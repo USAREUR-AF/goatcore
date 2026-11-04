@@ -39,7 +39,9 @@ SSH_TAIL = "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o Contr
 def _load_registry(text=None):
     import yaml
     data = yaml.safe_load(text if text is not None else REG.read_text())
-    return (data or {}).get("doors", {})
+    # `doors:` with no entries loads as None, not {} -- the shipped public
+    # registry starts empty.
+    return (data or {}).get("doors") or {}
 
 
 def _resolve_door(env, doors):
@@ -304,6 +306,12 @@ def main():
     check = "--check" in sys.argv
     envs = list(_load_registry().keys()) if "--all" in sys.argv else [a for a in sys.argv[1:] if not a.startswith("--")]
     if not envs:
+        if "--all" in sys.argv:
+            # An empty registry has nothing to generate or verify; the shipped
+            # public doors.yaml starts this way.
+            print("ok: the doors registry is empty, no door inventories to "
+                  + ("check" if check else "generate"))
+            sys.exit(0)
         raise SystemExit("usage: generate-door-inventory.py <goatnet> [--check] | --all [--check] | --self-test")
     sys.exit(run(envs, check))
 
