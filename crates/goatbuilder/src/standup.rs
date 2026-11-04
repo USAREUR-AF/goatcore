@@ -207,6 +207,14 @@ fn inventory_hosts(repo: &Path, groups: &[&str], ssh_target: bool) -> Vec<String
         .unwrap_or_default()
 }
 
+/// Why the obs leg cannot run in this tree, when its utility play is absent.
+pub(crate) fn obs_play_missing(repo: &Path) -> Option<String> {
+    if repo.join("ops/ansible/utility-host-bootstrap.yml").is_file() {
+        return None;
+    }
+    Some("has_obs_host: true, but ops/ansible/utility-host-bootstrap.yml is not in this tree, so the obs leg cannot run.".to_string())
+}
+
 fn read_site(repo: &Path, o: &Options) -> Result<Site> {
     let site = o.site.to_string();
     let site_us = site.replace('-', "_");
@@ -239,6 +247,12 @@ fn read_site(repo: &Path, o: &Options) -> Result<Site> {
     };
     if o.obs_only && !obs {
         return Err(anyhow!("--obs-only: no obs leg to run — {obs_why}"));
+    }
+    // Refuse here rather than at phase 2, after the core leg has started beside it.
+    if obs {
+        if let Some(missing) = obs_play_missing(repo) {
+            return Err(anyhow!("{missing} Re-run with --skip-obs to stand up the site without its obs host."));
+        }
     }
 
     let profile = match o.profile {
@@ -469,11 +483,11 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
         ev.push(Event::Phase(Phase { n: 12, kind: "T", label: "mint the pubsub-state mirror bot on the obs host's Forgejo (once; skipped when FORGEJO_PUBSUB_TOKEN is set)".into(), cmd: format!("if [ -n \"${{FORGEJO_PUBSUB_TOKEN:-}}\" ]; then echo '    FORGEJO_PUBSUB_TOKEN already set — bot minted; skipping';    else '{r}/ops/scripts/forgejo-mint-pubsub-bot.sh' '{obs_ssh}'      && eval \"$('{r}/ops/scripts/envrc-var.sh' FORGEJO_PUBSUB_TOKEN)\"      && '{r}/ops/scripts/standup-keep-secret' FORGEJO_PUBSUB_TOKEN      && echo '    token loaded from the operator envrc; the run continues'; fi"), stop_after: true }));
     }
     ev.push(p(12, "GATE", "every input the phases after the manual step will reach is set (the NetBird service token phase 11 issues)".into(), format!("python3 '{r}/ops/scripts/standup-required-inputs.py' {site} --profile {} --from 12", s.profile)));
-    ev.push(p(12, "A", "pubsub-state Repl mirror (Block 86)".into(), format!("cd '{r}/ops/ansible' && ( ls group_vars/{g}/pubsub-state.yml >/dev/null 2>&1 && {pre} {inv} pubsub-state-mirror-deploy.yml -e target={g} || echo 'no group_vars/{g}/pubsub-state.yml — Repl not configured for this goatnet; add one by copying any goatnet that has one, mint the bot, then re-run --from 12' )")));
+    ev.push(p(12, "A", "pubsub-state Repl mirror (Block 86)".into(), format!("cd '{r}/ops/ansible' && if ls group_vars/{g}/pubsub-state.yml >/dev/null 2>&1; then {pre} {inv} pubsub-state-mirror-deploy.yml -e target={g}; else echo 'no group_vars/{g}/pubsub-state.yml — Repl not configured for this goatnet; add one by copying any goatnet that has one, mint the bot, then re-run --from 12'; fi")));
     ev.push(p(12, "A", "onboarding intake front desk (public, ADR 1062 stage 1)".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} onboard-intake-deploy.yml -e target={g} -e site_id={site}")));
     ev.push(p(12, "A", "onboard-runner (auto-mint on approval, ADR 1062 stage 3)".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} onboard-runner-deploy.yml -e target={g} -e site_id={site}")));
     ev.push(p(12, "A", "grant-keyd (encryption key distribution)".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} grant-keyd-deploy.yml -e target={g} -l 'mgmt-{site}-01*'")));
-    ev.push(p(12, "A", "notional pub/sub (synthetic vendors — opt-in via synth_vendors_enabled)".into(), format!("cd '{r}/ops/ansible' && ( grep -qE 'synth_vendors_enabled:[[:space:]]*true' group_vars/{g}/synth-vendors.yml 2>/dev/null && {pre} {inv} zagros-zenoh-synth-vendors-deploy.yml -e target={g} || echo 'synth_vendors_enabled not true for {g} — notional pub/sub not requested, skipping' )")));
+    ev.push(p(12, "A", "notional pub/sub (synthetic vendors — opt-in via synth_vendors_enabled)".into(), format!("cd '{r}/ops/ansible' && if grep -qE 'synth_vendors_enabled:[[:space:]]*true' group_vars/{g}/synth-vendors.yml 2>/dev/null; then {pre} {inv} zagros-zenoh-synth-vendors-deploy.yml -e target={g}; else echo 'synth_vendors_enabled not true for {g} — notional pub/sub not requested, skipping'; fi")));
     if s.obs {
         ev.push(Event::LegJoin { leg: "stack", at: 13 });
     }
@@ -1585,6 +1599,32 @@ mod tests {
         let mut seen: Vec<u32> = ns.clone();
         seen.dedup();
         assert_eq!(seen, (1..=LAST_PHASE).collect::<Vec<_>>(), "an internet site walks every phase 1..14: {seen:?}");
+    }
+
+    /// An obs leg whose play is absent is named before anything runs.
+    #[test]
+    fn a_missing_obs_play_is_named() {
+        let dir = std::env::temp_dir().join(format!("goatbuilder-obs-play-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("ops/ansible")).unwrap();
+        let why = obs_play_missing(&dir).expect("an absent play is reported");
+        assert!(why.contains("utility-host-bootstrap.yml"), "{why}");
+        std::fs::write(dir.join("ops/ansible/utility-host-bootstrap.yml"), "---\n").unwrap();
+        assert_eq!(obs_play_missing(&dir), None);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A play that fails must fail its step, so these two steps may not end in
+    /// the `|| echo` that used to report a failed play as "not configured".
+    #[test]
+    fn optional_plays_do_not_mask_their_own_failure() {
+        let o = Options { env: "e", site: "zagros", profile: None, from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false };
+        let lines = phase_lines(&test_site(false), &o);
+        for play in ["pubsub-state-mirror-deploy.yml", "zagros-zenoh-synth-vendors-deploy.yml"] {
+            let line = lines.iter().find(|l| l.2.contains(play)).unwrap_or_else(|| panic!("{play} is in the plan"));
+            assert!(line.2.contains("; then ") && line.2.ends_with("; fi"), "{}", line.2);
+            assert!(!line.2.contains("|| echo"), "{}", line.2);
+        }
     }
 
     #[test]

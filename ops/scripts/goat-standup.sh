@@ -222,6 +222,11 @@ elif [ -z "$(python3 "$REPO/ops/scripts/inventory-hosts.py" "$OBS_GROUP" 2>/dev/
   OBS_WHY="has_obs_host: true but no host in inventory group [$OBS_GROUP] yet"
 else OBS=1; fi
 if [ "$OBS_ONLY" = 1 ] && [ "$OBS" = 0 ]; then echo "--obs-only: no obs leg to run — $OBS_WHY"; exit 1; fi
+# Refuse here rather than at phase 2, after the core leg has started beside it.
+if [ "$OBS" = 1 ] && [ ! -f "$REPO/ops/ansible/utility-host-bootstrap.yml" ]; then
+  echo "has_obs_host: true, but ops/ansible/utility-host-bootstrap.yml is not in this tree, so the obs leg cannot run. Re-run with --skip-obs to stand up the site without its obs host." >&2
+  exit 1
+fi
 # The ansible phases run under an aws-vault profile. It defaults to the
 # platform's hosted account, but a sovereign goatnet owns its own account —
 # so it is overridable (GOAT_AWS_PROFILE) rather than baked in. A hardcoded
@@ -1027,7 +1032,7 @@ step 12 GATE "every input the phases after the manual step will reach is set (th
   "python3 '$REPO/ops/scripts/standup-required-inputs.py' $SITE --profile $PROFILE --from 12"
 
 step 12 A "pubsub-state Repl mirror (Block 86)" \
-  "cd '$REPO/ops/ansible' && ( ls group_vars/${GROUP}/pubsub-state.yml >/dev/null 2>&1 && $ANSIBLE_PRE ${INV[*]} pubsub-state-mirror-deploy.yml -e target=$GROUP || echo 'no group_vars/${GROUP}/pubsub-state.yml — Repl not configured for this goatnet; add one by copying any goatnet that has one, mint the bot, then re-run --from 12' )"
+  "cd '$REPO/ops/ansible' && if ls group_vars/${GROUP}/pubsub-state.yml >/dev/null 2>&1; then $ANSIBLE_PRE ${INV[*]} pubsub-state-mirror-deploy.yml -e target=$GROUP; else echo 'no group_vars/${GROUP}/pubsub-state.yml — Repl not configured for this goatnet; add one by copying any goatnet that has one, mint the bot, then re-run --from 12'; fi"
 
 # Phase 12. Onboarding PUBLIC intake front desk (ADR 1062 stage 1) — the public web
 #      page an off-mesh candidate opens to submit their onboarding form. Without
@@ -1066,7 +1071,7 @@ step 12 A "grant-keyd (encryption key distribution)" \
 #      zenoh-synth-vendors-deploy.yml instead.) Needs PORTAL_OPERATOR_API_KEY.
 
 step 12 A "notional pub/sub (synthetic vendors — opt-in via synth_vendors_enabled)" \
-  "cd '$REPO/ops/ansible' && ( grep -qE 'synth_vendors_enabled:[[:space:]]*true' group_vars/${GROUP}/synth-vendors.yml 2>/dev/null && $ANSIBLE_PRE ${INV[*]} zagros-zenoh-synth-vendors-deploy.yml -e target=$GROUP || echo 'synth_vendors_enabled not true for ${GROUP} — notional pub/sub not requested, skipping' )"
+  "cd '$REPO/ops/ansible' && if grep -qE 'synth_vendors_enabled:[[:space:]]*true' group_vars/${GROUP}/synth-vendors.yml 2>/dev/null; then $ANSIBLE_PRE ${INV[*]} zagros-zenoh-synth-vendors-deploy.yml -e target=$GROUP; else echo 'synth_vendors_enabled not true for ${GROUP} — notional pub/sub not requested, skipping'; fi"
 
 # --parallel: run the queued phase-12 steps in their waves, before anything of phase 13.
 dag_flush

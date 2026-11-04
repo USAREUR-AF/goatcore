@@ -115,8 +115,8 @@ def read_plan(site, profile, plan_file):
     return phases
 
 
-GREP_GUARD = re.compile(r"""grep -qE '([^']+)' (\S+?) 2>/dev/null &&""")
-LS_GUARD = re.compile(r"\bls (\S+\.yml) >/dev/null 2>&1 &&")
+GREP_GUARD = re.compile(r"""grep -qE '([^']+)' (\S+?) 2>/dev/null(?: &&|; then)""")
+LS_GUARD = re.compile(r"\bls (\S+\.yml) >/dev/null 2>&1(?: &&|; then)")
 
 
 def plays_in(cmd, default_group):
