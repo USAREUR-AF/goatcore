@@ -27,6 +27,7 @@ on:
 
 permissions:
   contents: read
+  packages: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -63,6 +64,9 @@ jobs:
 
       - name: Scan repository and curated images
         id: scan
+        env:
+          TRIVY_USERNAME: ${{ github.actor }}
+          TRIVY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
         run: python3 ops/scripts/trivy-scan.py --no-secrets
 
       - name: Upload Trivy reports

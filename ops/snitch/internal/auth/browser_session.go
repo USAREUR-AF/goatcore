@@ -70,6 +70,7 @@ func (s *browserSessions) create(w http.ResponseWriter, r *http.Request, credent
 		return false
 	}
 	s.entries[id] = browserSession{credential: credential, expires: now.Add(browserSessionTTL)}
+	//nolint:gosec // G124: Secure is mandatory outside the tested loopback development origin; HttpOnly and SameSite Strict are unconditional.
 	http.SetCookie(w, &http.Cookie{
 		Name: browserSessionCookie, Value: id, Path: "/", HttpOnly: true,
 		Secure: !browserLoopback(r.Host), SameSite: http.SameSiteStrictMode,
@@ -107,6 +108,7 @@ func (s *browserSessions) logout(w http.ResponseWriter, r *http.Request) {
 		delete(s.entries, cookie.Value)
 		s.mu.Unlock()
 	}
+	//nolint:gosec // G124: Secure is mandatory outside the tested loopback development origin; HttpOnly and SameSite Strict are unconditional.
 	http.SetCookie(w, &http.Cookie{
 		Name: browserSessionCookie, Path: "/", HttpOnly: true,
 		Secure: !browserLoopback(r.Host), SameSite: http.SameSiteStrictMode, MaxAge: -1,
