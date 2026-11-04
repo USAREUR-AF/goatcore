@@ -2,12 +2,13 @@
 
 ## Coverage level
 
-Two layers gate this role at PR-time:
+These layers gate this role at PR-time:
 
 | Layer | What it catches | Where |
 |---|---|---|
 | `syntax-check.sh` (this dir) | YAML + Jinja2 parse errors in `tasks/main.yml` + the test playbook | local + CI |
 | `check-register-uniqueness.sh` (workspace) | F-075-class within-play `register:` name collisions | local + CI |
+| `clevis-bind-one-line.yml` (this dir, run by `syntax-check.sh`) | a `clevis luks bind` in `tasks/installer-luks.yml` whose pin is not on its shell line | local + CI |
 
 Run locally:
 
