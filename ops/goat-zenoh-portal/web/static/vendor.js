@@ -29,7 +29,7 @@ import { readResponse, request, showRequestError } from "/app.js";
 // (`last_publish_at`, `publish_count`) is shown once per card header, or
 // "no publish recorded yet". The slot alias is DISPLAY ONLY (ADR 1039): it
 // is searched and shown, never used to compose a key or a link.
-import { api, isAuthError, escapeHTML, hydrateAuth, getKey, lexicon } from "/app.js";
+import { api, isAuthError, escapeHTML, hydrateAuth, hasAuth, lexicon } from "/app.js";
 
 const SYNTH_KEY = "__synthetic__";
 const ALL_KEY = "__all__";
@@ -528,7 +528,7 @@ function toast(m) {
   toastTimer = setTimeout(() => t.classList.remove("show"), 2200);
 }
 
-if (!getKey()) {
+if (!hasAuth()) {
   $("auth-banner")?.classList.remove("hidden");
 }
 init();

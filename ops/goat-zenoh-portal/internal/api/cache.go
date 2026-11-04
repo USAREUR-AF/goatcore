@@ -43,6 +43,7 @@ func revalidated(next http.HandlerFunc) http.HandlerFunc {
 		// Both coding and credential vary the body; the 304 must carry both,
 		// and it never reaches the gzip layer's own Vary (no body to code).
 		h.Add("Vary", "Authorization")
+  h.Add("Vary", "Cookie")
 		h.Add("Vary", "Accept-Encoding")
 		next(w, r)
 	}

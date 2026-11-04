@@ -3,17 +3,20 @@ package probe
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptrace"
+	"os"
 	"strings"
 	"time"
 )
 
 // ServiceCheck defines a single service health check.
 type ServiceCheck struct {
+	CAFile  string        `json:"ca_file,omitempty" yaml:"ca_file,omitempty"` // optional PEM trust roots for a private service
 	Name    string        `json:"name" yaml:"name"`
 	Type    string        `json:"type" yaml:"type"`       // "http", "https", or "tcp"
 	URL     string        `json:"url" yaml:"url"`         // for http/https checks
@@ -94,10 +97,24 @@ func (p *ServiceProbe) checkHTTP(ctx context.Context, check ServiceCheck) Result
 		timeout = 10 * time.Second
 	}
 
+	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12}
+	if check.CAFile != "" {
+		roots, err := x509.SystemCertPool()
+		if err != nil {
+			roots = x509.NewCertPool()
+		}
+		pem, err := os.ReadFile(check.CAFile)
+		if err != nil || !roots.AppendCertsFromPEM(pem) {
+			return Result{Category: CatService, Name: "svc-" + check.Name, Status: Fail,
+				Detail: "cannot load configured service CA", Timestamp: time.Now().UTC()}
+		}
+		tlsConfig.RootCAs = roots
+	}
 	client := &http.Client{
 		Timeout: timeout,
 		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+			// Health includes server identity; inspection probes are separate.
+			TLSClientConfig: tlsConfig,
 		},
 	}
 

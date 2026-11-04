@@ -5,7 +5,7 @@ import requests
 
 def test_accounts_requires_auth(api_base_url):
     """GET /api/accounts without a token must return 401."""
-    resp = requests.get(f"{api_base_url}/api/accounts", verify=False)
+    resp = requests.get(f"{api_base_url}/api/accounts", timeout=10)
     assert resp.status_code == 401
 
 

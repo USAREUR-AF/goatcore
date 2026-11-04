@@ -152,27 +152,13 @@
   </main>
 
   <script type="module">
-import { readResponse, request, showRequestError, isAuthError } from "/app.js";
+import { readResponse, request, showRequestError, isAuthError, hasAuth } from "/app.js";
     import { hydrateAuth } from "/app.js";
-
-    // Re-use the same localStorage key the rest of the portal uses.
-    const API_KEY_STORAGE_KEY = "portalApiKey";
-
-    function getKey() {
-      try { return localStorage.getItem(API_KEY_STORAGE_KEY) || ""; } catch (e) { return ""; }
-    }
 
     function showAuth() {
       document.getElementById("auth-banner").classList.remove("hidden");
       document.getElementById("content").classList.add("hidden");
     }
-
-    document.getElementById("api-key-save").addEventListener("click", () => {
-      const v = document.getElementById("api-key-input").value.trim();
-      if (!v) return;
-      try { localStorage.setItem(API_KEY_STORAGE_KEY, v); } catch (e) {}
-      window.location.reload();
-    });
 
     function fmtCount(n) {
       if (n === null || n === undefined) return "0";
@@ -196,14 +182,12 @@ import { readResponse, request, showRequestError, isAuthError } from "/app.js";
     }
 
     async function fetchActivity() {
-      const key = getKey();
-      if (!key) { showAuth(); return; }
       // Finish shared authentication before this endpoint owns the denial UI.
       // The server decides access; an accepted identity may still receive 403.
       if (!await hydrateAuth()) { document.getElementById("content").classList.add("hidden"); return; }
       try {
         const resp = await request("/api/admin/vendor-activity", {
-          headers: { "Authorization": "Bearer " + key },
+          headers: {},
         });
         render(await readResponse(resp));
       } catch (e) {
@@ -272,11 +256,11 @@ import { readResponse, request, showRequestError, isAuthError } from "/app.js";
     }
 
     async function openEventDetail(vendor) {
-      const key = getKey();
+      const key = hasAuth();
       let data;
       try {
         const resp = await request("/api/admin/vendor-activity/" + encodeURIComponent(vendor) + "/events", {
-          headers: { "Authorization": "Bearer " + key },
+          headers: {},
         });
         data = await readResponse(resp);
       } catch (e) {

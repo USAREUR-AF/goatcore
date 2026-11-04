@@ -83,9 +83,13 @@ for (const slowResponse of ['identity', 'activity']) {
         if (!localStorage.getItem('portalApiKey')) localStorage.setItem('portalApiKey', 'activity-test');
       });
       let identityCalls = 0;
+      let replacement = false;
       await page.route('**/api/**', async route => {
         const path = new URL(route.request().url()).pathname;
-        const replacement = route.request().headers().authorization === 'Bearer replacement-test';
+        if (path === '/api/browser-session') {
+          replacement = route.request().headers().authorization === 'Bearer replacement-test';
+          return route.fulfill({status: replacement ? 204 : 401});
+        }
         if (path === '/api/whoami') {
           identityCalls++;
           if (slowResponse === 'identity') await new Promise(resolve => setTimeout(resolve, 200));
@@ -112,11 +116,11 @@ for (const slowResponse of ['identity', 'activity']) {
         await expect(page.locator('#loading')).toContainText('operator required');
         await expect(page.getByRole('alert').filter({hasText: 'operator required'})).toHaveCount(1);
         await expect(page.locator('#request-error')).toHaveCount(0);
-        expect(await page.evaluate(() => localStorage.getItem('portalApiKey'))).toBe('activity-test');
+        expect(await page.evaluate(() => localStorage.getItem('portalApiKey'))).toBeNull();
       }
       expect(identityCalls).toBe(1);
       if (!operator) {
-        await page.evaluate(() => localStorage.setItem('portalApiKey', 'replacement-test'));
+        await page.evaluate(async () => { const {setKey} = await import('/app.js'); await setKey('replacement-test'); });
         await page.reload();
         await expect(page.locator('#auth-banner')).toBeHidden();
         await expect(page.locator('#loading')).toBeHidden();
@@ -141,7 +145,7 @@ for (const failure of ['rejected', 'network']) {
       return route.fulfill({ json: {} });
     });
     await page.goto('/admin/vendor-activity.html');
-    await expect(page.locator('#who')).toContainText(failure === 'network' ? 'Connection failed' : 'Authentication failed');
+    await expect(page.locator('#who')).toContainText(failure === 'network' ? 'Connection failed' : 'unauthenticated');
     if (failure === 'network') await expect(page.locator('#auth-banner')).toBeHidden();
     else await expect(page.locator('#auth-banner')).toBeVisible();
     await expect(page.locator('#content')).toBeHidden();
