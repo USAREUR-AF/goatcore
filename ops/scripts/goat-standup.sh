@@ -1071,7 +1071,7 @@ step 12 A "grant-keyd (encryption key distribution)" \
 #      zenoh-synth-vendors-deploy.yml instead.) Needs PORTAL_OPERATOR_API_KEY.
 
 step 12 A "notional pub/sub (synthetic vendors — opt-in via synth_vendors_enabled)" \
-  "cd '$REPO/ops/ansible' && if grep -qE 'synth_vendors_enabled:[[:space:]]*true' group_vars/${GROUP}/synth-vendors.yml 2>/dev/null; then $ANSIBLE_PRE ${INV[*]} zagros-zenoh-synth-vendors-deploy.yml -e target=$GROUP; else echo 'synth_vendors_enabled not true for ${GROUP} — notional pub/sub not requested, skipping'; fi"
+  "cd '$REPO/ops/ansible' && { [ ! -e group_vars/${GROUP}/synth-vendors.yml ] || [ -r group_vars/${GROUP}/synth-vendors.yml ] || { echo 'cannot read group_vars/${GROUP}/synth-vendors.yml' >&2; false; }; } && if grep -qE '^[[:space:]]*synth_vendors_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' group_vars/${GROUP}/synth-vendors.yml 2>/dev/null; then $ANSIBLE_PRE ${INV[*]} zagros-zenoh-synth-vendors-deploy.yml -e target=$GROUP; else echo 'synth_vendors_enabled not true for ${GROUP} — notional pub/sub not requested, skipping'; fi"
 
 # --parallel: run the queued phase-12 steps in their waves, before anything of phase 13.
 dag_flush

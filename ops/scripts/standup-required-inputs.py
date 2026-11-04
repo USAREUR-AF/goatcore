@@ -126,7 +126,7 @@ def plays_in(cmd, default_group):
         f = ANS / g.group(2)
         try:
             pat = g.group(1).replace("[[:space:]]", r"\s")
-            if not re.search(pat, f.read_text()):
+            if not re.search(pat, f.read_text(), re.M):
                 return []
         except OSError:
             return []

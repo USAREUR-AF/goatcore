@@ -42,14 +42,23 @@ ENGINES = [
 ]
 # Environments removed from the tree; a live doc must not send a reader to them.
 RETIRED_ENVS = ["prov_conus_hosts", "vega_hosts"]
-# Plays the driver names that this tree does not ship, each with what a reader
-# meets when the driver reaches it. A new absence fails the check until it is
-# listed here with its behavior.
+# Plays the driver names that a public tree does not ship: what a reader meets
+# when the driver reaches one, and the driver text that makes that true. A new
+# absence fails the check until it is listed here. An entry stops excusing its
+# play if the driver text goes away, and in a tree that declares a deployment
+# no entry applies, because a real goatnet needs every play the driver names.
 PLAYS_OUTSIDE_THIS_TREE = {
-    "utility-host-bootstrap.yml": "the driver refuses the obs leg and names --skip-obs",
-    "zagros-zenoh-synth-vendors-deploy.yml": "opt-in; the step fails when synth_vendors_enabled is true",
-    "herd-connector-deploy.yml": "ships in goatstuff; phase 14 fails when has_network_jump_node is true",
+    "utility-host-bootstrap.yml": (
+        "the driver refuses the obs leg and names --skip-obs",
+        '[ ! -f "$REPO/ops/ansible/utility-host-bootstrap.yml" ]'),
+    "zagros-zenoh-synth-vendors-deploy.yml": (
+        "opt-in; the step fails when synth_vendors_enabled is true",
+        "group_vars/${GROUP}/synth-vendors.yml 2>/dev/null; then"),
+    "herd-connector-deploy.yml": (
+        "ships in goatstuff; phase 14 fails when has_network_jump_node is true",
+        "rescue_phase has_network_jump_node"),
 }
+DEPLOYMENT_MARKER = "ops/goatbuilder/goatbuilder.yaml"
 # Fewer plays than this means the parser went blind, as it did when the driver
 # moved from a literal ansible-preflight.sh to $ANSIBLE_PRE and every play check
 # passed on an empty list.
@@ -57,11 +66,16 @@ MIN_DRIVER_PLAYS = 15
 
 # ------- pure helpers (no filesystem), so --self-test can feed synthetic text --
 
-PLAY_RUNNER = re.compile(r'ansible-preflight\.sh|\$ANSIBLE_PRE')
+PLAY_RUNNER = re.compile(r'ansible-preflight\.sh|\$ANSIBLE_PRE|\bansible-playbook\b')
 PLAY_NAME = re.compile(r'(?<![/\w.-])([A-Za-z0-9_${}][A-Za-z0-9._${}-]*\.yml)')
+PLAY_VARIABLE = re.compile(r'\b([A-Z][A-Z0-9_]*)="?([A-Za-z0-9_.${}-]+\.yml)"?')
+VARIABLE_USE = re.compile(r'\$\{?([A-Z][A-Z0-9_]*)\}?')
 
 def driver_playbooks(driver_text):
     """(playbook, invocation-line) for every ansible playbook the driver runs."""
+    variables = {}
+    for name, value in PLAY_VARIABLE.findall(driver_text):
+        variables.setdefault(name, set()).add(value)
     out = []
     for line in driver_text.splitlines():
         if line.lstrip().startswith("#"):
@@ -70,16 +84,24 @@ def driver_playbooks(driver_text):
             # Only this invocation: later text is another command or a message.
             cmd = re.split(r'\|\||&&|;', seg)[0]
             out.extend((m.group(1), line) for m in PLAY_NAME.finditer(cmd))
+            # A play chosen earlier and run through a variable, as $RATHOLE_PLAY.
+            for use in VARIABLE_USE.findall(cmd):
+                out.extend((play, line) for play in sorted(variables.get(use, ())))
         # rescue_phase takes its play as a quoted argument on its own line.
         arg = re.match(r'\s*"([a-z0-9-]+\.yml)\b', line)
         if arg:
             out.append((arg.group(1), line))
     return out
 
-def missing_plays(driver_text, exists):
+def missing_plays(driver_text, exists, declared=PLAYS_OUTSIDE_THIS_TREE):
     """Plays the driver names that neither exist nor are declared absent."""
     names = {pb for pb, _ in driver_playbooks(driver_text) if "$" not in pb}
-    return sorted(n for n in names if n not in PLAYS_OUTSIDE_THIS_TREE and not exists(n))
+    return sorted(n for n in names if n not in declared and not exists(n))
+
+def unhandled_absences(driver_text, exists, declared=PLAYS_OUTSIDE_THIS_TREE):
+    """Declared-absent plays whose handling is no longer in the driver."""
+    return sorted(n for n, (_, handling) in declared.items()
+                  if not exists(n) and handling not in driver_text)
 
 def scoping_violations(driver_text, hosts_all_playbooks):
     """A `hosts: all` playbook invoked with a bare `-e target=` and no `--limit`
@@ -165,11 +187,16 @@ def run_checks(driver_text, handbook_text, do_fs=True):
         r.append((len(plays) >= MIN_DRIVER_PLAYS,
                   f"driver plays are visible to this check ({len(plays)} found)",
                   "" if len(plays) >= MIN_DRIVER_PLAYS else f"want at least {MIN_DRIVER_PLAYS}"))
-        missing = set(missing_plays(driver_text,
-                                    lambda n: os.path.exists(os.path.join(REPO, "ops/ansible", n))))
+        exists = lambda n: os.path.exists(os.path.join(REPO, "ops/ansible", n))
+        declared = ({} if os.path.exists(os.path.join(REPO, DEPLOYMENT_MARKER))
+                    else PLAYS_OUTSIDE_THIS_TREE)
+        missing = set(missing_plays(driver_text, exists, declared))
         for pb in sorted(plays):
             r.append((pb not in missing, f"driver playbook exists: {pb}",
                       "" if pb not in missing else "not in ops/ansible/ and not in PLAYS_OUTSIDE_THIS_TREE"))
+        unhandled = unhandled_absences(driver_text, exists, declared)
+        r.append((not unhandled, "every declared-absent play is still handled by the driver",
+                  ", ".join(unhandled)))
 
     # correctness: scripts the driver names exist
     if do_fs:
@@ -234,6 +261,12 @@ def run_checks(driver_text, handbook_text, do_fs=True):
             ok = p.returncode == 0 and "=== Phase 13 [GATE] acceptance" in p.stdout
             r.append((ok, f"--plan renders (profile={prof})",
                       "" if ok else f"rc={p.returncode}"))
+            # The rendered plan is the ground truth for the source parser above:
+            # a play the plan runs but the parser cannot see means it went blind.
+            seen = {pb for pb, _ in driver_playbooks(driver_text)}
+            unseen = sorted({pb for pb, _ in driver_playbooks(p.stdout)} - seen)
+            r.append((not unseen, f"parser sees every play the plan runs (profile={prof})",
+                      ", ".join(unseen)))
 
     # correctness: every goatnet in the door registry has its inventory blocks
     # established (env-door.sh arm + doors.ini + doors-groupvars.ini), so a
@@ -272,6 +305,20 @@ def self_test():
                '# $ANSIBLE_PRE commented-out.yml\n')
     if missing_plays(planted, lambda n: n == "found.yml") != ["planted-missing.yml"]:
         problems.append("a missing play invoked through $ANSIBLE_PRE")
+    bare = 'step 12 A "x" "cd y && ansible-playbook -i localhost, bare-missing.yml -e a=b"\n'
+    if missing_plays(bare, lambda n: False) != ["bare-missing.yml"]:
+        problems.append("a missing play run by a bare ansible-playbook")
+    through_variable = 'PLAY=generic.yml\nstep 5 A "x" "$ANSIBLE_PRE ${INV[*]} $PLAY -e t=g"\n'
+    if missing_plays(through_variable, lambda n: False) != ["generic.yml"]:
+        problems.append("a missing play run through a variable")
+    declared = {"gone.yml": ("what happens", "the handling")}
+    uses_gone = '$ANSIBLE_PRE gone.yml\n'
+    if missing_plays(uses_gone, lambda n: False, declared):
+        problems.append("a declared absence should be excused in a public tree")
+    if missing_plays(uses_gone, lambda n: False, {}) != ["gone.yml"]:
+        problems.append("a deployment tree should get no excuses")
+    if unhandled_absences(uses_gone, lambda n: False, declared) != ["gone.yml"]:
+        problems.append("a declared absence whose handling left the driver")
     if problems:
         print("SELF-TEST FAILED — the checker did NOT catch planted violations:")
         for s in problems:

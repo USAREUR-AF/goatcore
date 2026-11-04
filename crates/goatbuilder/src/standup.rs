@@ -487,7 +487,7 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
     ev.push(p(12, "A", "onboarding intake front desk (public, ADR 1062 stage 1)".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} onboard-intake-deploy.yml -e target={g} -e site_id={site}")));
     ev.push(p(12, "A", "onboard-runner (auto-mint on approval, ADR 1062 stage 3)".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} onboard-runner-deploy.yml -e target={g} -e site_id={site}")));
     ev.push(p(12, "A", "grant-keyd (encryption key distribution)".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} grant-keyd-deploy.yml -e target={g} -l 'mgmt-{site}-01*'")));
-    ev.push(p(12, "A", "notional pub/sub (synthetic vendors — opt-in via synth_vendors_enabled)".into(), format!("cd '{r}/ops/ansible' && if grep -qE 'synth_vendors_enabled:[[:space:]]*true' group_vars/{g}/synth-vendors.yml 2>/dev/null; then {pre} {inv} zagros-zenoh-synth-vendors-deploy.yml -e target={g}; else echo 'synth_vendors_enabled not true for {g} — notional pub/sub not requested, skipping'; fi")));
+    ev.push(p(12, "A", "notional pub/sub (synthetic vendors — opt-in via synth_vendors_enabled)".into(), format!("cd '{r}/ops/ansible' && {{ [ ! -e group_vars/{g}/synth-vendors.yml ] || [ -r group_vars/{g}/synth-vendors.yml ] || {{ echo 'cannot read group_vars/{g}/synth-vendors.yml' >&2; false; }}; }} && if grep -qE '^[[:space:]]*synth_vendors_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' group_vars/{g}/synth-vendors.yml 2>/dev/null; then {pre} {inv} zagros-zenoh-synth-vendors-deploy.yml -e target={g}; else echo 'synth_vendors_enabled not true for {g} — notional pub/sub not requested, skipping'; fi")));
     if s.obs {
         ev.push(Event::LegJoin { leg: "stack", at: 13 });
     }
@@ -1612,6 +1612,18 @@ mod tests {
         std::fs::write(dir.join("ops/ansible/utility-host-bootstrap.yml"), "---\n").unwrap();
         assert_eq!(obs_play_missing(&dir), None);
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// The synth guard reads YAML, so it has to agree with what YAML means:
+    /// every truthy spelling enables the step, and a comment does not.
+    #[test]
+    fn the_synth_guard_agrees_with_yaml() {
+        let o = Options { env: "e", site: "zagros", profile: None, from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false };
+        let lines = phase_lines(&test_site(false), &o);
+        let line = lines.iter().find(|l| l.2.contains("synth-vendors-deploy.yml")).expect("the synth step is planned");
+        assert!(line.2.contains("'^[[:space:]]*synth_vendors_enabled:"), "anchored past comments: {}", line.2);
+        assert!(line.2.contains("(true|True|TRUE|yes|Yes|YES|on|On|ON|1)"), "{}", line.2);
+        assert!(line.2.contains("cannot read group_vars/"), "an unreadable file fails: {}", line.2);
     }
 
     /// A play that fails must fail its step, so these two steps may not end in
