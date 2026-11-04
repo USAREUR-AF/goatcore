@@ -292,6 +292,17 @@ fn or_q(s: &str) -> &str {
 
 /// The plan, in the script's order. `resume` is how the operator re-enters
 /// this verb (printed in the manual steps' instructions).
+/// The playbook a phase runs for `site`: the site's own `<site>-<suffix>` when
+/// it keeps one under ops/ansible, else the generic `site-<suffix>`.
+fn site_play(repo: &Path, site: &str, suffix: &str) -> String {
+    let own = format!("{site}-{suffix}");
+    if repo.join("ops/ansible").join(&own).is_file() {
+        own
+    } else {
+        format!("site-{suffix}")
+    }
+}
+
 fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
     let r = &s.repo;
     let g = &s.group;
@@ -381,7 +392,10 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
     ev.push(p(5, "A", "mgmt-stack (site-bootstrap up to the account seed; the seed needs Ory and runs in phase 6)".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} site-bootstrap.yml {ev_p1} --skip-tags after-ory")));
     let internet = s.profile == "internet";
     if internet {
-        ev.push(p(5, "A", "[internet] relay-connect (rathole-client)".into(), format!("cd '{r}/ops/ansible' && ( ls {site}-rathole-client.yml >/dev/null 2>&1 && {pre} -i inventory/hosts-{site}.ini {inv} {site}-rathole-client.yml -e rathole_client_target={g} || echo 'no {site}-rathole-client.yml — make it from nova-rathole-client.yml (handbook phase 5), then re-run --from 5' )")));
+        // site-rathole-client.yml is the generic play; a site that keeps its
+        // own <site>-rathole-client.yml gets that one instead.
+        let rathole_play = site_play(repo, site, "rathole-client.yml");
+        ev.push(p(5, "A", format!("[internet] relay-connect (rathole-client, {rathole_play})"), format!("cd '{r}/ops/ansible' && {pre} -i inventory/hosts-{site}.ini {inv} {rathole_play} -e rathole_client_target={g}")));
     }
     ev.push(p(6, "A", "ory (kratos/hydra/ui)".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} ory-deploy.yml --limit {g} -e postgres_superuser_password=\"$(printenv {u}_PG_PASS)\"")));
     let jfs = &s.join_founder_site;
@@ -428,7 +442,8 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
         }
     } else {
         ev.push(p(10, "A", "[internet] dashboard".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} -l 'mgmt-{site}-01*' dashboard-deploy.yml -e site_id={site}")));
-        ev.push(p(10, "A", "[internet] register OIDC clients".into(), format!("cd '{r}/ops/ansible' && ( ls {site}-oidc-clients.yml >/dev/null 2>&1 && {pre} {inv} {site}-oidc-clients.yml -e target={g} || echo 'no {site}-oidc-clients.yml — extract one from any site that has <site>-oidc-clients.yml (ADR 1016), then re-run --from 10' )")));
+        let oidc_play = site_play(repo, site, "oidc-clients.yml");
+        ev.push(p(10, "A", format!("[internet] register OIDC clients ({oidc_play})"), format!("cd '{r}/ops/ansible' && {pre} {inv} {oidc_play} -e target={g}")));
         ev.push(p(11, "MANUAL", "[internet] first login, admin-promote, the bootstrap NetBird token".into(), format!("handbook §'Phase 11' has the exact block. In short: enroll YOUR laptop (netbird up), pin the three dashboard hosts in /etc/hosts, read the one-time password from /opt/mgmt-host/.bootstrap-passwords/{oe}.txt, log in; re-run the phase-10 dashboard-deploy line ONCE (promotes you to admin — the UI 403s until then); create service user svc-{site}-netbird-infra (Team > Service Users, role admin), create its token, add 'export {u}_NB_API_TOKEN=<token>' to .envrc.local.d/30-site-services.envrc and store it in 1Password as {site}-netbird / api_token. THEN resume: {resume} --from 12")));
     }
     let fqdn = &s.mgmt_fqdn;
