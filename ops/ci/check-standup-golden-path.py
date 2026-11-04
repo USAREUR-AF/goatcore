@@ -42,19 +42,44 @@ ENGINES = [
 ]
 # Environments removed from the tree; a live doc must not send a reader to them.
 RETIRED_ENVS = ["prov_conus_hosts", "vega_hosts"]
+# Plays the driver names that this tree does not ship, each with what a reader
+# meets when the driver reaches it. A new absence fails the check until it is
+# listed here with its behavior.
+PLAYS_OUTSIDE_THIS_TREE = {
+    "utility-host-bootstrap.yml": "the driver refuses the obs leg and names --skip-obs",
+    "zagros-zenoh-synth-vendors-deploy.yml": "opt-in; the step fails when synth_vendors_enabled is true",
+    "herd-connector-deploy.yml": "ships in goatstuff; phase 14 fails when has_network_jump_node is true",
+}
+# Fewer plays than this means the parser went blind, as it did when the driver
+# moved from a literal ansible-preflight.sh to $ANSIBLE_PRE and every play check
+# passed on an empty list.
+MIN_DRIVER_PLAYS = 15
 
 # ------- pure helpers (no filesystem), so --self-test can feed synthetic text --
+
+PLAY_RUNNER = re.compile(r'ansible-preflight\.sh|\$ANSIBLE_PRE')
+PLAY_NAME = re.compile(r'(?<![/\w.-])([A-Za-z0-9_${}][A-Za-z0-9._${}-]*\.yml)')
 
 def driver_playbooks(driver_text):
     """(playbook, invocation-line) for every ansible playbook the driver runs."""
     out = []
     for line in driver_text.splitlines():
-        for m in re.finditer(r'([A-Za-z0-9._${}-]+\.yml)', line):
-            pb = m.group(1)
-            if "ansible-preflight.sh" in line or "-deploy.yml" in pb or pb.endswith(".yml"):
-                if "ansible-preflight.sh" in line:
-                    out.append((pb, line))
+        if line.lstrip().startswith("#"):
+            continue
+        for seg in PLAY_RUNNER.split(line)[1:]:
+            # Only this invocation: later text is another command or a message.
+            cmd = re.split(r'\|\||&&|;', seg)[0]
+            out.extend((m.group(1), line) for m in PLAY_NAME.finditer(cmd))
+        # rescue_phase takes its play as a quoted argument on its own line.
+        arg = re.match(r'\s*"([a-z0-9-]+\.yml)\b', line)
+        if arg:
+            out.append((arg.group(1), line))
     return out
+
+def missing_plays(driver_text, exists):
+    """Plays the driver names that neither exist nor are declared absent."""
+    names = {pb for pb, _ in driver_playbooks(driver_text) if "$" not in pb}
+    return sorted(n for n in names if n not in PLAYS_OUTSIDE_THIS_TREE and not exists(n))
 
 def scoping_violations(driver_text, hosts_all_playbooks):
     """A `hosts: all` playbook invoked with a bare `-e target=` and no `--limit`
@@ -136,12 +161,15 @@ def run_checks(driver_text, handbook_text, do_fs=True):
 
     # correctness: every playbook the driver names exists
     if do_fs:
-        for pb, _ in driver_playbooks(driver_text):
-            if "$" in pb:      # $SITE-templated per-site playbook: operator-authored, skip
-                continue
-            ok = os.path.exists(os.path.join(REPO, "ops/ansible", pb))
-            r.append((ok, f"driver playbook exists: {pb}",
-                      "" if ok else "not in ops/ansible/"))
+        plays = {pb for pb, _ in driver_playbooks(driver_text) if "$" not in pb}
+        r.append((len(plays) >= MIN_DRIVER_PLAYS,
+                  f"driver plays are visible to this check ({len(plays)} found)",
+                  "" if len(plays) >= MIN_DRIVER_PLAYS else f"want at least {MIN_DRIVER_PLAYS}"))
+        missing = set(missing_plays(driver_text,
+                                    lambda n: os.path.exists(os.path.join(REPO, "ops/ansible", n))))
+        for pb in sorted(plays):
+            r.append((pb not in missing, f"driver playbook exists: {pb}",
+                      "" if pb not in missing else "not in ops/ansible/ and not in PLAYS_OUTSIDE_THIS_TREE"))
 
     # correctness: scripts the driver names exist
     if do_fs:
@@ -237,6 +265,13 @@ def self_test():
         "no reference to a retired environment",
     ]
     problems = [s for s in expect_fail if by.get(s, True)]
+    # The shape the driver really uses, which the parser once could not see.
+    planted = ('OBS="cd x && $ANSIBLE_PRE ${INV[*]} planted-missing.yml -e target=$G"\n'
+               'step 12 A "y" "( grep -qE \'k\' group_vars/$G/vars.yml 2>/dev/null && '
+               '$ANSIBLE_PRE ${INV[*]} found.yml || echo \'no other.yml\' )"\n'
+               '# $ANSIBLE_PRE commented-out.yml\n')
+    if missing_plays(planted, lambda n: n == "found.yml") != ["planted-missing.yml"]:
+        problems.append("a missing play invoked through $ANSIBLE_PRE")
     if problems:
         print("SELF-TEST FAILED — the checker did NOT catch planted violations:")
         for s in problems:
