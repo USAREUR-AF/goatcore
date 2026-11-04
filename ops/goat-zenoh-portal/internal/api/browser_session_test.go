@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -9,9 +10,41 @@ import (
 )
 
 func sessionRequest(method string) *http.Request {
-	r := httptest.NewRequest(method, "https://portal.example.test/api/browser-session", nil)
+	r := httptest.NewRequestWithContext(context.Background(), method, "https://portal.example.test/api/browser-session", nil)
 	r.Header.Set("Origin", "https://portal.example.test")
 	return r
+}
+
+func TestBrowserCookieFlagsForLoopbackAndExternalHosts(t *testing.T) {
+	for _, tc := range []struct {
+		host   string
+		secure bool
+	}{
+		{"localhost:8888", false}, {"127.0.0.1:8888", false},
+		{"[::1]:8888", false}, {"portal.example.test", true},
+		{"localhost.example.test", true}, {"127.0.0.1.example.test", true},
+	} {
+		t.Run(tc.host, func(t *testing.T) {
+			var sessions browserSessions
+			r := sessionRequest(http.MethodPost)
+			r.Host = tc.host
+			w := httptest.NewRecorder()
+			if !sessions.create(w, r, "synthetic") {
+				t.Fatal("create failed")
+			}
+			cookie := w.Result().Cookies()[0]
+			if cookie.Secure != tc.secure || !cookie.HttpOnly || cookie.SameSite != http.SameSiteStrictMode {
+				t.Fatalf("cookie security flags for %q: %+v", tc.host, cookie)
+			}
+			r.AddCookie(cookie)
+			cleared := httptest.NewRecorder()
+			sessions.logout(cleared, r)
+			cookie = cleared.Result().Cookies()[0]
+			if cookie.Secure != tc.secure || !cookie.HttpOnly || cookie.SameSite != http.SameSiteStrictMode || cookie.MaxAge != -1 {
+				t.Fatalf("logout cookie flags for %q: %+v", tc.host, cookie)
+			}
+		})
+	}
 }
 
 func TestBrowserSessionLifecycle(t *testing.T) {
@@ -101,7 +134,7 @@ func TestBrowserSessionOriginBoundary(t *testing.T) {
 	if browserSameOrigin(r) {
 		t.Fatal("accepted cross-site fetch")
 	}
-	local := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:8888/api/browser-session", nil)
+	local := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "http://127.0.0.1:8888/api/browser-session", nil)
 	local.Header.Set("Origin", "http://127.0.0.1:8888")
 	if !browserSameOrigin(local) {
 		t.Fatal("loopback development origin refused")

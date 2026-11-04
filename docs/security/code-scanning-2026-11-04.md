@@ -55,3 +55,11 @@ Local CodeQL security-extended analysis of the changed JavaScript surfaces produ
 Contextual dismissals must retain the ledger evidence. Code fixes close the eight affected main-branch alerts only after the patch is merged and the corresponding main-branch scan runs. The final GitHub inventory, rather than a passing local test or PR scan alone, establishes closure.
 
 These public repositories are generated exports under ADR 1215. Replay the changes into the maintained source/export workflow before its next publication so regeneration preserves them. No live deployment is included in this change.
+
+## CI follow-up
+
+The initial PR run exposed a SNITCH lint regression: test requests needed explicit contexts, and the security linter could not infer the conditional Secure flag. Tests now use NewRequestWithContext. The two cookie statements carry a narrow G124 exception for loopback development, with tests covering external hosts and lookalike hostnames; HttpOnly and SameSite Strict remain unconditional. The exact CI linter, golangci-lint v2.12.1, reports zero issues.
+
+GitHub default setup is configured for the repository and already publishes the authoritative code-scanning results. GitHub rejects advanced-setup uploads while default setup is enabled. The additional security-and-quality workflow still runs its queries and saves SARIF artifacts, without submitting a competing upload. Default setup remains enabled.
+
+The Trivy job could not access two curated GHCR images anonymously. It now requests packages:read and passes the ephemeral workflow token through Trivy's registry-authentication environment variables. Inaccessible images remain scan errors; no image is removed from coverage or marked clean because it could not be scanned.
