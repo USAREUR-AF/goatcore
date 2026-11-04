@@ -1,4 +1,17 @@
 # Which group_vars files a goatnet owes, against a reference goatnet of yours.
+#
+# reference: the group_vars directory of a goatnet you already run, e.g.
+#   reference: <site>_hosts
+# Its file set is what standup-config-preflight.py checks a new site against
+# and what --scaffold-plan / --scaffold work from. This checkout declares none,
+# so those two modes refuse until it is set or --scaffold-from <group> is passed,
+# and the file-inventory check is skipped with a warning.
+#
+# A goatlite site (preset: lite) needs no reference: goatlite-render.py writes
+# its whole config surface and its exclusions block below.
+#
+# exclusions.<group>: a file the reference has and this group deliberately does
+# not, with the reason; or __group_class__ with one reason for the whole group.
 reference: ''
 capability_parity: {}
 exclusions:

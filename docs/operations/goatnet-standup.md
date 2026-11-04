@@ -150,9 +150,12 @@ ops/scripts/standup-config-preflight.py <site>_hosts --scaffold-plan
 It lists every config file the reference env has, marks each `have` / `MISSING`
 / `excluded`, and treats a missing file as a decision you owe — port it
 re-threaded for your site, or declare the absence with a reason in
-`.groupvars-parity.yaml`. The reference environment (`zagros_hosts`) is the file
-inventory to diff against; the count grows as service surfaces are added, so read
-the tool's number, not a number written here.
+`.groupvars-parity.yaml`. The reference environment is the file inventory to diff
+against: `reference:` in `.groupvars-parity.yaml` names the group_vars directory
+of a goatnet you already run. A fresh checkout declares none, and `--scaffold-plan`
+refuses with that message until you set it or pass `--scaffold-from <group>`.
+The count grows as service surfaces are added, so read the tool's number, not a
+number written here.
 
 `--scaffold <site_id>` then writes those files from the reference env. Any value
 naming another environment is replaced with a `TBD_` sentinel. That covers list

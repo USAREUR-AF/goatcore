@@ -62,6 +62,31 @@ def split_exclusions(excl):
     return files, reason
 
 
+def resolve_reference(spec, override=None):
+    """(reference group, None) when usable, else (None, why and what to do).
+
+    The reference is one of the operator's own goatnets: its group_vars file set
+    is what a new site is checked and scaffolded against. A fresh checkout
+    declares none (`reference: ''`), so "none declared" and "declared but not
+    found" are told apart and each says how to proceed.
+    """
+    ref = override or spec.get("reference")
+    if not ref:
+        return None, (
+            "no reference goatnet is declared: `reference:` in "
+            "group_vars/.groupvars-parity.yaml is empty. Set it to the group_vars "
+            "directory of a goatnet you already run (e.g. reference: <site>_hosts), "
+            "or pass --scaffold-from <group> for one run. A goatlite site "
+            "(preset: lite) needs neither: ops/scripts/goatlite-render.py writes "
+            "its whole config surface.")
+    if not (GV / ref).is_dir():
+        return None, (
+            f"reference '{ref}' has no directory under group_vars/ ({GV / ref}). "
+            "Name an existing <site>_hosts directory in .groupvars-parity.yaml "
+            "or with --scaffold-from.")
+    return ref, None
+
+
 def check_file_inventory(group):
     """[30/32] Skeleton-as-file-inventory: a new env's config surface is the
     REFERENCE env's FILE SET, not one vars.yml. Every reference file missing
@@ -73,9 +98,9 @@ def check_file_inventory(group):
     if not manifest.is_file():
         return  # no parity manifest → skip (not every env opts in)
     spec = yaml.safe_load(manifest.read_text()) or {}
-    ref = spec.get("reference")
-    if not ref or not (GV / ref).is_dir():
-        warn(f"file-inventory: reference '{ref}' not found — check skipped")
+    ref, why = resolve_reference(spec)
+    if why:
+        warn(f"file-inventory check skipped: {why}")
         return
     excl = (spec.get("exclusions", {}) or {}).get(group, {}) or {}
     file_excl, group_class = split_exclusions(excl)
@@ -130,9 +155,9 @@ def check_capability_toggles(group):
     enrolled = (spec.get("capability_parity", {}) or {}).get(group)
     if not enrolled:
         return  # group not enrolled — silent by design
-    ref = spec.get("reference")
-    if not ref or not (GV / ref).is_dir():
-        warn(f"capability-parity: reference '{ref}' not found — check skipped")
+    ref, why = resolve_reference(spec)
+    if why:
+        warn(f"capability-parity check skipped: {why}")
         return
     ref_vals, _ = load_group(ref)
     env_vals, _ = load_group(group)
@@ -206,7 +231,7 @@ def load_group(group):
     return merged, raw
 
 
-def scaffold_plan(group):
+def scaffold_plan(group, ref_override=None):
     """--scaffold-plan: what config surface does this goatnet still owe?
 
     The rest of this script refuses when group_vars/<group>/ is absent, which is
@@ -220,9 +245,9 @@ def scaffold_plan(group):
     if not manifest.is_file():
         sys.exit(f"scaffold-plan: no {manifest} — nothing defines 'complete'")
     spec = yaml.safe_load(manifest.read_text()) or {}
-    ref = spec.get("reference")
-    if not ref or not (GV / ref).is_dir():
-        sys.exit(f"scaffold-plan: reference env '{ref}' not found under {GV}")
+    ref, why = resolve_reference(spec, ref_override)
+    if why:
+        sys.exit(f"scaffold-plan: {why}")
     excl = (spec.get("exclusions", {}) or {}).get(group, {}) or {}
     file_excl, group_class = split_exclusions(excl)
     ref_files = sorted(q.name for q in (GV / ref).glob("*.yml"))
@@ -382,9 +407,9 @@ def scaffold(group, site, ref_override=None, force=False):
     if not manifest.is_file():
         sys.exit(f"scaffold: no {manifest} — nothing defines 'complete'")
     spec = yaml.safe_load(manifest.read_text()) or {}
-    ref = ref_override or spec.get("reference")
-    if not ref or not (GV / ref).is_dir():
-        sys.exit(f"scaffold: reference env '{ref}' not found under {GV}")
+    ref, why = resolve_reference(spec, ref_override)
+    if why:
+        sys.exit(f"scaffold: {why}")
     excl = (spec.get("exclusions", {}) or {}).get(group, {}) or {}
     file_excl, group_class = split_exclusions(excl)
 
@@ -487,7 +512,8 @@ def main():
                     help="write the owed config surface, TBD_-marking every value "
                          "that is a secret, a pin, or names the reference env")
     ap.add_argument("--scaffold-from", metavar="GROUP",
-                    help="reference group to scaffold from (default: parity manifest's)")
+                    help="reference group for --scaffold and --scaffold-plan "
+                         "(default: the parity manifest's `reference`)")
     ap.add_argument("--force", action="store_true",
                     help="overwrite files that already exist")
     ap.add_argument("--scaffold-plan", action="store_true",
@@ -499,7 +525,7 @@ def main():
     if args.scaffold:
         sys.exit(scaffold(args.group, args.scaffold, args.scaffold_from, args.force))
     if args.scaffold_plan:
-        sys.exit(scaffold_plan(args.group))
+        sys.exit(scaffold_plan(args.group, args.scaffold_from))
 
     v, raw = load_group(args.group)
 
