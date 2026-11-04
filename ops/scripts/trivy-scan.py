@@ -64,6 +64,35 @@ FINDING_SECTIONS = (
     ("Misconfigurations", "FAIL"),
     ("Secrets", None),
 )
+# A curated image that cannot be pulled is a lifecycle state, not a scanner
+# fault: the registry answers DENIED or not-found for a package that was never
+# published, is not public, or was deleted. Report it as a warning so a red
+# run always means the scanner itself or a report failed. A network or
+# registry outage does not match these markers and stays a failure.
+UNPULLABLE_MARKERS = (
+    "unable to find the specified image",
+    "manifest unknown",
+    "name unknown",
+    "denied",
+    "unauthorized",
+)
+
+
+def image_is_unpullable(output: str) -> bool:
+    text = output.lower()
+    return any(marker in text for marker in UNPULLABLE_MARKERS)
+
+
+def warn_unpullable(label: str) -> None:
+    message = (
+        f"{label} is not pullable: it has never been published, or its registry "
+        "package is not public. Its image workflow publishes it on a qualifying "
+        "push to main; once the package exists and is public, this scan includes "
+        "it automatically."
+    )
+    print(f"  {message}", file=sys.stderr)
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        print(f"::warning title=Curated image not pullable::{message}")
 
 
 def load_targets(path: Path) -> list[str]:
@@ -190,11 +219,15 @@ def write_html_summary(
             key=lambda item: SEVERITIES.index(item["severity"]),
         )
         if not source_findings:
-            message = (
-                "No findings are available because this scan did not complete."
-                if status != "SCANNED"
-                else "No findings were reported for this target."
-            )
+            if status == "SCANNED":
+                message = "No findings were reported for this target."
+            elif status == "NOT PULLABLE":
+                message = (
+                    "This image is not pullable (never published, or its package "
+                    "is not public), so there was nothing to scan."
+                )
+            else:
+                message = "No findings are available because this scan did not complete."
             return f'<tr><td colspan="9">{html.escape(message)}</td></tr>'
         return "\n".join(
             '<tr class="finding-row" data-severity="'
@@ -391,7 +424,10 @@ def write_html_summary(
 
 
 def append_github_summary(
-    rows: list[tuple[str, dict[str, int] | None, str]], report_dir: Path, failures: int
+    rows: list[tuple[str, dict[str, int] | None, str]],
+    report_dir: Path,
+    failures: int,
+    unpullable: list[str],
 ) -> None:
     summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
     if not summary_path:
@@ -416,6 +452,17 @@ def append_github_summary(
         summary.write(
             f"HTML summary and JSON reports are included in the `trivy-reports` workflow artifact (`{report_dir.name}`).\n"
         )
+        if unpullable:
+            summary.write("\n**Curated images not pullable, reported as warnings:**\n\n")
+            for label in unpullable:
+                summary.write(f"- `{label}`\n")
+            summary.write(
+                "\nEach of these has never been published, or its registry package is "
+                "not public. Its image workflow publishes it on a qualifying push to "
+                "main, and this scan includes it automatically once it is public. A "
+                "missing curated image is a warning, not a failure, so a failed run "
+                "here always means the scanner itself or a report failed.\n"
+            )
         if failures:
             summary.write(
                 f"\n**Incomplete scan:** {failures} target(s) failed. An error is not a clean scan.\n"
@@ -466,6 +513,7 @@ def main() -> int:
     rows: list[tuple[str, dict[str, int] | None, str]] = []
     html_findings: list[dict[str, str]] = []
     failures = 0
+    unpullable: list[str] = []
     scan_plan = [("Local Repository Scan", "fs", str(repo_root))] + [
         (image, "image", image) for image in targets
     ]
@@ -484,6 +532,11 @@ def main() -> int:
 
         returncode, output = scan(command)
         if returncode != 0:
+            if target_type == "image" and image_is_unpullable(output):
+                unpullable.append(label)
+                warn_unpullable(label)
+                rows.append((label, None, "NOT PULLABLE"))
+                continue
             failures += 1
             print(f"  Scan failed (exit {returncode}):\n{output.rstrip()}", file=sys.stderr)
             rows.append((label, None, f"ERROR ({returncode})"))
@@ -512,10 +565,16 @@ def main() -> int:
     print("\nCounts are findings reported by Trivy, not deduplicated across targets.")
     print(f"Detailed JSON reports are in: {report_dir}")
     print(f"HTML summary: {html_path}")
-    append_github_summary(rows, report_dir, failures)
+    append_github_summary(rows, report_dir, failures, unpullable)
     if failures:
         print(f"{failures} scan(s) failed; an error is not a clean scan.", file=sys.stderr)
         return 1
+    if unpullable:
+        print(
+            f"{len(unpullable)} curated image(s) not pullable (never published or not "
+            "public); reported as warnings, not failures.",
+            file=sys.stderr,
+        )
     print("All requested scans completed. Review findings and reports before drawing conclusions.")
     return 0
 
