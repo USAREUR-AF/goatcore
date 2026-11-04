@@ -114,6 +114,9 @@ func extractToken(r *http.Request) string {
 func (s *Server) AuthMiddleware(required bool, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		token := extractToken(r)
+		if token == "" && r.Header.Get("Authorization") == "" {
+			token = s.browserSessions.credential(r)
+		}
 		if token == "" {
 			if required {
 				writeError(w, http.StatusUnauthorized, "auth", "missing bearer token")

@@ -1,9 +1,8 @@
 // goat-zenoh-portal — the Inspector's live stream.
 //
-// Streams /api/topics/stream with the portal key in the Authorization
+// Streams /api/topics/stream with the portal browser session.
 // header (sse.js), and writes each sample into the stream log newest-first.
 
-import { getKey } from "/app.js";
 import { openEventStream } from "/sse.js";
 
 let streamAbort = null;
@@ -30,8 +29,6 @@ function toggleStream(decode) {
   streamAbort = ctrl;
   btn.textContent = "Live stream: ON (click to stop)";
   const headers = { Accept: "text/event-stream" };
-  const apiKey = getKey();
-  if (apiKey) headers.Authorization = "Bearer " + apiKey;
   openEventStream(`/api/topics/stream?key=${encodeURIComponent(key)}`, {
     headers,
     signal: ctrl.signal,

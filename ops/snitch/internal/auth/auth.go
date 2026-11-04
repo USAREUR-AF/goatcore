@@ -49,7 +49,8 @@ type KeyInfo struct {
 
 // Auth manages API key authentication against PostgreSQL.
 type Auth struct {
-	pool *pgxpool.Pool
+	browserSessions browserSessions
+	pool            *pgxpool.Pool
 }
 
 // New creates an Auth manager. The api_keys table must already exist (created by store).
@@ -205,6 +206,9 @@ func (a *Auth) EnsureDefaults(ctx context.Context) (adminKey, probeKey string, e
 func (a *Auth) Require(minRole Role, next http.HandlerFunc) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		plain := extractKey(r)
+		if plain == "" && r.Header.Get("Authorization") == "" {
+			plain = a.browserSessions.credential(r)
+		}
 		if plain == "" {
 			w.Header().Set("Content-Type", "application/json")
 			http.Error(w, `{"error":"unauthorized","hint":"provide Authorization: Bearer <key>"}`, http.StatusUnauthorized)

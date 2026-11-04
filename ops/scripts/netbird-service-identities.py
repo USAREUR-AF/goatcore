@@ -45,7 +45,6 @@ import json
 import os
 import subprocess
 import sys
-import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -314,8 +313,8 @@ def onepassword_account(spec):
 
 def store_in_1password(spec, ident, goatnet, value):
     """Make the registry's 1Password item hold `value`. Writes go through a JSON
-    template file (0600, deleted after) so the secret never appears on a command
-    line. Never overwrites a different value already stored. Returns
+    template on stdin so the secret never appears on disk or a command line.
+    Never overwrites a different value already stored. Returns
     (ok, status)."""
     op = spec.get("onepassword") or {}
     where = ident.get("onepassword")
@@ -343,15 +342,14 @@ def store_in_1password(spec, ident, goatnet, value):
         doc = {"title": item, "category": "PASSWORD",
                "fields": [{"id": "password", "type": "CONCEALED", "purpose": "PASSWORD", "label": "password", "value": value},
                           {"label": field, "type": "CONCEALED", "value": value}]}
-        action = ["item", "create", "--vault", op["vault"]]
-    with tempfile.TemporaryDirectory() as tmp:
-        path = Path(tmp) / "item.json"
-        path.write_text(json.dumps(doc))
-        os.chmod(path, 0o600)
-        res = subprocess.run(base + action + [f"--template={path}"], capture_output=True, text=True)
+        action = ["item", "create", "--vault", op["vault"], "-"]
+    # `op item create -` and `op item edit <id>` both accept JSON on stdin.
+    # Keep the document off disk, argv, stdout, and diagnostic messages.
+    res = subprocess.run(base + action, input=json.dumps(doc), capture_output=True, text=True)
     if res.returncode != 0:
-        err = " ".join(res.stderr.split())[:200]
-        return False, f"NOT stored in 1Password {op['vault']}/{item} ({err})"
+        # The CLI can echo submitted fields in an error. Report the status,
+        # not stderr from a process that received the credential document.
+        return False, f"NOT stored in 1Password {op['vault']}/{item} (op exited {res.returncode})"
     return True, f"stored in 1Password {op['vault']}/{item} field {field}"
 
 

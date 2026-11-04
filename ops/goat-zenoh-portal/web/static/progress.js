@@ -4,7 +4,7 @@ import { readResponse, request, showRequestError } from "/app.js";
 // Design: docs/design/portal-vendor-progress.md.
 // Backend: GET /api/progress, operator-only.
 
-import { api, hydrateAuth, getKey, lexicon } from "/app.js";
+import { api, hydrateAuth, hasAuth, lexicon } from "/app.js";
 
 // Display lexicon (docs/design/portal-lexicon.md). Module-level; set by init
 // before any render. Legacy fallback seed.
@@ -313,7 +313,7 @@ async function init() {
   await hydrateAuth();
   LEX = await lexicon();
   const section = document.getElementById("progress-section");
-  if (!getKey()) {
+  if (!hasAuth()) {
     section.classList.add("hidden");
     return;
   }

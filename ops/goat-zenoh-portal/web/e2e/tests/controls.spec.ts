@@ -11,10 +11,17 @@ const schema = (storage = "protobuf-fds") => ({
 
 async function shell(page: Page, authenticated = true) {
   if (authenticated) await page.addInitScript(t => localStorage.setItem("portalApiKey", t), token);
+  let signedIn = authenticated;
   await page.route("**/api/**", r => {
     const path = new URL(r.request().url()).pathname;
+    if (path === "/api/browser-session") {
+      if (r.request().method() === 'DELETE') { signedIn = false; return r.fulfill({status: 204}); }
+      expect(r.request().headers().authorization).toBe('Bearer ' + token);
+      signedIn = true;
+      return r.fulfill({status: 204});
+    }
     if (path === "/api/branding") return r.fulfill({ json: { product_name: "Fixture", org: "slot", orgs: "slots" } });
-    if (path === "/api/whoami") return r.fulfill({ json: { operator: true, visible_orgs: 1 } });
+    if (path === "/api/whoami") return signedIn ? r.fulfill({ json: { operator: true, visible_orgs: 1 } }) : r.fulfill({status: 401, json: {error: {message: "missing session"}}});
     if (path === "/api/health") return r.fulfill({ json: { version: "test", uptime: "0s" } });
     if (path === "/api/orgs") return r.fulfill({ json: { orgs: [{ prefix: "producer", effective_access: "controlled" }] } });
     if (path === "/api/access/grants") return r.fulfill({ json: { grants: [{ id: "grant-1", producer: "producer", grantee_kind: "org", grantee_id: "reader", status: "active" }] } });
@@ -33,7 +40,7 @@ for (const path of ["/index.html", "/progress.html", "/admin/trashgoat.html"]) {
     if (enter) await page.locator("#api-key-input").press("Enter");
     else await page.locator("#api-key-save").click();
     await reloaded;
-    await expect.poll(() => page.evaluate(() => localStorage.getItem("portalApiKey"))).toBe(token);
+    await expect.poll(() => page.evaluate(() => localStorage.getItem("portalApiKey"))).toBeNull();
     await expect(page.locator("#auth-banner")).toBeHidden();
   });
 }
@@ -43,7 +50,7 @@ for (const [storage, extension, bytes] of [["protobuf-fds", "fds", "\u0000\u0001
     await shell(page);
     await page.route("**/api/schemas/render/**", r => r.fulfill({ json: schema(storage) }));
     await page.route("**/api/schemas/slot/**", r => {
-      expect(r.request().headers().authorization).toBe(`Bearer ${token}`);
+      expect(r.request().headers().authorization).toBeUndefined();
       expect(new URL(r.request().url()).search).toBe("?version=v2");
       return r.fulfill({ contentType: "application/octet-stream", headers: { "Content-Disposition": `attachment; filename=slot_topic_v1-v2.${extension}` }, body: Buffer.from(bytes) });
     });
@@ -56,12 +63,12 @@ for (const [storage, extension, bytes] of [["protobuf-fds", "fds", "\u0000\u0001
   });
 }
 
-test("raw JSON opens as inert text with bearer auth and the selected version", async ({ page }) => {
+test("raw JSON opens as inert text with session auth and the selected version", async ({ page }) => {
   await shell(page);
   let reads = 0;
   const body = { ...schema(), example: "<script>window.fixtureInjected = true</script>" };
   await page.route("**/api/schemas/render/**", r => {
-    expect(r.request().headers().authorization).toBe(`Bearer ${token}`);
+    expect(r.request().headers().authorization).toBeUndefined();
     if (++reads > 1) expect(new URL(r.request().url()).searchParams.get("version")).toBe("v2");
     return r.fulfill({ json: body });
   });
@@ -96,7 +103,7 @@ test("schema controls refuse missing credentials without a request", async ({ pa
   await page.route("**/api/schemas/slot/**", r => { downloads++; return r.abort(); });
   await page.goto("/schema.html?key=slot/topic/v1");
   await expect(page.locator("#m-download")).toBeVisible();
-  await page.evaluate(() => localStorage.removeItem("portalApiKey"));
+  await page.evaluate(async () => { const {clearKey} = await import("/app.js"); await clearKey(); });
   await page.locator("#m-download").click();
   await expect(page.locator("#error")).toContainText("Sign in");
   expect(downloads).toBe(0);
@@ -195,7 +202,7 @@ test('schema version switch controls the next protected download', async ({ page
   await page.route('**/api/schemas/render/**', r => r.fulfill({ json: { ...schema(), schema: { ...schema().schema, version: new URL(r.request().url()).searchParams.get('version') || 'v2' } } }));
   await page.route('**/api/schemas/slot/**', r => {
     expect(new URL(r.request().url()).searchParams.get('version')).toBe('v1');
-    expect(r.request().headers().authorization).toBe(`Bearer ${token}`);
+    expect(r.request().headers().authorization).toBeUndefined();
     return r.fulfill({ body: 'version-one' });
   });
   await page.goto('/schema.html?key=slot/topic/v1');
@@ -213,7 +220,7 @@ test('successful revoke refreshes to a terminal row without a revoke button', as
   await page.route('**/api/access/grants', r => r.fulfill({ json: { grants: [{ id: 'grant-1', producer: 'producer', grantee_kind: 'org', grantee_id: 'reader', status: revoked ? 'revoked' : 'active' }] } }));
   await page.route('**/api/access/grants/grant-1/revoke', r => {
     expect(r.request().method()).toBe('POST');
-    expect(r.request().headers().authorization).toBe(`Bearer ${token}`);
+    expect(r.request().headers().authorization).toBeUndefined();
     revoked = true; return r.fulfill({ json: { grant: 'grant-1', status: 'revoked' } });
   });
   await page.goto('/data-access.html');

@@ -31,7 +31,7 @@ for (const theme of ["light", "dark"]) {
     await expect(operation.getByRole("heading", { name: "Responses", exact: true })).toBeVisible();
     await page.getByRole("button", { name: "Authorize", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Available authorizations" })).toBeVisible();
-    await page.getByRole("button", { name: "Close", exact: true }).click();
+    await page.getByRole("button", { name: "Close", exact: true }).first().click();
   });
 }
 
