@@ -2,6 +2,9 @@
 # See docs/design/os-baseline-and-luks.md §3 for unlock mechanism semantics.
 #
 # format: <target> <source> <keyfile|none> <options>
+{% for line in luks_crypttab_installer_lines | default([]) %}
+{{ line }}
+{% endfor %}
 {% for vol in luks_volumes %}
 {#-
    Choice of options depends on modes enrolled on the volume.

@@ -1,0 +1,35 @@
+---
+# crypttab-keep-installer.yml — included by main.yml before "Render /etc/crypttab",
+# only on a node with BOTH role-managed luks_volumes and an installer-encrypted
+# partition (luks_installer_partitions). crypttab.j2 writes the whole file, so the
+# installer's own lines are read here and written back verbatim by the template.
+# Test: tests/crypttab-keep-installer.yml (offline, against a fixture crypttab).
+
+- name: Read /etc/crypttab to keep the installer's own entries
+  ansible.builtin.slurp:
+    src: "{{ luks_crypttab_path | default('/etc/crypttab') }}"
+  register: crypttab_current
+  failed_when: false
+
+- name: Keep crypttab lines that belong to installer-encrypted partitions
+  ansible.builtin.set_fact:
+    luks_crypttab_installer_lines: >-
+      {{ (crypttab_current.content | default('') | b64decode).splitlines()
+         | map('trim')
+         | reject('match', '^(#|$)')
+         | select('search', 'UUID=(' ~ ((installer_part_uuids | default({})).values() | map('regex_escape') | join('|')) ~ ')')
+         | list }}
+  when: (installer_part_uuids | default({})) | length > 0
+
+- name: REFUSE to render crypttab without each installer partition's entry
+  ansible.builtin.assert:
+    that:
+      - (luks_crypttab_installer_lines | default([])) | select('search', 'UUID=' ~ (item.value | regex_escape) ~ '(\\s|$)') | list | length > 0
+    fail_msg: >-
+      /etc/crypttab has no UUID={{ item.value }} line for installer-encrypted partition
+      {{ item.key }}. Rendering it now would leave the initramfs with no root unlock.
+      Restore the installer's entry first. Only lines naming the source as UUID=... are
+      recognised.
+  loop: "{{ (installer_part_uuids | default({})) | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
