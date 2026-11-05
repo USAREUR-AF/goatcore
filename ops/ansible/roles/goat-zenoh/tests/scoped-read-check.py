@@ -56,7 +56,7 @@ def render(**overrides) -> str:
         goat_zenoh_rest_port=8000, goat_zenoh_retention_days=7,
         goat_zenoh_audit_retention_days=365,
         goat_zenoh_storage_path="/var/lib/x/rocksdb", goat_zenoh_tls_dir="/etc/x/tls",
-        nova_seed_vendors=["community"],
+        zenoh_seed_vendors=["community"],
         zenoh_identity_model="per-uuid-slot-pool",
         zenoh_slot_pool_size=POOL, zenoh_slot_pool_salt=SALT,
         zenoh_partner_read_partition=True, zenoh_partner_slot_blocks=BLOCKS,

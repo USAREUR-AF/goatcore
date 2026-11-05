@@ -722,11 +722,13 @@ step 5 A "mgmt-stack (site-bootstrap up to the account seed; the seed needs Ory 
   "cd '$REPO/ops/ansible' && $ANSIBLE_PRE ${INV[*]} site-bootstrap.yml $BOOTSTRAP_EV_P1 --skip-tags after-ory"
 
 # Phase 5. [internet] Connect the mgmt host to its relays over the rathole tunnel.
-#     There is no generic play — the operator makes $SITE-rathole-client.yml from
-#     nova-rathole-client.yml (handbook §"Phase 5"). Uses the relay inventory too.
+#     site-rathole-client.yml is the generic play; a site that keeps its own
+#     $SITE-rathole-client.yml gets that one instead. Uses the relay inventory too.
 if [ "$PROFILE" = internet ]; then
-step 5 A "[internet] relay-connect (rathole-client)" \
-  "cd '$REPO/ops/ansible' && ( ls ${SITE}-rathole-client.yml >/dev/null 2>&1 && $ANSIBLE_PRE -i inventory/hosts-${SITE}.ini ${INV[*]} ${SITE}-rathole-client.yml -e rathole_client_target=$GROUP || echo 'no ${SITE}-rathole-client.yml — make it from nova-rathole-client.yml (handbook phase 5), then re-run --from 5' )"
+RATHOLE_PLAY=site-rathole-client.yml
+[ -f "$REPO/ops/ansible/${SITE}-rathole-client.yml" ] && RATHOLE_PLAY="${SITE}-rathole-client.yml"
+step 5 A "[internet] relay-connect (rathole-client, $RATHOLE_PLAY)" \
+  "cd '$REPO/ops/ansible' && $ANSIBLE_PRE -i inventory/hosts-${SITE}.ini ${INV[*]} $RATHOLE_PLAY -e rathole_client_target=$GROUP"
 fi
 
 # Phase 6. Ory (must precede account-seed). ory-deploy.yml is `hosts: all` and reads
@@ -918,8 +920,12 @@ fi
 else
 step 10 A "[internet] dashboard" \
   "cd '$REPO/ops/ansible' && $ANSIBLE_PRE ${INV[*]} -l 'mgmt-${SITE}-01*' dashboard-deploy.yml -e site_id=$SITE"
-step 10 A "[internet] register OIDC clients" \
-  "cd '$REPO/ops/ansible' && ( ls ${SITE}-oidc-clients.yml >/dev/null 2>&1 && $ANSIBLE_PRE ${INV[*]} ${SITE}-oidc-clients.yml -e target=$GROUP || echo 'no ${SITE}-oidc-clients.yml — extract one from any site that has <site>-oidc-clients.yml (ADR 1016), then re-run --from 10' )"
+# site-oidc-clients.yml is the generic play; a site that keeps its own
+# $SITE-oidc-clients.yml gets that one instead.
+OIDC_PLAY=site-oidc-clients.yml
+[ -f "$REPO/ops/ansible/${SITE}-oidc-clients.yml" ] && OIDC_PLAY="${SITE}-oidc-clients.yml"
+step 10 A "[internet] register OIDC clients ($OIDC_PLAY)" \
+  "cd '$REPO/ops/ansible' && $ANSIBLE_PRE ${INV[*]} $OIDC_PLAY -e target=$GROUP"
 
 # Phase 11. [internet] The browser step: first login, the admin promotion, and the ONE
 #      NetBird token a human has to mint — the bootstrap service identity, which
@@ -934,15 +940,15 @@ fi
 #     (management.json DisableDefaultPolicy) and nothing seeds one, so until the
 #     declared policies exist enrolled peers reach nothing — and every later
 #     phase that crosses the mesh depends on them. Groups, then policies, then
-#     enforce (which deletes any Default All->All it finds). Uses the bootstrap
+#     enforce (which deletes any Default All->All it finds), as ONE ansible-playbook
+#     run of the two plays in that order: netbird-acl-bootstrap.yml makes the
+#     groups, netbird-acl-cutover.yml mode=enforce creates every declared policy
+#     and then applies the declared Default-policy action (enforce does all that
+#     mode=apply does first), each play's asserts unchanged. Uses the bootstrap
 #     token from phase 11. A joiner applies nothing: its account IS the founder's.
 if [ "$JOINER" = 0 ]; then
-step 12 A "declared NetBird groups (netbird-acl-bootstrap)" \
-  "cd '$REPO/ops/ansible' && ansible-playbook -i localhost, --connection local netbird-acl-bootstrap.yml -e target_site=$SITE -e netbird_mgmt_url=https://$MGMT_FQDN"
-step 12 A "declared NetBird policies (cutover apply)" \
-  "cd '$REPO/ops/ansible' && ansible-playbook -i localhost, --connection local netbird-acl-cutover.yml -e target_site=$SITE -e mode=apply -e netbird_mgmt_url=https://$MGMT_FQDN"
-step 12 A "enforce: no Default All->All (cutover enforce)" \
-  "cd '$REPO/ops/ansible' && ansible-playbook -i localhost, --connection local netbird-acl-cutover.yml -e target_site=$SITE -e mode=enforce -e confirm_cutover=YES -e netbird_mgmt_url=https://$MGMT_FQDN"
+step 12 A "declared NetBird ACL: groups, then policies, then enforce (one play run)" \
+  "cd '$REPO/ops/ansible' && ansible-playbook -i localhost, --connection local netbird-acl-bootstrap.yml netbird-acl-cutover.yml -e target_site=$SITE -e mode=enforce -e confirm_cutover=YES -e netbird_mgmt_url=https://$MGMT_FQDN"
 fi
 step 12 GATE "the live NetBird account holds only the declared ACL for $ACL_SITE, and no All-group rule" \
   "python3 '$REPO/ops/scripts/netbird-policy-posture.py' '$ACL_SITE' --url https://$MGMT_FQDN --token-env $(printf '%s' "${ACL_SITE//-/_}" | tr '[:lower:]' '[:upper:]')_NB_API_TOKEN"

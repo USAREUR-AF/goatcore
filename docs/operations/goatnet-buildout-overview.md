@@ -161,7 +161,7 @@ goat-standup: site=demo  group=demo_hosts  profile=internet  (PLAN — nothing e
 === Phase 3 [T] generate per-instance secrets ===
 === Phase 4 [T] mint leaf certs ===
 === Phase 5 [A] mgmt-stack (site-bootstrap) — first run STOPS at the schema wait ===
-=== Phase 5 [A] [internet] relay-connect (rathole-client) ===
+=== Phase 5 [A] [internet] relay-connect (rathole-client, site-rathole-client.yml) ===
 === Phase 6 [A] ory (kratos/hydra/ui) ===
 === Phase 6 [A] re-run site-bootstrap (completes phase 5; prints + saves the setup key) ===
 === Phase 7 [A] [internet] public TLS certificate (traefik-acme) ===

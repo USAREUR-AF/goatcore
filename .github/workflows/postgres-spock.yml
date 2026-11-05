@@ -43,6 +43,33 @@ jobs:
       - name: Exercise actual two-site ledger reconciliation tasks
         run: python3 ops/postgres/spock/tests/revocation-rollout/test_ansible_bootstrap.py
 
+  reproducible:
+    # Build the image twice from this commit with the settings
+    # ops/oss/binary_match.py uses (no cache, no attestations, a fixed
+    # SOURCE_DATE_EPOCH, OCI output with rewrite-timestamp) and require every
+    # rootfs diff_id to match. On a mismatch the step lists each differing
+    # file and how it differs.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - name: Build twice
+        run: |
+          set -euo pipefail
+          SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"
+          export SOURCE_DATE_EPOCH
+          docker buildx create --name repro --driver docker-container >/dev/null
+          for side in a b; do
+            docker buildx build --builder repro --platform linux/amd64 --no-cache \
+              --provenance=false --sbom=false --build-arg "SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH" \
+              --output "type=oci,dest=$RUNNER_TEMP/$side.tar,rewrite-timestamp=true" \
+              ops/postgres/spock
+          done
+      - name: Same layers from both builds
+        run: python3 ops/postgres/spock/tests/reproducible/compare.py "$RUNNER_TEMP/a.tar" "$RUNNER_TEMP/b.tar"
+
   smoke-test:
     # Build the image for the native arch only and run it briefly — verifies
     # the baked postgresql.conf is picked up, wal_level is logical, Spock is
@@ -277,7 +304,7 @@ jobs:
   build:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
-    needs: [smoke-test, revocation-rollout, partition-revoke]
+    needs: [smoke-test, revocation-rollout, partition-revoke, reproducible]
     permissions:
       contents: read
       packages: write

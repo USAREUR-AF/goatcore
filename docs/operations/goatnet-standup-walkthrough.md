@@ -222,7 +222,7 @@ The relays are built in two places, on purpose — provisioning is Terraform's j
 configuration is the driver's:
 
 1. **Provision (before the run, Terraform):** `terraform-<env>/` creates the relay VPSes, the public DNS zone, and the records. *The driver has no terraform phase* — you apply this before the run.
-2. **Connect (phase 5, internet):** `<site>-rathole-client.yml` links the management host out to the relays (rathole tunnel).
+2. **Connect (phase 5, internet):** `site-rathole-client.yml` (or the site's own `<site>-rathole-client.yml`) links the management host out to the relays (rathole tunnel).
 3. **Build the tier (phase 7, two steps):** `generate-relays.sh` reads Terraform's `relays` output → writes `inventory/hosts-<site>.ini`; then `relay-server.yml` installs **coturn + rathole + the certbot TLS-renewal path** onto those hosts. Two steps because a relay VPS that exists in Terraform but has no inventory row is a relay no playbook can target, and nothing reports it.
 
 A **joiner** builds no relays of its own — phase 7 wires it into the *founder's*

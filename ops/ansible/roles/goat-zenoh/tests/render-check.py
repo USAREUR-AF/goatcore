@@ -46,7 +46,7 @@ def render(**overrides) -> str:
         goat_zenoh_audit_retention_days=365,
         goat_zenoh_storage_path="/var/lib/zagros-zenoh/rocksdb",
         goat_zenoh_tls_dir="/etc/zagros-zenoh/tls",
-        nova_seed_vendors=["community", "caracal"],
+        zenoh_seed_vendors=["community", "caracal"],
         zenoh_identity_model="per-vendor",
         zenoh_slot_pool_size=256,
         zenoh_slot_pool_salt="",
@@ -113,7 +113,7 @@ for k, a in enumerate(anchors):
 # isolation property: slot 0's rule must NOT grant slot 1's anchor
 check(f'"slot-w-{anchors[0]}"' in sp and anchors[1] not in sp.split(f'slot-w-{anchors[0]}')[1].split("}")[0],
       "slot 0's write rule does not mention any other anchor (isolation)")
-# F-517: a SEEDED vendor (nova_seed_vendors) publishes with
+# F-517: a SEEDED vendor (zenoh_seed_vendors) publishes with
 # CN=<vendor>-trial-peer even on a slot-pool goatnet (demogame via the
 # rest-pub-bridge sidecar). Previously slot-pool mode rendered nothing for
 # it, so the CN matched only trial-peer-read and every PUT was dropped silently
@@ -126,7 +126,7 @@ for v in ("community", "caracal"):
           f"seeded vendor {v}: subject CN = {v}-trial-peer")
     check(f'rules: ["trial-peer-w-{v}", "trial-peer-w-attest-schema"]' in sp and f'subjects: ["vendor-{v}"]' in sp,
           f"seeded vendor {v}: policy binds subject→its own rule")
-sp_noseed = render(zenoh_identity_model="per-uuid-slot-pool", zenoh_slot_pool_salt=SALT, zenoh_slot_pool_size=N, nova_seed_vendors=[])
+sp_noseed = render(zenoh_identity_model="per-uuid-slot-pool", zenoh_slot_pool_salt=SALT, zenoh_slot_pool_size=N, zenoh_seed_vendors=[])
 check("trial-peer-w-community" not in sp_noseed and "vendor-community" not in sp_noseed,
       "no seeded vendors ⇒ no per-vendor entries in slot-pool mode")
 check(brace_balanced(sp_noseed), "brace/bracket balanced with no seeded vendors")

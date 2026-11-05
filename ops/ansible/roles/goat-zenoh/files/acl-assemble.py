@@ -30,7 +30,7 @@ Usage:
   acl-assemble.py init-org --org O          # write an empty fragment (idempotent)
 
 Ownership split (the "org = portal-only" model, F-258 Phase-1 wiring):
-  The role STILL renders the seed vendors (nova_seed_vendors) inline in the
+  The role STILL renders the seed vendors (zenoh_seed_vendors) inline in the
   seed — the template is unchanged. The org fragment carries ONLY the vendors the
   portal/helper adds at runtime. So on a FRESH standup the org fragment is empty
   and assemble(seed, empty) == seed byte-for-byte (splicing empty content at each

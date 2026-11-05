@@ -28,7 +28,7 @@ The Stanford April 2026 ([arXiv 2604.02460](https://arxiv.org/abs/2604.02460)) r
 
 ## Decision
 
-Adopt **Anthropic's orchestrator-workers pattern** (per [Building Effective Agents](https://www.anthropic.com/engineering/building-effective-agents) + [Claude Agent SDK subagent orchestration](https://platform.claude.com/docs/en/agent-sdk/subagents)) layered on top of the existing constitutional shared-substrate (CLAUDE.md loaded by every captain + worker as the project constitution).
+Adopt the **orchestrator-workers pattern** layered on top of the existing constitutional shared substrate (the project instruction file loaded by every captain and worker as the project constitution).
 
 **Three tiers, capped:**
 

@@ -185,7 +185,7 @@ portal_ca_root_src: "{{ playbook_dir }}/../enrollment/ca/{{ site_id }}/root-cert
 portal_ca_key_src: "{{ lookup('env', 'HOME') }}/.goat/state/{{ site_id }}-ca/ca.key.age"
 portal_age_identity_src: "{{ lookup('env', 'HOME') }}/.config/age/keys.txt"
 portal_age_identity_path: "/etc/{{ site_id }}-age/keys.txt"   # a shared role must not name a goatnet
-portal_nova_root_cert: "/etc/{{ site_id }}-ca/root-cert.pem"   # a shared role must not name a goatnet
+portal_ca_root_cert: "/etc/{{ site_id }}-ca/root-cert.pem"   # a shared role must not name a goatnet
 portal_onboarding_packet_path: "/etc/goat-zenoh-portal/zenoh-trial-onboarding.md"
 portal_cert_sign_ca_id: ""   # REQUIRED per goatnet — a shared default
 # would sign certs for a new goatnet under ANOTHER goatnet's authority.

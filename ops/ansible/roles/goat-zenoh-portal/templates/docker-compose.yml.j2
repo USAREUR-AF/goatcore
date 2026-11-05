@@ -78,7 +78,7 @@ services:
 {% else %}
       - --ca-bundle-dir={{ portal_ca_bundle_dir }}
       - --age-identity={{ portal_age_identity_path }}
-      - --nova-root-cert={{ portal_nova_root_cert }}
+      - --nova-root-cert={{ portal_ca_root_cert }}
       - --ca-id={{ portal_cert_sign_ca_id }}
       - --site-id={{ portal_cert_sign_site_id }}
       - --uri-prefix={{ portal_cert_sign_uri_prefix }}

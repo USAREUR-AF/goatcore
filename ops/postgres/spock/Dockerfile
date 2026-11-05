@@ -65,20 +65,34 @@ USER root
 # upstream; older RPMs aged off the active stream, so a bare `rhel9` URL
 # now 404s for every version. If a future PGDG bump moves to `rhel9.10`
 # or similar, change the suffix here).
+#
+# Both dnf RUNs below build to the same bytes from the same tree. dnf writes
+# its logs to /tmp/dnf-log, which is removed; countme is off, so dnf neither
+# reports to the Rocky mirror's weekly user count nor rewrites the per-repo
+# countme window file; the ldconfig aux-cache (inode
+# and ctime of every library) is removed and rebuilt by the next ldconfig;
+# and build/pin-install-time.py, mounted for the RUN only, sets the install
+# time rpm and dnf record for the new packages to SOURCE_DATE_EPOCH (or, when
+# a build passes none, to the base image's newest install time).
 ARG TARGETARCH
 ARG PGBACKREST_VERSION=2.58.0
 ARG PGBACKREST_RHEL_SUFFIX=rhel9.8
-RUN set -eu \
+ARG SOURCE_DATE_EPOCH
+RUN --mount=type=bind,source=build/pin-install-time.py,target=/tmp/pin-install-time.py \
+    set -eu \
  && case "${TARGETARCH:-amd64}" in \
       amd64) RPM_ARCH=x86_64 ;; \
       arm64) RPM_ARCH=aarch64 ;; \
       *) echo "Unsupported TARGETARCH: $TARGETARCH"; exit 1 ;; \
     esac \
- && dnf install -y "https://download.postgresql.org/pub/repos/yum/common/redhat/rhel-9-${RPM_ARCH}/pgbackrest-${PGBACKREST_VERSION}-1PGDG.${PGBACKREST_RHEL_SUFFIX}.${RPM_ARCH}.rpm" \
+ && mark=$(python3 /tmp/pin-install-time.py mark) \
+ && dnf install -y --setopt=logdir=/tmp/dnf-log --setopt=*.countme=0 "https://download.postgresql.org/pub/repos/yum/common/redhat/rhel-9-${RPM_ARCH}/pgbackrest-${PGBACKREST_VERSION}-1PGDG.${PGBACKREST_RHEL_SUFFIX}.${RPM_ARCH}.rpm" \
  && mkdir -p /etc/pgbackrest /var/log/pgbackrest /var/spool/pgbackrest \
  && chown -R postgres:postgres /var/log/pgbackrest /var/spool/pgbackrest /etc/pgbackrest \
- && dnf clean all \
- && rm -rf /var/cache/dnf
+ && dnf clean all --setopt=logdir=/tmp/dnf-log \
+ && rm -rf /var/cache/dnf /tmp/dnf-log /var/cache/ldconfig/aux-cache \
+ && python3 /tmp/pin-install-time.py pin "$mark" \
+ && rpm -q pgbackrest
 
 # --- Postgres contrib extensions (Block 21C — added) -----------
 # Ory Kratos's migrations require pg_trgm + btree_gin (full-text indexes on
@@ -89,21 +103,29 @@ RUN set -eu \
 # pattern (Spock multi-master, pgBackRest paired-stanza, active-active over
 # Router-A/B) for identity state without forking a separate Postgres image.
 #
-# pgEdge ships postgresql16-contrib via their own yum repo when the base
-# is installed; if not present in the minimal image we fall back to the
-# stock pgEdge community repo. Resolution order:
-#   1. dnf install postgresql16-contrib (already in pgEdge package set)
-#   2. fall back to PGDG community RPM if pgEdge package missing
-ARG POSTGRES_CONTRIB_VERSION=16.15   # keep in sync with the base minor (see header); PGDG fallback path only
-RUN set -eu \
+# pgEdge ships the contrib package (pgedge-postgresql16-contrib, which
+# provides postgresql16-contrib) in the pgedge repo the base already enables.
+# It is named by exact version-release so the layer does not depend on what
+# the repo serves that day; its dependencies (perl and friends from Rocky
+# appstream/baseos) resolve from the repos as they stand. Resolution order:
+#   1. dnf install pgedge-postgresql16-contrib-<version>-<release>
+#   2. fall back to PGDG community RPM if that pgEdge package is missing
+# Bump both ARGs with the base (see header): the contrib must match the
+# server's minor.
+ARG POSTGRES_CONTRIB_VERSION=16.15
+ARG PGEDGE_CONTRIB_RELEASE=1.el9
+RUN --mount=type=bind,source=build/pin-install-time.py,target=/tmp/pin-install-time.py \
+    set -eu \
  && case "${TARGETARCH:-amd64}" in \
       amd64) RPM_ARCH=x86_64 ;; \
       arm64) RPM_ARCH=aarch64 ;; \
     esac \
- && (dnf install -y postgresql16-contrib 2>/dev/null \
-     || dnf install -y "https://download.postgresql.org/pub/repos/yum/common/redhat/rhel-9-${RPM_ARCH}/postgresql16-contrib-${POSTGRES_CONTRIB_VERSION}-2PGDG.rhel9.${RPM_ARCH}.rpm") \
- && dnf clean all \
- && rm -rf /var/cache/dnf \
+ && mark=$(python3 /tmp/pin-install-time.py mark) \
+ && (dnf install -y --setopt=logdir=/tmp/dnf-log --setopt=*.countme=0 "pgedge-postgresql16-contrib-${POSTGRES_CONTRIB_VERSION}-${PGEDGE_CONTRIB_RELEASE}" 2>/dev/null \
+     || dnf install -y --setopt=logdir=/tmp/dnf-log --setopt=*.countme=0 "https://download.postgresql.org/pub/repos/yum/common/redhat/rhel-9-${RPM_ARCH}/postgresql16-contrib-${POSTGRES_CONTRIB_VERSION}-2PGDG.rhel9.${RPM_ARCH}.rpm") \
+ && dnf clean all --setopt=logdir=/tmp/dnf-log \
+ && rm -rf /var/cache/dnf /tmp/dnf-log /var/cache/ldconfig/aux-cache \
+ && python3 /tmp/pin-install-time.py pin "$mark" \
  && ls /usr/pgsql-16/share/extension/ | grep -E "^(pg_trgm|btree_gin)\.control$" \
    || (echo "FATAL: contrib extensions not present after install" && exit 1)
 
