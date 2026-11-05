@@ -1,6 +1,27 @@
 ---
-# traefik-acme.yml — wire Let's Encrypt ACME (Cloudflare DNS-01) into
-# Traefik on a mgmt host.
+# traefik-acme.yml — wire Let's Encrypt ACME (DNS-01 through Cloudflare or
+# Azure DNS) into Traefik on a mgmt host.
+#
+# DNS-01 provider: `traefik_acme_dns_provider` in the TARGET GROUP's
+# group_vars, `cloudflare` (default) or `azure`. Unset, the play and its
+# render are exactly the Cloudflare path. `azure` uses lego's `azuredns`
+# provider with an Entra service principal (client secret); it suits hosts
+# with no managed identity, such as on-premises machines. Azure vars, all in
+# the target group's group_vars:
+#   traefik_acme_azure_tenant_id        REQUIRED  Entra tenant of the service principal
+#   traefik_acme_azure_client_id        REQUIRED  application (client) ID of the service principal
+#   traefik_acme_azure_client_secret    REQUIRED  SECRET: declare it as an env lookup, e.g.
+#                                                 "{{ lookup('env', 'AZURE_DNS_CLIENT_SECRET_<SITE>') }}"
+#   traefik_acme_azure_subscription_id  REQUIRED  subscription holding the DNS zone
+#   traefik_acme_azure_resource_group   REQUIRED  resource group holding the DNS zone
+#   traefik_acme_azure_zone_name        ""        pin the zone; empty = lego finds it by SOA.
+#                                                 Every name the routers request must sit in it.
+#   traefik_acme_azure_environment      ""        lego AZURE_ENVIRONMENT (public, usgovernment,
+#                                                 china); empty = public
+#   traefik_acme_dns_resolvers          1.1.1.1:53,8.8.8.8:53  DNS-01 propagation-check resolvers
+#                                                 (either provider)
+# ADMIN STEP (once per zone): an Entra app registration with a client secret,
+# and DNS Zone Contributor for it scoped to the zone.
 #
 # A standalone overlay rather than a change to the canonical traefik role:
 # a single playbook lays down only what an ACME-fronted goatnet needs on
@@ -11,8 +32,8 @@
 # What this playbook does on the mgmt host:
 #   1. Renders `/opt/mgmt-host/docker-compose.acme.yml` — a compose
 #      OVERRIDE that re-defines the `traefik:` service with the ACME
-#      command flags + a `/letsencrypt` volume + the Cloudflare DNS API
-#      token env var. Docker Compose REPLACES (not merges) `command:`
+#      command flags + a `/letsencrypt` volume + the DNS provider's
+#      credential env vars (Cloudflare token, or Azure service principal). Docker Compose REPLACES (not merges) `command:`
 #      arrays in overrides, so the override re-lists the entire base
 #      command set; the comment in the template flags this as a known
 #      maintenance touchpoint.
@@ -74,7 +95,9 @@
 #     daemon must be up against the goatnet's mgmt server.
 #   - The base mgmt-host compose is up (site-bootstrap.yml with
 #     skip_traefik=true).
-#   - The goatnet's Cloudflare API token in the environment.
+#   - The goatnet's DNS-01 credential in the environment: its Cloudflare API
+#     token, or with traefik_acme_dns_provider=azure the service principal's
+#     client secret (and whatever IDs its group_vars read from the env).
 #   - DNS for `netbird.<zone>` answering (cert-mint validation uses the
 #     public A records to find the relay-fronted :443 path back to the
 #     mgmt host's Traefik on the rathole tunnel).
@@ -82,7 +105,7 @@
 # Rollback: `docker compose up -d traefik` from /opt/mgmt-host (drops the
 #   overlay file by default). Re-running the play restores ACME state.
 
-- name: Wire Traefik ACME (Let's Encrypt via Cloudflare DNS-01)
+- name: Wire Traefik ACME (Let's Encrypt via DNS-01)
   # Host scope parameterized so any goatnet can mint its own mgmt cert:
   # `-e target=<site>_hosts -e public_mgmt_fqdn=netbird.<zone>
   #  -e acme_email=ops@<zone> -e cf_api_token=$CLOUDFLARE_API_TOKEN_<SITE>`.
@@ -109,6 +132,10 @@
     # reaches the host only through compose env interpolation, never as
     # plaintext substituted into a rendered file.
     cf_api_token: "{{ cloudflare_api_token | default('', true) }}"
+    # The DNS-01 provider, from the target group's traefik_acme_dns_provider.
+    # Derived, never a play-level default of the group var itself, for the
+    # same reason as the token above.
+    acme_dns_provider: "{{ traefik_acme_dns_provider | default('cloudflare', true) }}"
 
   pre_tasks:
     # #390: ACME routes the public_mgmt_fqdn hostname family, while Ory
@@ -144,7 +171,16 @@
           split these names and cannot be copied unchanged into this path.
       when: hydra_secrets_system is defined
 
+    - name: Pre-flight | DNS-01 provider is known
+      ansible.builtin.assert:
+        that:
+          - acme_dns_provider in ['cloudflare', 'azure']
+        fail_msg: >-
+          traefik_acme_dns_provider={{ acme_dns_provider }} is not supported.
+          Use cloudflare (the default) or azure.
+
     - name: Pre-flight | this goatnet's Cloudflare DNS-01 token resolves
+      when: acme_dns_provider == 'cloudflare'
       ansible.builtin.assert:
         that:
           - cf_api_token | length > 0
@@ -165,6 +201,52 @@
           A one-off `-e cf_api_token=$CLOUDFLARE_API_TOKEN_<ZONE>` still
           overrides, but it should not be the routine path — that is how the
           wrong goatnet's token used to satisfy this check.
+
+    # Azure DNS-01: every value from the target group's group_vars, so another
+    # goatnet's service principal can never satisfy this. Only names of empty
+    # values are printed, never a value.
+    - name: Pre-flight | this goatnet's Azure DNS-01 service principal resolves
+      when: acme_dns_provider == 'azure'
+      ansible.builtin.assert:
+        that:
+          - _azure_missing | length == 0
+        fail_msg: |
+          traefik_acme_dns_provider=azure, but these are empty or undefined in
+          the target group's group_vars: {{ _azure_missing | join(', ') }}.
+
+          Declare each in group_vars/<site>_hosts/vars.yml. The client secret
+          is a lookup of an environment variable, never a value in a file:
+
+            traefik_acme_azure_client_secret: "{{ '{{' }} lookup('env', 'AZURE_DNS_CLIENT_SECRET_<SITE>') {{ '}}' }}"
+
+          Empty means the group does not declare it, or the variable it names
+          is not exported in this shell (ops/scripts/with-secrets, or the
+          declared secrets posture). See the header of traefik-acme.yml.
+        quiet: true
+      vars:
+        _azure_missing: >-
+          {{ ([] if (traefik_acme_azure_tenant_id | default('') | string | trim) else ['traefik_acme_azure_tenant_id'])
+           + ([] if (traefik_acme_azure_client_id | default('') | string | trim) else ['traefik_acme_azure_client_id'])
+           + ([] if (traefik_acme_azure_client_secret | default('') | string | trim) else ['traefik_acme_azure_client_secret'])
+           + ([] if (traefik_acme_azure_subscription_id | default('') | string | trim) else ['traefik_acme_azure_subscription_id'])
+           + ([] if (traefik_acme_azure_resource_group | default('') | string | trim) else ['traefik_acme_azure_resource_group']) }}
+
+    # A pinned zone makes lego write every challenge record into it, so a
+    # public_mgmt_fqdn outside it fails at the ACME order, minutes later.
+    - name: Pre-flight | public_mgmt_fqdn sits in the pinned Azure DNS zone
+      when:
+        - acme_dns_provider == 'azure'
+        - traefik_acme_azure_zone_name | default('', true) | length > 0
+      ansible.builtin.assert:
+        that:
+          - public_mgmt_fqdn is defined
+          - (public_mgmt_fqdn | lower) == (traefik_acme_azure_zone_name | lower)
+            or (public_mgmt_fqdn | lower).endswith('.' ~ (traefik_acme_azure_zone_name | lower))
+        fail_msg: >-
+          public_mgmt_fqdn={{ public_mgmt_fqdn | default('UNDEFINED') }} is not in
+          traefik_acme_azure_zone_name={{ traefik_acme_azure_zone_name }}.
+          Fix the zone, or leave it empty so lego finds each name's zone.
+        quiet: true
 
     - name: Pre-flight | base compose file present
       ansible.builtin.stat:
@@ -373,7 +455,8 @@
       register: _dynamic_rendered
 
     # =====================================================================
-    # 4. Append the CF token to /opt/mgmt-host/.env so docker-compose's
+    # 4. Append the DNS-01 secret (the CF token, or with azure the service
+    #    principal's client secret) to /opt/mgmt-host/.env so docker-compose's
     #    env interpolation finds it. This file is the canonical env
     #    surface for the mgmt-host compose project (loaded by all overlays
     #    + by mgmt-host-compose-watch). Mode 0600 root:root.
@@ -393,6 +476,23 @@
         create: true
       no_log: true
       register: _env_token
+      when: acme_dns_provider == 'cloudflare'
+
+    # The Azure twin. Its own key, not AZURE_CLIENT_SECRET: .env is shared
+    # by every mgmt-host overlay, and the overlay maps this one name into the
+    # Traefik container only.
+    - name: Inject TRAEFIK_ACME_AZURE_CLIENT_SECRET into /opt/mgmt-host/.env
+      ansible.builtin.lineinfile:
+        path: "{{ compose_dir }}/.env"
+        regexp: "^TRAEFIK_ACME_AZURE_CLIENT_SECRET="
+        line: "TRAEFIK_ACME_AZURE_CLIENT_SECRET={{ traefik_acme_azure_client_secret }}"
+        owner: root
+        group: root
+        mode: "0600"
+        create: true
+      no_log: true
+      register: _env_azure_secret
+      when: acme_dns_provider == 'azure'
 
     # =====================================================================
     # 4.1. Pin COMPOSE_FILE so a bare `docker compose` cannot silently drop
@@ -511,7 +611,7 @@
     # =====================================================================
     # 6. Wait for first cert mint — Traefik writes /letsencrypt/acme.json
     #    as soon as the ACME order completes. DNS-01 propagation through
-    #    Cloudflare is usually 30-90s.
+    #    Cloudflare is usually 30-90s; budget the same for Azure DNS.
     # =====================================================================
     - name: Wait for acme.json to have a cert for the public mgmt FQDN
       # `args.executable: /bin/bash` is REQUIRED — Ansible's `shell` module
@@ -581,5 +681,6 @@
           If issuer reads "C=US, O=Let's Encrypt, CN=..." then Phase 2.5
           is closed. If issuer still says "TRAEFIK DEFAULT CERT", check
           the Traefik logs above — common causes are CF token scope
-          (must include `Zone:DNS:Edit` for `nova.example`) or
+          (must include `Zone:DNS:Edit` for `nova.example`), with azure a
+          service principal without DNS Zone Contributor on the zone, or
           DNS propagation slower than the 5min wait budget.

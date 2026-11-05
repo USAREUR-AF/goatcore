@@ -904,13 +904,26 @@
   gather_facts: false
   become: true
   tasks:
-    - name: management-a is up (when has_mgmt_api)
+    # management-a crash-loops on a streaming standby until that node is promoted
+    # (its Ory stays stopped; roles/keepalived-mgmt/README.md), so it is checked
+    # only where postgres-a is not in recovery. A promoted B is checked again.
+    - name: Ask whether postgres-a is a streaming standby (when has_mgmt_api)
+      ansible.builtin.command:
+        cmd: docker exec postgres-a psql -U postgres -tAc 'SELECT pg_is_in_recovery()'
+      register: smoke_pg_recovery
+      changed_when: false
+      failed_when: false
+      when: has_mgmt_api | default(false) | bool
+
+    - name: management-a is up (when has_mgmt_api, not on a standby)
       ansible.builtin.command:
         cmd: docker ps --filter name=management-a --format '{{ "{{" }}.Status{{ "}}" }}'
       register: mgmt_status
       changed_when: false
       failed_when: mgmt_status.stdout is not search('Up')
-      when: has_mgmt_api | default(false) | bool
+      when:
+        - has_mgmt_api | default(false) | bool
+        - (smoke_pg_recovery.stdout | default('') | trim) != 't'
 
     - name: postgres-a is up
       ansible.builtin.command:
@@ -1007,7 +1020,7 @@
           {{ site_id }} bootstrap complete for {{ inventory_hostname }} (profile={{ mgmt_stack_profile }}).
           postgres-a:    {{ pg_status.stdout }}
           {% if has_mgmt_api | default(false) | bool %}
-          management-a:  {{ mgmt_status.stdout }}
+          management-a:  {{ mgmt_status.stdout | default('not checked: postgres-a is a streaming standby') }}
           mgmt-host-bootstrap wrapper: {{ wrapper_path.stdout | trim }}
           {% endif %}
           {% if participates_in_spock | default(false) | bool %}

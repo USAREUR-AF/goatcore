@@ -1,0 +1,40 @@
+---
+# A goatnet with no stanza in netbird_acl_taxonomy.yml inherits `_default`
+# (tasks/netbird-taxonomy-default.yml), as operator-onboard.yml already does;
+# a declared site is left as declared. Runs on localhost; touches no API.
+- name: taxonomy-default derivation
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    declared: "{{ (lookup('file', playbook_dir ~ '/../../netbird_acl_taxonomy.yml') | from_yaml).netbird_acl_taxonomy.keys() | list }}"
+  tasks:
+    - name: Load the real taxonomy
+      ansible.builtin.include_vars:
+        file: ../../netbird_acl_taxonomy.yml
+
+    - name: A new site
+      ansible.builtin.include_tasks: ../../tasks/netbird-taxonomy-default.yml
+      vars:
+        target_site: newsite
+
+    - name: A new hyphenated site
+      ansible.builtin.include_tasks: ../../tasks/netbird-taxonomy-default.yml
+      vars:
+        target_site: acme-dev
+
+    - name: A declared site
+      ansible.builtin.include_tasks: ../../tasks/netbird-taxonomy-default.yml
+      vars:
+        target_site: "{{ (declared | reject('equalto', '_default') | list)[0] }}"
+
+    - name: Check
+      ansible.builtin.assert:
+        that:
+          - netbird_acl_taxonomy.newsite.site_prefix == 'NEWSITE'
+          - netbird_acl_taxonomy.newsite.groups == netbird_acl_taxonomy._default.groups
+          - netbird_acl_taxonomy['acme-dev'].site_prefix == 'ACME-DEV'
+          - (netbird_acl_taxonomy[(declared | reject('equalto', '_default') | list)[0]])
+            == ((lookup('file', playbook_dir ~ '/../../netbird_acl_taxonomy.yml') | from_yaml).netbird_acl_taxonomy[(declared | reject('equalto', '_default') | list)[0]])
+          - netbird_acl_taxonomy._default.site_prefix == '__DERIVED__'
+        quiet: true

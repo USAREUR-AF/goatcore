@@ -1,0 +1,98 @@
+# operator-onboard-site-config.yml — shared include: let a goatnet supply its own
+# entries for operator-onboard.yml's per-site maps from
+# ops/ansible/operator-onboard-sites/<site>.yml, instead of a hand-edit of the
+# play's vars block or a -e on every run. Play vars outrank group_vars, so the play could not see a
+# site's values any other way.
+#
+# The file's top-level keys are map names, each holding THIS site's entry (not
+# keyed by site):
+#
+#   netbird_site_url_map: https://netbird.example.net
+#   ory_site_kratos_admin_host_map:
+#     delegate_host_name: kratos-admin-example
+#     ...
+#
+# Each entry is merged into its map under `site` only, so a site file can never
+# supply or change another goatnet's values. A key that is not one of the maps
+# below fails the run (typos must not pass silently). A map the file leaves out
+# keeps its built-in entry, or its built-in absence: the play's own asserts and
+# KeyErrors still refuse a site that is not mapped. No file: nothing changes.
+#
+# Inputs: site (the goatnet name), site_config_dir (where the files live).
+
+- name: "site config — {{ site }}"
+  vars:
+    _onboard_site_config_maps:
+      - netbird_site_env_var_map
+      - netbird_site_url_map
+      - ory_site_kratos_admin_host_map
+      - ory_site_zone_map
+      - services_host_suffix_map
+      - ory_site_affiliation_trait_enabled_map
+      - zenoh_portal_url_map
+      - zenoh_router_endpoint_map
+      - zenoh_portal_operator_api_key_env_var_map
+      - zenoh_uri_san_scheme_map
+      - zenoh_observer_uri_san_scheme_map
+  block:
+    - name: "site config — look for {{ site_config_dir }}/{{ site }}.yml"
+      ansible.builtin.stat:
+        path: "{{ site_config_dir }}/{{ site }}.yml"
+      register: _onboard_site_config_stat
+      check_mode: false
+      when: site | default('') | length > 0
+
+    - name: "site config — load {{ site }}.yml"
+      ansible.builtin.include_vars:
+        file: "{{ site_config_dir }}/{{ site }}.yml"
+        name: _onboard_site_config
+      when:
+        - site | default('') | length > 0
+        - _onboard_site_config_stat.stat.exists | default(false)
+
+    - name: "site config — refuse keys that are not per-site maps"
+      ansible.builtin.assert:
+        that:
+          - (_onboard_site_config.keys() | list | difference(_onboard_site_config_maps)) | length == 0
+        fail_msg: |
+          {{ site_config_dir }}/{{ site }}.yml has keys that are not per-site maps of
+          operator-onboard.yml: {{ _onboard_site_config.keys() | list | difference(_onboard_site_config_maps) | join(', ') }}.
+          Allowed: {{ _onboard_site_config_maps | join(', ') }}.
+        quiet: true
+      when: _onboard_site_config is defined
+
+    - name: "site config — refuse an entry missing what the play reads"
+      ansible.builtin.assert:
+        that:
+          - _kratos is mapping
+          - (['delegate_host_name', 'ssh_host', 'ssh_user', 'kratos_admin_url', 'auth_url']
+             | reject('in', _kratos.keys() | list) | list) | length == 0
+        fail_msg: |
+          ory_site_kratos_admin_host_map in {{ site_config_dir }}/{{ site }}.yml needs
+          delegate_host_name, ssh_host, ssh_user, kratos_admin_url and auth_url.
+        quiet: true
+      vars:
+        _kratos: "{{ _onboard_site_config.ory_site_kratos_admin_host_map }}"
+      when:
+        - _onboard_site_config is defined
+        - "'ory_site_kratos_admin_host_map' in _onboard_site_config"
+
+    - name: "site config — refuse empty string entries"
+      ansible.builtin.assert:
+        that:
+          - item.value is string
+          - item.value | length > 0
+        fail_msg: "{{ item.key }} in {{ site_config_dir }}/{{ site }}.yml must be a non-empty string."
+        quiet: true
+      loop: "{{ _onboard_site_config | default({}) | dict2items | rejectattr('key', 'in', ['ory_site_kratos_admin_host_map', 'ory_site_affiliation_trait_enabled_map']) | list }}"
+      loop_control:
+        label: "{{ item.key }}"
+      when: _onboard_site_config is defined
+
+    - name: "site config — merge {{ site }}'s entries into the per-site maps"
+      ansible.builtin.set_fact:
+        "{{ item.key }}": "{{ lookup('ansible.builtin.vars', item.key) | combine({site: item.value}) }}"
+      loop: "{{ _onboard_site_config | default({}) | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}[{{ site }}]"
+      when: _onboard_site_config is defined

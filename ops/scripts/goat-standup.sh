@@ -792,11 +792,22 @@ step 6 A "[joiner] founder-side mirror (spock-mesh-wire on ${JOIN_FOUNDER_GROUP:
   "cd '$REPO/ops/ansible' && { [ -n '$JOIN_FOUNDER_GROUP' ] || { echo 'joiner: join_founder_site not set in group_vars/$GROUP/vars.yml'; exit 1; }; } && $ANSIBLE_PRE ${INV[*]} spock-mesh-wire.yml --limit $JOIN_FOUNDER_GROUP -e '{\"inter_site_spock_peers\":[\"$SITE\"]}'"
 fi
 
-# Phase 7. [internet] Public TLS via ACME (traefik-acme.yml). DNS-01 through Cloudflare;
-#    needs the site's CF API token from the env.
+# Phase 7. [internet] Public TLS via ACME (traefik-acme.yml). DNS-01 through Cloudflare
+#    by default; needs the site's CF API token from the env. A site whose
+#    group_vars set `traefik_acme_dns_provider: azure` uses Azure DNS instead:
+#    the play reads the service principal from the group's own env lookups, so
+#    the command passes no credential. The `test -n "$(printenv ...)"` is there
+#    so standup-phase-run refuses an empty client secret by name before the
+#    play starts; `test` is a builtin, so the value never reaches an argv.
+ACME_DNS_PROVIDER="$(grep -E '^[[:space:]]*traefik_acme_dns_provider:' "$GV_FILE" 2>/dev/null | head -1 | awk '{print $2}' | tr -d '"'\''' || true)"
 if [ "$PROFILE" = internet ]; then
+if [ "$ACME_DNS_PROVIDER" = azure ]; then
+step 7 A "[internet] public TLS certificate (traefik-acme)" \
+  "cd '$REPO/ops/ansible' && test -n \"\$(printenv AZURE_DNS_CLIENT_SECRET_${SITE_UPPER})\" && $ANSIBLE_PRE ${INV[*]} traefik-acme.yml -e target=$GROUP"
+else
 step 7 A "[internet] public TLS certificate (traefik-acme)" \
   "cd '$REPO/ops/ansible' && $ANSIBLE_PRE ${INV[*]} traefik-acme.yml -e target=$GROUP -e cf_api_token=\"\$(printenv CLOUDFLARE_API_TOKEN_${SITE_UPPER})\""
+fi
 fi
 
 # Phase 7. [internet] RELAY TIER — inventory, then deploy. The phase this script did
@@ -951,6 +962,11 @@ fi
 #     and then applies the declared Default-policy action (enforce does all that
 #     mode=apply does first), each play's asserts unchanged. Uses the bootstrap
 #     token from phase 11. A joiner applies nothing: its account IS the founder's.
+# On the internet profile https://$MGMT_FQDN carries the public ACME certificate,
+# so every mgmt-API caller (the ACL plays, netbird-policy-posture.py,
+# netbird-service-identities.py) verifies it against the system trust store, not
+# the goatnet's own CA.
+[ "$PROFILE" = internet ] && export NETBIRD_MGMT_CA=public
 if [ "$JOINER" = 0 ]; then
 step 12 A "declared NetBird ACL: groups, then policies, then enforce (one play run)" \
   "cd '$REPO/ops/ansible' && ansible-playbook -i localhost, --connection local netbird-acl-bootstrap.yml netbird-acl-cutover.yml -e target_site=$SITE -e mode=enforce -e confirm_cutover=YES -e netbird_mgmt_url=https://$MGMT_FQDN"
@@ -1058,6 +1074,21 @@ step 12 A "onboard-runner (auto-mint on approval, ADR 1062 stage 3)" \
 #      the portal accepts it. Single-homed on the founder.
 step 12 A "grant-keyd (encryption key distribution)" \
   "cd '$REPO/ops/ansible' && $ANSIBLE_PRE ${INV[*]} grant-keyd-deploy.yml -e target=$GROUP -l 'mgmt-${SITE}-01*'"
+
+# Phase 12. The site services site-services.yml imports, which no other phase ran:
+#      phase 10 runs that file only on LAN and only for its lan-dns, traefik and
+#      stun tags, so a site that enabled the console or isitup, listed them in
+#      isitup_services and routed them in Traefik got neither, and the phase-13
+#      declared-service-actually-deployed row failed. Each runs only when the
+#      site's vars.yml sets its flag true (the roles refuse otherwise), and on
+#      the founder mgmt host only: the console is an admin-write surface
+#      (ADR 1084 §D3, its play's router_role guard), and isitup is graded there.
+#      A failed play fails the step; only an unset flag skips.
+#      The console after the portal it reads; isitup last, after the surfaces it lists.
+step 12 A "id-admin console (single-homed admin surface; opt-in via id_admin_console_enabled)" \
+  "cd '$REPO/ops/ansible' && ( grep -qE '^id_admin_console_enabled:[[:space:]]*true' group_vars/${GROUP}/vars.yml 2>/dev/null && { $ANSIBLE_PRE ${INV[*]} id-admin-console-deploy.yml -e target=$GROUP -l 'mgmt-${SITE}-01*'; exit \$?; }; echo 'id_admin_console_enabled not true for ${GROUP} — console not requested, skipping' )"
+step 12 A "isitup status page (opt-in via isitup_enabled)" \
+  "cd '$REPO/ops/ansible' && ( grep -qE '^isitup_enabled:[[:space:]]*true' group_vars/${GROUP}/vars.yml 2>/dev/null && { $ANSIBLE_PRE ${INV[*]} isitup-deploy.yml -e target=$GROUP -l 'mgmt-${SITE}-01*'; exit \$?; }; echo 'isitup_enabled not true for ${GROUP} — status page not requested, skipping' )"
 
 # Phase 12. notional publishers/subscribers (synthetic demo traffic) — OPTIONAL per
 #      goatnet. A dev/demo goatnet opts in with synth_vendors_enabled: true in

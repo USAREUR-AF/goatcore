@@ -63,6 +63,15 @@
     goat_relay_image_archive: "{{ lookup('env', 'GOAT_RELAY_IMAGE_ARCHIVE') | default('/tmp/goat-relay-phase1.tar.gz', true) }}"
     ssm_bucket: "{{ lookup('env', 'SSM_BUCKET') | default('example-legacy-ansible-ssm-20260405131504905400000001', true) }}"
   tasks:
+    # Azure relays have no SSM bucket and no S3 presign: the image comes from
+    # the registry (role default). The offline archive path is not built for
+    # Azure, so an all-Azure inventory ends this play here.
+    - name: Azure — skip the S3 archive transfer (no SSM bucket on Azure)
+      ansible.builtin.meta: end_play
+      when: >-
+        (groups['goat_relay_hosts'] | default([]) | map('extract', hostvars)
+         | map(attribute='relay_cloud', default='aws') | unique | list) == ['azure']
+
     - name: verify image archive exists locally
       ansible.builtin.stat:
         path: "{{ goat_relay_image_archive }}"
@@ -259,6 +268,18 @@
           Got {{ (cloudflare_api_token | default('') | trim | length) }} characters —
           a Cloudflare API token is 40+. A short or empty value here does not fail
           the deploy, it fails every renewal 60 days later.
+      when:
+        - goat_relay_le_dns01 | default(false) | bool
+        - relay_dns01_provider | default('cloudflare') == 'cloudflare'
+
+    # relay_dns01_provider picks the DNS API: cloudflare (default, the AWS
+    # tiers) or azure (tasks/relay-dns01-azure.yml, VM managed identity).
+    - name: LE — require a known relay_dns01_provider
+      ansible.builtin.assert:
+        that:
+          - relay_dns01_provider | default('cloudflare') in ['cloudflare', 'azure']
+        fail_msg: "relay_dns01_provider must be cloudflare or azure, got {{ relay_dns01_provider }}"
+        quiet: true
       when: goat_relay_le_dns01 | default(false) | bool
 
     - name: LE — install certbot + Cloudflare DNS-01 plugin
@@ -266,7 +287,9 @@
         name: [certbot, python3-certbot-dns-cloudflare]
         state: present
         update_cache: true
-      when: goat_relay_le_dns01 | default(false) | bool
+      when:
+        - goat_relay_le_dns01 | default(false) | bool
+        - relay_dns01_provider | default('cloudflare') == 'cloudflare'
 
     - name: LE — ensure goat-relay cert dir exists
       ansible.builtin.file:
@@ -282,7 +305,9 @@
         owner: root
         group: root
         mode: "0600"
-      when: goat_relay_le_dns01 | default(false) | bool
+      when:
+        - goat_relay_le_dns01 | default(false) | bool
+        - relay_dns01_provider | default('cloudflare') == 'cloudflare'
 
     # Deploy-hook re-stages the renewed cert (deref'd to stable, non-symlink
     # files the role's two-file bind-mount can serve) + restarts the container.
@@ -323,8 +348,17 @@
           --agree-tos --non-interactive
       when:
         - goat_relay_le_dns01 | default(false) | bool
+        - relay_dns01_provider | default('cloudflare') == 'cloudflare'
         - not (le_cert.stat.exists | default(false))
       register: le_certbot
+
+    # Azure DNS through the relay VM's managed identity: no token leaves the
+    # operator's laptop. The dry-run below then proves renewal for both.
+    - name: LE — obtain cert via certbot DNS-01 (Azure DNS, VM managed identity)
+      ansible.builtin.include_tasks: tasks/relay-dns01-azure.yml
+      when:
+        - goat_relay_le_dns01 | default(false) | bool
+        - relay_dns01_provider | default('cloudflare') == 'azure'
 
     # PROVE RENEWAL WORKS, rather than proving a credentials file exists.
     #
@@ -439,6 +473,8 @@
         executable: /bin/bash
       register: image_load
       changed_when: "'Loaded image' in (image_load.stdout | default(''))"
+      # Azure relays pull from the registry; phase 0 did not run for them.
+      when: relay_cloud | default('aws') != 'azure'
 
   roles:
     # The role encodes the F-023 + F-027 invariant pair (modules-load.d

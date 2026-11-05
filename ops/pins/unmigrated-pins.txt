@@ -1,0 +1,12 @@
+# unmigrated-pins.txt — the shrink-only tail of pins not yet in fleet-pins.yaml.
+#
+# One row per pin a listed goatnet still defines outside its generated
+# pins.yml, as <member_group>:<var>. generate-pins.py --check and
+# `goatbuilder pins` both refuse such a pin unless it is listed here, and
+# refuse more rows than the baseline below. Migrate a pin into
+# ops/pins/fleet-pins.yaml (or the lite sidecar), delete its row, and lower the
+# baseline: the number may only shrink. Adding a row means raising it, which is
+# a visible, reviewable regression.
+#
+# The baseline line equals the number of rows below it.
+# baseline: 0

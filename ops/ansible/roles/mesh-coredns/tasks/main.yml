@@ -229,6 +229,20 @@
 # consults `files` before `dns`, so the netbird client dials local Traefik
 # (which serves the same LE cert by SNI and proxies to the local management
 # container). Client peers are unaffected — they keep the mesh-IP/relay apex.
+# A STANDBY mgmt host (router_role B of an A/B pair, postgres-a in recovery) runs
+# no management until it is promoted: its management-a crash-loops by design
+# (roles/keepalived-mgmt/README.md). Pinning the apex local there points its
+# netbird client at a dead management, so it can never enrol or reconnect. A
+# standby keeps the public apex (relays) instead; a promoted node gets the pin
+# on the next run. A host without postgres-a answers nothing: pinned as before.
+- name: Ask whether this host's postgres is a streaming standby (no local management)
+  ansible.builtin.command:
+    cmd: docker exec postgres-a psql -U postgres -tAc 'SELECT pg_is_in_recovery()'
+  register: _apex_pg_recovery
+  changed_when: false
+  failed_when: false
+  when: mesh_coredns_host_zone_route_enabled | bool
+
 - name: Pin the enrollment apex to local Traefik on the mgmt/DNS host (split-horizon)
   ansible.builtin.lineinfile:
     path: /etc/hosts
@@ -241,6 +255,7 @@
   when:
     - mesh_coredns_host_zone_route_enabled | bool
     - (mesh_coredns_mgmt_apex_fqdn | default(site_dns_zone) | default('')) | length > 0
+    - (_apex_pg_recovery.stdout | default('') | trim) != 't'
 
 - name: Remove the enrollment-apex split-horizon (flag off — rollback arm)
   ansible.builtin.lineinfile:
@@ -248,6 +263,15 @@
     regexp: '^\s*127\.0\.0\.1\s+{{ (mesh_coredns_mgmt_apex_fqdn | default(site_dns_zone)) | regex_escape }}\s*$'
     state: absent
   when: not (mesh_coredns_host_zone_route_enabled | bool)
+
+- name: Remove the enrollment-apex split-horizon on a standby (no local management)
+  ansible.builtin.lineinfile:
+    path: /etc/hosts
+    regexp: '^\s*127\.0\.0\.1\s+{{ (mesh_coredns_mgmt_apex_fqdn | default(site_dns_zone)) | regex_escape }}\s*$'
+    state: absent
+  when:
+    - mesh_coredns_host_zone_route_enabled | bool
+    - (_apex_pg_recovery.stdout | default('') | trim) == 't'
 
 - name: Apply pending resolver changes before smoke-testing
   ansible.builtin.meta: flush_handlers

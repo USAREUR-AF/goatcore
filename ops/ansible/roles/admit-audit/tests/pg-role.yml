@@ -1,0 +1,15 @@
+---
+# Fixture for pg-role-standby.sh: runs only tasks/pg-role.yml against localhost,
+# with a fake docker (on PATH) that records each psql statement.
+- name: admit-audit pg-role fixture
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    postgres_superuser_password: fake-superuser-password
+    admit_audit_password: fake-audit-password
+    pg_admit_audit_role: admit_audit
+    pg_admit_audit_db: netbird
+  tasks:
+    - name: Run the role's PG role tasks
+      ansible.builtin.include_tasks: ../tasks/pg-role.yml

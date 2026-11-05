@@ -233,6 +233,10 @@ class NetBird:
         # system store. Verification is never turned off.
         import ssl
         ca = REPO / "ops/enrollment/ca" / site / "root-cert.pem" if site else None
+        # NETBIRD_MGMT_CA=public: a goatnet with its own CA whose mgmt API carries a
+        # public ACME certificate (internet profile) verifies with the system store.
+        if os.environ.get("NETBIRD_MGMT_CA", "") == "public":
+            ca = None
         self.tls = ssl.create_default_context(cafile=str(ca)) if ca and ca.is_file() else ssl.create_default_context()
 
     def call(self, method, path, body=None, token=None):

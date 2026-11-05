@@ -15,6 +15,13 @@
 #   - aws_region           — AWS region for this relay
 #   - rathole_secret_name  — Secrets Manager key for credentials
 #
+# Azure relays (relay_cloud=azure, inventory/generate-relays-azure.sh): SSH as
+# the admin user through Bastion, no SSM. The public IP comes from the
+# inventory (relay_public_ip), DNS-01 from Azure DNS when
+# relay_dns01_provider=azure (tasks/relay-dns01-azure.yml), and the rathole
+# credentials are never written to a cloud secret store: see
+# relay-server-rathole.yml "Azure hand-off".
+#
 # Optional extra-vars:
 #   - shared_turn_secret    — all Coturn instances use the same secret.
 #                             If not set, reads from existing config or generates new.
@@ -45,10 +52,18 @@
           http://169.254.169.254/latest/meta-data/public-ipv4
       register: public_ip_result
       changed_when: false
+      when: relay_cloud | default('aws') != 'azure'
 
     - name: Set public IP fact
       ansible.builtin.set_fact:
         vps_public_ip: "{{ public_ip_result.stdout | trim }}"
+      when: relay_cloud | default('aws') != 'azure'
+
+    # Azure: the generator writes the public IP per host from Terraform.
+    - name: Set public IP fact (Azure, from inventory relay_public_ip)
+      ansible.builtin.set_fact:
+        vps_public_ip: "{{ relay_public_ip | mandatory('relay_public_ip is unset: regenerate the inventory with generate-relays-azure.sh') }}"
+      when: relay_cloud | default('aws') == 'azure'
 
     # ==================================================================
     # Rathole — management forwarding (TCP 443 → mgmt host).
@@ -222,9 +237,17 @@
         # schedule and FAIL on schedule when its credentials are wrong, so the
         # `--dry-run` task below checks this rather than believing it.
 
+        - name: Require a known relay_dns01_provider
+          ansible.builtin.assert:
+            that:
+              - relay_dns01_provider | default('cloudflare') in ['cloudflare', 'azure']
+            fail_msg: "relay_dns01_provider must be cloudflare or azure, got {{ relay_dns01_provider }}"
+            quiet: true
+          when: relay_cert_dns01 | default(false) | bool
+
         - name: Install certbot (+ Cloudflare DNS-01 plugin when relay_cert_dns01)
           ansible.builtin.apt:
-            name: "{{ ['certbot'] + (['python3-certbot-dns-cloudflare'] if (relay_cert_dns01 | default(false) | bool) else []) }}"
+            name: "{{ ['certbot'] + (['python3-certbot-dns-cloudflare'] if (relay_cert_dns01 | default(false) | bool and relay_dns01_provider | default('cloudflare') == 'cloudflare') else []) }}"
             state: present
             update_cache: true
 
@@ -245,7 +268,9 @@
               {{ (cloudflare_api_token | default('') | trim | length) }} characters —
               a Cloudflare API token is 40+. A short or empty value does not fail
               this deploy, it fails every renewal 60 days later.
-          when: relay_cert_dns01 | default(false) | bool
+          when:
+            - relay_cert_dns01 | default(false) | bool
+            - relay_dns01_provider | default('cloudflare') == 'cloudflare'
 
         # WRITTEN EVERY RUN, not only on first issuance. Once a cert exists, a
         # first-issuance-only condition would never reconcile this file again: a token
@@ -259,7 +284,9 @@
             owner: root
             group: root
             mode: "0600"
-          when: relay_cert_dns01 | default(false) | bool
+          when:
+            - relay_cert_dns01 | default(false) | bool
+            - relay_dns01_provider | default('cloudflare') == 'cloudflare'
 
         - name: Obtain TLS cert via certbot DNS-01 (Cloudflare)
           ansible.builtin.shell: |
@@ -271,8 +298,16 @@
               --agree-tos --non-interactive
           when:
             - relay_cert_dns01 | default(false) | bool
+            - relay_dns01_provider | default('cloudflare') == 'cloudflare'
             - not relay_cert.stat.exists
           register: certbot_dns01_result
+
+        # ---- DNS-01 (Azure DNS) — the relay VM's managed identity ----
+        - name: Obtain TLS cert via certbot DNS-01 (Azure DNS, VM managed identity)
+          ansible.builtin.include_tasks: tasks/relay-dns01-azure.yml
+          when:
+            - relay_cert_dns01 | default(false) | bool
+            - relay_dns01_provider | default('cloudflare') == 'azure'
 
         # PROVE RENEWAL WORKS, rather than proving the pieces exist.
         #
@@ -515,6 +550,7 @@
         - deploy_rathole | default(true) | bool
         - rathole_secret_name is defined
         - rathole_public_key | default('') | length > 0
+        - relay_cloud | default('aws') != 'azure'
 
     # ==================================================================
     # Verify
