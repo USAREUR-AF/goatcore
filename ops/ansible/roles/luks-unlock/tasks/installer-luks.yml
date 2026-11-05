@@ -252,8 +252,11 @@
     cmd: >-
       set -o pipefail;
       printf '%s' "{{ item.part.passphrase | default('') }}"
-      | clevis luks bind -y -k - -d "{{ item.part.device }}"
-        tpm2 '{"pcr_bank":"{{ luks_clevis_tpm2_pcr_bank }}","pcr_ids":"{{ luks_clevis_tpm2_pcr_ids }}"}'
+      | clevis luks bind -y -k - -d "{{ item.part.device }}" tpm2 '{"pcr_bank":"{{ luks_clevis_tpm2_pcr_bank }}","pcr_ids":"{{ luks_clevis_tpm2_pcr_ids }}"}'
+    # The pin and its config stay on the line above. In a folded (>-) scalar a
+    # MORE-indented line keeps its newline, so a pin on its own indented line ran
+    # as a separate command: clevis said "Did not specify a pin!" and no keyslot
+    # was bound. tests/clevis-bind-one-line.yml guards this.
     executable: /bin/bash
   loop: "{{ installer_clevis_tpm2.results | default([]) }}"
   loop_control:

@@ -19,6 +19,8 @@ fi
 echo "[luks-unlock/syntax-check] ansible-playbook --syntax-check on parse-only fixture"
 ansible-playbook -i 'localhost,' -c local playbook.yml --syntax-check
 
+echo "[luks-unlock/syntax-check] offline test: clevis-bind-one-line.yml"
+ansible-playbook -i 'localhost,' -c local clevis-bind-one-line.yml
 echo "[luks-unlock/syntax-check] offline test: crypttab-keep-installer.yml"
 ansible-playbook -i 'localhost,' -c local crypttab-keep-installer.yml
 
