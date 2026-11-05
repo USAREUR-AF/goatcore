@@ -126,12 +126,113 @@ ansible-playbook bridge.yml --limit bridge-rla
 ansible-playbook site.yml --limit relay-rlb,nethost
 ```
 
+## Azure relay playbooks (`relay_cloud=azure`)
+
+`goat-relay-deploy.yml`, `goat-relay-rathole.yml`, `goat-relay-colocated.yml`, `goat-relay-coturn.yml`,
+`relay-server.yml` and the `wg-cp0-server` role take an Azure relay inventory
+(`inventory/generate-relays-azure.sh`): SSH as the admin user through Bastion, with `become`. Every
+Azure branch is guarded on `relay_cloud` or `relay_dns01_provider`; the AWS path is unchanged.
+
+| What | AWS | Azure |
+|---|---|---|
+| Connection | SSM, `ssm-user`, S3 bucket | SSH through Bastion tunnels; no S3, no `remote_tmp` override |
+| Public IP | EC2 IMDSv2 | `relay_public_ip` from the inventory |
+| Relay image | GHCR, or the S3 archive (`archive_load`) | GHCR only; the archive play ends for an all-Azure inventory |
+| DNS-01 | certbot + Cloudflare token from the operator | certbot manual hook + the VM's managed identity |
+| Rathole credentials | Secrets Manager, written with the operator's AWS keys | Stay on the relay; optional local hand-off file |
+| wg-cp0 privkey backup | Secrets Manager | None; the role refuses until `wg_cp0_secret_storage=local_file` |
+
+**DNS-01.** With `relay_dns01_provider=azure`, `tasks/relay-dns01-azure.yml` installs
+`templates/certbot-azure-dns01-hook.py`: a stdlib-only hook that gets an ARM token from IMDS and
+writes the `_acme-challenge` TXT record. certbot has no first-party Azure DNS plugin and Ubuntu packages
+none, so this adds no dependency. Nothing leaves the operator's laptop. Set:
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `relay_dns01_azure_zone_name` | required | Zone holding `relay_dns_name`, e.g. `relay.example.com` |
+| `relay_dns01_azure_zone_resource_group` | required | Resource group of that zone |
+| `relay_dns01_azure_subscription_id` | VM's own | Subscription of the zone |
+| `relay_dns01_azure_auth` | `managed_identity` | Or `user_assigned_identity`, with `relay_dns01_azure_client_id` |
+
+**Admin step, once per relay:** give the VM a managed identity and DNS Zone Contributor on the zone
+(Terraform). The play checks this before issuing and fails with that message otherwise.
+
+**Rathole credentials.** The operator has no Azure write role, so no play writes to Key Vault. The
+relay already holds the token and keys (`/etc/rathole/server.toml`, `server.pubkey`), and Secrets
+Manager never held the private key, so only the hand-off channel changes. Pass
+`-e relay_rathole_handoff_dir=<local dir>` to get `<dir>/<host>.yml` (0600) for
+`relay-client.yml -e @<file>`; delete it once the site client is up. The relay-server.yml
+`turn_secret` is not stored either: pass `-e shared_turn_secret=...` to keep relays in step.
+A Key Vault design (relay identity writing its own secret) needs an admin role grant and is not built.
+
+**Status:** built and syntax-parsed; not measured against real Azure. wg-cp0 on Azure is designed
+only: it needs `wg_cp0_enabled` in `goat-relay-azure` and gives up the off-host key backup.
+
+## Azure DNS-01 for the mgmt host's public TLS (`traefik-acme.yml`)
+
+`traefik-acme.yml` issues the mgmt host's Let's Encrypt certificate by DNS-01 through
+Cloudflare (default) or Azure DNS. A site picks Azure in its target group's group_vars;
+unset, the play and its render are the Cloudflare path. Azure uses Traefik's lego
+`azuredns` provider with an Entra service principal (client secret), so it works on hosts
+with no managed identity, such as on-premises machines. The secret reaches the host only
+through `/opt/mgmt-host/.env` (0600), never a rendered file or a command line.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `traefik_acme_dns_provider` | `cloudflare` | `azure` selects Azure DNS |
+| `traefik_acme_azure_tenant_id` | required | Entra tenant of the service principal |
+| `traefik_acme_azure_client_id` | required | Application (client) ID |
+| `traefik_acme_azure_client_secret` | required | Secret: declare as `"{{ lookup('env', 'AZURE_DNS_CLIENT_SECRET_<SITE>') }}"` |
+| `traefik_acme_azure_subscription_id` | required | Subscription holding the zone |
+| `traefik_acme_azure_resource_group` | required | Resource group holding the zone |
+| `traefik_acme_azure_zone_name` | lego finds it by SOA | Pins the zone; every requested name must sit in it |
+| `traefik_acme_azure_environment` | `public` | `usgovernment` or `china` for those clouds |
+| `traefik_acme_dns_resolvers` | `1.1.1.1:53,8.8.8.8:53` | Propagation-check resolvers, either provider |
+
+The pre-flight names any empty Azure value and refuses before touching the host.
+`goat-standup.sh` phase 7 (and `goatbuilder standup`) then needs
+`AZURE_DNS_CLIENT_SECRET_<SITE>` set instead of `CLOUDFLARE_API_TOKEN_<SITE>`; with
+`posture.py init`, `AZURE` names are left for an outside value, never generated.
+
+**Admin step, once per zone:** an Entra app registration with a client secret, and the
+DNS Zone Contributor role for its service principal scoped to the DNS zone (not the
+resource group or subscription).
+
+**Status:** rendered and pre-flight tested offline; not yet run against a real Azure DNS zone.
+
 ## SSM Prerequisites
 
 The SSM connection plugin requires:
 - S3 bucket for file transfer (created by Terraform, name in inventory)
 - `OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES` on macOS (set in `.envrc`)
 - `ansible_remote_tmp=/tmp/.ansible/tmp` for relay hosts (SSM runs as `ssm-user`)
+
+## Azure relays (Bastion instead of SSM)
+
+A relay tier built with `terraform/modules/goat-relay-azure` has no SSM. Its relays accept SSH only
+from the Azure Bastion subnet, and Ansible reaches them over plain SSH through Bastion tunnels:
+
+```
+ops/ansible/inventory/generate-relays-azure.sh <env> <terraform_dir>   # inventory, keys from Key Vault
+ops/scripts/relay-tunnels-azure.sh <env> up                            # one tunnel per relay on 127.0.0.1
+ops/scripts/relay-tunnels-azure.sh <env> pin                           # first time: record the relays' host keys
+ansible -i inventory/hosts-<env>.ini relay_servers -m ping
+ops/scripts/relay-tunnels-azure.sh <env> down
+```
+
+Needs `az login`, Bastion Standard with tunnelling, Reader on each VM, its NIC and the Bastion, and
+read access to the Key Vault secret holding the relay key. The inventory sets `relay_cloud=azure`
+and, for the le-dns01 posture, `relay_dns01_provider=azure`.
+
+Each relay's SSH host key is checked against `inventory/<env>-relay-known_hosts`, overriding
+`ansible.cfg`'s `host_key_checking = false`: every relay sits on 127.0.0.1, so without the check any
+local process holding a tunnel port could pose as a relay. `pin` records the keys through tunnels
+this script has just opened, which Bastion connects to the VM inside Azure, and refuses to replace
+a pinned key that has changed. Keep the file with the environment's other config.
+
+Status: the generator is built and tested hermetically
+(`ops/ansible/inventory/tests/generate-relays-azure-test.sh`); the tunnels are designed, not yet
+measured against a live Bastion. The relay playbooks do not yet read `relay_dns01_provider`.
 
 ## File Layout
 

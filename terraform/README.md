@@ -21,6 +21,7 @@ A LAN-only goatnet, and every goatlite, needs none of this.
 | Module | What it creates | When you need it |
 |---|---|---|
 | `goat-relay` | One relay VPS: EC2 instance, Elastic IP, security group, SSM role, SSH key in Secrets Manager, optional VPC; runs the goat relay binary | Every goatnet reachable over the internet. Two in different regions is the usual shape |
+| `goat-relay-azure` | One relay VM on Azure: VM, static public IP, NSG, Key Vault secret for its SSH key, optional VNet, Azure DNS A record. Admin access through Azure Bastion, not SSM. Validated, not yet applied | A goatnet whose cloud must be Azure. The root owns the Key Vault, the Bastion and the round-robin record set |
 | `relay` | The same shape running the stock NetBird relay | Only if you choose the stock relay over goat's |
 | `bridge` | A VPS that joins the mesh and forwards named TCP ports to an outside endpoint over socat | Reaching a partner system that is not a mesh peer |
 | `goat-public-mtls-crutch` | A public mTLS-gated reachability tier, one VPS per region, operator-toggleable | Clients that cannot form a WireGuard path; default off |
