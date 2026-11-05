@@ -56,9 +56,6 @@ steps:
   - label: "declared NetBird"
     action: refused
     why: "the declared ACL lives in the NetBird account"
-  - label: "enforce: no Default All->All"
-    action: refused
-    why: "the declared ACL lives in the NetBird account"
   - label: "register OIDC clients"
     action: refused
     why: "clients live in the identity store (Hydra)"

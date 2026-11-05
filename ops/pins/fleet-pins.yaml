@@ -44,7 +44,7 @@ components:
   zenoh-router:
     owns_state: true
     rollback: pin-revert
-    var: nova_zenoh_image
+    var: zenoh_router_image
     image_workflow: .github/workflows/zenoh-pqc-fips-image.yml
     ledger_component: nova-zenoh
     deploy_playbook: zenoh-deploy.yml

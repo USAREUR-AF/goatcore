@@ -1809,7 +1809,7 @@ mod lite_tests {
 
     #[test]
     fn a_lite_goatnet_merges_its_row_and_its_deviations() {
-        let lite = "goatnets:\n  pasture:\n    members: [pasture_hosts]\n    ca_id_var: nova_ca_id\ncomponents:\n  alpha:\n    deviations:\n      pasture:\n        absent: true\n        reason: tier ceiling\n  beta:\n    deviations:\n      pasture_hosts:\n        value: \"b:tag\"\n        reason: dev rung\n";
+        let lite = "goatnets:\n  pasture:\n    members: [pasture_hosts]\n    ca_id_var: goat_ca_id\ncomponents:\n  alpha:\n    deviations:\n      pasture:\n        absent: true\n        reason: tier ceiling\n  beta:\n    deviations:\n      pasture_hosts:\n        value: \"b:tag\"\n        reason: dev rung\n";
         let d = tree("merge", Some(lite));
         let t = load_table(&d.join("ops/pins/fleet-pins.yaml")).unwrap();
         assert_eq!(t.goatnets.keys().cloned().collect::<BTreeSet<_>>(), ["zagros", "pasture"].iter().map(|s| s.to_string()).collect());

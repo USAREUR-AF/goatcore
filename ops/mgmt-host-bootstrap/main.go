@@ -336,7 +336,7 @@ func cmdCreateAccount(dsn *string) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&owner, "owner", "", "Owner email (required)")
-	cmd.Flags().StringVar(&siteName, "site-name", "", "Short site name, e.g. vega (required)")
+	cmd.Flags().StringVar(&siteName, "site-name", "", "Short site name, e.g. alpha (required)")
 	cmd.Flags().StringVar(&network, "network", "100.64.0.0/16", "WG network CIDR for this account")
 	cmd.Flags().StringVar(&domain, "domain", "", "Domain (default <site-name>.local)")
 	cmd.Flags().StringVar(&idempotencyKey, "idempotency-key", "",

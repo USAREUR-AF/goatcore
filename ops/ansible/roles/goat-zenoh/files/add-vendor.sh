@@ -8,7 +8,7 @@
 # role re-rendered it, a re-render would silently drop every vendor this script
 # had added. So ownership splits:
 #   SEED (role)   — config.json5 as the template renders it (base rules + the
-#                   nova_seed_vendors). Regenerated on every re-render.
+#                   zenoh_seed_vendors). Regenerated on every re-render.
 #   ORG  (portal) — ONLY the vendors this script / the portal adds at runtime.
 #                   Never touched by a re-render.
 #   LIVE          — acl-assemble.py assemble(SEED, ORG); what zenohd loads.

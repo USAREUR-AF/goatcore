@@ -462,9 +462,10 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
     }
     let fqdn = &s.mgmt_fqdn;
     if !s.joiner {
-        ev.push(p(12, "A", "declared NetBird groups (netbird-acl-bootstrap)".into(), format!("cd '{r}/ops/ansible' && ansible-playbook -i localhost, --connection local netbird-acl-bootstrap.yml -e target_site={site} -e netbird_mgmt_url=https://{fqdn}")));
-        ev.push(p(12, "A", "declared NetBird policies (cutover apply)".into(), format!("cd '{r}/ops/ansible' && ansible-playbook -i localhost, --connection local netbird-acl-cutover.yml -e target_site={site} -e mode=apply -e netbird_mgmt_url=https://{fqdn}")));
-        ev.push(p(12, "A", "enforce: no Default All->All (cutover enforce)".into(), format!("cd '{r}/ops/ansible' && ansible-playbook -i localhost, --connection local netbird-acl-cutover.yml -e target_site={site} -e mode=enforce -e confirm_cutover=YES -e netbird_mgmt_url=https://{fqdn}")));
+        // One ansible-playbook run of the two plays, in order: groups, then the
+        // cutover in enforce mode, which creates every declared policy before it
+        // applies the Default-policy action (goatlite.md §11 measure 3).
+        ev.push(p(12, "A", "declared NetBird ACL: groups, then policies, then enforce (one play run)".into(), format!("cd '{r}/ops/ansible' && ansible-playbook -i localhost, --connection local netbird-acl-bootstrap.yml netbird-acl-cutover.yml -e target_site={site} -e mode=enforce -e confirm_cutover=YES -e netbird_mgmt_url=https://{fqdn}")));
     }
     let acl_upper = s.acl_site.replace('-', "_").to_uppercase();
     ev.push(p(12, "GATE", format!("the live NetBird account holds only the declared ACL for {}, and no All-group rule", s.acl_site), format!("python3 '{r}/ops/scripts/netbird-policy-posture.py' '{}' --url https://{fqdn} --token-env {acl_upper}_NB_API_TOKEN", s.acl_site)));
@@ -1330,7 +1331,8 @@ mod tests {
     #[test]
     fn dag_is_read_and_matches_labels_past_their_profile_tag() {
         let dag = load_dag(&repo_root());
-        assert_eq!(dag.len(), 14);
+        assert_eq!(dag.len(), 12);
+        assert_eq!(dag_lookup(&dag, "declared NetBird ACL: groups, then policies, then enforce (one play run)").unwrap().id, "acl");
         assert_eq!(dag_lookup(&dag, "portal (registry, certificate minting, grant rows)").unwrap().id, "portal");
         assert_eq!(dag_lookup(&dag, "[internet] mesh CoreDNS (only if this site has a mesh zone)").unwrap().id, "mesh-dns");
         assert!(dag_lookup(&dag, "mint the pubsub-state mirror bot on the obs host's Forgejo").is_none());
@@ -1340,19 +1342,18 @@ mod tests {
     fn waves_put_independent_steps_together_and_respect_needs() {
         let q = |id: &str, n: &[&str]| (id.to_string(), n.iter().map(|x| x.to_string()).collect::<Vec<_>>());
         let w = waves(&[
-            q("acl-groups", &[]), q("acl-policies", &["acl-groups"]), q("acl-enforce", &["acl-policies"]),
-            q("acl-gate", &["acl-enforce"]), q("si-mint", &["acl-groups"]), q("si-gate", &["si-mint"]),
-            q("account-baseline", &["acl-groups"]), q("mesh-dns", &["account-baseline"]),
+            q("acl", &[]), q("acl-gate", &["acl"]), q("si-mint", &["acl"]), q("si-gate", &["si-mint"]),
+            q("account-baseline", &["acl"]), q("mesh-dns", &["account-baseline"]),
             q("portal", &["acl-gate", "si-gate"]), q("pubsub-mirror", &["portal"]), q("intake", &["portal"]),
             q("runner", &["portal"]), q("grant-keyd", &["portal"]), q("synth", &["portal"]),
         ]);
-        assert_eq!(w, vec![1, 2, 3, 4, 2, 3, 2, 3, 5, 6, 6, 6, 6, 6]);
+        assert_eq!(w, vec![1, 2, 2, 3, 2, 3, 4, 5, 5, 5, 5, 5]);
     }
 
     #[test]
     fn a_need_the_site_never_queued_is_met() {
         // a joiner queues no ACL steps: the portal then needs only the identities
-        let q = vec![("si-mint".to_string(), vec!["acl-groups".to_string()]), ("si-gate".to_string(), vec!["si-mint".to_string()]), ("portal".to_string(), vec!["acl-gate".to_string(), "si-gate".to_string()])];
+        let q = vec![("si-mint".to_string(), vec!["acl".to_string()]), ("si-gate".to_string(), vec!["si-mint".to_string()]), ("portal".to_string(), vec!["acl-gate".to_string(), "si-gate".to_string()])];
         assert_eq!(waves(&q), vec![1, 2, 3]);
     }
 
@@ -1449,6 +1450,26 @@ mod tests {
             let seq = at(&plan(&repo_root(), &test_site(false), &Options { from, to, ..o }, "RESUME"));
             assert!(!seq.iter().any(|x| x == "pull" || x == "join5"), "--from {from} --to {to}: {seq:?}");
         }
+    }
+
+    /// Phase 12's ACL is one ansible-playbook run: the groups play, then the
+    /// cutover in enforce mode (which creates the declared policies before it
+    /// applies the Default-policy action). A joiner applies none.
+    #[test]
+    fn the_declared_acl_is_one_play_run_groups_then_enforce() {
+        let o = Options { env: "e", site: "zagros", profile: None, from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false };
+        let lines = phase_lines(&test_site(false), &o);
+        let acl: Vec<&(u32, String, String)> = lines.iter().filter(|l| l.2.contains("netbird-acl-")).collect();
+        assert_eq!(acl.len(), 1, "{acl:?}");
+        let cmd = &acl[0].2;
+        assert_eq!(acl[0].0, 12);
+        assert_eq!(cmd.matches("ansible-playbook").count(), 1, "{cmd}");
+        let (b, c) = (cmd.find("netbird-acl-bootstrap.yml").unwrap(), cmd.find("netbird-acl-cutover.yml").unwrap());
+        assert!(b < c, "groups before the cutover: {cmd}");
+        assert!(cmd.contains("-e mode=enforce -e confirm_cutover=YES"), "{cmd}");
+        let gate = lines.iter().position(|l| l.1.starts_with("the live NetBird account holds only the declared ACL")).unwrap();
+        assert!(lines.iter().position(|l| l.2 == *cmd).unwrap() < gate, "the posture gate still follows");
+        assert!(!phase_lines(&test_site(true), &o).iter().any(|l| l.2.contains("netbird-acl-")), "a joiner applies no ACL");
     }
 
     /// The two parts phases 5 and 6 select: every play but the untagged pre-flight

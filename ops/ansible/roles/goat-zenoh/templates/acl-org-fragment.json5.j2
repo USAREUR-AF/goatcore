@@ -22,7 +22,7 @@
       // but is never persisted. Granting this write WITHOUT the audit
       // exclude active would route the firehose into the locked audit
       // bucket — keep them in lockstep.
-{% for vendor in nova_seed_vendors %}
+{% for vendor in zenoh_seed_vendors %}
       {
         id: "trial-peer-w-{{ vendor }}",
         messages: ["put", "delete", "liveliness_token"],
@@ -32,14 +32,14 @@
       },
 {% endfor %}
 ##ACL-ORG-REGION subjects
-{% for vendor in nova_seed_vendors %}
+{% for vendor in zenoh_seed_vendors %}
       {
         id: "vendor-{{ vendor }}",
         cert_common_names: ["{{ vendor }}-trial-peer"],
       },
 {% endfor %}
 ##ACL-ORG-REGION policies
-{% for vendor in nova_seed_vendors %}
+{% for vendor in zenoh_seed_vendors %}
       {
         rules: ["trial-peer-w-{{ vendor }}", "trial-peer-w-attest-schema"],
         subjects: ["vendor-{{ vendor }}"],

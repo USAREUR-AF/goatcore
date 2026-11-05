@@ -59,7 +59,7 @@ def role_default_root():
     """The root a goatnet gets when its group_vars says nothing."""
     try:
         with open(ROLE_DEFAULTS) as fh:
-            m = re.search(r"^nova_ca_root_cert_path:\s*\"?([^\"\n]+)", fh.read(), re.M)
+            m = re.search(r"^goat_ca_root_cert_path:\s*\"?([^\"\n]+)", fh.read(), re.M)
     except OSError:
         return None
     if not m:
@@ -92,7 +92,7 @@ def router_goatnets():
                 continue
             if re.search(r"^zenoh_stack:", text, re.M):
                 out.setdefault(d, None)
-            m = re.search(r"^nova_ca_root_cert_path:\s*\"?([^\"\n]+)", text, re.M)
+            m = re.search(r"^goat_ca_root_cert_path:\s*\"?([^\"\n]+)", text, re.M)
             if m and d in out:
                 out[d] = re.sub(r".*?enrollment/", "ops/enrollment/", m.group(1)).strip()
     return out

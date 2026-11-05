@@ -180,7 +180,7 @@ pub async fn run(ctx: &super::Ctx, op: PlatformAdminCmd) -> anyhow::Result<()> {
     let (target, dir, pubkey_files, github_keys, github_login, apply, write_entry, no_ory) =
         match op {
             PlatformAdminCmd::Status(t) => {
-                let env = prepare(ctx, &t)?;
+                let env = prepare(ctx, &t).await?;
                 let snap = Snapshot::read(ctx, &t, &env, &[], false, None).await?;
                 print_status(&t, &snap);
                 return Ok(());
@@ -220,7 +220,7 @@ pub async fn run(ctx: &super::Ctx, op: PlatformAdminCmd) -> anyhow::Result<()> {
                 no_ory,
             ),
         };
-    let env = prepare(ctx, &target)?;
+    let env = prepare(ctx, &target).await?;
     let extra_keys = read_pubkey_files(&pubkey_files)?;
     let snap = Snapshot::read(
         ctx,
@@ -240,7 +240,7 @@ pub async fn run(ctx: &super::Ctx, op: PlatformAdminCmd) -> anyhow::Result<()> {
     if write_entry && !plan.mesh_governed {
         anyhow::bail!(
             "--write-entry applies only on a goatnet governed by warrant \
-             (ops/warrant/membership/<env>/_scope.yaml says `converge: enforce`); `{}` is not",
+             (its `_scope.yaml` says `converge: enforce`); `{}` is not",
             env.name
         );
     }
@@ -324,7 +324,7 @@ struct Env {
     mesh_governed: bool,
 }
 
-fn prepare(ctx: &super::Ctx, t: &Target) -> anyhow::Result<Env> {
+async fn prepare(ctx: &super::Ctx, t: &Target) -> anyhow::Result<Env> {
     let env = t.env.trim().to_string();
     if !super::admin::is_valid_env(&env) {
         anyhow::bail!("invalid --env `{env}`: must be a kebab-case goatnet id (e.g. `zagros`)");
@@ -362,7 +362,14 @@ fn prepare(ctx: &super::Ctx, t: &Target) -> anyhow::Result<Env> {
         .unwrap_or_default()
         .trim()
         .to_string();
-    let mesh_governed = super::warrant::is_governed(&env);
+    let governance = super::warrant::governance(&env, &ctx.profile, &nb).await;
+    if governance.governed {
+        eprintln!(
+            "`{env}` membership is governed by warrant — {}",
+            governance.because()
+        );
+    }
+    let mesh_governed = governance.governed;
     Ok(Env {
         name: env,
         portal,

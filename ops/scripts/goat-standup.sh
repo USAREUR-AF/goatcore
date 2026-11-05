@@ -945,15 +945,15 @@ fi
 #     (management.json DisableDefaultPolicy) and nothing seeds one, so until the
 #     declared policies exist enrolled peers reach nothing — and every later
 #     phase that crosses the mesh depends on them. Groups, then policies, then
-#     enforce (which deletes any Default All->All it finds). Uses the bootstrap
+#     enforce (which deletes any Default All->All it finds), as ONE ansible-playbook
+#     run of the two plays in that order: netbird-acl-bootstrap.yml makes the
+#     groups, netbird-acl-cutover.yml mode=enforce creates every declared policy
+#     and then applies the declared Default-policy action (enforce does all that
+#     mode=apply does first), each play's asserts unchanged. Uses the bootstrap
 #     token from phase 11. A joiner applies nothing: its account IS the founder's.
 if [ "$JOINER" = 0 ]; then
-step 12 A "declared NetBird groups (netbird-acl-bootstrap)" \
-  "cd '$REPO/ops/ansible' && ansible-playbook -i localhost, --connection local netbird-acl-bootstrap.yml -e target_site=$SITE -e netbird_mgmt_url=https://$MGMT_FQDN"
-step 12 A "declared NetBird policies (cutover apply)" \
-  "cd '$REPO/ops/ansible' && ansible-playbook -i localhost, --connection local netbird-acl-cutover.yml -e target_site=$SITE -e mode=apply -e netbird_mgmt_url=https://$MGMT_FQDN"
-step 12 A "enforce: no Default All->All (cutover enforce)" \
-  "cd '$REPO/ops/ansible' && ansible-playbook -i localhost, --connection local netbird-acl-cutover.yml -e target_site=$SITE -e mode=enforce -e confirm_cutover=YES -e netbird_mgmt_url=https://$MGMT_FQDN"
+step 12 A "declared NetBird ACL: groups, then policies, then enforce (one play run)" \
+  "cd '$REPO/ops/ansible' && ansible-playbook -i localhost, --connection local netbird-acl-bootstrap.yml netbird-acl-cutover.yml -e target_site=$SITE -e mode=enforce -e confirm_cutover=YES -e netbird_mgmt_url=https://$MGMT_FQDN"
 fi
 step 12 GATE "the live NetBird account holds only the declared ACL for $ACL_SITE, and no All-group rule" \
   "python3 '$REPO/ops/scripts/netbird-policy-posture.py' '$ACL_SITE' --url https://$MGMT_FQDN --token-env $(printf '%s' "${ACL_SITE//-/_}" | tr '[:lower:]' '[:upper:]')_NB_API_TOKEN"

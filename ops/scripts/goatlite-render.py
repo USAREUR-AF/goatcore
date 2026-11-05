@@ -371,9 +371,9 @@ chrony_max_drift_ppm: 50
 
 # -- Internal CA (minted by phase 4, mint-site-certs.sh --mint-ca-if-missing) --
 # The var name is the one the goat-zenoh role reads; the VALUE is this goatnet's own CA.
-nova_ca_id: "{f['ca_id']}"
-nova_ca_root_cert: "ops/enrollment/ca/{n}/root-cert.pem"
-nova_ca_root_cert_path: "{{{{ playbook_dir }}}}/../enrollment/ca/{n}/root-cert.pem"
+goat_ca_id: "{f['ca_id']}"
+goat_ca_root_cert: "ops/enrollment/ca/{n}/root-cert.pem"
+goat_ca_root_cert_path: "{{{{ playbook_dir }}}}/../enrollment/ca/{n}/root-cert.pem"
 internal_ca_root_path: "{{{{ playbook_dir }}}}/../enrollment/ca/{n}/root-cert.pem"
 trust_domain: {n}-goatnet
 
@@ -532,8 +532,8 @@ portal_lex_org: "slot"
 portal_kratos_admin_url: "http://kratos:4434"
 portal_ca_bundle_dir: "/etc/{n}-ca"
 portal_age_identity_path: "/etc/{n}-age/keys.txt"
-portal_nova_root_cert: "/etc/{n}-ca/root-cert.pem"
-portal_cert_sign_ca_id: "{{{{ nova_ca_id }}}}"
+portal_ca_root_cert: "/etc/{n}-ca/root-cert.pem"
+portal_cert_sign_ca_id: "{{{{ goat_ca_id }}}}"
 portal_bundle_create_bin: "/usr/local/bin/bundle-create"
 portal_operator_api_key: "{{{{ lookup('env', '{up}_PORTAL_OPERATOR_API_KEY') }}}}"
 portal_traefik_mesh_only_middleware: "lan-mesh-allowlist@file"
@@ -772,7 +772,7 @@ def pins_block(f: dict) -> str:
       from day one, so no pin ever lives in its hand-authored group_vars.
     members:
       - {f['group']}
-    ca_id_var: nova_ca_id"""
+    ca_id_var: goat_ca_id"""
 
 
 LITE_PINS = REPO / "ops/pins/lite-pins.yaml"
