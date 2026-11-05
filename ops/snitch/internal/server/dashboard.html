@@ -204,7 +204,7 @@
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4" onerror="window._noChart=true"></script>
 <script>
-let authKey = localStorage.getItem('snitch_key') || '';
+try { localStorage.removeItem('snitch_key'); } catch (_) {}
 let currentRange = '24h';
 let trendChart = null;
 let currentState = null; // global for drill-down access
@@ -214,9 +214,6 @@ function showLogin() { document.getElementById('login-overlay').style.display = 
 function hideLogin() { document.getElementById('login-overlay').style.display = 'none'; }
 
 async function authFetch(url, opts = {}) {
-  if (authKey) {
-    opts.headers = Object.assign(opts.headers || {}, { 'Authorization': 'Bearer ' + authKey });
-  }
   const resp = await fetch(url, opts);
   if (resp.status === 401) { showLogin(); throw new Error('unauthorized'); }
   return resp;
@@ -226,10 +223,9 @@ async function doLogin() {
   const key = document.getElementById('key-input').value.trim();
   const errEl = document.getElementById('login-error');
   try {
-    const resp = await fetch('/api/mesh', { headers: { 'Authorization': 'Bearer ' + key } });
+    const resp = await fetch('/api/browser-session', { method: 'POST', headers: { 'Authorization': 'Bearer ' + key } });
     if (resp.ok) {
-      authKey = key;
-      localStorage.setItem('snitch_key', key);
+      document.getElementById('key-input').value = '';
       hideLogin();
       errEl.style.display = 'none';
       refresh();

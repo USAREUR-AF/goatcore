@@ -329,6 +329,7 @@ test.describe("portal responsive layout", () => {
 
   test("390x844 #who auth status aligns left and shows unauthenticated pre-auth", async ({ page }) => {
     await mockPortalApi(page);
+    await page.route('**/api/whoami', route => route.fulfill({status: 401, json: {error: {message: 'missing session'}}}));
     await page.setViewportSize({ width: 390, height: 844 });
     await openTopics(page);
 

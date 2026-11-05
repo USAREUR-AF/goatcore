@@ -140,7 +140,7 @@
 </div><!-- /content -->
 
 <script>
-let apiKey = localStorage.getItem('snitch_key') || '';
+try { localStorage.removeItem('snitch_key'); } catch (_) {}
 let currentRange = '30d';
 let trendChart = null;
 
@@ -157,10 +157,9 @@ function zuluDateTime(d) {
 }
 
 // --- Auth ---
-function headers() { return { 'Authorization': 'Bearer ' + apiKey }; }
+function headers() { return {}; }
 
 async function checkAuth() {
-  if (!apiKey) { showLogin(); return; }
   try {
     const r = await fetch('/api/satlink/latest', { headers: headers() });
     if (r.status === 401 || r.status === 403) { showLogin(); return; }
@@ -175,11 +174,17 @@ function showLogin() {
   document.getElementById('content').style.display = 'none';
 }
 
-function doLogin() {
-  apiKey = document.getElementById('key-input').value.trim();
-  if (!apiKey) return;
-  localStorage.setItem('snitch_key', apiKey);
-  checkAuth();
+async function doLogin() {
+  const key = document.getElementById('key-input').value.trim();
+  if (!key) return;
+  document.getElementById('key-input').value = '';
+  try {
+    const response = await fetch('/api/browser-session', {
+      method: 'POST', headers: { Authorization: 'Bearer ' + key },
+    });
+    if (!response.ok) { showLogin(); return; }
+    await checkAuth();
+  } catch (_) { showLogin(); }
 }
 
 document.getElementById('key-input').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });

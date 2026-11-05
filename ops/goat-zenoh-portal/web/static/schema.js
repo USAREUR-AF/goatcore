@@ -2,7 +2,7 @@
 //
 // Fetches GET /api/schemas/render/<key>[?version=v2] and renders the
 // returned descriptor tree as a Swagger-style read-only page.
-import { api, escapeHTML, hydrateAuth, getKey, lexicon } from "/app.js";
+import { api, escapeHTML, hydrateAuth, hasAuth, lexicon } from "/app.js";
 
 import { schemaDownloadLabel } from "/display.js";
 
@@ -130,7 +130,7 @@ async function openSchemaResource(event, rawJSON) {
   event.preventDefault();
   const link = event.currentTarget;
   if (link.getAttribute("aria-disabled") === "true") return;
-  const key = getKey();
+  const key = hasAuth();
   if (!key) { showError("Sign in first."); return; }
   const data = cachedRendered;
   const popup = rawJSON ? window.open("about:blank", "_blank") : null;
@@ -140,7 +140,7 @@ async function openSchemaResource(event, rawJSON) {
   document.getElementById("error").classList.add("hidden");
   try {
     const response = await fetch(link.href, {
-      headers: { Authorization: "Bearer " + key },
+      headers: {},
       redirect: "error",
     });
     if (!response.ok) throw new Error(`Schema request failed: HTTP ${response.status}.`);
@@ -531,7 +531,7 @@ function renderEnums(rendered) {
   }
 }
 
-if (!getKey()) {
+if (!hasAuth()) {
   document.getElementById("auth-banner")?.classList.remove("hidden");
 }
 init();

@@ -61,7 +61,7 @@ window.addEventListener("DOMContentLoaded", () => {
     defaultModelsExpandDepth: 0,
     docExpansion: "list",
     tryItOutEnabled: true,
-    persistAuthorization: true,
+    persistAuthorization: false,
     onComplete: () => {
       const spec = window.ui.specSelectors.specJson().toJS();
       if (!spec.info || !spec.paths) {

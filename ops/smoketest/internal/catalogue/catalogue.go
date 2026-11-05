@@ -24,7 +24,8 @@ type Service struct {
 
 // Check defines a single health check for a service.
 type Check struct {
-	Type    string `yaml:"type" json:"type"`       // http, https, tcp, script
+	CAFile  string `yaml:"ca_file,omitempty" json:"ca_file,omitempty"`
+	Type    string `yaml:"type" json:"type"` // http, https, tcp, script
 	URL     string `yaml:"url,omitempty" json:"url,omitempty"`
 	Host    string `yaml:"host,omitempty" json:"host,omitempty"`
 	Port    int    `yaml:"port,omitempty" json:"port,omitempty"`
@@ -59,11 +60,12 @@ func (f *File) ToServiceChecks() []probe.ServiceCheck {
 	for _, svc := range f.Services {
 		for _, c := range svc.Checks {
 			sc := probe.ServiceCheck{
-				Name: svc.Name,
-				Type: c.Type,
-				URL:  c.URL,
-				Host: c.Host,
-				Port: c.Port,
+				CAFile: c.CAFile,
+				Name:   svc.Name,
+				Type:   c.Type,
+				URL:    c.URL,
+				Host:   c.Host,
+				Port:   c.Port,
 				Expect: probe.ServiceExpect{
 					Status:       c.Status(),
 					BodyContains: c.Expect.BodyContains,

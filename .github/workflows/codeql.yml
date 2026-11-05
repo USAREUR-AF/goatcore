@@ -1,12 +1,12 @@
 name: codeql
 
-# CodeQL from this repo, instead of the managed "Code Quality" scan.
+# Additional CodeQL security-and-quality analysis alongside default setup.
 #
-# The managed scan (it shows in the run list as event `dynamic`, with no YAML
-# anywhere) ran on every pull request, could not be path-filtered, and its Go
-# leg compiled all 27 Go modules from a cold module cache before analysing:
-# about six minutes on a PR that changed three signature files, the slowest
-# check on every PR in the repo (#1993). This workflow:
+# GitHub default setup is the authoritative code-scanning publisher for this
+# repository and includes Go, Rust, Python, JavaScript and Actions. GitHub
+# rejects uploads from advanced setup while default setup is enabled.
+# This workflow keeps its additional queries and publishes SARIF artifacts,
+# without attempting a competing upload or disabling default setup. It:
 #
 #   * starts only when Go, Python or JavaScript/TypeScript source changes;
 #   * analyses only the languages the push touched (the `detect` job reads
@@ -16,13 +16,7 @@ name: codeql
 #     refused for Go, so the saving is in building less, not in not building).
 #     Python and JavaScript are extracted from source with no build.
 #
-# `push: main` stays, and this is the one guard-shaped workflow that keeps
-# it: code scanning diffs a pull request's alerts against the default
-# branch's, so main needs its own analysis or every alert reads as new
-# (docs/design/ci-discipline.md R8).
-#
-# After this merges, an admin turns the managed scan off: Settings -> Code
-# security -> Code quality. Until then both run.
+# Main and scheduled analyses retain full advanced-analysis artifacts too.
 
 on:
   pull_request:
@@ -170,3 +164,14 @@ jobs:
       - uses: github/codeql-action/analyze@v4
         with:
           category: "/language:${{ matrix.language }}"
+          upload: never
+          output: advanced-codeql-results
+
+      - name: Preserve advanced CodeQL results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: advanced-codeql-${{ matrix.language }}
+          path: advanced-codeql-results/*.sarif
+          if-no-files-found: warn
+          retention-days: 14

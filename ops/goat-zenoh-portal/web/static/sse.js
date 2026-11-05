@@ -1,9 +1,8 @@
 // goat-zenoh-portal — Server-Sent Events read with fetch.
 //
-// EventSource cannot send request headers, so a stream that needs the
-// portal's bearer key is read with fetch instead, and the key rides in the
-// Authorization header. It never goes in the URL: a query string lands in
-// proxy access logs (#1497).
+// Streaming uses fetch so callers can set Accept and cancel the request.
+// The browser sends its same-origin HttpOnly session cookie. Credentials
+// never go in the URL or browser storage.
 //
 // This covers the part of the SSE wire format the portal's stream writes
 // (internal/zenohproxy StreamSSE): `event:` and `data:` fields, `:` comment

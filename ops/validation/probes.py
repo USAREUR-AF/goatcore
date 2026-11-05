@@ -230,6 +230,7 @@ def _system_trust_error(host, port, timeout, sni=None, verify_name=True) -> str 
 def _fetch_cert_text(host, port, timeout) -> str | None:
     try:
         ctx = ssl.create_default_context()
+        ctx.minimum_version = ssl.TLSVersion.TLSv1_2
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE
         with socket.create_connection((host, port), timeout=timeout) as sock:
@@ -252,6 +253,7 @@ def tls_alpn(params) -> Verdict:
         return Verdict(UNKNOWN, "no host", "tls-alpn")
     try:
         ctx = ssl.create_default_context()
+        ctx.minimum_version = ssl.TLSVersion.TLSv1_2
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE
         with socket.create_connection((host, port), timeout=_timeout(params)) as sock:

@@ -47,6 +47,8 @@ type Server struct {
 func New(cfg Config) *Server {
 	s := &Server{cfg: cfg, mux: http.NewServeMux()}
 	a := cfg.Auth
+	s.mux.HandleFunc("POST /api/browser-session", a.BrowserSession)
+	s.mux.HandleFunc("DELETE /api/browser-session", a.BrowserSession)
 
 	// Public endpoints (no auth).
 	s.mux.HandleFunc("/", s.handleDashboard)
