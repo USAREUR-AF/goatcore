@@ -11,7 +11,7 @@
 // task on next Ansible run. The add-vendor.sh helper appends per-vendor
 // entries between the `// BEGIN:` / `// END:` markers in the
 // access_control block below + SIGHUPs zenohd; the helper's edits are
-// transient and re-rendered out by Ansible unless nova_seed_vendors
+// transient and re-rendered out by Ansible unless zenoh_seed_vendors
 // is also extended in group_vars. Canonical source lives at this
 // template path.
 {# ---------------------------------------------------------------------------
@@ -507,7 +507,7 @@
 {% endfor %}
 {% endif %}
 {% else %}
-{% for vendor in nova_seed_vendors %}
+{% for vendor in zenoh_seed_vendors %}
         // {{ vendor }} vendor — seed entry.
         // The add-vendor.sh helper appends new entries between BEGIN
         // and END markers further below. New per-vendor storage entries
@@ -1418,7 +1418,7 @@
 {% endfor %}
 {% endif %}
       // F-517: seeded vendor-CN publishers under the slot pool. A goatnet in
-      // per-uuid-slot-pool mode still declares nova_seed_vendors (the
+      // per-uuid-slot-pool mode still declares zenoh_seed_vendors (the
       // storages above render from it), and a seeded vendor that publishes
       // with CN=<vendor>-trial-peer (demogame via the rest-pub-bridge
       // sidecar) needs a write grant on its own namespace exactly as the
@@ -1426,7 +1426,7 @@
       // only trial-peer-read and every PUT is dropped silently at ingress.
       // Same shape as acl-org-fragment.json5.j2, one rule per
       // seeded vendor, ingress-only, own namespace + its volatile class.
-{% for vendor in nova_seed_vendors %}
+{% for vendor in zenoh_seed_vendors %}
       {
         id: "trial-peer-w-{{ vendor }}",
         messages: ["put", "delete", "liveliness_token"],
@@ -1726,7 +1726,7 @@
       // F-517: one subject per seeded vendor CN (see the write rules above).
       // Reads still come through trial-peer-read, which enumerates the same
       // CNs; this subject exists so the vendor's own write policy can bind.
-{% for vendor in nova_seed_vendors %}
+{% for vendor in zenoh_seed_vendors %}
       {
         id: "vendor-{{ vendor }}",
         cert_common_names: ["{{ vendor }}-trial-peer"],
@@ -1918,7 +1918,7 @@
       // F-517: bind each seeded vendor's write rule (+ the shared
       // attest-schema write) to its CN subject. Without this binding the rule
       // above is defined but reaches nobody — default-deny, silent.
-{% for vendor in nova_seed_vendors %}
+{% for vendor in zenoh_seed_vendors %}
       {
         rules: ["trial-peer-w-{{ vendor }}", "trial-peer-w-attest-schema"],
         subjects: ["vendor-{{ vendor }}"],

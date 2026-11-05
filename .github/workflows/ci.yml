@@ -117,7 +117,7 @@ jobs:
             # Not playbooks: data files and a tasks file imported by relay-server.yml.
             # site-bootstrap and site-resume index a group named from site_id, which needs an inventory.
             case "$p" in netbird_acl_matrix.yml|netbird_acl_taxonomy.yml|requirements.yml|relay-server-rathole.yml|site-bootstrap.yml|site-resume.yml) continue;; esac
-            ansible-playbook --syntax-check -i localhost, -e target=all -e mgmt_host_target=all -e migrator_host=all -e site_id=zagros "$p" >/dev/null 2>&1 || { echo "syntax: $p"; rc=1; }
+            ansible-playbook --syntax-check -i localhost, -e target=all -e mgmt_host_target=all -e migrator_host=all -e rathole_client_target=all -e site_id=zagros "$p" >/dev/null 2>&1 || { echo "syntax: $p"; rc=1; }
           done
           exit $rc
       - name: shell and YAML lint

@@ -45,7 +45,7 @@ goat_zenoh_extra_ca_deliver: []
 # FIPS goatnets override this to ghcr.io/{{ ghcr_org }}/zenoh-pqc-fips + set
 # goat_zenoh_fips_variant: true (see below). Prior bare-upstream base:
 # eclipse/zenoh:1.9.0@sha256:157965d7 (kept in the deploy-history ledger).
-nova_zenoh_image: "ghcr.io/{{ ghcr_org }}/zenoh-pqc@sha256:372de39d2e8b64fe7157194173f1b7ac6eac2700ff04c49cce2ce3c284a6fdb2"
+zenoh_router_image: "ghcr.io/{{ ghcr_org }}/zenoh-pqc@sha256:372de39d2e8b64fe7157194173f1b7ac6eac2700ff04c49cce2ce3c284a6fdb2"
 
 # ---- File-descriptor bulkhead --------------------------------------
 # nofile ulimit for the router container. The per-uuid slot pool spawns one
@@ -158,7 +158,7 @@ goat_zenoh_zid_seed:   "{{ inventory_hostname }}|{{ goat_zenoh_zid_realm }}|zeno
 goat_zenoh_router_zid: "{{ (goat_zenoh_zid_seed | hash('sha256'))[:32] | regex_replace('^0+', '') }}"
 
 # ---- RocksDB backend artifact (upstream eclipse-zenoh release) -------------
-# Pinned in lockstep with nova_zenoh_image; see the parent zenoh role
+# Pinned in lockstep with zenoh_router_image; see the parent zenoh role
 # defaults for the same shape. SHA256s come from the GitHub release-asset
 # API for eclipse-zenoh/zenoh-backend-rocksdb at the matching tag.
 goat_zenoh_rocksdb_backend_version: "1.9.0"
@@ -251,7 +251,7 @@ goat_zenoh_mesh_boot_timeout: 180
 # Trial question #3 ("schema + format discipline under low pressure")
 # cannot be answered with audit-mode counts until the plugin lands;
 # Block 23 substrate is the natural home.
-nova_schema_enforcer_enabled: false       # see GAP above
+goat_schema_enforcer_enabled: false       # see GAP above
 
 # ---- Storage ---------------------------------------------------------------
 # RocksDB retention applies to every registered <vendor>/** prefix. 7-day
@@ -296,13 +296,13 @@ goat_zenoh_legacy_system_namespace: false
 # `ops/enrollment/...` would resolve to the nonexistent ops/ansible/ops/...
 # which makes the router pre-flight false-fail on certs that are present.
 # playbook_dir is the absolute ops/ansible dir.
-nova_ca_root_cert_path: "{{ playbook_dir }}/../enrollment/ca/{{ site_id }}/root-cert.pem"   # a shared role must not name a goatnet
+goat_ca_root_cert_path: "{{ playbook_dir }}/../enrollment/ca/{{ site_id }}/root-cert.pem"   # a shared role must not name a goatnet
 # The router leaf on the controller: the manifest out_dir (~/.goat/state/<site>-leaves)
 # first, the old in-checkout copy as a fallback (filter_plugins/goat_leaf.py, #2165). A site
 # that serves another site's router leaf sets goat_router_leaf_site.
 goat_router_leaf_site: "{{ site_id }}"
-nova_router_leaf_cert_path: "{{ 'router-cert.pem' | goat_leaf(goat_router_leaf_site) }}"
-nova_router_leaf_key_path:  "{{ 'router-key.pem' | goat_leaf(goat_router_leaf_site) }}"
+zenoh_router_leaf_cert_path: "{{ 'router-cert.pem' | goat_leaf(goat_router_leaf_site) }}"
+zenoh_router_leaf_key_path:  "{{ 'router-key.pem' | goat_leaf(goat_router_leaf_site) }}"
 
 # Host-side install paths (inside the zenohd container's view).
 goat_zenoh_tls_dir: "/etc/{{ zenoh_stack }}/tls"
@@ -321,7 +321,7 @@ goat_zenoh_tls_dir: "/etc/{{ zenoh_stack }}/tls"
 
 # Seed vendors at deploy. Operator can extend at deploy time via
 # group_vars or extend post-deploy via the add-vendor.sh helper script.
-nova_seed_vendors:
+zenoh_seed_vendors:
   - community
   - caracal
 

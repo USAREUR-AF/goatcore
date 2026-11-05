@@ -133,7 +133,7 @@
 
 - name: Pre-flight | the goatnet's CA root cert exists on controller
   ansible.builtin.stat:
-    path: "{{ nova_ca_root_cert_path }}"
+    path: "{{ goat_ca_root_cert_path }}"
   delegate_to: localhost
   become: false
   register: nova_ca_root_stat
@@ -141,7 +141,7 @@
 
 - name: Pre-flight | the goatnet's router leaf cert exists on controller
   ansible.builtin.stat:
-    path: "{{ nova_router_leaf_cert_path }}"
+    path: "{{ zenoh_router_leaf_cert_path }}"
   delegate_to: localhost
   become: false
   register: nova_router_cert_stat
@@ -149,7 +149,7 @@
 
 - name: Pre-flight | the goatnet's router leaf key exists on controller
   ansible.builtin.stat:
-    path: "{{ nova_router_leaf_key_path }}"
+    path: "{{ zenoh_router_leaf_key_path }}"
   delegate_to: localhost
   become: false
   register: nova_router_key_stat
@@ -164,9 +164,9 @@
     fail_msg: >-
       GB-071 goat-zenoh refuses to deploy: the CA root or the router leaf is
       not on this controller. Looked for
-        - {{ nova_ca_root_cert_path }}
-        - {{ nova_router_leaf_cert_path }}
-        - {{ nova_router_leaf_key_path }}
+        - {{ goat_ca_root_cert_path }}
+        - {{ zenoh_router_leaf_cert_path }}
+        - {{ zenoh_router_leaf_key_path }}
       The leaf is read from the site manifest's out_dir
       (~/.goat/state/{{ goat_router_leaf_site }}-leaves), so any checkout
       finds it. If it is missing there, mint it:
@@ -382,7 +382,7 @@
 
 - name: Deliver the goatnet's CA root cert to host
   ansible.builtin.copy:
-    src: "{{ nova_ca_root_cert_path }}"
+    src: "{{ goat_ca_root_cert_path }}"
     dest: "{{ goat_zenoh_tls_dir }}/ca-root-cert.pem"
     mode: "0644"
   notify: Restart nova zenoh router
@@ -464,14 +464,14 @@
 
 - name: Deliver the goatnet's router leaf cert to host
   ansible.builtin.copy:
-    src: "{{ nova_router_leaf_cert_path }}"
+    src: "{{ zenoh_router_leaf_cert_path }}"
     dest: "{{ goat_zenoh_tls_dir }}/router-cert.pem"
     mode: "0644"
   notify: Restart nova zenoh router
 
 - name: Deliver the goatnet's router leaf key to host
   ansible.builtin.copy:
-    src: "{{ nova_router_leaf_key_path }}"
+    src: "{{ zenoh_router_leaf_key_path }}"
     dest: "{{ goat_zenoh_tls_dir }}/router-key.pem"
     mode: "0600"
   notify: Restart nova zenoh router
@@ -874,7 +874,7 @@
   # `docker compose up -d` would pull on first run anyway; this is just
   # an explicit-pull step for operator visibility.
   ansible.builtin.command:
-    cmd: "docker pull {{ nova_zenoh_image }}"
+    cmd: "docker pull {{ zenoh_router_image }}"
   register: goat_zenoh_pull
   changed_when: "'Downloaded newer image' in goat_zenoh_pull.stdout or 'Pull complete' in goat_zenoh_pull.stdout"
 
@@ -923,7 +923,7 @@
     content: |
       {
         "fips_marker": true,
-        "image_digest": "{{ nova_zenoh_image | regex_replace('^.*@', '') }}",
+        "image_digest": "{{ zenoh_router_image | regex_replace('^.*@', '') }}",
         "attested_at_ms": {{ (ansible_date_time.epoch | int) * 1000 }},
         "module": "AWS-LC FIPS 3.1.0 (CMVP #5298/#5314)"
       }
