@@ -25,6 +25,13 @@ components:
     image_workflow: .github/workflows/signal-server.yml
     ledger_component: null
     fleet: ghcr.io/{{ ghcr_org }}/signal-server@sha256:3a26d0e8884e90edcf8dfc0fba5261a16ce45c7e585d9ca325a0913d9029241d
+  mgmt-host-bootstrap:
+    owns_state: false
+    rollback: pin-revert
+    var: mgmt_host_bootstrap_image
+    image_workflow: .github/workflows/mgmt-host-bootstrap.yml
+    ledger_component: null
+    fleet: ghcr.io/{{ ghcr_org }}/mgmt-host-bootstrap:latest@sha256:a43d432590bfb06d811fce4c213179119cedc50f74771504567bf2172756780f
   spire:
     owns_state: true
     rollback: none
@@ -268,3 +275,17 @@ components:
     image_workflow: null
     ledger_component: goat-docs
     fleet: nginx:1.27-alpine@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10
+  mesh-coredns:
+    owns_state: false
+    rollback: pin-revert
+    var: mesh_coredns_image
+    image_workflow: null
+    ledger_component: mesh-coredns
+    fleet: coredns/coredns:1.15.0@sha256:0a9d8c8ddf34347eb59aad9a8784f0710de88d6d112726d11d271f9bc6daca26
+  spiffe-helper:
+    owns_state: false
+    rollback: pin-revert
+    var: fabric_health_spiffe_helper_image
+    image_workflow: null
+    ledger_component: spiffe-helper
+    fleet: ghcr.io/spiffe/spiffe-helper:0.10.1@sha256:2402c34d83794aa24c127baa46e9732d653463f3bfcd39cda1313003ed60f8c9

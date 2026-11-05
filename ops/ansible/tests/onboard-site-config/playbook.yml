@@ -1,0 +1,67 @@
+---
+# A goatnet's ops/ansible/operator-onboard-sites/<site>.yml reaches
+# operator-onboard.yml's per-site maps (tasks/operator-onboard-site-config.yml) under its own name only,
+# and leaves every other goatnet's built-in entry as it was. Runs on localhost;
+# touches no API. run.sh also drives the refusals.
+- name: onboard site config
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    _play: "{{ (lookup('file', playbook_dir ~ '/../../operator-onboard.yml') | from_yaml)[0] }}"
+    _builtin: "{{ _play.vars }}"
+    netbird_site_url_map: "{{ _builtin.netbird_site_url_map }}"
+    netbird_site_env_var_map: "{{ _builtin.netbird_site_env_var_map }}"
+    ory_site_kratos_admin_host_map: "{{ _builtin.ory_site_kratos_admin_host_map }}"
+    ory_site_zone_map: "{{ _builtin.ory_site_zone_map }}"
+    services_host_suffix_map: "{{ _builtin.services_host_suffix_map }}"
+    ory_site_affiliation_trait_enabled_map: "{{ _builtin.ory_site_affiliation_trait_enabled_map }}"
+    zenoh_portal_url_map: "{{ _builtin.zenoh_portal_url_map }}"
+    zenoh_router_endpoint_map: "{{ _builtin.zenoh_router_endpoint_map }}"
+    zenoh_portal_operator_api_key_env_var_map: "{{ _builtin.zenoh_portal_operator_api_key_env_var_map }}"
+    zenoh_uri_san_scheme_map: "{{ _builtin.zenoh_uri_san_scheme_map }}"
+    zenoh_observer_uri_san_scheme_map: "{{ _builtin.zenoh_observer_uri_san_scheme_map }}"
+  tasks:
+    - name: operator-onboard.yml loads the site config
+      ansible.builtin.assert:
+        that:
+          - (_play.tasks | map('to_json')
+             | select('search', _include) | list | length) == 1
+        quiet: true
+      vars:
+        _include: '"ansible.builtin.include_tasks": "tasks/operator-onboard-site-config.yml"'
+
+    - name: Load the site config
+      ansible.builtin.include_tasks: ../../tasks/operator-onboard-site-config.yml
+      vars:
+        site: "{{ test_site }}"
+        site_config_dir: "{{ test_dir }}"
+
+    - name: Check
+      ansible.builtin.assert:
+        that:
+          - netbird_site_url_map.testnet == 'https://mgmt.testnet.invalid'
+          - netbird_site_env_var_map.testnet == 'TESTNET_NB_API_TOKEN'
+          - ory_site_kratos_admin_host_map.testnet.ssh_host == 'testnet-core-a'
+          - ory_site_kratos_admin_host_map.testnet.ssh_extra_args == '-o UserKnownHostsFile=/dev/null'
+          - zenoh_portal_url_map.testnet == 'https://portal.testnet.mesh.testnet.invalid'
+          - zenoh_uri_san_scheme_map.testnet == 'urn:goat-testnet:vendor='
+          # Maps the file leaves out stay unmapped for it: the play still refuses.
+          - "'testnet' not in zenoh_router_endpoint_map"
+          - "'testnet' not in zenoh_observer_uri_san_scheme_map"
+          # Every built-in entry is unchanged.
+          - netbird_site_url_map | dict2items | rejectattr('key', 'equalto', 'testnet') | items2dict == _builtin.netbird_site_url_map
+          - ory_site_kratos_admin_host_map | dict2items | rejectattr('key', 'equalto', 'testnet') | items2dict == _builtin.ory_site_kratos_admin_host_map
+          - zenoh_portal_url_map | dict2items | rejectattr('key', 'equalto', 'testnet') | items2dict == _builtin.zenoh_portal_url_map
+          - zenoh_uri_san_scheme_map | dict2items | rejectattr('key', 'equalto', 'testnet') | items2dict == _builtin.zenoh_uri_san_scheme_map
+        quiet: true
+      when: test_expect_merge | default(true) | bool
+
+    - name: No file, no change
+      ansible.builtin.assert:
+        that:
+          - netbird_site_url_map == _builtin.netbird_site_url_map
+          - ory_site_kratos_admin_host_map == _builtin.ory_site_kratos_admin_host_map
+          - zenoh_portal_url_map == _builtin.zenoh_portal_url_map
+        quiet: true
+      when: not (test_expect_merge | default(true) | bool)

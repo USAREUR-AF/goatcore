@@ -90,7 +90,7 @@ the routers hold the previous generation's key material and every handshake fail
 ./gen-cas.sh
 
 # Either the image this repo already pins (see roles/goat-zenoh/defaults/main.yml):
-export ZENOH_IMAGE='ghcr.io/<org>/zenoh-pqc@sha256:372de39d2e8b64fe7157194173f1b7ac6eac2700ff04c49cce2ce3c284a6fdb2'
+export ZENOH_IMAGE='ghcr.io/<org>/zenoh-pqc:sha-36b4e91@sha256:d838142b61cb338043efae6ac0916a86315c005566446a68e0c83ae735eb7042'
 # …or pin your own upstream digest:
 #   docker buildx imagetools inspect eclipse/zenoh:1.9.0 --format '{{.Manifest.Digest}}'
 #   export ZENOH_IMAGE="eclipse/zenoh@sha256:<that digest>"

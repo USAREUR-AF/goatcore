@@ -1,0 +1,13 @@
+# A fictional goatnet's own entries, one per map, not keyed by site.
+netbird_site_url_map: https://mgmt.testnet.invalid
+netbird_site_env_var_map: TESTNET_NB_API_TOKEN
+ory_site_kratos_admin_host_map:
+  delegate_host_name: kratos-admin-testnet
+  ssh_host: testnet-core-a
+  ssh_user: goat
+  kratos_admin_url: http://127.0.0.1:4434
+  auth_url: https://auth.testnet.mesh.testnet.invalid
+  ssh_extra_args: -o UserKnownHostsFile=/dev/null
+  host_key_checking: true
+zenoh_portal_url_map: https://portal.testnet.mesh.testnet.invalid
+zenoh_uri_san_scheme_map: 'urn:goat-testnet:vendor='

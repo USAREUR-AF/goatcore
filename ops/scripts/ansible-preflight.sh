@@ -362,6 +362,9 @@ ops/ansible/mgmt-host.yml
 #
 # Resolution order: $GOAT_ANSIBLE_TRUNK_REMOTE, else a remote named `usareur-af`
 # if one exists, else `origin`. Repos with a single remote are unaffected.
+# The branch is $GOAT_ANSIBLE_TRUNK_BRANCH, else `main` (fresh-source.sh reads
+# the same variable).
+TRUNK_BRANCH="${GOAT_ANSIBLE_TRUNK_BRANCH:-main}"
 if [ -n "${GOAT_ANSIBLE_TRUNK_REMOTE:-}" ]; then
   TRUNK_REMOTE="$GOAT_ANSIBLE_TRUNK_REMOTE"
 elif git -C "$REPO_ROOT" remote get-url usareur-af >/dev/null 2>&1; then
@@ -369,8 +372,8 @@ elif git -C "$REPO_ROOT" remote get-url usareur-af >/dev/null 2>&1; then
 else
   TRUNK_REMOTE="origin"
 fi
-if ! git -C "$REPO_ROOT" rev-parse --verify --quiet "$TRUNK_REMOTE/main" >/dev/null 2>&1 \
-   && [ "$TRUNK_REMOTE" != "origin" ]; then
+if ! git -C "$REPO_ROOT" rev-parse --verify --quiet "$TRUNK_REMOTE/$TRUNK_BRANCH" >/dev/null 2>&1 \
+   && [ "$TRUNK_REMOTE" != "origin" ] && [ "$TRUNK_BRANCH" = main ]; then
   echo "ansible-preflight: $TRUNK_REMOTE/main not present, falling back to origin/main" >&2
   TRUNK_REMOTE="origin"
 fi
@@ -390,7 +393,7 @@ if ! trunk_sha="$("$SCRIPT_DIR/fresh-source.sh" "${FS_ARGS[@]}")"; then
   echo "ansible-preflight: REFUSE — see fresh-source above. Bypass only with a reason: GOAT_SKIP_ANSIBLE_PREFLIGHT=1 <your command>" >&2
   exit 1
 fi
-TRUNK_CMP="${trunk_sha:-$TRUNK_REMOTE/main}"
+TRUNK_CMP="${trunk_sha:-$TRUNK_REMOTE/$TRUNK_BRANCH}"
 STALE_CRITICAL=""
 for path in $SAFETY_CRITICAL_PATHS; do
   [ -f "$REPO_ROOT/$path" ] || continue
@@ -401,7 +404,7 @@ for path in $SAFETY_CRITICAL_PATHS; do
 done
 if [ -n "$STALE_CRITICAL" ]; then
   {
-    echo "ansible-preflight: REFUSE — this checkout differs from $TRUNK_REMOTE/main in a SAFETY-CRITICAL path:"
+    echo "ansible-preflight: REFUSE — this checkout differs from $TRUNK_REMOTE/$TRUNK_BRANCH in a SAFETY-CRITICAL path:"
     printf '%s' "$STALE_CRITICAL"
     echo ""
     echo "These files decide whether traefik keeps its ACME certificate resolver."
@@ -411,7 +414,7 @@ if [ -n "$STALE_CRITICAL" ]; then
     echo "now happened twice."
     echo ""
     echo "If you did not deliberately change these files, fast-forward this worktree"
-    echo "onto $TRUNK_REMOTE/main (or rebase your branch onto it) and re-run."
+    echo "onto $TRUNK_REMOTE/$TRUNK_BRANCH (or rebase your branch onto it) and re-run."
     echo ""
     echo "If you ARE deliberately changing them, this refusal is the point: land the"
     echo "change first, then deploy from a checkout that carries it. Bypass only with"

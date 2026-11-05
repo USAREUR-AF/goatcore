@@ -47,51 +47,8 @@
 # ALTER ROLE resets the password on every run (so rotation is just re-run).
 # Role gets SELECT on public.peers ONLY — no setup_keys, no users, no spock.
 
-- name: Create 'admit_audit' PG role if missing
-  ansible.builtin.command:
-    argv:
-      - docker
-      - exec
-      - -e
-      - "PGPASSWORD={{ postgres_superuser_password }}"
-      - postgres-a
-      - psql
-      - -U
-      - postgres
-      - -d
-      - postgres
-      - -v
-      - ON_ERROR_STOP=1
-      - -c
-      - |
-        DO $$
-        BEGIN
-          IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '{{ pg_admit_audit_role }}') THEN
-            CREATE ROLE {{ pg_admit_audit_role }} LOGIN;
-          END IF;
-        END
-        $$;
-  changed_when: false
-
-- name: Set 'admit_audit' role password (idempotent-on-rotate)
-  ansible.builtin.command:
-    argv:
-      - docker
-      - exec
-      - -e
-      - "PGPASSWORD={{ postgres_superuser_password }}"
-      - postgres-a
-      - psql
-      - -U
-      - postgres
-      - -d
-      - postgres
-      - -v
-      - ON_ERROR_STOP=1
-      - -c
-      - "ALTER ROLE {{ pg_admit_audit_role }} WITH PASSWORD '{{ admit_audit_password }}';"
-  changed_when: true
-  no_log: true
+- name: Create the admit_audit PG role, set its password and grant (primary only)
+  ansible.builtin.import_tasks: pg-role.yml
 
 - name: Ensure pg_hba.conf admits admit_audit from the docker compose network
   # The admit-audit sidecar connects from inside the docker compose mgmt
@@ -108,60 +65,6 @@
       fi
   changed_when: true
   no_log: true
-
-- name: Grant CONNECT on target DB to 'admit_audit' role
-  ansible.builtin.command:
-    argv:
-      - docker
-      - exec
-      - -e
-      - "PGPASSWORD={{ postgres_superuser_password }}"
-      - postgres-a
-      - psql
-      - -U
-      - postgres
-      - -d
-      - postgres
-      - -v
-      - ON_ERROR_STOP=1
-      - -c
-      - "GRANT CONNECT ON DATABASE {{ pg_admit_audit_db }} TO {{ pg_admit_audit_role }};"
-  changed_when: false
-
-# Grant SELECT on public.peers only. Wrapped in a DO block so the role
-# no-ops cleanly if Netbird hasn't migrated the schema yet (greenfield
-# ordering: this role can run before the first management-a start, and
-# the table materializes later).
-- name: Grant SELECT on public.peers to 'admit_audit' (best-effort)
-  ansible.builtin.command:
-    argv:
-      - docker
-      - exec
-      - -e
-      - "PGPASSWORD={{ postgres_superuser_password }}"
-      - postgres-a
-      - psql
-      - -U
-      - postgres
-      - -d
-      - "{{ pg_admit_audit_db }}"
-      - -v
-      - ON_ERROR_STOP=0
-      - -c
-      - |
-        DO $$
-        BEGIN
-          IF EXISTS (
-            SELECT 1 FROM information_schema.tables
-            WHERE table_schema = 'public' AND table_name = 'peers'
-          ) THEN
-            EXECUTE 'GRANT USAGE ON SCHEMA public TO {{ pg_admit_audit_role }}';
-            EXECUTE 'GRANT SELECT ON public.peers TO {{ pg_admit_audit_role }}';
-          END IF;
-        END
-        $$;
-  changed_when: false
-  failed_when: false
 
 # ---------------------------------------------------------------------------
 # 2. Copy the compose overlay + IOC rules file.

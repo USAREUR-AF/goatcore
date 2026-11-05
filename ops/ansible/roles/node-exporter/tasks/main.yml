@@ -95,7 +95,7 @@
   ansible.builtin.shell:
     cmd: >-
       set -o pipefail;
-      curl -s --max-time 10 http://localhost:{{ node_exporter_port }}/metrics
+      curl -s --max-time 10 http://{{ node_exporter_listen_addr | default('localhost', true) or 'localhost' }}:{{ node_exporter_port }}/metrics
       | grep -c '^node_' || true
     executable: /bin/bash
   register: _ne_metric_count

@@ -197,14 +197,16 @@ def main() -> int:
                     help="report attribution for every peer on the goatnet")
     ap.add_argument("--handle", help="report candidates for one person (offboard preflight)")
     ap.add_argument("--site", help="site token used in peer names (default: the goatnet)")
+    ap.add_argument("--url", help="NetBird management URL (default: SITE_URLS[goatnet]); "
+                    "operator-onboard.yml passes its own netbird_site_url_map entry")
     a = ap.parse_args()
 
     if not a.audit and not a.handle:
         ap.error("choose --audit or --handle")
 
-    base = SITE_URLS.get(a.goatnet)
+    base = a.url or SITE_URLS.get(a.goatnet)
     if not base:
-        ap.error(f"unknown goatnet {a.goatnet!r}; add it to SITE_URLS")
+        ap.error(f"unknown goatnet {a.goatnet!r}; add it to SITE_URLS or pass --url")
 
     var = a.goatnet.upper().replace("-", "_") + "_NB_API_TOKEN"
     token = os.environ.get(var, "")

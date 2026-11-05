@@ -151,6 +151,8 @@
     # ory_site_kratos_admin_host_map names the inventory host. The host's
     # connection params are injected via add_host at Phase 2.0 so this
     # playbook stays runnable with `-i localhost,`.
+    # Optional per entry: ssh_port, connection, ssh_extra_args (appended to
+    # the SSH args, e.g. a pinned known_hosts file) and host_key_checking.
     ory_site_kratos_admin_host_map:
       zagros-dev:
         # Reached at its own mesh IP through the goatnet's door (doors.yaml).
@@ -518,6 +520,16 @@
         - not (i_understand_the_enroll_leg_is_retired | default(false) | bool
                and onboard_bootstrap_no_console | default(false) | bool)
 
+    # A goatnet may supply its own entries for the per-site maps above from
+    # ops/ansible/operator-onboard-sites/<env>.yml (an overlay ships it),
+    # merged under its own name only. Play vars outrank group_vars, so this is
+    # the only way in short of -e. See tasks/operator-onboard-site-config.yml.
+    - name: "Load the goatnet's own per-site config, if it ships one"
+      ansible.builtin.include_tasks: tasks/operator-onboard-site-config.yml
+      vars:
+        site: "{{ onboard_env }}"
+        site_config_dir: "{{ playbook_dir }}/operator-onboard-sites"
+
     - name: "Assert manifest file exists"
       ansible.builtin.stat:
         path: "{{ manifest_path }}"
@@ -727,7 +739,8 @@
           - zenoh_trial_site in zenoh_portal_url_map
         fail_msg: |
           Zenoh trial-portal URL not mapped for site '{{ zenoh_trial_site }}'.
-          Add an entry to zenoh_portal_url_map in ops/ansible/operator-onboard.yml.
+          Add an entry to zenoh_portal_url_map in ops/ansible/operator-onboard.yml,
+          or in the goatnet's own ops/ansible/operator-onboard-sites/{{ zenoh_trial_site }}.yml.
       when:
         - manifest.zenoh.enabled
         - onboard_action == 'enroll'
@@ -1105,8 +1118,8 @@
         fail_msg: |
           Site '{{ item }}' is missing from ory_site_kratos_admin_host_map
           in ops/ansible/operator-onboard.yml. Add the {delegate_host_name,
-          ssh_host, ssh_user, kratos_admin_url, auth_url} entry before
-          re-running.
+          ssh_host, ssh_user, kratos_admin_url, auth_url} entry there or in
+          ops/ansible/operator-onboard-sites/{{ item }}.yml before re-running.
       loop: "{{ manifest.ory_site.sites }}"
       when:
         - manifest.ory_site.enabled
@@ -1123,7 +1136,11 @@
         # instead of hanging the whole onboard (a revoke sat >2 min
         # with no output). ConnectTimeout caps the connect; ServerAlive detects
         # a dead session in ~30s; BatchMode refuses an interactive prompt.
-        ansible_ssh_common_args: "-o ConnectTimeout=15 -o ServerAliveInterval=10 -o ServerAliveCountMax=3 -o BatchMode=yes"
+        ansible_ssh_common_args: "-o ConnectTimeout=15 -o ServerAliveInterval=10 -o ServerAliveCountMax=3 -o BatchMode=yes{{ (' ' ~ ory_site_kratos_admin_host_map[item].ssh_extra_args) if ory_site_kratos_admin_host_map[item].ssh_extra_args is defined else '' }}"
+        # A site that pins its host keys (ssh_extra_args naming a known_hosts
+        # file) turns the check on here; ansible.cfg's host_key_checking=false
+        # would otherwise put StrictHostKeyChecking=no ahead of those args.
+        ansible_host_key_checking: "{{ ory_site_kratos_admin_host_map[item].host_key_checking | default(lookup('ansible.builtin.config', 'HOST_KEY_CHECKING')) }}"
         groups: kratos_admin_targets
       loop: "{{ manifest.ory_site.sites }}"
       loop_control:
@@ -1991,13 +2008,12 @@
     # the override still prints them.
     - name: "revoke/NetBird: refuse if this person owns a peer the cut cannot select"
       ansible.builtin.command:
-        argv:
-          - "{{ playbook_dir }}/../scripts/peer-attribution.py"
-          - "{{ item }}"
-          - "--handle"
-          - "{{ manifest.identity.handle }}"
-          - "--site"
-          - "{{ item }}"
+        # --url only for a mapped site: an unmapped one keeps the script's own
+        # refusal rather than a derived guess.
+        argv: >-
+          {{ [playbook_dir ~ '/../scripts/peer-attribution.py', item,
+              '--handle', manifest.identity.handle, '--site', item]
+             + (['--url', netbird_site_url_map[item]] if item in netbird_site_url_map else []) }}
       environment: "{{ {_tokvar: lookup('env', _tokvar)} }}"
       vars:
         _tokvar: "{{ netbird_site_env_var_map[item] | default(item | upper | replace('-', '_') + '_NB_API_TOKEN') }}"
@@ -2201,7 +2217,11 @@
         ansible_connection: "{{ ory_site_kratos_admin_host_map[item].connection | default('ssh', true) }}"
         # P1.4 — bound the SSH transport (see enroll Phase 2.0); harmless when
         # the test overrides connection to 'local'.
-        ansible_ssh_common_args: "-o ConnectTimeout=15 -o ServerAliveInterval=10 -o ServerAliveCountMax=3 -o BatchMode=yes"
+        ansible_ssh_common_args: "-o ConnectTimeout=15 -o ServerAliveInterval=10 -o ServerAliveCountMax=3 -o BatchMode=yes{{ (' ' ~ ory_site_kratos_admin_host_map[item].ssh_extra_args) if ory_site_kratos_admin_host_map[item].ssh_extra_args is defined else '' }}"
+        # A site that pins its host keys (ssh_extra_args naming a known_hosts
+        # file) turns the check on here; ansible.cfg's host_key_checking=false
+        # would otherwise put StrictHostKeyChecking=no ahead of those args.
+        ansible_host_key_checking: "{{ ory_site_kratos_admin_host_map[item].host_key_checking | default(lookup('ansible.builtin.config', 'HOST_KEY_CHECKING')) }}"
         groups: kratos_admin_targets
       loop: "{{ manifest.ory_site.sites }}"
       loop_control:

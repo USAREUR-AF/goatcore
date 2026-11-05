@@ -87,6 +87,9 @@ struct Site {
     join_founder_group: String,
     acl_site: String,
     mgmt_fqdn: String,
+    /// `traefik_acme_dns_provider` (the script's ACME_DNS_PROVIDER): `azure`
+    /// changes the phase-7 ACME command; anything else is the Cloudflare path.
+    acme_dns_provider: String,
     intra_pair: bool,
     obs: bool,
     obs_why: String,
@@ -292,6 +295,7 @@ fn read_site(repo: &Path, o: &Options) -> Result<Site> {
         join_founder_group,
         acl_site,
         mgmt_fqdn: gv_first(&gv, "public_mgmt_fqdn"),
+        acme_dns_provider: gv_first(&gv, "traefik_acme_dns_provider"),
         intra_pair: gv_matches(&gv, "intra_site_pair", "true"),
         obs,
         obs_why,
@@ -429,7 +433,13 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
         ev.push(p(6, "A", format!("[joiner] founder-side mirror (spock-mesh-wire on {}, peer={site} only — both-direction subscriptions)", or_q(jfg)), format!("cd '{r}/ops/ansible' && {{ [ -n '{jfg}' ] || {{ echo 'joiner: join_founder_site not set in group_vars/{g}/vars.yml'; exit 1; }}; }} && {pre} {inv} spock-mesh-wire.yml --limit {jfg} -e '{{\"inter_site_spock_peers\":[\"{site}\"]}}'")));
     }
     if internet {
-        ev.push(p(7, "A", "[internet] public TLS certificate (traefik-acme)".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} traefik-acme.yml -e target={g} -e cf_api_token=\"$(printenv CLOUDFLARE_API_TOKEN_{u})\"")));
+        // Azure DNS-01: the play reads the service principal from the group's
+        // env lookups; the `test -n` lets standup-phase-run name an empty secret.
+        if s.acme_dns_provider == "azure" {
+            ev.push(p(7, "A", "[internet] public TLS certificate (traefik-acme)".into(), format!("cd '{r}/ops/ansible' && test -n \"$(printenv AZURE_DNS_CLIENT_SECRET_{u})\" && {pre} {inv} traefik-acme.yml -e target={g}")));
+        } else {
+            ev.push(p(7, "A", "[internet] public TLS certificate (traefik-acme)".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} traefik-acme.yml -e target={g} -e cf_api_token=\"$(printenv CLOUDFLARE_API_TOKEN_{u})\"")));
+        }
         ev.push(p(7, "T", "[internet] generate relay inventory from terraform".into(), format!("'{r}/ops/ansible/inventory/generate-relays.sh' {site} terraform-{site}")));
         ev.push(p(7, "A", "[internet] relay tier (coturn + rathole + TLS renewal)".into(), format!("cd '{r}/ops/ansible' && umask 077 && VF=$(mktemp -t goat-relay-vars.XXXXXX) && printf 'nb_relay_auth_secret: \"%s\"\\nrelay_secret: \"%s\"\\ncloudflare_api_token: \"%s\"\\n' \"$(printenv {u}_RELAY_SECRET)\" \"$(printenv {u}_RELAY_SECRET)\" \"$(printenv CLOUDFLARE_API_TOKEN_{u})\" > \"$VF\" && {pre} -i inventory/hosts-{site}.ini relay-server.yml -e @\"$VF\"; rc=$?; rm -f \"$VF\"; exit $rc")));
         if s.joiner {
@@ -488,6 +498,11 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
     ev.push(p(12, "A", "onboarding intake front desk (public, ADR 1062 stage 1)".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} onboard-intake-deploy.yml -e target={g} -e site_id={site}")));
     ev.push(p(12, "A", "onboard-runner (auto-mint on approval, ADR 1062 stage 3)".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} onboard-runner-deploy.yml -e target={g} -e site_id={site}")));
     ev.push(p(12, "A", "grant-keyd (encryption key distribution)".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} grant-keyd-deploy.yml -e target={g} -l 'mgmt-{site}-01*'")));
+    // The site services site-services.yml imports, which no other phase runs:
+    // each only when the site's vars.yml sets its flag, on the founder mgmt host,
+    // and a failed play fails the step.
+    ev.push(p(12, "A", "id-admin console (single-homed admin surface; opt-in via id_admin_console_enabled)".into(), format!("cd '{r}/ops/ansible' && if grep -qE '^id_admin_console_enabled:[[:space:]]*true' group_vars/{g}/vars.yml 2>/dev/null; then {pre} {inv} id-admin-console-deploy.yml -e target={g} -l 'mgmt-{site}-01*'; else echo 'id_admin_console_enabled not true for {g} — console not requested, skipping'; fi")));
+    ev.push(p(12, "A", "isitup status page (opt-in via isitup_enabled)".into(), format!("cd '{r}/ops/ansible' && if grep -qE '^isitup_enabled:[[:space:]]*true' group_vars/{g}/vars.yml 2>/dev/null; then {pre} {inv} isitup-deploy.yml -e target={g} -l 'mgmt-{site}-01*'; else echo 'isitup_enabled not true for {g} — status page not requested, skipping'; fi")));
     ev.push(p(12, "A", "notional pub/sub (synthetic vendors — opt-in via synth_vendors_enabled)".into(), format!("cd '{r}/ops/ansible' && {{ [ ! -e group_vars/{g}/synth-vendors.yml ] || [ -r group_vars/{g}/synth-vendors.yml ] || {{ echo 'cannot read group_vars/{g}/synth-vendors.yml' >&2; false; }}; }} && if grep -qE '^[[:space:]]*synth_vendors_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' group_vars/{g}/synth-vendors.yml 2>/dev/null; then {pre} {inv} zagros-zenoh-synth-vendors-deploy.yml -e target={g}; else echo 'synth_vendors_enabled not true for {g} — notional pub/sub not requested, skipping'; fi")));
     if s.obs {
         ev.push(Event::LegJoin { leg: "stack", at: 13 });
@@ -1331,11 +1346,13 @@ mod tests {
     #[test]
     fn dag_is_read_and_matches_labels_past_their_profile_tag() {
         let dag = load_dag(&repo_root());
-        assert_eq!(dag.len(), 12);
+        assert_eq!(dag.len(), 14);
         assert_eq!(dag_lookup(&dag, "declared NetBird ACL: groups, then policies, then enforce (one play run)").unwrap().id, "acl");
         assert_eq!(dag_lookup(&dag, "portal (registry, certificate minting, grant rows)").unwrap().id, "portal");
         assert_eq!(dag_lookup(&dag, "[internet] mesh CoreDNS (only if this site has a mesh zone)").unwrap().id, "mesh-dns");
         assert!(dag_lookup(&dag, "mint the pubsub-state mirror bot on the obs host's Forgejo").is_none());
+        assert_eq!(dag_lookup(&dag, "id-admin console (single-homed admin surface; opt-in via id_admin_console_enabled)").unwrap().id, "id-console");
+        assert_eq!(dag_lookup(&dag, "isitup status page (opt-in via isitup_enabled)").unwrap().id, "isitup");
     }
 
     #[test]
@@ -1372,7 +1389,7 @@ mod tests {
             state_dir: t.display().to_string(), ansible_pre: String::new(), inv: "", profile: "lan".into(), joiner: false,
             join_founder_site: String::new(), join_founder_group: String::new(), acl_site: "zagros".into(), mgmt_fqdn: String::new(),
             intra_pair: false, obs: false, obs_why: String::new(), group_vars_exists: true, lite: false, nb_token_available: false,
-            owner_email: "$OWNER_EMAIL".to_string(),
+            acme_dns_provider: String::new(), owner_email: "$OWNER_EMAIL".to_string(),
         };
         let mk = |id: &str, needs: &[&str], cmd: &str| Queued { id: id.into(), needs: needs.iter().map(|x| x.to_string()).collect(), label: id.into(), cmd: cmd.into() };
         // The repository root: a step runs through its ops/scripts/standup-phase-run.
@@ -1397,7 +1414,7 @@ mod tests {
             state_dir: "/s".into(), ansible_pre: "PRE".into(), inv: "INV", profile: "lan".into(), joiner,
             join_founder_site: if joiner { "alpha".into() } else { String::new() }, join_founder_group: if joiner { "alpha_hosts".into() } else { String::new() },
             acl_site: "zagros".into(), mgmt_fqdn: String::new(), intra_pair: false, obs: false, obs_why: String::new(),
-            group_vars_exists: true, lite: false, nb_token_available: false, owner_email: "$OWNER_EMAIL".to_string(),
+            group_vars_exists: true, lite: false, nb_token_available: false, acme_dns_provider: String::new(), owner_email: "$OWNER_EMAIL".to_string(),
         }
     }
 
@@ -1682,7 +1699,7 @@ mod tests {
             state_dir: "/h/.goat/state".into(), ansible_pre: "PRE".into(), inv: INV, profile: "lan".into(), joiner: false,
             join_founder_site: String::new(), join_founder_group: String::new(), acl_site: "pasture".into(), mgmt_fqdn: "mgmt.pasture.lan".into(),
             intra_pair: false, obs: false, obs_why: String::new(), group_vars_exists: false, lite, nb_token_available,
-            owner_email: if lite { "a.learner@example.org".to_string() } else { "$OWNER_EMAIL".to_string() },
+            acme_dns_provider: String::new(), owner_email: if lite { "a.learner@example.org".to_string() } else { "$OWNER_EMAIL".to_string() },
         }
     }
 
