@@ -46,7 +46,7 @@ change across all of them.
 | [`ops/ansible/roles/goat-zenoh/defaults/main.yml`](../../ops/ansible/roles/goat-zenoh/defaults/main.yml) | same shape with `goat_zenoh_*` prefix |
 | [`ops/zenoh/pqc-image/Dockerfile`](../../ops/zenoh/pqc-image/Dockerfile) | `ZENOH_TAG=1.9.0` + `UPSTREAM_IMAGE=eclipse/zenoh:1.9.0@sha256:<same digest as the role pin>`; on bump also re-apply `patches/zenohd-pqc-aws-lc-rs.patch` (git-apply fails loudly if upstream moves `main()`) and re-verify the three F-247 provider-install sites |
 | [`ops/zenoh/pqc-image/Dockerfile.fips`](../../ops/zenoh/pqc-image/Dockerfile.fips) | `ZENOH_TAG=1.9.0` + `ROCKSDB_BACKEND_TAG=1.9.0` (matched-pair glibc plugin build); on bump re-apply `patches/zenohd-fips-aws-lc-fips.patch` and re-check the backend-traits `default-features` sed still matches the rocksdb manifest. **`AWS_LC_FIPS_SYS_VERSION=0.13.11` does NOT move on a zenoh bump** — it pins the CMVP #5298/#5314-validated AWS-LC FIPS 3.1.0 source and only changes when a newer module version is certificated (zenoh-pqc-tls.md §5) |
-| `ops/ansible/group_vars/nova_hosts/vars.yml` | `nova_zenoh_image: "ghcr.io/usareur-af/zenoh-pqc@sha256:<list digest>"` — the nova-a standing PQ canary (ADR 1079); a zenoh bump rebuilds zenoh-pqc on the new tag and this pin moves to the NEW list digest (+ deploy-history top row), not back to upstream |
+| `ops/ansible/group_vars/nova_hosts/vars.yml` | `zenoh_router_image: "ghcr.io/usareur-af/zenoh-pqc@sha256:<list digest>"` — the nova-a standing PQ canary (ADR 1079); a zenoh bump rebuilds zenoh-pqc on the new tag and this pin moves to the NEW list digest (+ deploy-history top row), not back to upstream |
 | Any future zenoh-using crate | `zenoh = "=1.9.0"` |
 
 ## What NOT to use

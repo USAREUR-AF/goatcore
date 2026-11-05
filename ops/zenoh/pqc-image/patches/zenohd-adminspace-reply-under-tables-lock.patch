@@ -29,7 +29,7 @@ index 6e6e23a..24f8cfd 100644
 +    // mid-walk leaves this thread waiting on a read it already holds, the
 +    // writer waiting on this thread, and every other reader (routing, REST,
 +    // healthcheck) waiting behind the writer: the router wedges. Reproduced on
-+    // zagros-dev: admin walks alone and declaration churn alone never wedge;
++    // On a dev goatnet: admin walks alone and declaration churn alone never wedge;
 +    // both together wedge within 34 s with this exact stack.
 +    let replies: Vec<(KeyExpr<'static>, ZBytes)> = {
 +        let tables = &context.runtime.state.router.tables;

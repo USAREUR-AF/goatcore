@@ -8,7 +8,7 @@
 # ${VAR:?} / ${VAR:-} forms. A variable appears here because something
 # consumes it, which is the only claim this file is entitled to make.
 #
-# 1375 variables, 387 of them secret-bearing by name.
+# 1377 variables, 388 of them secret-bearing by name.
 #
 # THIS FILE HOLDS NO VALUES AND NEVER WILL. Credentials live in the store.
 # .envrc.local.d/*.refs hold references, mode 0600 (ADR 1186).
@@ -290,7 +290,7 @@ export <ENV>_ZULIP_OIDC_CLIENT_SECRET=""  # SECRET
 #
 # Every line here is credential material. Blast radius and rotation cost p
 # er class: docs/design/credential-inventory.md.
-# 194 variables.
+# 195 variables.
 # ==========================================================================
 
 # ops/compose/mgmt-host/docker-compose.admit-audit.yml
@@ -794,6 +794,9 @@ export SALTLICK_IMAGE=""  # SECRET
 # ops/compose/mgmt-host/docker-compose.yml, signal-server/cmd/signal-server/main.go
 export SIGNAL_FEDERATION_TOKEN=""  # SECRET
 
+# ops/ansible/site-oidc-clients.yml
+export SITE_COMPLIANCE_OIDC_CLIENT_SECRET=""  # SECRET
+
 # ops/ci/check-group-vars-parity.sh
 export SITE_SLOT_POOL_SALT=""  # SECRET
 
@@ -880,7 +883,7 @@ export ZH_KEY=""  # SECRET
 #
 # Named here because something reads them, so a missing one breaks a run t
 # he same way a missing secret does.
-# 966 variables.
+# 967 variables.
 # ==========================================================================
 
 # ops/federation-partnerenv/drill/lib/common.sh
@@ -1104,6 +1107,9 @@ export CANONICAL_RATE=""
 
 # ops/zenoh/wedge-loadtest/scripts/rig-harness.sh
 export CARDINALITY=""
+
+# ops/oss/binary_match.py
+export CARGO_HOME=""
 
 # ops/identity/cac-live-test/catcher.py
 export CATCHER_MODE=""

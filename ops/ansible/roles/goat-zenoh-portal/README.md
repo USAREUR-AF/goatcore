@@ -40,7 +40,7 @@ Zenoh trial fabric onto a single host (nova-a). Per design at
 | `portal_acl_reload_fake` | skip SIGHUP step (marker edits still run) | `false` |
 | `portal_ca_bundle_dir` | mounted ro into container | `/etc/nova-ca` |
 | `portal_age_identity_path` | mounted ro into container | `/etc/nova-age/keys.txt` |
-| `portal_nova_root_cert` | path inside container | `/etc/nova-ca/root-cert.pem` |
+| `portal_ca_root_cert` | path inside container | `/etc/nova-ca/root-cert.pem` |
 | `portal_onboarding_packet_path` | mounted ro inside container | `/etc/goat-zenoh-portal/zenoh-trial-onboarding.md` |
 | `portal_operator_api_key` | env-supplied; required | (env: `PORTAL_OPERATOR_API_KEY`) |
 | `portal_operator_approval_required` | flips first-cohort vendor approval | `true` |

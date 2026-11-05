@@ -10,7 +10,7 @@
 # The shapes this catches, each a default that names one goatnet:
 #
 #   goat-zenoh          zenoh_stack: "<goatnet>-zenoh"
-#                       <goatnet>_router_leaf_cert_path -> ../enrollment/<goatnet>/
+#                       zenoh_router_leaf_cert_path -> ../enrollment/<goatnet>/
 #   goat-zenoh-portal   portal_cert_sign_ca_id: "dev-<goatnet>-ca-ecdsa-..."
 #                       portal_ca_bundle_dir: "/etc/<goatnet>-ca"
 #   lan-coredns         lan_coredns_zone_dir: ../dns/<goatnet>-lan
@@ -38,7 +38,7 @@ EXEMPT='^ops/ansible/roles/nova-lan-[a-z-]+/'
 # guard's own remediation.
 scan() {
   # VALUE side only. A variable NAME may carry a legacy goatnet word
-  # (<goatnet>_ca_root_cert_path) while its value is correct; renaming those
+  # (goat_ca_root_cert_path) while its value is correct; renaming those
   # keys is a separate change with its own blast radius across every group_vars
   # that sets them. What must not name a goatnet is what the role USES.
   grep -rnE "^[a-z_]+:" ops/ansible/roles/*/defaults/main.yml 2>/dev/null \

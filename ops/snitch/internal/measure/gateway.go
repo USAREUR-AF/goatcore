@@ -94,7 +94,7 @@ func lookupARP(ctx context.Context, ip string) string {
 }
 
 // normalizeMac pads single-digit hex octets and converts dash separators
-// to colons: "0-1A-2:3:4:5" → "00:1a:02:03:04:05". Cross-platform: Linux // opsec-allow: synthetic example
+// to colons: "0-1A-2:3:4:5" → "00:1a:02:03:04:05". Cross-platform: Linux  // opsec-allow: synthetic example MAC
 // + Darwin emit colon-separated MACs; Windows arp -a emits dash-separated.
 func normalizeMac(mac string) string {
 	mac = strings.ReplaceAll(mac, "-", ":")

@@ -311,10 +311,10 @@ SNAPSHOT_DEFAULT_TTL = 30 * 24 * 3600  # 30 days
 def snapshot_render(scalars, records, prev, bindings=None):
     """Render the snapshot dict; serial/generated_at carry over unless content changed."""
     site_id, zone = scalars["site_id"], scalars["site_dns_zone"]
-    ca_id = scalars.get("name_snapshot_ca_id") or scalars.get("nova_ca_id")
+    ca_id = scalars.get("name_snapshot_ca_id") or scalars.get("goat_ca_id")
     if not ca_id:
         sys.stderr.write(f"ERROR: {site_id}: name_snapshot_enabled but no "
-                         f"name_snapshot_ca_id / nova_ca_id in group_vars — the snapshot "
+                         f"name_snapshot_ca_id / goat_ca_id in group_vars — the snapshot "
                          f"must name its signing CA (fail closed)\n")
         sys.exit(2)
     body = {

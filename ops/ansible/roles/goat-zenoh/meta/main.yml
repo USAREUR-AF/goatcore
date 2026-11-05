@@ -16,4 +16,4 @@ dependencies:
     vars:
       rollback_component: nova-zenoh
       rollback_artifact_type: image
-      rollback_ref: "{{ nova_zenoh_image }}"
+      rollback_ref: "{{ zenoh_router_image }}"

@@ -87,7 +87,7 @@ type config struct {
 func parseFlags() config {
 	var (
 		dsn      = flag.String("dsn", envDefault("ADMIT_AUDIT_DSN", "postgres://admit_audit@127.0.0.1:5432/netbird?sslmode=disable"), "read-only Postgres DSN")
-		site     = flag.String("site", envDefault("SITE_NAME", ""), "site label (required; e.g. vega-a)")
+		site     = flag.String("site", envDefault("SITE_NAME", ""), "site label (required; e.g. alpha)")
 		poll     = flag.Duration("poll", 30*time.Second, "poll interval")
 		window   = flag.Duration("window", 5*time.Minute, "rolling window for burst/density metrics")
 		listen   = flag.String("listen", "127.0.0.1:9124", "listen addr for /metrics")

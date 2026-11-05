@@ -792,12 +792,22 @@ async fn run_move(ctx: &super::Ctx, a: MoveArgs) -> anyhow::Result<()> {
     // Warrant owns membership on a governed scope (mesh-change-control.md
     // §4.5): the mesh leg becomes an entry in the declaration, never a live
     // write. An ungoverned scope never enters this block.
-    let governed = mesh_plane && super::warrant::is_governed(&env);
+    let governance = if mesh_plane {
+        Some(super::warrant::governance(&env, &ctx.profile, &nb).await)
+    } else {
+        None
+    };
+    let governed = governance.is_some_and(|g| g.governed);
+    if let Some(g) = governance.filter(|g| g.governed) {
+        eprintln!("`{env}` membership is governed by warrant — {}", g.because());
+    }
     if a.write_entry && !governed {
         anyhow::bail!(
             "--write-entry applies only on a scope governed by warrant \
-             (ops/warrant/membership/<scope>/_scope.yaml says `converge: enforce`); \
-             `{env}` is not governed"
+             (its `_scope.yaml` says `converge: enforce`); `{env}` is not governed{}",
+            governance
+                .map(|g| format!(" — {}", g.because()))
+                .unwrap_or_default()
         );
     }
     if governed && (a.apply || a.write_entry) {

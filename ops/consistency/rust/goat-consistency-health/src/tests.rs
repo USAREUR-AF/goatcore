@@ -243,6 +243,9 @@ fn consistency_dir() -> std::path::PathBuf {
 /// from the committed public-keys set — never from the artifact.
 #[test]
 fn a_tampered_or_unsigned_artifact_is_refused_and_reverting_is_green() {
+    if !has_committed_intent() {
+        return; // the signed intent artifacts are this deployment's
+    }
     let dir = std::env::temp_dir().join(format!("gch-tamper-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("intent.json");

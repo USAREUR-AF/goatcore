@@ -50,7 +50,7 @@ The URL path minus the leading `/` is the key-expression; the request `Content-T
 
 ### Identity + ACL — unchanged machinery
 
-The bridge introduces **no new identity path**. The leaf is minted by the same portal/bootstrap flow (`bootstrap-demogame-portal.sh`, `CN=<vendor>-trial-peer`, URI-SAN `urn:goat-nova:vendor=<vendor>`), and the ACL grant comes from adding the vendor to `nova_seed_vendors` — which renders the subject (`cert_common_names: ["<vendor>-trial-peer"]`), the write rule (`put`/`delete` ingress on `<vendor>/**`), and the storage. For demogame: `CN=demogame-trial-peer` → `demogame/**`.
+The bridge introduces **no new identity path**. The leaf is minted by the same portal/bootstrap flow (`bootstrap-demogame-portal.sh`, `CN=<vendor>-trial-peer`, URI-SAN `urn:goat-nova:vendor=<vendor>`), and the ACL grant comes from adding the vendor to `zenoh_seed_vendors` — which renders the subject (`cert_common_names: ["<vendor>-trial-peer"]`), the write rule (`put`/`delete` ingress on `<vendor>/**`), and the storage. For demogame: `CN=demogame-trial-peer` → `demogame/**`.
 
 ## Security
 
@@ -64,7 +64,7 @@ Deployed as a sidecar in the publisher's compose project, on the shared router n
 
 **Turnkey order for a new publisher:**
 1. Mint the vendor leaf (portal / bootstrap script); place cert + key on the host.
-2. Add the vendor to `nova_seed_vendors`; re-render the router (`zenoh-deploy.yml`).
+2. Add the vendor to `zenoh_seed_vendors`; re-render the router (`zenoh-deploy.yml`).
 3. Add the sidecar service to the publisher's compose + repoint its publish endpoint; deploy.
 4. Confirm topics flow in panoscope.
 
