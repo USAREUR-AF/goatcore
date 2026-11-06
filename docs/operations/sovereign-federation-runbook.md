@@ -44,7 +44,8 @@ never does. Their side mirrors it exactly.
       below is mechanical; that is the decision. The names each router presents are derived from
       the agreement, not agreed by hand (Step 2).
 - [ ] A host you control to run the edge router on. It does not need to be powerful. It must not
-      be a machine that already runs your core fabric.
+      be a machine that already runs your core fabric. It is a peer of your own mesh in node class
+      `PEERING-EDGE`, which lets it reach only your core router's fabric port (ADR 1219).
 
 ---
 

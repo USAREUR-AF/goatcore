@@ -1,4 +1,4 @@
-# ADR 1219 — A peering edge that stays a mesh peer holds `PEERING-EDGE`: it reaches only the core router's fabric TLS port, and only platform admins reach it
+# ADR 1219 — A peering edge holds `PEERING-EDGE`: it reaches only the core router's fabric TLS port, and only platform admins reach it
 
 | Field | Value |
 |---|---|
@@ -13,10 +13,10 @@
 
 ## TL;DR (for a layperson)
 
-A federation edge is the one machine that holds a partner's certificate authority. ADR 1157 puts
-it on neither party's network. A deployment that keeps its edge enrolled on its own mesh instead
-needs that machine fenced: if it is ever compromised, it should be able to reach nothing it does
-not already reach for its job. This decision names the fence. The edge sits in `PEERING-EDGE`
+A federation edge is the one machine that holds a partner's certificate authority. The peering
+tunnel joins neither party's network (ADR 1157); the edge itself is a peer of its own goatnet's
+mesh, because that is how it reaches its own core router. Since it trusts a foreign root, it must
+reach nothing beyond that one connection. The edge sits in `PEERING-EDGE`
 alone; it may open one connection, to the core Zenoh router's TLS port; platform admins may log
 in to it; nothing else on the mesh can reach it, and it can reach nothing else.
 
@@ -37,7 +37,7 @@ on a goatnet with several substrate hosts, `INFRA:7447` is several routers.
 
 ## Decision
 
-1. **`PEERING-EDGE` — a NODE CLASS** for a federation edge router that stays a peer of its own
+1. **`PEERING-EDGE` — a NODE CLASS** for a federation edge router, a peer of its own
    goatnet's mesh. Class name and group name are the same. A peer holding it holds it alone.
    - It initiates only toward `FABRIC-CORE`, on port-set `fabric` tcp (7447, the TLS listener).
      No udp 7448, no web, no DNS, no management plane, no lateral reach, never P2P.
@@ -79,7 +79,7 @@ on a goatnet with several substrate hosts, `INFRA:7447` is several routers.
 
 ## Consequences
 
-**Positive.** A deployment can keep its edge on its own mesh with a declared, asserted fence. A
+**Positive.** The edge reaches its core over its own mesh under a declared, asserted rule. A
 compromised edge reaches only the port its legitimate traffic uses. The live guards classify the
 edge rather than reporting it unclassified.
 
