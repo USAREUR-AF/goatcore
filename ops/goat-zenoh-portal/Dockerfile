@@ -45,7 +45,7 @@ RUN go build \
 # day apart could differ in their base. No renovate in this repo, so refresh it
 # manually: `docker buildx imagetools inspect cgr.dev/chainguard/glibc-dynamic:latest`
 # and update the multi-arch index digest below.
-FROM cgr.dev/chainguard/glibc-dynamic:latest@sha256:5bb932663cff4fb276186720e0357af55c5e47f12e4d9f44ea0060fa3e7bca88
+FROM cgr.dev/chainguard/glibc-dynamic:latest@sha256:671a621016fb33812136dea6182b1db957996d3c8c618187aaf86abd9b14af53
 # The store this image's server opens. The goat-zenoh-portal-store role reads it
 # with `docker image inspect` and refuses to deploy an image whose store differs
 # from the goatnet's declared portal_store. An image without the label predates
