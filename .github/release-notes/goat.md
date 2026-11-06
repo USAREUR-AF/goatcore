@@ -1,6 +1,6 @@
 `goat`, the operator CLI: health, people, topics, publish and subscribe on a goatnet.
 
-**Assets.** `goat-linux-amd64`, `goat-linux-arm64` (both run on glibc 2.31 and later: Ubuntu 20.04, Debian 11 and later), `goat-darwin-amd64` (Intel), `goat-darwin-arm64` (Apple Silicon), `goat-windows-amd64.exe`, each with a `.sha256`; `SHA256SUMS` over all five; `SHA256SUMS.cosign-bundle`, a keyless cosign signature over `SHA256SUMS` made by this repository's release workflow.
+**Assets.** `goat-linux-amd64`, `goat-linux-arm64` (both run on glibc 2.31 and later: Ubuntu 20.04, Debian 11 and later), `goat-darwin-amd64` (Intel), `goat-darwin-arm64` (Apple Silicon), `goat-windows-amd64.exe`, each with a `.sha256`; `goat-docs.tar.gz`, the field guide built from this tag (the site the goat-docs role serves), with its `.sha256`; `SHA256SUMS` over all six; `SHA256SUMS.cosign-bundle`, a keyless cosign signature over `SHA256SUMS` made by this repository's release workflow.
 
 **Download, verify, install.** Replace `<tag>` with this release's tag and `<os>-<arch>` with `linux-amd64`, `linux-arm64`, `darwin-amd64` or `darwin-arm64`; Windows is below.
 

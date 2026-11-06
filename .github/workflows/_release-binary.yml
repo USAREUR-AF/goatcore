@@ -1,7 +1,7 @@
 # Builds one of this repository's command-line binaries for five platforms,
 # signs its checksums, and attaches everything to the GitHub Release of the tag.
 # Called by goat-release.yml and goatbuilder-release.yml; runs with GITHUB_TOKEN
-# alone.
+# alone. A caller that names a docs_script also gets the binary's book.
 #
 # Assets, per release:
 #   <bin>-linux-amd64    ubuntu-24.04,     linked against glibc 2.31 (Ubuntu 20.04, Debian 11 and later)
@@ -12,7 +12,10 @@
 #   <bin>-windows-amd64.exe  windows-latest, MSVC (unless the caller sets
 #                        windows: false)
 #   <asset>.sha256       one per binary
-#   SHA256SUMS           every binary's digest
+#   <docs_asset>         the binary's book, when the caller names a docs_script
+#                        (built on ubuntu-24.04 from this tag's binary), with
+#                        its .sha256
+#   SHA256SUMS           every asset's digest, the book's included
 #   SHA256SUMS.cosign-bundle  a keyless cosign signature over SHA256SUMS, made
 #                        under this workflow's GitHub OIDC identity
 #
@@ -53,6 +56,19 @@ on:
         type: boolean
         required: false
         default: true
+      docs_script:
+        description: >-
+          repository-relative script that builds the binary's book, called as
+          `<script> <binary> <output .tar.gz>` and writing <output>.sha256 beside
+          it; empty builds no book
+        type: string
+        required: false
+        default: ''
+      docs_asset:
+        description: the book's asset name, e.g. goat-docs.tar.gz (required with docs_script)
+        type: string
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -260,9 +276,72 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  docs:
+    name: book ${{ inputs.docs_asset }}
+    needs: [nominator]
+    if: ${{ !cancelled() && inputs.docs_script != '' && (needs.nominator.result == 'success' || needs.nominator.result == 'skipped') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: docs_asset is named
+        env:
+          DOCS_ASSET: ${{ inputs.docs_asset }}
+        run: |
+          set -euo pipefail
+          case "$DOCS_ASSET" in
+            *.tar.gz) ;;
+            *) echo "::error::docs_script is set, so docs_asset must name a .tar.gz (got '${DOCS_ASSET}')"; exit 1 ;;
+          esac
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: crates
+          key: docs-${{ inputs.package }}
+      - name: cargo build --release --locked -p ${{ inputs.package }} (the book carries this binary's --help)
+        working-directory: crates
+        env:
+          PKG: ${{ inputs.package }}
+        run: cargo build --release --locked -p "$PKG"
+      - uses: peaceiris/actions-mdbook@v2
+        with:
+          mdbook-version: '0.5.4'
+      - name: gettext and mdbook-i18n-helpers, for the translated builds
+        timeout-minutes: 10
+        env:
+          MDBOOK_I18N_HELPERS_VERSION: '0.4.0'
+        run: |
+          set -euo pipefail
+          sudo apt-get -o Acquire::Retries=3 -o DPkg::Lock::Timeout=120 update
+          sudo apt-get -o DPkg::Lock::Timeout=120 install -y gettext
+          cargo install --locked mdbook-i18n-helpers --version "=${MDBOOK_I18N_HELPERS_VERSION}"
+      - name: Build the book
+        env:
+          SCRIPT: ${{ inputs.docs_script }}
+          BIN: crates/target/release/${{ inputs.bin }}
+          DOCS_ASSET: ${{ inputs.docs_asset }}
+        run: |
+          set -euo pipefail
+          "./$SCRIPT" "$BIN" "dist/$DOCS_ASSET"
+          test -s "dist/$DOCS_ASSET"
+          (cd dist && sha256sum -c "$DOCS_ASSET.sha256")
+          {
+            echo "### ${DOCS_ASSET}"
+            echo "- size $(du -h "dist/$DOCS_ASSET" | cut -f1), sha256 \`$(awk '{print $1}' "dist/$DOCS_ASSET.sha256")\`"
+            echo "- index.html present: $(tar tzf "dist/$DOCS_ASSET" | grep -cx './index.html' || true)"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.bin }}-docs
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 30
+
   checksums:
     name: SHA256SUMS, signed with cosign (keyless)
-    needs: [build]
+    needs: [build, docs]
+    # docs is skipped for a binary with no book.
+    if: ${{ !cancelled() && needs.build.result == 'success' && (needs.docs.result == 'success' || needs.docs.result == 'skipped') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -299,8 +378,8 @@ jobs:
 
   release:
     name: attach the assets to the release
-    needs: [build, checksums]
-    if: github.ref_type == 'tag' && startsWith(github.ref_name, inputs.tag_prefix)
+    needs: [build, docs, checksums]
+    if: ${{ !cancelled() && github.ref_type == 'tag' && startsWith(github.ref_name, inputs.tag_prefix) && needs.checksums.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:

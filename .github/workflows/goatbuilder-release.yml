@@ -27,5 +27,8 @@ jobs:
       bin: goatbuilder
       tag_prefix: goatbuilder/v
       notes: goatbuilder.md
+      # The book the goat-docs role serves at docs.<site>/goatbuilder/, built from this tag.
+      docs_script: docs/goatbuilder-book/build.sh
+      docs_asset: goatbuilder-docs.tar.gz
       # goatbuilder drives Unix hosts and does not build for Windows.
       windows: false

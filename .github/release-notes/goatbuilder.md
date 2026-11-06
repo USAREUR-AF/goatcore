@@ -1,6 +1,6 @@
 `goatbuilder`, the build, release, deploy and standup tool for a goatnet.
 
-**Assets.** `goatbuilder-linux-amd64`, `goatbuilder-linux-arm64` (both run on glibc 2.31 and later: Ubuntu 20.04, Debian 11 and later), `goatbuilder-darwin-amd64` (Intel), `goatbuilder-darwin-arm64` (Apple Silicon), each with a `.sha256`; `SHA256SUMS` over all four; `SHA256SUMS.cosign-bundle`, a keyless cosign signature over `SHA256SUMS` made by this repository's release workflow.
+**Assets.** `goatbuilder-linux-amd64`, `goatbuilder-linux-arm64` (both run on glibc 2.31 and later: Ubuntu 20.04, Debian 11 and later), `goatbuilder-darwin-amd64` (Intel), `goatbuilder-darwin-arm64` (Apple Silicon), each with a `.sha256`; `goatbuilder-docs.tar.gz`, the goatbuilder book built from this tag, with its `.sha256`; `SHA256SUMS` over all five; `SHA256SUMS.cosign-bundle`, a keyless cosign signature over `SHA256SUMS` made by this repository's release workflow.
 
 **Download, verify, install.** Replace `<tag>` with this release's tag and `<os>-<arch>` with `linux-amd64`, `linux-arm64`, `darwin-amd64` or `darwin-arm64`.
 
