@@ -77,9 +77,9 @@ Operator's age identity flows: laptop → SSH stdin → `/dev/stdin` on Orin-C �
 
 `ca_signing_host_operators`: list of dicts with required fields `name`, `email`, `ssh_pubkey`, optional `comment`.
 
-`ca_signing_host_ca_id`: the dev CA ID string (e.g. `dev-goat-ca-2026-04-20`).
+`ca_signing_host_ca_id`: the dev CA ID string (e.g. `dev-goat-ca-2026-04-20`). Required, no default.
 
-`ca_signing_host_repo_url`: git URL to clone (e.g. `https://github.com/usareur-af/goatcore.git`).
+`ca_signing_host_repo_url`: git URL of the repository whose allowlist the signing host trusts. Required, no default.
 
 `ca_signing_host_repo_branch`: branch to track (default `main`).
 

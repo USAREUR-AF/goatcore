@@ -187,16 +187,23 @@ The minted-cert identity strings used to be hardcoded nova values that ZAGROS
 inherited unchanged, so ZAGROS certs read `urn:goat-nova:vendor=<anchor>` despite the
 display relex. These are **not** lexicon tokens (a lexicon change must never reach
 a cert) and they are **not** fixed — they are per-goatnet machine values set by
-the `goat-zenoh-portal` role, defaulting to the nova-a wording for byte-stability:
+the `goat-zenoh-portal` role. The role passes every one of them to the binary
+on every goatnet; the binary's own built-in defaults are example values used only
+by an unconfigured portal (tests, local runs):
 
-| Concern | Config (role var / flag / env) | nova-a default | ZAGROS |
-|---|---|---|---|
-| URI-SAN prefix | `portal_cert_sign_uri_prefix` / `--uri-prefix` / `PORTAL_URI_PREFIX` | `urn:goat-nova:vendor=` | `urn:goat:zagros:org=` |
-| Leaf CN suffix | `portal_cert_sign_cn_suffix` / `--cn-suffix` | `-trial-peer` | `-peer` (unused in slot-pool mode — CN = bare anchor) |
-| DNS-SAN suffix | `portal_cert_sign_dns_suffix` / `--dns-suffix` | `nova.peer` | `zagros.peer` |
-| Onboarding tarball stem | `portal_onboarding_tarball_stem` | `nova-onboarding` | `zagros-onboarding` |
-| In-tarball packet name | `portal_onboarding_packet_name` | `zenoh-trial-onboarding.md` | `zagros-fabric-onboarding.md` |
-| In-tarball CA-root name | `portal_onboarding_root_cert_name` | `nova-ca-root.pem` | `zagros-ca-root.pem` |
+| Concern | Config (role var / flag / env) | Binary default | Role default | ZAGROS |
+|---|---|---|---|---|
+| URI-SAN prefix | `portal_cert_sign_uri_prefix` / `--uri-prefix` / `PORTAL_URI_PREFIX` | `urn:goat:example:org=` | `urn:goat:<site_id>:org=` | `urn:goat:zagros:org=` |
+| Leaf CN suffix | `portal_cert_sign_cn_suffix` / `--cn-suffix` | `-trial-peer` | `-trial-peer` | `-peer` (unused in slot-pool mode — CN = bare anchor) |
+| DNS-SAN suffix | `portal_cert_sign_dns_suffix` / `--dns-suffix` | `example.peer` | `<site_id>.peer` | `zagros.peer` |
+| Onboarding tarball stem | `portal_onboarding_tarball_stem` | `goat-onboarding` | `<site_id>-onboarding` | `zagros-onboarding` |
+| In-tarball packet name | `portal_onboarding_packet_name` | `zenoh-trial-onboarding.md` | `zenoh-trial-onboarding.md` | `zagros-fabric-onboarding.md` |
+| In-tarball CA-root name | `portal_onboarding_root_cert_name` | `ca-root.pem` | `<site_id>-ca-root.pem` | `zagros-ca-root.pem` |
+
+The CA-root file bundled into the tarball is `--ca-root-cert` / `PORTAL_CA_ROOT_CERT`
+(the role passes `--ca-root-cert`, `portal_ca_root_cert_flag`; the legacy name
+`--nova-root-cert` still parses and wins when both are set). The root-CA download at `/peering/root-ca.pem` is served under the in-tarball
+CA-root name.
 
 **The URI-SAN prefix is freeze-critical:** it lands in every cert and is pinned by
 external mTLS integrations + (in per-vendor mode) the router ACL `cert_common_names`.
@@ -251,8 +258,10 @@ HTML and half D3-generated DOM:
 cluster on the wire is always keyed by the cert-bound `vendor` field / UUID
 anchor, the ACL subjects + audit + deep-link `key=` params are untouched. The
 `<code>vendor</code>` schema-decl field name + the `vendor`/`site`/`role_class`
-metadata list stay literal (they name a real wire field). Defaults reproduce the
-nova-a wording byte-for-byte, so an unconfigured panoscope is unchanged.
+metadata list stay literal (they name a real wire field). An unconfigured
+panoscope renders "vendor" and "Zenoh fabric"; every goatnet sets
+`portal_lex_product_name`, so the fabric label on a deployed panoscope always
+comes from its group_vars.
 
 Configured by the `panoscope` ansible role's `env.j2` from the **same group_vars
 the portal reads** — `portal_lex_org` ("org" on ZAGROS) for the noun and

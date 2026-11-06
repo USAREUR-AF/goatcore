@@ -9,7 +9,7 @@ timed standup on hardware is the measurement.
 |---|---|
 | Targets | founder site ≤ 60 min · one new node ≤ 15 min · burn-down ≤ 15 min |
 | Design | [goatbuilder-speed.md](../../design/goatbuilder-speed.md) |
-| Status | budget written; levers 1 to 4 built in both avenues; levers 5 and 6 designed with dates |
+| Status | budget written; levers 1 to 6 built in both avenues (lever 5 WIP until a seeded host is timed); the hour not yet measured on hardware |
 
 ## The budget
 

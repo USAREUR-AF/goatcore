@@ -25,7 +25,7 @@ This doc is the step-by-step.
 > — a non-author, no AI, this doc set only, standing a GOAT-Net up start to end
 > with zero improvisation, which is the definition of done in
 > `standup-remediation-plan.md`. The
-> internet-profile chaining in particular (the phase 5 → 6 schema-wait hand-off
+> internet-profile chaining in particular (the phase 5 → 6 hand-off around Ory
 > and the post-login re-runs) has not been driven end to end. **Expect gaps, and
 > treat any step that needs improvisation or outside knowledge as a defect in
 > the procedure, not operator error** — file it (see [When you hit a
@@ -292,27 +292,28 @@ internet-only phases 7 and 8, and phases 10 and 11 differ by profile.
 |---|---|---|---|---|
 | 1 | GATE | Config preflight (TBD sentinels, file inventory, coupled-fact + secret-format checks) | both | prints `preflight OK`; any failure names the file + reason |
 | 1 | GATE | **Declared ACL** — `netbird-policy-posture.py <site> --declared` (a joiner checks its founder's) | both | prints `OK: '<site>' declares its ACL (N rules) and default_policy_action: delete`; a goatnet with no declared ACL is refused here, because without one its peers reach nothing ([ADR 1185](../adr/1185-no-default-all-to-all-standup-applies-declared-acl.md)) |
-| 1 | GATE | **Host preflight** — measures the target hosts and changes nothing (`standup-host-preflight.py`) | both | prints `READY`; a failure names the invariant, the host, and what it read. Skips with a note when the group has no hosts in inventory yet, which is normal before phase 1 |
+| 1 | GATE | **Host preflight** — measures the target hosts and changes nothing (`standup-host-preflight.py`). The driver tells it what the run already knows: with `--from` 1 or 2 it passes `--baseline-pending`, so the sysctls, presync unit and container engine that phase 2 sets read as `set by phase 2 of this run` on a fresh box, not as failures (on a resume from 3 or later they are invariants again); a site whose `vars.yml` declares `luks_volumes_mgmt_host: []` gets `--disk-encryption declared-off`, so its plain root is the declared exclusion (a VM), not a refusal | both | prints `READY`; a failure names the invariant, the host, and what it read. Skips with a note when the group has no hosts in inventory yet, which is normal before phase 1 |
 | 2 | A | Host baseline + LUKS (all nodes; `seed-ssh-key.sh` first, once) | both | `DockerRootDir` is your encrypted mount; on hardware, `findmnt /opt/docker-data` shows the LUKS mapper |
+| 2–5 | A ∥ | **Image pull** (`standup-image-pull.yml`), in the background from the end of phase 2 to the start of phase 5: every image the site's pins name (`fleet-pins.yaml` and the lite sidecar, less every component declared absent), pulled on the site's hosts at most 4 at a time; skipped when phase 5 is outside `--from`/`--to` | both | the join line before phase 5 prints `N of N image(s) present`; an image that cannot be pulled stops the run there with `could not pull <image>: <reason>` for each, all named in one run |
 | 3 | T | Generate the ~30 per-instance secrets | both | `env \| grep <SITE>_` lists the site's vars after `direnv allow` |
 | 4 | T | Mint every leaf cert from the manifest (+ name snapshot) | both | `mint-site-certs.sh` reports every leaf present; no manifest-not-found |
-| 5 | A | mgmt-stack (`site-bootstrap.yml`) — **first run stops at the schema wait** | both | on a first run it stops waiting for the netbird schema — **expected**; phase 6 finishes it |
+| 5 | A | mgmt-stack (`site-bootstrap.yml --skip-tags after-ory`): the host gates, NTP baseline, mgmt stack and Traefik, everything that does not need Ory | both | play ends `failed=0`; `docker ps` shows postgres-a, signal-a and traefik `Up` (management-a restart-loops on `hydra:4444` until phase 6, which is expected). Any refusal fails the phase with the play's output above it |
 | 5 | A | Relay-connect (`site-rathole-client.yml`, or the site's own `<site>-rathole-client.yml` when it keeps one) | internet | `ss -tnp \| grep 2333` shows one ESTABLISHED tunnel per relay; a `curl` of `netbird.<zone>` returns any HTTP code (`000` = the tunnel is not carrying traffic) |
 | 6 | A | Identity stack — Ory (kratos/hydra), **before** account-seed | both | `docker ps` shows kratos + hydra `Up`; `hydra:4444/health/ready` returns `{"status":"ok"}` |
-| 6 | A | Re-run `site-bootstrap.yml` — completes phase 5, prints the setup key | both | play ends `failed=0` and prints the single-use bootstrap setup key — **save it** |
+| 6 | A | The rest of `site-bootstrap.yml` (`--skip-tags stack`): the account seed waits for the netbird schema, bounded by `netbird_schema_wait_seconds` (300 s), then the plays after it; a joiner re-runs the whole file with Spock on | both | play ends `failed=0` and prints the single-use bootstrap setup key — **save it** |
 | 7 | A | Public TLS via ACME (`traefik-acme.yml`, DNS-01): Ory sites must declare non-empty, equal `site_dns_zone` and `public_mgmt_fqdn` in the target group; preflight checks this before applying the overlay | internet | the issuer stops reading `TRAEFIK DEFAULT CERT`; if it does not, it is a DNS-01 failure — see [Cloudflare failure modes](#troubleshooting--when-you-hit-a-gap) |
-| 8 | O | Mesh-enroll the host + re-mint the router cert | internet | `netbird status` shows `Management: Connected` and a `100.x` mesh IP — see [Phase 8 in full](#phase-8--mesh-enroll-in-full) |
+| 8 | A + T | Mesh-enroll the hosts (`mesh-enroll-host.yml`: a single-use key each, the declared `mesh_enrollment_url`), then record the mesh IPs and re-mint the router cert (`standup-mesh-record.py`) | internet | each host's `netbird status` shows `Management: Connected` and a `100.x` mesh IP; `standup-<site>-mesh-ips.json` names it; the router pair is re-minted — see [Phase 8 in full](#phase-8--mesh-enroll-in-full) |
 | 9 | A | Per-uuid Zenoh router (binds the mesh IP; cert from phase 4/8) | both | container `Up (healthy)`, a `7447` listener on the intended IP, `0` "Cannot find volume" log lines — see [Phase 9](#phase-9--the-router-is-bound-not-just-up) |
 | 9 | A | SPIRE server on the founder (`spire-deploy.yml -l 'mgmt-<site>-01*' -e spire_enabled=true`): workload identity for the portal bridge, id-console, onboard-runner and grant-keyd | both | `spire-server` container healthy; `docker exec spire-server /opt/spire/bin/spire-server entry show` lists the `grant-keyd` entry |
 | 10 | A | LAN: combined LAN services play · internet: dashboard + OIDC clients (`site-oidc-clients.yml`, or the site's own `<site>-oidc-clients.yml`) | split | LAN: dashboard reachable on the LAN; internet: `dashboard-deploy` ends `failed=0`, OIDC client registered in Hydra |
 | 11 | O | Browser step: first login, admin-promote, the bootstrap NetBird token. Internet: at the public dashboard. LAN: at the LAN dashboard, with the laptop resolving the zone (the box as its DNS server, or a hosts-file pin); the driver prints the steps and skips the phase when `<SITE>_NB_API_TOKEN` is already available under the declared secrets posture | both | you can log in, the UI stops `403`-ing after the promote re-run, `<SITE>_NB_API_TOKEN` is exported — see [Phase 11 in full](#phase-11--first-login-the-browser-step) |
-| 12 | A + GATE | **The declared ACL, first**: `netbird-acl-bootstrap.yml`, cutover `mode=apply`, cutover `mode=enforce` (founder only), then `netbird-policy-posture.py <site> --url https://<public_mgmt_fqdn>` (both) | both | the gate prints `OK: no All-group rule; every enabled policy is declared.` No goatnet carries a Default All→All, so until this runs enrolled peers reach nothing — see [ADR 1185](../adr/1185-no-default-all-to-all-standup-applies-declared-acl.md) |
+| 12 | A + GATE | **The declared ACL, first**: one `ansible-playbook` run of `netbird-acl-bootstrap.yml` then `netbird-acl-cutover.yml` with `mode=enforce`, which creates every declared policy before it applies the declared Default-policy action (founder only), then `netbird-policy-posture.py <site> --url https://<public_mgmt_fqdn>` (both) | both | the gate prints `OK: no All-group rule; every enabled policy is declared.` No goatnet carries a Default All→All, so until this runs enrolled peers reach nothing — see [ADR 1185](../adr/1185-no-default-all-to-all-standup-applies-declared-acl.md) |
 | 12 | T + GATE | NetBird service identities: `netbird-service-identities.py <site> --mint`, then `--live` | both | the gate prints `OK: every required identity is present and verified.` — see [Phase 12](#phase-12--netbird-service-identities) |
 | ∥ host | A ∥ | **Observability leg `host`** — baseline + LUKS on the obs host, then `utility-host-bootstrap.yml` (docker data-root on the NVMe, then Forgejo). Starts with phase 2, runs alongside 2–6, **joins before the phase-12 mirror**. A tree without `utility-host-bootstrap.yml` refuses before phase 1; `--skip-obs` stands the site up without its obs host | both, when an obs host is declared + inventoried | log `~/.goat/state/standup-<site>-obs-host.log` ends with `Forgejo GREEN`; at the join the driver prints its tail |
 | 12 | T | Mint the pubsub-state mirror bot on the obs host's Forgejo (once; skipped when `FORGEJO_PUBSUB_TOKEN` is already set) | obs host only | the token is written to the operator envrc; the run stops so you can `direnv allow`, then `--from 12` |
 | 12 | A | netbird account baseline (mesh-DNS nameserver group, no policy; **founder only** — a joiner's account is the founder's), mesh CoreDNS (internet), **portal** (`portal-deploy.yml`, before everything below that reads it), pub/sub Repl, onboarding intake, onboard-runner, **grant-keyd** (`grant-keyd-deploy.yml`, encryption key distribution) | both | account-init `failed=0`; CoreDNS resolves `*.<site>.<zone>` (then drop the laptop's `/etc/hosts` pin); the grant-keyd play ends by proving the portal answers `200` on `/api/access/release-sets` with keyd's token; the add-ons skip cleanly when their group_var is absent |
 | ∥ stack | A ∥ | **Observability leg `stack`** — `obs-host-bootstrap.yml` (Prometheus + Alertmanager + Grafana). Starts after 9 (needs `obs_scrape_targets` = the core host's addresses, which an internet site only has after 8), runs alongside 10–12, **joins before 13** | both, when an obs host is declared + inventoried | the play's opening gate passes (targets declared); Prometheus on the obs host shows every target `up` — the gate's `prometheus-targets-up` row |
-| 13 | GATE | Acceptance (`goatbuilder assay`) — every provisioned aspect proven live + functional | both | `run-acceptance.py` reports every eligible row PASS; read the report, not `$?` |
+| 13 | GATE | Acceptance (`goatbuilder assay`) — every provisioned aspect proven live + functional. Off by default on a goatlite (`preset: lite`): the phase prints `SKIPPED` and the command to run it, `--check` runs it in the standup, `goatbuilder assay <site>` on its own | both | `run-acceptance.py` reports every eligible row PASS; read the report, not `$?` |
 | 14 | A | **Rescue nodes** — the site's break-glass node (ADR 1114) and network-jump host ([ADR 1131](../adr/1131-network-jump-class-and-herd-gear-scope.md)), each converged when the site declares it | both, when declared | the declared node's play ends `failed=0`; a class the site declares it does not have prints the recorded reason and skips. A class declared `true` with no host in inventory skips as not-yet-built |
 | 14 | A | Relay-health box + cross-goatnet surfaces — `ops/goatnets/cross-env-apply.sh --require <site>` deploys the goatnet's own relay-health box and redeploys every other box from `ops/goatnets/cross-env.yaml` | both | `https://relay-health.<env>.goat.example/` serves the goatnet's relays, host-net and zenoh bands; every box's `/goatnets.html` lists the goatnet, green, footer naming this run's commit |
 
@@ -359,7 +360,7 @@ every overview until the boxes are redeployed.
 **Ordering is load-bearing:** Ory before account-seed; the schema wait before the
 router; mesh-enroll before the router (it binds the mesh IP); cert + client before
 the service. The driver encodes it so you do not have to. Account-seed is not a
-phase of its own: it runs inside site-bootstrap (phases 5 and 6). `--from`/`--to`
+phase of its own: it runs inside site-bootstrap's `after-ory` plays in phase 6. `--from`/`--to`
 over a phase the profile skips runs nothing.
 
 ### Phase numbers
@@ -445,53 +446,44 @@ node-addition.md §4.
 *(internet profile only — a LAN host's router cert is already final from phase 4,
 bound to the LAN IP, so there is no phase 8 on LAN.)*
 
-This is the one genuinely operator-fired step and the one with the most ways to
-half-succeed, so run the preflight first — it **prints** the exact `netbird up`
-line for this GOAT-Net rather than describing it:
+Phase 8 is two scripted steps; the run does not stop here.
 
-```
-ops/preflight-enrollment.sh          # note: ops/, not ops/scripts/
-```
+**Step 1, `mesh-enroll-host.yml -e target=<site>_hosts`**, per host, one at a time:
 
-It checks the netbird CLI is installed, no stale `wt0` is left over, the setup key
-is format-sane, the management URL answers, and the clock is within 60 s of the
-server (gross skew kills the TLS handshake with an error that names neither the
-clock nor the cert).
+1. **The enrolment URL is the site's declared `mesh_enrollment_url`** (group_vars),
+   and its port must agree with where the host resolves the name: `:443`
+   when it resolves to the relays, `:8443` when it resolves to the host itself.
+   The play resolves the name on the host and refuses a pair that disagrees,
+   before any key exists. A mismatch would enrol the peer against the wrong
+   entrypoint, get a 404 from the management API, and drop the host off its own
+   mesh. Never point the name at loopback via `/etc/hosts`.
+2. **The rosenpass flags come from `rosenpass_enabled`.** With it true the play
+   appends `--enable-rosenpass --rosenpass-permissive`; without them a peer
+   enrols PQ-less and stays that way, which the `rosenpass-pq-negotiated`
+   acceptance row catches.
+3. **A host already enrolled** (`netbird status --json` shows the management
+   connection and a mesh IP) mints nothing and changes nothing. Otherwise a
+   single-use key (one use, one hour, role bootstrap) is minted with
+   `mgmt-host-bootstrap create-setup-key` on the site's first host, handed to
+   `netbird up --setup-key-file` through a 0600 file under `/run` that is removed
+   afterwards, and the play waits up to `mesh_enroll_wait_seconds` (180 s) for
+   the management connection and a mesh IP.
 
-Then enroll on the management host:
+It writes `~/.goat/state/standup-<site>-mesh-ips.json`: each host and its
+mesh IP.
 
-```
-sudo netbird up --management-url https://netbird.<zone>:443 --setup-key <the key from phase 6>
-```
+**Step 2, `standup-mesh-record.py <site> --ips <that file>`**, on the laptop:
+`mesh_ip_a` / `mesh_ip_b` in the site's group_vars (the cert manifest's mesh-IP
+placeholders resolve from them), each host's `ansible_host` in its
+`inventory/mgmt-hosts-mesh.ini` line (a host with no line there keeps its
+transport, and the step says so), a literal old mesh IP in the manifest's router
+leaf, and then the router pair deleted and re-minted with
+`mint-site-certs.sh <site> --only router`. A second run with the same IPs mints
+nothing. Commit the group_vars, inventory and manifest changes with the site.
 
-**Confirm enrollment before you do anything else** — both failure modes below are
-silent, and the next step mints a certificate you do not want to mint onto a host
-that never joined:
-
-```
-sudo netbird status          # want: Management: Connected, and a 100.x IP on wt0
-```
-
-Three things that have each cost a standup:
-
-1. **The apex and `--management-url` port must agree**. If the name
-   resolves to the relay path, use `:443`; if it resolves to the host itself, use
-   `:8443`. A mismatch enrolls the peer against the wrong entrypoint, gets a 404
-   from the management API, and the host silently drops off its own mesh. Never
-   point the name at loopback via `/etc/hosts`.
-2. **If the GOAT-Net sets `rosenpass_enabled: true`, append `--enable-rosenpass
-   --rosenpass-permissive`.** Omit them and the peer enrolls PQ-less and silently
-   stays that way; the `rosenpass-pq-negotiated` acceptance row is what catches it.
-3. **Re-mint the router cert against the real mesh IP.** Fill the mesh IP into
-   `inventory/mgmt-hosts-mesh.ini` and the cert manifest, then (the delete is
-   required — the mint skips a leaf whose file already exists):
-   ```
-   rm -f ~/.goat/state/<site>-leaves/router-{cert,key}.pem
-   ops/scripts/mint-site-certs.sh <site> --only router
-   cp ~/.goat/state/<site>-leaves/router-{cert,key}.pem ops/enrollment/<site>/
-   ```
-
-Resume the driver with `--from 9`.
+`ops/preflight-enrollment.sh` remains for an enrolment by hand: it checks the
+netbird CLI, a stale `wt0`, the key's format, the management URL and clock skew,
+and prints the `netbird up` line.
 
 ## Phase 9 — the router is bound, not just up
 
@@ -645,18 +637,19 @@ Quick triage for the most likely failures:
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
+| Phase 5 refuses at `NTP preflight FAILED ... exceeds the preflight ceiling of 200 ms` on a fresh box | the box booted under a second out; `makestep 1.0` does not step that, and chrony slews it for about half an hour per second | phase 2 steps the clock once at baseline, before anything runs; on a box whose baseline did not, `sudo chronyc makestep` on the box, then `--from 5` |
 | `ansible-preflight` refuses to run | checkout behind or diverged from the remote main, a locally modified safety-critical playbook, or an unreachable registry namespace | read its message — the checkout case prints the exact `git pull` |
 | preflight: `no group_vars dir` | group name mismatch | directory must be exactly `<group>` (underscores) |
 | `manifest not found` in phase 4 | cert manifest not authored | prep step 7 above |
 | `ansible-preflight`: "at least one live pin does not exist under that namespace" | the primary registry namespace is missing images that exist on the mirror | `export GHCR_ORG=goat-maintainer` in `00-site-identity.envrc`, `direnv allow`, re-run |
 | a command fails on a variable you just added, and `direnv: loading` prints *after* the failure | the shell reloads direnv only at the next prompt, so the command ran with the old env | press Enter once, confirm with `echo $<var>`, re-run |
-| phase 5 stops at `wait for the netbird schema` and the play says "management-a cannot reach Hydra (hydra:4444)"; `management-a` restart-loops on `hydra:4444: connection refused` | the management service needs the identity stack, which phase 6 installs — expected on every first standup | run phase 6, which also re-runs the site bootstrap (the re-run of 6) — its last step prints the setup-key banner |
+| the account seed stops at `wait for the netbird schema` and the play says "management-a cannot reach Hydra (hydra:4444)" | the whole `site-bootstrap.yml` was run on a site with no Ory yet; the management service needs the identity stack, which phase 6 installs before the seed | run phase 6 (`--from 6 --to 6`): it deploys Ory, then runs the rest of the site bootstrap, whose last step prints the setup-key banner |
 | phase 9 fails: `range of CPUs is from 0.01 to N.00, as there are only N CPUs available` | the router's compose CPU cap exceeds the host's core count | set `goat_zenoh_cpus` below the core count in the group vars, re-run phase 9 |
 | phase 9 fails pulling the zenoh image: `permission_denied: read_package` | the token cannot read that package under the org your checkout resolved | pull the other org from the host (swap `usareur-af`/`goat-maintainer`); if it works, pin `…_zenoh_image` to that org's digest and re-run |
 | phase 9 refuses with GB-071, naming `~/.goat/state/<site>-leaves/router-cert.pem` (phase 1's input scan and `goatbuilder doctor --site` report the same line before any host is touched) | the router pair is not in the site manifest's `out_dir`, the one place plays read leaves from (the `goat_leaf` filter, #2165; a copy staged at `ops/enrollment/<site>/` by an older mint still counts) | `ops/scripts/mint-site-certs.sh <site> --only router` (a leaf already there is skipped), re-run |
 | `direnv allow` prints `SITE: No such file or directory` (or `SITE_UPPER`, …) | a `<placeholder>` was pasted literally — the shell reads unquoted `<…>` as a redirection | replace every `<…>` with your real value; none may remain in an envrc file |
-| enrollment hangs / host off mesh (internet) | the URL and the DNS answer do not agree as a pair | Phase 8, item 1 |
-| router serves wrong cert / crash-loops (internet) | router minted before enrollment, or a stale key | delete both router pem files, re-mint `--only router` (Phase 8, item 3) |
+| enrollment hangs / host off mesh (internet) | the URL and the DNS answer do not agree as a pair | phase 8 refuses it and names both; correct `mesh_enrollment_url` (Phase 8, item 1) |
+| router serves wrong cert / crash-loops (internet) | router minted before enrollment, or a stale key | re-run phase 8 (`--from 8 --to 8`): it re-records the IPs and re-mints the router pair |
 | **Cloudflare DNS-01 (phase 7):** issuer stays `TRAEFIK DEFAULT CERT` | the token is missing `Zone:DNS:Edit`, or is scoped to the wrong zone | fix the token scope, re-run phase 7 |
 | dashboard loads but every panel is empty and `/api/policies` returns `403` | your account exists as a plain user — admin comes from the promote re-run | re-run the phase-10 dashboard-deploy once (Phase 13, step 3), refresh |
 | login submits, then a 500: "Unable to accept OAuth 2.0 Login Challenge" | a login flow whose challenge expired — usually a stale tab | close the tab, start fresh from `https://dashboard.<site>.<zone>` |

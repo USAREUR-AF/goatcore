@@ -170,6 +170,41 @@ per-goatnet surface `version_check` resolves.
   non-zero exit with a specific message; the installed binary is never left
   half-written.
 
+### `goatnet.toml`: the goatnet's own facts
+
+goat-cli holds no goatnet. Each goatnet publishes the facts the CLI needs at
+`get.<site>/goatnet.toml`, and `goat context refresh` writes them into the
+context's `profile.toml`, where `Profile::goatnet_endpoints()`
+(`crates/goat-cli/src/profile.rs`) reads them.
+
+| Key | Derived from (group_vars) |
+|---|---|
+| `goatnet` | `site_id` |
+| `router_endpoint` | `portal_router_endpoint`, else `tls/zenoh.<site_id>.<site_dns_zone>:7447` |
+| `netbird_mgmt_url` | `https://<public_mgmt_fqdn>` |
+| `netbird_token_env` | `<SITE_ID>_NB_API_TOKEN` |
+| `netbird_site_prefix` | `site_id` upper-cased |
+| `netbird_rosenpass` | `rosenpass_enabled` |
+| `ory_auth_url` | `https://auth.<site_id>.<site_dns_zone>` |
+| `ory_ssh_host` | `mesh_ip_a` |
+| `ory_ssh_user`, `mgmt_ssh_user` | `ansible_user` |
+| `demo_service` | `goat_get_demo_service` (declared per goatnet; the service `goat demo` opens with no name given) |
+| `i18n_feedback_email` | `goat_get_i18n_feedback_email` (declared per goatnet; where operators report translation errors) |
+
+The goat-get role renders it (`roles/goat-get/defaults/main.yml`,
+`goat_get_goatnet_facts`) with the same derivations as the onboard-runner role,
+so a goatnet needs no new declaration for those; `demo_service` and
+`i18n_feedback_email` are the two a goatnet declares, and an empty one is left
+out of the file. The surface is mesh-only, like the rest
+of `get.<site>`.
+
+goat-cli carries no table of goatnets. Every command that acts on a goatnet
+reads these keys from the context whose profile names that goatnet
+(`Profile::goatnet_endpoints_for`), so `--env <goatnet>` never borrows another
+goatnet's facts. Before any `goat admin` command, a context that names no
+goatnet yet fetches its `goatnet.toml` once (4 s timeout); when the facts are
+still missing, the command says to run `goat context refresh`.
+
 ## SDK assets (grant-crypto)
 
 The same role optionally serves the **grant-crypto SDK** ([ADR 1106](../adr/1106-grant-crypto-sdk-and-endpoint-forward-secrecy.md))

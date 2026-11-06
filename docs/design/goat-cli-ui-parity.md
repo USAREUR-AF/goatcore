@@ -66,7 +66,7 @@ for the same reason: **they act on the local machine**.
 
 | Verb | Note |
 |---|---|
-| `profile init\|show\|rotate\|path`, `context ls\|use\|show\|rm` | Local credential/profile store (`~/.goat/`) |
+| `profile init\|show\|rotate\|path`, `context ls\|use\|show\|rm\|refresh` | Local credential/profile store (`~/.goat/`) |
 | `init`, `tutor`, `hello`, `demo`, `mock` | Learning + synthetic-traffic tools; web analogs are the guide and the isolated zenoh-sandbox |
 | `update`, `completion`, `docs`, `plugin list\|which`, `explain`, `compose`, `ui` | Self-update (the `get.<site>` page is the web half), shell integration, hosted-docs browser, TUI hops |
 | `ca ls\|add\|rm` | The CA roots *this machine* trusts. Fetching roots for the operator would be deciding trust on their behalf, so it stays a deliberate local act — no server-side mirror |
@@ -139,6 +139,7 @@ precisely for the moment the mesh is down — when no mesh-served web page would
 |---|---|---|
 | `machine affiliation repair` | CLI-ONLY | Operator-controlled repair of approved legacy spellings, with an explicit preview and revision-bound apply; intentionally no web repair form. See [the repair runbook](../operations/machine-affiliation-repair.md) |
 | `machine enroll[--bulk]\|mesh-key\|revoke\|ls\|grant` | **ABSENT** | No web surface calls `/api/machines/*` at all; machine-enrollment.md already names a console "set machine quota" action as the intended future. Owned by goat#1128 |
+| `machine ssh enable` | SIBLING(netbird-dashboard) | The dashboard's peer page toggles SSH; the CLI resolves the machine through the portal (custody-scoped), changes only the SSH flag, and records the action in the operator-action audit (ADR 1216) |
 
 ## 7. Identity + onboarding admin (console-backed)
 

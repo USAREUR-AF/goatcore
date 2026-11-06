@@ -34,7 +34,7 @@ changes; portal already matches repo`.
 ### Path B — MinIO snapshot tarball (fallback when Forgejo was lost)
 
 ```bash
-mc cp local-nova/pubsub-state-snapshots/latest.tar.gz .
+mc cp local-<site>/pubsub-state-snapshots/latest.tar.gz .
 mkdir pubsub-state
 tar xzf latest.tar.gz -C pubsub-state --strip-components=1
 pubsub-apply --from ./pubsub-state \

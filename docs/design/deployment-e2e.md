@@ -70,6 +70,8 @@ The cases, in order (`ops/e2e/hermetic.sh`, each a row in the record):
 | the ladder | `rc.sh` tag → dev pin PR (stub-merged) → dev deploy → preprod record + pin → preprod deploy → evidence PR; `--from prod`: graduate, fold into `fleet:`, prod deploy, every rung verified; a re-run of the landed dev step opens no dev-pin PR (item 15); a stale open candidate abandoned by the next candidate's preprod step (C6, #2039) | every rung's ledger names the candidate digest |
 | fastlane and rollback | fastlane to all three; `rollback.sh --list/--status`; one step back from the on-host ledger | the hotfix digest everywhere, then the rollback row on dev |
 | the page as test | `ops/e2e/doc-as-test.py` runs the fenced blocks of `docs/operations/goatbuilder-first-run.md` §"A deploy, with its proof" with the declared substitutions | a drifted page fails |
+| site-cache client | the `site-cache-client` role applied to the dev host with an answering port, then a closed one (goatbuilder-speed.md sink 6) | the probe apt runs prints the cache URL, then `DIRECT`; `apt-config dump` names the probe |
+| teardown | `teardown-service-stop.yml` stops the dev canary by compose service name, then `teardown-compose.yml` brings its project down (goatbuilder-speed.md §"Teardown") | each play's own assertion that nothing runs; two `teardown.jsonl` rows read back over ssh; the deploy ledger's row count unchanged |
 
 `--no-hosts` runs the first group only, which is what a laptop without Docker
 can run; the rest needs Linux and a Docker daemon (container addresses must be
@@ -172,6 +174,13 @@ come from what each command promises, and this table checks that no class is bli
 | Defaulted or edge inputs | an invite minted with no lifetime is not a one-hour invite |
 | The served artifact differs from the built one | T2: the binaries on get.&lt;site&gt; match their checksums and advertised version, and round-trip |
 | The real fabric path | the mTLS router session and a publish received (local router; live with a slot certificate) |
+
+## The same pattern for a federation
+
+`ops/federation-e2e/run.sh` runs two sovereigns generated fresh, the real federation driver on both
+avenues, a real WireGuard link, and reads the proof from the receiving side's storage and ACL trace.
+Its hosts run systemd and their own dockerd, because the edge role bind-mounts host paths and reads
+the container's PID, which a socket shared with the runner would break.
 
 ## What is not here
 
