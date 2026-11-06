@@ -1,0 +1,22 @@
+{{define "devices_block" -}}
+{{/* The selected admin card defers device reads (#2384). The same block
+     renders the fetched fragment, including the existing OS and reachability
+     hints (#1586). A plain link remains usable without JavaScript. */}}
+{{if .DevicesURL}}
+<div data-devices-url="{{.DevicesURL}}" aria-live="polite">
+  <p class="ob-note dim"><a href="{{.DevicesURL}}">View mesh devices</a></p>
+</div>
+{{else if .DevicesErr}}<p class="ob-note dim">Devices: {{.DevicesErr}}</p>
+{{else if .Devices}}
+<div class="ob-devices">
+  {{if .Devices.Peers}}
+  <p class="ob-note"><b>Devices on the mesh:</b></p>
+  <ul class="ob-device-list">
+    {{range .Devices.Peers}}<li><code>{{.Name}}</code> · {{if .OS}}{{.OS}}{{else}}<span class="dim">OS not reported</span>{{end}} · {{if .ControlOnly}}<b>control only — no tunnel</b>{{else if .Connected}}connected{{else}}offline{{end}}</li>{{end}}
+  </ul>
+  {{else}}<p class="ob-note dim">Devices on the mesh: none attributed to this handle.</p>{{end}}
+  {{if .Devices.ControlOnly}}<p class="ob-note warn" role="alert"><b>Connected to the control server only — the person's network blocks the mesh data ports.</b> The management host has never completed a tunnel with any of their devices, so nothing on the mesh, sign-in pages included, opens for them. Their network team must allow outbound TCP and UDP 33073 to the relays and UDP 3478; the network-team guide page lists the hosts.</p>{{end}}
+  {{if .Devices.ServerOnly}}<p class="ob-note warn" role="alert"><b>Only a server is enrolled — the person cannot open the login link yet.</b> The login link and /fabric-credential open only on a device connected to the mesh. Ask them to enroll the computer they browse from with the same setup key.</p>{{end}}
+</div>
+{{- end}}
+{{- end}}
