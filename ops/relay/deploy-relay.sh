@@ -293,7 +293,7 @@ verify_relays() {
     # Test DNS (dnsmasq)
     local dns_ok="FAIL"
     local dns_result
-    dns_result=$(dig +short "@$public_ip" demogame.netbird.legacy.example 2>/dev/null)
+    dns_result=$(dig +short "@$public_ip" airdefenders.netbird.legacy.example 2>/dev/null)
     [ -n "$dns_result" ] && dns_ok="OK"
 
     printf "  %-4s %-15s  mgmt=%s  stun=%s  rathole=%s  relay=%s  dns=%s\n" "$name" "$public_ip" "$mgmt_ok" "$stun_ok" "$ctl_ok" "$relay_ok" "$dns_ok"

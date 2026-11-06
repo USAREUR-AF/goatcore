@@ -2,7 +2,7 @@
 
 :80 {
 	# Container services (routed by Traefik directly, not Caddy):
-	#   demogame.netbird.legacy.example
+	#   airdefenders.netbird.legacy.example
 	#   isitup.netbird.legacy.example
 	#   smoketest.netbird.legacy.example
 	#   secwatch.netbird.legacy.example

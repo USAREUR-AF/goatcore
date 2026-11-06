@@ -105,10 +105,10 @@ running: `goat --version`. To get the latest, see [Install & verify](install.md)
 - **The fabric tail works on every goatnet.** `goat sub --literal '<key>'`
   subscribes on the key exactly as written. On the zagros goatnets the
   first key segment is normally a slot alias, so a seeded vendor prefix
-  such as `demogame/` used to be refused as an unknown alias and the
-  Demo Game demo could not be watched from a terminal there. The flag
+  such as `airdefenders/` used to be refused as an unknown alias and the
+  Air Defenders demo could not be watched from a terminal there. The flag
   is read-only: a typo gives an empty tail, never a stray write.
-- **`goat demo demogame` uses it automatically**, so the one-command
+- **`goat demo airdefenders` uses it automatically**, so the one-command
   demo (browser + terminal tail) now runs on zagros, zagros-prod and zagros-dev.
 
 ## v0.5.3

@@ -45,7 +45,7 @@ during a degradation is how a recoverable event becomes an unrecoverable one.
 
 ### Rung 1 — browse and demo (T5)
 
-**Shed:** synth producers (22), demogame, gym, goat-docs, brief, herd,
+**Shed:** synth producers (22), airdefenders, gym, goat-docs, brief, herd,
 zenoh-sandbox, goat-map-synth, isitup, selfservice-ui.
 **Buys:** ~9.5 % CPU, 1.7 GiB RAM, and — larger than either — the fabric
 message rate the synth producers generate, which is most of the current

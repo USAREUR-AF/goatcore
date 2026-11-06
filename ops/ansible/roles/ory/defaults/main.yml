@@ -57,7 +57,7 @@ site_admins: []
 # Values are subdomain prefixes — rendered as `https://<prefix>.<site_id>.<site_dns_zone>/`.
 # `_default` is the catchall for users whose `groups` does not match any
 # other entry; `isitup` is the safe v1 choice because every Hydra OIDC
-# client surface (dashboard / panoscope / portal / demogame) shares
+# client surface (dashboard / panoscope / portal / airdefenders) shares
 # the same Kratos session — landing on isitup never blocks a downstream
 # admin who needed the dashboard, just adds one extra click.
 bootstrap_first_login_url_by_group:

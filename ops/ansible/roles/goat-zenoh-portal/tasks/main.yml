@@ -145,7 +145,7 @@
     public: true
 
 # ---------------------------------------------------------------------------
-# Cloudflare DNS publish — mirrors the demogame + panoscope pattern.
+# Cloudflare DNS publish — mirrors the airdefenders + panoscope pattern.
 # Runs only when portal_publish_cloudflare_dns is true; delegate_to:
 # localhost so the API call leaves the operator workstation, not the
 # target host. Auth via CLOUDFLARE_API_TOKEN env var resolved through

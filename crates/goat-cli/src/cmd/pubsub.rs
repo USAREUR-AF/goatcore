@@ -179,7 +179,7 @@ pub struct SubArgs {
 
     /// Subscribe on the key exactly as written — skip slot-alias resolution of
     /// the leading segment. For a namespace that is not a slot anchor on a
-    /// slot-pool goatnet: a seeded per-vendor prefix such as `demogame/`
+    /// slot-pool goatnet: a seeded per-vendor prefix such as `airdefenders/`
     /// (seeded beside the slot pool), where the resolver would refuse
     /// the segment as an unknown alias. Read-only, so a typo costs an empty
     /// tail, never a phantom write prefix (the F-177 case the fail-closed
@@ -1856,10 +1856,10 @@ mod sub_pattern_tests {
         // A seeded per-vendor prefix beside a slot pool: the resolver refuses
         // it as an unknown alias, --literal subscribes on it as written.
         let reg = reg_with_alias();
-        assert!(sub_pattern(&reg, "demogame/zagros/**", false).is_err());
+        assert!(sub_pattern(&reg, "airdefenders/zagros/**", false).is_err());
         assert_eq!(
-            sub_pattern(&reg, " demogame/zagros/** ", true).unwrap(),
-            "demogame/zagros/**"
+            sub_pattern(&reg, " airdefenders/zagros/** ", true).unwrap(),
+            "airdefenders/zagros/**"
         );
     }
 

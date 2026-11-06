@@ -34,10 +34,10 @@
 # ==========================================================================
 
 # in use by: ZAGROS, ZAGROS_DEV, ZAGROS_PROD
-export <ENV>_DEMOGAME_OAUTH2_PROXY_CLIENT_SECRET=""  # SECRET
+export <ENV>_AIRDEFENDERS_OAUTH2_PROXY_CLIENT_SECRET=""  # SECRET
 
 # in use by: ZAGROS, ZAGROS_DEV, ZAGROS_PROD
-export <ENV>_DEMOGAME_OAUTH2_PROXY_COOKIE_SECRET=""  # SECRET
+export <ENV>_AIRDEFENDERS_OAUTH2_PROXY_COOKIE_SECRET=""  # SECRET
 
 # in use by: NOVA_LAN, UK
 export <ENV>_A_LUKS_PASS=""  # SECRET
@@ -302,7 +302,7 @@ export ALERT_SMTP_PASS=""  # SECRET
 # .github/workflows/docs-translation-gate.yml, ops/ansible/nethost-secwatch.yml …
 export ANTHROPIC_API_KEY=""  # SECRET
 
-# ops/zenoh-trial-peers/demogame-schemas/upload-all.sh
+# ops/zenoh-trial-peers/airdefenders-schemas/upload-all.sh
 export API_KEY=""  # SECRET
 
 # ops/relay/health/serve.sh, ops/wave3/steady-state.sh
@@ -740,7 +740,7 @@ export PEER_SSH_KEY=""  # SECRET
 # ops/ansible/group_vars/all.yml, ops/scripts/node-seed.py
 export PLATFORM_ADMIN_SSH_PUBKEYS=""  # SECRET
 
-# ops/zenoh-trial-peers/demogame-schemas/upload-all.sh, ops/zenoh-trial-peers/synth-vendor-schemas/delete-ghost-topics.sh …
+# ops/zenoh-trial-peers/airdefenders-schemas/upload-all.sh, ops/zenoh-trial-peers/synth-vendor-schemas/delete-ghost-topics.sh …
 export PORTAL_API_KEY=""  # SECRET
 
 # ops/scripts/create-decode-health-identity.sh, ops/scripts/create-provenance-guard-identity.sh
@@ -916,16 +916,16 @@ export ADMIT_AUDIT_IMAGE=""
 # ops/ci/check-adr-status-vs-code.sh
 export ADR_STATUS_BASELINE=""
 
-# ops/serve/demogame/spawn-bots.sh
+# ops/serve/airdefenders/spawn-bots.sh
 export AD_BOTS=""
 
-# ops/serve/demogame/demo_auth.go
+# ops/serve/airdefenders/demo_auth.go
 export AD_DEMO_UNGATED=""
 
-# ops/serve/demogame/ws.go
+# ops/serve/airdefenders/ws.go
 export AD_MAX_CONNS_PER_IP=""
 
-# ops/serve/demogame/spawn-bots.sh
+# ops/serve/airdefenders/spawn-bots.sh
 export AD_URL=""
 
 # ops/ci/check-federated-trust-retirement.sh
@@ -940,14 +940,14 @@ export AGENT_REF_RANGE_HEAD=""
 # ops/loadtest/rca-throughput-decomposition.sh
 export AGG_K=""
 
-# docs/project/active-work/recently_completed/demogame-mp-merge.yaml, docs/project/active-work/recently_completed/easy-rollback-tier0-demogame.yaml …
-export DEMOGAME_IMAGE=""
+# docs/project/active-work/recently_completed/airdefenders-mp-merge.yaml, docs/project/active-work/recently_completed/easy-rollback-tier0-airdefenders.yaml …
+export AIRDEFENDERS_IMAGE=""
 
-# ops/zenoh-trial-peers/bootstrap-demogame-portal.sh
-export DEMOGAME_VENDOR_CERT_OUT_DIR=""
+# ops/zenoh-trial-peers/bootstrap-airdefenders-portal.sh
+export AIRDEFENDERS_VENDOR_CERT_OUT_DIR=""
 
-# ops/ansible/roles/demogame/defaults/main.yml, ops/ansible/roles/demogame/tasks/deploy.yml …
-export DEMOGAME_ZENOH_SIDECAR_IMAGE=""
+# ops/ansible/roles/airdefenders/defaults/main.yml, ops/ansible/roles/airdefenders/tasks/deploy.yml …
+export AIRDEFENDERS_ZENOH_SIDECAR_IMAGE=""
 
 # ops/ansible/group_vars/zagros_cloud_hosts/vars.yml, ops/ansible/group_vars/zagros_dev_hosts/vars.yml …
 export ALERT_EMAIL_DIGEST_RECIPIENTS=""
@@ -1069,7 +1069,7 @@ export BLACKBOX_EXTRA_PROBE_HOST=""
 # ops/scripts/gated-service-preflight.sh
 export BRANCHES=""
 
-# ops/serve/demogame/spawn-bots.sh
+# ops/serve/airdefenders/spawn-bots.sh
 export BROWSER=""
 
 # terraform-prod/bootstrap.sh
@@ -1198,7 +1198,7 @@ export COLLAB_KANIDM_URL=""
 # ops/onboard-runner/collab.go
 export COLLAB_SIGNIN_URL=""
 
-# ops/serve/demogame/spawn-bots.sh
+# ops/serve/airdefenders/spawn-bots.sh
 export COLS=""
 
 # ops/ansible/compliance-proxy-deploy.yml
@@ -3250,16 +3250,16 @@ export RUST_LOG=""
 # ops/zenoh/docker-compose.yml, ops/zenoh/loadgen/main.go
 export SCENARIO=""
 
-# ops/zenoh-trial-peers/bootstrap-demogame-portal.sh, ops/zenoh-trial-peers/bootstrap-portal-vendors.sh
+# ops/zenoh-trial-peers/bootstrap-airdefenders-portal.sh, ops/zenoh-trial-peers/bootstrap-portal-vendors.sh
 export SCP_TARGET=""
 
 # ops/loadtest/rca-throughput-decomposition.sh
 export SCRATCH_ROCKSDB=""
 
-# ops/serve/demogame/spawn-bots.sh
+# ops/serve/airdefenders/spawn-bots.sh
 export SCREEN_H=""
 
-# ops/serve/demogame/spawn-bots.sh
+# ops/serve/airdefenders/spawn-bots.sh
 export SCREEN_W=""
 
 # ops/zenoh/wedge-repro/run-slow-consumer.sh, ops/zenoh/wedge-repro/slow_consumer.py
@@ -3622,7 +3622,7 @@ export TRANSPORT=""
 # ops/scripts/pr-readiness.sh
 export TRUNK=""
 
-# ops/serve/demogame/demo_auth.go
+# ops/serve/airdefenders/demo_auth.go
 export TRUST_FORWARDED_IDENTITY=""
 
 # ops/serve/trust-sandbox/deploy/docker-compose.hosted.yml
@@ -3820,13 +3820,13 @@ export ZENOH_PIN=""
 # ops/relay/health/zenoh-health-probe.sh
 export ZENOH_PROM_OUT=""
 
-# MULTIPLAYER_NOTES.md, ops/serve/demogame/main.go
+# MULTIPLAYER_NOTES.md, ops/serve/airdefenders/main.go
 export ZENOH_PUBLISH=""
 
 # ops/relay/health/zenoh-health-probe.sh
 export ZENOH_QUIC_PORT=""
 
-# ops/serve/demogame/main.go
+# ops/serve/airdefenders/main.go
 export ZENOH_REST_ENDPOINT=""
 
 # ops/relay/health/zenoh-fabric-sampler.sh, ops/relay/health/zenoh-health-probe.sh

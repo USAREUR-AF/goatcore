@@ -6,7 +6,7 @@
   local script helper keys ids
   for script in \
     ops/zenoh-trial-peers/bootstrap-notional-portal.sh \
-    ops/zenoh-trial-peers/bootstrap-demogame-portal.sh \
+    ops/zenoh-trial-peers/bootstrap-airdefenders-portal.sh \
     ops/zenoh-trial-peers/synth-vendor-schemas/bootstrap-notional-schemas.sh; do
     helper=existing_topic_id_for; keys=EXISTING_TOPIC_KEYS; ids=EXISTING_TOPIC_IDS
     if [[ "$script" == *bootstrap-notional-schemas.sh ]]; then

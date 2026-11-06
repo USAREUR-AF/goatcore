@@ -48,7 +48,7 @@ the UI even if the vendor skipped running the example.
 There is deliberately **no in-portal Zenoh subscriber.** The portal has
 no native Zenoh client today (the inspector talks to the REST plugin
 over HTTP), and Eclipse does not publish a maintained Zenoh 1.x Go
-binding (per CLAUDE.md, the demogame publisher pivoted to a REST
+binding (per CLAUDE.md, the airdefenders publisher pivoted to a REST
 shim for the same reason). The audit-subscriber Rust service is already
 the canonical "subscribes to everything on the fabric" peer; the portal
 tails its output instead of duplicating the subscription.

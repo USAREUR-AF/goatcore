@@ -71,7 +71,7 @@ jobs:
         # Roles import modules from ansible.posix (sysctl, authorized_key,
         # etc.), community.general (timezone, htpasswd, etc.), and
         # community.docker (docker_image, docker_compose_v2 — panoscope,
-        # goat-zenoh-portal, demogame, isitup, …). Without these,
+        # goat-zenoh-portal, airdefenders, isitup, …). Without these,
         # ansible-playbook --syntax-check warns "No module named
         # 'ansible_collections.<ns>.<col>'" and the syntax-check.sh
         # scripts exit non-zero. Pin major versions to keep the gate

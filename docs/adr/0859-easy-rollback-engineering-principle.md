@@ -25,7 +25,7 @@ Three concrete substrate elements:
 
 CI substrate: `.github/workflows/deploy-history-check.yml` requires that any change to a role's `<role>_image` default also appends the new SHA to the corresponding `deploy-history.yml` (and prunes >8 oldest rows).
 
-Tier-0 sweep: panoscope, goat-zenoh-portal, zenoh-router, audit-subscriber, isitup, brief, dataflows, demogame, netbird-dashboard, netbird-mgmt, oauth2-proxy-dashboard. Adopted in parallel per-service follow-on tracks after this principle PR lands.
+Tier-0 sweep: panoscope, goat-zenoh-portal, zenoh-router, audit-subscriber, isitup, brief, dataflows, airdefenders, netbird-dashboard, netbird-mgmt, oauth2-proxy-dashboard. Adopted in parallel per-service follow-on tracks after this principle PR lands.
 
 ## Scope (in / out)
 

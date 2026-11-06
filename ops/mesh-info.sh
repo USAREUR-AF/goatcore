@@ -121,7 +121,7 @@ show_dns() {
     done < "$hosts_file"
   else
     echo "  (mesh-hosts file not found — checking known names)"
-    for name in goat demogame; do
+    for name in goat airdefenders; do
       local fqdn="$name.$DOMAIN"
       local resolved
       resolved=$(dig +short @"$nethost_dns" -p 5353 "$fqdn" 2>/dev/null || echo "")

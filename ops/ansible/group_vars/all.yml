@@ -153,7 +153,7 @@ service_tiers:
   relay_metrics_ingest: 2
   compliance_proxy: 2
   # nicety — no effect on operational value
-  demogame: 3
+  airdefenders: 3
   zenoh_sandbox: 3
   synth_vendors: 3
   brief: 3

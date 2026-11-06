@@ -67,7 +67,7 @@ Three candidate runtimes:
   - **Layer 4** — architecture comment: updated.
   - **Layer 5** — boot-time assertion: unchanged.
 
-**Migration is bounded to the goat-relay binary.** The mgmt-host stack (signal-server, netbird-mgmt, db-policy-engine, mgmt-host-bootstrap, gatewatch, demogame, ntp-health-agent, admit-audit) stays on vanilla tokio. ADR 0709 D7's runtime decision applies to those workloads; their shape is request-scoped, not per-byte hot-path, and the io_uring uplift is structurally smaller. **The carve-out matches the language-decision rule in [ADR 0112](0112-tech-strategy-workload-shape-language-boundary.md): per-byte hot path + on-data-path sidecar gets the heaviest tooling; per-request control + CLI keeps the ergonomic default.**
+**Migration is bounded to the goat-relay binary.** The mgmt-host stack (signal-server, netbird-mgmt, db-policy-engine, mgmt-host-bootstrap, gatewatch, airdefenders, ntp-health-agent, admit-audit) stays on vanilla tokio. ADR 0709 D7's runtime decision applies to those workloads; their shape is request-scoped, not per-byte hot-path, and the io_uring uplift is structurally smaller. **The carve-out matches the language-decision rule in [ADR 0112](0112-tech-strategy-workload-shape-language-boundary.md): per-byte hot path + on-data-path sidecar gets the heaviest tooling; per-request control + CLI keeps the ergonomic default.**
 
 **Sequencing:** L5 lands AFTER L1-L4, L6, L7, L8 are landed and re-measured against M-NNN (the L8 verdict re-test). The L5 implementation effort is ~4-8 hr focused work plus a re-measurement against the same iperf3 ramp. The expected delta versus the L8-stack baseline determines whether L5 was worth it (predicted: 10-30% lift on syscall-heavy paths; falsifiable).
 

@@ -27,7 +27,7 @@ Pick a name from the task description, lowercase + hyphenated, ≤30 chars:
 
 - "do the zenoh bump" → `zenoh-1.9-bump` (pick the version specifically)
 - "fix F-074 bootstrap-bundle absence" → `f074-bootstrap-bundle-fix`
-- "build the demogame 2 cluster" → `block-67-demogame-2-captain`
+- "build the airdefenders 2 cluster" → `block-67-airdefenders-2-captain`
 - "refactor the policy engine" → `policy-engine-refactor`
 
 Don't ask the operator to confirm the track name — pick a reasonable one and proceed. The operator can correct mid-flight if needed.

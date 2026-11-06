@@ -45,7 +45,7 @@ ansible-playbook site.yml
 | Tier | Playbook | What it covers |
 |---|---|---|
 | 1. Infrastructure | `site-infra.yml` | VPS relays, network host firewall, mesh DNS, network host relay clients |
-| 2. Services | `site-services.yml` | Caddy hosting, status page, smoketest, secwatch, demogame |
+| 2. Services | `site-services.yml` | Caddy hosting, status page, smoketest, secwatch, airdefenders |
 | 3. Bridge | `bridge.yml` | Bridge VPSes for partner connectivity (requires `-e netbird_setup_key`) |
 | 4. TAK | `tak-server.yml` | TAK Server (requires hardware + Docker image from tak.gov) |
 
@@ -94,7 +94,7 @@ Tiers 3 and 4 skip cleanly if their inventory groups are empty.
 |---|---|
 | `site.yml` | All tiers in order (infra → services → bridge → TAK) |
 | `site-infra.yml` | Tier 1: `relay-server` → `nethost-firewall` → `nethost-dns` → `nethost-relay` |
-| `site-services.yml` | Tier 2: `nethost-serve` → `nethost-status` → `nethost-smoketest` → `nethost-secwatch` → `demogame` |
+| `site-services.yml` | Tier 2: `nethost-serve` → `nethost-status` → `nethost-smoketest` → `nethost-secwatch` → `airdefenders` |
 
 ## Inventory
 

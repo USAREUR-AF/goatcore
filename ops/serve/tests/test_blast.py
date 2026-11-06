@@ -1,5 +1,5 @@
 """
-Selenium tests for Demo Game proximity blast multi-kill behavior.
+Selenium tests for Air Defenders proximity blast multi-kill behavior.
 
 Validates that armed interceptor detonation kills ALL targets within
 PROX_RADIUS, not just the trigger target. Uses window._testStep() to
@@ -23,7 +23,7 @@ from selenium import webdriver
 from selenium.webdriver.chrome.options import Options as ChromeOptions
 from selenium.webdriver.firefox.options import Options as FirefoxOptions
 
-SERVE_DIR = str(Path(__file__).resolve().parent.parent / "demogame")
+SERVE_DIR = str(Path(__file__).resolve().parent.parent / "airdefenders")
 GAME_FILE = "index.html"
 
 

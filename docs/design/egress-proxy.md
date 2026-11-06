@@ -543,7 +543,7 @@ context; it does **not** destroy the audit record.
 | Enrollment / de-enrollment of peers | Netbird management API | Perimeter change events |
 
 **Out of scope (v1).** Application-level logs (efforts, gatewatch,
-demogame, Zenoh samples), Traefik access logs, routine Prometheus
+airdefenders, Zenoh samples), Traefik access logs, routine Prometheus
 scrapes. These stay in local Loki with normal retention.
 
 **Destination.** Per-site append-only store, **not** cross-site

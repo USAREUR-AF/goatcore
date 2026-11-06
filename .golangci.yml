@@ -8,7 +8,7 @@
 #
 # Scope today: load-bearing services (signal-server, ops/time-hygiene,
 # ops/mgmt-host-bootstrap, ops/admit-audit, ops/enrollment). Peripheral
-# services (gatewatch, demogame, archived/) opt in via a follow-up.
+# services (gatewatch, airdefenders, archived/) opt in via a follow-up.
 #
 # Rationale per linter:
 #   errcheck       — unchecked errors (production data-loss bugs)

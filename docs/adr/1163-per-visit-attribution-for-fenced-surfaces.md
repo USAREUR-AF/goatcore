@@ -10,7 +10,7 @@
 
 Three things, in this order.
 
-1. **demogame, brief and dataflows get authenticated doors.** An
+1. **airdefenders, brief and dataflows get authenticated doors.** An
    oauth2-proxy fence with an empty allowed-groups list: any identity the site
    Hydra will issue a token for passes, and no group is refused.
 2. **`SurfaceVisitV1` records one authenticated request per row**, age-encrypted
