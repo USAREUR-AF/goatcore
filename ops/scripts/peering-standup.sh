@@ -43,9 +43,11 @@
 #                         (https, a static file). Unset, phase 5 uploads our
 #                         package to the directory and the pointer names that, so
 #                         a party behind NAT needs no public host
-#     FED_CA_CERT         our CA certificate (PEM) to upload to the directory;
-#                         default the profile's ca-roots.pem. Only the certificate
-#                         whose SHA-256 is our identity.ca_fingerprint is sent
+#     FED_CA_CERT         our own CA certificate (PEM), the one phase 8 signs the
+#                         peering leaves with; phase 5 uploads it to the directory
+#                         (unset there, the profile's ca-roots.pem). Only the
+#                         certificate whose SHA-256 is our identity.ca_fingerprint
+#                         is sent
 #     FED_COUNTERPARTY_ID the counterparty's sovereign_id, to look them up; phase 5
 #                         fetches their package and CA (to $FED_WORK/theirs-ca.pem)
 #
@@ -70,7 +72,7 @@ while [ $# -gt 0 ]; do
     --to)         TO="$2"; shift 2 ;;
     --as)         AS="$2"; shift 2 ;;
     --edge-group) EDGE_GROUP="$2"; shift 2 ;;
-    -h|--help)    sed -n '2,56p' "$0"; exit 0 ;;
+    -h|--help)    sed -n '2,58p' "$0"; exit 0 ;;
     -*)           echo "unknown flag $1" >&2; exit 2 ;;
     *)            [ -z "$PEERING" ] && PEERING="$1"; shift ;;
   esac

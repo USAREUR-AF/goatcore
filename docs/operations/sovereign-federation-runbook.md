@@ -96,7 +96,7 @@ is out of band, and everything above works without one.
 | `FED_COUNTERPARTY_ID` | the partner's `sovereign_id` | same |
 | `FED_SIGNING_KEY` | the key that signed your package; it signs the pointer and the uploads | same |
 | `FED_PACKAGE_URL` | **unset**: the directory hosts the package | where your host serves the package phase 3 wrote, unchanged, behind TLS, never on a mesh |
-| `FED_CA_CERT` | your CA certificate (PEM); unset, the profile's `ca-roots.pem` is read | same |
+| `FED_CA_CERT` | your own CA certificate (PEM), the one phase 8 signs the peering leaves with; unset, the directory step reads the profile's `ca-roots.pem` | same |
 
 With those set, the exchange phase, before it stops:
 

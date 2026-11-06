@@ -186,7 +186,8 @@ stops for the key check, it:
 1. publishes our pointer, signed with `FED_SIGNING_KEY`. With `FED_PACKAGE_URL` unset it first
    claims the entry, then uploads our package to `/v1/parties/<us>/package` and names that; set,
    it confirms our own host serves the package byte for byte and names it;
-2. uploads our CA certificate to `/v1/parties/<us>/ca`: from `FED_CA_CERT`, else the profile's
+2. uploads our CA certificate to `/v1/parties/<us>/ca`: from `FED_CA_CERT` (the CA phase 8 signs
+   the peering leaves with), else the profile's
    `ca-roots.pem`, only the certificate whose SHA-256 is our `identity.ca_fingerprint`;
 3. looks up `FED_COUNTERPARTY_ID`, fetches their package, checks digest and signatures, and
    places it where phase 6 reads it when nothing is there yet; fetches their CA, checks it
@@ -202,7 +203,7 @@ stops for the key check, it:
 | `FED_COUNTERPARTY_ID` | yes | yes |
 | `FED_SIGNING_KEY` | yes | yes |
 | `FED_PACKAGE_URL` | its host's package address | unset |
-| `FED_CA_CERT` | when the CA is not in the profile's `ca-roots.pem` | same |
+| `FED_CA_CERT` | our own CA certificate, as phase 8 already reads it; unset, the profile's `ca-roots.pem` | same |
 
 Every directory failure is a warning. Unset, phase 5 is unchanged.
 
