@@ -1,0 +1,102 @@
+# Audit middle-tier FIFO eviction (ADR 0811 + audit-cold-storage-offload.md).
+#
+# The bucket carries a hard quota. When it is reached, MinIO refuses new audit
+# writes, and without an alert that goes unnoticed for days. The eviction
+# service exists to drop oldest records before that
+# wall; these rules exist because a preventive service that silently stops
+# running leaves exactly the condition it was built to prevent.
+#
+# Metrics: goat_audit_evict_* from the role's node_exporter textfile.
+groups:
+  - name: audit-fifo-evict
+    interval: 60s
+    rules:
+
+      # Informational by design: every eviction is a real loss of old audit
+      # history and should be visible, even when the substrate handled it.
+      - alert: AuditMiddleTierEviction
+        expr: goat_audit_evict_objects_total > 0
+        for: 0m
+        labels:
+          severity: info
+          component: audit-middle-tier
+        annotations:
+          summary: "audit bucket {{ $labels.bucket }} evicted {{ $value }} hour-prefix(es) of oldest records"
+          description: |
+            The substrate dropped oldest records to keep accepting new ones.
+            The eviction trail is in the bucket under ops/eviction/.
+            If this is not a one-off, the quota is too small for the current
+            producer rate, or a producer is writing more than it should.
+
+      # The shape that matters: eviction running over and over is either a
+      # runaway producer or someone pushing legitimate records out.
+      - alert: AuditEvictionRateAnomalous
+        expr: increase(goat_audit_evict_hour_prefixes_total[6h]) > 24
+        for: 15m
+        labels:
+          severity: warning
+          component: audit-middle-tier
+        annotations:
+          summary: "audit eviction is running constantly on {{ $labels.bucket }} ({{ $value }} hour-prefixes in 6h)"
+          description: |
+            More than a day of audit history has been evicted in six hours.
+            Two causes worth separating before raising the quota: a producer
+            writing far more than planned, and a garbage flood squeezing out
+            real records. Check the write-rate by producer first.
+
+      # The bucket is heading for the wall and eviction has NOT relieved it.
+      - alert: AuditBucketAtQuota
+        expr: >
+          goat_audit_evict_bucket_used_bytes / goat_audit_evict_quota_bytes > 0.97
+        for: 10m
+        labels:
+          severity: critical
+          component: audit-middle-tier
+        annotations:
+          summary: "CRITICAL: audit bucket {{ $labels.bucket }} at {{ $value | humanizePercentage }} of quota — writes are about to be refused"
+          description: |
+            Eviction has not brought the bucket below its high-water mark.
+            At the wall MinIO refuses every audit write and the goatnet loses
+            its audit record silently — the producer logs the failure, nothing
+            else does. Check goat-audit-fifo-evict.service for why it is not
+            keeping up before raising the quota.
+
+      # A preventive service that is not running is the real failure mode:
+      # nothing else notices until the wall.
+      - alert: AuditEvictorStale
+        expr: >
+          time() - goat_audit_evict_last_run_timestamp_seconds > 3600
+        for: 15m
+        labels:
+          severity: warning
+          component: audit-middle-tier
+        annotations:
+          summary: "audit FIFO evictor has not completed a pass in over an hour"
+          description: |
+            goat-audit-fifo-evict.timer should run every 15 minutes. While it
+            is not running, nothing stands between the bucket and the quota
+            wall. Check: systemctl status goat-audit-fifo-evict.timer
+
+      - alert: AuditEvictorCannotMeasure
+        expr: goat_audit_evict_last_result == 1
+        for: 30m
+        labels:
+          severity: warning
+          component: audit-middle-tier
+        annotations:
+          summary: "audit FIFO evictor cannot measure {{ $labels.bucket }}"
+          description: |
+            The evictor ran but could not read the bucket size, so it will not
+            evict anything. Usually its MinIO identity (goat-audit-evictor) is
+            missing, revoked, or its secret has rotated out of step with
+            minio_extra_users.
+
+      - alert: AuditEvictorOperationFailed
+        expr: goat_audit_evict_last_result == 3
+        for: 15m
+        labels:
+          severity: warning
+          component: audit-middle-tier
+        annotations:
+          summary: "audit FIFO evictor operation failed on {{ $labels.bucket }}"
+          description: "Version deletion, state persistence or trail publication failed. Inspect the service and pending-pass journal before another destructive pass."

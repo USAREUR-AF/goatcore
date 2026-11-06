@@ -190,7 +190,7 @@ replication is wired — otherwise replication would truncate an empty table or
 collide on a populated one.
 
 1. **Pass 1 (phase 5)** — `site-bootstrap` with `participates_in_spock=false`. The account and schema are not seeded locally; they arrive by replication.
-2. **Pass 2 (phase 6, joiner-only)** — `<site>-seed-from-peer.yml`, the guarded, data-only copy of identity + mesh state from the founder. `synchronize_data:=false` means no wipe, so the seed must precede wiring.
+2. **Pass 2 (phase 6, joiner-only)** — `site-seed-from-peer.yml` (or the site's own `<site>-seed-from-peer.yml` when it keeps one), the guarded, data-only copy of identity + mesh state from the founder. `synchronize_data:=false` means no wipe, so the seed must precede wiring.
 3. **Pass 3 (phase 6)** — re-run `site-bootstrap` with Spock enabled, creating the `netbird_mgmt` subscriptions.
 4. **Founder-side mirror (phase 6, joiner-only)** — `spock-mesh-wire.yml` on the founder, scoped to this joiner only, so the subscriptions exist in **both** directions and an unrelated down peer cannot block the join.
 

@@ -1,0 +1,14 @@
+{
+  "bucket": {{ audit_fifo_evict_bucket | to_json }},
+  "alias": {{ audit_fifo_evict_alias | to_json }},
+  "quota_gib": {{ audit_fifo_evict_quota_gib | int | to_json }},
+  "high_pct": {{ audit_fifo_evict_high_water_pct | int | to_json }},
+  "low_pct": {{ audit_fifo_evict_low_water_pct | int | to_json }},
+  "batch_hours": {{ audit_fifo_evict_batch_hours | int | to_json }},
+  "max_pass_pct": {{ audit_fifo_evict_max_pass_pct | int | to_json }},
+  "trail_prefix": {{ audit_fifo_evict_trail_prefix | to_json }},
+  "textfile_dir": {{ audit_fifo_evict_textfile_dir | to_json }},
+  "mc_image": {{ audit_fifo_evict_mc_image | to_json }},
+  "state_dir": {{ audit_fifo_evict_dir | to_json }},
+  "env_file": {{ (audit_fifo_evict_dir ~ "/evictor.env") | to_json }}
+}

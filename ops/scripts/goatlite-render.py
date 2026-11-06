@@ -587,7 +587,7 @@ relay_health_enabled: false
 grant_keyd_enabled: true
 admit_audit_enabled: true
 isitup_enabled: false
-demogame_enabled: false
+airdefenders_enabled: false
 brief_enabled: false
 compliance_proxy_enabled: false
 dataflows_enabled: false
@@ -771,7 +771,7 @@ id_admin_console_notify_goatnet_purpose: >-
 # -- Fail-loud placeholders for role defaults above the tier ceiling -----------
 smtp_from: "FAIL-LOUD-{n}-has-no-smtp"
 snitch_collector_url: "FAIL-LOUD-{n}-has-no-snitch-collector"
-demogame_url_host: "FAIL-LOUD-demogame-is-nicety-tier"
+airdefenders_url_host: "FAIL-LOUD-airdefenders-is-nicety-tier"
 
 {svc_tls}
 goat_get_traefik_cert_resolver: "{resolver}"
@@ -787,7 +787,7 @@ netbird_selfheal_enabled: false
 # The names a goatlite answers for. CoreDNS's hosts plugin has no wildcards, so
 # each one is listed.
 ZONE_SERVICES = (
-    "admin-dashboard", "demogame", "auth", "brief", "compliance", "consistency",
+    "admin-dashboard", "airdefenders", "auth", "brief", "compliance", "consistency",
     "dashboard", "dataflows", "flashlight", "goat-docs", "goat-get", "goat-map",
     "grafana", "gym", "herd", "id-admin-console", "isitup", "mgmt", "mgmt-admin",
     "mgmt-read", "microscope", "minio", "minio-console", "netview", "netview-response",

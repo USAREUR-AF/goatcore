@@ -36,7 +36,7 @@
 # rejected. One without them decodes fine and works. The same command therefore
 # produces a working secret or a crash-looping one at random, which is exactly
 # how this landed: on the first live run of this role, brief came up and
-# dataflows and demogame crash-looped, on secrets generated in one loop.
+# dataflows and airdefenders crash-looped, on secrets generated in one loop.
 #
 # The fleet convention avoids the question entirely: 32 hex characters from
 # `openssl rand -hex 16`, which is a valid raw secret and needs no decoding.

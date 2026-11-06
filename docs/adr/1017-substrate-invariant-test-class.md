@@ -114,7 +114,7 @@ configurations / values. Concrete examples in scope today:
   T at peer Y, modulo declared partition/latency tolerance.
 
 A *substrate* is NOT the same as a *service* or a *role*. A service
-that runs in isolation (e.g., `gatewatch`, `demogame`) does not
+that runs in isolation (e.g., `gatewatch`, `airdefenders`) does not
 need a substrate-invariant test. A service that depends on a substrate
 inherits the substrate's tests; it does not need to re-implement them.
 

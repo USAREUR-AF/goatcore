@@ -53,13 +53,13 @@ COVERED = {
     # no fence container, and served HTTP 200 to any caller on production.
     "panoscope": "panoscope_oauth2_proxy_allowed_groups",
     "isitup": "isitup_oauth2_proxy_allowed_groups",
-    # Authenticated doors (oauth2-proxy-surface) on demogame / brief /
+    # Authenticated doors (oauth2-proxy-surface) on airdefenders / brief /
     # dataflows: built taken down (#726, deployed ahead
     # of review), put back the same day through review. The door refuses
     # nobody; it exists so Hydra records who reached the surface. These rows
     # are valid only while the door is ON somewhere — the dormant-door rule
     # below fails the build if it is off everywhere.
-    "demogame": "demogame_oauth2_proxy_allowed_groups",
+    "airdefenders": "airdefenders_oauth2_proxy_allowed_groups",
     "brief": "brief_oauth2_proxy_allowed_groups",
     "dataflows": "dataflows_oauth2_proxy_allowed_groups",
 }
@@ -94,7 +94,7 @@ ok = all(d in DOOR_VALUES for d in doors.values())
 
 # A grant on a mesh-only door enforces nothing — no fence reads it — and the
 # console renders it as an access list: a `play` grant to
-# PLATFORM-ADMIN on demogame read as "nobody else may play" while the
+# PLATFORM-ADMIN on airdefenders read as "nobody else may play" while the
 # surface admitted every mesh caller. So a mesh-only service holds no grants.
 for g in matrix["groups"]:
     for gr in g.get("grants", []):
@@ -154,7 +154,7 @@ for service, var in sorted(COVERED.items()):
         # differentiates behind the door (relay-health). A lone grant on a
         # surface that does not differentiate renders as an access list
         # ("PLATFORM-ADMIN plays, nobody else does"), so zero is the honest
-        # count for demogame / brief / dataflows.
+        # count for airdefenders / brief / dataflows.
         print(f"note: {service}: authenticated door, no grants — the door is the whole decision")
     elif not want:
         print(f"FAIL: {service} is covered but the matrix grants it to no group")
@@ -225,7 +225,7 @@ for p in audit_paths:
             continue
         var = m.group(1) + "oauth2_proxy_allowed_groups"
         # A DORMANT door: the role ships <prefix>_oauth2_proxy_enabled and no
-        # goatnet turns it on. demogame / brief / dataflows are this shape
+        # goatnet turns it on. airdefenders / brief / dataflows are this shape
         # — the door exists in the tree and runs nowhere, so
         # the matrix must say what runs (mesh-only), not what could. The var
         # is admitted only while BOTH hold: enabled is false everywhere AND the

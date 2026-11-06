@@ -111,3 +111,7 @@ machine_provenance_guard_rules_dir: "/opt/{{ site_id }}-obs/prometheus/rules"
 # Run once inline at deploy, with somebody watching, rather than discovering at
 # :17 unattended that a credential was wrong.
 machine_provenance_guard_run_now: true
+
+# Where warrant-membership installs this scope's declarations. The guard reads them
+# to accept declared external-service hosts (ADR 1178, F-531).
+machine_provenance_guard_warrant_dir: "/etc/goat/warrant/membership/{{ site_id }}"

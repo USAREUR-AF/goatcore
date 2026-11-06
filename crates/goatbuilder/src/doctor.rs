@@ -1880,8 +1880,8 @@ mod tests {
             return; // a public clone of goatcore ships no deployment
         }
         let a = ansible();
-        let r = resolve_target_mode(&a, &a.join("demogame-deploy.yml")).unwrap();
-        assert_eq!(r.mode, "-e demogame_host_group=<group>");
+        let r = resolve_target_mode(&a, &a.join("airdefenders-deploy.yml")).unwrap();
+        assert_eq!(r.mode, "-e airdefenders_host_group=<group>");
     }
 
     #[test]

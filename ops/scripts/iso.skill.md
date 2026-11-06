@@ -14,7 +14,7 @@ This skill controls the per-session worktree state for the current Claude Code s
 ## When to use
 
 - **`/iso enter <name>`** — provision a per-session worktree at `.claude/worktrees/<name>` on branch `track/<name>` from origin/main, register the track, and operate from there for the rest of the session.
-- **`/iso enter --autonomous <name>`** — same as above, plus copies the overnight allowlist into the per-session worktree's `.claude/settings.local.json` so the agent runs end-to-end without operator permission prompts. Hard deny list still applies (cloud apply, destructive, main push, merge). Permission denial = structural halt per `ops/work/roles/autonomous-worker.md`. Use for overnight runs (zenoh bump, demogame cluster).
+- **`/iso enter --autonomous <name>`** — same as above, plus copies the overnight allowlist into the per-session worktree's `.claude/settings.local.json` so the agent runs end-to-end without operator permission prompts. Hard deny list still applies (cloud apply, destructive, main push, merge). Permission denial = structural halt per `ops/work/roles/autonomous-worker.md`. Use for overnight runs (zenoh bump, airdefenders cluster).
 - **`/iso exit`** — return to master worktree (suspend the active track via `work update --status paused`, don't release).
 - **`/iso resume <name>`** — re-enter an existing per-session worktree (already-provisioned).
 - **`/iso status`** — show current operating directory + branch + track state + dirty flag + autonomous-mode flag.

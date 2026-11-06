@@ -158,10 +158,10 @@ svcs = []
 for row in (v.get("isitup_services") or []):
     if isinstance(row, dict) and row.get("fqdn"):
         svcs.append(render(str(row["fqdn"])))
-# demogame_url_host is a declared service FQDN outside isitup_services;
+# airdefenders_url_host is a declared service FQDN outside isitup_services;
 # it is a legitimate fallback for an env whose registry is not populated yet.
-if not svcs and v.get("demogame_url_host"):
-    svcs.append(render(str(v["demogame_url_host"])))
+if not svcs and v.get("airdefenders_url_host"):
+    svcs.append(render(str(v["airdefenders_url_host"])))
 
 out("SITE_ID", site_id)
 out("SITE_ZONE", zone)

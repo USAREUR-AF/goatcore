@@ -320,7 +320,7 @@ fn or_q(s: &str) -> &str {
 /// this verb (printed in the manual steps' instructions).
 /// The playbook a phase runs for `site`: the site's own `<site>-<suffix>` when
 /// it keeps one under ops/ansible, else the generic `site-<suffix>`.
-fn site_play(repo: &Path, site: &str, suffix: &str) -> String {
+pub(crate) fn site_play(repo: &Path, site: &str, suffix: &str) -> String {
     let own = format!("{site}-{suffix}");
     if repo.join("ops/ansible").join(&own).is_file() {
         own
@@ -428,7 +428,10 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
     let jfs = &s.join_founder_site;
     let jfg = &s.join_founder_group;
     if s.joiner {
-        ev.push(p(6, "A", format!("[joiner] seed-from-peer (pass 2 — data-only copy from founder {}; guarded)", or_q(jfs)), format!("cd '{r}/ops/ansible' && {{ [ -n '{jfs}' ] || {{ echo 'joiner: group_vars/{g}/vars.yml must set join_founder_site (the founder site-id to seed from)'; exit 1; }}; }} && {{ ls {site}-seed-from-peer.yml >/dev/null 2>&1 || {{ echo 'missing {site}-seed-from-peer.yml — clone it from any site that has <site>-seed-from-peer.yml (node-addition.md §4)'; exit 1; }}; }} && {pre} {inv} {site}-seed-from-peer.yml -e site_id={site}")));
+        // site-seed-from-peer.yml is the generic play; a site that keeps its
+        // own <site>-seed-from-peer.yml gets that one instead.
+        let seed_play = site_play(repo, site, "seed-from-peer.yml");
+        ev.push(p(6, "A", format!("[joiner] seed-from-peer (pass 2 — data-only copy from founder {}; guarded)", or_q(jfs)), format!("cd '{r}/ops/ansible' && {{ [ -n '{jfs}' ] || {{ echo 'joiner: group_vars/{g}/vars.yml must set join_founder_site (the founder site-id to seed from)'; exit 1; }}; }} && {pre} {inv} {seed_play} -e site_id={site}")));
     }
     // The rest of site-bootstrap, now that Ory is up: the seed's schema wait is
     // bounded (netbird_schema_wait_seconds) and names its cause. A joiner runs
@@ -1550,6 +1553,28 @@ mod tests {
         let jsb: Vec<&(u32, String, String)> = j.iter().filter(|l| l.2.contains("site-bootstrap.yml")).collect();
         assert!(jsb[0].2.ends_with("--skip-tags after-ory"));
         assert!(!jsb[1].2.contains("--skip-tags"), "{}", jsb[1].2);
+    }
+
+    /// A joiner's pass 2 runs the generic site-seed-from-peer.yml when the site
+    /// keeps no <site>-seed-from-peer.yml of its own, and the site's own play
+    /// when it does.
+    #[test]
+    fn joiner_seed_falls_back_to_the_generic_play() {
+        let o = Options { env: "e", site: "zagros", profile: None, from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false, check: false };
+        let j = phase_lines(&test_site(true), &o);
+        let seed: Vec<&(u32, String, String)> = j.iter().filter(|l| l.1.starts_with("[joiner] seed-from-peer")).collect();
+        assert_eq!(seed.len(), 1, "{seed:?}");
+        assert_eq!(seed[0].0, 6);
+        assert!(seed[0].2.contains(" site-seed-from-peer.yml -e site_id=zagros"), "{}", seed[0].2);
+        assert!(!seed[0].2.contains("missing "), "no refusal for an absent per-site play: {}", seed[0].2);
+        let f = phase_lines(&test_site(false), &o);
+        assert!(!f.iter().any(|l| l.2.contains("seed-from-peer")), "a founder never seeds");
+        let t = std::env::temp_dir().join(format!("gb-seed-play-{}", std::process::id()));
+        std::fs::create_dir_all(t.join("ops/ansible")).unwrap();
+        assert_eq!(site_play(&t, "zagros", "seed-from-peer.yml"), "site-seed-from-peer.yml");
+        std::fs::write(t.join("ops/ansible/zagros-seed-from-peer.yml"), "---\n").unwrap();
+        assert_eq!(site_play(&t, "zagros", "seed-from-peer.yml"), "zagros-seed-from-peer.yml");
+        let _ = std::fs::remove_dir_all(&t);
     }
 
     /// The image pull starts after phase 2 and is joined before phase 5, and only

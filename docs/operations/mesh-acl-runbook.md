@@ -96,7 +96,7 @@ Triggered when the third peer of a novel class enrolls.
    shortest unambiguous noun describing the peer class. Avoid mission
    names; the NetBird layer is echelon-based,
    not mission-based — see
-   mesh-acl design doc §"Why no DEMOGAME-C2".
+   mesh-acl design doc §"Why no AIRDEFENDERS-C2".
 
 2. **Update the design doc** (`docs/design/mesh-acl.md`):
    - Add the new group to the §"Group taxonomy (13 per site)" table.

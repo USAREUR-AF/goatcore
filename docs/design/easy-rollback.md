@@ -15,7 +15,7 @@ This is a one-line operational invariant. It is short on purpose so it survives.
 Three forcing functions:
 
 1. **Pace.** The repo's deploy cadence is high — image bumps land hourly during active days. The window between "the image is live" and "we discover it's broken" is sometimes seconds (a crash loop visible in `docker inspect`) and sometimes minutes-to-hours (a UX regression like the panoscope "real peers missing" gap surfaced 2026-05-19 after PR #238). In both cases the operator's *next minute* matters: every minute of degraded state is a minute the operator can't trust the rest of the fabric.
-2. **Surface area.** Tier-0 services (panoscope, portal, zenoh-router, audit-subscriber, isitup, brief, dataflows, demogame, dashboard, mgmt, oauth2-proxy) are eleven things. Each can break independently. Each currently has its own ad-hoc recovery dance (find prior SHA, sed compose file, force-recreate). Eleven different dances ≈ no dance.
+2. **Surface area.** Tier-0 services (panoscope, portal, zenoh-router, audit-subscriber, isitup, brief, dataflows, airdefenders, dashboard, mgmt, oauth2-proxy) are eleven things. Each can break independently. Each currently has its own ad-hoc recovery dance (find prior SHA, sed compose file, force-recreate). Eleven different dances ≈ no dance.
 3. **Multi-agent reality.** Agents push image bumps; an operator across the room sees a 502 and doesn't have the deploy session's context. Without a substrate, the operator and the agent diverge on "what was the last good SHA" — which is exactly the failure mode that left the user staring at `bad gateway` while the agent debugged config split-brain on 2026-05-19.
 
 The principle is the floor. Specific services can build richer rollback (blue-green, canary, schema-aware staged migration) on top — but every service starts at the floor.
@@ -133,7 +133,7 @@ The eleven services that, if broken for a non-trivial period, immediately impact
 | isitup               | ops/ansible/roles/isitup/             | Operator-facing status page                          |
 | brief                | ops/ansible/roles/brief/              | Partner briefing surface                             |
 | dataflows            | ops/ansible/roles/dataflows/          | Partner briefing surface                             |
-| demogame         | ops/ansible/roles/demogame/       | Demo/partner-facing                                  |
+| airdefenders         | ops/ansible/roles/airdefenders/       | Demo/partner-facing                                  |
 | netbird-dashboard    | ops/ansible/roles/netbird-dashboard/  | Mgmt console (admins)                                |
 | netbird-mgmt         | ops/ansible/roles/netbird-mgmt/       | Mgmt API; peer enrollment                            |
 | oauth2-proxy-dashboard | ops/ansible/roles/oauth2-proxy-dashboard/ | L7 admin fence; failure = wide-open dashboard or denied-all dashboard |

@@ -420,7 +420,7 @@ mod tests {
                 created_at: 30,
             },
             TopicMeta {
-                key: "demogame/tracks/v1".into(),
+                key: "airdefenders/tracks/v1".into(),
                 format: "".into(), // no declared format
                 last_seen_at: Some(100),
                 created_at: 5,
@@ -437,7 +437,7 @@ mod tests {
                     items,
                     vec![
                         "org11x/observations/v1".to_string(),
-                        "demogame/tracks/v1".to_string(),
+                        "airdefenders/tracks/v1".to_string(),
                         "goat-maintainer/probe/v2".to_string(),
                         "goat-maintainer/test/v1".to_string(),
                     ]

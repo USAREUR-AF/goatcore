@@ -167,12 +167,12 @@ services:
       depth. A static deck, so it declares no API routes.
     audit_point: traefik access log.
 
-  - name: demogame
+  - name: airdefenders
     door: authenticated
-    description: Demo Game Classic game + shared leaderboard; the fabric demo (/demo) inside it is platform-admin only.
-    surface: https://demogame.<site>.<zone>/
+    description: Air Defenders Classic game + shared leaderboard; the fabric demo (/demo) inside it is platform-admin only.
+    surface: https://airdefenders.<site>.<zone>/
     fence: >-
-      oauth2-proxy sidecar (oauth2-proxy-demogame), any authenticated
+      oauth2-proxy sidecar (oauth2-proxy-airdefenders), any authenticated
       identity — no group is refused at the door. The door exists for
       ATTRIBUTION: Hydra records one consent grant per visitor, which is what
       makes this surface answerable in microscope. Mesh-only until 2026-09-05;
@@ -186,10 +186,10 @@ services:
       door with no cookie jar. ONE in-app gate behind the door (2026-09-11):
       GET /demo — the eight-bot fabric demo that fills the whole co-op room —
       and the DEMO button that opens it render only for the groups in
-      demogame_demo_admin_groups (PLATFORM-ADMIN), read from the door's
+      airdefenders_demo_admin_groups (PLATFORM-ADMIN), read from the door's
       unforgeable X-Forwarded-Groups (demo_auth.go). That is the `admin` grant
       below; everyone else plays at / and /mp.
-    audit_point: demogame structured log.
+    audit_point: airdefenders structured log.
 
   - name: help
     door: mesh-only
@@ -309,11 +309,11 @@ groups:
       # brief and dataflows carry NO grant rows: their door admits any login
       # and refuses no group, so a grant here would describe nothing the fence
       # enforces — the console once rendered one as "PLATFORM-ADMIN plays,
-      # nobody else does". demogame is the exception :
+      # nobody else does". airdefenders is the exception :
       # `admin` here is the in-app fabric-demo gate (/demo + the DEMO button),
       # enforced by the game from the door's X-Forwarded-Groups; playing is
       # still any login.
-      - { service: demogame,        access: admin }
+      - { service: airdefenders,        access: admin }
 
   # ADR 1189 (docs/design/mesh-change-control.md). Held by the named people
   # who may WRITE to NetBird from the admin dashboard address; granted and

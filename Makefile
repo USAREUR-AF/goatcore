@@ -52,6 +52,7 @@ test:
 # Excluded on purpose:
 # ops/serve/tests/test_blast.py (needs pytest).
 PY_SUITES := \
+	ops/scripts/test_external_service_finish.py \
 	ops/node-net-health/test_inventory.py \
 	ops/relay/health/test_atomic_ingest.py \
 	ops/issue-tracks/test_issue_tracks.py \

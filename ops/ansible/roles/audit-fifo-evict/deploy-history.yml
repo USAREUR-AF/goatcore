@@ -1,0 +1,16 @@
+---
+# Pending declaration under ADR 0859/1060. This is not a deployment receipt.
+service: audit-fifo-evict
+artifact_type: forward-only
+hosts: []
+history:
+  - sha: PENDING
+    image: "minio/mc:RELEASE.2024-10-29T15-34-59Z@sha256:PENDING"
+    pr: 1885
+    merged_at: null
+    do_not_roll_to: true
+    summary: >-
+      No reviewed accessible client digest is available. The role rejects this
+      sentinel before installation. Supply a verified multi-architecture client
+      pin and its ledger row together; add a connection map only for an actual
+      authorized deployment. Deleted versions cannot be restored by code rollback.

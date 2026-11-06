@@ -115,10 +115,13 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
             if founder_site.is_empty() {
                 return Err(anyhow!("group_vars/{group}/vars.yml declares goatnet_founder: false and no join_founder_site — a joiner must name the founder it seeds from (node-addition.md §3)"));
             }
+            // site-seed-from-peer.yml is the generic play; a site that keeps its
+            // own <site>-seed-from-peer.yml gets that one instead.
+            let seed_play = crate::standup::site_play(repo, site, "seed-from-peer.yml");
             let p1 = if intra_pair { format!("{ev_bootstrap} -e participates_in_spock=false") } else { format!("{ev_bootstrap} -e participates_in_spock=false -e has_durable_independent_state=true") };
             ev.push(p(13, "A", "[core, joiner] pass 1 — bootstrap without Spock (AutoMigrate creates the schema once, on the empty DB)", format!("cd '{r}/ops/ansible' && {pre} {inv} -l {node} site-bootstrap.yml {p1}")));
             ev.push(p(13, "A", "[core, joiner] the service deploys the seed needs (kratos/hydra schemas): ory", format!("cd '{r}/ops/ansible' && {pre} {inv} ory-deploy.yml --limit {node} -e postgres_superuser_password=\"$(printenv {upper}_PG_PASS)\"")));
-            ev.push(p(13, "A", &format!("[core, joiner] pass 2 — seed-from-peer: data-only copy from founder {founder_site} (fails loud if the account is populated)"), format!("cd '{r}/ops/ansible' && {{ ls {site}-seed-from-peer.yml >/dev/null 2>&1 || {{ echo 'missing {site}-seed-from-peer.yml — clone it from another site's <site>-seed-from-peer.yml (node-addition.md §4)'; exit 1; }}; }} && {pre} {inv} -l {node} {site}-seed-from-peer.yml -e site_id={site}")));
+            ev.push(p(13, "A", &format!("[core, joiner] pass 2 — seed-from-peer: data-only copy from founder {founder_site} (fails loud if the account is populated)"), format!("cd '{r}/ops/ansible' && {pre} {inv} -l {node} {seed_play} -e site_id={site}")));
             ev.push(p(13, "A", "[core, joiner] pass 3 — bootstrap with Spock: subscriptions on both sides, polled to replicating", format!("cd '{r}/ops/ansible' && {pre} {inv} -l {node} site-bootstrap.yml {ev_bootstrap}")));
             ev.push(p(13, "A", &format!("[core, joiner] the founder-side mirror on {founder_group}, peer={site} only (§5.4a: the same change, not a follow-up)"), format!("cd '{r}/ops/ansible' && {pre} {inv} spock-mesh-wire.yml --limit {founder_group} -e '{{\"inter_site_spock_peers\":[\"{site}\"]}}'")));
         }

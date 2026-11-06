@@ -565,9 +565,14 @@ func assembleManifest(h *intakeHints, in effectiveInputs) (map[string]any, error
 	setPath(m, "identity.added_by", sponsorAddedBy(in.Sponsor, in.Site))
 	setPath(m, "identity.added", time.Now().UTC().Format("2006-01-02"))
 	// identity.github (optional) — a bare login for repo-collaborator grants at
-	// provision (docs/design/onboarding-github-repo-grants.md). Normalize: trim +
-	// drop a single leading '@' so the manifest carries the login GitHub expects.
-	if gh := strings.TrimPrefix(strings.TrimSpace(in.GitHubUsername), "@"); gh != "" {
+	// provision (docs/design/onboarding-github-repo-grants.md). Use the same
+	// validator as intake and later edits; an internal caller must not be able to
+	// silently persist a malformed login by bypassing the HTTP validation path.
+	gh, githubErr := normalizeGitHubLogin(in.GitHubUsername)
+	if githubErr != nil {
+		return nil, githubErr
+	}
+	if gh != "" {
 		setPath(m, "identity.github", gh)
 	}
 

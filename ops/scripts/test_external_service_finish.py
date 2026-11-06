@@ -7,6 +7,7 @@ entry into that scope's services.yaml (or in place, in whichever fragment
 already holds the peer) on the PR and never writes NetBird live. On any other scope it writes live, as
 before. On every scope the group name comes from the taxonomy's site_prefix (#1451).
 """
+import base64
 import contextlib
 import datetime
 import importlib.util
@@ -200,6 +201,9 @@ class ResumeTest(unittest.TestCase):
         self.tree = self.root / "apply"
         self.branch = "esf-apply-123"
         self.git("worktree", "add", "--quiet", "-b", self.branch, str(self.tree))
+        declaration = self.tree / "ops/ansible/group_vars/fixture_hosts/external-service-fixture.yml"
+        declaration.parent.mkdir(parents=True)
+        declaration.write_text("external_service_fixture:\n  enabled: true\n")
         self.note = self.tree / "operator-note.txt"
         self.note.write_text("untracked work to preserve\n")
         self.state_dir = self.root / "state"
@@ -220,10 +224,12 @@ class ResumeTest(unittest.TestCase):
         return subprocess.run(["git", "-C", str(self.repo), *args], check=True,
                               capture_output=True, text=True).stdout
 
-    def resume(self, dry_run, apply=None):
+    def resume(self, dry_run, apply=None, start=None, pull=None):
         argv = ["external-service-finish", "123", "--email", "fixture@example.invalid"]
         if dry_run:
             argv.append("--dry-run")
+        if start:
+            argv += ["--from", start]
         with contextlib.ExitStack() as stack:
             for name, value in (("REPO", str(self.repo)), ("STATE_DIR", str(self.state_dir)),
                                 ("DRY", False)):
@@ -231,6 +237,13 @@ class ResumeTest(unittest.TestCase):
             stack.enter_context(patch.object(sys, "argv", argv))
             stack.enter_context(patch.object(esf, "site_facts", return_value=self.facts))
             stack.enter_context(patch.object(esf, "transport", return_value=("mesh", [])))
+            declaration = base64.b64encode(b"external_service_fixture:\n  enabled: true\n").decode()
+            stack.enter_context(patch.object(esf, "gh_json", side_effect=lambda args:
+                {"state": "MERGED", "headRefOid": "fixture-head"} if args[0] == "pr"
+                else {"content": declaration}))
+            if pull is not None:
+                stack.enter_context(patch.object(esf, "do_pull", side_effect=pull))
+                stack.enter_context(patch.object(esf, "do_tier"))
             if apply is not None:
                 stack.enter_context(patch.object(esf, "do_apply", side_effect=apply))
                 stack.enter_context(patch.object(esf, "do_verify"))
@@ -280,6 +293,20 @@ class ResumeTest(unittest.TestCase):
         self.assertEqual(self.note.read_text(), "untracked work to preserve\n")
         self.assertEqual(self.checkpoint.read_bytes(), checkpoint)
         self.assertIn(self.branch, self.git("branch", "--format=%(refname:short)").splitlines())
+
+    def test_from_pull_refreshes_stale_declaration_before_mutations(self):
+        path = self.tree / "ops/ansible/group_vars/fixture_hosts/external-service-fixture.yml"
+        path.write_text("external_service_fixture: {enabled: false}\n")
+        refreshed = []
+        def pull(*args):
+            path.write_text("external_service_fixture:\n  enabled: true\n")
+            refreshed.append(True)
+        def apply(*args):
+            self.assertTrue(refreshed)
+            self.assertIn("enabled: true", path.read_text())
+        code, _ = self.resume(dry_run=False, start="pull", pull=pull, apply=apply)
+        self.assertEqual(code, 0)
+        self.assertEqual(refreshed, [True])
 
 
 class ReviewTest(unittest.TestCase):
@@ -359,6 +386,127 @@ class StateCompletionTest(unittest.TestCase):
         self.check.assert_called_once()
         self.email.assert_called_once()
         self.assertEqual(self.state.read_text(), before)
+
+
+class ArchiveGuardTest(unittest.TestCase):
+    def test_real_guard_refuses_invalid_resume_before_any_handler(self):
+        for response in ("closed", "disabled", "missing", "malformed", "unavailable"):
+            with self.subTest(response=response), tempfile.TemporaryDirectory() as tmp, ExitStack() as patches:
+                Path(tmp, "1.json").write_text(json.dumps({
+                    "pr": 1, "group": "fixture_hosts", "stem": "demo", "done": esf.STEPS[:8],
+                }))
+                patches.enter_context(patch.object(esf, "STATE_DIR", tmp))
+                patches.enter_context(patch.object(sys, "argv", ["finish", "1"]))
+                def source(args):
+                    if response == "unavailable":
+                        raise esf.Stop("synthetic GitHub read failure")
+                    if args[0] == "pr":
+                        return {"state": "CLOSED" if response == "closed" else "MERGED", "headRefOid": "head"}
+                    body = {"disabled": "external_service_demo: {enabled: false}",
+                            "missing": "{}", "malformed": "[invalid yaml"}[response]
+                    return {"content": base64.b64encode(body.encode()).decode()}
+                patches.enter_context(patch.object(esf, "gh_json", side_effect=source))
+                handlers = [patches.enter_context(patch.object(esf, "do_" + name)) for name in esf.STEPS]
+                self.assertEqual(esf.main(), 1)
+                for handler in handlers:
+                    handler.assert_not_called()
+
+    def test_saved_apply_bytes_must_match_enabled_main(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp, "ops/ansible/group_vars/fixture_hosts/external-service-demo.yml")
+            path.parent.mkdir(parents=True)
+            body = b"external_service_demo: {enabled: true}\n"
+            state = {"pr": 1, "group": "fixture_hosts", "stem": "demo", "apply_tree": tmp, "done": ["pull"]}
+            def source(args):
+                return ({"state": "MERGED", "headRefOid": "head"} if args[0] == "pr"
+                        else {"content": base64.b64encode(body).decode()})
+            with patch.object(esf, "gh_json", side_effect=source):
+                path.write_bytes(body)
+                esf.require_present_declaration(state)
+                path.write_text("external_service_demo: {enabled: true, mesh_ip: changed}\n")
+                with self.assertRaisesRegex(esf.Stop, "differs from current main"):
+                    esf.require_present_declaration(state)
+
+    def test_merge_is_bound_to_checked_head(self):
+        state = {"pr": 1, "url": "fixture", "checked_head": "checked-enabled-head"}
+        def merge(command, **kwargs):
+            self.assertEqual(command[-2:], ["--match-head-commit", "checked-enabled-head"])
+            raise esf.Stop("GitHub refused changed head")
+        with patch.object(esf, "DRY", False), \
+             patch.object(esf, "gh_json", return_value={"state": "OPEN", "reviewDecision": "APPROVED"}), \
+             patch.object(esf, "run", side_effect=merge):
+            with self.assertRaisesRegex(esf.Stop, "changed head"):
+                esf.do_merge(None, state, {})
+        self.assertNotIn("merged", state)
+
+    def test_withdrawal_during_recipient_prompt_prevents_smtp(self):
+        from types import SimpleNamespace
+        state = {"name": "fixture"}
+        facts = {"site_id": "fixture", "smtp_from": "fixture@example.invalid"}
+        with patch.object(esf, "DRY", False), \
+             patch.object(esf, "linked_email", return_value=("fixture", None, "unlinked")), \
+             patch.object(esf, "ask", return_value="recipient@example.invalid"), \
+             patch.object(esf, "confirm", return_value=True), \
+             patch.object(esf, "config_text", return_value="fixture configuration"), \
+             patch.object(esf, "require_present_declaration", side_effect=esf.Stop("withdrawn during prompt")), \
+             patch.object(esf.smtplib, "SMTP") as smtp:
+            with self.assertRaisesRegex(esf.Stop, "withdrawn during prompt"):
+                esf.do_email(SimpleNamespace(email=None), state, facts)
+            smtp.assert_not_called()
+
+    def test_current_source_state(self):
+        import base64
+        for state in ("OPEN", "MERGED"):
+            for enabled in (True, False):
+                with self.subTest(state=state, enabled=enabled):
+                    body = "external_service_demo: {enabled: %s}" % str(enabled).lower()
+                    replies = [{"state": state, "headRefOid": "abc123"},
+                               {"content": base64.b64encode(body.encode()).decode()}]
+                    with patch.object(esf, "gh_json", side_effect=replies) as gh:
+                        st = {"pr": 1, "group": "test_hosts", "stem": "demo"}
+                        if enabled:
+                            esf.require_present_declaration(st)
+                        else:
+                            with self.assertRaises(esf.Stop):
+                                esf.require_present_declaration(st)
+                        ref = "main" if state == "MERGED" else "abc123"
+                        self.assertTrue(gh.call_args.args[0][1].endswith("?ref=" + ref))
+
+    def test_withdrawn_during_review_stops_before_merge(self):
+        with tempfile.TemporaryDirectory() as tmp, ExitStack() as patches:
+            patches.enter_context(patch.object(esf, "STATE_DIR", tmp))
+            patches.enter_context(patch.object(sys, "argv", ["finish", "1"]))
+            patches.enter_context(patch.object(esf, "site_facts", return_value={}))
+            patches.enter_context(patch.object(esf, "check_site"))
+            enabled = [True]
+
+            def guard(_state):
+                if not enabled[0]:
+                    raise esf.Stop("withdrawn during review")
+
+            patches.enter_context(patch.object(esf, "require_present_declaration", side_effect=guard))
+            handlers = {name: patches.enter_context(patch.object(esf, "do_" + name))
+                        for name in esf.STEPS}
+            handlers["read"].side_effect = lambda args, state: state.update(group="fixture_hosts")
+            handlers["review"].side_effect = lambda *args: enabled.__setitem__(0, False)
+            self.assertEqual(esf.main(), 1)
+            handlers["review"].assert_called_once()
+            for name in ("merge", "tier", "apply", "email"):
+                handlers[name].assert_not_called()
+
+    def test_resume_refuses_before_handlers(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, "1.json").write_text(json.dumps({"done": ["check", "read"]}))
+            with patch.object(esf, "STATE_DIR", tmp), \
+                 patch.object(sys, "argv", ["finish", "1"]), \
+                 patch.object(esf, "require_present_declaration", side_effect=esf.Stop("archived")), \
+                 patch.object(esf, "do_peer") as peer, \
+                 patch.object(esf, "do_tier") as tier, \
+                 patch.object(esf, "do_email") as email:
+                self.assertNotEqual(esf.main(), 0)
+                peer.assert_not_called()
+                tier.assert_not_called()
+                email.assert_not_called()
 
 
 if __name__ == "__main__":

@@ -114,7 +114,7 @@ for k, a in enumerate(anchors):
 check(f'"slot-w-{anchors[0]}"' in sp and anchors[1] not in sp.split(f'slot-w-{anchors[0]}')[1].split("}")[0],
       "slot 0's write rule does not mention any other anchor (isolation)")
 # F-517: a SEEDED vendor (zenoh_seed_vendors) publishes with
-# CN=<vendor>-trial-peer even on a slot-pool goatnet (demogame via the
+# CN=<vendor>-trial-peer even on a slot-pool goatnet (airdefenders via the
 # rest-pub-bridge sidecar). Previously slot-pool mode rendered nothing for
 # it, so the CN matched only trial-peer-read and every PUT was dropped silently
 # at ingress. Seeded vendors get the same write rule + subject + policy
