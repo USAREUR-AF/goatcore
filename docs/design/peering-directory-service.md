@@ -32,8 +32,10 @@ would collapse that separation at exactly the point where two sovereigns meet.
 
 ## 3. What actually establishes trust — and it is not this
 
-The mechanism reachable from both sides is **the specification plus the same versioned tool**:
-each side computes the composed agreement independently and compares one digest. No server, no
+The mechanism reachable from both sides is **the specification**: each side computes the composed
+agreement independently, with its own implementation of the same `spec` version checked against
+the normative conformance vectors, and the two compare one digest. Neither side needs the other's
+tool, release or commit. No server, no
 third party, no infrastructure. That is what [`federation-package-spec.md`](federation-package-spec.md)
 and `goat federate` already implement, and it works with a partner who is entirely offline.
 
@@ -156,7 +158,8 @@ one of these was missed.
 | FIPS fabric image | The package, `capabilities.fabric_fips_image` |
 | Post-quantum capability | The package, `capabilities.pqc_capable` |
 | Fabric version and spec version | The package, `capabilities.fabric_version` and `spec` |
-| Tool version | Reserved `capabilities.tool_version` (designed, not built); read aloud on the digest call until it is |
+| Spec version both sides compose under | The package's `spec`; a mismatch is the only version fact that stops composition |
+| Tool version | Not required to match. Reserved `capabilities.tool_version` (designed, not built) is a diagnostic hint only |
 | Whether an edge accepts inbound traffic | The designed `inbound` capability; until it is built, the listener appears in `transport_offer.listener` |
 | Peering names, certificate names, ingress prefix, republish target | **Derived from the agreement**, never asked for and never chosen by hand |
 

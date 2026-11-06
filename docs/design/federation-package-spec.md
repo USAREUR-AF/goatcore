@@ -380,11 +380,11 @@ in v1 needs it: release sets are explicit lists, so no lane abstraction crosses 
 
 `capabilities.tool_version` is reserved. **Designed, not built.** If a future version adds it,
 it carries the version of the tool that composed the package (`goat --version`), measured by
-`goat federate init` and never declared. It is informational: it changes no negotiated field,
-and two parties compare it before composing because the digest only matches when both sides
-compose with the same rules. v1 carries `spec` and `capabilities.fabric_version` and nothing
-for the tool, so in v1 the two parties read their tool versions to each other on the call where
-the digest is compared ([`peering-directory-service.md`](peering-directory-service.md) §6.1).
+`goat federate init` and never declared. It is informational: it changes no negotiated field
+and is never a precondition. The digest matches when both sides compose under the same `spec`
+version, and each side's tool proves it implements that version by passing the normative
+conformance vectors (§10). Two parties do not need the same tool, the same release or the same
+commit; a tool-version difference is a diagnostic hint when a digest unexpectedly differs.
 
 ---
 
