@@ -92,6 +92,8 @@ jobs:
   source-tarball:
     name: source tarball, tested from the tarball
     needs: [version]
+    # The nominator is skipped on a dispatch; version then runs and so does this.
+    if: ${{ !cancelled() && needs.version.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -136,6 +138,8 @@ jobs:
   docs:
     name: documentation site tarball
     needs: [version]
+    # The nominator is skipped on a dispatch; version then runs and so does this.
+    if: ${{ !cancelled() && needs.version.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -166,6 +170,8 @@ jobs:
   capi:
     name: capi ${{ matrix.os }}-${{ matrix.arch }}
     needs: [version]
+    # The nominator is skipped on a dispatch; version then runs and so does this.
+    if: ${{ !cancelled() && needs.version.result == 'success' }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     strategy:
@@ -268,6 +274,7 @@ jobs:
   checksums:
     name: SHA256SUMS, signed with cosign (keyless)
     needs: [version, source-tarball, docs, capi]
+    if: ${{ !cancelled() && needs.source-tarball.result == 'success' && needs.docs.result == 'success' && needs.capi.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -319,7 +326,7 @@ jobs:
   release:
     name: attach the assets to the release
     needs: [source-tarball, docs, capi, checksums]
-    if: github.ref_type == 'tag' && startsWith(github.ref_name, 'grant-crypto-sdk-v')
+    if: ${{ !cancelled() && github.ref_type == 'tag' && startsWith(github.ref_name, 'grant-crypto-sdk-v') && needs.checksums.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
