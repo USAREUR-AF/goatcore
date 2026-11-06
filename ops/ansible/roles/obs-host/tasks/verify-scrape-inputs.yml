@@ -1,0 +1,49 @@
+# Run on the observer, before any storage/configuration mutation. Post-deploy
+# verification must also prove the Prometheus container's own network path.
+- name: obs-host | fetch required metric endpoints from this observer
+  ansible.builtin.uri:
+    url: "http://{{ item.addr }}{{ item.metrics_path | default('/metrics') }}"
+    return_content: true
+    status_code: 200
+    timeout: 10
+    follow_redirects: none
+    use_proxy: false
+  loop: "{{ obs_scrape_targets | selectattr('required_metrics', 'defined') | list }}"
+  register: obs_required_scrapes
+  changed_when: false
+  check_mode: false  # Read-only HTTP checks must also run during --check.
+  no_log: true
+
+# A sample line as Prometheus's text parser accepts it, after the metric name:
+# optional well-formed labels, a float value (NaN and +/-Inf included) and an
+# optional integer millisecond timestamp, then end of line. A numeric prefix
+# alone let `name{broken} 1` and `name 1 INVALID` through.
+# The loop below reads response bodies, so it runs under no_log and keeps only
+# "target: metric" names; the assert prints those names and never a body.
+- name: obs-host | start the missing-sample list empty on every run
+  ansible.builtin.set_fact:
+    obs_scrape_missing: []
+
+- name: obs-host | find required metrics without a consumable sample
+  ansible.builtin.set_fact:
+    obs_scrape_missing: >-
+      {{ obs_scrape_missing
+         + ([] if (item.0.content | default('')
+                   | regex_search('(?m)^' ~ (item.1 | regex_escape) ~ obs_sample_line_tail)) is not none
+            else [item.0.item.name ~ ': ' ~ item.1]) }}
+  vars:
+    obs_sample_line_tail: '(?:\{(?:[a-zA-Z_][a-zA-Z0-9_]*="(?:[^"\\\n]|\\.)*"(?:,[a-zA-Z_][a-zA-Z0-9_]*="(?:[^"\\\n]|\\.)*")*,?)?\})?[ \t]+(?:[-+]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][-+]?[0-9]+)?|[-+]?Inf|NaN)(?:[ \t]+-?[0-9]+)?[ \t]*$'
+  loop: "{{ obs_required_scrapes.results | default([]) | subelements('item.required_metrics') }}"
+  loop_control:
+    label: "{{ item.0.item.name }}: {{ item.1 }}"
+  no_log: true
+
+- name: obs-host | require samples rather than only HTTP success
+  ansible.builtin.assert:
+    that:
+      - obs_scrape_missing | default([]) | length == 0
+    fail_msg: >-
+      Required scrape input has no consumable sample for
+      {{ obs_scrape_missing | default([]) | join(', ') }};
+      keep the current Prometheus configuration.
+    quiet: true

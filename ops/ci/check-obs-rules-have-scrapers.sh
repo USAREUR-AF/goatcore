@@ -207,6 +207,24 @@ for obs_dir in sorted(glob.glob("ops/ansible/group_vars/*_obs_hosts")):
     if blackbox:
         jobs.add(norm("blackbox-https"))
 
+    # A monitoring host can scrape another site's core (a failover
+    # arrangement). Read a gated producer's setting from that target's declared
+    # owner, not from the monitoring host's local site. Unknown owners fail
+    # closed rather than falling back to a convenient local true flag.
+    producer_settings = {}
+    for target in obs.get("obs_scrape_targets") or []:
+        owner = target.get("producer_group")
+        if owner is None:
+            continue
+        if (not isinstance(owner, str)
+                or not re.fullmatch(r"[a-zA-Z0-9_]+_hosts", owner)
+                or not os.path.isdir("ops/ansible/group_vars/" + owner)):
+            failures.append("%s: target %r has invalid producer_group %r"
+                            % (group, target.get("name"), owner))
+            producer_settings[id(target)] = {}
+        else:
+            producer_settings[id(target)] = load_group(owner)
+
     checked += 1
 
     for rule_file in rule_files:
@@ -238,9 +256,20 @@ for obs_dir in sorted(glob.glob("ops/ansible/group_vars/*_obs_hosts")):
                 continue
 
             gate = src.get("requires_var")
-            if gate and not gates.get(gate):
+            matching_targets = [t for t in (obs.get("obs_scrape_targets") or [])
+                                if norm(t.get("job", "")) == norm(src["job"])]
+            if gate and gate.startswith("obs_"):
+                # These timers run on the observer itself, never on a remote
+                # node just because it exposes the same scrape job.
+                fed = bool(obs.get(gate))
+            elif matching_targets:
+                fed = any(producer_settings.get(id(t), gates).get(gate)
+                          for t in matching_targets)
+            else:
+                fed = bool(gates.get(gate))
+            if gate and not fed:
                 unfed.append("%s (job %r is scraped, but %s is not true in %s, "
-                             "so nothing writes the series; %s)"
+                             "or the target producer_group, so nothing writes the series; %s)"
                              % (metric, src["job"], gate, gate_where,
                                 src.get("produced_by", "")))
 
