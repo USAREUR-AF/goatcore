@@ -15,7 +15,55 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Decides whether a pull request changes anything the build jobs read. A
+  # pull request whose every file is documentation (Markdown or an image under
+  # docs/, or a Markdown file at the repository root) skips rust, go and
+  # python-and-ansible; a job skipped by its `if:` reports success, so its
+  # check name still appears. docs/reference/ and docs/operators/ are read by
+  # tests and always count as code. Pushes to main, workflow_dispatch, a
+  # workflow change, any other path, or a diff that cannot be computed run
+  # everything.
+  changes:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.classify.outputs.code }}
+    steps:
+      # A pull_request checkout is the test merge commit; its first parent is
+      # the base, so depth 2 is enough to diff the pull request's own changes.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - id: classify
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          code=false
+          if [ "$EVENT" != pull_request ]; then
+            code=true
+          elif ! files=$(git diff --name-only HEAD^1 HEAD); then
+            echo "cannot diff against the base: running everything"
+            code=true
+          else
+            while IFS= read -r f; do
+              [ -z "$f" ] && continue
+              case "$f" in
+                docs/reference/*|docs/operators/*) is_doc=no ;;
+                docs/*.md|docs/*.png|docs/*.jpg|docs/*.jpeg|docs/*.gif|docs/*.svg|docs/*.webp) is_doc=yes ;;
+                */*) is_doc=no ;;
+                *.md) is_doc=yes ;;
+                *) is_doc=no ;;
+              esac
+              echo "$is_doc  $f"
+              [ "$is_doc" = no ] && code=true
+            done <<< "$files"
+          fi
+          echo "code=$code"
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+
   rust:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -43,6 +91,8 @@ jobs:
           cargo test --workspace --locked
 
   go:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     steps:
@@ -79,6 +129,8 @@ jobs:
           exit $rc
 
   python-and-ansible:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -127,12 +179,25 @@ jobs:
           bash ops/ci/check-bash-portability.sh
           yamllint -d relaxed .github/workflows
 
+  # Always runs: documentation is where a key or an equipment address is most
+  # likely to be pasted. A pull request scans the files it adds or changes;
+  # a push to main and workflow_dispatch scan the whole tree.
   no-identifiers:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
       - name: no keys, equipment addresses or live values in the tree
+        env:
+          EVENT: ${{ github.event_name }}
         run: |
-          sudo apt-get update -q && sudo apt-get install -y -q ripgrep
-          bash ops/ci/check-no-identity-spillage.sh
+          if [ "$EVENT" = pull_request ] && git rev-parse -q --verify HEAD^1 >/dev/null; then
+            mapfile -t changed < <(git diff --name-only --diff-filter=ACMR HEAD^1 HEAD)
+            echo "scanning ${#changed[@]} changed file(s)"
+            [ "${#changed[@]}" -eq 0 ] && exit 0
+            bash ops/ci/check-no-identity-spillage.sh "${changed[@]}"
+          else
+            bash ops/ci/check-no-identity-spillage.sh
+          fi
