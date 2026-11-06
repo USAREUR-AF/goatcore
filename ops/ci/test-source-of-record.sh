@@ -17,6 +17,10 @@
 #   a goatstuff file edited -> GB-064; goatstuff.ref disagrees -> GB-064;
 #   another goatstuff commit layered -> GB-064; no goatstuff checkout -> GB-065
 #   (offline: 0); an overlay file replacing a goatstuff file -> 0
+#   goatrodeo layered after goatstuff (goatrodeo_ref=), judged the same way:
+#   byte-identical -> 0; edited or missing -> GB-064; goatrodeo.ref disagrees
+#   -> GB-064; no checkout -> GB-065 (offline: 0); the overlay adding a file
+#   beside a goatrodeo role -> 0; a marker without goatrodeo -> as before
 #   pre-disclosure patches (embargo=), carried in the overlay or declared by
 #   digest in embargo/<id>/patches.sha256: recorded and applied -> 0; any
 #   other change, a missing or altered patch, a marker that disagrees -> GB-064
@@ -27,7 +31,7 @@ REPO="$(cd "$(dirname "$0")/../.." && pwd)"
 S="$(mktemp -d "${TMPDIR:-/tmp}/sor.XXXXXX")"
 trap 'rm -rf "$S"' EXIT
 G=(-c user.name=t -c user.email=t@localhost -c commit.gpgsign=false -c init.defaultBranch=main)
-unset GOAT_FRESH_SOURCE_TRUNK GOAT_DEPLOY_OFFLINE GOAT_OVERLAY_DIR GOAT_OVERLAY_REMOTE GOAT_OVERLAY_TRUNK_REMOTE GOAT_GOATSTUFF_DIR
+unset GOAT_FRESH_SOURCE_TRUNK GOAT_DEPLOY_OFFLINE GOAT_OVERLAY_DIR GOAT_OVERLAY_REMOTE GOAT_OVERLAY_TRUNK_REMOTE GOAT_GOATSTUFF_DIR GOAT_GOATRODEO_DIR
 FAILS=0
 ok()   { echo "ok   $1"; }
 bad()  { echo "FAIL $1"; FAILS=$((FAILS + 1)); }
@@ -284,6 +288,74 @@ expect "patches removed from the overlay, unpatched tree runs" 0 "$CORE" fs
 assemble
 D="$(python3 "$S/t/ops/scripts/lib/source_of_record.py" describe --repo "$S/t")"
 if printf '%s' "$D" | grep -q goatstuff; then bad "describe without goatstuff_ref names goatstuff: $D"; else ok "describe without goatstuff_ref names no goatstuff"; fi
+
+# --- goatrodeo, the second public layer, after goatstuff (goatrodeo_ref=) --------
+mkdir -p "$S/rodeo/ops/ansible/roles/airdefenders/tasks" "$S/rodeo/docs"
+echo "- debug: msg=rodeo" > "$S/rodeo/ops/ansible/roles/airdefenders/tasks/main.yml"
+echo "rodeo notes" > "$S/rodeo/docs/airdefenders.md"
+echo "goatrodeo" > "$S/rodeo/README.md"
+git "${G[@]}" -C "$S/rodeo" init -q
+git -C "$S/rodeo" add -A
+git "${G[@]}" -C "$S/rodeo" commit -q -m "goatrodeo"
+RODEO="$(git -C "$S/rodeo" rev-parse HEAD)"
+echo "$RODEO" > "$S/ov/goatrodeo.ref"
+mkdir -p "$S/ov/ops/ansible/roles/airdefenders"
+echo "rows: []" > "$S/ov/ops/ansible/roles/airdefenders/deploy-history.yml"
+git -C "$S/ov" add -A
+git "${G[@]}" -C "$S/ov" commit -q -m "pin goatrodeo, keep the ledger"
+git -C "$S/ov" push -q origin main
+
+assemble_rodeo() {   # -> $S/t: goatcore, goatstuff's ops/, goatrodeo's ops/, then the overlay
+  assemble_stuff "$STUFF"
+  (cd "$S/rodeo" && git ls-files ops) | while IFS= read -r f; do
+    mkdir -p "$S/t/$(dirname "$f")"; cp -p "$S/rodeo/$f" "$S/t/$f"
+  done
+  printf 'goatrodeo_ref=%s\ngoatrodeo_path=%s\n' "$RODEO" "$S/rodeo" >> "$S/t/.goat-assembled"
+}
+
+assemble_rodeo
+expect "goatrodeo layered, a byte-identical goatrodeo file runs" 0 "$CORE" fs
+expect "goatrodeo layered, the summary names it after goatstuff" 0 "goatstuff ${STUFF:0:12} + goatrodeo ${RODEO:0:12}" fs
+D="$(python3 "$S/t/ops/scripts/lib/source_of_record.py" describe --repo "$S/t")"
+if printf '%s' "$D" | grep -q "\"goatrodeo\":\"$RODEO\"" && printf '%s' "$D" | grep -q "\"goatrodeo_ref\":\"$RODEO\"" \
+   && printf '%s' "$D" | grep -q "\"goatstuff\":\"$STUFF\""; then ok "describe names the goatrodeo commit"; else bad "describe with goatrodeo: $D"; fi
+expect "goatrodeo layered, pinned run" 0 "$CORE" env GOAT_FRESH_SOURCE_TRUNK="$CORE" "$S/t/ops/scripts/fresh-source.sh" --repo "$S/t" --quiet
+
+echo "- debug: msg=hand" > "$S/t/ops/ansible/roles/airdefenders/tasks/main.yml"
+expect "goatrodeo file edited after assembly" 1 "differ from goatrodeo" fs
+
+assemble_rodeo
+rm -f "$S/t/ops/ansible/roles/airdefenders/tasks/main.yml"
+expect "goatrodeo file missing from the tree" 1 "differ from goatrodeo" fs
+
+assemble_rodeo
+echo "$STUFF" > "$S/t/goatrodeo.ref"
+expect "goatrodeo.ref disagrees with the marker" 1 "goatrodeo.ref in this tree names" fs
+
+assemble_rodeo
+sed -i.bak -E 's/^goatrodeo_ref=.*$/goatrodeo_ref=abc/' "$S/t/.goat-assembled"; rm -f "$S/t/.goat-assembled.bak"
+expect "goatrodeo_ref not a commit" 1 "goatrodeo_ref= but not a 40-hex commit" fs
+
+assemble_rodeo
+grep -v '^goatrodeo_path=' "$S/t/.goat-assembled" > "$S/m"; mv "$S/m" "$S/t/.goat-assembled"
+expect "no goatrodeo checkout known" 1 "GB-065 REFUSE.*goatrodeo" fs
+expect "no goatrodeo checkout, offline" 0 "$CORE" fs --offline
+expect "goatrodeo checkout from GOAT_GOATRODEO_DIR" 0 "$CORE" env GOAT_GOATRODEO_DIR="$S/rodeo" "$S/t/ops/scripts/fresh-source.sh" --repo "$S/t"
+
+# the same tree with a marker that names no goatrodeo: judged exactly as before,
+# so goatrodeo's files are goatcore changes that come from no recorded source
+assemble_rodeo
+grep -v '^goatrodeo_' "$S/t/.goat-assembled" > "$S/m"; mv "$S/m" "$S/t/.goat-assembled"
+expect "marker without goatrodeo: its files are refused as stray" 1 "nor goatstuff nor the overlay" fs
+D="$(python3 "$S/t/ops/scripts/lib/source_of_record.py" describe --repo "$S/t")"
+if printf '%s' "$D" | grep -q goatrodeo; then bad "describe without goatrodeo_ref names goatrodeo: $D"; else ok "describe without goatrodeo_ref names no goatrodeo"; fi
+assemble_stuff "$STUFF"
+rm -f "$S/t/ops/ansible/roles/airdefenders/deploy-history.yml"; rmdir "$S/t/ops/ansible/roles/airdefenders"
+git -C "$S/ov" rm -q goatrodeo.ref ops/ansible/roles/airdefenders/deploy-history.yml
+git "${G[@]}" -C "$S/ov" commit -q -m "drop goatrodeo"
+git -C "$S/ov" push -q origin main
+assemble_stuff "$STUFF"
+expect "marker and overlay without goatrodeo: goatstuff tree runs as before" 0 "$CORE" fs
 
 # a clone (no marker) still takes the trunk-remote path: goatcore's main moves
 # in ops/ansible and a plain clone at the older commit is refused as behind it

@@ -38,8 +38,10 @@
 # the same order as ansible-preflight.sh.
 #
 # An assembled tree (a `.goat-assembled` marker at the root: goatcore at the
-# commit in goatcore.ref with an environment overlay copied over it) is judged
-# against its pair of commits instead — goatcore.ref and the overlay's main; see
+# commit in goatcore.ref, optional public layers goatstuff and goatrodeo at the
+# commits in goatstuff.ref and goatrodeo.ref, and an environment overlay copied
+# over it) is judged against those commits instead — goatcore.ref, each layer's
+# ref and the overlay's main; see
 # ops/scripts/lib/source_of_record.py. --remote does not apply to it.
 set -euo pipefail
 
@@ -52,7 +54,7 @@ while [ $# -gt 0 ]; do
     --remote) REMOTE="$2"; shift 2 ;;
     --offline) OFFLINE=1; shift ;;
     --quiet) QUIET=1; shift ;;
-    -h|--help) sed -n '2,43p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,45p' "$0"; exit 0 ;;
     *) echo "fresh-source: unknown argument $1" >&2; exit 2 ;;
   esac
 done

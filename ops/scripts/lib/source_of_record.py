@@ -12,6 +12,8 @@ overlay's assemble step:
     overlay_path=<the overlay checkout it was copied from>   (optional;
                                                                overlay_dir= also read)
     goatstuff_path=<the goatstuff checkout it was copied from> (optional)
+    goatrodeo_ref=<the goatrodeo commit in goatrodeo.ref, 40 hex>   (optional)
+    goatrodeo_path=<the goatrodeo checkout it was copied from> (optional)
     embargo=<id>/core.patch:<sha256>,<id>/stuff.patch:<sha256>,…  (optional)
 
 Its source of record is the pair (goatcore commit, overlay commit). The tree is
@@ -27,6 +29,15 @@ then current only if goatstuff.ref, when present, names that commit, and every
 goatstuff file under ops/ the overlay does not replace is in the tree byte for
 byte as that commit has it. Without goatstuff_ref nothing about goatstuff is
 checked or recorded.
+
+goatstuff is one of the public layers (PUBLIC_LAYERS), each optional and judged
+the same way: goatstuff, then goatrodeo (goatrodeo_ref=, goatrodeo_path=,
+goatrodeo.ref, $GOAT_GOATRODEO_DIR), layered in that order after goatcore and
+before the patches and the overlay. A layer's files under ops/ the overlay does
+not replace must be in the tree byte for byte as the layer's recorded commit has
+them, and a layer named in the marker whose checkout is not known is refused
+(GB-065) unless the run is offline. A marker without a layer's <name>_ref= line
+checks and records nothing about that layer.
 
 Pre-disclosure patches. An overlay may declare fixes that are not yet public as
 patches, embargo/<id>/core.patch (applied to goatcore) and embargo/<id>/stuff.patch
@@ -56,12 +67,14 @@ commit, nothing about patches is checked or recorded.
         assembled  {"goatcore": <commit>, "goatcore_ref": <goatcore.ref>,
                     "overlay": <commit>, "goatcore_export_of": <commit>?,
                     "goatstuff": <commit>?, "goatstuff_ref": <goatstuff.ref>?,
+                    "goatrodeo": <commit>?, "goatrodeo_ref": <goatrodeo.ref>?,
                     "embargo": [<id>, …]?}
 
 Overlay checkout: the marker's overlay_path (or overlay_dir), else
 $GOAT_OVERLAY_DIR. Overlay trunk remote: $GOAT_OVERLAY_TRUNK_REMOTE, else
 $GOAT_OVERLAY_REMOTE, else `origin`. goatstuff checkout: the marker's
-goatstuff_path, else $GOAT_GOATSTUFF_DIR. Standard library only.
+goatstuff_path, else $GOAT_GOATSTUFF_DIR; goatrodeo checkout: goatrodeo_path,
+else $GOAT_GOATRODEO_DIR. Standard library only.
 """
 import argparse
 import hashlib
@@ -85,6 +98,11 @@ SHA = re.compile(r"^[0-9a-f]{40}$")
 PATCH = re.compile(r"^embargo/([A-Za-z0-9][A-Za-z0-9._-]*)/(core|stuff)\.patch$")
 # The overlay's declaration of patches it does not carry itself: sha256sum lines "<sha256>  <kind>.patch".
 DECLARED = re.compile(r"^embargo/([A-Za-z0-9][A-Za-z0-9._-]*)/patches\.sha256$")
+# The public layers an assemble step may copy between goatcore and the overlay,
+# in the order it copies them: (name, the environment variable naming its
+# checkout when the marker does not). Marker keys <name>_ref and <name>_path,
+# declaration file <name>.ref in the tree.
+PUBLIC_LAYERS = (("goatstuff", "GOAT_GOATSTUFF_DIR"), ("goatrodeo", "GOAT_GOATRODEO_DIR"))
 DECLARED_LINE = re.compile(r"^([0-9a-f]{64}) [ *](core|stuff)\.patch$")
 
 
@@ -124,9 +142,14 @@ def overlay_dir(m):
     return os.path.abspath(d) if d else ""
 
 
-def goatstuff_dir(m):
-    d = m.get("goatstuff_path") or os.environ.get("GOAT_GOATSTUFF_DIR") or ""
+def layer_dir(m, name, env):
+    d = m.get(name + "_path") or os.environ.get(env) or ""
     return os.path.abspath(d) if d else ""
+
+
+def layers(m):
+    """[(name, env, commit)] for each public layer the marker records, in assembly order."""
+    return [(n, e, m[n + "_ref"]) for n, e in PUBLIC_LAYERS if n + "_ref" in m]
 
 
 def read_ref(repo, name):
@@ -186,8 +209,8 @@ def tree_matches_overlay(repo, od, commit):
     return differing(repo, want)
 
 
-def tree_matches_goatstuff(repo, sd, commit, overlay_paths, patched_paths=()):
-    """goatstuff files under ops/ the overlay does not replace whose assembled bytes differ from the commit's, or are missing."""
+def tree_matches_layer(repo, sd, commit, overlay_paths, patched_paths=()):
+    """A public layer's files under ops/ the overlay does not replace whose assembled bytes differ from the commit's, or are missing."""
     want, err = blobs(sd, commit, ["ops"])
     if want is None:
         return None, err
@@ -381,13 +404,14 @@ def check(repo, offline, quiet):
     decl = read_ref(repo, "goatcore.ref")
     if decl is not None and decl != ref:
         refuse("GB-064", f"goatcore.ref in this tree names {decl[:12]} but the tree was assembled on goatcore {ref[:12]}", [reassemble])
+    public = layers(m)
+    for name, _, lref in public:
+        if not SHA.match(lref):
+            refuse("GB-064", f"{MARKER} carries {name}_ref= but not a 40-hex commit", [reassemble])
+        ldecl = read_ref(repo, name + ".ref")
+        if ldecl is not None and ldecl != lref:
+            refuse("GB-064", f"{name}.ref in this tree names {ldecl[:12]} but the tree was assembled with {name} {lref[:12]}", [reassemble])
     sref = m.get("goatstuff_ref")
-    if sref is not None:
-        if not SHA.match(sref):
-            refuse("GB-064", f"{MARKER} carries goatstuff_ref= but not a 40-hex commit", [reassemble])
-        sdecl = read_ref(repo, "goatstuff.ref")
-        if sdecl is not None and sdecl != sref:
-            refuse("GB-064", f"goatstuff.ref in this tree names {sdecl[:12]} but the tree was assembled with goatstuff {sref[:12]}", [reassemble])
     rc, head, _ = git(repo, "rev-parse", "HEAD")
     if rc != 0 or head != ref:
         refuse("GB-064", f"this tree's goatcore checkout is at {head[:12] or '(no commit)'}, not the goatcore.ref commit {ref[:12]}", [reassemble])
@@ -417,36 +441,40 @@ def check(repo, offline, quiet):
                ["changed or missing:\n    " + shown,
                 "Edit the overlay, commit, re-assemble; a deploy renders only what a commit records.", reassemble])
     supplied = overlay_tree(od, ocsha)
-    sd = goatstuff_dir(m) if sref is not None else ""
-    if sref is not None:
-        if not sd or not os.path.isdir(sd):
+    dirs = {}
+    for name, env, lref in public:
+        ld = layer_dir(m, name, env)
+        if not ld or not os.path.isdir(ld):
             if offline:
-                say(f"OFFLINE — no goatstuff checkout to judge goatstuff {sref[:12]} against; proceeding as an offline run.")
+                say(f"OFFLINE — no {name} checkout to judge {name} {lref[:12]} against; proceeding as an offline run.")
                 print(ref); return
-            refuse("GB-065", f"the goatstuff checkout this tree was assembled from is not known, so the tree cannot be shown to hold goatstuff {sref[:12]}",
-                   ["fix: set GOAT_GOATSTUFF_DIR=<goatstuff checkout> (or write goatstuff_path= into .goat-assembled), and re-run.",
+            refuse("GB-065", f"the {name} checkout this tree was assembled from is not known, so the tree cannot be shown to hold {name} {lref[:12]}",
+                   [f"fix: set {env}=<{name} checkout> (or write {name}_path= into .goat-assembled), and re-run.",
                     "On an islanded site, re-run with --offline."])
-        rc, _, _ = git(sd, "rev-parse", "--verify", "--quiet", sref + "^{commit}")
+        rc, _, _ = git(ld, "rev-parse", "--verify", "--quiet", lref + "^{commit}")
         if rc != 0:
-            refuse("GB-064", f"goatstuff commit {sref[:12]} is not in the goatstuff checkout {sd}", [reassemble])
-    embargoed = check_embargo(repo, m, supplied, od, ocsha, ref, sref, sd)
-    if sref is not None:
-        sdiff, err = tree_matches_goatstuff(repo, sd, sref, supplied, embargoed)
-        if sdiff is None:
-            refuse("GB-065", f"could not read goatstuff commit {sref[:12]} ({err})", [reassemble])
-        if sdiff:
-            shown = "\n    ".join(sdiff[:10]) + (f"\n    … and {len(sdiff) - 10} more" if len(sdiff) > 10 else "")
-            refuse("GB-064", f"{len(sdiff)} goatstuff file(s) this tree deploys from differ from goatstuff {sref[:12]} (edited after assembly, or assembled from another commit)",
+            refuse("GB-064", f"{name} commit {lref[:12]} is not in the {name} checkout {ld}", [reassemble])
+        dirs[name] = ld
+    embargoed = check_embargo(repo, m, supplied, od, ocsha, ref, sref, dirs.get("goatstuff", ""))
+    layered = set()
+    for name, _, lref in public:
+        ldiff, err = tree_matches_layer(repo, dirs[name], lref, supplied, embargoed)
+        if ldiff is None:
+            refuse("GB-065", f"could not read {name} commit {lref[:12]} ({err})", [reassemble])
+        if ldiff:
+            shown = "\n    ".join(ldiff[:10]) + (f"\n    … and {len(ldiff) - 10} more" if len(ldiff) > 10 else "")
+            refuse("GB-064", f"{len(ldiff)} {name} file(s) this tree deploys from differ from {name} {lref[:12]} (edited after assembly, or assembled from another commit)",
                    ["changed or missing:\n    " + shown,
-                    "A change to goatstuff lands in goatstuff and reaches the tree by moving goatstuff.ref.", reassemble])
-        sw, _ = blobs(sd, sref, ["ops"])
-        supplied = supplied | set(sw or {})
+                    f"A change to {name} lands in {name} and reaches the tree by moving {name}.ref.", reassemble])
+        lw, _ = blobs(dirs[name], lref, ["ops"])
+        layered |= set(lw or {})
+    supplied = supplied | layered
     stray, err = stray_core_edits(repo, supplied | embargoed)
     if stray is None:
         refuse("GB-065", f"could not read this tree's git status ({err})", [reassemble])
     if stray:
         shown = "\n    ".join(stray[:10]) + (f"\n    … and {len(stray) - 10} more" if len(stray) > 10 else "")
-        refuse("GB-064", f"{len(stray)} goatcore file(s) this tree deploys from were changed in the tree and come from neither goatcore {ref[:12]}" + (" nor goatstuff" if sref is not None else "") + " nor the overlay",
+        refuse("GB-064", f"{len(stray)} goatcore file(s) this tree deploys from were changed in the tree and come from neither goatcore {ref[:12]}" + ("".join(f" nor {n}" for n, _, _ in public)) + " nor the overlay",
                ["changed:\n    " + shown,
                 "A change to goatcore lands in goatcore and reaches the tree by moving goatcore.ref; an environment's change lands in the overlay.", reassemble])
     if pinned:
@@ -489,7 +517,7 @@ def check(repo, offline, quiet):
         exp = export_of(repo)
         ids = embargo_ids(embargo_entries(m))
         say(f"assembled tree: goatcore {ref[:12]}" + (f" (export of {exp})" if exp else "")
-            + (f" + goatstuff {sref[:12]}" if sref is not None else "") + f" + overlay {oc[:12]}"
+            + "".join(f" + {n} {lref[:12]}" for n, _, lref in public) + f" + overlay {oc[:12]}"
             + (f" + pre-disclosure patches {', '.join(ids)}" if ids else ""))
     print(ref)
 
@@ -503,11 +531,11 @@ def describe(repo):
     decl = read_ref(repo, "goatcore.ref")
     if decl is not None:
         d["goatcore_ref"] = decl
-    if "goatstuff_ref" in m:
-        d["goatstuff"] = m["goatstuff_ref"]
-        sdecl = read_ref(repo, "goatstuff.ref")
-        if sdecl is not None:
-            d["goatstuff_ref"] = sdecl
+    for name, _, lref in layers(m):
+        d[name] = lref
+        ldecl = read_ref(repo, name + ".ref")
+        if ldecl is not None:
+            d[name + "_ref"] = ldecl
     exp = export_of(repo)
     if exp:
         d["goatcore_export_of"] = exp

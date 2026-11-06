@@ -9,12 +9,13 @@
 //! run (`GOAT_FRESH_SOURCE_TRUNK`), so all of its plays are judged against one
 //! commit.
 //!
-//! An assembled tree (goatcore at the overlay's `goatcore.ref`, goatstuff at its
-//! `goatstuff.ref`, the overlay's pre-disclosure patches, the overlay copied
-//! over them) carries a `.goat-assembled` marker at its root. The same script
-//! hands such a tree to `ops/scripts/lib/source_of_record.py`, which reads every
-//! line of the marker (`goatcore_ref`, `overlay_commit`, `overlay_path`,
-//! `goatstuff_ref`, `goatstuff_path`, `embargo`) and judges the tree against
+//! An assembled tree (goatcore at the overlay's `goatcore.ref`, the public
+//! layers goatstuff and goatrodeo at its `goatstuff.ref` and `goatrodeo.ref`,
+//! the overlay's pre-disclosure patches, the overlay copied over them) carries a
+//! `.goat-assembled` marker at its root. The same script hands such a tree to
+//! `ops/scripts/lib/source_of_record.py`, which reads every line of the marker
+//! (`goatcore_ref`, `overlay_commit`, `overlay_path`, `<layer>_ref` and
+//! `<layer>_path` for each public layer, `embargo`) and judges the tree against
 //! the commits and patches it names. This module runs that one script for both
 //! kinds of tree, so the binary and the scripts give the same verdict on the
 //! same tree. It reads the marker itself only to refuse a tree whose goatcore
@@ -49,9 +50,9 @@ impl Fresh {
 /// Run the check for `repo`. `GOAT_DEPLOY_OFFLINE=1` (`--offline`) and an
 /// already-pinned `GOAT_FRESH_SOURCE_TRUNK` reach the script through the
 /// environment, as they do from the script avenue; so do the overlay and
-/// goatstuff checkouts of an assembled tree (`GOAT_OVERLAY_DIR`,
-/// `GOAT_OVERLAY_TRUNK_REMOTE`, `GOAT_GOATSTUFF_DIR`) when its marker does not
-/// name them.
+/// public-layer checkouts of an assembled tree (`GOAT_OVERLAY_DIR`,
+/// `GOAT_OVERLAY_TRUNK_REMOTE`, `GOAT_GOATSTUFF_DIR`, `GOAT_GOATRODEO_DIR`)
+/// when its marker does not name them.
 pub fn check(repo: &Path) -> Result<Fresh> {
     check_with(repo, &[], &[])
 }
@@ -113,6 +114,22 @@ pub const MARKER: &str = ".goat-assembled";
 /// The check an assembled tree is judged by, in the tree's own goatcore.
 const SOURCE_OF_RECORD: &str = "ops/scripts/lib/source_of_record.py";
 
+/// The public layers an assemble step may copy between goatcore and the
+/// overlay, in the order it copies them; the same list as `PUBLIC_LAYERS` in
+/// `source_of_record.py`. Marker keys `<name>_ref` and `<name>_path`.
+pub const PUBLIC_LAYERS: [&str; 2] = ["goatstuff", "goatrodeo"];
+
+/// One public layer the marker records.
+#[derive(Debug, PartialEq, Clone)]
+pub struct Layer {
+    /// The layer's name (one of `PUBLIC_LAYERS`).
+    pub name: String,
+    /// The layer commit copied into the tree.
+    pub commit: String,
+    /// Where that checkout is, when the marker names it.
+    pub path: Option<String>,
+}
+
 /// What `.goat-assembled` says.
 #[derive(Debug, PartialEq, Default)]
 pub struct Marker {
@@ -122,10 +139,9 @@ pub struct Marker {
     pub overlay_commit: String,
     /// Where the overlay checkout is, when the marker names it.
     pub overlay_path: Option<String>,
-    /// The goatstuff commit layered between goatcore and the overlay, when there is one.
-    pub goatstuff_ref: Option<String>,
-    /// Where that goatstuff checkout is, when the marker names it.
-    pub goatstuff_path: Option<String>,
+    /// The public layers copied between goatcore and the overlay, in assembly order;
+    /// empty when the marker records none.
+    pub public: Vec<Layer>,
     /// The ids of the pre-disclosure patches applied (`embargo=<id>/<kind>.patch:<sha256>,…`), sorted.
     pub embargo: Vec<String>,
 }
@@ -134,8 +150,8 @@ impl Marker {
     /// One line naming what the tree was built from.
     pub fn describe(&self) -> String {
         let mut s = format!("goatcore {}", short(&self.goatcore_ref));
-        if let Some(g) = &self.goatstuff_ref {
-            s.push_str(&format!(" + goatstuff {}", short(g)));
+        for l in &self.public {
+            s.push_str(&format!(" + {} {}", l.name, short(&l.commit)));
         }
         if !self.embargo.is_empty() {
             s.push_str(&format!(" + pre-disclosure patches {}", self.embargo.join(", ")));
@@ -177,8 +193,12 @@ fn parse_marker(text: &str) -> Result<Marker> {
         goatcore_ref,
         overlay_commit,
         overlay_path: get("overlay_path").or_else(|| get("overlay_dir")),
-        goatstuff_ref: get("goatstuff_ref"),
-        goatstuff_path: get("goatstuff_path"),
+        public: PUBLIC_LAYERS
+            .iter()
+            .filter_map(|n| {
+                get(&format!("{n}_ref")).map(|commit| Layer { name: n.to_string(), commit, path: get(&format!("{n}_path")) })
+            })
+            .collect(),
         embargo,
     })
 }
@@ -326,7 +346,7 @@ mod tests {
 
     fn run_assembled(tree: &Path, overlay: Option<&Path>, offline: bool) -> Fresh {
         let mut set: Vec<(&str, &str)> = vec![(OVERLAY_REMOTE_ENV, "origin")];
-        let mut unset = vec![TRUNK_ENV, "GOAT_OVERLAY_REMOTE", "GOAT_GOATSTUFF_DIR"];
+        let mut unset = vec![TRUNK_ENV, "GOAT_OVERLAY_REMOTE", "GOAT_GOATSTUFF_DIR", "GOAT_GOATRODEO_DIR"];
         let o = overlay.map(|p| p.to_str().unwrap().to_string()).unwrap_or_default();
         if overlay.is_some() {
             set.push((OVERLAY_DIR_ENV, o.as_str()));
@@ -352,10 +372,19 @@ mod tests {
             "goatcore_ref=abc\ngoatstuff_ref=fed\noverlay_commit=def\ngoatstuff_path=/s\nembargo=B/core.patch:11,A/core.patch:22,A/stuff.patch:33\n",
         )
         .unwrap();
-        assert_eq!(m.goatstuff_ref.as_deref(), Some("fed"));
-        assert_eq!(m.goatstuff_path.as_deref(), Some("/s"));
+        assert_eq!(m.public, vec![Layer { name: "goatstuff".into(), commit: "fed".into(), path: Some("/s".into()) }]);
         assert_eq!(m.embargo, vec!["A".to_string(), "B".to_string()]);
         assert_eq!(m.describe(), "goatcore abc + goatstuff fed + pre-disclosure patches A, B + overlay def");
+        // goatrodeo, the second public layer: recorded after goatstuff whatever the line order.
+        let m = parse_marker("goatcore_ref=abc\ngoatrodeo_ref=bee\ngoatrodeo_path=/r\ngoatstuff_ref=fed\noverlay_commit=def\n").unwrap();
+        assert_eq!(
+            m.public,
+            vec![
+                Layer { name: "goatstuff".into(), commit: "fed".into(), path: None },
+                Layer { name: "goatrodeo".into(), commit: "bee".into(), path: Some("/r".into()) },
+            ]
+        );
+        assert_eq!(m.describe(), "goatcore abc + goatstuff fed + goatrodeo bee + overlay def");
         assert!(parse_marker("goatcore_ref=abc\n").is_err());
         assert!(parse_marker("overlay_commit=def\n").is_err());
         assert!(parse_marker("goatcore_ref=\noverlay_commit=def\n").is_err());
@@ -487,6 +516,39 @@ mod tests {
         let f = run_assembled(&tree, Some(&ov), false);
         assert!(f.refused());
         assert!(f.check.detail.contains("differ from goatstuff"), "{}", f.check.detail);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// goatrodeo layered after goatstuff: a byte-identical file runs, one edited after
+    /// assembly is refused, and the same tree with no goatrodeo in its marker is judged
+    /// as before (the goatrodeo file is then a stray goatcore change).
+    #[test]
+    fn assembled_goatrodeo_is_judged_like_goatstuff() {
+        let (root, ov, _, tree) = assembled_fixture("gr");
+        git(&root, &["init", "-q", "-b", "main", "rodeo"]);
+        let rodeo = root.join("rodeo");
+        let rel = "ops/ansible/roles/airdefenders/tasks/main.yml";
+        commit_file(&rodeo, rel, "- debug: msg=rodeo\n", "goatrodeo");
+        let rref = head(&rodeo);
+        fs::create_dir_all(tree.join("ops/ansible/roles/airdefenders/tasks")).unwrap();
+        fs::copy(rodeo.join(rel), tree.join(rel)).unwrap();
+        let gref = head(&tree);
+        let with = format!("goatcore_ref={gref}\noverlay_commit={}\ngoatrodeo_ref={rref}\ngoatrodeo_path={}\n", head(&ov), rodeo.display());
+        fs::write(tree.join(MARKER), &with).unwrap();
+        let f = run_assembled(&tree, Some(&ov), false);
+        assert!(!f.refused(), "{}", f.check.detail);
+        assert!(f.check.detail.contains(&format!("goatrodeo {}", &rref[..12])), "{}", f.check.detail);
+        // Edited after assembly: refused.
+        fs::write(tree.join(rel), "- debug: msg=hand\n").unwrap();
+        let f = run_assembled(&tree, Some(&ov), false);
+        assert!(f.refused());
+        assert!(f.check.detail.contains("differ from goatrodeo"), "{}", f.check.detail);
+        // No goatrodeo in the marker: unchanged behaviour, the file comes from no layer.
+        fs::copy(rodeo.join(rel), tree.join(rel)).unwrap();
+        fs::write(tree.join(MARKER), format!("goatcore_ref={gref}\noverlay_commit={}\n", head(&ov))).unwrap();
+        let f = run_assembled(&tree, Some(&ov), false);
+        assert!(f.refused());
+        assert!(f.check.detail.contains("nor the overlay") && !f.check.detail.contains("goatrodeo"), "{}", f.check.detail);
         let _ = fs::remove_dir_all(root);
     }
 
