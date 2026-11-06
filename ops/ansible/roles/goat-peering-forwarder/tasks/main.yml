@@ -23,10 +23,16 @@
 - name: peering-forwarder | read the host's services
   ansible.builtin.service_facts:
 
+- name: peering-forwarder | look for a mesh interface, read from the kernel and not from facts
+  ansible.builtin.stat:
+    path: "/sys/class/net/{{ item }}"
+  loop: "{{ peering_forwarder_mesh_interfaces }}"
+  register: _pf_mesh_ifs
+
 - name: peering-forwarder | refuse a host that is a mesh peer
   ansible.builtin.assert:
     that:
-      - (ansible_interfaces | default([])) | intersect(peering_forwarder_mesh_interfaces) | length == 0
+      - _pf_mesh_ifs.results | selectattr('stat.exists') | list | length == 0
       - >-
         peering_forwarder_mesh_services
         | select('in', ansible_facts.services | default({}))
