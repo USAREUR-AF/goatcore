@@ -1416,7 +1416,7 @@ entries:
     causes:
       - the surface is mid-deploy and the binary, its checksum and SHA256SUMS are from different releases
       - the download was altered or truncated on the way
-      - the signature over SHA256SUMS is not from the release workflow of the repository goatbuilder.yaml names
+      - the signature over SHA256SUMS is not from the release workflow of the repository this goatbuilder was built in
     fixes:
       - "retry in a few minutes; the surface's files are written together"
       - "goatbuilder update --check   (what the surface serves now)"
