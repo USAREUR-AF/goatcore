@@ -142,7 +142,7 @@ jobs:
         timeout-minutes: 5
         run: |
           python3 -m pip install -q pyyaml jsonschema pytest ansible-core yamllint
-          sudo apt-get update -q && sudo apt-get install -y -q shellcheck ripgrep
+          sudo apt-get update -q && sudo apt-get install -y -q shellcheck ripgrep dosfstools parted xz-utils
           ansible-galaxy collection install -r ops/ansible/requirements.yml
       - name: every Python file compiles
         run: python3 -m compileall -q .
@@ -178,6 +178,19 @@ jobs:
         run: |
           bash ops/ci/check-bash-portability.sh
           yamllint -d relaxed .github/workflows
+      - name: Pi flash scripts lint clean
+        run: |
+          shellcheck ops/rpi-base-image/00-prerequisites.sh ops/rpi-base-image/01-flash.sh ops/ci/test-rpi-flash-linux.sh
+          shellcheck -S warning ops/rpi-base-image/*.sh ops/rpi-base-image/helper-scripts/*.sh
+      # A scsi_debug RAM disk stands in for the SD card; the runner's own disks
+      # are only ever passed to --dry-run, which must refuse them.
+      - name: Pi flash script refuses unsafe targets and flashes a scratch disk on Linux
+        timeout-minutes: 5
+        run: |
+          if ! sudo modprobe -n scsi_debug 2>/dev/null; then
+            timeout 180 sudo apt-get install -y -q "linux-modules-extra-$(uname -r)" || true
+          fi
+          bash ops/ci/test-rpi-flash-linux.sh
 
   peering-forwarder:
     needs: changes
