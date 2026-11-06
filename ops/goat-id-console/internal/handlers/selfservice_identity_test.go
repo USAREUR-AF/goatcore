@@ -27,7 +27,7 @@ func TestSelfService_AuthenticatedRequestReachesTheHandler(t *testing.T) {
 	s := newOnboardTestServer(t)
 	s.Cfg.DevBypassAuth = false // otherwise the actor is fabricated and proves nothing
 	h := s.Routes()
-	const email = "bennett@example.test"
+	const email = "robin@example.test"
 
 	for _, path := range selfServiceRoutes {
 		r := httptest.NewRequestWithContext(context.Background(), http.MethodGet, path, nil)

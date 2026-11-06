@@ -28,16 +28,16 @@ import (
 )
 
 // newSelfDoorServer wires participant keys through the stubbed portal whoami:
-//   - "bennett-key": platform-admin cap, login bennett@example.org, onboarded as "bennett";
+//   - "robin-key": platform-admin cap, login robin@example.org, onboarded as "robin";
 //   - "other-key": platform-admin cap, login else@example.org, onboarded as "somebody-else";
 //   - "dev-key": NOT sponsor-authorized, so onboardAPIGate refuses it upstream.
 func newSelfDoorServer(t *testing.T) (*Server, http.Handler) {
 	t.Helper()
 	s := newOnboardTestServer(t)
 	portalURL, rt := fakeSponsorPortal(t, nil, nil)
-	rt.keys["bennett-key"] = portalWhoami{
-		Org: "7b9b61a4ae2373d6f0a0535d2b72b4ea", Alias: "bennett-operator",
-		SponsorAuthorized: true, SponsorMaxTier: "platform-admin", SponsorEmail: "bennett@example.org",
+	rt.keys["robin-key"] = portalWhoami{
+		Org: "7b9b61a4ae2373d6f0a0535d2b72b4ea", Alias: "robin-operator",
+		SponsorAuthorized: true, SponsorMaxTier: "platform-admin", SponsorEmail: "robin@example.org",
 	}
 	rt.keys["other-key"] = portalWhoami{
 		Org: "00220022", Alias: "else-operator",
@@ -45,7 +45,7 @@ func newSelfDoorServer(t *testing.T) (*Server, http.Handler) {
 	}
 	rt.keys["dev-key"] = portalWhoami{Org: "some-dev-org", SponsorAuthorized: false}
 	s.Cfg.PortalInternalURL = portalURL
-	seedPlatformAdminPerson(t, s, "bennett", "bennett@example.org")
+	seedPlatformAdminPerson(t, s, "robin", "robin@example.org")
 	seedPlatformAdminPerson(t, s, "somebody-else", "else@example.org")
 	return s, s.Routes()
 }
@@ -73,7 +73,7 @@ func TestApiRequestOperatorKey_selfServiceDoor(t *testing.T) {
 	// handle behind the token, never the org anchor the principal carries. The
 	// row also carries the bound login, so the approval mail has an
 	// address.
-	w := machineReq(t, h, "bennett-key", "POST", "/api/onboard/operator-keys",
+	w := machineReq(t, h, "robin-key", "POST", "/api/onboard/operator-keys",
 		`{"env":"zagros","reason":"org creation via goat CLI"}`)
 	if w.Code != http.StatusOK {
 		t.Fatalf("self-request (handle omitted) = %d, want 200; %s", w.Code, w.Body.String())
@@ -82,20 +82,20 @@ func TestApiRequestOperatorKey_selfServiceDoor(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &row); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if row.Handle != "bennett" || row.Email != "bennett@example.org" {
-		t.Fatalf("self-request row = %+v, want the roster handle bennett and login bennett@example.org", row)
+	if row.Handle != "robin" || row.Email != "robin@example.org" {
+		t.Fatalf("self-request row = %+v, want the roster handle robin and login robin@example.org", row)
 	}
 	if row.Status != onboardstore.OperatorKeyRequested {
 		t.Fatalf("self-request status = %q, want %q", row.Status, onboardstore.OperatorKeyRequested)
 	}
-	if after := auditAfter(t, s, "operator_key_request"); after["self"] != true || after["handle"] != "bennett" {
-		t.Fatalf("audit after = %v, want self for bennett", after)
+	if after := auditAfter(t, s, "operator_key_request"); after["self"] != true || after["handle"] != "robin" {
+		t.Fatalf("audit after = %v, want self for robin", after)
 	}
 
 	// Explicitly naming your OWN handle in the body, in any case, works the same
 	// way and lands on the same live row (the store dedupes per handle and env).
-	w2 := machineReq(t, h, "bennett-key", "POST", "/api/onboard/operator-keys",
-		`{"handle":"contributorg","env":"zagros","reason":"again"}`)
+	w2 := machineReq(t, h, "robin-key", "POST", "/api/onboard/operator-keys",
+		`{"handle":"Robin","env":"zagros","reason":"again"}`)
 	if w2.Code != http.StatusOK {
 		t.Fatalf("self-request (own handle named) = %d, want 200; %s", w2.Code, w2.Body.String())
 	}
@@ -109,13 +109,13 @@ func TestApiRequestOperatorKey_selfServiceDoor(t *testing.T) {
 	// never gets to act "for somebody else"; that stays the operator door. The
 	// org anchor is "somebody else" too: it is not a person.
 	for _, other := range []string{"someone-else", "7b9b61a4ae2373d6f0a0535d2b72b4ea"} {
-		w3 := machineReq(t, h, "bennett-key", "POST", "/api/onboard/operator-keys",
+		w3 := machineReq(t, h, "robin-key", "POST", "/api/onboard/operator-keys",
 			`{"handle":"`+other+`","env":"zagros","reason":"for a colleague"}`)
 		if w3.Code != http.StatusForbidden || !strings.Contains(w3.Body.String(), "self_only") {
 			t.Fatalf("self-request for %s = %d, want 403 self_only; %s", other, w3.Code, w3.Body.String())
 		}
 	}
-	if after := auditAfter(t, s, "operator_key_self_request_refused"); after["caller"] != "bennett" {
+	if after := auditAfter(t, s, "operator_key_self_request_refused"); after["caller"] != "robin" {
 		t.Fatalf("refusal audit after = %v, want the caller named", after)
 	}
 	rows, err := s.Onboard.ListOperatorKeys(context.Background(), "")
@@ -158,7 +158,7 @@ func TestApiCollectOperatorKey_selfServiceDoor(t *testing.T) {
 	// Self-request, then a DIFFERENT admin approves (two-person rule) — a
 	// non-operator principal cannot approve at all, so this uses the store
 	// directly, matching how an approval actually happens in practice.
-	w := machineReq(t, h, "bennett-key", "POST", "/api/onboard/operator-keys", `{"env":"zagros","reason":"first key"}`)
+	w := machineReq(t, h, "robin-key", "POST", "/api/onboard/operator-keys", `{"env":"zagros","reason":"first key"}`)
 	if w.Code != http.StatusOK {
 		t.Fatalf("self-request = %d; %s", w.Code, w.Body.String())
 	}
@@ -173,24 +173,24 @@ func TestApiCollectOperatorKey_selfServiceDoor(t *testing.T) {
 	// was operator-only, so a self-requester could never actually retrieve the
 	// secret their own request produced through the CLI. The delivery names
 	// the roster handle, which is also the key file's name on the portal host.
-	wc := machineReq(t, h, "bennett-key", "GET", "/api/onboard/operator-keys/"+row.ID+"/collect", "")
+	wc := machineReq(t, h, "robin-key", "GET", "/api/onboard/operator-keys/"+row.ID+"/collect", "")
 	if wc.Code != http.StatusOK {
 		t.Fatalf("self-collect own key = %d, want 200; %s", wc.Code, wc.Body.String())
 	}
 	var collected map[string]string
 	_ = json.Unmarshal(wc.Body.Bytes(), &collected)
-	if collected["handle"] != "bennett" || !strings.HasPrefix(collected["key"], "op_") {
-		t.Fatalf("self-collect delivery = %v, want handle bennett and an op_ key", collected)
+	if collected["handle"] != "robin" || !strings.HasPrefix(collected["key"], "op_") {
+		t.Fatalf("self-collect delivery = %v, want handle robin and an op_ key", collected)
 	}
 
 	// A second collect attempt is refused (delivered exactly once) — unchanged
 	// store-level behavior, re-asserted here for the non-operator path.
-	wc2 := machineReq(t, h, "bennett-key", "GET", "/api/onboard/operator-keys/"+row.ID+"/collect", "")
+	wc2 := machineReq(t, h, "robin-key", "GET", "/api/onboard/operator-keys/"+row.ID+"/collect", "")
 	if wc2.Code != http.StatusConflict {
 		t.Fatalf("second self-collect = %d, want 409 already_delivered; %s", wc2.Code, wc2.Body.String())
 	}
 
-	// A different non-operator principal cannot collect bennett's key by naming
+	// A different non-operator principal cannot collect robin's key by naming
 	// his handle — the self-match check applies to every principal, operator or
 	// not (H2, operatorkeys_collect_authz_test.go's rule, now exercised for a
 	// non-operator caller too). Bound to self, another person's row reads as
@@ -201,12 +201,12 @@ func TestApiCollectOperatorKey_selfServiceDoor(t *testing.T) {
 	if _, err := s.Onboard.ApproveOperatorKey(context.Background(), row2.ID, "admin", []string{"admin"}); err != nil {
 		t.Fatalf("approve row2: %v", err)
 	}
-	wForeign := machineReq(t, h, "bennett-key", "GET",
+	wForeign := machineReq(t, h, "robin-key", "GET",
 		"/api/onboard/operator-keys/"+row2.ID+"/collect?handle=somebody-else", "")
 	if wForeign.Code != http.StatusForbidden {
 		t.Fatalf("cross-principal collect by query handle = %d, want 403; %s", wForeign.Code, wForeign.Body.String())
 	}
-	wBound := machineReq(t, h, "bennett-key", "GET", "/api/onboard/operator-keys/"+row2.ID+"/collect", "")
+	wBound := machineReq(t, h, "robin-key", "GET", "/api/onboard/operator-keys/"+row2.ID+"/collect", "")
 	if wBound.Code != http.StatusNotFound {
 		t.Fatalf("collect other's row bound to self = %d, want 404; %s", wBound.Code, wBound.Body.String())
 	}
