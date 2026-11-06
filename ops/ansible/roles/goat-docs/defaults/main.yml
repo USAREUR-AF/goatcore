@@ -23,7 +23,9 @@ goat_docs_hostname: "docs.{{ site_id | mandatory }}.{{ site_dns_zone | mandatory
 #
 # Keep this coupled to goat_get_release_tag unless the "Currency lock"
 # section in docs/design/goat-cli-hosted-docs.md says otherwise.
-goat_docs_release_tag: "goat-cli-v0.4.19"
+# goat-cli-v0.5.16 is the first release of this repository that carries
+# goat-docs.tar.gz (goat-release.yml builds it from the tag).
+goat_docs_release_tag: "goat-cli-v0.5.16"
 # Self-referential — see goat-get/defaults/main.yml.
 goat_docs_release_repo: "{{ source_repo }}"
 # Whether the release repository is private (see goat_get_release_private).
@@ -99,6 +101,6 @@ goat_docs_goatbuilder_enabled: false
 # its group_vars.
 goat_docs_goatbuilder_release_repo: "{{ source_repo }}"
 goat_docs_goatbuilder_release_private: "{{ goat_docs_release_private }}"
-goat_docs_goatbuilder_release_tag: "goatbuilder/v0.4.1"
+goat_docs_goatbuilder_release_tag: "goatbuilder/v0.4.2"
 goat_docs_goatbuilder_asset: "goatbuilder-docs.tar.gz"
 goat_docs_goatbuilder_www_subdir: "goatbuilder"

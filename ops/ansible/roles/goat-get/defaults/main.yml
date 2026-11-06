@@ -346,7 +346,9 @@ goat_get_refused_release_reason:
 goat_get_goatbuilder_enabled: false
 goat_get_goatbuilder_release_repo: "{{ source_repo }}"
 goat_get_goatbuilder_release_private: "{{ goat_get_release_private }}"
-goat_get_goatbuilder_release_tag: "goatbuilder/v0.4.1"
+# goatbuilder/v0.4.2 is the first release of this repository that carries
+# goatbuilder-docs.tar.gz and goatbuilder-darwin-amd64.
+goat_get_goatbuilder_release_tag: "goatbuilder/v0.4.2"
 goat_get_goatbuilder_version: "{{ goat_get_goatbuilder_release_tag | regex_replace('^goatbuilder/v', '') }}"
 goat_get_goatbuilder_www_subdir: "goatbuilder"
 # Set-equality: a release missing SHA256SUMS.cosign-bundle is not served — the
