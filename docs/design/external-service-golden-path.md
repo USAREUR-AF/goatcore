@@ -288,8 +288,8 @@ A declaration is merged with `enabled: false` while its backend is not yet servi
 
 ```bash
 python3 ops/dns/generate-mesh-hosts.py          # renders the record from the declaration
-cd ops/enrollment && go run ./cmd/name-snapshot-sign \
-  --snapshot ../dns/zagros/name-snapshot.json --root-key <this goatnet's CA key> --age-identity ~/.config/age/keys.txt
+(cd ops/enrollment && go run ./cmd/name-snapshot-sign \
+  --snapshot ../dns/zagros/name-snapshot.json --root-key <this goatnet's CA key> --age-identity ~/.config/age/keys.txt)
 bash ops/ci/check-name-snapshot-sig.sh          # commit mesh-hosts, name-snapshot.json and the .sig
 ```
 
@@ -361,3 +361,19 @@ Not measured: a live `traefik-acme.yml` run on any goatnet after the change. The
 ## Housekeeping this path exposes
 
 Each goatnet's name snapshot signs under that goatnet's own CA; the finish script signs with it.
+
+## Reversible archive
+
+Retain the declaration with `enabled: false`; do not delete it. Validate the
+owner proposal with `--state absent`. The finisher is for enabled services only:
+withdraw through `external-service.yml` with `state=absent`, after generating and
+signing the DNS snapshot. Pass `zone_record_removal_allow` with exactly the
+removed fully qualified names in the generated revision, never the blanket override.
+The play removes managed OAuth clients and partner certificate delegation; retain
+credential references and client configuration for restoration. Mesh enrollment,
+partner applications and their data are not removed by this path.
+
+Restore by confirming the owner can serve again, reviewing `retire_after`, setting
+`enabled: true`, regenerating and signing DNS, and applying `state=present`. Verify
+TLS, authentication, application health and listings. Restoration recreates managed
+clients; it does not restore expired user sessions.

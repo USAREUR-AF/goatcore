@@ -99,3 +99,6 @@ jobs:
           done < <(find ops/ansible/roles -path '*/tests/syntax-check.sh' -print0 | sort -z)
           echo "ansible-syntax-check: ran=$ran fails=$fails"
           [[ "$fails" -eq 0 ]] || exit 1
+
+      - name: External-service client and delegation lifecycle (loopback only)
+        run: python3 ops/ansible/tests/test-external-service-lifecycle.py

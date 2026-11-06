@@ -20,6 +20,7 @@ updates:
       - /ops/goat-id-console
       - /ops/gatewatch
       - /ops/goat-zenoh-portal
+      - /ops/federation-e2e/host
       - /ops/netbird
       - /ops/onboard-runner
       - /ops/postgres/spock
@@ -42,4 +43,3 @@ updates:
       # 02-spock-extension.sql (see PR #2080 CI failures).
       - dependency-name: "ghcr.io/pgedge/pgedge-postgres"
         update-types: ["version-update:semver-major"]
-      - "/ops/federation-e2e/host"
