@@ -49,6 +49,7 @@ type Minter struct {
 	AgeIdentityPath  string
 	CAID             string
 	SiteID           string
+	Org              string // Subject O of every minted leaf, passed as cert-sign --org. Empty omits the flag (cert-sign's built-in default applies).
 	URIPrefix        string // URI-SAN prefix; per-goatnet (e.g. "urn:goat:<site>:org="). Frozen into every minted cert — the integration-pinned identity grammar.
 	CNSuffix         string // per-vendor-mode leaf CN suffix (legacy "-trial-peer"). Empty → "-trial-peer". Slot-pool mode overrides CN to the bare anchor via MintOptions, so this is unused there.
 	DNSSuffix        string // DNS-SAN suffix; the SAN is "client.<prefix>.<DNSSuffix>" (per-goatnet). In the cert; not load-bearing for the ACL (keys on URI-SAN + CN) but per-goatnet for audit cleanliness. Empty → "example.peer".
@@ -369,12 +370,22 @@ func (m *Minter) invokeCertSign(ctx context.Context, prefix, certPath, keyPath, 
 		"--out-cert", certPath,
 		"--out-key", keyPath,
 	}
+	// The goatnet's Subject O. Without it a cert-sign built from this tree
+	// stamps its built-in default, which is not the organisation a goatnet's
+	// earlier leaves carry. Empty leaves cert-sign's default (and keeps a
+	// cert-sign that predates --org working).
+	if org := strings.TrimSpace(m.Org); org != "" {
+		args = append(args, "--org", org)
+	}
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Stdout = nil
 	stderrBuf := &strings.Builder{}
 	cmd.Stderr = io.MultiWriter(os.Stderr, stderrBuf)
 	if err := cmd.Run(); err != nil {
 		errStr := stderrBuf.String()
+		if strings.Contains(errStr, "flag provided but not defined: -org") {
+			return fmt.Errorf("cert-sign rejected --org: this cert-sign build predates the flag; install a cert-sign built from ops/enrollment/cmd/cert-sign (the portal role rebuilds it) or clear the portal's --cert-org — underlying error: %w", err)
+		}
 		if strings.Contains(errStr, "--uri-san") {
 			return fmt.Errorf("cert-sign rejected --uri-san: this cert-sign build lacks the URI-SAN extension; install one that has it before flipping --cert-sign-fake off — underlying error: %w", err)
 		}

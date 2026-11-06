@@ -140,6 +140,7 @@ func cmdServe(args []string) error {
 		AgeIdentityPath:  cfg.AgeIdentityPath,
 		CAID:             cfg.CertSignCAID,
 		SiteID:           cfg.CertSignSiteID,
+		Org:              cfg.CertSignOrg,
 		URIPrefix:        cfg.CertSignURIPrefix,
 		CNSuffix:         cfg.CertSignCNSuffix,
 		DNSSuffix:        cfg.CertSignDNSSuffix,

@@ -86,6 +86,7 @@ func TestMint_RealCertSign_LeafIsP256Recipient(t *testing.T) {
 		AgeIdentityPath:  ident,
 		CAID:             "conformance-ca",
 		SiteID:           "conformance",
+		Org:              "Conformance Org",
 		URIPrefix:        "urn:goat:galaxy:org=",
 		DNSSuffix:        "galaxy.peer",
 		CARoot:           filepath.Join(caDir, "root-cert.pem"),
@@ -128,6 +129,10 @@ func TestMint_RealCertSign_LeafIsP256Recipient(t *testing.T) {
 	}
 	if pub.Curve != elliptic.P256() {
 		t.Fatalf("minted leaf curve is %s; the recipient contract requires P-256", pub.Curve.Params().Name)
+	}
+	// The goatnet's Subject O reaches the leaf (cert-sign --org).
+	if len(cert.Subject.Organization) != 1 || cert.Subject.Organization[0] != "Conformance Org" {
+		t.Errorf("leaf O = %q; want [\"Conformance Org\"] from Minter.Org", cert.Subject.Organization)
 	}
 	if cert.Subject.CommonName != "acme" {
 		t.Errorf("leaf CN = %q; want the bare anchor \"acme\" (slot-pool shape)", cert.Subject.CommonName)

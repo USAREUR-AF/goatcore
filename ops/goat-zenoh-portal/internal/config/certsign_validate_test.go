@@ -49,3 +49,33 @@ func TestLoadFromFlags_CAIDHasNoDefault(t *testing.T) {
 		t.Fatalf("CertSignCAID default = %q, want empty", cfg.CertSignCAID)
 	}
 }
+
+// The Subject O defaults to empty (the role omits the flag; cert-sign keeps its
+// own default) and is read from PORTAL_CERT_SIGN_ORG.
+func TestLoadFromFlags_CertSignOrg(t *testing.T) {
+	t.Setenv("PORTAL_CERT_SIGN_ORG", "")
+	cfg, err := LoadFromFlags(nil)
+	if err != nil {
+		t.Fatalf("LoadFromFlags: %v", err)
+	}
+	if cfg.CertSignOrg != "" {
+		t.Fatalf("CertSignOrg default = %q, want empty", cfg.CertSignOrg)
+	}
+
+	t.Setenv("PORTAL_CERT_SIGN_ORG", "Example Org")
+	cfg, err = LoadFromFlags(nil)
+	if err != nil {
+		t.Fatalf("LoadFromFlags: %v", err)
+	}
+	if cfg.CertSignOrg != "Example Org" {
+		t.Fatalf("CertSignOrg from env = %q, want %q", cfg.CertSignOrg, "Example Org")
+	}
+
+	cfg, err = LoadFromFlags([]string{"--cert-org=Flag Org"})
+	if err != nil {
+		t.Fatalf("LoadFromFlags: %v", err)
+	}
+	if cfg.CertSignOrg != "Flag Org" {
+		t.Fatalf("CertSignOrg from flag = %q, want %q", cfg.CertSignOrg, "Flag Org")
+	}
+}

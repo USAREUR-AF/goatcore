@@ -20,4 +20,11 @@ ansible-playbook \
   --syntax-check \
   "$SCRIPT_DIR/playbook.yml"
 
+# Behavioural: the --org support detection on fixture usage texts (localhost
+# only, no host, no docker).
+ansible-playbook \
+  -i localhost, \
+  --connection local \
+  "$SCRIPT_DIR/cert-sign-org-support.yml"
+
 echo "goat-zenoh-portal: syntax-check OK"

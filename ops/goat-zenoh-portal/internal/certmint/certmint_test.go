@@ -500,6 +500,99 @@ func TestMint_EKUArgv(t *testing.T) {
 	}
 }
 
+// TestMint_OrgArgv pins the Subject O handed to cert-sign: --org <value> as one
+// argv element when Minter.Org is set (spaces survive), and no --org at all when
+// it is empty or blank, so cert-sign's built-in default applies and a cert-sign
+// that predates the flag keeps working.
+func TestMint_OrgArgv(t *testing.T) {
+	stubDir := t.TempDir()
+	argsFile := filepath.Join(stubDir, "args.txt")
+	stub := filepath.Join(stubDir, "cert-sign")
+	// One argv element per line, so a value with a space is visible as one.
+	script := "#!/bin/sh\n" +
+		": > " + argsFile + "\n" +
+		"for a in \"$@\"; do printf '%s\\n' \"$a\" >> " + argsFile + "; done\n" +
+		"while [ $# -gt 0 ]; do\n" +
+		"  case $1 in\n" +
+		"    --out-cert) echo stub-cert > \"$2\"; shift 2;;\n" +
+		"    --out-key)  echo stub-key  > \"$2\"; shift 2;;\n" +
+		"    *) shift;;\n" +
+		"  esac\n" +
+		"done\n"
+	if err := os.WriteFile(stub, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	mint := func(org string) []string {
+		t.Helper()
+		m := &certmint.Minter{
+			BinaryPath:      stub,
+			CABundleDir:     stubDir,
+			AgeIdentityPath: filepath.Join(stubDir, "age.key"),
+			VendorBundleDir: t.TempDir(),
+			Org:             org,
+		}
+		if _, err := m.Mint(context.Background(), "acme", "vp_acme_testkey", certmint.MintOptions{}); err != nil {
+			t.Fatalf("mint: %v", err)
+		}
+		argv, err := os.ReadFile(argsFile)
+		if err != nil {
+			t.Fatalf("stub argv not recorded: %v", err)
+		}
+		return strings.Split(strings.TrimRight(string(argv), "\n"), "\n")
+	}
+	orgArg := func(argv []string) (string, bool) {
+		for i, a := range argv {
+			if a == "--org" {
+				if i+1 < len(argv) {
+					return argv[i+1], true
+				}
+				return "", true
+			}
+		}
+		return "", false
+	}
+
+	if v, ok := orgArg(mint("Example Org")); !ok || v != "Example Org" {
+		t.Errorf("Org set: want --org \"Example Org\", got present=%v value=%q", ok, v)
+	}
+	if v, ok := orgArg(mint("  Example Org  ")); !ok || v != "Example Org" {
+		t.Errorf("Org padded: want --org trimmed to \"Example Org\", got present=%v value=%q", ok, v)
+	}
+	for _, empty := range []string{"", "   "} {
+		if _, ok := orgArg(mint(empty)); ok {
+			t.Errorf("Org %q: want no --org in the argv", empty)
+		}
+	}
+}
+
+// A cert-sign that predates --org fails with Go's flag error; the mint error
+// names the fix instead of passing the bare usage text through.
+func TestMint_OrgRejectedByOldCertSign(t *testing.T) {
+	stubDir := t.TempDir()
+	stub := filepath.Join(stubDir, "cert-sign")
+	script := "#!/bin/sh\n" +
+		"for a in \"$@\"; do [ \"$a\" = --org ] && { echo 'flag provided but not defined: -org' >&2; exit 2; }; done\n" +
+		"exit 0\n"
+	if err := os.WriteFile(stub, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	m := &certmint.Minter{
+		BinaryPath:      stub,
+		CABundleDir:     stubDir,
+		AgeIdentityPath: filepath.Join(stubDir, "age.key"),
+		VendorBundleDir: t.TempDir(),
+		Org:             "Example Org",
+	}
+	_, err := m.Mint(context.Background(), "acme", "vp_acme_testkey", certmint.MintOptions{})
+	if err == nil {
+		t.Fatal("want an error from a cert-sign that rejects --org")
+	}
+	if !strings.Contains(err.Error(), "predates the flag") {
+		t.Errorf("error does not name the fix: %v", err)
+	}
+}
+
 // A .cbor that nobody can verify is not a profile bundle, it is a file.
 // goat-cli compiles in no CA root: roots are operator-supplied, so one binary
 // works everywhere. That puts the burden here: whoever hands out a .cbor must

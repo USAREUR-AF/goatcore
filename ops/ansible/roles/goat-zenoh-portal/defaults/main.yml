@@ -196,6 +196,12 @@ portal_onboarding_packet_path: "/etc/goat-zenoh-portal/zenoh-trial-onboarding.md
 portal_cert_sign_ca_id: ""   # REQUIRED per goatnet — a shared default
 # would sign certs for a new goatnet under ANOTHER goatnet's authority.
 portal_cert_sign_site_id: "{{ site_id }}"   # a shared role must not name a goatnet
+# Subject O of every leaf the portal mints, passed as cert-sign --org. Read
+# from goat_cert_organization (group_vars/all.yml), the same fact the operator
+# plays state on their cert-sign calls, so a cert-sign built from this tree
+# stamps the goatnet's organisation rather than its built-in default. Empty
+# omits the flag and leaves cert-sign's default.
+portal_cert_sign_org: "{{ goat_cert_organization | default('') }}"
 # Per-goatnet cert identity + onboarding-filename strings. Each goatnet MUST
 # override these in its group_vars so its minted certs + tarballs carry its own
 # names. The URI-SAN prefix in particular is frozen

@@ -62,6 +62,14 @@ Zenoh trial fabric onto a single host. Per design at
   Achieved by either (a) using the goat-zenoh-portal image that already
   bundles `cert-sign`, or (b) bind-mounting a host-side `cert-sign`
   into `/usr/local/bin/cert-sign` of the container. Defaults assume (b).
+  The role builds and installs it from this checkout when it is missing.
+- The Subject O of minted leaves is `portal_cert_sign_org`, defaulting to
+  `goat_cert_organization` (the same fact the operator plays pass to
+  cert-sign). It reaches the portal as `PORTAL_CERT_SIGN_ORG` and the portal
+  passes `cert-sign --org`; empty omits the flag and cert-sign's built-in
+  default applies. When the pinned image reads the setting and the host
+  cert-sign predates `--org`, the role rebuilds cert-sign from this checkout
+  and restarts the portal.
 - (Optional) A `bundle-create` binary on the host, same placement pattern
   as `cert-sign`, to mint the goat-cli `.cbor` into the vendor tarball.
   OFF by default (`portal_bundle_create_bin: ""`). To enable: build

@@ -1,0 +1,18 @@
+---
+# Reads the two probes main.yml registers before deciding whether the host
+# cert-sign must be rebuilt for --org:
+#   portal_image_help     `docker run <portal_image> serve -h`
+#   portal_cert_sign_help `/usr/local/bin/cert-sign -h`
+# and sets portal_image_passes_org / portal_cert_sign_has_org.
+#
+# Flag lines in Go's usage text read "  -name type" (or "  -name" for a bool);
+# match the line, not a substring: cert-sign's --uri-san help mentions
+# "example-org". Tested by tests/cert-sign-org-support.yml.
+- name: Read --cert-org (image) and --org (host cert-sign) from the usage text
+  ansible.builtin.set_fact:
+    portal_image_passes_org: >-
+      {{ (portal_image_help.stdout | default('')) is search('(?m)^ +-cert-org( |$)')
+         or (portal_image_help.stderr | default('')) is search('(?m)^ +-cert-org( |$)') }}
+    portal_cert_sign_has_org: >-
+      {{ (portal_cert_sign_help.stdout | default('')) is search('(?m)^ +-org( |$)')
+         or (portal_cert_sign_help.stderr | default('')) is search('(?m)^ +-org( |$)') }}

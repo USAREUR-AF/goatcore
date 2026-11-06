@@ -160,6 +160,7 @@ type Config struct {
 	AgeIdentityPath        string // operator's age identity file (decrypts the CA key)
 	CertSignCAID           string // --ca-id value for cert-sign invocation
 	CertSignSiteID         string // --site-id value (the CA site id)
+	CertSignOrg            string // --org value: the Subject O of minted leaves. "" omits the flag, so cert-sign uses its built-in default.
 	CertSignURIPrefix      string // URI-SAN prefix; per-goatnet Set per env via the role; the built-in default is an example value.
 	CertSignCNSuffix       string // per-vendor-mode leaf CN suffix (legacy "-trial-peer"). Per-uuid-slot-pool mode overrides CN to the bare slot anchor, so this is unused there; kept configurable so a non-slot goatnet can drop the "trial" wording.
 	CertSignDNSSuffix      string // DNS-SAN suffix; SAN is "client.<principal>.<suffix>" (per-goatnet). In the cert; not ACL-load-bearing.
@@ -430,6 +431,7 @@ func LoadFromFlags(args []string) (*Config, error) {
 	fs.StringVar(&cfg.AgeIdentityPath, "age-identity", envOr("PORTAL_AGE_IDENTITY", ""), "Path to age identity file (decrypts CA key)")
 	fs.StringVar(&cfg.CertSignCAID, "ca-id", envOr("PORTAL_CA_ID", ""), "--ca-id value passed to cert-sign; required unless --cert-sign-fake")
 	fs.StringVar(&cfg.CertSignSiteID, "site-id", envOr("PORTAL_SITE_ID", "example-site"), "--site-id (Subject OU) passed to cert-sign")
+	fs.StringVar(&cfg.CertSignOrg, "cert-org", envOr("PORTAL_CERT_SIGN_ORG", ""), "--org (Subject O) passed to cert-sign; empty = omit the flag and take cert-sign's built-in default. The role sets it from goat_cert_organization")
 	fs.StringVar(&cfg.CertSignURIPrefix, "uri-prefix", envOr("PORTAL_URI_PREFIX", "urn:goat:example:org="), "URI-SAN prefix; <prefix><principal> is the minted SAN. Per-goatnet, e.g. 'urn:goat:<site>:org='; the role sets it on every goatnet")
 	fs.StringVar(&cfg.CertSignCNSuffix, "cn-suffix", envOr("PORTAL_CERT_SIGN_CN_SUFFIX", "-trial-peer"), "per-vendor-mode leaf CN suffix (legacy '-trial-peer'); slot-pool mode ignores it (CN = bare anchor)")
 	fs.StringVar(&cfg.CertSignDNSSuffix, "dns-suffix", envOr("PORTAL_CERT_SIGN_DNS_SUFFIX", "example.peer"), "DNS-SAN suffix; SAN is client.<principal>.<suffix> (per-goatnet, e.g. '<site>.peer')")

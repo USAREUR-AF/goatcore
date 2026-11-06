@@ -370,42 +370,8 @@
         path: /usr/local/bin/cert-sign
       register: portal_cert_sign_bin
 
-    - name: Build cert-sign on the controller for this host's architecture (missing on the host)
-      ansible.builtin.command:
-        argv:
-          - go
-          - build
-          - -tags
-          - nopiv
-          - -o
-          - "{{ playbook_dir }}/../../.cert-sign-{{ inventory_hostname }}"
-          - ./cmd/cert-sign
-        chdir: "{{ playbook_dir }}/../enrollment"
-      environment:
-        GOOS: linux
-        GOARCH: "{{ 'arm64' if ansible_architecture in ['aarch64', 'arm64'] else 'amd64' }}"
-        CGO_ENABLED: "0"
-      delegate_to: localhost
-      become: false
-      when: not portal_cert_sign_bin.stat.exists
-      changed_when: true
-
-    - name: Install cert-sign on the host (missing on the host)
-      ansible.builtin.copy:
-        src: "{{ playbook_dir }}/../../.cert-sign-{{ inventory_hostname }}"
-        dest: /usr/local/bin/cert-sign
-        mode: "0755"
-        owner: root
-        group: root
-      become: true
-      when: not portal_cert_sign_bin.stat.exists
-
-    - name: Remove the controller-side build artefact
-      ansible.builtin.file:
-        path: "{{ playbook_dir }}/../../.cert-sign-{{ inventory_hostname }}"
-        state: absent
-      delegate_to: localhost
-      become: false
+    - name: Build and install cert-sign (missing on the host)
+      ansible.builtin.include_tasks: cert-sign-install.yml
       when: not portal_cert_sign_bin.stat.exists
 
     - name: Stat the host cert-sign binary again
@@ -645,6 +611,60 @@
   community.docker.docker_compose_v2_pull:
     project_src: "{{ portal_data_dir }}"
   changed_when: false
+
+# Subject O of minted leaves. portal.env carries PORTAL_CERT_SIGN_ORG from
+# goat_cert_organization; a portal image that reads it passes cert-sign --org on
+# every mint. A host cert-sign installed before --org existed rejects the flag,
+# so every mint would 500 — replace it with one built from this checkout, but
+# only when the pinned image passes the flag: a binary built from this tree run
+# WITHOUT --org stamps cert-sign's built-in default, not the goatnet's O.
+- name: Bring the host cert-sign up to --org (real-mint mode, organisation set)
+  when:
+    - not (portal_cert_sign_fake | bool)
+    - portal_cert_sign_org | trim | length > 0
+  block:
+    - name: Probe the pinned portal image for PORTAL_CERT_SIGN_ORG support
+      ansible.builtin.command:
+        argv:
+          - docker
+          - run
+          - --rm
+          - "{{ portal_image }}"
+          - serve
+          - -h
+      register: portal_image_help
+      changed_when: false
+      failed_when: false
+      become: true
+
+    - name: Probe the host cert-sign for the --org flag
+      ansible.builtin.command:
+        argv:
+          - /usr/local/bin/cert-sign
+          - -h
+      register: portal_cert_sign_help
+      changed_when: false
+      failed_when: false
+
+    - name: Read what the image and the host binary support
+      ansible.builtin.include_tasks: cert-sign-org-support.yml
+
+    - name: Rebuild cert-sign (the image passes --org; the host binary predates it)
+      ansible.builtin.include_tasks: cert-sign-install.yml
+      when:
+        - portal_image_passes_org | bool
+        - not (portal_cert_sign_has_org | bool)
+
+    - name: Restart the portal onto the rebuilt cert-sign
+      # The compose file bind-mounts the binary by path; a running container
+      # holds the replaced file until it restarts.
+      ansible.builtin.debug:
+        msg: cert-sign replaced; the portal restarts at the end of the play.
+      changed_when: true
+      notify: restart goat-zenoh-portal
+      when:
+        - portal_image_passes_org | bool
+        - not (portal_cert_sign_has_org | bool)
 
 # A Traefik router that names a middleware nothing defines does
 # not fail loudly — it goes into ERROR STATE and stops serving, which presents
