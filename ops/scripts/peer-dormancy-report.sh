@@ -23,14 +23,33 @@
 # fail toward the reversible action.
 #
 # usage:
-#   ops/scripts/peer-dormancy-report.sh              # human roster
-#   ops/scripts/peer-dormancy-report.sh --csv
+#   ops/scripts/peer-dormancy-report.sh <goatnet>          # human roster
+#   ops/scripts/peer-dormancy-report.sh <goatnet> --csv
+#
+# <goatnet> names the goatnet (site-a or site_a). Everything else is read from
+# what that goatnet's configuration declares (ops/scripts/goatnet-facts.py):
+#   the management host   user@mesh_ip of its first management host in
+#                         ops/ansible/inventory/doors.yaml; MGMT_HOST=user@host
+#                         names another
+#   a person's device     a peer named peer-<handle>-<goatnet>-<YYYY-MM-DD>-...,
+#                         the name the onboarding setup key gives it
+#   infrastructure        a peer whose name starts with one of the function
+#                         prefixes below, or with an item of the goatnet's
+#                         peer_report_infra_prefixes (group_vars) list
+#
+# env:
+#   MGMT_HOST     user@host of the management host (default: from doors.yaml)
+#   PG_CONTAINER  postgres container name (default postgres-a)
 set -euo pipefail
 
-THOR_HOST="${THOR_HOST:-100.127.0.175}"
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+GOATNET="${1:-}"
+case "$GOATNET" in ""|-*) echo "usage: $(basename "$0") <goatnet> [--csv]" >&2; exit 2 ;; esac
+MODE="${2:-report}"
 PG_CONTAINER="${PG_CONTAINER:-postgres-a}"
-SSH_USER="${SSH_USER:-goat}"
-MODE="${1:-report}"
+MGMT_HOST="${MGMT_HOST:-$(python3 "$HERE/goatnet-facts.py" mgmt-ssh "$GOATNET")}" \
+  || { echo "peer-dormancy-report: no management host for $GOATNET; set MGMT_HOST=user@host" >&2; exit 2; }
+INFRA_EXTRA="$(python3 "$HERE/goatnet-facts.py" var "$GOATNET" peer_report_infra_prefixes 2>/dev/null | paste -sd' ' - || true)"
 
 tmp="$(mktemp)"
 cat > "$tmp" <<'SQL'
@@ -51,8 +70,8 @@ SQL
 # and report a confident empty roster.
 chmod 644 "$tmp"
 
-scp -q -o BatchMode=yes "$tmp" "${SSH_USER}@${THOR_HOST}:/tmp/dormancy.sql"
-raw="$(ssh -o BatchMode=yes "${SSH_USER}@${THOR_HOST}" \
+scp -q -o BatchMode=yes "$tmp" "${MGMT_HOST}:/tmp/dormancy.sql"
+raw="$(ssh -o BatchMode=yes "${MGMT_HOST}" \
   "sudo docker cp /tmp/dormancy.sql ${PG_CONTAINER}:/tmp/d.sql >/dev/null 2>&1;
    sudo docker exec ${PG_CONTAINER} psql -U postgres -d netbird -f /tmp/d.sql 2>/dev/null;
    rm -f /tmp/dormancy.sql")"
@@ -64,9 +83,9 @@ if [ -z "${raw//[[:space:]]/}" ]; then
   exit 2
 fi
 
-python3 - "$MODE" <<PYEOF
+python3 - "$MODE" "$GOATNET" "$INFRA_EXTRA" <<PYEOF
 import sys, re, collections
-mode = sys.argv[1]
+mode, goatnet, infra_extra = sys.argv[1], sys.argv[2], sys.argv[3].split()
 raw = """$raw"""
 
 # Class resolution. The registry is authoritative; this script has only the peer
@@ -74,8 +93,9 @@ raw = """$raw"""
 # anything not positively identified as a person's device is treated as gear.
 # Infrastructure named by function is neither — it is excluded entirely, because
 # a mgmt host or a DNS node is not dormant-reapable by this policy at all.
-INFRA = re.compile(r"^(mgmt-|mesh-dns-|relay-|collab-|goat-|goatnet-|huey-|lab-node|workhorse|ip-\d)")
-PERSON = re.compile(r"^peer-.+-zagros-\d{4}-\d{2}-\d{2}")
+INFRA = re.compile(r"^(mgmt-|mesh-dns-|relay-|collab-|goat-|goatnet-|ip-\d"
+                   + "".join("|" + re.escape(p) for p in infra_extra) + ")")
+PERSON = re.compile(r"^peer-.+-" + re.escape(goatnet.replace("_", "-")) + r"-\d{4}-\d{2}-\d{2}")
 
 rows = []
 for line in raw.splitlines():

@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | **Built** 2026-10-28: the hermetic tier (`ops/e2e/hermetic.sh`, CI `deploy-e2e.yml`), the run record, the secrets-coverage and deps-named gates, the rehearsal tier; the live canary **built, not yet run** (its image builds on the first push to main; `--bump` points zagros-dev at it) |
+| Status | **Built** 2026-10-28: the hermetic tier (`ops/e2e/hermetic.sh`, CI `deploy-e2e.yml`), the run record, the secrets-coverage and deps-named gates, the rehearsal tier; the live canary **built, not yet run** (its image builds on the first push to main; `--bump` points the dev rung's goatnet at it) |
 | Decision | [ADR 1200](../adr/1200-deployment-e2e-three-tiers.md) |
 | What it tests | `ops/scripts/{deploy-component,rc,rollback,fastlane,pr-land,ansible-preflight}.sh`, the rollback-ledger role, `ops/release/graduate.py`, `ops/pins/generate-pins.py`, the `goatbuilder` binary — unmodified |
 | Audience | whoever changes a driver, and whoever has to trust one before releasing |
@@ -15,7 +15,7 @@ each answering a different question, each with the host's ledger as the only pro
 | Tier | Question | Runs | Hosts |
 |---|---|---|---|
 | **Hermetic** | do the drivers, as committed, move a component through dev → preprod → prod and back? | every PR touching them; nightly | three containers on the CI runner that look like management hosts |
-| **Live canary** | does a deploy work on a real goatnet today? | nightly, from an operator laptop (`ops/e2e/live-canary.sh`) | the zagros-dev management host |
+| **Live canary** | does a deploy work on a real goatnet today? | nightly, from an operator laptop (`ops/e2e/live-canary.sh`) | the management host of the release ladder's dev rung |
 | **Release rehearsal** | will the next step of every open candidate run, before a person runs it? | daily, in CI | none; dry runs |
 
 Two gates sit beside them, because the 2026-10-28 releases failed on things no
@@ -89,13 +89,20 @@ the job summary. An operator running the live canary gets the same directory.
 
 ## Live canary
 
-`ops/e2e/live-canary.sh`, from a checkout on main on a laptop that reaches
-zagros-dev (mesh or door): `goatbuilder doctor`, a dry run, the live deploy of
+`ops/e2e/live-canary.sh`, from a checkout on main or an assembled tree, on a
+laptop that reaches the goatnet (mesh or door). The goatnet is the release
+ladder's `dev` rung (`ops/release/ladder.yaml`) unless `--env` names another, and
+the host whose ledger the rollback steps read is that goatnet's first management
+host in `ops/ansible/inventory/doors.yaml` unless `--host` names another; both are
+read by `ops/scripts/goatnet-facts.py`. The run: `goatbuilder doctor`, a dry run, the live deploy of
 `e2e-canary`, `--verify-only`, `rollback --list`, then a real rollback one step back (proved by the host ledger's newest row reading `action: rollback` and naming the prior ref) and the roll forward through `deploy`, verified again — all recorded. The rollback alternates avenue by day (even days `goatbuilder rollback`, odd days `rollback.sh`; `LIVE_CANARY_AVENUE` overrides, ADR 1201) and needs two refs in the host's ledger, which the second `--bump` provides. The canary
-templates no secret, so no `op run`. `--bump` first points zagros-dev's deviation
-at the newest image `e2e-canary-image.yml` built from main (`sha-<main>`),
-regenerates, re-signs the zagros-dev intent with the operator's CA key and lands
-the pin through `pr-land.sh`. In `ops/pins/fleet-pins.yaml` the component is
+templates no secret, so no `op run`. `--bump` first points the goatnet's deviation
+at the newest image `e2e-canary-image.yml` built from main
+(`ghcr.io/<ghcr_org>/e2e-canary:sha-<main>`, `ghcr_org` from the goatnet's
+group_vars), regenerates, re-signs its intent with the operator's CA key and lands
+the pin through `pr-land.sh`. That is a single-repository checkout's path: an
+assembled tree takes its pins and intents from the overlay, so there `--bump` is
+refused and the canary pin lands on the overlay like any other pin. In `ops/pins/fleet-pins.yaml` the component is
 `fleet: null`, absent on every goatnet until the first `--bump`. No GitHub runner
 reaches a goatnet (`ops/validation/goatnet-runners.yaml`), so this is the
 operator's nightly command, not a workflow.
