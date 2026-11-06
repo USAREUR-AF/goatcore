@@ -100,7 +100,7 @@ NODE_CLASS = {
     "EFFECTOR-COMMAND", "EFFECTOR-ARBITER",
     "KID", "EXTERNAL-KID", "EXTERNAL-INTERMEDIARY", "FUSION", "CONTROL",
     "POD", "NETWORK", "MOON", "BREAKGLASS", "INFRA", "EXTERNAL-INFRA", "BACKEND-INFRA",
-    "NETWORK-JUMP", "EDGE-SERVER",
+    "NETWORK-JUMP", "EDGE-SERVER", "PEERING-EDGE",
 }
 # NET-ENGINEER (ADR 1216) is a PERSON group: network engineers laptops, never
 # gear. Counted with the roles so that (b) fails gear wearing it.
@@ -125,7 +125,12 @@ SUBSTRATE_CLASS = {"POD", "NETWORK", "MOON", "INFRA", "EXTERNAL-INFRA", "BACKEND
                    # EDGE-SERVER (ADR 1216) takes the NETWORK shape exactly: a
                    # site server that supports edge devices, administered over
                    # the mesh, holding no fabric ports and no custody edge.
-                   "EDGE-SERVER"}
+                   "EDGE-SERVER",
+                   # PEERING-EDGE (ADR 1219) is a federation edge router kept on
+                   # the mesh: it dials the core router and nothing else, and is
+                   # placed by the declaration, not minted, so it has no custody
+                   # edge either.
+                   "PEERING-EDGE"}
 GEAR_CLASS = NODE_CLASS - SUBSTRATE_CLASS
 
 # Scope prefixes from the taxonomy: goatnet entries + exercise/site stamps.
