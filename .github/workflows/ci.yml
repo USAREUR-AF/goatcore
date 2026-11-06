@@ -107,6 +107,8 @@ jobs:
           set -o pipefail
           export PYTHONPATH="$PWD/ops/consistency/python"
           python3 -m pytest -q --ignore=ops/ci/test_membership_reconcile.py --ignore=ops/consistency/python/tests/test_corpus.py --ignore=ops/consistency/python/tests/test_lite_sidecar.py ops/ci ops/consistency/python ops/goatbuilder tests 2>&1 | tail -40
+      - name: the deploy's source-of-record check on assembled trees
+        run: bash ops/ci/test-source-of-record.sh
       - name: Ansible roles and templates resolve
         run: bash ops/ci/check-role-template-refs-resolve.sh
       - name: playbooks parse

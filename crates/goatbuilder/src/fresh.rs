@@ -9,18 +9,20 @@
 //! run (`GOAT_FRESH_SOURCE_TRUNK`), so all of its plays are judged against one
 //! commit.
 //!
-//! An assembled tree (`goatcore` at the overlay's `goatcore.ref`, the overlay
-//! copied over it, `ops/goatprivate/assemble.sh`) carries a `.goat-assembled`
-//! marker at its root and is judged here instead: the `goatcore_ref` it was
-//! built from must equal the tree's declared `goatcore.ref` and its HEAD, and
-//! the `overlay_commit` it was built from must not be behind the overlay
-//! checkout's own `<remote>/main` outside `docs/` (GB-064). The overlay
-//! checkout is named by `overlay_path=` in the marker or `GOAT_OVERLAY_DIR`;
-//! its remote is `GOAT_OVERLAY_TRUNK_REMOTE`, else `origin`. The trunk handed
-//! to the plays is `goatcore_ref`. The rollback-ledger role records both
-//! commits in every row a play from the tree writes.
+//! An assembled tree (goatcore at the overlay's `goatcore.ref`, goatstuff at its
+//! `goatstuff.ref`, the overlay's pre-disclosure patches, the overlay copied
+//! over them) carries a `.goat-assembled` marker at its root. The same script
+//! hands such a tree to `ops/scripts/lib/source_of_record.py`, which reads every
+//! line of the marker (`goatcore_ref`, `overlay_commit`, `overlay_path`,
+//! `goatstuff_ref`, `goatstuff_path`, `embargo`) and judges the tree against
+//! the commits and patches it names. This module runs that one script for both
+//! kinds of tree, so the binary and the scripts give the same verdict on the
+//! same tree. It reads the marker itself only to refuse a tree whose goatcore
+//! carries no `source_of_record.py`. The trunk handed to the plays of an
+//! assembled tree is `goatcore_ref`; the rollback-ledger role records the
+//! commits and the patch ids in every row a play from the tree writes.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 
 use anyhow::{Context, Result};
@@ -46,25 +48,30 @@ impl Fresh {
 
 /// Run the check for `repo`. `GOAT_DEPLOY_OFFLINE=1` (`--offline`) and an
 /// already-pinned `GOAT_FRESH_SOURCE_TRUNK` reach the script through the
-/// environment, as they do from the script avenue.
+/// environment, as they do from the script avenue; so do the overlay and
+/// goatstuff checkouts of an assembled tree (`GOAT_OVERLAY_DIR`,
+/// `GOAT_OVERLAY_TRUNK_REMOTE`, `GOAT_GOATSTUFF_DIR`) when its marker does not
+/// name them.
 pub fn check(repo: &Path) -> Result<Fresh> {
     check_with(repo, &[], &[])
 }
 
 fn check_with(repo: &Path, set: &[(&str, &str)], unset: &[&str]) -> Result<Fresh> {
     if let Some(m) = marker(repo)? {
-        let env = |k: &str| -> Option<String> {
-            if unset.contains(&k) {
-                return None;
-            }
-            set.iter().find(|(n, _)| *n == k).map(|(_, v)| v.to_string()).or_else(|| std::env::var(k).ok())
-        };
-        let ctx = AssembledEnv {
-            offline: env("GOAT_DEPLOY_OFFLINE").as_deref() == Some("1"),
-            overlay_dir: env(OVERLAY_DIR_ENV).filter(|v| !v.is_empty()),
-            overlay_remote: env(OVERLAY_REMOTE_ENV).filter(|v| !v.is_empty()).unwrap_or_else(|| "origin".into()),
-        };
-        return Ok(assembled(repo, &m, &ctx));
+        if !repo.join(SOURCE_OF_RECORD).is_file() {
+            return Ok(Fresh {
+                trunk: m.goatcore_ref.clone(),
+                check: Check {
+                    name: "fresh-source".into(),
+                    ok: false,
+                    detail: format!(
+                        "GB-065 REFUSE — this tree is assembled ({}) but its goatcore has no {SOURCE_OF_RECORD} to judge it with (contract C3).",
+                        m.describe()
+                    ),
+                    fix: Some("move goatcore.ref to a goatcore commit that carries the check, re-assemble, and run from the new tree".into()),
+                },
+            });
+        }
     }
     let mut cmd = Command::new(repo.join("ops/scripts/fresh-source.sh"));
     cmd.args(["--repo".as_ref(), repo.as_os_str()]);
@@ -101,17 +108,13 @@ fn check_with(repo: &Path, set: &[(&str, &str)], unset: &[&str]) -> Result<Fresh
     Ok(Fresh { trunk, check })
 }
 
-/// The marker an assembled tree carries at its root (ops/goatprivate/assemble.sh).
+/// The marker an assembled tree carries at its root (the overlay's assemble step).
 pub const MARKER: &str = ".goat-assembled";
-/// Names the overlay checkout when the marker does not.
-pub const OVERLAY_DIR_ENV: &str = "GOAT_OVERLAY_DIR";
-/// The overlay checkout's trunk remote; `origin` when unset.
-pub const OVERLAY_REMOTE_ENV: &str = "GOAT_OVERLAY_TRUNK_REMOTE";
-/// The overlay paths whose trunk changes do not refuse a deploy.
-const OVERLAY_NOT_DEPLOYED: &str = ":(exclude)docs";
+/// The check an assembled tree is judged by, in the tree's own goatcore.
+const SOURCE_OF_RECORD: &str = "ops/scripts/lib/source_of_record.py";
 
 /// What `.goat-assembled` says.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Default)]
 pub struct Marker {
     /// The goatcore commit the tree was built from.
     pub goatcore_ref: String,
@@ -119,6 +122,27 @@ pub struct Marker {
     pub overlay_commit: String,
     /// Where the overlay checkout is, when the marker names it.
     pub overlay_path: Option<String>,
+    /// The goatstuff commit layered between goatcore and the overlay, when there is one.
+    pub goatstuff_ref: Option<String>,
+    /// Where that goatstuff checkout is, when the marker names it.
+    pub goatstuff_path: Option<String>,
+    /// The ids of the pre-disclosure patches applied (`embargo=<id>/<kind>.patch:<sha256>,…`), sorted.
+    pub embargo: Vec<String>,
+}
+
+impl Marker {
+    /// One line naming what the tree was built from.
+    pub fn describe(&self) -> String {
+        let mut s = format!("goatcore {}", short(&self.goatcore_ref));
+        if let Some(g) = &self.goatstuff_ref {
+            s.push_str(&format!(" + goatstuff {}", short(g)));
+        }
+        if !self.embargo.is_empty() {
+            s.push_str(&format!(" + pre-disclosure patches {}", self.embargo.join(", ")));
+        }
+        s.push_str(&format!(" + overlay {}", short(&self.overlay_commit)));
+        s
+    }
 }
 
 /// Read the marker at `repo`'s root: `None` when there is none (a plain checkout).
@@ -141,134 +165,22 @@ fn parse_marker(text: &str) -> Result<Marker> {
     };
     let goatcore_ref = get("goatcore_ref").ok_or_else(|| anyhow::anyhow!("no goatcore_ref= line"))?;
     let overlay_commit = get("overlay_commit").ok_or_else(|| anyhow::anyhow!("no overlay_commit= line"))?;
-    Ok(Marker { goatcore_ref, overlay_commit, overlay_path: get("overlay_path") })
-}
-
-struct AssembledEnv {
-    offline: bool,
-    overlay_dir: Option<String>,
-    overlay_remote: String,
-}
-
-fn git_out(dir: &Path, args: &[&str]) -> Option<String> {
-    let out = Command::new("git").arg("-C").arg(dir).args(args).output().ok()?;
-    out.status.success().then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
-}
-
-fn refuse_row(detail: String, fix: String) -> Check {
-    Check { name: "fresh-source".into(), ok: false, detail, fix: Some(fix) }
-}
-
-/// Judge an assembled tree: goatcore at its declared ref, the overlay current with its trunk.
-fn assembled(repo: &Path, m: &Marker, ctx: &AssembledEnv) -> Fresh {
-    let trunk = m.goatcore_ref.clone();
-    let reassemble = "re-assemble from the current overlay: git -C <overlay> pull --ff-only origin main && <overlay>/assemble.sh <new dir>, then run from the new dir".to_string();
-    let out = |check: Check| Fresh { trunk: trunk.clone(), check };
-
-    // goatcore: the tree was built from the ref it declares, and still sits on it.
-    let declared = match std::fs::read_to_string(repo.join("goatcore.ref")) {
-        Ok(t) => t.trim().to_string(),
-        Err(_) => {
-            return out(refuse_row(
-                format!("GB-064 REFUSE — {MARKER} names goatcore {} but the tree has no goatcore.ref to declare which goatcore it builds with (contract C3).", short(&m.goatcore_ref)),
-                reassemble,
-            ))
-        }
-    };
-    if declared != m.goatcore_ref {
-        return out(refuse_row(
-            format!("GB-064 REFUSE — this tree was assembled from goatcore {} but goatcore.ref declares {}; a deploy from it would run other code than declared (contract C3).", short(&m.goatcore_ref), short(&declared)),
-            reassemble,
-        ));
-    }
-    if let Some(head) = git_out(repo, &["rev-parse", "HEAD"]) {
-        if head != m.goatcore_ref {
-            return out(refuse_row(
-                format!("GB-064 REFUSE — the tree's goatcore checkout is at {} but it was assembled from {} (goatcore.ref); a deploy from it would run other code than declared (contract C3).", short(&head), short(&m.goatcore_ref)),
-                reassemble,
-            ));
-        }
-    }
-
-    // The overlay: the commit copied in is current with the overlay's trunk.
-    let overlay_commit = m.overlay_commit.trim_end_matches("-dirty");
-    let dirty = overlay_commit.len() != m.overlay_commit.len();
-    let Some(dir) = m.overlay_path.clone().or_else(|| ctx.overlay_dir.clone()) else {
-        if ctx.offline {
-            return out(Check { name: "fresh-source".into(), ok: true, detail: format!("OFFLINE — assembled tree: goatcore {} as declared; overlay {} not judged (no overlay checkout named). The run is recorded as offline.", short(&m.goatcore_ref), short(overlay_commit)), fix: None });
-        }
-        return out(refuse_row(
-            format!("GB-064 REFUSE — assembled tree: goatcore {} as declared, but overlay {} cannot be shown current with its trunk because no overlay checkout is named (contract C3).", short(&m.goatcore_ref), short(overlay_commit)),
-            format!("name the overlay checkout: {OVERLAY_DIR_ENV}=<overlay checkout> and re-run"),
-        ));
-    };
-    let odir = PathBuf::from(&dir);
-    let remote = ctx.overlay_remote.as_str();
-    let otrunk = format!("{remote}/main");
-    if !ctx.offline {
-        let fetched = Command::new("git")
-            .arg("-C")
-            .arg(&odir)
-            .args(["fetch", "--quiet", remote, "main"])
-            .env("GIT_SSH_COMMAND", std::env::var("GIT_SSH_COMMAND").unwrap_or_else(|_| "ssh -o BatchMode=yes -o ConnectTimeout=10".into()))
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false);
-        if !fetched {
-            return out(refuse_row(
-                format!("GB-065 REFUSE — could not fetch {remote} main in the overlay checkout {dir}, so overlay {} cannot be shown current with its trunk (contract C3); refusing before any host is touched. On an islanded site, re-run with --offline.", short(overlay_commit)),
-                format!("restore the connection to the overlay's {remote} and re-run"),
-            ));
-        }
-    }
-    let Some(osha) = git_out(&odir, &["rev-parse", "--verify", "--quiet", &format!("{otrunk}^{{commit}}")]) else {
-        if ctx.offline {
-            return out(Check { name: "fresh-source".into(), ok: true, detail: format!("OFFLINE — assembled tree: goatcore {} as declared; no cached {otrunk} in {dir} to judge overlay {} against. The run is recorded as offline.", short(&m.goatcore_ref), short(overlay_commit)), fix: None });
-        }
-        return out(refuse_row(format!("GB-065 REFUSE — fetched {remote} in {dir}, but it has no main branch to judge overlay {} against.", short(overlay_commit)), format!("check the overlay checkout's {remote} remote")));
-    };
-    if git_out(&odir, &["rev-parse", "--verify", "--quiet", &format!("{overlay_commit}^{{commit}}")]).is_none() {
-        return out(refuse_row(
-            format!("GB-064 REFUSE — overlay commit {} the tree was assembled from is not in the overlay checkout {dir}, so it cannot be judged against {otrunk} (contract C3).", short(overlay_commit)),
-            reassemble,
-        ));
-    }
-    let missing = git_out(&odir, &["log", "--format=%h %s", &format!("{overlay_commit}..{osha}"), "--", ".", OVERLAY_NOT_DEPLOYED]).unwrap_or_default();
-    if !missing.is_empty() {
-        let lines: Vec<&str> = missing.lines().collect();
-        let mut d = format!(
-            "GB-064 REFUSE — this tree was assembled from overlay {}, which is behind {otrunk} at {} in what a deploy reads; refusing before any host is touched (contract C3).\n  {} commit(s) on {otrunk} not in it (newest first):",
-            short(overlay_commit),
-            short(&osha),
-            lines.len()
-        );
-        for l in lines.iter().take(10) {
-            d.push_str(&format!("\n    {l}"));
-        }
-        if lines.len() > 10 {
-            d.push_str(&format!("\n    … and {} more", lines.len() - 10));
-        }
-        return out(refuse_row(d, reassemble));
-    }
-
-    let mut said = vec![];
-    if ctx.offline {
-        said.push(format!("OFFLINE — not fetching the overlay's {remote}; judged against the cached {otrunk} at {}. The run is recorded as offline.", short(&osha)));
-    }
-    said.push(format!("assembled tree: goatcore {} as declared in goatcore.ref; overlay {} current with {otrunk} at {}", short(&m.goatcore_ref), short(overlay_commit), short(&osha)));
-    let ahead = git_out(&odir, &["log", "--format=%h %s", &format!("{osha}..{overlay_commit}")]).unwrap_or_default();
-    if !ahead.is_empty() {
-        let lines: Vec<&str> = ahead.lines().collect();
-        let mut w = format!("WARN — overlay {} carries {} commit(s) not on {otrunk}; they are deployed with this run:", short(overlay_commit), lines.len());
-        for l in lines.iter().take(5) {
-            w.push_str(&format!("\n    {l}"));
-        }
-        said.push(w);
-    }
-    if dirty {
-        said.push(format!("WARN — the overlay had uncommitted changes when this tree was assembled ({}); they are deployed with this run and no commit records them.", m.overlay_commit));
-    }
-    out(Check { name: "fresh-source".into(), ok: true, detail: said.join("\n"), fix: None })
+    let mut embargo: Vec<String> = get("embargo")
+        .unwrap_or_default()
+        .split(',')
+        .filter_map(|e| e.trim().split_once('/').map(|(id, _)| id.to_string()))
+        .filter(|id| !id.is_empty())
+        .collect();
+    embargo.sort();
+    embargo.dedup();
+    Ok(Marker {
+        goatcore_ref,
+        overlay_commit,
+        overlay_path: get("overlay_path").or_else(|| get("overlay_dir")),
+        goatstuff_ref: get("goatstuff_ref"),
+        goatstuff_path: get("goatstuff_path"),
+        embargo,
+    })
 }
 
 fn short(sha: &str) -> &str {
@@ -370,7 +282,8 @@ mod tests {
     }
 
     fn head(dir: &Path) -> String {
-        git_out(dir, &["rev-parse", "HEAD"]).unwrap()
+        let out = Command::new("git").arg("-C").arg(dir).args(["rev-parse", "HEAD"]).output().unwrap();
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
     }
 
     fn commit_file(dir: &Path, rel: &str, body: &str, msg: &str) {
@@ -381,8 +294,12 @@ mod tests {
         git(dir, &["commit", "-qm", msg]);
     }
 
+    const OVERLAY_DIR_ENV: &str = "GOAT_OVERLAY_DIR";
+    const OVERLAY_REMOTE_ENV: &str = "GOAT_OVERLAY_TRUNK_REMOTE";
+
     /// An overlay trunk (bare), two overlay checkouts of it, and an assembled
-    /// tree: a goatcore commit with the marker and goatcore.ref beside it.
+    /// tree: a goatcore commit carrying the real check scripts, with the
+    /// overlay's goatcore.ref and the marker beside it.
     fn assembled_fixture(tag: &str) -> (PathBuf, PathBuf, PathBuf, PathBuf) {
         let root = std::env::temp_dir().join(format!("gb-assembled-{tag}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
@@ -391,6 +308,10 @@ mod tests {
         git(&root, &["init", "-q", "--bare", "ov.git"]);
         git(&bare, &["symbolic-ref", "HEAD", "refs/heads/main"]);
         git(&root, &["init", "-q", "-b", "main", "tree"]);
+        let scripts = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../ops/scripts");
+        fs::create_dir_all(tree.join("ops/scripts/lib")).unwrap();
+        fs::copy(scripts.join("fresh-source.sh"), tree.join("ops/scripts/fresh-source.sh")).unwrap();
+        fs::copy(scripts.join("lib/source_of_record.py"), tree.join(SOURCE_OF_RECORD)).unwrap();
         commit_file(&tree, "ops/ansible/x", "1", "goatcore base");
         let gref = head(&tree);
         git(&root, &["init", "-q", "-b", "main", "ov"]);
@@ -405,7 +326,7 @@ mod tests {
 
     fn run_assembled(tree: &Path, overlay: Option<&Path>, offline: bool) -> Fresh {
         let mut set: Vec<(&str, &str)> = vec![(OVERLAY_REMOTE_ENV, "origin")];
-        let mut unset = vec![TRUNK_ENV];
+        let mut unset = vec![TRUNK_ENV, "GOAT_OVERLAY_REMOTE", "GOAT_GOATSTUFF_DIR"];
         let o = overlay.map(|p| p.to_str().unwrap().to_string()).unwrap_or_default();
         if overlay.is_some() {
             set.push((OVERLAY_DIR_ENV, o.as_str()));
@@ -421,15 +342,24 @@ mod tests {
     }
 
     #[test]
-    fn marker_parses_and_requires_both_commits() {
+    fn marker_parses_every_line_the_check_reads() {
         let m = parse_marker("goatcore_ref=abc\noverlay_commit=def-dirty\n").unwrap();
-        assert_eq!(m, Marker { goatcore_ref: "abc".into(), overlay_commit: "def-dirty".into(), overlay_path: None });
+        assert_eq!(m, Marker { goatcore_ref: "abc".into(), overlay_commit: "def-dirty".into(), ..Default::default() });
         let m = parse_marker("goatcore_ref=abc\noverlay_commit=def\noverlay_path=/o\n").unwrap();
         assert_eq!(m.overlay_path.as_deref(), Some("/o"));
+        assert_eq!(parse_marker("goatcore_ref=abc\noverlay_commit=def\noverlay_dir=/d\n").unwrap().overlay_path.as_deref(), Some("/d"));
+        let m = parse_marker(
+            "goatcore_ref=abc\ngoatstuff_ref=fed\noverlay_commit=def\ngoatstuff_path=/s\nembargo=B/core.patch:11,A/core.patch:22,A/stuff.patch:33\n",
+        )
+        .unwrap();
+        assert_eq!(m.goatstuff_ref.as_deref(), Some("fed"));
+        assert_eq!(m.goatstuff_path.as_deref(), Some("/s"));
+        assert_eq!(m.embargo, vec!["A".to_string(), "B".to_string()]);
+        assert_eq!(m.describe(), "goatcore abc + goatstuff fed + pre-disclosure patches A, B + overlay def");
         assert!(parse_marker("goatcore_ref=abc\n").is_err());
         assert!(parse_marker("overlay_commit=def\n").is_err());
         assert!(parse_marker("goatcore_ref=\noverlay_commit=def\n").is_err());
-        // A plain checkout carries no marker: the script avenue judges it.
+        // A plain checkout carries no marker: the script judges it against its trunk.
         let d = std::env::temp_dir().join(format!("gb-nomarker-{}", std::process::id()));
         fs::create_dir_all(&d).unwrap();
         assert!(marker(&d).unwrap().is_none());
@@ -442,7 +372,7 @@ mod tests {
         let f = run_assembled(&tree, Some(&ov), false);
         assert!(!f.refused(), "{}", f.check.detail);
         assert_eq!(f.trunk, head(&tree));
-        assert!(f.check.detail.contains("assembled tree") && f.check.detail.contains("current with origin/main"), "{}", f.check.detail);
+        assert!(f.check.detail.contains("assembled tree: goatcore"), "{}", f.check.detail);
         // The overlay checkout named in the marker instead of the environment.
         let m = fs::read_to_string(tree.join(MARKER)).unwrap();
         fs::write(tree.join(MARKER), format!("{m}overlay_path={}\n", ov.display())).unwrap();
@@ -457,7 +387,7 @@ mod tests {
         fs::write(tree.join("goatcore.ref"), "0123456789012345678901234567890123456789\n").unwrap();
         let f = run_assembled(&tree, Some(&ov), false);
         assert!(f.refused());
-        assert!(f.check.detail.contains("GB-064") && f.check.detail.contains("goatcore.ref declares 012345678"), "{}", f.check.detail);
+        assert!(f.check.detail.contains("GB-064") && f.check.detail.contains("goatcore.ref in this tree names 012345678"), "{}", f.check.detail);
         assert!(f.check.fix.as_deref().unwrap().contains("assemble.sh"));
         // The declaration matches, but the goatcore checkout moved off it.
         let gref = head(&tree);
@@ -470,7 +400,7 @@ mod tests {
     }
 
     #[test]
-    fn assembled_overlay_behind_refuses_ahead_warns() {
+    fn assembled_overlay_behind_refuses_ahead_warns_dirty_refuses() {
         let (root, ov, other, tree) = assembled_fixture("ov");
         // The overlay trunk gains a docs-only change: not what a deploy reads, runs.
         commit_file(&other, "docs/findings/f.md", "f", "docs only");
@@ -488,12 +418,21 @@ mod tests {
         // Assembled from an overlay commit on top of the trunk: runs, names it.
         git(&ov, &["pull", "-q", "--ff-only", "origin", "main"]);
         commit_file(&ov, "ops/ansible/group_vars/g/vars.yml", "v", "overlay change");
+        for rel in ["ops/pins/fleet-pins.yaml", "ops/ansible/group_vars/g/vars.yml", "docs/findings/f.md"] {
+            fs::create_dir_all(tree.join(rel).parent().unwrap()).unwrap();
+            fs::copy(ov.join(rel), tree.join(rel)).unwrap();
+        }
         let gref = head(&tree);
-        fs::write(tree.join(MARKER), format!("goatcore_ref={gref}\noverlay_commit={}-dirty\n", head(&ov))).unwrap();
+        fs::write(tree.join(MARKER), format!("goatcore_ref={gref}\noverlay_commit={}\n", head(&ov))).unwrap();
         let f = run_assembled(&tree, Some(&ov), false);
         assert!(!f.refused(), "{}", f.check.detail);
         assert!(f.check.detail.contains("WARN") && f.check.detail.contains("overlay change"), "{}", f.check.detail);
-        assert!(f.check.detail.contains("uncommitted"), "{}", f.check.detail);
+
+        // Assembled from uncommitted overlay changes: refused, as the script avenue refuses it.
+        fs::write(tree.join(MARKER), format!("goatcore_ref={gref}\noverlay_commit={}-dirty\n", head(&ov))).unwrap();
+        let f = run_assembled(&tree, Some(&ov), false);
+        assert!(f.refused());
+        assert!(f.check.detail.contains("GB-064") && f.check.detail.contains("uncommitted"), "{}", f.check.detail);
         let _ = fs::remove_dir_all(root);
     }
 
@@ -503,7 +442,7 @@ mod tests {
         // No overlay checkout named: refused, naming the variable; offline runs.
         let f = run_assembled(&tree, None, false);
         assert!(f.refused());
-        assert!(f.check.detail.contains("GB-064") && f.check.fix.as_deref().unwrap().contains(OVERLAY_DIR_ENV), "{}", f.check.detail);
+        assert!(f.check.detail.contains("GB-065") && f.check.fix.as_deref().unwrap().contains(OVERLAY_DIR_ENV), "{}", f.check.detail);
         let f = run_assembled(&tree, None, true);
         assert!(!f.refused() && f.check.detail.contains("OFFLINE"), "{}", f.check.detail);
 
@@ -521,6 +460,83 @@ mod tests {
         let f = run_assembled(&tree, Some(&ov), true);
         assert!(f.refused());
         assert!(f.check.detail.contains("not in the overlay checkout"), "{}", f.check.detail);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// A goatstuff checkout layered into the tree: the binary judges it as the scripts do.
+    #[test]
+    fn assembled_goatstuff_is_judged() {
+        let (root, ov, _, tree) = assembled_fixture("gs");
+        git(&root, &["init", "-q", "-b", "main", "stuff"]);
+        let stuff = root.join("stuff");
+        commit_file(&stuff, "ops/ansible/roles/y/tasks/main.yml", "- debug: msg=stuff\n", "goatstuff");
+        let sref = head(&stuff);
+        fs::create_dir_all(tree.join("ops/ansible/roles/y/tasks")).unwrap();
+        fs::copy(stuff.join("ops/ansible/roles/y/tasks/main.yml"), tree.join("ops/ansible/roles/y/tasks/main.yml")).unwrap();
+        let gref = head(&tree);
+        fs::write(
+            tree.join(MARKER),
+            format!("goatcore_ref={gref}\noverlay_commit={}\ngoatstuff_ref={sref}\ngoatstuff_path={}\n", head(&ov), stuff.display()),
+        )
+        .unwrap();
+        let f = run_assembled(&tree, Some(&ov), false);
+        assert!(!f.refused(), "{}", f.check.detail);
+        assert!(f.check.detail.contains(&format!("goatstuff {}", &sref[..12])), "{}", f.check.detail);
+        // A goatstuff file edited after assembly: refused.
+        fs::write(tree.join("ops/ansible/roles/y/tasks/main.yml"), "- debug: msg=hand\n").unwrap();
+        let f = run_assembled(&tree, Some(&ov), false);
+        assert!(f.refused());
+        assert!(f.check.detail.contains("differ from goatstuff"), "{}", f.check.detail);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// A pre-disclosure patch recorded in the marker: the patched file runs, any other change is refused.
+    #[test]
+    fn assembled_pre_disclosure_patch_is_accepted_only_as_recorded() {
+        let (root, ov, _, tree) = assembled_fixture("emb");
+        let patch = "diff --git a/ops/ansible/x b/ops/ansible/x\nindex d00491f..0cfbf08 100644\n--- a/ops/ansible/x\n+++ b/ops/ansible/x\n@@ -1 +1 @@\n-1\n\\ No newline at end of file\n+2\n\\ No newline at end of file\n";
+        commit_file(&ov, "embargo/A/core.patch", patch, "embargo A");
+        commit_file(&ov, "embargo/A/README.md", "# A\n", "embargo A readme");
+        git(&ov, &["push", "-q", "origin", "main"]);
+        for rel in ["embargo/A/core.patch", "embargo/A/README.md"] {
+            fs::create_dir_all(tree.join(rel).parent().unwrap()).unwrap();
+            fs::copy(ov.join(rel), tree.join(rel)).unwrap();
+        }
+        fs::write(tree.join("ops/ansible/x"), "2").unwrap();
+        let digest = {
+            let out = Command::new("python3")
+                .args(["-c", "import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())"])
+                .arg(tree.join("embargo/A/core.patch"))
+                .output()
+                .unwrap();
+            String::from_utf8_lossy(&out.stdout).trim().to_string()
+        };
+        let gref = head(&tree);
+        let body = format!("goatcore_ref={gref}\noverlay_commit={}\n", head(&ov));
+        fs::write(tree.join(MARKER), format!("{body}embargo=A/core.patch:{digest}\n")).unwrap();
+        let f = run_assembled(&tree, Some(&ov), false);
+        assert!(!f.refused(), "{}", f.check.detail);
+        assert!(f.check.detail.contains("pre-disclosure patches A"), "{}", f.check.detail);
+        // The marker does not record the patch the overlay carries: refused.
+        fs::write(tree.join(MARKER), &body).unwrap();
+        let f = run_assembled(&tree, Some(&ov), false);
+        assert!(f.refused() && f.check.detail.contains("not the ones the overlay commit carries"), "{}", f.check.detail);
+        // Recorded, but the file is not as the patch makes it: refused.
+        fs::write(tree.join(MARKER), format!("{body}embargo=A/core.patch:{digest}\n")).unwrap();
+        fs::write(tree.join("ops/ansible/x"), "3").unwrap();
+        let f = run_assembled(&tree, Some(&ov), false);
+        assert!(f.refused() && f.check.detail.contains("pre-disclosure patches change are not"), "{}", f.check.detail);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// A goatcore without the assembled-tree check cannot judge the tree: refused before the script runs.
+    #[test]
+    fn assembled_without_the_check_refuses() {
+        let (root, _, _, tree) = assembled_fixture("nocheck");
+        fs::remove_file(tree.join(SOURCE_OF_RECORD)).unwrap();
+        let f = check_with(&tree, &[], &[TRUNK_ENV]).unwrap();
+        assert!(f.refused());
+        assert!(f.check.detail.contains("GB-065") && f.check.detail.contains(SOURCE_OF_RECORD), "{}", f.check.detail);
         let _ = fs::remove_dir_all(root);
     }
 }
