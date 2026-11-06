@@ -77,7 +77,9 @@ goat_get_hostname: "get.{{ site_id | mandatory }}.{{ site_dns_zone | mandatory }
 #   reissue accepts a legacy -rosenpass-reissue key name (#2036); platform-admin
 #   revoke reports SSH removal evidence, which the offboarding driver needs
 #   (#1976); native onboarding derives the affiliation kind (#1870).
-goat_get_release_tag: "goat-cli-v0.5.14"
+# goat-cli-v0.5.15: no built-in goatnet table; the CLI reads each
+#   goatnet's facts from get.<site>/goatnet.toml (`goat context refresh`).
+goat_get_release_tag: "goat-cli-v0.5.15"
 # Resolves through group_vars/all.yml `source_repo` to the release repository;
 # ops/ci/check-release-asset-parity.sh confirms the release carries its assets.
 goat_get_release_repo: "{{ source_repo }}"
