@@ -55,6 +55,12 @@ ADVISORY = ("ADVISORY — the directory grants nothing and is not an input to th
             "compose verifies against the key you bound out of band.")
 
 
+def read_bytes(path: str) -> bytes:
+    with open(path, "rb") as f:
+        return f.read()
+
+
+
 # ---------------------------------------------------------------------------
 # Canonical form (RFC 8785 for the value space a package uses: objects, arrays,
 # strings, integers, booleans). A float is refused rather than guessed at.
@@ -97,7 +103,7 @@ _PKCS8_PREFIX = bytes.fromhex("302e020100300506032b657004220420")
 
 
 def load_seed(path: str) -> bytes:
-    text = open(path, encoding="utf-8").read().strip()
+    text = read_bytes(path).decode("utf-8").strip()
     if len(text) == 64 and all(c in "0123456789abcdefABCDEF" for c in text):
         return bytes.fromhex(text)
     try:
@@ -334,7 +340,7 @@ def compatibility(ours: dict, theirs: dict, their_expired: bool) -> Report:
 def read_keyring(path: str | None) -> dict:
     keys = {}
     if path and os.path.isfile(path):
-        for line in open(path, encoding="utf-8"):
+        for line in read_bytes(path).decode("utf-8").splitlines():
             line = "".join(line.split())
             if not line or line.startswith("#") or "=" not in line:
                 continue
@@ -409,7 +415,7 @@ def publish(url, ours_raw: bytes, package_url: str | None, key_path: str | None,
             with open(os.path.join(work, "ours.pointer.json"), "wb") as f:
                 f.write(body)
         except OSError:
-            pass
+            pass  # a convenience copy for the operator; the pointer is already built
     key_b64 = b64(pub)
     headers = {"Content-Type": "application/json", "X-Saltlick-Key": key_b64,
                "X-Saltlick-Signature": b64(sign(seed, request_statement("PUT", sid, body, key_b64)))}
@@ -545,7 +551,7 @@ def main(argv=None) -> int:
         warnings.append("the directory URL is not https; a reader on the path could alter what you fetch")
 
     try:
-        ours_raw = open(a.ours, "rb").read()
+        ours_raw = read_bytes(a.ours)
         ours = json.loads(ours_raw)
     except (OSError, ValueError) as e:
         print(f"    WARN    our package is not readable ({e}); the directory step is skipped")
@@ -555,7 +561,7 @@ def main(argv=None) -> int:
     theirs_on_disk = None
     if a.theirs and os.path.isfile(a.theirs):
         try:
-            theirs_on_disk = json.loads(open(a.theirs, "rb").read())
+            theirs_on_disk = json.loads(read_bytes(a.theirs))
         except ValueError:
             warnings.append(f"{a.theirs} is not JSON")
     their_id = a.their_id or (theirs_on_disk or {}).get("sovereign_id")
@@ -576,18 +582,18 @@ def main(argv=None) -> int:
                     with open(os.path.join(a.work, "theirs.fetched.json"), "wb") as f:
                         f.write(body)
                 except OSError:
-                    pass
+                    pass  # a convenience copy for the operator; nothing reads it
             if via_pointer and theirs_on_disk is None and a.theirs:
                 # A full package fetched through their pointer: place it where phase 6 reads
                 # it. compose still verifies it against the key bound out of band.
                 try:
-                    fd = os.open(a.theirs, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+                    fd = os.open(a.theirs, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
                     with os.fdopen(fd, "wb") as f:
                         f.write(body)
                     print(f"\n    placed `{their_id}`'s package at {a.theirs} — phase 6 composes it against the key you bound")
                 except OSError as e:
                     warnings.append(f"could not place their package at {a.theirs}: {e}")
-            elif via_pointer and theirs_on_disk is not None and open(a.theirs, "rb").read() != body:
+            elif via_pointer and theirs_on_disk is not None and read_bytes(a.theirs) != body:
                 warnings.append(f"{a.theirs} differs from the package `{their_id}` serves; the file on disk is what composes")
             report = compatibility(ours, theirs, False)
             transport_rows(ours, theirs, report)

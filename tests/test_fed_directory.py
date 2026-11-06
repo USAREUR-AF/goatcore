@@ -29,11 +29,7 @@ spec = importlib.util.spec_from_file_location("fed_directory", REPO / "ops/feder
 d = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(d)
 
-try:
-    import cryptography  # noqa: F401
-    HAVE_ED25519 = True
-except ImportError:
-    HAVE_ED25519 = shutil.which("openssl") is not None
+HAVE_ED25519 = importlib.util.find_spec("cryptography") is not None or shutil.which("openssl") is not None
 needs_ed25519 = pytest.mark.skipif(not HAVE_ED25519, reason="no Ed25519 implementation (cryptography or openssl)")
 
 XAA = VEC / "compose-full/package-xaa.canonical.json"
@@ -53,29 +49,34 @@ class Server(http.server.BaseHTTPRequestHandler):
     def do_PUT(self):
         sid = self.path.rsplit("/", 1)[-1]
         body = self.rfile.read(int(self.headers["Content-Length"]))
+        code, reply = self.put(sid, body)
+        self.reply(code, reply)
+
+    def put(self, sid, body):
         if Server.refuse_with:
-            return self.reply(Server.refuse_with, b"refused")
+            return Server.refuse_with, b"refused"
         doc = json.loads(body)
         if doc.get("spec") == d.PACKAGE_SPEC and any(k in doc for k in d.OFFER_BLOCKS):
-            return self.reply(422, b"a directory entry never carries an offer")
+            return 422, b"a directory entry never carries an offer"
         key = self.headers["X-Saltlick-Key"]
         if sid in Server.entries and Server.entries[sid][1] != key:
-            return self.reply(403, b"a different key is already bound")
+            return 403, b"a different key is already bound"
         stmt = d.request_statement("PUT", sid, body, key)
         if not d.verify(base64.b64decode(key), stmt, base64.b64decode(self.headers["X-Saltlick-Signature"])):
-            return self.reply(403, b"bad request signature")
+            return 403, b"bad request signature"
         first = sid not in Server.entries
         Server.entries[sid] = (body, key)
-        self.reply(201, json.dumps({"first_use": first}).encode())
+        return 201, json.dumps({"first_use": first}).encode()
 
     def do_GET(self):
-        if self.path in Server.files:
-            return self.reply(200, Server.files[self.path])
         sid = self.path.rsplit("/", 1)[-1]
-        if not self.path.startswith("/v1/parties/") or sid not in Server.entries:
-            return self.reply(404, b"not found")
-        body, key = Server.entries[sid]
-        self.reply(200, body, {"X-Saltlick-Bound-Key": key, "X-Saltlick-Expired": "false"})
+        if self.path in Server.files:
+            self.reply(200, Server.files[self.path])
+        elif self.path.startswith("/v1/parties/") and sid in Server.entries:
+            body, key = Server.entries[sid]
+            self.reply(200, body, {"X-Saltlick-Bound-Key": key, "X-Saltlick-Expired": "false"})
+        else:
+            self.reply(404, b"not found")
 
     def reply(self, code, body, headers=None):
         self.send_response(code)
