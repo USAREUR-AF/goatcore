@@ -98,7 +98,7 @@
   become: false
   module_defaults:
     ansible.builtin.uri:
-      ca_path: "{{ (playbook_dir ~ '/../enrollment/ca/' ~ target_site ~ '/root-cert.pem') if (playbook_dir ~ '/../enrollment/ca/' ~ target_site ~ '/root-cert.pem') is exists else omit }}"
+      ca_path: "{{ omit if (netbird_api_ca | default('auto')) == 'public' else ((playbook_dir ~ '/../enrollment/ca/' ~ target_site ~ '/root-cert.pem') if (playbook_dir ~ '/../enrollment/ca/' ~ target_site ~ '/root-cert.pem') is exists else omit) }}"
   gather_facts: false
 
   vars:
@@ -867,9 +867,12 @@
   # The API may serve a certificate from the goatnet's own CA (a LAN goatnet
   # does). When that CA's root is in the repository, verify against it; a
   # goatnet behind a public CA verifies as before. Never turn verification off.
+  # A goatnet whose root is in the repository but whose API is served under a
+  # public CA passes -e netbird_api_ca=public, which verifies against the
+  # system trust store instead.
   module_defaults:
     ansible.builtin.uri:
-      ca_path: "{{ (playbook_dir ~ '/../enrollment/ca/' ~ target_site ~ '/root-cert.pem') if (playbook_dir ~ '/../enrollment/ca/' ~ target_site ~ '/root-cert.pem') is exists else omit }}"
+      ca_path: "{{ omit if (netbird_api_ca | default('auto')) == 'public' else ((playbook_dir ~ '/../enrollment/ca/' ~ target_site ~ '/root-cert.pem') if (playbook_dir ~ '/../enrollment/ca/' ~ target_site ~ '/root-cert.pem') is exists else omit) }}"
   gather_facts: false
 
   vars:
@@ -942,7 +945,7 @@
   # goatnet behind a public CA verifies as before. Never turn verification off.
   module_defaults:
     ansible.builtin.uri:
-      ca_path: "{{ (playbook_dir ~ '/../enrollment/ca/' ~ target_site ~ '/root-cert.pem') if (playbook_dir ~ '/../enrollment/ca/' ~ target_site ~ '/root-cert.pem') is exists else omit }}"
+      ca_path: "{{ omit if (netbird_api_ca | default('auto')) == 'public' else ((playbook_dir ~ '/../enrollment/ca/' ~ target_site ~ '/root-cert.pem') if (playbook_dir ~ '/../enrollment/ca/' ~ target_site ~ '/root-cert.pem') is exists else omit) }}"
   gather_facts: false
 
   vars:
