@@ -1,7 +1,0 @@
----
-# SPDX-License-Identifier: Apache-2.0
-- name: saltlick | recreate container
-  community.docker.docker_compose_v2:
-    project_src: "{{ saltlick_compose_dir }}"
-    state: restarted
-  become: true

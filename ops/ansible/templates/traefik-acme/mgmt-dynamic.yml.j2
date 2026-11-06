@@ -618,12 +618,11 @@ http:
 {# Optional mesh-only surfaces: each role renders its own router to
    /etc/traefik/dynamic/<name>.yml, which SNI-matches this certificate.
    isitup (isitup-deploy.yml, via oauth2-proxy); brief and dataflows (static
-   nginx); saltlick (peering directory, mesh-only by decision D-14,
-   peering-directory-service.md); admin.auth (id-admin-console, ADMINS gate,
+   nginx); admin.auth (id-admin-console, ADMINS gate,
    ADR 0860); relay-health (ADMINS gate, F-213); sandbox (zenoh-sandbox,
    zenoh-sandbox.md); compliance (compliance-proxy, ADR 1029). #}
 {% for _flag, _name in [('isitup_enabled', 'isitup'), ('brief_enabled', 'brief'),
-                        ('dataflows_enabled', 'dataflows'), ('saltlick_enabled', 'saltlick'),
+                        ('dataflows_enabled', 'dataflows'),
                         ('id_admin_console_enabled', 'admin.auth'),
                         ('relay_health_enabled', 'relay-health'),
                         ('zenoh_sandbox_enabled', 'sandbox'),

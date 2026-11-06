@@ -8,7 +8,7 @@
 # ${VAR:?} / ${VAR:-} forms. A variable appears here because something
 # consumes it, which is the only claim this file is entitled to make.
 #
-# 1403 variables, 393 of them secret-bearing by name.
+# 1402 variables, 392 of them secret-bearing by name.
 #
 # THIS FILE HOLDS NO VALUES AND NEVER WILL. Credentials live in the store.
 # .envrc.local.d/*.refs hold references, mode 0600 (ADR 1186).
@@ -799,9 +799,6 @@ export ROSENPASS_ENABLED=""  # SECRET
 
 # ops/validation/probes.py
 export SAFE_BROWSING_API_KEY=""  # SECRET
-
-# ops/ansible/roles/saltlick/templates/docker-compose.yml.j2
-export SALTLICK_IMAGE=""  # SECRET
 
 # ops/compose/mgmt-host/docker-compose.yml, signal-server/cmd/signal-server/main.go
 export SIGNAL_FEDERATION_TOKEN=""  # SECRET
