@@ -250,7 +250,7 @@ def profile_ca_roots() -> str:
                 if k.strip() == "current_context":
                     ctx = v.strip().strip('"').strip("'")
         except OSError:
-            pass
+            pass  # no config.toml: `goat` falls back to the default context too
     return os.path.join(pdir, "contexts", ctx or "default", "ca-roots.pem")
 
 
@@ -668,7 +668,7 @@ def fetch_ca(url, sid: str, theirs: dict, work: str | None, report: "Report", ti
                            "the file on disk is what phase 10 places; replace it with the one the voice call confirms")
         else:
             try:
-                fd = os.open(dest, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+                fd = os.open(dest, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
                 with os.fdopen(fd, "wb") as f:
                     f.write(anchor)
                 report.add("PASS", "theirs-ca.pem", f"placed at {dest}")
