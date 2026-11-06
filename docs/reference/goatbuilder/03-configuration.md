@@ -9,7 +9,7 @@ live.
 |---|---|
 | File | `ops/goatbuilder/goatbuilder.yaml` |
 | Schema | `ops/goatbuilder/schema/goatbuilder-v1.schema.json` (`schema: goatbuilder/v1`) |
-| In goat's repository | **Generated** by `ops/goatbuilder/gen-config.py` from `ops/pins/fleet-pins.yaml` and `ops/release/ladder.yaml`. Do not edit it; change a source and regenerate |
+| In goat's repository | **Generated** by `ops/goatbuilder/gen-config.py` from `ops/pins/fleet-pins.yaml`, `ops/release/ladder.yaml`, `ops/goatbuilder/project.yml` (`repo:`, `deploy:`) and `ops/goatbuilder/posture.yml` (`secrets:`). Do not edit it; change a source and regenerate. A deployment that keeps its values in a private overlay carries its own `project.yml` and `posture.yml` there |
 | Gate | `.github/workflows/goatbuilder-schema.yml` validates the file and the schema's refusal tests on every pull request |
 
 ## The shape

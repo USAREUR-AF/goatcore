@@ -1,0 +1,17 @@
+# This project's release source and deploy values, read by
+# ops/goatbuilder/gen-config.py into goatbuilder.yaml's `repo:` and `deploy:`
+# blocks (docs/design/goatbuilder-portability.md).
+#
+# This copy describes the public repository: where its releases are tagged and
+# its images published. A deployment declares its own values in its own copy
+# of this file (a private overlay carries it beside its fleet pins and
+# ladder). Delete the file and the generated config names placeholder
+# coordinates that belong to no one.
+repo:
+  source: USAREUR-AF/goatcore        # owner/name of the repository that tags releases
+  image_namespace: ghcr.io/usareur-af
+  signing: intent-sign               # intent-sign | cosign
+# deploy:                            # every key optional; undeclared, goatbuilder
+#   aws_profile: <profile>           #   uses the AWS profile `default`,
+#   ssh_user: <account>              #   refuses a real join-node,
+#   state_dir: ~/.goat/state         #   and keeps state in ~/.goat/state.

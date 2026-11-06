@@ -19,7 +19,7 @@ The config schema gate is built and gates every pull request that touches it:
 | Piece | Path | What it holds |
 |---|---|---|
 | the schema | `ops/goatbuilder/schema/goatbuilder-v1.schema.json` | Draft-07, fail-closed (`additionalProperties: false` throughout); the gate vocabulary is the release ladder's own |
-| this repository's config | `ops/goatbuilder/goatbuilder.yaml` | **generated** from `ops/pins/fleet-pins.yaml` + `ops/release/ladder.yaml` by `gen-config.py` — never hand-edited; one fact, one home |
+| this repository's config | `ops/goatbuilder/goatbuilder.yaml` | **generated** from `ops/pins/fleet-pins.yaml` + `ops/release/ladder.yaml` + `ops/goatbuilder/project.yml` + `ops/goatbuilder/posture.yml` by `gen-config.py` — never hand-edited; one fact, one home |
 | the validator | `ops/goatbuilder/validate.py` | the schema plus the cross-field rules JSON Schema cannot express; exit 0 / 1 / 2 like `ops/operators/validate.py` |
 | the refusals, locked | `ops/goatbuilder/test_schema.py` | 17 tests: every shape the schema must refuse, and that the real 30-component config fits |
 | the CI gate | `.github/workflows/goatbuilder-schema.yml` | drift (`gen-config.py --check`), validity, and the refusal tests, on every PR touching the sources |
