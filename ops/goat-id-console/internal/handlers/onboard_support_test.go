@@ -125,6 +125,23 @@ func TestOnboardValidationError_EmptyFieldsIsAServerError(t *testing.T) {
 	}
 }
 
+func TestAssembleManifestRejectsInvalidGitHubUsername(t *testing.T) {
+	hints, err := loadIntakeHints()
+	if err != nil {
+		t.Fatalf("loadIntakeHints: %v", err)
+	}
+	_, err = assembleManifest(hints, effectiveInputs{
+		Tier:           "browse",
+		AffiliationID:  "test-org",
+		Handle:         "test-user",
+		Email:          "test@example.test",
+		GitHubUsername: "invalid--login",
+	})
+	if err == nil || !strings.Contains(err.Error(), "not a GitHub login") {
+		t.Fatalf("assembleManifest invalid GitHub username: got %v, want validator error", err)
+	}
+}
+
 func TestNationCodeValidation_SharedByIntakeAndReview(t *testing.T) {
 	tests := []struct {
 		val   string
@@ -163,7 +180,7 @@ func TestNationCodeValidation_SharedByIntakeAndReview(t *testing.T) {
 				PrincipalType: "system", // Skip nationality validation
 				Nation:        tt.val,   // The field to test
 			}
-			fields, validationErr := validationErrorsForSubmission(inv, sub)
+			fields, validationErr := validationErrorsForSubmission(inv, &sub)
 			if validationErr != nil {
 				t.Fatalf("validationErrorsForSubmission: %v", validationErr)
 			}
