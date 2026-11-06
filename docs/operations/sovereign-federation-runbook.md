@@ -40,9 +40,9 @@ never does. Their side mirrors it exactly.
       peering forwarder first, because its address is a value that side's package carries:
       [`peering-forwarder.md`](../design/peering-forwarder.md) ([ADR 1218](../adr/1218-peering-forwarder-when-neither-edge-accepts-inbound.md)).
       No other reachability is required.
-- [ ] You have agreed, in writing, three things: **what data flows**, **in which direction**, and
-      **the name the other side's router will present**. Everything below is mechanical; these
-      three are the decisions.
+- [ ] You have agreed, in writing, **what data flows** and **in which direction**. Everything
+      below is mechanical; that is the decision. The names each router presents are derived from
+      the agreement, not agreed by hand (Step 2).
 - [ ] A host you control to run the edge router on. It does not need to be powerful. It must not
       be a machine that already runs your core fabric.
 
@@ -81,21 +81,56 @@ and a verifying key taken from the package it verifies proves nothing.
 **Phases 1–8 run where the fabric is; phases 9–10 are ansible from the operator's
 machine.** Use `--to 8` and `--from 9` when those are different hosts.
 
-## Step 2 — Agree the names and prefixes
+### Optional: look the partner up in a peering directory first
 
-Do this on a call, and write it down. Four values, and both sides need all four.
+A peering directory (`saltlick`) is a public listing outside every goatnet that holds
+**pointers, not permissions**: where each party's signed package can be fetched, and its sha256.
+It grants nothing and is never an input to the check. Until a directory is reachable by both
+sides, the first exchange is out of band, and everything above works without one.
+
+| Set | To |
+|---|---|
+| `FED_DIRECTORY_URL` | the directory, `https://…` |
+| `FED_PACKAGE_URL` | where you serve your package, as a static file behind TLS on a public host you run — never on a mesh. Copy the file phase 3 wrote there unchanged |
+| `FED_COUNTERPARTY_ID` | the partner's `sovereign_id` |
+| `FED_SIGNING_KEY` | the key that signed your package; it signs the pointer too |
+
+With those set, the exchange phase, before it stops:
+
+1. checks your package is served byte for byte at `FED_PACKAGE_URL`, then publishes your pointer;
+2. looks up the partner's pointer, fetches their package, checks its sha256 against the pointer
+   and both signatures against the key in your keyring, and places it where compose reads it if
+   nothing is there yet;
+3. prints a **compatibility report**: spec, fabric and tool version, the transport the agreement
+   will select, FIPS image on both sides, post-quantum capability, trust domains, and whether
+   either edge accepts inbound traffic. Each row is PASS, WARN, FAIL or UNKNOWN with its fix.
+
+A directory that is down, refuses, or disagrees with the package is a warning, never a stop.
+Your CA certificate and SPIFFE bundle still move directly.
+
+**What a partner is never asked by message.** The package carries their `sovereign_id`, trust
+domain, CA fingerprint, transports, FIPS image, post-quantum capability and versions; peering
+names are derived from the agreement. A question list sent to a partner means one of these was
+missed. The one act that stays out of band is **reading the verifying-key fingerprint, and after
+compose the agreement digest, aloud** — group count first, read back. The directory replaces
+neither. Design: [`peering-directory-service.md`](../design/peering-directory-service.md) §6.
+
+## Step 2 — The names and prefixes come from the agreement
+
+None of these is asked of the partner. Each is in a package or derived by `compose`, and both
+sides derive the same values from the same agreement.
 
 | Value | Example | Whose |
 |---|---|---|
-| Your sovereign identifier | `xab` | yours, short, lowercase |
-| The name your edge router presents to them | `peer-xab` | yours |
-| Where their data lands on your side | `from/xab/**` | yours |
+| Your sovereign identifier | `xab` | yours, in your package |
+| The name your edge router presents to them | `fed.xab.xaa.01` | derived from the agreement (`peering_cn`) |
+| Where their data lands on your side | `from/xaa/**` | derived from the agreement |
 | What you will send them | `release/all/**` — the **staging** name, internal to you | yours |
 | The name that data carries once it crosses | `from/<your sovereign>/**` — the **wire** name; the republisher lifts the staging name onto it before anything reaches the edge, and it is what the counterparty's ingress prefix admits | derived |
 
-Their four values mirror these. **The name is load-bearing**: the other side's permission rules
-will match it exactly, character for character. Agree it once and do not change it casually — a
-change means a coordinated configuration edit on both sides.
+Their values mirror these. **The name is load-bearing**: the other side's permission rules
+will match it exactly, character for character, which is why it is derived rather than typed. A
+change to a `sovereign_id` changes every derived name and means a new agreement on both sides.
 
 Do **not** choose a name that already exists in your own fabric. Their router presenting a name
 your own routers use is the failure mode this whole design is built to prevent.
@@ -156,11 +191,20 @@ Firewall it to exactly this, on the edge host:
 - **outbound**: the tunnel port, to their address only.
 - **nothing else crosses** — no management, no shell, no administrative interface.
 
-**Behind a forwarder**, the side that listens receives the tunnel port on its carrier interface
-(`wg-carry0`), not from the partner's address, and sets `peering_wg_via_forwarder: true` so the
-rule binds to that interface. Its only outbound is the carrier port to the forwarder. The side
-that dials sends to the forwarder's address. Set the link MTU to 1300 on both sides
-([`peering-forwarder.md`](../design/peering-forwarder.md) §3).
+**Behind a forwarder** (status: built, not yet run between two goatnets), the side that listens
+receives the tunnel port on its carrier interface (`wg-carry0`), not from the partner's address,
+and its only outbound is the carrier port to the forwarder. The side that dials sends to the
+forwarder's address. The forwarder is up before step 1
+([`peering-forwarder.md`](../design/peering-forwarder.md) §7):
+
+| Host | Play | Variables |
+|---|---|---|
+| Forwarder (group `peering_forwarders`) | `ops/ansible/peering-forwarder.yml` (`roles/goat-peering-forwarder`) | `peering_forwarder_enabled: true`; `peering_forwarder_peerings`, one entry per peering: `name`, `edge_carrier_public_key`, optional `partner_sources`. Ports 51820/51821 and carrier 169.254.30.0/31 are defaults |
+| Our edge | `peering-prepare.yml` and `peering-wg.yml` (`roles/goat-peering-wg`) | `peering_wg_via_forwarder: true`, `peering_wg_forwarder_carrier_public_key`, `peering_wg_forwarder_endpoint: <forwarder>:51821` |
+
+With `peering_wg_via_forwarder: true` the edge's firewall binds the tunnel port to `wg-carry0`,
+and phase 11 refuses unless this side listens and the link MTU is at most 1340. Offer
+`measured_mtu = 1300`. Declare the forwarder under `forwarder:` in the partner file.
 
 ## Step 6 — Sealed data for this partner, if they need it
 

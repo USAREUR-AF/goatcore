@@ -29,6 +29,33 @@
       - peering_wg_counterparty_package | length > 0
     fail_msg: "goat-peering-wg needs the rendered agreement values and the counterparty package. Nothing here is guessed."
 
+- name: peering-wg | behind a forwarder, this side listens and the carrier is configured
+  ansible.builtin.assert:
+    that:
+      - peering_wg_we_listen | bool
+      - peering_wg_forwarder_carrier_public_key | length > 0
+      - peering_wg_forwarder_endpoint | length > 0
+    fail_msg: >-
+      goat-peering-wg refuses: peering_wg_via_forwarder is true, so this edge is the
+      listener behind the forwarder and the agreement has to say so (we_listen is
+      {{ peering_wg_we_listen }}): offer listener = true with the forwarder's host:port
+      as the endpoint. The carrier also needs peering_wg_forwarder_carrier_public_key
+      and peering_wg_forwarder_endpoint from the forwarder play
+      (docs/design/peering-forwarder.md §7).
+  when: peering_wg_via_forwarder | bool
+
+- name: peering-wg | behind a forwarder, the peering fits inside the carrier
+  ansible.builtin.assert:
+    that:
+      - (peering_wg_mtu | int) <= (peering_wg_forwarder_max_mtu | int)
+    fail_msg: >-
+      goat-peering-wg refuses: the agreed MTU {{ peering_wg_mtu }} is above
+      {{ peering_wg_forwarder_max_mtu }}. Behind a forwarder the peering travels inside
+      the carrier, one WireGuard header more, and a larger MTU fragments or drops large
+      samples while small ones work. Offer measured_mtu 1300 and re-compose
+      (docs/design/peering-forwarder.md §3).
+  when: peering_wg_via_forwarder | bool
+
 - name: peering-wg | read the counterparty's package
   ansible.builtin.set_fact:
     _pw_offer_doc: "{{ lookup('ansible.builtin.file', peering_wg_counterparty_package) | from_json }}"
@@ -151,6 +178,39 @@
       allowed {{ peering_wg_remote_link_ip }}/32, address
       {{ peering_wg_local_link_ip }}/{{ peering_wg_link_prefix_len }}. Read:
       {{ _pw_dump.stdout_lines }} {{ _pw_addr.stdout_lines }}
+
+- name: peering-wg | read the carrier back
+  ansible.builtin.command: "wg show {{ peering_wg_carrier_interface }} dump"
+  register: _pw_carrier_dump
+  changed_when: false
+  when: peering_wg_via_forwarder | bool
+
+- name: peering-wg | the carrier holds the forwarder and nothing else
+  ansible.builtin.assert:
+    that:
+      - _pw_carrier_dump.stdout_lines | length == 2
+      - peering_wg_forwarder_carrier_public_key in _pw_carrier_dump.stdout_lines[1]
+      - (peering_wg_carrier_remote_ip ~ '/32') in _pw_carrier_dump.stdout_lines[1]
+    fail_msg: >-
+      {{ peering_wg_carrier_interface }} does not hold one peer
+      {{ peering_wg_forwarder_carrier_public_key }} allowed
+      {{ peering_wg_carrier_remote_ip }}/32. Read: {{ _pw_carrier_dump.stdout_lines[1:] }}
+  when: peering_wg_via_forwarder | bool
+
+# Field 5 of a peer line is the latest handshake, seconds since the epoch, 0 = never.
+# Three keepalive intervals without one means the carrier is down, and the peering is
+# unreachable from outside whatever its own state shows.
+- name: peering-wg | the carrier's latest handshake
+  ansible.builtin.debug:
+    msg: >-
+      {{ peering_wg_carrier_interface }} to {{ peering_wg_forwarder_endpoint }}:
+      {{ 'no handshake yet' if _pw_hs == 0 else ('last handshake ' ~ (_pw_now - _pw_hs) ~ ' s ago') }}
+      {{- '' if (_pw_hs > 0 and (_pw_now - _pw_hs) <= 3 * (peering_wg_carrier_keepalive | int))
+          else '. CARRIER DOWN: check the forwarder is up and holds the carrier key of this edge.' }}
+  vars:
+    _pw_hs: "{{ (_pw_carrier_dump.stdout_lines[1].split()[4] | default(0)) | int }}"
+    _pw_now: "{{ ansible_date_time.epoch | int }}"
+  when: peering_wg_via_forwarder | bool
 
 - name: peering-wg | record deploy convergence in the ledger after the checks
   ansible.builtin.include_role:

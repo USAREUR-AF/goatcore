@@ -1,0 +1,52 @@
+#!/usr/sbin/nft -f
+# {{ ansible_managed }}
+#
+# One table for every peering this host forwards (peering-forwarder.md §2-§3).
+# Inbound on the public interface: each peering's port, each carrier's port, replies,
+# ICMP and DHCP. Each peering's port is translated to its edge's carrier address and
+# sent down its carrier with the forwarder's carrier address as source, so replies
+# return through the carrier. Nothing else is forwarded.
+{% set _pub = peering_forwarder_public_interface %}
+{% set _carrier_ports = _pf_peerings | map(attribute='carrier_port') | map('int') | unique | join(', ') %}
+table inet goat_peering_forwarder
+delete table inet goat_peering_forwarder
+table inet goat_peering_forwarder {
+  chain prerouting {
+    type nat hook prerouting priority dstnat; policy accept;
+{% for p in _pf_peerings %}
+    # {{ p.name }}: public {{ p.peering_port }} -> {{ p.carrier_remote_ip }}:{{ p.edge_peering_port }} on {{ p.interface }}
+    iifname "{{ _pub }}" {% if p.partner_sources | length > 0 %}ip saddr { {{ p.partner_sources | join(', ') }} } {% endif %}udp dport {{ p.peering_port }} dnat ip to {{ p.carrier_remote_ip }}:{{ p.edge_peering_port }}
+{% endfor %}
+  }
+  chain postrouting {
+    type nat hook postrouting priority srcnat; policy accept;
+{% for p in _pf_peerings %}
+    oifname "{{ p.interface }}" ip daddr {{ p.carrier_remote_ip }} udp dport {{ p.edge_peering_port }} ct status dnat masquerade
+{% endfor %}
+  }
+  chain forward {
+    type filter hook forward priority filter; policy drop;
+{% for p in _pf_peerings %}
+    iifname "{{ _pub }}" oifname "{{ p.interface }}" ip daddr {{ p.carrier_remote_ip }} udp dport {{ p.edge_peering_port }} ct status dnat accept
+    iifname "{{ p.interface }}" oifname "{{ _pub }}" ct state established,related accept
+{% endfor %}
+    counter drop
+  }
+  chain input {
+    type filter hook input priority filter; policy accept;
+    iifname "{{ _pub }}" ct state established,related accept
+    iifname "{{ _pub }}" meta l4proto { icmp, icmpv6 } accept
+    iifname "{{ _pub }}" udp sport 67 udp dport 68 accept
+    iifname "{{ _pub }}" udp dport { {{ _carrier_ports }} } accept
+{% if peering_forwarder_ssh_sources | length > 0 %}
+    iifname "{{ _pub }}" ip saddr { {{ peering_forwarder_ssh_sources | join(', ') }} } tcp dport 22 accept
+{% endif %}
+    iifname "{{ _pub }}" counter drop
+{% for p in _pf_peerings %}
+    # Nothing is initiated from the carrier towards the forwarder itself.
+    iifname "{{ p.interface }}" ct state established,related accept
+    iifname "{{ p.interface }}" meta l4proto icmp accept
+    iifname "{{ p.interface }}" counter drop
+{% endfor %}
+  }
+}

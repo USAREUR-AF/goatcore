@@ -16,7 +16,15 @@
     "we_listen": peering_wg_we_listen | bool,
     "mtu": peering_wg_mtu,
     "fabric_port": peering_wg_fabric_port
-  },
+  } | combine({
+    "via_forwarder": {
+      "carrier_interface": peering_wg_carrier_interface,
+      "forwarder_endpoint": peering_wg_forwarder_endpoint,
+      "forwarder_carrier_public_key": peering_wg_forwarder_carrier_public_key,
+      "carrier_subnet": peering_wg_carrier_local_ip ~ "/" ~ peering_wg_carrier_prefix_len,
+      "carrier_mtu": peering_wg_carrier_mtu
+    }
+  } if (peering_wg_via_forwarder | bool) else {}),
   "observed": {
     "kernel_fips_enabled": ((_pw_kernel_fips_raw.content | default('MA==') | b64decode | trim) == '1')
   },

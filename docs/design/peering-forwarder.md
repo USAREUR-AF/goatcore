@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | **Designed, not built.** The edge-side behaviour it relies on (one side listens, the other dials with a keepalive) is built in `roles/goat-peering-wg`; the forwarder role, its CI guard and the agreement member in §6 are not built |
+| Status | **Built, not yet run between two goatnets.** Forwarder: `roles/goat-peering-forwarder`, play `ops/ansible/peering-forwarder.yml`. Edge: `peering_wg_via_forwarder` in `roles/goat-peering-wg`. Guard: `ops/ci/check-peering-forwarder-holds-nothing.py`. Container test: `ops/ci/test-peering-forwarder-e2e.sh`. `forwarder:` is validated by `ops/federation/validate-partners.py`. The package member `transport_offer.via` (§6) is designed, not built |
 | Decision | [ADR 1218](../adr/1218-peering-forwarder-when-neither-edge-accepts-inbound.md), amends [ADR 1157](../adr/1157-cross-sovereign-federation-edge-terminated.md) step 1 |
 | Companions | [`sovereign-federation-runbook.md`](../operations/sovereign-federation-runbook.md) (step 1 and step 5), [`federation-package-spec.md`](federation-package-spec.md) (`transport_offer`), `roles/goat-peering-wg` |
 | Audience | Operators of two goatnets that want to federate; whoever accredits the interconnection |
@@ -124,8 +124,18 @@ the same position as the internet path it replaces, and the boundary controls st
 **Today**, version 1 of the federation package has no member for a forwarder. A party behind a
 forwarder offers the forwarder's address as `transport_offer.endpoint` with `listener: true`, and
 composition accepts it unchanged. The forwarder is declared in the partner declaration file,
-`ops/federation/partners/<sovereign-id>.yaml`, under `forwarder:` (operator, placement, public
-endpoint), and in the written interconnection agreement.
+`ops/federation/partners/<sovereign-id>.yaml`, under `forwarder:`, and in the written
+interconnection agreement:
+
+```yaml
+forwarder:
+  operator: <sovereign-id>        # the party that runs it
+  placement: cloud-vm             # cloud-vm | owned-site (§4)
+  endpoint: <public host>:51820   # what transport_offer.endpoint carries
+```
+
+`validate-partners.py` refuses a `forwarder:` block with a missing or unknown key, an operator
+that is not a sovereign id, another placement, or an endpoint that is not `host:port`.
 
 **Designed, not built:** a reserved member `transport_offer.via`, so that the composed agreement
 both parties digest says the endpoint is a forwarder and who operates it:
@@ -152,7 +162,17 @@ two parties can establish the same fact on a call.
 
 - **Bring-up order.** Forwarder up, carrier up from the edge (handshake within 25 s), then our
   package is issued with the forwarder's endpoint, then the partner dials. The forwarder exists
-  before step 1 of the runbook, because its address is a value our package carries.
+  before step 1 of the runbook, because its address is a value our package carries. The two
+  carrier keys are exchanged in three runs:
+
+  | Run | Sets | Prints |
+  |---|---|---|
+  | `peering-prepare.yml` on the edge | `peering_wg_via_forwarder: true` | the edge's carrier key |
+  | `peering-forwarder.yml` on the forwarder | `peering_forwarder_enabled: true`, `peering_forwarder_peerings: [{name, edge_carrier_public_key, partner_sources}]` | the forwarder's carrier key |
+  | `peering-prepare.yml` on the edge | `peering_wg_forwarder_carrier_public_key`, `peering_wg_forwarder_endpoint: <forwarder>:51821` | the carrier handshake |
+
+  The edge's `federation.toml` `[transport]` then offers `endpoint = "<forwarder>:51820"`,
+  `listener = true`, `measured_mtu = 1300`.
 - **Health.** The carrier's latest-handshake age on the edge is the forwarder's liveness signal.
   An age above three keepalive intervals (75 s) means the carrier is down and the peering is
   unreachable from outside, whatever the peering's own state shows.

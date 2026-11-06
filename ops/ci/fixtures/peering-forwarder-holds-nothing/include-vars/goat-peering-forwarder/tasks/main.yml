@@ -1,0 +1,4 @@
+---
+- name: fixture | read the agreement
+  ansible.builtin.include_vars:
+    dir: /srv/applied

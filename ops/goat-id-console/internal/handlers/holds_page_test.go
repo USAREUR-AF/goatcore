@@ -778,7 +778,7 @@ func TestHoldsPage_NoLoginReasons(t *testing.T) {
 		}
 		for peer, want := range map[string]string{
 			"p-kay": "onboarded on this goatnet, no login carries its email",
-			"p-lou": "onboarded on zagros-prod, vega only, not this goatnet",
+			"p-lou": "onboarded on vega, zagros-prod only, not this goatnet",
 			"p-max": "no active onboarding record",
 			"p-ops": "onboarded on this goatnet without an email (machine door), no login to link",
 			"p-ned": "onboarded on this goatnet, but the newest onboarding of its login is on zagros-prod, so the member page would not derive this handle",

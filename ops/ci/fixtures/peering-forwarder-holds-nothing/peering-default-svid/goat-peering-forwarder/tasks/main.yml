@@ -1,0 +1,4 @@
+---
+- name: fixture | a harmless task
+  ansible.builtin.debug:
+    msg: "{{ peering_forwarder_enabled }}"

@@ -1,0 +1,82 @@
+---
+# The carrier to a peering forwarder (docs/design/peering-forwarder.md §2). Runs only
+# when peering_wg_via_forwarder is true. Outbound only: this edge dials the
+# forwarder and keeps the path open with a keepalive, so it works behind any NAT
+# that lets outbound UDP through. The peering on peering_wg_interface is unchanged
+# and ends here; the carrier only brings its packets to this host.
+- name: peering-wg | carrier | the carrier is its own interface
+  ansible.builtin.assert:
+    that:
+      - peering_wg_carrier_interface | length > 0
+      - peering_wg_carrier_interface | length <= 15
+      - peering_wg_carrier_interface is match('^[a-zA-Z0-9_-]+$')
+      - peering_wg_carrier_interface != peering_wg_interface
+      - (peering_wg_carrier_listen_port | int) != (peering_wg_listen_port | int)
+      - peering_wg_carrier_local_ip != peering_wg_carrier_remote_ip
+      - (peering_wg_carrier_prefix_len | int) in [30, 31]
+      - (peering_wg_carrier_mtu | int) >= 1280
+    fail_msg: >-
+      The carrier needs its own interface name (1-15 chars, not
+      {{ peering_wg_interface }}), its own local port, two distinct carrier addresses
+      on a /31 or /30 and an MTU of at least 1280.
+
+# Made here and never leaves this host. It authenticates the carrier to the
+# forwarder, and is not the peering key.
+- name: peering-wg | carrier | make the carrier's private key if there is none
+  ansible.builtin.shell:
+    cmd: "umask 077; wg genkey > {{ peering_wg_carrier_key_path }}"
+    creates: "{{ peering_wg_carrier_key_path }}"
+
+- name: peering-wg | carrier | read the carrier's public key
+  ansible.builtin.shell:
+    cmd: "wg pubkey < {{ peering_wg_carrier_key_path }}"
+  register: _pw_carrier_public
+  changed_when: false
+
+- name: peering-wg | carrier | hand this to the forwarder
+  ansible.builtin.debug:
+    msg:
+      - "carrier {{ peering_wg_carrier_interface }} public key: {{ _pw_carrier_public.stdout }}"
+      - "The forwarder sets it as edge_carrier_public_key in its peering_forwarder_peerings entry."
+      - >-
+        {{ 'Set peering_wg_forwarder_carrier_public_key and peering_wg_forwarder_endpoint from the
+        forwarder play, then run this again: no carrier until then.'
+        if (peering_wg_forwarder_carrier_public_key | length == 0 or peering_wg_forwarder_endpoint | length == 0)
+        else 'forwarder ' ~ peering_wg_forwarder_endpoint ~ ' holds ' ~ peering_wg_forwarder_carrier_public_key }}
+
+- name: peering-wg | carrier | the forwarder's values are well formed
+  ansible.builtin.assert:
+    that:
+      - peering_wg_forwarder_carrier_public_key is match('^[A-Za-z0-9+/]{43}=$')
+      - peering_wg_forwarder_endpoint is match('^[^:/\s]+:[0-9]+$')
+      - peering_wg_forwarder_carrier_public_key != _pw_carrier_public.stdout
+    fail_msg: >-
+      peering_wg_forwarder_carrier_public_key must be the forwarder's carrier key as
+      WireGuard prints it (44 base64 characters ending in '='), and
+      peering_wg_forwarder_endpoint its host:carrier-port. Got
+      '{{ peering_wg_forwarder_carrier_public_key }}' and '{{ peering_wg_forwarder_endpoint }}'.
+  when:
+    - peering_wg_forwarder_carrier_public_key | length > 0
+    - peering_wg_forwarder_endpoint | length > 0
+
+- name: peering-wg | carrier | environment
+  ansible.builtin.template:
+    src: carrier.env.j2
+    dest: "{{ peering_wg_carrier_env_path }}"
+    owner: root
+    group: root
+    mode: "0600"
+  register: _pw_carrier_env
+  when:
+    - peering_wg_forwarder_carrier_public_key | length > 0
+    - peering_wg_forwarder_endpoint | length > 0
+
+- name: peering-wg | carrier | up, and kept up across reboots
+  ansible.builtin.systemd:
+    name: "{{ peering_wg_carrier_service }}"
+    state: "{{ 'restarted' if (_pw_carrier_env is changed) else 'started' }}"
+    enabled: true
+    daemon_reload: true
+  when:
+    - peering_wg_forwarder_carrier_public_key | length > 0
+    - peering_wg_forwarder_endpoint | length > 0

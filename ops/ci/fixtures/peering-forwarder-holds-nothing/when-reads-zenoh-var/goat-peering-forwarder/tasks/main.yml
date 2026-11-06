@@ -1,0 +1,5 @@
+---
+- name: fixture | conditional on the fabric
+  ansible.builtin.debug:
+    msg: hi
+  when: goat_zenoh_edge_partner_ca_path is defined

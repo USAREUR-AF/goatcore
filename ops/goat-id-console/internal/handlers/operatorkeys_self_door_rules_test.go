@@ -24,9 +24,9 @@ func newSelfDoorRulesServer(t *testing.T) (*Server, http.Handler) {
 	t.Helper()
 	s := newOnboardTestServer(t)
 	portalURL, rt := fakeSponsorPortal(t, nil, nil)
-	rt.keys["bennett-key"] = portalWhoami{
-		Org: "7b9b61a4ae2373d6f0a0535d2b72b4ea", Alias: "bennett-operator",
-		SponsorAuthorized: true, SponsorMaxTier: "platform-admin", SponsorEmail: "bennett@example.org",
+	rt.keys["robin-key"] = portalWhoami{
+		Org: "7b9b61a4ae2373d6f0a0535d2b72b4ea", Alias: "robin-operator",
+		SponsorAuthorized: true, SponsorMaxTier: "platform-admin", SponsorEmail: "robin@example.org",
 	}
 	rt.keys["ines-key"] = portalWhoami{
 		Org: "00330033", Alias: "ines-admin", SponsorAuthorized: true, SponsorMaxTier: "iam-admin",
@@ -40,7 +40,7 @@ func newSelfDoorRulesServer(t *testing.T) (*Server, http.Handler) {
 		SponsorEmail: "ghost@example.org",
 	}
 	s.Cfg.PortalInternalURL = portalURL
-	seedPlatformAdminPerson(t, s, "bennett", "bennett@example.org")
+	seedPlatformAdminPerson(t, s, "robin", "robin@example.org")
 	seedPlatformAdminPerson(t, s, "ines", "ines@example.org")
 	return s, s.Routes()
 }
@@ -73,11 +73,11 @@ func TestOperatorKeyAPI_selfDoorFollowsTheHolderRule(t *testing.T) {
 	}
 
 	// A platform admin with no reason: 400, nothing recorded.
-	w = machineReq(t, h, "bennett-key", "POST", "/api/onboard/operator-keys", `{}`)
+	w = machineReq(t, h, "robin-key", "POST", "/api/onboard/operator-keys", `{}`)
 	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "missing_reason") {
 		t.Fatalf("self request without reason = %d %s, want 400 missing_reason", w.Code, w.Body.String())
 	}
-	w = machineReq(t, h, "bennett-key", "POST", "/api/onboard/operator-keys", `{"reason":"   "}`)
+	w = machineReq(t, h, "robin-key", "POST", "/api/onboard/operator-keys", `{"reason":"   "}`)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("self request with blank reason = %d, want 400", w.Code)
 	}
@@ -127,7 +127,7 @@ func TestOperatorKeyAPI_unboundParticipantRefused(t *testing.T) {
 
 func TestOperatorKeyAPI_participantStaysOutOfOperatorVerbs(t *testing.T) {
 	s, h := newSelfDoorRulesServer(t)
-	own := seedOperatorKeyRequest(t, s, "bennett", "bennett@example.org")
+	own := seedOperatorKeyRequest(t, s, "robin", "robin@example.org")
 
 	cases := []struct{ method, path string }{
 		{"GET", "/api/onboard/operator-keys"},
@@ -137,7 +137,7 @@ func TestOperatorKeyAPI_participantStaysOutOfOperatorVerbs(t *testing.T) {
 		{"POST", "/api/onboard/operator-keys/reconcile"},
 	}
 	for _, c := range cases {
-		w := machineReq(t, h, "bennett-key", c.method, c.path, "")
+		w := machineReq(t, h, "robin-key", c.method, c.path, "")
 		if w.Code != http.StatusForbidden || !strings.Contains(w.Body.String(), "operator_only") {
 			t.Fatalf("%s %s = %d %s, want 403 operator_only", c.method, c.path, w.Code, w.Body.String())
 		}

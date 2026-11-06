@@ -41,7 +41,7 @@
   # goatnet behind a public CA verifies as before. Never turn verification off.
   module_defaults:
     ansible.builtin.uri:
-      ca_path: "{{ (playbook_dir ~ '/../enrollment/ca/' ~ target_site ~ '/root-cert.pem') if (playbook_dir ~ '/../enrollment/ca/' ~ target_site ~ '/root-cert.pem') is exists else omit }}"
+      ca_path: "{{ omit if (netbird_api_ca | default('auto')) == 'public' else ((playbook_dir ~ '/../enrollment/ca/' ~ target_site ~ '/root-cert.pem') if (playbook_dir ~ '/../enrollment/ca/' ~ target_site ~ '/root-cert.pem') is exists else omit) }}"
   gather_facts: false
 
   vars:

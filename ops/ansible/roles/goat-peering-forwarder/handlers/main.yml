@@ -1,0 +1,10 @@
+---
+- name: Restart goat peering forwarder
+  ansible.builtin.systemd:
+    name: "goat-peering-forwarder@{{ item.interface }}.service"
+    state: restarted
+    enabled: true
+    daemon_reload: true
+  loop: "{{ _pf_peerings }}"
+  loop_control:
+    label: "{{ item.interface }}"

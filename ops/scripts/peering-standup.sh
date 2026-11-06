@@ -34,6 +34,14 @@
 #                         federation interface here and the running router there; the
 #                         edge must not share a machine with the core.
 #     GOAT_AWS_PROFILE    aws-vault profile the ansible phases run under
+#     FED_DIRECTORY_URL   optional: a peering directory (saltlick). Set, phase 5
+#                         publishes our pointer, looks up the counterparty's,
+#                         fetches their package and prints a compatibility report
+#                         before it stops. Advisory: a directory failure is a
+#                         warning. Unset, phase 5 is unchanged.
+#     FED_PACKAGE_URL     where our package is served (https, a static file on a
+#                         public host); the pointer we publish names it
+#     FED_COUNTERPARTY_ID the counterparty's sovereign_id, to look them up
 #
 # WHAT THIS DOES NOT DO. It never sends anything to the counterparty and never
 # accepts anything from them automatically. The two exchanges — our package out,
@@ -55,7 +63,7 @@ while [ $# -gt 0 ]; do
     --to)         TO="$2"; shift 2 ;;
     --as)         AS="$2"; shift 2 ;;
     --edge-group) EDGE_GROUP="$2"; shift 2 ;;
-    -h|--help)    sed -n '2,45p' "$0"; exit 0 ;;
+    -h|--help)    sed -n '2,49p' "$0"; exit 0 ;;
     -*)           echo "unknown flag $1" >&2; exit 2 ;;
     *)            [ -z "$PEERING" ] && PEERING="$1"; shift ;;
   esac
@@ -106,6 +114,14 @@ step() {   # step <n> <kind> <label> <command...>
   [ "$PLAN" = 1 ] && return 0
   case "$kind" in
     MANUAL)
+      # The optional directory step runs inside phase 5, before the stop. It is
+      # advisory, so its exit status is never read.
+      if [ "$n" = 5 ] && [ -n "$DIRECTORY_STEP" ]; then
+        python3 "$REPO/ops/federation/standup/directory.py" --url "$FED_DIRECTORY_URL" --ours "$OURS" \
+          ${FED_PACKAGE_URL:+--package-url "$FED_PACKAGE_URL"} ${FED_SIGNING_KEY:+--key "$FED_SIGNING_KEY"} \
+          --theirs "$FED_COUNTERPARTY" ${FED_COUNTERPARTY_ID:+--their-id "$FED_COUNTERPARTY_ID"} \
+          --keyring "$FED_KEYRING" --work "$FED_WORK" || true
+      fi
       echo "    ^ OPERATOR STEP — do the above, then re-run with --from $((n+1))"
       exit 0 ;;
     *)
@@ -176,12 +192,35 @@ step 4 T "lint our package against the spec" \
   "$GOAT_BIN federate lint '$OURS'"
 
 # ---------------------------------------------------------------------------
-# Phase 5 — THE EXCHANGE, and it is manual on purpose. The directory is advisory and
-#     mesh-internal (D-14): it holds recognition, never offers. The packages
-#     themselves move directly between the two parties over a channel they
-#     choose, and the counterparty's verifying key is bound over a channel
-#     authenticated INDEPENDENTLY of this link — never taken from the package.
+# Phase 5 — THE EXCHANGE, and it stops for a person on purpose: the counterparty's
+#     verifying key is bound over a channel authenticated INDEPENDENTLY of this
+#     link — never taken from the package, never from a directory.
+#     With FED_DIRECTORY_URL set, the phase first runs the optional directory step
+#     (ops/federation/standup/directory.py): the directory holds pointers, not
+#     permissions, and is never an input to compose's check.
 # ---------------------------------------------------------------------------
+# A value printed into the plan and passed to the helper: anything but plain URL
+# characters disables the step rather than reach a command line.
+DIRECTORY_STEP=""
+if [ -n "${FED_DIRECTORY_URL:-}" ]; then
+  case "$FED_DIRECTORY_URL${FED_PACKAGE_URL:-}${FED_COUNTERPARTY_ID:-}" in
+    *[!A-Za-z0-9._:/?=\&%~+@-]*) DIRECTORY_STEP="" ;;
+    *) DIRECTORY_STEP=1 ;;
+  esac
+fi
+if [ -n "$DIRECTORY_STEP" ]; then
+  DIRECTORY_TEXT="     Directory step (advisory; grants nothing), run before this stop:
+       python3 '$REPO/ops/federation/standup/directory.py' --url '$FED_DIRECTORY_URL' --ours '$OURS'${FED_PACKAGE_URL:+ --package-url '$FED_PACKAGE_URL'} --their-id '${FED_COUNTERPARTY_ID:-<unset>}'
+     It publishes our pointer, fetches theirs, checks digest and signatures,
+     places their package if none is on disk, and prints a compatibility report."
+elif [ -n "${FED_DIRECTORY_URL:-}" ]; then
+  DIRECTORY_TEXT="     FED_DIRECTORY_URL, FED_PACKAGE_URL or FED_COUNTERPARTY_ID holds characters
+     outside a plain URL; the directory step is off."
+else
+  DIRECTORY_TEXT="     Optional: set FED_DIRECTORY_URL, FED_PACKAGE_URL and FED_COUNTERPARTY_ID
+     to publish our pointer to a peering directory, fetch theirs and print a
+     compatibility report first (advisory; grants nothing)."
+fi
 step 5 MANUAL "exchange packages, and bind their verifying key out of band" \
   "Send $OURS and our CA certificate to the counterparty, with $FED_WORK/ours.spiffe-bundle if phase 2 wrote one.
      Obtain theirs and place them at: $FED_COUNTERPARTY
@@ -194,8 +233,7 @@ step 5 MANUAL "exchange packages, and bind their verifying key out of band" \
      as   <sovereign_id>=<44 base64 characters>
      Phase 6 passes each line to compose as --key; compose refuses (exit 20)
      for any party whose key is not bound.
-     Optionally publish a RECOGNITION-ONLY entry to a directory:
-       ops/federation/roundtrip/../../saltlick  (advisory; grants nothing)"
+$DIRECTORY_TEXT"
 
 # Each `sovereign=key` line in the keyring becomes one --key argument. A missing
 # or empty keyring is not patched over here: compose's own refusal names the

@@ -20,7 +20,7 @@ import (
 	"github.com/usareur-af/goatcore/ops/goat-id-console/internal/kratos"
 )
 
-const collectorEmail = "bennett@example.test"
+const collectorEmail = "robin@example.test"
 const collectorKratosID = "9c1d2e3f-4a5b-4c6d-8e9f-0a1b2c3d4e5f"
 
 // staticJSONRoundTripper is a minimal RoundTripper that returns a fixed JSON
@@ -151,10 +151,10 @@ func TestFabricCredential_LandingPageOffersCollectionToAnyMember(t *testing.T) {
 func TestFabricCredential_CollectShowsTheSecretsOnceAndSaysSo(t *testing.T) {
 	portalURL, sent := fakeCollectPortal(t, http.StatusCreated, map[string]any{
 		"slot_id":       "a1b2c3d4e5f6",
-		"system_handle": "bennett-h",
+		"system_handle": "robin-h",
 		"api_key":       "vp_live_secret_value",
 		"bundle_url":    "https://portal.example.test/bundles/a1b2c3d4e5f6/tok",
-		"uri_san":       "urn:goat:zagros:org=bennett-h",
+		"uri_san":       "urn:goat:zagros:org=robin-h",
 	})
 	s := fabricCredServer(t, portalURL)
 	w := collectPost(t, s.Routes(), s, collectorEmail)
