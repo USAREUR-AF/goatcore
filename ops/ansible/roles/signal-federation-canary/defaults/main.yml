@@ -1,13 +1,10 @@
 ---
 # signal-federation-canary role defaults. Per-site overrides in group_vars.
 #
-# `:latest` is a placeholder, not the intended end state.
 # .github/workflows/signal-federation-probe-image.yml publishes this image to
-# ghcr.io/<repository owner>/signal-federation-probe, tagging `:latest` and
-# `:sha-<short>` on every push to main that changes ops/signal-federation-probe/.
-# Move this to a `:sha-<short>@sha256:<digest>` pin once that workflow has
-# published from main.
-signal_federation_probe_image: "ghcr.io/{{ ghcr_org }}/signal-federation-probe:latest"
+# ghcr.io/<repository owner>/signal-federation-probe on every push to main that
+# changes ops/signal-federation-probe/. Pinned by digest to the build it published.
+signal_federation_probe_image: "ghcr.io/{{ ghcr_org }}/signal-federation-probe:sha-eed55d4@sha256:52b0bab0853db7f26cc6483a8221e8f120c026ec720d7fa60997237c2382e581"
 signal_federation_canary_target: "localhost:10000"
 signal_federation_canary_interval: "60s"
 signal_federation_canary_metrics_addr: ":9091"
