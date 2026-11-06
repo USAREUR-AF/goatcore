@@ -30,3 +30,15 @@ In scope: the code in this repository and the images and release artifacts built
 ## Supported versions
 
 Pre-1.0, the latest tagged release of each component is supported. Fixes land on `main` and are released by tag.
+
+## Advance notice for operators of goat deployments
+
+Organisations that run goat deployments can apply to receive advance notice of a vulnerability before its public advisory. A registered operator receives, privately, the advisory text, the fix as a patch, and fixed images and binaries built from it, so its deployments are patched by the time the advisory is published.
+
+**When it is used.** Only for a vulnerability in this repository's own code that is not already public or easily discoverable, and only once a fix exists. A vulnerability in a dependency that already has a public advisory is handled in the open, through the normal dependency update.
+
+**Timing.** The advance-notice window sits inside the coordinated disclosure date agreed with the reporter and never moves that date. It is 14 days by default, may be extended once by up to 14 days, and always ends at the agreed disclosure date or earlier. The advisory is published at once, ending the window, if the vulnerability is found being exploited, becomes public, or is disclosed by anyone who received notice.
+
+**What a recipient may do during the window.** Deploy the fix to the deployments it operates, and share the notice with the people who operate them. It may not discuss the vulnerability publicly, publish the patch or the fixed artifacts, or share them outside its own organisation.
+
+**How to apply.** Open a report through the [private reporting form](https://github.com/USAREUR-AF/goatcore/security/advisories/new) with the title `Advance notice application`, naming your organisation, a security contact (name, e-mail address and GitHub account), and the goat deployments you operate. Admission is the maintainers' decision, made per organisation, and is reviewed at least once a year. Admitted contacts are added to a private repository, from which notices, patches and artifacts are distributed.
