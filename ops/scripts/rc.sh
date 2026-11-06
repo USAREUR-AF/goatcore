@@ -41,6 +41,22 @@
 # Refusals (none is ceremony): not a nominator; tag commit not on main; image
 # missing or split between orgs; rc-validate says "not a member" (the tag is
 # gone); a live row FAILs (the candidate is dead: fix on main, cut rc.N+1).
+#
+# From an assembled tree (a checkout carrying the .goat-assembled marker that an
+# overlay's assemble.sh writes): the goatnets' pins, intents and release records
+# belong to the overlay repository the marker names (overlay_path), not to this
+# tree's origin. rc.sh then runs every step after the tag (--from dev|rows|
+# preprod|preprod-rows|prod, with --tag):
+#   - its scratch tree is a second assembled tree, built by the overlay's own
+#     assemble.sh from a fresh overlay worktree on origin/main, so every tool a
+#     step calls (generate-pins.py, graduate.py, intent-sign) is the pinned one;
+#   - a step's edits land as a pull request on the overlay repository, carrying
+#     exactly the files the step changed in the scratch tree;
+#   - after a landing the scratch tree is assembled again from the merged overlay
+#     and the deploy runs from it, so fresh-source.sh sees a current overlay.
+# The nominator check reads the overlay repository. Cutting the tag (--from tag)
+# stays with a single-repository checkout: the tag goes where the component's
+# image workflow builds it.
 set -euo pipefail
 # Hold the Mac awake for the whole run (#2122; ops/scripts/lib/keep-awake.sh).
 _keep_awake="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/keep-awake.sh"
@@ -50,6 +66,18 @@ HERE="$(cd "$(dirname "$0")" && pwd)"; REPO="$(cd "$HERE/../.." && pwd)"
 PINS="$REPO/ops/pins/fleet-pins.yaml"; LADDER="$REPO/ops/release/ladder.yaml"
 RUNNERS="$REPO/ops/validation/goatnet-runners.yaml"
 die() { echo "rc: $*" >&2; exit 1; }
+# An assembled tree (see the header): ASSEMBLED=1 and OVERLAY = the overlay
+# checkout its marker names. DEPLOY_HERE holds the deploy driver the run uses: this
+# one, until a landing re-assembles the scratch tree.
+ASSEMBLED=0; OVERLAY=""; DEPLOY_HERE="$HERE"
+if [ -f "$REPO/.goat-assembled" ]; then
+  ASSEMBLED=1
+  OVERLAY="$(sed -n 's/^overlay_path=//p' "$REPO/.goat-assembled" | head -1)"
+  [ "$(sed -n 's/^goatcore_ref=//p' "$REPO/.goat-assembled" | head -1)" != local ] \
+    || die "$REPO was assembled from local directories (goatcore_ref=local), which no deploy accepts; assemble from the pinned refs"
+  [ -n "$OVERLAY" ] && [ -x "$OVERLAY/assemble.sh" ] \
+    || die "$REPO/.goat-assembled names no overlay checkout with an assemble.sh (overlay_path=${OVERLAY:-<none>}); re-assemble from the overlay"
+fi
 # One value this checkout declares about itself in ops/goatbuilder/goatbuilder.yaml
 # (<section> <key>), as the builder reads it; empty when it declares none.
 declared() { python3 -c 'import sys, yaml; print(str(((yaml.safe_load(open(sys.argv[1])) or {}).get(sys.argv[2]) or {}).get(sys.argv[3]) or "").strip())' "$REPO/ops/goatbuilder/goatbuilder.yaml" "$1" "$2" 2>/dev/null || true; }
@@ -127,10 +155,20 @@ fi
 # guard AND need not hold the merged pin, so it can silently deploy a stale ref and
 # verify green. Require main/master here, before anything is cut.
 RBR0="$(git -C "$REPO" symbolic-ref --quiet --short HEAD 2>/dev/null || echo DETACHED)"
+if [ "$ASSEMBLED" = 1 ]; then
+  # An assembled tree is detached by construction. Its currency is the overlay
+  # commit it was built from, which deploy-component.sh (fresh-source.sh) checks
+  # against the overlay's origin/main before any host is touched.
+  RBR0="assembled tree, overlay $(sed -n 's/^overlay_commit=//p' "$REPO/.goat-assembled" | cut -c1-12)"
+  [ "$FROM" != tag ] || die "--from tag cuts the tag on this tree's origin ($REPO_SLUG); from an assembled tree, cut the tag where the component's image workflow builds it, then re-run here with --tag <that tag> --from dev"
+  [ -n "$TAG" ] || die "from an assembled tree, name the candidate with --tag <component>/vX.Y.Z-rc.N"
+  OVERLAY_SLUG="$(git -C "$OVERLAY" remote get-url origin | sed -E 's#.*[:/]([^/]+/[^/]+)\.git$#\1#; s#.*[:/]([^/]+/[^/]+)$#\1#')"
+else
 case "$RBR0" in
   main|master) ;;
   *) die "run rc.sh from a checkout on main — this one ($REPO) is on '$RBR0'. rc.sh deploys from the invoking checkout and only a main checkout is kept current with the pin it merges; a feature-branch run can deploy a stale pin and verify green. Switch to a current main checkout (git checkout main && git pull --ff-only origin main) and re-run." ;;
 esac
+fi
 
 # --- facts ----------------------------------------------------------------------
 step "component $COMP"
@@ -161,7 +199,13 @@ step "preflight"
 note "deploying from $REPO on $RBR0; deps ok (PyYAML, jsonschema)"
 # GOAT_RC_ROLE_CHECK=0 skips the nominator check where there is no person (the
 # goatbuilder parity gate in CI); `goatbuilder release` honours the same variable.
-if [ "${GOAT_RC_ROLE_CHECK:-1}" != 0 ]; then
+if [ "${GOAT_RC_ROLE_CHECK:-1}" != 0 ] && [ "$ASSEMBLED" = 1 ]; then
+  # From an assembled tree nothing is tagged here; what this run changes is the
+  # overlay repository's pins and records, so its admins are the nominators.
+  ME="$(gh api user -q .login)"
+  ROLE="$(gh api "repos/$OVERLAY_SLUG/collaborators/$ME/permission" -q .role_name 2>/dev/null || echo unknown)"
+  case "$ROLE" in admin) note "$ME holds $ROLE on $OVERLAY_SLUG (the overlay this tree was assembled from)" ;; *) die "$ME holds '$ROLE' on $OVERLAY_SLUG; only an admin of the overlay repository may put a release candidate on its goatnets" ;; esac
+elif [ "${GOAT_RC_ROLE_CHECK:-1}" != 0 ]; then
   ME="$(gh api user -q .login)"
   ROLE="$(gh api "repos/$REPO_SLUG/collaborators/$ME/permission" -q .role_name 2>/dev/null || echo unknown)"
   case "$ROLE" in admin) note "$ME holds $ROLE on $REPO_SLUG" ;; *) die "$ME holds '$ROLE' on $REPO_SLUG; only a repository admin may nominate a release candidate (the rule rc-validate.yml enforces)" ;; esac
@@ -305,7 +349,60 @@ note "candidate ref $(render "$REF")"
 
 # --- helpers for pin edits + landing -----------------------------------------------
 WT="$REPO/../$(basename "$REPO")-wt-rc-$(date -u +%H%M%S)"
-mkwt() { [ -d "$WT" ] || run git -C "$REPO" worktree add -q "$WT" -b "chore/rc-$IMAGE-$(date -u +%Y%m%d-%H%M%S)" origin/main; }
+mkwt() {
+  [ -d "$WT" ] && return 0
+  if [ "$ASSEMBLED" = 1 ]; then
+    run git -C "$OVERLAY" fetch -q origin main
+    run git -C "$OVERLAY" worktree add -q "$OWT" -b "chore/rc-$IMAGE-$(date -u +%Y%m%d-%H%M%S)" origin/main
+    if [ "$DRY" = 1 ]; then note "DRY: $OWT/assemble.sh $WT  (the scratch tree: goatcore + goatstuff + the overlay worktree)"; return 0; fi
+    assemble_wt
+  else
+    run git -C "$REPO" worktree add -q "$WT" -b "chore/rc-$IMAGE-$(date -u +%Y%m%d-%H%M%S)" origin/main
+  fi
+}
+# --- assembled tree only ---------------------------------------------------------
+# $OWT: the overlay worktree a step's edits land from. $WT: the scratch tree the
+# overlay's assemble.sh builds from $OWT; its HEAD stays the goatcore commit
+# (source_of_record.py requires that), so its starting content is kept as a git
+# tree object ($WT_SNAP) and a step's edits are the diff against it. Once built,
+# the run reads its facts and deploys from $WT, the newest assembly it has.
+OWT="$WT-overlay"; WT_SNAP=""; EVID_ROOT="$REPO"
+assemble_wt() {
+  local log; log="$(mktemp)"
+  rm -rf "$WT"
+  "$OWT/assemble.sh" "$WT" >"$log" 2>&1 || { cat "$log" >&2; die "$OWT/assemble.sh could not build the scratch tree $WT"; }
+  git -C "$WT" add -A --force
+  WT_SNAP="$(git -C "$WT" write-tree)"
+  git -C "$WT" reset -q
+  REPO="$WT"; PINS="$WT/ops/pins/fleet-pins.yaml"; LADDER="$WT/ops/release/ladder.yaml"
+  RUNNERS="$WT/ops/validation/goatnet-runners.yaml"; DEPLOY_HERE="$WT/ops/scripts"
+  note "scratch tree $WT assembled from overlay $(git -C "$OWT" rev-parse --short HEAD)"
+}
+land_overlay() { # $1 title, $2 body: the step's edits in $WT, as a PR on the overlay
+  local changes st p B
+  git -C "$WT" add -A --force
+  changes="$(git -C "$WT" diff-index --cached --name-status --no-renames "$WT_SNAP")"
+  git -C "$WT" reset -q
+  if [ -z "$(printf '%s\n' "$changes" | awk 'NF{print $2}' | grep -v '\.sig$' || true)" ]; then
+    note "pins already current on the overlay's main; nothing to land"
+    return 0
+  fi
+  while IFS="$(printf '\t')" read -r st p; do
+    [ -n "$p" ] || continue
+    case "$st" in
+      D) git -C "$OWT" rm -q --ignore-unmatch -- "$p" ;;
+      *) mkdir -p "$OWT/$(dirname "$p")"; cp -p "$WT/$p" "$OWT/$p" ;;
+    esac
+    note "lands $st $p"
+  done <<< "$changes"
+  B="$(mktemp)"; printf '%s\n' "$2" > "$B"
+  "$HERE/pr-land.sh" --worktree "$OWT" --branch "$(git -C "$OWT" rev-parse --abbrev-ref HEAD)" --title "$1" --body-file "$B"
+  # The overlay's main now carries the edit: build the next scratch tree from it,
+  # so the deploy that follows reads a current overlay.
+  git -C "$OWT" fetch -q origin main
+  git -C "$OWT" checkout -q -B "chore/rc-$IMAGE-$(date -u +%Y%m%d-%H%M%S)" origin/main
+  assemble_wt
+}
 set_deviation() {  # $1 goatnet key, $2 reason
   run python3 - "$WT/ops/pins/fleet-pins.yaml" "$COMP" "$1" "$REF" "$2" <<'PY'
 import sys, yaml, re
@@ -403,6 +500,11 @@ regen_sign_check() {
   run python3 "$WT/ops/pins/generate-pins.py" --check
 }
 land() { # $1 title, $2 body
+  if [ "$ASSEMBLED" = 1 ]; then
+    if [ "$DRY" = 1 ]; then note "DRY: the step's edits in $WT land as a PR on $OVERLAY_SLUG via $HERE/pr-land.sh --worktree $OWT: $1"
+    else land_overlay "$1" "$2"; fi
+    return 0
+  fi
   if [ "$DRY" = 0 ]; then
     # A re-run whose pin is already merged regenerates the same bytes: the tree
     # differs from main in nothing (signatures are no longer re-signed) — there
@@ -441,7 +543,9 @@ with open(sys.argv[1]) as stream:
 print((runners['goatnets'].get(sys.argv[2]) or {}).get(sys.argv[3], ''))
 PY
 }
-evidence_path() { printf '%s' "$REPO/ops/validation/evidence/$IMAGE-${TAG#*/}-$1.jsonl"; }
+# EVID_ROOT is the invoking tree: a re-assembled scratch tree is replaced on the
+# next landing, and the record names this path.
+evidence_path() { printf '%s' "$EVID_ROOT/ops/validation/evidence/$IMAGE-${TAG#*/}-$1.jsonl"; }
 browser_toolchain_check() { # $1 rows (comma list) -> notes; returns 1 when a browser row cannot run here
   local e2e="$REPO/ops/goat-id-console/web/e2e"
   case ",$1," in *,intake-form-browser-submit,*|*,review-gate-accepts-open-field-invite,*) ;; *) return 0 ;; esac
@@ -527,7 +631,7 @@ What $TAG carries ($CHANGES_LINE):
 $CHANGES"
   # --- 4 dev deploy
   step "deploy $TAG to $DEV"
-  run_with_dry_flag "$HERE/deploy-component.sh" "$COMP" --goatnet "$DEV"
+  run_with_dry_flag "$DEPLOY_HERE/deploy-component.sh" "$COMP" --goatnet "$DEV"
 fi
 
 # --- 5 rows on dev -------------------------------------------------------------------
@@ -655,7 +759,7 @@ fi
 note "record $REC"
 fi
 step "deploy $TAG to $PRE"
-run_with_dry_flag "$HERE/deploy-component.sh" "$COMP" --goatnet "$PRE"
+run_with_dry_flag "$DEPLOY_HERE/deploy-component.sh" "$COMP" --goatnet "$PRE"
 step "live rows on $PRE"
 if ! rows_on "$PRE"; then die "a live row FAILED on $PRE after the dev PASS — leave the candidate open, investigate; graduate.py refuses without convergence evidence"; fi
 mkwt
@@ -754,10 +858,19 @@ PY
   regen_sign_check
   land "chore(release): $TAG graduates; fleet runs it and $PROD folds (ADR 1120/1173)" "Candidate record $(basename "$REC") graduated with the operator ack of $ACK after the soak on $PRE. fleet: is now $REF; the $DEV, $PRE and $PROD deviations that carried the candidate (or the hotfix it replaces) are deleted, so every rung reads one value. Pins and intents regenerated and re-signed; graduate.py check and generate-pins --check pass."
   step "deploy $TAG to $PROD"
-  run_with_dry_flag "$HERE/deploy-component.sh" "$COMP" --goatnet "$PROD"
+  run_with_dry_flag "$DEPLOY_HERE/deploy-component.sh" "$COMP" --goatnet "$PROD"
   step "every rung reads $TAG"
-  for g in "$DEV" "$PRE"; do run_with_dry_flag "$HERE/deploy-component.sh" "$COMP" --goatnet "$g" --verify-only; done
+  for g in "$DEV" "$PRE"; do run_with_dry_flag "$DEPLOY_HERE/deploy-component.sh" "$COMP" --goatnet "$g" --verify-only; done
   if [ "$DRY" = 1 ]; then note "$COMP: DRY: a real run puts fleet $REF on $DEV, $PRE and $PROD and reads every ledger"
   else note "$COMP: fleet $REF on $DEV, $PRE and $PROD (ledger-verified)"; fi
 fi
+if [ "$ASSEMBLED" = 1 ]; then
+  # The scratch tree is a plain directory. The overlay worktree is clean once its
+  # PR merged; its branch stays for the reflog, as a single-repository run's does.
+  if [ "$DRY" = 0 ]; then
+    rm -rf "$WT"
+    [ -d "$OWT" ] && git -C "$OVERLAY" worktree remove "$OWT" 2>/dev/null || true
+  fi
+else
 [ -d "$WT" ] && [ "$DRY" = 0 ] && git -C "$REPO" worktree remove "$WT" 2>/dev/null || true
+fi
