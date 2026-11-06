@@ -28,12 +28,15 @@ goatstuff file under ops/ the overlay does not replace is in the tree byte for
 byte as that commit has it. Without goatstuff_ref nothing about goatstuff is
 checked or recorded.
 
-Pre-disclosure patches. An overlay may carry fixes that are not yet public as
+Pre-disclosure patches. An overlay may declare fixes that are not yet public as
 patches, embargo/<id>/core.patch (applied to goatcore) and embargo/<id>/stuff.patch
-(applied to goatstuff); the assemble step applies them, in id order, after
-goatstuff and before the overlay, and records each in the embargo= line with
-the sha256 of its bytes. The tree is then current only if the marker lists
-exactly the patches the overlay commit carries, with those digests, and every
+(applied to goatstuff): either it carries the patch file, or it declares the
+patch's sha256 in embargo/<id>/patches.sha256 ("<sha256>  core.patch" lines) and
+its assemble step fetches the patch from where the overlay names it and writes
+it into the tree at that path. The assemble step applies them, in id order,
+after goatstuff and before the overlay, and records each in the embargo= line
+with the sha256 of its bytes. The tree is then current only if the marker lists
+exactly the patches the overlay commit declares, with those digests, and every
 file the patches change is in the tree byte for byte as the pinned commit plus
 the patches has it (a file a patch deletes is absent). Those files are judged
 against that and nothing else; any other change to a goatcore or goatstuff file
@@ -80,6 +83,9 @@ CORE_DEPLOYED = ["ops", "goatcore.ref"]
 SHA = re.compile(r"^[0-9a-f]{40}$")
 # A pre-disclosure patch in the overlay: embargo/<id>/core.patch or embargo/<id>/stuff.patch.
 PATCH = re.compile(r"^embargo/([A-Za-z0-9][A-Za-z0-9._-]*)/(core|stuff)\.patch$")
+# The overlay's declaration of patches it does not carry itself: sha256sum lines "<sha256>  <kind>.patch".
+DECLARED = re.compile(r"^embargo/([A-Za-z0-9][A-Za-z0-9._-]*)/patches\.sha256$")
+DECLARED_LINE = re.compile(r"^([0-9a-f]{64}) [ *](core|stuff)\.patch$")
 
 
 def git(repo, *args, env=None, raw=False):
@@ -266,22 +272,62 @@ def patched(base, commit, patches):
         return changed, ""
 
 
-def check_embargo(repo, m, supplied, ref, sref, sd):
+def declared_patches(od, commit, supplied):
+    """{embargo/<id>/<kind>.patch: sha256} the overlay commit declares, or (None, error).
+
+    A patch is declared by a line of embargo/<id>/patches.sha256 (the patch is
+    fetched by the assemble step from where the overlay names it), or by the
+    overlay carrying the patch file itself.
+    """
+    out = {}
+    for p in sorted(supplied):
+        hit = DECLARED.match(p)
+        if hit:
+            rc, text, err = git(od, "show", f"{commit}:{p}", raw=True)
+            if rc != 0:
+                return None, err
+            for line in text.splitlines():
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                d = DECLARED_LINE.match(line)
+                if not d:
+                    return None, f"{p}: not a '<sha256>  <core|stuff>.patch' line: {line[:60]}"
+                out[f"embargo/{hit.group(1)}/{d.group(2)}.patch"] = d.group(1)
+    for p in sorted(supplied):
+        if PATCH.match(p):
+            blob = subprocess.run(["git", "-C", od, "cat-file", "blob", f"{commit}:{p}"], capture_output=True)
+            if blob.returncode != 0:
+                return None, blob.stderr.decode(errors="replace").strip()
+            digest = hashlib.sha256(blob.stdout).hexdigest()
+            if out.get(p, digest) != digest:
+                return None, f"{p} is carried with sha256 {digest[:12]} but patches.sha256 declares {out[p][:12]}"
+            out[p] = digest
+    return out, ""
+
+
+def check_embargo(repo, m, supplied, od, ocsha, ref, sref, sd):
     """The paths the recorded pre-disclosure patches change, after showing the tree holds exactly them.
 
-    Refuses when the marker's patches are not the overlay commit's, a digest
-    differs, a patch does not apply, or a patched file is not as the patches make it.
+    Refuses when the marker's patches or digests are not the ones the overlay
+    commit declares, a patch in the tree differs, a patch does not apply, or a
+    patched file is not as the patches make it.
     """
     reassemble = "fix: re-assemble from the overlay checkout (its assemble.sh into a new directory) and deploy from that tree."
     entries = embargo_entries(m)
-    carried = sorted(p for p in supplied if PATCH.match(p))
-    if not entries and not carried:
+    declared, err = declared_patches(od, ocsha, supplied)
+    if declared is None:
+        refuse("GB-064", f"the overlay commit's pre-disclosure patch declaration cannot be read ({err})", [reassemble])
+    if not entries and not declared:
         return set()
-    listed = sorted(p for p, _ in entries)
-    if listed != carried:
-        refuse("GB-064", "the pre-disclosure patches the marker records are not the ones the overlay commit carries",
-               ["marker: " + (", ".join(listed) or "(none)"), "overlay: " + (", ".join(carried) or "(none)"), reassemble])
+    if dict(entries) != declared:
+        listed = [f"{p} {d[:12]}" for p, d in sorted(entries)]
+        want = [f"{p} {d[:12]}" for p, d in sorted(declared.items())]
+        refuse("GB-064", "the pre-disclosure patches the marker records are not the ones the overlay commit declares",
+               ["marker: " + (", ".join(listed) or "(none)"), "overlay: " + (", ".join(want) or "(none)"), reassemble])
     for p, digest in entries:
+        if not os.path.isfile(os.path.join(repo, p)):
+            refuse("GB-064", f"{p} is recorded in the marker but is not in this tree", [reassemble])
         f = os.path.join(repo, p)
         with open(f, "rb") as fh:
             got = hashlib.sha256(fh.read()).hexdigest()
@@ -383,7 +429,7 @@ def check(repo, offline, quiet):
         rc, _, _ = git(sd, "rev-parse", "--verify", "--quiet", sref + "^{commit}")
         if rc != 0:
             refuse("GB-064", f"goatstuff commit {sref[:12]} is not in the goatstuff checkout {sd}", [reassemble])
-    embargoed = check_embargo(repo, m, supplied, ref, sref, sd)
+    embargoed = check_embargo(repo, m, supplied, od, ocsha, ref, sref, sd)
     if sref is not None:
         sdiff, err = tree_matches_goatstuff(repo, sd, sref, supplied, embargoed)
         if sdiff is None:

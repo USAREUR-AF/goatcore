@@ -520,7 +520,7 @@ mod tests {
         // The marker does not record the patch the overlay carries: refused.
         fs::write(tree.join(MARKER), &body).unwrap();
         let f = run_assembled(&tree, Some(&ov), false);
-        assert!(f.refused() && f.check.detail.contains("not the ones the overlay commit carries"), "{}", f.check.detail);
+        assert!(f.refused() && f.check.detail.contains("not the ones the overlay commit declares"), "{}", f.check.detail);
         // Recorded, but the file is not as the patch makes it: refused.
         fs::write(tree.join(MARKER), format!("{body}embargo=A/core.patch:{digest}\n")).unwrap();
         fs::write(tree.join("ops/ansible/x"), "3").unwrap();
