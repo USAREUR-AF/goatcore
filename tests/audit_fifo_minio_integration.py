@@ -14,6 +14,14 @@ import time
 import uuid
 
 
+def private_file(path, text):
+    """Create a fixture credential file readable only by its owner from the first byte."""
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "w") as stream:
+        stream.write(text)
+    return path
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--server-image", required=True)
@@ -34,15 +42,13 @@ def main():
     mib = 2**20
     with tempfile.TemporaryDirectory(prefix="goat-fifo-test-") as tmp:
         directory = Path(tmp)
-        server_env = directory / "server.env"
-        server_env.write_text("MINIO_ROOT_USER=fixture-admin\nMINIO_ROOT_PASSWORD=" + admin_password +
-                              "\nMINIO_BROWSER=off\n")
-        root_env = directory / "root.env"
-        root_env.write_text(f"MC_HOST_fixture=http://fixture-admin:{admin_password}@127.0.0.1:{port}\n")
-        evict_env = directory / "evict.env"
-        evict_env.write_text(f"MC_HOST_fixture=http://fixture-evictor:{evict_password}@127.0.0.1:{port}\n")
-        for path in (server_env, root_env, evict_env):
-            path.chmod(0o600)
+        server_env = private_file(directory / "server.env",
+                                  "MINIO_ROOT_USER=fixture-admin\nMINIO_ROOT_PASSWORD=" + admin_password +
+                                  "\nMINIO_BROWSER=off\n")
+        root_env = private_file(directory / "root.env",
+                                f"MC_HOST_fixture=http://fixture-admin:{admin_password}@127.0.0.1:{port}\n")
+        evict_env = private_file(directory / "evict.env",
+                                 f"MC_HOST_fixture=http://fixture-evictor:{evict_password}@127.0.0.1:{port}\n")
         config = dict(bucket="audit-integrity", alias="fixture", quota_gib=1,
                       high_pct=2, low_pct=1, batch_hours=6, max_pass_pct=25,
                       trail_prefix="ops/eviction", state_dir=tmp, textfile_dir=tmp,

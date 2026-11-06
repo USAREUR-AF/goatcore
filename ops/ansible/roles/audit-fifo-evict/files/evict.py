@@ -175,9 +175,11 @@ def metrics(config, used, prefixes, freed, result, total):
                   "# TYPE " + name + " " + kind,
                   name + '{bucket="' + config["bucket"] + '"} ' + str(value)]
     fd, name = tempfile.mkstemp(prefix=".audit-fifo-", dir=directory)
+    # node_exporter reads the textfile directory as an unprivileged user, so the
+    # (non-secret) metrics file is world-readable; mkstemp creates it 0600.
+    os.fchmod(fd, 0o644)
     with os.fdopen(fd, "w") as stream:
         stream.write("\n".join(lines) + "\n")
-    os.chmod(name, 0o644)
     os.replace(name, directory / "audit_fifo_evict.prom")
 
 
