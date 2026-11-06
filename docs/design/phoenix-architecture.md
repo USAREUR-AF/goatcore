@@ -142,7 +142,7 @@ We already have Zenoh in the architecture as a data fabric (Block 11, Phase 2D, 
 | Data publish/subscribe | Zenoh pub/sub (native) |
 | Service discovery | Zenoh key-expression registry — services register under `services/<class>/<instance>/`; consumers query by pattern |
 | Control / command | Zenoh request-response (native) |
-| Identity attestation | Upstream Zenoh authn/access control, anchored to the offline-CA-issued peer identity. No goat-specific cap-token format. See `zenoh-data-fabric.md` §"Phase 3+ scope expansion" Identity attestation row |
+| Identity attestation | Upstream Zenoh authn/access control, anchored to the offline-CA-issued peer identity. No goat-specific cap-token format. See `zenoh-data-fabric.md` §"Scope" Identity attestation row |
 | Configuration distribution | Config under `config/<scope>/*`; peers subscribe to their scope |
 | Partner federation | Zenoh bridge translating to partner protocol (for partners who don't speak Zenoh) |
 | Health / observability | Peers publish health to `health/<class>/<instance>`; aggregator subscribes by pattern |
