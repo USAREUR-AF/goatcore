@@ -6,9 +6,9 @@
 # Assets, per release:
 #   <bin>-linux-amd64    ubuntu-24.04,     linked against glibc 2.31 (Ubuntu 20.04, Debian 11 and later)
 #   <bin>-linux-arm64    ubuntu-24.04-arm, linked against glibc 2.31
-#   <bin>-darwin-amd64   macos-14, cross-compiled to x86_64-apple-darwin,
+#   <bin>-darwin-amd64   macos-15, cross-compiled to x86_64-apple-darwin,
 #                        ad-hoc signed, not notarized
-#   <bin>-darwin-arm64   macos-14, ad-hoc signed, not notarized
+#   <bin>-darwin-arm64   macos-15, ad-hoc signed, not notarized
 #   <bin>-windows-amd64.exe  windows-latest, MSVC (unless the caller sets
 #                        windows: false)
 #   <asset>.sha256       one per binary
@@ -21,7 +21,7 @@
 #
 # darwin-amd64 is cross-compiled on Apple Silicon: GitHub's Intel macOS runner
 # pool is winding down and a job queued for one can wait hours. The Xcode SDK
-# on macos-14 is universal, so the cross build needs no extra configuration;
+# on macos-15 is universal, so the cross build needs no extra configuration;
 # the binary cannot run on the arm64 host (no Rosetta), so its --version check
 # is replaced by a check that it is an x86_64 Mach-O. goatbuilder checks the signature
 # against the certificate identity ^https://github.com/<this repository>/, so
@@ -104,8 +104,8 @@ jobs:
           legs='[
             {"runner":"ubuntu-24.04",    "os_label":"linux",  "arch":"amd64","rust_target":"x86_64-unknown-linux-gnu", "glibc":"2.31","cross":false,"ext":""},
             {"runner":"ubuntu-24.04-arm","os_label":"linux",  "arch":"arm64","rust_target":"aarch64-unknown-linux-gnu","glibc":"2.31","cross":false,"ext":""},
-            {"runner":"macos-14",        "os_label":"darwin", "arch":"amd64","rust_target":"x86_64-apple-darwin",      "glibc":"",    "cross":true, "ext":""},
-            {"runner":"macos-14",        "os_label":"darwin", "arch":"arm64","rust_target":"aarch64-apple-darwin",     "glibc":"",    "cross":false,"ext":""},
+            {"runner":"macos-15",        "os_label":"darwin", "arch":"amd64","rust_target":"x86_64-apple-darwin",      "glibc":"",    "cross":true, "ext":""},
+            {"runner":"macos-15",        "os_label":"darwin", "arch":"arm64","rust_target":"aarch64-apple-darwin",     "glibc":"",    "cross":false,"ext":""},
             {"runner":"windows-latest",  "os_label":"windows","arch":"amd64","rust_target":"x86_64-pc-windows-msvc",   "glibc":"",    "cross":false,"ext":".exe"}
           ]'
           if [ "$WINDOWS" != true ]; then
