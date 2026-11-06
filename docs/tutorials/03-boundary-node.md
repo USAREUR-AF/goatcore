@@ -141,7 +141,7 @@ is the sovereign-federation runbook
    and the certificate names. Without the far side there is no peering to
    complete; this is why the tutorial stops at the plan on a laptop.
 2. **An edge host**, a peer of your own goatnet's mesh in node class `PEERING-EDGE` (it reaches
-   only your core router's fabric port; ADR 1219), in an ansible group
+   only your core router's fabric port and mesh DNS; ADR 1219), in an ansible group
    named by `--edge-group` (default `<peering>_edge`). The boundary router runs
    here, not on a core host. Declare the group in
    `ops/ansible/inventory/peering-edges.ini` in your goatnet's own repository;

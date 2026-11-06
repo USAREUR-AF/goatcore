@@ -1,4 +1,4 @@
-# ADR 1219 — A peering edge holds `PEERING-EDGE`: it reaches only the core router's fabric TLS port, and only platform admins reach it
+# ADR 1219 — A peering edge holds `PEERING-EDGE`: it reaches only the core router's fabric TLS port and mesh DNS, and only platform admins reach it
 
 | Field | Value |
 |---|---|
@@ -17,14 +17,16 @@ A federation edge is the one machine that holds a partner's certificate authorit
 tunnel joins neither party's network (ADR 1157); the edge itself is a peer of its own goatnet's
 mesh, because that is how it reaches its own core router. Since it trusts a foreign root, it must
 reach nothing beyond that one connection. The edge sits in `PEERING-EDGE`
-alone; it may open one connection, to the core Zenoh router's TLS port; platform admins may log
-in to it; nothing else on the mesh can reach it, and it can reach nothing else.
+alone; it may open one connection, to the core Zenoh router's TLS port, and look up mesh names
+on the mesh nameserver; platform admins may log in to it; nothing else on the mesh can reach it,
+and it can reach nothing else.
 
 ## Context
 
 The edge router (`roles/goat-zenoh-edge`) dials the core router over `goat_zenoh_edge_core_endpoints`
-(`tls/<core>:7447`) and carries the partner link over its own tunnel (`roles/goat-peering-wg`, or the
-forwarder carrier of ADR 1218). Neither link needs anything else from the mesh.
+(`tls/<core>:7447`, where `<core>` is the router's mesh name) and carries the partner link over its
+own tunnel (`roles/goat-peering-wg`, or the forwarder carrier of ADR 1218). Beyond the core link it
+needs one thing from the mesh: resolving that name.
 
 An edge enrolled as ordinary gear (for example `KID`) holds the gear rules: tcp 443/53/5353/7447 and
 udp 53/5353/7448 to every `INFRA` peer, and any-port reach from `INFRA` and `PLATFORM-ADMIN`. That is
@@ -39,8 +41,9 @@ on a goatnet with several substrate hosts, `INFRA:7447` is several routers.
 
 1. **`PEERING-EDGE` — a NODE CLASS** for a federation edge router, a peer of its own
    goatnet's mesh. Class name and group name are the same. A peer holding it holds it alone.
-   - It initiates only toward `FABRIC-CORE`, on port-set `fabric` tcp (7447, the TLS listener).
-     No udp 7448, no web, no DNS, no management plane, no lateral reach, never P2P.
+   - It initiates toward `FABRIC-CORE` on port-set `fabric` tcp (7447, the TLS listener), and
+     toward `INFRA` on port-set `mesh-dns` udp (5353, the mesh nameserver), and nothing else.
+     No udp 7448, no web, no management plane, no lateral reach, never P2P.
    - Only `PLATFORM-ADMIN` reaches it, on port-set `shell` (tcp 22). `INFRA` does not.
    - Placed by the membership declaration (`exact: [<P>-PEERING-EDGE]`), never minted: the portal
      enrollment enum does not carry it, so re-deriving the box's groups from its enrollment class
@@ -56,13 +59,17 @@ on a goatnet with several substrate hosts, `INFRA:7447` is several routers.
 3. **Rules, one way, `bidirectional: false`**, in the deployment's rule intents for each scope
    whose edge is a mesh peer:
    - `peering-edge → fabric-core` tcp, port-set `fabric`;
+   - `peering-edge → infra (mesh dns only)` udp, port-set `mesh-dns`, the shape of
+     `breakglass → infra (mesh dns only)`;
    - `platform-admin → peering-edge` tcp, port-set `shell`.
-   No new port set: both arms exist.
-4. **The edge dials the core router by an address that needs no mesh DNS** (the router's mesh
-   address, which its certificate carries), because mesh DNS is a reach the class does not hold.
-5. **Assertions** (ADR 1126) per scope that declares the class: the edge reaches `FABRIC-CORE:7447`;
-   it reaches nothing else on `FABRIC-CORE` (443, 53, 5353, 22, udp 7448) and nothing on `INFRA`,
-   any gear class, any person group, `P2P`, `POD` or `MOON`; `PLATFORM-ADMIN` reaches it on 22 and
+   No new port set: all three arms exist.
+4. **The edge dials the core router by its mesh name**, resolved through the mesh nameserver on
+   udp 5353. Resolving a name reaches no service: the only service port the class opens is
+   `FABRIC-CORE:7447`.
+5. **Assertions** (ADR 1126) per scope that declares the class: the edge reaches `FABRIC-CORE:7447`
+   and `INFRA` udp 5353; it reaches nothing else on `FABRIC-CORE` (tcp 443, 53, 5353, 22; udp 7448,
+   53), no tcp port, no other udp port and no icmp on `INFRA`, and nothing on any gear class, any
+   person group, `P2P`, `POD` or `MOON`; `PLATFORM-ADMIN` reaches it on 22 and
    on nothing else; no other group (including `INFRA` and `P2P`) reaches it.
 
 ## Alternatives considered
@@ -91,7 +98,7 @@ the change is a narrowing.
 ## Assessor view (SCA-R)
 
 Least privilege for the one host trusting an external root: one outbound service port to one
-named destination, one administrative inbound port for privileged users (AC-4, AC-6, AC-17,
+named destination, name resolution on the mesh nameserver, one administrative inbound port for privileged users (AC-4, AC-6, AC-17,
 CM-7). Declared in version control, generated, asserted on each change and against live state
 (CM-3, CA-7).
 
