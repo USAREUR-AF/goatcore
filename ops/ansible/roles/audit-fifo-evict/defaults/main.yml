@@ -75,9 +75,12 @@ audit_fifo_evict_secret_envvar: "{{ site_id | upper | replace('-', '_') }}_AUDIT
 
 audit_fifo_evict_endpoint: "http://127.0.0.1:9000"
 audit_fifo_evict_dir: /opt/audit-fifo-evict
-# An explicit, refused sentinel until a reviewed accessible multi-arch client
-# digest is available. Replace it and append the matching ledger entry together.
-audit_fifo_evict_mc_image: "minio/mc:RELEASE.2024-10-29T15-34-59Z@sha256:PENDING"
+# The MinIO client the role runs with `--entrypoint mc`: the same Chainguard
+# image and digest the minio role pins as minio_mc_image (amd64 + arm64 index).
+# minio/mc is no longer published on Docker Hub, so a tag-only pin there cannot
+# be pulled by a host that has not cached it. Change it with a ledger row in
+# deploy-history.yml.
+audit_fifo_evict_mc_image: "cgr.dev/chainguard/minio-client:latest-dev@sha256:9dc099d7951b8e1b257042713a3b1bfbf231fb21dc60455c6c349a29d2b42ad9"
 # node_exporter textfile dir differs per goatnet — declare it with the host.
 audit_fifo_evict_textfile_dir: /var/lib/node_exporter/textfile_collector
 

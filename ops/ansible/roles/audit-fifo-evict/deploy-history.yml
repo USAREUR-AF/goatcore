@@ -14,3 +14,11 @@ history:
       sentinel before installation. Supply a verified multi-architecture client
       pin and its ledger row together; add a connection map only for an actual
       authorized deployment. Deleted versions cannot be restored by code rollback.
+  - sha: 9dc099d7951b
+    image: "cgr.dev/chainguard/minio-client:latest-dev@sha256:9dc099d7951b8e1b257042713a3b1bfbf231fb21dc60455c6c349a29d2b42ad9"
+    pr: null
+    merged_at: null
+    summary: >-
+      First deployable client pin: the Chainguard minio-client index (amd64 and
+      arm64) the minio role already pins. Measured on an arm64 host: runs as
+      `--entrypoint mc`, and `mc rm` offers --bypass for GOVERNANCE retention.
