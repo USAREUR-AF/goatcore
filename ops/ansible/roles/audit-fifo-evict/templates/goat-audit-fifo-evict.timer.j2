@@ -1,0 +1,11 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Measure the audit bucket every {{ audit_fifo_evict_interval }} and evict oldest-first at the high-water mark
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec={{ audit_fifo_evict_interval }}
+Persistent=true
+
+[Install]
+WantedBy=timers.target

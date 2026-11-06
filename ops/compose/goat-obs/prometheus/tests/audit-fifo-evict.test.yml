@@ -1,0 +1,146 @@
+# promtool test rules ops/compose/goat-obs/prometheus/tests/audit-fifo-evict.test.yml
+#
+# Two jobs. First, the fitness test that obs_rule_files_all demands: on a
+# goatnet that runs no evictor, none of these alerts may fire. Three rule files
+# have reached main unable to fire because nothing enabled them; the opposite
+# failure — a file that fires everywhere it is enabled — is why that list is
+# explicit, so prove silence on no input.
+#
+# Second, the conditions themselves, anchored on numbers measured on a
+# goatnet whose bucket hit its quota:
+#   quota 330 GiB = 354334801920 bytes
+#   usage at the wall 300.1 GiB = 322240348160 bytes (0.91 of quota)
+#   that is the state in which MinIO refused every audit write
+rule_files:
+  - ../rules/audit-fifo-evict.yml
+
+evaluation_interval: 1m
+
+tests:
+  # 1. No evictor anywhere: every alert silent.
+  - interval: 1m
+    input_series: []
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: AuditMiddleTierEviction
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: AuditEvictionRateAnomalous
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: AuditBucketAtQuota
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: AuditEvictorStale
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: AuditEvictorCannotMeasure
+        exp_alerts: []
+
+  # 2. A healthy evictor below the high-water mark: silent.
+  - interval: 1m
+    input_series:
+      - series: 'goat_audit_evict_bucket_used_bytes{bucket="audit-integrity"}'
+        values: '283467841536+0x60'      # 0.80 of a 330 GiB quota
+      - series: 'goat_audit_evict_quota_bytes{bucket="audit-integrity"}'
+        values: '354334801920+0x60'
+      - series: 'goat_audit_evict_objects_total{bucket="audit-integrity"}'
+        values: '0+0x60'
+      - series: 'goat_audit_evict_last_result{bucket="audit-integrity"}'
+        values: '0+0x60'
+    alert_rule_test:
+      - eval_time: 45m
+        alertname: AuditBucketAtQuota
+        exp_alerts: []
+      - eval_time: 45m
+        alertname: AuditMiddleTierEviction
+        exp_alerts: []
+
+  # 3. The measured state: at the wall, eviction NOT relieving it.
+  #    This is the alert whose absence let audit ingest fail for two days.
+  - interval: 1m
+    input_series:
+      - series: 'goat_audit_evict_bucket_used_bytes{bucket="audit-integrity"}'
+        values: '346000000000+0x60'      # 0.976 of quota
+      - series: 'goat_audit_evict_quota_bytes{bucket="audit-integrity"}'
+        values: '354334801920+0x60'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: AuditBucketAtQuota
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              component: audit-middle-tier
+              bucket: audit-integrity
+            exp_annotations:
+              summary: "CRITICAL: audit bucket audit-integrity at 97.65% of quota — writes are about to be refused"
+              description: |
+                Eviction has not brought the bucket below its high-water mark.
+                At the wall MinIO refuses every audit write and the goatnet loses
+                its audit record silently — the producer logs the failure, nothing
+                else does. Check goat-audit-fifo-evict.service for why it is not
+                keeping up before raising the quota.
+
+  # 4. The evictor stopped running: the preventive service going quiet is
+  #    itself the condition to catch.
+  - interval: 1m
+    input_series:
+      - series: 'goat_audit_evict_last_run_timestamp_seconds{bucket="audit-integrity"}'
+        values: '0+0x180'
+    alert_rule_test:
+      - eval_time: 90m
+        alertname: AuditEvictorStale
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: audit-middle-tier
+              bucket: audit-integrity
+            exp_annotations:
+              summary: "audit FIFO evictor has not completed a pass in over an hour"
+              description: |
+                goat-audit-fifo-evict.timer should run every 15 minutes. While it
+                is not running, nothing stands between the bucket and the quota
+                wall. Check: systemctl status goat-audit-fifo-evict.timer
+
+  # A two-prefix pass sampled repeatedly must not become thirty evictions.
+  - interval: 1m
+    input_series:
+      - series: 'goat_audit_evict_objects_total{bucket="fixture"}'
+        values: '2+0x60'
+      - series: 'goat_audit_evict_hour_prefixes_total{bucket="fixture"}'
+        values: '0 2+0x60'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: AuditEvictionRateAnomalous
+        exp_alerts: []
+
+  # Actual cumulative increments still detect more than 24 touched hours.
+  - interval: 1m
+    input_series:
+      - series: 'goat_audit_evict_hour_prefixes_total{bucket="fixture"}'
+        values: '0+1x60'
+    alert_rule_test:
+      - eval_time: 45m
+        alertname: AuditEvictionRateAnomalous
+        exp_alerts:
+          - exp_labels: {severity: warning, component: audit-middle-tier, bucket: fixture}
+            exp_annotations:
+              summary: "audit eviction is running constantly on fixture (45 hour-prefixes in 6h)"
+              description: |
+                More than a day of audit history has been evicted in six hours.
+                Two causes worth separating before raising the quota: a producer
+                writing far more than planned, and a garbage flood squeezing out
+                real records. Check the write-rate by producer first.
+
+  - interval: 1m
+    input_series:
+      - series: 'goat_audit_evict_last_result{bucket="fixture"}'
+        values: '3+0x30'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: AuditEvictorOperationFailed
+        exp_alerts:
+          - exp_labels: {severity: warning, component: audit-middle-tier, bucket: fixture}
+            exp_annotations:
+              summary: "audit FIFO evictor operation failed on fixture"
+              description: "Version deletion, state persistence or trail publication failed. Inspect the service and pending-pass journal before another destructive pass."

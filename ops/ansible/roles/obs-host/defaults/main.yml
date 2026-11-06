@@ -222,6 +222,13 @@ obs_rule_files:
   # all six. That is the fitness test for being in this list; the reason
   # tls-cert-renewal.yml is excluded below is that it would fail it.
   - audit-subscriber.yml
+  # Audit middle-tier FIFO eviction. Enabled here deliberately and at the same
+  # time as the rule file: see the note above — a merged rule file that nobody
+  # added to this list cannot fire, and that has happened three times. Passes
+  # the same fitness test: no absent() guards, every expr a positive condition
+  # over series that simply do not exist on a goatnet without an evictor, and
+  # tests/audit-fifo-evict.test.yml proves silence on empty input.
+  - audit-fifo-evict.yml
   # Signal-plane amplification: peers retrying sessions to peers that are not
   # there. Added and it is the THIRD file to arrive here for the
   # identical reason — the rules were written, reviewed and merged, and were
