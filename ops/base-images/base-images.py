@@ -9,8 +9,8 @@ that line is the role's image. The files in this repository name images
 anyone may pull and redistribute. An environment that wants other bases (a
 hardened vendor catalogue, its own mirror) puts its own file at the same path
 in its overlay; the overlay is copied over this tree before a build, so the
-build reads the overlay's line instead. Design: docs/design/base-images.md.
-How to do it for your own environment: docs/operations/build-on-your-own-base-images.md.
+build reads the overlay's line instead. Design: goatcore docs/design/base-images.md.
+How to do it for your own environment: goatcore docs/operations/build-on-your-own-base-images.md.
 
   list   [--root DIR]
          Print each role, its build argument and its image.
@@ -343,7 +343,7 @@ def cmd_check(root):
         if subscription(img):
             fail.append(f"ROLE ON A SUBSCRIPTION REGISTRY  {path}\n    {img}\n"
                         "    A public default must be an image anyone may pull and redistribute.\n"
-                        "    Put this line in your overlay's copy of the file instead (docs/operations/build-on-your-own-base-images.md).")
+                        "    Put this line in your overlay's copy of the file instead (goatcore docs/operations/build-on-your-own-base-images.md).")
     args = by_arg(roles)
     allow = load_allow(root)
     seen = set()
@@ -396,7 +396,7 @@ def cmd_check(root):
             fail.append(f"STALE ALLOW  {ALLOW}:{n}\n    {path} {key}\n    This reference is gone. Delete the line; the list only shrinks.")
     if fail:
         print("\n".join(fail))
-        print(f"\n{len(fail)} problem(s). Design: docs/design/base-images.md")
+        print(f"\n{len(fail)} problem(s). Design: goatcore docs/design/base-images.md")
         return 1
     print(f"ok: {len(roles)} role(s), every one pinned and public; every Dockerfile names its bases through a role; "
           f"{len(allow)} waived reference(s)")
