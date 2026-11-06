@@ -10,7 +10,7 @@ name: zenoh-pqc-fips-image
 #   - build-time: fips-probe runs inside the builder (module enters FIPS
 #     mode; X25519MLKEM768 offered fips=true + preferred; negotiates on
 #     loopback; classical ring client down-negotiates to P-256).
-#   - smoke (here, per-arch): boot the image with the full baked plugin set
+#   - smoke (ops/zenoh/pqc-image/smoke-fips.sh, per-arch): boot the image with the full baked plugin set
 #     over a real TLS listener; assert the "goat FIPS" boot marker, the
 #     F-122/F-136 plugin-ABI class, the rest plugin answering, AND a live
 #     fips-probe --connect handshake negotiating X25519MLKEM768 against the
@@ -100,59 +100,13 @@ jobs:
           load: true
           tags: zenoh-pqc-fips-probe:smoke-${{ matrix.arch }}
           cache-from: type=gha,scope=zenoh-pqc-fips-${{ matrix.arch }}
+      # The smoke is a script so a pipeline that builds this image from the
+      # same tree (`sh <script> <image>`) runs the same assertions; without
+      # PROBE_IMAGE the script builds the probe stage itself.
       - name: Smoke — FIPS boot marker + plugin ABI + live X25519MLKEM768
-        run: |
-          set -euo pipefail
-          # Throwaway P-256 server cert (same curve as the goat CA chain).
-          mkdir -p /tmp/certs
-          openssl ecparam -name prime256v1 -genkey -noout -out /tmp/certs/key.pem
-          # basicConstraints CA:FALSE — `req -x509` defaults to CA:TRUE and
-          # webpki refuses a CA cert as end-entity (CaUsedAsEndEntity).
-          openssl req -new -x509 -key /tmp/certs/key.pem -out /tmp/certs/cert.pem \
-            -days 2 -subj "/CN=localhost" \
-            -addext "subjectAltName=DNS:localhost,IP:127.0.0.1" \
-            -addext "basicConstraints=critical,CA:FALSE" \
-            -addext "keyUsage=digitalSignature" \
-            -addext "extendedKeyUsage=serverAuth"
-          chmod 644 /tmp/certs/*
-          cat > /tmp/smoke.json5 <<'EOF'
-          {
-            mode: "router",
-            listen: { endpoints: ["tls/0.0.0.0:7447"] },
-            transport: { link: { tls: {
-              listen_certificate: "/certs/cert.pem",
-              listen_private_key: "/certs/key.pem",
-            } } },
-            plugins_loading: { enabled: true, search_dirs: ["/"] },
-            plugins: {
-              rest: { http_port: 8000 },
-              storage_manager: {
-                backend_search_dirs: ["/opt/zenoh/plugins-baked"],
-                volumes: { rocksdb: {} },
-                storages: { smoke: { key_expr: "smoke/**", volume: { id: "rocksdb", dir: "smoke", create_db: true } } },
-              },
-            },
-          }
-          EOF
-          docker run -d --name smoke --network host \
-            -v /tmp/smoke.json5:/smoke.json5:ro \
-            -v /tmp/certs:/certs:ro \
-            zenoh-pqc-fips:smoke-${{ matrix.arch }} -c /smoke.json5
-          sleep 8
-          docker logs smoke 2>&1 | tee /tmp/smoke.log
-          if grep -qi 'compatibility mismatch\|Cannot spawn\|panic' /tmp/smoke.log; then
-            echo "::error::plugin ABI or boot failure"; exit 1
-          fi
-          grep -q 'goat FIPS: AWS-LC FIPS module active' /tmp/smoke.log \
-            || { echo "::error::FIPS boot marker missing"; exit 1; }
-          # rest plugin answering == zenohd + plugins all live
-          curl -sSf http://127.0.0.1:8000/@/local/router | head -c 300; echo
-          # THE assertion: a live handshake against the booted zenohd
-          # negotiates the hybrid PQ group under the FIPS provider.
-          docker run --rm --network host -v /tmp/certs:/certs:ro \
-            zenoh-pqc-fips-probe:smoke-${{ matrix.arch }} \
-            --connect 127.0.0.1:7447 localhost /certs/cert.pem
-          docker rm -f smoke
+        env:
+          PROBE_IMAGE: zenoh-pqc-fips-probe:smoke-${{ matrix.arch }}
+        run: sh ops/zenoh/pqc-image/smoke-fips.sh zenoh-pqc-fips:smoke-${{ matrix.arch }}
       - name: Push by digest (${{ matrix.arch }})
         if: github.event_name != 'pull_request'
         id: push
