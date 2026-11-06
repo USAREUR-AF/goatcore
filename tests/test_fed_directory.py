@@ -7,8 +7,9 @@ reports compatibility. It is advisory: every failure is a warning and exit 0.
 
 A stand-in server plays both the directory (the saltlick write rule: a request
 statement signed under the presented key, first write claims the name, offers in a
-package-form entry refused with 422) and the static hosts the packages are served
-from, so the step runs without a network.
+package-form entry refused with 422; a hosted package or CA needs an entry and the
+entry's key) and the static hosts the packages are served from, so the step runs
+without a network.
 """
 import base64
 import contextlib
@@ -18,6 +19,7 @@ import importlib.util
 import io
 import json
 import shutil
+import subprocess
 import threading
 from pathlib import Path
 
@@ -41,16 +43,33 @@ PUB = {s: (VEC / f"testkeys/{s}.public.b64").read_text().strip() for s in ("xaa"
 class Server(http.server.BaseHTTPRequestHandler):
     entries: dict = {}
     files: dict = {}
+    hosted: dict = {}
     refuse_with = None
 
     def log_message(self, *a):
         pass
 
     def do_PUT(self):
-        sid = self.path.rsplit("/", 1)[-1]
         body = self.rfile.read(int(self.headers["Content-Length"]))
-        code, reply = self.put(sid, body)
+        rest = self.path.removeprefix("/v1/parties/")
+        if "/" in rest:
+            code, reply = self.put_hosted(rest, body)
+        else:
+            code, reply = self.put(rest, body)
         self.reply(code, reply)
+
+    def put_hosted(self, resource, body):
+        sid, kind = resource.split("/", 1)
+        if sid not in Server.entries:
+            return 409, b"publish the entry first"
+        key = self.headers["X-Saltlick-Key"]
+        if Server.entries[sid][1] != key:
+            return 403, b"not the bound key"
+        stmt = d.request_statement("PUT", resource, body, key)
+        if not d.verify(base64.b64decode(key), stmt, base64.b64decode(self.headers["X-Saltlick-Signature"])):
+            return 403, b"bad request signature"
+        Server.hosted[resource] = body
+        return 201, b"{}"
 
     def put(self, sid, body):
         if Server.refuse_with:
@@ -70,7 +89,10 @@ class Server(http.server.BaseHTTPRequestHandler):
 
     def do_GET(self):
         sid = self.path.rsplit("/", 1)[-1]
-        if self.path in Server.files:
+        rest = self.path.removeprefix("/v1/parties/")
+        if rest in Server.hosted:
+            self.reply(200, Server.hosted[rest], {"X-Saltlick-Bound-Key": Server.entries[rest.split("/")[0]][1]})
+        elif self.path in Server.files:
             self.reply(200, Server.files[self.path])
         elif self.path.startswith("/v1/parties/") and sid in Server.entries:
             body, key = Server.entries[sid]
@@ -89,7 +111,7 @@ class Server(http.server.BaseHTTPRequestHandler):
 
 @pytest.fixture
 def server():
-    Server.entries, Server.files, Server.refuse_with = {}, {}, None
+    Server.entries, Server.files, Server.hosted, Server.refuse_with = {}, {}, {}, None
     srv = http.server.HTTPServer(("127.0.0.1", 0), Server)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     yield f"http://127.0.0.1:{srv.server_address[1]}"
@@ -203,7 +225,7 @@ def test_a_refusing_directory_is_a_warning(server):
 def test_an_unreachable_directory_is_a_warning():
     rc, out = run("--url", "http://127.0.0.1:9", "--ours", XAA, "--their-id", "xab", "--timeout", "2")
     assert rc == 0
-    assert "FED_PACKAGE_URL is not set" in out and "directory unreachable" in out
+    assert "FED_SIGNING_KEY is not set" in out and "directory unreachable" in out
 
 
 def entry(sid, td, transports, fips=True, pqc=True, inbound=None):
@@ -281,3 +303,145 @@ def test_driver_phase_5_with_a_dead_directory_still_stops_cleanly(tmp_path):
     r = driver(tmp_path, FED_DIRECTORY_URL="http://127.0.0.1:9", FED_COUNTERPARTY_ID="xab")
     assert r.returncode == 0, r.stderr
     assert "WARN" in r.stdout and "OPERATOR STEP" in r.stdout
+
+
+# ---------------------------------------------------------------------------
+# A party with no public host: the directory hosts its package and CA.
+# ---------------------------------------------------------------------------
+
+needs_openssl = pytest.mark.skipif(shutil.which("openssl") is None, reason="no openssl CLI to mint a test CA")
+
+
+def mint_ca(tmp_path, name):
+    """A self-signed CA certificate, PEM, and its `sha256:` fingerprint over the DER."""
+    key, crt = tmp_path / f"{name}.key", tmp_path / f"{name}.crt"
+    subprocess.run(["openssl", "req", "-x509", "-newkey", "ed25519", "-nodes", "-subj", f"/CN={name} test CA",
+                    "-days", "2", "-keyout", str(key), "-out", str(crt),
+                    "-addext", "basicConstraints=critical,CA:TRUE"], check=True, capture_output=True)
+    pem = crt.read_bytes()
+    return pem, d.sha256_of(d.pem_certificates(pem)[0])
+
+
+def package_with_ca(tmp_path, sid, fingerprint):
+    """The conformance package for sid, its ca_fingerprint replaced and re-signed by sid's test key."""
+    src = XAA if sid == "xaa" else XAB
+    pkg = {k: v for k, v in json.loads(src.read_bytes()).items() if k != "signature"}
+    pkg["identity"] = dict(pkg["identity"], ca_fingerprint=fingerprint)
+    seed = d.load_seed(str(KEY[sid]))
+    raw = d.canonical(dict(pkg, signature=d.b64(d.sign(seed, d.canonical(pkg)))))
+    p = tmp_path / f"{sid}.canonical.json"
+    p.write_bytes(raw)
+    return p
+
+
+@needs_ed25519
+@needs_openssl
+def test_without_a_package_url_the_directory_hosts_our_package_and_ca(server, tmp_path):
+    ca, fp = mint_ca(tmp_path, "xaa")
+    other, _ = mint_ca(tmp_path, "other")
+    bundle = tmp_path / "bundle.pem"
+    bundle.write_bytes(other + ca)
+    ours = package_with_ca(tmp_path, "xaa", fp)
+    rc, out = run("--url", server, "--ours", ours, "--key", KEY["xaa"], "--ca", bundle, "--work", tmp_path)
+    assert rc == 0, out
+    pointer = json.loads(Server.entries["xaa"][0])
+    assert pointer["package_url"] == f"{server}/v1/parties/xaa/package"
+    assert pointer["package_sha256"] == d.sha256_of(ours.read_bytes())
+    assert Server.hosted["xaa/package"] == ours.read_bytes()
+    # Only the anchor the package names, never the rest of the bundle.
+    assert d.pem_certificates(Server.hosted["xaa/ca"]) == d.pem_certificates(ca)
+    assert "uploaded `xaa`'s package to the directory" in out
+    assert f"our CA fingerprint, to read aloud: {d.fingerprint_groups(fp)}" in out
+    assert "refused" not in out and "not uploaded" not in out
+
+
+@needs_ed25519
+@needs_openssl
+def test_the_ca_defaults_to_the_profiles_ca_roots(server, tmp_path, monkeypatch):
+    ca, fp = mint_ca(tmp_path, "xaa")
+    ctx = tmp_path / "goat/contexts/default"
+    ctx.mkdir(parents=True)
+    (ctx / "ca-roots.pem").write_bytes(ca)
+    monkeypatch.setenv("GOAT_PROFILE_DIR", str(tmp_path / "goat"))
+    monkeypatch.delenv("GOAT_CONTEXT", raising=False)
+    rc, out = run("--url", server, "--ours", package_with_ca(tmp_path, "xaa", fp), "--key", KEY["xaa"])
+    assert rc == 0 and d.pem_certificates(Server.hosted["xaa/ca"]) == d.pem_certificates(ca), out
+
+
+@needs_ed25519
+@needs_openssl
+def test_a_ca_that_is_not_the_packages_anchor_is_not_uploaded(server, tmp_path, monkeypatch):
+    monkeypatch.setenv("GOAT_PROFILE_DIR", str(tmp_path / "nowhere"))
+    _, fp = mint_ca(tmp_path, "xaa")
+    wrong, _ = mint_ca(tmp_path, "wrong")
+    (tmp_path / "wrong.pem").write_bytes(wrong)
+    ours = package_with_ca(tmp_path, "xaa", fp)
+    rc, out = run("--url", server, "--ours", ours, "--key", KEY["xaa"], "--ca", tmp_path / "wrong.pem")
+    assert rc == 0 and "xaa/ca" not in Server.hosted
+    assert "has our package's identity.ca_fingerprint" in out
+    assert Server.hosted["xaa/package"] == ours.read_bytes()
+    rc, out = run("--url", server, "--ours", ours, "--key", KEY["xaa"])
+    assert rc == 0 and "FED_CA_CERT is not set" in out
+
+
+@needs_ed25519
+@needs_openssl
+def test_their_ca_is_fetched_checked_placed_and_read_back(server, tmp_path):
+    ca, fp = mint_ca(tmp_path, "xab")
+    (tmp_path / "xab-ca.pem").write_bytes(ca)
+    theirs_pkg = package_with_ca(tmp_path, "xab", fp)
+    run("--url", server, "--ours", theirs_pkg, "--key", KEY["xab"], "--ca", tmp_path / "xab-ca.pem")
+    work = tmp_path / "work"
+    work.mkdir()
+    rc, out = run("--url", server, "--ours", XAA, "--their-id", "xab", "--theirs", work / "theirs.canonical.json",
+                  "--work", work)
+    assert rc == 0, out
+    assert "PASS    package digest" in out and "PASS    CA fingerprint" in out
+    assert (work / "theirs.canonical.json").read_bytes() == theirs_pkg.read_bytes()
+    assert d.pem_certificates((work / "theirs-ca.pem").read_bytes()) == d.pem_certificates(ca)
+    assert f"their verifying key (as the directory has it; confirm it, then record it in the keyring): " \
+           f"{d.key_groups(PUB['xab'])}" in out
+    assert f"their CA fingerprint:  {d.fingerprint_groups(fp)}" in out
+
+
+@needs_ed25519
+@needs_openssl
+def test_a_ca_that_does_not_match_their_package_is_not_placed(server, tmp_path):
+    _, fp = mint_ca(tmp_path, "xab")
+    wrong, _ = mint_ca(tmp_path, "wrong")
+    run("--url", server, "--ours", package_with_ca(tmp_path, "xab", fp), "--key", KEY["xab"])
+    Server.hosted["xab/ca"] = wrong
+    work = tmp_path / "work"
+    work.mkdir()
+    rc, out = run("--url", server, "--ours", XAA, "--their-id", "xab", "--work", work)
+    assert rc == 0 and "FAIL    CA fingerprint" in out
+    assert not (work / "theirs-ca.pem").exists()
+    assert "their CA fingerprint" not in out
+
+
+@needs_ed25519
+def test_a_party_hosting_no_ca_is_a_warning(server, tmp_path):
+    serve("xab", XAB)
+    run("--url", server, "--ours", XAB, "--package-url", f"{server}/packages/xab.json", "--key", KEY["xab"])
+    rc, out = run("--url", server, "--ours", XAA, "--their-id", "xab", "--work", tmp_path)
+    assert rc == 0 and "WARN    CA fetch" in out and not (tmp_path / "theirs-ca.pem").exists()
+
+
+@needs_ed25519
+@needs_openssl
+def test_driver_phase_5_without_a_package_url_uploads_and_fetches(server, tmp_path):
+    ca, fp = mint_ca(tmp_path, "xab")
+    (tmp_path / "xab-ca.pem").write_bytes(ca)
+    run("--url", server, "--ours", package_with_ca(tmp_path, "xab", fp), "--key", KEY["xab"], "--ca", tmp_path / "xab-ca.pem")
+    work = tmp_path / "work"
+    work.mkdir()
+    ours_ca, ours_fp = mint_ca(tmp_path, "xaa")
+    (tmp_path / "xaa-ca.pem").write_bytes(ours_ca)
+    (work / "ours.canonical.json").write_bytes(package_with_ca(tmp_path, "xaa", ours_fp).read_bytes())
+    r = driver(work, FED_DIRECTORY_URL=server, FED_COUNTERPARTY_ID="xab", FED_SIGNING_KEY=KEY["xaa"],
+               FED_CA_CERT=tmp_path / "xaa-ca.pem")
+    assert r.returncode == 0, r.stderr
+    assert Server.hosted["xaa/package"] == (work / "ours.canonical.json").read_bytes()
+    assert "xaa/ca" in Server.hosted
+    assert (work / "theirs-ca.pem").exists() and (work / "theirs.canonical.json").exists()
+    assert r.stdout.rstrip().splitlines()[-1].strip().startswith("^ OPERATOR STEP")

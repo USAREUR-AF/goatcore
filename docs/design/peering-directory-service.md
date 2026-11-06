@@ -111,7 +111,7 @@ the digest of that package, until a date, signed by the party itself.
 |---|---|
 | `spec` | `saltlick-pointer/v1` |
 | `sovereign_id` | The party, 2–16 characters of `a-z0-9-`, as in the package |
-| `package_url` | An `https://` address where the party serves its signed package as a static file. The address is the party's own: a public host it runs, outside any mesh |
+| `package_url` | An `https://` address where the party's signed package is served. Either the directory's own `/v1/parties/<id>/package`, or a public host the party runs, outside any mesh |
 | `package_sha256` | `sha256:` and the hex digest of the package's canonical bytes |
 | `expires` | The last day the pointer is valid. The directory serves an expired entry and flags it; it never refuses one |
 | `signature` | Ed25519 over the canonical form without `signature`, by the key that signs the party's package |
@@ -124,22 +124,32 @@ A counterparty looks the party up, fetches the package from `package_url`, check
 sha256 matches `package_sha256`, checks the pointer's and the package's signatures against the
 key it bound out of band, and composes. The directory is not an input to that check.
 
-**`transport_offer`, `data_offer` and `cut` never enter the directory.** They sit in the package
-at the address the pointer names, or move directly between the two parties. A directory holding
-reachability, release sets or accepted limits would be publishing sovereign operational detail to
-everyone who can read it.
+**A party behind NAT needs no host.** The directory keeps two files beside an entry, each
+uploaded under the entry's bound key and served byte for byte:
 
-**A forwarder's address never enters the directory**, for the same reason: it is
+| File | Path | Checked on upload | Checked by the reader |
+|---|---|---|---|
+| The signed package | `/v1/parties/<id>/package` | `federation-package/v1`, `sovereign_id` is the path's, canonical bytes, signature under the bound key | digest against `package_sha256`; signatures against the key bound out of band |
+| The CA certificate | `/v1/parties/<id>/ca` | PEM certificates, each an X.509 CA | SHA-256 of the DER against the package's `identity.ca_fingerprint` |
+
+The driver uploads both, so the package and the CA never travel by mail. The only out-of-band
+act is reading the verifying key and the CA fingerprint aloud (§6.1).
+
+**`transport_offer`, `data_offer` and `cut` never enter a directory entry**, which is what the
+listing reads. They sit in the package at the address the pointer names, whether the directory
+hosts it or the party does, or move directly between the two parties.
+
+**A forwarder's address never enters a directory entry**, for the same reason: it is
 `transport_offer.endpoint`. What two parties do need to learn before building is whether either
 of them can accept inbound traffic, because when neither can, one runs a peering forwarder
 ([`peering-forwarder.md`](peering-forwarder.md), ADR 1218) before its package can be issued.
 **Designed, not built:** a capability `inbound: "direct" | "forwarder" | "none"`, published
 with the other capabilities, which states that fact without saying where the address is.
 
-The package a party serves at `package_url` is the half it would send. That half carries the edge
-endpoint and the cut contact, so a public `package_url` publishes them; a party that will not
-publish them serves its recognition-only package (the always-required blocks) there and sends the
-full half directly.
+The package at `package_url` is the half the party would send. That half carries the edge
+endpoint and the cut contact, so a public `package_url`, the directory's included, publishes them;
+a party that will not publish them serves its recognition-only package (the always-required
+blocks) there and sends the full half directly.
 
 saltlick also accepts the earlier entry form, a recognition-only `federation-package/v1`
 package, and refuses one that carries an offer.
@@ -163,9 +173,9 @@ one of these was missed.
 | Whether an edge accepts inbound traffic | The designed `inbound` capability; until it is built, the listener appears in `transport_offer.listener` |
 | Peering names, certificate names, ingress prefix, republish target | **Derived from the agreement**, never asked for and never chosen by hand |
 
-The one act that stays out of band is **reading the verifying-key fingerprint, and after
-composition the agreement digest, aloud to the counterparty** — group count first, read back.
-The directory replaces neither.
+The one act that stays out of band is **reading the verifying key and the CA fingerprint, and
+after composition the agreement digest, aloud to the counterparty** — group count first, read
+back. The driver prints both in groups of four. The directory replaces none of them.
 
 ### 6.2 The step in the peering driver
 
@@ -173,12 +183,26 @@ The directory replaces neither.
 step when `FED_DIRECTORY_URL` is set (`ops/federation/standup/directory.py`). Before the phase
 stops for the key check, it:
 
-1. confirms our package is served byte for byte at `FED_PACKAGE_URL`;
-2. publishes our pointer, signed with `FED_SIGNING_KEY`;
+1. publishes our pointer, signed with `FED_SIGNING_KEY`. With `FED_PACKAGE_URL` unset it first
+   claims the entry, then uploads our package to `/v1/parties/<us>/package` and names that; set,
+   it confirms our own host serves the package byte for byte and names it;
+2. uploads our CA certificate to `/v1/parties/<us>/ca`: from `FED_CA_CERT`, else the profile's
+   `ca-roots.pem`, only the certificate whose SHA-256 is our `identity.ca_fingerprint`;
 3. looks up `FED_COUNTERPARTY_ID`, fetches their package, checks digest and signatures, and
-   places it where phase 6 reads it when nothing is there yet;
-4. prints a compatibility report from the two packages, one row per fact in §6.1, each PASS,
-   WARN, FAIL or UNKNOWN with its fix.
+   places it where phase 6 reads it when nothing is there yet; fetches their CA, checks it
+   against their `identity.ca_fingerprint`, and places it at `$FED_WORK/theirs-ca.pem` when
+   nothing is there yet;
+4. prints their verifying key and CA fingerprint in groups of four for the voice call, and a
+   compatibility report from the two packages, one row per fact in §6.1, each PASS, WARN, FAIL or
+   UNKNOWN with its fix.
+
+| A party sets | Own public host | No public host |
+|---|---|---|
+| `FED_DIRECTORY_URL` | yes | yes |
+| `FED_COUNTERPARTY_ID` | yes | yes |
+| `FED_SIGNING_KEY` | yes | yes |
+| `FED_PACKAGE_URL` | its host's package address | unset |
+| `FED_CA_CERT` | when the CA is not in the profile's `ca-roots.pem` | same |
 
 Every directory failure is a warning. Unset, phase 5 is unchanged.
 

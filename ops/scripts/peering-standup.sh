@@ -39,14 +39,21 @@
 #                         fetches their package and prints a compatibility report
 #                         before it stops. Advisory: a directory failure is a
 #                         warning. Unset, phase 5 is unchanged.
-#     FED_PACKAGE_URL     where our package is served (https, a static file on a
-#                         public host); the pointer we publish names it
-#     FED_COUNTERPARTY_ID the counterparty's sovereign_id, to look them up
+#     FED_PACKAGE_URL     optional: where our own public host serves our package
+#                         (https, a static file). Unset, phase 5 uploads our
+#                         package to the directory and the pointer names that, so
+#                         a party behind NAT needs no public host
+#     FED_CA_CERT         our CA certificate (PEM) to upload to the directory;
+#                         default the profile's ca-roots.pem. Only the certificate
+#                         whose SHA-256 is our identity.ca_fingerprint is sent
+#     FED_COUNTERPARTY_ID the counterparty's sovereign_id, to look them up; phase 5
+#                         fetches their package and CA (to $FED_WORK/theirs-ca.pem)
 #
-# WHAT THIS DOES NOT DO. It never sends anything to the counterparty and never
-# accepts anything from them automatically. The two exchanges — our package out,
-# their package in — are phase 5, and phase 5 is MANUAL by design: the channel
-# is theirs to choose and the corroboration is theirs to perform.
+# WHAT THIS DOES NOT DO. It never trusts anything from the counterparty on its
+# own. The two exchanges — our package and CA out, theirs in — are phase 5, either
+# through the directory or by a channel the two parties choose, and phase 5 is
+# MANUAL by design: the corroboration (reading the key and CA fingerprint aloud)
+# is theirs to perform.
 set -uo pipefail
 # Hold the Mac awake for the whole run (#2122; ops/scripts/lib/keep-awake.sh).
 _keep_awake="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/keep-awake.sh"
@@ -63,7 +70,7 @@ while [ $# -gt 0 ]; do
     --to)         TO="$2"; shift 2 ;;
     --as)         AS="$2"; shift 2 ;;
     --edge-group) EDGE_GROUP="$2"; shift 2 ;;
-    -h|--help)    sed -n '2,49p' "$0"; exit 0 ;;
+    -h|--help)    sed -n '2,56p' "$0"; exit 0 ;;
     -*)           echo "unknown flag $1" >&2; exit 2 ;;
     *)            [ -z "$PEERING" ] && PEERING="$1"; shift ;;
   esac
@@ -119,6 +126,7 @@ step() {   # step <n> <kind> <label> <command...>
       if [ "$n" = 5 ] && [ -n "$DIRECTORY_STEP" ]; then
         python3 "$REPO/ops/federation/standup/directory.py" --url "$FED_DIRECTORY_URL" --ours "$OURS" \
           ${FED_PACKAGE_URL:+--package-url "$FED_PACKAGE_URL"} ${FED_SIGNING_KEY:+--key "$FED_SIGNING_KEY"} \
+          ${FED_CA_CERT:+--ca "$FED_CA_CERT"} \
           --theirs "$FED_COUNTERPARTY" ${FED_COUNTERPARTY_ID:+--their-id "$FED_COUNTERPARTY_ID"} \
           --keyring "$FED_KEYRING" --work "$FED_WORK" || true
       fi
@@ -203,7 +211,7 @@ step 4 T "lint our package against the spec" \
 # characters disables the step rather than reach a command line.
 DIRECTORY_STEP=""
 if [ -n "${FED_DIRECTORY_URL:-}" ]; then
-  case "$FED_DIRECTORY_URL${FED_PACKAGE_URL:-}${FED_COUNTERPARTY_ID:-}" in
+  case "$FED_DIRECTORY_URL${FED_PACKAGE_URL:-}${FED_COUNTERPARTY_ID:-}${FED_CA_CERT:-}" in
     *[!A-Za-z0-9._:/?=\&%~+@-]*) DIRECTORY_STEP="" ;;
     *) DIRECTORY_STEP=1 ;;
   esac
@@ -211,18 +219,21 @@ fi
 if [ -n "$DIRECTORY_STEP" ]; then
   DIRECTORY_TEXT="     Directory step (advisory; grants nothing), run before this stop:
        python3 '$REPO/ops/federation/standup/directory.py' --url '$FED_DIRECTORY_URL' --ours '$OURS'${FED_PACKAGE_URL:+ --package-url '$FED_PACKAGE_URL'} --their-id '${FED_COUNTERPARTY_ID:-<unset>}'
-     It publishes our pointer, fetches theirs, checks digest and signatures,
-     places their package if none is on disk, and prints a compatibility report."
+     It uploads our package (unless FED_PACKAGE_URL names our own host) and CA,
+     publishes our pointer, fetches their package and CA, checks digest,
+     signatures and CA fingerprint, places what is not on disk, and prints the
+     key and fingerprint to read back and a compatibility report."
 elif [ -n "${FED_DIRECTORY_URL:-}" ]; then
-  DIRECTORY_TEXT="     FED_DIRECTORY_URL, FED_PACKAGE_URL or FED_COUNTERPARTY_ID holds characters
-     outside a plain URL; the directory step is off."
+  DIRECTORY_TEXT="     FED_DIRECTORY_URL, FED_PACKAGE_URL, FED_COUNTERPARTY_ID or FED_CA_CERT holds
+     characters outside a plain URL; the directory step is off."
 else
-  DIRECTORY_TEXT="     Optional: set FED_DIRECTORY_URL, FED_PACKAGE_URL and FED_COUNTERPARTY_ID
-     to publish our pointer to a peering directory, fetch theirs and print a
-     compatibility report first (advisory; grants nothing)."
+  DIRECTORY_TEXT="     Optional: set FED_DIRECTORY_URL, FED_COUNTERPARTY_ID and FED_SIGNING_KEY to
+     exchange packages and CA certificates through a peering directory instead
+     (advisory; grants nothing; no public host needed)."
 fi
 step 5 MANUAL "exchange packages, and bind their verifying key out of band" \
-  "Send $OURS and our CA certificate to the counterparty, with $FED_WORK/ours.spiffe-bundle if phase 2 wrote one.
+  "Send $OURS and our CA certificate to the counterparty, with $FED_WORK/ours.spiffe-bundle if phase 2 wrote one
+     (with FED_DIRECTORY_URL set, phase 5 moves the package and CA through the directory).
      Obtain theirs and place them at: $FED_COUNTERPARTY
        $FED_WORK/theirs-ca.pem
        $FED_WORK/theirs.spiffe-bundle

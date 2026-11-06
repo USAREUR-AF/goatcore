@@ -5,17 +5,25 @@ Run only when FED_DIRECTORY_URL is set. The directory holds pointers, not
 permissions: an entry says where a party's signed package can be fetched and the
 sha256 of that package, until a date, signed by the party itself. This step:
 
-  1. checks that our package is served, byte for byte, at FED_PACKAGE_URL — a
-     static file behind TLS on a public host, never on a mesh;
-  2. publishes our pointer entry (sovereign_id, package_url, package_sha256,
-     expires, signature) signed with the key that signed our package;
+  1. publishes our pointer entry (sovereign_id, package_url, package_sha256,
+     expires, signature) signed with the key that signed our package. With
+     FED_PACKAGE_URL set, the pointer names our own public host, which must
+     serve our package byte for byte. Unset, the directory hosts it: we upload
+     our package to <directory>/v1/parties/<us>/package and the pointer names
+     that, so a party behind NAT needs no public host;
+  2. uploads our CA certificate to <directory>/v1/parties/<us>/ca: the
+     certificate in FED_CA_CERT, else in the profile's ca-roots.pem, whose
+     SHA-256 is our package's identity.ca_fingerprint;
   3. looks up the counterparty's pointer, fetches their package from the address
      it gives, checks the digest, checks both signatures against the key bound
      out of band when the keyring has it, and places the package where phase 6
-     reads it if nothing is there yet;
-  4. prints a compatibility report computed from the two packages — one row per
-     fact a partner would otherwise be asked by message, PASS / WARN / FAIL /
-     UNKNOWN, each with the fix.
+     reads it if nothing is there yet; fetches their CA certificate, checks it
+     against their package's identity.ca_fingerprint, and places it at
+     $FED_WORK/theirs-ca.pem if nothing is there yet;
+  4. prints their verifying key and CA fingerprint in groups of four for the
+     voice call, and a compatibility report computed from the two packages —
+     one row per fact a partner would otherwise be asked by message,
+     PASS / WARN / FAIL / UNKNOWN, each with the fix.
 
 THE INVARIANT. The directory is advisory, never authoritative; being listed grants
 nothing (docs/design/peering-directory-service.md §2). It is not an input to the
@@ -24,7 +32,7 @@ band, never against anything the directory served. So nothing here can fail a
 peering: a directory that is down, refusing or wrong produces a WARN and exit 0.
 
 usage:
-  directory.py --url URL --ours FILE [--package-url URL] [--key FILE]
+  directory.py --url URL --ours FILE [--package-url URL] [--key FILE] [--ca FILE]
                [--theirs FILE] [--their-id SOVEREIGN_ID] [--keyring FILE] [--work DIR]
 """
 from __future__ import annotations
@@ -190,6 +198,60 @@ def key_groups(key_b64: str) -> str:
     """The verifying key as it is read aloud: the group count, then groups of four."""
     groups = [key_b64[i:i + 4] for i in range(0, len(key_b64), 4)]
     return f"{len(groups)} groups: " + " ".join(groups)
+
+
+def fingerprint_groups(fp: str) -> str:
+    """A `sha256:<hex>` CA fingerprint as it is read aloud: the hex in groups of four."""
+    return key_groups(fp.removeprefix("sha256:"))
+
+
+# ---------------------------------------------------------------------------
+# CA certificates. identity.ca_fingerprint is `sha256:` over the DER of the
+# trust anchor (federation-package-spec.md §5.1), so a certificate is matched to
+# a package by that digest, never by position in a bundle.
+# ---------------------------------------------------------------------------
+
+_PEM_CERT_RE = re.compile(rb"-----BEGIN CERTIFICATE-----\s*(.*?)\s*-----END CERTIFICATE-----", re.S)
+
+
+def pem_certificates(pem: bytes) -> list:
+    """The DER of each CERTIFICATE block in pem; a block that is not base64 is skipped."""
+    out = []
+    for m in _PEM_CERT_RE.finditer(pem):
+        try:
+            out.append(base64.b64decode(b"".join(m.group(1).split()), validate=True))
+        except ValueError:
+            continue
+    return out
+
+
+def der_to_pem(der: bytes) -> bytes:
+    b = base64.b64encode(der).decode()
+    return ("-----BEGIN CERTIFICATE-----\n" + "\n".join(b[i:i + 64] for i in range(0, len(b), 64))
+            + "\n-----END CERTIFICATE-----\n").encode()
+
+
+def anchor_for(pem: bytes, fingerprint: str):
+    """The certificate in pem whose SHA-256 is fingerprint, as PEM; None if there is none."""
+    for der in pem_certificates(pem):
+        if sha256_of(der) == fingerprint:
+            return der_to_pem(der)
+    return None
+
+
+def profile_ca_roots() -> str:
+    """The active goat profile's ca-roots.pem, resolved as `goat` resolves it."""
+    pdir = os.environ.get("GOAT_PROFILE_DIR") or os.path.join(os.path.expanduser("~"), ".goat")
+    ctx = os.environ.get("GOAT_CONTEXT", "")
+    if not ctx:
+        try:
+            for line in read_bytes(os.path.join(pdir, "config.toml")).decode("utf-8").splitlines():
+                k, _, v = line.partition("=")
+                if k.strip() == "current_context":
+                    ctx = v.strip().strip('"').strip("'")
+        except OSError:
+            pass
+    return os.path.join(pdir, "contexts", ctx or "default", "ca-roots.pem")
 
 
 # ---------------------------------------------------------------------------
@@ -375,27 +437,41 @@ def _https_or_local(url: str) -> bool:
     return p.scheme == "https" or (p.scheme == "http" and p.hostname in ("localhost", "127.0.0.1", "::1"))
 
 
+def signed_put(url: str, sid: str, resource: str, body: bytes, seed: bytes, content_type: str, timeout: float):
+    """PUT body to <url>/v1/parties/<resource>, signed as the saltlick write rule requires."""
+    key_b64 = b64(public_key(seed))
+    path = resource if resource == sid else sid + "/" + resource
+    headers = {"Content-Type": content_type, "X-Saltlick-Key": key_b64,
+               "X-Saltlick-Signature": b64(sign(seed, request_statement("PUT", path, body, key_b64)))}
+    target = entry_url(url, sid) + ("" if resource == sid else "/" + resource)
+    return _http("PUT", target, body, headers, timeout)
+
+
 def publish(url, ours_raw: bytes, package_url: str | None, key_path: str | None, work: str | None,
-            timeout: float) -> list:
-    """Publish our pointer. Returns warnings; an empty list means it was published."""
+            timeout: float, ca_path: str | None = None) -> list:
+    """Publish our pointer, and with no package_url our package; then our CA.
+    Returns warnings; an empty list means everything was published."""
     try:
         pkg = json.loads(ours_raw)
     except ValueError as e:
         return [f"our package is not JSON ({e}); nothing published"]
     sid = pkg.get("sovereign_id", "")
-    if not package_url:
-        return ["FED_PACKAGE_URL is not set, so there is no address to point at; nothing published. "
-                f"Serve {sid}'s package as a static file behind TLS on a public host and set it"]
-    if not _https_or_local(package_url):
+    if not SOVEREIGN_ID_RE.match(sid):
+        return [f"our package's sovereign_id {sid!r} is not a sovereign_id; nothing published"]
+    hosted = not package_url
+    if hosted:
+        package_url = entry_url(url, sid) + "/package"
+    elif not _https_or_local(package_url):
         return [f"FED_PACKAGE_URL {package_url} is not https; nothing published"]
-    # The pointer must point at what we would send. Fetch it back and compare.
-    try:
-        status, _, served = _get(package_url, timeout)
-    except (OSError, urllib.error.URLError) as e:
-        return [f"our package is not reachable at {package_url} ({e}); place {sid}'s package there; nothing published"]
-    if status != 200 or served != ours_raw:
-        return [f"{package_url} does not serve our package byte for byte (HTTP {status}); "
-                "copy the file phase 3 wrote there unchanged; nothing published"]
+    else:
+        # The pointer must point at what we would send. Fetch it back and compare.
+        try:
+            status, _, served = _get(package_url, timeout)
+        except (OSError, urllib.error.URLError) as e:
+            return [f"our package is not reachable at {package_url} ({e}); place {sid}'s package there; nothing published"]
+        if status != 200 or served != ours_raw:
+            return [f"{package_url} does not serve our package byte for byte (HTTP {status}); "
+                    "copy the file phase 3 wrote there unchanged; nothing published"]
     if not key_path:
         return ["FED_SIGNING_KEY is not set, so the pointer cannot be signed; nothing published"]
     try:
@@ -417,11 +493,11 @@ def publish(url, ours_raw: bytes, package_url: str | None, key_path: str | None,
         except OSError:
             pass  # a convenience copy for the operator; the pointer is already built
     key_b64 = b64(pub)
-    headers = {"Content-Type": "application/json", "X-Saltlick-Key": key_b64,
-               "X-Saltlick-Signature": b64(sign(seed, request_statement("PUT", sid, body, key_b64)))}
+    # The entry first: its first publish binds the key, and the directory refuses
+    # a hosted file for a name no entry has claimed.
     try:
-        status, _, resp = _http("PUT", entry_url(url, sid), body, headers, timeout)
-    except (OSError, urllib.error.URLError) as e:
+        status, _, resp = signed_put(url, sid, sid, body, seed, "application/json", timeout)
+    except (OSError, urllib.error.URLError, RuntimeError) as e:
         return [f"directory unreachable at {url}: {e}"]
     text = resp.decode(errors="replace").strip()
     if status not in (200, 201):
@@ -431,27 +507,73 @@ def publish(url, ours_raw: bytes, package_url: str | None, key_path: str | None,
         how = "claimed on first use" if info.get("first_use") else ("rotated" if info.get("rotated") else "replaced")
     except ValueError:
         how = "accepted"
+    warnings = []
+    if hosted:
+        try:
+            status, _, resp = signed_put(url, sid, "package", ours_raw, seed, "application/json", timeout)
+        except (OSError, urllib.error.URLError, RuntimeError) as e:
+            status, resp = 0, str(e).encode()
+        if status not in (200, 201):
+            warnings.append(f"package upload refused, HTTP {status}: {resp.decode(errors='replace').strip()[:300]}; "
+                            "the pointer names a package the directory does not hold")
+        else:
+            try:
+                status, _, served = _get(package_url, timeout)
+            except (OSError, urllib.error.URLError) as e:
+                status, served = 0, str(e).encode()
+            if status != 200 or served != ours_raw:
+                warnings.append(f"{package_url} does not serve our package byte for byte after upload (HTTP {status})")
+            else:
+                print(f"    uploaded `{sid}`'s package to the directory: {package_url}")
     print(f"    published `{sid}` → {package_url} ({how})")
     print(f"    our verifying key, to read aloud: {key_groups(key_b64)}")
+    warnings += publish_ca(url, sid, pkg, seed, ca_path, timeout)
+    return warnings
+
+
+def publish_ca(url, sid: str, pkg: dict, seed: bytes, ca_path: str | None, timeout: float) -> list:
+    """Upload the CA certificate whose SHA-256 is our identity.ca_fingerprint."""
+    fp = (pkg.get("identity") or {}).get("ca_fingerprint", "")
+    source = ca_path or profile_ca_roots()
+    try:
+        pem = read_bytes(source)
+    except OSError:
+        how = "FED_CA_CERT" if ca_path else "FED_CA_CERT is not set and the profile's ca-roots.pem"
+        return [f"{how} ({source}) is not readable; our CA certificate was not uploaded. "
+                "Set FED_CA_CERT to our CA certificate (PEM)"]
+    anchor = anchor_for(pem, fp)
+    if anchor is None:
+        return [f"no certificate in {source} has our package's identity.ca_fingerprint {fp}; "
+                "our CA certificate was not uploaded. Set FED_CA_CERT to the CA the package names"]
+    try:
+        status, _, resp = signed_put(url, sid, "ca", anchor, seed, "application/pem-certificate-chain", timeout)
+    except (OSError, urllib.error.URLError, RuntimeError) as e:
+        return [f"CA upload failed: {e}"]
+    if status not in (200, 201):
+        return [f"CA upload refused, HTTP {status}: {resp.decode(errors='replace').strip()[:300]}"]
+    print(f"    uploaded our CA certificate to the directory: {entry_url(url, sid)}/ca")
+    print(f"    our CA fingerprint, to read aloud: {fingerprint_groups(fp)}")
     return []
 
 
 def lookup(url, sid: str, bound_key: str | None, timeout: float, report: "Report"):
-    """Our counterparty's package, through their pointer. Returns (bytes, dict, fetched_through_a_pointer)."""
+    """Our counterparty's package, through their pointer.
+    Returns (bytes, dict, fetched_through_a_pointer, the key the directory has bound for them)."""
     try:
         status, headers, body = _get(entry_url(url, sid), timeout)
     except (OSError, urllib.error.URLError) as e:
         report.add("WARN", "lookup", f"directory unreachable at {url}: {e}")
-        return None, None, False
+        return None, None, False, None
     if status != 200:
         report.add("WARN", "lookup", f"no entry for `{sid}` (HTTP {status})",
                    "until they publish one, the package moves out of band")
-        return None, None, False
+        return None, None, False, None
+    dir_key = headers.get("x-saltlick-bound-key")
     try:
         entry = json.loads(body)
     except ValueError:
         report.add("WARN", "lookup", f"the entry for `{sid}` is not JSON")
-        return None, None, False
+        return None, None, False, None
     pub = None
     if bound_key:
         try:
@@ -481,41 +603,78 @@ def lookup(url, sid: str, bound_key: str | None, timeout: float, report: "Report
         # An older entry form: the recognition-only package itself.
         report.add("PASS", "lookup", f"`{sid}` lists a recognition-only package (no pointer)")
         signed_by_bound_key(entry, "entry signature")
-        return body, entry, False
+        return body, entry, False, dir_key
     if entry.get("spec") != POINTER_SPEC:
         report.add("WARN", "lookup", f"`{sid}`'s entry has spec {entry.get('spec')!r}, which this step does not read")
-        return None, None, False
+        return None, None, False, None
     if entry.get("sovereign_id") != sid:
         report.add("WARN", "lookup", f"the entry for `{sid}` names `{entry.get('sovereign_id')}`")
-        return None, None, False
+        return None, None, False, None
     signed_by_bound_key(entry, "pointer signature")
     purl = entry.get("package_url", "")
     if not _https_or_local(purl):
         report.add("WARN", "package_url", f"{purl!r} is not https; not fetched")
-        return None, None, False
+        return None, None, False, None
     try:
         status, _, pbody = _get(purl, timeout)
     except (OSError, urllib.error.URLError) as e:
         report.add("WARN", "package fetch", f"{purl}: {e}", "ask them to serve the package there, or send it out of band")
-        return None, None, False
+        return None, None, False, None
     if status != 200 or len(pbody) > MAX_PACKAGE_BYTES:
         report.add("WARN", "package fetch", f"{purl}: HTTP {status}, {len(pbody)} bytes")
-        return None, None, False
+        return None, None, False, None
     if sha256_of(pbody) != entry.get("package_sha256"):
         report.add("FAIL", "package digest", f"{purl} serves {sha256_of(pbody)}, the pointer says {entry.get('package_sha256')}",
                    "do not use it; ask them which is current")
-        return None, None, False
+        return None, None, False, None
     report.add("PASS", "package digest", f"{purl} serves the package the pointer names ({entry['package_sha256'][:23]}…)")
     try:
         pkg = json.loads(pbody)
     except ValueError:
         report.add("FAIL", "package", "the fetched package is not JSON")
-        return None, None, False
+        return None, None, False, None
     if pkg.get("sovereign_id") != sid:
         report.add("FAIL", "package", f"the fetched package is `{pkg.get('sovereign_id')}`, not `{sid}`")
-        return None, None, False
+        return None, None, False, None
     signed_by_bound_key(pkg, "package signature")
-    return pbody, pkg, True
+    return pbody, pkg, True, dir_key
+
+
+def fetch_ca(url, sid: str, theirs: dict, work: str | None, report: "Report", timeout: float = 10.0):
+    """Their CA certificate from the directory, checked against their package's
+    identity.ca_fingerprint and placed at <work>/theirs-ca.pem if none is there.
+    Returns the fingerprint it matched, or None."""
+    fp = (theirs.get("identity") or {}).get("ca_fingerprint", "")
+    try:
+        status, _, body = _get(entry_url(url, sid) + "/ca", timeout, accept="application/pem-certificate-chain")
+    except (OSError, urllib.error.URLError) as e:
+        report.add("WARN", "CA fetch", f"{e}", "until it is fetched, their CA certificate moves out of band")
+        return None
+    if status != 200:
+        report.add("WARN", "CA fetch", f"`{sid}` hosts no CA certificate in the directory (HTTP {status})",
+                   "until they upload one, their CA certificate moves out of band")
+        return None
+    anchor = anchor_for(body, fp)
+    if anchor is None:
+        report.add("FAIL", "CA fingerprint", f"no certificate the directory serves for `{sid}` has their package's "
+                   f"identity.ca_fingerprint {fp}", "do not use it; ask them which CA is current")
+        return None
+    report.add("PASS", "CA fingerprint", "the CA certificate the directory serves matches their package's identity.ca_fingerprint")
+    if work:
+        dest = os.path.join(work, "theirs-ca.pem")
+        if os.path.exists(dest):
+            if anchor_for(read_bytes(dest), fp) is None:
+                report.add("WARN", "theirs-ca.pem", f"{dest} holds no certificate with their ca_fingerprint; left as it is",
+                           "the file on disk is what phase 10 places; replace it with the one the voice call confirms")
+        else:
+            try:
+                fd = os.open(dest, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+                with os.fdopen(fd, "wb") as f:
+                    f.write(anchor)
+                report.add("PASS", "theirs-ca.pem", f"placed at {dest}")
+            except OSError as e:
+                report.add("WARN", "theirs-ca.pem", f"could not place it at {dest}: {e}")
+    return fp
 
 
 def transport_rows(ours: dict, theirs: dict, r: "Report"):
@@ -537,6 +696,7 @@ def main(argv=None) -> int:
     ap.add_argument("--ours", required=True)
     ap.add_argument("--package-url")
     ap.add_argument("--key")
+    ap.add_argument("--ca")
     ap.add_argument("--theirs")
     ap.add_argument("--their-id")
     ap.add_argument("--keyring")
@@ -556,7 +716,7 @@ def main(argv=None) -> int:
     except (OSError, ValueError) as e:
         print(f"    WARN    our package is not readable ({e}); the directory step is skipped")
         return 0
-    warnings += publish(a.url, ours_raw, a.package_url, a.key, a.work, a.timeout)
+    warnings += publish(a.url, ours_raw, a.package_url, a.key, a.work, a.timeout, a.ca)
 
     theirs_on_disk = None
     if a.theirs and os.path.isfile(a.theirs):
@@ -574,8 +734,17 @@ def main(argv=None) -> int:
     else:
         checks = Report()
         keyring = read_keyring(a.keyring)
-        body, theirs, via_pointer = lookup(a.url, their_id, keyring.get(their_id), a.timeout, checks)
+        body, theirs, via_pointer, dir_key = lookup(a.url, their_id, keyring.get(their_id), a.timeout, checks)
+        their_fp = fetch_ca(a.url, their_id, theirs, a.work, checks, a.timeout) if theirs is not None else None
         checks.print(f"Lookup of `{their_id}`")
+        their_key = keyring.get(their_id) or dir_key
+        if their_key or their_fp:
+            print(f"\n    Read back on the voice call with `{their_id}`:")
+            if their_key:
+                src = "as you bound it" if keyring.get(their_id) else "as the directory has it; confirm it, then record it in the keyring"
+                print(f"      their verifying key ({src}): {key_groups(their_key)}")
+            if their_fp:
+                print(f"      their CA fingerprint:  {fingerprint_groups(their_fp)}")
         if theirs is not None:
             if a.work:
                 try:
@@ -601,9 +770,8 @@ def main(argv=None) -> int:
 
     for w in warnings:
         print(f"    WARN    {w}")
-    print("\n    Still moved directly between the two parties: the CA certificate and the SPIFFE bundle.\n"
-          "    The out-of-band act that remains: read the verifying-key fingerprint, and after\n"
-          "    phase 6 the agreement digest, aloud to the counterparty. The directory replaces neither.")
+    print("\n    The out-of-band act that remains: read the verifying key and the CA fingerprint, and\n"
+          "    after phase 6 the agreement digest, aloud to the counterparty. The directory replaces none of them.")
     return 0
 
 

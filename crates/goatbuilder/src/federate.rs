@@ -90,7 +90,7 @@ fn shell_safe(s: &str) -> bool {
 
 /// The optional directory step (ops/federation/standup/directory.py), run inside
 /// phase 5 before it stops. `None` when FED_DIRECTORY_URL is unset, or when it,
-/// FED_PACKAGE_URL or FED_COUNTERPARTY_ID holds anything but plain URL
+/// FED_PACKAGE_URL, FED_COUNTERPARTY_ID or FED_CA_CERT holds anything but plain URL
 /// characters: the values are printed into the plan and passed to the helper.
 fn directory_step() -> Option<(String, Option<String>, Option<String>)> {
     let url = env_or("FED_DIRECTORY_URL", String::new());
@@ -99,8 +99,9 @@ fn directory_step() -> Option<(String, Option<String>, Option<String>)> {
     }
     let pkg = env_or("FED_PACKAGE_URL", String::new());
     let id = env_or("FED_COUNTERPARTY_ID", String::new());
+    let ca = env_or("FED_CA_CERT", String::new());
     let plain = |s: &str| s.chars().all(|c| c.is_ascii_alphanumeric() || "._:/?=&%~+@-".contains(c));
-    if !(plain(&url) && plain(&pkg) && plain(&id)) {
+    if !(plain(&url) && plain(&pkg) && plain(&id) && plain(&ca)) {
         return None;
     }
     Some((url, Some(pkg).filter(|v| !v.is_empty()), Some(id).filter(|v| !v.is_empty())))
@@ -110,12 +111,12 @@ fn directory_step() -> Option<(String, Option<String>, Option<String>)> {
 fn directory_text(r: &str, ours: &str) -> String {
     match directory_step() {
         Some((url, pkg, id)) => format!(
-            "     Directory step (advisory; grants nothing), run before this stop:\n       python3 '{r}/ops/federation/standup/directory.py' --url '{url}' --ours '{ours}'{} --their-id '{}'\n     It publishes our pointer, fetches theirs, checks digest and signatures,\n     places their package if none is on disk, and prints a compatibility report.",
+            "     Directory step (advisory; grants nothing), run before this stop:\n       python3 '{r}/ops/federation/standup/directory.py' --url '{url}' --ours '{ours}'{} --their-id '{}'\n     It uploads our package (unless FED_PACKAGE_URL names our own host) and CA,\n     publishes our pointer, fetches their package and CA, checks digest,\n     signatures and CA fingerprint, places what is not on disk, and prints the\n     key and fingerprint to read back and a compatibility report.",
             pkg.map(|p| format!(" --package-url '{p}'")).unwrap_or_default(),
             id.unwrap_or_else(|| "<unset>".to_string())
         ),
-        None if !env_or("FED_DIRECTORY_URL", String::new()).is_empty() => "     FED_DIRECTORY_URL, FED_PACKAGE_URL or FED_COUNTERPARTY_ID holds characters\n     outside a plain URL; the directory step is off.".to_string(),
-        None => "     Optional: set FED_DIRECTORY_URL, FED_PACKAGE_URL and FED_COUNTERPARTY_ID\n     to publish our pointer to a peering directory, fetch theirs and print a\n     compatibility report first (advisory; grants nothing).".to_string(),
+        None if !env_or("FED_DIRECTORY_URL", String::new()).is_empty() => "     FED_DIRECTORY_URL, FED_PACKAGE_URL, FED_COUNTERPARTY_ID or FED_CA_CERT holds\n     characters outside a plain URL; the directory step is off.".to_string(),
+        None => "     Optional: set FED_DIRECTORY_URL, FED_COUNTERPARTY_ID and FED_SIGNING_KEY to\n     exchange packages and CA certificates through a peering directory instead\n     (advisory; grants nothing; no public host needed).".to_string(),
     }
 }
 
@@ -130,6 +131,10 @@ fn directory_args(repo: &Path, work: &str) -> Option<Vec<String>> {
     let key = env_or("FED_SIGNING_KEY", String::new());
     if !key.is_empty() {
         a.extend(["--key".into(), key]);
+    }
+    let ca = env_or("FED_CA_CERT", String::new());
+    if !ca.is_empty() {
+        a.extend(["--ca".into(), ca]);
     }
     a.extend(["--theirs".into(), env_or("FED_COUNTERPARTY", format!("{work}/theirs.canonical.json"))]);
     if let Some(i) = id {
@@ -163,7 +168,7 @@ fn plan(repo: &Path, o: &Options, work: &str, edge_group: &str, resume: &str) ->
         p(3, "T", "init — our half, read from the running system", format!("{init_env}{goat} federate init --with-transport --with-data {}--out '{ours}'", if signing.is_empty() { String::new() } else { format!("--signing-key '{signing}' ") })),
         p(4, "T", "lint our package against the spec", format!("{goat} federate lint '{ours}'")),
         p(5, "MANUAL", "exchange packages, and bind their verifying key out of band", format!(
-            "Send {ours} and our CA certificate to the counterparty, with {work}/ours.spiffe-bundle if phase 2 wrote one.\n     Obtain theirs and place them at: {counterparty}\n       {work}/theirs-ca.pem\n       {work}/theirs.spiffe-bundle\n     Bind their verifying key over a channel authenticated independently of\n     this link — a key taken from the package it verifies proves nothing.\n     Record BOTH parties' keys, one per line, at:\n       {keyring}\n     as   <sovereign_id>=<44 base64 characters>\n     Phase 6 passes each line to compose as --key; compose refuses (exit 20)\n     for any party whose key is not bound.\n{}", directory_text(&r, &ours))),
+            "Send {ours} and our CA certificate to the counterparty, with {work}/ours.spiffe-bundle if phase 2 wrote one\n     (with FED_DIRECTORY_URL set, phase 5 moves the package and CA through the directory).\n     Obtain theirs and place them at: {counterparty}\n       {work}/theirs-ca.pem\n       {work}/theirs.spiffe-bundle\n     Bind their verifying key over a channel authenticated independently of\n     this link — a key taken from the package it verifies proves nothing.\n     Record BOTH parties' keys, one per line, at:\n       {keyring}\n     as   <sovereign_id>=<44 base64 characters>\n     Phase 6 passes each line to compose as --key; compose refuses (exit 20)\n     for any party whose key is not bound.\n{}", directory_text(&r, &ours))),
     ];
     // Each `sovereign=key` line in the keyring becomes one --key argument; a
     // missing keyring is left for compose's own refusal to name.
@@ -306,9 +311,9 @@ fn plan_view(repo: &Path, o: &Options, work: &str, edge_group: &str, phases: &[P
                 }
                 s.push('\n');
                 let dir = if directory_step().is_some() {
-                    "Before it stops, phase 5 looks the other party up in the peering directory (saltlick): it publishes where our half can be fetched, fetches theirs, and prints a compatibility report. It grants no access."
+                    "Before it stops, phase 5 exchanges packages and CA certificates through the peering directory (saltlick): it uploads our package (unless FED_PACKAGE_URL names our own host) and CA, fetches theirs, and prints the key and CA fingerprint to read back and a compatibility report. It grants no access."
                 } else {
-                    "Optional: set FED_DIRECTORY_URL, FED_PACKAGE_URL and FED_COUNTERPARTY_ID to look the other party up in a peering directory (saltlick) first. It grants no access."
+                    "Optional: set FED_DIRECTORY_URL, FED_COUNTERPARTY_ID and FED_SIGNING_KEY to exchange packages and CA certificates through a peering directory (saltlick); no public host is needed. It grants no access."
                 };
                 s.push_str(&crate::tutor::fill(dir, "", ""));
             }
