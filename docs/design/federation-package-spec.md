@@ -1066,3 +1066,4 @@ is what makes them a test of it rather than a description of it.
   locally, and never inside the digest (§7).
 - **A directory.** Convenient, and never required. Two parties who share none federate
   exactly as well (§5.1).
+
