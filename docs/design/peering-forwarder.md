@@ -69,7 +69,7 @@ either party, and either party may operate it.
 | Host | Inbound | Outbound |
 |---|---|---|
 | **Forwarder** | UDP 51820 (peering) from the partner's egress address when it is stable, otherwise from any address. UDP 51821 (carrier) from any address. Nothing else; no SSH. Managed through the provider's agent or console, or out of band on owned hardware | UDP to the edge's carrier address only |
-| **Our edge** | On `wg-fed0`: the peering port only from the carrier interface. On `wg-carry0`: nothing initiated from the forwarder | UDP 51821 to the forwarder only, plus what `cross-sovereign-federation.md` §5.3 already allows inward |
+| **Our edge** | On `wg-fed0`: the peering port only from the carrier interface. On `wg-carry0`: nothing initiated from the forwarder | UDP 51821 to the forwarder only, plus the fabric TLS port inward to its own core, as without a forwarder |
 | **Partner edge** | Unchanged | UDP 51820 to the forwarder's public address |
 
 **When the partner sits behind carrier-grade NAT or a satellite terminal, its egress address
@@ -109,9 +109,10 @@ port: the destination of a forwarded packet must follow from the port alone.
 The forwarder sits **outside the authorization boundary** of both parties. It is transport, in
 the same position as the internet path it replaces, and the boundary controls stay on the edge:
 
-- **SC-7 enforcement points** in `cross-sovereign-federation.md` §5.3 are unchanged and still on
-  the edge host. Point 1 (the edge's outside interface accepts only the peering transport from
-  the named counterparty) is enforced on the carrier interface instead of the public one.
+- **SC-7 enforcement points** stay on the edge host, all three unchanged in substance: the
+  outside interface accepts only the peering transport, the edge dials inward to its own core on
+  the fabric TLS port only, and the fabric ACL admits writes only under `from/<sovereign>/**`.
+  Behind a forwarder, the first is enforced on the carrier interface instead of the public one.
 - **SC-8 / SC-13** are carried by the fabric TLS session, as before. The forwarder adds no
   cryptographic claim and removes none.
 - **SP 800-47 interconnection record.** The forwarder is named in the interconnection agreement:
