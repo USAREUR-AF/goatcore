@@ -110,6 +110,13 @@ and stops there. **`transport_offer`, `data_offer` and `cut` never enter the dir
 move directly between the two parties. A directory holding reachability, release sets or
 accepted limits would be publishing sovereign operational detail to everyone who can read it.
 
+**A forwarder's address never enters the directory**, for the same reason: it is
+`transport_offer.endpoint`. What two parties do need to learn before building is whether either
+of them can accept inbound traffic, because when neither can, one runs a peering forwarder
+([`peering-forwarder.md`](peering-forwarder.md), ADR 1218) before its package can be issued.
+**Designed, not built:** a capability `inbound: "direct" | "forwarder" | "none"`, published
+with the other capabilities, which states that fact without saying where the address is.
+
 This is not a special directory-only shape. It is an ordinary, complete package from a party
 that is not, in the directory, offering to connect or exchange — which is exactly what a
 capability listing should be.

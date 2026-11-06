@@ -35,7 +35,11 @@ never does. Their side mirrors it exactly.
 - [ ] Both sides run this software with **their own** certificate authority. If one side does not
       have its own CA, stop — you do not have two sovereign environments, and a different pattern
       applies.
-- [ ] Both sides can expose **one** UDP port to the other. No other reachability is required.
+- [ ] **One** side can accept inbound UDP on one port, directly or through a forwarder. The other
+      side only dials out. If both edges sit behind NAT with no inbound port, one side runs a
+      peering forwarder first, because its address is a value that side's package carries:
+      [`peering-forwarder.md`](../design/peering-forwarder.md) ([ADR 1218](../adr/1218-peering-forwarder-when-neither-edge-accepts-inbound.md)).
+      No other reachability is required.
 - [ ] You have agreed, in writing, three things: **what data flows**, **in which direction**, and
       **the name the other side's router will present**. Everything below is mechanical; these
       three are the decisions.
@@ -68,7 +72,7 @@ ops/scripts/peering-standup.sh <peering> --from 5   # resume after the exchange
 | 7 | T | mint the peering leaves | three certificates, names derived from the agreement, SANs covering every address that will be dialled |
 | 8 | T | `apply --confirm` | the partner declaration, the edge group_vars, the republisher vars and the ACL fragment |
 | 9 | A | deploy the edge | the edge dials our core and accepts the partner's CN |
-| 10 | A | open the transport the AGREEMENT selected | the link is up. **`wireguard` has no play in this repository** — the phase refuses rather than substituting IPsec. A party that needs IPsec declares `ipsec-fips` and NOT `wireguard`, so the intersection selects it |
+| 10 | A | open the transport the AGREEMENT selected | the link is up. `wireguard` runs `peering-wg.yml`, `ipsec-fips` runs `peering-edge.yml`; the phase never substitutes one for the other. A party that needs IPsec declares `ipsec-fips` and NOT `wireguard`, so the intersection selects it |
 | 11 | GATE | acceptance | carries both ways, refuses what the agreement does not name, and round-trips |
 
 **Phase 4 is manual on purpose.** The channel is the counterparty's to choose,
@@ -151,6 +155,12 @@ Firewall it to exactly this, on the edge host:
 - **inbound**: the tunnel port, from their address only. Everything else denied and logged.
 - **outbound**: the tunnel port, to their address only.
 - **nothing else crosses** — no management, no shell, no administrative interface.
+
+**Behind a forwarder**, the side that listens receives the tunnel port on its carrier interface
+(`wg-carry0`), not from the partner's address, and sets `peering_wg_via_forwarder: true` so the
+rule binds to that interface. Its only outbound is the carrier port to the forwarder. The side
+that dials sends to the forwarder's address. Set the link MTU to 1300 on both sides
+([`peering-forwarder.md`](../design/peering-forwarder.md) §3).
 
 ## Step 6 — Sealed data for this partner, if they need it
 

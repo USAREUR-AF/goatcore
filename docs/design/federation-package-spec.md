@@ -365,6 +365,14 @@ reason that it is mutable; here it is excluded because it would be self-asserted
 
 ### Reserved for a later version
 
+`transport_offer.via` is reserved. If a future version adds it, it records that
+`transport_offer.endpoint` is a peering forwarder and who operates it, as
+`{"kind": "forwarder", "operator": "<sovereign-id>"}`. It is informational: it changes no
+negotiated field and no rule, and its presence puts the forwarder into the digest. In v1 a party
+behind a forwarder offers the forwarder's `host:port` as `endpoint` with `listener: true`, and
+declares the forwarder in its partner declaration and interconnection agreement
+([`peering-forwarder.md`](peering-forwarder.md) §6).
+
 `frameworks` is reserved as a member name. If a future version adds it, it means *"the
 frameworks this party claims to belong to"* — an assertion, for display and for compatibility
 hints only, and **never an input to an access decision**. It is not part of v1 because nothing
