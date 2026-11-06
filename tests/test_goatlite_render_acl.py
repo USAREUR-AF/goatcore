@@ -148,7 +148,10 @@ class AclInATree(unittest.TestCase):
         r = subprocess.run([os.environ["GOAT_BIN"], "acl", "test", "fixture", "--verbose"],
                            cwd=self.root, capture_output=True, text=True)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        self.assertIn("fixture: all 6 assertions hold", r.stdout)
+        # The evaluator adds its own flat-mesh check to the six rendered rows.
+        self.assertRegex(r.stdout, r"fixture: all \d+ assertions hold")
+        for row in yaml.safe_load(render.acl_tests_block(FACTS))["fixture"]:
+            self.assertIn(f"] {row['name']}", r.stdout)
         render.remove_acl(FACTS, render.Report(), check=False)
         render.render_acl(dict(FACTS, name="bare", name_us="bare", upper="BARE"), render.Report(), check=False)
         # Without the render's assertions the same verb must refuse, not pass.
