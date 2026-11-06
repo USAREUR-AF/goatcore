@@ -3,7 +3,7 @@
 #
 # Defaults for the goat-get role — a mesh-internal download surface that
 # re-serves the goat-cli release binaries at `get.<site>.<zone>` so on-mesh
-# vendors can install `goat` without reaching the private GitHub
+# vendors can install `goat` without reaching the GitHub
 # release page (which they cannot download from). Mirrors the `brief`
 # role shape: nginx:alpine + Traefik file-provider + mesh-only gating.
 # Per-goatnet: the hostname is site-templated below, so each
@@ -83,6 +83,11 @@ goat_get_release_tag: "goat-cli-v0.5.15"
 # Resolves through group_vars/all.yml `source_repo` to the release repository;
 # ops/ci/check-release-asset-parity.sh confirms the release carries its assets.
 goat_get_release_repo: "{{ source_repo }}"
+# Whether the release repository is private. false (the default): the release
+# is read anonymously when no token is set, and a token GitHub refuses (401/403)
+# falls back to an anonymous read with a warning. true: the token is required
+# and only the token is tried. Each payload family below has its own flag.
+goat_get_release_private: false
 goat_get_assets:
   - goat-linux-amd64
   - goat-linux-amd64.sha256
@@ -100,10 +105,13 @@ goat_get_assets:
   - goat-windows-amd64.exe.sha256
   - SHA256SUMS
 
-# GitHub token used to read the PRIVATE repo's release assets at download
-# time. Needs `contents:read` on the repo (classic `repo` scope, or a
-# fine-grained PAT). Sourced from the operator's env; passed transiently
-# to the host download task (no_log) and never persisted on the host.
+# GitHub token for reading release assets at download time. Optional for a
+# public release repository: empty means every GitHub request goes without an
+# Authorization header. Needed for a private one (`contents:read` on the repo:
+# classic `repo` scope, or a fine-grained PAT), declared with the family's
+# *_release_private flag. When set and accepted it is used for public releases
+# too (higher API rate limit). Sourced from the operator's env; passed
+# transiently to the host download task (no_log) and never persisted on the host.
 goat_get_github_token: "{{ lookup('env', 'GOAT_CLI_RELEASE_TOKEN') | default(lookup('env', 'GH_TOKEN'), true) | default(lookup('env', 'GHCR_READ_TOKEN'), true) }}"
 
 # ---------------------------------------------------------------------------
@@ -124,6 +132,7 @@ goat_get_github_token: "{{ lookup('env', 'GOAT_CLI_RELEASE_TOKEN') | default(loo
 goat_get_sdk_enabled: false
 goat_get_sdk_release_tag: "grant-crypto-sdk-v0.1.0"
 goat_get_sdk_release_repo: "{{ goat_get_release_repo }}"
+goat_get_sdk_release_private: "{{ goat_get_release_private }}"
 
 # The version string embedded in the source-tarball asset name, derived from the
 # SAME tag that pins the served assets (mirrors version.json.j2's derivation) —
@@ -234,6 +243,8 @@ goat_get_cloudflare_a_record_ips: []
 #   curl -LO https://get.<site>.<zone>/kmod/jetson-wireguard-kmod-$(uname -r).tar.gz
 goat_get_kmod_enabled: false
 goat_get_kmod_release_repo: "usareur-af/jetson-wireguard-kmod"
+# true requires goat_get_github_token; false also tries an anonymous read.
+goat_get_kmod_release_private: false
 goat_get_kmod_release_tag: "v1.0.0"
 goat_get_kmod_www_subdir: "kmod"
 goat_get_kmod_assets:
@@ -260,6 +271,8 @@ goat_get_kmod_assets:
 # templated off the tag the way the SDK family does — one variable to bump.
 goat_get_octopod_enabled: false
 goat_get_octopod_release_repo: "usareur-af/octo-pod"
+# true requires goat_get_github_token; false also tries an anonymous read.
+goat_get_octopod_release_private: false
 goat_get_octopod_release_tag: "octo-pod-v0.1.0"
 goat_get_octopod_version: "{{ goat_get_octopod_release_tag | regex_replace('^octo-pod-v', '') }}"
 goat_get_octopod_www_subdir: "octo-pod"
@@ -312,7 +325,7 @@ goat_get_refused_release_reason:
 # (docs/design/goatbuilder-distribution.md). The build/release binary for a
 # goat environment, served to platform admins from inside the goatnet: the
 # SAME signed release assets the public GitHub Release carries, never a
-# rebuild. Same family shape as kmod/octo-pod: token-authz probe on the tag,
+# rebuild. Same family shape as kmod/octo-pod: release-access probe on the tag,
 # set-equality assert on assets, host-side fetch, fail-closed. The release is
 # cut by .github/workflows/goatbuilder-release.yml on a `goatbuilder/v<semver>`
 # tag; bump the tag here and re-run goat-get-deploy.yml to serve it. The docs
@@ -332,6 +345,7 @@ goat_get_refused_release_reason:
 # deploy-history.yml. The role refuses `enabled` with an empty tag.
 goat_get_goatbuilder_enabled: false
 goat_get_goatbuilder_release_repo: "{{ source_repo }}"
+goat_get_goatbuilder_release_private: "{{ goat_get_release_private }}"
 goat_get_goatbuilder_release_tag: "goatbuilder/v0.4.1"
 goat_get_goatbuilder_version: "{{ goat_get_goatbuilder_release_tag | regex_replace('^goatbuilder/v', '') }}"
 goat_get_goatbuilder_www_subdir: "goatbuilder"

@@ -61,38 +61,43 @@
 
 - name: goat-docs | otherwise fall back to the GitHub release API
   ansible.builtin.set_fact:
-    goat_docs_dl_headers:
-      Authorization: "Bearer {{ goat_docs_github_token }}"
-      Accept: "application/octet-stream"
     goat_docs_source: github
   when: goat_docs_source is not defined
 
-# Only the GitHub leg needs a credential. On the mirror leg this assert is
-# skipped, which is the whole point: a sovereign site with no GitHub identity
-# still deploys. Keep the message naming the mirror, so an operator who hits
-# this knows the mirror miss is the real cause and the token is the fallback.
-- name: goat-docs | preconditions — release token present (GitHub fallback only)
-  ansible.builtin.assert:
-    that:
-      - goat_docs_github_token | default('') | length > 0
-    fail_msg: >-
+# Only the GitHub leg talks to GitHub, and on it a credential is needed only
+# for a private release repository (goat_docs_release_private: true). A public
+# release is read anonymously; a token GitHub refuses (401/403) falls back to
+# an anonymous read with a warning. The failure message names the mirror, so
+# an operator who hits it knows the mirror miss is the first cause.
+- name: goat-docs | decide how to read the GitHub release (token or anonymous)
+  ansible.builtin.include_tasks: "{{ role_path }}/../../tasks/github-release-access.yml"
+  vars:
+    ghr_label: "goat-docs"
+    ghr_repo: "{{ goat_docs_release_repo }}"
+    ghr_tag: "{{ goat_docs_release_tag }}"
+    ghr_token: "{{ goat_docs_github_token }}"
+    ghr_token_name: "goat_docs_github_token (GOAT_CLI_RELEASE_TOKEN, else GH_TOKEN, else GHCR_READ_TOKEN)"
+    ghr_private: "{{ goat_docs_release_private }}"
+    ghr_private_var: goat_docs_release_private
+    ghr_hint: >-
       The download mirror ({{ goat_docs_mirror_base }}/{{ goat_docs_mirror_prefix }})
-      does not carry {{ goat_docs_asset }} for {{ goat_docs_release_tag }}, so this
-      falls back to the GitHub release API — and goat_docs_github_token is empty.
-      Either publish the tag to the mirror (preferred; a sovereign site has no
-      GitHub identity) or set GOAT_CLI_RELEASE_TOKEN / GH_TOKEN with contents:read
-      on {{ goat_docs_release_repo }}.
-  run_once: true
+      does not carry {{ goat_docs_asset }} for {{ goat_docs_release_tag }}, which is why
+      this went to GitHub. Publishing the tag to the mirror is preferred; a
+      sovereign site has no GitHub identity.
+  when: goat_docs_source == 'github'
+
+- name: goat-docs | GitHub request headers (Authorization only when the token is used)
+  ansible.builtin.set_fact:
+    goat_docs_gh_auth: "{{ ghr_auth_headers }}"
+    goat_docs_dl_headers: "{{ {'Accept': 'application/octet-stream'} | combine(ghr_auth_headers) }}"
+  no_log: true
   when: goat_docs_source == 'github'
 
 - name: goat-docs | resolve release by tag (asset id + url map)
   ansible.builtin.uri:
     url: "https://api.github.com/repos/{{ goat_docs_release_repo }}/releases/tags/{{ goat_docs_release_tag }}"
     method: GET
-    headers:
-      Authorization: "Bearer {{ goat_docs_github_token }}"
-      Accept: "application/vnd.github+json"
-      X-GitHub-Api-Version: "2022-11-28"
+    headers: "{{ {'Accept': 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28'} | combine(goat_docs_gh_auth) }}"
     return_content: true
   register: goat_docs_release
   become: true
@@ -202,14 +207,31 @@
   run_once: true
   when: goat_docs_goatbuilder_enabled | bool
 
+- name: goat-docs | goatbuilder | decide how to read the GitHub release (token or anonymous)
+  ansible.builtin.include_tasks: "{{ role_path }}/../../tasks/github-release-access.yml"
+  vars:
+    ghr_label: "goat-docs | goatbuilder"
+    ghr_repo: "{{ goat_docs_goatbuilder_release_repo }}"
+    ghr_tag: "{{ goat_docs_goatbuilder_release_tag }}"
+    ghr_token: "{{ goat_docs_github_token }}"
+    ghr_token_name: "goat_docs_github_token (GOAT_CLI_RELEASE_TOKEN, else GH_TOKEN, else GHCR_READ_TOKEN)"
+    ghr_private: "{{ goat_docs_goatbuilder_release_private }}"
+    ghr_private_var: goat_docs_goatbuilder_release_private
+    ghr_hint: >-
+      goat_docs_goatbuilder_enabled is true. If the tag is not cut, a repository admin tags main.
+  when: goat_docs_goatbuilder_enabled | bool
+
+- name: goat-docs | goatbuilder | GitHub request headers (Authorization only when the token is used)
+  ansible.builtin.set_fact:
+    goat_docs_goatbuilder_gh_auth: "{{ ghr_auth_headers }}"
+  no_log: true
+  when: goat_docs_goatbuilder_enabled | bool
+
 - name: goat-docs | goatbuilder | resolve the goatbuilder release by tag (asset id + url map)
   ansible.builtin.uri:
     url: "https://api.github.com/repos/{{ goat_docs_goatbuilder_release_repo }}/releases/tags/{{ goat_docs_goatbuilder_release_tag }}"
     method: GET
-    headers:
-      Authorization: "Bearer {{ goat_docs_github_token }}"
-      Accept: "application/vnd.github+json"
-      X-GitHub-Api-Version: "2022-11-28"
+    headers: "{{ {'Accept': 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28'} | combine(goat_docs_goatbuilder_gh_auth) }}"
     status_code: [200, 401, 403, 404]
     return_content: true
   register: goat_docs_goatbuilder_release
@@ -250,9 +272,7 @@
 - name: goat-docs | goatbuilder | download the sha256 sidecar
   ansible.builtin.get_url:
     url: "{{ goat_docs_goatbuilder_asset_urls[goat_docs_goatbuilder_asset ~ '.sha256'] }}"
-    headers:
-      Authorization: "Bearer {{ goat_docs_github_token }}"
-      Accept: "application/octet-stream"
+    headers: "{{ {'Accept': 'application/octet-stream'} | combine(goat_docs_goatbuilder_gh_auth) }}"
     dest: "{{ goat_docs_stage_dir }}/{{ goat_docs_goatbuilder_asset }}.sha256"
     mode: "0644"
     force: true
@@ -270,9 +290,7 @@
 - name: goat-docs | goatbuilder | download + verify the tarball
   ansible.builtin.get_url:
     url: "{{ goat_docs_goatbuilder_asset_urls[goat_docs_goatbuilder_asset] }}"
-    headers:
-      Authorization: "Bearer {{ goat_docs_github_token }}"
-      Accept: "application/octet-stream"
+    headers: "{{ {'Accept': 'application/octet-stream'} | combine(goat_docs_goatbuilder_gh_auth) }}"
     dest: "{{ goat_docs_stage_dir }}/{{ goat_docs_goatbuilder_asset }}"
     checksum: "sha256:{{ (goat_docs_goatbuilder_sha_file.content | b64decode).split()[0] }}"
     mode: "0644"

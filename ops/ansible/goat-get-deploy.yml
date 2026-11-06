@@ -23,8 +23,9 @@
 #   1. goat-cli release `goat_get_release_tag` exists on
 #      usareur-af/goatcore with the goat-<os>-<arch> + SHA256SUMS
 #      assets (built by .github/workflows/goat-cli-release.yml).
-#   2. GOAT_CLI_RELEASE_TOKEN (or GH_TOKEN) env var exported with
-#      contents:read on the repo so the host can pull the assets.
+#   2. Only for a private release repository (goat_get_release_private:
+#      true): GOAT_CLI_RELEASE_TOKEN (or GH_TOKEN) env var exported with
+#      contents:read on the repo. A public release is read anonymously.
 #   3. CLOUDFLARE_API_TOKEN env var exported when
 #      goat_get_publish_cloudflare_dns is true in group_vars.
 #   4. get.<site>.<site_dns_zone> is in that goatnet's LE SAN list — flip

@@ -21,8 +21,9 @@
 #      usareur-af/goatcore with the `goat-docs.tar.gz` + `.sha256`
 #      assets (built by the `docs` job in goat-cli-release.yml — re-dispatch
 #      the workflow on an existing tag to backfill them).
-#   2. GOAT_CLI_RELEASE_TOKEN (or GH_TOKEN) env var exported with
-#      contents:read on the repo so the host can pull the asset.
+#   2. Only for a private release repository (goat_docs_release_private:
+#      true): GOAT_CLI_RELEASE_TOKEN (or GH_TOKEN) env var exported with
+#      contents:read on the repo. A public release is read anonymously.
 #   3. docs.<site_dns_zone> is PUBLISHED in the mesh CoreDNS. The record
 #      lives in ops/dns/<site>/mesh-hosts (committed), but a brand-new
 #      surface only resolves for mesh peers AFTER the zone is re-synced:

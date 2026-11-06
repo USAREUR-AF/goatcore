@@ -81,8 +81,12 @@ a direct mirror of the `brief` role:
   --encoding`, and the `goat admin lan` triage kit; `goat-cli-v0.2.0` was the
   first release with `goat-windows-amd64.exe`) **on
   the host** at deploy time (host has internet egress; nothing multi-MB
-  crosses the mesh via scp). The private-repo read uses a transient
-  `GOAT_CLI_RELEASE_TOKEN` (no_log, never persisted on the host).
+  crosses the mesh via scp). A public release repository is read
+  anonymously; a private one (`goat_get_release_private: true`) needs a
+  transient `GOAT_CLI_RELEASE_TOKEN` (no_log, never persisted on the host).
+  A set token is used when GitHub accepts it; one GitHub refuses (401/403) on
+  a public repository falls back to an anonymous read with a warning
+  (`ops/ansible/tasks/github-release-access.yml`).
 - **DNS:** `get.<site>.<zone>` → that goatnet's mesh IP in its
   `ops/dns/<goatnet>/mesh-hosts` (e.g.
   `ops/dns/nova/mesh-hosts` on
@@ -302,8 +306,8 @@ serves the `jetson-wireguard-kmod` release (pinned by
 tarballs (`jetson-wireguard-kmod-<uname -r>.tar.gz`: .ko set + SHA256SUMS +
 PROVENANCE + install.sh + README + GPL-2.0 LICENSE) plus aggregate
 SHA256SUMS and a landing page with the one-liner install. Host-side fetch
-with `goat_get_github_token`, token-probe + asset set-equality asserts,
-fail-closed. Why on this surface: an on-mesh Jetson can adopt kernelspace
+with `goat_get_github_token` (anonymous for a public release), release-access
+probe + asset set-equality asserts, fail-closed. Why on this surface: an on-mesh Jetson can adopt kernelspace
 WireGuard (ADR 1118) with zero GitHub reach — same argument as the CLI
 binaries; and the artifacts keep working when the WAN doesn't, which is
 exactly when a Jetson site is installing things. Bump the release tag here +
@@ -317,8 +321,8 @@ Fourth asset family, same shape as the kmod family: `goat_get_octopod_enabled`
 `goat_get_octopod_release_tag`) at `get.<site>.<zone>/octo-pod/` — the
 `Architecture: all` .deb, the tarball for a box with no apt, per-artifact
 `.sha256`, the aggregate `SHA256SUMS`, its cosign bundle, and `LATEST`.
-Host-side fetch with `goat_get_github_token`, token-probe + asset
-set-equality asserts, fail-closed. Artifact names carry the version, so the
+Host-side fetch with `goat_get_github_token` (anonymous for a public release),
+release-access probe + asset set-equality asserts, fail-closed. Artifact names carry the version, so the
 asset list is templated off the tag the way the SDK family does — one
 variable to bump.
 
