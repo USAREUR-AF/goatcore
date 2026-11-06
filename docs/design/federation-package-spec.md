@@ -378,6 +378,14 @@ frameworks this party claims to belong to"* — an assertion, for display and fo
 hints only, and **never an input to an access decision**. It is not part of v1 because nothing
 in v1 needs it: release sets are explicit lists, so no lane abstraction crosses the link.
 
+`capabilities.tool_version` is reserved. **Designed, not built.** If a future version adds it,
+it carries the version of the tool that composed the package (`goat --version`), measured by
+`goat federate init` and never declared. It is informational: it changes no negotiated field,
+and two parties compare it before composing because the digest only matches when both sides
+compose with the same rules. v1 carries `spec` and `capabilities.fabric_version` and nothing
+for the tool, so in v1 the two parties read their tool versions to each other on the call where
+the digest is compared ([`peering-directory-service.md`](peering-directory-service.md) §6.1).
+
 ---
 
 ## 4. Canonical form
