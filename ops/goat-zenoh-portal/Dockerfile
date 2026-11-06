@@ -3,13 +3,17 @@
 # Stage 1: build static binaries (CGO disabled). The server keeps its registry
 #          in Postgres (pgx); store-migrate also links the pure-Go SQLite driver
 #          to copy the registry between the two engines (ADR 1165 step A).
-# Stage 2: Chainguard glibc-dynamic runtime per ADR 0700.
+# Stage 2: the runtime-cc base (ops/base-images/, ADR 1220).
 #
 # The server embeds all static assets via embed.FS, so the runtime image
 # carries two files: /usr/local/bin/goat-zenoh-portal and
 # /usr/local/bin/store-migrate. Cosign-signing
 # lands as a follow-on when Block 40 / 50B.5 substrate fires (no per-
 # image change required — registry-side signature).
+
+# Base images are build arguments named for their role; the defaults are
+# the public images in ops/base-images/ (docs/design/base-images.md).
+ARG BASE_RUNTIME_CC=gcr.io/distroless/cc-debian13:nonroot@sha256:08476c244888bfb425bae1ae4dd7c17f093e972aab8426883d97f3c6f280f7c1
 
 FROM golang:1.26-bookworm@sha256:23ce71337b726608afb1bc00986e630a05034a87a87ea1fc2cd1ae5cf33387eb AS build
 WORKDIR /src
@@ -41,11 +45,9 @@ RUN go build \
     -o /store-migrate \
     ./cmd/store-migrate
 
-# Runtime base pinned by digest (#1251): the :latest tag floats, so two builds a
-# day apart could differ in their base. No renovate in this repo, so refresh it
-# manually: `docker buildx imagetools inspect cgr.dev/chainguard/glibc-dynamic:latest`
-# and update the multi-arch index digest below.
-FROM cgr.dev/chainguard/glibc-dynamic:latest@sha256:5bb932663cff4fb276186720e0357af55c5e47f12e4d9f44ea0060fa3e7bca88
+# Runtime base pinned by digest (#1251) through the runtime-cc role: the digest
+# lives in ops/base-images/runtime-cc/Dockerfile, which Dependabot refreshes.
+FROM ${BASE_RUNTIME_CC}
 # The store this image's server opens. The goat-zenoh-portal-store role reads it
 # with `docker image inspect` and refuses to deploy an image whose store differs
 # from the goatnet's declared portal_store. An image without the label predates
@@ -53,8 +55,8 @@ FROM cgr.dev/chainguard/glibc-dynamic:latest@sha256:5bb932663cff4fb276186720e035
 # same fact under a neutral key, so the role can read either.
 LABEL org.usareur-af.goat-zenoh-portal.store="postgres"
 LABEL io.goat.zenoh-portal.store="postgres"
-# Static binary, but Chainguard glibc-dynamic gives ca-certificates +
-# /etc/passwd for a non-root run. Use chainguard's nonroot user.
+# Static binary, but the runtime-cc base gives ca-certificates +
+# /etc/passwd for a non-root run. Use its nonroot user.
 USER 65532:65532
 COPY --from=build /goat-zenoh-portal /usr/local/bin/goat-zenoh-portal
 COPY --from=build /store-migrate /usr/local/bin/store-migrate

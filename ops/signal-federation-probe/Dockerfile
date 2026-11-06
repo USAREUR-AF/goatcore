@@ -1,20 +1,20 @@
 # Build + run image for signal-federation-probe.
-# Multi-arch via cgr.dev/chainguard/go (FIPS-friendly base) + chainguard/static
-# runtime image (no shell, no package manager — minimal attack surface).
+# Multi-arch via the go-build base + the runtime-static base (ADR 1220):
+# no shell, no package manager in the runtime image.
 #
-# The registry host is cgr.DEV. This file said cgr.io previously which
-# does not resolve at all — so the image could never have been built, which is
-# consistent with there having been no build workflow for it either.
-# Every other Dockerfile in this repo already used cgr.dev; these were the only
-# three references that did not.
-FROM cgr.dev/chainguard/go:latest AS build
+# Base images are build arguments named for their role; the defaults are
+# the public images in ops/base-images/ (docs/design/base-images.md).
+ARG BASE_GO_BUILD=docker.io/library/golang:1.26-bookworm@sha256:23ce71337b726608afb1bc00986e630a05034a87a87ea1fc2cd1ae5cf33387eb
+ARG BASE_RUNTIME_STATIC=gcr.io/distroless/static-debian13:nonroot@sha256:25ac8f0c3b2334a9eb05452266bd4697864a8c8ef0ef71e5e6480d7f92868329
+
+FROM ${BASE_GO_BUILD} AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY main.go ./
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /signal-federation-probe .
 
-FROM cgr.dev/chainguard/static:latest
+FROM ${BASE_RUNTIME_STATIC}
 COPY --from=build /signal-federation-probe /signal-federation-probe
 EXPOSE 9091
 ENTRYPOINT ["/signal-federation-probe"]

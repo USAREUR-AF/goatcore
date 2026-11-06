@@ -302,7 +302,7 @@ func cmdServe(args []string) error {
 // when it answers 200 with status "ok".
 //
 // It exists because the runtime image is distroless
-// (cgr.dev/chainguard/glibc-dynamic — no shell, no curl, no wget), so the usual
+// (the runtime-cc base — no shell, no curl, no wget), so the usual
 // `wget -q -O- .../api/health` healthcheck is unrunnable: F-173 records the
 // result of writing one into a distroless image — the container reports
 // permanently unhealthy while serving fine, which is worse than no healthcheck

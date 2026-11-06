@@ -1,11 +1,15 @@
 # Multi-stage build for goat-id-console.
 #
 # Stage 1: build a static binary (no CGO, embed.FS for assets).
-# Stage 2: Chainguard static-nonroot runtime — no shell, no package manager.
+# Stage 2: the runtime-static base (ops/base-images/) — no shell, no package manager.
 #
 # Per ADR 0860: this is the admin tenant of the IdP plane and runs behind
 # an oauth2-proxy sidecar with --allowed-group=ADMINS (same role pattern
 # as oauth2-proxy-dashboard).
+
+# Base images are build arguments named for their role; the defaults are
+# the public images in ops/base-images/ (docs/design/base-images.md).
+ARG BASE_RUNTIME_STATIC=gcr.io/distroless/static-debian13:nonroot@sha256:25ac8f0c3b2334a9eb05452266bd4697864a8c8ef0ef71e5e6480d7f92868329
 
 FROM golang:1.26-bookworm@sha256:23ce71337b726608afb1bc00986e630a05034a87a87ea1fc2cd1ae5cf33387eb AS build
 WORKDIR /src
@@ -43,7 +47,7 @@ RUN go build \
 # copy under /etc/goat-id-console/group-permissions.yml so the binary boots
 # without a separate volume mount. Operators override via env or by bind-
 # mounting a newer copy at the same path.
-FROM cgr.dev/chainguard/static:latest
+FROM ${BASE_RUNTIME_STATIC}
 # The store this image's server opens. The id-admin-console role reads it with
 # `docker image inspect` and refuses to deploy an image whose store differs
 # from the goatnet's declared id_admin_console_store. An image without the label

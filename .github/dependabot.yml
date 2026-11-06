@@ -15,6 +15,11 @@ updates:
   - package-ecosystem: docker
     directories:
       - /ops/admit-audit
+      - /ops/base-images/go-build
+      - /ops/base-images/runtime-cc
+      - /ops/base-images/runtime-shell
+      - /ops/base-images/runtime-static
+      - /ops/base-images/rust-build
       - /ops/e2e/canary
       - /ops/e2e/host
       - /ops/goat-id-console

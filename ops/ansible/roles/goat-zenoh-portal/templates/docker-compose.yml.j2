@@ -175,7 +175,7 @@ services:
     # Container healthcheck.
     #
     # DEFAULT-OFF ON PURPOSE, and it is not busywork: this image is
-    # cgr.dev/chainguard/glibc-dynamic (ops/goat-zenoh-portal/Dockerfile) —
+    # built on the distroless runtime-cc base (ops/goat-zenoh-portal/Dockerfile) —
     # no shell, no curl, no wget. A `wget http://…/api/health` probe here is
     # UNRUNNABLE and would pin the container at `Up (unhealthy)` forever while
     # it serves perfectly, which is precisely F-173 (same burn on the

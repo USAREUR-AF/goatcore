@@ -16,10 +16,15 @@
 # committed grammar it was built from: no mount, no runtime file to go missing,
 # and no "grammar unavailable" degraded mode for a file that is not optional.
 #
-# Chainguard glibc-dynamic runtime per ADR 0700; non-root uid 65532 (the ansible
+# runtime-cc base (ops/base-images/, ADR 1220); non-root uid 65532 (the ansible
 # role chowns the cert dir to it).
 
-FROM cgr.dev/chainguard/rust:latest-dev AS rust-builder
+# Base images are build arguments named for their role; the defaults are
+# the public images in ops/base-images/ (docs/design/base-images.md).
+ARG BASE_RUST_BUILD=docker.io/library/rust:1.92-bookworm@sha256:e90e846de4124376164ddfbaab4b0774c7bdeef5e738866295e5a90a34a307a2
+ARG BASE_RUNTIME_CC=gcr.io/distroless/cc-debian13:nonroot@sha256:08476c244888bfb425bae1ae4dd7c17f093e972aab8426883d97f3c6f280f7c1
+
+FROM ${BASE_RUST_BUILD} AS rust-builder
 USER root
 WORKDIR /build/rust
 
@@ -47,7 +52,7 @@ COPY rust/goat-consistency-health/ goat-consistency-health/
 COPY rust/goat-consistency-console/ goat-consistency-console/
 RUN cargo build --release --locked -p goat-consistency-health
 
-FROM cgr.dev/chainguard/glibc-dynamic:latest
+FROM ${BASE_RUNTIME_CC}
 WORKDIR /
 COPY --from=rust-builder /build/rust/target/release/goat-consistency-health /usr/local/bin/goat-consistency-health
 ENTRYPOINT ["/usr/local/bin/goat-consistency-health"]

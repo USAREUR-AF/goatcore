@@ -57,8 +57,8 @@ services:
 {% if fabric_crawler_healthcheck_enabled | default(false) %}
     # Container healthcheck.
     #
-    # DEFAULT-OFF ON PURPOSE. The runtime image is
-    # cgr.dev/chainguard/glibc-dynamic (ops/zenoh-trial-peers/fabric-crawler/
+    # DEFAULT-OFF ON PURPOSE. The runtime image is the distroless
+    # runtime-cc base (ops/zenoh-trial-peers/fabric-crawler/
     # Dockerfile) — no shell, no curl/wget — AND the crawler exposes no HTTP
     # endpoint at all, so there is nothing in the image that can probe it. An
     # unrunnable probe would pin the container `Up (unhealthy)` forever.
