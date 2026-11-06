@@ -87,6 +87,7 @@ echo "$peers" | \
   GUARD_MACHINES_FILE="$machines_file" \
   GUARD_RECONCILE_ALLOWLIST="${PROVENANCE_RECONCILE_ALLOWLIST:-}" \
   GUARD_PROVENANCE_ENFORCE="${PROVENANCE_ENFORCE:-0}" \
+  GUARD_WARRANT_DIR="${WARRANT_MEMBERSHIP_DIR:-}" \
   python3 -c '
 import json, os, re, sys
 
@@ -202,6 +203,28 @@ def bare(g):
             return g[len(p):]
     return g
 
+# External-service hosts are minted under a person (F-531), so their names read
+# as human. Warrant declares them as exact: [<P>-EXTERNAL-INFRA] (ADR 1178), and a
+# host declared that way may hold the class. Holding anything else still fails.
+def declared_external_hosts(root):
+    if not root or not os.path.isdir(root):
+        return set()
+    import glob
+    import yaml
+    out = set()
+    for f in glob.glob(os.path.join(root, "*.yaml")):
+        if os.path.basename(f).startswith("_"):
+            continue
+        with open(f) as fh:
+            doc = yaml.safe_load(fh) or {}
+        for e in doc.get("entries") or []:
+            exact = e.get("exact") or []
+            if len(exact) == 1 and exact[0].endswith("-EXTERNAL-INFRA"):
+                out.add(e.get("peer"))
+    return out
+
+DECLARED_EXTERNAL = declared_external_hosts(os.environ.get("GUARD_WARRANT_DIR", ""))
+
 fail = 0
 gear_peers = []
 for p in peers:
@@ -216,7 +239,7 @@ for p in peers:
         gear_peers.append(nm)
 
     # (a) a person-shaped peer must not be wearing a gear class
-    if human and classes:
+    if human and classes and nm not in DECLARED_EXTERNAL:
         print(f"FAIL {nm}")
         print(f"     rails-minted human peer holds NODE CLASS {sorted(classes)}")
         print(f"     Node classes are for equipment. Give the person a role group instead.")
@@ -231,7 +254,9 @@ for p in peers:
         fail = 1
 
     # (c) covered by nothing at all — invisible to every rule, and to any audit
-    if not classes and not roles:
+    # A quarantined or probation peer is classified: warrant holds it there.
+    held = any(t == "QUARANTINED" or t.startswith("PROBATION") for t in tags)
+    if not classes and not roles and not held:
         print(f"FAIL {nm}")
         shown = names if names else ["[only All]"]
         print(f"     holds neither a node class nor a role: {shown}")

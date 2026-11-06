@@ -8,7 +8,7 @@
 # ${VAR:?} / ${VAR:-} forms. A variable appears here because something
 # consumes it, which is the only claim this file is entitled to make.
 #
-# 1401 variables, 393 of them secret-bearing by name.
+# 1403 variables, 393 of them secret-bearing by name.
 #
 # THIS FILE HOLDS NO VALUES AND NEVER WILL. Credentials live in the store.
 # .envrc.local.d/*.refs hold references, mode 0600 (ADR 1186).
@@ -898,7 +898,7 @@ export ZH_KEY=""  # SECRET
 #
 # Named here because something reads them, so a missing one breaks a run t
 # he same way a missing secret does.
-# 986 variables.
+# 988 variables.
 # ==========================================================================
 
 # ops/federation-partnerenv/drill/lib/common.sh
@@ -2046,6 +2046,9 @@ export GUARD_RECONCILE_ALLOWLIST=""
 
 # ops/ci/check-node-class-membership.sh
 export GUARD_TAXONOMY=""
+
+# ops/ci/check-node-class-membership.sh
+export GUARD_WARRANT_DIR=""
 
 # ops/ci/check-env-coverage.sh, ops/ci/check-site-config-bleed.sh
 export GV_ROOT=""
@@ -3681,6 +3684,9 @@ export VXLAN_RCA_NETBIRD_IFACE=""
 
 # ops/scripts/vxlan-rca.sh
 export VXLAN_RCA_NO_PCAP=""
+
+# ops/ci/check-node-class-membership.sh
+export WARRANT_MEMBERSHIP_DIR=""
 
 # ops/wave3/scripts/check-soak-progress.sh, ops/wave3/scripts/start-soak.sh …
 export WAVE3_ACCOUNT_ID=""
