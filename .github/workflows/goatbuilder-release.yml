@@ -27,3 +27,5 @@ jobs:
       bin: goatbuilder
       tag_prefix: goatbuilder/v
       notes: goatbuilder.md
+      # goatbuilder drives Unix hosts and does not build for Windows.
+      windows: false

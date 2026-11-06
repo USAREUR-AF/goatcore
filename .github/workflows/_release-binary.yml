@@ -1,4 +1,4 @@
-# Builds one of this repository's command-line binaries for three platforms,
+# Builds one of this repository's command-line binaries for five platforms,
 # signs its checksums, and attaches everything to the GitHub Release of the tag.
 # Called by goat-release.yml and goatbuilder-release.yml; runs with GITHUB_TOKEN
 # alone.
@@ -6,14 +6,24 @@
 # Assets, per release:
 #   <bin>-linux-amd64    ubuntu-24.04,     linked against glibc 2.31 (Ubuntu 20.04, Debian 11 and later)
 #   <bin>-linux-arm64    ubuntu-24.04-arm, linked against glibc 2.31
+#   <bin>-darwin-amd64   macos-14, cross-compiled to x86_64-apple-darwin,
+#                        ad-hoc signed, not notarized
 #   <bin>-darwin-arm64   macos-14, ad-hoc signed, not notarized
+#   <bin>-windows-amd64.exe  windows-latest, MSVC (unless the caller sets
+#                        windows: false)
 #   <asset>.sha256       one per binary
 #   SHA256SUMS           every binary's digest
 #   SHA256SUMS.cosign-bundle  a keyless cosign signature over SHA256SUMS, made
 #                        under this workflow's GitHub OIDC identity
 #
 # The names are the ones `goat update` and `goatbuilder update` fetch
-# (crates/goat-selfupdate: <bin>-<os>-<arch>). goatbuilder checks the signature
+# (crates/goat-selfupdate: <bin>-<os>-<arch>, with .exe on Windows).
+#
+# darwin-amd64 is cross-compiled on Apple Silicon: GitHub's Intel macOS runner
+# pool is winding down and a job queued for one can wait hours. The Xcode SDK
+# on macos-14 is universal, so the cross build needs no extra configuration;
+# the binary cannot run on the arm64 host (no Rosetta), so its --version check
+# is replaced by a check that it is an x86_64 Mach-O. goatbuilder checks the signature
 # against the certificate identity ^https://github.com/<this repository>/, so
 # the signature must be made here, in this repository, and nowhere else.
 
@@ -38,6 +48,11 @@ on:
         description: release notes file under .github/release-notes/
         type: string
         required: true
+      windows:
+        description: build the windows-amd64 leg (false for a binary that does not build on Windows)
+        type: boolean
+        required: false
+        default: true
 
 permissions:
   contents: read
@@ -72,20 +87,45 @@ jobs:
             exit 1
           fi
 
+  plan:
+    name: the platforms this binary builds for
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - id: plan
+        env:
+          WINDOWS: ${{ inputs.windows }}
+        run: |
+          set -euo pipefail
+          # glibc: the Linux glibc floor, linked by cargo-zigbuild, never the runner's.
+          # cross: the binary is built for an architecture the runner cannot execute.
+          legs='[
+            {"runner":"ubuntu-24.04",    "os_label":"linux",  "arch":"amd64","rust_target":"x86_64-unknown-linux-gnu", "glibc":"2.31","cross":false,"ext":""},
+            {"runner":"ubuntu-24.04-arm","os_label":"linux",  "arch":"arm64","rust_target":"aarch64-unknown-linux-gnu","glibc":"2.31","cross":false,"ext":""},
+            {"runner":"macos-14",        "os_label":"darwin", "arch":"amd64","rust_target":"x86_64-apple-darwin",      "glibc":"",    "cross":true, "ext":""},
+            {"runner":"macos-14",        "os_label":"darwin", "arch":"arm64","rust_target":"aarch64-apple-darwin",     "glibc":"",    "cross":false,"ext":""},
+            {"runner":"windows-latest",  "os_label":"windows","arch":"amd64","rust_target":"x86_64-pc-windows-msvc",   "glibc":"",    "cross":false,"ext":".exe"}
+          ]'
+          if [ "$WINDOWS" != true ]; then
+            legs="$(jq -c 'map(select(.os_label != "windows"))' <<<"$legs")"
+          fi
+          matrix="$(jq -c '{include: .}' <<<"$legs")"
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+          jq -r '.include[] | "- \(.os_label)-\(.arch) on \(.runner)"' <<<"$matrix" >> "$GITHUB_STEP_SUMMARY"
+
   build:
     name: build ${{ matrix.os_label }}-${{ matrix.arch }}
-    needs: [nominator]
+    needs: [nominator, plan]
     # workflow_dispatch has no tag: nominator is skipped and the build runs.
-    if: ${{ !cancelled() && (needs.nominator.result == 'success' || needs.nominator.result == 'skipped') }}
+    if: ${{ !cancelled() && needs.plan.result == 'success' && (needs.nominator.result == 'success' || needs.nominator.result == 'skipped') }}
     runs-on: ${{ matrix.runner }}
+    # A cold-cache release build on the Windows runner takes over 20 minutes.
     timeout-minutes: 60
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - { runner: ubuntu-24.04,     os_label: linux,  arch: amd64, rust_target: x86_64-unknown-linux-gnu,  glibc: '2.31' }
-          - { runner: ubuntu-24.04-arm, os_label: linux,  arch: arm64, rust_target: aarch64-unknown-linux-gnu, glibc: '2.31' }
-          - { runner: macos-14,         os_label: darwin, arch: arm64, rust_target: aarch64-apple-darwin,      glibc: ''     }
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     defaults:
       run:
         shell: bash
@@ -99,6 +139,10 @@ jobs:
         with:
           workspaces: crates
           key: release-${{ inputs.package }}-${{ matrix.rust_target }}
+
+      - name: NASM (Windows), which ring's x86_64 assembly needs under MSVC
+        if: runner.os == 'Windows'
+        uses: ilammy/setup-nasm@v1
 
       - name: Python for zig (Linux)
         if: matrix.glibc != ''
@@ -149,6 +193,19 @@ jobs:
             exit 1
           fi
 
+      - name: The cross-built macOS binary is x86_64
+        if: matrix.cross && runner.os == 'macOS'
+        env:
+          BIN: target/${{ matrix.rust_target }}/release/${{ inputs.bin }}
+        run: |
+          set -euo pipefail
+          archs="$(lipo -archs "$BIN")"
+          echo "$BIN: $archs"
+          if [ "$archs" != x86_64 ]; then
+            echo "::error::$BIN is '$archs', not x86_64"
+            exit 1
+          fi
+
       - name: Ad-hoc sign the macOS binary
         # The linker's own ad-hoc signature can stall or kill a launch on macOS 14
         # and later; a codesign ad-hoc signature does not. No Apple account is
@@ -162,8 +219,11 @@ jobs:
           codesign --verify --strict --verbose=2 "$BIN"
 
       - name: --version agrees with the tag
+        # A cross-built binary cannot run on its runner; it shares the source,
+        # and so the version, of the native legs that do run this check.
+        if: ${{ !matrix.cross }}
         env:
-          BIN: target/${{ matrix.rust_target }}/release/${{ inputs.bin }}
+          BIN: target/${{ matrix.rust_target }}/release/${{ inputs.bin }}${{ matrix.ext }}
           PREFIX: ${{ inputs.tag_prefix }}
         run: |
           set -euo pipefail
@@ -182,8 +242,8 @@ jobs:
       - name: Stage the asset and its .sha256
         id: stage
         env:
-          SRC: target/${{ matrix.rust_target }}/release/${{ inputs.bin }}
-          OUT: ${{ inputs.bin }}-${{ matrix.os_label }}-${{ matrix.arch }}
+          SRC: target/${{ matrix.rust_target }}/release/${{ inputs.bin }}${{ matrix.ext }}
+          OUT: ${{ inputs.bin }}-${{ matrix.os_label }}-${{ matrix.arch }}${{ matrix.ext }}
         run: |
           set -euo pipefail
           mkdir -p "$GITHUB_WORKSPACE/dist"
