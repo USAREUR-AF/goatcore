@@ -85,8 +85,9 @@ x 'systemctl is-enabled goat-peering-forwarder@wg-carry0.service && systemctl is
 [ "$(x 'wg show wg-carry0 peers')" = "$KEY_EDGE" ] || fail "1: the carrier does not hold exactly the edge"
 x 'wg show wg-carry0 allowed-ips' | grep -q '169.254.30.1/32' || fail "1: the edge's AllowedIPs is not its carrier /32"
 [ "$(x 'wg show wg-carry0 listen-port')" = 51821 ] || fail "1: the carrier does not listen on 51821"
-x 'nft list table inet goat_peering_forwarder' | grep -q 'ip saddr 192.0.2.20 udp dport 51820 dnat ip to 169.254.30.1:51820' \
-  || fail "1: the table does not translate the peering port for the partner's source"
+table=$(x 'nft list table inet goat_peering_forwarder')
+printf '%s\n' "$table" | grep -Eq 'ip saddr \{? ?192\.0\.2\.20 ?\}? udp dport 51820 dnat (ip )?to 169\.254\.30\.1:51820' \
+  || { printf '%s\n' "$table"; fail "1: the table does not translate the peering port for the partner's source"; }
 [ "$(x 'sysctl -n net.ipv4.ip_forward')" = 1 ] || fail "1: IPv4 forwarding is off"
 x 'python3 -c "import json,sys; d=json.load(open(\"/var/log/goat-peering-forwarder-state.json\")); sys.exit(0 if d[\"holds_peering_material\"] is False and d[\"peerings\"][0][\"edge_carrier_public_key\"]==\"'"$KEY_EDGE"'\" and len(d[\"peerings\"][0][\"forwarder_carrier_public_key\"])==44 else 1)"' \
   || fail "1: the state file does not record the edge key, our key and holds_peering_material false"
