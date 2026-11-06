@@ -26,6 +26,8 @@ on:
   push:
     tags:
       - 'grant-crypto-sdk-v*'
+    branches:
+      - feat/release-docs-and-sdk-assets
   workflow_dispatch:
 
 permissions:
