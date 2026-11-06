@@ -219,11 +219,11 @@ mod tests {
     #[test]
     fn site_from_url_extracts_label_before_netbird() {
         assert_eq!(
-            site_from_url("https://demogame.nova.netbird.nova.example"),
+            site_from_url("https://airdefenders.nova.netbird.nova.example"),
             Some("nova".to_string())
         );
         assert_eq!(
-            site_from_url("https://demogame.zagros.netbird.example.net/demo"),
+            site_from_url("https://airdefenders.zagros.netbird.example.net/demo"),
             Some("zagros".to_string())
         );
     }

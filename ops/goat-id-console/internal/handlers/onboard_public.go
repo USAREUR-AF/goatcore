@@ -344,8 +344,9 @@ var errTierExceedsSponsorship = errors.New("the requested role exceeds what your
 // one-time invite is consumed so the candidate can reopen the same link and
 // fix everything in one pass. The keys match intake field names; messages are
 // the same ones the single-field errors used to carry, and they surface in
-// the 422 `validation_failed` `error.fields` payload.
-func validationErrorsForSubmission(inv *onboardstore.Invite, sub candidateSubmission) (map[string]string, error) {
+// the 422 `validation_failed` `error.fields` payload. Valid GitHub logins are
+// normalized in place so the value passed to manifest assembly is canonical.
+func validationErrorsForSubmission(inv *onboardstore.Invite, sub *candidateSubmission) (map[string]string, error) {
 	fields := map[string]string{}
 
 	// Name + email: required for any submission.
@@ -415,6 +416,13 @@ func validationErrorsForSubmission(inv *onboardstore.Invite, sub candidateSubmis
 		fields["nationality"] = "please provide your nationality as an ISO 3166-1 alpha-3 code (e.g. CAN, USA) — it decides which shared data you may be shown, so a request without it cannot be reviewed"
 	}
 
+	github, githubErr := normalizeGitHubLogin(sub.GitHubUsername)
+	if githubErr != nil {
+		fields["github_username"] = githubErr.Message
+	} else {
+		sub.GitHubUsername = github
+	}
+
 	if len(fields) == 0 {
 		return nil, nil
 	}
@@ -470,7 +478,7 @@ func (s *Server) handleOnboardSubmit(w http.ResponseWriter, r *http.Request) {
 		onboardError(w, http.StatusBadRequest, "bad_submission", "submission must be a JSON object")
 		return
 	}
-	fields, perr := validationErrorsForSubmission(inv, sub)
+	fields, perr := validationErrorsForSubmission(inv, &sub)
 	if perr != nil {
 		onboardError(w, http.StatusInternalServerError, "invalid_invite", "this invite has invalid access metadata")
 		return

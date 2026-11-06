@@ -443,12 +443,12 @@ portal_traefik_router_name: "portal"
 portal_traefik_network: "mgmt"
 # Traefik cert resolver name — matches the Traefik static config
 # (`le` = Let's Encrypt via Cloudflare DNS-01). Same pattern panoscope
-# + demogame / auth / dashboard / oauth2 use.
+# + airdefenders / auth / dashboard / oauth2 use.
 portal_traefik_cert_resolver: "le"
 # File-provider directory + filename for the Traefik dynamic route.
 # Traefik is file-provider-only (no docker provider); each
 # service ships its own file here. Filename intentionally distinct from
-# mgmt.yml + demogame.yml + panoscope.yml so a portal
+# mgmt.yml + airdefenders.yml + panoscope.yml so a portal
 # redeploy can't stomp neighboring routes.
 portal_traefik_dynamic_dir: "/etc/traefik/dynamic"
 portal_traefik_dynamic_filename: "portal.yml"
@@ -530,7 +530,7 @@ portal_memory_limit: "512m"
 # private `portal` network + the Traefik network.
 portal_zenoh_network: ""
 
-# Cloudflare DNS publish — mirrors the demogame + panoscope pattern.
+# Cloudflare DNS publish — mirrors the airdefenders + panoscope pattern.
 # When `portal_publish_cloudflare_dns: true`, the role looks up the zone
 # id, lists existing A records, and POSTs any missing ones from
 # `portal_cloudflare_a_record_ips`. Auth from the CLOUDFLARE_API_TOKEN

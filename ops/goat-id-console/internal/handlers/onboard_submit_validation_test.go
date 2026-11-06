@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/usareur-af/goatcore/ops/goat-id-console/internal/onboardstore"
@@ -40,7 +41,7 @@ func TestSubmit_RealCallerShape(t *testing.T) {
 		"unit_code":         "",
 		"unit_code_scheme":  "uic",
 		"title":             "",
-		"github_username":   "", // Blank triggers fallback to email, or handle_required if email lacks @
+		"github_username":   "bad!", // Invalid GitHub login joins the same field-error response.
 		"alliance_standing": "organic",
 		"sector":            "defense",
 		"notes":             "",
@@ -80,8 +81,11 @@ func TestSubmit_RealCallerShape(t *testing.T) {
 	if _, ok := fields["nationality"]; !ok {
 		t.Errorf("missing nationality in error.fields")
 	}
-	if len(fields) != 3 {
-		t.Errorf("expected exactly 3 fields in error.fields, got %d: %v", len(fields), fields)
+	if _, ok := fields["github_username"]; !ok {
+		t.Errorf("missing github_username in error.fields")
+	}
+	if len(fields) != 4 {
+		t.Errorf("expected exactly 4 fields in error.fields, got %d: %v", len(fields), fields)
 	}
 
 	// Verify invite is unconsumed by querying its status.
@@ -89,6 +93,7 @@ func TestSubmit_RealCallerShape(t *testing.T) {
 	fullPayload["organization"] = "Valid Organization"
 	fullPayload["tier"] = "browse"
 	fullPayload["nationality"] = "CAN"
+	fullPayload["github_username"] = "@valid-user"
 
 	body2, _ := json.Marshal(map[string]any{"token": tok, "submission": fullPayload})
 	req2 := httptest.NewRequestWithContext(context.Background(), "POST", "/public/onboard/submit", bytes.NewReader(body2))
@@ -98,6 +103,123 @@ func TestSubmit_RealCallerShape(t *testing.T) {
 
 	if w2.Code != http.StatusCreated {
 		t.Fatalf("subsequent valid submit should succeed, invite should be unconsumed. got %d: %s", w2.Code, w2.Body.String())
+	}
+}
+
+func TestSubmit_GitHubUsernameValidation(t *testing.T) {
+	validSubmission := func(github string) map[string]any {
+		return map[string]any{
+			"name":            "GitHub Candidate",
+			"email":           "github-candidate@example.test",
+			"principal_type":  "person",
+			"organization":    "Test Organization",
+			"nationality":     "CAN",
+			"github_username": github,
+		}
+	}
+	post := func(t *testing.T, h http.Handler, token string, sub map[string]any) *httptest.ResponseRecorder {
+		t.Helper()
+		body, err := json.Marshal(map[string]any{"token": token, "submission": sub})
+		if err != nil {
+			t.Fatal(err)
+		}
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/public/onboard/submit", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		return w
+	}
+
+	for _, github := range []string{
+		"octocat!",
+		"-octocat",
+		"octocat-",
+		"octo--cat",
+		strings.Repeat("a", 40),
+	} {
+		t.Run("reject_"+github, func(t *testing.T) {
+			s := newOnboardTestServer(t)
+			h := s.Routes()
+			inv := &onboardstore.Invite{Sponsor: "sponsor@bypass.local", Env: "zagros", PreboundJSON: `{"tier":"browse"}`}
+			token, err := s.Onboard.MintInvite(context.Background(), inv)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			w := post(t, h, token, validSubmission(github))
+			if w.Code != http.StatusUnprocessableEntity {
+				t.Fatalf("invalid GitHub login %q: want 422, got %d: %s", github, w.Code, w.Body.String())
+			}
+			var res map[string]onboardAPIError
+			if err := json.Unmarshal(w.Body.Bytes(), &res); err != nil {
+				t.Fatal(err)
+			}
+			if _, ok := res["error"].Fields["github_username"]; !ok {
+				t.Fatalf("invalid GitHub login %q: missing github_username field error: %s", github, w.Body.String())
+			}
+
+			storedInvite, err := s.Onboard.GetInviteByToken(context.Background(), token)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if storedInvite.Status != onboardstore.InviteInvited {
+				t.Fatalf("invalid GitHub login %q consumed invite: status=%q", github, storedInvite.Status)
+			}
+			proposals, err := s.Onboard.ListProposals(context.Background(), "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(proposals) != 0 {
+				t.Fatalf("invalid GitHub login %q created %d proposals", github, len(proposals))
+			}
+
+			w = post(t, h, token, validSubmission("corrected-login"))
+			if w.Code != http.StatusCreated {
+				t.Fatalf("corrected GitHub login after %q: want 201, got %d: %s", github, w.Code, w.Body.String())
+			}
+		})
+	}
+
+	for _, tc := range []struct {
+		name   string
+		input  string
+		stored string
+	}{
+		{name: "valid", input: "octocat", stored: "octocat"},
+		{name: "leading at", input: "  @Octo-Cat  ", stored: "Octo-Cat"},
+		{name: "maximum length", input: strings.Repeat("a", 39), stored: strings.Repeat("a", 39)},
+		{name: "empty optional field", input: "", stored: ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newOnboardTestServer(t)
+			h := s.Routes()
+			inv := &onboardstore.Invite{Sponsor: "sponsor@bypass.local", Env: "zagros", PreboundJSON: `{"tier":"browse"}`}
+			token, err := s.Onboard.MintInvite(context.Background(), inv)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			w := post(t, h, token, validSubmission(tc.input))
+			if w.Code != http.StatusCreated {
+				t.Fatalf("valid GitHub login %q: want 201, got %d: %s", tc.input, w.Code, w.Body.String())
+			}
+			var created onboardSubmitResponse
+			if err := json.Unmarshal(w.Body.Bytes(), &created); err != nil {
+				t.Fatal(err)
+			}
+			proposal, err := s.Onboard.GetProposal(context.Background(), created.ProposalID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var manifest map[string]any
+			if err := json.Unmarshal([]byte(proposal.ManifestJSON), &manifest); err != nil {
+				t.Fatal(err)
+			}
+			stored, _ := getPath(manifest, "identity.github").(string)
+			if stored != tc.stored {
+				t.Fatalf("identity.github = %q, want %q", stored, tc.stored)
+			}
+		})
 	}
 }
 
@@ -228,7 +350,7 @@ func TestSubmit_ValidationEdgeCases(t *testing.T) {
 				"organization":    "Test Org",
 				"nationality":     "",
 				"tier":            "browse",
-				"github_username": "sys_handle",
+				"github_username": "sys-handle",
 			},
 			wantStatus: http.StatusCreated,
 			wantFields: nil,
@@ -242,7 +364,7 @@ func TestSubmit_ValidationEdgeCases(t *testing.T) {
 				"organization":    "Test Org",
 				"nationality":     "",
 				"tier":            "browse",
-				"github_username": "per_handle",
+				"github_username": "per-handle",
 			},
 			wantStatus: http.StatusUnprocessableEntity,
 			wantFields: []string{"nationality"},

@@ -11,7 +11,7 @@ THE FAILURE THIS EXISTS TO STOP, as it happened on a production goatnet:
 
   Its standup copied the first goatnet's list verbatim:
   panoscope-trial-peer, flashlight-trial-peer, names-collector-trial-peer,
-  demogame-trial-peer. Reader cert CNs are minted PER GOATNET, and none of
+  airdefenders-trial-peer. Reader cert CNs are minted PER GOATNET, and none of
   those four exist on the new goatnet — its readers are `panoscope`, `flashlight`,
   `stethoscope`. The list was 100% wrong and 100% silent, and it stayed that
   way for fifteen days because the partition never actually rendered (the lane
@@ -57,8 +57,8 @@ import sys
 #
 #   /etc/<svc>/zenoh-client-cert.pem   panoscope, flashlight, stethoscope,
 #                                      fabric-health, the *-health publishers
-#   /opt/<svc>/certs/<svc>-cert.pem    demogame (its zenoh sidecar
-#                                      bind-mounts /opt/demogame/certs)
+#   /opt/<svc>/certs/<svc>-cert.pem    airdefenders (its zenoh sidecar
+#                                      bind-mounts /opt/airdefenders/certs)
 #
 # Add a path here rather than assuming; the cost of missing one is a reader that
 # goes silently dark on the next narrowing.
@@ -215,7 +215,7 @@ def self_test():
         cert_common_names: [
           "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
           "panoscope-trial-peer",
-          "demogame-trial-peer",
+          "airdefenders-trial-peer",
         ],
       },
       {
@@ -261,7 +261,7 @@ def self_test():
 
     # GREEN — same ACL with the live CNs added.
     fixed = narrowed.replace(
-        '"demogame-trial-peer",',
+        '"airdefenders-trial-peer",',
         '"panoscope",\n          "flashlight",\n          "stethoscope",',
     )
     if main([write("fixed.json5", fixed), cglob]) != 0:

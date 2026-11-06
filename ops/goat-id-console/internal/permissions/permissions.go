@@ -53,7 +53,7 @@ type Service struct {
 // mesh-only surface admits any mesh caller regardless of what the grid says.
 //
 // The console marks the non-authoritative columns because the unmarked grid
-// misled an operator : demogame showed a play grant to
+// misled an operator : airdefenders showed a play grant to
 // PLATFORM-ADMIN and an em-dash everywhere else, which reads as "nobody else
 // may play", while the surface in fact had no identity gate at all.
 func (s Service) GridIsAuthoritative() bool { return s.Door == DoorGroupGated }

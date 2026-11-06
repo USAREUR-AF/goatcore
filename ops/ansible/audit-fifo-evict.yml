@@ -1,0 +1,22 @@
+---
+# SPDX-License-Identifier: Apache-2.0
+#
+# Install the audit middle tier's FIFO-eviction service.
+#
+#   cd ops/ansible
+#   OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/ansible-preflight.sh \
+#     -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini \
+#     audit-fifo-evict.yml -e target=<site>_hosts
+#
+# Pre-flight: the evictor's MinIO identity must exist. Mint the secret once
+#   <SITE>_AUDIT_EVICTOR_S3_SECRET_KEY=$(openssl rand -hex 24)
+# into .envrc.local.d/30-site-services.envrc, then run minio-bootstrap.yml so
+# mc-init creates the user from minio_extra_users with the audit-evict policy.
+# This play asserts rather than guesses if the secret is absent.
+- name: audit middle-tier FIFO eviction
+  hosts: "{{ target | mandatory }}"
+  become: true
+  gather_facts: true
+
+  roles:
+    - role: audit-fifo-evict

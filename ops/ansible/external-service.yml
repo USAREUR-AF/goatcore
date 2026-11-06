@@ -402,6 +402,7 @@
         status_code: [200, 404]
         return_content: true
       register: _ext_client_get
+      no_log: true
       when: ext.client is defined
 
     - name: Create or re-sync the client (present)
@@ -573,7 +574,7 @@
       loop_control:
         label: "{{ item.key }} -> {{ item.value }}"
       when: (_cf_have.content | default('')) != item.value
-      no_log: false
+      no_log: true
       delegate_to: localhost
       run_once: true
 
@@ -587,6 +588,7 @@
       loop: "{{ _cf_ours | rejectattr('name', 'in', _cf_want.keys() | list) | list }}"
       loop_control:
         label: "{{ item.name }}"
+      no_log: true
       delegate_to: localhost
       run_once: true
 

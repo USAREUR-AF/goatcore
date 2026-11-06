@@ -13,10 +13,10 @@
 #   - public_mgmt_fqdn (optional)                used for SAN audit
 #
 # Per-service entry shape (each becomes one row on the page):
-#   - id: demogame                           stable slug (id field in JSON)
-#     name: "Demo Game"                      rendered label
-#     fqdn: demogame.<site>.netbird.example.net
-#     container: demogame                    optional — for direct
+#   - id: airdefenders                           stable slug (id field in JSON)
+#     name: "Air Defenders"                      rendered label
+#     fqdn: airdefenders.<site>.netbird.example.net
+#     container: airdefenders                    optional — for direct
 #                                                container-IP health probe
 #     port: 8095                                 container port for the probe
 #     health_path: /health                       default /

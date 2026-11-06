@@ -37,7 +37,7 @@ Judgment calls, made explicit:
 | **core (0)** | traefik · netbird management + signal · netbird-dashboard (+admin-fence proxy — the first OIDC login mints the account Owner, F-188) · postgres · kratos · hydra · selfservice-ui · zenoh router · mesh-dns/CoreDNS · spire-server · spire-agent · admit-audit |
 | **essential (1)** | goat-zenoh-portal · goat-id-console (+proxy, +spiffe-helper) · onboard-runner (+spiffe-helper) · onboard-intake-collector · minio · audit-subscriber · goat-get · goat-docs · grant-keyd (+spiffe-helper) |
 | **utility (2)** | panoscope (+proxy) · stethoscope · flashlight · isitup (+proxy) · obs stack (prometheus, grafana, alertmanager, blackbox, cadvisor, node-exporter, postgres-exporter, process-exporter) · goat-logship · env-health publishers (fabric-health, mesh-health, node-net-health, node-net-health-rollup, time-health, ntp-health-pub, presence-health) · relay-health + relay-metrics-ingest (+proxy) · compliance proxies (aws-sigv4-proxy, oauth2-proxy-compliance) |
-| **nicety (3)** | demogame (+zenoh-sidecar) · zenoh-sandbox (router + web) · synth-* vendor fleet · brief · dataflows |
+| **nicety (3)** | airdefenders (+zenoh-sidecar) · zenoh-sandbox (router + web) · synth-* vendor fleet · brief · dataflows |
 
 ## 3. Measured footprint (evidence)
 
@@ -72,7 +72,7 @@ service_tiers:
   netbird_mgmt: 0
   # … one entry per service …
   panoscope: 2
-  demogame: 3
+  airdefenders: 3
 
 # Per-site ceiling — deploy services with tier <= this. Class-C knob;
 # per-site group_vars override. Default: everything (full parity).

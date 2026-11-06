@@ -698,6 +698,7 @@
 </section>
 <script src="/static/onboard-queue.js"></script>
 <script src="/static/onboard-find.js"></script>
+{{if and .Proposal .Proposal.DevicesURL}}<script src="/static/onboard-devices.js"></script>{{end}}
 {{end}}
 
 {{/* The Offboard form of the onboarded, enrolled and archived cards. One
@@ -719,25 +720,6 @@
   <input type="hidden" name="csrf" value="{{.CSRFToken}}">
   <button type="submit" aria-label="Email {{.Handle}} a request to add their GitHub username">Email a request</button>
 </form>{{end}}
-{{- end}}
-
-{{define "devices_block" -}}
-{{/* The person's mesh peers and each one's OS (#1586). A person whose only
-     peers are servers reads "enrolled" yet cannot open the mesh-only login
-     link from a workstation; say so here. Display only. */}}
-{{if .DevicesErr}}<p class="ob-note dim">Devices: {{.DevicesErr}}</p>
-{{else if .Devices}}
-<div class="ob-devices">
-  {{if .Devices.Peers}}
-  <p class="ob-note"><b>Devices on the mesh:</b></p>
-  <ul class="ob-device-list">
-    {{range .Devices.Peers}}<li><code>{{.Name}}</code> · {{if .OS}}{{.OS}}{{else}}<span class="dim">OS not reported</span>{{end}} · {{if .ControlOnly}}<b>control only — no tunnel</b>{{else if .Connected}}connected{{else}}offline{{end}}</li>{{end}}
-  </ul>
-  {{else}}<p class="ob-note dim">Devices on the mesh: none attributed to this handle.</p>{{end}}
-  {{if .Devices.ControlOnly}}<p class="ob-note warn" role="alert"><b>Connected to the control server only — the person's network blocks the mesh data ports.</b> The management host has never completed a tunnel with any of their devices, so nothing on the mesh, sign-in pages included, opens for them. Their network team must allow outbound TCP and UDP 33073 to the relays and UDP 3478; the network-team guide page lists the hosts.</p>{{end}}
-  {{if .Devices.ServerOnly}}<p class="ob-note warn" role="alert"><b>Only a server is enrolled — the person cannot open the login link yet.</b> The login link and /fabric-credential open only on a device connected to the mesh. Ask them to enroll the computer they browse from with the same setup key.</p>{{end}}
-</div>
-{{- end}}
 {{- end}}
 
 {{define "device_key_form" -}}

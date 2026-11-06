@@ -19,7 +19,7 @@ When the substrate spawns a captain agent and three worker agents to build somet
 
 What none of those decisions name is **where the worker agents physically execute**. Today the operator runs Claude Code inside VS Code; the working tree is a single checkout on `main`; there is no second checkout. If a captain spawns three worker agents in this session, all four share the same `.git/HEAD`. Pattern A becomes single-threaded by working-tree contention; Pattern B is unusable (no second checkout to integrate into); the PR-gated branch protection becomes advisory because nothing actually opens a PR — workers commit straight to `main` because that's the only branch checked out.
 
-This is a real prerequisite to firing the Block 48D demogame-epic-wrath pilot. The kickoff memo §5 worker-spawn-plan claims "3 workers in parallel" without operational detail on isolation.
+This is a real prerequisite to firing the Block 48D airdefenders-epic-wrath pilot. The kickoff memo §5 worker-spawn-plan claims "3 workers in parallel" without operational detail on isolation.
 
 ## Decision
 
@@ -45,7 +45,7 @@ The interactive operator session in VS Code stays on `main` (the captain's "defa
 
 **Concurrency ceiling for Option I**: ~3-4 concurrent workers per laptop is the soft ceiling. Beyond that, Option II or III is required. The exact ceiling is operator-machine-specific; not a substrate property.
 
-**PR-gate enforcement during pilots**: demogame-epic-wrath pilot (and subsequent pilots) MUST flip branch protection on `main` for the duration of the pilot per [ADR 0109](0109-git-collaboration-trunk-based.md) trigger conditions. Otherwise the substrate test isn't testing real PR-shape.
+**PR-gate enforcement during pilots**: airdefenders-epic-wrath pilot (and subsequent pilots) MUST flip branch protection on `main` for the duration of the pilot per [ADR 0109](0109-git-collaboration-trunk-based.md) trigger conditions. Otherwise the substrate test isn't testing real PR-shape.
 
 Full mechanics live in the design doc at [`../design/cluster-worker-execution-environment.md`](https://github.com/usareur-af/goatdocs/blob/main/docs/design/cluster-worker-execution-environment.md). Operator runbook lives at [`../operations/cluster-worker-worktree-runbook.md`](https://github.com/usareur-af/goatdocs/blob/main/docs/operations/cluster-worker-worktree-runbook.md).
 

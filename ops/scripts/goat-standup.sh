@@ -779,11 +779,14 @@ step 6 A "ory (kratos/hydra/ui)" \
 #     of identity + mesh state from the founder into the fresh schema (Ory is up
 #     now, so the tables exist), then it removes the migration marker. Guarded:
 #     fails loud if the account is already populated (override -e force_reseed=true
-#     deliberately). Founder sites skip this. The <site>-seed-from-peer.yml is
-#     cloned from an existing <site>-seed-from-peer.yml (node-addition.md §4).
+#     deliberately). Founder sites skip this. site-seed-from-peer.yml is the
+#     generic play; a site that keeps its own $SITE-seed-from-peer.yml gets that
+#     one instead.
 if [ "$JOINER" = 1 ]; then
+SEED_PLAY=site-seed-from-peer.yml
+[ -f "$REPO/ops/ansible/${SITE}-seed-from-peer.yml" ] && SEED_PLAY="${SITE}-seed-from-peer.yml"
 step 6 A "[joiner] seed-from-peer (pass 2 — data-only copy from founder ${JOIN_FOUNDER_SITE:-?}; guarded)" \
-  "cd '$REPO/ops/ansible' && { [ -n '$JOIN_FOUNDER_SITE' ] || { echo 'joiner: group_vars/$GROUP/vars.yml must set join_founder_site (the founder site-id to seed from)'; exit 1; }; } && { ls ${SITE}-seed-from-peer.yml >/dev/null 2>&1 || { echo 'missing ${SITE}-seed-from-peer.yml — clone it from any site that has <site>-seed-from-peer.yml (node-addition.md §4)'; exit 1; }; } && $ANSIBLE_PRE ${INV[*]} ${SITE}-seed-from-peer.yml -e site_id=$SITE"
+  "cd '$REPO/ops/ansible' && { [ -n '$JOIN_FOUNDER_SITE' ] || { echo 'joiner: group_vars/$GROUP/vars.yml must set join_founder_site (the founder site-id to seed from)'; exit 1; }; } && $ANSIBLE_PRE ${INV[*]} $SEED_PLAY -e site_id=$SITE"
 fi
 
 # Phase 6. The rest of site-bootstrap, now that Ory is up: the account seed waits

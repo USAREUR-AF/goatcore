@@ -53,6 +53,7 @@ ops/goatbuilder/goatbuilder.yaml (GOAT_AWS_PROFILE overrides the profile).
 Design: docs/design/external-service-golden-path.md, "Finishing a proposed service".
 """
 import argparse
+import base64
 import datetime
 import glob
 import json
@@ -585,7 +586,11 @@ def do_merge(a, st, facts):
     if pr["reviewDecision"] != "APPROVED":
         raise Stop("the new commits dismissed the approval (review decision: %s). Re-approve %s, then re-run with --from merge."
                    % (pr["reviewDecision"] or "none", st["url"]))
-    run(["gh", "pr", "merge", str(st["pr"]), "--repo", GH_REPO, "--squash", "--delete-branch"], write=True)
+    checked_head = st.get("checked_head")
+    if not checked_head:
+        raise Stop("No checked proposal head; restart from read before merging.")
+    run(["gh", "pr", "merge", str(st["pr"]), "--repo", GH_REPO, "--squash", "--delete-branch",
+         "--match-head-commit", checked_head], write=True)
     st["merged"] = not DRY
     ok("merged")
 
@@ -895,6 +900,8 @@ def do_email(a, st, facts):
         note("DRY: would send from %s via %s:%s:\n" % (facts["smtp_from"], facts["smtp_host"], facts["smtp_port"]))
         print("\n".join("        " + l for l in msg.get_content().splitlines()))
         return
+    # Recipient prompts may wait while the owner withdraws the proposal.
+    require_present_declaration(st)
     with smtplib.SMTP(facts["smtp_host"], facts["smtp_port"], timeout=30) as s:
         s.starttls(context=ssl.create_default_context())
         s.login(os.environ[facts["smtp_user_env"]], os.environ[facts["smtp_pass_env"]])
@@ -944,6 +951,41 @@ def do_review(a, st, facts):
     ok("all checks passed")
 
 
+def require_present_declaration(st):
+    """Recheck the source before each step, including resumed steps."""
+    path = "ops/ansible/group_vars/%s/external-service-%s.yml" % (st["group"], st["stem"])
+    pr = gh_json(["pr", "view", str(st["pr"]), "--repo", GH_REPO,
+                  "--json", "state,headRefOid"])
+    if pr["state"] not in ("OPEN", "MERGED"):
+        raise Stop("Cannot finish a closed, unmerged proposal.")
+    # The apply path uses main after merge; the PR branch may already be deleted.
+    ref = "main" if pr["state"] == "MERGED" else pr["headRefOid"]
+    blob = gh_json(["api", "repos/%s/contents/%s?ref=%s" % (GH_REPO, path, ref)])
+    try:
+        content = base64.b64decode("".join(blob["content"].split()), validate=True)
+        data = yaml.safe_load(content)
+    except (KeyError, TypeError, ValueError, AttributeError, yaml.YAMLError):
+        raise Stop("Cannot read a valid external-service declaration; nothing can continue.") from None
+    if not isinstance(data, dict):
+        raise Stop("The external-service declaration must be a mapping.")
+    entries = [v for k, v in data.items() if isinstance(k, str) and k.startswith("external_service_")]
+    if len(entries) != 1 or not isinstance(entries[0], dict) or entries[0].get("enabled", True) is not True:
+        raise Stop("This finisher accepts enabled declarations only. For withdrawal, retain the disabled "
+                   "declaration, sign the regenerated DNS snapshot and apply external-service.yml state=absent "
+                   "with named zone_record_removal_allow entries. No membership or email steps are needed.")
+    if pr["state"] == "OPEN":
+        st["checked_head"] = ref
+    elif st.get("apply_tree") and "pull" in st.get("done", []):
+        local_path = os.path.join(st["apply_tree"], path)
+        try:
+            with open(local_path, "rb") as fh:
+                local_content = fh.read()
+        except OSError:
+            raise Stop("Saved apply worktree has no readable declaration; restart from pull.") from None
+        if local_content != content:
+            raise Stop("Saved apply declaration differs from current main; restart from pull.")
+
+
 # ---- runner ------------------------------------------------------------------
 def main():
     global DRY
@@ -969,7 +1011,10 @@ def main():
     handlers = dict(check=do_check, read=do_read, peer=do_peer, prepare=do_prepare, review=do_review, merge=do_merge,
                     pull=do_pull, tier=do_tier, apply=do_apply, verify=do_verify, email=do_email)
     facts = None
+    s = "read"
     try:
+        if "read" in st["done"]:
+            require_present_declaration(st)
         for s in STEPS:
             if s in st["done"]:
                 note("[%s] done earlier" % s)
@@ -979,8 +1024,13 @@ def main():
             if s in ("check", "read"):
                 handlers[s](a, st)
             else:
+                # Review can wait while the proposal changes. Recheck before
+                # each subsequent action, especially merge, tier and apply.
+                if facts is not None:
+                    require_present_declaration(st)
                 handlers[s](a, st, facts)
             if s == "read":
+                require_present_declaration(st)
                 facts = site_facts(REPO, st["group"])
                 check_site(a, facts)
             if not DRY:

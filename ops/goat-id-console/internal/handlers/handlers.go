@@ -546,6 +546,9 @@ func (s *Server) Routes() http.Handler {
 	// a sponsorship annotation, and is then scoped to their OWN invitees at
 	// their annotated tier cap.
 	mux.HandleFunc("GET /onboarding", s.onboardGate(s.handleOnboarding))
+	// Device details are admin-only and fetched separately from page rendering
+	// so a slow NetBird does not block the candidate list or detail card (#2384).
+	mux.HandleFunc("GET /onboarding/{id}/devices", s.adminGate(s.handleOnboardingDevices))
 	mux.HandleFunc("GET /onboarding/invite", s.onboardGate(s.handleOnboardInviteForm))
 	mux.HandleFunc("POST /onboarding/invite", s.onboardGate(s.handleOnboardInviteCreate))
 	// Email-delivery controls on the invite-created page (the one-time link
@@ -1216,6 +1219,9 @@ type proposalView struct {
 	Devices *meshstate.DeviceSummary
 	// DevicesErr is why Devices could not be loaded, shown instead of a list.
 	DevicesErr string
+	// DevicesURL defers the selected admin card's mesh lookup until after the
+	// page loads. Empty for list rows, sponsors, and other proposal stages.
+	DevicesURL string
 }
 
 // onboardInviteView is the template-facing shape of an onboarding invite on the

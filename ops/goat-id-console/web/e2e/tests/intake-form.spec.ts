@@ -163,6 +163,62 @@ test.describe("candidate intake form (mocked backend)", () => {
     expect(errors).toEqual([]);
   });
 
+  test("an invalid GitHub username can be corrected and resubmitted", async ({ page }) => {
+    const errors = failOnPageErrors(page);
+    const posts: Array<{ token: string; submission: Submission }> = [];
+    await page.route("**/api/onboard/preview?*", (route: Route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ valid: true, tier_locked: true, prebound: { tier: "developer" }, repo_tiers: ["developer"] }),
+      }),
+    );
+    await page.route("**/api/onboard/submit", (route: Route, req: Request) => {
+      posts.push(JSON.parse(req.postData() || "{}"));
+      if (posts.length === 1) {
+        return route.fulfill({
+          status: 422,
+          contentType: "application/json",
+          body: JSON.stringify({
+            error: {
+              code: "validation_failed",
+              message: "one or more fields need correction before this request can be reviewed",
+              fields: { github_username: "GitHub username may contain only letters, numbers, and single hyphens" },
+            },
+          }),
+        });
+      }
+      return route.fulfill({
+        status: 201,
+        contentType: "application/json",
+        body: JSON.stringify({ proposal_id: "prop-e2e", status: "submitted" }),
+      });
+    });
+
+    await page.goto(`/onboard.html?t=${TOKEN}`);
+    await fillPerson(page);
+    const githubInput = page.getByLabel(/^GitHub username/);
+    await githubInput.fill("invalid--login");
+    await page.getByRole("button", { name: "Submit for review" }).click();
+
+    await expect(page.locator("#err")).toContainText("GitHub username");
+    await expect(githubInput).toHaveAttribute("aria-invalid", "true");
+    await expect(githubInput).toHaveAttribute("aria-describedby", "err-msg-github_username");
+    await expect(githubInput).toBeFocused();
+    await expect(page.getByLabel(/^Full name/)).toHaveValue(NAME);
+    await expect(page.getByLabel(/^Email/)).toHaveValue(EMAIL);
+    await expect(page.getByLabel(/^Organization/)).toHaveValue("E2E Org");
+    expect(posts).toHaveLength(1);
+
+    await githubInput.fill("corrected-login");
+    await page.getByRole("button", { name: "Submit for review" }).click();
+    await expect(page.getByText("your details were submitted for review")).toBeVisible();
+    expect(posts).toHaveLength(2);
+    expect(posts[0].submission.github_username).toBe("invalid--login");
+    expect(posts[1].submission.github_username).toBe("corrected-login");
+    expect(errors).toEqual([]);
+  });
+
   test("a person without a nationality is stopped before any request is sent", async ({ page }) => {
     const errors = failOnPageErrors(page);
     const posts = await mockIntakeApi(page);

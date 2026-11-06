@@ -393,13 +393,13 @@ services:
     ledger: dataflows
     surfaces: [dataflows]
     oidc_clients: [dataflows]
-  demogame:
+  airdefenders:
     class: mgmt
-    present: {var: demogame_enabled}
-    containers: [demogame, demogame-zenoh-sidecar, oauth2-proxy-demogame]
-    ledger: demogame
-    surfaces: [demogame]
-    oidc_clients: [demogame]
+    present: {var: airdefenders_enabled}
+    containers: [airdefenders, airdefenders-zenoh-sidecar, oauth2-proxy-airdefenders]
+    ledger: airdefenders
+    surfaces: [airdefenders]
+    oidc_clients: [airdefenders]
   zenoh-sandbox:
     class: mgmt
     present: {var: zenoh_sandbox_enabled}

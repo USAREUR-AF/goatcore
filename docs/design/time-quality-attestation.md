@@ -177,7 +177,7 @@ declaration and rejects emissions below the floor.
 | **36B** | Schema-enforcer interceptor change + DLQ wiring. Test against existing fabric traffic with `minimum_source` set to lowest tier. |
 | **36C** | Data-dictionary spec update + per-topic `minimum_source` in production schemas. |
 | **36D** | Lineage `worst_case_time_quality` edge attribute + lineage-peer query verbs. |
-| **36E** | Backfill: existing producers (gatewatch, audit-logger, NTP health, future demogame-on-Zenoh) emit the envelope. |
+| **36E** | Backfill: existing producers (gatewatch, audit-logger, NTP health, future airdefenders-on-Zenoh) emit the envelope. |
 | **36F** | Consumers wired: Tipper weighting, Scout citations, partner-release floor enforcement. |
 
 Each phase is independently complete — 36A ships value (operators can query envelope) before 36B ships enforcement before 36C ships discipline. Reversal at any point leaves the fabric coherent.

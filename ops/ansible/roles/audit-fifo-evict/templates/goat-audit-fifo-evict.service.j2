@@ -1,0 +1,13 @@
+# {{ ansible_managed }}
+[Unit]
+Description=FIFO-evict the audit middle tier when it reaches its quota
+Documentation=file://{{ audit_fifo_evict_dir }}/goat-audit-fifo-evict.sh
+After=docker.service
+Wants=docker.service
+
+[Service]
+Type=oneshot
+ExecStart={{ audit_fifo_evict_dir }}/goat-audit-fifo-evict.sh {{ "--evict" if audit_fifo_evict_enabled | bool else "--measure-only" }}
+# Exit 2 means "evicted, still above the low-water mark" — the next pass
+# continues, so it is not a unit failure. Exit 1 (cannot measure) is.
+SuccessExitStatus=0 2

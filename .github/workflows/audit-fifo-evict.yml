@@ -1,0 +1,61 @@
+name: audit-fifo-evict
+on:
+  pull_request:
+    paths:
+      - 'ops/ansible/roles/audit-fifo-evict/**'
+      - 'ops/ansible/audit-fifo-evict.yml'
+      - 'ops/minio/policies/audit-evict.json'
+      - 'ops/compose/goat-obs/prometheus/rules/audit-fifo-evict.yml'
+      - 'ops/compose/goat-obs/prometheus/tests/audit-fifo-evict.test.yml'
+      - 'tests/test_audit_fifo_evict.py'
+      - 'tests/audit_fifo_*'
+      - '.github/workflows/audit-fifo-evict.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  # The eviction alerts, checked with the promtool of the Prometheus the
+  # goat-obs stack runs (prom/prometheus:v2.54.1), so a rule that passes here
+  # also loads on the server. Bump this WITH the compose image pin.
+  rules:
+    name: promtool check + unit tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      PROM_VERSION: '2.54.1'
+      PROM_SHA256: '31715ef65e8a898d0f97c8c08c03b6b9afe485ac84e1698bcfec90fc6e62924f'
+    steps:
+      - uses: actions/checkout@v4
+      - name: install promtool (version-pinned + checksum-verified)
+        run: |
+          set -euo pipefail
+          tarball="prometheus-${PROM_VERSION}.linux-amd64.tar.gz"
+          curl -fsSLO "https://github.com/prometheus/prometheus/releases/download/v${PROM_VERSION}/${tarball}"
+          echo "${PROM_SHA256}  ${tarball}" | sha256sum -c -
+          tar xzf "${tarball}"
+          sudo install -m 0755 "prometheus-${PROM_VERSION}.linux-amd64/promtool" /usr/local/bin/promtool
+      - name: promtool check rules
+        working-directory: ops/compose/goat-obs/prometheus
+        run: promtool check rules rules/audit-fifo-evict.yml
+      - name: promtool test rules
+        working-directory: ops/compose/goat-obs/prometheus
+        run: promtool test rules tests/audit-fifo-evict.test.yml
+  version-retention:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.10'
+          cache: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install --quiet pyyaml
+      - run: python3 tests/test_audit_fifo_evict.py
+      - name: Real GOVERNANCE versions, pass bounds and COMPLIANCE cold tier
+        run: bash tests/audit_fifo_source_integration.sh

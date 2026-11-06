@@ -46,5 +46,5 @@ ops/zenoh-ingress-gateway
 
 # --- Go modules whose *-image.yml builds but runs no go test (or no workflow)
 ops/onboard-runner
-ops/serve/demogame
+ops/serve/airdefenders
 ops/zenoh-trial-peers/vendor-decode-rca

@@ -60,22 +60,63 @@ So FIFO-eviction is the right policy for the working tier. The
 substrate fails over to "we have less recent history" rather than "we
 have no recent history" under pressure.
 
-**Eviction policy** (implementation-scoped in
-`active-work/queued/audit-fifo-eviction.yaml`):
+**Eviction policy** — built as the `audit-fifo-evict` role
+(`ops/ansible/roles/audit-fifo-evict`, playbook `ops/ansible/audit-fifo-evict.yml`).
+Without it, GOVERNANCE mode gives the substrate the weaker guarantee AND
+COMPLIANCE's failure mode: a bucket that reaches its hard quota refuses every
+new audit write while nothing makes room. The implementation follows the policy
+below, with the quota read from the host's own declaration rather than the
+server (reading a quota is an admin API, and the service deliberately holds no
+admin right):
 
-- Watch `minio_bucket_quota_used_bytes / minio_bucket_quota_bytes`
-  from the `minio-quota-scraper` sidecar.
-- At ≥ 90% utilization: evict oldest objects (by `lastModified`)
-  via `mc rm --bypass-governance --older-than <N>` until usage
-  drops to a configured low-water mark (e.g. 80%).
-- Emit `AuditMiddleTierEviction` events for every batch evicted,
-  including object count + total bytes + age range + dataset
-  coverage. These events themselves go into the audit-integrity
-  bucket (and are therefore preserved into the next cold-archive).
-- Alert at every eviction batch (informational) + alert separately
-  if eviction runs more than N times in M window
-  (`AuditEvictionRateAnomalous` — catches both runaway producer
-  bugs and attacker garbage floods).
+- Measure all stored versions with `mc du --versions`, using the host's
+  declared quota. Ordinary current-key size can hide retained versions.
+- At or above the high-water mark, enumerate version IDs and sort hour
+  prefixes by their timestamp across sites. Before touching the next oldest
+  hour, count every snapshotted version against the remaining byte budget.
+  An oversized hour stops the pass; it does not justify deleting newer data.
+- Delete each selected version with `mc rm --bypass --version-id ID
+  ALIAS/BUCKET/KEY`. This removes retained versions rather than creating
+  delete markers. The mc client needs bucket-scoped `GetObjectVersion` for
+  its versioned metadata check as well as delete and governance-bypass rights.
+- Bound each pass by both the configured byte percentage and hour count.
+  Exit 2 means a bounded incomplete pass. Measurement errors exit 1;
+  deletion, state or trail errors exit 3 and fail the unit.
+- Journal each attempted version on local durable storage before removal.
+  Confirmed outcomes are uploaded beneath `ops/eviction/`; failed trail
+  uploads remain pending and block the next destructive pass. The evictor's
+  policy (`ops/minio/policies/audit-evict.json`) explicitly denies deletion of
+  its own trail. Metrics remeasure usage after publishing the trail.
+- Persist an actual cumulative hour-prefix counter. Alerting uses its
+  `increase` over six hours, so repeated scrapes do not multiply a single pass.
+
+Installation and the default timer are measurement-only. Set
+`audit_fifo_evict_enabled: true` only as an explicit rollout decision after
+checking the observed quota, retention posture, first pass scope and client
+artifact. The installation probe always passes `--measure-only` and must
+succeed before the timer is started. This flag does not replace the functional
+eviction path; `--evict` performs the bounded pass described above.
+
+The role refuses to install until `audit_fifo_evict_mc_image` names an
+immutable client image (`<image>@sha256:<64 hex>`); its default is an explicit
+`@sha256:PENDING` declaration, recorded as non-rollable pending metadata.
+Replace it with a verified multi-architecture reference and a matching ledger
+row together. The integration fixture builds the exact upstream release source
+into disposable local images; this proves version and retention behaviour but
+does not publish a runtime artifact. The rollback ledger classifies eviction as
+forward-only: reverting code cannot restore removed versions.
+
+Reproduce the source contracts and the isolated real-version test:
+
+```sh
+python3 tests/test_audit_fifo_evict.py
+bash tests/audit_fifo_source_integration.sh
+promtool test rules ops/compose/goat-obs/prometheus/tests/audit-fifo-evict.test.yml
+```
+
+The integration script needs Docker, Git, Python 3 and Go. It selects the Docker
+architecture, verifies the two upstream commit IDs, uses Go 1.26.10, and removes
+only its unique test images and container. It contacts no live audit endpoint.
 
 ## Why three tiers (not one)
 

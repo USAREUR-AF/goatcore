@@ -123,8 +123,8 @@ ops/replication-observability-fire-test/docker-compose.yml prom/prometheus:v2.51
 ops/replication-observability-fire-test/docker-compose.yml quay.io/prometheuscommunity/postgres-exporter:v0.15.0   # 2026-09-22 seed
 ops/secwatch/Dockerfile debian:bookworm-slim   # 2026-09-22 seed
 ops/secwatch/docker-compose.yml secwatch:latest   # 2026-09-22 seed
-ops/serve/demogame/Dockerfile cgr.dev/chainguard/go:latest   # 2026-09-22 seed
-ops/serve/demogame/Dockerfile cgr.dev/chainguard/static:latest   # 2026-09-22 seed
+ops/serve/airdefenders/Dockerfile cgr.dev/chainguard/go:latest   # 2026-09-22 seed
+ops/serve/airdefenders/Dockerfile cgr.dev/chainguard/static:latest   # 2026-09-22 seed
 ops/serve/archived/efforts/Dockerfile alpine:3.20   # 2026-09-22 seed
 ops/serve/archived/efforts/Dockerfile golang:1.22-alpine   # 2026-09-22 seed
 ops/serve/brief/Dockerfile nginx:alpine   # 2026-09-22 seed

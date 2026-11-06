@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # portal-deploy.yml — operator-fired deploy of the
-# goat-zenoh-portal on the site's portal host. Mirrors the demogame +
+# goat-zenoh-portal on the site's portal host. Mirrors the airdefenders +
 # zenoh-deploy + panoscope pattern: thin wrapper around the role, single
 # command, Cloudflare DNS publish in the same fire.
 #

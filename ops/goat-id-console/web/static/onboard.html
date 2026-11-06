@@ -236,6 +236,7 @@
       case "organization": return document.getElementById("organization");
       case "tier": return document.getElementById("tierRow-sel");
       case "nationality": return document.getElementById("nationality");
+      case "github_username": return document.getElementById("github_username");
       // The server derives the account name from the email address; the form
       // has no handle input, so the address is the field to fix.
       case "handle": return document.getElementById("email");
@@ -252,6 +253,7 @@
       case "nationality": return "Nationality";
       case "nation": return "Organisation's nation";
       case "handle": return "Email";
+      case "github_username": return "GitHub username";
       default: return cap(name.replace(/_/g, " "));
     }
   }
@@ -261,7 +263,7 @@
     if(!fields) return;
     var ul = document.createElement("ul");
     var first = null;
-    var ordered = ["name", "email", "organization", "nationality", "handle", "tier", "nation"];
+    var ordered = ["name", "email", "organization", "nationality", "handle", "tier", "github_username", "nation"];
 
     function addField(name){
       if(!Object.prototype.hasOwnProperty.call(fields, name)) return;

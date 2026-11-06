@@ -147,6 +147,11 @@
       Each entry: {name, addr, job}. See group_vars/<obs-group>/vars.yml
       for an instance.
 
+# New scrape inputs must serve real samples before any configuration change.
+# Kept separate so the read-only checks can also be exercised in isolation.
+- name: obs-host | verify required scrape inputs
+  ansible.builtin.import_tasks: verify-scrape-inputs.yml
+
 - name: Pre-flight — obs_data_root parent (NVMe at /opt/docker-data) exists
   ansible.builtin.stat:
     path: /opt/docker-data
