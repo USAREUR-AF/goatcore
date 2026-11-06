@@ -996,12 +996,13 @@ tests:
     aspect: mesh/acl-declaration
     probe: goat-cli
     params: {via: "localhost", context: "{{ goat_context }}", verb: "acl test {{ site_id }} --json",
-             expect_jq: "all(.[]; .verdict == \"satisfied\")", timeout: 60}
+             expect_jq: "length > 0 and all(.[]; .verdict == \"satisfied\")", timeout: 60}
     requires: [netbird-mgmt]
     caught_would_have: >-
       a declared ACL assertion (allow or deny) that the goatnet's declaration
-      no longer satisfies. The declaration, not the live mesh: the must_refuse
-      rows are the live boundary checks.
+      no longer satisfies, or a goatnet that declares no assertions at all
+      (the verb exits non-zero and the report is empty). The declaration, not
+      the live mesh: the must_refuse rows are the live boundary checks.
   - id: deploy-ledgers-match-main
     aspect: deploy/ledgers
     probe: goat-cli

@@ -40,6 +40,11 @@ pub struct AclTestArgs {
     /// Include satisfied assertions in the text report.
     #[arg(long)]
     pub verbose: bool,
+    /// Accept a check in which no assertion exists. Without it, a scope (or a
+    /// whole declaration) that declares no assertions fails: nothing was
+    /// checked, and an empty check is not a pass.
+    #[arg(long)]
+    pub none_expected: bool,
 }
 
 pub async fn run_test(args: AclTestArgs) -> anyhow::Result<()> {
@@ -49,44 +54,86 @@ pub async fn run_test(args: AclTestArgs) -> anyhow::Result<()> {
     // for every such goatnet. Outside a checkout, the embedded copy.
     // The note stays on stderr, apart from JSON and from the verdict.
     let decl = declaration("acl test: checking the declaration in this checkout")?;
-    let scopes = match &args.scope {
-        Some(s) => vec![s.clone()],
+    let checked = check(&decl, args.scope.as_deref())?;
+
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&checked.reports)?);
+        // JSON stays the report array; the coverage line goes to stderr.
+        if !checked.unasserted.is_empty() {
+            eprintln!(
+                "acl test: not checked — no assertions declared: {}",
+                checked.unasserted.join(", ")
+            );
+        }
+    } else {
+        for r in &checked.reports {
+            print_report(r, args.verbose);
+        }
+        // Include unchecked scopes so the report shows its coverage.
+        if !checked.unasserted.is_empty() {
+            println!(
+                "\nnot checked — no assertions declared: {}",
+                checked.unasserted.join(", ")
+            );
+        }
+        if checked.reports.is_empty() && args.none_expected {
+            println!("Nothing was checked, and --none-expected says none were expected.");
+        }
+    }
+
+    verdict(&checked, args.scope.as_deref(), args.none_expected)
+}
+
+/// What one run evaluated: a report per scope that carries assertions, and
+/// the scopes that carry none.
+struct Checked {
+    reports: Vec<Report>,
+    unasserted: Vec<String>,
+}
+
+/// Evaluate `scope`, or every declared scope when it is `None`.
+fn check(decl: &Declaration, scope: Option<&str>) -> anyhow::Result<Checked> {
+    let scopes = match scope {
+        Some(s) => vec![s.to_string()],
         None => decl.scopes(),
     };
-
-    let mut reports = Vec::new();
-    let mut silent = Vec::new();
+    let mut checked = Checked {
+        reports: Vec::new(),
+        unasserted: Vec::new(),
+    };
     for site in &scopes {
         // Reject an unknown scope before checking whether it has assertions.
         let model = decl.model(site)?;
         let tests = decl.tests(site);
         if tests.is_empty() {
-            silent.push(site.clone());
+            checked.unasserted.push(site.clone());
             continue;
         }
-        reports.push(panoscope_core::aclcheck::evaluate(&model, &tests));
+        checked
+            .reports
+            .push(panoscope_core::aclcheck::evaluate(&model, &tests));
     }
+    Ok(checked)
+}
 
-    if args.json {
-        println!("{}", serde_json::to_string_pretty(&reports)?);
-    } else {
-        for r in &reports {
-            print_report(r, args.verbose);
-        }
-        // Include unchecked scopes so the report shows its coverage.
-        if !silent.is_empty() {
-            println!(
-                "\nnot checked — no assertions declared: {}",
-                silent.join(", ")
-            );
-        }
-        if reports.is_empty() {
-            println!("No scope in the declaration carries an assertion.");
-        }
+/// The exit decision. A run that evaluated no assertion fails unless the
+/// caller said none were expected: `all()` over an empty set is true, and a
+/// goatnet whose declaration carries no assertions would otherwise pass every
+/// gate that reads this verb. Undetermined results fail as well as explicit
+/// violations.
+fn verdict(checked: &Checked, scope: Option<&str>, none_expected: bool) -> anyhow::Result<()> {
+    if checked.reports.is_empty() && !none_expected {
+        let what = match scope {
+            Some(s) => format!("scope `{s}` declares no ACL assertions"),
+            None => "no scope in the declaration carries an ACL assertion".to_string(),
+        };
+        anyhow::bail!(
+            "{what}, so nothing was checked, and an empty check is not a pass. \
+             Declare them under `netbird_acl_tests:` in ops/warrant/rule-intents/netbird-acl.yaml \
+             and regenerate with ops/warrant/generate.py, or pass --none-expected if none are meant to exist"
+        );
     }
-
-    // Undetermined results fail as well as explicit violations.
-    if reports.iter().all(|r| r.is_clean()) {
+    if checked.reports.iter().all(|r| r.is_clean()) {
         Ok(())
     } else {
         anyhow::bail!("ACL assertions did not hold against the declaration")
@@ -97,7 +144,9 @@ pub async fn run_test(args: AclTestArgs) -> anyhow::Result<()> {
 /// directory is inside a goat checkout, else the copy compiled in. `note` goes to
 /// stderr when the checkout's files are used, so the source is never silent.
 pub(crate) fn declaration(note: &str) -> anyhow::Result<Declaration> {
-    let on_disk = std::env::current_dir().ok().and_then(|cwd| checkout_declaration(&cwd));
+    let on_disk = std::env::current_dir()
+        .ok()
+        .and_then(|cwd| checkout_declaration(&cwd));
     Ok(match &on_disk {
         Some((tax, mat)) => {
             eprintln!("{note}");
@@ -109,7 +158,9 @@ pub(crate) fn declaration(note: &str) -> anyhow::Result<Declaration> {
 
 /// Both declaration files read from the checkout `start` is inside, if any.
 fn checkout_declaration(start: &Path) -> Option<(String, String)> {
-    let root = start.ancestors().find(|dir| dir.join("crates/goat-cli/Cargo.toml").is_file())?;
+    let root = start
+        .ancestors()
+        .find(|dir| dir.join("crates/goat-cli/Cargo.toml").is_file())?;
     let tax = std::fs::read_to_string(root.join(DECLARATION[0].0)).ok()?;
     let mat = std::fs::read_to_string(root.join(DECLARATION[1].0)).ok()?;
     Some((tax, mat))
@@ -214,10 +265,13 @@ mod tests {
 
     #[tokio::test]
     async fn it_runs_with_no_context_no_network_and_no_credentials() {
+        // This checkout's declaration may carry no assertions at all; the flag
+        // keeps this test about the verb running, not about the declaration.
         run_test(AclTestArgs {
             scope: None,
             json: true,
             verbose: false,
+            none_expected: true,
         })
         .await
         .expect("the declared assertions must hold");
@@ -229,9 +283,92 @@ mod tests {
             scope: Some("nosuchsite".into()),
             json: false,
             verbose: false,
+            none_expected: true,
         })
         .await;
-        assert!(e.is_err(), "an unknown scope must not exit 0");
+        assert!(
+            e.is_err(),
+            "an unknown scope must not exit 0, even with --none-expected"
+        );
+    }
+
+    const TAX: &str = "netbird_acl_taxonomy:\n  lone:\n    site_prefix: LONE\n    groups:\n    - suffix: INFRA\n    - suffix: DEVELOPER\n  quiet:\n    site_prefix: QUIET\n    groups:\n    - suffix: INFRA\n";
+    const RULES: &str = "netbird_acl_matrix:\n  lone:\n    rules:\n    - name: dev to infra\n      sources: [DEVELOPER]\n      destinations: [INFRA]\n      protocol: tcp\n      ports: [\"443\"]\n      action: accept\n  quiet:\n    rules: []\n";
+
+    fn decl(tests: &str) -> Declaration {
+        Declaration::parse(TAX, &format!("{RULES}{tests}")).expect("fixture declaration")
+    }
+
+    const LONE_TESTS: &str = "netbird_acl_tests:\n  lone:\n  - name: a developer reaches the box on 443\n    src: DEVELOPER\n    proto: tcp\n    accept: [\"INFRA:443\"]\n  - name: a developer has no SSH to the box\n    src: DEVELOPER\n    proto: tcp\n    deny: [\"INFRA:22\"]\n";
+
+    #[test]
+    fn a_scope_with_no_assertions_fails_and_says_why() {
+        let d = decl("");
+        let checked = check(&d, Some("lone")).expect("lone is declared");
+        assert!(checked.reports.is_empty());
+        assert_eq!(checked.unasserted, vec!["lone".to_string()]);
+        let msg = format!(
+            "{:#}",
+            verdict(&checked, Some("lone"), false).expect_err("empty is not a pass")
+        );
+        assert!(
+            msg.contains("scope `lone` declares no ACL assertions"),
+            "{msg}"
+        );
+        assert!(
+            msg.contains("--none-expected"),
+            "the way out is named: {msg}"
+        );
+    }
+
+    #[test]
+    fn a_declaration_with_no_assertions_anywhere_fails() {
+        let d = decl("");
+        let checked = check(&d, None).expect("both scopes declared");
+        assert_eq!(
+            checked.unasserted,
+            vec!["lone".to_string(), "quiet".to_string()]
+        );
+        let msg = format!(
+            "{:#}",
+            verdict(&checked, None, false).expect_err("empty is not a pass")
+        );
+        assert!(
+            msg.contains("no scope in the declaration carries an ACL assertion"),
+            "{msg}"
+        );
+    }
+
+    #[test]
+    fn none_expected_turns_an_empty_check_into_a_reported_pass() {
+        let d = decl("");
+        let checked = check(&d, Some("lone")).expect("lone is declared");
+        verdict(&checked, Some("lone"), true).expect("the caller said none were expected");
+    }
+
+    #[test]
+    fn a_scope_with_holding_assertions_passes_without_the_flag() {
+        let d = decl(LONE_TESTS);
+        let checked = check(&d, Some("lone")).expect("lone is declared");
+        assert_eq!(checked.reports.len(), 1);
+        verdict(&checked, Some("lone"), false).expect("both assertions hold");
+    }
+
+    #[test]
+    fn an_unasserted_scope_beside_an_asserted_one_is_reported_not_hidden() {
+        let d = decl(LONE_TESTS);
+        let checked = check(&d, None).expect("both scopes declared");
+        assert_eq!(checked.reports.len(), 1);
+        assert_eq!(checked.unasserted, vec!["quiet".to_string()]);
+        verdict(&checked, None, false).expect("the asserted scope holds");
+    }
+
+    #[test]
+    fn none_expected_never_excuses_a_violation() {
+        let broken = LONE_TESTS.replace("deny: [\"INFRA:22\"]", "deny: [\"INFRA:443\"]");
+        let d = decl(&broken);
+        let checked = check(&d, Some("lone")).expect("lone is declared");
+        assert!(verdict(&checked, Some("lone"), true).is_err());
     }
 
     // The fixture needs the crate manifest used to locate a source checkout.
@@ -285,7 +422,10 @@ mod tests {
         assert_eq!(tax, TAXONOMY_YAML);
         assert_eq!(mat, edited);
         let plain = tempfile::tempdir().expect("temp dir");
-        assert!(checkout_declaration(plain.path()).is_none(), "not a checkout");
+        assert!(
+            checkout_declaration(plain.path()).is_none(),
+            "not a checkout"
+        );
     }
 
     #[test]

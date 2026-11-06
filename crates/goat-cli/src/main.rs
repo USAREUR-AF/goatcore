@@ -199,7 +199,9 @@ enum Cmd {
     /// binary and runs its `netbird_acl_tests` block through the same
     /// evaluator the PR gate and netvis `/assertions` use. No network, no
     /// context, no credentials — a check that needs a working profile is a
-    /// check people skip.
+    /// check people skip. A scope, or a whole declaration, with no
+    /// assertions fails: nothing was checked. `--none-expected` accepts that
+    /// outcome when it is intended.
     Acl {
         #[command(subcommand)]
         op: cmd::acl::AclCmd,

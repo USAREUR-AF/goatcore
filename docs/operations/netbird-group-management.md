@@ -111,7 +111,7 @@ If none of these fits, the device is not ready to be enrolled. Write down what i
 
 | Question | Command |
 |---|---|
-| Does the declared ACL still hold every assertion for a scope? | `goat acl test <scope>` (offline, the same evaluator as netvis and the PR gate). To check an edit you haven't merged, run `cargo run -p goat-cli -- acl test <scope>` from the checkout's `crates/`: an installed `goat` checks the declaration it was built from |
+| Does the declared ACL still hold every assertion for a scope? | `goat acl test <scope>` (offline, the same evaluator as netvis and the PR gate). To check an edit you haven't merged, run `cargo run -p goat-cli -- acl test <scope>` from the checkout's `crates/`: an installed `goat` checks the declaration it was built from. A scope with no assertions fails (nothing was checked); pass `--none-expected` when that is intended |
 | Why can A not reach B on a port? | `goat warrant why-blocked --scope <scope> --from <GROUP> --to <GROUP> --port <n>` |
 | Who holds which mesh groups? | `goat admin peer ls` (mesh IP and groups per peer); `goat who --once` is an identity roster and shows no mesh groups |
 | What is actually applied on the wire? | netvis: `/?level=g` for the group matrix, machine level for a group's members |

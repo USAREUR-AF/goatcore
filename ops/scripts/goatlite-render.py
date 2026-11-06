@@ -1527,6 +1527,126 @@ def acl_intents_block(f: dict) -> str:
       default_policy_name_pattern: "Default\""""
 
 
+ACL_TESTS_KEY = "netbird_acl_tests:"
+
+
+def substrate_ports(proto: str) -> list:
+    """The box's peer-facing ports for `proto`, read from the port set the
+    intents grant (ops/warrant/port-sets.yaml `substrate`), so an assertion
+    can never drift from the rule it checks."""
+    doc = yaml.safe_load((REPO / "ops/warrant/port-sets.yaml").read_text(encoding="utf-8")) or {}
+    for entry in doc.get("port_sets") or []:
+        if entry.get("name") == "substrate":
+            for member in entry.get("members") or []:
+                if member.get("protocol") == proto:
+                    return [str(x) for x in member.get("ports") or []]
+    raise Refuse(f"ops/warrant/port-sets.yaml declares no `substrate` {proto} arm; "
+                 "the goatlite rules grant it, so its assertions cannot be written")
+
+
+def acl_tests_block(f: dict) -> str:
+    """The assertions that hold the one-box posture, in the shape `goat acl
+    test` and the PR gate evaluate. A scope with no assertions is not a scope
+    that passes, so these render with the rules: the accept rows prove the
+    declared reach works, the deny row proves a participant never gained the
+    administrator's any-port reach to the box."""
+    tcp = ", ".join(f'"INFRA:{x}"' for x in substrate_ports("tcp"))
+    udp = ", ".join(f'"INFRA:{x}"' for x in substrate_ports("udp"))
+    return f"""  {f['name']}:
+    # goatlite (ADR 1213): written by ops/scripts/goatlite-render.py with the
+    # rules above; `goat acl test {f['name']}` evaluates them.
+    - name: "every participant reaches the box's peer-facing TCP services"
+      src: [PLATFORM-ADMIN, DEVELOPER]
+      proto: tcp
+      accept: [{tcp}]
+    - name: "every participant resolves DNS and reaches the fabric over UDP"
+      src: [PLATFORM-ADMIN, DEVELOPER]
+      proto: udp
+      accept: [{udp}]
+    - name: "the administrator keeps a way in (SSH to the box)"
+      src: PLATFORM-ADMIN
+      proto: tcp
+      accept: ["INFRA:22"]
+    - name: "the box reaches every peer it administers"
+      src: INFRA
+      proto: any
+      accept: ["PLATFORM-ADMIN:*", "DEVELOPER:*"]
+    - name: "participants reach one another (LAN P2P)"
+      src: [PLATFORM-ADMIN, DEVELOPER]
+      proto: any
+      accept: ["PLATFORM-ADMIN:*", "DEVELOPER:*"]
+    - name: "a participant is not the administrator: no SSH to the box"
+      src: DEVELOPER
+      proto: tcp
+      deny: ["INFRA:22"]"""
+
+
+def ensure_acl_tests_key(path: Path, rep: "Report", check: bool) -> None:
+    """The assertions live under a top-level `netbird_acl_tests:` key in the
+    rule intents. A declaration that has none yet gets the key at the end of
+    the file, so the goatlite block has a parent to sit under."""
+    text = path.read_text(encoding="utf-8")
+    lines = text.split("\n")
+    if any(re.match(r"^netbird_acl_tests:\s*$", ln) for ln in lines):
+        return
+    if any(re.match(r"^netbird_acl_tests:", ln) for ln in lines):
+        raise Refuse(f"{path.relative_to(REPO)}: `netbird_acl_tests:` carries an inline value; "
+                     "make it a block mapping (one scope per indented key) and render again")
+    while lines and lines[-1] == "":
+        lines.pop()
+    lines += ["", ACL_TESTS_KEY, ""]
+    if not check:
+        path.write_text("\n".join(lines), encoding="utf-8")
+    rep.add(f"{path.relative_to(REPO)} [{ACL_TESTS_KEY}]", "would write" if check else "written")
+
+
+def drop_empty_acl_tests_key(path: Path, rep: "Report", check: bool) -> None:
+    """After a remove, a `netbird_acl_tests:` key with nothing under it would
+    parse as null rather than an empty map; drop it."""
+    if not path.exists():
+        return
+    lines = path.read_text(encoding="utf-8").split("\n")
+    k = next((i for i, ln in enumerate(lines) if re.match(r"^netbird_acl_tests:\s*$", ln)), None)
+    if k is None:
+        return
+    rest = lines[k + 1:]
+    nxt = next((ln for ln in rest if ln.strip() and not ln.lstrip().startswith("#")), None)
+    if nxt is not None and nxt[:1] in (" ", "\t", "-"):
+        return  # it still holds another scope's assertions
+    start = k
+    new = lines[:start] + lines[k + 1:]
+    while start > 0 and start < len(new) and new[start - 1] == "" and new[start] == "":
+        del new[start]
+    if not check:
+        path.write_text("\n".join(new), encoding="utf-8")
+    rep.add(f"{path.relative_to(REPO)} [{ACL_TESTS_KEY}]", "would remove" if check else "removed")
+
+
+def render_acl(f: dict, rep: "Report", check: bool) -> None:
+    """The goatnet's ACL declaration: its groups, its rules, the assertions
+    that check them, and the matrix generated from the rules."""
+    marker_block(REPO / "ops/ansible/netbird_acl_taxonomy.yml", f["name"], acl_taxonomy_block(f), rep, check,
+                 insert_before=r"^netbird_exercise_template:")
+    intents = REPO / "ops/warrant/rule-intents/netbird-acl.yaml"
+    # The assertions key first, so the rules block below always has a key
+    # after it: the exercise template or the assertions, whichever is first.
+    ensure_acl_tests_key(intents, rep, check)
+    marker_block(intents, f["name"], acl_intents_block(f), rep, check,
+                 insert_before=r"^(netbird_exercise_rules_template|netbird_acl_tests):")
+    marker_block(intents, f["name"], acl_tests_block(f), rep, check,
+                 tag="acl-tests", insert_after=r"^netbird_acl_tests:\s*$")
+    regenerate_acl_matrix(rep, check)
+
+
+def remove_acl(f: dict, rep: "Report", check: bool) -> None:
+    marker_remove(REPO / "ops/ansible/netbird_acl_taxonomy.yml", f["name"], rep, check)
+    intents = REPO / "ops/warrant/rule-intents/netbird-acl.yaml"
+    marker_remove(intents, f["name"], rep, check)
+    marker_remove(intents, f["name"], rep, check, tag="acl-tests")
+    drop_empty_acl_tests_key(intents, rep, check)
+    regenerate_acl_matrix(rep, check)
+
+
 def regenerate_acl_matrix(rep: "Report", check: bool) -> None:
     """ops/ansible/netbird_acl_matrix.yml is generated from the rule intents;
     phase 1's ACL gate and phase 12's cutover read the generated file."""
@@ -1925,11 +2045,7 @@ def render(f: dict, check: bool) -> Report:
     marker_block(REPO / "ops/ansible/inventory/doors.yaml", f["name"], doors_block(f), rep, check)
     marker_block(REPO / "ops/goatnets/cross-env.yaml", f["name"], cross_env_block(f), rep, check)
     marker_block(REPO / "ops/validation/goatnet-runners.yaml", f["name"], runners_block(f), rep, check)
-    marker_block(REPO / "ops/ansible/netbird_acl_taxonomy.yml", f["name"], acl_taxonomy_block(f), rep, check,
-                 insert_before=r"^netbird_exercise_template:")
-    marker_block(REPO / "ops/warrant/rule-intents/netbird-acl.yaml", f["name"], acl_intents_block(f), rep, check,
-                 insert_before=r"^netbird_exercise_rules_template:")
-    regenerate_acl_matrix(rep, check)
+    render_acl(f, rep, check)
 
     if check:
         pins = gv / "pins.yml"
@@ -2006,10 +2122,9 @@ def remove(f: dict, check: bool) -> Report:
     pins_deviation_remove(f, rep, check)
     for rel in ("ops/ansible/group_vars/.groupvars-parity.yaml", "ops/pins/lite-pins.yaml",
                 "ops/ansible/inventory/doors.yaml", "ops/goatnets/cross-env.yaml",
-                "ops/validation/goatnet-runners.yaml", "ops/ansible/netbird_acl_taxonomy.yml",
-                "ops/warrant/rule-intents/netbird-acl.yaml"):
+                "ops/validation/goatnet-runners.yaml"):
         marker_remove(REPO / rel, f["name"], rep, check)
-    regenerate_acl_matrix(rep, check)
+    remove_acl(f, rep, check)
     lite_table_close(LITE_PINS, rep, check)
     ini_section_remove(REPO / "ops/ansible/inventory/doors.ini", f"{f['name_us']}_door_hosts", rep, check)
     ini_section_remove(REPO / "ops/ansible/inventory/doors-groupvars.ini", f["group"], rep, check)
