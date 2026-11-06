@@ -119,7 +119,7 @@ services:
     # Container healthcheck.
     #
     # Unlike the portal / crawler / grant-keyd containers, this image CAN run a
-    # probe: it is cgr.dev/chainguard/wolfi-base with curl + a shell
+    # probe: it is built on the runtime-shell base with curl + a shell
     # (ops/onboard-runner/Dockerfile), added for the native onboard's local
     # Kratos leg. So the check below is real, not aspirational.
     #

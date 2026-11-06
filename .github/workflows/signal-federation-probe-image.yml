@@ -1,0 +1,80 @@
+name: signal-federation-probe-image
+# Builds ops/signal-federation-probe/Dockerfile — the federated signal-server
+# canary — and publishes it.
+#
+# Why it exists: roles/signal-federation-canary/defaults/main.yml pulls
+# ghcr.io/<owner>/signal-federation-probe:latest, and this is the workflow that
+# publishes that image from this repository.
+#
+# What it does, per ops/signal-federation-probe/README.md: sends a
+# `signalexchange.SignalExchange/Send` RPC with a remoteKey belonging to a peer
+# at the OTHER site. The local signal sees `notfound`, forwards to its
+# federation peer, and returns `delivered`. Three modes — one-shot validation
+# (exit code = pass/fail), a looping canary exposing Prometheus metrics, and a
+# verbose diagnostic.
+#
+# Per-arch native build + manifest combine, the same shape as grant-keyd-image.yml:
+#   - linux/amd64 on ubuntu-24.04
+#   - linux/arm64 on ubuntu-24.04-arm (GitHub-hosted arm64 runner)
+#
+# Native per-arch rather than QEMU because the Dockerfile compiles Go in-image
+# (`go build` in a cgr.dev/chainguard/go stage) without cross-compiling via
+# GOARCH, so an emulated arm64 build would run the whole Go toolchain under
+# QEMU. Both site tiers need it: the x86 mgmt-hosts and the Tegra arm64 Thors.
+#
+# Tag scheme:
+#   - On main push:                        :latest + :sha-<short>
+#   - On signal-federation-probe/v* tag:   :v<tag-name>
+#   - On any build:                        :sha-<short>
+#
+# Publishes to ghcr.io/<repository owner, lowercased>/signal-federation-probe on
+# the GITHUB_TOKEN alone (packages: write); a pull request builds and pushes
+# nothing. Build body: .github/workflows/_image-build.yml (shared).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'ops/signal-federation-probe/**'
+      - '.github/workflows/signal-federation-probe-image.yml'
+    tags: ['signal-federation-probe/v*']
+  pull_request:
+    paths:
+      - 'ops/signal-federation-probe/**'
+      - '.github/workflows/signal-federation-probe-image.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.10'
+          cache-dependency-path: ops/signal-federation-probe/go.sum
+      - name: go vet + build
+        working-directory: ops/signal-federation-probe
+        run: |
+          go vet ./...
+          go build ./...
+
+  image:
+    needs: ["test"]
+    uses: ./.github/workflows/_image-build.yml
+    permissions:
+      contents: read
+      packages: write
+    secrets: inherit
+    with:
+      image_name: signal-federation-probe
+      tag_prefix: signal-federation-probe
+      context: ops/signal-federation-probe
+      description: "Synthetic canary for federated signal-server forwarding (validation / canary / diagnostic modes)"

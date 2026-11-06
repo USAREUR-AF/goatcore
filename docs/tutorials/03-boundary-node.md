@@ -142,9 +142,19 @@ is the sovereign-federation runbook
    complete; this is why the tutorial stops at the plan on a laptop.
 2. **An edge host**, a peer of your own goatnet's mesh in node class `PEERING-EDGE` (it reaches
    only your core router's fabric port; ADR 1219), in an ansible group
-   named by `--edge-group` (default `<peering>_edge`, declared in
-   `ops/ansible/inventory/peering-edges.ini`). The boundary router runs here, not
-   on a core host.
+   named by `--edge-group` (default `<peering>_edge`). The boundary router runs
+   here, not on a core host. Declare the group in
+   `ops/ansible/inventory/peering-edges.ini` in your goatnet's own repository;
+   goatcore ships none, because the hosts are yours. One group per peering,
+   listed under `[peering_edges:children]`:
+
+   ```ini
+   [peering_edges:children]
+   <peering>_edge
+
+   [<peering>_edge]
+   <edge-host> ansible_host=<address on the peering transport or the mesh> ansible_user=ubuntu
+   ```
 3. **The peering declared**, when you keep peerings in `goatbuilder.yaml`: a row
    under `peerings:` for this counterparty on this environment. With any peering
    declared, the one you name must be among them, so a typo is refused before
@@ -218,8 +228,10 @@ uses — **carries, refuses, and round-trips**:
   and carrying nothing, with nothing logged at either end.
 
 The access decision itself is a reviewable record: one file per partner under
-`ops/federation/partners/`, changed by pull request and gated by
-`ops/federation/validate-partners.py`. Adding the file grants nothing; access
+`ops/federation/partners/` in your goatnet's own repository, changed by pull
+request and gated by `ops/federation/validate-partners.py`. goatcore ships one
+file there, `EXAMPLE-hello-ally.yaml`, as the shape to copy; the fields are
+explained in `ops/federation/README.md`. Adding the file grants nothing; access
 follows only when the edge runs with it.
 
 ## Undo

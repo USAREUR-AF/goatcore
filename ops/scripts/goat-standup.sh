@@ -1051,15 +1051,27 @@ step 12 A "portal (registry, certificate minting, grant rows)" \
 
 # Phase 12. pub/sub state-of-record Repl (Block 86) — mirror the portal registry to
 #      Forgejo (+ MinIO shadow) so a rebuild restores fabric STRUCTURE, not just
-#      an empty fabric. Requires Forgejo up for this goatnet + the mirror bot
-#      minted once (ops/scripts/forgejo-mint-pubsub-bot.sh <forgejo-ssh-target>).
-#      Skips cleanly when the goatnet declares no pubsub-state group_var.
+#      an empty fabric. Requires a Forgejo for this goatnet (goatcore ships no
+#      Forgejo role) + the mirror bot minted once
+#      (ops/scripts/forgejo-mint-pubsub-bot.sh <forgejo-ssh-target>).
+#      The mint and the mirror both skip cleanly when the goatnet declares no
+#      pubsub-state group_var.
 #      Design: docs/design/pubsub-state-as-code.md §Deployment topologies.
 # Forgejo must be up (leg O1O2) and the mirror bot minted before the mirror
 # deploys. The mint is once-per-goatnet and writes FORGEJO_PUBSUB_TOKEN to the
 # operator envrc; it is skipped when the token is already in the environment.
 if [ "$OBS" = 1 ]; then
   leg_join host 12
+fi
+# The bot lives on the goatnet's Forgejo, which goatcore does not deploy: a
+# goatnet that declares no pub/sub state forge skips the mint and goes on.
+if [ "$OBS" = 1 ] && [ ! -f "$REPO/ops/ansible/group_vars/${GROUP}/pubsub-state.yml" ]; then
+  if [ 12 -ge "$FROM" ] && [ 12 -le "$TO" ]; then
+    printf '\n=== Phase 12 [T] %s ===\n    SKIPPED — %s\n    %s\n' "mint the pubsub-state mirror bot on the obs host's Forgejo (once; skipped when FORGEJO_PUBSUB_TOKEN is set)" \
+      "no group_vars/${GROUP}/pubsub-state.yml: this goatnet declares no Forgejo for the pub/sub state mirror" \
+      "goatcore ships no Forgejo role; to turn the mirror on, run a Forgejo for this goatnet and declare it (ops/ansible/roles/pubsub-state-repo/README.md)"
+  fi
+elif [ "$OBS" = 1 ]; then
   # user@address of the obs host, from the same two inventories the plays use
   # (the mesh override wins when the host has enrolled).
   OBS_SSH_TARGET="$(python3 "$REPO/ops/scripts/inventory-hosts.py" "$OBS_GROUP" --ssh-target --inventory "$REPO/ops/ansible/inventory/mgmt-hosts.ini" --inventory "$REPO/ops/ansible/inventory/mgmt-hosts-mesh.ini" 2>/dev/null | head -1)"
@@ -1074,7 +1086,7 @@ step 12 GATE "every input the phases after the manual step will reach is set (th
   "python3 '$REPO/ops/scripts/standup-required-inputs.py' $SITE --profile $PROFILE --from 12"
 
 step 12 A "pubsub-state Repl mirror (Block 86)" \
-  "cd '$REPO/ops/ansible' && if ls group_vars/${GROUP}/pubsub-state.yml >/dev/null 2>&1; then $ANSIBLE_PRE ${INV[*]} pubsub-state-mirror-deploy.yml -e target=$GROUP; else echo 'no group_vars/${GROUP}/pubsub-state.yml — Repl not configured for this goatnet; add one by copying any goatnet that has one, mint the bot, then re-run --from 12'; fi"
+  "cd '$REPO/ops/ansible' && if ls group_vars/${GROUP}/pubsub-state.yml >/dev/null 2>&1; then $ANSIBLE_PRE ${INV[*]} pubsub-state-mirror-deploy.yml -e target=$GROUP; else echo 'no group_vars/${GROUP}/pubsub-state.yml — the pub/sub state mirror is not configured for this goatnet; skipping. It needs a Forgejo you run for this goatnet (goatcore ships no Forgejo role): see ops/ansible/roles/pubsub-state-repo/README.md, then re-run --from 12'; fi"
 
 # Phase 12. Onboarding PUBLIC intake front desk (ADR 1062 stage 1) — the public web
 #      page an off-mesh candidate opens to submit their onboarding form. Without
@@ -1205,7 +1217,7 @@ rescue_phase has_breakglass_node breakglass_absent_reason breakglass \
 
 rescue_phase has_network_jump_node network_jump_absent_reason network_jump \
   "inventory/${SITE}-network-jump.ini" \
-  "network-jump host (ADR 1131 — reach to switch, router and out-of-band gear)" \
+  "network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses)" \
   "herd-connector-deploy.yml -e herd_connector_target_hosts=${SITE//-/_}_network_jump_hosts"
 
 # G-20: cross-env-apply.sh redeploys relay-health on EVERY box in

@@ -1,0 +1,92 @@
+---
+# SPDX-License-Identifier: Apache-2.0
+#
+# Defaults for the `saltlick` role — the peering directory.
+# Design: docs/design/peering-directory-service.md.
+# Source: USAREUR-AF/saltlick. Image: ghcr.io/usareur-af/saltlick (public).
+#
+# THE INVARIANT THIS ROLE MUST NOT BREAK
+#   Advisory, never authoritative. Being listed grants access to nothing, and
+#   federation must work with this service switched off. Nothing configured
+#   here may make a party's decision depend on the directory being up or being
+#   right. If a future change to this role makes the directory load-bearing —
+#   a gate, an attestation, a source of authorization — the change is wrong,
+#   not the invariant.
+#
+# WHY THE IMAGE IS NOT `{{ ghcr_org }}`-TEMPLATED
+#   Other roles here pin ghcr.io/{{ ghcr_org }}/<img> because the image is
+#   built from THIS repository. saltlick is built from its own repository on
+#   purpose: the design doc §4 makes self-hostability a hard requirement, so the
+#   directory cannot depend on this one. Its package follows its own repository
+#   owner, which is why this pin is literal.
+
+# ----- Image pin ----------------------------------------------------------
+# `v0.1.0`, built multi-arch (linux/amd64 + linux/arm64) by the saltlick
+# repository's release workflow, which fires on a `v*` tag. The digest is the
+# multi-arch INDEX digest, which is what a host on either architecture
+# resolves through. It pulls anonymously.
+#
+# To bump: tag a new release in USAREUR-AF/saltlick, take the digest its
+# release workflow prints, and change this line.
+saltlick_image: "ghcr.io/usareur-af/saltlick:v0.1.0@sha256:fc63e214371599dac21164d581f14ceda1e7f9b29598c474f8e75459402d38d0"
+
+# Fail-closed guard on the pin above. Leave true. Setting it false deploys an
+# image named by tag alone.
+saltlick_image_digest_required: true
+
+# ----- Registry pull auth -------------------------------------------------
+# The package is public, so no credential is needed and the login task stays
+# skipped. Set saltlick_pull_auth_enabled and supply the password at run time
+# (from the environment, never a committed file) only when you pin a private
+# build of your own.
+saltlick_pull_auth_enabled: false
+saltlick_pull_registry: "ghcr.io"
+saltlick_pull_username: ""
+saltlick_pull_password: ""
+
+# ----- Hostname + routing -------------------------------------------------
+# `saltlick.<site>.<zone>`, sibling to the other mesh surfaces on a mgmt host.
+# Mesh names only — see the mesh-internal note below.
+saltlick_hostname: "saltlick.{{ site_id | mandatory }}.{{ site_dns_zone | mandatory }}"
+
+saltlick_container_name: "saltlick"
+saltlick_internal_port: 8080
+saltlick_compose_dir: "/opt/saltlick"
+saltlick_memory_limit: "256M"
+
+# Named docker volume holding the SQLite file. Mount the DIRECTORY, never the
+# .db file: SQLite runs in WAL mode, so saltlick.db has -wal and -shm siblings
+# that must sit on the same persistent volume. Bind-mounting the file alone
+# leaves the write-ahead log in the container's writable layer and committed
+# writes vanish on restart while everything still looks healthy.
+saltlick_data_volume: "saltlick_data"
+saltlick_db_path: "/data/saltlick.db"
+
+# Traefik wiring — the mgmt-host pattern: file-provider router, upstream
+# addressed by docker network alias on `mgmt`, `le` cert resolver (DNS-01,
+# static config).
+saltlick_traefik_network: "mgmt"
+saltlick_traefik_dynamic_dir: "/etc/traefik/dynamic"
+saltlick_traefik_dynamic_filename: "saltlick.yml"
+saltlick_traefik_cert_resolver: "le"
+saltlick_traefik_router_name: "saltlick"
+
+# ----- Mesh-only gating, and it is load-bearing ---------------------------
+# The directory is mesh-internal by decision, and the consequence is accepted:
+# a partner cannot reach it, and the design tolerates that because packages are
+# self-verifying and can be handed over by any means
+# (peering-directory-service.md §5.1). This middleware is the WHOLE network
+# gate; there is no application-layer auth on reads, because reads are meant to
+# be open to everyone who can reach the service.
+#
+# DO NOT remove this to "let a partner fetch". Revisiting mesh-only is a
+# decision recorded in the design doc, not a middleware deletion.
+saltlick_traefik_mesh_only_middleware: "mesh-only-allowlist@file"
+
+# ----- Write authenticity is INSIDE the service, not here -----------------
+# Writes are trust-on-first-use, authenticated by Ed25519 signatures the
+# publishing parties hold. There is no oauth2-proxy fence and there must not
+# be one: fencing writes behind our identity plane would make OUR directory
+# the thing deciding who may publish, which is the authoritative posture the
+# invariant forbids. This is why saltlick has no row in
+# ops/permissions/group-permissions.yml — it has no group-gated door.

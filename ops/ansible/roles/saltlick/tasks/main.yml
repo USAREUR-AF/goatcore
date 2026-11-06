@@ -1,0 +1,140 @@
+---
+# SPDX-License-Identifier: Apache-2.0
+#
+# saltlick role — the peering directory (docs/design/peering-directory-service.md),
+# behind the existing Traefik with mesh-only gating on a mgmt host.
+#
+# Pre-flight the operator owns, not this role:
+#   1. saltlick.<site>.<zone> is in the master Let's Encrypt SAN list — set
+#      `saltlick_enabled: true` in the site's group_vars and re-run
+#      traefik-acme.yml BEFORE this playbook, or Traefik has no cert to serve.
+#   2. The mesh DNS record exists — add the isitup_services row, re-run
+#      ops/dns/generate-mesh-hosts.py, and deploy CoreDNS.
+#
+# Idempotent: a re-run on a healthy host is a no-op beyond a pull if the pin
+# changed.
+
+- name: saltlick | refuse an image pin carrying no digest
+  # A tag alone names whatever was pushed last; the role refuses it so a run
+  # deploys exactly the build the pin names.
+  ansible.builtin.fail:
+    msg: >-
+      saltlick_image is {{ saltlick_image }}, which carries no @sha256: digest.
+      USAREUR-AF/saltlick publishes a digest-pinned image on every `v*` tag, so
+      this is an unpinned override rather than a missing release. Set
+      saltlick_image to ghcr.io/usareur-af/saltlick:v<x.y.z>@sha256:<digest>.
+      To deploy a locally built image on purpose, set
+      saltlick_image_digest_required=false.
+  when:
+    - saltlick_image_digest_required | bool
+    - "'@sha256:' not in saltlick_image"
+
+- name: saltlick | log the host's docker daemon in to the registry
+  # Only for a private build pinned in place of the public image. GHCR grants
+  # package access per package: a 403 on the pull below with a green login
+  # above means the package has not granted the pulling identity, not that the
+  # credential is wrong. Skipped when auth is off or no password is supplied,
+  # so a host that already holds a working credential is untouched.
+  community.docker.docker_login:
+    registry_url: "{{ saltlick_pull_registry }}"
+    username: "{{ saltlick_pull_username }}"
+    password: "{{ saltlick_pull_password }}"
+  become: true
+  no_log: true   # keep the PAT out of ansible-playbook stdout
+  when:
+    - saltlick_pull_auth_enabled | bool
+    - saltlick_pull_password | length > 0
+
+- name: saltlick | create compose dir
+  ansible.builtin.file:
+    path: "{{ saltlick_compose_dir }}"
+    state: directory
+    mode: "0755"
+  become: true
+
+- name: saltlick | render docker-compose.yml
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ saltlick_compose_dir }}/docker-compose.yml"
+    mode: "0644"
+  become: true
+  notify: saltlick | recreate container
+
+- name: saltlick | write SALTLICK_IMAGE pin to compose .env
+  # lineinfile, not template, so a manual pin edit on the host survives a role
+  # re-run. The .env stays authoritative for the pin.
+  ansible.builtin.lineinfile:
+    path: "{{ saltlick_compose_dir }}/.env"
+    create: true
+    mode: "0644"
+    regexp: "^SALTLICK_IMAGE="
+    line: "SALTLICK_IMAGE={{ saltlick_image }}"
+  become: true
+  notify: saltlick | recreate container
+
+- name: saltlick | render Traefik dynamic config (file provider)
+  ansible.builtin.template:
+    src: traefik-saltlick.yml.j2
+    dest: "{{ saltlick_traefik_dynamic_dir }}/{{ saltlick_traefik_dynamic_filename }}"
+    mode: "0644"
+  become: true
+  # Traefik reloads file-provider changes on its own — no SIGHUP.
+
+- name: saltlick | pull image
+  community.docker.docker_image:
+    name: "{{ saltlick_image }}"
+    source: pull
+    force_source: true
+  become: true
+
+- name: saltlick | bring up via docker compose
+  community.docker.docker_compose_v2:
+    project_src: "{{ saltlick_compose_dir }}"
+    state: present
+    pull: missing
+  become: true
+
+- name: saltlick | wait for container to be Running
+  ansible.builtin.command:
+    cmd: "docker inspect -f '{{ '{{' }}.State.Running{{ '}}' }}' {{ saltlick_container_name }}"
+  register: saltlick_running
+  retries: 30
+  delay: 2
+  until: saltlick_running.stdout | trim == 'true'
+  changed_when: false
+  become: true
+
+- name: saltlick | the directory answers /healthz
+  # Container-Running is not the same claim as the service answering. This is
+  # the acceptance step: it runs inside the mgmt network against the container
+  # alias, so it proves the same path Traefik uses.
+  ansible.builtin.command:
+    cmd: >-
+      docker run --rm --network {{ saltlick_traefik_network }}
+      curlimages/curl:latest -fsS
+      http://{{ saltlick_container_name }}:{{ saltlick_internal_port }}/healthz
+  register: saltlick_health
+  retries: 15
+  delay: 2
+  until: saltlick_health.rc == 0
+  changed_when: false
+  become: true
+
+- name: saltlick | report the spec version this instance accepts
+  # Which package spec version is served is the one fact an operator needs at
+  # the end of a deploy: a package written for another lineage is refused
+  # unread, in either direction.
+  ansible.builtin.command:
+    cmd: >-
+      docker run --rm --network {{ saltlick_traefik_network }}
+      curlimages/curl:latest -fsS
+      http://{{ saltlick_container_name }}:{{ saltlick_internal_port }}/v1/spec
+  register: saltlick_spec
+  changed_when: false
+  become: true
+
+- name: saltlick | show the served spec version
+  ansible.builtin.debug:
+    msg: "{{ saltlick_hostname }} serving {{ saltlick_spec.stdout }}"
+# Deploy ledger written by the shared `rollback-ledger` meta-dependency
+# (meta/main.yml) per ADR 1060 — no per-role task here.

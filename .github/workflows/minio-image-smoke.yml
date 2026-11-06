@@ -1,0 +1,59 @@
+name: minio-image-smoke
+
+# The MinIO role's images start and answer the way the role uses them:
+# the server with the role's command, user and health check, and the client
+# running a shell script against it, the way mc-init does. Uses no secret.
+on:
+  pull_request:
+    paths:
+      - 'ops/ansible/roles/minio/**'
+      - '.github/workflows/minio-image-smoke.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: minio-image-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: read the pinned images from the role
+        id: img
+        run: |
+          set -euo pipefail
+          d=ops/ansible/roles/minio/defaults/main.yml
+          {
+            echo "server=$(sed -nE 's/^minio_image: "([^"]+)"/\1/p' "$d")"
+            echo "client=$(sed -nE 's/^minio_mc_image: "([^"]+)"/\1/p' "$d")"
+            echo "uid=$(sed -nE 's/^minio_uid: ([0-9]+)/\1/p' "$d")"
+          } >> "$GITHUB_OUTPUT"
+      - name: the server starts as the role runs it and its health check passes
+        run: |
+          set -euo pipefail
+          docker network create minio-net
+          mkdir -p data && sudo chown "${{ steps.img.outputs.uid }}:${{ steps.img.outputs.uid }}" data
+          docker run -d --name minio --network minio-net \
+            --user "${{ steps.img.outputs.uid }}:${{ steps.img.outputs.uid }}" \
+            -e MINIO_ROOT_USER=smoke-root -e MINIO_ROOT_PASSWORD=smoke-root-password-0123456789 \
+            -v "$PWD/data:/data" \
+            "${{ steps.img.outputs.server }}" server /data --address :9000 --console-address :9001
+          for i in $(seq 1 30); do
+            if docker exec minio wget -q --spider http://localhost:9000/minio/health/live; then echo "healthy after ${i}s"; exit 0; fi
+            sleep 1
+          done
+          docker logs minio; exit 1
+      - name: the client runs a shell script against it, as mc-init does
+        run: |
+          set -euo pipefail
+          printf '%s\n' '#!/bin/sh' 'set -e' 'mc ready local' 'mc mb --ignore-existing local/smoke' 'echo hi | mc pipe local/smoke/hello' 'mc cat local/smoke/hello' > mc-init.sh
+          docker run --rm --network minio-net \
+            -e MC_HOST_local=http://smoke-root:smoke-root-password-0123456789@minio:9000 \
+            -v "$PWD/mc-init.sh:/mc-init.sh:ro" --entrypoint /bin/sh \
+            "${{ steps.img.outputs.client }}" /mc-init.sh | tee out.txt
+          grep -qx hi out.txt

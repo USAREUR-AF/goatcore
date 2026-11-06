@@ -1,0 +1,33 @@
+# EXAMPLE ONLY — filename is prefixed EXAMPLE- so the validator treats it as a
+# fixture and no tooling ever treats it as a live peering.
+#
+# Copy to <sovereign-id>.yaml under ops/federation/partners/ in your goatnet's
+# own repository, fill in, and open a pull request. The review is the control:
+# widening a partner's access should be as visible as any other change to
+# production configuration.
+
+sovereign_id: hello-ally          # short, lowercase, stable. Used as the ingress prefix.
+display_name: "Example Partner"   # for humans and surfaces only; never load-bearing
+
+# recognised | connected | exchanging   (ADR 1157 §5)
+#   recognised — we hold their trust material. No tunnel. Nothing flows.
+#   connected  — tunnel up, session possible, NO ACL subject matches. They can do nothing.
+#   exchanging — the only level that moves data.
+level: recognised
+
+# The Subject CN their peering router presents. AGREED between both sides, and
+# set on their end via the identity service's dns_name. Matching is exact.
+partner_cn: peer-hello-ally
+
+# Where their data may land on our side. Exact prefixes. No root wildcards.
+ingress:
+  - "from/hello-ally/**"
+
+# What they may receive from us. Exact prefixes. No root wildcards.
+egress:
+  - "release/all/**"
+
+# Free text, required. What this peering is for, and who agreed it. This is the
+# half a reviewer actually reads.
+rationale: >-
+  Example declaration used as a validator fixture. Not a real peering.

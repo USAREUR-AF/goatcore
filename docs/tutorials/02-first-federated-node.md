@@ -122,8 +122,9 @@ goatbuilder join-node <env> --site <joiner-site> --node <node-name> --class core
 ```
 
 **The scripts avenue.** `ops/scripts/goat-standup.sh <joiner-site> --plan`, then
-without `--plan`; the node-addition runbook (`docs/operations/node-addition.md`)
-is the by-hand sequence `join-node` runs.
+without `--plan`. For each further machine, the `join-node --dry-run` plan above
+is the by-hand sequence: every phase prints the command it runs and the gate
+that proves it, so the same steps can be run one at a time.
 
 ## Done means proven, not deployed
 

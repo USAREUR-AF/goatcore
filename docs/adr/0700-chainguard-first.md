@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Accepted |
+| Status | Accepted. Amended by [ADR 1220](1220-public-base-images-by-role-overlay-supplies-its-own.md): this preference applies to an environment's overlay (the goat team's goatnets build on Chainguard through the team's own environment repository); the public repositories default to bases anyone may redistribute |
 | Date | 2026-04-25 |
 | Repo scope | Multi |
 | Related | [`0701-iron-bank-not-trust-anchor.md`](0701-iron-bank-not-trust-anchor.md), [`0702-build-from-source-mgmt-plane.md`](0702-build-from-source-mgmt-plane.md), `../design/os-supply-chain-security.md`, `../project/chainguard-procurement.md` |

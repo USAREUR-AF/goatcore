@@ -34,6 +34,7 @@ REPO = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)),
 sys.path.insert(0, os.path.join(REPO, "ops", "consistency", "python"))
 
 try:
+    import yaml  # noqa: E402
     from goat_consistency import resolve  # noqa: E402
 except ImportError as exc:  # pragma: no cover - dependency, not logic
     sys.exit("standup-images: %s (PyYAML + jsonschema required: pip install pyyaml jsonschema)" % exc)
@@ -91,9 +92,14 @@ def lite_images(ghcr_org, image_registry=""):
     """Every image a goatlite runs: the fleet value, or the deviation the renderer writes."""
     r = renderer()
     devs = r.lite_deviations(image_registry)
-    t = resolve.load_tables(r.FLEET_PINS)
+    # The components alone: the preset lists what a goatlite would run before one
+    # is declared, so a checkout that declares no goatnet (goatcore) still lists them.
+    with open(r.FLEET_PINS, encoding="utf-8") as fh:
+        components = (yaml.safe_load(fh) or {}).get("components") or {}
+    if not isinstance(components, dict) or not components:
+        raise ValueError("%s: `components:` must be a non-empty mapping" % r.FLEET_PINS)
     out, bad = [], []
-    for cname, spec in t.components.items():
+    for cname, spec in components.items():
         if (spec.get("artifact_type") or "image") != "image":
             continue
         dev = devs.get(cname)

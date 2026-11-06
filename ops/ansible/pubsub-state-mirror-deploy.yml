@@ -16,6 +16,9 @@
 # PRE-CONDITIONS (operator owns, one-time per goatnet):
 #   - Forgejo up for this goatnet (obs/utility host) with the pubsub-state-mirror
 #     ADMIN bot + PAT — mint with ops/scripts/forgejo-mint-pubsub-bot.sh <group>.
+#     goatcore ships no Forgejo role; run your own and declare it in
+#     group_vars/<group>/pubsub-state.yml (roles/pubsub-state-repo/README.md).
+#     Without that file the standup drivers skip this play and say why.
 #   - Secrets in the env (newsite-secrets.sh generates the portal key):
 #       FORGEJO_PUBSUB_TOKEN, <SITE>_PUBSUB_MIRROR_PORTAL_KEY, and the goatnet's
 #       MinIO root cred env vars if the MinIO tier is wanted.

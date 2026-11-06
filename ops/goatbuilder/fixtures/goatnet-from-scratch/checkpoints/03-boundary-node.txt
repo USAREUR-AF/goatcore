@@ -39,8 +39,8 @@ What a real run would leave to you, at phase 5:
 
      /tmp/goat-peering-rehearsal/keys.txt
 
-Optional: list this peering in the directory at ops/saltlick. That only helps
-others recognise you. It grants no access.
+Optional: set FED_DIRECTORY_URL, FED_PACKAGE_URL and FED_COUNTERPARTY_ID to look
+the other party up in a peering directory (saltlick) first. It grants no access.
 
 To see more: add -o json to see every phase's command, or read
 docs/operations/sovereign-federation-runbook.md.

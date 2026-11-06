@@ -82,39 +82,50 @@ and a verifying key taken from the package it verifies proves nothing.
 **Phases 1–8 run where the fabric is; phases 9–10 are ansible from the operator's
 machine.** Use `--to 8` and `--from 9` when those are different hosts.
 
-### Optional: look the partner up in a peering directory first
+### Optional: exchange through a peering directory
 
 A peering directory (`saltlick`) is a public listing outside every goatnet that holds
 **pointers, not permissions**: where each party's signed package can be fetched, and its sha256.
-It grants nothing and is never an input to the check. Until a directory is reachable by both
-sides, the first exchange is out of band, and everything above works without one.
+It also hosts each party's signed package and CA certificate, so **a party behind NAT, with no
+public host of its own, needs no host**: the driver uploads both. The directory grants nothing
+and is never an input to the check. Until a directory is reachable by both sides, the exchange
+is out of band, and everything above works without one.
 
-| Set | To |
-|---|---|
-| `FED_DIRECTORY_URL` | the directory, `https://…` |
-| `FED_PACKAGE_URL` | where you serve your package, as a static file behind TLS on a public host you run — never on a mesh. Copy the file phase 3 wrote there unchanged |
-| `FED_COUNTERPARTY_ID` | the partner's `sovereign_id` |
-| `FED_SIGNING_KEY` | the key that signed your package; it signs the pointer too |
+| Set | No public host | Own public host |
+|---|---|---|
+| `FED_DIRECTORY_URL` | the directory, `https://…` | same |
+| `FED_COUNTERPARTY_ID` | the partner's `sovereign_id` | same |
+| `FED_SIGNING_KEY` | the key that signed your package; it signs the pointer and the uploads | same |
+| `FED_PACKAGE_URL` | **unset**: the directory hosts the package | where your host serves the package phase 3 wrote, unchanged, behind TLS, never on a mesh |
+| `FED_CA_CERT` | your own CA certificate (PEM), the one phase 8 signs the peering leaves with; unset, the directory step reads the profile's `ca-roots.pem` | same |
 
 With those set, the exchange phase, before it stops:
 
-1. checks your package is served byte for byte at `FED_PACKAGE_URL`, then publishes your pointer;
-2. looks up the partner's pointer, fetches their package, checks its sha256 against the pointer
+1. publishes your pointer; with `FED_PACKAGE_URL` unset it uploads your package to
+   `<directory>/v1/parties/<you>/package` and the pointer names that, otherwise it checks your
+   host serves the package byte for byte;
+2. uploads your CA certificate to `<directory>/v1/parties/<you>/ca`: only the certificate whose
+   SHA-256 is your package's `identity.ca_fingerprint`;
+3. looks up the partner's pointer, fetches their package, checks its sha256 against the pointer
    and both signatures against the key in your keyring, and places it where compose reads it if
-   nothing is there yet;
-3. prints a **compatibility report**: spec, fabric and tool version, the transport the agreement
+   nothing is there yet; fetches their CA certificate, checks it against their
+   `identity.ca_fingerprint`, and places it at `$FED_WORK/theirs-ca.pem` if nothing is there yet;
+4. prints, for the voice call, **their verifying key and CA fingerprint in groups of four**, and
+   yours;
+5. prints a **compatibility report**: spec, fabric and tool version, the transport the agreement
    will select, FIPS image on both sides, post-quantum capability, trust domains, and whether
    either edge accepts inbound traffic. Each row is PASS, WARN, FAIL or UNKNOWN with its fix.
 
-A directory that is down, refuses, or disagrees with the package is a warning, never a stop.
-Your CA certificate and SPIFFE bundle still move directly.
+A directory that is down, refuses, or disagrees with the package is a warning, never a stop. The
+SPIFFE bundle, when phase 2 wrote one, still moves directly.
 
 **What a partner is never asked by message.** The package carries their `sovereign_id`, trust
 domain, CA fingerprint, transports, FIPS image, post-quantum capability and versions; peering
 names are derived from the agreement. A question list sent to a partner means one of these was
-missed. The one act that stays out of band is **reading the verifying-key fingerprint, and after
-compose the agreement digest, aloud** — group count first, read back. The directory replaces
-neither. Design: [`peering-directory-service.md`](../design/peering-directory-service.md) §6.
+missed. The one act that stays out of band is **reading the verifying key and the CA
+fingerprint, and after compose the agreement digest, aloud** — group count first, read back.
+Record their key in the keyring only after it is read back. The directory replaces none of
+them. Design: [`peering-directory-service.md`](../design/peering-directory-service.md) §6.
 
 ## Step 2 — The names and prefixes come from the agreement
 
