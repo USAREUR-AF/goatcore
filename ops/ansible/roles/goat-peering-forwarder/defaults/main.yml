@@ -1,0 +1,67 @@
+---
+# Defaults for `goat-peering-forwarder` — a host with a fixed public address that
+# relays one UDP port per peering to an edge that sits behind NAT.
+#
+# Design: docs/design/peering-forwarder.md
+# ADR:    docs/adr/1218-peering-forwarder-when-neither-edge-accepts-inbound.md
+# Edge:   roles/goat-peering-wg, peering_wg_via_forwarder
+#
+# The forwarder carries ciphertext only. It holds its own carrier key and one
+# nftables table, and never a peering key, CA, SVID, fabric certificate or mesh
+# enrolment: the role refuses a host that has any of them, and
+# ops/ci/check-peering-forwarder-holds-nothing.sh refuses a change that would let
+# this role be handed one.
+
+# Off by default. Nothing in this role runs on a host that has not declared it.
+peering_forwarder_enabled: false
+
+# The interface that carries the public address. Peering and carrier ports are
+# accepted on it and nothing else is, apart from replies, ICMP and DHCP.
+peering_forwarder_public_interface: "{{ ansible_default_ipv4.interface | default('') }}"
+
+# One entry per peering. A second peering is a second entry, with its own carrier
+# interface, its own peering port, its own carrier port and its own carrier subnet:
+# the destination of a forwarded packet follows from its port alone, so nothing in
+# one entry may be shared with another. The role refuses a list that shares any.
+#
+#   - name: xaa                       # the partner this peering is with; a label
+#     edge_carrier_public_key: "<44 base64 characters>"   # REQUIRED, from the edge
+#     partner_sources: []             # partner egress addresses; empty = any source
+#
+# Every other key takes its value from peering_forwarder_peering_defaults below.
+peering_forwarder_peerings: []
+
+peering_forwarder_peering_defaults:
+  interface: wg-carry0          # <= 15 chars (IFNAMSIZ)
+  peering_port: 51820           # public UDP port the partner dials
+  edge_peering_port: 51820      # the edge's wg-fed0 listen port, the DNAT target
+  carrier_port: 51821           # public UDP port the edge dials for the carrier
+  carrier_local_ip: 169.254.30.0
+  carrier_remote_ip: 169.254.30.1
+  carrier_prefix_len: 31
+  carrier_mtu: 1420
+  partner_sources: []
+
+# Source addresses (IPv4, CIDR allowed) admitted to TCP 22 on the public interface.
+# Empty by default: the design manages a forwarder through the provider's agent or
+# console, or out of band on owned hardware. Set it only for owned hardware that has
+# neither, and only to the management host's own address.
+peering_forwarder_ssh_sources: []
+
+peering_forwarder_packages:
+  - wireguard-tools
+  - nftables
+
+peering_forwarder_config_dir: /etc/goat-peering-forwarder
+peering_forwarder_nft_path: "{{ peering_forwarder_config_dir }}/forwarder.nft"
+peering_forwarder_sysctl_path: /etc/sysctl.d/60-goat-peering-forwarder.conf
+peering_forwarder_state_path: /var/log/goat-peering-forwarder-state.json
+
+# A host that is any of these is not a forwarder. Read by the refusals in
+# tasks/main.yml.
+peering_forwarder_mesh_interfaces:
+  - wt0
+peering_forwarder_mesh_services:
+  - netbird.service
+peering_forwarder_edge_dirs:
+  - /etc/goat-peering-wg

@@ -35,6 +35,30 @@ peering_wg_counterparty_package: "{{ fed_counterparty | default('') }}"
 # The side that dials keeps the path open from behind NAT.
 peering_wg_keepalive: 25
 
+# --- behind a peering forwarder (docs/design/peering-forwarder.md) ----------
+# When neither edge accepts inbound UDP, one listens through a forwarder: this edge
+# dials the forwarder over a carrier tunnel, and the forwarder relays the peering
+# port down it. Off by default; with it off, nothing below is read or rendered.
+# With it on, this side must be the listener and the agreed MTU at most 1340
+# (offer measured_mtu 1300 in federation.toml [transport], with the forwarder's
+# host:port as endpoint and listener = true).
+peering_wg_via_forwarder: false
+peering_wg_carrier_interface: wg-carry0
+# The local UDP port the carrier dials from. Never opened inbound; replies return
+# through this host's own NAT.
+peering_wg_carrier_listen_port: 51822
+# From the forwarder play's output. Empty on the first prepare run: the role then
+# makes the carrier key, prints it for the forwarder, and brings up no carrier.
+peering_wg_forwarder_endpoint: ""
+peering_wg_forwarder_carrier_public_key: ""
+peering_wg_carrier_local_ip: 169.254.30.1
+peering_wg_carrier_remote_ip: 169.254.30.0
+peering_wg_carrier_prefix_len: 31
+peering_wg_carrier_mtu: 1420
+peering_wg_carrier_keepalive: 25
+# One more WireGuard header inside the carrier: 1420 - 80.
+peering_wg_forwarder_max_mtu: 1340
+
 # --- what crosses -----------------------------------------------------------
 # Inbound on the tunnel, and outbound onto it: the fabric port and these, TCP.
 # Bootstrap step 2 of the transport design: "the only port reachable across it is
@@ -69,3 +93,6 @@ peering_wg_env_path: "{{ peering_wg_config_dir }}/{{ peering_wg_interface }}.env
 peering_wg_nft_path: "{{ peering_wg_config_dir }}/{{ peering_wg_interface }}.nft"
 peering_wg_service: "goat-peering-wg@{{ peering_wg_interface }}.service"
 peering_wg_state_path: "/var/log/goat-peering-wg-{{ peering_wg_interface }}-state.json"
+peering_wg_carrier_key_path: "{{ peering_wg_config_dir }}/{{ peering_wg_carrier_interface }}.key"
+peering_wg_carrier_env_path: "{{ peering_wg_config_dir }}/{{ peering_wg_carrier_interface }}.env"
+peering_wg_carrier_service: "goat-peering-wg@{{ peering_wg_carrier_interface }}.service"

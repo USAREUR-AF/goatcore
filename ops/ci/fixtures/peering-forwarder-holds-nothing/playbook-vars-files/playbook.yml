@@ -1,0 +1,7 @@
+---
+- name: fixture | forwarder with the agreement's values
+  hosts: peering_forwarders
+  vars_files:
+    - /srv/applied/vars.yml
+  roles:
+    - role: goat-peering-forwarder

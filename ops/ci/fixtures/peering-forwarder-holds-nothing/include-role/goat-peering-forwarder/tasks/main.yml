@@ -1,0 +1,4 @@
+---
+- name: fixture | pull in another role
+  ansible.builtin.include_role:
+    name: goat-peering-wg

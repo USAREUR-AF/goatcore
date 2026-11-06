@@ -1,0 +1,315 @@
+---
+# The forwarder: one carrier per peering, dialled by the edge, and one nftables table
+# that relays each peering's public port down its carrier and nothing else.
+# Fails closed on the host before it changes anything on it.
+- name: peering-forwarder | skip unless this host declared a forwarder
+  ansible.builtin.meta: end_host
+  when: not (peering_forwarder_enabled | bool)
+
+- name: peering-forwarder | start from no peerings
+  ansible.builtin.set_fact:
+    _pf_peerings: []
+
+- name: peering-forwarder | fill each peering from the defaults
+  ansible.builtin.set_fact:
+    _pf_peerings: >-
+      {{ _pf_peerings + [peering_forwarder_peering_defaults | combine(item)] }}
+  loop: "{{ peering_forwarder_peerings }}"
+  loop_control:
+    label: "{{ item.name | default('?') }}"
+
+# --- refusals: what a forwarder is not ------------------------------------------
+
+- name: peering-forwarder | read the host's services
+  ansible.builtin.service_facts:
+
+- name: peering-forwarder | refuse a host that is a mesh peer
+  ansible.builtin.assert:
+    that:
+      - (ansible_interfaces | default([])) | intersect(peering_forwarder_mesh_interfaces) | length == 0
+      - >-
+        peering_forwarder_mesh_services
+        | select('in', ansible_facts.services | default({}))
+        | map('extract', ansible_facts.services | default({}))
+        | selectattr('state', 'equalto', 'running')
+        | list | length == 0
+    fail_msg: >-
+      goat-peering-forwarder refuses: this host is a member of a goatnet mesh
+      (interface {{ peering_forwarder_mesh_interfaces | join(', ') }} present, or
+      {{ peering_forwarder_mesh_services | join(', ') }} running). A forwarder is
+      outside both parties' authorization boundaries and joins neither mesh
+      (peering-forwarder.md §2). Use a host that is not enrolled.
+
+- name: peering-forwarder | look for an edge's peering configuration on this host
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop: "{{ peering_forwarder_edge_dirs }}"
+  register: _pf_edge_dirs
+
+- name: peering-forwarder | refuse a host that is a peering edge
+  ansible.builtin.assert:
+    that:
+      - _pf_edge_dirs.results | selectattr('stat.exists') | list | length == 0
+    fail_msg: >-
+      goat-peering-forwarder refuses: {{ _pf_edge_dirs.results | selectattr('stat.exists')
+      | map(attribute='item') | join(', ') }} exists, so this host holds a peering
+      edge's WireGuard configuration. The forwarder never holds a peering key.
+
+- name: peering-forwarder | list what is already in the config directory
+  ansible.builtin.find:
+    paths: "{{ peering_forwarder_config_dir }}"
+    file_type: any
+    hidden: true
+    recurse: true
+  register: _pf_existing
+
+- name: peering-forwarder | the names this role writes there, and no others
+  ansible.builtin.set_fact:
+    _pf_allowed_files: >-
+      {{ [peering_forwarder_nft_path]
+         + (_pf_peerings | map(attribute='interface') | map('regex_replace', '^(.*)$', peering_forwarder_config_dir ~ '/\1.key') | list)
+         + (_pf_peerings | map(attribute='interface') | map('regex_replace', '^(.*)$', peering_forwarder_config_dir ~ '/\1.env') | list) }}
+
+- name: peering-forwarder | refuse anything in the config directory this role did not put there
+  ansible.builtin.assert:
+    that:
+      - _pf_existing.files | map(attribute='path') | reject('in', _pf_allowed_files) | list | length == 0
+    fail_msg: >-
+      goat-peering-forwarder refuses: {{ peering_forwarder_config_dir }} holds
+      {{ _pf_existing.files | map(attribute='path') | reject('in', _pf_allowed_files) | list | join(', ') }}.
+      This role writes only one carrier key and one environment file per peering and
+      one nftables file. Anything else there may be a peering key, a CA, an SVID or a
+      fabric certificate, and a forwarder holds none of them. Remove it, or use
+      another host.
+
+# --- refusals: what the declaration has to say ----------------------------------
+
+- name: peering-forwarder | the declaration names a public interface and at least one peering
+  ansible.builtin.assert:
+    that:
+      - peering_forwarder_public_interface | length > 0
+      - peering_forwarder_public_interface is match('^[a-zA-Z0-9_.-]{1,15}$')
+      - _pf_peerings | default([]) | length > 0
+    fail_msg: >-
+      goat-peering-forwarder needs peering_forwarder_public_interface (got
+      '{{ peering_forwarder_public_interface }}') and at least one entry in
+      peering_forwarder_peerings.
+
+- name: peering-forwarder | each peering is well formed
+  ansible.builtin.assert:
+    that:
+      - item.name is defined
+      - item.name is match('^[a-z0-9][a-z0-9-]{1,15}$')
+      - item.edge_carrier_public_key is defined
+      - item.edge_carrier_public_key is string
+      - item.edge_carrier_public_key is match('^[A-Za-z0-9+/]{43}=$')
+      - item.interface is match('^[a-zA-Z0-9_-]{1,15}$')
+      - item.interface != peering_forwarder_public_interface
+      - (item.peering_port | int) >= 1 and (item.peering_port | int) <= 65535
+      - (item.edge_peering_port | int) >= 1 and (item.edge_peering_port | int) <= 65535
+      - (item.carrier_port | int) >= 1 and (item.carrier_port | int) <= 65535
+      - (item.peering_port | int) != (item.carrier_port | int)
+      - item.carrier_local_ip is match('^([0-9]{1,3}\.){3}[0-9]{1,3}$')
+      - item.carrier_remote_ip is match('^([0-9]{1,3}\.){3}[0-9]{1,3}$')
+      - item.carrier_local_ip != item.carrier_remote_ip
+      - (item.carrier_prefix_len | int) in [30, 31]
+      - (item.carrier_mtu | int) >= 1280
+      - item.partner_sources is sequence
+      - item.partner_sources is not string
+      - item.partner_sources | reject('match', '^([0-9]{1,3}\.){3}[0-9]{1,3}(/[0-9]{1,2})?$') | list | length == 0
+    fail_msg: >-
+      Peering '{{ item.name | default('?') }}' is malformed. It needs a name
+      (a-z0-9-, 2-16 chars) and edge_carrier_public_key, the edge's carrier public key
+      as WireGuard prints it (44 base64 characters ending in '='), got
+      '{{ item.edge_carrier_public_key | default('') }}'. Ports 1-65535 with the
+      peering port distinct from the carrier port; two distinct IPv4 carrier
+      addresses on a /31 or /30; partner_sources a list of IPv4 addresses or CIDRs.
+  loop: "{{ _pf_peerings }}"
+  loop_control:
+    label: "{{ item.name | default('?') }}"
+
+- name: peering-forwarder | no two peerings share a port, an interface, an address or an edge key
+  ansible.builtin.assert:
+    that:
+      - _pf_peerings | map(attribute='interface') | unique | length == _pf_peerings | length
+      - _pf_peerings | map(attribute='name') | unique | length == _pf_peerings | length
+      - _pf_peerings | map(attribute='edge_carrier_public_key') | unique | length == _pf_peerings | length
+      - _pf_ports | unique | length == _pf_ports | length
+      - _pf_addrs | unique | length == _pf_addrs | length
+    fail_msg: >-
+      Two peerings share an interface, a name, an edge key, a public port or a carrier
+      address. One peering is one carrier interface and one public port: the
+      destination of a forwarded packet has to follow from its port alone.
+  vars:
+    _pf_ports: >-
+      {{ (_pf_peerings | map(attribute='peering_port') | map('int') | list)
+         + (_pf_peerings | map(attribute='carrier_port') | map('int') | list) }}
+    _pf_addrs: >-
+      {{ (_pf_peerings | map(attribute='carrier_local_ip') | list)
+         + (_pf_peerings | map(attribute='carrier_remote_ip') | list) }}
+
+- name: peering-forwarder | SSH sources are addresses
+  ansible.builtin.assert:
+    that:
+      - peering_forwarder_ssh_sources is sequence
+      - peering_forwarder_ssh_sources is not string
+      - peering_forwarder_ssh_sources | reject('match', '^([0-9]{1,3}\.){3}[0-9]{1,3}(/[0-9]{1,2})?$') | list | length == 0
+    fail_msg: "peering_forwarder_ssh_sources must be a list of IPv4 addresses or CIDRs."
+
+# --- the host ---------------------------------------------------------------------
+
+- name: peering-forwarder | install WireGuard and nftables
+  ansible.builtin.apt:
+    name: "{{ peering_forwarder_packages }}"
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: peering-forwarder | config directory
+  ansible.builtin.file:
+    path: "{{ peering_forwarder_config_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+# The carrier key is made here and never leaves this host. It authenticates the
+# carrier, not the peering. It is never taken from a variable.
+- name: peering-forwarder | make each carrier's private key if there is none
+  ansible.builtin.shell:
+    cmd: "umask 077; wg genkey > {{ peering_forwarder_config_dir }}/{{ item.interface }}.key"
+    creates: "{{ peering_forwarder_config_dir }}/{{ item.interface }}.key"
+  loop: "{{ _pf_peerings }}"
+  loop_control:
+    label: "{{ item.interface }}"
+
+- name: peering-forwarder | IPv4 forwarding, persistent
+  ansible.builtin.copy:
+    dest: "{{ peering_forwarder_sysctl_path }}"
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # {{ ansible_managed }}
+      # goat-peering-forwarder relays each peering's port down its carrier.
+      net.ipv4.ip_forward = 1
+  register: _pf_sysctl
+
+- name: peering-forwarder | IPv4 forwarding, now
+  ansible.builtin.command: "sysctl -w net.ipv4.ip_forward=1"
+  changed_when: _pf_sysctl.changed
+
+- name: peering-forwarder | link script
+  ansible.builtin.template:
+    src: goat-peering-forwarder-link.sh.j2
+    dest: /usr/local/sbin/goat-peering-forwarder-link
+    owner: root
+    group: root
+    mode: "0755"
+  notify: Restart goat peering forwarder
+
+- name: peering-forwarder | link service
+  ansible.builtin.template:
+    src: goat-peering-forwarder@.service.j2
+    dest: /etc/systemd/system/goat-peering-forwarder@.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart goat peering forwarder
+
+- name: peering-forwarder | firewall and forwarding rules
+  ansible.builtin.template:
+    src: forwarder.nft.j2
+    dest: "{{ peering_forwarder_nft_path }}"
+    owner: root
+    group: root
+    mode: "0600"
+  notify: Restart goat peering forwarder
+
+- name: peering-forwarder | carrier environment
+  ansible.builtin.template:
+    src: carrier.env.j2
+    dest: "{{ peering_forwarder_config_dir }}/{{ item.interface }}.env"
+    owner: root
+    group: root
+    mode: "0600"
+  loop: "{{ _pf_peerings }}"
+  loop_control:
+    label: "{{ item.interface }}"
+  notify: Restart goat peering forwarder
+
+- name: peering-forwarder | converge the carriers
+  ansible.builtin.meta: flush_handlers
+
+- name: peering-forwarder | every carrier is running and enabled
+  ansible.builtin.systemd:
+    name: "goat-peering-forwarder@{{ item.interface }}.service"
+    state: started
+    enabled: true
+    daemon_reload: true
+  loop: "{{ _pf_peerings }}"
+  loop_control:
+    label: "{{ item.interface }}"
+
+# --- read back --------------------------------------------------------------------
+
+- name: peering-forwarder | read each carrier back
+  ansible.builtin.command: "wg show {{ item.interface }} dump"
+  register: _pf_dump
+  changed_when: false
+  loop: "{{ _pf_peerings }}"
+  loop_control:
+    label: "{{ item.interface }}"
+
+- name: peering-forwarder | each carrier holds exactly the edge, at its carrier address
+  ansible.builtin.assert:
+    that:
+      # Line 1 is the interface, every further line is one peer.
+      - item.stdout_lines | length == 2
+      - item.item.edge_carrier_public_key in item.stdout_lines[1]
+      - (item.item.carrier_remote_ip ~ '/32') in item.stdout_lines[1]
+      - (item.stdout_lines[0].split()[2] | int) == (item.item.carrier_port | int)
+    fail_msg: >-
+      {{ item.item.interface }} does not hold what the declaration says: one peer
+      {{ item.item.edge_carrier_public_key }} allowed {{ item.item.carrier_remote_ip }}/32,
+      listening on {{ item.item.carrier_port }}. Read: {{ item.stdout_lines[1:] }}
+  loop: "{{ _pf_dump.results }}"
+  loop_control:
+    label: "{{ item.item.interface }}"
+
+- name: peering-forwarder | the forwarding table is loaded
+  ansible.builtin.command: "nft list table inet goat_peering_forwarder"
+  register: _pf_nft
+  changed_when: false
+
+- name: peering-forwarder | read each carrier's public key
+  ansible.builtin.command: "wg show {{ item.interface }} public-key"
+  register: _pf_public
+  changed_when: false
+  loop: "{{ _pf_peerings }}"
+  loop_control:
+    label: "{{ item.interface }}"
+
+- name: peering-forwarder | write the state file
+  ansible.builtin.template:
+    src: state.json.j2
+    dest: "{{ peering_forwarder_state_path }}"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: peering-forwarder | hand these to the edge
+  ansible.builtin.debug:
+    msg:
+      - "peering:   {{ item.item.name }} ({{ item.item.interface }})"
+      - "the edge sets:"
+      - "  peering_wg_via_forwarder: true"
+      - "  peering_wg_forwarder_carrier_public_key: {{ item.stdout }}"
+      - "  peering_wg_forwarder_endpoint: <this host's public address>:{{ item.item.carrier_port }}"
+      - "  peering_wg_carrier_local_ip: {{ item.item.carrier_remote_ip }}"
+      - "  peering_wg_carrier_remote_ip: {{ item.item.carrier_local_ip }}"
+      - "and offers <this host's public address>:{{ item.item.peering_port }} as transport_offer.endpoint, listener true, measured_mtu 1300."
+      - "recorded:  {{ peering_forwarder_state_path }}"
+  loop: "{{ _pf_public.results }}"
+  loop_control:
+    label: "{{ item.item.interface }}"

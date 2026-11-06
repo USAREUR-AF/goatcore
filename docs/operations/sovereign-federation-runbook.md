@@ -156,11 +156,20 @@ Firewall it to exactly this, on the edge host:
 - **outbound**: the tunnel port, to their address only.
 - **nothing else crosses** — no management, no shell, no administrative interface.
 
-**Behind a forwarder**, the side that listens receives the tunnel port on its carrier interface
-(`wg-carry0`), not from the partner's address, and sets `peering_wg_via_forwarder: true` so the
-rule binds to that interface. Its only outbound is the carrier port to the forwarder. The side
-that dials sends to the forwarder's address. Set the link MTU to 1300 on both sides
-([`peering-forwarder.md`](../design/peering-forwarder.md) §3).
+**Behind a forwarder** (status: built, not yet run between two goatnets), the side that listens
+receives the tunnel port on its carrier interface (`wg-carry0`), not from the partner's address,
+and its only outbound is the carrier port to the forwarder. The side that dials sends to the
+forwarder's address. The forwarder is up before step 1
+([`peering-forwarder.md`](../design/peering-forwarder.md) §7):
+
+| Host | Play | Variables |
+|---|---|---|
+| Forwarder (group `peering_forwarders`) | `ops/ansible/peering-forwarder.yml` (`roles/goat-peering-forwarder`) | `peering_forwarder_enabled: true`; `peering_forwarder_peerings`, one entry per peering: `name`, `edge_carrier_public_key`, optional `partner_sources`. Ports 51820/51821 and carrier 169.254.30.0/31 are defaults |
+| Our edge | `peering-prepare.yml` and `peering-wg.yml` (`roles/goat-peering-wg`) | `peering_wg_via_forwarder: true`, `peering_wg_forwarder_carrier_public_key`, `peering_wg_forwarder_endpoint: <forwarder>:51821` |
+
+With `peering_wg_via_forwarder: true` the edge's firewall binds the tunnel port to `wg-carry0`,
+and phase 11 refuses unless this side listens and the link MTU is at most 1340. Offer
+`measured_mtu = 1300`. Declare the forwarder under `forwarder:` in the partner file.
 
 ## Step 6 — Sealed data for this partner, if they need it
 

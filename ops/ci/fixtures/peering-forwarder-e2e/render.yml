@@ -1,0 +1,21 @@
+---
+# Renders a role's templates with its own defaults and a host's values, for
+# ops/ci/test-peering-forwarder-e2e.sh. The host's values arrive as extra vars, so
+# they take precedence over the defaults exactly where a real run's would.
+- name: render a role's templates for one e2e host
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - "{{ role_dir }}/defaults/main.yml"
+  vars:
+    ansible_date_time: {iso8601: "1970-01-01T00:00:00Z", epoch: "0"}
+    ansible_hostname: e2e
+  tasks:
+    - name: render
+      ansible.builtin.template:
+        src: "{{ role_dir }}/templates/{{ f.0 }}"
+        dest: "{{ out }}/{{ f.1 }}"
+        mode: "0755"
+      loop: "{{ files }}"
+      loop_control:
+        loop_var: f

@@ -81,6 +81,10 @@
   register: _pw_public
   changed_when: false
 
+- name: peering-wg | the carrier to a peering forwarder
+  ansible.builtin.include_tasks: carrier.yml
+  when: peering_wg_via_forwarder | bool
+
 - name: peering-wg | say what init will read
   ansible.builtin.debug:
     msg: "{{ peering_wg_interface }} holds {{ _pw_public.stdout }}; no address and no peer until phase 11."

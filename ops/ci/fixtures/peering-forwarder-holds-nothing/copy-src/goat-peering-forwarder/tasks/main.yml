@@ -1,0 +1,5 @@
+---
+- name: fixture | ship a file
+  ansible.builtin.copy:
+    src: material.bin
+    dest: /etc/goat-peering-forwarder/material.bin

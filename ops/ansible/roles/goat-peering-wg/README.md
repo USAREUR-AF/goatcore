@@ -55,6 +55,32 @@ the edge router's published port is a DNAT that never reaches the input chain.
 - **MSS:** clamped to the route's MTU on forwarded traffic, because the edge's session
   is forwarded from a compose network.
 
+## Behind a peering forwarder
+
+When neither edge accepts inbound UDP, this edge listens through a forwarder
+(`roles/goat-peering-forwarder`, `peering-forwarder.md`). Off by default; with
+`peering_wg_via_forwarder: false` every file this role renders is unchanged.
+
+| Variable | Default | Set to |
+|---|---|---|
+| `peering_wg_via_forwarder` | `false` | `true` |
+| `peering_wg_forwarder_endpoint` | `""` | `<forwarder>:51821`, from the forwarder play |
+| `peering_wg_forwarder_carrier_public_key` | `""` | the key the forwarder play prints |
+| `peering_wg_carrier_interface` | `wg-carry0` | |
+| `peering_wg_carrier_local_ip` / `_remote_ip` | `169.254.30.1` / `169.254.30.0` | the forwarder entry's remote / local |
+| `peering_wg_carrier_listen_port` | `51822` | the local port the carrier dials from |
+| `peering_wg_carrier_mtu` | `1420` | |
+| `peering_wg_carrier_keepalive` | `25` | |
+
+- **Phase 2** makes the carrier key and prints it. With the forwarder's key and
+  endpoint set, it brings up `goat-peering-wg@wg-carry0`, dialling the forwarder.
+- **Phase 11** refuses unless this side is the listener and the agreed MTU is at most
+  `peering_wg_forwarder_max_mtu` (1340); offer `measured_mtu = 1300`. It reads the
+  carrier back and reports its latest handshake.
+- **Firewall:** the peering port is accepted only on `iifname wg-carry0` from the
+  forwarder's carrier address; anything else on the carrier, and the peering port on
+  any other interface, is counted and dropped. The source-address rule is not written.
+
 ## Cutting it
 
 `systemctl stop goat-peering-wg@<interface>` removes the interface and the firewall

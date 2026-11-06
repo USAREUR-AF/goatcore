@@ -127,6 +127,32 @@ jobs:
           bash ops/ci/check-bash-portability.sh
           yamllint -d relaxed .github/workflows
 
+  peering-forwarder:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: deps
+        timeout-minutes: 5
+        run: python3 -m pip install -q pyyaml ansible-core pytest
+      - name: the partner file's forwarder block is validated
+        run: python3 -m pytest -q ops/ci/test_validate_partners_forwarder.py
+      - name: the forwarder role cannot be handed peering material
+        run: |
+          python3 ops/ci/check-peering-forwarder-holds-nothing.py
+          python3 ops/ci/check-peering-forwarder-holds-nothing.py --self-test
+      - name: a peering through a forwarder, edge behind NAT, in containers
+        timeout-minutes: 10
+        run: |
+          sudo modprobe wireguard
+          bash ops/ci/test-peering-forwarder-e2e.sh
+      - name: the forwarder play, run on a systemd host, converges and refuses
+        timeout-minutes: 10
+        run: bash ops/ci/test-peering-forwarder-role.sh
+
   no-identifiers:
     runs-on: ubuntu-24.04
     timeout-minutes: 10

@@ -1,0 +1,4 @@
+---
+- name: fixture | read a file from the control node
+  ansible.builtin.set_fact:
+    _x: "{{ lookup('ansible.builtin.file', '/srv/whatever') }}"

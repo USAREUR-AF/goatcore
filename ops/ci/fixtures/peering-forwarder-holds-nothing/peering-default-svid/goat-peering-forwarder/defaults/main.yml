@@ -1,0 +1,5 @@
+---
+peering_forwarder_enabled: false
+peering_forwarder_peering_defaults:
+  interface: wg-carry0
+  svid_path: /run/x

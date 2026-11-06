@@ -1,0 +1,17 @@
+---
+# Parse-only fixture for the goat-peering-forwarder role. Addresses are from the
+# RFC 3927 link-local and RFC 5737 documentation ranges and the key is a fixed
+# sample, so nothing here can be mistaken for a real forwarder.
+- name: goat-peering-forwarder | parse-only fixture
+  hosts: localhost
+  gather_facts: false
+  vars:
+    peering_forwarder_enabled: true
+    peering_forwarder_public_interface: eth0
+    peering_forwarder_peerings:
+      - name: xaa
+        edge_carrier_public_key: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+        partner_sources:
+          - 192.0.2.10
+  roles:
+    - role: ../..
