@@ -428,8 +428,10 @@ What the driver does differently, inside the same phases:
 
 - **Pass 1** (phase 5) runs `site-bootstrap` with `participates_in_spock=false` —
   the account and schema are not seeded locally, they arrive by replication.
-- **Pass 2** (phase 6, joiner-only) runs `<site>-seed-from-peer.yml`, the
-  guarded data-only copy of identity + mesh state from the founder.
+- **Pass 2** (phase 6, joiner-only) runs `site-seed-from-peer.yml`, the
+  guarded data-only copy of identity + mesh state from the founder (the first
+  host of the founder's `<join_founder_site>_hosts` group). A site that keeps
+  its own `<site>-seed-from-peer.yml` gets that one instead.
 - **Pass 3** (phase 6) re-runs `site-bootstrap` with Spock enabled, creating the
   `netbird_mgmt` subscriptions.
 - **Founder-side mirror** (phase 6, joiner-only) runs `spock-mesh-wire.yml` on
