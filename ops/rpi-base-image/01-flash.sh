@@ -309,7 +309,7 @@ cleanup() {
     if [ "$LINUX_MOUNTED" = 1 ]; then
         $SUDO umount "$LINUX_MNT" 2>/dev/null || warn "Could not unmount $LINUX_MNT"
     fi
-    [ -n "$LINUX_MNT" ] && rmdir "$LINUX_MNT" 2>/dev/null || true
+    if [ -n "$LINUX_MNT" ]; then rmdir "$LINUX_MNT" 2>/dev/null || true; fi
     if [ "$rc" -ne 0 ] && [ "${WRITE_STARTED:-0}" = 1 ]; then
         error "Script failed. SD card may be in an inconsistent state."
     fi
