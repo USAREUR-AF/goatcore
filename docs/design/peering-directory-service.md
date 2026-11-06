@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | **Built: the `saltlick` repository and service exist.** The pointer entry of §6 and the internet-reachable deployment of §5.1 are designed; the driver step of §6.2 is built behind `FED_DIRECTORY_URL`. Decisions D-4, D-14, D-15 and G-10 in `../project/cross-sovereign-federation-plan.md`. |
+| Status | **Built.** Service: `USAREUR-AF/saltlick`, image `ghcr.io/usareur-af/saltlick:v0.1.0` (public). Deploy: `ops/ansible/saltlick-deploy.yml` and role `ops/ansible/roles/saltlick/` in this repository. The pointer entry of §6 and the internet-reachable deployment of §5.1 are designed; the driver step of §6.2 is built behind `FED_DIRECTORY_URL`. |
 | Audience | Internal — author / reviewer / whoever stands the service up |
 | Companions | [`federation-package-spec.md`](federation-package-spec.md) (the artifact this directory serves), `cross-sovereign-peering-transport.md` (the eight-step bootstrap), `cross-sovereign-federation.md`, `partner-peering-portal.md` (Block 84 — composes with this, does not compete) |
 | Repo scope | **A new repository, not this monorepo.** See §4. |
@@ -209,11 +209,13 @@ than overlapping.
 | Piece | State |
 |---|---|
 | The decision, and its invariant | **Decided** — 2026-09-05 |
-| Repository | **Built** — `saltlick`, public |
-| Service | **Built**; a mesh-internal instance runs, and is retired once a partner-reachable instance serves |
+| Repository | **Public** — `USAREUR-AF/saltlick` |
+| Service | **Built** — image `ghcr.io/usareur-af/saltlick:v0.1.0`, multi-arch, pulls anonymously |
+| Deploy | **Built** — `ops/ansible/saltlick-deploy.yml` with role `ops/ansible/roles/saltlick/`, pinned to that image by digest |
 | Internet-reachable deployment (§5.1) | **Designed**; per-source rate limits in the service designed |
 | Pointer entry (§6) | **Designed, not built** in saltlick |
 | Driver step (§6.2) | **Built** behind `FED_DIRECTORY_URL` |
 | The trust mechanism it sits above — package spec, `goat federate`, conformance vectors | **Built and merged** — see [`federation-package-spec.md`](federation-package-spec.md) |
 
-Federation works without this service. That is by design.
+Federation works without this service. That is by design: the directory is advisory, and a
+peering never waits on it.

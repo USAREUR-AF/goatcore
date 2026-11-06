@@ -58,4 +58,3 @@ ops/compose/mgmt-host/docker-compose.spire-agent.yml   # 2026-09-06 seed
 ops/compose/mgmt-host/docker-compose.spire.yml   # 2026-09-06 seed
 ops/compose/relay-health-standalone/docker-compose.public.yml   # 2026-09-06 seed
 ops/compose/relay-health-standalone/docker-compose.yml   # 2026-09-06 seed
-ops/ansible/roles/saltlick/templates/docker-compose.yml.j2   # 2026-09-08 — landed on main after the seed; unsized

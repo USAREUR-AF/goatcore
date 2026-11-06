@@ -1,15 +1,12 @@
 ---
 # signal-federation-canary role defaults. Per-site overrides in group_vars.
 #
-# `:latest` is a placeholder, not the intended end state. Previously NO
-# WORKFLOW BUILT THIS IMAGE — the role, the Dockerfile and the compose file all
-# existed and the image did not, in either container-registry namespace, so this
-# default named something nobody could pull. The build now exists at
-# .github/workflows/signal-federation-probe-image.yml. Move this to a
-# `:sha-<short>@sha256:<digest>` pin once that workflow has published from main;
-# a floating tag is the one thing F-245 pinning discipline exists to prevent, and
-# ops/ci/check-ghcr-namespace-parity.sh counts it in its no-digest tally on every
-# run until it moves.
+# `:latest` is a placeholder, not the intended end state.
+# .github/workflows/signal-federation-probe-image.yml publishes this image to
+# ghcr.io/<repository owner>/signal-federation-probe, tagging `:latest` and
+# `:sha-<short>` on every push to main that changes ops/signal-federation-probe/.
+# Move this to a `:sha-<short>@sha256:<digest>` pin once that workflow has
+# published from main.
 signal_federation_probe_image: "ghcr.io/{{ ghcr_org }}/signal-federation-probe:latest"
 signal_federation_canary_target: "localhost:10000"
 signal_federation_canary_interval: "60s"

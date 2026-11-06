@@ -1,9 +1,8 @@
 //! `join-node`: one more machine of a class at a live site, declared →
-//! converged → verified. Nothing drives this today but the runbook
-//! (docs/operations/node-addition.md §5.4 "The sequence as actually
-//! executed", §4/§5.4 the three passes, §6 "Done means proven"); this verb is
-//! that sequence as numbered phases with the runbook's gates, in its order,
-//! with its traps as the phase text. `--dry-run` prints every phase and
+//! converged → verified. This verb is the node-addition sequence (the
+//! executed order, the joiner's three passes, "done means proven") as
+//! numbered phases with their gates, with each step's trap in the phase text;
+//! docs/tutorials/02-first-federated-node.md walks through it. `--dry-run` prints every phase and
 //! command and runs nothing; `--from`/`--to` resume; every phase is idempotent.
 //!
 //!   1  MANUAL reach the box on the SITE LAN (not the USB bridge address)
@@ -98,7 +97,7 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
     let mut ev = vec![
         p(1, "MANUAL", "reach the box on the SITE LAN", format!("ssh {user}@{addr} — the address handed over may be 192.168.55.1: that is l4tbr0, the Jetson USB device-mode bridge on the box itself, reachable only over a direct USB-C cable. Find the real LAN address before anything else, then pass it as --address.")),
         p(2, "T", "seed the SSH key (key auth + NOPASSWD sudo; password from the env var, never the command line)", format!("'{r}/ops/scripts/seed-ssh-key.sh' {user}@{addr} {pass_var}")),
-        p(3, "GATE", "repo work first: group, inventory, pins, exclusions (node-addition.md §5.5) — the config preflight passes", format!("python3 '{r}/ops/scripts/standup-config-preflight.py' {group}")),
+        p(3, "GATE", "repo work first: group, inventory, pins, exclusions — the config preflight passes", format!("python3 '{r}/ops/scripts/standup-config-preflight.py' {group}")),
         p(4, "T", "quiet apt on the node (the baseline stalls on the dpkg lock otherwise; unmasked in phase 14)", format!("ssh {user}@{addr} 'sudo systemctl mask --now apt-daily.timer apt-daily-upgrade.timer'")),
         p(5, "A", "host baseline, narrowed to the node — run detached if the session may drop: it apt-upgrades and reboot-waves", format!("cd '{r}/ops/ansible' && {pre} {inv} mgmt-host-baseline.yml -e target={group} -e site_id={site} -l {node}")),
         p(6, "A", "WireGuard kernel modules, first pass — the final check fails before enrolment (wt0 absent); expected, phase 11 re-runs it", format!("cd '{r}/ops/ansible' && ( {pre} {inv} wireguard-kmod.yml -e target={group} -l {node} || echo '>> wireguard-kmod: final check failed before enrolment (wt0 absent) — expected; phase 11 re-runs it for changed=0' )")),
@@ -113,7 +112,7 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
     match o.class {
         "core" if joiner => {
             if founder_site.is_empty() {
-                return Err(anyhow!("group_vars/{group}/vars.yml declares goatnet_founder: false and no join_founder_site — a joiner must name the founder it seeds from (node-addition.md §3)"));
+                return Err(anyhow!("group_vars/{group}/vars.yml declares goatnet_founder: false and no join_founder_site — a joiner must name the founder it seeds from"));
             }
             // site-seed-from-peer.yml is the generic play; a site that keeps its
             // own <site>-seed-from-peer.yml gets that one instead.
@@ -123,7 +122,7 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
             ev.push(p(13, "A", "[core, joiner] the service deploys the seed needs (kratos/hydra schemas): ory", format!("cd '{r}/ops/ansible' && {pre} {inv} ory-deploy.yml --limit {node} -e postgres_superuser_password=\"$(printenv {upper}_PG_PASS)\"")));
             ev.push(p(13, "A", &format!("[core, joiner] pass 2 — seed-from-peer: data-only copy from founder {founder_site} (fails loud if the account is populated)"), format!("cd '{r}/ops/ansible' && {pre} {inv} -l {node} {seed_play} -e site_id={site}")));
             ev.push(p(13, "A", "[core, joiner] pass 3 — bootstrap with Spock: subscriptions on both sides, polled to replicating", format!("cd '{r}/ops/ansible' && {pre} {inv} -l {node} site-bootstrap.yml {ev_bootstrap}")));
-            ev.push(p(13, "A", &format!("[core, joiner] the founder-side mirror on {founder_group}, peer={site} only (§5.4a: the same change, not a follow-up)"), format!("cd '{r}/ops/ansible' && {pre} {inv} spock-mesh-wire.yml --limit {founder_group} -e '{{\"inter_site_spock_peers\":[\"{site}\"]}}'")));
+            ev.push(p(13, "A", &format!("[core, joiner] the founder-side mirror on {founder_group}, peer={site} only (the same change, not a follow-up)"), format!("cd '{r}/ops/ansible' && {pre} {inv} spock-mesh-wire.yml --limit {founder_group} -e '{{\"inter_site_spock_peers\":[\"{site}\"]}}'")));
         }
         "core" => {
             ev.push(p(13, "A", &format!("[core, founder site] site-bootstrap on the node{}", if intra_pair { " (intra_site_pair: the A→B streaming standby is phase 6A of the play)" } else { "" }), format!("cd '{r}/ops/ansible' && {pre} {inv} -l {node} site-bootstrap.yml {ev_bootstrap}")));
@@ -147,7 +146,7 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
             let rg = format!("{site_us}_network_jump_hosts");
             let extra = format!("inventory/{site}-network-jump.ini");
             let inv_extra = if repo.join("ops/ansible").join(&extra).is_file() { format!(" -i {extra}") } else { String::new() };
-            ev.push(p(13, "A", "[network-jump] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear)", format!("cd '{r}/ops/ansible' && {pre} {inv}{inv_extra} herd-connector-deploy.yml -e herd_connector_target_hosts={rg} -e target={rg} -l {node}")));
+            ev.push(p(13, "A", "[network-jump] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses)", format!("cd '{r}/ops/ansible' && {pre} {inv}{inv_extra} herd-connector-deploy.yml -e herd_connector_target_hosts={rg} -e target={rg} -l {node}")));
         }
         other => return Err(anyhow!("class '{other}' is not one this verb converges; known: {}", CLASSES.join(", "))),
     }
@@ -198,13 +197,13 @@ pub fn join_node(repo: &Path, o: &Options) -> Result<Report> {
         let status = Command::new("bash").args(["-euo", "pipefail", "-c", &ph.cmd]).current_dir(repo).status().context("bash")?;
         if !status.success() {
             let rc = status.code().unwrap_or(1);
-            checks.push(Check { name: "failed".into(), ok: false, detail: format!("!! Phase {} (\"{}\") FAILED — exit {rc}. No later phase has run; the node is left partway through phase {}. docs/operations/node-addition.md §5.4 names this step's proof and its trap.", ph.n, ph.label, ph.n), fix: Some(format!("fix the cause, then resume — every phase is idempotent: {resume} --from {}", ph.n)) });
+            checks.push(Check { name: "failed".into(), ok: false, detail: format!("!! Phase {} (\"{}\") FAILED — exit {rc}. No later phase has run; the node is left partway through phase {}. `--dry-run` prints this phase's command and the gate that proves it.", ph.n, ph.label, ph.n), fix: Some(format!("fix the cause, then resume — every phase is idempotent: {resume} --from {}", ph.n)) });
             exit = EXIT_REFUSED;
             break;
         }
     }
     if o.dry_run {
-        checks.push(row("footer", "PLAN complete. Remove --dry-run to execute (needs --address). Manual steps (1, 8, 10) pause the run; resume with --from <next>. Read docs/operations/node-addition.md §5.4 first.".into()));
+        checks.push(row("footer", "PLAN complete. Remove --dry-run to execute (needs --address). Manual steps (1, 8, 10) pause the run; resume with --from <next>. docs/tutorials/02-first-federated-node.md walks through it.".into()));
     }
     let mut r = Report::new("join-node", checks, EXIT_REFUSED);
     r.exit = exit;

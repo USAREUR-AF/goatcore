@@ -2,6 +2,8 @@
 # Not deployed by goatcore: flashlight, goat-topology, herd, herd-connector, microscope, netvis, panoscope, stethoscope.
 # Their roles and playbooks are in goatstuff (ops/ansible/roles/<name>/); a goatnet
 # that does not run them needs no row for them.
+# herd and herd-connector have no public image: their fleet pins are null, and a
+# goatnet that runs them supplies its own image (herd_image, herd_connector_image).
 goatnets: {}
 components:
   netbird-mgmt:
@@ -198,7 +200,7 @@ components:
     var: herd_image
     image_workflow: null
     ledger_component: herd
-    fleet: ghcr.io/{{ ghcr_org }}/herd:v0.2.1@sha256:f73a621e1905b4a35ca5071c48f85ff4c5dee2daedb87b48b8ea5cbbd06865ee
+    fleet: null
   herd-connector:
     owns_state: false
     rollback: pin-revert

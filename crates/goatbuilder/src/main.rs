@@ -377,10 +377,11 @@ pub enum Cmd {
         to: u32,
     },
     /// One more machine of a class at a live site, declared → converged →
-    /// verified: docs/operations/node-addition.md's executed sequence as
-    /// numbered phases with its gates (reach, key, repo work first, baseline,
-    /// kernel WireGuard before and after enrolment, the kernel ACL plane as the
-    /// enrolment gate, the class's converge, acceptance).
+    /// verified: the node-addition sequence of
+    /// docs/tutorials/02-first-federated-node.md as numbered phases with its
+    /// gates (reach, key, repo work first, baseline, kernel WireGuard before and
+    /// after enrolment, the kernel ACL plane as the enrolment gate, the class's
+    /// converge, acceptance).
     JoinNode {
         /// The environment (goatnet).
         env: String,

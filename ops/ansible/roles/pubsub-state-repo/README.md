@@ -8,6 +8,23 @@ and seeds the first commit from the live portal.
 
 **Apply playbook:** [`ops/ansible/pubsub-state-mirror-deploy.yml`](../../pubsub-state-mirror-deploy.yml).
 
+## It needs a Forgejo, which goatcore does not deploy
+
+The mirror's primary tier is a Forgejo instance for the goatnet. goatcore ships
+no Forgejo role or play: run Forgejo the way its own documentation describes (a
+container on the obs host is the shape this role was written against), then
+declare it in `group_vars/<site>_hosts/pubsub-state.yml` (`pubsub_state_forgejo_url`,
+or `FORGEJO_URL` in the environment) and mint the mirror bot with
+`ops/scripts/forgejo-mint-pubsub-bot.sh <forgejo-ssh-target>`, which writes
+`FORGEJO_PUBSUB_TOKEN`.
+
+The mirror is optional. A goatnet with no `group_vars/<site>_hosts/pubsub-state.yml`
+has no mirror: `goatbuilder standup` and `ops/scripts/goat-standup.sh` print
+the phase-12 bot mint and mirror deploy as skipped, with that reason, and go on.
+Run directly, this role and `pubsub-state-mirror-deploy.yml` refuse at their
+pre-flight when the token is unset or the Forgejo does not answer
+`<url>/api/v1/version`.
+
 ## Required env vars
 
 | Var                       | Purpose                                    |

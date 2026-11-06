@@ -501,11 +501,21 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
     ev.push(p(12, "A", "portal (registry, certificate minting, grant rows)".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} portal-deploy.yml -e target={g} -l 'mgmt-{site}-01*' -e postgres_superuser_password=\"$(printenv {u}_PG_PASS)\"")));
     if s.obs {
         ev.push(Event::LegJoin { leg: "host", at: 12 });
+    }
+    // The bot lives on the goatnet's Forgejo, which goatcore does not deploy: a
+    // goatnet that declares no pub/sub state forge skips the mint and goes on.
+    let forge = repo.join(format!("ops/ansible/group_vars/{g}/pubsub-state.yml")).is_file();
+    if s.obs && !forge && in_range(12, o) {
+        ev.push(Event::Skip { n: 12, kind: "T", label: "mint the pubsub-state mirror bot on the obs host's Forgejo (once; skipped when FORGEJO_PUBSUB_TOKEN is set)".into(), lines: vec![
+            format!("SKIPPED — no group_vars/{g}/pubsub-state.yml: this goatnet declares no Forgejo for the pub/sub state mirror"),
+            "goatcore ships no Forgejo role; to turn the mirror on, run a Forgejo for this goatnet and declare it (ops/ansible/roles/pubsub-state-repo/README.md)".into()] });
+    }
+    if s.obs && forge {
         let obs_ssh = inventory_hosts(repo, &[og], true).into_iter().next().unwrap_or_default();
         ev.push(Event::Phase(Phase { n: 12, kind: "T", label: "mint the pubsub-state mirror bot on the obs host's Forgejo (once; skipped when FORGEJO_PUBSUB_TOKEN is set)".into(), cmd: format!("if [ -n \"${{FORGEJO_PUBSUB_TOKEN:-}}\" ]; then echo '    FORGEJO_PUBSUB_TOKEN already set — bot minted; skipping';    else '{r}/ops/scripts/forgejo-mint-pubsub-bot.sh' '{obs_ssh}'      && eval \"$('{r}/ops/scripts/envrc-var.sh' FORGEJO_PUBSUB_TOKEN)\"      && '{r}/ops/scripts/standup-keep-secret' FORGEJO_PUBSUB_TOKEN      && echo '    token loaded from the operator envrc; the run continues'; fi"), stop_after: true }));
     }
     ev.push(p(12, "GATE", "every input the phases after the manual step will reach is set (the NetBird service token phase 11 issues)".into(), format!("python3 '{r}/ops/scripts/standup-required-inputs.py' {site} --profile {} --from 12", s.profile)));
-    ev.push(p(12, "A", "pubsub-state Repl mirror (Block 86)".into(), format!("cd '{r}/ops/ansible' && if ls group_vars/{g}/pubsub-state.yml >/dev/null 2>&1; then {pre} {inv} pubsub-state-mirror-deploy.yml -e target={g}; else echo 'no group_vars/{g}/pubsub-state.yml — Repl not configured for this goatnet; add one by copying any goatnet that has one, mint the bot, then re-run --from 12'; fi")));
+    ev.push(p(12, "A", "pubsub-state Repl mirror (Block 86)".into(), format!("cd '{r}/ops/ansible' && if ls group_vars/{g}/pubsub-state.yml >/dev/null 2>&1; then {pre} {inv} pubsub-state-mirror-deploy.yml -e target={g}; else echo 'no group_vars/{g}/pubsub-state.yml — the pub/sub state mirror is not configured for this goatnet; skipping. It needs a Forgejo you run for this goatnet (goatcore ships no Forgejo role): see ops/ansible/roles/pubsub-state-repo/README.md, then re-run --from 12'; fi")));
     ev.push(p(12, "A", "onboarding intake front desk (public, ADR 1062 stage 1)".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} onboard-intake-deploy.yml -e target={g} -e site_id={site}")));
     ev.push(p(12, "A", "onboard-runner (auto-mint on approval, ADR 1062 stage 3)".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} onboard-runner-deploy.yml -e target={g} -e site_id={site}")));
     ev.push(p(12, "A", "grant-keyd (encryption key distribution)".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} grant-keyd-deploy.yml -e target={g} -l 'mgmt-{site}-01*'")));
@@ -536,7 +546,7 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
     let site_us = site.replace('-', "_");
     let rescue = [
         ("has_breakglass_node", "breakglass_absent_reason", "breakglass", format!("inventory/{site}-breakglass-nodes.ini"), "break-glass node (ADR 1114 — the way in when mesh + control plane are both down)".to_string(), "breakglass-nodes.yml".to_string()),
-        ("has_network_jump_node", "network_jump_absent_reason", "network_jump", format!("inventory/{site}-network-jump.ini"), "network-jump host (ADR 1131 — reach to switch, router and out-of-band gear)".to_string(), format!("herd-connector-deploy.yml -e herd_connector_target_hosts={site_us}_network_jump_hosts")),
+        ("has_network_jump_node", "network_jump_absent_reason", "network_jump", format!("inventory/{site}-network-jump.ini"), "network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses)".to_string(), format!("herd-connector-deploy.yml -e herd_connector_target_hosts={site_us}_network_jump_hosts")),
     ];
     for (flag, reason_key, suffix, extra_inv, label, play) in rescue {
         let rgroup = format!("{site_us}_{suffix}_hosts");
@@ -1575,6 +1585,28 @@ mod tests {
         std::fs::write(t.join("ops/ansible/zagros-seed-from-peer.yml"), "---\n").unwrap();
         assert_eq!(site_play(&t, "zagros", "seed-from-peer.yml"), "zagros-seed-from-peer.yml");
         let _ = std::fs::remove_dir_all(&t);
+    }
+
+    /// goatcore deploys no Forgejo: an obs host on a goatnet that declares no
+    /// pub/sub state forge gets the bot mint as a SKIPPED line, not a step that
+    /// stops the run; a goatnet that declares one gets the mint, stop and all.
+    #[test]
+    fn the_forgejo_bot_mint_skips_when_no_forge_is_declared() {
+        let o = Options { env: "e", site: "zagros", profile: None, from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false, check: false };
+        let mut s = test_site(false);
+        s.obs = true;
+        s.obs_group = "zagros_obs_hosts".into();
+        let tree = tempfile::tempdir().unwrap();
+        let mint = |ev: &[Event]| -> (bool, bool) {
+            let skip = ev.iter().any(|e| matches!(e, Event::Skip { n: 12, label, .. } if label.starts_with("mint the pubsub-state mirror bot")));
+            let step = ev.iter().any(|e| matches!(e, Event::Phase(p) if p.n == 12 && p.stop_after && p.label.starts_with("mint the pubsub-state mirror bot")));
+            (skip, step)
+        };
+        assert_eq!(mint(&plan(tree.path(), &s, &o, "RESUME")), (true, false));
+        let gv = tree.path().join("ops/ansible/group_vars/zagros_hosts");
+        std::fs::create_dir_all(&gv).unwrap();
+        std::fs::write(gv.join("pubsub-state.yml"), "---\n").unwrap();
+        assert_eq!(mint(&plan(tree.path(), &s, &o, "RESUME")), (false, true));
     }
 
     /// The image pull starts after phase 2 and is joined before phase 5, and only
