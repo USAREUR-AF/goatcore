@@ -12,3 +12,5 @@
 #   compose      -> key is the image without its digest
 ops/ansible/roles/minio/defaults/main.yml minio_image   # upstream minio/minio images are gone; Chainguard's free image is the only maintained one
 ops/ansible/roles/minio/defaults/main.yml minio_mc_image   # upstream minio/mc images are gone; same
+ops/ansible/roles/audit-fifo-evict/defaults/main.yml audit_fifo_evict_mc_image   # the same Chainguard minio-client the minio role pins; upstream minio/mc images are gone
+ops/ansible/roles/audit-fifo-evict/deploy-history.yml cgr.dev/chainguard/minio-client:latest-dev   # the ledger row for that pin
