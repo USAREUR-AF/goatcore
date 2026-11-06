@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
-"""Run Trivy against the checkout and the curated project image set."""
+"""Run Trivy against the checkout, the curated image set, and the fleet pins.
+
+Three lanes, labeled in every summary:
+  - the local repository (filesystem scan),
+  - the head of each curated image line (trivy-images.txt, :latest),
+  - the deployed set: the immutable digests ops/pins/fleet-pins.yaml pins,
+    which is what the fleet actually runs. The head lane answers "is the
+    newest build clean"; the pin lane answers "is what is deployed clean".
+"""
 
 from __future__ import annotations
 
@@ -7,6 +15,7 @@ import argparse
 import html
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -64,6 +73,81 @@ FINDING_SECTIONS = (
     ("Misconfigurations", "FAIL"),
     ("Secrets", None),
 )
+# A curated image that cannot be pulled is a lifecycle state, not a scanner
+# fault: the registry answers DENIED or not-found for a package that was never
+# published, is not public, or was deleted. Report it as a warning so a red
+# run always means the scanner itself or a report failed. A network or
+# registry outage does not match these markers and stays a failure.
+UNPULLABLE_MARKERS = (
+    "unable to find the specified image",
+    "manifest unknown",
+    "name unknown",
+    "denied",
+    "unauthorized",
+)
+
+
+def image_is_unpullable(output: str) -> bool:
+    text = output.lower()
+    return any(marker in text for marker in UNPULLABLE_MARKERS)
+
+
+def warn_unpullable(label: str, lane: str) -> None:
+    if lane == "pin":
+        message = (
+            f"{label} is not pullable: fleet-pins.yaml deploys this digest, but "
+            "this registry does not serve it. Either the pin was minted against "
+            "another registry instance, or the package is not public. A fleet "
+            "host cannot re-pull this image from here."
+        )
+    else:
+        message = (
+            f"{label} is not pullable: it has never been published, or its registry "
+            "package is not public. Its image workflow publishes it on a qualifying "
+            "push to main; once the package exists and is public, this scan includes "
+            "it automatically."
+        )
+    print(f"  {message}", file=sys.stderr)
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        print(f"::warning title=Curated image not pullable::{message}")
+
+
+# fleet-pins.yaml is machine-written and every `fleet:` value is one reference
+# on one line, so a line scan needs no YAML dependency on the scan runner. The
+# {{ ghcr_org }} template renders from GHCR_ORG, defaulting to the org the
+# curated list names.
+GHCR_ORG_DEFAULT = "usareur-af"
+# The value itself carries spaces while templated ({{ ghcr_org }}), so capture
+# the whole line value and validate after rendering.
+FLEET_PIN_RE = re.compile(r"^\s*fleet:\s*(.+?)\s*$", re.MULTILINE)
+
+
+def load_fleet_pins(path: Path) -> list[str]:
+    if not path.is_file():
+        return []
+    org = os.environ.get("GHCR_ORG", GHCR_ORG_DEFAULT)
+    refs: list[str] = []
+    for raw in FLEET_PIN_RE.findall(path.read_text(encoding="utf-8")):
+        # A component with no fleet image carries `fleet: null`. Left in, Trivy
+        # would ask Docker Hub for an image called "null" and report it denied.
+        if raw.strip("\"'") in ("null", "~", ""):
+            continue
+        ref = re.sub(r"\{\{\s*ghcr_org\s*\}\}", org, raw.strip("\"'"))
+        if re.search(r"\s", ref):
+            # A variable this scan does not render; a garbage ref would reach
+            # Trivy as a parse error wearing the pin's name.
+            print(f"Skipping fleet pin with an unrendered variable: {raw}", file=sys.stderr)
+            continue
+        if ref not in refs:
+            refs.append(ref)
+    return refs
+
+
+def pin_label(ref: str) -> str:
+    name, _, digest = ref.partition("@")
+    if digest:
+        return f"{name}@{digest[:19]} (deployed pin)"
+    return f"{ref} (deployed pin)"
 
 
 def load_targets(path: Path) -> list[str]:
@@ -190,11 +274,15 @@ def write_html_summary(
             key=lambda item: SEVERITIES.index(item["severity"]),
         )
         if not source_findings:
-            message = (
-                "No findings are available because this scan did not complete."
-                if status != "SCANNED"
-                else "No findings were reported for this target."
-            )
+            if status == "SCANNED":
+                message = "No findings were reported for this target."
+            elif status == "NOT PULLABLE":
+                message = (
+                    "This image is not pullable (never published, or its package "
+                    "is not public), so there was nothing to scan."
+                )
+            else:
+                message = "No findings are available because this scan did not complete."
             return f'<tr><td colspan="9">{html.escape(message)}</td></tr>'
         return "\n".join(
             '<tr class="finding-row" data-severity="'
@@ -391,7 +479,10 @@ def write_html_summary(
 
 
 def append_github_summary(
-    rows: list[tuple[str, dict[str, int] | None, str]], report_dir: Path, failures: int
+    rows: list[tuple[str, dict[str, int] | None, str]],
+    report_dir: Path,
+    failures: int,
+    unpullable: list[str],
 ) -> None:
     summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
     if not summary_path:
@@ -412,10 +503,25 @@ def append_github_summary(
             summary.write(
                 f"| {target} | {' | '.join(values)} | {total} | {status} |\n"
             )
-        summary.write("\nCounts are findings reported by Trivy, not deduplicated across targets.\n\n")
+        summary.write(
+            "\nCounts are findings reported by Trivy, not deduplicated across targets. "
+            "Rows marked `(deployed pin)` are the immutable digests `ops/pins/fleet-pins.yaml` "
+            "deploys; unmarked image rows are the head of each image line (`:latest`).\n\n"
+        )
         summary.write(
             f"HTML summary and JSON reports are included in the `trivy-reports` workflow artifact (`{report_dir.name}`).\n"
         )
+        if unpullable:
+            summary.write("\n**Curated images not pullable, reported as warnings:**\n\n")
+            for label in unpullable:
+                summary.write(f"- `{label}`\n")
+            summary.write(
+                "\nEach of these has never been published, or its registry package is "
+                "not public. Its image workflow publishes it on a qualifying push to "
+                "main, and this scan includes it automatically once it is public. A "
+                "missing curated image is a warning, not a failure, so a failed run "
+                "here always means the scanner itself or a report failed.\n"
+            )
         if failures:
             summary.write(
                 f"\n**Incomplete scan:** {failures} target(s) failed. An error is not a clean scan.\n"
@@ -460,17 +566,26 @@ def main() -> int:
         except FileExistsError:
             report_dir = report_root / f"trivy-run-{timestamp}-{collision}"
             collision += 1
-    print(f"Scanning checkout and {len(targets)} curated images (platform: {args.platform})")
+    pins = load_fleet_pins(repo_root / "ops" / "pins" / "fleet-pins.yaml")
+    print(
+        f"Scanning checkout, {len(targets)} curated images (head of line) and "
+        f"{len(pins)} deployed pins (platform: {args.platform})"
+    )
     print(f"JSON reports: {report_dir}")
 
     rows: list[tuple[str, dict[str, int] | None, str]] = []
     html_findings: list[dict[str, str]] = []
     failures = 0
-    scan_plan = [("Local Repository Scan", "fs", str(repo_root))] + [
-        (image, "image", image) for image in targets
+    unpullable: list[str] = []
+    scan_plan = [("Local Repository Scan", "fs", str(repo_root), "fs")] + [
+        (image, "image", image, "head") for image in targets
     ]
+    curated = {target for _label, _type, target, _lane in scan_plan}
+    scan_plan.extend(
+        (pin_label(ref), "image", ref, "pin") for ref in pins if ref not in curated
+    )
 
-    for number, (label, target_type, target) in enumerate(scan_plan, start=1):
+    for number, (label, target_type, target, lane) in enumerate(scan_plan, start=1):
         print(f"[{number}/{len(scan_plan)}] {label}", flush=True)
         report_path = report_dir / f"{number:02d}-{target_type}.json"
         command = [trivy, target_type]
@@ -484,6 +599,11 @@ def main() -> int:
 
         returncode, output = scan(command)
         if returncode != 0:
+            if target_type == "image" and image_is_unpullable(output):
+                unpullable.append(label)
+                warn_unpullable(label, lane)
+                rows.append((label, None, "NOT PULLABLE"))
+                continue
             failures += 1
             print(f"  Scan failed (exit {returncode}):\n{output.rstrip()}", file=sys.stderr)
             rows.append((label, None, f"ERROR ({returncode})"))
@@ -512,10 +632,16 @@ def main() -> int:
     print("\nCounts are findings reported by Trivy, not deduplicated across targets.")
     print(f"Detailed JSON reports are in: {report_dir}")
     print(f"HTML summary: {html_path}")
-    append_github_summary(rows, report_dir, failures)
+    append_github_summary(rows, report_dir, failures, unpullable)
     if failures:
         print(f"{failures} scan(s) failed; an error is not a clean scan.", file=sys.stderr)
         return 1
+    if unpullable:
+        print(
+            f"{len(unpullable)} curated image(s) not pullable (never published or not "
+            "public); reported as warnings, not failures.",
+            file=sys.stderr,
+        )
     print("All requested scans completed. Review findings and reports before drawing conclusions.")
     return 0
 
