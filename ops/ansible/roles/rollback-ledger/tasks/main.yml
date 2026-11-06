@@ -184,7 +184,7 @@
 
 # The source of record the play rendered from, as ansible-preflight.sh exports
 # it: {"commit": <sha>} from a clone, or {"goatcore": <sha>, "goatcore_ref": …,
-# "overlay": <sha>, "goatstuff": <sha>?, "goatrodeo": <sha>?, "embargo": [<id>, …]?} from an assembled tree
+# "overlay": <sha>, "goatstuff": <sha>?, "embargo": [<id>, …]?} from an assembled tree
 # (ops/scripts/lib/source_of_record.py).
 # Absent when the play did not go through the wrapper, so such a row is unchanged.
 - name: rollback-ledger | the row names the source tree it was rendered from
