@@ -123,6 +123,9 @@ if [ "$HOSTS" = 1 ]; then
   grep -q ' ghcr.io$' /etc/hosts || echo "127.0.0.1 ghcr.io" | sudo tee -a /etc/hosts >/dev/null
   for _i in $(seq 1 30); do curl -s --cacert "$CERTS/cert.pem" https://ghcr.io/v2/ >/dev/null 2>&1 && break; sleep 1; done
   curl -s --cacert "$CERTS/cert.pem" https://ghcr.io/v2/ >/dev/null || die "the hermetic registry did not come up as ghcr.io"
+  # dockerd is a Go program: its resolver caches /etc/hosts for up to 5 s, so a
+  # push right after the re-point can still reach the real ghcr.io. Wait it out.
+  sleep 6
   say "images: the canary at three stamps"
   build_push() { # $1 tag, $2 stamp -> the digest the registry holds
     docker build -q --build-arg "CANARY_STAMP=$2" -t "ghcr.io/usareur-af/e2e-canary:$1" "$HERE/canary" >/dev/null
