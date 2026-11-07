@@ -97,7 +97,19 @@ def fleet_pins(canary_ref, secret_ref):
 
 def ladder(clone):
     p = os.path.join(clone, "ops/release/ladder.yaml")
-    d = yaml.safe_load(read_text(p))
+    d = yaml.safe_load(read_text(p)) or {}
+    if not d.get("rungs"):
+        # A checkout that declares no deployment ships an empty ladder; the
+        # hermetic one is the three-rung ladder with the gates a deployment
+        # declares (docs/design/release-graduation.md).
+        d["rungs"] = [{"name": n, "goatnet": g, "status": "live", "role": f"hermetic {n} rung"} for n, g in RUNG.items()]
+        d["hops"] = [
+            {"from": "dev", "to": "preprod", "status": "live",
+             "gates": [{"id": "candidate-record"}, {"id": "validation-evidence"}]},
+            {"from": "preprod", "to": "prod", "status": "live",
+             "gates": [{"id": "candidate-record"}, {"id": "soak", "min_days": 1}, {"id": "convergence-evidence"},
+                       {"id": "validation-evidence"}, {"id": "operator-ack"}]},
+        ]
     for r in d.get("rungs") or []:
         if r.get("name") in RUNG:
             r["goatnet"] = RUNG[r["name"]]
