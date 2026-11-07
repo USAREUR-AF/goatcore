@@ -26,6 +26,21 @@ sys.path.insert(0, os.path.join(REPO, "ops", "consistency", "python"))
 from goat_consistency import resolve  # noqa: E402
 
 
+def _checkout_org():
+    """The namespace standup-images.py resolves `{{ ghcr_org }}` to in this
+    checkout, read through its own default_ghcr_org: an overlay's
+    group_vars/all.yml may name another organisation than this repository's."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("standup_images", IMAGES)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod.default_ghcr_org(REPO)
+
+
+ORG = _checkout_org()
+GOAT = "ghcr.io/%s/" % ORG
+
+
 def run(*args, env=None):
     return subprocess.run(list(args), capture_output=True, text=True, env=env)
 
@@ -72,7 +87,7 @@ class ImageList(unittest.TestCase):
             r = run(sys.executable, IMAGES, "--member", "hobby_hosts", "--table", os.path.join(d, "fleet-pins.yaml"))
             self.assertEqual(r.returncode, 0, r.stderr)
             refs = r.stdout.split()
-            fleet_ref = lambda c: str(fleet.components[c]["fleet"]).replace("{{ ghcr_org }}", "usareur-af")
+            fleet_ref = lambda c: str(fleet.components[c]["fleet"]).replace("{{ ghcr_org }}", ORG)
             self.assertNotIn(fleet_ref(gone), refs)
             self.assertIn(fleet_ref(kept), refs)
         finally:
@@ -129,10 +144,10 @@ class LitePreset(unittest.TestCase):
             member = run(sys.executable, IMAGES, "--member", "hobby_hosts", "--table", table).stdout.split()
             self.assertEqual(sorted(moved), sorted(member), "the rendered pins are the listed ones")
             self.assertEqual(len(plain), len(moved))
-            goat = [r for r in plain if r.startswith("ghcr.io/usareur-af/")]
-            other = [r for r in plain if not r.startswith("ghcr.io/usareur-af/")]
+            goat = [r for r in plain if r.startswith(GOAT)]
+            other = [r for r in plain if not r.startswith(GOAT)]
             self.assertTrue(goat and other, "the lite set has goat images and others (control)")
-            self.assertEqual(sorted(r.replace("ghcr.io/usareur-af/", reg + "/", 1) for r in goat),
+            self.assertEqual(sorted(r.replace(GOAT, reg + "/", 1) for r in goat),
                              sorted(r for r in moved if r.startswith(reg + "/")), "same name and digest")
             self.assertEqual(sorted(other), sorted(r for r in moved if not r.startswith(reg + "/")),
                              "another project's image keeps its registry")
