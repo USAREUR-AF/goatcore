@@ -14,7 +14,7 @@
 </p>
 
 > [!NOTE]
-> goat is pre-1.0: interfaces can still change between releases. This repository is generated from goat's source tree; each update arrives as a new commit on `main`.
+> goat is pre-1.0: interfaces can still change between releases.
 
 ## What goat is
 
