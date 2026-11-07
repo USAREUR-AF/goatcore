@@ -136,7 +136,8 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
         p(11, "A", "WireGuard kernel modules again — changed=0 proves the kmod took, now that wt0 exists", format!("cd '{r}/ops/ansible' && {pre} {inv} wireguard-kmod.yml -e target={group} -l {node}")),
         p(12, "GATE", "mesh_ip + the mesh inventory filled in one change (mesh IPs are not stable across re-enrolment) — preflight passes with no TBD_", format!("python3 '{r}/ops/scripts/standup-config-preflight.py' {preflight_target} && ! grep -rqn 'TBD_' '{r}/ops/ansible/group_vars/{group}/' && ! grep -n 'TBD_' '{r}/ops/ansible/inventory/mgmt-hosts-mesh.ini' | grep -qw {node}")),
     ];
-    let ev_bootstrap = format!("-e site_id={site} -e bootstrap_owner_email=\"$OWNER_EMAIL\" -e 'postgres_superuser_password={{{{ lookup(\"env\", \"{upper}_PG_PASS\") }}}}' -e 'netbird_encryption_key={{{{ lookup(\"env\", \"{upper}_NB_ENCKEY\") }}}}' -e 'pgbackrest_cipher_pass={{{{ lookup(\"env\", \"{upper}_BKP_KEY\") }}}}'");
+    let ev_secrets = format!("-e bootstrap_owner_email=\"$OWNER_EMAIL\" -e 'postgres_superuser_password={{{{ lookup(\"env\", \"{upper}_PG_PASS\") }}}}' -e 'netbird_encryption_key={{{{ lookup(\"env\", \"{upper}_NB_ENCKEY\") }}}}' -e 'pgbackrest_cipher_pass={{{{ lookup(\"env\", \"{upper}_BKP_KEY\") }}}}'");
+    let ev_bootstrap = format!("-e site_id={site} {ev_secrets}");
     match o.class {
         "core" if joiner => {
             if founder_site.is_empty() {
@@ -145,12 +146,22 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
             // site-seed-from-peer.yml is the generic play; a site that keeps its
             // own <site>-seed-from-peer.yml gets that one instead.
             let seed_play = crate::standup::site_play(repo, site, "seed-from-peer.yml");
-            let p1 = if intra_pair { format!("{ev_bootstrap} -e participates_in_spock=false") } else { format!("{ev_bootstrap} -e participates_in_spock=false -e has_durable_independent_state=true") };
-            ev.push(p(13, "A", "[core, joiner] pass 1 — bootstrap without Spock (AutoMigrate creates the schema once, on the empty DB)", format!("cd '{r}/ops/ansible' && {pre} {inv} -l {node} site-bootstrap.yml {p1}")));
+            // site_id reaches the joiner's passes as a PLAY variable, never as
+            // `-e site_id`: an extra var sets every host's site_id to this site,
+            // and the Spock roles' inventory walk then finds no peer.
+            let bs = crate::standup::bootstrap_play(repo, site);
+            let p1 = if intra_pair { format!("{ev_secrets} -e participates_in_spock=false") } else { format!("{ev_secrets} -e participates_in_spock=false -e has_durable_independent_state=true") };
+            ev.push(p(13, "A", "[core, joiner] pass 1 — bootstrap without Spock (AutoMigrate creates the schema once, on the empty DB; Postgres initialises with the founder's encoding)", format!("cd '{r}/ops/ansible' && {pre} {inv} -l {node} {bs} {p1}")));
             ev.push(p(13, "A", "[core, joiner] the service deploys the seed needs (kratos/hydra schemas): ory", format!("cd '{r}/ops/ansible' && {pre} {inv} ory-deploy.yml --limit {node} -e 'postgres_superuser_password={{{{ lookup(\"env\", \"{upper}_PG_PASS\") }}}}'")));
             ev.push(p(13, "A", &format!("[core, joiner] pass 2 — seed-from-peer: data-only copy from founder {founder_site} (fails loud if the account is populated)"), format!("cd '{r}/ops/ansible' && {pre} {inv} -l {node} {seed_play} -e site_id={site}")));
-            ev.push(p(13, "A", "[core, joiner] pass 3 — bootstrap with Spock: subscriptions on both sides, polled to replicating", format!("cd '{r}/ops/ansible' && {pre} {inv} -l {node} site-bootstrap.yml {ev_bootstrap}")));
-            ev.push(p(13, "A", &format!("[core, joiner] the founder-side mirror on {founder_group}, peer={site} only (the same change, not a follow-up)"), format!("cd '{r}/ops/ansible' && {pre} {inv} spock-mesh-wire.yml --limit {founder_group} -e '{{\"inter_site_spock_peers\":[\"{site}\"]}}'")));
+            // Ory (Phase 7D) subscribes each side only to a peer that already has
+            // its ory_narrow node, and its history reconcile checks the reverse
+            // subscription on the peer, so the three steps below are staged:
+            // joiner node+repset, founder node+repset+subscription, joiner
+            // subscription+reconcile (which copies history both ways).
+            ev.push(p(13, "A", "[core, joiner] pass 3 — bootstrap with Spock: netbird subscriptions on both sides, polled to replicating; Ory node + repset only", format!("cd '{r}/ops/ansible' && {pre} {inv} -l {node} {bs} {ev_secrets} -e ory_spock_wire_subscriptions=false")));
+            ev.push(p(13, "A", &format!("[core, joiner] the founder-side mirror on {founder_group}, peer={site} only (the same change, not a follow-up): netbird + Ory node, repset, subscription"), format!("cd '{r}/ops/ansible' && {pre} {inv} spock-mesh-wire.yml --limit {founder_group} -e '{{\"inter_site_spock_peers\":[\"{site}\"],\"ory_spock_reconcile_history\":false}}'")));
+            ev.push(p(13, "A", "[core, joiner] the joiner's Spock wiring again, now that the founder's half exists: Ory subscription + history reconcile", format!("cd '{r}/ops/ansible' && {pre} {inv} spock-mesh-wire.yml --limit {node}")));
         }
         "core" => {
             ev.push(p(13, "A", &format!("[core, founder site] site-bootstrap on the node{}", if intra_pair { " (intra_site_pair: the A→B streaming standby is phase 6A of the play)" } else { "" }), format!("cd '{r}/ops/ansible' && {pre} {inv} -l {node} site-bootstrap.yml {ev_bootstrap}")));
@@ -277,11 +288,63 @@ mod tests {
         let phases: Vec<&str> = r.checks.iter().filter(|c| c.name == "phase").map(|c| c.detail.as_str()).collect();
         assert!(phases[0].starts_with("=== Phase 1 [MANUAL] reach the box"));
         let core: Vec<&&str> = phases.iter().filter(|p| p.contains("[core, joiner]")).collect();
-        assert_eq!(core.len(), 5, "{phases:?}");
-        assert!(core[0].contains("pass 1") && core[2].contains("pass 2") && core[3].contains("pass 3") && core[4].contains("founder-side mirror on zagros_hosts"));
+        assert_eq!(core.len(), 6, "{phases:?}");
+        assert!(core[0].contains("pass 1") && core[2].contains("pass 2") && core[3].contains("pass 3") && core[4].contains("founder-side mirror on zagros_hosts") && core[5].contains("Spock wiring again"));
         assert!(phases.last().unwrap().starts_with("=== Phase 15 [GATE] done means proven"));
         let cmds: Vec<&str> = r.checks.iter().filter(|c| c.name == "cmd").map(|c| c.detail.as_str()).collect();
         assert!(cmds.iter().any(|c| c.contains("-e participates_in_spock=false")));
+    }
+
+    /// A checkout with one founder and one joiner site, for the plan tests
+    /// that must also run in a public clone.
+    fn joiner_checkout() -> tempfile::TempDir {
+        let t = tempfile::tempdir().unwrap();
+        let gv = t.path().join("ops/ansible/group_vars");
+        std::fs::create_dir_all(gv.join("zagros_b_hosts")).unwrap();
+        std::fs::write(gv.join("zagros_b_hosts/vars.yml"), "goatnet_founder: false\njoin_founder_site: zagros\nsite_enrollment_dns: netbird.example.net\n").unwrap();
+        t
+    }
+
+    /// The joiner's bootstrap passes carry site_id as a play variable (the
+    /// generic wrapper, or the site's own wrapper when it keeps one), never as
+    /// `-e site_id`, which would reach every host and leave the Spock roles
+    /// with no peer. Ory is staged across both sides in the order that lets
+    /// each step pass: joiner node + repset, founder subscription, joiner
+    /// subscription + reconcile.
+    #[test]
+    fn a_joiner_bootstraps_with_a_play_var_and_stages_ory() {
+        let t = joiner_checkout();
+        let o = opts("zagros-b", "core", "zagros");
+        let ph = plan(t.path(), &o).unwrap();
+        let core: Vec<&Phase> = ph.iter().filter(|p| p.label.contains("[core, joiner]")).collect();
+        assert_eq!(core.len(), 6, "{:?}", core.iter().map(|p| &p.label).collect::<Vec<_>>());
+        for i in [0, 3] {
+            assert!(core[i].cmd.contains("-l node-x site-bootstrap-for.yml -e bootstrap_site=zagros-b "), "{}", core[i].cmd);
+            assert!(!core[i].cmd.contains("-e site_id="), "{}", core[i].cmd);
+            assert!(core[i].cmd.contains("_PG_PASS\")"), "secrets still reach the play: {}", core[i].cmd);
+        }
+        assert!(core[0].cmd.contains("-e participates_in_spock=false"), "{}", core[0].cmd);
+        assert!(core[3].cmd.contains("-e ory_spock_wire_subscriptions=false"), "{}", core[3].cmd);
+        assert!(core[4].cmd.contains("spock-mesh-wire.yml --limit zagros_hosts") && core[4].cmd.contains("\"inter_site_spock_peers\":[\"zagros-b\"]") && core[4].cmd.contains("\"ory_spock_reconcile_history\":false"), "{}", core[4].cmd);
+        assert!(core[5].cmd.ends_with("spock-mesh-wire.yml --limit node-x"), "{}", core[5].cmd);
+        assert!(!core[4].cmd.contains("-e site_id") && !core[5].cmd.contains("-e site_id"));
+
+        // A site that keeps its own wrapper gets it.
+        std::fs::write(t.path().join("ops/ansible/zagros-b-bootstrap.yml"), "---\n").unwrap();
+        let ph = plan(t.path(), &o).unwrap();
+        let core: Vec<&Phase> = ph.iter().filter(|p| p.label.contains("[core, joiner]")).collect();
+        assert!(core[0].cmd.contains("-l node-x zagros-b-bootstrap.yml -e bootstrap_owner_email"), "{}", core[0].cmd);
+    }
+
+    /// The generic wrapper exists and sets site_id from bootstrap_site as a
+    /// play variable on the import, which is what keeps other hosts' site_id.
+    #[test]
+    fn the_bootstrap_wrapper_sets_site_id_as_a_play_var() {
+        let text = std::fs::read_to_string(repo().join("ops/ansible/site-bootstrap-for.yml")).unwrap();
+        let docs: Vec<serde_yaml::Value> = serde_yaml::from_str(&text).unwrap();
+        let import = docs.iter().find(|d| d.get("ansible.builtin.import_playbook").is_some()).expect("an import_playbook entry");
+        assert_eq!(import["ansible.builtin.import_playbook"].as_str(), Some("site-bootstrap.yml"));
+        assert_eq!(import["vars"]["site_id"].as_str(), Some("{{ bootstrap_site }}"));
     }
 
     #[test]

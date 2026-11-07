@@ -102,6 +102,21 @@
         {{ ory_spock_explicit_peers }}
       {%- endif -%}
 
+# Same rule as spock-mesh-peering: a joiner with no peer is an island.
+- name: "ory-narrow-repset | refuse a joiner that would wire no peer"
+  ansible.builtin.assert:
+    that:
+      - ory_spock_peer_sites | length > 0
+    fail_msg: >-
+      {{ site_id }} is a joiner (goatnet_founder: false) and found no peer
+      site for ory_narrow (topology={{ ory_spock_topology }}). If site_id was
+      passed as an extra var (-e site_id=...), every host reads as this site;
+      run site-bootstrap-for.yml -e bootstrap_site=<site> instead. Otherwise
+      the founder's group is missing from the inventory or does not declare
+      participates_in_spock: true.
+    quiet: true
+  when: not (goatnet_founder | default(true) | bool)
+
 - name: "ory-narrow-repset | report peer set"
   ansible.builtin.debug:
     msg: >-
@@ -113,7 +128,9 @@
   loop: "{{ ory_spock_databases | product(ory_spock_peer_sites) | list }}"
   loop_control:
     loop_var: ory_spock_db_peer
-  when: ory_spock_peer_sites | length > 0
+  when:
+    - ory_spock_peer_sites | length > 0
+    - ory_spock_wire_subscriptions | bool
 
 # A separate pass: both directions must be wired before either site's snapshot
 # is taken, or a write between the snapshot and reverse subscription is lost.
@@ -124,4 +141,7 @@
   loop: "{{ ory_spock_databases | product(ory_spock_peer_sites) | list }}"
   loop_control:
     loop_var: ory_spock_db_peer
-  when: ory_spock_peer_sites | length > 0
+  when:
+    - ory_spock_peer_sites | length > 0
+    - ory_spock_wire_subscriptions | bool
+    - ory_spock_reconcile_history | bool

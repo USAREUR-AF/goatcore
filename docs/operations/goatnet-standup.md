@@ -433,9 +433,22 @@ What the driver does differently, inside the same phases:
   host of the founder's `<join_founder_site>_hosts` group). A site that keeps
   its own `<site>-seed-from-peer.yml` gets that one instead.
 - **Pass 3** (phase 6) re-runs `site-bootstrap` with Spock enabled, creating the
-  `netbird_mgmt` subscriptions.
+  `netbird_mgmt` subscriptions, and the joiner's `ory_narrow` node and repset
+  without subscribing yet (`-e ory_spock_wire_subscriptions=false`).
 - **Founder-side mirror** (phase 6, joiner-only) runs `spock-mesh-wire.yml` on
-  the founder so the subscriptions exist in both directions.
+  the founder: Phase 7B (netbird) and Phase 7D (`ory_narrow`, kratos + hydra),
+  so the founder has its own `ory_narrow` node and subscribes to the joiner.
+- **Joiner again** (phase 6, joiner-only) runs `spock-mesh-wire.yml` on the
+  joiner: it subscribes to the founder's `ory_narrow` and reconciles revocation
+  history in both directions. Each side can subscribe only to a peer that
+  already has its node, which is why Ory takes these three steps.
+
+A joiner's bootstrap passes run `site-bootstrap-for.yml -e bootstrap_site=<site>`
+(or the site's own `<site>-bootstrap.yml`), never `site-bootstrap.yml -e
+site_id=<site>`: an extra `site_id` reaches every inventory host, and the Spock
+roles then find no peer. A joiner that would wire no peer fails, naming that
+cause. Its Postgres initialises with the founder's cluster encoding
+(site-bootstrap Phase 1C).
 
 One prerequisite the driver cannot supply and the config must: the founder's
 `group_vars` must name this joiner as a peer (`inter_site_spock_peers` +

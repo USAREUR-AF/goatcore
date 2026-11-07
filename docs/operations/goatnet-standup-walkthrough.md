@@ -191,8 +191,9 @@ collide on a populated one.
 
 1. **Pass 1 (phase 5)** — `site-bootstrap` with `participates_in_spock=false`. The account and schema are not seeded locally; they arrive by replication.
 2. **Pass 2 (phase 6, joiner-only)** — `site-seed-from-peer.yml` (or the site's own `<site>-seed-from-peer.yml` when it keeps one), the guarded, data-only copy of identity + mesh state from the founder. `synchronize_data:=false` means no wipe, so the seed must precede wiring.
-3. **Pass 3 (phase 6)** — re-run `site-bootstrap` with Spock enabled, creating the `netbird_mgmt` subscriptions.
-4. **Founder-side mirror (phase 6, joiner-only)** — `spock-mesh-wire.yml` on the founder, scoped to this joiner only, so the subscriptions exist in **both** directions and an unrelated down peer cannot block the join.
+3. **Pass 3 (phase 6)** — re-run `site-bootstrap` with Spock enabled, creating the `netbird_mgmt` subscriptions and the joiner's `ory_narrow` node and repset (no Ory subscription yet).
+4. **Founder-side mirror (phase 6, joiner-only)** — `spock-mesh-wire.yml` on the founder, scoped to this joiner only: Phase 7B and Phase 7D, so the subscriptions exist in **both** directions and an unrelated down peer cannot block the join.
+5. **Joiner again (phase 6, joiner-only)** — `spock-mesh-wire.yml` on the joiner: its `ory_narrow` subscription to the founder and the two-way revocation-history reconcile.
 
 The identity plane (Ory) federates the same way on a second subscription set
 (`ory_narrow`, kratos + hydra), declared by `ory_spock_enabled: true` — which

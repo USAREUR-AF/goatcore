@@ -143,6 +143,28 @@
          | list }}
       {%- endif -%}
 
+# A joiner exists to replicate with the goatnet it joined: wiring no peer leaves
+# it an island that still reports PASS. The founder may legitimately have no
+# peer yet (a single-site goatnet), so only a joiner is refused.
+- name: "spock-mesh | refuse a joiner that would wire no peer"
+  ansible.builtin.assert:
+    that:
+      - spock_mesh_target_peers | length > 0
+    fail_msg: >-
+      {{ site_id }} is a joiner (goatnet_founder: false) and found no peer
+      site to wire (topology={{ spock_mesh_topology }}{{ ', explicit peers=' ~
+      (spock_mesh_explicit_peers | join(',')) if spock_mesh_topology == 'explicit' else '' }};
+      participating peer sites found in the inventory: {{ spock_mesh_peer_registry | default({}) | list | join(', ') or 'none' }}).
+      Causes, most likely first: site_id was passed as an extra var
+      (-e site_id=...), which sets every host's site_id to this site so the
+      inventory walk sees no other site (run site-bootstrap-for.yml
+      -e bootstrap_site=<site> instead); the founder's group is not in this
+      run's inventory; the founder's group_vars do not declare
+      participates_in_spock: true; or the explicit peer list names no
+      site that is in the inventory.
+    quiet: true
+  when: not (goatnet_founder | default(true) | bool)
+
 - name: "spock-mesh | refuse an unresolved mesh-IP placeholder in any publisher host"
   # A publisher host still reading `TBD_..._MESH_IP` means the site's mesh_ip_a/b
   # group_var was not filled in after enrolment. Creating a Spock node with that

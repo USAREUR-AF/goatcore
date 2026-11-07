@@ -322,6 +322,90 @@
       when: has_mgmt_api | default(false) | bool
 
 # ============================================================================
+# Phase 1C — a joiner's cluster encoding follows its founder's
+#
+# Spock replicates between clusters of ONE encoding: a UTF8 joiner subscribed
+# to a SQL_ASCII founder fails every apply with "encoding conversion for binary
+# datum not supported yet". The compose file initialises a fresh PGDATA with
+# POSTGRES_INITDB_ARGS (default UTF8); a founder initialised before that
+# default is SQL_ASCII. So a joiner (goatnet_founder: false) reads the
+# founder's template1 encoding and initialises with the same one: the fact
+# set here (postgres_initdb_encoding) is what the .env render writes as
+# POSTGRES_INITDB_ARGS. A joiner whose cluster already exists with another
+# encoding is refused: initdb never runs again on an existing PGDATA.
+# A founder is untouched.
+# ============================================================================
+- name: "site-bootstrap: joiner cluster encoding follows the founder (when goatnet_founder false)"
+  tags: [stack]
+  hosts: "{{ (site_id | replace('-', '_')) ~ '_hosts' }}"
+  gather_facts: false
+  become: true
+  vars:
+    _founder_group: "{{ (join_founder_site | default('')) | replace('-', '_') ~ '_hosts' }}"
+    _founder_host: "{{ (groups[_founder_group] | default([])) | first | default('') }}"
+    _encoding_sql: "select pg_encoding_to_char(encoding) from pg_database where datname='template1'"
+  tasks:
+    - name: joiner encoding gate
+      when: not (goatnet_founder | default(true) | bool)
+      block:
+        - name: "encoding | a joiner names a founder in the inventory"
+          ansible.builtin.assert:
+            that:
+              - _founder_host | length > 0
+            fail_msg: >-
+              {{ site_id }} declares goatnet_founder: false but no founder host
+              resolves: join_founder_site={{ join_founder_site | default('(unset)') }},
+              group {{ _founder_group }} has no host in this run's inventory.
+              The joiner's Postgres must be initialised with the founder's
+              encoding, so the founder must be reachable from here.
+            quiet: true
+
+        - name: "encoding | read the founder's cluster encoding ({{ _founder_host }})"
+          ansible.builtin.command:
+            argv: [docker, exec, -u, postgres,
+                   "{{ hostvars[_founder_host].spock_mesh_postgres_container | default('postgres-a') }}",
+                   psql, -X, -U, postgres, -tAc, "{{ _encoding_sql }}"]
+          # delegate_to is templated before the block's `when`, so a founder
+          # (no _founder_host) needs a non-empty value to skip on.
+          delegate_to: "{{ _founder_host or inventory_hostname }}"
+          run_once: true
+          register: _founder_encoding
+          changed_when: false
+
+        - name: "encoding | the founder answered with an encoding name"
+          ansible.builtin.assert:
+            that:
+              - _founder_encoding.stdout | trim is match('^[A-Z0-9_]+$')
+            fail_msg: >-
+              Could not read the founder's template1 encoding on {{ _founder_host }}
+              (got "{{ _founder_encoding.stdout | trim }}").
+            quiet: true
+
+        - name: "encoding | initialise this joiner with the founder's encoding"
+          ansible.builtin.set_fact:
+            postgres_initdb_encoding: "{{ _founder_encoding.stdout | trim }}"
+
+        - name: "encoding | read this node's cluster encoding, if its Postgres already runs"
+          ansible.builtin.command:
+            argv: [docker, exec, -u, postgres, postgres-a, psql, -X, -U, postgres, -tAc, "{{ _encoding_sql }}"]
+          register: _local_encoding
+          changed_when: false
+          failed_when: false
+
+        - name: "encoding | refuse an existing cluster whose encoding differs from the founder's"
+          ansible.builtin.assert:
+            that:
+              - _local_encoding.rc != 0 or (_local_encoding.stdout | trim) == postgres_initdb_encoding
+            fail_msg: >-
+              {{ inventory_hostname }} already runs a Postgres cluster encoded
+              {{ _local_encoding.stdout | trim }}; the founder {{ _founder_host }}
+              is {{ postgres_initdb_encoding }}. Spock cannot replicate between
+              them, and initdb never re-runs on an existing PGDATA. On a joiner
+              that holds no data yet: stop the stack, remove the pgdata-a volume,
+              and re-run this play so Postgres initialises as {{ postgres_initdb_encoding }}.
+            quiet: true
+
+# ============================================================================
 # Phase 2A — full mgmt-stack via mgmt-host.yml
 #
 # mgmt-host.yml targets `hosts: mgmt_hosts`. Only sites that ACTUALLY
@@ -415,6 +499,9 @@
               {# started under this profile; the key keeps the mount on this     #}
               {# host's certificate directory if it ever is.                     #}
               TRAEFIK_TLS_ROOT={{ traefik_tls_root | default((goat_host_etc_dir | default('/etc/goat')) ~ '/tls') }}
+              {% if postgres_initdb_encoding is defined and postgres_initdb_encoding %}
+              POSTGRES_INITDB_ARGS="--locale=C --encoding={{ postgres_initdb_encoding }}"
+              {% endif %}
               {% if postgres_spock_image is defined and postgres_spock_image %}
               POSTGRES_SPOCK_IMAGE={{ postgres_spock_image }}
               {% endif %}
@@ -496,6 +583,44 @@
             - traefik
           changed_when: false
           failed_when: not_running_check.stdout | length > 0
+
+# Phase 1C's other half: once the stack is up, the joiner's cluster IS the
+# founder's encoding (catches a PGDATA that existed before Postgres was running
+# for Phase 1C to read).
+- name: "site-bootstrap: joiner cluster encoding matches the founder (after the stack is up)"
+  tags: [stack]
+  hosts: "{{ (site_id | replace('-', '_')) ~ '_hosts' }}"
+  gather_facts: false
+  become: true
+  tasks:
+    - name: "encoding | read this node's cluster encoding"
+      ansible.builtin.command:
+        argv: [docker, exec, -u, postgres, postgres-a, psql, -X, -U, postgres, -tAc,
+               "select pg_encoding_to_char(encoding) from pg_database where datname='template1'"]
+      register: _joiner_encoding
+      changed_when: false
+      when:
+        - not (goatnet_founder | default(true) | bool)
+        - postgres_initdb_encoding is defined
+        # The Spock node; a B standby's cluster is a copy of A's.
+        - (router_role | default('A')) == 'A'
+
+    - name: "encoding | this joiner's cluster encoding is the founder's"
+      ansible.builtin.assert:
+        that:
+          - (_joiner_encoding.stdout | trim) == postgres_initdb_encoding
+        fail_msg: >-
+          {{ inventory_hostname }}'s cluster is {{ _joiner_encoding.stdout | trim }};
+          the founder's is {{ postgres_initdb_encoding }}. The PGDATA existed
+          before this run, so initdb did not run with the founder's encoding.
+          On a joiner that holds no data yet: stop the stack, remove the
+          pgdata-a volume, and re-run.
+        quiet: true
+      when:
+        - not (goatnet_founder | default(true) | bool)
+        - postgres_initdb_encoding is defined
+        # The Spock node; a B standby's cluster is a copy of A's.
+        - (router_role | default('A')) == 'A'
 
 # ============================================================================
 # Phase 2.5 — Traefik TLS terminator (Block 22J / ADR 0407)

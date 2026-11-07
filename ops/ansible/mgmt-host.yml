@@ -370,6 +370,13 @@
           SITE_NAME={{ site_name }}
           POSTGRES_SUPERUSER_PASSWORD={{ postgres_superuser_password }}
           MGMT_CONTAINER_HOST_PORT={{ mgmt_container_host_port | default('8080') }}
+          {# A joiner initialises Postgres with its founder's encoding       #}
+          {# (site-bootstrap.yml Phase 1C sets postgres_initdb_encoding);   #}
+          {# unset, the compose default (UTF8) applies. initdb reads it only #}
+          {# on an empty PGDATA.                                             #}
+          {% if postgres_initdb_encoding is defined and postgres_initdb_encoding %}
+          POSTGRES_INITDB_ARGS="--locale=C --encoding={{ postgres_initdb_encoding }}"
+          {% endif %}
           {# F-102 closure — SITE_FQDN feeds docker-compose.yml's          #}
           {# `extra_hosts: ["oauth2.${SITE_FQDN}:host-gateway", ...]`     #}
           {# block. management-a's JWKS-fetch needs `oauth2.<site>...`    #}

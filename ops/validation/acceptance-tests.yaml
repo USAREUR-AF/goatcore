@@ -25,6 +25,7 @@ tests:
   # leg is local against the public page. Mints, submits in Chromium,
   # requires 201, sponsor-rejects its own proposal.
   - id: intake-form-browser-submit
+    applies_when: goatnet_founder   # founder-owned surface; a joiner uses the founder's
     aspect: onboarding/candidate-intake
     probe: cmd-assert
     params: {host: localhost, cmd: "ops/scripts/onboard-intake-smoke.sh --context {{ goat_sponsor_context }} --env {{ env }} --goat-via {{ goat_via }}", expect: "smoke: PASS", unknown_rc: 2, timeout: 240}
@@ -36,6 +37,7 @@ tests:
   # console", no such path), while pre-bound CLI invites passed, so a
   # CLI-only check read green. Needs an operator context for the admin-stage reject.
   - id: review-gate-accepts-open-field-invite
+    applies_when: goatnet_founder   # founder-owned surface; a joiner uses the founder's
     aspect: onboarding/review-gate
     probe: cmd-assert
     params: {host: localhost, cmd: "ops/scripts/onboard-intake-smoke.sh --context {{ goat_sponsor_context }} --env {{ env }} --goat-via {{ goat_via }} --stage sponsor", expect: "smoke: PASS", unknown_rc: 2, timeout: 300}
@@ -48,6 +50,7 @@ tests:
   # user the registry names. Without them a portal refuses every machine
   # enrollment. Runs from the operator laptop, where the tokens live.
   - id: netbird-service-identities
+    applies_when: goatnet_founder   # founder-owned surface; a joiner uses the founder's
     aspect: mgmt-stack/netbird-service-identities
     probe: cmd-assert
     params: {host: localhost, cmd: "ops/scripts/netbird-service-identities.py {{ env }} --live",
@@ -503,6 +506,7 @@ tests:
     params: {names_from: public_auth_fqdns}
     caught_would_have: "the Google Safe Browsing 'dangerous site' interstitial on a fresh public login/consent domain (F-class none yet) — every enroller hits a full-page red block before reaching the portal, and it reads as a phishing verdict, not a TLS error. Graded here needs SAFE_BROWSING_API_KEY (else UNKNOWN, not a false pass); FAIL means file a review in Google Search Console for the zone."
   - id: panoscope-serves-authenticated
+    applies_when: goatnet_founder   # founder-owned surface; a joiner uses the founder's
     aspect: surfaces/panoscope
     probe: http-ok
     params: {url: "https://panoscope.{{ site_id }}.{{ site_dns_zone }}", expect: [200, 302], from: mesh}
@@ -583,6 +587,7 @@ tests:
   # row below names a defect that survived a full standup plus three days of
   # green dashboards.
   - id: portal-resolves-a-person
+    applies_when: goatnet_founder   # founder-owned surface; a joiner uses the founder's
     aspect: portal/identity-layer
     probe: http-ok
     params: {url: "https://portal.{{ site_id }}.{{ site_dns_zone }}/api/access/who?id={{ acceptance_known_person_email }}",
@@ -595,6 +600,7 @@ tests:
       the portal stays healthy. Asserting a 200 does NOT catch it; asserting
       that `resolved` is non-empty does, on standup day.
   - id: portal-anchor-linkage-is-recorded
+    applies_when: goatnet_founder   # founder-owned surface; a joiner uses the founder's
     aspect: portal/identity-layer
     probe: http-ok
     params: {url: "https://portal.{{ site_id }}.{{ site_dns_zone }}/api/access/who?id={{ acceptance_known_person_email }}",
@@ -608,6 +614,7 @@ tests:
       degraded, not broken, and the row exists to keep the degradation VISIBLE
       instead of letting the fallback quietly remain the mechanism.
   - id: microscope-every-source-live
+    applies_when: goatnet_founder   # founder-owned surface; a joiner uses the founder's
     aspect: microscope/adapters
     probe: http-ok
     params: {url: "https://microscope.{{ site_id }}.{{ site_dns_zone }}/api/entity?id={{ acceptance_known_person_email }}",
@@ -647,6 +654,7 @@ tests:
       while the container, its DNS record, its Traefik router and its TLS are all
       green.
   - id: audit-offload-pipeline-runs
+    applies_when: goatnet_founder   # founder-owned surface; a joiner uses the founder's
     aspect: audit/three-tier
     probe: container-health
     params: {host: "{{ orin_a }}", container: audit-subscriber}
@@ -902,6 +910,7 @@ tests:
       the first `goat status` a new operator runs: router port, an mTLS session,
       the portal and the operator's own cert, each graded on its own line.
   - id: portal-health-answers
+    applies_when: goatnet_founder   # founder-owned surface; a joiner uses the founder's
     aspect: fabric/operator-chain
     probe: cmd-assert
     # From the management machine, so it answers wherever the assay runs; the
@@ -995,7 +1004,7 @@ tests:
   - id: goat-acl-declaration-holds
     aspect: mesh/acl-declaration
     probe: goat-cli
-    params: {via: "localhost", context: "{{ goat_context }}", verb: "acl test {{ site_id }} --json",
+    params: {via: "localhost", context: "{{ goat_context }}", verb: "acl test {{ acl_scope }} --json",
              expect_jq: "length > 0 and all(.[]; .verdict == \"satisfied\")", timeout: 60}
     requires: [netbird-mgmt]
     caught_would_have: >-
@@ -1003,6 +1012,8 @@ tests:
       no longer satisfies, or a goatnet that declares no assertions at all
       (the verb exits non-zero and the report is empty). The declaration, not
       the live mesh: the must_refuse rows are the live boundary checks.
+      The scope is the goatnet's (acl_scope: a joiner site's is its founder's),
+      because ACL declarations are per goatnet, not per site.
   - id: deploy-ledgers-match-main
     aspect: deploy/ledgers
     probe: goat-cli

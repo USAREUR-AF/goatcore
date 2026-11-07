@@ -6,6 +6,22 @@ Each release is the tag `goatbuilder/v<semver>` on `main`, built and signed by
 
 ## Unreleased
 
+### Fixed: a joiner's bootstrap wires its peers, and Ory replicates both ways
+
+`join-node` (phase 13) and `standup` ran a joiner's bootstrap as
+`site-bootstrap.yml -e site_id=<site>`. An extra variable sets site_id on every
+inventory host, so the Spock roles' walk over the other sites found none and
+wired zero peers. A joiner's passes now run `site-bootstrap-for.yml -e
+bootstrap_site=<site>`, which sets site_id as a play variable, or the site's
+own `<site>-bootstrap.yml` when it keeps one.
+
+- Ory (Phase 7D) is staged across both sides: pass 3 builds the joiner's
+  ory_narrow node and repset only (`-e ory_spock_wire_subscriptions=false`);
+  the founder-side mirror now runs Phase 7D as well as 7B
+  (`spock-mesh-wire.yml`, `ory_spock_reconcile_history: false`); then a new
+  step re-runs `spock-mesh-wire.yml` on the joiner, which subscribes to the
+  founder and reconciles revocation history in both directions.
+
 ### Fixed: `join-node` runs every node against its own class's group
 
 An obs, breakglass or network-jump node was baselined, kmod-converged and

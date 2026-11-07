@@ -169,6 +169,17 @@ def generate(env, gv_dir=None, inv_path=None):
             values[key] = v
     values.setdefault("public_mgmt_fqdn", values.get("site_dns_zone"))
 
+    # The ACL scope. ACL declarations are per goatnet (ops/warrant renders one
+    # netbird_acl_taxonomy entry per goatnet), and a joiner site enrols into the
+    # goatnet of the founder it joins, so its scope is join_founder_site, not
+    # its own site id (the same rule `goatbuilder standup` applies to its ACL
+    # gates). A founder's scope is its own site id.
+    founder = (_extract(text, "join_founder_site") or "").strip()
+    if not _bool(values.get("goatnet_founder", "true")) and founder and "{{" not in founder:
+        values["acl_scope"] = founder
+    else:
+        values["acl_scope"] = env
+
     # pubsub-state replication applies only if the goatnet declares it.
     values["pubsub_state_repl_enabled"] = (gv_dir / "pubsub-state.yml").is_file()
 
@@ -852,6 +863,15 @@ def self_test():
         problems.append(f"joiner: spock_ory_dbs (got {vj.get('spock_ory_dbs')})")
     if not (vj.get("spock_seed_marker") or "").endswith("migrations.allow"):
         problems.append("joiner: spock_seed_marker not derived")
+    # A joiner that names its founder takes the founder's ACL scope, never
+    # its own site id (which no ACL declaration carries).
+    (d3 / "join_hosts" / "vars.yml").write_text(
+        (d3 / "join_hosts" / "vars.yml").read_text() + "join_founder_site: orig\n")
+    vj = generate("join", gv_dir=d3 / "join_hosts", inv_path=inv3)
+    if vj.get("acl_scope") != "orig":
+        problems.append(f"joiner: acl_scope should be the founder's goatnet (got {vj.get('acl_scope')})")
+    if vj.get("goatnet_founder") is not False:
+        problems.append("joiner: goatnet_founder should read false (founder-only rows N/A)")
 
     # A single-site founder emits NONE of the joiner values (rows stay N/A).
     vf = generate("orig", gv_dir=d3 / "orig_hosts", inv_path=inv3)
@@ -859,6 +879,8 @@ def self_test():
         problems.append("founder: spock_joiner should be false")
     if "spock_inbound_sub" in vf or "spock_peer_dsn_host" in vf:
         problems.append("founder: must not emit joiner-only values")
+    if vf.get("acl_scope") != "orig":
+        problems.append(f"founder: acl_scope should be its own site id (got {vf.get('acl_scope')})")
 
     if problems:
         print("self-test FAILED:")

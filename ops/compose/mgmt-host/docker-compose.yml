@@ -68,19 +68,22 @@ services:
       - config_file=/etc/postgresql/postgresql.conf
     environment:
       POSTGRES_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD:?set POSTGRES_SUPERUSER_PASSWORD in .env}
-      # Cluster encoding = UTF8, NOT the pgedge base image's SQL_ASCII initdb
-      # default. Every database created here inherits template1, so a
+      # Cluster encoding. Default UTF8, NOT the pgedge base image's SQL_ASCII
+      # initdb default: every database created here inherits template1, so a
       # UTF8 cluster makes netbird/kratos/hydra UTF8 with no per-DB change —
       # identity and org names validate and store as Unicode. --locale=C keeps
-      # the current byte-order collation; only the encoding moves.
+      # the byte-order collation.
       #
-      # NON-DISRUPTIVE BY CONSTRUCTION: the upstream entrypoint applies
-      # POSTGRES_INITDB_ARGS ONLY when it runs initdb on an EMPTY PGDATA. A
-      # container with an already-initialized data dir skips initdb entirely
-      # so this is a no-op on every already-running goatnet and takes
-      # effect only on a FRESH standup. Existing SQL_ASCII clusters migrate
-      # separately — destructive and coordinated.
-      POSTGRES_INITDB_ARGS: "--locale=C --encoding=UTF8"
+      # The upstream entrypoint applies POSTGRES_INITDB_ARGS ONLY when it runs
+      # initdb on an EMPTY PGDATA; an existing cluster keeps the encoding it
+      # was created with. That makes it matter for a goatnet with more than
+      # one site: Spock replicates only between clusters of the same encoding,
+      # and a founder created before this default is SQL_ASCII. So the value
+      # comes from .env: a joiner's .env carries its founder's encoding
+      # (site-bootstrap.yml Phase 1C reads it), and anything that renders no
+      # value gets UTF8. Existing SQL_ASCII clusters migrate separately —
+      # destructive and coordinated.
+      POSTGRES_INITDB_ARGS: "${POSTGRES_INITDB_ARGS:---locale=C --encoding=UTF8}"
     ports:
       # Bound to 0.0.0.0 so peer sites reach us via the Netbird mesh
       # interface for Spock logical replication. EC2/Orin SG rules

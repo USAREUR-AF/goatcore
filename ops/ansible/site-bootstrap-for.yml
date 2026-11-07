@@ -1,0 +1,44 @@
+---
+# site-bootstrap-for.yml — run site-bootstrap.yml for ONE site, with site_id
+# set as a play variable instead of an extra variable.
+#
+#   ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini \
+#     -i inventory/mgmt-hosts-mesh.ini site-bootstrap-for.yml \
+#     -e bootstrap_site=<site> [the rest of site-bootstrap.yml's -e flags]
+#
+# WHY NOT `-e site_id=<site>`. An extra variable overrides site_id for EVERY
+# host in the inventory, so any task that reads another host's site_id through
+# hostvars sees the site being bootstrapped. spock-mesh-peering's inventory walk
+# (hostvars[item].site_id != site_id) then finds no peer site: on a joiner it
+# wires zero peers; ory-narrow-repset's full_mesh peer list is empty the same
+# way. A play variable applies only to the plays it is set on and leaves every
+# other host's site_id at its own group_vars value.
+#
+# Pass bootstrap_site, NOT site_id: an extra site_id would override this play
+# variable again (extra vars outrank play vars). The import refuses it.
+#
+# A site that keeps its own <site>-bootstrap.yml wrapper (which sets site_id
+# itself) runs that wrapper in place of this file; `goatbuilder join-node`
+# picks whichever exists.
+
+- name: "site-bootstrap-for: refuse an extra site_id (it would reach every host)"
+  hosts: localhost
+  gather_facts: false
+  tags: [always]
+  tasks:
+    - name: "site-bootstrap-for: bootstrap_site given, site_id not passed as an extra var"
+      ansible.builtin.assert:
+        that:
+          - bootstrap_site is defined
+          - bootstrap_site | length > 0
+          - site_id is not defined
+        fail_msg: >-
+          Pass -e bootstrap_site=<site> and NOT -e site_id. An extra site_id
+          overrides site_id on every inventory host, so peer discovery
+          (spock-mesh-peering, ory-narrow-repset) sees no other site.
+        quiet: true
+
+- name: "site-bootstrap-for: site-bootstrap.yml with site_id as a play variable"
+  ansible.builtin.import_playbook: site-bootstrap.yml
+  vars:
+    site_id: "{{ bootstrap_site }}"

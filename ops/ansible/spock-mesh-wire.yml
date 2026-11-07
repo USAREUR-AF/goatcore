@@ -17,13 +17,25 @@
 # Usage:
 #   ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini \
 #     -i inventory/mgmt-hosts-mesh.ini spock-mesh-wire.yml \
-#     -l <host> -e site_id=<that host's site_id> \
-#     -e postgres_superuser_password="$<SITE>_PG_PASS"
+#     -l <host> -e postgres_superuser_password="$<SITE>_PG_PASS"
 #
 # The host's group_vars must ALREADY declare participates_in_spock: true and a
 # non-none inter_site_spock_topology naming the peer's site_id (not its group
 # name). The role is gated on both, exactly as Phase 7B gates it, so a host that
 # is not meant to federate is a clean no-op rather than a surprise.
+#
+# The second play is the same for Phase 7D (ory-narrow-repset: the kratos and
+# hydra databases), gated as site-bootstrap gates it (ory_spock_enabled too).
+# A founder that never federated has no ory_narrow node or repset, so a joiner
+# cannot subscribe to it until this has run on the founder. The join order is
+# in ops/ansible/roles/ory-narrow-repset/defaults/main.yml
+# (ory_spock_wire_subscriptions / ory_spock_reconcile_history).
+#
+# Do NOT pass -e site_id: the host's own group_vars carry it, and an extra
+# site_id would override every peer's site_id too (see site-bootstrap-for.yml).
+#
+# Both plays act on the Spock-participating host of a site only
+# (router_role A, or unset on a single-host site); a B standby is read-only.
 
 - name: "spock-mesh-wire — apply spock-mesh-peering to one host"
   hosts: all
@@ -48,3 +60,20 @@
       when:
         - participates_in_spock | default(false) | bool
         - (inter_site_spock_topology | default('none')) != 'none'
+        - (router_role | default('A')) == 'A'
+
+# A separate play: both roles end their play (meta: end_play) when their gate
+# is off, which inside one play would also skip the other role.
+- name: "spock-mesh-wire — apply ory-narrow-repset (Phase 7D) to one host"
+  hosts: all
+  gather_facts: false
+  become: true
+  tasks:
+    - name: Apply ory-narrow-repset role
+      ansible.builtin.include_role:
+        name: ory-narrow-repset
+      when:
+        - participates_in_spock | default(false) | bool
+        - (inter_site_spock_topology | default('none')) != 'none'
+        - ory_spock_enabled | default(false) | bool
+        - (router_role | default('A')) == 'A'

@@ -26,8 +26,12 @@
 #                       joiner) the founder's site id. The seed source is the
 #                       first host of <join_founder_site>_hosts, the founder's
 #                       active mgmt node; seed_peer_host names a different one.
-#   force_reseed        (-e, default false) overwrite an already-populated
-#                       account. The guard below refuses otherwise.
+#   force_reseed        (-e, default false) re-seed an already-populated
+#                       node: the seed tables (exactly the sets below) are
+#                       emptied first, then loaded. The guard below refuses
+#                       otherwise, and refuses force_reseed on a node that is
+#                       already a Spock node (emptying a subscribed table
+#                       would replicate the deletes to the goatnet).
 #
 # The seed runs on ONE node: the first host of the target group (the active
 # mgmt node), or the node `-l` narrows to. A second node at the joiner site
@@ -141,8 +145,37 @@
           netbird.accounts on {{ inventory_hostname }} already has
           {{ local_accounts.stdout | trim }} row(s): this node looks already
           seeded or already federated. Refusing to re-seed. To overwrite on
-          purpose, re-run with -e force_reseed=true (it re-applies data-only
-          dumps over existing rows).
+          purpose, re-run with -e force_reseed=true (it empties the seed
+          tables, then loads the dumps).
+
+    - name: "seed | with force_reseed, probe whether this node is already a Spock node"
+      ansible.builtin.shell:
+        cmd: |
+          for db in {{ seed_databases | map(attribute='db') | join(' ') }}; do
+            q() { docker exec -u postgres {{ postgres_container }} psql -X -U postgres -d "$db" -tAc "$1" | tr -d '[:space:]'; }
+            if [ "$(q "select to_regclass('spock.local_node') is not null")" = t ]; then
+              echo "$db=$(q 'select count(*) from spock.local_node')"
+            else
+              echo "$db=0"
+            fi
+          done
+        executable: /bin/bash
+      register: _spock_local_nodes
+      changed_when: false
+      when: force_reseed | bool
+
+    - name: "seed | refuse force_reseed on a node that is already a Spock node"
+      ansible.builtin.assert:
+        that:
+          - _spock_local_nodes.stdout_lines | reject('match', '^[a-z_]+=0$') | list | length == 0
+        fail_msg: >-
+          force_reseed empties the seed tables, and {{ inventory_hostname }} is
+          already a Spock node ({{ _spock_local_nodes.stdout_lines | join(', ') }}):
+          the deletes would replicate to every site it subscribes with. A seed
+          precedes subscription wiring; re-seeding a federated node is a
+          detach-and-rejoin, not a re-run of this play.
+        quiet: true
+      when: force_reseed | bool
 
     # Revocation guard (ADR 1193) on BOTH ends before the dump: goat_revocations
     # is in the seed set, so it must exist on the peer to dump and here to
@@ -159,88 +192,136 @@
         label: "{{ item.0 }} {{ item.1 }}"
       changed_when: true
 
-    # -----------------------------------------------------------------------
-    # Dump on the peer — one data-only pg_dump per database so pg_dump orders
-    # tables foreign-key-safely; --disable-triggers defers FK checks on restore.
-    # -----------------------------------------------------------------------
-    - name: "seed | dump each database data-only on the peer ({{ peer_host }})"
-      ansible.builtin.shell:
-        cmd: >-
-          docker exec -u postgres {{ postgres_container }}
-          pg_dump --data-only --disable-triggers
-          {{ item.tables | map('regex_replace', '^', '-t public.') | join(' ') }}
-          -U postgres -d {{ item.db }}
-          > /tmp/{{ seed_stage_name }}-{{ item.db }}.sql
-      args:
-        executable: /bin/bash
-      delegate_to: "{{ peer_host }}"
-      loop: "{{ seed_databases }}"
-      loop_control:
-        label: "{{ item.db }} ({{ item.tables | length }} tables)"
+    # Hub directive ledger (ADR 1205) on BOTH ends, the same file and the same
+    # way spock-mesh-peering installs it: goat_hub_directives is in the netbird
+    # seed set, a federated founder has it, and a joiner's freshly migrated
+    # schema does not, so the data-only load would fail on the missing table.
+    - name: "seed | install the hub directive ledger on the peer and locally"
+      ansible.builtin.command:
+        argv: [docker, exec, -i, -u, postgres, "{{ postgres_container }}",
+               psql, -U, postgres, -d, netbird, -v, ON_ERROR_STOP=1, -q]
+        stdin: "{{ lookup('ansible.builtin.file', playbook_dir ~ '/../postgres/spock/hub-authority/netbird.sql') }}"
+      delegate_to: "{{ item }}"
+      loop: "{{ [peer_host, inventory_hostname] }}"
       changed_when: true
 
-    - name: "seed | ensure controller staging dir exists"
-      ansible.builtin.file:
-        path: "{{ local_stage_dir }}"
-        state: directory
-        mode: "0700"
-      delegate_to: localhost
-      become: false
-      run_once: true
+    # The dumps hold identity credentials. Everything from the dump to the
+    # restore runs in one block whose `always` removes every copy (peer, this
+    # node, the controller's staging dir), on success and on failure alike.
+    - name: "seed | dump, stage, load"
+      block:
+        # -------------------------------------------------------------------
+        # Dump on the peer — one data-only pg_dump per database so pg_dump
+        # orders tables foreign-key-safely; --disable-triggers defers FK checks
+        # on restore.
+        # -------------------------------------------------------------------
+        - name: "seed | dump each database data-only on the peer ({{ peer_host }})"
+          ansible.builtin.shell:
+            cmd: >-
+              umask 077 &&
+              docker exec -u postgres {{ postgres_container }}
+              pg_dump --data-only --disable-triggers
+              {{ item.tables | map('regex_replace', '^', '-t public.') | join(' ') }}
+              -U postgres -d {{ item.db }}
+              > /tmp/{{ seed_stage_name }}-{{ item.db }}.sql
+          args:
+            executable: /bin/bash
+          delegate_to: "{{ peer_host }}"
+          loop: "{{ seed_databases }}"
+          loop_control:
+            label: "{{ item.db }} ({{ item.tables | length }} tables)"
+          changed_when: true
 
-    - name: "seed | fetch each dump from the peer to the controller"
-      ansible.builtin.fetch:
-        src: "/tmp/{{ seed_stage_name }}-{{ item.db }}.sql"
-        dest: "{{ local_stage_dir }}/{{ item.db }}.sql"
-        flat: true
-      delegate_to: "{{ peer_host }}"
-      loop: "{{ seed_databases }}"
-      loop_control:
-        label: "{{ item.db }}"
+        - name: "seed | ensure controller staging dir exists"
+          ansible.builtin.file:
+            path: "{{ local_stage_dir }}"
+            state: directory
+            mode: "0700"
+          delegate_to: localhost
+          become: false
+          run_once: true
 
-    - name: "seed | copy each dump onto {{ inventory_hostname }}"
-      ansible.builtin.copy:
-        src: "{{ local_stage_dir }}/{{ item.db }}.sql"
-        dest: "/tmp/{{ seed_stage_name }}-{{ item.db }}.sql"
-        mode: "0600"
-      loop: "{{ seed_databases }}"
-      loop_control:
-        label: "{{ item.db }}"
+        - name: "seed | fetch each dump from the peer to the controller"
+          ansible.builtin.fetch:
+            src: "/tmp/{{ seed_stage_name }}-{{ item.db }}.sql"
+            dest: "{{ local_stage_dir }}/{{ item.db }}.sql"
+            flat: true
+          delegate_to: "{{ peer_host }}"
+          loop: "{{ seed_databases }}"
+          loop_control:
+            label: "{{ item.db }}"
 
-    # -----------------------------------------------------------------------
-    # Restore. ON_ERROR_STOP so a missing kratos/hydra schema (Ory not
-    # deployed yet) fails loud rather than silently seeding nothing.
-    # -----------------------------------------------------------------------
-    - name: "seed | restore each dump into the local postgres (data-only)"
-      ansible.builtin.shell:
-        cmd: >-
-          docker exec -i {{ postgres_container }}
-          psql -U postgres -d {{ item.db }} -v ON_ERROR_STOP=1
-          < /tmp/{{ seed_stage_name }}-{{ item.db }}.sql
-      args:
-        executable: /bin/bash
-      loop: "{{ seed_databases }}"
-      loop_control:
-        label: "{{ item.db }}"
-      changed_when: true
+        - name: "seed | copy each dump onto {{ inventory_hostname }}"
+          ansible.builtin.copy:
+            src: "{{ local_stage_dir }}/{{ item.db }}.sql"
+            dest: "/tmp/{{ seed_stage_name }}-{{ item.db }}.sql"
+            mode: "0600"
+          loop: "{{ seed_databases }}"
+          loop_control:
+            label: "{{ item.db }}"
 
-    # The dumps hold identity credentials: remove every copy once restored.
-    - name: "seed | remove the dumps from the peer and this node"
-      ansible.builtin.file:
-        path: "/tmp/{{ seed_stage_name }}-{{ item.1 }}.sql"
-        state: absent
-      delegate_to: "{{ item.0 }}"
-      loop: "{{ [peer_host, inventory_hostname] | product(seed_databases | map(attribute='db')) | list }}"
-      loop_control:
-        label: "{{ item.0 }} {{ item.1 }}"
+        # -------------------------------------------------------------------
+        # force_reseed: empty exactly the seed tables first, so the load does
+        # not primary-key-conflict with a partial earlier load, and no leftover
+        # row (a kratos identity the revocation guard would backfill a baseline
+        # for) survives. DELETE, not TRUNCATE: TRUNCATE refuses a table another
+        # (non-seed) table references, and CASCADE would empty tables outside
+        # the set. session_replication_role=replica keeps triggers (foreign
+        # keys, the revocation guard, the hub ledger's immutability) out of it,
+        # as --disable-triggers does for the load. One transaction per database.
+        # -------------------------------------------------------------------
+        - name: "seed | force_reseed: empty the seed tables on {{ inventory_hostname }}"
+          ansible.builtin.command:
+            argv: [docker, exec, -i, -u, postgres, "{{ postgres_container }}",
+                   psql, -X, -U, postgres, -d, "{{ item.db }}", -v, ON_ERROR_STOP=1, -q]
+            stdin: |
+              BEGIN;
+              SET LOCAL session_replication_role = replica;
+              {% for tbl in item.tables | reverse %}
+              DELETE FROM public.{{ tbl }};
+              {% endfor %}
+              COMMIT;
+          loop: "{{ seed_databases }}"
+          loop_control:
+            label: "{{ item.db }} ({{ item.tables | length }} tables)"
+          changed_when: true
+          when: force_reseed | bool
 
-    - name: "seed | remove the controller staging dir"
-      ansible.builtin.file:
-        path: "{{ local_stage_dir }}"
-        state: absent
-      delegate_to: localhost
-      become: false
-      run_once: true
+        # -------------------------------------------------------------------
+        # Restore. ON_ERROR_STOP so a missing kratos/hydra schema (Ory not
+        # deployed yet) fails loud rather than silently seeding nothing.
+        # -------------------------------------------------------------------
+        - name: "seed | restore each dump into the local postgres (data-only)"
+          ansible.builtin.shell:
+            cmd: >-
+              docker exec -i {{ postgres_container }}
+              psql -U postgres -d {{ item.db }} -v ON_ERROR_STOP=1
+              < /tmp/{{ seed_stage_name }}-{{ item.db }}.sql
+          args:
+            executable: /bin/bash
+          loop: "{{ seed_databases }}"
+          loop_control:
+            label: "{{ item.db }}"
+          changed_when: true
+
+      always:
+        - name: "seed | remove the controller staging dir"
+          ansible.builtin.file:
+            path: "{{ local_stage_dir }}"
+            state: absent
+          delegate_to: localhost
+          become: false
+          run_once: true
+
+        - name: "seed | remove the dumps from the peer and this node"
+          ansible.builtin.file:
+            path: "/tmp/{{ seed_stage_name }}-{{ item.1 }}.sql"
+            state: absent
+          delegate_to: "{{ item.0 }}"
+          loop: "{{ [peer_host, inventory_hostname] | product(seed_databases | map(attribute='db')) | list }}"
+          loop_control:
+            label: "{{ item.0 }} {{ item.1 }}"
+          ignore_unreachable: true
 
     # -----------------------------------------------------------------------
     # Marker removal — make this node a NON-migrator. PASS 1 left
