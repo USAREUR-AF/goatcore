@@ -1,0 +1,58 @@
+name: partition-harness
+
+# ADR 1165 D5, docs/design/island-mode-multi-writer.md §6. Two Spock sites
+# with the real NetBird management, Kratos and Hydra schemas at the fleet's
+# pinned versions are cut apart, written on both sides, healed, and checked:
+# drift-watch equal on every replicated table, every Spock exception or
+# resolution accounted for, nothing issued to two subjects. One scenario per
+# name in docs/design/island-mode-write-inventory.md §10; the job prints the
+# coverage (implemented / pending / failing).
+
+on:
+  pull_request:
+    paths:
+      - 'ops/postgres/spock/**'
+      - 'ops/goat-zenoh-portal/internal/registry/**'
+      - 'ops/goat-id-console/internal/store/**'
+      - 'ops/goat-id-console/internal/orgstore/**'
+      - 'ops/onboard-runner/**'
+      - 'ops/ansible/roles/spock-mesh-peering/**'
+      - 'ops/ansible/roles/ory-narrow-repset/**'
+      - 'ops/ansible/roles/spock-drift-watch/**'
+      - 'ops/ansible/roles/ory/defaults/**'
+      - 'ops/pins/fleet-pins.yaml'
+      - 'docs/design/island-mode-write-inventory.md'
+      - '.github/workflows/partition-harness.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  partition-harness:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.12'
+      - name: Install PyYAML
+        run: python3 -m pip install pyyaml==6.0.2
+      - name: Coverage registry (no containers)
+        run: python3 ops/postgres/spock/tests/partition-harness/harness.py coverage /dev/null || true
+      - uses: docker/setup-buildx-action@v3
+      - name: Build postgres-spock (native arch only)
+        uses: docker/build-push-action@v6
+        with:
+          context: ops/postgres/spock
+          load: true
+          tags: postgres-spock:harness
+          cache-from: type=gha,scope=postgres-spock
+      - name: Partition harness
+        env:
+          IMAGE: postgres-spock:harness
+        run: ops/postgres/spock/tests/partition-harness/run.sh

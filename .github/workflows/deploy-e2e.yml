@@ -1,0 +1,202 @@
+name: deploy-e2e
+
+# The deployment engineering, end to end (docs/design/deployment-e2e.md).
+#
+#   hermetic   the real drivers against three container hosts, a local bare
+#              remote and a local registry the runner resolves as ghcr.io; the
+#              ledger read back from each host is the only proof. On every PR
+#              that touches the drivers, nightly in full.
+#   gates      secrets-coverage (warning-only here: the references live in the
+#              private goat-credentials repository, whose CI judges them) and
+#              deps-named (every tool the release path invokes is named up front).
+#   rehearsal  every open release candidate's next step, dry-run, daily — so a
+#              person never discovers the step's refusal by running it.
+#
+# The live canary (zagros-dev) runs from an operator laptop: ops/e2e/live-canary.sh.
+# No GitHub runner reaches a goatnet (ops/validation/goatnet-runners.yaml).
+on:
+  pull_request:
+    paths:
+      - 'ops/scripts/**'
+      - 'ops/ansible/roles/rollback-ledger/**'
+      - 'ops/ansible/roles/e2e-canary/**'
+      - 'ops/ansible/roles/e2e-canary-secret/**'
+      - 'ops/ansible/e2e-canary*.yml'
+      - 'ops/ansible/teardown-*.yml'
+      - 'ops/ansible/roles/site-cache-client/**'
+      - 'ops/release/**'
+      - 'ops/pins/**'
+      - 'ops/validation/**'
+      - 'ops/consistency/python/**'
+      - 'ops/e2e/**'
+      - 'ops/ci/check-secrets-coverage.py'
+      - 'ops/ci/check-deps-named.py'
+      - 'crates/goatbuilder/**'
+      - 'crates/goat-cli/**'
+      - 'crates/panoscope-core/**'
+      - 'ops/goat-zenoh-portal/**'
+      - 'ops/goat-id-console/**'
+      - 'crates/Cargo.toml'
+      - 'crates/Cargo.lock'
+      - 'docs/operations/goatbuilder-first-run.md'
+      - '.github/workflows/deploy-e2e.yml'
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+jobs:
+  gates:
+    name: secrets-coverage + deps-named
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install --quiet pyyaml
+      - name: Every tool the release path invokes is named up front
+        run: python3 ops/ci/check-deps-named.py
+      - name: Every secret a deploy templates has a reference line (judged in goat-credentials' CI)
+        run: python3 ops/ci/check-secrets-coverage.py
+
+  hermetic:
+    name: hermetic — the real drivers on container hosts, proved from the ledger
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: ops/enrollment/go.mod
+          cache-dependency-path: ops/enrollment/go.sum
+      - name: Install Rust toolchain (stable)
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo registry + build target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            crates/target
+          key: deploy-e2e-cargo-${{ runner.os }}-${{ hashFiles('crates/Cargo.lock') }}
+      - name: Install the controller's tools (apt, age, yq, ansible + collections)
+        timeout-minutes: 8
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          # libpcsclite-dev: ca-init links piv-go (the YubiKey path) even in dev mode
+          sudo apt-get install -y -qq --no-install-recommends age jq openssh-client netcat-openbsd libpcsclite-dev pkg-config
+          python3 -m pip install --quiet pyyaml jsonschema yq 'ansible-core>=2.16,<2.21'
+          ansible-galaxy collection install -r ops/ansible/requirements.yml >/dev/null
+      - name: Every prerequisite the hermetic tier needs is present (seconds, not a failed run)
+        run: ops/e2e/prereqs.sh
+      - name: Build goatbuilder
+        working-directory: crates
+        run: cargo build -p goatbuilder
+      - name: The hermetic tier
+        run: ops/e2e/hermetic.sh --goatbuilder crates/target/debug/goatbuilder --record "$RUNNER_TEMP/e2e-report"
+      - name: Upload the run record
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deploy-e2e-hermetic-record
+          path: ${{ runner.temp }}/e2e-report
+          if-no-files-found: warn
+
+  goat-suite:
+    # The goat CLI suite (docs/design/goat-cli-e2e-testing.md §T1s): the real goat
+    # binary operates a real portal, console and Zenoh router (mTLS) started on this
+    # runner, and every case asserts on the object the service stored. Shares the
+    # run record and report with the hermetic tier above.
+    name: goat suite — the real CLI against a local portal, console and router
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      # The acceptance assay's runner (ops/validation/run-acceptance.py) reads YAML.
+      - run: pip install --quiet pyyaml
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: ops/goat-zenoh-portal/go.mod
+          cache-dependency-path: |
+            ops/goat-zenoh-portal/go.sum
+            ops/goat-id-console/go.sum
+      - name: Install Rust toolchain (stable)
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo registry + build target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            crates/target
+          key: deploy-e2e-goat-cargo-${{ runner.os }}-${{ hashFiles('crates/Cargo.lock') }}
+      - name: Build goat
+        working-directory: crates
+        run: cargo build -p goat-cli
+      - name: The stack (portal, console, identity stand-in, Zenoh router)
+        timeout-minutes: 12
+        run: ops/e2e/suites/goat/stack.sh up "$RUNNER_TEMP/goat-stack"
+      - name: The goat suite
+        env:
+          E2E_RECORD_DIR: ${{ runner.temp }}/goat-e2e-report
+        run: ops/e2e/suites/goat/run.sh crates/target/debug/goat "$RUNNER_TEMP/goat-stack"
+      - name: Stack logs on failure
+        if: failure()
+        run: tail -n 60 "$RUNNER_TEMP"/goat-stack/*.log; docker logs goat-e2e-zenoh 2>&1 | tail -40 || true
+      - name: Upload the run record
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deploy-e2e-goat-suite-record
+          path: ${{ runner.temp }}/goat-e2e-report
+          if-no-files-found: warn
+
+  rehearsal:
+    name: rehearsal — every open candidate's next step, dry-run
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    if: github.event_name != 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install --quiet pyyaml jsonschema
+      - name: Install Rust toolchain (stable)
+        uses: dtolnay/rust-toolchain@stable
+      - name: Build goatbuilder
+        working-directory: crates
+        run: cargo build -p goatbuilder
+      - name: Rehearse
+        env:
+          GOAT_RC_ROLE_CHECK: '0'
+          GOAT_MESH_PROBE: '0'
+        run: |
+          git checkout -q -B main   # both drivers refuse anything but a main checkout; this one is the run's head
+          ops/e2e/rehearsal.sh --goatbuilder crates/target/debug/goatbuilder --record "$RUNNER_TEMP/rehearsal-report"
+      - name: Upload the run record
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deploy-e2e-rehearsal-record
+          path: ${{ runner.temp }}/rehearsal-report
+          if-no-files-found: warn
