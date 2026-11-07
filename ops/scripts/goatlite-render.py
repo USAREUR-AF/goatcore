@@ -733,6 +733,9 @@ goat_zenoh_fips_variant: true
 portal_traefik_host: "portal.{{{{ site_id }}}}.{{{{ site_dns_zone }}}}"
 portal_traefik_network: "mgmt"
 portal_traefik_cert_resolver: "{resolver}"
+# A learning box shows the example goatnet's release lanes; a goatnet of its own
+# declares portal_release_sets instead (roles/goat-zenoh-portal refuses neither set).
+portal_release_sets_use_example: true
 portal_zenoh_network: "{{{{ zenoh_stack }}}}_default"
 portal_zenoh_rest_url: "http://{{{{ zenoh_stack }}}}-router:8000"
 portal_identity_model: per-uuid-slot-pool

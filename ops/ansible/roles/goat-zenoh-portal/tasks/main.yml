@@ -473,16 +473,30 @@
   # ADR 1027 (data-access program B2). A goatnet declares its own release sets
   # in its group_vars; the Data-Access COP shows exactly those lanes.
 
-- name: Copy generic release-set registry (release-sets.yaml) from controller
+- name: Refuse to install the example release-set registry on a goatnet that did not ask for it
+  ansible.builtin.assert:
+    that:
+      - portal_release_sets_use_example | bool
+    fail_msg: >-
+      {{ site_id | default(inventory_hostname) }} declares no portal_release_sets, so the
+      portal would show the EXAMPLE goatnet's release lanes
+      (ops/permissions/release-sets.yaml) as this goatnet's. Declare this goatnet's
+      sets in group_vars/<site>_hosts/data-access.yml (portal_release_sets), or set
+      portal_release_sets_use_example: true if the example registry is what you want
+      (the example goatnet, a learning box), or portal_release_sets_path: "" to turn
+      the release reveal off.
+    quiet: true
+  when: portal_release_sets_path | length > 0 and (portal_release_sets | default([]) | length) == 0
+
+- name: Copy the example release-set registry (release-sets.yaml) from controller
   ansible.builtin.copy:
     src: "{{ playbook_dir }}/../../ops/permissions/release-sets.yaml"
     dest: "{{ portal_release_sets_path }}"
     mode: "0644"
   when: portal_release_sets_path | length > 0 and (portal_release_sets | default([]) | length) == 0
   notify: restart goat-zenoh-portal
-  # ADR 1027 (data-access program B2). A goatnet that declares no
-  # portal_release_sets gets the generic registry
-  # ops/permissions/release-sets.yaml, as before.
+  # ADR 1027 (data-access program B2). Reached only with
+  # portal_release_sets_use_example: true (the assert above).
 
 - name: Render partner slot blocks (ADR 1138) from the SAME group_var the router reads
   ansible.builtin.copy:
