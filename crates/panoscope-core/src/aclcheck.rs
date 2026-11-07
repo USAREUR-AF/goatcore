@@ -1057,19 +1057,19 @@ mod tests {
     fn a_site_without_a_taxonomy_stanza_inherits_default() {
         let tax = "netbird_acl_taxonomy:\n  _default:\n    site_prefix: __DERIVED__\n    \
                    groups:\n    - suffix: INFRA\n    - suffix: OBSERVER\n";
-        let mat = "netbird_acl_matrix:\n  efdi:\n    rules:\n    - name: infra to all\n      \
+        let mat = "netbird_acl_matrix:\n  demo:\n    rules:\n    - name: infra to all\n      \
                    sources: [INFRA]\n      destinations: [OBSERVER]\n      protocol: tcp\n      \
                    ports: ['443']\n      action: accept\n";
         let d = Declaration::parse(tax, mat).expect("parse");
-        let m = d.model("efdi").expect("efdi inherits _default");
-        assert_eq!(m.prefix, "EFDI");
-        assert!(m.groups.contains("EFDI-INFRA") && m.groups.contains("EFDI-OBSERVER"));
+        let m = d.model("demo").expect("demo inherits _default");
+        assert_eq!(m.prefix, "DEMO");
+        assert!(m.groups.contains("DEMO-INFRA") && m.groups.contains("DEMO-OBSERVER"));
         assert_eq!(m.permits.len(), 1);
         assert_eq!(
             (m.permits[0].src.as_str(), m.permits[0].dst.as_str()),
-            ("EFDI-INFRA", "EFDI-OBSERVER")
+            ("DEMO-INFRA", "DEMO-OBSERVER")
         );
-        assert!(d.scopes().contains(&"efdi".to_string()));
+        assert!(d.scopes().contains(&"demo".to_string()));
         assert!(matches!(d.model("nosuchsite"), Err(DeclError::NoSuchSite(_))));
     }
 
