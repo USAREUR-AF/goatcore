@@ -44,7 +44,8 @@ def values_named(value, key):
             yield from values_named(child, key)
 
 
-def demanded(root, play):
+def demanded(root, play, goatnet):
+    snake = goatnet.replace("-", "_")
     variables = play["vars"]
     demanded_names = set()
     roles = variables["p12_role_client_secrets"]
@@ -64,7 +65,7 @@ def demanded(root, play):
         if actual != {expected}:
             raise Invalid(f"{role}: preflight and registration consume different secrets")
         demanded_names.add(expected)
-    clients = variables["zagros_prod_extra_oidc_clients"]
+    clients = variables[f"{snake}_extra_oidc_clients"]
     ids = [client["client_id"] for client in clients]
     if len(set(ids)) != len(ids) or set(ids) & set(roles):
         raise Invalid("duplicate P12 client identifiers")
@@ -74,36 +75,46 @@ def demanded(root, play):
                 for name in demanded_names}
     # Paired cookies are actual group_vars lookups for the P12 clients,
     # including cloud-hosted fences. Other services are outside this contract.
-    for group in ("zagros_prod_hosts", "zagros_prod_relay_health"):
+    for group in (f"{snake}_hosts", f"{snake}_relay_health"):
         for path in (root / "ops/ansible/group_vars" / group).glob("*.yml"):
             data = read_yaml(path)
             for value in data.values():
                 if isinstance(value, str):
-                    match = re.fullmatch(r"\{\{\s*lookup\('env',\s*'(ZAGROS_PROD_[A-Z0-9_]*COOKIE_SECRET)'\)\s*\}\}", value)
+                    match = re.fullmatch(r"\{\{\s*lookup\('env',\s*'(" + snake.upper() + r"_[A-Z0-9_]*COOKIE_SECRET)'\)\s*\}\}", value)
                     if match and match[1].removesuffix("_COOKIE_SECRET") in families:
                         demanded_names.add(match[1])
     return demanded_names
 
 
-def check(root, play, spec):
-    missing = demanded(root, play) - set(spec)
+def check(root, play, spec, goatnet):
+    demand = demanded(root, play, goatnet)
+    missing = demand - set(spec)
     if missing:
         raise Invalid("generator omits: " + ", ".join(sorted(missing)))
-    if any(spec[name] != "hex48" for name in demanded(root, play) if name.endswith("CLIENT_SECRET")):
+    if any(spec[name] != "hex48" for name in demand if name.endswith("CLIENT_SECRET")):
         raise Invalid("OIDC client secrets must use hex48")
-    if any(spec[name] != "hex32" for name in demanded(root, play) if name.endswith("COOKIE_SECRET")):
+    if any(spec[name] != "hex32" for name in demand if name.endswith("COOKIE_SECRET")):
         raise Invalid("proxy cookies must use hex32")
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[2])
+    parser.add_argument("--goatnet", default="zagros-prod",
+                        help="the goatnet whose <goatnet>-oidc-clients.yml play and <goatnet>_hosts group_vars are checked")
     parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args()
     root = args.root
-    play = read_yaml(root / "ops/ansible/zagros-prod-oidc-clients.yml")[0]
+    goatnet = args.goatnet
+    if not re.fullmatch(r"[a-z0-9][a-z0-9-]*", goatnet):
+        raise Invalid(f"invalid goatnet name {goatnet!r}")
+    play_path = root / f"ops/ansible/{goatnet}-oidc-clients.yml"
+    if not play_path.is_file():
+        raise Invalid(f"{play_path.relative_to(root)} is not in this tree; the check runs in the goatnet's "
+                      "environment repository against the assembled tree (--goatnet <name>)")
+    play = read_yaml(play_path)[0]
     spec = json.loads(subprocess.check_output(["/bin/bash", str(root / "ops/scripts/newsite-secrets.sh"),
-                                              "zagros-prod", "--spec-json"], text=True))
+                                              goatnet, "--spec-json"], text=True))
     if args.self_test:
         # Exact membership, not substring matching. Removing an actual live
         # client's generator row must fail before trusting the positive verdict.
@@ -112,13 +123,13 @@ def main():
         del missing[first]
         missing[first + "_EXTRA"] = "hex48"
         try:
-            check(root, play, missing)
+            check(root, play, missing, goatnet)
         except Invalid:
             print("self-test: missing exact client family rejected")
         else:
             raise Invalid("self-test false pass")
-    check(root, play, spec)
-    print(f"newsite credential coverage: {len(demanded(root, play))} live demands covered")
+    check(root, play, spec, goatnet)
+    print(f"newsite credential coverage: {len(demanded(root, play, goatnet))} {goatnet} live demands covered")
 
 
 if __name__ == "__main__":
