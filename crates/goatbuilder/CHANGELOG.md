@@ -6,6 +6,18 @@ Each release is the tag `goatbuilder/v<semver>` on `main`, built and signed by
 
 ## Unreleased
 
+### Added: `join-node` turns on signal federation for a joiner's core node
+
+After the joiner's Spock wiring, phase 13 runs the signal-federation steps
+(docs/design/signal-federation-pair.md): a gate,
+`ops/scripts/signal-federation-check.py <site> --peer <founder> --resolve
+--require-env`, that refuses a half-configured pair from the repository;
+`signal-federation-transport.yml` on the joiner, then the founder;
+`traefik-acme.yml` on both; the joiner's relay tunnel; the founder's relay pin
+(`relay-ingress-add-site.yml`); and `signal-federation-verify.yml`, which
+proves an offer forwarded and delivered. A joiner declaring
+`signal_federation_absent_reason` gets the gate and a SKIP line.
+
 ### Added: `join-node --via door`
 
 `join-node` gave every play `-i inventory/mgmt-hosts.ini -i

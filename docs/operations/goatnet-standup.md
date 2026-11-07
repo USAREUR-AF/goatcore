@@ -456,6 +456,14 @@ One prerequisite the driver cannot supply and the config must: the founder's
 The full joiner mechanics, and why the passes cannot be reordered, are in
 node-addition.md §4.
 
+Signal federation between the two management nodes is not run by this
+driver: after the joiner's Spock wiring, turn it on with the plays in
+[signal-federation-pair.md](../design/signal-federation-pair.md) §"The sequence"
+(`goatbuilder join-node <env> --site <joiner-site> --node <node> --class core
+--dry-run` prints them as the `[signal federation]` steps of phase 13).
+Its gate, `ops/scripts/signal-federation-check.py <joiner-site>`, refuses a
+pair that is configured on one side only.
+
 ## Phase 8 — mesh-enroll, in full
 
 *(internet profile only — a LAN host's router cert is already final from phase 4,

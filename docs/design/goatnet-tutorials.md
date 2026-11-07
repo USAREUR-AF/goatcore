@@ -67,9 +67,9 @@ the replication so writes flow both ways.
 | | |
 |---|---|
 | Audience | A platform admin who has finished tutorial 1 |
-| Prerequisites | A founder whose gate is green; the joiner's configuration with `goatnet_founder: false` and `join_founder_site`; the founder's configuration naming the joiner as a replication peer; the pins row's member group |
+| Prerequisites | A founder whose gate is green; the joiner's configuration with `goatnet_founder: false` and `join_founder_site`; the founder's configuration naming the joiner as a replication peer; the pins row's member group; signal federation declared on both sides, the founder's relay pin and the federation DNS records ([signal-federation-pair.md](signal-federation-pair.md)) |
 | Commands | `standup <env> --site <joiner-site> --dry-run` then `--yes`; `join-node <env> --site <site> --node <n> --class <c>` for each further machine. Scripts: `goat-standup.sh <joiner-site>`; the node-addition runbook |
-| Checkpoints | (1) the rehearsal matches `checkpoints/02-first-federated-node.txt`, including the founder-side mirror recorded on the founder's machines; (2) the joiner's gate green from the joiner's network; (3) every subscription `replicating` both ways, a founder write visible on the joiner, a deletion replicated back; (4) `status` across both sites |
+| Checkpoints | (1) the rehearsal matches `checkpoints/02-first-federated-node.txt`, including the founder-side mirror recorded on the founder's machines; (2) the joiner's gate green from the joiner's network; (3) every subscription `replicating` both ways, a founder write visible on the joiner, a deletion replicated back; `signal-federation-verify.yml` passing; (4) `status` across both sites |
 | Done | Checkpoints 2–4 on hardware |
 | Undo | Re-run from the failed phase; removing a joiner reverses the founder-side mirror in the same change |
 

@@ -212,6 +212,11 @@
           docs/findings/F-070-management-json-default-stun-host-nxdomain.md
           for full context.
 
+    # A proxy with no peer address dies at startup; an ingress without a token
+    # is an unauthenticated public Forward surface. Refused before .env exists.
+    - name: Refuse a half-configured signal federation
+      ansible.builtin.include_tasks: tasks/signal-federation-assert.yml
+
     - name: Ensure compose directory exists
       ansible.builtin.file:
         path: "{{ compose_dir }}"

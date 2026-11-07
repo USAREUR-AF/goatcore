@@ -22,7 +22,10 @@
 //!  11  A      wireguard-kmod.yml again — changed=0 proves the kmod took
 //!  12  GATE   mesh_ip + the mesh inventory filled: preflight passes with no TBD_
 //!  13  A      the class's converge: core (founder pass, or a joiner's three
-//!             passes + the founder-side mirror), obs (the three obs legs; at
+//!             passes + the founder-side mirror, then signal federation: a
+//!             gate on both sides' config, the relay pins and DNS, the token
+//!             and proxy on each side, the routers, the relay pin, the
+//!             delivery proof), obs (the three obs legs; at
 //!             a joiner site the utility leg is skipped — the pub/sub state of
 //!             record stays with the founder), breakglass, network-jump
 //!  14  T      unmask the apt timers
@@ -115,6 +118,44 @@ fn gv_first(file: &Path, key: &str) -> String {
         .unwrap_or_default()
 }
 
+/// Phase 13's signal-federation steps for a joiner's core node, after the Spock
+/// wiring (ADR 1085 Amendment 1). A peer is present on exactly one signal
+/// server, so a second management node that can take signal load needs its
+/// signal and the founder's to forward offers to each other, over the mesh
+/// with a relay-tunneled backup.
+///
+/// The gate comes first and checks what the operator's repository must hold
+/// before anything changes: both sites' federation group_vars, complete and
+/// crossed (each side's peer address and name are the other's), the founder's
+/// relay inventory pinning each federation hostname to its own node's tunnel,
+/// the hostnames resolving to the relays, and the shared token in the
+/// environment. Then, in the order that never exposes an unauthenticated
+/// surface: the token and proxy on the joiner and on the founder, the
+/// federation routers and certificates, the joiner's relay tunnel, the relay
+/// pins, and the delivery proof. A joiner that declares
+/// `signal_federation_absent_reason` (both sides off) gets the gate, which
+/// proves the two sides agree, and a SKIP line instead.
+fn signal_federation(ev: &mut Vec<Phase>, repo: &Path, gv: &Path, site: &str, founder: &str, pre: &str, inv: &str) {
+    let r = repo.display().to_string();
+    let site_group = format!("{}_hosts", site.replace('-', "_"));
+    let founder_group = format!("{}_hosts", founder.replace('-', "_"));
+    let p = |kind: &'static str, label: String, cmd: String| Phase { n: 13, kind, label, cmd };
+    ev.push(p("GATE", format!("[signal federation] the repo declares it on both sides: {site_group} and {founder_group} crossed and complete, {founder}'s relay inventory pins each federation hostname to its own node, the names resolve to the relays, the shared token is in the environment"), format!("python3 '{r}/ops/scripts/signal-federation-check.py' {site} --peer {founder} --resolve --require-env")));
+    if !gv_first(gv, "signal_federation_absent_reason").is_empty() {
+        ev.push(p("SKIP", format!("[signal federation] declared off on both sides (signal_federation_absent_reason in group_vars/{site_group}); the gate above proved the two sides agree"), format!("echo '>> signal federation: declared off for {site} (signal_federation_absent_reason); nothing to converge'")));
+        return;
+    }
+    let rathole = crate::standup::site_play(repo, founder, "rathole-client.yml");
+    let relay_inv = format!("inventory/hosts-{founder}.ini");
+    let need_relay_inv = format!("{{ [ -f {relay_inv} ] || {{ echo '{founder} relay inventory {relay_inv} missing — generate it: inventory/generate-relays.sh {founder} terraform-{founder}'; exit 1; }}; }}");
+    ev.push(p("A", format!("[signal federation] token + dual-path proxy on the joiner {site} first (the token is enforced before any public path reaches it)"), format!("cd '{r}/ops/ansible' && {pre} {inv} signal-federation-transport.yml -e federation_site={site}")));
+    ev.push(p("A", format!("[signal federation] token + dual-path proxy on the founder {founder} (the same change, not a follow-up: one direction alone leaves offers undeliverable)"), format!("cd '{r}/ops/ansible' && {pre} {inv} signal-federation-transport.yml -e federation_site={founder}")));
+    ev.push(p("A", "[signal federation] each node's federation router and its certificate (Traefik, DNS-01)".to_string(), format!("cd '{r}/ops/ansible' && {pre} {inv} traefik-acme.yml -e target={site_group} && {pre} {inv} traefik-acme.yml -e target={founder_group}")));
+    ev.push(p("A", format!("[signal federation] the joiner's tunnel to every {founder} relay ({rathole}, service rathole_client_service_name)"), format!("cd '{r}/ops/ansible' && {need_relay_inv} && {pre} -i {relay_inv} {inv} {rathole} -e rathole_client_target={site_group}")));
+    ev.push(p("A", format!("[signal federation] {founder}'s relays: the {site} backend and its federation-hostname pin, re-rendered and post-checked (relay-ingress-add-site.yml)"), format!("cd '{r}/ops/ansible' && {need_relay_inv} && {pre} -i {relay_inv} -i inventory/{founder}-goat-relay-alias.ini {inv} relay-ingress-add-site.yml -e target=goat_relay_hosts -e founder_site={founder} -e join_site={site}")));
+    ev.push(p("GATE", "[signal federation] proven from both nodes: transport up both ways, an offer forwarded and delivered".to_string(), format!("cd '{r}/ops/ansible' && {pre} {inv} signal-federation-verify.yml -e federation_site={site} -e federation_peer_site={founder}")));
+}
+
 fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
     let r = repo.display().to_string();
     let site = o.site;
@@ -194,6 +235,7 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
             ev.push(p(13, "A", "[core, joiner] pass 3 — bootstrap with Spock: netbird subscriptions on both sides, polled to replicating; Ory node + repset only", format!("cd '{r}/ops/ansible' && {pre} {inv} -l {node} {bs} {ev_secrets} -e ory_spock_wire_subscriptions=false")));
             ev.push(p(13, "A", &format!("[core, joiner] the founder-side mirror on {founder_group}, peer={site} only (the same change, not a follow-up): netbird + Ory node, repset, subscription"), format!("cd '{r}/ops/ansible' && {pre} {inv} spock-mesh-wire.yml --limit {founder_group} -e '{{\"inter_site_spock_peers\":[\"{site}\"],\"ory_spock_reconcile_history\":false}}'")));
             ev.push(p(13, "A", "[core, joiner] the joiner's Spock wiring again, now that the founder's half exists: Ory subscription + history reconcile", format!("cd '{r}/ops/ansible' && {pre} {inv} spock-mesh-wire.yml --limit {node}")));
+            signal_federation(&mut ev, repo, &gv, site, &founder_site, &pre, inv);
         }
         "core" => {
             ev.push(p(13, "A", &format!("[core, founder site] site-bootstrap on the node{}", if intra_pair { " (intra_site_pair: the A→B streaming standby is phase 6A of the play)" } else { "" }), format!("cd '{r}/ops/ansible' && {pre} {inv} -l {node} site-bootstrap.yml {ev_bootstrap}")));
@@ -396,6 +438,61 @@ mod tests {
         let ph = plan(t.path(), &o).unwrap();
         let core: Vec<&Phase> = ph.iter().filter(|p| p.label.contains("[core, joiner]")).collect();
         assert!(core[0].cmd.contains("-l node-x zagros-b-bootstrap.yml -e bootstrap_owner_email"), "{}", core[0].cmd);
+    }
+
+    /// After the Spock wiring, a joiner's core node runs signal federation:
+    /// the repo gate first, then the joiner's token and proxy before the
+    /// founder's, the routers, the joiner's tunnel, the founder's relay pins,
+    /// and the delivery proof last. Nothing in it names a site but the two
+    /// the checkout declares.
+    #[test]
+    fn a_joiner_core_node_federates_signal_after_the_spock_wiring() {
+        let t = joiner_checkout();
+        let ph = plan(t.path(), &opts("zagros-b", "core", "zagros")).unwrap();
+        let rewire = ph.iter().position(|p| p.label.contains("Spock wiring again")).unwrap();
+        let fed: Vec<&Phase> = ph.iter().filter(|p| p.label.starts_with("[signal federation]")).collect();
+        assert_eq!(fed.len(), 7, "{:?}", fed.iter().map(|p| &p.label).collect::<Vec<_>>());
+        let first = ph.iter().position(|p| p.label.starts_with("[signal federation]")).unwrap();
+        assert_eq!(first, rewire + 1, "federation follows the Spock wiring directly");
+        assert!(fed.iter().all(|p| p.n == 13));
+        assert_eq!(fed[0].kind, "GATE");
+        assert!(fed[0].cmd.ends_with("signal-federation-check.py' zagros-b --peer zagros --resolve --require-env"), "{}", fed[0].cmd);
+        assert!(fed[1].cmd.ends_with("signal-federation-transport.yml -e federation_site=zagros-b"), "joiner first: {}", fed[1].cmd);
+        assert!(fed[2].cmd.ends_with("signal-federation-transport.yml -e federation_site=zagros"), "{}", fed[2].cmd);
+        assert!(fed[3].cmd.contains("traefik-acme.yml -e target=zagros_b_hosts") && fed[3].cmd.contains("traefik-acme.yml -e target=zagros_hosts"), "{}", fed[3].cmd);
+        assert!(fed[4].cmd.contains("-i inventory/hosts-zagros.ini") && fed[4].cmd.contains("site-rathole-client.yml -e rathole_client_target=zagros_b_hosts"), "{}", fed[4].cmd);
+        assert!(fed[5].cmd.contains("-i inventory/zagros-goat-relay-alias.ini") && fed[5].cmd.contains("relay-ingress-add-site.yml -e target=goat_relay_hosts -e founder_site=zagros -e join_site=zagros-b"), "{}", fed[5].cmd);
+        assert_eq!(fed[6].kind, "GATE");
+        assert!(fed[6].cmd.ends_with("signal-federation-verify.yml -e federation_site=zagros-b -e federation_peer_site=zagros"), "{}", fed[6].cmd);
+        assert!(fed.iter().all(|p| !p.cmd.contains("-e site_id")));
+        // A founder keeping its own rathole-client play gets it.
+        std::fs::write(t.path().join("ops/ansible/zagros-rathole-client.yml"), "---\n").unwrap();
+        let ph = plan(t.path(), &opts("zagros-b", "core", "zagros")).unwrap();
+        assert!(ph.iter().any(|p| p.cmd.contains(" zagros-rathole-client.yml -e rathole_client_target=zagros_b_hosts")));
+        // The missing relay inventory stops the step with how to make it.
+        let step = ph.iter().find(|p| p.cmd.contains("relay-ingress-add-site.yml")).unwrap();
+        let o = Command::new("bash").args(["-euo", "pipefail", "-c", &step.cmd]).output().unwrap();
+        assert!(!o.status.success() && String::from_utf8_lossy(&o.stdout).contains("generate-relays.sh zagros terraform-zagros"));
+    }
+
+    /// A joiner that declares federation off with a reason gets the gate (the
+    /// two sides must agree) and a SKIP, and no federation play runs.
+    #[test]
+    fn a_joiner_that_declares_federation_off_gets_the_gate_and_a_skip() {
+        let t = joiner_checkout();
+        let gv = t.path().join("ops/ansible/group_vars/zagros_b_hosts/vars.yml");
+        let mut text = std::fs::read_to_string(&gv).unwrap();
+        text.push_str("signal_federation_absent_reason: one node holds every peer\n");
+        std::fs::write(&gv, text).unwrap();
+        let ph = plan(t.path(), &opts("zagros-b", "core", "zagros")).unwrap();
+        let fed: Vec<&Phase> = ph.iter().filter(|p| p.label.starts_with("[signal federation]")).collect();
+        assert_eq!(fed.iter().map(|p| p.kind).collect::<Vec<_>>(), vec!["GATE", "SKIP"]);
+        assert!(ph.iter().all(|p| !p.cmd.contains("signal-federation-transport.yml") && !p.cmd.contains("relay-ingress-add-site.yml")));
+        // A founder site's core node has no federation phase of its own.
+        let gvf = t.path().join("ops/ansible/group_vars/zagros_hosts");
+        std::fs::create_dir_all(&gvf).unwrap();
+        std::fs::write(gvf.join("vars.yml"), "goatnet_founder: true\n").unwrap();
+        assert!(plan(t.path(), &opts("zagros", "core", "zagros")).unwrap().iter().all(|p| !p.label.starts_with("[signal federation]")));
     }
 
     /// The generic wrapper exists and sets site_id from bootstrap_site as a

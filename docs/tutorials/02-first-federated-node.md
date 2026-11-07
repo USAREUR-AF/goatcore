@@ -32,6 +32,11 @@ one. Here both sites belong to the same goatnet and the same owner.
 3. **It changes the founder.** The founder-side mirror (phase 6) adds the
    founder's half of the replication subscriptions. Without it, writes flow one
    way only.
+4. **Its signal federates with the founder's.** A peer holds its signalling
+   stream on one signal server; the two forward offers to each other over the
+   mesh, with a relay-tunneled backup. Both sides are turned on in the same
+   change, after replication
+   ([signal-federation-pair.md](../design/signal-federation-pair.md)).
 
 ## Rehearse it on the fixture
 
@@ -92,7 +97,16 @@ checkpoint 2 on hardware proves.
 3. **The pins.** The joiner's member group added to the goatnet's row in
    `ops/pins/fleet-pins.yaml`, with `absent: true` for components that stay
    single-homed on the founder.
-4. **Reach.** The joiner's machines reachable for the first key seeding, and
+4. **Signal federation, declared on both sides.** Each site's group_vars name
+   the other's mesh address and federation hostname, the shared token by
+   reference, the proxy and the ingress
+   ([signal-federation-pair.md](../design/signal-federation-pair.md) §"What a
+   federating pair declares"); the founder's relay inventory
+   `inventory/<founder>-goat-relay-alias.ini` pins each federation hostname to
+   its own node; the hostnames have A records over the relays, applied. Check
+   with `ops/scripts/signal-federation-check.py <joiner-site> --resolve`. A
+   joiner that stays off declares `signal_federation_absent_reason` instead.
+5. **Reach.** The joiner's machines reachable for the first key seeding, and
    your laptop able to reach both sites: on the goatnet's mesh, or through its
    door (`join-node --via door`, below).
 
@@ -137,8 +151,8 @@ enrolment, the one that looks for `wt0`; any other failure stops the run.
 
 ### What join-node runs for a joiner's core machine
 
-Phase 13 is the joiner's three passes and the founder-side mirror, in this
-order. Each step depends on the one before.
+Phase 13 is the joiner's three passes, the founder-side mirror and signal
+federation, in this order. Each step depends on the one before.
 
 | Step | Play | What it does |
 |---|---|---|
@@ -148,6 +162,13 @@ order. Each step depends on the one before.
 | Pass 3 | the same bootstrap play with `ory_spock_wire_subscriptions=false` | Turns on mesh replication both ways; for identity, creates the joiner's node and replication set only |
 | Mirror | `spock-mesh-wire.yml --limit <founder group>` with `inter_site_spock_peers=[<joiner-site>]`, `ory_spock_reconcile_history=false` | The founder's half: its node, replication set and subscription to the joiner. No history reconcile yet |
 | Rewire | `spock-mesh-wire.yml --limit <node>` | The joiner's identity subscription, then the history reconcile, which copies history both ways now that both halves exist |
+| Federation gate | `ops/scripts/signal-federation-check.py <joiner-site> --peer <founder-site> --resolve --require-env` | Refuses a half-configured federation: one side on, a proxy with no peer address, an ingress without a token, crossed names, a missing relay pin or DNS record, the token not in the environment. Off with a declared reason passes, and the steps below are skipped |
+| Federation, joiner | `signal-federation-transport.yml -e federation_site=<joiner-site>` | The token and the dual-path proxy; proves the running signal enforces the token |
+| Federation, founder | the same with `-e federation_site=<founder-site>` | The founder's half, in the same run |
+| Routers | `traefik-acme.yml`, joiner group then founder group | Each node's federation hostname router and certificate |
+| Tunnel | the founder's `<founder>-rathole-client.yml` (else `site-rathole-client.yml`) on the joiner group, with `inventory/hosts-<founder>.ini` | The joiner's tunnel to every founder relay |
+| Relay pin | `relay-ingress-add-site.yml` with the founder's relay inventory and alias file | The joiner's backend and its federation-hostname pin on every relay, post-checked |
+| Federation proof | `signal-federation-verify.yml -e federation_site=<joiner-site> -e federation_peer_site=<founder-site>` | Transport up from both nodes; an offer forwarded and delivered in at least one direction |
 
 `site_id` reaches every pass as a play variable, set by the wrapper. Never pass
 `-e site_id=...`: an extra variable sets the site on every host in the
@@ -179,8 +200,10 @@ with the fresh-peer rows run from the joiner's network and a goat context for
 each site on the machine that runs it (`goat_context` for the joiner,
 `goat_context_peer` for the founder). **Checkpoint 3**, the federation
 evidence: every replication subscription reports `replicating` in both
-directions; a write on the founder appears in the joiner's database; and the
-same deletion replicates back. **Checkpoint 4:**
+directions; a write on the founder appears in the joiner's database; the
+same deletion replicates back; and `signal-federation-verify.yml` passes, naming
+which directions a forward proved (a direction whose target peer is homed on
+the sender's own signal reports UNPROVEN until peers home on the joiner). **Checkpoint 4:**
 
 ```text
 goatbuilder status --env <env>
@@ -190,7 +213,10 @@ Both sites' machines name their declared refs, the founder's included.
 
 ## Undo
 
-Re-run from the failed phase. Removing a joiner reverses the mirror on the
+Re-run from the failed phase. Federation is turned off on both sides at
+once (`federation_peers_for_a: ""` on each, then the transport play or
+`mgmt-host.yml` on each node); one side alone leaves offers to the other's peers
+undeliverable. Removing a joiner reverses the mirror on the
 founder in the same change that removes the joiner from the pins and the
 founder's peer list; never remove the joiner's machines while the founder still
 subscribes to them.
