@@ -518,10 +518,6 @@ goat_controller_state_dir: "{{ lookup('env', 'HOME') }}/.goat/state"
 # kanidm-reissue-code.sh, offboard.sh) read it from the controller environment
 # when GOAT_IDM_ADMIN_PW is unset.
 public_door_idm_admin_pw_env: "GOAT_IDM_ADMIN_PW"
-# goat-zenoh-portal: the flag that takes the CA root, and the name the NetBird
-# API token carries inside the container.
-portal_ca_root_cert_flag: "--nova-root-cert"
-portal_netbird_api_token_env: "NOVA_NB_API_TOKEN"
 # The image label each store gate reads from the pinned image.
 portal_store_label: "org.usareur-af.goat-zenoh-portal.store"
 id_admin_console_store_label: "org.usareur-af.goat-id-console.store"

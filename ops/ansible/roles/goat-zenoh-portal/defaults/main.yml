@@ -362,7 +362,9 @@ portal_intake_base_url: ""
 portal_netbird_mgmt_url: "https://{{ site_dns_zone }}"
 portal_netbird_api_token_envvar: "{{ site_id | upper | replace('-', '_') }}_NB_API_TOKEN"
 # The name the token carries INSIDE the container (portal.env). A goatnet whose
-# pinned image predates PORTAL_NETBIRD_API_TOKEN sets the name that image reads.
+# pinned image predates PORTAL_NETBIRD_API_TOKEN sets the name that image reads,
+# or a list of names: portal.env then carries the token under each, and any of
+# the images reads its own.
 portal_netbird_api_token_env: "PORTAL_NETBIRD_API_TOKEN"
 # Where the NetBird management hostname in portal_netbird_mgmt_url points INSIDE the container.
 # On a mgmt host `mesh-coredns` pins that name to 127.0.0.1 in /etc/hosts, and
