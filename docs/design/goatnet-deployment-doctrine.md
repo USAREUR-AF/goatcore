@@ -75,6 +75,7 @@ declared writer, and refuses outright when a multi-host play declares none.
 Promotion to the second node stays the operator action §D3 says it is —
 `-e admin_write_role=B` **moves** the single home; there is deliberately no flag
 that turns the guard off.
+Which components may be single-homed at all, and why only those, is P13.
 
 **Proven by:** `standup-config-preflight.py` (coupled-fact asserts) + the
 cert-mint orphan-key guard + `tasks/assert-admin-write-host.yml` (single-homed
@@ -193,6 +194,43 @@ byte-identical files — two avenues, never two behaviours.
 of the deployment e2e harness ([`deployment-e2e.md`](deployment-e2e.md)) run
 both avenues; a failure on either fails the check. A script runs on its own and
 never depends on the `goatbuilder` binary.
+
+---
+
+## P13 — Every site runs every surface it needs to operate cut off.
+
+A goatnet keeps working at a site that has lost its uplink
+([ADR 0206](../adr/0206-island-mode-by-construction.md)), and island mode puts
+writes at every site, one write class at a time
+([ADR 1165](../adr/1165-island-mode-multi-writer-every-site-admits.md), which
+amends [ADR 1084](../adr/1084-block-64r-mgmt-repset-and-two-node-federation.md)
+§D3). So the default placement of a component is **every site of its goatnet**.
+A second or joining site that lacks a surface is a site that cannot run that
+surface while cut off.
+
+Three placements, and the only reasons for each:
+
+| Placement | Applies to | Declared as |
+|---|---|---|
+| Every site | Read-only and per-site surfaces: viewers, inspection pages, download and docs surfaces, node-scoped publishers | `read_only: true` on the component in `ops/pins/fleet-pins.yaml` for a read-only surface; no `absent` deviation on any live site |
+| One node per goatnet (single-homed) | An admin write class that ADR 1165 has not yet lifted: the surfaces ADR 1084 §D3 names (portal, id-console, dashboard, `goat admin`) and the engines that write the same stores | `single_homed_role: "<router_role>"` on the component; its play runs `tasks/assert-admin-write-host.yml` |
+| Absent at a named site, for a stated reason that is not single-homing | A dormant standby that routes nothing until promotion (ADR 1111 `route` trigger); a one-per-trust-domain singleton such as a certificate authority (ADR 1111 `singleton` trigger); a site that does not run the component yet, naming what it lacks | `absent: true` deviation whose `reason:` says which |
+
+A read-only surface is never single-homed. When ADR 1165 lifts a write class,
+its components lose `single_homed_role` and run at every site.
+
+A surface that runs at a site with no local Zenoh router of its own (a passive
+node whose router copy is stopped) points its endpoint at the active router over
+the mesh and does not join a local router network; the role carries the switch,
+the host's vars set it.
+
+**Proven by:** `resolve.check_placement` in
+`ops/consistency/python/goat_consistency/resolve.py`, run by
+`ops/pins/generate-pins.py --check` on every pull request: it refuses a
+deviation whose reason claims single-homing (`single-homed`, `D3`) unless the
+component declares `single_homed_role`, and refuses `single_homed_role` on a
+component declared `read_only: true`. Tests:
+`ops/consistency/python/tests/test_placement.py`.
 
 ---
 

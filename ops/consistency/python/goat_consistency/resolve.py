@@ -44,6 +44,45 @@ GENERATED_BASENAME = "pins.yml"
 ARTIFACT_TYPES = ("image", "config", "acl", "data", "cert", "forward-only")
 DEFAULT_ARTIFACT_TYPE = "image"
 
+# Placement (goatnet-deployment-doctrine.md P13). A component is single-homed
+# only while it is an admin write class ADR 1165 has not yet lifted, and it says
+# so by declaring `single_homed_role:`. A deviation reason that claims
+# single-homing for a component that declares none is the wrong reason for an
+# absence; a component declared `read_only: true` is never single-homed.
+SINGLE_HOMING_CLAIM_RE = re.compile(r"single[- ]?homed|\bD3\b", re.IGNORECASE)
+
+
+def check_placement(components):
+    """The two P13 placement rules, raised as SchemaError."""
+    for cname, spec in components.items():
+        spec = spec or {}
+        role = spec.get("single_homed_role")
+        read_only = spec.get("read_only")
+        if read_only is not None and not isinstance(read_only, bool):
+            die("component '%s': `read_only:` must be true or false" % cname)
+        if role is not None and (not isinstance(role, str) or not role.strip()):
+            die("component '%s': `single_homed_role:` must be a router_role "
+                "letter such as \"A\"" % cname)
+        if read_only and role:
+            die("component '%s' declares both `read_only: true` and "
+                "`single_homed_role: %s`. A read-only surface runs at every site "
+                "of its goatnet and is never single-homed "
+                "(goatnet-deployment-doctrine.md P13)." % (cname, role))
+        if role:
+            continue
+        for scope, dev in (spec.get("deviations") or {}).items():
+            reason = " ".join(str((dev or {}).get("reason") or "").split())
+            hit = SINGLE_HOMING_CLAIM_RE.search(reason)
+            if hit:
+                die("component '%s': deviation '%s' gives single-homing as its "
+                    "reason (\"%s\"), but the component declares no "
+                    "`single_homed_role:`. Only an admin write class not yet "
+                    "lifted by ADR 1165 is single-homed, and it declares the "
+                    "role. Declare it, or state the real reason for the "
+                    "deviation (goatnet-deployment-doctrine.md P13)."
+                    % (cname, scope, hit.group(0)))
+
+
 TRUTHY = {"true", "yes", "on"}
 FALSY = {"false", "no", "off"}
 
@@ -276,6 +315,7 @@ def validate(goatnets, components):
                         die("component '%s' has `fleet: null` but '%s' (goatnet "
                             "'%s') carries no deviation — the pin is unresolvable"
                             % (cname, m, gn))
+    check_placement(components)
     return member_of
 
 
