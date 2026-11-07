@@ -6,12 +6,14 @@
 //! command and runs nothing; `--from`/`--to` resume; every phase is idempotent.
 //!
 //!   1  MANUAL reach the box on the SITE LAN (not the USB bridge address)
-//!   2  T      seed-ssh-key.sh — key auth + NOPASSWD sudo, password from an env var
+//!   2  T      seed-ssh-key.sh — key auth + NOPASSWD sudo, password from an env var;
+//!             skipped when `ssh -o BatchMode=yes <user>@<addr> sudo -n true` already
+//!             passes (a box installed unattended with the key and NOPASSWD sudo)
 //!   3  GATE   repo work done first: standup-config-preflight.py passes
 //!   4  T      quiet apt on the node (mask the daily timers; unmasked at 14)
 //!   5  A      mgmt-host-baseline.yml, narrowed to the node
-//!   6  A      wireguard-kmod.yml, first pass — its last check fails before
-//!             enrolment (wt0 absent); expected
+//!   6  A      wireguard-kmod.yml, first pass — its wt0 check fails before
+//!             enrolment (wt0 absent); expected, and the only failure let pass
 //!   7  GATE   the goatnet CA this site trusts is the site's own, not the shared dev root
 //!   8  MANUAL mint a setup key carrying the group the site's other nodes hold
 //!   9  GATE   preflight-enrollment.sh on the node (clock, stale wt0, apex reach)
@@ -20,10 +22,16 @@
 //!  11  A      wireguard-kmod.yml again — changed=0 proves the kmod took
 //!  12  GATE   mesh_ip + the mesh inventory filled: preflight passes with no TBD_
 //!  13  A      the class's converge: core (founder pass, or a joiner's three
-//!             passes + the founder-side mirror), obs (the three obs legs),
-//!             breakglass, network-jump
+//!             passes + the founder-side mirror), obs (the three obs legs; at
+//!             a joiner site the utility leg is skipped — the pub/sub state of
+//!             record stays with the founder), breakglass, network-jump
 //!  14  T      unmask the apt timers
 //!  15  GATE   acceptance: every applicable row PASS, from the new node's context
+//!
+//! `--via mesh` (default) reaches the goatnet's hosts over this machine's mesh
+//! (`mgmt-hosts.ini` + `mgmt-hosts-mesh.ini`); `--via door` over its env door
+//! (`mgmt-hosts.ini` + `doors-groupvars.ini`, docs/design/env-doors.md), for a
+//! machine not on that goatnet's mesh. The two transports are never combined.
 //!
 //! Status: built from the runbook; unmeasured on hardware (the runbook's own
 //! run of is the record it transcribes).
@@ -43,12 +51,31 @@ pub struct Options<'a> {
     pub class: &'a str,
     pub address: Option<&'a str>,
     pub pass_var: Option<&'a str>,
+    /// How this machine reaches the goatnet's hosts: `mesh` or `door`.
+    pub via: &'a str,
     pub from: u32,
     pub to: u32,
     pub dry_run: bool,
 }
 
 pub const CLASSES: [&str; 4] = ["core", "obs", "breakglass", "network-jump"];
+pub const VIAS: [&str; 2] = ["mesh", "door"];
+
+/// The inventories a play is given for each transport. Base inventory first
+/// (group membership, site facts, router_role); then exactly one transport
+/// override. Passing both overrides lets whichever loads last win silently.
+fn inventories(via: &str) -> &'static str {
+    match via {
+        "door" => "-i inventory/mgmt-hosts.ini -i inventory/doors-groupvars.ini",
+        _ => "-i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini",
+    }
+}
+
+/// The step that opens the env door, printed first in a `--via door` plan and
+/// run before the first phase (door-open.sh reuses a door already open).
+fn door_open_cmd(repo: &Path, env: &str) -> String {
+    format!("'{}/ops/scripts/door-open.sh' {env}", repo.display())
+}
 
 struct Phase {
     n: u32,
@@ -69,6 +96,11 @@ fn class_group(site_us: &str, class: &str) -> String {
         other => format!("{site_us}_{}_hosts", other.replace('-', "_")),
     }
 }
+
+/// Exits 0 only when every `fatal:` in an ansible log falls under the
+/// wireguard-kmod task that verifies wt0 (the check that cannot pass before the
+/// node is enrolled, roles/wireguard-kmod/tasks/main.yml), and there is one.
+const WT0_ABSENT_ONLY: &str = "awk '/^TASK \\[/{t=$0} /^fatal:/{n++; if (t !~ /verify wt0 is kernelspace wireguard/) bad=1} END{exit !(n>0 && !bad)}'";
 
 fn gv_matches(file: &Path, key: &str, value: &str) -> bool {
     std::fs::read_to_string(file)
@@ -107,7 +139,7 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
     let aws = crate::settings::aws_profile(repo);
     let user = crate::settings::ssh_user(repo).unwrap_or_else(|| "<deploy.ssh_user>".to_string());
     let pre = format!("OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws {aws} -- ../scripts/ansible-preflight.sh");
-    let inv = "-i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini";
+    let inv = inventories(o.via);
     let addr = o.address.unwrap_or("<the node's LAN address>");
     let pass_var = o.pass_var.map(String::from).unwrap_or_else(|| format!("{upper}_NODE_PASS"));
     let gv = repo.join("ops/ansible/group_vars").join(&site_group).join("vars.yml");
@@ -124,11 +156,11 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
     let enrol_dns = { let d = gv_first(&gv, "site_enrollment_dns"); if d.is_empty() { format!("<site_enrollment_dns of {site_group}>") } else { d } };
     let mut ev = vec![
         p(1, "MANUAL", "reach the box on the SITE LAN", format!("ssh {user}@{addr} — find the box's real LAN address before anything else and pass it as --address. On a Jetson the address handed over may be 192.168.55.1: that is l4tbr0, the USB device-mode bridge on the box itself, reachable only over a direct USB-C cable.")),
-        p(2, "T", "seed the SSH key (key auth + NOPASSWD sudo; password from the env var, never the command line)", format!("'{r}/ops/scripts/seed-ssh-key.sh' {user}@{addr} {pass_var}")),
+        p(2, "T", "seed the SSH key (key auth + NOPASSWD sudo; password from the env var, never the command line) — skipped when key auth and NOPASSWD sudo already work", format!("if ssh -o BatchMode=yes -o ConnectTimeout=10 {user}@{addr} sudo -n true; then echo '>> {user}@{addr}: key auth and NOPASSWD sudo already work — seed skipped'; else '{r}/ops/scripts/seed-ssh-key.sh' {user}@{addr} {pass_var}; fi")),
         p(3, "GATE", "repo work first: group, inventory, pins, exclusions — the config preflight passes", format!("python3 '{r}/ops/scripts/standup-config-preflight.py' {preflight_target}")),
         p(4, "T", "quiet apt on the node (the baseline stalls on the dpkg lock otherwise; unmasked in phase 14)", format!("ssh {user}@{addr} 'sudo systemctl mask --now apt-daily.timer apt-daily-upgrade.timer'")),
         p(5, "A", "host baseline, narrowed to the node — run detached if the session may drop: it apt-upgrades and reboot-waves", format!("cd '{r}/ops/ansible' && {pre} {inv} mgmt-host-baseline.yml -e target={group} -e site_id={site} -l {node}")),
-        p(6, "A", "WireGuard kernel modules, first pass — the final check fails before enrolment (wt0 absent); expected, phase 11 re-runs it", format!("cd '{r}/ops/ansible' && ( {pre} {inv} wireguard-kmod.yml -e target={group} -l {node} || echo '>> wireguard-kmod: final check failed before enrolment (wt0 absent) — expected; phase 11 re-runs it for changed=0' )")),
+        p(6, "A", "WireGuard kernel modules, first pass — its wt0 check fails before enrolment (wt0 absent); expected, phase 11 re-runs it. Any other failure stops the run", format!("cd '{r}/ops/ansible' && log=$(mktemp) && if {pre} {inv} wireguard-kmod.yml -e target={group} -l {node} 2>&1 | tee \"$log\"; then rm -f \"$log\"; elif {WT0_ABSENT_ONLY} \"$log\" && grep -q 'wt0.*does not exist' \"$log\"; then rm -f \"$log\"; echo '>> wireguard-kmod: the wt0 check failed before enrolment (wt0 absent) — expected; phase 11 re-runs it for changed=0'; else echo \"!! wireguard-kmod failed on something other than the pre-enrolment wt0 check — output kept in $log\"; exit 1; fi")),
         p(7, "GATE", "the CA this site trusts is its own, not the shared dev root (silence puts a production node on the dev CA)", format!("python3 '{r}/ops/scripts/standup-config-preflight.py' {preflight_target} && ! grep -rqE 'ca_id:[[:space:]]*\"?[a-z]+-goat-ca-' '{r}/ops/ansible/group_vars/{group}/' || {{ echo 'group_vars/{group} names the unnamed default CA (<mode>-goat-ca-<date>); a site node trusts its goatnet CA'; exit 1; }}")),
         p(8, "MANUAL", "mint a setup key carrying the group the site's other mgmt hosts hold — read it off a live peer, do not guess", format!("in the NetBird dashboard of {enrol_at} (or `goat admin` on it): Setup Keys → new key, auto_groups = the group a live mgmt host of {enrol_at} holds; keep it for phase 10")),
         p(9, "GATE", "enrollment preflight on the node (clock skew, a stale wt0, an unreachable apex — each turns enrolment into a hang)", format!("{{ printf 'export NETBIRD_SETUP_KEY=%s NETBIRD_MANAGEMENT_URL=%s\\n' \"$(printenv {upper}_NB_SETUP_KEY)\" 'https://{enrol_dns}'; cat '{r}/ops/preflight-enrollment.sh'; }} | ssh {user}@{addr} 'bash -s'")),
@@ -167,12 +199,19 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
             ev.push(p(13, "A", &format!("[core, founder site] site-bootstrap on the node{}", if intra_pair { " (intra_site_pair: the A→B streaming standby is phase 6A of the play)" } else { "" }), format!("cd '{r}/ops/ansible' && {pre} {inv} -l {node} site-bootstrap.yml {ev_bootstrap}")));
         }
         "obs" => {
-            if let Some(missing) = crate::standup::obs_play_missing(repo) {
+            if let Some(missing) = crate::standup::obs_play_missing(repo).filter(|_| !joiner) {
                 return Err(anyhow!("{missing}"));
             }
             let og = &group;
             ev.push(p(13, "A", "[obs] observability host: baseline + LUKS (own nodes only)", format!("cd '{r}/ops/ansible' && {pre} {inv} mgmt-host-baseline.yml -e target={og} -e site_id={site} -l {node} && {pre} {inv} tang-server.yml -e target={og} -l {node} && {pre} {inv} mgmt-host-luks.yml -e target={og} -e site_id={site} -l {node}")));
-            ev.push(p(13, "A", "[obs] observability host: utility (Forgejo, the pub/sub state-of-record primary; docker data-root on the NVMe first, F-504)", format!("cd '{r}/ops/ansible' && {pre} {inv} utility-host-bootstrap.yml -e target={og} -l {node}")));
+            if joiner {
+                // The pub/sub state of record has one primary per goatnet, at
+                // the founder; a joiner's obs host does not start a second one.
+                let at = if founder_site.is_empty() { "the founder".to_string() } else { format!("the founder {founder_site}") };
+                ev.push(p(13, "SKIP", &format!("[obs, joiner] utility leg (Forgejo, the pub/sub state-of-record primary) not run: {site} joins a goatnet, and its state of record stays with {at}"), format!("echo '>> utility-host-bootstrap.yml skipped: {site} is a joiner site (goatnet_founder: false); the state of record stays with {at}'")));
+            } else {
+                ev.push(p(13, "A", "[obs] observability host: utility (Forgejo, the pub/sub state-of-record primary; docker data-root on the NVMe first, F-504)", format!("cd '{r}/ops/ansible' && {pre} {inv} utility-host-bootstrap.yml -e target={og} -l {node}")));
+            }
             ev.push(p(13, "A", "[obs] observability host: stack (Prometheus/Alertmanager/Grafana) — needs obs_scrape_targets", format!("cd '{r}/ops/ansible' && {pre} {inv} obs-host-bootstrap.yml -e target={og} -l {node}")));
         }
         "breakglass" => {
@@ -210,6 +249,14 @@ pub fn join_node(repo: &Path, o: &Options) -> Result<Report> {
     if !CLASSES.contains(&o.class) {
         return Err(anyhow!("class '{}' is not one this verb converges; known: {}", o.class, CLASSES.join(", ")));
     }
+    execute(repo, o)
+}
+
+/// The plan and the run, once the environment, site and class are known.
+fn execute(repo: &Path, o: &Options) -> Result<Report> {
+    if !VIAS.contains(&o.via) {
+        return Err(anyhow!("--via '{}' is not a transport; known: {} (mesh = this machine is on the goatnet's mesh; door = through its env door, docs/design/env-doors.md)", o.via, VIAS.join(", ")));
+    }
     if !o.dry_run && o.address.is_none() {
         return Err(anyhow!("--address <the node's LAN address> is required to run (phase 1 says how to find it); --dry-run plans without it"));
     }
@@ -217,9 +264,24 @@ pub fn join_node(repo: &Path, o: &Options) -> Result<Report> {
         return Err(anyhow!("this checkout declares no SSH user for a new machine: set deploy.ssh_user in ops/goatbuilder/goatbuilder.yaml; --dry-run plans without it"));
     }
     let phases = plan(repo, o)?;
-    let resume = format!("goatbuilder join-node {} --site {} --node {} --class {}{}", o.env, o.site, o.node, o.class, o.address.map(|a| format!(" --address {a}")).unwrap_or_default());
-    let mut checks = vec![row("banner", format!("join-node: site={}  node={}  class={}  {}", o.site, o.node, o.class, if o.dry_run { "(DRY RUN — nothing executes)" } else { "" }))];
+    let resume = format!("goatbuilder join-node {} --site {} --node {} --class {}{}{}", o.env, o.site, o.node, o.class, o.address.map(|a| format!(" --address {a}")).unwrap_or_default(), if o.via == "door" { " --via door" } else { "" });
+    let mut checks = vec![row("banner", format!("join-node: site={}  node={}  class={}  via={}  {}", o.site, o.node, o.class, o.via, if o.dry_run { "(DRY RUN — nothing executes)" } else { "" }))];
     let mut exit = EXIT_OK;
+    if o.via == "door" {
+        let open = door_open_cmd(repo, o.env);
+        checks.push(row("door", format!("=== Before phase 1: open the env door to {} — every play below goes through it (mgmt-hosts.ini + doors-groupvars.ini, never the mesh inventory too) ===", o.env)));
+        checks.push(row("cmd", open.clone()));
+        if !o.dry_run {
+            let status = Command::new("bash").args(["-euo", "pipefail", "-c", &open]).current_dir(repo).status().context("bash")?;
+            if !status.success() {
+                checks.push(Check { name: "failed".into(), ok: false, detail: format!("!! the env door to {} did not open — no phase has run", o.env), fix: Some(format!("{open} --status says why; then re-run: {resume} --from {}", o.from.max(1))) });
+                let mut r = Report::new("join-node", checks, EXIT_REFUSED);
+                r.exit = EXIT_REFUSED;
+                r.ok = false;
+                return Ok(r);
+            }
+        }
+    }
     for ph in &phases {
         if ph.n < o.from || ph.n > o.to {
             continue;
@@ -273,7 +335,7 @@ mod tests {
     }
 
     fn opts<'a>(site: &'a str, class: &'a str, env: &'a str) -> Options<'a> {
-        Options { env, site, node: "node-x", class, address: None, pass_var: None, from: 0, to: 99, dry_run: true }
+        Options { env, site, node: "node-x", class, address: None, pass_var: None, via: "mesh", from: 0, to: 99, dry_run: true }
     }
 
     /// A joiner site's core node gets the three passes and the founder-side
@@ -414,6 +476,97 @@ mod tests {
         assert!(cmds.iter().any(|c| c.contains("lookup(\"env\", \"") && c.contains("_PG_PASS\")")), "{cmds:?}");
         let p9 = cmds.iter().find(|c| c.contains("preflight-enrollment.sh")).unwrap();
         assert!(p9.contains("NETBIRD_MANAGEMENT_URL=") && p9.contains("| ssh ") && p9.ends_with("'bash -s'"), "{p9}");
+    }
+
+    /// `--via door` gives every play the base inventory and the door override,
+    /// never the mesh override too, and the plan opens with the door step.
+    #[test]
+    fn via_door_uses_the_door_inventory_and_opens_the_door_first() {
+        let t = joiner_checkout();
+        let o = Options { via: "door", ..opts("zagros-b", "core", "zagros") };
+        let r = execute(t.path(), &o).unwrap();
+        assert_eq!(r.checks[1].name, "door", "{:?}", r.checks.iter().map(|c| &c.name).collect::<Vec<_>>());
+        assert!(r.checks[1].detail.contains("open the env door to zagros"), "{}", r.checks[1].detail);
+        assert!(r.checks[2].detail.ends_with("/ops/scripts/door-open.sh' zagros"), "{}", r.checks[2].detail);
+        // (Phase 12 still reads the mesh inventory for TBD_: the node's mesh row
+        // is owed whichever way this machine reaches it. No play is given it.)
+        let plays: Vec<Phase> = plan(t.path(), &o).unwrap().into_iter().filter(|p| p.cmd.contains("ansible-preflight.sh")).collect();
+        assert!(plays.len() >= 6);
+        for ph in plays {
+            assert!(!ph.cmd.contains("mgmt-hosts-mesh.ini"), "phase {}: {}", ph.n, ph.cmd);
+            assert!(ph.cmd.contains("-i inventory/mgmt-hosts.ini -i inventory/doors-groupvars.ini"), "phase {}: {}", ph.n, ph.cmd);
+        }
+        // The default stays the mesh, with no door step.
+        let mesh = opts("zagros-b", "core", "zagros");
+        let r = execute(t.path(), &mesh).unwrap();
+        assert!(r.checks.iter().all(|c| c.name != "door"));
+        for ph in plan(t.path(), &mesh).unwrap() {
+            assert!(!ph.cmd.contains("doors-groupvars.ini"), "phase {}: {}", ph.n, ph.cmd);
+        }
+        let bad = Options { via: "tunnel", ..opts("zagros-b", "core", "zagros") };
+        assert!(execute(t.path(), &bad).unwrap_err().to_string().contains("--via 'tunnel'"));
+    }
+
+    /// At a joiner site an obs node skips the utility leg (the state of record
+    /// stays with the founder) and says why; a founder site's obs node runs it.
+    #[test]
+    fn a_joiner_obs_node_skips_the_state_of_record_leg() {
+        let t = joiner_checkout();
+        let ph = plan(t.path(), &opts("zagros-b", "obs", "zagros")).unwrap();
+        assert!(ph.iter().all(|p| !p.cmd.contains("ansible-preflight.sh") || !p.cmd.contains("utility-host-bootstrap.yml")), "a joiner never runs the utility play");
+        let skip = ph.iter().find(|p| p.kind == "SKIP").expect("a SKIP line for the utility leg");
+        assert!(skip.label.contains("state of record stays with the founder zagros"), "{}", skip.label);
+        assert!(ph.iter().any(|p| p.cmd.contains("obs-host-bootstrap.yml -e target=zagros_b_obs_hosts")));
+
+        let gv = t.path().join("ops/ansible/group_vars/zagros_hosts");
+        std::fs::create_dir_all(&gv).unwrap();
+        std::fs::write(gv.join("vars.yml"), "goatnet_founder: true\n").unwrap();
+        std::fs::write(t.path().join("ops/ansible/utility-host-bootstrap.yml"), "---\n").unwrap();
+        let ph = plan(t.path(), &opts("zagros", "obs", "zagros")).unwrap();
+        assert!(ph.iter().all(|p| p.kind != "SKIP"));
+        assert!(ph.iter().any(|p| p.cmd.contains("utility-host-bootstrap.yml -e target=zagros_obs_hosts")));
+    }
+
+    /// Phase 2 probes key auth + NOPASSWD sudo first and seeds only when the
+    /// probe fails; the dry-run prints the probe.
+    #[test]
+    fn the_key_seed_is_skipped_when_the_box_already_takes_the_key() {
+        let t = joiner_checkout();
+        let o = Options { address: Some("192.0.2.9"), ..opts("zagros-b", "core", "zagros") };
+        let p2 = plan(t.path(), &o).unwrap().into_iter().find(|p| p.n == 2).unwrap();
+        assert!(p2.cmd.starts_with("if ssh -o BatchMode=yes -o ConnectTimeout=10 <deploy.ssh_user>@192.0.2.9 sudo -n true; then echo"), "{}", p2.cmd);
+        assert!(p2.cmd.contains("seed skipped") && p2.cmd.contains("else '") && p2.cmd.contains("seed-ssh-key.sh' <deploy.ssh_user>@192.0.2.9 ZAGROS_B_NODE_PASS; fi"), "{}", p2.cmd);
+        let r = execute(t.path(), &o).unwrap();
+        assert!(r.checks.iter().any(|c| c.name == "cmd" && c.detail.contains("sudo -n true")));
+    }
+
+    /// Phase 6 lets through only the pre-enrolment wt0 check: a clean run and a
+    /// run whose sole failure is that check pass; any other failure stops.
+    #[test]
+    fn phase_six_masks_only_the_wt0_absent_check() {
+        let t = joiner_checkout();
+        std::fs::create_dir_all(t.path().join("ops/scripts")).unwrap();
+        // Stands in for with-aws + ansible: prints FAKE_LOG, exits FAKE_RC.
+        let stub = t.path().join("ops/scripts/with-aws");
+        std::fs::write(&stub, "#!/bin/bash\nprintf '%s\\n' \"$FAKE_LOG\"\nexit \"$FAKE_RC\"\n").unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let p6 = plan(t.path(), &opts("zagros-b", "core", "zagros")).unwrap().into_iter().find(|p| p.n == 6).unwrap();
+        let run = |log: &str, rc: &str| {
+            Command::new("bash").args(["-euo", "pipefail", "-c", &p6.cmd]).env("FAKE_LOG", log).env("FAKE_RC", rc).output().unwrap()
+        };
+        let wt0 = "TASK [wireguard-kmod : check current wt0 driver] ***\nok: [node-x]\nTASK [wireguard-kmod : verify wt0 is kernelspace wireguard] ***\nFAILED - RETRYING: [node-x]: verify wt0 is kernelspace wireguard (12 retries left).\nfatal: [node-x]: FAILED! => {\"attempts\": 12, \"cmd\": \"ip -d link show wt0\", \"stderr\": \"Device \\\"wt0\\\" does not exist.\"}";
+        let other = "TASK [wireguard-kmod : install the module] ***\nfatal: [node-x]: FAILED! => {\"msg\": \"modprobe: FATAL: Module wireguard not found\"}";
+        let unreachable = "TASK [Gathering Facts] ***\nfatal: [node-x]: UNREACHABLE! => {\"msg\": \"ssh: connect to host timed out\"}";
+        assert!(run("PLAY RECAP ok=9 failed=0", "0").status.success());
+        let o = run(wt0, "2");
+        assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stdout));
+        assert!(String::from_utf8_lossy(&o.stdout).contains("expected; phase 11 re-runs it"));
+        for log in [other, unreachable, &format!("{wt0}\n{other}")] {
+            let o = run(log, "2");
+            assert!(!o.status.success(), "must surface: {log}");
+            assert!(String::from_utf8_lossy(&o.stdout).contains("something other than the pre-enrolment wt0 check"));
+        }
     }
 
     #[test]

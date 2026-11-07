@@ -400,6 +400,10 @@ pub enum Cmd {
         /// The env var holding the node's first-login password (default <SITE>_NODE_PASS).
         #[arg(long)]
         pass_var: Option<String>,
+        /// How this machine reaches the goatnet's hosts: `mesh` (this machine is on
+        /// its mesh) or `door` (through its env door; the plan opens it first).
+        #[arg(long, default_value = "mesh", value_parser = ["mesh", "door"])]
+        via: String,
         /// Resume from this phase.
         #[arg(long, default_value_t = 1)]
         from: u32,
@@ -1290,11 +1294,11 @@ fn main() {
             }
             None => standup::teardown(&repo, &standup::Options { env, site, profile: profile.as_deref(), from: *from, to: *to, skip_obs: false, obs_only: false, dry_run: *dry_run, parallel: false, check: false }, *services),
         },
-        Cmd::JoinNode { env, site, node, class, address, pass_var, from, to, dry_run } => {
+        Cmd::JoinNode { env, site, node, class, address, pass_var, via, from, to, dry_run } => {
             if !cli.yes && !*dry_run && !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
                 Err(anyhow::anyhow!("join-node is a mutation: pass --yes without a terminal (C10)"))
             } else {
-                joinnode::join_node(&repo, &joinnode::Options { env, site, node, class, address: address.as_deref(), pass_var: pass_var.as_deref(), from: *from, to: *to, dry_run: *dry_run })
+                joinnode::join_node(&repo, &joinnode::Options { env, site, node, class, address: address.as_deref(), pass_var: pass_var.as_deref(), via, from: *from, to: *to, dry_run: *dry_run })
             }
         }
         Cmd::Federate { with, env, as_party, edge_group, work, from, to, dry_run } => {

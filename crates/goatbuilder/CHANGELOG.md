@@ -6,6 +6,33 @@ Each release is the tag `goatbuilder/v<semver>` on `main`, built and signed by
 
 ## Unreleased
 
+### Added: `join-node --via door`
+
+`join-node` gave every play `-i inventory/mgmt-hosts.ini -i
+inventory/mgmt-hosts-mesh.ini`, so it ran only from a machine on that
+goatnet's mesh. `--via <mesh|door>` (default `mesh`) picks the transport;
+`door` gives every play `-i inventory/mgmt-hosts.ini -i
+inventory/doors-groupvars.ini` and never the mesh inventory too
+(docs/design/env-doors.md). The plan's first line is the door step,
+`ops/scripts/door-open.sh <env>`, and a run opens the door before phase 1,
+refusing if it does not open.
+
+### Changed: `join-node` phases 2, 6 and 13 at a joiner obs site
+
+- Phase 2 first probes `ssh -o BatchMode=yes <user>@<address> sudo -n true`
+  and skips `seed-ssh-key.sh` with a note when it passes (a box installed
+  unattended with the operator's key and NOPASSWD sudo). The dry-run prints
+  the probe.
+- Phase 6 no longer masks every failure of the first `wireguard-kmod.yml`
+  pass. It passes only when the run succeeds, or when its sole failure is the
+  role's `verify wt0 is kernelspace wireguard` check reporting that `wt0` does
+  not exist (the node is not enrolled yet). Any other failure stops the run,
+  with the play's output kept in a temporary file the message names.
+- Phase 13 for class `obs` at a joiner site (the core group's
+  `goatnet_founder: false`) skips `utility-host-bootstrap.yml` (Forgejo, the
+  pub/sub state-of-record primary): the state of record stays with the
+  founder. The plan line says so, as a `SKIP` phase.
+
 ### Fixed: a joiner's bootstrap wires its peers, and Ory replicates both ways
 
 `join-node` (phase 13) and `standup` ran a joiner's bootstrap as

@@ -85,13 +85,16 @@ checkpoint 2 on hardware proves.
    with `goatnet_founder: false` and `join_founder_site: <founder-site>`.
 2. **The founder names the joiner.** The founder's configuration must list the
    joiner as a replication peer before the mirror runs. The driver cannot
-   supply this; the configuration must.
+   supply this; the configuration must. Both sites' groups are children of
+   `[mgmt_hosts:children]` in `inventory/mgmt-hosts.ini`: replication finds its
+   peers by walking that group, and the config preflight fails, naming the line
+   to add, when a site running the management stack is missing from it.
 3. **The pins.** The joiner's member group added to the goatnet's row in
    `ops/pins/fleet-pins.yaml`, with `absent: true` for components that stay
    single-homed on the founder.
 4. **Reach.** The joiner's machines reachable for the first key seeding, and
    your laptop able to reach both sites: on the goatnet's mesh, or through its
-   door.
+   door (`join-node --via door`, below).
 
 ## Run it on your hardware
 
@@ -120,6 +123,49 @@ goatbuilder join-node <env> --site <joiner-site> --node <node-name> --class core
 goatbuilder join-node <env> --site <joiner-site> --node <node-name> --class core \
   --address <its LAN address> --yes
 ```
+
+A laptop that is not on the goatnet's mesh adds `--via door`. Every play then
+takes `inventory/mgmt-hosts.ini` with `inventory/doors-groupvars.ini`, never the
+mesh inventory as well, and the plan's first line opens the door
+(`ops/scripts/door-open.sh <env>`); a run opens it before phase 1.
+
+Phase 2 seeds the SSH key only when the box needs it: it first tries
+`ssh -o BatchMode=yes <user>@<address> sudo -n true`, and a box installed
+unattended with your key and passwordless sudo passes that and skips the seed.
+Phase 6, the first WireGuard pass, is expected to fail on one check before
+enrolment, the one that looks for `wt0`; any other failure stops the run.
+
+### What join-node runs for a joiner's core machine
+
+Phase 13 is the joiner's three passes and the founder-side mirror, in this
+order. Each step depends on the one before.
+
+| Step | Play | What it does |
+|---|---|---|
+| Pass 1 | `site-bootstrap-for.yml -e bootstrap_site=<joiner-site>` (or the site's own `<site>-bootstrap.yml`) with `participates_in_spock=false` | Brings the stack up with no account. Postgres initialises with the founder's cluster encoding, read from the founder; an existing cluster with a different encoding is refused |
+| Ory | `ory-deploy.yml` | Creates the identity schemas the seed loads into |
+| Pass 2 | `site-seed-from-peer.yml` | Installs the hub directive ledger on both ends, then copies identity and mesh data from the founder. Refuses an account that is already populated |
+| Pass 3 | the same bootstrap play with `ory_spock_wire_subscriptions=false` | Turns on mesh replication both ways; for identity, creates the joiner's node and replication set only |
+| Mirror | `spock-mesh-wire.yml --limit <founder group>` with `inter_site_spock_peers=[<joiner-site>]`, `ory_spock_reconcile_history=false` | The founder's half: its node, replication set and subscription to the joiner. No history reconcile yet |
+| Rewire | `spock-mesh-wire.yml --limit <node>` | The joiner's identity subscription, then the history reconcile, which copies history both ways now that both halves exist |
+
+`site_id` reaches every pass as a play variable, set by the wrapper. Never pass
+`-e site_id=...`: an extra variable sets the site on every host in the
+inventory, the peer walk then finds no other site, and a joiner that would wire
+zero peers is refused rather than reported as passing.
+
+An obs machine at a joiner site runs the baseline, LUKS and the observability
+stack, and skips the utility leg (Forgejo, the pub/sub state-of-record
+primary): the state of record stays with the founder, and the plan says so.
+
+**A renamed machine keeps its backups.** Each machine's pgBackRest repository
+passphrase is derived from the site's backup key and a per-machine seed. The
+seed is the machine's inventory name the first time the backup play runs, and
+it is recorded on the machine in `/etc/pgbackrest/cipher-seed` (root only; it
+holds a name, not the key). Later runs read the recorded name, so renaming the
+machine in the inventory leaves the passphrase, and the repository, as they
+were. To re-key a machine on purpose, remove that file together with the
+repository it keys.
 
 **The scripts avenue.** `ops/scripts/goat-standup.sh <joiner-site> --plan`, then
 without `--plan`. For each further machine, the `join-node --dry-run` plan above
