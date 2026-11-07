@@ -142,6 +142,7 @@ def plays_in(cmd, default_group):
         f = ANS / g.group(2)
         try:
             pat = g.group(1).replace("[[:space:]]", r"\s")
+            # grep matches line by line, so its `^` is the start of a line.
             if not re.search(pat, f.read_text(), re.M):
                 return []
         except OSError:

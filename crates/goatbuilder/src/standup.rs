@@ -544,6 +544,11 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
     ev.push(p(12, "A", "onboarding intake front desk (public, ADR 1062 stage 1)".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} onboard-intake-deploy.yml -e target={g} -e site_id={site}")));
     ev.push(p(12, "A", "onboard-runner (auto-mint on approval, ADR 1062 stage 3)".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} onboard-runner-deploy.yml -e target={g} -e site_id={site}")));
     ev.push(p(12, "A", "grant-keyd (encryption key distribution)".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} grant-keyd-deploy.yml -e target={g} -l 'mgmt-{site}-01*'")));
+    // The site services site-services.yml imports, which no other phase runs:
+    // each only when the site's vars.yml sets its flag, on the founder mgmt host,
+    // and a failed play fails the step.
+    ev.push(p(12, "A", "id-admin console (single-homed admin surface; opt-in via id_admin_console_enabled)".into(), format!("cd '{r}/ops/ansible' && if grep -qE '^id_admin_console_enabled:[[:space:]]*true' group_vars/{g}/vars.yml 2>/dev/null; then {pre} {inv} id-admin-console-deploy.yml -e target={g} -l 'mgmt-{site}-01*'; else echo 'id_admin_console_enabled not true for {g} — console not requested, skipping'; fi")));
+    ev.push(p(12, "A", "isitup status page (opt-in via isitup_enabled)".into(), format!("cd '{r}/ops/ansible' && if grep -qE '^isitup_enabled:[[:space:]]*true' group_vars/{g}/vars.yml 2>/dev/null; then {pre} {inv} isitup-deploy.yml -e target={g} -l 'mgmt-{site}-01*'; else echo 'isitup_enabled not true for {g} — status page not requested, skipping'; fi")));
     ev.push(p(12, "A", "notional pub/sub (synthetic vendors — opt-in via synth_vendors_enabled)".into(), format!("cd '{r}/ops/ansible' && {{ [ ! -e group_vars/{g}/synth-vendors.yml ] || [ -r group_vars/{g}/synth-vendors.yml ] || {{ echo 'cannot read group_vars/{g}/synth-vendors.yml' >&2; false; }}; }} && if grep -qE '^[[:space:]]*synth_vendors_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' group_vars/{g}/synth-vendors.yml 2>/dev/null; then {pre} {inv} zenoh-synth-vendors-slot-pool-deploy.yml -e target={g}; else echo 'synth_vendors_enabled not true for {g} — notional pub/sub not requested, skipping'; fi")));
     if s.obs {
         ev.push(Event::LegJoin { leg: "stack", at: 13 });
@@ -1492,11 +1497,13 @@ mod tests {
     #[test]
     fn dag_is_read_and_matches_labels_past_their_profile_tag() {
         let dag = load_dag(&repo_root());
-        assert_eq!(dag.len(), 12);
+        assert_eq!(dag.len(), 14);
         assert_eq!(dag_lookup(&dag, "declared NetBird ACL: groups, then policies, then enforce (one play run)").unwrap().id, "acl");
         assert_eq!(dag_lookup(&dag, "portal (registry, certificate minting, grant rows)").unwrap().id, "portal");
         assert_eq!(dag_lookup(&dag, "[internet] mesh CoreDNS (only if this site has a mesh zone)").unwrap().id, "mesh-dns");
         assert!(dag_lookup(&dag, "mint the pubsub-state mirror bot on the obs host's Forgejo").is_none());
+        assert_eq!(dag_lookup(&dag, "id-admin console (single-homed admin surface; opt-in via id_admin_console_enabled)").unwrap().id, "id-console");
+        assert_eq!(dag_lookup(&dag, "isitup status page (opt-in via isitup_enabled)").unwrap().id, "isitup");
     }
 
     #[test]
