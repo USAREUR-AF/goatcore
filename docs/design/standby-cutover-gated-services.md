@@ -71,3 +71,12 @@ A promotion runbook that consumes this manifest is planned.
 - [node-topologies-and-replication-mechanisms.md](node-topologies-and-replication-mechanisms.md) — zagros-b is topology #2.
 - zagros-two-node-signal-bringup-and-netbird-perf-learnings.md §8.5 — the P-phase build (P1/P2 = standby-safe; P3+ = cutover-gated).
 - environment-parity.md — the sibling manifest+guard pattern (`parity-capabilities.yaml`).
+
+
+## Standby execution
+
+Status: built. Avoid audit-role writes on a PostgreSQL standby, avoid a local enrollment-apex pin on a known standby, and check management service health only where it should run. Refuse role writes on an unknown recovery state; preserve DNS pin state on an unknown recovery state.
+
+Tests substitute Docker responses and use temporary files. They do not establish replication correctness, failover safety or retained writes during promotion. No database migration or failover was performed.
+
+Offline regression evidence and remaining release gates are recorded in the corresponding draft PR. No live deployment is claimed.
