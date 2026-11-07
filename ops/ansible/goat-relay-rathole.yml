@@ -27,6 +27,11 @@
 # rathole_secret_name + aws_region + ansible_aws_ssm_* come from the relay
 # inventory (inventory/hosts-<site>.ini). Idempotent: re-runs reuse the
 # persisted server.pubkey + existing token (relay-server-rathole.yml logic).
+#
+# Azure (relay_cloud=azure): SSH through Bastion, public IP from the inventory,
+# and no Key Vault write: the operator has no write role. See
+# relay-server-rathole.yml "Azure hand-off" for how the site client gets the
+# credentials (-e relay_rathole_handoff_dir=<local dir>).
 
 - name: Deploy rathole reverse-tunnel server on the goat-relay tier
   hosts: "{{ target | mandatory }}"
@@ -56,10 +61,17 @@
           http://169.254.169.254/latest/meta-data/public-ipv4
       register: public_ip_result
       changed_when: false
+      when: relay_cloud | default('aws') != 'azure'
 
     - name: Set public IP fact
       ansible.builtin.set_fact:
         vps_public_ip: "{{ public_ip_result.stdout | trim }}"
+      when: relay_cloud | default('aws') != 'azure'
+
+    - name: Set public IP fact (Azure, from inventory relay_public_ip)
+      ansible.builtin.set_fact:
+        vps_public_ip: "{{ relay_public_ip | mandatory('relay_public_ip is unset: regenerate the inventory with generate-relays-azure.sh') }}"
+      when: relay_cloud | default('aws') == 'azure'
 
     # rathole-server: install binary + generate/read Noise keypair + token +
     # write server.toml (:443 service, :2333 control) + systemd unit. Gated
@@ -87,6 +99,7 @@
         - deploy_rathole | default(true) | bool
         - rathole_secret_name is defined
         - rathole_public_key | default('') | length > 0
+        - relay_cloud | default('aws') != 'azure'
 
     - name: Rathole server status
       ansible.builtin.debug:
