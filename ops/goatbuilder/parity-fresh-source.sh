@@ -35,8 +35,17 @@ G=(-c user.name=parity -c user.email=parity@localhost)
 # The trunk is a fresh root commit of HEAD's ops/ tree, so the gate works the
 # same from a shallow CI checkout (which can be neither cloned nor pushed from
 # whole) as from a full one; everything the drivers read lives under ops/.
+# An assembled tree (.goat-assembled at its root) holds the overlay uncommitted
+# over goatcore's HEAD, and the overlay is where its goatnets are declared, so
+# there the trunk is seeded from the working tree's ops/ (tracked and untracked,
+# ignored files left out); from HEAD alone neither avenue would find a goatnet
+# and both would stop before the check under test.
 mkdir -p "$S/seed"
-git -C "$REPO" archive HEAD ops | tar -x -C "$S/seed"
+if [ -f "$REPO/.goat-assembled" ]; then
+  git -C "$REPO" ls-files -z -co --exclude-standard -- ops | (cd "$REPO" && tar --null -T - -cf -) | tar -x -C "$S/seed"
+else
+  git -C "$REPO" archive HEAD ops | tar -x -C "$S/seed"
+fi
 git -C "$S/seed" init -q -b main
 git -C "$S/seed" add -A
 git "${G[@]}" -C "$S/seed" commit -q -m "parity: the checkout under test"

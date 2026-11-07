@@ -30,6 +30,16 @@ SH
   ln -s / "$FIXTURE/root-alias"
 }
 
+# The roles that carry delete-vendor.sh in this tree (a goatnet's own role may
+# not be present); goat-zenoh's always must.
+vendor_roles() {
+  local role
+  for role in goat-zenoh nova-lan-zenoh; do
+    [ -f "$REPO_ROOT/ops/ansible/roles/$role/files/delete-vendor.sh" ] && echo "$role"
+  done
+  return 0
+}
+
 invoke_delete() {
   local role="$1" parent="$2"
   shift 2
@@ -44,7 +54,8 @@ invoke_delete() {
 }
 
 @test "vendor deletion refuses empty and root parents before any side effect" {
-  for role in goat-zenoh nova-lan-zenoh; do
+  [ -f "$REPO_ROOT/ops/ansible/roles/goat-zenoh/files/delete-vendor.sh" ]
+  for role in $(vendor_roles); do
     for parent in "" / // /../ "$FIXTURE/root-alias"; do
       invoke_delete "$role" "$parent"
       [ "$status" -eq 4 ]
@@ -57,7 +68,8 @@ invoke_delete() {
 }
 
 @test "vendor deletion keeps cleanup scoped to a valid parent with spaces" {
-  for role in goat-zenoh nova-lan-zenoh; do
+  [ -f "$REPO_ROOT/ops/ansible/roles/goat-zenoh/files/delete-vendor.sh" ]
+  for role in $(vendor_roles); do
     : > "$COMMAND_LOG"
     invoke_delete "$role" "$FIXTURE/storage"
     [ "$status" -eq 0 ]
@@ -70,7 +82,8 @@ invoke_delete() {
 
 @test "vendor deletion accepts a relative storage parent and canonicalizes it" {
   cd "$FIXTURE"
-  for role in goat-zenoh nova-lan-zenoh; do
+  [ -f "$REPO_ROOT/ops/ansible/roles/goat-zenoh/files/delete-vendor.sh" ]
+  for role in $(vendor_roles); do
     : > "$COMMAND_LOG"
     invoke_delete "$role" storage
     [ "$status" -eq 0 ]
@@ -79,7 +92,8 @@ invoke_delete() {
 }
 
 @test "vendor deletion cleans the same directory after editing existing stanzas" {
-  for role in goat-zenoh nova-lan-zenoh; do
+  [ -f "$REPO_ROOT/ops/ansible/roles/goat-zenoh/files/delete-vendor.sh" ]
+  for role in $(vendor_roles); do
     printf '      {\n        id: "trial-peer-w-bin",\n        key_exprs: ["bin/**"],\n      },\n' > "$FIXTURE/org"
     : > "$COMMAND_LOG"
     invoke_delete "$role" "$FIXTURE/storage"

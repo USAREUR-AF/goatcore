@@ -242,7 +242,9 @@ echo "  refused, table named, nothing stopped"
 
 # ---------------------------------------------------------------- case 2
 say "case 2: migrate to phase 4, then resume"
+# shellcheck disable=SC2034  # read through eval as "seq_$n" in case 3
 seq_founder=$(pg founder netbird -c "SELECT last_value FROM utf8_local_id_seq")
+# shellcheck disable=SC2034  # read through eval as "seq_$n" in case 3
 seq_joiner=$(pg joiner netbird -c "SELECT last_value FROM utf8_local_id_seq")
 t0=$(date +%s)
 run_play "$WORK/case2a.log" -e postgres_encoding_migrate_stop_after=4 || { tail -60 "$WORK/case2a.log"; fail "case 2: phases 1-4"; }

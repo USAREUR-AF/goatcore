@@ -64,6 +64,8 @@ on:
       - 'ops/ci/check-alertmanager-renders.py'
       - 'ops/ci/test_zenoh_admission_routing.py'
       - 'ops/ci/check-alert-severity-deliverable.py'
+      - 'ops/ci/check-obs-rules-have-scrapers.sh'
+      - 'ops/ci/test_obs_rule_sources.py'
       # The dashboards are an input to the PromQL parse check.
       - 'ops/compose/goat-obs/grafana/dashboards/**'
       # A goatnet's group_vars are inputs to the stream-exclusion and blackbox
@@ -208,6 +210,11 @@ jobs:
           python -m pip install --quiet pyyaml
           python -m py_compile portal_registry_pg.py reap-orphans.py sync-slot-anchors.py
           python -W error::ResourceWarning -m unittest test_portal_registry_pg test_reap_orphans -v
+
+      # The guard judges a goatnet's own scrape targets, so it runs where those
+      # live; its fixtures (a scratch tree per case) run here.
+      - name: every alert rule's metric has a scraper — the guard proves itself on fixtures
+        run: python3 ops/ci/test_obs_rule_sources.py
 
       - name: identity-reconcile
         working-directory: ops/compose/goat-obs/identity-reconcile

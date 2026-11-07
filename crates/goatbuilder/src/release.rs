@@ -24,6 +24,16 @@
 //! is reported "pins already current on main; nothing to land".
 //! `pr-land.sh`, `intent-sign`, `affected-flows.py` and `run-acceptance.py`
 //! are still the tools the script calls, called the same way.
+//!
+//! From an assembled tree (`.goat-assembled` at its root) the goatnets' pins,
+//! intents and records belong to the overlay repository the marker names
+//! (`overlay_path`), exactly as in rc.sh: the run needs `--tag` and never cuts
+//! one; the nominator is an admin of the overlay repository; each step's
+//! scratch tree is a fresh assembly built by the overlay's `assemble.sh` from a
+//! worktree of the overlay's origin/main; a step's edits land as a pull request
+//! on the overlay repository carrying exactly the files the step changed; and
+//! after a landing the scratch tree is assembled again and the deploy runs
+//! from it.
 
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
@@ -72,9 +82,25 @@ pub struct Options<'a> {
     pub dry_run: bool,
 }
 
+/// An assembled tree's overlay (rc.sh `ASSEMBLED=1`): where a step's edits land.
+struct Overlay {
+    /// The overlay checkout the marker names (`OVERLAY`).
+    path: PathBuf,
+    /// Its origin as `owner/name` (`OVERLAY_SLUG`).
+    slug: String,
+    /// The overlay worktree a step's edits land from (`OWT`).
+    owt: PathBuf,
+    /// The scratch tree's content as assembled, a git tree object (`WT_SNAP`).
+    snap: String,
+}
+
 /// One run's state: the script's variables, named as it names them.
 struct Run<'a> {
     repo: &'a Path,
+    /// The tree the run reads its facts from and deploys from (rc.sh `REPO`
+    /// after an assembly): the invoking checkout, or the newest scratch assembly.
+    root: PathBuf,
+    overlay: Option<Overlay>,
     o: &'a Options<'a>,
     repo_slug: String,
     image: String,
@@ -96,7 +122,7 @@ impl Run<'_> {
     /// What the candidate carries (rc.sh `rc_changes`): the one-line summary and
     /// the commit subjects since the component's previous tag.
     fn changes(&self) -> (String, String) {
-        let wf = read_yaml(&self.repo.join("ops/pins/fleet-pins.yaml"))
+        let wf = read_yaml(&self.root.join("ops/pins/fleet-pins.yaml"))
             .ok()
             .and_then(|p| p.get("components")?.get(self.o.component)?.get("image_workflow")?.as_str().map(String::from))
             .unwrap_or_default();
@@ -236,8 +262,85 @@ impl<'a> Run<'a> {
             return Ok(());
         }
         let branch = format!("chore/rc-{}-{}", self.image, push_stamp().replace('T', "-").trim_end_matches('Z'));
+        if let Some(ov) = &self.overlay {
+            let (ovp, owt) = (ov.path.display().to_string(), ov.owt.display().to_string());
+            self.run("git", &["-C".into(), ovp.clone(), "fetch".into(), "-q".into(), "origin".into(), "main".into()])?;
+            self.run("git", &["-C".into(), ovp, "worktree".into(), "add".into(), "-q".into(), owt.clone(), "-b".into(), branch, "origin/main".into()])?;
+            if self.o.dry_run {
+                self.note(format!("DRY: {owt}/assemble.sh {}  (the scratch tree: goatcore + goatstuff + the overlay worktree)", self.wt.display()));
+                return Ok(());
+            }
+            return self.assemble_wt();
+        }
         let args: Vec<String> = ["-C", self.repo.to_str().unwrap_or("."), "worktree", "add", "-q", self.wt.to_str().unwrap_or("."), "-b", &branch, "origin/main"].iter().map(|s| s.to_string()).collect();
         self.run("git", &args)
+    }
+
+    /// Assembled tree only (rc.sh `assemble_wt`): build the scratch tree from the
+    /// overlay worktree with the overlay's own assemble.sh. Its HEAD stays the
+    /// goatcore commit, so its starting content is kept as a tree object and a
+    /// step's edits are the diff against it. The run then reads and deploys from it.
+    fn assemble_wt(&mut self) -> Result<()> {
+        let Some(ov) = self.overlay.as_mut() else { return Ok(()) };
+        let wt = self.wt.clone();
+        let _ = std::fs::remove_dir_all(&wt);
+        let out = Command::new(ov.owt.join("assemble.sh")).arg(&wt).output().with_context(|| format!("{}/assemble.sh", ov.owt.display()))?;
+        if !out.status.success() {
+            eprint!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+            return Err(goat_errors::coded("GB-028", format!("{}/assemble.sh could not build the scratch tree {}", ov.owt.display(), wt.display())).into());
+        }
+        let wt_s = wt.display().to_string();
+        sh("git", &["-C", &wt_s, "add", "-A", "--force"])?;
+        ov.snap = sh("git", &["-C", &wt_s, "write-tree"])?;
+        sh("git", &["-C", &wt_s, "reset", "-q"])?;
+        let short = sh("git", &["-C", &ov.owt.display().to_string(), "rev-parse", "--short", "HEAD"]).unwrap_or_default();
+        self.root = wt.clone();
+        self.note(format!("scratch tree {wt_s} assembled from overlay {short}"));
+        Ok(())
+    }
+
+    /// Assembled tree only (rc.sh `land_overlay`): the step's edits in the
+    /// scratch tree, as a pull request on the overlay repository; then the next
+    /// scratch tree is assembled from the overlay's merged main.
+    fn land_overlay(&mut self, title: &str, body: &str) -> Result<()> {
+        let Some(ov) = self.overlay.as_ref() else { return Ok(()) };
+        let (wt_s, owt) = (self.wt.display().to_string(), ov.owt.clone());
+        let owt_s = owt.display().to_string();
+        sh("git", &["-C", &wt_s, "add", "-A", "--force"])?;
+        let changes = sh("git", &["-C", &wt_s, "diff-index", "--cached", "--name-status", "--no-renames", &ov.snap]).unwrap_or_default();
+        sh("git", &["-C", &wt_s, "reset", "-q"])?;
+        let rows: Vec<(String, String)> = changes
+            .lines()
+            .filter_map(|l| l.split_once('\t').map(|(st, p)| (st.to_string(), p.to_string())))
+            .filter(|(_, p)| !p.is_empty())
+            .collect();
+        if !rows.iter().any(|(_, p)| !p.ends_with(".sig")) {
+            self.note("pins already current on the overlay's main; nothing to land".into());
+            return Ok(());
+        }
+        for (st, p) in &rows {
+            if st == "D" {
+                sh("git", &["-C", &owt_s, "rm", "-q", "--ignore-unmatch", "--", p])?;
+            } else {
+                let dst = owt.join(p);
+                if let Some(d) = dst.parent() {
+                    std::fs::create_dir_all(d)?;
+                }
+                std::fs::copy(self.wt.join(p), &dst).with_context(|| format!("copy {p} to the overlay worktree"))?;
+            }
+            self.note(format!("lands {st} {p}"));
+        }
+        let b = std::env::temp_dir().join(format!("goatbuilder-pr-body-{}", std::process::id()));
+        std::fs::write(&b, format!("{body}\n"))?;
+        let branch = sh("git", &["-C", &owt_s, "rev-parse", "--abbrev-ref", "HEAD"]).unwrap_or_else(|_| "rc".into());
+        let land = self.repo.join("ops/scripts/pr-land.sh").display().to_string();
+        self.run(&land, &["--worktree".into(), owt_s.clone(), "--branch".into(), branch, "--title".into(), title.into(), "--body-file".into(), b.display().to_string()])?;
+        // The overlay's main now carries the edit: build the next scratch tree
+        // from it, so the deploy that follows reads a current overlay.
+        let _ = sh("git", &["-C", &owt_s, "fetch", "-q", "origin", "main"]);
+        let nb = format!("chore/rc-{}-{}", self.image, push_stamp().replace('T', "-").trim_end_matches('Z'));
+        sh("git", &["-C", &owt_s, "checkout", "-q", "-B", &nb, "origin/main"])?;
+        self.assemble_wt()
     }
 
     fn set_deviation(&mut self, goatnet: &str, reason: &str) -> Result<()> {
@@ -254,7 +357,7 @@ impl<'a> Run<'a> {
     /// Without this a component carrying such a record could not start a new
     /// candidate at dev at all (onboard-runner).
     fn reconcile_superseded(&mut self, rung: &str) -> Result<()> {
-        let base = if self.wt.join("ops/release").is_dir() { self.wt.clone() } else { self.repo.to_path_buf() };
+        let base = if self.wt.join("ops/release").is_dir() { self.wt.clone() } else { self.root.clone() };
         for (old, hotfix) in promote::stale_candidates_c6(&base, self.o.component) {
             let by = hotfix.unwrap_or_else(|| self.reference.clone());
             let reason = format!("Superseded on {rung}: the rung no longer runs this candidate (check C6); overtaken by {by} before release candidate {} (ADR 1173), nominated by {}", self.tag, self.o.ack);
@@ -270,7 +373,7 @@ impl<'a> Run<'a> {
         let changed: Vec<String> = if self.o.dry_run {
             self.note(format!("DRY: goatbuilder pins {}", self.wt.display()));
             // nothing is regenerated in a dry run, so every intent is named below
-            let intents = self.repo.join("ops/consistency/intent");
+            let intents = self.root.join("ops/consistency/intent");
             let mut dirs: Vec<PathBuf> = std::fs::read_dir(&intents).map(|rd| rd.flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect()).unwrap_or_default();
             dirs.sort();
             dirs.iter().map(|d| d.file_name().unwrap_or_default().to_string_lossy().to_string()).collect()
@@ -283,7 +386,7 @@ impl<'a> Run<'a> {
         };
         for g in changed {
             let i = self.wt.join("ops/consistency/intent").join(&g).join("intent.json");
-            let src = if i.is_file() { i.clone() } else { self.repo.join("ops/consistency/intent").join(&g).join("intent.json") };
+            let src = if i.is_file() { i.clone() } else { self.root.join("ops/consistency/intent").join(&g).join("intent.json") };
             let (key, _, _) = pins::ca_key_for(&src, &g)?;
             if !Path::new(&key).is_file() {
                 // A dry run signs nothing: say what a real run needs and go on, so
@@ -316,6 +419,14 @@ impl<'a> Run<'a> {
     }
 
     fn land(&mut self, title: &str, body: &str) -> Result<()> {
+        if let Some(ov) = &self.overlay {
+            if self.o.dry_run {
+                let line = format!("DRY: the step's edits in {} land as a PR on {} via {}/pr-land.sh --worktree {}: {title}", self.wt.display(), ov.slug, self.repo.join("ops/scripts").display(), ov.owt.display());
+                self.note(line);
+                return Ok(());
+            }
+            return self.land_overlay(title, body);
+        }
         if !self.o.dry_run {
             // A re-run whose pin is already merged regenerates the same bytes;
             // only signatures (never re-signed now) or nothing would differ.
@@ -468,7 +579,7 @@ impl<'a> Run<'a> {
     }
 
     fn deploy(&mut self, goatnet: &str, verify_only: bool) -> Result<()> {
-        let r = push::deploy(self.repo, &push::Options { component: self.o.component, goatnet, only_group: None, dry_run: self.o.dry_run, verify_only, ack: self.o.ack })?;
+        let r = push::deploy(&self.root, &push::Options { component: self.o.component, goatnet, only_group: None, dry_run: self.o.dry_run, verify_only, ack: self.o.ack })?;
         let ok = r.ok;
         self.checks.borrow_mut().extend(r.checks);
         if !ok && !self.o.dry_run {
@@ -534,8 +645,31 @@ fn release_inner(repo: &Path, o: &Options, checks: Rc<RefCell<Vec<Check>>>) -> R
     if !sh_ok("python3", &["-c", "import yaml, jsonschema"]) {
         return Err(goat_errors::coded("GB-010", "python deps missing — this needs PyYAML + jsonschema. Install once:  pip install pyyaml jsonschema  (or pipx/venv), then re-run. Re-running the same command is safe (an existing tag is validated as-is).").into());
     }
-    let rbr0 = sh("git", &["-C", &repo_s, "symbolic-ref", "--quiet", "--short", "HEAD"]).unwrap_or_else(|_| "DETACHED".into());
-    if rbr0 != "main" && rbr0 != "master" {
+    let mut rbr0 = sh("git", &["-C", &repo_s, "symbolic-ref", "--quiet", "--short", "HEAD"]).unwrap_or_else(|_| "DETACHED".into());
+    // An assembled tree (rc.sh ASSEMBLED=1): the overlay the marker names owns
+    // the pins and records this run changes.
+    let mut overlay: Option<Overlay> = None;
+    if let Some(m) = crate::fresh::marker(repo)? {
+        if m.goatcore_ref == "local" {
+            return Err(goat_errors::coded("GB-009", format!("{} was assembled from local directories (goatcore_ref=local), which no deploy accepts; assemble from the pinned refs", repo.display())).into());
+        }
+        let ovp = m.overlay_path.clone().unwrap_or_default();
+        if ovp.is_empty() || !Path::new(&ovp).join("assemble.sh").is_file() {
+            return Err(goat_errors::coded("GB-009", format!("{}/.goat-assembled names no overlay checkout with an assemble.sh (overlay_path={}); re-assemble from the overlay", repo.display(), if ovp.is_empty() { "<none>" } else { &ovp })).into());
+        }
+        // Detached by construction: its currency is the overlay commit it was
+        // built from, which the deploy's fresh-source check judges.
+        rbr0 = format!("assembled tree, overlay {}", m.overlay_commit.chars().take(12).collect::<String>());
+        if o.from == From::Tag {
+            return Err(goat_errors::coded("GB-018", format!("--from tag cuts the tag on this tree's origin ({repo_slug}); from an assembled tree, cut the tag where the component's image workflow builds it, then re-run here with --tag <that tag> --from dev")).into());
+        }
+        if o.tag.is_none() {
+            return Err(goat_errors::coded("GB-018", "from an assembled tree, name the candidate with --tag <component>/vX.Y.Z-rc.N").into());
+        }
+        let ourl = sh("git", &["-C", &ovp, "remote", "get-url", "origin"])?;
+        let slug = ourl.trim_end_matches(".git").rsplit([':', '/']).take(2).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join("/");
+        overlay = Some(Overlay { path: PathBuf::from(&ovp), slug, owt: PathBuf::new(), snap: String::new() });
+    } else if rbr0 != "main" && rbr0 != "master" {
         return Err(goat_errors::coded("GB-009", format!("run rc.sh from a checkout on main — this one ({}) is on '{rbr0}'. rc.sh deploys from the invoking checkout and only a main checkout is kept current with the pin it merges; a feature-branch run can deploy a stale pin and verify green. Switch to a current main checkout (git checkout main && git pull --ff-only origin main) and re-run.", repo.display())).into());
     }
 
@@ -544,6 +678,8 @@ fn release_inner(repo: &Path, o: &Options, checks: Rc<RefCell<Vec<Check>>>) -> R
     let f = |k: &str| facts.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
     let mut run = Run {
         repo,
+        root: repo.to_path_buf(),
+        overlay,
         o,
         repo_slug,
         image: f("image"),
@@ -560,6 +696,9 @@ fn release_inner(repo: &Path, o: &Options, checks: Rc<RefCell<Vec<Check>>>) -> R
         dev_evid: String::new(),
         checks,
     };
+    if let Some(ov) = run.overlay.as_mut() {
+        ov.owt = PathBuf::from(format!("{}-overlay", run.wt.display()));
+    }
     run.step(&format!("component {}", o.component));
     let fleet_shown = if run.fleet.is_empty() { "<none>".to_string() } else { render(&run.fleet) };
     run.note(format!("image {}; rungs dev={} preprod={} prod={}; fleet ref {fleet_shown}", run.image, run.dev, run.pre, run.prod));
@@ -571,7 +710,18 @@ fn release_inner(repo: &Path, o: &Options, checks: Rc<RefCell<Vec<Check>>>) -> R
     run.note(format!("deploying from {} on {rbr0}; deps ok (PyYAML, jsonschema)", repo.display()));
     // GOAT_RC_ROLE_CHECK=0 skips the nominator check where there is no person
     // (the parity gate in CI); the script honours the same variable.
-    if std::env::var("GOAT_RC_ROLE_CHECK").map(|v| v != "0").unwrap_or(true) {
+    let role_check = std::env::var("GOAT_RC_ROLE_CHECK").map(|v| v != "0").unwrap_or(true);
+    if role_check && run.overlay.is_some() {
+        // Nothing is tagged here; what the run changes is the overlay
+        // repository's pins and records, so its admins are the nominators.
+        let slug = run.overlay.as_ref().map(|ov| ov.slug.clone()).unwrap_or_default();
+        let me = sh("gh", &["api", "user", "-q", ".login"])?;
+        let role = sh("gh", &["api", &format!("repos/{slug}/collaborators/{me}/permission"), "-q", ".role_name"]).unwrap_or_else(|_| "unknown".into());
+        if role != "admin" {
+            return Err(goat_errors::coded("GB-011", format!("{me} holds '{role}' on {slug}; only an admin of the overlay repository may put a release candidate on its goatnets")).into());
+        }
+        run.note(format!("{me} holds {role} on {slug} (the overlay this tree was assembled from)"));
+    } else if role_check {
         let me = sh("gh", &["api", "user", "-q", ".login"])?;
         let role = sh("gh", &["api", &format!("repos/{}/collaborators/{me}/permission", run.repo_slug), "-q", ".role_name"]).unwrap_or_else(|_| "unknown".into());
         if role != "admin" {
@@ -730,7 +880,7 @@ fn release_inner(repo: &Path, o: &Options, checks: Rc<RefCell<Vec<Check>>>) -> R
     let mut from = o.from;
     let mut rec_found = None;
     if !matches!(from, From::Prod | From::PreprodRows) {
-        rec_found = preprod_open_record(repo, o.component, &run.pre, &run.reference, o.dry_run)?;
+        rec_found = preprod_open_record(&run.root.clone(), o.component, &run.pre, &run.reference, o.dry_run)?;
         if let Some(r) = &rec_found {
             run.note(format!("{} already runs {} on main and its record {r} is open; reusing it, as --from preprod-rows does", run.pre, run.tag));
             from = From::PreprodRows;
@@ -749,13 +899,13 @@ fn release_inner(repo: &Path, o: &Options, checks: Rc<RefCell<Vec<Check>>>) -> R
             } else if o.dry_run {
                 run.rec = format!("ops/release/records/{}/<date>-<ref12>.yaml", o.component);
             } else {
-                let pins = read_yaml(&repo.join("ops/pins/fleet-pins.yaml"))?;
+                let pins = read_yaml(&run.root.join("ops/pins/fleet-pins.yaml"))?;
                 let pinned = pins.get("components").and_then(|c| c.get(o.component)).and_then(|c| c.get("deviations")).and_then(|d| d.get(&pre)).and_then(|d| d.get("value")).and_then(|v| v.as_str()).unwrap_or("").to_string();
                 if pinned != run.reference {
                     return Err(goat_errors::coded("GB-038", format!("{pre} does not run {} on main (it pins {}) — resume with --from preprod, which pins it", run.tag, if pinned.is_empty() { "the fleet value" } else { &pinned })).into());
                 }
                 let d12: String = run.reference.rsplit(':').next().unwrap_or("").chars().take(12).collect();
-                let hits = promote::open_records_by_digest(repo, o.component, &d12);
+                let hits = promote::open_records_by_digest(&run.root, o.component, &d12);
                 if hits.len() != 1 {
                     return Err(goat_errors::coded("GB-038", format!("no single open record for {} under ops/release/records/{}/ — resume with --from preprod", run.tag, o.component)).into());
                 }
@@ -789,7 +939,7 @@ fn release_inner(repo: &Path, o: &Options, checks: Rc<RefCell<Vec<Check>>>) -> R
         // Once preprod runs the candidate, every other open ladder candidate for
         // the component is stale (check C6) and the landing refuses: close each
         // in this same PR, naming the new record (C8).
-        let recs_base = if run.wt.join("ops/release").is_dir() { run.wt.clone() } else { run.repo.to_path_buf() };
+        let recs_base = if run.wt.join("ops/release").is_dir() { run.wt.clone() } else { run.root.clone() };
         for old in promote::stale_ladder_candidates(&recs_base, o.component, &rec_base) {
             let reason = format!("Superseded by release candidate {} on {pre} (ADR 1173), nominated by {}", run.tag, o.ack);
             run.promote(&format!("abandon {old} --reason {reason} --superseded-by {rec_base}"), &promote::Sub::Abandon { record: old.clone(), reason, superseded_by: Some(rec_base.clone()) })?;
@@ -827,7 +977,7 @@ fn release_inner(repo: &Path, o: &Options, checks: Rc<RefCell<Vec<Check>>>) -> R
 
         // --- 7 soak
         run.step("soak");
-        let mind = promote::soak_min_days(repo);
+        let mind = promote::soak_min_days(&run.root);
         run.note(format!("{} is the preprod candidate. After {mind} day(s), with an operator ack:", run.tag));
         run.note(format!("  goatbuilder release {} --tag {} --from prod --ack '<name>'    # graduate, fold into fleet:, deploy {}, verify every rung", o.component, run.tag, run.prod));
     }
@@ -855,8 +1005,8 @@ fn release_inner(repo: &Path, o: &Options, checks: Rc<RefCell<Vec<Check>>>) -> R
         let pins_wt = run.wt.join("ops/pins/fleet-pins.yaml");
         // Fold only the pins that carried THIS candidate (rc.sh step 8): a value
         // deviation for any other ref is a newer candidate already on its rung.
-        let pins_src = if pins_wt.is_file() { pins_wt.clone() } else { run.repo.join("ops/pins/fleet-pins.yaml") };
-        let recs_root = if run.wt.join("ops/release").is_dir() { run.wt.clone() } else { run.repo.to_path_buf() };
+        let pins_src = if pins_wt.is_file() { pins_wt.clone() } else { run.root.join("ops/pins/fleet-pins.yaml") };
+        let recs_root = if run.wt.join("ops/release").is_dir() { run.wt.clone() } else { run.root.clone() };
         let hot = promote::open_hotfix_refs(&recs_root, o.component);
         let (gs, kept) = pins::fold_rungs(&pins_src, o.component, &run.reference, &prod, &hot, &[dev.clone(), pre.clone(), prod.clone()])?;
         for (g, v) in &kept {
@@ -891,7 +1041,16 @@ fn release_inner(repo: &Path, o: &Options, checks: Rc<RefCell<Vec<Check>>>) -> R
             run.note(format!("{}: fleet {} on {dev}, {pre} and {prod} (ledger-verified)", o.component, run.reference));
         }
     }
-    if run.wt.is_dir() && !o.dry_run {
+    if let Some(ov) = &run.overlay {
+        // The scratch tree is a plain directory; the overlay worktree is clean
+        // once its PR merged, and its branch stays for the reflog.
+        if !o.dry_run {
+            let _ = std::fs::remove_dir_all(&run.wt);
+            if ov.owt.is_dir() {
+                let _ = sh("git", &["-C", &ov.path.display().to_string(), "worktree", "remove", &ov.owt.display().to_string()]);
+            }
+        }
+    } else if run.wt.is_dir() && !o.dry_run {
         let _ = sh("git", &["-C", &repo_s, "worktree", "remove", run.wt.to_str().unwrap_or(".")]);
     }
     let mut report = Report::new("release", run.checks.take(), EXIT_REFUSED);

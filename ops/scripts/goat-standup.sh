@@ -724,7 +724,21 @@ step 4 T "name-fallback snapshot (generate + sign)" \
 #    (--skip-tags stack). Each play runs once; no phase stops on purpose.
 OWNER_EMAIL_STANDUP="\$OWNER_EMAIL"
 [[ "${LITE}" == 1 && -n "${lite_admin:-}" ]] && OWNER_EMAIL_STANDUP="$lite_admin"
-BOOTSTRAP_EV="-e site_id=$SITE -e bootstrap_owner_email=\"$OWNER_EMAIL_STANDUP\" -e postgres_superuser_password=\"\$(printenv ${SITE_UPPER}_PG_PASS)\" -e netbird_encryption_key=\"\$(printenv ${SITE_UPPER}_NB_ENCKEY)\" -e pgbackrest_cipher_pass=\"\$(printenv ${SITE_UPPER}_BKP_KEY)\""
+BOOTSTRAP_SECRETS_EV="-e bootstrap_owner_email=\"$OWNER_EMAIL_STANDUP\" -e postgres_superuser_password=\"\$(printenv ${SITE_UPPER}_PG_PASS)\" -e netbird_encryption_key=\"\$(printenv ${SITE_UPPER}_NB_ENCKEY)\" -e pgbackrest_cipher_pass=\"\$(printenv ${SITE_UPPER}_BKP_KEY)\""
+# A joiner's bootstrap carries site_id as a PLAY variable: its own
+# $SITE-bootstrap.yml when it keeps one (that play sets site_id), else the
+# generic wrapper site-bootstrap-for.yml -e bootstrap_site=$SITE. Never
+# site-bootstrap.yml -e site_id=$SITE for a joiner: an extra var reaches every
+# inventory host, and the Spock roles' walk over the other sites' hostvars then
+# finds no peer to wire. A founder keeps the plain form. (goatbuilder's
+# bootstrap_play; the parity gate holds the two to the same plan.)
+if [ "$JOINER" = 1 ]; then
+  if [ -f "$REPO/ops/ansible/${SITE}-bootstrap.yml" ]; then SB="${SITE}-bootstrap.yml"; else SB="site-bootstrap-for.yml -e bootstrap_site=$SITE"; fi
+  BOOTSTRAP_EV="$BOOTSTRAP_SECRETS_EV"
+else
+  SB="site-bootstrap.yml"
+  BOOTSTRAP_EV="-e site_id=$SITE $BOOTSTRAP_SECRETS_EV"
+fi
 # A joiner's pass-1 bootstrap must NOT enable Spock yet — the account + schema
 # arrive by the seed in pass 2 (phase 6). participates_in_spock also defaults
 # from group_vars; this pins it for the first pass. A founder uses BOOTSTRAP_EV.
@@ -755,7 +769,7 @@ pull_join 5
 # Any refusal here is a real one and fails the phase. The binary's line is
 # the same (parity gate).
 step 5 A "mgmt-stack (site-bootstrap up to the account seed; the seed needs Ory and runs in phase 6)" \
-  "cd '$REPO/ops/ansible' && $ANSIBLE_PRE ${INV[*]} site-bootstrap.yml $BOOTSTRAP_EV_P1 --skip-tags after-ory"
+  "cd '$REPO/ops/ansible' && $ANSIBLE_PRE ${INV[*]} $SB $BOOTSTRAP_EV_P1 --skip-tags after-ory"
 
 # Phase 5. [internet] Connect the mgmt host to its relays over the rathole tunnel.
 #     site-rathole-client.yml is the generic play; a site that keeps its own
@@ -795,9 +809,13 @@ fi
 #     bootstrap setup key — SAVE IT (phase 11 needs it; phase 8 mints its own); then the plays after
 #     it. A founder runs only that part (--skip-tags stack). A joiner runs the whole
 #     file again: its pass 3 turns Spock on, which the stack plays configure.
+#     Ory (Phase 7D) is staged across both sides so each step passes: pass 3
+#     builds the joiner's Ory node and repset only (ory_spock_wire_subscriptions=
+#     false), the founder mirror below subscribes without reconciling history,
+#     then the joiner's spock-mesh-wire subscribes and reconciles both ways.
 if [ "$JOINER" = 1 ]; then
-step 6 A "[joiner] re-run site-bootstrap with Spock on (pass 3; prints + saves the setup key)" \
-  "cd '$REPO/ops/ansible' && $ANSIBLE_PRE ${INV[*]} site-bootstrap.yml $BOOTSTRAP_EV"
+step 6 A "[joiner] re-run site-bootstrap with Spock on (pass 3; Ory node + repset only; prints + saves the setup key)" \
+  "cd '$REPO/ops/ansible' && $ANSIBLE_PRE ${INV[*]} $SB $BOOTSTRAP_EV -e ory_spock_wire_subscriptions=false"
 else
 step 6 A "the rest of site-bootstrap: wait for the netbird schema, seed the account, print + save the setup key" \
   "cd '$REPO/ops/ansible' && $ANSIBLE_PRE ${INV[*]} site-bootstrap.yml $BOOTSTRAP_EV --skip-tags stack"
@@ -823,7 +841,9 @@ fi
 #     the seed step above, so wiring carries incremental writes only and never truncates.
 if [ "$JOINER" = 1 ]; then
 step 6 A "[joiner] founder-side mirror (spock-mesh-wire on ${JOIN_FOUNDER_GROUP:-?}, peer=$SITE only — both-direction subscriptions)" \
-  "cd '$REPO/ops/ansible' && { [ -n '$JOIN_FOUNDER_GROUP' ] || { echo 'joiner: join_founder_site not set in group_vars/$GROUP/vars.yml'; exit 1; }; } && $ANSIBLE_PRE ${INV[*]} spock-mesh-wire.yml --limit $JOIN_FOUNDER_GROUP -e '{\"inter_site_spock_peers\":[\"$SITE\"]}'"
+  "cd '$REPO/ops/ansible' && { [ -n '$JOIN_FOUNDER_GROUP' ] || { echo 'joiner: join_founder_site not set in group_vars/$GROUP/vars.yml'; exit 1; }; } && $ANSIBLE_PRE ${INV[*]} spock-mesh-wire.yml --limit $JOIN_FOUNDER_GROUP -e '{\"inter_site_spock_peers\":[\"$SITE\"],\"ory_spock_reconcile_history\":false}'"
+step 6 A "[joiner] the joiner's Spock wiring again, now that the founder's half exists (Ory subscription + history reconcile)" \
+  "cd '$REPO/ops/ansible' && $ANSIBLE_PRE ${INV[*]} spock-mesh-wire.yml --limit $GROUP"
 fi
 
 # Phase 7. [internet] Public TLS via ACME (traefik-acme.yml). DNS-01 through Cloudflare;
