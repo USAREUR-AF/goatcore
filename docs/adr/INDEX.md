@@ -170,7 +170,7 @@ linked to its authoritative upstream source.
 
 | # | Title | Status | Repo scope | Diagram |
 |---|---|---|---|---|
-| 0700 | [Chainguard-first for third-party container images](0700-chainguard-first.md) | Accepted; amended by 1220 (applies to an environment's overlay, not the public defaults) | Multi | — |
+| 0700 | [Chainguard-first for third-party container images](0700-chainguard-first.md) | Accepted; amended by 1220 (a private Chainguard catalogue belongs in an environment's overlay) | Multi | — |
 | 0701 | [Iron Bank not a standalone trust signal](0701-iron-bank-not-trust-anchor.md) | Accepted | Multi | — |
 | 0702 | [Build-from-source for management plane components](0702-build-from-source-mgmt-plane.md) | Accepted | |
 | 0703 | [Pinned digests + pin-regression CI guard](0703-pinned-digests-and-pin-regression-ci.md) | Accepted | |
@@ -428,7 +428,7 @@ linked to its authoritative upstream source.
 | 1216 | [A site network engineer reaches that site's devices one way, on declared ports, through `NET-ENGINEER`; `EDGE-SERVER` is a delegable class with `NETWORK`'s shape](1216-net-engineer-group-and-edge-server-class.md) | Accepted | |
 | 1218 | [When neither edge accepts inbound traffic, a peering forwarder gives one side a public address; it relays ciphertext and holds nothing of the peering](1218-peering-forwarder-when-neither-edge-accepts-inbound.md) | Proposed | |
 | 1219 | [A peering edge that stays a mesh peer holds `PEERING-EDGE`: it reaches only the core router's fabric TLS port and mesh DNS, and only platform admins reach it](1219-peering-edge-on-the-mesh-reaches-only-the-core-router.md) | Accepted | |
-| 1220 | [Base images are named by role: the public tree defaults to images anyone may redistribute, and an environment's overlay supplies its own](1220-public-base-images-by-role-overlay-supplies-its-own.md) | Accepted | Amends 0700 |
+| 1220 | [Base images are named by role: the public tree defaults to Chainguard's free catalogue, and an environment's overlay supplies its own](1220-public-base-images-by-role-overlay-supplies-its-own.md) | Accepted | Amends 0700 |
 | 1200 | [The deployment engineering is proved end to end in three tiers, with the ledger as the only proof](1200-deployment-e2e-three-tiers.md) | **Accepted** | |
 | 1208 | [Each sovereign runs its own environment, shares only by deliberate release, and seals restricted data to its intended receivers](1208-sovereign-environments-release-namespaces-and-grant-encryption.md) | Accepted 2026-10-30 | |
 | 1209 | [Card sign-in is per sovereign PKI profile; the US DoD card is the first profile, not the design](1209-card-sign-in-is-per-sovereign-pki-profile.md) | Proposed (2026-10-30) | Amends 1069. One registry `ops/identity/sovereign-pkis.yaml` describes every PKI (issuer match, identity rule with capture regex, subject CN format, trust anchor, revocation, example card); the goatnet `icam-mtls-proxy` role, the collab front's `sovereign_pkis` and the store's `OPENBAO_SOVEREIGN_PKI_DIR` render from it; identity = `<pki>:<identifier>`; nationality never inferred from the PKI; binding admin-done; capped trust stores load issuing CAs only; us-dod EDIPI read as `^(\d{10})(?:\d{6})?@mil$` (live UPN is 16 digits). Rejected: a role per nation, hand-kept per-door PKI lists, nationality from the issuer, loading all 49 DISA CAs. |

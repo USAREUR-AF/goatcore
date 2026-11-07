@@ -28,7 +28,7 @@
 
 # Base images are build arguments named for their role; the defaults are
 # the public images in ops/base-images/ (docs/design/base-images.md).
-ARG BASE_RUNTIME_SHELL=docker.io/library/python:3.13-slim-trixie@sha256:09a17cad02668ae61ece136b4fd36ac3849e14f670ebedb637ea3e15580525bc
+ARG BASE_RUNTIME_SHELL=cgr.dev/chainguard/wolfi-base:latest@sha256:8509ee4351a2e501b7f98201f2e2642396e82020c61a589cacdcfe74b9de46c1
 
 FROM golang:1.26-bookworm@sha256:23ce71337b726608afb1bc00986e630a05034a87a87ea1fc2cd1ae5cf33387eb AS build
 WORKDIR /src
@@ -41,8 +41,9 @@ RUN go build -trimpath -ldflags="-s -w" -o /onboard-runner .
 
 FROM ${BASE_RUNTIME_SHELL}
 # curl (+ ca-certificates) for the native onboard's local Kratos-admin leg, and
-# python 3.13. The public base (python:3.13-slim) has apt-get and python; a Wolfi
-# base has apk. Either way python3 is on PATH afterwards.
+# python 3.13. The public base (Chainguard wolfi-base) takes both from apk. A
+# Debian base takes curl from apt-get and must already carry python3
+# (python:3.13-slim does). The RUN fails if python3 is not on PATH afterwards.
 RUN if command -v apk >/dev/null 2>&1; then \
       apk add --no-cache curl ca-certificates python-3.13; \
     else \

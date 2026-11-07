@@ -52,7 +52,11 @@ ALLOW = os.path.join(ROLE_DIR, "vendor-refs.allow")
 # Registries whose images the public tree may not default to: pulling from
 # them needs a subscription or an account, and their terms do not cover
 # redistribution of images built on them. An overlay may use them freely.
+# Chainguard's free catalogue, cgr.dev/chainguard/, is public and anonymous and
+# is the public default; a private Chainguard organisation, cgr.dev/<org>/, is
+# a subscription.
 SUBSCRIPTION_REGISTRIES = ("cgr.dev/", "registry1.dso.mil/")
+FREE_PREFIXES = ("cgr.dev/chainguard/",)
 
 DIGEST = re.compile(r"@sha256:[0-9a-f]{64}$")
 ARG_RE = re.compile(r"^\s*ARG\s+(BASE_[A-Z0-9_]+)(?:=(\S*))?\s*$")
@@ -75,7 +79,7 @@ def is_dockerfile(path):
 
 
 def subscription(ref):
-    return ref.startswith(SUBSCRIPTION_REGISTRIES)
+    return ref.startswith(SUBSCRIPTION_REGISTRIES) and not ref.startswith(FREE_PREFIXES)
 
 
 def files(root):
@@ -441,17 +445,17 @@ def self_test():
             devnull.close()
 
     cases = [
-        ("a role on a subscription registry", dict(role_rust=f"cgr.dev/chainguard/rust:latest-dev@sha256:{d64}")),
+        ("a role on a subscription registry", dict(role_rust=f"cgr.dev/example-org/rust:latest-dev@sha256:{d64}")),
         ("a role pinned by tag only", dict(role_rust="docker.io/library/rust:1.92-bookworm")),
         ("a Dockerfile FROM on a subscription registry",
-         dict(svc=f"FROM cgr.dev/chainguard/glibc-dynamic:latest@sha256:{d64}\n")),
+         dict(svc=f"FROM cgr.dev/example-org/glibc-dynamic:latest@sha256:{d64}\n")),
         ("an ARG default that differs from its role file",
          dict(svc=f"ARG BASE_RUNTIME_CC=gcr.io/distroless/cc-debian12@sha256:{d64}\nFROM ${{BASE_RUNTIME_CC}}\n")),
         ("an ARG naming a role that does not exist",
          dict(svc=f"ARG BASE_NOPE=x@sha256:{d64}\nFROM ${{BASE_NOPE}}\n")),
         ("a FROM on a base argument never declared", dict(svc="FROM ${BASE_RUNTIME_CC}\n")),
         ("a role default on a subscription registry",
-         dict(compose=f'fx_image: "cgr.dev/chainguard/minio:latest@sha256:{d64}"\n')),
+         dict(compose=f'fx_image: "cgr.dev/example-org/minio:latest@sha256:{d64}"\n')),
         ("an allow line whose reference is gone", dict(allow="ops/ansible/roles/gone/defaults/main.yml gone_image  # fx\n")),
     ]
     with tempfile.TemporaryDirectory() as tmp:
@@ -464,10 +468,15 @@ def self_test():
             if verdict(tmp) == 0:
                 print(f"SELF-TEST FAILED: the gate passed {what}.")
                 return 1
-        tree(tmp, compose=f'fx_image: "cgr.dev/chainguard/minio:latest@sha256:{d64}"\n',
+        tree(tmp, compose=f'fx_image: "cgr.dev/example-org/minio:latest@sha256:{d64}"\n',
              allow="ops/ansible/roles/fx/defaults/main.yml fx_image  # no public build exists\n")
         if verdict(tmp) != 0:
             print("SELF-TEST FAILED: the gate rejected a waived reference.")
+            return 1
+        tree(tmp, role_rust=f"cgr.dev/chainguard/rust:latest-dev@sha256:{d64}",
+             compose=f'fx_image: "cgr.dev/chainguard/minio:latest-dev@sha256:{d64}"\n')
+        if verdict(tmp) != 0:
+            print("SELF-TEST FAILED: the gate rejected Chainguard's free catalogue.")
             return 1
         # sync repairs a stale default; args reads an overlay's role file.
         tree(tmp, svc=f"ARG BASE_RUNTIME_CC=old@sha256:{d64}\nFROM ${{BASE_RUNTIME_CC}}\n")
@@ -481,7 +490,7 @@ def self_test():
         if verdict(tmp) != 0:
             print("SELF-TEST FAILED: sync did not repair a stale default.")
             return 1
-        vendor = f"cgr.dev/chainguard/glibc-dynamic:latest@sha256:{d64}"
+        vendor = f"cgr.dev/example-org/glibc-dynamic-fips:latest@sha256:{d64}"
         with open(os.path.join(tmp, ROLE_DIR, "runtime-cc", "Dockerfile"), "w") as fh:
             fh.write(f"FROM {vendor}\n")
         with open(os.path.join(tmp, "svc", "Dockerfile"), encoding="utf-8") as fh:
@@ -492,7 +501,7 @@ def self_test():
             return 1
     print("self-test ok: red on a subscription role, an unpinned role, a subscription FROM, a stale default, "
           "an unknown role, an undeclared base, a subscription role default and a stale allow line; "
-          "green on a clean tree and a waived reference; sync repairs; args follows the overlay")
+          "green on a clean tree, a waived reference and the free Chainguard catalogue; sync repairs; args follows the overlay")
     return 0
 
 
