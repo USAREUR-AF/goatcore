@@ -344,19 +344,25 @@
     # on -- the same outage arriving quietly. A host carrying the overlay
     # cannot serve TLS without this token, so refuse to write a .env that
     # would break it.
-    - name: Assert the Cloudflare DNS-01 token resolves on an ACME host
+    # The DNS-01 credential depends on traefik_acme_dns_provider (traefik-acme.yml):
+    # Cloudflare's API token by default, an Entra client secret for azure.
+    - name: Assert the DNS-01 credential resolves on an ACME host
+      vars:
+        _acme_provider: "{{ traefik_acme_dns_provider | default('cloudflare', true) }}"
+        _acme_credential_var: >-
+          {{ 'traefik_acme_azure_client_secret' if _acme_provider == 'azure' else 'cloudflare_api_token' }}
       ansible.builtin.assert:
         that:
-          - cloudflare_api_token is defined
-          - (cloudflare_api_token | default('') | trim) | length > 0
+          - _acme_provider in ['cloudflare', 'azure']
+          - (lookup('ansible.builtin.vars', _acme_credential_var | trim, default='') | string | trim) | length > 0
         fail_msg: >-
           {{ inventory_hostname }} carries {{ compose_dir }}/docker-compose.acme.yml,
-          so Traefik mints Let's Encrypt certs here and needs
-          CLOUDFLARE_DNS_API_TOKEN in {{ compose_dir }}/.env, but
-          `cloudflare_api_token` is unset or empty for this host. Declare it in
-          group_vars/<group>/vars.yml as a lookup of this goatnet's own
-          CLOUDFLARE_API_TOKEN_* variable (see group_vars/zagros_hosts/vars.yml)
-          and export that variable in .envrc.local.d before re-running.
+          so Traefik mints Let's Encrypt certs here (DNS-01 via {{ _acme_provider }}) and
+          needs its credential in {{ compose_dir }}/.env, but
+          `{{ _acme_credential_var | trim }}` is unset or empty for this host. Declare it in
+          group_vars/<group>/vars.yml as a lookup of this goatnet's own variable
+          (CLOUDFLARE_API_TOKEN_* as in group_vars/zagros_hosts/vars.yml, or
+          AZURE_DNS_CLIENT_SECRET_* for azure) and export it before re-running.
           Refusing to render a .env that would drop the ACME resolver.
         quiet: true
       when: _mgmt_acme_overlay.stat.exists
@@ -535,8 +541,15 @@
           {# unchanged. COMPOSE_FILE is what makes a BARE `docker compose`   #}
           {# keep the overlay; an explicit -f set still overrides it, so     #}
           {# every scoped call in the roles behaves exactly as before.       #}
+          {# The DNS-01 credential follows traefik_acme_dns_provider, as in  #}
+          {# traefik-acme.yml: an azure site's Entra client secret, else the #}
+          {# Cloudflare token.                                                #}
           {% if _mgmt_acme_overlay.stat.exists %}
+          {% if (traefik_acme_dns_provider | default('cloudflare', true)) == 'azure' %}
+          TRAEFIK_ACME_AZURE_CLIENT_SECRET={{ traefik_acme_azure_client_secret }}
+          {% else %}
           CLOUDFLARE_DNS_API_TOKEN={{ cloudflare_api_token }}
+          {% endif %}
           COMPOSE_FILE=docker-compose.yml:docker-compose.acme.yml
           {% endif %}
 

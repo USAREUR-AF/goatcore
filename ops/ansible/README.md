@@ -126,6 +126,38 @@ ansible-playbook bridge.yml --limit bridge-rla
 ansible-playbook site.yml --limit relay-rlb,nethost
 ```
 
+## Azure DNS-01 for the mgmt host's public TLS (`traefik-acme.yml`)
+
+`traefik-acme.yml` issues the mgmt host's Let's Encrypt certificate by DNS-01 through
+Cloudflare (default) or Azure DNS. A site picks Azure in its target group's group_vars;
+unset, the play and its render are the Cloudflare path. Azure uses Traefik's lego
+`azuredns` provider with an Entra service principal (client secret), so it works on hosts
+with no managed identity, such as on-premises machines. The secret reaches the host only
+through `/opt/mgmt-host/.env` (0600), never a rendered file or a command line.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `traefik_acme_dns_provider` | `cloudflare` | `azure` selects Azure DNS |
+| `traefik_acme_azure_tenant_id` | required | Entra tenant of the service principal |
+| `traefik_acme_azure_client_id` | required | Application (client) ID |
+| `traefik_acme_azure_client_secret` | required | Secret: declare as `"{{ lookup('env', 'AZURE_DNS_CLIENT_SECRET_<SITE>') }}"` |
+| `traefik_acme_azure_subscription_id` | required | Subscription holding the zone |
+| `traefik_acme_azure_resource_group` | required | Resource group holding the zone |
+| `traefik_acme_azure_zone_name` | lego finds it by SOA | Pins the zone; every requested name must sit in it |
+| `traefik_acme_azure_environment` | `public` | `usgovernment` or `china` for those clouds |
+| `traefik_acme_dns_resolvers` | `1.1.1.1:53,8.8.8.8:53` | Propagation-check resolvers, either provider |
+
+The pre-flight names any empty Azure value and refuses before touching the host.
+`goat-standup.sh` phase 7 (and `goatbuilder standup`) then needs
+`AZURE_DNS_CLIENT_SECRET_<SITE>` set instead of `CLOUDFLARE_API_TOKEN_<SITE>`; with
+`posture.py init`, `AZURE` names are left for an outside value, never generated.
+
+**Admin step, once per zone:** an Entra app registration with a client secret, and the
+DNS Zone Contributor role for its service principal scoped to the DNS zone (not the
+resource group or subscription).
+
+**Status:** rendered and pre-flight tested offline; not yet run against a real Azure DNS zone.
+
 ## SSM Prerequisites
 
 The SSM connection plugin requires:
