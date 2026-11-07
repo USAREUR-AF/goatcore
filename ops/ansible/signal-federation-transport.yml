@@ -43,8 +43,21 @@
 # proxy, signal_federation_proxy_enabled: false) and re-run on both. Turning one
 # side off alone leaves the other forwarding offers nobody can deliver.
 
+- name: "signal federation transport — refuse a run without -e federation_site"
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Require federation_site naming a declared site group
+      ansible.builtin.assert:
+        that:
+          - federation_site is defined and (federation_site | length) > 0
+          - (federation_site | replace('-', '_')) ~ '_hosts' in groups
+        fail_msg: "pass -e federation_site=<site>; group <site>_hosts must be in the inventory"
+        quiet: true
+
 - name: "signal federation transport — token + dual-path proxy ({{ federation_site | default('SET -e federation_site') }})"
-  hosts: "{{ groups[(federation_site | mandatory | replace('-', '_')) ~ '_hosts'][0] }}"
+  hosts: "{{ federation_site | default('unset') | replace('-', '_') }}_hosts[0]"
   # Facts: the compose-watch role reads ansible_os_family.
   gather_facts: true
   become: true

@@ -27,8 +27,22 @@
 #     -i inventory/mgmt-hosts-mesh.ini signal-federation-verify.yml \
 #     -e federation_site=<joiner-site> -e federation_peer_site=<founder-site>
 
+- name: "signal federation verify — refuse a run without -e federation_site and federation_peer_site"
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Require federation_site naming a declared site group
+      ansible.builtin.assert:
+        that:
+          - federation_site is defined and (federation_site | length) > 0
+          - (federation_site | replace('-', '_')) ~ '_hosts' in groups
+          - federation_peer_site is defined and (federation_peer_site | replace('-', '_')) ~ '_hosts' in groups
+        fail_msg: "pass -e federation_site=<joiner> -e federation_peer_site=<founder>; both <site>_hosts groups must be in the inventory"
+        quiet: true
+
 - name: "signal federation verify — each node's own mesh key"
-  hosts: "{{ groups[(federation_site | mandatory | replace('-', '_')) ~ '_hosts'][0] }}:{{ groups[(federation_peer_site | mandatory | replace('-', '_')) ~ '_hosts'][0] }}"
+  hosts: "{{ federation_site | default('unset') | replace('-', '_') }}_hosts[0]:{{ federation_peer_site | default('unset') | replace('-', '_') }}_hosts[0]"
   gather_facts: false
   become: true
   tasks:
@@ -43,7 +57,7 @@
         sigfed_pubkey: "{{ (_nb_status.stdout | from_json).publicKey }}"
 
 - name: "signal federation verify — transport and delivery toward the peer"
-  hosts: "{{ groups[(federation_site | mandatory | replace('-', '_')) ~ '_hosts'][0] }}:{{ groups[(federation_peer_site | mandatory | replace('-', '_')) ~ '_hosts'][0] }}"
+  hosts: "{{ federation_site | default('unset') | replace('-', '_') }}_hosts[0]:{{ federation_peer_site | default('unset') | replace('-', '_') }}_hosts[0]"
   gather_facts: false
   become: true
   vars:
