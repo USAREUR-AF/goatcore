@@ -1,0 +1,233 @@
+name: wg-cp0-release
+
+# Block 22R.2 — signed-release pipeline for the wg-cp0 orchestrator
+# binary's first formal version. Mirrors the snitch-v0.1.x release
+# pattern at .github/workflows/snitch.yml: 6-target build matrix,
+# per-binary sha256 + aggregate SHA256SUMS, release job fires on
+# `git push origin wg-cp0-v<semver>` to attach binaries + manifest
+# to the GitHub Release.
+#
+# Sibling to .github/workflows/wg-cp0-accessor.yml. The accessor
+# workflow is the per-PR / per-push CI gate (unit + lint + 6-target
+# build matrix on every change); this workflow is the tag-driven
+# release surface, inert for normal pushes + PRs. Splitting the two
+# keeps each workflow's trigger surface narrow and predictable:
+#
+#   - PRs touching ops/enrollment/cmd/wg-cp0/** fire the accessor
+#     workflow ONLY (artifacts are PR-scoped, 90d retention).
+#   - Tag pushes wg-cp0-v* fire THIS workflow ONLY (artifacts are
+#     attached to a GitHub Release at the same shape).
+#
+# Cosign signing per ADR 0700 + docs/design/oci-goat-substrate.md
+# is a Block 40 follow-on for all load-bearing Go binaries (plus
+# goat-relay); it lands as one cross-cutting CI change rather than
+# per-binary plumbing. The release shape here (binaries + sha256 +
+# SHA256SUMS) matches the snitch-v0.1.0 baseline and can be
+# extended with `cosign sign-blob --keyless` + `*.sig` /
+# `*.cert.pem` sibling assets when Block 40 lands.
+#
+# Pin discipline:
+#   - go-version: 'stable' (matches wg-cp0-accessor.yml's rationale
+#     against pinned numeric versions resolving to stdlib-CVE
+#     patchlevels)
+#   - cache-dependency-path: ops/enrollment/go.sum
+#
+# Release-job permissions: contents: write — required to create /
+# update a GitHub Release and attach assets. Scoped per-job, not
+# workflow-wide, so the build + checksum jobs run with the default
+# contents: read.
+
+on:
+  push:
+    tags:
+      - 'wg-cp0-v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Supersede in-flight runs for the same ref. A push during review used to
+# leave the previous run going to completion, so a branch pushed three
+# times paid three times for an answer only the last one needed. Keyed on
+# the workflow plus the ref, and NEVER cancels on main — a merge-commit run
+# is the one whose result is recorded.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  build-matrix:
+    name: build ${{ matrix.target.goos }}/${{ matrix.target.goarch }}
+    # Cross-compile every release tag for all six common Go targets.
+    # Identical shape to wg-cp0-accessor.yml's matrix so per-target
+    # regressions surface at PR time (accessor.yml) AND at release
+    # time (this workflow); both jobs are required-green before any
+    # release ships.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - { goos: linux,   goarch: amd64 }
+          - { goos: linux,   goarch: arm64 }
+          - { goos: darwin,  goarch: amd64 }
+          - { goos: darwin,  goarch: arm64 }
+          - { goos: windows, goarch: amd64 }
+          - { goos: windows, goarch: arm64 }
+    defaults:
+      run:
+        working-directory: ops/enrollment
+    env:
+      CGO_ENABLED: "0"
+      GOOS: ${{ matrix.target.goos }}
+      GOARCH: ${{ matrix.target.goarch }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: 'stable'
+          cache-dependency-path: ops/enrollment/go.sum
+      - name: Compute output filename
+        id: outname
+        run: |
+          if [ "$GOOS" = "windows" ]; then
+            echo "binary=wg-cp0.exe" >> "$GITHUB_OUTPUT"
+          else
+            echo "binary=wg-cp0" >> "$GITHUB_OUTPUT"
+          fi
+      - name: go vet (per-target view of build tags)
+        run: go vet ./cmd/wg-cp0/...
+      - name: go build (cross-compile to ${{ matrix.target.goos }}/${{ matrix.target.goarch }})
+        run: go build -trimpath -ldflags="-s -w" -o "${{ steps.outname.outputs.binary }}" ./cmd/wg-cp0
+      - name: go test -c (verify per-target test compile)
+        # Confirms the test binary compiles for every target even on
+        # release runs — catches build-tag mismatches that runtime-only
+        # builds would miss.
+        run: go test -c -o /tmp/wg-cp0.test ./cmd/wg-cp0
+      - name: Compute artifact sha256
+        id: sha
+        run: |
+          if command -v sha256sum >/dev/null; then
+            sum=$(sha256sum "${{ steps.outname.outputs.binary }}" | awk '{print $1}')
+          else
+            sum=$(shasum -a 256 "${{ steps.outname.outputs.binary }}" | awk '{print $1}')
+          fi
+          echo "sha256=$sum" >> "$GITHUB_OUTPUT"
+          echo "$sum  ${{ steps.outname.outputs.binary }}" > "${{ steps.outname.outputs.binary }}.sha256"
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wg-cp0-${{ matrix.target.goos }}-${{ matrix.target.goarch }}
+          path: |
+            ops/enrollment/${{ steps.outname.outputs.binary }}
+            ops/enrollment/${{ steps.outname.outputs.binary }}.sha256
+          if-no-files-found: error
+          retention-days: 90
+      - name: Annotate run summary
+        run: |
+          {
+            echo "### wg-cp0 ${GOOS}/${GOARCH}"
+            echo
+            echo "- Output: \`${{ steps.outname.outputs.binary }}\`"
+            echo "- SHA-256: \`${{ steps.sha.outputs.sha256 }}\`"
+            echo "- Trimpath + stripped (\`-s -w\`)"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  checksums:
+    name: aggregate SHA256SUMS
+    needs: build-matrix
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Download all matrix artifacts
+        uses: actions/download-artifact@v4.3.0
+        with:
+          path: artifacts
+      - name: Build SHA256SUMS manifest
+        # Each per-target artifact already carries a `<binary>.sha256`
+        # line; concatenating them gives the canonical fleet-wide
+        # manifest. Sort for deterministic output.
+        run: |
+          set -euo pipefail
+          (
+            cd artifacts
+            find . -name '*.sha256' -print0 \
+              | xargs -0 cat \
+              | sort -k 2 \
+              > ../SHA256SUMS
+          )
+          echo "### wg-cp0 SHA256SUMS"
+          echo
+          echo '```'
+          cat SHA256SUMS
+          echo '```'
+          {
+            echo "### wg-cp0 SHA256SUMS"
+            echo
+            echo '```'
+            cat SHA256SUMS
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: wg-cp0-checksums
+          path: SHA256SUMS
+          if-no-files-found: error
+          retention-days: 90
+
+  release:
+    name: attach binaries to GitHub Release
+    # Tag-gated upload. Fires only on `git push origin
+    # wg-cp0-v<semver>`. The release is created if it doesn't exist;
+    # existing releases are updated for that tag.
+    needs:
+      - build-matrix
+      - checksums
+    if: startsWith(github.ref, 'refs/tags/wg-cp0-v')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4.3.0
+        with:
+          path: artifacts
+      - name: Stage release assets
+        # Flatten artifact dirs into a single release-assets/ tree.
+        # Naming pattern: wg-cp0-<goos>-<goarch>[.exe] + .sha256
+        # sidecar. Matches the snitch-v0.1.0 asset shape so operators
+        # downloading from either Release see the same layout.
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+          for d in artifacts/wg-cp0-*; do
+            name=$(basename "$d")
+            # Skip the checksums artifact dir; SHA256SUMS is copied
+            # separately below.
+            if [ "$name" = "wg-cp0-checksums" ]; then
+              continue
+            fi
+            for f in "$d"/*; do
+              base=$(basename "$f")
+              if [ "$base" = "wg-cp0" ] || [ "$base" = "wg-cp0.exe" ]; then
+                ext=""
+                [ "$base" = "wg-cp0.exe" ] && ext=".exe"
+                cp "$f" "release-assets/${name}${ext}"
+              elif [ "$base" = "wg-cp0.sha256" ] || [ "$base" = "wg-cp0.exe.sha256" ]; then
+                ext=""
+                [ "$base" = "wg-cp0.exe.sha256" ] && ext=".exe"
+                cp "$f" "release-assets/${name}${ext}.sha256"
+              fi
+            done
+          done
+          cp artifacts/wg-cp0-checksums/SHA256SUMS release-assets/SHA256SUMS
+          ls -la release-assets/
+      - name: Create or update Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release-assets/*
+          generate_release_notes: true
+          tag_name: ${{ github.ref_name }}

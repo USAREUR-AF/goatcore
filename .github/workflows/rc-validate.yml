@@ -1,0 +1,192 @@
+name: rc-validate
+
+# A release candidate is a tag <component>/v<semver>-rc.<n> on a commit on
+# main (ADR 1173, docs/design/release-candidate-validation.md). This workflow
+# is what the tag triggers on the GitHub side:
+#   1. refuse the tag unless its pusher holds the admin role on the
+#      repository and its commit is on main
+#      (a refused tag is DELETED here, so a stray tag never becomes a candidate);
+#   2. compute the flows the candidate affects, from the fleet's current pin;
+#   3. run every affected flow's cheap suite (mocked backend, no goatnet);
+#   4. print the live commands a mesh-connected controller runs on zagros-dev.
+# The candidate image is built by the component's own image workflow, which
+# already triggers on <component>/v* tags. Nothing here reaches a goatnet.
+
+on:
+  push:
+    tags:
+      - '*/v*-rc.*'
+
+permissions:
+  contents: write     # to delete a refused tag
+  pull-requests: read
+
+# One run per candidate tag, never cancelled: the nomination is the artifact,
+# and a second push of the same tag is refused upstream.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  admit:
+    name: nominator + main-ancestry check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      component: ${{ steps.parse.outputs.component }}
+      version: ${{ steps.parse.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Parse the tag
+        id: parse
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          component="${tag%%/*}"
+          version="${tag#*/}"
+          case "$version" in v*-rc.[0-9]*) ;; *) echo "::error::tag $tag is not <component>/v<semver>-rc.<n>"; exit 1;; esac
+          echo "component=$component" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: The pusher must hold the admin role on this repository
+        id: nominator
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Nomination is a repository-role question, answered by GitHub's own
+          # permission model with the token every workflow already has: only
+          # the admin role may cut a release candidate (operator decision,
+          # 2026-09-09: the repository's direct admins, nobody else). No org
+          # read, no secret, no team lookup.
+          role=$(gh api "repos/${GITHUB_REPOSITORY}/collaborators/${GITHUB_ACTOR}/permission" --jq .role_name 2>/dev/null || echo unknown)
+          echo "${GITHUB_ACTOR} holds role: ${role}"
+          case "$role" in
+            admin) exit 0 ;;
+            unknown)
+              echo "::error::could not read ${GITHUB_ACTOR}'s repository role. The tag is kept; nothing is validated until this check can answer."
+              exit 1 ;;
+            *)
+              echo "::error::${GITHUB_ACTOR} holds the '${role}' role on ${GITHUB_REPOSITORY}; only a repository admin may nominate a release candidate. Deleting ${GITHUB_REF_NAME}."
+              git push origin ":refs/tags/${GITHUB_REF_NAME}" || true
+              exit 1 ;;
+          esac
+      - name: The commit must be on main
+        run: |
+          git fetch -q origin main
+          if ! git merge-base --is-ancestor "${GITHUB_SHA}" origin/main; then
+            echo "::error::${GITHUB_REF_NAME} points at ${GITHUB_SHA}, which is not on main. Deleting the tag."
+            git push origin ":refs/tags/${GITHUB_REF_NAME}" || true
+            exit 1
+          fi
+
+  affected:
+    name: which flows does this candidate touch
+    needs: admit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      matrix: ${{ steps.flows.outputs.matrix }}
+      live_rows: ${{ steps.flows.outputs.live_rows }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install pyyaml
+      - name: Lint the flow map
+        run: python3 ops/validation/affected-flows.py --lint
+      - name: Compute affected flows (base = the fleet's current pin)
+        id: flows
+        run: |
+          set -o pipefail
+          comp="${{ needs.admit.outputs.component }}"
+          # fleet-pins keys are ledger components; the tag prefix is the image name.
+          # Map the two through the pins table (image_workflow names the tag family).
+          pin_key=$(python3 - "$comp" <<'PY'
+          import sys, yaml
+          comp = sys.argv[1]
+          pins = yaml.safe_load(open("ops/pins/fleet-pins.yaml"))
+          for k, v in (pins.get("components") or {}).items():
+              wf = str((v or {}).get("image_workflow", ""))
+              if wf.endswith(f"/{comp}-image.yml"):
+                  print(k); break
+          else:
+              sys.exit(f"no fleet-pins component builds from {comp}-image.yml")
+          PY
+          )
+          python3 ops/validation/affected-flows.py --component "$pin_key" --head "${GITHUB_SHA}" | tee affected.txt
+          python3 ops/validation/affected-flows.py --component "$pin_key" --head "${GITHUB_SHA}" --json > affected.json
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          d = json.load(open("affected.json"))
+          suites = [{"flow": f["id"], "dir": c["dir"], "run": c["run"]} for f in d["affected"] for c in (f.get("cheap") or [])]
+          print("matrix=" + json.dumps({"include": suites}))
+          print("live_rows=" + ",".join(d["live_rows"]))
+          PY
+          { echo "## Release candidate ${GITHUB_REF_NAME}"; echo; echo '```'; cat affected.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+  cheap:
+    name: cheap suite · ${{ matrix.flow }}
+    needs: affected
+    if: ${{ fromJSON(needs.affected.outputs.matrix).include[0] != null }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.affected.outputs.matrix) }}
+    services:
+      # ADR 1165 step A: the console's browser specs start real consoles whose
+      # stores are in Postgres (E2E_PG_DSN). Same image and digest as the
+      # console's own workflows. Suites that need no database ignore it.
+      postgres:
+        image: postgres:16.4@sha256:e62fbf9d3e2b49816a32c400ed2dba83e3b361e6833e624024309c35d334b412
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: ${{ matrix.run }}
+        working-directory: ${{ matrix.dir }}
+        env:
+          E2E_PG_DSN: postgres://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
+        run: ${{ matrix.run }}
+
+  live-commands:
+    name: what the mesh-side controller runs next
+    needs: [admit, affected, cheap]
+    if: ${{ always() && needs.admit.result == 'success' && needs.affected.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Print the live run
+        run: |
+          rows="${{ needs.affected.outputs.live_rows }}"
+          {
+            echo "## Live validation on zagros-dev (mesh-connected controller)"
+            echo
+            if [ "${{ needs.cheap.result }}" = "failure" ]; then
+              echo "**A cheap suite failed. This candidate is dead: delete the tag, fix on main, tag -rc.<n+1>.**"
+            fi
+            echo "1. Deploy \`${{ needs.admit.outputs.component }}:${{ needs.admit.outputs.version }}\` to zagros-dev as a declared deviation in \`ops/pins/fleet-pins.yaml\` (\`deviations.zagros_dev\`), reason \`RC ${GITHUB_REF_NAME}\`."
+            if [ -n "$rows" ]; then
+              echo "2. From the operator laptop (on the zagros-dev mesh):"
+              echo
+              echo '```'
+              echo "python3 ops/validation/run-acceptance.py --env zagros-dev --only $rows --var goat_context=<zagros-dev context>"
+              echo '```'
+              echo "3. Cite the PASS lines from ~/.goat/state/zagros-dev-acceptance/results.jsonl as evidence.validation in the preprod candidate record."
+            else
+              echo "2. No live row is mapped for the affected flows yet — the map says so; the candidate's evidence is the cheap suites above. Add rows in ops/validation/acceptance-tests.yaml + flow-map.yaml."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

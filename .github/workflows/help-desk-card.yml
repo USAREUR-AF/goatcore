@@ -1,0 +1,52 @@
+name: help-desk-card
+
+# Wires ops/scripts/test_help_desk_qr.py — the unit tests for the two-QR
+# help-desk card renderer (docs/design/help-desk-service-pattern.md §4,
+# ADR 1176). The tests exercise the built-in QR encoder and the card
+# renderer with URL overrides, so they need no group_vars rows and no
+# network. The registry-backed `--check` run per goatnet is added to this
+# job when the `help` rows land (plan phase 5).
+#
+# PR-only, path-filtered: the script has no runtime dependency on anything
+# else in the tree.
+
+on:
+  pull_request:
+    paths:
+      - 'ops/scripts/help-desk-qr.py'
+      - 'ops/scripts/test_help_desk_qr.py'
+      - '.github/workflows/help-desk-card.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install PyYAML (the script reads group_vars)
+        run: python3 -m pip install --quiet pyyaml
+
+      - name: Unit tests (built-in encoder, card renderer)
+        run: |
+          set -euo pipefail
+          python3 -W error::ResourceWarning ops/scripts/test_help_desk_qr.py
+
+      - name: Render a preview card with URL overrides
+        run: |
+          set -euo pipefail
+          python3 ops/scripts/help-desk-qr.py --site zagros \
+            --inside-url https://help.zagros.netbird.zagros.example \
+            --outside-url https://example.invalid/help \
+            --out "$RUNNER_TEMP/card"
+          test -s "$RUNNER_TEMP/card/card.html"
+          test -s "$RUNNER_TEMP/card/inside.svg"
+          test -s "$RUNNER_TEMP/card/outside.svg"

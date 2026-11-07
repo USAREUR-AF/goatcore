@@ -1,0 +1,40 @@
+# A mermaid block with a syntax error fails nothing — it renders as an error box
+# on GitHub and on every docs surface, and nothing else notices. One sat in
+# docs/design/failure-isolation.md long enough that nobody could date it.
+#
+# Diff-scoped: only markdown changed against the base is rendered, because mmdc
+# drives a real headless browser. `--all` sweeps every block in docs/ and is
+# available to run by hand.
+name: mermaid-renders
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '**/*.md'
+      - 'ops/ci/check-mermaid-renders.sh'
+      - '.github/workflows/mermaid-renders.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  render:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install mermaid-cli
+        run: npm install -g @mermaid-js/mermaid-cli@11
+      - name: Every changed mermaid block renders
+        env:
+          # ubuntu-24.04 ships Chrome at this path; the script falls back through
+          # google-chrome / chromium and SKIPS loudly if it finds none.
+          CHROME_PATH: /usr/bin/google-chrome-stable
+        run: bash ops/ci/check-mermaid-renders.sh

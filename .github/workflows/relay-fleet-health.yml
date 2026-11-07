@@ -1,0 +1,68 @@
+name: relay-fleet-health
+
+# Public TCP :33073 probes of active ZAGROS fleets and every enrollment DNS
+# pool address. The former production relay tiers retired September 2026;
+# inventories are shared with the fleet health dashboard.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'ops/scripts/relay-fleet-healthcheck.*'
+      - 'ops/relay/health/relays*.conf'
+      - 'ops/scripts/test_relay_fleet_healthcheck.py'
+      - '.github/workflows/relay-fleet-health.yml'
+  schedule:
+    # 05:23 UTC daily — offset from other nightly jobs (wg-cp0-mesh-reach @ 04:17).
+    - cron: '23 5 * * *'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'fleet to probe (select one when filtering region names)'
+        type: choice
+        options: [all, zagros, zagros-dev, zagros-prod]
+        default: all
+      regions:
+        description: 'comma-separated region subset (default: all)'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+# Supersede in-flight runs for the same ref. A push during review used to
+# leave the previous run going to completion, so a branch pushed three
+# times paid three times for an answer only the last one needed. Keyed on
+# the workflow plus the ref, and NEVER cancels on main — a merge-commit run
+# is the one whose result is recorded.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  probe:
+    name: relay fleet ${{ matrix.environment }} :33073 reachability
+    strategy:
+      fail-fast: false
+      matrix:
+        environment: >-
+          ${{ fromJSON(inputs.environment == 'zagros' && '["zagros"]' ||
+          inputs.environment == 'zagros-dev' && '["zagros-dev"]' ||
+          inputs.environment == 'zagros-prod' && '["zagros-prod"]' ||
+          '["zagros", "zagros-dev", "zagros-prod"]') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test probe failure handling
+        run: python3 ops/scripts/test_relay_fleet_healthcheck.py
+      - name: Probe relay fleet
+        env:
+          RELAY_ENVIRONMENT: ${{ matrix.environment }}
+          RELAY_REGIONS: ${{ inputs.regions }}
+        run: |
+          args=(--environment "$RELAY_ENVIRONMENT")
+          if [ -n "$RELAY_REGIONS" ]; then
+            args+=(--regions "$RELAY_REGIONS")
+          fi
+          ops/scripts/relay-fleet-healthcheck.sh "${args[@]}"
