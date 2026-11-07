@@ -206,49 +206,49 @@ def plan_fixes(rows, roster, handle_map, taken):
 # ---------------------------------------------------------------- self-test
 
 ROSTER_FIXTURE = {"jane-doe", "g1x-gcs", "dave-2"}
-MAP_FIXTURE = {"person-46@example.org": "jane-doe", "person-112@example.org": "nobody-here"}
+MAP_FIXTURE = {"jane.doe@example.invalid": "jane-doe", "sam@example.invalid": "nobody-here"}
 
 
 def self_test():
     cases = [
         ("candidate: dots and case fold to a handle shape",
-         handle_candidate("person-46@example.org") == "jane-doe"),
+         handle_candidate("Jane.Doe@example.invalid") == "jane-doe"),
         ("candidate: specials collapse, edges strip",
          handle_candidate("a_b+c@x") == "a-b-c"),
         ("resolve: a mapped handle in the roster wins",
-         resolve_handle("person-46@example.org", ROSTER_FIXTURE, MAP_FIXTURE) == ("jane-doe", None)),
+         resolve_handle("jane.doe@example.invalid", ROSTER_FIXTURE, MAP_FIXTURE) == ("jane-doe", None)),
         ("resolve: a mapped handle outside the roster is refused",
-         resolve_handle("person-112@example.org", ROSTER_FIXTURE, MAP_FIXTURE) == (None, "nobody-here")),
+         resolve_handle("sam@example.invalid", ROSTER_FIXTURE, MAP_FIXTURE) == (None, "nobody-here")),
         ("resolve: an unmapped candidate in the roster passes",
-         resolve_handle("person-38@example.org", ROSTER_FIXTURE, {}) == ("g1x-gcs", None)),
+         resolve_handle("g1x-gcs@example.invalid", ROSTER_FIXTURE, {}) == ("g1x-gcs", None)),
         ("resolve: an unmapped candidate outside the roster is refused",
-         resolve_handle("person-48@example.org", ROSTER_FIXTURE, {}) == (None, "jane")),
+         resolve_handle("jane@example.invalid", ROSTER_FIXTURE, {}) == (None, "jane")),
         ("check: a retroactive miss fails, a normal miss reports",
          classify_enrolled(
-             [("prop-retro-1", "jane", "person-46@example.org", 1),
-              ("prop-2", "gone-person", "person-40@example.org", 0),
-              ("prop-retro-3", "g1x-gcs", "person-38@example.org", 1)],
-             ROSTER_FIXTURE) == ([("prop-retro-1", "jane", "person-46@example.org")],
-                                 [("prop-2", "gone-person", "person-40@example.org")])),
+             [("prop-retro-1", "jane", "jane.doe@example.invalid", 1),
+              ("prop-2", "gone-person", "gone@example.invalid", 0),
+              ("prop-retro-3", "g1x-gcs", "g1x-gcs@example.invalid", 1)],
+             ROSTER_FIXTURE) == ([("prop-retro-1", "jane", "jane.doe@example.invalid")],
+                                 [("prop-2", "gone-person", "gone@example.invalid")])),
         ("fix: mapped + rostered + free plans an update",
-         plan_fixes([("prop-retro-1", "jane", "person-46@example.org")],
+         plan_fixes([("prop-retro-1", "jane", "jane.doe@example.invalid")],
                     ROSTER_FIXTURE, MAP_FIXTURE, set())
          == ([("prop-retro-1", "jane", "jane-doe")], [])),
         ("fix: no mapping is unfixable, never guessed",
-         plan_fixes([("prop-retro-9", "bob", "person-20@example.org")],
+         plan_fixes([("prop-retro-9", "bob", "bob@example.invalid")],
                     ROSTER_FIXTURE, MAP_FIXTURE, set())[0] == []),
         ("fix: a mapped handle outside the roster is unfixable",
-         plan_fixes([("prop-retro-8", "sam", "person-112@example.org")],
+         plan_fixes([("prop-retro-8", "sam", "sam@example.invalid")],
                     ROSTER_FIXTURE, MAP_FIXTURE, set())[0] == []),
         ("fix: a collision with another row is unfixable",
-         plan_fixes([("prop-retro-1", "jane", "person-46@example.org")],
+         plan_fixes([("prop-retro-1", "jane", "jane.doe@example.invalid")],
                     ROSTER_FIXTURE, MAP_FIXTURE, {"jane-doe"})[0] == []),
         ("fix: two rows mapped to one handle plan only the first",
-         plan_fixes([("prop-retro-1", "jane", "person-46@example.org"),
-                     ("prop-retro-2", "jd", "person-46@example.org")],
+         plan_fixes([("prop-retro-1", "jane", "jane.doe@example.invalid"),
+                     ("prop-retro-2", "jd", "jane.doe@example.invalid")],
                     ROSTER_FIXTURE, MAP_FIXTURE, set())
          == ([("prop-retro-1", "jane", "jane-doe")],
-             [("prop-retro-2", "jd", "person-46@example.org",
+             [("prop-retro-2", "jd", "jane.doe@example.invalid",
                "mapped handle 'jane-doe' is already on another proposal row")])),
     ]
     ok = True
