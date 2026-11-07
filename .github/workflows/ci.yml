@@ -241,11 +241,11 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Cache GNU Bash 3.2.57
         id: bash32
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ${{ runner.temp }}/goat-ci-bash32
           key: bash-3.2.57-ubuntu-24.04-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('ops/ci/build-bash32.sh') }}
@@ -254,7 +254,7 @@ jobs:
         if: steps.bash32.outputs.cache-hit != 'true'
         run: bash ops/ci/build-bash32.sh "$RUNNER_TEMP/goat-ci-bash32"
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: '3.12'
 
@@ -271,7 +271,7 @@ jobs:
           echo "BASH_UNDER_TEST=$RUNNER_TEMP/goat-ci-bash32/bin/bash" >> "$GITHUB_ENV"
           echo "HOST_BASH_UNDER_TEST=/bin/bash" >> "$GITHUB_ENV"
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: '1.26.10'
 
@@ -326,8 +326,8 @@ jobs:
           - ops/wg-cp0-mesh-reach
           - ops/zenoh/loadgen
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           # A patched Go release for the standard-library scan.
           go-version: '1.26.10'
