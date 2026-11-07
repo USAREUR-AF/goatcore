@@ -954,10 +954,19 @@
   gather_facts: false
   become: true
   vars:
+    # The per-host seed is the name recorded on the host the first time this
+    # runs (tasks/pgbackrest-cipher-seed.yml), so a renamed host keeps the
+    # passphrase its repo was made with. A host with no record gets its
+    # current inventory_hostname, the value this derivation always used.
     pgbackrest_repo1_cipher_pass: >-
-      {{ (pgbackrest_cipher_pass | default('') ~ '-repo1-' ~ inventory_hostname)
+      {{ (pgbackrest_cipher_pass | default('') ~ '-repo1-'
+          ~ (pgbackrest_cipher_seed | default(inventory_hostname)))
          | hash('sha256') | truncate(32, True, '') }}
   tasks:
+    - name: Record or read the pgBackRest cipher seed
+      ansible.builtin.include_tasks: tasks/pgbackrest-cipher-seed.yml
+      when: has_durable_independent_state | default(true) | bool
+
     - name: Apply pgbackrest role
       ansible.builtin.import_role:
         name: pgbackrest
