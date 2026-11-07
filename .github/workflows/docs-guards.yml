@@ -1,0 +1,82 @@
+name: docs-guards
+
+# One job for the document-shape guards over docs/. Previously these were
+# five workflows (adr-number-uniqueness, adr-status-vs-code, doc-links,
+# doc-code-citations, guide-example-names): five runner starts on overlapping
+# `docs/**` filters for one job's worth of work, and four separate parsers of
+# docs/adr/INDEX.md. Coverage is unchanged; the path filter is the union.
+#
+# Kept out on purpose: mermaid-renders.yml drives a headless browser and stays
+# its own workflow; circulated-docs.yml renders PDFs and does the same.
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/docs-guards.yml'
+      - 'docs/**'
+      - '.claude/skills/**'
+      - 'crates/goat-cli/**'
+      - 'crates/panoscope-core/src/**'
+      - 'ops/ansible/group_vars/*/pins.yml'
+      - 'ops/ansible/roles/**'
+      - 'ops/ci/**'
+      - 'ops/goat-id-console/**'
+      - 'ops/goat-zenoh-portal/**'
+      - 'ops/onboard-runner/**'
+      - 'ops/gym/**'
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  docs:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+
+      # A single GraphQL request compares newly claimed ADR/finding IDs across
+      # open PRs. Confirmed collisions fail; API or pagination gaps warn open.
+      - name: Cross-PR ADR and finding IDs are unique
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          python3 ops/ci/test-cross-pr-id-uniqueness.py
+          python3 ops/ci/check-cross-pr-id-uniqueness.py
+
+      # ADR register — one number, one ADR; every ADR indexed; index agrees; ADR-0002 vocabulary
+      - name: ADR numbers are unique
+        run: ops/ci/check-adr-number-uniqueness.sh
+      - name: every ADR has an index row
+        run: ops/ci/check-adr-index-complete.sh
+      - name: index status agrees with each ADR
+        run: ops/ci/check-adr-index-status-agrees.sh
+      - name: status-vocabulary guard self-test
+        run: python3 ops/ci/check-adr-status-vocabulary.py --self-test
+      - name: every status leads with an ADR-0002 token
+        run: python3 ops/ci/check-adr-status-vocabulary.py docs/adr
+      - name: self-test — guard proves RED on a planted under-claiming ADR
+        run: ops/ci/check-adr-status-vs-code.sh --self-test
+      - name: no ADR under-claims code that exists in the tree
+        run: ops/ci/check-adr-status-vs-code.sh
+
+      # Links and citations
+      - name: relative .md links resolve
+        run: python3 ops/ci/check-doc-links.py
+      - name: skills declare an audience; both-skills have a GUIDE (ADR 1174)
+        run: python3 ops/ci/check-skill-audience.py
+      - name: every `path:line` citation is within its file
+        run: ./ops/ci/check-doc-code-citations.sh
+
+      # Reader-facing guides never use a real roster handle as an example
+      - name: self-test — guard goes RED on a planted example (P6)
+        run: ops/ci/check-guide-example-names.py --self-test
+      - name: no roster handle used as an example in guide text
+        run: ops/ci/check-guide-example-names.py

@@ -1,0 +1,60 @@
+# Renders the ory role's kratos.yaml.j2 for every goatnet and makes Kratos
+# itself accept or reject the result.
+#
+# F-341: the role carried a knob that rendered an invalid Kratos key. Kratos
+# does not warn on those — it refuses to boot — so a bad render is a goatnet's
+# identity plane down, not a lint nit. Nothing validated this template before:
+# the role's own fixture writes a hand-authored kratos.yaml and never touches
+# the template.
+name: kratos-config-render
+
+on:
+  pull_request:
+    paths:
+      - 'ops/ansible/roles/ory/templates/ory/kratos.yaml.j2'
+      - 'ops/ansible/roles/ory/defaults/main.yml'
+      - 'ops/ansible/group_vars/**'
+      - 'ops/ci/check-kratos-config-renders.sh'
+      - '.github/workflows/kratos-config-render.yml'
+  # push: on main REMOVED — this workflow is a guard, not a publisher. It
+  # already gates the pull request, and a squash merge puts the reviewed diff
+  # on main unchanged, so re-running it there re-verifies a commit whose answer
+  # is known. 98 of 119 workflows did that; measured at 4,787 runs in
+  # one day, roughly half of them this shape.
+  #
+  # An earlier draft of this comment also said "main is protected from
+  # force-push". IT IS NOT — this plan cannot have branch protection at all
+  # (the API answers "Upgrade to GitHub Pro"). A force-push to main therefore
+  # bypasses this guard entirely. That is a real gap and it is 's, not
+  # something a paths filter or a trigger change can close.
+  # Publishers keep push: on purpose — the merge commit is the artifact.
+# Supersede in-flight runs for the same ref. A push during review used to
+# leave the previous run going to completion, so a branch pushed three
+# times paid three times for an answer only the last one needed. Keyed on
+# the workflow plus the ref, and NEVER cancels on main — a merge-commit run
+# is the one whose result is recorded.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  render-and-validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install render deps
+        run: pip install --quiet jinja2 pyyaml
+
+      # Pull once rather than per-goatnet, so a registry hiccup fails here with
+      # a clear message instead of looking like a config rejection.
+      - name: Pull Kratos image
+        run: docker pull oryd/kratos:v1.3.1
+
+      - name: Render every goatnet's kratos.yaml and validate against Kratos
+        run: ops/ci/check-kratos-config-renders.sh

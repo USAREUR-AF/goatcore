@@ -1,0 +1,66 @@
+name: federation-bundle
+
+# The partner conformance bundle stays current, deterministic, and its verifier
+# actually refuses.
+#
+# docs/design/federation-package-spec.md §10 makes the conformance vectors
+# normative, and §8.3 concedes that an external partner may not have them —
+# they are 210 files in a repository nobody outside can reach. The bundle in
+# ops/federation/bundle/ closes that, and introduces a staleness risk of its
+# own: the specification or a vector changes, the bundle a partner already
+# holds does not, and the partner discovers the difference as a digest mismatch
+# against us. That is the one failure this format exists to make loud and
+# diagnosable, arriving instead as a mystery.
+#
+# So the bundle's content-sha256 is committed at
+# ops/federation/bundle/content.sha256 and recomputed here. It covers the
+# manifest's file list and not its provenance header, so it does not churn on
+# unrelated commits — it moves when what a partner would receive moves.
+#
+# The guard also proves itself: doctrine P6, a guard that only ever prints "ok"
+# is indistinguishable from one that does not look. --self-test breaks a
+# bundle eight ways and asserts the verifier goes red for each.
+
+on:
+  pull_request:
+    paths:
+      - 'docs/design/federation-package-spec.md'
+      - 'ops/federation/vectors/**'
+      - 'ops/federation/bundle/**'
+      - 'ops/ci/check-federation-bundle.sh'
+      - '.github/workflows/federation-bundle.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: federation-bundle-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bundle:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      # Runs the ratchet, the determinism comparison, and the eight red-proofs
+      # of the verifier. Nothing to install: bash, python3, coreutils and tar
+      # are on the runner, and that is deliberately the same set the partner
+      # side needs.
+      - name: Bundle is current, deterministic, and its verifier refuses
+        timeout-minutes: 5
+        run: ops/ci/check-federation-bundle.sh
+
+      # The verifier is what a partner runs, on whatever they have. It is
+      # POSIX sh, and shellcheck is told so — a bashism here is a defect that
+      # only shows up on somebody else's machine, which is the one place we
+      # cannot debug it.
+      - name: shellcheck
+        timeout-minutes: 2
+        run: |
+          sudo apt-get update && sudo apt-get install -y shellcheck
+          shellcheck ops/ci/check-federation-bundle.sh
+          shellcheck ops/federation/bundle/make-bundle.sh
+          shellcheck -s sh ops/federation/bundle/verify-bundle.sh

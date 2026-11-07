@@ -1,0 +1,16 @@
+# Known ADRs whose Status does not lead with an ADR-0002 token.
+# Shrink-only baseline for check-adr-status-vocabulary.py.
+#
+# A NEW non-conforming ADR fails on its own PR. Correcting one of these makes
+# its line here stale and the guard fails asking for the line to be removed, so
+# the set only ever shrinks. Do not add to it without a reason written here.
+#
+# 1045 — the ADR states a PER-FACET status ("Declare + reveal Accepted —
+#   deployed + live-fired on ZAGROS 2026-06-15"), while INDEX.md records the ADR
+#   as Proposed. Two facets in different lifecycle states, and the two records
+#   disagree about which the ADR as a whole is in. Under ADR 0002 an ADR has one
+#   status, so this is a real governance question — either the enforce/dynamic
+#   facets belong in their own ADR, or the whole is Proposed and the deployed
+#   facets are noted as such. Left for the QoS owner rather than resolved here:
+#   normalising it silently would pick one answer and hide that a choice was made.
+1045-qos-throughput-envelopes.md

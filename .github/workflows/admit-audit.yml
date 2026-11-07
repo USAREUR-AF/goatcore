@@ -1,0 +1,74 @@
+name: admit-audit
+
+# Block 66A.3 — per-module CI workflow for ops/admit-audit.
+#
+# admit-audit is the read-only sidecar that watches the local
+# Netbird mgmt Postgres for new peers rows (admit events) and emits
+# structured logs + Prometheus metrics. C1 of mgmt-plane-threat-
+# mitigations.md §2.1.
+#
+# Block 50E.12 stood up the test scaffold (13 sub-tests across 3 pure
+# functions + goleak.VerifyTestMain). This workflow is the per-PR
+# gate that runs them.
+#
+# Triggers:
+#   - PR / push touching ops/admit-audit/**
+#   - PR / push touching the workflow itself
+
+on:
+  # push: on main REMOVED — this workflow is a guard, not a publisher. It
+  # already gates the pull request, and a squash merge puts the reviewed diff
+  # on main unchanged, so re-running it there re-verifies a commit whose answer
+  # is known. 98 of 119 workflows did that; measured at 4,787 runs in
+  # one day, roughly half of them this shape.
+  #
+  # An earlier draft of this comment also said "main is protected from
+  # force-push". IT IS NOT — this plan cannot have branch protection at all
+  # (the API answers "Upgrade to GitHub Pro"). A force-push to main therefore
+  # bypasses this guard entirely. That is a real gap and it is 's, not
+  # something a paths filter or a trigger change can close.
+  # Publishers keep push: on purpose — the merge commit is the artifact.
+  pull_request:
+    paths:
+      - 'ops/admit-audit/**'
+      - '.golangci.yml'
+      - '.github/workflows/admit-audit.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Supersede in-flight runs for the same ref. A push during review used to
+# leave the previous run going to completion, so a branch pushed three
+# times paid three times for an answer only the last one needed. Keyed on
+# the workflow plus the ref, and NEVER cancels on main — a merge-commit run
+# is the one whose result is recorded.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  unit:
+    name: unit tests + lint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: ops/admit-audit
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.10'
+          cache-dependency-path: ops/admit-audit/go.sum
+      - run: go vet ./...
+      - name: golangci-lint (Block 50A.3 — strict config)
+        uses: golangci/golangci-lint-action@v7
+        with:
+          version: v2.12.1
+          working-directory: ops/admit-audit
+          args: --config=${{ github.workspace }}/.golangci.yml
+      - name: go test (Block 50E.12 scaffold — 13 sub-tests)
+        # Includes goleak.VerifyTestMain. Future: add testcontainers
+        # tests for the polling / rolling-window / dedup paths.
+        run: go test -v -race -count=1 ./...
