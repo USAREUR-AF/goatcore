@@ -365,6 +365,14 @@ impl Declaration {
     pub fn scopes(&self) -> Vec<String> {
         let mut v: Vec<String> = self.tax.netbird_acl_taxonomy.keys().cloned().collect();
         v.extend(self.tax.netbird_exercises.keys().cloned());
+        v.extend(
+            self.mat
+                .netbird_acl_matrix
+                .keys()
+                .chain(self.mat.netbird_acl_tests.keys())
+                .filter(|s| self.default_scope(s).is_some())
+                .cloned(),
+        );
         v.sort();
         v.dedup();
         v
@@ -427,9 +435,35 @@ impl Declaration {
         })
     }
 
+    /// A goatnet the matrix declares but the taxonomy has no stanza for
+    /// inherits `_default`, with `site_prefix` = the site id upper-cased —
+    /// exactly as `ops/ansible/tasks/netbird-taxonomy-default.yml` derives it
+    /// for the ACL plays. Only for a site the matrix names (rules or
+    /// assertions): a name declared nowhere stays no scope, so a typo is
+    /// still refused rather than checked against an empty model.
+    fn default_scope(&self, site: &str) -> Option<Scope> {
+        if self.tax.netbird_acl_taxonomy.contains_key(site)
+            || self.tax.netbird_exercises.contains_key(site)
+        {
+            return None;
+        }
+        let matrix = self.mat.netbird_acl_matrix.get(site);
+        if matrix.is_none() && !self.mat.netbird_acl_tests.contains_key(site) {
+            return None;
+        }
+        let d = self.tax.netbird_acl_taxonomy.get("_default")?;
+        Some(Scope {
+            prefix: site.to_uppercase(),
+            suffixes: d.groups.iter().map(|g| g.suffix.clone()).collect(),
+            rules: matrix.map(|m| m.rules.clone()).unwrap_or_default(),
+            host_site: None,
+        })
+    }
+
     pub fn model(&self, site: &str) -> Result<Model, DeclError> {
         let Scope { prefix, suffixes, rules, host_site } = self
             .scope(site)
+            .or_else(|| self.default_scope(site))
             .ok_or_else(|| DeclError::NoSuchSite(site.to_string()))?;
         let host_prefix = host_site
             .as_deref()
@@ -1013,6 +1047,30 @@ mod tests {
             deny: deny.iter().map(|s| (*s).to_string()).collect(),
             baseline: None,
         }
+    }
+
+    /// A goatnet with no taxonomy stanza inherits `_default`, its prefix
+    /// derived as the upper-cased site id, as the ACL plays derive it
+    /// (`ops/ansible/tasks/netbird-taxonomy-default.yml`). Declared in the
+    /// matrix, it is a scope; named nowhere, it is still no scope at all.
+    #[test]
+    fn a_site_without_a_taxonomy_stanza_inherits_default() {
+        let tax = "netbird_acl_taxonomy:\n  _default:\n    site_prefix: __DERIVED__\n    \
+                   groups:\n    - suffix: INFRA\n    - suffix: OBSERVER\n";
+        let mat = "netbird_acl_matrix:\n  efdi:\n    rules:\n    - name: infra to all\n      \
+                   sources: [INFRA]\n      destinations: [OBSERVER]\n      protocol: tcp\n      \
+                   ports: ['443']\n      action: accept\n";
+        let d = Declaration::parse(tax, mat).expect("parse");
+        let m = d.model("efdi").expect("efdi inherits _default");
+        assert_eq!(m.prefix, "EFDI");
+        assert!(m.groups.contains("EFDI-INFRA") && m.groups.contains("EFDI-OBSERVER"));
+        assert_eq!(m.permits.len(), 1);
+        assert_eq!(
+            (m.permits[0].src.as_str(), m.permits[0].dst.as_str()),
+            ("EFDI-INFRA", "EFDI-OBSERVER")
+        );
+        assert!(d.scopes().contains(&"efdi".to_string()));
+        assert!(matches!(d.model("nosuchsite"), Err(DeclError::NoSuchSite(_))));
     }
 
     #[test]

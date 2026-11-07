@@ -993,6 +993,11 @@ fi
 #     and then applies the declared Default-policy action (enforce does all that
 #     mode=apply does first), each play's asserts unchanged. Uses the bootstrap
 #     token from phase 11. A joiner applies nothing: its account IS the founder's.
+# On the internet profile https://$MGMT_FQDN carries the public ACME certificate,
+# so every mgmt-API caller (the ACL plays, netbird-policy-posture.py,
+# netbird-service-identities.py) verifies it against the system trust store, not
+# the goatnet's own CA.
+[ "$PROFILE" = internet ] && export NETBIRD_MGMT_CA=public
 if [ "$JOINER" = 0 ]; then
 step 12 A "declared NetBird ACL: groups, then policies, then enforce (one play run)" \
   "cd '$REPO/ops/ansible' && ansible-playbook -i localhost, --connection local netbird-acl-bootstrap.yml netbird-acl-cutover.yml -e target_site=$SITE -e mode=enforce -e confirm_cutover=YES -e netbird_mgmt_url=https://$MGMT_FQDN"
