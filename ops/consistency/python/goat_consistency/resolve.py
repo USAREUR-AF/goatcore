@@ -28,7 +28,7 @@ import re
 
 import yaml
 
-from .paths import ALLOWLIST, CAPS_FILE, GROUP_VARS, LITE_TABLE, ROLES, TABLE, rel
+from .paths import ALLOWLIST, CAPS_FILE, GROUP_VARS, ROLES, TABLE, rel
 
 # Keys the pin table governs: image pins and release tags. Deliberately NOT
 # `*_version` — a version string (netbird_version: 0.75.1) is not a deploy pin

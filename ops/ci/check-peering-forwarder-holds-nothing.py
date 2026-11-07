@@ -120,7 +120,8 @@ def check(role: str, playbook: str) -> list[str]:
     # 1. declared names
     for f in walk(role, "defaults") + walk(role, "vars"):
         try:
-            doc = yaml.safe_load(open(f, encoding="utf-8")) or {}
+            with open(f, encoding="utf-8") as stream:
+                doc = yaml.safe_load(stream) or {}
         except yaml.YAMLError as e:
             errs.append(f"{f}: not YAML: {e}")
             continue
@@ -150,7 +151,8 @@ def check(role: str, playbook: str) -> list[str]:
             for tok in ("ca", "cert", "svid", "spire", "spiffe", "bundle", "tls", "netbird", "pem"):
                 if re.search(rf"(^|[^a-z]){tok}([^a-z]|$)", base):
                     errs.append(f"{f}: file name carries {tok!r}")
-            raw = open(f, encoding="utf-8").read()
+            with open(f, encoding="utf-8") as stream:
+                raw = stream.read()
             text = strip_comments(raw)
             exprs = jinja_expressions(text)
             if f.endswith((".yml", ".yaml")):
@@ -175,7 +177,8 @@ def check(role: str, playbook: str) -> list[str]:
     # 4. no dependencies
     meta = os.path.join(role, "meta", "main.yml")
     if os.path.isfile(meta):
-        doc = yaml.safe_load(open(meta, encoding="utf-8")) or {}
+        with open(meta, encoding="utf-8") as stream:
+            doc = yaml.safe_load(stream) or {}
         if doc.get("dependencies"):
             errs.append(f"{meta}: declares dependencies {doc['dependencies']!r}; a forwarder role has none")
     if os.path.isdir(os.path.join(role, "files")) and walk(role, "files"):
@@ -184,7 +187,8 @@ def check(role: str, playbook: str) -> list[str]:
     # 5. the playbook
     if playbook:
         try:
-            plays = yaml.safe_load(open(playbook, encoding="utf-8")) or []
+            with open(playbook, encoding="utf-8") as stream:
+                plays = yaml.safe_load(stream) or []
         except (OSError, yaml.YAMLError) as e:
             return errs + [f"{playbook}: unreadable: {e}"]
         want = os.path.basename(os.path.normpath(role))

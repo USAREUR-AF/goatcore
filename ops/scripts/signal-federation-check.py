@@ -40,7 +40,6 @@ defect naming the key and file to fix. 2 = usage. Reads files only, except
 """
 import argparse
 import ast
-import ipaddress
 import os
 import re
 import socket

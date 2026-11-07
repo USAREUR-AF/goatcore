@@ -293,7 +293,8 @@ def role_closure(repo, roles):
         if os.path.isfile(meta):
             try:
                 import yaml
-                deps = (yaml.safe_load(open(meta, encoding="utf-8")) or {}).get("dependencies") or []
+                with open(meta, encoding="utf-8") as stream:
+                    deps = (yaml.safe_load(stream) or {}).get("dependencies") or []
             except Exception:
                 deps = []
             for dep in deps:

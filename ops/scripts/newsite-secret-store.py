@@ -314,7 +314,8 @@ def main():
         return
     store = store_name()
     if store in value_stores() or store == "env":
-        return main_values(args, spec, handle, store)
+        main_values(args, spec, handle, store)
+        return
     common = subprocess.check_output(["git", "-C", str(Path(__file__).parent), "rev-parse",
                                       "--path-format=absolute", "--git-common-dir"], text=True).strip()
     root = Path(common).parent

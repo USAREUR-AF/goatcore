@@ -4,8 +4,6 @@ import importlib.util
 import textwrap
 from pathlib import Path
 
-import pytest
-
 HERE = Path(__file__).resolve().parent
 spec = importlib.util.spec_from_file_location("sfc", HERE.parent / "ops" / "scripts" / "signal-federation-check.py")
 sfc = importlib.util.module_from_spec(spec)
