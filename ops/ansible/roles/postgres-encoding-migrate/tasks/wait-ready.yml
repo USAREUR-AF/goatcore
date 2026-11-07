@@ -1,0 +1,21 @@
+---
+# Wait until Postgres answers three probes in a row, 2 s apart. The image
+# entrypoint runs initdb and its init scripts on a temporary server first and
+# then restarts; a single probe can land in that gap.
+
+- name: "wait | {{ _pem_c }} answers steadily"
+  ansible.builtin.shell:
+    executable: /bin/bash
+    cmd: |
+      ok=0
+      for i in $(seq 1 120); do
+        if docker exec -u postgres {{ _pem_c | quote }} psql -X -U postgres -tA -d postgres -c 'SELECT 1' >/dev/null 2>&1; then
+          ok=$((ok + 1)); [ $ok -ge 3 ] && exit 0
+        else
+          ok=0
+        fi
+        sleep 2
+      done
+      docker logs --tail 40 {{ _pem_c | quote }} >&2
+      exit 1
+  changed_when: false

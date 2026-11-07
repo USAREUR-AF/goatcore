@@ -1,0 +1,33 @@
+---
+# Phase 7 — a new pgBackRest stanza for the new cluster, in the empty
+# repository phase 4 left (the old repository stays beside it as
+# <repo>.pre-utf8-<run> until cleanup). The config file is unchanged: same
+# stanza name, same cipher passphrase. The archive settings came back with
+# the old postgresql.auto.conf in phase 5.
+#
+# A primary must pass stanza-create, check and a full backup. A standby's
+# result is reported, not gated: the run is mid-outage at this point and the
+# standby's stanza does not hold the goatnet's data.
+
+- name: "pgbackrest | stanza"
+  when: _pem_pre.stanza | default('') | length > 0
+  block:
+    - name: "pgbackrest | stanza-create, check, full backup ({{ _pem_pre.stanza }})"
+      ansible.builtin.shell:
+        executable: /bin/bash
+        cmd: |
+          set -euo pipefail
+          B=(docker exec -u postgres {{ _pem_c | quote }} pgbackrest --stanza={{ _pem_pre.stanza | quote }})
+          "${B[@]}" stanza-create
+          "${B[@]}" check
+          "${B[@]}" backup --type=full
+          "${B[@]}" info
+      register: _pem_bkp
+      changed_when: true
+      failed_when: _pem_bkp.rc != 0 and not (_pem_standby | bool)
+
+    - name: "pgbackrest | result"
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }} {{ _pem_pre.stanza }}:
+          {{ 'ok' if _pem_bkp.rc == 0 else 'FAILED on this standby (not gated): ' ~ (_pem_bkp.stderr | default('') | trim) }}

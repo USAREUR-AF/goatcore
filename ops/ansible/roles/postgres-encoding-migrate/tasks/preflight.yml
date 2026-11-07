@@ -1,0 +1,413 @@
+---
+# Phase 1 — preflight. Reads only; changes nothing on Postgres. Opens the run
+# (run id + state directory) when every gate passes.
+#
+# Gates, each fail-closed:
+#   - group_vars do not declare a non-UTF8 postgres_initdb_encoding
+#   - every member's Postgres container runs; Spock nodes are primaries,
+#     standbys (router_role B) are in recovery
+#   - the clusters are SQL_ASCII (all UTF8 already: nothing to do; a mix of
+#     both outside a run: refused)
+#   - every Spock subscription of a member pulls from another member, is
+#     replicating, and the member's group_vars will wire it again (phase 8)
+#   - the replicator password each re-wire needs is in the environment
+#   - every byte of every database and of the roles converts to UTF-8
+#   - free space covers the dumps, the kept PGDATA and the new backup
+
+- name: "preflight | contract: group_vars may declare only UTF8"
+  ansible.builtin.assert:
+    that:
+      - postgres_initdb_encoding is not defined
+        or (postgres_initdb_encoding | string | upper) == postgres_encoding_migrate_target
+    fail_msg: >-
+      {{ inventory_hostname }}'s group_vars declare postgres_initdb_encoding:
+      {{ postgres_initdb_encoding | default('') }}. A migrated goatnet's
+      groups declare {{ postgres_encoding_migrate_target }} or nothing (the
+      compose default is UTF8). Change it in every group of migrate_groups,
+      then re-run.
+    quiet: true
+
+# Fixed now: the block below re-reads its `when` before every task, and opening
+# the run sets _pem_run part-way through it.
+- name: "preflight | is a run being opened"
+  ansible.builtin.set_fact:
+    _pem_opening: "{{ _pem_run | length == 0 }}"
+
+- name: "preflight | the run is already open on this host"
+  ansible.builtin.debug:
+    msg: "{{ inventory_hostname }}: resuming run {{ _pem_run }}"
+  when: _pem_run | length > 0
+
+- name: "preflight | runs agree across members"
+  ansible.builtin.assert:
+    that:
+      - (ansible_play_hosts | map('extract', hostvars, '_pem_run') | select | unique | list | length) <= 1
+      - (ansible_play_hosts | map('extract', hostvars, '_pem_run') | select | list | length) in
+        [0, ansible_play_hosts | length]
+    fail_msg: >-
+      The members are not in one run:
+      {% for h in ansible_play_hosts %}{{ h }}={{ hostvars[h]._pem_run or '(none)' }} {% endfor %}.
+      A run covers every member of migrate_groups from phase 1 to the end. Pass
+      the same migrate_groups as the run that opened it, or finish/roll back
+      that run first (action=status shows it).
+    quiet: true
+  run_once: true
+
+- name: "preflight | the container runs"
+  ansible.builtin.assert:
+    that:
+      - _pem_ct.running | default(false) | bool
+    fail_msg: "{{ _pem_c }} is not running on {{ inventory_hostname }}; preflight reads the live cluster."
+    quiet: true
+  when: _pem_opening | bool
+
+- name: "preflight | gates on the live clusters"
+  when: _pem_opening | bool
+  block:
+    - name: "preflight | recovery state and encodings"
+      ansible.builtin.command:
+        argv: "{{ _pem_psql + ['-d', 'postgres', '-tAc', _sql] }}"
+      vars:
+        _sql: >-
+          SELECT json_build_object('recovery', pg_is_in_recovery(),
+            'dbs', (SELECT json_agg(json_build_object('db', datname, 'enc', pg_encoding_to_char(encoding)) ORDER BY datname)
+                    FROM pg_database WHERE datallowconn AND datname <> 'template1'),
+            'template1', (SELECT pg_encoding_to_char(encoding) FROM pg_database WHERE datname = 'template1'),
+            'db_bytes', (SELECT sum(pg_database_size(datname))::bigint FROM pg_database WHERE datallowconn))
+      register: _pem_live
+      changed_when: false
+
+    - name: "preflight | parse"
+      ansible.builtin.set_fact:
+        _pem_state: "{{ _pem_live.stdout | from_json }}"
+
+    - name: "preflight | primaries and standbys are what router_role says"
+      ansible.builtin.assert:
+        that:
+          - (_pem_state.recovery | bool) == (_pem_standby | bool)
+        fail_msg: >-
+          {{ inventory_hostname }} router_role={{ router_role | default('A') }} but
+          pg_is_in_recovery()={{ _pem_state.recovery }}. A Spock node must be a
+          primary and a router_role B host a streaming standby; fix the
+          inventory or the cluster first.
+        quiet: true
+
+    - name: "preflight | encodings across members"
+      ansible.builtin.set_fact:
+        _pem_encs: >-
+          {{ ansible_play_hosts | map('extract', hostvars, '_pem_state')
+             | map(attribute='dbs') | flatten | map(attribute='enc') | list
+             + (ansible_play_hosts | map('extract', hostvars, '_pem_state') | map(attribute='template1') | list) }}
+      run_once: true
+
+    - name: "preflight | nothing to migrate"
+      ansible.builtin.debug:
+        msg: >-
+          Every database on {{ ansible_play_hosts | join(', ') }} is already
+          {{ postgres_encoding_migrate_target }}. Nothing to do.
+      run_once: true
+      when: _pem_encs | unique | list == [postgres_encoding_migrate_target]
+
+    - name: "preflight | end when everything is already the target"
+      ansible.builtin.meta: end_play
+      when: _pem_encs | unique | list == [postgres_encoding_migrate_target]
+
+    - name: "preflight | refuse a goatnet that is part migrated outside a run"
+      ansible.builtin.assert:
+        that:
+          - postgres_encoding_migrate_target not in _pem_encs
+        fail_msg: >-
+          Some databases are already {{ postgres_encoding_migrate_target }} and some are not
+          ({{ _pem_encs | unique | join(', ') }}), and no run is open. Spock
+          replicates only between clusters of one encoding. List per member:
+          {% for h in ansible_play_hosts %}{{ h }}: {{ hostvars[h]._pem_state.dbs | map(attribute='enc') | unique | join('/') }}; {% endfor %}
+          Find the run that left this state (action=status on the same groups)
+          and resume or roll it back.
+        quiet: true
+      run_once: true
+
+    - name: "preflight | Spock inventory per database"
+      ansible.builtin.shell:
+        executable: /bin/bash
+        cmd: |
+          set -euo pipefail
+          P=(docker exec -i -u postgres {{ _pem_c | quote }} psql -X -q -v ON_ERROR_STOP=1 -U postgres -tA)
+          for db in $("${P[@]}" -d postgres -c "SELECT datname FROM pg_database WHERE datallowconn AND datname <> 'template1' ORDER BY 1"); do
+            has=$("${P[@]}" -d "$db" -c "SELECT count(*) FROM pg_extension WHERE extname = 'spock'")
+            [ "$has" = 1 ] || continue
+            # The extension without a local node (netbird_idp) is not a Spock member.
+            [ "$("${P[@]}" -d "$db" -c "SELECT count(*) FROM spock.local_node")" = 1 ] || continue
+            "${P[@]}" -d "$db" -c "SELECT json_build_object('db', current_database(),
+              'node', (SELECT n.node_name FROM spock.local_node l JOIN spock.node n ON n.node_id = l.node_id),
+              'subs', coalesce((SELECT json_agg(json_build_object('name', s.subscription_name, 'status', s.status,
+                         'provider', s.provider_node, 'sets', s.replication_sets) ORDER BY s.subscription_name)
+                       FROM spock.sub_show_status() s), '[]'::json))"
+          done
+      register: _pem_spock_raw
+      changed_when: false
+      when: not (_pem_standby | bool)
+
+    - name: "preflight | parse Spock inventory"
+      ansible.builtin.set_fact:
+        _pem_spock: "{{ (_pem_spock_raw.stdout_lines | default([])) | map('from_json') | list }}"
+
+    - name: "preflight | every subscription pulls from a member and is replicating"
+      ansible.builtin.assert:
+        that:
+          - _pem_bad | length == 0
+        fail_msg: >-
+          Subscriptions that this run cannot carry: {{ _pem_bad | join('; ') }}.
+          Every Spock node a member subscribes to must be in migrate_groups
+          (all of a goatnet's Spock members migrate together), and every
+          subscription must be replicating before the migration starts.
+        quiet: true
+      vars:
+        _pem_nodes: >-
+          {{ ansible_play_hosts | map('extract', hostvars, '_pem_spock') | flatten
+             | map(attribute='node') | select | list }}
+        _pem_bad: >-
+          {%- set out = [] -%}
+          {%- for h in ansible_play_hosts -%}
+            {%- for d in hostvars[h]._pem_spock -%}
+              {%- for s in d.subs -%}
+                {%- if s.provider not in _pem_nodes -%}{%- set _ = out.append(h ~ ' ' ~ d.db ~ ' ' ~ s.name ~ ' pulls from ' ~ s.provider ~ ', not a member') -%}{%- endif -%}
+                {%- if s.status != 'replicating' -%}{%- set _ = out.append(h ~ ' ' ~ d.db ~ ' ' ~ s.name ~ ' is ' ~ s.status) -%}{%- endif -%}
+              {%- endfor -%}
+            {%- endfor -%}
+          {%- endfor -%}
+          {{ out }}
+      run_once: true
+
+    - name: "preflight | a node with subscriptions is wired again by its group_vars"
+      ansible.builtin.assert:
+        that:
+          - participates_in_spock | default(false) | bool
+          - (inter_site_spock_topology | default('none')) != 'none'
+          - lookup('env', _pem_site_upper ~ '_REPLICATOR_PASS') | length > 0
+        fail_msg: >-
+          {{ inventory_hostname }} holds Spock subscriptions
+          ({{ _pem_spock | map(attribute='subs') | flatten | map(attribute='name') | join(', ') }})
+          but phase 8 would not wire them again: participates_in_spock={{ participates_in_spock | default(false) }},
+          inter_site_spock_topology={{ inter_site_spock_topology | default('none') }},
+          {{ _pem_site_upper }}_REPLICATOR_PASS {{ 'set' if lookup('env', _pem_site_upper ~ '_REPLICATOR_PASS') else 'unset' }}.
+          The re-wire uses the same roles and gates as site-bootstrap Phase 7B/7D.
+        quiet: true
+      when: _pem_spock | map(attribute='subs') | flatten | length > 0
+
+    - name: "preflight | a pair site's standby can be rebuilt (replicator password)"
+      ansible.builtin.assert:
+        that:
+          - lookup('env', _pem_site_upper ~ '_REPLICATOR_PASS') | length > 0
+        fail_msg: >-
+          {{ inventory_hostname }} is a streaming standby; phase 6 rebuilds it
+          with the postgres-streaming-replication role, which needs
+          {{ _pem_site_upper }}_REPLICATOR_PASS in the environment.
+        quiet: true
+      when: _pem_standby | bool
+
+    - name: "preflight | working directory"
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0700"
+      loop:
+        - "{{ _pem_dir }}"
+        - "{{ _pem_dir }}/bin"
+
+    - name: "preflight | install the UTF-8 stream tool"
+      ansible.builtin.copy:
+        src: pg-utf8-stream.py
+        dest: "{{ _pem_dir }}/bin/pg-utf8-stream.py"
+        mode: "0755"
+
+    - name: "preflight | byte scan: every database and the roles must convert to UTF-8"
+      ansible.builtin.shell:
+        executable: /bin/bash
+        cmd: |
+          set -uo pipefail
+          C={{ _pem_c | quote }}
+          T={{ (_pem_dir ~ '/bin/pg-utf8-stream.py') | quote }}
+          fail=0
+          docker exec -u postgres "$C" pg_dumpall -U postgres --globals-only | python3 "$T" scan --label '(roles)'
+          s=("${PIPESTATUS[@]}"); [ "${s[0]}" = 0 ] || { echo "pg_dumpall failed: ${s[0]}" >&2; fail=1; }
+          [ "${s[1]}" = 0 ] || [ "${s[1]}" = 3 ] || fail=1
+          for db in $(docker exec -u postgres "$C" psql -X -U postgres -tA -d postgres -c "SELECT datname FROM pg_database WHERE datallowconn AND datname <> 'template1' ORDER BY 1"); do
+            docker exec -u postgres "$C" pg_dump -U postgres -d "$db" | python3 "$T" scan --label "$db"
+            s=("${PIPESTATUS[@]}"); [ "${s[0]}" = 0 ] || { echo "pg_dump $db failed: ${s[0]}" >&2; fail=1; }
+            [ "${s[1]}" = 0 ] || [ "${s[1]}" = 3 ] || fail=1
+          done
+          exit $fail
+      register: _pem_scan_raw
+      changed_when: false
+      when: not (_pem_standby | bool)
+
+    - name: "preflight | scan results"
+      ansible.builtin.set_fact:
+        _pem_scan: "{{ (_pem_scan_raw.stdout_lines | default([])) | map('from_json') | list }}"
+
+    - name: "preflight | values that are not valid UTF-8"
+      ansible.builtin.debug:
+        msg: "{{ _pem_scan | rejectattr('ok') | list }}"
+      when: _pem_scan | rejectattr('ok') | list | length > 0
+
+    - name: "preflight | refuse bytes that do not convert (unless a repair is chosen)"
+      ansible.builtin.assert:
+        that:
+          - (_pem_scan | rejectattr('ok') | list | length == 0) or postgres_encoding_migrate_repair == 'latin1'
+        fail_msg: >-
+          {{ inventory_hostname }}: values that are not valid UTF-8 in
+          {% for r in _pem_scan | rejectattr('ok') %}{{ r.source }}
+          [{% for t, v in r.invalid.items() %}{{ t }}: {{ v.rows }} row(s){{ ', ' if not loop.last }}{% endfor %}]{{ '; ' if not loop.last }}{% endfor %}.
+          The samples above give each row's first field and the bytes around
+          the first invalid one. Either correct those rows and re-run, or, if
+          they were written as LATIN1, re-run with
+          -e postgres_encoding_migrate_repair=latin1 (each invalid byte is read
+          as a LATIN1 character; valid UTF-8 is kept). See
+          docs/operations/postgres-utf8-migration.md "Values that are not UTF-8".
+        quiet: true
+
+    - name: "preflight | the pgBackRest stanza on this host"
+      ansible.builtin.shell:
+        executable: /bin/bash
+        cmd: |
+          set -euo pipefail
+          f={{ postgres_encoding_migrate_pgbackrest_conf | quote }}
+          [ -f "$f" ] || exit 0
+          awk -F'[][]' '/^\[/ { if ($2 != "global") print $2 }' "$f"
+      register: _pem_stanza_raw
+      changed_when: false
+
+    - name: "preflight | measure PGDATA and the free space on each filesystem"
+      ansible.builtin.shell:
+        executable: /bin/bash
+        cmd: |
+          set -euo pipefail
+          V={{ _pem_volume | quote }}; I={{ _pem_image | quote }}
+          pg=$(docker run --rm --user 0 --entrypoint du -v "$V":/v:ro "$I" -sb /v | awk '{print $1}')
+          vol=$(docker run --rm --user 0 --entrypoint df -v "$V":/v:ro "$I" -B1 --output=source,avail /v | tail -1)
+          dir=$(df -B1 --output=source,avail {{ _pem_dir | quote }} | tail -1)
+          repo=""
+          if [ -d {{ postgres_encoding_migrate_pgbackrest_repo | quote }} ]; then
+            repo=$(df -B1 --output=source,avail {{ postgres_encoding_migrate_pgbackrest_repo | quote }} | tail -1)
+          fi
+          printf '{"pgdata": %s, "vol": "%s", "dir": "%s", "repo": "%s"}\n' "$pg" "$vol" "$dir" "$repo"
+      register: _pem_space_raw
+      changed_when: false
+
+    - name: "preflight | space need per filesystem"
+      ansible.builtin.set_fact:
+        _pem_space: "{{ _pem_space_raw.stdout | from_json }}"
+        _pem_stanza: "{{ _pem_stanza_raw.stdout_lines | first | default('') }}"
+
+    - name: "preflight | refuse when a filesystem cannot hold what the run writes"
+      ansible.builtin.assert:
+        that:
+          - _pem_short | length == 0
+        fail_msg: >-
+          {{ inventory_hostname }} has too little free space:
+          {% for s in _pem_short %}{{ s.src }} needs {{ s.need }} bytes free, has {{ s.avail }}{{ '; ' if not loop.last }}{% endfor %}.
+          The run keeps a copy of PGDATA ({{ _pem_space.pgdata }} bytes) as a
+          Docker volume, writes the dumps to {{ _pem_dir }}
+          {% if _pem_stanza %}and a new full pgBackRest backup to {{ postgres_encoding_migrate_pgbackrest_repo }}{% endif %},
+          plus a reserve of {{ postgres_encoding_migrate_reserve_bytes }} bytes per filesystem.
+          Free space, or set postgres_encoding_migrate_dir to a larger filesystem.
+        quiet: true
+      vars:
+        _pem_parts: >-
+          {%- set p = [] -%}
+          {%- set v = _pem_space.vol.split() -%}
+          {%- set _ = p.append({'src': v[0], 'avail': v[1] | int, 'need': _pem_space.pgdata | int}) -%}
+          {%- if not (_pem_standby | bool) -%}
+            {%- set d = _pem_space.dir.split() -%}
+            {%- set _ = p.append({'src': d[0], 'avail': d[1] | int, 'need': _pem_state.db_bytes | int}) -%}
+            {%- if _pem_stanza and _pem_space.repo -%}
+              {%- set r = _pem_space.repo.split() -%}
+              {%- set _ = p.append({'src': r[0], 'avail': r[1] | int, 'need': _pem_space.pgdata | int}) -%}
+            {%- endif -%}
+          {%- endif -%}
+          {{ p }}
+        _pem_short: >-
+          {%- set out = [] -%}
+          {%- for src, items in _pem_parts | groupby('src') -%}
+            {%- set need = (items | sum(attribute='need')) + (postgres_encoding_migrate_reserve_bytes | int) -%}
+            {%- if (items | first).avail < need -%}{%- set _ = out.append({'src': src, 'need': need, 'avail': (items | first).avail}) -%}{%- endif -%}
+          {%- endfor -%}
+          {{ out }}
+
+    - name: "preflight | the compose project's .env"
+      ansible.builtin.stat:
+        path: "{{ _pem_workdir }}/.env"
+      register: _pem_envfile
+
+    - name: "preflight | refuse without a .env to carry the encoding"
+      ansible.builtin.assert:
+        that:
+          - _pem_envfile.stat.exists
+        fail_msg: >-
+          {{ _pem_workdir }}/.env does not exist on {{ inventory_hostname }}. The
+          re-created cluster takes its initdb encoding from POSTGRES_INITDB_ARGS
+          in that file.
+        quiet: true
+
+    # ---- every gate passed: open the run --------------------------------
+    - name: "preflight | new run id"
+      ansible.builtin.set_fact:
+        _pem_new_run: "{{ lookup('ansible.builtin.pipe', 'date -u +%Y%m%dT%H%M%SZ') }}"
+      run_once: true
+      delegate_to: localhost
+      become: false
+
+    - name: "preflight | run directory"
+      ansible.builtin.file:
+        path: "{{ _pem_dir }}/{{ hostvars[ansible_play_hosts[0]]._pem_new_run }}"
+        state: directory
+        mode: "0700"
+
+    - name: "preflight | save the container record and the preflight report"
+      ansible.builtin.copy:
+        dest: "{{ _pem_dir }}/{{ hostvars[ansible_play_hosts[0]]._pem_new_run }}/{{ item.name }}"
+        content: "{{ item.content | to_nice_json }}\n"
+        mode: "0600"
+      loop:
+        - name: container.json
+          content: "{{ _pem_ct }}"
+        - name: preflight.json
+          content:
+            members: "{{ ansible_play_hosts }}"
+            standby: "{{ _pem_standby }}"
+            founder: "{{ _pem_founder }}"
+            state: "{{ _pem_state }}"
+            spock: "{{ _pem_spock }}"
+            scan: "{{ _pem_scan }}"
+            repair: "{{ postgres_encoding_migrate_repair }}"
+            space: "{{ _pem_space }}"
+            stanza: "{{ _pem_stanza }}"
+        - name: pgbackrest-stanza
+          content: "{{ _pem_stanza }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: "preflight | open the run"
+      ansible.builtin.copy:
+        dest: "{{ _pem_dir }}/current-run"
+        content: "{{ hostvars[ansible_play_hosts[0]]._pem_new_run }}\n"
+        mode: "0600"
+
+    - name: "preflight | context for the open run"
+      ansible.builtin.include_tasks: context.yml
+
+    - name: "preflight | record done"
+      ansible.builtin.copy:
+        dest: "{{ _pem_rundir }}/phase-1.done"
+        content: "preflight\n"
+        mode: "0600"
+
+    - name: "preflight | run opened"
+      ansible.builtin.debug:
+        msg: >-
+          Run {{ _pem_run }} open on {{ inventory_hostname }}
+          ({{ 'standby' if _pem_standby else ('founder' if _pem_founder else 'joiner') }}):
+          PGDATA {{ _pem_space.pgdata }} bytes, databases
+          {{ _pem_state.dbs | map(attribute='db') | join(', ') }},
+          Spock subscriptions {{ _pem_spock | map(attribute='subs') | flatten | length }},
+          pgBackRest stanza {{ _pem_stanza or '(none)' }}.

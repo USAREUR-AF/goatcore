@@ -1,0 +1,39 @@
+---
+# Run one numbered phase on this host unless its marker says it is done.
+# Inputs: pem_phase (int), pem_name (the tasks file is <pem_name>.yml).
+# A phase runs only inside a run (phase 1 opens it) and only up to
+# postgres_encoding_migrate_stop_after.
+
+- name: "phase {{ pem_phase }} | context"
+  ansible.builtin.include_tasks: context.yml
+
+- name: "phase {{ pem_phase }} | marker"
+  ansible.builtin.stat:
+    path: "{{ _pem_rundir }}/phase-{{ pem_phase }}.done"
+  register: _pem_marker
+  when: _pem_rundir | length > 0
+
+- name: "phase {{ pem_phase }} | decide"
+  ansible.builtin.set_fact:
+    _pem_do: >-
+      {{ (_pem_rundir | length > 0)
+         and not (_pem_marker.stat.exists | default(false))
+         and (pem_phase | float) < ((postgres_encoding_migrate_stop_after | int) + 1) }}
+
+- name: "phase {{ pem_phase }} | {{ pem_name }}"
+  ansible.builtin.include_tasks: "{{ pem_name }}.yml"
+  when: _pem_do | bool
+
+- name: "phase {{ pem_phase }} | record done"
+  ansible.builtin.copy:
+    dest: "{{ _pem_rundir }}/phase-{{ pem_phase }}.done"
+    content: "{{ pem_name }}\n"
+    mode: "0600"
+  when: _pem_do | bool
+
+- name: "phase {{ pem_phase }} | state"
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }} phase {{ pem_phase }} ({{ pem_name }}):
+      {{ 'ran' if (_pem_do | bool) else ('already done' if (_pem_marker.stat.exists | default(false))
+         else ('no run open' if _pem_rundir | length == 0 else 'held by stop_after')) }}

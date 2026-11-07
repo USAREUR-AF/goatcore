@@ -1,0 +1,108 @@
+---
+# Facts every phase needs: which member this is, the run it belongs to, and
+# how its Postgres container was created. Read from the run's saved state when
+# it exists (the container is gone between phases 5 and its re-create), from
+# the live container otherwise.
+
+- name: "context | member kind"
+  ansible.builtin.set_fact:
+    _pem_standby: "{{ (router_role | default('A') | string | upper) == 'B' }}"
+    _pem_founder: "{{ goatnet_founder | default(true) | bool }}"
+    _pem_c: "{{ postgres_encoding_migrate_container }}"
+    _pem_dir: "{{ postgres_encoding_migrate_dir }}"
+    _pem_site_upper: "{{ (site_id | default(inventory_hostname)) | upper | replace('-', '_') }}"
+
+- name: "context | read this host's current run id"
+  ansible.builtin.command:
+    argv: [cat, "{{ _pem_dir }}/current-run"]
+  register: _pem_cur
+  changed_when: false
+  failed_when: false
+
+- name: "context | run directory"
+  ansible.builtin.set_fact:
+    _pem_run: "{{ _pem_cur.stdout | trim if _pem_cur.rc == 0 else '' }}"
+    _pem_rundir: "{{ _pem_dir ~ '/' ~ (_pem_cur.stdout | trim) if _pem_cur.rc == 0 else '' }}"
+
+- name: "context | read the saved container record"
+  ansible.builtin.command:
+    argv: [cat, "{{ _pem_rundir }}/container.json"]
+  register: _pem_saved_container
+  changed_when: false
+  failed_when: false
+  when: _pem_rundir | length > 0
+
+- name: "context | inspect the live container"
+  ansible.builtin.command:
+    argv: [docker, inspect, "{{ _pem_c }}", --format,
+           '{"labels": {{ "{{" }}json .Config.Labels{{ "}}" }}, "mounts": {{ "{{" }}json .Mounts{{ "}}" }}, "image": {{ "{{" }}json .Config.Image{{ "}}" }}, "running": {{ "{{" }}.State.Running{{ "}}" }}}']
+  register: _pem_live_container
+  changed_when: false
+  failed_when: false
+  when: (_pem_saved_container.rc | default(1)) != 0
+
+- name: "context | refuse a member without its Postgres container"
+  ansible.builtin.assert:
+    that:
+      - (_pem_saved_container.rc | default(1)) == 0 or (_pem_live_container.rc | default(1)) == 0
+    fail_msg: >-
+      {{ inventory_hostname }} has no container named {{ _pem_c }} and no saved
+      record of one under {{ _pem_rundir or _pem_dir }}. Every host of the
+      listed groups must run the goatnet's Postgres; take a host that does not
+      out of migrate_groups, or set postgres_encoding_migrate_container.
+    quiet: true
+
+- name: "context | container record"
+  ansible.builtin.set_fact:
+    _pem_ct: >-
+      {{ (_pem_saved_container.stdout if (_pem_saved_container.rc | default(1)) == 0
+          else _pem_live_container.stdout) | from_json }}
+
+- name: "context | compose project, files and volume"
+  ansible.builtin.set_fact:
+    _pem_project: "{{ _pem_ct.labels['com.docker.compose.project'] | default('') }}"
+    _pem_workdir: "{{ _pem_ct.labels['com.docker.compose.project.working_dir'] | default('') }}"
+    _pem_service: "{{ _pem_ct.labels['com.docker.compose.service'] | default('') }}"
+    _pem_files: "{{ (_pem_ct.labels['com.docker.compose.project.config_files'] | default('')).split(',') | select | list }}"
+    _pem_image: "{{ _pem_ct.image }}"
+    _pem_volume: >-
+      {{ postgres_encoding_migrate_volume
+         or ((_pem_ct.mounts | selectattr('Destination', 'equalto', postgres_encoding_migrate_pgdata)
+              | selectattr('Type', 'equalto', 'volume') | map(attribute='Name') | list) | first | default('')) }}
+
+- name: "context | refuse a container compose did not create, or whose PGDATA is not a volume"
+  ansible.builtin.assert:
+    that:
+      - _pem_project | length > 0
+      - _pem_workdir | length > 0
+      - _pem_service | length > 0
+      - _pem_files | length > 0
+      - _pem_volume | length > 0
+    fail_msg: >-
+      {{ _pem_c }} on {{ inventory_hostname }}: compose project
+      '{{ _pem_project }}', directory '{{ _pem_workdir }}', service
+      '{{ _pem_service }}', files {{ _pem_files }}, PGDATA volume
+      '{{ _pem_volume }}'. The migration re-creates the container through the
+      same compose project and keeps the old PGDATA volume aside, so it needs
+      all five.
+    quiet: true
+
+- name: "context | derived names"
+  ansible.builtin.set_fact:
+    _pem_aside: "{{ _pem_volume }}-pre-utf8-{{ _pem_run }}"
+    _pem_compose: >-
+      docker compose -p {{ _pem_project | quote }} --project-directory {{ _pem_workdir | quote }}
+      {% for f in _pem_files %}-f {{ f | quote }} {% endfor %}
+    _pem_psql: [docker, exec, -i, -e, PGCLIENTENCODING=UTF8, -u, postgres, "{{ postgres_encoding_migrate_container }}", psql, -X, -q, -v, ON_ERROR_STOP=1, -U, postgres]
+
+- name: "context | read the run's preflight report"
+  ansible.builtin.command:
+    argv: [cat, "{{ _pem_rundir }}/preflight.json"]
+  register: _pem_pre_raw
+  changed_when: false
+  failed_when: false
+  when: _pem_rundir | length > 0
+
+- name: "context | preflight report"
+  ansible.builtin.set_fact:
+    _pem_pre: "{{ (_pem_pre_raw.stdout | from_json) if (_pem_pre_raw.rc | default(1)) == 0 else {} }}"

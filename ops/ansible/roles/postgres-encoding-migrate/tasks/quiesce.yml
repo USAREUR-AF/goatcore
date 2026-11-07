@@ -1,0 +1,154 @@
+---
+# Phase 2 — quiesce. On every member: record, then stop, every unit and
+# container that could write to Postgres or revive one that does. The record
+# is what phase 9 (and a rollback) starts again; it is merged, never
+# overwritten, so a re-run after a partial stop still restarts everything.
+# Gate: no client session remains on a primary except this play's own.
+
+- name: "quiesce | active units from the stop list"
+  ansible.builtin.shell:
+    executable: /bin/bash
+    cmd: |
+      for u in {{ postgres_encoding_migrate_stop_units | map('quote') | join(' ') }}; do
+        if systemctl is-active --quiet "$u" 2>/dev/null; then echo "$u"; fi
+      done
+      true
+  register: _pem_units_now
+  changed_when: false
+
+- name: "quiesce | containers to stop: the compose project, the declared extras, any connected client"
+  ansible.builtin.shell:
+    executable: /bin/bash
+    cmd: |
+      set -euo pipefail
+      C={{ _pem_c | quote }}
+      {
+        docker ps --filter label=com.docker.compose.project={{ _pem_project | quote }} --format '{{ "{{" }}.Names{{ "}}" }}'
+        for x in {{ postgres_encoding_migrate_extra_containers | map('quote') | join(' ') }}; do
+          docker ps --filter name="^${x}$" --format '{{ "{{" }}.Names{{ "}}" }}'
+        done
+        if [ "$(docker inspect -f '{{ "{{" }}.State.Running{{ "}}" }}' "$C" 2>/dev/null)" = true ]; then
+          addrs=$(docker exec -u postgres "$C" psql -X -U postgres -tA -d postgres -c \
+            "SELECT DISTINCT host(client_addr) FROM pg_stat_activity WHERE backend_type = 'client backend' AND client_addr IS NOT NULL AND pid <> pg_backend_pid()" || true)
+          if [ -n "$addrs" ]; then
+            docker ps -q | xargs -r docker inspect -f '{{ "{{" }}.Name{{ "}}" }} {{ "{{" }}range .NetworkSettings.Networks{{ "}}" }}{{ "{{" }}.IPAddress{{ "}}" }} {{ "{{" }}end{{ "}}" }}' \
+              | while read -r name ips; do
+                  for a in $addrs; do
+                    for i in $ips; do [ "$a" = "$i" ] && echo "${name#/}"; done
+                  done
+                done
+          fi
+        fi
+      } | grep -vx "$C" | sort -u || true
+  register: _pem_ctrs_now
+  changed_when: false
+
+- name: "quiesce | read the existing record"
+  ansible.builtin.command:
+    argv: [cat, "{{ _pem_rundir }}/stopped.json"]
+  register: _pem_stopped_old
+  changed_when: false
+  failed_when: false
+
+- name: "quiesce | describe each container for its re-start"
+  ansible.builtin.command:
+    argv: [docker, inspect, "{{ item }}", --format,
+           '{"name": {{ "{{" }}json .Name{{ "}}" }}, "labels": {{ "{{" }}json .Config.Labels{{ "}}" }}, "networks": {{ "{{" }}json .NetworkSettings.Networks{{ "}}" }}}']
+  loop: "{{ _pem_ctrs_now.stdout_lines }}"
+  register: _pem_ctr_desc
+  changed_when: false
+
+- name: "quiesce | merged record"
+  ansible.builtin.set_fact:
+    _pem_stopped:
+      units: "{{ ((_pem_old.units | default([])) + _pem_units_now.stdout_lines) | unique | list }}"
+      containers: "{{ ((_pem_old.containers | default([])) + _pem_new_ctrs) | unique(attribute='name') | list }}"
+  vars:
+    _pem_old: "{{ (_pem_stopped_old.stdout | from_json) if _pem_stopped_old.rc == 0 else {} }}"
+    _pem_new_ctrs: >-
+      {%- set out = [] -%}
+      {%- for r in _pem_ctr_desc.results -%}
+        {%- set d = r.stdout | from_json -%}
+        {%- set l = d.labels or {} -%}
+        {%- set _ = out.append({'name': d.name | regex_replace('^/', ''),
+                        'project': l['com.docker.compose.project'] | default(''),
+                        'workdir': l['com.docker.compose.project.working_dir'] | default(''),
+                        'service': l['com.docker.compose.service'] | default(''),
+                        'files': (l['com.docker.compose.project.config_files'] | default('')).split(',') | select | list,
+                        'ips': (d.networks or {}).values() | map(attribute='IPAddress') | select | list}) -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: "quiesce | save the record before stopping anything"
+  ansible.builtin.copy:
+    dest: "{{ _pem_rundir }}/stopped.json"
+    content: "{{ _pem_stopped | to_nice_json }}\n"
+    mode: "0600"
+
+- name: "quiesce | stop units (reviving watchers first)"
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: stopped
+  loop: "{{ _pem_units_now.stdout_lines }}"
+
+- name: "quiesce | stop containers"
+  ansible.builtin.command:
+    argv: "{{ ['docker', 'stop', '-t', '30'] + _pem_ctrs_now.stdout_lines }}"
+  when: _pem_ctrs_now.stdout_lines | length > 0
+  changed_when: true
+
+# A client that was mid-statement when its container stopped (a long query, a
+# sleep) keeps its server session until the statement ends. Sessions from the
+# addresses of the containers just stopped are ended; any other session is
+# left alone and refused below.
+- name: "quiesce | end the sessions of the containers just stopped (primaries)"
+  ansible.builtin.command:
+    argv: "{{ _pem_psql + ['-d', 'postgres', '-tAc', _sql] }}"
+  vars:
+    _ips: >-
+      {{ _pem_stopped.containers | map(attribute='ips', default=[]) | flatten | select | unique | list }}
+    _sql: >-
+      SELECT count(pg_terminate_backend(pid)) FROM pg_stat_activity
+      WHERE backend_type = 'client backend' AND pid <> pg_backend_pid()
+        AND host(client_addr) IN ('{{ _ips | join("', '") }}')
+  register: _pem_terminated
+  changed_when: (_pem_terminated.stdout | trim) != '0'
+  when:
+    - not (_pem_standby | bool)
+    - _ips | length > 0
+
+- name: "quiesce | wait for client sessions to drain (primaries)"
+  ansible.builtin.command:
+    argv: "{{ _pem_psql + ['-d', 'postgres', '-tAc', _sql] }}"
+  vars:
+    _sql: >-
+      SELECT coalesce(json_agg(json_build_object('pid', pid, 'db', datname, 'user', usename,
+             'app', application_name, 'addr', host(client_addr))), '[]'::json)
+      FROM pg_stat_activity WHERE backend_type = 'client backend' AND pid <> pg_backend_pid()
+  register: _pem_sessions
+  until: (_pem_sessions.stdout | from_json | length) == 0
+  retries: "{{ (postgres_encoding_migrate_drain_seconds | int / 5) | int }}"
+  delay: 5
+  changed_when: false
+  failed_when: false
+  when: not (_pem_standby | bool)
+
+- name: "quiesce | refuse while a client is still connected"
+  ansible.builtin.assert:
+    that:
+      - (_pem_sessions.stdout | default('[]') | from_json | length) == 0
+    fail_msg: >-
+      {{ inventory_hostname }}: sessions still open on {{ _pem_c }} after the
+      writers stopped: {{ _pem_sessions.stdout }}. Something outside the
+      compose project writes here (a host process, a timer, a container on
+      the host network). Stop it, or add its container to
+      postgres_encoding_migrate_extra_containers / its unit to
+      postgres_encoding_migrate_stop_units, and re-run (the run resumes here).
+    quiet: true
+  when: not (_pem_standby | bool)
+
+- name: "quiesce | stopped"
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}: stopped units {{ _pem_stopped.units | join(', ') or '(none)' }};
+      containers {{ _pem_stopped.containers | map(attribute='name') | join(', ') or '(none)' }}.

@@ -1,0 +1,125 @@
+---
+# Phase 3 — capture, on each primary (a standby is a copy of its primary and
+# is rebuilt from it in phase 6):
+#   - every Spock slot confirms the quiesce point (nothing still in flight);
+#   - replicated tables hold the same rows on every Spock node (gate: the new
+#     subscriptions are created with synchronize_data false);
+#   - row counts per table, the yardstick for phase 5;
+#   - a full pgBackRest backup of the old cluster, where the host has a stanza;
+#   - pg_dumpall --globals-only and pg_dump -Fc of every database.
+# Each node dumps its own databases: replicated tables are identical (gated
+# above) and per-site tables and databases (netbird_events, sessions, the
+# portal and console stores) belong to the node they are on.
+
+- name: "capture | every Spock slot on this node confirms the quiesce point"
+  ansible.builtin.shell:
+    executable: /bin/bash
+    cmd: |
+      set -euo pipefail
+      P=(docker exec -u postgres {{ _pem_c | quote }} psql -X -U postgres -tA -d postgres)
+      target=$("${P[@]}" -c "SELECT pg_current_wal_lsn()")
+      for i in $(seq 1 {{ (postgres_encoding_migrate_catchup_seconds | int / 2) | int }}); do
+        behind=$("${P[@]}" -c "SELECT count(*) FROM pg_replication_slots WHERE plugin LIKE 'spock%' AND (confirmed_flush_lsn IS NULL OR confirmed_flush_lsn < '$target'::pg_lsn)")
+        [ "$behind" = 0 ] && { echo "caught up at $target"; exit 0; }
+        sleep 2
+      done
+      "${P[@]}" -c "SELECT slot_name, active, confirmed_flush_lsn FROM pg_replication_slots WHERE plugin LIKE 'spock%'" >&2
+      echo "Spock slots did not confirm $target within {{ postgres_encoding_migrate_catchup_seconds }} s" >&2
+      exit 1
+  register: _pem_catchup
+  changed_when: false
+  when: not (_pem_standby | bool)
+
+- name: "capture | replicated tables: rows and content hash per node"
+  ansible.builtin.shell:
+    executable: /bin/bash
+    cmd: |
+      set -euo pipefail
+      P=(docker exec -u postgres {{ _pem_c | quote }} psql -X -q -v ON_ERROR_STOP=1 -U postgres -tA)
+      for d in {{ _pem_pre.spock | default([]) | map(attribute='db') | map('quote') | join(' ') }}; do
+        for t in $("${P[@]}" -d "$d" -c "SELECT DISTINCT quote_ident(nspname) || '.' || quote_ident(relname) FROM spock.tables WHERE set_name IS NOT NULL ORDER BY 1"); do
+          "${P[@]}" -d "$d" -c "SET TimeZone = 'UTC'; SET DateStyle = 'ISO, YMD'; SET extra_float_digits = 3;
+            SELECT json_build_object('db', current_database(), 'table', '$t', 'rows', count(*),
+                   'hash', md5(coalesce(string_agg(md5(x::text), '' ORDER BY md5(x::text)), '')))
+            FROM $t x"
+        done
+      done
+  register: _pem_ident_raw
+  changed_when: false
+  when: not (_pem_standby | bool)
+
+- name: "capture | identity per node"
+  ansible.builtin.set_fact:
+    _pem_ident: "{{ (_pem_ident_raw.stdout_lines | default([])) | map('from_json') | list }}"
+
+- name: "capture | replicated tables that differ between Spock nodes"
+  ansible.builtin.set_fact:
+    _pem_diverged: >-
+      {%- set seen = {} -%}
+      {%- for h in ansible_play_hosts -%}
+        {%- for r in hostvars[h]._pem_ident | default([]) -%}
+          {%- set k = r.db ~ ' ' ~ r.table -%}
+          {%- set _ = seen.update({k: (seen[k] | default([])) + [h ~ ': ' ~ r.rows ~ ' rows, ' ~ r.hash]}) -%}
+        {%- endfor -%}
+      {%- endfor -%}
+      {%- set out = [] -%}
+      {%- for k, v in seen.items() -%}
+        {%- if v | map('regex_replace', '^[^:]*: ', '') | unique | list | length > 1 -%}{%- set _ = out.append(k ~ ' => ' ~ (v | join(' | '))) -%}{%- endif -%}
+      {%- endfor -%}
+      {{ out }}
+  run_once: true
+
+- name: "capture | refuse divergent replicated tables"
+  ansible.builtin.assert:
+    that:
+      - _pem_diverged | length == 0 or (postgres_encoding_migrate_accept_divergence | bool)
+    fail_msg: >-
+      Replicated tables differ between Spock nodes after every slot caught
+      up: {{ _pem_diverged | join('; ') }}. The re-wired subscriptions copy no
+      data (synchronize_data false), so the difference would stay. Reconcile
+      the rows first (spock-drift-watch / ACE shows which), or re-run with
+      -e postgres_encoding_migrate_accept_divergence=true to carry the
+      difference over unchanged. The run resumes at this phase; the writers
+      stay stopped.
+    quiet: true
+  run_once: true
+
+- name: "capture | row counts per table, every database"
+  ansible.builtin.include_tasks: counts.yml
+  vars:
+    pem_counts_file: counts-pre.json
+  when: not (_pem_standby | bool)
+
+- name: "capture | pgBackRest backup of the old cluster"
+  ansible.builtin.command:
+    argv: [docker, exec, -u, postgres, "{{ _pem_c }}", pgbackrest, "--stanza={{ _pem_pre.stanza }}", backup, --type=full]
+  when:
+    - not (_pem_standby | bool)
+    - _pem_pre.stanza | default('') | length > 0
+  changed_when: true
+
+- name: "capture | dump roles and every database"
+  ansible.builtin.shell:
+    executable: /bin/bash
+    cmd: |
+      set -euo pipefail
+      umask 077
+      C={{ _pem_c | quote }}; D={{ _pem_rundir | quote }}
+      docker exec -u postgres "$C" pg_dumpall -U postgres --globals-only > "$D/globals.sql.part"
+      mv "$D/globals.sql.part" "$D/globals.sql"
+      docker exec -u postgres "$C" psql -X -U postgres -tA -d postgres \
+        -c "SELECT datname FROM pg_database WHERE datallowconn AND datname <> 'template1' ORDER BY 1" > "$D/databases.txt"
+      while read -r db; do
+        docker exec -u postgres "$C" pg_dump -U postgres -Fc --create -d "$db" > "$D/db-$db.dump.part"
+        # The archive must read back: list its table of contents.
+        docker exec -i -u postgres "$C" pg_restore -l < "$D/db-$db.dump.part" > /dev/null
+        mv "$D/db-$db.dump.part" "$D/db-$db.dump"
+        echo "$db $(stat -c %s "$D/db-$db.dump")"
+      done < "$D/databases.txt"
+  register: _pem_dumped
+  changed_when: true
+  when: not (_pem_standby | bool)
+
+- name: "capture | captured"
+  ansible.builtin.debug:
+    msg: "{{ inventory_hostname }}: {{ _pem_catchup.stdout | default('standby') }}; dumps (db bytes): {{ _pem_dumped.stdout_lines | default([]) }}"

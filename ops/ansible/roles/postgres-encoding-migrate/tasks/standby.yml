@@ -1,0 +1,22 @@
+---
+# Phase 6 — rebuild each pair site's streaming standby from its new primary.
+# The postgres-streaming-replication role does it exactly as site-bootstrap
+# Phase 6A does, forced: on A it sets the synchronous-standby settings
+# (phase 5 left them out); on B it wipes PGDATA and runs pg_basebackup from
+# A. B's old PGDATA is kept as a volume since phase 4.
+# The role brings B's compose services and compose-watch back up; B is a
+# read-only standby, so nothing there writes.
+
+- name: "standby | rebuild (intra_site_pair sites)"
+  ansible.builtin.include_role:
+    name: postgres-streaming-replication
+  vars:
+    postgres_streaming_force_rebuild: true
+    postgres_replicator_password: "{{ lookup('env', _pem_site_upper ~ '_REPLICATOR_PASS') }}"
+    postgres_data_volume: "{{ _pem_volume }}"
+  when: intra_site_pair | default(false) | bool
+
+- name: "standby | single-node site"
+  ansible.builtin.debug:
+    msg: "{{ inventory_hostname }}: no intra-site standby."
+  when: not (intra_site_pair | default(false) | bool)

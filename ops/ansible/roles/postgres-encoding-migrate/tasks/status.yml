@@ -1,0 +1,21 @@
+---
+# Status — the open run on this host, its phases done, and what it keeps.
+
+- name: "status | read"
+  ansible.builtin.shell:
+    executable: /bin/bash
+    cmd: |
+      D={{ _pem_rundir | quote }}
+      [ -n {{ _pem_run | quote }} ] || { echo "no open run"; ls -1 {{ _pem_dir | quote }} 2>/dev/null | grep -v -e current-run -e bin | sed 's/^/past run: /'; exit 0; }
+      echo "run {{ _pem_run }}"
+      echo "phases done: $(ls "$D" | sed -n 's/^phase-\(.*\)\.done$/\1/p' | sort -V | tr '\n' ' ')"
+      for f in complete rolled-back cleaned; do [ -f "$D/$f" ] && echo "$f"; done
+      docker volume inspect {{ _pem_aside | quote }} >/dev/null 2>&1 && echo "old PGDATA kept as volume {{ _pem_aside }}"
+      ls "$D"/db-*.dump >/dev/null 2>&1 && echo "dumps: $(du -ch "$D"/db-*.dump | tail -1 | cut -f1)"
+      true
+  register: _pem_status
+  changed_when: false
+
+- name: "status | {{ inventory_hostname }}"
+  ansible.builtin.debug:
+    msg: "{{ _pem_status.stdout_lines }}"

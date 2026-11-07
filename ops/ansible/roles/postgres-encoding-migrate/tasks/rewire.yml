@@ -1,0 +1,122 @@
+---
+# Phase 8 — wire Spock again on the new clusters, with the same roles and in
+# the order a join uses (goatbuilder join-node phase 13, spock-mesh-wire.yml):
+#   8.1 founders  spock-mesh-peering   (netbird: nodes, repsets, both directions)
+#   8.2 joiners   spock-mesh-peering
+#   8.3 primaries start kratos + hydra (ory-narrow-repset waits for them healthy)
+#   8.4 joiners   ory-narrow-repset, ory_spock_wire_subscriptions=false
+#   8.5 founders  ory-narrow-repset, ory_spock_reconcile_history=false
+#   8.6 joiners   ory-narrow-repset (subscriptions + history reconcile)
+#   8.7 primaries the subscription set equals phase 1's, all replicating
+# Every subscription is created with synchronize_data false: phase 3 proved
+# the replicated tables identical and phase 5 restored them unchanged.
+#
+# Each node is wired to exactly the members it pulled from before (explicit
+# peers), so a goatnet host outside this run is never subscribed.
+# Input: pem_step (one of the step names below).
+
+- name: "rewire | this node's peers before the migration"
+  ansible.builtin.set_fact:
+    _pem_peers: >-
+      {%- set mine = _pem_pre.spock | default([]) | map(attribute='subs') | flatten | map(attribute='provider') | unique | list -%}
+      {%- set out = [] -%}
+      {%- for h in ansible_play_hosts if h != inventory_hostname -%}
+        {%- for d in hostvars[h]._pem_pre.spock | default([]) -%}
+          {%- if d.node in mine and hostvars[h].site_id not in out -%}{%- set _ = out.append(hostvars[h].site_id) -%}{%- endif -%}
+        {%- endfor -%}
+      {%- endfor -%}
+      {{ out }}
+    _pem_spock_on: >-
+      {{ not (_pem_standby | bool)
+         and (participates_in_spock | default(false) | bool)
+         and (inter_site_spock_topology | default('none')) != 'none' }}
+
+- name: "rewire | netbird (spock-mesh-peering)"
+  ansible.builtin.include_role:
+    name: spock-mesh-peering
+  vars:
+    inter_site_spock_topology: explicit
+    inter_site_spock_peers: "{{ _pem_peers }}"
+  when:
+    - pem_step in ['netbird-founders', 'netbird-joiners']
+    - _pem_spock_on | bool
+    - (_pem_founder | bool) == (pem_step == 'netbird-founders')
+
+- name: "rewire | start kratos and hydra for the Ory re-wire"
+  when:
+    - pem_step == 'ory-start'
+    - _pem_spock_on | bool
+    - ory_spock_enabled | default(false) | bool
+  block:
+    - name: "rewire | start {{ postgres_encoding_migrate_ory_containers | join(', ') }}"
+      ansible.builtin.command:
+        argv: "{{ ['docker', 'start'] + postgres_encoding_migrate_ory_containers }}"
+      changed_when: true
+
+    - name: "rewire | Ory containers healthy"
+      ansible.builtin.shell:
+        executable: /bin/bash
+        cmd: |
+          for c in {{ postgres_encoding_migrate_ory_containers | map('quote') | join(' ') }}; do
+            docker inspect --format '{{ "{{" }}.State.Health.Status{{ "}}" }}' "$c" | grep -qx healthy || exit 1
+          done
+      register: _pem_ory_health
+      until: _pem_ory_health.rc == 0
+      retries: 24
+      delay: 5
+      changed_when: false
+
+- name: "rewire | Ory (ory-narrow-repset)"
+  ansible.builtin.include_role:
+    name: ory-narrow-repset
+  vars:
+    inter_site_spock_topology: explicit
+    inter_site_spock_peers: "{{ _pem_peers }}"
+    ory_spock_wire_subscriptions: "{{ pem_step != 'ory-joiners-1' }}"
+    ory_spock_reconcile_history: "{{ pem_step != 'ory-founders' }}"
+  when:
+    - pem_step in ['ory-joiners-1', 'ory-founders', 'ory-joiners-2']
+    - _pem_spock_on | bool
+    - ory_spock_enabled | default(false) | bool
+    - (_pem_founder | bool) == (pem_step == 'ory-founders')
+
+- name: "rewire | verify the subscription set"
+  when:
+    - pem_step == 'verify'
+    - not (_pem_standby | bool)
+  block:
+    - name: "rewire | subscriptions now"
+      ansible.builtin.shell:
+        executable: /bin/bash
+        cmd: |
+          set -euo pipefail
+          P=(docker exec -u postgres {{ _pem_c | quote }} psql -X -q -v ON_ERROR_STOP=1 -U postgres -tA)
+          for db in {{ _pem_pre.spock | default([]) | map(attribute='db') | map('quote') | join(' ') }}; do
+            "${P[@]}" -d "$db" -c "SELECT s.subscription_name || ' ' || s.status FROM spock.sub_show_status() s ORDER BY 1" | sed "s/^/$db /"
+          done
+      register: _pem_subs_now
+      until: _pem_subs_now.rc == 0 and (_pem_subs_now.stdout_lines | reject('match', '.* replicating$') | list | length == 0)
+      retries: 30
+      delay: 2
+      changed_when: false
+      failed_when: false
+
+    - name: "rewire | refuse a missing, extra or stalled subscription"
+      ansible.builtin.assert:
+        that:
+          - _now | sort == _want | sort
+        fail_msg: >-
+          {{ inventory_hostname }}: subscriptions after the re-wire
+          {{ _pem_subs_now.stdout_lines }}; before the migration
+          {{ _want }} (all replicating). The new clusters hold the data and
+          the writers are still stopped; fix the wiring and re-run (the run
+          resumes at phase 8), or action=rollback.
+        quiet: true
+      vars:
+        _now: "{{ _pem_subs_now.stdout_lines }}"
+        _want: >-
+          {%- set out = [] -%}
+          {%- for d in _pem_pre.spock | default([]) -%}
+            {%- for s in d.subs -%}{%- set _ = out.append(d.db ~ ' ' ~ s.name ~ ' replicating') -%}{%- endfor -%}
+          {%- endfor -%}
+          {{ out }}

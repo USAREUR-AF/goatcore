@@ -1,0 +1,118 @@
+---
+# Phase 4 — snapshot for rollback, on every member:
+#   - stop Postgres (clean shutdown);
+#   - copy PGDATA, byte for byte, into a new Docker volume <volume>-pre-utf8-<run>
+#     and check the copy (same bytes, same file count) — refuse if the
+#     filesystem cannot hold it;
+#   - keep the compose .env and the container's pg_hba.conf;
+#   - move the pgBackRest repository aside (it belongs to the old cluster) and
+#     leave an empty one with the same owner and mode.
+# The old PGDATA volume itself is not touched here.
+
+- name: "snapshot | stop Postgres"
+  ansible.builtin.command:
+    argv: [docker, stop, -t, "120", "{{ _pem_c }}"]
+  changed_when: true
+
+- name: "snapshot | is the copy already made and checked"
+  ansible.builtin.stat:
+    path: "{{ _pem_rundir }}/aside.ok"
+  register: _pem_aside_ok
+
+- name: "snapshot | copy PGDATA aside"
+  when: not _pem_aside_ok.stat.exists
+  block:
+    - name: "snapshot | measure PGDATA and the free space beside it"
+      ansible.builtin.shell:
+        executable: /bin/bash
+        cmd: |
+          set -euo pipefail
+          V={{ _pem_volume | quote }}; I={{ _pem_image | quote }}
+          pg=$(docker run --rm --user 0 --entrypoint du -v "$V":/v:ro "$I" -sb /v | awk '{print $1}')
+          avail=$(docker run --rm --user 0 --entrypoint df -v "$V":/v:ro "$I" -B1 --output=avail /v | tail -1)
+          echo "$pg $avail"
+      register: _pem_size
+      changed_when: false
+
+    - name: "snapshot | refuse when the copy does not fit"
+      ansible.builtin.assert:
+        that:
+          - (_pem_size.stdout.split()[1] | int) >= (_pem_size.stdout.split()[0] | int) + (postgres_encoding_migrate_reserve_bytes | int)
+        fail_msg: >-
+          {{ inventory_hostname }}: PGDATA is {{ _pem_size.stdout.split()[0] }} bytes;
+          its filesystem has {{ _pem_size.stdout.split()[1] }} free and keeps a
+          reserve of {{ postgres_encoding_migrate_reserve_bytes }}. Postgres is
+          stopped and the writers are down: free space and re-run (the run
+          resumes here), or roll back (action=rollback) to start them again.
+        quiet: true
+
+    - name: "snapshot | copy into {{ _pem_aside }}"
+      ansible.builtin.shell:
+        executable: /bin/bash
+        cmd: |
+          set -euo pipefail
+          V={{ _pem_volume | quote }}; A={{ _pem_aside | quote }}; I={{ _pem_image | quote }}
+          docker volume rm -f "$A" >/dev/null 2>&1 || true
+          docker volume create --label goat.postgres-utf8-migration.run={{ _pem_run | quote }} \
+            --label goat.postgres-utf8-migration.of="$V" "$A" >/dev/null
+          docker run --rm --user 0 --entrypoint sh -v "$V":/from:ro -v "$A":/to "$I" -c '
+            set -e
+            cp -a /from/. /to/
+            a=$(find /from -type f -printf "%s\n" | awk "{s+=\$1} END {print s+0}")
+            b=$(find /to -type f -printf "%s\n" | awk "{s+=\$1} END {print s+0}")
+            n=$(find /from | wc -l); m=$(find /to | wc -l)
+            echo "bytes $a -> $b, entries $n -> $m"
+            [ "$a" = "$b" ] && [ "$n" = "$m" ]'
+      register: _pem_copy
+      changed_when: true
+
+    - name: "snapshot | the copy checks out"
+      ansible.builtin.copy:
+        dest: "{{ _pem_rundir }}/aside.ok"
+        content: "{{ _pem_aside }} {{ _pem_copy.stdout }}\n"
+        mode: "0600"
+
+- name: "snapshot | keep the compose .env"
+  ansible.builtin.copy:
+    src: "{{ _pem_workdir }}/.env"
+    dest: "{{ _pem_rundir }}/env.pre"
+    remote_src: true
+    force: false
+    mode: "0600"
+
+- name: "snapshot | keep the container's pg_hba.conf"
+  ansible.builtin.shell:
+    executable: /bin/bash
+    cmd: |
+      set -euo pipefail
+      f={{ (_pem_rundir ~ '/pg_hba.conf') | quote }}
+      [ -s "$f" ] && exit 0
+      docker cp {{ (_pem_c ~ ':/etc/postgresql/pg_hba.conf') | quote }} "$f.part"
+      chmod 600 "$f.part"; mv "$f.part" "$f"
+  changed_when: true
+
+- name: "snapshot | move the pgBackRest repository aside"
+  ansible.builtin.shell:
+    executable: /bin/bash
+    cmd: |
+      set -euo pipefail
+      R={{ postgres_encoding_migrate_pgbackrest_repo | quote }}
+      parent=$(dirname "$R"); base=$(basename "$R")
+      old="$base.pre-utf8-{{ _pem_run }}"
+      [ -d "$parent/$old" ] && { echo "already aside: $parent/$old"; exit 0; }
+      [ -d "$R" ] || { echo "no repository at $R"; exit 0; }
+      docker run --rm --user 0 --entrypoint sh -v "$parent":/p {{ _pem_image | quote }} -c "
+        set -e
+        own=\$(stat -c %u:%g /p/$base); mode=\$(stat -c %a /p/$base)
+        mv /p/$base /p/$old
+        mkdir /p/$base && chown \$own /p/$base && chmod \$mode /p/$base
+        echo moved /p/$base to /p/$old, new \$own \$mode"
+  register: _pem_repo_move
+  changed_when: "'moved' in _pem_repo_move.stdout"
+  when: _pem_pre.stanza | default('') | length > 0
+
+- name: "snapshot | done"
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}: PGDATA kept as volume {{ _pem_aside }};
+      pgBackRest {{ _pem_repo_move.stdout | default('no stanza') }}

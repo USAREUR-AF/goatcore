@@ -1,0 +1,91 @@
+---
+# postgres-encoding-migrate — defaults.
+#
+# Driven by ops/ansible/postgres-encoding-migrate.yml; runbook
+# docs/operations/postgres-utf8-migration.md. Every value here can be set
+# per goatnet in group_vars or per run with -e.
+
+# What the run does: migrate (phases 1-9, resumable), rollback, cleanup, status.
+postgres_encoding_migrate_action: migrate
+
+# Stop after this phase number (1-9). Unset runs every phase still owed.
+postgres_encoding_migrate_stop_after: 9
+
+# The encoding every cluster ends in. The play migrates to UTF8 only.
+postgres_encoding_migrate_target: UTF8
+
+# Bytes that are not valid UTF-8 stop the run at phase 1 and are listed.
+#   none    refuse (the default); repair the rows, then re-run.
+#   latin1  read each invalid byte as a LATIN1 character and store its UTF-8
+#           encoding. Valid UTF-8 sequences are kept as they are. Use only
+#           when the listed values were written as LATIN1 (or as a single-byte
+#           Windows code page whose printable range matches it).
+postgres_encoding_migrate_repair: none
+
+# Replicated (Spock repset) tables must hold the same rows on every member
+# before the dump: the new subscriptions are created with
+# synchronize_data false, so a difference would carry on after the
+# migration. true lets a run continue past a listed difference.
+postgres_encoding_migrate_accept_divergence: false
+
+# Rollback and cleanup act only when this equals the run id they act on
+# (`status` prints it).
+postgres_encoding_migrate_confirm: ""
+
+# Per-host working directory: run state, reports, dumps. Mode 0700. The dumps
+# hold every row and every role's password hash.
+postgres_encoding_migrate_dir: /var/lib/goat/postgres-utf8-migration
+
+postgres_encoding_migrate_become: true
+
+# The Postgres container and its data directory inside it.
+postgres_encoding_migrate_container: "{{ spock_mesh_postgres_container | default('postgres-a') }}"
+postgres_encoding_migrate_pgdata: /var/lib/pgsql/16/data
+
+# The compose volume holding PGDATA. Empty = read from the container's mount
+# of postgres_encoding_migrate_pgdata.
+postgres_encoding_migrate_volume: ""
+
+# Systemd units stopped during the migration when they are active, and started
+# again at the end (only those that were active). Anything that revives
+# containers, writes to Postgres, or fails a node over belongs here.
+postgres_encoding_migrate_stop_units:
+  - mgmt-host-compose-watch.service
+  - keepalived.service
+  - spock-hub-directives.timer
+  - spock-drift-watch.timer
+  - netbird-admin-reconcile.timer
+  - mesh-membership-reconcile.timer
+  - warrant-membership.timer
+  - consistency-snapshot.timer
+  - registry-wal-signals.timer
+
+# Writers outside the Postgres container's compose project (by container
+# name). Every running container of that project is stopped already, and so
+# is any container found holding a connection to Postgres.
+postgres_encoding_migrate_extra_containers: []
+
+# Seconds to wait for client connections to drain after the writers stop.
+postgres_encoding_migrate_drain_seconds: 60
+
+# Seconds to wait for every Spock slot to confirm the quiesce point.
+postgres_encoding_migrate_catchup_seconds: 300
+
+# Free bytes kept in reserve on each filesystem beyond the measured need.
+postgres_encoding_migrate_reserve_bytes: 1073741824
+
+# pgBackRest. A host without the config file has no stanza and the
+# pgBackRest steps are skipped there.
+postgres_encoding_migrate_pgbackrest_conf: /etc/pgbackrest/pgbackrest.conf
+postgres_encoding_migrate_pgbackrest_repo: /opt/docker-data/pgbackrest
+postgres_encoding_migrate_pgbackrest_uid: 26
+
+# Ory containers started for the Phase 7D re-wire (ory-narrow-repset waits
+# for them to be healthy). Only on a goatnet with ory_spock_enabled.
+postgres_encoding_migrate_ory_containers:
+  - "{{ ory_spock_kratos_container | default('kratos-a') }}"
+  - "{{ ory_spock_hydra_container | default('hydra-a') }}"
+
+# Seconds to wait for a probe row written on one Spock node to reach the
+# others (phase 9).
+postgres_encoding_migrate_probe_seconds: 60

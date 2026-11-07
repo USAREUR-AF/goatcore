@@ -1,0 +1,211 @@
+---
+# Phase 5 — re-initialise and restore, on each primary. The compose stack
+# initialises the new cluster itself: POSTGRES_INITDB_ARGS in the project
+# .env carries --encoding=UTF8, and the PGDATA volume is empty, so the image
+# entrypoint runs initdb and the image's init scripts. Then:
+#   roles (one transaction) -> each database from its own dump -> the old
+#   postgresql.auto.conf (synchronous_standby_names left out: the standby is
+#   rebuilt in phase 6, which sets it again) -> the old pg_hba.conf ->
+#   restart -> every database UTF8 and every table's row count equal to
+#   phase 3's.
+# Each step leaves a marker, so a re-run continues where it stopped.
+
+- name: "reinit | standbys are rebuilt in phase 6"
+  ansible.builtin.debug:
+    msg: "{{ inventory_hostname }} is a standby; nothing to re-initialise here."
+  when: _pem_standby | bool
+
+- name: "reinit | primary"
+  when: not (_pem_standby | bool)
+  block:
+    - name: "reinit | the copy of the old PGDATA is in place"
+      ansible.builtin.stat:
+        path: "{{ _pem_rundir }}/aside.ok"
+      register: _pem_aside_ok
+
+    - name: "reinit | refuse without the checked copy"
+      ansible.builtin.assert:
+        that:
+          - _pem_aside_ok.stat.exists
+          - _pem_aside != _pem_volume
+        fail_msg: "{{ inventory_hostname }}: no checked copy of PGDATA ({{ _pem_rundir }}/aside.ok); phase 4 did not finish."
+        quiet: true
+
+    - name: "reinit | initdb encoding in {{ _pem_workdir }}/.env"
+      ansible.builtin.lineinfile:
+        path: "{{ _pem_workdir }}/.env"
+        regexp: '^POSTGRES_INITDB_ARGS='
+        line: 'POSTGRES_INITDB_ARGS="--locale=C --encoding={{ postgres_encoding_migrate_target }}"'
+
+    - name: "reinit | is the new cluster already initialised"
+      ansible.builtin.stat:
+        path: "{{ _pem_rundir }}/reinit.ok"
+      register: _pem_reinit_ok
+
+    - name: "reinit | new cluster"
+      when: not _pem_reinit_ok.stat.exists
+      block:
+        - name: "reinit | remove the containers that hold the old volume, then the volume"
+          ansible.builtin.shell:
+            executable: /bin/bash
+            cmd: |
+              set -euo pipefail
+              V={{ _pem_volume | quote }}; D={{ _pem_rundir | quote }}
+              users=$(docker ps -a --filter volume="$V" --format '{{ "{{" }}.Names{{ "}}" }}')
+              for u in $users; do echo "$u" >> "$D/volume-users.txt"; done
+              [ -f "$D/volume-users.txt" ] && sort -u -o "$D/volume-users.txt" "$D/volume-users.txt"
+              [ -n "$users" ] && docker rm -f $users >/dev/null
+              if docker volume inspect "$V" >/dev/null 2>&1; then docker volume rm "$V" >/dev/null; echo "removed $V"; fi
+              echo "removed containers: ${users:-none}"
+          changed_when: true
+
+        - name: "reinit | create Postgres through its compose project"
+          ansible.builtin.shell:
+            executable: /bin/bash
+            chdir: "{{ _pem_workdir }}"
+            cmd: "{{ _pem_compose }} up -d --no-deps --force-recreate {{ _pem_service | quote }}"
+          changed_when: true
+
+        - name: "reinit | wait for initdb and the init scripts"
+          ansible.builtin.include_tasks: wait-ready.yml
+
+        - name: "reinit | the new cluster's encoding"
+          ansible.builtin.command:
+            argv: "{{ _pem_psql + ['-d', 'postgres', '-tAc', \"SELECT pg_encoding_to_char(encoding) FROM pg_database WHERE datname = 'template1'\"] }}"
+          register: _pem_newenc
+          changed_when: false
+
+        - name: "reinit | refuse a new cluster that is not {{ postgres_encoding_migrate_target }}"
+          ansible.builtin.assert:
+            that:
+              - (_pem_newenc.stdout | trim) == postgres_encoding_migrate_target
+            fail_msg: >-
+              The re-created cluster on {{ inventory_hostname }} is
+              {{ _pem_newenc.stdout | trim }}. The compose file must read
+              POSTGRES_INITDB_ARGS from {{ _pem_workdir }}/.env (goatcore
+              ops/compose/mgmt-host/docker-compose.yml does). The old data is
+              in volume {{ _pem_aside }}; action=rollback puts it back.
+            quiet: true
+
+        - name: "reinit | new cluster ready"
+          ansible.builtin.copy:
+            dest: "{{ _pem_rundir }}/reinit.ok"
+            content: "{{ _pem_newenc.stdout | trim }}\n"
+            mode: "0600"
+
+    - name: "reinit | roles"
+      ansible.builtin.shell:
+        executable: /bin/bash
+        cmd: |
+          set -euo pipefail
+          D={{ _pem_rundir | quote }}
+          [ -f "$D/restored-globals.ok" ] && { echo "already restored"; exit 0; }
+          grep -vx 'CREATE ROLE postgres;' "$D/globals.sql" \
+            | python3 {{ (_pem_dir ~ '/bin/pg-utf8-stream.py') | quote }} filter --repair {{ postgres_encoding_migrate_repair | quote }} \
+            | docker exec -i -u postgres {{ _pem_c | quote }} psql -X -q -v ON_ERROR_STOP=1 -1 -U postgres -d template1 >/dev/null
+          touch "$D/restored-globals.ok"
+          echo restored
+      register: _pem_globals
+      changed_when: "'already' not in _pem_globals.stdout"
+
+    - name: "reinit | databases"
+      ansible.builtin.shell:
+        executable: /bin/bash
+        cmd: |
+          set -euo pipefail
+          D={{ _pem_rundir | quote }}; C={{ _pem_c | quote }}
+          T={{ (_pem_dir ~ '/bin/pg-utf8-stream.py') | quote }}
+          while read -r db; do
+            [ -f "$D/restored-db-$db.ok" ] && { echo "$db: already restored"; continue; }
+            docker exec -u postgres "$C" psql -X -q -v ON_ERROR_STOP=1 -U postgres -d template1 \
+              -c "DROP DATABASE IF EXISTS \"$db\" WITH (FORCE)"
+            docker exec -i -u postgres "$C" pg_restore --create -f - < "$D/db-$db.dump" \
+              | python3 "$T" filter --repair {{ postgres_encoding_migrate_repair | quote }} \
+              | docker exec -i -u postgres "$C" psql -X -q -v ON_ERROR_STOP=1 -U postgres -d template1 >/dev/null
+            touch "$D/restored-db-$db.ok"
+            echo "$db: restored"
+          done < "$D/databases.txt"
+      register: _pem_restored
+      changed_when: "'restored' in _pem_restored.stdout"
+
+    - name: "reinit | old settings and access rules"
+      ansible.builtin.shell:
+        executable: /bin/bash
+        cmd: |
+          set -euo pipefail
+          D={{ _pem_rundir | quote }}; C={{ _pem_c | quote }}
+          [ -f "$D/conf.ok" ] && { echo "already applied"; exit 0; }
+          docker run --rm --user 0 --entrypoint cat -v {{ _pem_aside | quote }}:/v:ro {{ _pem_image | quote }} /v/postgresql.auto.conf > "$D/postgresql.auto.conf.pre"
+          chmod 600 "$D/postgresql.auto.conf.pre"
+          grep -v '^[[:space:]]*synchronous_standby_names' "$D/postgresql.auto.conf.pre" \
+            | docker exec -i -u postgres "$C" sh -c 'cat > {{ postgres_encoding_migrate_pgdata }}/postgresql.auto.conf'
+          docker exec -i -u 0 "$C" sh -c 'cat > /etc/postgresql/pg_hba.conf' < "$D/pg_hba.conf"
+          docker restart -t 60 "$C" >/dev/null
+          touch "$D/conf.ok"
+          echo applied
+      register: _pem_conf
+      changed_when: "'already' not in _pem_conf.stdout"
+
+    - name: "reinit | wait after the restart"
+      ansible.builtin.include_tasks: wait-ready.yml
+
+    - name: "reinit | every database's encoding"
+      ansible.builtin.command:
+        argv: "{{ _pem_psql + ['-d', 'postgres', '-tAc', _sql] }}"
+      vars:
+        _sql: >-
+          SELECT coalesce(string_agg(datname || '=' || pg_encoding_to_char(encoding), ' ' ORDER BY datname), '')
+          FROM pg_database WHERE pg_encoding_to_char(encoding) <> '{{ postgres_encoding_migrate_target }}'
+      register: _pem_notutf8
+      changed_when: false
+
+    - name: "reinit | refuse a database that is not {{ postgres_encoding_migrate_target }}"
+      ansible.builtin.assert:
+        that:
+          - _pem_notutf8.stdout | trim | length == 0
+        fail_msg: "{{ inventory_hostname }}: databases not {{ postgres_encoding_migrate_target }}: {{ _pem_notutf8.stdout }}"
+        quiet: true
+
+    - name: "reinit | row counts after the restore"
+      ansible.builtin.include_tasks: counts.yml
+      vars:
+        pem_counts_file: counts-post.json
+
+    - name: "reinit | read the pre-migration counts"
+      ansible.builtin.command:
+        argv: [cat, "{{ _pem_rundir }}/counts-pre.json"]
+      register: _pem_counts_pre
+      changed_when: false
+
+    - name: "reinit | refuse a table whose row count changed"
+      ansible.builtin.assert:
+        that:
+          - _pem_count_diff | length == 0
+        fail_msg: >-
+          {{ inventory_hostname }}: row counts differ from before the migration:
+          {{ _pem_count_diff | join('; ') }}. The new cluster is not in use
+          (writers are stopped); action=rollback restores the old one.
+        quiet: true
+      vars:
+        _pre: "{{ _pem_counts_pre.stdout | from_json }}"
+        _pem_count_diff: >-
+          {%- set out = [] -%}
+          {%- for db, tabs in _pre.items() -%}
+            {%- for t, n in tabs.items() -%}
+              {%- set m = (_pem_counts[db] | default({}))[t] | default('missing') -%}
+              {%- if m != n -%}{%- set _ = out.append(db ~ ' ' ~ t ~ ': ' ~ n ~ ' -> ' ~ m) -%}{%- endif -%}
+            {%- endfor -%}
+          {%- endfor -%}
+          {%- for db, tabs in _pem_counts.items() -%}
+            {%- for t, n in tabs.items() -%}
+              {%- if t not in (_pre[db] | default({})) -%}{%- set _ = out.append(db ~ ' ' ~ t ~ ': new table, ' ~ n ~ ' rows') -%}{%- endif -%}
+            {%- endfor -%}
+          {%- endfor -%}
+          {{ out }}
+
+    - name: "reinit | restored"
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }}: {{ _pem_counts | length }} databases,
+          {{ _pem_counts.values() | map('length') | sum }} tables, every row count
+          equal to phase 3's; all {{ postgres_encoding_migrate_target }}.

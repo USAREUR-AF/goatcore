@@ -333,7 +333,10 @@
 # set here (postgres_initdb_encoding) is what the .env render writes as
 # POSTGRES_INITDB_ARGS. A joiner whose cluster already exists with another
 # encoding is refused: initdb never runs again on an existing PGDATA.
-# A founder is untouched.
+# A founder is untouched. A SQL_ASCII goatnet moves to UTF8 with
+# postgres-encoding-migrate.yml, every Spock member at once
+# (docs/operations/postgres-utf8-migration.md); its joiners then follow a
+# UTF8 founder here.
 # ============================================================================
 - name: "site-bootstrap: joiner cluster encoding follows the founder (when goatnet_founder false)"
   tags: [stack]

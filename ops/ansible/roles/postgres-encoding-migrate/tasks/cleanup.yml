@@ -1,0 +1,46 @@
+---
+# Cleanup — delete what the run kept for rollback, once the operator has
+# decided the new clusters stay: the old PGDATA volume, the old pgBackRest
+# repository, and the dumps. Reports, counts and the record stay in the run
+# directory. After this, rollback is no longer possible.
+
+- name: "context"
+  ansible.builtin.include_tasks: context.yml
+
+- name: "cleanup | the run is complete on this host"
+  ansible.builtin.stat:
+    path: "{{ _pem_rundir }}/complete"
+  register: _pem_complete
+
+- name: "cleanup | refuse an incomplete run"
+  ansible.builtin.assert:
+    that:
+      - _pem_complete.stat.exists
+    fail_msg: >-
+      Run {{ _pem_run or '(none)' }} on {{ inventory_hostname }} has not
+      finished phase 9. Cleanup removes the rollback copy, so it acts only on
+      a complete run.
+    quiet: true
+
+- name: "cleanup | delete the old PGDATA volume, the old repository and the dumps"
+  ansible.builtin.shell:
+    executable: /bin/bash
+    cmd: |
+      set -euo pipefail
+      D={{ _pem_rundir | quote }}
+      docker volume rm -f {{ _pem_aside | quote }} >/dev/null 2>&1 && echo "removed volume {{ _pem_aside }}"
+      R={{ postgres_encoding_migrate_pgbackrest_repo | quote }}
+      parent=$(dirname "$R"); base=$(basename "$R")
+      if [ -d "$parent/$base.pre-utf8-{{ _pem_run }}" ]; then
+        docker run --rm --user 0 --entrypoint rm -v "$parent":/p {{ _pem_image | quote }} -rf "/p/$base.pre-utf8-{{ _pem_run }}"
+        echo "removed $parent/$base.pre-utf8-{{ _pem_run }}"
+      fi
+      rm -f "$D"/db-*.dump "$D"/globals.sql "$D"/postgresql.auto.conf.pre "$D"/env.pre
+      echo {{ _pem_run | quote }} > "$D/cleaned"
+      echo "removed dumps from $D"
+  register: _pem_cleaned
+  changed_when: true
+
+- name: "cleanup | done"
+  ansible.builtin.debug:
+    msg: "{{ inventory_hostname }}: {{ _pem_cleaned.stdout_lines | join('; ') }}"

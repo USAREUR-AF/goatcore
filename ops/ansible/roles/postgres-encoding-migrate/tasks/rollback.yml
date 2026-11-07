@@ -1,0 +1,187 @@
+---
+# Rollback — put every member back on its pre-migration cluster. Acts on the
+# whole run at once: every member's old PGDATA is the state of one quiesce
+# point, so the old Spock slots and subscriptions, and each standby's WAL
+# position, line up again only when all members return together.
+# Input: pem_step = stop | restore | start | verify.
+# Writes made to the new clusters after phase 9 are not carried back.
+
+- name: "context"
+  ansible.builtin.include_tasks: context.yml
+
+- name: "rollback | stop writers and units (stop)"
+  when: pem_step == 'stop'
+  block:
+    - name: "rollback | units"
+      ansible.builtin.shell:
+        executable: /bin/bash
+        cmd: |
+          for u in {{ postgres_encoding_migrate_stop_units | map('quote') | join(' ') }}; do
+            if systemctl is-active --quiet "$u" 2>/dev/null; then systemctl stop "$u"; echo "$u"; fi
+          done
+          true
+      register: _pem_rb_units
+      changed_when: _pem_rb_units.stdout_lines | length > 0
+
+    - name: "rollback | containers of the compose project and the declared extras"
+      ansible.builtin.shell:
+        executable: /bin/bash
+        cmd: |
+          set -euo pipefail
+          names=$( {
+            docker ps --filter label=com.docker.compose.project={{ _pem_project | quote }} --format '{{ "{{" }}.Names{{ "}}" }}'
+            for x in {{ postgres_encoding_migrate_extra_containers | map('quote') | join(' ') }}; do
+              docker ps --filter name="^${x}$" --format '{{ "{{" }}.Names{{ "}}" }}'
+            done
+          } | sort -u | grep -vx {{ _pem_c | quote }} || true)
+          [ -n "$names" ] && docker stop -t 30 $names >/dev/null
+          echo "${names:-none}"
+      register: _pem_rb_ctrs
+      changed_when: true
+
+- name: "rollback | restore the old PGDATA (restore)"
+  when: pem_step == 'restore'
+  block:
+    - name: "rollback | is there a checked copy"
+      ansible.builtin.stat:
+        path: "{{ _pem_rundir }}/aside.ok"
+      register: _pem_aside_ok
+
+    - name: "rollback | the copy volume exists"
+      ansible.builtin.command:
+        argv: [docker, volume, inspect, "{{ _pem_aside }}"]
+      register: _pem_aside_vol
+      changed_when: false
+      failed_when: _pem_aside_ok.stat.exists and _pem_aside_vol.rc != 0
+      when: _pem_aside_ok.stat.exists
+
+    - name: "rollback | put the old PGDATA back into {{ _pem_volume }}"
+      when: _pem_aside_ok.stat.exists
+      ansible.builtin.shell:
+        executable: /bin/bash
+        chdir: "{{ _pem_workdir }}"
+        cmd: |
+          set -euo pipefail
+          V={{ _pem_volume | quote }}; A={{ _pem_aside | quote }}; I={{ _pem_image | quote }}; D={{ _pem_rundir | quote }}
+          cp "$D/env.pre" {{ (_pem_workdir ~ '/.env') | quote }}
+          users=$(docker ps -a --filter volume="$V" --format '{{ "{{" }}.Names{{ "}}" }}')
+          for u in $users; do echo "$u" >> "$D/volume-users.txt"; done
+          [ -n "$users" ] && docker rm -f $users >/dev/null
+          docker volume rm -f "$V" >/dev/null 2>&1 || true
+          {{ _pem_compose }} up --no-start --no-deps --force-recreate {{ _pem_service | quote }}
+          docker run --rm --user 0 --entrypoint sh -v "$A":/from:ro -v "$V":/to "$I" -c '
+            set -e
+            find /to -mindepth 1 -delete
+            cp -a /from/. /to/
+            a=$(find /from -type f -printf "%s\n" | awk "{s+=\$1} END {print s+0}")
+            b=$(find /to -type f -printf "%s\n" | awk "{s+=\$1} END {print s+0}")
+            echo "restored bytes $a -> $b"
+            [ "$a" = "$b" ]'
+      register: _pem_rb_copy
+      changed_when: true
+
+    # Before Postgres starts: a bind mount is resolved when the container
+    # starts, so a repository moved afterwards would not be the one it sees.
+    - name: "rollback | pgBackRest repository back"
+      ansible.builtin.shell:
+        executable: /bin/bash
+        cmd: |
+          set -euo pipefail
+          R={{ postgres_encoding_migrate_pgbackrest_repo | quote }}
+          parent=$(dirname "$R"); base=$(basename "$R")
+          old="$base.pre-utf8-{{ _pem_run }}"; new="$base.utf8-{{ _pem_run }}"
+          [ -d "$parent/$old" ] || { echo "no repository kept aside"; exit 0; }
+          docker run --rm --user 0 --entrypoint sh -v "$parent":/p {{ _pem_image | quote }} -c "
+            set -e
+            [ -d /p/$base ] && mv /p/$base /p/$new
+            mv /p/$old /p/$base
+            echo put back /p/$base, new cluster repository kept as /p/$new"
+      register: _pem_rb_repo
+      changed_when: "'put back' in _pem_rb_repo.stdout"
+
+    - name: "rollback | start the old cluster"
+      ansible.builtin.command:
+        argv: [docker, start, "{{ _pem_c }}"]
+      changed_when: true
+
+    - name: "rollback | wait"
+      ansible.builtin.include_tasks: wait-ready.yml
+
+    - name: "rollback | the container's pg_hba.conf"
+      ansible.builtin.shell:
+        executable: /bin/bash
+        cmd: |
+          set -euo pipefail
+          f={{ (_pem_rundir ~ '/pg_hba.conf') | quote }}
+          [ -s "$f" ] || { echo "none kept"; exit 0; }
+          docker exec -i -u 0 {{ _pem_c | quote }} sh -c 'cat > /etc/postgresql/pg_hba.conf' < "$f"
+          docker exec -u postgres {{ _pem_c | quote }} psql -X -U postgres -tA -d postgres -c 'SELECT pg_reload_conf()' >/dev/null
+          echo restored
+      changed_when: true
+
+    - name: "rollback | the old cluster's encoding"
+      ansible.builtin.command:
+        argv: "{{ _pem_psql + ['-d', 'postgres', '-tAc', \"SELECT pg_encoding_to_char(encoding) FROM pg_database WHERE datname = 'template1'\"] }}"
+      register: _pem_rb_enc
+      changed_when: false
+
+    - name: "rollback | refuse a cluster that is not the old one"
+      ansible.builtin.assert:
+        that:
+          - (_pem_rb_enc.stdout | trim) == (_pem_pre.state.template1 | default(_pem_rb_enc.stdout | trim))
+        fail_msg: >-
+          {{ inventory_hostname }}: after rollback template1 is
+          {{ _pem_rb_enc.stdout | trim }}, before the migration it was
+          {{ _pem_pre.state.template1 }}.
+        quiet: true
+
+- name: "rollback | start what phase 2 stopped (start)"
+  when: pem_step == 'start'
+  ansible.builtin.include_tasks: start-writers.yml
+
+- name: "rollback | verify and close the run (verify)"
+  when: pem_step == 'verify'
+  block:
+    - name: "rollback | the old subscriptions replicate again"
+      ansible.builtin.shell:
+        executable: /bin/bash
+        cmd: |
+          set -euo pipefail
+          P=(docker exec -u postgres {{ _pem_c | quote }} psql -X -q -U postgres -tA)
+          for db in {{ _pem_pre.spock | default([]) | map(attribute='db') | map('quote') | join(' ') }}; do
+            "${P[@]}" -d "$db" -c "SELECT s.subscription_name || ' ' || s.status FROM spock.sub_show_status() s ORDER BY 1" | sed "s/^/$db /"
+          done
+      register: _pem_rb_subs
+      until: _pem_rb_subs.rc == 0 and (_pem_rb_subs.stdout_lines | reject('match', '.* replicating$') | list | length == 0)
+      retries: 30
+      delay: 2
+      changed_when: false
+      failed_when: false
+      when: not (_pem_standby | bool)
+
+    - name: "rollback | report"
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }}: back on the pre-migration cluster
+          ({{ _pem_pre.state.template1 | default('?') }}).
+          {% if not (_pem_standby | bool) %}Subscriptions: {{ _pem_rb_subs.stdout_lines | default([]) | join(', ') or 'none' }}{% endif %}
+
+    - name: "rollback | refuse to close the run while a subscription is not replicating"
+      ansible.builtin.assert:
+        that:
+          - _pem_rb_subs.stdout_lines | default([]) | reject('match', '.* replicating$') | list | length == 0
+        fail_msg: >-
+          {{ inventory_hostname }}: subscriptions after rollback
+          {{ _pem_rb_subs.stdout_lines }}. The data is back; the run stays
+          open so action=rollback can be repeated once the cause is fixed.
+        quiet: true
+      when: not (_pem_standby | bool)
+
+    - name: "rollback | close the run"
+      ansible.builtin.shell:
+        executable: /bin/bash
+        cmd: |
+          set -euo pipefail
+          echo {{ _pem_run | quote }} > {{ (_pem_rundir ~ '/rolled-back') | quote }}
+          rm -f {{ (_pem_dir ~ '/current-run') | quote }}
+      changed_when: true

@@ -82,7 +82,9 @@ services:
       # comes from .env: a joiner's .env carries its founder's encoding
       # (site-bootstrap.yml Phase 1C reads it), and anything that renders no
       # value gets UTF8. Existing SQL_ASCII clusters migrate separately —
-      # destructive and coordinated.
+      # destructive and coordinated, every Spock member together:
+      # docs/operations/postgres-utf8-migration.md
+      # (ops/ansible/postgres-encoding-migrate.yml).
       POSTGRES_INITDB_ARGS: "${POSTGRES_INITDB_ARGS:---locale=C --encoding=UTF8}"
     ports:
       # Bound to 0.0.0.0 so peer sites reach us via the Netbird mesh
