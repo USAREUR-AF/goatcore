@@ -61,7 +61,7 @@ id_admin_console_org_db_name: id_console_orgs
 # ZAGROS_ID_CONSOLE_DB_PASS, ZAGROS_PROD_ID_CONSOLE_DB_PASS. Read only when the store
 # is postgres; tasks/store-gate.yml refuses an empty value then.
 id_admin_console_db_password_env: "{{ site_id | upper | replace('-', '_') }}_ID_CONSOLE_DB_PASS"
-id_admin_console_db_password: "{{ lookup('env', id_admin_console_db_password_env) }}"
+id_admin_console_db_password: "{{ lookup('env', id_admin_console_db_password_env) }}"  # when: id_admin_console_store=postgres
 # Percent-encoded in full ('/' included, which urlencode leaves alone), so any
 # password survives the URL and the compose env file unchanged.
 id_admin_console_db_password_url: "{{ id_admin_console_db_password | urlencode | replace('/', '%2F') }}"

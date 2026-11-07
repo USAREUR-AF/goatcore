@@ -547,6 +547,7 @@ pub fn secrets_needed(repo: &Path, groups: &[String], name: &str, ledger: &str, 
     if ledger != name {
         roles.push(ledger.to_string());
     }
+    let roles = role_closure(repo, &roles);
     let play_text = std::fs::read_to_string(play).unwrap_or_default();
     for (var, alts) in role_default_bindings(repo, &roles, groups, &play_text) {
         out.entry(var).or_insert_with(|| alts.join("|"));
@@ -599,7 +600,11 @@ pub(crate) fn group_scalars(repo: &Path, groups: &[String]) -> BTreeMap<String, 
 /// For a role-default value: the names any one of which satisfies it, or `None`
 /// when it is not a need (a literal fallback, a shell name, or a name computed
 /// from something unresolvable). Mirrors ops/scripts/deploy-secrets-needed.py.
-pub fn binding_alternatives(expr: &str, vars: &BTreeMap<String, String>) -> Option<Vec<String>> {
+///
+/// `rvals` are the role's own scalar values, so a lookup whose argument is a variable
+/// (`lookup('env', portal_db_password_env)`) resolves through it: the group's value
+/// first, then the role's, holding a literal name or `{{ site_id … }}_SUFFIX`.
+pub fn binding_alternatives(expr: &str, vars: &BTreeMap<String, String>, rvals: &BTreeMap<String, String>) -> Option<Vec<String>> {
     const NOT_SECRETS: [&str; 7] = ["HOME", "USER", "LOGNAME", "PATH", "PWD", "SHELL", "TMPDIR"];
     if regex::Regex::new(r#"default\(\s*['"]"#).unwrap().is_match(expr) {
         return None;
@@ -608,6 +613,9 @@ pub fn binding_alternatives(expr: &str, vars: &BTreeMap<String, String>) -> Opti
     let literal = regex::Regex::new(r#"^['"]([A-Z][A-Z0-9_]*)['"]"#).unwrap();
     let computed = regex::Regex::new(r#"^\(\s*(site_id_upper|site_id)\b(.*?)\)\s*[+~]\s*['"]([A-Z0-9_]+)['"]"#).unwrap();
     let fallback = regex::Regex::new(r#"default\(\s*['"]([A-Z0-9_]+)['"]"#).unwrap();
+    let variable = regex::Regex::new(r#"^([a-z][a-z0-9_]*)\s*\)"#).unwrap();
+    let name_only = regex::Regex::new(r#"^[A-Z][A-Z0-9_]*$"#).unwrap();
+    let templated = regex::Regex::new(r#"^\{\{\s*(site_id_upper|site_id)\b([^}]*)\}\}([A-Z0-9_]+)$"#).unwrap();
     // A computed name: (site_id … | upper [| replace('-','_')]) +/~ '_SUFFIX'.
     let resolve = |c: regex::Captures| -> Option<String> {
         let (base, filters, suffix) = (&c[1], &c[2], &c[3]);
@@ -622,9 +630,17 @@ pub fn binding_alternatives(expr: &str, vars: &BTreeMap<String, String>) -> Opti
     let mut names = Vec::new();
     for m in lookup.find_iter(expr) {
         let rest = &expr[m.end()..];
-        let n = match literal.captures(rest) {
-            Some(c) => c[1].to_string(),
-            None => resolve(computed.captures(rest)?)?,
+        let n = if let Some(c) = literal.captures(rest) {
+            c[1].to_string()
+        } else if let Some(c) = variable.captures(rest) {
+            let val = vars.get(&c[1]).filter(|v| !v.is_empty()).or_else(|| rvals.get(&c[1]))?.clone();
+            if name_only.is_match(&val) {
+                val
+            } else {
+                resolve(templated.captures(&val)?)?
+            }
+        } else {
+            resolve(computed.captures(rest)?)?
         };
         names.push(n);
     }
@@ -634,6 +650,57 @@ pub fn binding_alternatives(expr: &str, vars: &BTreeMap<String, String>) -> Opti
     Some(names)
 }
 
+/// `roles` and every role they pull in: include_role / import_role by a literal
+/// name in their tasks and handlers, and meta dependencies. Mirrors `role_closure`
+/// in ops/scripts/deploy-secrets-needed.py.
+fn role_closure(repo: &Path, roles: &[String]) -> Vec<String> {
+    let included = regex::Regex::new(r#"(?m)(?:include_role|import_role):\s*\n\s+name:\s*['"]?([A-Za-z0-9_.-]+)['"]?\s*$"#).unwrap();
+    let mut seen: Vec<String> = Vec::new();
+    let mut queue: std::collections::VecDeque<String> = roles.iter().cloned().collect();
+    while let Some(r) = queue.pop_front() {
+        if seen.contains(&r) {
+            continue;
+        }
+        seen.push(r.clone());
+        let rdir = repo.join("ops/ansible/roles").join(&r);
+        if !rdir.is_dir() {
+            continue;
+        }
+        for sub in ["tasks", "handlers"] {
+            let mut stack = vec![rdir.join(sub)];
+            let mut found: Vec<PathBuf> = Vec::new();
+            while let Some(d) = stack.pop() {
+                let Ok(rd) = std::fs::read_dir(&d) else { continue };
+                for e in rd.flatten() {
+                    let p = e.path();
+                    if p.is_dir() {
+                        stack.push(p);
+                    } else if p.extension().map(|x| x == "yml" || x == "yaml").unwrap_or(false) {
+                        found.push(p);
+                    }
+                }
+            }
+            found.sort();
+            for p in found {
+                let Ok(t) = std::fs::read_to_string(&p) else { continue };
+                queue.extend(included.captures_iter(&t).map(|c| c[1].to_string()));
+            }
+        }
+        if let Ok(t) = std::fs::read_to_string(rdir.join("meta/main.yml")) {
+            let doc: serde_yaml::Value = serde_yaml::from_str(&t).unwrap_or_default();
+            if let Some(deps) = doc.get("dependencies").and_then(|d| d.as_sequence()) {
+                for dep in deps {
+                    let name = dep.as_str().or_else(|| dep.get("role").and_then(|v| v.as_str()));
+                    if let Some(n) = name.filter(|n| !n.contains('{')) {
+                        queue.push_back(n.to_string());
+                    }
+                }
+            }
+        }
+    }
+    seen
+}
+
 /// ansible var -> names, for the env lookups in the defaults and vars of `roles`
 /// that no member group overrides and that the play or the role's own tasks and
 /// templates reference (goat-get's GOAT_CLI_RELEASE_TOKEN lives there).
@@ -641,6 +708,9 @@ fn role_default_bindings(repo: &Path, roles: &[String], groups: &[String], play_
     let word = regex::Regex::new(r"\b[a-z][a-z0-9_]+\b").unwrap();
     let binding = regex::Regex::new(r#"^([a-z][a-z0-9_]*):\s*["'](.*)["']\s*(#.*)?$"#).unwrap();
     let or_names = regex::Regex::new(r"#\s*or:\s*([A-Z][A-Z0-9_]*(?:\s*,\s*[A-Z][A-Z0-9_]*)*)").unwrap();
+    // `# when: <var>=<value>`: needed only when the group's value (else the role's) is that.
+    let when = regex::Regex::new(r"#.*?\bwhen:\s*([a-z][a-z0-9_]*)\s*=\s*([A-Za-z0-9_.-]+)").unwrap();
+    let scalar = regex::Regex::new(r"^([a-z][a-z0-9_]*):\s*(\S.*)$").unwrap();
     let vars = group_scalars(repo, groups);
     let mut out = BTreeMap::new();
     for r in roles {
@@ -661,29 +731,45 @@ fn role_default_bindings(repo: &Path, roles: &[String], groups: &[String], play_
                 }
             }
         }
+        let mut lines: Vec<String> = Vec::new();
         for sub in ["defaults", "vars"] {
             let Ok(rd) = std::fs::read_dir(rdir.join(sub)) else { continue };
             let mut files: Vec<PathBuf> = rd.flatten().map(|e| e.path()).filter(|p| p.extension().map(|x| x == "yml" || x == "yaml").unwrap_or(false)).collect();
             files.sort();
             for f in files {
                 let Ok(t) = std::fs::read_to_string(&f) else { continue };
-                for line in t.lines() {
-                    let Some(c) = binding.captures(line) else { continue };
-                    let (var, expr) = (&c[1], &c[2]);
-                    if !expr.contains("lookup(") || vars.contains_key(var) || !used.contains(var) {
-                        continue;
-                    }
-                    if let Some(mut alts) = binding_alternatives(expr, &vars) {
-                        if let Some(o) = c.get(3).and_then(|m| or_names.captures(m.as_str())) {
-                            for n in o[1].split(',').map(str::trim) {
-                                if !alts.iter().any(|a| a == n) {
-                                    alts.push(n.to_string());
-                                }
-                            }
+                lines.extend(t.lines().map(str::to_string));
+            }
+        }
+        let mut rvals: BTreeMap<String, String> = BTreeMap::new();
+        for line in &lines {
+            if let Some(c) = scalar.captures(line) {
+                let v = c[2].split(" #").next().unwrap_or("").trim().trim_matches(|ch| ch == '\'' || ch == '"').to_string();
+                rvals.entry(c[1].to_string()).or_insert(v);
+            }
+        }
+        for line in &lines {
+            let Some(c) = binding.captures(line) else { continue };
+            let (var, expr) = (&c[1], &c[2]);
+            if !expr.contains("lookup(") || vars.contains_key(var) || !used.contains(var) {
+                continue;
+            }
+            let comment = c.get(3).map(|m| m.as_str()).unwrap_or("");
+            if let Some(w) = when.captures(comment) {
+                let actual = vars.get(&w[1]).filter(|v| !v.is_empty()).or_else(|| rvals.get(&w[1]));
+                if actual.map(String::as_str) != Some(&w[2]) {
+                    continue;
+                }
+            }
+            if let Some(mut alts) = binding_alternatives(expr, &vars, &rvals) {
+                if let Some(o) = or_names.captures(comment) {
+                    for n in o[1].split(',').map(str::trim) {
+                        if !alts.iter().any(|a| a == n) {
+                            alts.push(n.to_string());
                         }
-                        out.insert(var.to_string(), alts);
                     }
                 }
+                out.insert(var.to_string(), alts);
             }
         }
     }
@@ -1709,6 +1795,29 @@ mod tests {
         write(r, "ops/ansible/group_vars/dev_hosts/vars.yml", "site_id: dev-a\ngoat_get_github_token: literal\n");
         let got = secrets_needed(r, &["dev_hosts".into()], "goat-get", "goat-get", &r.join("ops/ansible/goat-get-deploy.yml"));
         assert!(!got.contains_key("goat_get_github_token"));
+    }
+
+    /// A store role the component includes holds its database password, named
+    /// through a variable and read only on Postgres (as goat-zenoh-portal-store's).
+    #[test]
+    fn an_included_store_roles_password_is_required_on_postgres_only() {
+        let t = tempfile::tempdir().unwrap();
+        let r = t.path();
+        write(r, "ops/ansible/app-deploy.yml", "- hosts: \"{{ target }}\"\n  roles: [app]\n");
+        write(r, "ops/ansible/roles/app/tasks/main.yml", "- name: app | the store\n  ansible.builtin.include_role:\n    name: app-store\n    public: true\n");
+        write(
+            r,
+            "ops/ansible/roles/app-store/defaults/main.yml",
+            "app_store: sqlite\napp_db_password_env: \"{{ site_id | upper | replace('-', '_') }}_APP_DB_PASS\"\napp_db_password: \"{{ lookup('env', app_db_password_env) }}\"  # when: app_store=postgres\n",
+        );
+        write(r, "ops/ansible/roles/app-store/tasks/main.yml", "- debug: msg=\"{{ app_db_password | length }}\"\n");
+        let play = r.join("ops/ansible/app-deploy.yml");
+        write(r, "ops/ansible/group_vars/dev_hosts/vars.yml", "site_id: dev-a\napp_store: postgres\n");
+        let got = secrets_needed(r, &["dev_hosts".into()], "app", "app", &play);
+        assert_eq!(got.get("app_db_password").map(String::as_str), Some("DEV_A_APP_DB_PASS"));
+        write(r, "ops/ansible/group_vars/dev_hosts/vars.yml", "site_id: dev-a\napp_store: sqlite\n");
+        let got = secrets_needed(r, &["dev_hosts".into()], "app", "app", &play);
+        assert!(!got.contains_key("app_db_password"), "a sqlite goatnet reads no database password");
     }
 
     /// The real goat-get role: the token is part of what a deploy needs.
