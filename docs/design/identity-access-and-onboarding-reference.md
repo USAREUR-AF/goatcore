@@ -272,7 +272,7 @@ bundle):
    `admin.rs:3435-3457, 3515-3519`).
 4. **The `.cbor` bundle** — minted by the portal certmint (not the runner) via the
    `bundle-create` binary (`ops/goat-zenoh-portal/internal/certmint/certmint.go:217-262`;
-   ZAGROS wires `portal_bundle_create_bin` `group_vars/zagros_hosts/vars.yml:2700`).
+   a goatnet wires `portal_bundle_create_bin` in its environment repository's `group_vars/<site>_hosts/vars.yml`).
 5. **Bundle markdown** `ops/operators/out/<handle>-bundle.md` (setup key + api_key +
    bundle URL) (`admin.rs:4893`, `render_bundle_md` `admin.rs:3211`), which the runner
    scrapes to send the welcome email.

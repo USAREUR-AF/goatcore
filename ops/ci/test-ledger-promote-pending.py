@@ -7,10 +7,9 @@
 # THE FAILURE THIS EXISTS FOR. `rollback-ledger` is a meta-dependency, so
 # ansible runs it BEFORE the role that can refuse the deploy. It used to write
 # `action: "deploy"` at that point, and nothing corrected the row when the
-# deploy was then refused. Between 2026-09-16 and 2026-09-19 that produced three
-# rows across three goatnets asserting deploys that never happened — on
-# zagros-prod the ledger named the new digest while the router ran an 11-day-old
-# container. `deploy-component.sh` proves convergence by reading that ledger, so
+# deploy was then refused, so the ledger could assert a deploy that never
+# happened: a new digest recorded while the host still ran the old container.
+# `deploy-component.sh` proves convergence by reading that ledger, so
 # the check meant to catch an unconverged host confirmed it instead.
 #
 # The fix is a two-step row: written `pending`, promoted to `deploy` by a
@@ -143,8 +142,7 @@ def main():
     # alone, so a re-run after a refused deploy found its own `pending` row
     # already naming this ref, skipped the append, and notified nothing. The
     # handler cannot promote a row it is never told about, so the ledger read
-    # `pending` on a host that had in fact deployed (mgmt-zagros-prod-echo-01-thor,
-    # 2026-09-21). No test of promote-pending.py can see that, because the bug
+    # `pending` on a host that had in fact deployed. No test of promote-pending.py can see that, because the bug
     # is that promote-pending.py is never reached. So assert the task exists.
     tasks = os.path.join(
         REPO, "ansible", "roles", "rollback-ledger", "tasks", "main.yml"
@@ -187,8 +185,8 @@ def main():
         )
 
     # Served payloads: the promote reads each file back and records what the
-    # host serves, not what the vars meant (goat-get served 0.5.6 on zagros-prod
-    # while main declared 0.5.14 and nothing could see it, 2026-10-29).
+    # host serves, not what the vars meant (a served version can lag the
+    # declared one with nothing else able to see it).
     with tempfile.TemporaryDirectory() as d:
         led = os.path.join(d, "deploy-history.jsonl")
         with open(led, "w") as fh:

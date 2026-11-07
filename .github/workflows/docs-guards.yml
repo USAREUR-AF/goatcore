@@ -14,7 +14,6 @@ on:
     paths:
       - '.github/workflows/docs-guards.yml'
       - 'docs/**'
-      - '.claude/skills/**'
       - 'crates/goat-cli/**'
       - 'crates/panoscope-core/src/**'
       - 'ops/ansible/group_vars/*/pins.yml'
@@ -23,7 +22,6 @@ on:
       - 'ops/goat-id-console/**'
       - 'ops/goat-zenoh-portal/**'
       - 'ops/onboard-runner/**'
-      - 'ops/gym/**'
 
 permissions:
   contents: read
@@ -70,13 +68,10 @@ jobs:
       # Links and citations
       - name: relative .md links resolve
         run: python3 ops/ci/check-doc-links.py
-      - name: skills declare an audience; both-skills have a GUIDE (ADR 1174)
-        run: python3 ops/ci/check-skill-audience.py
       - name: every `path:line` citation is within its file
         run: ./ops/ci/check-doc-code-citations.sh
 
-      # Reader-facing guides never use a real roster handle as an example
-      - name: self-test — guard goes RED on a planted example (P6)
-        run: ops/ci/check-guide-example-names.py --self-test
-      - name: no roster handle used as an example in guide text
-        run: ops/ci/check-guide-example-names.py
+      # Not here: the skill-audience guard (ADR 1174) runs where the
+      # .claude/skills tree lives, and the roster-handle guard reads a roster
+      # of real people that this repository does not carry; the leak gate
+      # (leak-gate.yml) refuses names in this tree instead.

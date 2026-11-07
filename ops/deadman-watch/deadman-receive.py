@@ -16,8 +16,8 @@ This is the somewhere else.
 ONE FILE PER SOURCE. Each obs host posts to POST /<its-hostname> and
 gets its own timestamp file, <state-dir>/<source>.last-heartbeat, so the checker
 can watch each one separately. With a single shared file, any live obs host kept
-the file fresh for all of them: zagros-prod's SVK obs host heartbeated into the
-same watcher as Orin-C, and Orin-C's four-day outage never paged. A bare POST /
+the file fresh for all of them, so a dead host sharing a watcher with a live
+one never paged. A bare POST /
 still writes the legacy file so an un-migrated sender keeps working.
 
 Deliberately stdlib-only and deliberately not containerised: it must have fewer
@@ -45,10 +45,19 @@ SOURCE_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
 
 
 def state_path_for(source: str) -> str:
-    """Timestamp file for a source; "" is the legacy single file."""
+    """Timestamp file for a source; "" is the legacy single file.
+
+    The source is already held to SOURCE_RE; the containment check below is the
+    second wall, so a future change to the pattern cannot write outside the
+    state directory.
+    """
     if not source:
         return STATE_FILE
-    return os.path.join(os.path.dirname(STATE_FILE), f"{source}.last-heartbeat")
+    base = os.path.realpath(os.path.dirname(STATE_FILE))
+    target = os.path.realpath(os.path.join(base, f"{source}.last-heartbeat"))
+    if not target.startswith(base + os.sep):
+        raise ValueError(f"source {source!r} resolves outside the state directory")
+    return target
 
 
 def source_from_path(path: str):
@@ -56,7 +65,7 @@ def source_from_path(path: str):
     name = urllib.parse.urlparse(path).path.strip("/")
     if name == "":
         return ""
-    return name if SOURCE_RE.match(name) else None
+    return name if SOURCE_RE.fullmatch(name) else None
 
 
 def record_heartbeat(source: str = "") -> None:

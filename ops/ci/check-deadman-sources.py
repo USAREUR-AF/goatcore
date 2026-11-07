@@ -4,10 +4,9 @@
 The dead-man's switch has two halves: each obs host's Alertmanager posts its
 always-firing Watchdog alert to a watcher on another machine
 (`roles/deadman-watch`), and the watcher pages when the heartbeat stops. The
-watcher used to keep ONE timestamp for everything that posted to it. On
-zagros-prod, Orin-C and the SVK obs host both posted to Orin-A's watcher, so when
-Orin-C's disk dropped off the bus on 2026-09-11 the SVK host's live heartbeat
-kept the timestamp fresh and nothing paged for four days.
+watcher must not keep ONE timestamp for everything that posts to it: with two
+obs hosts posting to one watcher, a live heartbeat from one keeps the timestamp
+fresh while the other is dead, and nothing pages.
 
 The watcher now keeps one timestamp per request path and judges every host in
 `deadman_watch_expected_sources` separately. That only helps if both ends are
@@ -26,8 +25,8 @@ wired, so this guard checks, for every group_vars directory that declares
 
   3. a watcher-port URL whose address belongs to no group that sets
      `deadman_watch_enabled` FAILS: the heartbeat goes nowhere, so the site's
-     death pages nobody (zagros, 2026-10-29: zagros_obs_hosts posted to zagros-a,
-     where no watcher was ever deployed). This used to be a warning.
+     death pages nobody (an obs group posting to a host where no watcher is
+     deployed).
 
 A third-party absence detector (DEADMAN_WEBHOOK_URL / deadman_external_url) is
 one check per URL and is not on the watcher port, so neither rule touches it.
