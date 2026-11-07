@@ -13,6 +13,13 @@
 REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/.." && pwd)"
 WORK="$REPO_ROOT/ops/work/work"
 
+# This tree may not carry the code a test reads (a public goatcore checkout
+# does not carry a goatnet's own scripts); such a test is skipped by name,
+# and runs wherever that code is present.
+setup() {
+  [ -f "$WORK" ] || skip "ops/work is not in this tree"
+}
+
 @test "work wrapper: runs from repo root (a non-module cwd — the bug's location)" {
   cd "$REPO_ROOT"
   run "$WORK" list

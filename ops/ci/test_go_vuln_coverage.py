@@ -11,6 +11,10 @@ def scan(directory):
 
 class CoverageTests(unittest.TestCase):
     def setUp(self):
+        # One exemption of the fixture's own, whatever the repository declares.
+        self._exemptions = guard.EXEMPTIONS
+        guard.EXEMPTIONS = {"ops/example-tool": "fixture tooling"}
+        self.addCleanup(setattr, guard, "EXEMPTIONS", self._exemptions)
         self.ci = {"jobs": {"go-vuln": {
             "strategy": {"matrix": {"module": ["ops/example"]}},
             "steps": [scan("${{ matrix.module }}")],

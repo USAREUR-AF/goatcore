@@ -11,7 +11,11 @@ REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/.." && pwd)"
 SCRIPT="$REPO_ROOT/ops/ci/check-ghcr-namespace-parity.sh"
 DIGEST="sha256:$(printf '0%.0s' $(seq 1 64))"
 
+# This tree may not carry the code a test reads (a public goatcore checkout
+# does not carry a goatnet's own scripts); such a test is skipped by name,
+# and runs wherever that code is present.
 setup() {
+  [ -f "$SCRIPT" ] || skip "ops/ci/check-ghcr-namespace-parity.sh is not in this tree"
   command -v python3 >/dev/null || skip "python3 not installed"
   FAKE="$BATS_TEST_TMPDIR/repo"
   mkdir -p "$FAKE/ops/ci" "$FAKE/ops/ansible" "$FAKE/ops/pins" "$BATS_TEST_TMPDIR/bin"

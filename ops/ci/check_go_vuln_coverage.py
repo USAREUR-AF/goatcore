@@ -7,11 +7,10 @@ import sys
 
 import yaml
 
-EXEMPTIONS = {
-    "ops/relay/wedge-repro": "operator repro tooling",
-    "ops/zenoh-trial-peers/vendor-decode-rca": "operator RCA tooling",
-    "ops/terraform-tests": "CI test harness",
-}
+# Tracked Go modules deliberately left out of the go-vuln matrix, each with
+# its reason. An entry naming a module this repository does not track fails,
+# so the list holds only modules that are here.
+EXEMPTIONS: dict[str, str] = {}
 
 
 def blocking(node):

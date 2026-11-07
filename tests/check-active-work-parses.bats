@@ -11,7 +11,11 @@
 REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/.." && pwd)"
 GATE="$REPO_ROOT/ops/ci/check-active-work-parses.sh"
 
+# This tree may not carry the code a test reads (a public goatcore checkout
+# does not carry a goatnet's own scripts); such a test is skipped by name,
+# and runs wherever that code is present.
 setup() {
+  [ -f "$GATE" ] || skip "ops/ci/check-active-work-parses.sh is not in this tree"
   FIXTURE="$BATS_TEST_TMPDIR/repo"
   mkdir -p "$FIXTURE/docs/project/active-work/tracks" "$FIXTURE/docs/project/active-work/queued"
   git -C "$FIXTURE" init -q

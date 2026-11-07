@@ -159,6 +159,10 @@ jobs:
           set -o pipefail
           export PYTHONPATH="$PWD/ops/consistency/python"
           python3 -m pytest -q --ignore=ops/ci/test_membership_reconcile.py --ignore=ops/consistency/python/tests/test_corpus.py --ignore=ops/consistency/python/tests/test_lite_sidecar.py ops/ci ops/consistency/python ops/goatbuilder tests 2>&1 | tail -40
+      - name: Go vulnerability scan coverage
+        run: |
+          python3 ops/ci/test_go_vuln_coverage.py
+          python3 ops/ci/check_go_vuln_coverage.py
       # Runs the obs-host role's real read-only scrape-input preflight against
       # loopback HTTP fixtures; a rejected endpoint must stop before a write.
       - name: obs-host scrape inputs need a consumable sample
@@ -224,6 +228,124 @@ jobs:
       - name: the forwarder play, run on a systemd host, converges and refuses
         timeout-minutes: 10
         run: bash ops/ci/test-peering-forwarder-role.sh
+
+  bats-bash32:
+    # Keep the Bats harness on host Bash 5 so failed [[ assertions are reliable.
+    # Subjects and env-bash children use real 3.2.57; absolute interpreter paths
+    # honor BASH_UNDER_TEST too (#228).
+    # Linux-host-only role tests keep the runner native Bash via HOST_BASH_UNDER_TEST.
+    # Tests whose subject this tree does not carry (a goatnet's own scripts)
+    # skip themselves by name and run wherever that subject is present.
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache GNU Bash 3.2.57
+        id: bash32
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/goat-ci-bash32
+          key: bash-3.2.57-ubuntu-24.04-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('ops/ci/build-bash32.sh') }}
+
+      - name: Build GNU Bash 3.2.57
+        if: steps.bash32.outputs.cache-hit != 'true'
+        run: bash ops/ci/build-bash32.sh "$RUNNER_TEMP/goat-ci-bash32"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install tools and pinned Bats
+        timeout-minutes: 8
+        run: |
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 -o DPkg::Lock::Timeout=120 update
+          sudo apt-get -o DPkg::Lock::Timeout=120 install -y -qq shellcheck jq gettext-base
+          pip install yamllint PyYAML
+          bash ops/ci/install-bats.sh "$RUNNER_TEMP/goat-ci-bats" /bin/bash
+          echo "$RUNNER_TEMP/goat-ci-bash32/bin" >> "$GITHUB_PATH"
+          echo "$RUNNER_TEMP/goat-ci-bats/bin" >> "$GITHUB_PATH"
+          echo "BASH_UNDER_TEST=$RUNNER_TEMP/goat-ci-bash32/bin/bash" >> "$GITHUB_ENV"
+          echo "HOST_BASH_UNDER_TEST=/bin/bash" >> "$GITHUB_ENV"
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.10'
+
+      - name: Verify interpreter and empty-array behavior
+        run: |
+          bash -c 'test "${BASH_VERSINFO[0]}:${BASH_VERSINFO[1]}:${BASH_VERSINFO[2]}" = "3:2:57"'
+          "$BASH_UNDER_TEST" --version
+          # This must fail on 3.2 and pass on modern Bash. Refuse a runner
+          # that could make the regression tests pass with the wrong shell.
+          # Expand the array in the selected child shell, not this wrapper.
+          # shellcheck disable=SC2016
+          if "$BASH_UNDER_TEST" -uc 'a=(); printf "%s\n" "${a[@]}"'; then
+            echo "FAIL: interpreter did not reproduce the empty-array nounset bug" >&2
+            exit 1
+          fi
+
+      - name: Full Bats suite under GNU Bash 3.2
+        # Verify that the driver catches failures before trusting a green suite.
+        # The expected-failure fixture is kept outside tests/.
+        run: |
+          bash ops/ci/check-bats-bash32.sh
+          bats tests/
+
+  go-vuln:
+    # govulncheck on every tracked Go module, one matrix row each; signal-server
+    # runs its own in signal-server.yml. Any reported vulnerability fails the
+    # build, so upstream CVE drift is caught at pull-request time. The coverage
+    # guard (python-and-ansible: Go vulnerability scan coverage) refuses a
+    # tracked module with no row and a row with no module; a module left out on
+    # purpose is named with its reason in ops/ci/check_go_vuln_coverage.py.
+    # Unconditional (no `if:`): the guard accepts only a blocking scan.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        module:
+          - ops/admit-audit
+          - ops/enrollment
+          - ops/federation/reference
+          - ops/goat-id-console
+          - ops/goat-zenoh-portal
+          - ops/grant-crypto
+          - ops/grant-crypto/sdk/bindings/go
+          - ops/mgmt-host-bootstrap
+          - ops/onboard-runner
+          - ops/relay-probe
+          - ops/signal-federation-probe
+          - ops/smoketest
+          - ops/snitch
+          - ops/time-hygiene
+          - ops/wg-cp0-mesh-reach
+          - ops/zenoh/loadgen
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          # A patched Go release for the standard-library scan.
+          go-version: '1.26.10'
+          # go.* not go.sum: a dependency-free module carries no go.sum, and
+          # setup-go trips on a pattern that resolves to nothing.
+          cache-dependency-path: ${{ matrix.module }}/go.*
+      - name: Install CGO deps for go-piv modules (libpcsclite)
+        timeout-minutes: 8
+        if: matrix.module == 'ops/enrollment' || matrix.module == 'ops/wg-cp0-mesh-reach'
+        # Both import go-piv/piv-go/v2, a CGO binding to libpcsclite;
+        # govulncheck compiles the package before scanning.
+        run: |
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 -o DPkg::Lock::Timeout=120 update
+          sudo apt-get -o DPkg::Lock::Timeout=120 install -y -qq libpcsclite-dev
+      - name: govulncheck
+        working-directory: ${{ matrix.module }}
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
 
   # Always runs: documentation is where a key or an equipment address is most
   # likely to be pasted. A pull request scans the files it adds or changes;
