@@ -192,7 +192,8 @@ class Preflight(unittest.TestCase):
                                             "always" in previous.get("tags", [])
                                             for previous in tasks[:index]), path.name)
         self.assertEqual(set(writers), {"mgmt-host.yml", "traefik-acme.yml",
-                                       "site-bootstrap.yml"})
+                                       "site-bootstrap.yml",
+                                       "signal-federation-transport.yml"})
 
 
 if __name__ == "__main__":
