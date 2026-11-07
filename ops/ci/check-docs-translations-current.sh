@@ -2,20 +2,24 @@
 # check-docs-translations-current.sh — lock the goat docs translations to
 # the current English source (docs/design/goat-cli-hosted-docs.md).
 #
-# Instead of warning that translations *may* lag, we PREVENT lag: re-extract
-# the POT from the current English chapters, msgmerge each po/<lang>.po
-# against it, and FAIL if any language has untranslated or fuzzy entries —
-# i.e. an English string changed but a translation did not keep up. English
-# and all languages move together, or this gate blocks the merge. That is
-# what "translations locked to the CLI version" means in practice: every
-# goat-cli-v* release ships English + 29 languages that are provably in sync.
+# Re-extract the POT from the current English chapters, msgmerge each
+# po/<lang>.po against it, and REPORT every language with untranslated or
+# fuzzy entries — i.e. an English string changed and a translation has not
+# caught up yet. Missing translations do not fail anything (ADR 1024 addendum
+# 2026-11-02, docs/design/goat-cli-i18n.md "The currency gate reports and does
+# not fail"): a per-language build falls back to English for those entries.
+# The run fails only when the check itself cannot run (no POT, no po files).
+# `--strict` makes drift fail too, for someone refreshing translations who
+# wants a hard answer.
 #
-# When this fails, msgmerge has already told you exactly which entries drifted
-# — refresh them (the translation fan-out, scoped to the fuzzy/untranslated
-# entries) and re-run. See docs/goat-cli-book/po/README.md.
+# When it reports drift, msgmerge has already marked the exact entries —
+# refresh them and re-run. See docs/goat-cli-book/po/README.md.
 #
 # Needs: mdbook, mdbook-i18n-helpers (mdbook-xgettext), gettext (msgmerge/msgfmt).
 set -euo pipefail
+
+STRICT=0
+[ "${1:-}" = "--strict" ] && STRICT=1
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 BOOK="$REPO_ROOT/docs/goat-cli-book"
@@ -61,6 +65,7 @@ for po in "${pos[@]}"; do
   stats="$(msgfmt --statistics -o /dev/null "$merged" 2>&1 || true)"
   if echo "$stats" | grep -qE "[1-9][0-9]* (untranslated|fuzzy)"; then
     echo "DRIFT: $lang — ${stats}"
+    [ -n "${GITHUB_ACTIONS:-}" ] && echo "::warning title=docs translation drift::$lang — ${stats}"
     drift=1
   fi
 done
@@ -69,8 +74,9 @@ if [ "$drift" -eq 0 ]; then
   echo "OK: all ${#pos[@]} docs languages are current with the English source."
 else
   echo
-  echo "Docs translations have drifted from English. Refresh the flagged"
-  echo "languages (msgmerge has marked the exact entries) before merging —"
-  echo "translations are locked to the CLI version. See docs/goat-cli-book/po/README.md."
+  echo "Docs translations lag the English source in the languages above. They"
+  echo "render the English text for those entries until refreshed; nothing waits"
+  echo "on them. To refresh, see docs/goat-cli-book/po/README.md."
 fi
-exit "$drift"
+if [ "$STRICT" -eq 1 ]; then exit "$drift"; fi
+exit 0

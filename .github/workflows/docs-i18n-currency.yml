@@ -1,0 +1,44 @@
+name: docs-i18n-currency
+
+# Report how far the goat docs translations lag the English source. Runs when
+# the book (chapters or po/) changes; each language whose translation has not
+# caught up with an English change is a warning annotation. Drift does not fail
+# the run (ADR 1024 addendum 2026-11-02); a broken POT extraction does.
+
+on:
+  pull_request:
+    paths:
+      - 'docs/goat-cli-book/**'
+      - 'ops/ci/check-docs-translations-current.sh'
+      - '.github/workflows/docs-i18n-currency.yml'
+
+# Supersede in-flight runs for the same ref. A push during review used to
+# leave the previous run going to completion, so a branch pushed three
+# times paid three times for an answer only the last one needed. Keyed on
+# the workflow plus the ref, and NEVER cancels on main — a merge-commit run
+# is the one whose result is recorded.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  currency:
+    name: docs translations current with English
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install mdBook
+        uses: peaceiris/actions-mdbook@v2
+        with:
+          mdbook-version: latest
+
+      - name: Install gettext + mdbook-i18n-helpers
+        timeout-minutes: 8
+        run: |
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 -o DPkg::Lock::Timeout=120 update && sudo apt-get -o DPkg::Lock::Timeout=120 install -y gettext
+          cargo install mdbook-i18n-helpers --locked
+
+      - name: Report translations that lag the English source
+        run: ops/ci/check-docs-translations-current.sh

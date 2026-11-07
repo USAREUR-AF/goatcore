@@ -53,13 +53,13 @@ Phasing:
 - **LP2 — mdBook i18n scaffold + language picker: built.** `mdbook-i18n-helpers` (gettext: `po/messages.pot` → per-language `po/<lang>.po`); per-language books built in the release `docs` job (`docs.nova/<lang>/`); served by the `goat-docs` role. Plus an **elegant header language picker** on every page (a custom theme component): a dropdown of **flag + autonym** (`🇫🇷 Français`, `🇺🇦 Українська`, …; flag is a *visual aid*, the autonym is the identifier — so we never lean on the flag-≠-language anti-pattern), switching **keeps your place** (`/fr/<page>` ⇄ `/de/<page>`), persists the choice (`localStorage`), and respects `Accept-Language` on first visit. Judgment calls (config knobs): English → `🇬🇧` (vs `🇺🇸`); Klingon → `🖖 tlhIngan Hol` (no nation). `theme/built-langs.js` lists the built languages so the picker never links to a 404.
 - **LP3 — translate the prose: built (all 29).** The hand-written chapters are translated into all 29 NATO-member + Ukrainian languages (`po/<lang>.po`, 509 prose strings each, `msgfmt`-valid, zero "fabric"→"factory" false friends); `built-langs.js` lists all 30 (en + 29).
 
-### Currency lock (translations stay pinned to the CLI version)
+### Currency report (translations versioned with the CLI)
 
-We do **not** ship a "translations may be stale" warning — that earlier plan was reversed. Instead translations are **locked to the CLI version and prevented from drifting**:
+Translations ship with the CLI version and their drift from English is reported on every book change. Missing or out-of-date translations do not fail a change or a release (ADR 1024 addendum 2026-11-02); an entry a language lacks renders in English:
 
 - **Versioned together:** the docs tarball + every `po/<lang>.po` ship under the `goat-cli-v*` release tag, so a given binary's docs are exactly its translations.
-- **Currency gate** (`ops/ci/check-docs-translations-current.sh`, wired in `.github/workflows/docs-i18n-currency.yml`): on any PR touching `docs/goat-cli-book/**`, re-extract the POT from the *current* English chapters, `msgmerge` each `.po` against it, and **hard-fail** if any language has fuzzy/untranslated entries. So an English-copy change can't merge until all 29 languages catch up — English and every language move together, or CI blocks.
-- **Refresh workflow:** when the gate flags drift, `msgmerge` has already marked the exact changed entries → re-translate just those (the fan-out scoped to fuzzy entries) → green. See `docs/goat-cli-book/po/README.md`.
+- **Currency check** (`ops/ci/check-docs-translations-current.sh`, wired in `.github/workflows/docs-i18n-currency.yml`): on any PR touching `docs/goat-cli-book/**`, re-extract the POT from the *current* English chapters, `msgmerge` each `.po` against it, and report every language with fuzzy/untranslated entries as a warning. It fails only when the extraction itself breaks; `--strict` makes drift fail too, for someone refreshing translations.
+- **Refresh workflow:** when the check reports drift, `msgmerge` has already marked the exact changed entries → re-translate just those (the fan-out scoped to fuzzy entries) → green. See `docs/goat-cli-book/po/README.md`.
 
 The only remaining translation caveat is *quality* (machine-translated, not yet native-reviewed) — that note stays until native review, and is independent of version currency.
 
@@ -77,13 +77,13 @@ The two-track answer, simplified: every release writes a short **English** entry
 - **Per release:** append an entry to `release-notes.md` (English). That's the whole obligation for a **PATCH** release (`x.y.Z`) — typically bug fixes and small additions; the translated guide keeps serving the prior tag and the notes communicate the delta.
 - **On a larger (MINOR/MAJOR) release** (`x.Y.z` / `X.y.z`): do the full per-language retranslation pass, then re-couple `goat_docs_release_tag` to `goat_get_release_tag` so the translated guide catches up to the binary. The version number is load-bearing for this split, so a release that adds user-facing commands should bump the **minor**, not the patch (v0.4.3 added `--env` + `doctor --topic` as a patch — the lag it produced is why this flow exists).
 
-#### Version-gated trigger + Claude-assisted catalog fill (built)
+#### Version-gated trigger + machine-translation catalog fill (built)
 
 The trigger is automated in `.github/workflows/docs-translation-gate.yml`, on `goat-cli-v*` tag push (and `workflow_dispatch`), **separate from `goat-cli-release.yml`** so it never blocks the binary build:
 
-- A `classify` job compares the tag to the previous `goat-cli-v*` tag. **PATCH** (`x.y.Z`) → no-op (release notes carry the delta in English). **MINOR/MAJOR** (`x.Y.z` / `X.y.z`) → run the `.ftl` coverage gate.
-- The gate is `ops/scripts/translate-ftl.py --check`: it verifies every locale catalog under `crates/goat-cli/i18n/` covers the English arbiter, and **fails a minor/major release with binary-string drift** — the gap the prose `.po` currency gate can't see (the reference is generated from the binary's Fluent catalogs, not the book). This is the "gate the regenerated reference" half.
-- Filling the drift is `translate-ftl.py --apply` — Claude-assisted translation of the missing message-ids, validated so every contract token (backticked `tokens`, `{ $var }` placeables, select syntax) survives verbatim; a mismatch is refused, never written. It runs **locally** (operator's `ANTHROPIC_API_KEY`) or in CI via the workflow's `apply=true` dispatch, which opens a PR with the refreshed catalogs (needs the `ANTHROPIC_API_KEY` repo secret). Because the catalogs are built into the binary at the tag, the fill is a **pre-tag** step (commit before tagging), not an auto-commit on tag push. Tool details: `docs/design/goat-cli-i18n.md` §"CI guard".
+- A `classify` job compares the tag to the previous `goat-cli-v*` tag. **PATCH** (`x.y.Z`) → no-op (release notes carry the delta in English). **MINOR/MAJOR** (`x.Y.z` / `X.y.z`) → run the `.ftl` coverage report.
+- The report is `ops/scripts/translate-ftl.py --check`: it lists every message a locale catalog under `crates/goat-cli/i18n/` lacks against the English arbiter and exits 0 — binary-string drift, the gap the prose `.po` currency gate can't see (the reference is generated from the binary's Fluent catalogs, not the book). This is the "gate the regenerated reference" half.
+- Filling the drift is `translate-ftl.py --apply` — machine translation through the Anthropic Messages API of the missing message-ids, validated so every contract token (backticked `tokens`, `{ $var }` placeables, select syntax) survives verbatim; a mismatch is refused, never written. It runs **locally** (operator's `ANTHROPIC_API_KEY`) or in CI via the workflow's `apply=true` dispatch, which opens a PR with the refreshed catalogs (needs the `ANTHROPIC_API_KEY` repo secret; without it the fill job skips with a notice). Because the catalogs are built into the binary at the tag, the fill is a **pre-tag** step (commit before tagging), not an auto-commit on tag push. Tool details: `docs/design/goat-cli-i18n.md` §"CI guard".
 
 ## Multi-site (not nova-a-only)
 

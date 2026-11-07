@@ -1,0 +1,143 @@
+name: docs-translation-gate
+
+# Reports only: translate-ftl.py --check exits 0 on drift (ADR 1024 addendum
+# 2026-11-02), so the check below never holds a release. Dispatch with apply=true
+# to fill the gaps; without the ANTHROPIC_API_KEY secret the fill skips with a
+# notice.
+#
+# Version-gated docs translation currency (docs/design/goat-cli-hosted-docs.md
+# §"Release notes flow", docs/design/goat-cli-i18n.md §"CI guard").
+#
+# The problem: the docs command reference is generated from the binary
+# (`goat --lang <X> docs --markdown`), so its translations come from the Fluent
+# catalogs in crates/goat-cli/i18n/. When a release adds English message-ids the
+# other locales lack, the binary falls back to English and the reference shows
+# English inside otherwise-translated pages — "binary-string drift" the prose
+# `.po` currency gate cannot see.
+#
+# The flow, gated by version component (the two-track answer):
+#   * PATCH release (x.y.Z) — release notes carry the delta (English, by design).
+#     We do NOT block on .ftl translation currency. This job no-ops.
+#   * MINOR/MAJOR release (x.Y.z / X.y.z) — we run the .ftl coverage check and
+#     report the drift; a locale that lacks a message renders it in English.
+#
+# Filling the drift uses the Anthropic Messages API (ops/scripts/translate-ftl.py --apply). Because
+# the catalogs are committed artifacts built into the binary at the tag, the fill
+# must land BEFORE the tag — so it is a pre-tag step (run locally, or via the
+# workflow_dispatch path below which opens a PR), not an auto-commit on tag push.
+#
+# This workflow is SEPARATE from goat-cli-release.yml on purpose: it never blocks
+# the binary build. It informs the release; it does not gate the artifacts.
+
+on:
+  push:
+    tags:
+      - 'goat-cli-v*'
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: 'Run the machine-translation fill and open a PR (needs ANTHROPIC_API_KEY secret)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+# Supersede in-flight runs for the same ref. A push during review used to
+# leave the previous run going to completion, so a branch pushed three
+# times paid three times for an answer only the last one needed. Keyed on
+# the workflow plus the ref, and NEVER cancels on main — a merge-commit run
+# is the one whose result is recorded.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  classify:
+    name: classify release (patch vs minor/major)
+    if: github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    outputs:
+      bump: ${{ steps.bump.outputs.bump }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - id: bump
+        name: compare to the previous goat-cli-v* tag
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          cur="${TAG#goat-cli-v}"
+          # Previous goat-cli-v* tag by version order (the one just below TAG).
+          prev="$(git tag -l 'goat-cli-v*' | sed 's/^goat-cli-v//' \
+                  | sort -V | awk -v c="$cur" '$0==c{print p} {p=$0}')"
+          if [ -z "$prev" ]; then
+            echo "no previous tag — treating as minor/major (full gate)"
+            echo "bump=minormajor" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          # major.minor without the patch, via parameter expansion (no heredocs in YAML).
+          cmm="${cur%.*}"; pmm="${prev%.*}"
+          if [ "$cmm" != "$pmm" ]; then
+            echo "v$prev -> v$cur — MINOR/MAJOR"; echo "bump=minormajor" >> "$GITHUB_OUTPUT"
+          else
+            echo "v$prev -> v$cur — PATCH (release notes only; no .ftl gate)"
+            echo "bump=patch" >> "$GITHUB_OUTPUT"
+          fi
+
+  gate:
+    name: report .ftl coverage (minor/major only)
+    needs: classify
+    if: needs.classify.outputs.bump == 'minormajor'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: check every locale covers the English arbiter
+        run: |
+          python3 ops/scripts/translate-ftl.py --check --catalog all
+
+  fill:
+    name: machine-translation fill → PR
+    if: github.event_name == 'workflow_dispatch' && inputs.apply
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+      - id: key
+        name: is the translation API key configured
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
+            echo "::notice title=fill skipped::ANTHROPIC_API_KEY secret is not set in this repository, so the fill does not run here. Run ops/scripts/translate-ftl.py --apply locally, or add the secret."
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: translate missing ids
+        if: steps.key.outputs.present == 'true'
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: python3 ops/scripts/translate-ftl.py --apply --catalog all
+      - name: open a PR with the refreshed catalogs
+        if: steps.key.outputs.present == 'true'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          branch: chore/i18n-ftl-fill
+          commit-message: "chore(i18n): fill machine-translated .ftl drift via translate-ftl.py"
+          title: "chore(i18n): fill machine-translated .ftl catalog drift"
+          body: |
+            Automated `ops/scripts/translate-ftl.py --apply` run — fills locale
+            catalogs whose message-ids drifted behind the English arbiter, so the
+            generated docs command reference renders translated rather than falling
+            back to English.
+
+            Machine-translated, marked for review per `i18n-provenance.toml`.
+          signoff: true
+          add-paths: crates/goat-cli/i18n/**
