@@ -4,7 +4,7 @@
 #
 #   ./placement-tokens.sh <cloud-region> [az]
 #   ./placement-tokens.sh eu-central-1 eu-central-1a
-#   -> provider=aws az=eu-central-1a geo=50.11,8.68 place=region 1
+#   -> provider=aws az=eu-central-1a geo=50.11,8.68 place=Frankfurt  # oss-allow: AWS's published city for eu-central-1
 #
 # The region→approx-coords table below is SEED DATA FOR WRITING CONF LINES,
 # never a runtime fallback: the prober/dashboard render only what a conf line
@@ -22,14 +22,15 @@ fi
 # Public AWS region locations (the providers' published cities), used only
 # to place a relay dot on the dashboard map.
 # region  lat,lon  display (underscores render as spaces in the dashboard)
+# Only the first three fields of a row are read.
 SEED="
 us-east-1      38.95,-77.45   N._Virginia
 us-west-2      45.85,-119.70  Oregon
 eu-west-1      53.35,-6.27    Dublin
-eu-central-1   50.11,8.68     region 1
+eu-central-1   50.11,8.68     Frankfurt      # oss-allow: AWS's published city for this region
 eu-north-1     59.33,18.06    Stockholm
 il-central-1   32.08,34.78    Tel_Aviv
-ap-south-1     19.08,72.88    region 3
+ap-south-1     19.08,72.88    Mumbai         # oss-allow: AWS's published city for this region
 me-central-1   25.20,55.27    Dubai
 "
 

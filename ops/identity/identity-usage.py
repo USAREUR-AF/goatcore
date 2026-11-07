@@ -28,9 +28,15 @@
 #     presence, which is the direction that scrubs somebody who is on the mesh.
 #
 # usage:
-#   identity-usage.py                     # table, every proposal row
-#   identity-usage.py --json
-#   identity-usage.py --never-used-only   # the archive candidates
+#   identity-usage.py --env site-a                     # table, every proposal row
+#   identity-usage.py --env site-a --json
+#   identity-usage.py --env site-a --never-used-only   # the archive candidates
+#
+# --env names the goatnet (default $GOATNET; neither set is refused). The NetBird
+# token is read from <GOATNET>_NB_API_TOKEN, else <GOATNET>_PORTAL_NB_SVC_TOKEN
+# (site-a: SITE_A_...). The management API is $NB_API, else
+# https://<public_mgmt_fqdn> from the goatnet's group_vars when the checkout is
+# beside this file (ops/scripts/goatnet-facts.py mgmt-url).
 #
 # Run ON the mgmt host (needs kratos admin + the portal on the compose network).
 import argparse
@@ -44,7 +50,8 @@ import urllib.request
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import peerowner  # noqa: E402  the ONE peer->person client
 
-NB_API = os.environ.get("NB_API", "https://netbird.zagros.example")
+NB_API = os.environ.get("NB_API", "").rstrip("/")
+FACTS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "scripts", "goatnet-facts.py")
 KRATOS = os.environ.get("KRATOS_ADMIN_URL", "http://kratos:4434")
 PORTAL = os.environ.get("PORTAL_INTERNAL_URL", "http://goat-zenoh-portal:8090")
 CONSOLE_DB = os.environ.get("ONBOARD_DB", "/var/lib/goat-id-console/onboard.db")
@@ -119,10 +126,23 @@ def main():
                     help="rows at `onboarded` holding no LIVE unredeemed key — "
                          "the set that should not be sitting in that stage")
     ap.add_argument("--status", default="", help="only rows in this status")
+    ap.add_argument("--env", default=os.environ.get("GOATNET", ""),
+                    help="the goatnet (site-a) whose token and management API to use (default $GOATNET)")
     a = ap.parse_args()
+    if not a.env:
+        ap.error("--env is required (or set GOATNET)")
 
-    token = (os.environ.get("ZAGROS_NB_API_TOKEN")
-             or os.environ.get("ZAGROS_PORTAL_NB_SVC_TOKEN", "")).strip()
+    global NB_API
+    if not NB_API and os.path.isfile(FACTS):
+        r = subprocess.run([sys.executable, FACTS, "mgmt-url", a.env],
+                           capture_output=True, text=True)
+        NB_API = r.stdout.strip() if r.returncode == 0 else ""
+    if not NB_API.startswith("https://"):
+        ap.error("no management API for %s: set NB_API=https://<public_mgmt_fqdn>" % a.env)
+
+    prefix = a.env.upper().replace("-", "_")
+    token = (os.environ.get(prefix + "_NB_API_TOKEN")
+             or os.environ.get(prefix + "_PORTAL_NB_SVC_TOKEN", "")).strip()
     portal_key = os.environ.get("PORTAL_LOOKUP_TOKEN", "").strip()
 
     rows = proposals(CONSOLE_DB)

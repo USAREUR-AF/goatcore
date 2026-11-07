@@ -35,7 +35,7 @@ Classification (read-only; this tool NEVER cuts):
 
 Run on the mgmt host (all stores local), e.g.:
 
-    sudo python3 ops/scripts/reap-orphans.py \
+    sudo python3 ops/scripts/reap-orphans.py --env site-a \
         --onboard-db /var/lib/goat-id-console/onboard.db \
         --registry-db /opt/goat-zenoh-portal/registry.db \
         --kratos-admin-url http://127.0.0.1:4434 \
@@ -46,6 +46,14 @@ On a goatnet whose portal runs on Postgres (portal_store: postgres), replace
 --registry-db with --registry-store postgres: the slots are read through
 `docker exec postgres-a psql` (portal_registry_pg.py). The onboard store is the
 console's and keeps its own flag.
+
+--env names the goatnet (default $GOATNET; neither set is refused). The NetBird
+token is read from <GOATNET>_NB_API_TOKEN (site-a: SITE_A_NB_API_TOKEN), else
+GOAT_NB_API_TOKEN.
+
+Test-residue e-mail suffixes: the public list below, plus one suffix per line
+(# comments allowed) from every ops/scripts/reap-orphans.d/*.test-domains file a
+deployment adds, plus --test-domain.
 
 Every data source is optional-degradable EXCEPT the two DBs: a missing
 Kratos/NetBird/roster source drops the dependent buckets and says so loudly
@@ -73,6 +81,20 @@ TEST_DOMAIN_SUFFIXES = (
     ".test",
     "@notional.zagros",
 )
+
+
+def _deployment_test_domains() -> tuple[str, ...]:
+    """The suffixes a deployment adds in ops/scripts/reap-orphans.d/*.test-domains."""
+    out: list[str] = []
+    for p in sorted((Path(__file__).resolve().parent / "reap-orphans.d").glob("*.test-domains")):
+        for line in p.read_text(encoding="utf-8").splitlines():
+            line = line.split("#", 1)[0].strip().lower()
+            if line and line not in TEST_DOMAIN_SUFFIXES and line not in out:
+                out.append(line)
+    return tuple(out)
+
+
+TEST_DOMAIN_SUFFIXES = TEST_DOMAIN_SUFFIXES + _deployment_test_domains()
 
 
 def is_test_email(email: str, extra: tuple[str, ...] = ()) -> bool:
@@ -359,17 +381,21 @@ def main() -> int:
     portal_registry_pg.add_arguments(ap, "--registry-db")
     ap.add_argument("--kratos-admin-url", default="http://127.0.0.1:4434")
     ap.add_argument("--no-kratos", action="store_true", help="skip the Kratos pull (drops orphan/undeclared detection)")
-    ap.add_argument("--nb-url", default="", help="NetBird mgmt URL; token from $ZAGROS_NB_API_TOKEN / $GOAT_NB_API_TOKEN")
+    ap.add_argument("--nb-url", default="", help="NetBird mgmt URL; token from $<GOATNET>_NB_API_TOKEN / $GOAT_NB_API_TOKEN")
     ap.add_argument(
         "--roster", default="",
         help="THIS GOATNET's declared roster for the UNDECLARED bucket — "
              "docs/operators/<--env>/roster.json. The controller-side union at "
              "docs/operators/roster.json is refused (ADR 1172)")
-    ap.add_argument("--env", default="zagros", help="goatnet env used in emitted commands")
+    ap.add_argument("--env", default=os.environ.get("GOATNET", ""),
+                    help="the goatnet (site-a): its peer names, its token, the emitted commands (default $GOATNET)")
     ap.add_argument("--test-domain", action="append", default=[], help="extra email suffix classified as test residue")
     ap.add_argument("--cohort", default="", help="write the PURGE cohort handles to FILE (for --revoke --from FILE)")
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args()
+    if not args.env:
+        ap.error("--env is required (or set GOATNET): the goatnet whose accounts are swept")
+    token_var = args.env.upper().replace("-", "_") + "_NB_API_TOKEN"
     if args.registry_store == "sqlite" and not args.registry_db:
         ap.error("--registry-db is required with --registry-store sqlite")
 
@@ -391,9 +417,9 @@ def main() -> int:
 
     nb_peers = nb_keys = None
     if args.nb_url:
-        token = os.environ.get("ZAGROS_NB_API_TOKEN") or os.environ.get("GOAT_NB_API_TOKEN") or ""
+        token = os.environ.get(token_var) or os.environ.get("GOAT_NB_API_TOKEN") or ""
         if not token:
-            degraded.append("NetBird token unset ($ZAGROS_NB_API_TOKEN) — live-artifact check dropped")
+            degraded.append(f"NetBird token unset (${token_var}) — live-artifact check dropped")
         else:
             try:
                 nb_peers, nb_keys = read_netbird(args.nb_url, token)

@@ -15,6 +15,12 @@ set -euo pipefail
 #   - SSH access to NETHOST (key or password via .envrc.local)
 #   - .envrc sourced (NETHOST_HOST, NETHOST_USER)
 #
+# A deployment that exports other names for these keeps them through its
+# ops/env-aliases.d/*.sh (ops/scripts/lib/env-aliases.sh), which may also set
+# GOAT_DEPLOYMENT, the first word of the backup titles ops/backup.sh writes
+# (default goat), and NETBIRD_DOMAIN, the management domain the closing check
+# names (default netbird.legacy.example).
+#
 # Usage:
 #   bash ops/restore.sh                              # restores latest backup
 #   bash ops/restore.sh goat-backup-20260324  # restores specific backup
@@ -30,6 +36,9 @@ if [ -f "$REPO_DIR/.envrc" ]; then
   [ -f "$REPO_DIR/.envrc.local" ] && source "$REPO_DIR/.envrc.local" 2>/dev/null || true
   set +a
 fi
+# shellcheck source=scripts/lib/env-aliases.sh
+. "$REPO_DIR/ops/scripts/lib/env-aliases.sh"
+BACKUP_KIND="${GOAT_DEPLOYMENT:-goat}-backup"
 
 : "${NETHOST_HOST:?Set NETHOST_HOST}"
 : "${NETHOST_USER:?Set NETHOST_USER}"
@@ -81,7 +90,7 @@ if [ -z "$BACKUP_TITLE" ]; then
     | python3 -c "
 import sys, json
 docs = json.load(sys.stdin)
-backups = [d for d in docs if 'goat-backup' in d.get('title','')]
+backups = [d for d in docs if '$BACKUP_KIND' in d.get('title','')]
 if not backups:
     print('  No goat backups found.')
     sys.exit(1)
@@ -100,7 +109,7 @@ print(f\"Latest: {backups[0]['title']}\")
       | python3 -c "
 import sys, json
 docs = json.load(sys.stdin)
-backups = [d for d in docs if 'goat-backup' in d.get('title','')]
+backups = [d for d in docs if '$BACKUP_KIND' in d.get('title','')]
 backups.sort(key=lambda d: d.get('created_at',''), reverse=True)
 print(backups[0]['title'])
 " 2>/dev/null)
@@ -155,7 +164,7 @@ if ! run_remote "echo ok" >/dev/null 2>&1; then
   exit 1
 fi
 
-REMOTE_TMP="/tmp/goat-restore-$$"
+REMOTE_TMP="/tmp/${GOAT_DEPLOYMENT:-goat}-restore-$$"
 run_remote "mkdir -p $REMOTE_TMP"
 
 for f in "$SNAP_DIR"/*.tar.gz; do
@@ -228,4 +237,4 @@ echo "============================================"
 echo ""
 echo "  Verify from LOCAL:"
 echo "    sudo netbird status"
-echo "    curl -sk https://netbird.legacy.example"
+echo "    curl -sk https://${NETBIRD_DOMAIN:-netbird.legacy.example}"

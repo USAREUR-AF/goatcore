@@ -90,8 +90,10 @@ check: lint test
 # ── Build (convenience wrappers) ────────────────────────
 
 .PHONY: build-infra
+# The network host's hostname is NETHOST_HOSTNAME, which a deployment sets in
+# its ops/env-aliases.d/*.sh (ops/scripts/lib/env-aliases.sh).
 build-infra:
-	@provisioning/build.sh --role infrastructure --platform x86_64 --hostname nethost-01
+	@bash -c '. ops/scripts/lib/env-aliases.sh; exec provisioning/build.sh --role infrastructure --platform x86_64 --hostname "$${NETHOST_HOSTNAME:-nethost-01}"'
 
 .PHONY: build-client
 build-client:

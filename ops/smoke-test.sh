@@ -10,7 +10,8 @@
 #   ops/smoke-test.sh --json           # JSON output for dashboard/logging
 #   ops/smoke-test.sh --category dns   # Run specific category only
 #
-# Categories: dns, relay, stun, management, nethost, mesh, all
+# Categories: dns, relay, stun, management, nethost, mesh, all (the network
+# host's category, and its check names, carry NETHOST_NAME when it is set)
 #
 # Exit codes:
 #   0 = all checks passed
@@ -19,6 +20,17 @@
 #
 # Results are appended to ops/smoke-test-results.jsonl (one JSON line per run)
 # for historical tracking and local dashboard consumption.
+#
+# The relays (names, addresses, regions, instances) come from ops/relay-env.sh.
+# Values a deployment sets in its ops/env-aliases.d/*.sh
+# (ops/scripts/lib/env-aliases.sh), each with an example default:
+#   NETHOST_HOST / NETHOST_USER  the network host to check over the mesh (default
+#                        host NETHOST_MESH_ADDRESS; default user deploy.ssh_user
+#                        in ops/goatbuilder/project.yml)
+#   NETBIRD_DOMAIN       the management domain
+#   RELAY_DNS_NAMES      the relays' public names, space-separated
+#   RELAY_AWS_PROFILE    the aws-vault profile the relays' SSM checks run with
+#                        (default deploy.aws_profile, else default)
 
 set -euo pipefail
 
@@ -36,6 +48,8 @@ if [ -f "$REPO_DIR/.envrc" ]; then
   [ -f "$REPO_DIR/.envrc.local" ] && source "$REPO_DIR/.envrc.local" 2>/dev/null || true
   set +a
 fi
+# shellcheck source=scripts/lib/env-aliases.sh
+. "$SCRIPT_DIR/scripts/lib/env-aliases.sh"
 
 # --- Config ---
 source "$SCRIPT_DIR/relay-env.sh"
@@ -43,9 +57,13 @@ RELAYS=()
 for i in "${!RELAY_NAMES[@]}"; do
   RELAYS+=("${RELAY_NAMES[$i]}:${RELAY_IPS[$i]}:${RELAY_REGIONS[$i]}:${RELAY_INSTANCE_IDS[$i]}")
 done
-NETHOST_MESH_IP="${NETHOST_HOST:-100.127.1.23}"
+FACTS="$SCRIPT_DIR/scripts/goatnet-facts.py"
+NETHOST_MESH_IP="${NETHOST_HOST:-${NETHOST_MESH_ADDRESS:-100.127.1.23}}"
+NETHOST_SSH_USER="${NETHOST_USER:-$(python3 "$FACTS" deploy ssh_user 2>/dev/null || echo goat)}"
 NETBIRD_DOMAIN="${NETBIRD_DOMAIN:-netbird.legacy.example}"
-RELAY_DNS_NAMES=("relay.legacy.example" "relay-rlb.legacy.example" "relay-rlc.legacy.example")
+read -r -a RELAY_DNS_NAMES <<< "${RELAY_DNS_NAMES:-relay.legacy.example relay-rlb.legacy.example relay-rlc.legacy.example}"
+RELAY_AWS_PROFILE="${RELAY_AWS_PROFILE:-$(python3 "$FACTS" deploy aws_profile 2>/dev/null || echo default)}"
+NETHOST_CATEGORY="${NETHOST_NAME:-nethost}"
 
 # --- Parse args ---
 MODE="full"
@@ -56,7 +74,7 @@ while [[ $# -gt 0 ]]; do
     --quick) MODE="quick"; shift ;;
     --json) OUTPUT="json"; shift ;;
     --category) CATEGORY="$2"; shift 2 ;;
-    --help|-h) echo "Usage: $0 [--quick] [--json] [--category dns|relay|stun|management|nethost|mesh|all]"; exit 0 ;;
+    --help|-h) echo "Usage: $0 [--quick] [--json] [--category dns|relay|stun|management|$NETHOST_CATEGORY|mesh|all]"; exit 0 ;;
     *) echo "Unknown option: $1"; exit 2 ;;
   esac
 done
@@ -124,8 +142,8 @@ check_dns() {
     fi
   done
 
-  # Verify round-robin has all 3 IPs
-  local expected_ips="203.0.113.2 203.0.113.20 203.0.113.30"
+  # Verify round-robin has every relay's IP
+  local expected_ips="${RELAY_IPS[*]}"
   for eip in $expected_ips; do
     if echo "$ips" | grep -q "$eip"; then
       record "$category" "round-robin:$eip" "PASS" "in pool"
@@ -260,11 +278,11 @@ check_management() {
 # NETHOST checks (via SSH over mesh)
 # ===========================================================================
 check_nethost() {
-  local category="nethost"
+  local category="$NETHOST_CATEGORY"
 
   # SSH connectivity via mesh IP
   local result
-  result=$(measure "ssh -o ConnectTimeout=5 -o BatchMode=yes goat@$NETHOST_MESH_IP 'echo ok'")
+  result=$(measure "ssh -o ConnectTimeout=5 -o BatchMode=yes ${NETHOST_SSH_USER}@$NETHOST_MESH_IP 'echo ok'")
   IFS=":" read -r rc ms <<< "$result"
   if [ "$rc" = "0" ]; then
     record "$category" "ssh-mesh" "PASS" "SSH via $NETHOST_MESH_IP" "$ms"
@@ -275,7 +293,7 @@ check_nethost() {
 
   # Docker containers
   local containers
-  containers=$(ssh -o ConnectTimeout=5 -o BatchMode=yes "goat@$NETHOST_MESH_IP" \
+  containers=$(ssh -o ConnectTimeout=5 -o BatchMode=yes "${NETHOST_SSH_USER}@$NETHOST_MESH_IP" \
     'docker ps --format "{{.Names}}:{{.Status}}" 2>/dev/null' 2>/dev/null || echo "")
 
   for expected in netbird-server netbird-dashboard netbird-traefik netbird-postgres; do
@@ -292,7 +310,7 @@ check_nethost() {
 
   # Rathole clients
   local client_status
-  client_status=$(ssh -o ConnectTimeout=5 -o BatchMode=yes "goat@$NETHOST_MESH_IP" \
+  client_status=$(ssh -o ConnectTimeout=5 -o BatchMode=yes "${NETHOST_SSH_USER}@$NETHOST_MESH_IP" \
     'systemctl list-units "rathole-client@*" --no-pager --no-legend 2>/dev/null' 2>/dev/null || echo "")
 
   for relay_name in fra isr mum; do
@@ -305,7 +323,7 @@ check_nethost() {
 
   # Disk usage
   local disk_pct
-  disk_pct=$(ssh -o ConnectTimeout=5 -o BatchMode=yes "goat@$NETHOST_MESH_IP" \
+  disk_pct=$(ssh -o ConnectTimeout=5 -o BatchMode=yes "${NETHOST_SSH_USER}@$NETHOST_MESH_IP" \
     "df / --output=pcent | tail -1 | tr -d ' %'" 2>/dev/null || echo "")
   if [ -n "$disk_pct" ] && [ "$disk_pct" -lt 80 ] 2>/dev/null; then
     record "$category" "disk-usage" "PASS" "${disk_pct}%"
@@ -347,9 +365,9 @@ check_mesh() {
     result=$(measure "ping -c 1 -W 3 $NETHOST_MESH_IP")
     IFS=":" read -r rc ms <<< "$result"
     if [ "$rc" = "0" ]; then
-      record "$category" "mesh-ping-nethost" "PASS" "reachable" "$ms"
+      record "$category" "mesh-ping-$NETHOST_CATEGORY" "PASS" "reachable" "$ms"
     else
-      record "$category" "mesh-ping-nethost" "FAIL" "unreachable" "$ms"
+      record "$category" "mesh-ping-$NETHOST_CATEGORY" "FAIL" "unreachable" "$ms"
     fi
   else
     record "$category" "local-netbird" "WARN" "netbird CLI not installed"
@@ -374,7 +392,7 @@ check_vps_deep() {
 
     # Check SSM agent
     local ssm_status
-    ssm_status=$(aws-vault exec legacy --no-session -- \
+    ssm_status=$(aws-vault exec "$RELAY_AWS_PROFILE" --no-session -- \
       aws ssm describe-instance-information --region "$region" \
       --filters "Key=InstanceIds,Values=$instance_id" \
       --query "InstanceInformationList[].PingStatus" --output text 2>/dev/null || echo "")
@@ -388,7 +406,7 @@ check_vps_deep() {
 
     # Check services via SSM
     local cmd_id
-    cmd_id=$(aws-vault exec legacy --no-session -- \
+    cmd_id=$(aws-vault exec "$RELAY_AWS_PROFILE" --no-session -- \
       aws ssm send-command --region "$region" --instance-ids "$instance_id" \
       --document-name "AWS-RunShellScript" \
       --parameters '{"commands":["echo RATHOLE=$(systemctl is-active rathole-server 2>/dev/null); echo COTURN=$(systemctl is-active coturn 2>/dev/null); echo DISK=$(df / --output=pcent | tail -1 | tr -d \" %\"); echo UPTIME=$(uptime -s 2>/dev/null || echo unknown)"]}' \
@@ -397,7 +415,7 @@ check_vps_deep() {
     if [ -n "$cmd_id" ]; then
       sleep 4
       local output
-      output=$(aws-vault exec legacy --no-session -- \
+      output=$(aws-vault exec "$RELAY_AWS_PROFILE" --no-session -- \
         aws ssm get-command-invocation --region "$region" \
         --command-id "$cmd_id" --instance-id "$instance_id" \
         --query "StandardOutputContent" --output text 2>/dev/null || echo "")
@@ -508,7 +526,7 @@ run_checks() {
     relay)      check_relay ;;
     stun)       check_stun ;;
     management) check_management ;;
-    nethost)       check_nethost ;;
+    "$NETHOST_CATEGORY") check_nethost ;;
     mesh)       check_mesh ;;
     all)
       check_dns

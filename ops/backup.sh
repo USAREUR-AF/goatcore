@@ -12,6 +12,12 @@ set -euo pipefail
 #   - 1Password CLI (`op`) installed and signed in
 #   - .envrc sourced (NETHOST_HOST, NETHOST_USER, NETBIRD_DOMAIN)
 #
+# A deployment that exports other names for these keeps them through its
+# ops/env-aliases.d/*.sh (ops/scripts/lib/env-aliases.sh), which may also set
+#   GOAT_DEPLOYMENT  first word of the backup's title, <name>-backup-<host>-<time>
+#                    (default goat; ops/restore.sh lists the same titles)
+#   NETHOST_NAME     the host name used when `hostname` cannot be read (default nethost)
+#
 # Usage: bash ops/backup.sh
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -25,6 +31,8 @@ if [ -f "$REPO_DIR/.envrc" ]; then
   [ -f "$REPO_DIR/.envrc.local" ] && source "$REPO_DIR/.envrc.local" 2>/dev/null || true
   set +a
 fi
+# shellcheck source=scripts/lib/env-aliases.sh
+. "$REPO_DIR/ops/scripts/lib/env-aliases.sh"
 
 : "${NETHOST_HOST:?Set NETHOST_HOST}"
 : "${NETHOST_USER:?Set NETHOST_USER}"
@@ -44,8 +52,8 @@ run_remote() {
 }
 
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
-HOSTNAME_REMOTE=$(run_remote "hostname" 2>/dev/null || echo "nethost")
-SNAPSHOT_NAME="goat-backup-${HOSTNAME_REMOTE}-${TIMESTAMP}"
+HOSTNAME_REMOTE=$(run_remote "hostname" 2>/dev/null || echo "${NETHOST_NAME:-nethost}")
+SNAPSHOT_NAME="${GOAT_DEPLOYMENT:-goat}-backup-${HOSTNAME_REMOTE}-${TIMESTAMP}"
 SNAPSHOT_PATH="$SNAPSHOT_DIR/$SNAPSHOT_NAME"
 
 echo "============================================"
