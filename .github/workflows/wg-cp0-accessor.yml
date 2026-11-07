@@ -66,8 +66,8 @@ jobs:
       run:
         working-directory: ops/enrollment
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           # 'stable' matches the sibling enrollment.yml workflow's
           # rationale — pinned numeric versions resolve to patchlevels
@@ -109,8 +109,8 @@ jobs:
       run:
         working-directory: ops/enrollment
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: 'stable'
           cache-dependency-path: ops/enrollment/go.sum
@@ -151,8 +151,8 @@ jobs:
       GOOS: ${{ matrix.target.goos }}
       GOARCH: ${{ matrix.target.goarch }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: 'stable'
           cache-dependency-path: ops/enrollment/go.sum
@@ -177,7 +177,7 @@ jobs:
           echo "sha256=$sum" >> "$GITHUB_OUTPUT"
           echo "$sum  ${{ steps.outname.outputs.binary }}" > "${{ steps.outname.outputs.binary }}.sha256"
       - name: Upload binary artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: wg-cp0-${{ matrix.target.goos }}-${{ matrix.target.goarch }}
           path: |

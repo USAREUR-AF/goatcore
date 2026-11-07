@@ -80,7 +80,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
       - name: The pusher holds the admin role
@@ -147,23 +147,23 @@ jobs:
         shell: bash
         working-directory: crates
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@035fceb3c12fb0c6a9461b52775e16473133e591 # 1.95.0
         with:
           targets: ${{ matrix.rust_target }}
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: crates
           key: release-${{ inputs.package }}-${{ matrix.rust_target }}
 
       - name: NASM (Windows), which ring's x86_64 assembly needs under MSVC
         if: runner.os == 'Windows'
-        uses: ilammy/setup-nasm@v1
+        uses: ilammy/setup-nasm@72793074d3c8cdda771dba85f6deafe00623038b # v1
 
       - name: Python for zig (Linux)
         if: matrix.glibc != ''
         id: python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: '3.12'
       - name: zig and cargo-zigbuild (Linux), to link against the glibc floor and not the runner's
@@ -269,7 +269,7 @@ jobs:
           echo "$sum  $OUT" > "$OUT.sha256"
           echo "- \`$OUT\` sha256 \`$sum\`" >> "$GITHUB_STEP_SUMMARY"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ${{ inputs.bin }}-${{ matrix.os_label }}-${{ matrix.arch }}
           path: dist/*
@@ -283,7 +283,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: docs_asset is named
         env:
           DOCS_ASSET: ${{ inputs.docs_asset }}
@@ -293,8 +293,8 @@ jobs:
             *.tar.gz) ;;
             *) echo "::error::docs_script is set, so docs_asset must name a .tar.gz (got '${DOCS_ASSET}')"; exit 1 ;;
           esac
-      - uses: dtolnay/rust-toolchain@1.95.0
-      - uses: Swatinem/rust-cache@v2
+      - uses: dtolnay/rust-toolchain@035fceb3c12fb0c6a9461b52775e16473133e591 # 1.95.0
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: crates
           key: docs-${{ inputs.package }}
@@ -303,7 +303,7 @@ jobs:
         env:
           PKG: ${{ inputs.package }}
         run: cargo build --release --locked -p "$PKG"
-      - uses: peaceiris/actions-mdbook@v2
+      - uses: peaceiris/actions-mdbook@ee69d230fe19748b7abf22df32acaa93833fad08 # v2
         with:
           mdbook-version: '0.5.4'
       - name: gettext and mdbook-i18n-helpers, for the translated builds
@@ -330,7 +330,7 @@ jobs:
             echo "- size $(du -h "dist/$DOCS_ASSET" | cut -f1), sha256 \`$(awk '{print $1}' "dist/$DOCS_ASSET.sha256")\`"
             echo "- index.html present: $(tar tzf "dist/$DOCS_ASSET" | grep -cx './index.html' || true)"
           } >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ${{ inputs.bin }}-docs
           path: dist/*
@@ -348,7 +348,7 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           path: artifacts
           merge-multiple: true
@@ -358,7 +358,7 @@ jobs:
           cat artifacts/*.sha256 | sort -k 2 > SHA256SUMS
           (cd artifacts && sha256sum -c ../SHA256SUMS)
           { echo '```'; cat SHA256SUMS; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
-      - uses: sigstore/cosign-installer@v3
+      - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
       - name: Sign SHA256SUMS, then verify it the way goatbuilder update does
         run: |
           set -euo pipefail
@@ -367,7 +367,7 @@ jobs:
             --certificate-identity-regexp "^https://github.com/${GITHUB_REPOSITORY}/" \
             --certificate-oidc-issuer https://token.actions.githubusercontent.com \
             SHA256SUMS
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ${{ inputs.bin }}-checksums
           path: |
@@ -385,13 +385,13 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           path: release-assets
           merge-multiple: true
       - run: ls -la release-assets/
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           tag_name: ${{ github.ref_name }}
           files: release-assets/*
