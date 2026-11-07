@@ -31,6 +31,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -150,6 +151,13 @@ func LoadDataRoster(path string) (*DataRoster, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read data-roster %s: %w", path, err)
 	}
+	return parseDataRoster(path, raw)
+}
+
+// parseDataRoster indexes the bytes of a roster.json read from path (path is
+// only for error messages). Split from LoadDataRoster so DataRosterCache can
+// skip the parse when the bytes are unchanged.
+func parseDataRoster(path string, raw []byte) (*DataRoster, error) {
 	var rf dataRosterFile
 	if err := json.Unmarshal(raw, &rf); err != nil {
 		return nil, fmt.Errorf("parse data-roster %s: %w", path, err)
@@ -500,17 +508,20 @@ func (dr *DataRoster) ClassifyOrgMaterial(producer, org string, fw *CoalitionFra
 // whether a caller may grant for a producer: a caller governs a producer when the
 // producer's owning org is one the caller's own producer is also declared under
 // (same-org authority — the bootstrapped `data.govern.org:<O>`).
-func (dr *DataRoster) OrgsOfProducer(key string) []string { return dr.producerOrgs[key] }
+func (dr *DataRoster) OrgsOfProducer(key string) []string {
+	// A copy: a DataRoster may be shared across requests (DataRosterCache).
+	return slices.Clone(dr.producerOrgs[key])
+}
 
 // OrgPersonMembers returns an org's active person members in roster order. The
 // governance cutover (ADR 1102) reads it two ways: the first entry is the
 // new-org auto-seed anchor (the org's first onboardee, who governs by default
 // until the org delegates), and the full slice is the one-time all-members
 // migration set. Returns nil for an unknown org or one with only machine
-// members. The returned slice is the internal backing array — callers read, do
-// not mutate.
+// members. The slice is a copy: a DataRoster may be shared across requests
+// (DataRosterCache), so no caller may hold its backing array.
 func (dr *DataRoster) OrgPersonMembers(org string) []OrgPersonMember {
-	return dr.orgPersonMembers[org]
+	return slices.Clone(dr.orgPersonMembers[org])
 }
 
 // OrgsWithPersonMembers returns every org id that has at least one active person

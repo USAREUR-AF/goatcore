@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/usareur-af/goatcore/ops/goat-zenoh-portal/internal/access"
 	"github.com/usareur-af/goatcore/ops/goat-zenoh-portal/internal/acl"
 	"github.com/usareur-af/goatcore/ops/goat-zenoh-portal/internal/activity"
 	"github.com/usareur-af/goatcore/ops/goat-zenoh-portal/internal/certmint"
@@ -65,6 +66,11 @@ type Server struct {
 	// from, resolved once from config at construction.
 	envBaselines    registry.BaselineSet
 	envDefaultClass string
+
+	// rosters memoises the parsed data roster (cfg.RosterPath) for the
+	// data-access routes; it re-parses when the file changes on disk, so
+	// roster edits still apply on the next request (access.DataRosterCache).
+	rosters access.DataRosterCache
 }
 
 // New builds a Server with the supplied dependencies. staticFS holds the
