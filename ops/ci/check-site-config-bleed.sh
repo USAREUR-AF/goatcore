@@ -63,7 +63,17 @@ GV_ROOT="${GV_ROOT:-ops/ansible/group_vars}"
 #     teardown-only and out of scope for parity work, which is
 #     forward-only (docs/design/environment-parity.md §scope). Retrofitting it
 #     is explicitly not required by this guard.
+#   A deployment adds its own shared zones in
+#   ops/ci/check-site-config-bleed.d/*.zones, one apex per line (blank lines
+#   and `#` comments ignored), each with its reason in a comment.
 SHARED_ZONES=('legacy.example')
+for _f in "$(dirname "${BASH_SOURCE[0]}")"/check-site-config-bleed.d/*.zones; do
+  [[ -f "$_f" ]] || continue
+  while IFS= read -r _z; do
+    _z="${_z%%#*}"; _z="${_z//[[:space:]]/}"
+    [[ -n "$_z" ]] && SHARED_ZONES+=("$_z")
+  done < "$_f"
+done
 
 # Non-routable / reserved TLDs: a `.lan` or `.local` zone is not a globally
 # unique reachability fact, and short forms ("lan") would match everything.

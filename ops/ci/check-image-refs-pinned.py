@@ -29,7 +29,10 @@ the digest and the role verifies it (mediamtx).
 Everything that floated when this guard landed is listed in
 ops/ci/floating-image-pins.allow. That list only SHRINKS: a new floating
 reference fails, and so does an allow line whose reference is now pinned or
-gone, so a fix cannot leave its line behind.
+gone, so a fix cannot leave its line behind. A repository layered onto this
+one (goatstuff, a deployment overlay) lists its own files' entries, in the
+same format and under the same rule, in
+ops/ci/floating-image-pins.allow.d/*.allow.
 
   --seed   print allow-file lines for every current offender, for the one-time
            baseline. Never use it to wave a new offender through.
@@ -200,17 +203,26 @@ def dockerfiles():
     return out
 
 
+def allow_files():
+    """The allow list and its layered extensions, in a fixed order."""
+    files = [ALLOW] if os.path.exists(ALLOW) else []
+    ext = ALLOW + ".d"
+    if os.path.isdir(ext):
+        files += [os.path.join(ext, f) for f in sorted(os.listdir(ext)) if f.endswith(".allow")]
+    return files
+
+
 def load_allow():
+    """(path, key) -> (allow file, line number)."""
     allow = {}
-    if not os.path.exists(ALLOW):
-        return allow
-    with open(ALLOW, encoding="utf-8") as source_file:
-        for n, ln in enumerate(source_file, 1):
-            body = ln.split("#", 1)[0].strip()
-            if not body:
-                continue
-            path, _, key = body.partition(" ")
-            allow[(path, key.strip())] = n
+    for allow_file in allow_files():
+        with open(allow_file, encoding="utf-8") as source_file:
+            for n, ln in enumerate(source_file, 1):
+                body = ln.split("#", 1)[0].strip()
+                if not body:
+                    continue
+                path, _, key = body.partition(" ")
+                allow.setdefault((path, key.strip()), (allow_file, n))
     return allow
 
 
@@ -235,10 +247,11 @@ def main():
         print("    Pin the multi-arch index digest (tag@sha256:…). `crane digest <ref>` or")
         print("    `docker buildx imagetools inspect <ref>` prints it. Read the digest the")
         print("    host is RUNNING when pinning a deployed image, or the pin is an upgrade.")
-    for (p, key), n in sorted(allow.items(), key=lambda x: x[1]):
+    files = allow_files()
+    for (p, key), (af, n) in sorted(allow.items(), key=lambda x: (files.index(x[1][0]), x[1][1])):
         if (p, key) not in seen:
             fail += 1
-            print(f"STALE ALLOW   {ALLOW}:{n}")
+            print(f"STALE ALLOW   {af}:{n}")
             print(f"    {p} {key}")
             print("    This reference is pinned or gone. Delete the line — the list only shrinks.")
     for p, n, d in unrefreshed_pins():

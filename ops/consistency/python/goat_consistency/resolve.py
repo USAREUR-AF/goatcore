@@ -434,10 +434,28 @@ def render_value(value, source):
 # the curated capability half, and the ungoverned tail
 # ---------------------------------------------------------------------------
 
-def load_caps(path=None):
+# Rows keyed by these fields; an extension row with the same key replaces the
+# row in place, a new key is appended.
+CAPS_ROW_KEYS = (("capabilities", "var"), ("node_shape", "var"),
+                 ("retired", "var"), ("cross_goatnet", "capability"))
+
+
+def caps_files(path=None):
+    """The capabilities file and its extensions, in merge order.
+
+    A deployment supplies its own goatnets' rows in <file>.d/*.yaml beside it
+    (for ops/pins/parity-capabilities.yaml: ops/pins/parity-capabilities.d/):
+    the same sections, merged in file-name order. A `capabilities`/`node_shape`/
+    `retired` row with the `var` of an existing row (a `cross_goatnet` row with
+    its `capability`) replaces it; others are appended. Under `deviations`, a var
+    an extension declares carries the extension's scopes only: the public file's
+    deviations describe its example goatnets, which a deployment does not run."""
     path = path or CAPS_FILE
-    with open(path) as f:
-        data = yaml.safe_load(f) or {}
+    ext = path[:-len(".yaml")] + ".d" if path.endswith(".yaml") else path + ".d"
+    return [path] + sorted(glob.glob(os.path.join(ext, "*.yaml")))
+
+
+def _check_caps(path, data):
     for section in ("capabilities", "node_shape", "retired"):
         rows = data.get(section) or []
         if not isinstance(rows, list):
@@ -457,6 +475,36 @@ def load_caps(path=None):
                 die("%s: deviation %s/%s has no `reason:` — a deviation without "
                     "a reason is a schema error (design doc §2 principle 2)"
                     % (rel(path), var, scope))
+
+
+def load_caps(path=None):
+    files = caps_files(path)
+    data = None
+    for f in files:
+        with open(f) as fh:
+            part = yaml.safe_load(fh) or {}
+        _check_caps(f, part)
+        if data is None:
+            data = part
+            continue
+        for section, key in CAPS_ROW_KEYS:
+            rows = part.get(section) or []
+            if not rows:
+                continue
+            base = list(data.get(section) or [])
+            at = {(r or {}).get(key): i for i, r in enumerate(base)}
+            for row in rows:
+                k = (row or {}).get(key)
+                if k in at:
+                    base[at[k]] = row
+                else:
+                    at[k] = len(base)
+                    base.append(row)
+            data[section] = base
+        if part.get("deviations"):
+            devs = dict(data.get("deviations") or {})
+            devs.update(part["deviations"])
+            data["deviations"] = devs
     return data
 
 

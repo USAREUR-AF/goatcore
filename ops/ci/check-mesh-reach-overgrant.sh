@@ -29,6 +29,12 @@
 # substrate class over here), which this does not do. Run it on every goatnet
 # and compare by hand until that exists.
 #
+# GROUP PREFIXES. A group name is read as <scope>-<CLASS> and the scope prefix
+# is stripped before the class is compared. The public example scopes are
+# listed below; a deployment adds its own, one per line, in
+# ops/ci/check-mesh-reach-overgrant.d/*.prefixes (blank lines and `#` comments
+# ignored). The longest prefix that matches is the one stripped.
+#
 # DECLARED DEVIATIONS: ops/ci/mesh-reach-declared-deviations.yaml. An accepted
 # state is declared there with its operator, date and reason — not suppressed
 # silently. Declared rows are printed as NOTE so they stay visible, and do not
@@ -49,6 +55,13 @@ policies="$(curl -sf -H "Authorization: Token ${NB_API_TOKEN}" "${NB_API_URL}/ap
 }
 
 DEVIATIONS="${MESH_REACH_DEVIATIONS:-$(dirname "$0")/mesh-reach-declared-deviations.yaml}"
+
+GROUP_PREFIXES="ZAGROS-PROD- SITE_ONE- ZAGROS- NOVA- VEGA- EX-DEMO-"
+for f in "$(dirname "$0")"/check-mesh-reach-overgrant.d/*.prefixes; do
+  [ -f "$f" ] || continue
+  GROUP_PREFIXES="$GROUP_PREFIXES $(sed -e 's/#.*$//' "$f" | tr -s '[:space:]' ' ')"
+done
+export GROUP_PREFIXES
 
 printf '%s\n%s\n%s\n' "$peers" "$policies" "$DEVIATIONS" | python3 -c '
 import json, os, sys
@@ -76,8 +89,11 @@ if dev_path and os.path.isfile(dev_path):
     if cur.get("peer"):
         declared[(cur["peer"], cur.get("check", ""))] = cur
 
+# Longest first, so a scope that extends another (<A>-PROD- over <A>-) wins.
+PREFIXES = sorted(set(os.environ.get("GROUP_PREFIXES", "").split()), key=lambda p: (-len(p), p))
+
 def bare(g):
-    for p in ("ZAGROS-PROD-", "SITE_ONE-", "ZAGROS-", "NOVA-", "VEGA-", "EX-DEMO-"):
+    for p in PREFIXES:
         if g.startswith(p):
             return g[len(p):]
     return g

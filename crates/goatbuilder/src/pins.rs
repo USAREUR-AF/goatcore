@@ -85,6 +85,23 @@ impl Paths {
     pub fn caps(&self) -> PathBuf {
         self.repo.join("ops/pins/parity-capabilities.yaml")
     }
+    /// The capabilities file and the extensions a deployment supplies beside it
+    /// (`ops/pins/parity-capabilities.d/*.yaml`), in merge order (resolve.py `caps_files`).
+    pub fn caps_files(&self) -> Vec<PathBuf> {
+        let mut files = vec![self.caps()];
+        if let Ok(rd) = std::fs::read_dir(self.repo.join("ops/pins/parity-capabilities.d")) {
+            let mut ext: Vec<PathBuf> = rd
+                .filter_map(|e| e.ok().map(|e| e.path()))
+                .filter(|p| {
+                    let name = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                    !name.starts_with('.') && name.ends_with(".yaml")
+                })
+                .collect();
+            ext.sort();
+            files.extend(ext);
+        }
+        files
+    }
     pub fn allowlist(&self) -> PathBuf {
         self.repo.join("ops/pins/unmigrated-pins.txt")
     }
@@ -595,41 +612,87 @@ pub fn render_value(value: &Value, source: &str) -> Resolution {
 
 // --- the curated capability half, and the ungoverned tail -------------------------
 
+/// Rows keyed by these fields; an extension row with the same key replaces the
+/// row in place, a new key is appended. Under `deviations`, a var an extension
+/// declares carries the extension's scopes only (resolve.py `load_caps`).
+const CAPS_ROW_KEYS: [(&str, &str); 4] = [("capabilities", "var"), ("node_shape", "var"), ("retired", "var"), ("cross_goatnet", "capability")];
+
 pub fn load_caps(p: &Paths) -> Result<Value> {
-    let path = p.caps();
-    let data = read_yaml(&path)?;
+    let mut data: Option<Value> = None;
+    for path in p.caps_files() {
+        let part = read_yaml(&path)?;
+        check_caps(p, &path, &part)?;
+        let Some(base) = data.as_mut() else {
+            data = Some(part);
+            continue;
+        };
+        let base = base.as_object_mut().expect("read_yaml returns a mapping");
+        for (section, key) in CAPS_ROW_KEYS {
+            let rows = match get(&part, section) {
+                Some(Value::Array(a)) if !a.is_empty() => a.clone(),
+                _ => continue,
+            };
+            let mut merged = match base.get(section) {
+                Some(Value::Array(a)) => a.clone(),
+                _ => Vec::new(),
+            };
+            for row in rows {
+                let k = get(&row, key).cloned().unwrap_or(Value::Null);
+                match merged.iter().position(|r| get(r, key).cloned().unwrap_or(Value::Null) == k) {
+                    Some(i) => merged[i] = row,
+                    None => merged.push(row),
+                }
+            }
+            base.insert(section.to_string(), Value::Array(merged));
+        }
+        if let Some(Value::Object(devs)) = get(&part, "deviations") {
+            let mut all = match base.get("deviations") {
+                Some(Value::Object(o)) => o.clone(),
+                _ => Map::new(),
+            };
+            // A var an extension declares carries the extension's scopes only.
+            for (var, scopes) in devs {
+                all.insert(var.clone(), scopes.clone());
+            }
+            base.insert("deviations".to_string(), Value::Object(all));
+        }
+    }
+    Ok(data.unwrap_or_else(|| Value::Object(Map::new())))
+}
+
+fn check_caps(p: &Paths, path: &Path, data: &Value) -> Result<()> {
     for section in ["capabilities", "node_shape", "retired"] {
-        let rows = match get(&data, section) {
+        let rows = match get(data, section) {
             None | Some(Value::Null) => Vec::new(),
             Some(Value::Array(a)) => a.clone(),
-            Some(_) => return die(format!("{}: `{section}:` must be a list", p.rel(&path))),
+            Some(_) => return die(format!("{}: `{section}:` must be a list", p.rel(path))),
         };
         for row in rows {
             let row = if row.is_object() { row } else { Value::Object(Map::new()) };
             if !truthy(get(&row, "var")) {
-                return die(format!("{}: a `{section}:` row has no `var:`", p.rel(&path)));
+                return die(format!("{}: a `{section}:` row has no `var:`", p.rel(path)));
             }
             if s_of(get(&row, "why").filter(|v| truthy(Some(v)))).trim().is_empty() {
-                return die(format!("{}: `{section}` row '{}' has no `why:` — a tracked row must say why it earns one", p.rel(&path), s_of(get(&row, "var"))));
+                return die(format!("{}: `{section}` row '{}' has no `why:` — a tracked row must say why it earns one", p.rel(path), s_of(get(&row, "var"))));
             }
         }
     }
-    let devs = match get(&data, "deviations") {
+    let devs = match get(data, "deviations") {
         None | Some(Value::Null) => Map::new(),
         Some(Value::Object(o)) => o.clone(),
-        Some(_) => return die(format!("{}: `deviations:` must be a mapping", p.rel(&path))),
+        Some(_) => return die(format!("{}: `deviations:` must be a mapping", p.rel(path))),
     };
     for (var, scopes) in &devs {
         if let Some(scopes) = scopes.as_object() {
             for (scope, dev) in scopes {
                 let dev = if dev.is_object() { dev.clone() } else { Value::Object(Map::new()) };
                 if s_of(get(&dev, "reason").filter(|v| truthy(Some(v)))).trim().is_empty() {
-                    return die(format!("{}: deviation {var}/{scope} has no `reason:` — a deviation without a reason is a schema error (design doc §2 principle 2)", p.rel(&path)));
+                    return die(format!("{}: deviation {var}/{scope} has no `reason:` — a deviation without a reason is a schema error (design doc §2 principle 2)", p.rel(path)));
                 }
             }
         }
     }
-    Ok(data)
+    Ok(())
 }
 
 /// The shrink-only unmigrated-pin tail: (rows, count, declared baseline).
@@ -1059,7 +1122,9 @@ pub fn build_body(p: &Paths, goatnet: &str, t: &Table, caps: &Value, member_of: 
     if t.lite.contains(goatnet) {
         sources.insert(p.rel(&p.lite_table()), Value::String(sha256_of_file(&p.lite_table())?));
     }
-    sources.insert(p.rel(&p.caps()), Value::String(sha256_of_file(&p.caps())?));
+    for caps_file in p.caps_files() {
+        sources.insert(p.rel(&caps_file), Value::String(sha256_of_file(&caps_file)?));
+    }
 
     let mut body = Map::new();
     body.insert("format".into(), json!(INTENT_FORMAT));

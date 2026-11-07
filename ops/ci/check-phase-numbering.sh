@@ -9,8 +9,18 @@
 #
 #   goat-standup.sh --plan        (lan and internet: together they cover 1..N)
 #   peering-standup.sh --plan
-#   goatbuilder join-node --dry-run   (a joiner core node and a founder rescue node)
+#   goatbuilder join-node --dry-run   (each node a deployment lists, below)
 #   goatbuilder federate --dry-run
+#
+# join-node plans the goatnets this checkout declares, so the nodes to plan come
+# from the deployment, not from this file: every
+# ops/ci/check-phase-numbering.d/*.joinnode file lists one per line as
+#     <label>|<goatnet>|<site>|<class>
+# (e.g. "joiner core|<goatnet>|<joiner site>|core" and
+# "founder rescue|<goatnet>|<founder site>|breakglass"). A tree that declares no
+# goatnet lists none. *.exclude files in the same directory add playbook
+# pathspecs (one per line) the task-name check below leaves alone, beside the
+# ones it names. Blank lines and `#` comments are ignored in both.
 #
 # goatbuilder standup/teardown and federate are held to the scripts line for line
 # by the parity gates, so the scripts' plans stand for both avenues there.
@@ -20,6 +30,14 @@
 #   ops/ci/check-phase-numbering.sh --selftest             prove the patterns below
 set -uo pipefail
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
+EXT_DIR="$REPO/ops/ci/check-phase-numbering.d"
+ext_entries() {  # ext_entries <suffix> — entry lines of every $EXT_DIR/*<suffix>
+  local f
+  for f in "$EXT_DIR"/*"$1"; do
+    [ -f "$f" ] || continue
+    sed -e 's/[[:space:]]*#.*$//' -e 's/^[[:space:]]*//' "$f" | grep -v '^$' || true
+  done
+}
 
 # Shared patterns — the live checks and --selftest read the SAME regexes, so a
 # green self-test means the checks match these exact shapes and nothing else.
@@ -124,8 +142,10 @@ for c in json.load(sys.stdin)["checks"]:
     if c["name"] == "phase": print(c["detail"])'; }
 # A peering must be declared (C1), and the repository's own config declares none.
 "$BIN" -C "$REPO" -o json --mock "$REPO/ops/goatbuilder/fixtures/goatnet-from-scratch/03-boundary-node" federate hello-ally --work "$work" --dry-run 2>/dev/null | phase_rows | check "goatbuilder federate --dry-run" 1 || fail=1
-"$BIN" -C "$REPO" -o json join-node zagros --site uk --node phasecheck-1 --class core --dry-run 2>/dev/null | phase_rows | check "goatbuilder join-node --dry-run (joiner core)" 1 || fail=1
-"$BIN" -C "$REPO" -o json join-node zagros_prod --site zagros-prod --node phasecheck-1 --class breakglass --dry-run 2>/dev/null | phase_rows | check "goatbuilder join-node --dry-run (founder rescue)" 1 || fail=1
+while IFS='|' read -r label jn_env jn_site jn_class; do
+  [ -n "$label" ] || continue
+  "$BIN" -C "$REPO" -o json join-node "$jn_env" --site "$jn_site" --node phasecheck-1 --class "$jn_class" --dry-run 2>/dev/null | phase_rows | check "goatbuilder join-node --dry-run ($label)" 1 || fail=1
+done < <(ext_entries .joinnode)
 
 # A lettered phase id written anywhere a driver prints a phase header.
 if grep -nE '=== Phase [0-9]+[a-z]' "$REPO/ops/scripts/goat-standup.sh" "$REPO/ops/scripts/peering-standup.sh" "$REPO"/crates/goatbuilder/src/*.rs; then
@@ -139,11 +159,15 @@ fi
 #   - integdev-bootstrap.yml — teardown-only legacy env; a guard refuses any edit of
 #     its grandfathered NetBird user seed.
 #   - nova-lan-*.yml — a closed-LAN orchestrator, a SEPARATE driver with its
-#     own phase scheme (not goat-standup).
+#     own phase scheme (not goat-standup). A deployment's own drivers of that
+#     kind are listed in ops/ci/check-phase-numbering.d/*.exclude.
 #   - mgmt-host.yml — `phase2` is a deploy-mode var (docker-compose.phase2.yml), the
 #     full-stack-vs-postgres-only switch, not a sequence anyone resumes from.
+name_excl=()
+while IFS= read -r f; do [ -n "$f" ] && name_excl+=( ":!$f" ); done < <(ext_entries .exclude)
 if git -C "$REPO" grep -nE "$NAME_RE" -- 'ops/ansible/*.yml' 'ops/ansible/*.yaml' \
-     ':!ops/ansible/integdev-bootstrap.yml' ':!ops/ansible/nova-lan-*.yml' ':!ops/ansible/mgmt-host.yml'; then
+     ':!ops/ansible/integdev-bootstrap.yml' ':!ops/ansible/nova-lan-*.yml' ':!ops/ansible/mgmt-host.yml' \
+     ${name_excl[@]+"${name_excl[@]}"}; then
   echo "FAIL an Ansible task name carries a phase number (above): name the step in words"; fail=1
 fi
 

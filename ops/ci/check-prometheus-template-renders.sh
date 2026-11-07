@@ -56,11 +56,24 @@ template_path = sys.argv[1]
 # It grows a blackbox job when obs_blackbox_enabled is set, and both states are
 # asserted below.
 #
-# Add a goatnet here on the day it deploys goat-obs, not on the day it declares
-# services.
-GOATNETS = [
-    ("zagros", "zagros_hosts", "zagros", "netbird.zagros.example"),
-]
+# A deployment lists its goatnets in ops/ci/check-prometheus-template-renders.d/,
+# every `*.goatnets` file one line per goatnet:
+#     <name> <group_vars group> <site_id> <mesh DNS zone>
+# (blank lines and `#` comments ignored). Add a goatnet there on the day it
+# deploys goat-obs, not on the day it declares services. A tree that declares
+# none (the public tree carries no goatnet) renders no goat-obs config here.
+import glob as _glob
+GOATNETS = []
+for _f in sorted(_glob.glob("ops/ci/check-prometheus-template-renders.d/*.goatnets")):
+    for _ln in open(_f):
+        _ln = _ln.split("#", 1)[0].split()
+        if not _ln:
+            continue
+        if len(_ln) != 4:
+            print(f"check-prometheus-template-renders: {_f}: expected "
+                  f"'<name> <group> <site_id> <zone>', got {' '.join(_ln)!r}", file=sys.stderr)
+            raise SystemExit(1)
+        GOATNETS.append(tuple(_ln))
 
 # Jobs that must survive rendering with at least one target. These are the
 # ones whose absence is silent: Prometheus starts happily with a job that

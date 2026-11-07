@@ -26,6 +26,7 @@ checker flags them, so a green verdict on the real tree is trusted.
 Usage:  python3 ops/ci/check-standup-golden-path.py [--self-test]
 Exit:   0 = all checks pass · 1 = one or more failed · 2 = self-test failed
 """
+import glob
 import os
 import re
 import subprocess
@@ -41,7 +42,16 @@ ENGINES = [
     "ops/validation/run-acceptance.py",          # DONE
 ]
 # Environments removed from the tree; a live doc must not send a reader to them.
+# A deployment adds its own retired groups in
+# ops/ci/check-standup-golden-path.d/*.retired, one per line (blank lines and
+# `#` comments ignored).
 RETIRED_ENVS = ["prov_conus_hosts", "vega_hosts"]
+for _f in sorted(glob.glob(os.path.join(REPO, "ops/ci/check-standup-golden-path.d/*.retired"))):
+    with open(_f) as _fh:
+        for _ln in _fh:
+            _ln = _ln.split("#", 1)[0].strip()
+            if _ln and _ln not in RETIRED_ENVS:
+                RETIRED_ENVS.append(_ln)
 # Plays the driver names that a public tree does not ship: what a reader meets
 # when the driver reaches one, and the driver text that makes that true. A new
 # absence fails the check until it is listed here. An entry stops excusing its

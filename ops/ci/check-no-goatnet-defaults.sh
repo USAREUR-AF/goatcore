@@ -28,9 +28,25 @@
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel 2>/dev/null || echo .)"
 
-export GOATNETS='nova|nova-zone|nova-lan|nova_hosts|lab-node|hobby_hosts|zagros-backbone|zagros-prod\.net|team\.example|vega-domain|vega-zone|legacy'
-# Roles whose NAME declares the goatnet they serve. Not shared, so not a leak.
+# The goatnet names a default must not carry (regex alternatives), and the
+# roles whose NAME declares the goatnet they serve (not shared, so not a leak).
+# The public example names are below. A deployment adds its own goatnets in
+# ops/ci/check-no-goatnet-defaults.d/: every `*.needles` file adds one regex
+# per line to GOATNETS, every `*.exempt` file one role-path regex per line to
+# EXEMPT. Blank lines and `#` comments are ignored.
+GOATNETS='nova|nova-zone|nova-lan|nova_hosts|lab-node|hobby_hosts|zagros-backbone|zagros-prod\.net|team\.example|vega-domain|vega-zone'
 EXEMPT='^ops/ansible/roles/nova-lan-[a-z-]+/'
+EXT_DIR=ops/ci/check-no-goatnet-defaults.d   # relative to the repository root (cwd)
+ext_entries() {  # ext_entries <suffix> — entry lines of every $EXT_DIR/*<suffix>
+  local f
+  for f in "$EXT_DIR"/*"$1"; do
+    [ -f "$f" ] || continue
+    sed -e 's/[[:space:]]*#.*$//' -e 's/^[[:space:]]*//' "$f" | grep -v '^$' || true
+  done
+}
+while IFS= read -r e; do [ -n "$e" ] && GOATNETS="$GOATNETS|$e"; done < <(ext_entries .needles)
+while IFS= read -r e; do [ -n "$e" ] && EXEMPT="$EXEMPT|$e"; done < <(ext_entries .exempt)
+export GOATNETS
 
 # Match the VALUE only. A comment is allowed to name a goatnet — the ones on
 # the fixed lines say which goatnet the default USED to name, which is the most
