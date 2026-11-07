@@ -57,7 +57,10 @@ def pins():
     out = {"NB_IMAGE": nb}
     # The Ory role default is the fleet version (a tag). Take its digest from
     # the goatnet that pins one, and refuse if that goatnet runs another tag.
-    pinned = (REPO / "ops/ansible/group_vars/zagros_dev_hosts/vars.yml").read_text()
+    # A checkout that declares no goatnet (this repository on its own) has no
+    # such file; the role defaults' tags are then the images.
+    pinned_file = REPO / "ops/ansible/group_vars/zagros_dev_hosts/vars.yml"
+    pinned = pinned_file.read_text() if pinned_file.is_file() else ""
     for var, key in (("ory_kratos_image", "KRATOS_IMAGE"), ("ory_hydra_image", "HYDRA_IMAGE")):
         tag = ory[var]
         m = re.search(rf'^{var}:\s*"([^"]+)"', pinned, re.M)

@@ -139,8 +139,10 @@ def inventory(clone, hosts, ssh_key):
 def runners(clone):
     p = os.path.join(clone, "ops/validation/goatnet-runners.yaml")
     d = yaml.safe_load(read_text(p))
+    if not d.get("goatnets"):   # a checkout that declares no goatnet lists none
+        d["goatnets"] = {}
     for g in GOATNETS:
-        d.setdefault("goatnets", {})[g] = {"name": g.replace("_", "-"), "goat_via": "", "intake_resolve": "",
+        d["goatnets"][g] = {"name": g.replace("_", "-"), "goat_via": "", "intake_resolve": "",
                                            "values": "ops/validation/values-zagros-dev.yaml"}
     write(p, "# HERMETIC overlay (ops/e2e/overlay.py): runner rows for the hermetic goatnets.\n" + yaml.safe_dump(d, sort_keys=False, width=120))
 
@@ -148,7 +150,9 @@ def runners(clone):
 def flow_map(clone):
     p = os.path.join(clone, "ops/validation/flow-map.yaml")
     d = yaml.safe_load(read_text(p))
-    d.setdefault("flows", []).append({
+    if not d.get("flows"):
+        d["flows"] = []
+    d["flows"].append({
         "id": "e2e-canary-secret",
         "what": "the secret-bearing hermetic canary; mapped to a browser row so the release driver's toolchain preflight is exercised",
         "paths": ["ops/e2e/canary/**"],
