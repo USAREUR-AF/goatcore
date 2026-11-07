@@ -9,10 +9,12 @@ name: deploy-e2e
 #   gates      secrets-coverage (warning-only here: the references live in the
 #              private goat-credentials repository, whose CI judges them) and
 #              deps-named (every tool the release path invokes is named up front).
-#   rehearsal  every open release candidate's next step, dry-run, daily — so a
-#              person never discovers the step's refusal by running it.
 #
-# The live canary (zagros-dev) runs from an operator laptop: ops/e2e/live-canary.sh.
+# The rehearsal tier (ops/e2e/rehearsal.sh: every open release candidate's next
+# step, dry-run) reads a deployment's candidate records and live ladder rungs,
+# which this repository does not carry; it runs in the CI of the repository
+# that holds them. The live canary runs from an operator laptop:
+# ops/e2e/live-canary.sh.
 # No GitHub runner reaches a goatnet (ops/validation/goatnet-runners.yaml).
 on:
   pull_request:
@@ -166,37 +168,4 @@ jobs:
         with:
           name: deploy-e2e-goat-suite-record
           path: ${{ runner.temp }}/goat-e2e-report
-          if-no-files-found: warn
-
-  rehearsal:
-    name: rehearsal — every open candidate's next step, dry-run
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    if: github.event_name != 'pull_request'
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - run: pip install --quiet pyyaml jsonschema
-      - name: Install Rust toolchain (stable)
-        uses: dtolnay/rust-toolchain@stable
-      - name: Build goatbuilder
-        working-directory: crates
-        run: cargo build -p goatbuilder
-      - name: Rehearse
-        env:
-          GOAT_RC_ROLE_CHECK: '0'
-          GOAT_MESH_PROBE: '0'
-        run: |
-          git checkout -q -B main   # both drivers refuse anything but a main checkout; this one is the run's head
-          ops/e2e/rehearsal.sh --goatbuilder crates/target/debug/goatbuilder --record "$RUNNER_TEMP/rehearsal-report"
-      - name: Upload the run record
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: deploy-e2e-rehearsal-record
-          path: ${{ runner.temp }}/rehearsal-report
           if-no-files-found: warn

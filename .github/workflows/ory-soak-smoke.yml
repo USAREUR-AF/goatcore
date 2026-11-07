@@ -109,7 +109,7 @@ jobs:
           # historical evidence files (e.g. 2026-04-25-...) cause CI
           # to summarize stale historical evidence instead of today's
           # run. F-087 surfaced + fixed.
-          EVIDENCE=$(ls -t docs/reports/*-ory-soak-evidence.jsonl | head -1)
+          EVIDENCE=$(find docs/reports -name '*-ory-soak-evidence.jsonl' -printf '%T@ %p\n' | sort -rn | head -1 | cut -d' ' -f2-)
           echo "::notice::summarizing $EVIDENCE"
           python3 ops/ansible/roles/ory/tests/soak/summarize.py "$EVIDENCE"
           TICKS=$(python3 ops/ansible/roles/ory/tests/soak/summarize.py --json "$EVIDENCE" | python3 -c "import sys,json; print(json.load(sys.stdin)['ticks'])")
@@ -151,7 +151,7 @@ jobs:
         run: |
           set -euo pipefail
           # Pick freshest by mtime.
-          EVIDENCE=$(ls -t docs/reports/*-ory-spock-replicated-soak-evidence.jsonl | head -1)
+          EVIDENCE=$(find docs/reports -name '*-ory-spock-replicated-soak-evidence.jsonl' -printf '%T@ %p\n' | sort -rn | head -1 | cut -d' ' -f2-)
           echo "::notice::summarizing $EVIDENCE"
           python3 ops/ansible/roles/ory/tests/soak/summarize.py "$EVIDENCE"
           TICKS=$(python3 ops/ansible/roles/ory/tests/soak/summarize.py --json "$EVIDENCE" | python3 -c "import sys,json; print(json.load(sys.stdin)['ticks'])")
