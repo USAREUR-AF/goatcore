@@ -96,12 +96,33 @@ is complete is a no-op.
 | 1 | preflight | Reads encodings, Spock nodes and subscriptions, pgBackRest stanza; byte-scans every database and the roles (`pg_dump` → `files/pg-utf8-stream.py scan`); measures disk. Opens the run. Changes nothing. | group_vars declare non-UTF8; a container is down; router_role disagrees with `pg_is_in_recovery()`; the goatnet is part-migrated outside a run; a subscription pulls from a non-member or is not replicating; a node with subscriptions would not be re-wired by its group_vars; a replicator password is missing; a replicated table's key set differs between members in three samples 15 s apart (unless `accept_divergence`); any foreign key has orphan rows on any node (always); a value is not UTF-8; a filesystem is too small |
 | 2 | quiesce | Records and stops the active units in `postgres_encoding_migrate_stop_units` (compose-watch, keepalived, the Spock timers, reconcilers), every running container of Postgres's compose project, the declared extras and any container holding a session. Ends the sessions those containers left. | a client session remains (a host process, a timer, a host-network container) |
 | 3 | capture | Waits until every Spock slot confirms the quiesce point; hashes every replicated table on every node; counts every table; takes a full pgBackRest backup; `pg_dumpall --globals-only` and `pg_dump -Fc --create` of every database. Each node dumps its own databases: per-site tables and databases are not on its peers. | slots do not catch up; key sets differ or a foreign key has orphans (the phase 1 checks again, quiesced); a replicated table's content differs between nodes (unless `accept_divergence`) |
-| 4 | snapshot | Stops Postgres; copies PGDATA into volume `<volume>-pre-utf8-<run id>` and checks bytes and file count; keeps `.env` and the container's `pg_hba.conf`; moves the pgBackRest repository to `<repo>.pre-utf8-<run id>` and leaves an empty one with the same owner and mode. | the copy does not fit or does not match |
-| 5 | reinit | Sets `POSTGRES_INITDB_ARGS="--locale=C --encoding=UTF8"` in the project `.env`; removes the containers holding the old volume and the volume; re-creates Postgres through its own compose project and files, so the image's entrypoint runs initdb and its init scripts. Restores roles (one transaction), then each database through `pg-utf8-stream.py filter`, which declares the stream UTF8 so the server validates every byte. Puts back the old `postgresql.auto.conf` (without `synchronous_standby_names`) and `pg_hba.conf`; restarts. | the new cluster or any database is not UTF8; any table's row count differs from phase 3 |
+| 4 | snapshot | Stops Postgres; copies PGDATA into volume `<volume>-pre-utf8-<run id>` and checks bytes and file count; keeps `.env` and the container's `pg_hba.conf`; moves the pgBackRest repository to `<repo>.pre-utf8-<run id>` and leaves an empty one with the same owner and mode; empties the stanza's archive-async spool (`<spool>/archive/<stanza>`). | the copy does not fit or does not match |
+| 5 | reinit | Sets `POSTGRES_INITDB_ARGS="--locale=C --encoding=UTF8"` in the project `.env`; removes the containers holding the old volume and the volume; re-creates Postgres through its own compose project and files, so the image's entrypoint runs initdb and its init scripts. Restores roles (one transaction), then each database through `pg-utf8-stream.py filter`, which declares the stream UTF8 so the server validates every byte. Puts back the old `postgresql.auto.conf` with `archive_mode = 'off'` and without `synchronous_standby_names`, and the old `pg_hba.conf`; restarts. After each start, Postgres must be out of recovery at two reads 10 s apart with no crash in its log. | Postgres does not stay up (the refusal quotes the last FATAL/ERROR lines of the Postgres and pgBackRest logs); archiving is not off; the new cluster or any database is not UTF8; any table's row count differs from phase 3 |
 | 6 | standby | On a pair site, runs `postgres-streaming-replication` forced: A gets its synchronous-standby settings back, B is wiped and re-copied with `pg_basebackup`. | the role's own checks |
-| 7 | pgbackrest | `stanza-create`, `check`, full backup into the empty repository. | any of the three fails on a primary (a standby's result is reported) |
+| 7 | pgbackrest | `stanza-create` in the empty repository; then the old `archive_mode` line back, restart, Postgres must stay up; then `check` and a full backup. | stanza-create, staying up, check or the backup fails on a primary (a standby's stanza result is reported) |
 | 8 | rewire | 8.1 founders and 8.2 joiners run `spock-mesh-peering`; 8.3 starts kratos and hydra; 8.4 joiners, 8.5 founders, 8.6 joiners run `ory-narrow-repset` in the join order of `goatbuilder join-node` phase 13. Each node is wired only to the members it pulled from before. Subscriptions use `synchronize_data false`; phase 3 proved the data identical. 8.7 compares the subscription set with phase 1's. | a subscription is missing, extra or not replicating |
 | 9 | finish | 9.1 in each replicated database, a probe table joins the replication set, each node writes a row of non-ASCII text, every node must hold its own row and one from each provider, intact; the table is removed. 9.2 starts every recorded container (re-creating through compose those removed in phase 5) and then the units. | a probe row does not arrive |
+
+## Archiving during the migration
+
+WAL archiving is off on the new cluster from its initdb in phase 5 until
+phase 7 has created its pgBackRest stanza. Phase 5 writes the old
+`postgresql.auto.conf` back with `archive_mode = 'off'` and keeps the old
+line in `<dir>/<run id>/archive-mode.pre`; phase 7 runs `stanza-create`, puts
+that line back, restarts, and only then runs `pgbackrest check` (which needs
+archiving on: it switches WAL and waits for the segment in the repository)
+and the first full backup. A postmaster therefore never starts with an
+archive command pointing at a repository that has no stanza. With
+`archive-async`, a failing push in that state takes Postgres into a crash
+loop.
+
+WAL written between phase 5 and phase 7 is not archived. The full backup of
+the old cluster in phase 3 and the first full backup of the new cluster in
+phase 7 bracket that window; nothing in it can be replayed from the archive.
+
+Phase 4 and a rollback also empty the stanza's archive-async spool: its
+status files name the WAL segments one cluster pushed, and the other
+cluster's segments can carry the same names.
 
 ## Verify after the run
 
@@ -241,7 +262,9 @@ All defaults: `ops/ansible/roles/postgres-encoding-migrate/defaults/main.yml`.
   referencing it. It checks the refusal of the orphan and the divergent
   parent (also with `accept_divergence`), reconcile refusing a conflicting
   key and then copying the missing rows without a Spock echo, the
-  refusal of an invalid byte, a run stopped after phase 4 and resumed, the
+  refusal of an invalid byte, that the new cluster never crash-loops with the
+  production pgBackRest settings (`archive-async`, `archive_timeout`,
+  repository moved aside) and has archiving back on after phase 7, a run stopped after phase 4 and resumed, the
   result (encodings, counts, text bytes, owners, database settings, sequences,
   role passwords, subscriptions, a write each way, writers, the new backup), a
   no-op re-run, rollback, a second run with `repair=latin1` under a new run

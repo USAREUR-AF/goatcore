@@ -99,6 +99,20 @@
       register: _pem_rb_repo
       changed_when: "'put back' in _pem_rb_repo.stdout"
 
+    - name: "rollback | empty the archive-async spool of the stanza"
+      ansible.builtin.shell:
+        executable: /bin/bash
+        cmd: |
+          set -euo pipefail
+          S={{ postgres_encoding_migrate_pgbackrest_spool | quote }}
+          st={{ _pem_pre.stanza | quote }}
+          [ -d "$S/archive/$st" ] || { echo "no spool for $st"; exit 0; }
+          docker run --rm --user 0 --entrypoint rm -v "$S":/s {{ _pem_image | quote }} -rf "/s/archive/$st"
+          echo "emptied $S/archive/$st"
+      register: _pem_spool
+      changed_when: "'emptied' in _pem_spool.stdout"
+      when: _pem_pre.stanza | default('') | length > 0
+
     - name: "rollback | start the old cluster"
       ansible.builtin.command:
         argv: [docker, start, "{{ _pem_c }}"]
@@ -106,6 +120,12 @@
 
     - name: "rollback | wait"
       ansible.builtin.include_tasks: wait-ready.yml
+
+    - name: "rollback | the old cluster stays up"
+      ansible.builtin.include_tasks: stays-up.yml
+      vars:
+        pem_expect_recovery: "{{ _pem_standby | bool }}"
+        pem_stays_up_why: "the rollback start"
 
     - name: "rollback | the container's pg_hba.conf"
       ansible.builtin.shell:

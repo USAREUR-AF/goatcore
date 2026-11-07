@@ -19,6 +19,9 @@
 #      writers back, pgBackRest has a backup of the new cluster
 #   4  a re-run is a no-op
 #   5  rollback: SQL_ASCII again, old data, old subscriptions replicating
+#      The founder's pgBackRest config matches the role's (archive-async, spool,
+#      archive_timeout), so an archive-push fires on its own while the new
+#      cluster has no stanza yet.
 #   6  migrate again with repair=latin1 over a LATIN1 value (a new run id;
 #      the rolled-back run's copy is reported), then cleanup of both runs
 #
@@ -101,7 +104,10 @@ repo1-cipher-pass=pemtest-cipher
 repo1-retention-full=2
 log-path=/var/log/pgbackrest
 spool-path=/var/spool/pgbackrest
+archive-async=y
 compress-type=zst
+log-level-console=info
+log-level-file=detail
 
 [utf8-founder-netbird]
 pg1-path=/var/lib/pgsql/16/data
@@ -112,10 +118,10 @@ chmod 644 "$WORK/founder/pgbackrest-etc/pgbackrest.conf"
 
 cat > "$WORK/inventory.ini" <<EOF
 [utf8_founder_hosts]
-pem-founder ansible_host=127.0.0.1 site_name=utf8-founder signal_uri=pemtest-founder-pg:5432 spock_mesh_postgres_container=pemtest-founder-pg postgres_encoding_migrate_dir=$WORK/state-founder postgres_encoding_migrate_pgbackrest_conf=$WORK/founder/pgbackrest-etc/pgbackrest.conf postgres_encoding_migrate_pgbackrest_repo=$WORK/founder/pgbackrest-repo ansible_python_interpreter=$(command -v python3)
+pem-founder ansible_host=127.0.0.1 site_name=utf8-founder signal_uri=pemtest-founder-pg:5432 spock_mesh_postgres_container=pemtest-founder-pg postgres_encoding_migrate_dir=$WORK/state-founder postgres_encoding_migrate_pgbackrest_conf=$WORK/founder/pgbackrest-etc/pgbackrest.conf postgres_encoding_migrate_pgbackrest_repo=$WORK/founder/pgbackrest-repo postgres_encoding_migrate_pgbackrest_spool=$WORK/founder/pgbackrest-spool ansible_python_interpreter=$(command -v python3)
 
 [utf8_joiner_hosts]
-pem-joiner ansible_host=127.0.0.1 site_name=utf8-joiner signal_uri=pemtest-joiner-pg:5432 spock_mesh_postgres_container=pemtest-joiner-pg postgres_encoding_migrate_dir=$WORK/state-joiner postgres_encoding_migrate_pgbackrest_conf=$WORK/joiner/pgbackrest-etc/pgbackrest.conf postgres_encoding_migrate_pgbackrest_repo=$WORK/joiner/pgbackrest-repo ansible_python_interpreter=$(command -v python3)
+pem-joiner ansible_host=127.0.0.1 site_name=utf8-joiner signal_uri=pemtest-joiner-pg:5432 spock_mesh_postgres_container=pemtest-joiner-pg postgres_encoding_migrate_dir=$WORK/state-joiner postgres_encoding_migrate_pgbackrest_conf=$WORK/joiner/pgbackrest-etc/pgbackrest.conf postgres_encoding_migrate_pgbackrest_repo=$WORK/joiner/pgbackrest-repo postgres_encoding_migrate_pgbackrest_spool=$WORK/joiner/pgbackrest-spool ansible_python_interpreter=$(command -v python3)
 
 [mgmt_hosts:children]
 utf8_founder_hosts
@@ -145,6 +151,13 @@ for n in "${NODES[@]}"; do
 done
 pg founder postgres -c "ALTER SYSTEM SET archive_mode = 'on';"
 pg founder postgres -c "ALTER SYSTEM SET archive_command = 'pgbackrest --stanza=utf8-founder-netbird archive-push %p';"
+# As the pgbackrest role sets it (60s there): a WAL switch, and so an
+# archive-push, happens on an idle cluster too.
+pg founder postgres -c "ALTER SYSTEM SET archive_timeout = '10s';"
+# A checkpoint soon after any start, so WAL the restore wrote is marked ready
+# for archiving within the phase that started it (on a mgmt host the larger
+# restore does this through max_wal_size).
+pg founder postgres -c "ALTER SYSTEM SET checkpoint_timeout = '30s';"
 docker restart pemtest-founder-pg >/dev/null; wait_pg founder
 docker exec -u postgres pemtest-founder-pg pgbackrest --stanza=utf8-founder-netbird stanza-create >/dev/null
 docker exec -u postgres pemtest-founder-pg pgbackrest --stanza=utf8-founder-netbird backup --type=full >/dev/null
@@ -242,7 +255,18 @@ for n in "${NODES[@]}"; do
   docker volume inspect "pemtest-${n}_pgdata-a-pre-utf8-$RUN" >/dev/null || fail "case 2: $n has no kept PGDATA"
 done
 grep -q 'pemtest-founder-extwriter' "$WORK/state-founder/$RUN/stopped.json" || fail "case 2: the connected writer outside the project was not found"
-run_play "$WORK/case2b.log" || { tail -80 "$WORK/case2b.log"; fail "case 2: resume to the end"; }
+# WAL keeps completing while the play runs, as it does on a mgmt host: a
+# non-transactional message (no table touched, counts unchanged) and a WAL
+# switch every 2 s on the founder. Each completed segment is handed to the
+# archive command as soon as archive_mode is on.
+( while :; do
+    docker exec -u postgres pemtest-founder-pg psql -X -tA -d postgres \
+      -c "SELECT pg_logical_emit_message(false, 'pemtest', 'tick')" -c "SELECT pg_switch_wal()" >/dev/null 2>&1 || true
+    sleep 2
+  done ) &
+TICKER=$!
+run_play "$WORK/case2b.log" || { kill $TICKER; tail -80 "$WORK/case2b.log"; docker logs pemtest-founder-pg 2>&1 | grep -E 'server process \(PID|unable to find a valid repository' | head -5; fail "case 2: resume to the end"; }
+kill $TICKER 2>/dev/null || true
 t1=$(date +%s)
 echo "  run $RUN complete; phases 1-9 took $((t1 - t0)) s including the pause"
 
@@ -277,8 +301,15 @@ for i in $(seq 1 30); do
   [[ $i == 30 ]] && fail "case 3: new writes did not replicate (joiner sees '$a', founder sees '$b')"
 done
 docker exec -u postgres pemtest-founder-pg pgbackrest --stanza=utf8-founder-netbird info | grep -q 'full backup' || fail "case 3: no backup of the new cluster"
+# The new cluster never crash-looped: archiving was off until its stanza existed.
+if docker logs pemtest-founder-pg 2>&1 | grep -E 'server process \(PID [0-9]+\) exited|terminating any other active server processes|reinitializing'; then
+  fail "case 3: the new cluster's Postgres crashed (above)"; fi
+docker logs pemtest-founder-pg 2>&1 | grep -q 'unable to find a valid repository' && fail "case 3: archive-push ran before the new stanza existed"
+[[ "$(pg founder postgres -c 'SHOW archive_mode')" == on ]] || fail "case 3: archiving is not back on"
+[[ "$(pg joiner postgres -c 'SHOW archive_mode')" == off ]] || fail "case 3: the joiner (no stanza, archiving never on) changed"
+docker exec -u postgres pemtest-founder-pg pgbackrest --stanza=utf8-founder-netbird check >/dev/null || fail "case 3: pgbackrest check on the new cluster"
 ls -d "$WORK/founder/pgbackrest-repo.pre-utf8-$RUN" >/dev/null || fail "case 3: old pgBackRest repository not kept"
-echo "  UTF8 everywhere; counts, bytes, owners, settings, sequences, passwords kept; replication both ways; writers back; new stanza backed up"
+echo "  UTF8 everywhere; counts, bytes, owners, settings, sequences, passwords kept; replication both ways; writers back; no crash; archiving back on; new stanza checked and backed up"
 
 # ---------------------------------------------------------------- case 4
 say "case 4: a re-run is a no-op"

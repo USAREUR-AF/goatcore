@@ -69,6 +69,12 @@
         - name: "reinit | wait for initdb and the init scripts"
           ansible.builtin.include_tasks: wait-ready.yml
 
+        - name: "reinit | the new cluster stays up"
+          ansible.builtin.include_tasks: stays-up.yml
+          vars:
+            pem_expect_recovery: false
+            pem_stays_up_why: "initdb of the new cluster"
+
         - name: "reinit | the new cluster's encoding"
           ansible.builtin.command:
             argv: "{{ _pem_psql + ['-d', 'postgres', '-tAc', \"SELECT pg_encoding_to_char(encoding) FROM pg_database WHERE datname = 'template1'\"] }}"
@@ -137,8 +143,15 @@
           [ -f "$D/conf.ok" ] && { echo "already applied"; exit 0; }
           docker run --rm --user 0 --entrypoint cat -v {{ _pem_aside | quote }}:/v:ro {{ _pem_image | quote }} /v/postgresql.auto.conf > "$D/postgresql.auto.conf.pre"
           chmod 600 "$D/postgresql.auto.conf.pre"
+          # Archiving stays off until phase 7 has created the new stanza: the
+          # old archive_command pushes to a repository phase 4 moved aside, and
+          # with archive-async a failing push takes the postmaster into a crash
+          # loop. Phase 7 puts the old archive_mode line back.
+          grep -E '^[[:space:]]*archive_mode[[:space:]]*=' "$D/postgresql.auto.conf.pre" > "$D/archive-mode.pre" || true
           grep -v '^[[:space:]]*synchronous_standby_names' "$D/postgresql.auto.conf.pre" \
+            | sed -E "s/^[[:space:]]*archive_mode[[:space:]]*=.*$/archive_mode = 'off'/" \
             | docker exec -i -u postgres "$C" sh -c 'cat > {{ postgres_encoding_migrate_pgdata }}/postgresql.auto.conf'
+          if [ -s "$D/archive-mode.pre" ]; then echo "held off until phase 7" > "$D/archive-held"; fi
           docker exec -i -u 0 "$C" sh -c 'cat > /etc/postgresql/pg_hba.conf' < "$D/pg_hba.conf"
           docker restart -t 60 "$C" >/dev/null
           touch "$D/conf.ok"
@@ -148,6 +161,19 @@
 
     - name: "reinit | wait after the restart"
       ansible.builtin.include_tasks: wait-ready.yml
+
+    - name: "reinit | archiving is off until the new stanza exists"
+      ansible.builtin.command:
+        argv: "{{ _pem_psql + ['-d', 'postgres', '-tAc', 'SHOW archive_mode'] }}"
+      register: _pem_archive_now
+      changed_when: false
+      failed_when: (_pem_archive_now.stdout | trim) != 'off'
+
+    - name: "reinit | the restored cluster stays up"
+      ansible.builtin.include_tasks: stays-up.yml
+      vars:
+        pem_expect_recovery: false
+        pem_stays_up_why: "the old settings and access rules were applied"
 
     - name: "reinit | every database's encoding"
       ansible.builtin.command:

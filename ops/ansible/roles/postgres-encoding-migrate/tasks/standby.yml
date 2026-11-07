@@ -20,3 +20,28 @@
   ansible.builtin.debug:
     msg: "{{ inventory_hostname }}: no intra-site standby."
   when: not (intra_site_pair | default(false) | bool)
+
+- name: "standby | Postgres stays up after the rebuild"
+  ansible.builtin.include_tasks: stays-up.yml
+  vars:
+    pem_expect_recovery: "{{ _pem_standby | bool }}"
+    pem_stays_up_why: "the standby rebuild"
+  when: intra_site_pair | default(false) | bool
+
+# The rebuilt standby carries its primary's postgresql.auto.conf, archiving
+# held off. Record the standby's own old archive_mode line, from its kept
+# copy, so phase 7 puts it back as it does on the primary.
+- name: "standby | its old archive_mode line, for phase 7"
+  ansible.builtin.shell:
+    executable: /bin/bash
+    cmd: |
+      set -euo pipefail
+      D={{ _pem_rundir | quote }}
+      docker run --rm --user 0 --entrypoint cat -v {{ _pem_aside | quote }}:/v:ro {{ _pem_image | quote }} /v/postgresql.auto.conf \
+        | { grep -E '^[[:space:]]*archive_mode[[:space:]]*=' || true; } > "$D/archive-mode.pre"
+      if [ -s "$D/archive-mode.pre" ]; then echo "held off until phase 7" > "$D/archive-held"; echo held; else echo none; fi
+  register: _pem_sb_arch
+  changed_when: "'held' in _pem_sb_arch.stdout"
+  when:
+    - intra_site_pair | default(false) | bool
+    - _pem_standby | bool

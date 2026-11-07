@@ -111,6 +111,20 @@
   changed_when: "'moved' in _pem_repo_move.stdout"
   when: _pem_pre.stanza | default('') | length > 0
 
+- name: "snapshot | empty the archive-async spool of the stanza"
+  ansible.builtin.shell:
+    executable: /bin/bash
+    cmd: |
+      set -euo pipefail
+      S={{ postgres_encoding_migrate_pgbackrest_spool | quote }}
+      st={{ _pem_pre.stanza | quote }}
+      [ -d "$S/archive/$st" ] || { echo "no spool for $st"; exit 0; }
+      docker run --rm --user 0 --entrypoint rm -v "$S":/s {{ _pem_image | quote }} -rf "/s/archive/$st"
+      echo "emptied $S/archive/$st"
+  register: _pem_spool
+  changed_when: "'emptied' in _pem_spool.stdout"
+  when: _pem_pre.stanza | default('') | length > 0
+
 - name: "snapshot | done"
   ansible.builtin.debug:
     msg: >-

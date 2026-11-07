@@ -1,0 +1,47 @@
+---
+# After any phase starts or restarts Postgres: it must be in the recovery
+# state its role expects (a primary out of recovery, a standby in it) and stay
+# up — two reads 10 s apart, and no server process exit, crash restart or
+# PANIC in the Postgres log over that window. A postmaster whose children die
+# (an archive command it cannot run, a bad setting) restarts in crash recovery
+# every few seconds and answers a single probe in between.
+# On failure: the last FATAL/ERROR/PANIC lines of the Postgres log (stderr of
+# the container) and of the newest pgBackRest logs.
+# Input: pem_expect_recovery (bool), pem_stays_up_why (text for messages).
+
+- name: "stays up | {{ pem_stays_up_why }}"
+  ansible.builtin.shell:
+    executable: /bin/bash
+    cmd: |
+      set -uo pipefail
+      C={{ _pem_c | quote }}
+      want={{ 't' if (pem_expect_recovery | bool) else 'f' }}
+      since=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+      read1=$(docker exec -u postgres "$C" psql -X -U postgres -tA -d postgres -c 'SELECT pg_is_in_recovery()' 2>&1)
+      sleep 10
+      read2=$(docker exec -u postgres "$C" psql -X -U postgres -tA -d postgres -c 'SELECT pg_is_in_recovery()' 2>&1)
+      crashes=$(docker logs --since "$since" "$C" 2>&1 \
+        | grep -E 'exited with exit code|was terminated by signal|terminating any other active server processes|all server processes terminated; reinitializing|PANIC:' || true)
+      if [ "$read1" = "$want" ] && [ "$read2" = "$want" ] && [ -z "$crashes" ]; then
+        echo "up: pg_is_in_recovery=$want at both reads, no crash in the log"
+        exit 0
+      fi
+      echo "reads: '$read1' then '$read2' (want '$want')"
+      echo "--- Postgres log, crash lines since $since:"; echo "$crashes" | tail -10
+      echo "--- Postgres log, last FATAL/ERROR/PANIC lines:"
+      docker logs --tail 400 "$C" 2>&1 | grep -E 'FATAL|ERROR|PANIC' | tail -10
+      echo "--- pgBackRest logs, last ERROR lines:"
+      docker exec "$C" sh -c 'for f in $(ls -t /var/log/pgbackrest/*.log 2>/dev/null | head -3); do echo "$f:"; grep -E "ERROR|WARN" "$f" | tail -5; done' 2>&1
+      exit 1
+  register: _pem_up
+  changed_when: false
+  failed_when: false
+
+- name: "stays up | refuse a Postgres that does not stay up ({{ pem_stays_up_why }})"
+  ansible.builtin.assert:
+    that:
+      - _pem_up.rc == 0
+    fail_msg: |
+      {{ _pem_c }} on {{ inventory_hostname }} did not stay up after {{ pem_stays_up_why }}:
+      {{ _pem_up.stdout }}
+    quiet: true

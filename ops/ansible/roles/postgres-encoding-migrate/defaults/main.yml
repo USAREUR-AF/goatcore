@@ -83,6 +83,11 @@ postgres_encoding_migrate_reserve_bytes: 1073741824
 # pgBackRest steps are skipped there.
 postgres_encoding_migrate_pgbackrest_conf: /etc/pgbackrest/pgbackrest.conf
 postgres_encoding_migrate_pgbackrest_repo: /opt/docker-data/pgbackrest
+# The archive-async spool. Its status files name WAL segments that the cluster
+# which wrote them has pushed; the other cluster's segments can have the same
+# names, so phase 4 and a rollback empty <spool>/archive/<stanza> before a
+# different cluster starts on this host.
+postgres_encoding_migrate_pgbackrest_spool: /var/spool/pgbackrest
 postgres_encoding_migrate_pgbackrest_uid: 26
 
 # Ory containers started for the Phase 7D re-wire (ory-narrow-repset waits
