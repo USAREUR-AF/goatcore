@@ -10,7 +10,7 @@ output "instance_id" {
 
 output "bridge_url" {
   description = "DNS hostname for the bridge"
-  value       = "${local.dns_name}.legacy.example"
+  value       = "${local.dns_name}.${var.dns_zone_name}"
 }
 
 output "ssh_key_secret_name" {

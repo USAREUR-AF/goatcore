@@ -143,3 +143,21 @@ variable "wg_cp0_port" {
   type        = number
   default     = 51821
 }
+
+variable "quic_rule_description" {
+  description = "Description of the UDP QUIC ingress rule. A goatnet with live relays passes the text its rule already carries: changing a rule description rewrites the security group's rules."
+  type        = string
+  default     = "Netbird relay QUIC data relay"
+}
+
+variable "icmp_rule_description" {
+  description = "Description of the ICMP ingress rule. A goatnet with live relays passes the text its rule already carries."
+  type        = string
+  default     = "ICMP ping (Satlink PoP benchmarks)"
+}
+
+variable "purpose_tag" {
+  description = "Value of the instance's Purpose tag."
+  type        = string
+  default     = "rathole VPS relay for Netbird management behind the satellite link NAT"
+}

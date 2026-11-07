@@ -222,7 +222,7 @@ resource "aws_security_group" "main" {
     to_port     = 33073
     protocol    = "udp"
     cidr_blocks = ["0.0.0.0/0"]
-    description = "Netbird relay QUIC data relay"
+    description = var.quic_rule_description
   }
 
   # DNS (UDP 53) is NOT exposed publicly. dnsmasq on relays serves mesh-internal
@@ -259,7 +259,7 @@ resource "aws_security_group" "main" {
     to_port     = -1
     protocol    = "icmp"
     cidr_blocks = ["0.0.0.0/0"]
-    description = "ICMP ping (Satlink PoP benchmarks)"
+    description = var.icmp_rule_description
   }
 
   egress {
@@ -314,7 +314,7 @@ resource "aws_instance" "relay" {
     Name    = local.resource_name
     Service = var.service_name
     Region  = var.region
-    Purpose = "rathole VPS relay for Netbird management behind the satellite link NAT"
+    Purpose = var.purpose_tag
   }
 
   lifecycle {

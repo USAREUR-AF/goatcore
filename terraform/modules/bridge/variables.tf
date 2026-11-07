@@ -82,3 +82,9 @@ variable "cloudflare_zone_id" {
   description = "Cloudflare zone ID for DNS records"
   type        = string
 }
+
+variable "dns_zone_name" {
+  description = "DNS zone the bridge_url output names the bridge under."
+  type        = string
+  default     = "legacy.example"
+}

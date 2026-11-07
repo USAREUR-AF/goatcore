@@ -6,8 +6,20 @@
 # deploy CoreDNS to it. CoreDNS itself is deployed by ops/ansible/goat-coredns.yml.
 
 variable "name" {
-  description = "Short host name suffix, e.g. 'a' / 'b' (host becomes mesh-dns-zagros-<name>)."
+  description = "Short host name suffix, e.g. 'a' / 'b' (host becomes mesh-dns-<goatnet>-<name>)."
   type        = string
+}
+
+variable "goatnet" {
+  description = "Goatnet id this host serves; it threads through every resource name (mesh-dns-<goatnet>-<name>). Changing it on a live host renames, and so replaces, its IAM role, instance profile and security group."
+  type        = string
+  default     = "zagros"
+}
+
+variable "label" {
+  description = "Label used in the security-group description and the boot log lines. Defaults to the goatnet id upper-cased."
+  type        = string
+  default     = null
 }
 
 variable "az" {
@@ -41,7 +53,7 @@ variable "netbird_setup_key" {
 }
 
 variable "netbird_mgmt_url" {
-  description = "ZAGROS NetBird management URL for enrollment."
+  description = "NetBird management URL for enrollment. A goatnet passes its own."
   type        = string
   default     = "https://netbird.zagros.example:443"
 }

@@ -34,7 +34,7 @@ data "aws_vpc" "default" {
 }
 
 resource "aws_iam_role" "this" {
-  name = "mesh-dns-zagros-${var.name}"
+  name = "mesh-dns-${var.goatnet}-${var.name}"
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
@@ -68,13 +68,13 @@ resource "aws_iam_role_policy" "ssm_bucket" {
 }
 
 resource "aws_iam_instance_profile" "this" {
-  name = "mesh-dns-zagros-${var.name}"
+  name = "mesh-dns-${var.goatnet}-${var.name}"
   role = aws_iam_role.this.name
 }
 
 resource "aws_security_group" "this" {
-  name        = "mesh-dns-zagros-${var.name}"
-  description = "ZAGROS mesh CoreDNS replica ${var.name} - egress-only; DNS served over the mesh, no public ingress"
+  name        = "mesh-dns-${var.goatnet}-${var.name}"
+  description = "${local.label} mesh CoreDNS replica ${var.name} - egress-only; DNS served over the mesh, no public ingress"
   vpc_id      = data.aws_vpc.default.id
 
   egress {
@@ -84,15 +84,18 @@ resource "aws_security_group" "this" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  tags = merge(var.tags, { Name = "mesh-dns-zagros-${var.name}" })
+  tags = merge(var.tags, { Name = "mesh-dns-${var.goatnet}-${var.name}" })
 }
 
 locals {
+  # Display label in descriptions and boot log lines; the goatnet id upper-cased
+  # unless the caller names one (a description change replaces the security group).
+  label     = coalesce(var.label, upper(var.goatnet))
   user_data = <<-EOT
     #!/bin/bash
     set -euo pipefail
     exec > >(tee /var/log/mesh-dns-bootstrap.log) 2>&1
-    echo "[$(date -Is)] mesh-dns-zagros-${var.name} bootstrap starting"
+    echo "[$(date -Is)] mesh-dns-${var.goatnet}-${var.name} bootstrap starting"
 
     export DEBIAN_FRONTEND=noninteractive
     apt-get update -qq
@@ -115,15 +118,15 @@ locals {
     JSON
     systemctl restart docker
 
-    # ---- Mesh client: stock netbird, enroll on the ZAGROS mesh ----
+    # ---- Mesh client: stock netbird, enroll on the ${local.label} mesh ----
     curl -fsSL https://pkgs.netbird.io/debian/public.key | gpg --dearmor -o /usr/share/keyrings/netbird-archive-keyring.gpg
     echo "deb [signed-by=/usr/share/keyrings/netbird-archive-keyring.gpg] https://pkgs.netbird.io/debian stable main" \
       > /etc/apt/sources.list.d/netbird.list
     apt-get update -qq
     apt-get install -y -qq netbird
-    echo "[$(date -Is)] enrolling on ZAGROS mesh as mesh-dns-zagros-${var.name}"
+    echo "[$(date -Is)] enrolling on ${local.label} mesh as mesh-dns-${var.goatnet}-${var.name}"
     for attempt in 1 2 3 4 5; do
-      if netbird up --setup-key '${var.netbird_setup_key}' --management-url '${var.netbird_mgmt_url}' --hostname 'mesh-dns-zagros-${var.name}'; then
+      if netbird up --setup-key '${var.netbird_setup_key}' --management-url '${var.netbird_mgmt_url}' --hostname 'mesh-dns-${var.goatnet}-${var.name}'; then
         echo "[$(date -Is)] netbird up ok (attempt $attempt)"; break
       fi
       echo "[$(date -Is)] netbird up attempt $attempt failed; retrying in 20s"; sleep 20
@@ -170,5 +173,5 @@ resource "aws_instance" "this" {
     ignore_changes = [ami, user_data]
   }
 
-  tags = merge(var.tags, { Name = "mesh-dns-zagros-${var.name}" })
+  tags = merge(var.tags, { Name = "mesh-dns-${var.goatnet}-${var.name}" })
 }
