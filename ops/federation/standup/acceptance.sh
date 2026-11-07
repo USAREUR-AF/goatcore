@@ -129,8 +129,12 @@ else
   #      under the wire name, so each row also proves that side's republisher.
   [ "$OUR_SETS" != "-" ] || no "the agreement offers no release set from us" "Nothing would cross outbound; there is no lane to prove."
   [ "$THEIR_SETS" != "-" ] || no "the agreement offers no release set from them" "Nothing would cross inbound; there is no lane to prove."
-  for set in $(list "$THEIR_SETS"); do put_theirs "$set/acceptance/$S" "in-$S"; done
-  for set in $(list "$OUR_SETS");   do put_ours   "$set/acceptance/$S" "out-$S"; done
+  # Half a second apart. The receiving edge enforces the agreed `hz` as a
+  # downsampling interval over the whole wire prefix, so two samples a few
+  # milliseconds apart under different sets are one too many for it, and the
+  # second is dropped before its access check, with nothing logged.
+  for set in $(list "$THEIR_SETS"); do put_theirs "$set/acceptance/$S" "in-$S"; sleep 0.5; done
+  for set in $(list "$OUR_SETS");   do put_ours   "$set/acceptance/$S" "out-$S"; sleep 0.5; done
   sleep 8
   for set in $(list "$THEIR_SETS"); do
     w="$(wire_of "$THEM" "$set")/acceptance/$S"
