@@ -129,3 +129,12 @@ The fixture is also where a fresh environment's standup is rehearsed before any 
 | `join-node <env> --site <s> --node <n> --class <c>` (`crates/goatbuilder/src/joinnode.rs`) | **built** (2026-10-28) from the runbook, which has no driver: node-addition.md §5.4's executed sequence as fifteen numbered phases with its gates and traps — reach, key seeding, repo work first, apt quiet, the narrowed baseline, kernel WireGuard before and after enrolment, the kernel ACL plane as the enrolment gate, mesh_ip filled, then the class's converge (core: a founder pass, or a joiner's three passes and the founder-side mirror; obs: the three obs legs; breakglass; network-jump), the timers unmasked, acceptance. `--dry-run` plans without an address; a run needs `--address`. **Unmeasured** on hardware; no parity gate exists because nothing else drives this today — the tests in `joinnode.rs` lock the phase order for a joiner core node and a founder break-glass node |
 | `federate <with>` (`crates/goatbuilder/src/federate.rs`) | **built** (2026-10-28): `peering-standup.sh` phase for phase — preflight, init, lint, the manual exchange with the out-of-band key binding, compose with every bound key, verify, the leaves minted from the agreement, apply (the only writer), the edge deployed, the transport the AGREEMENT chose opened or refused when no play stands it up, acceptance in four tiers; `--as`, `--edge-group`, `--work`, `--from`/`--to`, `--dry-run`; a peering declared in `peerings:` must be the one named (C1). **Unmeasured** on a live peering |
 | the parity gate for `federate` | **built**: `ops/goatbuilder/parity-federate.sh` plans one peering on both sides in the same empty working directory (no keyring, no agreement: phase 10 refuses identically) and compares every phase and command; CI runs it: 11 phases identical |
+
+
+## Fresh-source branch selection
+
+Status: built. Allow ordinary checkouts to select GOAT_ANSIBLE_TRUNK_BRANCH while preserving source-declared remote selection and the assembled-tree source-of-record path.
+
+The branch override applies to ordinary checkouts. Assembled trees continue to follow their pinned source-of-record contract. No deployment preflight was bypassed.
+
+Offline regression evidence and remaining release gates are recorded in the corresponding draft PR. No live deployment is claimed.
