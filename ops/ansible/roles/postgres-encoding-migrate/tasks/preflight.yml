@@ -92,6 +92,47 @@
           inventory or the cluster first.
         quiet: true
 
+    # Phase 5 re-creates Postgres through this compose project with
+    # POSTGRES_INITDB_ARGS set in .env. That reaches initdb only if the
+    # service's own environment: passes it through; an older render of the
+    # compose file lists POSTGRES_PASSWORD alone, initdb then defaults to
+    # SQL_ASCII, and the refusal would come in phase 5 with the goatnet down.
+    # Render the service the way phase 5 will (the variable set to the target
+    # in the shell, which compose prefers over .env) and read what the
+    # container would get.
+    - name: "preflight | the compose service passes POSTGRES_INITDB_ARGS to initdb"
+      ansible.builtin.shell:
+        executable: /bin/bash
+        chdir: "{{ _pem_workdir }}"
+        cmd: >-
+          POSTGRES_INITDB_ARGS={{ ('--locale=C --encoding=' ~ postgres_encoding_migrate_target) | quote }}
+          {{ _pem_compose }} config --format json {{ _pem_service | quote }}
+      register: _pem_initdb_render
+      changed_when: false
+      when: not (_pem_standby | bool)
+
+    - name: "preflight | refuse a compose service that does not pass the encoding"
+      ansible.builtin.assert:
+        that:
+          - ('--encoding=' ~ postgres_encoding_migrate_target) in _pem_initdb_env
+        fail_msg: >-
+          {{ inventory_hostname }}: service {{ _pem_service }} in
+          {{ _pem_files | join(', ') }} would start initdb with
+          POSTGRES_INITDB_ARGS={{ _pem_initdb_env or '(not set)' }}. Its
+          environment: must pass the variable through from .env, as goatcore's
+          ops/compose/mgmt-host/docker-compose.yml does with
+          POSTGRES_INITDB_ARGS: "${POSTGRES_INITDB_ARGS:---locale=C --encoding=UTF8}".
+          Re-render the compose file from goatcore (mgmt-host.yml, or
+          site-bootstrap Phase 2B for a postgres-spock-only site), or add that
+          line to the service's environment:, then run again. Nothing has
+          stopped.
+        quiet: true
+      vars:
+        _pem_initdb_env: >-
+          {{ (((_pem_initdb_render.stdout | from_json).services[_pem_service].environment | default({}))
+              .POSTGRES_INITDB_ARGS | default('')) | string }}
+      when: not (_pem_standby | bool)
+
     - name: "preflight | encodings across members"
       ansible.builtin.set_fact:
         _pem_encs: >-

@@ -11,7 +11,9 @@
 #      physical standby of the founder in a group of its own: phase 1 refuses
 #      the dead subscriptions, refuses dropping a replicating member's
 #      subscription, and refuses the standby until its group is named; every
-#      later run passes drop_subscriptions=down_nonmembers and standby_groups
+#      later run passes drop_subscriptions=down_nonmembers and standby_groups.
+#      A compose file whose postgres service does not pass POSTGRES_INITDB_ARGS
+#      is refused in phase 1, before anything stops
 #   0  rows written on each node before Spock was wired (synchronize_data
 #      false) leave a replicated parent table different and a replicated child
 #      row orphaned: phase 1 refuses, accept_divergence does not get past it,
@@ -278,7 +280,20 @@ if run_play_bare "$WORK/caseDc.log" -e postgres_encoding_migrate_drop_subscripti
 grep -q "streams WAL to a physical standby at $GW (application_name utf8_founder_b" "$WORK/caseDc.log" \
   || { grep -E 'msg' "$WORK/caseDc.log" | tail -3; fail "case D: the refusal does not name the standby"; }
 [[ ! -f "$WORK/state-founder/current-run" ]] || fail "case D: a run was opened"
+# An older render of the compose file: the postgres service's environment has
+# no POSTGRES_INITDB_ARGS, so .env could not reach initdb in phase 5.
+cp "$WORK/founder/docker-compose.yml" "$WORK/founder/docker-compose.yml.keep"
+grep -v 'POSTGRES_INITDB_ARGS:' "$WORK/founder/docker-compose.yml.keep" > "$WORK/founder/docker-compose.yml"
+if run_play "$WORK/caseDd.log"; then fail "case D: the run passed a compose service without POSTGRES_INITDB_ARGS"; fi
+cp "$WORK/founder/docker-compose.yml.keep" "$WORK/founder/docker-compose.yml"; rm -f "$WORK/founder/docker-compose.yml.keep"
+grep -q 'service postgres-a in .*founder/docker-compose.yml would start initdb with POSTGRES_INITDB_ARGS=(not set)' "$WORK/caseDd.log" \
+  || { grep -E 'msg' "$WORK/caseDd.log" | tail -3; fail "case D: the refusal does not name the compose file"; }
+[[ ! -f "$WORK/state-founder/current-run" ]] || fail "case D: a run was opened"
+for c in pg writer; do
+  [[ "$(docker inspect -f '{{.State.Running}}' "pemtest-founder-$c")" == true ]] || fail "case D: the compose refusal stopped pemtest-founder-$c"
+done
 echo "  dead subscriptions refused, a member's subscription not droppable, undeclared standby refused with address and application_name"
+echo "  a compose service without POSTGRES_INITDB_ARGS refused in phase 1, with its file named; nothing stopped"
 
 say "case 0: divergent parent + orphan child: phase 1 refuses; reconcile fixes it"
 if run_play "$WORK/case0a.log"; then fail "case 0: the run passed over an orphan"; fi
