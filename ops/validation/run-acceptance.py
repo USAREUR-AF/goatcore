@@ -540,7 +540,7 @@ def self_test():
               {"host": "localhost", "cmd": str(nomod), "expect": "OK"}).status, probes.UNKNOWN)
         # a health envelope arrives as base64 from the REST plugin and as
         # `hex:` from `goat sub`; both decode to the same site.
-        _env = bytes.fromhex("0a046d6573681208656664692d646576")  # EnvHealthV1{domain:"mesh", scope:"zagros-dev"}
+        _env = bytes.fromhex("0a046d657368120a7a6167726f732d646576")  # EnvHealthV1{domain:"mesh", scope:"zagros-dev"}
         import base64 as _b64
         check("payload from goat sub (hex:)", probes._payload_fields("hex:" + _env.hex()).get("site"), "zagros-dev")
         check("payload from REST (base64)", probes._payload_fields(_b64.b64encode(_env).decode()).get("site"), "zagros-dev")
