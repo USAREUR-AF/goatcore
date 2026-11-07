@@ -23,13 +23,11 @@ updates:
       - /ops/e2e/canary
       - /ops/e2e/host
       - /ops/goat-id-console
-      - /ops/gatewatch
       - /ops/goat-zenoh-portal
       - /ops/federation-e2e/host
       - /ops/netbird
       - /ops/onboard-runner
       - /ops/postgres/spock
-      - /ops/secwatch
       - /signal-server
     schedule:
       interval: weekly
@@ -48,3 +46,99 @@ updates:
       # 02-spock-extension.sql (see PR #2080 CI failures).
       - dependency-name: "ghcr.io/pgedge/pgedge-postgres"
         update-types: ["version-update:semver-major"]
+
+  - package-ecosystem: github-actions
+    directories:
+      - /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      github-actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: "chore(deps)"
+
+  - package-ecosystem: gomod
+    directories:
+      - /ops/admit-audit
+      - /ops/enrollment
+      - /ops/federation/reference
+      - /ops/goat-id-console
+      - /ops/goat-zenoh-portal
+      - /ops/grant-crypto
+      - /ops/grant-crypto/sdk/bindings/go
+      - /ops/mgmt-host-bootstrap
+      - /ops/onboard-runner
+      - /ops/relay-probe
+      - /ops/signal-federation-probe
+      - /ops/smoketest
+      - /ops/snitch
+      - /ops/time-hygiene
+      - /ops/wg-cp0-mesh-reach
+      - /ops/zenoh/loadgen
+      - /signal-server
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      gomod:
+        patterns: ["*"]
+    commit-message:
+      prefix: "chore(deps)"
+
+  - package-ecosystem: npm
+    directories:
+      - /ops/ansible/roles/netbird-dashboard/tests/fixture-e2e/playwright
+      - /ops/goat-id-console/web/e2e
+      - /ops/goat-zenoh-portal/web/e2e
+      - /ops/grant-crypto/sdk/bindings/ts
+      - /ops/smoketest/dashboard
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      npm:
+        patterns: ["*"]
+    commit-message:
+      prefix: "chore(deps)"
+
+  - package-ecosystem: pip
+    directories:
+      - /ops/grant-crypto/sdk/bindings/python
+      - /ops/serve
+      - /ops/smoketest/apptests
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      pip:
+        patterns: ["*"]
+    commit-message:
+      prefix: "chore(deps)"
+
+  - package-ecosystem: cargo
+    directories:
+      - /
+      - /crates
+      - /ops/consistency/rust
+      - /ops/federation/republisher
+      - /ops/grant-crypto/keyd
+      - /ops/grant-crypto/sdk
+      - /ops/relay-auth-probe
+      - /ops/zenoh-ingress-gateway
+      - /ops/zenoh/pqc-image/bench
+      - /ops/zenoh/pqc-image/fips-probe
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      cargo:
+        patterns: ["*"]
+    commit-message:
+      prefix: "chore(deps)"
