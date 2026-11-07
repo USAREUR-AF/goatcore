@@ -25,7 +25,7 @@ on:
   # An earlier draft of this comment also said "main is protected from
   # force-push". IT IS NOT — this plan cannot have branch protection at all
   # (the API answers "Upgrade to GitHub Pro"). A force-push to main therefore
-  # bypasses this guard entirely. That is a real gap and it is 's, not
+  # bypasses this guard entirely. That is a repository-settings decision, not
   # something a paths filter or a trigger change can close.
   # Publishers keep push: on purpose — the merge commit is the artifact.
   pull_request:

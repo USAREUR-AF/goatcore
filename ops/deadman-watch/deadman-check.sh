@@ -21,8 +21,7 @@
 # host is judged on its own timestamp file (<state-dir>/<source>.last-heartbeat,
 # written by deadman-receive for POST /<source>), with its own dedup key and its
 # own paged marker. One healthy obs host can no longer keep the switch green for
-# a dead one — which is how Orin-C was dead for four days in September 2026
-# while the SVK obs host's heartbeat kept the single shared file fresh.
+# a dead one, as it could when every sender shared one file.
 # Empty list = the original single-file behaviour, unchanged.
 set -uo pipefail
 

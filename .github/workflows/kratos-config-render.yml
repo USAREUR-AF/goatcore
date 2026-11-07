@@ -25,7 +25,7 @@ on:
   # An earlier draft of this comment also said "main is protected from
   # force-push". IT IS NOT — this plan cannot have branch protection at all
   # (the API answers "Upgrade to GitHub Pro"). A force-push to main therefore
-  # bypasses this guard entirely. That is a real gap and it is 's, not
+  # bypasses this guard entirely. That is a repository-settings decision, not
   # something a paths filter or a trigger change can close.
   # Publishers keep push: on purpose — the merge commit is the artifact.
 # Supersede in-flight runs for the same ref. A push during review used to
@@ -56,5 +56,17 @@ jobs:
       - name: Pull Kratos image
         run: docker pull oryd/kratos:v1.3.1
 
+      # This repository carries no goatnet. The synthetic goatnet `zagros`
+      # lives in USAREUR-AF/goatenv; its group_vars are copied in so the
+      # template renders against a complete goatnet. An environment repository
+      # runs the same script over its own goatnets in its assembled tree.
+      - name: Check out goatenv for the synthetic goatnet
+        uses: actions/checkout@v4
+        with:
+          repository: USAREUR-AF/goatenv
+          path: .goatenv
+          persist-credentials: false
+      - name: Place goatenv's group_vars
+        run: cp -R .goatenv/ops/ansible/group_vars/. ops/ansible/group_vars/
       - name: Render every goatnet's kratos.yaml and validate against Kratos
         run: ops/ci/check-kratos-config-renders.sh

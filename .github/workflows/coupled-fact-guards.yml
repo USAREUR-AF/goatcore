@@ -11,26 +11,20 @@ name: coupled-fact-guards
 #      whose PQ claim nothing (static or runtime) can verify.
 #   5. check-no-floating-image-pins.sh — a hand-authored group_vars pin naming a
 #      mutable tag instead of a digest. Same class again: the config reads as a
-#      fixed version and is not one. six goatnets ran the mesh
-#      control plane from netbird-mgmt:latest, and the tag had ALREADY moved —
-#      the zagros Thor was on sha256:ad4d12dd while :latest resolved to
-#      sha256:a4a7065e, so any pull would have silently upgraded production.
+#      fixed version and is not one: a mutable tag moves, and the next pull
+#      silently upgrades whatever runs from it.
 #   6. check-no-foreign-goatnet-config.py — a goatnet's group_vars naming
 #      ANOTHER goatnet's domain. Same class: the config reads as this goatnet's
 #      and deploys against another's, and the other goatnet's hosts answer, so
-#      nothing fails. zagros-dev handed its peers zagros's five STUN servers from
-#      to because the standup scaffold copied list items
-#      from the reference goatnet unchecked. Deliberate cross-goatnet lines carry
+#      nothing fails (a standup scaffold copying list items from a reference
+#      goatnet unchecked does exactly this). Deliberate cross-goatnet lines carry
 #      `# cross-goatnet: <reason>` inline. Its second pass checks relay
-#      ADDRESSES against the relay inventories (ops/relay/health/relays*.conf):
-#      zagros-dev's mesh DNS answered its enrolment name with zagros's five relay
-#      IPs, which a domain check cannot see.
+#      ADDRESSES against the relay inventories (ops/relay/health/relays*.conf),
+#      which a domain check cannot see.
 #   7. check-deadman-sources.py — an obs host whose dead-man heartbeat reads
 #      "watched" while another obs host's heartbeat keeps the same watcher
-#      timestamp fresh. Orin-C's disk dropped off the bus
-#      and nothing paged for four days, because the SVK obs host posted to the
-#      same watcher. Each sender now needs its own path, and the watcher must
-#      expect it. test-deadman.sh proves the watcher judges senders separately.
+#      timestamp fresh, so a dead host sharing a watcher never pages. Each
+#      sender needs its own path, and the watcher must expect it. test-deadman.sh proves the watcher judges senders separately.
 #   4. check-no-decaying-fact-port-bind.sh — a container port published on an
 #      address resolved from a host fact at deploy time. Same class,
 #      one step further out: the config does not lie when written, it rots
@@ -114,17 +108,12 @@ on:
       - 'ops/scripts/ansible-preflight.sh'
       - 'ops/scripts/newsite-secrets.sh'
       - 'ops/scripts/newsite-secret-store.py'
-      - 'ops/ansible/zagros-prod-oidc-clients.yml'
-      - 'ops/ci/check-newsite-secrets-coverage.*'
       - 'tests/test_newsite_secrets.py'
-      - 'tests/test_oidc_contract.py'
-      - 'tests/test_portal_key_preflight.py'
       - 'tests/test_scaffold_reference_address.py'
       - 'tests/newsite-secrets.bats'
       - '.github/workflows/**'
       - 'ops/ansible/zenoh-deploy.yml'
       - 'ops/ansible/zenoh-acl-migrate.yml'
-      - 'ops/ci/coupled-fact-known-open.txt'
       - '.github/workflows/coupled-fact-guards.yml'
       # Image digest guard (ADR 0703): anything that names an image.
       - 'ops/ci/check-no-floating-image-pins.sh'
@@ -147,7 +136,7 @@ on:
   # An earlier draft of this comment also said "main is protected from
   # force-push". IT IS NOT — this plan cannot have branch protection at all
   # (the API answers "Upgrade to GitHub Pro"). A force-push to main therefore
-  # bypasses this guard entirely. That is a real gap and it is 's, not
+  # bypasses this guard entirely. That is a repository-settings decision, not
   # something a paths filter or a trigger change can close.
   # Publishers keep push: on purpose — the merge commit is the artifact.
 # Supersede in-flight runs for the same ref. A push during review used to
@@ -176,13 +165,14 @@ jobs:
           echo "23c3f5a3c73de91dbaec419f3c492bef636deb02680808e5d842e6553aa16074  alertmanager-0.27.0.linux-amd64.tar.gz" | sha256sum -c
           tar xzf alertmanager-0.27.0.linux-amd64.tar.gz
           echo "AMTOOL=$RUNNER_TEMP/alertmanager-0.27.0.linux-amd64/amtool" >> "$GITHUB_ENV"
-      - name: Verify newsite credential persistence and P12 coverage
+      # The P12 OIDC-client coverage contract (check-newsite-secrets-coverage,
+      # test_oidc_contract, test_portal_key_preflight) asserts over one
+      # goatnet's own OIDC-client playbook, which lives in that goatnet's
+      # environment repository, so it runs there against the assembled tree.
+      - name: Verify newsite credential persistence
         run: |
           python3 tests/test_newsite_secrets.py
-          python3 tests/test_oidc_contract.py
-          python3 tests/test_portal_key_preflight.py
           python3 tests/test_scaffold_reference_address.py
-          ops/ci/check-newsite-secrets-coverage.sh --self-test
       - name: "self-test: every guard proves RED on a broken fixture first (P6)"
         run: |
           ops/ci/check-partition-render-consistency.sh --self-test
@@ -217,8 +207,10 @@ jobs:
         run: python3 ops/ci/check-fence-client-registered.py
       - name: no certificate request names a host its wildcard covers (#2149)
         run: python3 ops/ci/check-acme-san-requests.py
-      - name: every goatnet's Alertmanager loads, every route has a receiver, warnings never page critical
-        run: python3 ops/ci/check-alertmanager-goatnets.py
+      # The full render (every mgmt host's real group_vars through
+      # render-alertmanager.yml) needs goatnets in inventory/mgmt-hosts.ini;
+      # this repository carries none, so it runs in an environment repository's
+      # assembled tree. Here the routing judge proves itself on its fixtures.
       - name: a declared assay probe identity carries all of its facts
         run: python3 ops/ci/check-assay-probe-identity.py
       - name: every leaf read goes through goat_leaf, never a checkout-staged copy (#2165)

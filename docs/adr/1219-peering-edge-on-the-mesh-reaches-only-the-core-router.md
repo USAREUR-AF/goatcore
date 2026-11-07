@@ -9,7 +9,7 @@
 | Amends | — |
 | Supersedes | — |
 | Superseded by | — |
-| Related | [ADR 1157](1157-cross-sovereign-federation-edge-terminated.md) (edge-terminated federation), [ADR 1218](1218-peering-forwarder-when-neither-edge-accepts-inbound.md) (peering forwarder), [ADR 1116](1116-retire-opsystem-gear-classes.md) §7 (live-membership guard), [ADR 1126](1126-acl-assertions-rechecked-when-nothing-is-written.md) (assertions), [ADR 1129](1129-warrant-scoped-expiring-network-authorizations.md) (warrant), [ADR 1189](1189-netbird-read-only-dashboard-and-warrant-owned-membership.md), [ADR 1216](1216-net-engineer-group-and-edge-server-class.md) (the class-plus-rules shape this follows) |
+| Related | [ADR 1157](1157-cross-sovereign-federation-edge-terminated.md) (edge-terminated federation), [ADR 1218](1218-peering-forwarder-when-neither-edge-accepts-inbound.md) (peering forwarder), ADR 1116 §7 (live-membership guard), [ADR 1126](1126-acl-assertions-rechecked-when-nothing-is-written.md) (assertions), [ADR 1129](1129-warrant-scoped-expiring-network-authorizations.md) (warrant), [ADR 1189](1189-netbird-read-only-dashboard-and-warrant-owned-membership.md), [ADR 1216](1216-net-engineer-group-and-edge-server-class.md) (the class-plus-rules shape this follows) |
 
 ## TL;DR (for a layperson)
 
