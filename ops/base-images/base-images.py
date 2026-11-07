@@ -5,9 +5,9 @@
 Every Dockerfile in this tree takes its base images as build arguments named
 BASE_<ROLE> (BASE_RUST_BUILD, BASE_RUNTIME_CC, ...). Each role is one file,
 ops/base-images/<role>/Dockerfile, holding a single digest-pinned FROM line:
-that line is the role's image. The files in this repository name images
-anyone may pull and redistribute. An environment that wants other bases (a
-hardened vendor catalogue, its own mirror) puts its own file at the same path
+that line is the role's image. The files in this repository name Chainguard's
+free catalogue, which anyone pulls without an account. An environment that
+wants other bases (a private catalogue, its own mirror) puts its own file at the same path
 in its overlay; the overlay is copied over this tree before a build, so the
 build reads the overlay's line instead. Design: goatcore docs/design/base-images.md.
 How to do it for your own environment: goatcore docs/operations/build-on-your-own-base-images.md.
@@ -346,7 +346,7 @@ def cmd_check(root):
             fail.append(f"ROLE NOT PINNED  {path}\n    {img}\n    Pin the multi-arch index digest: `crane digest <ref>` prints it.")
         if subscription(img):
             fail.append(f"ROLE ON A SUBSCRIPTION REGISTRY  {path}\n    {img}\n"
-                        "    A public default must be an image anyone may pull and redistribute.\n"
+                        "    A public default must be an image anyone may pull without an account.\n"
                         "    Put this line in your overlay's copy of the file instead (goatcore docs/operations/build-on-your-own-base-images.md).")
     args = by_arg(roles)
     allow = load_allow(root)
