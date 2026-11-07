@@ -15,6 +15,11 @@ import (
 	"strings"
 )
 
+// DefaultMaxStreamsPerPrincipal is the per-key live-stream cap when
+// PORTAL_MAX_STREAMS_PER_PRINCIPAL is unset: room for a person with several
+// inspector tabs, not for a fan-out of polls against the router.
+const DefaultMaxStreamsPerPrincipal = 8
+
 // Identity-model values for Config.IdentityModel.
 const (
 	// IdentityModelPerVendor is the legacy trial-fabric model: one cert per
@@ -45,6 +50,12 @@ type Config struct {
 	// goatnets. Size must be ≥ the router's zenoh_slot_pool_size.
 	SlotPoolSalt string
 	SlotPoolSize int
+	// MaxStreamsPerPrincipal caps how many /api/topics/stream connections one
+	// vendor or slot key may hold open at once. Each stream polls the router's
+	// REST plugin every second, and the stream router carries no proxy rate
+	// limiter, so without it any key could open N streams for N polls a
+	// second. Operators are exempt. 0 disables the cap.
+	MaxStreamsPerPrincipal int
 
 	// LazySlotStorage (per-uuid-slot-pool only): when true, the router does NOT
 	// pre-cut a rocksdb store per pool slot (zenoh_lazy_slot_storage), so the
@@ -406,6 +417,7 @@ func LoadFromFlags(args []string) (*Config, error) {
 	fs.StringVar(&cfg.Listen, "listen", envOr("PORTAL_LISTEN", "127.0.0.1:8090"), "HTTP listener address")
 	fs.StringVar(&cfg.IdentityModel, "identity-model", envOr("PORTAL_IDENTITY_MODEL", IdentityModelPerVendor), "Onboarding identity model: per-vendor or per-uuid-slot-pool (ADR 1025)")
 	fs.StringVar(&cfg.SlotPoolSalt, "slot-pool-salt", envOr("PORTAL_SLOT_POOL_SALT", ""), "Per-goatnet salt for the per-uuid slot pool; MUST match the router template's zenoh_slot_pool_salt (per-uuid mode only)")
+	fs.IntVar(&cfg.MaxStreamsPerPrincipal, "max-streams-per-principal", envInt("PORTAL_MAX_STREAMS_PER_PRINCIPAL", DefaultMaxStreamsPerPrincipal), "Concurrent /api/topics/stream connections one vendor or slot key may hold (operators exempt); 0 disables the cap")
 	fs.IntVar(&cfg.SlotPoolSize, "slot-pool-size", envInt("PORTAL_SLOT_POOL_SIZE", 0), "Number of slots to bake into the registry; MUST equal the router's zenoh_slot_pool_size (per-uuid mode only)")
 	fs.BoolVar(&cfg.LazySlotStorage, "lazy-slot-storage", envBool("PORTAL_LAZY_SLOT_STORAGE", false), "Per-uuid mode: the router does not pre-cut a store per pool slot; live-add the slot's <anchor>/** store via admin-REST at mint (must match the router's zenoh_lazy_slot_storage)")
 	fs.IntVar(&cfg.TopicBudgetSelfBlock, "topic-budget-self-block", envInt("PORTAL_TOPIC_BUDGET_SELF_BLOCK", 0), "Automatic self-service topic-budget allowance every onboarded slot holds (must equal zenoh_topic_budget_self_block); 0 disables the budget-projection endpoint")

@@ -1389,6 +1389,17 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "stream", err.Error())
 		return
 	}
+	release, ok := s.streams.acquire(PrincipalFromContext(r.Context()), s.cfg.MaxStreamsPerPrincipal)
+	if !ok {
+		// Not 429: the proxy's errors middleware replaces every 429 with its
+		// own page (TestPortal_NeverProducesA429). 409 says the request
+		// conflicts with what this caller already holds open.
+		writeError(w, http.StatusConflict, "stream_limit", fmt.Sprintf(
+			"this key already has %d live streams open; close one (an inspector tab) and retry",
+			s.cfg.MaxStreamsPerPrincipal))
+		return
+	}
+	defer release()
 	if err := s.zenoh.StreamSSE(r.Context(), w, key, time.Second); err != nil {
 		// Once SSE headers are written we can't switch to JSON error; log
 		// and let the client retry.

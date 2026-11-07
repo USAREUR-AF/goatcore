@@ -65,6 +65,10 @@ type Server struct {
 	// from, resolved once from config at construction.
 	envBaselines    registry.BaselineSet
 	envDefaultClass string
+
+	// streams counts the live /api/topics/stream connections per key, for
+	// the MaxStreamsPerPrincipal cap (stream_limit.go).
+	streams streamSlots
 }
 
 // New builds a Server with the supplied dependencies. staticFS holds the
