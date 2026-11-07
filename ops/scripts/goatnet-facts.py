@@ -19,6 +19,10 @@ that goatnet already carries, so no script names a deployment:
                                            list prints one item per line
   goatnet-facts.py dev-goatnet             the goatnet of the release ladder's
                                            rung named `dev` (ops/release/ladder.yaml)
+  goatnet-facts.py deploy <key>            one value of this deployment's deploy
+                                           block, ops/goatbuilder/project.yml
+                                           (aws_profile, ssh_user, state_dir;
+                                           state_dir with ~ expanded)
 
 <goatnet> is written either way (site-a or site_a). A fact that is not declared
 prints nothing and exits 1, with the file it looked in on stderr, so a caller
@@ -112,6 +116,19 @@ def dev_goatnet():
     return 1
 
 
+def deploy(key):
+    proj = REPO / "ops/goatbuilder/project.yml"
+    value = (load(proj).get("deploy") or {}).get(key)
+    if value in (None, ""):
+        print(f"goatnet-facts: {proj} declares no deploy.{key}", file=sys.stderr)
+        return 1
+    if key.endswith("_dir"):
+        import os
+        value = os.path.expanduser(str(value))
+    print(value)
+    return 0
+
+
 def main(argv):
     if len(argv) == 2 and argv[0] == "mgmt-ssh":
         return mgmt_ssh(argv[1])
@@ -121,6 +138,8 @@ def main(argv):
         return var(argv[1], argv[2])
     if argv == ["dev-goatnet"]:
         return dev_goatnet()
+    if len(argv) == 2 and argv[0] == "deploy":
+        return deploy(argv[1])
     print(__doc__.split("\n\n")[1], file=sys.stderr)
     return 2
 
