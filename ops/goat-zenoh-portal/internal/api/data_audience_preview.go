@@ -87,7 +87,7 @@ func (s *Server) handleAudienceAccessPreview(w http.ResponseWriter, r *http.Requ
 			"declared registry (roster path) not configured — the audience cannot be derived")
 		return
 	}
-	dr, err := access.LoadDataRoster(s.cfg.RosterPath)
+	dr, err := s.rosters.Load(s.cfg.RosterPath)
 	if err != nil {
 		log.Printf("data-audience-preview: load roster: %v", err)
 		writeError(w, http.StatusInternalServerError, "registry", "could not load the declared registry")
