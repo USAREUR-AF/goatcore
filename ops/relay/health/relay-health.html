@@ -604,7 +604,7 @@ function esc(s){ return String(s==null?"":s).replace(/[&<>"]/g, c=>({'&':'&amp;'
 // else the short hex. The full name + full hex always ride in the title (hover).
 function trimName(n){
   let s = n.replace(/^peer-/, "");                 // drop the onboard "peer-" prefix
-  s = s.replace(/-zagros-\d{4}-\d{2}-\d{2}.*$/, ""); // drop the -zagros-<date>-<host> tail
+  s = s.replace(/-\d{4}-\d{2}-\d{2}.*$/, "");     // drop the -<date>-<host> tail; <handle>-<goatnet> stays, for any goatnet
   return (s.length>28 ? s.slice(0,27)+"…" : s) || n;
 }
 // PEER_NAMES[id] is a baseball-card object {name,id,aff,ip,os,host,seen,conn}

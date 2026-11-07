@@ -205,6 +205,7 @@ icam_federation:
   #     client_id: "goat-example"
   #     scopes: ["openid", "profile", "email"]
   #     claim_map: eams-a          # -> ops/identity/claim-maps/<claim_map>.jsonnet
+  #     subject_client_id: <id>    # replaces the claim map's `local client_id` (the RP id it records)
   #     asserts_min: { ial: ial2, aal: aal2, fal: fal2 }   # fail-closed downstream gate
   #     boundary_il: 5             # authorization boundary / impact level tag
 

@@ -34,6 +34,7 @@ icam_federation:
       client_id: "goat-zagros"
       scopes: ["openid", "profile", "email"]
       claim_map: eams-a             # -> ops/identity/claim-maps/eams-a.jsonnet
+      subject_client_id: "goat-zagros"   # the RP id the claim map records in external_subjects; omit to keep the committed file's
       asserts_min: { ial: ial2, aal: aal2, fal: fal2 }
       boundary_il: 5
 
