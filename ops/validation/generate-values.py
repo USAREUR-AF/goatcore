@@ -125,6 +125,20 @@ def _router_cn(env, manifests_dir=None):
     return cn.group(1).strip() if cn else None
 
 
+def _group_vars_text(gv_dir):
+    """Every vars file of the group, as one text, highest precedence first.
+
+    Ansible loads every file in group_vars/<group>/, not just vars.yml, and a
+    site may split its registry out (for example, isitup_services kept in isitup.yml).
+    Reading vars.yml alone dropped those keys, so the rows that expand over
+    them read UNKNOWN. Ansible loads the files in name order and the later one
+    wins; the readers here take the first match, so the files go in reverse
+    name order."""
+    files = [f for f in Path(gv_dir).iterdir()
+             if f.is_file() and f.suffix in (".yml", ".yaml")]
+    return "\n".join(f.read_text() for f in sorted(files, reverse=True))
+
+
 def _spock_node_name(site_id, intra_pair):
     """The Spock node name for a site — spock-mesh-peering/tasks/main.yml:105-106:
     <site_id underscored>, plus '_a' when the site is an intra-site A/B pair."""
@@ -138,7 +152,7 @@ def generate(env, gv_dir=None, inv_path=None):
     vars_file = gv_dir / "vars.yml"
     if not vars_file.is_file():
         raise SystemExit(f"generate-values: no group_vars for '{env}' at {vars_file}")
-    text = vars_file.read_text()
+    text = _group_vars_text(gv_dir)
 
     values = {"site_id": env}
     # The goat CLI legs of the assay. The context that holds a fabric identity
@@ -429,6 +443,9 @@ def generate(env, gv_dir=None, inv_path=None):
     values["enroll_probe"] = "false"
     values["enroll_peer_host"] = ""
     values["nb_api_token_env"] = env.upper().replace("-", "_") + "_NB_API_TOKEN"
+    # The portal rows' bearer: the site's operator key, under the name every
+    # secret store exports it as (newsite-secrets.sh: <SITE>_PORTAL_OPERATOR_API_KEY).
+    values["portal_operator_key_env"] = env.upper().replace("-", "_") + "_PORTAL_OPERATOR_API_KEY"
     nbv = _extract(text, "netbird_version")
     if nbv and "{{" not in nbv:
         values["enroll_client_image"] = f"netbirdio/netbird:{nbv}"
@@ -442,6 +459,13 @@ def generate(env, gv_dir=None, inv_path=None):
     # internal CA's CN in committed config, so that case is left unresolved
     # (derive, never invent) until one does, via internal_ca_cn.
     cert_mode = _extract(text, "dashboard_cert_delivery_mode")
+    # WHERE the probe reaches that entrypoint from here. An internet site (acme,
+    # the same test goat-standup.sh uses to pick the profile) is fronted by its
+    # relays, and they publish only :443: rathole forwards it to the host's
+    # enrollment entrypoint (rathole_client_netbird_mgmt_local_addr), so the
+    # host's :8443 is not public and probing it read UNKNOWN. A LAN site's
+    # apex is the host itself, whose enrollment entrypoint is :8443.
+    values["enrollment_public_port"] = "443" if cert_mode == "acme" else "8443"
     if cert_mode == "acme":
         values["entrypoint_cert_issuer"] = "Let's Encrypt"
     elif cert_mode:
@@ -760,7 +784,43 @@ def self_test():
     if v.get("public_mgmt_fqdn") != "netbird.demo.net": problems.append("public_mgmt_fqdn fallback failed")
     if v.get("pubsub_state_repl_enabled") is not False: problems.append("pubsub flag not false")
     if v.get("nb_api_token_env") != "DEMO_NB_API_TOKEN": problems.append("nb_api_token_env not <SITE>_NB_API_TOKEN")
+    if v.get("portal_operator_key_env") != "DEMO_PORTAL_OPERATOR_API_KEY":
+        problems.append("portal_operator_key_env not <SITE>_PORTAL_OPERATOR_API_KEY "
+                        f"(got {v.get('portal_operator_key_env')!r})")
     if v.get("entrypoint_cert_issuer") != "Let's Encrypt": problems.append("acme site: entrypoint_cert_issuer should be Let's Encrypt")
+    if v.get("enrollment_public_port") != "443":
+        problems.append("acme (internet, relay-fronted) site: the enrollment entrypoint is "
+                        f"reached on the relays' :443 (got {v.get('enrollment_public_port')!r})")
+    if problems:
+        print("SELF-TEST FAILED:"); [print("  -", p) for p in problems]; return 2
+
+    # --- a registry split out of vars.yml (e.g. isitup.yml) -------
+    # Ansible reads every file in the group dir; so must the value set, or the
+    # rows that expand over the registry read UNKNOWN. vars.yml sorts after
+    # isitup.yml, so it wins a key both set.
+    d6 = Path(tempfile.mkdtemp())
+    (d6 / "split_hosts").mkdir(parents=True)
+    (d6 / "split_hosts" / "vars.yml").write_text(
+        'site_dns_zone: netbird.split.net\nmesh_ip_a: "100.127.0.24"\n'
+        'has_obs_host: false\n')
+    (d6 / "split_hosts" / "isitup.yml").write_text(
+        '---\nhas_obs_host: true\nisitup_services:\n'
+        '  - id: auth\n    fqdn: "auth.{{ site_id }}.{{ site_dns_zone }}"\n'
+        '    container: kratos\n    access: public\n'
+        '  - id: mgmt\n    fqdn: "mgmt.{{ site_id }}.{{ site_dns_zone }}"\n    access: api\n')
+    inv6 = d6 / "inv.ini"
+    inv6.write_text("[split_hosts]\nmgmt-split-01 ansible_host=100.127.0.24 router_role=A\n")
+    v6 = generate("split", gv_dir=d6 / "split_hosts", inv_path=inv6)
+    if v6.get("isitup_services") != ["auth.split.netbird.split.net", "mgmt.split.netbird.split.net"]:
+        problems.append(f"split registry: isitup_services not read from isitup.yml "
+                        f"(got {v6.get('isitup_services')})")
+    if v6.get("isitup_containers") != ["kratos"]:
+        problems.append(f"split registry: isitup_containers (got {v6.get('isitup_containers')})")
+    if v6.get("public_auth_fqdns") != ["netbird.split.net", "auth.split.netbird.split.net"]:
+        problems.append(f"split registry: public_auth_fqdns (got {v6.get('public_auth_fqdns')})")
+    if v6.get("has_obs_host") is not False:
+        problems.append("split registry: vars.yml must win a key isitup.yml also sets")
+
     if problems:
         print("SELF-TEST FAILED:"); [print("  -", p) for p in problems]; return 2
 
@@ -794,6 +854,9 @@ def self_test():
     v5 = generate("nocn", gv_dir=d5 / "nocn_hosts", inv_path=inv5)
     if "entrypoint_cert_issuer" in v5:
         problems.append("non-acme site with no internal_ca_cn: must not invent entrypoint_cert_issuer")
+    if v5.get("enrollment_public_port") != "8443":
+        problems.append("lan site: the enrollment entrypoint is the host's own :8443 "
+                        f"(got {v5.get('enrollment_public_port')!r})")
 
     if problems:
         print("SELF-TEST FAILED:"); [print("  -", p) for p in problems]; return 2

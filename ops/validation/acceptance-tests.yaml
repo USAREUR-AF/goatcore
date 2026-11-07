@@ -80,8 +80,9 @@ tests:
     # expect_issuer is per site (generate-values.py, from
     # dashboard_cert_delivery_mode): "Let's Encrypt" on an ACME site, the
     # internal CA's CN on a site that uses one. The literal always passed on
-    # every ACME site and could never pass on an internal-CA site.
-    params: {host: "{{ public_mgmt_fqdn }}", port: 8443, expect_issuer: "{{ entrypoint_cert_issuer }}", refuse_cn: "TRAEFIK DEFAULT CERT"}
+    # every ACME site and could never pass on an internal-CA site. The port is
+    # per site too: 443 through the relays on an internet site, else 8443.
+    params: {host: "{{ public_mgmt_fqdn }}", port: "{{ enrollment_public_port }}", expect_issuer: "{{ entrypoint_cert_issuer }}", refuse_cn: "TRAEFIK DEFAULT CERT"}
     requires: [traefik]
     caught_would_have: "row 40 — enrollment entrypoint served traefik.default; netbird refused; forced re-enroll cascade"
   - id: oidc-dashboard-login-flow
@@ -595,7 +596,7 @@ tests:
     aspect: portal/identity-layer
     probe: http-ok
     params: {url: "https://portal.{{ site_id }}.{{ site_dns_zone }}/api/access/who?id={{ acceptance_known_person_email }}",
-             auth: portal_operator_key, expect: 200, expect_json_nonempty: resolved}
+             auth: "{{ portal_operator_key_env }}", expect: 200, expect_json_nonempty: resolved}
     requires: [goat-zenoh-portal, kratos]
     severity: gate
     caught_would_have: >-
@@ -608,7 +609,7 @@ tests:
     aspect: portal/identity-layer
     probe: http-ok
     params: {url: "https://portal.{{ site_id }}.{{ site_dns_zone }}/api/access/who?id={{ acceptance_known_person_email }}",
-             auth: portal_operator_key, expect: 200, expect_json_equals: {anchor_linkage: recorded}}
+             auth: "{{ portal_operator_key_env }}", expect: 200, expect_json_equals: {anchor_linkage: recorded}}
     requires: [goat-zenoh-portal, kratos]
     severity: warn
     caught_would_have: >-
@@ -622,7 +623,7 @@ tests:
     aspect: microscope/adapters
     probe: http-ok
     params: {url: "https://microscope.{{ site_id }}.{{ site_dns_zone }}/api/entity?id={{ acceptance_known_person_email }}",
-             auth: portal_operator_key, expect: 200, expect_json_none_equals: {"sources[].state": skipped}}
+             auth: "{{ portal_operator_key_env }}", expect: 200, expect_json_none_equals: {"sources[].state": skipped}}
     requires: [microscope]
     severity: gate
     caught_would_have: >-
@@ -834,7 +835,7 @@ tests:
     probe: tls-identity
     must_refuse: true
     paired_positive: enrollment-entrypoint-cert-identity
-    params: {host: "{{ public_mgmt_fqdn }}", port: 8443, expect_cn: "TRAEFIK DEFAULT CERT"}
+    params: {host: "{{ public_mgmt_fqdn }}", port: "{{ enrollment_public_port }}", expect_cn: "TRAEFIK DEFAULT CERT"}
     requires: [traefik]
     severity: gate
     caught_would_have: >-
