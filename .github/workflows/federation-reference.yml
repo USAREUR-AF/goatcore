@@ -1,0 +1,66 @@
+name: federation-reference
+
+# Tests ops/federation/reference — the Go implementation of
+# docs/design/federation-package-spec.md, and the thing that proves the
+# specification's conformance vectors are reproducible by code rather than only
+# by the person who derived them.
+#
+# The vectors are normative and were derived by hand from the specification
+# without running this implementation, deliberately. So this job answers one
+# question: does an implementation written from the document agree with the
+# document's own worked examples, byte for byte? A failure here means the code is
+# wrong, never the vector.
+#
+# Tests run here rather than nowhere. A test no workflow runs looks like coverage
+# and provides none. This module carries the property that matters most
+# in the whole format: the canonicaliser must never return a nil error alongside
+# bytes that are not JSON, because that is the one failure both sides can agree
+# on — a matching digest over garbage. TestCanonicalNeverLies asserts error XOR
+# parseable over generated input and fails if the generator becomes one-sided.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'ops/federation/reference/**'
+      - 'ops/federation/vectors/**'
+      - '.github/workflows/federation-reference.yml'
+  pull_request:
+    paths:
+      - 'ops/federation/reference/**'
+      - 'ops/federation/vectors/**'
+      - '.github/workflows/federation-reference.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: federation-reference-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.10'
+          cache-dependency-path: ops/federation/reference/go.sum
+
+      - name: gofmt
+        working-directory: ops/federation/reference
+        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+
+      - name: go vet
+        working-directory: ops/federation/reference
+        run: go vet ./...
+
+      # -race because the canonicaliser and composer are pure functions that a
+      # caller may reasonably run concurrently over many packages.
+      - name: go test
+        working-directory: ops/federation/reference
+        run: go test -race ./...

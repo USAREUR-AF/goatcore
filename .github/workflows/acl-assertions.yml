@@ -1,0 +1,60 @@
+name: acl-assertions
+
+# Always report a check. Only start Rust when the declaration, evaluator, or
+# shared Cargo inputs change; an unrelated PR does not need the build.
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: acl-assertions-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  assertions:
+    name: ACL assertions
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Select changed inputs
+        id: changes
+        shell: bash
+        run: |
+          changed_files="$RUNNER_TEMP/acl-changed-files"
+          git diff --name-only -z HEAD^1 HEAD > "$changed_files"
+          run_tests=false
+          while IFS= read -r -d '' path; do
+            case "$path" in
+              ops/ansible/netbird_acl_taxonomy.yml|ops/ansible/netbird_acl_matrix.yml|crates/panoscope-core/*|crates/Cargo.toml|crates/Cargo.lock|.github/workflows/acl-assertions.yml)
+                run_tests=true
+                break
+                ;;
+            esac
+          done < "$changed_files"
+          printf 'run_tests=%s\n' "$run_tests" >> "$GITHUB_OUTPUT"
+
+      - name: Install Rust toolchain
+        if: steps.changes.outputs.run_tests == 'true'
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo inputs and build
+        if: steps.changes.outputs.run_tests == 'true'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            crates/target
+          key: cargo-acl-assertions-${{ runner.os }}-${{ hashFiles('crates/Cargo.lock') }}
+
+      - name: Run evaluator and declaration tests
+        if: steps.changes.outputs.run_tests == 'true'
+        working-directory: crates
+        run: cargo test -p panoscope-core

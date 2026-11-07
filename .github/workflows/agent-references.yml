@@ -1,0 +1,184 @@
+name: agent-references
+
+# Wires ops/ci/check-no-agent-references.sh — the opsec guard that refuses
+# agent-tooling references (claude.ai URLs, Claude-Session commit trailers,
+# anthropic.com URLs) in files that do not exist for that tooling.
+#
+# WHY: this repository is intended to split into an open-source and a private
+# implementation repo. Every vendor reference that leaks into ordinary docs,
+# code or commit messages is scrub work at that point — and anything already in
+# history cannot be scrubbed at all. The cheapest time to refuse one is before
+# it merges.
+#
+# DIFF-SCOPED, not full-tree, and for the same reason as identity-spillage: the
+# current tree carries 16 pre-existing hits and a full-tree gate would fail red
+# on main on day one. Measured 2026-09-01 via `--census`, they split in two:
+#
+#   - THREE are real product integrations that call the API on purpose —
+#     ops/secwatch/internal/analysis/claude.go and ops/scripts/translate-{ftl,po}.py.
+#     These are not leaks. They need a DECISION at split time (does the open
+#     repo carry that dependency?), not a scrub.
+#   - THIRTEEN are documentation mentions. That is the actual scrub surface.
+#
+# Neither is this guard's job today. Scanning only the files a change touches
+# delivers the forward value — no NEW reference reaches the public surface —
+# while the legacy set stays visible via `--census` for a separate sweep. Once
+# that sweep lands, promote to full-tree by calling the script with no args.
+#
+# No path filter: a session URL can land in any file, and the commonest place
+# it lands is a doc.
+
+# THE PULL-REQUEST TRIGGER ALONE HAS A HOLE, and it was exploited within twelve
+# minutes of this guard landing. GitHub runs `pull_request` workflows using the
+# workflow files from the HEAD branch, so a pull request opened BEFORE this file
+# existed does not carry it and skips the check entirely — silently, with zero
+# runs, which looks identical to passing. On 2026-09-04 this guard merged at
+# 11:00:22Z and a pull request based on older main merged at 11:12:41Z carrying
+# 33 vendor session URLs into a squash commit message on main. Permanently: the
+# guard's own refusal text says "amend or rebase", and neither is available once
+# it is on main.
+#
+# So `push: on main` is here as a BACKSTOP, reversing the reasoning this file
+# originally carried (copied from identity-spillage.yml, where the guarded thing
+# is a file and a file can be fixed later). History cannot. A violation that
+# reaches main is exactly the event worth one red run, tied to the push that
+# caused it — it does not go permanently red, because each run scans only its
+# own pushed range.
+#
+# THE BACKSTOP DETECTS; IT DOES NOT PREVENT. An earlier version of this comment
+# said the fix was to make the check REQUIRED in branch protection. MEASURED
+# 2026-09-06: that does not work here, and believing it did was worse than
+# knowing it did not.
+#
+# `scan` IS already a required context on main. But branch protection matches
+# required checks BY CONTEXT NAME, and until 2026-09-08 three workflows here
+# published a job called `scan` — this one, identity-spillage.yml and
+# netbird-user-sql.yml (now a repo-guards.yml step). Since then only identity-spillage.yml publishes `scan`;
+# this job is `agent-references`, so it can be required under its own name.
+# A pull request that does not carry THIS file still reports a green `scan`
+# from one of the other two, and satisfies the requirement without this guard
+# ever running. Sampled PR #603 (opened before 2026-09-04): its only jobs named
+# `scan` come from identity-spillage and netbird-user-sql. 64 of 77 open pull
+# requests predate this file.
+#
+# THE FIX IS `pull_request_target`, which runs the workflow file from the BASE
+# branch instead of the head. An old pull request is then scanned by main's
+# copy of this guard, whether or not its own branch has ever seen it. Renaming
+# the job to a unique context would also close it, but only for pull requests
+# that can report the new name — the other 64 would be blocked until rebased,
+# which is a lot of unrelated disruption to fix a guard.
+#
+# SAFETY, because `pull_request_target` is the trigger with the sharp edge: it
+# runs with a token that can write to this repository, so it must never execute
+# code from the pull request. This job does not. It checks out the BASE commit
+# — so `ops/ci/check-no-agent-references.sh` is always main's copy, never the
+# branch's — and fetches the head only as DATA, to read file contents and
+# commit messages out of. `permissions:` is pinned to `contents: read` so even
+# that token cannot write.
+
+on:
+  pull_request_target:
+  push:
+    branches: [main]
+
+# Never more than read. See the safety note above: `pull_request_target` would
+# otherwise hand a write-capable token to a job that touches branch content.
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  agent-references:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      # BASE, deliberately — this is what makes `pull_request_target` safe here.
+      # The scanning script that runs below is main's, never the pull request's.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # need the base commit to diff against
+          ref: ${{ github.event_name == 'push' && github.sha || github.event.pull_request.base.sha }}
+
+      # The head is fetched as DATA and never checked out over the working
+      # tree: nothing in it is executed, only read.
+      - name: Fetch the pull request head to scan
+        if: github.event_name == 'pull_request_target'
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin \
+            "+refs/pull/${{ github.event.pull_request.number }}/head:refs/remotes/pr/head"
+
+      - name: Compute the range this run is responsible for
+        id: changed
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "pull_request_target" ]; then
+            RANGE_BASE="${{ github.event.pull_request.base.sha }}"
+            RANGE_HEAD="refs/remotes/pr/head"
+          else
+            # push on main. `before` is all-zeroes on a branch's first push and
+            # can also point at a commit that no longer exists after a force
+            # push; fall back to the tip commit alone rather than failing open.
+            RANGE_BASE="${{ github.event.before }}"
+            if [ -z "$RANGE_BASE" ] || [ "$RANGE_BASE" = "0000000000000000000000000000000000000000" ] \
+               || ! git cat-file -e "$RANGE_BASE^{commit}" 2>/dev/null; then
+              RANGE_BASE="HEAD~1"
+            fi
+            RANGE_HEAD="HEAD"
+          fi
+          echo "RANGE_BASE=$RANGE_BASE" >> "$GITHUB_ENV"
+          echo "RANGE_HEAD=$RANGE_HEAD" >> "$GITHUB_ENV"
+          git diff --name-only --diff-filter=ACMR "${RANGE_BASE}...${RANGE_HEAD}" > changed.txt
+          echo "----- files in range -----"
+          cat changed.txt || true
+
+      - name: Scan changed files for agent-tooling references
+        run: |
+          set -euo pipefail
+          if [ ! -s changed.txt ]; then
+            echo "ok: no added/modified files to scan"
+            exit 0
+          fi
+          # The SCRIPT is the base's (this checkout); the DATA is the range.
+          # The two variables make the script diff RANGE_BASE...RANGE_HEAD
+          # inside this repository, so it scans the ADDED LINES of each path
+          # and reads a new file's content off the range head. It never
+          # executes anything from the branch.
+          #
+          # Until 2026-09-11 this step copied each head-side file into a
+          # scratch directory outside the git tree and ran the script there.
+          # Outside a repository every git call fails, so the script's
+          # merge-base search failed and it fell back to scanning WHOLE
+          # FILES -- refusing a pull request for provenance lines it never
+          # wrote. That is the false positive #625 removed;
+          # the scratch tree had quietly put it back.
+          #
+          # -r: never invoke with zero args -- the no-arg mode scans the whole
+          #     tree and would trip the grandfathered legacy hits.
+          # -d '\n': tolerate paths with spaces. Paths stay repo-relative with
+          #     no "./" prefix, because allowed() matches exactly.
+          AGENT_REF_RANGE_BASE="$RANGE_BASE" AGENT_REF_RANGE_HEAD="$RANGE_HEAD" \
+            xargs -r -d '\n' ops/ci/check-no-agent-references.sh < changed.txt
+
+      - name: Check the commit messages too
+        run: |
+          set -euo pipefail
+          # History cannot be scrubbed later, so a trailer in a commit message
+          # is worse than one in a file. The script scans files; this catches
+          # the message itself.
+          if git log --format='%B' "${RANGE_BASE}...${RANGE_HEAD}" | grep -nEi 'claude\.ai|Claude-Session:|anthropic\.com'; then
+            echo
+            echo
+            if [ "${{ github.event_name }}" = "push" ]; then
+              echo "A vendor reference reached main. It cannot be removed from history."
+              echo "This run exists so that fact is visible rather than silent."
+            else
+              echo "refused: a vendor reference in a commit message."
+              echo "Commit messages are permanent once merged. Amend or rebase now."
+            fi
+            exit 1
+          fi
+          echo "ok: no agent-tooling references in commit messages"
