@@ -1,0 +1,68 @@
+# Sovereign PKI registry guard (ADR 1209).
+#
+# ops/identity/sovereign-pkis.yaml is the only place a sovereign PKI is described;
+# the goatnet role, the collab front's Terraform value and the store's directory
+# layout are rendered from it. This workflow keeps the registry well-formed (every
+# live profile fully verified, every identity rule resolving its own example card)
+# and the committed renderings current, and runs the generated nginx maps in a real
+# nginx with the njs module against synthetic cards from the test PKI generator.
+#
+# Rollback: rm this file + ops/ci/check-sovereign-pkis.py.
+
+name: sovereign-pki-registry
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'ops/identity/sovereign-pkis.yaml'
+      - 'ops/identity/sovereign_pkis.py'
+      - 'ops/identity/sovereign-pkis-render.py'
+      - 'ops/identity/test_sovereign_pkis.py'
+      - 'ops/identity/claim-maps/sovereign-pki.jsonnet'
+      - 'ops/identity/claim-maps/eams-a.jsonnet'
+      - 'ops/identity/cac-test-pki/**'
+      - 'ops/identity/grammar.yaml'
+      - 'ops/ansible/filter_plugins/sovereign_pki.py'
+      - 'ops/ansible/filter_plugins/test_sovereign_pki.py'
+      - 'ops/ansible/roles/icam-mtls-proxy/**'
+      - 'ops/ci/check-sovereign-pkis.py'
+      - '.github/workflows/sovereign-pki-registry.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  check-sovereign-pkis:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install deps (PyYAML, jsonnet, Jinja2; nginx with the njs module)
+        timeout-minutes: 4
+        run: |
+          pip install --quiet pyyaml jsonnet jinja2
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq nginx-core libnginx-mod-http-js >/dev/null
+          sudo systemctl stop nginx || true
+          nginx -v
+          ls /usr/lib/nginx/modules/ngx_http_js_module.so
+      - name: Gate self-test (red on an unchecked registry)
+        run: python3 ops/ci/check-sovereign-pkis.py --self-test
+      - name: Registry is well-formed and generated artefacts are current
+        run: python3 ops/ci/check-sovereign-pkis.py .
+      - name: Registry, maps (live nginx + njs), claim map, generator
+        env:
+          NGINX_JS_MODULE: /usr/lib/nginx/modules/ngx_http_js_module.so
+        run: python3 -W error::ResourceWarning ops/identity/test_sovereign_pkis.py -v
+      - name: The role's filters render what the library renders
+        run: python3 ops/ansible/filter_plugins/test_sovereign_pki.py -v
+      - name: The role's templates render for the default profile (Jinja, filters loaded)
+        run: python3 ops/ansible/roles/icam-mtls-proxy/test_render.py -v

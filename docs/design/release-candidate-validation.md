@@ -32,7 +32,7 @@ A release candidate is a git tag. Cutting it is the one act that starts the expe
 affected-flows.py --component id-admin-console --head goat-id-console/v1.4.0-rc.1
 ```
 
-The base of the diff is the commit the fleet runs for that component: `ops/pins/fleet-pins.yaml`'s `fleet:` value carries the image's `sha-<short>` tag, which is the git short sha the image workflow built from. So the answer is "everything that changed since what the fleet runs", which is what a release candidate is.
+The base of the diff is the commit the fleet runs for that component: `ops/pins/fleet-pins.yaml`'s `fleet:` value carries the image's `sha-<short>` tag, which is the git short sha the image workflow built from. So the answer is "everything that changed since what the fleet runs", which is what a release candidate is. A pin that names only a digest carries no commit; the base is then the component's previous `<component>/v*` tag, and with none the empty tree, so every mapped flow counts as affected.
 
 **What a candidate carries is written down where it is reviewed.** The tag names only the component and version (`<component>/v<semver>-rc.N`), the semver convention. `rc.sh` (and `goatbuilder release`) list the commits since the component's previous tag that touch the paths its image workflow builds from. That list goes into the dev pin PR body and the preprod PR body, and its one-line form (`N change(s) since <tag>: #a, #b`) into the candidate record's `reason`.
 
