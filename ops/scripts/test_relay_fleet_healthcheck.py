@@ -21,12 +21,17 @@ spec.loader.exec_module(health)
 
 def _has_fleets():
     try:
-        return all(health.load_fleet(env) for env in health.FLEETS)
+        return bool(health.FLEETS) and all(
+            health.load_fleet(env) for env in health.FLEETS
+        )
     except (OSError, ValueError):
         return False
 
 
 HAS_FLEETS = _has_fleets()
+# The first relay inventory this tree carries (a deployment's own), for the
+# tests that read the real inventories.
+LIVE_ENV = next(iter(health.FLEETS), None)
 
 
 class FleetTests(unittest.TestCase):
@@ -34,7 +39,35 @@ class FleetTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "relays.conf").write_text(text)
-            return health.load_fleet("zagros", root)
+            with patch.object(
+                health, "enroll_default", return_value="netbird.zagros.example"
+            ):
+                return health.load_fleet("zagros", root)
+
+    def test_fleets_are_the_inventories_present(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "relays.conf").write_text(
+                "# header\nfra 192.0.2.1 region instance zagros\n"
+            )
+            (root / "relays-zagros-dev.conf").write_text("")
+            (root / "other.conf").write_text("")
+            self.assertEqual(
+                health.discover_fleets(root),
+                {"zagros": "relays.conf", "zagros-dev": "relays-zagros-dev.conf"},
+            )
+            with self.assertRaises(ValueError):
+                health.load_fleet("zagros-prod", root)
+
+    def test_undeclared_default_needs_enroll_host(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "relays.conf").write_text("fra 192.0.2.1 region instance zagros\n")
+            with (
+                patch.object(health, "enroll_default", return_value=None),
+                self.assertRaises(ValueError),
+            ):
+                health.load_fleet("zagros", root)
 
     def test_inventory_default_and_override(self):
         relays = self.inventory(
@@ -149,7 +182,7 @@ class FleetTests(unittest.TestCase):
     @unittest.skipUnless(HAS_FLEETS, "no relay inventories in this tree")
     def test_json_exit_status_and_schema(self):
         for status, expected in [("OPEN", 0), ("REFUSED", 1), ("FILTERED", 1)]:
-            code, output, _ = self.run_main(["--environment", "zagros", "--json"], status)
+            code, output, _ = self.run_main(["--environment", LIVE_ENV, "--json"], status)
             self.assertEqual(code, expected)
             data = json.loads(output)
             self.assertEqual(data["port"], 33073)
@@ -158,13 +191,17 @@ class FleetTests(unittest.TestCase):
 
     @unittest.skipUnless(HAS_FLEETS, "no relay inventories in this tree")
     def test_subset_does_not_reduce_pool(self):
+        relays = health.load_fleet(LIVE_ENV)
+        first = relays[0]["name"]
         code, output, _ = self.run_main(
-            ["--environment", "zagros", "--regions", "fra", "--json"]
+            ["--environment", LIVE_ENV, "--regions", first, "--json"]
         )
         self.assertEqual(code, 0)
         rows = json.loads(output)["checks"]
-        self.assertEqual([r["relay"] for r in rows if r["tier"] == "relay"], ["fra"])
-        self.assertEqual(rows[-1]["target"], "netbird.zagros.example->192.0.2.99")
+        self.assertEqual([r["relay"] for r in rows if r["tier"] == "relay"], [first])
+        self.assertEqual(
+            rows[-1]["target"], f"{max(r['host'] for r in relays)}->192.0.2.99"
+        )
 
     def test_subset_preserves_other_enrollment_hosts(self):
         fleets = self.fleet()
@@ -207,6 +244,7 @@ class FleetTests(unittest.TestCase):
         with (
             patch.dict(os.environ, {"RELAY_HC_TIMEOUT": "1e100"}),
             patch.object(health, "load_fleet", return_value=self.fleet()["zagros"]),
+            patch.dict(health.FLEETS, {"zagros": "relays.conf"}),
             contextlib.redirect_stderr(io.StringIO()) as err,
         ):
             self.assertEqual(health.main(["--environment", "zagros"]), 2)

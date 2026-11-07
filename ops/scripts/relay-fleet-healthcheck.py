@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
-"""Check declared relay listeners and every advertised enrollment pool address."""
+"""Check declared relay listeners and every advertised enrollment pool address.
+
+The fleets are the relay inventories present in ops/relay/health/:
+relays-<goatnet>.conf belongs to <goatnet>, and relays.conf to the goatnet its
+rows name in their fifth column. goat ships none; a deployment supplies its own.
+A row without enroll_host= probes the goatnet's site_enrollment_dns from
+ops/ansible/group_vars/<goatnet>_hosts/; a goatnet that declares none must set
+enroll_host= on every row.
+"""
 
 import argparse
 import ipaddress
@@ -9,29 +17,64 @@ import os
 from pathlib import Path
 import re
 import socket
+import subprocess
 import sys
 
 PORT = 33073
-FLEETS = {
-    "zagros": "relays.conf",
-    "zagros-dev": "relays-zagros-dev.conf",
-    "zagros-prod": "relays-zagros-prod.conf",
-}
-INVENTORY = Path(__file__).resolve().parents[1] / "relay" / "health"
+REPO = Path(__file__).resolve().parents[2]
+INVENTORY = REPO / "ops" / "relay" / "health"
 HOSTNAME = re.compile(r"(?=.{1,253}$)[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?\Z")
+
+
+def discover_fleets(directory=INVENTORY):
+    """{goatnet: inventory file name} for every relay inventory in directory."""
+    fleets = {}
+    for path in sorted(directory.glob("relays*.conf")):
+        if path.name == "relays.conf":
+            rows = (line.split("#", 1)[0].split() for line in path.read_text().splitlines())
+            environment = next((f[4] for f in rows if len(f) >= 5), None)
+        else:
+            match = re.fullmatch(r"relays-([a-z0-9-]+)\.conf", path.name)
+            environment = match and match.group(1)
+        if environment:
+            fleets[environment] = path.name
+    return dict(sorted(fleets.items()))
+
+
+def enroll_default(environment):
+    """The goatnet's declared site_enrollment_dns (goatnet-facts.py), or None."""
+    if environment not in _ENROLL_DEFAULTS:
+        try:
+            done = subprocess.run(
+                [sys.executable, str(REPO / "ops" / "scripts" / "goatnet-facts.py"),
+                 "var", environment, "site_enrollment_dns"],
+                capture_output=True, text=True, timeout=30, check=False,
+            )
+            lines = done.stdout.split() if done.returncode == 0 else []
+        except (OSError, subprocess.SubprocessError):
+            lines = []
+        _ENROLL_DEFAULTS[environment] = lines[0] if len(lines) == 1 else None
+    return _ENROLL_DEFAULTS[environment]
+
+
+_ENROLL_DEFAULTS = {}
+FLEETS = discover_fleets()
 
 
 def load_fleet(environment, directory=INVENTORY):
     """Read the dashboard inventory, rejecting ambiguous or empty fleets."""
     relays = []
     names = set()
-    for number, line in enumerate(
-        (directory / FLEETS[environment]).read_text().splitlines(), 1
-    ):
+    inventory = (FLEETS if directory == INVENTORY else discover_fleets(directory)).get(
+        environment
+    )
+    if inventory is None:
+        raise ValueError(f"{environment}: no relay inventory in {directory}")
+    for number, line in enumerate((directory / inventory).read_text().splitlines(), 1):
         fields = line.split("#", 1)[0].split()
         if not fields:
             continue
-        location = f"{FLEETS[environment]}:{number}"
+        location = f"{inventory}:{number}"
         if len(fields) < 5:
             raise ValueError(
                 f"{location}: expected five columns plus optional key=value tokens"
@@ -53,8 +96,8 @@ def load_fleet(environment, directory=INVENTORY):
                 raise ValueError(f"{location}: invalid/duplicate inventory token")
             options[key] = value
         host = options.get("enroll_host")
-        if host is None and environment == "zagros":
-            host = "netbird.zagros.example"
+        if host is None:
+            host = enroll_default(environment)
         if (
             not host
             or not HOSTNAME.fullmatch(host)
