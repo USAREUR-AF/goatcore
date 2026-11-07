@@ -304,7 +304,9 @@ def served_check_script(name, port):
     import yaml
     plays = yaml.safe_load((ANSIBLE / "traefik-acme.yml").read_text())
     tpl = next(p for p in plays if "_served_cert_check" in (p.get("vars") or {}))["vars"]["_served_cert_check"]
-    return jinja2.Template(tpl).render(item=name, traefik_acme_served_check_port=port)
+    # Autoescape on: the values rendered here (a DNS name, a port) carry no
+    # HTML-special characters, so the bash text is the same either way.
+    return jinja2.Environment(autoescape=True).from_string(tpl).render(item=name, traefik_acme_served_check_port=port)
 
 
 def free_port():
@@ -394,19 +396,20 @@ class FakeCf(http.server.BaseHTTPRequestHandler):
         FakeCf.tokens.append(self.headers.get("Authorization"))
         u = urlparse(self.path)
         q = {k: v[0] for k, v in parse_qs(u.query).items()}
-        if u.path.endswith("/zones"):
+        parts = u.path.rstrip("/").split("/")
+        if parts[-1] == "zones":
             z = self.zones.get(q.get("name"))
-            return self.reply(200, {"success": True, "result": [{"id": z, "name": q["name"]}] if z else []})
-        m = re.match(r".*/zones/(\w+)/dns_records$", u.path)
-        if m:
-            res = [r for r in self.records.get(m.group(1), []) if r["type"] == q.get("type") and r["name"] == q.get("name")]
-            return self.reply(200, {"success": True, "result": res})
-        self.reply(404, {"success": False, "errors": [{"code": 7003, "message": "no route"}]})
+            self.reply(200, {"success": True, "result": [{"id": z, "name": q["name"]}] if z else []})
+        elif parts[-1] == "dns_records" and parts[-3] == "zones":
+            res = [r for r in self.records.get(parts[-2], []) if r["type"] == q.get("type") and r["name"] == q.get("name")]
+            self.reply(200, {"success": True, "result": res})
+        else:
+            self.reply(404, {"success": False, "errors": [{"code": 7003, "message": "no route"}]})
 
     def do_DELETE(self):
-        m = re.match(r".*/zones/(\w+)/dns_records/(\w+)$", self.path)
-        FakeCf.deleted.append(m.group(2))
-        self.reply(200, {"success": True, "result": {"id": m.group(2)}})
+        rid = self.path.rstrip("/").split("/")[-1]
+        FakeCf.deleted.append(rid)
+        self.reply(200, {"success": True, "result": {"id": rid}})
 
 
 @pytest.fixture
