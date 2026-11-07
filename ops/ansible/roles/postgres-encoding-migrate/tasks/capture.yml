@@ -30,6 +30,12 @@
   changed_when: false
   when: not (_pem_standby | bool)
 
+- name: "capture | integrity, quiesced: replicated key sets and foreign-key orphans"
+  ansible.builtin.include_tasks: integrity-gate.yml
+  vars:
+    pem_key_dbs: "{{ _pem_pre.spock | default([]) | map(attribute='db') | list }}"
+    pem_gate_rounds: 1
+
 - name: "capture | replicated tables: rows and content hash per node"
   ansible.builtin.shell:
     executable: /bin/bash
@@ -76,11 +82,13 @@
     fail_msg: >-
       Replicated tables differ between Spock nodes after every slot caught
       up: {{ _pem_diverged | join('; ') }}. The re-wired subscriptions copy no
-      data (synchronize_data false), so the difference would stay. Reconcile
-      the rows first (spock-drift-watch / ACE shows which), or re-run with
-      -e postgres_encoding_migrate_accept_divergence=true to carry the
-      difference over unchanged. The run resumes at this phase; the writers
-      stay stopped.
+      data (synchronize_data false), so the difference would stay. Key sets
+      are equal (checked above), so these are rows whose content differs:
+      decide which side is right (spock-drift-watch / ACE shows the rows), or
+      re-run with -e postgres_encoding_migrate_accept_divergence=true to carry
+      the difference over unchanged. Foreign-key orphans were checked above
+      and refuse regardless. To stop here and start the writers again:
+      action=rollback; otherwise the run resumes at this phase.
     quiet: true
   run_once: true
 

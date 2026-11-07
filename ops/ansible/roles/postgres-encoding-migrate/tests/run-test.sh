@@ -7,6 +7,11 @@
 # and a pgBackRest stanza on the founder.
 #
 # Cases, in order:
+#   0  rows written on each node before Spock was wired (synchronize_data
+#      false) leave a replicated parent table different and a replicated child
+#      row orphaned: phase 1 refuses, accept_divergence does not get past it,
+#      reconcile refuses a conflicting key, then copies the missing rows without
+#      echoing them through Spock
 #   1  a value that is not UTF-8 stops phase 1 and names its table
 #   2  migrate with stop_after=4, then resume to the end
 #   3  result: every database UTF8, rows and bytes equal, owners and settings
@@ -14,7 +19,8 @@
 #      writers back, pgBackRest has a backup of the new cluster
 #   4  a re-run is a no-op
 #   5  rollback: SQL_ASCII again, old data, old subscriptions replicating
-#   6  migrate again with repair=latin1 over a LATIN1 value, then cleanup
+#   6  migrate again with repair=latin1 over a LATIN1 value (a new run id;
+#      the rolled-back run's copy is reported), then cleanup of both runs
 #
 # Needs: docker (compose v2), ansible-playbook, the postgres-spock image
 # (POSTGRES_SPOCK_IMAGE, else the fleet pin). KEEP=1 leaves everything up.
@@ -115,7 +121,7 @@ pem-joiner ansible_host=127.0.0.1 site_name=utf8-joiner signal_uri=pemtest-joine
 utf8_founder_hosts
 utf8_joiner_hosts
 EOF
-cp -r "$HERE/group_vars" "$WORK/group_vars"
+rm -rf "$WORK/group_vars"; cp -r "$HERE/group_vars" "$WORK/group_vars"
 
 for n in "${NODES[@]}"; do dc "$n" up -d postgres-a >/dev/null; done
 for n in "${NODES[@]}"; do wait_pg "$n"; done
@@ -143,6 +149,13 @@ docker restart pemtest-founder-pg >/dev/null; wait_pg founder
 docker exec -u postgres pemtest-founder-pg pgbackrest --stanza=utf8-founder-netbird stanza-create >/dev/null
 docker exec -u postgres pemtest-founder-pg pgbackrest --stanza=utf8-founder-netbird backup --type=full >/dev/null
 
+say "fixture: a parent row of each node's own, written before Spock is wired"
+for n in "${NODES[@]}"; do
+  pg "$n" netbird -c "CREATE TABLE utf8_net (nid text PRIMARY KEY, note text NOT NULL);
+                      CREATE TABLE utf8_client (id text PRIMARY KEY, nid text NOT NULL REFERENCES utf8_net (nid));
+                      INSERT INTO utf8_net VALUES ('shared', 'the same on every node'), ('nid-$n', '$n network');"
+done
+
 say "fixture: Spock wiring with the real role (founder, then joiner)"
 for h in pem-founder pem-joiner; do
   ( cd "$ANS" && "$AP" -i "$WORK/inventory.ini" spock-mesh-wire.yml -l "$h" ) > "$WORK/wire-$h.log" 2>&1 \
@@ -156,6 +169,17 @@ for i in $(seq 1 30); do
   [[ $i == 30 ]] && fail "fixture replication: founder $a joiner $b rows"
 done
 
+say "fixture: a child row on each node referencing its own parent, replicated"
+pg founder netbird -c "INSERT INTO utf8_client VALUES ('c-founder', 'nid-founder');"
+pg joiner netbird -c "INSERT INTO utf8_client VALUES ('c-joiner', 'nid-joiner');"
+for i in $(seq 1 30); do
+  a=$(pg founder netbird -c "SELECT count(*) FROM utf8_client"); b=$(pg joiner netbird -c "SELECT count(*) FROM utf8_client")
+  [[ "$a" == 2 && "$b" == 2 ]] && break; sleep 1
+  [[ $i == 30 ]] && fail "fixture: child rows did not replicate (founder $a joiner $b)"
+done
+[[ "$(pg joiner netbird -c "SELECT count(*) FROM utf8_client c WHERE NOT EXISTS (SELECT 1 FROM utf8_net p WHERE p.nid = c.nid)")" == 1 ]] \
+  || fail "fixture: the joiner should hold one orphan child row"
+
 say "fixture: writers (in the project, and one outside any project)"
 for n in "${NODES[@]}"; do
   dc "$n" up -d writer volreader >/dev/null
@@ -166,6 +190,34 @@ sleep 4
 shared_before=$(pg founder netbird -c "SELECT string_agg(id || '=' || encode(convert_to(v, 'SQL_ASCII'), 'hex'), ',' ORDER BY id) FROM utf8_shared")
 
 # ---------------------------------------------------------------- case 1
+say "case 0: divergent parent + orphan child: phase 1 refuses; reconcile fixes it"
+if run_play "$WORK/case0a.log"; then fail "case 0: the run passed over an orphan"; fi
+grep -q 'utf8_client -> utf8_net (utf8_client_nid_fkey): 1 row(s) without a parent' "$WORK/case0a.log" \
+  || { grep -E 'msg|FAILED' "$WORK/case0a.log" | tail -5; fail "case 0: the refusal does not name the orphan"; }
+grep -q 'postgres_encoding_migrate_reconcile_tables=netbird.public.utf8_net' "$WORK/case0a.log" || fail "case 0: the refusal does not name the reconcile"
+[[ ! -f "$WORK/state-founder/current-run" ]] || fail "case 0: a run was opened"
+if run_play "$WORK/case0b.log" -e postgres_encoding_migrate_accept_divergence=true; then fail "case 0: accept_divergence passed an orphan"; fi
+grep -q 'does not change that' "$WORK/case0b.log" || fail "case 0: accept_divergence refusal does not say why"
+exc_before=$(pg founder netbird -c "SELECT count(*) FROM spock.exception_log")$(pg joiner netbird -c "SELECT count(*) FROM spock.exception_log")
+# A key with different content on the two nodes is a conflict, not a missing row.
+pg founder netbird -c "BEGIN; SELECT spock.repair_mode(true); UPDATE utf8_net SET note = 'changed here only' WHERE nid = 'shared'; SELECT spock.repair_mode(false); COMMIT;" >/dev/null
+if run_play "$WORK/case0c.log" -e postgres_encoding_migrate_action=reconcile -e postgres_encoding_migrate_reconcile_tables=netbird.public.utf8_net; then
+  fail "case 0: reconcile copied over a conflicting key"; fi
+grep -q 'differs between members' "$WORK/case0c.log" || fail "case 0: reconcile refusal does not name the conflict"
+[[ "$(pg joiner netbird -c "SELECT count(*) FROM utf8_net")" == 2 ]] || fail "case 0: a refused reconcile wrote rows"
+pg founder netbird -c "BEGIN; SELECT spock.repair_mode(true); UPDATE utf8_net SET note = 'the same on every node' WHERE nid = 'shared'; SELECT spock.repair_mode(false); COMMIT;" >/dev/null
+run_play "$WORK/case0d.log" -e postgres_encoding_migrate_action=reconcile -e postgres_encoding_migrate_reconcile_tables=netbird.public.utf8_net \
+  || { tail -40 "$WORK/case0d.log"; fail "case 0: reconcile"; }
+sleep 3
+for n in "${NODES[@]}"; do
+  [[ "$(pg "$n" netbird -c "SELECT string_agg(nid, ',' ORDER BY nid) FROM utf8_net")" == 'nid-founder,nid-joiner,shared' ]] || fail "case 0: $n utf8_net after reconcile"
+done
+[[ "$(pg founder netbird -c "SELECT count(*) FROM spock.exception_log")$(pg joiner netbird -c "SELECT count(*) FROM spock.exception_log")" == "$exc_before" ]] \
+  || fail "case 0: the copied rows echoed through Spock (exception_log grew)"
+grep -q 'Named tables still different: none' "$WORK/case0d.log" || fail "case 0: reconcile did not report the table equal"
+grep -q 'Foreign-key orphans: none' "$WORK/case0d.log" || fail "case 0: reconcile did not report the orphans gone"
+echo "  refused with names (accept_divergence too), conflict refused, missing rows copied without echo, orphans gone"
+
 say "case 1: a value that is not UTF-8 stops phase 1 and names its table"
 pg founder netbird -c "INSERT INTO utf8_local (v) VALUES (convert_from('\\x6574e9'::bytea, 'SQL_ASCII'));"
 if run_play "$WORK/case1.log"; then fail "case 1: the run passed over an invalid byte"; fi
@@ -271,8 +323,18 @@ for n in "${NODES[@]}"; do
   ! ls "$WORK/state-$n/$RUN2/"db-*.dump >/dev/null 2>&1 || fail "case 6: $n dumps still there"
 done
 [[ ! -d "$WORK/founder/pgbackrest-repo.pre-utf8-$RUN2" ]] || fail "case 6: old repository still there"
+grep -q "pemtest-founder_pgdata-a-pre-utf8-$RUN" "$WORK/case6.log" || fail "case 6: preflight did not report the rolled-back run's copy"
+docker volume inspect "pemtest-founder_pgdata-a-pre-utf8-$RUN" >/dev/null || fail "case 6: the rolled-back run's copy is already gone"
+run_play "$WORK/case6d.log" -e postgres_encoding_migrate_action=cleanup -e postgres_encoding_migrate_confirm="$RUN" \
+  || { tail -40 "$WORK/case6d.log"; fail "case 6: cleanup of the rolled-back run"; }
+for n in "${NODES[@]}"; do
+  ! docker volume inspect "pemtest-${n}_pgdata-a-pre-utf8-$RUN" >/dev/null 2>&1 || fail "case 6: $n rolled-back copy still there"
+  [[ -f "$WORK/state-$n/$RUN/cleaned" ]] || fail "case 6: $n rolled-back run not marked cleaned"
+done
+[[ ! -d "$WORK/founder/pgbackrest-repo.utf8-$RUN" ]] || fail "case 6: the rolled-back run's set-aside repository is still there"
+[[ "$(pg founder netbird -c "SELECT pg_encoding_to_char(encoding) FROM pg_database WHERE datname='netbird'")" == UTF8 ]] || fail "case 6: cleanup touched the live cluster"
 run_play "$WORK/status.log" -e postgres_encoding_migrate_action=status || fail "status"
-grep -q 'phases done' "$WORK/status.log" || fail "status output"
-echo "  repaired eté, valid text untouched, cleanup removed the kept volume, repository and dumps"
+grep -q "run $RUN: cleaned" "$WORK/status.log" || fail "status output"
+echo "  repaired eté, valid text untouched; new run id after the rollback; cleanup of both runs removed their volumes, repositories and dumps"
 
 say "PASS (logs in $WORK)"

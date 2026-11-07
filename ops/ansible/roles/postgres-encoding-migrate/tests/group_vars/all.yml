@@ -12,7 +12,7 @@ spock_mesh_databases:
     replication_sets: [utf8_test]
     repset:
       name: utf8_test
-      tables: [utf8_shared]
+      tables: [utf8_shared, utf8_net, utf8_client]
 # The fixture has no NetBird tables for the guards to attach to.
 spock_mesh_revocation_guard: false
 spock_mesh_hub_authority: false

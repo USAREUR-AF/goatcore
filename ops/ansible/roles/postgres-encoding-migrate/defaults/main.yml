@@ -5,7 +5,8 @@
 # docs/operations/postgres-utf8-migration.md. Every value here can be set
 # per goatnet in group_vars or per run with -e.
 
-# What the run does: migrate (phases 1-9, resumable), rollback, cleanup, status.
+# What the run does: migrate (phases 1-9, resumable), reconcile, rollback,
+# cleanup, status.
 postgres_encoding_migrate_action: migrate
 
 # Stop after this phase number (1-9). Unset runs every phase still owed.
@@ -27,6 +28,10 @@ postgres_encoding_migrate_repair: none
 # synchronize_data false, so a difference would carry on after the
 # migration. true lets a run continue past a listed difference.
 postgres_encoding_migrate_accept_divergence: false
+
+# action=reconcile: the tables to reconcile, <db>.<schema>.<table>,
+# comma-separated (phase 1 prints the list when it refuses).
+postgres_encoding_migrate_reconcile_tables: ""
 
 # Rollback and cleanup act only when this equals the run id they act on
 # (`status` prints it).

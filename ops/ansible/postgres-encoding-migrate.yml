@@ -17,6 +17,9 @@
 #   -e postgres_encoding_migrate_action=status    what the open run has done
 #   -e postgres_encoding_migrate_action=rollback -e postgres_encoding_migrate_confirm=<run id>
 #   -e postgres_encoding_migrate_action=cleanup  -e postgres_encoding_migrate_confirm=<run id>
+#      (a completed run, or a rolled-back one: removes what that run kept)
+#   -e postgres_encoding_migrate_action=reconcile -e postgres_encoding_migrate_reconcile_tables=<db>.<schema>.<table>,...
+#      (copy rows one member holds and another lacks; phase 1 prints the list)
 #
 # migrate_groups is every group holding the goatnet's Spock members and their
 # standbys (comma-separated). Not a site's obs group: it runs no goatnet
@@ -46,11 +49,11 @@
           - migrate_groups is defined
           - migrate_groups is string
           - migrate_groups | length > 0
-          - (postgres_encoding_migrate_action | default('migrate')) in ['migrate', 'rollback', 'cleanup', 'status']
+          - (postgres_encoding_migrate_action | default('migrate')) in ['migrate', 'reconcile', 'rollback', 'cleanup', 'status']
         fail_msg: >-
           Pass -e migrate_groups=<group>[,<group>...] (the goatnet's Spock
           member groups, comma-separated) and optionally
-          -e postgres_encoding_migrate_action=migrate|rollback|cleanup|status.
+          -e postgres_encoding_migrate_action=migrate|reconcile|rollback|cleanup|status.
         quiet: true
 
     - name: "inputs | every listed group has hosts in this inventory"
@@ -240,8 +243,8 @@
       vars: {pem_phase: "9.2", pem_name: finish, pem_step: restart}
       when: (postgres_encoding_migrate_action | default('migrate')) == 'migrate'
 
-# ---------------------------------------------------------------- rollback / cleanup
-- name: "postgres-encoding-migrate | rollback and cleanup: the confirmed run"
+# ---------------------------------------------------------------- reconcile
+- name: "postgres-encoding-migrate | reconcile: no run has stopped the writers"
   hosts: "{{ migrate_groups | default('migrate_groups_unset') }}"
   gather_facts: false
   become: "{{ postgres_encoding_migrate_become | default(true) }}"
@@ -249,7 +252,66 @@
   tasks:
     - name: context
       ansible.builtin.include_role: {name: postgres-encoding-migrate, tasks_from: context.yml}
-      when: (postgres_encoding_migrate_action | default('migrate')) in ['rollback', 'cleanup']
+      when: (postgres_encoding_migrate_action | default('migrate')) == 'reconcile'
+
+    - name: "reconcile | an open run past phase 1"
+      ansible.builtin.stat:
+        path: "{{ _pem_rundir }}/phase-2.done"
+      register: _pem_rec_p2
+      when:
+        - (postgres_encoding_migrate_action | default('migrate')) == 'reconcile'
+        - _pem_rundir | length > 0
+
+    - name: "reconcile | refuse inside a run that has stopped the writers"
+      ansible.builtin.assert:
+        that:
+          - not (_pem_rec_p2.stat.exists | default(false))
+        fail_msg: >-
+          Run {{ _pem_run }} on {{ inventory_hostname }} is past phase 1. Reconcile
+          runs before a migration (or after a rollback), against the live clusters.
+        quiet: true
+      when: (postgres_encoding_migrate_action | default('migrate')) == 'reconcile'
+
+- name: "postgres-encoding-migrate | reconcile: read and plan"
+  hosts: "{{ migrate_groups | default('migrate_groups_unset') }}"
+  gather_facts: false
+  become: "{{ postgres_encoding_migrate_become | default(true) }}"
+  any_errors_fatal: true
+  tasks:
+    - ansible.builtin.include_role: {name: postgres-encoding-migrate, tasks_from: reconcile.yml}
+      vars: {pem_step: fetch}
+      when: (postgres_encoding_migrate_action | default('migrate')) == 'reconcile'
+
+- name: "postgres-encoding-migrate | reconcile: copy"
+  hosts: "{{ migrate_groups | default('migrate_groups_unset') }}"
+  gather_facts: false
+  become: "{{ postgres_encoding_migrate_become | default(true) }}"
+  any_errors_fatal: true
+  tasks:
+    - ansible.builtin.include_role: {name: postgres-encoding-migrate, tasks_from: reconcile.yml}
+      vars: {pem_step: apply}
+      when: (postgres_encoding_migrate_action | default('migrate')) == 'reconcile'
+
+- name: "postgres-encoding-migrate | reconcile: check again"
+  hosts: "{{ migrate_groups | default('migrate_groups_unset') }}"
+  gather_facts: false
+  become: "{{ postgres_encoding_migrate_become | default(true) }}"
+  any_errors_fatal: true
+  tasks:
+    - ansible.builtin.include_role: {name: postgres-encoding-migrate, tasks_from: reconcile.yml}
+      vars: {pem_step: verify}
+      when: (postgres_encoding_migrate_action | default('migrate')) == 'reconcile'
+
+# ---------------------------------------------------------------- rollback / cleanup
+- name: "postgres-encoding-migrate | rollback: the confirmed run"
+  hosts: "{{ migrate_groups | default('migrate_groups_unset') }}"
+  gather_facts: false
+  become: "{{ postgres_encoding_migrate_become | default(true) }}"
+  any_errors_fatal: true
+  tasks:
+    - name: context
+      ansible.builtin.include_role: {name: postgres-encoding-migrate, tasks_from: context.yml}
+      when: (postgres_encoding_migrate_action | default('migrate')) == 'rollback'
 
     - name: "confirm | the run named is the run open on every member"
       ansible.builtin.assert:
@@ -263,7 +325,7 @@
           -e postgres_encoding_migrate_confirm=<that run id>. Open runs:
           {% for h in ansible_play_hosts %}{{ h }}={{ hostvars[h]._pem_run or '(none)' }} {% endfor %}
         quiet: true
-      when: (postgres_encoding_migrate_action | default('migrate')) in ['rollback', 'cleanup']
+      when: (postgres_encoding_migrate_action | default('migrate')) == 'rollback'
 
 - name: "postgres-encoding-migrate | rollback: stop"
   hosts: "{{ migrate_groups | default('migrate_groups_unset') }}"

@@ -1,0 +1,17 @@
+---
+# One more key-set sample, taken only while a difference remains; a table
+# stays on the list only if it differs in every sample.
+
+- name: "integrity gate | wait before sample {{ _pem_round }}"
+  ansible.builtin.pause:
+    seconds: 15
+  when: _pem_kd_tables | length > 0
+
+- name: "integrity gate | sample {{ _pem_round }}"
+  ansible.builtin.include_tasks: integrity.yml
+  when: _pem_kd_tables | length > 0
+
+- name: "integrity gate | still different after sample {{ _pem_round }}"
+  ansible.builtin.set_fact:
+    _pem_kd_tables: "{{ _pem_kd_tables | intersect(_pem_keydiff | map(attribute='table') | list) }}"
+  when: _pem_kd_tables | length > 0

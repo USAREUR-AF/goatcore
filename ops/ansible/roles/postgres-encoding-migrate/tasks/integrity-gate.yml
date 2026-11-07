@@ -1,0 +1,87 @@
+---
+# Refuse, with names, what would make phase 5 fail or carry a difference
+# forward. Phase 1 runs it with the writers up, so a key-set difference must
+# hold over three samples 15 s apart to count; phase 3 runs it once, quiesced.
+#
+#   Foreign-key orphans refuse ALWAYS, accept_divergence included: the restore
+#   validates every foreign key, so an orphan stops phase 5 in the middle of
+#   the outage.
+#   Key-set differences refuse unless postgres_encoding_migrate_accept_divergence.
+#
+# Input: pem_key_dbs, pem_gate_rounds (1 or 3).
+
+- name: "integrity gate | sample 1"
+  ansible.builtin.include_tasks: integrity.yml
+
+- name: "integrity gate | tables different in sample 1"
+  ansible.builtin.set_fact:
+    _pem_kd_tables: "{{ _pem_keydiff | map(attribute='table') | list }}"
+
+- name: "integrity gate | later samples (only while a difference remains)"
+  ansible.builtin.include_tasks: integrity-resample.yml
+  loop: "{{ range(2, (pem_gate_rounds | int) + 1) | list }}"
+  loop_control:
+    loop_var: _pem_round
+
+- name: "integrity gate | persistent differences"
+  ansible.builtin.set_fact:
+    _pem_kd_final: "{{ _pem_keydiff | selectattr('table', 'in', _pem_kd_tables) | list }}"
+  run_once: true
+
+- name: "integrity gate | findings"
+  ansible.builtin.set_fact:
+    _pem_orphan_lines: >-
+      {%- set out = [] -%}
+      {%- for h in ansible_play_hosts -%}
+        {%- for o in hostvars[h]._pem_orphans | default([]) -%}
+          {%- set _ = out.append(h ~ ': ' ~ o.db ~ ' ' ~ o.child ~ ' -> ' ~ o.parent ~ ' (' ~ o.constraint ~ '): ' ~ o.rows ~ ' row(s) without a parent') -%}
+        {%- endfor -%}
+      {%- endfor -%}
+      {{ out }}
+    _pem_orphan_parents: >-
+      {%- set out = [] -%}
+      {%- for h in ansible_play_hosts -%}
+        {%- for o in hostvars[h]._pem_orphans | default([]) -%}
+          {%- set _ = out.append(o.db ~ '.' ~ (o.parent if '.' in o.parent else 'public.' ~ o.parent)) -%}
+        {%- endfor -%}
+      {%- endfor -%}
+      {{ out | unique | list }}
+  run_once: true
+
+- name: "integrity gate | refuse foreign-key orphans"
+  ansible.builtin.assert:
+    that:
+      - _pem_orphan_lines | length == 0
+    fail_msg: >-
+      Rows whose foreign-key parent is absent on the same node:
+      {{ _pem_orphan_lines | join('; ') }}.
+      The restore re-creates and validates every foreign key, so phase 5 would
+      fail on these with the goatnet down; postgres_encoding_migrate_accept_divergence
+      does not change that.
+      {% set rec = _pem_orphan_parents | select('in', _pem_kd_final | map(attribute='table') | list) | list %}
+      {% if rec %}The parent tables {{ rec | join(', ') }} differ between members
+      (rows written on one node before the subscriptions existed). If the
+      missing rows are present on another member and no key holds different
+      content, copy them across (with no run open, or after action=rollback) with
+      -e postgres_encoding_migrate_action=reconcile -e postgres_encoding_migrate_reconcile_tables={{ rec | join(',') }}
+      and run again.{% else %}No member holds the missing parent rows; repair
+      the child rows (delete them, or insert their parents) and run again.{% endif %}
+    quiet: true
+  run_once: true
+
+- name: "integrity gate | refuse replicated tables whose key sets differ"
+  ansible.builtin.assert:
+    that:
+      - _pem_kd_final | length == 0 or (postgres_encoding_migrate_accept_divergence | bool)
+    fail_msg: >-
+      Replicated tables whose rows differ between members:
+      {% for d in _pem_kd_final %}{{ d.table }} [{{ d.detail }}]{{ '; ' if not loop.last }}{% endfor %}.
+      The re-wired subscriptions copy no data (synchronize_data false), so the
+      difference would carry on after the migration. Rows present on one
+      member and absent on another, with no key holding different content, are
+      copied across (with no run open, or after action=rollback) by
+      -e postgres_encoding_migrate_action=reconcile -e postgres_encoding_migrate_reconcile_tables={{ _pem_kd_final | map(attribute='table') | join(',') }};
+      -e postgres_encoding_migrate_accept_divergence=true carries the
+      difference over unchanged (foreign-key orphans still refuse).
+    quiet: true
+  run_once: true

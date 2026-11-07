@@ -178,6 +178,12 @@
           {{ out }}
       run_once: true
 
+    - name: "preflight | integrity: replicated key sets and foreign-key orphans"
+      ansible.builtin.include_tasks: integrity-gate.yml
+      vars:
+        pem_key_dbs: "{{ _pem_spock | map(attribute='db') | list }}"
+        pem_gate_rounds: 3
+
     - name: "preflight | a node with subscriptions is wired again by its group_vars"
       ansible.builtin.assert:
         that:
@@ -293,6 +299,21 @@
           printf '{"pgdata": %s, "vol": "%s", "dir": "%s", "repo": "%s"}\n' "$pg" "$vol" "$dir" "$repo"
       register: _pem_space_raw
       changed_when: false
+
+    - name: "preflight | copies kept by earlier runs on this host"
+      ansible.builtin.command:
+        argv: [docker, volume, ls, -q, --filter, "label=goat.postgres-utf8-migration.of={{ _pem_volume }}"]
+      register: _pem_leftover
+      changed_when: false
+
+    - name: "preflight | earlier runs still hold disk"
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }} keeps {{ _pem_leftover.stdout_lines | join(', ') }} from earlier
+          runs; the space check below counts that space as used.
+          action=cleanup -e postgres_encoding_migrate_confirm=<that run id> frees it
+          (action=status lists the runs).
+      when: _pem_leftover.stdout_lines | length > 0
 
     - name: "preflight | space need per filesystem"
       ansible.builtin.set_fact:

@@ -14,6 +14,7 @@ phases, gates, rollback, cleanup) is
 | `tasks/context.yml` | facts every phase reads: member kind, run, compose project, PGDATA volume |
 | `tasks/phase.yml` | runs one phase unless its marker says done |
 | `tasks/preflight.yml` | 1 |
+| `tasks/integrity.yml`, `tasks/integrity-gate.yml`, `tasks/integrity-resample.yml` | 1 and 3: replicated key sets, foreign-key orphans |
 | `tasks/quiesce.yml` | 2 |
 | `tasks/capture.yml`, `tasks/counts.yml` | 3 |
 | `tasks/snapshot.yml` | 4 |
@@ -22,7 +23,7 @@ phases, gates, rollback, cleanup) is
 | `tasks/pgbackrest.yml` | 7 |
 | `tasks/rewire.yml` | 8 (`spock-mesh-peering`, `ory-narrow-repset`) |
 | `tasks/finish.yml`, `tasks/start-writers.yml` | 9 |
-| `tasks/rollback.yml`, `tasks/cleanup.yml`, `tasks/status.yml` | actions |
+| `tasks/reconcile.yml`, `tasks/rollback.yml`, `tasks/cleanup.yml`, `tasks/status.yml` | actions |
 | `files/pg-utf8-stream.py` | byte scan of a dump; the restore filter (encoding declarations, optional LATIN1 repair) |
 
 Tests: `tests/syntax-check.sh` (CI), `tests/run-test.sh` (Docker, two nodes).
