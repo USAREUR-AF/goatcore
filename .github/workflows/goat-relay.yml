@@ -74,14 +74,12 @@ jobs:
         # gate on `cfg(target_os = "linux")` only run in CI; macOS dev
         # runs exercise the userspace fallback.
         #
-        # `--skip end_to_end_steering_pins_same_src_to_same_socket` —
-        # the CBPF source-IP-affinity steering test needs kernel
-        # CAP_BPF privs the GHA runner doesn't grant. Test passes on
-        # dev workstations with the privilege; CI exercises the other
-        # 25 tests + the clippy gate. Tracked as a watchpoint in the
-        # workflow's comment trail (no F-NNN — environment limitation,
-        # not external-system behavior).
-        run: cargo test -p goat-relay --all-features -- --skip end_to_end_steering_pins_same_src_to_same_socket
+        # The CBPF steering end-to-end test runs here. It used to be
+        # skipped as needing CAP_BPF, but an unprivileged process may
+        # attach a reuseport cBPF program to its own socket; the test was
+        # failing because the program read the wrong offset and steered
+        # every connection to socket 0.
+        run: cargo test -p goat-relay --all-features
 
       - name: cargo clippy (deny warnings)
         run: cargo clippy -p goat-relay --all-targets -- -D warnings
