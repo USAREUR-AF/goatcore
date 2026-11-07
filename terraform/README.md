@@ -36,3 +36,23 @@ the operator does not have to be on the mesh to converge it.
 `ops/ansible/inventory/generate-relays.sh` reads the root's `relays` output and
 writes the relay inventory, so `goatbuilder standup` finds the relays with no
 further wiring. See `docs/operations/goatnet-standup.md`.
+
+## Resource descriptions are inputs
+
+`modules/goat-relay` and `modules/relay-health-host` take a `descriptions` map.
+A security-group description cannot be changed in place, so a root whose live
+goatnet was created with other text passes that text and plans no change:
+
+```hcl
+module "relay_a" {
+  source = "../terraform/modules/goat-relay"
+  # ...
+  descriptions = { icmp = "<the live rule's description>" }
+}
+```
+
+Keys: `goat-relay` — `security_group`, `ssh`, `websocket`, `quic`, `wg_cp0`,
+`rathole_ingress`, `rathole_control`, `coturn_stun_udp`, `coturn_stun_tcp`,
+`coturn_turn`, `ab_websocket`, `ab_quic`, `icmp`, `egress`, `ssh_key_secret`,
+`rathole_secret`; `relay-health-host` — `security_group`, `public_443`,
+`public_80`. A key not given keeps the module default.

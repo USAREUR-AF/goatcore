@@ -165,10 +165,10 @@ federation, in this order. Each step depends on the one before.
 | Federation gate | `ops/scripts/signal-federation-check.py <joiner-site> --peer <founder-site> --resolve --require-env` | Refuses a half-configured federation: one side on, a proxy with no peer address, an ingress without a token, crossed names, a missing relay pin or DNS record, the token not in the environment. Off with a declared reason passes, and the steps below are skipped |
 | Federation, joiner | `signal-federation-transport.yml -e federation_site=<joiner-site>` | The token and the dual-path proxy; proves the running signal enforces the token |
 | Federation, founder | the same with `-e federation_site=<founder-site>` | The founder's half, in the same run |
-| Routers | `traefik-acme.yml`, joiner group then founder group | Each node's federation hostname router and certificate |
+| Routers | `traefik-acme.yml`, joiner group then founder group | Each node's federation hostname router, and its own certificate served for that name (a stale DNS-01 record is cleared and Traefik restarted once before the step fails) |
 | Tunnel | the founder's `<founder>-rathole-client.yml` (else `site-rathole-client.yml`) on the joiner group, with `inventory/hosts-<founder>.ini` | The joiner's tunnel to every founder relay |
-| Relay pin | `relay-ingress-add-site.yml` with the founder's relay inventory and alias file | The joiner's backend and its federation-hostname pin on every relay, post-checked |
-| Federation proof | `signal-federation-verify.yml -e federation_site=<joiner-site> -e federation_peer_site=<founder-site>` | Transport up from both nodes; an offer forwarded and delivered in at least one direction |
+| Relay pin | `relay-ingress-add-site.yml` with the founder's relay inventory and alias file | The joiner's backend and its federation-hostname pin on every relay; every dispatcher backend UP, a DOWN one's tunnel client restarted once before the step fails |
+| Federation proof | `signal-federation-verify.yml -e federation_site=<joiner-site> -e federation_peer_site=<founder-site>` | Transport up from both nodes; an offer forwarded and delivered in at least one direction; a probe that could not run is named and fails the step |
 
 `site_id` reaches every pass as a play variable, set by the wrapper. Never pass
 `-e site_id=...`: an extra variable sets the site on every host in the

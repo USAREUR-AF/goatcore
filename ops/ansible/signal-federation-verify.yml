@@ -68,9 +68,21 @@
     _delivered_sum: >-
       curl -sf {{ _metrics }} | awk '/^signal_server_forward_sent_total[{]/ && /outcome="delivered"/ {s+=$NF} END {printf "%d\n", s}'
   tasks:
-    - name: Probe image (the canary role's pin)
+    # The canary role's defaults hold the probe pin. Read them into their own
+    # namespace so a goatnet's group_vars override of
+    # signal_federation_probe_image still wins (include_vars straight into the
+    # host's vars would outrank group_vars and silently undo the override).
+    - name: Probe image | read the canary role's pin
       ansible.builtin.include_vars:
         file: "{{ playbook_dir }}/roles/signal-federation-canary/defaults/main.yml"
+        name: _sigfed_canary_defaults
+
+    - name: Probe image | the goatnet's override, else the canary role's pin
+      ansible.builtin.set_fact:
+        _sigfed_probe_image: >-
+          {{ signal_federation_probe_image
+             | default(_sigfed_canary_defaults.signal_federation_probe_image | default(''), true)
+             | string | trim }}
 
     - name: Refuse a node that does not declare federation
       ansible.builtin.include_tasks: tasks/signal-federation-assert.yml
@@ -127,13 +139,38 @@
           - --rm
           - --network
           - host
-          - "{{ signal_federation_probe_image }}"
+          - "{{ _sigfed_probe_image }}"
           - --mode=validation
           - --target=localhost:10000
           - "--remote-key={{ hostvars[_peer].sigfed_pubkey }}"
       register: _probe
       changed_when: false
       failed_when: false
+      when: _sigfed_probe_image | length > 0
+
+    # A probe that did not run, could not pull its image, or exited non-zero
+    # is a FAILED direction with its cause named — never an empty outcome.
+    # Exit codes (ops/signal-federation-probe/main.go, --mode=validation):
+    # 0 delivered, 1 any other offer outcome, 2 bad arguments; docker run
+    # itself exits 125 when it cannot create the container (pull refused,
+    # manifest unknown) and 126/127 when the entrypoint cannot run.
+    - name: Delivery | name the probe's outcome
+      ansible.builtin.set_fact:
+        sigfed_probe_error: >-
+          {%- set out = ((_probe.stdout | default('')) ~ ' ' ~ (_probe.stderr | default(''))) | trim -%}
+          {%- set tail = (out | regex_replace('\\s+', ' '))[-300:] -%}
+          {%- if _sigfed_probe_image | length == 0 -%}
+          probe image undefined: signal_federation_probe_image is unset and the canary role's defaults carry no pin
+          {%- elif _probe.rc | default(0) == 0 -%}
+          {%- elif _probe.rc == 125 and out is search('manifest unknown|not found|pull access denied|denied|unauthorized|toomanyrequests|no such host|i/o timeout', ignorecase=true) -%}
+          image pull failed for {{ _sigfed_probe_image }} (docker exit 125): {{ tail }}
+          {%- elif _probe.rc in [125, 126, 127] -%}
+          docker could not run {{ _sigfed_probe_image }} (exit {{ _probe.rc }}): {{ tail | default('no output', true) }}
+          {%- elif _probe.rc == 1 -%}
+          probe ran and the offer was not delivered (exit 1): {{ tail | default('no output', true) }}
+          {%- else -%}
+          probe exited {{ _probe.rc }}: {{ tail | default('no output', true) }}
+          {%- endif -%}
 
     - name: Delivery | forwards delivered after the probe
       ansible.builtin.shell: "{{ _delivered_sum }}"
@@ -151,8 +188,8 @@
         sigfed_direction: >-
           {{ inventory_hostname }} -> {{ _peer }}:
           {{ 'PROVEN (forward delivered)' if (_after.stdout | int) > (_before.stdout | int)
-             else ('UNPROVEN: the probe was delivered without a forward — ' ~ _peer ~ "'s key is homed on this node's signal"
-                   if _probe.rc == 0 else 'FAILED: probe outcome ' ~ (_probe.stdout | default('') | trim)) }};
+             else ('FAILED: ' ~ sigfed_probe_error if (sigfed_probe_error | default('', true) | length) > 0
+                   else 'UNPROVEN: the probe was delivered without a forward — ' ~ _peer ~ "'s key is homed on this node's signal") }};
           proxy+signal {{ 'running' if _run.rc == 0 else 'NOT running' }},
           token {{ 'enforced' if _auth.rc == 0 else 'NOT enforced' }},
           mesh leg {{ 'up' if _mesh.rc == 0 else 'DOWN' }},
@@ -178,9 +215,13 @@
         that:
           - _nodes | map('extract', hostvars, 'sigfed_transport_ok') | map('bool') | select | list | length == 2
           - _nodes | map('extract', hostvars, 'sigfed_proven') | map('bool') | select | list | length >= 1
+          # A probe error ("" or None when the probe was clean) fails the
+          # verdict even when the other direction proved delivery.
+          - _nodes | map('extract', hostvars, 'sigfed_probe_error') | map('default', 'not reached') | select | list | length == 0
         fail_msg: >-
           signal federation {{ federation_site }} <-> {{ federation_peer_site }} is
-          not proven. Read the two direction lines above: a DOWN leg names the
+          not proven. Read the two direction lines above: a FAILED probe names
+          its cause (image pull, undefined image, exit code), a DOWN leg names the
           path (mesh: the peer's mesh_ip_a:10000; public: relay pin, tunnel,
           the peer's Traefik federation router and certificate).
         success_msg: >-

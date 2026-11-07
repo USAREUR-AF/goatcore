@@ -75,3 +75,20 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+variable "descriptions" {
+  description = <<-EOT
+    Resource description overrides, by key: security_group, public_443,
+    public_80. A key not given keeps the module default (locals.descriptions
+    in main.tf). Pass a live goatnet's existing text so a plan shows no
+    change: a security-group description cannot be edited in place, so a
+    different one replaces the group.
+  EOT
+  type        = map(string)
+  default     = {}
+
+  validation {
+    condition     = length(setsubtract(keys(var.descriptions), ["security_group", "public_443", "public_80"])) == 0
+    error_message = "descriptions has an unknown key: use security_group, public_443 or public_80."
+  }
+}

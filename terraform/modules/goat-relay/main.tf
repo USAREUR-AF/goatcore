@@ -53,6 +53,31 @@ locals {
   dns_name      = var.relay_name != "" ? "${var.relay_dns_prefix}-${var.relay_name}" : var.relay_dns_prefix
 }
 
+# Resource descriptions. Every one is an input: a security-group description
+# is immutable (changing it replaces the group) and a rule's description is
+# part of the rule, so a root whose live goatnet carries other text passes it
+# in `descriptions` and plans no change. Keys not passed keep these defaults.
+locals {
+  descriptions = merge({
+    security_group  = "goat-relay (Block 33): TCP+UDP 33073 data plane only"
+    ssh             = "SSH (restricted)"
+    websocket       = "goat-relay WebSocket data plane"
+    quic            = "goat-relay QUIC data plane"
+    wg_cp0          = "wg-cp0 silent control-plane WireGuard listener (Block 22)"
+    rathole_ingress = "rathole: public Netbird mgmt-API / signal enrollment (TCP 443)"
+    rathole_control = "rathole control channel (TCP 2333)"
+    coturn_stun_udp = "coturn STUN (UDP 3478)"
+    coturn_stun_tcp = "coturn STUN (TCP 3478 fallback)"
+    coturn_turn     = "coturn TURN relay media range (UDP 49152-65535)"
+    ab_websocket    = "A/B stock-relay experiment: WebSocket data plane (temporary)"
+    ab_quic         = "A/B stock-relay experiment: QUIC data plane (temporary, F-021)"
+    icmp            = "ICMP ping (latency benchmarks)"
+    egress          = "All outbound"
+    ssh_key_secret  = "SSH private key for ${local.resource_name}"
+    rathole_secret  = "rathole relay credentials for ${local.resource_name} (token + public key)"
+  }, var.descriptions)
+}
+
 # -- VPC (created only when vpc_id is not provided) ---------------------------
 
 resource "aws_vpc" "relay" {
@@ -128,7 +153,7 @@ resource "random_id" "secret_suffix" {
 
 resource "aws_secretsmanager_secret" "ssh_key" {
   name        = "${local.resource_name}-ssh-${random_id.secret_suffix.hex}"
-  description = "SSH private key for ${local.resource_name}"
+  description = local.descriptions.ssh_key_secret
   tags        = { Service = var.service_name }
 }
 
@@ -146,7 +171,7 @@ resource "aws_secretsmanager_secret_version" "ssh_key" {
 resource "aws_secretsmanager_secret" "rathole_credentials" {
   count       = var.rathole_ingress_enabled ? 1 : 0
   name        = "${local.resource_name}-rathole-${random_id.secret_suffix.hex}"
-  description = "rathole relay credentials for ${local.resource_name} (token + public key)"
+  description = local.descriptions.rathole_secret
   tags        = { Service = var.service_name }
 }
 
@@ -181,7 +206,7 @@ resource "aws_iam_instance_profile" "ec2" {
 
 resource "aws_security_group" "main" {
   name        = local.resource_name
-  description = "goat-relay (Block 33): TCP+UDP 33073 data plane only"
+  description = local.descriptions.security_group
   vpc_id      = local.vpc_id
 
   # SSH: no public access by default. Use SSM Session Manager for shell
@@ -193,7 +218,7 @@ resource "aws_security_group" "main" {
       to_port     = 22
       protocol    = "tcp"
       cidr_blocks = var.ssh_cidr_blocks
-      description = "SSH (restricted)"
+      description = local.descriptions.ssh
     }
   }
 
@@ -207,7 +232,7 @@ resource "aws_security_group" "main" {
     to_port     = 33073
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
-    description = "goat-relay WebSocket data plane"
+    description = local.descriptions.websocket
   }
 
   ingress {
@@ -215,7 +240,7 @@ resource "aws_security_group" "main" {
     to_port     = 33073
     protocol    = "udp"
     cidr_blocks = ["0.0.0.0/0"]
-    description = "goat-relay QUIC data plane"
+    description = local.descriptions.quic
   }
 
   # Block 22 silent control plane (ADR 0313). Opt-in per terraform-prod
@@ -231,7 +256,7 @@ resource "aws_security_group" "main" {
       to_port     = var.wg_cp0_port
       protocol    = "udp"
       cidr_blocks = ["0.0.0.0/0"]
-      description = "wg-cp0 silent control-plane WireGuard listener (Block 22)"
+      description = local.descriptions.wg_cp0
     }
   }
 
@@ -251,7 +276,7 @@ resource "aws_security_group" "main" {
       to_port     = 443
       protocol    = "tcp"
       cidr_blocks = ["0.0.0.0/0"]
-      description = "rathole: public Netbird mgmt-API / signal enrollment (TCP 443)"
+      description = local.descriptions.rathole_ingress
     }
   }
 
@@ -262,7 +287,7 @@ resource "aws_security_group" "main" {
       to_port     = 2333
       protocol    = "tcp"
       cidr_blocks = var.rathole_cidr_blocks
-      description = "rathole control channel (TCP 2333)"
+      description = local.descriptions.rathole_control
     }
   }
 
@@ -278,7 +303,7 @@ resource "aws_security_group" "main" {
       to_port     = 3478
       protocol    = "udp"
       cidr_blocks = ["0.0.0.0/0"]
-      description = "coturn STUN (UDP 3478)"
+      description = local.descriptions.coturn_stun_udp
     }
   }
 
@@ -289,7 +314,7 @@ resource "aws_security_group" "main" {
       to_port     = 3478
       protocol    = "tcp"
       cidr_blocks = ["0.0.0.0/0"]
-      description = "coturn STUN (TCP 3478 fallback)"
+      description = local.descriptions.coturn_stun_tcp
     }
   }
 
@@ -300,7 +325,7 @@ resource "aws_security_group" "main" {
       to_port     = 65535
       protocol    = "udp"
       cidr_blocks = ["0.0.0.0/0"]
-      description = "coturn TURN relay media range (UDP 49152-65535)"
+      description = local.descriptions.coturn_turn
     }
   }
 
@@ -327,7 +352,7 @@ resource "aws_security_group" "main" {
       to_port     = var.ab_stock_relay_port
       protocol    = "tcp"
       cidr_blocks = ["0.0.0.0/0"]
-      description = "A/B stock-relay experiment: WebSocket data plane (temporary)"
+      description = local.descriptions.ab_websocket
     }
   }
 
@@ -338,7 +363,7 @@ resource "aws_security_group" "main" {
       to_port     = var.ab_stock_relay_port
       protocol    = "udp"
       cidr_blocks = ["0.0.0.0/0"]
-      description = "A/B stock-relay experiment: QUIC data plane (temporary, F-021)"
+      description = local.descriptions.ab_quic
     }
   }
 
@@ -347,7 +372,7 @@ resource "aws_security_group" "main" {
     to_port     = -1
     protocol    = "icmp"
     cidr_blocks = ["0.0.0.0/0"]
-    description = "ICMP ping (Satlink PoP benchmarks)"
+    description = local.descriptions.icmp
   }
 
   egress {
@@ -355,7 +380,7 @@ resource "aws_security_group" "main" {
     to_port     = 0
     protocol    = "-1"
     cidr_blocks = ["0.0.0.0/0"]
-    description = "All outbound"
+    description = local.descriptions.egress
   }
 
   tags = { Service = var.service_name }

@@ -896,7 +896,7 @@ fi
 #       <founder>-rathole-client.yml -e rathole_client_target=<site>_hosts
 if [ "$JOINER" = 1 ] && [ "$PROFILE" = internet ]; then
 step 7 A "[joiner] wire $SITE into the founder (${JOIN_FOUNDER_SITE:-?}) relay ingress + re-render" \
-  "cd '$REPO/ops/ansible' && { [ -n '$JOIN_FOUNDER_SITE' ] || { echo 'joiner: join_founder_site not set in group_vars/$GROUP/vars.yml'; exit 1; }; } && { ls inventory/hosts-$JOIN_FOUNDER_SITE.ini >/dev/null 2>&1 || { echo 'founder relay inventory inventory/hosts-$JOIN_FOUNDER_SITE.ini missing — generate it first: inventory/generate-relays.sh $JOIN_FOUNDER_SITE terraform-$JOIN_FOUNDER_SITE'; exit 1; }; } && $ANSIBLE_PRE -i inventory/hosts-$JOIN_FOUNDER_SITE.ini -i inventory/$JOIN_FOUNDER_SITE-goat-relay-alias.ini relay-ingress-add-site.yml -e target=goat_relay_hosts -e founder_site=$JOIN_FOUNDER_SITE -e join_site=$SITE"
+  "cd '$REPO/ops/ansible' && { [ -n '$JOIN_FOUNDER_SITE' ] || { echo 'joiner: join_founder_site not set in group_vars/$GROUP/vars.yml'; exit 1; }; } && { ls inventory/hosts-$JOIN_FOUNDER_SITE.ini >/dev/null 2>&1 || { echo 'founder relay inventory inventory/hosts-$JOIN_FOUNDER_SITE.ini missing — generate it first: inventory/generate-relays.sh $JOIN_FOUNDER_SITE terraform-$JOIN_FOUNDER_SITE'; exit 1; }; } && $ANSIBLE_PRE -i inventory/hosts-$JOIN_FOUNDER_SITE.ini -i inventory/$JOIN_FOUNDER_SITE-goat-relay-alias.ini ${INV[*]} relay-ingress-add-site.yml -e target=goat_relay_hosts -e founder_site=$JOIN_FOUNDER_SITE -e join_site=$SITE"
 fi
 
 # Phase 8. [internet] Mesh-enroll the hosts onto their own goatnet, scripted

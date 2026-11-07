@@ -109,6 +109,17 @@
     # reaches the host only through compose env interpolation, never as
     # plaintext substituted into a rendered file.
     cf_api_token: "{{ cloudflare_api_token | default('', true) }}"
+    # The certificate this host's Traefik serves for SNI {{ item }}: exit 0
+    # when it is not Traefik's default and covers the name; else the reason.
+    _served_cert_check: |
+      set -o pipefail
+      pem=$(timeout 10 openssl s_client -connect 127.0.0.1:{{ traefik_acme_served_check_port | default(443) }} -servername '{{ item }}' </dev/null 2>/dev/null | openssl x509 2>/dev/null) \
+        || { echo "no certificate served for {{ item }}"; exit 1; }
+      iss=$(printf '%s\n' "$pem" | openssl x509 -noout -issuer)
+      case "$iss" in *"TRAEFIK DEFAULT"*) echo "TRAEFIK DEFAULT CERT for {{ item }}"; exit 1;; esac
+      printf '%s\n' "$pem" | openssl x509 -noout -checkhost '{{ item }}' | grep -q 'does match' \
+        || { echo "served certificate ($iss) does not cover {{ item }}"; exit 1; }
+      echo "{{ item }}: $iss"
 
   pre_tasks:
     # #390: ACME routes the public_mgmt_fqdn hostname family, while Ory
@@ -550,6 +561,10 @@
       delay: 10
       until: _acme_ready.rc == 0
       changed_when: false
+      # Not fatal here: the served-certificate check below judges every
+      # declared name, this one included, and repairs a stale DNS-01 record
+      # before it fails.
+      failed_when: false
 
     - name: Show Traefik logs (last 50 lines) for the audit trail
       ansible.builtin.command:
@@ -560,6 +575,99 @@
     - name: Print Traefik logs
       ansible.builtin.debug:
         var: _traefik_logs.stdout_lines
+
+    # =====================================================================
+    # 6b. Every declared name is served with its own certificate, not
+    #     Traefik's default. A DNS-01 order that failed part-way can leave
+    #     `_acme-challenge.<name>` TXT behind; Cloudflare then refuses the
+    #     retry ("An identical record already exists") and Traefik keeps the
+    #     default certificate for that name. Repair once: delete the stale
+    #     records with this play's token, restart Traefik, re-check. Still
+    #     default fails the play naming the name.
+    #
+    #     Names: public_mgmt_fqdn, plus signal_federation_ingress_fqdn when
+    #     signal_federation_ingress_enabled; traefik_acme_verify_names
+    #     replaces the list.
+    # =====================================================================
+    - name: Served certificate | the names this host must serve with its own certificate
+      ansible.builtin.set_fact:
+        _acme_names: >-
+          {{ (traefik_acme_verify_names | default(
+                [public_mgmt_fqdn]
+                + ([signal_federation_ingress_fqdn]
+                   if (signal_federation_ingress_enabled | default(false) | bool)
+                      and (signal_federation_ingress_fqdn | default('', true) | length) > 0
+                   else []), true))
+             | map('trim') | select | unique | list }}
+
+    - name: Served certificate | read each name's certificate on this host's :443
+      ansible.builtin.shell:
+        cmd: "{{ _served_cert_check }}"
+        executable: /bin/bash
+      loop: "{{ _acme_names }}"
+      register: _served
+      changed_when: false
+      failed_when: false
+      retries: 12
+      delay: 10
+      until: _served.rc == 0
+
+    - name: Served certificate | names on the default certificate
+      ansible.builtin.set_fact:
+        _acme_default: "{{ _served.results | rejectattr('rc', 'equalto', 0) | map(attribute='item') | list }}"
+
+    - name: Served certificate | repair a stale DNS-01 record once
+      when: _acme_default | length > 0
+      block:
+        - name: Served certificate | delete stale _acme-challenge TXT records (Cloudflare API, controller)
+          ansible.builtin.command:
+            argv: "{{ ['python3', playbook_dir ~ '/../scripts/cf-acme-challenge-clean.py'] + _acme_default }}"
+          environment:
+            CF_DNS_API_TOKEN: "{{ cf_api_token }}"
+          delegate_to: localhost
+          become: false
+          register: _acme_clean
+          changed_when: _acme_clean.stdout is search('deleted [1-9]')
+          failed_when: false
+
+        - name: Served certificate | what the clean-up did
+          ansible.builtin.debug:
+            msg: "{{ (_acme_clean.stdout_lines + _acme_clean.stderr_lines) | default([]) }}"
+
+        - name: Served certificate | restart Traefik once so it retries the orders
+          ansible.builtin.command:
+            argv: [docker, restart, traefik]
+          changed_when: true
+
+        - name: Served certificate | re-read each repaired name's certificate
+          ansible.builtin.shell:
+            cmd: "{{ _served_cert_check }}"
+            executable: /bin/bash
+          loop: "{{ _acme_default }}"
+          register: _served_after
+          changed_when: false
+          failed_when: false
+          retries: 30
+          delay: 10
+          until: _served_after.rc == 0
+
+    - name: Served certificate | every declared name is served with its own certificate
+      ansible.builtin.assert:
+        that:
+          - _acme_still | length == 0
+        fail_msg: >-
+          {{ inventory_hostname }} still serves no certificate of its own for
+          {{ _acme_still | map(attribute='item') | join(', ') }}
+          ({{ _acme_still | map(attribute='stdout') | map('regex_replace', '\\s+', ' ') | join('; ') }}).
+          Stale-record clean-up: {{ (_acme_clean.stdout_lines | default(['not run'])) | join('; ') }}.
+          Read the Traefik log above for the ACME error for that name (token
+          scope Zone:Read + DNS:Edit on its zone, the name's DNS, the Let's
+          Encrypt rate limit).
+        success_msg: "{{ inventory_hostname }}: {{ _acme_names | join(', ') }} served with their own certificates"
+      vars:
+        _acme_still: >-
+          {{ (_served_after.results | default([]) if _acme_default | length > 0 else [])
+             | rejectattr('rc', 'equalto', 0) | list }}
 
     # =====================================================================
     # 7. External verification — from the controller, openssl-connect

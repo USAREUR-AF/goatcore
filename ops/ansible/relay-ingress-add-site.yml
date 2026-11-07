@@ -26,12 +26,19 @@
 #      rollback ledger. This is the EXISTING relay ingress play — no parallel
 #      mechanism is introduced.
 #   4. Post-check (play C, founder relays): the joiner backend is present in each
-#      relay's live haproxy config (stats socket). Deterministic proof the alias
-#      was wired fleet-wide.
+#      relay's live haproxy config, and EVERY dispatcher backend (balanced and
+#      pin_*) is UP, read from the haproxy stats CSV on 127.0.0.1:8404. A
+#      backend still DOWN gets its node's rathole-client@<relay> restarted once
+#      (delegated to the node: the joiner's <join_site>_hosts, the founder's
+#      <founder_site>_hosts, or the backend's `node:`), then the relay is
+#      re-checked; still DOWN fails the play naming relay and backend. The
+#      restart needs the management inventory loaded beside the relay
+#      inventory (goatbuilder join-node passes it).
 #
 # THE JOINER SIDE (companion, NOT this play). For the backend to go UP rather
 # than sit DOWN, the joiner's mgmt host must ALSO dial the relays and register
-# the service — deploy that with the existing client play:
+# the service (the post-check in step 4 fails while it does not) — deploy that
+# with the existing client play:
 #   <founder>-rathole-client.yml -e rathole_client_target=<site>_hosts
 # and the joiner's Traefik must already serve the public apex end-to-end (ADR
 # 1085 §"A second mgmt host must serve the apex before it takes weight"), which
@@ -59,6 +66,7 @@
 #     AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY_PROD \
 #     ../scripts/ansible-preflight.sh \
 #       -i inventory/hosts-zagros.ini -i inventory/zagros-goat-relay-alias.ini \
+#       -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini \
 #       relay-ingress-add-site.yml \
 #       -e target=goat_relay_hosts -e founder_site=zagros -e join_site=uk
 # goat-standup.sh drives this as a joiner phase — see ops/scripts/goat-standup.sh.
@@ -198,35 +206,10 @@
 - name: Re-render founder relay ingress
   ansible.builtin.import_playbook: goat-relay-rathole.yml
 
-- name: "Relay ingress add-site — post-check the joiner backend is live on the relays"
+- name: "Relay ingress add-site — post-check every dispatcher backend is UP on every relay"
   hosts: "{{ target | mandatory }}"
   gather_facts: false
   become: false
-  vars:
-    _stats_port: "{{ rathole_ingress_dispatch_stats_port | default(8404) }}"
   tasks:
-    - name: Read the relay's live haproxy stats (localhost socket)
-      ansible.builtin.command:
-        argv: [curl, -s, "http://127.0.0.1:{{ _stats_port }}/;csv"]
-      register: _stats
-      changed_when: false
-      retries: 6
-      delay: 5
-      until: >-
-        _stats.rc == 0 and
-        ('balanced,' + (join_site | string) + ',') in _stats.stdout
-
-    - name: Assert the joiner backend is wired into this relay's dispatcher
-      ansible.builtin.assert:
-        that:
-          - "('balanced,' + (join_site | string) + ',') in _stats.stdout"
-        fail_msg: >-
-          {{ inventory_hostname }} does not carry a `{{ join_site }}` server in
-          its haproxy `balanced` backend after the re-render — the alias was not
-          applied here. Check the merge landed in
-          inventory/{{ founder_site }}-goat-relay-alias.ini and re-run.
-        success_msg: >-
-          {{ inventory_hostname }}: `{{ join_site }}` backend present in the
-          dispatcher. (UP requires the joiner's rathole client to be dialing —
-          see the play header "THE JOINER SIDE".)
-        quiet: true
+    - name: Every dispatcher backend UP (restart a DOWN backend's rathole client once)
+      ansible.builtin.include_tasks: tasks/relay-ingress-backends-up.yml

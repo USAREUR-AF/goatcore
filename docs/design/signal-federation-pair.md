@@ -84,13 +84,34 @@ The token is enforced before any public path reaches a node.
 | 1 | GATE | `../scripts/signal-federation-check.py <joiner> --peer <founder> --resolve --require-env` | the repository holds every fact above |
 | 2 | A | `signal-federation-transport.yml -e federation_site=<joiner>` | proxy + signal running; signal-a logs `federation auth enforced` |
 | 3 | A | the same with `-e federation_site=<founder>` | the same on the founder |
-| 4 | A | `traefik-acme.yml -e target=<joiner>_hosts`, then `-e target=<founder>_hosts` | each node's federation router and certificate |
+| 4 | A | `traefik-acme.yml -e target=<joiner>_hosts`, then `-e target=<founder>_hosts` | each node's federation router; each node serves its own certificate (not Traefik's default) for `public_mgmt_fqdn` and `signal_federation_ingress_fqdn` |
 | 5 | A | `<founder>-rathole-client.yml` (else `site-rathole-client.yml`) with `-i inventory/hosts-<founder>.ini -e rathole_client_target=<joiner>_hosts` | the joiner's tunnel to every relay |
-| 6 | A | `relay-ingress-add-site.yml -i inventory/hosts-<founder>.ini -i inventory/<founder>-goat-relay-alias.ini -e target=goat_relay_hosts -e founder_site=<founder> -e join_site=<joiner>` | the joiner backend and its pin live on every relay |
+| 6 | A | `relay-ingress-add-site.yml -i inventory/hosts-<founder>.ini -i inventory/<founder>-goat-relay-alias.ini` plus the management inventories, `-e target=goat_relay_hosts -e founder_site=<founder> -e join_site=<joiner>` | the joiner backend and its pin live on every relay, and every dispatcher backend is UP on every relay |
 | 7 | GATE | `signal-federation-verify.yml -e federation_site=<joiner> -e federation_peer_site=<founder>` | transport up on both nodes; an offer forwarded and delivered |
 
 Every play runs through `../scripts/ansible-preflight.sh` with the goatnet's
 inventories, under `ops/scripts/with-secrets` so the token variable is set.
+
+The founder's relay inventory `inventory/hosts-<founder>.ini` comes from
+`inventory/generate-relays.sh <founder> terraform-<founder>`. It runs terraform
+under aws-vault with the profile from `AWS_VAULT_PROFILE_<FOUNDER>`, else
+`GOAT_AWS_PROFILE`, else `deploy.aws_profile` in
+`ops/goatbuilder/goatbuilder.yaml`; when terraform reads nothing it prints the
+aws-vault or terraform error. The relays' SSH private keys go to
+`<state_dir>/relay-ssh-keys/<founder>/` (mode 0700; `state_dir` is
+`deploy.state_dir`, else `~/.goat/state`).
+
+What each step repairs or refuses on its own:
+
+| Step | Check | When it fails |
+|---|---|---|
+| 4 | `openssl s_client` to the node's own `:443` with each name as SNI: the certificate is not `TRAEFIK DEFAULT CERT` and covers the name | deletes `_acme-challenge.<name>` TXT records left by a failed DNS-01 order (`ops/scripts/cf-acme-challenge-clean.py`, the play's Cloudflare token), restarts Traefik once, re-checks; still default fails naming the name |
+| 6 | haproxy stats CSV on each relay's `127.0.0.1:8404`: every server in `balanced` and `pin_*` is UP | restarts `rathole-client@<relay>` on the node behind a DOWN backend (the joiner's or founder's first host, or the backend's `node:`), re-checks; still DOWN fails naming relay and backend |
+| 7 | the probe ran and exited 0 | a probe that could not pull its image, could not run, or exited non-zero is FAILED with its cause and fails the play |
+
+The relay ingress re-render (`goat-relay-rathole.yml`, run by step 6) refuses a
+relay with no running data plane: a `goat-relay` container, or the upstream
+NetBird relay (`netbird-relay`, image `netbirdio/relay`). Either one passes.
 
 ## The proof
 
@@ -102,14 +123,19 @@ inventories, under `ops/scripts/with-secrets` so the token variable is set.
   name (the path relay pin → tunnel → peer Traefik).
 - **Delivery:** the `signal-federation-probe` image (`--mode=validation`) offers
   to the peer node's own NetBird key, and the sending node's
-  `signal_server_forward_sent_total{outcome="delivered"}` must rise.
+  `signal_server_forward_sent_total{outcome="delivered"}` must rise. The image
+  is `signal_federation_probe_image` from the goatnet's group_vars, else the
+  pin in `roles/signal-federation-canary/defaults/main.yml`. That pin is a
+  digest published in `ghcr.io/usareur-af`; a goatnet whose `ghcr_org` names
+  another namespace sets `signal_federation_probe_image` to a digest published
+  there.
 
 A direction whose target key is homed on the sender's own signal is delivered
 with no forward and reported UNPROVEN. That is the steady state while every
 peer reaches signal through the goatnet apex and the relays send the apex to
 one node (the joiner's balanced weight 0): the founder holds every peer, so
-only joiner → founder is provable. The play passes on transport both ways plus
-one proven direction. The other direction becomes provable when peers home on
+only joiner → founder is provable. The play passes on transport both ways, one
+proven direction, and no FAILED probe. The other direction becomes provable when peers home on
 the joiner, by balanced weight or a signal home pin (ADR 1085).
 
 While the joiner holds no peers, every forward from the founder misses; the

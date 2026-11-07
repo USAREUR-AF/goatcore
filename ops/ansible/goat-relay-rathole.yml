@@ -34,33 +34,17 @@
 
   tasks:
     # -- F-188 guard: rathole ingress is ONLY meaningful colocated on a LIVE
-    # goat-relay data plane. A goatnet shipped with rathole running (:443/:2333) but
-    # the goat-relay container was never deployed, so enrollment worked while
-    # every peer's relay-fallback failed (Relays 0/N, nothing on :33073). Catch
-    # that half-built state HERE instead of letting it look healthy. Deploy the
-    # data plane first (goat-relay-deploy.yml) or run both in one pass via
+    # relay data plane. A goatnet shipped with rathole running (:443/:2333) but
+    # no relay container, so enrollment worked while every peer's
+    # relay-fallback failed (Relays 0/N, nothing on :33073). Catch that
+    # half-built state HERE instead of letting it look healthy. Either data
+    # plane counts: the all-Rust goat-relay (goat-relay-deploy.yml) or the
+    # upstream NetBird relay (container netbird-relay, image netbirdio/relay,
+    # relay-server.yml). Deploy one first, or run both in one pass via
     # goat-relay-colocated.yml. Waive for a deliberate ingress-only host with
     # -e allow_rathole_without_relay=true.
-    - name: F-188 guard — detect the goat-relay data plane on this host
-      ansible.builtin.shell: >-
-        docker ps --filter name=goat-relay --filter status=running -q
-      register: goat_relay_running
-      changed_when: false
-      failed_when: false
-
-    - name: F-188 guard — require the goat-relay data plane (or explicit waiver)
-      ansible.builtin.assert:
-        that:
-          - (goat_relay_running.stdout | trim | length > 0) or (allow_rathole_without_relay | default(false) | bool)
-        fail_msg: |
-          No running goat-relay container on {{ inventory_hostname }}.
-          Rathole ingress alone leaves :443 enrollment working but NO :33073
-          data-plane relay — the F-188 failure (peers enroll, then reach
-          nothing; Relays 0/N). Deploy the data plane first:
-            ansible-playbook ... goat-relay-deploy.yml
-          or run both in one pass: goat-relay-colocated.yml. For a deliberate
-          ingress-only host, re-run with -e allow_rathole_without_relay=true.
-        success_msg: "goat-relay data plane present — rathole colocation valid."
+    - name: F-188 guard — require a relay data plane (or explicit waiver)
+      ansible.builtin.include_tasks: tasks/relay-data-plane-guard.yml
 
     # Public IP (IMDSv2) — stored in the SM secret as relay_ip, informational
     # for the client. Same fetch the legacy relay play uses unconditionally.

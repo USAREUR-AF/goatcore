@@ -57,7 +57,6 @@ ops/ansible/roles/ory/defaults/main.yml ory_hydra_image   # 2026-09-22 seed
 ops/ansible/roles/ory/defaults/main.yml ory_kratos_image   # 2026-09-22 seed
 ops/ansible/roles/otel-collector/defaults/main.yml otel_image   # 2026-09-22 seed
 ops/ansible/roles/postgres-streaming-replication/defaults/main.yml postgres_basebackup_client_image   # 2026-09-22 seed
-ops/ansible/roles/signal-federation-canary/defaults/main.yml signal_federation_probe_image   # 2026-09-22 seed
 ops/ansible/roles/zenoh-synth-vendors/defaults/main.yml synth_vendor_image   # 2026-09-22 seed
 ops/authelia/docker-compose.yml authelia/authelia:latest   # 2026-09-22 seed
 ops/bootstrap/first-boot/integration-test/Dockerfile ubuntu:24.04   # 2026-09-22 seed
