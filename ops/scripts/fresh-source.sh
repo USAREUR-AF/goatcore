@@ -43,6 +43,7 @@
 # over it) is judged against those commits instead — goatcore.ref, each layer's
 # ref and the overlay's main; see
 # ops/scripts/lib/source_of_record.py. --remote does not apply to it.
+# Ordinary checkouts may set GOAT_ANSIBLE_TRUNK_BRANCH; the default is main.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -81,13 +82,14 @@ if [ -z "$REMOTE" ]; then
     [ -n "$REMOTE" ] || REMOTE=origin
   fi
 fi
-TRUNK="$REMOTE/main"
+BRANCH="${GOAT_ANSIBLE_TRUNK_BRANCH:-main}"
+TRUNK="$REMOTE/$BRANCH"
 
 branch="$(git -C "$REPO" symbolic-ref --quiet --short HEAD 2>/dev/null || echo "")"
-if [ "$branch" = main ] || [ "$branch" = master ]; then
-  FIX="GOAT_ALLOW_MASTER_GIT_MUTATE=1 git -C $REPO pull --ff-only $REMOTE main"
+if [ "$branch" = main ] || [ "$branch" = master ] || [ "$branch" = "$BRANCH" ]; then
+  FIX="GOAT_ALLOW_MASTER_GIT_MUTATE=1 git -C $REPO pull --ff-only $REMOTE $BRANCH"
 else
-  FIX="git -C $REPO fetch $REMOTE main && git -C $REPO rebase $TRUNK"
+  FIX="git -C $REPO fetch $REMOTE $BRANCH && git -C $REPO rebase $TRUNK"
 fi
 
 # --- the trunk commit to judge against ------------------------------------------
@@ -106,16 +108,16 @@ elif [ "$OFFLINE" = 1 ]; then
 else
   # BatchMode and a connect timeout: an unreachable remote is an answer, not a hang.
   if ! GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh -o BatchMode=yes -o ConnectTimeout=10}" \
-       git -C "$REPO" fetch --quiet "$REMOTE" main 2>/dev/null; then
+       git -C "$REPO" fetch --quiet "$REMOTE" "$BRANCH" 2>/dev/null; then
     {
-      echo "fresh-source: GB-065 REFUSE — could not fetch $REMOTE main, so this checkout cannot be shown current with the source of record (contract C3); refusing before any host is touched."
+      echo "fresh-source: GB-065 REFUSE — could not fetch $REMOTE $BRANCH, so this checkout cannot be shown current with the source of record (contract C3); refusing before any host is touched."
       echo "  fix: restore the connection to $REMOTE and re-run."
       echo "  On an islanded site, re-run with --offline: the run is then judged against the cached $TRUNK and recorded as offline."
     } >&2
     exit 1
   fi
   SHA="$(git -C "$REPO" rev-parse --verify --quiet "$TRUNK^{commit}" 2>/dev/null || echo "")"
-  [ -n "$SHA" ] || { echo "fresh-source: GB-065 REFUSE — fetched $REMOTE, but it has no main branch to judge against." >&2; exit 1; }
+  [ -n "$SHA" ] || { echo "fresh-source: GB-065 REFUSE — fetched $REMOTE, but it has no $BRANCH branch to judge against." >&2; exit 1; }
 fi
 
 # --- behind: the trunk carries changes to what a deploy reads that HEAD lacks -----
