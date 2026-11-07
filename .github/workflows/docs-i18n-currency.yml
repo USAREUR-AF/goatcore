@@ -1,9 +1,9 @@
 name: docs-i18n-currency
 
-# Lock the goat docs translations to the English source. Runs when the book
-# (chapters or po/) changes; fails if English moved but a translation didn't,
-# so every goat-cli-v* release ships English + 29 languages provably in sync.
-# Replaces the "translations may be stale" warning with prevention.
+# Report how far the goat docs translations lag the English source. Runs when
+# the book (chapters or po/) changes; each language whose translation has not
+# caught up with an English change is a warning annotation. Drift does not fail
+# the run (ADR 1024 addendum 2026-11-02); a broken POT extraction does.
 
 on:
   pull_request:
@@ -40,5 +40,5 @@ jobs:
           sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 -o DPkg::Lock::Timeout=120 update && sudo apt-get -o DPkg::Lock::Timeout=120 install -y gettext
           cargo install mdbook-i18n-helpers --locked
 
-      - name: Check translations are locked to the English source
+      - name: Report translations that lag the English source
         run: ops/ci/check-docs-translations-current.sh

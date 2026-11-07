@@ -2,7 +2,8 @@ name: docs-translation-gate
 
 # Reports only: translate-ftl.py --check exits 0 on drift (ADR 1024 addendum
 # 2026-11-02), so the check below never holds a release. Dispatch with apply=true
-# to fill the gaps.
+# to fill the gaps; without the ANTHROPIC_API_KEY secret the fill skips with a
+# notice.
 #
 # Version-gated docs translation currency (docs/design/goat-cli-hosted-docs.md
 # §"Release notes flow", docs/design/goat-cli-i18n.md §"CI guard").
@@ -17,11 +18,10 @@ name: docs-translation-gate
 # The flow, gated by version component (the two-track answer):
 #   * PATCH release (x.y.Z) — release notes carry the delta (English, by design).
 #     We do NOT block on .ftl translation currency. This job no-ops.
-#   * MINOR/MAJOR release (x.Y.z / X.y.z) — the translated guide is expected to
-#     catch up. We run the .ftl coverage check and FAIL on drift, so a sizeable
-#     release can't ship a half-translated reference.
+#   * MINOR/MAJOR release (x.Y.z / X.y.z) — we run the .ftl coverage check and
+#     report the drift; a locale that lacks a message renders it in English.
 #
-# Filling the drift uses Claude (ops/scripts/translate-ftl.py --apply). Because
+# Filling the drift uses the Anthropic Messages API (ops/scripts/translate-ftl.py --apply). Because
 # the catalogs are committed artifacts built into the binary at the tag, the fill
 # must land BEFORE the tag — so it is a pre-tag step (run locally, or via the
 # workflow_dispatch path below which opens a PR), not an auto-commit on tag push.
@@ -36,7 +36,7 @@ on:
   workflow_dispatch:
     inputs:
       apply:
-        description: 'Run the Claude-assisted fill and open a PR (needs ANTHROPIC_API_KEY secret)'
+        description: 'Run the machine-translation fill and open a PR (needs ANTHROPIC_API_KEY secret)'
         type: boolean
         default: false
 
@@ -88,7 +88,7 @@ jobs:
           fi
 
   gate:
-    name: gate .ftl coverage (minor/major only)
+    name: report .ftl coverage (minor/major only)
     needs: classify
     if: needs.classify.outputs.bump == 'minormajor'
     runs-on: ubuntu-24.04
@@ -97,16 +97,10 @@ jobs:
       - uses: actions/checkout@v4
       - name: check every locale covers the English arbiter
         run: |
-          python3 ops/scripts/translate-ftl.py --check --catalog all || {
-            echo "::error::Minor/major release has untranslated .ftl strings — the docs"
-            echo "::error::command reference would show English in translated locales."
-            echo "::error::Fill before tagging: ops/scripts/translate-ftl.py --apply"
-            echo "::error::(or run this workflow via 'Run workflow' with apply=true to open a PR)."
-            exit 1
-          }
+          python3 ops/scripts/translate-ftl.py --check --catalog all
 
   fill:
-    name: Claude-assisted fill → PR
+    name: machine-translation fill → PR
     if: github.event_name == 'workflow_dispatch' && inputs.apply
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -115,17 +109,24 @@ jobs:
       pull-requests: write
     steps:
       - uses: actions/checkout@v4
-      - name: translate missing ids via Claude
+      - id: key
+        name: is the translation API key configured
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
           if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
-            echo "::error::ANTHROPIC_API_KEY secret is not set — cannot run the fill in CI."
-            echo "::error::Add the repo secret, or run ops/scripts/translate-ftl.py --apply locally."
-            exit 1
+            echo "::notice title=fill skipped::ANTHROPIC_API_KEY secret is not set in this repository, so the fill does not run here. Run ops/scripts/translate-ftl.py --apply locally, or add the secret."
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=true" >> "$GITHUB_OUTPUT"
           fi
-          python3 ops/scripts/translate-ftl.py --apply --catalog all
+      - name: translate missing ids
+        if: steps.key.outputs.present == 'true'
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: python3 ops/scripts/translate-ftl.py --apply --catalog all
       - name: open a PR with the refreshed catalogs
+        if: steps.key.outputs.present == 'true'
         uses: peter-evans/create-pull-request@v6
         with:
           branch: chore/i18n-ftl-fill
