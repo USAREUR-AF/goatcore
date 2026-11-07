@@ -1,0 +1,62 @@
+name: docs-picker-e2e
+
+# Real-browser regression test for the docs language picker. The picker is
+# injected at runtime into mdBook's menu bar; a static check can't see whether
+# it actually rendered. This builds a 2-language book and drives it with
+# Playwright (chromium) to assert the picker renders, opens, and switches —
+# catching mdBook DOM changes (e.g. #menu-bar -> #mdbook-menu-bar) that
+# silently break it.
+
+on:
+  pull_request:
+    paths:
+      - 'docs/goat-cli-book/theme/**'
+      - 'docs/goat-cli-book/book.toml'
+      - 'docs/goat-cli-book/tests/**'
+      - '.github/workflows/docs-picker-e2e.yml'
+
+# Supersede in-flight runs for the same ref. A push during review used to
+# leave the previous run going to completion, so a branch pushed three
+# times paid three times for an answer only the last one needed. Keyed on
+# the workflow plus the ref, and NEVER cancels on main — a merge-commit run
+# is the one whose result is recorded.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  picker:
+    name: docs language picker renders (Playwright)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install mdBook
+        uses: peaceiris/actions-mdbook@v2
+        with:
+          mdbook-version: latest
+
+      - name: Install gettext + mdbook-i18n-helpers
+        timeout-minutes: 8
+        run: |
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 -o DPkg::Lock::Timeout=120 update && sudo apt-get -o DPkg::Lock::Timeout=120 install -y gettext
+          cargo install mdbook-i18n-helpers --locked
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build a 2-language book (en + fr)
+        working-directory: docs/goat-cli-book
+        run: |
+          printf 'window.GOAT_DOCS_LANGS = ["en","fr"];\n' > theme/built-langs.js
+          mdbook build -d book
+          MDBOOK_BOOK__LANGUAGE=fr mdbook build -d book/fr
+
+      - name: Run the picker e2e (Playwright)
+        working-directory: docs/goat-cli-book
+        run: |
+          npm i playwright@1
+          npx playwright install --with-deps chromium
+          node tests/picker-e2e.mjs book
