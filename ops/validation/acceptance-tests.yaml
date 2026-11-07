@@ -133,10 +133,14 @@ tests:
   - id: pg-standby-encoding-utf8
     aspect: data/postgres-pair
     probe: cmd-assert
-    params: {host: "{{ orin_b }}", cmd: "docker exec postgres-a psql -tAc \"show server_encoding\"", expect: "UTF8"}
+    # The goatnet's encoding, not a literal: the founder's declared
+    # postgres_initdb_encoding (a joiner initialises with the founder's), UTF8
+    # when none is declared (generate-values.py, postgres_encoding). The id keeps
+    # its name so recorded evidence still joins.
+    params: {host: "{{ orin_b }}", cmd: "docker exec postgres-a psql -tAc \"show server_encoding\"", expect: "{{ postgres_encoding }}"}
     requires: [postgres-streaming-replication]
     applies_when: intra_site_pair
-    caught_would_have: "row 45 — initdb defaulting SQL_ASCII on the rebuilt standby"
+    caught_would_have: "row 45 — initdb on the rebuilt standby defaulting to an encoding other than the goatnet's"
   - id: pgbackrest-stanza-and-first-backup
     aspect: data/backups
     probe: cmd-assert
