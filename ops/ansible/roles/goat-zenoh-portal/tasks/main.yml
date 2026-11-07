@@ -637,6 +637,54 @@
     project_src: "{{ portal_data_dir }}"
   changed_when: false
 
+# The image's CLI against the rendered command line, BEFORE anything restarts.
+# A flag the compose passes and the pinned binary does not define stops
+# `serve` at startup, and the settle-window check below only sees that after
+# the running container has been replaced. Probe the pinned image's
+# `serve -h` (the same probe the cert-sign block uses) and refuse here, while
+# the running portal is untouched. The rendered docker-compose.yml on disk is
+# already the new one; the next deploy with a matching configuration
+# re-renders it.
+- name: CLI surface | the serve flags the pinned image defines
+  ansible.builtin.command:
+    argv:
+      - docker
+      - run
+      - --rm
+      - "{{ portal_image }}"
+      - serve
+      - -h
+  register: portal_serve_help
+  changed_when: false
+  failed_when: false
+  become: true
+
+- name: CLI surface | the rendered compose file
+  ansible.builtin.slurp:
+    src: "{{ portal_data_dir }}/docker-compose.yml"
+  register: portal_compose_rendered
+  become: true
+
+- name: CLI surface | every flag the compose passes is one the image defines
+  vars:
+    _help: "{{ (portal_serve_help.stdout | default('')) ~ '\n' ~ (portal_serve_help.stderr | default('')) }}"
+    _defined: "{{ _help | regex_findall('(?m)^\\s+-{1,2}([A-Za-z0-9][A-Za-z0-9._-]*)') | unique }}"
+    _command: "{{ ((portal_compose_rendered.content | b64decode | from_yaml).services['goat-zenoh-portal'].command) | default([]) }}"
+    _passed: "{{ _command | map('string') | select('match', '^-') | map('regex_replace', '=.*$', '') | map('regex_replace', '^-+', '') | unique }}"
+    _missing: "{{ _passed | difference(_defined) }}"
+  ansible.builtin.assert:
+    that:
+      - _defined | length > 0
+      - _missing | length == 0
+    fail_msg: >-
+      {{ 'The pinned image printed no flags for `serve -h`, so its command line cannot be checked: ' ~ portal_image
+         if (_defined | length == 0) else
+         'The rendered command passes flags the pinned image does not define: ' ~ (_missing | map('regex_replace', '^', '--') | join(', '))
+         ~ '. `serve` would refuse them and the portal would crash-loop. The running portal is untouched. '
+         ~ 'The usual cause is a goatnet variable naming a flag from another source tree, such as '
+         ~ 'portal_ca_root_cert_flag; set it to a name ' ~ portal_image ~ ' defines.' }}
+    quiet: true
+
 # Subject O of minted leaves. portal.env carries PORTAL_CERT_SIGN_ORG from
 # goat_cert_organization; a portal image that reads it passes cert-sign --org on
 # every mint. A host cert-sign installed before --org existed rejects the flag,
