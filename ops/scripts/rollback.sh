@@ -168,10 +168,14 @@ if [ "$MODE" = "--list" ]; then
     for i in $(seq 0 $((HOST_COUNT - 1))); do
       USERi="$(yq -r ".hosts[$i].ssh_user" "$LEDGER")"
       HOSTi="$(yq -r ".hosts[$i].host" "$LEDGER")"
+      SITEi="$(yq -r ".hosts[$i].site // \"\"" "$LEDGER")"
       HROWS="$(ssh "${SSH_OPTS[@]}" "${USERi}@${HOSTi}" \
         "sudo tac $(runtime_ledger_path "$SERVICE") 2>/dev/null" 2>/dev/null || true)"
       if [ -n "$HROWS" ]; then
-        echo "  (on-host ledger @ ${HOSTi} — source of truth)"
+        echo "  (on-host ledger @ ${HOSTi}${SITEi:+, goatnet ${SITEi}} — source of truth)"
+        if [ -z "$SITE" ] && [ "$HOST_COUNT" -gt 1 ]; then
+          note "this is the first reachable of $HOST_COUNT hosts; pass --site <goatnet> for one goatnet's history"
+        fi
         echo "$HROWS" | jq -r '"  " + (.ts // "?") + "  [" + (.artifact_type // "image") + "]  " + ((.ref // .image) // "—") + (if (.reversible // true)==false then "  (reversible:false)" else "" end) + (if .promoted_at then "  (finished " + .promoted_at + ")" else "" end)'
         exit 0
       fi
