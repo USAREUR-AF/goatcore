@@ -49,6 +49,9 @@ PY
 }
 
 @test "acceptance rows for NetBird mgmt host resolve to public_mgmt_fqdn" {
+  # Reads each goatnet's generated values file; a tree without them (a public
+  # goatcore checkout) has nothing to judge, and the test runs where they are.
+  [ -f "$REPO_ROOT/ops/validation/values-zagros.yaml" ] || skip "no goatnet values files in this tree"
   cd "$REPO_ROOT"
 
   run python3 - <<'PY'

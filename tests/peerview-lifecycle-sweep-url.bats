@@ -7,6 +7,13 @@
 REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/.." && pwd)"
 DEFAULTS="$REPO_ROOT/ops/ansible/roles/peerview/defaults/main.yml"
 
+# This tree may not carry the code a test reads (a public goatcore checkout
+# does not carry a goatnet's own scripts); such a test is skipped by name,
+# and runs wherever that code is present.
+setup() {
+  [ -f "$DEFAULTS" ] || skip "the peerview role is not in this tree"
+}
+
 @test "lifecycle sweep NetBird API default does not begin with https://netbird." {
   run grep -E '^lifecycle_sweep_nb_api:' "$DEFAULTS"
   [ "$status" -eq 0 ]

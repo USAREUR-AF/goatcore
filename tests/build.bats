@@ -4,7 +4,14 @@
 REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/.." && pwd)"
 BUILD_SH="$REPO_ROOT/provisioning/build.sh"
 
+# This tree may not carry the code a test reads (a public goatcore checkout
+# does not carry a goatnet's own scripts); such a test is skipped by name,
+# and runs wherever that code is present.
 setup() {
+  case "$BATS_TEST_DESCRIPTION" in
+    build.sh:*|cloud-init:*|"security: setup-key"*|"security: cf-api-token"*|"security: ssh password"*)
+      [ -f "$BUILD_SH" ] || skip "provisioning/ is not in this tree" ;;
+  esac
   # Create a temporary .env for tests
   export TEST_ENV="$BATS_TEST_TMPDIR/.env"
   cat > "$TEST_ENV" <<'EOF'

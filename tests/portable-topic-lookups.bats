@@ -3,6 +3,8 @@
 
 @test "portable topic lookups preserve last-wins, literal keys and empty registries" {
   local repo="$(cd "$BATS_TEST_DIRNAME/.." && pwd)"
+  # The helpers live under ops/zenoh-trial-peers, which this tree may not carry.
+  [ -d "$repo/ops/zenoh-trial-peers" ] || skip "ops/zenoh-trial-peers is not in this tree"
   local script helper keys ids
   for script in \
     ops/zenoh-trial-peers/bootstrap-notional-portal.sh \

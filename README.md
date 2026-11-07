@@ -61,7 +61,7 @@ To run goat for real on a single machine with no cloud account, start with [goat
 | | |
 |---|---|
 | **Learn** | [goatlite: one machine, one file](docs/tutorials/00-goatlite.md) · [A new environment](docs/tutorials/01-new-goatnet.md) · [A second site](docs/tutorials/02-first-federated-node.md) · [Sharing with a partner](docs/tutorials/03-boundary-node.md) |
-| **Use** | [The `goat` CLI](docs/goat-cli-book/src/getting-started.md) · [`goatbuilder`](docs/reference/goatbuilder/01-what-it-is.md) · [Operations runbooks](docs/operations/) |
+| **Use** | [Stand up a goatnet](docs/operations/goatnet-standup.md) · [The `goat` CLI](docs/goat-cli-book/src/getting-started.md) · [`goatbuilder`](docs/reference/goatbuilder/01-what-it-is.md) · [Operations runbooks](docs/operations/) |
 | **Understand** | [Architecture overview](https://github.com/usareur-af/goatdocs/blob/main/docs/design/architecture-spine.md) · [Component designs](docs/design/) · [Decision record](docs/adr/INDEX.md) |
 | **This release** | [What is included and what you provide](docs/RELEASE-CONTENTS.md) |
 

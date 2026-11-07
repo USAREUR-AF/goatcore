@@ -1,0 +1,31 @@
+---
+galaxy_info:
+  role_name: postgres_encoding_migrate
+  author: goat-maintainer
+  license: Apache-2.0
+  min_ansible_version: "2.14"
+  platforms:
+    - name: Ubuntu
+      versions:
+        - jammy
+        - noble
+
+# Universal deploy-rollback ledger (ADR 1060). Data artifact: the run rewrites
+# every cluster's databases. Recorded for the migrate action only; status,
+# reconcile, rollback and cleanup change no encoding. The row is written
+# `pending` at the first phase and promoted when phase 9.2 has started the
+# writers again (tasks/finish.yml), so a run held by stop_after or refused at a
+# gate stays pending.
+dependencies:
+  - role: rollback-ledger
+    when: (postgres_encoding_migrate_action | default('migrate')) == 'migrate'
+    vars:
+      rollback_component: postgres-encoding-migrate
+      rollback_artifact_type: data
+      rollback_promote_mode: explicit  # the run spans many plays; promote after phase 9.2
+      rollback_ref: "encoding={{ postgres_encoding_migrate_target }}"
+      rollback_reversible: true
+      rollback_restore_pointer: >-
+        postgres-encoding-migrate.yml -e postgres_encoding_migrate_action=rollback
+        restores the PGDATA phase 4 kept aside, until action=cleanup removes it;
+        after cleanup, restore the pre-migration pgBackRest backup phase 3 took.

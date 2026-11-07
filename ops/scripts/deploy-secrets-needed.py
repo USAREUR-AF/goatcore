@@ -76,6 +76,11 @@ ROLE_BINDING = re.compile(r"""^([a-z][a-z0-9_]*):\s*["'](.*)["']\s*(#.*)?$""")
 # A role that accepts another variable in its place says so on the binding's line:
 #   portal_operator_api_key: "{{ lookup('env', 'PORTAL_OPERATOR_API_KEY') }}"  # or: PORTAL_OPERATOR_API_KEYS
 OR_NAMES = re.compile(r"#\s*or:\s*([A-Z][A-Z0-9_]*(?:\s*,\s*[A-Z][A-Z0-9_]*)*)")
+# A binding read only in one configuration says which, on the same line:
+#   portal_db_password: "{{ lookup('env', portal_db_password_env) }}"  # when: portal_store=postgres
+# It is needed when the goatnet's value (else the role default) is that value.
+WHEN = re.compile(r"#.*?\bwhen:\s*([a-z][a-z0-9_]*)\s*=\s*([A-Za-z0-9_.-]+)")
+SCALAR = re.compile(r"^([a-z][a-z0-9_]*):\s*(\S.*)$")
 
 
 def site_vars(repo, group):
@@ -97,18 +102,31 @@ def site_vars(repo, group):
     return out
 
 
-def _env_arg(expr, i, svars):
+def _env_arg(expr, i, svars, rvals=None):
     """The environment name a lookup('env', …) argument starting at expr[i] names, or None
-    when it is computed from something this scan cannot resolve. Literal names, and the
-    one computed shape the roles use: (site_id … | upper [| replace('-','_')]) +/~ '_SUFFIX'."""
+    when it is computed from something this scan cannot resolve. Literal names, the one
+    computed shape the roles use: (site_id … | upper [| replace('-','_')]) +/~ '_SUFFIX',
+    and a variable (group value first, then the role's own) holding a literal name or
+    "{{ site_id … }}_SUFFIX"."""
     rest = expr[i:]
     m = re.match(r"""['"]([A-Z][A-Z0-9_]*)['"]""", rest)
     if m:
         return m.group(1)
+    m = re.match(r"""([a-z][a-z0-9_]*)\s*\)""", rest)
+    if m:
+        val = svars.get(m.group(1)) or (rvals or {}).get(m.group(1)) or ""
+        if re.fullmatch(r"[A-Z][A-Z0-9_]*", val):
+            return val
+        t = re.fullmatch(r"""\{\{\s*(site_id_upper|site_id)\b([^}]*)\}\}([A-Z0-9_]+)""", val)
+        return _site_name(t.group(1), t.group(2), t.group(3), svars) if t else None
     m = re.match(r"""\(\s*(site_id_upper|site_id)\b(.*?)\)\s*[+~]\s*['"]([A-Z0-9_]+)['"]""", rest)
     if not m:
         return None
-    base, filters, suffix = m.group(1), m.group(2), m.group(3)
+    return _site_name(m.group(1), m.group(2), m.group(3), svars)
+
+
+def _site_name(base, filters, suffix, svars):
+    """site_id (or site_id_upper) through the filters, then the suffix; None when unknown."""
     if base == "site_id_upper":
         val = svars.get("site_id_upper")
         if not val:
@@ -124,7 +142,7 @@ def _env_arg(expr, i, svars):
     return sid + suffix
 
 
-def binding_alternatives(expr, svars):
+def binding_alternatives(expr, svars, rvals=None):
     """For a role-default value: the environment names any one of which satisfies it, or
     None when it is not a need — it has a literal or shell-path fallback (`| default('x')`,
     `| default('', true)`), reads only shell names, or computes a name this scan cannot
@@ -133,7 +151,7 @@ def binding_alternatives(expr, svars):
         return None   # a literal fallback (an empty string included): optional by declaration
     names = []
     for m in ENV_ARG.finditer(expr):
-        n = _env_arg(expr, m.end(), svars)
+        n = _env_arg(expr, m.end(), svars, rvals)
         if n is None:
             return None
         names.append(n)
@@ -160,6 +178,7 @@ def role_default_bindings(repo, roles, group_vars_names, svars, play_words):
                         used |= set(WORD.findall(fh.read()))
                 except OSError:
                     continue
+        role_lines = []
         for sub in ("defaults", "vars"):
             d = os.path.join(rdir, sub)
             if not os.path.isdir(d):
@@ -169,22 +188,30 @@ def role_default_bindings(repo, roles, group_vars_names, svars, play_words):
                     continue
                 try:
                     with open(os.path.join(d, fn), encoding="utf-8", errors="replace") as fh:
-                        lines = fh.read().splitlines()
+                        role_lines += fh.read().splitlines()
                 except OSError:
                     continue
-                for line in lines:
-                    m = ROLE_BINDING.match(line)
-                    if not m or "lookup(" not in m.group(2):
-                        continue
-                    var = m.group(1)
-                    if var in group_vars_names or var not in used:
-                        continue
-                    alts = binding_alternatives(m.group(2), svars)
-                    if alts:
-                        o = OR_NAMES.search(m.group(3) or "")
-                        if o:
-                            alts += [n.strip() for n in o.group(1).split(",") if n.strip() not in alts]
-                        out[var] = alts
+        rvals = {}
+        for line in role_lines:
+            sm = SCALAR.match(line)
+            if sm:
+                rvals.setdefault(sm.group(1), sm.group(2).split(" #")[0].strip().strip("'\""))
+        for line in role_lines:
+            m = ROLE_BINDING.match(line)
+            if not m or "lookup(" not in m.group(2):
+                continue
+            var = m.group(1)
+            if var in group_vars_names or var not in used:
+                continue
+            w = WHEN.search(m.group(3) or "")
+            if w and (svars.get(w.group(1)) or rvals.get(w.group(1))) != w.group(2):
+                continue
+            alts = binding_alternatives(m.group(2), svars, rvals)
+            if alts:
+                o = OR_NAMES.search(m.group(3) or "")
+                if o:
+                    alts += [n.strip() for n in o.group(1).split(",") if n.strip() not in alts]
+                out[var] = alts
     return out
 
 
@@ -234,6 +261,48 @@ def play_words(play):
     return set(WORD.findall(text))
 
 
+INCLUDED_ROLE = re.compile(r"""(?:include_role|import_role):\s*\n\s+name:\s*['"]?([A-Za-z0-9_.-]+)['"]?\s*$""", re.M)
+
+
+def role_closure(repo, roles):
+    """`roles` and every role they pull in: include_role / import_role by a literal
+    name in their tasks and handlers, and meta dependencies. A store role the
+    component includes (goat-zenoh-portal -> goat-zenoh-portal-store) holds its
+    database password binding, so it is part of what the deploy needs."""
+    seen, queue = [], list(roles)
+    while queue:
+        r = queue.pop(0)
+        if r in seen:
+            continue
+        seen.append(r)
+        rdir = os.path.join(repo, "ops/ansible/roles", r)
+        if not os.path.isdir(rdir):
+            continue
+        for sub in ("tasks", "handlers"):
+            d = os.path.join(rdir, sub)
+            for root, _d, files in os.walk(d):
+                for f in sorted(files):
+                    if not f.endswith((".yml", ".yaml")):
+                        continue
+                    try:
+                        with open(os.path.join(root, f), encoding="utf-8", errors="replace") as fh:
+                            queue += INCLUDED_ROLE.findall(fh.read())
+                    except OSError:
+                        continue
+        meta = os.path.join(rdir, "meta", "main.yml")
+        if os.path.isfile(meta):
+            try:
+                import yaml
+                deps = (yaml.safe_load(open(meta, encoding="utf-8")) or {}).get("dependencies") or []
+            except Exception:
+                deps = []
+            for dep in deps:
+                name = dep.get("role") if isinstance(dep, dict) else dep
+                if isinstance(name, str) and "{" not in name:
+                    queue.append(name)
+    return seen
+
+
 def needed_for(repo, play, names, groups):
     """ansible var -> [ENV NAME, …]: the group_vars env bindings the play and roles
     reference (one name each), then the role-default bindings no group overrides
@@ -250,7 +319,7 @@ def needed_for(repo, play, names, groups):
         for var, env in env_bindings(repo, g).items():
             if var in words:
                 needed[var] = [env]
-    for var, alts in role_default_bindings(repo, names, gv_names, svars, play_words(play)).items():
+    for var, alts in role_default_bindings(repo, role_closure(repo, names), gv_names, svars, play_words(play)).items():
         needed.setdefault(var, alts)
     # An outbound channel whose empty value turns it off (ops/secrets/off-when-empty.txt)
     # is never a need: a goatnet with no PagerDuty, Slack or mail account still deploys.

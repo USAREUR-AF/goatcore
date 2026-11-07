@@ -114,3 +114,12 @@
     content: "{{ _pem_run }}\n"
     mode: "0600"
   when: pem_step == 'restart'
+
+- name: "finish | record the migration in the deploy ledger"
+  ansible.builtin.include_role:
+    name: rollback-ledger
+    tasks_from: promote
+  vars:
+    rollback_component: postgres-encoding-migrate
+    rollback_ref: "encoding={{ postgres_encoding_migrate_target }}"
+  when: pem_step == 'restart'

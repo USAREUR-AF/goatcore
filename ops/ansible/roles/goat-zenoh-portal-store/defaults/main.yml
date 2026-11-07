@@ -66,7 +66,7 @@ portal_db_name: portal_registry
 # ZAGROS_PORTAL_DB_PASS, ZAGROS_PROD_PORTAL_DB_PASS. Read only when the store is
 # postgres; tasks/gate.yml refuses an empty value then.
 portal_db_password_env: "{{ site_id | upper | replace('-', '_') }}_PORTAL_DB_PASS"
-portal_db_password: "{{ lookup('env', portal_db_password_env) }}"
+portal_db_password: "{{ lookup('env', portal_db_password_env) }}"  # when: portal_store=postgres
 # Percent-encoded in full ('/' included, which urlencode leaves alone), so any
 # password survives the URL and the compose env file unchanged.
 portal_db_password_url: "{{ portal_db_password | urlencode | replace('/', '%2F') }}"
