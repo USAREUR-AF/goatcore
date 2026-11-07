@@ -32,7 +32,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 TEMPLATE="ops/compose/goat-obs/prometheus/prometheus.yml"
 [ -r "$TEMPLATE" ] || { echo "missing $TEMPLATE" >&2; exit 1; }
 
-python3 - "$TEMPLATE" <<'PYEOF'
+python3 - "$TEMPLATE" "$@" <<'PYEOF'
 import re, sys, yaml
 
 try:
@@ -56,24 +56,42 @@ template_path = sys.argv[1]
 # It grows a blackbox job when obs_blackbox_enabled is set, and both states are
 # asserted below.
 #
-# A deployment lists its goatnets in ops/ci/check-prometheus-template-renders.d/,
-# every `*.goatnets` file one line per goatnet:
-#     <name> <group_vars group> <site_id> <mesh DNS zone>
-# (blank lines and `#` comments ignored). Add a goatnet there on the day it
-# deploys goat-obs, not on the day it declares services. A tree that declares
-# none (the public tree carries no goatnet) renders no goat-obs config here.
-import glob as _glob
-GOATNETS = []
-for _f in sorted(_glob.glob("ops/ci/check-prometheus-template-renders.d/*.goatnets")):
-    for _ln in open(_f):
-        _ln = _ln.split("#", 1)[0].split()
-        if not _ln:
+# The goatnets to render are named on the command line, `--goatnet <name>`
+# (repeatable): the ones that deploy this template, which only the deployment
+# knows. Each one's group, site_id and site_dns_zone come from its own
+# ops/ansible/group_vars/<name>_hosts. With no --goatnet nothing is rendered
+# here (the public tree carries no goatnet); the obs-host pass below still runs.
+def _group_vars(group):
+    out = {}
+    base = f"ops/ansible/group_vars/{group}"
+    for path in sorted(_glob.glob(base + "/*.yml")) + [p for p in (base + ".yml",) if os.path.isfile(p)]:
+        try:
+            data = yaml.safe_load(open(path)) or {}
+        except yaml.YAMLError:
             continue
-        if len(_ln) != 4:
-            print(f"check-prometheus-template-renders: {_f}: expected "
-                  f"'<name> <group> <site_id> <zone>', got {' '.join(_ln)!r}", file=sys.stderr)
-            raise SystemExit(1)
-        GOATNETS.append(tuple(_ln))
+        if isinstance(data, dict):
+            out.update(data)
+    return out
+
+
+import glob as _glob
+import os
+GOATNETS = []
+_args = sys.argv[2:]
+while _args:
+    if _args[0] != "--goatnet" or len(_args) < 2:
+        print("usage: check-prometheus-template-renders.sh [--goatnet <name>]...", file=sys.stderr)
+        raise SystemExit(2)
+    _name = _args[1]
+    _args = _args[2:]
+    _group = _name.replace("-", "_") + "_hosts"
+    _gv = _group_vars(_group)
+    _site, _zone = _gv.get("site_id"), _gv.get("site_dns_zone")
+    if not isinstance(_site, str) or not isinstance(_zone, str) or "{{" in _site + _zone:
+        print(f"check-prometheus-template-renders: group_vars/{_group} declares no plain "
+              f"site_id and site_dns_zone", file=sys.stderr)
+        raise SystemExit(1)
+    GOATNETS.append((_name, _group, _site, _zone))
 
 # Jobs that must survive rendering with at least one target. These are the
 # ones whose absence is silent: Prometheus starts happily with a job that
