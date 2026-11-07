@@ -12,7 +12,6 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import textwrap
 import time
 import unittest
 
@@ -123,7 +122,7 @@ echo "op=${OP_SERVICE_ACCOUNT_TOKEN:+leaked} bao=${BAO_TOKEN:+leaked} bw=${BW_SE
 def write_exe(path, text):
     with open(path, "w") as fh:
         fh.write(text)
-    os.chmod(path, 0o755)
+    os.chmod(path, 0o700)
 
 
 class Base(unittest.TestCase):
