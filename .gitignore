@@ -106,7 +106,7 @@ ops/tak/.env
 .claude/worktrees/
 # Per-session handoff throttle state (Block 48T / ADR 0839 hooks)
 .claude/handoff/
-# Per-session worktree env anchor (ADR 0017 + ops/scripts/iso.skill.md)
+# Per-session worktree env anchor (ADR 0017; the agent-workflow plugin's /iso)
 .iso-mode.env
 # Playwright MCP cache
 .playwright-mcp/
