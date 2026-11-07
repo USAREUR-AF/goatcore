@@ -98,6 +98,19 @@ netbird_acl_taxonomy:
         \ (ADR 1113 \xA73), but the peer itself is operator-enrolled. Inbound from INFRA is deliberately\
         \ NOT declared yet \u2014 the connector control port is an ADR 1131 open item, and the intent\
         \ lands with the port rather than a placeholder, so the class is fail-closed until it does."
+    - suffix: NET-ENGINEER
+      description: "Person group (ADR 1216): network engineers' laptops. A PERSON group, never held by gear or any\
+      \ machine. Additive to the holder's participant role, which carries their substrate and DNS reach;\
+      \ this group adds only device administration: tcp 22 / 22022 (NetBird SSH) / 3389 and udp 3389\
+      \ (port-set `device-admin`) plus icmp, one way, to NETWORK, CONTROL and EDGE-SERVER. Nothing initiates\
+      \ toward it. Not P2P, no fabric ports, no reach to mission classes, people or the substrate shell.\
+      \ Replaces hand-made All -> single-peer any-port policies."
+    - suffix: EDGE-SERVER
+      description: "Node-class (ADR 1216): a named server that directly supports edge devices. Exactly NETWORK's\
+      \ shape: PLATFORM-ADMIN + INFRA reach it any-port, one way; it initiates ONLY toward INFRA on the\
+      \ management plane (port-set `netadmin`) plus icmp. NO fabric ports, no lateral reach, NEVER P2P.\
+      \ NET-ENGINEER reaches it on the device-admin ports. Enrollable by a site network admin holding the\
+      \ delegated entitlement (ADR 1113), like NETWORK."
     - suffix: P2P
       description: 'CAPABILITY group, not a role (ratified 2026-07-16/17): graduated lateral reach. Members
         can INITIATE to any peer (one-way rule D); non-members navigate only the restrictive paths. Role
@@ -325,6 +338,19 @@ netbird_acl_taxonomy:
         \ (ADR 1113 \xA73), but the peer itself is operator-enrolled. Inbound from INFRA is deliberately\
         \ NOT declared yet \u2014 the connector control port is an ADR 1131 open item, and the intent\
         \ lands with the port rather than a placeholder, so the class is fail-closed until it does."
+    - suffix: NET-ENGINEER
+      description: "Person group (ADR 1216): network engineers' laptops. A PERSON group, never held by gear or any\
+      \ machine. Additive to the holder's participant role, which carries their substrate and DNS reach;\
+      \ this group adds only device administration: tcp 22 / 22022 (NetBird SSH) / 3389 and udp 3389\
+      \ (port-set `device-admin`) plus icmp, one way, to NETWORK, CONTROL and EDGE-SERVER. Nothing initiates\
+      \ toward it. Not P2P, no fabric ports, no reach to mission classes, people or the substrate shell.\
+      \ Replaces hand-made All -> single-peer any-port policies."
+    - suffix: EDGE-SERVER
+      description: "Node-class (ADR 1216): a named server that directly supports edge devices. Exactly NETWORK's\
+      \ shape: PLATFORM-ADMIN + INFRA reach it any-port, one way; it initiates ONLY toward INFRA on the\
+      \ management plane (port-set `netadmin`) plus icmp. NO fabric ports, no lateral reach, NEVER P2P.\
+      \ NET-ENGINEER reaches it on the device-admin ports. Enrollable by a site network admin holding the\
+      \ delegated entitlement (ADR 1113), like NETWORK."
     - suffix: P2P
       description: 'CAPABILITY group, not a role (ratified 2026-07-16/17): graduated lateral reach. Members
         can INITIATE to any peer (one-way rule D); non-members navigate only the restrictive paths. Role
@@ -546,6 +572,19 @@ netbird_acl_taxonomy:
         \ (ADR 1113 \xA73), but the peer itself is operator-enrolled. Inbound from INFRA is deliberately\
         \ NOT declared yet \u2014 the connector control port is an ADR 1131 open item, and the intent\
         \ lands with the port rather than a placeholder, so the class is fail-closed until it does."
+    - suffix: NET-ENGINEER
+      description: "Person group (ADR 1216): network engineers' laptops. A PERSON group, never held by gear or any\
+      \ machine. Additive to the holder's participant role, which carries their substrate and DNS reach;\
+      \ this group adds only device administration: tcp 22 / 22022 (NetBird SSH) / 3389 and udp 3389\
+      \ (port-set `device-admin`) plus icmp, one way, to NETWORK, CONTROL and EDGE-SERVER. Nothing initiates\
+      \ toward it. Not P2P, no fabric ports, no reach to mission classes, people or the substrate shell.\
+      \ Replaces hand-made All -> single-peer any-port policies."
+    - suffix: EDGE-SERVER
+      description: "Node-class (ADR 1216): a named server that directly supports edge devices. Exactly NETWORK's\
+      \ shape: PLATFORM-ADMIN + INFRA reach it any-port, one way; it initiates ONLY toward INFRA on the\
+      \ management plane (port-set `netadmin`) plus icmp. NO fabric ports, no lateral reach, NEVER P2P.\
+      \ NET-ENGINEER reaches it on the device-admin ports. Enrollable by a site network admin holding the\
+      \ delegated entitlement (ADR 1113), like NETWORK."
     - suffix: SENSOR-FEED
       family: SENSOR
       slot: data-plane
@@ -770,6 +809,19 @@ netbird_acl_taxonomy:
         \ (ADR 1113 \xA73), but the peer itself is operator-enrolled. Inbound from INFRA is deliberately\
         \ NOT declared yet \u2014 the connector control port is an ADR 1131 open item, and the intent\
         \ lands with the port rather than a placeholder, so the class is fail-closed until it does."
+    - suffix: NET-ENGINEER
+      description: "Person group (ADR 1216): network engineers' laptops. A PERSON group, never held by gear or any\
+      \ machine. Additive to the holder's participant role, which carries their substrate and DNS reach;\
+      \ this group adds only device administration: tcp 22 / 22022 (NetBird SSH) / 3389 and udp 3389\
+      \ (port-set `device-admin`) plus icmp, one way, to NETWORK, CONTROL and EDGE-SERVER. Nothing initiates\
+      \ toward it. Not P2P, no fabric ports, no reach to mission classes, people or the substrate shell.\
+      \ Replaces hand-made All -> single-peer any-port policies."
+    - suffix: EDGE-SERVER
+      description: "Node-class (ADR 1216): a named server that directly supports edge devices. Exactly NETWORK's\
+      \ shape: PLATFORM-ADMIN + INFRA reach it any-port, one way; it initiates ONLY toward INFRA on the\
+      \ management plane (port-set `netadmin`) plus icmp. NO fabric ports, no lateral reach, NEVER P2P.\
+      \ NET-ENGINEER reaches it on the device-admin ports. Enrollable by a site network admin holding the\
+      \ delegated entitlement (ADR 1113), like NETWORK."
     - suffix: P2P
       description: 'CAPABILITY group, not a role (ratified 2026-07-16/17): graduated lateral reach. Members
         can INITIATE to any peer (one-way rule D); non-members navigate only the restrictive paths. Role
@@ -944,6 +996,16 @@ netbird_exercise_template:
       \ the udp 5353 that F-314 proved is the difference between reaching gear and being able to NAME\
       \ it). NO fabric ports, no lateral reach, NEVER P2P. Not delegable \u2014 the entitlement that lets\
       \ a site admin enroll a switch must not let them enroll the box that reaches every switch."
+  - suffix: NET-ENGINEER
+    description: "Person group (ADR 1216, scope-local): this scope's network engineers' laptops, never gear.\
+    \ Additive to a participant role. Reaches this scope's NETWORK, EDGE-SERVER and (gear scopes) CONTROL on the\
+    \ device-admin ports (tcp 22 / 22022 / 3389, udp 3389) plus icmp, one way. SCOPE-LOCAL IS THE POINT:\
+    \ a site's engineer reaches only that site's devices. No fabric ports, no lateral reach, never P2P."
+  - suffix: EDGE-SERVER
+    description: "Node-class (ADR 1216, scope-local): a named server that directly supports this scope's edge\
+    \ devices. NETWORK's shape: reachable any-port by this scope's PLATFORM-ADMIN + INFRA; initiates\
+    \ only to INFRA management-plane services plus icmp. No fabric ports, no lateral reach, never P2P;\
+    \ delegable like NETWORK."
   - suffix: QUARANTINED
     description: Security satellite lane (ADR 1091), exercise scope. INFRA :443+DNS only; no fabric ports;
       no self-service exit.

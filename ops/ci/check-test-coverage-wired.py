@@ -51,6 +51,11 @@ SKIP_DIR_PARTS = ("/.claude/worktrees/", "/vendor/", "/target/", "/node_modules/
 TEST_CMD_RE = re.compile(r"\b(go\s+test|cargo\s+test|cargo\s+nextest)\b")
 CARGO_TEST_RE = re.compile(r"\bcargo\s+(?:test|nextest)\b")
 PKG_ARG_RE = re.compile(r"(?:-p|--package)[= ]+([A-Za-z0-9_-]+)")
+# A step that loops over every tracked go.mod (ci.yml: `for gm in $(git
+# ls-files '*go.mod' ...)`) and runs `go test` in each tests EVERY Go module,
+# minus the ones it skips by name (`[ "$gm" = <path> ] && continue`).
+GO_ALL_MODULES_RE = re.compile(r"""git\s+ls-files\s+['"]?(?:\*\*/)?\*/?go\.mod['"]?""")
+GO_LOOP_SKIP_RE = re.compile(r"""\[\s*"\$\w+"\s*=\s*['"]?([\w./-]+)['"]?\s*\]\s*&&\s*continue""")
 
 
 def repo_root():
@@ -175,6 +180,8 @@ def harvest_test_steps(wf_dir):
               is NOT root-credited — its path token match stands alone.)
     packages: cargo package names named by `-p`/`--package` in a test step."""
     contexts, dir_roots, packages = [], set(), set()
+    go_all = {"seen": False, "skips": set()}
+    harvest_test_steps.go_all = go_all
     if not os.path.isdir(wf_dir):
         return contexts, dir_roots, packages
     for fn in sorted(os.listdir(wf_dir)):
@@ -208,11 +215,15 @@ def harvest_test_steps(wf_dir):
                     continue
                 wd = step.get("working-directory") or job_wd or ""
                 wd = str(wd).strip()
-                ctx = wd + "\n" + run
+                # A module named only to be SKIPPED is not wired by that name.
+                ctx = wd + "\n" + GO_LOOP_SKIP_RE.sub("", run)
                 contexts.append(ctx)
                 named = [m.group(1) for m in PKG_ARG_RE.finditer(run)]
                 for n in named:
                     packages.add(n)
+                if re.search(r"\bgo\s+test\b", run) and GO_ALL_MODULES_RE.search(run):
+                    go_all["seen"] = True
+                    go_all["skips"].update(GO_LOOP_SKIP_RE.findall(run))
                 # A cargo test with no `-p`/`--package` tests the whole
                 # workspace/package rooted at the working-directory.
                 if CARGO_TEST_RE.search(run) and not named and wd:
@@ -248,8 +259,10 @@ def pkg_name(root, crate_dir):
     return os.path.basename(crate_dir)
 
 
-def is_wired(kind, mdir, root, contexts, dir_roots, packages):
+def is_wired(kind, mdir, root, contexts, dir_roots, packages, go_all=None):
     joined = "\n".join(contexts)
+    if kind == "go" and go_all and go_all["seen"] and mdir not in go_all["skips"]:
+        return True
     if token_in(mdir, joined):
         return True
     if kind == "rust":
@@ -290,7 +303,8 @@ def compute(root):
     unwired = []
     wired = []
     for kind, mdir in sorted(modules):
-        if is_wired(kind, mdir, root, contexts, dir_roots, packages):
+        if is_wired(kind, mdir, root, contexts, dir_roots, packages,
+                    getattr(harvest_test_steps, "go_all", None)):
             wired.append((kind, mdir))
         else:
             unwired.append((kind, mdir))
@@ -398,6 +412,30 @@ def self_test(root):
         # with empty allowlist the orphan must make the gate fail
         if not unwired_names:
             print("  self-test FAIL: expected at least one unwired module")
+            ok = False
+        # An every-module loop wires every Go module except the ones it skips.
+        os.makedirs(os.path.join(tmp, "ops", "skipped-mod"))
+        with open(os.path.join(tmp, "ops", "skipped-mod", "go.mod"), "w") as fh:
+            fh.write("module example.com/skipped-mod\n\ngo 1.26\n")
+        with open(os.path.join(tmp, "ops", "skipped-mod", "x_test.go"), "w") as fh:
+            fh.write("package x\nimport \"testing\"\nfunc TestX(t *testing.T){}\n")
+        with open(os.path.join(tmp, ".github", "workflows", "all.yml"), "w") as fh:
+            fh.write(
+                "name: all\non: [push]\njobs:\n  t:\n    runs-on: ubuntu-latest\n"
+                "    steps:\n      - name: test\n        run: |\n"
+                "          for gm in $(git ls-files '*go.mod' | sed 's|/go.mod||'); do\n"
+                "            [ \"$gm\" = ops/skipped-mod ] && continue\n"
+                "            ( cd \"$gm\" && go test ./... )\n"
+                "          done\n"
+            )
+        wired, unwired, _ = compute(tmp)
+        wired_names = {m for _, m in wired}
+        unwired_names = {m for _, m in unwired}
+        if "ops/orphan-mod" not in wired_names:
+            print("  self-test FAIL: every-module loop did not wire ops/orphan-mod")
+            ok = False
+        if "ops/skipped-mod" not in unwired_names:
+            print("  self-test FAIL: module skipped by the loop counted as wired")
             ok = False
         if ok:
             print("OK: self-test — wired detected wired, orphan detected UNWIRED")

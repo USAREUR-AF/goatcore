@@ -1,0 +1,125 @@
+name: netbird-acl-parity
+
+# Wires ops/ci/check-netbird-acl-parity.py — the guard that a goatnet's mesh
+# ACL is configured in BOTH halves: the group vocabulary
+# (ops/ansible/netbird_acl_taxonomy.yml) and the permits between those groups
+# (ops/ansible/netbird_acl_matrix.yml).
+#
+# WHY: zagros-prod went live with all 19 of its taxonomy groups
+# created and ZERO matrix policies — the taxonomy had an `zagros-prod` entry, the
+# matrix did not, and nothing failed. NetBird's Default All->All remained the
+# only policy, so a mesh that looked segmented by group was flat. That is the
+# same shape as F-250 (ZAGROS running flat with ZAGROS-* groups no policy used), so
+# it is a repeating class rather than an incident: creating groups reads like
+# configuring access, and the missing half is silent in every surface an
+# operator looks at except the policy list itself.
+#
+# The guard's first run on main also caught a second, independent instance:
+# nova's matrix still referenced OPERATOR / VENDOR after the ADR 1043
+# rename to MONITOR / DEVELOPER, which would have aborted its cutover play
+# mid-standup at the live-group assert.
+#
+# FULL-TREE, not diff-scoped: both files are single small SoT documents, and
+# the failure mode is a MISSING entry — a diff-scoped run sees nothing to check
+# when the offending change is "added a site to the taxonomy only."
+#
+# Scope limit: this is FILE parity. It cannot see whether a goatnet's LIVE mesh
+# has the matrix applied — a site can be green here and still run flat on
+# Default All->All. Live posture is the cutover play's mode=propose report and
+# the standup gate. See docs/findings/F-283.
+#
+# Rollback: rm this file + ops/ci/check-netbird-acl-parity.py.
+
+on:
+  # push: on main REMOVED — this workflow is a guard, not a publisher. It
+  # already gates the pull request, and a squash merge puts the reviewed diff
+  # on main unchanged, so re-running it there re-verifies a commit whose answer
+  # is known. 98 of 119 workflows did that; measured at 4,787 runs in
+  # one day, roughly half of them this shape.
+  #
+  # An earlier draft of this comment also said "main is protected from
+  # force-push". IT IS NOT — this plan cannot have branch protection at all
+  # (the API answers "Upgrade to GitHub Pro"). A force-push to main therefore
+  # bypasses this guard entirely. That is a real gap and it is 's, not
+  # something a paths filter or a trigger change can close.
+  # Publishers keep push: on purpose — the merge commit is the artifact.
+  pull_request:
+    paths:
+      - 'ops/ansible/netbird_acl_taxonomy.yml'
+      - 'ops/ansible/netbird_acl_matrix.yml'
+      - 'ops/ci/check-netbird-acl-parity.py'
+      - 'ops/ci/test-netbird-acl-parity-qualified.py'
+      - 'ops/ci/check-gear-acting-group-scope.py'
+      - 'ops/ci/test-gear-acting-group-scope.py'
+      # The gear-scope guard reads the warrant INTENTS, which are the source
+      # netbird_acl_matrix.yml is generated FROM. Without this line a change
+      # that moves a rule never runs the guard that rule can break.
+      - 'ops/warrant/rule-intents/**'
+      # folded (track guard-cull): gear-class-parity, ory-groups-enum,
+      # identity-grammar-sot, and two guard test suites that ran nowhere
+      - 'ops/goat-zenoh-portal/internal/registry/machines.go'
+      - 'ops/operators/schema/operator-manifest.schema.json'
+      - 'ops/permissions/group-permissions.yml'
+      - 'ops/identity/generate.py'
+      - 'ops/identity/grammar.yaml'
+      - 'ops/ci/check-gear-class-parity.py'
+      - 'ops/ci/check-enroll-help-classes.py'
+      - 'ops/ci/test-enroll-help-classes.py'
+      - 'crates/goat-cli/src/cmd/machine.rs'
+      - 'ops/ci/check-ory-groups-enum.sh'
+      - 'ops/ci/check-membership-reconcile.py'
+      - 'ops/ci/test_membership_reconcile.py'
+      - 'ops/ci/check-node-class-membership.sh'
+      - 'ops/ci/test-machine-provenance-guard-wrapper.sh'
+      - 'ops/ansible/roles/machine-provenance-guard/**'
+      - 'ops/ansible/filter_plugins/**'
+      - '.github/workflows/netbird-acl-parity.yml'
+
+concurrency:
+  group: netbird-acl-parity-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  acl-parity:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - name: Install PyYAML
+        run: pip install --no-input pyyaml
+      # WHERE THE OTHER THREE RUN. check-netbird-acl-parity.py,
+      # test-netbird-acl-parity-qualified.py and test-gear-acting-group-scope.py
+      # judge a goatnet's REAL pair: its taxonomy and the matrix generated from
+      # its own ops/warrant policy, with that policy's exercise rule templates.
+      # This tree carries the example taxonomy and a matrix generated from
+      # ops/warrant/demo, a policy for a different, smaller cast of groups, so
+      # the pair disagrees by construction. Those three run on the assembled
+      # tree of the repository that holds a goatnet's overlay.
+      # ADR 1124. The resolver is shared by the cutover playbook and the guard
+      # above; these two prove it behaves and that every constraint it claims to
+      # enforce actually refuses something. A guard that passes but never fails
+      # is worthless, so the negative tests are part of the gate, not optional.
+      - name: ADR 1124 resolver — resolution + fail-closed behaviour
+        run: python3 ops/ansible/filter_plugins/test_acl_scope.py
+      # Gear is enrolled PER SCOPE, so a group that acts on gear and exists only
+      # at goatnet altitude can never reach it.
+      - name: Gear-acting groups are declared scope-locally
+        run: python3 ops/ci/check-gear-acting-group-scope.py .
+
+      # ---- Folded (track guard-cull): the identity-vocabulary
+      # guards that each read the same taxonomy, schema and permission files.
+      - name: Gear class parity — the mint and the mesh share one vocabulary (ADR 1116)
+        run: python3 ops/ci/check-gear-class-parity.py .
+      - name: machine enroll --help matches the mint's node-class sets (#1400)
+        run: python3 ops/ci/check-enroll-help-classes.py . && python3 ops/ci/test-enroll-help-classes.py
+      - name: ory_site.groups enum matches the Ory permission SoT
+        run: ops/ci/check-ory-groups-enum.sh
+      - name: grammar.yaml reproduces the manifest schema byte-for-byte (ADR 1067)
+        run: python3 ops/identity/generate.py --check
+      - name: membership-reconcile declaration reader — previously run by nothing
+        run: python3 ops/ci/test_membership_reconcile.py
+      - name: machine-provenance-guard wrapper exit-code contract (ADR 1130) — previously run by nothing
+        run: bash ops/ci/test-machine-provenance-guard-wrapper.sh

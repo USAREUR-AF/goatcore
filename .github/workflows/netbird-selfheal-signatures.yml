@@ -1,0 +1,69 @@
+---
+name: netbird-selfheal-signatures
+
+# Wires ops/ci/test-netbird-selfheal-signatures.sh — the contract test for the
+# three wedge signatures in ops/netbird/netbird-boot-selfheal.sh.
+#
+# Why it needs a gate at all: this script's job is to RESTART netbird on a live
+# mesh host, unattended. A regression that makes it fire on a healthy daemon is
+# worse than the wedges it exists to catch — it would bounce production peers on
+# a timer, and the blast radius is every host with the role enabled. The test
+# therefore checks "does not fire" as hard as "fires": 7 of its 10 cases assert
+# NO restart (signature off, no targets configured, any-target-reachable,
+# malformed targets, cooldown honoured, control-plane-down, daemon not
+# answering).
+#
+# Signature 3 is the reason the file exists. the zagros-prod
+# breakglass node reported mgmt + signal Connected with 5/10 peers and every
+# peer P2P, while its data plane was dead both ways for hours; the timer ran
+# every 90s throughout and neither control-plane signature could see it.
+#
+# Runs on PRs touching the script, the role, or the test, plus pushes to main
+# as a post-merge backstop. No network, no root, no netbird binary — the daemon
+# and the restart command are stubbed, and the data-plane probe runs against a
+# loopback listener.
+
+on:
+  pull_request:
+    paths:
+      - 'ops/netbird/netbird-boot-selfheal.sh'
+      - 'ops/ci/test-netbird-selfheal-signatures.sh'
+      - 'ops/ansible/roles/netbird-boot-selfheal/**'
+      - '.github/workflows/netbird-selfheal-signatures.yml'
+  # push: on main REMOVED — this workflow is a guard, not a publisher. It
+  # already gates the pull request, and a squash merge puts the reviewed diff
+  # on main unchanged, so re-running it there re-verifies a commit whose answer
+  # is known. 98 of 119 workflows did that; measured at 4,787 runs in
+  # one day, roughly half of them this shape.
+  #
+  # An earlier draft of this comment also said "main is protected from
+  # force-push". IT IS NOT — this plan cannot have branch protection at all
+  # (the API answers "Upgrade to GitHub Pro"). A force-push to main therefore
+  # bypasses this guard entirely. That is a real gap and it is 's, not
+  # something a paths filter or a trigger change can close.
+  # Publishers keep push: on purpose — the merge commit is the artifact.
+permissions:
+  contents: read
+
+# Supersede in-flight runs for the same ref. A push during review used to
+# leave the previous run going to completion, so a branch pushed three
+# times paid three times for an answer only the last one needed. Keyed on
+# the workflow plus the ref, and NEVER cancels on main — a merge-commit run
+# is the one whose result is recorded.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  test:
+    name: wedge-signature contract
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: shellcheck the watchdog
+        run: shellcheck -S warning ops/netbird/netbird-boot-selfheal.sh
+
+      - name: signature contract (10 cases, both directions)
+        run: bash ops/ci/test-netbird-selfheal-signatures.sh
