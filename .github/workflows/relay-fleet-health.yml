@@ -1,68 +1,45 @@
 name: relay-fleet-health
 
-# Public TCP :33073 probes of active ZAGROS fleets and every enrollment DNS
-# pool address. The former production relay tiers retired September 2026;
-# inventories are shared with the fleet health dashboard.
+# The prober behind the relay fleet health check: a public TCP :33073 probe of
+# each relay in a goatnet's inventory (ops/relay/health/relays*.conf) and of
+# every address in its enrollment DNS pool.
+#
+# This tree carries the prober and its tests, not a fleet. The scheduled probe
+# of a real fleet runs where that fleet's inventory is committed, beside the
+# goatnet's overlay. Here the pull request proves the prober's failure handling:
+# an unreachable listener, an empty or malformed inventory, a DNS pool that
+# resolves to nothing, and a region filter that selects nothing all exit as
+# documented instead of reading as healthy.
 
 on:
-  push:
-    branches: [main]
+  pull_request:
     paths:
       - 'ops/scripts/relay-fleet-healthcheck.*'
-      - 'ops/relay/health/relays*.conf'
       - 'ops/scripts/test_relay_fleet_healthcheck.py'
       - '.github/workflows/relay-fleet-health.yml'
-  schedule:
-    # 05:23 UTC daily — offset from other nightly jobs (wg-cp0-mesh-reach @ 04:17).
-    - cron: '23 5 * * *'
-  workflow_dispatch:
-    inputs:
-      environment:
-        description: 'fleet to probe (select one when filtering region names)'
-        type: choice
-        options: [all, zagros, zagros-dev, zagros-prod]
-        default: all
-      regions:
-        description: 'comma-separated region subset (default: all)'
-        required: false
-        default: ''
 
 permissions:
   contents: read
 
-# Supersede in-flight runs for the same ref. A push during review used to
-# leave the previous run going to completion, so a branch pushed three
-# times paid three times for an answer only the last one needed. Keyed on
-# the workflow plus the ref, and NEVER cancels on main — a merge-commit run
-# is the one whose result is recorded.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  cancel-in-progress: true
 
 jobs:
-  probe:
-    name: relay fleet ${{ matrix.environment }} :33073 reachability
-    strategy:
-      fail-fast: false
-      matrix:
-        environment: >-
-          ${{ fromJSON(inputs.environment == 'zagros' && '["zagros"]' ||
-          inputs.environment == 'zagros-dev' && '["zagros-dev"]' ||
-          inputs.environment == 'zagros-prod' && '["zagros-prod"]' ||
-          '["zagros", "zagros-dev", "zagros-prod"]') }}
+  test:
+    name: prober failure handling
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
       - name: Test probe failure handling
-        run: python3 ops/scripts/test_relay_fleet_healthcheck.py
-      - name: Probe relay fleet
-        env:
-          RELAY_ENVIRONMENT: ${{ matrix.environment }}
-          RELAY_REGIONS: ${{ inputs.regions }}
+        run: python3 -W error::ResourceWarning ops/scripts/test_relay_fleet_healthcheck.py
+      - name: The wrapper parses and refuses an unknown environment
         run: |
-          args=(--environment "$RELAY_ENVIRONMENT")
-          if [ -n "$RELAY_REGIONS" ]; then
-            args+=(--regions "$RELAY_REGIONS")
-          fi
-          ops/scripts/relay-fleet-healthcheck.sh "${args[@]}"
+          bash -n ops/scripts/relay-fleet-healthcheck.sh
+          rc=0
+          ops/scripts/relay-fleet-healthcheck.sh --environment no-such-goatnet >/dev/null 2>&1 || rc=$?
+          test "$rc" -eq 2

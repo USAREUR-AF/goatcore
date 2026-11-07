@@ -24,27 +24,5 @@
 #
 # format: one repo-relative module path per line (Go module dir or Rust crate dir)
 
-# --- Rust crates whose *-image.yml builds the container but runs no cargo test
-crates/microscope
-crates/stethoscope
-crates/stethoscope-checks
-ops/flashlight
-ops/goat-trashgoat
-ops/panoscope
-ops/zenoh-trial-peers/audit-subscriber
-ops/zenoh-trial-peers/fabric-health
-ops/zenoh-trial-peers/loadgen
-ops/zenoh-trial-peers/mesh-health
-ops/zenoh-trial-peers/node-net-health
-ops/zenoh-trial-peers/ntp-health-pub
-ops/zenoh-trial-peers/presence-health
-ops/zenoh-trial-peers/synth-vendor
-ops/zenoh-trial-peers/time-health
-
 # --- Rust crate with no workflow at all
 ops/zenoh-ingress-gateway
-
-# --- Go modules whose *-image.yml builds but runs no go test (or no workflow)
-ops/onboard-runner
-ops/serve/airdefenders
-ops/zenoh-trial-peers/vendor-decode-rca

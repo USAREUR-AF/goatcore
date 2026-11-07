@@ -97,7 +97,13 @@ jobs:
       - run: pip install pyyaml
       - name: Lint the flow map
         run: python3 ops/validation/affected-flows.py --lint
-      - name: Compute affected flows (base = the fleet's current pin)
+      # The base is the commit the fleet runs, read from the component's
+      # fleet-pins value when that value carries a sha-<short> or version tag.
+      # A digest-only pin names no commit; the base is then the component's
+      # previous release tag, and with no earlier tag the empty tree, so every
+      # mapped flow counts as affected. An unknown base never
+      # narrows the suites that run.
+      - name: Compute affected flows (base = the fleet's current pin, else the previous release tag)
         id: flows
         run: |
           set -o pipefail
@@ -116,8 +122,14 @@ jobs:
               sys.exit(f"no fleet-pins component builds from {comp}-image.yml")
           PY
           )
-          python3 ops/validation/affected-flows.py --component "$pin_key" --head "${GITHUB_SHA}" | tee affected.txt
-          python3 ops/validation/affected-flows.py --component "$pin_key" --head "${GITHUB_SHA}" --json > affected.json
+          if python3 ops/validation/affected-flows.py --component "$pin_key" --head "${GITHUB_SHA}" --json > affected.json; then
+            python3 ops/validation/affected-flows.py --component "$pin_key" --head "${GITHUB_SHA}" | tee affected.txt
+          else
+            base=$(git describe --tags --abbrev=0 --match "${comp}/v*" "${GITHUB_SHA}^" 2>/dev/null || git hash-object -t tree /dev/null)
+            echo "base: ${base} (the fleet pin names no commit)" | tee affected.txt
+            python3 ops/validation/affected-flows.py "${base}..${GITHUB_SHA}" | tee -a affected.txt
+            python3 ops/validation/affected-flows.py "${base}..${GITHUB_SHA}" --json > affected.json
+          fi
           python3 - <<'PY' >> "$GITHUB_OUTPUT"
           import json
           d = json.load(open("affected.json"))

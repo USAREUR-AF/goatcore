@@ -97,8 +97,15 @@ jobs:
         run: python3 ops/identity/test_backfill_aff_trait.py
       - name: Org-catalog drift guard tests
         run: python3 ops/ci/test_check_org_catalog.py
+      # A goatnet's org catalog is committed with that goatnet's overlay, not
+      # here; the generator and the drift guard are proven by the test above.
       - name: Committed org catalogs match their generator (offline)
-        run: python3 ops/ci/check-org-catalog.py
+        run: |
+          if [ -d ops/identity/orgs ]; then
+            python3 ops/ci/check-org-catalog.py
+          else
+            echo "no committed org catalog in this tree: nothing to compare"
+          fi
       - name: Identity-grammar gate unit test (Phase C anti-regression)
         run: python3 ops/operators/test_validate_grammar.py
       - name: Collab-projection unit test

@@ -74,7 +74,7 @@ check("NATO is not a country and passes through", derive_kind("state", "NATO", "
 
 print("normalize_nation folds what it knows and passes through what it does not:")
 check("lowercase alpha-2 folds", gen_roster.normalize_nation("us"), "USA")
-check("surrounding space is trimmed", gen_roster.normalize_nation(" uk "), "ISL")
+check("surrounding space is trimmed", gen_roster.normalize_nation(" de "), "DEU")
 check("NATO is untouched", gen_roster.normalize_nation("NATO"), "NATO")
 check("EU is untouched", gen_roster.normalize_nation("EU"), "EU")
 check("None is empty, not a crash", gen_roster.normalize_nation(None), "")

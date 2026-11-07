@@ -54,11 +54,3 @@ flows:
         run: npm ci && npx playwright install --with-deps chromium && npm test
     live: []
 
-  - id: panoscope-frontend
-    what: the fabric common-operating-picture renders and its typecheck passes
-    paths:
-      - ops/panoscope/frontend/**
-    cheap:
-      - dir: ops/panoscope/frontend
-        run: npm ci && npm run typecheck && npx playwright install --with-deps chromium && npm run build
-    live: []

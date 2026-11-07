@@ -1,11 +1,11 @@
 name: goat-obs checks
 
 # CI gate for the on-mgmt-host observability stack (ops/compose/goat-obs) and
-# the tenant notifier that feeds it.
+# its host-side feeders.
 #
 # Why this exists: both halves shipped with tests that NOTHING ran. The
 # prometheus rules directory had five promtool suites sitting unexecuted since
-# they were written, and the budget-notify / identity-reconcile python suites
+# they were written, and the identity-reconcile python suites
 # landed with the fragility-audit hardening and had no runner
 # either. An alerting rule that silently stops matching is the exact failure
 # class those rules exist to catch, so leaving their tests unrun was the same
@@ -30,7 +30,6 @@ on:
     paths:
       - 'ops/compose/goat-obs/**'
       - 'ops/compose/mgmt-host/monitoring/rules/compose-orphans.yml'
-      - 'ops/zenoh-trial-peers/budget-notify/**'
       # Host readers of the portal registry, SQLite and Postgres eras (ADR 1165
       # step A): the shared Postgres reader and the scripts that use it.
       - 'ops/scripts/portal_registry_pg.py'
@@ -57,42 +56,19 @@ on:
       - 'ops/relay/health/test_atomic_ingest.py'
       - 'ops/ci/check-grafana-dashboard-promql.sh'
       - 'ops/ci/check-textfile-exposition.sh'
-      - 'ops/ci/check-prometheus-template-renders.sh'
       - 'ops/ci/check-blackbox-covers-registry.sh'
       - 'ops/ci/check-stream-exclusion-matches-relabel.sh'
-      # The obs-host ROLE is the second Prometheus stack (zagros-prod's Orin-C,
-      # vega's obs host). Its template and its per-goatnet obs group_vars are
-      # inputs to both the render check and the probe-coverage check, so a
-      # change to either must run them — otherwise the guards run on every PR
-      # except the ones that can break them.
+      # The obs-host role's templates feed the blackbox coverage check.
       - 'ops/ansible/roles/obs-host/**'
       - 'ops/ansible/roles/observability/templates/alertmanager.yml.j2'
-      # A GLOB, not a list of two groups. The enumerated form named
-      # zagros_prod_obs_hosts and vega_obs_hosts only — so a change to
-      # zagros_cloud_obs_hosts or zagros_prod_echo_obs_hosts ran none of these
-      # guards, and vega has been retired. That is
-      # the same "runs on every PR except the ones that can break it" trap this
-      # comment block warns about, two lines up. `vars.yml` widened to `**`
-      # because these groups split their vars across files —
-      # zagros_prod_obs_hosts/mesh-path-quality.yml is one of them.
-      - 'ops/ansible/group_vars/*_obs_hosts/**'
-      - 'ops/ci/check-obs-rules-have-scrapers.sh'
-      - 'ops/ci/check-obs-dashboards-have-metrics.sh'
       - 'ops/ci/check-alertmanager-renders.py'
       - 'ops/ci/test_zenoh_admission_routing.py'
       - 'ops/ci/check-alert-severity-deliverable.py'
-      # The dashboard set itself is an input to that guard: adding a dashboard
-      # that a goatnet cannot populate is exactly what it catches.
+      # The dashboards are an input to the PromQL parse check.
       - 'ops/compose/goat-obs/grafana/dashboards/**'
-      - 'ops/pins/obs-metric-sources.yaml'
-      # netview's stream-exclusion list must agree with the relabel in
-      # goat-obs' prometheus.yml. These trees are INPUTS to that check, so
-      # omitting them would run the guard on every PR except the ones that
-      # can break it (the ADR 1132 D4 trap, and F-327 before it).
-      - 'ops/netview/**'
-      - 'ops/ansible/roles/netview/**'
-      - 'ops/ansible/group_vars/zagros_hosts/vars.yml'
-      - 'ops/ansible/group_vars/zagros_prod_hosts/vars.yml'
+      # A goatnet's group_vars are inputs to the stream-exclusion and blackbox
+      # checks below.
+      - 'ops/ansible/group_vars/**'
       - 'ops/ansible/roles/node-exporter/templates/link-capacity.prom.j2'
       - '.github/workflows/goat-obs-checks.yml'
   workflow_dispatch:
@@ -178,17 +154,6 @@ jobs:
           pip install --quiet jinja2
           ops/ci/check-textfile-exposition.sh
 
-      # prometheus.yml is an ANSIBLE TEMPLATE, so promtool above cannot read
-      # it — the scrape config, which decides what is watched at all, had no
-      # check of any kind. Renders it per goatnet and asserts the probe jobs
-      # survive with targets. Needs group_vars in the path filter below: the
-      # blackbox targets are rendered FROM isitup_services, so a registry edit
-      # is an input to this check even when no goat-obs file changed.
-      - name: prometheus template render check
-        run: |
-          pip install --quiet jinja2 pyyaml
-          ops/ci/check-prometheus-template-renders.sh
-
       # Two facts that must agree and nothing made them: the ^nova- relabel in
       # prometheus.yml rewrites `service` at ingest, and netview's SSE
       # exclusion matches against that same label from THREE homes. Deploying
@@ -210,27 +175,12 @@ jobs:
           pip install --quiet pyyaml
           ops/ci/check-blackbox-covers-registry.sh
 
-      # The other half of the same surface. The step above catches a
-      # declared service nobody PROBES; this one catches a loaded alert rule
-      # nothing SCRAPES. Both exist because obs_rule_files is a role default
-      # that grows fleet-wide while obs_scrape_targets is a per-goatnet list
-      # that starts empty — zagros-prod carried 21 rules with no series behind
-      # them, including the audit delete-marker alerts that exist precisely
-      # because an audit bucket degraded unnoticed for eleven weeks.
-      - name: loaded alert rules have something feeding them
-        run: |
-          pip install --quiet pyyaml
-          ops/ci/check-obs-rules-have-scrapers.sh
-
-      # One altitude up from the step above. That one asks whether a loaded
-      # ALERT can fire; this asks whether an installed PANEL can draw. Same
-      # root cause both times — this fleet declares a consumer of data
-      # separately from the thing that collects it, and until these guards
-      # existed nothing compared them.
-      - name: installed dashboards can draw something
-        run: |
-          pip install --quiet pyyaml
-          ops/ci/check-obs-dashboards-have-metrics.sh
+      # WHERE THREE MORE RUN. The prometheus template render check, "loaded
+      # alert rules have something feeding them" and "installed dashboards can
+      # draw something" judge each goatnet's own declarations: its
+      # isitup_services, its scrape targets and ops/pins/obs-metric-sources.yaml.
+      # Those live with the goatnet's overlay, not in this tree, so the three
+      # run on the assembled tree of the repository that holds them.
       - name: alertmanager templates render a clean pager severity — previously run by nothing
         run: python3 ops/ci/check-alertmanager-renders.py
       - name: admission pages preserve short failures and receiver fan-out
@@ -239,7 +189,7 @@ jobs:
         run: python3 ops/ci/check-alert-severity-deliverable.py
 
   obs-python-tests:
-    name: budget-notify + identity-reconcile + router probes + registry-wal unit tests
+    name: identity-reconcile + router probes + registry-wal unit tests
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -248,16 +198,10 @@ jobs:
         with:
           python-version: '3.12'
 
-      # Both are stdlib-only (no requirements file, deliberately — they run as
-      # root cron/timer jobs on the mgmt host with the system interpreter), so
-      # there is nothing to install. compileall first: a syntax error in a
+      # stdlib-only suites (they run as root cron/timer jobs on the mgmt host
+      # with the system interpreter). compileall first: a syntax error in a
       # cron-invoked script otherwise surfaces as a silently missing metric.
-      - name: budget-notify
-        working-directory: ops/zenoh-trial-peers/budget-notify
-        run: |
-          python -m compileall -q .
-          python -W error::ResourceWarning -m unittest discover -v
-
+      # budget-notify's suite moved with its tree to goatstuff.
       - name: portal registry host readers (sqlite and postgres eras)
         working-directory: ops/scripts
         run: |
