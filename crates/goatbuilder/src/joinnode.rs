@@ -61,6 +61,15 @@ fn row(name: &str, detail: String) -> Check {
     Check { name: name.into(), ok: true, detail, fix: None }
 }
 
+/// The inventory group a node of `class` sits in at a site: the core group for
+/// `core`, `<site>_<class>_hosts` otherwise (obs, breakglass, network-jump).
+fn class_group(site_us: &str, class: &str) -> String {
+    match class {
+        "core" => format!("{site_us}_hosts"),
+        other => format!("{site_us}_{}_hosts", other.replace('-', "_")),
+    }
+}
+
 fn gv_matches(file: &Path, key: &str, value: &str) -> bool {
     std::fs::read_to_string(file)
         .map(|t| t.lines().any(|l| l.trim_start().strip_prefix(key).and_then(|r| r.strip_prefix(':')).map(|v| v.trim_start().starts_with(value)).unwrap_or(false)))
@@ -79,7 +88,21 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
     let site = o.site;
     let site_us = site.replace('-', "_");
     let upper = site_us.to_uppercase();
-    let group = format!("{site_us}_hosts");
+    // The site's core group carries the site-level facts (founder or joiner,
+    // the founder it joins); the node's own group is its class's group, and the
+    // gates and plays of phases 3-12 run against that one. A class whose node
+    // sits in another group would otherwise match no host (`-e target=` ∩ `-l`
+    // is empty) and the play would pass having done nothing.
+    let site_group = format!("{site_us}_hosts");
+    let group = class_group(&site_us, o.class);
+    // The config preflight judges a site from its core group; an obs node's
+    // facts are checked through `--obs <group>` (the mgmt-stack rows do not
+    // apply to an obs host), and a rescue node's site is its core group's.
+    let preflight_target = match o.class {
+        "core" => group.clone(),
+        "obs" => format!("{site_group} --obs {group}"),
+        _ => site_group.clone(),
+    };
     let node = o.node;
     let aws = crate::settings::aws_profile(repo);
     let user = crate::settings::ssh_user(repo).unwrap_or_else(|| "<deploy.ssh_user>".to_string());
@@ -87,28 +110,33 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
     let inv = "-i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini";
     let addr = o.address.unwrap_or("<the node's LAN address>");
     let pass_var = o.pass_var.map(String::from).unwrap_or_else(|| format!("{upper}_NODE_PASS"));
-    let gv = repo.join("ops/ansible/group_vars").join(&group).join("vars.yml");
+    let gv = repo.join("ops/ansible/group_vars").join(&site_group).join("vars.yml");
     let joiner = gv_matches(&gv, "goatnet_founder", "false");
     let founder_site = gv_first(&gv, "join_founder_site");
     let founder_group = if founder_site.is_empty() { String::new() } else { format!("{}_hosts", founder_site.replace('-', "_")) };
     let intra_pair = gv_matches(&gv, "intra_site_pair", "true");
     let p = |n: u32, kind: &'static str, label: &str, cmd: String| Phase { n, kind, label: label.to_string(), cmd };
 
+    // A joiner enrols into the goatnet it joins: the founder's control plane.
+    let enrol_at = if joiner && !founder_site.is_empty() { founder_site.as_str() } else { site };
+    // The enrolment apex the preflight checks: the goatnet's, declared in the
+    // site's core group (a joiner's names the goatnet it joins).
+    let enrol_dns = { let d = gv_first(&gv, "site_enrollment_dns"); if d.is_empty() { format!("<site_enrollment_dns of {site_group}>") } else { d } };
     let mut ev = vec![
-        p(1, "MANUAL", "reach the box on the SITE LAN", format!("ssh {user}@{addr} — the address handed over may be 192.168.55.1: that is l4tbr0, the Jetson USB device-mode bridge on the box itself, reachable only over a direct USB-C cable. Find the real LAN address before anything else, then pass it as --address.")),
+        p(1, "MANUAL", "reach the box on the SITE LAN", format!("ssh {user}@{addr} — find the box's real LAN address before anything else and pass it as --address. On a Jetson the address handed over may be 192.168.55.1: that is l4tbr0, the USB device-mode bridge on the box itself, reachable only over a direct USB-C cable.")),
         p(2, "T", "seed the SSH key (key auth + NOPASSWD sudo; password from the env var, never the command line)", format!("'{r}/ops/scripts/seed-ssh-key.sh' {user}@{addr} {pass_var}")),
-        p(3, "GATE", "repo work first: group, inventory, pins, exclusions — the config preflight passes", format!("python3 '{r}/ops/scripts/standup-config-preflight.py' {group}")),
+        p(3, "GATE", "repo work first: group, inventory, pins, exclusions — the config preflight passes", format!("python3 '{r}/ops/scripts/standup-config-preflight.py' {preflight_target}")),
         p(4, "T", "quiet apt on the node (the baseline stalls on the dpkg lock otherwise; unmasked in phase 14)", format!("ssh {user}@{addr} 'sudo systemctl mask --now apt-daily.timer apt-daily-upgrade.timer'")),
         p(5, "A", "host baseline, narrowed to the node — run detached if the session may drop: it apt-upgrades and reboot-waves", format!("cd '{r}/ops/ansible' && {pre} {inv} mgmt-host-baseline.yml -e target={group} -e site_id={site} -l {node}")),
         p(6, "A", "WireGuard kernel modules, first pass — the final check fails before enrolment (wt0 absent); expected, phase 11 re-runs it", format!("cd '{r}/ops/ansible' && ( {pre} {inv} wireguard-kmod.yml -e target={group} -l {node} || echo '>> wireguard-kmod: final check failed before enrolment (wt0 absent) — expected; phase 11 re-runs it for changed=0' )")),
-        p(7, "GATE", "the CA this site trusts is its own, not the shared dev root (silence puts a production node on the dev CA)", format!("python3 '{r}/ops/scripts/standup-config-preflight.py' {group} && ! grep -rqE 'ca_id:[[:space:]]*\"?dev-' '{r}/ops/ansible/group_vars/{group}/' || {{ echo 'group_vars/{group} names a dev- CA; a site node trusts its goatnet CA'; exit 1; }}")),
-        p(8, "MANUAL", "mint a setup key carrying the group the site's other mgmt hosts hold — read it off a live peer, do not guess", format!("in the NetBird dashboard of {site} (or `goat admin` on it): Setup Keys → new key, auto_groups = the group a live mgmt host of {site} holds; keep it for phase 10")),
-        p(9, "GATE", "enrollment preflight on the node (clock skew, a stale wt0, an unreachable apex — each turns enrolment into a hang)", format!("ssh {user}@{addr} 'bash -s' < '{r}/ops/preflight-enrollment.sh")),
+        p(7, "GATE", "the CA this site trusts is its own, not the shared dev root (silence puts a production node on the dev CA)", format!("python3 '{r}/ops/scripts/standup-config-preflight.py' {preflight_target} && ! grep -rqE 'ca_id:[[:space:]]*\"?[a-z]+-goat-ca-' '{r}/ops/ansible/group_vars/{group}/' || {{ echo 'group_vars/{group} names the unnamed default CA (<mode>-goat-ca-<date>); a site node trusts its goatnet CA'; exit 1; }}")),
+        p(8, "MANUAL", "mint a setup key carrying the group the site's other mgmt hosts hold — read it off a live peer, do not guess", format!("in the NetBird dashboard of {enrol_at} (or `goat admin` on it): Setup Keys → new key, auto_groups = the group a live mgmt host of {enrol_at} holds; keep it for phase 10")),
+        p(9, "GATE", "enrollment preflight on the node (clock skew, a stale wt0, an unreachable apex — each turns enrolment into a hang)", format!("{{ printf 'export NETBIRD_SETUP_KEY=%s NETBIRD_MANAGEMENT_URL=%s\\n' \"$(printenv {upper}_NB_SETUP_KEY)\" 'https://{enrol_dns}'; cat '{r}/ops/preflight-enrollment.sh'; }} | ssh {user}@{addr} 'bash -s'")),
         p(10, "MANUAL", "enrol the node — the gate is the kernel ACL plane, not \"Connected\"", "on the node: sudo netbird up <the line phase 9 printed> --enable-rosenpass=false (match the goatnet's declared PQC posture; never also pass --rosenpass-permissive=false). Gate: `netbird status` shows Interface type: Kernel AND `sudo nft list tables` shows `table ip netbird` — Connected alone is an unfiltered node".to_string()),
         p(11, "A", "WireGuard kernel modules again — changed=0 proves the kmod took, now that wt0 exists", format!("cd '{r}/ops/ansible' && {pre} {inv} wireguard-kmod.yml -e target={group} -l {node}")),
-        p(12, "GATE", "mesh_ip + the mesh inventory filled in one change (mesh IPs are not stable across re-enrolment) — preflight passes with no TBD_", format!("python3 '{r}/ops/scripts/standup-config-preflight.py' {group} && ! grep -rn 'TBD_' '{r}/ops/ansible/inventory/mgmt-hosts-mesh.ini' '{r}/ops/ansible/group_vars/{group}/' | grep -q {node}")),
+        p(12, "GATE", "mesh_ip + the mesh inventory filled in one change (mesh IPs are not stable across re-enrolment) — preflight passes with no TBD_", format!("python3 '{r}/ops/scripts/standup-config-preflight.py' {preflight_target} && ! grep -rqn 'TBD_' '{r}/ops/ansible/group_vars/{group}/' && ! grep -n 'TBD_' '{r}/ops/ansible/inventory/mgmt-hosts-mesh.ini' | grep -qw {node}")),
     ];
-    let ev_bootstrap = format!("-e site_id={site} -e bootstrap_owner_email=\"$OWNER_EMAIL\" -e postgres_superuser_password=\"$(printenv {upper}_PG_PASS)\" -e netbird_encryption_key=\"$(printenv {upper}_NB_ENCKEY)\" -e pgbackrest_cipher_pass=\"$(printenv {upper}_BKP_KEY)\"");
+    let ev_bootstrap = format!("-e site_id={site} -e bootstrap_owner_email=\"$OWNER_EMAIL\" -e 'postgres_superuser_password={{{{ lookup(\"env\", \"{upper}_PG_PASS\") }}}}' -e 'netbird_encryption_key={{{{ lookup(\"env\", \"{upper}_NB_ENCKEY\") }}}}' -e 'pgbackrest_cipher_pass={{{{ lookup(\"env\", \"{upper}_BKP_KEY\") }}}}'");
     match o.class {
         "core" if joiner => {
             if founder_site.is_empty() {
@@ -119,7 +147,7 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
             let seed_play = crate::standup::site_play(repo, site, "seed-from-peer.yml");
             let p1 = if intra_pair { format!("{ev_bootstrap} -e participates_in_spock=false") } else { format!("{ev_bootstrap} -e participates_in_spock=false -e has_durable_independent_state=true") };
             ev.push(p(13, "A", "[core, joiner] pass 1 — bootstrap without Spock (AutoMigrate creates the schema once, on the empty DB)", format!("cd '{r}/ops/ansible' && {pre} {inv} -l {node} site-bootstrap.yml {p1}")));
-            ev.push(p(13, "A", "[core, joiner] the service deploys the seed needs (kratos/hydra schemas): ory", format!("cd '{r}/ops/ansible' && {pre} {inv} ory-deploy.yml --limit {node} -e postgres_superuser_password=\"$(printenv {upper}_PG_PASS)\"")));
+            ev.push(p(13, "A", "[core, joiner] the service deploys the seed needs (kratos/hydra schemas): ory", format!("cd '{r}/ops/ansible' && {pre} {inv} ory-deploy.yml --limit {node} -e 'postgres_superuser_password={{{{ lookup(\"env\", \"{upper}_PG_PASS\") }}}}'")));
             ev.push(p(13, "A", &format!("[core, joiner] pass 2 — seed-from-peer: data-only copy from founder {founder_site} (fails loud if the account is populated)"), format!("cd '{r}/ops/ansible' && {pre} {inv} -l {node} {seed_play} -e site_id={site}")));
             ev.push(p(13, "A", "[core, joiner] pass 3 — bootstrap with Spock: subscriptions on both sides, polled to replicating", format!("cd '{r}/ops/ansible' && {pre} {inv} -l {node} site-bootstrap.yml {ev_bootstrap}")));
             ev.push(p(13, "A", &format!("[core, joiner] the founder-side mirror on {founder_group}, peer={site} only (the same change, not a follow-up)"), format!("cd '{r}/ops/ansible' && {pre} {inv} spock-mesh-wire.yml --limit {founder_group} -e '{{\"inter_site_spock_peers\":[\"{site}\"]}}'")));
@@ -131,7 +159,7 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
             if let Some(missing) = crate::standup::obs_play_missing(repo) {
                 return Err(anyhow!("{missing}"));
             }
-            let og = format!("{site_us}_obs_hosts");
+            let og = &group;
             ev.push(p(13, "A", "[obs] observability host: baseline + LUKS (own nodes only)", format!("cd '{r}/ops/ansible' && {pre} {inv} mgmt-host-baseline.yml -e target={og} -e site_id={site} -l {node} && {pre} {inv} tang-server.yml -e target={og} -l {node} && {pre} {inv} mgmt-host-luks.yml -e target={og} -e site_id={site} -l {node}")));
             ev.push(p(13, "A", "[obs] observability host: utility (Forgejo, the pub/sub state-of-record primary; docker data-root on the NVMe first, F-504)", format!("cd '{r}/ops/ansible' && {pre} {inv} utility-host-bootstrap.yml -e target={og} -l {node}")));
             ev.push(p(13, "A", "[obs] observability host: stack (Prometheus/Alertmanager/Grafana) — needs obs_scrape_targets", format!("cd '{r}/ops/ansible' && {pre} {inv} obs-host-bootstrap.yml -e target={og} -l {node}")));
@@ -267,6 +295,62 @@ mod tests {
         assert!(phases.iter().any(|p| p.contains("[breakglass] break-glass node (ADR 1114")));
         let cmd = r.checks.iter().filter(|c| c.name == "cmd").find(|c| c.detail.contains("breakglass-nodes.yml")).unwrap();
         assert!(cmd.detail.contains("-e target=zagros_prod_breakglass_hosts -l node-x"), "{}", cmd.detail);
+    }
+
+    /// Each class's node sits in its own group; the core group only for core.
+    #[test]
+    fn each_class_resolves_to_its_own_group() {
+        assert_eq!(class_group("zagros_b", "core"), "zagros_b_hosts");
+        assert_eq!(class_group("zagros_b", "obs"), "zagros_b_obs_hosts");
+        assert_eq!(class_group("zagros_prod", "breakglass"), "zagros_prod_breakglass_hosts");
+        assert_eq!(class_group("zagros_prod", "network-jump"), "zagros_prod_network_jump_hosts");
+    }
+
+    /// An obs node's baseline, kmod and gates name the obs group, never the
+    /// core group: `-e target=<core> -l <obs node>` matches no host and the
+    /// play passes having done nothing.
+    #[test]
+    fn an_obs_node_runs_every_host_phase_against_the_obs_group() {
+        if !crate::config::checkout_declares_a_deployment() {
+            return; // a public clone of goatcore ships no deployment
+        }
+        let r = join_node(&repo(), &opts("zagros-prod", "obs", "zagros_prod")).unwrap();
+        let cmds: Vec<&str> = r.checks.iter().filter(|c| c.name == "cmd").map(|c| c.detail.as_str()).collect();
+        assert!(cmds.iter().all(|c| !c.contains("target=zagros_prod_hosts ")), "{cmds:?}");
+        assert!(cmds.iter().any(|c| c.contains("mgmt-host-baseline.yml -e target=zagros_prod_obs_hosts")), "{cmds:?}");
+        assert!(cmds.iter().any(|c| c.contains("standup-config-preflight.py' zagros_prod_hosts --obs zagros_prod_obs_hosts")), "{cmds:?}");
+    }
+
+    /// Phase 12 refuses any TBD_ left in the node's group_vars (a TBD mesh_ip_a
+    /// carries no node name), and phase 7 refuses only the unnamed default CA,
+    /// not the `dev-` key-mode prefix every goatnet's CA id carries.
+    #[test]
+    fn the_tbd_and_ca_gates_test_what_they_name() {
+        if !crate::config::checkout_declares_a_deployment() {
+            return; // a public clone of goatcore ships no deployment
+        }
+        let r = join_node(&repo(), &opts("uk", "core", "zagros")).unwrap();
+        let cmds: Vec<&str> = r.checks.iter().filter(|c| c.name == "cmd").map(|c| c.detail.as_str()).collect();
+        let p12 = cmds.iter().find(|c| c.contains("TBD_")).unwrap();
+        assert!(p12.contains("! grep -rqn 'TBD_'") && p12.contains("_hosts/' && ! grep -n 'TBD_'"), "{p12}");
+        let p7 = cmds.iter().find(|c| c.contains("ca_id:")).unwrap();
+        assert!(p7.contains("-goat-ca-") && !p7.contains("\"?dev-'"), "{p7}");
+    }
+
+    /// No secret is expanded onto a command line: phase 13 reads them inside
+    /// the play (ansible's env lookup, after with-secrets has resolved them),
+    /// and the phase 9 preflight gets the key over stdin with the real apex.
+    #[test]
+    fn secrets_stay_off_argv_and_the_preflight_checks_the_real_apex() {
+        if !crate::config::checkout_declares_a_deployment() {
+            return; // a public clone of goatcore ships no deployment
+        }
+        let r = join_node(&repo(), &opts("uk", "core", "zagros")).unwrap();
+        let cmds: Vec<&str> = r.checks.iter().filter(|c| c.name == "cmd").map(|c| c.detail.as_str()).collect();
+        assert!(cmds.iter().all(|c| !c.contains("_PG_PASS)") && !c.contains("_NB_ENCKEY)") && !c.contains("_BKP_KEY)")), "{cmds:?}");
+        assert!(cmds.iter().any(|c| c.contains("lookup(\"env\", \"") && c.contains("_PG_PASS\")")), "{cmds:?}");
+        let p9 = cmds.iter().find(|c| c.contains("preflight-enrollment.sh")).unwrap();
+        assert!(p9.contains("NETBIRD_MANAGEMENT_URL=") && p9.contains("| ssh ") && p9.ends_with("'bash -s'"), "{p9}");
     }
 
     #[test]

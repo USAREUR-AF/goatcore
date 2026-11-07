@@ -248,10 +248,6 @@ type Config struct {
 	// and the membership-authority panel link to (admin guide, git clone,
 	// warrant membership declarations), e.g. "https://github.com/example/goat".
 	PlatformRepoURL string
-	// AdminGuideURL is the admin operator guide the welcome package's operator
-	// section links to (ADMIN_GUIDE_URL). A deployment whose PlatformRepoURL
-	// is its own configuration repository keeps the guide at the product's copy.
-	AdminGuideURL string
 	// CollabURL is the collaboration environment's front door named in the
 	// welcome package's collab block (NOTIFY_COLLAB_URL).
 	CollabURL string
@@ -479,7 +475,6 @@ func Load() (*Config, error) {
 	c.NotifyPortalURL = envOr("NOTIFY_PORTAL_URL", "")
 	c.GuideRepoBaseURL = envOr("GUIDE_REPO_BASE_URL", "")
 	c.PlatformRepoURL = strings.TrimRight(envOr("PLATFORM_REPO_URL", "https://github.com/usareur-af/goatcore"), "/")
-	c.AdminGuideURL = envOr("ADMIN_GUIDE_URL", "https://github.com/usareur-af/goatcore/blob/main/docs/operations/admin-operator-guide.md")
 	c.CollabURL = strings.TrimRight(envOr("NOTIFY_COLLAB_URL", "https://collab.goat.example"), "/")
 	c.NotifyRelayHealthURL = envOr("NOTIFY_RELAY_HEALTH_URL", "")
 	c.NotifyMapURL = envOr("NOTIFY_MAP_URL", "")

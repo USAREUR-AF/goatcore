@@ -327,11 +327,16 @@ PYREFS
   fi
 fi
 
-# Load references before invoking the injector. Re-entry retains the resolved
-# environment rather than replacing it with the references just read from disk.
-# Migration remains opt-in: explicit with-secrets resolves inherited references.
-if [ "${GOAT_REFERENCES_ONLY:-0}" = "1" ] && [ -z "${GOAT_SECRETS_RESOLVED:-}" ] \
-   && { [[ "$(env)" == *"=${GOAT_SECRET_REF_PREFIX:-op://}"* ]] || [[ "$(env)" == *"=bao://"* ]]; }; then
+# Resolve every inherited reference before the play sees it. Re-entry retains the
+# resolved environment rather than replacing it with the references just read
+# from disk. GOAT_REFERENCES_ONLY decides which FILES a shell loads (plaintext
+# envrc or references only); it does not decide whether a reference already in
+# the environment is resolved. A reference that reaches the play unresolved is
+# sent as the literal string — a registry login with "op://…" as its password
+# fails on the host with no_log hiding why — so any reference present is resolved
+# here, whatever the shell's migration state.
+if [ -z "${GOAT_SECRETS_RESOLVED:-}" ] \
+   && { [[ "$(env)" == *"=${GOAT_SECRET_REF_PREFIX:-op://}"* ]] || [[ "$(env)" == *"=bao://"* ]] || [[ "$(env)" == *"=bw://"* ]]; }; then
   exec "$SCRIPT_DIR/with-secrets" "$0" "$@"
 fi
 # A value store (ADR 1204: env-file, git-crypt, sops) holds the values themselves,

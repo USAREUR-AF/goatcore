@@ -89,9 +89,6 @@ type Catalog struct {
 	// operator section's admin-guide link and git clone come from it. Blank
 	// renders the guide by name and asks the operator for the clone URL.
 	RepoURL string
-	// AdminGuideURL is the admin operator guide (ADMIN_GUIDE_URL). Blank falls
-	// back to the guide's path under RepoURL.
-	AdminGuideURL string
 	// CollabURL is the collaboration environment's front door
 	// (NOTIFY_COLLAB_URL). Blank renders the collab block without an address.
 	CollabURL string
@@ -1579,9 +1576,7 @@ func renderOperatorSetup(d *doc, cat Catalog, r Recipient) {
 		d.para("Your operator handle is assigned with your operator bundle — ask your")
 		d.para("operator for it. EVERY admin action you take is attributed to it.")
 	}
-	if cat.AdminGuideURL != "" {
-		d.para("Full guide: " + cat.AdminGuideURL)
-	} else if cat.RepoURL != "" {
+	if cat.RepoURL != "" {
 		d.para("Full guide: " + strings.TrimRight(cat.RepoURL, "/") + "/blob/main/docs/operations/admin-operator-guide.md")
 	} else {
 		d.para("Full guide: docs/operations/admin-operator-guide.md in the platform repository.")

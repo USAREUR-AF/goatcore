@@ -274,10 +274,6 @@ id_admin_console_notify_goatnet_purpose: ""
 # the welcome package's collab block. Empty = the variable is rendered empty
 # and the console uses its built-in value.
 id_admin_console_platform_repo_url: ""
-# admin_guide_url: the admin operator guide the operator section links to, as
-# a full URL. Empty = the console's built-in value, the product repository's
-# copy; set it when platform_repo_url names a repository without the guide.
-id_admin_console_admin_guide_url: ""
 id_admin_console_notify_collab_url: ""
 
 # Comma-separated addresses emailed when a candidate clears the sponsor gate and

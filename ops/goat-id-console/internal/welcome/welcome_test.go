@@ -1668,21 +1668,3 @@ func TestRender_blankCollabAndRepoURLs(t *testing.T) {
 		t.Error("blank URLs must not render an address")
 	}
 }
-
-func TestRender_adminGuideURLWinsOverRepoURL(t *testing.T) {
-	cat := zagrosCatalog()
-	cat.RepoURL = "https://github.com/example-org/goatnet-config"
-	cat.AdminGuideURL = "https://github.com/example-org/goat/blob/main/docs/operations/admin-operator-guide.md"
-	out := Render(cat,
-		Recipient{Name: "Adm", Handle: "adm-op", Tier: "platform-admin", AdminConsole: true, AdminOperator: true},
-		Artifacts{SetupKey: "K"})
-	if !strings.Contains(out, "Full guide: "+cat.AdminGuideURL) {
-		t.Error("the guide link must be AdminGuideURL")
-	}
-	if strings.Contains(out, "goatnet-config/blob/main/docs/operations/admin-operator-guide.md") {
-		t.Error("the guide link must not be built from RepoURL when AdminGuideURL is set")
-	}
-	if !strings.Contains(out, "git clone https://github.com/example-org/goatnet-config.git") {
-		t.Error("the clone line still comes from RepoURL")
-	}
-}

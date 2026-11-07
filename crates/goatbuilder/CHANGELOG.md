@@ -4,6 +4,35 @@ Each release is the tag `goatbuilder/v<semver>` on `main`, built and signed by
 `.github/workflows/goatbuilder-release.yml`. Design of record:
 `docs/design/goatbuilder.md`; conformance: `docs/design/goatbuilder-conformance.md`.
 
+## Unreleased
+
+### Fixed: `join-node` runs every node against its own class's group
+
+An obs, breakglass or network-jump node was baselined, kmod-converged and
+gated against the site's CORE group: `-e target=<site>_hosts -l <obs node>`
+matches no host, so the play passed having done nothing. Phases 3-12 now use
+the class's group, and an obs node's config preflight runs as
+`standup-config-preflight.py <site>_hosts --obs <site>_obs_hosts`.
+
+- Phase 12 refuses any `TBD_` left in the node's group_vars. It only tripped
+  on a line carrying the node's name, which a `mesh_ip_a: "TBD_…"` never does.
+- Phase 7 refuses the unnamed default CA (`<mode>-goat-ca-<date>`). It refused
+  any `ca_id` starting `dev-`, which is the key-mode prefix every goatnet's own
+  CA id carries.
+- Phase 8 names the dashboard of the goatnet a joiner enrols into (its founder).
+- Phase 1 says the Jetson USB-bridge address applies to a Jetson only.
+- Phase 9 passes the goatnet's enrolment apex (`site_enrollment_dns`) and the
+  setup key over stdin; it checked a placeholder URL with no key, and its
+  command carried an unclosed quote.
+- Phase 13 reads secrets inside the play (`lookup('env', …)`) instead of
+  `"$(printenv …)"` on the command line, which the calling shell expanded to the
+  unresolved `op://` reference before `with-secrets` ran, and put values on argv.
+
+### Fixed: `wireguard-kmod` on a kernel with WireGuard in-tree
+
+A stock distribution kernel ships WireGuard; the role now ends for such a host
+instead of refusing for want of prebuilt artifacts.
+
 ## 0.4.1 — 2026-11-02
 
 goatbuilder names no deployment of its own: what a person reads uses

@@ -248,7 +248,7 @@ pub fn run(repo: &Path, o: &Options) -> Result<Report> {
     // binary is refused before the long download.
     let sha_txt = fetch_text(&probe, &sha_url, fetch_total).map_err(|e| unread(format!("cannot read the checksum: {e}")))?;
     let want = goat_selfupdate::parse_checksum(&sha_txt).ok_or_else(|| unread(format!("{sha_url} holds no sha256 digest")))?;
-    let signature = signed(&probe, &s.base, &asset, &want, fetch_total)?;
+    let signature = signed(repo, &probe, &s.base, &asset, &want, fetch_total)?;
     if matches!(o.output, OutputFormat::Table) {
         eprintln!("downloading {bin_url} …");
     }
@@ -274,20 +274,11 @@ pub fn run(repo: &Path, o: &Options) -> Result<Report> {
     Ok(Report::new("update", rows, EXIT_REFUSED))
 }
 
-/// The repository whose release workflow signs goatbuilder: the one this
-/// binary was built in by GitHub Actions (GITHUB_REPOSITORY at compile time,
-/// so a fork that releases its own build verifies against itself), else
-/// USAREUR-AF/goatcore for a local build.
-const PUBLISHER: &str = match option_env!("GITHUB_REPOSITORY") {
-    Some(r) => r,
-    None => "USAREUR-AF/goatcore",
-};
-
 /// SHA256SUMS, the release's one signed file, must list `asset` at the digest
 /// its `.sha256` gives; with cosign on PATH its signature is verified against
 /// the release workflow's identity, as the install page does by hand
 /// (docs/design/goatbuilder-distribution.md). Returns the signature row's text.
-fn signed(agent: &ureq::Agent, base: &str, asset: &str, want: &str, total: Duration) -> Result<String> {
+fn signed(repo: &Path, agent: &ureq::Agent, base: &str, asset: &str, want: &str, total: Duration) -> Result<String> {
     let sums_url = format!("{base}/SHA256SUMS");
     let sums = fetch_text(agent, &sums_url, total).map_err(|e| unread(format!("cannot read the signed checksums: {e}")))?;
     let listed = sums.lines().find_map(|l| {
@@ -305,10 +296,9 @@ fn signed(agent: &ureq::Agent, base: &str, asset: &str, want: &str, total: Durat
     };
     let bundle_url = format!("{base}/SHA256SUMS.cosign-bundle");
     let bundle = fetch_text(agent, &bundle_url, total).map_err(|e| unread(format!("cannot read the signature: {e}")))?;
-    // The signer is this binary's publisher, not the checkout it runs in: a
-    // deployment's repo.source names where its pull requests are, and it
-    // releases no goatbuilder of its own.
-    let source = PUBLISHER;
+    // Run outside a checkout, the signer is this binary's own publisher. The
+    // signature is always checked: an unreadable config never skips it.
+    let source = crate::config::load(&repo.join("ops/goatbuilder/goatbuilder.yaml")).ok().and_then(|c| c.repo).map(|r| r.source).unwrap_or_else(|| "USAREUR-AF/goatcore".into());
     let dir = std::env::temp_dir().join(format!("goatbuilder-update-{}", std::process::id()));
     let _ = std::fs::create_dir_all(&dir);
     let (sums_path, bundle_path) = (dir.join("SHA256SUMS"), dir.join("SHA256SUMS.cosign-bundle"));
