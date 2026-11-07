@@ -45,6 +45,18 @@ components:
     image_workflow: .github/workflows/mgmt-host-bootstrap.yml
     deploy_playbook: mgmt-host.yml
     ledger_component: null
+  # The outbound republisher of a sovereign peering, on the core host the edge
+  # dials (roles/goat-fed-republisher, peering phase 12). fleet: null until the
+  # first main build of goat-fed-republisher-image.yml publishes a digest; that
+  # digest lands here in its own pull request.
+  goat-fed-republisher:
+    owns_state: false
+    rollback: pin-revert
+    var: goat_fed_republisher_image
+    image_workflow: .github/workflows/goat-fed-republisher-image.yml
+    deploy_playbook: peering-republisher.yml
+    ledger_component: goat-fed-republisher
+    fleet: null
   spire:
     owns_state: true
     rollback: none

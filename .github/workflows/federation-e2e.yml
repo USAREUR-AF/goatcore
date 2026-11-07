@@ -24,6 +24,8 @@ on:
       - 'ops/ansible/roles/goat-peering-wg/**'
       - 'ops/ansible/roles/goat-peering-spire/**'
       - 'ops/ansible/roles/goat-zenoh-edge/**'
+      - 'ops/ansible/roles/goat-fed-republisher/**'
+      - 'ops/ansible/roles/goat-zenoh/templates/config.json5.j2'
       - 'ops/ansible/roles/spire/templates/server.conf.j2'
       - 'ops/ansible/tasks/peering-applied-vars.yml'
       - 'ops/ansible/peering-*.yml'
@@ -47,7 +49,7 @@ jobs:
   federation:
     name: two sovereigns through the real driver, proved from the receiving side
     runs-on: ubuntu-24.04
-    timeout-minutes: 75
+    timeout-minutes: 100
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

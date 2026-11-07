@@ -16,7 +16,7 @@ PHASE  TYPE     STEP
 9      tool     Write the access rules and settings
 10     manual   Review what was written, and let the router onto our core
 11     ansible  Open the connection the agreement chooses
-12     ansible  Deploy the router that connects the two networks
+12     ansible  Deploy the router that connects the two networks, and the republisher beside our core
 13     ansible  Trust the other party's identity service
 14     gate     Test that allowed traffic passes and the rest is refused
 

@@ -5,7 +5,8 @@
 # docs/design/deployment-e2e.md §Hermetic is the pattern. Four privileged hosts run
 # systemd and their own dockerd:
 #
-#   <s>-core   the `goat-zenoh` core router and a real spire-server
+#   <s>-core   the `goat-zenoh` core router, a real spire-server and, from phase 12, the
+#              outbound republisher (built here from ops/federation/republisher)
 #   <s>-edge   the operator's station and the edge host: the driver runs here, the plays
 #              reach it over ssh, its dockerd runs the edge router
 #
@@ -14,6 +15,10 @@
 # network, and only the tunnel's UDP port crosses it. Phase 5's exchange and phase 10's
 # review are scripted as a file copy, a keyring and an acl-assemble, as two operators
 # would do them by hand. Nothing else about the driver is touched.
+#
+# Each sovereign offers TWO release sets, `release/all/**` and `release/<them>/**`, and
+# phase 14 proves each one crosses as `from/<us>/<set>/**`: staged on the sending core,
+# lifted by its republisher, read back from the receiving core's store.
 #
 # Two scenarios, because nothing is asymmetric:
 #   1  pasture listens and goes first, both sides through `goatbuilder federate`
@@ -68,6 +73,11 @@ ZENOH_IMAGE="ghcr.io/usareur-af/zenoh-pqc@sha256:372de39d2e8b64fe7157194173f1b7a
 SPIRE_IMAGE="$(python3 -c 'import sys, yaml; print(((yaml.safe_load(open(sys.argv[1])).get("components") or {}).get("spire") or {}).get("fleet") or "")' "$REPO/ops/pins/fleet-pins.yaml" 2>/dev/null || true)"
 [[ "$SPIRE_IMAGE" =~ ^ghcr\.io/spiffe/spire-server:[^@[:space:]]+@sha256:[0-9a-f]{64}$ ]] || { echo "run.sh: ops/pins/fleet-pins.yaml declares no digest-pinned SPIRE image (components.spire.fleet)" >&2; exit 2; }
 HOST_IMAGE=fed-e2e-host
+# The republisher, built from this checkout and loaded into each core host's dockerd.
+# The role takes its content-addressed id (`sha256:<64 hex>`), as immutable as a
+# registry digest, until the published image is pinned in ops/pins/fleet-pins.yaml.
+RP_TAG=fed-e2e-republisher
+RP_IMAGE=""
 ACL_ASSEMBLE="$REPO/ops/ansible/roles/goat-zenoh/files/acl-assemble.py"
 REC="$REPO/ops/e2e/rec.py"
 FAILS=0
@@ -134,7 +144,7 @@ gen_sovereign() { # $1 sovereign: its CA, its signing key, its operator's identi
   git clone -q --depth 1 --single-branch "file://$REPO" "$d/clone"
   git -C "$d/clone" checkout -q -B main
   git -C "$d/clone" config user.name "$s operator"; git -C "$d/clone" config user.email "ops@$s.test"
-  python3 "$HERE/overlay.py" "$d/clone" "$s" "$(other "$s")" "$(octet "$s")" "$ZENOH_IMAGE"
+  python3 "$HERE/overlay.py" "$d/clone" "$s" "$(other "$s")" "$(octet "$s")" "$ZENOH_IMAGE" --republisher-image "$RP_IMAGE"
   git -C "$d/clone" add -A
   git -C "$d/clone" commit -q -m "$s: this sovereign's declarations for the peering"
   git clone -q --bare "$d/clone" "$d/origin.git"
@@ -211,7 +221,7 @@ proposed_link_subnet = "169.254.77.0/31"
 measured_mtu         = 1380
 
 [data]
-release                  = ["release/$s/**"]
+release                  = ["release/all/**", "release/$them/**"]
 accept_hz                = 100
 accept_bytes_per_message = 1048576
 accept_distinct_keys     = 5000
@@ -345,6 +355,7 @@ scenario() { # $1 number, $2 first side (it also listens), $3 avenue
   done
   for s in pasture meadow; do wait_ready "fed-$s-core"; wait_ready "fed-$s-edge"; done
   for s in pasture meadow; do start_core "$s"; done
+  for s in pasture meadow; do docker save "$RP_TAG" | docker exec -i "fed-$s-core" docker load -q >/dev/null; done
   prepare_edge "$first" true
   prepare_edge "$second" false
 
@@ -369,9 +380,15 @@ scenario() { # $1 number, $2 first side (it also listens), $3 avenue
   rec "s$n-the-agreement-selected-wireguard" --expect-in '"kind":"wireguard"' -- docker exec fed-pasture-edge cat /var/lib/goat-federation/meadow/agreement.json
   for s in "$first" "$second"; do review_and_admit "$s"; done
 
-  say "scenario $n: phases 11-12, each side: the transport, then the edge"
+  say "scenario $n: phases 11-12, each side: the transport, the edge, the republisher"
   for s in "$first" "$second"; do
-    rec "s$n-$s-phases-11-to-12" --expect-in "open the wireguard transport" -- bash -c "$(declare -f drive host_exec other octet core_ip die); drive '$s' '$avenue' 11 12"
+    rec "s$n-$s-phases-11-to-12" --expect-in "open the wireguard transport" --expect-in "goat-fed-republisher-$(other "$s") is running" -- bash -c "$(declare -f drive host_exec other octet core_ip die); drive '$s' '$avenue' 11 12"
+  done
+  # The republisher on each core maps BOTH offered sets onto that side's wire name.
+  for s in "$first" "$second"; do
+    them="$(other "$s")"
+    rec "s$n-$s-republisher-maps-both-sets" --expect-in "release release/all/** -> wire from/$s/all/**" --expect-in "release release/$them/** -> wire from/$s/$them/**" \
+      -- docker exec "fed-$s-core" docker logs "goat-fed-republisher-$them"
   done
   rec "s$n-a-wireguard-handshake" -- bash -c \
     "for _ in \$(seq 1 30); do t=\$(docker exec fed-pasture-edge wg show wg-fed0 latest-handshakes | cut -f2); [ \"\${t:-0}\" != 0 ] && break; sleep 2; done; docker exec fed-pasture-edge wg show wg-fed0 latest-handshakes | cut -f2; [ \"\${t:-0}\" != 0 ]"
@@ -386,7 +403,7 @@ scenario() { # $1 number, $2 first side (it also listens), $3 avenue
   for s in "$first" "$second"; do
     them="$(other "$s")"
     host_exec "fed-$s-core" sh -c 'cat > /usr/local/bin/fed-responder.py' < "$REPO/ops/federation/roundtrip/responder.py"
-    docker exec -d "fed-$s-core" python3 /usr/local/bin/fed-responder.py "from/$them" "from/$s"
+    docker exec -d "fed-$s-core" python3 /usr/local/bin/fed-responder.py "from/$them" "release/all"
     start_probe "$s" agreed "/var/lib/goat-federation/$them/pki/peering-outward.pem" "/var/lib/goat-federation/$them/pki/peering-outward-key.pem" 8101
     start_probe "$s" forged /etc/fed-e2e/forged.pem /etc/fed-e2e/forged-key.pem 8102
     start_probe "$s" impersonate /etc/fed-e2e/impersonate.pem /etc/fed-e2e/impersonate-key.pem 8103
@@ -405,12 +422,18 @@ scenario() { # $1 number, $2 first side (it also listens), $3 avenue
       "docker exec fed-$s-edge wg show wg-fed0 transfer | awk '{print; if (\$2 < 1 || \$3 < 1) exit 1}'"
   done
   # A round trip that cannot fail is not a check: cut on one side, and it fails.
-  local rt=(env "BASE=http://$(core_ip "$first"):8000" "$REPO/ops/federation/roundtrip/fedcheck.sh" "from/$first" "from/$second" 15)
+  local rt=(env "BASE=http://$(core_ip "$first"):8000" "$REPO/ops/federation/roundtrip/fedcheck.sh" "release/all" "from/$second" 15)
+  # The republisher is the only writer of our wire name: stop it, and nothing crosses.
+  rec "s$n-stop-the-republisher" -- docker exec "fed-$first-core" docker stop "goat-fed-republisher-$second"
+  rec "s$n-round-trip-fails-without-the-republisher" --expect-exit 1 --expect-in "FAIL" -- "${rt[@]}"
+  rec "s$n-start-the-republisher" -- docker exec "fed-$first-core" docker start "goat-fed-republisher-$second"
+  rec "s$n-round-trip-passes-with-the-republisher" --expect-in "PASS" -- bash -c \
+    "for _ in 1 2 3 4 5 6; do out=\$(BASE=http://$(core_ip "$first"):8000 '$REPO/ops/federation/roundtrip/fedcheck.sh' release/all from/$second 20) && { echo \"\$out\"; exit 0; }; sleep 10; done; echo \"\$out\"; exit 1"
   rec "s$n-cut-the-link" -- docker exec "fed-$second-edge" systemctl stop goat-peering-wg@wg-fed0
   rec "s$n-round-trip-fails-when-cut" --expect-exit 1 --expect-in "FAIL" -- "${rt[@]}"
   rec "s$n-restore-the-link" -- docker exec "fed-$second-edge" systemctl start goat-peering-wg@wg-fed0
   rec "s$n-round-trip-passes-again" --expect-in "PASS" -- bash -c \
-    "for _ in 1 2 3 4 5 6; do out=\$(BASE=http://$(core_ip "$first"):8000 '$REPO/ops/federation/roundtrip/fedcheck.sh' from/$first from/$second 20) && { echo \"\$out\"; exit 0; }; sleep 10; done; echo \"\$out\"; exit 1"
+    "for _ in 1 2 3 4 5 6; do out=\$(BASE=http://$(core_ip "$first"):8000 '$REPO/ops/federation/roundtrip/fedcheck.sh' release/all from/$second 20) && { echo \"\$out\"; exit 0; }; sleep 10; done; echo \"\$out\"; exit 1"
   # F-495: the role refuses without a recorded reason, and refuses any other transport.
   for s in pasture meadow; do
     docker exec "fed-$s-edge" cat /var/log/goat-peering-wg-wg-fed0-state.json > "$RECORD/s$n-$s-wg-state.json" 2>&1 || true
@@ -426,6 +449,7 @@ scenario() { # $1 number, $2 first side (it also listens), $3 avenue
     docker exec "fed-$s-edge" sh -c "docker logs goat-zenoh-edge-$(other "$s") 2>&1 | tail -400" > "$RECORD/s$n-$s-edge-router.log" 2>&1 || true
     docker exec "fed-$s-core" sh -c "docker logs goat-zenoh 2>&1 | tail -200" > "$RECORD/s$n-$s-core-router.log" 2>&1 || true
     docker exec "fed-$s-core" sh -c "docker logs spire-server 2>&1 | tail -100" > "$RECORD/s$n-$s-spire.log" 2>&1 || true
+    docker exec "fed-$s-core" sh -c "docker logs goat-fed-republisher-$(other "$s") 2>&1 | tail -200" > "$RECORD/s$n-$s-republisher.log" 2>&1 || true
     docker exec "fed-$s-edge" wg show wg-fed0 > "$RECORD/s$n-$s-wg.txt" 2>&1 || true
   done
 }
@@ -459,6 +483,12 @@ say "the host image"
 ctx="$WORK/host-context"; rm -rf "$ctx"; cp -R "$HERE/host" "$ctx"
 # Not -q: a failed build has to say why in the job log.
 docker build --progress=plain -t "$HOST_IMAGE" "$ctx"
+
+say "the republisher image, from this checkout"
+docker build --progress=plain -t "$RP_TAG" "$REPO/ops/federation/republisher"
+RP_IMAGE="$(docker image inspect -f '{{.Id}}' "$RP_TAG")"
+[[ "$RP_IMAGE" =~ ^sha256:[0-9a-f]{64}$ ]] || die "the republisher image has no content-addressed id: '$RP_IMAGE'"
+echo "republisher image: $RP_IMAGE"
 
 if [ -z "$ONLY" ] || [ "$ONLY" = 1 ]; then scenario 1 pasture goatbuilder; fi
 if [ -z "$ONLY" ] || [ "$ONLY" = 2 ]; then scenario 2 meadow script; fi

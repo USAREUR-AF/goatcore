@@ -7,13 +7,12 @@
 #   1. rust-builder: cargo build --release --locked
 #   2. Runtime: the runtime-cc base (ops/base-images/, ADR 1220).
 #
-# No embedded identity material. FOUR files are bind-mounted at deploy time —
-# a leaf cert + key for the LOCAL session and another pair for the PEERING EDGE
-# session, plus each side's CA root. They are deliberately different identities:
-# the local one is an ordinary fabric client, the edge one is what the edge's
-# access rules grant `from/<sovereign>/**` and nothing wider.
-#
-# The composed agreement is mounted read-only too. It is the configuration.
+# No embedded identity material. The deployment (roles/goat-fed-republisher)
+# bind-mounts one directory: the composed agreement, which is the configuration,
+# one leaf cert + key (CN fed.<us>.<them>.republisher.01) and our CA. Both
+# sessions dial OUR core router with that leaf; the core's fed-rp-<them> subject
+# lets it read the offered release sets and write from/<us>/** and nothing wider.
+# The binary still takes the two sessions' endpoints and identities separately.
 
 # Base images are build arguments named for their role; the defaults are
 # the public images in ops/base-images/ (docs/design/base-images.md).

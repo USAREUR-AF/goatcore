@@ -299,6 +299,12 @@ runs **on its own side, over its own data**. It is deliberately not a router fea
 underlying fabric cannot rename key expressions in transit, and building that capability
 would mean forking it.
 
+The mapping is fixed: `release/<set>/<rest>` crosses as `from/<sovereign_id>/<set>/<rest>`, so
+several sets share one wire prefix with the set kept as a path segment. Where a party runs that
+process is its own decision. This repository's republisher (`ops/federation/republisher/`) runs on
+the party's core host, with both of its sessions on the party's core router, and is the only writer
+of the party's wire name there; the party's edge carries that name out.
+
 ## 3.3 Coalitions, alliances and frameworks
 
 **No coalition is named anywhere in this specification, and no package declares its own

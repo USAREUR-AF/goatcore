@@ -100,6 +100,9 @@ printf 'commit %s\npasture %s\nmeadow %s\nstarted %s\n' "$COMMIT" "$H_pasture" "
 ZENOH_IMAGE="ghcr.io/usareur-af/zenoh-pqc@sha256:372de39d2e8b64fe7157194173f1b7ac6eac2700ff04c49cce2ce3c284a6fdb2"
 SPIRE_IMAGE="$(python3 -c 'import sys, yaml; print(((yaml.safe_load(open(sys.argv[1])).get("components") or {}).get("spire") or {}).get("fleet") or "")' "$REPO/ops/pins/fleet-pins.yaml" 2>/dev/null || true)"
 [[ "$SPIRE_IMAGE" =~ ^ghcr\.io/spiffe/spire-server:[^@[:space:]]+@sha256:[0-9a-f]{64}$ ]] || die "ops/pins/fleet-pins.yaml declares no digest-pinned SPIRE image (components.spire.fleet)"
+# The outbound republisher: the published image of record, components.goat-fed-republisher.
+REPUBLISHER_IMAGE="$(python3 -c 'import sys, yaml; print(str(((yaml.safe_load(open(sys.argv[1])).get("components") or {}).get("goat-fed-republisher") or {}).get("fleet") or "").replace("{{ ghcr_org }}", "usareur-af"))' "$REPO/ops/pins/fleet-pins.yaml" 2>/dev/null || true)"
+[[ "$REPUBLISHER_IMAGE" =~ @sha256:[0-9a-f]{64}$ ]] || die "ops/pins/fleet-pins.yaml declares no digest-pinned republisher image (components.goat-fed-republisher.fleet)"
 
 other() { [ "$1" = pasture ] && echo meadow || echo pasture; }
 core_addr() { [ "$1" = pasture ] && echo 10.77.1.10 || echo 10.77.2.10; }
@@ -124,7 +127,7 @@ done
 hx() {
   local s="$1" args cmd; shift
   args="$(printf '%q ' "$@")"
-  cmd="sudo env FED_ZENOH_IMAGE=$ZENOH_IMAGE FED_SPIRE_IMAGE=$SPIRE_IMAGE bash /opt/fed-live/live-host.sh $args"
+  cmd="sudo env FED_ZENOH_IMAGE=$ZENOH_IMAGE FED_SPIRE_IMAGE=$SPIRE_IMAGE FED_REPUBLISHER_IMAGE=$REPUBLISHER_IMAGE bash /opt/fed-live/live-host.sh $args"
   if [ "$DRY" = 1 ]; then echo "DRY  [$s] live-host.sh $args" >&2; return 0; fi
   "$BIN/on-$s" "$cmd"
 }
@@ -184,7 +187,7 @@ for s in pasture meadow; do
   if [ "$DRY" = 1 ]; then echo "DRY  [$s] install goat and goatbuilder to /usr/local/bin" >&2
   else hput "$s" /usr/local/bin/goat 0755 < "$GOAT"; hput "$s" /usr/local/bin/goatbuilder 0755 < "$GB"; fi
   if [ "$DRY" = 1 ]; then echo "DRY  [$s] write /opt/fed-live/ops.tar.gz" >&2; else hput "$s" /opt/fed-live/ops.tar.gz 0644 < "$TARBALL"; fi
-  rec "$s-prereqs" --expect-in "prereqs ok" -- "$BIN/on-$s" "sudo env FED_ZENOH_IMAGE=$ZENOH_IMAGE FED_SPIRE_IMAGE=$SPIRE_IMAGE bash /opt/fed-live/live-host.sh prereqs"
+  rec "$s-prereqs" --expect-in "prereqs ok" -- "$BIN/on-$s" "sudo env FED_ZENOH_IMAGE=$ZENOH_IMAGE FED_SPIRE_IMAGE=$SPIRE_IMAGE FED_REPUBLISHER_IMAGE=$REPUBLISHER_IMAGE bash /opt/fed-live/live-host.sh prereqs"
   # The zenoh image is private. The token goes from this shell's variable, through
   # printf (a builtin, so never an argument to a process), down SSH's stdin to
   # `docker login --password-stdin`. Nothing on this laptop holds it in a file.
@@ -194,7 +197,7 @@ for s in pasture meadow; do
     printf '%s' "${!GHCR_TOKEN_ENV}" | "$BIN/on-$s" "sudo bash /opt/fed-live/live-host.sh login $GHCR_USER" || die "docker login on $s failed"
   fi
   LOGGED_IN+=("$s")
-  rec "$s-images" --expect-in "images ok" -- "$BIN/on-$s" "sudo env FED_ZENOH_IMAGE=$ZENOH_IMAGE FED_SPIRE_IMAGE=$SPIRE_IMAGE bash /opt/fed-live/live-host.sh images"
+  rec "$s-images" --expect-in "images ok" -- "$BIN/on-$s" "sudo env FED_ZENOH_IMAGE=$ZENOH_IMAGE FED_SPIRE_IMAGE=$SPIRE_IMAGE FED_REPUBLISHER_IMAGE=$REPUBLISHER_IMAGE bash /opt/fed-live/live-host.sh images"
 done
 
 scenario() { # $1 number, $2 first side (it also listens), $3 avenue
@@ -277,7 +280,7 @@ scenario() { # $1 number, $2 first side (it also listens), $3 avenue
     rec "s$n-$s-tunnel-carried-it" -- bash -c "'$BIN/on-$s' sudo wg show wg-fed0 transfer | awk '{print; if (\$2 < 1 || \$3 < 1) exit 1}'"
   done
   local b; b="$(port_base "$first")"
-  local rt="BASE=http://127.0.0.1:${b}000 '$REPO/ops/federation/roundtrip/fedcheck.sh' from/$first from/$second"
+  local rt="BASE=http://127.0.0.1:${b}000 '$REPO/ops/federation/roundtrip/fedcheck.sh' release/all from/$second"
   rec "s$n-cut-the-link" -- "$BIN/on-$second" sudo systemctl stop goat-peering-wg@wg-fed0
   rec "s$n-round-trip-fails-when-cut" --expect-exit 1 --expect-in "FAIL" -- bash -c "$rt 15"
   rec "s$n-restore-the-link" -- "$BIN/on-$second" sudo systemctl start goat-peering-wg@wg-fed0

@@ -96,31 +96,6 @@
 {% endif %}
     ],
   },
-{% for _p in (zenoh_sovereign_peerings | default([])) %}
-      // Sovereign peering: {{ _p.sovereign }} (ADR 1157). INGRESS WRITE ONLY,
-      // confined to that sovereign's own prefix. There is deliberately NO read
-      // rule here -- a sovereign reads only what an explicit release rule grants,
-      // so the default for a new peering is "may send us data, may see nothing".
-      {
-        id: "sovereign-{{ _p.sovereign }}-w",
-        messages: ["put", "delete"],
-        flows: ["ingress"],
-        permission: "allow",
-        key_exprs: ["from/{{ _p.sovereign }}/**"],
-      },
-{% if (_p.release_key_exprs | default([])) | length > 0 %}
-      // Declared release set for {{ _p.sovereign }}: EGRESS only, and only the
-      // prefixes named in the peering declaration. Never a wildcard -- a release
-      // set is a decision, and a wildcard is the absence of one.
-      {
-        id: "sovereign-{{ _p.sovereign }}-r",
-        messages: ["declare_subscriber", "query", "reply", "declare_liveliness_subscriber", "liveliness_query"],
-        flows: ["egress"],
-        permission: "allow",
-        key_exprs: [{% for _k in _p.release_key_exprs %}"{{ _k }}"{% if not loop.last %}, {% endif %}{% endfor %}],
-      },
-{% endif %}
-{% endfor %}
 {% if goat_zenoh_connect_endpoints | default([]) | length > 0 %}
 
   // Outbound router-to-router federation (ADR 0844 topology + ADR 1020 canonical
@@ -574,6 +549,83 @@
     enabled: true,
     default_permission: "deny",
     rules: [
+{% for _p in (zenoh_sovereign_peerings | default([])) %}
+      // Sovereign peering: {{ _p.sovereign }} (ADR 1157). The same four rules
+      // `goat federate apply` renders into ops/federation/acl/<them>-fragment.json5,
+      // so a core configured from this role and one spliced from the fragment
+      // carry one grant. DATA FLOWS ONE WAY PER KEY SET AND INTEREST THE OTHER:
+      // the edge writes into `from/<sov>/**` and we send it our subscriber
+      // declaration for it; it reads the declared release set and its
+      // declaration for that set arrives here as ingress.
+      {
+        id: "sovereign-{{ _p.sovereign }}-w",
+        messages: ["put", "delete"],
+        flows: ["ingress"],
+        permission: "allow",
+        key_exprs: ["from/{{ _p.sovereign }}/**"],
+      },
+      {
+        id: "sovereign-{{ _p.sovereign }}-w-interest",
+        messages: ["declare_subscriber", "query", "declare_queryable"],
+        flows: ["egress"],
+        permission: "allow",
+        key_exprs: ["from/{{ _p.sovereign }}/**"],
+      },
+{% if (_p.release_key_exprs | default([])) | length > 0 %}
+      // What {{ _p.sovereign }} may READ from us: our wire name `from/<us>/**`,
+      // never a `release/**` staging name and never a wildcard. `put` and
+      // `delete` are here because delivering a sample to a subscriber IS an
+      // egress put from the router's side.
+      {
+        id: "sovereign-{{ _p.sovereign }}-r",
+        messages: ["put", "delete", "declare_subscriber", "query", "reply", "declare_liveliness_subscriber", "liveliness_query"],
+        flows: ["egress"],
+        permission: "allow",
+        key_exprs: [{% for _k in _p.release_key_exprs %}"{{ _k }}"{% if not loop.last %}, {% endif %}{% endfor %}],
+      },
+      {
+        id: "sovereign-{{ _p.sovereign }}-r-interest",
+        messages: ["declare_subscriber", "query", "declare_queryable"],
+        flows: ["ingress"],
+        permission: "allow",
+        key_exprs: [{% for _k in _p.release_key_exprs %}"{{ _k }}"{% if not loop.last %}, {% endif %}{% endfor %}],
+      },
+{% endif %}
+{% if (_p.republisher_cn | default('')) | length > 0 %}
+      // The outbound republisher for {{ _p.sovereign }} (ops/federation/republisher).
+      // It READS the offered release sets and WRITES our wire name, and is the
+      // only writer of `from/<us>/**` on this core. Both of its sessions dial
+      // this router; the edge then carries the wire name out on the -r rule above.
+      {
+        id: "sovereign-{{ _p.sovereign }}-rp-r",
+        messages: ["put", "delete", "declare_subscriber", "query", "reply"],
+        flows: ["egress"],
+        permission: "allow",
+        key_exprs: [{% for _k in _p.republisher_release_key_exprs %}"{{ _k }}"{% if not loop.last %}, {% endif %}{% endfor %}],
+      },
+      {
+        id: "sovereign-{{ _p.sovereign }}-rp-r-interest",
+        messages: ["declare_subscriber", "query", "declare_queryable"],
+        flows: ["ingress"],
+        permission: "allow",
+        key_exprs: [{% for _k in _p.republisher_release_key_exprs %}"{{ _k }}"{% if not loop.last %}, {% endif %}{% endfor %}],
+      },
+      {
+        id: "sovereign-{{ _p.sovereign }}-rp-w",
+        messages: ["put", "delete"],
+        flows: ["ingress"],
+        permission: "allow",
+        key_exprs: [{% for _k in _p.release_key_exprs %}"{{ _k }}"{% if not loop.last %}, {% endif %}{% endfor %}],
+      },
+      {
+        id: "sovereign-{{ _p.sovereign }}-rp-w-interest",
+        messages: ["declare_subscriber", "query", "declare_queryable"],
+        flows: ["egress"],
+        permission: "allow",
+        key_exprs: [{% for _k in _p.release_key_exprs %}"{{ _k }}"{% if not loop.last %}, {% endif %}{% endfor %}],
+      },
+{% endif %}
+{% endfor %}
       // Universal read — any CA-rooted peer subscribes /
       // queries any topic on the fabric. Wide-open reads per the
       // community-of-trust posture. Zenoh 1.x `messages:` variant set:
@@ -1556,6 +1608,13 @@
         id: "sovereign-{{ _p.sovereign }}",
         cert_common_names: ["{{ _p.cn }}"],
       },
+{% if (_p.republisher_cn | default('')) | length > 0 %}
+      // Its outbound republisher: our own CA, our own name, never the partner's.
+      {
+        id: "sovereign-{{ _p.sovereign }}-republisher",
+        cert_common_names: ["{{ _p.republisher_cn }}"],
+      },
+{% endif %}
 {% endfor %}
       // Fabric-health meter — operator-minted leaf carries
       // CN=fabric-health-trial-peer (ADR 1034 infra peer). Distinct from the
@@ -1794,7 +1853,11 @@
 {% endif %}
 {% for _p in (zenoh_sovereign_peerings | default([])) %}
       // {{ _p.sovereign }}: write into its own prefix{% if (_p.release_key_exprs | default([])) | length > 0 %}, read the declared release set{% else %}, read NOTHING{% endif %}.
-      { rules: [{% if (_p.release_key_exprs | default([])) | length > 0 %}"sovereign-{{ _p.sovereign }}-w", "sovereign-{{ _p.sovereign }}-r"{% else %}"sovereign-{{ _p.sovereign }}-w"{% endif %}], subjects: ["sovereign-{{ _p.sovereign }}"] },
+      { rules: ["sovereign-{{ _p.sovereign }}-w", "sovereign-{{ _p.sovereign }}-w-interest"{% if (_p.release_key_exprs | default([])) | length > 0 %}, "sovereign-{{ _p.sovereign }}-r", "sovereign-{{ _p.sovereign }}-r-interest"{% endif %}], subjects: ["sovereign-{{ _p.sovereign }}"] },
+{% if (_p.republisher_cn | default('')) | length > 0 %}
+      // {{ _p.sovereign }}'s republisher: read the offered release sets, write our wire name.
+      { rules: ["sovereign-{{ _p.sovereign }}-rp-r", "sovereign-{{ _p.sovereign }}-rp-r-interest", "sovereign-{{ _p.sovereign }}-rp-w", "sovereign-{{ _p.sovereign }}-rp-w-interest"], subjects: ["sovereign-{{ _p.sovereign }}-republisher"] },
+{% endif %}
 {% endfor %}
 
       // Audit subscriber: read + receive deliveries on ** so it persists

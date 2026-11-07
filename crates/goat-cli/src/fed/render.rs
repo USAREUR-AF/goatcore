@@ -15,7 +15,7 @@
 //   * It never writes anything. The caller decides that, and only `apply`
 //     does.
 
-use super::compose::{peering_cn, publish_under};
+use super::compose::{peering_cn, publish_under, republisher_cn};
 use super::json::{parse_document, Finding, JVal};
 use super::package::AGREEMENT_SPEC;
 
@@ -680,11 +680,22 @@ pub fn render_all(
              # The outbound half of the symmetric publishing rule. Our data is staged under\n\
              # a local `release/…` name; the wire name is `from/{}/`. The fabric cannot\n\
              # rename key expressions in transit, so attaching the wire name is a small\n\
-             # process on our own side, over our own data.\n\n\
+             # process on our own side, over our own data.\n\
+             #\n\
+             # It runs beside our CORE router and both of its sessions dial that core: it\n\
+             # reads the release sets below and writes the wire name, and the edge carries\n\
+             # the wire name out. The core admits it by this CN (the core fragment's\n\
+             # `fed-rp-<them>` subject); phase 8 mints its certificate as republisher.pem.\n\n\
              goat_fed_republisher_sovereign_id: \"{}\"\n\
+             goat_fed_republisher_partner_id: \"{}\"\n\
+             goat_fed_republisher_cn: \"{}\"\n\
              goat_fed_republisher_publish_under: \"{}\"\n\
              goat_fed_republisher_release:\n",
-            ours, ours, f.publish_under
+            ours,
+            ours,
+            them.sovereign_id,
+            republisher_cn(ours, &them.sovereign_id),
+            f.publish_under
         ));
         for k in &f.release {
             r.push_str(&format!("  - \"{k}\"\n"));
@@ -868,6 +879,41 @@ pub fn render_all(
             );
         }
 
+        // THE OUTBOUND REPUBLISHER, our own client of our own core. It reads the
+        // offered release sets and writes our wire name, and nothing else: the
+        // edge's `fed-r-<them>` rule above then carries the wire name out. It is
+        // the only writer of `from/<us>/**` this fragment admits.
+        let rp_id = format!("fed-rp-{}", them.sovereign_id);
+        let rp_rules = [
+            format!("fed-rp-r-{}", them.sovereign_id),
+            format!("fed-rp-r-interest-{}", them.sovereign_id),
+            format!("fed-rp-w-{}", them.sovereign_id),
+            format!("fed-rp-w-interest-{}", them.sovereign_id),
+        ];
+        let rp_release: Vec<String> = outbound.map(|f| f.release.clone()).unwrap_or_default();
+        let republishes = !egress.is_empty() && !rp_release.is_empty();
+        if republishes {
+            rule(
+                &rp_rules[0],
+                "\"put\", \"delete\", \"declare_subscriber\", \"query\", \"reply\"",
+                "egress",
+                &rp_release,
+            );
+            rule(
+                &rp_rules[1],
+                "\"declare_subscriber\", \"query\", \"declare_queryable\"",
+                "ingress",
+                &rp_release,
+            );
+            rule(&rp_rules[2], "\"put\", \"delete\"", "ingress", &egress);
+            rule(
+                &rp_rules[3],
+                "\"declare_subscriber\", \"query\", \"declare_queryable\"",
+                "egress",
+                &egress,
+            );
+        }
+
         a.push_str("##ACL-ORG-REGION subjects\n");
         if !ingress.is_empty() || !egress.is_empty() {
             a.push_str("      {\n");
@@ -875,6 +921,14 @@ pub fn render_all(
             a.push_str(&format!(
                 "        cert_common_names: [\"{}\"],\n      }},\n",
                 them.peering_cn
+            ));
+        }
+        if republishes {
+            a.push_str("      {\n");
+            a.push_str(&format!("        id: \"{rp_id}\",\n"));
+            a.push_str(&format!(
+                "        cert_common_names: [\"{}\"],\n      }},\n",
+                republisher_cn(ours, &them.sovereign_id)
             ));
         }
 
@@ -899,6 +953,13 @@ pub fn render_all(
             let quoted: Vec<String> = bound.iter().map(|r| format!("\"{r}\"")).collect();
             a.push_str(&format!(
                 "      {{ rules: [{}], subjects: [\"{sub_id}\"] }},\n",
+                quoted.join(", ")
+            ));
+        }
+        if republishes {
+            let quoted: Vec<String> = rp_rules.iter().map(|r| format!("\"{r}\"")).collect();
+            a.push_str(&format!(
+                "      {{ rules: [{}], subjects: [\"{rp_id}\"] }},\n",
                 quoted.join(", ")
             ));
         }
@@ -1138,5 +1199,39 @@ mod tests {
             "{body}"
         );
         assert!(body.contains("release/weather/**"), "{body}");
+        assert!(
+            body.contains("goat_fed_republisher_cn: \"fed.xaa.xab.republisher.01\""),
+            "{body}"
+        );
+        assert!(body.contains("goat_fed_republisher_partner_id: \"xab\""), "{body}");
+    }
+
+    /// The republisher is admitted to OUR core by its own subject: it reads the
+    /// offered release sets and writes our wire name, and nothing else.
+    #[test]
+    fn the_core_fragment_admits_the_republisher_to_read_the_release_set_and_write_the_wire_name() {
+        let ag = agreement();
+        let body = render_all(&ag, "xaa", "sha256:test", Some("edge"), &[])
+            .into_iter()
+            .find(|r| r.path.ends_with("acl/xab-fragment.json5"))
+            .expect("a core fragment")
+            .body;
+        assert!(body.contains("cert_common_names: [\"fed.xaa.xab.republisher.01\"]"), "{body}");
+        assert!(
+            body.contains("rules: [\"fed-rp-r-xab\", \"fed-rp-r-interest-xab\", \"fed-rp-w-xab\", \"fed-rp-w-interest-xab\"], subjects: [\"fed-rp-xab\"]"),
+            "{body}"
+        );
+        let rule_keys = |id: &str| -> String {
+            body.split(&format!("id: \"{id}\""))
+                .nth(1)
+                .and_then(|r| r.split("},").next())
+                .unwrap_or_default()
+                .to_string()
+        };
+        assert!(rule_keys("fed-rp-r-xab").contains("\"release/weather/**\""), "{body}");
+        assert!(!rule_keys("fed-rp-r-xab").contains("from/"), "{body}");
+        assert!(rule_keys("fed-rp-w-xab").contains("\"from/xaa/**\""), "{body}");
+        assert!(!rule_keys("fed-rp-w-xab").contains("release/"), "{body}");
+        assert!(!body.contains("\"**\""), "no rule names the whole keyspace\n{body}");
     }
 }

@@ -1,0 +1,41 @@
+name: goat-fed-republisher-image
+# Builds ops/federation/republisher/Dockerfile — the outbound republisher of a
+# sovereign peering — and publishes ghcr.io/<owner>/goat-fed-republisher.
+#
+# The role (ops/ansible/roles/goat-fed-republisher) runs it on our core host and
+# refuses any image that is not digest-pinned. The digest a main build publishes
+# becomes components.goat-fed-republisher.fleet in ops/pins/fleet-pins.yaml in its
+# own pull request; until then that pin is null and a deployment names its own.
+#
+# Build body: .github/workflows/_image-build.yml (shared).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'ops/federation/republisher/**'
+      - '.github/workflows/goat-fed-republisher-image.yml'
+    tags: ['goat-fed-republisher/v*']
+  pull_request:
+    paths:
+      - 'ops/federation/republisher/Dockerfile'
+      - '.github/workflows/goat-fed-republisher-image.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  image:
+    uses: ./.github/workflows/_image-build.yml
+    permissions:
+      contents: read
+      packages: write
+    secrets: inherit
+    with:
+      image_name: goat-fed-republisher
+      tag_prefix: goat-fed-republisher
+      context: ops/federation/republisher
+      file: ops/federation/republisher/Dockerfile
+      description: "goat-fed-republisher — lifts a peering's offered release sets onto the wire name from/<sovereign>/"

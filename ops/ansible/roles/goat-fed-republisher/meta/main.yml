@@ -1,0 +1,14 @@
+---
+galaxy_info:
+  role_name: goat_fed_republisher
+  description: The outbound republisher of a sovereign peering, beside our core router.
+
+# ADR 1060 — record the image this run converges to. The role refuses an image
+# that is not content-addressed, so the recorded ref is exact.
+dependencies:
+  - role: rollback-ledger
+    vars:
+      rollback_component: goat-fed-republisher
+      rollback_artifact_type: image
+      rollback_promote_mode: explicit  # mid-role flush_handlers; promote after the check
+      rollback_ref: "{{ goat_fed_republisher_image }}"

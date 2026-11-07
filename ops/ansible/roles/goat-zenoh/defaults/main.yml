@@ -606,6 +606,12 @@ goat_zenoh_router_peer_deliver_key_exprs: ["**", "**/@adv/**"]
 #                                 # out of band and set as the FIRST dns_name on
 #                                 # their SPIRE entry
 #     release_key_exprs: []       # what they may READ from us. Empty = nothing.
+#     republisher_cn: ""          # the outbound republisher's CN on THIS core,
+#                                 # minted in peering phase 8 (republisher.pem);
+#                                 # empty renders no republisher subject
+#     republisher_release_key_exprs: []   # the offered release sets it reads,
+#                                 # e.g. ["release/REL-ALL/**"]; it writes
+#                                 # release_key_exprs (our wire name) and nothing else
 #
 # DELIBERATELY NOT PRE-CUT, unlike zenoh_partner_slot_blocks (ADR 1138). A
 # partner slot's anchor is a hash, so subjects can exist before anyone holds the

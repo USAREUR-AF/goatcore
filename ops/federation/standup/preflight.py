@@ -206,6 +206,42 @@ def main():
                 "`--limit` on an empty group runs against nothing and reports SUCCESS,\n"
                 "so phase 12 would 'pass' having deployed no edge at all.")
 
+    # 5b — where the outbound republisher runs. When the declaration offers a
+    #      release set, phase 12 deploys the republisher on our core host with
+    #      --limit <peering>_core, under [peering_cores:children]. A missing or empty
+    #      group would deploy nothing and report success, and nothing would ever
+    #      appear under our wire name.
+    offers = False
+    if decl.is_file():
+        m = re.search(r'^\s*release\s*=\s*\[([^\]]*)\]', decl.read_text(), re.M)
+        offers = bool(m and m.group(1).strip().strip(","))
+    core = f"{a.peering}_core"
+    if offers and inv.is_file():
+        want, hosts, children, inside = False, [], [], False
+        for line in inv.read_text().splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if line.startswith("["):
+                want = line[1:-1].strip() == core
+                inside = line == "[peering_cores:children]"
+                continue
+            if want:
+                hosts.append(line.split()[0])
+            if inside:
+                children.append(line.split()[0])
+        if not hosts:
+            bad("republisher inventory", f"{inv} has no [{core}] group with a host in it",
+                f"The declaration offers a release set, so phase 12 deploys the outbound\n"
+                f"republisher on our core host with --limit {core}. Name the core host the\n"
+                f"edge dials there; an empty or missing group deploys nothing and reports success.")
+        elif core not in children:
+            bad("republisher inventory", f"[{core}] is not listed under [peering_cores:children] in {inv}",
+                "peering-republisher.yml targets peering_cores, so `--limit` on this group\n"
+                "runs nothing and reports success.")
+        else:
+            ok("republisher inventory", f"[{core}] -> {', '.join(hosts)}")
+
     # C1 — declared first. goatbuilder refuses an undeclared peering, and the script
     #      holds the same rule here so neither avenue runs one by accident.
     cfg = Path(a.repo) / "ops/goatbuilder/goatbuilder.yaml"

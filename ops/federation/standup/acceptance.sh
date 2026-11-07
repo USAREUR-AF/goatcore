@@ -32,6 +32,13 @@
 #   FED_SPIRE_OURS           command prefix running OUR `spire-server` CLI
 #   FED_SPIRE_THEIRS         command prefix running THEIR `spire-server` CLI
 #
+# THE REPUBLISHER IS THE ONLY WRITER OF OUR WIRE NAME. Every positive row publishes
+# under a `release/<set>/...` staging name on the sending core and reads the sample
+# back under `from/<sender>/<set>/...` on the receiving side, once per offered set,
+# so a pass proves the republisher lifted it, the core admitted it, and the edges
+# carried it. A row that wrote the wire name itself would pass with no republisher
+# running at all.
+#
 # Every key expression is READ FROM THE AGREEMENT. Typing them here would make
 # this suite agree with itself rather than with the peering: a test that carries
 # its own copy of the grants passes when the deployment is wrong in the same way
@@ -56,7 +63,7 @@ no()   { printf '  \033[31mFAIL\033[0m  %s\n' "$1"; [ -n "${2:-}" ] && printf ' 
 skp()  { printf '  \033[33mskip\033[0m  %s\n' "$1"; [ -n "${2:-}" ] && printf '        %s\n' "$2"; skip=$((skip+1)); }
 
 # --- the lanes, from the agreement -------------------------------------------
-read -r US THEM OUR_WIRE THEIR_WIRE THEIR_TD <<EOF
+read -r US THEM OUR_WIRE THEIR_WIRE THEIR_TD OUR_SETS THEIR_SETS <<EOF
 $(python3 - "$AGREEMENT" "$AS" <<'PY'
 import json, sys
 ag = json.load(open(sys.argv[1])); want = sys.argv[2] or ""
@@ -67,14 +74,33 @@ them = [p for p in parties if p != us][0]
 # never appears on the link, so asserting it here would assert a
 # key the peering is correct to refuse.
 td = {p["sovereign_id"]: p["trust_domain"] for p in ag.get("parties", [])}
-print(us, them, f"from/{us}", f"from/{them}", td[them])
+# The staging prefix of every offered set, `release/<set>/**` less its `/**`, one
+# comma-separated list per direction ("-" for none). A pattern with a wildcard
+# before its tail names no single key to publish, so it is left out here.
+def sets(frm):
+    out = []
+    for f in ag.get("flows", []):
+        if f.get("from") != frm:
+            continue
+        for r in f.get("release", []):
+            stem = r[:-3] if r.endswith("/**") else r
+            if stem.startswith("release/") and "*" not in stem:
+                out.append(stem)
+    return ",".join(out) or "-"
+print(us, them, f"from/{us}", f"from/{them}", td[them], sets(us), sets(them))
 PY
 )
 EOF
+# staging prefix -> the wire key it crosses as: `from/<sender>/` + the staging key
+# less its first segment (ops/federation/republisher/README.md, the key mapping).
+wire_of() { printf 'from/%s/%s' "$1" "${2#release/}"; }
+list() { [ "$1" = "-" ] || printf '%s\n' "$1" | tr ',' '\n'; }
 [ -n "$US" ] || { echo "could not read the parties from the agreement" >&2; exit 2; }
 echo "acceptance — $US <-> $THEM"
 echo "  our wire name:   $OUR_WIRE/**"
 echo "  their wire name: $THEIR_WIRE/**"
+echo "  our offered sets:   $OUR_SETS"
+echo "  their offered sets: $THEIR_SETS"
 echo
 
 ours()   { if [ -n "$FED_SSH_OURS" ]; then timeout 60 ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$FED_SSH_OURS" "$1" 2>/dev/null; else eval "$1"; fi; }
@@ -99,22 +125,35 @@ else
 
   # ---- TIER 2, POSITIVE. Read back from the RECEIVING side's own storage: an
   #      ACL allow proves the write was permitted, only a read-back proves it
-  #      was delivered.
-  put_theirs "$THEIR_WIRE/acceptance/$S" "in-$S"
-  put_ours   "$OUR_WIRE/acceptance/$S"   "out-$S"
+  #      was delivered. Each sample is STAGED under a release set and must arrive
+  #      under the wire name, so each row also proves that side's republisher.
+  [ "$OUR_SETS" != "-" ] || no "the agreement offers no release set from us" "Nothing would cross outbound; there is no lane to prove."
+  [ "$THEIR_SETS" != "-" ] || no "the agreement offers no release set from them" "Nothing would cross inbound; there is no lane to prove."
+  for set in $(list "$THEIR_SETS"); do put_theirs "$set/acceptance/$S" "in-$S"; done
+  for set in $(list "$OUR_SETS");   do put_ours   "$set/acceptance/$S" "out-$S"; done
   sleep 8
-  got=$(get_ours "$THEIR_WIRE/acceptance/$S")
-  [ "$got" = "in-$S" ] && ok "their write into $THEIR_WIRE/** arrived and reads back on our side" \
-                       || no "not delivered inbound" "expected 'in-$S', read '${got:-<nothing>}'"
-  got=$(get_theirs "$OUR_WIRE/acceptance/$S")
-  [ "$got" = "out-$S" ] && ok "our release set arrived under its wire name and reads back on theirs" \
-                        || no "not delivered outbound" "expected 'out-$S', read '${got:-<nothing>}'"
+  for set in $(list "$THEIR_SETS"); do
+    w="$(wire_of "$THEM" "$set")/acceptance/$S"
+    got=$(get_ours "$w")
+    [ "$got" = "in-$S" ] && ok "their $set/** staged there arrived as $(wire_of "$THEM" "$set")/** and reads back on our side" \
+                         || no "not delivered inbound: $set/** -> $w" "expected 'in-$S', read '${got:-<nothing>}'"
+  done
+  for set in $(list "$OUR_SETS"); do
+    w="$(wire_of "$US" "$set")/acceptance/$S"
+    got=$(get_theirs "$w")
+    [ "$got" = "out-$S" ] && ok "our $set/** staged here arrived as $(wire_of "$US" "$set")/** and reads back on theirs" \
+                          || no "not delivered outbound: $set/** -> $w" "expected 'out-$S', read '${got:-<nothing>}'"
+  done
 
   # ---- TIER 3, NEGATIVE. Only meaningful because tier 2 just passed.
   if [ "$fail" -eq 0 ]; then
     put_theirs "ops/fabric/acceptance-$S" "nope-$S"
     put_ours   "from/$US-not-granted/acceptance-$S" "nope-$S"
+    put_ours   "release/$US-not-offered/acceptance-$S" "nope-$S"
     sleep 8
+    got=$(get_theirs "$(wire_of "$US" "release/$US-not-offered")/acceptance-$S")
+    [ -z "$got" ] && ok "a staging name the agreement never offered was NOT lifted onto our wire name" \
+                  || no "release/$US-not-offered/** crossed as $(wire_of "$US" "release/$US-not-offered")/** — the republisher forwarded a set nobody agreed"
     got=$(get_ours "ops/fabric/acceptance-$S")
     [ -z "$got" ] && ok "their write outside the agreement did NOT cross" \
                   || no "a write to ops/** crossed the edge — the boundary is not holding"
@@ -208,13 +247,19 @@ if [ ! -x "$RT" ]; then
 elif ! ours "test -x /tmp/fedcheck.sh" >/dev/null 2>&1 && [ -n "$FED_SSH_OURS" ]; then
   skp "round trip not runnable on the publishing host" \
       "copy ops/federation/roundtrip/fedcheck.sh there, and responder.py to the far side"
+elif [ "$OUR_SETS" = "-" ]; then
+  no "no round trip possible" "the agreement offers no release set from us, so no nonce can cross"
 else
-  out=$( [ -n "$FED_SSH_OURS" ] && ours "/tmp/fedcheck.sh $OUR_WIRE $THEIR_WIRE 25" \
-                                || BASE="$FED_OURS_REST" "$RT" "$OUR_WIRE" "$THEIR_WIRE" 25 )
-  case "$out" in
-    *PASS*) ok "round trip: a nonce we published came back acknowledged by THEIR router$(printf '%s' "$out" | grep -oE ' in [0-9]+ms')" ;;
-    *)      no "the round trip did not complete" "$out" ;;
-  esac
+  # One nonce per offered set, staged under it: each pass proves our republisher
+  # lifted that set, the link carried it, and THEIR side answered.
+  for set in $(list "$OUR_SETS"); do
+    out=$( [ -n "$FED_SSH_OURS" ] && ours "/tmp/fedcheck.sh $set $THEIR_WIRE 25" \
+                                  || BASE="$FED_OURS_REST" "$RT" "$set" "$THEIR_WIRE" 25 )
+    case "$out" in
+      *PASS*) ok "round trip via $set/**: a nonce staged here crossed as $(wire_of "$US" "$set")/** and came back acknowledged by THEIR side$(printf '%s' "$out" | grep -oE ' in [0-9]+ms')" ;;
+      *)      no "the round trip via $set/** did not complete" "$out" ;;
+    esac
+  done
 fi
 
 # ---- ADR 1157 STEP 2. Recognition is proved from the side doing the recognising: a

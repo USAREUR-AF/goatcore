@@ -20,15 +20,27 @@ live-fabric rehearsal is written and unrun. Treat it as a first-run procedure, n
 
 ## What you are building
 
-One extra data router on each side, dedicated to the other party.
+One extra data router on each side, dedicated to the other party, and one small process beside
+each core that names your data for the crossing.
 
 ```
+ release/<set>/**                                                      release/<set>/**
+       │ republisher (on your core host)          republisher (on their core host) │
+       ▼                                                                           ▼
+ from/<you>/<set>/**                                                 from/<them>/<set>/**
 your core fabric ── your edge router ══ tunnel ══ their edge router ── their core fabric
    trusts YOUR CA       trusts THEIR CA              trusts YOUR CA        trusts THEIR CA
 ```
 
 Your edge router is the only thing that trusts their certificate authority. Your core fabric
 never does. Their side mirrors it exactly.
+
+**The republisher** runs on your core host, the host your edge dials, and both of its sessions
+dial your core router. It subscribes to each release set you offer, `release/<set>/**`, and
+publishes every sample under `from/<you>/<set>/**`, the wire name. It is the only writer of
+`from/<you>/**` on your side; your core admits it by its own certificate name, and your edge
+carries the wire name out. Several sets share the one wire prefix, the set kept as a path
+segment: `release/REL-ALL/<rest>` crosses as `from/<you>/REL-ALL/<rest>`.
 
 ## Before you start
 
@@ -58,74 +70,37 @@ until the GENERATED artifacts were the thing deployed.
 
 ```bash
 ops/scripts/peering-standup.sh <peering> --plan     # prints every phase, runs nothing
-ops/scripts/peering-standup.sh <peering>            # stops at phase 4, which is yours
-ops/scripts/peering-standup.sh <peering> --from 5   # resume after the exchange
+ops/scripts/peering-standup.sh <peering>            # stops at phase 5, which is yours
+ops/scripts/peering-standup.sh <peering> --from 6   # resume after the exchange; stops at phase 10
+ops/scripts/peering-standup.sh <peering> --from 11  # resume after the review
 ```
+
+`goatbuilder federate <peering>` runs the same phases with the same numbers and `--from`/`--to`.
 
 | # | Kind | Phase | Worked when |
 |---|---|---|---|
-| 1 | GATE | preflight, fail-closed | prints `READY`; a failure names the input and where it was looked for |
-| 2 | T | `init` — our half, measured | a signed package; exit 23 means a value could not be derived and the list is the output |
-| 3 | T | `lint` | every required member present, signature shape valid |
-| 4 | **MANUAL** | exchange packages; bind their key **out of band** | their package is on disk and their verifying key came from a channel authenticated independently of this link |
-| 5 | T | `compose` | one digest, and argument order does not change it |
-| 6 | T | `verify` | the derived names re-derive; the ingress prefix and republish target are stated |
-| 7 | T | mint the peering leaves | three certificates, names derived from the agreement, SANs covering every address that will be dialled |
-| 8 | T | `apply --confirm` | the partner declaration, the edge group_vars, the republisher vars and the ACL fragment |
-| 9 | A | deploy the edge | the edge dials our core and accepts the partner's CN |
-| 10 | A | open the transport the AGREEMENT selected | the link is up. `wireguard` runs `peering-wg.yml`, `ipsec-fips` runs `peering-edge.yml`; the phase never substitutes one for the other. A party that needs IPsec declares `ipsec-fips` and NOT `wireguard`, so the intersection selects it |
-| 11 | GATE | acceptance | carries both ways, refuses what the agreement does not name, and round-trips |
+| 1 | GATE | preflight, fail-closed | prints `READY`; a failure names the input and where it was looked for. When the declaration offers a release set, the inventory group `<peering>_core` names the core host and sits under `[peering_cores:children]` |
+| 2 | A | prepare what the package measures: the federation interface and the SPIRE bundle | the interface and its key exist with no peer on them; the bundle is exported when this side runs SPIRE |
+| 3 | T | `init` — our half, measured | a signed package; exit 23 means a value could not be derived and the list is the output |
+| 4 | T | `lint` | every required member present, signature shape valid |
+| 5 | **MANUAL** | exchange packages; bind their key **out of band** | their package is on disk and their verifying key came from a channel authenticated independently of this link |
+| 6 | T | `compose` | one digest, and argument order does not change it |
+| 7 | T | `verify` | the derived names re-derive; the ingress prefix and republish target are stated |
+| 8 | T | mint the peering leaves | four certificates, names derived from the agreement, SANs covering every address that will be dialled: outward, inward, core, and `republisher.pem` with CN `fed.<us>.<them>.republisher.01` |
+| 9 | T | `apply --confirm` | the partner declaration, the edge group_vars, the republisher vars (`federation-<them>-republish.yml`) and the ACL fragment, which carries the edge's subject and the republisher's `fed-rp-<them>` subject |
+| 10 | **MANUAL** | review what apply rendered; admit the edge on our core | the fragment is spliced into the core's access control and the core restarted on it |
+| 11 | A | open the transport the AGREEMENT selected | the link is up. `wireguard` runs `peering-wg.yml`, `ipsec-fips` runs `peering-edge.yml`; the phase never substitutes one for the other, and any other transport refuses. A party that needs IPsec declares `ipsec-fips` and NOT `wireguard`, so the intersection selects it |
+| 12 | A | deploy the edge, then the outbound republisher (`peering-zenoh-edge.yml`, then `peering-republisher.yml` with `--limit <peering>_core`) | the edge dials our core and accepts the partner's CN; the republisher container `goat-fed-republisher-<them>` runs on the core host, its `/metrics` on loopback reads `goat_fed_republisher_local_subscribed 1` and `goat_fed_republisher_edge_linked 1`, and its log has one `release release/<set>/** -> wire from/<us>/<set>/**` line per offered set |
+| 13 | A | federate the SPIRE trust domains (ADR 1157 step 2) | our server refreshes their trust domain across the link, or the play says the step was not done for a side with no SPIRE server |
+| 14 | GATE | acceptance | carries both ways, once per offered set: a sample staged under `release/<set>/…` reads back under `from/<sender>/<set>/…` on the receiving side; refuses what the agreement does not name; and round-trips once per set |
 
-**Phase 4 is manual on purpose.** The channel is the counterparty's to choose,
-and a verifying key taken from the package it verifies proves nothing.
+**Phases 5 and 10 are manual on purpose.** The exchange channel is the counterparty's to choose,
+and a verifying key taken from the package it verifies proves nothing. The review is the control,
+and only this party can change this party's core.
 
-**Phases 1–8 run where the fabric is; phases 9–10 are ansible from the operator's
-machine.** Use `--to 8` and `--from 9` when those are different hosts.
-
-### Optional: exchange through a peering directory
-
-A peering directory (`saltlick`) is a public listing outside every goatnet that holds
-**pointers, not permissions**: where each party's signed package can be fetched, and its sha256.
-It also hosts each party's signed package and CA certificate, so **a party behind NAT, with no
-public host of its own, needs no host**: the driver uploads both. The directory grants nothing
-and is never an input to the check. Until a directory is reachable by both sides, the exchange
-is out of band, and everything above works without one.
-
-| Set | No public host | Own public host |
-|---|---|---|
-| `FED_DIRECTORY_URL` | the directory, `https://…` | same |
-| `FED_COUNTERPARTY_ID` | the partner's `sovereign_id` | same |
-| `FED_SIGNING_KEY` | the key that signed your package; it signs the pointer and the uploads | same |
-| `FED_PACKAGE_URL` | **unset**: the directory hosts the package | where your host serves the package phase 3 wrote, unchanged, behind TLS, never on a mesh |
-| `FED_CA_CERT` | your own CA certificate (PEM), the one phase 8 signs the peering leaves with; unset, the directory step reads the profile's `ca-roots.pem` | same |
-
-With those set, the exchange phase, before it stops:
-
-1. publishes your pointer; with `FED_PACKAGE_URL` unset it uploads your package to
-   `<directory>/v1/parties/<you>/package` and the pointer names that, otherwise it checks your
-   host serves the package byte for byte;
-2. uploads your CA certificate to `<directory>/v1/parties/<you>/ca`: only the certificate whose
-   SHA-256 is your package's `identity.ca_fingerprint`;
-3. looks up the partner's pointer, fetches their package, checks its sha256 against the pointer
-   and both signatures against the key in your keyring, and places it where compose reads it if
-   nothing is there yet; fetches their CA certificate, checks it against their
-   `identity.ca_fingerprint`, and places it at `$FED_WORK/theirs-ca.pem` if nothing is there yet;
-4. prints, for the voice call, **their verifying key and CA fingerprint in groups of four**, and
-   yours;
-5. prints a **compatibility report**: spec, fabric and tool version, the transport the agreement
-   will select, FIPS image on both sides, post-quantum capability, trust domains, and whether
-   either edge accepts inbound traffic. Each row is PASS, WARN, FAIL or UNKNOWN with its fix.
-
-A directory that is down, refuses, or disagrees with the package is a warning, never a stop. The
-SPIFFE bundle, when phase 2 wrote one, still moves directly.
-
-**What a partner is never asked by message.** The package carries their `sovereign_id`, trust
-domain, CA fingerprint, transports, FIPS image, post-quantum capability and versions; peering
-names are derived from the agreement. A question list sent to a partner means one of these was
-missed. The one act that stays out of band is **reading the verifying key and the CA
-fingerprint, and after compose the agreement digest, aloud** — group count first, read back.
-Record their key in the keyring only after it is read back. The directory replaces none of
-them. Design: [`peering-directory-service.md`](../design/peering-directory-service.md) §6.
+**Phases 2 and 11–13 run ansible** against `ops/ansible/inventory/peering-edges.ini`: the edge
+group `<peering>_edge`, and for the republisher the core group `<peering>_core`. The rest run
+`goat` and the standup scripts where the working directory is.
 
 ## Step 2 — The names and prefixes come from the agreement
 
@@ -138,7 +113,7 @@ sides derive the same values from the same agreement.
 | The name your edge router presents to them | `fed.xab.xaa.01` | derived from the agreement (`peering_cn`) |
 | Where their data lands on your side | `from/xaa/**` | derived from the agreement |
 | What you will send them | `release/all/**` — the **staging** name, internal to you | yours |
-| The name that data carries once it crosses | `from/<your sovereign>/**` — the **wire** name; the republisher lifts the staging name onto it before anything reaches the edge, and it is what the counterparty's ingress prefix admits | derived |
+| The name that data carries once it crosses | `from/<your sovereign>/**` — the **wire** name. Your republisher, on your core host, lifts `release/<set>/<rest>` onto `from/<your sovereign>/<set>/<rest>` before anything reaches the edge, every set under the one prefix; it is what the counterparty's ingress prefix admits | derived |
 
 Their values mirror these. **The name is load-bearing**: the other side's permission rules
 will match it exactly, character for character, which is why it is derived rather than typed. A
@@ -191,6 +166,31 @@ everything — the single most damaging mistake available in this procedure.
 **Do not reuse your core router's configuration as a starting point.** Use the edge template. The
 permission engine stops at the first rule that allows something, so a permissive rule inherited
 from your core cannot be taken back by adding a narrower one afterwards.
+
+### The republisher, on your core host
+
+Phase 12 deploys it with `peering-republisher.yml` on the inventory group `<peering>_core`, which
+names the core host your edge dials. The agreement's values (`goat_fed_republisher_sovereign_id`,
+`_partner_id`, `_cn`, `_publish_under`, `_release`) come from `apply`. Set these in
+`group_vars/<peering>_core/`, and nothing else:
+
+| Setting | What it is |
+|---|---|
+| `goat_fed_republisher_image` | the image, digest-pinned: `components.goat-fed-republisher.fleet` in `ops/pins/fleet-pins.yaml` |
+| `goat_fed_republisher_core_endpoint` | your core router as this host dials it, e.g. `tls/<core address>:7447`, with no `#` fragment |
+| `goat_fed_republisher_core_ca_src` | **your** CA, the roots your core's certificate chains to, as a path on the machine running the driver |
+
+Its certificate is phase 8's `republisher.pem`, and the agreement is phase 6's; the role copies both
+from the working directory. Your core admits it through the fragment's `fed-rp-<them>` subject: read
+the offered `release/<set>/**`, write `from/<you>/**`, nothing else. A core configured from
+`roles/goat-zenoh` carries the same grant through `zenoh_sovereign_peerings[].republisher_cn` and
+`republisher_release_key_exprs`.
+
+Its `edge_linked` and `dropped_total{reason="edge_down"}` metrics describe its session to **your
+core**. They do not see the partner link; phase 14's round trip does.
+
+To stop your data crossing at once without touching the edge, stop the container
+`goat-fed-republisher-<them>` on the core host: nothing else writes your wire name.
 
 ## Step 5 — Open the tunnel
 
@@ -295,21 +295,23 @@ refused.
 **Every check in Step 7 needs shell on both sides.** You read their store, you read their log. A
 real publisher has neither, and none of those checks is available to them.
 
-The round trip is the one check the sending side can make alone. Publish a nonce under your own
-wire name and wait for their acknowledgement to come back under theirs:
+The round trip is the one check the sending side can make alone. Stage a nonce under one of your
+release sets, let your republisher lift it onto your wire name, and wait for their acknowledgement
+to come back under theirs:
 
 ```bash
-# on their side, once
-python3 ops/federation/roundtrip/responder.py from/<them> from/<us>
+# on their side, once: watch for your probes, stage the ack under one of THEIR sets
+python3 ops/federation/roundtrip/responder.py from/<you> release/<one of their sets>
 
-# on yours, whenever you want the answer
-ops/federation/roundtrip/fedcheck.sh from/<us> from/<them>
+# on yours, once per set you offer (phase 14 does this for every set)
+ops/federation/roundtrip/fedcheck.sh release/<one of your sets> from/<them>
 ```
 
 A pass means the sample crossed, **their own router delivered it to a process on their side**, the
 payload arrived with the digest you sent, and the answer came back over the same agreement. It uses
 no access the agreement does not already grant — the probe goes out on your wire name and the ack
-returns on their landing prefix, which are the two lanes you just built.
+returns on their landing prefix, which are the two lanes you just built. Because the probe is
+staged, a pass also proves your republisher lifted that set; with the republisher stopped it fails.
 
 Run it last, because it is the only stage that fails when an earlier one silently half-works. A
 peering can be ESTABLISHED, fully authenticated, and carrying nothing at all with no denial logged

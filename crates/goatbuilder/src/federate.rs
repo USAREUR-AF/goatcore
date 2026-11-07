@@ -15,7 +15,8 @@
 //!  10  MANUAL review what apply rendered; admit the edge on our core
 //!  11  A/GATE open the transport the AGREEMENT chose — or refuse when no play
 //!             stands that transport up
-//!  12  A      deploy the sovereign edge router
+//!  12  A      deploy the sovereign edge router and the outbound republisher
+//!             (the republisher on our core host, inventory group <peering>_core)
 //!  13  A      federate the SPIRE trust domains (ADR 1157 step 2)
 //!  14  GATE   acceptance — carries, refuses, and round-trips
 //!
@@ -160,7 +161,11 @@ fn plan(repo: &Path, o: &Options, work: &str, edge_group: &str, resume: &str) ->
 
     let router_host = env_or("FED_ROUTER_DOCKER_HOST", String::new());
     let init_env = if router_host.is_empty() { String::new() } else { format!("DOCKER_HOST='{router_host}' ") };
-    let play = |name: &str| format!("cd '{r}/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws {aws} -- ../scripts/ansible-preflight.sh -i inventory/peering-edges.ini --limit '{edge_group}' -e fed_edge_group='{edge_group}' -e fed_work='{work}' -e fed_counterparty='{counterparty}' {name}");
+    let play_on = |limit: &str, name: &str| format!("cd '{r}/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws {aws} -- ../scripts/ansible-preflight.sh -i inventory/peering-edges.ini --limit '{limit}' -e fed_edge_group='{edge_group}' -e fed_work='{work}' -e fed_counterparty='{counterparty}' {name}");
+    let play = |name: &str| play_on(edge_group, name);
+    // The core host the edge dials: the outbound republisher runs there, beside
+    // our core router, and both of its sessions dial that router (phase 12).
+    let core_group = format!("{}_core", o.with);
 
     let mut ev = vec![
         p(1, "GATE", "peering preflight (fail-closed)", format!("python3 '{r}/ops/federation/standup/preflight.py' '{}' --work '{work}' --edge-group '{edge_group}'", o.with)),
@@ -213,7 +218,7 @@ fn plan(repo: &Path, o: &Options, work: &str, edge_group: &str, resume: &str) ->
                 "echo \"    The agreement selected transport '{unreadable}' and this repository\";\n     echo \"    has no play that stands one up: wireguard is peering-wg.yml, ipsec-fips is peering-edge.yml.\";\n     echo \"\";\n     echo \"    Do NOT substitute the other transport: a tunnel the two parties did not\";\n     echo \"    agree is exactly the drift between what was agreed and what got deployed\";\n     echo \"    that this flow exists to prevent.\";\n     false")));
         }
     }
-    ev.push(p(12, "A", "deploy the sovereign edge router", play("peering-zenoh-edge.yml")));
+    ev.push(p(12, "A", "deploy the sovereign edge router and the outbound republisher", format!("{} && {}", play("peering-zenoh-edge.yml"), play_on(&core_group, "peering-republisher.yml"))));
     ev.push(p(13, "A", "federate the SPIRE trust domains (ADR 1157 step 2)", play("peering-spire.yml")));
     ev.push(p(14, "GATE", "acceptance — carries, refuses, and round-trips", format!("'{r}/ops/federation/standup/acceptance.sh' '{agreement}'{as_arg}")));
     let _ = resume;
@@ -271,7 +276,7 @@ fn plan_view(repo: &Path, o: &Options, work: &str, edge_group: &str, phases: &[P
             9 => "Write the access rules and settings",
             10 => "Review what was written, and let the router onto our core",
             11 => "Open the connection the agreement chooses",
-            12 => "Deploy the router that connects the two networks",
+            12 => "Deploy the router that connects the two networks, and the republisher beside our core",
             13 => "Trust the other party's identity service",
             14 => "Test that allowed traffic passes and the rest is refused",
             _ => "",
@@ -572,6 +577,7 @@ mod tests {
         let cmds: Vec<&str> = r.checks.iter().filter(|c| c.name == "cmd").map(|c| c.detail.as_str()).collect();
         assert!(cmds[8].contains("--edge-group 'hello-ally_edge'"), "{}", cmds[8]);
         assert!(cmds[11].contains("peering-zenoh-edge.yml"));
+        assert!(cmds[11].contains("--limit 'hello-ally_core'") && cmds[11].ends_with(" peering-republisher.yml"), "{}", cmds[11]);
         assert!(!work.exists(), "a plan creates nothing");
     }
 

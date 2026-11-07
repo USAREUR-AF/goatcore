@@ -2,7 +2,7 @@
 """One sovereign's own declarations, written into that sovereign's clone.
 
     overlay.py <clone> <us> <them> <subnet-octet> <image>
-               [--core-addr A] [--spire-listen A] [--local]
+               [--core-addr A] [--spire-listen A] [--local] [--republisher-image I]
 
 Each party has its own repository, as two organisations would. Only synthetic names
 and addresses: this run reaches no goatnet.
@@ -13,6 +13,9 @@ and addresses: this run reaches no goatnet.
                   (default 10.77.<octet>.20, the container edge host)
   --local         ansible reaches the edge and the core on this machine with a local
                   connection: the live run, where one host carries both
+  --republisher-image
+                  the outbound republisher's image on the core host: a digest-pinned
+                  reference, or the `sha256:<id>` of an image loaded there
 """
 import argparse
 from pathlib import Path
@@ -25,6 +28,7 @@ for name in ("clone", "us", "them", "octet", "image"):
 ap.add_argument("--core-addr")
 ap.add_argument("--spire-listen")
 ap.add_argument("--local", action="store_true")
+ap.add_argument("--republisher-image", default="")
 a = ap.parse_args()
 
 clone, us, them = Path(a.clone), a.us, a.them
@@ -44,7 +48,24 @@ core_host = "127.0.0.1" if a.local else core_ip
 
 [fed_core]
 {us}-core ansible_host={core_host} {conn}
+
+# The core host the edge dials: the outbound republisher runs there (phase 12).
+[peering_cores:children]
+{them}_core
+
+[{them}_core]
+{us}-core ansible_host={core_host} {conn}
 """)
+
+# The republisher's deployment half. The agreement half comes from `goat federate
+# apply`; our CA is the one phase 8 signs with, as the edge reads it.
+cg = clone / "ops/ansible/group_vars" / f"{them}_core"
+cg.mkdir(parents=True, exist_ok=True)
+(cg / "republisher.yml").write_text(yaml.safe_dump({
+    "goat_fed_republisher_image": a.republisher_image,
+    "goat_fed_republisher_core_endpoint": f"tls/{core_ip}:7447",
+    "goat_fed_republisher_core_ca_src": f"{work}/pki/our-ca.pem",
+}, sort_keys=True))
 
 gv = clone / "ops/ansible/group_vars" / group
 gv.mkdir(parents=True, exist_ok=True)

@@ -20,9 +20,17 @@
 //   a put on a linkless client session succeeds locally and is discarded by
 //   the transport, which is loss that no counter would ever see.
 //
-// WHAT THE OPERATOR SEES. `edge_linked` falls to 0 the moment the link drops;
-// `dropped_total{reason="edge_down"}` then climbs at the feed's real rate, so
-// the cost of an outage is a number rather than an inference.
+// WHAT THE OPERATOR SEES. The publishing session dials OUR CORE router, which
+// the peering edge carries the wire name out from (roles/goat-fed-republisher).
+// `edge_linked` therefore reports that session: it falls to 0 the moment the
+// link to our core drops, and `dropped_total{reason="edge_down"}` then climbs at
+// the feed's real rate, so the cost of that outage is a number rather than an
+// inference. It does NOT see the partner link: with the core reachable and the
+// partner link down, samples reach our core and go no further, and only the
+// round trip (ops/federation/roundtrip/) and the partner's own store show it.
+//
+// The names keep `edge` because the code path is the one the README describes
+// for a session to a peering edge; the deployment points it at the core.
 //
 // WHAT STILL CANNOT BE SEEN FROM THIS SIDE. A sample put while `edge_linked`
 // was 1, on a link that failed before the transport flushed it, is lost with
@@ -158,9 +166,11 @@ pub async fn run_publisher<S: EdgeSink>(
         metrics.edge_linked.set(i64::from(linked));
         if was_linked != Some(linked) {
             if linked {
-                info!("peering edge linked; outbound flow resumed");
+                info!("publishing session linked to our core; outbound flow resumed");
             } else {
-                warn!("peering edge has no transport peer; outbound samples are being dropped");
+                warn!(
+                    "publishing session has no transport peer; outbound samples are being dropped"
+                );
             }
             was_linked = Some(linked);
         }

@@ -14,7 +14,7 @@
 # expensive failure shape this system has. Every name below comes
 # out of the agreement, and every address that will be dialled goes in as a SAN.
 #
-# THREE CERTIFICATES, and they are not interchangeable:
+# FOUR CERTIFICATES, and they are not interchangeable:
 #
 #   outward   presented TO the partner.   CN = fed.<us>.<them>.NN   (ours, derived)
 #   inward    presented to OUR core.      CN = fed.<them>.<us>.NN   (the agreed
@@ -22,6 +22,10 @@
 #             foreign authority ever reaches a core router — F-424)
 #   core      presented BY our core.      CN = the core's own name, with a SAN
 #             for every address the edge is configured to dial
+#   republisher  presented to OUR core by the outbound republisher.
+#             CN = fed.<us>.<them>.republisher.01 (ours, derived; the subject the
+#             core fragment `apply` renders admits it to read the offered release
+#             sets and write our wire name, nothing else). Never shown to them.
 #
 # Usage:
 #   mint-peering-leaves.sh <agreement.json> <out-dir> [--as <sovereign>]
@@ -56,7 +60,7 @@ done
 fail() { echo "[✗] $1" >&2; [ -n "${2:-}" ] && printf '     %s\n' "$2" >&2; exit 1; }
 
 # --- the two derived names, read from the agreement, never typed --------------
-read -r US THEM OURS_CN THEIRS_CN DERIVED_LINK_IP <<EOF
+read -r US THEM OURS_CN THEIRS_CN DERIVED_LINK_IP REPUBLISHER_CN <<EOF
 $(python3 - "$AGREEMENT" "$AS" <<'PY'
 import json, sys
 ag = json.load(open(sys.argv[1]))
@@ -83,7 +87,7 @@ if subnet:
     hosts = list(net) if net.prefixlen == 31 else list(net.hosts())
     if len(hosts) == 2:
         link = str(hosts[parties.index(us)])
-print(us, them, cn(us, them), cn(them, us), link)
+print(us, them, cn(us, them), cn(them, us), link, f"fed.{us}.{them}.republisher.01")
 PY
 )
 EOF
@@ -97,6 +101,7 @@ EOF
 echo "  agreement names us '$US', counterparty '$THEM'"
 echo "  outward CN (to them):   $OURS_CN"
 echo "  inward  CN (to core):   $THEIRS_CN   <- the name our core's ACL matches"
+echo "  republisher CN (core):  $REPUBLISHER_CN"
 
 # --- the CA that signs all three ---------------------------------------------
 [ -n "$CA_CERT" ] && [ -n "$CA_KEY" ] || fail "no signing CA" \
@@ -139,6 +144,11 @@ mint peering-outward "$OURS_CN" "$osan"
 # is what our core's generated ACL fragment names as its subject.
 mint peering-inward "$THEIRS_CN" "DNS:$THEIRS_CN"
 
+# Republisher: our own client of our own core. Both of its sessions dial the core,
+# so it needs no SAN beyond its name; the core fragment's `fed-rp-<them>` subject
+# matches this CN.
+mint republisher "$REPUBLISHER_CN" "DNS:$REPUBLISHER_CN"
+
 # Core: presented BY our core TO this edge. Every address the edge may dial has
 # to appear here — a missing SAN is the silent failure this script exists for.
 if [ -n "$CORE_SAN" ]; then
@@ -172,6 +182,12 @@ cat <<DONE
     goat_zenoh_edge_inward_cert:  $OUT/peering-inward.pem
     goat_zenoh_edge_inward_key:   $OUT/peering-inward-key.pem
     goat_zenoh_edge_partner_cn:   $THEIRS_CN     (set by \`goat federate apply\`)
+
+  And the republisher role, on the core host the edge dials, as:
+
+    goat_fed_republisher_cert:    $OUT/republisher.pem
+    goat_fed_republisher_key:     $OUT/republisher-key.pem
+    goat_fed_republisher_cn:      $REPUBLISHER_CN     (set by \`goat federate apply\`)
 
   The partner's CA — and ONLY the partner's CA — goes in
   goat_zenoh_edge_partner_ca_path. Never in a core router's trust store.

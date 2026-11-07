@@ -24,7 +24,7 @@
 #   collect    <us> <them>        logs and state for the record, on stdout
 #   reset                         everything this run made, packages and images kept
 #
-# Environment: FED_ZENOH_IMAGE, FED_SPIRE_IMAGE (digest-pinned).
+# Environment: FED_ZENOH_IMAGE, FED_SPIRE_IMAGE, FED_REPUBLISHER_IMAGE (digest-pinned).
 set -euo pipefail
 VERB="${1:?verb}"; shift
 D=/opt/fed-live
@@ -73,7 +73,9 @@ images)
   need_images
   docker pull -q "$FED_ZENOH_IMAGE" >/dev/null
   docker pull -q "$FED_SPIRE_IMAGE" >/dev/null
-  echo "images ok: $FED_ZENOH_IMAGE, $FED_SPIRE_IMAGE"
+  case "${FED_REPUBLISHER_IMAGE:-}" in *@sha256:*) ;; *) die "FED_REPUBLISHER_IMAGE must be digest-pinned" ;; esac
+  docker pull -q "$FED_REPUBLISHER_IMAGE" >/dev/null
+  echo "images ok: $FED_ZENOH_IMAGE, $FED_SPIRE_IMAGE, $FED_REPUBLISHER_IMAGE"
   ;;
 
 logout)
@@ -117,7 +119,7 @@ clone)
   git -C "$D/src" init -q -b main
   git -C "$D/src" config user.name "$us operator"; git -C "$D/src" config user.email "ops@$us.test"
   "$PY" "$D/src/ops/federation-e2e/overlay.py" "$D/src" "$us" "$them" 0 "$FED_ZENOH_IMAGE" \
-    --core-addr "$core" --spire-listen "$core" --local
+    --core-addr "$core" --spire-listen "$core" --local --republisher-image "${FED_REPUBLISHER_IMAGE:-}"
   git -C "$D/src" add -A; git -C "$D/src" commit -q -m "$us: this sovereign's tree and its declarations for the peering"
   git clone -q --bare "$D/src" /srv/goat.git
   git clone -q /srv/goat.git /opt/goat
@@ -186,7 +188,7 @@ proposed_link_subnet = "169.254.77.0/31"
 measured_mtu         = 1380
 
 [data]
-release                  = ["release/$us/**"]
+release                  = ["release/all/**", "release/$them/**"]
 accept_hz                = 100
 accept_bytes_per_message = 1048576
 accept_distinct_keys     = 5000
@@ -248,8 +250,8 @@ responder)
   install -m 0755 /opt/goat/ops/federation/roundtrip/responder.py /usr/local/bin/fed-responder.py
   systemctl stop fed-live-responder >/dev/null 2>&1 || true
   systemctl reset-failed fed-live-responder >/dev/null 2>&1 || true
-  systemd-run --quiet --unit fed-live-responder python3 /usr/local/bin/fed-responder.py "from/$them" "from/$us"
-  echo "responder ok: answers from/$them under from/$us"
+  systemd-run --quiet --unit fed-live-responder python3 /usr/local/bin/fed-responder.py "from/$them" "release/all"
+  echo "responder ok: answers from/$them under release/all, crossing as from/$us/all"
   ;;
 
 ansible)

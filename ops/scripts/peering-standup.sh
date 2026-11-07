@@ -24,6 +24,9 @@
 #     --as          which party we are (default: read from the declaration)
 #     --edge-group  the ansible group the edge runs in (default: <peering>_edge)
 #
+#   The outbound republisher runs on our core host, the host the edge dials, in
+#   the inventory group <peering>_core (a child of [peering_cores]).
+#
 #   Environment:
 #     GOAT_BIN            the goat binary (default: whatever is on PATH)
 #     FED_WORK            working directory (default: /var/lib/goat-federation/<peering>)
@@ -103,6 +106,9 @@ if [ -z "${GOAT_PROFILE_DIR:-}" ]; then
 fi
 export GOAT_PROFILE_DIR
 [ -n "$EDGE_GROUP" ] || EDGE_GROUP="${PEERING}_edge"
+# The core host the edge dials: the outbound republisher runs there, beside our
+# core router, and both of its sessions dial that router (phase 12).
+CORE_GROUP="${PEERING}_core"
 
 # THE BOUND KEYS. `compose` refuses (exit 20) unless a verifying key is bound to
 # each party, and it will never take one from the package it verifies — a package
@@ -170,7 +176,7 @@ echo "peering-standup: peering=$PEERING  work=$FED_WORK  edge-group=$EDGE_GROUP 
 # Every ansible phase, one shape. The generated vars and the two exchanged files
 # reach the plays through these, so a phase cannot read an older run's copy.
 play() {
-  printf "%s" "cd '$REPO/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws $GOAT_AWS_PROFILE -- ../scripts/ansible-preflight.sh -i inventory/peering-edges.ini --limit '$EDGE_GROUP' -e fed_edge_group='$EDGE_GROUP' -e fed_work='$FED_WORK' -e fed_counterparty='$FED_COUNTERPARTY' $1"
+  printf "%s" "cd '$REPO/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws $GOAT_AWS_PROFILE -- ../scripts/ansible-preflight.sh -i inventory/peering-edges.ini --limit '${2:-$EDGE_GROUP}' -e fed_edge_group='$EDGE_GROUP' -e fed_work='$FED_WORK' -e fed_counterparty='$FED_COUNTERPARTY' $1"
 }
 
 # ---------------------------------------------------------------------------
@@ -340,10 +346,18 @@ else
      false"
 fi
 
-# The edge binds its partner-facing port on the link address, which exists once the
-# transport is open, and that is why the transport comes first.
-step 12 A "deploy the sovereign edge router" \
-  "$(play peering-zenoh-edge.yml)"
+# ---------------------------------------------------------------------------
+# Phase 12 — THE EDGE, THEN THE REPUBLISHER. The edge binds its partner-facing port
+#      on the link address, which exists once the transport is open, and that is
+#      why the transport comes first. The republisher runs on our core host and
+#      both of its sessions dial our core: it reads `release/<set>/**` and writes
+#      `from/<us>/<set>/**`, the only writer of our wire name, and the edge carries
+#      that name out. Worked when the edge reached our core and the republisher
+#      reports `local_subscribed 1` and `edge_linked 1` with one `release -> wire`
+#      line per offered set.
+# ---------------------------------------------------------------------------
+step 12 A "deploy the sovereign edge router and the outbound republisher" \
+  "$(play peering-zenoh-edge.yml) && $(play peering-republisher.yml "$CORE_GROUP")"
 
 # ---------------------------------------------------------------------------
 # Phase 13 — ADR 1157 STEP 2. Each side federates the other's SPIRE trust domain:

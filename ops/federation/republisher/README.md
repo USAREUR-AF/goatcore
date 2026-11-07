@@ -1,7 +1,27 @@
 # Outbound republisher — the other half of the symmetric publishing rule
 
-`goat-fed-republisher` subscribes to the release set the agreement declares for **our** flow,
-and republishes each sample on the peering edge under `from/<our sovereign_id>/`.
+`goat-fed-republisher` subscribes to the release sets the agreement declares for **our** flow,
+and republishes each sample under `from/<our sovereign_id>/`, the wire name.
+
+## Where it runs
+
+**On our core host, the host the peering edge dials, and both of its sessions dial our core
+router.** The local session subscribes to each offered `release/<set>/**`; the publishing session
+puts each sample under `from/<us>/<set>/**` on the same core. The edge already carries
+`from/<us>/**` from our core to the partner, so the partner-facing edge has no listener and no rule
+for this process.
+
+| | |
+|---|---|
+| Deployed by | `ops/ansible/peering-republisher.yml`, role `roles/goat-fed-republisher`, peering phase 12 after the edge |
+| Inventory | the core host in group `<peering>_core`, under `[peering_cores:children]` |
+| Image | `ghcr.io/<owner>/goat-fed-republisher`, built by `.github/workflows/goat-fed-republisher-image.yml`, pinned by digest as `components.goat-fed-republisher` in `ops/pins/fleet-pins.yaml` |
+| Identity | one leaf for both sessions, `republisher.pem`, CN `fed.<us>.<them>.republisher.01`, minted in phase 8 by our CA |
+| Admitted by | the core subject `fed-rp-<them>` that `goat federate apply` renders into the ACL fragment: read the offered `release/<set>/**`, write `from/<us>/**`, nothing else |
+| Worked when | `/metrics` on loopback reads `local_subscribed 1` and `edge_linked 1`, and the log has one `release … -> wire …` line per offered set |
+
+It is the **only writer of `from/<us>/**`** on our side. Stopping its container stops our data
+crossing without touching the edge.
 
 ## Why this is a process and not a router feature
 
@@ -115,8 +135,8 @@ What the operator sees:
 
 | Metric | Meaning |
 |---|---|
-| `goat_fed_republisher_edge_linked` | 0 the moment the peering link drops |
-| `..._dropped_total{reason="edge_down"}` | climbs at the feed's real rate during an outage, so its cost is a number |
+| `goat_fed_republisher_edge_linked` | 0 the moment the publishing session loses our core router |
+| `..._dropped_total{reason="edge_down"}` | climbs at the feed's real rate while that session is down, so its cost is a number |
 | `..._dropped_total{reason="queue_full"}` | the edge is up but slower than the feed |
 | `..._dropped_total{reason="publish_error"}` | the put itself was refused |
 | `..._refused_total{reason}` | the **agreement** refused it: `not_released`, `oversize`, `rate_shed`, `cardinality_shed`, `agreement_expired`, `unmappable` |
@@ -124,8 +144,11 @@ What the operator sees:
 | `..._untimestamped_total` | see the honest gap above |
 | `..._agreement_expiry_seconds` | alertable **before** the flow stops, not after |
 
-**What still cannot be seen from this side:** a sample put while `edge_linked` was 1, on a link
-that failed before the transport flushed it, is lost with no local signal. That residual is
+**What these metrics do not see:** the partner link. The publishing session dials our core, so
+`edge_linked` and `edge_down` describe that session; with the core reachable and the partner link
+down, samples reach our core and go no further. The round trip (`../roundtrip/`) and the partner's
+own store are what show that. And a sample put while `edge_linked` was 1, on a link that failed
+before the transport flushed it, is lost with no local signal. That residual is
 inherent to a one-way put and closes only if the receiver reports back, which no part of this
 design does.
 
@@ -191,9 +214,10 @@ one. **A live run must still demonstrate, on a real link:**
    refusal must fire again when repeated (F-177: a cached decision is logged once, so a single
    observation cannot distinguish "refused" from "never attempted"). Inbound has this
    (RESULTS.md case 2, `ops/fabric/hijack`); outbound has not been observed at all.
-3. **The link comes back on its own.** Restart the peering edge under load and observe
+3. **The link comes back on its own.** Restart our core router under load and observe
    `edge_linked` fall and rise, `dropped_total{reason="edge_down"}` account for the gap, and the
-   feed resume with no operator action.
+   feed resume with no operator action. A restart of the peering edge is seen by the round trip,
+   not by these metrics.
 4. **The timestamp instant survives end to end.** Compare the timestamp on the sample in the
    partner's store against the instant it was staged with. Nothing local can prove this: it
    depends on the receiving router accepting a timestamp it did not mint.

@@ -1,0 +1,31 @@
+---
+# peering-republisher.yml — deploy the OUTBOUND REPUBLISHER of one peering, on our
+# core host, the host the peering edge dials.
+#
+#   Role:     roles/goat-fed-republisher/
+#   Process:  ops/federation/republisher/ (README.md: the mapping and what survives it)
+#   Driver:   ops/scripts/peering-standup.sh and goatbuilder federate, phase 12,
+#             after peering-zenoh-edge.yml, with --limit <peering>_core
+#
+# Both of its sessions dial our core router. It subscribes to the offered
+# `release/<set>/**` staging names and publishes each sample under
+# `from/<us>/<set>/**`, the wire name; the edge carries that name out. It is the
+# only writer of `from/<us>/**` on our side, admitted by the core's
+# `fed-rp-<them>` subject (the fragment `goat federate apply` renders).
+#
+# Inventory: the core host in group <peering>_core, under [peering_cores:children]
+# in inventory/peering-edges.ini. Its deployment values (image, core endpoint, our
+# CA) go in group_vars/<peering>_core/; the agreement's values come from
+# `goat federate apply`, read from fed_work like every other peering play.
+#
+# Rollback: revert the image pin and re-run (ADR 1060). To stop our data
+# crossing at once, stop the container: nothing else writes our wire name.
+- name: Sovereign peering outbound republisher
+  hosts: peering_cores
+  gather_facts: true
+  become: true
+  pre_tasks:
+    - name: Read what `goat federate apply` rendered for this run
+      ansible.builtin.include_tasks: tasks/peering-applied-vars.yml
+  roles:
+    - role: goat-fed-republisher

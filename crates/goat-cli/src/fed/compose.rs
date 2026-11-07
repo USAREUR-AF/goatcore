@@ -379,6 +379,15 @@ pub fn peering_cn(issuer: &str, counterparty: &str) -> String {
     format!("fed.{issuer}.{counterparty}.01")
 }
 
+/// The outbound republisher's name on OUR core, for the peering with
+/// `counterparty`: `fed.<us>.<counterparty>.republisher.01`. Never presented to
+/// the counterparty, and never agreed with them: it is our own client of our own
+/// core, minted by our CA in peering phase 8 and matched by the subject `apply`
+/// renders into the core's access-control fragment.
+pub fn republisher_cn(us: &str, counterparty: &str) -> String {
+    format!("fed.{us}.{counterparty}.republisher.01")
+}
+
 /// The wire name. Every party publishes across the link under
 /// `from/<its own sovereign_id>/` — one rule, the same rule on both sides
 /// (§3.2). Not the same thing as a release set, which is the local staging
