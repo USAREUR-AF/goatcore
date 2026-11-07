@@ -62,7 +62,13 @@ goatnet's own size first: phase 1 reports PGDATA bytes per member.
    stopped.
 4. **A clean mesh.** Every subscription replicating, and every Spock node any
    member subscribes to listed in `migrate_groups`. Phase 1 refuses otherwise.
-5. **Identical replicated rows, no orphans.** Every replicated table holds the
+5. **Peers that are gone, standbys in other groups.** Name the gone peers'
+   subscriptions in `postgres_encoding_migrate_drop_subscriptions` and the
+   groups of standbys outside `migrate_groups` in
+   `postgres_encoding_migrate_standby_groups` (see
+   [Peers that are gone](#peers-that-are-gone) and
+   [Physical standbys](#physical-standbys)); phase 1 refuses either otherwise.
+6. **Identical replicated rows, no orphans.** Every replicated table holds the
    same primary keys on every member, and no foreign key has a child row
    whose parent is absent on the same node. Phase 1 checks both and refuses
    with names; see [Divergent rows and foreign-key orphans](#divergent-rows-and-foreign-key-orphans).
@@ -93,15 +99,94 @@ is complete is a no-op.
 
 | # | Phase | What it does | Refuses when |
 |---|---|---|---|
-| 1 | preflight | Reads encodings, Spock nodes and subscriptions, pgBackRest stanza; byte-scans every database and the roles (`pg_dump` → `files/pg-utf8-stream.py scan`); measures disk. Opens the run. Changes nothing. | group_vars declare non-UTF8; a container is down; router_role disagrees with `pg_is_in_recovery()`; the goatnet is part-migrated outside a run; a subscription pulls from a non-member or is not replicating; a node with subscriptions would not be re-wired by its group_vars; a replicator password is missing; a replicated table's key set differs between members in three samples 15 s apart (unless `accept_divergence`); any foreign key has orphan rows on any node (always); a value is not UTF-8; a filesystem is too small |
+| 1 | preflight | Reads encodings, Spock nodes and subscriptions, pgBackRest stanza; byte-scans every database and the roles (`pg_dump` → `files/pg-utf8-stream.py scan`); measures disk. Opens the run. Changes nothing. | group_vars declare non-UTF8; a container is down; router_role disagrees with `pg_is_in_recovery()`; the goatnet is part-migrated outside a run; a subscription pulls from a non-member or is not replicating (unless dropped); a named dropped subscription is replicating or pulls from a member; a physical standby of a member is not a host of the run, or a standby of the run is not streaming; a node with subscriptions would not be re-wired by its group_vars; a replicator password is missing; a replicated table's key set differs between members in three samples 15 s apart (unless `accept_divergence`); any foreign key has orphan rows on any node (always); a value is not UTF-8; a filesystem is too small |
 | 2 | quiesce | Records and stops the active units in `postgres_encoding_migrate_stop_units` (compose-watch, keepalived, the Spock timers, reconcilers), every running container of Postgres's compose project, the declared extras and any container holding a session. Ends the sessions those containers left. | a client session remains (a host process, a timer, a host-network container) |
-| 3 | capture | Waits until every Spock slot confirms the quiesce point; hashes every replicated table on every node; counts every table; takes a full pgBackRest backup; `pg_dumpall --globals-only` and `pg_dump -Fc --create` of every database. Each node dumps its own databases: per-site tables and databases are not on its peers. | slots do not catch up; key sets differ or a foreign key has orphans (the phase 1 checks again, quiesced); a replicated table's content differs between nodes (unless `accept_divergence`) |
+| 3 | capture | Waits until every Spock slot confirms the quiesce point (a dropped peer's inactive slot excepted); hashes every replicated table on every node; counts every table; takes a full pgBackRest backup; `pg_dumpall --globals-only` and `pg_dump -Fc --create` of every database. Each node dumps its own databases: per-site tables and databases are not on its peers. | slots do not catch up; key sets differ or a foreign key has orphans (the phase 1 checks again, quiesced); a replicated table's content differs between nodes (unless `accept_divergence`) |
 | 4 | snapshot | Stops Postgres; copies PGDATA into volume `<volume>-pre-utf8-<run id>` and checks bytes and file count; keeps `.env` and the container's `pg_hba.conf`; moves the pgBackRest repository to `<repo>.pre-utf8-<run id>` and leaves an empty one with the same owner and mode; empties the stanza's archive-async spool (`<spool>/archive/<stanza>`). | the copy does not fit or does not match |
 | 5 | reinit | Sets `POSTGRES_INITDB_ARGS="--locale=C --encoding=UTF8"` in the project `.env`; removes the containers holding the old volume and the volume; re-creates Postgres through its own compose project and files, so the image's entrypoint runs initdb and its init scripts. Restores roles (one transaction), then each database through `pg-utf8-stream.py filter`, which declares the stream UTF8 so the server validates every byte. Puts back the old `postgresql.auto.conf` with `archive_mode = 'off'` and without `synchronous_standby_names`, and the old `pg_hba.conf`; restarts. After each start, Postgres must be out of recovery at two reads 10 s apart with no crash in its log. | Postgres does not stay up (the refusal quotes the last FATAL/ERROR lines of the Postgres and pgBackRest logs); archiving is not off; the new cluster or any database is not UTF8; any table's row count differs from phase 3 |
-| 6 | standby | On a pair site, runs `postgres-streaming-replication` forced: A gets its synchronous-standby settings back, B is wiped and re-copied with `pg_basebackup`. | the role's own checks |
+| 6 | standby | Every physical standby of the run (router_role B in a listed group, or a host of `postgres_encoding_migrate_standby_groups`) is rebuilt by `postgres-streaming-replication`'s standby side, forced: PGDATA wiped, `pg_basebackup` from its new primary. The primary's `synchronous_standby_names` (held back in phase 5) goes back. | a standby does not stay up; the primary does not stream to every standby it had in phase 1; a standby is not in recovery, does not read UTF8, or does not carry its new primary's system identifier |
 | 7 | pgbackrest | `stanza-create` in the empty repository; then the old `archive_mode` line back, restart, Postgres must stay up; then `check` and a full backup. | stanza-create, staying up, check or the backup fails on a primary (a standby's stanza result is reported) |
-| 8 | rewire | 8.1 founders and 8.2 joiners run `spock-mesh-peering`; 8.3 starts kratos and hydra; 8.4 joiners, 8.5 founders, 8.6 joiners run `ory-narrow-repset` in the join order of `goatbuilder join-node` phase 13. Each node is wired only to the members it pulled from before. Subscriptions use `synchronize_data false`; phase 3 proved the data identical. 8.7 compares the subscription set with phase 1's. | a subscription is missing, extra or not replicating |
+| 8 | rewire | 8.1 founders and 8.2 joiners run `spock-mesh-peering`; 8.3 starts kratos and hydra; 8.4 joiners, 8.5 founders, 8.6 joiners run `ory-narrow-repset` in the join order of `goatbuilder join-node` phase 13. Each node is wired only to the members it pulled from before; dropped subscriptions are not created. Subscriptions use `synchronize_data false`; phase 3 proved the data identical. 8.7 compares the subscription set with phase 1's. | a subscription is missing, extra or not replicating |
 | 9 | finish | 9.1 in each replicated database, a probe table joins the replication set, each node writes a row of non-ASCII text, every node must hold its own row and one from each provider, intact; the table is removed. 9.2 starts every recorded container (re-creating through compose those removed in phase 5) and then the units. | a probe row does not arrive |
+
+## Peers that are gone
+
+A member may still hold subscriptions to a Spock peer that no longer runs
+(a joiner that is powered off, a site that was retired): they are `down` and
+their origin is not a member. Phase 1 refuses them, and accepts exactly the
+ones named in `postgres_encoding_migrate_drop_subscriptions`:
+
+```bash
+$P -e postgres_encoding_migrate_drop_subscriptions=down_nonmembers
+$P -e postgres_encoding_migrate_drop_subscriptions=sub_<peer>_to_<member>,sub_<peer>_to_<member2>
+```
+
+`down_nonmembers` selects every subscription that is not replicating and
+pulls from a node outside `migrate_groups`. Phase 1 reads each
+subscription's status five times, 2 s apart, and counts it as replicating
+only if every read says so: a subscription whose origin is unreachable reports
+`replicating` for a moment each time its apply worker restarts. A named subscription that is
+replicating, or pulls from a member, is refused. Phase 1 prints and records
+the dropped subscriptions (`dropped` in `<dir>/<run id>/preflight.json`);
+phase 3 does not wait for the gone peer's slots; phase 8 does not create
+them again; the phase 9 report lists them. The new cluster holds no Spock
+node, slot or subscription of the gone peer: phase 5 restores no Spock
+catalog, and phase 8 wires each node only to the members it pulled from.
+
+A dropped peer comes back only by joining again at the new encoding:
+`goatbuilder join-node` (or `goat-standup.sh`) for that site, which
+initialises it with its founder's encoding (site-bootstrap Phase 1C). Until
+then take it out of the goatnet's Spock peer lists (`inter_site_spock_peers`,
+or its `participates_in_spock`), so a later site-bootstrap with
+`full_mesh` does not wire to it. A rollback brings the dropped
+subscriptions back as they were (down).
+
+## Physical standbys
+
+Every physical standby that streams from a member is rebuilt in phase 6 and
+restored by a rollback, so each must be a host of the run:
+
+- **router_role B in a listed group** (a pair site: `<site>_hosts` holds A
+  and B), or
+- **a host of a group named in `postgres_encoding_migrate_standby_groups`**
+  (a standby kept in a group of its own; those hosts join every phase as
+  standbys).
+
+Phase 1 reads `pg_stat_replication` on every primary; a client without a
+logical slot is a physical standby. Each is matched to a standby of the run
+by `postgres_standby_app_name` or by address (`postgres_standby_lan_ip`,
+`ansible_host`, `mesh_ip`). Phase 1 refuses, naming the primary, the client
+address and its application_name, a physical client that matches no standby
+of the run, and a standby of the run that no member streams to. A standby
+needs `postgres_standby_app_name`, `postgres_primary_lan_ip` and
+`<SITE>_REPLICATOR_PASS`, as for site-bootstrap Phase 6A.
+
+```bash
+$P -e postgres_encoding_migrate_standby_groups=<joiner>_backup_hosts
+```
+
+Phase 6 runs only the standby side of `postgres-streaming-replication`:
+the primary's replicator role, pg_hba entry and WAL settings came back with
+the restore. Its `synchronous_standby_names`, held back in phase 5 so commits
+do not wait for a standby that is not there, goes back once the standby
+streams. Then the phase requires: the primary streams to every standby it had
+in phase 1; each standby is in recovery, reads UTF8 and carries its new
+primary's system identifier. A rollback restores each standby's kept PGDATA,
+and checks that every primary streams to its standbys again.
+
+## keepalived and the VIP on a pair site
+
+`keepalived.service` is in `postgres_encoding_migrate_stop_units`, so phase 2
+stops it on A and on B and the site's VIP is down from phase 2 to phase 9
+(the mgmt API is down for that time anyway). With keepalived stopped on both,
+nothing can move the VIP to B or run its notify script while A's Postgres is
+re-created. Phase 9 starts keepalived last, on every primary first and then
+on the standbys: A, with the higher priority and its stack up, takes MASTER
+before B's keepalived starts. Then every node must still be what it was (a
+primary out of recovery, a standby in recovery) at two reads 10 s apart. With
+`keepalived_auto_promote_postgres: false` (the role's default) a MASTER
+transition never promotes Postgres; a goatnet that sets it true relies on
+that order.
 
 ## Archiving during the migration
 
@@ -244,6 +329,8 @@ lists every run a host has seen, its state, and what it still keeps.
 | `postgres_encoding_migrate_repair` | `none` | `latin1` reinterprets invalid bytes |
 | `postgres_encoding_migrate_accept_divergence` | `false` | Carry a replicated-table difference over unchanged (foreign-key orphans still refuse) |
 | `postgres_encoding_migrate_reconcile_tables` | | `reconcile`: `<db>.<schema>.<table>`, comma-separated |
+| `postgres_encoding_migrate_drop_subscriptions` | `[]` | Subscriptions to gone peers to drop: names, or `down_nonmembers` |
+| `postgres_encoding_migrate_standby_groups` | | Groups of physical standbys not in `migrate_groups`, comma-separated |
 | `postgres_encoding_migrate_extra_containers` | `[]` | Writers outside Postgres's compose project |
 | `postgres_encoding_migrate_stop_units` | see role defaults | Units stopped and started again when active |
 | `postgres_encoding_migrate_dir` | `/var/lib/goat/postgres-utf8-migration` | Run state, reports and dumps (mode 0700; the dumps hold every row and every role's password hash) |
@@ -252,21 +339,28 @@ All defaults: `ops/ansible/roles/postgres-encoding-migrate/defaults/main.yml`.
 
 ## Tests
 
-- `ops/ansible/roles/postgres-encoding-migrate/tests/syntax-check.sh` — parse
-  checks and the stream tool; runs in CI (`ansible-syntax-check.yml`).
-- `ops/ansible/roles/postgres-encoding-migrate/tests/run-test.sh` — on one
-  Docker host: a founder and a joiner on the pinned postgres-spock image,
-  SQL_ASCII, wired with `spock-mesh-wire.yml`, a pgBackRest stanza on the
-  founder, writers inside and outside the compose project, and on each node a
-  parent row written before Spock was wired plus a replicated child row
-  referencing it. It checks the refusal of the orphan and the divergent
-  parent (also with `accept_divergence`), reconcile refusing a conflicting
-  key and then copying the missing rows without a Spock echo, the
-  refusal of an invalid byte, that the new cluster never crash-loops with the
-  production pgBackRest settings (`archive-async`, `archive_timeout`,
-  repository moved aside) and has archiving back on after phase 7, a run stopped after phase 4 and resumed, the
-  result (encodings, counts, text bytes, owners, database settings, sequences,
-  role passwords, subscriptions, a write each way, writers, the new backup), a
-  no-op re-run, rollback, a second run with `repair=latin1` under a new run
-  id, and cleanup of both the completed and the rolled-back run. The streaming standby (phase 6) and the Ory steps (8.3–8.6) are not
-  exercised by it: the fixture has no pair site and no Ory containers.
+`ops/ansible/roles/postgres-encoding-migrate/tests/syntax-check.sh` — parse
+checks and the stream tool; runs in CI (`ansible-syntax-check.yml`).
+
+`ops/ansible/roles/postgres-encoding-migrate/tests/run-test.sh` — on one
+Docker host, on the pinned postgres-spock image: a founder and a joiner
+(SQL_ASCII, wired with `spock-mesh-wire.yml`, pgBackRest on the founder with
+the role's settings: `archive-async`, spool, `archive_timeout`); a third Spock
+node stopped before the run; a physical standby of the founder in a group of
+its own, built by `postgres-streaming-replication`; writers inside and
+outside the compose project; on each node a parent row written before Spock
+was wired and a replicated child row referencing it.
+
+| Case | Proves |
+|---|---|
+| D | phase 1 refuses the gone peer's subscriptions; refuses dropping a member's replicating subscription; refuses the standby until its group is named, giving its address and application_name |
+| 0 | phase 1 refuses the orphan and the divergent parent (with `accept_divergence` too); reconcile refuses a conflicting key, then copies the missing rows without a Spock echo |
+| 1 | an invalid byte is refused with its table |
+| 2 | a run stopped after phase 4 resumes; the gone peer's subscriptions are dropped (`down_nonmembers`) |
+| 3 | encodings, row counts, text bytes, owners, database settings, sequences, role passwords; replication both ways; writers back; no crash restart, archiving back on, `pgbackrest check`; phase 6: the standby carries the new founder's system identifier, is in recovery, reads UTF8, streams and receives a write; the gone peer's subscriptions, node and slots absent, and listed in the final report |
+| 4 | a re-run changes nothing |
+| 5 | rollback: SQL_ASCII, old rows, old subscriptions (the gone peer's back, down), old repository; the standby back on the old cluster and streaming |
+| 6 | a second run (new run id, named dropped subscriptions, `repair=latin1`); cleanup of the completed and the rolled-back run |
+
+The Ory steps (8.3–8.6) are not exercised: the fixture has no Ory
+containers.

@@ -40,7 +40,26 @@
   ansible.builtin.systemd:
     name: "{{ item }}"
     state: started
-  loop: "{{ _pem_stopped.units }}"
+  loop: "{{ _pem_stopped.units | reject('equalto', 'keepalived.service') | list }}"
+
+# keepalived last, and on the primaries before the standbys: a pair's VIP
+# goes back to the primary (higher priority, its stack already up) before the
+# standby's keepalived starts and could take MASTER on its own.
+- name: "writers | keepalived on the primaries"
+  ansible.builtin.systemd:
+    name: keepalived.service
+    state: started
+  when:
+    - "'keepalived.service' in _pem_stopped.units"
+    - not (_pem_standby | bool)
+
+- name: "writers | keepalived on the standbys"
+  ansible.builtin.systemd:
+    name: keepalived.service
+    state: started
+  when:
+    - "'keepalived.service' in _pem_stopped.units"
+    - _pem_standby | bool
 
 - name: "writers | which containers stay down"
   ansible.builtin.shell:

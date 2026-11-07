@@ -24,7 +24,7 @@
       - exec
       - -u
       - postgres
-      - postgres-a
+      - "{{ postgres_streaming_container }}"
       - psql
       - -U
       - postgres
@@ -51,7 +51,7 @@
       - exec
       - -u
       - postgres
-      - postgres-a
+      - "{{ postgres_streaming_container }}"
       - psql
       - -U
       - postgres
@@ -74,11 +74,11 @@
   when: (router_role | upper) == 'A'
   ansible.builtin.shell: |
     set -o pipefail
-    HBA=$(docker exec {{ postgres_primary_container | default('postgres-a') }} sh -c 'echo $PGDATA')/pg_hba.conf
+    HBA=$(docker exec {{ postgres_streaming_container }} sh -c 'echo $PGDATA')/pg_hba.conf
     LINE="host replication {{ postgres_replicator_user | default('replicator') }} {{ mesh_ip_b }}/32 scram-sha-256"
-    docker exec {{ postgres_primary_container | default('postgres-a') }} sh -c \
+    docker exec {{ postgres_streaming_container }} sh -c \
       "grep -qF \"$LINE\" $HBA || echo \"$LINE\" >> $HBA"
-    docker exec -u postgres {{ postgres_primary_container | default('postgres-a') }} \
+    docker exec -u postgres {{ postgres_streaming_container }} \
       psql -U postgres -c "SELECT pg_reload_conf()" >/dev/null
   args:
     executable: /bin/bash
@@ -113,7 +113,7 @@
       - exec
       - -u
       - postgres
-      - postgres-a
+      - "{{ postgres_streaming_container }}"
       - psql
       - -U
       - postgres
@@ -151,7 +151,7 @@
       - exec
       - -u
       - postgres
-      - postgres-a
+      - "{{ postgres_streaming_container }}"
       - psql
       - -U
       - postgres
@@ -169,7 +169,7 @@
       - exec
       - -u
       - postgres
-      - postgres-a
+      - "{{ postgres_streaming_container }}"
       - psql
       - -U
       - postgres
@@ -197,7 +197,7 @@
       - exec
       - -u
       - postgres
-      - postgres-a
+      - "{{ postgres_streaming_container }}"
       - psql
       - -U
       - postgres
@@ -231,7 +231,7 @@
           - exec
           - -u
           - postgres
-          - postgres-a
+          - "{{ postgres_streaming_container }}"
           - psql
           - -U
           - postgres
@@ -300,7 +300,7 @@
           {{ postgres_basebackup_client_image }}
           pg_basebackup
           -h {{ postgres_primary_lan_ip }}
-          -p 5432
+          -p {{ postgres_primary_port }}
           -U replicator
           -D /data
           -Fp -Xs -P -R
@@ -337,7 +337,7 @@
           archive_mode = 'on'
           archive_command = 'pgbackrest --config=/etc/pgbackrest/pgbackrest.conf --stanza={{ site_id }}-netbird archive-push %p'
           archive_timeout = '60s'
-          primary_conninfo = 'application_name={{ postgres_standby_app_name }} user=replicator password={{ postgres_replicator_password }} host={{ postgres_primary_lan_ip }} port=5432 sslmode=prefer'
+          primary_conninfo = 'application_name={{ postgres_standby_app_name }} user=replicator password={{ postgres_replicator_password }} host={{ postgres_primary_lan_ip }} port={{ postgres_primary_port }} sslmode=prefer'
           max_connections = {{ postgres_max_connections }}
         owner: "{{ postgres_spock_uid }}"
         group: "{{ postgres_spock_gid }}"
@@ -354,7 +354,7 @@
 
     - name: "Standby | wait for postgres-a to report healthy"
       ansible.builtin.shell: |
-        docker inspect -f '{{ "{{" }}.State.Health.Status{{ "}}" }}' postgres-a
+        docker inspect -f '{{ "{{" }}.State.Health.Status{{ "}}" }}' {{ postgres_streaming_container }}
       register: pg_health
       until: pg_health.stdout == "healthy"
       retries: 24
@@ -382,7 +382,7 @@
       - exec
       - -u
       - postgres
-      - postgres-a
+      - "{{ postgres_streaming_container }}"
       - psql
       - -U
       - postgres

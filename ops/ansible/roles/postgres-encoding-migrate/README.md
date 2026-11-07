@@ -19,11 +19,12 @@ phases, gates, rollback, cleanup) is
 | `tasks/capture.yml`, `tasks/counts.yml` | 3 |
 | `tasks/snapshot.yml` | 4 |
 | `tasks/reinit.yml`, `tasks/wait-ready.yml` | 5 |
-| `tasks/standby.yml` | 6 (`postgres-streaming-replication`) |
+| `tasks/standby.yml` | 6: every physical standby rebuilt (`postgres-streaming-replication`, standby side) and proven |
+| `tasks/stays-up.yml` | after every start: expected recovery state, no crash restart |
 | `tasks/pgbackrest.yml` | 7 |
 | `tasks/rewire.yml` | 8 (`spock-mesh-peering`, `ory-narrow-repset`) |
 | `tasks/finish.yml`, `tasks/start-writers.yml` | 9 |
 | `tasks/reconcile.yml`, `tasks/rollback.yml`, `tasks/cleanup.yml`, `tasks/status.yml` | actions |
 | `files/pg-utf8-stream.py` | byte scan of a dump; the restore filter (encoding declarations, optional LATIN1 repair) |
 
-Tests: `tests/syntax-check.sh` (CI), `tests/run-test.sh` (Docker, two nodes).
+Tests: `tests/syntax-check.sh` (CI), `tests/run-test.sh` (Docker: two members, a stopped peer, a physical standby; `tests/standby-wire.yml` builds the standby).

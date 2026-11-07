@@ -6,7 +6,12 @@
 
 - name: "context | member kind"
   ansible.builtin.set_fact:
-    _pem_standby: "{{ (router_role | default('A') | string | upper) == 'B' }}"
+    # A standby: router_role B in its group, or any host of a group named in
+    # postgres_encoding_migrate_standby_groups (a standby kept in a group of its own).
+    _pem_standby: >-
+      {{ (router_role | default('A') | string | upper) == 'B'
+         or inventory_hostname in (postgres_encoding_migrate_standby_groups | default('')).split(',')
+              | map('trim') | select | map('extract', groups) | select('defined') | flatten }}
     _pem_founder: "{{ goatnet_founder | default(true) | bool }}"
     _pem_c: "{{ postgres_encoding_migrate_container }}"
     _pem_dir: "{{ postgres_encoding_migrate_dir }}"

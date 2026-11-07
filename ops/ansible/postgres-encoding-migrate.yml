@@ -23,7 +23,11 @@
 #
 # migrate_groups is every group holding the goatnet's Spock members and their
 # standbys (comma-separated). Not a site's obs group: it runs no goatnet
-# Postgres. Every Spock node a member subscribes to must be listed.
+# Postgres. Every Spock node a member subscribes to must be listed, or its
+# subscriptions named in postgres_encoding_migrate_drop_subscriptions.
+# A physical standby kept in a group of its own is named in
+# postgres_encoding_migrate_standby_groups; phase 1 refuses a standby
+# streaming from a member that neither variable covers.
 #
 # Phases (each leaves a marker per host; a re-run skips what is done):
 #   1 preflight   gates only, opens the run
@@ -62,11 +66,11 @@
           - (groups[item] | default([])) | length > 0
         fail_msg: "Group {{ item }} has no hosts in this run's inventory."
         quiet: true
-      loop: "{{ migrate_groups.split(',') | map('trim') | select | list }}"
+      loop: "{{ (migrate_groups ~ ',' ~ (postgres_encoding_migrate_standby_groups | default(''))).split(',') | map('trim') | select | list }}"
 
 # ---------------------------------------------------------------- status
 - name: "postgres-encoding-migrate | status"
-  hosts: "{{ migrate_groups | default('migrate_groups_unset') }}"
+  hosts: "{{ (migrate_groups | default('migrate_groups_unset')) ~ ((',' ~ postgres_encoding_migrate_standby_groups) if (postgres_encoding_migrate_standby_groups | default('')) else '') }}"
   gather_facts: false
   become: "{{ postgres_encoding_migrate_become | default(true) }}"
   tasks:
@@ -79,7 +83,7 @@
 
 # ---------------------------------------------------------------- migrate
 - name: "postgres-encoding-migrate | phase 1 preflight"
-  hosts: "{{ migrate_groups | default('migrate_groups_unset') }}"
+  hosts: "{{ (migrate_groups | default('migrate_groups_unset')) ~ ((',' ~ postgres_encoding_migrate_standby_groups) if (postgres_encoding_migrate_standby_groups | default('')) else '') }}"
   gather_facts: false
   become: "{{ postgres_encoding_migrate_become | default(true) }}"
   any_errors_fatal: true
@@ -92,7 +96,7 @@
       when: (postgres_encoding_migrate_action | default('migrate')) == 'migrate'
 
 - name: "postgres-encoding-migrate | phase 2 quiesce"
-  hosts: "{{ migrate_groups | default('migrate_groups_unset') }}"
+  hosts: "{{ (migrate_groups | default('migrate_groups_unset')) ~ ((',' ~ postgres_encoding_migrate_standby_groups) if (postgres_encoding_migrate_standby_groups | default('')) else '') }}"
   gather_facts: false
   become: "{{ postgres_encoding_migrate_become | default(true) }}"
   any_errors_fatal: true
@@ -102,7 +106,7 @@
       when: (postgres_encoding_migrate_action | default('migrate')) == 'migrate'
 
 - name: "postgres-encoding-migrate | phase 3 capture"
-  hosts: "{{ migrate_groups | default('migrate_groups_unset') }}"
+  hosts: "{{ (migrate_groups | default('migrate_groups_unset')) ~ ((',' ~ postgres_encoding_migrate_standby_groups) if (postgres_encoding_migrate_standby_groups | default('')) else '') }}"
   gather_facts: false
   become: "{{ postgres_encoding_migrate_become | default(true) }}"
   any_errors_fatal: true
@@ -112,7 +116,7 @@
       when: (postgres_encoding_migrate_action | default('migrate')) == 'migrate'
 
 - name: "postgres-encoding-migrate | phase 4 snapshot"
-  hosts: "{{ migrate_groups | default('migrate_groups_unset') }}"
+  hosts: "{{ (migrate_groups | default('migrate_groups_unset')) ~ ((',' ~ postgres_encoding_migrate_standby_groups) if (postgres_encoding_migrate_standby_groups | default('')) else '') }}"
   gather_facts: false
   become: "{{ postgres_encoding_migrate_become | default(true) }}"
   any_errors_fatal: true
@@ -122,7 +126,7 @@
       when: (postgres_encoding_migrate_action | default('migrate')) == 'migrate'
 
 - name: "postgres-encoding-migrate | phase 5 reinit"
-  hosts: "{{ migrate_groups | default('migrate_groups_unset') }}"
+  hosts: "{{ (migrate_groups | default('migrate_groups_unset')) ~ ((',' ~ postgres_encoding_migrate_standby_groups) if (postgres_encoding_migrate_standby_groups | default('')) else '') }}"
   gather_facts: false
   become: "{{ postgres_encoding_migrate_become | default(true) }}"
   any_errors_fatal: true
@@ -132,7 +136,7 @@
       when: (postgres_encoding_migrate_action | default('migrate')) == 'migrate'
 
 - name: "postgres-encoding-migrate | phase 6 standby"
-  hosts: "{{ migrate_groups | default('migrate_groups_unset') }}"
+  hosts: "{{ (migrate_groups | default('migrate_groups_unset')) ~ ((',' ~ postgres_encoding_migrate_standby_groups) if (postgres_encoding_migrate_standby_groups | default('')) else '') }}"
   gather_facts: false
   become: "{{ postgres_encoding_migrate_become | default(true) }}"
   any_errors_fatal: true
@@ -142,7 +146,7 @@
       when: (postgres_encoding_migrate_action | default('migrate')) == 'migrate'
 
 - name: "postgres-encoding-migrate | phase 7 pgbackrest"
-  hosts: "{{ migrate_groups | default('migrate_groups_unset') }}"
+  hosts: "{{ (migrate_groups | default('migrate_groups_unset')) ~ ((',' ~ postgres_encoding_migrate_standby_groups) if (postgres_encoding_migrate_standby_groups | default('')) else '') }}"
   gather_facts: false
   become: "{{ postgres_encoding_migrate_become | default(true) }}"
   any_errors_fatal: true
@@ -154,7 +158,7 @@
 # Phase 8: one play per step, so each step finishes on every node before the
 # next starts (the join order of goatbuilder join-node phase 13).
 - name: "postgres-encoding-migrate | phase 8.1 Spock netbird, founders"
-  hosts: "{{ migrate_groups | default('migrate_groups_unset') }}"
+  hosts: "{{ (migrate_groups | default('migrate_groups_unset')) ~ ((',' ~ postgres_encoding_migrate_standby_groups) if (postgres_encoding_migrate_standby_groups | default('')) else '') }}"
   gather_facts: false
   become: "{{ postgres_encoding_migrate_become | default(true) }}"
   any_errors_fatal: true
@@ -164,7 +168,7 @@
       when: (postgres_encoding_migrate_action | default('migrate')) == 'migrate'
 
 - name: "postgres-encoding-migrate | phase 8.2 Spock netbird, joiners"
-  hosts: "{{ migrate_groups | default('migrate_groups_unset') }}"
+  hosts: "{{ (migrate_groups | default('migrate_groups_unset')) ~ ((',' ~ postgres_encoding_migrate_standby_groups) if (postgres_encoding_migrate_standby_groups | default('')) else '') }}"
   gather_facts: false
   become: "{{ postgres_encoding_migrate_become | default(true) }}"
   any_errors_fatal: true
@@ -174,7 +178,7 @@
       when: (postgres_encoding_migrate_action | default('migrate')) == 'migrate'
 
 - name: "postgres-encoding-migrate | phase 8.3 start kratos and hydra"
-  hosts: "{{ migrate_groups | default('migrate_groups_unset') }}"
+  hosts: "{{ (migrate_groups | default('migrate_groups_unset')) ~ ((',' ~ postgres_encoding_migrate_standby_groups) if (postgres_encoding_migrate_standby_groups | default('')) else '') }}"
   gather_facts: false
   become: "{{ postgres_encoding_migrate_become | default(true) }}"
   any_errors_fatal: true
@@ -184,7 +188,7 @@
       when: (postgres_encoding_migrate_action | default('migrate')) == 'migrate'
 
 - name: "postgres-encoding-migrate | phase 8.4 Ory, joiners (node + repset)"
-  hosts: "{{ migrate_groups | default('migrate_groups_unset') }}"
+  hosts: "{{ (migrate_groups | default('migrate_groups_unset')) ~ ((',' ~ postgres_encoding_migrate_standby_groups) if (postgres_encoding_migrate_standby_groups | default('')) else '') }}"
   gather_facts: false
   become: "{{ postgres_encoding_migrate_become | default(true) }}"
   any_errors_fatal: true
@@ -194,7 +198,7 @@
       when: (postgres_encoding_migrate_action | default('migrate')) == 'migrate'
 
 - name: "postgres-encoding-migrate | phase 8.5 Ory, founders"
-  hosts: "{{ migrate_groups | default('migrate_groups_unset') }}"
+  hosts: "{{ (migrate_groups | default('migrate_groups_unset')) ~ ((',' ~ postgres_encoding_migrate_standby_groups) if (postgres_encoding_migrate_standby_groups | default('')) else '') }}"
   gather_facts: false
   become: "{{ postgres_encoding_migrate_become | default(true) }}"
   any_errors_fatal: true
@@ -204,7 +208,7 @@
       when: (postgres_encoding_migrate_action | default('migrate')) == 'migrate'
 
 - name: "postgres-encoding-migrate | phase 8.6 Ory, joiners (subscriptions + history)"
-  hosts: "{{ migrate_groups | default('migrate_groups_unset') }}"
+  hosts: "{{ (migrate_groups | default('migrate_groups_unset')) ~ ((',' ~ postgres_encoding_migrate_standby_groups) if (postgres_encoding_migrate_standby_groups | default('')) else '') }}"
   gather_facts: false
   become: "{{ postgres_encoding_migrate_become | default(true) }}"
   any_errors_fatal: true
@@ -214,7 +218,7 @@
       when: (postgres_encoding_migrate_action | default('migrate')) == 'migrate'
 
 - name: "postgres-encoding-migrate | phase 8.7 subscription set"
-  hosts: "{{ migrate_groups | default('migrate_groups_unset') }}"
+  hosts: "{{ (migrate_groups | default('migrate_groups_unset')) ~ ((',' ~ postgres_encoding_migrate_standby_groups) if (postgres_encoding_migrate_standby_groups | default('')) else '') }}"
   gather_facts: false
   become: "{{ postgres_encoding_migrate_become | default(true) }}"
   any_errors_fatal: true
@@ -224,7 +228,7 @@
       when: (postgres_encoding_migrate_action | default('migrate')) == 'migrate'
 
 - name: "postgres-encoding-migrate | phase 9.1 a write on each node replicates"
-  hosts: "{{ migrate_groups | default('migrate_groups_unset') }}"
+  hosts: "{{ (migrate_groups | default('migrate_groups_unset')) ~ ((',' ~ postgres_encoding_migrate_standby_groups) if (postgres_encoding_migrate_standby_groups | default('')) else '') }}"
   gather_facts: false
   become: "{{ postgres_encoding_migrate_become | default(true) }}"
   any_errors_fatal: true
@@ -234,7 +238,7 @@
       when: (postgres_encoding_migrate_action | default('migrate')) == 'migrate'
 
 - name: "postgres-encoding-migrate | phase 9.2 start writers and units"
-  hosts: "{{ migrate_groups | default('migrate_groups_unset') }}"
+  hosts: "{{ (migrate_groups | default('migrate_groups_unset')) ~ ((',' ~ postgres_encoding_migrate_standby_groups) if (postgres_encoding_migrate_standby_groups | default('')) else '') }}"
   gather_facts: false
   become: "{{ postgres_encoding_migrate_become | default(true) }}"
   any_errors_fatal: true
@@ -245,7 +249,7 @@
 
 # ---------------------------------------------------------------- reconcile
 - name: "postgres-encoding-migrate | reconcile: no run has stopped the writers"
-  hosts: "{{ migrate_groups | default('migrate_groups_unset') }}"
+  hosts: "{{ (migrate_groups | default('migrate_groups_unset')) ~ ((',' ~ postgres_encoding_migrate_standby_groups) if (postgres_encoding_migrate_standby_groups | default('')) else '') }}"
   gather_facts: false
   become: "{{ postgres_encoding_migrate_become | default(true) }}"
   any_errors_fatal: true
@@ -273,7 +277,7 @@
       when: (postgres_encoding_migrate_action | default('migrate')) == 'reconcile'
 
 - name: "postgres-encoding-migrate | reconcile: read and plan"
-  hosts: "{{ migrate_groups | default('migrate_groups_unset') }}"
+  hosts: "{{ (migrate_groups | default('migrate_groups_unset')) ~ ((',' ~ postgres_encoding_migrate_standby_groups) if (postgres_encoding_migrate_standby_groups | default('')) else '') }}"
   gather_facts: false
   become: "{{ postgres_encoding_migrate_become | default(true) }}"
   any_errors_fatal: true
@@ -283,7 +287,7 @@
       when: (postgres_encoding_migrate_action | default('migrate')) == 'reconcile'
 
 - name: "postgres-encoding-migrate | reconcile: copy"
-  hosts: "{{ migrate_groups | default('migrate_groups_unset') }}"
+  hosts: "{{ (migrate_groups | default('migrate_groups_unset')) ~ ((',' ~ postgres_encoding_migrate_standby_groups) if (postgres_encoding_migrate_standby_groups | default('')) else '') }}"
   gather_facts: false
   become: "{{ postgres_encoding_migrate_become | default(true) }}"
   any_errors_fatal: true
@@ -293,7 +297,7 @@
       when: (postgres_encoding_migrate_action | default('migrate')) == 'reconcile'
 
 - name: "postgres-encoding-migrate | reconcile: check again"
-  hosts: "{{ migrate_groups | default('migrate_groups_unset') }}"
+  hosts: "{{ (migrate_groups | default('migrate_groups_unset')) ~ ((',' ~ postgres_encoding_migrate_standby_groups) if (postgres_encoding_migrate_standby_groups | default('')) else '') }}"
   gather_facts: false
   become: "{{ postgres_encoding_migrate_become | default(true) }}"
   any_errors_fatal: true
@@ -304,7 +308,7 @@
 
 # ---------------------------------------------------------------- rollback / cleanup
 - name: "postgres-encoding-migrate | rollback: the confirmed run"
-  hosts: "{{ migrate_groups | default('migrate_groups_unset') }}"
+  hosts: "{{ (migrate_groups | default('migrate_groups_unset')) ~ ((',' ~ postgres_encoding_migrate_standby_groups) if (postgres_encoding_migrate_standby_groups | default('')) else '') }}"
   gather_facts: false
   become: "{{ postgres_encoding_migrate_become | default(true) }}"
   any_errors_fatal: true
@@ -328,7 +332,7 @@
       when: (postgres_encoding_migrate_action | default('migrate')) == 'rollback'
 
 - name: "postgres-encoding-migrate | rollback: stop"
-  hosts: "{{ migrate_groups | default('migrate_groups_unset') }}"
+  hosts: "{{ (migrate_groups | default('migrate_groups_unset')) ~ ((',' ~ postgres_encoding_migrate_standby_groups) if (postgres_encoding_migrate_standby_groups | default('')) else '') }}"
   gather_facts: false
   become: "{{ postgres_encoding_migrate_become | default(true) }}"
   any_errors_fatal: true
@@ -338,7 +342,7 @@
       when: (postgres_encoding_migrate_action | default('migrate')) == 'rollback'
 
 - name: "postgres-encoding-migrate | rollback: restore"
-  hosts: "{{ migrate_groups | default('migrate_groups_unset') }}"
+  hosts: "{{ (migrate_groups | default('migrate_groups_unset')) ~ ((',' ~ postgres_encoding_migrate_standby_groups) if (postgres_encoding_migrate_standby_groups | default('')) else '') }}"
   gather_facts: false
   become: "{{ postgres_encoding_migrate_become | default(true) }}"
   any_errors_fatal: true
@@ -348,7 +352,7 @@
       when: (postgres_encoding_migrate_action | default('migrate')) == 'rollback'
 
 - name: "postgres-encoding-migrate | rollback: start"
-  hosts: "{{ migrate_groups | default('migrate_groups_unset') }}"
+  hosts: "{{ (migrate_groups | default('migrate_groups_unset')) ~ ((',' ~ postgres_encoding_migrate_standby_groups) if (postgres_encoding_migrate_standby_groups | default('')) else '') }}"
   gather_facts: false
   become: "{{ postgres_encoding_migrate_become | default(true) }}"
   any_errors_fatal: true
@@ -358,7 +362,7 @@
       when: (postgres_encoding_migrate_action | default('migrate')) == 'rollback'
 
 - name: "postgres-encoding-migrate | rollback: verify and close"
-  hosts: "{{ migrate_groups | default('migrate_groups_unset') }}"
+  hosts: "{{ (migrate_groups | default('migrate_groups_unset')) ~ ((',' ~ postgres_encoding_migrate_standby_groups) if (postgres_encoding_migrate_standby_groups | default('')) else '') }}"
   gather_facts: false
   become: "{{ postgres_encoding_migrate_become | default(true) }}"
   any_errors_fatal: true
@@ -368,7 +372,7 @@
       when: (postgres_encoding_migrate_action | default('migrate')) == 'rollback'
 
 - name: "postgres-encoding-migrate | cleanup"
-  hosts: "{{ migrate_groups | default('migrate_groups_unset') }}"
+  hosts: "{{ (migrate_groups | default('migrate_groups_unset')) ~ ((',' ~ postgres_encoding_migrate_standby_groups) if (postgres_encoding_migrate_standby_groups | default('')) else '') }}"
   gather_facts: false
   become: "{{ postgres_encoding_migrate_become | default(true) }}"
   any_errors_fatal: true

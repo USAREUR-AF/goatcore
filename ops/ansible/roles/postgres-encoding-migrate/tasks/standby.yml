@@ -1,32 +1,56 @@
 ---
-# Phase 6 — rebuild each pair site's streaming standby from its new primary.
-# The postgres-streaming-replication role does it exactly as site-bootstrap
-# Phase 6A does, forced: on A it sets the synchronous-standby settings
-# (phase 5 left them out); on B it wipes PGDATA and runs pg_basebackup from
-# A. B's old PGDATA is kept as a volume since phase 4.
-# The role brings B's compose services and compose-watch back up; B is a
-# read-only standby, so nothing there writes.
+# Phase 6 — every physical standby of the run is rebuilt from its new
+# primary, then proven: it streams, it is in recovery, it holds the primary's
+# new system identifier, and it reads UTF8.
+#
+# A standby is router_role B in a listed group or a host of
+# postgres_encoding_migrate_standby_groups (phase 1 required every standby a
+# member streams to to be one of these). It is rebuilt by
+# postgres-streaming-replication's standby side, forced: PGDATA wiped,
+# pg_basebackup from postgres_primary_lan_ip, application_name set. Its old
+# PGDATA is kept as a volume since phase 4.
+#
+# The primary side needs nothing from that role: the replicator role, its
+# pg_hba entry and the WAL settings came back with the restore in phase 5.
+# Only synchronous_standby_names was held back (a primary waiting on a standby
+# that is not there yet blocks every commit); it goes back once the standby
+# streams.
+#
+# The role brings the standby's compose services and compose-watch back up;
+# the standby is read-only, so nothing there writes.
 
-- name: "standby | rebuild (intra_site_pair sites)"
+- name: "standby | the compose services the rebuild stops and starts"
+  ansible.builtin.shell:
+    executable: /bin/bash
+    chdir: "{{ _pem_workdir }}"
+    cmd: "{{ _pem_compose }} config --services"
+  register: _pem_sb_services
+  changed_when: false
+  when: _pem_standby | bool
+
+- name: "standby | rebuild from the new primary"
   ansible.builtin.include_role:
     name: postgres-streaming-replication
   vars:
+    # The role's standby side only: the primary side is described above.
+    router_role: B
     postgres_streaming_force_rebuild: true
     postgres_replicator_password: "{{ lookup('env', _pem_site_upper ~ '_REPLICATOR_PASS') }}"
     postgres_data_volume: "{{ _pem_volume }}"
-  when: intra_site_pair | default(false) | bool
-
-- name: "standby | single-node site"
-  ansible.builtin.debug:
-    msg: "{{ inventory_hostname }}: no intra-site standby."
-  when: not (intra_site_pair | default(false) | bool)
+    postgres_streaming_container: "{{ _pem_c }}"
+    mgmt_compose_dir: "{{ _pem_workdir }}"
+    # The role's list, narrowed to the services this host's project has.
+    mgmt_services_to_stop_for_basebackup: >-
+      {{ ['postgres-a', 'management-a', 'signal-a', 'traefik'] | select('in', _pem_sb_services.stdout_lines) | list
+         if _pem_service == 'postgres-a' else [_pem_service] }}
+  when: _pem_standby | bool
 
 - name: "standby | Postgres stays up after the rebuild"
   ansible.builtin.include_tasks: stays-up.yml
   vars:
-    pem_expect_recovery: "{{ _pem_standby | bool }}"
+    pem_expect_recovery: true
     pem_stays_up_why: "the standby rebuild"
-  when: intra_site_pair | default(false) | bool
+  when: _pem_standby | bool
 
 # The rebuilt standby carries its primary's postgresql.auto.conf, archiving
 # held off. Record the standby's own old archive_mode line, from its kept
@@ -42,6 +66,85 @@
       if [ -s "$D/archive-mode.pre" ]; then echo "held off until phase 7" > "$D/archive-held"; echo held; else echo none; fi
   register: _pem_sb_arch
   changed_when: "'held' in _pem_sb_arch.stdout"
+  when: _pem_standby | bool
+
+- name: "standby | synchronous_standby_names back on the primary"
+  ansible.builtin.shell:
+    executable: /bin/bash
+    cmd: |
+      set -euo pipefail
+      D={{ _pem_rundir | quote }}; C={{ _pem_c | quote }}
+      [ -s "$D/sync-standby.pre" ] || { echo "none held"; exit 0; }
+      docker exec -i -u postgres -e F={{ (postgres_encoding_migrate_pgdata ~ '/postgresql.auto.conf') | quote }} "$C" sh -c '
+        set -e
+        grep -v "^[[:space:]]*synchronous_standby_names[[:space:]]*=" "$F" > "$F.goat-tmp" || true
+        cat >> "$F.goat-tmp"
+        cat "$F.goat-tmp" > "$F"; rm -f "$F.goat-tmp"' < "$D/sync-standby.pre"
+      docker exec -u postgres "$C" psql -X -U postgres -tA -d postgres -c 'SELECT pg_reload_conf()' >/dev/null
+      echo "restored: $(cat "$D/sync-standby.pre")"
+  register: _pem_sync_back
+  changed_when: "'restored' in _pem_sync_back.stdout"
+  when: not (_pem_standby | bool)
+
+- name: "standby | the primary streams to every standby it had before"
+  ansible.builtin.command:
+    argv: "{{ _pem_psql + ['-d', 'postgres', '-tAc', _sql] }}"
+  vars:
+    _sql: >-
+      SELECT coalesce(string_agg(r.application_name, ',' ORDER BY r.application_name), '')
+      FROM pg_stat_replication r LEFT JOIN pg_replication_slots s ON s.active_pid = r.pid
+      WHERE coalesce(s.slot_type, 'physical') = 'physical' AND r.state = 'streaming'
+  register: _pem_sb_streaming
+  until: (_pem_sb_streaming.stdout | trim) == (_pem_pre.physical | default([]) | map(attribute='app') | sort | join(','))
+  retries: 30
+  delay: 2
+  changed_when: false
+  failed_when: false
   when:
-    - intra_site_pair | default(false) | bool
-    - _pem_standby | bool
+    - not (_pem_standby | bool)
+    - _pem_pre.physical | default([]) | length > 0
+
+- name: "standby | refuse a standby that is not streaming from the new primary"
+  ansible.builtin.assert:
+    that:
+      - (_pem_sb_streaming.stdout | trim) == (_pem_pre.physical | default([]) | map(attribute='app') | sort | join(','))
+    fail_msg: >-
+      {{ inventory_hostname }} streams to [{{ _pem_sb_streaming.stdout | trim }}]; before the
+      migration it streamed to [{{ _pem_pre.physical | map(attribute='app') | sort | join(',') }}].
+    quiet: true
+  when:
+    - not (_pem_standby | bool)
+    - _pem_pre.physical | default([]) | length > 0
+
+- name: "standby | system identifier and encoding"
+  ansible.builtin.command:
+    argv: "{{ _pem_psql + ['-d', 'postgres', '-tAc', _sql] }}"
+  vars:
+    _sql: >-
+      SELECT (SELECT system_identifier FROM pg_control_system()) || ' ' ||
+             (SELECT pg_encoding_to_char(encoding) FROM pg_database WHERE datname = 'template1') || ' ' ||
+             pg_is_in_recovery()
+  register: _pem_sb_ident
+  changed_when: false
+
+- name: "standby | refuse a standby that is not a copy of its new primary"
+  ansible.builtin.assert:
+    that:
+      - _mine[2] == 'true'
+      - _mine[1] == postgres_encoding_migrate_target
+      - _mine[0] in _primary_ids
+    fail_msg: >-
+      {{ inventory_hostname }}: system identifier {{ _mine[0] }}, template1 {{ _mine[1] }},
+      in recovery {{ _mine[2] }}. A rebuilt standby is in recovery, reads
+      {{ postgres_encoding_migrate_target }} and carries the system identifier of a new
+      primary of this run ({{ _primary_ids | join(', ') }}).
+    quiet: true
+  vars:
+    _mine: "{{ _pem_sb_ident.stdout | trim | split(' ') }}"
+    _primary_ids: >-
+      {%- set out = [] -%}
+      {%- for h in ansible_play_hosts if not (hostvars[h]._pem_standby | bool) -%}
+        {%- set _ = out.append((hostvars[h]._pem_sb_ident.stdout | trim).split(' ')[0]) -%}
+      {%- endfor -%}
+      {{ out }}
+  when: _pem_standby | bool

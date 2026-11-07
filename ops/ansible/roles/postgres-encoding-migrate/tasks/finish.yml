@@ -91,6 +91,23 @@
   when: pem_step == 'restart'
   ansible.builtin.include_tasks: start-writers.yml
 
+- name: "finish | each node is still what it was: primary out of recovery, standby in it"
+  ansible.builtin.include_tasks: stays-up.yml
+  vars:
+    pem_expect_recovery: "{{ _pem_standby | bool }}"
+    pem_stays_up_why: "the writers and units started again"
+  when: pem_step == 'restart'
+
+- name: "finish | report"
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}: run {{ _pem_run }} complete.
+      {% if _pem_pre.dropped | default([]) %}Subscriptions DROPPED (not created again):
+      {% for d in _pem_pre.dropped %}{{ d.db }} {{ d.name }} from {{ d.provider }} (was {{ d.status }}){{ '; ' if not loop.last }}{% endfor %}.
+      Those peers rejoin only with join-node at the new encoding; take them out of
+      the inventory and the peers lists (inter_site_spock_peers) until then.{% else %}No subscription dropped.{% endif %}
+  when: pem_step == 'restart'
+
 - name: "finish | the run is complete"
   ansible.builtin.copy:
     dest: "{{ _pem_rundir }}/complete"

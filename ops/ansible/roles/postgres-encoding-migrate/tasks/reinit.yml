@@ -148,6 +148,10 @@
           # with archive-async a failing push takes the postmaster into a crash
           # loop. Phase 7 puts the old archive_mode line back.
           grep -E '^[[:space:]]*archive_mode[[:space:]]*=' "$D/postgresql.auto.conf.pre" > "$D/archive-mode.pre" || true
+          # synchronous_standby_names is left out until phase 6 has rebuilt the
+          # standby it names (a primary waiting on a standby that is not there
+          # blocks every commit); phase 6 puts the line back.
+          grep -E '^[[:space:]]*synchronous_standby_names[[:space:]]*=' "$D/postgresql.auto.conf.pre" > "$D/sync-standby.pre" || true
           grep -v '^[[:space:]]*synchronous_standby_names' "$D/postgresql.auto.conf.pre" \
             | sed -E "s/^[[:space:]]*archive_mode[[:space:]]*=.*$/archive_mode = 'off'/" \
             | docker exec -i -u postgres "$C" sh -c 'cat > {{ postgres_encoding_migrate_pgdata }}/postgresql.auto.conf'

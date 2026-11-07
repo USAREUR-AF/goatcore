@@ -142,6 +142,15 @@
               'subs', coalesce((SELECT json_agg(json_build_object('name', s.subscription_name, 'status', s.status,
                          'provider', s.provider_node, 'sets', s.replication_sets) ORDER BY s.subscription_name)
                        FROM spock.sub_show_status() s), '[]'::json))"
+            # Status over five samples 2 s apart: a subscription whose origin is
+            # unreachable flips to 'replicating' for a moment each time its
+            # apply worker restarts. It counts as replicating only if every
+            # sample says so.
+            for i in 1 2 3 4 5; do
+              "${P[@]}" -d "$db" -c "SELECT json_build_object('sample_db', current_database(),
+                'status', coalesce(json_object_agg(subscription_name, status), '{}'::json)) FROM spock.sub_show_status()"
+              [ "$i" = 5 ] || sleep 2
+            done
           done
       register: _pem_spock_raw
       changed_when: false
@@ -149,7 +158,99 @@
 
     - name: "preflight | parse Spock inventory"
       ansible.builtin.set_fact:
-        _pem_spock: "{{ (_pem_spock_raw.stdout_lines | default([])) | map('from_json') | list }}"
+        _pem_spock: >-
+          {%- set rows = (_pem_spock_raw.stdout_lines | default([])) | map('from_json') | list -%}
+          {%- set out = [] -%}
+          {%- for d in rows if 'sample_db' not in d -%}
+            {%- set samples = rows | selectattr('sample_db', 'defined') | selectattr('sample_db', 'equalto', d.db) | map(attribute='status') | list -%}
+            {%- set subs = [] -%}
+            {%- for x in d.subs -%}
+              {%- set seen = samples | map(attribute=x.name, default='missing') | list + [x.status] -%}
+              {%- set worst = (seen | reject('equalto', 'replicating') | list + ['replicating']) | first -%}
+              {%- set _ = subs.append(x | combine({'status': worst})) -%}
+            {%- endfor -%}
+            {%- set _ = out.append(d | combine({'subs': subs})) -%}
+          {%- endfor -%}
+          {{ out }}
+
+    - name: "preflight | Spock node names of the members"
+      ansible.builtin.set_fact:
+        _pem_nodes: >-
+          {{ ansible_play_hosts | map('extract', hostvars, '_pem_spock') | flatten
+             | map(attribute='node') | select | unique | list }}
+        _pem_drop_spec: >-
+          {{ (postgres_encoding_migrate_drop_subscriptions | default([])).split(',') | map('trim') | select | list
+             if (postgres_encoding_migrate_drop_subscriptions | default([])) is string
+             else (postgres_encoding_migrate_drop_subscriptions | default([]) | list) }}
+      run_once: true
+
+    # Subscriptions to peers that are gone (a powered-off joiner, a retired
+    # site) are dropped by name, or all at once with down_nonmembers: every
+    # subscription that is not replicating AND pulls from a node that is not a
+    # member. Dropped subscriptions are left out of every later phase and are
+    # not created again in phase 8.
+    - name: "preflight | subscriptions this run drops"
+      ansible.builtin.set_fact:
+        _pem_spock_all: "{{ _pem_spock }}"
+        _pem_dropped: >-
+          {%- set out = [] -%}
+          {%- for d in _pem_spock -%}
+            {%- for s in d.subs -%}
+              {%- if (_pem_drop_spec == ['down_nonmembers'] and s.status != 'replicating' and s.provider not in _pem_nodes)
+                     or (_pem_drop_spec != ['down_nonmembers'] and s.name in _pem_drop_spec) -%}
+                {%- set _ = out.append({'db': d.db, 'name': s.name, 'provider': s.provider, 'status': s.status}) -%}
+              {%- endif -%}
+            {%- endfor -%}
+          {%- endfor -%}
+          {{ out }}
+
+    - name: "preflight | the subscriptions that stay"
+      ansible.builtin.set_fact:
+        _pem_spock: >-
+          {%- set out = [] -%}
+          {%- for d in _pem_spock_all -%}
+            {%- set keep = [] -%}
+            {%- for s in d.subs if (d.db ~ ' ' ~ s.name) not in (_pem_dropped | map(attribute='db') | zip(_pem_dropped | map(attribute='name')) | map('join', ' ') | list) -%}
+              {%- set _ = keep.append(s) -%}
+            {%- endfor -%}
+            {%- set _ = out.append(d | combine({'subs': keep})) -%}
+          {%- endfor -%}
+          {{ out }}
+
+    - name: "preflight | refuse a named subscription that is not a dead peer's"
+      ansible.builtin.assert:
+        that:
+          - _pem_drop_bad | length == 0
+        fail_msg: >-
+          postgres_encoding_migrate_drop_subscriptions names what this run must not drop:
+          {{ _pem_drop_bad | join('; ') }}. Only a subscription that is not
+          replicating and pulls from a node outside migrate_groups is dropped.
+        quiet: true
+      vars:
+        _all: "{{ ansible_play_hosts | map('extract', hostvars, '_pem_dropped') | flatten }}"
+        _pem_drop_bad: >-
+          {%- set out = [] -%}
+          {%- if _pem_drop_spec != ['down_nonmembers'] -%}
+            {%- for n in _pem_drop_spec if n not in (_all | map(attribute='name') | list) -%}
+              {%- set _ = out.append(n ~ ': no member has this subscription') -%}
+            {%- endfor -%}
+            {%- for h in ansible_play_hosts -%}
+              {%- for x in hostvars[h]._pem_dropped -%}
+                {%- if x.status == 'replicating' -%}{%- set _ = out.append(h ~ ' ' ~ x.db ~ ' ' ~ x.name ~ ' is replicating') -%}{%- endif -%}
+                {%- if x.provider in _pem_nodes -%}{%- set _ = out.append(h ~ ' ' ~ x.db ~ ' ' ~ x.name ~ ' pulls from ' ~ x.provider ~ ', a member') -%}{%- endif -%}
+              {%- endfor -%}
+            {%- endfor -%}
+          {%- endif -%}
+          {{ out }}
+      run_once: true
+
+    - name: "preflight | dropped subscriptions"
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }} drops {{ _pem_dropped | map(attribute='name') | join(', ') }}
+          (origins {{ _pem_dropped | map(attribute='provider') | unique | join(', ') }}). They are
+          not created again; a dropped peer comes back only by joining again at the new encoding.
+      when: _pem_dropped | length > 0
 
     - name: "preflight | every subscription pulls from a member and is replicating"
       ansible.builtin.assert:
@@ -159,12 +260,12 @@
           Subscriptions that this run cannot carry: {{ _pem_bad | join('; ') }}.
           Every Spock node a member subscribes to must be in migrate_groups
           (all of a goatnet's Spock members migrate together), and every
-          subscription must be replicating before the migration starts.
+          subscription must be replicating before the migration starts. A
+          subscription to a peer that is gone is dropped with
+          -e postgres_encoding_migrate_drop_subscriptions=<name>,... or
+          =down_nonmembers.
         quiet: true
       vars:
-        _pem_nodes: >-
-          {{ ansible_play_hosts | map('extract', hostvars, '_pem_spock') | flatten
-             | map(attribute='node') | select | list }}
         _pem_bad: >-
           {%- set out = [] -%}
           {%- for h in ansible_play_hosts -%}
@@ -177,12 +278,6 @@
           {%- endfor -%}
           {{ out }}
       run_once: true
-
-    - name: "preflight | integrity: replicated key sets and foreign-key orphans"
-      ansible.builtin.include_tasks: integrity-gate.yml
-      vars:
-        pem_key_dbs: "{{ _pem_spock | map(attribute='db') | list }}"
-        pem_gate_rounds: 3
 
     - name: "preflight | a node with subscriptions is wired again by its group_vars"
       ansible.builtin.assert:
@@ -210,6 +305,98 @@
           {{ _pem_site_upper }}_REPLICATOR_PASS in the environment.
         quiet: true
       when: _pem_standby | bool
+
+    # Every physical standby that streams from a member is rebuilt in phase 6
+    # and kept for rollback, so each must be a host of this run: router_role B
+    # in a listed group, or a host of postgres_encoding_migrate_standby_groups.
+    # A standby left out would keep following a primary whose system
+    # identifier no longer exists.
+    - name: "preflight | physical replication clients of this primary"
+      ansible.builtin.command:
+        argv: "{{ _pem_psql + ['-d', 'postgres', '-tAc', _sql] }}"
+      vars:
+        _sql: >-
+          SELECT coalesce(json_agg(json_build_object('app', r.application_name, 'addr', host(r.client_addr),
+                 'state', r.state, 'sync', r.sync_state) ORDER BY r.application_name), '[]'::json)
+          FROM pg_stat_replication r LEFT JOIN pg_replication_slots s ON s.active_pid = r.pid
+          WHERE coalesce(s.slot_type, 'physical') = 'physical'
+      register: _pem_phys_raw
+      changed_when: false
+      when: not (_pem_standby | bool)
+
+    - name: "preflight | physical clients"
+      ansible.builtin.set_fact:
+        _pem_physical: "{{ (_pem_phys_raw.stdout | default('[]')) | from_json if not (_pem_standby | bool) else [] }}"
+
+    - name: "preflight | a standby names its primary and its application_name"
+      ansible.builtin.assert:
+        that:
+          - postgres_standby_app_name | default('') | length > 0
+          - postgres_primary_lan_ip | default('') | length > 0
+        fail_msg: >-
+          {{ inventory_hostname }} is a standby of this run but its group_vars lack
+          {{ ((['postgres_standby_app_name'] if not (postgres_standby_app_name | default('')) else [])
+              + (['postgres_primary_lan_ip'] if not (postgres_primary_lan_ip | default('')) else [])) | join(' and ') }}.
+          Phase 6 rebuilds it with postgres-streaming-replication, which reads both.
+        quiet: true
+      when: _pem_standby | bool
+
+    - name: "preflight | every physical standby of a member is in this run"
+      ansible.builtin.assert:
+        that:
+          - _pem_phys_bad | length == 0
+        fail_msg: >-
+          {{ _pem_phys_bad | join('; ') }}. A physical standby of a member is
+          rebuilt from the new primary in phase 6 and restored by a rollback,
+          so it must be a host of this run: router_role B in a group of
+          migrate_groups, or a host of a group named in
+          -e postgres_encoding_migrate_standby_groups=<group>[,...]. A standby
+          left out would follow a primary that no longer exists.
+        quiet: true
+      vars:
+        _pem_phys_bad: >-
+          {%- set out = [] -%}
+          {%- set sb = [] -%}
+          {%- for h in ansible_play_hosts if hostvars[h]._pem_standby | bool -%}{%- set _ = sb.append(h) -%}{%- endfor -%}
+          {%- set matched = [] -%}
+          {%- for p in ansible_play_hosts if not (hostvars[p]._pem_standby | bool) -%}
+            {%- for c in hostvars[p]._pem_physical | default([]) -%}
+              {%- set m = [] -%}
+              {%- for h in sb -%}
+                {%- if c.app == hostvars[h].postgres_standby_app_name | default('')
+                       or c.addr in [hostvars[h].postgres_standby_lan_ip | default(''), hostvars[h].ansible_host | default(''), hostvars[h].mesh_ip | default('')] -%}
+                  {%- set _ = m.append(h) -%}
+                {%- endif -%}
+              {%- endfor -%}
+              {%- if m -%}{%- set _ = matched.extend(m) -%}
+              {%- else -%}{%- set _ = out.append(p ~ ' streams WAL to a physical standby at ' ~ c.addr ~ ' (application_name ' ~ c.app ~ ', ' ~ c.state ~ ') that is not a host of this run') -%}{%- endif -%}
+            {%- endfor -%}
+          {%- endfor -%}
+          {%- for h in sb if h not in matched -%}
+            {%- set _ = out.append(h ~ ' is a standby of this run but no member streams to it (application_name ' ~ (hostvars[h].postgres_standby_app_name | default('?')) ~ ')') -%}
+          {%- endfor -%}
+          {{ out }}
+      run_once: true
+
+    - name: "preflight | integrity: replicated key sets and foreign-key orphans"
+      ansible.builtin.include_tasks: integrity-gate.yml
+      vars:
+        pem_key_dbs: "{{ _pem_spock | map(attribute='db') | list }}"
+        pem_gate_rounds: 3
+
+    # Slots no subscriber reads: a dropped peer subscribed through them. Phase 3
+    # waits for every other Spock slot (Spock names a slot with a hash, so the
+    # subscriber cannot be read from it).
+    - name: "preflight | Spock slots no subscriber reads"
+      ansible.builtin.command:
+        argv: "{{ _pem_psql + ['-d', 'postgres', '-tAc', \"SELECT coalesce(string_agg(slot_name, ' ' ORDER BY slot_name), '') FROM pg_replication_slots WHERE plugin LIKE 'spock%' AND NOT active\"] }}"
+      register: _pem_inactive_raw
+      changed_when: false
+      when: not (_pem_standby | bool)
+
+    - name: "preflight | inactive slots"
+      ansible.builtin.set_fact:
+        _pem_inactive_slots: "{{ (_pem_inactive_raw.stdout | default('')).split() }}"
 
     - name: "preflight | working directory"
       ansible.builtin.file:
@@ -399,6 +586,9 @@
             founder: "{{ _pem_founder }}"
             state: "{{ _pem_state }}"
             spock: "{{ _pem_spock }}"
+            dropped: "{{ _pem_dropped | default([]) }}"
+            physical: "{{ _pem_physical | default([]) }}"
+            inactive_slots: "{{ _pem_inactive_slots | default([]) }}"
             scan: "{{ _pem_scan }}"
             repair: "{{ postgres_encoding_migrate_repair }}"
             space: "{{ _pem_space }}"

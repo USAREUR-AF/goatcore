@@ -162,6 +162,12 @@
 - name: "rollback | verify and close the run (verify)"
   when: pem_step == 'verify'
   block:
+    - name: "rollback | subscriptions phase 1 dropped (down before the run, down after it)"
+      ansible.builtin.set_fact:
+        _pem_rb_dropped_re: >-
+          {{ '^(' ~ ((_pem_pre.dropped | default([]) | map(attribute='db') | zip(_pem_pre.dropped | default([]) | map(attribute='name'))
+             | map('join', ' ') | map('regex_escape') | list) + ['$^']) | join('|') ~ ') ' }}
+
     - name: "rollback | the old subscriptions replicate again"
       ansible.builtin.shell:
         executable: /bin/bash
@@ -172,7 +178,7 @@
             "${P[@]}" -d "$db" -c "SELECT s.subscription_name || ' ' || s.status FROM spock.sub_show_status() s ORDER BY 1" | sed "s/^/$db /"
           done
       register: _pem_rb_subs
-      until: _pem_rb_subs.rc == 0 and (_pem_rb_subs.stdout_lines | reject('match', '.* replicating$') | list | length == 0)
+      until: _pem_rb_subs.rc == 0 and (_pem_rb_subs.stdout_lines | reject('match', '.* replicating$') | reject('match', _pem_rb_dropped_re) | list | length == 0)
       retries: 30
       delay: 2
       changed_when: false
@@ -189,13 +195,30 @@
     - name: "rollback | refuse to close the run while a subscription is not replicating"
       ansible.builtin.assert:
         that:
-          - _pem_rb_subs.stdout_lines | default([]) | reject('match', '.* replicating$') | list | length == 0
+          - _pem_rb_subs.stdout_lines | default([]) | reject('match', '.* replicating$') | reject('match', _pem_rb_dropped_re) | list | length == 0
         fail_msg: >-
           {{ inventory_hostname }}: subscriptions after rollback
           {{ _pem_rb_subs.stdout_lines }}. The data is back; the run stays
           open so action=rollback can be repeated once the cause is fixed.
         quiet: true
       when: not (_pem_standby | bool)
+
+    - name: "rollback | the physical standbys stream again"
+      ansible.builtin.command:
+        argv: "{{ _pem_psql + ['-d', 'postgres', '-tAc', _sql] }}"
+      vars:
+        _sql: >-
+          SELECT coalesce(string_agg(r.application_name, ',' ORDER BY r.application_name), '')
+          FROM pg_stat_replication r LEFT JOIN pg_replication_slots s ON s.active_pid = r.pid
+          WHERE coalesce(s.slot_type, 'physical') = 'physical' AND r.state = 'streaming'
+      register: _pem_rb_phys
+      until: (_pem_rb_phys.stdout | trim) == (_pem_pre.physical | default([]) | map(attribute='app') | sort | join(','))
+      retries: 30
+      delay: 2
+      changed_when: false
+      when:
+        - not (_pem_standby | bool)
+        - _pem_pre.physical | default([]) | length > 0
 
     - name: "rollback | close the run"
       ansible.builtin.shell:

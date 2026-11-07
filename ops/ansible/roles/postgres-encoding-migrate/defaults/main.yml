@@ -33,6 +33,17 @@ postgres_encoding_migrate_accept_divergence: false
 # comma-separated (phase 1 prints the list when it refuses).
 postgres_encoding_migrate_reconcile_tables: ""
 
+# Subscriptions to peers that are gone, dropped by the run instead of refused:
+# a list of subscription names, or down_nonmembers for every subscription that
+# is not replicating and pulls from a node outside migrate_groups. They are not
+# created again; the peer rejoins with join-node at the new encoding.
+postgres_encoding_migrate_drop_subscriptions: []
+
+# Groups holding physical standbys of the members that are not in
+# migrate_groups (a standby kept in a group of its own). Their hosts join the
+# run as standbys: snapshot, rebuild in phase 6, rollback.
+postgres_encoding_migrate_standby_groups: ""
+
 # Rollback and cleanup act only when this equals the run id they act on
 # (`status` prints it).
 postgres_encoding_migrate_confirm: ""

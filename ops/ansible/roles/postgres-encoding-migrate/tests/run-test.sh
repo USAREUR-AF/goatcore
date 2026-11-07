@@ -7,6 +7,11 @@
 # and a pgBackRest stanza on the founder.
 #
 # Cases, in order:
+#   D  a peer that is gone (subscriptions down, origin not a member) and a
+#      physical standby of the founder in a group of its own: phase 1 refuses
+#      the dead subscriptions, refuses dropping a replicating member's
+#      subscription, and refuses the standby until its group is named; every
+#      later run passes drop_subscriptions=down_nonmembers and standby_groups
 #   0  rows written on each node before Spock was wired (synchronize_data
 #      false) leave a replicated parent table different and a replicated child
 #      row orphaned: phase 1 refuses, accept_divergence does not get past it,
@@ -22,6 +27,11 @@
 #      The founder's pgBackRest config matches the role's (archive-async, spool,
 #      archive_timeout), so an archive-push fires on its own while the new
 #      cluster has no stanza yet.
+#   3  also: the standby rebuilt from the new founder (streams, in recovery,
+#      UTF8, the founder's new system identifier); dropped subscriptions not
+#      created again and listed in the final report
+#   5  also: the standby back on the old cluster and streaming; the dropped
+#      subscriptions back (down), as before the run
 #   6  migrate again with repair=latin1 over a LATIN1 value (a new run id;
 #      the rolled-back run's copy is reported), then cleanup of both runs
 #
@@ -37,9 +47,14 @@ WORK="${WORK:-$(mktemp -d /tmp/pem-test.XXXXXX)}"
 AP="${ANSIBLE_PLAYBOOK:-ansible-playbook}"
 PW=pemtest-superuser
 export ANSIBLE_CONFIG="$ANS/ansible.cfg"
+export ANSIBLE_ROLES_PATH="$ANS/roles"   # for the fixture playbooks in this directory
 export UTF8_FOUNDER_REPLICATOR_PASS=pemtest-replicator
 export UTF8_JOINER_REPLICATOR_PASS=pemtest-replicator
-NODES=(founder joiner)
+export UTF8_GONE_REPLICATOR_PASS=pemtest-replicator
+NODES=(founder joiner)              # the run's Spock members
+SPOCKN=(founder joiner gone)        # every Spock node; gone is stopped before the run
+ALL=(founder joiner gone standby)   # standby: the founder's physical standby, its own group
+PPORT=${PEMTEST_PRIMARY_PORT:-15432}  # the founder's Postgres on the Docker host, for the standby
 
 say() { printf '\n[pem-test] %s\n' "$*"; }
 fail() { printf '\n[pem-test] FAIL: %s\n' "$*" >&2; exit 1; }
@@ -57,13 +72,13 @@ pg() { local n=$1 db=$2; shift 2; docker exec -i -e PGCLIENTENCODING=UTF8 -u pos
 asroot() { docker run --rm --user 0 --entrypoint sh -v "$1":/p "$POSTGRES_SPOCK_IMAGE" -c "$2"; }
 
 teardown() {
-  for n in "${NODES[@]}"; do
+  for n in "${ALL[@]}"; do
     [[ -f "$WORK/$n/docker-compose.yml" ]] && dc "$n" down -v --remove-orphans >/dev/null 2>&1 || true
     docker rm -f "pemtest-$n-extwriter" >/dev/null 2>&1 || true
     docker volume ls -q --filter label=goat.postgres-utf8-migration.of="pemtest-${n}_pgdata-a" | xargs -r docker volume rm -f >/dev/null 2>&1 || true
   done
   docker network rm pemtest-net >/dev/null 2>&1 || true
-  [[ -d "$WORK" ]] && asroot "$WORK" 'rm -rf /p/founder /p/joiner /p/state-founder /p/state-joiner' >/dev/null 2>&1 || true
+  [[ -d "$WORK" ]] && asroot "$WORK" 'rm -rf /p/founder /p/joiner /p/gone /p/standby /p/state-founder /p/state-joiner /p/state-standby' >/dev/null 2>&1 || true
 }
 cleanup() {
   if [[ "${KEEP:-0}" == 1 ]]; then say "KEEP=1: left running in $WORK"; return; fi
@@ -81,19 +96,28 @@ wait_pg() {
   fail "pemtest-$n-pg never became ready"
 }
 
-run_play() {   # run_play <log> <extra args...>
+# Every run drops the subscriptions to the stopped node and names the
+# founder's standby group; run_play_bare passes neither.
+RUN_DEFAULTS=(-e postgres_encoding_migrate_drop_subscriptions=down_nonmembers -e postgres_encoding_migrate_standby_groups=utf8_founder_backup_hosts)
+run_play_bare() {   # run_play_bare <log> <extra args...>
   local log=$1; shift
   ( cd "$ANS" && "$AP" -i "$WORK/inventory.ini" "$PLAY" -e migrate_groups=utf8_founder_hosts,utf8_joiner_hosts "$@" ) > "$log" 2>&1
 }
+run_play() { local log=$1; shift; run_play_bare "$log" "${RUN_DEFAULTS[@]}" "$@"; }
 
 # ---------------------------------------------------------------- fixture
-say "fixture: network, two SQL_ASCII compose projects"
+say "fixture: network, four SQL_ASCII compose projects"
+if ss -ltn 2>/dev/null | grep -q ":$PPORT "; then fail "port $PPORT is taken on this host; set PEMTEST_PRIMARY_PORT"; fi
 docker network create pemtest-net >/dev/null
-for n in "${NODES[@]}"; do
+GW=$(docker network inspect pemtest-net -f '{{(index .IPAM.Config 0).Gateway}}')
+for n in "${ALL[@]}"; do
   mkdir -p "$WORK/$n"/{pgbackrest-repo,pgbackrest-etc,pgbackrest-log,pgbackrest-spool} "$WORK/state-$n"
-  sed "s/@NODE@/$n/g" "$HERE/compose.yml.tmpl" > "$WORK/$n/docker-compose.yml"
-  printf 'POSTGRES_SUPERUSER_PASSWORD=%s\nPOSTGRES_SPOCK_IMAGE=%s\nPOSTGRES_INITDB_ARGS="--locale=C --encoding=SQL_ASCII"\n' \
-    "$PW" "$POSTGRES_SPOCK_IMAGE" > "$WORK/$n/.env"
+  ports=""; [[ $n == founder ]] && ports="    ports: [\"$PPORT:5432\"]\\n"
+  sed -e "s/@NODE@/$n/g" -e "s/@PORTS@/$ports/" "$HERE/compose.yml.tmpl" > "$WORK/$n/docker-compose.yml"
+  # COMPOSE_PROJECT_NAME: a bare `docker compose` in the directory (as
+  # postgres-streaming-replication runs it) reaches the same project.
+  printf 'COMPOSE_PROJECT_NAME=pemtest-%s\nPOSTGRES_SUPERUSER_PASSWORD=%s\nPOSTGRES_SPOCK_IMAGE=%s\nPOSTGRES_INITDB_ARGS="--locale=C --encoding=SQL_ASCII"\n' \
+    "$n" "$PW" "$POSTGRES_SPOCK_IMAGE" > "$WORK/$n/.env"
   asroot "$WORK/$n" 'chown 26:26 /p/pgbackrest-repo /p/pgbackrest-log /p/pgbackrest-spool && chmod 750 /p/pgbackrest-repo'
 done
 cat > "$WORK/founder/pgbackrest-etc/pgbackrest.conf" <<'EOF'
@@ -123,21 +147,43 @@ pem-founder ansible_host=127.0.0.1 site_name=utf8-founder signal_uri=pemtest-fou
 [utf8_joiner_hosts]
 pem-joiner ansible_host=127.0.0.1 site_name=utf8-joiner signal_uri=pemtest-joiner-pg:5432 spock_mesh_postgres_container=pemtest-joiner-pg postgres_encoding_migrate_dir=$WORK/state-joiner postgres_encoding_migrate_pgbackrest_conf=$WORK/joiner/pgbackrest-etc/pgbackrest.conf postgres_encoding_migrate_pgbackrest_repo=$WORK/joiner/pgbackrest-repo postgres_encoding_migrate_pgbackrest_spool=$WORK/joiner/pgbackrest-spool ansible_python_interpreter=$(command -v python3)
 
+[utf8_gone_hosts]
+pem-gone ansible_host=127.0.0.1 site_name=utf8-gone signal_uri=pemtest-gone-pg:5432 spock_mesh_postgres_container=pemtest-gone-pg ansible_python_interpreter=$(command -v python3)
+
+# The founder's physical standby, in a group of its own. become: the
+# streaming role wipes and chowns the volume's directory on the host.
+[utf8_founder_backup_hosts]
+pem-standby ansible_host=127.0.0.1 router_role=B spock_mesh_postgres_container=pemtest-standby-pg postgres_encoding_migrate_dir=$WORK/state-standby postgres_encoding_migrate_pgbackrest_conf=$WORK/standby/pgbackrest-etc/pgbackrest.conf postgres_encoding_migrate_pgbackrest_repo=$WORK/standby/pgbackrest-repo postgres_encoding_migrate_pgbackrest_spool=$WORK/standby/pgbackrest-spool postgres_encoding_migrate_become=true ansible_become=true ansible_python_interpreter=$(command -v python3)
+
+[utf8_founder_hosts:vars]
+mesh_ip_b=$GW
+postgres_primary_lan_ip=$GW
+postgres_standby_lan_ip=$GW
+postgres_primary_port=$PPORT
+postgres_standby_app_name=utf8_founder_b
+
+[utf8_founder_backup_hosts:vars]
+postgres_primary_lan_ip=$GW
+postgres_standby_lan_ip=$GW
+postgres_primary_port=$PPORT
+postgres_standby_app_name=utf8_founder_b
+
 [mgmt_hosts:children]
 utf8_founder_hosts
 utf8_joiner_hosts
+utf8_gone_hosts
 EOF
 rm -rf "$WORK/group_vars"; cp -r "$HERE/group_vars" "$WORK/group_vars"
 
-for n in "${NODES[@]}"; do dc "$n" up -d postgres-a >/dev/null; done
-for n in "${NODES[@]}"; do wait_pg "$n"; done
-for n in "${NODES[@]}"; do
+for n in "${SPOCKN[@]}"; do dc "$n" up -d postgres-a >/dev/null; done
+for n in "${SPOCKN[@]}"; do wait_pg "$n"; done
+for n in "${SPOCKN[@]}"; do
   [[ "$(pg "$n" postgres -c "SELECT pg_encoding_to_char(encoding) FROM pg_database WHERE datname='netbird'")" == SQL_ASCII ]] \
     || fail "$n did not initialise SQL_ASCII"
 done
 
 say "fixture: schema and data (UTF-8 text stored in SQL_ASCII)"
-for n in "${NODES[@]}"; do
+for n in "${SPOCKN[@]}"; do
   pg "$n" netbird -c "CREATE TABLE utf8_shared (id text PRIMARY KEY, v text NOT NULL);
                       CREATE TABLE utf8_local (id serial PRIMARY KEY, v text NOT NULL);
                       INSERT INTO utf8_local (v) SELECT '$n local ' || g || ' — Ærø' FROM generate_series(1, 50) g;"
@@ -163,14 +209,14 @@ docker exec -u postgres pemtest-founder-pg pgbackrest --stanza=utf8-founder-netb
 docker exec -u postgres pemtest-founder-pg pgbackrest --stanza=utf8-founder-netbird backup --type=full >/dev/null
 
 say "fixture: a parent row of each node's own, written before Spock is wired"
-for n in "${NODES[@]}"; do
+for n in "${SPOCKN[@]}"; do
   pg "$n" netbird -c "CREATE TABLE utf8_net (nid text PRIMARY KEY, note text NOT NULL);
                       CREATE TABLE utf8_client (id text PRIMARY KEY, nid text NOT NULL REFERENCES utf8_net (nid));
                       INSERT INTO utf8_net VALUES ('shared', 'the same on every node'), ('nid-$n', '$n network');"
 done
 
-say "fixture: Spock wiring with the real role (founder, then joiner)"
-for h in pem-founder pem-joiner; do
+say "fixture: Spock wiring with the real role (founder, joiner, gone)"
+for h in pem-founder pem-joiner pem-gone; do
   ( cd "$ANS" && "$AP" -i "$WORK/inventory.ini" spock-mesh-wire.yml -l "$h" ) > "$WORK/wire-$h.log" 2>&1 \
     || { tail -40 "$WORK/wire-$h.log"; fail "spock-mesh-wire on $h"; }
 done
@@ -193,6 +239,26 @@ done
 [[ "$(pg joiner netbird -c "SELECT count(*) FROM utf8_client c WHERE NOT EXISTS (SELECT 1 FROM utf8_net p WHERE p.nid = c.nid)")" == 1 ]] \
   || fail "fixture: the joiner should hold one orphan child row"
 
+say "fixture: the founder's physical standby, built by postgres-streaming-replication"
+dc standby up -d postgres-a >/dev/null; wait_pg standby
+( cd "$ANS" && "$AP" -i "$WORK/inventory.ini" "$HERE/standby-wire.yml" -e image="$POSTGRES_SPOCK_IMAGE" ) > "$WORK/standby-wire.log" 2>&1 \
+  || { tail -40 "$WORK/standby-wire.log"; fail "standby wiring"; }
+for i in $(seq 1 30); do
+  [[ "$(pg founder postgres -c "SELECT count(*) FROM pg_stat_replication WHERE application_name = 'utf8_founder_b' AND state = 'streaming'")" == 1 ]] && break
+  sleep 2; [[ $i == 30 ]] && fail "fixture: the standby does not stream"
+done
+[[ "$(pg standby postgres -c 'SELECT pg_is_in_recovery()')" == t ]] || fail "fixture: the standby is not in recovery"
+
+say "fixture: a peer that is gone (stopped; its subscriptions go down)"
+dc gone stop >/dev/null
+for i in $(seq 1 60); do
+  a=$(pg founder netbird -c "SELECT status FROM spock.sub_show_status() WHERE provider_node = 'utf8_gone'")
+  b=$(pg joiner netbird -c "SELECT status FROM spock.sub_show_status() WHERE provider_node = 'utf8_gone'")
+  [[ "$a" != replicating && -n "$a" && "$b" != replicating && -n "$b" ]] && break
+  sleep 2; [[ $i == 60 ]] && fail "fixture: subscriptions to the stopped peer still report replicating ($a / $b)"
+done
+echo "  subscriptions from utf8_gone: founder $a, joiner $b"
+
 say "fixture: writers (in the project, and one outside any project)"
 for n in "${NODES[@]}"; do
   dc "$n" up -d writer volreader >/dev/null
@@ -203,6 +269,17 @@ sleep 4
 shared_before=$(pg founder netbird -c "SELECT string_agg(id || '=' || encode(convert_to(v, 'SQL_ASCII'), 'hex'), ',' ORDER BY id) FROM utf8_shared")
 
 # ---------------------------------------------------------------- case 1
+say "case D: a gone peer and an undeclared standby are refused in phase 1"
+if run_play_bare "$WORK/caseDa.log"; then fail "case D: the run passed over dead subscriptions"; fi
+grep -q 'pulls from utf8_gone, not a member' "$WORK/caseDa.log" || { grep -E 'msg' "$WORK/caseDa.log" | tail -3; fail "case D: the refusal does not name the dead subscription"; }
+if run_play_bare "$WORK/caseDb.log" -e postgres_encoding_migrate_drop_subscriptions=sub_utf8_joiner_to_utf8_founder; then fail "case D: dropped a member's subscription"; fi
+grep -q 'sub_utf8_joiner_to_utf8_founder is replicating' "$WORK/caseDb.log" || fail "case D: the refusal does not say the named subscription is replicating"
+if run_play_bare "$WORK/caseDc.log" -e postgres_encoding_migrate_drop_subscriptions=down_nonmembers; then fail "case D: the run passed over an undeclared standby"; fi
+grep -q "streams WAL to a physical standby at $GW (application_name utf8_founder_b" "$WORK/caseDc.log" \
+  || { grep -E 'msg' "$WORK/caseDc.log" | tail -3; fail "case D: the refusal does not name the standby"; }
+[[ ! -f "$WORK/state-founder/current-run" ]] || fail "case D: a run was opened"
+echo "  dead subscriptions refused, a member's subscription not droppable, undeclared standby refused with address and application_name"
+
 say "case 0: divergent parent + orphan child: phase 1 refuses; reconcile fixes it"
 if run_play "$WORK/case0a.log"; then fail "case 0: the run passed over an orphan"; fi
 grep -q 'utf8_client -> utf8_net (utf8_client_nid_fkey): 1 row(s) without a parent' "$WORK/case0a.log" \
@@ -242,6 +319,7 @@ echo "  refused, table named, nothing stopped"
 
 # ---------------------------------------------------------------- case 2
 say "case 2: migrate to phase 4, then resume"
+sysid_old=$(pg founder postgres -c "SELECT system_identifier FROM pg_control_system()")
 seq_founder=$(pg founder netbird -c "SELECT last_value FROM utf8_local_id_seq")
 seq_joiner=$(pg joiner netbird -c "SELECT last_value FROM utf8_local_id_seq")
 t0=$(date +%s)
@@ -309,7 +387,28 @@ docker logs pemtest-founder-pg 2>&1 | grep -q 'unable to find a valid repository
 [[ "$(pg joiner postgres -c 'SHOW archive_mode')" == off ]] || fail "case 3: the joiner (no stanza, archiving never on) changed"
 docker exec -u postgres pemtest-founder-pg pgbackrest --stanza=utf8-founder-netbird check >/dev/null || fail "case 3: pgbackrest check on the new cluster"
 ls -d "$WORK/founder/pgbackrest-repo.pre-utf8-$RUN" >/dev/null || fail "case 3: old pgBackRest repository not kept"
+# Phase 6: the standby is a copy of the NEW founder.
+sysid_new=$(pg founder postgres -c "SELECT system_identifier FROM pg_control_system()")
+[[ "$sysid_new" != "$sysid_old" ]] || fail "case 3: the founder kept its system identifier"
+[[ "$(pg standby postgres -c "SELECT system_identifier FROM pg_control_system()")" == "$sysid_new" ]] || fail "case 3: the standby is not a copy of the new founder"
+[[ "$(pg standby postgres -c 'SELECT pg_is_in_recovery()')" == t ]] || fail "case 3: the standby is not in recovery"
+[[ "$(pg standby postgres -c "SELECT pg_encoding_to_char(encoding) FROM pg_database WHERE datname='netbird'")" == UTF8 ]] || fail "case 3: the standby does not read UTF8"
+[[ "$(pg founder postgres -c "SELECT count(*) FROM pg_stat_replication WHERE application_name = 'utf8_founder_b' AND state = 'streaming'")" == 1 ]] || fail "case 3: the standby does not stream from the new founder"
+pg founder netbird -c "INSERT INTO utf8_local (v) VALUES ('seen on the standby ✓');"
+for i in $(seq 1 15); do
+  [[ "$(pg standby netbird -c "SELECT count(*) FROM utf8_local WHERE v = 'seen on the standby ✓'")" == 1 ]] && break; sleep 1
+  [[ $i == 15 ]] && fail "case 3: a write on the founder does not reach the standby"
+done
+pg founder netbird -c "DELETE FROM utf8_local WHERE v = 'seen on the standby ✓';"
+# Dropped: not created again, and named in the final report.
+for n in "${NODES[@]}"; do
+  [[ "$(pg "$n" netbird -c "SELECT count(*) FROM spock.sub_show_status()")" == 1 ]] || fail "case 3: $n has a subscription besides its member peer's"
+  [[ "$(pg "$n" netbird -c "SELECT count(*) FROM spock.node WHERE node_name = 'utf8_gone'")" == 0 ]] || fail "case 3: $n still knows the dropped node"
+  [[ "$(pg "$n" netbird -c "SELECT count(*) FROM pg_replication_slots WHERE plugin LIKE 'spock%'")" == 1 ]] || fail "case 3: $n holds a Spock slot besides its member peer's"
+done
+grep -q 'Subscriptions DROPPED (not created again): netbird sub_utf8_gone_to_utf8_founder from utf8_gone' "$WORK/case2b.log" || fail "case 3: the final report does not list the dropped subscription"
 echo "  UTF8 everywhere; counts, bytes, owners, settings, sequences, passwords kept; replication both ways; writers back; no crash; archiving back on; new stanza checked and backed up"
+echo "  standby rebuilt from the new founder: same new system identifier, in recovery, UTF8, streaming, receives writes; dead peer's subscriptions, node and slots gone, listed as dropped"
 
 # ---------------------------------------------------------------- case 4
 say "case 4: a re-run is a no-op"
@@ -325,7 +424,8 @@ run_play "$WORK/case5.log" -e postgres_encoding_migrate_action=rollback -e postg
 for n in "${NODES[@]}"; do
   [[ "$(pg "$n" postgres -c "SELECT pg_encoding_to_char(encoding) FROM pg_database WHERE datname='netbird'")" == SQL_ASCII ]] || fail "case 5: $n not SQL_ASCII"
   [[ "$(pg "$n" netbird -c "SELECT count(*) FROM utf8_shared")" == 6 ]] || fail "case 5: $n does not hold the pre-migration rows"
-  [[ "$(pg "$n" netbird -c "SELECT count(*) FROM spock.sub_show_status() WHERE status = 'replicating'")" == 1 ]] || fail "case 5: $n old subscription not replicating"
+  # The dropped peer's subscription is back too; its status flaps while its origin is down.
+  [[ "$(pg "$n" netbird -c "SELECT count(*) FROM spock.sub_show_status() WHERE status = 'replicating' AND provider_node <> 'utf8_gone'")" == 1 ]] || fail "case 5: $n old subscription not replicating"
   [[ ! -f "$WORK/state-$n/current-run" ]] || fail "case 5: $n run still open"
   [[ "$(docker inspect -f '{{.State.Running}}' "pemtest-$n-writer")" == true ]] || fail "case 5: $n writer not running"
 done
@@ -335,13 +435,24 @@ for i in $(seq 1 30); do
   [[ $i == 30 ]] && fail "case 5: the old subscription does not carry new writes"
 done
 docker exec -u postgres pemtest-founder-pg pgbackrest --stanza=utf8-founder-netbird check >/dev/null || fail "case 5: old pgBackRest repository not back"
-echo "  SQL_ASCII again, pre-migration rows, old subscriptions replicate, old repository back"
+[[ "$(pg founder postgres -c "SELECT system_identifier FROM pg_control_system()")" == "$sysid_old" ]] || fail "case 5: the founder is not the old cluster"
+[[ "$(pg standby postgres -c "SELECT system_identifier FROM pg_control_system()")" == "$sysid_old" ]] || fail "case 5: the standby is not back on the old cluster"
+[[ "$(pg standby postgres -c "SELECT pg_encoding_to_char(encoding) FROM pg_database WHERE datname='netbird'")" == SQL_ASCII ]] || fail "case 5: the standby is not SQL_ASCII"
+[[ "$(pg standby postgres -c 'SELECT pg_is_in_recovery()')" == t ]] || fail "case 5: the standby is not in recovery"
+for i in $(seq 1 30); do
+  [[ "$(pg founder postgres -c "SELECT count(*) FROM pg_stat_replication WHERE application_name = 'utf8_founder_b' AND state = 'streaming'")" == 1 ]] && break
+  sleep 2; [[ $i == 30 ]] && fail "case 5: the standby does not stream from the old founder"
+done
+[[ "$(pg standby netbird -c "SELECT count(*) FROM utf8_shared WHERE id = 'f6'")" == 1 ]] || fail "case 5: the standby does not follow the old founder"
+[[ "$(pg founder netbird -c "SELECT count(*) FROM spock.sub_show_status() WHERE provider_node = 'utf8_gone'")" == 1 ]] || fail "case 5: the dropped subscription is not back on the old cluster"
+echo "  SQL_ASCII again, pre-migration rows, old subscriptions replicate (the dead peer's back, down), old repository back; standby back on the old cluster and streaming"
 
 # ---------------------------------------------------------------- case 6
 say "case 6: migrate again over a LATIN1 value with repair=latin1, then cleanup"
 pg founder netbird -c "INSERT INTO utf8_local (v) VALUES (convert_from('\\x6574e9'::bytea, 'SQL_ASCII'));"
 latin_id=$(pg founder netbird -c "SELECT max(id) FROM utf8_local")
-run_play "$WORK/case6.log" -e postgres_encoding_migrate_repair=latin1 || { tail -60 "$WORK/case6.log"; fail "case 6: migrate"; }
+run_play "$WORK/case6.log" -e postgres_encoding_migrate_repair=latin1 \
+  -e postgres_encoding_migrate_drop_subscriptions=sub_utf8_gone_to_utf8_founder,sub_utf8_gone_to_utf8_joiner || { tail -60 "$WORK/case6.log"; fail "case 6: migrate"; }
 RUN2=$(cat "$WORK/state-founder/current-run")
 [[ "$RUN2" != "$RUN" ]] || fail "case 6: the run id was reused"
 [[ "$(pg founder netbird -c "SELECT v FROM utf8_local WHERE id = $latin_id")" == 'eté' ]] || fail "case 6: the LATIN1 byte was not repaired"

@@ -19,7 +19,11 @@
       P=(docker exec -u postgres {{ _pem_c | quote }} psql -X -U postgres -tA -d postgres)
       target=$("${P[@]}" -c "SELECT pg_current_wal_lsn()")
       for i in $(seq 1 {{ (postgres_encoding_migrate_catchup_seconds | int / 2) | int }}); do
-        behind=$("${P[@]}" -c "SELECT count(*) FROM pg_replication_slots WHERE plugin LIKE 'spock%' AND (confirmed_flush_lsn IS NULL OR confirmed_flush_lsn < '$target'::pg_lsn)")
+        # A slot a dropped peer subscribed through never confirms: with
+        # subscriptions dropped, a slot already inactive in phase 1 and still
+        # inactive is not waited for. The new cluster does not have it.
+        behind=$("${P[@]}" -c "SELECT count(*) FROM pg_replication_slots WHERE plugin LIKE 'spock%' AND (confirmed_flush_lsn IS NULL OR confirmed_flush_lsn < '$target'::pg_lsn)
+                 {% if (ansible_play_hosts | map('extract', hostvars, '_pem_pre') | map(attribute='dropped', default=[]) | flatten | length > 0) and (_pem_pre.inactive_slots | default([])) %}AND NOT (NOT active AND slot_name IN ('{{ _pem_pre.inactive_slots | join("', '") }}')){% endif %}")
         [ "$behind" = 0 ] && { echo "caught up at $target"; exit 0; }
         sleep 2
       done

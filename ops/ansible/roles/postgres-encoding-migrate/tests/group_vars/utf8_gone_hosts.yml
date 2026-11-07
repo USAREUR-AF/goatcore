@@ -1,0 +1,5 @@
+---
+# A Spock peer that is stopped before the run (its subscriptions are dropped).
+site_id: utf8-gone
+goatnet_founder: false
+join_founder_site: utf8-founder

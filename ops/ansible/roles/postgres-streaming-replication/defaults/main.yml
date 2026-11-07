@@ -151,3 +151,9 @@ postgres_max_connections: 300
 # Path inside postgres-a container (postgres-spock RHEL layout) for
 # data dir validation queries.
 postgres_container_data_path: "/var/lib/pgsql/16/data"
+# The Postgres container on each host (the same name on A and B) and the port
+# B reaches A's Postgres on. Defaults are the mgmt-host compose stack's.
+# postgres_primary_container is the older name for the container and still
+# overrides it.
+postgres_streaming_container: "{{ postgres_primary_container | default('postgres-a') }}"
+postgres_primary_port: 5432
