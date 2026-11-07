@@ -1,0 +1,12 @@
+---
+# Runs tasks/release-sets-guard.yml with the role defaults and the vars a case
+# passes (-e). Driven by tests/release-sets-guard.sh.
+- name: release-sets guard
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - ../defaults/main.yml
+  tasks:
+    - name: The guard, as the role runs it
+      ansible.builtin.include_tasks: ../tasks/release-sets-guard.yml
+      when: portal_release_sets_path | length > 0 and (portal_release_sets | default([]) | length) == 0

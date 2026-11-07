@@ -89,11 +89,12 @@ portal_release_sets_path: "{{ portal_data_dir }}/release-sets.yaml"
 portal_release_sets: []
 
 # true installs the example registry ops/permissions/release-sets.yaml (the
-# example goatnet's sets) when portal_release_sets is empty. Only the example
-# goatnet and a learning box want that; any other goatnet declares its own sets.
-# false with no portal_release_sets fails the deploy rather than showing
-# another goatnet's release lanes as this one's.
-portal_release_sets_use_example: false
+# example goatnet's sets) when portal_release_sets is empty. True by default
+# only on the example goatnet (zagros, zagros-*), which keeps the committed
+# file; a learning box sets it on purpose. Anywhere else an empty
+# portal_release_sets fails the deploy (tasks/release-sets-guard.yml) rather
+# than showing another goatnet's release lanes as this one's.
+portal_release_sets_use_example: "{{ (site_id | default('')) is match('^zagros(-|$)') }}"
 
 # ADR 1138 portal half — the pre-cut partner slot blocks, RENDERED FROM THE SAME
 # group_var the router reads (`zenoh_partner_slot_blocks`). One fact, one home:
