@@ -18,7 +18,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from jinja2 import Environment, StrictUndefined
+from jinja2 import Environment, FileSystemLoader, StrictUndefined, select_autoescape
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -39,8 +39,11 @@ CF_LINES = [
 
 def render(**extra):
     # Ansible's template module: trim_blocks on, trailing newline kept.
-    env = Environment(undefined=StrictUndefined, trim_blocks=True, keep_trailing_newline=True)
-    return env.from_string(TEMPLATE.read_text()).render(**{**BASE, **extra})
+    env = Environment(loader=FileSystemLoader(TEMPLATE.parent),
+                      autoescape=select_autoescape(disabled_extensions=("yml.j2",),
+                                                   default=True, default_for_string=True),
+                      undefined=StrictUndefined, trim_blocks=True, keep_trailing_newline=True)
+    return env.get_template(TEMPLATE.name).render(**{**BASE, **extra})
 
 
 class Overlay(unittest.TestCase):
@@ -69,6 +72,12 @@ class Overlay(unittest.TestCase):
         self.assertNotIn("AZURE_ZONE_NAME", env)
         self.assertNotIn("AZURE_ENVIRONMENT", env)
         self.assertNotIn("CLOUDFLARE", out)
+
+    def test_configuration_values_are_not_html_escaped(self):
+        value = "fixture&value<angle>"
+        doc = yaml.safe_load(render(**{**AZURE, "traefik_acme_azure_resource_group": value}))
+        env = dict(e.split("=", 1) for e in doc["services"]["traefik"]["environment"])
+        self.assertEqual(env["AZURE_RESOURCE_GROUP"], value)
 
     def test_azure_optional_zone_environment_and_resolvers(self):
         doc = yaml.safe_load(render(**AZURE, traefik_acme_azure_zone_name="example.com",
