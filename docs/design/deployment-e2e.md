@@ -16,7 +16,7 @@ each answering a different question, each with the host's ledger as the only pro
 |---|---|---|---|
 | **Hermetic** | do the drivers, as committed, move a component through dev → preprod → prod and back? | every PR touching them; nightly | three containers on the CI runner that look like management hosts |
 | **Live canary** | does a deploy work on a real goatnet today? | nightly, from an operator laptop (`ops/e2e/live-canary.sh`) | the management host of the release ladder's dev rung |
-| **Release rehearsal** | will the next step of every open candidate run, before a person runs it? | daily, in CI | none; dry runs |
+| **Release rehearsal** | will the next step of every open candidate run, before a person runs it? | daily, in the CI of the repository that holds the deployment's candidate records and ladder | none; dry runs |
 
 Two gates sit beside them, because the 2026-10-28 releases failed on things no
 tier would have moved: **secrets-coverage** (every variable a deploy templates
@@ -109,7 +109,10 @@ operator's nightly command, not a workflow.
 
 ## Release rehearsal
 
-`ops/e2e/rehearsal.sh`, daily in CI: for every open ladder candidate (a record
+`ops/e2e/rehearsal.sh`, daily in the CI of the repository that carries the
+deployment's release records and live ladder rungs (this repository carries
+neither, so `deploy-e2e.yml` here runs the hermetic tier, the goat suite and
+the gates): for every open ladder candidate (a record
 in state `candidate`) the next step is `--from prod`; for every component whose
 dev rung carries an rc deviation with no open record, `--from dev`. Both
 `rc.sh --dry-run` and `goatbuilder release --dry-run` rehearse it, and the run
