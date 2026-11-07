@@ -46,9 +46,8 @@ components:
     deploy_playbook: mgmt-host.yml
     ledger_component: null
   # The outbound republisher of a sovereign peering, on the core host the edge
-  # dials (roles/goat-fed-republisher, peering phase 12). fleet: null until the
-  # first main build of goat-fed-republisher-image.yml publishes a digest; that
-  # digest lands here in its own pull request.
+  # dials (roles/goat-fed-republisher, peering phase 12). The digest is the
+  # multi-arch index goat-fed-republisher-image.yml published from main at 4f1493b.
   goat-fed-republisher:
     owns_state: false
     rollback: pin-revert
@@ -56,7 +55,7 @@ components:
     image_workflow: .github/workflows/goat-fed-republisher-image.yml
     deploy_playbook: peering-republisher.yml
     ledger_component: goat-fed-republisher
-    fleet: null
+    fleet: ghcr.io/{{ ghcr_org }}/goat-fed-republisher@sha256:e12d3a146b8548703eab7f9aa084fdf09c970118ddb7c8a737328da22f936070
   spire:
     owns_state: true
     rollback: none
