@@ -12,8 +12,13 @@
 #      the dead subscriptions, refuses dropping a replicating member's
 #      subscription, and refuses the standby until its group is named; every
 #      later run passes drop_subscriptions=down_nonmembers and standby_groups.
-#      A compose file whose postgres service does not pass POSTGRES_INITDB_ARGS
-#      is refused in phase 1, before anything stops
+#      A compose file whose postgres service does not pass POSTGRES_INITDB_ARGS,
+#      or does not mount /etc/pgbackrest, a pgBackRest config the container
+#      cannot read, and one without pg1-path are refused in phase 1, before
+#      anything stops
+#   3  also: the joiner, wired before the revocation guard existed, gets the
+#      guard and hub ledger in phase 8.0, and revocation history crosses both
+#      ways
 #   0  rows written on each node before Spock was wired (synchronize_data
 #      false) leave a replicated parent table different and a replicated child
 #      row orphaned: phase 1 refuses, accept_divergence does not get past it,
@@ -100,7 +105,11 @@ wait_pg() {
 
 # Every run drops the subscriptions to the stopped node and names the
 # founder's standby group; run_play_bare passes neither.
-RUN_DEFAULTS=(-e postgres_encoding_migrate_drop_subscriptions=down_nonmembers -e postgres_encoding_migrate_standby_groups=utf8_founder_backup_hosts)
+# The migration runs with the revocation guard and hub ledger on (the role's
+# default); the fixture was wired without them, and only the founder has them
+# (installed below), as on a goatnet whose joiner predates them.
+RUN_DEFAULTS=(-e postgres_encoding_migrate_drop_subscriptions=down_nonmembers -e postgres_encoding_migrate_standby_groups=utf8_founder_backup_hosts
+              -e spock_mesh_revocation_guard=true -e spock_mesh_hub_authority=true)
 run_play_bare() {   # run_play_bare <log> <extra args...>
   local log=$1; shift
   ( cd "$ANS" && "$AP" -i "$WORK/inventory.ini" "$PLAY" -e migrate_groups=utf8_founder_hosts,utf8_joiner_hosts "$@" ) > "$log" 2>&1
@@ -217,6 +226,18 @@ for n in "${SPOCKN[@]}"; do
                       INSERT INTO utf8_net VALUES ('shared', 'the same on every node'), ('nid-$n', '$n network');"
 done
 
+say "fixture: the NetBird tables the revocation guard attaches to; the guard on the founder only"
+for n in "${SPOCKN[@]}"; do
+  pg "$n" netbird -c "CREATE TABLE setup_keys (id text PRIMARY KEY, revoked boolean NOT NULL DEFAULT false);
+                      CREATE TABLE users (id text PRIMARY KEY, blocked boolean NOT NULL DEFAULT false);
+                      CREATE TABLE peers (id text PRIMARY KEY, user_id text, peer_status_login_expired boolean NOT NULL DEFAULT false);
+                      INSERT INTO setup_keys VALUES ('key-$n-1', false), ('key-$n-2', true);
+                      INSERT INTO users VALUES ('user-$n', false);"
+done
+pg founder netbird < "$ANS/../postgres/spock/revocation-guard/netbird.sql" >/dev/null
+pg founder netbird < "$ANS/../postgres/spock/hub-authority/netbird.sql" >/dev/null
+[[ "$(pg joiner netbird -c "SELECT to_regclass('public.goat_revocations') IS NULL")" == t ]] || fail "fixture: the joiner should have no revocation guard"
+
 say "fixture: Spock wiring with the real role (founder, joiner, gone)"
 for h in pem-founder pem-joiner pem-gone; do
   ( cd "$ANS" && "$AP" -i "$WORK/inventory.ini" spock-mesh-wire.yml -l "$h" ) > "$WORK/wire-$h.log" 2>&1 \
@@ -294,6 +315,27 @@ for c in pg writer; do
 done
 echo "  dead subscriptions refused, a member's subscription not droppable, undeclared standby refused with address and application_name"
 echo "  a compose service without POSTGRES_INITDB_ARGS refused in phase 1, with its file named; nothing stopped"
+# The same older render without the /etc/pgbackrest mount; then the mount
+# back but the config unreadable by uid 26; then a config without pg1-path.
+cp "$WORK/founder/docker-compose.yml" "$WORK/founder/docker-compose.yml.keep"
+grep -v 'pgbackrest-etc:/etc/pgbackrest' "$WORK/founder/docker-compose.yml.keep" > "$WORK/founder/docker-compose.yml"
+if run_play "$WORK/caseDe.log"; then fail "case D: the run passed a compose service without the pgBackRest mount"; fi
+cp "$WORK/founder/docker-compose.yml.keep" "$WORK/founder/docker-compose.yml"; rm -f "$WORK/founder/docker-compose.yml.keep"
+grep -q 'service postgres-a in .*founder/docker-compose.yml does not mount .*founder/pgbackrest-etc at /etc/pgbackrest' "$WORK/caseDe.log" \
+  || { grep -E 'msg' "$WORK/caseDe.log" | tail -3; fail "case D: the refusal does not name the missing mount"; }
+chmod 600 "$WORK/founder/pgbackrest-etc/pgbackrest.conf"
+if run_play "$WORK/caseDf.log"; then fail "case D: the run passed a pgBackRest config the container cannot read"; fi
+chmod 644 "$WORK/founder/pgbackrest-etc/pgbackrest.conf"
+grep -q 'pgbackrest.conf (owner:group mode [0-9]*:[0-9]* 600) is not readable by uid 26' "$WORK/caseDf.log" \
+  || { grep -E 'msg' "$WORK/caseDf.log" | tail -3; fail "case D: the refusal does not name the unreadable config"; }
+cp "$WORK/founder/pgbackrest-etc/pgbackrest.conf" "$WORK/pgbackrest.conf.keep"
+grep -v '^pg1-path=' "$WORK/pgbackrest.conf.keep" > "$WORK/founder/pgbackrest-etc/pgbackrest.conf"
+if run_play "$WORK/caseDg.log"; then fail "case D: the run passed a pgBackRest config without pg1-path"; fi
+cp "$WORK/pgbackrest.conf.keep" "$WORK/founder/pgbackrest-etc/pgbackrest.conf"; rm -f "$WORK/pgbackrest.conf.keep"
+grep -q 'has no stanza section with pg1-path' "$WORK/caseDg.log" || { grep -E 'msg' "$WORK/caseDg.log" | tail -3; fail "case D: the refusal does not name the missing pg1-path"; }
+[[ ! -f "$WORK/state-founder/current-run" ]] || fail "case D: a run was opened"
+[[ "$(docker inspect -f '{{.State.Running}}' pemtest-founder-pg)" == true ]] || fail "case D: a pgBackRest refusal stopped Postgres"
+echo "  pgBackRest: missing mount, unreadable config and missing pg1-path each refused in phase 1, with the file named; nothing stopped"
 
 say "case 0: divergent parent + orphan child: phase 1 refuses; reconcile fixes it"
 if run_play "$WORK/case0a.log"; then fail "case 0: the run passed over an orphan"; fi
@@ -424,6 +466,15 @@ for n in "${NODES[@]}"; do
   [[ "$(pg "$n" netbird -c "SELECT count(*) FROM pg_replication_slots WHERE plugin LIKE 'spock%'")" == 1 ]] || fail "case 3: $n holds a Spock slot besides its member peer's"
 done
 grep -q 'Subscriptions DROPPED (not created again): netbird sub_utf8_gone_to_utf8_founder from utf8_gone' "$WORK/case2b.log" || fail "case 3: the final report does not list the dropped subscription"
+# Phase 8.0: the joiner, wired before the guard existed, has it now, and the
+# founder's pass read its history without failing.
+for n in "${NODES[@]}"; do
+  [[ "$(pg "$n" netbird -c "SELECT to_regclass('public.goat_revocations') IS NOT NULL AND to_regclass('public.goat_hub_directives') IS NOT NULL")" == t ]] \
+    || fail "case 3: $n lacks the revocation guard or the hub ledger"
+done
+[[ "$(pg joiner netbird -c "SELECT count(*) FROM goat_revocations WHERE subject_id = 'key-founder-2'")" == 1 ]] || fail "case 3: the founder's revocation history did not reach the joiner"
+[[ "$(pg founder netbird -c "SELECT count(*) FROM goat_revocations WHERE subject_id = 'key-joiner-2'")" == 1 ]] || fail "case 3: the joiner's revocation history did not reach the founder"
+grep -q 'phase 8.0 revocation guard and hub ledger on every member' "$WORK/case2b.log" || fail "case 3: phase 8.0 did not run"
 echo "  UTF8 everywhere; counts, bytes, owners, settings, sequences, passwords kept; replication both ways; writers back; no crash; archiving back on; new stanza checked and backed up"
 echo "  standby rebuilt from the new founder: same new system identifier, in recovery, UTF8, streaming, receives writes; dead peer's subscriptions, node and slots gone, listed as dropped"
 

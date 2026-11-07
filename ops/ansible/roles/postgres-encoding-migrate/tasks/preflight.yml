@@ -133,6 +133,77 @@
               .POSTGRES_INITDB_ARGS | default('')) | string }}
       when: not (_pem_standby | bool)
 
+    # pgBackRest, as phase 5 re-creates the container: phase 7 runs
+    # stanza-create inside it, and the archive_command phase 7 turns back on
+    # runs there too. Both read /etc/pgbackrest/pgbackrest.conf, which reaches
+    # a re-created container only through the compose bind mount; a copy put
+    # into the old container (docker cp) is gone after the re-create. Checked
+    # on every primary whose host has the config file:
+    #   - the rendered service bind-mounts the config directory at
+    #     /etc/pgbackrest, read-only;
+    #   - the container's postgres user (uid 26) can read the file through
+    #     that mount (a throwaway container of the same image, same mount);
+    #   - the file has a stanza section with pg1-path.
+    - name: "preflight | pgBackRest config as the re-created container will see it"
+      ansible.builtin.shell:
+        executable: /bin/bash
+        cmd: |
+          set -uo pipefail
+          f={{ postgres_encoding_migrate_pgbackrest_conf | quote }}
+          [ -f "$f" ] || { echo '{"present": false}'; exit 0; }
+          d=$(dirname "$f"); b=$(basename "$f")
+          read_ok=false; body=""
+          if body=$(docker run --rm --user {{ postgres_encoding_migrate_pgbackrest_uid | int }} --entrypoint cat \
+                -v "$d":/etc/pgbackrest:ro {{ _pem_image | quote }} "/etc/pgbackrest/$b" 2>/dev/null); then read_ok=true; fi
+          owner=$(stat -c '%u:%g %a' "$f")
+          stanzas=$(printf '%s\n' "$body" | awk -F'[][]' '/^\[/ { s=$2 } /^[[:space:]]*pg1-path[[:space:]]*=/ { if (s != "" && s != "global") print s }' | sort -u | tr '\n' ' ')
+          printf '{"present": true, "dir": "%s", "readable": %s, "owner": "%s", "stanzas_with_pg1_path": "%s"}\n' "$d" "$read_ok" "$owner" "$stanzas"
+      register: _pem_bkr_raw
+      changed_when: false
+      when: not (_pem_standby | bool)
+
+    - name: "preflight | refuse a pgBackRest config phase 7 cannot use"
+      ansible.builtin.assert:
+        that:
+          - _pem_bkr_bad | length == 0
+        fail_msg: >-
+          {{ inventory_hostname }}: {{ _pem_bkr_bad | join('; ') }}. Phase 7 runs
+          pgbackrest stanza-create inside the re-created {{ _pem_c }}, and it
+          reads {{ postgres_encoding_migrate_pgbackrest_conf }} only through the
+          compose bind mount. Fix: re-render the compose file from goatcore
+          (ops/compose/mgmt-host/docker-compose.yml mounts
+          /etc/pgbackrest:/etc/pgbackrest:ro) or add that volume to service
+          {{ _pem_service }} in {{ _pem_files | join(', ') }}; give the file the
+          pgbackrest role's owner and mode (owner 26, group root, 0640); re-run
+          the pgbackrest role if the stanza section is missing. Nothing has
+          stopped.
+        quiet: true
+      vars:
+        _b: "{{ _pem_bkr_raw.stdout | from_json }}"
+        _vols: "{{ ((_pem_initdb_render.stdout | from_json).services[_pem_service].volumes | default([])) }}"
+        _mount: "{{ _vols | selectattr('target', 'equalto', '/etc/pgbackrest') | list }}"
+        _pem_bkr_bad: >-
+          {%- set out = [] -%}
+          {%- if _b.present -%}
+            {%- if _mount | length == 0 -%}
+              {%- set _ = out.append('service ' ~ _pem_service ~ ' in ' ~ (_pem_files | join(', ')) ~ ' does not mount ' ~ _b.dir ~ ' at /etc/pgbackrest') -%}
+            {%- else -%}
+              {%- if (_mount[0].source | default('')) != _b.dir -%}
+                {%- set _ = out.append('service ' ~ _pem_service ~ ' mounts ' ~ (_mount[0].source | default('?')) ~ ' at /etc/pgbackrest, not ' ~ _b.dir) -%}
+              {%- endif -%}
+              {%- if not (_mount[0].read_only | default(false)) -%}
+                {%- set _ = out.append('service ' ~ _pem_service ~ ' mounts /etc/pgbackrest read-write, not read-only') -%}
+              {%- endif -%}
+            {%- endif -%}
+            {%- if not _b.readable -%}
+              {%- set _ = out.append(postgres_encoding_migrate_pgbackrest_conf ~ ' (owner:group mode ' ~ _b.owner ~ ') is not readable by uid ' ~ postgres_encoding_migrate_pgbackrest_uid ~ ', the container postgres user') -%}
+            {%- elif _b.readable and (_b.stanzas_with_pg1_path | trim) == '' -%}
+              {%- set _ = out.append(postgres_encoding_migrate_pgbackrest_conf ~ ' has no stanza section with pg1-path') -%}
+            {%- endif -%}
+          {%- endif -%}
+          {{ out }}
+      when: not (_pem_standby | bool)
+
     - name: "preflight | encodings across members"
       ansible.builtin.set_fact:
         _pem_encs: >-

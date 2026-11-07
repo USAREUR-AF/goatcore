@@ -1,6 +1,7 @@
 ---
 # Phase 8 — wire Spock again on the new clusters, with the same roles and in
 # the order a join uses (goatbuilder join-node phase 13, spock-mesh-wire.yml):
+#   8.0 every member: the revocation guard and the hub ledger (ops/postgres/spock)
 #   8.1 founders  spock-mesh-peering   (netbird: nodes, repsets, both directions)
 #   8.2 joiners   spock-mesh-peering
 #   8.3 primaries start kratos + hydra (ory-narrow-repset waits for them healthy)
@@ -30,6 +31,33 @@
       {{ not (_pem_standby | bool)
          and (participates_in_spock | default(false) | bool)
          and (inter_site_spock_topology | default('none')) != 'none' }}
+
+# 8.0, before any node's pass: the revocation guard and the hub directive
+# ledger on every member. A node's spock-mesh-peering pass installs them
+# locally and then reconciles revocation history by reading the PEER's
+# goat_revocations; a peer wired before the guard existed (its dump has none)
+# fails that read until its own pass runs later. A fresh build installs them
+# on every site before history is read; this does the same. The SQL is the
+# role's own (ops/postgres/spock/), idempotent.
+- name: "rewire | revocation guard and hub ledger on this member"
+  ansible.builtin.command:
+    argv: "{{ _pem_psql + ['-d', item.0.name] }}"
+    stdin: "{{ lookup('ansible.builtin.file', item.1) }}"
+  loop: >-
+    {%- set out = [] -%}
+    {%- for d in spock_mesh_databases | default([{'name': spock_mesh_database | default('netbird')}]) -%}
+      {%- set g = playbook_dir ~ '/../postgres/spock/revocation-guard/' ~ d.name ~ '.sql' -%}
+      {%- set h = playbook_dir ~ '/../postgres/spock/hub-authority/' ~ d.name ~ '.sql' -%}
+      {%- if (spock_mesh_revocation_guard | default(true) | bool) and g is file -%}{%- set _ = out.append([d, g]) -%}{%- endif -%}
+      {%- if (spock_mesh_hub_authority | default(true) | bool) and h is file -%}{%- set _ = out.append([d, h]) -%}{%- endif -%}
+    {%- endfor -%}
+    {{ out }}
+  loop_control:
+    label: "{{ item.0.name }}: {{ item.1 | basename }} ({{ item.1 | dirname | basename }})"
+  changed_when: true
+  when:
+    - pem_step == 'guards'
+    - _pem_spock_on | bool
 
 - name: "rewire | netbird (spock-mesh-peering)"
   ansible.builtin.include_role:

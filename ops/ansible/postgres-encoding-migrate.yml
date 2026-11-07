@@ -157,6 +157,16 @@
 
 # Phase 8: one play per step, so each step finishes on every node before the
 # next starts (the join order of goatbuilder join-node phase 13).
+- name: "postgres-encoding-migrate | phase 8.0 revocation guard and hub ledger on every member"
+  hosts: "{{ (migrate_groups | default('migrate_groups_unset')) ~ ((',' ~ postgres_encoding_migrate_standby_groups) if (postgres_encoding_migrate_standby_groups | default('')) else '') }}"
+  gather_facts: false
+  become: "{{ postgres_encoding_migrate_become | default(true) }}"
+  any_errors_fatal: true
+  tasks:
+    - ansible.builtin.include_role: {name: postgres-encoding-migrate, tasks_from: phase.yml}
+      vars: {pem_phase: "8.0", pem_name: rewire, pem_step: guards}
+      when: (postgres_encoding_migrate_action | default('migrate')) == 'migrate'
+
 - name: "postgres-encoding-migrate | phase 8.1 Spock netbird, founders"
   hosts: "{{ (migrate_groups | default('migrate_groups_unset')) ~ ((',' ~ postgres_encoding_migrate_standby_groups) if (postgres_encoding_migrate_standby_groups | default('')) else '') }}"
   gather_facts: false
