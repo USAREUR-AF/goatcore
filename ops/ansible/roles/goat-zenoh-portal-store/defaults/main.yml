@@ -36,6 +36,10 @@ portal_store: sqlite
 # Postgres server, which the gate reads as "sqlite". A goatnet whose pinned
 # image predates this key sets the key that image carries.
 portal_store_label: "io.goat.zenoh-portal.store"
+# Older names for the same label, read in order when the one above is absent.
+# A goatnet whose pinned images were built under another label key lists that
+# key here, so images built either way pass the gate.
+portal_store_label_aliases: []
 # Host-side record of which store holds the registry's rows. Written by the
 # cutover (postgres) and the rollback (sqlite); absent = never cut over.
 portal_store_marker: /var/lib/goat-zenoh-portal/STORE

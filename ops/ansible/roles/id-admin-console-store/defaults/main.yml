@@ -33,6 +33,10 @@ id_admin_console_store: sqlite
 # Postgres server, which the gate reads as "sqlite". A goatnet whose pinned
 # image predates this key sets the key that image carries.
 id_admin_console_store_label: "goat.id-console.store"
+# Older names for the same label, read in order when the one above is absent.
+# A goatnet whose pinned images were built under another label key lists that
+# key here, so images built either way pass the gate.
+id_admin_console_store_label_aliases: []
 # Host-side record of which store holds this console's rows. Written by the
 # cutover (postgres) and the rollback (sqlite); absent = never cut over.
 id_admin_console_store_marker: /var/lib/goat-id-console/STORE
