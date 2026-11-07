@@ -226,7 +226,17 @@ pub fn list(repo: &Path, component: &str, site: Option<&str>) -> Result<Report> 
     for h in &hosts {
         let rows = host_rows_newest_first(h, component);
         if !rows.is_empty() {
-            checks.push(line(format!("  (on-host ledger @ {} — source of truth)", h.host)));
+            // Name the goatnet the host belongs to, and with no --site on a
+            // multi-host map say that only the first reachable host is shown,
+            // as rollback.sh --list does.
+            let goatnet = if h.site.is_empty() { String::new() } else { format!(", goatnet {}", h.site) };
+            checks.push(line(format!("  (on-host ledger @ {}{goatnet} — source of truth)", h.host)));
+            if site.is_none() && hosts.len() > 1 {
+                checks.push(line(format!(
+                    "this is the first reachable of {} hosts; pass --site <goatnet> for one goatnet's history",
+                    hosts.len()
+                )));
+            }
             for r in rows {
                 checks.push(line(format_row(&r)));
             }
