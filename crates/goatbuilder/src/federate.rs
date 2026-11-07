@@ -276,7 +276,7 @@ fn plan_view(repo: &Path, o: &Options, work: &str, edge_group: &str, phases: &[P
             9 => "Write the access rules and settings",
             10 => "Review what was written, and let the router onto our core",
             11 => "Open the connection the agreement chooses",
-            12 => "Deploy the router that connects the two networks, and the republisher beside our core",
+            12 => "Deploy the edge router, and the republisher on our core",
             13 => "Trust the other party's identity service",
             14 => "Test that allowed traffic passes and the rest is refused",
             _ => "",
