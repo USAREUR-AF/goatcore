@@ -152,7 +152,11 @@
     dest: "{{ minio_compose_dir }}/mc-init.sh"
     owner: root
     group: root
-    mode: "0750"
+    # World-readable: the mc-init container runs as the image's non-root user
+    # (65532 on the Chainguard minio-client image) and must read the script it
+    # executes. It holds no secret; those reach mc-init through
+    # mc-extra-users.env (0600) and the MC_HOST_local variable.
+    mode: "0644"
 
 # 3b. Mesh-internal console exposure (Traefik file-provider overlay).
 # Off by default; sites that expose the console (ZAGROS) set
