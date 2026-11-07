@@ -19,7 +19,9 @@ import re
 import sys
 import tempfile
 
-NEEDLES = re.compile(r"zagros|nova|usareur|goat|usareur-af|goat-maintainer|nethost|\bthor\b", re.I)
+# The example goatnet's name (zagros) is the tutorials' vocabulary, not a
+# project's own name, so it is not a needle here.
+NEEDLES = re.compile(r"nova|usareur|goat-maintainer|nethost|\bthor\b", re.I)
 BASELINE = "ops/goatbuilder/portability-baseline.txt"
 
 
@@ -92,13 +94,13 @@ def self_test() -> int:
         src.mkdir(parents=True)
         (root / "ops/goatbuilder").mkdir(parents=True)
         f = src / "a.rs"
-        f.write_text('/// e.g. zagros-dev\n// zagros in a comment\nfn a() {}\n#[cfg(test)]\nmod t { const X: &str = "zagros"; }\n')
+        f.write_text('/// e.g. nethost-dev\n// nethost in a comment\nfn a() {}\n#[cfg(test)]\nmod t { const X: &str = "nethost"; }\n')
         cases = []
         cases.append(("help text counts, comments and tests do not", counts(root) == {"crates/goatbuilder/src/a.rs": 1}))
         cases.append(("a new name with no baseline fails", len(problems(root)) == 1))
         write_baseline(root)
         cases.append(("the written baseline passes", problems(root) == []))
-        f.write_text('/// e.g. zagros-dev\n/// or usareur-af\nfn a() {}\n')
+        f.write_text('/// e.g. nethost-dev\n/// or usareur-af\nfn a() {}\n')
         cases.append(("a second name fails", len(problems(root)) == 1))
         f.write_text("/// e.g. <site>\nfn a() {}\n")
         cases.append(("a name removed without lowering the baseline fails", len(problems(root)) == 1))

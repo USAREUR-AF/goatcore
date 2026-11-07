@@ -18,7 +18,9 @@ lift dag_flush > "$T/fns.sh"
 
 run_case() {  # run_case <name> ; Q_* set by the caller via a here-doc file
   # shellcheck disable=SC2034  # read by the lifted dag_flush
-  ( STATE_DIR="$T"; SITE=zagros; PROFILE=lan
+  # GOAT_SECRET_STORE=env: the steps here read no secret, so no value store is
+  # loaded around them (standup-phase-run loads one for env-file/sops/git-crypt).
+  ( STATE_DIR="$T"; SITE=zagros; PROFILE=lan; export GOAT_SECRET_STORE=env
     # shellcheck disable=SC1090,SC1091
     . "$T/fns.sh"; . "$T/case.sh"; dag_flush ) >"$T/$1.out" 2>&1
 }

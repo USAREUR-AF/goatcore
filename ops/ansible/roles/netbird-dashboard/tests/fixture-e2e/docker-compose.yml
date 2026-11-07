@@ -144,7 +144,7 @@ services:
     # The image namespace is GHCR_ORG. run.sh exports it: the caller's value,
     # else ghcr_org from ops/ansible/group_vars/all.yml, the namespace this
     # checkout deploys from.
-    image: ghcr.io/${GHCR_ORG:?run this stack through run.sh, or export GHCR_ORG (the image namespace)}/netbird-mgmt:patched-53b04e5@sha256:cf1312474bf168270c3426964d1a6faa6d2c6d9bb9bf66086f84475bcb0fb47d
+    image: ghcr.io/${GHCR_ORG:?run this stack through run.sh, or export GHCR_ORG (the image namespace)}/netbird-mgmt@sha256:0122a19060141e573e02e4faf1581406ce2e6059965661383c80cd7475f7fe73
     depends_on:
       postgres:
         condition: service_healthy

@@ -37,9 +37,9 @@ You never run `goatbuilder` on the box. It runs on your laptop and does everythi
 
 ### First, install the tools
 
-The run uses these programs on your laptop. Install them now, so nothing stops you partway through. Section 4's doctor command checks every one of them and prints the install command for anything missing, so you can also run the doctor first and follow what it says.
+The run uses these programs on your laptop. Install them now, so nothing stops you partway through. Section 4's doctor command checks the laptop and prints the install command for anything it finds missing.
 
-The laptop can run Linux or macOS. ⚠️ Windows itself is not supported yet. WSL runs the Linux path and may work, but no run has been tested on it. Package names are the same on apt, dnf and brew unless the table says otherwise.
+The laptop can run Linux or macOS. ⚠️ Windows itself is not supported yet. WSL runs the Linux path and may work, but no run has been tested on it. The Linux commands below are for Ubuntu 24.04, and CI runs them as written on a fresh Ubuntu 24.04 on every change to this page (`.github/workflows/goatlite-workstation.yml`).
 
 | Program                                                   | Used for                                                                                           |
 | --------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
@@ -48,36 +48,55 @@ The laptop can run Linux or macOS. ⚠️ Windows itself is not supported yet. W
 | `netbird` | joins your laptop to the goatnet's mesh in section 6; install it from `https://docs.netbird.io/how-to/installation` |
 | `git`                                                   | the checkout                                                                                       |
 | `ssh`                                                   | reaching the box                                                                                   |
-| `cargo` (Rust) | building `goatbuilder` and `goat`; install it from `https://rustup.rs/` |
-| `ansible-playbook`                                      | every deploy step on the box                                                                       |
-| `python3` with `pyyaml`, `jsonschema`, `jmespath` | the render, the checks, and the access-rule steps                                                  |
+| `cargo` (Rust)                                          | building `goatbuilder` and `goat`; install it from `https://rustup.rs/`                            |
+| `yq`, version 4, by mikefarah                           | reading the certificate manifest when phase 1 mints the goatnet's certificate authority. The `yq` that apt installs is a different program with the same name |
+| `age`                                                   | encrypting the certificate authority's key                                                         |
+| `go` 1.26 or newer, `pkg-config` and the PC/SC headers  | building the certificate tools phase 1 runs (`ops/enrollment`). The PC/SC headers are `libpcsclite-dev` on Linux; macOS has them built in |
+| `python3` with `venv`                                   | one Python environment for this tutorial, set up in the checkout below                            |
+| `ansible-playbook`                                      | every deploy step on the box; `ansible-core` 2.20.11 from pip, inside that environment            |
+| `pyyaml`, `jsonschema`, `jmespath`                      | the render, the checks, and the access-rule steps; from pip, inside that environment              |
 | `node`, `npm`, Playwright with Chromium               | the two acceptance checks that drive a browser                                                     |
 
-Install the packages on Ubuntu or Debian:
+#### On Ubuntu 24.04
 
-```text
-sudo apt install git openssh-client ansible nodejs npm python3-pip
+Refresh the package lists, then install the packages. A fresh image has no package lists yet, so `apt install` on its own cannot find them:
+
+```bash
+sudo apt update
+sudo apt install -y git openssh-client curl ca-certificates build-essential python3 python3-venv nodejs npm age pkg-config libpcsclite-dev
 ```
 
-Install the packages on macOS with Homebrew:
+Install mikefarah's `yq`, version 4. Ubuntu's `yq` package is a different program; do not install it:
 
-```text
-brew install git ansible node
+```bash
+sudo curl -fsSL -o /usr/local/bin/yq "https://github.com/mikefarah/yq/releases/download/v4.44.3/yq_linux_$(dpkg --print-architecture)"
+sudo chmod 0755 /usr/local/bin/yq
+yq --version
 ```
 
-Install the Python modules:
+Install Go from `go.dev`. Ubuntu's `golang-go` is older than the version `ops/enrollment/go.mod` asks for:
 
-```text
-python3 -m pip install pyyaml jsonschema jmespath
+```bash
+curl -fsSL "https://go.dev/dl/go1.26.10.linux-$(dpkg --print-architecture).tar.gz" | sudo tar -C /usr/local -xz
+export PATH="/usr/local/go/bin:$PATH"
+go version
 ```
 
-Install the browser for the two browser checks. Run this after the clone step below, from the root of the checkout:
+Add `export PATH="/usr/local/go/bin:$PATH"` to your shell profile too, so a new terminal finds `go`.
+
+Install Rust with `rustup` from `https://rustup.rs/`; it is not in this block because it asks questions as it installs.
+
+#### On macOS
 
 ```text
-cd ops/goat-id-console/web/e2e && npm ci && npx playwright install chromium
+brew install git python node yq age go rustup
 ```
+
+The Python environment below uses Homebrew's `python3`; macOS's own is too old for `ansible-core` 2.20. Check with `python3 --version`, which must print 3.12 or newer.
 
 One registry token is also needed before images can be pulled; section 4 names it and where to put it.
+
+### Get the checkout and build the two programs
 
 Get the checkout. Every later command runs from its root:
 
@@ -86,7 +105,7 @@ git clone https://github.com/usareur-af/goatcore.git
 cd goatcore
 ```
 
-There is no release page yet, so build both programs from the checkout with [Rust](https://rustup.rs/). The first build takes several minutes.
+There is no release page yet, so build both programs from the checkout with Rust. The first build takes several minutes.
 
 ```text
 (cd crates && cargo build --release --locked -p goatbuilder -p goat-cli)
@@ -98,6 +117,34 @@ goat --version
 
 If `--version` says "command not found", add `export PATH="$HOME/.local/bin:$PATH"` to your shell profile and open a new terminal.
 
+### Set up Python, Ansible and the browser
+
+Every command here runs on your laptop, from the root of the checkout.
+
+Create one Python environment for this tutorial and install its modules and Ansible into it. Ubuntu 24.04 refuses `pip install` into the system Python, and the environment keeps the tutorial's versions apart from anything else on the laptop:
+
+```bash
+python3 -m venv ~/.venvs/goatlite
+. ~/.venvs/goatlite/bin/activate
+python3 -m pip install pyyaml jsonschema jmespath 'ansible-core==2.20.11'
+ansible-galaxy collection install -r ops/ansible/requirements.yml
+```
+
+`ansible-core` 2.20 is the newest line the repository's Ansible CI accepts (`.github/workflows/ansible-syntax-check.yml`). It carries no collections of its own; `ops/ansible/requirements.yml` names the ones the plays use.
+
+⚠️ Every terminal you use for this tutorial activates the environment first, with `. ~/.venvs/goatlite/bin/activate`. `goatbuilder` runs `python3` and `ansible-playbook` from your `PATH`, so in a terminal without the environment the first phase that needs them fails.
+
+Install the browser for the two browser checks. `--with-deps` also installs the system libraries Chromium needs on Linux, and asks for your password to do it:
+
+```bash
+(cd ops/goat-id-console/web/e2e && npm ci && npx playwright install --with-deps chromium)
+```
+
+Check that the browser starts. It prints `chromium launched`; an error naming a missing library, such as `libatk-1.0.so.0`, means the system libraries are not installed, so run the line above again:
+
+```bash
+(cd ops/goat-id-console/web/e2e && node -e "import('@playwright/test').then(({ chromium }) => chromium.launch()).then((b) => { console.log('chromium launched'); return b.close(); })")
+```
 
 ## 2. Write the one file
 

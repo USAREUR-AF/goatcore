@@ -64,7 +64,7 @@
 
 # A separate play: both roles end their play (meta: end_play) when their gate
 # is off, which inside one play would also skip the other role.
-- name: "spock-mesh-wire — apply ory-narrow-repset (Phase 7D) to one host"
+- name: "spock-mesh-wire — apply ory-narrow-repset to one host"
   hosts: all
   gather_facts: false
   become: true
