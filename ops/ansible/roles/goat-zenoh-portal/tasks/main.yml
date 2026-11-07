@@ -563,6 +563,35 @@
   when: portal_bundle_create_bin | length > 0
   notify: restart goat-zenoh-portal
 
+# portal_ca_root_cert_flag may be one flag or a list of candidates: an overlay
+# whose goatnets run portal images from different source trees lists every
+# name, and the role passes the first one the pinned image's `serve -h`
+# defines. A string is used as it is, with no probe.
+- name: CA-root flag | probe the pinned image when there is a choice
+  when: portal_ca_root_cert_flag is not string
+  ansible.builtin.command:
+    argv: [docker, run, --rm, "{{ portal_image }}", serve, -h]
+  register: portal_ca_root_flag_help
+  changed_when: false
+  failed_when: false
+  become: true
+
+- name: CA-root flag | the first candidate the pinned image defines
+  vars:
+    _help: "{{ (portal_ca_root_flag_help.stdout | default('')) ~ '\n' ~ (portal_ca_root_flag_help.stderr | default('')) }}"
+    _defined: "{{ _help | regex_findall('(?m)^\\s+-{1,2}([A-Za-z0-9][A-Za-z0-9._-]*)') }}"
+    _chosen: "{{ portal_ca_root_cert_flag | select('in', _defined | map('regex_replace', '^', '--') | list) | list }}"
+  when: portal_ca_root_cert_flag is not string
+  block:
+    - name: CA-root flag | refuse when the image defines none of the candidates
+      ansible.builtin.assert:
+        that: _chosen | length > 0
+        fail_msg: "{{ portal_image }} defines none of {{ portal_ca_root_cert_flag | join(', ') }}; the running portal is untouched."
+        quiet: true
+    - name: CA-root flag | use it
+      ansible.builtin.set_fact:
+        portal_ca_root_cert_flag_effective: "{{ _chosen | first }}"
+
 - name: Render docker-compose for portal
   ansible.builtin.template:
     src: docker-compose.yml.j2
