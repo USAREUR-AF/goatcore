@@ -1,0 +1,68 @@
+name: portal-web-e2e
+
+# Playwright e2e for the goat-zenoh-portal static web UI. Path-filtered
+# so only web-touching PRs pay the runtime. Specs mock /api/* via
+# page.route and serve web/static/ from a stdlib static server
+# (serve.mjs), so this job needs no Go portal binary, DB, or Zenoh
+# fabric — it's a pure frontend gate (first guard: the topic-form
+# protobuf footgun, F-162). Mirrors panoscope-frontend-test.yml.
+
+on:
+  # push: on main REMOVED — this workflow is a guard, not a publisher. It
+  # already gates the pull request, and a squash merge puts the reviewed diff
+  # on main unchanged, so re-running it there re-verifies a commit whose answer
+  # is known. 98 of 119 workflows did that; measured at 4,787 runs in
+  # one day, roughly half of them this shape.
+  #
+  # main IS protected (checked on the organisation's Enterprise
+  # plan: one required approving review, force-push and deletion refused),
+  # so a force-push cannot bypass this guard. An earlier version of this
+  # comment said the plan could not have branch protection; that was a lower
+  # plan and is no longer true.
+  # Publishers keep push: on purpose — the merge commit is the artifact.
+  pull_request:
+    paths:
+      - 'ops/goat-zenoh-portal/web/**'
+      - '.github/workflows/portal-web-e2e.yml'
+
+# Supersede in-flight runs for the same ref. A push during review used to
+# leave the previous run going to completion, so a branch pushed three
+# times paid three times for an answer only the last one needed. Keyed on
+# the workflow plus the ref, and NEVER cancels on main — a merge-commit run
+# is the one whose result is recorded.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  e2e:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: ops/goat-zenoh-portal/web/e2e
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: ops/goat-zenoh-portal/web/e2e/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Run e2e spec
+        run: npm test
+
+      - name: Upload playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: portal-web-playwright-report
+          path: ops/goat-zenoh-portal/web/e2e/playwright-report/
+          retention-days: 7

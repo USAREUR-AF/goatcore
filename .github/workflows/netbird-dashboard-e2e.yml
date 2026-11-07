@@ -1,0 +1,204 @@
+# Block 21D.1 netbird-dashboard E2E + perf harness — CI workflow.
+#
+# Two jobs:
+#   - structure: cheap (~1s) Tier-A YAML structural assertions on the role.
+#   - e2e:       expensive (~3-5 min) Tier-B fixture-up-Playwright drive
+#                of the full OAuth dance.
+#
+# Triggered on:
+#   - PR touching the netbird-dashboard role, the Ory role's tests
+#     surface, or the dashboard compose overlay.
+#   - workflow_dispatch (manual; allows operator-fired runs against
+#     a staged dashboard URL).
+#   - weekly cron (catch upstream-image drift on netbirdio/dashboard
+#     bumps + Ory image bumps).
+#
+# CI feasibility analysis: docs/operations/dashboard-bringup.md +
+# ops/ansible/roles/netbird-dashboard/tests/fixture-e2e/README.md.
+
+name: netbird-dashboard E2E + perf
+
+on:
+  pull_request:
+    paths:
+      - 'ops/ansible/roles/netbird-dashboard/**'
+      - 'ops/compose/mgmt-host/docker-compose.dashboard.yml'
+      - 'ops/ci/check-hydra-client-invariants.py'
+      - 'ops/ci/test_hydra_client_invariants.py'
+      - '.github/workflows/netbird-dashboard-e2e.yml'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "harness mode (local fixture | live URL)"
+        type: choice
+        options: [local, live]
+        default: local
+      live_url:
+        description: "DASHBOARD_BASE_URL (live mode only)"
+        required: false
+        default: ""
+  schedule:
+    # Sundays 02:30 UTC — catch upstream image drift weekly.
+    - cron: '30 2 * * 0'
+
+permissions:
+  contents: read
+
+# Supersede in-flight runs for the same ref. A push during review used to
+# leave the previous run going to completion, so a branch pushed three
+# times paid three times for an answer only the last one needed. Keyed on
+# the workflow plus the ref, and NEVER cancels on main — a merge-commit run
+# is the one whose result is recorded.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  structure:
+    name: structural assertions (cheap, no docker)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - name: Install PyYAML
+        run: pip install --no-input pyyaml
+      - name: Run role structural test
+        run: python3 ops/ansible/roles/netbird-dashboard/tests/test-structure.py
+      - name: Run Codex Hydra-client invariant lint
+        run: |
+          python3 ops/ci/test_hydra_client_invariants.py
+          python3 ops/ci/check-hydra-client-invariants.py ops/ansible
+      - name: Set up Node for harness regression tests
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Test dashboard timing and failure verdicts
+        run: node --test ops/ansible/roles/netbird-dashboard/tests/fixture-e2e/playwright/e2e.test.mjs
+
+  e2e:
+    name: E2E + perf (fixture)
+    runs-on: ubuntu-24.04
+    needs: structure
+    if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.mode == 'local' }}
+    timeout-minutes: 15
+    # F-130: this E2E was red on main (5 consecutive
+    # failures, then dormant previously when PR #77 re-triggered
+    # the path filter). 9 layers of pre-existing rot found across
+    # container images (slimmed: lost wget + curl), Hydra CLI flag
+    # rename (--client-id → --id), missing `--ping=true`, port
+    # mismatch (8443 vs 443), DNS not wired, kratos identity seed
+    # path broken, JWT validation drift between Hydra issuer + netbird-
+    # mgmt JWKS fetcher. 8 fixed in this PR; layer 9 (JWT/JWKS) is
+    # genuine identity-infra debt, not blocking unrelated changes.
+    # Non-blocking until the `netbird-dashboard-e2e-revive` track
+    # gets it back to green and removes this line. See F-130.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('ops/ansible/roles/netbird-dashboard/tests/fixture-e2e/playwright/package.json') }}
+
+      - name: Install Playwright Chromium
+        working-directory: ops/ansible/roles/netbird-dashboard/tests/fixture-e2e/playwright
+        run: |
+          npm install
+          npx playwright install --with-deps chromium
+
+      - name: Map fixture hostnames to loopback
+        # Traefik in the fixture stack listens on 127.0.0.1:8443 and
+        # routes by SNI to dashboard / auth / oauth2 / mgmt hosts. The
+        # multi-SAN cert seed.sh mints covers all four hostnames. The
+        # Playwright runner needs DNS resolution for them — neither
+        # Docker nor the workflow set up a resolver, so the
+        # `net::ERR_NAME_NOT_RESOLVED` failure surfaced here is the
+        # missing /etc/hosts wire. The localhost.test TLD is reserved
+        # for testing (RFC 6761) so the entries are safe.
+        run: |
+          sudo tee -a /etc/hosts >/dev/null <<'HOSTS'
+          127.0.0.1 dashboard.localhost.test
+          127.0.0.1 auth.localhost.test
+          127.0.0.1 oauth2.localhost.test
+          127.0.0.1 mgmt.localhost.test
+          HOSTS
+          getent hosts dashboard.localhost.test
+
+      - name: Run E2E fixture (local mode)
+        env:
+          DASHBOARD_BASE_URL: https://dashboard.localhost.test
+          E2E_OPERATOR_EMAIL: e2e-test@localhost.test
+          E2E_OPERATOR_PASSWORD: e2e-test-password-fixed-1234
+        run: bash ops/ansible/roles/netbird-dashboard/tests/fixture-e2e/run.sh local
+
+      - name: Upload e2e timing artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-timing-jsonl
+          path: /tmp/dashboard-e2e-*.jsonl
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: Upload container logs (always)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-container-logs
+          path: /tmp/dashboard-e2e-container-logs/
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: Upload Playwright trace on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-trace
+          path: /tmp/dashboard-e2e-*.trace.zip
+          if-no-files-found: ignore
+          retention-days: 30
+
+  e2e-live:
+    name: E2E + perf (live URL — manual only)
+    runs-on: ubuntu-24.04
+    needs: structure
+    if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'live' }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - name: Install Playwright Chromium
+        working-directory: ops/ansible/roles/netbird-dashboard/tests/fixture-e2e/playwright
+        run: |
+          npm install
+          npx playwright install --with-deps chromium
+      - name: Run E2E (live)
+        # Operator credentials provided via repo secrets on workflow_dispatch.
+        env:
+          E2E_OPERATOR_EMAIL: ${{ secrets.E2E_OPERATOR_EMAIL }}
+          E2E_OPERATOR_PASSWORD: ${{ secrets.E2E_OPERATOR_PASSWORD }}
+        run: |
+          bash ops/ansible/roles/netbird-dashboard/tests/fixture-e2e/run.sh live \
+            "${{ github.event.inputs.live_url }}" \
+            "$E2E_OPERATOR_EMAIL" \
+            "$E2E_OPERATOR_PASSWORD"
+      - name: Upload e2e timing artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-timing-live-jsonl
+          path: /tmp/dashboard-e2e-*.jsonl
+          if-no-files-found: ignore
+          retention-days: 30
