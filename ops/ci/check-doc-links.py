@@ -25,7 +25,7 @@ import subprocess
 import sys
 
 # The count of broken links accepted at the time of writing. Only ever lower it.
-BASELINE = 88
+BASELINE = 0
 
 LINK = re.compile(r'\[[^\]]*\]\(([^)]+)\)')
 

@@ -1,0 +1,44 @@
+name: Acceptance pairings
+# A `must_refuse` acceptance row asserts that something is DENIED, and a denial
+# is indistinguishable from a path that was never live. The runner already
+# refuses to count a negative whose paired positive did not pass; this guards the
+# other half — a `paired_positive` naming a row that does not exist degrades to
+# UNKNOWN forever, which is a check that can never fail sitting in the suite
+# looking like coverage.
+on:
+  pull_request:
+    paths:
+      - 'ops/validation/acceptance-tests.yaml'
+      - 'ops/validation/run-acceptance.py'
+      - 'ops/validation/probes.py'
+      - 'ops/validation/generate-values.py'
+      - 'ops/ci/check-acceptance-pairings.py'
+      - '.github/workflows/acceptance-pairings.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'ops/validation/acceptance-tests.yaml'
+      - 'ops/ci/check-acceptance-pairings.py'
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install --quiet pyyaml
+      - name: Every must_refuse row pairs with a real positive
+        run: python3 ops/ci/check-acceptance-pairings.py
+      # The assay's runner and value derivation, offline: every probe type is
+      # proven RED on a broken fixture and GREEN on a good one, the goat CLI
+      # probe against a stub goat (the locus answers UNKNOWN, a refusal FAIL).
+      - name: The runner proves every probe red then green
+        run: python3 ops/validation/run-acceptance.py --self-test
+      - name: Values derive from a site's config
+        run: python3 ops/validation/generate-values.py --self-test

@@ -81,6 +81,7 @@ linked to its authoritative upstream source.
 | 0209 | [Shim pattern for vendor cruft absorption](0209-shim-pattern.md) | Accepted | |
 | 0210 | [Zenoh as universal peer-interaction substrate (Phase 3+)](0210-zenoh-universal-substrate.md) | Accepted | goat core | — |
 | 0211 | [Single management server (no federation between mgmt servers)](0211-single-management-server.md) | Accepted | goat core | — |
+| 0212 | [Scope split: goat (transport) vs goat-bond (WAN bonding)](0212-goat-vs-bond-split.md) | Accepted | Multi | — |
 | 0213 | [Convenience services vs core services — promotion threshold](0213-convenience-vs-core-services.md) | Accepted | |
 | 0214 | [Failure-isolation four-pattern framework](0214-failure-isolation-four-pattern.md) | Accepted | goat core | — |
 | 0216 | [GOAT-Net scaling — federation plane + site plane separation](0216-goat-net-federation-and-site-planes.md) | Proposed | goat core | — |
@@ -207,6 +208,7 @@ linked to its authoritative upstream source.
 | 0820 | [Continuous vulnerability scanning — Trivy + grype + osquery drift](0820-continuous-vuln-scanning.md) | Accepted | |
 | 0821 | [Mission partner sharing — `release/` namespace + bring-your-own-OIDC + four-facet expectations](0821-mission-partner-sharing-pattern.md) | Proposed | |
 | 0822 | [Wide-event observability via OpenTelemetry + OpenObserve](0822-wide-event-observability-otlp-openobserve.md) | Proposed | |
+| 0823 | [Daily cross-site state reconciliation as a low-tech fallback to Spock](0823-daily-state-reconciliation.md) | Proposed | goat core | — |
 | 0824 | [Video fabric: MediaMTX-only v1, Zenoh control plane, post-Spike-A/B verdicts](0824-video-fabric-mediamtx-only-v1.md) | Proposed | |
 | 0825 | [Replay substrate](0825-replay-substrate.md) | Proposed | |
 | 0830 | [`[relay-engineering]` Spike-tolerant relay capacity via warm-stopped EC2 + pre-baked AMI](0830-spike-tolerant-relay-capacity.md) | Proposed | goat core | — |

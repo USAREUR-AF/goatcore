@@ -210,7 +210,13 @@ except ImportError:
     print("  SKIP: pyyaml not installed")
 else:
     seen = 0
-    for gv in sorted(_glob.glob(str(ROLE.parent.parent / "group_vars" / "*" / "*.yml"))):
+    # A substrate-only tree (goatcore on its own) carries no goatnet's
+    # group_vars, only `_examples/`; the real values arrive with an environment
+    # overlay in an assembled tree. With no goatnet present there is nothing to
+    # require, so the "at least one" check below applies only where one is.
+    goatnet_vars = [gv for gv in sorted(_glob.glob(str(ROLE.parent.parent / "group_vars" / "*" / "*.yml")))
+                    if not Path(gv).parent.name.startswith("_")]
+    for gv in goatnet_vars:
         with open(gv, encoding="utf-8") as fh:
             try:
                 doc = _yaml.safe_load(fh) or {}
@@ -227,7 +233,10 @@ else:
             check(shape != "**", f"{scope}: `{shape}` is not the fabric-wide grant in disguise")
             check(any(c not in ("*", "**") for c in shape.split("/")),
                   f"{scope}: `{shape}` names at least one real chunk (a `*`-only shape matches everything)")
-    check(seen > 0, f"at least one goatnet declares cross-tenant shapes ({seen} found)")
+    if goatnet_vars:
+        check(seen > 0, f"at least one goatnet declares cross-tenant shapes ({seen} found)")
+    else:
+        print("  SKIP: no goatnet group_vars in this tree (substrate only); runs in an assembled tree")
 
 print()
 print("ALL SCOPED-READ CHECKS PASSED" if fails == 0 else f"{fails} CHECK(S) FAILED")
