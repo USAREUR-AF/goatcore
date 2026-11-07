@@ -11,6 +11,10 @@ set -euo pipefail
 #   - Netbird SQLite databases backed up
 #
 # Usage: sudo bash migrate.sh <PG_PASSWORD>
+#
+# Host directory: GOAT_HOST_OPT_DIR (the group_vars goat_host_opt_dir), else the
+# parent of the netbird-postgres compose project's working directory, else
+# /opt/goat. The script runs as a copied file on the host, so it reads no tree.
 
 if [ $# -lt 1 ]; then
   echo "Usage: sudo bash migrate.sh <PG_PASSWORD>"
@@ -18,14 +22,18 @@ if [ $# -lt 1 ]; then
 fi
 
 PG_PASS="$1"
-BACKUP_DIR="/opt/goat/postgres-migration/backup"
-WORK_DIR="/opt/goat/postgres-migration/work"
+if [ -z "${GOAT_HOST_OPT_DIR:-}" ]; then
+  _pg_compose_dir="$(docker inspect --format '{{ index .Config.Labels "com.docker.compose.project.working_dir" }}' netbird-postgres 2>/dev/null || true)"
+  case "$_pg_compose_dir" in /*/*) GOAT_HOST_OPT_DIR="$(dirname "$_pg_compose_dir")" ;; *) GOAT_HOST_OPT_DIR=/opt/goat ;; esac
+fi
+BACKUP_DIR="$GOAT_HOST_OPT_DIR/postgres-migration/backup"
+WORK_DIR="$GOAT_HOST_OPT_DIR/postgres-migration/work"
 PGHOST="127.0.0.1"
 
 # Verify Postgres is reachable
 if ! docker exec netbird-postgres pg_isready -U netbird >/dev/null 2>&1; then
   echo "ERROR: netbird-postgres container not ready. Is it running?"
-  echo "  Start it: cd /opt/goat/postgres && docker compose up -d"
+  echo "  Start it: cd $GOAT_HOST_OPT_DIR/postgres && docker compose up -d"
   exit 1
 fi
 

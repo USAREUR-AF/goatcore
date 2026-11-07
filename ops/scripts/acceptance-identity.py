@@ -7,6 +7,7 @@ org whose sponsorship is capped at browse, with no operator power. Its context
 
 usage:
   acceptance-identity.py <env> <admin-ssh> <admin-context> <target-ssh> [--port N]
+  acceptance-identity.py --print-config <env>   the zone and 1Password account a run uses
 
   <admin-ssh>      host that makes the one operator call (POST /api/orgs:
                    create, approve, sponsorship=browse)
@@ -25,11 +26,44 @@ identity's whoami (the proof the key works), which must read operator=false, spo
 Rotate: goat admin rotate goat-acceptance --key-only, then re-run the install
 half. Cut off at once: goat admin sponsorship goat-acceptance --revoke.
 """
-import json, os, shlex, subprocess, sys
+import importlib.util, json, os, shlex, subprocess, sys
+
+REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Examples for a tree whose group_vars declare no site_dns_zone.
+EXAMPLE_ZONES = {"zagros-dev": "netbird.zagros-dev.example", "zagros": "netbird.zagros.example"}
+EXAMPLE_OP_ACCOUNT = "example.1password.com"
+
+
+def site_dns_zone(goatnet):
+    """The goatnet's site_dns_zone from its group_vars, else the example's."""
+    r = subprocess.run([sys.executable, os.path.join(REPO, "ops/scripts/goatnet-facts.py"), "var", goatnet, "site_dns_zone"],
+                       capture_output=True, text=True)
+    zone = r.stdout.strip() if r.returncode == 0 else ""
+    if zone and "{{" not in zone:
+        return zone
+    if goatnet in EXAMPLE_ZONES:
+        return EXAMPLE_ZONES[goatnet]
+    sys.exit(f"acceptance-identity: ops/ansible/group_vars/{goatnet.replace('-', '_')}_hosts declares no site_dns_zone")
+
+
+def op_account():
+    """The account the secrets posture pins (OP_ACCOUNT, else `secrets: op_account:`
+    in ops/goatbuilder/goatbuilder.yaml, ADR 1204), else the example's."""
+    spec = importlib.util.spec_from_file_location("goat_posture", os.path.join(REPO, "ops/secrets/posture.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod.op_account(REPO) or EXAMPLE_OP_ACCOUNT
+
+
+if __name__ == "__main__" and sys.argv[1:2] == ["--print-config"]:
+    # The values a run on <env> would use, without contacting anything.
+    print(json.dumps({"zone": site_dns_zone(sys.argv[2]), "op_account": op_account()}))
+    sys.exit(0)
 
 env, admin, admin_ctx, target = sys.argv[1:5]
 port = sys.argv[sys.argv.index("--port") + 1] if "--port" in sys.argv else ""
-zone = {"zagros-dev": "netbird.zagros-dev.example", "zagros": "netbird.zagros.example"}[env]
+zone = site_dns_zone(env)
+op_acct = op_account()  # resolved before anything is created
 portal = f"https://portal.{env}.{zone}"
 onboard = f"https://onboard.{env}.{zone}"
 SSH = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15",
@@ -81,7 +115,7 @@ tmpl = json.dumps({"title": f"{env}-acceptance-sponsor", "category": "API_CREDEN
 rfd, wfd = os.pipe()
 os.write(wfd, tmpl.encode()); os.close(wfd)
 envp = {k: v for k, v in os.environ.items() if k != "GCP_HEIMDALL_OP_ITEM"}
-envp["OP_ACCOUNT"] = "example.1password.com"
+envp["OP_ACCOUNT"] = op_acct
 op = subprocess.run(["op", "item", "create", "--vault", "goat-site-services",
                      "--template", f"/dev/fd/{rfd}", "--format", "json"],
                     pass_fds=(rfd,), capture_output=True, text=True, env=envp)

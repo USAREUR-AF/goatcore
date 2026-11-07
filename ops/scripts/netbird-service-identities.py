@@ -160,8 +160,12 @@ def expand(template, goatnet):
     return template.replace("{goatnet}", goatnet).replace("{SITE}", site_upper(goatnet))
 
 
-def service_user_name(ident, goatnet):
-    return (ident.get("declared_names") or {}).get(goatnet) or expand(ident["service_user"], goatnet)
+def service_user_name(key, ident, goatnet, gvars):
+    """The goatnet's own name for the identity's service user: its group_vars
+    netbird_service_user_names[<identity>], then the registry's declared_names
+    for the goatnet, then the registry's service_user pattern."""
+    own = (gvars.get("netbird_service_user_names") or {}).get(key)
+    return own or (ident.get("declared_names") or {}).get(goatnet) or expand(ident["service_user"], goatnet)
 
 
 # ---------------------------------------------------------------------------
@@ -301,6 +305,13 @@ def verify_owner(nb, token, expected_user, users):
 # 1Password
 # ---------------------------------------------------------------------------
 
+def onepassword_account(spec):
+    """The 1Password account the item lives in: the one the secrets posture pins
+    (OP_ACCOUNT, else `secrets: op_account:` in goatbuilder.yaml, ADR 1204),
+    else the registry's onepassword.account."""
+    return posture().op_account(str(REPO)) or (spec.get("onepassword") or {}).get("account", "")
+
+
 def store_in_1password(spec, ident, goatnet, value):
     """Make the registry's 1Password item hold `value`. Writes go through a JSON
     template file (0600, deleted after) so the secret never appears on a command
@@ -311,7 +322,7 @@ def store_in_1password(spec, ident, goatnet, value):
     if not where or not op:
         return True, "no 1Password item declared"
     item, field = expand(where["item"], goatnet), where["field"]
-    base = ["op", "--account", op["account"]]
+    base = ["op", "--account", onepassword_account(spec)]
     got = subprocess.run(base + ["item", "get", item, "--vault", op["vault"], "--format", "json"],
                          capture_output=True, text=True)
     if got.returncode == 0:
@@ -395,7 +406,7 @@ def main():
         required, why = requirement(ident, gvars)
         rows.append({"key": key, "ident": ident, "required": required, "why": why,
                      "env": expand(ident["token_env"], a.goatnet),
-                     "user": service_user_name(ident, a.goatnet)})
+                     "user": service_user_name(key, ident, a.goatnet, gvars)})
     values = envrc_values([r["env"] for r in rows], envrc_dir)
 
     boot = next(r for r in rows if r["key"] == bootstrap[0])

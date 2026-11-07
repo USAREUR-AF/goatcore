@@ -115,7 +115,10 @@ printf '%s\n' "\$out" | grep -q 'yq is required' || { printf '%s\n' "\$out" | ta
 pass "negative control: with yq absent the render fails and names yq"
 python3 ops/scripts/goatlite-render.py --site cleanroom || fail "the render failed with the declared toolchain"
 [ -s ops/enrollment/ca/cleanroom/root-cert.pem ] || fail "no root certificate rendered"
-[ "\$(stat -c %a "\$HOME/.goat/state/cleanroom-ca/ca.key.age")" = 600 ] || fail "the CA key is not mode 0600"
+# The state directory the render keeps the CA key in: this checkout's
+# deploy.state_dir (ops/goatbuilder/project.yml), else ~/.goat/state.
+state_dir="\$(python3 ops/scripts/goatnet-facts.py deploy state_dir 2>/dev/null || true)"; state_dir="\${state_dir:-\$HOME/.goat/state}"
+[ "\$(stat -c %a "\$state_dir/cleanroom-ca/ca.key.age")" = 600 ] || fail "the CA key is not mode 0600"
 [ "\$(stat -c %a "\$HOME/.config/age/keys.txt")" = 600 ] || fail "the age identity is not mode 0600"
 pass "the render minted the goatlite's CA with the declared toolchain (key and identity 0600)"
 

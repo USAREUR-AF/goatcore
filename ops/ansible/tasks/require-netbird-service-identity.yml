@@ -43,7 +43,7 @@
       - nsi_token | default('') | length > 0
     fail_msg: >-
       {{ role_name }} needs the NetBird service identity '{{ nsi_identity }}'
-      (service user {{ (_nsi.declared_names | default({})).get(_nsi_goatnet, _nsi.service_user | replace('{goatnet}', _nsi_goatnet)) }})
+      (service user {{ (netbird_service_user_names | default({})).get(nsi_identity) or (_nsi.declared_names | default({})).get(_nsi_goatnet, _nsi.service_user | replace('{goatnet}', _nsi_goatnet)) }})
       and {{ _nsi_env }} is empty in this shell.
       {{ _nsi.without_it | default('') }}
       {% if _nsi.bootstrap | default(false) %}This is the bootstrap identity: mint

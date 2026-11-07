@@ -174,6 +174,14 @@ def deploy_history(clone, hosts):
           "# HERMETIC connection map (ops/e2e/overlay.py).\n" + yaml.safe_dump({"service": "e2e-canary", "hosts": rows, "history": []}, sort_keys=False))
 
 
+def state_dir(clone, env):
+    """Where rc.sh looks for the CA keys under the harness's HOME: the clone's
+    deploy.state_dir (ops/goatbuilder/project.yml, which gen-config.py carries
+    into goatbuilder.yaml), else ~/.goat/state, the builder's rule."""
+    r = sh([sys.executable, "ops/scripts/goatnet-facts.py", "deploy", "state_dir"], cwd=clone, env=env, check=False)
+    return r.stdout.strip() if r.returncode == 0 and r.stdout.strip() else os.path.join(env["HOME"], ".goat/state")
+
+
 def ca(clone, home, env):
     """A throwaway dev CA: ca-init writes the age-encrypted key under $HOME the way rc.sh expects it, and the SPKI into the clone."""
     ident = os.path.join(home, ".config/age/keys.txt")
@@ -181,7 +189,7 @@ def ca(clone, home, env):
     if not os.path.exists(ident):
         sh(["age-keygen", "-o", ident], cwd=clone, env=env)
     pub = [l.split(":", 1)[1].strip() for l in read_text(ident).splitlines(True) if l.lower().startswith("# public key")][0]
-    keydir = os.path.join(home, ".goat/state/e2e-ca")
+    keydir = os.path.join(state_dir(clone, env), "e2e-ca")
     os.makedirs(keydir, exist_ok=True)
     key = os.path.join(keydir, "ca.key.age")
     pem = os.path.join(clone, "ops/enrollment/public-keys", f"{CA_ID}.pem")
