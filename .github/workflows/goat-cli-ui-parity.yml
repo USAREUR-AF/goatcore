@@ -1,0 +1,82 @@
+name: goat-cli-ui-parity
+
+# A new operator-facing CLI verb cannot ship without a row in the CLI-to-UI
+# parity matrix (docs/design/goat-cli-ui-parity.md) — the last open acceptance
+# criterion of goat#239. The matrix is the audit that closed the CLI/UI drift;
+# without this gate it silently rots the next time a verb lands with no row.
+#
+# How it "sees" a new verb: the command tree is defined in the clap derive in
+# crates/goat-cli, so a PR that adds a verb edits that source. This workflow
+# builds goat from the PR's own source and runs `goat docs --markdown` (walked
+# from the live clap tree), so a newly-added verb is enumerated for free — then
+# ops/ci/check-cli-ui-parity.py fails the PR if it has no matrix row.
+#
+# Scoped via `paths:` — it only needs to run when the CLI surface or the matrix
+# (or this guard) changes. Building goat-cli is the cost, so we do not pay it on
+# unrelated PRs.
+#
+# Rollback: rm this file and ops/ci/check-cli-ui-parity.py. The guard is
+# additive — its absence does not break anything; its presence keeps the matrix
+# honest.
+
+on:
+  pull_request:
+    paths:
+      - 'crates/goat-cli/**'
+      - 'crates/panoscope-core/**'
+      - 'crates/Cargo.toml'
+      - 'crates/Cargo.lock'
+      - 'docs/design/goat-cli-ui-parity.md'
+      - 'ops/ci/check-cli-ui-parity.py'
+      - 'ops/ci/test-cli-ui-parity.py'
+      - '.github/workflows/goat-cli-ui-parity.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  parity:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Test the parity guard's failure paths and valid inventory
+        run: python3 ops/ci/test-cli-ui-parity.py
+
+      - name: Install Rust toolchain (stable)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry + git deps
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: cargo-cli-ui-parity-${{ hashFiles('crates/Cargo.lock') }}
+          restore-keys: |
+            cargo-cli-ui-parity-
+
+      - name: Cache cargo build target
+        uses: actions/cache@v4
+        with:
+          path: crates/target
+          key: target-cli-ui-parity-${{ hashFiles('crates/Cargo.lock') }}
+          restore-keys: |
+            target-cli-ui-parity-
+
+      - name: Build goat (for its live command tree)
+        working-directory: crates
+        run: cargo build --locked -p goat-cli
+
+      - name: Every operator-facing CLI verb has a matrix row
+        env:
+          # Enumerate from the binary we just built off this PR's source, not
+          # from any goat on PATH.
+          GOAT_BIN: crates/target/debug/goat
+        run: ./ops/ci/check-cli-ui-parity.py --report

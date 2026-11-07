@@ -1,0 +1,286 @@
+# goatbuilder — the build/release CLI (ADR 1198). Same gates as goat-cli-pr.yml:
+# check, clippy with warnings denied, test. The crate embeds the config schema
+# from ops/goatbuilder/schema/, so a schema change rebuilds and re-tests it.
+#
+# This repository declares no deployment (no ops/goatbuilder/goatbuilder.yaml,
+# no goatnet in ops/pins, no live ladder rung), so the gates here are the ones
+# that run on the code, its fixtures and the mock: unit, golden and flow tests,
+# the parity gates that read only this tree, the standup and teardown plans on
+# fixtures, and the tutorials' rehearsals. The gates that read a declared
+# deployment (validate/doctor, the deploy, release, verify, fresh-source, pins,
+# promote and standup parity gates against its goatnets, the live-site input
+# scan, the end-state check of its sites, the image pre-pull test, join-node on
+# its sites, the catalog-wide presence-flag check) run in the CI of the
+# repository that declares it, on its assembled tree.
+#
+# Rollback: rm this file.
+
+name: goatbuilder-pr
+
+on:
+  pull_request:
+    paths:
+      - 'crates/goatbuilder/**'
+      - 'crates/Cargo.toml'
+      - 'crates/Cargo.lock'
+      - 'ops/goatbuilder/schema/**'
+      - 'ops/goatbuilder/goatbuilder.yaml'
+      - 'ops/goatbuilder/parity-*.sh'
+      - 'ops/pins/**'
+      - 'ops/release/graduate.py'
+      - 'ops/release/ladder.yaml'
+      - 'ops/consistency/python/**'
+      - 'ops/scripts/rc.sh'
+      - 'ops/scripts/fastlane.sh'
+      - 'ops/scripts/pr-land.sh'
+      - '.github/workflows/goatbuilder-pr.yml'
+      - 'crates/goat-errors/**'
+      - 'crates/goat-fun/**'
+      - 'crates/goat-selfupdate/**'
+      # The committed command reference (docs::tests regenerates it from the
+      # clap tree and refuses a diff) — a hand edit to it must run the gate too.
+      - 'docs/reference/goatbuilder/command-reference.md'
+      - 'ops/scripts/translate-ftl.py'
+      # What check-goatbuilder-portable.py scans beyond the crate.
+      - 'ops/ci/check-goatbuilder-portable.py'
+      - 'ops/errors/catalog.yaml'
+      - 'docs/reference/goatbuilder/**'
+      # The scripts avenue (ADR 1201): a change to a script, a parity gate or the
+      # tools both avenues call must run the gates too, or "both avenues identical"
+      # is only ever checked when the binary changes.
+      - 'ops/goatbuilder/**'
+      - 'ops/scripts/deploy-component.sh'
+      - 'ops/scripts/rollback.sh'
+      - 'ops/scripts/goat-standup.sh'
+      - 'ops/scripts/goat-teardown.sh'
+      - 'ops/scripts/goatnet-endstate.sh'
+      - 'ops/ci/check-role-honours-presence-flag.py'
+      - 'ops/scripts/envrc-var.sh'
+      - 'ops/scripts/standup-required-inputs.py'
+      - 'ops/scripts/test_standup_required_inputs.py'
+      - 'ops/scripts/standup-images.py'
+      - 'ops/scripts/standup-image-pull.sh'
+      - 'ops/scripts/test_standup_image_pull.py'
+      - 'ops/scripts/standup-mesh-record.py'
+      - 'ops/scripts/test_standup_mesh_record.py'
+      - 'ops/scripts/node-seed.py'
+      - 'ops/scripts/test_node_seed.py'
+      - 'ops/scripts/mint-site-certs.sh'
+      - 'ops/goatnets/cross-env-apply.sh'
+      - 'ops/scripts/goatlite-render.py'
+      - 'ops/secrets/off-when-empty.txt'
+      - 'ops/ansible/**'
+      - 'ops/errors/**'
+      - 'ops/scripts/peering-standup.sh'
+      - 'ops/scripts/deploy-secrets-needed.py'
+      - 'ops/scripts/ansible-preflight.sh'
+      - 'ops/scripts/fresh-source.sh'
+      - 'ops/scripts/lib/source_of_record.py'
+      - 'ops/ci/test-source-of-record.sh'
+      - 'ops/scripts/env-door.sh'
+      - 'ops/scripts/generate-door-inventory.py'
+      - 'ops/scripts/standup-phase-run'
+      - 'ops/secrets/posture.py'
+      - 'tests/test_standup_phase_run.py'
+      - 'ops/scripts/goatlite-render.py'
+      - 'tests/test_goatlite_render_*.py'
+      - 'ops/ci/check-phase-numbering.sh'
+      - 'ops/release/**'
+      - 'ops/validation/**'
+      # The goatnet tutorials (ADR 1202): their rehearsals run as written.
+      - 'docs/tutorials/**'
+      - 'ops/tutorials/**'
+      # The unit suite checks that every play's templated hosts: line resolves
+      # to an extra-var target mode (the F-587 shape), so a play change runs it.
+      - 'ops/ansible/*.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: goatbuilder-pr-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: crates
+
+jobs:
+  host:
+    name: check + clippy + test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain (stable + clippy)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: Cache cargo registry + git deps
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: cargo-goatbuilder-pr-${{ hashFiles('crates/Cargo.lock') }}
+          restore-keys: |
+            cargo-goatbuilder-pr-
+      - name: Cache cargo build target
+        uses: actions/cache@v4
+        with:
+          path: crates/target
+          key: target-goatbuilder-pr-${{ hashFiles('crates/Cargo.lock') }}
+          restore-keys: |
+            target-goatbuilder-pr-
+      - name: goatbuilder ships no environment or programme name
+        working-directory: ${{ github.workspace }}
+        run: |
+          python3 ops/ci/check-goatbuilder-portable.py --self-test
+          python3 ops/ci/check-goatbuilder-portable.py
+      - name: cargo check
+        run: cargo check -p goatbuilder --all-targets
+      - name: cargo clippy (deny warnings)
+        run: cargo clippy -p goatbuilder -p goat-fun -p goat-selfupdate --all-targets -- -D warnings
+      - name: Install the Python the pins and promote flows render with
+        run: pip install --quiet pyyaml jsonschema
+      - name: cargo test (unit, golden commands, tutor; every test target but the flows)
+        run: cargo test -p goatbuilder --bins --test cli_golden --test tutor --test bound_not_a_tty --test update
+      - name: cargo test -p goat-fun (the shared hidden runner, goat and goatbuilder bound)
+        run: cargo test -p goat-fun -p goat-selfupdate
+      - name: cargo test (whole-flow integration; a skipped flow fails the job)
+        run: |
+          set -o pipefail
+          cargo test -p goatbuilder --test flows -- --nocapture 2>&1 | tee /tmp/flows.log
+          if grep -q '^skipped:' /tmp/flows.log; then echo "::error::a flow skipped for missing Python deps"; exit 1; fi
+      - name: Every message has a translation in every shipped language
+        working-directory: .
+        run: |
+          python3 ops/scripts/translate-ftl.py --self-test
+          python3 ops/scripts/translate-ftl.py --check --catalog goatbuilder --catalog goat-errors || {
+            echo "::error::A message in English has no translation in some shipped language (docs/design/goat-cli-i18n.md §CLI catalog currency)."
+            echo "::error::Fill it: ops/scripts/translate-ftl.py --apply --catalog goatbuilder --catalog goat-errors   (needs ANTHROPIC_API_KEY; or dispatch docs-translation-gate.yml with apply=true)"
+            exit 1
+          }
+      - name: Parity gate — `rollback --list/--status` read exactly what rollback.sh reads
+        working-directory: ${{ github.workspace }}
+        timeout-minutes: 8   # an apt mirror stall has no timeout of its own
+        run: |
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 install -y -qq jq >/dev/null
+          pip install --quiet yq   # the jq-wrapping yq the script side reads the in-repo ledger with
+          # No host is reachable from a runner, and the gate pins that no-reach path:
+          # an ssh that refuses at once keeps every one of the 81 components from
+          # waiting out a connect timeout per host on the script side.
+          mkdir -p "$RUNNER_TEMP/noreach" && printf '#!/bin/sh\nexit 255\n' > "$RUNNER_TEMP/noreach/ssh" && chmod +x "$RUNNER_TEMP/noreach/ssh"
+          PATH="$RUNNER_TEMP/noreach:$PATH" ops/goatbuilder/parity-rollback.sh crates/target/debug/goatbuilder   # every component with a deploy-history.yml
+          # Again under mikefarah's yq, the one the script tells an operator to
+          # install (brew install yq): its @tsv differs from the Python yq's, and
+          # a multi-line summary split into several numbered rows under it (#2066).
+          mkdir -p "$RUNNER_TEMP/myq"
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/myq/yq" https://github.com/mikefarah/yq/releases/download/v4.44.3/yq_linux_amd64
+          echo "a2c097180dd884a8d50c956ee16a9cec070f30a7947cf4ebf87d5f36213e9ed7  $RUNNER_TEMP/myq/yq" | sha256sum -c --quiet
+          chmod +x "$RUNNER_TEMP/myq/yq"
+          PATH="$RUNNER_TEMP/noreach:$RUNNER_TEMP/myq:$PATH" ops/goatbuilder/parity-rollback.sh crates/target/debug/goatbuilder
+      - name: Parity gate — `history` lists exactly what rollback.sh --list lists
+        working-directory: ${{ github.workspace }}
+        timeout-minutes: 8
+        env:
+          GOAT_MESH_PROBE: "0"
+          GOAT_DOOR_OPEN: "0"   # decide the door, do not open it: nothing is reachable here
+        run: PATH="$RUNNER_TEMP/noreach:$PATH" ops/goatbuilder/parity-history.sh crates/target/debug/goatbuilder zagros_dev
+      - name: Parity gate — both avenues refuse an incomplete ledger verification on the real path (#1545)
+        working-directory: ${{ github.workspace }}
+        run: ops/goatbuilder/parity-verify-refusals.sh crates/target/debug/goatbuilder
+      - name: End state — the model's self-test, both avenues grade the fixtures alike (ADR 1206)
+        working-directory: ${{ github.workspace }}
+        run: |
+          python3 ops/goatbuilder/endstate/endstate.py --self-test
+          ops/goatbuilder/parity-endstate.sh crates/target/debug/goatbuilder
+          # a service a site declares off is never deployed: the checker's own cases here; the
+          # catalog-wide run needs the roles goatstuff carries, so it runs on an assembled tree
+          python3 ops/ci/check-role-honours-presence-flag.py --self-test
+      - name: Fresh source on an assembled tree — goatcore at goatcore.ref plus an overlay is judged against that pair (C3)
+        working-directory: ${{ github.workspace }}
+        run: ops/ci/test-source-of-record.sh
+      - name: Parity gate — `fastlane --dry-run` checks exactly what fastlane.sh checks
+        working-directory: ${{ github.workspace }}
+        env:
+          GH_TOKEN: ${{ github.token }}   # cannot read the GHCR packages API; both sides refuse at the digest step with the same words
+        run: ops/goatbuilder/parity-fastlane.sh crates/target/debug/goatbuilder microscope sha-b7a1621
+      - name: Every input a standup reaches is set — the scan finds the fixture's gaps in one pass
+        working-directory: ${{ github.workspace }}
+        run: python3 ops/scripts/test_standup_required_inputs.py
+      - name: Each phase runs through the shared runner; a goatlite's phase 1 creates its own secrets store (LP-007)
+        working-directory: ${{ github.workspace }}
+        run: python3 tests/test_standup_phase_run.py
+      - name: goatlite's render — the LAN surface, and lite.internet's internet-correct values (goatlite.md §6)
+        working-directory: ${{ github.workspace }}
+        run: python3 -W error::ResourceWarning -m unittest discover -s tests -p 'test_goatlite_render_*.py' -v
+      - name: Phase 8 records the mesh IPs where the router certificate reads them, and re-mints only on a change
+        working-directory: ${{ github.workspace }}
+        run: python3 ops/scripts/test_standup_mesh_record.py
+      - name: The autoinstall seed per node class carries the asserted LUKS layout, the role package lists and key-only access
+        working-directory: ${{ github.workspace }}
+        run: python3 ops/scripts/test_node_seed.py
+      - name: Phase 12's dependency graph is valid, and both avenues run it in waves
+        working-directory: ${{ github.workspace }}
+        run: |
+          python3 ops/goatbuilder/standup-dag.py --check
+          ops/goatbuilder/test-standup-waves.sh
+      - name: Parity gate — `teardown --dry-run` plans exactly the teardown goat-teardown.sh plans
+        working-directory: ${{ github.workspace }}
+        env:
+          GOAT_MESH_PROBE: "0"
+        run: ops/goatbuilder/parity-teardown.sh crates/target/debug/goatbuilder zagros_prod:zagros-prod zagros:uk zagros_dev:zagros-dev
+      - name: Parity gate — `federate --dry-run` plans exactly the phases peering-standup.sh plans
+        working-directory: ${{ github.workspace }}
+        run: ops/goatbuilder/parity-federate.sh crates/target/debug/goatbuilder hello-ally
+      - name: Every operator-facing phase sequence is whole numbers from 1, no gaps, no letters
+        working-directory: ${{ github.workspace }}
+        env:
+          GOAT_MESH_PROBE: "0"
+        run: ops/ci/check-phase-numbering.sh crates/target/debug/goatbuilder
+      - name: The standup rehearsal converges every class of the fixture, in phase order, on a copy
+        working-directory: ${{ github.workspace }}
+        run: |
+          cp -R ops/goatbuilder/fixtures/standup "$RUNNER_TEMP/standup-fixture"
+          crates/target/debug/goatbuilder --mock "$RUNNER_TEMP/standup-fixture" standup dev --site alpha --ack "CI" --yes
+          crates/target/debug/goatbuilder --mock "$RUNNER_TEMP/standup-fixture" status --env dev
+      - name: The goatnet tutorials' rehearsals run as written and match the worked example's checkpoints
+        working-directory: ${{ github.workspace }}
+        run: ops/tutorials/check.sh crates/target/debug/goatbuilder
+
+  # goatbuilder ships darwin binaries (goatbuilder-release.yml), so its unit,
+  # golden and flow tests run on macOS too. No Windows job: goatbuilder drives
+  # Ansible and aws-vault, neither of which runs natively there, and it is not
+  # shipped for Windows (goat-cli-pr.yml's windows job has no counterpart here).
+  macos:
+    name: macOS test (unit, golden, flows)
+    runs-on: macos-15
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain (stable)
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo registry + git deps
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: cargo-goatbuilder-pr-macos-${{ hashFiles('crates/Cargo.lock') }}
+          restore-keys: |
+            cargo-goatbuilder-pr-macos-
+      - name: Cache cargo build target
+        uses: actions/cache@v4
+        with:
+          path: crates/target
+          key: target-goatbuilder-pr-macos-${{ hashFiles('crates/Cargo.lock') }}
+          restore-keys: |
+            target-goatbuilder-pr-macos-
+      - name: Install the Python the pins and promote flows render with
+        run: python3 -m pip install --quiet --break-system-packages pyyaml jsonschema || python3 -m pip install --quiet pyyaml jsonschema
+      - name: cargo test
+        run: cargo test -p goatbuilder
+

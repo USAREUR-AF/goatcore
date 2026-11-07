@@ -1,0 +1,164 @@
+name: ory-soak-smoke
+
+# ADR 1008 smoke-tier soak gate. Re-runs both Ory soak drivers
+# (single-node + 2-node Spock-replicated) at 5-minute duration on every
+# PR / push that touches soak drivers, the Ory Ansible role, the
+# postgres-spock image, or this workflow. Catches driver-itself
+# regressions before the validation-tier 2 h soak runs locally.
+#
+# Why 5 minutes: validation tier (2 h) is too long for the PR loop;
+# 5 minutes is enough to exercise bring-up + a handful of churn ticks
+# + the summarizer's verdict logic. The validation tier still runs
+# locally (or via cron — TBD) and feeds the post-soak decision review.
+#
+# Triggers:
+#   - PR / push touching the soak drivers, the Ory role, the postgres-spock
+#     Dockerfile / init, or this workflow.
+#   - Pin-regression hook: changes to the Kratos / Hydra / postgres-spock
+#     image references in any file under ops/.
+#   - Weekly Saturday run for upstream Ory image drift.
+#   - Manual dispatch with override duration.
+
+on:
+  # push: on main REMOVED — this workflow is a guard, not a publisher. It
+  # already gates the pull request, and a squash merge puts the reviewed diff
+  # on main unchanged, so re-running it there re-verifies a commit whose answer
+  # is known. 98 of 119 workflows did that; measured at 4,787 runs in
+  # one day, roughly half of them this shape.
+  #
+  # An earlier draft of this comment also said "main is protected from
+  # force-push". IT IS NOT — this plan cannot have branch protection at all
+  # (the API answers "Upgrade to GitHub Pro"). A force-push to main therefore
+  # bypasses this guard entirely. That is a real gap and it is 's, not
+  # something a paths filter or a trigger change can close.
+  # Publishers keep push: on purpose — the merge commit is the artifact.
+  pull_request:
+    paths:
+      - 'ops/ansible/roles/ory/**'
+      - 'ops/compose/mgmt-host/docker-compose.ory.yml'
+      - 'ops/postgres/spock/Dockerfile'
+      - 'ops/postgres/spock/init/**'
+      - '.github/workflows/ory-soak-smoke.yml'
+  schedule:
+    # Saturday 04:17 UTC — after mgmt-host-bootstrap-cron at 03:17 UTC,
+    # before any human-attended weekend work.
+    - cron: '17 4 * * 6'
+  workflow_dispatch:
+    inputs:
+      soak_duration:
+        description: 'SOAK_DURATION override (e.g. 5m, 30m, 2h)'
+        required: false
+        default: '5m'
+
+env:
+  SOAK_DURATION: ${{ inputs.soak_duration || '5m' }}
+
+# Supersede in-flight runs for the same ref. A push during review used to
+# leave the previous run going to completion, so a branch pushed three
+# times paid three times for an answer only the last one needed. Keyed on
+# the workflow plus the ref, and NEVER cancels on main — a merge-commit run
+# is the one whose result is recorded.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  build-postgres-spock-image:
+    name: build postgres-spock-test:contribs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build postgres-spock-test:contribs
+        run: docker build -t postgres-spock-test:contribs ops/postgres/spock
+      - name: Save image to artifact
+        run: docker save postgres-spock-test:contribs -o /tmp/postgres-spock-test.tar
+      - uses: actions/upload-artifact@v4
+        with:
+          name: postgres-spock-test
+          path: /tmp/postgres-spock-test.tar
+          retention-days: 1
+
+  single-node-soak:
+    name: single-node soak (smoke tier)
+    runs-on: ubuntu-24.04
+    needs: build-postgres-spock-image
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4.3.0
+        with:
+          name: postgres-spock-test
+          path: /tmp
+      - run: docker load -i /tmp/postgres-spock-test.tar
+      - name: Run single-node soak (SOAK_DURATION=${{ env.SOAK_DURATION }})
+        run: bash ops/ansible/roles/ory/tests/soak/run-single-node.sh
+        env:
+          SOAK_DURATION: ${{ env.SOAK_DURATION }}
+      - name: Summarize evidence + assert minimum tick count
+        # Smoke tier asserts driver-itself correctness (bring-up worked,
+        # JSONL parses, summarizer runs) — NOT that the verdict is PASS.
+        # Verdict signal is the validation tier's job; smoke tier failing
+        # on verdict-FAIL would mask "Spock-replication-of-kratos doesn't
+        # work" as "CI is broken" and the post-soak decision review would
+        # never see the evidence. So we only fail on driver crash + zero-tick.
+        run: |
+          set -euo pipefail
+          # Pick the freshest evidence file by mtime — `ls -t` sorts
+          # newest-first. Without `-t`, alphabetic sort + committed
+          # historical evidence files (e.g. 2026-04-25-...) cause CI
+          # to summarize stale historical evidence instead of today's
+          # run. F-087 surfaced + fixed.
+          EVIDENCE=$(find docs/reports -name '*-ory-soak-evidence.jsonl' -printf '%T@ %p\n' | sort -rn | head -1 | cut -d' ' -f2-)
+          echo "::notice::summarizing $EVIDENCE"
+          python3 ops/ansible/roles/ory/tests/soak/summarize.py "$EVIDENCE"
+          TICKS=$(python3 ops/ansible/roles/ory/tests/soak/summarize.py --json "$EVIDENCE" | python3 -c "import sys,json; print(json.load(sys.stdin)['ticks'])")
+          echo "ticks: $TICKS"
+          [ "$TICKS" -ge 3 ] || { echo "::error::soak produced fewer than 3 ticks — likely a driver regression"; exit 1; }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: single-node-soak-evidence
+          path: docs/reports/*-ory-soak-evidence.jsonl
+
+  twonode-spock-soak:
+    name: 2-node Spock-replicated soak (smoke tier)
+    runs-on: ubuntu-24.04
+    needs: build-postgres-spock-image
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4.3.0
+        with:
+          name: postgres-spock-test
+          path: /tmp
+      - run: docker load -i /tmp/postgres-spock-test.tar
+      - name: Run 2-node Spock-replicated soak (SOAK_DURATION=${{ env.SOAK_DURATION }})
+        run: bash ops/ansible/roles/ory/tests/soak/run-2node-spock.sh
+        env:
+          SOAK_DURATION: ${{ env.SOAK_DURATION }}
+      - name: Summarize evidence + assert minimum tick count
+        # Smoke tier asserts driver-itself correctness (bring-up worked,
+        # JSONL parses, summarizer runs, ≥3 ticks captured) — NOT that
+        # the verdict is PASS. The decision-review-grade verdict comes
+        # from the validation tier (2 h+) per ADR 1008. A 5-minute soak
+        # is too short to converge on the 99% green-rate threshold for
+        # Spock A→B replication of Kratos rows; smoke tier failing on
+        # verdict-FAIL would mask "Spock-replication-of-kratos doesn't
+        # converge in 5 min" as "CI is broken" and would never let the
+        # validation tier surface a real regression. Mirrors single-node
+        # job's posture for consistency.
+        run: |
+          set -euo pipefail
+          # Pick freshest by mtime.
+          EVIDENCE=$(find docs/reports -name '*-ory-spock-replicated-soak-evidence.jsonl' -printf '%T@ %p\n' | sort -rn | head -1 | cut -d' ' -f2-)
+          echo "::notice::summarizing $EVIDENCE"
+          python3 ops/ansible/roles/ory/tests/soak/summarize.py "$EVIDENCE"
+          TICKS=$(python3 ops/ansible/roles/ory/tests/soak/summarize.py --json "$EVIDENCE" | python3 -c "import sys,json; print(json.load(sys.stdin)['ticks'])")
+          echo "ticks: $TICKS"
+          [ "$TICKS" -ge 3 ] || { echo "::error::soak produced fewer than 3 ticks — likely a driver regression"; exit 1; }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: twonode-spock-soak-evidence
+          path: docs/reports/*-ory-spock-replicated-soak-evidence.jsonl

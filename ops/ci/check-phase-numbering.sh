@@ -124,8 +124,15 @@ for c in json.load(sys.stdin)["checks"]:
     if c["name"] == "phase": print(c["detail"])'; }
 # A peering must be declared (C1), and the repository's own config declares none.
 "$BIN" -C "$REPO" -o json --mock "$REPO/ops/goatbuilder/fixtures/goatnet-from-scratch/03-boundary-node" federate hello-ally --work "$work" --dry-run 2>/dev/null | phase_rows | check "goatbuilder federate --dry-run" 1 || fail=1
-"$BIN" -C "$REPO" -o json join-node zagros --site uk --node phasecheck-1 --class core --dry-run 2>/dev/null | phase_rows | check "goatbuilder join-node --dry-run (joiner core)" 1 || fail=1
-"$BIN" -C "$REPO" -o json join-node zagros_prod --site zagros-prod --node phasecheck-1 --class breakglass --dry-run 2>/dev/null | phase_rows | check "goatbuilder join-node --dry-run (founder rescue)" 1 || fail=1
+# join-node plans against a declared deployment's sites. A checkout that declares
+# none (goatcore on its own: no ops/goatbuilder/goatbuilder.yaml) has no site to
+# join; the deployment's repository runs these two against its own sites.
+if [ -f "$REPO/ops/goatbuilder/goatbuilder.yaml" ]; then
+  "$BIN" -C "$REPO" -o json join-node zagros --site uk --node phasecheck-1 --class core --dry-run 2>/dev/null | phase_rows | check "goatbuilder join-node --dry-run (joiner core)" 1 || fail=1
+  "$BIN" -C "$REPO" -o json join-node zagros_prod --site zagros-prod --node phasecheck-1 --class breakglass --dry-run 2>/dev/null | phase_rows | check "goatbuilder join-node --dry-run (founder rescue)" 1 || fail=1
+else
+  echo "skip goatbuilder join-node --dry-run: this checkout declares no deployment (ops/goatbuilder/goatbuilder.yaml)"
+fi
 
 # A lettered phase id written anywhere a driver prints a phase header.
 if grep -nE '=== Phase [0-9]+[a-z]' "$REPO/ops/scripts/goat-standup.sh" "$REPO/ops/scripts/peering-standup.sh" "$REPO"/crates/goatbuilder/src/*.rs; then

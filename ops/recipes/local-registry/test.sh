@@ -45,7 +45,7 @@ fi
 curl -fsS "http://$ADDR/v2/" >/dev/null || fail "no registry answers on $ADDR"
 pass "a registry answers on http://$ADDR/v2/ ($mode)"
 
-out="$("$LR" mirror --to "$TO" --only signal-server --only grant-keyd --insecure)" || { echo "$out"; fail "mirror failed"; }
+out="$("$LR" mirror --to "$TO" --only signal-server --only goat-admit-audit --insecure)" || { echo "$out"; fail "mirror failed"; }
 echo "$out" | sed 's/^/      /'
 [ "$(echo "$out" | grep -c '^ok ')" = 2 ] || fail "mirror did not report two images served at their digests"
 pass "two goat images mirrored, each served at its pinned digest"
@@ -57,7 +57,7 @@ echo "$out" | grep -q "postgres-spock" || fail "the failed verify does not name 
 pass "negative control: verify of an image not mirrored fails and names it"
 
 rendered="$(python3 "$REPO/ops/scripts/standup-images.py" --preset lite --image-registry "$TO")"
-for name in signal-server grant-keyd; do
+for name in signal-server goat-admit-audit; do
   pin="$(printf '%s\n' "$rendered" | grep "^${TO}/${name}[:@]" || true)"
   [ -n "$pin" ] || fail "the lite pins rendered against $TO carry no $name"
   src="$("$LR" list --to "$TO" --only "$name" | cut -d' ' -f2)"

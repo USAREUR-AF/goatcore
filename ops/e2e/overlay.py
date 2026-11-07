@@ -97,7 +97,19 @@ def fleet_pins(canary_ref, secret_ref):
 
 def ladder(clone):
     p = os.path.join(clone, "ops/release/ladder.yaml")
-    d = yaml.safe_load(read_text(p))
+    d = yaml.safe_load(read_text(p)) or {}
+    if not d.get("rungs"):
+        # A checkout that declares no deployment ships an empty ladder; the
+        # hermetic one is the three-rung ladder with the gates a deployment
+        # declares (docs/design/release-graduation.md).
+        d["rungs"] = [{"name": n, "goatnet": g, "status": "live", "role": f"hermetic {n} rung"} for n, g in RUNG.items()]
+        d["hops"] = [
+            {"from": "dev", "to": "preprod", "status": "live",
+             "gates": [{"id": "candidate-record"}, {"id": "validation-evidence"}]},
+            {"from": "preprod", "to": "prod", "status": "live",
+             "gates": [{"id": "candidate-record"}, {"id": "soak", "min_days": 1}, {"id": "convergence-evidence"},
+                       {"id": "validation-evidence"}, {"id": "operator-ack"}]},
+        ]
     for r in d.get("rungs") or []:
         if r.get("name") in RUNG:
             r["goatnet"] = RUNG[r["name"]]
@@ -139,8 +151,10 @@ def inventory(clone, hosts, ssh_key):
 def runners(clone):
     p = os.path.join(clone, "ops/validation/goatnet-runners.yaml")
     d = yaml.safe_load(read_text(p))
+    if not d.get("goatnets"):   # a checkout that declares no goatnet lists none
+        d["goatnets"] = {}
     for g in GOATNETS:
-        d.setdefault("goatnets", {})[g] = {"name": g.replace("_", "-"), "goat_via": "", "intake_resolve": "",
+        d["goatnets"][g] = {"name": g.replace("_", "-"), "goat_via": "", "intake_resolve": "",
                                            "values": "ops/validation/values-zagros-dev.yaml"}
     write(p, "# HERMETIC overlay (ops/e2e/overlay.py): runner rows for the hermetic goatnets.\n" + yaml.safe_dump(d, sort_keys=False, width=120))
 
@@ -148,7 +162,9 @@ def runners(clone):
 def flow_map(clone):
     p = os.path.join(clone, "ops/validation/flow-map.yaml")
     d = yaml.safe_load(read_text(p))
-    d.setdefault("flows", []).append({
+    if not d.get("flows"):
+        d["flows"] = []
+    d["flows"].append({
         "id": "e2e-canary-secret",
         "what": "the secret-bearing hermetic canary; mapped to a browser row so the release driver's toolchain preflight is exercised",
         "paths": ["ops/e2e/canary/**"],
@@ -184,7 +200,9 @@ def ca(clone, home, env):
     keydir = os.path.join(home, ".goat/state/e2e-ca")
     os.makedirs(keydir, exist_ok=True)
     key = os.path.join(keydir, "ca.key.age")
-    pem = os.path.join(clone, "ops/enrollment/public-keys", f"{CA_ID}.pem")
+    pubdir = os.path.join(clone, "ops/enrollment/public-keys")
+    os.makedirs(pubdir, exist_ok=True)   # a checkout that declares no goatnet carries no CA public keys
+    pem = os.path.join(pubdir, f"{CA_ID}.pem")
     if os.path.exists(pem):
         os.remove(pem)
     sh(["go", "run", "./cmd/ca-init", "--mode", "dev", "--out", key, "--recipients", pub, "--allow-single-recipient", "--id", "e2e-ca",
@@ -194,6 +212,7 @@ def ca(clone, home, env):
 
 def intents(clone, home, env, key, ident):
     idir = os.path.join(clone, "ops/consistency/intent")
+    os.makedirs(idir, exist_ok=True)   # none on a checkout that declares no goatnet
     for d in os.listdir(idir):
         full = os.path.join(idir, d)
         if os.path.isdir(full) and d not in GOATNETS:
@@ -215,7 +234,9 @@ def intents(clone, home, env, key, ident):
     # hermetic table no longer lists; an empty list keeps the ratchet honest here
     # (0 rows, baseline untouched) without a stale row failing the check.
     up = os.path.join(clone, "ops/pins/unmigrated-pins.txt")
-    header = [l for l in read_text(up).splitlines(True) if l.startswith("#")]
+    # A checkout that declares no goatnet carries no allowlist; the hermetic one
+    # starts empty at baseline 0.
+    header = [l for l in read_text(up).splitlines(True) if l.startswith("#")] if os.path.exists(up) else ["# baseline: 0\n"]
     write(up, "".join(header) + "# HERMETIC overlay (ops/e2e/overlay.py): the hermetic goatnets carry no unmigrated pin.\n")
     sh([sys.executable, "ops/pins/generate-pins.py"], cwd=clone, env=env)
     for g in GOATNETS:
