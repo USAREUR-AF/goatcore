@@ -263,7 +263,8 @@ jobs:
         run: |
           sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 -o DPkg::Lock::Timeout=120 update
           sudo apt-get -o DPkg::Lock::Timeout=120 install -y -qq shellcheck jq gettext-base
-          pip install yamllint PyYAML
+          # jsonschema: rc.sh refuses without it before the refusals rc-assembled-tree.bats checks.
+          pip install yamllint PyYAML jsonschema
           bash ops/ci/install-bats.sh "$RUNNER_TEMP/goat-ci-bats" /bin/bash
           echo "$RUNNER_TEMP/goat-ci-bash32/bin" >> "$GITHUB_PATH"
           echo "$RUNNER_TEMP/goat-ci-bats/bin" >> "$GITHUB_PATH"
