@@ -28,3 +28,7 @@ ansible-playbook \
   "$SCRIPT_DIR/cert-sign-org-support.yml"
 
 echo "goat-zenoh-portal: syntax-check OK"
+
+# The release-set registry a goatnet declares in group_vars must render to the
+# golden file the portal's Go test parses.
+bash "$SCRIPT_DIR/render-release-sets.sh"

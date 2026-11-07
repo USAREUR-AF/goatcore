@@ -1,0 +1,14 @@
+---
+# Fixture for the release-set render check in syntax-check.sh: a goatnet's
+# portal_release_sets as it would appear in group_vars. The rendered file must
+# equal ops/goat-zenoh-portal/internal/access/testdata/release-sets.role-render.yaml,
+# which the portal's Go test parses with LoadReleaseSets.
+portal_release_sets:
+  - set: ZAGROS
+    prefix: release/ZAGROS/
+    members: []
+  - set: REL-ALL
+    members: []
+  - set: REL-PARTNER
+    members: ["0123456789abcdef0123456789abcdef"]
+  - set: REL-NOMEMBERS

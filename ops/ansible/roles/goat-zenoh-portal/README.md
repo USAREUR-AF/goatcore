@@ -46,6 +46,8 @@ Zenoh trial fabric onto a single host. Per design at
 | `portal_operator_approval_required` | flips first-cohort vendor approval | `true` |
 | `portal_traefik_host` | Traefik router rule | `portal.{{ site_dns_zone }}` |
 | `portal_sunset_date` | shown in UI banner | `""` |
+| `portal_release_sets` | this goatnet's release sets, `[{set, prefix, members}]` in the shape of `ops/permissions/release-sets.yaml`; declared in the goatnet's `group_vars/<site>_hosts/data-access.yml`. Non-empty: the role renders the portal's registry from it (`templates/release-sets.yaml.j2`). Empty: the role copies the generic `ops/permissions/release-sets.yaml` | `[]` |
+| `portal_release_sets_path` | where the registry lands on the host; `""` disables the Data-Access release reveal | `{{ portal_data_dir }}/release-sets.yaml` |
 
 ## Prerequisites
 

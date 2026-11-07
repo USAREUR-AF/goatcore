@@ -448,16 +448,41 @@
   # ops/operators/{{ portal_roster_env }}/ — the manifests this goatnet's own
   # console minted — so no other environment's people can reach this host.
 
-- name: Copy release-set registry (release-sets.yaml) from controller
+- name: Refuse a malformed portal_release_sets declaration (ADR 1027)
+  ansible.builtin.assert:
+    that:
+      - portal_release_sets is sequence
+      - portal_release_sets is not string
+      - portal_release_sets | rejectattr('set', 'defined') | list | length == 0
+      - portal_release_sets | map(attribute='set') | map('string') | map('trim') | select('equalto', '') | list | length == 0
+      - portal_release_sets | map(attribute='set') | map('string') | map('trim') | unique | list | length == portal_release_sets | length
+    fail_msg: >-
+      portal_release_sets must be a list of {set, prefix, members} entries, each
+      with a non-blank, unique `set` (prefix defaults to release/<set>/, members
+      to []). Shape: ops/permissions/release-sets.yaml.
+    quiet: true
+  when: portal_release_sets_path | length > 0 and (portal_release_sets | default([]) | length) > 0
+
+- name: Render release-set registry from this goatnet's portal_release_sets
+  ansible.builtin.template:
+    src: release-sets.yaml.j2
+    dest: "{{ portal_release_sets_path }}"
+    mode: "0644"
+  when: portal_release_sets_path | length > 0 and (portal_release_sets | default([]) | length) > 0
+  notify: restart goat-zenoh-portal
+  # ADR 1027 (data-access program B2). A goatnet declares its own release sets
+  # in its group_vars; the Data-Access COP shows exactly those lanes.
+
+- name: Copy generic release-set registry (release-sets.yaml) from controller
   ansible.builtin.copy:
     src: "{{ playbook_dir }}/../../ops/permissions/release-sets.yaml"
     dest: "{{ portal_release_sets_path }}"
     mode: "0644"
-  when: portal_release_sets_path | length > 0
+  when: portal_release_sets_path | length > 0 and (portal_release_sets | default([]) | length) == 0
   notify: restart goat-zenoh-portal
-  # ADR 1027 (data-access program B2). The committed release-set registry is the
-  # Data-Access COP's release-governance picture (org → release lane); edit
-  # ops/permissions/release-sets.yaml to change membership, then redeploy.
+  # ADR 1027 (data-access program B2). A goatnet that declares no
+  # portal_release_sets gets the generic registry
+  # ops/permissions/release-sets.yaml, as before.
 
 - name: Render partner slot blocks (ADR 1138) from the SAME group_var the router reads
   ansible.builtin.copy:

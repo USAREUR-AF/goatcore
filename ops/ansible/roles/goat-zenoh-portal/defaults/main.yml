@@ -73,6 +73,20 @@ portal_roster_env: ""
 # then notes release-set membership is not declared).
 portal_release_sets_path: "{{ portal_data_dir }}/release-sets.yaml"
 
+# This goatnet's own release sets, declared in its group_vars (e.g.
+# group_vars/<site>_hosts/data-access.yml). Same shape as the release_sets
+# list in ops/permissions/release-sets.yaml:
+#   portal_release_sets:
+#     - set: REL-ALL
+#       prefix: release/REL-ALL/   # optional, defaults to release/<set>/
+#       members: []                # org ids; optional, defaults to []
+# Non-empty => the role renders portal_release_sets_path from this list
+# (templates/release-sets.yaml.j2). Empty => the role copies the generic
+# ops/permissions/release-sets.yaml. List every lane the goatnet's
+# zenoh_release_writers / zenoh_partner_read_lanes / zenoh_partner_slot_blocks
+# name, or the COP will not show it.
+portal_release_sets: []
+
 # ADR 1138 portal half — the pre-cut partner slot blocks, RENDERED FROM THE SAME
 # group_var the router reads (`zenoh_partner_slot_blocks`). One fact, one home:
 # if these two ever disagree the portal hands a partner a slot the router does

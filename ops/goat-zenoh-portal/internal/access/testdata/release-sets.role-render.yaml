@@ -1,0 +1,19 @@
+# GENERATED — do not edit on the host.
+# Rendered by roles/goat-zenoh-portal from `portal_release_sets`, declared in
+# this goatnet's own group_vars (ADR 1027 release-set registry). Shape and
+# meaning: ops/permissions/release-sets.yaml. Change the group_var and
+# redeploy the portal.
+version: 1
+release_sets:
+  - set: "ZAGROS"
+    prefix: "release/ZAGROS/"
+    members: []
+  - set: "REL-ALL"
+    prefix: "release/REL-ALL/"
+    members: []
+  - set: "REL-PARTNER"
+    prefix: "release/REL-PARTNER/"
+    members: ["0123456789abcdef0123456789abcdef"]
+  - set: "REL-NOMEMBERS"
+    prefix: "release/REL-NOMEMBERS/"
+    members: []
