@@ -1026,19 +1026,15 @@ fn lite_secrets_row(c: Check) -> Check {
     c
 }
 
-/// The one account a goatlite needs until public images land (goatlite.md §5 row 7).
-/// Unset is a warning, not a refusal: phase 5 is where it is used, and a learner
-/// rehearsing does not need it. An `ok` row with a `fix` prints as a note.
+/// The image-pull token (goatlite.md §5 row 7). The goatnet's images are public
+/// on ghcr.io and a goatlite standup pulls every one without credentials, so
+/// unset is the normal case and prints no note; set, phase 5 logs in with it
+/// (a mirror or private registry that needs one).
 fn image_token_row(set: bool) -> Check {
     if set {
-        return ok("secret:GHCR_READ_TOKEN", "set: pulls the goatnet's container images in phase 5".to_string());
+        return ok("secret:GHCR_READ_TOKEN", "set: phase 5 logs in to the registry with it".to_string());
     }
-    Check {
-        name: "secret:GHCR_READ_TOKEN".to_string(),
-        ok: true,
-        detail: "GHCR_READ_TOKEN is not set: phase 5 needs it to pull the goatnet's container images".to_string(),
-        fix: Some("export GHCR_READ_TOKEN=<a GitHub token with read:packages>".to_string()),
-    }
+    ok("secret:GHCR_READ_TOKEN", "not set: the goatnet's images are public and pull without it".to_string())
 }
 
 /// The toolchain the live rows need on this machine: the console e2e suite's
@@ -1966,10 +1962,9 @@ mod tests {
     }
 
     #[test]
-    fn the_image_token_row_warns_and_never_refuses() {
+    fn the_image_token_row_never_refuses_and_needs_no_token() {
         let unset = image_token_row(false);
-        assert!(unset.ok && unset.fix.as_deref().unwrap().contains("read:packages"), "{unset:?}");
-        assert!(unset.detail.contains("phase 5"));
+        assert!(unset.ok && unset.fix.is_none() && unset.detail.contains("public"), "{unset:?}");
         let set = image_token_row(true);
         assert!(set.ok && set.fix.is_none());
     }
