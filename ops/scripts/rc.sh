@@ -639,7 +639,7 @@ EVID=""
 if [ "$FROM" != preprod ] && [ "$FROM" != preprod-rows ] && [ "$FROM" != prod ]; then
   step "live rows on $DEV"
   if ! rows_on "$DEV"; then die "a live row FAILED on $DEV — the candidate is dead: fix on main, cut rc.$((RCN+1)) (delete $TAG)"; fi
-  DEV_EVID="$EVID"; DEV_ROWS_RAN=1
+  DEV_EVID="$EVID"; dev_rows_ran=1
 fi
 
 # --- 6 preprod -----------------------------------------------------------------------
@@ -685,7 +685,7 @@ step "preprod rung: open the candidate and put $TAG on $PRE"
 # there — rather than from a variable only the dev step sets.
 # Only when this run did not run the dev rows: a run that did and found none
 # mapped has no dev evidence, and an older file on disk is not this candidate's.
-if [ -z "${DEV_ROWS_RAN:-}" ]; then DEV_EVID="$(evidence_path "$(runner_var "$DEV" name)")"; [ -s "$DEV_EVID" ] || DEV_EVID=""; fi
+if [ -z "${dev_rows_ran:-}" ]; then DEV_EVID="$(evidence_path "$(runner_var "$DEV" name)")"; [ -s "$DEV_EVID" ] || DEV_EVID=""; fi
 mkwt
 rc_changes
 # Not inside the capture: a `run` in a dry run prints its DRY line, and a
