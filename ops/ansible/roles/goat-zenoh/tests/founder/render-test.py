@@ -3,8 +3,9 @@
 
 Unset, the router config is byte-identical to main's, so no existing goatnet
 changes. Set, it carries exactly one rule (founder-w: put/delete on founder/**
-and hello/<site_id>), one subject (the CN), and one policy binding them with
-the ordinary peer read. Renders with the partner-partition test's renderer.
+and hello/<site_id>), one subject (the CN), one policy binding them with the
+ordinary peer read, and one storage on founder/** so the founder's writes are
+retained and `goat pub --confirm` can read them back. Renders with the partner-partition test's renderer.
 """
 import importlib.util, subprocess, sys
 from pathlib import Path
@@ -38,6 +39,8 @@ if '"founder/**", "hello/pasture"' not in on: problems.append("set: founder-w mu
 if on.count('cert_common_names: ["goat-founder-trial-peer"]') != 1: problems.append("set: expected one founder subject with the CN")
 if '{ rules: ["trial-peer-r-all", "trial-peer-deliver-all", "founder-w"], subjects: ["founder"] }' not in on:
     problems.append("set: expected the founder policy with the ordinary peer read")
+if on.count('key_expr: "founder/**"') != 1: problems.append("set: expected one storage on founder/**")
+if on.count('/founder",') != 1: problems.append("set: expected the founder storage in its own rocksdb dir")
 if problems:
     print("FAIL:", *problems, sep="\n  "); sys.exit(1)
-print("[PASS] founder grant: inert when unset (byte-identical to main), exactly one rule, subject and policy when set")
+print("[PASS] founder grant: inert when unset (byte-identical to main), exactly one rule, subject, policy and storage when set")

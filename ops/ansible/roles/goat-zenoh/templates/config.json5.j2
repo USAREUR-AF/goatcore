@@ -405,6 +405,26 @@
           garbage_collect_period: 86400,
           time_to_live: {{ goat_zenoh_audit_retention_days | int * 86400 * 1000 }},
         },
+{% if zenoh_founder_cn | default('') %}
+
+        // A goatlite founder's own space (goatlite.md §8). founder/** is the
+        // one prefix a goatlite person writes (the founder-w ACL rule below),
+        // so it is stored like every other writable prefix: retained for the
+        // fabric window and queryable, which is what `goat pub --confirm`
+        // reads back. Rendered only where zenoh_founder_cn is set.
+        founder: {
+          key_expr: "founder/**",
+          volume: {
+            id: "rocksdb",
+            dir: "{{ goat_zenoh_storage_path }}/founder",
+            on_closure: "do_nothing",
+            create_db: true,
+            db_recovery_enabled: false,
+          },
+          garbage_collect_period: 86400,
+          time_to_live: {{ goat_zenoh_retention_days | int * 86400 * 1000 }},
+        },
+{% endif %}
 
 {% if zenoh_identity_model == 'per-uuid-slot-pool' %}
 {% if zenoh_lazy_slot_storage | default(false) | bool %}

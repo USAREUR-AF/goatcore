@@ -405,10 +405,10 @@ goat --context pasture sub 'founder/**' --take 1 --for 60s
 ```
 
 ```text
-goat --context pasture pub founder/hello/v1 --payload 'first message on pasture'
+goat --context pasture pub founder/hello/v1 --payload 'first message on pasture' --confirm
 ```
 
-The subscriber prints the message and stops. A goatlite keeps no storage for `founder/**`, so `--confirm`, which reads the value back from the router's storage, reports it as not confirmed even when it arrived; leave it off here.
+The subscriber prints the message and stops. `--confirm` reads the value back from the router's storage, where a goatlite keeps everything written under `founder/**`, and the publisher prints `confirm: ✓ landed`.
 
 ## When something fails
 
