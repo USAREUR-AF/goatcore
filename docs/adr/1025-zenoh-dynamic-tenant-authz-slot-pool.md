@@ -1,6 +1,7 @@
 # ADR 1025 — Dynamic per-tenant authorization on Zenoh's static ACL: pre-cut identity-bound slot pool + prefix-disciplined namespace
 
 **Status:** Proposed (2026-06-05). Revised same day — sandbox simplifications adopted: **uuid-only write-anchor**, **modest pool sized to onboards-per-window**, **mesh-first revocation**. Site-enforcement, large pools, and short-lived-cert revocation are deferred to the operational definition (see [Stage](#stage--sandbox-now-operational-definition-later)).
+**Current state (2026-11-08):** the slot pool is the write model in use. Grant encryption is built ([ADR 1094](1094-grant-keyed-payload-encryption.md)). Sovereignty is enforced at the environment ([ADR 1208](1208-sovereign-environments-release-namespaces-and-grant-encryption.md)), which changes the site-prefix trigger (§2). The short-lived-certificate trigger is restated in §5.
 **Repo scope:** goat core (the Zenoh router roles, `goat-zenoh-portal`, identity/cert issuance, `goat-cli`)
 **Related:** findings F-181 (static ACL, no dynamic authz) · F-156 (no live ACL reload) · F-177 · F-178 (AdvancedPub/Sub reliability is behind the `unstable` build) · ADRs [0844](0844-zenoh-deployment-topology-and-acl-v1.md) (ACL v1 namespace) · [0858](0858-zenoh-image-upstream-pivot.md) (stock image — the build we are not reopening) · [1020](1020-zenoh-federated-peering-trust-model.md) · [1022](1022-zenoh-denial-observability.md) · [1023](1023-zenoh-rest-pub-bridge-for-non-rust-publishers.md) · design `zenoh-write-enforcement-rollout.md` · `zenoh-data-fabric.md` · `identity-architecture.md` · [`zenoh-brokerless-consequences.md`](../design/zenoh-brokerless-consequences.md) (the static-ACL limitation this ADR solves is one facet of brokerlessness — alongside the DLQ, QoS, and silent-denial work) · prior work PR #371 (live storage reload; deferred write-enforcement)
 
@@ -33,9 +34,9 @@ The bias is **fast onboarding, minimal moving parts, easy to change**. So this A
 
 | Aspect | Sandbox now | Operational definition later |
 |---|---|---|
-| Write-anchor | **`<uuid>` only** (smallest enforced prefix; existing taxonomy nests below) | add **`<site>/`** to the anchor when sovereignty/residency must be *enforced* |
+| Write-anchor | **`<uuid>` only** (smallest enforced prefix; existing taxonomy nests below) | add **`<site>/`** to the anchor only if residency must be enforced between sites *inside one sovereign's environment*; sovereignty between nations is the environment boundary ([ADR 1208](1208-sovereign-environments-release-namespaces-and-grant-encryption.md)) |
 | Slot pool | **modest** (sized to onboards-per-window; refilled by a planned restart) | larger pool + dual-router **rolling** restart so refills cause no outage |
-| Revocation | **mesh-first** (Netbird; instant; per-publisher because a sandbox publisher is its own peer) | add **short-lived certs + `close_link_on_expiration`** when publishers share a host |
+| Revocation | **mesh-first** (Netbird; instant; per-publisher because a sandbox publisher is its own peer) | add **short-lived certs + `close_link_on_expiration`** when several publishers, each with its own certificate, share a host |
 | Delivery reliability | producer-cooperation: `goat pub --confirm`, Query/Reply (no fork) | **AdvancedPub/Sub** automatic recovery — behind the `unstable` build ([ADR 0858](0858-zenoh-image-upstream-pivot.md) addendum); the watch-item |
 | Federation & peering | **flexible**; un-onboarded peer ingress quarantined by default ([ADR 1020](1020-zenoh-federated-peering-trust-model.md)) | **strict router parity** for internal goat↔goat; a **defined gateway/quarantine path** for external partners (§10) |
 
@@ -161,7 +162,7 @@ flowchart LR
 **Ordering principle:** the enforced anchor contains only **genuine, tamper-proof trust boundaries**; everything mutable/descriptive sits below it or in the registry.
 
 - **`<uuid>`** is the **stable identity** (cert CN, ACL slot) and — at the sandbox stage — the **whole** enforced anchor. The full ADR 0844 taxonomy (`data/<class>/<site>/<id>`, `services/`, `health/`, …) nests **verbatim below** the anchor, so this is a **prefix-addition**, not a reshaping: consumers strip one leading segment. `<site>` therefore remains a *descriptive* segment of the existing taxonomy for now — not publisher-forgeable in a way that matters yet, because the sandbox is one trust domain.
-- **Deferred to the operational definition:** when `<site>` must be an *enforced* sovereignty/residency boundary (a system at site B genuinely cannot publish under site A's residency label), promote it into the anchor (`<site>/<uuid>/**`). That is a deliberate, later, sovereignty-driven step — not paid now.
+- **Deferred to the operational definition:** when `<site>` must be an *enforced* residency boundary between sites of one sovereign (a system at site B genuinely cannot publish under site A's residency label), promote it into the anchor (`<site>/<uuid>/**`). Sovereignty between nations does not need it: [ADR 1208](1208-sovereign-environments-release-namespaces-and-grant-encryption.md) gives each nation its own environment, a harder boundary than a prefix. No residency requirement inside one environment is set.
 
 This discipline is **enforced** (the write rule physically confines the system to its anchor) and **issued** (the portal hands over the anchor prefix + cert at onboard) — so it costs nothing at onboarding time and is not a convention a vendor can violate. **Enforced isolation *requires* a predictable namespace** — true of every prefix/subject-based authz system (NATS subjects, MQTT topic ACLs, DDS partitions); it is the deal, not a Zenoh quirk.
 
@@ -209,7 +210,7 @@ flowchart TB
 ```
 
 - **Sandbox:** mesh (Netbird) revocation — instant, and per-publisher because publisher = peer. No cert-renewal machinery, no re-mint load.
-- **Operational definition:** when several publishers share a host (mesh granularity too coarse), add short-TTL certs + `close_link_on_expiration`; cut-off latency ≤ TTL. This is the SPIFFE short-lived-credential model.
+- **Operational definition:** when several publishers, each holding its own certificate, share a host (mesh granularity too coarse), add short-TTL certs + `close_link_on_expiration`; cut-off latency ≤ TTL. This is the SPIFFE short-lived-credential model. A host that connects with **one** identity for everything behind it (a pod, a sensor node) does not meet this trigger: expiring its certificate cuts off everything behind it, the same as a mesh revoke. A device that must be cut off on its own needs its own identity first. Short-lived certs also need a renewal service, and a site cut off from its issuer cannot renew; both are costs to weigh when the trigger is met.
 - **Not available at any stage:** sub-TTL *instant per-system* cut-off at the Zenoh layer — no CRL, no reliable admin force-drop ([zenoh#1019](https://github.com/eclipse-zenoh/zenoh/issues/1019)). For finer-than-host instant cut-off the TTL is the floor.
 
 ### 6. The slot pool is a buffer; restart refills it (mechanism 1)
@@ -274,8 +275,8 @@ Federation is *inter-goatnet* (one goat goatnet peering with another, or with a 
 
 1. **Right-size the modest pool** — pick a buffer size from the expected sandbox onboarding rate; confirm a clean boot on the target host. (The 100K boot test only matters if/when a never-refill pool is wanted.)
 2. **Namespace v2 migration plan** — enumerate the consumers (panoscope/stethoscope/storage/audit/portal) that parse the current shape; the uuid-prefix-addition form is the smaller migration.
-3. **Site-enforcement trigger** — record the sovereignty/residency condition that promotes `<site>` into the anchor at the operational definition.
-4. **Encryption** stays **unbuilt** until a concrete per-tenant read-confidentiality requirement is named ([zenoh#97](https://github.com/eclipse-zenoh/zenoh/issues/97)).
+3. **Site-enforcement trigger** — recorded in §2: residency enforced between sites inside one sovereign's environment. Sovereignty between nations is the environment boundary (ADR 1208).
+4. **Encryption** — done: grant encryption is built ([ADR 1094](1094-grant-keyed-payload-encryption.md)) and is a standard production control ([ADR 1208](1208-sovereign-environments-release-namespaces-and-grant-encryption.md)).
 5. **AdvancedPub/Sub** stays the **watch-item** — adopt only as a deliberate build decision when must-land reliability becomes a hard requirement.
 6. **Federation reconciliation (§10)** — sandbox stays flexible; before internal goat↔goat federation lands, define the **router-parity contract** + **pre-peering parity check**, confirm the **per-goatnet salt** gives disjoint uuid spaces, and reconcile the **trusted-parity-peer admission rule** with the per-slot model. Specify the **sovereign-goat-partner** external path in [`zenoh-federated-peering-trust.md`](../design/zenoh-federated-peering-trust.md); third-party stays on ADR 1020's gateway/quarantine.
 
