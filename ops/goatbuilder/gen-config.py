@@ -58,7 +58,10 @@ DEFAULT_REPO = {
     "image_namespace": "ghcr.io/example-org",
     "signing": "intent-sign",
 }
-REPO_KEYS = ("source", "image_namespace", "signing")
+# In schema order. release_source is optional: the repository whose release
+# workflow signs the goatbuilder binaries `goatbuilder update` installs; omitted,
+# goatbuilder uses source.
+REPO_KEYS = ("source", "image_namespace", "release_source", "signing")
 DEPLOY_KEYS = ("aws_profile", "ssh_user", "state_dir")
 
 
@@ -177,7 +180,7 @@ def project(path: str = PROJECT) -> tuple[dict, dict]:
     if missing:
         raise SystemExit(f"{path}: `repo:` must declare {missing} (the release source and image namespace)")
     repo.setdefault("signing", DEFAULT_REPO["signing"])
-    return {k: repo[k] for k in REPO_KEYS}, _block(path, declared, "deploy", DEPLOY_KEYS)
+    return {k: repo[k] for k in REPO_KEYS if k in repo}, _block(path, declared, "deploy", DEPLOY_KEYS)
 
 
 def posture(path: str = POSTURE) -> dict:

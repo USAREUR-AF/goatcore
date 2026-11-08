@@ -317,6 +317,15 @@ class ProjectValues(unittest.TestCase):
         self.assertEqual(list(cfg)[:4], ["schema", "preset", "repo", "deploy"])
         self.assertEqual(validate.errors_for(cfg), [])
 
+    def test_release_source_is_carried_when_declared(self):
+        project = self._write("project.yml", "repo:\n  signing: cosign\n  release_source: pasture/release\n"
+                              "  image_namespace: ghcr.io/pasture\n  source: pasture/flock\n")
+        cfg = self.gen(project)
+        self.assertEqual(list(cfg["repo"].items()),
+                         [("source", "pasture/flock"), ("image_namespace", "ghcr.io/pasture"),
+                          ("release_source", "pasture/release"), ("signing", "cosign")])
+        self.assertEqual(validate.errors_for(cfg), [])
+
     def test_this_checkouts_project_file_validates(self):
         repo, deploy = gen_config.project()
         cfg = self.gen(gen_config.PROJECT, gen_config.POSTURE)
