@@ -325,6 +325,22 @@ entries:
     read: docs/design/goat-cli-error-codes.md
     exit: 4
 
+  - code: E_ACL_DECLARATION_MISSING
+    tool: goat
+    title: no ACL declaration was supplied
+    what: "`goat acl test` or `goat warrant` needs the goatnet's netbird_acl_taxonomy.yml and netbird_acl_matrix.yml and found them nowhere. goat carries no deployment's declaration, so it stops rather than check other rules."
+    causes:
+      - the command ran outside a checkout and the context holds no declaration
+      - the goatnet does not serve its declaration at get.<site>/acl/, so `goat context refresh` fetched none
+    fixes:
+      - "goat acl test --declaration <dir>   (a directory holding both files)"
+      - "export GOAT_ACL_DECLARATION_DIR=<dir>"
+      - "set acl_declaration_dir = \"<dir>\" in ~/.goat/contexts/<name>/profile.toml"
+      - "goat context refresh   (fills ~/.goat/contexts/<name>/acl/ when the goatnet serves it)"
+      - "run from a checkout that carries ops/ansible/netbird_acl_taxonomy.yml and netbird_acl_matrix.yml"
+    read: docs/design/goat-cli-error-codes.md
+    exit: 1
+
   # --------------------------------------------------------------- goatbuilder
 
   - code: GB-001
@@ -511,6 +527,20 @@ entries:
     read: docs/design/release-candidate-validation.md
     matches:
       - "does not run rc-validate.yml"
+    exit: 1
+
+  - code: GB-078
+    tool: goatbuilder
+    title: no release signer is known, so the update refuses
+    what: "`goatbuilder update` checks SHA256SUMS against the repository whose release workflow signed it. It found none: the working directory is in no checkout whose ops/goatbuilder/goatbuilder.yaml names repo.release_source or repo.source, and this binary was built outside a release workflow, so it names no publisher itself. Nothing was installed."
+    causes:
+      - goatbuilder update ran outside a deployment checkout with a locally built binary
+    fixes:
+      - "goatbuilder -C <checkout> update   (a checkout whose goatbuilder.yaml names repo.release_source)"
+      - "install a goatbuilder from a release, which carries its own publisher"
+    read: docs/design/goatbuilder-distribution.md
+    matches:
+      - "no release signer is known"
     exit: 1
 
   - code: GB-012

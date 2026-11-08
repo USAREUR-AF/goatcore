@@ -478,7 +478,7 @@ async fn run(cli: Cli) -> i32 {
         Cmd::Vendor { op } => cmd::vendor::run(&ctx, op).await,
         Cmd::Topic { op } => cmd::topic::run(&ctx, op).await,
         Cmd::Schema { op } => cmd::schema::run(&ctx, op).await,
-        Cmd::Acl { op } => cmd::acl::run(op).await,
+        Cmd::Acl { op } => cmd::acl::run(&ctx, op).await,
         Cmd::Warrant { op } => cmd::warrant::run(&ctx, op).await,
         Cmd::Access { op } => cmd::access::run(&ctx, op).await,
         Cmd::Machine { op } => cmd::machine::run(&ctx, op).await,

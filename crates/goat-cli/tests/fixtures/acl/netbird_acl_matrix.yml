@@ -1,0 +1,22 @@
+# A synthetic ACL declaration for goat-cli's tests. It names no deployment.
+netbird_acl_matrix:
+  lone:
+    rules:
+    - name: dev to infra
+      sources: [DEVELOPER]
+      destinations: [INFRA]
+      protocol: tcp
+      ports: ["443"]
+      action: accept
+  quiet:
+    rules: []
+netbird_acl_tests:
+  lone:
+  - name: a developer reaches the box on 443
+    src: DEVELOPER
+    proto: tcp
+    accept: ["INFRA:443"]
+  - name: a developer has no SSH to the box
+    src: DEVELOPER
+    proto: tcp
+    deny: ["INFRA:22"]

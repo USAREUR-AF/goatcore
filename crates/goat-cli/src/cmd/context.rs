@@ -205,6 +205,7 @@ async fn refresh(
         std::fs::read_to_string(&source).map_err(|e| anyhow::anyhow!("read {source}: {e}"))?
     };
     let facts = parse_goatnet_toml(&body).map_err(|e| anyhow::anyhow!("{source}: {e}"))?;
+    refresh_acl_declaration(&target, &source, dry_run).await?;
     let path = target.profile_toml_path();
     let current = target.read_classified(&path)?;
     let (merged, changed) = merge_goatnet_facts(&current, &facts)?;
@@ -237,6 +238,81 @@ async fn refresh(
         "context `{}`: {} key(s) written from {source}",
         target.context,
         changed.len()
+    );
+    Ok(())
+}
+
+/// The goatnet's ACL declaration, beside its goatnet.toml: `<base>/acl/` holds
+/// netbird_acl_taxonomy.yml and netbird_acl_matrix.yml when the goatnet serves
+/// them. Both found: written to the context's `acl/` directory, where
+/// `goat acl` / `goat warrant` read them. Either absent: the context's copy is
+/// left as it is, and a goatnet that serves none is said so.
+async fn refresh_acl_declaration(
+    target: &Profile,
+    source: &str,
+    dry_run: bool,
+) -> anyhow::Result<()> {
+    use crate::cmd::acl::{CONTEXT_SUBDIR, MATRIX_FILE, TAXONOMY_FILE};
+    let base = match source.rsplit_once('/') {
+        Some((b, _)) => b.to_string(),
+        None => ".".to_string(),
+    };
+    let mut got = Vec::new();
+    for name in [TAXONOMY_FILE, MATRIX_FILE] {
+        let at = format!("{base}/{CONTEXT_SUBDIR}/{name}");
+        let body = if at.starts_with("https://") || at.starts_with("http://") {
+            let resp = reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(15))
+                .build()?
+                .get(&at)
+                .send()
+                .await
+                .map_err(|e| anyhow::anyhow!("fetch {at}: {e}"))?;
+            if !resp.status().is_success() {
+                None
+            } else {
+                Some(resp.text().await?)
+            }
+        } else {
+            std::fs::read_to_string(&at).ok()
+        };
+        match body {
+            Some(b) => got.push((name, b)),
+            None => {
+                println!(
+                    "context `{}`: the goatnet serves no ACL declaration at {base}/{CONTEXT_SUBDIR}/; \
+                     the context's copy is unchanged",
+                    target.context
+                );
+                return Ok(());
+            }
+        }
+    }
+    let dir = target.context_dir().join(CONTEXT_SUBDIR);
+    let unchanged = got
+        .iter()
+        .all(|(n, b)| std::fs::read_to_string(dir.join(n)).ok().as_deref() == Some(b.as_str()));
+    if unchanged {
+        return Ok(());
+    }
+    if dry_run {
+        println!(
+            "context `{}`: the ACL declaration in {} would be replaced (dry run)",
+            target.context,
+            dir.display()
+        );
+        return Ok(());
+    }
+    std::fs::create_dir_all(&dir)?;
+    for (n, b) in &got {
+        let tmp = dir.join(format!("{n}.tmp"));
+        std::fs::write(&tmp, b.as_bytes())?;
+        std::fs::rename(&tmp, dir.join(n))?;
+    }
+    println!(
+        "context `{}`: ACL declaration written to {}",
+        target.context,
+        dir.display()
     );
     Ok(())
 }
@@ -581,6 +657,31 @@ mod tests {
     const FACTS: &str = "# rendered\nschema = \"goat/goatnet/v1\"\ngoatnet = \"zagros\"\n\
         netbird_mgmt_url = \"https://netbird.zagros.example\"\nnetbird_rosenpass = \"false\"\n\
         mgmt_ssh_user = \"goat\"\nportal_endpoint = \"https://evil.example\"\n";
+
+    #[tokio::test]
+    async fn refresh_copies_the_goatnets_acl_declaration_into_the_context() {
+        use crate::cmd::acl::{MATRIX_FILE, TAXONOMY_FILE};
+        let served = tempfile::tempdir().expect("temp dir");
+        std::fs::create_dir_all(served.path().join("acl")).expect("acl dir");
+        std::fs::write(served.path().join("acl").join(TAXONOMY_FILE), "t: 1\n").expect("tax");
+        let source = served.path().join("goatnet.toml").display().to_string();
+        let home = tempfile::tempdir().expect("temp dir");
+        let p = Profile {
+            dir: home.path().to_path_buf(),
+            context: "t".into(),
+        };
+        // Only one file served: the context is left alone.
+        refresh_acl_declaration(&p, &source, false)
+            .await
+            .expect("refresh");
+        assert!(!p.context_dir().join("acl").exists());
+        std::fs::write(served.path().join("acl").join(MATRIX_FILE), "m: 1\n").expect("mat");
+        refresh_acl_declaration(&p, &source, false)
+            .await
+            .expect("refresh");
+        let got = std::fs::read_to_string(p.context_dir().join("acl").join(MATRIX_FILE));
+        assert_eq!(got.expect("written"), "m: 1\n");
+    }
 
     #[test]
     fn goatnet_toml_needs_its_schema() {

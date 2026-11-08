@@ -256,6 +256,11 @@ def run(argv=None):
         # inject a token from env if the row names auth: <ENVVAR>
         if "auth" in params:
             tok = os.environ.get(str(params["auth"]))
+            # The secrets store names a goatnet's portal operator key
+            # <SITE>_PORTAL_OPERATOR_API_KEY (goatbuilder secrets init); the
+            # assay runs under with-secrets, so read that name too.
+            if not tok and params["auth"] == "portal_operator_key" and values.get("site_id"):
+                tok = os.environ.get(str(values["site_id"]).upper().replace("-", "_") + "_PORTAL_OPERATOR_API_KEY")
             if not tok:
                 # Without the token the call is unauthenticated and a 401 says
                 # nothing about the goatnet: the probe cannot answer.

@@ -61,7 +61,7 @@ pub enum WarrantCmd {
 
 pub async fn run(ctx: &super::Ctx, cmd: WarrantCmd) -> anyhow::Result<()> {
     match cmd {
-        WarrantCmd::WhyBlocked(a) => run_why_blocked(a),
+        WarrantCmd::WhyBlocked(a) => run_why_blocked(&ctx.profile, a),
         WarrantCmd::PortSets(a) => run_port_sets(a),
         WarrantCmd::Apply(a) => membership::run_apply(ctx, a).await,
         WarrantCmd::Pause(a) => membership::run_pause(ctx, a).await,
@@ -103,6 +103,11 @@ pub struct WhyBlockedArgs {
     pub proto: String,
     #[arg(long)]
     pub json: bool,
+    /// Directory holding the goatnet's netbird_acl_taxonomy.yml and
+    /// netbird_acl_matrix.yml. Omitted: GOAT_ACL_DECLARATION_DIR, the active
+    /// context, then the checkout (see `goat acl test --help`).
+    #[arg(long, value_name = "DIR")]
+    pub declaration: Option<std::path::PathBuf>,
 }
 
 #[derive(Args, Debug)]
@@ -132,11 +137,11 @@ fn qualify(model: &Model, name: &str) -> String {
     }
 }
 
-fn run_why_blocked(args: WhyBlockedArgs) -> anyhow::Result<()> {
+fn run_why_blocked(profile: &crate::profile::Profile, args: WhyBlockedArgs) -> anyhow::Result<()> {
     // `{e:?}` (Debug) discarded DeclError's own hand-authored Display prose;
     // acl.rs's identical case just uses `?` (Display, via anyhow's blanket
     // conversion), which is what this should have done too.
-    let decl = super::acl::declaration("warrant: reading the ACL declaration in this checkout")?;
+    let decl = super::acl::declaration(profile, args.declaration.as_deref(), "warrant why-blocked")?;
     let model = decl.model(&args.scope)?;
 
     let from = qualify(&model, &args.from);

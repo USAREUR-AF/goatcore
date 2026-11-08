@@ -67,6 +67,53 @@ if verb == "delete-generic-password":
 sys.exit(1)
 '''
 
+# A stub Linux kernel keyring: one JSON file per key, with the kernel timeout
+# enforced on search the way the kernel does (an expired key is not found).
+KEYCTL = r'''#!/usr/bin/env python3
+import json, os, sys, time
+root = os.environ["FAKE_KEYRING"]
+os.makedirs(root, exist_ok=True)
+with open(os.path.join(root, "argv.log"), "a") as fh:
+    fh.write(" ".join(sys.argv[1:]) + "\n")
+def keys():
+    out = {}
+    for f in os.listdir(root):
+        if f.endswith(".key"):
+            out[f[:-4]] = json.load(open(os.path.join(root, f)))
+    return out
+def save(kid, k):
+    json.dump(k, open(os.path.join(root, kid + ".key"), "w"))
+a = sys.argv[1:]
+v = a[0]
+if v == "padd" and a[1] == "user" and a[3] == "@u":
+    kid = str(100 + len(keys()) + int(time.time() * 1000) % 1000)
+    save(kid, {"desc": a[2], "data": sys.stdin.read(), "expiry": 0, "perm": "", "revoked": False})
+    print(kid); sys.exit(0)
+if v == "search" and a[1] == "@u" and a[2] == "user":
+    for kid, k in keys().items():
+        if k["desc"] == a[3] and not k["revoked"]:
+            if k["expiry"] and k["expiry"] <= time.time():
+                print("keyctl_search: Key has expired", file=sys.stderr); sys.exit(1)
+            print(kid); sys.exit(0)
+    print("keyctl_search: Required key not available", file=sys.stderr); sys.exit(1)
+ks = keys()
+if len(a) < 2 or a[1] not in ks:
+    sys.exit(1)
+k = ks[a[1]]
+if v == "pipe":
+    if k["revoked"]: sys.exit(1)
+    sys.stdout.write(k["data"]); sys.exit(0)
+if v == "timeout":
+    k["expiry"] = time.time() + int(a[2]); save(a[1], k); sys.exit(0)
+if v == "setperm":
+    k["perm"] = a[2]; save(a[1], k); sys.exit(0)
+if v == "revoke":
+    k["revoked"] = True; save(a[1], k); sys.exit(0)
+if v == "unlink":
+    os.remove(os.path.join(root, a[1] + ".key")); sys.exit(0)
+sys.exit(1)
+'''
+
 # op: whoami checks the token; run records what op saw, then runs the rest.
 OP = r'''#!/usr/bin/env bash
 log="$FAKE_KEYCHAIN/op.log"
@@ -159,6 +206,7 @@ class Base(unittest.TestCase):
             "PATH": f"{self.bin}:{os.path.dirname(sys.executable)}:/usr/bin:/bin",
             "HOME": self.tmp, "USER": "tester", "FAKE_KEYCHAIN": self.kc,
             "FAKE_OP_GOOD": OP_TOKEN, "FAKE_BAO_CHILD": BAO_CHILD, "FAKE_BW_GOOD": BW_KEY,
+            "FAKE_KEYRING": os.path.join(self.tmp, "keyring"),
             "BAO_ADDR": "https://store.example", "GOAT_BUILDER_CONFIG": os.path.join(self.tmp, "none.yaml"),
         }
         e.update(kw)
@@ -335,6 +383,77 @@ class WithSecrets(Base):
         self.assertIn("bao-run sees set", runners)
         self.assertIn("bw-run sees set", runners)
         self.assertIn("op= bao= bw=", self.read("probe.out"))
+
+
+class LinuxKeyring(Base):
+    """A host with no `security` but with `keyctl`: the kernel user keyring backend."""
+
+    def setUp(self):
+        super().setUp()
+        os.remove(os.path.join(self.bin, "security"))
+        write_exe(os.path.join(self.bin, "keyctl"), KEYCTL)
+        self.kr = os.path.join(self.tmp, "keyring")
+
+    def env(self, **kw):
+        kw.setdefault("GOAT_SECRETS_KEYSTORE", "keyring")
+        return super().env(**kw)
+
+    def key(self, store):
+        if not os.path.isdir(self.kr):
+            return None
+        for f in os.listdir(self.kr):
+            if f.endswith(".key"):
+                k = json.load(open(os.path.join(self.kr, f)))
+                if k["desc"] == f"goat-secrets-session-{store}":
+                    return k
+        return None
+
+    def test_start_keeps_the_token_with_a_kernel_timeout_and_no_argv(self):
+        r = self.session("start", "--store", "1password", "--hours", "6", stdin=OP_TOKEN + "\n")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn(OP_TOKEN, r.stdout + r.stderr)
+        k = self.key("1password")
+        head, _, token = k["data"].partition("\n")
+        self.assertEqual(token, OP_TOKEN)
+        self.assertAlmostEqual(int(head.split("=")[1]) - time.time(), 6 * 3600, delta=60)
+        self.assertAlmostEqual(k["expiry"] - time.time(), 6 * 3600, delta=60)
+        self.assertEqual(k["perm"], "0x3f1b0000")
+        self.assertNotIn(OP_TOKEN, self.read("op.log"))
+        with open(os.path.join(self.kr, "argv.log")) as fh:
+            self.assertNotIn(OP_TOKEN, fh.read())
+        self.assertEqual([f for f in os.listdir(self.kc) if f.endswith(".json")], [])
+
+    def test_with_secrets_uses_the_keyring_session_then_end_removes_it(self):
+        self.assertEqual(self.session("start", "--store", "1password", stdin=OP_TOKEN).returncode, 0)
+        st = self.session("status")
+        self.assertIn("live", [l for l in st.stdout.splitlines() if l.startswith("1password")][0])
+        r = self.with_secrets(GOAT_SECRET_STORE="1password", OP_ACCOUNT="example.1password.com",
+                              DB_PASS="op://<vault>/item/password")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("run token=set account=unset", self.read("op.log"))
+        self.assertIn("op= bao= bw=", self.read("probe.out"))
+        e = self.session("end", "--store", "1password")
+        self.assertEqual(e.returncode, 0, e.stderr)
+        self.assertIsNone(self.key("1password"))
+        self.assertEqual(self.session("token", "1password").returncode, 1)
+
+    def test_restart_replaces_the_key_rather_than_adding_a_second(self):
+        for _ in range(2):
+            self.assertEqual(self.session("start", "--store", "1password", stdin=OP_TOKEN).returncode, 0)
+        live = [f for f in os.listdir(self.kr) if f.endswith(".key")]
+        self.assertEqual(len(live), 1)
+
+    def test_a_kernel_expired_key_is_not_used(self):
+        self.assertEqual(self.session("start", "--store", "1password", stdin=OP_TOKEN).returncode, 0)
+        k = self.key("1password")
+        for f in os.listdir(self.kr):
+            if f.endswith(".key"):
+                k["expiry"] = time.time() - 1
+                json.dump(k, open(os.path.join(self.kr, f), "w"))
+        self.assertEqual(self.session("token", "1password").returncode, 1)
+        r = self.with_secrets(GOAT_SECRET_STORE="1password", OP_ACCOUNT="example.1password.com",
+                              DB_PASS="op://<vault>/item/password")
+        self.assertIn("run token= account=example.1password.com", self.read("op.log"))
 
 
 if __name__ == "__main__":

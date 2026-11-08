@@ -1,5 +1,4 @@
 # Lines naming an environment or programme, per file (ops/ci/check-goatbuilder-portable.py).
 # Only shrinks. Regenerate after removing names: python3 ops/ci/check-goatbuilder-portable.py --write
-crates/goatbuilder/src/update.rs 1
 docs/reference/goatbuilder/02-install.md 1
 docs/reference/goatbuilder/11-workflows.md 1

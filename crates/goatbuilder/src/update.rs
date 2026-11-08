@@ -296,9 +296,17 @@ fn signed(repo: &Path, agent: &ureq::Agent, base: &str, asset: &str, want: &str,
     };
     let bundle_url = format!("{base}/SHA256SUMS.cosign-bundle");
     let bundle = fetch_text(agent, &bundle_url, total).map_err(|e| unread(format!("cannot read the signature: {e}")))?;
-    // Run outside a checkout, the signer is this binary's own publisher. The
-    // signature is always checked: an unreadable config never skips it.
-    let source = crate::config::load(&repo.join("ops/goatbuilder/goatbuilder.yaml")).ok().and_then(|c| c.repo).map(|r| r.source).unwrap_or_else(|| "USAREUR-AF/goatcore".into());
+    // The signer is the checkout's repo.release_source, else its repo.source;
+    // run outside a checkout, the repository whose workflow built this binary.
+    // No repository is named in the code. The signature is always checked: an
+    // unreadable config never skips it, and an unknown signer refuses.
+    let configured = crate::config::load(&repo.join("ops/goatbuilder/goatbuilder.yaml")).ok().and_then(|c| c.repo).map(|r| r.release_source.unwrap_or(r.source));
+    let source = release_signer(configured, BUILT_BY).ok_or_else(|| {
+        goat_errors::coded(
+            "GB-078",
+            "signature not checked, refusing to install: no release signer is known. Run from a checkout whose ops/goatbuilder/goatbuilder.yaml names repo.release_source (or repo.source); this binary was not built by a release workflow, so it names none itself. The installed binary is untouched",
+        )
+    })?;
     let dir = std::env::temp_dir().join(format!("goatbuilder-update-{}", std::process::id()));
     let _ = std::fs::create_dir_all(&dir);
     let (sums_path, bundle_path) = (dir.join("SHA256SUMS"), dir.join("SHA256SUMS.cosign-bundle"));
@@ -323,6 +331,18 @@ fn signed(repo: &Path, agent: &ureq::Agent, base: &str, asset: &str, want: &str,
         .into()),
         Err(e) => Err(goat_errors::coded("GB-074", format!("signature not checked, refusing to install: cannot run {}: {e}; the installed binary is untouched", cosign.display())).into()),
     }
+}
+
+/// The repository whose GitHub workflow built this binary (`GITHUB_REPOSITORY`
+/// at build time): the binary's own release provenance. None for a local build.
+const BUILT_BY: Option<&str> = option_env!("GITHUB_REPOSITORY");
+
+/// Who must have signed SHA256SUMS: the deployment's configuration, else the
+/// binary's own provenance. Neither: None, and the update refuses.
+fn release_signer(configured: Option<String>, built_by: Option<&str>) -> Option<String> {
+    configured
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| built_by.filter(|s| !s.trim().is_empty()).map(str::to_string))
 }
 
 fn on_path(tool: &str) -> Option<PathBuf> {
@@ -491,6 +511,15 @@ pub fn doctor_row(repo: &Path, site: Option<&str>) -> Option<Check> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn the_signer_comes_from_config_then_provenance_never_a_name_in_the_code() {
+        assert_eq!(super::release_signer(Some("org/a".into()), Some("org/b")).as_deref(), Some("org/a"));
+        assert_eq!(super::release_signer(None, Some("org/b")).as_deref(), Some("org/b"));
+        assert_eq!(super::release_signer(Some(" ".into()), None), None);
+        assert_eq!(super::release_signer(None, None), None);
+    }
+
     use super::*;
 
     fn write(root: &Path, rel: &str, body: &str) {

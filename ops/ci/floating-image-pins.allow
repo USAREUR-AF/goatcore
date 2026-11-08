@@ -64,7 +64,6 @@ ops/identity/mtls-proxy-proof/docker-compose.yml ghcr.io/dexidp/dex:v2.41.1   # 
 ops/identity/mtls-proxy-proof/docker-compose.yml nginx:1.27-alpine   # 2026-09-22 seed
 ops/monitoring/docker-compose.yml prom/alertmanager:v0.27.0   # 2026-09-22 seed
 ops/monitoring/docker-compose.yml prom/prometheus:v2.54.1   # 2026-09-22 seed
-ops/netbird/Dockerfile ubuntu:24.04   # 2026-09-22 seed
 ops/serve/docker-compose.yml caddy:latest   # 2026-09-22 seed
 ops/smoketest/Dockerfile debian:bookworm-slim   # 2026-09-22 seed
 ops/smoketest/Dockerfile golang:1.26-bookworm   # 2026-09-22 seed

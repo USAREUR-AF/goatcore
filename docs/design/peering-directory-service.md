@@ -122,18 +122,20 @@ binding, never its source.
 
 A counterparty looks the party up, fetches the package from `package_url`, checks that its
 sha256 matches `package_sha256`, checks the pointer's and the package's signatures against the
-key it bound out of band, and composes. The directory is not an input to that check.
+key read back on the call, and composes. The directory is not an input to that check.
 
-**A party behind NAT needs no host.** The directory keeps two files beside an entry, each
-uploaded under the entry's bound key and served byte for byte:
+**A party behind NAT needs no host.** The directory keeps up to three files beside an entry,
+each uploaded under the entry's bound key and served byte for byte, with the upload's own key
+and request signature (`X-Saltlick-Key`, `X-Saltlick-Signature`, `X-Saltlick-Resource`):
 
 | File | Path | Checked on upload | Checked by the reader |
 |---|---|---|---|
-| The signed package | `/v1/parties/<id>/package` | `federation-package/v1`, `sovereign_id` is the path's, canonical bytes, signature under the bound key | digest against `package_sha256`; signatures against the key bound out of band |
+| The signed package | `/v1/parties/<id>/package` | `federation-package/v1`, `sovereign_id` is the path's, canonical bytes, signature under the bound key | digest against `package_sha256`; signatures against the key read back on the call |
 | The CA certificate | `/v1/parties/<id>/ca` | PEM certificates, each an X.509 CA | SHA-256 of the DER against the package's `identity.ca_fingerprint` |
+| The SPIFFE trust bundle, when SPIRE federation is on | `/v1/parties/<id>/spiffe-bundle` | a SPIFFE bundle (JWKS: `x509-svid` keys with an `x5c`, `jwt-svid` keys) | the upload's request signature under the key read back on the call |
 
-The driver uploads both, so the package and the CA never travel by mail. The only out-of-band
-act is reading the verifying key and the CA fingerprint aloud (§6.1).
+The driver uploads all three, so none of them travels by mail. The only act outside the
+machine is reading the verifying key and the CA fingerprint aloud (§6.1).
 
 **`transport_offer`, `data_offer` and `cut` never enter a directory entry**, which is what the
 listing reads. They sit in the package at the address the pointer names, whether the directory
@@ -226,8 +228,6 @@ than overlapping.
 - **One instance per environment, or one shared?** One instance serves every goatnet of a
   coalition, because it sits outside all of them; whether a coalition ever wants a second is
   open.
-- **The CA certificate and the SPIFFE bundle** still move directly between the two parties. A
-  pointer could name them too; not designed.
 
 ## 9. Status
 
@@ -235,10 +235,10 @@ than overlapping.
 |---|---|
 | The decision, and its invariant | **Decided** — 2026-09-05 |
 | Repository | **Public** — `USAREUR-AF/saltlick` |
-| Service | **Built** — image `ghcr.io/usareur-af/saltlick:v0.1.0`, multi-arch, pulls anonymously |
+| Service | **Built** — image `ghcr.io/usareur-af/saltlick:v0.4.0`, multi-arch, pulls anonymously; hosts package, CA and SPIFFE bundle with the upload's signature |
 | Internet-reachable deployment (§5.1) | **Built** — one instance outside every goatnet, declared in the deploying team's private overlay, never a mesh service on a goatnet host; per-source rate limits in the service designed |
-| Pointer entry (§6) | **Designed, not built** in saltlick |
-| Driver step (§6.2) | **Built** behind `FED_DIRECTORY_URL` |
+| Pointer entry (§6) | **Built** in saltlick (`saltlick-pointer/v1`) |
+| Driver step (§6.2) | **Built**; phase 5 of the driver, required by preflight unless `FED_NO_DIRECTORY=1`; exercised end to end by `ops/federation-e2e/run.sh` against a saltlick it starts |
 | The trust mechanism it sits above — package spec, `goat federate`, conformance vectors | **Built and merged** — see [`federation-package-spec.md`](federation-package-spec.md) |
 
 Federation works without this service. That is by design: the directory is advisory, and a

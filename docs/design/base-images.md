@@ -59,6 +59,8 @@ An assembled tree is goatcore (or goatstuff) with the environment's repository c
 
 Dependabot watches each role directory (`.github/dependabot.yml`) and opens a pull request when the pinned tag has a newer build. The `base-images` check on that pull request fails until `base-images.py sync` has rewritten the Dockerfile defaults. Pushing the sync rewrites exactly the Dockerfiles that use the role, and their image workflows' `paths` filters rebuild exactly those images.
 
+goatcore owns `base-images.py` and every role it defines, and only goatcore's Dependabot refreshes them. goatstuff's Dependabot refreshes only `node-build`, the one role goatstuff alone defines; goatrodeo defines none and runs no base-image Dependabot. goatstuff and goatrodeo copy goatcore's files: `.github/scripts/base-images-shared.sh` in each compares every file under `ops/base-images/` that goatcore also carries with goatcore `main`, and `--fix` copies goatcore's bytes and runs `sync`. Their workflow `base-images-shared` runs it on pull requests that touch `ops/base-images/` and daily, so a refresh merged in goatcore shows there as a failing run until the copy lands.
+
 ## The gate
 
 `.github/workflows/base-images.yml` runs `base-images.py --self-test`, then `base-images.py check`. The check fails when:

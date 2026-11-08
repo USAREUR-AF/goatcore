@@ -3,13 +3,13 @@
 | Field | Value |
 |---|---|
 | Status | Skeleton (Phase 2D-late / Phase 3 commitment) |
-| Anchor | [`../../docs/design/partner-receiver-requirements.md`](../../docs/design/partner-receiver-requirements.md) |
+| Anchor | [`https://github.com/usareur-af/goatstuff/blob/main/docs/design/moon-pod-conformance.md`](https://github.com/usareur-af/goatstuff/blob/main/docs/design/moon-pod-conformance.md) |
 | ADR | [`../../docs/adr/0223-goat-moon-pod-repo-containment.md`](../../docs/adr/0223-goat-moon-pod-repo-containment.md) |
 | Implementation tracker | `../../docs/project/implementation-plan.md` Block 60A-extension |
 
 ## What this is
 
-A conformance smoke-test suite that walks the 24-hour deployment path against a candidate goat-moon-pod and asserts each of the seven requirements at [`../../docs/design/partner-receiver-requirements.md`](../../docs/design/partner-receiver-requirements.md).
+A conformance smoke-test suite that walks the 24-hour deployment path against a candidate goat-moon-pod and asserts each of the seven requirements at [`https://github.com/usareur-af/goatstuff/blob/main/docs/design/moon-pod-conformance.md`](https://github.com/usareur-af/goatstuff/blob/main/docs/design/moon-pod-conformance.md).
 
 Runs against:
 
@@ -108,11 +108,11 @@ A moon-pod with all PASS verdicts on requirements 1-7 plus the 24-hour walk is *
 
 - **A new edge case for requirement 6 surfaces.** Add a corresponding `06-sovereignty-floor/eN-*.sh` test.
 - **A vendor moon-pod ships with a structurally different shape that the existing tests can't cleanly evaluate.** Add tests; do not loosen existing tests to accommodate.
-- **The contract at [`partner-receiver-requirements.md`](../../docs/design/partner-receiver-requirements.md) gains a new requirement.** Add a new test group `08-*/`.
+- **The contract at [`moon-pod-conformance.md`](https://github.com/usareur-af/goatstuff/blob/main/docs/design/moon-pod-conformance.md) gains a new requirement.** Add a new test group `08-*/`.
 
 ## References
 
-- [`../../docs/design/partner-receiver-requirements.md`](../../docs/design/partner-receiver-requirements.md) — the contract under test
+- [`https://github.com/usareur-af/goatstuff/blob/main/docs/design/moon-pod-conformance.md`](https://github.com/usareur-af/goatstuff/blob/main/docs/design/moon-pod-conformance.md) — the contract under test
 - [`../../docs/design/goat-moon-pod.md`](https://github.com/usareur-af/goatstuff/blob/main/docs/design/goat-moon-pod.md) — abstract spec
 - [`../../docs/design/goat-moon-pod-builder-guide.md`](https://github.com/usareur-af/goatstuff/blob/main/docs/design/goat-moon-pod-builder-guide.md) — how vendors use this suite
 - [`../../docs/adr/0223-goat-moon-pod-repo-containment.md`](../../docs/adr/0223-goat-moon-pod-repo-containment.md) — repo-containment + extensibility-bones decision

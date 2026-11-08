@@ -64,15 +64,19 @@ The live half runs from the mesh because that is the path people traverse and be
 A row runs `goat` where the context is. `ops/validation/goatnet-runners.yaml`
 names, per goatnet, the host that holds the context (`goat_via`): zagros-dev's
 management host over the mesh, and for zagros and zagros-prod `door:<env>` — the
-driver opens the door (`door-open.sh`), resolves `env-door.sh <env> --ssh-target`
-to `user@127.0.0.1:port`, and the smoke runs its `goat` legs there. The laptop
+driver opens the door (`door-open.sh`), takes the management host's address from
+`env-door.sh <env> --host-target` (`user@<mesh address>`) and the door from
+`--ssh-target` (`user@127.0.0.1:port`), and every ssh the rows make goes to the
+host through the door: the smoke runs its `goat` legs there. The laptop
 needs neither that goatnet's mesh nor its contexts, which is the door model
 ([env-doors.md](env-doors.md)). The host must hold the contexts the rows name, all
 non-person: `acceptance` for the intake rows, and `assay-probe`
 (`probe_context`, where the goatnet declares it) for the rows that read the
-fabric. The runners file names no context; operator keys never go on a host. Rows that run a command on a goatnet host (`cmd-assert` with a
-`host:`) reach it through the same door: the driver exports
-`GOAT_ROWS_SSH_JUMP` and the probe adds `-o ProxyJump` (#2100). A row that
+fabric. The runners file names no context; operator keys never go on a host. The driver passes the door as
+`GOAT_ROWS_SSH_JUMP`; `goat` rows, host rows (`cmd-assert` with a `host:`) and
+`onboard-intake-smoke.sh` all jump through it with a ProxyCommand (#2100). The
+door address is never the ssh destination itself: it is a tunnel port whose host
+key changes between goatnets, so only the host behind it is verified. A row that
 cannot run (the runner exits 2: a tool or a context missing) is reported
 **UNTESTED** and stops the run — never a failed row, never a dead candidate.
 

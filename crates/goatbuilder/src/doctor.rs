@@ -89,6 +89,10 @@ pub fn run(repo: &Path, only_env: Option<&str>, frozen: bool, credentials: bool)
     // in the run reaches AWS (goatlite.md §5 row 1): GOAT_AWS_MODE=none, or every
     // declared environment is reached directly and no door is ssm.
     let aws_skip = aws_rows_skipped(lite_cfg.as_ref().or(cfg.as_ref()), std::env::var("GOAT_AWS_MODE").ok().as_deref());
+    // A goatlite cuts no release (ADR 1213): the rows that only a release reads
+    // (gh, a candidate's digest, the live rows' goat contexts) are skipped, as
+    // declared, so the lite doctor grades only what the standup needs (#148).
+    let lite = lite_cfg.is_some();
     for (tool, why, fix) in [
         ("git", "the source of record", "install git"),
         (
@@ -117,6 +121,10 @@ pub fn run(repo: &Path, only_env: Option<&str>, frozen: bool, credentials: bool)
             "ships with the OS",
         ),
     ] {
+        if tool == "gh" && lite {
+            checks.push(release_row_skipped("tool:gh", "release tags, pull requests and checks"));
+            continue;
+        }
         if tool == "aws-vault" {
             if let Some(reason) = aws_skip.as_deref() {
                 checks.push(ok("tool:aws-vault", format!("skipped: declared: {reason}")));
@@ -136,6 +144,7 @@ pub fn run(repo: &Path, only_env: Option<&str>, frozen: bool, credentials: bool)
     // A candidate's digest: ops/scripts/image-digest uses whichever of crane,
     // skopeo or docker is on PATH (ADR 1204).
     match ["crane", "skopeo", "docker"].iter().find(|t| which(t)) {
+        _ if lite => checks.push(release_row_skipped("tool:image-digest", "a candidate's digest")),
         Some(t) => checks.push(ok("tool:image-digest", format!("{t} reads a candidate's digest from the registry (release)"))),
         None => checks.push(refused("tool:image-digest", "none of crane, skopeo or docker is on PATH (release reads a candidate's digest with one)".to_string(), "brew install crane (or skopeo, or Docker)")),
     }
@@ -196,14 +205,20 @@ pub fn run(repo: &Path, only_env: Option<&str>, frozen: bool, credentials: bool)
     // contexts the live rows mint invites from.
     checks.push(op_session_check(repo, credentials));
     checks.extend(aws_vault_check(repo, aws_skip.as_deref(), credentials));
-    checks.push(crane_check());
-    checks.extend(goat_contexts_check(repo));
+    if lite {
+        checks.push(release_row_skipped("tool:crane", "a candidate's digest"));
+        checks.push(release_row_skipped("tool:goat-contexts", "the goat contexts the live rows mint invites from"));
+    } else {
+        checks.push(crane_check());
+        checks.extend(goat_contexts_check(repo));
+    }
 
     // 3. The checkout: on main/master, and current with origin (C3).
     checks.push(checkout_check(repo, frozen));
 
     // 3b. The declared secrets posture and whether its store can serve (ADR 1204).
-    checks.extend(crate::secrets::doctor_rows(repo, credentials));
+    let secrets = crate::secrets::doctor_rows(repo, credentials);
+    checks.extend(if lite { secrets.into_iter().map(lite_secrets_row).collect() } else { secrets });
 
     if let Some(cfg) = cfg {
         // 4. Each environment's transport, as the resolver would choose it.
@@ -996,19 +1011,30 @@ fn live_rows_skipped() -> Check {
     ok("tool:live-rows", "skipped: declared: a goatlite cuts no release, so the browser rows do not run from this machine".to_string())
 }
 
-/// The one account a goatlite needs until public images land (goatlite.md §5 row 7).
-/// Unset is a warning, not a refusal: phase 5 is where it is used, and a learner
-/// rehearsing does not need it. An `ok` row with a `fix` prints as a note.
+/// A row only a release reads, skipped under the lite preset with its reason.
+fn release_row_skipped(name: &str, what: &str) -> Check {
+    ok(name, format!("skipped: declared: a goatlite cuts no release, so this machine does not need {what}"))
+}
+
+/// Under the lite preset phase 3 of the standup writes the secrets file
+/// (`goatbuilder secrets init`), so before the first standup its absence is
+/// the expected state, named with the phase that produces it, not a refusal.
+fn lite_secrets_row(c: Check) -> Check {
+    if c.name == "secrets:env-file" && !c.ok && c.detail.contains("does not exist") {
+        return ok(&c.name, format!("{}: produced by phase 3 of the standup", c.detail));
+    }
+    c
+}
+
+/// The image-pull token (goatlite.md §5 row 7). The goatnet's images are public
+/// on ghcr.io and a goatlite standup pulls every one without credentials, so
+/// unset is the normal case and prints no note; set, phase 5 logs in with it
+/// (a mirror or private registry that needs one).
 fn image_token_row(set: bool) -> Check {
     if set {
-        return ok("secret:GHCR_READ_TOKEN", "set: pulls the goatnet's container images in phase 5".to_string());
+        return ok("secret:GHCR_READ_TOKEN", "set: phase 5 logs in to the registry with it".to_string());
     }
-    Check {
-        name: "secret:GHCR_READ_TOKEN".to_string(),
-        ok: true,
-        detail: "GHCR_READ_TOKEN is not set: phase 5 needs it to pull the goatnet's container images".to_string(),
-        fix: Some("export GHCR_READ_TOKEN=<a GitHub token with read:packages>".to_string()),
-    }
+    ok("secret:GHCR_READ_TOKEN", "not set: the goatnet's images are public and pull without it".to_string())
 }
 
 /// The toolchain the live rows need on this machine: the console e2e suite's
@@ -1917,10 +1943,28 @@ mod tests {
     }
 
     #[test]
-    fn the_image_token_row_warns_and_never_refuses() {
+    fn under_lite_the_release_rows_are_skipped_as_declared() {
+        for (name, what) in [("tool:gh", "release tags"), ("tool:crane", "a candidate's digest")] {
+            let c = release_row_skipped(name, what);
+            assert!(c.ok && c.fix.is_none() && c.detail.starts_with("skipped: declared"), "{c:?}");
+        }
+    }
+
+    #[test]
+    fn under_lite_a_missing_secrets_file_is_phase_3s_and_other_rows_keep_their_grade() {
+        let missing = Check { name: "secrets:env-file".into(), ok: false, detail: ".envrc.local.d/secrets.env does not exist".into(), fix: Some("goatbuilder secrets init --env <goatnet>".into()) };
+        let c = lite_secrets_row(missing);
+        assert!(c.ok && c.detail.ends_with("produced by phase 3 of the standup"), "{c:?}");
+        let unreadable = Check { name: "secrets:env-file".into(), ok: false, detail: ".envrc.local.d/secrets.env is mode 0644".into(), fix: Some("chmod 600".into()) };
+        assert!(!lite_secrets_row(unreadable).ok);
+        let other = Check { name: "secrets:posture".into(), ok: false, detail: "does not exist".into(), fix: None };
+        assert!(!lite_secrets_row(other).ok);
+    }
+
+    #[test]
+    fn the_image_token_row_never_refuses_and_needs_no_token() {
         let unset = image_token_row(false);
-        assert!(unset.ok && unset.fix.as_deref().unwrap().contains("read:packages"), "{unset:?}");
-        assert!(unset.detail.contains("phase 5"));
+        assert!(unset.ok && unset.fix.is_none() && unset.detail.contains("public"), "{unset:?}");
         let set = image_token_row(true);
         assert!(set.ok && set.fix.is_none());
     }

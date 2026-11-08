@@ -11,6 +11,7 @@
 # negative control:
 #
 #   apt     before the page's `apt update`, an install on the fresh image fails
+#   rust    the page's rustup block runs unattended and leaves cargo on PATH
 #   python  the system Python is externally managed; the page's venv is the
 #           python3 on PATH and imports yaml, jsonschema, jmespath
 #   ansible the pinned ansible-core and the requirements.yml collections
@@ -46,12 +47,13 @@ checkout="$(blocks "Set up Python, Ansible and the browser")"
 ! grep -q -- '--break-system-packages' "$PAGE" || fail "the page overrides the system Python (--break-system-packages); the venv is the route"
 first_apt="$(printf '%s\n' "$ubuntu" | grep -m1 -E '^sudo apt(-get)? ' || true)"
 case "$first_apt" in *" update"*) ;; *) fail "the first apt command is not apt update: $first_apt" ;; esac
+printf '%s\n' "$ubuntu" | grep -q 'sh.rustup.rs | sh -s -- -y' || fail "Rust is not installed non-interactively (rustup -y)"
 printf '%s\n' "$checkout" | grep -q 'python3 -m venv' || fail "no venv is created"
 printf '%s\n' "$checkout" | grep -q "ansible-core==" || fail "ansible-core is not pinned"
 printf '%s\n' "$checkout" | grep -q 'ansible-galaxy collection install -r ops/ansible/requirements.yml' || fail "the collections are not installed"
 printf '%s\n' "$checkout" | grep -q 'playwright install --with-deps chromium' || fail "Playwright is installed without its system libraries"
 printf '%s\n' "$checkout" | grep -q 'chromium launched' || fail "no browser launch check"
-pass "the page declares apt update, a venv, pinned ansible-core + collections, Playwright --with-deps and a launch check"
+pass "the page declares apt update, rustup -y, a venv, pinned ansible-core + collections, Playwright --with-deps and a launch check"
 [ "${1:-}" = "--lint" ] && exit 0
 
 [ "$(id -u)" = 0 ] || fail "run as root in a fresh ubuntu:24.04 container"
@@ -88,6 +90,10 @@ for c in ansible.posix community.general community.docker community.crypto; do
   ansible-galaxy collection list "\$c" 2>/dev/null | grep -q "^\$c " || fail "collection \$c is not installed"
 done
 pass "ansible-core 2.20.11 with the requirements.yml collections"
+
+# cargo: the page's rustup block put it on PATH (the build in "Get the checkout" needs it)
+cargo --version >/dev/null || fail "cargo is not on PATH after the page's rustup block"
+pass "cargo is on PATH: \$(cargo --version)"
 
 # yq is mikefarah's
 yq --version 2>&1 | grep -qi mikefarah || fail "yq is not mikefarah's: \$(yq --version 2>&1)"

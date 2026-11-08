@@ -133,6 +133,19 @@ fn run(c: &Copy, url: &str, args: &[&str], extra: &[(&str, &str)]) -> Output {
     cmd.output().unwrap()
 }
 
+/// A goatbuilder.yaml in the working directory naming the release signer.
+fn signer_config(c: &Copy, release_source: &str) {
+    let dir = c.home.join("ops/goatbuilder");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("goatbuilder.yaml"),
+        format!(
+            "schema: goatbuilder/v1\npreset: lite\nrepo:\n  source: example-org/declarations\n  image_namespace: ghcr.io/example-org\n  release_source: {release_source}\ncomponents:\n  portal:\n    declared_in: declared/pins.yaml\nenvironments:\n  - name: dev\n    converger: push-ansible\npromotion:\n  path:\n    - name: dev\n      kind: rung\n      environment: dev\n"
+        ),
+    )
+    .unwrap();
+}
+
 fn text(o: &Output) -> String {
     format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr))
 }
@@ -238,6 +251,8 @@ fn a_sha256_that_sha256sums_contradicts_is_refused() {
 #[test]
 fn a_verified_signature_installs_and_a_refused_one_does_not() {
     let c = copy();
+    // The signer comes from the deployment's config, never from the code.
+    signer_config(&c, "example-org/releases");
     let before = bytes(&c.exe);
     let url = surface("9.9.9", Body::Full(release()), &sha256(&release()));
     let refused = fake_cosign(&c, 1);
@@ -250,6 +265,10 @@ fn a_verified_signature_installs_and_a_refused_one_does_not() {
     let verified = fake_cosign(&c, 0);
     let o = run(&c, &url, &["update"], &[("PATH", &verified)]);
     assert_eq!(o.status.code(), Some(0), "{}", text(&o));
-    assert!(text(&o).contains("ok    signature  SHA256SUMS signed by the"), "{}", text(&o));
+    assert!(
+        text(&o).contains("ok    signature  SHA256SUMS signed by the example-org/releases release workflow"),
+        "{}",
+        text(&o)
+    );
     assert_eq!(bytes(&c.exe), release());
 }

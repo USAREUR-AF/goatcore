@@ -107,7 +107,7 @@ jobs:
         run: |
           set -euo pipefail
           tarball="prometheus-${PROM_VERSION}.linux-amd64.tar.gz"
-          curl -fsSLO "https://github.com/prometheus/prometheus/releases/download/v${PROM_VERSION}/${tarball}"
+          curl -fsSLO --retry 6 --retry-delay 15 --retry-all-errors "https://github.com/prometheus/prometheus/releases/download/v${PROM_VERSION}/${tarball}"
           echo "${PROM_SHA256}  ${tarball}" | sha256sum -c -
           tar xzf "${tarball}"
           sudo install -m 0755 "prometheus-${PROM_VERSION}.linux-amd64/promtool" /usr/local/bin/promtool

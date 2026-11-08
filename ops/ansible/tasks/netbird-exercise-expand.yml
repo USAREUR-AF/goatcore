@@ -20,13 +20,21 @@
 #     host site's Default policy (its enable/disable belongs to the host
 #     site's own cutover lifecycle).
 #   - URL + token env-var: inherited from the host_site's existing rows.
+#     A deployment that declares no site maps (a goatlite, or any standup of
+#     a goatnet the maps have never heard of, ADR 1185) has no rows to
+#     inherit: the playbooks then reach the host site by their own defaults
+#     (-e netbird_mgmt_url, <SITE>_NB_API_TOKEN), so an exercise hosted on a
+#     site this deployment does not run cannot stop its run.
 
 - name: "exercise-expand — validate host_site of every declared exercise"
   ansible.builtin.assert:
     that:
       - item.value.host_site is defined
-      - item.value.host_site in netbird_site_url_map
-      - item.value.host_site in netbird_site_env_var_map
+      - item.value.host_site is match('^[a-z][a-z0-9-]+[a-z0-9]$')
+      # Declared maps are the deployment's list of the sites it reaches: an
+      # exercise must name one of them. No maps declared: nothing to check against.
+      - (netbird_site_url_map | default({}) | length == 0) or item.value.host_site in netbird_site_url_map
+      - (netbird_site_env_var_map | default({}) | length == 0) or item.value.host_site in netbird_site_env_var_map
       - item.value.site_prefix is defined
       - item.value.site_prefix | length > 0
       # A scope that opts into the ADR 1116 gear classes must be able to see
@@ -41,7 +49,8 @@
       - item.value.kind in ['exercise', 'operational']
     fail_msg: >-
       netbird_exercises['{{ item.key }}'] must declare site_prefix + a
-      host_site present in netbird_site_url_map/netbird_site_env_var_map
+      host_site that is a site name and, when this deployment declares
+      netbird_site_url_map/netbird_site_env_var_map, is present in both
       (got host_site={{ item.value.host_site | default('<unset>') }});
       and kind: exercise|operational
       (got kind={{ item.value.kind | default('<unset>') }});
@@ -62,10 +71,12 @@
                                             else [])}}) }}
     netbird_site_url_map: >-
       {{ netbird_site_url_map
-         | combine({item.key: netbird_site_url_map[item.value.host_site]}) }}
+         | combine({item.key: netbird_site_url_map[item.value.host_site]}
+                    if item.value.host_site in netbird_site_url_map else {}) }}
     netbird_site_env_var_map: >-
       {{ netbird_site_env_var_map
-         | combine({item.key: netbird_site_env_var_map[item.value.host_site]}) }}
+         | combine({item.key: netbird_site_env_var_map[item.value.host_site]}
+                    if item.value.host_site in netbird_site_env_var_map else {}) }}
   loop: "{{ netbird_exercises | default({}) | dict2items }}"
   loop_control:
     label: "{{ item.key }}"

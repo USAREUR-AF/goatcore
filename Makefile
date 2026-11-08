@@ -108,36 +108,69 @@ clean:
 	rm -rf provisioning/.build/
 
 # ── Multi-agent substrate (Block 48O + ADR 0017) ────────
-# The session tooling lives in the dots repository: the agent-workflow Claude Code
-# plugin (hooks, /iso and the other session skills, memory seeds), the `work`
-# CLI and the git-hook dispatcher. ops/scripts/dots-tool runs the dots tools.
+# Per-clone install of the session-isolation pilot pieces. Each piece
+# is independently revertable (see ADR 0017 §"Rollback procedure").
 
 .PHONY: multi-agent-substrate-install
 multi-agent-substrate-install: multi-agent-substrate-hooks-install \
                                 multi-agent-substrate-skill-install \
-                                multi-agent-substrate-memory-install
+                                multi-agent-substrate-memory-install \
+                                multi-agent-substrate-bus-init
 	@echo ""
 	@echo "==> Multi-agent substrate installation complete."
-	@echo "    A repo opts in with .claude/agent-workflow.yaml."
+	@echo "    Hooks: .git/hooks/{post-checkout,pre-commit}"
+	@echo "    Skill: ~/.claude/skills/iso/SKILL.md"
+	@echo "    Memory: ~/.claude/projects/<this-repo>/memory/feedback_master_worktree_readonly.md"
+	@echo "    Session bus: ~/.claude/state/session-bus-<repo-fingerprint>.jsonl"
+	@echo ""
+	@echo "    Optional: symlink launcher to PATH —"
+	@echo "      ln -s $$(pwd)/ops/scripts/claude-session ~/bin/claude-session"
 
 .PHONY: multi-agent-substrate-hooks-install
 multi-agent-substrate-hooks-install:
-	@echo "==> Setting git's global core.hooksPath to the dots dispatcher"
-	@./ops/scripts/dots-tool git-hooks/install-global --apply
+	@echo "==> Installing master-worktree hooks (post-checkout + pre-commit)"
+	@./ops/git-hooks/install.sh
 
 .PHONY: multi-agent-substrate-skill-install
 multi-agent-substrate-skill-install:
-	@echo "==> Session skills and hooks come from the agent-workflow plugin"
-	@if command -v claude >/dev/null 2>&1; then \
-		claude plugin marketplace add "$$(./ops/scripts/dots-tool --root)" && claude plugin install agent-workflow@dots; \
-	else \
-		echo "    claude is not on PATH; install Claude Code, then run this target again"; exit 1; \
-	fi
+	@echo "==> Installing /iso slash command skill at ~/.claude/skills/iso/SKILL.md"
+	@mkdir -p ~/.claude/skills/iso
+	@ln -sfn "$$(pwd)/ops/scripts/iso.skill.md" ~/.claude/skills/iso/SKILL.md
+	@echo "    /iso skill installed (verify: type /iso status next session)"
 
 .PHONY: multi-agent-substrate-memory-install
 multi-agent-substrate-memory-install:
-	@echo "==> Seeding the agent-workflow feedback memories"
-	@./ops/scripts/dots-tool aw-seed-memories
+	@echo "==> Installing memory hooks from ops/scripts/feedback-memory-hooks/"
+	@MEMORY_DIR=$$(find ~/.claude/projects -maxdepth 1 -type d -name "*$$(basename $$(git rev-parse --show-toplevel))*" | head -1); \
+	if [ -z "$$MEMORY_DIR" ]; then \
+		echo "    WARN: per-repo memory dir not found at ~/.claude/projects/."; \
+		echo "    The dir is created by Claude Code on first session in this repo."; \
+		echo "    Run this target again after starting one Claude Code session."; \
+	else \
+		mkdir -p "$$MEMORY_DIR/memory"; \
+		touch "$$MEMORY_DIR/memory/MEMORY.md"; \
+		installed=0; \
+		for hook_path in ops/scripts/feedback-memory-hooks/feedback_*.md; do \
+			hook=$$(basename "$$hook_path"); \
+			cp "$$hook_path" "$$MEMORY_DIR/memory/"; \
+			installed=$$((installed + 1)); \
+			grep -qF "($$hook)" "$$MEMORY_DIR/memory/MEMORY.md" && continue; \
+			summary=$$(awk '/^description:[[:space:]]/ {sub(/^description:[[:space:]]+/,""); print; exit}' "$$hook_path" | sed 's/\.[[:space:]].*//'); \
+			[ -z "$$summary" ] && summary="(no description in frontmatter)"; \
+			printf -- '- [%s](%s) — %s\n' "$$hook" "$$hook" "$$summary" >> "$$MEMORY_DIR/memory/MEMORY.md"; \
+		done; \
+		echo "    $$installed hooks installed at $$MEMORY_DIR/memory/"; \
+	fi
+
+.PHONY: multi-agent-substrate-bus-init
+multi-agent-substrate-bus-init:
+	@echo "==> Initializing session-bus state directory"
+	@mkdir -p ~/.claude/state
+	@REPO_FP=$$(git rev-parse --show-toplevel | shasum | cut -c1-12); \
+	BUS_FILE=~/.claude/state/session-bus-$$REPO_FP.jsonl; \
+	touch "$$BUS_FILE"; \
+	echo "    Session bus at $$BUS_FILE (per-repo via path fingerprint)"
+	@echo "    Tail with: ops/work/work bus tail"
 
 # ── PR readiness gate (Block 48Q) ───────────────────────
 # Pre-push hard gate. Operates on the CURRENT branch (no args). Hard-
@@ -155,9 +188,19 @@ pr-readiness-test:
 
 .PHONY: multi-agent-substrate-uninstall
 multi-agent-substrate-uninstall:
-	@echo "==> Unsetting git's global core.hooksPath"
-	@./ops/scripts/dots-tool git-hooks/install-global --remove
-	@echo "    The plugin stays installed: claude plugin uninstall agent-workflow@dots removes it."
+	@echo "==> Removing hooks (.git/hooks/post-checkout + pre-commit)"
+	@rm -f .git/hooks/post-checkout .git/hooks/pre-commit
+	@echo "==> Removing skill (~/.claude/skills/iso/)"
+	@if [ -L ~/.claude/skills/iso/SKILL.md ] && [ "$$(readlink ~/.claude/skills/iso/SKILL.md)" = "$$(pwd)/ops/scripts/iso.skill.md" ]; then \
+		rm ~/.claude/skills/iso/SKILL.md; rmdir ~/.claude/skills/iso 2>/dev/null || true; \
+	fi
+	@echo "==> Removing memory hook"
+	@MEMORY_DIR=$$(find ~/.claude/projects -maxdepth 1 -type d -name "*$$(basename $$(git rev-parse --show-toplevel))*" | head -1); \
+	[ -n "$$MEMORY_DIR" ] && rm -f "$$MEMORY_DIR/memory/feedback_master_worktree_readonly.md" || true
+	@echo "    Memory hook MEMORY.md row left in place (manual edit recommended if removing)"
+	@echo ""
+	@echo "==> Substrate uninstalled. Per-clone session-bus.jsonl preserved at ~/.claude/state/."
+	@echo "    Per-worktree .iso-mode.env files left in place (use 'git worktree remove' for full cleanup)."
 
 .PHONY: review
 review: ## the daily review-and-act: what is soaking, ready, or owed on the ladder (ADR 1177)

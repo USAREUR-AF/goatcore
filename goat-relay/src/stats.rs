@@ -92,6 +92,10 @@ pub fn render_json(routing: &RoutingTable) -> String {
         "\"drops\":{{\"writer_full\":{},\"writer_closed\":{},\"peer_not_found\":{},\"datagram_too_large\":{}}},",
         drops.writer_full, drops.writer_closed, drops.peer_not_found, drops.datagram_too_large
     ));
+    s.push_str(&format!(
+        "\"subscriptions_refused\":{},",
+        routing.subscriptions_refused()
+    ));
     s.push_str("\"peers\":[");
     for (i, p) in peers.iter().enumerate() {
         if i > 0 {
@@ -149,6 +153,6 @@ mod tests {
     #[test]
     fn render_json_empty_table_is_valid() {
         let json = render_json(&RoutingTable::new());
-        assert_eq!(json, "{\"connections\":0,\"drops\":{\"writer_full\":0,\"writer_closed\":0,\"peer_not_found\":0,\"datagram_too_large\":0},\"peers\":[]}");
+        assert_eq!(json, "{\"connections\":0,\"drops\":{\"writer_full\":0,\"writer_closed\":0,\"peer_not_found\":0,\"datagram_too_large\":0},\"subscriptions_refused\":0,\"peers\":[]}");
     }
 }

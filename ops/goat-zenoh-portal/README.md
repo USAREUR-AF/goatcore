@@ -81,7 +81,7 @@ browser's localStorage at key `portalApiKey`).
 | `DELETE` | `/api/vendors/{vendor}/topics/{id}`           | vendor or operator | Retire a topic |
 | `GET`    | `/api/topics/latest?key=<key-expr>`           | bearer   | Last value (proxies Zenoh REST plugin) |
 | `GET`    | `/api/topics/recent?key=<key-expr>&n=20`      | bearer   | Last N values |
-| `GET`    | `/api/topics/stream?key=<key-expr>`           | bearer   | SSE live-tail |
+| `GET`    | `/api/topics/stream?key=<key-expr>`           | bearer   | SSE live-tail; at most `PORTAL_MAX_STREAMS_PER_PRINCIPAL` (default 8) open per org/slot key, operators exempt, else 409 `stream_limit` |
 | `GET`    | `/api/org-bundle/{vendor}/{token}.tar.gz`     | token    | One-time cert tarball download (returned at org mint) |
 | `GET`    | `/api/vendor-bundle/{vendor}/{token}.tar.gz`  | token    | Deprecated alias of `/api/org-bundle` (ADR 1052); counted toward the Phase-4 gate |
 

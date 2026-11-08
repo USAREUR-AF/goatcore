@@ -116,6 +116,11 @@
           "type": "string",
           "pattern": "^[a-z0-9.-]+(/[a-z0-9._-]+)+$"
         },
+        "release_source": {
+          "description": "The repository whose release workflow signs the goatbuilder binaries this project installs, as owner/name. `goatbuilder update` checks the SHA256SUMS signature against it. Omitted: source.",
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
+        },
         "signing": {
           "description": "How a published declaration is signed at the source (contract C2): intent-sign for the git-published intents, cosign for a registry-published index.",
           "enum": ["intent-sign", "cosign"],

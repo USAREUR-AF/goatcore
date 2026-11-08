@@ -235,13 +235,13 @@ elif [ -n "$DIRECTORY_STEP" ]; then
   EXCHANGE_LABEL="exchange through the directory; read the key and CA fingerprint aloud"
   EXCHANGE_TEXT="Directory step, run before this stop (it grants nothing):
        python3 '$REPO/ops/federation/standup/directory.py' --url '$FED_DIRECTORY_URL' --ours '$OURS'${FED_PACKAGE_URL:+ --package-url '$FED_PACKAGE_URL'} --their-id '${FED_COUNTERPARTY_ID:-<unset>}'
-     It uploads our package (unless FED_PACKAGE_URL names our own host) and CA,
-     publishes our pointer, fetches their package and CA to $FED_COUNTERPARTY
-     and $FED_WORK/theirs-ca.pem, checks digest, signatures and CA fingerprint,
-     and prints both verifying keys and CA fingerprints in groups of four and a
-     compatibility report. Their entry not there yet: run phase 5 again after
-     they run theirs. With SPIRE federation on, hand over
-     $FED_WORK/ours.spiffe-bundle and place theirs at $FED_WORK/theirs.spiffe-bundle."
+     It uploads our package (unless FED_PACKAGE_URL names our own host), CA and
+     SPIFFE bundle (when phase 2 wrote one), publishes our pointer, fetches
+     theirs to $FED_COUNTERPARTY, $FED_WORK/theirs-ca.pem and
+     $FED_WORK/theirs.spiffe-bundle, checks digest, signatures and CA
+     fingerprint, and prints both verifying keys and CA fingerprints in groups
+     of four and a compatibility report. Their entry not there yet: run phase 5
+     again after they run theirs."
 elif [ -n "${FED_DIRECTORY_URL:-}" ]; then
   EXCHANGE_LABEL="exchange through the directory; read the key and CA fingerprint aloud"
   EXCHANGE_TEXT="FED_DIRECTORY_URL, FED_PACKAGE_URL, FED_COUNTERPARTY_ID or FED_CA_CERT holds

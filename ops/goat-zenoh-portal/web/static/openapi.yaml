@@ -2637,6 +2637,16 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
+        "409":
+          description: >
+            `stream_limit`: this org or slot key already holds the maximum
+            number of live streams (`PORTAL_MAX_STREAMS_PER_PRINCIPAL`, default
+            8; operators are exempt). Close one and retry. Not 429, which the
+            proxy's errors middleware reserves.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
         default:
           $ref: "#/components/responses/Default"
 

@@ -48,6 +48,10 @@ name: coupled-fact-guards
 #      script that has a goatnet's management host hold an operator context for
 #      the acceptance rows. The rows run there as non-person identities only
 #      (ADR 1207: `acceptance`, `assay-probe`); operator keys never go on a host.
+#  12. check-fence-cookie-secret-length.py — an oauth2-proxy fence whose role
+#      does not assert the cookie secret is 16, 24 or 32 characters. Any other
+#      length crash-loops the proxy at boot behind a green play recap, and the
+#      surface answers 502.
 # Doctrine P6: each guard proves itself RED against a broken fixture
 # (--self-test) before its verdict on the real tree is trusted — the
 # self-test step runs first, every time.
@@ -74,6 +78,9 @@ on:
       - 'ops/dns/*/name-snapshot.json'
       - 'ops/ci/check-deadman-sources.py'
       - 'ops/ci/check-fence-client-registered.py'
+      - 'ops/ci/check-fence-cookie-secret-length.py'
+      - 'ops/ansible/roles/*/tasks/**'
+      - 'ops/ansible/roles/*/templates/**'
       - 'ops/ansible/roles/rollback-ledger/**'
       - 'ops/ansible/roles/goat-get/meta/**'
       - 'ops/ansible/roles/goat-docs/meta/**'
@@ -162,7 +169,7 @@ jobs:
       - name: Install amtool (alertmanager v0.27.0)
         run: |
           cd "$RUNNER_TEMP"
-          curl -fsSLO https://github.com/prometheus/alertmanager/releases/download/v0.27.0/alertmanager-0.27.0.linux-amd64.tar.gz
+          curl -fsSLO --retry 6 --retry-delay 15 --retry-all-errors https://github.com/prometheus/alertmanager/releases/download/v0.27.0/alertmanager-0.27.0.linux-amd64.tar.gz
           echo "23c3f5a3c73de91dbaec419f3c492bef636deb02680808e5d842e6553aa16074  alertmanager-0.27.0.linux-amd64.tar.gz" | sha256sum -c
           tar xzf alertmanager-0.27.0.linux-amd64.tar.gz
           echo "AMTOOL=$RUNNER_TEMP/alertmanager-0.27.0.linux-amd64/amtool" >> "$GITHUB_ENV"
@@ -188,6 +195,7 @@ jobs:
           python3 ops/ci/check-acme-san-requests.py --self-test
           python3 ops/ci/check-alertmanager-goatnets.py --self-test
           python3 ops/ci/check-assay-probe-identity.py --self-test
+          python3 ops/ci/check-fence-cookie-secret-length.py --self-test
           python3 ops/ci/check-leaf-paths-through-goat-leaf.py --self-test
           python3 ops/ci/check-no-operator-context-on-hosts.py --self-test
       - name: partition flag vs rendered read carve
@@ -206,6 +214,8 @@ jobs:
         run: python3 ops/ci/check-deadman-sources.py
       - name: every oauth2-proxy fence's Hydra client is registered (#2126)
         run: python3 ops/ci/check-fence-client-registered.py
+      - name: every oauth2-proxy fence refuses a cookie secret of the wrong length
+        run: python3 ops/ci/check-fence-cookie-secret-length.py
       - name: no certificate request names a host its wildcard covers (#2149)
         run: python3 ops/ci/check-acme-san-requests.py
       # The full render (every mgmt host's real group_vars through

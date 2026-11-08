@@ -10,7 +10,7 @@ import (
 
 // satlinkSchema is executed alongside the main schema on Open(). The table,
 // column and index names come from compat: they hold existing history.
-const satlinkSchema = `
+var satlinkSchema = `
 CREATE TABLE IF NOT EXISTS ` + compat.SatlinkProbesTable + ` (
 	id BIGSERIAL PRIMARY KEY,
 	ts BIGINT NOT NULL,

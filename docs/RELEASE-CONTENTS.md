@@ -60,7 +60,7 @@ These work from a clone with no configuration:
 
 - `goatbuilder standup zagros --site alpha --mock <dir>` and the other verbs under `--mock`, against the fixtures.
 - `goatbuilder explain` and `goat explain`, with an error code or pasted text.
-- `goat --help` and the `goat acl` verbs, which read the example policy compiled in from `ops/warrant/demo/`.
+- `goat --help`, and the `goat acl` verbs run inside a checkout (they read its `ops/ansible/netbird_acl_*.yml`; elsewhere pass `--declaration <dir>`).
 - Every script in `ops/ci/`, from a git checkout.
 
 These need configuration from you first:

@@ -578,7 +578,7 @@ rows_on() { # $1 goatnet key -> writes evidence file, returns runner exit
     die "could not compute the live rows $TAG affects (affected-flows.py failed above) — fix that, then re-run the same command"
   fi
   local rows; rows="$(printf '%s' "$flows_json" | python3 -c 'import json,sys; print(",".join(json.load(sys.stdin)["live_rows"]))')"
-  if [ -z "$rows" ]; then note "no live rows are mapped for what $TAG changed (ops/validation/flow-map.yaml) — evidence is the cheap suites only"; echo "" > "$EVID"; return 0; fi
+  if [ -z "$rows" ]; then note "no live rows are mapped for what $TAG changed (ops/validation/flow-map.yaml) — evidence is the cheap suites only"; EVID=""; return 0; fi
   # A row that cannot run here is UNTESTED, not FAILED: say what is missing and
   # stop before the runner, rather than let an exit 2 read as a dead candidate.
   if ! browser_toolchain_check "$rows"; then
@@ -593,23 +593,23 @@ PY
   note "rows on $name: $rows (requires $req)"
   # The contexts the rows run as come from the values file (goat_sponsor_context,
   # probe_context): non-person identities, never an operator key (ADR 1207).
-  local via res; via="$(runner_var "$g" goat_via)"; res="$(runner_var "$g" intake_resolve)"
+  local via res jump=""; via="$(runner_var "$g" goat_via)"; res="$(runner_var "$g" intake_resolve)"
   # A rung this laptop is not meshed to runs its rows on its own management
-  # host through the door: goat_via `door:<env>` resolves to the door's ssh
-  # endpoint (docs/design/env-doors.md; release-candidate-validation.md).
-  unset GOAT_ROWS_SSH_JUMP
+  # host through the door: goat_via `door:<env>` resolves to that host's mesh
+  # address, and every ssh the rows make (goat rows and host rows) jumps through
+  # the door to reach it (docs/design/env-doors.md; ops/validation/probes.py
+  # _ssh_jump). The door address itself is never the ssh destination: it is a
+  # tunnel port whose host key churns.
   case "$via" in door:*)
     local door="${via#door:}"
     if [ "$DRY" = 1 ]; then note "DRY: $HERE/door-open.sh $door  (the rows run goat on $name's management host through the door)"
     else "$HERE/door-open.sh" "$door" >/dev/null 2>&1 || die "door to $door did not open for the rows on $name"; fi
-    via="$("$HERE/env-door.sh" "$door" --ssh-target 2>/dev/null || true)"
-    [ -n "$via" ] || [ "$DRY" = 1 ] || die "env-door.sh $door --ssh-target printed no user@host:port"
-    # Host rows (cmd-assert on the goatnet's hosts) jump through the same door
-    # to each host's mesh address (ops/validation/probes.py _ssh_jump, #2100).
-    [ "$DRY" = 1 ] || export GOAT_ROWS_SSH_JUMP="$via" ;;
+    jump="$("$HERE/env-door.sh" "$door" --ssh-target 2>/dev/null || true)"
+    via="$("$HERE/env-door.sh" "$door" --host-target 2>/dev/null || true)"
+    { [ -n "$jump" ] && [ -n "$via" ]; } || [ "$DRY" = 1 ] || die "env-door.sh $door printed no door (--ssh-target) or host (--host-target)" ;;
   esac
   local rc=0
-  run env INTAKE_RESOLVE="$res" python3 "$REPO/ops/validation/run-acceptance.py" --env "$name" --values "$REPO/$(runner_var "$g" values)" \
+  run env GOAT_ROWS_SSH_JUMP="$jump" INTAKE_RESOLVE="$res" python3 "$REPO/ops/validation/run-acceptance.py" --env "$name" --values "$REPO/$(runner_var "$g" values)" \
       --deployed "$req" --only "$rows" --var "goat_via=$via" --var "env=$name" --json "$EVID" --require-pass || rc=$?
   # exit 2 from the runner is an environment problem (a tool missing, a context
   # not configured) — the rows did not run. That is UNTESTED, never FAIL.
@@ -639,7 +639,7 @@ EVID=""
 if [ "$FROM" != preprod ] && [ "$FROM" != preprod-rows ] && [ "$FROM" != prod ]; then
   step "live rows on $DEV"
   if ! rows_on "$DEV"; then die "a live row FAILED on $DEV — the candidate is dead: fix on main, cut rc.$((RCN+1)) (delete $TAG)"; fi
-  DEV_EVID="$EVID"
+  DEV_EVID="$EVID"; dev_rows_ran=1
 fi
 
 # --- 6 preprod -----------------------------------------------------------------------
@@ -683,7 +683,9 @@ if [ "$FROM" != preprod-rows ]; then
 step "preprod rung: open the candidate and put $TAG on $PRE"
 # A resume from preprod reads the dev evidence from disk — the dev step wrote it
 # there — rather than from a variable only the dev step sets.
-if [ -z "${DEV_EVID:-}" ]; then DEV_EVID="$(evidence_path "$(runner_var "$DEV" name)")"; [ -s "$DEV_EVID" ] || DEV_EVID=""; fi
+# Only when this run did not run the dev rows: a run that did and found none
+# mapped has no dev evidence, and an older file on disk is not this candidate's.
+if [ -z "${dev_rows_ran:-}" ]; then DEV_EVID="$(evidence_path "$(runner_var "$DEV" name)")"; [ -s "$DEV_EVID" ] || DEV_EVID=""; fi
 mkwt
 rc_changes
 # Not inside the capture: a `run` in a dry run prints its DRY line, and a

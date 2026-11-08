@@ -35,19 +35,24 @@
 //!
 //! Three classic-BPF instructions:
 //! ```text
-//! ld   [12]              ; load 32-bit word at packet offset 12 (IPv4 src IP)
-//! mod  num_sockets       ; modulo num_sockets — returns shard index 0..N-1
-//! ret  A                 ; return accumulator (the result)
+//! ld   [SKF_NET_OFF + 12] ; load 32-bit word at network-header offset 12 (IPv4 src IP)
+//! mod  num_sockets        ; modulo num_sockets — returns shard index 0..N-1
+//! ret  A                  ; return accumulator (the result)
 //! ```
 //!
-//! The "packet" pointer for SO_REUSEPORT_CBPF starts at the IP header.
-//! For IPv4: src IP is at offset 12 (byte offsets 12-15 within IP header).
-//! For IPv6: src IP is at offset 8 (16 bytes); not handled here — IPv6
-//! packets fall through to the kernel default RSS hash.
+//! The "packet" a reuseport program sees does NOT start at the IP header:
+//! the kernel pulls the transport header first, so plain offset 0 is the
+//! first byte after the TCP/UDP header (the TCP payload, empty on a SYN).
+//! A plain `ld [12]` therefore reads past the end of a SYN, the load
+//! aborts the program with a return of 0, and every connection lands on
+//! socket 0. The address has to be read relative to the network header,
+//! through the `SKF_NET_OFF` ancillary base.
+//!
+//! For IPv4 the load reads the source address (header bytes 12-15). For
+//! an IPv6 packet the same load reads bytes 4-7 of the 16-byte source
+//! address, which still pins one source to one shard.
 //!
 //! Linux 4.5+ required (SO_ATTACH_REUSEPORT_CBPF added in commit 538950a1b75aa).
-
-#![cfg(target_os = "linux")]
 
 use std::io;
 use std::os::fd::AsRawFd;
@@ -91,10 +96,13 @@ pub(crate) fn attach_source_ip_steering<S: AsRawFd>(
     const BPF_ALU_MOD_K: u16 = 0x94;
     const BPF_RET_A: u16 = 0x16;
 
-    // IPv4 source IP is at offset 12 in the IP header. The BPF "packet"
-    // pointer for SO_REUSEPORT_CBPF starts at the IP header; offset 12
-    // gives bytes 12-15 = IPv4 src address.
-    const IPV4_SRC_OFFSET: u32 = 12;
+    // IPv4 source IP is at offset 12 in the IP header. A reuseport
+    // program's packet pointer sits past the transport header, so the
+    // offset is taken from the network header via the SKF_NET_OFF base
+    // (see the module docs). A plain 12 reads past the end of a SYN and
+    // steers every connection to socket 0.
+    #[allow(clippy::cast_sign_loss)]
+    const IPV4_SRC_OFFSET: u32 = (libc::SKF_NET_OFF + 12) as u32;
 
     let prog: [libc::sock_filter; 3] = [
         libc::sock_filter {

@@ -33,6 +33,11 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+if [ -z "$COLLECTOR" ]; then
+  echo "snitch: no collector URL: pass --collector <url> or set SNITCH_COLLECTOR" >&2
+  exit 1
+fi
+
 log() { echo "[snitch] $(date +%H:%M:%S) $*"; }
 
 if [ "$(id -u)" -ne 0 ]; then

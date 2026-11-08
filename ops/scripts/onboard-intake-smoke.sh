@@ -54,29 +54,32 @@ done
 case "$STAGE" in intake|sponsor) ;; *) echo "smoke: --stage must be intake or sponsor" >&2; exit 2 ;; esac
 [ -n "$ENV_NAME" ] || ENV_NAME="$CTX"
 
+# via_ssh: run a command on the --goat-via host. VIA is user@host, or
+# user@host:port for a door address used directly. When the release driver
+# reaches the host through a door it names the door in GOAT_ROWS_SSH_JUMP
+# (user@127.0.0.1:port, env-door.sh <env> --ssh-target) and VIA is the host's
+# mesh address (env-door.sh <env> --host-target): the ssh jumps through the door,
+# as ops/validation/probes.py _ssh_jump does (docs/design/env-doors.md).
+via_ssh() {
+  local _host="$VIA" _port="" _jump=()
+  case "$VIA" in *:*) _host="${VIA%:*}"; _port="${VIA##*:}" ;; esac
+  if [ -n "${GOAT_ROWS_SSH_JUMP:-}" ]; then
+    local _jt="${GOAT_ROWS_SSH_JUMP%:*}" _jp="${GOAT_ROWS_SSH_JUMP##*:}"
+    _jump=(-o "ProxyCommand=ssh -o BatchMode=yes -o ConnectTimeout=6 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -p $_jp -W %h:%p $_jt")
+  fi
+  ssh -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+    ${_jump[@]+"${_jump[@]}"} ${_port:+-p "$_port"} "$_host" "$@"
+}
+
 # goat: local, or on a host that holds the context (see --goat-via).
 goat() {
-  if [ -n "$VIA" ]; then
-    # user@host, or user@host:port when the host is reached through a door
-    # (env-door.sh <env> --ssh-target; docs/design/env-doors.md).
-    local _host="$VIA" _port=""
-    case "$VIA" in *:*) _host="${VIA%:*}"; _port="${VIA##*:}" ;; esac
-    ssh -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ${_port:+-p "$_port"} "$_host" goat "$@"
-  else
-    command goat "$@"
-  fi
+  if [ -n "$VIA" ]; then via_ssh goat "$@"; else command goat "$@"; fi
 }
 
 # on_goat_host: a shell line where goat runs (local, or the --goat-via host),
 # for the one read the CLI has no verb for (the console's capabilities).
 on_goat_host() {
-  if [ -n "$VIA" ]; then
-    local _host="$VIA" _port=""
-    case "$VIA" in *:*) _host="${VIA%:*}"; _port="${VIA##*:}" ;; esac
-    ssh -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ${_port:+-p "$_port"} "$_host" "$1"
-  else
-    sh -c "$1"
-  fi
+  if [ -n "$VIA" ]; then via_ssh "$1"; else sh -c "$1"; fi
 }
 
 # q: an argument for goat — shell-escaped only when it rides over ssh, where the

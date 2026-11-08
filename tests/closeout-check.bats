@@ -3,16 +3,12 @@
 # its key scan must not read build trees (#1356).
 
 REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/.." && pwd)"
-# The tool lives in the dots repository; test the copy ops/scripts/closeout-check.sh runs.
-# Where no dots checkout resolves (DOTS_DIR, PATH, core.hooksPath, DOTS_REPO_URL),
-# every test skips: the tool is tested in dots itself.
-SCRIPT="$("$REPO_ROOT/ops/scripts/dots-tool" --which closeout-check 2>/dev/null || true)"
+SCRIPT="$REPO_ROOT/ops/scripts/closeout-check.sh"
 REAL_GIT="$(command -v git)"
 # Assembled so the literal header never sits in the tree for the secret scans.
 PEM_HEAD="-----BEGIN PRIV""ATE KEY-----"
 
 setup() {
-  [ -n "$SCRIPT" ] || skip "no dots checkout: closeout-check lives in the dots repository"
   export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
   W="$BATS_TEST_TMPDIR"
   git init -q --bare "$W/origin.git"
@@ -39,7 +35,7 @@ run_check() {
 # the real binary.
 bare_path() {
   mkdir -p "$W/bare"
-  for t in bash awk grep wc tr tail head sed find xargs sleep pkill dirname; do
+  for t in bash awk grep wc tr tail head sed find xargs sleep pkill; do
     p=$(command -v "$t") && ln -s "$p" "$W/bare/$t"
   done
   if [ -e "$W/bin/git" ]; then cp "$W/bin/git" "$W/bare/git"; else ln -s "$REAL_GIT" "$W/bare/git"; fi

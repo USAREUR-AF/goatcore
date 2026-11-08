@@ -49,6 +49,7 @@ Zenoh trial fabric onto a single host. Per design at
 | `portal_release_sets` | this goatnet's release sets, `[{set, prefix, members}]` in the shape of `ops/permissions/release-sets.yaml`; declared in the goatnet's `group_vars/<site>_hosts/data-access.yml`. Non-empty: the role renders the portal's registry from it (`templates/release-sets.yaml.j2`). Empty: the deploy fails unless `portal_release_sets_use_example` is true | `[]` |
 | `portal_release_sets_use_example` | with no `portal_release_sets`, install the example registry `ops/permissions/release-sets.yaml`; otherwise the deploy fails (`tasks/release-sets-guard.yml`) | true on the example goatnet (`site_id` zagros, zagros-*), else `false` |
 | `portal_release_sets_path` | where the registry lands on the host; `""` disables the Data-Access release reveal | `{{ portal_data_dir }}/release-sets.yaml` |
+| `portal_max_streams_per_principal` | concurrent `/api/topics/stream` connections one org or slot key may hold (operators exempt); rendered as `PORTAL_MAX_STREAMS_PER_PRINCIPAL` only when set. Raise it where people share one org key; `0` turns the cap off | `""` (the portal's default, 8) |
 
 ## Prerequisites
 

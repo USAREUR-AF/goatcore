@@ -69,7 +69,7 @@ Per-user installation at `~/.claude/skills/iso/SKILL.md`, a symlink to the track
 
 Auto-detection means zero ceremony — no flags needed beyond `--master` for explicit master mode.
 
-### 5. Memory hook (`feedback_master_worktree_readonly.md` (dots agent-tools, `feedback-memory-hooks/`))
+### 5. Memory hook (`feedback_master_worktree_readonly.md` (`ops/scripts/feedback-memory-hooks/`))
 
 Advisory backstop loaded into Claude's memory each session. Reinforces:
 - Master worktree HEAD is shared substrate; never `git checkout -b` or `git switch` there

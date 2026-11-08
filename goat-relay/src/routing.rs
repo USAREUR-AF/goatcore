@@ -144,9 +144,106 @@ impl Hasher for PeerIdHasher {
 }
 type PeerStatsMap = HashMap<PeerId, PeerCounters, BuildHasherDefault<PeerIdHasher>>;
 
+/// Upper bound on how many subjects one subscriber may watch at once.
+///
+/// One subscribe frame carries at most 244 subjects, but nothing bounded
+/// how many frames a peer sends: any authenticated peer could subscribe to
+/// arbitrary peer-ids until it disconnected, growing the registry without
+/// limit. A real client watches the peers it has relay connections to, so
+/// this sits far above any fleet's size. Subjects past it are refused and
+/// counted ([`RoutingTable::subscriptions_refused`]).
+pub const MAX_SUBSCRIPTIONS_PER_PEER: usize = 16_384;
+
+/// The subscription registry, indexed both ways under one lock.
+///
+/// `by_subject` (subject → its watchers) is what the online/offline
+/// fan-out reads. `by_subscriber` (watcher → the subjects it watches) is
+/// its exact mirror: it lets a departing peer's subscriptions be stripped
+/// in time proportional to what THAT peer watched, rather than a walk over
+/// every subject in the fleet under the write lock on each disconnect, and
+/// it is where the per-subscriber cap is counted.
+#[derive(Default)]
+struct SubscriptionIndex {
+    by_subject: HashMap<PeerId, HashSet<PeerId>>,
+    by_subscriber: HashMap<PeerId, HashSet<PeerId>>,
+}
+
+impl SubscriptionIndex {
+    /// Record that `subscriber` watches `subject`. Returns `false` (and
+    /// records nothing) when that would take the subscriber past
+    /// [`MAX_SUBSCRIPTIONS_PER_PEER`]; re-adding an existing edge is
+    /// always accepted.
+    fn add(&mut self, subscriber: PeerId, subject: PeerId) -> bool {
+        let watching = self.by_subscriber.entry(subscriber).or_default();
+        if !watching.contains(&subject) && watching.len() >= MAX_SUBSCRIPTIONS_PER_PEER {
+            if watching.is_empty() {
+                self.by_subscriber.remove(&subscriber);
+            }
+            return false;
+        }
+        watching.insert(subject);
+        self.by_subject
+            .entry(subject)
+            .or_default()
+            .insert(subscriber);
+        true
+    }
+
+    /// Remove the single edge `subscriber` → `subject`, GC'ing empty sets
+    /// on both sides.
+    fn remove_edge(&mut self, subscriber: &PeerId, subject: &PeerId) {
+        if let Some(watchers) = self.by_subject.get_mut(subject) {
+            watchers.remove(subscriber);
+            if watchers.is_empty() {
+                self.by_subject.remove(subject);
+            }
+        }
+        if let Some(watching) = self.by_subscriber.get_mut(subscriber) {
+            watching.remove(subject);
+            if watching.is_empty() {
+                self.by_subscriber.remove(subscriber);
+            }
+        }
+    }
+
+    /// Strip `peer` from the registry on its departure, in both roles, and
+    /// return the peers that were watching it (for the offline fan-out).
+    ///
+    /// As a subscriber, every subject it watched loses it as a watcher. As
+    /// a subject, its watcher set is removed: a watcher is told once that
+    /// it went offline and must subscribe again to hear of its return.
+    /// That is the behaviour this registry has always had; the reverse
+    /// index only changes what it costs.
+    fn remove_peer(&mut self, peer: &PeerId) -> Option<HashSet<PeerId>> {
+        if let Some(watching) = self.by_subscriber.remove(peer) {
+            for subject in &watching {
+                if let Some(watchers) = self.by_subject.get_mut(subject) {
+                    watchers.remove(peer);
+                    if watchers.is_empty() {
+                        self.by_subject.remove(subject);
+                    }
+                }
+            }
+        }
+        let watchers = self.by_subject.remove(peer)?;
+        for watcher in &watchers {
+            if let Some(watching) = self.by_subscriber.get_mut(watcher) {
+                watching.remove(peer);
+                if watching.is_empty() {
+                    self.by_subscriber.remove(watcher);
+                }
+            }
+        }
+        Some(watchers)
+    }
+}
+
 struct RoutingState {
     connections: RwLock<HashMap<PeerId, ConnHandle>>,
-    subscribers: RwLock<HashMap<PeerId, HashSet<PeerId>>>,
+    subscribers: RwLock<SubscriptionIndex>,
+    /// Subjects refused because the subscriber was already watching
+    /// [`MAX_SUBSCRIPTIONS_PER_PEER`] peers. Lifetime, relaxed.
+    subscriptions_refused: AtomicU64,
     /// Drop accounting. The relay drops frames silently per spec
     /// §3.3 (no back-pressure to the source); these counters make the
     /// otherwise-invisible loss observable for a stats/health surface.
@@ -178,6 +275,7 @@ impl Default for RoutingState {
         Self {
             connections: RwLock::default(),
             subscribers: RwLock::default(),
+            subscriptions_refused: AtomicU64::new(0),
             drops: DropCounters::default(),
             // Counting ON by default preserves the merged behavior + the unit
             // tests; `main` gates it (default: on iff `--stats-addr` is served).
@@ -376,6 +474,7 @@ impl RoutingTable {
             .subscribers
             .read()
             .unwrap_or_else(|e| e.into_inner())
+            .by_subject
             .get(&peer_id)
             .cloned();
         if let Some(subs) = subs {
@@ -466,22 +565,16 @@ impl RoutingTable {
     /// [`RoutingTable::remove_self`]; the connection-entry removal is the
     /// caller's responsibility (so `remove_self` can guard it on identity).
     fn deregister_peer_subscriptions(&self, peer_id: &PeerId) {
-        // Drop this peer from every subject's subscriber set + GC empty
-        // entries so the registry doesn't leak empty HashSets. Then
-        // remove the leaving peer's own subscriber-list (subjects watched
-        // BY this peer) and snapshot it for offline-notification fan-out.
-        let subs = {
-            let mut subs_map = self
-                .inner
-                .subscribers
-                .write()
-                .unwrap_or_else(|e| e.into_inner());
-            subs_map.retain(|_subject, subs| {
-                subs.remove(peer_id);
-                !subs.is_empty()
-            });
-            subs_map.remove(peer_id)
-        };
+        // Drop this peer from the subject sets it watched, and take the set
+        // of peers watching IT for the offline fan-out (see
+        // SubscriptionIndex::remove_peer). Cost is proportional to this
+        // peer's own subscriptions, not to the size of the registry.
+        let subs = self
+            .inner
+            .subscribers
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove_peer(peer_id);
         let Some(subs) = subs else { return };
         let frame = match marshal_peer_list(PeerListKind::Offline, &[*peer_id]) {
             Ok(v) => Bytes::from(v),
@@ -501,7 +594,13 @@ impl RoutingTable {
     /// immediately. Idempotent — re-subscribing to an already-watched
     /// subject re-emits the immediate-notification only if the subject
     /// is currently online.
+    ///
+    /// A subscriber already watching [`MAX_SUBSCRIPTIONS_PER_PEER`]
+    /// subjects has further NEW subjects refused: they are not recorded,
+    /// get no immediate notification, and are counted in
+    /// [`RoutingTable::subscriptions_refused`]. The peer stays connected.
     pub fn subscribe(&self, subscriber: PeerId, subjects: &[PeerId]) {
+        let mut refused: u64 = 0;
         let online_now: Vec<PeerId> = {
             let mut subs_map = self
                 .inner
@@ -515,13 +614,30 @@ impl RoutingTable {
                 .unwrap_or_else(|e| e.into_inner());
             let mut online = Vec::new();
             for subject in subjects {
-                subs_map.entry(*subject).or_default().insert(subscriber);
+                if !subs_map.add(subscriber, *subject) {
+                    refused += 1;
+                    continue;
+                }
                 if conn_map.contains_key(subject) {
                     online.push(*subject);
                 }
             }
             online
         };
+        if refused > 0 {
+            let before = self
+                .inner
+                .subscriptions_refused
+                .fetch_add(refused, Ordering::Relaxed);
+            // Log the first refusal per process, not one line per frame: a
+            // misbehaving peer would otherwise turn the cap into a log flood.
+            if before == 0 {
+                eprintln!(
+                    "routing: peer_id={subscriber:?} reached the {MAX_SUBSCRIPTIONS_PER_PEER}-subject \
+                     subscription cap; further subjects are refused (counted as subscriptions_refused)"
+                );
+            }
+        }
         if !online_now.is_empty() {
             // Emit the currently-online subjects in DATAGRAM-SAFE chunks
             // (≤ [`DATAGRAM_SAFE_PEERS_PER_MESSAGE`] subjects per frame,
@@ -568,13 +684,15 @@ impl RoutingTable {
             .write()
             .unwrap_or_else(|e| e.into_inner());
         for subject in subjects {
-            if let Some(subs) = subs_map.get_mut(subject) {
-                subs.remove(&subscriber);
-                if subs.is_empty() {
-                    subs_map.remove(subject);
-                }
-            }
+            subs_map.remove_edge(&subscriber, subject);
         }
+    }
+
+    /// Lifetime count of subjects refused by the per-subscriber cap
+    /// ([`MAX_SUBSCRIPTIONS_PER_PEER`]). Relaxed load; advisory.
+    #[must_use]
+    pub fn subscriptions_refused(&self) -> u64 {
+        self.inner.subscriptions_refused.load(Ordering::Relaxed)
     }
 
     /// Forward `frame` to the peer identified by `dest`.
@@ -1185,9 +1303,112 @@ mod tests {
             .read()
             .expect("rwlock not poisoned");
         assert!(
-            !subs.contains_key(&subject),
+            !subs.by_subject.contains_key(&subject),
             "subscriber's subscription must drop on its disconnect"
         );
+        assert!(
+            !subs.by_subscriber.contains_key(&subscriber),
+            "the reverse index must drop the departed subscriber too"
+        );
+    }
+
+    /// A distinct peer-id for every `n`, beyond the 256 that [`peer`] gives.
+    fn peer_n(n: u32) -> PeerId {
+        let mut b = [0u8; PEER_ID_SIZE];
+        b[..4].copy_from_slice(b"sha-");
+        b[4..8].copy_from_slice(&n.to_be_bytes());
+        PeerId::from_bytes(b)
+    }
+
+    #[test]
+    fn subscribe_refuses_new_subjects_past_the_per_peer_cap() {
+        let table = RoutingTable::new();
+        let subscriber = peer(0xEE);
+        let cap = u32::try_from(MAX_SUBSCRIPTIONS_PER_PEER).unwrap();
+        let subjects: Vec<PeerId> = (0..cap).map(peer_n).collect();
+        for chunk in subjects.chunks(244) {
+            table.subscribe(subscriber, chunk);
+        }
+        assert_eq!(
+            table.subscriptions_refused(),
+            0,
+            "up to the cap is accepted"
+        );
+
+        // Re-subscribing an already-watched subject at the cap is fine.
+        table.subscribe(subscriber, &subjects[..10]);
+        assert_eq!(
+            table.subscriptions_refused(),
+            0,
+            "an existing edge is not new"
+        );
+
+        // Two new subjects past the cap are refused and counted.
+        table.subscribe(subscriber, &[peer_n(cap), peer_n(cap + 1)]);
+        assert_eq!(table.subscriptions_refused(), 2);
+        let subs = table.inner.subscribers.read().expect("rwlock not poisoned");
+        assert_eq!(
+            subs.by_subscriber[&subscriber].len(),
+            MAX_SUBSCRIPTIONS_PER_PEER
+        );
+        assert!(
+            !subs.by_subject.contains_key(&peer_n(cap)),
+            "a refused subject is not recorded"
+        );
+    }
+
+    #[test]
+    fn unsubscribe_frees_room_under_the_cap() {
+        let table = RoutingTable::new();
+        let subscriber = peer(0xEE);
+        let cap = u32::try_from(MAX_SUBSCRIPTIONS_PER_PEER).unwrap();
+        let subjects: Vec<PeerId> = (0..cap).map(peer_n).collect();
+        for chunk in subjects.chunks(244) {
+            table.subscribe(subscriber, chunk);
+        }
+        table.unsubscribe(subscriber, &subjects[..1]);
+        table.subscribe(subscriber, &[peer_n(cap)]);
+        assert_eq!(
+            table.subscriptions_refused(),
+            0,
+            "the freed slot is reusable"
+        );
+    }
+
+    #[test]
+    fn subject_departure_keeps_both_indexes_in_step() {
+        // A subject leaving drops its watcher set (watchers hear Offline once
+        // and must re-subscribe — unchanged behaviour); the reverse index must
+        // forget that edge too, or the watcher's cap count would drift.
+        let table = RoutingTable::new();
+        let watcher = peer(0x01);
+        let subject = peer(0x02);
+        let other = peer(0x03);
+        let (w_tx, mut w_rx) = mpsc::channel(crate::routing::WRITER_QUEUE_CAPACITY);
+        let (s_tx, _s_rx) = mpsc::channel(crate::routing::WRITER_QUEUE_CAPACITY);
+        table.insert(watcher, w_tx);
+        table.insert(subject, s_tx);
+        table.subscribe(watcher, &[subject, other]);
+        let _ = w_rx.try_recv(); // immediate Online for `subject`
+
+        table.remove(&subject);
+        assert!(
+            w_rx.try_recv().is_ok(),
+            "the watcher is told the subject went offline"
+        );
+
+        let subs = table.inner.subscribers.read().expect("rwlock not poisoned");
+        assert!(!subs.by_subject.contains_key(&subject));
+        let watching = &subs.by_subscriber[&watcher];
+        assert!(
+            !watching.contains(&subject),
+            "reverse edge to the departed subject is gone"
+        );
+        assert!(
+            watching.contains(&other),
+            "unrelated subscriptions are untouched"
+        );
+        assert!(subs.by_subject[&other].contains(&watcher));
     }
 
     #[test]

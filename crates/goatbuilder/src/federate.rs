@@ -121,7 +121,7 @@ fn exchange(r: &str, ours: &str, work: &str, counterparty: &str, keyring: &str) 
             Some((url, pkg, id)) => (
                 directory_label,
                 format!(
-                    "Directory step, run before this stop (it grants nothing):\n       python3 '{r}/ops/federation/standup/directory.py' --url '{url}' --ours '{ours}'{} --their-id '{}'\n     It uploads our package (unless FED_PACKAGE_URL names our own host) and CA,\n     publishes our pointer, fetches their package and CA to {counterparty}\n     and {work}/theirs-ca.pem, checks digest, signatures and CA fingerprint,\n     and prints both verifying keys and CA fingerprints in groups of four and a\n     compatibility report. Their entry not there yet: run phase 5 again after\n     they run theirs. With SPIRE federation on, hand over\n     {work}/ours.spiffe-bundle and place theirs at {work}/theirs.spiffe-bundle.",
+                    "Directory step, run before this stop (it grants nothing):\n       python3 '{r}/ops/federation/standup/directory.py' --url '{url}' --ours '{ours}'{} --their-id '{}'\n     It uploads our package (unless FED_PACKAGE_URL names our own host), CA and\n     SPIFFE bundle (when phase 2 wrote one), publishes our pointer, fetches\n     theirs to {counterparty}, {work}/theirs-ca.pem and\n     {work}/theirs.spiffe-bundle, checks digest, signatures and CA\n     fingerprint, and prints both verifying keys and CA fingerprints in groups\n     of four and a compatibility report. Their entry not there yet: run phase 5\n     again after they run theirs.",
                     pkg.map(|p| format!(" --package-url '{p}'")).unwrap_or_default(),
                     id.unwrap_or_else(|| "<unset>".to_string())
                 ),

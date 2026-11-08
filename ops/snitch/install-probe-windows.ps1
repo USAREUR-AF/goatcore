@@ -16,7 +16,7 @@
     silently degrade in that mode.
 
 .PARAMETER Collector
-    Snitch collector base URL (default: https://snitch.netbird.legacy.example).
+    Snitch collector base URL (required; or set SNITCH_COLLECTOR).
 
 .PARAMETER OperatorKey
     Operator-role API key for the binary download. Required.
@@ -47,7 +47,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-if (-not $Collector) { $Collector = "https://snitch.netbird.legacy.example" }
+if (-not $Collector) { Write-Error "snitch: no collector URL: pass -Collector <url> or set SNITCH_COLLECTOR"; exit 1 }
 
 function Write-Log { param($Message) Write-Host "[snitch-windows] $(Get-Date -Format HH:mm:ss) $Message" }
 

@@ -311,6 +311,26 @@
     - name: Pre-flight | relay secret is the one this host already signs with
       ansible.builtin.include_tasks: tasks/assert-relay-secret-unchanged.yml
 
+    # The management server trusts the deployment's internal CA through files
+    # this play places here, not through a CA baked into the image: compose
+    # mounts the directory at /etc/netbird/trust and adds it to SSL_CERT_DIR.
+    # netbird_mgmt_trust_certs lists PEM files on the controller (a goatnet's
+    # internal root and intermediate); empty, the directory stays empty and
+    # only the image's system trust applies.
+    - name: Ensure management-a trust directory exists
+      ansible.builtin.file:
+        path: "{{ compose_dir }}/management-a/trust"
+        state: directory
+        mode: "0755"
+
+    - name: Place the deployment's CA certificates for management-a
+      ansible.builtin.copy:
+        src: "{{ item }}"
+        dest: "{{ compose_dir }}/management-a/trust/{{ item | basename | regex_replace('\\.(crt|pem)$', '') }}.pem"
+        mode: "0644"
+      loop: "{{ netbird_mgmt_trust_certs | default([]) }}"
+      register: _mgmt_trust_certs
+
     - name: Render management-a/management.json from template
       ansible.builtin.template:
         src: templates/management.json.j2
@@ -583,6 +603,14 @@
           {% if _mgmt_acme_overlay.stat.exists %}-f docker-compose.acme.yml{% endif %}
           up -d
         chdir: "{{ compose_dir }}"
+      changed_when: true
+
+    # compose recreates management-a when its definition changes, not when a
+    # mounted file does; a new or changed CA file needs the process restarted.
+    - name: Restart management-a after its trusted CA files changed
+      ansible.builtin.command:
+        cmd: docker restart management-a
+      when: _mgmt_trust_certs is changed
       changed_when: true
 
     # =====================================================================
