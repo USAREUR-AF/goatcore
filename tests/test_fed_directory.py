@@ -276,12 +276,20 @@ def driver(work, **env):
                           env=e, capture_output=True, text=True, timeout=120)
 
 
-def test_driver_phase_5_without_a_directory_runs_no_directory_step(tmp_path):
+def test_driver_phase_5_without_a_directory_names_it_as_required(tmp_path):
     r = driver(tmp_path)
     assert r.returncode == 0, r.stderr
-    assert "Optional: set FED_DIRECTORY_URL" in r.stdout
-    assert "Directory step (optional)" not in r.stdout
+    assert "Set FED_DIRECTORY_URL, FED_COUNTERPARTY_ID and FED_SIGNING_KEY; phase 1 refuses" in r.stdout
+    assert "Directory step, run before this stop" not in r.stdout
     assert "OPERATOR STEP" in r.stdout
+
+
+def test_driver_phase_5_with_no_directory_names_the_files_to_hand_over(tmp_path):
+    r = driver(tmp_path, FED_NO_DIRECTORY=1)
+    assert r.returncode == 0, r.stderr
+    assert "exchange packages by hand (FED_NO_DIRECTORY=1)" in r.stdout
+    assert "Obtain theirs and place them at:" in r.stdout
+    assert "Directory step, run before this stop" not in r.stdout
 
 
 @needs_ed25519

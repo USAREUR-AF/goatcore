@@ -193,7 +193,7 @@ fn plan(repo: &Path, o: &Options, work: &str, edge_group: &str, resume: &str) ->
         p(2, "A", "prepare what the package measures: the federation interface and the SPIRE bundle", play("peering-prepare.yml")),
         p(3, "T", "init — our half, read from the running system", format!("{init_env}{goat} federate init --with-transport --with-data {}--out '{ours}'", if signing.is_empty() { String::new() } else { format!("--signing-key '{signing}' ") })),
         p(4, "T", "lint our package against the spec", format!("{goat} federate lint '{ours}'")),
-        { let (label, body) = exchange(&r, &ours, &work, &counterparty, &keyring); p(5, "MANUAL", label, body) },
+        { let (label, body) = exchange(&r, &ours, work, &counterparty, &keyring); p(5, "MANUAL", label, body) },
     ];
     // Each `sovereign=key` line in the keyring becomes one --key argument; a
     // missing keyring is left for compose's own refusal to name.
