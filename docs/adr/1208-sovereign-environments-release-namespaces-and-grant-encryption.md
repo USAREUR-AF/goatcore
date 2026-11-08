@@ -56,5 +56,5 @@ should decrypt".
 
 - A production environment never hosts another nation's site. A node located in another nation's territory stays in its own nation's environment.
 - `grant-keyd` runs on production environments. Its release path is goatbuilder, and `ops/goatbuilder/endstate/baseline.txt` stops carrying it as undeclared.
-- Grant encryption across a federated boundary is built: a partner identity joins a release set's audience and opens its own slot ([ADR 1169](1169-partner-audience-membership-via-spire-federation.md), decisions 2 and 3), proven on a two-region test peering, not yet between two real environments.
+- Grant encryption across a federated boundary is not yet usable between two real environments. The wrap, the signed bundle and the partner's per-set read rule are built ([ADR 1169](1169-partner-audience-membership-via-spire-federation.md), decisions 2 and 3, shown on a two-region test peering run by one operator). Nothing carries the partner's recipient key across the boundary, and the SVID key it is taken from changes hourly; [ADR 1223](1223-federated-recipient-key-crosses-the-boundary-signed-and-long-lived.md) (Proposed) designs the fix.
 - The portal's `access` label code and its catalog badge remain until a separate change removes them.
