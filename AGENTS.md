@@ -1,4 +1,4 @@
-# AGENTS.md
+# Repository Guidelines
 
 Instructions for AI coding agents, and a short version for anyone working here. [CONTRIBUTING.md](CONTRIBUTING.md) is the full process.
 
@@ -20,7 +20,10 @@ A real deployment is goatcore at a pinned commit plus a separate overlay reposit
 
 | Path | What |
 |---|---|
-| `crates/` | Rust workspace: `goat-cli` (the `goat` CLI), `goatbuilder`, `goat-errors`, `panoscope-core` |
+| `crates/` | Separate Rust workspace: `goat-cli` (the `goat` CLI), `goatbuilder`, `goat-errors`, `panoscope-core` |
+| `goat-relay/`, `goat-relay-protocol/` | separate root Rust workspace for the relay and wire protocol |
+| `signal-server/` | Go signalling service with its own module and tests |
+| `tests/` | shell and Python regression suites |
 | `ops/ansible/` | roles and playbooks; `group_vars/_examples/` shows the shape of a deployment's values |
 | `ops/<component>/` | services and tools, mostly Go and Python, each with its own tests |
 | `ops/ci/` | every CI gate, as a script you can run locally |
@@ -52,6 +55,19 @@ bash ops/ci/check-bash-portability.sh        # shell runs on bash 3.2
 ```
 
 A red check names its script, so every failure reproduces locally.
+
+### Build and validate the affected component
+
+- In `crates/`, `cargo build --release -p goatbuilder` builds the deployment CLI. The root README’s mock `standup` and `status` example rehearses a deployment locally.
+- The root and `crates/` Rust workspaces build separately. Run `cargo test --workspace --locked` in the affected workspace; use the applicable workflow’s toolchain and Clippy flags. Relay tests have Linux/kernel requirements: `.github/workflows/goat-relay.yml` documents the privileged-test skip. macOS does not exercise Linux-only paths.
+- In a changed Go module, run `go vet ./... && go test ./...`.
+- Run affected shell suites with `bats tests/<suite>.bats`. Follow each Python suite’s documented invocation; some files are standalone scripts rather than pytest suites.
+- For Ansible, run `ops/ci/check-role-template-refs-resolve.sh` and `ansible-playbook --syntax-check <playbook>`. Role-specific fixtures live under `ops/ansible/roles/<role>/tests/` where provided.
+- For docs, run `ops/ci/check-doc-links.py` and `ops/ci/check-doc-code-citations.sh`.
+
+Use `cargo fmt` for Rust, `gofmt` for Go, four-space Python indentation, and two-space YAML indentation. Follow adjacent naming conventions, including Python `test_*.py` and Go `*_test.go`.
+
+Install the tools and dependencies named by the component’s CI workflow before running its checks. Add regression coverage for behavior changes, and report commands, results, and untested gaps in the PR template. Report skips separately from passes: `check-no-live-secret.sh` requires the operator’s configured local environment and skips when no live secret values are loaded.
 
 ## Read first
 
