@@ -54,7 +54,7 @@ should decrypt".
 
 ## Consequences
 
-- Where a production environment hosts another nation's site, that nation's environment is stood up, the site migrated, and a federated boundary placed between them.
+- A production environment never hosts another nation's site. A node located in another nation's territory stays in its own nation's environment.
 - `grant-keyd` runs on production environments. Its release path is goatbuilder, and `ops/goatbuilder/endstate/baseline.txt` stops carrying it as undeclared.
 - Grant encryption across a federated boundary is open under F-481.
 - The portal's `access` label code and its catalog badge remain until a separate change removes them.

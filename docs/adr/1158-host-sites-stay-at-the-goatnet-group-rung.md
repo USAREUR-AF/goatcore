@@ -79,7 +79,7 @@ a control that reads as protection and is not.
 
 **A site that needs its own trust domain gets its own goatnet, not a prefix.**
 That path already exists (`partner-standalone-goatnet.md`,
-Block 72) and is the answer for a future sovereign host site. Keeping it as the
+Block 72) and is the answer for any site that needs its own trust domain, such as another sovereign's. Keeping it as the
 escape hatch is what lets the rule above stay absolute.
 
 **Naming form for new subordinate scopes: `<ISO3>-<letter>`** (for example
