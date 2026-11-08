@@ -469,8 +469,9 @@ small.
 
 ## 10. What this does not solve
 
-- **Transitive reachability.** Refused, not solved. A party reaches only parties it has peered
-  with. Candidate 3 is the only shape that would give data — never trust — a transitive path,
+- **Transitive reachability.** A party reaches only parties it has peered with, except for data
+  its owner marks as a general release ([ADR 1224](../adr/1224-transit-is-one-hop-unless-the-owner-marks-a-general-release.md), Proposed), which travels to every
+  federated environment. Candidate 3 is the only shape that would give data — never trust — a transitive path,
   and it is refused on withdrawal rather than on mechanism.
 - **Withdrawal from retained history.** Removing a member closes the forward direction, which is
   built and fired, and #790 now also removes the member's `keys/<set>/**` lane so it cannot follow

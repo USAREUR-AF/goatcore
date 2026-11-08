@@ -93,7 +93,7 @@ holding exactly one certificate authority, and its own tunnel.
 
 **7. Transitive reachability is refused.** A party reaches only parties it has peered with. No
 roster membership, and no chain of peerings, creates a path between two parties that have not
-peered.
+peered. *Amended by [ADR 1224](1224-transit-is-one-hop-unless-the-owner-marks-a-general-release.md) (Proposed): data its owner marks as a general release travels to every federated environment, and a roster supplies the trust bundle that verifies its origin.*
 
 **8. Withdrawing a party from a framework is a roster revision, and each member converges
 through the retirement path that already exists** — moving the peering's entry from

@@ -181,6 +181,8 @@ Network boundary, firewall placement and the full RMF control mapping:
 
 ### 8. Refuse lateral transit; permit hierarchical transit; seal anything crossing more than one link.
 
+> **Amended by [ADR 1224](1224-transit-is-one-hop-unless-the-owner-marks-a-general-release.md) (Proposed).** Released data goes one hop. It moves further only by a deliberate re-release, or when its owner marks it as a general release, which travels to every federated environment. Sealing is not required for transit. The text below is kept for its link-state sizing.
+
 Bilateral-only is 1,984 two-party accreditation documents at N=32 and contradicts how the
 alliance actually shares. Two-level regions give a link-state domain of V=N rather than
 N+N(N−1) — but regions are **link-state containment only, never a trust boundary**, because
