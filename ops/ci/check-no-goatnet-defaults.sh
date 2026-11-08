@@ -92,7 +92,7 @@ if [ "${1:-}" = "--self-test" ]; then
 fi
 
 # Deliberate exceptions live in ops/ci/goatnet-defaults.allow, one
-# `roles/<role>/defaults/main.yml:<variable>` per line. Shrink-only: an entry
+# `ops/ansible/roles/<role>/defaults/main.yml:<variable>` per line. Shrink-only: an entry
 # whose default no longer names a goatnet is stale and refused, so the list can
 # only get shorter. The first two entries are the provisioning tier on the
 # provisioning tier, which is documented as a shared

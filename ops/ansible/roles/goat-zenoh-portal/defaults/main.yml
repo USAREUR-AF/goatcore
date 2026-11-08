@@ -224,6 +224,8 @@ portal_ca_root_cert: "/etc/{{ site_id }}-ca/root-cert.pem"   # a shared role mus
 # Both names by default: the pinned image (ops/pins/fleet-pins.yaml) predates
 # the neutral --ca-root-cert and defines only the legacy -nova-root-cert, which
 # the source still accepts; a string here refused every standup on that pin.
+# `nova` here is the legacy flag's name, not a goatnet's, so
+# ops/ci/goatnet-defaults.allow exempts this variable.
 portal_ca_root_cert_flag: ["--ca-root-cert", "--nova-root-cert"]
 portal_onboarding_packet_path: "/etc/goat-zenoh-portal/zenoh-trial-onboarding.md"
 portal_cert_sign_ca_id: ""   # REQUIRED per goatnet — a shared default
