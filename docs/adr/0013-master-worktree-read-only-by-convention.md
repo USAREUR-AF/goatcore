@@ -128,7 +128,7 @@ Both hooks use `git rev-parse --git-dir != --git-common-dir` to detect "is this 
 - **ADR 0006** — concurrency governance (track pickup/release; the pickup decision triggers worktree provision)
 - **`claude-session` launcher** at [`../../ops/scripts/claude-session`](../../ops/scripts/claude-session) — provides the "or use" path that the hook's error message points at
 - **`/iso` slash command** at [`../../ops/scripts/iso.skill.md`](../../ops/scripts/iso.skill.md) — operator UX for mid-session toggling between modes
-- **Memory hook** at [`../../ops/scripts/feedback-memory-hooks/feedback_master_worktree_readonly.md`](../../ops/scripts/feedback-memory-hooks/feedback_master_worktree_readonly.md) — advisory backstop reinforcing path discipline at agent reflex layer
+- **Memory hook** at `feedback_master_worktree_readonly.md` (dots agent-tools, `feedback-memory-hooks/`) — advisory backstop reinforcing path discipline at agent reflex layer
 
 **Pilot status — may be rolled back.**
 
@@ -219,7 +219,7 @@ Items 1 + 2 are mechanical and worth implementing as a follow-on (Block 48-style
 
 ### Distributable memory hook
 
-Procedural enforcement until substrate items 1-3 land: [`ops/scripts/feedback-memory-hooks/feedback_no_halfway_worktree_authoring.md`](../../ops/scripts/feedback-memory-hooks/feedback_no_halfway_worktree_authoring.md) — installed alongside the existing `feedback_master_worktree_readonly.md` hook by the same operator-fired install path. Future Claude Code sessions in this repo pick up the rule automatically as part of the memory-hook bundle.
+Procedural enforcement until substrate items 1-3 land: `feedback_no_halfway_worktree_authoring.md` (dots agent-tools, `feedback-memory-hooks/`) — installed alongside the existing `feedback_master_worktree_readonly.md` hook by the same operator-fired install path. Future Claude Code sessions in this repo pick up the rule automatically as part of the memory-hook bundle.
 
 ### Pilot status update
 
