@@ -110,8 +110,8 @@ wire_read_posture:
     M1.5-compliance-floor: >-
       the goat client libraries/SDK refuse to subscribe beyond the
       caller's grants (ADR 1076) — binds well-behaved code only, NOT
-      adversaries; every mention must say so. Raises the floor while
-      M2 lands.
+      adversaries; every mention must say so. Raised the floor while
+      M2 landed; not needed now that M2 is built.
     M2-committed: >-
       grant-keyed payload encryption (ADR 1027 arc, reserved releaseset
       scope) — the router routes ciphertext under the same static ACL;

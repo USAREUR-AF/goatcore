@@ -161,7 +161,7 @@ The grants and labels above are **plane-neutral policy**. What differs per plane
 
 | | WRITE | READ |
 |---|---|---|
-| **Machine (x509, wire)** | **Enforced per-identity, live** — the router ACL lets a cert publish only under its own producer key (ADR 1025; predates this track; now named `data.write.producer:<key>` in the shared grammar) | **Membership-gated, not per-stream** — any *enrolled* cert subscribes to any non-carved stream; one deny carve exists (`ops/audit/operator/**`, M-068). Per-stream scoping = the M1/M2 stages below |
+| **Machine (x509, wire)** | **Enforced per-identity, live** — the router ACL lets a cert publish only under its own producer key (ADR 1025; predates this track; now named `data.write.producer:<key>` in the shared grammar) | **Membership-gated, not per-stream** — any *enrolled* cert subscribes to any non-carved stream; one deny carve exists (`ops/audit/operator/**`, M-068). Per-stream scoping = the M1/M2 stages below; M2 is built, so a sealed stream opens only for its grant's audience |
 | **Human (HTTP surfaces)** | n/a (humans don't publish; processes do) | **Enforced per-stream, built this track, live-verified** |
 
 Saying "the wire is open" without the word **read**, or "the developer is governed" without the word **write**, is exactly the collapse that manufactures contradictions. Three cells are enforced today; machine-read is the single staged cell, and it is never open to the world — only to enrolled members.
@@ -169,7 +169,7 @@ Saying "the wire is open" without the word **read**, or "the developer is govern
 **Be precise about who the surface layer binds.** Wire readers are enrolled machine principals only — mesh membership plus an issued cert, both revocable, the population enumerable from the registry, universal observers badged on the COP. Humans are browser-only *unless issued a cert*. So:
 
 - For the **browser-only majority** (most onboarded humans — analysts, leadership, most partner staff), surface enforcement is the real and complete boundary: they have no other path to fabric data.
-- For a **cert-holding developer**, surface scoping governs her *screen*, not her *code*: her process can subscribe to any non-carved stream today. For her, the binding controls are admission + revocation + observability (M0), the on-demand wire carves (M1), and eventually keying (M2). Any narrative that implies her scoped browser view also constrains her cert is wrong and must not be written.
+- For a **cert-holding developer**, surface scoping governs her *screen*, not her *code*: her process can subscribe to any non-carved stream today. For her, the binding controls are admission + revocation + observability (M0), the on-demand wire carves (M1), and keying (M2, built). Any narrative that implies her scoped browser view also constrains her cert is wrong and must not be written.
 
 **The stages — one policy, three backends:**
 
