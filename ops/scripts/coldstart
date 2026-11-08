@@ -1,5 +1,67 @@
 #!/usr/bin/env bash
-# coldstart — runs `coldstart` from dots (agent-tools/bin/coldstart); see ops/scripts/dots-tool.
-s="${BASH_SOURCE[0]}"
-while [ -L "$s" ]; do l="$(readlink "$s")"; case "$l" in /*) s="$l" ;; *) s="$(dirname "$s")/$l" ;; esac; done
-exec "$(dirname "$s")/dots-tool" coldstart "$@"
+# coldstart — resume a session automatically after a break, without anyone remembering restart steps.
+# Implements ADR 1190 (cold-start marker). Composes with ADR 0839 (the handoff baton): the baton commit holds the
+# session's state; the marker only says what to start and points at the baton.
+#
+# Usage:
+#   coldstart check [<repo>]            the SessionStart hook (.claude/hooks/session-start-coldstart.sh): no marker,
+#                                       exit at once; a marker, flush it, start its "## Run" lines in the background,
+#                                       hand its "## Then" text to the new session as additionalContext
+#   coldstart leave [<repo>] < marker   write the marker (the close-out, when work is unfinished; a session whose
+#                                       cold start could not finish, to re-arm it)
+#   coldstart path [<repo>]             print where the marker lives
+#
+# The marker is <repo>/.claude/coldstart.md (gitignored, per machine):
+#   ## Run    shell lines safe to run unattended: start local services, nothing that sends, merges, deploys or deletes
+#   ## Then   what the next session does first, in order; it points at the latest handoff baton commit for state
+# A marker fires once: check moves it to <repo>/.claude/coldstart.consumed/<UTC stamp>.md before acting on it.
+#
+# Opt out per person: GOAT_COLDSTART=off in .envrc.local.d/ (gitignored), like GOAT_CLOSEOUT_PROTOCOL.
+
+set -euo pipefail
+
+repo() { # the repo: an explicit argument, the hook's CLAUDE_PROJECT_DIR, the git top level, the current directory
+  if [ -n "${1:-}" ]; then printf '%s\n' "$1"; return; fi
+  if [ -n "${CLAUDE_PROJECT_DIR:-}" ]; then printf '%s\n' "$CLAUDE_PROJECT_DIR"; return; fi
+  git rev-parse --show-toplevel 2>/dev/null || pwd
+}
+marker() { printf '%s/.claude/coldstart.md\n' "$1"; }
+consumed() { printf '%s/.claude/coldstart.consumed\n' "$1"; }
+section() { awk -v h="## $2" '$0==h{on=1;next} /^## /{on=0} on' "$1"; } # the lines under "## <name>"
+
+cmd_check() {
+  [ "${GOAT_COLDSTART:-on}" = "off" ] && exit 0
+  local r m d stamp used log run steps ctx
+  r="$(repo "${1:-}")"; m="$(marker "$r")"
+  [ -f "$m" ] || exit 0 # the common case: one file test, a few milliseconds
+  d="$(consumed "$r")"; mkdir -p "$d"
+  stamp="$(date -u +%Y%m%dT%H%M%SZ)"; used="$d/$stamp.md"; log="$d/$stamp.log"
+  mv "$m" "$used" 2>/dev/null || exit 0 # flushed before anything runs; a second hook that lost the race does nothing
+  run="$(section "$used" Run | sed '/^```/d')"
+  if [ -n "$run" ]; then
+    (cd "$r" && nohup bash -c "$run" >"$log" 2>&1 &) >/dev/null 2>&1
+  fi
+  steps="$(section "$used" Then)"
+  ctx="COLD START for $r (marker consumed: $used; background run log: $log).
+Do this first, before the operator's request, and say in one line that you did:
+$steps
+If any of it cannot be finished in this session, re-arm it: ops/scripts/coldstart leave \"$r\" < (what is left, in the same ## Run / ## Then form)."
+  python3 -c 'import json,sys; print(json.dumps({"systemMessage": "cold start: resuming from "+sys.argv[2], "hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": sys.argv[1]}}))' "$ctx" "$used"
+}
+
+cmd_leave() {
+  local r m tmp
+  r="$(repo "${1:-}")"; m="$(marker "$r")"
+  mkdir -p "$(dirname "$m")"
+  tmp="$m.tmp.$$"; cat >"$tmp"
+  if ! grep -q '^## Then' "$tmp"; then rm -f "$tmp"; echo "coldstart leave: the marker needs a '## Then' section" >&2; exit 2; fi
+  mv "$tmp" "$m"
+  echo "cold-start marker left: $m"
+}
+
+case "${1:-}" in
+  check) shift; cmd_check "$@" ;;
+  leave) shift; cmd_leave "$@" ;;
+  path) shift; marker "$(repo "${1:-}")" ;;
+  *) sed -n '2,20p' "$0" >&2; exit 2 ;;
+esac

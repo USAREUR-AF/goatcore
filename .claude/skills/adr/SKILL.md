@@ -24,11 +24,8 @@ ops/scripts/next-id.sh            # next free ADR across every remote-tracking r
 ops/scripts/next-id.sh --fetch    # fetch first, so open branches count
 ```
 
-`ops/scripts/next-id.sh` runs `next-id` from a dots checkout through
-`ops/scripts/dots-tool`; set `DOTS_DIR` to a checkout, or `DOTS_REPO_URL` to clone one at
-the commit in `ops/scripts/dots.ref`. Without dots, take the highest number on `main`
-plus one, and check open pull requests: the docs-guards check refuses a number another
-open PR already claims.
+If `next-id.sh` cannot run, take the highest number on `main` plus one, and check open
+pull requests: the docs-guards check refuses a number another open PR already claims.
 
 ## 2. Write the file
 
