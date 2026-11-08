@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""Every oauth2-proxy fence refuses a cookie secret of the wrong length before deploying.
+"""Every oauth2-proxy fence refuses a cookie secret oauth2-proxy cannot use, before deploying.
 
-oauth2-proxy measures OAUTH2_PROXY_COOKIE_SECRET in characters and starts only
-when it is 16, 24 or 32 long. Any other length (a 44-character
-`openssl rand -base64 32`, a generated password) crash-loops the proxy at boot
-while the play recap is green and the surface behind it answers 502. A role
-that renders the secret must therefore assert the exact set before it deploys;
-a non-empty or minimum-length check does not catch it.
+oauth2-proxy uses OAUTH2_PROXY_COOKIE_SECRET as URL-safe base64 when it decodes
+to 16, 24 or 32 bytes, and otherwise as raw text that must be exactly 16, 24 or
+32 characters. Anything else (standard base64 with + or /, a generated
+password) crash-loops the proxy at boot while the play recap is green and the
+surface behind it answers 502. A role that renders the secret must therefore
+assert the exact length set before it deploys (a role may also accept the
+URL-safe base64 form); a non-empty or minimum-length check does not catch it.
 
 A fence is a role template line OAUTH2_PROXY_COOKIE_SECRET={{ <var> }}. It
 passes when a task file of the same role asserts `(<var> | length) in [16, 24, 32]`
@@ -70,7 +71,7 @@ def main() -> int:
         return 0
     for var, tpl in found:
         print(f"FAIL: {tpl} renders {{{{ {var} }}}} as OAUTH2_PROXY_COOKIE_SECRET and no task in its role "
-              f"asserts `({var} | length) in [16, 24, 32]`. Any other length crash-loops oauth2-proxy "
+              f"asserts `({var} | length) in [16, 24, 32]`. A secret oauth2-proxy cannot use crash-loops it "
               "behind a green play (roles/microscope/tasks/main.yml is the shape).")
     return 1
 
