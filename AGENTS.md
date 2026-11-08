@@ -69,6 +69,23 @@ Use `cargo fmt` for Rust, `gofmt` for Go, four-space Python indentation, and two
 
 Install the tools and dependencies named by the component’s CI workflow before running its checks. Add regression coverage for behavior changes, and report commands, results, and untested gaps in the PR template. Report skips separately from passes: `check-no-live-secret.sh` requires the operator’s configured local environment and skips when no live secret values are loaded.
 
+## Ownership, tracking and review
+
+- Check related open and merged issues and pull requests before starting. Reuse existing work where appropriate, and identify changes that supersede an older proposal.
+- Trace affected callers, configuration, tests and sibling repositories. Check the applicable ADRs and their current status; document dependencies and merge order when a change spans repositories.
+- Use the repository issue or pull-request template, a scoped Conventional Commit title, appropriate existing labels and the established project. For public product work, use the [public roadmap](https://github.com/orgs/USAREUR-AF/projects/8) and state every affected repository. Do not invent priorities or delivery dates.
+- Preserve existing assignees and assign the original author and people doing the work when they are eligible. This includes migrated stories filed by a maintainer on someone else's behalf. Do not change repository access just to make an assignment possible.
+- When migrating work, link the replacement from the original tracker. Close superseded or migrated items as such; do not describe migration as a completed fix. Close a fixed report only when evidence covers its acceptance criteria, and leave partially addressed work open.
+- Record code merged, tests passed and deployment verified as separate outcomes. Include reproducible commands, results and meaningful gaps; neither a merge nor a successful build proves a running deployment was updated.
+
+## Private reports and public information
+
+Follow [SECURITY.md](SECURITY.md) for suspected vulnerabilities. Keep findings and private operational evidence out of public issues, pull requests and project cards. Check for an existing private report before creating another. Do not publish an advisory or request a CVE without explicit maintainer approval.
+
+Keep public instructions reusable: use synthetic examples and plain, translatable English, without private issue links, deployment details or personal machine paths. Link detailed procedures instead of duplicating them here.
+
+The `security-reviewed` label records the review described in [CONTRIBUTING.md](CONTRIBUTING.md#outside-contributions); it is not a substitute for that review or for CI. A different owner gives the final merge approval. New commits require a fresh review of the updated diff.
+
 ## Read first
 
 - [architecture-spine.md](https://github.com/usareur-af/goatdocs/blob/main/docs/design/architecture-spine.md) in goatdocs: the architecture in one read.
