@@ -9,7 +9,7 @@
 | Repo scope | Multi |
 | Supersedes | — |
 | Superseded by | — |
-| Related | [`0821-mission-partner-sharing-pattern.md`](0821-mission-partner-sharing-pattern.md), [`0217-shim-repo-containment.md`](0217-shim-repo-containment.md), [`0111-vendor-friendly-license-posture.md`](0111-vendor-friendly-license-posture.md), [`../design/partner-receiver-requirements.md`](../design/partner-receiver-requirements.md), [`../design/goat-moon-pod.md`](https://github.com/usareur-af/goatstuff/blob/main/docs/design/goat-moon-pod.md), [`../design/goat-moon-pod-builder-guide.md`](https://github.com/usareur-af/goatstuff/blob/main/docs/design/goat-moon-pod-builder-guide.md) |
+| Related | [`0821-mission-partner-sharing-pattern.md`](0821-mission-partner-sharing-pattern.md), [`0217-shim-repo-containment.md`](0217-shim-repo-containment.md), [`0111-vendor-friendly-license-posture.md`](0111-vendor-friendly-license-posture.md), [`https://github.com/usareur-af/goatstuff/blob/main/docs/design/moon-pod-conformance.md`](https://github.com/usareur-af/goatstuff/blob/main/docs/design/moon-pod-conformance.md), [`../design/goat-moon-pod.md`](https://github.com/usareur-af/goatstuff/blob/main/docs/design/goat-moon-pod.md), [`../design/goat-moon-pod-builder-guide.md`](https://github.com/usareur-af/goatstuff/blob/main/docs/design/goat-moon-pod-builder-guide.md) |
 
 ## TL;DR (for a layperson)
 
@@ -38,7 +38,7 @@ Adopt **option 3: separate pod repo, software + hardware as one product, with ve
 
 | Class | Repo home | Examples |
 |---|---|---|
-| Requirements contract | Trunk: [`docs/design/partner-receiver-requirements.md`](../design/partner-receiver-requirements.md) | Authoritative seven-requirement contract; cited by every implementation |
+| Requirements contract | Trunk: [goatstuff `docs/design/moon-pod-conformance.md`](https://github.com/usareur-af/goatstuff/blob/main/docs/design/moon-pod-conformance.md) | Authoritative seven-requirement contract; cited by every implementation |
 | Boundary enforcement | Trunk: `zenoh-plugins/release-bridge/` + Ansible roles | Schema-enforcer, allowlist, conditioning, audit emission. *We* enforce the contract at the goat boundary; the pod implements its side |
 | Coordination plane | Trunk: `terraform/` + `ops/ansible/` (partner-net netbird-mgmt instance) | Distinct from main fabric mgmt-plane; isolated blast radius |
 | Reference implementation | Separate repo: [`USAREUR-AF/zagros-moon-pod`](https://github.com/USAREUR-AF/zagros-moon-pod) | Apache 2.0 (private during MVP, public at GA); bundle + per-IdP overlays + hardware BOM + imaging + first-boot scripts |
@@ -56,7 +56,7 @@ Adopt **option 3: separate pod repo, software + hardware as one product, with ve
 - `<provider>` — `open` for our reference implementation; vendor-product-name otherwise (`<product>`).
 - `<service>` — service type. `pod` for a deployable instance.
 
-The abstract spec is "**goat-moon-pod**" (a concept, not a repo). Concrete implementations are `goat-moon-<provider>-pod`. The full definition of the moon metaphor lives once in [`partner-receiver-requirements.md`](../design/partner-receiver-requirements.md) §"The 'moon' metaphor"; everywhere else cites it.
+The abstract spec is "**goat-moon-pod**" (a concept, not a repo). Concrete implementations are `goat-moon-<provider>-pod`. The full definition of the moon metaphor lives once in [`moon-pod-conformance.md`](https://github.com/usareur-af/goatstuff/blob/main/docs/design/moon-pod-conformance.md) §"The 'moon' metaphor"; everywhere else cites it.
 
 Future relationship planes (if any emerge) follow the same pattern with a different `<plane>` term. We do not pre-create those slots.
 
@@ -64,7 +64,7 @@ Future relationship planes (if any emerge) follow the same pattern with a differ
 
 We leave just enough scaffolding for vendors to build their own conformant moon-pods. Per the "don't overdo preoptimization" guidance:
 
-- ✅ **Conformance contract** — [`partner-receiver-requirements.md`](../design/partner-receiver-requirements.md). Authoritative; cited by every implementation.
+- ✅ **Conformance contract** — [`moon-pod-conformance.md`](https://github.com/usareur-af/goatstuff/blob/main/docs/design/moon-pod-conformance.md). Authoritative; cited by every implementation.
 - ✅ **Conformance smoke-test suite** — [`tests/moon-pod-conformance/`](../../tests/moon-pod-conformance/). Vendor runs locally before requesting evaluation; CI runs continuously against `goat-moon-open-pod`.
 - ✅ **Builder guide** — [`goat-moon-pod-builder-guide.md`](https://github.com/usareur-af/goatstuff/blob/main/docs/design/goat-moon-pod-builder-guide.md). Explains the contract, the test suite, and points at `goat-moon-open-pod` as a worked example.
 - ✅ **Per-vendor cookbooks** — `docs/integrations/moon-pods/`. One short doc per named-vendor candidate sketching how their public API maps to `release/<partner>/...`.
@@ -89,7 +89,7 @@ The `hardware/` subtree contains BOM (OnLogic / Lenovo Tiny / NUC / RPi 5 8GB ca
 
 ## Why we name vendor candidates explicitly
 
-Naming vendor candidates in [`partner-receiver-requirements.md`](../design/partner-receiver-requirements.md) and providing per-vendor cookbooks **does not endorse** their products and **does not commit** us to evaluating them. It does:
+Naming vendor candidates in [`moon-pod-conformance.md`](https://github.com/usareur-af/goatstuff/blob/main/docs/design/moon-pod-conformance.md) and providing per-vendor cookbooks **does not endorse** their products and **does not commit** us to evaluating them. It does:
 
 - Signal that we know they have public API surfaces and could plausibly build conformant moon-pods.
 - Provide a worked starting point for any of them or any partner using their products.
