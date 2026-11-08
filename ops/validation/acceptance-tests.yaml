@@ -75,6 +75,7 @@ tests:
     requires: [signal-server, traefik]
     caught_would_have: "row 22 — signal_proto http; peers registered but Signal-disconnected"
   - id: enrollment-entrypoint-cert-identity
+    applies_when: {goatlite: false}   # a goatlite has no relay ingress on 8443; its edge is the box's 443
     aspect: mgmt-stack/enrollment
     probe: tls-identity
     # expect_issuer is per site (generate-values.py, from
@@ -493,18 +494,21 @@ tests:
       each answers that name with Traefik's default certificate, so a peer
       whose tunnel flaps has no working path to re-signal.
   - id: every-declared-service-resolves
+    applies_when: {goatlite: false}   # a goatlite runs no isitup and declares no isitup_services
     aspect: dns/mesh-zone
     probe: dns-resolve
     params: {names_from: isitup_services, resolver: "{{ mesh_ip_a }}:5353", expect: "{{ mesh_ip_a }}"}
     requires: [mesh-coredns]
     caught_would_have: "F-197 — declared-but-unresolvable deploys dark"
   - id: declared-service-actually-deployed
+    applies_when: {goatlite: false}   # a goatlite runs no isitup and declares no isitup_services
     aspect: services/deploy-join
     probe: cmd-assert
     params: {host: "{{ orin_a }}", cmd_template: "docker ps --format '{{ '{{' }}.Names{{ '}}' }}' | grep -qx {item}", for_each: isitup_containers}
     requires: [mesh-coredns]
     caught_would_have: "row 30 — whole tiers declared in isitup_services, silently never deployed. EXACT: each declared service's own container name (isitup_containers) must be running, or this row hard-FAILs — a goatnet cannot pass the gate with a declared service missing."
   - id: public-auth-fqdns-not-flagged
+    applies_when: {goatlite: false}   # a goatlite's names live under its LAN zone; none is public
     aspect: enrollment/safe-browsing
     probe: safe-browsing
     params: {names_from: public_auth_fqdns}
@@ -568,14 +572,14 @@ tests:
   # is a legitimate shape) declares that by leaving relay_public_ips empty.
   # Absence has to be declared, not inferred from a missing listener.
   - id: relay-fleet-answers-if-declared
-    applies_when: {goatnet_founder: true, relay_public_ips: true}   # founder-owned relay fleet; a joiner uses the founder's
+    applies_when: {goatnet_founder: true, relay_public_ips: true, goatlite: false}   # founder-owned relay fleet; a joiner uses the founder's
     aspect: relays/presence
     probe: tls-identity
     params: {hosts_from: relay_public_ips, port: 33073, verify_name: false, expect_system_trust: true}
     caught_would_have: "relay VPSes with no inventory, no rels:// listener, acceptance gate green"
 
   - id: relay-protocol-cert-system-trust
-    applies_when: goatnet_founder   # founder-owned surface; a joiner uses the founder's
+    applies_when: {goatnet_founder: true, goatlite: false}   # founder-owned relay tier; a joiner uses the founder's, a goatlite has none
     aspect: relays/tls
     probe: tls-identity
     params: {hosts_from: relay_public_ips, port: 33073, verify_name: false, expect_system_trust: true}
@@ -950,6 +954,7 @@ tests:
       subscriber; the goat CLI round trip above cannot grade it on a goatnet
       with no operator context yet.
   - id: goat-presence-has-peers
+    applies_when: {goatlite: false}   # a goatlite runs no presence publisher (presence-health is above its tier)
     aspect: fabric/presence
     probe: goat-cli
     params: {via: "{{ probe_via }}", context: "{{ probe_context }}", verb: "presence --json",

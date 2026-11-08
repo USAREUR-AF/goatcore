@@ -432,6 +432,11 @@ def generate(env, gv_dir=None, inv_path=None):
     nbv = _extract(text, "netbird_version")
     if nbv and "{{" not in nbv:
         values["enroll_client_image"] = f"netbirdio/netbird:{nbv}"
+    else:
+        # No pinned client version: the rows are opt-in, and an unresolved image
+        # would read UNKNOWN before their opt-in is even asked. Empty lets them
+        # report SKIPPED (opt-in) unopted, and "needs image" when opted in.
+        values["enroll_client_image"] = ""
 
     # The enrollment entrypoint's TLS issuer (tls-identity row
     # enrollment-entrypoint-cert-identity). Every goatnet in this tree today
@@ -441,6 +446,26 @@ def generate(env, gv_dir=None, inv_path=None):
     # graded against an issuer it cannot present. No site yet names its
     # internal CA's CN in committed config, so that case is left unresolved
     # (derive, never invent) until one does, via internal_ca_cn.
+    # A goatlite (ADR 1213): one box on its own LAN, rendered from goatlite.yaml
+    # (goatlite_host is written only by ops/scripts/goatlite-render.py). Rows
+    # for surfaces a goatlite does not have (a relay tier, the relay ingress on
+    # 8443, isitup's service list, public names, a presence publisher) read N/A
+    # on it through `applies_when: {goatlite: false}`.
+    lite_host = _extract(text, "goatlite_host")
+    values["goatlite"] = bool(lite_host)
+    # A curl on the box reaching the box's own names: the box's resolver does not
+    # ask the goatnet's CoreDNS, so on a goatlite the curl options that already
+    # carry the goatnet's root (curl_ca_opt) also pin the portal name to the box.
+    if lite_host and "{{" not in lite_host and values.get("site_dns_zone"):
+        pin = f"--resolve portal.{env}.{values['site_dns_zone']}:443:{lite_host.strip(chr(34))}"
+        values["curl_ca_opt"] = (values.get("curl_ca_opt", "") + " " + pin).strip()
+    # The person the portal identity rows look up: the declared value, else the
+    # first administrator the site declares (site_admins).
+    if not values.get("acceptance_known_person_email"):
+        m = re.search(r'^site_admins:\s*\n\s*-\s*email:\s*["\']?([^"\'\s#]+)', text, re.M)
+        if m:
+            values["acceptance_known_person_email"] = m.group(1)
+
     cert_mode = _extract(text, "dashboard_cert_delivery_mode")
     if cert_mode == "acme":
         values["entrypoint_cert_issuer"] = "Let's Encrypt"
