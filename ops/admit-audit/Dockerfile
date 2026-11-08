@@ -3,7 +3,7 @@
 # Build arg `GOPROXY` lets CI cache module fetches; defaults to the
 # public proxy.
 
-FROM golang:1.26.10-alpine@sha256:a2012b4a1d1f9f7e9f44e0d39b805a901e856b1dd80b4e6ee4338db547050308 AS builder
+FROM golang:1.27.2-alpine@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d AS builder
 ARG GOPROXY=https://proxy.golang.org,direct
 WORKDIR /src
 COPY go.mod go.sum* ./
