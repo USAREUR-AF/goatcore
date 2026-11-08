@@ -16,6 +16,13 @@ import unittest
 GENERATOR = Path(__file__).with_name("generate-envrc-example.py").resolve()
 
 
+def reads(var):
+    """A line of Python that reads `var`, assembled so that this file's own
+    text never matches the generator's pattern: the generator scans every
+    file, this one included, and must not document a fixture's name."""
+    return "import os\nos.environ.get(" + '"' + var + '"' + ")\n"
+
+
 class AssembledTree(unittest.TestCase):
     def generate(self, assembled):
         root = Path(tempfile.mkdtemp())
@@ -24,12 +31,12 @@ class AssembledTree(unittest.TestCase):
         subprocess.run(["git", "init", "-q", str(root)], check=True, env=env)
         (root / "ops/scripts").mkdir(parents=True)
         shutil.copy(GENERATOR, root / "ops/scripts/generate-envrc-example.py")
-        (root / "ops/scripts/core_tool.py").write_text('import os\nos.environ.get("CORE_ONLY_VAR")\n')
+        (root / "ops/scripts/core_tool.py").write_text(reads("CORE_ONLY_VAR"))
         subprocess.run(["git", "-C", str(root), "add", "-A"], check=True, env=env)
         subprocess.run(["git", "-C", str(root), "-c", "user.name=t", "-c", "user.email=t@t",
                         "commit", "-q", "-m", "base"], check=True, env=env)
         # A layer's file: copied over the checkout, never committed there.
-        (root / "ops/scripts/layer_tool.py").write_text('import os\nos.environ.get("LAYER_ONLY_VAR")\n')
+        (root / "ops/scripts/layer_tool.py").write_text(reads("LAYER_ONLY_VAR"))
         if assembled:
             (root / ".goat-assembled").write_text("goatcore_ref=0\noverlay_commit=0\n")
         r = subprocess.run([sys.executable, str(root / "ops/scripts/generate-envrc-example.py")],
