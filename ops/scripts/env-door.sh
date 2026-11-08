@@ -9,6 +9,8 @@
 # usage:
 #   ops/scripts/env-door.sh <env>            # open the tunnel (foreground; Ctrl-C closes)
 #   ops/scripts/env-door.sh <env> --print    # print ssh/ansible usage, don't connect
+#   ops/scripts/env-door.sh <env> --ssh-target   # user@127.0.0.1:port of the door
+#   ops/scripts/env-door.sh <env> --host-target  # user@<mesh address> of the host behind it
 #
 # envs: every goatnet with an ssm door in the door registry
 # (ops/ansible/inventory/doors.yaml); a joiner site rides its founder's door.
@@ -16,6 +18,14 @@ set -euo pipefail
 
 ENV="${1:-}"
 MODE="${2:-run}"
+# An unrecognised flag must not fall through to opening a tunnel in the
+# foreground: a caller asking an older copy of this script for a mode it lacks
+# would hang on a tunnel instead of failing.
+case "$MODE" in
+  run|--print|--ssh-target|--host-target) ;;
+  *) echo "usage: $0 <goatnet> [--print|--ssh-target|--host-target]" >&2
+     echo "env-door: unknown mode '$MODE'" >&2; exit 1 ;;
+esac
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # The door's facts come from the registry, read at run time: the script names no
@@ -32,7 +42,7 @@ fi
 _facts=""
 [ -z "$ENV" ] || _facts="$("$PY" "$HERE/generate-door-inventory.py" --arm "$ENV" 2>/dev/null || true)"
 if [ -z "$_facts" ]; then
-  echo "usage: $0 <goatnet> [--print|--ssh-target]" >&2
+  echo "usage: $0 <goatnet> [--print|--ssh-target|--host-target]" >&2
   [ -z "$ENV" ] || echo "env-door: no ssm door for '$ENV' in ops/ansible/inventory/doors.yaml (or the registry could not be read: it needs python3 with PyYAML)." >&2
   exit 1
 fi
@@ -48,6 +58,11 @@ unset _facts _k _v
 # an OPEN door (door-open.sh <env> first): user@127.0.0.1:port. The release
 # driver's rows use it (goatnet-runners.yaml `goat_via: door:<env>`).
 if [ "$MODE" = "--ssh-target" ]; then printf '%s@127.0.0.1:%s\n' "$DOOR_USER" "$PORT"; exit 0; fi
+# --host-target: the management host itself, user@<mesh address>, for an ssh
+# that jumps through the open door (ProxyCommand to --ssh-target, then -W to
+# this). The door port is a tunnel whose host key churns; the host's own key
+# is the one a caller verifies (ops/validation/probes.py _ssh_jump).
+if [ "$MODE" = "--host-target" ]; then printf '%s@%s\n' "$DOOR_USER" "$TARGET_IP"; exit 0; fi
 
 cat <<EOF
 # door: $ENV -> $TARGET_NAME ($TARGET_IP) via $INSTANCE, local port $PORT

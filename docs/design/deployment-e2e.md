@@ -39,7 +39,7 @@ log kept by hand) — are the regression corpus. Every item has a gate or a fix:
 | 5 | a variable a deploy templates had no reference line for a deployer to copy | `ops/ci/check-secrets-coverage.py` |
 | 7 | `crane` not installed, and `rc.sh` discarded its stderr: "image not found" for an image that existed | `ops/scripts/image-digest` (ADR 1204) uses any of crane, skopeo or docker and keeps the tool's own error; `rc.sh` refuses up front when none is present, `goatbuilder doctor` names it; `check-deps-named.py` |
 | 9 | the smoke exited 2 (no Playwright toolchain) and `rc.sh` said "the candidate is dead, delete the tag" | `rc.sh browser_toolchain_check` before the rows, exit 2 = **UNTESTED**, never FAIL; mirrored in `release.rs`; hermetic `release-dry-run-names-browser-toolchain` |
-| 13 | the preprod rows ran from the laptop, which had to be meshed to zagros and hold its contexts — against the door model | `goatnet-runners.yaml goat_via: door:<env>`: the rows run `goat` on the rung's management host through the door (`env-door.sh --ssh-target`); the host must hold the contexts (zagros-dev does; zagros and zagros-prod need theirs minted) |
+| 13 | the preprod rows ran from the laptop, which had to be meshed to zagros and hold its contexts — against the door model | `goatnet-runners.yaml goat_via: door:<env>`: the rows run `goat` on the rung's management host through the door (`env-door.sh --host-target` through `--ssh-target`); the host must hold the contexts (zagros-dev does; zagros and zagros-prod need theirs minted) |
 | 14 | the laptop's zagros profile lacked `onboard_endpoint`; the mint got a bare 405 | moot under 13; the 405 is catalogued (track/error-interpreter) |
 | 15 | every retry merged a +3/−3 PR of signature files only | #2046 re-signs only a changed intent and lands nothing when only signatures would change; the deviation edit (`rc.sh set_deviation`, `pins::edit_set_deviation`) now replaces a re-declared deviation where it stands — it used to move it to the top of the map, so every re-run after a later rung's deviation reordered the table and opened a PR; hermetic `release-rerun-dev-step-opens-no-pr` re-runs from dev after the ladder reached preprod and asserts "nothing to land" and no new dev-pin PR |
 | 16 | `--from preprod` rebuilt the record's dev evidence from a variable only the dev step sets | `rc.sh` reads the evidence file from disk on a resume |
@@ -123,8 +123,10 @@ up in the daily record, not on the day a person runs the step.
 
 `ops/validation/goatnet-runners.yaml` carries `goat_via: door:<env>` for zagros
 and zagros-prod: `rc.sh` and `goatbuilder release` open the door
-(`door-open.sh`), resolve `env-door.sh <env> --ssh-target` to `user@127.0.0.1:port`,
-and `onboard-intake-smoke.sh` runs its `goat` legs there. The rows run as
+(`door-open.sh`), resolve `env-door.sh <env> --host-target` to the management
+host (`user@<mesh address>`) and `--ssh-target` to the door (`user@127.0.0.1:port`,
+passed as `GOAT_ROWS_SSH_JUMP`), and `onboard-intake-smoke.sh` runs its `goat`
+legs on the host through the door. The rows run as
 the non-person identities the values file names, never as an operator: the
 intake rows as `acceptance` (`goat_sponsor_context`, [ADR 1207](../adr/1207-acceptance-rows-run-as-a-non-person-sponsor-identity.md)),
 the fabric rows as `assay-probe` (`probe_context`) where the goatnet declares

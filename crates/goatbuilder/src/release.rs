@@ -538,8 +538,12 @@ impl<'a> Run<'a> {
             }
         }
         let mut via = self.runner_var(goatnet, "goat_via")?;
+        let mut jump = String::new();
         // A rung this laptop is not meshed to runs its rows on its own management
-        // host through the door (goat_via `door:<env>`; release-candidate-validation.md).
+        // host through the door (goat_via `door:<env>`; release-candidate-validation.md):
+        // the rows' ssh goes to that host's mesh address and jumps through the
+        // door (ops/validation/probes.py _ssh_jump). The door address itself is
+        // never the destination: it is a tunnel port whose host key churns.
         if let Some(env) = via.strip_prefix("door:") {
             let env = env.to_string();
             let door_open = self.repo.join("ops/scripts/door-open.sh");
@@ -547,12 +551,14 @@ impl<'a> Run<'a> {
                 // rc.sh prints this step in a dry run; the parity gate compares it.
                 self.note(format!("DRY: {} {env}  (the rows run goat on {name}'s management host through the door)", door_open.display()));
             }
-            if !self.o.dry_run && !sh_ok(self.repo.join("ops/scripts/door-open.sh").to_str().unwrap_or(""), &[&env]) {
+            if !self.o.dry_run && !sh_ok(door_open.to_str().unwrap_or(""), &[&env]) {
                 return Err(goat_errors::coded("GB-043", format!("door to {env} did not open for the rows on {name}")).into());
             }
-            via = sh(self.repo.join("ops/scripts/env-door.sh").to_str().unwrap_or(""), &[&env, "--ssh-target"]).unwrap_or_default();
-            if via.is_empty() && !self.o.dry_run {
-                return Err(goat_errors::coded("GB-043", format!("env-door.sh {env} --ssh-target printed no user@host:port")).into());
+            let env_door = self.repo.join("ops/scripts/env-door.sh");
+            jump = sh(env_door.to_str().unwrap_or(""), &[&env, "--ssh-target"]).unwrap_or_default();
+            via = sh(env_door.to_str().unwrap_or(""), &[&env, "--host-target"]).unwrap_or_default();
+            if (jump.is_empty() || via.is_empty()) && !self.o.dry_run {
+                return Err(goat_errors::coded("GB-043", format!("env-door.sh {env} printed no door (--ssh-target) or host (--host-target)")).into());
             }
         }
         // The contexts the rows run as come from the values file (goat_sponsor_context,
@@ -560,7 +566,7 @@ impl<'a> Run<'a> {
         let res = self.runner_var(goatnet, "intake_resolve")?;
         let values = self.repo.join(self.runner_var(goatnet, "values")?).display().to_string();
         let args: Vec<String> = vec![
-            format!("INTAKE_RESOLVE={res}"), "python3".into(), self.repo.join("ops/validation/run-acceptance.py").display().to_string(),
+            format!("GOAT_ROWS_SSH_JUMP={jump}"), format!("INTAKE_RESOLVE={res}"), "python3".into(), self.repo.join("ops/validation/run-acceptance.py").display().to_string(),
             "--env".into(), name.clone(), "--values".into(), values, "--deployed".into(), req, "--only".into(), rows,
             "--var".into(), format!("goat_via={via}"), "--var".into(), format!("env={name}"),
             "--json".into(), self.evid.clone(), "--require-pass".into(),
