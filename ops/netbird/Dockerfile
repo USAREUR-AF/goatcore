@@ -69,7 +69,8 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 # No deployment CA is baked into this image: each goatnet supplies its own
-# internal CA at run time (bind-mount the bundle and set SSL_CERT_FILE).
+# internal CA at run time. ops/compose/mgmt-host mounts the files listed in
+# netbird_mgmt_trust_certs at /etc/netbird/trust and adds it to SSL_CERT_DIR.
 RUN update-ca-certificates
 
 COPY --from=builder /build/netbird-mgmt /usr/local/bin/netbird-mgmt

@@ -289,6 +289,10 @@ services:
       # delays the final push after a burst.
       NB_PEER_UPDATE_INTERVAL_MS: "${NB_PEER_UPDATE_INTERVAL_MS:-500}"
       NB_PEER_UPDATE_STARTUP_PERIOD_S: "${NB_PEER_UPDATE_STARTUP_PERIOD_S:-90}"
+      # The system trust directories plus the deployment's internal CA, which
+      # mgmt-host.yml places in ./management-a/trust (netbird_mgmt_trust_certs).
+      # No deployment CA is baked into the image.
+      SSL_CERT_DIR: /etc/ssl/certs:/etc/netbird/trust
     volumes:
       # management.json rendered by ops/ansible/mgmt-host.yml from
       # ops/ansible/templates/management.json.j2 — see that file for var contract.
@@ -298,6 +302,8 @@ services:
       # at deploy time; touching / removing migrations.allow inside it gates
       # AutoMigrate on the patched image. No-op for stock image.
       - ./management-a/marker:/opt/netbird-ha:rw
+      # The deployment's internal CA (see SSL_CERT_DIR above).
+      - ./management-a/trust:/etc/netbird/trust:ro
     ports:
       # REST + gRPC on port 80 inside the container, loopback-only exposure
       # to the host (kept for direct local debugging via curl from the host).

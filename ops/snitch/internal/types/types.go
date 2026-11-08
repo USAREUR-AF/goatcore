@@ -429,10 +429,11 @@ type SatlinkTarget struct {
 }
 
 // DefaultSatlinkTargets are the relays the PoP benchmark measures
-// (compat.SatlinkTargets).
+// (SNITCH_SATLINK_TARGETS, else compat.SatlinkTargets).
 var DefaultSatlinkTargets = func() []SatlinkTarget {
-	out := make([]SatlinkTarget, 0, len(compat.SatlinkTargets))
-	for _, t := range compat.SatlinkTargets {
+	targets := compat.ConfiguredSatlinkTargets()
+	out := make([]SatlinkTarget, 0, len(targets))
+	for _, t := range targets {
 		out = append(out, SatlinkTarget{Name: t.Name, IP: t.IP, Region: t.Region})
 	}
 	return out

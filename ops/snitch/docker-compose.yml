@@ -1,6 +1,6 @@
 # SNITCH — mesh network performance monitor.
 #
-# Traefik routes snitch.netbird.legacy.example to this container.
+# Traefik routes SNITCH_HOST (from .env) to this container.
 # The Go binary serves the dashboard/API and collects probe reports.
 # Analytics stored in a dedicated PostgreSQL 16 container (snitch-db).
 #
@@ -43,20 +43,22 @@ services:
       - SNITCH_PEER_DOMAIN_SUFFIXES
       - SNITCH_GATEWATCH_URL
       - SNITCH_PUBLIC_URL
+      - SNITCH_SATLINK_NAME
+      - SNITCH_SATLINK_TARGETS
     cap_add:
       - NET_RAW
     dns:
-      - 100.127.1.23
+      - ${SNITCH_DNS:-100.127.1.23}
       - 8.8.8.8
     volumes:
       - ./data:/app/data
       - /usr/bin/netbird:/usr/bin/netbird:ro
       - /var/run/netbird.sock:/var/run/netbird.sock
-      - /opt/goat/gate-status.json:/data/gate-status.json:ro
+      - ${SNITCH_GATE_STATUS_FILE:-/opt/goat/gate-status.json}:/data/gate-status.json:ro
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=netbird_netbird"
-      - "traefik.http.routers.snitch.rule=Host(`snitch.netbird.legacy.example`)"
+      - "traefik.http.routers.snitch.rule=Host(`${SNITCH_HOST:-snitch.netbird.legacy.example}`)"
       - "traefik.http.routers.snitch.entrypoints=websecure"
       - "traefik.http.routers.snitch.tls=true"
       - "traefik.http.routers.snitch.middlewares=mesh-only"
