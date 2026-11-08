@@ -50,6 +50,8 @@ services:
       - SNITCH_PEER_DOMAIN_SUFFIXES
       - SNITCH_GATEWATCH_URL
       - SNITCH_PUBLIC_URL
+      - SNITCH_SATLINK_NAME
+      - SNITCH_SATLINK_TARGETS
     cap_add:
       - NET_RAW
     ports:
