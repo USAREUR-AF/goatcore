@@ -80,6 +80,9 @@ pub(crate) const GOATNET_KEYS: &[&str] = &[
     "mgmt_ssh_user",
     "demo_service",
     "i18n_feedback_email",
+    // The goatnet's warrant membership declaration (`enforce` | `report` |
+    // `none`), read by cmd::warrant_membership::governance.
+    crate::cmd::warrant_membership::CONTEXT_CONVERGE_KEY,
 ];
 const GOATNET_SCHEMA: &str = "goat/goatnet/v1";
 /// Keys the signed bundle also writes: `goatnet.toml` fills them only when the
@@ -599,6 +602,21 @@ mod tests {
             !f.iter().any(|(k, _)| k == "portal_endpoint"),
             "a goatnet.toml must never overwrite a bundle-issued endpoint"
         );
+    }
+
+    #[test]
+    fn goatnet_toml_carries_the_warrant_membership_declaration() {
+        let f = parse_goatnet_toml(
+            "schema = \"goat/goatnet/v1\"\ngoatnet = \"zagros\"\n\
+             warrant_membership_converge = \"none\"\n",
+        )
+        .unwrap();
+        assert!(f
+            .iter()
+            .any(|(k, v)| k == "warrant_membership_converge" && v == "none"));
+        let (body, changed) = merge_goatnet_facts("goatnet = \"zagros\"\n", &f).unwrap();
+        assert!(body.contains("warrant_membership_converge = \"none\"\n"));
+        assert_eq!(changed, vec!["warrant_membership_converge".to_string()]);
     }
 
     #[test]

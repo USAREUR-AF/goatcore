@@ -391,3 +391,18 @@ goat_get_goatnet_facts:
   # Set per goatnet in its group_vars; empty (the default) leaves the key out.
   demo_service: "{{ goat_get_demo_service | default('', true) }}"
   i18n_feedback_email: "{{ goat_get_i18n_feedback_email | default('', true) }}"
+  # The goatnet's warrant membership declaration, so `goat` outside a checkout
+  # answers from it instead of the live NetBird account (see below).
+  warrant_membership_converge: "{{ goat_get_warrant_membership_converge }}"
+
+# `converge:` of ops/warrant/membership/<site_id>/_scope.yaml, read on the
+# controller from the tree the play runs from. `none` when that tree carries
+# declarations but none for this goatnet; empty (the key is left out) when the
+# tree carries no declarations at all, so the CLI keeps asking the goatnet's
+# NetBird account (crates/goat-cli/src/cmd/warrant_membership.rs, governance).
+goat_get_warrant_membership_root: "{{ playbook_dir }}/../warrant/membership"
+goat_get_warrant_membership_converge: >-
+  {%- set f = goat_get_warrant_membership_root ~ '/' ~ site_id ~ '/_scope.yaml' -%}
+  {%- if f is file -%}{{ (lookup('file', f) | from_yaml).converge | default('unreadable', true) }}
+  {%- elif goat_get_warrant_membership_root is directory -%}none
+  {%- endif -%}

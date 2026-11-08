@@ -194,6 +194,7 @@ context's `profile.toml`, where `Profile::goatnet_endpoints()`
 | `ory_ssh_user`, `mgmt_ssh_user` | `ansible_user` |
 | `demo_service` | `goat_get_demo_service` (declared per goatnet; the service `goat demo` opens with no name given) |
 | `i18n_feedback_email` | `goat_get_i18n_feedback_email` (declared per goatnet; where operators report translation errors) |
+| `warrant_membership_converge` | `converge:` of `ops/warrant/membership/<site_id>/_scope.yaml` in the tree the play runs from; `none` when that tree has declarations but not this goatnet's; left out when it has none. Lets `goat` outside a checkout decide warrant governance from the declaration instead of the live NetBird account |
 
 The goat-get role renders it (`roles/goat-get/defaults/main.yml`,
 `goat_get_goatnet_facts`) with the same derivations as the onboard-runner role,
