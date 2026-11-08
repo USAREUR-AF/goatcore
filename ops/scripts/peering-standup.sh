@@ -37,11 +37,14 @@
 #                         federation interface here and the running router there; the
 #                         edge must not share a machine with the core.
 #     GOAT_AWS_PROFILE    aws-vault profile the ansible phases run under
-#     FED_DIRECTORY_URL   optional: a peering directory (saltlick). Set, phase 5
-#                         publishes our pointer, looks up the counterparty's,
-#                         fetches their package and prints a compatibility report
-#                         before it stops. Advisory: a directory failure is a
-#                         warning. Unset, phase 5 is unchanged.
+#     FED_DIRECTORY_URL   the peering directory (saltlick), required unless
+#                         FED_NO_DIRECTORY=1. Phase 5 uploads our package and CA,
+#                         publishes our pointer, fetches the counterparty's package
+#                         and CA, and prints both keys and CA fingerprints and a
+#                         compatibility report before it stops. It grants nothing:
+#                         compose checks their package against the key read aloud.
+#     FED_NO_DIRECTORY    1 only for a counterparty that can reach no directory;
+#                         phase 5 then names the files to hand over directly
 #     FED_PACKAGE_URL     optional: where our own public host serves our package
 #                         (https, a static file). Unset, phase 5 uploads our
 #                         package to the directory and the pointer names that, so
@@ -55,10 +58,9 @@
 #                         fetches their package and CA (to $FED_WORK/theirs-ca.pem)
 #
 # WHAT THIS DOES NOT DO. It never trusts anything from the counterparty on its
-# own. The two exchanges — our package and CA out, theirs in — are phase 5, either
-# through the directory or by a channel the two parties choose, and phase 5 is
-# MANUAL by design: the corroboration (reading the key and CA fingerprint aloud)
-# is theirs to perform.
+# own. The two exchanges — our package and CA out, theirs in — are phase 5, through
+# the directory, and phase 5 stops for the one act a machine cannot do: reading
+# the verifying key and CA fingerprint aloud, and recording the key once read back.
 set -uo pipefail
 # Hold the Mac awake for the whole run (#2122; ops/scripts/lib/keep-awake.sh).
 _keep_awake="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/keep-awake.sh"
@@ -113,7 +115,7 @@ CORE_GROUP="${PEERING}_core"
 # THE BOUND KEYS. `compose` refuses (exit 20) unless a verifying key is bound to
 # each party, and it will never take one from the package it verifies — a package
 # carrying its own key authenticates nothing. So the keys live in a file the
-# operator writes during phase 5, out of band, and phase 6 passes them.
+# operator writes during phase 5, after reading them aloud, and phase 6 passes them.
 : "${FED_KEYRING:=$FED_WORK/keys.txt}"
 OURS="$FED_WORK/ours.canonical.json"
 AGREEMENT="$FED_WORK/agreement.json"
@@ -129,8 +131,8 @@ step() {   # step <n> <kind> <label> <command...>
   [ "$PLAN" = 1 ] && return 0
   case "$kind" in
     MANUAL)
-      # The optional directory step runs inside phase 5, before the stop. It is
-      # advisory, so its exit status is never read.
+      # The directory step runs inside phase 5, before the stop. It is advisory:
+      # compose is the check, so its exit status is never read.
       if [ "$n" = 5 ] && [ -n "$DIRECTORY_STEP" ]; then
         python3 "$REPO/ops/federation/standup/directory.py" --url "$FED_DIRECTORY_URL" --ours "$OURS" \
           ${FED_PACKAGE_URL:+--package-url "$FED_PACKAGE_URL"} ${FED_SIGNING_KEY:+--key "$FED_SIGNING_KEY"} \
@@ -208,12 +210,10 @@ step 4 T "lint our package against the spec" \
   "$GOAT_BIN federate lint '$OURS'"
 
 # ---------------------------------------------------------------------------
-# Phase 5 — THE EXCHANGE, and it stops for a person on purpose: the counterparty's
-#     verifying key is bound over a channel authenticated INDEPENDENTLY of this
-#     link — never taken from the package, never from a directory.
-#     With FED_DIRECTORY_URL set, the phase first runs the optional directory step
-#     (ops/federation/standup/directory.py): the directory holds pointers, not
-#     permissions, and is never an input to compose's check.
+# Phase 5 — THE EXCHANGE, through the directory (ops/federation/standup/directory.py),
+#     then a stop for a person: the counterparty's verifying key is bound by reading
+#     it aloud — never taken from the package, never from the directory, which
+#     holds pointers, not permissions, and is never an input to compose's check.
 # ---------------------------------------------------------------------------
 # A value printed into the plan and passed to the helper: anything but plain URL
 # characters disables the step rather than reach a command line.
@@ -224,35 +224,45 @@ if [ -n "${FED_DIRECTORY_URL:-}" ]; then
     *) DIRECTORY_STEP=1 ;;
   esac
 fi
-if [ -n "$DIRECTORY_STEP" ]; then
-  DIRECTORY_TEXT="     Directory step (advisory; grants nothing), run before this stop:
-       python3 '$REPO/ops/federation/standup/directory.py' --url '$FED_DIRECTORY_URL' --ours '$OURS'${FED_PACKAGE_URL:+ --package-url '$FED_PACKAGE_URL'} --their-id '${FED_COUNTERPARTY_ID:-<unset>}'
-     It uploads our package (unless FED_PACKAGE_URL names our own host) and CA,
-     publishes our pointer, fetches their package and CA, checks digest,
-     signatures and CA fingerprint, places what is not on disk, and prints the
-     key and fingerprint to read back and a compatibility report."
-elif [ -n "${FED_DIRECTORY_URL:-}" ]; then
-  DIRECTORY_TEXT="     FED_DIRECTORY_URL, FED_PACKAGE_URL, FED_COUNTERPARTY_ID or FED_CA_CERT holds
-     characters outside a plain URL; the directory step is off."
-else
-  DIRECTORY_TEXT="     Optional: set FED_DIRECTORY_URL, FED_COUNTERPARTY_ID and FED_SIGNING_KEY to
-     exchange packages and CA certificates through a peering directory instead
-     (advisory; grants nothing; no public host needed)."
-fi
-step 5 MANUAL "exchange packages, and bind their verifying key out of band" \
-  "Send $OURS and our CA certificate to the counterparty, with $FED_WORK/ours.spiffe-bundle if phase 2 wrote one
-     (with FED_DIRECTORY_URL set, phase 5 moves the package and CA through the directory).
+if [ "${FED_NO_DIRECTORY:-}" = 1 ]; then
+  EXCHANGE_LABEL="exchange packages by hand (FED_NO_DIRECTORY=1); read the key and CA fingerprint aloud"
+  EXCHANGE_TEXT="No directory: FED_NO_DIRECTORY=1 is for a counterparty that can reach none.
+     Send $OURS and our CA certificate to the counterparty, with $FED_WORK/ours.spiffe-bundle if phase 2 wrote one.
      Obtain theirs and place them at: $FED_COUNTERPARTY
        $FED_WORK/theirs-ca.pem
-       $FED_WORK/theirs.spiffe-bundle
-     Bind their verifying key over a channel authenticated independently of
-     this link — a key taken from the package it verifies proves nothing.
-     Record BOTH parties' keys, one per line, at:
+       $FED_WORK/theirs.spiffe-bundle"
+elif [ -n "$DIRECTORY_STEP" ]; then
+  EXCHANGE_LABEL="exchange through the directory; read the key and CA fingerprint aloud"
+  EXCHANGE_TEXT="Directory step, run before this stop (it grants nothing):
+       python3 '$REPO/ops/federation/standup/directory.py' --url '$FED_DIRECTORY_URL' --ours '$OURS'${FED_PACKAGE_URL:+ --package-url '$FED_PACKAGE_URL'} --their-id '${FED_COUNTERPARTY_ID:-<unset>}'
+     It uploads our package (unless FED_PACKAGE_URL names our own host) and CA,
+     publishes our pointer, fetches their package and CA to $FED_COUNTERPARTY
+     and $FED_WORK/theirs-ca.pem, checks digest, signatures and CA fingerprint,
+     and prints both verifying keys and CA fingerprints in groups of four and a
+     compatibility report. Their entry not there yet: run phase 5 again after
+     they run theirs. With SPIRE federation on, hand over
+     $FED_WORK/ours.spiffe-bundle and place theirs at $FED_WORK/theirs.spiffe-bundle."
+elif [ -n "${FED_DIRECTORY_URL:-}" ]; then
+  EXCHANGE_LABEL="exchange through the directory; read the key and CA fingerprint aloud"
+  EXCHANGE_TEXT="FED_DIRECTORY_URL, FED_PACKAGE_URL, FED_COUNTERPARTY_ID or FED_CA_CERT holds
+     characters outside a plain URL; phase 1 refuses this run."
+else
+  EXCHANGE_LABEL="exchange through the directory; read the key and CA fingerprint aloud"
+  EXCHANGE_TEXT="Set FED_DIRECTORY_URL, FED_COUNTERPARTY_ID and FED_SIGNING_KEY; phase 1 refuses
+     without them. The directory step then uploads our package and CA, fetches
+     theirs, and prints both keys and CA fingerprints and a compatibility report.
+     FED_NO_DIRECTORY=1 is for a counterparty that can reach no directory."
+fi
+step 5 MANUAL "$EXCHANGE_LABEL" \
+  "$EXCHANGE_TEXT
+     On one call, each side reads its verifying key and CA fingerprint aloud and
+     the other reads them back: a key taken from the package it verifies proves
+     nothing. Then record BOTH parties' keys, one per line, at:
        $FED_KEYRING
      as   <sovereign_id>=<44 base64 characters>
      Phase 6 passes each line to compose as --key; compose refuses (exit 20)
-     for any party whose key is not bound.
-$DIRECTORY_TEXT"
+     for any party whose key is not bound. After compose, read the agreement
+     digest to each other the same way."
 
 # Each `sovereign=key` line in the keyring becomes one --key argument. A missing
 # or empty keyring is not patched over here: compose's own refusal names the

@@ -148,6 +148,33 @@ def main():
     else:
         bad("signing key", f"FED_SIGNING_KEY points at {key}, which does not exist")
 
+    # 3b — the peering directory. Phase 5 exchanges packages and CA certificates
+    #     through it, so a run without one would stop at phase 5 with nothing to
+    #     exchange. FED_NO_DIRECTORY=1 is the one exception: a counterparty that
+    #     can reach no directory, where phase 5 names the files to hand over.
+    if os.environ.get("FED_NO_DIRECTORY", "") == "1":
+        ok("peering directory", "FED_NO_DIRECTORY=1: phase 5 names the files to hand over directly")
+    else:
+        url = os.environ.get("FED_DIRECTORY_URL", "")
+        their = os.environ.get("FED_COUNTERPARTY_ID", "")
+        plain = re.compile(r"^[A-Za-z0-9._:/?=&%~+@-]*$")
+        values = [url, their, os.environ.get("FED_PACKAGE_URL", ""), os.environ.get("FED_CA_CERT", "")]
+        if not url:
+            bad("peering directory", "FED_DIRECTORY_URL is unset",
+                "Phase 5 exchanges packages and CA certificates through the peering directory\n"
+                "(saltlick): set FED_DIRECTORY_URL=https://<directory> and FED_COUNTERPARTY_ID.\n"
+                "FED_NO_DIRECTORY=1 only for a counterparty that can reach no directory.")
+        elif not url.startswith("https://"):
+            bad("peering directory", f"FED_DIRECTORY_URL is {url}, not an https:// address")
+        elif not their:
+            bad("peering directory", "FED_COUNTERPARTY_ID is unset",
+                "The counterparty's sovereign_id (ISO 3166-1 alpha-3), to look them up.")
+        elif not all(plain.match(v) for v in values):
+            bad("peering directory", "FED_DIRECTORY_URL, FED_PACKAGE_URL, FED_COUNTERPARTY_ID or "
+                "FED_CA_CERT holds characters outside a plain URL")
+        else:
+            ok("peering directory", f"{url}, counterparty {their}")
+
     # 4 — somewhere to work.
     work = Path(a.work)
     try:
