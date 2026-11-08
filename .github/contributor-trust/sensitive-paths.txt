@@ -1,0 +1,37 @@
+# Paths where a change from a contributor outside the maintainers needs a
+# recorded security review, even when the contributor is known (ADR 1221).
+# One glob per line: `**` crosses directories, `*` stays in one directory,
+# a pattern with no slash matches that file name anywhere. Owners edit this
+# file; it takes effect when the edit merges.
+
+# What runs in CI, what builds images, what is pinned
+.github/**
+Dockerfile*
+*.Dockerfile
+ops/base-images/**
+ops/pins/**
+Cargo.lock
+go.sum
+deny.toml
+CODEOWNERS
+SECURITY.md
+
+# Who may do what: identity, access, policy
+ops/identity/**
+ops/warrant/**
+ops/permissions/**
+ops/goat-id-console/**
+ops/ory-consent/**
+ops/enrollment/**
+ops/goat-zenoh-portal/internal/access/**
+ops/goat-zenoh-portal/internal/api/auth*
+ops/snitch/**/auth*
+ops/netbird/**
+ops/secrets/**
+
+# Cryptography and the data path
+ops/grant-crypto/**
+goat-relay/**
+goat-relay-protocol/**
+ops/relay/**
+ops/zenoh/**

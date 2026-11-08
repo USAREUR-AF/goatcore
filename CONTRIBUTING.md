@@ -49,6 +49,26 @@ A load-bearing decision — one a later contributor would need to know the reaso
 
 Reviewers look for: the change does what its subject says and nothing else; the gates pass; the design document moved with the code; status words are honest; no identifier of a real deployment (an address, a hostname, a key, a person) entered the tree. Review comments are about the change, not the author.
 
+## Outside contributions
+
+A required check, `contributor-trust`, asks who wrote each pull request ([ADR 1221](docs/adr/1221-outside-contributions-need-a-known-author-or-a-recorded-security-review.md)):
+
+| Author | Security review needed |
+|---|---|
+| Maintainer (organisation member or collaborator) | No |
+| Known: registered in a goat community environment with a linked GitHub account, or with an earlier merged pull request here | Only if the change touches a path in [`.github/contributor-trust/sensitive-paths.txt`](.github/contributor-trust/sensitive-paths.txt) |
+| Anyone else | Yes |
+
+When a review is needed, an owner reads the change against this list and, if it holds, applies the `security-reviewed` label:
+
+- the change does only what its title says;
+- it adds no dependency, network call, binary, generated blob or obfuscated code that the description does not explain;
+- every change to a workflow, build file or pin is read line by line;
+- tests exercise the change;
+- a change to authentication, access control or cryptography also gets a second, independent reviewer.
+
+A new push removes the label. The approval that merges the pull request comes from a different owner than the one who applied it. If you are registered in a community environment, link your GitHub account there and your pull requests take the faster path.
+
 ## Merging
 
 Development happens in this repository. A pull request merged to `main` is the change; there is no other upstream. A deployment picks it up by moving the commit it pins, in its own overlay repository.
