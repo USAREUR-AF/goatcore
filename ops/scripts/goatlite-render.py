@@ -580,6 +580,9 @@ minio_enabled: false
 id_admin_console_enabled: false
 goat_get_enabled: false
 goat_docs_enabled: false
+# With no goat-get there is no served goat to sync the host's from, so the
+# onboard-runner role records the goat-cli payload as absent, as declared.
+onboard_runner_goat_autoupdate: false
 {dns_server}
 relay_health_enabled: false
 # Phase 12 deploys grant-keyd and the mgmt stack runs admit-audit; the
@@ -1210,6 +1213,12 @@ LITE_ABSENT = {
     # identity console needs a mail sender and two external identity doors a
     # goatlite has no account for. Each returns when that is solved.
     "audit-subscriber", "id-admin-console",
+    # Deployed by no goatlite phase (measured on a clean-VM run, 2026-11-08): the
+    # download and docs surfaces are off (goat_get_enabled / goat_docs_enabled
+    # false below) and a goatlite federates with nothing. Left pinned, each read
+    # as "no ledger on the host" and failed `goatbuilder diff` and the assay row
+    # deploy-ledgers-match-main.
+    "goat-get", "goat-docs", "goat-fed-republisher",
 }
 
 
