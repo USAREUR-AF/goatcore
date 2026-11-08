@@ -13,6 +13,12 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License: Apache 2.0"></a>
 </p>
 
+<p align="center">
+  <img src="docs/assets/panoscope.gif" alt="panoscope showing synthetic peers on a local Zenoh fabric, then the live stream of a newly published topic" width="960">
+  <br>
+  <sub>panoscope, goat's live view of the data fabric, running on a laptop with synthetic data. Its code is in <a href="https://github.com/usareur-af/goatstuff/tree/main/ops/panoscope">goatstuff</a>.</sub>
+</p>
+
 > [!NOTE]
 > goat is pre-1.0: interfaces can still change between releases.
 
