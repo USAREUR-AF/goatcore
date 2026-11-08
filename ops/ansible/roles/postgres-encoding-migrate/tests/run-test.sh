@@ -16,7 +16,8 @@
 #      or does not mount /etc/pgbackrest, a pgBackRest config the container
 #      cannot read, and one without pg1-path are refused in phase 1, before
 #      anything stops; so are Ory container names (ory_spock_*_container)
-#      that do not exist on the host
+#      that do not exist on the host, and a joiner that declares Ory
+#      federation it was never wired for
 #   3  also: the joiner, wired before the revocation guard existed, gets the
 #      guard and hub ledger in phase 8.0, and revocation history crosses both
 #      ways
@@ -349,6 +350,23 @@ grep -q 'phase 8 starts kratos-a and hydra-a for the Ory re-wire, and kratos-a h
 [[ ! -f "$WORK/state-founder/current-run" ]] || fail "case D: a run was opened"
 [[ "$(docker inspect -f '{{.State.Running}}' pemtest-founder-writer)" == true ]] || fail "case D: the Ory refusal stopped a writer"
 echo "  Ory containers that do not exist refused in phase 1, with the names present; nothing stopped"
+# The joiner declares Ory federation (ory_spock_enabled) but was never wired
+# for it: live it pulls only netbird. Phase 8 would add Ory subscriptions; phase
+# 1 refuses and names them. (Its Ory container names exist, so only this gate
+# speaks.)
+docker create --name pemtest-mgmt-kratos-1 --entrypoint true "$POSTGRES_SPOCK_IMAGE" >/dev/null
+docker create --name pemtest-mgmt-hydra-1 --entrypoint true "$POSTGRES_SPOCK_IMAGE" >/dev/null
+cp "$WORK/group_vars/utf8_joiner_hosts.yml" "$WORK/joiner-vars.keep"
+printf 'ory_spock_enabled: true\nory_spock_kratos_container: pemtest-mgmt-kratos-1\nory_spock_hydra_container: pemtest-mgmt-hydra-1\n' >> "$WORK/group_vars/utf8_joiner_hosts.yml"
+rc=0; run_play "$WORK/caseDi.log" || rc=$?
+cp "$WORK/joiner-vars.keep" "$WORK/group_vars/utf8_joiner_hosts.yml"; rm -f "$WORK/joiner-vars.keep"
+docker rm -f pemtest-mgmt-kratos-1 pemtest-mgmt-hydra-1 >/dev/null
+[[ $rc != 0 ]] || fail "case D: the run passed declared Ory wiring that is not live"
+{ grep -q 'pem-joiner declares but has no .*kratos ory_sub_utf8_founder_kratos_to_utf8_joiner_kratos' "$WORK/caseDi.log" \
+  && grep -q 'pem-joiner declares but has no .*hydra ory_sub_utf8_founder_hydra_to_utf8_joiner_hydra' "$WORK/caseDi.log"; } \
+  || { grep -E 'msg' "$WORK/caseDi.log" | tail -3; fail "case D: the refusal does not name the declared Ory subscriptions"; }
+[[ ! -f "$WORK/state-founder/current-run" ]] || fail "case D: a run was opened"
+echo "  declared Ory wiring that is not live refused in phase 1, with the subscriptions named; nothing stopped"
 
 say "case 0: divergent parent + orphan child: phase 1 refuses; reconcile fixes it"
 if run_play "$WORK/case0a.log"; then fail "case 0: the run passed over an orphan"; fi

@@ -16,21 +16,33 @@
 # peers), so a goatnet host outside this run is never subscribed.
 # Input: pem_step (one of the step names below).
 
+# Peers are taken from the live subscriptions phase 1 recorded, separately for
+# the netbird databases and the Ory databases (ory_spock_databases), so each
+# role re-creates only what existed: a node with no Ory subscription before
+# the run gets none after it, whatever ory_spock_enabled says (phase 1 refuses
+# a run whose declared wiring differs from live).
 - name: "rewire | this node's peers before the migration"
   ansible.builtin.set_fact:
-    _pem_peers: >-
-      {%- set mine = _pem_pre.spock | default([]) | map(attribute='subs') | flatten | map(attribute='provider') | unique | list -%}
-      {%- set out = [] -%}
-      {%- for h in ansible_play_hosts if h != inventory_hostname -%}
-        {%- for d in hostvars[h]._pem_pre.spock | default([]) -%}
-          {%- if d.node in mine and hostvars[h].site_id not in out -%}{%- set _ = out.append(hostvars[h].site_id) -%}{%- endif -%}
-        {%- endfor -%}
-      {%- endfor -%}
-      {{ out }}
+    _pem_peers: "{{ _pem_peers_for | selectattr('ory', 'equalto', false) | map(attribute='site') | unique | list }}"
+    _pem_peers_ory: "{{ _pem_peers_for | selectattr('ory', 'equalto', true) | map(attribute='site') | unique | list }}"
     _pem_spock_on: >-
       {{ not (_pem_standby | bool)
          and (participates_in_spock | default(false) | bool)
          and (inter_site_spock_topology | default('none')) != 'none' }}
+  vars:
+    _ory_dbs: "{{ ory_spock_databases | default(['kratos', 'hydra']) }}"
+    _pem_peers_for: >-
+      {%- set out = [] -%}
+      {%- for d in _pem_pre.spock | default([]) -%}
+        {%- for s in d.subs -%}
+          {%- for h in ansible_play_hosts if h != inventory_hostname -%}
+            {%- if s.provider in (hostvars[h]._pem_pre.spock | default([]) | map(attribute='node') | list) -%}
+              {%- set _ = out.append({'site': hostvars[h].site_id, 'ory': d.db in _ory_dbs}) -%}
+            {%- endif -%}
+          {%- endfor -%}
+        {%- endfor -%}
+      {%- endfor -%}
+      {{ out }}
 
 # 8.0, before any node's pass: the revocation guard and the hub directive
 # ledger on every member. A node's spock-mesh-peering pass installs them
@@ -75,6 +87,7 @@
     - pem_step == 'ory-start'
     - _pem_spock_on | bool
     - ory_spock_enabled | default(false) | bool
+    - (_pem_peers_ory | length > 0) or (_pem_founder | bool)
   block:
     - name: "rewire | start {{ postgres_encoding_migrate_ory_containers | join(', ') }}"
       ansible.builtin.command:
@@ -99,13 +112,16 @@
     name: ory-narrow-repset
   vars:
     inter_site_spock_topology: explicit
-    inter_site_spock_peers: "{{ _pem_peers }}"
+    inter_site_spock_peers: "{{ _pem_peers_ory }}"
     ory_spock_wire_subscriptions: "{{ pem_step != 'ory-joiners-1' }}"
     ory_spock_reconcile_history: "{{ pem_step != 'ory-founders' }}"
   when:
     - pem_step in ['ory-joiners-1', 'ory-founders', 'ory-joiners-2']
     - _pem_spock_on | bool
     - ory_spock_enabled | default(false) | bool
+    # Live Ory wiring only: a joiner that pulled no Ory subscription before
+    # the run is not wired now; a founder keeps its node and repset.
+    - (_pem_peers_ory | length > 0) or (_pem_founder | bool)
     - (_pem_founder | bool) == (pem_step == 'ory-founders')
 
 - name: "rewire | verify the subscription set"
