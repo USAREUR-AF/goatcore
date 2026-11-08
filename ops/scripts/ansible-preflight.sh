@@ -140,6 +140,40 @@ SAFE_ARGV="$(__safe_argv "$@")"
 #
 # Opt out of these specifically with GOAT_SKIP_ARG_GUARDS=1.
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# goat_unresolved_reference_guard — the play never receives a secret reference.
+#
+# Every `lookup('env', ...)` renders whatever the environment holds. Once the
+# injector above has run, an environment value that still begins with op://,
+# bao:// or bw:// is a reference nothing resolved: an inherited
+# GOAT_SECRETS_RESOLVED, a GOAT_SECRET_REF_PREFIX naming one scheme while
+# another is present, or a caller that skipped the injector. Rendered as-is it
+# becomes a container's literal password or cookie secret. Refuse, naming the
+# variables, never their values. No opt-out: resolve the reference or unset it.
+# ---------------------------------------------------------------------------
+goat_unresolved_reference_guard() {
+  local name value found=""
+  for name in $(compgen -e); do
+    case "$name" in GOAT_SECRET_REF_PREFIX) continue ;; esac
+    value="${!name-}"
+    case "$value" in
+      op://?*|bao://?*|bw://?*) found="$found $name" ;;
+    esac
+  done
+  [ -z "$found" ] && return 0
+  {
+    echo ""
+    echo "ansible-preflight: REFUSE — unresolved secret references in the environment:"
+    for name in $found; do echo "    $name"; done
+    echo ""
+    echo "  The play would render each one as a literal string (a container password,"
+    echo "  an oauth2-proxy cookie secret). Run through the injector so they resolve:"
+    echo "    ops/scripts/with-secrets ops/scripts/ansible-preflight.sh <args>"
+    echo "  or unset any variable this play does not need."
+  } >&2
+  exit 2
+}
+
 goat_arg_guards() {
   [ "${GOAT_SKIP_ARG_GUARDS:-}" = "1" ] && return 0
   local -a argv=("$@") invs=()
@@ -348,6 +382,7 @@ if [ -z "${GOAT_SECRETS_RESOLVED:-}" ]; then
 fi
 
 goat_arg_guards "$@"
+goat_unresolved_reference_guard
 
 # The source of record this play renders from, for the deploy ledger row
 # (rollback-ledger records it as `source_tree`): {"commit": HEAD} from a clone,
