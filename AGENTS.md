@@ -54,3 +54,7 @@ A red check names its script, so every failure reproduces locally.
 - [architecture-spine.md](https://github.com/usareur-af/goatdocs/blob/main/docs/design/architecture-spine.md) in goatdocs: the architecture in one read.
 - [docs/design/zenoh-brokerless-consequences.md](docs/design/zenoh-brokerless-consequences.md): the data fabric has no central broker, which rules out a class of fixes.
 - [docs/adr/INDEX.md](docs/adr/INDEX.md): why things are the way they are.
+
+## Skills
+
+`.claude/skills/` holds task instructions for coding agents, each a `SKILL.md` with a `GUIDE.md` for people: [goat-cli](.claude/skills/goat-cli/SKILL.md) (driving a goatnet with the `goat` CLI) and [adr](.claude/skills/adr/SKILL.md) (proposing an ADR).
