@@ -109,9 +109,10 @@ pass "python3 is the venv's, Python 3.14, and imports yaml, jsonschema, jmespath
 SCRIPT
     common_checks
     cat <<'SCRIPT'
-# rust came from rustup, not the keg-only Homebrew formula
-case "$(command -v cargo)" in "$HOME/.cargo/bin/cargo") ;; *) fail "cargo on PATH is $(command -v cargo), not rustup's" ;; esac
-pass "cargo is rustup's"
+# rust came from the page's rustup installer (a runner may also carry
+# Homebrew's keg-only rustup on PATH; a clean Mac has neither)
+"$HOME/.cargo/bin/cargo" --version >/dev/null 2>&1 || fail "the page's rustup block left no cargo in ~/.cargo/bin"
+pass "the page's rustup block installed cargo in ~/.cargo/bin"
 
 # the control: the Python the page steers away from cannot start ansible-core 2.20
 brew list python@3.15 >/dev/null 2>&1 || brew install python@3.15 >/dev/null
