@@ -85,7 +85,6 @@ interesting state than peers relay-forced by NAT.
    local-secrets-pattern.md):
    - `aws-vault` profile `legacy` (dev tree, `legacy.example`)
    - `CLOUDFLARE_API_TOKEN` — dev-tree token, for both DNS-01 challenges
-   - `GHCR_READ_TOKEN` — the goat-relay image is a private GHCR package
    - `TF_VAR_aws_account_id` — the cross-account fuse; no default, fail-closed
 2. **Two throwaway secrets you generate now**, not reused from any live env:
    ```

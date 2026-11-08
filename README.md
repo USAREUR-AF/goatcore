@@ -41,7 +41,7 @@ On top of those, this repository provides two command-line tools: `goatbuilder` 
 
 ## Try it
 
-The fastest way to see goat is a rehearsal: `goatbuilder` stands up a complete example environment against a simulated set of machines, on your laptop, in about ten minutes. Nothing touches a network.
+The fastest way to see goat is a rehearsal: `goatbuilder` stands up a complete example environment against a simulated set of machines, on your laptop. Nothing touches a network. The first `cargo build` takes the longest, often half an hour on a laptop; the rehearsal itself runs in seconds.
 
 ```bash
 cd crates && cargo build --release -p goatbuilder && cd ..

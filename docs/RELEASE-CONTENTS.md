@@ -49,7 +49,7 @@ What you need depends on how far you go. The rehearsal needs a laptop; everythin
 | To do this | You bring |
 |---|---|
 | The rehearsal | Rust, to build `goatbuilder` from `crates/` |
-| goatlite | One Ubuntu 24.04 host or VM with 4 cores and 16 GB that you can reach by SSH with a key; a laptop on the same LAN with Rust and the NetBird client; a GitHub token with `read:packages` as `GHCR_READ_TOKEN`, or your own images |
+| goatlite | One Ubuntu 24.04 host or VM with 4 cores and 16 GB that you can reach by SSH with a key; a laptop on the same LAN with Rust and the NetBird client. The images are public on ghcr.io and need no account |
 | A full goatnet on one LAN | The hosts: a core pair and an observability pair is the baseline, one core host is enough to start. Each runs Ubuntu 24.04 with disk encryption. Also a secret store, and `yq`, `sshpass`, `go` and `age`, which `goatbuilder doctor` checks |
 | A full goatnet on the internet | The above, plus your own AWS account, a Cloudflare zone and a domain, for the relays and public DNS |
 | Your own images | A fork. The image workflows publish to `ghcr.io/<your owner>/` with `GITHUB_TOKEN` alone |
