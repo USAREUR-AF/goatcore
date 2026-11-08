@@ -39,7 +39,7 @@ no credentials, no network and no VPN:
 goat warrant why-blocked --scope zagros --from DEVELOPER --to INFRA --port 7447
 ```
 
-It reads the declaration compiled into the binary and answers one of three ways.
+It reads the deployment's declaration — the directory `GOAT_ACL_DECLARATION_DIR` names, else the `ops/ansible/netbird_acl_*.yml` of the checkout or overlay you run it in, else the copy compiled into the binary — and answers one of three ways.
 
 **PERMITTED** — the ACL is not your problem:
 

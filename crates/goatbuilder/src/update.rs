@@ -296,9 +296,10 @@ fn signed(repo: &Path, agent: &ureq::Agent, base: &str, asset: &str, want: &str,
     };
     let bundle_url = format!("{base}/SHA256SUMS.cosign-bundle");
     let bundle = fetch_text(agent, &bundle_url, total).map_err(|e| unread(format!("cannot read the signature: {e}")))?;
-    // Run outside a checkout, the signer is this binary's own publisher. The
-    // signature is always checked: an unreadable config never skips it.
-    let source = crate::config::load(&repo.join("ops/goatbuilder/goatbuilder.yaml")).ok().and_then(|c| c.repo).map(|r| r.source).unwrap_or_else(|| "USAREUR-AF/goatcore".into());
+    // The signer is the checkout's repo.release_source, else its repo.source;
+    // run outside a checkout, this binary's own publisher. The signature is
+    // always checked: an unreadable config never skips it.
+    let source = crate::config::load(&repo.join("ops/goatbuilder/goatbuilder.yaml")).ok().and_then(|c| c.repo).map(|r| r.release_source.unwrap_or(r.source)).unwrap_or_else(|| "USAREUR-AF/goatcore".into());
     let dir = std::env::temp_dir().join(format!("goatbuilder-update-{}", std::process::id()));
     let _ = std::fs::create_dir_all(&dir);
     let (sums_path, bundle_path) = (dir.join("SHA256SUMS"), dir.join("SHA256SUMS.cosign-bundle"));

@@ -1,6 +1,7 @@
-// Evaluate the embedded ACL declaration with the same evaluator as netvis and CI.
-// This command needs no network connection, profile, or credentials. Local source
-// differences are reported on stderr; cargo run checks the current checkout.
+// Evaluate the ACL declaration with the same evaluator as netvis and CI.
+// This command needs no network connection, profile, or credentials. The
+// declaration is a deployment's own: GOAT_ACL_DECLARATION_DIR, else the
+// checkout or overlay the working directory is in, else the copy compiled in.
 
 use std::path::Path;
 
@@ -140,10 +141,28 @@ fn verdict(checked: &Checked, scope: Option<&str>, none_expected: bool) -> anyho
     }
 }
 
-/// The ACL declaration that governs here: the checkout's files when the working
-/// directory is inside a goat checkout, else the copy compiled in. `note` goes to
-/// stderr when the checkout's files are used, so the source is never silent.
+/// Names a directory that holds a deployment's `netbird_acl_taxonomy.yml` and
+/// `netbird_acl_matrix.yml`. A deployment whose declaration is not the one
+/// compiled in sets it, so the CLI checks that deployment's rules from any
+/// working directory.
+pub(crate) const DECLARATION_DIR_ENV: &str = "GOAT_ACL_DECLARATION_DIR";
+
+/// The ACL declaration that governs here, first match wins:
+/// 1. the directory `GOAT_ACL_DECLARATION_DIR` names (both files must be
+///    readable there, or the command fails rather than check other rules);
+/// 2. the files of the goat checkout, or of a deployment overlay carrying
+///    `ops/ansible/netbird_acl_taxonomy.yml`, that the working directory is in;
+/// 3. the copy compiled in.
+///
+/// `note` goes to stderr when files on disk are used, so the source is never
+/// silent.
 pub(crate) fn declaration(note: &str) -> anyhow::Result<Declaration> {
+    if let Some(dir) = std::env::var_os(DECLARATION_DIR_ENV).filter(|v| !v.is_empty()) {
+        let dir = std::path::PathBuf::from(dir);
+        let (tax, mat) = dir_declaration(&dir)?;
+        eprintln!("{note} ({DECLARATION_DIR_ENV}={})", dir.display());
+        return Ok(Declaration::parse(&tax, &mat)?);
+    }
     let on_disk = std::env::current_dir()
         .ok()
         .and_then(|cwd| checkout_declaration(&cwd));
@@ -156,11 +175,32 @@ pub(crate) fn declaration(note: &str) -> anyhow::Result<Declaration> {
     })
 }
 
-/// Both declaration files read from the checkout `start` is inside, if any.
+/// Both declaration files from a directory named explicitly. Either one
+/// missing is an error: the caller asked for this deployment's rules.
+fn dir_declaration(dir: &Path) -> anyhow::Result<(String, String)> {
+    let read = |name: &str| {
+        let path = dir.join(name);
+        std::fs::read_to_string(&path).map_err(|e| {
+            anyhow::anyhow!(
+                "{DECLARATION_DIR_ENV} names {}, but {} cannot be read: {e}",
+                dir.display(),
+                path.display()
+            )
+        })
+    };
+    Ok((
+        read("netbird_acl_taxonomy.yml")?,
+        read("netbird_acl_matrix.yml")?,
+    ))
+}
+
+/// Both declaration files read from the checkout `start` is inside, if any:
+/// a goat source checkout (it carries `crates/goat-cli`) or a deployment
+/// overlay that carries its own taxonomy under `ops/ansible/`.
 fn checkout_declaration(start: &Path) -> Option<(String, String)> {
-    let root = start
-        .ancestors()
-        .find(|dir| dir.join("crates/goat-cli/Cargo.toml").is_file())?;
+    let root = start.ancestors().find(|dir| {
+        dir.join("crates/goat-cli/Cargo.toml").is_file() || dir.join(DECLARATION[0].0).is_file()
+    })?;
     let tax = std::fs::read_to_string(root.join(DECLARATION[0].0)).ok()?;
     let mat = std::fs::read_to_string(root.join(DECLARATION[1].0)).ok()?;
     Some((tax, mat))
@@ -426,6 +466,34 @@ mod tests {
             checkout_declaration(plain.path()).is_none(),
             "not a checkout"
         );
+    }
+
+    #[test]
+    fn an_overlay_without_the_cli_crate_is_read_too() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let ansible = dir.path().join("ops/ansible");
+        std::fs::create_dir_all(&ansible).expect("ops/ansible");
+        std::fs::write(ansible.join("netbird_acl_taxonomy.yml"), TAX).expect("taxonomy");
+        std::fs::write(ansible.join("netbird_acl_matrix.yml"), RULES).expect("matrix");
+        let nested = dir.path().join("docs/deep");
+        std::fs::create_dir_all(&nested).expect("nested");
+        let (tax, mat) = checkout_declaration(&nested).expect("inside an overlay");
+        assert_eq!(tax, TAX);
+        assert_eq!(mat, RULES);
+    }
+
+    #[test]
+    fn a_named_directory_is_read_and_a_missing_file_is_an_error() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        std::fs::write(dir.path().join("netbird_acl_taxonomy.yml"), TAX).expect("taxonomy");
+        let msg = format!(
+            "{:#}",
+            dir_declaration(dir.path()).expect_err("matrix missing")
+        );
+        assert!(msg.contains("netbird_acl_matrix.yml"), "{msg}");
+        std::fs::write(dir.path().join("netbird_acl_matrix.yml"), RULES).expect("matrix");
+        let (tax, mat) = dir_declaration(dir.path()).expect("both present");
+        assert_eq!((tax.as_str(), mat.as_str()), (TAX, RULES));
     }
 
     #[test]

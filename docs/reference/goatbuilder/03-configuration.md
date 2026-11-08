@@ -25,6 +25,7 @@ repo:
   source: <org>/<repo>             # where declarations and tags live
   image_namespace: ghcr.io/<org>   # where component images are pushed
   signing: intent-sign             # how intents are signed
+  release_source: <org>/<repo>     # who signs the goatbuilder binaries; default: source
 deploy:
   aws_profile: <profile>           # GOAT_AWS_PROFILE overrides it; default: default
   ssh_user: <user>                 # the account join-node first reaches a machine as

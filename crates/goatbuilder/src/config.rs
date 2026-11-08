@@ -106,6 +106,12 @@ pub struct Repo {
     pub image_namespace: String,
     #[serde(default)]
     pub signing: Option<String>,
+    /// The repository whose release workflow signs the goatbuilder binaries
+    /// this project installs. A deployment whose declarations live in one
+    /// repository and whose goatbuilder comes from another names the second
+    /// here. Omitted: `source`.
+    #[serde(default)]
+    pub release_source: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

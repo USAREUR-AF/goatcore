@@ -409,9 +409,9 @@ func Load() (*Config, error) {
 	c.CollabDoorURL = envOr("COLLAB_KANIDM_URL", "")
 	c.CollabDoorAdminPW = envOr("COLLAB_KANIDM_IDM_ADMIN_PW", "")
 	c.PublicDoorURL = envOr("PUBLIC_DOOR_KANIDM_URL", "")
-	// GOAT_IDM_ADMIN_PW is the neutral name; the original name is still read
-	// and wins when both are set.
-	c.PublicDoorAdminPW = envOr("GOAT_IDM_ADMIN_PW", envOr("GOAT_IDM_ADMIN_PW", ""))
+	// The role writes GOAT_IDM_ADMIN_PW whatever name the deployment gives the
+	// variable on its controllers (public_door_idm_admin_pw_env).
+	c.PublicDoorAdminPW = envOr("GOAT_IDM_ADMIN_PW", "")
 	c.PortalInternalURL = envOr("PORTAL_INTERNAL_URL", "")
 	c.PortalLookupToken = envOr("PORTAL_LOOKUP_TOKEN", envOr("NOTIFY_TOKEN", ""))
 
