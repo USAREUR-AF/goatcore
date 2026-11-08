@@ -119,6 +119,7 @@ on:
       - 'ops/ci/check-no-floating-image-pins.sh'
       - 'ops/ci/check-image-refs-pinned.py'
       - 'ops/ci/floating-image-pins.allow'
+      - 'ops/ci/test_image_refs_assembled.py'
       - '.github/dependabot.yml'
       - 'ops/ansible/roles/*/defaults/**'
       - '**/Dockerfile'
@@ -280,6 +281,8 @@ jobs:
 
       - name: check-no-floating-image-pins --self-test
         run: ops/ci/check-no-floating-image-pins.sh --self-test
+      - name: the image-ref guard reads an assembled tree's layers
+        run: python3 ops/ci/test_image_refs_assembled.py
 
       # Also runs ops/ci/check-image-refs-pinned.py: role defaults, every
       # compose file, every Dockerfile FROM, against the shrink-only list
