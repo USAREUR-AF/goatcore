@@ -97,10 +97,11 @@ class Server(http.server.BaseHTTPRequestHandler):
         sid = self.path.rsplit("/", 1)[-1]
         rest = self.path.removeprefix("/v1/parties/")
         if rest in Server.hosted:
-            key, sig = Server.signed[rest]
-            self.reply(200, Server.hosted[rest], {"X-Saltlick-Bound-Key": Server.entries[rest.split("/")[0]][1],
-                                                  "X-Saltlick-Key": key, "X-Saltlick-Signature": sig,
-                                                  "X-Saltlick-Resource": rest})
+            headers = {"X-Saltlick-Bound-Key": Server.entries[rest.split("/")[0]][1]}
+            if rest in Server.signed:  # a file stored without an upload signature is served without one
+                key, sig = Server.signed[rest]
+                headers.update({"X-Saltlick-Key": key, "X-Saltlick-Signature": sig, "X-Saltlick-Resource": rest})
+            self.reply(200, Server.hosted[rest], headers)
         elif self.path in Server.files:
             self.reply(200, Server.files[self.path])
         elif self.path.startswith("/v1/parties/") and sid in Server.entries:
