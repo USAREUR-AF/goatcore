@@ -15,7 +15,8 @@
 #      A compose file whose postgres service does not pass POSTGRES_INITDB_ARGS,
 #      or does not mount /etc/pgbackrest, a pgBackRest config the container
 #      cannot read, and one without pg1-path are refused in phase 1, before
-#      anything stops
+#      anything stops; so are Ory container names (ory_spock_*_container)
+#      that do not exist on the host
 #   3  also: the joiner, wired before the revocation guard existed, gets the
 #      guard and hub ledger in phase 8.0, and revocation history crosses both
 #      ways
@@ -336,6 +337,18 @@ grep -q 'has no stanza section with pg1-path' "$WORK/caseDg.log" || { grep -E 'm
 [[ ! -f "$WORK/state-founder/current-run" ]] || fail "case D: a run was opened"
 [[ "$(docker inspect -f '{{.State.Running}}' pemtest-founder-pg)" == true ]] || fail "case D: a pgBackRest refusal stopped Postgres"
 echo "  pgBackRest: missing mount, unreadable config and missing pg1-path each refused in phase 1, with the file named; nothing stopped"
+# Ory on, with compose-generated container names and no ory_spock_*_container
+# in group_vars: phase 8 would start kratos-a/hydra-a, which do not exist.
+docker create --name pemtest-mgmt-kratos-1 --entrypoint true "$POSTGRES_SPOCK_IMAGE" >/dev/null
+docker create --name pemtest-mgmt-hydra-1 --entrypoint true "$POSTGRES_SPOCK_IMAGE" >/dev/null
+if run_play "$WORK/caseDh.log" -e ory_spock_enabled=true; then
+  docker rm -f pemtest-mgmt-kratos-1 pemtest-mgmt-hydra-1 >/dev/null; fail "case D: the run passed Ory container names that do not exist"; fi
+docker rm -f pemtest-mgmt-kratos-1 pemtest-mgmt-hydra-1 >/dev/null
+grep -q 'phase 8 starts kratos-a and hydra-a for the Ory re-wire, and kratos-a hydra-a does not exist here. Kratos and Hydra containers on this host: pemtest-mgmt-hydra-1 pemtest-mgmt-kratos-1' "$WORK/caseDh.log" \
+  || { grep -E 'msg' "$WORK/caseDh.log" | tail -3; fail "case D: the refusal does not name the missing and the present Ory containers"; }
+[[ ! -f "$WORK/state-founder/current-run" ]] || fail "case D: a run was opened"
+[[ "$(docker inspect -f '{{.State.Running}}' pemtest-founder-writer)" == true ]] || fail "case D: the Ory refusal stopped a writer"
+echo "  Ory containers that do not exist refused in phase 1, with the names present; nothing stopped"
 
 say "case 0: divergent parent + orphan child: phase 1 refuses; reconcile fixes it"
 if run_play "$WORK/case0a.log"; then fail "case 0: the run passed over an orphan"; fi

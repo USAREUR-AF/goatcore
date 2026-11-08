@@ -204,6 +204,43 @@
           {{ out }}
       when: not (_pem_standby | bool)
 
+    # Phase 8.3 starts kratos and hydra by container name for the Ory re-wire
+    # (postgres_encoding_migrate_ory_containers, from ory_spock_kratos_container
+    # / ory_spock_hydra_container, default kratos-a / hydra-a). Compose names
+    # them <project>-kratos-1 unless the goatnet sets container_name, so a
+    # group that declares neither variable fails there with the goatnet down.
+    - name: "preflight | the Ory containers phase 8 starts exist"
+      ansible.builtin.shell:
+        executable: /bin/bash
+        cmd: |
+          missing=""
+          for c in {{ postgres_encoding_migrate_ory_containers | map('quote') | join(' ') }}; do
+            docker inspect --type container "$c" >/dev/null 2>&1 || missing="$missing $c"
+          done
+          present=$(docker ps -a --format '{{ "{{" }}.Names{{ "}}" }}' | grep -E 'kratos|hydra' | grep -vE 'migrate|init' | sort | tr '\n' ' ')
+          printf '{"missing": "%s", "present": "%s"}\n' "${missing# }" "${present% }"
+      register: _pem_ory_raw
+      changed_when: false
+      when:
+        - not (_pem_standby | bool)
+        - participates_in_spock | default(false) | bool
+        - (inter_site_spock_topology | default('none')) != 'none'
+        - ory_spock_enabled | default(false) | bool
+
+    - name: "preflight | refuse Ory container names that do not exist"
+      ansible.builtin.assert:
+        that:
+          - (_pem_ory_raw.stdout | from_json).missing | length == 0
+        fail_msg: >-
+          {{ inventory_hostname }}: phase 8 starts {{ postgres_encoding_migrate_ory_containers | join(' and ') }}
+          for the Ory re-wire, and {{ (_pem_ory_raw.stdout | from_json).missing }} does not exist here.
+          Kratos and Hydra containers on this host: {{ (_pem_ory_raw.stdout | from_json).present or '(none)' }}.
+          Set ory_spock_kratos_container and ory_spock_hydra_container in this
+          host's group_vars to those names (the ory-narrow-repset role reads the
+          same variables), then run again. Nothing has stopped.
+        quiet: true
+      when: _pem_ory_raw is not skipped
+
     - name: "preflight | encodings across members"
       ansible.builtin.set_fact:
         _pem_encs: >-
