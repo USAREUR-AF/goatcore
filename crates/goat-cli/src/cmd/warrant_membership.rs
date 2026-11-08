@@ -96,6 +96,11 @@ pub struct ApplyArgs {
     /// alias.
     #[arg(long, alias = "dir")]
     pub file: PathBuf,
+    /// Directory holding the goatnet's netbird_acl_taxonomy.yml and
+    /// netbird_acl_matrix.yml, read to check the scope's prefix. Omitted:
+    /// GOAT_ACL_DECLARATION_DIR, the active context, then the checkout.
+    #[arg(long, value_name = "DIR")]
+    pub acl_declaration: Option<PathBuf>,
     /// `report` changes nothing. `enforce` converges, and is refused when
     /// `_scope.yaml` says `converge: report`.
     #[arg(long, value_enum, default_value = "report")]
@@ -2639,7 +2644,11 @@ pub async fn run_apply(ctx: &crate::cmd::Ctx, a: ApplyArgs) -> anyhow::Result<()
     }
     let decl = load_decl(&a.file, &a.scope)?;
     let prefix = scope_prefix(&a.scope);
-    let tax = super::super::acl::declaration("warrant apply: reading the ACL declaration in this checkout")?;
+    let tax = super::super::acl::declaration(
+        &ctx.profile,
+        a.acl_declaration.as_deref(),
+        "warrant apply",
+    )?;
     if let Ok(m) = tax.model(&a.scope) {
         if m.prefix != prefix {
             anyhow::bail!(

@@ -267,6 +267,30 @@
     mode: "0644"
   become: true
 
+# This goatnet's ACL declaration, served at get.<site>/acl/ beside goatnet.toml.
+# goat-cli compiles in no declaration; `goat context refresh` copies these two
+# files into the context, where `goat acl test` and `goat warrant` read them.
+# Off unless goat_get_acl_declaration is true: the declaration describes the
+# goatnet's access rules to every peer that can reach get.<site>.
+- name: goat-get | acl | create subdir
+  ansible.builtin.file:
+    path: "{{ goat_get_www_dir }}/acl"
+    state: directory
+    mode: "0755"
+  become: true
+  when: goat_get_acl_declaration | bool
+
+- name: goat-get | acl | publish the declaration
+  ansible.builtin.copy:
+    src: "{{ goat_get_acl_declaration_src_dir }}/{{ item }}"
+    dest: "{{ goat_get_www_dir }}/acl/{{ item }}"
+    mode: "0644"
+  loop:
+    - netbird_acl_taxonomy.yml
+    - netbird_acl_matrix.yml
+  become: true
+  when: goat_get_acl_declaration | bool
+
 # ---------------------------------------------------------------------------
 # CA roots — served at get.<site>/ca-roots/ alongside the binaries.
 #

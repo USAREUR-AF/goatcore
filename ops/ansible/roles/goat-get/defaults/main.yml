@@ -406,3 +406,9 @@ goat_get_warrant_membership_converge: >-
   {%- if f is file -%}{{ (lookup('file', f) | from_yaml).converge | default('unreadable', true) }}
   {%- elif goat_get_warrant_membership_root is directory -%}none
   {%- endif -%}
+
+# Serve this goatnet's ACL declaration (netbird_acl_taxonomy.yml and
+# netbird_acl_matrix.yml from goat_get_acl_declaration_src_dir) at
+# get.<site>/acl/, for `goat context refresh` to copy into a context.
+goat_get_acl_declaration: false
+goat_get_acl_declaration_src_dir: "{{ playbook_dir }}"

@@ -118,6 +118,7 @@ mod tests {
             "E_CERT_EXPIRED", "E_DOCTOR_INCONCLUSIVE", "E_PORTAL_UNREACHABLE", "E_PORTAL_BAD_RESPONSE",
             "E_TOKEN_INVALID", "E_PORTAL_FORBIDDEN", "E_NOT_ADMIN", "E_TOPIC_CONFLICT", "E_BUNDLE_INVALID",
             "E_PORTAL_NOT_FOUND", "E_PORTAL_RATE_LIMITED", "E_PORTAL_SERVER_ERROR", "E_PORTAL_REFUSED",
+            "E_ACL_DECLARATION_MISSING",
         ] {
             assert!(codes.contains(&c), "{c} missing from ops/errors/catalog.yaml");
         }

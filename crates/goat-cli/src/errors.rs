@@ -135,6 +135,13 @@ pub enum GoatError {
     /// must send back. Nothing was changed.
     #[error("E_NETBIRD_FAILED")]
     NetbirdFailed { hint: String },
+
+    /// `goat acl` / `goat warrant` found no ACL declaration to read: no
+    /// --declaration, no GOAT_ACL_DECLARATION_DIR, none in the active context,
+    /// and the working directory is in no checkout that carries one. Nothing
+    /// of any deployment is compiled in, so there is nothing to fall back to.
+    #[error("E_ACL_DECLARATION_MISSING")]
+    AclDeclarationMissing { hint: String },
 }
 
 impl GoatError {
@@ -172,6 +179,7 @@ impl GoatError {
             Self::MachineUnresolved { .. } => "E_MACHINE_UNRESOLVED",
             Self::MeshPeerUnresolved { .. } => "E_MESH_PEER_UNRESOLVED",
             Self::NetbirdFailed { .. } => "E_NETBIRD_FAILED",
+            Self::AclDeclarationMissing { .. } => "E_ACL_DECLARATION_MISSING",
         }
     }
 
@@ -199,6 +207,7 @@ impl GoatError {
                 exit_codes::EXIT_GENERIC
             }
             Self::NetbirdFailed { .. } => exit_codes::EXIT_PORTAL,
+            Self::AclDeclarationMissing { .. } => exit_codes::EXIT_GENERIC,
         }
     }
 
@@ -315,6 +324,9 @@ impl GoatError {
                 )
             }
             Self::NetbirdFailed { .. } => fl!(LANGUAGE_LOADER, "error-netbird-failed-summary"),
+            Self::AclDeclarationMissing { .. } => {
+                fl!(LANGUAGE_LOADER, "error-acl-declaration-missing-summary")
+            }
         }
     }
 
@@ -340,7 +352,8 @@ impl GoatError {
             | Self::BundleInvalid { hint }
             | Self::MachineUnresolved { hint, .. }
             | Self::MeshPeerUnresolved { hint, .. }
-            | Self::NetbirdFailed { hint } => hint,
+            | Self::NetbirdFailed { hint }
+            | Self::AclDeclarationMissing { hint } => hint,
         }
     }
 
@@ -372,7 +385,8 @@ impl GoatError {
             | Self::BundleInvalid { hint }
             | Self::MachineUnresolved { hint, .. }
             | Self::MeshPeerUnresolved { hint, .. }
-            | Self::NetbirdFailed { hint } => {
+            | Self::NetbirdFailed { hint }
+            | Self::AclDeclarationMissing { hint } => {
                 hint.push('\n');
                 hint.push_str("  hint: ");
                 hint.push_str(extra);
