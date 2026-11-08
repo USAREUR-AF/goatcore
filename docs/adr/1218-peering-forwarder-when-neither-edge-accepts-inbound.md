@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Proposed. Designed, not built. Nothing in a live goatnet changes on merge |
+| Status | Proposed. Built (the `goat-peering-forwarder` role); not yet run between two real environments. Nothing in a live goatnet changes on merge |
 | Date | 2026-11-06 |
 | Deciders | operator |
 | Repo scope | goat core (federation design, runbook, package spec; the forwarder role and its CI guard when built) |
