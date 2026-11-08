@@ -86,7 +86,7 @@ Serve flags:
   --satlink-interval      Satellite-link PoP probe interval (default: 24h, 0 = disabled)
 
 Probe flags:
-  --collector      Collector URL (default: http://100.127.1.23:8080)
+  --collector      Collector URL (required; or SNITCH_COLLECTOR)
   --interval       Repeat interval in seconds (0 = run once, default: 60)
   --probe-key      API key for authentication
 
@@ -190,7 +190,8 @@ func cmdProbe(args []string) {
 		*collectorURL = os.Getenv("SNITCH_COLLECTOR")
 	}
 	if *collectorURL == "" {
-		*collectorURL = "http://100.127.1.23:8080"
+		fmt.Fprintln(os.Stderr, "snitch probe: no collector URL: pass --collector <url> or set SNITCH_COLLECTOR")
+		os.Exit(2)
 	}
 	if *probeKey == "" {
 		*probeKey = os.Getenv("SNITCH_PROBE_KEY")
@@ -481,7 +482,8 @@ func cmdPolicy(args []string) {
 	}
 	collectorURL := os.Getenv("SNITCH_COLLECTOR")
 	if collectorURL == "" {
-		collectorURL = "http://100.127.1.23:8080"
+		fmt.Fprintln(os.Stderr, "snitch policy: no collector URL: set SNITCH_COLLECTOR")
+		os.Exit(2)
 	}
 	switch args[0] {
 	case "get":

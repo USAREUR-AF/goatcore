@@ -10,19 +10,19 @@
 //
 //   curl -X POST -H "Authorization: Bearer $ADMIN_KEY" \
 //     -d '{"mode":"focused-research","expires_at":"2026-05-04T15:10:00Z","reason":"weekly net-health snapshot","set_by":"operator:maintainer"}' \
-//     https://snitch.netbird.legacy.example/api/probe-policy/set
+//     <collector-url>/api/probe-policy/set
 //
 // To abort an in-progress focused-research window early:
 //
 //   curl -X POST -H "Authorization: Bearer $ADMIN_KEY" \
 //     -d '{"mode":"default","reason":"abort","set_by":"operator:maintainer"}' \
-//     https://snitch.netbird.legacy.example/api/probe-policy/set
+//     <collector-url>/api/probe-policy/set
 //
 // To stop probes fleet-wide:
 //
 //   curl -X POST -H "Authorization: Bearer $ADMIN_KEY" \
 //     -d '{"mode":"off","reason":"operational disruption","set_by":"operator:maintainer"}' \
-//     https://snitch.netbird.legacy.example/api/probe-policy/set
+//     <collector-url>/api/probe-policy/set
 //
 // Default at boot is read from env var SNITCH_DEFAULT_POLICY (one of
 // off / minimal / default / focused-research). If unset, defaults to

@@ -48,7 +48,7 @@ services:
     cap_add:
       - NET_RAW
     dns:
-      - ${SNITCH_DNS:-100.127.1.23}
+      - ${SNITCH_DNS:?set SNITCH_DNS (the resolver for mesh names) in .env}
       - 8.8.8.8
     volumes:
       - ./data:/app/data
@@ -58,7 +58,7 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=netbird_netbird"
-      - "traefik.http.routers.snitch.rule=Host(`${SNITCH_HOST:-snitch.netbird.legacy.example}`)"
+      - "traefik.http.routers.snitch.rule=Host(`${SNITCH_HOST:?set SNITCH_HOST in .env}`)"
       - "traefik.http.routers.snitch.entrypoints=websecure"
       - "traefik.http.routers.snitch.tls=true"
       - "traefik.http.routers.snitch.middlewares=mesh-only"
