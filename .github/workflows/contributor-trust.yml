@@ -35,10 +35,12 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
+      # The base branch's tip, not the pull request's base commit: a pull
+      # request opened before the check merged has a base without it.
       - name: check out the base branch (the check as merged)
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
+          ref: ${{ github.event.pull_request.base.ref }}
           sparse-checkout: .github/contributor-trust
           persist-credentials: false
 
