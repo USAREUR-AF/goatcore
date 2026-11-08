@@ -207,7 +207,7 @@ goatbuilder assay pasture --values ops/goatbuilder/fixtures/goatnet-from-scratch
 goatbuilder doctor
 ```
 
-The doctor reads your `goatlite.yaml` and prints one `lite` row naming every decision it derived from your four facts: the box, the SSH user, the administrator, the zone, the environment and its one site, disk encryption, the secrets store. Then it names every tool it needs on the laptop. The cloud checks and the browser-test check show as skipped, because the lite preset declares that no cloud is used and no release is cut. Fix what it names, then run it again until every row passes. The doctor does not reach the box; phase 1 of the standup does.
+The doctor reads your `goatlite.yaml` and prints one `lite` row naming every decision it derived from your four facts: the box, the SSH user, the administrator, the zone, the environment and its one site, disk encryption, the secrets store. Then it names every tool it needs on the laptop, and checks that `GHCR_READ_TOKEN` is set; when it is not, the doctor prints a note, because phase 5 needs it to pull the images. The cloud checks and the browser-test check show as skipped, because the lite preset declares that no cloud is used and no release is cut. Fix what it names, then run it again until every row passes. The doctor does not reach the box; phase 1 of the standup does.
 
 ## 5. Stand it up
 
