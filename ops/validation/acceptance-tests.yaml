@@ -746,16 +746,16 @@ tests:
     aspect: onboarding/goat-cli-config
     probe: cmd-assert
     applies_when: onboard_runner_enabled
-    params: {host: "{{ orin_a }}", cmd: "docker exec onboard-runner sh -c 'strings /usr/local/bin/goat | grep -c \"{{ site_id }}\"' || echo 0", expect_min: 1}
+    params: {host: "{{ orin_a }}", cmd: "docker exec onboard-runner sh -c 'grep -c \"^netbird_mgmt_url = .https://{{ public_mgmt_fqdn }}.$\" \"$HOME/.goat/contexts/default/profile.toml\"' || echo 0", expect_min: 1}
     requires: [onboard-runner]
     severity: gate
     caught_would_have: >-
-      F-485 wall 1 + wall 2 — goat-cli hardcodes per-goatnet endpoints in three
-      match arms, so a goatnet stood up after those arms were last edited is
-      invisible to the onboarder and every mint refuses. Asserting against the
-      binary the CONTAINER sees also catches wall 2: the runner bind-mounts the
-      host binary, so replacing that file leaves the container on the old inode
-      until something restarts it.
+      F-485 wall 1 — the onboarder could not mint for a goatnet it did not know.
+      goat-cli no longer carries a built-in goatnet table: the runner's entrypoint
+      writes this goatnet's facts into the goat profile from the deploy env
+      (ops/onboard-runner/docker-entrypoint.sh), and a native onboard reads them
+      from there. A profile without this goatnet's NetBird management URL, or
+      with another goatnet's, refuses every mint.
   - id: onboard-runner-reaches-mgmt-api
     aspect: onboarding/runner-reachability
     probe: cmd-assert
