@@ -530,7 +530,24 @@ def publish(url, ours_raw: bytes, package_url: str | None, key_path: str | None,
     print(f"    published `{sid}` → {package_url} ({how})")
     print(f"    our verifying key, to read aloud: {key_groups(key_b64)}")
     warnings += publish_ca(url, sid, pkg, seed, ca_path, timeout)
+    warnings += publish_bundle(url, sid, seed, work, timeout)
     return warnings
+
+
+def publish_bundle(url, sid: str, seed: bytes, work: str | None, timeout: float) -> list:
+    """Upload our SPIFFE trust bundle, when phase 2 exported one (SPIRE federation on)."""
+    path = os.path.join(work, "ours.spiffe-bundle") if work else ""
+    if not path or not os.path.isfile(path):
+        return []
+    try:
+        body = read_bytes(path)
+        status, _, resp = signed_put(url, sid, "spiffe-bundle", body, seed, "application/json", timeout)
+    except (OSError, urllib.error.URLError, RuntimeError) as e:
+        return [f"SPIFFE bundle upload failed: {e}"]
+    if status not in (200, 201):
+        return [f"SPIFFE bundle upload refused, HTTP {status}: {resp.decode(errors='replace').strip()[:300]}"]
+    print(f"    uploaded our SPIFFE trust bundle to the directory: {entry_url(url, sid)}/spiffe-bundle")
+    return []
 
 
 def publish_ca(url, sid: str, pkg: dict, seed: bytes, ca_path: str | None, timeout: float) -> list:
@@ -679,6 +696,56 @@ def fetch_ca(url, sid: str, theirs: dict, work: str | None, report: "Report", ti
     return fp
 
 
+def fetch_bundle(url, sid: str, key_b64: str | None, work: str | None, report: "Report", timeout: float = 10.0):
+    """Their SPIFFE trust bundle from the directory, checked against the signature of the
+    upload that stored it (saltlick SPEC "Checking a hosted file against the key read
+    aloud") under their verifying key, and placed at <work>/theirs.spiffe-bundle if none
+    is there. Nothing in the package names the bundle, so the signature is the check."""
+    resource = f"{sid}/spiffe-bundle"
+    try:
+        status, headers, body = _get(entry_url(url, sid) + "/spiffe-bundle", timeout)
+    except (OSError, urllib.error.URLError) as e:
+        report.add("WARN", "SPIFFE bundle fetch", f"{e}", "run phase 5 again once the directory answers")
+        return
+    if status == 404:
+        report.add("UNKNOWN", "SPIFFE bundle", f"`{sid}` hosts none",
+                   "needed only when both sides run SPIRE federation (phase 13); run phase 5 again after they upload one")
+        return
+    if status != 200:
+        report.add("WARN", "SPIFFE bundle fetch", f"HTTP {status}", "run phase 5 again")
+        return
+    writer = headers.get("x-saltlick-key", "")
+    sig = headers.get("x-saltlick-signature", "")
+    if not key_b64:
+        report.add("WARN", "SPIFFE bundle", f"no verifying key for `{sid}` to check it against; not placed",
+                   "read their key back on the call, record it, and run phase 5 again")
+        return
+    try:
+        ok = (writer == key_b64 and headers.get("x-saltlick-resource", resource) == resource
+              and verify(base64.b64decode(key_b64), request_statement("PUT", resource, body, key_b64), base64.b64decode(sig)))
+    except (ValueError, RuntimeError):
+        ok = False
+    if not ok:
+        report.add("FAIL", "SPIFFE bundle signature", f"the bundle the directory serves for `{sid}` is not signed by "
+                   f"their verifying key", "do not use it; ask them to run phase 5 again")
+        return
+    report.add("PASS", "SPIFFE bundle signature", "signed by their verifying key")
+    if work:
+        dest = os.path.join(work, "theirs.spiffe-bundle")
+        if os.path.exists(dest):
+            if read_bytes(dest) != body:
+                report.add("WARN", "theirs.spiffe-bundle", f"{dest} differs from the bundle `{sid}` serves; left as it is",
+                           "the file on disk is what phase 13 imports")
+        else:
+            try:
+                fd = os.open(dest, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                with os.fdopen(fd, "wb") as f:
+                    f.write(body)
+                report.add("PASS", "theirs.spiffe-bundle", f"placed at {dest}")
+            except OSError as e:
+                report.add("WARN", "theirs.spiffe-bundle", f"could not place it at {dest}: {e}")
+
+
 def transport_rows(ours: dict, theirs: dict, r: "Report"):
     """When both offer a link, the listener rule compose applies (§6 step 4b)."""
     ta, tb = ours.get("transport_offer"), theirs.get("transport_offer")
@@ -739,6 +806,7 @@ def main(argv=None) -> int:
         keyring = read_keyring(a.keyring)
         body, theirs, via_pointer, dir_key = lookup(a.url, their_id, keyring.get(their_id), a.timeout, checks)
         their_fp = fetch_ca(a.url, their_id, theirs, a.work, checks, a.timeout) if theirs is not None else None
+        fetch_bundle(a.url, their_id, keyring.get(their_id) or dir_key, a.work, checks, a.timeout)
         checks.print(f"Lookup of `{their_id}`")
         their_key = keyring.get(their_id) or dir_key
         if their_key or their_fp:

@@ -12,9 +12,11 @@
 #
 # Each sovereign has its own CA, its own signing key and its own git repository. The two
 # internal networks do not reach each other; the two edges alone share the boundary
-# network, and only the tunnel's UDP port crosses it. Phase 5's exchange and phase 10's
-# review are scripted as a file copy, a keyring and an acl-assemble, as two operators
-# would do them by hand. Nothing else about the driver is touched.
+# network, and only the tunnel's UDP port crosses it. A peering directory (saltlick, behind
+# a TLS front with its own local CA) sits on the boundary network, and phase 5 exchanges
+# each side's package, CA certificate and SPIFFE bundle through it, as against a real
+# partner. The voice call is scripted as a keyring, and phase 10's review as an
+# acl-assemble. Nothing else about the driver is touched.
 #
 # Each sovereign offers TWO release sets, `release/all/**` and `release/<them>/**`, and
 # phase 14 proves each one crosses as `from/<us>/<set>/**`: staged on the sending core,
@@ -73,6 +75,11 @@ ZENOH_IMAGE="ghcr.io/usareur-af/zenoh-pqc@sha256:372de39d2e8b64fe7157194173f1b7a
 SPIRE_IMAGE="$(python3 -c 'import sys, yaml; print(((yaml.safe_load(open(sys.argv[1])).get("components") or {}).get("spire") or {}).get("fleet") or "")' "$REPO/ops/pins/fleet-pins.yaml" 2>/dev/null || true)"
 [[ "$SPIRE_IMAGE" =~ ^ghcr\.io/spiffe/spire-server:[^@[:space:]]+@sha256:[0-9a-f]{64}$ ]] || { echo "run.sh: ops/pins/fleet-pins.yaml declares no digest-pinned SPIRE image (components.spire.fleet)" >&2; exit 2; }
 HOST_IMAGE=fed-e2e-host
+# The peering directory both edges reach, and the TLS front that issues its certificate
+# from a local CA: saltlick refuses a pointer whose package_url is not https.
+SALTLICK_IMAGE="ghcr.io/usareur-af/saltlick@sha256:__SALTLICK_DIGEST__"
+DIRECTORY_TLS_IMAGE="caddy@sha256:c3d7ee5d2b11f9dc54f947f68a734c84e9c9666c92c88a7f30b9cba5da182adb"
+DIRECTORY_IP=10.77.3.40
 # The republisher, built from this checkout and loaded into each core host's dockerd.
 # The role takes its content-addressed id (`sha256:<64 hex>`), as immutable as a
 # registry digest, until the published image is pinned in ops/pins/fleet-pins.yaml.
@@ -93,9 +100,10 @@ td() { echo "$1.fed.test"; }
 
 NETS=(fed-e2e-pasture fed-e2e-meadow fed-e2e-boundary)
 HOSTS=(fed-pasture-core fed-pasture-edge fed-meadow-core fed-meadow-edge)
+DIRECTORY=(fed-e2e-directory fed-e2e-directory-tls)
 teardown() {
   local net
-  docker rm -f -v "${HOSTS[@]}" >/dev/null 2>&1 || true
+  docker rm -f -v "${HOSTS[@]}" "${DIRECTORY[@]}" >/dev/null 2>&1 || true
   for net in "${NETS[@]}"; do docker network rm "$net" >/dev/null 2>&1 || true; done
 }
 final() { [ "$KEEP" = 1 ] || teardown; }
@@ -244,9 +252,10 @@ drive() { # $1 sovereign, $2 avenue, $3 from, $4 to
     -e "FED_CORE_CN=core-$s" -e "FED_CORE_SAN=$(core_ip "$s")"
     -e "FED_ROUTER_DOCKER_HOST=ssh://goat@$(core_ip "$s")"
     -e GOAT_AWS_MODE=none -e GOAT_BIN=/usr/local/bin/goat -e HOME=/root -e GOAT_ANSIBLE_TRUNK_REMOTE=origin
-    # The harness places each side's package and CA itself, between the two
-    # hosts it owns, so phase 5 runs without a directory.
-    -e FED_NO_DIRECTORY=1
+    # The directory on the boundary network (start_directory), trusted through its TLS
+    # front's local CA.
+    -e FED_DIRECTORY_URL=https://10.77.3.40:8443 -e "FED_COUNTERPARTY_ID=$them"
+    -e SSL_CERT_FILE=/etc/fed-e2e/directory-ca.pem
   )
   case "$avenue" in
     goatbuilder) docker exec "${env[@]}" -w /opt/goat "$h" goatbuilder -C /opt/goat --yes federate "$them" --as "$s" --from "$from" --to "$to" ;;
@@ -255,20 +264,36 @@ drive() { # $1 sovereign, $2 avenue, $3 from, $4 to
   esac
 }
 
-# Phase 5, as two operators do it: the package, the CA and the SPIRE bundle cross by file
-# copy, and each writes down both verifying keys, bound independently of the packages.
-exchange() {
-  local s them w_s w_t
-  for s in pasture meadow; do
-    them="$(other "$s")"; w_s="/var/lib/goat-federation/$them"; w_t="/var/lib/goat-federation/$s"
-    docker cp -q "fed-$s-edge:$w_s/ours.canonical.json" "$WORK/$s/ours.canonical.json"
-    docker cp -q "fed-$s-edge:$w_s/ours.spiffe-bundle" "$WORK/$s/ours.spiffe-bundle"
-    docker cp -q "$WORK/$s/ours.canonical.json" "fed-$them-edge:$w_t/theirs.canonical.json"
-    docker cp -q "$WORK/$s/ours.spiffe-bundle" "fed-$them-edge:$w_t/theirs.spiffe-bundle"
-    docker cp -q "$WORK/$s/keys/ca.pem" "fed-$them-edge:$w_t/theirs-ca.pem"
+# The peering directory: saltlick on the boundary network, its write budget off, and a TLS
+# front in its network namespace issuing a certificate for its address from a local CA.
+# Each edge trusts that CA through SSL_CERT_FILE.
+start_directory() {
+  docker run -d --name fed-e2e-directory --network fed-e2e-boundary --ip "$DIRECTORY_IP" \
+    -e SALTLICK_WRITE_LIMIT=0 -e SALTLICK_READ_LIMIT=0 "$SALTLICK_IMAGE" >/dev/null
+  docker run -d --name fed-e2e-directory-tls --network container:fed-e2e-directory "$DIRECTORY_TLS_IMAGE" \
+    caddy reverse-proxy --from "https://$DIRECTORY_IP:8443" --to 127.0.0.1:8080 >/dev/null
+  local i s
+  for i in $(seq 1 30); do
+    if docker cp -q fed-e2e-directory-tls:/data/caddy/pki/authorities/local/root.crt "$WORK/directory-ca.pem" 2>/dev/null; then
+      # /etc/fed-e2e on each edge is its keys folder, mounted read-only.
+      for s in pasture meadow; do install -m 0644 "$WORK/directory-ca.pem" "$WORK/$s/keys/directory-ca.pem"; done
+      docker exec fed-pasture-edge curl -fsS --cacert /etc/fed-e2e/directory-ca.pem "https://$DIRECTORY_IP:8443/healthz" >/dev/null 2>&1 && return 0
+    fi
+    sleep 1
   done
+  die "the peering directory did not answer over TLS at https://$DIRECTORY_IP:8443: $(docker logs fed-e2e-directory 2>&1 | tail -2)"
+}
+
+# Phase 5 goes through the directory. The side that ran it first finds the other's entry
+# missing and runs it again. Then the voice call, as two operators do it: each writes down
+# both verifying keys, read back independently of the directory.
+exchange() { # $1 the side that ran phase 5 first, $2 avenue, $3 scenario number
+  local first="$1" avenue="$2" n="$3" s them w
+  rec "s$n-$first-phase-5-again" --expect-in "Directory step" -- bash -c "$(declare -f drive host_exec other octet core_ip die); drive '$first' '$avenue' 5 5"
   for s in pasture meadow; do
-    them="$(other "$s")"
+    them="$(other "$s")"; w="/var/lib/goat-federation/$them"
+    rec "s$n-$s-the-directory-placed-their-files" -- docker exec "fed-$s-edge" sh -c \
+      "test -s $w/theirs.canonical.json && test -s $w/theirs-ca.pem && test -s $w/theirs.spiffe-bundle"
     printf '%s=%s\n%s=%s\n' "$s" "$(cat "$WORK/$s/keys/signing.pub")" "$them" "$(cat "$WORK/$them/keys/signing.pub")" > "$WORK/$s/keys.txt"
     docker cp -q "$WORK/$s/keys.txt" "fed-$s-edge:/var/lib/goat-federation/$them/keys.txt"
   done
@@ -328,7 +353,7 @@ accept_as() { # $1 sovereign, $2 avenue
   local s="$1" avenue="$2" them w; them="$(other "$s")"; w="$WORK/$s/fedwork"
   mkdir -p "$w"; cp "$WORK/$s/agreement.json" "$w/agreement.json"
   local env=(
-    "FED_WORK=$w" "GOAT_AWS_MODE=none" "FED_ACCEPTANCE_STRICT=1" "FED_NO_DIRECTORY=1"
+    "FED_WORK=$w" "GOAT_AWS_MODE=none" "FED_ACCEPTANCE_STRICT=1"
     "FED_OURS_REST=http://$(core_ip "$s"):8000" "FED_THEIRS_REST=http://$(core_ip "$them"):8000"
     "FED_EDGE_LOG_OURS=docker exec fed-$s-edge docker logs goat-zenoh-edge-$them"
     "FED_PROBE_THEIRS_REST=http://$(edge_ip "$them"):8101"
@@ -361,6 +386,7 @@ scenario() { # $1 number, $2 first side (it also listens), $3 avenue
   for s in pasture meadow; do docker save "$RP_TAG" | docker exec -i "fed-$s-core" docker load -q >/dev/null; done
   prepare_edge "$first" true
   prepare_edge "$second" false
+  start_directory
 
   say "scenario $n: the isolation the rest of the run depends on"
   rec "s$n-a-core-cannot-reach-the-boundary" --expect-exit 1 -- docker exec "fed-$first-core" ping -c1 -W2 "$(boundary_ip "$second")"
@@ -370,9 +396,9 @@ scenario() { # $1 number, $2 first side (it also listens), $3 avenue
 
   say "scenario $n: phases 1-4, each side, up to the exchange"
   for s in "$first" "$second"; do
-    rec "s$n-$s-phases-1-to-5" --expect-in "exchange packages" -- bash -c "$(declare -f drive host_exec other octet core_ip die); drive '$s' '$avenue' 1 5"
+    rec "s$n-$s-phases-1-to-5" --expect-in "exchange through the directory" -- bash -c "$(declare -f drive host_exec other octet core_ip die); drive '$s' '$avenue' 1 5"
   done
-  exchange
+  exchange "$first" "$avenue" "$n"
 
   say "scenario $n: phases 6-9, each side, up to the review"
   for s in "$first" "$second"; do

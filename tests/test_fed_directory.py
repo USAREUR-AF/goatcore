@@ -46,6 +46,7 @@ class Server(http.server.BaseHTTPRequestHandler):
     entries: dict = {}
     files: dict = {}
     hosted: dict = {}
+    signed: dict = {}
     refuse_with = None
 
     def log_message(self, *a):
@@ -71,6 +72,7 @@ class Server(http.server.BaseHTTPRequestHandler):
         if not d.verify(base64.b64decode(key), stmt, base64.b64decode(self.headers["X-Saltlick-Signature"])):
             return 403, b"bad request signature"
         Server.hosted[resource] = body
+        Server.signed[resource] = (key, self.headers["X-Saltlick-Signature"])
         return 201, b"{}"
 
     def put(self, sid, body):
@@ -95,7 +97,10 @@ class Server(http.server.BaseHTTPRequestHandler):
         sid = self.path.rsplit("/", 1)[-1]
         rest = self.path.removeprefix("/v1/parties/")
         if rest in Server.hosted:
-            self.reply(200, Server.hosted[rest], {"X-Saltlick-Bound-Key": Server.entries[rest.split("/")[0]][1]})
+            key, sig = Server.signed[rest]
+            self.reply(200, Server.hosted[rest], {"X-Saltlick-Bound-Key": Server.entries[rest.split("/")[0]][1],
+                                                  "X-Saltlick-Key": key, "X-Saltlick-Signature": sig,
+                                                  "X-Saltlick-Resource": rest})
         elif self.path in Server.files:
             self.reply(200, Server.files[self.path])
         elif self.path.startswith("/v1/parties/") and sid in Server.entries:
@@ -128,7 +133,7 @@ def tls_cert(tmp_path_factory):
 
 @pytest.fixture
 def server(tls_cert, monkeypatch):
-    Server.entries, Server.files, Server.hosted, Server.refuse_with = {}, {}, {}, None
+    Server.entries, Server.files, Server.hosted, Server.signed, Server.refuse_with = {}, {}, {}, {}, None
     crt, key = tls_cert
     srv = http.server.HTTPServer(("127.0.0.1", 0), Server)
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
@@ -481,3 +486,47 @@ def test_driver_phase_5_without_a_package_url_uploads_and_fetches(server, tmp_pa
     assert "xaa/ca" in Server.hosted
     assert (work / "theirs-ca.pem").exists() and (work / "theirs.canonical.json").exists()
     assert r.stdout.rstrip().splitlines()[-1].strip().startswith("^ OPERATOR STEP")
+
+
+BUNDLE = b'{"keys":[{"use":"jwt-svid","kty":"OKP","crv":"Ed25519","kid":"k1","x":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}],"spiffe_sequence":1}\n'
+
+
+@needs_ed25519
+@needs_openssl
+def test_their_spiffe_bundle_is_uploaded_checked_against_their_key_and_placed(server, tmp_path):
+    ca, fp = mint_ca(tmp_path, "xab")
+    (tmp_path / "xab-ca.pem").write_bytes(ca)
+    theirs_pkg = package_with_ca(tmp_path, "xab", fp)
+    theirs_work = tmp_path / "theirs-work"
+    theirs_work.mkdir()
+    (theirs_work / "ours.spiffe-bundle").write_bytes(BUNDLE)
+    _, out = run("--url", server, "--ours", theirs_pkg, "--key", KEY["xab"], "--ca", tmp_path / "xab-ca.pem",
+                 "--work", theirs_work)
+    assert Server.hosted["xab/spiffe-bundle"] == BUNDLE and "uploaded our SPIFFE trust bundle" in out
+    work = tmp_path / "work"
+    work.mkdir()
+    rc, out = run("--url", server, "--ours", XAA, "--their-id", "xab", "--theirs", work / "theirs.canonical.json",
+                  "--work", work)
+    assert rc == 0, out
+    assert "PASS    SPIFFE bundle signature" in out
+    assert (work / "theirs.spiffe-bundle").read_bytes() == BUNDLE
+
+
+@needs_ed25519
+@needs_openssl
+def test_a_spiffe_bundle_not_signed_by_their_key_is_not_placed(server, tmp_path):
+    ca, fp = mint_ca(tmp_path, "xab")
+    (tmp_path / "xab-ca.pem").write_bytes(ca)
+    theirs_pkg = package_with_ca(tmp_path, "xab", fp)
+    theirs_work = tmp_path / "theirs-work"
+    theirs_work.mkdir()
+    (theirs_work / "ours.spiffe-bundle").write_bytes(BUNDLE)
+    run("--url", server, "--ours", theirs_pkg, "--key", KEY["xab"], "--ca", tmp_path / "xab-ca.pem", "--work", theirs_work)
+    Server.hosted["xab/spiffe-bundle"] = BUNDLE.replace(b'"spiffe_sequence":1', b'"spiffe_sequence":2')
+    work = tmp_path / "work"
+    work.mkdir()
+    rc, out = run("--url", server, "--ours", XAA, "--their-id", "xab", "--theirs", work / "theirs.canonical.json",
+                  "--work", work)
+    assert rc == 0, out
+    assert "FAIL    SPIFFE bundle signature" in out
+    assert not (work / "theirs.spiffe-bundle").exists()
