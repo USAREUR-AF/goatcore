@@ -6,6 +6,14 @@ Each release is the tag `goatbuilder/v<semver>` on `main`, built and signed by
 
 ## Unreleased
 
+## 0.4.3 — 2026-11-08
+
+### Changed: `update` takes its release signer from the checkout
+
+`goatbuilder update` verifies a new binary against the repository named by
+`repo.release_source` in `ops/goatbuilder/goatbuilder.yaml`, else `repo.source`;
+no repository name is compiled in. The config accepts `repo.release_source`.
+
 ### Added: `join-node` turns on signal federation for a joiner's core node
 
 After the joiner's Spock wiring, phase 13 runs the signal-federation steps
