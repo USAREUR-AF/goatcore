@@ -1,5 +1,7 @@
 # Mission partner sharing — design (companion to ADR 0821)
 
+> **Scope: a moon pod is a learning tool.** Partners use it in an exercise environment to learn how goat works. It is not the operational path for sharing data between nations. Operationally, each sovereign runs its own environment and manages its own pods, and data passes between sovereigns only across boundary nodes that federate their environments ([ADR 1157](../adr/1157-cross-sovereign-federation-edge-terminated.md), [ADR 1208](../adr/1208-sovereign-environments-release-namespaces-and-grant-encryption.md)). Where this document describes a pod joining another nation's environment, read it as the learning setup.
+
 | Field | Value |
 |---|---|
 | Status | Draft (Phase 2D-late / Phase 3 commitment) |
