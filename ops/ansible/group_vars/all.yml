@@ -469,7 +469,7 @@ portal_audit_subscriber_id: "{{ audit_subscriber_id | default('nova-a') }}"
 # deploy-history.yml (ADR 0859). A tree assembled from goatcore and the
 # overlay takes these, so those goatnets keep the same images (switch-over
 # plan rule T2).
-portal_image: "ghcr.io/{{ ghcr_org }}/goat-zenoh-portal@sha256:b8a3da7b3ddbd87794aab5bb26639bf182b754d0319bc6c1800e114e75459a1d"
+portal_image: "ghcr.io/{{ ghcr_org }}/goat-zenoh-portal@sha256:6cf2252dc27403da513907f2e97c2af5e20d2aaa9b2c57adbae1ea6b18e586b5"
 grant_keyd_image: "ghcr.io/{{ ghcr_org }}/grant-keyd@sha256:60a60e17b03442395ae2fb620e166dec4897991a6ef30854fecbfaae9126ba7c"
 id_admin_console_image: "ghcr.io/{{ ghcr_org }}/goat-id-console@sha256:60401f3cff3e84d1de92735294ed70a818094f8c267284a1f427cda59fc517c8"
 

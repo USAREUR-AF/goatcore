@@ -92,7 +92,7 @@ components:
     image_workflow: .github/workflows/goat-zenoh-portal-image.yml
     ledger_component: goat-zenoh-portal
     single_homed_role: A
-    fleet: ghcr.io/{{ ghcr_org }}/goat-zenoh-portal@sha256:b8a3da7b3ddbd87794aab5bb26639bf182b754d0319bc6c1800e114e75459a1d
+    fleet: ghcr.io/{{ ghcr_org }}/goat-zenoh-portal@sha256:6cf2252dc27403da513907f2e97c2af5e20d2aaa9b2c57adbae1ea6b18e586b5
   consistency-health:
     owns_state: false
     rollback: pin-revert
