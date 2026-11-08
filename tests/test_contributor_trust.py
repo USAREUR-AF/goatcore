@@ -83,3 +83,10 @@ def test_render_names_tier_and_paths():
     f = facts(changed=["goat-relay/src/routing.rs"])
     text = ct.render(ct.decide(f, PATTERNS), f)
     assert "REVIEW NEEDED" in text and "unknown" in text and "goat-relay/src/routing.rs" in text
+
+
+def test_owner_with_private_membership_is_maintainer_by_permission():
+    for perm in ("admin", "maintain", "write"):
+        f = facts(association="CONTRIBUTOR", repo_permission=perm, changed=[".github/workflows/x.yml"])
+        assert ct.tier_of(f)[0] == "maintainer" and ct.decide(f, PATTERNS).passed
+    assert ct.tier_of(facts(association="CONTRIBUTOR", repo_permission="read"))[0] == "unknown"

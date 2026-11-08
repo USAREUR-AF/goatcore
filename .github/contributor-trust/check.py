@@ -42,6 +42,7 @@ LABEL = "security-reviewed"
 MAINTAINER_ASSOCIATIONS = {"OWNER", "MEMBER", "COLLABORATOR"}
 AUTOMATION_LOGINS = {"dependabot[bot]"}
 ATTESTING_PERMISSIONS = {"admin", "maintain"}
+MAINTAINER_PERMISSIONS = {"admin", "maintain", "write"}
 API = "https://api.github.com"
 
 
@@ -101,6 +102,7 @@ class Facts:
     label_present: bool
     label_actor: str | None = None
     label_actor_permission: str | None = None
+    repo_permission: str | None = None  # the author's own permission on this repository
 
 
 @dataclass
@@ -118,6 +120,8 @@ def tier_of(f: Facts) -> tuple[str, list[str]]:
         return "automation", [f"{f.author} is automation this repository runs"]
     if f.association in MAINTAINER_ASSOCIATIONS:
         return "maintainer", [f"GitHub reports the author as {f.association}"]
+    if f.repo_permission in MAINTAINER_PERMISSIONS:
+        return "maintainer", [f"the author has {f.repo_permission} permission on this repository"]
     reasons = []
     if f.registered:
         reasons.append("registered in a community environment")
@@ -260,6 +264,17 @@ def label_state(repo: str, pr: int, token: str) -> tuple[bool, str | None, str |
     return True, actor, perm
 
 
+def repo_permission(repo: str, login: str, token: str) -> str | None:
+    """The author's permission here. An owner whose organisation membership is
+    private can reach the check reported as CONTRIBUTOR; their permission still
+    says what they are. Not fatal: on an error the other tiers decide."""
+    try:
+        _, body = api(f"/repos/{repo}/collaborators/{urllib.parse.quote(login)}/permission", token)
+    except ApiError:
+        return None
+    return body.get("role_name") or body.get("permission")
+
+
 def main() -> int:
     env = os.environ
     repo = env["GITHUB_REPOSITORY"]
@@ -274,10 +289,15 @@ def main() -> int:
 
     try:
         patterns = load_patterns(patterns_file.read_text()) if patterns_file.exists() else []
-        quick = author in AUTOMATION_LOGINS or association in MAINTAINER_ASSOCIATIONS
+        perm = None
+        if author not in AUTOMATION_LOGINS and association not in MAINTAINER_ASSOCIATIONS:
+            perm = repo_permission(repo, author, token)
+        quick = (author in AUTOMATION_LOGINS or association in MAINTAINER_ASSOCIATIONS
+                 or perm in MAINTAINER_PERMISSIONS)
         facts = Facts(
             author=author,
             association=association,
+            repo_permission=perm,
             registered=None if quick else is_registered(roster_repo, roster_token, author),
             merged_prs=0 if quick else merged_pr_count(repo.split("/")[0], author, token),
             changed=changed_paths(repo, pr, token),
