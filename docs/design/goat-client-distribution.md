@@ -29,12 +29,12 @@ runs the VPN itself.
 ## Track A — L1 reaches every goat-client user
 
 1. **[linchpin] Rebase the L1 commits onto the goat fork lineage.** L1
-   (`backoff` + `breaker`) currently sits on `fork-owner/netbird` branch
-   `scratch/l1-retry`, **diverged** from `32d04da` (the goat CA-embed lineage
+   (`backoff` + `breaker`) currently sits on `USAREUR-AF/netbird` branch
+   `scratch/l1-retry`, **diverged** from `c5841359c` (the goat CA-embed lineage
    goat-client pins). Rebase the two commits onto that lineage → a new fork
    commit. Nothing consumes L1 until this exists on a consumable ref.
 2. **goat-client `go.mod` bump + multi-OS rebuild.** Point goat-client's
-   `replace => fork-owner/netbird` at the new commit; rebuild the release binaries.
+   `replace => USAREUR-AF/netbird` at the new commit; rebuild the release binaries.
    L1 now ships as a normal goat-client update.
 3. **L1 decay bench (measured gate).** `tc-netem` induced loss on nova-twin with the
    L1-carrying goat-client: aggregate signal traffic must **decay** to <5% of
@@ -118,7 +118,7 @@ runs the VPN itself.
 
 | # | work | repo | drivable now | needs |
 |---|---|---|---|---|
-| A1 | L1 → goat fork lineage | `fork-owner/netbird` | yes (rebase) | `gh-fork-owner` to push |
+| A1 | L1 → goat fork lineage | `USAREUR-AF/netbird` | yes (rebase) | push access to `USAREUR-AF/netbird` |
 | A2 | goat-client go.mod bump + rebuild | `goat-client` | yes (PR) | goat-client release pipeline |
 | A3 | ~~L1 decay bench~~ | — | **dropped** | confirmation-only of an already-shipped, code-proven fix; not worth the nova-mesh disruption |
 | B4 | mature goat-client | `goat-client` | partial | product decisions |

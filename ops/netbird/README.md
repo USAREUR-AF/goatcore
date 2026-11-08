@@ -13,8 +13,8 @@ Patched build of Netbird. Four **management-server** deltas plus two
    hostname at registration time: `Name = "<auto_peer_name>-<hostname>"`. Both
    halves of the identity are preserved so operators can match the mint-intent
    label back to the physical device. Origin: merged PR #1 on
-   [goat-maintainer/netbird](https://github.com/goat-maintainer/netbird/pull/1) at commit
-   `cb223726` (combined diff of `c33517a59..6e3625fc2` scoped to
+   [USAREUR-AF/netbird](https://github.com/USAREUR-AF/netbird/tree/feat/setupkey-auto-peer-name) at commit
+   `cb223726` (combined diff of `970d9506a..0e976e85e` scoped to
    `management/` + `shared/management/`, excluding `*_test.go`). Used downstream
    by the operator-onboard pipeline (queued track
    `netbird-fork-setupkey-auto-peer-name`).
@@ -26,8 +26,8 @@ Patched build of Netbird. Four **management-server** deltas plus two
    instead of the unbound algo-1 token, so a peer's relay token cannot be
    replayed to impersonate another peer at the relay. Pairs with the Rust `goat-relay` Phase A change (dual-accept). Carries the
    `peer_id`-preimage invariant test (mgmt↔relay lockout guard). Origin: merged
-   PR #4 on [goat-maintainer/netbird](https://github.com/goat-maintainer/netbird/pull/4)
-   (commits `06f400228..64a082183`); full design
+   PR #4 on [USAREUR-AF/netbird](https://github.com/USAREUR-AF/netbird/tree/feature/relay-peer-id-bound-tokens)
+   (commits `4ec8f44fb..fd722b847`); full design
    ADR 1021. Default-off, so
    no behavior change until `Relay.PeerBoundTokens=true` is set and every relay
    tier accepts peer-bound tokens (ADR 1021 Phase C cutover).

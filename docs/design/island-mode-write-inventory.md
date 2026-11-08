@@ -1,6 +1,6 @@
 # Island mode write inventory: every write to the four admin stores, with its class
 
-**Status:** Written 2026-10-29, read from code at `8591afeb7` (branch `track/island-multiwriter-plan`) and the NetBird fork `goat-maintainer/netbird` at `6fb9b15c0`. Every rule in §8 is Designed; none is built. Step 5 of `island-mode-program.md`. Design: [`island-mode-multi-writer.md`](island-mode-multi-writer.md). Decision: [ADR 1165](../adr/1165-island-mode-multi-writer-every-site-admits.md).
+**Status:** Written 2026-10-29, read from code at `8591afeb7` (branch `track/island-multiwriter-plan`) and the NetBird fork `USAREUR-AF/netbird` at `274076d5f`. Every rule in §8 is Designed; none is built. Step 5 of `island-mode-program.md`. Design: [`island-mode-multi-writer.md`](island-mode-multi-writer.md). Decision: [ADR 1165](../adr/1165-island-mode-multi-writer-every-site-admits.md).
 
 Island mode lets every site of a goatnet change admin state while cut off from the others, and
 it is safe only if every write is shaped so the merge after the link returns loses nothing. The

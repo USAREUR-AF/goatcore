@@ -962,7 +962,7 @@
           usage_limit: "{{ _usage_limit | int }}"
           ephemeral: false
           # AutoPeerName (Block 83C.3) — operator-assigned label prefix.
-          # The patched goat-maintainer/netbird-mgmt image combines this with the
+          # The patched netbird-mgmt image combines this with the
           # joining peer's reported hostname at registration as
           # "<auto_peer_name>-<hostname>". Both halves preserved so a peer
           # named `dale` enrolled via this key shows up as
