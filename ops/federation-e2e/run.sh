@@ -415,9 +415,11 @@ scenario() { # $1 number, $2 first side (it also listens), $3 avenue
 
   say "scenario $n: the failures that make the passes mean something"
   # F-424: a partner authority on a core router IS an authorization grant.
+  # Both subjects are printed by the runner's openssl: the host image's openssl
+  # may format names differently (3.5 drops the spaces around '=').
   for s in pasture meadow; do
     rec "s$n-$s-core-trusts-only-its-own-ca" -- bash -c \
-      "docker exec fed-$s-core sh -c 'grep -c BEGIN /etc/goat-core/ca.pem' | grep -qx 1 && [ \"\$(docker exec fed-$s-core openssl x509 -in /etc/goat-core/ca.pem -noout -subject)\" = \"\$(openssl x509 -in '$WORK/$s/keys/ca.pem' -noout -subject)\" ]"
+      "docker exec fed-$s-core sh -c 'grep -c BEGIN /etc/goat-core/ca.pem' | grep -qx 1 && [ \"\$(docker exec fed-$s-core cat /etc/goat-core/ca.pem | openssl x509 -noout -subject)\" = \"\$(openssl x509 -in '$WORK/$s/keys/ca.pem' -noout -subject)\" ]"
     rec "s$n-$s-tunnel-carried-it" -- bash -c \
       "docker exec fed-$s-edge wg show wg-fed0 transfer | awk '{print; if (\$2 < 1 || \$3 < 1) exit 1}'"
   done
