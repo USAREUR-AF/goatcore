@@ -151,12 +151,17 @@
     - name: "seed | with force_reseed, probe whether this node is already a Spock node"
       ansible.builtin.shell:
         cmd: |
+          set -euo pipefail
           for db in {{ seed_databases | map(attribute='db') | join(' ') }}; do
             q() { docker exec -u postgres {{ postgres_container }} psql -X -U postgres -d "$db" -tAc "$1" | tr -d '[:space:]'; }
-            if [ "$(q "select to_regclass('spock.local_node') is not null")" = t ]; then
-              echo "$db=$(q 'select count(*) from spock.local_node')"
-            else
+            exists=$(q "select to_regclass('spock.local_node') is not null")
+            if [ "$exists" = t ]; then
+              count=$(q 'select count(*) from spock.local_node')
+              echo "$db=$count"
+            elif [ "$exists" = f ]; then
               echo "$db=0"
+            else
+              exit 1
             fi
           done
         executable: /bin/bash
@@ -179,8 +184,8 @@
 
     # Revocation guard (ADR 1193) on BOTH ends before the dump: goat_revocations
     # is in the seed set, so it must exist on the peer to dump and here to
-    # restore into. Idempotent. --disable-triggers on the restore keeps the
-    # guard's triggers out of the seed itself.
+    # restore into. Idempotent. The restore transaction saves and disables
+    # triggers only on the seed tables, then restores their exact firing modes.
     - name: "seed | install the revocation guard on the peer and locally"
       ansible.builtin.command:
         argv: [docker, exec, -i, -u, postgres, "{{ postgres_container }}",
@@ -212,15 +217,15 @@
       block:
         # -------------------------------------------------------------------
         # Dump on the peer — one data-only pg_dump per database so pg_dump
-        # orders tables foreign-key-safely; --disable-triggers defers FK checks
-        # on restore.
+        # orders tables foreign-key-safely. The restore transaction manages
+        # trigger modes itself, including ALWAYS triggers.
         # -------------------------------------------------------------------
         - name: "seed | dump each database data-only on the peer ({{ peer_host }})"
           ansible.builtin.shell:
             cmd: >-
               umask 077 &&
               docker exec -u postgres {{ postgres_container }}
-              pg_dump --data-only --disable-triggers
+              pg_dump --data-only
               {{ item.tables | map('regex_replace', '^', '-t public.') | join(' ') }}
               -U postgres -d {{ item.db }}
               > /tmp/{{ seed_stage_name }}-{{ item.db }}.sql
@@ -260,43 +265,24 @@
           loop_control:
             label: "{{ item.db }}"
 
-        # -------------------------------------------------------------------
-        # force_reseed: empty exactly the seed tables first, so the load does
-        # not primary-key-conflict with a partial earlier load, and no leftover
-        # row (a kratos identity the revocation guard would backfill a baseline
-        # for) survives. DELETE, not TRUNCATE: TRUNCATE refuses a table another
-        # (non-seed) table references, and CASCADE would empty tables outside
-        # the set. session_replication_role=replica keeps triggers (foreign
-        # keys, the revocation guard, the hub ledger's immutability) out of it,
-        # as --disable-triggers does for the load. One transaction per database.
-        # -------------------------------------------------------------------
-        - name: "seed | force_reseed: empty the seed tables on {{ inventory_hostname }}"
-          ansible.builtin.command:
-            argv: [docker, exec, -i, -u, postgres, "{{ postgres_container }}",
-                   psql, -X, -U, postgres, -d, "{{ item.db }}", -v, ON_ERROR_STOP=1, -q]
-            stdin: |
-              BEGIN;
-              SET LOCAL session_replication_role = replica;
-              {% for tbl in item.tables | reverse %}
-              DELETE FROM public.{{ tbl }};
-              {% endfor %}
-              COMMIT;
-          loop: "{{ seed_databases }}"
-          loop_control:
-            label: "{{ item.db }} ({{ item.tables | length }} tables)"
-          changed_when: true
-          when: force_reseed | bool
-
-        # -------------------------------------------------------------------
-        # Restore. ON_ERROR_STOP so a missing kratos/hydra schema (Ory not
-        # deployed yet) fails loud rather than silently seeding nothing.
-        # -------------------------------------------------------------------
+        # Save trigger modes, optionally delete, load, and restore the modes in
+        # ONE transaction per database. ALWAYS triggers ignore replica mode;
+        # disabling them explicitly is required for populated immutable ledgers.
+        # A failed load rolls back this database's deletion and trigger changes.
         - name: "seed | restore each dump into the local postgres (data-only)"
           ansible.builtin.shell:
-            cmd: >-
-              docker exec -i {{ postgres_container }}
-              psql -U postgres -d {{ item.db }} -v ON_ERROR_STOP=1
-              < /tmp/{{ seed_stage_name }}-{{ item.db }}.sql
+            cmd: |
+              set -euo pipefail
+              {
+                cat <<'GOAT_SEED_BEGIN'
+              {{ lookup('ansible.builtin.template', 'seed-from-peer-begin.sql.j2') }}
+              GOAT_SEED_BEGIN
+                cat {{ ('/tmp/' ~ seed_stage_name ~ '-' ~ item.db ~ '.sql') | quote }}
+                cat <<'GOAT_SEED_END'
+              {{ lookup('ansible.builtin.file', playbook_dir ~ '/templates/seed-from-peer-end.sql') }}
+              GOAT_SEED_END
+              } | docker exec -i -u postgres {{ postgres_container | quote }} \
+                psql -X -U postgres -d {{ item.db | quote }} -v ON_ERROR_STOP=1
           args:
             executable: /bin/bash
           loop: "{{ seed_databases }}"

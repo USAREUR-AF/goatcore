@@ -1,0 +1,38 @@
+BEGIN;
+SET LOCAL lock_timeout = '5s';
+{% if force_reseed | bool %}
+-- Repeat the preflight at the point of mutation. A query error aborts the
+-- transaction; it must never be interpreted as an unregistered node.
+DO $$
+DECLARE registered boolean;
+BEGIN
+  IF to_regclass('spock.local_node') IS NOT NULL THEN
+    EXECUTE 'SELECT EXISTS (SELECT 1 FROM spock.local_node)' INTO registered;
+    IF registered THEN
+      RAISE EXCEPTION 'force_reseed refuses an already registered Spock node';
+    END IF;
+  END IF;
+END $$;
+{% endif %}
+-- Lock before recording modes so concurrent application writes and trigger
+-- changes cannot race the replacement. Only the declared seed set is locked.
+{% for tbl in item.tables %}
+LOCK TABLE public."{{ tbl | replace('"', '""') }}" IN ACCESS EXCLUSIVE MODE;
+{% endfor %}
+CREATE TEMP TABLE goat_seed_trigger_modes ON COMMIT DROP AS
+SELECT tgrelid, tgname, tgenabled
+FROM pg_trigger
+WHERE tgrelid IN (
+{% for tbl in item.tables %}
+  'public."{{ tbl | replace('"', '""') | replace("'", "''") }}"'::regclass{{ ',' if not loop.last else '' }}
+{% endfor %}
+);
+{% for tbl in item.tables %}
+ALTER TABLE public."{{ tbl | replace('"', '""') }}" DISABLE TRIGGER ALL;
+{% endfor %}
+{% if force_reseed | bool %}
+-- DELETE stays within the seed set; TRUNCATE CASCADE could erase other data.
+{% for tbl in item.tables | reverse %}
+DELETE FROM public."{{ tbl | replace('"', '""') }}";
+{% endfor %}
+{% endif %}

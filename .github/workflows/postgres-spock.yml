@@ -5,11 +5,15 @@ on:
     branches: [main]
     paths:
       - 'ops/postgres/spock/**'
+      - 'ops/ansible/site-seed-from-peer.yml'
+      - 'ops/ansible/templates/seed-from-peer-*'
       - '.github/workflows/postgres-spock.yml'
     tags: ['postgres-spock/v*']
   pull_request:
     paths:
       - 'ops/postgres/spock/**'
+      - 'ops/ansible/site-seed-from-peer.yml'
+      - 'ops/ansible/templates/seed-from-peer-*'
       - 'ops/ansible/roles/revocation-ledger-bootstrap/**'
       - 'ops/ansible/roles/ory-narrow-repset/**'
       - 'ops/ansible/roles/spock-mesh-peering/**'
@@ -42,6 +46,8 @@ jobs:
         run: python3 -m pip install ansible-core==2.20.3
       - name: Exercise actual two-site ledger reconciliation tasks
         run: python3 ops/postgres/spock/tests/revocation-rollout/test_ansible_bootstrap.py
+      - name: Seed retry preserves ledger rows and trigger modes
+        run: python3 ops/postgres/spock/tests/seed-retry/test_seed_retry.py
 
   reproducible:
     # Build the image twice from this commit with the settings

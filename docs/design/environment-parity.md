@@ -292,6 +292,15 @@ day.
 - Never fork another goatnet's database end-state. A joiner site gets its data
   through the guarded data-only seed (`ops/ansible/site-seed-from-peer.yml`)
   and replication, never a copy of the founder's database.
+- **Built, not yet measured on a live joiner:** the generic seed play saves
+  trigger modes, disables triggers on exactly the seed tables, optionally
+  deletes their rows for `force_reseed`, loads the data-only dump, and restores
+  the original trigger modes in one transaction per database. ALWAYS ledger
+  protections are preserved. A failed load rolls back that database's data and
+  trigger changes; this is not a transaction across all three databases.
+  Forced reseeding refuses an already registered Spock node. It is a retry
+  before federation, not a detach-and-rejoin procedure. Regression coverage:
+  `ops/postgres/spock/tests/seed-retry/test_seed_retry.py`.
 - A new terraform tree has `allowed_account_ids` on every provider block before
   its first apply (CI-asserted by `check-env-coverage.sh`).
 
