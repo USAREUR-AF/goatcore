@@ -18,7 +18,9 @@ import http.server
 import importlib.util
 import io
 import json
+import os
 import shutil
+import ssl
 import subprocess
 import threading
 from pathlib import Path
@@ -75,6 +77,8 @@ class Server(http.server.BaseHTTPRequestHandler):
         if Server.refuse_with:
             return Server.refuse_with, b"refused"
         doc = json.loads(body)
+        if doc.get("spec") == d.POINTER_SPEC and not str(doc.get("package_url", "")).startswith("https://"):
+            return 422, b"package_url must be https"
         if doc.get("spec") == d.PACKAGE_SPEC and any(k in doc for k in d.OFFER_BLOCKS):
             return 422, b"a directory entry never carries an offer"
         key = self.headers["X-Saltlick-Key"]
@@ -109,12 +113,30 @@ class Server(http.server.BaseHTTPRequestHandler):
         self.wfile.write(body)
 
 
+@pytest.fixture(scope="session")
+def tls_cert(tmp_path_factory):
+    """A throwaway certificate for 127.0.0.1: the directory is https only, as saltlick is."""
+    if not shutil.which("openssl"):
+        pytest.skip("no openssl to make a test certificate")
+    d_ = tmp_path_factory.mktemp("tls")
+    crt, key = d_ / "dir.pem", d_ / "dir.key"
+    subprocess.run(["openssl", "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1",
+                    "-nodes", "-days", "1", "-subj", "/CN=127.0.0.1", "-addext", "subjectAltName=IP:127.0.0.1",
+                    "-keyout", str(key), "-out", str(crt)], check=True, capture_output=True)
+    return crt, key
+
+
 @pytest.fixture
-def server():
+def server(tls_cert, monkeypatch):
     Server.entries, Server.files, Server.hosted, Server.refuse_with = {}, {}, {}, None
+    crt, key = tls_cert
     srv = http.server.HTTPServer(("127.0.0.1", 0), Server)
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ctx.load_cert_chain(str(crt), str(key))
+    srv.socket = ctx.wrap_socket(srv.socket, server_side=True)
+    monkeypatch.setenv("SSL_CERT_FILE", str(crt))
     threading.Thread(target=srv.serve_forever, daemon=True).start()
-    yield f"http://127.0.0.1:{srv.server_address[1]}"
+    yield f"https://127.0.0.1:{srv.server_address[1]}"
     srv.shutdown()
 
 
@@ -223,9 +245,15 @@ def test_a_refusing_directory_is_a_warning(server):
 
 
 def test_an_unreachable_directory_is_a_warning():
-    rc, out = run("--url", "http://127.0.0.1:9", "--ours", XAA, "--their-id", "xab", "--timeout", "2")
+    rc, out = run("--url", "https://127.0.0.1:9", "--ours", XAA, "--their-id", "xab", "--timeout", "2")
     assert rc == 0
     assert "FED_SIGNING_KEY is not set" in out and "directory unreachable" in out
+
+
+def test_a_plain_http_directory_publishes_nothing():
+    rc, out = run("--url", "http://127.0.0.1:9", "--ours", XAA, "--their-id", "xab", "--timeout", "2")
+    assert rc == 0
+    assert "FAIL    the directory URL is not https" in out
 
 
 def entry(sid, td, transports, fips=True, pqc=True, inbound=None):
@@ -308,7 +336,7 @@ def test_driver_phase_5_with_a_directory_publishes_and_reports(server, tmp_path)
 
 def test_driver_phase_5_with_a_dead_directory_still_stops_cleanly(tmp_path):
     (tmp_path / "ours.canonical.json").write_bytes(XAA.read_bytes())
-    r = driver(tmp_path, FED_DIRECTORY_URL="http://127.0.0.1:9", FED_COUNTERPARTY_ID="xab")
+    r = driver(tmp_path, FED_DIRECTORY_URL="https://127.0.0.1:9", FED_COUNTERPARTY_ID="xab")
     assert r.returncode == 0, r.stderr
     assert "WARN" in r.stdout and "OPERATOR STEP" in r.stdout
 

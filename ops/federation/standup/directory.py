@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The optional directory step of a peering standup, phase 5.
+"""The directory step of a peering standup, phase 5.
 
 Run only when FED_DIRECTORY_URL is set. The directory holds pointers, not
 permissions: an entry says where a party's signed package can be fetched and the
@@ -16,7 +16,7 @@ sha256 of that package, until a date, signed by the party itself. This step:
      SHA-256 is our package's identity.ca_fingerprint;
   3. looks up the counterparty's pointer, fetches their package from the address
      it gives, checks the digest, checks both signatures against the key bound
-     out of band when the keyring has it, and places the package where phase 6
+     on the call when the keyring has it, and places the package where phase 6
      reads it if nothing is there yet; fetches their CA certificate, checks it
      against their package's identity.ca_fingerprint, and places it at
      $FED_WORK/theirs-ca.pem if nothing is there yet;
@@ -27,8 +27,8 @@ sha256 of that package, until a date, signed by the party itself. This step:
 
 THE INVARIANT. The directory is advisory, never authoritative; being listed grants
 nothing (docs/design/peering-directory-service.md §2). It is not an input to the
-check: `compose` verifies the counterparty's package against the key bound out of
-band, never against anything the directory served. So nothing here can fail a
+check: `compose` verifies the counterparty's package against the key read back on the
+call, never against anything the directory served. So nothing here can fail a
 peering: a directory that is down, refusing or wrong produces a WARN and exit 0.
 
 usage:
@@ -60,7 +60,7 @@ TRANSPORT_PREFERENCE = ("wireguard", "ipsec-fips")
 SOVEREIGN_ID_RE = re.compile(r"^[a-z0-9-]{2,16}$")
 MAX_PACKAGE_BYTES = 64 << 10
 ADVISORY = ("ADVISORY — the directory grants nothing and is not an input to the check. "
-            "compose verifies against the key you bound out of band.")
+            "compose verifies against the key you read back on the call.")
 
 
 def read_bytes(path: str) -> bytes:
@@ -432,9 +432,11 @@ def _get(url: str, timeout: float, accept="application/json"):
         return e.code, {k.lower(): v for k, v in (e.headers or {}).items()}, e.read(MAX_PACKAGE_BYTES + 1)
 
 
-def _https_or_local(url: str) -> bool:
-    p = urllib.parse.urlparse(url)
-    return p.scheme == "https" or (p.scheme == "http" and p.hostname in ("localhost", "127.0.0.1", "::1"))
+def _https(url: str) -> bool:
+    # saltlick refuses a pointer whose package_url is not https, and the
+    # pointer's package_url is built from the directory URL, so nothing here
+    # accepts plain http. A private CA is trusted through SSL_CERT_FILE.
+    return urllib.parse.urlparse(url).scheme == "https"
 
 
 def signed_put(url: str, sid: str, resource: str, body: bytes, seed: bytes, content_type: str, timeout: float):
@@ -461,7 +463,7 @@ def publish(url, ours_raw: bytes, package_url: str | None, key_path: str | None,
     hosted = not package_url
     if hosted:
         package_url = entry_url(url, sid) + "/package"
-    elif not _https_or_local(package_url):
+    elif not _https(package_url):
         return [f"FED_PACKAGE_URL {package_url} is not https; nothing published"]
     else:
         # The pointer must point at what we would send. Fetch it back and compare.
@@ -566,7 +568,7 @@ def lookup(url, sid: str, bound_key: str | None, timeout: float, report: "Report
         return None, None, False, None
     if status != 200:
         report.add("WARN", "lookup", f"no entry for `{sid}` (HTTP {status})",
-                   "until they publish one, the package moves out of band")
+                   "run phase 5 again after they run theirs")
         return None, None, False, None
     dir_key = headers.get("x-saltlick-bound-key")
     try:
@@ -594,9 +596,9 @@ def lookup(url, sid: str, bound_key: str | None, timeout: float, report: "Report
         except (ValueError, RuntimeError):
             ok = False
         if ok:
-            report.add("PASS", what, "verifies under the key you bound out of band")
+            report.add("PASS", what, "verifies under the key you read back on the call")
         else:
-            report.add("WARN", what, "does NOT verify under the key you bound out of band",
+            report.add("WARN", what, "does NOT verify under the key you read back on the call",
                        "trust the key you read back, not the directory; tell the counterparty")
 
     if entry.get("spec") == PACKAGE_SPEC:
@@ -612,13 +614,13 @@ def lookup(url, sid: str, bound_key: str | None, timeout: float, report: "Report
         return None, None, False, None
     signed_by_bound_key(entry, "pointer signature")
     purl = entry.get("package_url", "")
-    if not _https_or_local(purl):
+    if not _https(purl):
         report.add("WARN", "package_url", f"{purl!r} is not https; not fetched")
         return None, None, False, None
     try:
         status, _, pbody = _get(purl, timeout)
     except (OSError, urllib.error.URLError) as e:
-        report.add("WARN", "package fetch", f"{purl}: {e}", "ask them to serve the package there, or send it out of band")
+        report.add("WARN", "package fetch", f"{purl}: {e}", "ask them to run phase 5, which uploads it")
         return None, None, False, None
     if status != 200 or len(pbody) > MAX_PACKAGE_BYTES:
         report.add("WARN", "package fetch", f"{purl}: HTTP {status}, {len(pbody)} bytes")
@@ -648,11 +650,11 @@ def fetch_ca(url, sid: str, theirs: dict, work: str | None, report: "Report", ti
     try:
         status, _, body = _get(entry_url(url, sid) + "/ca", timeout, accept="application/pem-certificate-chain")
     except (OSError, urllib.error.URLError) as e:
-        report.add("WARN", "CA fetch", f"{e}", "until it is fetched, their CA certificate moves out of band")
+        report.add("WARN", "CA fetch", f"{e}", "run phase 5 again once the directory answers")
         return None
     if status != 200:
         report.add("WARN", "CA fetch", f"`{sid}` hosts no CA certificate in the directory (HTTP {status})",
-                   "until they upload one, their CA certificate moves out of band")
+                   "run phase 5 again after they run theirs")
         return None
     anchor = anchor_for(body, fp)
     if anchor is None:
@@ -704,11 +706,12 @@ def main(argv=None) -> int:
     ap.add_argument("--timeout", type=float, default=10.0)
     a = ap.parse_args(argv)
 
-    print(f"\n    Directory step (optional): {a.url}")
+    print(f"\n    Directory step: {a.url}")
     print(f"    {ADVISORY}")
     warnings = []
-    if not _https_or_local(a.url):
-        warnings.append("the directory URL is not https; a reader on the path could alter what you fetch")
+    if not _https(a.url):
+        print("    FAIL    the directory URL is not https; saltlick refuses a pointer that is not, so nothing is published")
+        return 0
 
     try:
         ours_raw = read_bytes(a.ours)
@@ -754,7 +757,7 @@ def main(argv=None) -> int:
                     pass  # a convenience copy for the operator; nothing reads it
             if via_pointer and theirs_on_disk is None and a.theirs:
                 # A full package fetched through their pointer: place it where phase 6 reads
-                # it. compose still verifies it against the key bound out of band.
+                # it. compose still verifies it against the key read back on the call.
                 try:
                     fd = os.open(a.theirs, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
                     with os.fdopen(fd, "wb") as f:
