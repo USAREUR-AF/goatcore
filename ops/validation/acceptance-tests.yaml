@@ -748,18 +748,17 @@ tests:
   # suite is for.
   - id: onboard-runner-knows-this-goatnet
     aspect: onboarding/goat-cli-config
-    probe: cmd-assert
+    probe: onboard-runner-profile
     applies_when: onboard_runner_enabled
-    params: {host: "{{ orin_a }}", cmd: "docker exec onboard-runner sh -c 'grep -c \"^netbird_mgmt_url = .https://{{ public_mgmt_fqdn }}.$\" \"$HOME/.goat/contexts/default/profile.toml\"' || echo 0", expect_min: 1}
+    params: {host: "{{ orin_a }}", goatnet: "{{ site_id }}"}
     requires: [onboard-runner]
     severity: gate
     caught_would_have: >-
-      F-485 wall 1 — the onboarder could not mint for a goatnet it did not know.
-      goat-cli no longer carries a built-in goatnet table: the runner's entrypoint
-      writes this goatnet's facts into the goat profile from the deploy env
-      (ops/onboard-runner/docker-entrypoint.sh), and a native onboard reads them
-      from there. A profile without this goatnet's NetBird management URL, or
-      with another goatnet's, refuses every mint.
+      A stock goat binary can onboard a new goatnet from its profile alone.
+      Check the default profile written inside the running container, including
+      the router, NetBird and Ory settings, without printing values or tokens.
+      Missing configuration fails; an unreachable container is UNKNOWN.
+      Binary freshness remains the onboard-runner role's version/restart check.
   - id: onboard-runner-reaches-mgmt-api
     aspect: onboarding/runner-reachability
     probe: cmd-assert
