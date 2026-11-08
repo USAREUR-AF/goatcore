@@ -272,8 +272,8 @@ start_directory() {
     -e SALTLICK_WRITE_LIMIT=0 -e SALTLICK_READ_LIMIT=0 "$SALTLICK_IMAGE" >/dev/null
   docker run -d --name fed-e2e-directory-tls --network container:fed-e2e-directory "$DIRECTORY_TLS_IMAGE" \
     caddy reverse-proxy --from "https://$DIRECTORY_IP:8443" --to 127.0.0.1:8080 >/dev/null
-  local i s
-  for i in $(seq 1 30); do
+  local s
+  for _ in $(seq 1 30); do
     if docker cp -q fed-e2e-directory-tls:/data/caddy/pki/authorities/local/root.crt "$WORK/directory-ca.pem" 2>/dev/null; then
       # /etc/fed-e2e on each edge is its keys folder, mounted read-only.
       for s in pasture meadow; do install -m 0644 "$WORK/directory-ca.pem" "$WORK/$s/keys/directory-ca.pem"; done
