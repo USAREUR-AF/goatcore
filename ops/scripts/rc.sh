@@ -578,7 +578,7 @@ rows_on() { # $1 goatnet key -> writes evidence file, returns runner exit
     die "could not compute the live rows $TAG affects (affected-flows.py failed above) — fix that, then re-run the same command"
   fi
   local rows; rows="$(printf '%s' "$flows_json" | python3 -c 'import json,sys; print(",".join(json.load(sys.stdin)["live_rows"]))')"
-  if [ -z "$rows" ]; then note "no live rows are mapped for what $TAG changed (ops/validation/flow-map.yaml) — evidence is the cheap suites only"; echo "" > "$EVID"; return 0; fi
+  if [ -z "$rows" ]; then note "no live rows are mapped for what $TAG changed (ops/validation/flow-map.yaml) — evidence is the cheap suites only"; EVID=""; return 0; fi
   # A row that cannot run here is UNTESTED, not FAILED: say what is missing and
   # stop before the runner, rather than let an exit 2 read as a dead candidate.
   if ! browser_toolchain_check "$rows"; then
@@ -639,7 +639,7 @@ EVID=""
 if [ "$FROM" != preprod ] && [ "$FROM" != preprod-rows ] && [ "$FROM" != prod ]; then
   step "live rows on $DEV"
   if ! rows_on "$DEV"; then die "a live row FAILED on $DEV — the candidate is dead: fix on main, cut rc.$((RCN+1)) (delete $TAG)"; fi
-  DEV_EVID="$EVID"
+  DEV_EVID="$EVID"; DEV_ROWS_RAN=1
 fi
 
 # --- 6 preprod -----------------------------------------------------------------------
@@ -683,7 +683,9 @@ if [ "$FROM" != preprod-rows ]; then
 step "preprod rung: open the candidate and put $TAG on $PRE"
 # A resume from preprod reads the dev evidence from disk — the dev step wrote it
 # there — rather than from a variable only the dev step sets.
-if [ -z "${DEV_EVID:-}" ]; then DEV_EVID="$(evidence_path "$(runner_var "$DEV" name)")"; [ -s "$DEV_EVID" ] || DEV_EVID=""; fi
+# Only when this run did not run the dev rows: a run that did and found none
+# mapped has no dev evidence, and an older file on disk is not this candidate's.
+if [ -z "${DEV_ROWS_RAN:-}" ]; then DEV_EVID="$(evidence_path "$(runner_var "$DEV" name)")"; [ -s "$DEV_EVID" ] || DEV_EVID=""; fi
 mkwt
 rc_changes
 # Not inside the capture: a `run` in a dry run prints its DRY line, and a

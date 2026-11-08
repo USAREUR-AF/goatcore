@@ -876,6 +876,16 @@ fn release_inner(repo: &Path, o: &Options, checks: Rc<RefCell<Vec<Check>>>) -> R
             return Err(goat_errors::coded("GB-014", format!("a live row FAILED on {dev} — the candidate is dead: fix on main, cut rc.{} (delete {})", run.rcn + 1, run.tag)).into());
         }
         run.dev_evid = run.evid.clone();
+    } else {
+        // A resume past the dev rows reads the dev evidence from disk, which
+        // the dev step wrote there, as rc.sh does. A run that ran the dev rows
+        // and found none mapped has none, and an older file is not this
+        // candidate's.
+        let name = run.runner_var(&run.dev.clone(), "name")?;
+        let evid = run.repo.join("ops/validation/evidence").join(format!("{}-{}-{name}.jsonl", run.image, run.tag.split('/').nth(1).unwrap_or(&run.tag)));
+        if std::fs::metadata(&evid).map(|m| m.len() > 0).unwrap_or(false) {
+            run.dev_evid = evid.display().to_string();
+        }
     }
 
     // --- 6 preprod
