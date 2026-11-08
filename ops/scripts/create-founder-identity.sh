@@ -100,7 +100,11 @@ TOML
 fi
 
 if command -v goat >/dev/null; then
-  if goat --context "$GOATNET" status --json --timeout 20 2>/dev/null | grep -q '"session":{"ok":true'; then
+  # goat status exits non-zero when any layer fails (a context with no portal
+  # key fails the portal row), and under pipefail that would fail the pipe even
+  # when the session row is ok; read the output, then the session row.
+  status_json="$(goat --context "$GOATNET" status --json --timeout 20 2>/dev/null || true)"
+  if printf '%s' "$status_json" | grep -q '"session":{"ok":true'; then
     echo "verified: goat --context $GOATNET status opens an mTLS session to the router"
   else
     echo "installed, not yet verified: 'goat --context $GOATNET status' opened no session." >&2
