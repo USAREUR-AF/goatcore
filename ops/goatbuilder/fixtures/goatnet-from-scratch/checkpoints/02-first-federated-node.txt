@@ -108,7 +108,7 @@ assay plan: env=zagros  44 applicable rows, 35 N/A
     refuse enrollment-entrypoint-refuses-the-default-cert tls-identity
 
   onboarding (3)
-    prove  onboard-runner-knows-this-goatnet            cmd-assert
+    prove  onboard-runner-knows-this-goatnet            onboard-runner-profile
     prove  onboard-runner-reaches-mgmt-api              cmd-assert
     prove  onboard-runner-audit-reaches-the-fabric      cmd-assert
 
