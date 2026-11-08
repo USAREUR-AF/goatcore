@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Proposed (design worked; designed-not-built) |
+| Status | Proposed (built: the grant-crypto SDK and `grant-keyd` in `ops/grant-crypto/`; grant, rotate, revoke and restart proven on a live goatnet) |
 | Date | 2026-07-10 |
 | Repo scope | goat core — machine-plane read enforcement |
 | Supersedes | — (fills in the "M2" mechanism ADR 1076 committed to) |
@@ -43,7 +43,7 @@ ADR 1076 committed to closing the one open cell in the plane×operation matrix �
 - **+** One policy source across planes is preserved (the key service reads the same grant rows; `no_third_shim` holds).
 - **−** New moving parts: a per-site key-distribution service, publisher-side envelope encoding, and a key path for every reader of stored *content* (decoded views, forensic tools, replay). Designed, staged, not free.
 - **−** Enforcement is topic-grained and revocation is rotation-latency-bound — materially weaker than the human plane's read-time granularity/immediacy. Must be stated, never oversold.
-- **−** Designed-not-built; production go-live is a standard control, not conditional on who shares an environment ([ADR 1208](1208-sovereign-environments-release-namespaces-and-grant-encryption.md)).
+- **−** Production go-live is a standard control, not conditional on who shares an environment ([ADR 1208](1208-sovereign-environments-release-namespaces-and-grant-encryption.md)).
 
 ## Build sequencing
 
