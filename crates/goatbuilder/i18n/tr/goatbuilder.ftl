@@ -205,7 +205,7 @@ tutor-l18-title = Bonus: meraklı olun
 tutor-l18-text =
     Bu ders isteğe bağlıdır. Aşağıdaki komutu çalıştırın ve tutor tamamlanmış olur.
 
-    goatbuilder CLI'sinin birkaç küçük gizli özelliği vardır. Bunlar yardımda veya bu derslerde yoktur. Bazıları, eski Unix kullanıcılarının sadece ne olacağını görmek için yeni bir programa sık sık yazdığı kelimelere cevap verir. the maintaineryeceğiniz şeylerin çoğu hiçbir şey yapmaz.
+    goatbuilder CLI'sinin birkaç küçük gizli özelliği vardır. Bunlar yardımda veya bu derslerde yoktur. Bazıları, eski Unix kullanıcılarının sadece ne olacağını görmek için yeni bir programa sık sık yazdığı kelimelere cevap verir. Deneyeceğiniz şeylerin çoğu hiçbir şey yapmaz.
 
     Bu ders, onların ne olduğunu söylemez. Onları bulmak, asıl amaçtır.
 
@@ -274,7 +274,7 @@ tutor-l6-text =
 
     goatbuilder `promote status` komutu her bileşenin nerede olduğunu gösterir. Aday, test edilmekte olan bir sürümdür. Bir yayının genel biçimi `goatbuilder release <component> --tag <tag> --from dev` şeklindedir. Aşağıdaki komutlar bu checkout'un bir bileşenini ve örnek bir etiketi kullanır. Her birinde `--dry-run` vardır, bu yüzden hiçbir şey etiketlenmez veya dağıtılmaz.
 
-    the maintainerme çalıştırmaları `gh` ve mesh gerektirir. Deponun yöneticisi değilseniz, her `release` komutunun önüne `GOAT_RC_ROLE_CHECK=0` koyun.
+    Deneme çalıştırmaları `gh` ve mesh gerektirir. Deponun yöneticisi değilseniz, her `release` komutunun önüne `GOAT_RC_ROLE_CHECK=0` koyun.
 tutor-l9-s1 = Var olmayan bir goatnet ile gerçek bir hata oluşturun
 tutor-l9-text =
     goatbuilder reddettiğinde bir kod yazdırır. `GB-` ile başlayan kodlar goatbuilder'dan, `E_` ile başlayanlar goat CLI'ından, `X-` ile başlayanlar ise goatbuilder'ın çalıştırdığı başka bir araçtan gelir.
