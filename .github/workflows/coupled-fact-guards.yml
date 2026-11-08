@@ -162,7 +162,7 @@ jobs:
       - name: Install amtool (alertmanager v0.27.0)
         run: |
           cd "$RUNNER_TEMP"
-          curl -fsSLO https://github.com/prometheus/alertmanager/releases/download/v0.27.0/alertmanager-0.27.0.linux-amd64.tar.gz
+          curl -fsSLO --retry 6 --retry-delay 15 --retry-all-errors https://github.com/prometheus/alertmanager/releases/download/v0.27.0/alertmanager-0.27.0.linux-amd64.tar.gz
           echo "23c3f5a3c73de91dbaec419f3c492bef636deb02680808e5d842e6553aa16074  alertmanager-0.27.0.linux-amd64.tar.gz" | sha256sum -c
           tar xzf alertmanager-0.27.0.linux-amd64.tar.gz
           echo "AMTOOL=$RUNNER_TEMP/alertmanager-0.27.0.linux-amd64/amtool" >> "$GITHUB_ENV"
