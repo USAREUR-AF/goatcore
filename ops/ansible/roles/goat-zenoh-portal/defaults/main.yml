@@ -221,7 +221,10 @@ portal_ca_root_cert: "/etc/{{ site_id }}-ca/root-cert.pem"   # a shared role mus
 # candidates: the role then passes the first one the pinned image's `serve -h`
 # defines, so an overlay whose goatnets run images from different source trees
 # lists every name once (neutral first) and a pin move needs no flag change.
-portal_ca_root_cert_flag: "--ca-root-cert"
+# Both names by default: the pinned image (ops/pins/fleet-pins.yaml) predates
+# the neutral --ca-root-cert and defines only the legacy -nova-root-cert, which
+# the source still accepts; a string here refused every standup on that pin.
+portal_ca_root_cert_flag: ["--ca-root-cert", "--nova-root-cert"]
 portal_onboarding_packet_path: "/etc/goat-zenoh-portal/zenoh-trial-onboarding.md"
 portal_cert_sign_ca_id: ""   # REQUIRED per goatnet — a shared default
 # would sign certs for a new goatnet under ANOTHER goatnet's authority.
