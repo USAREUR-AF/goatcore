@@ -671,10 +671,14 @@ mod tests {
             context: "t".into(),
         };
         // Only one file served: the context is left alone.
-        refresh_acl_declaration(&p, &source, false).await.expect("refresh");
+        refresh_acl_declaration(&p, &source, false)
+            .await
+            .expect("refresh");
         assert!(!p.context_dir().join("acl").exists());
         std::fs::write(served.path().join("acl").join(MATRIX_FILE), "m: 1\n").expect("mat");
-        refresh_acl_declaration(&p, &source, false).await.expect("refresh");
+        refresh_acl_declaration(&p, &source, false)
+            .await
+            .expect("refresh");
         let got = std::fs::read_to_string(p.context_dir().join("acl").join(MATRIX_FILE));
         assert_eq!(got.expect("written"), "m: 1\n");
     }

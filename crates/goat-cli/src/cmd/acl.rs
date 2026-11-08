@@ -428,7 +428,10 @@ mod tests {
             msg.contains("scope `lone` declares no ACL assertions"),
             "{msg}"
         );
-        assert!(msg.contains("--none-expected"), "the way out is named: {msg}");
+        assert!(
+            msg.contains("--none-expected"),
+            "the way out is named: {msg}"
+        );
     }
 
     #[test]
@@ -542,7 +545,12 @@ mod tests {
         let g = e.downcast_ref::<GoatError>().expect("a goat error");
         assert_eq!(g.code(), "E_ACL_DECLARATION_MISSING");
         let hint = g.hint();
-        for want in ["--declaration", DECLARATION_DIR_ENV, CONTEXT_KEY, "goat context refresh"] {
+        for want in [
+            "--declaration",
+            DECLARATION_DIR_ENV,
+            CONTEXT_KEY,
+            "goat context refresh",
+        ] {
             assert!(hint.contains(want), "{want} missing from: {hint}");
         }
     }
@@ -552,7 +560,10 @@ mod tests {
         let d = tempfile::tempdir().expect("temp dir");
         std::fs::write(d.path().join(TAXONOMY_FILE), "x").expect("taxonomy");
         let src = Source::Flag(d.path().to_path_buf());
-        let msg = format!("{:#}", read_dir(d.path(), &src).expect_err("matrix missing"));
+        let msg = format!(
+            "{:#}",
+            read_dir(d.path(), &src).expect_err("matrix missing")
+        );
         assert!(msg.contains(MATRIX_FILE), "{msg}");
     }
 
@@ -562,10 +573,7 @@ mod tests {
         write_both(&tree.path().join(CHECKOUT_DIR));
         let nested = tree.path().join("crates/x/src");
         std::fs::create_dir_all(&nested).expect("nested");
-        assert_eq!(
-            checkout_dir(&nested),
-            Some(tree.path().join(CHECKOUT_DIR))
-        );
+        assert_eq!(checkout_dir(&nested), Some(tree.path().join(CHECKOUT_DIR)));
         let plain = tempfile::tempdir().expect("temp dir");
         assert_eq!(checkout_dir(plain.path()), None);
     }
