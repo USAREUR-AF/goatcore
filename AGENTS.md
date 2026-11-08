@@ -29,6 +29,10 @@ A real deployment is goatcore at a pinned commit plus a separate overlay reposit
 | `docs/adr/` | decisions; `docs/adr/INDEX.md` lists them |
 | `docs/tutorials/` | start with `00-goatlite.md` |
 
+## One build for every deployment
+
+A tool or image built from this repository is the same for every deployment that runs it. Nothing about a deployment is compiled into a binary, baked into an image or used as a default, not even as a fallback: no names, domains, addresses, repositories, ACL tables, certificate authorities or display text. Each value comes from the deployment's configuration: the goat context and its `goatnet.toml`, Ansible group_vars, an environment variable, or a file mounted at deploy time. When the configuration is missing, the tool stops with an error from `ops/errors/catalog.yaml` that names what to supply. A default is allowed only when it belongs to no deployment, such as an empty list or a port number. A deployment never builds its own copy of a tool or image; its overlay repository holds configuration only.
+
 ## Rules CI enforces
 
 1. **No identifier of a real deployment.** Hostnames, domains, addresses, account ids, keys, people, places and organisations of any real goatnet never enter a file or a commit message. Use the example goatnet `zagros`, documentation addresses (RFC 5737, and `100.127.0.0/16` for mesh), and `example.org` mail. The leak gate (`.github/workflows/leak-gate.yml`) checks every added line against a private list of deployment names. It never prints what matched, so a red leak gate means: rename the identifier. Locally, `ops/ci/check-no-identity-spillage.sh` and `ops/ci/check-no-live-secret.sh` catch keys, addresses and credential shapes; the name list itself is not available outside CI.
