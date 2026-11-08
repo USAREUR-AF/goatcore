@@ -29,10 +29,10 @@ CHECKPOINTS="$ROOT/ops/goatbuilder/fixtures/goatnet-from-scratch/checkpoints"
 SECTION="Rehearse it on the fixture|Rehearse it on the worked example"
 fail=0; ran=0
 
-for page in "$ROOT"/docs/tutorials/[0-9][0-9]-*.md; do
-  [ -f "$page" ] || continue
-  name="$(basename "$page" .md)"
-  script="$(python3 - "$page" "$SECTION" <<'PY'
+# The section's bash blocks. A function, not a heredoc inside $(...): bash 3.2
+# (macOS's /bin/bash) misparses the backticks of the fences in that form.
+extract() {
+  python3 - "$1" "$2" <<'PY'
 import re, sys
 text = open(sys.argv[1], encoding="utf-8").read().splitlines()
 want = sys.argv[2].split("|")
@@ -58,7 +58,12 @@ for l in text[start + 1:]:
         out.append(l)
 print("\n".join(out))
 PY
-)"
+}
+
+for page in "$ROOT"/docs/tutorials/[0-9][0-9]-*.md; do
+  [ -f "$page" ] || continue
+  name="$(basename "$page" .md)"
+  script="$(extract "$page" "$SECTION")"
   [ -n "$script" ] || continue
   ran=$((ran + 1))
   scratch="$(mktemp -d)"

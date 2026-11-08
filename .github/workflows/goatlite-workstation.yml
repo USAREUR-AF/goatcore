@@ -4,8 +4,10 @@
 # venv with the pinned ansible-core and its collections, Playwright's Chromium
 # with its system libraries and a launch check, then a goatlite render that
 # mints a CA with that toolchain. Each step has a negative control
-# (ops/tutorials/check-workstation.sh). Path-filtered to the page and what its
-# commands read.
+# (ops/tutorials/check-workstation.sh). The macOS job runs the page's macOS
+# commands as written on a GitHub macOS runner (Homebrew comes installed there;
+# the page installs it first). Path-filtered to the page and what its commands
+# read.
 #
 # Rollback: rm this file.
 
@@ -44,3 +46,12 @@ jobs:
         run: bash ops/tutorials/check-workstation.sh --lint
       - name: The setup runs as written, with a negative control per prerequisite
         run: bash ops/tutorials/check-workstation.sh
+
+  macos:
+    name: tutorial setup on macOS (Apple Silicon)
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: The macOS setup runs as written, with its controls
+        run: bash ops/tutorials/check-workstation.sh --macos

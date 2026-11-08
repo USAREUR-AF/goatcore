@@ -131,6 +131,10 @@ pub fn run(repo: &Path, only_env: Option<&str>, frozen: bool, credentials: bool)
                 continue;
             }
         }
+        if tool == "ansible-playbook" && which(tool) {
+            checks.push(ansible_row(Command::new(tool).arg("--version").output()));
+            continue;
+        }
         if which(tool) {
             checks.push(ok(&format!("tool:{tool}"), why.to_string()));
         } else {
@@ -1024,6 +1028,34 @@ fn lite_secrets_row(c: Check) -> Check {
         return ok(&c.name, format!("{}: produced by phase 3 of the standup", c.detail));
     }
     c
+}
+
+/// ansible-core supports only some Python releases as its controller: 2.20 runs
+/// on 3.12 to 3.14 and stops with a traceback on 3.15, which is what Homebrew's
+/// `python` formula installs. On PATH is therefore not enough; the row runs
+/// `ansible-playbook --version` and names the interpreter it reports.
+fn ansible_row(out: std::io::Result<std::process::Output>) -> Check {
+    const FIX: &str = "ansible-core 2.20 runs on Python 3.12 to 3.14: recreate the venv with one (macOS: brew install python@3.14, then python3.14 -m venv --clear ~/.venvs/goatlite) and reinstall its modules (docs/tutorials/00-goatlite.md section 1)";
+    match out {
+        Ok(o) if o.status.success() => {
+            let text = String::from_utf8_lossy(&o.stdout);
+            let core = text.lines().next().unwrap_or("").trim().to_string();
+            let py = text
+                .lines()
+                .find_map(|l| l.trim().strip_prefix("python version = "))
+                .map(|v| v.split_whitespace().next().unwrap_or(v).to_string());
+            match py {
+                Some(v) => ok("tool:ansible-playbook", format!("{core} on Python {v} (the push converger)")),
+                None => ok("tool:ansible-playbook", format!("{core} (the push converger)")),
+            }
+        }
+        Ok(o) => {
+            let err = String::from_utf8_lossy(&o.stderr);
+            let last = err.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("no output").trim().to_string();
+            refused("tool:ansible-playbook", format!("ansible-playbook is on PATH but does not start: {last}"), FIX)
+        }
+        Err(e) => refused("tool:ansible-playbook", format!("ansible-playbook is on PATH but cannot run: {e}"), FIX),
+    }
 }
 
 /// The image-pull token (goatlite.md §5 row 7). The goatnet's images are public
@@ -1959,6 +1991,24 @@ mod tests {
         assert!(!lite_secrets_row(unreadable).ok);
         let other = Check { name: "secrets:posture".into(), ok: false, detail: "does not exist".into(), fix: None };
         assert!(!lite_secrets_row(other).ok);
+    }
+
+    #[cfg(unix)]
+    fn output(code: i32, stdout: &str, stderr: &str) -> std::process::Output {
+        use std::os::unix::process::ExitStatusExt;
+        std::process::Output { status: std::process::ExitStatus::from_raw(code << 8), stdout: stdout.into(), stderr: stderr.into() }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_ansible_that_does_not_start_refuses_and_names_the_python_range() {
+        let good = ansible_row(Ok(output(0, "ansible-playbook [core 2.20.11]\n  config file = None\n  python version = 3.14.10 (main) [Clang]\n", "")));
+        assert!(good.ok && good.detail.contains("core 2.20.11") && good.detail.contains("Python 3.14.10"), "{good:?}");
+        let crash = ansible_row(Ok(output(1, "", "Traceback (most recent call last):\nAttributeError: module 'dataclasses' has no attribute '_is_type'\n")));
+        assert!(!crash.ok && crash.detail.contains("_is_type"), "{crash:?}");
+        assert!(crash.fix.as_deref().unwrap_or("").contains("python@3.14"), "{crash:?}");
+        let gone = ansible_row(Err(std::io::Error::from(std::io::ErrorKind::NotFound)));
+        assert!(!gone.ok);
     }
 
     #[test]

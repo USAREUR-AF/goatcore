@@ -39,7 +39,7 @@ You never run `goatbuilder` on the box. It runs on your laptop and does everythi
 
 The run uses these programs on your laptop. Install them now, so nothing stops you partway through. Section 4's doctor command checks the laptop and prints the install command for anything it finds missing.
 
-The laptop can run Linux or macOS. ⚠️ Windows itself is not supported yet. WSL runs the Linux path and may work, but no run has been tested on it. The Linux commands below are for Ubuntu 24.04, and CI runs them as written on a fresh Ubuntu 24.04 on every change to this page (`.github/workflows/goatlite-workstation.yml`).
+The laptop can run Linux or macOS. ⚠️ Windows itself is not supported yet. WSL runs the Linux path and may work, but no run has been tested on it. The Linux commands below are for Ubuntu 24.04, and CI runs them as written on a fresh Ubuntu 24.04 on every change to this page; it runs the macOS commands as written on a GitHub macOS runner, which comes with Homebrew already installed (`.github/workflows/goatlite-workstation.yml`).
 
 | Program                                                   | Used for                                                                                           |
 | --------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
@@ -52,7 +52,7 @@ The laptop can run Linux or macOS. ⚠️ Windows itself is not supported yet. W
 | `yq`, version 4, by mikefarah                           | reading the certificate manifest when phase 1 mints the goatnet's certificate authority. The `yq` that apt installs is a different program with the same name |
 | `age`                                                   | encrypting the certificate authority's key                                                         |
 | `go` 1.26 or newer, `pkg-config` and the PC/SC headers  | building the certificate tools phase 1 runs (`ops/enrollment`). The PC/SC headers are `libpcsclite-dev` on Linux; macOS has them built in |
-| `python3` with `venv`                                   | one Python environment for this tutorial, set up in the checkout below                            |
+| `python3` 3.12 to 3.14, with `venv`                     | one Python environment for this tutorial, set up in the checkout below                            |
 | `ansible-playbook`                                      | every deploy step on the box; `ansible-core` 2.20.11 from pip, inside that environment            |
 | `pyyaml`, `jsonschema`, `jmespath`                      | the render, the checks, and the access-rule steps; from pip, inside that environment              |
 | `node`, `npm`, Playwright with Chromium               | the two acceptance checks that drive a browser                                                     |
@@ -94,11 +94,50 @@ cargo --version
 
 #### On macOS
 
+These commands are for Apple Silicon and Intel Macs, in the default shell, zsh. Install Homebrew first, from `https://brew.sh`, if `brew --version` does not answer. Its installer asks for your password, installs Apple's Command Line Tools (the compiler the builds below use), and ends by printing two lines that put `brew` on your `PATH`; run them. On Apple Silicon they are:
+
 ```text
-brew install git python node yq age go rustup
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> ~/.zprofile
+eval "$(/opt/homebrew/bin/brew shellenv)"
 ```
 
-The Python environment below uses Homebrew's `python3`; macOS's own is too old for `ansible-core` 2.20. Check with `python3 --version`, which must print 3.12 or newer.
+On an Intel Mac Homebrew lives in `/usr/local`, which is already on the `PATH`, and the installer prints no such lines.
+
+Install the packages. macOS has the PC/SC framework built in, so it needs no `pkg-config` or PC/SC headers:
+
+```bash
+brew install git python@3.14 node yq age go
+```
+
+`ansible-core` 2.20 runs on Python 3.12 to 3.14. macOS's own `python3` is 3.9, too old, and Homebrew's `python` formula is now 3.15, too new: `ansible-playbook` stops with a traceback ending `module 'dataclasses' has no attribute '_is_type'`. So install `python@3.14`, and put its `python3` first on the `PATH` of this terminal, so that the Python environment below is made with it. The environment keeps that Python, so later terminals need only activate it:
+
+```bash
+export PATH="$(brew --prefix python@3.14)/libexec/bin:$PATH"
+python3 --version
+```
+
+It prints `Python 3.14` and a patch number. If it prints another version, your `python@3.14` predates the `python3` name in that directory: run `brew upgrade python@3.14` and the two lines again.
+
+Install Rust with `rustup`, the same way as on Linux. Do not use Homebrew's `rustup` formula: it installs no toolchain and leaves `cargo` off the `PATH`. The installer adds `cargo` to new terminals itself; the second line puts it on the `PATH` of this one:
+
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+. "$HOME/.cargo/env"
+cargo --version
+```
+
+#### An SSH key
+
+`goatbuilder` reaches the box over SSH with your key, and phase 1 makes that key the box's administrator key. If `ls ~/.ssh/id_*.pub` lists nothing, make one, then copy it to the box. Replace `ubuntu@192.0.2.50` with the box's user and address:
+
+```text
+ssh-keygen -t ed25519
+ssh-copy-id ubuntu@192.0.2.50
+ssh ubuntu@192.0.2.50 true
+```
+
+The last line must return without asking for a password. If you gave the key a passphrase, load it into the SSH agent once, so the standup's many connections do not each ask for it: `ssh-add ~/.ssh/id_ed25519` on Linux, `ssh-add --apple-use-keychain ~/.ssh/id_ed25519` on macOS.
 
 ### Get the checkout and build the two programs
 
@@ -120,7 +159,7 @@ goatbuilder --version
 goat --version
 ```
 
-The `export` line covers this terminal. If `--version` says "command not found" in a new terminal, add the same line to your shell profile.
+The `export` line covers this terminal. If `--version` says "command not found" in a new terminal, add the same line to your shell profile: `~/.profile` on Ubuntu, `~/.zprofile` on macOS.
 
 ### Set up Python, Ansible and the browser
 
@@ -139,7 +178,7 @@ ansible-galaxy collection install -r ops/ansible/requirements.yml
 
 ⚠️ Every terminal you use for this tutorial activates the environment first, with `. ~/.venvs/goatlite/bin/activate`. `goatbuilder` runs `python3` and `ansible-playbook` from your `PATH`, so in a terminal without the environment the first phase that needs them fails.
 
-Install the browser for the two browser checks. `--with-deps` also installs the system libraries Chromium needs on Linux, and asks for your password to do it:
+Install the browser for the two browser checks. `--with-deps` also installs the system libraries Chromium needs on Linux, and asks for your password to do it; macOS needs none, and it asks for nothing there:
 
 ```bash
 (cd ops/goat-id-console/web/e2e && npm ci && npx playwright install --with-deps chromium)
