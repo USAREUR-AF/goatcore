@@ -79,6 +79,7 @@ pub(crate) use membership::{
     OwnerJoin, PersonBaseline, PEOPLE_FILE, RUNBOOK,
 };
 pub use membership::{ApplyArgs, PauseArgs, ResumeArgs, WarrantExit};
+pub(crate) use membership::CONTEXT_CONVERGE_KEY;
 
 #[path = "warrant_membership.rs"]
 mod membership;

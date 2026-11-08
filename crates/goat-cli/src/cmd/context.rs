@@ -81,8 +81,8 @@ pub(crate) const GOATNET_KEYS: &[&str] = &[
     "demo_service",
     "i18n_feedback_email",
     // The goatnet's warrant membership declaration (`enforce` | `report` |
-    // `none`), read by cmd::warrant_membership::governance.
-    crate::cmd::warrant_membership::CONTEXT_CONVERGE_KEY,
+    // `none`), read by cmd::warrant (membership governance).
+    crate::cmd::warrant::CONTEXT_CONVERGE_KEY,
 ];
 const GOATNET_SCHEMA: &str = "goat/goatnet/v1";
 /// Keys the signed bundle also writes: `goatnet.toml` fills them only when the
