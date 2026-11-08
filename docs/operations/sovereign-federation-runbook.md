@@ -170,9 +170,12 @@ in the keyring and resume with `--from 6`. After `compose`, read the agreement d
 other the same way. Those reads, and the decision about what data flows, are the only acts that
 are not machine-driven.
 
-The SPIFFE trust bundle moves outside the directory when both sides run SPIRE federation
-(phase 13): phase 5 names the files. After that first exchange, refresh is automatic: each side
-re-pulls the other's published bundle on a timer, so **the other side replacing their
+When both sides run SPIRE federation (phase 13), phase 5 also uploads the SPIFFE trust bundle
+phase 2 exported and fetches theirs to `$FED_WORK/theirs.spiffe-bundle`. Nothing in the package
+names the bundle, so the step checks it against the signature of the upload that stored it,
+under their verifying key (saltlick `SPEC.md`, "Checking a hosted file against the key read
+aloud"), and places it only when that holds. After that first exchange, refresh is automatic:
+each side re-pulls the other's published bundle on a timer, so **the other side replacing their
 certificate authority does not break the link**.
 
 **No directory.** `FED_NO_DIRECTORY=1` is for a counterparty that can reach no directory. Phase 5
