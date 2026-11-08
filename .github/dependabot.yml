@@ -46,5 +46,7 @@ updates:
       # own reviewed upgrade plan, not a dependabot auto-bump. The pgedge
       # minimal images also drop pg_trgm on major bumps, which breaks
       # 02-spock-extension.sql (see PR #2080 CI failures).
+      # The tags are not semver (`16-spock5-minimal`), so update-types never
+      # matched and Dependabot proposed 16 -> 18 (#59). Pin the major by range.
       - dependency-name: "ghcr.io/pgedge/pgedge-postgres"
-        update-types: ["version-update:semver-major"]
+        versions: [">=17"]

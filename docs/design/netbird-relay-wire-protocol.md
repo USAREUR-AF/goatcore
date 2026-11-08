@@ -563,6 +563,8 @@ Each peer has its own Listener with a per-peer interest-set. The Listener filter
 
 **Scale concern:** notification is O(N) per peer state change (where N = total connected peers). At 600 peers in our scope envelope, a single peer disconnect produces 600 listener notifications. Mostly cheap (each does an interest-set membership check) but worth measuring once we get to 600+ peers in soak. For Block 33's Rust impl, **a more efficient design pre-builds inverse interest indexes** — `map[PeerID]Vec<&Listener>` so a peer-state change touches only listeners with explicit interest. Defer to 33B as an optimization; conformance does not require this internal change.
 
+**Rust impl status — built.** `goat-relay/src/routing.rs` keeps the subscription registry indexed both ways under one lock: subject → watchers (read by the online/offline fan-out) and watcher → subjects (so a departing peer's subscriptions are stripped in time proportional to what it watched, not a walk over every subject in the registry). A peer may watch at most `MAX_SUBSCRIPTIONS_PER_PEER` (16,384) subjects; new subjects past that are refused without disconnecting the peer, and counted as `subscriptions_refused` on the stats endpoint. Not observable at the wire for any client within the cap.
+
 ### §4.6 — Shutdown
 
 `Relay.Shutdown(ctx)` (`relay.go:177-194`):
