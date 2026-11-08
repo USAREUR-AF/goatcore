@@ -204,6 +204,8 @@ drive)
   export FED_CA_CERT="$K/ca.pem" FED_CA_KEY="$K/ca-key.pem" FED_CORE_CN="core-$us"
   FED_CORE_SAN="$(openssl x509 -in "$K/core.pem" -noout -ext subjectAltName | grep -oE 'IP Address:[0-9.]+' | cut -d: -f2)"
   export FED_CORE_SAN GOAT_AWS_MODE=none GOAT_BIN=/usr/local/bin/goat GOAT_ANSIBLE_TRUNK_REMOTE=origin HOME=/root
+  # The harness places each side's package and CA itself; phase 5 runs without a directory.
+  export FED_NO_DIRECTORY=1
   cd /opt/goat
   case "$avenue" in
     goatbuilder) exec goatbuilder -C /opt/goat --yes federate "$them" --as "$us" --from "$from" --to "$to" ;;

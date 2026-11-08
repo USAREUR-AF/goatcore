@@ -415,7 +415,7 @@ pub enum Cmd {
         dry_run: bool,
     },
     /// A sovereign peering declared, converged and verified (ADR 1157): our
-    /// half measured, the packages exchanged out of band, one agreement
+    /// half measured, the packages exchanged through the peering directory, one agreement
     /// composed and verified, the leaves minted from it, the rules rendered by
     /// the one writer, the edge deployed, the transport the agreement chose
     /// opened, acceptance in all four tiers. Replaces

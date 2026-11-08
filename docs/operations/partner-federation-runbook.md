@@ -9,12 +9,11 @@ link with us.** You have your own certificate authority, your own data fabric an
 security policy. You will not be given access to our systems, our source code or our
 configuration, and you do not need any of them.
 
-**This document is meant to be sufficient on its own.** Where it is not — where a step needs a
-fact only we hold, or a file only we can send you — it says so in bold, in place, as
-**Ask us:**. Every one of those is also collected under **Everywhere you must contact
-us**, so you can send one message rather than eight. If you find yourself needing to ask us
-something this document did not tell you to ask, that is a defect in this document and we
-want to hear about it.
+**This document is meant to be sufficient on its own.** Every fact about us that your half needs
+is in our signed package, which you fetch from the peering directory (step 3). What still needs a
+person is collected under **What still needs a conversation**: the call in step 1, and three
+cases that depend on your platform. If you find yourself needing to ask us something else, that
+is a defect in this document and we want to hear about it.
 
 Two companion documents you should have alongside this one:
 
@@ -23,8 +22,8 @@ Two companion documents you should have alongside this one:
 | **Federation package, version 1** | The wire format and the composition rules. The contract | To build your half |
 | **Conformance vectors** | ~30 worked examples with byte-exact expected output | To prove your implementation is right |
 
-Both travel by email or in a meeting pack. **Ask us:** for the vector bundle if it was not
-attached — it is a directory of files, not a link, and you cannot fetch it yourself.
+Both are public, in the goatcore repository: the specification at
+`docs/design/federation-package-spec.md`, the vectors under `ops/federation/vectors/`.
 
 **Status: this procedure has been run in rehearsal between two environments on the same
 infrastructure, and never yet against a partner on foreign infrastructure.** Treat it as a
@@ -152,8 +151,8 @@ that fails at step 5 — we are unreachable, the MTU is wrong, a firewall is not
 said — costs you nothing but time, having disclosed no namespace and no release set. Take this
 option if your policy makes disclosure a decision; skip it otherwise.
 
-**Ask us:** for our identifier and our trust domain. They are facts about us and you cannot
-derive them. Ours are stated in the message that accompanied this document.
+Our identifier and our trust domain are in our package (`sovereign_id`,
+`identity.trust_domain`), which step 3 fetches from the directory.
 
 ---
 
@@ -263,9 +262,8 @@ If either party later changes its signing key or its certificate authority, it g
 **this same step again**. A key change is exactly as significant as a first appearance and is
 treated as one.
 
-**A directory is a cache of this binding, never its source.** If we later share a directory,
-a key you learn only from it is a key you learned from whoever runs it. Two parties who share
-no directory federate exactly as well as two who share one.
+**The directory moves packages; it never binds a key.** A key you learn only from it is a key you
+learned from whoever runs it, so the key you compose with is the one read back on this call.
 
 ---
 
@@ -348,10 +346,13 @@ from `compose-full` should compose or refuse for reasons you can name.
 
 ### What crosses
 
-Each party sends the other its signed package. **Any channel at all** — email, a shared
-directory, a courier, a chat you do not trust. The packages are signed and the outcome is
-digest-compared, so the channel does not need to be secure. This is the deliberate design: a new
-transport for the packages is not a security decision.
+Each party publishes its signed package and CA certificate to the **peering directory**
+(saltlick), and fetches the other's: `PUT`/`GET /v1/parties/<sovereign_id>/package` and
+`/ca`, beside a signed pointer entry naming the package's sha256. Neither side needs a public
+host, and nothing is sent by email. The packages are signed and the outcome is digest-compared,
+so the directory does not need to be trusted: it carries files, and compose checks them against
+the keys read back in step 1. A party that can reach no directory hands the same two files over
+by any channel; the checks are unchanged.
 
 ### What each side runs
 
@@ -906,23 +907,20 @@ agreement before you build against it.
 
 ---
 
-## Everywhere you must contact us
+## What still needs a conversation
 
-Consolidated so you can send one message. Every item here is a fact we hold or a file we hold;
-none of them is derivable from this document.
+Everything else is in our package or in the public goatcore repository.
 
-| # | What you need | Why we cannot put it in this document |
+| # | What | Why it is not in the package |
 |---|---|---|
-| 1 | **Our identifier and our trust domain** | Facts about us. They are in the message that accompanied this document; if they are not, ask |
-| 2 | **Our Ed25519 signing public key and our CA fingerprint**, over an independently authenticated channel | This is step 1 and it is the point. It cannot be written down here — a value in this document is a value from the channel that carried this document |
-| 3 | **The conformance vector bundle** | It is a directory of byte-exact files in a repository you cannot reach. It must be sent to you |
-| 4 | **Our edge's public address and UDP port** | A fact about our deployment, and it may change before your run |
-| 5 | **Whether we can be the listener** | Depends on our NAT posture at the time. Establish it before step 2, not at step 6 |
-| 6 | **A conversation, before you build anything**, if your fabric image is not post-quantum capable | The designed answer is standalone post-quantum key agreement on the tunnel itself. It has never been run, and it is not something to discover mid-build |
-| 7 | **Our validated-cryptography posture**, if your accreditation needs a claim about it | It depends on the host we run your edge on, and on a certificate number read off the public database. It is per-host, not per-product |
-| 8 | **Our edge router's log**, whenever a refusal and a fault are indistinguishable from your side | **What we will refuse**. There is no other way |
+| 1 | **Our Ed25519 signing public key and our CA fingerprint**, read aloud on one call | This is step 1 and it is the point. A value from a document or a directory is a value from whoever carried it |
+| 2 | **A conversation, before you build anything**, if your fabric image is not post-quantum capable | The designed answer is standalone post-quantum key agreement on the tunnel itself. It has never been run, and it is not something to discover mid-build |
+| 3 | **Our validated-cryptography posture**, if your accreditation needs a claim about it | It depends on the host we run your edge on, and on a certificate number read off the public database. It is per-host, not per-product |
+| 4 | **Our edge router's log**, whenever a refusal and a fault are indistinguishable from your side | **What we will refuse**. There is no other way |
 
-There is deliberately no ninth. **We do not supply a verifier, a library, or a container image**,
+Our edge's address and port are our package's `transport_offer.endpoint`.
+
+There is deliberately no fifth. **We do not supply a verifier, a library, or a container image**,
 and you should not wait for one. The specification and the vectors are the whole of what you
 need, and if they are not, that is the defect we want reported.
 

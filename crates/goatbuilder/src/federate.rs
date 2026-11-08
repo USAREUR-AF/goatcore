@@ -7,7 +7,7 @@
 //!             the SPIRE bundle to exchange
 //!   3  T      init — our half, read from the running system
 //!   4  T      lint our package against the spec
-//!   5  MANUAL exchange packages; bind their verifying key out of band
+//!   5  MANUAL exchange through the directory; read the key and CA fingerprint aloud
 //!   6  T      compose — one agreement, one digest, no perspective
 //!   7  T      verify the agreement from our side
 //!   8  T      mint the peering leaf certificates from the agreement
@@ -89,7 +89,7 @@ fn shell_safe(s: &str) -> bool {
     !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || "._:+/=-".contains(c))
 }
 
-/// The optional directory step (ops/federation/standup/directory.py), run inside
+/// The directory step (ops/federation/standup/directory.py), run inside
 /// phase 5 before it stops. `None` when FED_DIRECTORY_URL is unset, or when it,
 /// FED_PACKAGE_URL, FED_COUNTERPARTY_ID or FED_CA_CERT holds anything but plain URL
 /// characters: the values are printed into the plan and passed to the helper.
@@ -108,17 +108,38 @@ fn directory_step() -> Option<(String, Option<String>, Option<String>)> {
     Some((url, Some(pkg).filter(|v| !v.is_empty()), Some(id).filter(|v| !v.is_empty())))
 }
 
-/// Phase 5's closing lines, word for word the script's.
-fn directory_text(r: &str, ours: &str) -> String {
-    match directory_step() {
-        Some((url, pkg, id)) => format!(
-            "     Directory step (advisory; grants nothing), run before this stop:\n       python3 '{r}/ops/federation/standup/directory.py' --url '{url}' --ours '{ours}'{} --their-id '{}'\n     It uploads our package (unless FED_PACKAGE_URL names our own host) and CA,\n     publishes our pointer, fetches their package and CA, checks digest,\n     signatures and CA fingerprint, places what is not on disk, and prints the\n     key and fingerprint to read back and a compatibility report.",
-            pkg.map(|p| format!(" --package-url '{p}'")).unwrap_or_default(),
-            id.unwrap_or_else(|| "<unset>".to_string())
-        ),
-        None if !env_or("FED_DIRECTORY_URL", String::new()).is_empty() => "     FED_DIRECTORY_URL, FED_PACKAGE_URL, FED_COUNTERPARTY_ID or FED_CA_CERT holds\n     characters outside a plain URL; the directory step is off.".to_string(),
-        None => "     Optional: set FED_DIRECTORY_URL, FED_COUNTERPARTY_ID and FED_SIGNING_KEY to\n     exchange packages and CA certificates through a peering directory instead\n     (advisory; grants nothing; no public host needed).".to_string(),
-    }
+/// Phase 5's label and body, word for word the script's.
+fn exchange(r: &str, ours: &str, work: &str, counterparty: &str, keyring: &str) -> (&'static str, String) {
+    let directory_label = "exchange through the directory; read the key and CA fingerprint aloud";
+    let (label, head) = if env_or("FED_NO_DIRECTORY", String::new()) == "1" {
+        (
+            "exchange packages by hand (FED_NO_DIRECTORY=1); read the key and CA fingerprint aloud",
+            format!("No directory: FED_NO_DIRECTORY=1 is for a counterparty that can reach none.\n     Send {ours} and our CA certificate to the counterparty, with {work}/ours.spiffe-bundle if phase 2 wrote one.\n     Obtain theirs and place them at: {counterparty}\n       {work}/theirs-ca.pem\n       {work}/theirs.spiffe-bundle"),
+        )
+    } else {
+        match directory_step() {
+            Some((url, pkg, id)) => (
+                directory_label,
+                format!(
+                    "Directory step, run before this stop (it grants nothing):\n       python3 '{r}/ops/federation/standup/directory.py' --url '{url}' --ours '{ours}'{} --their-id '{}'\n     It uploads our package (unless FED_PACKAGE_URL names our own host) and CA,\n     publishes our pointer, fetches their package and CA to {counterparty}\n     and {work}/theirs-ca.pem, checks digest, signatures and CA fingerprint,\n     and prints both verifying keys and CA fingerprints in groups of four and a\n     compatibility report. Their entry not there yet: run phase 5 again after\n     they run theirs. With SPIRE federation on, hand over\n     {work}/ours.spiffe-bundle and place theirs at {work}/theirs.spiffe-bundle.",
+                    pkg.map(|p| format!(" --package-url '{p}'")).unwrap_or_default(),
+                    id.unwrap_or_else(|| "<unset>".to_string())
+                ),
+            ),
+            None if !env_or("FED_DIRECTORY_URL", String::new()).is_empty() => (
+                directory_label,
+                "FED_DIRECTORY_URL, FED_PACKAGE_URL, FED_COUNTERPARTY_ID or FED_CA_CERT holds\n     characters outside a plain URL; phase 1 refuses this run.".to_string(),
+            ),
+            None => (
+                directory_label,
+                "Set FED_DIRECTORY_URL, FED_COUNTERPARTY_ID and FED_SIGNING_KEY; phase 1 refuses\n     without them. The directory step then uploads our package and CA, fetches\n     theirs, and prints both keys and CA fingerprints and a compatibility report.\n     FED_NO_DIRECTORY=1 is for a counterparty that can reach no directory.".to_string(),
+            ),
+        }
+    };
+    (
+        label,
+        format!("{head}\n     On one call, each side reads its verifying key and CA fingerprint aloud and\n     the other reads them back: a key taken from the package it verifies proves\n     nothing. Then record BOTH parties' keys, one per line, at:\n       {keyring}\n     as   <sovereign_id>=<44 base64 characters>\n     Phase 6 passes each line to compose as --key; compose refuses (exit 20)\n     for any party whose key is not bound. After compose, read the agreement\n     digest to each other the same way."),
+    )
 }
 
 /// The directory step's arguments, for a real run of phase 5. No shell: each
@@ -172,8 +193,7 @@ fn plan(repo: &Path, o: &Options, work: &str, edge_group: &str, resume: &str) ->
         p(2, "A", "prepare what the package measures: the federation interface and the SPIRE bundle", play("peering-prepare.yml")),
         p(3, "T", "init — our half, read from the running system", format!("{init_env}{goat} federate init --with-transport --with-data {}--out '{ours}'", if signing.is_empty() { String::new() } else { format!("--signing-key '{signing}' ") })),
         p(4, "T", "lint our package against the spec", format!("{goat} federate lint '{ours}'")),
-        p(5, "MANUAL", "exchange packages, and bind their verifying key out of band", format!(
-            "Send {ours} and our CA certificate to the counterparty, with {work}/ours.spiffe-bundle if phase 2 wrote one\n     (with FED_DIRECTORY_URL set, phase 5 moves the package and CA through the directory).\n     Obtain theirs and place them at: {counterparty}\n       {work}/theirs-ca.pem\n       {work}/theirs.spiffe-bundle\n     Bind their verifying key over a channel authenticated independently of\n     this link — a key taken from the package it verifies proves nothing.\n     Record BOTH parties' keys, one per line, at:\n       {keyring}\n     as   <sovereign_id>=<44 base64 characters>\n     Phase 6 passes each line to compose as --key; compose refuses (exit 20)\n     for any party whose key is not bound.\n{}", directory_text(&r, &ours))),
+        { let (label, body) = exchange(&r, &ours, work, &counterparty, &keyring); p(5, "MANUAL", label, body) },
     ];
     // Each `sovereign=key` line in the keyring becomes one --key argument; a
     // missing keyring is left for compose's own refusal to name.
@@ -269,7 +289,7 @@ fn plan_view(repo: &Path, o: &Options, work: &str, edge_group: &str, phases: &[P
             2 => "Make the link interface and export our trust bundle",
             3 => "Build our half of the agreement from the running system",
             4 => "Check our half is valid",
-            5 => "Swap halves with the other party, and confirm their key",
+            5 => "Swap halves through the directory, and read their key back",
             6 => "Combine both halves into one agreement",
             7 => "Check the agreement from our side",
             8 => "Create the certificates for this peering",
@@ -305,22 +325,26 @@ fn plan_view(repo: &Path, o: &Options, work: &str, edge_group: &str, phases: &[P
         match (ours, theirs, keys) {
             (Some(ours), Some(theirs), Some(keys)) => {
                 let steps: [(&str, Option<&str>, &str); 4] = [
-                    ("Send your half and your CA certificate to the other party", Some(&ours), ""),
+                    ("No directory: send your half and your CA certificate to the other party", Some(&ours), ""),
                     ("Get their half, CA certificate and trust bundle, and save them here", Some(&theirs), ""),
-                    ("Confirm their key another way", None, "Use a call or another channel you trust. A key that arrives inside their package proves nothing."),
+                    ("Read your key and CA fingerprint aloud on one call", None, "Each side reads the other's back. A key that arrives inside their package proves nothing."),
                     ("Save both keys here, one per line, as sovereign_id=key", Some(&keys), ""),
                 ];
                 for (i, (title, file, note)) in steps.iter().enumerate() {
                     s.push('\n');
                     s.push_str(&crate::output::hand_step(i + 1, title, *file, note, color));
                 }
-                s.push('\n');
-                let dir = if directory_step().is_some() {
-                    "Before it stops, phase 5 exchanges packages and CA certificates through the peering directory (saltlick): it uploads our package (unless FED_PACKAGE_URL names our own host) and CA, fetches theirs, and prints the key and CA fingerprint to read back and a compatibility report. It grants no access."
-                } else {
-                    "Optional: set FED_DIRECTORY_URL, FED_COUNTERPARTY_ID and FED_SIGNING_KEY to exchange packages and CA certificates through a peering directory (saltlick); no public host is needed. It grants no access."
-                };
-                s.push_str(&crate::tutor::fill(dir, "", ""));
+            }
+            (None, None, Some(keys)) => {
+                let steps: [(&str, Option<&str>, &str); 3] = [
+                    ("Phase 5 exchanges your half and CA certificate with theirs through the peering directory (saltlick)", None, "It uploads yours, fetches theirs, checks both, and prints both keys and CA fingerprints and a compatibility report. It grants no access. If their entry is not there yet, run phase 5 again after they run theirs."),
+                    ("Read your key and CA fingerprint aloud on one call", None, "Each side reads the other's back. A key that arrives inside their package proves nothing."),
+                    ("Save both keys here, one per line, as sovereign_id=key", Some(&keys), ""),
+                ];
+                for (i, (title, file, note)) in steps.iter().enumerate() {
+                    s.push('\n');
+                    s.push_str(&crate::output::hand_step(i + 1, title, *file, note, color));
+                }
             }
             // The script's words changed: show them rather than guess.
             _ => {
@@ -428,12 +452,12 @@ pub fn federate(repo: &Path, o: &Options) -> Result<Report> {
             continue;
         }
         if ph.kind == "MANUAL" {
-            // The optional directory step, inside phase 5 before the stop. It is
+            // The directory step, inside phase 5 before the stop. It is
             // advisory: its exit status is never read.
             if ph.n == 5 {
                 if let Some(args) = directory_args(repo, &work) {
                     let _ = Command::new("python3").args(&args).current_dir(repo).status();
-                    checks.push(row("directory", "the optional directory step ran; it is advisory and its result changes no phase".into()));
+                    checks.push(row("directory", "the directory step ran; it is advisory and its result changes no phase".into()));
                 }
             }
             checks.push(row("note", format!("^ OPERATOR STEP — do the above, then re-run with --from {}", ph.n + 1)));
@@ -517,7 +541,7 @@ mod tests {
         for gone in ["counterparty", "out of band", "no perspective", "Mint", "fail-closed", "sovereign edge", "ansible-preflight", "Only ipsec-fips"] {
             assert!(!view.contains(gone), "{gone}: {view}");
         }
-        assert!(view.contains("1. Send your half and your CA certificate to the other party:") && view.contains("Confirm their key another way"), "{view}");
+        assert!(view.contains("1. Phase 5 exchanges your half") && view.contains("Read your key and CA fingerprint aloud on one call"), "{view}");
         assert!(!view.contains('\u{2717}'), "a plan owes nothing, so it marks nothing: {view}");
         assert!(view.lines().all(|l| l.chars().count() <= 80 || !l.trim().contains(' ')), "{view}");
         let is_row = |l: &&str| l.split_whitespace().next().is_some_and(|w| w.parse::<u32>().is_ok());
@@ -569,7 +593,7 @@ mod tests {
         assert_eq!(phases.len(), 14, "{phases:?}");
         assert!(phases[0].starts_with("=== Phase 1 [GATE] peering preflight"));
         assert!(phases[1].starts_with("=== Phase 2 [A] prepare what the package measures"));
-        assert!(phases[4].starts_with("=== Phase 5 [MANUAL] exchange packages"));
+        assert!(phases[4].starts_with("=== Phase 5 [MANUAL] exchange through the directory"));
         assert!(phases[9].starts_with("=== Phase 10 [MANUAL] review what apply rendered"));
         assert!(phases[10].starts_with("=== Phase 11 [GATE] open the transport — REFUSED, no play for 'unknown'"), "{}", phases[10]);
         assert!(phases[12].starts_with("=== Phase 13 [A] federate the SPIRE trust domains"));

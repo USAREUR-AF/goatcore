@@ -244,6 +244,9 @@ drive() { # $1 sovereign, $2 avenue, $3 from, $4 to
     -e "FED_CORE_CN=core-$s" -e "FED_CORE_SAN=$(core_ip "$s")"
     -e "FED_ROUTER_DOCKER_HOST=ssh://goat@$(core_ip "$s")"
     -e GOAT_AWS_MODE=none -e GOAT_BIN=/usr/local/bin/goat -e HOME=/root -e GOAT_ANSIBLE_TRUNK_REMOTE=origin
+    # The harness places each side's package and CA itself, between the two
+    # hosts it owns, so phase 5 runs without a directory.
+    -e FED_NO_DIRECTORY=1
   )
   case "$avenue" in
     goatbuilder) docker exec "${env[@]}" -w /opt/goat "$h" goatbuilder -C /opt/goat --yes federate "$them" --as "$s" --from "$from" --to "$to" ;;
@@ -325,7 +328,7 @@ accept_as() { # $1 sovereign, $2 avenue
   local s="$1" avenue="$2" them w; them="$(other "$s")"; w="$WORK/$s/fedwork"
   mkdir -p "$w"; cp "$WORK/$s/agreement.json" "$w/agreement.json"
   local env=(
-    "FED_WORK=$w" "GOAT_AWS_MODE=none" "FED_ACCEPTANCE_STRICT=1"
+    "FED_WORK=$w" "GOAT_AWS_MODE=none" "FED_ACCEPTANCE_STRICT=1" "FED_NO_DIRECTORY=1"
     "FED_OURS_REST=http://$(core_ip "$s"):8000" "FED_THEIRS_REST=http://$(core_ip "$them"):8000"
     "FED_EDGE_LOG_OURS=docker exec fed-$s-edge docker logs goat-zenoh-edge-$them"
     "FED_PROBE_THEIRS_REST=http://$(edge_ip "$them"):8101"
@@ -415,9 +418,11 @@ scenario() { # $1 number, $2 first side (it also listens), $3 avenue
 
   say "scenario $n: the failures that make the passes mean something"
   # F-424: a partner authority on a core router IS an authorization grant.
+  # Both subjects are printed by the runner's openssl: the host image's openssl
+  # may format names differently (3.5 drops the spaces around '=').
   for s in pasture meadow; do
     rec "s$n-$s-core-trusts-only-its-own-ca" -- bash -c \
-      "docker exec fed-$s-core sh -c 'grep -c BEGIN /etc/goat-core/ca.pem' | grep -qx 1 && [ \"\$(docker exec fed-$s-core openssl x509 -in /etc/goat-core/ca.pem -noout -subject)\" = \"\$(openssl x509 -in '$WORK/$s/keys/ca.pem' -noout -subject)\" ]"
+      "docker exec fed-$s-core sh -c 'grep -c BEGIN /etc/goat-core/ca.pem' | grep -qx 1 && [ \"\$(docker exec fed-$s-core cat /etc/goat-core/ca.pem | openssl x509 -noout -subject)\" = \"\$(openssl x509 -in '$WORK/$s/keys/ca.pem' -noout -subject)\" ]"
     rec "s$n-$s-tunnel-carried-it" -- bash -c \
       "docker exec fed-$s-edge wg show wg-fed0 transfer | awk '{print; if (\$2 < 1 || \$3 < 1) exit 1}'"
   done

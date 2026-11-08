@@ -303,7 +303,7 @@ accept_as() { # $1 scenario, $2 sovereign, $3 avenue
   w="$RECORD/s$n-$s-fedwork"; mkdir -p "$w"
   hget "$s" "/var/lib/goat-federation/$them/agreement.json" > "$w/agreement.json"
   local env=(
-    "FED_WORK=$w" "GOAT_AWS_MODE=none" "FED_ACCEPTANCE_STRICT=1"
+    "FED_WORK=$w" "GOAT_AWS_MODE=none" "FED_ACCEPTANCE_STRICT=1" "FED_NO_DIRECTORY=1"
     "FED_OURS_REST=http://127.0.0.1:${b}000" "FED_THEIRS_REST=http://127.0.0.1:${tb}000"
     "FED_EDGE_LOG_OURS=$BIN/on-$s sudo docker logs goat-zenoh-edge-$them"
     "FED_PROBE_THEIRS_REST=http://127.0.0.1:${tb}101"

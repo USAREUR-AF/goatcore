@@ -963,8 +963,8 @@ and digest are in [`../../ops/federation/vectors/`](../../ops/federation/vectors
 
 The example above is pretty-printed, and the vectors hold its byte-exact form. That is a
 convenience, and it must not become the only place a rule lives. **The vectors are normative
-(§10), and an external partner may not have them** — they sit in a repository; this document
-travels by email, in a meeting pack, as an attachment to an interconnection agreement.
+(§10), and this document is also read on its own** — as an attachment to an interconnection
+agreement, away from the repository the vectors live in.
 
 So: **every rule that changes the bytes, or changes whether an agreement exists at all, is
 stated in prose in this document.** The vectors confirm an implementation. They are not where it
