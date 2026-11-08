@@ -52,6 +52,10 @@ segment: `release/REL-ALL/<rest>` crosses as `from/<you>/REL-ALL/<rest>`.
       peering forwarder first, because its address is a value that side's package carries:
       [`peering-forwarder.md`](../design/peering-forwarder.md) ([ADR 1218](../adr/1218-peering-forwarder-when-neither-edge-accepts-inbound.md)).
       No other reachability is required.
+- [ ] Both sides reach the same **peering directory** (saltlick) over HTTPS. The driver exchanges
+      your packages and CA certificates through it, so neither side needs a public host and
+      nothing is sent by email. It grants nothing:
+      [`peering-directory-service.md`](../design/peering-directory-service.md).
 - [ ] You have agreed, in writing, **what data flows** and **in which direction**. Everything
       below is mechanical; that is the decision. The names each router presents are derived from
       the agreement, not agreed by hand (Step 2).
@@ -70,12 +74,23 @@ until the GENERATED artifacts were the thing deployed.
 
 ```bash
 ops/scripts/peering-standup.sh <peering> --plan     # prints every phase, runs nothing
-ops/scripts/peering-standup.sh <peering>            # stops at phase 5, which is yours
-ops/scripts/peering-standup.sh <peering> --from 6   # resume after the exchange; stops at phase 10
+ops/scripts/peering-standup.sh <peering>            # exchanges through the directory, stops at phase 5
+ops/scripts/peering-standup.sh <peering> --from 6   # resume after the call; stops at phase 10
 ops/scripts/peering-standup.sh <peering> --from 11  # resume after the review
 ```
 
 `goatbuilder federate <peering>` runs the same phases with the same numbers and `--from`/`--to`.
+
+Set these before the run; phase 1 refuses without the first three:
+
+| Variable | Value |
+|---|---|
+| `FED_DIRECTORY_URL` | the peering directory, `https://…`, the same one your counterparty uses |
+| `FED_COUNTERPARTY_ID` | the counterparty's `sovereign_id` (ISO 3166-1 alpha-3) |
+| `FED_SIGNING_KEY` | the key that signs your package; it also signs your directory entry and uploads |
+| `FED_CA_CERT` | your CA certificate (PEM), the one phase 8 signs the peering leaves with; unset, the profile's `ca-roots.pem` |
+| `FED_PACKAGE_URL` | **leave unset**: the directory hosts your package. Set it only to serve the package from a public host of your own, behind TLS, never on a mesh |
+| `FED_NO_DIRECTORY` | `1` only for a counterparty that can reach no directory; phase 5 then names the files to hand over |
 
 | # | Kind | Phase | Worked when |
 |---|---|---|---|
@@ -83,7 +98,7 @@ ops/scripts/peering-standup.sh <peering> --from 11  # resume after the review
 | 2 | A | prepare what the package measures: the federation interface and the SPIRE bundle | the interface and its key exist with no peer on them; the bundle is exported when this side runs SPIRE |
 | 3 | T | `init` — our half, measured | a signed package; exit 23 means a value could not be derived and the list is the output |
 | 4 | T | `lint` | every required member present, signature shape valid |
-| 5 | **MANUAL** | exchange packages; bind their key **out of band** | their package is on disk and their verifying key came from a channel authenticated independently of this link |
+| 5 | **MANUAL** | exchange through the directory; read the key and CA fingerprint **aloud** | the directory step uploaded ours and placed theirs and their CA on disk with no FAIL row; on one call each side read its verifying key and CA fingerprint and the other read them back; both keys are in the keyring |
 | 6 | T | `compose` | one digest, and argument order does not change it |
 | 7 | T | `verify` | the derived names re-derive; the ingress prefix and republish target are stated |
 | 8 | T | mint the peering leaves | four certificates, names derived from the agreement, SANs covering every address that will be dialled: outward, inward, core, and `republisher.pem` with CN `fed.<us>.<them>.republisher.01` |
@@ -94,9 +109,10 @@ ops/scripts/peering-standup.sh <peering> --from 11  # resume after the review
 | 13 | A | federate the SPIRE trust domains (ADR 1157 step 2) | our server refreshes their trust domain across the link, or the play says the step was not done for a side with no SPIRE server |
 | 14 | GATE | acceptance | carries both ways, once per offered set: a sample staged under `release/<set>/…` reads back under `from/<sender>/<set>/…` on the receiving side; refuses what the agreement does not name; and round-trips once per set |
 
-**Phases 5 and 10 are manual on purpose.** The exchange channel is the counterparty's to choose,
-and a verifying key taken from the package it verifies proves nothing. The review is the control,
-and only this party can change this party's core.
+**Phases 5 and 10 stop for a person on purpose.** The machine moves every file in phase 5; what it
+cannot do is confirm whose key it fetched, and a verifying key taken from the package it verifies
+proves nothing, so the two sides read the keys to each other. The review in phase 10 is the
+control, and only this party can change this party's core.
 
 **Phases 2 and 11–13 run ansible** against `ops/ansible/inventory/peering-edges.ini`: the edge
 group `<peering>_edge`, and for the republisher the core group `<peering>_core`. The rest run
@@ -122,25 +138,45 @@ change to a `sovereign_id` changes every derived name and means a new agreement 
 Do **not** choose a name that already exists in your own fabric. Their router presenting a name
 your own routers use is the failure mode this whole design is built to prevent.
 
-## Step 3 — Exchange trust material
+## Step 3 — Exchange packages and CA certificates through the directory
 
-Each side publishes its **public** certificate authority material and pulls the other's. No
-private key is exchanged, ever, in any step of this procedure. If anyone asks you to send a
-private key, the procedure is being done wrong.
+Phase 5 does the exchange. Neither side sends a file, and no private key is exchanged in any
+step of this procedure. If anyone asks you to send a private key, the procedure is being done
+wrong.
 
-The first exchange is out of band — email, a call, a physical handover, whatever your policy
-allows. Verify the fingerprint by a **different channel** than the one that carried the file:
+The directory step (`ops/federation/standup/directory.py`):
 
-```bash
-openssl x509 -in their-ca.pem -noout -subject -fingerprint -sha256
-```
+1. publishes your pointer entry, signed with your package key; with `FED_PACKAGE_URL` unset it
+   uploads your package to `<directory>/v1/parties/<you>/package` and the pointer names that;
+2. uploads your CA certificate to `<directory>/v1/parties/<you>/ca`: only the certificate whose
+   SHA-256 is your package's `identity.ca_fingerprint`;
+3. looks up the counterparty's pointer, fetches their package, checks its sha256 against the
+   pointer and its signatures, and places it where phase 6 reads it; fetches their CA
+   certificate, checks it against their `identity.ca_fingerprint`, and places it at
+   `$FED_WORK/theirs-ca.pem`;
+4. prints both verifying keys and both CA fingerprints **in groups of four**, for the call;
+5. prints a **compatibility report** from the two packages: sovereign ids, spec, fabric and tool
+   version, the transport the agreement selects, FIPS fabric image, PQC capability, trust
+   domains, inbound reachability and expiry, each PASS, WARN, FAIL or UNKNOWN with the fix.
+   Nothing in it is asked of the counterparty by message.
 
-Read the fingerprint to your counterpart aloud, or check it against a value they published
-separately. A trust anchor accepted without out-of-band verification is not a trust anchor.
+If their entry is not there yet, run phase 5 again after they run theirs. A directory that is
+down or disagrees with a package is reported, never trusted: `compose` checks their package
+against the key you read back, never against anything the directory served.
 
-After the first exchange, refresh is automatic: each side re-pulls the other's published material
-on a timer, so **the other side replacing their certificate authority does not break the link**.
-That is the reason for using the identity service rather than copying a file into place.
+**The call.** Each side reads its verifying key (11 groups) and CA fingerprint (16 groups) aloud,
+group count first; the other reads them back against what phase 5 printed. Then record both keys
+in the keyring and resume with `--from 6`. After `compose`, read the agreement digest to each
+other the same way. Those reads, and the decision about what data flows, are the only acts that
+are not machine-driven.
+
+The SPIFFE trust bundle moves outside the directory when both sides run SPIRE federation
+(phase 13): phase 5 names the files. After that first exchange, refresh is automatic: each side
+re-pulls the other's published bundle on a timer, so **the other side replacing their
+certificate authority does not break the link**.
+
+**No directory.** `FED_NO_DIRECTORY=1` is for a counterparty that can reach no directory. Phase 5
+then names the files to hand over directly; the call is unchanged.
 
 ## Step 4 — Stand up your edge router
 

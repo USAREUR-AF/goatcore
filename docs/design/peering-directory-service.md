@@ -46,7 +46,7 @@ is precisely why it can be added later without reopening anything:
 |---|---|---|
 | Offline exchange, digest compared by voice | SSH host keys, PGP signing parties | **The default.** Zero infrastructure; works with an air-gapped partner |
 | A well-known endpoint serving your own signed package | OIDC discovery, SAML metadata, Matrix `.well-known` | Convenience, once a partner can reach one. Never the thing establishing trust |
-| A neutral directory holding pointers | PeeringDB | This service. The first exchange is out of band until a directory is reachable by both sides |
+| A neutral directory holding pointers | PeeringDB | This service. It also hosts each party's package and CA, and the driver's phase 5 exchanges through it |
 
 A party must always be able to federate without touching the directory at all. If that ever
 stops being true, the directory has become authoritative and the invariant in §2 is broken.
