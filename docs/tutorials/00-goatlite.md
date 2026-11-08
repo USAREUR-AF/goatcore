@@ -84,7 +84,13 @@ go version
 
 Add `export PATH="/usr/local/go/bin:$PATH"` to your shell profile too, so a new terminal finds `go`.
 
-Install Rust with `rustup` from `https://rustup.rs/`; it is not in this block because it asks questions as it installs.
+Install Rust with `rustup`, the installer from `https://rustup.rs/`. `-y` accepts its defaults instead of asking, and the second line puts `cargo` on the `PATH` of this terminal; a new terminal finds it on its own:
+
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+. "$HOME/.cargo/env"
+cargo --version
+```
 
 #### On macOS
 
@@ -111,11 +117,12 @@ There is no release page yet, so build both programs from the checkout with Rust
 (cd crates && cargo build --release --locked -p goatbuilder -p goat-cli)
 mkdir -p ~/.local/bin
 install -m 0755 crates/target/release/goatbuilder crates/target/release/goat ~/.local/bin/
+export PATH="$HOME/.local/bin:$PATH"
 goatbuilder --version
 goat --version
 ```
 
-If `--version` says "command not found", add `export PATH="$HOME/.local/bin:$PATH"` to your shell profile and open a new terminal.
+The `export` line covers this terminal. If `--version` says "command not found" in a new terminal, add the same line to your shell profile.
 
 ### Set up Python, Ansible and the browser
 
