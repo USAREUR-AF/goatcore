@@ -139,15 +139,18 @@ def anchor_violations(handbook_text):
     return [m.group(1) for m in re.finditer(r'\]\(#([a-z0-9-]+)\)', handbook_text)
             if m.group(1) not in headings]
 
-def expand_vars(line, driver_text):
-    """Inline any $VAR / ${VAR} on a line with that var's definition elsewhere in
-    the driver, so a check sees through `site-bootstrap.yml $BOOTSTRAP_EV`."""
+def expand_vars(line, driver_text, depth=4):
+    """Inline any $VAR / ${VAR} on a line with every definition of that var in
+    the driver, so a check sees through `site-bootstrap.yml $BOOTSTRAP_EV`. A
+    definition may be indented (set inside an if/else) and may itself name
+    another variable (BOOTSTRAP_EV="... $BOOTSTRAP_SECRETS_EV"); both are
+    followed, to a fixed depth."""
     seen = line
     for m in re.finditer(r'\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?', line):
         var = m.group(1)
-        d = re.search(rf'^{var}=(.*)$', driver_text, re.M)
-        if d:
-            seen += " " + d.group(1)
+        for d in re.finditer(rf'^\s*{var}=(.*)$', driver_text, re.M):
+            value = d.group(1)
+            seen += " " + (expand_vars(value, driver_text, depth - 1) if depth > 0 else value)
     return seen
 
 def retired_env_hits(text):
@@ -319,6 +322,13 @@ def self_test():
     if missing_plays(bare, lambda n: False) != ["bare-missing.yml"]:
         problems.append("a missing play run by a bare ansible-playbook")
     through_variable = 'PLAY=generic.yml\nstep 5 A "x" "$ANSIBLE_PRE ${INV[*]} $PLAY -e t=g"\n'
+    nested = ('S="-e bootstrap_owner_email=a -e postgres_superuser_password=b '
+              '-e netbird_encryption_key=c -e pgbackrest_cipher_pass=d"\n'
+              'if [ "$J" = 1 ]; then\n  EV="$S"\nelse\n  EV="-e site_id=x $S"\nfi\n'
+              'step 6 A "x" "$ANSIBLE_PRE site-bootstrap.yml $EV"\n')
+    if not {s: ok for ok, s, _ in run_checks(nested, "", do_fs=False)}.get(
+            "site-bootstrap invocations carry required extra-vars", False):
+        problems.append("extra-vars set inside an if/else through a second variable")
     if missing_plays(through_variable, lambda n: False) != ["generic.yml"]:
         problems.append("a missing play run through a variable")
     declared = {"gone.yml": ("what happens", "the handling")}
