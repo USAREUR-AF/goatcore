@@ -163,6 +163,11 @@ portal_slot_pool_size: 0
 # pre-cuts a store per pool slot). See zenoh-storage-taxonomy-sharding.md.
 portal_lazy_slot_storage: false
 
+# Concurrent /api/topics/stream connections one org or slot key may hold
+# (operators are exempt). Empty leaves the portal's built-in default (8); set a
+# number to raise it where people share one org key, or 0 to turn the cap off.
+portal_max_streams_per_principal: ""
+
 # Path to the live zenohd config.json5 (bind-mounted r/w into the
 # portal container). The zenoh role renders this file under its per-stack
 # /etc/<zenoh_stack> dir with BEGIN/END markers the portal edits between
