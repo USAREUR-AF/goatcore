@@ -163,6 +163,8 @@ jobs:
         run: |
           python3 ops/ci/test_go_vuln_coverage.py
           python3 ops/ci/check_go_vuln_coverage.py
+      - name: .envrc.example generation reads an assembled tree's layers
+        run: python3 ops/scripts/test_envrc_example_assembled.py
       # Runs the obs-host role's real read-only scrape-input preflight against
       # loopback HTTP fixtures; a rejected endpoint must stop before a write.
       - name: obs-host scrape inputs need a consumable sample
