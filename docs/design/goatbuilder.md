@@ -275,6 +275,10 @@ peerings:
 
 `init lint compose diff verify apply status plan deploy test allocate` are words of `goatbuilder federate` and can never name a partner (GB-120).
 
+`tunnel` is this party's local choice of transport, spelled as the schema has always spelled it: `ipsec` is the agreement's `ipsec-fips`. Like `offer:`, it may only narrow: the agreement picks the transport from both packages' measured capabilities, and phase 11 runs the play for the transport the agreement chose, never the one `tunnel` names. A `tunnel` that disagrees with the agreement is a configuration to correct, not an override.
+
+A partner declared on two environments needs `--env` only when it matters: the offer check demands it only when one of the entries declares `offer:`.
+
 **One owner per field: the offered release sets.** The verified agreement determines what flows between the two parties. The goat context's `federation.toml` owns the release sets this party offers (`[data] release`), and `goat federate init` writes them into our half of the agreement. A peering's `offer:` may only narrow that list for one partner. A set name `X` means the key expression `release/X/**` (`ops/permissions/release-sets.yaml`), and a key expression under `release/` is compared as written. Every entry must be one `federation.toml` offers; an entry it does not offer is refused, never added (GB-129). So there is no second, hand-kept list that could widen what was declared and reviewed in one place.
 
 Where it is checked:
