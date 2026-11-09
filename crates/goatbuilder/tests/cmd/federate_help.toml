@@ -10,7 +10,8 @@ opened, acceptance in all four tiers. Replaces ops/scripts/peering-standup.sh st
 
 `goatbuilder federate init|lint|compose|diff|verify|apply` runs one of the six federation verbs in
 process, with the flags and exit codes of `goat federate <verb>`. `goatbuilder federate plan
-<partner>` writes the bounded plan alone.
+<partner>` writes the bounded plan alone; `goatbuilder federate backout <partner>` backs one peering
+out and leaves the others as they were.
 
 Usage: goatbuilder federate [OPTIONS] <WITH> [PARTNER]
        goatbuilder federate <COMMAND>
@@ -25,6 +26,9 @@ Commands:
   plan     The bounded plan of one peering before anything changes: versions, agreement digest,
            rendered-configuration hashes, owned resources, restarts, acceptance policy and phase 1's
            readiness, written to <work>/plan.json with a stable hash. Reads only; changes no host
+  backout  Back out ONE peering: survey its hosts, confirm, remove its tunnel, SPIRE federation,
+           edge router, republisher, forwarder mapping and core admission, and leave every other
+           peering and the core as they were
   help     Print this message or the help of the given subcommand(s)
 
 Arguments:
@@ -77,16 +81,13 @@ Options:
           The six verbs: the directory holding federation.toml, mtls.cert.pem and ca-roots.pem
           (default: $GOAT_CONTEXT_DIR, else the goat context directory, found the way goat finds it)
 
-      --cert <FILE>
-          The six verbs: our mTLS certificate (default: mtls.cert.pem in the context directory)
-
   -v, --verbose
           Log what a run does — the external commands it shells out to, and the network phase of
           `update` — to stderr, so `-o json|yaml` stays a clean document. Or set
           RUST_LOG=goatbuilder=debug
 
-      --ca-roots <FILE>
-          The six verbs: the CA roots (default: ca-roots.pem in the context directory)
+      --cert <FILE>
+          The six verbs: our mTLS certificate (default: mtls.cert.pem in the context directory)
 
       --timeout <SECS>
           Seconds to bound the connect/reach phase before failing fast — the one phase that can
@@ -94,6 +95,9 @@ Options:
           play's own run or the binary download (stall-bounded). Also reads GOATBUILDER_TIMEOUT
           
           [env: GOATBUILDER_TIMEOUT=]
+
+      --ca-roots <FILE>
+          The six verbs: the CA roots (default: ca-roots.pem in the context directory)
 
       --context <NAME>
           The six verbs: the goat context to read, as `goat --context` (default: $GOAT_CONTEXT, else

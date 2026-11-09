@@ -434,11 +434,12 @@ pub enum Cmd {
     /// `goatbuilder federate init|lint|compose|diff|verify|apply` runs one of
     /// the six federation verbs in process, with the flags and exit codes of
     /// `goat federate <verb>`. `goatbuilder federate plan <partner>` writes
-    /// the bounded plan alone.
+    /// the bounded plan alone; `goatbuilder federate backout <partner>` backs
+    /// one peering out and leaves the others as they were.
     #[command(args_conflicts_with_subcommands = true, subcommand_negates_reqs = true)]
     Federate {
-        /// One federation verb, or one stage of the one command (`plan`),
-        /// instead of the whole peering.
+        /// One federation verb, one stage of the one command (`plan`), or
+        /// `backout <partner>`, instead of the whole peering.
         #[command(subcommand)]
         verb: Option<federate::plan::Stage>,
         #[command(flatten)]
@@ -1400,6 +1401,13 @@ fn main() {
                 Err(anyhow::anyhow!("join-node is a mutation: pass --yes without a terminal (C10)"))
             } else {
                 joinnode::join_node(&repo, &joinnode::Options { env, site, node, class, address: address.as_deref(), pass_var: pass_var.as_deref(), via, from: *from, to: *to, dry_run: *dry_run })
+            }
+        }
+        Cmd::Federate { verb: Some(federate::plan::Stage::Backout(b)), .. } => {
+            if !cli.yes && !b.dry_run && cli.mock.is_none() && !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+                Err(goat_errors::coded("GB-008", "federate backout is a mutation: pass --yes without a terminal (C10)").into())
+            } else {
+                federate::backout::backout(&repo, &b.options(cli.mock.as_deref(), cli.yes, matches!(cli.output, OutputFormat::Table)))
             }
         }
         Cmd::Federate { verb: Some(stage), site, measure, .. } => {

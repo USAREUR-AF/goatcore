@@ -1705,8 +1705,8 @@ pub fn recheck(repo: &Path, o: &PlanOptions) -> Result<Report> {
 }
 
 /// What `goatbuilder federate <word>` runs instead of the whole peering: one
-/// of the six federation verbs (federate/verbs.rs), or a stage of the one
-/// command.
+/// of the six federation verbs (federate/verbs.rs), a stage of the one
+/// command, or the back-out of one peering (federate/backout.rs).
 #[derive(clap::Subcommand, Debug)]
 pub enum Stage {
     #[command(flatten)]
@@ -1738,13 +1738,20 @@ pub enum Stage {
         #[arg(long)]
         recheck: bool,
     },
+    /// Back out ONE peering: survey its hosts, confirm, remove its tunnel,
+    /// SPIRE federation, edge router, republisher, forwarder mapping and core
+    /// admission, and leave every other peering and the core as they were.
+    #[command(name = super::backout::VERB)]
+    Backout(super::backout::BackoutArgs),
 }
 
 /// Run one stage.
 pub fn run(repo: &Path, stage: &Stage, mock: Option<&Path>) -> Result<Report> {
     match stage {
         // main.rs runs the verbs before it reads a repository.
-        Stage::Verb(_) => Err(anyhow!("the federation verbs are run before this point")),
+        Stage::Verb(_) | Stage::Backout(_) => {
+            Err(anyhow!("the federation verbs and backout are run before this point"))
+        }
         Stage::Plan {
             with,
             env,

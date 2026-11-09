@@ -229,11 +229,12 @@ pub struct PeeringForwarder {
 /// Words `goatbuilder federate <word>` takes, or is reserved to take, as a
 /// subcommand, so a peering declared with one could never be run: the six
 /// federation verbs, clap's `help`, the stages of the one command (`status`,
-/// `plan`, `deploy`, `test`), and `allocate`. The one list; ops/goatbuilder/
-/// validate.py's RESERVED_PEERING_NAMES mirrors it.
+/// `plan`, `deploy`, `test`), `allocate`, and `backout` (one peering backed
+/// out). The one list; ops/goatbuilder/validate.py's RESERVED_PEERING_NAMES
+/// mirrors it.
 pub const RESERVED_PEERING_NAMES: &[&str] = &[
     "init", "lint", "compose", "diff", "verify", "apply", "help", "status", "plan", "deploy",
-    "test", "allocate",
+    "test", "allocate", "backout",
 ];
 
 /// Read a YAML config file into a JSON value (the form the schema validates).
@@ -715,7 +716,7 @@ mod tests {
     /// list, so a partner named like one is refused where it is declared (GB-120).
     #[test]
     fn a_peering_named_like_a_federate_subcommand_is_refused() {
-        for name in ["lint", "apply", "help"] {
+        for name in ["lint", "apply", "help", "backout"] {
             let mut v = with_sites();
             v["peerings"] = json!([{"with": name, "environment": "dev", "site": "alpha", "edge_class": "edge"}]);
             rejected(&v, "(GB-120)");
@@ -723,6 +724,7 @@ mod tests {
         for verb in goat_federation::verbs::VERB_NAMES {
             assert!(RESERVED_PEERING_NAMES.contains(verb), "{verb} is a verb and must be reserved");
         }
+        assert!(RESERVED_PEERING_NAMES.contains(&crate::federate::backout::VERB), "backout is a subcommand and must be reserved");
     }
 
     #[test]

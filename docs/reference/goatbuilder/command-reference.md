@@ -256,7 +256,7 @@ One more machine of a class at a live site, declared → converged → verified:
 
 A sovereign peering declared, converged and verified (ADR 1157): our half measured, the packages exchanged through the peering directory, one agreement composed and verified, the leaves minted from it, the rules rendered by the one writer, the edge deployed, the transport the agreement chose opened, acceptance in all four tiers. Replaces ops/scripts/peering-standup.sh step for step.
 
-`goatbuilder federate init|lint|compose|diff|verify|apply` runs one of the six federation verbs in process, with the flags and exit codes of `goat federate <verb>`. `goatbuilder federate plan <partner>` writes the bounded plan alone.
+`goatbuilder federate init|lint|compose|diff|verify|apply` runs one of the six federation verbs in process, with the flags and exit codes of `goat federate <verb>`. `goatbuilder federate plan <partner>` writes the bounded plan alone; `goatbuilder federate backout <partner>` backs one peering out and leaves the others as they were.
 
 **Arguments**
 
@@ -298,6 +298,7 @@ A sovereign peering declared, converged and verified (ADR 1157): our half measur
 - [`goatbuilder federate verify`](#goatbuilder-federate-verify) — Could we actually deliver this agreement? Dry-run it here
 - [`goatbuilder federate apply`](#goatbuilder-federate-apply) — Render the access rules and configuration this agreement implies
 - [`goatbuilder federate plan`](#goatbuilder-federate-plan) — The bounded plan of one peering before anything changes: versions, agreement digest, rendered-configuration hashes, owned resources, restarts, acceptance policy and phase 1's readiness, written to <work>/plan.json with a stable hash. Reads only; changes no host
+- [`goatbuilder federate backout`](#goatbuilder-federate-backout) — Back out ONE peering: survey its hosts, confirm, remove its tunnel, SPIRE federation, edge router, republisher, forwarder mapping and core admission, and leave every other peering and the core as they were
 
 ## `goatbuilder federate init`
 
@@ -461,6 +462,26 @@ The bounded plan of one peering before anything changes: versions, agreement dig
 | `--work <WORK>` | The working directory (default $FED_WORK, else /var/lib/goat-federation/<peering>) |  |
 | `--no-live` | Skip phase 1's live reads of the hosts; each is reported SKIP |  |
 | `--recheck` | Recheck the saved plan instead of writing one: refused when the file was altered, an input changed, or a live prerequisite fails |  |
+
+## `goatbuilder federate backout`
+
+Back out ONE peering: survey its hosts, confirm, remove its tunnel, SPIRE federation, edge router, republisher, forwarder mapping and core admission, and leave every other peering and the core as they were
+
+**Arguments**
+
+| Argument | Description |
+|---|---|
+| `<PARTNER>` | The partner whose one peering is removed (its sovereign id, as declared) |
+
+**Options**
+
+| Flag | Description | Default |
+|---|---|---|
+| `--env <ENV>` | The environment the peering is declared on (checked against goatbuilder.yaml peerings:) |  |
+| `--as <AS_PARTY>` | Which party we are (default: read from the agreement in the working directory) |  |
+| `--edge-group <EDGE_GROUP>` | The ansible group the edge runs in (default <partner>_edge) |  |
+| `--work <WORK>` | The working directory (default $FED_WORK, else /var/lib/goat-federation/<partner>) |  |
+| `--dry-run` | Survey the peering's hosts read-only and print every resource the back-out would remove, per host; change nothing |  |
 
 ## `goatbuilder pins`
 

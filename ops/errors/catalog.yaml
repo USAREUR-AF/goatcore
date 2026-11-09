@@ -2518,6 +2518,122 @@ entries:
 
   # ----------------------------------------------------------- external tools
 
+  # ------------------------------------------- federate backout, one peering (GB-220..229)
+
+  - code: GB-220
+    tool: goatbuilder
+    title: federate backout was not given a partner it can act on
+    what: "goatbuilder federate backout takes one partner: a sovereign id (2-16 characters of a-z0-9-) that is not a federate subcommand. The working directory and edge group must be plain paths and names, because they go into the play's command line. Nothing ran."
+    causes:
+      - the partner was left out, or is not a sovereign id
+      - --work or --edge-group holds a quote, a space or a shell character
+    fixes:
+      - "goatbuilder federate backout <partner> --dry-run"
+    read: docs/design/goatbuilder.md
+    exit: 1
+    matches:
+      - "federate backout needs the partner"
+      - "backout takes the partner whose peering it removes"
+
+  - code: GB-221
+    tool: goatbuilder
+    title: the back-out found a resource it cannot show is this peering's alone
+    what: "The read-only survey found a resource under this peering's names that another peering holds (a WireGuard interface whose state file or peer names another partner, a carrier another peering's state names), or a core configuration it cannot prove changes by this peering alone (the live file is not seed + org fragment, partner ids overlap, a policy mixes partners). Nothing was changed on any host."
+    causes:
+      - two peerings were given the same interface, carrier or stack name in their group values
+      - the core's live configuration was edited by hand after the last assemble
+      - the core keeps no seed/org split (slot-pool mode), so the admission cannot be located
+    fixes:
+      - "read the REFUSED lines of goatbuilder federate backout <partner> --dry-run; give each peering its own names, or reconcile the core's live file with its seed and org fragment"
+    read: docs/design/goatbuilder.md
+    exit: 1
+    matches:
+      - "refused \\(GB-221\\)"
+
+  - code: GB-222
+    tool: goatbuilder
+    title: the back-out survey did not complete
+    what: "ops/ansible/peering-backout.yml failed before every host of the peering answered, so there is no plan to show and nothing was changed."
+    causes:
+      - a host of <partner>_edge, <partner>_core or peering_forwarders is unreachable
+      - the inventory ops/ansible/inventory/peering-edges.ini does not exist in this checkout
+    fixes:
+      - "read the play output above; fix reachability, then goatbuilder federate backout <partner> --dry-run"
+    read: docs/design/goatbuilder.md
+    exit: 1
+    matches:
+      - "survey play failed before every host answered"
+
+  - code: GB-223
+    tool: goatbuilder
+    title: the slot recheck did not allow the core router restart
+    what: "Immediately before the core router restarts without this peering's admission, the committed slot list is checked against the registry, as the admission path does. It drifted, the registry could not be read, or no registry was named, so the core was not restarted. The edge side of the peering is already removed and the partner has no path to the core."
+    causes:
+      - slots were minted or revoked since the list was committed
+      - FED_SLOT_DB (or FED_SLOT_REGISTRY_STORE=postgres with FED_SLOT_PG_SSH) is not set for a deployment with lazy slot storage
+    fixes:
+      - "regenerate and commit the slot list (ops/scripts/sync-slot-anchors.py --env <env> ...), then goatbuilder federate backout <partner>"
+    read: docs/design/goatbuilder.md
+    exit: 3
+    matches:
+      - "\\(GB-223\\)"
+
+  - code: GB-224
+    tool: goatbuilder
+    title: the core router was not restarted on the reviewed candidate
+    what: "The core step installs only the candidate configuration whose digest the survey printed. The core's files changed since the survey (so the candidate's digest differs), more than one core router was found, or the restart failed. The org fragment kept beside it as <fragment>.before-backout-<partner> is the state before the step."
+    causes:
+      - another change reached the core between the survey and the restart
+      - several containers qualify as the core router
+    fixes:
+      - "goatbuilder federate backout <partner> --dry-run, review the new candidate, then run it again"
+      - "name the router with peering_backout_core_container or FED_ROUTER_CONTAINER"
+    read: docs/design/goatbuilder.md
+    exit: 3
+    matches:
+      - "\\(GB-224\\)"
+
+  - code: GB-225
+    tool: goatbuilder
+    title: resources of the peering are still present after the back-out
+    what: "The survey run after the removal still finds resources of this peering, or the removal play stopped partway. Every step is idempotent: running the back-out again removes what is left and reports the rest as absent."
+    causes:
+      - a host became unreachable during the removal
+      - a unit or container would not stop
+    fixes:
+      - "goatbuilder federate backout <partner>"
+    read: docs/design/goatbuilder.md
+    exit: 3
+    matches:
+      - "\\(GB-225\\)"
+
+  - code: GB-226
+    tool: goatbuilder
+    title: our package for the counterparty could not be withdrawn from the directory
+    what: "The back-out asks the peering directory to delete /v1/parties/<us>/packages/<partner>, signed by our bound key. The directory refused or could not be reached. This is a warning: a listing grants nothing, and the peering's hosts are already clean. Our single entry and every other party's entry are never touched."
+    causes:
+      - FED_SIGNING_KEY is not set, or is not the key the directory binds to us
+      - the directory is unreachable
+    fixes:
+      - "python3 ops/federation/standup/directory_withdraw.py --url <directory> --us <us> --them <partner> --key <signing key>"
+    read: docs/design/peering-directory-service.md
+    exit: 0
+    matches:
+      - "WARN \\(GB-226\\)"
+
+  - code: GB-227
+    tool: goatbuilder
+    title: the core still admits the partner through its own configuration
+    what: "The core router was configured by roles/goat-zenoh from zenoh_sovereign_peerings, which declares the partner's subject and grants as sovereign-<partner> ids. That is the deployment's configuration, not a spliced fragment, so the back-out reports it and does not edit it. The partner has no edge left to reach the core through."
+    causes:
+      - the core admits the peering from zenoh_sovereign_peerings rather than from the spliced fragment
+    fixes:
+      - "remove the partner's entry from zenoh_sovereign_peerings by review and run the core play (a router restart)"
+    read: docs/operations/sovereign-federation-runbook.md
+    exit: 3
+    matches:
+      - "\\(GB-227\\)"
+
   - code: X-ANSIBLE-001
     tool: ansible
     title: a host was unreachable
