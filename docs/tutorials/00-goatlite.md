@@ -390,7 +390,7 @@ goat --context pasture status
 goat --context pasture health
 ```
 
-`goat status` opens one real session to the router and gives one verdict per layer; the `session` row is the one that proves your identity. Its `portal` row fails for this identity, which holds no portal key. `goat health` reads the fabric's own health beat; a goatlite runs no health publisher, so it reports that it saw none.
+`goat status` opens one real session to the router and gives one verdict per layer; the `session` row is the one that proves your identity. This identity holds no portal key, so its `portal` row checks only that the portal answers (`liveness only`). `goat health` reads the fabric's own health beat; a goatlite runs no health publisher, so it reports that it saw none.
 
 **Send a message to yourself.** `goat hello` publishes through the fabric and receives its own message back.
 
