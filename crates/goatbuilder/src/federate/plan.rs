@@ -18,6 +18,7 @@
 //! The plan reads; it changes nothing on any host. Its only writes are under
 //! `<work>`: `plan.json` and phase 1's result files.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -197,8 +198,9 @@ pub struct Plan {
     pub acceptance: AcceptancePolicy,
     pub readiness: Vec<Readiness>,
     pub host_firewall: Vec<HostFirewall>,
-    /// Values this peering and another declared peering would bind on the same
-    /// machine (the host-level allocation check, federate/hostalloc.rs).
+    /// What this peering and another declared peering would share on one
+    /// machine (the host-level allocation check, federate/hostalloc.rs). Only
+    /// the conflicts this peering is part of.
     pub conflicts: Vec<hostalloc::Conflict>,
     /// READY, `READY, <n> check(s) not verified` (SKIP is never a pass), or BLOCKED.
     pub verdict: String,
@@ -339,30 +341,115 @@ pub(super) fn resolve(
 }
 
 /// The hosts of one inventory group in ops/ansible/inventory/peering-edges.ini,
-/// as (inventory name, address): `ansible_host` when given, else the name.
+/// as (inventory name, address), read the way Ansible reads an INI inventory
+/// for what the plan needs: `[group:children]` expanded, `[group:vars]`
+/// sections skipped, a header's trailing comment ignored. The address is
+/// `ansible_host` from any line that names the host (quotes removed), else
+/// from `host_vars/<host>.yml` or `host_vars/<host>/*.yml`, else the name. Host
+/// ranges such as `edge[01:02]` are not expanded.
 pub fn inventory_hosts(repo: &Path, group: &str) -> Vec<(String, String)> {
     let text = std::fs::read_to_string(repo.join("ops/ansible/inventory/peering-edges.ini"))
         .unwrap_or_default();
-    let mut inside = false;
-    let mut out = Vec::new();
-    for line in text.lines().map(str::trim) {
+    let unquote = |v: &str| v.trim_matches(|c| c == '"' || c == '\'').to_string();
+    let mut members: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut children: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut address: BTreeMap<String, String> = BTreeMap::new();
+    // (group, kind): kind is "" for hosts, "children" or "vars".
+    let mut section: Option<(String, String)> = None;
+    for raw in text.lines() {
+        let line = raw.trim();
         if line.is_empty() || line.starts_with('#') || line.starts_with(';') {
             continue;
         }
-        if line.starts_with('[') {
-            inside = line == format!("[{group}]");
+        if let Some(rest) = line.strip_prefix('[') {
+            let name = rest.split(']').next().unwrap_or_default().trim();
+            section = Some(match name.split_once(':') {
+                Some((g, k)) => (g.to_string(), k.to_string()),
+                None => (name.to_string(), String::new()),
+            });
             continue;
         }
-        if inside {
-            let mut words = line.split_whitespace();
-            let Some(name) = words.next() else { continue };
-            let addr = words
-                .find_map(|w| w.strip_prefix("ansible_host="))
-                .unwrap_or(name);
-            out.push((name.to_string(), addr.to_string()));
+        let Some((g, kind)) = &section else { continue };
+        let body = line.split(" #").next().unwrap_or(line);
+        let mut words = body.split_whitespace();
+        let Some(name) = words.next() else { continue };
+        match kind.as_str() {
+            "" => {
+                members.entry(g.clone()).or_default().push(name.to_string());
+                for w in words {
+                    if let Some(v) = w.strip_prefix("ansible_host=") {
+                        address.insert(name.to_string(), unquote(v));
+                    }
+                }
+            }
+            "children" => children
+                .entry(g.clone())
+                .or_default()
+                .push(name.to_string()),
+            _ => {}
         }
     }
-    out
+    fn expand(
+        g: &str,
+        members: &BTreeMap<String, Vec<String>>,
+        children: &BTreeMap<String, Vec<String>>,
+        seen: &mut Vec<String>,
+        out: &mut Vec<String>,
+    ) {
+        if seen.iter().any(|s| s == g) {
+            return;
+        }
+        seen.push(g.to_string());
+        for h in members.get(g).into_iter().flatten() {
+            if !out.contains(h) {
+                out.push(h.clone());
+            }
+        }
+        for c in children.get(g).into_iter().flatten() {
+            expand(c, members, children, seen, out);
+        }
+    }
+    let mut names = Vec::new();
+    expand(group, &members, &children, &mut Vec::new(), &mut names);
+    names
+        .into_iter()
+        .map(|n| {
+            let addr = address
+                .get(&n)
+                .cloned()
+                .or_else(|| host_var(repo, &n, "ansible_host").map(|v| unquote(&v)))
+                .unwrap_or_else(|| n.clone());
+            (n, addr)
+        })
+        .collect()
+}
+
+/// A plain value from host_vars/<host>.yml, then host_vars/<host>/*.yml in
+/// name order (the last that sets it wins).
+fn host_var(repo: &Path, host: &str, key: &str) -> Option<String> {
+    let hv = repo.join("ops/ansible/host_vars");
+    let mut files = vec![
+        hv.join(format!("{host}.yml")),
+        hv.join(format!("{host}.yaml")),
+    ];
+    if let Ok(rd) = std::fs::read_dir(hv.join(host)) {
+        let mut more: Vec<PathBuf> = rd.filter_map(|e| e.ok().map(|e| e.path())).collect();
+        more.sort();
+        files.extend(more);
+    }
+    let mut found = None;
+    for f in files {
+        let Some(doc) = std::fs::read_to_string(&f)
+            .ok()
+            .and_then(|t| serde_yaml::from_str::<serde_yaml::Value>(&t).ok())
+        else {
+            continue;
+        };
+        if let Some(v) = doc.get(key).and_then(yaml_scalar) {
+            found = Some(v);
+        }
+    }
+    found
 }
 
 fn source_version(repo: &Path) -> String {
@@ -1060,7 +1147,7 @@ fn inputs_part(
             detail: format!("{} ({}): {}", h.host, h.group, h.detail),
         });
     }
-    let claims = hostalloc::claims(
+    let cmp = hostalloc::compare(
         repo,
         all,
         peering,
@@ -1068,8 +1155,11 @@ fn inputs_part(
         Path::new(&work),
         &resources,
     );
-    let conflicts = hostalloc::conflicts(&claims);
-    rows.push(hostalloc::readiness(with, &claims, &conflicts));
+    let conflicts = hostalloc::involving(
+        hostalloc::conflicts(&cmp.claims),
+        &hostalloc::label(peering),
+    );
+    rows.push(hostalloc::readiness(&cmp, &conflicts));
     let plan = Plan {
         schema: SCHEMA.into(),
         peering: with.into(),
