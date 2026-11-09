@@ -752,10 +752,10 @@ pub fn run_init(
     goat_federation::verbs::run_init_measured(site, a, out, &measure)
 }
 
-/// Whether the driver's phase 3 measures over SSH (`FED_MEASURE=ssh`) instead
-/// of the machine the driver runs on (unset, empty or `here`, the default).
+/// Whether the driver's phase 3 measures over SSH (`FED_MEASURE` unset, empty
+/// or `ssh`, the default) or the machine the driver runs on (`here`).
 pub fn driver_measures_over_ssh() -> bool {
-    std::env::var("FED_MEASURE").ok().as_deref() == Some("ssh")
+    std::env::var("FED_MEASURE").ok().as_deref() != Some("here")
 }
 
 /// Any other value of `FED_MEASURE` is refused, as peering-standup.sh refuses
