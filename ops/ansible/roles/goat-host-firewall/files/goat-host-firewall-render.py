@@ -85,6 +85,7 @@ RENDER_SCHEMA = "goat-host-firewall-render/v1"
 TABLE = "goat_host_firewall"
 IFNAME = re.compile(r"^[A-Za-z0-9_.-]{1,15}$")
 RULE_NAME = re.compile(r"^[a-z0-9][a-z0-9./-]*$")
+PEERING_NAME = re.compile(r"^[a-z0-9][a-z0-9.-]*$")
 OVERRIDE_KEYS = {"drop", "sources", "ports", "interface", "reason"}
 # What the profile itself would choose for the values a deployment may set as role
 # inputs. An input wider than these loosens the baseline as much as an override does,
@@ -207,6 +208,14 @@ def common_rules(host):
     floor = dict(PROFILE_MANAGEMENT_PREFIX_FLOOR)
     floor.update(host.get("management_prefix_floor") or {})
     broad = []
+    for fam in ("ipv4", "ipv6"):
+        try:
+            f = int(floor[fam])
+        except (TypeError, ValueError):
+            raise incomplete(f"host.management_prefix_floor.{fam} must be a prefix length")
+        if f < PROFILE_MANAGEMENT_PREFIX_FLOOR[fam]:
+            broad.append(f"management prefix floor {fam} /{f} broader than the profile's "
+                         f"/{PROFILE_MANAGEMENT_PREFIX_FLOOR[fam]}")
     for m in mgmt:
         n = ipaddress.ip_network(m)
         if n.prefixlen == 0:
@@ -234,7 +243,8 @@ def common_rules(host):
                                   "udp sport 547 udp dport 546 accept"],
              note="DHCP and DHCPv6 replies, which conntrack cannot match to the multicast or "
                   "broadcast request"),
-        Rule("container-bridges", expr=['iifname "docker0" accept', 'iifname "br-*" accept'],
+        Rule("container-bridges", expr=['iifname "docker0" accept', 'iifname "br-l2*" drop',
+                                        'iifname "br-*" accept'],
              note="the host's own containers (docker0, br-*): to services on the host, and to "
                   "ports other containers publish; drop it on a host whose containers must not"),
         Rule("ssh-management", proto="tcp", ports=[ssh_port], sources=mgmt,
@@ -261,8 +271,9 @@ def edge_rules(host, peerings):
     for i, p in enumerate(sorted(peerings, key=lambda p: str(p.get("name", "")))):
         where = f"peerings[{p.get('name', i)}]"
         name = str(_req(p, "name", where))
-        if not RULE_NAME.match(name):
-            raise incomplete(f"{where}: name {name!r} must be lowercase a-z0-9./-")
+        if not PEERING_NAME.match(name):
+            raise incomplete(f"{where}: name {name!r} must be lowercase a-z0-9.- (no '/', "
+                             f"which separates a peering from its rule)")
         if name in seen:
             raise incomplete(f"{where}: two peerings are both named {name!r}")
         seen.add(name)
@@ -672,9 +683,9 @@ def check_listeners(rules, listening, closed, ephemeral=None):
             pass
         if key in admitted or key in closing:
             continue
-        if proto == "udp" and lo is not None and lo <= int(item.get("port")) <= hi:
-            continue   # a client socket on an ephemeral port, not a service
         closing.append(key)
+        if proto == "udp" and lo is not None and lo <= int(item.get("port")) <= hi:
+            continue   # most likely a client socket: recorded as closed, not refused
         if key not in acknowledged and str(item.get("process") or "") not in processes:
             unacknowledged.append(f"{key} ({item.get('process') or 'unknown process'} on "
                                   f"{addr or '*'})")
@@ -760,7 +771,9 @@ def render(profile, rules, tightened, loosened):
     ]
     cb = next((r for r in rules if r.name == "container-bridges"), None)
     if cb is not None and not cb.dropped:
+        # A VXLAN segment bridge (br-l2*) made after this run stays closed until the next.
         out += ['    iifname "docker0" return comment "container-bridges"',
+                '    iifname "br-l2*" drop comment "container-bridges"',
                 '    iifname "br-*" return comment "container-bridges"']
     for r in rules:
         out += ["    " + line for line in _rule_lines(r, published=True)]

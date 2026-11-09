@@ -80,7 +80,8 @@ def test_edge_wireguard_admits_exactly_the_declared_ports():
 def test_edge_wireguard_published_chain_holds_the_same_ports():
     res = render(fixture("edge-wireguard"))
     pub = lines(res, "published_new")
-    assert pub[:2] == ['iifname "docker0" return comment "container-bridges"',
+    assert pub[:3] == ['iifname "docker0" return comment "container-bridges"',
+                       'iifname "br-l2*" drop comment "container-bridges"',
                        'iifname "br-*" return comment "container-bridges"']
     assert pub[-1] == 'counter drop comment "default-deny"'
     assert ('iifname "wg-fed0" ip saddr { 169.254.10.0 } meta l4proto tcp ct original '
@@ -89,6 +90,7 @@ def test_edge_wireguard_published_chain_holds_the_same_ports():
     assert not any("loopback" in l or "icmp" in l or "dhcp" in l for l in pub)
     assert rule_line(res, "container-bridges") == [
         'iifname "docker0" accept comment "container-bridges"',
+        'iifname "br-l2*" drop comment "container-bridges"',
         'iifname "br-*" accept comment "container-bridges"']
 
 
@@ -558,7 +560,7 @@ def test_ephemeral_udp_client_sockets_are_skipped():
     doc = fixture("core")
     doc["host"]["ephemeral_ports"] = [32768, 60999]
     doc["listening"] = [{"proto": "udp", "port": 41234, "addr": "0.0.0.0", "process": "x"}]
-    assert render(doc)["closing"] == []
+    assert render(doc)["closing"] == ["udp/41234"]
     # A TCP listener in that range is a service, not a client socket.
     doc["listening"] = [{"proto": "tcp", "port": 41234, "addr": "0.0.0.0", "process": "x"}]
     refused(doc, "GB-215")
@@ -589,9 +591,10 @@ def test_management_source_broader_than_the_floor_needs_a_reason():
     doc["override"] = {"ssh-management": {"reason": "the site's whole management network"}}
     res = render(doc)
     assert res["loosened"][0]["rule"] == "ssh-management"
+    # Moving the floor instead moves the loosening onto the floor; it still needs a reason.
     doc["host"]["management_prefix_floor"] = {"ipv4": 16, "ipv6": 48}
     doc["override"] = {}
-    render(doc)
+    refused(doc, "GB-212")
 
 
 def test_mesh_udp_ports_need_a_reason():
@@ -653,3 +656,56 @@ def test_peering_only_ignores_override_entries_for_other_peerings():
     assert "icmp-echo" in res["dropped"]
     with pytest.raises(hfr.Refusal):
         hfr.run(copy.deepcopy(only), None, "wg-fed9")
+
+
+# --------------------------------------------------------------------------- recheck of acbac9d
+
+# 3. A VXLAN segment bridge created after the load must stay closed between runs.
+def test_br_l2_is_dropped_before_the_container_bridge_accept():
+    res = render(fixture("core"))
+    inp = lines(res)
+    drop = inp.index('iifname "br-l2*" drop comment "container-bridges"')
+    accept = inp.index('iifname "br-*" accept comment "container-bridges"')
+    assert drop < accept
+    pub = lines(res, "published_new")
+    assert pub.index('iifname "br-l2*" drop comment "container-bridges"') < \
+        pub.index('iifname "br-*" return comment "container-bridges"')
+
+
+@pytest.mark.parametrize("link", ["br-int", "br-ex", "br-l2seg3"])
+def test_any_non_docker_br_link_is_refused(link):
+    doc = fixture("core")
+    doc["host"]["bridge_interfaces"] = [link]
+    refused(doc, "GB-210")
+
+
+# 5. The floor itself is a role input: one broader than the profile's needs a reason.
+@pytest.mark.parametrize("floor", [{"ipv4": 1}, {"ipv4": 16}, {"ipv6": 48}])
+def test_a_floor_broader_than_the_profile_needs_a_reason(floor):
+    doc = fixture("core")
+    doc["host"]["management_prefix_floor"] = floor
+    e = refused(doc, "GB-212")
+    assert "ssh-management" in str(e)
+    doc["override"] = {"ssh-management": {"reason": "the site's management network is a /16"}}
+    render(doc)
+
+
+def test_a_floor_narrower_than_the_profile_is_free():
+    doc = fixture("core")
+    doc["host"]["management_prefix_floor"] = {"ipv4": 28, "ipv6": 96}
+    render(doc)
+
+
+# Minor: a peering name holding "/" would make its rule names ambiguous.
+def test_a_peering_name_with_a_slash_is_refused():
+    doc = fixture("edge-wireguard")
+    doc["peerings"][0]["name"] = "wg/fed0"
+    refused(doc, "GB-210")
+
+
+# Minor: a UDP listener on an ephemeral port is not refused, but it is recorded as closed.
+def test_an_ephemeral_udp_listener_is_recorded_in_closing():
+    doc = fixture("core")
+    doc["host"]["ephemeral_ports"] = [32768, 60999]
+    doc["listening"] = [{"proto": "udp", "port": 41234, "addr": "0.0.0.0", "process": "x"}]
+    assert render(doc)["closing"] == ["udp/41234"]
