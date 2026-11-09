@@ -600,7 +600,7 @@ probes_note() { # KIND HANDLE STATUS DEADLINE: record one resource in this run's
   python3 - "$PROBES_FILE" "$RUN_ID" "$1" "$2" "$3" "$4" <<'PY'
 import json, os, sys, time
 path, run, kind, handle, status, deadline = sys.argv[1:]
-m = {"run": run, "resources": {}}
+m = {"run": run, "pid": os.getppid(), "resources": {}}
 if os.path.exists(path):
     m = json.load(open(path))
 r = m["resources"].setdefault(handle, {"kind": kind, "deadline": int(deadline or 0), "started_at": int(time.time())})
@@ -610,8 +610,13 @@ json.dump(m, open(tmp, "w"), indent=2, sort_keys=True)
 os.replace(tmp, path)
 PY
 }
-probes_left() { # MANIFEST: the handles it names that were not confirmed gone
-  python3 -c 'import json,sys; m=json.load(open(sys.argv[1])); print("\n".join(h for h,r in m.get("resources",{}).items() if r.get("status")!="gone"))' "$1" 2>/dev/null
+probes_left() { # MANIFEST: the handles it names that were not confirmed gone; exit 2 when unreadable
+  python3 -c 'import json,sys; m=json.load(open(sys.argv[1])); print("\n".join(h for h,r in m.get("resources",{}).items() if r.get("status")!="gone"))' "$1" 2>/dev/null || return 2
+}
+probes_owner_alive() { # MANIFEST: the run that wrote it is still running here (a concurrent run)
+  local pid
+  pid=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("pid") or "")' "$1" 2>/dev/null)
+  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
 }
 probes_stop() { # MANIFEST: stop and check every resource it names; prints the ones still there
   local h left=""
@@ -622,9 +627,9 @@ probes_stop() { # MANIFEST: stop and check every resource it names; prints the o
   done
   printf '%s' "$left"
 }
-probes_cleanup_on_signal() {
+probes_cleanup_on_signal() { # EXIT-STATUS
   [ -n "$PROBES_STARTED" ] && [ -f "$PROBES_FILE" ] && probes_stop "$PROBES_FILE" >/dev/null
-  exit 130
+  exit "$1"
 }
 if [ -n "${FED_PROBE_LAUNCHER:-}" ]; then
   mkdir -p "$PROBES_DIR"
@@ -633,7 +638,13 @@ if [ -n "${FED_PROBE_LAUNCHER:-}" ]; then
   for f in "$PROBES_DIR"/*.json; do
     [ -f "$f" ] || continue
     [ "$f" = "$PROBES_FILE" ] && continue
-    [ -n "$(probes_left "$f")" ] || continue
+    pl=$(probes_left "$f"); prc=$?
+    if [ "$prc" -ne 0 ]; then
+      # A manifest that cannot be read cannot show its resources are gone.
+      earlier="$earlier $(basename "$f" .json)"; left="$left <unreadable manifest $(basename "$f")>"; continue
+    fi
+    [ -n "$pl" ] || continue
+    probes_owner_alive "$f" && { echo "  probes of $(basename "$f" .json) belong to a run still going here; left alone"; continue; }
     earlier="$earlier $(basename "$f" .json)"
     left="$left$(probes_stop "$f")"
   done
@@ -643,7 +654,8 @@ if [ -n "${FED_PROBE_LAUNCHER:-}" ]; then
     else no cleanup/earlier-runs local precondition "probes an interrupted run left behind are still there:$left" \
       "Only resources named in those runs' manifests were stopped; stop these by hand."; fi
   fi
-  trap probes_cleanup_on_signal INT TERM
+  trap 'probes_cleanup_on_signal 130' INT
+  trap 'probes_cleanup_on_signal 143' TERM
   deadline=$(( $(date +%s) + ${FED_PROBE_TTL:-900} ))
   for kind in agreed forged impersonate; do
     case "$kind" in

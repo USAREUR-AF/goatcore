@@ -653,6 +653,19 @@ class AcceptanceRun(unittest.TestCase):
         self.assertEqual(self.verdicts()["cleanup/earlier-runs"], "PASS", out)
         self.assertEqual(os.listdir(state), ["somebody-elses"])
 
+    def test_an_unreadable_earlier_manifest_is_not_taken_as_clean(self):
+        fab = self.fabric.start()
+        launcher, state = self.launcher(fab)
+        probes = os.path.join(self.tmp, "evidence", "acceptance", "probes")
+        os.makedirs(probes)
+        with open(os.path.join(probes, "acc-broken.json"), "w") as f:
+            f.write("{not json")
+        rc, out = self.run_acceptance(
+            drop=["FED_PROBE_THEIRS_REST", "FED_PROBE_FORGED_REST", "FED_PROBE_IMPERSONATE_REST"],
+            extra={"FED_PROBE_LAUNCHER": launcher})
+        self.assertEqual(rc, 1, out)
+        self.assertEqual(self.verdicts()["cleanup/earlier-runs"], "FAIL", out)
+
     def test_without_a_launcher_nothing_is_started_or_cleaned(self):
         rc, out = self.run_acceptance()
         self.assertEqual(rc, 0, out)
