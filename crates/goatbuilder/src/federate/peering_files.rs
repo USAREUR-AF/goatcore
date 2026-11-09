@@ -138,7 +138,53 @@ fn host_line(name: &str, addr: &str, user: Option<&str>) -> String {
 /// The peering inventory: every peering's edge and core, one inventory name per
 /// peering per machine, so two peerings on one machine never read each other's
 /// group_vars (Ansible merges every group a host name is in).
-fn inventory(cfg: &Config, values: &[PeeringValues]) -> String {
+/// The `[group]` section of an INI inventory, its host lines only.
+fn section(text: &str, group: &str) -> Option<Vec<String>> {
+    let head = format!("[{group}]");
+    let mut lines = text.lines();
+    lines.find(|l| l.trim() == head)?;
+    Some(
+        lines
+            .take_while(|l| !l.trim_start().starts_with('['))
+            .filter(|l| !l.trim().is_empty() && !l.trim_start().starts_with('#'))
+            .map(String::from)
+            .collect(),
+    )
+}
+
+/// Retired peerings' groups, carried over from the last generated inventory:
+/// (edge groups, core groups), each with its host lines.
+type Retired = (Vec<(String, Vec<String>)>, Vec<(String, Vec<String>)>);
+
+fn retired_groups(
+    values: &[PeeringValues],
+    previous: &alloc::Record,
+    prev: Option<&str>,
+) -> Retired {
+    let (mut edges, mut cores) = (Vec::new(), Vec::new());
+    let Some(text) = prev else {
+        return (edges, cores);
+    };
+    let declared: Vec<String> = values
+        .iter()
+        .map(|v| format!("{}/{}", v.environment, v.peering))
+        .collect();
+    for (k, e) in &previous.peerings {
+        if declared.contains(k) {
+            continue;
+        }
+        for (g, list) in [(&e.edge_group, &mut edges), (&e.core_group, &mut cores)] {
+            if let Some(g) = g {
+                if let Some(hosts) = section(text, g) {
+                    list.push((g.clone(), hosts));
+                }
+            }
+        }
+    }
+    (edges, cores)
+}
+
+fn inventory(cfg: &Config, values: &[PeeringValues], retired: &Retired) -> String {
     let mut s = header("the peering inventory, from goatbuilder.yaml peerings: hosts:.");
     s.push_str(
         "# One inventory name per peering for each machine: a host name in two peering\n\
@@ -150,6 +196,9 @@ fn inventory(cfg: &Config, values: &[PeeringValues]) -> String {
     for (_, v) in &pairs {
         s.push_str(&format!("{}\n", v.edge_group));
     }
+    for (g, _) in &retired.0 {
+        s.push_str(&format!("{g}\n"));
+    }
     for (p, v) in &pairs {
         let h = p.hosts.as_ref().expect("checked by the caller");
         s.push_str(&format!(
@@ -158,9 +207,21 @@ fn inventory(cfg: &Config, values: &[PeeringValues]) -> String {
             host_line(&v.edge_host_name, &h.edge, h.user.as_deref())
         ));
     }
+    let carry = |s: &mut String, list: &Vec<(String, Vec<String>)>| {
+        for (g, hosts) in list {
+            s.push_str(&format!(
+                "\n# Retired: no longer declared, kept while its record entry stays (it may still run).\n[{g}]\n{}\n",
+                hosts.join("\n")
+            ));
+        }
+    };
+    carry(&mut s, &retired.0);
     s.push_str("\n# The core host each peering's edge dials; its republisher runs there.\n[peering_cores:children]\n");
     for (_, v) in &pairs {
         s.push_str(&format!("{}\n", v.core_group));
+    }
+    for (g, _) in &retired.1 {
+        s.push_str(&format!("{g}\n"));
     }
     for (p, v) in &pairs {
         let h = p.hosts.as_ref().expect("checked by the caller");
@@ -170,6 +231,7 @@ fn inventory(cfg: &Config, values: &[PeeringValues]) -> String {
             host_line(&v.core_host_name, &h.core, h.user.as_deref())
         ));
     }
+    carry(&mut s, &retired.1);
     s
 }
 
@@ -182,10 +244,23 @@ pub fn render(cfg: &Config, values: &[PeeringValues]) -> Result<Vec<Rendered>> {
 
 /// `render`, keeping the record entries of `previous` whose peering is no
 /// longer declared.
+#[cfg(test)]
 pub fn render_with(
     cfg: &Config,
     values: &[PeeringValues],
     previous: &alloc::Record,
+) -> Result<Vec<Rendered>> {
+    render_full(cfg, values, previous, None)
+}
+
+/// `render_with`, carrying over from `prev_inventory` (the inventory this
+/// module generated last time) the groups of record entries no longer
+/// declared: their peering may still run, and backing it out needs its hosts.
+pub fn render_full(
+    cfg: &Config,
+    values: &[PeeringValues],
+    previous: &alloc::Record,
+    prev_inventory: Option<&str>,
 ) -> Result<Vec<Rendered>> {
     let mut out = vec![Rendered {
         path: format!("ops/goatbuilder/{}", alloc::RECORD_FILE),
@@ -223,7 +298,11 @@ pub fn render_with(
     if inv {
         out.push(Rendered {
             path: "ops/ansible/inventory/peering-edges.ini".into(),
-            body: inventory(cfg, values),
+            body: inventory(
+                cfg,
+                values,
+                &retired_groups(values, previous, prev_inventory),
+            ),
         });
     }
     Ok(out)
@@ -329,6 +408,194 @@ fn shadowed(repo: &Path, r: &Rendered, hosts: &[String]) -> Option<(PathBuf, Vec
     None
 }
 
+/// Hand-written (not generated) YAML files of one group_vars group.
+fn hand_group_files(repo: &Path, group: &str) -> Vec<PathBuf> {
+    let mut out: Vec<PathBuf> = std::fs::read_dir(repo.join("ops/ansible/group_vars").join(group))
+        .map(|it| it.flatten().map(|e| e.path()).collect())
+        .unwrap_or_default();
+    for ext in ["yml", "yaml"] {
+        out.push(repo.join(format!("ops/ansible/group_vars/{group}.{ext}")));
+    }
+    out.retain(|f| {
+        matches!(f.extension().and_then(|e| e.to_str()), Some("yml" | "yaml"))
+            && std::fs::read_to_string(f)
+                .map(|t| !t.starts_with(MARKER))
+                .unwrap_or(false)
+    });
+    out.sort();
+    out
+}
+
+/// One variable's value as the hand files of `group` set it, else as the role
+/// default in this repository sets it.
+fn live_value(repo: &Path, group: &str, var: &str, role: &str) -> Option<String> {
+    let read = |f: &Path| -> Option<String> {
+        let text = std::fs::read_to_string(f).ok()?;
+        let v: serde_yaml::Value = serde_yaml::from_str(&text).ok()?;
+        match v.get(var)? {
+            serde_yaml::Value::String(s) => Some(s.clone()),
+            serde_yaml::Value::Number(n) => Some(n.to_string()),
+            _ => None,
+        }
+    };
+    hand_group_files(repo, group)
+        .iter()
+        .rev()
+        .find_map(|f| read(f))
+        .or_else(|| read(&repo.join(format!("ops/ansible/roles/{role}/defaults/main.yml"))))
+}
+
+/// Whether a peering already runs from hand-written configuration: its edge
+/// group has hand group_vars, or the hand-written inventory names its group.
+fn runs_by_hand(repo: &Path, edge_group: &str) -> bool {
+    if !hand_group_files(repo, edge_group).is_empty() {
+        return true;
+    }
+    hand_inventory(repo)
+        .map(|groups| groups.contains_key(edge_group))
+        .unwrap_or(false)
+}
+
+/// The groups of the hand-written peering inventory and their host names.
+/// `None`: there is none, or goatbuilder generated it.
+fn hand_inventory(repo: &Path) -> Option<std::collections::BTreeMap<String, Vec<String>>> {
+    let text =
+        std::fs::read_to_string(repo.join("ops/ansible/inventory/peering-edges.ini")).ok()?;
+    if text.starts_with(MARKER) {
+        return None;
+    }
+    let mut groups: std::collections::BTreeMap<String, Vec<String>> = Default::default();
+    let mut current: Option<String> = None;
+    for line in text.lines() {
+        let l = line.trim();
+        if l.is_empty() || l.starts_with('#') || l.starts_with(';') {
+            continue;
+        }
+        if let Some(name) = l.strip_prefix('[').and_then(|r| r.strip_suffix(']')) {
+            // `:children` and `:vars` sections list groups and variables, not hosts.
+            current = (!name.contains(':')).then(|| name.to_string());
+            if let Some(g) = &current {
+                groups.entry(g.clone()).or_default();
+            }
+            continue;
+        }
+        if let (Some(g), Some(host)) = (&current, l.split_whitespace().next()) {
+            groups.entry(g.clone()).or_default().push(host.to_string());
+        }
+    }
+    Some(groups)
+}
+
+/// Before anything is written: a peering the record does not hold, which
+/// already runs from hand-written configuration, must not be given values
+/// other than the ones it runs on without that being said. Refuses (GB-230)
+/// naming each value that would move, unless `moves` names the peering.
+pub fn adoption_check(
+    repo: &Path,
+    cfg: &Config,
+    values: &[PeeringValues],
+    ctx: &AllocContext,
+    moves: &[String],
+) -> Result<()> {
+    let mut lines = Vec::new();
+    for (p, v) in cfg.peerings.iter().zip(values.iter()) {
+        let key = format!("{}/{}", v.environment, v.peering);
+        if ctx.record.peerings.contains_key(&key)
+            || moves.iter().any(|m| m == &v.peering || m == &key)
+            || !runs_by_hand(repo, &v.edge_group)
+        {
+            continue;
+        }
+        let wg = p.tunnel.as_deref() != Some("ipsec");
+        let mut checks: Vec<(&str, String, &str, String, &str)> = vec![
+            (
+                "spire_outbound_port",
+                v.spire_outbound_port.to_string(),
+                "peering_spire_outbound_port",
+                v.edge_group.clone(),
+                "goat-peering-spire",
+            ),
+            (
+                "republisher_metrics_port",
+                v.republisher_metrics_port.to_string(),
+                "goat_fed_republisher_metrics_port",
+                v.core_group.clone(),
+                "goat-fed-republisher",
+            ),
+        ];
+        if wg {
+            checks.push((
+                "wg_interface",
+                v.wg_interface.clone(),
+                "peering_wg_interface",
+                v.edge_group.clone(),
+                "goat-peering-wg",
+            ));
+            checks.push((
+                "wg_listen_port",
+                v.wg_listen_port.to_string(),
+                "peering_wg_listen_port",
+                v.edge_group.clone(),
+                "goat-peering-wg",
+            ));
+        }
+        let mut moved = Vec::new();
+        for (field, allocated, var, group, role) in checks {
+            if let Some(live) = live_value(repo, &group, var, role) {
+                if live != allocated {
+                    moved.push(format!("{field} {live} -> {allocated}"));
+                }
+            }
+        }
+        if !moved.is_empty() {
+            lines.push(format!(
+                "{key} runs from hand-written files and would move: {}",
+                moved.join(", ")
+            ));
+        }
+    }
+    if lines.is_empty() {
+        return Ok(());
+    }
+    Err(goat_errors::coded(
+        "GB-230",
+        format!(
+            "goatbuilder federate allocate would change the values of a peering that already runs (GB-230): {}. To adopt it as it runs, pin those values under the peering's values: in goatbuilder.yaml (a pin on 51820 needs the environment's peering_edge_reserved_udp to allow it). To move it on purpose, run again with FED_ALLOCATE_MOVE=<with>[,<with>...]; its next phase 2 then moves the tunnel. Nothing was written",
+            lines.join("; ")
+        ),
+    )
+    .into())
+}
+
+/// Without `hosts:`, the hand-written inventory must give each peering its own
+/// inventory name for each machine: a name in two peering groups merges both
+/// peerings' rendered values (GB-231).
+fn hand_inventory_names_apart(repo: &Path, values: &[PeeringValues]) -> Result<()> {
+    let Some(groups) = hand_inventory(repo) else {
+        return Ok(());
+    };
+    let mut seen: std::collections::BTreeMap<String, String> = Default::default();
+    for v in values {
+        for g in [&v.edge_group, &v.core_group] {
+            for h in groups.get(g.as_str()).into_iter().flatten() {
+                if let Some(other) = seen.insert(h.clone(), g.clone()) {
+                    if &other != g {
+                        return Err(goat_errors::coded(
+                            "GB-231",
+                            format!(
+                                "ops/ansible/inventory/peering-edges.ini puts the inventory name {h} in both {other} and {g} (GB-231): Ansible merges the group_vars of every group a name is in, so each peering would read the other's values. Give each peering its own name for the machine (for example {}-{h} with the same ansible_host), or declare hosts: on every peering and let goatbuilder federate allocate render the inventory",
+                                v.peering
+                            ),
+                        )
+                        .into());
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 fn row(name: &str, ok: bool, detail: String, fix: Option<String>) -> Check {
     Check {
         name: name.into(),
@@ -351,6 +618,18 @@ pub fn driver_agrees(
     edge_group: &str,
 ) -> Result<()> {
     let ctx = AllocContext::load(cfg_dir)?;
+    // Only a recorded entry is checked; ambiguity matters only then.
+    let recorded = cfg.peerings.iter().any(|p| {
+        p.with == o.with
+            && o.env.map(|e| p.environment == e).unwrap_or(true)
+            && ctx
+                .record
+                .peerings
+                .contains_key(&format!("{}/{}", p.environment, p.with))
+    });
+    if !recorded {
+        return Ok(());
+    }
     let Some(p) = super::declaration::peering(cfg, o.with, o.env)? else {
         return Ok(());
     };
@@ -403,7 +682,21 @@ pub fn run(repo: &Path, o: &Options) -> Result<Report> {
         .unwrap_or_else(|| repo.to_path_buf());
     let ctx = AllocContext::load(&cfg_dir)?;
     let values = alloc::allocate_all(&cfg, &ctx)?;
-    let rendered = render_with(&cfg, &values, &ctx.record)?;
+    let moves: Vec<String> = std::env::var("FED_ALLOCATE_MOVE")
+        .unwrap_or_default()
+        .split(',')
+        .map(|m| m.trim().to_string())
+        .filter(|m| !m.is_empty())
+        .collect();
+    adoption_check(repo, &cfg, &values, &ctx, &moves)?;
+    if cfg.peerings.iter().all(|p| p.hosts.is_none()) {
+        hand_inventory_names_apart(repo, &values)?;
+    }
+    let prev_inventory =
+        std::fs::read_to_string(repo.join("ops/ansible/inventory/peering-edges.ini"))
+            .ok()
+            .filter(|t| t.starts_with(MARKER));
+    let rendered = render_full(&cfg, &values, &ctx.record, prev_inventory.as_deref())?;
     let writes = !o.dry_run && o.mock.is_none();
     let mode = if o.dry_run {
         " (DRY RUN: nothing is written)"
@@ -476,7 +769,10 @@ pub fn run(repo: &Path, o: &Options) -> Result<Report> {
             if let Some(parent) = t.parent() {
                 std::fs::create_dir_all(parent)?;
             }
-            std::fs::write(&t, &r.body)?;
+            // Whole or not at all: a reader never sees half a record.
+            let tmp = t.with_extension("goatbuilder-tmp");
+            std::fs::write(&tmp, &r.body)?;
+            std::fs::rename(&tmp, &t)?;
             "written"
         };
         let detail = if writes || same {
@@ -799,6 +1095,132 @@ mod tests {
                 && e.to_string().contains("deployment.yml"),
             "{e}"
         );
+    }
+
+    fn role_defaults(d: &Path) {
+        let wg = d.join("ops/ansible/roles/goat-peering-wg/defaults");
+        std::fs::create_dir_all(&wg).unwrap();
+        std::fs::write(
+            wg.join("main.yml"),
+            "peering_wg_interface: wg-fed0\npeering_wg_listen_port: 51820\n",
+        )
+        .unwrap();
+    }
+
+    /// A peering the record does not hold, whose edge group already has hand
+    /// files (it runs today), is never given different values silently: refused
+    /// naming adopt (pin) or move; a pin of the live values, or a confirmed move,
+    /// goes ahead.
+    #[test]
+    fn adopting_a_running_peering_never_moves_it_silently() {
+        let d = repo_with(json!([p("xab", false)]));
+        role_defaults(d.path());
+        let g = d.path().join("ops/ansible/group_vars/xab_edge");
+        std::fs::create_dir_all(&g).unwrap();
+        std::fs::write(g.join("deployment.yml"), "goat_zenoh_edge_image: x\n").unwrap();
+        let c = config::load(&d.path().join("ops/goatbuilder/goatbuilder.yaml")).unwrap();
+        let vs = alloc::allocate_all(&c, &AllocContext::default()).unwrap();
+        let e = adoption_check(d.path(), &c, &vs, &AllocContext::default(), &[]).unwrap_err();
+        assert_eq!(
+            e.downcast_ref::<goat_errors::Coded>().unwrap().code,
+            "GB-230"
+        );
+        let m = e.to_string();
+        assert!(
+            m.contains("wg_listen_port") && m.contains("51820") && m.contains("51823"),
+            "{m}"
+        );
+        assert!(
+            m.contains("values:") && m.contains("FED_ALLOCATE_MOVE"),
+            "{m}"
+        );
+        // Adopting: pin the live values (51820 needs the environment's reserved list).
+        let mut adopt = c.clone();
+        adopt.peerings[0].values.wg_listen_port = Some(51820);
+        adopt.environments[0].peering_edge_reserved_udp = Some(vec![]);
+        let av = alloc::allocate_all(&adopt, &AllocContext::default()).unwrap();
+        assert!(adoption_check(d.path(), &adopt, &av, &AllocContext::default(), &[]).is_ok());
+        // A confirmed move goes ahead.
+        assert!(
+            adoption_check(d.path(), &c, &vs, &AllocContext::default(), &["xab".into()]).is_ok()
+        );
+        // A peering with no hand files is new: nothing to adopt.
+        let d2 = repo_with(json!([p("xab", false)]));
+        role_defaults(d2.path());
+        assert!(adoption_check(d2.path(), &c, &vs, &AllocContext::default(), &[]).is_ok());
+    }
+
+    /// Without hosts:, the inventory stays hand-written; one inventory name in
+    /// two peering groups would merge both peerings' values, so it is refused.
+    #[test]
+    fn a_hand_inventory_with_one_name_in_two_peering_groups_is_refused() {
+        let d = repo_with(json!([p("xab", false), p("xac", false)]));
+        let inv = d.path().join("ops/ansible/inventory");
+        std::fs::create_dir_all(&inv).unwrap();
+        std::fs::write(
+            inv.join("peering-edges.ini"),
+            "[xab_edge]\nedge-1 ansible_host=192.0.2.20\n\n[xac_edge]\nedge-1 ansible_host=192.0.2.20\n",
+        )
+        .unwrap();
+        let e = run(d.path(), &opts(false)).unwrap_err();
+        assert_eq!(
+            e.downcast_ref::<goat_errors::Coded>().unwrap().code,
+            "GB-231"
+        );
+        assert!(e.to_string().contains("edge-1"), "{e}");
+        std::fs::write(
+            inv.join("peering-edges.ini"),
+            "[xab_edge]\nedge-1-xab ansible_host=192.0.2.20\n\n[xac_edge]\nedge-1-xac ansible_host=192.0.2.20\n",
+        )
+        .unwrap();
+        run(d.path(), &opts(false)).unwrap();
+    }
+
+    /// A removed peering keeps its inventory groups while its record entry
+    /// stays, so backing it out still has hosts to target.
+    #[test]
+    fn a_removed_peerings_inventory_groups_stay_while_it_is_recorded() {
+        let d = repo_with(json!([p("xab", true), p("xac", true)]));
+        run(d.path(), &opts(false)).unwrap();
+        let cfgp = d.path().join("ops/goatbuilder/goatbuilder.yaml");
+        let mut doc: serde_json::Value =
+            serde_yaml::from_str(&std::fs::read_to_string(&cfgp).unwrap()).unwrap();
+        doc["peerings"] = json!([p("xab", true)]);
+        std::fs::write(&cfgp, serde_yaml::to_string(&doc).unwrap()).unwrap();
+        run(d.path(), &opts(false)).unwrap();
+        let inv = std::fs::read_to_string(d.path().join("ops/ansible/inventory/peering-edges.ini"))
+            .unwrap();
+        assert!(
+            inv.contains("[xac_edge]\ndev-edge-xac ansible_host=192.0.2.20"),
+            "{inv}"
+        );
+        assert!(inv.contains("[xac_core]\ndev-core-xac"), "{inv}");
+        assert!(!std::fs::read_dir(d.path().join("ops/goatbuilder"))
+            .unwrap()
+            .flatten()
+            .any(|e| e.file_name().to_string_lossy().contains(".tmp")));
+    }
+
+    /// A partner on two environments that the record does not hold runs as
+    /// before, with no --env demanded; --env is needed only once one is recorded.
+    #[test]
+    fn the_record_check_demands_env_only_for_a_recorded_peering() {
+        let mut prod = p("xab", false);
+        prod["environment"] = json!("prod");
+        let c = cfg(json!([p("xab", false), prod]));
+        let dir = tempfile::tempdir().unwrap();
+        let o = Options {
+            with: "xab",
+            ..opts(true)
+        };
+        assert!(driver_agrees(
+            &c,
+            dir.path(),
+            &o,
+            "/var/lib/goat-federation/xab",
+            "xab_edge"
+        )
+        .is_ok());
     }
 
     #[test]
