@@ -1,0 +1,26 @@
+---
+# peering-host-firewall.example.yml — the host firewall baseline of a peering edge
+# host and its core router host.
+#
+# COPY into the edge's and the core's group_vars (for example
+# group_vars/<peering>_edge/host-firewall.yml and group_vars/<peering>_core/host-firewall.yml).
+# Default is OFF; with it off the peering plays do not include the role and nothing
+# changes. Design: docs/design/peering-host-firewall.md. Role defaults:
+# ops/ansible/roles/goat-host-firewall/defaults/main.yml.
+
+goat_host_firewall_baseline: false     # <-- the switch
+
+# Required when on: where SSH is admitted from. Documentation addresses below; put the
+# deployment's management host or range here.
+goat_host_firewall_management_sources:
+  - 198.51.100.10/32
+
+# Optional. Tighten freely; loosen a NAMED rule only, with a reason. List the names:
+#   python3 ops/ansible/roles/goat-host-firewall/files/goat-host-firewall-render.py \
+#     --input <input.json> --list-rules
+goat_host_firewall_override:
+  icmp-echo: {drop: true}
+  # fabric-tls: {sources: [100.127.0.0/16]}           # core: fabric port from the mesh only
+  # other-tcp:
+  #   ports: [9100]
+  #   reason: "node exporter, scraped by the site's monitoring host"

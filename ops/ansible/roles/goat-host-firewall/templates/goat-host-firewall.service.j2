@@ -1,0 +1,18 @@
+# {{ ansible_managed }}
+# Loads the host firewall baseline at boot (docs/design/peering-host-firewall.md).
+# Only the table inet goat_host_firewall is replaced; other tables are untouched.
+[Unit]
+Description=goat host firewall baseline (nftables table goat_host_firewall)
+DefaultDependencies=no
+Wants=network-pre.target
+Before=network-pre.target shutdown.target
+Conflicts=shutdown.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft -f {{ goat_host_firewall_dir }}/ruleset.nft
+ExecStop=/usr/sbin/nft delete table inet goat_host_firewall
+
+[Install]
+WantedBy=multi-user.target

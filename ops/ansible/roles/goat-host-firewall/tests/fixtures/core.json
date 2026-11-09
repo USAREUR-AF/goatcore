@@ -1,0 +1,14 @@
+{
+  "schema": "goat-host-firewall-input/v1",
+  "profile": "core",
+  "host": {
+    "ssh_port": 22,
+    "management_sources": ["198.51.100.10/32"],
+    "mesh_interface": "wt0",
+    "mesh_udp_ports": [51820],
+    "fabric_tcp_port": 7447,
+    "fabric_udp_port": null,
+    "fabric_sources": [],
+    "mesh_dns_port": 5353
+  }
+}

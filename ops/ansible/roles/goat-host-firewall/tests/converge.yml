@@ -1,0 +1,9 @@
+---
+# Converge fixture for ops/ci/test-host-firewall-role.sh: the role alone, over SSH,
+# with the profile and the values passed as extra vars.
+- name: goat-host-firewall | converge
+  hosts: all
+  gather_facts: true
+  become: true
+  roles:
+    - role: ../..

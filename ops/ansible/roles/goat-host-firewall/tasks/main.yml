@@ -1,0 +1,157 @@
+---
+# goat-host-firewall — render the baseline, check it, then load it with a rollback
+# armed. Design: docs/design/peering-host-firewall.md
+#
+# Every refusal happens before anything on the host changes: the inputs, the
+# override, and whether the ruleset would drop the SSH session running this play.
+# Rendering is the same script the federation planner calls, so the plan and this
+# run print the same hash for the same input.
+
+- name: host-firewall | the play names a profile
+  ansible.builtin.assert:
+    that:
+      - goat_host_firewall_profile in ['edge', 'core']
+    fail_msg: >-
+      goat-host-firewall refuses (GB-210): goat_host_firewall_profile is
+      '{{ goat_host_firewall_profile }}'. The play that includes this role sets it to
+      edge or core; it is not a group_vars value.
+
+- name: host-firewall | the management sources are declared
+  ansible.builtin.assert:
+    that:
+      - goat_host_firewall_management_sources is sequence
+      - goat_host_firewall_management_sources is not string
+      - goat_host_firewall_management_sources | length > 0
+    fail_msg: >-
+      goat-host-firewall refuses (GB-210): goat_host_firewall_management_sources is
+      empty, so SSH would be admitted from nowhere. Set it in this host's group_vars
+      to the address or CIDR the deployment manages the host from. Nothing was applied.
+
+- name: host-firewall | an edge run carries its peering
+  ansible.builtin.assert:
+    that:
+      - goat_host_firewall_peering is mapping
+      - (goat_host_firewall_peering.name | default('')) | length > 0
+    fail_msg: >-
+      goat-host-firewall refuses (GB-210): an edge run needs goat_host_firewall_peering,
+      set by peering-wg.yml or peering-edge.yml from the transport role's values.
+  when: goat_host_firewall_profile == 'edge'
+
+# --- what is on the host already ---------------------------------------------------
+
+- name: host-firewall | the peerings already stored on this host
+  ansible.builtin.find:
+    paths: "{{ goat_host_firewall_dir }}/peerings"
+    patterns: "*.json"
+  register: _hf_found
+  when: goat_host_firewall_profile == 'edge'
+
+- name: host-firewall | read them
+  ansible.builtin.slurp:
+    src: "{{ item.path }}"
+  loop: "{{ (_hf_found.files | default([])) | sort(attribute='path') }}"
+  loop_control:
+    label: "{{ item.path | basename }}"
+  register: _hf_stored
+  when: goat_host_firewall_profile == 'edge'
+
+- name: host-firewall | every peering of this host, this run's in place of its stored copy
+  ansible.builtin.set_fact:
+    _hf_peerings: >-
+      {{ ((_hf_stored.results | default([]))
+          | map(attribute='content') | map('b64decode') | map('from_json')
+          | rejectattr('name', 'equalto', goat_host_firewall_peering.name) | list)
+         + [goat_host_firewall_peering] }}
+  when: goat_host_firewall_profile == 'edge'
+
+# Run without become: sudo resets the environment and SSH_CONNECTION with it.
+- name: host-firewall | the SSH session running this play
+  ansible.builtin.shell: |
+    set -eu
+    c="${SSH_CONNECTION:-}"
+    [ -n "$c" ] || exit 0
+    set -- $c
+    dev=$(ip -o route get "$1" 2>/dev/null | sed -n 's/.* dev \([^ ]*\).*/\1/p' | head -n 1)
+    printf '%s %s %s\n' "$1" "$4" "$dev"
+  args:
+    executable: /bin/sh
+  become: false
+  changed_when: false
+  check_mode: false
+  register: _hf_session
+  when: ansible_connection | default('ssh') in ['ssh', 'paramiko', 'smart']
+
+- name: host-firewall | the managing session could be read
+  ansible.builtin.assert:
+    that:
+      - (_hf_session.stdout | default('') | trim | split(' ') | length) >= 2
+    fail_msg: >-
+      goat-host-firewall refuses (GB-213): this play reaches the host over SSH, but the
+      session's source address could not be read (SSH_CONNECTION was empty), so the
+      lockout check cannot run. Nothing was applied.
+  when: _hf_session is not skipped
+
+- name: host-firewall | assemble the input
+  ansible.builtin.set_fact:
+    _hf_input:
+      schema: goat-host-firewall-input/v1
+      profile: "{{ goat_host_firewall_profile }}"
+      host:
+        ssh_port: "{{ goat_host_firewall_ssh_port | int }}"
+        management_sources: "{{ goat_host_firewall_management_sources }}"
+        mesh_interface: "{{ goat_host_firewall_mesh_interface }}"
+        mesh_udp_ports: "{{ goat_host_firewall_mesh_udp_ports | map('int') | list }}"
+        fabric_tcp_port: "{{ goat_host_firewall_fabric_tcp_port | int }}"
+        fabric_udp_port: "{{ (goat_host_firewall_fabric_udp_port | trim | int) if (goat_host_firewall_fabric_udp_port | trim | length > 0) else none }}"
+        fabric_sources: "{{ goat_host_firewall_fabric_sources }}"
+        mesh_dns_port: "{{ (goat_host_firewall_mesh_dns_port | int) if (goat_host_firewall_mesh_dns_port | string | length > 0) else none }}"
+      peerings: "{{ _hf_peerings | default([]) if goat_host_firewall_profile == 'edge' else [] }}"
+      override: "{{ goat_host_firewall_override }}"
+      must_reach: >-
+        {{ [] if (_hf_session is skipped) else
+           [{'saddr': _hf_session.stdout.split()[0], 'proto': 'tcp',
+             'dport': _hf_session.stdout.split()[1] | int,
+             'iif': (_hf_session.stdout.split()[2] | default(''))}] }}
+
+- name: host-firewall | render and check (nothing is applied when this refuses)
+  ansible.builtin.command:
+    argv:
+      - "{{ ansible_playbook_python }}"
+      - "{{ role_path }}/files/goat-host-firewall-render.py"
+      - --input
+      - "-"
+      - --format
+      - json
+    stdin: "{{ _hf_input | to_json }}"
+  delegate_to: localhost
+  become: false
+  check_mode: false
+  changed_when: false
+  failed_when: false
+  register: _hf_render
+
+- name: host-firewall | refused
+  ansible.builtin.fail:
+    msg: "{{ _hf_render.stderr | default('the renderer failed') | trim }} (exit {{ _hf_render.rc }})"
+  when: _hf_render.rc != 0
+
+- name: host-firewall | the ruleset
+  ansible.builtin.set_fact:
+    _hf_result: "{{ _hf_render.stdout | from_json }}"
+
+- name: host-firewall | say what will be loaded
+  ansible.builtin.debug:
+    msg:
+      - "profile {{ _hf_result.profile }}, sha256 {{ _hf_result.sha256 }}"
+      - "rules: {{ _hf_result.rules | map(attribute='name') | join(', ') }}"
+      - "dropped by the override: {{ _hf_result.dropped | join(', ') or 'none' }}"
+      - "loosened: {{ _hf_result.loosened | map(attribute='rule') | join(', ') or 'none' }}"
+
+- name: host-firewall | check mode loads nothing
+  ansible.builtin.debug:
+    msg: "check mode: would load ruleset sha256 {{ _hf_result.sha256 }}; nothing changed"
+  when: ansible_check_mode
+
+- name: host-firewall | load it
+  ansible.builtin.include_tasks: apply.yml
+  when: not ansible_check_mode

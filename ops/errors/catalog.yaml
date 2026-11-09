@@ -1490,6 +1490,86 @@ entries:
       - "NOT clean .*\\(GB-076\\)"
     exit: 3
 
+  - code: GB-210
+    tool: goatbuilder
+    title: the host firewall baseline is missing a value it needs
+    what: "The host firewall baseline (roles/goat-host-firewall, rendered by its goat-host-firewall-render.py) could not build a ruleset, because a value it derives the rules from is missing or malformed. Nothing was applied."
+    causes:
+      - goat_host_firewall_management_sources is empty, so SSH would be admitted from nowhere
+      - an edge run reached the role without its peering values (the play was not peering-wg.yml or peering-edge.yml)
+      - a port, address or interface name in the input is not one (a partner endpoint given as a name, an interface name over 15 characters)
+    fixes:
+      - "set goat_host_firewall_management_sources in the host's group_vars to the address or CIDR the deployment manages it from"
+      - "python3 ops/ansible/roles/goat-host-firewall/files/goat-host-firewall-render.py --input <input.json> --list-rules   (what the baseline derives)"
+    read: docs/design/peering-host-firewall.md
+    matches:
+      - "goat-host-firewall: REFUSED \\(GB-210\\)"
+      - "goat-host-firewall refuses \\(GB-210\\)"
+    exit: 2
+
+  - code: GB-211
+    tool: goatbuilder
+    title: the host firewall override names a rule the baseline does not have
+    what: "The deployment's goat_host_firewall_override names a rule that is not in the baseline, names a fixed rule (loopback, established, invalid), uses a key other than drop, sources, ports, interface and reason, or asks a fixed-expression rule for more than drop. The whole override was refused and nothing was applied."
+    causes:
+      - a misspelled rule name, or a peering rule named for an interface this host does not carry
+      - an attempt to add a new allow rule; only named baseline rules can be changed, and other-tcp / other-udp are the named rules for a service the host also runs
+    fixes:
+      - "python3 ops/ansible/roles/goat-host-firewall/files/goat-host-firewall-render.py --input <input.json> --list-rules   (the names an override may use)"
+    read: docs/design/peering-host-firewall.md
+    matches:
+      - "goat-host-firewall: REFUSED \\(GB-211\\)"
+    exit: 3
+
+  - code: GB-212
+    tool: goatbuilder
+    title: the host firewall override loosens a rule without a recorded reason
+    what: "An override entry widens a baseline rule (more sources, other ports, another interface) and carries no reason. Tightening is free; loosening a named rule needs a reason recorded in the deployment's configuration. The whole override was refused and nothing was applied."
+    causes:
+      - "the entry has no reason: key, or a blank one"
+      - "an entry meant to narrow widens instead (an empty sources list means any source)"
+    fixes:
+      - "add reason: \"<why this host needs it>\" to the entry in goat_host_firewall_override"
+      - narrow the rule instead, which needs no reason
+    read: docs/design/peering-host-firewall.md
+    matches:
+      - "goat-host-firewall: REFUSED \\(GB-212\\)"
+    exit: 3
+
+  - code: GB-213
+    tool: goatbuilder
+    title: the host firewall would cut the session managing the host
+    what: "The rendered ruleset admits no SSH from the source of the session running the play (read from SSH_CONNECTION on the host), so loading it would lock the deployment out. Nothing was applied."
+    causes:
+      - goat_host_firewall_management_sources does not hold the address this play connects from
+      - the override drops ssh-management, narrows its sources past this address, or binds it to another interface
+      - SSH listens on another port than goat_host_firewall_ssh_port
+      - the session's source could not be read, so the check could not run
+    fixes:
+      - "add the controller's address to goat_host_firewall_management_sources"
+      - "run the play from a declared management source"
+    read: docs/design/peering-host-firewall.md
+    matches:
+      - "goat-host-firewall: REFUSED \\(GB-213\\)"
+      - "goat-host-firewall refuses \\(GB-213\\)"
+    exit: 4
+
+  - code: GB-214
+    tool: goatbuilder
+    title: the host firewall ruleset was not loaded or not confirmed
+    what: "Loading the rendered ruleset failed, or a fresh connection to the host did not succeed after it was loaded. A ruleset that was loaded is undone by the rollback timer the role armed before loading it."
+    causes:
+      - the kernel refused the ruleset (nft -c failed), for example an nftables too old for a rule
+      - the new ruleset blocks the connection the controller makes, through a path the lockout check could not see (a jump host, a NAT between controller and host)
+      - systemd-run is not available on the host, so no rollback could be armed and nothing was loaded
+    fixes:
+      - "wait goat_host_firewall_rollback_seconds, then: nft list table inet goat_host_firewall   (the previous table is back)"
+      - "read /etc/goat-host-firewall/ruleset.nft.new on the host and the play output"
+    read: docs/design/peering-host-firewall.md
+    matches:
+      - "goat-host-firewall \\(GB-214\\)"
+    exit: 1
+
   # ----------------------------------------------------------- external tools
 
   - code: X-ANSIBLE-001

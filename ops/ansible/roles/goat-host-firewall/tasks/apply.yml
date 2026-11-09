@@ -1,0 +1,167 @@
+---
+# Load the rendered ruleset atomically, with the previous one armed to come back
+# unless a fresh connection to the host confirms the new one. `nft -f` of a file
+# that deletes and re-declares one table is one transaction: the host is never
+# between two rulesets.
+
+- name: host-firewall | nftables is installed
+  ansible.builtin.apt:
+    name: nftables
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  when: ansible_pkg_mgr | default('apt') == 'apt'
+
+- name: host-firewall | config directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+  loop:
+    - "{{ goat_host_firewall_dir }}"
+    - "{{ goat_host_firewall_dir }}/peerings"
+
+- name: host-firewall | the hash last loaded here
+  ansible.builtin.slurp:
+    src: "{{ goat_host_firewall_dir }}/applied.sha256"
+  register: _hf_applied
+  failed_when: false
+
+- name: host-firewall | the table is loaded
+  ansible.builtin.command: nft list table inet goat_host_firewall
+  register: _hf_loaded
+  changed_when: false
+  failed_when: false
+
+- name: host-firewall | decide whether to load
+  ansible.builtin.set_fact:
+    _hf_needs_load: >-
+      {{ _hf_loaded.rc != 0
+         or ((_hf_applied.content | default('') | b64decode | trim) != _hf_result.sha256) }}
+
+- name: host-firewall | load with a rollback armed
+  when: _hf_needs_load | bool
+  block:
+    - name: host-firewall | write the candidate
+      ansible.builtin.copy:
+        content: "{{ _hf_result.ruleset }}"
+        dest: "{{ goat_host_firewall_dir }}/ruleset.nft.new"
+        owner: root
+        group: root
+        mode: "0600"
+
+    - name: host-firewall | the kernel accepts it
+      ansible.builtin.command: "nft -c -f {{ goat_host_firewall_dir }}/ruleset.nft.new"
+      changed_when: false
+
+    # What comes back on rollback: the table as loaded now, or no table at all.
+    - name: host-firewall | keep what is loaded now
+      ansible.builtin.shell: |
+        set -eu
+        d={{ goat_host_firewall_dir | quote }}
+        {
+          printf 'table inet goat_host_firewall\ndelete table inet goat_host_firewall\n'
+          nft list table inet goat_host_firewall 2>/dev/null || true
+        } > "$d/rollback.nft.tmp"
+        mv -f "$d/rollback.nft.tmp" "$d/rollback.nft"
+      args:
+        executable: /bin/sh
+      changed_when: true
+
+    - name: host-firewall | clear a rollback left by an earlier run
+      ansible.builtin.shell: |
+        systemctl stop {{ goat_host_firewall_rollback_unit }}.timer {{ goat_host_firewall_rollback_unit }}.service 2>/dev/null || true
+        systemctl reset-failed {{ goat_host_firewall_rollback_unit }}.timer {{ goat_host_firewall_rollback_unit }}.service 2>/dev/null || true
+      args:
+        executable: /bin/sh
+      changed_when: false
+
+    - name: host-firewall | arm the rollback
+      ansible.builtin.command:
+        argv:
+          - systemd-run
+          - "--unit={{ goat_host_firewall_rollback_unit }}"
+          - "--on-active={{ goat_host_firewall_rollback_seconds | int }}"
+          - /usr/sbin/nft
+          - -f
+          - "{{ goat_host_firewall_dir }}/rollback.nft"
+      changed_when: true
+
+    - name: host-firewall | load the candidate (one transaction)
+      ansible.builtin.command: "nft -f {{ goat_host_firewall_dir }}/ruleset.nft.new"
+      changed_when: true
+  rescue:
+    - name: host-firewall | not loaded
+      ansible.builtin.fail:
+        msg: >-
+          goat-host-firewall (GB-214): '{{ ansible_failed_task.name | default('a step') }}'
+          failed: {{ ansible_failed_result.msg | default(ansible_failed_result.stderr | default('')) }}.
+          If the candidate was loaded, the previous ruleset comes back by itself within
+          {{ goat_host_firewall_rollback_seconds }} s (unit {{ goat_host_firewall_rollback_unit }}).
+          Read the rendered ruleset at {{ goat_host_firewall_dir }}/ruleset.nft.new.
+
+# Unconditional, because a meta task takes no `when`: on a run that loaded nothing it
+# only reconnects. On a run that did, the next connection is a new SSH session, made
+# through the new ruleset.
+- name: host-firewall | drop the connection this play holds
+  ansible.builtin.meta: reset_connection
+
+- name: host-firewall | confirm the new ruleset from a fresh connection
+  when: _hf_needs_load | bool
+  block:
+    - name: host-firewall | a fresh connection still reaches the host
+      ansible.builtin.wait_for_connection:
+        timeout: "{{ goat_host_firewall_confirm_timeout | int }}"
+
+    - name: host-firewall | confirm, so the rollback does not fire
+      ansible.builtin.command: "systemctl stop {{ goat_host_firewall_rollback_unit }}.timer"
+      changed_when: true
+
+    - name: host-firewall | keep the confirmed ruleset for boot
+      ansible.builtin.command: >-
+        mv -f {{ goat_host_firewall_dir }}/ruleset.nft.new {{ goat_host_firewall_dir }}/ruleset.nft
+      changed_when: true
+
+    - name: host-firewall | record the hash
+      ansible.builtin.copy:
+        content: "{{ _hf_result.sha256 }}\n"
+        dest: "{{ goat_host_firewall_dir }}/applied.sha256"
+        owner: root
+        group: root
+        mode: "0600"
+  rescue:
+    - name: host-firewall | not confirmed
+      ansible.builtin.fail:
+        msg: >-
+          goat-host-firewall (GB-214): '{{ ansible_failed_task.name | default('a step') }}'
+          failed after the new ruleset was loaded:
+          {{ ansible_failed_result.msg | default(ansible_failed_result.stderr | default('')) }}.
+          The previous ruleset comes back by itself within
+          {{ goat_host_firewall_rollback_seconds }} s (unit {{ goat_host_firewall_rollback_unit }}).
+          Read the rendered ruleset at {{ goat_host_firewall_dir }}/ruleset.nft.new.
+
+- name: host-firewall | store this run's peering for the next run on this host
+  ansible.builtin.copy:
+    content: "{{ goat_host_firewall_peering | to_nice_json(sort_keys=true) }}\n"
+    dest: "{{ goat_host_firewall_dir }}/peerings/{{ goat_host_firewall_peering.name }}.json"
+    owner: root
+    group: root
+    mode: "0600"
+  when: goat_host_firewall_profile == 'edge'
+
+- name: host-firewall | boot unit
+  ansible.builtin.template:
+    src: goat-host-firewall.service.j2
+    dest: "/etc/systemd/system/{{ goat_host_firewall_service }}"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: host-firewall | the boot unit is enabled and active
+  ansible.builtin.systemd:
+    name: "{{ goat_host_firewall_service }}"
+    enabled: true
+    state: started
+    daemon_reload: true
