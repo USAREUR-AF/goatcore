@@ -448,6 +448,13 @@ class AcceptanceRun(unittest.TestCase):
         self.assertEqual(rc, 1, out)
         self.assertEqual(self.verdicts()["existing/xac/leak/release/xab"], "FAIL", out)
 
+    def test_silence_on_an_existing_partner_that_receives_nothing_is_not_a_pass(self):
+        work = self.existing()
+        self.assertEqual(self.run_before({"FED_EXISTING_WORKS": work})[0], 0)
+        self.fabric.faults.existing_down.add("xac")
+        rc, out = self.run_acceptance(extra={"FED_EXISTING_WORKS": work})
+        self.assertEqual(self.verdicts()["existing/xac/leak/release/xab"], "BLOCKED", out)
+
     def test_leakage_without_a_surface_is_an_optional_skip(self):
         work = self.existing()
         self.assertEqual(self.run_before({"FED_EXISTING_WORKS": work})[0], 0)
