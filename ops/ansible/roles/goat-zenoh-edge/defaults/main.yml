@@ -44,17 +44,26 @@ goat_zenoh_edge_inward_key: "{{ (goat_zenoh_edge_cert_dir ~ '/peering-inward-key
 # partner's CA phase 5 fetched (<fed_work>/theirs-ca.pem) from the CONTROLLER and
 # installs them in goat_zenoh_edge_cert_dir, after checking on the controller,
 # before anything is written on the edge, that:
+#   - each leaf carries the identity the agreement derives (outward CN
+#     fed.<us>.<them>.01, inward CN fed.<them>.<us>.01, the same DNS SAN,
+#     CA:FALSE) and is not a CA certificate itself;
 #   - each key belongs to its certificate (public keys compared) and is mode 0600;
 #   - each leaf chains to OUR CA, the certificate in goat_zenoh_edge_our_ca_path
-#     whose SHA-256 the agreement names for us, and has not expired;
-#   - the partner CA file is exactly one certificate whose SHA-256 is the
-#     ca_fingerprint the agreement names for the partner;
-#   - goat_zenoh_edge_cert_dir holds no other peering's files.
-# Unchanged files are left alone, so a re-run restarts nothing.
+#     whose SHA-256 the agreement names for us, and is valid for at least
+#     goat_zenoh_edge_cert_min_valid_seconds;
+#   - the partner CA file is exactly one CA certificate (CA:TRUE), valid as long,
+#     whose SHA-256 is the ca_fingerprint the agreement names for the partner;
+#   - goat_zenoh_edge_cert_dir holds no other peering's files: its .peering file
+#     names this partner, or it is empty or holds only these exact files.
+# The agreement in the working directory is trusted as phase 6 verified it.
+# Unchanged files are left alone, so a re-run restarts nothing. A run that
+# changes a file and stops before the edge restarts leaves .restart-pending in
+# the directory, and the next run restarts the edge.
 goat_zenoh_edge_install_certs: false
 # The per-peering directory on the edge. Each peering has its own: several
-# peerings on one edge never share or overwrite files. The driver passes the
-# allocated value (PeeringValues.cert_dir); this default is the same string.
+# peerings on one edge never share or overwrite files. Not built yet: the driver
+# passing the allocated PeeringValues.cert_dir (stage 8, allocation); until then
+# this default or a group_vars value applies.
 goat_zenoh_edge_cert_dir: "/etc/goat-zenoh-edge-{{ goat_zenoh_edge_partner_id }}/tls"
 # Sources ON THE CONTROLLER. fed_work is the run's working directory, passed by
 # the driver (`-e fed_work=...`), as for goat-fed-republisher.
@@ -64,7 +73,8 @@ goat_zenoh_edge_agreement_src: "{{ fed_work | default('') }}/agreement.json"
 # Empty: read from the agreement. Set it only to pin the value as well; a value
 # that differs from the agreement is refused.
 goat_zenoh_edge_partner_ca_fingerprint: ""
-# Refuse a leaf with less remaining lifetime than this (0: refuse only expired).
+# Refuse a leaf or the partner CA with less remaining lifetime than this, in
+# seconds (0: refuse only an expired one).
 goat_zenoh_edge_cert_min_valid_seconds: 0
 # Owner of the installed files. Keys are 0600 and certificates 0644, owned by the
 # user the edge container reads them as (root in the fleet image).

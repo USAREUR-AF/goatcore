@@ -36,20 +36,20 @@
     fail_msg: >-
       goat_zenoh_edge_cert_dir '{{ goat_zenoh_edge_cert_dir }}' must be an absolute
       path at least two levels deep, without '.' or '..' parts and without a
-      trailing '/'. The driver passes the allocated value; the default is
-      /etc/goat-zenoh-edge-<partner>/tls.
+      trailing '/'. The default is /etc/goat-zenoh-edge-<partner>/tls.
 
 - name: edge certs | the run's working directory is known
   ansible.builtin.assert:
     that:
-      - goat_zenoh_edge_cert_src_dir is match('^/.+')
+      - goat_zenoh_edge_cert_src_dir is match('^/.*[^/]$')
       - goat_zenoh_edge_partner_ca_src is match('^/.+')
       - goat_zenoh_edge_agreement_src is match('^/.+')
     fail_msg: >-
       goat_zenoh_edge_install_certs needs the run's working directory on the
-      controller: pass -e fed_work=<work> (the driver does), or set
-      goat_zenoh_edge_cert_src_dir, goat_zenoh_edge_partner_ca_src and
-      goat_zenoh_edge_agreement_src to absolute paths.
+      controller: pass -e fed_work=<work> (both driver avenues pass it to every
+      peering play), or set goat_zenoh_edge_cert_src_dir, goat_zenoh_edge_partner_ca_src
+      and goat_zenoh_edge_agreement_src to absolute paths, the directory without a
+      trailing '/'. Given: '{{ goat_zenoh_edge_cert_src_dir }}'.
 
 - name: edge certs | our CA is named, to check the leaves against
   ansible.builtin.assert:
@@ -126,36 +126,48 @@
       directory: give this one its own goat_zenoh_edge_cert_dir. Nothing was written.
   when: _ze_certs_marker_stat.stat.exists
 
-- name: edge certs | list what an unmarked directory already holds
-  ansible.builtin.find:
-    paths: "{{ goat_zenoh_edge_cert_dir }}"
-    hidden: true
-    file_type: any
-  register: _ze_certs_existing
-  when: not _ze_certs_marker_stat.stat.exists
-
-- name: edge certs | refuse an unmarked directory holding other files
-  # A directory with no .peering file is taken only when it is empty or holds
-  # nothing but the files this role installs: a hand-placed set from another
-  # peering, or a system directory, is never adopted and re-owned.
-  ansible.builtin.assert:
-    that:
-      - _ze_certs_foreign | length == 0
-    fail_msg: >-
-      {{ goat_zenoh_edge_cert_dir }} has no .peering file and holds files this role
-      does not install: {{ _ze_certs_foreign | join(', ') }}. Give this peering its
-      own empty goat_zenoh_edge_cert_dir. Nothing was written.
-  vars:
-    _ze_certs_foreign: >-
-      {{ _ze_certs_existing.files | default([]) | map(attribute='path') | map('basename')
-         | reject('in', ['peering-outward.pem', 'peering-outward-key.pem', 'peering-inward.pem',
-                         'peering-inward-key.pem', 'partner-ca.pem'])
-         | list }}
-  when: not _ze_certs_marker_stat.stat.exists
-
 - name: edge certs | the checksums of what was checked
   ansible.builtin.set_fact:
     _ze_certs_sums: >-
       {{ _ze_certs_check.stdout_lines | select('match', '^checksums: ') | first
          | regex_replace('^checksums: ', '') | from_json }}
 
+- name: edge certs | list what an unmarked directory already holds
+  ansible.builtin.find:
+    paths: "{{ goat_zenoh_edge_cert_dir }}"
+    hidden: true
+    file_type: any
+    get_checksum: true
+  register: _ze_certs_existing
+  when: not _ze_certs_marker_stat.stat.exists
+
+- name: edge certs | refuse an unmarked directory unless it is empty or already holds these exact files
+  # A directory with no .peering file is adopted only when it is empty, or when
+  # every file in it is one this role installs with the same bytes as the checked
+  # source: a hand-placed set from another peering, an older set, or a system
+  # directory is never adopted and re-owned.
+  ansible.builtin.assert:
+    that:
+      - _ze_certs_foreign | length == 0
+    fail_msg: >-
+      {{ goat_zenoh_edge_cert_dir }} has no .peering file and holds files that are
+      not this peering's checked material: {{ _ze_certs_foreign | join(', ') }}.
+      Give this peering its own empty goat_zenoh_edge_cert_dir, or remove those
+      files after checking whose they are. Nothing was written.
+  vars:
+    _ze_certs_expected:
+      peering-outward.pem: "{{ _ze_certs_sums[goat_zenoh_edge_cert_src_dir ~ '/peering-outward.pem'] }}"
+      peering-outward-key.pem: "{{ _ze_certs_sums[goat_zenoh_edge_cert_src_dir ~ '/peering-outward-key.pem'] }}"
+      peering-inward.pem: "{{ _ze_certs_sums[goat_zenoh_edge_cert_src_dir ~ '/peering-inward.pem'] }}"
+      peering-inward-key.pem: "{{ _ze_certs_sums[goat_zenoh_edge_cert_src_dir ~ '/peering-inward-key.pem'] }}"
+      partner-ca.pem: "{{ _ze_certs_sums[goat_zenoh_edge_partner_ca_src] }}"
+    _ze_certs_foreign: >-
+      {%- set out = [] -%}
+      {%- for f in _ze_certs_existing.files | default([]) -%}
+      {%- set n = f.path | basename -%}
+      {%- if (_ze_certs_expected[n] | default('')) == '' or (f.checksum | default('')) != _ze_certs_expected[n] -%}
+      {%- set _ = out.append(n) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ out }}
+  when: not _ze_certs_marker_stat.stat.exists

@@ -72,6 +72,12 @@ the `goat-zenoh-edge` role installs them in phase 12 from the controller, as
 `goat-fed-republisher` already installs its own leaf. The driver already passes
 `fed_work` to every peering play, so no new driver value is needed.
 
+Trust assumption: the agreement file in the controller's working directory
+(`<work>/agreement.json`) is taken as the verified agreement. Phase 6 verified
+its signatures; these checks do not verify them again. Anyone who can write the
+controller's working directory can change what is checked, as they can change
+the leaves themselves.
+
 The checks and the writes are two task files, included at two points of
 `roles/goat-zenoh-edge/tasks/main.yml`.
 
@@ -79,46 +85,75 @@ The checks and the writes are two task files, included at two points of
 
 1. The five path variables must equal `<cert_dir>/<file>` (the defaults derive
    them). A deployment that still sets one to another path is refused, naming it.
-2. `goat_zenoh_edge_cert_dir` must be an absolute path at least two levels deep.
+2. `goat_zenoh_edge_cert_dir` must be an absolute path at least two levels deep,
+   and the source directory is refused with a trailing `/` (the checksums are
+   keyed by the exact source path).
 3. Our CA is read from the edge (`goat_zenoh_edge_our_ca_path`).
-4. `files/check-peering-certs.py` runs on the controller and reports every failed
-   check, not only the first: each leaf file holds exactly one certificate; each
-   key matches its certificate (public keys compared as DER) and has mode 0600;
-   each leaf verifies against the certificate in our CA file whose SHA-256 is our
-   party's `ca_fingerprint` in the agreement, for `sslserver` and `sslclient`,
-   with default trust locations disabled and `-partial_chain` (that certificate
-   may be an intermediate under a shared root; it is still the only anchor), so
-   an expired leaf fails too; the partner CA file holds exactly one certificate
-   whose SHA-256 over DER is the partner's `ca_fingerprint`. A second certificate
-   in the partner CA file is refused, not ignored: the edge would trust every
-   certificate in it on the partner-facing listener without the agreement naming
-   it. On success it prints the SHA-1 of each source file as checked.
+4. `files/check-peering-certs.py` runs on the controller. It reads each file once
+   (no symlink, regular files only) into a private temporary directory, runs
+   every `openssl` call on those copies, and hashes the same bytes. It reports
+   every failed check, not only the first:
+   - the agreement is a JSON object whose `parties` are exactly two objects with
+     distinct `sovereign_id`s, one of them the partner, each with a
+     `sha256:<hex>` `ca_fingerprint`; anything else is a `refused:` line;
+   - each leaf file holds exactly one certificate; each key matches its
+     certificate (public keys compared as DER) and has mode 0600;
+   - each leaf carries the identity the agreement derives, as
+     `mint-peering-leaves.sh` derives it: outward subject exactly
+     `CN=fed.<us>.<them>.01`, inward exactly `CN=fed.<them>.<us>.01`, a DNS SAN
+     equal to that CN, and `basicConstraints` `CA:FALSE`; a leaf whose DER is our
+     CA or the partner CA is refused. A leaf minted for another peering, or our
+     CA with its own key in a leaf's place, fails here;
+   - each leaf verifies against the certificate in our CA file whose SHA-256 is
+     our party's `ca_fingerprint`, for `sslserver` and `sslclient`, with default
+     trust locations disabled and `-partial_chain` (that certificate may be an
+     intermediate under a shared root; it is still the only anchor), and is valid
+     for at least `goat_zenoh_edge_cert_min_valid_seconds` (`-checkend`);
+   - the partner CA file holds exactly one certificate, with `basicConstraints`
+     `CA:TRUE`, valid for at least the same time, whose SHA-256 over DER is the
+     partner's `ca_fingerprint`. A second certificate in the partner CA file is
+     refused, not ignored: the edge would trust every certificate in it on the
+     partner-facing listener without the agreement naming it.
+
+   On success it prints the SHA-1 of the bytes it checked for each source file.
 5. The `.peering` file in `cert_dir`, when present, must name this partner. A
-   directory without one is taken only when it is empty or holds nothing but the
-   five files this role installs, so a hand-placed set from another peering or a
-   system directory is never adopted and re-owned.
+   directory without one is adopted only when it is empty, or when every file in
+   it is one of the five this role installs with the same SHA-1 as the checked
+   source. A hand-placed set from another peering, an older set, or a system
+   directory is refused and left as it was.
 
 `tasks/certificates-install.yml` runs after every other check in the role and
 before the bundle trust mode reads the partner CA. It writes the directory
 (0750), the `.peering` file, the certificates and partner CA (0644) and the keys
 (0600), each with the configured owner. Each copy carries the checksum from step
-4, so a source file changed after the check (a concurrent `--rotate`, for
-example) fails the copy instead of installing bytes nobody checked. Installing
-after the role's other checks means a later refusal cannot leave a new
-certificate in place with its restart notification lost: Ansible drops pending
-handlers when a host fails, and the next run would see the file unchanged and
-not restart.
+4: a copy that transfers a source file changed after the check (a concurrent
+`--rotate`, for example) fails instead of installing bytes nobody checked. A
+destination already equal to its current source is not transferred, so that
+comparison does not apply to it. The files are installed byte for byte as
+checked; they are not re-encoded.
 
-A refusal in the check file leaves the edge as it was. The `copy` tasks compare
-content and mode, so an unchanged file is not rewritten and the restart handler
-is notified only by a real change: a re-run restarts nothing, and a rotated leaf
-restarts the edge once. The checks also run under `--check`. Key files are copied
-with `diff: false`, so `--diff` does not print them.
+Restarts. Before the first copy the install writes `.restart-pending` in
+`cert_dir`. When a file changed, or the file was already there from an earlier
+run, it notifies the edge restart and then the handler that removes
+`.restart-pending`; Ansible runs handlers in the order `handlers/main.yml`
+defines them, and a failed restart fails the host, so the file is removed only
+after a restart that succeeded. When nothing changed and nothing was pending,
+the file is removed at once. A copy that fails, a later task that fails, a
+failed restart, or an interrupted run leaves the file, and the next run restarts
+the edge even when its own copies change nothing. Installing after the role's
+other checks also means a later refusal does not follow a certificate change.
+
+A refusal in the check file leaves the edge as it was, including a directory
+already populated by an earlier install. The `copy` tasks compare content and
+mode, so an unchanged file is not rewritten: a re-run restarts nothing, and a
+rotated leaf restarts the edge once. The checks also run under `--check`. Key
+files are copied with `diff: false`, so `--diff` does not print them.
 
 Several peerings on one edge each have their own `cert_dir`. The default is
-`/etc/goat-zenoh-edge-<partner>/tls`; the driver passes the allocated
-`PeeringValues.cert_dir` once allocation lands. The `.peering` marker makes a
-directory that another peering already holds a refusal rather than an overwrite.
+`/etc/goat-zenoh-edge-<partner>/tls`. Not built: the driver passing the
+allocated `PeeringValues.cert_dir` (stage 8, allocation); until then the default
+or a group_vars value applies. The `.peering` marker makes a directory that
+another peering already holds a refusal rather than an overwrite.
 
 Not built: the driver's phase 10 text still tells the person to place the partner
 CA, which stays correct while the switch defaults to off. Turning the default on,
@@ -127,17 +162,30 @@ a separate later change. Our CA itself (`goat_zenoh_edge_our_ca_path`) and the
 core's own certificate are still placed by the deployment.
 
 `ops/ansible/roles/goat-zenoh-edge/tests/test-certificates.sh` mints disposable
-CAs with openssl and runs the tasks on localhost: installation with the modes
+CAs with openssl and runs the task files on localhost (`tests/certificates.yml`)
+and the whole role (`tests/main.yml`). Covered: installation with the modes
 above, an idempotent re-run with no restart, a `--check` run, a replaced leaf with
-one restart, a second directory, our CA named as an intermediate inside a bundle,
-and a refusal with an unwritten directory for a mismatched key, a leaf from
-another CA, a wrong partner fingerprint, a two-certificate partner CA file, a
-pinned fingerprint that differs from the agreement, a key readable by others, a
-missing leaf, a directory another peering holds, a leaf file with two
-certificates, an unmarked directory holding other files, a path set by hand and a
-relative directory. Not covered by a test: a source file changing between the
-check and the copy (the copy module's `checksum` refusal was confirmed by hand). CI runs it in
-`.github/workflows/ansible-syntax-check.yml`.
+one restart, our CA named as an intermediate inside a bundle; a refusal with an
+unwritten directory for a mismatched key, a leaf from another CA, a wrong partner
+fingerprint, a two-certificate partner CA file, a partner "CA" that is not a CA,
+a pinned fingerprint that differs from the agreement, a key readable by others, a
+missing leaf, a leaf file with two certificates, a leaf minted for another
+peering, the inward identity in the outward place, a SAN that is not the CN, a
+leaf with `CA:TRUE`, our CA and its key used as a leaf, a leaf or a partner CA
+with less lifetime than the minimum, six malformed agreements (none a
+traceback), a source directory with a trailing `/`, a directory another peering
+holds, an unmarked directory holding other files or an older leaf, a path set by
+hand and a relative directory; two peerings with two directories and two markers,
+each refused the other's directory; five refusals against an installed directory,
+which keeps its files, modes and restart count; a failed restart and a half-done
+install, each leaving `.restart-pending` that the next run honours with one
+restart. Through the whole role: with the switch on, the check runs and a later
+refusal in `tasks/main.yml` leaves no certificate installed; bad material is
+refused before the role's first write; with the switch off no certificate task
+runs and no working directory is needed. Not covered by a test: an expired file
+as such (the same `-checkend` refuses it with 0), a source file changing between
+the check and the copy, and the role's real restart handler (the test stands in
+for the compose restart). CI runs it in `.github/workflows/ansible-syntax-check.yml`.
 
 ## Boundaries and tests
 

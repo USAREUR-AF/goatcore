@@ -1,7 +1,7 @@
 ---
 # Runs tasks/certificates-check.yml and certificates-install.yml on localhost
-# against certificates minted by test-certificates.sh. The handler stands in for the edge restart and records
-# each restart, so the test can tell a re-run that changed nothing from one
+# against certificates minted by test-certificates.sh. The restart handler is a
+# stand-in that records each restart, so the test can tell a re-run that changed nothing from one
 # that did. vars_files outranks play vars, so test-certificates.sh passes the
 # peering's own values (partner id, install switch, paths) as extra vars.
 - name: goat-zenoh-edge certificate installation, against local test material
@@ -12,10 +12,19 @@
     - ../defaults/main.yml
   vars:
     role_path: "{{ playbook_dir }}/.."
+  # The same two handlers as handlers/main.yml, in the same order; only the
+  # restart is a stand-in. restart_fails=true makes the restart fail, as a
+  # compose restart can.
   handlers:
     - name: Restart goat zenoh edge
-      ansible.builtin.shell: echo restart >> {{ restart_log | quote }}
+      ansible.builtin.shell: >-
+        {{ 'exit 1' if restart_fails | default(false) | bool
+           else 'echo restart >> ' ~ (restart_log | quote) }}
       changed_when: true
+    - name: Clear goat zenoh edge restart-pending
+      ansible.builtin.file:
+        path: "{{ goat_zenoh_edge_cert_dir }}/.restart-pending"
+        state: absent
   tasks:
     - name: Check the peering certificates
       ansible.builtin.include_tasks: ../tasks/certificates-check.yml

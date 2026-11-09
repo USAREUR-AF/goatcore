@@ -5,17 +5,32 @@ Runs on the controller, where phase 8 (mint-peering-leaves.sh) left the leaves
 and phase 5 (directory.py, or the hand exchange) left the partner's CA. It reads
 and writes nothing on the edge: the role installs the files only when this exits 0.
 
+TRUST ASSUMPTION. The agreement file on the controller is taken as the verified
+agreement: phase 6 verified its signatures, and this script does not verify them
+again. Whoever can write the controller's working directory can change what is
+checked here.
+
+Each file is read once (no symlink, regular files only) into a private temporary
+directory; every check runs on those copies, and the checksums printed are of
+those same bytes, so the role installs exactly what was checked.
+
 Checks, all of them, reporting every failure rather than the first:
-  - each leaf and key exists and is a regular file; each leaf file holds exactly
-    one certificate; each key has mode 0600;
-  - each key belongs to its certificate (public keys compared as DER);
+  - the agreement names exactly two distinct parties, one of them the partner;
+  - each leaf file holds exactly one certificate; each key has mode 0600 and
+    belongs to its certificate (public keys compared as DER);
+  - each leaf carries the identity the agreement derives, as mint-peering-leaves.sh
+    does: outward CN fed.<us>.<them>.01, inward CN fed.<them>.<us>.01, an exact
+    subject, a DNS SAN equal to that CN, and basicConstraints CA:FALSE; neither
+    leaf is our CA or the partner CA itself;
   - each leaf chains to OUR CA as the agreement names it (the certificate in
     --our-ca whose SHA-256 is our party's ca_fingerprint), for TLS client and
-    server use, with default trust locations disabled, and is not expired;
-  - the partner CA file holds exactly one certificate, and its SHA-256 over DER
-    equals the ca_fingerprint the agreement names for the partner. A second
-    certificate in that file would be trusted on the partner-facing listener
-    without the agreement naming it, so it is refused, not ignored.
+    server use, with default trust locations disabled, and is valid for at least
+    --min-valid-seconds;
+  - the partner CA file holds exactly one certificate, a CA (CA:TRUE) valid for
+    at least --min-valid-seconds, whose SHA-256 over DER equals the ca_fingerprint
+    the agreement names for the partner. A second certificate in that file would
+    be trusted on the partner-facing listener without the agreement naming it,
+    so it is refused, not ignored.
 
 Usage:
   check-peering-certs.py --src-dir <pki> --partner-ca <pem> --agreement <json>
@@ -37,7 +52,13 @@ import tempfile
 
 LEAVES = ("peering-outward", "peering-inward")
 FINGERPRINT = re.compile(r"^sha256:[0-9a-f]{64}$")
+SOVEREIGN_ID = re.compile(r"^[A-Za-z0-9_-]+$")
 PEM_CERT = re.compile(rb"-----BEGIN CERTIFICATE-----\s.*?-----END CERTIFICATE-----", re.S)
+MAX_BYTES = 1 << 20
+
+
+class Refused(Exception):
+    pass
 
 
 def openssl(*args, data=None):
@@ -46,15 +67,55 @@ def openssl(*args, data=None):
     return result.returncode, result.stdout, result.stderr.decode(errors="replace").strip()
 
 
+def last_line(text, default="openssl failed"):
+    lines = [ln for ln in (text or "").splitlines() if ln.strip()]
+    return lines[-1] if lines else default
+
+
+def read_once(path):
+    """The file's bytes and mode, read through one descriptor: no symlink, regular file only."""
+    try:
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
+    except OSError as e:
+        raise Refused(f"cannot open {path}: {e.strerror}" + (" (a symlink is refused)" if os.path.islink(path) else ""))
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            raise Refused(f"{path} is not a regular file")
+        data = b""
+        while len(data) <= MAX_BYTES:
+            chunk = os.read(fd, 65536)
+            if not chunk:
+                break
+            data += chunk
+        if len(data) > MAX_BYTES:
+            raise Refused(f"{path} is larger than {MAX_BYTES} bytes")
+        return data, stat.S_IMODE(st.st_mode)
+    finally:
+        os.close(fd)
+
+
 def der_of(pem):
     rc, out, err = openssl("x509", "-outform", "DER", data=pem)
     if rc:
-        raise ValueError("not a readable certificate: " + (err.splitlines() or ["openssl failed"])[-1])
+        raise Refused("not a readable certificate: " + last_line(err))
     return out
 
 
 def sha256(der):
     return "sha256:" + hashlib.sha256(der).hexdigest()
+
+
+def text_of(path):
+    rc, out, err = openssl("x509", "-in", path, "-noout", "-text")
+    if rc:
+        raise Refused(f"{path}: not a readable certificate: {last_line(err)}")
+    return out.decode(errors="replace")
+
+
+def extension(text, name):
+    m = re.search(r"X509v3 " + re.escape(name) + r":[^\n]*\n\s*([^\n]+)", text)
+    return m[1].strip() if m else None
 
 
 def public_key_der(path, certificate):
@@ -68,15 +129,25 @@ def public_key_der(path, certificate):
     return (None, err) if rc else (der, "")
 
 
-def agreement_fingerprints(path, partner):
-    with open(path, encoding="utf-8") as f:
-        parties = json.load(f).get("parties") or []
+def read_agreement(raw, path, partner):
+    """(us, ours_fp, theirs_fp) from the agreement, or Refused naming what is wrong."""
+    try:
+        ag = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError) as e:
+        raise Refused(f"{path} is not JSON: {e}")
+    parties = ag.get("parties") if isinstance(ag, dict) else None
+    if not isinstance(parties, list) or len(parties) != 2 or not all(isinstance(p, dict) for p in parties):
+        raise Refused(f"{path} must carry `parties` as a list of exactly two objects")
     ids = [p.get("sovereign_id") for p in parties]
-    if len(parties) != 2 or partner not in ids:
-        raise ValueError(f"{path} does not name '{partner}' as one of exactly two parties (it names {ids})")
-    theirs = next(p for p in parties if p.get("sovereign_id") == partner).get("ca_fingerprint", "")
-    ours = next(p for p in parties if p.get("sovereign_id") != partner).get("ca_fingerprint", "")
-    return ours, theirs
+    if not all(isinstance(i, str) and SOVEREIGN_ID.match(i) for i in ids):
+        raise Refused(f"{path}: every party needs a sovereign_id of letters, digits, '-' or '_' (it names {ids})")
+    if ids[0] == ids[1]:
+        raise Refused(f"{path} names the same sovereign_id twice ({ids[0]})")
+    if partner not in ids:
+        raise Refused(f"{path} does not name '{partner}' as a party (it names {ids})")
+    them = parties[ids.index(partner)]
+    ours = parties[1 - ids.index(partner)]
+    return ours["sovereign_id"], ours.get("ca_fingerprint", ""), them.get("ca_fingerprint", "")
 
 
 def main():
@@ -91,136 +162,179 @@ def main():
     a = ap.parse_args()
 
     ok, refused = [], []
+    sums = {}
 
+    def emit():
+        for line in ok:
+            print("ok: " + line)
+        for line in refused:
+            print("refused: " + line)
+        if not refused:
+            print("checksums: " + json.dumps(sums, sort_keys=True))
+        return 1 if refused else 0
+
+    # Read our CA from stdin before anything can return early: a writer whose
+    # reader has exited gets a broken pipe, and Ansible then loses this output.
+    stdin_ca = sys.stdin.buffer.read(MAX_BYTES + 1) if a.our_ca == "-" else None
+
+    if a.min_valid_seconds < 0:
+        refused.append("--min-valid-seconds must not be negative")
+        return emit()
+
+    # --- the agreement -------------------------------------------------------------
     try:
-        ours_fp, theirs_fp = agreement_fingerprints(a.agreement, a.partner_id)
-    except (OSError, ValueError) as e:
-        print(f"refused: cannot read the agreement: {e}. It is phase 6's output ({a.agreement}).")
-        return 1
+        raw, _ = read_once(a.agreement)
+        us, ours_fp, theirs_fp = read_agreement(raw, a.agreement, a.partner_id)
+    except Refused as e:
+        refused.append(f"cannot use the agreement: {e}. It is phase 6's output ({a.agreement}).")
+        return emit()
     if a.partner_fingerprint:
         if a.partner_fingerprint != theirs_fp:
             refused.append(f"goat_zenoh_edge_partner_ca_fingerprint is {a.partner_fingerprint}, but the agreement "
                            f"names {theirs_fp} for '{a.partner_id}'. Remove the setting or correct it; the "
                            "agreement is the record both parties signed.")
-        theirs_fp = a.partner_fingerprint
     for who, fp in (("our", ours_fp), (f"'{a.partner_id}'s", theirs_fp)):
-        if not FINGERPRINT.match(fp or ""):
+        if not isinstance(fp, str) or not FINGERPRINT.match(fp):
             refused.append(f"the agreement's {who} ca_fingerprint is not sha256:<64 lowercase hex>: {fp!r}")
     if refused:
-        print("\n".join("refused: " + r for r in refused))
-        return 1
+        return emit()
+    expected_cn = {"peering-outward": f"fed.{us}.{a.partner_id}.01",
+                   "peering-inward": f"fed.{a.partner_id}.{us}.01"}
 
-    # --- the partner CA: exactly one certificate, the one the agreement names ---
-    try:
-        with open(a.partner_ca, "rb") as f:
-            partner_pem = f.read()
-        certs = PEM_CERT.findall(partner_pem)
-        if len(certs) != 1:
-            refused.append(f"{a.partner_ca} holds {len(certs)} certificates; it must hold exactly one, the CA "
-                           f"whose fingerprint the agreement names ({theirs_fp}). Every certificate in it would "
-                           "be trusted on the partner-facing listener.")
-        else:
-            got = sha256(der_of(certs[0]))
-            if got != theirs_fp:
-                refused.append(f"{a.partner_ca} has fingerprint {got}, but the agreement names {theirs_fp} for "
-                               f"'{a.partner_id}'. Do not install it: ask the partner which CA is current, "
-                               "and fetch it again (phase 5).")
-            else:
-                ok.append(f"partner CA {a.partner_ca} matches the agreement's fingerprint {theirs_fp}")
-    except (OSError, ValueError) as e:
-        refused.append(f"partner CA {a.partner_ca}: {e}. It is phase 5's output (theirs-ca.pem).")
-
-    # --- our CA: the certificate the agreement names for us ----------------------
-    our_anchor = None
-    try:
-        our_pem = sys.stdin.buffer.read() if a.our_ca == "-" else open(a.our_ca, "rb").read()
-        for c in PEM_CERT.findall(our_pem):
-            if sha256(der_of(c)) == ours_fp:
-                our_anchor = c
-                break
-        if our_anchor is None:
-            refused.append(f"our CA ({'goat_zenoh_edge_our_ca_path, read from the edge' if a.our_ca == '-' else a.our_ca}) "
-                           f"holds no certificate with the fingerprint the agreement names for us ({ours_fp}); "
-                           "the leaves cannot be checked against the CA the partner was told about.")
-    except (OSError, ValueError) as e:
-        refused.append(f"our CA: {e}")
-
-    # --- the leaves -------------------------------------------------------------
-    trust = ["-no-CAfile", "-no-CApath"]
-    _, h_out, h_err = openssl("verify", "-help")
-    if b"-no-CAstore" in h_out or "-no-CAstore" in h_err:
-        trust.append("-no-CAstore")
     with tempfile.TemporaryDirectory(prefix="edge-cert-check-") as tmp:
+        os.chmod(tmp, 0o700)
+
+        def stage(src, name):
+            data, mode = read_once(src)
+            dst = os.path.join(tmp, name)
+            with open(dst, "wb") as f:
+                f.write(data)
+            sums[src] = hashlib.sha1(data).hexdigest()
+            return dst, data, mode
+
+        # --- the partner CA: one CA certificate, the one the agreement names -------
+        partner_der = None
+        try:
+            pca, partner_pem, _ = stage(a.partner_ca, "partner-ca.pem")
+            certs = PEM_CERT.findall(partner_pem)
+            if len(certs) != 1:
+                raise Refused(f"holds {len(certs)} certificates; it must hold exactly one, the CA whose "
+                              f"fingerprint the agreement names ({theirs_fp}). Every certificate in it would be "
+                              "trusted on the partner-facing listener.")
+            partner_der = der_of(certs[0])
+            got = sha256(partner_der)
+            if got != theirs_fp:
+                raise Refused(f"has fingerprint {got}, but the agreement names {theirs_fp} for "
+                              f"'{a.partner_id}'. Do not install it: ask the partner which CA is current, and "
+                              "fetch it again (phase 5).")
+            bc = extension(text_of(pca), "Basic Constraints") or ""
+            if not bc.startswith("CA:TRUE"):
+                raise Refused(f"is not a CA certificate (basicConstraints {bc or 'absent'}).")
+            rc, _, _ = openssl("x509", "-in", pca, "-noout", "-checkend", a.min_valid_seconds)
+            if rc:
+                raise Refused(f"expires within {a.min_valid_seconds} seconds (or has expired). Ask the partner "
+                              "for their current CA; the agreement names its fingerprint.")
+            ok.append(f"partner CA {a.partner_ca} is a CA matching the agreement's fingerprint {theirs_fp}")
+        except Refused as e:
+            refused.append(f"partner CA {a.partner_ca} {e}" if str(e).startswith(("holds", "has", "is", "expires"))
+                           else f"partner CA: {e}. It is phase 5's output (theirs-ca.pem).")
+
+        # --- our CA: the certificate the agreement names for us --------------------
+        our_der = None
         anchor_path = os.path.join(tmp, "our-ca.pem")
-        if our_anchor is not None:
-            with open(anchor_path, "wb") as f:
-                f.write(our_anchor + b"\n")
+        try:
+            if stdin_ca is not None and len(stdin_ca) > MAX_BYTES:
+                raise Refused(f"our CA on stdin is larger than {MAX_BYTES} bytes")
+            our_pem = stdin_ca if stdin_ca is not None else read_once(a.our_ca)[0]
+            for c in PEM_CERT.findall(our_pem):
+                if sha256(der_of(c)) == ours_fp:
+                    our_der = der_of(c)
+                    with open(anchor_path, "wb") as f:
+                        f.write(c + b"\n")
+                    break
+            if our_der is None:
+                where = "goat_zenoh_edge_our_ca_path, read from the edge" if a.our_ca == "-" else a.our_ca
+                refused.append(f"our CA ({where}) holds no certificate with the fingerprint the agreement names "
+                               f"for us ({ours_fp}); the leaves cannot be checked against the CA the partner "
+                               "was told about.")
+        except Refused as e:
+            refused.append(f"our CA: {e}")
+
+        trust = ["-no-CAfile", "-no-CApath"]
+        _, h_out, h_err = openssl("verify", "-help")
+        if b"-no-CAstore" in h_out or "-no-CAstore" in h_err:
+            trust.append("-no-CAstore")
+
+        # --- the leaves -------------------------------------------------------------
         for name in LEAVES:
-            cert = os.path.join(a.src_dir, name + ".pem")
-            key = os.path.join(a.src_dir, name + "-key.pem")
-            missing = [p for p in (cert, key) if not os.path.isfile(p)]
-            if missing:
-                refused.append(f"{name}: no file at {', '.join(missing)}. Run phase 8 (mint-peering-leaves.sh).")
+            src_cert = os.path.join(a.src_dir, name + ".pem")
+            src_key = os.path.join(a.src_dir, name + "-key.pem")
+            try:
+                cert, cert_pem, _ = stage(src_cert, name + ".pem")
+                key, _, key_mode = stage(src_key, name + "-key.pem")
+            except Refused as e:
+                refused.append(f"{name}: {e}. Run phase 8 (mint-peering-leaves.sh).")
                 continue
-            with open(cert, "rb") as f:
-                blocks = len(PEM_CERT.findall(f.read()))
-            if blocks != 1:
-                refused.append(f"{name}: {cert} holds {blocks} certificates; it must hold exactly the one leaf "
-                               "phase 8 minted, because every certificate in it is presented to the peer.")
+            failed = len(refused)
+            blocks = PEM_CERT.findall(cert_pem)
+            if len(blocks) != 1:
+                refused.append(f"{name}: {src_cert} holds {len(blocks)} certificates; it must hold exactly the one "
+                               "leaf phase 8 minted, because every certificate in it is presented to the peer.")
                 continue
-            mode = stat.S_IMODE(os.stat(key).st_mode)
-            if mode != 0o600:
-                refused.append(f"{name}: {key} has mode {mode:04o}; a private key must be 0600.")
+            if key_mode != 0o600:
+                refused.append(f"{name}: {src_key} has mode {key_mode:04o}; a private key must be 0600.")
+            try:
+                leaf_der = der_of(blocks[0])
+                text = text_of(cert)
+            except Refused as e:
+                refused.append(f"{name}: {src_cert}: {e}")
+                continue
+            if leaf_der in (our_der, partner_der):
+                refused.append(f"{name}: {src_cert} is a CA certificate itself, not a leaf minted under it.")
+                continue
             cpub, cerr = public_key_der(cert, True)
             kpub, kerr = public_key_der(key, False)
             if cpub is None or kpub is None:
-                refused.append(f"{name}: unreadable {'certificate ' + cert if cpub is None else 'key ' + key}: "
-                               f"{(cerr or kerr).splitlines()[-1] if (cerr or kerr) else 'openssl failed'}")
+                refused.append(f"{name}: unreadable {'certificate ' + src_cert if cpub is None else 'key ' + src_key}: "
+                               f"{last_line(cerr or kerr)}")
                 continue
             if cpub != kpub:
-                refused.append(f"{name}: {key} does not belong to {cert} (their public keys differ). "
+                refused.append(f"{name}: {src_key} does not belong to {src_cert} (their public keys differ). "
                                "Re-run phase 8 for this leaf; do not pair files by hand.")
-            else:
-                ok.append(f"{name}: key matches certificate")
-            if our_anchor is None:
-                continue
-            chained = True
-            for purpose in ("sslserver", "sslclient"):
-                # -partial_chain: our named CA may be an intermediate under a shared
-                # root; with default locations disabled it is still the only anchor.
-                rc, out, err = openssl("verify", *trust, "-partial_chain", "-trusted", anchor_path,
-                                       "-purpose", purpose, cert)
-                if rc:
-                    reason = (err or out.decode(errors="replace")).strip().splitlines()
-                    refused.append(f"{name}: {cert} does not chain to our CA {ours_fp} for {purpose}: "
-                                   f"{reason[-1] if reason else 'verify failed'}")
-                    chained = False
-                    break
-            if chained and a.min_valid_seconds > 0:
+
+            # The identity the agreement derives, as mint-peering-leaves.sh mints it.
+            want = expected_cn[name]
+            rc, subj, _ = openssl("x509", "-in", cert, "-noout", "-subject", "-nameopt", "RFC2253")
+            subject = subj.decode(errors="replace").strip().partition("=")[2].strip() if rc == 0 else ""
+            if subject != "CN=" + want:
+                refused.append(f"{name}: {src_cert} has subject '{subject}', but the agreement derives "
+                               f"'CN={want}'. It was minted for another peering or by hand; re-run phase 8.")
+            san = extension(text, "Subject Alternative Name") or ""
+            dns = {s.strip()[4:].lower() for s in san.split(",") if s.strip().startswith("DNS:")}
+            if want.lower() not in dns:
+                refused.append(f"{name}: {src_cert} has no DNS SAN '{want}' (SANs: {san or 'none'}).")
+            bc = extension(text, "Basic Constraints")
+            if bc != "CA:FALSE":
+                refused.append(f"{name}: {src_cert} must carry basicConstraints CA:FALSE (it has {bc or 'none'}).")
+
+            if our_der is not None:
+                for purpose in ("sslserver", "sslclient"):
+                    # -partial_chain: our named CA may be an intermediate under a shared
+                    # root; with default locations disabled it is still the only anchor.
+                    rc, out, err = openssl("verify", *trust, "-partial_chain", "-trusted", anchor_path,
+                                           "-purpose", purpose, cert)
+                    if rc:
+                        refused.append(f"{name}: {src_cert} does not chain to our CA {ours_fp} for {purpose}: "
+                                       f"{last_line(err or out.decode(errors='replace'), 'verify failed')}")
+                        break
                 rc, _, _ = openssl("x509", "-in", cert, "-noout", "-checkend", a.min_valid_seconds)
                 if rc:
-                    refused.append(f"{name}: {cert} expires within {a.min_valid_seconds} seconds. "
-                                   "Re-run phase 8 with --rotate.")
-                    chained = False
-            if chained:
-                ok.append(f"{name}: chains to our CA {ours_fp}")
+                    refused.append(f"{name}: {src_cert} expires within {a.min_valid_seconds} seconds (or has "
+                                   "expired). Re-run phase 8 with --rotate.")
+            if len(refused) == failed:
+                ok.append(f"{name}: CN={want}, key matches, chains to our CA {ours_fp}")
 
-    # SHA-1 of each source as checked, for the copy module's `checksum`: the role
-    # installs exactly these bytes, or fails if a file changed after the check.
-    sums = {}
-    for path in [os.path.join(a.src_dir, n + s) for n in LEAVES for s in (".pem", "-key.pem")] + [a.partner_ca]:
-        try:
-            with open(path, "rb") as f:
-                sums[path] = hashlib.sha1(f.read()).hexdigest()
-        except OSError:
-            pass
-    for line in ok:
-        print("ok: " + line)
-    if not refused:
-        print("checksums: " + json.dumps(sums, sort_keys=True))
-    for line in refused:
-        print("refused: " + line)
-    return 1 if refused else 0
+    return emit()
 
 
 if __name__ == "__main__":

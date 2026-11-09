@@ -1,51 +1,120 @@
 ---
 # Install the peering leaves and the partner's CA that certificates-check.yml
-# checked. Each copy carries the checksum the check computed, so a source file
-# changed since the check fails the copy instead of installing unchecked bytes.
+# checked. Each copy carries the checksum the check computed, so a copy that
+# transfers a source file changed since the check fails instead of installing
+# unchecked bytes. A destination already equal to its source is not transferred.
+#
+# The restart a certificate change needs is recorded before the first copy:
+# .restart-pending is written in the certificate directory, then the files are
+# copied. When a file changed, or an earlier run left .restart-pending, the edge
+# restart is notified together with the handler that removes the file; handlers
+# run in the order handlers/main.yml defines them, so the file is removed only
+# after a restart that succeeded. When nothing changed and nothing was pending,
+# the file is removed at once. A run that stops anywhere in between (a copy
+# failing, a later task failing, the run interrupted) leaves the file, and the
+# next run restarts the edge even when its copies change nothing.
 # docs/design/federation-certificate-lifecycle.md, "Installing on the edge".
 
-- name: edge certs | the per-peering directory
+- name: edge certs | forget the copy results of an earlier inclusion in this play
+  ansible.builtin.set_fact:
+    _ze_certs_copied_certs: { results: [] }
+    _ze_certs_copied_keys: { results: [] }
+
+- name: edge certs | a restart a previous run owes
+  ansible.builtin.stat:
+    path: "{{ goat_zenoh_edge_cert_dir }}/.restart-pending"
+  register: _ze_certs_pending
+
+- name: edge certs | install
+  block:
+    - name: edge certs | the per-peering directory
+      ansible.builtin.file:
+        path: "{{ goat_zenoh_edge_cert_dir }}"
+        state: directory
+        owner: "{{ goat_zenoh_edge_cert_owner }}"
+        group: "{{ goat_zenoh_edge_cert_group }}"
+        mode: "0750"
+
+    - name: edge certs | which peering this directory belongs to
+      ansible.builtin.copy:
+        content: "{{ goat_zenoh_edge_partner_id }}\n"
+        dest: "{{ goat_zenoh_edge_cert_dir }}/.peering"
+        owner: "{{ goat_zenoh_edge_cert_owner }}"
+        group: "{{ goat_zenoh_edge_cert_group }}"
+        mode: "0644"
+
+    # Bookkeeping, not a change to the edge: it is removed again below when
+    # nothing changes, so it is not reported as a change.
+    - name: edge certs | record that an install is under way, before the first copy
+      ansible.builtin.copy:
+        content: "certificate install under way or not yet followed by an edge restart\n"
+        dest: "{{ goat_zenoh_edge_cert_dir }}/.restart-pending"
+        mode: "0600"
+      changed_when: false
+
+    - name: edge certs | the certificates and the partner CA
+      ansible.builtin.copy:
+        src: "{{ item.src }}"
+        dest: "{{ item.dest }}"
+        owner: "{{ goat_zenoh_edge_cert_owner }}"
+        group: "{{ goat_zenoh_edge_cert_group }}"
+        mode: "0644"
+        checksum: "{{ _ze_certs_sums[item.src] }}"
+      loop:
+        - { src: "{{ goat_zenoh_edge_cert_src_dir }}/peering-outward.pem", dest: "{{ goat_zenoh_edge_outward_cert }}" }
+        - { src: "{{ goat_zenoh_edge_cert_src_dir }}/peering-inward.pem", dest: "{{ goat_zenoh_edge_inward_cert }}" }
+        - { src: "{{ goat_zenoh_edge_partner_ca_src }}", dest: "{{ goat_zenoh_edge_partner_ca_path }}" }
+      register: _ze_certs_copied_certs
+
+    - name: edge certs | the private keys, readable by their owner alone
+      ansible.builtin.copy:
+        src: "{{ item.src }}"
+        dest: "{{ item.dest }}"
+        owner: "{{ goat_zenoh_edge_cert_owner }}"
+        group: "{{ goat_zenoh_edge_cert_group }}"
+        mode: "0600"
+        checksum: "{{ _ze_certs_sums[item.src] }}"
+      loop:
+        - { src: "{{ goat_zenoh_edge_cert_src_dir }}/peering-outward-key.pem", dest: "{{ goat_zenoh_edge_outward_key }}" }
+        - { src: "{{ goat_zenoh_edge_cert_src_dir }}/peering-inward-key.pem", dest: "{{ goat_zenoh_edge_inward_key }}" }
+      loop_control:
+        label: "{{ item.dest }}"
+      diff: false
+      register: _ze_certs_copied_keys
+
+  rescue:
+    - name: edge certs | refuse after a half-done install
+      ansible.builtin.fail:
+        msg: >-
+          goat-zenoh-edge could not install every peering certificate file:
+          {{ ansible_failed_result.msg | default('see the task above') }}.
+          {{ goat_zenoh_edge_cert_dir }}/.restart-pending is left in place (when
+          the directory could be written), so the next run restarts the edge after
+          it completes the install.
+
+- name: edge certs | did any certificate file change
+  ansible.builtin.set_fact:
+    _ze_certs_changed: >-
+      {{ (_ze_certs_copied_certs.results + _ze_certs_copied_keys.results)
+         | selectattr('changed', 'defined') | selectattr('changed') | list | length > 0 }}
+
+- name: edge certs | restart the edge for a changed file or a restart an earlier run owes
+  ansible.builtin.debug:
+    msg: >-
+      {{ 'Certificate files changed' if _ze_certs_changed | bool
+         else 'An earlier run changed certificate files and did not reach the edge restart' }};
+      the edge restarts, and .restart-pending is removed after the restart succeeds.
+  changed_when: true
+  notify:
+    - Restart goat zenoh edge
+    - Clear goat zenoh edge restart-pending
+  when: (_ze_certs_changed | bool) or _ze_certs_pending.stat.exists
+
+- name: edge certs | nothing changed and nothing was owed, so no restart is pending
   ansible.builtin.file:
-    path: "{{ goat_zenoh_edge_cert_dir }}"
-    state: directory
-    owner: "{{ goat_zenoh_edge_cert_owner }}"
-    group: "{{ goat_zenoh_edge_cert_group }}"
-    mode: "0750"
-
-- name: edge certs | which peering this directory belongs to
-  ansible.builtin.copy:
-    content: "{{ goat_zenoh_edge_partner_id }}\n"
-    dest: "{{ goat_zenoh_edge_cert_dir }}/.peering"
-    owner: "{{ goat_zenoh_edge_cert_owner }}"
-    group: "{{ goat_zenoh_edge_cert_group }}"
-    mode: "0644"
-
-- name: edge certs | the certificates and the partner CA
-  ansible.builtin.copy:
-    src: "{{ item.src }}"
-    dest: "{{ item.dest }}"
-    owner: "{{ goat_zenoh_edge_cert_owner }}"
-    group: "{{ goat_zenoh_edge_cert_group }}"
-    mode: "0644"
-    checksum: "{{ _ze_certs_sums[item.src] }}"
-  loop:
-    - { src: "{{ goat_zenoh_edge_cert_src_dir }}/peering-outward.pem", dest: "{{ goat_zenoh_edge_outward_cert }}" }
-    - { src: "{{ goat_zenoh_edge_cert_src_dir }}/peering-inward.pem", dest: "{{ goat_zenoh_edge_inward_cert }}" }
-    - { src: "{{ goat_zenoh_edge_partner_ca_src }}", dest: "{{ goat_zenoh_edge_partner_ca_path }}" }
-  notify: Restart goat zenoh edge
-
-- name: edge certs | the private keys, readable by their owner alone
-  ansible.builtin.copy:
-    src: "{{ item.src }}"
-    dest: "{{ item.dest }}"
-    owner: "{{ goat_zenoh_edge_cert_owner }}"
-    group: "{{ goat_zenoh_edge_cert_group }}"
-    mode: "0600"
-    checksum: "{{ _ze_certs_sums[item.src] }}"
-  loop:
-    - { src: "{{ goat_zenoh_edge_cert_src_dir }}/peering-outward-key.pem", dest: "{{ goat_zenoh_edge_outward_key }}" }
-    - { src: "{{ goat_zenoh_edge_cert_src_dir }}/peering-inward-key.pem", dest: "{{ goat_zenoh_edge_inward_key }}" }
-  loop_control:
-    label: "{{ item.dest }}"
-  diff: false
-  notify: Restart goat zenoh edge
+    path: "{{ goat_zenoh_edge_cert_dir }}/.restart-pending"
+    state: absent
+  changed_when: false
+  when:
+    - not (_ze_certs_changed | bool)
+    - not _ze_certs_pending.stat.exists
