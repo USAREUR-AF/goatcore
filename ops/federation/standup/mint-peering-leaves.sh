@@ -30,14 +30,24 @@
 # Usage:
 #   mint-peering-leaves.sh <agreement.json> <out-dir> [--as <sovereign>]
 #                          [--ca-cert <pem>] [--ca-key <pem>]
+#                          [--ca-key-age <file.age> --age-identity <keys.txt>]
 #                          [--core-cn <name>] [--core-san <san>[,<san>...]]
 #                          [--link-ip <ip>] [--rotate] [--min-valid-seconds <n>]
 #
-# Environment: FED_CA_CERT, FED_CA_KEY, FED_CORE_CN, FED_CORE_SAN, FED_LINK_IP
+# Environment: FED_CA_CERT, FED_CA_KEY, FED_CA_KEY_AGE, FED_AGE_IDENTITY,
+#              FED_CORE_CN, FED_CORE_SAN, FED_LINK_IP
+#
+# THE CA KEY. An explicit key file (--ca-key, FED_CA_KEY) always wins. Without
+# one, the deployment's age-encrypted key (--ca-key-age, FED_CA_KEY_AGE; the
+# driver derives it from <deploy.state_dir>/<site>-ca/ca.key.age) is opened with
+# its age identity into a file this run owns: mode 0600 in a fresh private
+# directory, removed when the script exits, whatever the exit. The key is
+# needed only to issue a missing leaf or to rotate.
 set -uo pipefail
 
 AGREEMENT=""; OUT=""; AS=""
 CA_CERT="${FED_CA_CERT:-}"; CA_KEY="${FED_CA_KEY:-}"
+CA_KEY_AGE="${FED_CA_KEY_AGE:-}"; AGE_IDENTITY="${FED_AGE_IDENTITY:-}"
 CORE_CN="${FED_CORE_CN:-goat-zenoh}"; CORE_SAN="${FED_CORE_SAN:-}"; LINK_IP="${FED_LINK_IP:-}"
 DAYS="${FED_LEAF_DAYS:-90}"
 ROTATE=0; MIN_VALID_SECONDS="${FED_LEAF_MIN_VALID_SECONDS:-86400}"
@@ -50,10 +60,12 @@ while [ $# -gt 0 ]; do
     --as)       AS="$2"; shift 2 ;;
     --ca-cert)  CA_CERT="$2"; shift 2 ;;
     --ca-key)   CA_KEY="$2"; shift 2 ;;
+    --ca-key-age)   CA_KEY_AGE="$2"; shift 2 ;;
+    --age-identity) AGE_IDENTITY="$2"; shift 2 ;;
     --core-cn)  CORE_CN="$2"; shift 2 ;;
     --core-san) CORE_SAN="$2"; shift 2 ;;
     --link-ip)  LINK_IP="$2"; shift 2 ;;
-    -h|--help)  sed -n '2,32p' "$0"; exit 0 ;;
+    -h|--help)  sed -n '2,44p' "$0"; exit 0 ;;
     -*)         echo "unknown flag $1" >&2; exit 2 ;;
     *)          if [ -z "$AGREEMENT" ]; then AGREEMENT="$1"; else OUT="$1"; fi; shift ;;
   esac
@@ -151,6 +163,37 @@ else
   echo "      Pass every address the edge is configured to dial. A core"
   echo "      certificate without a SAN for the dialled address fails name"
   echo "      verification, and the edge logs nothing at INFO when it does."
+fi
+
+# The CA key from the deployment's declared source, when no key file is given.
+RUN_KEY_DIR=""
+cleanup_key() { [ -z "$RUN_KEY_DIR" ] || rm -rf "$RUN_KEY_DIR"; }
+trap cleanup_key EXIT
+trap 'cleanup_key; exit 130' INT
+trap 'cleanup_key; exit 143' TERM
+trap 'cleanup_key; exit 129' HUP
+if [ -z "$CA_KEY" ] && [ -n "$CA_KEY_AGE" ]; then
+  why=""
+  if [ ! -f "$CA_KEY_AGE" ]; then
+    why="$CA_KEY_AGE does not exist"
+  elif [ -z "$AGE_IDENTITY" ] || [ ! -f "$AGE_IDENTITY" ]; then
+    why="no age identity at ${AGE_IDENTITY:-(unset; set FED_AGE_IDENTITY)}"
+  elif ! command -v age >/dev/null 2>&1; then
+    why="the age command is not installed"
+  else
+    RUN_KEY_DIR="$(umask 077 && mktemp -d "${TMPDIR:-/tmp}/fed-ca-key.XXXXXX")" || why="no private temporary directory"
+    if [ -z "$why" ]; then
+      if ( umask 077 && age -d -i "$AGE_IDENTITY" -o "$RUN_KEY_DIR/ca-key.pem" "$CA_KEY_AGE" ) 2>"$RUN_KEY_DIR/age.err"; then
+        CA_KEY="$RUN_KEY_DIR/ca-key.pem"
+        echo "  CA key: opened $CA_KEY_AGE for this run; the copy is removed when it ends"
+      else
+        why="$CA_KEY_AGE did not open with $AGE_IDENTITY: $(head -c 300 "$RUN_KEY_DIR/age.err")"
+      fi
+    fi
+  fi
+  # A key is needed only to issue or rotate; a re-run that reuses every leaf
+  # goes on without one, and the helper refuses if it does need it.
+  [ -z "$why" ] || echo "  [!] CA key not opened: $why" >&2
 fi
 
 ARGS=(--out "$OUT" --ca-cert "$CA_CERT" --ca-fingerprint "$CA_FINGERPRINT" --days "$DAYS"

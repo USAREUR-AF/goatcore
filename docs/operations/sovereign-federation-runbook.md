@@ -498,7 +498,9 @@ ops/federation/standup/mint-peering-leaves.sh \
   --core-cn "$FED_CORE_CN" --core-san "$FED_CORE_SAN" --rotate
 ```
 
-The signing inputs still come from `FED_CA_CERT` and `FED_CA_KEY`. Rotation
+The signing inputs come from `FED_CA_CERT` and `FED_CA_KEY`, or, without a key
+file, from the deployment's age-encrypted key (`FED_CA_KEY_AGE` with
+`FED_AGE_IDENTITY`), which the script opens for this run only. Rotation
 replaces every requested pair with a new key; keep that action separate from an
 ordinary phase rerun. Previous material is retained in a private `.previous-*`
 directory under the output directory. Protect and retire it through the local key

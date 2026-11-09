@@ -163,7 +163,8 @@ def main():
                 print('  [reused] ' + name + ': existing certificate and key validated')
             return
         if args.ca_key is None or not args.ca_key.is_file():
-            raise ValueError('issuance requires our CA key; set FED_CA_KEY or --ca-key')
+            raise ValueError('issuance requires our CA key; set FED_CA_KEY or --ca-key, '
+                             'or FED_CA_KEY_AGE with FED_AGE_IDENTITY')
         ca_key = args.ca_key.absolute()
         if public_key(ca, certificate=True) != public_key(ca_key):
             raise ValueError('signing CA certificate and private key do not match')
