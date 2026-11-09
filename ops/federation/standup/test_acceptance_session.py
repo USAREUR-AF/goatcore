@@ -315,6 +315,24 @@ class Publish(Fixture):
         proposed, _ = self.propose()
         self.assertEqual(open(proposed).read().count("acceptance:"), 1)
 
+    def test_the_proposal_is_never_written_over_the_deployments_file(self):
+        self.ready()
+        before = open(self.partner).read()
+        self.out = os.path.dirname(self.partner)
+        with self.assertRaises(ses.Refused):
+            self.propose()
+        self.assertEqual(open(self.partner).read(), before)
+
+    def test_an_old_block_at_the_end_without_a_newline_is_replaced_whole(self):
+        self.ready()
+        with open(self.partner, "a") as f:
+            f.write("acceptance:\n  status: stale\n  session: old")
+        proposed, _ = self.propose()
+        import yaml
+        d = yaml.safe_load(open(proposed))
+        self.assertEqual(d["acceptance"]["session"], self.m["session_id"])
+        self.assertNotIn("session: old", open(proposed).read())
+
     def test_nothing_is_proposed_without_the_whole_scope_cleanup_and_both_approvals(self):
         for why, kw, approvals in (("our cleanup", dict(cleanup=False), None),
                                    ("their cleanup", dict(peer_cleanup=False), None),
