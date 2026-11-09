@@ -9,6 +9,7 @@ on:
     paths:
       - 'crates/goat-cli/**'
       - 'crates/goat-federation/**'
+      - 'ops/federation/vectors/**'
       - 'crates/panoscope-core/**'
       - 'crates/Cargo.toml'
       - 'crates/Cargo.lock'
