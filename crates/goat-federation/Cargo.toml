@@ -4,6 +4,7 @@ version = "0.5.17"
 edition = "2021"
 rust-version = "1.88"
 license = "Apache-2.0"
+publish = false
 description = "Federation package v1 (docs/design/federation-package-spec.md): parse, sign, compose, diff, derive and render. The library behind the federation verbs."
 
 [dependencies]
