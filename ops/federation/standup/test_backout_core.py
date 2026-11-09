@@ -190,6 +190,17 @@ class OnePeeringOfTwo(unittest.TestCase):
         self.assertEqual(result["removed"]["subjects"], ["fed-xac"])
         self.assertNotIn("xac", fx.text(os.path.join(out, "org.candidate")))
 
+    def test_a_recognition_only_neighbour_keeps_its_trailing_comment(self):
+        # xab grants nothing, so its policies region ends in a comment, right before
+        # xac's GENERATED header: removing xac must not take xab's comment with it.
+        quiet = fragment("xaa", "xab").split("##ACL-ORG-REGION write-rules", 1)[0] + (
+            "##ACL-ORG-REGION write-rules\n##ACL-ORG-REGION subjects\n##ACL-ORG-REGION policies\n"
+            "      // NO RULES, NO SUBJECT, NO POLICY. This agreement grants no access in\n")
+        fx = Fixture(quiet, fragment("xaa", "xac"))
+        result, rc, out = fx.plan("xac")
+        self.assertEqual(rc, 0, result)
+        self.assertIn("NO RULES, NO SUBJECT", fx.text(os.path.join(out, "org.candidate")))
+
     def test_a_prefix_of_another_id_is_not_a_match(self):
         # xa is a valid id and a prefix of xab: nothing of xab may go with it.
         fx = Fixture(fragment("xaa", "xab"), fragment("xaa", "xa"))

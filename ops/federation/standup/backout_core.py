@@ -142,8 +142,10 @@ def parse(lines):
             continue
         if ln.lstrip().startswith("//"):
             j = i
+            # A GENERATED line starts a new block: the header of the next fragment never
+            # merges with the comment that ends the previous one.
             while j + 1 < len(lines) and lines[j + 1].lstrip().startswith("//") \
-                    and not lines[j + 1].startswith(FRAG_HDR):
+                    and GENERATED not in lines[j + 1]:
                 j += 1
             blocks.append(Block(region, i, j, lines))
             i = j + 1

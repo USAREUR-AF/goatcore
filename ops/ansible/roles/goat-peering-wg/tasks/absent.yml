@@ -3,10 +3,11 @@
 # path after tasks/peering-backout-begin.yml, which names the resources in _pb_names.wg.
 #
 # Ownership, read from the host: the interface is this peering's when its state file
-# names this partner, or, with no state file (phase 2 ran, phase 11 did not), when it
-# holds no peer or only the key this partner's package offers. A state file naming
-# another partner, or a peer key that is not this partner's, makes every resource
-# below "not-ours": nothing is removed and the play refuses.
+# names this partner; with no state file yet (phase 11 has not run), when its public key
+# is the one our package for this partner offers (phase 3), or its one peer is the key
+# this partner's package offers. A state file naming another partner, a key or peer that
+# is another's, or nothing to compare with, makes every present resource below
+# "not-ours": nothing is removed and the play refuses. Nothing there at all is absent.
 #
 # Shared by every peering on the host and never removed: the unit template
 # goat-peering-wg@.service, /usr/local/sbin/goat-peering-wg-link and the packages.
@@ -21,6 +22,16 @@
     - name: peering-wg | absent | the interface's peers
       ansible.builtin.command: "wg show {{ _pb_names.wg.interface }} peers"
       register: _pbw_peers
+      changed_when: false
+      failed_when: false
+
+    # What phase 3 published for this peering is the interface's public key, in our
+    # package. Read from the interface, or from the key file when the interface is down.
+    - name: peering-wg | absent | the interface's own public key
+      ansible.builtin.shell: >-
+        wg show {{ _pb_names.wg.interface }} public-key 2>/dev/null
+        || wg pubkey < {{ _pb_names.wg.files[2] }}
+      register: _pbw_pub
       changed_when: false
       failed_when: false
 
@@ -74,9 +85,18 @@
     - name: peering-wg | absent | decide whose interface this is
       ansible.builtin.set_fact:
         _pbw_state: "{{ (_pbw_state_raw.content | b64decode | from_json) if (_pbw_state_raw.content is defined) else {} }}"
+        # The partner's package offers the key that belongs on our interface as its peer;
+        # it counts only when it is this partner's package.
         _pbw_package_key: >-
-          {{ ((lookup('ansible.builtin.file', fed_counterparty, errors='ignore') | default('{}', true) | from_json).transport_offer.public_key | default(''))
-             if (fed_counterparty is defined and fed_counterparty is file) else '' }}
+          {%- set doc = (lookup('ansible.builtin.file', fed_counterparty, errors='ignore') | default('{}', true) | from_json)
+                if (fed_counterparty is defined and fed_counterparty is file) else {} -%}
+          {{ doc.transport_offer.public_key | default('') if (doc.sovereign_id | default('')) == peering_backout_id else '' }}
+        # Our own package for this partner offers our interface's public key.
+        _pbw_our_key: >-
+          {%- set ours = (lookup('ansible.builtin.file', fed_work ~ '/ours.canonical.json', errors='ignore') | default('{}', true) | from_json)
+                if (fed_work is defined and (fed_work ~ '/ours.canonical.json') is file) else {} -%}
+          {{ ours.transport_offer.public_key | default('') if (ours.sovereign_id | default('')) not in ['', peering_backout_id] else '' }}
+        _pbw_has_key: "{{ (_pbw_pub.stdout | default('') | trim) is match('^[A-Za-z0-9+/]{43}=$') }}"
         _pbw_peer_list: "{{ _pbw_peers.stdout_lines | default([]) if _pbw_peers.rc == 0 else [] }}"
         _pbw_link_exists: "{{ _pbw_peers.rc == 0 }}"
         _pbw_other_carriers: >-
@@ -96,12 +116,15 @@
       ansible.builtin.set_fact:
         _pbw_owner: >-
           {%- set their = _pbw_state.identity.their_sovereign_id | default('') -%}
+          {%- set mine = _pbw_pub.stdout | default('') | trim -%}
           {%- if their and their != peering_backout_id -%}other:{{ their }}
           {%- elif their == peering_backout_id -%}ours
-          {%- elif _pbw_peer_list | length == 0 -%}ours
+          {%- elif not (_pbw_link_exists | bool) and not (_pbw_has_key | bool) -%}ours
+          {%- elif _pbw_peer_list | length > 0 and _pbw_package_key and _pbw_peer_list != [_pbw_package_key] -%}other:peer {{ _pbw_peer_list | join(',') }}
+          {%- elif _pbw_our_key and (_pbw_has_key | bool) and mine == _pbw_our_key -%}ours
+          {%- elif _pbw_our_key and (_pbw_has_key | bool) -%}other:key {{ mine }} is not the key our package for {{ peering_backout_id }} offers
           {%- elif _pbw_package_key and _pbw_peer_list == [_pbw_package_key] -%}ours
-          {%- elif _pbw_package_key -%}other:peer {{ _pbw_peer_list | join(',') }}
-          {%- else -%}unproven
+          {%- else -%}unproven: no state file, and no package of ours or theirs to compare the interface with
           {%- endif -%}
 
     - name: peering-wg | absent | record what is there
@@ -109,7 +132,7 @@
         _pb_rows: >-
           {%- set out = _pb_rows -%}
           {%- set own = _pbw_owner -%}
-          {%- set bad = own.startswith('other') or own == 'unproven' -%}
+          {%- set bad = own.startswith('other') or own.startswith('unproven') -%}
           {%- set items = [
                 ['interface ' ~ _pb_names.wg.interface, _pbw_link_exists],
                 ['unit ' ~ _pb_names.wg.service, ('active' in (_pbw_unit.stdout_lines | default([]))) or ('enabled' in (_pbw_unit.stdout_lines | default([])))],
