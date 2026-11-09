@@ -33,6 +33,8 @@
 #                            (goat_zenoh_edge_acl_trace)
 #   FED_PROBE_THEIRS_REST    REST surface of a client session across the link holding
 #                            THEIR agreed peering identity, connected to our edge
+#   FED_PROBE_THEIRS_ZID     that session's zenoh id (optional): when set, the allowed
+#                            control must have come from exactly that session
 #   FED_PROBE_FORGED_REST    the same, holding a certificate from THEIR CA with a
 #                            common name the agreement never named
 #   FED_PROBE_FORGED_ZID     that session's zenoh id, the only name the router logs for
@@ -460,7 +462,15 @@ else
       # One read of the log per question, kept for the lines each check quotes.
       trace()   { ours "$FED_EDGE_LOG_OURS" > "$TRACE" 2>&1; }
       lines()   { grep -F "$1" "$TRACE" | grep -E 'is (un)?authorized to ' | tail -3; }
-      verdict() { lines "$1" | grep -oE 'is (un)?authorized' | tail -1; }
+      # verdict [SESSION-FILTER] KEY-FILTER: the last decision, of one session when given.
+      verdict() {
+        if [ $# -eq 2 ]; then grep -F "$2" "$TRACE" | grep -F "$1" | grep -oE 'is (un)?authorized' | tail -1
+        else lines "$1" | grep -oE 'is (un)?authorized' | tail -1; fi
+      }
+      # session_of KEY-FILTER: the zenoh id zenoh 1.9 prints first on a decision line,
+      # `<zid> on Interface(..)+CertCommonName(..)+..+<zid> is authorized to ...`.
+      session_of() { lines "$1" | grep -E 'is authorized to ' | tail -1 \
+                     | sed -nE 's/.*[[:space:]]([0-9a-f]{4,32}) on .* is authorized to .*/\1/p'; }
       probe()   { curl -s -m 8 -X PUT -d "$3" "$1/$2" -o /dev/null; }
       begin
       IN="$THEIR_WIRE/acceptance-probe/$S"; OUT="ops/fabric/acceptance-probe-$S"; SPOOF="$OUR_WIRE/acceptance-spoof/$S"
@@ -471,21 +481,36 @@ else
         settle 6
         trace
         v_in=$(verdict "Put (ingress) on $IN")
+        # The session the edge names on the allow line. The denials below count only
+        # when the edge records them for this same session: an allow from one session
+        # beside a deny from another proves nothing about either.
+        CZID=$(session_of "Put (ingress) on $IN")
         get_side ours "$IN"
-        obs key "$IN"; obs trace "$(lines "Put (ingress) on $IN")"; obs received "$GOT"
-        if [ "$v_in" = "is authorized" ] && [ "$GOT_RC" -eq 0 ] && [ "$GOT" = "probe-$S" ]; then
-          ok refusal/control-allowed inbound negative "the agreed identity's write in its lane: ALLOWED in our edge's trace, and it reads back on our core"
+        obs key "$IN"; obs trace "$(lines "Put (ingress) on $IN")"; obs received "$GOT"; obs session "$CZID"
+        if [ "$v_in" = "is authorized" ] && [ "$GOT_RC" -eq 0 ] && [ "$GOT" = "probe-$S" ] \
+           && [ -n "${FED_PROBE_THEIRS_ZID:-}" ] && [ "$CZID" != "$FED_PROBE_THEIRS_ZID" ]; then
+          no refusal/control-allowed inbound negative "the allow on our edge came from another session" \
+            "the trace names session '${CZID:-<none>}', the probe is '$FED_PROBE_THEIRS_ZID'. The denials below would prove nothing."
+          CONTROL=0
+        elif [ "$v_in" = "is authorized" ] && [ "$GOT_RC" -eq 0 ] && [ "$GOT" = "probe-$S" ]; then
+          ok refusal/control-allowed inbound negative "the agreed identity's write in its lane: ALLOWED in our edge's trace for session ${CZID:-<unnamed>}, and it reads back on our core"
           CONTROL=1
         else
           no refusal/control-allowed inbound negative "the control did not land" "trace verdict '${v_in:-<none>}', our core read '${GOT:-<nothing>}'. The denials below would prove nothing."
           CONTROL=0
       fi
-      # deny NAME KEY MESSAGE: a denial counts only beside a control that landed.
+      # deny NAME KEY MESSAGE: a denial counts only beside a control that landed, and
+      # only when the edge recorded it for the control's own session.
       deny() {
-        local v; v=$(verdict "Put (ingress) on $2")
-        obs key "$2"; obs trace "$(lines "Put (ingress) on $2")"
+        local v vs
+        v=$(verdict "Put (ingress) on $2"); vs=$(verdict "$CZID on " "Put (ingress) on $2")
+        obs key "$2"; obs trace "$(lines "Put (ingress) on $2")"; obs session "$CZID"
         if [ "$CONTROL" != 1 ]; then skp "$1" inbound negative "$3: not asserted" "the allowed control on the same session did not land"
-        elif [ "$v" = "is unauthorized" ]; then ok "$1" inbound negative "$3: DENIED in our edge's trace"
+        elif [ -z "$CZID" ]; then
+          blk "$1" inbound negative "$3: not tied to the control's session" "the edge's allow line names no session id, so a denial cannot be correlated with it"
+        elif [ "$vs" = "is unauthorized" ]; then ok "$1" inbound negative "$3: DENIED in our edge's trace for the control's session $CZID"
+        elif [ "$v" = "is unauthorized" ]; then
+          no "$1" inbound negative "the denial of $2 was recorded for another session, not the control's ($CZID)" "trace verdict for $CZID: '${vs:-<none>}'"
         else no "$1" inbound negative "no denial recorded for $2" "trace verdict '${v:-<none>}'"; fi
       }
       deny refusal/out-of-lane-denied "$OUT" "the same identity's write to ops/**"

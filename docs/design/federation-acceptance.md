@@ -31,8 +31,8 @@ the agreement, and generates one check per direction and set. **Built.**
 | `persistence/<dir>/<set>` | each offered set, each direction | only the receiving core's own store subscribes to the exact key of a second sample (no other session does), and that sample reads back from the store (§2.1) | both cores' REST surfaces and admin space read |
 | `republisher-boundary/<dir>` | each direction the agreement has | a set the agreement never offered, staged beside the offered ones that just crossed, is not lifted | tier 2 passed |
 | `out-of-lane/<dir>` | both | a write outside any wire name does not cross | tier 2 passed |
-| `refusal/control-allowed` | inbound | a session holding the partner's agreed identity writes in its lane: ALLOWED in our edge's ACL trace and read back on our core | `FED_EDGE_LOG_OURS`, `FED_PROBE_THEIRS_REST`, an inbound lane |
-| `refusal/out-of-lane-denied`, `refusal/spoof-denied` | inbound | the same session writing to `ops/**` and under our wire name: DENIED in the trace. Asserted only beside a control that landed; otherwise SKIP | the same |
+| `refusal/control-allowed` | inbound | a session holding the partner's agreed identity writes in its lane: ALLOWED in our edge's ACL trace and read back on our core; the session id on the allow line is recorded, and must equal `FED_PROBE_THEIRS_ZID` when that is set (§2.2) | `FED_EDGE_LOG_OURS`, `FED_PROBE_THEIRS_REST`, an inbound lane |
+| `refusal/out-of-lane-denied`, `refusal/spoof-denied` | inbound | the same session writing to `ops/**` and under our wire name: DENIED in the trace for the control's own session id. Asserted only beside a control that landed; otherwise SKIP (§2.2) | the same |
 | `refusal/forged-name`, `refusal/impersonation` | inbound | a certificate from their CA with a name nobody agreed, and one bearing our core's name: matched no ACL subject, zero authorizations, nothing landed | the probe sessions and their zenoh ids |
 | `roundtrip/<dir>/<set>` | each direction with a return path | a nonce staged under each set is acknowledged by the far side's responder with the digest sent | outbound: our core only; inbound: their surface |
 | `spire/refresh`, `spire/bundle-held`, `spire/svid-chains` | inbound | our server refreshes and holds their bundle; their workload chains to it and not to ours | `FED_SPIRE_OURS`, `FED_SPIRE_THEIRS` |
@@ -106,6 +106,27 @@ holds stores on more than one, and telling a store from a person's session on a 
 not built. Measured against `eclipse/zenoh:1.9.0` with a memory store on `from/xab/**`: the
 store alone answers `ready`; a client subscribed to `from/xab/all/**` answers `diagnostic`; a
 client subscribed to `from/xab/**/fedcheck/*` does not count for a `.../persist` key.
+
+### 2.2 Refusal on the receiving edge's own record
+
+**Built.** Silence proves nothing, and neither does HTTP 200 to the sender, who gets it for both
+an allowed and a refused write. So the refusal rows read the receiving edge's ACL trace
+(`goat_zenoh_edge_acl_trace`), and a denial is evidence only beside an allow for the same
+session. zenoh 1.9 names the session first on every decision line:
+
+```
+<zid> on Interface(eth0)+CertCommonName(<agreed name>)+Transport(Tls)+<zid> is authorized to Put (ingress) on from/<them>/acceptance-probe/<run id>
+```
+
+The runner takes the session id from the control's allow line and asserts each denial among that
+session's lines only. A denial logged for another session is FAIL (the control's own write
+outside its lane was not refused on the record). An allow line with no session id makes the
+denials BLOCKED: they cannot be tied to the control. With `FED_PROBE_THEIRS_ZID` set, an allow
+from any other session fails the control, so the drill's probe is known to be the session that
+was allowed.
+
+These rows run on our edge for the inbound direction. The outbound direction is refused, or
+not, by the partner's edge, so it is the partner's inbound row in their own bundle.
 
 ## 3. Outcome and exit status
 
@@ -211,6 +232,7 @@ broken on purpose (`Faults`). `test_acceptance.py` runs the real script against 
 | an unwritable evidence directory | exit 2 |
 | a diagnostic subscriber carrying a lane whose store's subscription is refused | delivery PASS, `persistence/` BLOCKED, exit 3; with the pause command, FAIL and exit 1, and the subscriber restarted |
 | a subscriber on other keys; a closed admin space; no store for the lane | PASS; BLOCKED (exit 3); FAIL (exit 1) |
+| a denial logged for another session; an allow from a session that is not the probe; decision lines without session ids | denial FAIL (exit 1); control FAIL (exit 1); denials BLOCKED (exit 3) |
 
 `FED_ACCEPTANCE_WAIT`, `FED_ACCEPTANCE_GAP` and `FED_ACCEPTANCE_RT_TIMEOUT` shorten the waits
 for the test; a real edge needs the defaults.

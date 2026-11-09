@@ -66,6 +66,9 @@ class Faults:
         #                                    sample arrives there only beside a diagnostic subscriber
         self.diagnostic = {}               # side -> key expression a client session subscribes to there
         self.admin_closed = set()          # sides whose admin space answers nothing
+        self.deny_from_other_session = False  # our edge logs the agreed probe's denials under
+        #                                    another session's id (its own decisions are missing)
+        self.trace_without_session = False # decision lines carry no session id
 
 
 class Core:
@@ -93,6 +96,7 @@ class Fabric:
         self.servers = []
         self.zids = {"forged": "f" + "1" * 31, "impersonate": "f" + "2" * 31}
         self.diag_zid = "d" + "3" * 31
+        self.agreed_zid = "a" * 32
 
     # --- the agreement -------------------------------------------------------
     def offered(self, side):
@@ -184,9 +188,15 @@ class Fabric:
     def probe_put(self, which, key, value):
         lines = []
         if which == "agreed":
-            zid, subject = "aaaa", "peering-%s" % self.them
+            zid, subject = self.agreed_zid, "peering-%s" % self.them
             ok = key.startswith("from/%s/" % self.them) and bool(self.offered(self.them))
-            lines.append("%s on %s is %s to Put (ingress) on %s" % (zid, subject, "authorized" if ok else "unauthorized", key))
+            if not ok and self.faults.deny_from_other_session:
+                zid = "e" * 32
+            # zenoh 1.9: `<zid> on Interface(..)+CertCommonName(..)+Transport(Tls)+<zid> is ...`
+            who = "%s on Interface(eth0)+CertCommonName(%s)+Transport(Tls)+%s" % (zid, subject, zid)
+            if self.faults.trace_without_session:
+                who = "Interface(eth0)+CertCommonName(%s)" % subject
+            lines.append("%s is %s to Put (ingress) on %s" % (who, "authorized" if ok else "unauthorized", key))
             if ok:
                 self.deliver(self.us, key, value)
         else:
