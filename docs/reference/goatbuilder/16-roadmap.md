@@ -26,12 +26,12 @@ As of 2026-11-09. One row per module of [ADR 1225](../../adr/1225-federation-bel
 |---|---|---|---|---|---|---|
 | 0 | Test environment baseline on main | `track/fed-e2e-env` | main | the baseline matrix | in progress | revert its branch; run.sh stays |
 | — | Three-party harness and role fixes | `fix/federation-three-party` | main | `three-party-shared-edge` | in progress | revert alone |
-| 1 | Acceptance cannot pass on skipped checks | `ws/w7-1-acceptance-skips` | main | `acceptance-strict-no-skip` + baseline | in progress | one revert; skips pass again unless FED_ACCEPTANCE_STRICT is set |
+| 1 | Acceptance cannot pass on skipped checks | `ws/w7-1-acceptance-skips` goatcore#274 | `integration/federation-turnkey` | `acceptance-strict-no-skip` + baseline | in progress | one revert; skips pass again unless FED_ACCEPTANCE_STRICT is set |
 | 2 | Evidence schema and outcome words | `ws/w7-2-acceptance-evidence` | Stage 1 | baseline; schema tests | in progress | one revert; acceptance falls back to Stage 1 output |
 | 2.x | Agreement-derived checks, bilateral exchange, cleanup, publishing `exchanging` | `ws/w7-federate-acceptance` (then smaller PRs) | Stage 2 | to be named | in progress | each one revert |
-| 3 | Library crate (pure move) + CI coverage kept | `ws/w1-federation-crate` (3 commits) goatcore#242 | main (rebased onto Stage 2 at graduation) | baseline equal to main | tests pass (cargo test, clippy, parity, phase-numbering); reviewed; e2e matrix not yet reported | revert; later stages first |
+| 3 | Library crate (pure move) + CI coverage kept | `ws/w1-federation-crate` goatcore#242 | `integration/federation-turnkey` | baseline equal to main | tests pass (cargo test, clippy, parity, phase-numbering); reviewed; e2e matrix not yet reported | revert; later stages first |
 | — | Decision record ADR 1225 and design docs | `ws/w0-adr-federation-in-goatbuilder` goatcore#245 | Stage 3 | doc checks | tests pass (doc and ADR gates); under review | one revert |
-| 4 | Verbs into the library (pure move) | `ws/w2-verbs-move` | Stage 3 | baseline equal to main | built, pushed (0661a24) | one revert |
+| 4 | Verbs into the library (pure move) | `ws/w2-verbs-move` | Stage 3 | baseline equal to main | built, tests pass | one revert |
 | 5 | goatbuilder verbs beside goat's | `ws/w2b-goatbuilder-verbs` | Stage 4 | baseline; identical-output tests | in progress | one revert |
 | 5.1 | Driver runs verbs in process (opt-in) | `ws/w2c-driver-in-process` | Stage 5 | `goatbuilder-only-both-sides` with opt-in | in progress | one revert |
 | 5.2 | `goat federate` prints the notice | `ws/w2d-goat-federate-notice` | Stage 5 | baseline | in progress | one revert |

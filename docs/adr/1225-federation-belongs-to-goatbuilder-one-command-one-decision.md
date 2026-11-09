@@ -132,7 +132,7 @@ with an error from `ops/errors/catalog.yaml` that names what to supply.
    in the deployment's own repository is part of this confirmation: it is the deployment's
    existing change process, and the admission approval covers it.
 
-Both stay human because each is a judgement about trust that the software cannot make for
+Both stay human because each is a judgment about trust that the software cannot make for
 the operator: one about who the partner is, one about what the partner may put into the
 core.
 
@@ -251,7 +251,7 @@ released tools. None of this is on `main` yet; it arrives as stage 11, opt-in.
 - **What the directory learns.** The slot name is the counterparty's id, so a reader of the
   directory will be able to see that two parties hold a peering. The directory still computes
   nothing about who should peer with whom; the slot is the party's own statement, and the
-  catalogue will not list slots. A party that does not want the relationship visible exchanges its package out of
+  catalog will not list slots. A party that does not want the relationship visible exchanges its package out of
   band or from its own host, as today.
 - **How it arrives.** The directory service gains `GET|PUT /v1/parties/{id}/packages/{counterparty}`
   beside the old route and merges first; `ops/federation/standup/directory.py` then publishes
