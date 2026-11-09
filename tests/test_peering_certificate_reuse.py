@@ -2,14 +2,13 @@
 import hashlib
 import fcntl
 import importlib.util
-from unittest import mock
 import json
 import os
 from pathlib import Path
 import shutil
 import subprocess
 import tempfile
-import unittest
+import unittest.mock
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / 'ops/federation/standup/mint-peering-leaves.sh'
@@ -246,7 +245,7 @@ class CertificateReuse(unittest.TestCase):
                 raise OSError('synthetic install failure')
             return original_replace(source, target)
 
-        with mock.patch('sys.argv', args), mock.patch.object(module.os, 'replace', interrupted_replace):
+        with unittest.mock.patch('sys.argv', args), unittest.mock.patch.object(module.os, 'replace', interrupted_replace):
             with self.assertRaises(OSError):
                 module.main()
         self.assertEqual(before, self.snapshot())
