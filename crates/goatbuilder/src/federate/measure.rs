@@ -611,6 +611,29 @@ pub fn measure(
     Ok((m, choice))
 }
 
+/// The edge and the core named by the plays' inventory in this checkout.
+pub fn resolve(
+    repo: &Path,
+    edge_group: &str,
+    core_group: &str,
+    edge_pick: Option<&str>,
+    core_pick: Option<&str>,
+) -> Result<Hosts> {
+    let inv = read_inventory(repo, &[INVENTORY])?;
+    hosts(&inv, edge_group, core_group, edge_pick, core_pick)
+}
+
+/// The measurement `goat_federation::verbs::run_init_measured` takes: the edge
+/// and the core over SSH, with the router chosen by [`choose_router`]. `init`
+/// then reads identity and the declaration from the operator's own profile and
+/// signs where this runs.
+pub fn over_ssh(
+    hosts: Hosts,
+    router_flag: Option<String>,
+) -> impl Fn(Option<&str>) -> Result<Measured> {
+    move |interface| measure(&hosts, router_flag.as_deref(), interface).map(|(m, _)| m)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

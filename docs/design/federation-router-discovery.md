@@ -8,9 +8,13 @@ label, and both federation e2e harnesses use the role's naming pattern and label
 **Built:** the measurements read through a `Probe` (`crates/goat-federation/src/derive.rs`),
 so the same derivations measure this machine or a host reached over SSH; goatbuilder's SSH
 probe and the router precedence below (`crates/goatbuilder/src/federate/measure.rs`), with
-offline tests. **Not built:** the `goatbuilder federate init` flags that call the SSH
-measurement, and the driver's phase 3 using it; both arrive with the goatbuilder package
-verbs. **Not built:** automatic selection among several cores. Live deployment and
+offline tests; the library's `run_init_measured` (`crates/goat-federation/src/verbs/init.rs`),
+which takes init's measured half from its caller, and goatbuilder's `measure::over_ssh`,
+which supplies it. **Measured** once against two throwaway hosts built from the harness host
+image (sshd, NOPASSWD sudo, a WireGuard interface, a labeled router container): every value
+read over SSH, the declared, discovered, wrong-name and unreachable cases. **Not built:** the
+`goatbuilder federate init` flags (`--edge-host`, `--core-host`, `--router-container`) that
+call it, and the driver's phase 3 using them; both arrive with the goatbuilder package verbs. **Not built:** automatic selection among several cores. Live deployment and
 bilateral federation acceptance are separate release gates.
 
 > The verb moves to `goatbuilder federate init` ([ADR 1225](../adr/1225-federation-belongs-to-goatbuilder-one-command-one-decision.md), Proposed), which runs
@@ -135,8 +139,9 @@ checked against the read-only list, and edge reads never reach the core or the r
 goatbuilder's tests cover the ssh argument vector from an inventory (address, user, port, key,
 jump options, `sudo -n`, quoting), refusal of non-read-only commands before ssh starts, the
 router precedence, the GB-110, GB-111 and GB-113 refusals, and a remote read error that is
-ssh's own not being taken for the file's permission. Not yet run against the end-to-end
-harness's hosts.
+ssh's own not being taken for the file's permission; `run_init_measured` is tested to ask
+its measurer once, for the declared interface only when a transport is offered, and to
+return a measurer's error as is. Not yet run inside the end-to-end harness.
 
 Rust regression cases cover standard and legacy names, custom labels, explicit
 selection, invalid selectors, missing and stopped containers, multiple cores,
