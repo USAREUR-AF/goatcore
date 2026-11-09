@@ -10,27 +10,38 @@ import json
 import os
 from pathlib import Path
 import shutil
+import signal
 import subprocess
 import tempfile
+import time
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / 'ops/federation/standup/mint-peering-leaves.sh'
 
 FAKE_AGE = r'''#!/usr/bin/env bash
-# age -d -i <identity> -o <out> <in>
+# age -d -i <identity> -o <out> [--] <in>. Records where it wrote, and the
+# directory's and file's modes, in $FAKE_AGE_LOG (outside the run's TMPDIR).
 set -eu
-id=""; out=""; in=""
+id=""; out=""; in=""; decrypt=0
 while [ $# -gt 0 ]; do
   case "$1" in
-    -d) shift ;;
+    -d) decrypt=1; shift ;;
     -i) id="$2"; shift 2 ;;
     -o) out="$2"; shift 2 ;;
+    --) in="$2"; shift 2 ;;
     *) in="$1"; shift ;;
   esac
 done
-[ "$(cat "$id")" = good ] || { echo "age: error: no identity matched any of the recipients" >&2; exit 1; }
+[ "$decrypt" = 1 ] || { echo "age: not asked to decrypt" >&2; exit 1; }
+case "$(cat "$id")" in
+  good) ;;
+  leak) echo "age: error: unexpected intro: \"AGE-SECRET-KEY-1QQQSECRET\"" >&2; exit 1 ;;
+  *) echo "age: error: no identity matched any of the recipients" >&2; exit 1 ;;
+esac
 cp "$in" "$out"
+python3 -c 'import os,sys; d=os.path.dirname(sys.argv[1]); print(sys.argv[1], oct(os.stat(d).st_mode & 0o777), oct(os.stat(sys.argv[1]).st_mode & 0o777))' "$out" >> "$FAKE_AGE_LOG"
+[ -z "${FAKE_AGE_SLEEP:-}" ] || sleep "$FAKE_AGE_SLEEP"
 '''
 
 
@@ -69,17 +80,30 @@ class CaKeyFromAge(unittest.TestCase):
         self.good.write_text('good')
         self.bad = self.root / 'bad-identity.txt'
         self.bad.write_text('bad')
+        self.log = self.root / 'age.log'
+        self.log.write_text('')
 
-    def run_mint(self, *extra, env=None, path=None):
+    def run_mint(self, *extra, env=None, path=None, cwd=None):
         e = {k: v for k, v in os.environ.items() if not k.startswith('FED_')}
-        e.update({'TMPDIR': str(self.tmp), 'PATH': path or self.fake_path})
+        e.update({'TMPDIR': str(self.tmp), 'PATH': path or self.fake_path, 'FAKE_AGE_LOG': str(self.log)})
         e.update(env or {})
         args = ['bash', str(SCRIPT), str(self.agreement), str(self.out), '--as', 'xaa',
                 '--ca-cert', str(self.ca), '--core-cn', 'router', '--core-san', 'core.example.test', *extra]
-        return subprocess.run(args, env=e, capture_output=True, text=True)
+        return subprocess.run(args, env=e, capture_output=True, text=True, cwd=cwd)
 
     def assert_no_key_left(self):
         self.assertEqual(list(self.tmp.iterdir()), [], 'the run left its copy of the CA key behind')
+
+    def assert_written_privately(self):
+        """The stand-in wrote the key inside the run's TMPDIR, in a 0700
+        directory as a 0600 file, and that file is gone now."""
+        lines = self.log.read_text().split('\n')
+        written = [l.split() for l in lines if l.strip()]
+        self.assertEqual(len(written), 1, self.log.read_text())
+        path, dir_mode, file_mode = written[0]
+        self.assertTrue(Path(path).is_relative_to(self.tmp), path)
+        self.assertEqual((dir_mode, file_mode), ('0o700', '0o600'))
+        self.assertFalse(Path(path).exists())
 
     def test_the_age_key_issues_the_leaves_and_its_copy_is_removed(self):
         r = self.run_mint(env={'FED_CA_KEY_AGE': str(self.age_file), 'FED_AGE_IDENTITY': str(self.good)})
@@ -87,6 +111,7 @@ class CaKeyFromAge(unittest.TestCase):
         self.assertIn('opened', r.stdout)
         self.assertEqual(len(list(self.out.glob('*.pem'))), 8)
         self.assert_no_key_left()
+        self.assert_written_privately()
 
     def test_flags_name_the_age_key_too(self):
         r = self.run_mint('--ca-key-age', str(self.age_file), '--age-identity', str(self.good))
@@ -109,6 +134,46 @@ class CaKeyFromAge(unittest.TestCase):
         self.assertIn('CA key not opened', r.stderr)
         self.assertIn('FED_CA_KEY_AGE', r.stdout + r.stderr)
         self.assertFalse(list(self.out.glob('*.pem')) if self.out.exists() else [])
+        self.assert_no_key_left()
+
+    def test_a_message_from_age_never_repeats_a_secret(self):
+        leak = self.root / 'leak-identity.txt'
+        leak.write_text('leak')
+        r = self.run_mint(env={'FED_CA_KEY_AGE': str(self.age_file), 'FED_AGE_IDENTITY': str(leak)})
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn('CA key not opened', r.stderr)
+        self.assertNotIn('QQQSECRET', r.stdout + r.stderr)
+        self.assert_no_key_left()
+
+    @unittest.skipUnless(shutil.which('age') and shutil.which('age-keygen'), 'age is not installed')
+    def test_a_key_path_that_starts_with_a_dash_is_a_path(self):
+        identity = self.root / 'keys.txt'
+        subprocess.run(['age-keygen', '-o', str(identity)], capture_output=True, check=True)
+        recipient = subprocess.check_output(['age-keygen', '-y', str(identity)], text=True).strip()
+        subprocess.run(['age', '-r', recipient, '-o', str(self.root / '-ca.key.age'), str(self.key)], check=True)
+        r = self.run_mint(env={'FED_CA_KEY_AGE': '-ca.key.age', 'FED_AGE_IDENTITY': str(identity)},
+                          path=os.environ['PATH'], cwd=self.root)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assert_no_key_left()
+
+    def test_termination_removes_the_copy(self):
+        e = {k: v for k, v in os.environ.items() if not k.startswith('FED_')}
+        e.update({'TMPDIR': str(self.tmp), 'PATH': self.fake_path, 'FAKE_AGE_LOG': str(self.log), 'FAKE_AGE_SLEEP': '30',
+                  'FED_CA_KEY_AGE': str(self.age_file), 'FED_AGE_IDENTITY': str(self.good)})
+        args = ['bash', str(SCRIPT), str(self.agreement), str(self.out), '--as', 'xaa', '--ca-cert', str(self.ca)]
+        proc = subprocess.Popen(args, env=e, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+        try:
+            for _ in range(200):
+                if self.log.read_text().strip():
+                    break
+                time.sleep(0.05)
+            self.assertTrue(self.log.read_text().strip(), 'the stand-in never wrote the key')
+            os.killpg(proc.pid, signal.SIGTERM)
+            self.assertEqual(proc.wait(timeout=20), 143)
+        finally:
+            if proc.poll() is None:
+                os.killpg(proc.pid, signal.SIGKILL)
+                proc.wait()
         self.assert_no_key_left()
 
     def test_a_rerun_that_reuses_every_leaf_needs_no_key(self):

@@ -181,13 +181,23 @@ if [ -z "$CA_KEY" ] && [ -n "$CA_KEY_AGE" ]; then
   elif ! command -v age >/dev/null 2>&1; then
     why="the age command is not installed"
   else
-    RUN_KEY_DIR="$(umask 077 && mktemp -d "${TMPDIR:-/tmp}/fed-ca-key.XXXXXX")" || why="no private temporary directory"
+    # $TMPDIR when set; else memory-backed /dev/shm where there is one, so the
+    # plaintext never reaches a disk; else /tmp.
+    key_parent="${TMPDIR:-}"
+    if [ -z "$key_parent" ]; then
+      if [ -d /dev/shm ] && [ -w /dev/shm ]; then key_parent=/dev/shm; else key_parent=/tmp; fi
+    fi
+    RUN_KEY_DIR="$(umask 077 && mktemp -d "$key_parent/fed-ca-key.XXXXXX")" || why="no private temporary directory"
     if [ -z "$why" ]; then
-      if ( umask 077 && age -d -i "$AGE_IDENTITY" -o "$RUN_KEY_DIR/ca-key.pem" "$CA_KEY_AGE" ) 2>"$RUN_KEY_DIR/age.err"; then
+      if ( umask 077 && age -d -i "$AGE_IDENTITY" -o "$RUN_KEY_DIR/ca-key.pem" -- "$CA_KEY_AGE" ) 2>"$RUN_KEY_DIR/age.err"; then
         CA_KEY="$RUN_KEY_DIR/ca-key.pem"
         echo "  CA key: opened $CA_KEY_AGE for this run; the copy is removed when it ends"
       else
-        why="$CA_KEY_AGE did not open with $AGE_IDENTITY: $(head -c 300 "$RUN_KEY_DIR/age.err")"
+        # age repeats a quoted line of a file it cannot read, which is a
+        # secret when an identity file is named by mistake: quoted text and
+        # anything shaped like an age secret key are never repeated.
+        said="$(head -n 1 "$RUN_KEY_DIR/age.err" | sed -e 's/"[^"]*"/"..."/g' -e 's/AGE-SECRET-KEY-[A-Za-z0-9]*/AGE-SECRET-KEY-.../g' | cut -c1-200)"
+        why="$CA_KEY_AGE did not open with $AGE_IDENTITY (age: ${said:-no message})"
       fi
     fi
   fi
