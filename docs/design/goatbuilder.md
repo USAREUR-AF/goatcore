@@ -325,6 +325,27 @@ Every host-scoped value is unique within one environment, which is stricter than
 
 **The edge's reserved UDP ports are per environment.** `environments[].peering_edge_reserved_udp` lists the UDP ports that environment's edge hosts already hold; allocation never gives one to a tunnel or carrier, and a pin on one is refused (GB-122). Absent, it is `[51820]`, NetBird's WireGuard, because a mesh-enrolled edge holds it. An environment whose edges run no mesh client sets `[]`, which is how a peering already running on the role default 51820 is adopted by pinning it.
 
+### Per-peering files: rendered for review
+
+Status: built (`crates/goatbuilder/src/federate/peering_files.rs`, unit tests). Status: WIP — gate: two peerings on one edge host and one core host carrying data in the federation test environment, with every per-peering file rendered by `goatbuilder federate allocate` and none written by hand.
+
+`goatbuilder federate allocate` writes the allocation record and the per-peering files a person used to write by hand. The record and these files are the proposal: the deployment reviews and commits them like any other change to its own configuration, and nothing is deployed by this command.
+
+**Refusals**, each naming the fix: a target file goatbuilder did not generate, or a hand-written file that sets a variable this would render for the same hosts (the group, its parent `peering_edges`, `peering_cores` or `peering_forwarders` group, or the host_vars of its inventory names), so no variable has two owners decided by Ansible's precedence (GB-125); `hosts:` on some peerings and not others (GB-126). Once the record holds a peering, `goatbuilder federate <with>` refuses a run whose `--work` (its `pki`), `--edge-group` or core group differs from the allocated `cert_dir`, `edge_group` and `core_group` (GB-128): phase 8 would mint where the edge does not read, or the plays would reach another peering's hosts. A peering the record does not hold runs as before, so hand-written files keep working. The driver runs the republisher on `<with>_core` and does not read the allocated core group yet, so a partner declared on a second environment (allocated `<env>_<with>_core`) or a `core_group` pin is refused by GB-128 until it does. Without `hosts:` the inventory stays hand-written, and `allocate` says that each peering needs its own inventory name for each machine.
+
+**What `goatbuilder federate allocate` writes**, relative to the repository; `--dry-run` writes nothing and shows each file:
+
+| File | Holds |
+|---|---|
+| `ops/goatbuilder/peering-values.yaml` | the allocation record |
+| `ops/ansible/group_vars/<edge_group>/peering-values.yml` | the WireGuard interface and listen port, the SPIRE outbound port and server host, the edge listen port, the four leaf certificate paths under `cert_dir` (not the two CA paths: phase 8 does not write those files, and the partner CA is placed only after its fingerprint is checked in phase 10) |
+| `ops/ansible/group_vars/<core_group>/peering-values.yml` | the republisher's metrics port and certificate sources |
+| `ops/ansible/inventory/peering-edges.ini` | `peering_edges` and `peering_cores` with one group per peering, when every peering declares `hosts:` |
+
+It never writes the agreement's own values: `goat federate apply` renders those beside these files (`federation-<them>.yml`, `-republish.yml`, `-transport.yml`). It never overwrites a file it did not generate, and a re-run that changes nothing writes nothing.
+
+Not built yet: phase 3 reading `wg_interface` and `link_subnet` into the goat context's `federation.toml` `[transport]`, and the driver taking `--work`, `--edge-group` and the core group from the allocation instead of checking them (GB-128). The link the edge binds is the agreement's subnet, which may be the partner's proposal: two agreements that pick one subnet on one edge are not refused yet.
+
 ### A goatlite profile (future)
 
 > Designed 2026-10-31: [goatlite.md](goatlite.md) and [ADR 1213](../adr/1213-goatlite-preset-one-box-one-file.md). The paragraph below is the reservation this section made; the design doc is canonical.

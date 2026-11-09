@@ -1579,6 +1579,34 @@ entries:
       - "\\(GB-124\\)"
     exit: 2
 
+  - code: GB-125
+    tool: goatbuilder
+    title: a peering file exists that goatbuilder did not generate
+    what: "goatbuilder federate allocate writes the peering inventory and each peering's peering-values.yml. It never overwrites a file it did not generate (its first line says who did), and never renders a variable a hand-written file already sets for the same hosts (the group, its parent peering group, or the host_vars of its inventory names), because Ansible's file order would then pick the value. Nothing was written."
+    causes:
+      - ops/ansible/inventory/peering-edges.ini or a peering-values.yml was written by hand before the values were allocated
+      - "a hand-written group_vars or host_vars file sets a variable allocate renders (a listen port, a certificate path)"
+    fixes:
+      - "move its values into goatbuilder.yaml (pins under the peering's values:, addresses under hosts:), remove the file, and run goatbuilder federate allocate again"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "\\(GB-125\\)"
+    exit: 2
+
+  - code: GB-126
+    tool: goatbuilder
+    title: some peerings declare hosts and some do not
+    what: "The peering inventory is rendered whole, from every peering's hosts:. When some peerings declare hosts: and others do not, the rendered inventory would drop the others' machines."
+    causes:
+      - "hosts: added to a new peering while the older ones were listed in a hand-written inventory"
+    fixes:
+      - "add hosts: edge: <address> core: <address> to every peering"
+      - "or remove hosts: from every peering and keep writing ops/ansible/inventory/peering-edges.ini by hand"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "\\(GB-126\\)"
+    exit: 2
+
   - code: GB-127
     tool: goatbuilder
     title: no free per-peering value is left
@@ -1590,6 +1618,22 @@ entries:
     read: docs/design/goatbuilder.md
     matches:
       - "\\(GB-127\\)"
+    exit: 2
+
+  - code: GB-128
+    tool: goatbuilder
+    title: a federate run disagrees with the peering's allocated values
+    what: "The allocation record holds this peering, and the run's working directory, edge group or core group is not the allocated one. Phase 8 would mint certificates where the edge does not read them, or the plays would run on another peering's hosts. Nothing ran."
+    causes:
+      - "--work or FED_WORK names a directory whose pki is not the allocated cert_dir"
+      - "--edge-group names another group than the allocated edge_group"
+      - "a partner declared on a second environment, or a core_group pin: the driver runs the republisher on <with>_core and does not read the allocated core group yet"
+    fixes:
+      - "goatbuilder federate allocate --dry-run   (the allocated values)"
+      - "pass the --work and --edge-group the refusal names, or pin cert_dir and edge_group under the peering's values: to what you pass"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "\\(GB-128\\)"
     exit: 2
 
   - code: GB-129
