@@ -86,8 +86,14 @@ class AcceptanceRun(unittest.TestCase):
         self.assertNotEqual(c["blocked"], "0", out)
         self.assertEqual(rc, 3, out)
         self.assertIn("is not a pass", out)
-        self.assertEqual(self.verdicts()["counterparty-surface"], "BLOCKED")
+        v = self.verdicts()
+        self.assertEqual(v["delivery/inbound/release/all"], "BLOCKED")
+        self.assertEqual(v["delivery/outbound/release/xab"], "BLOCKED")
+        self.assertEqual(v["roundtrip/inbound"], "BLOCKED")
+        # What our side can prove alone, it proves.
+        self.assertEqual(v["roundtrip/outbound/release/all"], "PASS")
         self.assertEqual(self.bundle()["verdict"], "INCOMPLETE")
+        self.assertFalse(self.bundle()["inputs"]["theirs_rest"])
 
     def test_strict_off_does_not_turn_a_skip_into_a_pass(self):
         rc, out = self.run_acceptance(drop=["FED_SPIRE_OURS"], extra={"FED_ACCEPTANCE_STRICT": "0"})
@@ -138,6 +144,92 @@ class AcceptanceRun(unittest.TestCase):
         self.assertEqual(self.verdicts()["delivery/inbound/release/all"], "FAIL")
         self.assertEqual(self.verdicts()["refusals"], "SKIP")
         self.assertEqual(self.bundle()["exit"], 1)
+
+    # --- what the agreement-derived checks add ------------------------------
+    def test_every_direction_and_set_is_checked_including_the_inbound_round_trip(self):
+        rc, out = self.run_acceptance()
+        v = self.verdicts()
+        for name in ("delivery/inbound/release/all", "delivery/inbound/release/xaa", "delivery/outbound/release/all",
+                     "delivery/outbound/release/xab", "republisher-boundary/outbound", "republisher-boundary/inbound",
+                     "roundtrip/outbound/release/all", "roundtrip/outbound/release/xab",
+                     "roundtrip/inbound/release/all", "roundtrip/inbound/release/xaa"):
+            self.assertEqual(v.get(name), "PASS", (name, out))
+        d = [c for c in self.bundle()["checks"] if c["name"] == "delivery/outbound/release/xab"][0]
+        self.assertEqual(d["observations"]["sent_sha256"], d["observations"]["received_sha256"])
+        self.assertIn(self.bundle()["run"]["id"], d["observations"]["sent"])
+
+    def test_a_dead_rest_surface_is_blocked_never_a_silent_pass(self):
+        # Before: a read that failed looked like "nothing arrived", which is what every
+        # refusal check wants to see.
+        self.fabric.faults.broken_get.add("xaa")
+        rc, out = self.run_acceptance()
+        v = self.verdicts()
+        self.assertNotEqual(rc, 0, out)
+        self.assertNotIn("PASS", [v[n] for n in v if n.startswith(("out-of-lane/", "republisher-boundary/", "refusal/"))], out)
+        self.assertEqual(v["delivery/inbound/release/all"], "BLOCKED", out)
+        self.assertIn("HTTP 500", out)
+
+    def test_a_surface_that_answers_every_key_is_not_fresh_evidence(self):
+        self.fabric.faults.answers_everything["xaa"] = b"retained-from-an-earlier-run"
+        rc, out = self.run_acceptance()
+        self.assertEqual(rc, 1, out)
+        self.assertEqual(self.verdicts()["fresh-keys"], "FAIL", out)
+
+    def test_other_bytes_on_arrival_fail_with_both_digests(self):
+        self.fabric.faults.mangle_inbound = True
+        rc, out = self.run_acceptance()
+        self.assertEqual(rc, 1, out)
+        c = [c for c in self.bundle()["checks"] if c["name"] == "delivery/inbound/release/all"][0]
+        self.assertEqual(c["verdict"], "FAIL")
+        self.assertIn("other bytes", c["reason"])
+        self.assertNotEqual(c["observations"]["sent_sha256"], c["observations"]["received_sha256"])
+
+    def test_their_republisher_lifting_an_unoffered_set_fails(self):
+        self.fabric.faults.lift_everything.add("xab")
+        rc, out = self.run_acceptance()
+        self.assertEqual(rc, 1, out)
+        self.assertEqual(self.verdicts()["republisher-boundary/inbound"], "FAIL", out)
+        self.assertEqual(self.verdicts()["republisher-boundary/outbound"], "PASS", out)
+
+    def test_a_silent_trace_is_a_failure_not_a_pass(self):
+        self.fabric.faults.trace_silent = True
+        rc, out = self.run_acceptance()
+        self.assertEqual(rc, 1, out)
+        v = self.verdicts()
+        self.assertEqual(v["refusal/control-allowed"], "FAIL", out)
+        self.assertEqual(v["refusal/out-of-lane-denied"], "SKIP", out)
+
+    def test_a_send_only_agreement_is_not_applicable_inbound_and_passes(self):
+        ag = fakefabric.agreement(theirs=())
+        self.fabric = fakefabric.Fabric(ag, "xaa", self.tmp)
+        self.addCleanup(self.fabric.stop)
+        rc, out = self.run_acceptance(agreement=ag)
+        v = self.verdicts()
+        self.assertEqual(rc, 0, out)
+        for name in ("delivery/inbound", "republisher-boundary/inbound", "roundtrip/inbound", "roundtrip/outbound",
+                     "refusal/control-allowed"):
+            self.assertEqual(v[name], "NOT APPLICABLE", (name, out))
+        self.assertEqual(v["delivery/outbound/release/all"], "PASS", out)
+        self.assertEqual(v["refusal/forged-name"], "PASS", out)
+        na = [c for c in self.bundle()["checks"] if c["verdict"] == "NOT APPLICABLE"]
+        self.assertTrue(all(not c["required"] and c["reason"] for c in na))
+
+    def test_a_receive_only_agreement_checks_inbound_only(self):
+        ag = fakefabric.agreement(ours=())
+        self.fabric = fakefabric.Fabric(ag, "xaa", self.tmp)
+        self.addCleanup(self.fabric.stop)
+        rc, out = self.run_acceptance(agreement=ag)
+        v = self.verdicts()
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(v["delivery/outbound"], "NOT APPLICABLE", out)
+        self.assertEqual(v["delivery/inbound/release/xaa"], "PASS", out)
+        self.assertEqual(v["refusal/control-allowed"], "PASS", out)
+
+    def test_an_agreement_with_no_flow_fails(self):
+        ag = fakefabric.agreement(ours=(), theirs=())
+        rc, out = self.run_acceptance(agreement=ag)
+        self.assertEqual(rc, 1, out)
+        self.assertEqual(self.verdicts()["lanes"], "FAIL", out)
 
     def test_a_broken_round_trip_fails(self):
         self.fabric.faults.responder_down.add("xab")

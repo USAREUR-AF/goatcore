@@ -44,7 +44,9 @@ On the publishing sovereign, whenever you want the answer:
 ./fedcheck.sh release/<one of our sets> from/<them> [timeout]   # e.g. release/weather from/xaa 20
 ```
 
-Phase 14 (`ops/federation/standup/acceptance.sh`) runs it once per set we offer.
+Phase 14 (`ops/federation/standup/acceptance.sh`) runs it once per set we offer, and, when the
+partner's surface is reachable (a drill), once per set they offer in the other direction. It
+streams `fedcheck.sh` to the host that runs it (`bash -s` over ssh); nothing is copied there.
 
 ## Measured
 

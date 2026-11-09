@@ -54,7 +54,9 @@ class Faults:
         self.mangle_inbound = False        # inbound samples arrive with other bytes
         self.trace_silent = False          # our edge logs no ACL decisions
         self.authorize_forged = False      # our edge authorizes the forged name
-        self.stale = {}                    # key -> value present on a core before the run
+        self.stale = {}                    # side -> {key: value} present on a core before the run
+        self.broken_get = set()            # sides whose REST surface answers every GET with HTTP 500
+        self.answers_everything = {}       # side -> one value its REST surface returns for every GET
 
 
 class Core:
@@ -137,7 +139,7 @@ class Fabric:
         lines = []
         if which == "agreed":
             zid, subject = "aaaa", "peering-%s" % self.them
-            ok = key.startswith("from/%s/" % self.them)
+            ok = key.startswith("from/%s/" % self.them) and bool(self.offered(self.them))
             lines.append("%s on %s is %s to Put (ingress) on %s" % (zid, subject, "authorized" if ok else "unauthorized", key))
             if ok:
                 self.deliver(self.us, key, value)
@@ -154,13 +156,24 @@ class Fabric:
                     f.write("2026-11-09T00:00:00Z INFO zenoh::net::routing::interceptor::access_control: %s\n" % line)
 
     # --- serving ---------------------------------------------------------------
-    def _handler(self, on_get, on_put):
+    def _handler(self, on_get, on_put, side=None):
+        faults = self.faults
+
         class H(http.server.BaseHTTPRequestHandler):
             def log_message(self, *a):
                 pass
 
             def do_GET(self):
-                body = json.dumps(on_get(self.path.lstrip("/")), separators=(",", ":")).encode()
+                if side in faults.broken_get:
+                    self.send_response(500)
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return
+                rows = on_get(self.path.lstrip("/"))
+                if side in faults.answers_everything:
+                    rows = [{"key": self.path.lstrip("/"), "encoding": "zenoh/bytes",
+                             "value": base64.b64encode(faults.answers_everything[side]).decode()}]
+                body = json.dumps(rows, separators=(",", ":")).encode()
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(body)))
@@ -193,8 +206,9 @@ class Fabric:
             for k, v in self.faults.stale.get(side, {}).items():
                 self.cores[side].store[k] = v
         env = {
-            "FED_OURS_REST": self._serve(self._handler(self._rows(self.us), lambda k, v: self.put(self.us, k, v))),
-            "FED_THEIRS_REST": self._serve(self._handler(self._rows(self.them), lambda k, v: self.put(self.them, k, v))),
+            "FED_OURS_REST": self._serve(self._handler(self._rows(self.us), lambda k, v: self.put(self.us, k, v), self.us)),
+            "FED_THEIRS_REST": self._serve(self._handler(self._rows(self.them), lambda k, v: self.put(self.them, k, v),
+                                                         self.them)),
             "FED_EDGE_LOG_OURS": "cat '%s'" % self.trace_path,
             "FED_PROBE_FORGED_ZID": self.zids["forged"],
             "FED_PROBE_IMPERSONATE_ZID": self.zids["impersonate"],

@@ -10,6 +10,7 @@ which did not run is not a pass lives in one place, with tests.
                                     [--optional] [--obs-file F]
     acceptance_evidence.py finalize <checks.jsonl> --out DIR --agreement A --us U
                                     --them T --run-id ID --started T [--inputs k=0|1 ...]
+    acceptance_evidence.py rest-value  < curl output ending in a line with the HTTP status
 
 `record` appends one check. `finalize` writes DIR/result.json (schema
 goat-federation-acceptance/v1), DIR/summary.md and DIR/history/<run-id>.json, prints
@@ -220,6 +221,45 @@ def console(b):
     return "\n".join(out)
 
 
+class Unreadable(ValueError):
+    pass
+
+
+def rest_value(text):
+    """The value of the first row a zenoh REST GET returned, as bytes; b"" when the
+    surface answered with no row. Raises Unreadable when it did not answer, answered
+    with an error, or answered with something that is not a row list: a surface that
+    cannot be read must never look like a key that is absent.
+
+    `text` is curl's body followed by a last line holding the HTTP status
+    (`curl -w '\\n%{http_code}'`); curl prints 000 when it could not connect."""
+    body, _, code = text.rstrip("\n").rpartition("\n")
+    code = code.strip()
+    if code != "200":
+        raise Unreadable("HTTP %s" % (code or "<none>") if code != "000" else "no answer (connection failed or timed out)")
+    try:
+        rows = json.loads(body)
+    except ValueError:
+        raise Unreadable("the answer is not JSON: %r" % body[:80])
+    if not isinstance(rows, list):
+        raise Unreadable("the answer is not a list of rows: %r" % body[:80])
+    if not rows:
+        return b""
+    row = rows[0]
+    if not isinstance(row, dict) or "value" not in row:
+        raise Unreadable("a row without a value: %r" % body[:80])
+    value, encoding = row["value"], str(row.get("encoding") or "")
+    if not isinstance(value, str):
+        return json.dumps(value, separators=(",", ":")).encode()
+    if encoding.startswith("text/") or encoding in ("zenoh/string", "application/json"):
+        return value.encode()
+    # Anything else comes back base64, and nothing in the row says so for certain.
+    try:
+        return base64.b64decode(value, validate=True)
+    except ValueError:
+        return value.encode()
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -243,7 +283,15 @@ def main(argv=None):
     f.add_argument("--run-id", required=True)
     f.add_argument("--started", required=True)
     f.add_argument("--inputs", nargs="*", default=[])
+    sub.add_parser("rest-value")
     a = ap.parse_args(argv)
+    if a.cmd == "rest-value":
+        try:
+            sys.stdout.buffer.write(rest_value(sys.stdin.read()))
+            return 0
+        except Unreadable as e:
+            print(str(e), file=sys.stderr)
+            return 4
     try:
         if a.cmd == "record":
             ch = make_check(a.name, a.direction, a.verdict, a.reason, a.started, title=a.title, tier=a.tier,
