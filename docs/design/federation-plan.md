@@ -65,25 +65,40 @@ printed with its hash.
 Allocation keeps the peerings of one environment apart in the declaration. The
 host-level check looks at machines. It maps every declared peering's edge
 group (`<peering>_edge`; this run's `--edge-group`) and core group
-(`<peering>_core`) to the hosts the peering inventory names, by address, so two
-inventory names for one machine are one host. It then finds any value two
-peerings would bind on one machine:
+(`<peering>_core`) to the hosts the peering inventory names. The inventory is
+read as Ansible reads it for this purpose: `[group:children]` expanded,
+`[group:vars]` skipped, `ansible_host` from any line naming the host (quotes
+removed) or from `host_vars/`, else the name. Host ranges are not expanded.
+Machines are compared by address, so two inventory names for one address are
+one machine. A peering is `<with>/<environment>`: the same partner on two
+environments is two peerings. Then the check finds what two peerings would
+share on one machine:
 
-| Resource | Where | This peering's value | Another peering's value |
-|---|---|---|---|
-| WireGuard interface | edge host | the plan's resolved resource | its group's vars, else the role default |
-| tunnel UDP port | edge host | the plan's resolved resource | its group's vars, else the role default |
-| link subnet (overlap) | edge host | `transport.link_subnet` of our agreement | of its agreement, beside our working directory or under `/var/lib/goat-federation/<peering>` |
-| republisher metrics port | core host | the plan's resolved resource | its group's vars, else the role default |
+| Shared on one machine | Why it breaks | Compared when |
+|---|---|---|
+| an inventory name in both peerings' groups | Ansible merges both groups' variables onto that host, so one peering's values overwrite the other's | always |
+| WireGuard interface, tunnel UDP port | two tunnels cannot bind one | the peering's agreement chose wireguard, or it has none yet; an ipsec-fips peering binds neither |
+| carrier interface, carrier UDP port | the same, for the carrier to a forwarder | the peering's group sets `peering_wg_via_forwarder: true` |
+| link subnet (overlap, IPv4 or IPv6) | two links with one address | from `transport.link_subnet` of each peering's agreement |
+| republisher metrics port, on the core | two republishers cannot bind one | always |
 
-Another peering's values never come from this run's environment variables. The
-edge router's partner-facing port is not compared: `goat federate apply` binds
-each edge router to its own link address, so the port is shared by design, and
-the link subnets keep those addresses apart. A conflict that involves this
-peering is a FAIL in readiness with GB-203, naming the host, the resource and
-each peering's value. With no inventory host for this peering, the check is
-SKIP: nothing was compared. Ports held by something that is not a declared
-peering (NetBird on UDP 51820, any other service) are phase 1's live port check.
+This peering's values are the plan's resolved resources (and its edge group for
+the carrier values). Another peering's are its group's vars, then the role
+defaults, never this run's environment variables; its agreement is looked for
+beside our working directory, then under `/var/lib/goat-federation/<peering>`.
+The edge router's partner-facing port is not compared: `goat federate apply`
+binds each edge router to its own link address, so the port is shared by
+design, and the link subnets keep those addresses apart.
+
+Outcomes: a conflict this peering is part of is a FAIL with GB-203, naming the
+machine, the resource and each peering's value. The check is SKIP when this
+peering has no inventory host, when one of its own values does not resolve
+(unset or templated), or when another peering on a machine we share has a value
+that does not resolve or (once our agreement exists) no agreement to compare
+subnets with. Otherwise PASS. Only the conflicts this peering is part of go into
+its plan, so a conflict between two other peerings does not change this plan's
+hash. Ports held by something that is not a declared peering (NetBird on UDP
+51820, any other service) are phase 1's live port check.
 
 ## The recheck before a change
 
