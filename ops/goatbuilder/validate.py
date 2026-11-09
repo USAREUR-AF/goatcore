@@ -166,6 +166,13 @@ def errors_for(config: dict, schema: dict | None = None, checkout: dict | None =
             continue
         if cls not in (s.get("classes") or {}):
             out.append(f"peerings/{pi}: edge_class '{cls}' is not a declared class at site '{site}'")
+    # A word of `goatbuilder federate` never names a partner (GB-120). The binary also
+    # refuses pins that collide; that needs its allocator (crates/goatbuilder/src/federate/alloc.rs).
+    reserved = ("init", "lint", "compose", "diff", "verify", "apply", "status", "plan", "deploy", "test", "allocate")
+    for pi, p in enumerate(config.get("peerings") or []):
+        if p.get("with") in reserved:
+            out.append(f"peerings/{pi} (with '{p.get('with')}'): '{p.get('with')}' is a word of `goatbuilder federate` "
+                       f"and cannot name a partner (GB-120)")
     return out
 
 

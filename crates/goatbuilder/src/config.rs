@@ -179,6 +179,52 @@ pub struct Peering {
     pub environment: String,
     pub site: String,
     pub edge_class: String,
+    /// Step 1's tunnel: `wireguard` or `ipsec` (the FIPS-validated IPsec
+    /// transport). Absent: wireguard. The one field for the transport.
+    #[serde(default)]
+    #[allow(dead_code)] // read where the per-peering files are rendered
+    pub tunnel: Option<String>,
+    /// Release sets this peering offers, narrowing the `[data] release` of the
+    /// goat context's federation.toml, which owns them. Absent: all of them.
+    /// Checked by federate/declaration.rs: it may narrow, never widen.
+    #[serde(default)]
+    pub offer: Option<Vec<String>>,
+    /// Pins that override allocation, same keys as the allocated values.
+    #[serde(default)]
+    #[allow(dead_code)] // read by the allocator (federate/alloc.rs)
+    pub values: crate::federate::declaration::PeeringPins,
+    /// The machines' addresses, for the rendered peering inventory.
+    #[serde(default)]
+    #[allow(dead_code)] // read where the peering inventory is rendered
+    pub hosts: Option<PeeringHosts>,
+    /// Present when a peering forwarder relays the partner to our edge (ADR 1218).
+    #[serde(default)]
+    #[allow(dead_code)] // read where the forwarder is rendered and applied
+    pub forwarder: Option<PeeringForwarder>,
+}
+
+/// Where the edge and the core are, as the inventory reaches them.
+#[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)] // read where the peering inventory is rendered
+pub struct PeeringHosts {
+    pub edge: String,
+    pub core: String,
+    #[serde(default)]
+    pub user: Option<String>,
+}
+
+/// The peering forwarder in front of the edge (docs/design/peering-forwarder.md).
+#[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)] // read where the forwarder is rendered and applied
+pub struct PeeringForwarder {
+    /// The forwarder's public host the partner and our edge dial.
+    pub endpoint: String,
+    /// The inventory group the forwarder is in (default `peering_forwarders`).
+    #[serde(default)]
+    pub group: Option<String>,
+    /// The forwarder's address as the inventory reaches it (for the rendered inventory).
+    #[serde(default)]
+    pub ansible_host: Option<String>,
 }
 
 /// Read a YAML config file into a JSON value (the form the schema validates).
@@ -433,6 +479,9 @@ pub fn cross_field(cfg: &Config) -> Vec<String> {
             ));
         }
     }
+    // Reserved names and the offer's shape (docs/design/goatbuilder.md, "The
+    // peering declaration").
+    out.extend(crate::federate::declaration::problems(cfg));
     out
 }
 
