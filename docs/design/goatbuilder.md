@@ -255,6 +255,39 @@ Federation is built as modules ([ADR 1225](../adr/1225-federation-belongs-to-goa
 
 **Stage 14, teaching material.** Owns the runbook, the tutorials and the guides that teach the command, in this repository and its siblings. It follows the switches. Reverting it restores the earlier text.
 
+### The peering declaration
+
+Status: built (`crates/goatbuilder/src/federate/declaration.rs`, the schema's `peering` definition, unit tests). Status: WIP — gate: a peering with `offer:` equal to federation.toml's sets runs every phase in the federation test environment, and one that names an undeclared set is refused before phase 1.
+
+A `peerings:` entry keeps `with`, `environment`, `site`, `edge_class` and the optional `tunnel` (`wireguard` or `ipsec`, the one field for the transport), and takes these optional fields:
+
+```yaml
+peerings:
+  - with: xab
+    environment: dev
+    site: alpha
+    edge_class: edge
+    offer: [all, xab]           # narrows federation.toml's [data] release for this partner
+    values: {}                  # pins that override allocated values (Per-peering values, below)
+    hosts: { edge: 192.0.2.20, core: 192.0.2.10, user: goat }   # for a rendered inventory
+    forwarder: { endpoint: 203.0.113.7 }   # present when a peering forwarder relays (ADR 1218)
+```
+
+`init lint compose diff verify apply status plan deploy test allocate` are words of `goatbuilder federate` and can never name a partner (GB-120).
+
+**One owner per field: the offered release sets.** The verified agreement determines what flows between the two parties. The goat context's `federation.toml` owns the release sets this party offers (`[data] release`), and `goat federate init` writes them into our half of the agreement. A peering's `offer:` may only narrow that list for one partner. A set name `X` means the key expression `release/X/**` (`ops/permissions/release-sets.yaml`), and a key expression under `release/` is compared as written. Every entry must be one `federation.toml` offers; an entry it does not offer is refused, never added (GB-129). So there is no second, hand-kept list that could widen what was declared and reviewed in one place.
+
+Where it is checked:
+
+| Check | Where | Reads |
+|---|---|---|
+| reserved names (GB-120); `offer:` empty, malformed or repeating a set (GB-129) | `goatbuilder validate`, and every command that loads the config | goatbuilder.yaml only |
+| every `offer:` entry is in `[data] release` (GB-129) | `goatbuilder federate <with>`, before phase 1, when the peering declares `offer:` | the `federation.toml` phase 3 reads: `$GOAT_PROFILE_DIR` (else `~/.goat`), context `$GOAT_CONTEXT` (else `current_context`, else `default`) |
+
+A peering without `offer:` is not checked, and nothing is read: the driver runs as before.
+
+Not built yet: phase 3 offering a narrowed list. `goat federate init` offers exactly what `federation.toml` declares, so until it takes a narrowed list, an `offer:` narrower than `[data] release` is refused too (GB-129) rather than run with the wider set.
+
 ### A goatlite profile (future)
 
 > Designed 2026-10-31: [goatlite.md](goatlite.md) and [ADR 1213](../adr/1213-goatlite-preset-one-box-one-file.md). The paragraph below is the reservation this section made; the design doc is canonical.

@@ -37,6 +37,8 @@ use anyhow::{anyhow, Context, Result};
 use crate::config;
 use crate::{Check, Report, EXIT_OK, EXIT_REFUSED};
 
+pub mod declaration;
+
 pub struct Options<'a> {
     pub with: &'a str,
     pub env: Option<&'a str>,
@@ -417,6 +419,10 @@ pub fn federate(repo: &Path, o: &Options) -> Result<Report> {
         let home = std::env::var("HOME").unwrap_or_default();
         let dir = if is_root() { "/root/.goat".to_string() } else { format!("{home}/.goat") };
         std::env::set_var("GOAT_PROFILE_DIR", dir);
+    }
+    // A peering's offer: may narrow federation.toml's release sets, never widen them.
+    if o.mock.is_none() {
+        declaration::driver_check(&cfg, o.with, o.env)?;
     }
     let work = o.work.map(String::from).unwrap_or_else(|| env_or("FED_WORK", format!("/var/lib/goat-federation/{}", o.with)));
     let edge_group = o.edge_group.map(String::from).unwrap_or_else(|| format!("{}_edge", o.with));

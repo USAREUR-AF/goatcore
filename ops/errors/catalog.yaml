@@ -1490,6 +1490,36 @@ entries:
       - "NOT clean .*\\(GB-076\\)"
     exit: 3
 
+  - code: GB-120
+    tool: goatbuilder
+    title: a peering names a partner with a reserved word
+    what: "A word of `goatbuilder federate` (init lint compose diff verify apply status plan deploy test allocate) can never name a partner: `goatbuilder federate <word>` runs that step, so the peering could never be run by name."
+    causes:
+      - a peerings entry's `with:` is one of the reserved words
+    fixes:
+      - "name the partner by its sovereign id in goatbuilder.yaml peerings: with:"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "\\(GB-120\\)"
+    exit: 2
+
+  - code: GB-129
+    tool: goatbuilder
+    title: a peering's offer would widen what federation.toml declares
+    what: "The goat context's federation.toml owns the release sets this party offers ([data] release). A peering's offer: may only narrow that list for one partner. It names a set federation.toml does not offer, is empty or malformed, or names a narrower set than phase 3 can carry out yet (phase 3 offers exactly what federation.toml declares), or federation.toml cannot be read. Nothing ran."
+    causes:
+      - "offer: names a set that is not in federation.toml's [data] release"
+      - "offer: is narrower than [data] release, and goat federate init takes no narrowed list yet"
+      - "GOAT_PROFILE_DIR or GOAT_CONTEXT points at another goat context than the one phase 3 runs in"
+    fixes:
+      - "add the set to [data] release in federation.toml, the one owner of the offered sets, or remove it from offer:"
+      - "narrow [data] release in federation.toml to what this partner receives, or remove offer:"
+      - "goatbuilder validate   (the offer's shape)"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "\\(GB-129\\)"
+    exit: 2
+
   - code: GB-210
     tool: goatbuilder
     title: the host firewall baseline is missing a value it needs
