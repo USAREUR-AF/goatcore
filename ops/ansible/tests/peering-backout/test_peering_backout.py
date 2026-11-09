@@ -92,6 +92,11 @@ def build(tmp):
     return f"{tmp}/inventory/peering-edges.ini"
 
 
+def jload(path):
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
+
+
 def leaves(v):
     if isinstance(v, dict):
         for x in v.values():
@@ -123,8 +128,8 @@ class TwoPeeringsOneHost(unittest.TestCase):
                  str(HERE / "names.yml"), "-e", f"out={out}"], self.tmp)
         self.assertEqual(r.returncode, 0, r.stdout[-4000:] + r.stderr[-2000:])
         for role in ("edge", "core"):
-            a = json.load(open(f"{out}/{role}-xab.json"))
-            b = json.load(open(f"{out}/{role}-xac.json"))
+            a = jload(f"{out}/{role}-xab.json")
+            b = jload(f"{out}/{role}-xac.json")
             # Where the SPIRE server is reached, and our own sovereign id, are the same for
             # every peering by definition; they are addresses, not resources removed.
             for n in (a, b):
@@ -176,7 +181,7 @@ class TwoPeeringsOneHost(unittest.TestCase):
         self.assertTrue(any(r["resource"] == "carrier wg-carry1" for r in fwd), fwd)
         self.assertTrue(any("1 other entries" in r.get("note", "") for r in fwd), fwd)
         # The core files were read, never written.
-        self.assertEqual(open(fx.org).read(), fx.vendor + tbc.fragment("xaa", "xab") + tbc.fragment("xaa", "xac"))
+        self.assertEqual(Path(fx.org).read_text(), fx.vendor + tbc.fragment("xaa", "xab") + tbc.fragment("xaa", "xac"))
 
     def test_a_survey_without_the_rendered_values_or_agreement_still_runs(self):
         # A peering backed out before phase 9: no agreement, no applied values.
@@ -187,7 +192,7 @@ class TwoPeeringsOneHost(unittest.TestCase):
                  "-e", "peering_backout_id=xac", "-e", f"fed_work={self.tmp}/work/xac",
                  "-e", "fed_edge_group=xac_edge", "-e", "ansible_become=false"], self.tmp)
         self.assertEqual(r.returncode, 0, r.stdout[-6000:] + r.stderr[-2000:])
-        rec = json.load(open(f"{self.tmp}/work/xac/backout/survey/edge-xac.json"))
+        rec = jload(f"{self.tmp}/work/xac/backout/survey/edge-xac.json")
         spire = [r for r in rec["rows"] if r["component"] == "spire" and r["resource"].startswith("federation")]
         self.assertEqual(spire[0]["state"], "unknown")
 
@@ -208,6 +213,14 @@ class RoleDefaults(unittest.TestCase):
                 self.assertEqual(roles[k], v, f"{k}: the back-out repeats {v!r}, the role says {roles[k]!r}")
                 checked += 1
         self.assertGreaterEqual(checked, 6)
+
+    def test_the_forwarder_entry_defaults_match_the_role(self):
+        text = (ANSIBLE / "roles/goat-peering-forwarder/tasks/absent.yml").read_text()
+        m = re.search(r"set role_defaults = (\{.*?\}) -%\}", text, re.S)
+        self.assertIsNotNone(m)
+        repeated = yaml.safe_load(re.sub(r"\s+", " ", m.group(1)))
+        role = yaml.safe_load((ANSIBLE / "roles/goat-peering-forwarder/defaults/main.yml").read_text())
+        self.assertEqual(repeated, role["peering_forwarder_peering_defaults"])
 
 
 if __name__ == "__main__":

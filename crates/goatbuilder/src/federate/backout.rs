@@ -134,6 +134,41 @@ pub fn is_sovereign_id(s: &str) -> bool {
         && !s.starts_with('-')
 }
 
+/// `sha256:` and 64 lowercase hex digits: the only shape a core digest takes.
+pub fn is_digest(s: &str) -> bool {
+    s.strip_prefix("sha256:")
+        .map(|h| {
+            h.len() == 64
+                && h.bytes()
+                    .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
+        })
+        .unwrap_or(false)
+}
+
+/// A working directory whose agreement names other parties is another
+/// peering's: backing out from it would name the wrong partner's files.
+pub fn work_belongs_to(work: &str, partner: &str) -> Result<(), String> {
+    let Ok(text) = std::fs::read_to_string(format!("{work}/agreement.json")) else {
+        return Ok(());
+    };
+    let v: serde_json::Value = serde_json::from_str(&text)
+        .map_err(|e| format!("{work}/agreement.json is not JSON: {e}"))?;
+    let ids: Vec<&str> = v
+        .get("parties")
+        .and_then(|p| p.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|p| p.get("sovereign_id").and_then(|s| s.as_str()))
+                .collect()
+        })
+        .unwrap_or_default();
+    if ids.contains(&partner) {
+        Ok(())
+    } else {
+        Err(format!("{work}/agreement.json is between {ids:?}, not with {partner}: --work (or FED_WORK) points at another peering"))
+    }
+}
+
 /// A path or group name that may sit inside single quotes in a `bash -c` line.
 fn plain(s: &str) -> bool {
     !s.is_empty()
@@ -525,6 +560,9 @@ fn directory(repo: &Path, o: &Options, t: &Target, dry: bool) -> Option<(String,
 
 pub fn backout(repo: &Path, o: &Options) -> Result<Report> {
     let t = target(o)?;
+    if let Err(e) = work_belongs_to(&t.work, &t.partner) {
+        return Err(goat_errors::coded("GB-220", e).into());
+    }
     let cfg_path = match o.mock {
         Some(m) => m.join("goatbuilder.yaml"),
         None => repo.join("ops/goatbuilder/goatbuilder.yaml"),
@@ -680,8 +718,9 @@ pub fn backout(repo: &Path, o: &Options) -> Result<Report> {
             ));
         }
     }
-    let (slot_word, slot_ok, slot_said) =
-        slot_recheck(repo, env.as_deref(), s.core_candidate.is_some());
+    // A preview for the plan; the recheck that gates the restart runs again
+    // immediately before it, after the removal play (step 4).
+    let (slot_word, _, slot_said) = slot_recheck(repo, env.as_deref(), s.core_candidate.is_some());
     let (rec_path, rec_ours) = partner_record(repo, &t.partner);
     let dir_plan = directory(repo, o, &t, true);
     let mut extra: Vec<(String, String)> = Vec::new();
@@ -812,9 +851,13 @@ pub fn backout(repo: &Path, o: &Options) -> Result<Report> {
         return Ok(r);
     }
 
-    // 4 + 5 the core
-    if let Some(digest) = &s.core_candidate {
+    // 4 + 5 the core. The digest is the survey's own, shaped as one before it
+    // reaches a command line.
+    let mut core_done = true;
+    if let Some(digest) = s.core_candidate.as_ref().filter(|d| is_digest(d)) {
+        let (slot_word, slot_ok, slot_said) = slot_recheck(repo, env.as_deref(), true);
         if !slot_ok {
+            core_done = false;
             checks.push(row("slot-recheck", false, format!("{slot_word}: {slot_said} (GB-223)"), Some("regenerate and commit the slot list, then run the back-out again; the edge side is already removed".into())));
             exit = EXIT_NOT_CONVERGED;
         } else {
@@ -833,22 +876,58 @@ pub fn backout(repo: &Path, o: &Options) -> Result<Report> {
                 ],
             );
             checks.push(row("cmd", true, core_cmd.clone(), None));
+            let core_dir = base.join("core-apply");
+            let _ = std::fs::create_dir_all(&core_dir);
+            clear(&core_dir);
             if !run_bash(repo, &core_cmd)? {
+                core_done = false;
                 checks.push(row("core", false, "the core router was not restarted on the reviewed candidate (GB-224): its configuration changed since the survey, or the restart failed".into(), Some(format!("goatbuilder federate backout {} --dry-run, review the new candidate, then run it again", t.partner))));
                 exit = EXIT_NOT_CONVERGED;
             } else {
+                // Say what the core step did, from its own record, not from the plan.
+                let restarted = read_records(&core_dir)
+                    .unwrap_or_default()
+                    .iter()
+                    .flat_map(|r| r.rows.iter())
+                    .any(|r| r.resource.starts_with("router restart") && r.action == "restarted");
                 checks.push(row(
                     "core",
                     true,
-                    format!("core router restarted on {digest}"),
+                    if restarted { format!("core router restarted on {digest}") } else { "the core held no block of this peering any more at the restart step; nothing was restarted".to_string() },
                     None,
                 ));
             }
         }
+    } else if s.core_candidate.is_some() {
+        core_done = false;
+        checks.push(row(
+            "core",
+            false,
+            "the survey's core digest is not a sha256 digest; nothing was installed (GB-224)"
+                .into(),
+            None,
+        ));
+        exit = EXIT_NOT_CONVERGED;
+    }
+    if !core_done {
+        // The partner is still admitted on the core: keep its directory slot and
+        // record until the core step has run, so the record matches the core.
+        checks.push(row(
+            "directory",
+            true,
+            "not done: the core step did not complete".into(),
+            None,
+        ));
+        checks.push(row(
+            "partner-record",
+            true,
+            "not done: the core step did not complete".into(),
+            None,
+        ));
     }
 
     // 6 directory
-    if let Some((_, args)) = directory(repo, o, &t, false) {
+    if let Some((_, args)) = directory(repo, o, &t, false).filter(|_| core_done) {
         let out = Command::new("python3")
             .args(&args)
             .current_dir(repo)
@@ -872,7 +951,7 @@ pub fn backout(repo: &Path, o: &Options) -> Result<Report> {
     }
 
     // 7 the partner record, then the survey again
-    if rec_ours == Some(true) {
+    if core_done && rec_ours == Some(true) {
         std::fs::remove_file(&rec_path)
             .with_context(|| format!("delete {}", rec_path.display()))?;
         checks.push(row(
@@ -1276,6 +1355,36 @@ mod tests {
             let (w, ok, said) = slot_recheck(d.path(), Some("dev"), true);
             assert_eq!((w.as_str(), ok), ("BLOCKED", false), "{said}");
         }
+    }
+
+    #[test]
+    fn a_digest_is_sha256_hex_and_nothing_else() {
+        assert!(is_digest(&format!("sha256:{}", "a".repeat(64))));
+        for bad in [
+            "sha256:abc",
+            "",
+            "sha256:'; id #",
+            &format!("sha256:{}", "A".repeat(64)),
+        ] {
+            assert!(!is_digest(bad), "{bad}");
+        }
+    }
+
+    #[test]
+    fn a_working_directory_of_another_peering_is_refused() {
+        let d = tempfile::tempdir().unwrap();
+        let w = d.path().display().to_string();
+        assert!(
+            work_belongs_to(&w, "xac").is_ok(),
+            "no agreement yet: nothing to contradict"
+        );
+        std::fs::write(
+            d.path().join("agreement.json"),
+            r#"{"parties":[{"sovereign_id":"xaa"},{"sovereign_id":"xab"}]}"#,
+        )
+        .unwrap();
+        assert!(work_belongs_to(&w, "xac").is_err());
+        assert!(work_belongs_to(&w, "xab").is_ok());
     }
 
     #[test]
