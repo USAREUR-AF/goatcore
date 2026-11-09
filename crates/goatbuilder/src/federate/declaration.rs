@@ -309,10 +309,14 @@ pub fn check_offer(
 /// the partner more than the declaration says. A peering without `offer:` is not
 /// checked and nothing is read.
 pub fn driver_check(cfg: &Config, with: &str, env: Option<&str>) -> Result<Option<OfferCheck>> {
-    let declares = peering(cfg, with, env)?.is_some_and(|p| p.offer.is_some());
+    // Only an entry with `offer:` needs checking; ambiguity matters only then.
+    let declares = cfg.peerings.iter().any(|p| {
+        p.with == with && env.map(|e| p.environment == e).unwrap_or(true) && p.offer.is_some()
+    });
     if !declares {
         return Ok(None);
     }
+    peering(cfg, with, env)?;
     let path = declaration_path()?;
     match check_offer(cfg, with, env, &path)? {
         Some(c) => phase3_can_offer(with, c).map(Some),
@@ -485,5 +489,21 @@ mod tests {
             "[data]\naccept_hz = 1\naccept_bytes_per_message = 1\naccept_distinct_keys = 1\n",
         );
         assert!(check_offer(&c, "xab", None, &path).is_err());
+    }
+
+    /// A partner on two environments with no offer: nothing to check, so no
+    /// --env is demanded (the driver as before). With an offer on either entry
+    /// and no --env, it cannot tell which applies, and refuses.
+    #[test]
+    fn the_offer_check_demands_env_only_when_an_offer_is_declared() {
+        let mut prod = p("xab");
+        prod["environment"] = json!("prod");
+        let c = cfg(json!([p("xab"), prod.clone()]));
+        assert_eq!(driver_check(&c, "xab", None).unwrap(), None);
+        prod["offer"] = json!(["xab"]);
+        let c = cfg(json!([p("xab"), prod]));
+        let e = driver_check(&c, "xab", None).unwrap_err();
+        assert!(e.to_string().contains("pass --env"), "{e}");
+        assert_eq!(driver_check(&c, "xab", Some("dev")).unwrap(), None);
     }
 }
