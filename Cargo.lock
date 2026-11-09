@@ -473,7 +473,7 @@ dependencies = [
 
 [[package]]
 name = "goat-relay"
-version = "0.0.1-alpha"
+version = "0.1.0"
 dependencies = [
  "bytes",
  "core_affinity",
@@ -496,7 +496,7 @@ dependencies = [
 
 [[package]]
 name = "goat-relay-protocol"
-version = "0.0.1-alpha"
+version = "0.1.0"
 dependencies = [
  "bytes",
  "criterion",
