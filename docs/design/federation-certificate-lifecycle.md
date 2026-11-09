@@ -25,11 +25,15 @@ deployment's age-encrypted key: `--ca-key-age` or `FED_CA_KEY_AGE` with
 portal role's `portal_ca_key_src`) and `goat_federation_age_identity` (else
 `~/.config/age/keys.txt`).
 
-The decrypted key goes to `ca-key.pem` in a fresh directory under `$TMPDIR`
-(mode 0700, the file 0600). That directory belongs to this run and is removed when
+The decrypted key goes to `ca-key.pem` in a fresh directory (mode 0700, the
+file 0600) under `$TMPDIR` when it is set, else under memory-backed `/dev/shm`
+where there is one, else under `/tmp`. That directory belongs to this run and is removed when
 the script exits, by any exit, including an interrupt or termination. A kill
 the shell cannot trap (SIGKILL) leaves it behind. An age key that does not open is
-reported on stderr, and the run goes on without it. A re-run that reuses every
+reported on stderr, and the run goes on without it. The report never repeats
+quoted text from age or anything shaped like an age secret key, because age
+quotes the first line of a file it cannot read, and that line is a secret when
+an identity file is named by mistake. A re-run that reuses every
 leaf needs no key; one that must issue refuses with the helper's message.
 
 Status: WIP — gate: on the federation test environment, phase 8 issues a fresh
