@@ -271,7 +271,8 @@ A sovereign peering declared, converged and verified (ADR 1157): our half measur
 |---|---|---|
 | `--plan <PLAN>` | deploy: the plan to execute (default <work>/plan.json) |  |
 | `--approve-plan <APPROVE_PLAN>` | deploy: approve exactly this plan hash, after reading the plan. --yes never approves a plan |  |
-| `--confirm` | Phases 5 and 6: confirm the keys and the agreement digest here, at this terminal, instead of stopping for them by hand |  |
+| `--confirm` | Phases 5, 6 and 10: confirm the keys, the agreement digest and the admission here, at this terminal, instead of stopping for them by hand. The default when both stdin and stderr are a terminal |  |
+| `--no-confirm` | Stop at phases 5 and 10 for the steps by hand even at a terminal, as before confirming at the terminal was the default |  |
 | `--partner-key <PARTNER_KEY>` | Phase 5: the partner's verifying key, as read aloud on the call |  |
 | `--partner-ca-fingerprint <PARTNER_CA_FINGERPRINT>` | Phase 5: the partner's CA fingerprint, as read aloud on the call |  |
 | `--agreement-digest <AGREEMENT_DIGEST>` | Phase 6: the agreement digest, as compared with the partner |  |
