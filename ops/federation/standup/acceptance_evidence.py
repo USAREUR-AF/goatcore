@@ -12,6 +12,8 @@ which did not run is not a pass lives in one place, with tests.
                                     --them T --run-id ID --started T [--inputs k=0|1 ...]
     acceptance_evidence.py rest-value  < curl output ending in a line with the HTTP status
     acceptance_evidence.py persistence-scope --key K --router F --subscribers F
+    acceptance_evidence.py sha256 FILE
+    acceptance_evidence.py lookup --bundle F (--agreement-sha | --name N [--obs K])
 
 `record` appends one check. `finalize` writes DIR/result.json (schema
 goat-federation-acceptance/v1), DIR/summary.md and DIR/history/<run-id>.json, prints
@@ -47,7 +49,7 @@ SCHEMA = "goat-federation-acceptance/v1"
 PASS, FAIL, BLOCKED, SKIP, NA = "PASS", "FAIL", "BLOCKED", "SKIP", "NOT APPLICABLE"
 VERDICTS = (PASS, FAIL, BLOCKED, SKIP, NA)
 DIRECTIONS = ("outbound", "inbound", "both", "local")
-TIERS = ("positive", "persistence", "negative", "round-trip", "spire", "precondition")
+TIERS = ("positive", "persistence", "negative", "round-trip", "spire", "existing", "precondition")
 EXIT = {"PASS": 0, "FAIL": 1, "INCOMPLETE": 3}
 
 
@@ -358,6 +360,25 @@ def persistence_scope(key, router_rows, subscriber_rows):
 SCOPE_EXIT = {"ready": 0, "no-storage": 1, "closed": 4, "diagnostic": 5}
 
 
+def lookup(bundle_path, name=None, obs=None, agreement_sha=False):
+    """One value from an earlier bundle (the snapshot taken before a deployment):
+    its agreement digest, a check's verdict, or one of a check's observations.
+    None when the bundle, the check or the observation is not there."""
+    try:
+        with open(bundle_path) as f:
+            b = json.load(f)
+    except (OSError, ValueError):
+        return None
+    if b.get("schema") != SCHEMA:
+        return None
+    if agreement_sha:
+        return (b.get("agreement") or {}).get("sha256")
+    for c in b.get("checks", []):
+        if c.get("name") == name:
+            return c.get("verdict") if obs is None else (c.get("observations") or {}).get(obs)
+    return None
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -386,6 +407,13 @@ def main(argv=None):
     ps.add_argument("--key", required=True)
     ps.add_argument("--router", required=True)
     ps.add_argument("--subscribers", required=True)
+    sh = sub.add_parser("sha256")
+    sh.add_argument("file")
+    lk = sub.add_parser("lookup")
+    lk.add_argument("--bundle", required=True)
+    lk.add_argument("--name")
+    lk.add_argument("--obs")
+    lk.add_argument("--agreement-sha", action="store_true")
     a = ap.parse_args(argv)
     if a.cmd == "rest-value":
         try:
@@ -394,6 +422,19 @@ def main(argv=None):
         except Unreadable as e:
             print(str(e), file=sys.stderr)
             return 4
+    if a.cmd == "sha256":
+        try:
+            print(sha256_file(a.file))
+            return 0
+        except OSError as e:
+            print("acceptance evidence: %s" % e, file=sys.stderr)
+            return 2
+    if a.cmd == "lookup":
+        v = lookup(a.bundle, name=a.name, obs=a.obs, agreement_sha=a.agreement_sha)
+        if v is None:
+            return 1
+        print(v)
+        return 0
     if a.cmd == "persistence-scope":
         # Prints one JSON line (outcome, reason, details); the exit status is the outcome.
         try:

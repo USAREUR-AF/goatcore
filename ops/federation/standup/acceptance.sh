@@ -48,6 +48,13 @@
 #                            that stops the test subscribers a drill keeps there
 #   FED_TEST_SUBSCRIBERS_RESUME_OURS / _THEIRS   command that starts them again
 #
+# EXISTING PARTNERSHIPS, opt-in. FED_EXISTING_WORKS names the work directories of
+# the peerings this side already has (colon-separated, each holding its
+# agreement.json). `acceptance.sh <agreement> --before` checks only those, ahead of
+# the deployment, and keeps the result in <evidence>/before/; the run after the
+# deployment checks them again and compares. FED_EXISTING_REST (`<id>=<url>,...`,
+# a drill's) lets it read an existing partner's core for cross-partner leakage.
+#
 # WHERE THE PROBES RUN. From the operator's machine. FED_OURS_REST / FED_THEIRS_REST
 # are read through FED_SSH_OURS / FED_SSH_THEIRS when set (ssh to the core host, which
 # runs curl there), else from here. The round-trip script is streamed over that ssh
@@ -90,10 +97,10 @@
 # the test is.
 set -uo pipefail
 
-AGREEMENT="${1:?usage: acceptance.sh <agreement.json> [--as <sovereign>]}"; shift || true
-AS=""
+AGREEMENT="${1:?usage: acceptance.sh <agreement.json> [--as <sovereign>] [--before]}"; shift || true
+AS=""; BEFORE=0
 while [ $# -gt 0 ]; do
-  case "$1" in --as) AS="$2"; shift 2 ;; *) shift ;; esac
+  case "$1" in --as) AS="$2"; shift 2 ;; --before) BEFORE=1; shift ;; *) shift ;; esac
 done
 [ -f "$AGREEMENT" ] || { echo "no agreement at $AGREEMENT" >&2; exit 2; }
 
@@ -259,6 +266,152 @@ HAVE_OUT=1; [ "$OUR_SETS" = "-" ] && [ "$OUR_WILD" = "-" ] && HAVE_OUT=0
 HAVE_IN=1;  [ "$THEIR_SETS" = "-" ] && [ "$THEIR_WILD" = "-" ] && HAVE_IN=0
 NO_OUT="the agreement offers no release set from $US (a receive-only peering)"
 NO_IN="the agreement offers no release set from $THEM (a send-only peering)"
+
+# ---- THE VERDICT, from the evidence. acceptance_evidence.py decides it and the exit
+#      status, so the rule "a check that did not run is not a pass" lives in one place.
+set_or_not() { if [ -n "$1" ]; then echo 1; else echo 0; fi; }
+finish() { # DIR
+  python3 "$EVIDENCE" finalize "$CHECKS" --out "$1" --agreement "$AGREEMENT" --us "$US" --them "$THEM" \
+    --run-id "$RUN_ID" --started "$RUN_STARTED" --inputs \
+    "theirs_rest=$(set_or_not "$FED_THEIRS_REST")" "ssh_ours=$(set_or_not "$FED_SSH_OURS")" \
+    "ssh_theirs=$(set_or_not "$FED_SSH_THEIRS")" "edge_log_ours=$(set_or_not "${FED_EDGE_LOG_OURS:-}")" \
+    "probe_agreed=$(set_or_not "${FED_PROBE_THEIRS_REST:-}")" "probe_forged=$(set_or_not "${FED_PROBE_FORGED_REST:-}")" \
+    "probe_impersonate=$(set_or_not "${FED_PROBE_IMPERSONATE_REST:-}")" \
+    "spire=$(set_or_not "${FED_SPIRE_OURS:-}${FED_SPIRE_THEIRS:-}")" \
+    "existing=$(set_or_not "${FED_EXISTING_WORKS:-}")" "existing_rest=$(set_or_not "${FED_EXISTING_REST:-}")"
+  rc=$?
+  [ "$rc" -eq 2 ] && echo "  ACCEPTANCE FAILED — the evidence bundle could not be written to $1."
+  # A check whose evidence could not be recorded is missing from the bundle, so the
+  # bundle's verdict cannot stand: the run fails as an evidence failure.
+  if [ -n "$RECORD_FAILED" ]; then
+    echo "  ACCEPTANCE FAILED — the evidence for$RECORD_FAILED could not be recorded; the bundle is incomplete."
+    exit 2
+  fi
+  exit "$rc"
+}
+
+# ---- EXISTING PARTNERSHIPS. A deployment for one partner must leave every other
+#      partnership as it was. For each peering named in FED_EXISTING_WORKS: its
+#      agreement is byte for byte the one recorded before the deployment, a round
+#      trip on each set we offer it still comes back acknowledged (it needs only our
+#      core and that partner's responder), and, where a drill can read that
+#      partner's core, a sample on a set offered to THIS partner only does not reach
+#      it. Run with --before ahead of the deployment; the run after compares.
+BEFORE_DIR="$EVID/before"
+RT_SCRIPT="$HERE/../roundtrip/fedcheck.sh"
+RT_WAIT="${FED_ACCEPTANCE_RT_TIMEOUT:-25}"
+before_get() { python3 "$EVIDENCE" lookup --bundle "$BEFORE_DIR/result.json" "$@" 2>/dev/null; }
+existing_rest() { # ID: the drill's REST surface for that partner's core, or nothing
+  printf '%s' "${FED_EXISTING_REST:-}" | tr ',' '\n' | sed -n "s|^$1=||p" | head -1
+}
+# existing_parties AGREEMENT: "<partner> <our sets> <their sets>", or "- - -" when it
+# is not a two-party agreement naming us.
+existing_parties() {
+  python3 -c '
+import json, sys
+ag = json.load(open(sys.argv[1])); us = sys.argv[2]
+parties = [x.get("sovereign_id") for x in ag.get("parties", [])]
+if us not in parties or len(parties) != 2:
+    print("- - -"); sys.exit(0)
+p = [x for x in parties if x != us][0]
+def sets(frm):
+    out = []
+    for f in ag.get("flows", []):
+        if f.get("from") == frm:
+            for r in f.get("release", []):
+                stem = r[:-3] if r.endswith("/**") else r
+                if stem.startswith("release/") and "*" not in stem:
+                    out.append(stem)
+    return ",".join(out) or "-"
+print(p, sets(us), sets(p))
+' "$1" "$US" 2>/dev/null || echo "- - -"
+}
+existing_checks() {
+  local works work ag p osets psets sha bsha set out bv prest key before_why n
+  [ -n "${FED_EXISTING_WORKS:-}" ] || return 0
+  before_why=""
+  if [ "$BEFORE" != 1 ]; then
+    if [ ! -f "$BEFORE_DIR/result.json" ]; then
+      before_why="no snapshot from before the deployment at $BEFORE_DIR (run acceptance.sh <agreement> --before ahead of it)"
+    elif [ "$(before_get --agreement-sha)" != "$(python3 "$EVIDENCE" sha256 "$AGREEMENT")" ]; then
+      before_why="the snapshot at $BEFORE_DIR was taken for another agreement than this one"
+    fi
+  fi
+  works=$(printf '%s' "$FED_EXISTING_WORKS" | tr ':' '\n')
+  for work in $works; do
+    ag="$work/agreement.json"
+    begin
+    if [ ! -f "$ag" ]; then
+      blk "existing/$(basename "$work")/agreement" both existing "no agreement at $ag" "FED_EXISTING_WORKS names directories that each hold a peering's agreement.json."
+      continue
+    fi
+    read -r p osets psets <<EOF
+$(existing_parties "$ag")
+EOF
+    if [ "$p" = "-" ] || [ -z "$p" ]; then
+      blk "existing/$(basename "$work")/agreement" both existing "$ag is not a two-party agreement that names $US"
+      continue
+    fi
+    [ "$p" = "$THEM" ] && continue
+    sha=$(python3 "$EVIDENCE" sha256 "$ag"); obs agreement_sha256 "$sha"
+    n="existing/$p/agreement"
+    if [ "$BEFORE" = 1 ]; then
+      ok "$n" both existing "$p's agreement recorded before the deployment ($sha)"
+    elif [ -n "$before_why" ]; then
+      blk "$n" both existing "$p's agreement is unchanged: not proven" "$before_why"
+    else
+      bsha=$(before_get --name "$n" --obs agreement_sha256)
+      if [ -z "$bsha" ]; then blk "$n" both existing "$p's agreement is unchanged: not proven" "the snapshot from before holds no row for $p"
+      elif [ "$bsha" = "$sha" ]; then ok "$n" both existing "$p's agreement is the one recorded before the deployment"
+      else no "$n" both existing "$p's agreement changed during this deployment" "before $bsha, now $sha"; fi
+    fi
+    if [ "$osets" = "-" ] || [ "$psets" = "-" ]; then
+      begin; na "existing/$p/roundtrip" both existing "no return path with $p: a round trip needs a set each way"
+    elif [ ! -f "$RT_SCRIPT" ]; then
+      begin; blk "existing/$p/roundtrip" outbound existing "no round-trip check found" "expected $RT_SCRIPT"
+    else
+      for set in $(list "$osets"); do
+        begin; n="existing/$p/roundtrip/$set"
+        out=$(ours "BASE='$FED_OURS_REST' bash -s -- '$set' 'from/$p' '$RT_WAIT'" < "$RT_SCRIPT" 2>&1)
+        obs fedcheck "$out"
+        bv=""; [ "$BEFORE" = 1 ] || bv=$(before_get --name "$n")
+        obs before "${bv:-<none>}"
+        case "$out" in
+          *PASS*) ok "$n" outbound existing "$p still answers a round trip via $set/**${bv:+ (before: $bv)}" ;;
+          *) if [ "$bv" = PASS ]; then no "$n" outbound existing "$p answered a round trip via $set/** before this deployment, and does not now" "$out"
+             elif [ -n "$bv" ]; then no "$n" outbound existing "$p does not answer a round trip via $set/** (already $bv before the deployment)" "$out"
+             else no "$n" outbound existing "$p does not answer a round trip via $set/**" "$out"; fi ;;
+        esac
+      done
+    fi
+    # Leakage: only after the deployment, when this partner's lanes exist.
+    [ "$BEFORE" = 1 ] && continue
+    prest=$(existing_rest "$p")
+    for set in $(list "$OUR_SETS"); do
+      case ",$osets," in *",$set,"*) continue ;; esac
+      begin; n="existing/$p/leak/$set"; key="$(wire_of "$US" "$set")/acceptance/$S/leak-$p"
+      if [ -z "$prest" ]; then
+        printf '  \033[33mskip\033[0m  %s\n' "$set/** (offered to $THEM only) not read on $p's core: no surface for it"
+        record "$n" outbound existing SKIP "$set/** (offered to $THEM only) was not read on $p's core: one side cannot read another sovereign's core; the multi-partner test environment proves it (FED_EXISTING_REST)" --optional
+        continue
+      fi
+      put_ours "$set/acceptance/$S/leak-$p" "leak-$S"
+      settle 4
+      GOT=$(curl -s -m 8 -w '\n%{http_code}' "$prest/$key" | value); GOT_RC=$?; GOT_ERR=$(cat "$REST_ERR" 2>/dev/null)
+      obs key "$key"; obs received "$GOT"
+      if [ "$GOT_RC" -ne 0 ]; then blk "$n" outbound existing "$set/** on $p's core: not proven, its REST surface did not answer" "$GOT_ERR"
+      elif [ -z "$GOT" ]; then ok "$n" outbound existing "$set/**, offered to $THEM only, did NOT reach $p"
+      else no "$n" outbound existing "$set/**, offered to $THEM only, reached $p: cross-partner release leakage" "read '$GOT'"; fi
+    done
+  done
+  return 0
+}
+if [ "$BEFORE" = 1 ]; then
+  [ -n "${FED_EXISTING_WORKS:-}" ] || { echo "acceptance --before: FED_EXISTING_WORKS names no existing peering to record" >&2; exit 2; }
+  echo "  existing partnerships, before the deployment (evidence: $BEFORE_DIR)"
+  existing_checks
+  finish "$BEFORE_DIR"
+fi
 
 begin
 if [ "$HAVE_OUT" = 0 ] && [ "$HAVE_IN" = 0 ]; then
@@ -675,22 +828,7 @@ else
   rm -rf "$tmp"
 fi
 
-# ---- THE VERDICT, from the evidence. acceptance_evidence.py decides it and the exit
-#      status, so the rule "a check that did not run is not a pass" lives in one place.
-set_or_not() { if [ -n "$1" ]; then echo 1; else echo 0; fi; }
-python3 "$EVIDENCE" finalize "$CHECKS" --out "$EVID" --agreement "$AGREEMENT" --us "$US" --them "$THEM" \
-  --run-id "$RUN_ID" --started "$RUN_STARTED" --inputs \
-  "theirs_rest=$(set_or_not "$FED_THEIRS_REST")" "ssh_ours=$(set_or_not "$FED_SSH_OURS")" \
-  "ssh_theirs=$(set_or_not "$FED_SSH_THEIRS")" "edge_log_ours=$(set_or_not "${FED_EDGE_LOG_OURS:-}")" \
-  "probe_agreed=$(set_or_not "${FED_PROBE_THEIRS_REST:-}")" "probe_forged=$(set_or_not "${FED_PROBE_FORGED_REST:-}")" \
-  "probe_impersonate=$(set_or_not "${FED_PROBE_IMPERSONATE_REST:-}")" \
-  "spire=$(set_or_not "${FED_SPIRE_OURS:-}${FED_SPIRE_THEIRS:-}")"
-rc=$?
-[ "$rc" -eq 2 ] && echo "  ACCEPTANCE FAILED — the evidence bundle could not be written to $EVID."
-# A check whose evidence could not be recorded is missing from the bundle, so the
-# bundle's verdict cannot stand: the run fails as an evidence failure.
-if [ -n "$RECORD_FAILED" ]; then
-  echo "  ACCEPTANCE FAILED — the evidence for$RECORD_FAILED could not be recorded; the bundle is incomplete."
-  exit 2
-fi
-exit "$rc"
+# ---- EXISTING PARTNERSHIPS, after the deployment (defined above; nothing unless named).
+existing_checks
+
+finish "$EVID"
