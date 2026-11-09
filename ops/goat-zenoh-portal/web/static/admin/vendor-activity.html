@@ -152,7 +152,7 @@
   </main>
 
   <script type="module">
-import { readResponse, request, showRequestError, isAuthError, hasAuth } from "/app.js";
+import { readResponse, request, showRequestError, isAuthError } from "/app.js";
     import { hydrateAuth } from "/app.js";
 
     function showAuth() {
@@ -256,7 +256,6 @@ import { readResponse, request, showRequestError, isAuthError, hasAuth } from "/
     }
 
     async function openEventDetail(vendor) {
-      const key = hasAuth();
       let data;
       try {
         const resp = await request("/api/admin/vendor-activity/" + encodeURIComponent(vendor) + "/events", {

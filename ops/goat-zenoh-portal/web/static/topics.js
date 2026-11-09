@@ -296,7 +296,6 @@ async function uploadSchema(e) {
   fd.append("compatibility", compatibility);
   fd.append("format", format);
 
-  const key = hasAuth();
   out.textContent = "Uploading…";
   try {
     const res = await request(
@@ -390,7 +389,6 @@ async function bulkImport(dryRun) {
   const f = fileInput.files[0];
   const text = await f.text();
   const ct = guessContentType(f.name);
-  const key = hasAuth();
   const params = new URLSearchParams({ mode });
   if (dryRun) params.set("dry_run", "true");
 
