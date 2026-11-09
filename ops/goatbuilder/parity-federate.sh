@@ -12,6 +12,12 @@
 # binary's path are masked, runs of whitespace are collapsed. The banner and
 # the plan footer are not compared.
 #
+# Both avenues run the federation verbs (phases 3, 4, 6, 7, 9) one of two ways,
+# chosen by FED_VERBS: `goat` (the default, `goat federate <verb>`) or
+# `goatbuilder` (`goatbuilder federate <verb>`; the binary runs them in
+# process). The gate compares the two avenues in both modes, so neither can
+# drift while it is not the default.
+#
 # usage: parity-federate.sh <goatbuilder binary> <peering> [<peering> ...]
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"; REPO="$(cd "$HERE/../.." && pwd)"
@@ -21,11 +27,12 @@ WORK="$(mktemp -d -t goatbuilder-parity-federate.XXXXXX)"
 trap 'rm -rf "$WORK"' EXIT
 export FED_WORK="$WORK/work"
 GOAT="$(command -v goat || echo goat)"
+GBBIN="$(command -v goatbuilder || echo goatbuilder)"
 MOCK="$REPO/ops/goatbuilder/fixtures/goatnet-from-scratch/03-boundary-node"
 
 norm() {
   sed -E 's#\x1b\[[0-9;]*m##g' \
-  | sed -E 's#'"$REPO"'#REPO#g; s#'"$FED_WORK"'#WORK#g; s#'"$GOAT"' federate#GOAT federate#g' \
+  | sed -E 's#'"$REPO"'#REPO#g; s#'"$FED_WORK"'#WORK#g; s#'"$GOAT"' federate#GOAT federate#g; s#'"$GBBIN"' federate#goatbuilder federate#g' \
   | grep -E '^(=== |    )' \
   | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//; s/[[:space:]]+/ /g'
 }
@@ -43,16 +50,22 @@ for c in json.load(sys.stdin)["checks"]:
 }
 
 fail=0
-for peering in "$@"; do
-  a="$(script_side "$peering" || true)"; b="$(binary_side "$peering" || true)"
-  if [ -z "$a" ]; then
-    fail=1; echo "PARITY FAIL: federate $peering — the script produced no phases"; continue
-  fi
-  if [ "$a" != "$b" ]; then
-    fail=1; echo "PARITY FAIL: federate $peering"
-    { diff <(printf '%s\n' "$a") <(printf '%s\n' "$b") || true; } | sed 's/^/    /' | cut -c1-220 | head -40
-  else
-    echo "parity ok: federate $peering --dry-run ($(printf '%s\n' "$a" | grep -c '^=== ') phases, $(printf '%s\n' "$a" | grep -c .) lines identical)"
-  fi
+for verbs in goat goatbuilder; do
+  export FED_VERBS="$verbs"
+  for peering in "$@"; do
+    a="$(script_side "$peering" || true)"; b="$(binary_side "$peering" || true)"
+    if [ -z "$a" ]; then
+      fail=1; echo "PARITY FAIL: federate $peering (FED_VERBS=$verbs) — the script produced no phases"; continue
+    fi
+    if ! printf '%s\n' "$b" | grep -q "^$( [ "$verbs" = goat ] && echo GOAT || echo goatbuilder) federate lint "; then
+      fail=1; echo "PARITY FAIL: federate $peering (FED_VERBS=$verbs) — phase 4 does not run through $verbs"; continue
+    fi
+    if [ "$a" != "$b" ]; then
+      fail=1; echo "PARITY FAIL: federate $peering (FED_VERBS=$verbs)"
+      { diff <(printf '%s\n' "$a") <(printf '%s\n' "$b") || true; } | sed 's/^/    /' | cut -c1-220 | head -40
+    else
+      echo "parity ok: federate $peering --dry-run, FED_VERBS=$verbs ($(printf '%s\n' "$a" | grep -c '^=== ') phases, $(printf '%s\n' "$a" | grep -c .) lines identical)"
+    fi
+  done
 done
 exit $fail

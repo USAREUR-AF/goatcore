@@ -25,8 +25,8 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use anyhow::Result;
-use clap::Args;
+use anyhow::{anyhow, Result};
+use clap::{Args, Parser};
 use goat_federation::verbs::{self, FederateCmd, Site};
 
 /// Where this party's own state is, for the verbs that read it.
@@ -194,9 +194,8 @@ pub fn fault_exit(e: &anyhow::Error) -> i32 {
     }
 }
 
-/// One verb's command line after `goatbuilder federate`, as the tests write it.
-#[cfg(test)]
-#[derive(clap::Parser, Debug)]
+/// One verb's command line after `goatbuilder federate`, as the driver plans it.
+#[derive(Parser, Debug)]
 #[command(name = "goatbuilder federate", no_binary_name = true)]
 struct VerbLine {
     #[command(flatten)]
@@ -205,11 +204,18 @@ struct VerbLine {
     cmd: FederateCmd,
 }
 
+/// Run `goatbuilder federate <argv...>` in process: the driver's phases 3, 4,
+/// 6, 7 and 9 when FED_VERBS=goatbuilder. The words parsed are the words the
+/// plan prints, so the plan cannot say one thing and run another.
+pub fn run_argv(argv: &[String]) -> Result<i32> {
+    let line = VerbLine::try_parse_from(argv)
+        .map_err(|e| anyhow!("goatbuilder federate {}: {e}", argv.join(" ")))?;
+    run(line.cmd, &line.site)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use anyhow::anyhow;
-    use clap::Parser;
 
     /// The context name is read from config.toml the way goat reads it, so a
     /// file a TOML parser reads differently (or refuses) names the same
@@ -484,5 +490,13 @@ mod tests {
             code == verbs::EXIT_OK || code == verbs::EXIT_FED_NOT_CONFORMANT,
             "{text}"
         );
+    }
+
+    /// A word the plan prints that the verbs do not take is an error, not a
+    /// silent skip.
+    #[test]
+    fn run_argv_refuses_an_unknown_flag() {
+        let e = run_argv(&["lint".into(), "x".into(), "--no-such-flag".into()]).unwrap_err();
+        assert!(e.to_string().contains("--no-such-flag"), "{e}");
     }
 }

@@ -1,0 +1,12 @@
+# FED_VERBS names who runs the federation verbs; a value that is neither goat
+# nor goatbuilder is refused, as peering-standup.sh refuses it.
+bin.name = "goatbuilder"
+args = ["federate", "-C", "../..", "nobody", "--dry-run"]
+status.code = 2
+stdout = ""
+stderr = """
+goatbuilder: FED_VERBS is goat or goatbuilder, not 'goatbuidler'
+"""
+
+[env.add]
+FED_VERBS = "goatbuidler"
