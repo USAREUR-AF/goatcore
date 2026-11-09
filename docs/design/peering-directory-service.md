@@ -210,6 +210,13 @@ stops for the key check, it:
 
 Every directory failure is a warning. Unset, phase 5 is unchanged.
 
+The single-package flow (without `FED_DIRECTORY_PER_COUNTERPARTY`) is slightly stricter than
+before the per-counterparty change, in two places that apply whenever their key is in the
+keyring: a package fetched through their pointer whose signature does not verify under that key
+is a FAIL and is not placed (it was a WARN, and placed), and a package already on disk whose
+signature does not verify under that key is moved aside with the CA certificate and SPIFFE
+bundle beside it (§6.3, step 3). Without a keyring entry for them, it behaves as before.
+
 ### 6.3 A party with several peerings: one package per counterparty
 
 Decision: ADR 1225 §6, "Directory: several peerings per party" (`docs/adr/1225-federation-belongs-to-goatbuilder-one-command-one-decision.md`).
@@ -272,7 +279,8 @@ separate change. With it set, the step:
    signature verifies under that same key, so a directory that signs the slot under a key of
    its own cannot carry a genuine package. A slot served with no signature, either signature
    failing, or a keyring key that is not a key, places nothing new. A file already on disk is
-   moved to `<file>.refused` only on its own evidence: when the keyring holds their key and
+   moved to `<file>.refused-<UTC time>` (an earlier refused copy is kept) only on its own
+   evidence: when the keyring holds their key and
    the on-disk package's signature does not verify under it. The CA certificate and SPIFFE
    bundle that came with it go aside with it. A refused upload signature alone moves nothing,
    so a directory that lies cannot push a correct file aside;
@@ -280,11 +288,16 @@ separate change. With it set, the step:
    saves them as `$FED_WORK/theirs-ca.pem.unconfirmed` and
    `$FED_WORK/theirs.spiffe-bundle.unconfirmed`, never in place, and says to run phase 5 again
    once the key is recorded. With the key recorded, it places the CA certificate the checked
-   package names and the bundle whose upload signature verifies under the recorded key,
-   moves aside an on-disk CA certificate without that fingerprint or an on-disk bundle that
-   differs from the verified one, and removes the unconfirmed copies. A bundle that does not
-   verify places and moves nothing. Without the flag, the single-package flow places both as
-   before; the federation end-to-end test reads them in place before it records the keys;
+   package names and the bundle whose upload signature verifies under the recorded key, but
+   only where no file is there yet, and removes the unconfirmed copies. It never replaces an
+   on-disk CA certificate or bundle, even with one that verifies: a signature carries no date,
+   so a directory can replay any bundle or package the partner ever uploaded, including one
+   with a retired SPIFFE CA, which phase 13 would import. An on-disk file that differs is a
+   WARN and is left; it goes aside only with a package refused on its own evidence (above),
+   so `theirs-ca.pem` and the package cannot drift apart after a partner rotates. A partner
+   rotation therefore reaches us when the operator, having confirmed it on a call, removes the
+   old files and runs phase 5 again. Without the flag, the single-package flow places both as
+   before (the federation end-to-end test reads them in place before it records the keys);
 4. on a 404 there, reads their pointer as §6.2 does, but does **not** place that package: their
    pointer may name another of their peerings' packages, signed by the same key, and the digest
    may not tell (above). It saves it at `$FED_WORK/theirs.pointer.json` with a warning. After

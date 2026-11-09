@@ -43,8 +43,9 @@ it. The single slot and the pointer are written only when they are empty or hold
 this same peering's package, so they keep serving the first peering to a
 counterparty on an older release; without a counterparty id no slot is published.
 Before their key is in the keyring, their CA certificate and SPIFFE bundle are saved
-as <file>.unconfirmed, never in place; with it, they are checked and placed, and a
-package on disk that does not verify under it is moved aside with them.
+as <file>.unconfirmed, never in place; with it, they are checked and placed if absent
+(never replaced), and a package on disk that does not verify under it is moved aside
+with them, to <file>.refused-<UTC time>.
 
 THE INVARIANT. The directory is advisory, never authoritative; being listed grants
 nothing (docs/design/peering-directory-service.md §2). It is not an input to the
@@ -73,7 +74,7 @@ import tempfile
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import date
+from datetime import date, datetime, timezone
 
 POINTER_SPEC = "saltlick-pointer/v1"
 PACKAGE_SPEC = "federation-package/v1"
@@ -969,10 +970,15 @@ LEGACY, UNCONFIRMED, CONFIRMED = "legacy", "unconfirmed", "confirmed"
 
 
 def move_aside(path: str, warnings: list, why: str) -> bool:
-    """Rename path to <path>.refused so no later phase reads it; True when moved."""
+    """Rename path to <path>.refused-<UTC time> so no later phase reads it, keeping any earlier
+    refused copy; True when moved."""
     if not os.path.exists(path):
         return False
-    aside = path + ".refused"
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    aside, n = f"{path}.refused-{stamp}", 1
+    while os.path.exists(aside):
+        n += 1
+        aside = f"{path}.refused-{stamp}-{n}"
     try:
         os.replace(path, aside)
         warnings.append(f"{path} {why}; moved it to {aside}")
@@ -1021,9 +1027,10 @@ def fetch_ca(url, sid: str, theirs: dict, work: str | None, report: "Report", ti
              mode: str = LEGACY, warnings: list | None = None):
     """Their CA certificate from the directory, checked against their package's
     identity.ca_fingerprint and placed at <work>/theirs-ca.pem if none is there (LEGACY),
-    saved at <work>/theirs-ca.pem.unconfirmed (UNCONFIRMED), or placed with any on-disk
-    file that lacks the fingerprint moved aside (CONFIRMED: the package was checked under
-    the keyring key). Returns the fingerprint it matched, or None."""
+    saved at <work>/theirs-ca.pem.unconfirmed (UNCONFIRMED), or placed if none is there
+    (CONFIRMED: the package was checked under the keyring key). An on-disk file is never
+    replaced: a signature carries no date, so a directory could replay an older genuine
+    upload. Returns the fingerprint it matched, or None."""
     fp = (theirs.get("identity") or {}).get("ca_fingerprint", "")
     try:
         status, _, body = _get(entry_url(url, sid) + "/ca", timeout, accept="application/pem-certificate-chain")
@@ -1051,13 +1058,12 @@ def fetch_ca(url, sid: str, theirs: dict, work: str | None, report: "Report", ti
         return fp
     if work:
         dest = os.path.join(work, "theirs-ca.pem")
-        if mode == CONFIRMED and os.path.exists(dest) and anchor_for(read_bytes(dest), fp) is None:
-            move_aside(dest, warnings if warnings is not None else [],
-                       "holds no certificate with the ca_fingerprint of their package checked under the keyring key")
         if os.path.exists(dest):
             if anchor_for(read_bytes(dest), fp) is None:
-                report.add("WARN", "theirs-ca.pem", f"{dest} holds no certificate with their ca_fingerprint; left as it is",
-                           "the file on disk is what phase 10 places; replace it with the one the voice call confirms")
+                report.add("WARN", "theirs-ca.pem", f"{dest} holds no certificate with the ca_fingerprint of the package "
+                           "the directory serves; left as it is",
+                           "the file on disk is what phase 10 places. A signature carries no date, so the directory may "
+                           "be serving an older upload; replace the file by hand only with the CA the voice call confirms")
         else:
             try:
                 fd = os.open(dest, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
@@ -1081,9 +1087,9 @@ def fetch_bundle(url, sid: str, key_b64: str | None, work: str | None, report: "
     aloud") under their verifying key, and placed at <work>/theirs.spiffe-bundle if none
     is there. Nothing in the package names the bundle, so the signature is the check.
     UNCONFIRMED saves it at <work>/theirs.spiffe-bundle.unconfirmed instead. CONFIRMED (key_b64
-    is the keyring key) places it and moves aside an on-disk bundle that differs from the one
-    verified; a bundle that does not verify places nothing and moves nothing, since only the
-    directory's word would say the on-disk one is wrong."""
+    is the keyring key) places it if none is there. An on-disk bundle is never replaced, even
+    by one that verifies: a signature carries no date, so a directory could replay an older
+    genuine bundle holding a retired CA."""
     resource = f"{sid}/spiffe-bundle"
     try:
         status, headers, body = _get(entry_url(url, sid) + "/spiffe-bundle", timeout)
@@ -1124,9 +1130,6 @@ def fetch_bundle(url, sid: str, key_b64: str | None, work: str | None, report: "
         return
     if work:
         dest = os.path.join(work, "theirs.spiffe-bundle")
-        if mode == CONFIRMED and os.path.exists(dest) and read_bytes(dest) != body:
-            move_aside(dest, warnings if warnings is not None else [],
-                       "differs from the bundle signed by the key you recorded")
         if mode == CONFIRMED:
             try:
                 os.remove(dest + ".unconfirmed")
@@ -1135,7 +1138,8 @@ def fetch_bundle(url, sid: str, key_b64: str | None, work: str | None, report: "
         if os.path.exists(dest):
             if read_bytes(dest) != body:
                 report.add("WARN", "theirs.spiffe-bundle", f"{dest} differs from the bundle `{sid}` serves; left as it is",
-                           "the file on disk is what phase 13 imports")
+                           "the file on disk is what phase 13 imports. A signature carries no date, so the directory may "
+                           "be serving an older upload; replace the file by hand only after confirming with them")
         else:
             try:
                 fd = os.open(dest, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)

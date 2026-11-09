@@ -169,6 +169,13 @@ def server(tls_cert, monkeypatch):
     srv.shutdown()
 
 
+def refused(path):
+    """The one refused copy of path (<path>.refused-<UTC time>); fails if there is not exactly one."""
+    got = sorted(Path(path).parent.glob(Path(path).name + ".refused-*"))
+    assert len(got) == 1, got
+    return got[0]
+
+
 def run(*args):
     out = io.StringIO()
     with contextlib.redirect_stdout(out):
@@ -962,7 +969,7 @@ def test_a_package_placed_before_the_key_was_read_back_is_moved_aside_when_it_th
     rc, out = run("--url", server, "--ours", XAB, "--their-id", "xaa", "--theirs", theirs,
                   "--keyring", keyring_for(tmp_path, "xaa"), "--per-counterparty")
     assert rc == 0 and "FAIL    slot signature" in out, out
-    assert not theirs.exists() and (tmp_path / "theirs.json.refused").read_bytes() == forged
+    assert not theirs.exists() and refused(theirs).read_bytes() == forged
     assert "moved it to" in out
 
 
@@ -1076,31 +1083,80 @@ def test_a_refused_package_takes_its_ca_and_bundle_aside_with_it(server, tmp_pat
     rc, out = run("--url", server, "--ours", XAA, "--their-id", "xab", "--theirs", work / "theirs.canonical.json",
                   "--work", work, "--keyring", keyring_for(tmp_path, "xab"), "--per-counterparty")
     assert rc == 0, out
-    assert (work / "theirs.canonical.json.refused").read_bytes() == forged
-    assert (work / "theirs-ca.pem.refused").read_bytes() == b"rogue CA"
-    assert (work / "theirs.spiffe-bundle.refused").read_bytes() == b"rogue bundle"
+    assert refused(work / "theirs.canonical.json").read_bytes() == forged
+    assert refused(work / "theirs-ca.pem").read_bytes() == b"rogue CA"
+    assert refused(work / "theirs.spiffe-bundle").read_bytes() == b"rogue bundle"
     # The directory's genuine package for us then takes their place.
     assert (work / "theirs.spiffe-bundle").read_bytes() == BUNDLE
 
 
 @needs_ed25519
 @needs_openssl
-def test_with_the_key_recorded_an_on_disk_ca_or_bundle_the_checked_ones_contradict_is_moved_aside(server, tmp_path):
-    pkg, ca = publish_with_ca_and_bundle(server, tmp_path)
+def test_a_replayed_older_genuine_bundle_and_ca_change_nothing_on_disk(server, tmp_path):
+    """A signature carries no date, so a directory can serve any bundle or package the partner
+    ever uploaded. After the partner rotates its CA and bundle and we place the new ones, the
+    directory replaying the older genuine uploads must not move them aside or replace them."""
+    ca1, fp1 = mint_ca(tmp_path, "xab-old")
+    ca2, fp2 = mint_ca(tmp_path, "xab-new")
+    bundle1, bundle2 = BUNDLE, BUNDLE.replace(b'"spiffe_sequence":1', b'"spiffe_sequence":2')
+    own = tmp_path / "xab-own-work"
+    own.mkdir()
+
+    def publish(ca, fp, bundle):
+        (tmp_path / "xab-ca.pem").write_bytes(ca)
+        pkg = package_with_ca(tmp_path, "xab", fp).read_bytes()
+        (tmp_path / "xab-pkg.json").write_bytes(pkg)
+        (own / "ours.spiffe-bundle").write_bytes(bundle)
+        run("--url", server, "--ours", tmp_path / "xab-pkg.json", "--key", KEY["xab"], "--ca", tmp_path / "xab-ca.pem",
+            "--work", own, "--their-id", "xaa", "--per-counterparty")
+        return pkg
+
+    old_pkg = publish(ca1, fp1, bundle1)
+    saved = {r: (Server.hosted[r], Server.signed.get(r)) for r in ("xab/packages/xaa", "xab/ca", "xab/spiffe-bundle")}
+    new_pkg = publish(ca2, fp2, bundle2)
     work = tmp_path / "work"
     work.mkdir()
-    (work / "theirs.canonical.json").write_bytes(pkg.read_bytes())
-    other, _ = mint_ca(tmp_path, "other")
-    (work / "theirs-ca.pem").write_bytes(other)
-    (work / "theirs.spiffe-bundle").write_bytes(b"stale bundle")
-    rc, out = run("--url", server, "--ours", XAA, "--their-id", "xab", "--theirs", work / "theirs.canonical.json",
-                  "--work", work, "--keyring", keyring_for(tmp_path, "xab"), "--per-counterparty")
+    args = ("--url", server, "--ours", XAA, "--their-id", "xab", "--theirs", work / "theirs.canonical.json",
+            "--work", work, "--keyring", keyring_for(tmp_path, "xab"), "--per-counterparty")
+    rc, out = run(*args)
+    assert rc == 0 and (work / "theirs.canonical.json").read_bytes() == new_pkg, out
+    assert (work / "theirs.spiffe-bundle").read_bytes() == bundle2
+    assert d.pem_certificates((work / "theirs-ca.pem").read_bytes()) == d.pem_certificates(ca2)
+
+    # The directory replays the older genuine uploads, each with its genuine signature.
+    for r, (body, sig) in saved.items():
+        Server.hosted[r] = body
+        if sig:
+            Server.signed[r] = sig
+    rc, out = run(*args)
     assert rc == 0, out
-    assert (work / "theirs-ca.pem.refused").read_bytes() == other
-    assert d.pem_certificates((work / "theirs-ca.pem").read_bytes()) == d.pem_certificates(ca)
-    assert (work / "theirs.spiffe-bundle.refused").read_bytes() == b"stale bundle"
-    assert (work / "theirs.spiffe-bundle").read_bytes() == BUNDLE
-    assert (work / "theirs.canonical.json").read_bytes() == pkg.read_bytes()
+    assert "PASS    SPIFFE bundle signature" in out  # the replayed bundle does verify
+    assert (work / "theirs.canonical.json").read_bytes() == new_pkg
+    assert (work / "theirs.spiffe-bundle").read_bytes() == bundle2
+    assert d.pem_certificates((work / "theirs-ca.pem").read_bytes()) == d.pem_certificates(ca2)
+    assert not list(work.glob("*.refused*")), out
+    assert "WARN    theirs.spiffe-bundle" in out and "WARN    theirs-ca.pem" in out
+    assert old_pkg != new_pkg
+
+
+@needs_ed25519
+def test_a_second_refusal_keeps_the_first_refused_copy(server, tmp_path):
+    run("--url", server, "--ours", XAA, "--key", KEY["xaa"], "--their-id", "xab", "--per-counterparty")
+    pkg = {k: v for k, v in json.loads(XAA.read_bytes()).items() if k != "signature"}
+    theirs = tmp_path / "theirs.json"
+    copies = []
+    for n in (1, 2):
+        forged_pkg = dict(pkg, expires=f"299{n}-01-01")
+        forged = d.canonical(dict(forged_pkg, signature=d.b64(d.sign(ROGUE_SEED, d.canonical(forged_pkg)))))
+        theirs.write_bytes(forged)
+        copies.append(forged)
+        rc, out = run("--url", server, "--ours", XAB, "--their-id", "xaa", "--theirs", theirs,
+                      "--keyring", keyring_for(tmp_path, "xaa"), "--per-counterparty")
+        assert rc == 0 and "moved it to" in out, out
+        # the genuine slot package then takes its place; clear it for the next round
+        theirs.unlink()
+    got = sorted(p.read_bytes() for p in tmp_path.glob("theirs.json.refused-*"))
+    assert got == sorted(copies)
 
 
 @needs_ed25519
@@ -1116,7 +1172,7 @@ def test_a_lying_directory_cannot_move_a_correct_package_aside(server, tmp_path)
     rc, out = run("--url", server, "--ours", XAB, "--their-id", "xaa", "--theirs", theirs,
                   "--keyring", keyring_for(tmp_path, "xaa"), "--per-counterparty")
     assert rc == 0 and "FAIL    slot signature" in out, out
-    assert theirs.read_bytes() == for_xab.read_bytes() and not (tmp_path / "theirs.json.refused").exists()
+    assert theirs.read_bytes() == for_xab.read_bytes() and not list(tmp_path.glob("theirs.json.refused*"))
 
 
 @needs_ed25519
