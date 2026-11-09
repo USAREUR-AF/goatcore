@@ -72,6 +72,7 @@
     executable: /bin/bash
   register: _rp_metrics_clash
   changed_when: false
+  check_mode: false
 
 - name: republisher | no other republisher on this host holds our metrics port
   ansible.builtin.assert:
