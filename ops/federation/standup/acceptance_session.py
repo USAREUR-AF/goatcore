@@ -43,6 +43,7 @@ review, and nothing gates on it automatically.
 import argparse
 import datetime
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -53,11 +54,11 @@ SCHEMA = "goat-federation-acceptance-session/v1"
 BUNDLE_SCHEMA = "goat-federation-acceptance/v1"
 DEFAULT_POLICY = "every-generated-check-required/v1"
 FMT = "%Y-%m-%dT%H:%M:%SZ"
-# The session id and the challenges become key segments, payload bytes and file
-# names, and the shell passes them to curl on a core host. Either operator may
-# write the manifest, so nothing outside these shapes is accepted.
+# The session id, participant ids, challenges and run ids become key segments,
+# payload bytes, file names and command arguments, so only these shapes are accepted.
 SESSION_ID = re.compile(r"ses-[0-9A-Za-z-]{1,64}")
 CHALLENGE = re.compile(r"[0-9a-f]{16,64}")
+RUN_ID = re.compile(r"acc-[0-9A-Za-z-]{1,80}")
 SOVEREIGN = re.compile(r"[a-z0-9][a-z0-9-]{1,15}")
 
 
@@ -157,25 +158,31 @@ def validate(manifest, agreement_path, us, now=None):
     return [i for i in ids if i != us][0]
 
 
-def _shape(m):
-    """The manifest's own shape, as validate checks it, without the agreement."""
+def _shape(m, us):
+    """The manifest's own shape, as validate checks it, without the agreement: a
+    well-formed session id, exactly two well-formed participants of whom `us` is one,
+    and one well-formed challenge for each. Returns (manifest, partner id)."""
     if m.get("schema") != SCHEMA or not SESSION_ID.fullmatch(str(m.get("session_id"))):
         raise Refused("not a session manifest of this schema with a well-formed session id")
-    if not all(CHALLENGE.fullmatch(str(c)) for c in (m.get("challenges") or {}).values()):
-        raise Refused("a challenge in the manifest is not 16 to 64 lowercase hex digits")
-    return m
+    ids = [str(p.get("sovereign_id")) for p in (m.get("participants") or []) if isinstance(p, dict)]
+    if len(ids) != 2 or len(set(ids)) != 2 or not all(SOVEREIGN.fullmatch(i) for i in ids):
+        raise Refused("the manifest needs exactly two participants with well-formed sovereign ids, has %s" % ids)
+    if us not in ids:
+        raise Refused("the manifest's participants %s do not include %s" % (ids, us))
+    ch = m.get("challenges") or {}
+    if set(ch) != set(ids) or not all(CHALLENGE.fullmatch(str(c)) for c in ch.values()):
+        raise Refused("the manifest needs one challenge of 16 to 64 lowercase hex digits per participant")
+    return m, [i for i in ids if i != us][0]
 
 
 def import_bundle(manifest_path, us, evidence, bundle_path, now=None):
-    m = _shape(load(manifest_path, "the session manifest"))
-    them = [p.get("sovereign_id") for p in m.get("participants", []) if p.get("sovereign_id") != us]
-    if len(them) != 1:
-        raise Refused("the manifest does not name %s and one partner" % us)
-    them = them[0]
+    m, them = _shape(load(manifest_path, "the session manifest"), us)
     b = load(bundle_path, "the bundle")
     if b.get("schema") != BUNDLE_SCHEMA:
         raise Refused("not an acceptance bundle (schema %r)" % b.get("schema"))
     run = b.get("run") or {}
+    if not RUN_ID.fullmatch(str(run.get("id"))):
+        raise Refused("the bundle's run id %r is not of the form acc-<letters, digits, hyphens>" % run.get("id"))
     if run.get("observed_by") != them or run.get("us") != them:
         raise Refused("the bundle was observed by %r, not by the partner %s" % (run.get("observed_by"), them))
     sess = b.get("session") or {}
@@ -211,9 +218,10 @@ def import_bundle(manifest_path, us, evidence, bundle_path, now=None):
         index = load(index_path, "the import index")
     rid = str(run.get("id"))
     digest = sha256_file(bundle_path)
-    if rid in index:
-        raise Refused("run %s was already imported (%s): a bundle is accepted once" % (rid, index[rid]["sha256"]))
-    safe = "".join(ch if ch.isalnum() or ch in "-_." else "_" for ch in rid)
+    # A bundle is accepted once: by its digest, and by its run id.
+    if digest in index or any(v.get("run") == rid for v in index.values()):
+        raise Refused("this bundle (%s, run %s) was already imported: a bundle is accepted once" % (digest, rid))
+    safe = rid
     stored = dict(b)
     # Kept beside our own evidence, never mixed into it.
     stored["imported"] = {"at": ts(now), "from_file": os.path.basename(bundle_path), "sha256": digest,
@@ -221,7 +229,7 @@ def import_bundle(manifest_path, us, evidence, bundle_path, now=None):
     with open(os.path.join(d, safe + ".json"), "w") as f:
         json.dump(stored, f, indent=2)
         f.write("\n")
-    index[rid] = {"sha256": digest, "session": sess.get("id"), "imported_at": ts(now)}
+    index[digest] = {"run": rid, "session": sess.get("id"), "imported_at": ts(now)}
     with open(index_path, "w") as f:
         json.dump(index, f, indent=2, sort_keys=True)
         f.write("\n")
@@ -236,14 +244,39 @@ def mirror(name):
     return None
 
 
+def _evidence_module():
+    spec = importlib.util.spec_from_file_location("acceptance_evidence",
+                                                  os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                                               "acceptance_evidence.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+# Rows each side keeps for itself; the partner has no counterpart to them.
+LOCAL_ONLY = ("publish/", "existing/", "cleanup/earlier-runs", "fresh-keys", "lanes")
+
+
+def expected_peer_rows(local):
+    """The rows the partner's bundle must hold: the mirror of each of our required
+    rows (our outbound is their inbound; rows without a direction keep their name).
+    Our rows are generated from the agreement, so these are too."""
+    out = []
+    for c in local.get("checks", []):
+        if not c.get("required") or c["name"].startswith(LOCAL_ONLY):
+            continue
+        out.append(mirror(c["name"]) or c["name"])
+    return out
+
+
 def combine(manifest_path, us, evidence):
-    m = _shape(load(manifest_path, "the session manifest"))
+    m, them = _shape(load(manifest_path, "the session manifest"), us)
     sid = m.get("session_id")
+    ev = _evidence_module()
     local = load(os.path.join(evidence, "result.json"), "our result")
     if (local.get("session") or {}).get("id") != sid:
         raise Refused("our last result belongs to session %r, not %s; run phase 14 with this manifest" % (
             (local.get("session") or {}).get("id"), sid))
-    them = [p.get("sovereign_id") for p in m.get("participants", []) if p.get("sovereign_id") != us][0]
     d = os.path.join(evidence, "peer", them)
     peer = None
     if os.path.isdir(d):
@@ -255,29 +288,58 @@ def combine(manifest_path, us, evidence):
                     found.append(b)
         if found:
             peer = max(found, key=lambda b: b["run"]["ended_at"])
-    peer_checks = {c["name"]: c for c in (peer or {}).get("checks", [])}
+    local_checks = {c["name"]: c for c in local.get("checks", [])}
+    peer_checks = {}
+    malformed = {}
+    for c in (peer or {}).get("checks", []):
+        # Re-checked on our side, with the partner's own `required` ignored.
+        try:
+            ev.make_check(c.get("name"), c.get("direction"), c.get("verdict"), c.get("reason"), c.get("started_at"),
+                          ended=c.get("ended_at"), required=c.get("verdict") != "NOT APPLICABLE")
+            peer_checks[c["name"]] = c
+        except (ev.Malformed, TypeError, KeyError) as e:
+            malformed[str(c.get("name"))] = str(e)
+
+    def resolve(c, by_other, other_checks, kind):
+        """Status of a row: a BLOCKED row the other side observes is decided by theirs."""
+        if c["verdict"] == "BLOCKED" and by_other:
+            oc = other_checks.get(by_other)
+            if oc and oc["verdict"] in ("PASS", "FAIL"):
+                return "%s (%s)" % (oc["verdict"], kind)
+            return "OPEN"
+        return c["verdict"]
+
     rows, failed, open_ = [], [], []
     for c in local.get("checks", []):
-        row = {"name": c["name"], "required": c["required"], "local": c["verdict"], "peer_reported": None,
-               "status": c["verdict"]}
         by_peer = (c.get("observations") or {}).get("observed_by_peer")
-        if c["verdict"] == "BLOCKED" and by_peer:
-            mc = peer_checks.get(by_peer)
-            row["peer_reported"] = {"name": by_peer, "verdict": mc["verdict"] if mc else None}
-            row["status"] = ("PASS (peer-reported)" if mc and mc["verdict"] == "PASS"
-                             else "FAIL (peer-reported)" if mc and mc["verdict"] == "FAIL" else "OPEN")
-        rows.append(row)
-    local_checks = {c["name"]: c for c in local.get("checks", [])}
-    for c in (peer or {}).get("checks", []):
-        status = c["verdict"] + " (peer-reported)" if c["verdict"] in ("PASS", "FAIL") else c["verdict"]
+        mc = peer_checks.get(by_peer) if by_peer else None
+        rows.append({"name": c["name"], "required": c["required"], "local": c["verdict"],
+                     "peer_reported": {"name": by_peer, "verdict": mc["verdict"] if mc else None} if by_peer else None,
+                     "status": resolve(c, by_peer, peer_checks, "peer-reported")})
+    expected = expected_peer_rows(local)
+    for name in expected:
+        c = peer_checks.get(name)
+        if c is None:
+            st = "FAIL (peer-reported, malformed)" if name in malformed else "OPEN"
+            rows.append({"name": "%s: %s" % (them, name), "required": True, "local": None,
+                         "peer_reported": {"name": name, "verdict": None}, "status": st})
+            continue
         by_us = (c.get("observations") or {}).get("observed_by_peer")
-        if c["verdict"] == "BLOCKED" and by_us:
-            # What the partner could not observe and we did: our own row decides it.
-            mine = local_checks.get(by_us)
-            status = ("PASS (local)" if mine and mine["verdict"] == "PASS"
-                      else "FAIL (local)" if mine and mine["verdict"] == "FAIL" else "OPEN")
-        rows.append({"name": "%s: %s" % (them, c["name"]), "required": c["required"], "local": None,
-                     "peer_reported": {"name": c["name"], "verdict": c["verdict"]}, "status": status})
+        st = resolve(c, by_us, local_checks, "local")
+        if st in ("PASS", "FAIL"):
+            st += " (peer-reported)"
+        rows.append({"name": "%s: %s" % (them, name), "required": True, "local": None,
+                     "peer_reported": {"name": name, "verdict": c["verdict"]}, "status": st})
+    for name, c in peer_checks.items():
+        if name in expected:
+            continue
+        st = c["verdict"] + " (peer-reported)" if c["verdict"] in ("PASS", "FAIL") else c["verdict"]
+        rows.append({"name": "%s: %s" % (them, name), "required": False, "local": None,
+                     "peer_reported": {"name": name, "verdict": c["verdict"]}, "status": st})
+    for name, why in malformed.items():
+        if name not in expected:
+            rows.append({"name": "%s: %s" % (them, name), "required": False, "local": None,
+                         "peer_reported": {"name": name, "verdict": None}, "status": "FAIL (peer-reported, malformed)"})
     for r in rows:
         if r["status"].startswith("FAIL"):
             failed.append(r["name"])
@@ -361,8 +423,7 @@ def main(argv=None):
             print("session manifest valid for %s with %s" % (a.us, them))
             return 0
         if a.cmd == "fields":
-            m = _shape(load(a.manifest, "the session manifest"))
-            them = [p.get("sovereign_id") for p in m.get("participants", []) if p.get("sovereign_id") != a.us][0]
+            m, them = _shape(load(a.manifest, "the session manifest"), a.us)
             print(m["session_id"], m["challenges"][a.us], m["challenges"][them], them)
             return 0
         if a.cmd == "import":
