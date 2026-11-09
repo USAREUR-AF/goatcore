@@ -392,7 +392,8 @@ acceptance_session.py propose --manifest session.json --us <us> --evidence <evid
 ```
 
 writes `<dir>/<them>.yaml` (the file with the block) and `<dir>/<them>.yaml.diff`, and never edits
-the deployment's file. It refuses unless the combined bilateral result (§6) is PASS, both sides'
+the deployment's file: it refuses an `--out` that is the partner file's own directory. It also
+refreshes the combined result under `<evidence>/bilateral/`, as `combine` does. It refuses unless the combined bilateral result (§6) is PASS, both sides'
 bundles show `cleanup/probes` PASS (§2.4), both operators are named, the session has not
 expired, the file declares this session's partner, and its `level` already grants `exchanging`.
 The block holds the session, the digests of the manifest, agreement, both bundles and the

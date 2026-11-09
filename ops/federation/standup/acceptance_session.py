@@ -408,7 +408,10 @@ ACCEPTANCE_BLOCK = re.compile(r"^acceptance:[^\n]*\n(?:(?:[ \t]+[^\n]*|[ \t]*)\n
 
 
 def propose(manifest_path, us, evidence, partner_file, approvals, out_dir, now=None):
-    m = load(manifest_path, "the session manifest")
+    target = os.path.join(out_dir, os.path.basename(partner_file))
+    if os.path.realpath(os.path.dirname(target)) == os.path.realpath(os.path.dirname(os.path.abspath(partner_file))):
+        raise Refused("--out is the partner file's own directory; the proposal is written beside it, never over it")
+    m = _shape(load(manifest_path, "the session manifest"))
     them = [p.get("sovereign_id") for p in m.get("participants", []) if p.get("sovereign_id") != us][0]
     now = now or utcnow()
     if now >= parse_ts(m["expires_at"]):
@@ -467,6 +470,8 @@ def propose(manifest_path, us, evidence, partner_file, approvals, out_dir, now=N
         '    %s: "%s"' % (us, names[us].replace('"', "'")),
         '    %s: "%s"' % (them, names[them].replace('"', "'")),
     ]) + "\n"
+    if not text.endswith("\n"):
+        text += "\n"
     if ACCEPTANCE_BLOCK.search(text):
         new = ACCEPTANCE_BLOCK.sub(lambda _: block, text, count=1)
     else:
