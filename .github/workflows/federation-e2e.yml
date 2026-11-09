@@ -29,7 +29,7 @@ on:
       - 'ops/ansible/roles/spire/templates/server.conf.j2'
       - 'ops/ansible/tasks/peering-applied-vars.yml'
       - 'ops/ansible/peering-*.yml'
-      - 'crates/goatbuilder/src/federate.rs'
+      - 'crates/goatbuilder/src/federate/**'
       - 'crates/goat-federation/**'
       - 'crates/goat-cli/src/cmd/federate.rs'
       - 'ops/ci/check-federation-e2e-prepare.sh'
