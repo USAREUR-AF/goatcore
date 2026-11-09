@@ -30,6 +30,7 @@ on:
       - 'ops/ansible/tasks/peering-applied-vars.yml'
       - 'ops/ansible/peering-*.yml'
       - 'crates/goatbuilder/src/federate/**'
+      - 'crates/goatbuilder/src/main.rs'
       - 'crates/goat-federation/**'
       - 'crates/goat-cli/src/cmd/federate.rs'
       - 'ops/ci/check-federation-e2e-prepare.sh'
