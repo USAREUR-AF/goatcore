@@ -208,40 +208,36 @@ struct Scope<'a> {
     /// The roles whose defaults the play has in scope: goat-host-firewall and
     /// the play's own role.
     roles: Vec<&'static str>,
+    /// Vars files that exist and do not parse. Ansible would use them or
+    /// fail, so the plan does not fall through to a lower layer: any entry
+    /// here makes the input an error.
+    broken: std::cell::RefCell<Vec<String>>,
 }
 
+/// Every vars file under `dir`, recursively, in name order (as Ansible reads a
+/// vars directory).
 fn yaml_files(dir: &Path) -> Vec<PathBuf> {
-    let mut v: Vec<PathBuf> = std::fs::read_dir(dir)
-        .map(|rd| {
-            rd.filter_map(|e| e.ok().map(|e| e.path()))
-                .filter(|p| {
-                    p.extension()
-                        .is_some_and(|x| x == "yml" || x == "yaml" || x == "json")
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    v.sort();
-    v
-}
-
-/// The last file that sets `key` (a null counts: it is set).
-fn last_in(files: &[PathBuf], key: &str) -> Option<Y> {
-    let mut found = None;
-    for f in files {
-        let Some(doc) = std::fs::read_to_string(f)
-            .ok()
-            .and_then(|t| serde_yaml::from_str::<Y>(&t).ok())
-        else {
-            continue;
-        };
-        if let Some(v) = doc.get(key) {
-            found = Some(v.clone());
+    let mut out = Vec::new();
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return out;
+    };
+    let mut entries: Vec<PathBuf> = rd.filter_map(|e| e.ok().map(|e| e.path())).collect();
+    entries.sort();
+    for p in entries {
+        if p.is_dir() {
+            out.extend(yaml_files(&p));
+        } else if p
+            .extension()
+            .is_some_and(|x| x == "yml" || x == "yaml" || x == "json")
+        {
+            out.push(p);
         }
     }
-    found
+    out
 }
 
+/// The vars files of one host or group in a vars directory: `<name>`,
+/// `<name>.yml|.yaml|.json`, and everything under `<name>/`.
 fn named_files(dir: &Path, name: &str) -> Vec<PathBuf> {
     let mut files = vec![
         dir.join(name),
@@ -254,45 +250,78 @@ fn named_files(dir: &Path, name: &str) -> Vec<PathBuf> {
     files
 }
 
+fn inventory_value(kv: Option<&Vec<(String, Y)>>, key: &str) -> Option<Y> {
+    kv.and_then(|kv| kv.iter().rev().find(|(k, _)| k == key))
+        .map(|(_, v)| v.clone())
+}
+
 impl Scope<'_> {
+    /// The last of `files` that sets `key` (a null counts: it is set). A file
+    /// that does not parse is recorded in `broken`.
+    fn last_in(&self, files: &[PathBuf], key: &str) -> Option<Y> {
+        let mut found = None;
+        for f in files {
+            let Ok(text) = std::fs::read_to_string(f) else {
+                continue;
+            };
+            match serde_yaml::from_str::<Y>(&text) {
+                Ok(doc) => {
+                    if let Some(v) = doc.get(key) {
+                        found = Some(v.clone());
+                    }
+                }
+                Err(e) => {
+                    let msg = format!("{} does not parse ({e})", f.display());
+                    let mut b = self.broken.borrow_mut();
+                    if !b.contains(&msg) {
+                        b.push(msg);
+                    }
+                }
+            }
+        }
+        found
+    }
+
+    /// The first source that sets `key`, in Ansible's precedence, highest
+    /// first: apply's include_vars; playbook host_vars/, inventory host_vars/,
+    /// the inventory line; then, for the groups other than `all` (deepest
+    /// first), every playbook group_vars/, then every inventory group_vars/,
+    /// then every inventory `[group:vars]`; then the same three for `all`.
     fn raw(&self, key: &str) -> Option<Y> {
+        let pb = self.repo.join("ops/ansible");
+        let inv_dir = pb.join("inventory");
         if let Some(v) = self
             .applied
             .as_ref()
-            .and_then(|d| last_in(&yaml_files(d), key))
+            .and_then(|d| self.last_in(&yaml_files(d), key))
         {
             return Some(v);
         }
-        if let Some(v) = last_in(
-            &named_files(&self.repo.join("ops/ansible/host_vars"), &self.host),
-            key,
-        ) {
-            return Some(v);
-        }
-        if let Some(v) = self
-            .inv
-            .host_vars
-            .get(&self.host)
-            .and_then(|kv| kv.iter().rev().find(|(k, _)| k == key))
-            .map(|(_, v)| v.clone())
-        {
-            return Some(v);
-        }
-        for g in &self.groups {
-            if let Some(v) = last_in(
-                &named_files(&self.repo.join("ops/ansible/group_vars"), g),
-                key,
-            ) {
+        for dir in [pb.join("host_vars"), inv_dir.join("host_vars")] {
+            if let Some(v) = self.last_in(&named_files(&dir, &self.host), key) {
                 return Some(v);
             }
-            if let Some(v) = self
-                .inv
-                .group_vars
-                .get(g)
-                .and_then(|kv| kv.iter().rev().find(|(k, _)| k == key))
-                .map(|(_, v)| v.clone())
-            {
-                return Some(v);
+        }
+        if let Some(v) = inventory_value(self.inv.host_vars.get(&self.host), key) {
+            return Some(v);
+        }
+        let (all, others): (Vec<&String>, Vec<&String>) =
+            self.groups.iter().partition(|g| g.as_str() == "all");
+        for layer in [others, all] {
+            for g in &layer {
+                if let Some(v) = self.last_in(&named_files(&pb.join("group_vars"), g), key) {
+                    return Some(v);
+                }
+            }
+            for g in &layer {
+                if let Some(v) = self.last_in(&named_files(&inv_dir.join("group_vars"), g), key) {
+                    return Some(v);
+                }
+            }
+            for g in &layer {
+                if let Some(v) = inventory_value(self.inv.group_vars.get(*g), key) {
+                    return Some(v);
+                }
             }
         }
         None
@@ -303,13 +332,23 @@ impl Scope<'_> {
         let mut roles: Vec<&str> = role.into_iter().collect();
         roles.extend(self.roles.iter().copied().filter(|r| Some(*r) != role));
         roles.into_iter().find_map(|r| {
-            last_in(
+            self.last_in(
                 &[self
                     .repo
                     .join(format!("ops/ansible/roles/{r}/defaults/main.yml"))],
                 key,
             )
         })
+    }
+
+    /// An error naming every vars file that did not parse, if any did.
+    fn check_parsed(&self) -> Result<(), String> {
+        let b = self.broken.borrow();
+        if b.is_empty() {
+            Ok(())
+        } else {
+            Err(b.join("; "))
+        }
     }
 
     /// The value of `key`, else the role's default, else `fallback`, evaluated.
@@ -786,6 +825,7 @@ fn scope<'a>(
         groups,
         applied,
         roles,
+        broken: Default::default(),
     }
 }
 
@@ -817,6 +857,14 @@ pub fn input(c: &HostContext, host: &str, profile: &str) -> Result<Value, String
         c.our_edge_group
     ));
     let loads_applied = profile == "core" || transport == "wireguard";
+    // The play's include_vars fails when the directory is not there, so the
+    // deploy would stop; the plan does not render as if it would not.
+    if loads_applied && !applied.is_dir() {
+        return Err(format!(
+            "apply has not rendered {} (phase 9); the play loads it before the baseline",
+            applied.display()
+        ));
+    }
     let s = scope(
         c.repo,
         host,
@@ -834,12 +882,18 @@ pub fn input(c: &HostContext, host: &str, profile: &str) -> Result<Value, String
             .collect();
         peerings.push(ours);
     }
+    let override_v = to_json(&s.get(
+        "goat_host_firewall_override",
+        Some("goat-host-firewall"),
+        Y::Mapping(Default::default()),
+    )?);
+    s.check_parsed()?;
     Ok(json!({
         "schema": "goat-host-firewall-input/v1",
         "profile": profile,
         "host": host_v,
         "peerings": peerings,
-        "override": to_json(&s.get("goat_host_firewall_override", Some("goat-host-firewall"), Y::Mapping(Default::default()))?),
+        "override": override_v,
     }))
 }
 
@@ -934,13 +988,14 @@ pub fn render(repo: &Path, input: &Value) -> Render {
 /// Whether the baseline is on for a host (`goat_host_firewall_baseline`). An
 /// expression the plan cannot evaluate is an error, never "off".
 pub fn baseline_on(repo: &Path, host: &str) -> Result<bool, String> {
-    scope(repo, host, None, vec!["goat-host-firewall"])
-        .get(
-            "goat_host_firewall_baseline",
-            Some("goat-host-firewall"),
-            Y::Bool(false),
-        )
-        .map(|v| truthy(&v))
+    let s = scope(repo, host, None, vec!["goat-host-firewall"]);
+    let v = s.get(
+        "goat_host_firewall_baseline",
+        Some("goat-host-firewall"),
+        Y::Bool(false),
+    )?;
+    s.check_parsed()?;
+    Ok(truthy(&v))
 }
 
 /// The plan's entry for one host.
@@ -1008,6 +1063,10 @@ mod tests {
     }
 
     const FIXTURE: &str = "ops/federation/standup/fixtures/host-firewall";
+    /// The fixture's variants: WireGuard (precedence, stored peerings, core
+    /// SPIRE port), ipsec-fips (edge SPIRE forward, QUIC, empty DNS port,
+    /// override), and WireGuard behind a forwarder.
+    const VARIANTS: [&str; 3] = ["wireguard", "ipsec", "forwarder"];
 
     fn copy_dir(from: &Path, to: &Path) {
         std::fs::create_dir_all(to).unwrap();
@@ -1035,8 +1094,12 @@ mod tests {
     }
 
     fn fixture() -> Fixture {
+        variant("wireguard")
+    }
+
+    fn variant(name: &str) -> Fixture {
         let repo = tempfile::tempdir().unwrap();
-        copy_dir(&real().join(FIXTURE).join("repo"), repo.path());
+        copy_dir(&real().join(FIXTURE).join(name).join("repo"), repo.path());
         for f in [
             RENDERER,
             "ops/ansible/roles/goat-host-firewall/defaults/main.yml",
@@ -1048,7 +1111,7 @@ mod tests {
             std::fs::copy(real().join(f), repo.path().join(f)).unwrap();
         }
         let work = tempfile::tempdir().unwrap();
-        copy_dir(&real().join(FIXTURE).join("work"), work.path());
+        copy_dir(&real().join(FIXTURE).join(name).join("work"), work.path());
         Fixture { repo, work }
     }
 
@@ -1074,28 +1137,37 @@ mod tests {
     /// hash equals the deploy's for this declaration.
     #[test]
     fn the_plan_builds_the_recorded_input() {
-        let f = fixture();
-        for (host, _, _, profile) in HOSTS {
-            let got = input(&ctx(&f), host, profile).unwrap();
-            let path = real().join(FIXTURE).join(format!("expected/{host}.json"));
-            if std::env::var_os("GOAT_RECORD_HOST_FIREWALL").is_some() {
-                write(
-                    path.clone(),
-                    &(serde_json::to_string_pretty(&got).unwrap() + "\n"),
+        for v in VARIANTS {
+            let f = variant(v);
+            for (host, _, _, profile) in HOSTS {
+                let got =
+                    input(&ctx(&f), host, profile).unwrap_or_else(|e| panic!("{v}/{host}: {e}"));
+                let path = real()
+                    .join(FIXTURE)
+                    .join(v)
+                    .join(format!("expected/{host}.json"));
+                if std::env::var_os("GOAT_RECORD_HOST_FIREWALL").is_some() {
+                    write(
+                        path.clone(),
+                        &(serde_json::to_string_pretty(&got).unwrap() + "\n"),
+                    );
+                }
+                let want: Value =
+                    serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+                assert_eq!(
+                    got,
+                    want,
+                    "{v}/{host}: the plan's input differs from {}",
+                    path.display()
                 );
+                let e = entry(&ctx(&f), host, "x", "x", profile);
+                assert_eq!(e.outcome, "PASS", "{v}/{host} renders: {}", e.detail);
             }
-            let want: Value =
-                serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-            assert_eq!(
-                got,
-                want,
-                "{host}: the plan's input differs from {}",
-                path.display()
-            );
         }
     }
 
-    /// The precedence the fixture exercises: `[group:vars]` (ansible_port),
+    /// The precedence the fixture exercises: ansible_port from three group
+    /// layers,
     /// host_vars over the inventory line (mesh interface), apply's rendered
     /// file over a stale group_vars value (far link address), the SPIRE port on
     /// the SPIRE server's core host only, and the stored peerings with this
@@ -1105,7 +1177,9 @@ mod tests {
         let f = fixture();
         let c = ctx(&f);
         let edge = input(&c, "edge-a", "edge").unwrap();
-        assert_eq!(edge["host"]["ssh_port"], 2222);
+        // The playbook group_vars of a shallower group outrank the deeper
+        // group's inventory group_vars and [group:vars].
+        assert_eq!(edge["host"]["ssh_port"], 2400);
         assert_eq!(edge["host"]["mesh_interface"], "wt0");
         let names: Vec<&str> = edge["peerings"]
             .as_array()
@@ -1366,5 +1440,21 @@ mod tests {
             ),
             "ipsec peering fields"
         );
+    }
+
+    /// A vars file that does not parse is an error, never skipped for a
+    /// lower layer (serde_yaml refuses a duplicate key that PyYAML would take).
+    #[test]
+    fn a_vars_file_that_does_not_parse_is_blocked() {
+        let f = fixture();
+        write(
+            f.repo
+                .path()
+                .join("ops/ansible/group_vars/velmara_edge/dup.yml"),
+            "peering_wg_listen_port: 1\npeering_wg_listen_port: 2\n",
+        );
+        let e = entry(&ctx(&f), "edge-a", "192.0.2.10", "velmara_edge", "edge");
+        assert_eq!(e.outcome, "BLOCKED", "{}", e.detail);
+        assert!(e.detail.contains("does not parse"), "{}", e.detail);
     }
 }
