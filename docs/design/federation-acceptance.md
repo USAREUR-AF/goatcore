@@ -179,7 +179,9 @@ The deadline is now plus `FED_PROBE_TTL` seconds (900). Every resource started i
 this run's own manifest, `<evidence>/probes/<run id>.json`, before it is used. At the end the run
 stops exactly those, asks whether each is gone, and records `cleanup/probes`: FAIL, and required,
 when any remains. A manifest an earlier run left behind with resources not confirmed gone (the run
-was killed) is cleaned first, only the resources it names, recorded as `cleanup/earlier-runs`.
+was killed) is cleaned first, only the resources it names, recorded as `cleanup/earlier-runs`;
+a manifest whose run is still going on this machine (its process id answers) is left alone, and a
+manifest that cannot be read FAILs that row, since it cannot show its resources are gone.
 An interrupt or termination stops this run's probes before the run exits. A probe given directly
 (`FED_PROBE_THEIRS_REST` and the rest) is not started or stopped by the run. Probe keys stay
 under the reserved `acceptance-probe/`, `acceptance-forged/` and `acceptance-impersonate/`
