@@ -226,7 +226,9 @@ class AcceptanceRun(unittest.TestCase):
 
     def test_decisions_without_a_session_id_cannot_prove_a_denial(self):
         self.fabric.faults.trace_without_session = True
-        rc, out = self.run_acceptance()
+        # Even with the probe's id given: an allow line naming no session is evidence
+        # that cannot be read, not an allow from another session.
+        rc, out = self.run_acceptance(extra={"FED_PROBE_THEIRS_ZID": self.fabric.agreed_zid})
         v = self.verdicts()
         self.assertEqual(rc, 3, out)
         self.assertEqual(v["refusal/control-allowed"], "PASS", out)
