@@ -124,23 +124,18 @@ class Host:
 
 
 def _root_is_sole_data_volume(h):
-    """True when root is the node's only large data-bearing filesystem — the
-    single-encrypted-volume node-class where Tier-3 legitimately lives on the
-    encrypted root because there is no separate NVMe/LV to move container data to
+    """True when root is the node's only large data-bearing filesystem, so
+    Tier-3 legitimately lives on root because there is no separate NVMe/LV to
+    move container data to: the single-encrypted-volume node-class
     (host-site-node-disk-encryption.md §6/§82/§122, the Pi dropbear-reencrypt
-    plain-partition shape).
+    plain-partition shape) and a goatlite VM's one plain disk.
 
-    Two conditions: root sits on LUKS (the whole-disk container that gives
-    at-rest encryption to /opt/docker-data on this class), and no OTHER mounted
-    real filesystem is anywhere near root's size. If a bigger data disk exists
-    and the runtimes are not on it, both-on-root IS the F-093 failure, so this
-    returns False and the caller fails the node."""
-    ok, rsrc = h.sh("findmnt -no SOURCE /")
-    if not ok or not rsrc:
-        return False
-    ok, rchain = h.sh(f"lsblk -s -no TYPE {shlex.quote(rsrc)} 2>/dev/null")
-    if not ok or "crypt" not in rchain.split():
-        return False
+    The test is size only: no OTHER mounted real filesystem is anywhere near
+    root's size. If a bigger data disk exists and the runtimes are not on it,
+    both-on-root IS the F-093 failure, so this returns False and the caller
+    fails the node. Whether root must be encrypted is the "disk encryption"
+    row's question, graded against the site's declaration; this row does not
+    repeat it."""
     ok, out = h.sh("df -B1 --output=size,target -x tmpfs -x devtmpfs "
                    "-x squashfs -x overlay 2>/dev/null | tail -n +2")
     if not ok or not out:
@@ -258,8 +253,8 @@ def check(h):
             # by asking whether a larger data disk sits unused.
             if _root_is_sole_data_volume(h):
                 h.ok("container data-roots",
-                     "both on / — single encrypted-volume node-class; Tier-3 is the "
-                     "encrypted root, no separate data disk (design §82 variation)")
+                     "both on / — root is the only data filesystem, so Tier-3 is "
+                     "root; no separate data disk (design §82 variation)")
             else:
                 h.bad("container data-roots",
                       "both on / while a larger data filesystem sits unused",

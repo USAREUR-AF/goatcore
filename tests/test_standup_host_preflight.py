@@ -110,3 +110,27 @@ def test_the_declaration_does_not_excuse_an_encrypted_requirement():
     h = fake_host(mod, FRESH_VM, baseline_pending=True)  # disk_encryption stays "required"
     mod.check(h)
     assert "disk encryption" in h.fails
+
+
+STOOD_UP_LITE = [
+    ("docker info", (True, "/var/lib/docker")),
+    ("containerd/config.toml", (True, "/var/lib/containerd")),
+    ("df --output=target", (True, "/")),
+    ("df -B1 --output=size,target", (True, "82678120448 /\n923332608 /boot\n1124999168 /boot/efi")),
+] + FRESH_VM
+
+
+def test_a_stood_up_goatlite_with_one_plain_disk_passes_the_data_roots_row():
+    mod = load()
+    h = fake_host(mod, STOOD_UP_LITE, disk_encryption="declared-off")
+    mod.check(h)
+    assert "container data-roots" not in h.fails
+    assert h.warns.count("disk encryption") == 1
+
+
+def test_a_larger_unused_data_disk_still_fails_the_data_roots_row():
+    mod = load()
+    bigger = [("df -B1 --output=size,target", (True, "82678120448 /\n2000398934016 /data"))] + STOOD_UP_LITE
+    h = fake_host(mod, bigger, disk_encryption="declared-off")
+    mod.check(h)
+    assert "container data-roots" in h.fails
