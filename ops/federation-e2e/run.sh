@@ -786,7 +786,10 @@ docker build --progress=plain -t "$HOST_IMAGE" "$ctx"
 
 say "the republisher image, from this checkout"
 docker build --progress=plain -t "$RP_TAG" "$REPO/ops/federation/republisher"
-RP_IMAGE="$(docker image inspect -f '{{.Id}}' "$RP_TAG")"
+# The image's config digest: the id a classic image store (each host's dockerd) gives
+# it after `docker load`. A containerd image store on the runner reports the manifest
+# digest as .Id instead, which the hosts would not know.
+RP_IMAGE="sha256:$(docker save "$RP_TAG" | tar -xO manifest.json | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["Config"].rsplit("/", 1)[-1].removesuffix(".json").removeprefix("sha256:"))')"
 [[ "$RP_IMAGE" =~ ^sha256:[0-9a-f]{64}$ ]] || die "the republisher image has no content-addressed id: '$RP_IMAGE'"
 echo "republisher image: $RP_IMAGE"
 
