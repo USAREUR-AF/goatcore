@@ -305,13 +305,16 @@ existing_rest() { # ID: the drill's REST surface for that partner's core, or not
   printf '%s' "${FED_EXISTING_REST:-}" | tr ',' '\n' | sed -n "s|^$1=||p" | head -1
 }
 # existing_parties AGREEMENT: "<partner> <our sets> <their sets>", or "- - -" when it
-# is not a two-party agreement naming us.
+# is not a two-party agreement naming us with well-formed ids and set names (the same
+# shapes the run's own agreement must have).
 existing_parties() {
   python3 -c '
-import json, sys
+import json, re, sys
 ag = json.load(open(sys.argv[1])); us = sys.argv[2]
 parties = [x.get("sovereign_id") for x in ag.get("parties", [])]
-if us not in parties or len(parties) != 2:
+ok = all(re.fullmatch(r"[a-z0-9][a-z0-9-]{1,15}", str(x)) for x in parties) and all(
+    re.fullmatch(r"release/[A-Za-z0-9._/*-]+", str(r)) for f in ag.get("flows", []) for r in f.get("release", []))
+if not ok or us not in parties or len(parties) != 2:
     print("- - -"); sys.exit(0)
 p = [x for x in parties if x != us][0]
 def sets(frm):
@@ -349,7 +352,7 @@ existing_checks() {
 $(existing_parties "$ag")
 EOF
     if [ "$p" = "-" ] || [ -z "$p" ]; then
-      blk "existing/$(basename "$work")/agreement" both existing "$ag is not a two-party agreement that names $US"
+      blk "existing/$(basename "$work")/agreement" both existing "$ag is not a well-formed two-party agreement that names $US"
       continue
     fi
     [ "$p" = "$THEM" ] && continue
@@ -372,7 +375,7 @@ EOF
     else
       for set in $(list "$osets"); do
         begin; n="existing/$p/roundtrip/$set"
-        out=$(ours "BASE='$FED_OURS_REST' bash -s -- '$set' 'from/$p' '$RT_WAIT'" < "$RT_SCRIPT" 2>&1)
+        out=$(ours "BASE=$(printf %q "$FED_OURS_REST") bash -s -- $(printf '%q %q %q' "$set" "from/$p" "$RT_WAIT")" < "$RT_SCRIPT" 2>&1)
         obs fedcheck "$out"
         bv=""; [ "$BEFORE" = 1 ] || bv=$(before_get --name "$n")
         obs before "${bv:-<none>}"

@@ -463,6 +463,19 @@ class AcceptanceRun(unittest.TestCase):
         c = [c for c in self.bundle()["checks"] if c["name"] == "existing/xac/leak/release/xab"][0]
         self.assertEqual((c["verdict"], c["required"]), ("SKIP", False))
 
+    def test_an_existing_agreement_with_malformed_names_is_not_used(self):
+        work = self.existing()
+        ag = json.load(open(os.path.join(work, "agreement.json")))
+        marker = os.path.join(self.tmp, "ran")
+        ag["flows"][0]["release"].append("release/x'$(touch %s)'/**" % marker)
+        json.dump(ag, open(os.path.join(work, "agreement.json"), "w"))
+        rc, out = self.run_before({"FED_EXISTING_WORKS": work})
+        self.assertFalse(os.path.exists(marker), out)
+        before = json.load(open(os.path.join(self.tmp, "evidence", "acceptance", "before", "result.json")))
+        row = [c for c in before["checks"] if c["name"].startswith("existing/")][0]
+        self.assertEqual(row["verdict"], "BLOCKED", out)
+        self.assertIn("well-formed", row["reason"])
+
     def test_before_needs_a_named_partnership(self):
         rc, out = self.run_before({})
         self.assertEqual(rc, 2, out)
