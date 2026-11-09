@@ -361,14 +361,30 @@ fn checkout_check(repo: &Path, frozen: bool) -> Check {
 }
 
 /// The checkout row for an assembled tree: what the marker says it was built
-/// from. Its currency against the overlay is judged by the deploy's own
-/// fresh-source check (ops/scripts/lib/source_of_record.py), not here.
+/// from. The marker is trusted as rc.sh and `release` trust it. Its currency
+/// against the overlay is judged by the deploy's own fresh-source check
+/// (ops/scripts/lib/source_of_record.py), not here; the refusals below are the
+/// ones that check, `release` or rc.sh would make from the marker alone.
 fn assembled_check(repo: &Path, m: &crate::fresh::Marker) -> Check {
+    const REASSEMBLE: &str = "re-assemble the tree from the overlay (its assemble step writes the marker)";
     if m.goatcore_ref == "local" {
         return refused(
             "checkout",
             format!("{} was assembled from local directories (goatcore_ref=local), which no deploy accepts", repo.display()),
             "re-assemble the tree from the pinned refs",
+        );
+    }
+    // source_of_record.py refuses it at deploy time (GB-064): no commit records
+    // what the tree deploys.
+    if m.overlay_commit.ends_with("-dirty") {
+        return refused(
+            "checkout",
+            format!(
+                "{} was assembled from uncommitted overlay changes (overlay_commit={}), so no commit records what this tree deploys",
+                repo.display(),
+                m.overlay_commit
+            ),
+            &format!("commit the overlay change, then {REASSEMBLE}"),
         );
     }
     let head = git(repo, &["rev-parse", "HEAD"]).map(|s| s.trim().to_string()).unwrap_or_default();
@@ -382,17 +398,31 @@ fn assembled_check(repo: &Path, m: &crate::fresh::Marker) -> Check {
                 m.goatcore_ref,
                 if head.is_empty() { "unreadable" } else { &head }
             ),
-            "re-assemble the tree from the overlay (its assemble step writes the marker)",
+            REASSEMBLE,
         );
     }
-    ok(
-        "checkout",
-        format!(
-            "assembled tree ({}): built from {}; its detached HEAD is by construction, and the deploy's fresh-source check judges it against the overlay (C3)",
-            crate::fresh::MARKER,
-            m.describe()
-        ),
-    )
+    let built = format!(
+        "assembled tree ({}): built from {} (overlay commit {}); its detached HEAD is by construction, and the deploy's fresh-source check judges it against the overlay (C3)",
+        crate::fresh::MARKER,
+        m.describe(),
+        m.overlay_commit
+    );
+    // release and rc.sh refuse (GB-009) a marker that names no overlay checkout
+    // with an assemble.sh. A deploy does not: its preflight finds the overlay
+    // through GOAT_OVERLAY_DIR. So this is a note, not a failure.
+    let ovp = m.overlay_path.clone().unwrap_or_default();
+    if ovp.is_empty() || !Path::new(&ovp).join("assemble.sh").is_file() {
+        return Check {
+            name: "checkout".to_string(),
+            ok: true,
+            detail: format!(
+                "{built}; but the marker names no overlay checkout with an assemble.sh (overlay_path={}), so `release` and rc.sh refuse this tree (GB-009); a deploy finds the overlay through GOAT_OVERLAY_DIR",
+                if ovp.is_empty() { "<none>" } else { &ovp }
+            ),
+            fix: Some(format!("{REASSEMBLE} so it records overlay_path=, or set GOAT_OVERLAY_DIR=<overlay checkout> for a deploy")),
+        };
+    }
+    ok("checkout", built)
 }
 
 /// Who can deploy to a push environment, read from the files that decide it:
@@ -2581,18 +2611,37 @@ mod tests {
     fn an_assembled_tree_on_its_detached_head_passes_and_names_its_source() {
         let (t, head) = detached_checkout("assembled");
         let overlay = "0123456789abcdef0123456789abcdef01234567";
-        std::fs::write(t.join(crate::fresh::MARKER), format!("goatcore_ref={head}\noverlay_commit={overlay}\n")).unwrap();
+        let ov = t.join("overlay");
+        std::fs::create_dir_all(&ov).unwrap();
+        std::fs::write(ov.join("assemble.sh"), "#!/bin/sh\n").unwrap();
+        std::fs::write(t.join(crate::fresh::MARKER), format!("goatcore_ref={head}\noverlay_commit={overlay}\noverlay_path={}\n", ov.display())).unwrap();
         let c = checkout_check(&t, false);
         assert!(c.ok && c.fix.is_none(), "{c:?}");
         assert!(c.detail.contains("assembled tree"), "{}", c.detail);
-        assert!(c.detail.contains(&format!("goatcore {}", &head[..9])) && c.detail.contains("overlay 012345678"), "{}", c.detail);
+        assert!(c.detail.contains(&format!("goatcore {}", &head[..9])) && c.detail.contains(&format!("overlay commit {overlay}")), "{}", c.detail);
         assert_eq!(crate::Report::new("doctor", vec![c], crate::EXIT_REFUSED).exit, 0);
+        // No overlay checkout with an assemble.sh: release and rc.sh would refuse
+        // (GB-009) but a deploy would not, so the row passes with a note.
+        std::fs::remove_file(ov.join("assemble.sh")).unwrap();
+        for marker in [format!("goatcore_ref={head}\noverlay_commit={overlay}\noverlay_path={}\n", ov.display()), format!("goatcore_ref={head}\noverlay_commit={overlay}\n")] {
+            std::fs::write(t.join(crate::fresh::MARKER), marker).unwrap();
+            let c = checkout_check(&t, false);
+            assert!(c.ok, "{c:?}");
+            assert!(c.detail.contains("GB-009") && c.detail.contains("GOAT_OVERLAY_DIR"), "{}", c.detail);
+            assert!(c.fix.as_deref().unwrap_or("").contains("overlay_path="), "{c:?}");
+            assert_eq!(crate::Report::new("doctor", vec![c], crate::EXIT_REFUSED).exit, 0);
+        }
         let _ = std::fs::remove_dir_all(&t);
     }
 
     #[test]
     fn an_assembled_tree_whose_head_is_not_the_marked_commit_or_is_local_refuses() {
-        let (t, _) = detached_checkout("assembled-moved");
+        let (t, head) = detached_checkout("assembled-moved");
+        let dirty = "0123456789abcdef0123456789abcdef01234567-dirty";
+        std::fs::write(t.join(crate::fresh::MARKER), format!("goatcore_ref={head}\noverlay_commit={dirty}\n")).unwrap();
+        let c = checkout_check(&t, false);
+        assert!(!c.ok && c.detail.contains(&format!("overlay_commit={dirty}")), "{c:?}");
+        assert!(c.fix.as_deref().unwrap_or("").contains("re-assemble"), "{c:?}");
         let other = "fedcba9876543210fedcba9876543210fedcba98";
         std::fs::write(t.join(crate::fresh::MARKER), format!("goatcore_ref={other}\noverlay_commit=abc\n")).unwrap();
         let c = checkout_check(&t, false);
