@@ -34,15 +34,17 @@ only writes are `<work>/plan.json` and phase 1's result files under
 
 | Section | Holds | Read from |
 |---|---|---|
-| `versions` | goatbuilder's version, the checkout's commit (`-dirty` with changes), `goat --version`, the edge router and republisher images | the binary, `git`, `$GOAT_BIN`, the group's vars and the roles' defaults |
+| `versions` | goatbuilder's version, the checkout's commit (`-dirty` with changes), `goat --version`, the edge router and republisher images; under `--mock` the commit and `goat` are not read, so a mock plan is the same on every machine | the binary, `git`, `$GOAT_BIN`, the group's vars and the roles' defaults |
+| `inputs` | every value phase 1 and the live checks read, as the run will see it: the variable when set, else the derived value (`federate/preflight.rs`), and the live-check targets only the environment sets (`FED_ROUTER_CONTAINER`, `FED_CORE_CONFIG_PATH`, `FED_SLOT_*`, `DOCKER_HOST`). Another core router daemon or key path is a changed input | the environment and the deployment |
 | `agreement` | path, digest, transport, parties and flows; absent before phase 6 | `<work>/agreement.json`; the digest is sha256 over its bytes, which are the canonical form, so it equals what `goat federate compose` prints |
 | `rendered` | every file under `<work>/applied` with its sha256; empty before phase 9 | `goat federate apply`'s output |
-| `certificates` | subject and expiry of each certificate under `<work>/pki`; an expired one blocks | `openssl x509` |
-| `resources` | what this peering owns: its WireGuard interface, tunnel port, edge router port, edge router container, republisher metrics port and container, the core access-control fragment, the working directory and (with `--as`) the republisher identity | the same sources phase 1 reads, in the same order (`PORT_INPUTS` in `preflight_live.py`): the variable, the group's vars, its parent group's, `all`, then the role's default. A templated value is not guessed: its name is empty and its source says so |
+| `pki` | every file under `<work>/pki` with its sha256: a re-minted certificate is a changed input | phase 8's output |
+| `certificates` | subject and expiry of each certificate under `<work>/pki`. An expired one is a FAIL in readiness; with files present and no `openssl`, expiry is SKIP | `openssl x509` |
+| `resources` | what this peering owns: its WireGuard interface, tunnel port, edge router port, edge router container, republisher metrics port and container, the core access-control fragment, the working directory and (with `--as`) the republisher identity. The containers are the group's `goat_zenoh_edge_stack` and `goat_fed_republisher_stack`, else the roles' `<role>-<partner id>`; the core group is `<peering>_core`, the group phase 12 deploys to | the same sources phase 1 reads, in the same order (`PORT_INPUTS` in `preflight_live.py`): the variable, the group's vars, its parent group's, `all`, then the role's default. A templated value is not guessed: its name is empty and its source says so |
 | `restarts` | the core router (phase 10), this peering's WireGuard interface (11), edge router (12) and republisher (12, only when we offer a release set) | the phases; the agreement's flows decide the republisher |
 | `acceptance` | the runner, whether `FED_ACCEPTANCE_STRICT=1` is set, and for each flow a reception and a refusal that acceptance must show | the agreement's flows |
 | `readiness` | each phase-1 check's outcome and code | `preflight.py`, run with the derived inputs into `<work>/plan/preflight.json`; `--no-live` skips the live reads (each SKIP) |
-| `host_firewall` | one entry per host of the edge and core groups, NOT APPLICABLE | the peering inventory |
+| `host_firewall` | one entry per host of the edge and core groups, with its address, NOT APPLICABLE. A host that moves to another address is a changed input | the peering inventory |
 | `verdict` | `READY`, `READY, <n> check(s) not verified` (SKIP is never a pass), or `BLOCKED` (a FAIL or BLOCKED) | the readiness |
 | `hash` | sha256 over the plan without `hash` and without each readiness `detail` | the plan |
 
@@ -63,18 +65,27 @@ step calls `recheck_live_prerequisites(repo, plan_path)` immediately before it
 changes anything, and goes ahead only when `Recheck::allows_change()` is true:
 
 1. The plan file is read and its hash recomputed. A missing file, another
-   schema or a hash that does not match is GB-201.
-2. Every input section is built again from the current state and compared
+   schema or a hash that does not match is GB-201. So is a plan for another
+   peering, or one that is not in the working directory it names (a plan
+   copied from another peering's directory). The hash is not a signature: it
+   catches an edited file, not a forged one.
+2. A plan that was not ready cannot be approved later: a FAIL or BLOCKED in
+   its readiness, or a SKIP of a check step 4 does not rerun, is listed in
+   `unready`.
+3. Every input section is built again from the current state and compared
    with the saved plan. Each section that differs is listed in `changed`
    (GB-200): a new plan is needed, and a new approval.
-3. The live phase-1 checks (`edge-ports`, `core-ports`, `slot-anchors`,
+4. The live phase-1 checks (`edge-ports`, `core-ports`, `slot-anchors`,
    `core-router`, `ingress-stores`) run again into `<work>/plan/recheck.json`,
-   removed first so an older answer never stands in. Each must be PASS or NOT
-   APPLICABLE; anything else is GB-202 beside the check's own code. A SKIP does
-   not pass here.
+   removed first so an older answer never stands in. Each must answer, and be
+   PASS or NOT APPLICABLE; anything else is GB-202 beside the check's own code.
+   A SKIP does not pass here. The certificates are read again too: one that
+   expired since the plan blocks.
 
 `goatbuilder federate plan <partner> --recheck` runs the same function on
-demand and exits 0 only when a change may go ahead.
+demand and exits 0 only when a change may go ahead. It refuses `--mock` and
+`--no-live` (it exists to read the hosts), and an `--edge-group` or `--as` that
+differs from the saved plan's.
 
 ## Reverting this
 
