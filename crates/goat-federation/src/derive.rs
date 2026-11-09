@@ -613,7 +613,7 @@ fn run(bin: &str, args: &[&str]) -> Result<String, String> {
 mod tests {
     use super::*;
 
-    use crate::fed::anchor::test_pki::{leaf_signed_by, root, Ca};
+    use crate::anchor::test_pki::{leaf_signed_by, root, Ca};
 
     /// Writes the bundle and, when given, the profile certificate; returns the
     /// derivation. The selection itself is tested in `anchor`.
