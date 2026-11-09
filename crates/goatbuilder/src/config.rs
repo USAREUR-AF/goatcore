@@ -191,7 +191,6 @@ pub struct Peering {
     pub offer: Option<Vec<String>>,
     /// Pins that override allocation, same keys as the allocated values.
     #[serde(default)]
-    #[allow(dead_code)] // read by the allocator (federate/alloc.rs)
     pub values: crate::federate::declaration::PeeringPins,
     /// The machines' addresses, for the rendered peering inventory.
     #[serde(default)]
@@ -492,6 +491,9 @@ pub fn cross_field(cfg: &Config) -> Vec<String> {
     // Reserved names and the offer's shape (docs/design/goatbuilder.md, "The
     // peering declaration").
     out.extend(crate::federate::declaration::problems(cfg));
+    // Pins that are malformed or collide, and partners declared twice
+    // (docs/design/goatbuilder.md, "Per-peering values").
+    out.extend(crate::federate::alloc::declaration_problems(cfg));
     out
 }
 

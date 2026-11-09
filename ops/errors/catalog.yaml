@@ -1503,6 +1503,78 @@ entries:
       - "\\(GB-120\\)"
     exit: 2
 
+  - code: GB-121
+    tool: goatbuilder
+    title: two peerings would share a value
+    what: "A per-peering value (an interface, a UDP or TCP port, a link subnet, a forwarder port, a certificate directory, an inventory name) is pinned on one peering and already held by another, by a pin or by the allocation record, or a partner is declared twice on one environment. Two peerings on one edge or core host cannot share one."
+    causes:
+      - "two peerings pin the same value under values:"
+      - a pin takes a value the allocation record holds for another peering
+      - the same partner is declared twice on one environment
+    fixes:
+      - "pin a different value on one of the two peerings, or remove the pin and run goatbuilder federate allocate to have one allocated"
+      - "goatbuilder validate   (every collision, each naming both peerings)"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "\\(GB-121\\)"
+    exit: 2
+
+  - code: GB-122
+    tool: goatbuilder
+    title: a pinned port is one the edge host already holds
+    what: "A pinned WireGuard or carrier listen port is a UDP port the edge host already holds: NetBird's WireGuard listens on 51820, and a second listener there fails or steals its traffic."
+    causes:
+      - values.wg_listen_port or values.carrier_listen_port is pinned to 51820
+    fixes:
+      - "remove the pin and run goatbuilder federate allocate (it allocates odd ports from 51823 up and never takes 51820)"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "\\(GB-122\\)"
+    exit: 2
+
+  - code: GB-123
+    tool: goatbuilder
+    title: a peering's pin is not usable
+    what: "A pin under a peering's values: is malformed (an interface name over 15 characters, a subnet that is not a /31 or /30 on its boundary, a relative certificate directory, a name with spaces), or pins a forwarder value on a peering no forwarder relays."
+    causes:
+      - a typing mistake in a pin
+      - "public_port or a carrier_* value pinned without forwarder:"
+    fixes:
+      - "correct the pin, or remove it to have the value allocated"
+      - "declare forwarder: endpoint: on the peering, or remove the forwarder pins"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "\\(GB-123\\)"
+    exit: 2
+
+  - code: GB-124
+    tool: goatbuilder
+    title: the peering allocation record cannot be used
+    what: "ops/goatbuilder/peering-values.yaml, the record of the per-peering values goatbuilder federate allocate chose, is unreadable, has another schema, holds a malformed value, gives two peerings one value, or records a port the edge host already holds. Allocation reads it so a re-run never moves a value; it will not guess around a broken one."
+    causes:
+      - a hand edit or a merge conflict in the record
+      - a record from a newer goatbuilder
+    fixes:
+      - "git log -p ops/goatbuilder/peering-values.yaml   (restore it from its history)"
+      - "remove the broken entry and run goatbuilder federate allocate to allocate it afresh (that peering's values may change)"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "\\(GB-124\\)"
+    exit: 2
+
+  - code: GB-127
+    tool: goatbuilder
+    title: no free per-peering value is left
+    what: "Every candidate in a per-peering value's sequence is held by another peering of the same environment (128 interfaces, ports or /31 subnets), or by a pin."
+    causes:
+      - many peerings on one environment, or pins scattered over the sequence
+    fixes:
+      - "pin the value under the peering's values:"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "\\(GB-127\\)"
+    exit: 2
+
   - code: GB-129
     tool: goatbuilder
     title: a peering's offer would widen what federation.toml declares
