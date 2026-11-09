@@ -276,6 +276,8 @@ A sovereign peering declared, converged and verified (ADR 1157): our half measur
 | `--partner-ca-fingerprint <PARTNER_CA_FINGERPRINT>` | Phase 5: the partner's CA fingerprint, as read aloud on the call |  |
 | `--agreement-digest <AGREEMENT_DIGEST>` | Phase 6: the agreement digest, as compared with the partner |  |
 | `--place-pointer-package <PLACE_POINTER_PACKAGE>` | Phase 5: place the package the partner's single pointer named and the directory held back, after confirming on the call that it is the package for this peering (its digest, as the stop shows it) |  |
+| `--approve-admission <APPROVE_ADMISSION>` | Phase 10: approve exactly this admission digest, after reading what our core will admit. --yes never approves it |  |
+| `--review-in-pr` | Phase 10: write what our core would admit for review in a pull request, and stop |  |
 | `--env <ENV>` | The environment the peering is declared on (checked against goatbuilder.yaml peerings:) |  |
 | `--as <AS_PARTY>` | Which party we are (default: read from the declaration) |  |
 | `--edge-group <EDGE_GROUP>` | The ansible group the edge runs in (default <peering>_edge) |  |
