@@ -698,6 +698,18 @@ Then, in this order:
 There is no certificate revocation list and no way to revoke a single certificate. Cutting the
 tunnel is the control that actually works; the rest is cleanup.
 
+### Step 9 as one command
+
+`goatbuilder federate backout <them> --dry-run` lists, per host, every resource of this one
+peering that the steps above remove, and the digest of the core configuration it would restart
+on. Nothing changes. Without `--dry-run` it does Step 9 in the order above, then withdraws our
+package for them from the directory and deletes the generated partner record for review. Other
+peerings on the same hosts are left as they were. It does not touch stored partner data: the
+retention step in item 4 is still yours. The `peerings:` entry, a forwarder's
+`peering_forwarder_peerings` entry and a `zenoh_sovereign_peerings` entry are configuration you
+remove by review. [goatbuilder.md](../design/goatbuilder.md#federation-modules-and-their-seams)
+describes the steps and how each resource is matched to this one peering.
+
 ---
 
 ## Receive-storage preflight
