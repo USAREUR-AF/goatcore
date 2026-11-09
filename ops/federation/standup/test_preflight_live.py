@@ -74,6 +74,15 @@ class EdgePorts(unittest.TestCase):
         self.assertEqual(self.check(host(ss=ss, containers=cont)).outcome, live.PASS)
         self.assertEqual(self.check(host(ss=ss, containers="other\t192.0.2.10:7448->7448/tcp\n")).outcome, live.FAIL)
 
+    def test_a_port_published_without_a_socket_is_a_collision(self):
+        # Docker's userland proxy off: the published port has no listening socket.
+        cont = "goat-zenoh-edge-xac\t0.0.0.0:7448->7448/tcp\n"
+        r = self.check(host(containers=cont))
+        self.assertEqual(r.outcome, live.FAIL, r)
+        self.assertIn("published by container goat-zenoh-edge-xac", r.detail)
+        self.assertEqual(self.check(host(containers="goat-zenoh-edge-xab\t0.0.0.0:7448->7448/tcp\n")).outcome,
+                         live.PASS)
+
     def test_no_probe_answer_is_a_failure_not_a_pass(self):
         r = live.check_edge_ports({}, ["edge-1"], 51820, "wg-fed0", 7448, "x", "xab_edge")
         self.assertEqual((r.outcome, r.code), (live.FAIL, "GB-133"))
@@ -112,9 +121,28 @@ class PortInputs(unittest.TestCase):
             got = live.resolve_port_inputs(t, "xab_edge", "xab_core", {"FED_WG_INTERFACE": "wg-fed3"})
         self.assertEqual(got["FED_WG_INTERFACE"][0], "wg-fed3")
         self.assertEqual(got["FED_WG_LISTEN_PORT"], ("51830", "group_vars/xab_edge: peering_wg_listen_port"))
-        # A templated group value is not resolved here; the role default is.
-        self.assertEqual(got["FED_EDGE_LISTEN_PORT"][0], "7448")
+        # A templated group value is not resolved here, and the role default
+        # does not stand in for it.
+        self.assertIsNone(got["FED_EDGE_LISTEN_PORT"][0])
+        self.assertIn("templated", got["FED_EDGE_LISTEN_PORT"][1])
         self.assertIsNone(got["FED_REPUBLISHER_METRICS_PORT"][0])
+
+    def test_a_templated_declaration_blocks_instead_of_falling_back(self):
+        with tempfile.TemporaryDirectory() as t:
+            for g, body in (("xab_edge", "peering_wg_listen_port: '{{ alloc_port }}'\n"),
+                            ("peering_cores", "goat_fed_republisher_metrics_port: 9411\n"),
+                            ("all", "goat_zenoh_edge_listen_port: 7450\n")):
+                d = Path(t) / "ops/ansible/group_vars" / g
+                d.mkdir(parents=True)
+                (d / "vars.yml").write_text(body)
+            rd = Path(t) / "ops/ansible/roles/goat-peering-wg/defaults"
+            rd.mkdir(parents=True)
+            (rd / "main.yml").write_text("peering_wg_listen_port: 51820\n")
+            got = live.resolve_port_inputs(t, "xab_edge", "xab_core", {})
+        self.assertIsNone(got["FED_WG_LISTEN_PORT"][0])
+        self.assertIn("templated", got["FED_WG_LISTEN_PORT"][1])
+        self.assertEqual(got["FED_REPUBLISHER_METRICS_PORT"], ("9411", "group_vars/peering_cores: goat_fed_republisher_metrics_port"))
+        self.assertEqual(got["FED_EDGE_LISTEN_PORT"], ("7450", "group_vars/all: goat_zenoh_edge_listen_port"))
 
     def test_the_repository_roles_supply_port_defaults(self):
         got = live.resolve_port_inputs(REPO, "no_such_edge", "no_such_core", {})
@@ -231,6 +259,16 @@ class CoreRouter(unittest.TestCase):
     def test_an_explicit_daemon_is_docker_only(self):
         self.assertEqual(live.router_tools("ssh://goat@192.0.2.20"), ["docker"])
         self.assertEqual(live.router_tools(""), ["docker", "podman"])
+
+    def test_the_daemon_is_the_one_phase_3_reads(self):
+        # As derive.rs: an ambient DOCKER_HOST selects Docker on that daemon too.
+        self.assertEqual(live.effective_docker_host("", {"DOCKER_HOST": "ssh://goat@192.0.2.21"}), "ssh://goat@192.0.2.21")
+        self.assertEqual(live.effective_docker_host("ssh://goat@192.0.2.20", {"DOCKER_HOST": "x"}), "ssh://goat@192.0.2.20")
+        self.assertEqual(live.effective_docker_host("", {}), "")
+
+    def test_a_name_with_a_trailing_newline_is_not_a_name(self):
+        self.assertFalse(live.container_name("core\n"))
+        self.assertTrue(live.container_name("zagros-zenoh-router"))
 
 
 CORE_WIDE = '{ plugins: { storage_manager: { storages: { landing: { key_expr: "from/**", volume: "memory" } } } } }'
@@ -443,6 +481,25 @@ class WholeRun(unittest.TestCase):
         self.assertEqual((rc, by["slot-anchors"]["code"]), (1, "GB-134"))
         self.assertIn("--env", calls[0])
         self.assertEqual(calls[0][calls[0].index("--env") + 1], "zagros")
+
+    def test_an_unusable_port_value_blocks_and_never_passes(self):
+        for bad in ("70000", "51820x"):
+            with self.subTest(bad):
+                rc, out, by = self.run_main({"edge-1": host(), "core-1": host(name="core-1")},
+                                            {"FED_WG_LISTEN_PORT": bad}, ["--only", "edge-ports"])
+                self.assertEqual(by["edge-ports"]["outcome"], "BLOCKED", out)
+                self.assertEqual(rc, 1)
+
+    def test_the_restart_recheck_writes_its_own_result(self):
+        rc, out, _ = self.run_main({}, {"FED_PREFLIGHT_NO_LIVE": "1"})
+        full = (self.work / "preflight/result.json").read_text()
+        pf = load_preflight()
+        with mock.patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(io.StringIO()):
+            pf.main(["xab", "--work", str(self.work), "--profile-dir", str(self.profile), "--repo", str(self.repo),
+                     "--only", "slot-anchors", "--result", str(self.work / "preflight/slot-recheck.json")])
+        self.assertEqual((self.work / "preflight/result.json").read_text(), full)
+        recheck = json.loads((self.work / "preflight/slot-recheck.json").read_text())
+        self.assertEqual([r["check"] for r in recheck["results"]], ["slot-anchors"])
 
     def test_strict_refuses_on_a_skip(self):
         self.env.update({"FED_CA_CERT": "/x", "FED_CA_KEY": "/y"})

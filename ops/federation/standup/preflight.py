@@ -203,6 +203,9 @@ def main(argv=None):
     ap.add_argument("--repo", default=str(Path(__file__).resolve().parents[3]))
     ap.add_argument("--only", default="")
     ap.add_argument("--list", action="store_true")
+    # Where the results go; the restart recheck writes its own file so it never
+    # reads, or overwrites, the full phase-1 result.
+    ap.add_argument("--result", default="")
     a = ap.parse_args(argv)
     if a.list:
         return list_checks()
@@ -417,12 +420,18 @@ def main(argv=None):
     need_ports = [n for n in ("FED_WG_INTERFACE", "FED_WG_LISTEN_PORT", "FED_EDGE_LISTEN_PORT")] if want("edge-ports") else []
     if want("core-ports") and offers:
         need_ports.append("FED_REPUBLISHER_METRICS_PORT")
+    unusable = []  # inputs a live port check cannot run on
     for n in need_ports:
         v, where = ports[n]
         if v is None:
             missing.append((n, where))
+            unusable.append(n)
         elif n != "FED_WG_INTERFACE" and not (v.isdigit() and 0 < int(v) < 65536):
-            missing.append((n, f"{v} (from {where}) is not a port number"))
+            missing.append((n, f"{v} (from {where}) is not a port number from 1 to 65535"))
+            unusable.append(n)
+        elif n == "FED_WG_INTERFACE" and not live.container_name(v):
+            missing.append((n, f"{v} (from {where}) is not an interface name"))
+            unusable.append(n)
 
     slot_env = env.get("FED_SLOT_ENV", "") or peering_environment(a.repo, a.peering)
     hosts_group = f"{slot_env.replace('-', '_')}_hosts" if slot_env else ""
@@ -473,11 +482,11 @@ def main(argv=None):
         for c in port_checks:
             skipped(c, "edge ports free" if c == "edge-ports" else "core metrics port free")
     elif port_checks:
-        blocked = [n for n in need_ports if ports[n][0] is None]
+        blocked = [n for n in need_ports if n in unusable]
         if blocked:
             for c in port_checks:
                 record(Result(c, "edge ports free" if c == "edge-ports" else "core metrics port free", BLOCKED,
-                              "missing " + ", ".join(blocked), "GB-130"))
+                              "no usable " + ", ".join(blocked) + " (see required inputs)", "GB-130"))
         elif not inv.is_file():
             for c in port_checks:
                 record(Result(c, "edge ports free" if c == "edge-ports" else "core metrics port free", BLOCKED,
@@ -520,7 +529,7 @@ def main(argv=None):
             record(live.check_slot_anchors(a.repo, slot_env, registry))
 
     router = None
-    docker_host = env.get("FED_ROUTER_DOCKER_HOST", "")
+    docker_host = live.effective_docker_host(env.get("FED_ROUTER_DOCKER_HOST", ""), env)
     call = live.docker_caller(docker_host)
     if want("core-router") or want("ingress-stores"):
         if no_live:
@@ -559,14 +568,16 @@ def main(argv=None):
     skips = [r for r in results if r.outcome == SKIP]
     strict = env.get("FED_PREFLIGHT_STRICT", "") == "1"
     ready = not problems and not (strict and skips)
+    result_path = Path(a.result) if a.result else Path(a.work) / "preflight" / "result.json"
     try:
-        out = Path(a.work) / "preflight"
-        out.mkdir(parents=True, exist_ok=True)
-        (out / "result.json").write_text(json.dumps({
+        result_path.parent.mkdir(parents=True, exist_ok=True)
+        result_path.write_text(json.dumps({
             "schema": live.SCHEMA, "peering": a.peering, "only": sorted(only), "ready": ready,
             "results": [r.as_dict() for r in results]}, indent=2) + "\n")
-    except OSError:
-        pass
+    except OSError as e:
+        print(f"[✗] result file — {result_path} could not be written: {e}")
+        ready = False
+        problems.append("result file")
     print()
     if not ready:
         n = len(problems) + (len(skips) if strict else 0)

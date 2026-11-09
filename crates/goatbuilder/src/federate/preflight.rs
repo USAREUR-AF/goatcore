@@ -88,11 +88,23 @@ pub struct Input {
     pub source: String,
 }
 
+/// A derived value reaches phase commands that run through `bash -c` inside
+/// single quotes, so a value holding a quote, `$`, a backtick, a backslash or a
+/// control character is refused rather than exported: it stays unset, and
+/// preflight names it.
+fn shell_plain(v: &str) -> bool {
+    !v.chars().any(|c| c.is_control() || "'\"`$\\".contains(c))
+}
+
 fn input(name: &'static str, value: Option<String>, source: impl Into<String>) -> Input {
-    Input {
-        name,
-        value: value.filter(|v| !v.is_empty()),
-        source: source.into(),
+    let source = source.into();
+    match value.filter(|v| !v.is_empty()) {
+        Some(v) if !shell_plain(&v) => Input {
+            name,
+            value: None,
+            source: format!("{source} (its declared value holds a quote, $, backtick, backslash or control character, so it was not used)"),
+        },
+        value => Input { name, value, source },
     }
 }
 
@@ -422,20 +434,37 @@ impl SlotRecheck {
 #[allow(dead_code)]
 pub fn recheck_slot_anchors(repo: &Path, peering: &str, work: &str) -> Result<SlotRecheck> {
     let script = repo.join("ops/federation/standup/preflight.py");
-    Command::new("python3")
+    // Its own result file, removed first: a stale answer (or the full phase-1
+    // result) must never stand in for this run's.
+    let result = Path::new(work).join("preflight/slot-recheck.json");
+    let _ = std::fs::remove_file(&result);
+    let status = Command::new("python3")
         .arg(&script)
-        .args([peering, "--work", work, "--only", "slot-anchors"])
+        .args([
+            peering,
+            "--work",
+            work,
+            "--only",
+            "slot-anchors",
+            "--result",
+        ])
+        .arg(&result)
         .current_dir(repo)
         .status()
         .with_context(|| format!("python3 {}", script.display()))?;
-    read_slot_result(Path::new(work))
+    let r = read_slot_result(&result)?;
+    anyhow::ensure!(
+        status.success() == r.allows_restart(),
+        "the slot recheck exited {status} but its result says {}; not trusting either",
+        r.outcome
+    );
+    Ok(r)
 }
 
 // The phase-10 restart step calls this; it is wired by that step's change.
 #[allow(dead_code)]
-fn read_slot_result(work: &Path) -> Result<SlotRecheck> {
-    let path = work.join("preflight/result.json");
-    let text = std::fs::read_to_string(&path)
+fn read_slot_result(path: &Path) -> Result<SlotRecheck> {
+    let text = std::fs::read_to_string(path)
         .with_context(|| format!("no preflight result at {}", path.display()))?;
     let doc: serde_json::Value =
         serde_json::from_str(&text).with_context(|| format!("{} is not JSON", path.display()))?;
@@ -556,6 +585,29 @@ mod tests {
         );
     }
 
+    /// A declared value that would break out of the phase commands' quoting is
+    /// not exported.
+    #[test]
+    fn a_value_with_shell_characters_is_not_derived() {
+        let i = input(
+            "FED_SIGNING_KEY",
+            Some("/k'; touch /tmp/x; '".into()),
+            "group_vars/xab_edge: goat_federation_signing_key",
+        );
+        assert_eq!(i.value, None);
+        assert!(i.source.contains("was not used"), "{}", i.source);
+        assert_eq!(
+            input(
+                "FED_CA_CERT",
+                Some("/etc/goat ca/root-cert.pem".into()),
+                "x"
+            )
+            .value
+            .as_deref(),
+            Some("/etc/goat ca/root-cert.pem")
+        );
+    }
+
     /// Two core hosts: which one the router runs on is not guessed.
     #[test]
     fn an_ambiguous_core_group_derives_no_docker_host() {
@@ -625,23 +677,23 @@ mod tests {
     #[test]
     fn a_slot_result_is_read_and_graded() {
         let work = tempfile::tempdir().unwrap();
-        std::fs::create_dir_all(work.path().join("preflight")).unwrap();
+        let path = work.path().join("slot-recheck.json");
         let write = |outcome: &str, code: &str| {
             std::fs::write(
-                work.path().join("preflight/result.json"),
+                &path,
                 format!(r#"{{"schema":"goat-federation-preflight/v1","results":[{{"check":"slot-anchors","outcome":"{outcome}","detail":"live slots 462 · committed 461","code":"{code}"}}]}}"#),
             )
             .unwrap();
         };
         write("FAIL", "GB-134");
-        let r = read_slot_result(work.path()).unwrap();
+        let r = read_slot_result(&path).unwrap();
         assert_eq!(r.code.as_deref(), Some("GB-134"));
         assert!(!r.allows_restart());
         write("NOT APPLICABLE", "");
-        assert!(read_slot_result(work.path()).unwrap().allows_restart());
+        assert!(read_slot_result(&path).unwrap().allows_restart());
         write("SKIP", "");
         assert!(
-            !read_slot_result(work.path()).unwrap().allows_restart(),
+            !read_slot_result(&path).unwrap().allows_restart(),
             "a skip is not a pass"
         );
     }

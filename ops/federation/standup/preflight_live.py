@@ -82,9 +82,12 @@ def text(b):
 # Values the plays will use, read where the plays read them
 # ---------------------------------------------------------------------------
 
-def _plain_yaml_value(path, key):
-    """`key: value` from one YAML file, or None. A templated value (`{{ }}`)
-    is None: it resolves only inside a play, and guessing it would be a claim."""
+TEMPLATED = object()  # declared, but resolved only inside a play
+
+
+def _yaml_value(path, key):
+    """`key: value` from one YAML file: the value, None when the file does not
+    set it, or TEMPLATED when it does with a `{{ }}` expression."""
     try:
         import yaml
         data = yaml.safe_load(Path(path).read_text()) or {}
@@ -94,23 +97,35 @@ def _plain_yaml_value(path, key):
         return None
     v = data[key]
     if isinstance(v, str) and "{{" in v:
-        return None
+        return TEMPLATED
     return v
 
 
-def group_var(repo, group, key):
-    """A group's own declared value: group_vars/<group>.yml, then every file in
-    group_vars/<group>/, in name order (the last file that sets it wins, as
-    Ansible merges them)."""
+def _plain_yaml_value(path, key):
+    """`key: value` from one YAML file, or None. A templated value is None
+    here: it resolves only inside a play, and guessing it would be a claim."""
+    v = _yaml_value(path, key)
+    return None if v is TEMPLATED else v
+
+
+def _group_var_raw(repo, group, key):
     gv = Path(repo) / "ops/ansible/group_vars"
     found = None
     for cand in [gv / f"{group}.yml", gv / f"{group}.yaml"] + sorted(
             Path(p) for p in glob.glob(str(gv / group / "*.y*ml"))):
         if cand.is_file():
-            v = _plain_yaml_value(cand, key)
+            v = _yaml_value(cand, key)
             if v is not None:
                 found = v
     return found
+
+
+def group_var(repo, group, key):
+    """A group's own declared value: group_vars/<group>.yml, then every file in
+    group_vars/<group>/, in name order (the last file that sets it wins, as
+    Ansible merges them). None when unset or templated."""
+    v = _group_var_raw(repo, group, key)
+    return None if v is TEMPLATED else v
 
 
 def role_default(repo, role, key):
@@ -119,8 +134,12 @@ def role_default(repo, role, key):
 
 # (input name, role, variable, group kind). An environment variable wins (the
 # script avenue, and goatbuilder's allocated values, which it exports when the
-# operator has not); then the group's own value; then the role's default, which
-# is a port number or an interface name and belongs to no deployment.
+# operator has not); then the group's own value, its parent group's
+# (peering_edges / peering_cores), then group_vars/all, in Ansible's order; then
+# the role's default, which is a port number or an interface name and belongs to
+# no deployment. A value declared with a template at any of those levels is not
+# resolved here, and the check is BLOCKED rather than run on a guess. host_vars
+# are not read.
 PORT_INPUTS = [
     ("FED_WG_INTERFACE", "goat-peering-wg", "peering_wg_interface", "edge"),
     ("FED_WG_LISTEN_PORT", "goat-peering-wg", "peering_wg_listen_port", "edge"),
@@ -138,9 +157,18 @@ def resolve_port_inputs(repo, edge_group, core_group, environ=None):
         if environ.get(name, ""):
             out[name] = (str(environ[name]), f"${name}")
             continue
-        v = group_var(repo, group, var)
-        if v is not None:
-            out[name] = (str(v), f"group_vars/{group}: {var}")
+        declared = None
+        for g in (group, "peering_edges" if kind == "edge" else "peering_cores", "all"):
+            v = _group_var_raw(repo, g, var)
+            if v is not None:
+                declared = (g, v)
+                break
+        if declared and declared[1] is TEMPLATED:
+            out[name] = (None, f"group_vars/{declared[0]}: {var} is templated; it resolves only in a play, so "
+                         f"export {name} with the value it resolves to")
+            continue
+        if declared:
+            out[name] = (str(declared[1]), f"group_vars/{declared[0]}: {var}")
             continue
         v = role_default(repo, role, var)
         if v is not None:
@@ -249,15 +277,18 @@ def holders(facts, proto, port, own_container="", own_wg_interface=""):
     pids = parse_pids(facts.get("pids", ""))
     containers = parse_containers(facts.get("containers", ""))
     wg = parse_wg(facts.get("wg", "")) if proto == "udp" else {}
-    published = bool(own_container) and re.search(
-        rf":{port}->\d+/{proto}\b", containers.get(own_container, "")) is not None
+    # Containers that publish this port. With Docker's userland proxy off a
+    # published port has no listening socket at all, so `ss` cannot see it.
+    publishers = [n for n, p in containers.items() if re.search(rf":{port}->\d+/{proto}\b", p)]
     for row in parse_ss(facts.get("ss", "")):
         if row["proto"] != proto or row["port"] != port:
             continue
         if row["procs"]:
             for name, pid in row["procs"]:
                 cname = pids.get(pid, "")
-                ours = bool(own_container) and (cname == own_container or (name == "docker-proxy" and published))
+                if not cname and name == "docker-proxy" and publishers:
+                    continue  # attributed to the publishing container below
+                ours = bool(own_container) and cname == own_container
                 where = f"container {cname}" if cname else f"process {name} (pid {pid})"
                 found.append((f"{proto}/{port} on {row['addr']} by {where}", ours))
         else:
@@ -269,6 +300,8 @@ def holders(facts, proto, port, own_container="", own_wg_interface=""):
                     found.append((f"{proto}/{port} by WireGuard interface {i}", i == own_wg_interface))
             else:
                 found.append((f"{proto}/{port} on {row['addr']} by a kernel socket", False))
+    for cname in publishers:
+        found.append((f"{proto}/{port} published by container {cname}", bool(own_container) and cname == own_container))
     # wg can hold a port ss did not list (another namespace); still a holder.
     for i, p in wg.items():
         if p == port and not any(f"interface {i}" in d for d, _ in found):
@@ -340,11 +373,11 @@ CORE_ROLE = "zenoh-core"
 ROUTER_LIST_FORMAT = '{{.ID}}\t{{.Names}}\t{{.Label "org.goat.component"}}'
 ROUTER_INSPECT_FORMAT = {"docker": "{{.Id}}\t{{.State.Running}}\t{{.Config.Image}}",
                          "podman": "{{.ID}}\t{{.State.Running}}\t{{.Config.Image}}"}
-_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
+_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*")
 
 
 def container_name(v):
-    return bool(v) and bool(_NAME.match(v))
+    return bool(v) and bool(_NAME.fullmatch(v))
 
 
 def select_router(selected, tools, call):
@@ -384,6 +417,13 @@ def select_router(selected, tools, call):
         return ("none", "no running core router found; discovery accepts org.goat.component=zenoh-core, "
                 "standard *-zenoh-router names and legacy goat-zenoh. Attempts: " + " | ".join(attempts), None)
     return ("many", "multiple running core routers found (" + ", ".join(f"{t}:{i}" for i, t in found) + ")", None)
+
+
+def effective_docker_host(router_docker_host, environ=None):
+    """The daemon phase 3 reads: FED_ROUTER_DOCKER_HOST (the drivers put it in
+    DOCKER_HOST for init), else an ambient DOCKER_HOST, else none (local)."""
+    environ = os.environ if environ is None else environ
+    return router_docker_host or environ.get("DOCKER_HOST", "")
 
 
 def docker_caller(docker_host, runner=None):
