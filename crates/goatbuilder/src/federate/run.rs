@@ -5,7 +5,8 @@
 //! Every real run is recorded: the run, each phase attempt and outcome, and a
 //! by-hand phase declared done with `--from`. Recording changes no phase.
 //!
-//! `--resume` (off unless given) skips a phase only when all of these hold:
+//! Resuming (the default; `--no-resume` turns it off) skips a phase only
+//! when all of these hold:
 //!
 //! - the phase is one of 3, 5, 6, 9 or 10: it leaves local files that are
 //!   a pure product of what it reads (6 the agreement, 9 the rendered files),
@@ -274,7 +275,7 @@ impl Run {
         if s.resume && from > 1 && s.only.is_none() {
             rows.push(row(
                 "resume",
-                format!("--resume skips nothing when --from names the start; phases {from} to {to} all run"),
+                format!("--from names the start, so nothing is skipped: phases {from} to {to} all run"),
             ));
         }
 

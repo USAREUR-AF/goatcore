@@ -82,6 +82,22 @@ fn a_plan_or_a_mock_writes_no_journal() {
     assert!(!w.work.join(".lock").exists());
 }
 
+/// Resuming is the default: a plain re-run skips what it can see is unchanged.
+#[test]
+fn a_plain_rerun_resumes() {
+    let w = world();
+    std::fs::write(w.work.join("keys.txt"), "xaa=QUJD\nxab=QUJE\n").unwrap();
+    w.run(&["hello-ally"]);
+    w.run(&["hello-ally", "--from", "6", "--to", "9"]);
+    let (out, v) = w.run(&["hello-ally", "--to", "9"]);
+    assert!(out.status.success(), "{}", says(&out));
+    assert!(
+        rows(&v, "skipped").len() >= 3,
+        "3, 5, 6 and 9 are unchanged: {}",
+        says(&out)
+    );
+}
+
 /// A phase that fails is recorded as failed with GB-183; `--resume` then
 /// starts again where the files it can see stop matching, skips what is
 /// unchanged, and runs every check and every play again.
@@ -138,9 +154,9 @@ fn resume_after_a_failure_skips_only_what_it_can_see() {
         assert!(log.contains(play), "plays run again: {play}: {log}");
     }
 
-    // Without --resume, nothing is skipped: the default is unchanged.
+    // Resuming is the default now: --no-resume runs every phase in range.
     w.clear_log();
-    let (out, v) = w.run(&["hello-ally", "--to", "4"]);
+    let (out, v) = w.run(&["hello-ally", "--to", "4", "--no-resume"]);
     assert!(out.status.success(), "{}", says(&out));
     assert_eq!(phases_run(&v), [1, 2, 3, 4]);
     assert!(rows(&v, "skipped").is_empty());
