@@ -16,15 +16,31 @@ so a reader can tell them apart.
 | `status` on real hosts | **designed** | `status` reads real hosts through the push converger, as `verify` and `diff` do today | [goatbuilder-conformance.md](../../design/goatbuilder-conformance.md) |
 | A pull converger | **designed** | `converger: pull-agent`: an agent on each machine applies its class's signed release and `deploy` observes it; push and pull mix per class | [goatbuilder.md](../../design/goatbuilder.md) |
 | A semantic error matcher | **designed** | a fourth matcher after the lexical one | [error-interpretation.md](../../design/error-interpretation.md) |
-| Federation in goatbuilder: one command, one decision | **designed**: [ADR 1225](../../adr/1225-federation-belongs-to-goatbuilder-one-command-one-decision.md) (Proposed). Status: WIP — gate: the federation end-to-end test drives both sides with goatbuilder federate alone | `goatbuilder federate <partner>` is the whole procedure: one decision (partner and offered release sets), two human confirmations, everything else done, checked, recorded and resumable; `goat` keeps no federation code | [goatbuilder.md](../../design/goatbuilder.md) |
-| Federation library crate | **built**, not yet on `main`; no behavior change | the package code moves from `goat-cli` into `crates/goat-federation`, used by both binaries | [federation-package-spec.md](../../design/federation-package-spec.md) |
-| The six package verbs in goatbuilder | **designed** | `goatbuilder federate init\|lint\|compose\|diff\|verify\|apply` with today's flags and exit codes; `goat federate` runs the same library and names the goatbuilder command until a goatbuilder release reaches partner environments | [goatbuilder-conformance.md](../../design/goatbuilder-conformance.md) |
-| Our package built on the core over SSH | **designed** | phase 3 runs from the operator's machine; no binary or signing key copied to the edge | [goatbuilder.md](../../design/goatbuilder.md) |
-| Allocated per-peering values | **designed** | tunnel interface, listen ports, link subnet, edge listen port and metrics port allocated stably per peering and proposed as a reviewable change | [goatbuilder.md](../../design/goatbuilder.md) |
-| Edge certificates installed by the roles | **designed** | the per-peering certificates issued and installed by the edge roles, not copied by hand | [goatbuilder.md](../../design/goatbuilder.md) |
-| Federation preflight | **designed** | ports in use, the slot list against the registry, receive scopes against the edge's grants, certificate expiry and conflicts with existing peerings refused before any change | [goatbuilder.md](../../design/goatbuilder.md) |
-| Acceptance as a contract | **designed** | checks generated from the agreement's flows; PASS, FAIL, BLOCKED, SKIP, NOT APPLICABLE; a required check cannot become PASS; bilateral evidence exchanged by file | [goatbuilder.md](../../design/goatbuilder.md) |
-| Forwarder from the declaration | **designed** | the peering forwarder configured by the driver from the peering entry | [peering-forwarder.md](../../design/peering-forwarder.md) |
-| Several peerings per party in the directory | **designed**: [ADR 1225](../../adr/1225-federation-belongs-to-goatbuilder-one-command-one-decision.md) §6 | one package per counterparty, each in its own directory slot; the package format unchanged | [peering-directory-service.md](../../design/peering-directory-service.md) |
-| Federation plan, state and resume | **designed** | a plan with hashes before any change, approval bound to it, a run journal, resume by inspecting actual state | [goatbuilder.md](../../design/goatbuilder.md) |
-| Federation end-to-end through goatbuilder alone | **not built** | the federation end-to-end test drives both sides with `goatbuilder federate` and nothing else | [goatbuilder-conformance.md](../../design/goatbuilder-conformance.md) |
+| Federation in goatbuilder: one command, one decision | **designed**: [ADR 1225](../../adr/1225-federation-belongs-to-goatbuilder-one-command-one-decision.md) (Proposed); modules in the table below. Status: WIP — gate: the federation end-to-end test drives both sides with goatbuilder federate alone | `goatbuilder federate <partner>` is the whole procedure: one decision (partner and offered release sets), two human confirmations, everything else done, checked, recorded and resumable; `goat` keeps no federation code | [goatbuilder.md](../../design/goatbuilder.md) §"Federation modules and their seams" |
+
+## Federation in goatbuilder: modules
+
+One row per module of [ADR 1225](../../adr/1225-federation-belongs-to-goatbuilder-one-command-one-decision.md), in merge order. A module is one pull request with one purpose and reverts alone. A stage graduates only when its proving scenarios pass in the federation test environment on its branch and nothing that passes on `main` regresses. Each switch of default is its own pull request. States: not started, in progress, built, tests pass, graduated. Nothing in this table is on `main`.
+
+| Stage | Module | Branch | Stacked on | Proving scenarios | State | How to revert |
+|---|---|---|---|---|---|---|
+| 0 | Test-environment baseline | `track/fed-e2e-env` | main | the baseline matrix | in progress | revert its branch; `run.sh` stays as today |
+| 1 | Acceptance cannot pass on skipped checks | `ws/w7-1-acceptance-skips` | main | `acceptance-strict-no-skip`, baseline | in progress | one revert; skips pass again unless `FED_ACCEPTANCE_STRICT` is set |
+| 2 | Evidence schema and outcome words | `ws/w7-2-acceptance-evidence` | stage 1 | baseline; schema tests | in progress | one revert; acceptance prints stage 1 output |
+| 2.x | Checks from the agreement, bilateral exchange, cleanup, publishing `exchanging` | `ws/w7-federate-acceptance`, then smaller branches | stage 2 | to be named | in progress | each part one revert |
+| 3 | Library crate (pure move) | `ws/w1-federation-crate` | main | baseline equal to main | tests pass | one revert, after later stages |
+| — | Decision record (ADR 1225) and design documents | `ws/w0-adr-federation-in-goatbuilder` | stage 3 | doc checks | tests pass | one revert |
+| 4 | Verbs into the library (pure move) | `ws/w2a-verbs-into-library` | stage 3 | baseline equal to main | in progress | one revert |
+| 5 | goatbuilder verbs beside `goat`'s | `ws/w2b-goatbuilder-verbs` | stage 4 | baseline; identical-output tests | in progress | one revert |
+| 5.1 | Driver runs the verbs in process (opt-in) | `ws/w2c-driver-in-process` | stage 5 | `goatbuilder-only-both-sides` with the opt-in | in progress | one revert |
+| 5.2 | `goat federate` prints the notice | `ws/w2d-goat-federate-notice` | stage 5 | baseline | in progress | one revert |
+| 6 | Planner: `goatbuilder federate plan` | `ws/w6a-federate-plan` | stage 3 | to be named | in progress | one revert; `preflight.py` stays phase 1 |
+| 7 | Edge roles install peering certificates | `ws/w5-edge-certificates` | stage 3 | to be named | in progress | one revert; manual placement still works |
+| 8 | Allocated peering values, proposed for review | `ws/w4-peering-allocation` | stage 3 | second peering, three-party | in progress | one revert; hand-written files still work |
+| 9 | Phase 3 over SSH | `ws/w3-measure-over-ssh` | stage 5 | phase 3 from outside the edge | in progress | one revert; on-host `init` still works |
+| 10 | Forwarder from the declaration | `ws/w8-peering-forwarder` | stage 8 | second peering through the forwarder | in progress | one revert |
+| 11 | Directory: several packages per party | `ws/w9-directory-multi-peering` (and the directory service) | stage 3 | two counterparties | in progress | one revert per repository; the single package stays default |
+| 12 | Deploy, approval bound to the plan, journal, locks, resume, status | `ws/w10-federate-surface` (to be split) | stages 5 and 6 | to be named | in progress | each part one revert |
+| 13+ | Switches of default, each alone | `ws/w2e-switch-driver-in-process`, `ws/w2f-switch-standup-to-goatbuilder`, others | their module | the module's scenarios | not started | one revert each |
+| 14 | Teaching material | `ws/w12-federation-teaching` | the switches | doc checks | in progress | one revert per repository |
+| gate | Both sides driven by `goatbuilder federate` alone | `track/federate-in-goatbuilder` (integration) | every stage | `goatbuilder-only-both-sides` | not started | — |

@@ -67,12 +67,13 @@ Four facts say that `goat` is the wrong home for this code:
    and the same person stands the environment up with goatbuilder. Every `goat` user carrying
    the federation verbs serves no one who can use them.
 
-An operator who ran the 9 November federation wrote a proposal,
-"Federation automation" (9 November 2026), that reached the same entry point from the
+The operator who ran the first sovereign federation, in a proposal of 9 November 2026
+("Federation automation"), reached the same entry point from the
 operator's side: make goatbuilder the operator entry point for a resumable federation
 workflow driven by reviewed configuration, with automated acceptance evidence from each
-operator. This decision adopts the proposal's design for configuration ownership, plan and state, and
-acceptance (decision 5).
+operator. This decision is the best of both: it keeps this program's structure and adopts the
+proposal as the specification for configuration ownership, plan and state, acceptance, and
+`apply` staying a renderer (decision 5).
 
 ## Decision
 
@@ -83,16 +84,19 @@ acceptance (decision 5).
   `crates/goatbuilder/src/federate/`. The crate move is built, with no behavior change.
 - goatbuilder carries the six verbs with the same flags and exit codes `goat federate` has
   today: `goatbuilder federate init|lint|compose|diff|verify|apply`. `apply` stays a renderer:
-  it writes files and deploys nothing. Deploying is a separate, named stage of the driver.
+  it writes files and deploys nothing. Deploying is a separate, named stage (decision 5).
+- The new home arrives beside the old one. The driver keeps spawning `goat federate` by
+  default, and `ops/scripts/peering-standup.sh` keeps calling `goat federate`, until the test
+  environment shows the goatbuilder verbs pass the same scenarios; each of those two switches
+  of default is its own small pull request (decision 7).
 - `goat` keeps no federation code of its own. Until a goatbuilder release carrying the verbs
   is available to partner environments, `goat federate <verb>` keeps working through the
   same library, because partner environments run released `goat federate` today, and prints
   one line on stderr:
   ``goat federate is moving to goatbuilder: run `goatbuilder federate <verb> ...` ``.
   Once that goatbuilder release is available, `goat federate` is removed from `goat`.
-- Every federate subcommand name (`init lint compose diff verify apply status`, and any stage
-  name added under decision 5) is reserved and can never be a partner name; config
-  validation refuses it.
+- Every federate subcommand name (`init lint compose diff verify apply plan deploy test
+  status`) is reserved and can never be a partner name; config validation refuses it.
 
 ### 2. One command, one decision
 
@@ -153,7 +157,8 @@ the code implementing it updates; this ADR does not mark any of them built.
 
 ### 5. What is taken from the proposal, and what this program adds
 
-Taken from that operator's proposal, as its specification:
+Taken from the proposal of the operator who ran the first sovereign federation (9 November
+2026), as its specification:
 
 - **Configuration ownership** (the proposal's section 1). The verified agreement determines the permitted
   flows. Local configuration may narrow them or demand stronger checks and never expands them.
@@ -175,8 +180,12 @@ Taken from that operator's proposal, as its specification:
   apart from local observations, and no automatic bilateral gate until report signing and
   replay rules exist; probes time-limited, run-owned and cleaned up; `exchanging` published
   only through a reviewable change after the required scope passes on both sides.
-- **Stages.** The proposal's `plan`, `deploy`, `test` and `status` are the stages of the one
-  command, and each is also runnable alone.
+- **`apply` stays a renderer, and the stages are the proposal's.** `goatbuilder federate plan |
+  deploy | test | status` are the stages of the one command, each also runnable alone:
+  `plan` validates and explains the local change, `deploy` executes an approved plan through
+  the existing roles, `test` starts or resumes a bounded acceptance session, and `status`
+  shows deployment health and the last acceptance evidence with its age and scope.
+  `goatbuilder federate <partner>` runs them in order, with the two human stops of decision 3.
 - **Order.** Acceptance first, then the rest in the proposal's five-step order where the changes stack.
 
 What this program adds to the proposal: the library crate and goatbuilder as the only home
@@ -228,6 +237,40 @@ across peerings, and one /31 cannot serve several links; spec §7 takes the link
 on sort order. Fixing that changes agreement bytes and digests, needs a v2 specification and
 new vectors, and a change in every partner's implementation.
 
+### 7. Modules, seams and the graduated ladder
+
+The program is built as modules. One pull request is one module with one purpose; a code move
+and a behavior change never share a pull request. Each module can be reverted alone, and its
+pull request says what stops working, what keeps working and which scenarios change outcome
+when it is reverted. New behavior arrives beside the existing behavior; the existing avenue
+stays the default until the federation test environment shows the new one passes the same
+scenarios, and **each switch of default is its own small pull request**, so undoing it is one
+revert. Each module's seam, one paragraph per module, is in
+[`goatbuilder.md`](../design/goatbuilder.md) §"Federation modules and their seams", so a later
+change to one module needs no reading of the others.
+
+A stage graduates only when the scenarios named for it pass in the test environment on that
+branch and no scenario that passes on `main` regresses. The ladder is the merge order:
+
+| Stage | Module | Owns | Revert alone |
+|---|---|---|---|
+| 0 | Test-environment baseline | the scenario matrix on `main` | the harness keeps running as today |
+| 1 | Acceptance cannot pass on skipped checks | `ops/federation/standup/acceptance.sh` exit status | skips pass again unless `FED_ACCEPTANCE_STRICT` is set |
+| 2 | Evidence schema and outcome words | the versioned check and result schema | acceptance prints stage 1 output |
+| 3 | Library crate, pure move | `crates/goat-federation` | the code returns to `goat-cli` (later stages first) |
+| 4 | Verbs into the library, pure move | the six verb implementations | they return to `goat-cli` |
+| 5 | goatbuilder verbs beside `goat`'s | `goatbuilder federate init\|lint\|compose\|diff\|verify\|apply`; the opt-in in-process driver; the notice in `goat federate` | the driver and script keep using `goat federate` |
+| 6 | Planner and preflight | `goatbuilder federate plan` | `preflight.py` stays phase 1 |
+| 7 | Edge certificates from the roles | per-peering certificate install | certificates are placed by hand |
+| 8 | Allocated peering values | `crates/goatbuilder/src/federate/alloc.rs` | per-peering files are written by hand |
+| 9 | Phase 3 over SSH | building our package on the core from the operator's machine | phase 3 runs on the host |
+| 10 | Forwarder from the declaration | the forwarder's port mapping | the mapping is set by hand |
+| 11 | Directory, several packages per party | per-counterparty slots (decision 6) | the single slot stays |
+| 12 | The one-command surface | `deploy`, approval bound to the plan, journal, locks, resume, `test`, `status` | phases run as today |
+| 13+ | Switches of default, each alone | one default each (the driver in process; the script on goatbuilder; the directory per counterparty; removal of `goat federate`) | one revert each |
+
+Teaching material follows the switches.
+
 ## Alternatives considered
 
 - **Keep `goat federate` as the package tooling goatbuilder invokes** (the proposal's
@@ -268,7 +311,9 @@ new vectors, and a change in every partner's implementation.
 - The script avenue changes shape. **Amendment to [ADR 1201](1201-two-avenues-scripts-documented-cli-supported.md)
   rule 2, federating-node row only:** both avenues stay, the driver (`goatbuilder federate`)
   and `ops/scripts/peering-standup.sh`, and both call the `goatbuilder federate <verb>`
-  package verbs, as both called `goat federate` before. The script still orchestrates its own
+  package verbs, as both called `goat federate` before. This holds from the script's own
+  switch-of-default pull request (decision 7); until then the script calls `goat federate` and
+  needs no goatbuilder binary. The script still orchestrates its own
   phases and is still documented and unsupported; it now depends on the goatbuilder binary for
   the package verbs only, because a second implementation of the package protocol is the
   drift the previous alternative rejects.
