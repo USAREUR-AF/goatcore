@@ -206,8 +206,8 @@ class AcceptanceRun(unittest.TestCase):
         rc, out = self.run_acceptance(agreement=ag)
         v = self.verdicts()
         self.assertEqual(rc, 0, out)
-        for name in ("delivery/inbound", "republisher-boundary/inbound", "roundtrip/inbound", "roundtrip/outbound",
-                     "refusal/control-allowed"):
+        for name in ("delivery/inbound", "persistence/inbound", "republisher-boundary/inbound", "roundtrip/inbound",
+                     "roundtrip/outbound", "refusal/control-allowed"):
             self.assertEqual(v[name], "NOT APPLICABLE", (name, out))
         self.assertEqual(v["delivery/outbound/release/all"], "PASS", out)
         self.assertEqual(v["refusal/forged-name"], "PASS", out)
@@ -230,6 +230,73 @@ class AcceptanceRun(unittest.TestCase):
         rc, out = self.run_acceptance(agreement=ag)
         self.assertEqual(rc, 1, out)
         self.assertEqual(self.verdicts()["lanes"], "FAIL", out)
+
+    # --- persistent reception ----------------------------------------------
+    def test_every_offered_set_persists_on_the_store_alone(self):
+        rc, out = self.run_acceptance()
+        v = self.verdicts()
+        self.assertEqual(rc, 0, out)
+        for name in ("persistence/inbound/release/all", "persistence/inbound/release/xaa",
+                     "persistence/outbound/release/all", "persistence/outbound/release/xab"):
+            self.assertEqual(v.get(name), "PASS", (name, out))
+        c = [c for c in self.bundle()["checks"] if c["name"] == "persistence/inbound/release/all"][0]
+        scope = json.loads(c["observations"]["scope"])
+        self.assertEqual(scope["outcome"], "ready")
+        self.assertEqual(scope["details"]["store_subscriptions"], ["from/xab/**"])
+        self.assertTrue(c["observations"]["key"].endswith("/persist"))
+
+    def test_a_diagnostic_subscriber_masking_a_refused_store_is_not_a_pass(self):
+        # The defect: the edge refuses the store's own subscription, and a session
+        # someone left subscribed carries the samples. Delivery reads look fine.
+        self.fabric.faults.storage_interest_refused.add("xaa")
+        self.fabric.faults.diagnostic["xaa"] = "from/xab/**"
+        rc, out = self.run_acceptance()
+        v = self.verdicts()
+        self.assertEqual(v["delivery/inbound/release/all"], "PASS", out)
+        self.assertEqual(v["persistence/inbound/release/all"], "BLOCKED", out)
+        self.assertEqual(v["persistence/outbound/release/all"], "PASS", out)
+        self.assertEqual(rc, 3, out)
+        self.assertIn("FED_TEST_SUBSCRIBERS_PAUSE_OURS", out)
+
+    def test_with_the_test_subscriber_stopped_the_refused_store_fails(self):
+        self.fabric.faults.storage_interest_refused.add("xaa")
+        self.fabric.faults.diagnostic["xaa"] = "from/xab/**"
+        flag = os.path.join(self.tmp, "paused-xaa")
+        rc, out = self.run_acceptance(extra={"FED_TEST_SUBSCRIBERS_PAUSE_OURS": "touch '%s'" % flag,
+                                             "FED_TEST_SUBSCRIBERS_RESUME_OURS": "rm -f '%s'" % flag})
+        v = self.verdicts()
+        self.assertEqual(rc, 1, out)
+        self.assertEqual(v["persistence/inbound/release/all"], "FAIL", out)
+        self.assertFalse(os.path.exists(flag), "the test subscriber was not started again")
+
+    def test_a_subscriber_on_other_keys_does_not_block(self):
+        # The round-trip responder subscribes to fedcheck keys only; it carries no
+        # persistence sample, so it is no reason to stop.
+        self.fabric.faults.diagnostic["xaa"] = "from/xab/**/fedcheck/*"
+        rc, out = self.run_acceptance()
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(self.verdicts()["persistence/inbound/release/all"], "PASS", out)
+
+    def test_a_closed_admin_space_is_blocked_not_a_missing_store(self):
+        self.fabric.faults.admin_closed.add("xaa")
+        rc, out = self.run_acceptance()
+        v = self.verdicts()
+        self.assertEqual(rc, 3, out)
+        self.assertEqual(v["persistence/inbound/release/all"], "BLOCKED", out)
+        self.assertIn("adminspace read", out)
+
+    def test_no_store_for_the_lane_fails(self):
+        self.fabric.faults.no_storage.add("xab")
+        rc, out = self.run_acceptance()
+        self.assertEqual(rc, 1, out)
+        self.assertEqual(self.verdicts()["persistence/outbound/release/all"], "FAIL", out)
+
+    def test_persistence_without_a_counterparty_surface_is_blocked(self):
+        rc, out = self.run_acceptance(drop=["FED_THEIRS_REST"])
+        v = self.verdicts()
+        self.assertEqual(rc, 3, out)
+        self.assertEqual(v["persistence/inbound/release/all"], "BLOCKED", out)
+        self.assertEqual(v["persistence/outbound/release/xab"], "BLOCKED", out)
 
     def test_a_broken_round_trip_fails(self):
         self.fabric.faults.responder_down.add("xab")

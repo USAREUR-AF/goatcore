@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | **Built:** `ops/federation/standup/acceptance.sh`, phase 14 of both avenues (`goatbuilder federate` and `ops/scripts/peering-standup.sh`): the checks generated from the agreement's flows (§2), the outcome and exit rule (§3), the evidence bundle (§4, `ops/federation/standup/acceptance_evidence.py`, unit tests `test_acceptance_evidence.py`), and the in-process test fabric with the tests that run the real script against it (§5, `acceptance_fakefabric.py`, `test_acceptance.py`). The hermetic federation end-to-end test (`ops/federation-e2e/run.sh`) runs phase 14 from both sides with every check configured; it has not been run on this change. **Not built:** a required-check policy file, persistent-reception inspection of storage scope, checks of existing partnerships before and after, run-owned probe sessions with cleanup, and bilateral evidence exchange (session manifest, exchanged bundles, report signing) |
+| Status | **Built:** `ops/federation/standup/acceptance.sh`, phase 14 of both avenues (`goatbuilder federate` and `ops/scripts/peering-standup.sh`): the checks generated from the agreement's flows (§2), persistent reception (§2.1), the outcome and exit rule (§3), the evidence bundle (§4, `ops/federation/standup/acceptance_evidence.py`, unit tests `test_acceptance_evidence.py`), and the in-process test fabric with the tests that run the real script against it (§5, `acceptance_fakefabric.py`, `test_acceptance.py`). The hermetic federation end-to-end test (`ops/federation-e2e/run.sh`) runs phase 14 from both sides with every check configured; it has not been run on this change. **Not built:** a required-check policy file, checks of existing partnerships before and after, run-owned probe sessions with cleanup, and bilateral evidence exchange (session manifest, exchanged bundles, report signing) |
 | Companions | [`sovereign-federation-runbook.md`](../operations/sovereign-federation-runbook.md) Steps 7 and 8 (the same checks by hand), [`ops/federation/roundtrip/README.md`](../../ops/federation/roundtrip/README.md) (the round trip), [`deployment-e2e.md`](deployment-e2e.md) §"The same pattern for a federation" |
 | Audience | An operator running phase 14; whoever changes `acceptance.sh` |
 
@@ -28,6 +28,7 @@ the agreement, and generates one check per direction and set. **Built.**
 |---|---|---|---|
 | `delivery/<dir>/<set>` | each offered set, each direction | a sample staged under `release/<set>/acceptance/<run id>` on the sending core reads back under `from/<sender>/<set>/...` from the receiving core's store, byte for byte (both SHA-256 digests recorded) | both cores' REST surfaces |
 | `fresh-keys` | both | before anything is sent, every target key is readable and empty; the run id (time, process id, 32 random bits) is in every key and payload | the same |
+| `persistence/<dir>/<set>` | each offered set, each direction | only the receiving core's own store subscribes to the exact key of a second sample (no other session does), and that sample reads back from the store (§2.1) | both cores' REST surfaces and admin space read |
 | `republisher-boundary/<dir>` | each direction the agreement has | a set the agreement never offered, staged beside the offered ones that just crossed, is not lifted | tier 2 passed |
 | `out-of-lane/<dir>` | both | a write outside any wire name does not cross | tier 2 passed |
 | `refusal/control-allowed` | inbound | a session holding the partner's agreed identity writes in its lane: ALLOWED in our edge's ACL trace and read back on our core | `FED_EDGE_LOG_OURS`, `FED_PROBE_THEIRS_REST`, an inbound lane |
@@ -53,9 +54,9 @@ Rules that keep the checks honest:
   answer and the HTTP status (`acceptance_evidence.py rest-value`). Before this change a failed
   read printed nothing, which is what every refusal check wanted to see, and the value was
   found with a grep that missed `"value": "..."` written with a space.
-- **Reads are queries against the receiving core's store.** The runner declares no subscriber,
-  so no diagnostic interest can carry a sample the store would not have taken. Inspecting the
-  effective storage scope, and publishing after test subscribers stop, is not built.
+- **Reads are queries against the receiving core's store.** The runner declares no subscriber
+  of its own. Whether anyone else's subscriber could have carried a sample is the persistence
+  check's question (§2.1).
 - **Rates.** Samples are spaced by the agreement's lowest `hz` (at least 0.5 seconds), because
   the receiving edge drops a second sample inside its downsampling interval with nothing
   logged. A delivery read retries up to eight times, one second apart.
@@ -66,6 +67,40 @@ Rules that keep the checks honest:
   test starts them); run-owned, time-limited probes with cleanup are not built.
 
 Tier 1 (each phase's own end state) belongs to the phases.
+
+### 2.1 Persistent reception
+
+**Built.** A delivery row reads the sample back from the receiving core's store, but that store
+is only half of why the sample arrived. A sample crosses the edge because some subscriber on the
+receiving core matches its key. When the edge refuses the store's own subscription (a store wider
+than the edge grants, `from/**`, is refused whole), a session that somebody left subscribed on the
+core (a drill's test subscriber, a person's `z_sub`) supplies the interest instead, and the store
+records what that session pulled across. Delivery passes, and fails again the day the session
+closes.
+
+So after the delivery rows, for each offered set and direction, the runner:
+
+1. reads who subscribes to the exact key of a new sample, from the receiving core's admin space:
+   `@/*/router` (empty when the admin space is closed, which is BLOCKED rather than read as "no
+   store") and `@/*/router/subscriber/<key>`. Each row names a subscribed key expression and its
+   sources by zenoh id, as zenoh 1.9 prints them (`{"clients": [...], "peers": [...],
+   "routers": [...]}`). A store runs inside the router, so its subscription is sourced from the
+   router's own id; any other client or peer is a session somebody opened. No storage status
+   query is made, because a storage-manager status fan-out on a router with many stores is the
+   path of a known deadlock (`roles/goat-zenoh` compose notes);
+2. FAILs when no store of the router subscribes to the key, and is BLOCKED while another session
+   does. A drill that keeps test subscribers on a core names a command that stops them and one
+   that starts them again (`FED_TEST_SUBSCRIBERS_PAUSE_OURS` / `_RESUME_OURS`, and `_THEIRS`);
+   the runner stops them, reads the subscribers again, and restarts them after the read. A
+   subscriber that does not match the key is no reason to stop (the round-trip responder polls
+   `**/fedcheck/*` over REST and subscribes to nothing);
+3. publishes a new sample under `release/<set>/acceptance/<run id>/persist` on the sending core
+   and reads it back from the receiving store. PASS only when the exact bytes are read.
+
+The scope it saw (`store_subscriptions`, `diagnostic`, `remote_routers`) is kept in the check's
+observations. Measured against `eclipse/zenoh:1.9.0` with a memory store on `from/xab/**`: the
+store alone answers `ready`; a client subscribed to `from/xab/all/**` answers `diagnostic`; a
+client subscribed to `from/xab/**/fedcheck/*` does not count for a `.../persist` key.
 
 ## 3. Outcome and exit status
 
@@ -166,6 +201,8 @@ broken on purpose (`Faults`). `test_acceptance.py` runs the real script against 
 | an edge that logs no ACL decisions | the control FAIL, the denials SKIP |
 | send-only, receive-only, no flow | NOT APPLICABLE rows with reasons and exit 0; exit 1 for no flow |
 | an unwritable evidence directory | exit 2 |
+| a diagnostic subscriber carrying a lane whose store's subscription is refused | delivery PASS, `persistence/` BLOCKED, exit 3; with the pause command, FAIL and exit 1, and the subscriber restarted |
+| a subscriber on other keys; a closed admin space; no store for the lane | PASS; BLOCKED (exit 3); FAIL (exit 1) |
 
 `FED_ACCEPTANCE_WAIT`, `FED_ACCEPTANCE_GAP` and `FED_ACCEPTANCE_RT_TIMEOUT` shorten the waits
 for the test; a real edge needs the defaults.

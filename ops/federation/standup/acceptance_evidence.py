@@ -11,6 +11,7 @@ which did not run is not a pass lives in one place, with tests.
     acceptance_evidence.py finalize <checks.jsonl> --out DIR --agreement A --us U
                                     --them T --run-id ID --started T [--inputs k=0|1 ...]
     acceptance_evidence.py rest-value  < curl output ending in a line with the HTTP status
+    acceptance_evidence.py persistence-scope --key K --router F --subscribers F
 
 `record` appends one check. `finalize` writes DIR/result.json (schema
 goat-federation-acceptance/v1), DIR/summary.md and DIR/history/<run-id>.json, prints
@@ -38,6 +39,7 @@ import datetime
 import hashlib
 import json
 import os
+import re
 import sys
 import tempfile
 
@@ -45,7 +47,7 @@ SCHEMA = "goat-federation-acceptance/v1"
 PASS, FAIL, BLOCKED, SKIP, NA = "PASS", "FAIL", "BLOCKED", "SKIP", "NOT APPLICABLE"
 VERDICTS = (PASS, FAIL, BLOCKED, SKIP, NA)
 DIRECTIONS = ("outbound", "inbound", "both", "local")
-TIERS = ("positive", "negative", "round-trip", "spire", "precondition")
+TIERS = ("positive", "persistence", "negative", "round-trip", "spire", "precondition")
 EXIT = {"PASS": 0, "FAIL": 1, "INCOMPLETE": 3}
 
 
@@ -263,6 +265,99 @@ def rest_value(text):
         return value.encode()
 
 
+def rest_rows(text):
+    """Every row a zenoh REST GET returned, as a list. Raises Unreadable on the same
+    answers rest_value refuses."""
+    body, _, code = text.rstrip("\n").rpartition("\n")
+    code = code.strip()
+    if code != "200":
+        raise Unreadable("HTTP %s" % (code or "<none>") if code != "000" else "no answer (connection failed or timed out)")
+    try:
+        rows = json.loads(body)
+    except ValueError:
+        raise Unreadable("the answer is not JSON: %r" % body[:80])
+    if not isinstance(rows, list) or not all(isinstance(r, dict) and "key" in r for r in rows):
+        raise Unreadable("the answer is not a list of rows: %r" % body[:80])
+    return rows
+
+
+def key_matches(expr, key):
+    """Whether the key expression `expr` matches the single key `key`: `*` is one
+    chunk, `**` any number of chunks including none. Enough for subscriber names."""
+    e, k = expr.split("/"), key.split("/")
+
+    def m(i, j):
+        if i == len(e):
+            return j == len(k)
+        if e[i] == "**":
+            return any(m(i + 1, n) for n in range(j, len(k) + 1))
+        if j >= len(k):
+            return False
+        pat = "^" + ".*".join(re.escape(p) for p in e[i].split("*")) + "$"
+        return re.match(pat, k[j]) is not None and m(i + 1, j + 1)
+
+    return m(0, 0)
+
+
+SUBSCRIBER_KEY = re.compile(r"^@/([^/]+)/router/subscriber/(.+)$")
+
+
+def persistence_scope(key, router_rows, subscriber_rows):
+    """Who on the receiving core would take a sample published on `key`.
+
+    `router_rows` answers `@/*/router`: it is empty when the admin space is closed,
+    and an empty subscriber list would then read as "no storage", so it is checked
+    first. `subscriber_rows` answers `@/*/router/subscriber/<key>`; each row names a
+    subscribed key expression and its sources by zenoh id, in the shape zenoh 1.9
+    prints (`{"clients": [...], "peers": [...], "routers": [...]}`).
+
+    A storage runs inside the router, so its subscriber is sourced from the router's
+    own id. Any other client or peer subscribed to the key is a session someone
+    opened, a diagnostic interest: while it exists, a sample can reach the core
+    because of it, and a store whose own interest is refused would look healthy.
+
+    Returns (outcome, reason, details) with outcome one of
+      ready       a store of the router itself subscribes to the key, nothing else does
+      no-storage  no subscriber of the router itself matches the key
+      diagnostic  a client or peer session also subscribes to it
+      closed      the admin space answered nothing
+    """
+    routers = [r for r in router_rows if re.match(r"^@/[^/]+/router$", str(r.get("key", "")))]
+    if not routers:
+        return ("closed", "the receiving core's admin space answered nothing; it needs adminspace read permission",
+                {"key": key})
+    own = {str(r["key"]).split("/")[1] for r in routers}
+    local, diagnostic, remote = [], [], []
+    for row in subscriber_rows:
+        m = SUBSCRIBER_KEY.match(str(row.get("key", "")))
+        if not m or not key_matches(m.group(2), key):
+            continue
+        zid, expr, src = m.group(1), m.group(2), row.get("value") or {}
+        if not isinstance(src, dict):
+            src = {}
+        sessions = [z for kind in ("clients", "peers") for z in (src.get(kind) or [])]
+        if zid in own and zid in sessions:
+            local.append(expr)
+        for z in sessions:
+            if z not in own:
+                diagnostic.append({"expr": expr, "session": z})
+        for z in src.get("routers") or []:
+            if z not in own:
+                remote.append({"expr": expr, "router": z})
+    details = {"key": key, "store_subscriptions": sorted(set(local)), "diagnostic": diagnostic,
+               "remote_routers": remote}
+    if not local:
+        return ("no-storage", "no store on the receiving core subscribes to %s" % key, details)
+    if diagnostic:
+        return ("diagnostic", "a session other than the core's own stores subscribes to %s: %s" % (
+            key, ", ".join("%s (%s)" % (d["expr"], d["session"]) for d in diagnostic)), details)
+    return ("ready", "only the core's own store (%s) subscribes to %s" % (", ".join(details["store_subscriptions"]), key),
+            details)
+
+
+SCOPE_EXIT = {"ready": 0, "no-storage": 1, "closed": 4, "diagnostic": 5}
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -287,6 +382,10 @@ def main(argv=None):
     f.add_argument("--started", required=True)
     f.add_argument("--inputs", nargs="*", default=[])
     sub.add_parser("rest-value")
+    ps = sub.add_parser("persistence-scope")
+    ps.add_argument("--key", required=True)
+    ps.add_argument("--router", required=True)
+    ps.add_argument("--subscribers", required=True)
     a = ap.parse_args(argv)
     if a.cmd == "rest-value":
         try:
@@ -295,6 +394,17 @@ def main(argv=None):
         except Unreadable as e:
             print(str(e), file=sys.stderr)
             return 4
+    if a.cmd == "persistence-scope":
+        # Prints one JSON line (outcome, reason, details); the exit status is the outcome.
+        try:
+            router = rest_rows(open(a.router).read())
+            subs = rest_rows(open(a.subscribers).read())
+        except (OSError, Unreadable) as e:
+            print(json.dumps({"outcome": "unreadable", "reason": "the receiving core's admin space: %s" % e}))
+            return 4
+        outcome, reason, details = persistence_scope(a.key, router, subs)
+        print(json.dumps({"outcome": outcome, "reason": reason, "details": details}, sort_keys=True))
+        return SCOPE_EXIT[outcome]
     try:
         if a.cmd == "record":
             ch = make_check(a.name, a.direction, a.verdict, a.reason, a.started, title=a.title, tier=a.tier,
