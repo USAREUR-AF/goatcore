@@ -124,6 +124,7 @@
     - name: core | absent | the candidate is the one that was reviewed
       ansible.builtin.assert:
         that:
+          - peering_backout_core_expect | default('') is match('^sha256:[0-9a-f]{64}$')
           - peering_backout_core_expect | default('') == _pbc_plan.candidate_sha256
         fail_msg: >-
           The candidate core configuration is {{ _pbc_plan.candidate_sha256 }}; the reviewed
@@ -153,6 +154,13 @@
           Name the one to restart with peering_backout_core_container or FED_ROUTER_CONTAINER.
           Nothing was installed.
 
+    - name: core | absent | the owner and mode the two files have now
+      ansible.builtin.stat:
+        path: "{{ item }}"
+        get_checksum: false
+      loop: ["{{ _pbc_org }}", "{{ _pbc_live }}"]
+      register: _pbc_modes
+
     - name: core | absent | keep the org fragment as it was, beside it
       ansible.builtin.copy:
         src: "{{ _pbc_org }}"
@@ -164,13 +172,17 @@
       ansible.builtin.copy:
         src: "{{ _pbc_dir }}/plan/org.candidate"
         dest: "{{ _pbc_org }}"
-        mode: preserve
+        owner: "{{ _pbc_modes.results[0].stat.pw_name }}"
+        group: "{{ _pbc_modes.results[0].stat.gr_name }}"
+        mode: "{{ _pbc_modes.results[0].stat.mode }}"
 
     - name: core | absent | the live configuration, assembled from the seed and that fragment
       ansible.builtin.copy:
         src: "{{ _pbc_dir }}/plan/live.candidate"
         dest: "{{ _pbc_live }}"
-        mode: preserve
+        owner: "{{ _pbc_modes.results[1].stat.pw_name }}"
+        group: "{{ _pbc_modes.results[1].stat.gr_name }}"
+        mode: "{{ _pbc_modes.results[1].stat.mode }}"
 
     - name: core | absent | restart the router on it
       ansible.builtin.command:
