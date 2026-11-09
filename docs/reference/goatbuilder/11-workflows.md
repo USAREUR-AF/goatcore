@@ -136,5 +136,22 @@ goatbuilder federate <partner> --env <goatnet> --yes     # stops at phase 5: exc
 goatbuilder federate <partner> --env <goatnet> --from 5 --yes
 ```
 
-Done when phase 11's acceptance shows the edge carries the agreed data,
-refuses everything else, and round-trips.
+Done when phase 14's acceptance shows the edge carries the agreed data,
+refuses everything else, and round-trips. That is the procedure until the
+default switches land.
+
+Status: WIP — gate: the federation end-to-end test drives both sides with goatbuilder federate alone.
+
+After the switches, the one decision is the partner (a peering entry in
+`goatbuilder.yaml`) and the release sets it receives (owned by `federation.toml`,
+which the peering entry may only narrow), and the run is four stages, each also
+runnable alone:
+
+```bash
+goatbuilder federate plan <partner>      # validate and explain; asks for the key read-back
+goatbuilder federate deploy <partner>    # carries out the approved plan
+goatbuilder federate test <partner>      # bilateral acceptance session; bundles exchanged by file
+goatbuilder federate status <partner>    # health and the last evidence, with its age
+```
+
+See [the runbook, step 1](../../operations/sovereign-federation-runbook.md#step-1--run-goatbuilder-federate-partner).

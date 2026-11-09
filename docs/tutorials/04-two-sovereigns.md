@@ -58,6 +58,16 @@ peering also needs a counterparty, and the validated FIPS backend where your acc
 | 13 | task | Federate the two SPIRE trust domains |
 | 14 | gate | Acceptance: carries, refuses, round-trips, read from the receiving side |
 
+Status: WIP — gate: the federation end-to-end test drives both sides with goatbuilder federate alone.
+
+The same fourteen phases are becoming the stages of one command: phases 1 to 9
+are `goatbuilder federate plan`, 10 to 13 `deploy`, 14 `test`, and `status`
+reports where a peering stands. The verbs in rows 3 to 9 move to
+`goatbuilder federate <verb>`, with the same flags and exit codes. The
+[runbook's step 1](../operations/sovereign-federation-runbook.md#step-1--run-goatbuilder-federate-partner)
+teaches the stages. Until each stage's default switch lands, the table above
+and the runs below are the procedure.
+
 ## Run it in containers
 
 On a Linux machine with Docker and the `wireguard` module, with `goat` and
