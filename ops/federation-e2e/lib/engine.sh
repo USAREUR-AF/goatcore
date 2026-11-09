@@ -2,42 +2,62 @@
 # engine.sh — the federation e2e's images, names and functions, sourced by run.sh.
 # Moved unchanged from run.sh; run.sh's header says what the run proves.
 # It reads the globals run.sh sets: HERE, REPO, WORK, RECORD, GOAT, GB, KEEP, ONLY.
+#
+# What it creates is named from the variables below, so that several runs share one Docker
+# daemon without touching each other's containers or networks. Set them before sourcing:
+#   SRC              the goatcore tree under test: its scripts, roles, driver, and the clone
+#                    each sovereign gets (default REPO, the harness's own checkout)
+#   FE2E_PARTIES     up to four sovereign ids, in order A B C D (default: ${A} ${B} ${C})
+#   FE2E_HOST_PREFIX container hosts are <prefix>-<sovereign>-core|edge (default fed)
+#   FE2E_NET_PREFIX  networks <prefix>-<sovereign>, <prefix>-boundary, and the directory's
+#                    containers <prefix>-directory[-tls] (default fed-e2e)
+#   FE2E_NET_BASE    the first two octets of the run's /24s (default 10.77)
+#   FE2E_LAB         the value of label org.goat.fe2e.lab on all of it (default fed-e2e)
+#   FE2E_HOST_IMAGE, FE2E_RP_TAG   the host image and the republisher's local tag
+SRC="${SRC:-$REPO}"
+read -r A B C D <<<"${FE2E_PARTIES:-pasture meadow paddock}"
+PARTIES="$A $B ${C:-} ${D:-}"
+HP="${FE2E_HOST_PREFIX:-fed}"; NP="${FE2E_NET_PREFIX:-fed-e2e}"; NB="${FE2E_NET_BASE:-10.77}"
+LAB="${FE2E_LAB:-fed-e2e}"
+LABEL=(--label "org.goat.fe2e.lab=$LAB")
+export SRC A B C D PARTIES HP NP NB LAB
 # The fleet image, by digest, and the SPIRE release the fleet pins: the `spire`
 # component's value of record in ops/pins/fleet-pins.yaml, which every checkout carries
 # (a public one declares no goatnet there, but keeps every component). Both pull
 # anonymously.
 ZENOH_IMAGE="ghcr.io/usareur-af/zenoh-pqc@sha256:372de39d2e8b64fe7157194173f1b7ac6eac2700ff04c49cce2ce3c284a6fdb2"
-SPIRE_IMAGE="$(python3 -c 'import sys, yaml; print(((yaml.safe_load(open(sys.argv[1])).get("components") or {}).get("spire") or {}).get("fleet") or "")' "$REPO/ops/pins/fleet-pins.yaml" 2>/dev/null || true)"
+SPIRE_IMAGE="$(python3 -c 'import sys, yaml; print(((yaml.safe_load(open(sys.argv[1])).get("components") or {}).get("spire") or {}).get("fleet") or "")' "$SRC/ops/pins/fleet-pins.yaml" 2>/dev/null || true)"
 [[ "$SPIRE_IMAGE" =~ ^ghcr\.io/spiffe/spire-server:[^@[:space:]]+@sha256:[0-9a-f]{64}$ ]] || { echo "run.sh: ops/pins/fleet-pins.yaml declares no digest-pinned SPIRE image (components.spire.fleet)" >&2; exit 2; }
-HOST_IMAGE=fed-e2e-host
+HOST_IMAGE="${FE2E_HOST_IMAGE:-fed-e2e-host}"
 # The peering directory both edges reach, and the TLS front that issues its certificate
 # from a local CA: saltlick refuses a pointer whose package_url is not https.
 SALTLICK_IMAGE="ghcr.io/usareur-af/saltlick@sha256:6ec46ca98819e1523f30e85de8210db33f71040f1214171366e459f79bab7971"
 DIRECTORY_TLS_IMAGE="caddy@sha256:c3d7ee5d2b11f9dc54f947f68a734c84e9c9666c92c88a7f30b9cba5da182adb"
-DIRECTORY_IP=10.77.3.40
+DIRECTORY_IP="$NB.3.40"; export DIRECTORY_IP
 # The republisher, built from this checkout and loaded into each core host's dockerd.
 # The role takes its content-addressed id (`sha256:<64 hex>`), as immutable as a
 # registry digest, until the published image is pinned in ops/pins/fleet-pins.yaml.
-RP_TAG=fed-e2e-republisher
+RP_TAG="${FE2E_RP_TAG:-fed-e2e-republisher}"
 RP_IMAGE=""
-ACL_ASSEMBLE="$REPO/ops/ansible/roles/goat-zenoh/files/acl-assemble.py"
+ACL_ASSEMBLE="$SRC/ops/ansible/roles/goat-zenoh/files/acl-assemble.py"
 REC="$REPO/ops/e2e/rec.py"
 FAILS=0
 rec() { python3 "$REC" "$@" || FAILS=$((FAILS + 1)); }
 say() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
 die() { echo "run.sh: $*" >&2; exit 1; }
-other() { [ "$1" = pasture ] && echo meadow || echo pasture; }
-octet() { case "$1" in pasture) echo 1 ;; meadow) echo 2 ;; paddock) echo 4 ;; esac; }
-core_ip() { echo "10.77.$(octet "$1").10"; }
-edge_ip() { echo "10.77.$(octet "$1").20"; }
-boundary_ip() { case "$1" in pasture) echo 10.77.3.11 ;; meadow) echo 10.77.3.12 ;; paddock) echo 10.77.3.13 ;; esac; }
+other() { [ "$1" = "$A" ] && echo "$B" || echo "$A"; }
+octet() { case "$1" in "$A") echo 1 ;; "$B") echo 2 ;; "$C") echo 4 ;; "$D") echo 5 ;; esac; }
+core_ip() { echo "$NB.$(octet "$1").10"; }
+edge_ip() { echo "$NB.$(octet "$1").20"; }
+boundary_ip() { case "$1" in "$A") echo "$NB.3.11" ;; "$B") echo "$NB.3.12" ;; "$C") echo "$NB.3.13" ;; "$D") echo "$NB.3.14" ;; esac; }
 td() { echo "$1.fed.test"; }
 
 # EVERY PER-PEERING VALUE IS A FUNCTION OF THE PAIR. A party's partners, in order, are
 # P_<party>; its first peering keeps every role default, and each later one gets the
 # values two peerings cannot share on one edge host and one core host.
-P_pasture=""; P_meadow=""; P_paddock=""; NODIR=""
-partners() { local v="P_$1"; echo "${!v}"; }
+partners() { local v="P_$1"; echo "${!v:-}"; }
+set_partners() { printf -v "P_$1" '%s' "$2"; export "P_$1"; } # $1 party, $2 its partners in order
+for _p in $PARTIES; do set_partners "$_p" ""; done; NODIR=""
 pidx() { # $1 us, $2 them: the position of the peering among ours
   local i=0 t
   for t in $(partners "$1"); do [ "$t" = "$2" ] && { echo "$i"; return 0; }; i=$((i + 1)); done
@@ -50,20 +70,22 @@ rp_metrics() { echo $((9310 + $(pidx "$1" "$2"))); }
 probe_port() { echo $(($3 + 10 * $(pidx "$1" "$2"))); } # $3 the base: 8101 agreed, 8102 forged, 8103 impersonate
 ctx_of() { [ "$(pidx "$1" "$2")" = 0 ] && echo default || echo "$2"; }
 pair_subnet() {
-  case "$(printf '%s\n' "$1" "$2" | sort | tr '\n' ' ')" in
-    "meadow pasture ") echo 169.254.77.0/31 ;;
-    "paddock pasture ") echo 169.254.78.0/31 ;;
-    *) echo 169.254.79.0/31 ;;
+  # One /31 per pair, the same from either side.
+  local i j t
+  i="$(octet "$1")"; j="$(octet "$2")"; [ "$i" -gt "$j" ] && { t="$i"; i="$j"; j="$t"; }
+  case "$i:$j" in
+    1:2) echo 169.254.77.0/31 ;; 1:4) echo 169.254.78.0/31 ;; 2:4) echo 169.254.79.0/31 ;;
+    1:5) echo 169.254.80.0/31 ;; 2:5) echo 169.254.81.0/31 ;; *) echo 169.254.82.0/31 ;;
   esac
 }
 nodir() { case " $NODIR " in *" $1:$2 "*) return 0 ;; *) return 1 ;; esac; }
 partner_list() { # the parties in this scenario
-  local s; for s in pasture meadow paddock; do [ -n "$(partners "$s")" ] && echo "$s"; done; return 0
+  local s; for s in $PARTIES; do [ -n "$(partners "$s")" ] && echo "$s"; done; return 0
 }
 
-NETS=(fed-e2e-pasture fed-e2e-meadow fed-e2e-paddock fed-e2e-boundary)
-HOSTS=(fed-pasture-core fed-pasture-edge fed-meadow-core fed-meadow-edge fed-paddock-core fed-paddock-edge)
-DIRECTORY=(fed-e2e-directory fed-e2e-directory-tls)
+NETS=("$NP-boundary"); HOSTS=()
+for _p in $PARTIES; do NETS+=("$NP-$_p"); HOSTS+=("$HP-$_p-core" "$HP-$_p-edge"); done
+DIRECTORY=("$NP-directory" "$NP-directory-tls")
 teardown() {
   local net
   docker rm -f -v "${HOSTS[@]}" "${DIRECTORY[@]}" >/dev/null 2>&1 || true
@@ -114,7 +136,7 @@ gen_sovereign() { # $1 sovereign: its CA, its signing key, its operator's identi
   ssh-keygen -q -t ed25519 -N '' -f "$d/keys/id_ed25519" -C "fed-e2e-$s"
   chmod 0644 "$d/keys/"*.pem "$d/keys/signing.key" "$d/keys/id_ed25519"
   # Its own repository, as two organisations would hold.
-  git clone -q --depth 1 --single-branch "file://$REPO" "$d/clone"
+  git clone -q --depth 1 --single-branch "file://$SRC" "$d/clone"
   git -C "$d/clone" checkout -q -B main
   git -C "$d/clone" config user.name "$s operator"; git -C "$d/clone" config user.email "ops@$s.test"
   local also=() first; first="$(partners "$s" | awk '{print $1}')"
@@ -122,7 +144,8 @@ gen_sovereign() { # $1 sovereign: its CA, its signing key, its operator's identi
     [ "$t" = "$first" ] && continue
     also+=(--also "$t:$(iface "$s" "$t"):$(wgport "$s" "$t"):$(spire_out "$s" "$t"):$(rp_metrics "$s" "$t")")
   done
-  python3 "$HERE/overlay.py" "$d/clone" "$s" "$first" "$(octet "$s")" "$ZENOH_IMAGE" --republisher-image "$RP_IMAGE" "${also[@]}"
+  python3 "$HERE/overlay.py" "$d/clone" "$s" "$first" "$(octet "$s")" "$ZENOH_IMAGE" --republisher-image "$RP_IMAGE" \
+    --core-addr "$(core_ip "$s")" --spire-listen "$(edge_ip "$s")" ${also[@]+"${also[@]}"}
   git -C "$d/clone" add -A
   git -C "$d/clone" commit -q -m "$s: this sovereign's declarations for the peering"
   git clone -q --bare "$d/clone" "$d/origin.git"
@@ -133,8 +156,8 @@ gen_sovereign() { # $1 sovereign: its CA, its signing key, its operator's identi
 
 start_host() { # $1 name, $2 sovereign, $3 internal ip
   local n="$1" s="$2" ip="$3"
-  docker run -d --name "$n" --hostname "$n" --privileged --cgroupns=private \
-    --network "fed-e2e-$s" --ip "$ip" \
+  docker run -d --name "$n" --hostname "$n" "${LABEL[@]}" --privileged --cgroupns=private \
+    --network "$NP-$s" --ip "$ip" \
     --tmpfs /run --tmpfs /run/lock -v /var/lib/docker -v /lib/modules:/lib/modules:ro \
     -v "$WORK/$s/keys:/etc/fed-e2e:ro" -v "$WORK/$s/origin.git:/srv/goat.git:ro" \
     -v "$GOAT:/usr/local/bin/goat:ro" -v "$GB:/usr/local/bin/goatbuilder:ro" \
@@ -152,7 +175,7 @@ wait_ready() { # $1 host: systemd up, dockerd answering
 }
 
 start_core() { # $1 sovereign: seed config, bootstrap cert, the router and the SPIRE server
-  local s="$1" h="fed-$1-core" them extra; them="$(partners "$s" | awk '{print $1}')"
+  local s="$1" h="$HP-$1-core" them extra; them="$(partners "$s" | awk '{print $1}')"
   sed "s/__THEM__/$them/g; s/__US__/$s/g; s/__CORE_LISTEN__/0.0.0.0/; s/__CORE_REST__/0.0.0.0/" "$HERE/core-seed.json5" > "$WORK/$s/core-seed.json5"
   # A later partner's landing and not-granted prefixes are held the same way.
   read -r -a extra <<< "$(partners "$s" | cut -s -d' ' -f2-)"
@@ -179,7 +202,7 @@ PY
     -e RUST_LOG=zenoh=info,zenoh::net::routing::interceptor::access_control=trace \
     -p 7447:7447 -p 8000:8000 -v /etc/goat-core:/etc/goat-core:ro \
     "$ZENOH_IMAGE" -c /etc/goat-core/config.json5 >/dev/null
-  python3 "$HERE/render-spire.py" "$REPO/ops/ansible/roles/spire/templates/server.conf.j2" "$(td "$s")" "$WORK/$s/server.conf"
+  python3 "$HERE/render-spire.py" "$SRC/ops/ansible/roles/spire/templates/server.conf.j2" "$(td "$s")" "$WORK/$s/server.conf"
   host_exec "$h" sh -c 'install -d -m 0755 /opt/spire/config; install -d -o 1000 -g 1000 -m 0750 /opt/spire/data /opt/spire/data/server'
   docker cp -q "$WORK/$s/server.conf" "$h:/opt/spire/config/server.conf"
   host_exec "$h" docker run -d --name spire-server --restart unless-stopped \
@@ -196,7 +219,7 @@ PY
 prepare_edge() { # $1 sovereign, $2 them, $3 "true" when this side listens
   # Each peering's declaration lives in its own goat context: the first in `default`,
   # a later one in a context named for the partner, selected with GOAT_CONTEXT.
-  local s="$1" them="$2" listener="$3" h="fed-$1-edge" p
+  local s="$1" them="$2" listener="$3" h="$HP-$1-edge" p
   host_exec "$h" sh -c "[ -d /opt/goat/.git ] || git clone -q /srv/goat.git /opt/goat"
   host_exec "$h" sh -c "git -C /opt/goat config user.name '$s operator'; git -C /opt/goat config user.email 'ops@$s.test'"
   p="/root/.goat/contexts/$(ctx_of "$s" "$them")"
@@ -231,7 +254,7 @@ TOML
 # only thing specific to a hermetic host is GOAT_AWS_MODE=none, the mode ADR 1204
 # declares for a deploy needing no cloud credential.
 drive() { # $1 sovereign, $2 them, $3 avenue, $4 from, $5 to
-  local s="$1" them="$2" avenue="$3" from="$4" to="$5" h="fed-$1-edge"
+  local s="$1" them="$2" avenue="$3" from="$4" to="$5" h="$HP-$1-edge"
   local env=(
     -e "GOAT_CONTEXT=$(ctx_of "$s" "$them")"
     -e "FED_WORK=/var/lib/goat-federation/$them"
@@ -247,7 +270,7 @@ drive() { # $1 sovereign, $2 them, $3 avenue, $4 from, $5 to
   # A party has one entry in the directory. A peering added beside one composed through
   # it exchanges its packages by hand, so the entry the first partner composed against
   # stays the one it names.
-  if nodir "$s" "$them"; then env+=(-e FED_NO_DIRECTORY=1); else env+=(-e FED_DIRECTORY_URL=https://10.77.3.40:8443); fi
+  if nodir "$s" "$them"; then env+=(-e FED_NO_DIRECTORY=1); else env+=(-e "FED_DIRECTORY_URL=https://$DIRECTORY_IP:8443"); fi
   case "$avenue" in
     goatbuilder) docker exec "${env[@]}" -w /opt/goat "$h" goatbuilder -C /opt/goat --yes federate "$them" --as "$s" --from "$from" --to "$to" ;;
     script)      docker exec "${env[@]}" -w /opt/goat "$h" ops/scripts/peering-standup.sh "$them" --as "$s" --from "$from" --to "$to" ;;
@@ -259,20 +282,20 @@ drive() { # $1 sovereign, $2 them, $3 avenue, $4 from, $5 to
 # front in its network namespace issuing a certificate for its address from a local CA.
 # Each edge trusts that CA through SSL_CERT_FILE.
 start_directory() {
-  docker run -d --name fed-e2e-directory --network fed-e2e-boundary --ip "$DIRECTORY_IP" \
+  docker run -d --name "$NP-directory" "${LABEL[@]}" --network "$NP-boundary" --ip "$DIRECTORY_IP" \
     -e SALTLICK_WRITE_LIMIT=0 -e SALTLICK_READ_LIMIT=0 "$SALTLICK_IMAGE" >/dev/null
-  docker run -d --name fed-e2e-directory-tls --network container:fed-e2e-directory "$DIRECTORY_TLS_IMAGE" \
+  docker run -d --name "$NP-directory-tls" "${LABEL[@]}" --network "container:$NP-directory" "$DIRECTORY_TLS_IMAGE" \
     caddy reverse-proxy --from "https://$DIRECTORY_IP:8443" --to 127.0.0.1:8080 >/dev/null
   local s
   for _ in $(seq 1 30); do
-    if docker cp -q fed-e2e-directory-tls:/data/caddy/pki/authorities/local/root.crt "$WORK/directory-ca.pem" 2>/dev/null; then
+    if docker cp -q "$NP-directory-tls":/data/caddy/pki/authorities/local/root.crt "$WORK/directory-ca.pem" 2>/dev/null; then
       # /etc/fed-e2e on each edge is its keys folder, mounted read-only.
       for s in $(partner_list); do install -m 0644 "$WORK/directory-ca.pem" "$WORK/$s/keys/directory-ca.pem"; done
-      docker exec fed-pasture-edge curl -fsS --cacert /etc/fed-e2e/directory-ca.pem "https://$DIRECTORY_IP:8443/healthz" >/dev/null 2>&1 && return 0
+      docker exec $HP-${A}-edge curl -fsS --cacert /etc/fed-e2e/directory-ca.pem "https://$DIRECTORY_IP:8443/healthz" >/dev/null 2>&1 && return 0
     fi
     sleep 1
   done
-  die "the peering directory did not answer over TLS at https://$DIRECTORY_IP:8443: $(docker logs fed-e2e-directory 2>&1 | tail -2)"
+  die "the peering directory did not answer over TLS at https://$DIRECTORY_IP:8443: $(docker logs "$NP-directory" 2>&1 | tail -2)"
 }
 
 # Phase 5 goes through the directory. The side that ran it first finds the other's entry
@@ -286,21 +309,21 @@ exchange() { # $1 the side that ran phase 5 first, $2 the other side, $3 avenue,
     # their package against the key read back on the call.
     for s in "$first" "$second"; do
       them="$([ "$s" = "$first" ] && echo "$second" || echo "$first")"
-      docker cp -q "fed-$s-edge:/var/lib/goat-federation/$them/ours.canonical.json" "$WORK/$s/handover-$them.json"
-      docker cp -q "$WORK/$s/handover-$them.json" "fed-$them-edge:/var/lib/goat-federation/$s/theirs.canonical.json"
-      docker cp -q "$WORK/$s/keys/ca.pem" "fed-$them-edge:/var/lib/goat-federation/$s/theirs-ca.pem"
-      docker cp -q "fed-$s-edge:/var/lib/goat-federation/$them/ours.spiffe-bundle" "$WORK/$s/handover-$them.bundle"
-      docker cp -q "$WORK/$s/handover-$them.bundle" "fed-$them-edge:/var/lib/goat-federation/$s/theirs.spiffe-bundle"
+      docker cp -q "$HP-$s-edge:/var/lib/goat-federation/$them/ours.canonical.json" "$WORK/$s/handover-$them.json"
+      docker cp -q "$WORK/$s/handover-$them.json" "$HP-$them-edge:/var/lib/goat-federation/$s/theirs.canonical.json"
+      docker cp -q "$WORK/$s/keys/ca.pem" "$HP-$them-edge:/var/lib/goat-federation/$s/theirs-ca.pem"
+      docker cp -q "$HP-$s-edge:/var/lib/goat-federation/$them/ours.spiffe-bundle" "$WORK/$s/handover-$them.bundle"
+      docker cp -q "$WORK/$s/handover-$them.bundle" "$HP-$them-edge:/var/lib/goat-federation/$s/theirs.spiffe-bundle"
     done
   else
     rec "s$n-$first-$second-phase-5-again" --expect-in "Directory step" -- bash -c "drive '$first' '$second' '$avenue' 5 5"
   fi
   for s in "$first" "$second"; do
     them="$([ "$s" = "$first" ] && echo "$second" || echo "$first")"; w="/var/lib/goat-federation/$them"
-    rec "s$n-$s-$them-their-files-are-in-place" -- docker exec "fed-$s-edge" sh -c \
+    rec "s$n-$s-$them-their-files-are-in-place" -- docker exec "$HP-$s-edge" sh -c \
       "test -s $w/theirs.canonical.json && test -s $w/theirs-ca.pem && test -s $w/theirs.spiffe-bundle"
     printf '%s=%s\n%s=%s\n' "$s" "$(cat "$WORK/$s/keys/signing.pub")" "$them" "$(cat "$WORK/$them/keys/signing.pub")" > "$WORK/$s/keys.txt"
-    docker cp -q "$WORK/$s/keys.txt" "fed-$s-edge:/var/lib/goat-federation/$them/keys.txt"
+    docker cp -q "$WORK/$s/keys.txt" "$HP-$s-edge:/var/lib/goat-federation/$them/keys.txt"
   done
 }
 
@@ -310,31 +333,31 @@ exchange() { # $1 the side that ran phase 5 first, $2 the other side, $3 avenue,
 review_and_admit() { # $1 sovereign, $2 the peering being admitted
   local s="$1" them="$2" w d t; w="/var/lib/goat-federation/$them"; d="$WORK/$s/applied-$them"
   rm -rf "$d"; mkdir -p "$d"
-  docker cp -q "fed-$s-edge:$w/agreement.json" "$WORK/$s/agreement-$them.json"
-  docker cp -q "fed-$s-edge:$w/theirs-ca.pem" "$d/theirs-ca.pem"
+  docker cp -q "$HP-$s-edge:$w/agreement.json" "$WORK/$s/agreement-$them.json"
+  docker cp -q "$HP-$s-edge:$w/theirs-ca.pem" "$d/theirs-ca.pem"
   local want got
   want="$(python3 -c 'import json,sys; ag=json.load(open(sys.argv[1])); print([p["ca_fingerprint"] for p in ag["parties"] if p["sovereign_id"]==sys.argv[2]][0])' "$WORK/$s/agreement-$them.json" "$them")"
   got="sha256:$(openssl x509 -in "$d/theirs-ca.pem" -outform DER | sha256sum | cut -d' ' -f1)"
   [ "$want" = "$got" ] || die "$s: $them's CA does not match the agreement: $got, agreed $want"
-  host_exec "fed-$s-edge" install -m 0644 "$w/theirs-ca.pem" "$w/pki/partner-ca.pem"
+  host_exec "$HP-$s-edge" install -m 0644 "$w/theirs-ca.pem" "$w/pki/partner-ca.pem"
   # The core admits every peering admitted so far: one fragment per partner, reviewed
   # here, joined region by region (acl-assemble.py reads a repeated region header as
   # more of the same region).
   : > "$d/fragment.json5"
   for t in $(partners "$s"); do
-    if docker exec "fed-$s-edge" test -s "/var/lib/goat-federation/$t/applied/ops/federation/acl/$t-fragment.json5"; then
-      docker cp -q "fed-$s-edge:/var/lib/goat-federation/$t/applied/ops/federation/acl/$t-fragment.json5" "$d/fragment-$t.json5"
+    if docker exec "$HP-$s-edge" test -s "/var/lib/goat-federation/$t/applied/ops/federation/acl/$t-fragment.json5"; then
+      docker cp -q "$HP-$s-edge:/var/lib/goat-federation/$t/applied/ops/federation/acl/$t-fragment.json5" "$d/fragment-$t.json5"
       cat "$d/fragment-$t.json5" >> "$d/fragment.json5"
     fi
   done
   python3 "$ACL_ASSEMBLE" assemble --seed "$WORK/$s/core-seed.json5" --org "$d/fragment.json5" --out "$d/core.json5"
-  docker cp -q "$d/core.json5" "fed-$s-core:/etc/goat-core/config.json5"
-  docker cp -q "fed-$s-edge:$w/pki/core.pem" "$d/core.pem"
-  docker cp -q "fed-$s-edge:$w/pki/core-key.pem" "$d/core-key.pem"
+  docker cp -q "$d/core.json5" "$HP-$s-core:/etc/goat-core/config.json5"
+  docker cp -q "$HP-$s-edge:$w/pki/core.pem" "$d/core.pem"
+  docker cp -q "$HP-$s-edge:$w/pki/core-key.pem" "$d/core-key.pem"
   chmod 0644 "$d/core-key.pem"
-  docker cp -q "$d/core.pem" "fed-$s-core:/etc/goat-core/core.pem"
-  docker cp -q "$d/core-key.pem" "fed-$s-core:/etc/goat-core/core-key.pem"
-  host_exec "fed-$s-core" docker restart "$s-zenoh-router" >/dev/null
+  docker cp -q "$d/core.pem" "$HP-$s-core:/etc/goat-core/core.pem"
+  docker cp -q "$d/core-key.pem" "$HP-$s-core:/etc/goat-core/core-key.pem"
+  host_exec "$HP-$s-core" docker restart "$s-zenoh-router" >/dev/null
 }
 
 # A fixed id, because a peer matching no ACL subject is logged by its id alone.
@@ -347,17 +370,17 @@ start_probe() { # $1 sovereign, $2 them, $3 name, $4 cert, $5 key, $6 rest port
   w="/var/lib/goat-federation/$them"; dir="/etc/fed-probe-$them-$name"
   far_ip="$(python3 -c 'import json,sys,ipaddress as i; ag=json.load(open(sys.argv[1])); h=list(i.ip_network(ag["transport"]["link_subnet"])); ps=[p["sovereign_id"] for p in ag["parties"]]; print(h[ps.index(sys.argv[2])])' "$WORK/$s/agreement-$them.json" "$them")"
   sed "s/__FAR_LINK_IP__/$far_ip/; s/__REST_ADDR__/0.0.0.0/; s/__REST_PORT__/$port/; s/__ZID__/$(probe_zid "$s-$them" "$name")/" "$HERE/probe.json5" > "$WORK/$s/probe-$them-$name.json5"
-  host_exec "fed-$s-edge" install -d -m 0755 "$dir"
-  docker cp -q "$WORK/$s/probe-$them-$name.json5" "fed-$s-edge:$dir/config.json5"
-  host_exec "fed-$s-edge" sh -c "install -m 0644 '$w/pki/partner-ca.pem' '$dir/far-ca.pem'; install -m 0644 '$cert' '$dir/cert.pem'; install -m 0644 '$key' '$dir/key.pem'"
-  host_exec "fed-$s-edge" docker rm -f "fed-probe-$them-$name" >/dev/null 2>&1 || true
-  host_exec "fed-$s-edge" docker run -d --name "fed-probe-$them-$name" --network host --restart on-failure -v "$dir:/probe:ro" \
+  host_exec "$HP-$s-edge" install -d -m 0755 "$dir"
+  docker cp -q "$WORK/$s/probe-$them-$name.json5" "$HP-$s-edge:$dir/config.json5"
+  host_exec "$HP-$s-edge" sh -c "install -m 0644 '$w/pki/partner-ca.pem' '$dir/far-ca.pem'; install -m 0644 '$cert' '$dir/cert.pem'; install -m 0644 '$key' '$dir/key.pem'"
+  host_exec "$HP-$s-edge" docker rm -f "fed-probe-$them-$name" >/dev/null 2>&1 || true
+  host_exec "$HP-$s-edge" docker run -d --name "fed-probe-$them-$name" --network host --restart on-failure -v "$dir:/probe:ro" \
     -e RUST_LOG=zenoh=info "$ZENOH_IMAGE" -c /probe/config.json5 >/dev/null
   for _ in $(seq 1 30); do
     curl -s -m 2 -o /dev/null "http://$(edge_ip "$s"):$port/@/**" && return 0
     sleep 2
   done
-  host_exec "fed-$s-edge" docker logs "fed-probe-$them-$name" 2>&1 | tail -20 || true
+  host_exec "$HP-$s-edge" docker logs "fed-probe-$them-$name" 2>&1 | tail -20 || true
   die "probe $name toward $them did not come up on $s"
 }
 
@@ -369,12 +392,12 @@ accept_as() { # $1 sovereign, $2 them, $3 avenue
   local env=(
     "FED_WORK=$w" "GOAT_AWS_MODE=none" "FED_ACCEPTANCE_STRICT=1"
     "FED_OURS_REST=http://$(core_ip "$s"):8000" "FED_THEIRS_REST=http://$(core_ip "$them"):8000"
-    "FED_EDGE_LOG_OURS=docker exec fed-$s-edge docker logs goat-zenoh-edge-$them"
+    "FED_EDGE_LOG_OURS=docker exec $HP-$s-edge docker logs goat-zenoh-edge-$them"
     "FED_PROBE_THEIRS_REST=http://$(edge_ip "$them"):$(probe_port "$them" "$s" 8101)"
     "FED_PROBE_FORGED_REST=http://$(edge_ip "$them"):$(probe_port "$them" "$s" 8102)" "FED_PROBE_FORGED_ZID=$(probe_zid "$them-$s" forged)"
     "FED_PROBE_IMPERSONATE_REST=http://$(edge_ip "$them"):$(probe_port "$them" "$s" 8103)" "FED_PROBE_IMPERSONATE_ZID=$(probe_zid "$them-$s" impersonate)"
-    "FED_SPIRE_OURS=docker exec fed-$s-core docker exec spire-server /opt/spire/bin/spire-server"
-    "FED_SPIRE_THEIRS=docker exec fed-$them-core docker exec spire-server /opt/spire/bin/spire-server"
+    "FED_SPIRE_OURS=docker exec $HP-$s-core docker exec spire-server /opt/spire/bin/spire-server"
+    "FED_SPIRE_THEIRS=docker exec $HP-$them-core docker exec spire-server /opt/spire/bin/spire-server"
   )
   case "$avenue" in
     goatbuilder) env "${env[@]}" "$GB" -C "$WORK/$s/clone" --yes federate "$them" --as "$s" --work "$w" --from 14 --to 14 ;;
@@ -386,37 +409,36 @@ accept_as() { # $1 sovereign, $2 them, $3 avenue
 export_helpers() {
   export -f drive host_exec other octet core_ip edge_ip boundary_ip die partners pidx iface wgport \
     spire_out rp_metrics probe_port ctx_of pair_subnet nodir partner_list accept_as probe_zid td round_trip round_trip_eventually
-  export P_pasture P_meadow P_paddock NODIR WORK GB REPO HERE
+  for _p in $PARTIES; do export "P_$_p"; done
+  export NODIR WORK GB REPO HERE SRC RECORD DIRECTORY_IP
 }
 
 # The hosts of every party in this scenario, the directory, and the isolation checks.
 setup_hosts() { # $1 scenario number
   local n="$1" s a b
   teardown
-  docker network create --subnet 10.77.1.0/24 fed-e2e-pasture >/dev/null
-  docker network create --subnet 10.77.2.0/24 fed-e2e-meadow >/dev/null
-  docker network create --subnet 10.77.4.0/24 fed-e2e-paddock >/dev/null
-  docker network create --internal --subnet 10.77.3.0/24 fed-e2e-boundary >/dev/null
+  for s in $(partner_list); do docker network create "${LABEL[@]}" --subnet "$NB.$(octet "$s").0/24" "$NP-$s" >/dev/null; done
+  docker network create "${LABEL[@]}" --internal --subnet "$NB.3.0/24" "$NP-boundary" >/dev/null
   for s in $(partner_list); do gen_sovereign "$s"; done
   for s in $(partner_list); do
-    start_host "fed-$s-core" "$s" "$(core_ip "$s")"
-    start_host "fed-$s-edge" "$s" "$(edge_ip "$s")"
-    docker network connect --ip "$(boundary_ip "$s")" fed-e2e-boundary "fed-$s-edge"
+    start_host "$HP-$s-core" "$s" "$(core_ip "$s")"
+    start_host "$HP-$s-edge" "$s" "$(edge_ip "$s")"
+    docker network connect --ip "$(boundary_ip "$s")" "$NP-boundary" "$HP-$s-edge"
   done
-  for s in $(partner_list); do wait_ready "fed-$s-core"; wait_ready "fed-$s-edge"; done
+  for s in $(partner_list); do wait_ready "$HP-$s-core"; wait_ready "$HP-$s-edge"; done
   for s in $(partner_list); do start_core "$s"; done
-  for s in $(partner_list); do docker save "$RP_TAG" | docker exec -i "fed-$s-core" docker load -q >/dev/null; done
-  for s in $(partner_list); do host_exec "fed-$s-edge" sh -c "[ -d /opt/goat/.git ] || git clone -q /srv/goat.git /opt/goat"; done
+  for s in $(partner_list); do docker save "$RP_TAG" | docker exec -i "$HP-$s-core" docker load -q >/dev/null; done
+  for s in $(partner_list); do host_exec "$HP-$s-edge" sh -c "[ -d /opt/goat/.git ] || git clone -q /srv/goat.git /opt/goat"; done
   start_directory
 
   say "scenario $n: the isolation the rest of the run depends on"
   for a in $(partner_list); do
     for b in $(partner_list); do
       [ "$a" = "$b" ] && continue
-      rec "s$n-$a-core-cannot-reach-$b-boundary" --expect-exit 1 -- docker exec "fed-$a-core" ping -c1 -W2 "$(boundary_ip "$b")"
-      rec "s$n-$a-core-cannot-reach-$b-core" --expect-exit 1 -- docker exec "fed-$a-core" ping -c1 -W2 "$(core_ip "$b")"
-      rec "s$n-$a-edge-cannot-reach-$b-core" --expect-exit 1 -- docker exec "fed-$a-edge" ping -c1 -W2 "$(core_ip "$b")"
-      rec "s$n-$a-edge-shares-the-boundary-with-$b" -- docker exec "fed-$a-edge" ping -c1 -W2 "$(boundary_ip "$b")"
+      rec "s$n-$a-core-cannot-reach-$b-boundary" --expect-exit 1 -- docker exec "$HP-$a-core" ping -c1 -W2 "$(boundary_ip "$b")"
+      rec "s$n-$a-core-cannot-reach-$b-core" --expect-exit 1 -- docker exec "$HP-$a-core" ping -c1 -W2 "$(core_ip "$b")"
+      rec "s$n-$a-edge-cannot-reach-$b-core" --expect-exit 1 -- docker exec "$HP-$a-edge" ping -c1 -W2 "$(core_ip "$b")"
+      rec "s$n-$a-edge-shares-the-boundary-with-$b" -- docker exec "$HP-$a-edge" ping -c1 -W2 "$(boundary_ip "$b")"
     done
   done
 }
@@ -443,8 +465,8 @@ peer_up() {
     rec "s$n-$s-$them-phases-6-to-10" --expect-in "review what apply rendered" -- bash -c "drive '$s' '$them' '$avenue' 6 10"
   done
   rec "s$n-$first-$second-both-sides-hold-one-agreement" -- bash -c \
-    "a=\$(docker exec fed-$first-edge sha256sum /var/lib/goat-federation/$second/agreement.json | cut -d' ' -f1); b=\$(docker exec fed-$second-edge sha256sum /var/lib/goat-federation/$first/agreement.json | cut -d' ' -f1); echo \"\$a \$b\"; [ -n \"\$a\" ] && [ \"\$a\" = \"\$b\" ]"
-  rec "s$n-$first-$second-the-agreement-selected-wireguard" --expect-in '"kind":"wireguard"' -- docker exec "fed-$first-edge" cat "/var/lib/goat-federation/$second/agreement.json"
+    "a=\$(docker exec $HP-$first-edge sha256sum /var/lib/goat-federation/$second/agreement.json | cut -d' ' -f1); b=\$(docker exec $HP-$second-edge sha256sum /var/lib/goat-federation/$first/agreement.json | cut -d' ' -f1); echo \"\$a \$b\"; [ -n \"\$a\" ] && [ \"\$a\" = \"\$b\" ]"
+  rec "s$n-$first-$second-the-agreement-selected-wireguard" --expect-in '"kind":"wireguard"' -- docker exec "$HP-$first-edge" cat "/var/lib/goat-federation/$second/agreement.json"
   review_and_admit "$first" "$second"
   review_and_admit "$second" "$first"
 
@@ -453,11 +475,11 @@ peer_up() {
     them="$([ "$s" = "$first" ] && echo "$second" || echo "$first")"
     rec "s$n-$s-$them-phases-11-to-12" --expect-in "open the wireguard transport" --expect-in "goat-fed-republisher-$them is running" -- bash -c "drive '$s' '$them' '$avenue' 11 12"
     rec "s$n-$s-$them-republisher-maps-both-sets" --expect-in "release release/all/** -> wire from/$s/all/**" --expect-in "release release/$them/** -> wire from/$s/$them/**" \
-      -- docker exec "fed-$s-core" docker logs "goat-fed-republisher-$them"
+      -- docker exec "$HP-$s-core" docker logs "goat-fed-republisher-$them"
   done
   rec "s$n-$first-$second-a-wireguard-handshake" -- bash -c \
-    "for _ in \$(seq 1 30); do t=\$(docker exec fed-$first-edge wg show $i latest-handshakes | cut -f2); [ \"\${t:-0}\" != 0 ] && break; sleep 2; done; docker exec fed-$first-edge wg show $i latest-handshakes | cut -f2; [ \"\${t:-0}\" != 0 ]"
-  rec "s$n-$first-$second-fabric-port-closed-on-the-boundary" --expect-exit 1 -- docker exec "fed-$first-edge" bash -c "exec 3<>/dev/tcp/$(boundary_ip "$second")/7448"
+    "for _ in \$(seq 1 30); do t=\$(docker exec $HP-$first-edge wg show $i latest-handshakes | cut -f2); [ \"\${t:-0}\" != 0 ] && break; sleep 2; done; docker exec $HP-$first-edge wg show $i latest-handshakes | cut -f2; [ \"\${t:-0}\" != 0 ]"
+  rec "s$n-$first-$second-fabric-port-closed-on-the-boundary" --expect-exit 1 -- docker exec "$HP-$first-edge" bash -c "exec 3<>/dev/tcp/$(boundary_ip "$second")/7448"
 
   say "scenario $n: $first <-> $second phase 13, each side: the SPIRE trust domains"
   for s in "$first" "$second"; do
@@ -468,8 +490,8 @@ peer_up() {
   say "scenario $n: $first <-> $second phase 14 from both sides, positives and refusals together"
   for s in "$first" "$second"; do
     them="$([ "$s" = "$first" ] && echo "$second" || echo "$first")"
-    host_exec "fed-$s-core" sh -c 'cat > /usr/local/bin/fed-responder.py' < "$REPO/ops/federation/roundtrip/responder.py"
-    docker exec -d "fed-$s-core" python3 /usr/local/bin/fed-responder.py "from/$them" "release/all"
+    host_exec "$HP-$s-core" sh -c 'cat > /usr/local/bin/fed-responder.py' < "$SRC/ops/federation/roundtrip/responder.py"
+    docker exec -d "$HP-$s-core" python3 /usr/local/bin/fed-responder.py "from/$them" "release/all"
     start_probe "$s" "$them" agreed "/var/lib/goat-federation/$them/pki/peering-outward.pem" "/var/lib/goat-federation/$them/pki/peering-outward-key.pem" "$(probe_port "$s" "$them" 8101)"
     start_probe "$s" "$them" forged /etc/fed-e2e/forged.pem /etc/fed-e2e/forged-key.pem "$(probe_port "$s" "$them" 8102)"
     start_probe "$s" "$them" impersonate "/etc/fed-e2e/impersonate-$them.pem" "/etc/fed-e2e/impersonate-$them-key.pem" "$(probe_port "$s" "$them" 8103)"
@@ -487,7 +509,7 @@ accept_pair() { # $1 scenario, $2 a, $3 b, $4 avenue, $5 label suffix
 }
 
 round_trip() { # $1 sender, $2 receiver, $3 seconds: one try
-  BASE="http://$(core_ip "$1"):8000" "$REPO/ops/federation/roundtrip/fedcheck.sh" release/all "from/$2" "$3"
+  BASE="http://$(core_ip "$1"):8000" "$SRC/ops/federation/roundtrip/fedcheck.sh" release/all "from/$2" "$3"
 }
 round_trip_eventually() { # $1 sender, $2 receiver
   local out
@@ -505,50 +527,50 @@ failures() { # $1 scenario, $2 first, $3 second
   for s in "$first" "$second"; do
     them="$([ "$s" = "$first" ] && echo "$second" || echo "$first")"
     rec "s$n-$s-core-trusts-only-its-own-ca" -- bash -c \
-      "docker exec fed-$s-core sh -c 'grep -c BEGIN /etc/goat-core/ca.pem' | grep -qx 1 && [ \"\$(docker exec fed-$s-core cat /etc/goat-core/ca.pem | openssl x509 -noout -subject)\" = \"\$(openssl x509 -in '$WORK/$s/keys/ca.pem' -noout -subject)\" ]"
+      "docker exec $HP-$s-core sh -c 'grep -c BEGIN /etc/goat-core/ca.pem' | grep -qx 1 && [ \"\$(docker exec $HP-$s-core cat /etc/goat-core/ca.pem | openssl x509 -noout -subject)\" = \"\$(openssl x509 -in '$WORK/$s/keys/ca.pem' -noout -subject)\" ]"
     rec "s$n-$s-tunnel-carried-it" -- bash -c \
-      "docker exec fed-$s-edge wg show $(iface "$s" "$them") transfer | awk '{print; if (\$2 < 1 || \$3 < 1) exit 1}'"
+      "docker exec $HP-$s-edge wg show $(iface "$s" "$them") transfer | awk '{print; if (\$2 < 1 || \$3 < 1) exit 1}'"
   done
   # A round trip that cannot fail is not a check: cut on one side, and it fails.
   # The republisher is the only writer of our wire name: stop it, and nothing crosses.
-  rec "s$n-stop-the-republisher" -- docker exec "fed-$first-core" docker stop "goat-fed-republisher-$second"
+  rec "s$n-stop-the-republisher" -- docker exec "$HP-$first-core" docker stop "goat-fed-republisher-$second"
   rec "s$n-round-trip-fails-without-the-republisher" --expect-exit 1 --expect-in "FAIL" -- bash -c "round_trip '$first' '$second' 15"
-  rec "s$n-start-the-republisher" -- docker exec "fed-$first-core" docker start "goat-fed-republisher-$second"
+  rec "s$n-start-the-republisher" -- docker exec "$HP-$first-core" docker start "goat-fed-republisher-$second"
   rec "s$n-round-trip-passes-with-the-republisher" --expect-in "PASS" -- bash -c "round_trip_eventually '$first' '$second'"
-  rec "s$n-cut-the-link" -- docker exec "fed-$second-edge" systemctl stop "goat-peering-wg@$(iface "$second" "$first")"
+  rec "s$n-cut-the-link" -- docker exec "$HP-$second-edge" systemctl stop "goat-peering-wg@$(iface "$second" "$first")"
   rec "s$n-round-trip-fails-when-cut" --expect-exit 1 --expect-in "FAIL" -- bash -c "round_trip '$first' '$second' 15"
-  rec "s$n-restore-the-link" -- docker exec "fed-$second-edge" systemctl start "goat-peering-wg@$(iface "$second" "$first")"
+  rec "s$n-restore-the-link" -- docker exec "$HP-$second-edge" systemctl start "goat-peering-wg@$(iface "$second" "$first")"
   rec "s$n-round-trip-passes-again" --expect-in "PASS" -- bash -c "round_trip_eventually '$first' '$second'"
   # F-495: the role refuses without a recorded reason, and refuses any other transport.
   for s in "$first" "$second"; do
     them="$([ "$s" = "$first" ] && echo "$second" || echo "$first")"
-    docker exec "fed-$s-edge" cat "/var/log/goat-peering-wg-$(iface "$s" "$them")-state.json" > "$RECORD/s$n-$s-$them-wg-state.json" 2>&1 || true
+    docker exec "$HP-$s-edge" cat "/var/log/goat-peering-wg-$(iface "$s" "$them")-state.json" > "$RECORD/s$n-$s-$them-wg-state.json" 2>&1 || true
   done
   local ans="cd /opt/goat/ops/ansible && GOAT_AWS_MODE=none GOAT_ANSIBLE_TRUNK_REMOTE=origin ../scripts/with-aws none -- ../scripts/ansible-preflight.sh -i inventory/peering-edges.ini --limit ${first}_edge -e fed_edge_group=${first}_edge -e fed_work=/var/lib/goat-federation/$first -e fed_counterparty=/var/lib/goat-federation/$first/theirs.canonical.json"
-  rec "s$n-wireguard-refused-without-a-waiver" --expect-exit 2 --expect-in "goat-peering-wg refuses" -- docker exec "fed-$second-edge" bash -c "$ans -e peering_wg_fips_waived_reason= peering-wg.yml"
-  rec "s$n-wireguard-refused-under-another-transport" --expect-exit 2 --expect-in "goat-peering-wg refuses" -- docker exec "fed-$second-edge" bash -c "$ans -e goat_peering_transport_kind=ipsec-fips -e peering_wg_kind=ipsec-fips peering-wg.yml"
+  rec "s$n-wireguard-refused-without-a-waiver" --expect-exit 2 --expect-in "goat-peering-wg refuses" -- docker exec "$HP-$second-edge" bash -c "$ans -e peering_wg_fips_waived_reason= peering-wg.yml"
+  rec "s$n-wireguard-refused-under-another-transport" --expect-exit 2 --expect-in "goat-peering-wg refuses" -- docker exec "$HP-$second-edge" bash -c "$ans -e goat_peering_transport_kind=ipsec-fips -e peering_wg_kind=ipsec-fips peering-wg.yml"
   # The guards run on what this sovereign generated, in its own repository.
   for g in check-spire-federated-trust-files.sh check-federated-trust-retirement.sh; do
-    rec "s$n-guard-${g%.sh}" -- bash -c "docker cp -q fed-pasture-edge:/var/lib/goat-federation/meadow/applied/ops/ansible/group_vars/meadow_edge/. '$WORK/pasture/clone/ops/ansible/group_vars/meadow_edge/' && git -C '$WORK/pasture/clone' add -A && git -C '$WORK/pasture/clone' -c user.name=e2e -c user.email=e2e@localhost commit -q --allow-empty -m generated && '$WORK/pasture/clone/ops/ci/$g'"
+    rec "s$n-guard-${g%.sh}" -- bash -c "docker cp -q $HP-${A}-edge:/var/lib/goat-federation/${B}/applied/ops/ansible/group_vars/${B}_edge/. '$WORK/${A}/clone/ops/ansible/group_vars/${B}_edge/' && git -C '$WORK/${A}/clone' add -A && git -C '$WORK/${A}/clone' -c user.name=e2e -c user.email=e2e@localhost commit -q --allow-empty -m generated && '$WORK/${A}/clone/ops/ci/$g'"
   done
 }
 
 collect() { # $1 scenario
   local n="$1" s them
   for s in $(partner_list); do
-    docker exec "fed-$s-core" sh -c "docker logs $s-zenoh-router 2>&1 | tail -200" > "$RECORD/s$n-$s-core-router.log" 2>&1 || true
-    docker exec "fed-$s-core" sh -c "docker logs spire-server 2>&1 | tail -100" > "$RECORD/s$n-$s-spire.log" 2>&1 || true
+    docker exec "$HP-$s-core" sh -c "docker logs $s-zenoh-router 2>&1 | tail -200" > "$RECORD/s$n-$s-core-router.log" 2>&1 || true
+    docker exec "$HP-$s-core" sh -c "docker logs spire-server 2>&1 | tail -100" > "$RECORD/s$n-$s-spire.log" 2>&1 || true
     for them in $(partners "$s"); do
-      docker exec "fed-$s-edge" sh -c "docker logs goat-zenoh-edge-$them 2>&1 | tail -400" > "$RECORD/s$n-$s-$them-edge-router.log" 2>&1 || true
-      docker exec "fed-$s-core" sh -c "docker logs goat-fed-republisher-$them 2>&1 | tail -200" > "$RECORD/s$n-$s-$them-republisher.log" 2>&1 || true
-      docker exec "fed-$s-edge" wg show "$(iface "$s" "$them")" > "$RECORD/s$n-$s-$them-wg.txt" 2>&1 || true
+      docker exec "$HP-$s-edge" sh -c "docker logs goat-zenoh-edge-$them 2>&1 | tail -400" > "$RECORD/s$n-$s-$them-edge-router.log" 2>&1 || true
+      docker exec "$HP-$s-core" sh -c "docker logs goat-fed-republisher-$them 2>&1 | tail -200" > "$RECORD/s$n-$s-$them-republisher.log" 2>&1 || true
+      docker exec "$HP-$s-edge" wg show "$(iface "$s" "$them")" > "$RECORD/s$n-$s-$them-wg.txt" 2>&1 || true
     done
   done
 }
 
 scenario() { # $1 number, $2 first side (it also listens), $3 avenue
   local n="$1" first="$2" avenue="$3" second; second="$(other "$first")"
-  P_pasture=meadow; P_meadow=pasture; P_paddock=""; NODIR=""
+  set_partners "$A" "$B"; set_partners "$B" "$A"; set_partners "$C" ""; NODIR=""
   export_helpers
   say "scenario $n: $first listens and goes first; avenue $avenue"
   setup_hosts "$n"
@@ -567,7 +589,7 @@ scenario() { # $1 number, $2 first side (it also listens), $3 avenue
 snap() {
   local s="$1" them="$2" changing="$3" i t
   i="$(iface "$s" "$them")"; t="goat_peering_$(echo "$i" | tr -c 'a-zA-Z0-9_\n' _)"
-  docker exec "fed-$s-edge" bash -c "
+  docker exec "$HP-$s-edge" bash -c "
     wg show $i dump | awk 'NR==1{print \"iface\", \$2, \$3} NR>1{print \"peer\", \$1, \$3, \$4, \$8}'
     ip -o -4 addr show dev $i | awk '{print \"addr\", \$4}'
     nft list table inet $t | sed -E 's/counter packets [0-9]+ bytes [0-9]+/counter/'
@@ -578,7 +600,7 @@ snap() {
       [ -e \"\$u\" ] || continue
       sha256sum \"\$u\"; systemctl show -p ActiveEnterTimestamp -p ActiveState \"\$(basename \"\$u\")\"
     done" 2>&1
-  docker exec "fed-$s-core" bash -c "
+  docker exec "$HP-$s-core" bash -c "
     docker inspect -f '{{.Name}} {{.State.StartedAt}} {{.Image}}' goat-fed-republisher-$them
     sha256sum /etc/goat-fed-republisher-$them/* /opt/goat-fed-republisher-$them/docker-compose.yml" 2>&1
 }
@@ -606,76 +628,76 @@ set_isolation() { # $1 scenario, $2 us, $3 label
 
 guard_refusals() { # $1 scenario: the refusals that keep two peerings on one host apart
   local n="$1" a="cd /opt/goat/ops/ansible && GOAT_AWS_MODE=none GOAT_ANSIBLE_TRUNK_REMOTE=origin ../scripts/with-aws none -- ../scripts/ansible-preflight.sh -i inventory/peering-edges.ini"
-  local pd="-e fed_work=/var/lib/goat-federation/paddock -e fed_counterparty=/var/lib/goat-federation/paddock/theirs.canonical.json -e fed_edge_group=paddock_edge"
-  rec "s$n-a-second-peering-may-not-take-the-first-ones-interface" --expect-exit 2 --expect-in "carries the peering with meadow" -- \
-    docker exec fed-pasture-edge bash -c "$a --limit paddock_edge $pd -e peering_wg_interface=wg-fed0 peering-wg.yml"
+  local pd="-e fed_work=/var/lib/goat-federation/${C} -e fed_counterparty=/var/lib/goat-federation/${C}/theirs.canonical.json -e fed_edge_group=${C}_edge"
+  rec "s$n-a-second-peering-may-not-take-the-first-ones-interface" --expect-exit 2 --expect-in "carries the peering with ${B}" -- \
+    docker exec $HP-${A}-edge bash -c "$a --limit ${C}_edge $pd -e peering_wg_interface=wg-fed0 peering-wg.yml"
   rec "s$n-a-second-peering-may-not-take-the-first-ones-port" --expect-exit 2 --expect-in "listen port 51820" -- \
-    docker exec fed-pasture-edge bash -c "$a --limit paddock_edge $pd -e peering_wg_listen_port=51820 peering-wg.yml"
-  rec "s$n-a-second-republisher-may-not-take-the-first-ones-metrics-port" --expect-exit 2 --expect-in "goat-fed-republisher-meadow" -- \
-    docker exec fed-pasture-edge bash -c "$a --limit paddock_core $pd -e goat_fed_republisher_metrics_port=9310 peering-republisher.yml"
+    docker exec $HP-${A}-edge bash -c "$a --limit ${C}_edge $pd -e peering_wg_listen_port=51820 peering-wg.yml"
+  rec "s$n-a-second-republisher-may-not-take-the-first-ones-metrics-port" --expect-exit 2 --expect-in "goat-fed-republisher-${B}" -- \
+    docker exec $HP-${A}-edge bash -c "$a --limit ${C}_core $pd -e goat_fed_republisher_metrics_port=9310 peering-republisher.yml"
   # One inventory name in two peering groups: the merge the per-peering names prevent.
-  rec "s$n-preflight-refuses-one-inventory-name-in-two-peerings" --expect-exit 1 --expect-in "pasture-edge-meadow is in" -- bash -c \
-    "rm -rf '$WORK/merged' && cp -R '$WORK/pasture/clone' '$WORK/merged' && sed -i 's/^pasture-edge-paddock /pasture-edge-meadow /' '$WORK/merged/ops/ansible/inventory/peering-edges.ini' && python3 '$WORK/merged/ops/federation/standup/preflight.py' paddock --work '$WORK/merged-work' --edge-group paddock_edge --repo '$WORK/merged'"
+  rec "s$n-preflight-refuses-one-inventory-name-in-two-peerings" --expect-exit 1 --expect-in "${A}-edge-${B} is in" -- bash -c \
+    "rm -rf '$WORK/merged' && cp -R '$WORK/${A}/clone' '$WORK/merged' && sed -i 's/^${A}-edge-${C} /${A}-edge-${B} /' '$WORK/merged/ops/ansible/inventory/peering-edges.ini' && python3 '$WORK/merged/ops/federation/standup/preflight.py' ${C} --work '$WORK/merged-work' --edge-group ${C}_edge --repo '$WORK/merged'"
 }
 
 scenario3() {
   local n=3
-  P_pasture="meadow paddock"; P_meadow=pasture; P_paddock=pasture; NODIR="pasture:paddock paddock:pasture"
+  set_partners "$A" "$B $C"; set_partners "$B" "$A"; set_partners "$C" "$A"; NODIR="$A:$C $C:$A"
   export_helpers
-  say "scenario 3: pasture federates with meadow and with paddock on one edge host and one core host"
+  say "scenario 3: ${A} federates with ${B} and with ${C} on one edge host and one core host"
   setup_hosts "$n"
 
   # The first peering, through the driver's goatbuilder avenue and the directory.
-  peer_up "$n" pasture meadow goatbuilder
-  snap pasture meadow paddock > "$RECORD/s3-meadow-before-paddock.txt"
-  docker exec fed-pasture-edge sha256sum /var/lib/goat-federation/meadow/ours.canonical.json | cut -d' ' -f1 > "$WORK/pasture-meadow-package.sha"
+  peer_up "$n" ${A} ${B} goatbuilder
+  snap ${A} ${B} ${C} > "$RECORD/s3-${B}-before-${C}.txt"
+  docker exec $HP-${A}-edge sha256sum /var/lib/goat-federation/${B}/ours.canonical.json | cut -d' ' -f1 > "$WORK/${A}-${B}-package.sha"
 
   # The second peering, added beside it: peering-standup.sh, packages by hand.
-  peer_up "$n" pasture paddock script
-  snap pasture meadow paddock > "$RECORD/s3-meadow-after-paddock.txt"
-  # Phase 10 for paddock restarts pasture's core on the joined ACL, so the meadow
+  peer_up "$n" ${A} ${C} script
+  snap ${A} ${B} ${C} > "$RECORD/s3-${B}-after-${C}.txt"
+  # Phase 10 for ${C} restarts ${A}'s core on the joined ACL, so the ${B}
   # peering reconnects; nothing of its own may have changed.
-  rec "s3-adding-paddock-left-meadow-untouched" -- diff "$RECORD/s3-meadow-before-paddock.txt" "$RECORD/s3-meadow-after-paddock.txt"
-  accept_pair "$n" pasture meadow goatbuilder "-after-paddock"
+  rec "s3-adding-${C}-left-${B}-untouched" -- diff "$RECORD/s3-${B}-before-${C}.txt" "$RECORD/s3-${B}-after-${C}.txt"
+  accept_pair "$n" ${A} ${B} goatbuilder "-after-${C}"
 
   say "scenario 3: each partner receives the sets its own agreement offers, and no other"
-  set_isolation "$n" pasture both-up
+  set_isolation "$n" ${A} both-up
   # Each offered set is lifted once per peering that offers it: two writers of a set
   # both agreements offer. A measurement, not a check.
   for p in 9310 9311; do
-    docker exec fed-pasture-core curl -s "http://127.0.0.1:$p/metrics" 2>&1 | grep -E 'published_total' || true
+    docker exec $HP-${A}-core curl -s "http://127.0.0.1:$p/metrics" 2>&1 | grep -E 'published_total' || true
   done > "$RECORD/s3-shared-set-writers.txt"
 
   say "scenario 3: re-running one peering's phases leaves the other untouched"
-  snap pasture paddock meadow > "$RECORD/s3-paddock-before-meadow-rerun.txt"
-  rec "s3-rerun-meadow-phase-2" -- bash -c "drive pasture meadow goatbuilder 2 2"
-  rec "s3-rerun-meadow-phases-7-to-9" -- bash -c "drive pasture meadow goatbuilder 7 9"
-  rec "s3-rerun-meadow-phases-11-to-13" -- bash -c "drive pasture meadow goatbuilder 11 13"
-  snap pasture paddock meadow > "$RECORD/s3-paddock-after-meadow-rerun.txt"
-  rec "s3-meadow-rerun-left-paddock-untouched" -- diff "$RECORD/s3-paddock-before-meadow-rerun.txt" "$RECORD/s3-paddock-after-meadow-rerun.txt"
-  rec "s3-paddock-round-trip-after-meadow-rerun" --expect-in "PASS" -- bash -c "round_trip_eventually pasture paddock"
+  snap ${A} ${C} ${B} > "$RECORD/s3-${C}-before-${B}-rerun.txt"
+  rec "s3-rerun-${B}-phase-2" -- bash -c "drive ${A} ${B} goatbuilder 2 2"
+  rec "s3-rerun-${B}-phases-7-to-9" -- bash -c "drive ${A} ${B} goatbuilder 7 9"
+  rec "s3-rerun-${B}-phases-11-to-13" -- bash -c "drive ${A} ${B} goatbuilder 11 13"
+  snap ${A} ${C} ${B} > "$RECORD/s3-${C}-after-${B}-rerun.txt"
+  rec "s3-${B}-rerun-left-${C}-untouched" -- diff "$RECORD/s3-${C}-before-${B}-rerun.txt" "$RECORD/s3-${C}-after-${B}-rerun.txt"
+  rec "s3-${C}-round-trip-after-${B}-rerun" --expect-in "PASS" -- bash -c "round_trip_eventually ${A} ${C}"
 
-  snap pasture meadow paddock > "$RECORD/s3-meadow-before-paddock-rerun.txt"
-  rec "s3-rerun-paddock-phase-2" -- bash -c "drive pasture paddock script 2 2"
-  rec "s3-rerun-paddock-phases-7-to-9" -- bash -c "drive pasture paddock script 7 9"
-  rec "s3-rerun-paddock-phases-11-to-13" -- bash -c "drive pasture paddock script 11 13"
-  snap pasture meadow paddock > "$RECORD/s3-meadow-after-paddock-rerun.txt"
-  rec "s3-paddock-rerun-left-meadow-untouched" -- diff "$RECORD/s3-meadow-before-paddock-rerun.txt" "$RECORD/s3-meadow-after-paddock-rerun.txt"
-  rec "s3-meadow-round-trip-after-paddock-rerun" --expect-in "PASS" -- bash -c "round_trip_eventually pasture meadow"
-  accept_pair "$n" pasture meadow goatbuilder "-after-reruns"
-  accept_pair "$n" pasture paddock script "-after-reruns"
-  set_isolation "$n" pasture after-reruns
+  snap ${A} ${B} ${C} > "$RECORD/s3-${B}-before-${C}-rerun.txt"
+  rec "s3-rerun-${C}-phase-2" -- bash -c "drive ${A} ${C} script 2 2"
+  rec "s3-rerun-${C}-phases-7-to-9" -- bash -c "drive ${A} ${C} script 7 9"
+  rec "s3-rerun-${C}-phases-11-to-13" -- bash -c "drive ${A} ${C} script 11 13"
+  snap ${A} ${B} ${C} > "$RECORD/s3-${B}-after-${C}-rerun.txt"
+  rec "s3-${C}-rerun-left-${B}-untouched" -- diff "$RECORD/s3-${B}-before-${C}-rerun.txt" "$RECORD/s3-${B}-after-${C}-rerun.txt"
+  rec "s3-${B}-round-trip-after-${C}-rerun" --expect-in "PASS" -- bash -c "round_trip_eventually ${A} ${B}"
+  accept_pair "$n" ${A} ${B} goatbuilder "-after-reruns"
+  accept_pair "$n" ${A} ${C} script "-after-reruns"
+  set_isolation "$n" ${A} after-reruns
 
   say "scenario 3: the refusals that keep two peerings on one host apart"
   guard_refusals "$n"
 
-  say "scenario 3: the directory still names the package meadow composed against"
-  local dir_ptr="curl -fsS --cacert /etc/fed-e2e/directory-ca.pem https://$DIRECTORY_IP:8443/v1/parties/pasture"
-  rec "s3-directory-names-the-meadow-package" --expect-in "$(cat "$WORK/pasture-meadow-package.sha")" -- docker exec fed-pasture-edge bash -c "$dir_ptr"
-  # What meadow would see if pasture published its paddock package as its one entry:
-  # the entry and its transport offer change; meadow's running peering does not.
-  rec "s3-what-meadow-sees-if-pasture-republishes" --expect-in "$(boundary_ip pasture):$(wgport pasture paddock)" -- docker exec fed-pasture-edge bash -c \
-    "SSL_CERT_FILE=/etc/fed-e2e/directory-ca.pem python3 /opt/goat/ops/federation/standup/directory.py --url https://$DIRECTORY_IP:8443 --ours /var/lib/goat-federation/paddock/ours.canonical.json --key /etc/fed-e2e/signing.key --ca /etc/fed-e2e/ca.pem --their-id meadow --work /tmp/republish-demo >/dev/null; $dir_ptr; echo; curl -fsS --cacert /etc/fed-e2e/directory-ca.pem https://$DIRECTORY_IP:8443/v1/parties/pasture/package | python3 -c 'import json,sys; print(json.load(sys.stdin)[\"transport_offer\"])'"
-  rec "s3-meadow-still-carries-after-the-republish" --expect-in "PASS" -- bash -c "round_trip_eventually pasture meadow"
+  say "scenario 3: the directory still names the package ${B} composed against"
+  local dir_ptr="curl -fsS --cacert /etc/fed-e2e/directory-ca.pem https://$DIRECTORY_IP:8443/v1/parties/${A}"
+  rec "s3-directory-names-the-${B}-package" --expect-in "$(cat "$WORK/${A}-${B}-package.sha")" -- docker exec $HP-${A}-edge bash -c "$dir_ptr"
+  # What ${B} would see if ${A} published its ${C} package as its one entry:
+  # the entry and its transport offer change; ${B}'s running peering does not.
+  rec "s3-what-${B}-sees-if-${A}-republishes" --expect-in "$(boundary_ip ${A}):$(wgport ${A} ${C})" -- docker exec $HP-${A}-edge bash -c \
+    "SSL_CERT_FILE=/etc/fed-e2e/directory-ca.pem python3 /opt/goat/ops/federation/standup/directory.py --url https://$DIRECTORY_IP:8443 --ours /var/lib/goat-federation/${C}/ours.canonical.json --key /etc/fed-e2e/signing.key --ca /etc/fed-e2e/ca.pem --their-id ${B} --work /tmp/republish-demo >/dev/null; $dir_ptr; echo; curl -fsS --cacert /etc/fed-e2e/directory-ca.pem https://$DIRECTORY_IP:8443/v1/parties/${A}/package | python3 -c 'import json,sys; print(json.load(sys.stdin)[\"transport_offer\"])'"
+  rec "s3-${B}-still-carries-after-the-republish" --expect-in "PASS" -- bash -c "round_trip_eventually ${A} ${B}"
   collect "$n"
 }

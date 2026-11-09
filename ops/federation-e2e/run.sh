@@ -45,20 +45,25 @@
 # federation planned. It needs no Docker and no --goat (CI: check-federation-e2e-prepare.sh).
 #
 # usage: ops/federation-e2e/run.sh --goat BIN --goatbuilder BIN [--work DIR] [--record DIR]
-#                                  [--scenario 1|2|3] [--keep] [--prepare-only]
+#                                  [--scenario 1|2|3] [--keep] [--prepare-only] [--src DIR]
+#
+# --src names the goatcore tree under test (default: this checkout): its driver, plays,
+# roles and scripts are what run; the harness is this directory. The names, subnets and
+# party ids the run creates come from FE2E_* (lib/engine.sh).
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"; REPO="$(cd "$HERE/../.." && pwd)"
-WORK=""; RECORD=""; GOAT=""; GB=""; KEEP=0; ONLY=""; PREPARE=0
+WORK=""; RECORD=""; GOAT=""; GB=""; KEEP=0; ONLY=""; PREPARE=0; SRC=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --goat) GOAT="$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"; shift 2 ;;
     --goatbuilder) GB="$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"; shift 2 ;;
     --work) WORK="$2"; shift 2 ;;
     --record) RECORD="$2"; shift 2 ;;
+    --src) SRC="$(cd "$2" && pwd)"; shift 2 ;;
     --scenario) ONLY="$2"; shift 2 ;;
     --keep) KEEP=1; shift ;;
     --prepare-only) PREPARE=1; shift ;;
-    -h|--help) sed -n '2,43p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,48p' "$0"; exit 0 ;;
     *) echo "run.sh: unknown argument $1" >&2; exit 2 ;;
   esac
 done
@@ -82,20 +87,20 @@ trap final EXIT
 
 # --- what needs no hosts: the driver's own refusals ------------------------------------
 say "the driver's refusals, no hosts"
-FX="$REPO/ops/goatbuilder/fixtures/goatnet-from-scratch/03-boundary-node"
+FX="$SRC/ops/goatbuilder/fixtures/goatnet-from-scratch/03-boundary-node"
 SENT="$WORK/mock-ran"; printf '#!/bin/sh\ntouch %s\n' "$SENT" > "$WORK/mock-goat"; chmod +x "$WORK/mock-goat"
 rec mock-executes-nothing --expect-in "MOCK" --expect-in "not executed" -- bash -c \
-  "GOAT_BIN='$WORK/mock-goat' '$GB' -C '$REPO' --mock '$FX' federate hello-ally --as zagros --work '$WORK/mock-work' && [ ! -e '$SENT' ] && [ ! -e '$WORK/mock-work' ]"
+  "GOAT_BIN='$WORK/mock-goat' '$GB' -C '$SRC' --mock '$FX' federate hello-ally --as zagros --work '$WORK/mock-work' && [ ! -e '$SENT' ] && [ ! -e '$WORK/mock-work' ]"
 rec an-undeclared-peering-is-refused --expect-in "declare it first (C1)" -- bash -c \
-  "if '$GB' -C '$REPO' --mock '$FX' federate no-such-peer --dry-run 2>&1; then exit 1; fi"
+  "if '$GB' -C '$SRC' --mock '$FX' federate no-such-peer --dry-run 2>&1; then exit 1; fi"
 mkdir -p "$WORK/quic"; printf '{"transport":{"kind":"quic"}}' > "$WORK/quic/agreement.json"
 rec an-unknown-transport-refuses-and-substitutes-nothing --expect-in "REFUSED, no play for 'quic'" --expect-in "Do NOT substitute" --expect-not-in "ansible-preflight" -- bash -c \
-  "'$GB' -C '$REPO' --mock '$FX' federate hello-ally --work '$WORK/quic' --from 11 --to 11 --dry-run 2>&1; FED_WORK='$WORK/quic' '$REPO/ops/scripts/peering-standup.sh' hello-ally --from 11 --to 11 2>&1 && exit 1; exit 0"
+  "'$GB' -C '$SRC' --mock '$FX' federate hello-ally --work '$WORK/quic' --from 11 --to 11 --dry-run 2>&1; FED_WORK='$WORK/quic' '$SRC/ops/scripts/peering-standup.sh' hello-ally --from 11 --to 11 2>&1 && exit 1; exit 0"
 
 if [ "$PREPARE" = 1 ]; then
   say "the two sovereigns, generated and planned, no hosts"
-  P_pasture=meadow; P_meadow=pasture; P_paddock=""
-  for s in pasture meadow; do
+  set_partners "$A" "$B"; set_partners "$B" "$A"; set_partners "$C" ""
+  for s in "$A" "$B"; do
     gen_sovereign "$s"
     rec "prepare-$s-config-validates" -- "$GB" -C "$WORK/$s/clone" validate
     rec "prepare-$s-secrets-posture-is-env" --expect-in "env" --expect-not-in "env-file" -- env -u GOAT_SECRET_STORE python3 "$WORK/$s/clone/ops/secrets/posture.py" store
@@ -112,7 +117,7 @@ ctx="$WORK/host-context"; rm -rf "$ctx"; cp -R "$HERE/host" "$ctx"
 docker build --progress=plain -t "$HOST_IMAGE" "$ctx"
 
 say "the republisher image, from this checkout"
-docker build --progress=plain -t "$RP_TAG" "$REPO/ops/federation/republisher"
+docker build --progress=plain -t "$RP_TAG" "$SRC/ops/federation/republisher"
 # The image's config digest: the id a classic image store (each host's dockerd) gives
 # it after `docker load`. A containerd image store on the runner reports the manifest
 # digest as .Id instead, which the hosts would not know.
@@ -120,8 +125,8 @@ RP_IMAGE="sha256:$(docker save "$RP_TAG" | tar -xO manifest.json | python3 -c 'i
 [[ "$RP_IMAGE" =~ ^sha256:[0-9a-f]{64}$ ]] || die "the republisher image has no content-addressed id: '$RP_IMAGE'"
 echo "republisher image: $RP_IMAGE"
 
-if [ -z "$ONLY" ] || [ "$ONLY" = 1 ]; then scenario 1 pasture goatbuilder; fi
-if [ -z "$ONLY" ] || [ "$ONLY" = 2 ]; then scenario 2 meadow script; fi
+if [ -z "$ONLY" ] || [ "$ONLY" = 1 ]; then scenario 1 "$A" goatbuilder; fi
+if [ -z "$ONLY" ] || [ "$ONLY" = 2 ]; then scenario 2 "$B" script; fi
 if [ -z "$ONLY" ] || [ "$ONLY" = 3 ]; then scenario3; fi
 
 say "the record"
