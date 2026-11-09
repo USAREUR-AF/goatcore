@@ -118,7 +118,7 @@ renderer's input the way the deploy builds it:
   playbook `group_vars/`, then all of their inventory `group_vars/`, then all of
   their `[group:vars]`; then the same three for `all`; then the defaults of the
   roles that play has in scope (goat-host-firewall and the play's own role).
-  Vars directories are read recursively. A vars file that does not parse blocks
+  Vars directories are read recursively, hidden names left out, as Ansible does. A vars file that does not parse blocks
   the host rather than being skipped.
 - **Templates**: a value that is `{{ var }}` or `{{ var | default(x) }}`
   (optionally `| int`, `| bool`, `| trim`, `| string`), or a string holding such
