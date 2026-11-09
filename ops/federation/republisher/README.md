@@ -27,7 +27,10 @@ data crossing on that peering without touching the edge.
 keys of the sets its own agreement offers. Every grant `goat federate apply` renders outward (the
 edge's egress, the core's `fed-r-<them>` read and `fed-rp-w-<them>` write) names those keys, never
 the whole `from/<us>/**`, so a set agreed with one partner is never readable by another partner's
-edge. A set BOTH agreements offer is written by both republishers: each partner then receives every
+edge. The INTEREST rules (`fed-r-interest-<them>`, `fed-rp-w-interest-<them>`, the edge's
+`partner-receive-interest` and `core-return`) keep the whole `from/<us>/**`: a receiver subscribes to
+the whole wire name, zenoh refuses a subscriber declaration wider than the rule admitting it, and a
+declaration carries no data. A set BOTH agreements offer is written by both republishers: each partner then receives every
 sample of that set twice. Nothing in the agreement can remove that; it is a property of one writer
 per peering on a shared core.
 

@@ -520,6 +520,16 @@ pub fn render_all(
     let egress: Vec<String> = outbound
         .map(|f| wire_keys(&f.publish_under, &f.release))
         .unwrap_or_default();
+    // INTEREST STAYS ON THE WHOLE WIRE NAME. A receiver subscribes to all of
+    // `from/<us>/**` (its landing store does), and zenoh refuses a subscriber
+    // declaration wider than the rule that would admit it: with interest narrowed
+    // to the sets, the declaration is refused, nothing is ever asked for, and
+    // nothing crosses, with every link up. A declaration carries no data, so the
+    // DATA rules are what is narrowed (put, delete, reply) and the INTEREST rules
+    // keep the whole wire name.
+    let egress_interest: Vec<String> = outbound
+        .map(|f| vec![f.publish_under.clone()])
+        .unwrap_or_default();
 
     let mut out = Vec::new();
 
@@ -616,11 +626,19 @@ pub fn render_all(
             g.push_str(&format!("  - \"{k}\"\n"));
         }
     }
-    g.push_str("\n# What they may receive.\ngoat_zenoh_edge_egress_key_exprs:\n");
+    g.push_str("\n# What they may receive: the wire key of each offered set.\ngoat_zenoh_edge_egress_key_exprs:\n");
     if egress.is_empty() {
         g.push_str("  []\n");
     } else {
         for k in &egress {
+            g.push_str(&format!("  - \"{k}\"\n"));
+        }
+    }
+    g.push_str("\n# Where their interest may reach: our whole wire name. A declaration carries\n# no data; the sets above decide what is sent.\ngoat_zenoh_edge_egress_interest_key_exprs:\n");
+    if egress_interest.is_empty() {
+        g.push_str("  []\n");
+    } else {
+        for k in &egress_interest {
             g.push_str(&format!("  - \"{k}\"\n"));
         }
     }
@@ -883,7 +901,7 @@ pub fn render_all(
                 &ri_id,
                 "\"declare_subscriber\", \"query\", \"declare_queryable\"",
                 "ingress",
-                &egress,
+                &egress_interest,
             );
         }
 
@@ -918,7 +936,7 @@ pub fn render_all(
                 &rp_rules[3],
                 "\"declare_subscriber\", \"query\", \"declare_queryable\"",
                 "egress",
-                &egress,
+                &egress_interest,
             );
         }
 
@@ -1272,6 +1290,7 @@ mod tests {
         assert!(!rule_keys("fed-rp-r-xab").contains("from/"), "{body}");
         assert!(rule_keys("fed-rp-w-xab").contains("\"from/xaa/weather/**\""), "{body}");
         assert!(!rule_keys("fed-rp-w-xab").contains("\"from/xaa/**\""), "{body}");
+        assert!(rule_keys("fed-rp-w-interest-xab").contains("\"from/xaa/**\""), "{body}");
         assert!(!rule_keys("fed-rp-w-xab").contains("release/"), "{body}");
         assert!(!body.contains("\"**\""), "no rule names the whole keyspace\n{body}");
     }
@@ -1302,9 +1321,10 @@ mod tests {
         assert!(!c.iter().any(|k| k.starts_with("from/xaa/xab") || k == "from/xaa/**"), "{c:?}");
     }
 
-    /// Every artifact that grants our data a way out names the offered sets, not the
-    /// whole wire name: the partner declaration, the edge's egress and the core's
-    /// fed-r (the edge reads) and fed-rp-w (the republisher writes) rules.
+    /// Every rule that lets our DATA out names the offered sets, not the whole wire
+    /// name: the partner declaration, the edge's egress and the core's fed-r (the
+    /// edge reads) and fed-rp-w (the republisher writes) rules. The interest rules
+    /// keep the whole wire name, which carries no data.
     #[test]
     fn no_rendered_artifact_grants_the_whole_wire_name_outward() {
         let ag = agreement();
@@ -1323,11 +1343,18 @@ mod tests {
         let e = edge.split("goat_zenoh_edge_egress_key_exprs:\n").nth(1).unwrap().split("\n\n").next().unwrap();
         assert!(e.contains("from/xaa/weather/**") && !e.contains("\"from/xaa/**\""), "{edge}");
         let frag = find("acl/xab-fragment.json5");
-        for id in ["fed-r-xab", "fed-r-interest-xab", "fed-rp-w-xab", "fed-rp-w-interest-xab"] {
-            let keys = frag.split(&format!("id: \"{id}\"")).nth(1).and_then(|r| r.split("},").next()).unwrap();
-            assert!(keys.contains("\"from/xaa/weather/**\""), "{id}\n{frag}");
-            assert!(!keys.contains("\"from/xaa/**\""), "{id} grants the whole wire name\n{frag}");
+        let keys = |id: &str| frag.split(&format!("id: \"{id}\"")).nth(1).and_then(|r| r.split("},").next()).unwrap().to_string();
+        // Data: the sets only.
+        for id in ["fed-r-xab", "fed-rp-w-xab"] {
+            assert!(keys(id).contains("\"from/xaa/weather/**\""), "{id}\n{frag}");
+            assert!(!keys(id).contains("\"from/xaa/**\""), "{id} grants the whole wire name\n{frag}");
         }
+        // Interest: the whole wire name, or a receiver's subscription is refused.
+        for id in ["fed-r-interest-xab", "fed-rp-w-interest-xab"] {
+            assert!(keys(id).contains("\"from/xaa/**\""), "{id}\n{frag}");
+        }
+        let ei = edge.split("goat_zenoh_edge_egress_interest_key_exprs:\n").nth(1).unwrap().split("\n\n").next().unwrap();
+        assert!(ei.contains("\"from/xaa/**\""), "{edge}");
     }
 }
 

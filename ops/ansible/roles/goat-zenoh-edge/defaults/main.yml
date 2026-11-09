@@ -66,6 +66,14 @@ goat_zenoh_edge_ingress_key_exprs: []     # where they may write, e.g. from/svn/
 # expression in transit, so a rule naming the staging name permits a key that
 # never crosses and forbids the one that does.
 goat_zenoh_edge_egress_key_exprs: []   # e.g. from/<sovereign>/**
+# Where the partner's interest may reach on this edge, and what the core link carries:
+# our whole wire name, `from/<our sovereign>/**`. Empty means the same as
+# goat_zenoh_edge_egress_key_exprs. A receiver subscribes to the whole wire name, and
+# zenoh refuses a subscriber declaration wider than the rule admitting it, so interest
+# narrowed to the sets means nothing is ever asked for. Declarations carry no data:
+# partner-receive (egress) still sends only goat_zenoh_edge_egress_key_exprs, and the
+# core sends this edge only the offered sets (the fragment's fed-r rule).
+goat_zenoh_edge_egress_interest_key_exprs: []
 # Check inspectable local cores for a receive store matching each admitted
 # ingress scope. A retained broad history store is compatible when the required
 # scoped stores exist. Unreadable/separate cores are explicitly SKIP, not PASS.
