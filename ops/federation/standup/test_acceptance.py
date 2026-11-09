@@ -48,6 +48,13 @@ class AcceptanceRun(unittest.TestCase):
                            capture_output=True, text=True, timeout=240)
         return p.returncode, p.stdout + p.stderr
 
+    def bundle(self):
+        with open(os.path.join(self.tmp, "evidence", "acceptance", "result.json")) as f:
+            return json.load(f)
+
+    def verdicts(self):
+        return {c["name"]: c["verdict"] for c in self.bundle()["checks"]}
+
     def counts(self, out):
         line = [x for x in out.splitlines() if x.startswith("acceptance-counts:")][-1]
         return dict(kv.split("=", 1) for kv in line.split()[1:])
@@ -55,17 +62,32 @@ class AcceptanceRun(unittest.TestCase):
     def test_everything_works_and_passes(self):
         rc, out = self.run_acceptance()
         c = self.counts(out)
-        self.assertEqual((rc, c["fail"], c["skip"]), (0, "0", "0"), out)
+        self.assertEqual((rc, c["fail"], c["skip"], c["blocked"]), (0, "0", "0", "0"), out)
         self.assertNotIn("ACCEPTANCE FAILED", out)
+        b = self.bundle()
+        self.assertEqual((b["schema"], b["verdict"], b["exit"]), ("goat-federation-acceptance/v1", "PASS", 0))
+        self.assertEqual(set(self.verdicts().values()), {"PASS"})
+        names = set(self.verdicts())
+        for want in ("delivery/inbound/release/all", "delivery/outbound/release/xab", "republisher-boundary/outbound",
+                     "refusal/control-allowed", "refusal/out-of-lane-denied", "refusal/forged-name",
+                     "refusal/impersonation", "roundtrip/outbound/release/all", "spire/svid-chains"):
+            self.assertIn(want, names)
+        inbound = [c for c in b["checks"] if c["name"] == "delivery/inbound/release/all"][0]
+        self.assertEqual(inbound["direction"], "inbound")
+        self.assertEqual(inbound["observations"]["received"], inbound["observations"]["sent"])
+        denied = [c for c in b["checks"] if c["name"] == "refusal/out-of-lane-denied"][0]
+        self.assertIn("is unauthorized to Put (ingress) on ops/fabric/", denied["observations"]["trace"])
 
     def test_no_counterparty_surface_is_not_a_pass(self):
         # The production shape before this change: only our side, one skip, exit 0.
         rc, out = self.run_acceptance(drop=["FED_THEIRS_REST"])
         c = self.counts(out)
         self.assertEqual(c["fail"], "0", out)
-        self.assertNotEqual(c["skip"], "0", out)
+        self.assertNotEqual(c["blocked"], "0", out)
         self.assertEqual(rc, 3, out)
-        self.assertIn("A skip is not a pass", out)
+        self.assertIn("is not a pass", out)
+        self.assertEqual(self.verdicts()["counterparty-surface"], "BLOCKED")
+        self.assertEqual(self.bundle()["verdict"], "INCOMPLETE")
 
     def test_strict_off_does_not_turn_a_skip_into_a_pass(self):
         rc, out = self.run_acceptance(drop=["FED_SPIRE_OURS"], extra={"FED_ACCEPTANCE_STRICT": "0"})
@@ -75,12 +97,23 @@ class AcceptanceRun(unittest.TestCase):
         rc, out = self.run_acceptance(drop=["FED_EDGE_LOG_OURS"])
         self.assertEqual(rc, 3, out)
         self.assertIn("the ACL trace was not read", out)
+        self.assertEqual(self.verdicts()["refusal/acl-trace"], "BLOCKED")
+
+    def test_an_unwritable_evidence_directory_stops_the_run(self):
+        blocker = os.path.join(self.tmp, "not-a-directory")
+        open(blocker, "w").close()
+        rc, out = self.run_acceptance(extra={"FED_EVIDENCE_DIR": os.path.join(blocker, "x")})
+        self.assertEqual(rc, 2, out)
+        self.assertIn("cannot write the evidence directory", out)
 
     def test_a_failure_still_exits_1(self):
         self.fabric.faults.republisher_down.add("xab")
         rc, out = self.run_acceptance()
         self.assertEqual(rc, 1, out)
         self.assertIn("not delivered inbound", out)
+        self.assertEqual(self.verdicts()["delivery/inbound/release/all"], "FAIL")
+        self.assertEqual(self.verdicts()["refusals"], "SKIP")
+        self.assertEqual(self.bundle()["exit"], 1)
 
     def test_a_broken_round_trip_fails(self):
         self.fabric.faults.responder_down.add("xab")
