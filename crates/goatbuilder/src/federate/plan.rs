@@ -88,6 +88,9 @@ pub struct AgreementFacts {
     /// sha256 over the canonical bytes, as `goat federate compose` prints it.
     pub digest: String,
     pub transport: String,
+    /// `transport.link_subnet`, the link the two edges share.
+    #[serde(default)]
+    pub link_subnet: Option<String>,
     pub parties: Vec<String>,
     pub flows: Vec<Flow>,
 }
@@ -425,6 +428,10 @@ pub fn agreement_facts(work: &str) -> Result<Option<AgreementFacts>> {
         path: path.display().to_string(),
         digest: format!("sha256:{}", sha256_hex(&bytes)),
         transport: s(&v["transport"]["kind"]),
+        link_subnet: v["transport"]["link_subnet"]
+            .as_str()
+            .filter(|x| !x.is_empty())
+            .map(String::from),
         parties: v["parties"]
             .as_array()
             .map(|ps| ps.iter().map(|p| s(&p["sovereign_id"])).collect())
@@ -926,7 +933,19 @@ fn inputs_part(
             "controller",
             "--work, else $FED_WORK, else /var/lib/goat-federation/<peering>",
         ),
+        fixed(
+            "certificate directory",
+            format!("{work}/pki"),
+            "controller",
+            "phase 8 writes it; the plays copy its files to the edge and core",
+        ),
     ]);
+    resources.push(Resource {
+        kind: "link subnet".into(),
+        name: agreement.as_ref().and_then(|a| a.link_subnet.clone()),
+        on: edge_group.clone(),
+        source: "the agreement's transport.link_subnet (phase 6)".into(),
+    });
     if let Some(us) = o.r#as {
         resources.push(fixed(
             "republisher identity",
@@ -953,15 +972,37 @@ fn inputs_part(
             "goat_fed_republisher_image",
         ),
     ];
+    // The baseline host firewall is opt-in per group
+    // (`goat_host_firewall_baseline`, default false). Off: NOT APPLICABLE,
+    // nothing rendered or applied. On: the plan must report the rule set before
+    // anything is applied, and it does not render it yet, so it is BLOCKED.
     let mut host_firewall = Vec::new();
-    for g in [&edge_group, &core_group] {
+    for (g, parent) in [
+        (&edge_group, "peering_edges"),
+        (&core_group, "peering_cores"),
+    ] {
+        let on = resolve(
+            repo,
+            "host firewall baseline",
+            None,
+            &[g.as_str(), parent, "all"],
+            "goat-host-firewall",
+            "goat_host_firewall_baseline",
+        )
+        .value
+        .is_some_and(|v| v.eq_ignore_ascii_case("true"));
         for (name, address) in inventory_hosts(repo, g) {
+            let (outcome, detail) = if on {
+                ("BLOCKED", "host firewall baseline: on, and this plan does not render its rule set yet, so it cannot show what would be applied")
+            } else {
+                ("NOT APPLICABLE", "host firewall baseline: off (goat_host_firewall_baseline is not true); nothing is rendered or applied")
+            };
             host_firewall.push(HostFirewall {
                 host: name,
                 address,
                 group: g.clone(),
-                outcome: "NOT APPLICABLE".into(),
-                detail: "no baseline host firewall is declared for this host; the plan renders and applies no rule".into(),
+                outcome: outcome.into(),
+                detail: detail.into(),
             });
         }
     }
@@ -975,7 +1016,15 @@ fn inputs_part(
     } else {
         (source_version(repo), goat_version())
     };
-    let (certificates, cert_rows) = certificates(&Path::new(&work).join("pki"));
+    let (certificates, mut cert_rows) = certificates(&Path::new(&work).join("pki"));
+    for h in host_firewall.iter().filter(|h| h.outcome == "BLOCKED") {
+        cert_rows.push(Readiness {
+            check: "host-firewall".into(),
+            outcome: "BLOCKED".into(),
+            code: None,
+            detail: format!("{} ({}): {}", h.host, h.group, h.detail),
+        });
+    }
     let plan = Plan {
         schema: SCHEMA.into(),
         peering: with.into(),
@@ -2029,5 +2078,55 @@ mod tests {
         let h = rendered_hashes(&applied);
         assert!(h.iter().any(|f| f.path == "a"));
         assert!(h.len() <= 2, "{h:?}");
+    }
+
+    /// The deploy step copies owned resources from the plan: the link subnet
+    /// (from the agreement) and the certificate directory are among them.
+    #[test]
+    fn the_link_subnet_and_certificate_directory_are_resources() {
+        let r = tempfile::tempdir().unwrap();
+        let w = work_with_agreement();
+        let ws = w.path().display().to_string();
+        let p = planned(r.path(), &ws);
+        let get = |k: &str| {
+            p.resources
+                .iter()
+                .find(|x| x.kind == k)
+                .and_then(|x| x.name.clone())
+        };
+        assert_eq!(get("link subnet").as_deref(), Some("169.254.10.0/31"));
+        assert_eq!(get("certificate directory"), Some(format!("{ws}/pki")));
+    }
+
+    /// With the baseline host firewall off, each host is NOT APPLICABLE; with
+    /// it on, the plan cannot show the rule set yet, so the host and the plan
+    /// are BLOCKED rather than silently passing.
+    #[test]
+    fn a_host_firewall_baseline_that_is_on_blocks_the_plan() {
+        let r = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(r.path().join("ops/ansible/inventory")).unwrap();
+        std::fs::write(
+            r.path().join("ops/ansible/inventory/peering-edges.ini"),
+            "[velmara_edge]\nedge-a ansible_host=192.0.2.10\n",
+        )
+        .unwrap();
+        let w = tempfile::tempdir().unwrap();
+        let ws = w.path().display().to_string();
+        let (p, rows) = inputs_part(r.path(), &opts(&ws), &peering()).unwrap();
+        assert_eq!(p.host_firewall[0].outcome, "NOT APPLICABLE");
+        assert!(p.host_firewall[0]
+            .detail
+            .starts_with("host firewall baseline: off"));
+        assert!(rows.iter().all(|x| x.check != "host-firewall"));
+        let gv = r.path().join("ops/ansible/group_vars/peering_edges");
+        std::fs::create_dir_all(&gv).unwrap();
+        std::fs::write(gv.join("fw.yml"), "goat_host_firewall_baseline: true\n").unwrap();
+        let (p, rows) = inputs_part(r.path(), &opts(&ws), &peering()).unwrap();
+        assert_eq!(p.host_firewall[0].outcome, "BLOCKED");
+        assert!(
+            rows.iter()
+                .any(|x| x.check == "host-firewall" && x.outcome == "BLOCKED"),
+            "{rows:?}"
+        );
     }
 }
