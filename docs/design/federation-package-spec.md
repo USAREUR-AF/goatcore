@@ -1089,6 +1089,37 @@ is what makes them a test of it rather than a description of it.
   locally, and never inside the digest (§7).
 - **A directory.** Convenient, and never required. Two parties who share none federate
   exactly as well (§5.1).
+- **A counterparty member.** A package does not name the party it is meant for, and does not
+  need to. §11.1 says why that holds for a party with several peerings.
+
+### 11.1 A party with several peerings signs one package per counterparty
+
+This section adds no member and changes no rule; the version stays `federation-package/v1`, and
+every conformance vector stands as written.
+
+A package carries at most one `transport_offer`, so it describes one link: one endpoint, one
+public key, one proposed link subnet. A party that peers with several counterparties issues one
+package per counterparty, each carrying that peering's offer, all signed with the same key and
+naming the same `identity`. Each pair composes exactly as in §6 and §7, from two packages, with
+no knowledge of the party's other peerings.
+
+Three things follow, and none needs a rule of its own:
+
+- **An agreement already composed stays valid.** Composition reads only the two packages' bytes.
+  Moving a package to a different place (a per-counterparty slot in a directory, a different
+  file name) changes nothing that is hashed, so the agreement's canonical bytes and digest are
+  the same.
+- **A package delivered to the wrong counterparty is caught.** If one side composes with the
+  package the other issued for a third party, the two agreements differ, the digests differ, and
+  §9's comparison fails visibly.
+- **One offer for several partners is not this version.** A single `transport_offer` shared by
+  several peerings would need one `proposed_link_subnet` for several links, and §7 takes
+  `link_subnet` from whichever party sorts first, so two partners' proposals could collide on the
+  shared side. Allowing it needs a new subnet rule, which changes agreement bytes: a later
+  version, with its own vectors.
+
+How the packages travel is still out of scope (above). The peering directory keeps one slot per
+counterparty (`peering-directory-service.md` §6.3).
 
 
 ## Receiving storage interests

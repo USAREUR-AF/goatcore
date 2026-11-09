@@ -209,6 +209,60 @@ stops for the key check, it:
 
 Every directory failure is a warning. Unset, phase 5 is unchanged.
 
+### 6.3 A party with several peerings: one package per counterparty
+
+Status: WIP — gate: two peerings of one party exchanged through one directory on the test
+environment, each counterparty composing the package meant for it, and both agreements' digests
+matching on both sides.
+
+A package carries one `transport_offer`: one endpoint, one WireGuard key, one proposed link
+subnet. Each peering has its own interface, port and /31 (the per-peering allocation in
+`goatbuilder federate`), so a party with two peerings signs two packages. With one
+`/v1/parties/<id>/package` slot per party, publishing the second replaced the first.
+
+saltlick therefore also keeps one package per counterparty:
+
+| File | Path | Checked on upload | Checked by the reader |
+|---|---|---|---|
+| The package signed for one counterparty | `/v1/parties/<id>/packages/<counterparty>` | as the single package; `<counterparty>` has the form of a `sovereign_id` and is not `<id>` | the upload's request signature, whose resource line is `<id>/packages/<counterparty>`, under the key read back on the call; then the package signature |
+
+A slot is removed with the entry, or alone by a `DELETE` of its path signed by the bound key
+when the peering ends (`saltlick sign -method DELETE -id <id> -upload packages/<counterparty>`
+prints the header; the driver step does not withdraw slots).
+
+The package format does not change (spec §11.1). A misdelivered package is still caught: the two
+sides' agreement digests differ. The slot signature catches it earlier, because it records which
+counterparty the party uploaded the package for.
+
+The driver step does this when `FED_DIRECTORY_PER_COUNTERPARTY=1` is set (or
+`directory.py --per-counterparty`). **Built, off by default**; switching the default is a
+separate change. With it set, the step:
+
+1. uploads our package to `/v1/parties/<us>/packages/<FED_COUNTERPARTY_ID>`, and reads it back
+   byte for byte;
+2. writes the pointer and the single `/package` slot only when they are this peering's: the
+   single slot is empty, holds the bytes this peering last wrote (recorded in
+   `$FED_WORK/directory-single-slot.sha256`; the work directory is per peering), or holds a
+   package with our `transport_offer`. With `FED_PACKAGE_URL` set, the pointer is this
+   peering's when there is none or it names our `FED_PACKAGE_URL`. Otherwise the step leaves
+   both alone, so they keep serving the first peering to a counterparty on an older release.
+   Only that first peering's runs refresh the entry's `expires` or rotate its key;
+3. looks the counterparty up at `/v1/parties/<them>/packages/<us>` first. Only a 404 there
+   sends it to their pointer, as §6.2 does: their pointer may name another of their peerings'
+   packages, signed by the same key, so any other failure is a warning and nothing is placed.
+   When the slot's upload signature does not verify under the key read back on the call, or
+   the keyring's key for them is not a key, it uses nothing;
+4. against a directory that has no such route (a saltlick release before it), warns and keeps
+   the single-package flow.
+
+The CA certificate and the SPIFFE bundle stay one per party: they name the party, not a peering.
+
+**What the directory learns.** The slot name is the counterparty's `sovereign_id`, so anyone who
+asks for it learns that the two parties hold a peering. saltlick does not list slots in its
+catalogue or on its home page, does not interpret the name, and still computes nothing about who
+should peer with whom. A party that does not want a peering visible exchanges that package
+directly, as §6 already allows.
+
 ## 7. Relationship to the Block 84 peering portal
 
 They compose; neither replaces the other.
@@ -238,6 +292,7 @@ than overlapping.
 | Service | **Built** — image `ghcr.io/usareur-af/saltlick:v0.4.0`, multi-arch, pulls anonymously; hosts package, CA and SPIFFE bundle with the upload's signature |
 | Internet-reachable deployment (§5.1) | **Built** — one instance outside every goatnet, declared in the deploying team's private overlay, never a mesh service on a goatnet host; per-source rate limits in the service designed |
 | Pointer entry (§6) | **Built** in saltlick (`saltlick-pointer/v1`) |
+| Package per counterparty (§6.3) | **Built** in saltlick and the driver step, off by default (`FED_DIRECTORY_PER_COUNTERPARTY=1`); tested against a stand-in and a local saltlick, not yet on the test environment |
 | Driver step (§6.2) | **Built**; phase 5 of the driver, required by preflight unless `FED_NO_DIRECTORY=1`; exercised end to end by `ops/federation-e2e/run.sh` against a saltlick it starts |
 | The trust mechanism it sits above — package spec, `goat federate`, conformance vectors | **Built and merged** — see [`federation-package-spec.md`](federation-package-spec.md) |
 
