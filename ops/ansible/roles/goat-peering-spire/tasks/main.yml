@@ -30,6 +30,15 @@
       {{ peering_spire_bundle_port }}: the tunnel firewall drops every port it was not
       told about, and a dropped bundle endpoint reads as a partner who never rotated.
 
+- name: peering-spire | the forwards are named for the partner
+  ansible.builtin.assert:
+    that:
+      - peering_spire_partner_id is match('^[a-z0-9][a-z0-9-]{1,15}$')
+    fail_msg: >-
+      goat-peering-spire needs peering_spire_partner_id (the partner's sovereign_id, from
+      the rendered agreement) to name this peering's forward units; got
+      '{{ peering_spire_partner_id }}'.
+
 - name: peering-spire | read the bundle the exchange placed
   ansible.builtin.set_fact:
     _ps_their_bundle: "{{ lookup('ansible.builtin.file', peering_spire_their_bundle_file) }}"
@@ -88,6 +97,36 @@
   delegate_to: "{{ peering_spire_server_host }}"
   changed_when: true
 
+# Before forwards were named for the partner, one pair served every peering on the host.
+# Those units listen on the same addresses this peering's new pair will, so they go first.
+- name: peering-spire | find the forwards named for no partner
+  ansible.builtin.stat:
+    path: "/etc/systemd/system/{{ item }}"
+  loop:
+    - goat-peering-bundle-in.socket
+    - goat-peering-bundle-out.socket
+    - goat-peering-bundle-in.service
+    - goat-peering-bundle-out.service
+  register: _ps_legacy
+
+- name: peering-spire | stop and remove the forwards named for no partner
+  ansible.builtin.systemd:
+    name: "{{ item.item }}"
+    state: stopped
+    enabled: false
+  loop: "{{ _ps_legacy.results | selectattr('stat.exists') | list }}"
+  loop_control:
+    label: "{{ item.item }}"
+  failed_when: false
+
+- name: peering-spire | delete the forward unit files named for no partner
+  ansible.builtin.file:
+    path: "/etc/systemd/system/{{ item.item }}"
+    state: absent
+  loop: "{{ _ps_legacy.results | selectattr('stat.exists') | list }}"
+  loop_control:
+    label: "{{ item.item }}"
+
 - name: peering-spire | forward units
   ansible.builtin.template:
     src: "{{ item.src }}"
@@ -96,10 +135,10 @@
     group: root
     mode: "0644"
   loop:
-    - { src: forward.socket.j2, name: goat-peering-bundle-in.socket, listen: "{{ peering_spire_local_link_ip }}:{{ peering_spire_bundle_port }}" }
-    - { src: forward.service.j2, name: goat-peering-bundle-in.service, target: "{{ peering_spire_server_addr }}:{{ peering_spire_bundle_port }}" }
-    - { src: forward.socket.j2, name: goat-peering-bundle-out.socket, listen: "{{ peering_spire_outbound_listen }}:{{ peering_spire_outbound_port }}" }
-    - { src: forward.service.j2, name: goat-peering-bundle-out.service, target: "{{ peering_spire_remote_link_ip }}:{{ peering_spire_bundle_port }}" }
+    - { src: forward.socket.j2, name: "goat-peering-bundle-in-{{ peering_spire_partner_id }}.socket", listen: "{{ peering_spire_local_link_ip }}:{{ peering_spire_bundle_port }}" }
+    - { src: forward.service.j2, name: "goat-peering-bundle-in-{{ peering_spire_partner_id }}.service", target: "{{ peering_spire_server_addr }}:{{ peering_spire_bundle_port }}" }
+    - { src: forward.socket.j2, name: "goat-peering-bundle-out-{{ peering_spire_partner_id }}.socket", listen: "{{ peering_spire_outbound_listen }}:{{ peering_spire_outbound_port }}" }
+    - { src: forward.service.j2, name: "goat-peering-bundle-out-{{ peering_spire_partner_id }}.service", target: "{{ peering_spire_remote_link_ip }}:{{ peering_spire_bundle_port }}" }
   loop_control:
     label: "{{ item.name }}"
 
@@ -110,8 +149,8 @@
     enabled: true
     daemon_reload: true
   loop:
-    - goat-peering-bundle-in.socket
-    - goat-peering-bundle-out.socket
+    - "goat-peering-bundle-in-{{ peering_spire_partner_id }}.socket"
+    - "goat-peering-bundle-out-{{ peering_spire_partner_id }}.socket"
 
 # TIER 1: our server holds the partner's bundle, read back from the server.
 - name: peering-spire | our server holds the partner's bundle
