@@ -1,7 +1,7 @@
 # goat-client connectivity check + peer file drop — Tailscale-parity features for the inner mesh
 
 **Status:** Designed-not-built. Authoritative ADR: [`1063-goat-client-connectivity-check-and-file-drop.md`](../adr/1063-goat-client-connectivity-check-and-file-drop.md) (proposed).
-**Repo:** **v1 (both features) lands in [`<org>/goat-client`](https://github.com/<org>/goat-client)** (daemon + GUI); goat-core carries only this doc + the ADR. The one core-repo code change is **phase 2** (offline store-and-forward), which touches the Rust relay crates `goat-relay` / `goat-relay-protocol` — v1 basic transfer needs none of it. Rough proportion: ~95% goat-client, ~5% core, and that 5% is deferred.
+**Repo:** **v1 (both features) lands in [`USAREUR-AF/goat-client`](https://github.com/USAREUR-AF/goat-client)** (daemon + GUI); goat-core carries only this doc + the ADR. The one core-repo code change is **phase 2** (offline store-and-forward), which touches the Rust relay crates `goat-relay` / `goat-relay-protocol` — v1 basic transfer needs none of it. Rough proportion: ~95% goat-client, ~5% core, and that 5% is deferred.
 **Parent design:** [`goat-client.md`](goat-client.md) (the daemon + GUI this extends). **Substrate levers:** [ADR 0709](../adr/0709-block-33-relay-rewrite-architecture.md) (the Rust relay), `identity-grammar.md` (identity-grade authz), [`operator-action-audit.md`](operator-action-audit.md) (audit trail).
 
 ---

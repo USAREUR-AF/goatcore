@@ -1,6 +1,6 @@
 # goat-client — Cross-platform daemon + GUI for wg-cp0 onboarding
 
-**Status:** Canon through **v0.3.7** (2026-07-31, latest release on `<org>/goat-client`). The v0.2 three-mode triad (Blocks 76N–Q, [ADR 0840 Amendment 2026-05-13](../adr/0840-goat-client-cross-platform-daemon-gui.md)) shipped in v0.2.0; v0.3.x added the inner-mesh per-peer features (ADR 1063), the device-wide name-fallback resolver (ADR 1082), OS installers, and the wedge-class fixes validated 6/6 against a real management plane by the 2026-07-31 assay (cloud-env-lifecycle.md `goat-client-assay` row).
+**Status:** Canon through **v0.3.7** (2026-07-31, latest release). The v0.2 three-mode triad (Blocks 76N–Q, [ADR 0840 Amendment 2026-05-13](../adr/0840-goat-client-cross-platform-daemon-gui.md)) shipped in v0.2.0; v0.3.x added the inner-mesh per-peer features (ADR 1063), the device-wide name-fallback resolver (ADR 1082), OS installers, and the wedge-class fixes validated 6/6 against a real management plane by the 2026-07-31 assay (cloud-env-lifecycle.md `goat-client-assay` row).
 
 **Readiness, plainly — desktop-headless yes, general distribution no.** What ships is six-target desktop binaries plus `.deb`/`.rpm`/`.dmg`/`.msi`, cosign-signed, publicly downloadable at `get.goat.example` ([goat-client-distribution.md](goat-client-distribution.md)). Four things stand between that and putting it in a non-engineer's hands, none of them code-complete:
 
@@ -11,9 +11,9 @@
 | **Mobile** | Source-complete, never distributed. iOS + Android shells and the gomobile SDK are in-tree, `mobile.yml` is an advisory bind smoke, and **no release carries a mobile artifact** — no store, no MDM path. This is also the one platform where the embedded CA is load-bearing (§10.1) |
 | **Windows** | Unvalidated live. The MSI passed flags the daemon doesn't register through 0.3.6 — the same defect class as the deb/rpm/dmg units — fixed in 0.3.7 by source review, never by a live install |
 
-**End-user install + run:** [`docs/quickstart.md` in the goat-client repo](https://github.com/<org>/goat-client/blob/main/docs/quickstart.md) — per-OS download + cosign verify + install + bundle import + connect verify, ~10 min on a laptop. The release archive carries both binaries (daemon + GUI); the GUI-from-source build the quickstart once described was a v0.1.0-only necessity. Maturity caveat: operator-class first-contact dogfood, not non-engineer end-user distribution yet.
+**End-user install + run:** [`docs/quickstart.md` in the goat-client repo](https://github.com/USAREUR-AF/goat-client/blob/main/docs/quickstart.md) — per-OS download + cosign verify + install + bundle import + connect verify, ~10 min on a laptop. The release archive carries both binaries (daemon + GUI); the GUI-from-source build the quickstart once described was a v0.1.0-only necessity. Maturity caveat: operator-class first-contact dogfood, not non-engineer end-user distribution yet.
 **Authoritative ADR:** [`0840-goat-client-cross-platform-daemon-gui.md`](../adr/0840-goat-client-cross-platform-daemon-gui.md).
-**Repo:** [`<org>/goat-client`](https://github.com/<org>/goat-client) — public, Apache 2.0.
+**Repo:** [`USAREUR-AF/goat-client`](https://github.com/USAREUR-AF/goat-client) — public, Apache 2.0.
 **Companion:** [`snitch-app.md`](snitch-app.md) (Block 77, separate app — different problem, same client-tooling pattern).
 
 ---
@@ -47,7 +47,7 @@ Block 76 was originally written as a "user-experience polish for off-LAN / non-e
 2. F-103 — Traefik default cert config served leaf-only on the wire, no intermediate. Even with the root trusted, chain validation failed because Traefik did not present the intermediate.
 3. F-104 — Go gRPC dial passed `host:port` as `tls.Config.ServerName`, breaking IP-SAN match for IP-literal mgmt-API URLs (the natural shape over wg-cp0 since there is no public DNS by ADR 0313).
 
-**Bridging fixes** (all landed 2026-05-09, all surface-area we own): netbird-fork patch at `github.com/USAREUR-AF/netbird` commit `c5841359c` (`client/grpc/dialer.go` — embed offline-CA root via `go:embed` + strip port from ServerName via `net.SplitHostPort`); Traefik role renders leaf+intermediate fullchain; operator-laptop-onboarding playbook gained Phase 3.5 trust-anchor + Phase 3.6 patched-binary install. These worked for *us* but were operator-fired-CLI-driven, not viable for non-engineer users at any deployment scale beyond the trunk team. (The playbook's Phase 3.5/3.6 were retired 2026-07-20 — ADR 1083 Track B6 — when operator-laptop onboarding moved to installing goat-client from `get.goat.example` and importing a v0.2 combined-mode bundle; the fork-side fixes live on through `client/embed`.) The fork now embeds no certificate: its dialer adds the roots in `grpc.ExtraRootCAsPEM`, and goat-client sets that from the offline-CA root it embeds in `internal/ipc/grpc/`.
+**Bridging fixes** (all landed 2026-05-09, all surface-area we own): netbird-fork patch at `github.com/USAREUR-AF/netbird` commit `c5841359c` (`client/grpc/dialer.go` — embed offline-CA root via `go:embed` + strip port from ServerName via `net.SplitHostPort`); Traefik role renders leaf+intermediate fullchain; operator-laptop-onboarding playbook gained Phase 3.5 trust-anchor + Phase 3.6 patched-binary install. These worked for *us* but were operator-fired-CLI-driven, not viable for non-engineer users at any deployment scale beyond the trunk team. (The playbook's Phase 3.5/3.6 were retired 2026-07-20 — ADR 1083 Track B6 — when operator-laptop onboarding moved to installing goat-client from `get.goat.example` and importing a v0.2 combined-mode bundle; the fork-side fixes live on through `client/embed`.) The fork now embeds no certificate: its dialer adds the roots in `grpc.ExtraRootCAsPEM`, and goat-client sets it from every `*.pem` file compiled in from its `internal/ipc/grpc/trust/` directory. The public goat-client tree ships no certificate and pins no enrollment-bundle signing key (`internal/trustanchor/anchors.yaml` is empty), so a public build trusts the system roots only; a deployment adds its CA root and bundle-signing keys before building.
 
 **Why this elevates Block 76 sequencing:**
 
@@ -222,7 +222,7 @@ netbird uses a setup key — a string the user pastes into the app, which then t
 ## 5. Repo layout (planned)
 
 ```
-<org>/goat-client/
+USAREUR-AF/goat-client/
 ├── cmd/
 │   ├── goat-clientd/        # daemon binary (desktop + entry for gomobile)
 │   └── goat-client/          # Fyne GUI binary (desktop only)
@@ -319,11 +319,11 @@ There are **two separate fork apparatuses** in the goat ecosystem and they shoul
 | Apparatus | Repo | Role | Trust path |
 |---|---|---|---|
 | **netbird-fork** (existing) | `github.com/USAREUR-AF/netbird` — installed at `/usr/local/bin/netbird → /opt/goat/bin/netbird-goat` on operator laptops today | Desktop daemon. Originally built 2026-05-09 as the bridging-fix carrier for F-090/F-103/F-104 against the Ed25519 root. Today's role post-Block-79: **dev-account daily-driver** for operators. NOT load-bearing for goat-prod (stock NetBird is the supported goat-prod desktop client). | `SSL_CERT_FILE=/etc/ssl/goat-ca-bundle.pem` (CGO_ENABLED=0 pure-Go pool) + `go:embed`ed root in `client/grpc/dialer.go`. Whether the embed-pool *appends* or *replaces* system pool is undetermined as of 2026-05-11; a bundle-file update alone did NOT make it validate the new ECDSA chain in field testing. Retired from the goat-prod path. |
-| **goat-client** (Block 76, this design) | `<org>/goat-client` (new repo, separate codebase) | Cross-platform mobile + desktop client. Mobile sandboxes force embed-CA load-bearing — this is the apparatus that carries that requirement. | Embed-only on mobile (pinned-per-build); embed + OS trust store on desktop (defense-in-depth). |
+| **goat-client** (Block 76, this design) | `USAREUR-AF/goat-client` (new repo, separate codebase) | Cross-platform mobile + desktop client. Mobile sandboxes force embed-CA load-bearing — this is the apparatus that carries that requirement. | Embed-only on mobile (pinned-per-build); embed + OS trust store on desktop (defense-in-depth). |
 
 **Block 76 v0.1.x scope** is the goat-client repo, NOT the netbird-fork. The work shape:
 
-- **Repo:** new at `<org>/goat-client`. Forks netbird's MIT `client/` tree, strips netbird-mesh-specific logic, adds wg-cp0 bundle import.
+- **Repo:** new at `USAREUR-AF/goat-client`. Forks netbird's MIT `client/` tree, strips netbird-mesh-specific logic, adds wg-cp0 bundle import.
 - **Embed:** `//go:embed`s the canonical offline-CA root at `ops/enrollment/ca/dev/root-cert.pem` (X.509 CERTIFICATE PEM, ECDSA P-256 post-Block-79). NOT the retired `dev-goat-ca-2026-04-20.pem` (Ed25519, now in `ca/dev-ed25519-retired-2026-05-10/`).
 - **Pubkey-load pattern:** copy from [`ops/enrollment/cmd/wg-cp0-bundle-apply/main.go`](../../ops/enrollment/cmd/wg-cp0-bundle-apply/main.go) `loadCAPubkey()` (commit `dc3944fe`, 2026-05-11) — switches on PEM block type (PUBLIC KEY or CERTIFICATE), extracts SPKI, type-asserts to `*ecdsa.PublicKey`, validates `Curve == elliptic.P256()`. 12-line pattern; copy verbatim.
 - **Test fixtures:** mint ECDSA P-256 keys in setup (not Ed25519) — reference test pattern in [`wg-cp0-bundle-apply/main_test.go`](../../ops/enrollment/cmd/wg-cp0-bundle-apply/main_test.go) `TestLoadCAPubkey` cases. Test-vs-prod algorithm parity prevents F-090-class "macOS rejects Ed25519, but only-in-prod" surprises.
