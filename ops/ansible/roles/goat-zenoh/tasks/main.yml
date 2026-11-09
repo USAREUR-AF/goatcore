@@ -103,6 +103,38 @@
     - zenoh_peer_read_scoped | default(false) | bool
     - zenoh_partner_read_partition | default(false) | bool
 
+- name: Pre-flight | with several sovereign peerings, each reads its own sets only
+  # Every peering's republisher writes its sets under `from/<us>/<set>/**` on this one
+  # core. A peering whose release_key_exprs is the whole wire name `from/<us>/**` (or
+  # wider) can read every other peering's sets, including a set agreed with another
+  # partner only, and its edge carries them out. With one peering the whole prefix and
+  # the offered sets carry the same data; with two it is a leak. Refuse rather than
+  # render it: list the wire key of each set the agreement offers, as
+  # `goat federate apply` renders it (`from/<us>/<set>/**`).
+  ansible.builtin.assert:
+    that:
+      - _sov_whole_prefix | length == 0
+    fail_msg: >-
+      zenoh_sovereign_peerings declares {{ zenoh_sovereign_peerings | length }} peerings, and
+      {{ _sov_whole_prefix | join(', ') }} reads a whole wire name or wider
+      (release_key_exprs). Each peering's republisher writes onto this core, so that
+      peering's edge would carry the other peerings' sets out, including sets agreed with
+      another partner only. Narrow it to the wire key of each set its agreement offers,
+      e.g. from/<us>/<set>/**.
+    quiet: true
+  vars:
+    _sov_whole_prefix: >-
+      {%- set out = [] -%}
+      {%- for p in zenoh_sovereign_peerings | default([]) -%}
+      {%-   for k in p.release_key_exprs | default([]) -%}
+      {%-     if k.split('/')[-1] == '**' and (k.split('/') | length) <= 3 -%}
+      {%-       set _ = out.append(p.sovereign ~ ' (' ~ k ~ ')') -%}
+      {%-     endif -%}
+      {%-   endfor -%}
+      {%- endfor -%}
+      {{ out | unique }}
+  when: (zenoh_sovereign_peerings | default([]) | length) > 1
+
 - name: Pre-flight | flatten the pre-cut partner slot ranges (ADR 1138)
   # The explicit lane map is only half the partner population: the pre-cut
   # blocks carve whole ranges of slot indexes. A `slot_idx:` grant landing in
