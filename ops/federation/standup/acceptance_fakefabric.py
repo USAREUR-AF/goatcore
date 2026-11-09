@@ -2,7 +2,10 @@
 
 It stands in for what phase 14 talks to, over the same HTTP shapes:
 
-  * two cores' zenoh REST surfaces (GET a key expression, PUT a value), each a store;
+  * two cores' zenoh REST surfaces (GET a key expression, PUT a value), each a store,
+    with the two admin-space answers the persistence check reads (`@/*/router` and
+    `@/*/router/subscriber/<key>`, in zenoh 1.9's shapes): the core's own store
+    subscribes to `from/<other side>/**`, and a test may add a diagnostic session;
   * each side's republisher: a PUT under `release/<set>/...` on one core, when the
     agreement offers `<set>` from that side, lands on the other core as
     `from/<side>/<set>/...` (the link and both edges are folded into this step);
@@ -26,6 +29,7 @@ import os
 import re
 import subprocess
 import threading
+import urllib.parse
 
 
 def _match(expr, key):
@@ -57,11 +61,17 @@ class Faults:
         self.stale = {}                    # side -> {key: value} present on a core before the run
         self.broken_get = set()            # sides whose REST surface answers every GET with HTTP 500
         self.answers_everything = {}       # side -> one value its REST surface returns for every GET
+        self.no_storage = set()            # sides whose core has no store for the other side's wire name
+        self.storage_interest_refused = set()  # sides whose store's subscription the edge refuses: a
+        #                                    sample arrives there only beside a diagnostic subscriber
+        self.diagnostic = {}               # side -> key expression a client session subscribes to there
+        self.admin_closed = set()          # sides whose admin space answers nothing
 
 
 class Core:
     def __init__(self, name):
         self.name = name
+        self.zid = hashlib.sha256(name.encode()).hexdigest()[:32]
         self.store = {}
         self.lock = threading.Lock()
 
@@ -82,6 +92,7 @@ class Fabric:
         open(self.trace_path, "w").close()
         self.servers = []
         self.zids = {"forged": "f" + "1" * 31, "impersonate": "f" + "2" * 31}
+        self.diag_zid = "d" + "3" * 31
 
     # --- the agreement -------------------------------------------------------
     def offered(self, side):
@@ -116,10 +127,45 @@ class Fabric:
         if side == self.them and key.startswith("ops/") and self.faults.edge_admits_ops:
             self.deliver(self.us, key, value)
 
-    def deliver(self, side, key, value):
+    # --- who subscribes on a core ---------------------------------------------
+    def paused(self, side):
+        return os.path.exists(os.path.join(self.tmp, "paused-" + side))
+
+    def subscribers(self, side):
+        """(key expression, client ids) for every subscriber on `side`'s core."""
         core = self.cores[side]
-        with core.lock:
-            core.store[key] = value
+        subs = []
+        if side not in self.faults.no_storage:
+            subs.append(("from/%s/**" % self.other(side), [core.zid]))
+        if side in self.faults.diagnostic and not self.paused(side):
+            subs.append((self.faults.diagnostic[side], [self.diag_zid]))
+        return subs
+
+    def admin(self, side, expr):
+        core = self.cores[side]
+        if side in self.faults.admin_closed:
+            return []
+        if expr == "@/*/router":
+            return [{"key": "@/%s/router" % core.zid, "value": {"zid": core.zid}, "encoding": "application/json"}]
+        prefix = "@/*/router/subscriber/"
+        if expr.startswith(prefix):
+            key = expr[len(prefix):]
+            return [{"key": "@/%s/router/subscriber/%s" % (core.zid, ke),
+                     "value": {"clients": clients, "peers": [], "routers": [core.zid]}, "encoding": "application/json"}
+                    for ke, clients in self.subscribers(side) if _match(ke, key)]
+        return []
+
+    def deliver(self, side, key, value):
+        # The store keeps a sample when its own subscription carries it, or when the
+        # edge refuses that subscription but a diagnostic session's interest pulls the
+        # sample across anyway (the defect the persistence check exists for).
+        store = side not in self.faults.no_storage
+        interest = side not in self.faults.storage_interest_refused or any(
+            _match(ke, key) for ke, clients in self.subscribers(side) if clients != [self.cores[side].zid])
+        if store and interest:
+            core = self.cores[side]
+            with core.lock:
+                core.store[key] = value
         self.respond(side, key, value)
 
     def respond(self, side, key, value):
@@ -197,6 +243,9 @@ class Fabric:
 
     def _rows(self, side):
         def get(expr):
+            expr = urllib.parse.unquote(expr)
+            if expr.startswith("@/"):
+                return self.admin(side, expr)
             return [{"key": k, "value": base64.b64encode(v).decode(), "encoding": "zenoh/bytes"}
                     for k, v in self.cores[side].get(expr)]
         return get

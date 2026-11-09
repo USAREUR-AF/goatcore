@@ -97,6 +97,57 @@ class RestValue(unittest.TestCase):
                 ev.rest_value(text)
 
 
+ZID = "2b764bf382b5ca380b0cc1ba6fda9a4d"
+ROUTER = [{"key": "@/%s/router" % ZID, "value": {"zid": ZID}, "encoding": "application/json"}]
+
+
+def sub(expr, clients, routers=(ZID,), peers=()):
+    return {"key": "@/%s/router/subscriber/%s" % (ZID, expr),
+            "value": {"clients": list(clients), "peers": list(peers), "routers": list(routers)},
+            "encoding": "application/json", "timestamp": None}
+
+
+class PersistenceScope(unittest.TestCase):
+    """Rows in the shape zenoh 1.9's admin space answers `@/*/router/subscriber/<key>`."""
+    KEY = "from/xab/all/acceptance/acc-1/persist"
+
+    def test_the_store_alone_is_ready(self):
+        outcome, _, d = ev.persistence_scope(self.KEY, ROUTER, [sub("from/xab/**", [ZID])])
+        self.assertEqual(outcome, "ready")
+        self.assertEqual(d["store_subscriptions"], ["from/xab/**"])
+
+    def test_another_session_on_the_key_is_diagnostic(self):
+        other = "1375ec569946d705c1114088d163b367"
+        outcome, reason, d = ev.persistence_scope(self.KEY, ROUTER, [sub("from/xab/**", [ZID]),
+                                                                    sub("from/xab/all/**", [other])])
+        self.assertEqual(outcome, "diagnostic")
+        self.assertIn(other, reason)
+        outcome, _, _ = ev.persistence_scope(self.KEY, ROUTER, [sub("from/xab/**", [ZID]), sub("from/**", [], peers=[other])])
+        self.assertEqual(outcome, "diagnostic")
+
+    def test_a_subscriber_that_does_not_match_the_key_is_ignored(self):
+        rows = [sub("from/xab/**", [ZID]), sub("from/xab/**/fedcheck/*", ["1375ec569946d705c1114088d163b367"])]
+        self.assertEqual(ev.persistence_scope(self.KEY, ROUTER, rows)[0], "ready")
+
+    def test_no_store_and_a_closed_admin_space_are_told_apart(self):
+        self.assertEqual(ev.persistence_scope(self.KEY, ROUTER, [])[0], "no-storage")
+        self.assertEqual(ev.persistence_scope(self.KEY, ROUTER, [sub("from/xab/other/**", [ZID])])[0], "no-storage")
+        self.assertEqual(ev.persistence_scope(self.KEY, [], [])[0], "closed")
+
+    def test_a_remote_router_is_recorded_not_counted(self):
+        rows = [sub("from/xab/**", [ZID], routers=(ZID, "e" * 32))]
+        outcome, _, d = ev.persistence_scope(self.KEY, ROUTER, rows)
+        self.assertEqual(outcome, "ready")
+        self.assertEqual(d["remote_routers"], [{"expr": "from/xab/**", "router": "e" * 32}])
+
+    def test_key_matching(self):
+        for expr, key, want in (("from/xab/**", "from/xab", True), ("from/xab/**", "from/xab/a/b", True),
+                                ("from/*/all/**", "from/xab/all/x", True), ("from/xab/*", "from/xab/a/b", False),
+                                ("from/xa*/**", "from/xab/q", True), ("from/xac/**", "from/xab/q", False)):
+            with self.subTest(expr=expr, key=key):
+                self.assertEqual(ev.key_matches(expr, key), want)
+
+
 class Bundle(unittest.TestCase):
     def run_cli(self, *argv):
         out = io.StringIO()

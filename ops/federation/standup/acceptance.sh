@@ -6,6 +6,9 @@
 #   tier 2  POSITIVE   a fresh sample on every offered release set carries, in every
 #                      direction the agreement has, read back from the RECEIVING
 #                      core's own store and compared byte for byte
+#   PERSISTENCE        a second sample on every offered set reaches the receiving
+#                      core's store when only the store subscribes to its key, so
+#                      no diagnostic interest can be what carried it
 #   tier 3  NEGATIVE   the refusals fire — asserted only ALONGSIDE the positives,
 #                      because a refusal checked against a dead path passes
 #                      vacuously and proves nothing. Silence proves nothing
@@ -39,6 +42,9 @@
 #   FED_PROBE_IMPERSONATE_ZID   that session's zenoh id
 #   FED_SPIRE_OURS           command prefix running OUR `spire-server` CLI
 #   FED_SPIRE_THEIRS         command prefix running THEIR `spire-server` CLI
+#   FED_TEST_SUBSCRIBERS_PAUSE_OURS / _THEIRS    command, run on that core's side,
+#                            that stops the test subscribers a drill keeps there
+#   FED_TEST_SUBSCRIBERS_RESUME_OURS / _THEIRS   command that starts them again
 #
 # WHERE THE PROBES RUN. From the operator's machine. FED_OURS_REST / FED_THEIRS_REST
 # are read through FED_SSH_OURS / FED_SSH_THEIRS when set (ssh to the core host, which
@@ -110,8 +116,9 @@ RUN_ID="acc-$(date -u +%Y%m%dT%H%M%SZ)-$$-$(od -An -N4 -tx1 /dev/urandom | tr -d
 S="$RUN_ID"
 CHECKS="$EVID/.checks-$RUN_ID.jsonl"; OBSF="$EVID/.obs-$RUN_ID"
 REST_ERR="$EVID/.rest-$RUN_ID"; TRACE="$EVID/.trace-$RUN_ID"
+ADM_R="$EVID/.adm-router-$RUN_ID"; ADM_S="$EVID/.adm-subs-$RUN_ID"
 : > "$CHECKS"; : > "$OBSF"
-trap 'rm -f "$CHECKS" "$OBSF" "$REST_ERR" "$TRACE"' EXIT
+trap 'rm -f "$CHECKS" "$OBSF" "$REST_ERR" "$TRACE" "$ADM_R" "$ADM_S"' EXIT
 T0="$RUN_STARTED"
 pass=0; fail=0; skip=0; blocked=0; RECORD_FAILED=""
 
@@ -263,6 +270,8 @@ if [ -z "$FED_THEIRS_REST" ]; then
   blk out-of-lane/inbound inbound negative "their write outside the agreement does not cross: $why"
   blk out-of-lane/outbound outbound negative "a prefix the agreement never named does not reach them: $why"
   blk refusal/acl-trace inbound negative "the refusals on our edge's ACL trace: $why"
+  for set in $(list "$OUR_SETS");   do blk "persistence/outbound/$set" outbound persistence "our $set/** persists in their core's store: $why"; done
+  for set in $(list "$THEIR_SETS"); do blk "persistence/inbound/$set" inbound persistence "their $set/** persists in our core's store: $why"; done
 else
   # ---- TIER 2, POSITIVE. Read back from the RECEIVING side's own storage: an
   #      ACL allow proves the write was permitted, only a read-back proves it
@@ -318,6 +327,74 @@ else
     no fresh-keys both precondition "a target key was unreadable or already held a value before this run sent anything:$PRE_BAD" \
       "The run id is unique, so a value there is not from this run; the reads above prove nothing for those sets."
   fi
+
+  # ---- PERSISTENCE. The reads above are store queries, and the runner declares no
+  #      subscriber. That is not enough: a session someone else left subscribed on
+  #      the receiving core (a drill's responder, a person's `z_sub`) creates the
+  #      interest that pulls a sample across, and a store whose own subscription the
+  #      edge refuses then looks healthy for as long as that session lives. So, per
+  #      offered set: read who on the receiving core subscribes to the exact key
+  #      (the admin space, `@/*/router/subscriber/<key>`; no storage status query),
+  #      require that the core's own store does and that no other session does,
+  #      stopping a drill's test subscribers when it says how, and only then publish
+  #      a NEW sample and read it back from the store.
+  [ "$HAVE_OUT" = 1 ] || { begin; na persistence/outbound outbound persistence "$NO_OUT"; }
+  [ "$HAVE_IN" = 1 ]  || { begin; na persistence/inbound inbound persistence "$NO_IN"; }
+  side_run() { if [ "$1" = ours ]; then ours "$2"; else theirs "$2"; fi; }
+  side_get() { # SIDE KEY > curl output with its status line
+    if [ "$1" = ours ]; then ours "curl -s -m 8 -w '\n%{http_code}' '$FED_OURS_REST/$2'"
+    else theirs "curl -s -m 8 -w '\n%{http_code}' '$FED_THEIRS_REST/$2'"; fi
+  }
+  # scope SIDE KEY: sets SCOPE (one JSON line) and returns the outcome's status.
+  scope() {
+    side_get "$1" "@/*/router" > "$ADM_R" 2>/dev/null
+    side_get "$1" "@/*/router/subscriber/$2" > "$ADM_S" 2>/dev/null
+    SCOPE=$(python3 "$EVIDENCE" persistence-scope --key "$2" --router "$ADM_R" --subscribers "$ADM_S")
+  }
+  scope_reason() { printf '%s' "$SCOPE" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("reason",""))' 2>/dev/null; }
+  # persist DIRECTION RECEIVING-SIDE SENDING-SIDE SENDER SET
+  persist() {
+    local dir="$1" rx="$2" tx="$3" sender="$4" set="$5" key n there pause resume paused="" val i rc
+    n="persistence/$dir/$set"; key="$(wire_of "$sender" "$set")/acceptance/$S/persist"; val="persist-$S-${set#release/}"
+    there="our core"; pause="${FED_TEST_SUBSCRIBERS_PAUSE_OURS:-}"; resume="${FED_TEST_SUBSCRIBERS_RESUME_OURS:-}"
+    [ "$rx" = theirs ] && { there="their core"; pause="${FED_TEST_SUBSCRIBERS_PAUSE_THEIRS:-}"; resume="${FED_TEST_SUBSCRIBERS_RESUME_THEIRS:-}"; }
+    begin
+    scope "$rx" "$key"; rc=$?
+    if [ "$rc" -eq 5 ] && [ -n "$pause" ]; then
+      side_run "$rx" "$pause" >/dev/null 2>&1; paused=1; settle 2
+      obs paused "$pause"
+      scope "$rx" "$key"; rc=$?
+    fi
+    obs key "$key"; obs scope "$SCOPE"
+    case "$rc" in
+      0) ;;
+      1) no "$n" "$dir" persistence "no store on $there subscribes to $key" "$(scope_reason)" ;;
+      5) blk "$n" "$dir" persistence "$set/** on $there: a session other than the core's own store subscribes to the key, so reception cannot be shown to rest on the store" \
+           "$(scope_reason). Stop it, or set FED_TEST_SUBSCRIBERS_PAUSE_$(printf '%s' "$rx" | tr '[:lower:]' '[:upper:]') and its _RESUME_ twin." ;;
+      *) blk "$n" "$dir" persistence "$set/** on $there: who subscribes to the key could not be read" "$(scope_reason)" ;;
+    esac
+    if [ "$rc" -eq 0 ]; then
+      if [ "$tx" = ours ]; then put_ours "$set/acceptance/$S/persist" "$val"; else put_theirs "$set/acceptance/$S/persist" "$val"; fi
+      for i in 1 2 3 4 5 6 7 8; do
+        settle 1
+        get_side "$rx" "$key"
+        [ "$GOT_RC" -eq 0 ] && [ "$GOT" = "$val" ] && break
+      done
+      obs sent "$val"; obs received "$GOT"; obs attempts "$i"
+      if [ "$GOT_RC" -ne 0 ]; then
+        blk "$n" "$dir" persistence "$set/** -> $key: $there's REST surface did not answer" "$GOT_ERR"
+      elif [ "$GOT" = "$val" ]; then
+        ok "$n" "$dir" persistence "$set/** persists on $there with only the core's own store subscribed to the key"
+      else
+        no "$n" "$dir" persistence "$set/** did not persist on $there with only its store subscribed" \
+          "expected '$val', read '${GOT:-<nothing>}'. The store's own interest is not carrying this lane."
+      fi
+    fi
+    [ -n "$paused" ] && [ -n "$resume" ] && side_run "$rx" "$resume" >/dev/null 2>&1
+    return 0
+  }
+  for set in $(list "$THEIR_SETS"); do persist inbound ours theirs "$THEM" "$set"; gap; done
+  for set in $(list "$OUR_SETS");   do persist outbound theirs ours "$US" "$set"; gap; done
 
   # ---- TIER 3, NEGATIVE. Only meaningful because tier 2 just passed.
   if [ "$fail" -eq 0 ] && [ "$blocked" -eq 0 ]; then
