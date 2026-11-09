@@ -103,6 +103,11 @@ jobs:
       - name: External-service client and delegation lifecycle (loopback only)
         run: python3 ops/ansible/tests/test-external-service-lifecycle.py
 
+      - name: Back out one peering of two on one edge, core and forwarder (localhost only)
+        run: |
+          python3 ops/federation/standup/test_backout_core.py
+          python3 ops/federation/standup/test_directory_withdraw.py
+          python3 ops/ansible/tests/peering-backout/test_peering_backout.py
       - name: Standby database, DNS and management guards (local fixtures only)
         run: |
           bash ops/ansible/roles/admit-audit/tests/pg-role-standby.sh
