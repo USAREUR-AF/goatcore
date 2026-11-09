@@ -25,9 +25,9 @@ sha256 of that package, until a date, signed by the party itself. This step:
      one row per fact a partner would otherwise be asked by message,
      PASS / WARN / FAIL / UNKNOWN, each with the fix.
 
-SEVERAL PEERINGS (--per-counterparty, or FED_DIRECTORY_PER_COUNTERPARTY=1; off by
-default). A package carries one transport offer, so a party with two peerings signs
-two packages, and the single slot <directory>/v1/parties/<us>/package lets the second
+SEVERAL PEERINGS (--per-counterparty, or FED_DIRECTORY_PER_COUNTERPARTY=1, true or yes;
+off by default; 0, false, no or empty is off, and any other value is refused). A
+package carries one transport offer, so a party with two peerings signs two packages, and the single slot <directory>/v1/parties/<us>/package lets the second
 replace the first. With the flag on, this step also uploads our package to
 <directory>/v1/parties/<us>/packages/<them>, one slot per counterparty, and looks
 the counterparty's package up at <directory>/v1/parties/<them>/packages/<us> first.
@@ -319,6 +319,7 @@ def entry_url(base: str, sid: str) -> str:
 class Report:
     def __init__(self):
         self.rows = []
+        self.refused = None  # the bytes of a slot package refused on its signatures, if any
 
     def add(self, status, check, detail, fix=""):
         self.rows.append((status, check, detail, fix))
@@ -493,8 +494,8 @@ SINGLE_SLOT_MARK = "directory-single-slot.sha256"
 
 
 def prior_pointer_sha(work: str | None):
-    """The package_sha256 of the pointer this peering last built (<work>/ours.pointer.json),
-    read before this run overwrites it; None when there is none."""
+    """The package_sha256 of the pointer this peering last published (<work>/ours.pointer.json,
+    written only after the directory accepted it); None when there is none."""
     if not work:
         return None
     try:
@@ -613,12 +614,6 @@ def publish(url, ours_raw: bytes, package_url: str | None, key_path: str | None,
     except (OSError, ValueError, RuntimeError) as e:
         return [f"could not sign the pointer: {e}; nothing published"]
     prior_sha = prior_pointer_sha(work)
-    if work:
-        try:
-            with open(os.path.join(work, "ours.pointer.json"), "wb") as f:
-                f.write(body)
-        except OSError:
-            pass  # a convenience copy for the operator; the pointer is already built
     key_b64 = b64(pub)
     slot = per_counterparty and bool(their_id)
     write_single = True
@@ -649,6 +644,15 @@ def publish(url, ours_raw: bytes, package_url: str | None, key_path: str | None,
         text = resp.decode(errors="replace").strip()
         if status not in (200, 201):
             return [f"publish refused, HTTP {status}: {text[:300]}"]
+        if work:
+            # Written only once the directory holds this pointer: the next run reads it as
+            # the package this peering last published (prior_pointer_sha), so a run that
+            # failed before this point must leave the previous one in place.
+            try:
+                with open(os.path.join(work, "ours.pointer.json"), "wb") as f:
+                    f.write(body)
+            except OSError:
+                pass  # a convenience copy for the operator; the pointer is already published
         try:
             info = json.loads(text)
             how = "claimed on first use" if info.get("first_use") else ("rotated" if info.get("rotated") else "replaced")
@@ -890,10 +894,11 @@ def lookup_slot(url, sid: str, us: str, bound_key: str | None, timeout: float, r
                          base64.b64decode(headers.get("x-saltlick-signature", ""), validate=True)))
     except (ValueError, RuntimeError, OSError):
         ok = False
+    under = "the key you read back" if pub is not None else "the key the directory has bound for them"
     if not ok:
-        under = "the key you read back" if pub is not None else "the key the directory has bound for them"
         report.add("FAIL", "slot signature", f"the package at {target} was not uploaded for `{resource}` under {under}",
                    "do not use it: it may be the package of another of their peerings; tell the counterparty")
+        report.refused = body
         return None, None, False, dir_key
     if pub is not None:
         report.add("PASS", "slot signature", f"`{sid}` uploaded this package for `{us}` under the key you read back")
@@ -913,17 +918,21 @@ def lookup_slot(url, sid: str, us: str, bound_key: str | None, timeout: float, r
         report.add("FAIL", "package for us", f"the fetched package is `{pkg.get('sovereign_id')}`, not `{sid}`")
         return None, None, False, dir_key
     report.add("PASS", "package for us", f"{target} ({sha256_of(body)[:23]}…)")
-    if pub is not None:
-        try:
-            ok = verify(pub, canonical({k: v for k, v in pkg.items() if k != "signature"}),
-                        base64.b64decode(pkg.get("signature", "")))
-        except (ValueError, RuntimeError, OSError):
-            ok = False
-        if ok:
-            report.add("PASS", "package signature", "verifies under the key you read back on the call")
-        else:
-            report.add("WARN", "package signature", "does NOT verify under the key you read back on the call",
-                       "trust the key you read back, not the directory; tell the counterparty")
+    # The package's own signature, under the same key as the upload. Without it, a
+    # directory holding a key of its own could sign the slot statement itself and serve
+    # another peering's genuine package: the upload would verify under the key it
+    # substituted, the package would not.
+    try:
+        ok = verify(check_pub, canonical({k: v for k, v in pkg.items() if k != "signature"}),
+                    base64.b64decode(pkg.get("signature", "")))
+    except (ValueError, RuntimeError, OSError):
+        ok = False
+    if not ok:
+        report.add("FAIL", "package signature", f"does NOT verify under {under}, the key its upload was checked against",
+                   "do not use it; trust the key you read back, not the directory; tell the counterparty")
+        report.refused = body
+        return None, None, False, dir_key
+    report.add("PASS", "package signature", f"verifies under {under}")
     return body, pkg, True, dir_key
 
 
@@ -1039,15 +1048,17 @@ def main(argv=None) -> int:
     ap.add_argument("--keyring")
     ap.add_argument("--work")
     ap.add_argument("--timeout", type=float, default=10.0)
-    ap.add_argument("--per-counterparty", action="store_true",
-                    default=os.environ.get("FED_DIRECTORY_PER_COUNTERPARTY", "") == "1",
-                    help="publish and look up one package per counterparty (several peerings); "
-                         "default from FED_DIRECTORY_PER_COUNTERPARTY=1, else off")
     try:
+        # 1/true/yes on; 0/false/no, empty or unset off; anything else refused.
+        per_counterparty_default = env_flag("FED_DIRECTORY_PER_COUNTERPARTY")
         place_pointer_default = env_flag("FED_DIRECTORY_PLACE_POINTER_PACKAGE")
     except ValueError as e:
         print(f"\n    FAIL    {e}; the directory step did nothing")
         return 0
+    ap.add_argument("--per-counterparty", action="store_true",
+                    default=per_counterparty_default,
+                    help="publish and look up one package per counterparty (several peerings); "
+                         "default from FED_DIRECTORY_PER_COUNTERPARTY (1, true or yes; else off)")
     ap.add_argument("--place-pointer-package", action="store_true", default=place_pointer_default,
                     help="with --per-counterparty, place the package their pointer names when they host no "
                          "package for us; set only after confirming on the call that it is this peering's "
@@ -1107,8 +1118,28 @@ def main(argv=None) -> int:
         if found is None:
             found = lookup(a.url, their_id, keyring.get(their_id), a.timeout, checks)
         body, theirs, via_pointer, dir_key = found
-        their_fp = fetch_ca(a.url, their_id, theirs, a.work, checks, a.timeout) if theirs is not None else None
-        fetch_bundle(a.url, their_id, keyring.get(their_id) or dir_key, a.work, checks, a.timeout)
+        if checks.refused is not None and a.theirs and os.path.isfile(a.theirs) and read_bytes(a.theirs) == checks.refused:
+            # An earlier run placed exactly what this run refuses; phase 6 must not compose it.
+            aside = a.theirs + ".refused"
+            try:
+                os.replace(a.theirs, aside)
+                warnings.append(f"{a.theirs} held the package this run refuses; moved it to {aside}, so phase 6 "
+                                "does not compose it")
+                theirs_on_disk = None
+            except OSError as e:
+                warnings.append(f"{a.theirs} holds the package this run refuses and could not be moved aside ({e}); "
+                                "remove it before phase 6")
+        hold = theirs is not None and fallback and via_pointer and not a.place_pointer_package
+        their_fp = None
+        if hold:
+            # Nothing is placed from a held package, the CA and SPIFFE bundle it would
+            # vouch for included; the run that confirms it fetches them.
+            checks.add("UNKNOWN", "CA fetch", "not fetched: the package it is checked against is held for confirmation",
+                       "confirm the package on the call and re-run with FED_DIRECTORY_PLACE_POINTER_PACKAGE=1")
+            checks.add("UNKNOWN", "SPIFFE bundle", "not fetched while their package is held for confirmation")
+        else:
+            their_fp = fetch_ca(a.url, their_id, theirs, a.work, checks, a.timeout) if theirs is not None else None
+            fetch_bundle(a.url, their_id, keyring.get(their_id) or dir_key, a.work, checks, a.timeout)
         checks.print(f"Lookup of `{their_id}`")
         their_key = keyring.get(their_id) or dir_key
         if their_key or their_fp:
@@ -1118,7 +1149,6 @@ def main(argv=None) -> int:
                 print(f"      their verifying key ({src}): {key_groups(their_key)}")
             if their_fp:
                 print(f"      their CA fingerprint:  {fingerprint_groups(their_fp)}")
-        hold = theirs is not None and fallback and via_pointer and not a.place_pointer_package
         if hold:
             # Their pointer may name the package of another of their peerings, signed by the
             # same key, and the digest does not always tell the two apart (spec §11.1).

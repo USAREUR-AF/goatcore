@@ -243,8 +243,9 @@ The slot's upload signature is then the only check that the package was meant fo
 resource line names both parties. A reader taking a package from a slot must verify that line
 before using it, and the driver step does.
 
-The driver step does this when `FED_DIRECTORY_PER_COUNTERPARTY=1` is set (or
-`directory.py --per-counterparty`). **Built, off by default**; switching the default is a
+The driver step does this when `FED_DIRECTORY_PER_COUNTERPARTY` is `1`, `true` or `yes` (or
+`directory.py --per-counterparty`); `0`, `false`, `no`, empty or unset is off, and any other value
+is refused with nothing done. **Built, off by default**; switching the default is a
 separate change. With it set, the step:
 
 1. uploads our package to `/v1/parties/<us>/packages/<FED_COUNTERPARTY_ID>`, and reads it back
@@ -254,8 +255,10 @@ separate change. With it set, the step:
    single slot is empty, holds the bytes this peering last wrote (recorded in
    `$FED_WORK/directory-single-slot.sha256`, which every run that uploads the single slot now
    writes, with or without the flag; the work directory is per peering), holds the package
-   named by this peering's last pointer (`$FED_WORK/ours.pointer.json`, which releases before
-   the mark file also wrote), or holds a package with our `transport_offer`. With
+   named by this peering's last published pointer (`$FED_WORK/ours.pointer.json`, which
+   releases before the mark file also wrote, and which the step now writes only after the
+   directory accepts the pointer, so a run that fails early leaves it as it was), or holds a
+   package with our `transport_offer`. With
    `FED_PACKAGE_URL` set, the pointer is this peering's when there is none or it names our
    `FED_PACKAGE_URL`. Otherwise the step leaves both alone, so they keep serving the first
    peering to a counterparty on an older release. Only that first peering's runs refresh the
@@ -263,15 +266,21 @@ separate change. With it set, the step:
 3. looks the counterparty up at `/v1/parties/<them>/packages/<us>` first, and places that
    package only when its upload signature verifies over the resource `<them>/packages/<us>`:
    under the key in the keyring, or, with none yet, under the key the directory has bound
-   (printed for the call, where it must match the key read back). A slot served with no
-   signature, or one that does not verify, or a keyring key that is not a key, places nothing;
+   (printed for the call, where it must match the key read back), and the package's own
+   signature verifies under that same key, so a directory that signs the slot under a key of
+   its own cannot carry a genuine package. A slot served with no signature, either signature
+   failing, or a keyring key that is not a key, places nothing; and if an earlier run placed
+   exactly the bytes now refused (before the key was read back), the step moves that file to
+   `<file>.refused` so phase 6 does not compose it;
 4. on a 404 there, reads their pointer as §6.2 does, but does **not** place that package: their
    pointer may name another of their peerings' packages, signed by the same key, and the digest
    may not tell (above). It saves it at `$FED_WORK/theirs.pointer.json` with a warning. After
    confirming on the call that it is this peering's package, the operator re-runs with
    `FED_DIRECTORY_PLACE_POINTER_PACKAGE=1` (`--place-pointer-package`; `1`/`true`/`yes` on,
-   `0`/`false`/`no`/empty off, any other value refused) and the step places it. Any failure
-   other than a 404 is a warning and nothing is placed;
+   `0`/`false`/`no`/empty off, any other value refused) and the step places it. While the
+   package is held, their CA certificate and SPIFFE bundle are not fetched or placed either;
+   the confirming run fetches them. Any failure other than a 404 is a warning and nothing is
+   placed;
 5. against a directory that has no such route (a saltlick release before it), warns and keeps
    the single-package flow.
 

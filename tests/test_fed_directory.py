@@ -50,6 +50,8 @@ class Server(http.server.BaseHTTPRequestHandler):
     refuse_with = None
     no_slots = False  # an older saltlick: no /packages/<counterparty> route
     fail_slot_reads = None  # an HTTP status every GET of a counterparty slot answers with
+    fail_reads: dict = {}  # path below /v1/parties/ -> how many GETs of it answer 503 first
+    bound_override: dict = {}  # sovereign_id -> the bound key a dishonest directory serves instead
 
     def log_message(self, *a):
         pass
@@ -100,12 +102,16 @@ class Server(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         sid = self.path.rsplit("/", 1)[-1]
         rest = self.path.removeprefix("/v1/parties/")
-        if Server.no_slots and "/packages/" in rest:
+        if Server.fail_reads.get(rest):
+            Server.fail_reads[rest] -= 1
+            self.reply(503, b"unavailable")
+        elif Server.no_slots and "/packages/" in rest:
             self.reply(404, b"404 page not found")
         elif Server.fail_slot_reads and "/packages/" in rest:
             self.reply(Server.fail_slot_reads, b"unavailable")
         elif rest in Server.hosted:
-            headers = {"X-Saltlick-Bound-Key": Server.entries[rest.split("/")[0]][1]}
+            owner = rest.split("/")[0]
+            headers = {"X-Saltlick-Bound-Key": Server.bound_override.get(owner, Server.entries[owner][1])}
             if rest in Server.signed:  # a file stored without an upload signature is served without one
                 key, sig = Server.signed[rest]
                 headers.update({"X-Saltlick-Key": key, "X-Saltlick-Signature": sig, "X-Saltlick-Resource": rest})
@@ -143,7 +149,7 @@ def tls_cert(tmp_path_factory):
 @pytest.fixture
 def server(tls_cert, monkeypatch):
     Server.entries, Server.files, Server.hosted, Server.signed, Server.refuse_with = {}, {}, {}, {}, None
-    Server.no_slots, Server.fail_slot_reads = False, None
+    Server.no_slots, Server.fail_slot_reads, Server.fail_reads, Server.bound_override = False, None, {}, {}
     crt, key = tls_cert
     srv = http.server.HTTPServer(("127.0.0.1", 0), Server)
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
@@ -904,3 +910,109 @@ def test_the_digest_does_not_tell_apart_packages_that_differ_only_in_members_the
                         str(XAA), str(other)], capture_output=True, check=True, text=True)
     assert r.stdout.encode() == (vec / "agreement.canonical.json").read_bytes()
     assert (vec / "agreement.digest.txt").read_text().strip() in r.stderr
+
+
+ROGUE_SEED = bytes(range(1, 33))  # a key the directory holds, not any party's
+
+
+def rogue_slot(resource, body):
+    """Make the stand-in serve body at resource with an upload statement the directory signed
+    under a key of its own, and that key as the party's bound key: a substituted key."""
+    key = d.b64(d.public_key(ROGUE_SEED))
+    Server.hosted[resource] = body
+    Server.signed[resource] = (key, d.b64(d.sign(ROGUE_SEED, d.request_statement("PUT", resource, body, key))))
+    Server.bound_override[resource.split("/")[0]] = key
+    return key
+
+
+@needs_ed25519
+def test_a_directory_that_substitutes_its_own_key_cannot_carry_a_genuine_package(server, tmp_path):
+    """Without a keyring, a directory signing the slot statement under a key it holds and serving
+    another peering's genuine package (signed by the party's real key) is refused: the package's
+    own signature must verify under the same key as the upload."""
+    for_xab = peering_package(tmp_path, "xaa", "xab", "192.0.2.10:51821", "169.254.10.0/31")
+    for_xac = peering_package(tmp_path, "xaa", "xac", "192.0.2.10:51822", "169.254.10.2/31")
+    run("--url", server, "--ours", for_xab, "--key", KEY["xaa"], "--their-id", "xab", "--per-counterparty")
+    rogue_slot("xaa/packages/xab", for_xac.read_bytes())
+    theirs = tmp_path / "theirs.json"
+    rc, out = run("--url", server, "--ours", XAB, "--their-id", "xaa", "--theirs", theirs, "--per-counterparty")
+    assert rc == 0 and "FAIL    package signature" in out, out
+    assert not theirs.exists() and "COMPATIBILITY REPORT" not in out
+
+
+@needs_ed25519
+def test_a_package_placed_before_the_key_was_read_back_is_moved_aside_when_it_then_fails(server, tmp_path):
+    """A directory consistent with a key of its own gets its package placed before the call; once
+    the key read back is in the keyring, the slot fails and the placed file is moved aside."""
+    run("--url", server, "--ours", XAA, "--key", KEY["xaa"], "--their-id", "xab", "--per-counterparty")
+    pkg = {k: v for k, v in json.loads(XAA.read_bytes()).items() if k != "signature"}
+    forged = d.canonical(dict(pkg, signature=d.b64(d.sign(ROGUE_SEED, d.canonical(pkg)))))
+    rogue_slot("xaa/packages/xab", forged)
+    theirs = tmp_path / "theirs.json"
+    rc, out = run("--url", server, "--ours", XAB, "--their-id", "xaa", "--theirs", theirs, "--per-counterparty")
+    assert rc == 0 and theirs.read_bytes() == forged, out  # nothing before the call can tell
+    rc, out = run("--url", server, "--ours", XAB, "--their-id", "xaa", "--theirs", theirs,
+                  "--keyring", keyring_for(tmp_path, "xaa"), "--per-counterparty")
+    assert rc == 0 and "FAIL    slot signature" in out, out
+    assert not theirs.exists() and (tmp_path / "theirs.json.refused").read_bytes() == forged
+    assert "moved it to" in out
+
+
+@needs_ed25519
+def test_a_transient_failure_does_not_strand_a_prior_release_party(server, tmp_path, monkeypatch):
+    """ours.pointer.json is the record of the package this peering last published; a run that
+    stops before publishing must not overwrite it, or the next run no longer recognises the slot."""
+    monkeypatch.delenv("FED_DIRECTORY_PER_COUNTERPARTY", raising=False)
+    first = peering_package(tmp_path, "xaa", "xab", "192.0.2.10:51821", "169.254.10.0/31")
+    run("--url", server, "--ours", first, "--key", KEY["xaa"], "--their-id", "xab", "--work", tmp_path)
+    (tmp_path / d.SINGLE_SLOT_MARK).unlink()  # the prior release wrote no mark
+    first = first.read_bytes()  # peering_package reuses the file name for the same peering
+    moved = peering_package(tmp_path, "xaa", "xab", "192.0.2.10:51831", "169.254.10.0/31")
+    args = ("--url", server, "--ours", moved, "--key", KEY["xaa"], "--their-id", "xab", "--work", tmp_path,
+            "--per-counterparty")
+    Server.fail_reads["xaa/package"] = 1
+    rc, out = run(*args)
+    assert rc == 0 and "nothing published" in out and Server.hosted["xaa/package"] == first, out
+    assert json.loads((tmp_path / "ours.pointer.json").read_bytes())["package_sha256"] == d.sha256_of(first)
+    rc, out = run(*args)
+    assert rc == 0 and Server.hosted["xaa/package"] == moved.read_bytes(), out
+
+
+@needs_ed25519
+def test_the_per_counterparty_variable_reads_true_and_yes_and_refuses_other_words(server, tmp_path, monkeypatch):
+    for v in ("true", "yes", "1"):
+        Server.hosted.clear()
+        monkeypatch.setenv("FED_DIRECTORY_PER_COUNTERPARTY", v)
+        rc, out = run("--url", server, "--ours", XAA, "--key", KEY["xaa"], "--their-id", "xab")
+        assert rc == 0 and "xaa/packages/xab" in Server.hosted, (v, out)
+    for v in ("false", "no", "0", ""):
+        Server.hosted.clear()
+        monkeypatch.setenv("FED_DIRECTORY_PER_COUNTERPARTY", v)
+        rc, out = run("--url", server, "--ours", XAA, "--key", KEY["xaa"], "--their-id", "xab")
+        assert rc == 0 and sorted(Server.hosted) == ["xaa/package"], (v, out)
+    Server.entries.clear()
+    Server.hosted.clear()
+    monkeypatch.setenv("FED_DIRECTORY_PER_COUNTERPARTY", "on")
+    rc, out = run("--url", server, "--ours", XAA, "--key", KEY["xaa"], "--their-id", "xab")
+    assert rc == 0 and "FAIL    FED_DIRECTORY_PER_COUNTERPARTY='on'" in out and Server.hosted == {}, out
+
+
+@needs_ed25519
+@needs_openssl
+def test_a_held_package_places_no_ca_or_spiffe_bundle_either(server, tmp_path, monkeypatch):
+    monkeypatch.delenv("FED_DIRECTORY_PLACE_POINTER_PACKAGE", raising=False)
+    ca, fp = mint_ca(tmp_path, "xab")
+    (tmp_path / "xab-ca.pem").write_bytes(ca)
+    theirs_work = tmp_path / "theirs-work"
+    theirs_work.mkdir()
+    (theirs_work / "ours.spiffe-bundle").write_bytes(BUNDLE)
+    run("--url", server, "--ours", package_with_ca(tmp_path, "xab", fp), "--key", KEY["xab"],
+        "--ca", tmp_path / "xab-ca.pem", "--work", theirs_work)
+    work = tmp_path / "work"
+    work.mkdir()
+    rc, out = run("--url", server, "--ours", XAA, "--their-id", "xab", "--theirs", work / "theirs.canonical.json",
+                  "--work", work, "--per-counterparty")
+    assert rc == 0 and (work / "theirs.pointer.json").exists(), out
+    assert not (work / "theirs.canonical.json").exists()
+    assert not (work / "theirs-ca.pem").exists() and not (work / "theirs.spiffe-bundle").exists(), out
+    assert "UNKNOWN CA fetch" in out
