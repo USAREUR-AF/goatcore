@@ -234,7 +234,7 @@
 # (roles/keepalived-mgmt/README.md). Pinning the apex local there points its
 # netbird client at a dead management, so it can never enrol or reconnect. A
 # standby keeps the public apex (relays) instead; a promoted node gets the pin
-# on the next run. A host without postgres-a answers nothing: pinned as before.
+# on the next run. An unknown state preserves the current pin without adding one.
 - name: Ask whether this host's postgres is a streaming standby (no local management)
   ansible.builtin.command:
     cmd: docker exec postgres-a psql -U postgres -tAc 'SELECT pg_is_in_recovery()'

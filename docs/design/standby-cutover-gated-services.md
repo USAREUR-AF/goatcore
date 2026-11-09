@@ -77,6 +77,6 @@ A promotion runbook that consumes this manifest is planned.
 
 Status: built. Avoid audit-role writes on a PostgreSQL standby, avoid a local enrollment-apex pin on a known standby, and check management service health only where it should run. Refuse role writes on an unknown recovery state; preserve DNS pin state on an unknown recovery state.
 
-Tests substitute Docker responses and use temporary files. They do not establish replication correctness, failover safety or retained writes during promotion. No database migration or failover was performed.
+The `ansible-syntax-check` workflow runs the audit-role, apex-pin and management-smoke regression fixtures on every applicable PR. Tests substitute Docker responses and use temporary files. They do not establish replication correctness, failover safety or retained writes during promotion. No database migration or failover was performed.
 
 Offline regression evidence and remaining release gates are recorded in the corresponding draft PR. No live deployment is claimed.

@@ -102,3 +102,9 @@ jobs:
 
       - name: External-service client and delegation lifecycle (loopback only)
         run: python3 ops/ansible/tests/test-external-service-lifecycle.py
+
+      - name: Standby database, DNS and management guards (local fixtures only)
+        run: |
+          bash ops/ansible/roles/admit-audit/tests/pg-role-standby.sh
+          bash ops/ansible/roles/mesh-coredns/tests/apex-pin-standby.sh
+          bash ops/ansible/tests/smoke-standby/run.sh
