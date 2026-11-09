@@ -149,7 +149,7 @@ pub fn overlaps(a: &str, b: &str) -> bool {
 }
 
 /// A peering's agreement facts this check reads: (transport kind, link subnet).
-fn agreement_of(work: &Path) -> Option<(String, Option<String>)> {
+pub(super) fn agreement_of(work: &Path) -> Option<(String, Option<String>)> {
     let text = std::fs::read_to_string(work.join("agreement.json")).ok()?;
     let v: serde_json::Value = serde_json::from_str(&text).ok()?;
     let t = &v["transport"];
@@ -164,7 +164,7 @@ fn agreement_of(work: &Path) -> Option<(String, Option<String>)> {
 
 /// Where another peering's working directory is: beside ours when it is
 /// there, else the default root. Never our own directory.
-fn work_of_other(our_work: &Path, with: &str) -> Option<PathBuf> {
+pub(super) fn work_of_other(our_work: &Path, with: &str) -> Option<PathBuf> {
     let beside = our_work.parent().map(|p| p.join(with));
     let candidates = [beside, Some(Path::new(DEFAULT_WORK_ROOT).join(with))];
     candidates
