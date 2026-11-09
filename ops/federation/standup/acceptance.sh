@@ -346,8 +346,8 @@ else
   [ "$HAVE_IN" = 1 ]  || { begin; na persistence/inbound inbound persistence "$NO_IN"; }
   side_run() { if [ "$1" = ours ]; then ours "$2"; else theirs "$2"; fi; }
   side_get() { # SIDE KEY > curl output with its status line
-    if [ "$1" = ours ]; then ours "curl -s -m 8 -w '\n%{http_code}' '$FED_OURS_REST/$2'"
-    else theirs "curl -s -m 8 -w '\n%{http_code}' '$FED_THEIRS_REST/$2'"; fi
+    if [ "$1" = ours ]; then ours "curl -s -m 8 -w '\n%{http_code}' $(printf %q "$FED_OURS_REST/$2")"
+    else theirs "curl -s -m 8 -w '\n%{http_code}' $(printf %q "$FED_THEIRS_REST/$2")"; fi
   }
   # scope SIDE KEY: sets SCOPE (one JSON line) and returns the outcome's status.
   scope() {
