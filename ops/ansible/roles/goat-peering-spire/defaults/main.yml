@@ -27,6 +27,8 @@ peering_spire_bundle_port: 8443
 # TLS passes through both untouched: https_spiffe authenticates the far server by its
 # own SVID, so the forwards see ciphertext and vouch for nothing.
 peering_spire_outbound_listen: ""
+# Every peering on one edge host forwards outbound on peering_spire_outbound_listen, so
+# each needs its own port here; the role refuses one another peering already listens on.
 peering_spire_outbound_port: 18443
 
 # From the agreement, through federation-<them>-transport.yml.
