@@ -48,6 +48,8 @@ class Server(http.server.BaseHTTPRequestHandler):
     hosted: dict = {}
     signed: dict = {}
     refuse_with = None
+    no_slots = False  # an older saltlick: no /packages/<counterparty> route
+    fail_slot_reads = None  # an HTTP status every GET of a counterparty slot answers with
 
     def log_message(self, *a):
         pass
@@ -55,7 +57,9 @@ class Server(http.server.BaseHTTPRequestHandler):
     def do_PUT(self):
         body = self.rfile.read(int(self.headers["Content-Length"]))
         rest = self.path.removeprefix("/v1/parties/")
-        if "/" in rest:
+        if Server.no_slots and "/packages/" in rest:
+            code, reply = 404, b"404 page not found"
+        elif "/" in rest:
             code, reply = self.put_hosted(rest, body)
         else:
             code, reply = self.put(rest, body)
@@ -96,7 +100,11 @@ class Server(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         sid = self.path.rsplit("/", 1)[-1]
         rest = self.path.removeprefix("/v1/parties/")
-        if rest in Server.hosted:
+        if Server.no_slots and "/packages/" in rest:
+            self.reply(404, b"404 page not found")
+        elif Server.fail_slot_reads and "/packages/" in rest:
+            self.reply(Server.fail_slot_reads, b"unavailable")
+        elif rest in Server.hosted:
             headers = {"X-Saltlick-Bound-Key": Server.entries[rest.split("/")[0]][1]}
             if rest in Server.signed:  # a file stored without an upload signature is served without one
                 key, sig = Server.signed[rest]
@@ -135,6 +143,7 @@ def tls_cert(tmp_path_factory):
 @pytest.fixture
 def server(tls_cert, monkeypatch):
     Server.entries, Server.files, Server.hosted, Server.signed, Server.refuse_with = {}, {}, {}, {}, None
+    Server.no_slots, Server.fail_slot_reads = False, None
     crt, key = tls_cert
     srv = http.server.HTTPServer(("127.0.0.1", 0), Server)
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
@@ -531,3 +540,228 @@ def test_a_spiffe_bundle_not_signed_by_their_key_is_not_placed(server, tmp_path)
     assert rc == 0, out
     assert "FAIL    SPIFFE bundle signature" in out
     assert not (work / "theirs.spiffe-bundle").exists()
+
+
+# ---------------------------------------------------------------------------
+# Several peerings: one package per counterparty (--per-counterparty).
+# ---------------------------------------------------------------------------
+
+def peering_package(tmp_path, sid, peer, endpoint, subnet):
+    """`sid`'s package for its peering with `peer`: the compose-full package with this
+    peering's own endpoint and link subnet, re-signed under the test key."""
+    base = XAA if sid == "xaa" else XAB
+    pkg = {k: v for k, v in json.loads(base.read_bytes()).items() if k != "signature"}
+    pkg["transport_offer"] = dict(pkg["transport_offer"], endpoint=endpoint, proposed_link_subnet=subnet)
+    seed = d.load_seed(str(KEY[sid]))
+    raw = d.canonical(dict(pkg, signature=d.b64(d.sign(seed, d.canonical(pkg)))))
+    p = tmp_path / f"{sid}-for-{peer}.json"
+    p.write_bytes(raw)
+    return p
+
+
+def keyring_for(tmp_path, *sids):
+    k = tmp_path / "keys.txt"
+    k.write_text("".join(f"{s}={PUB[s]}\n" for s in sids))
+    return k
+
+
+@needs_ed25519
+def test_a_party_with_two_counterparties_holds_two_packages_and_neither_replaces_the_other(server, tmp_path):
+    for_xab = peering_package(tmp_path, "xaa", "xab", "192.0.2.10:51821", "169.254.10.0/31")
+    for_xac = peering_package(tmp_path, "xaa", "xac", "192.0.2.10:51822", "169.254.10.2/31")
+    rc, out = run("--url", server, "--ours", for_xab, "--key", KEY["xaa"], "--their-id", "xab", "--per-counterparty")
+    assert rc == 0 and "refused" not in out, out
+    rc, out = run("--url", server, "--ours", for_xac, "--key", KEY["xaa"], "--their-id", "xac", "--per-counterparty")
+    assert rc == 0 and "refused" not in out, out
+    assert "the single package slot holds another peering's package" in out
+
+    assert Server.hosted["xaa/packages/xab"] == for_xab.read_bytes()
+    assert Server.hosted["xaa/packages/xac"] == for_xac.read_bytes()
+    # The single slot and the pointer stay with the first peering.
+    assert Server.hosted["xaa/package"] == for_xab.read_bytes()
+    assert json.loads(Server.entries["xaa"][0])["package_sha256"] == d.sha256_of(for_xab.read_bytes())
+
+    # Re-running the first peering does not move anything either.
+    rc, out = run("--url", server, "--ours", for_xab, "--key", KEY["xaa"], "--their-id", "xab", "--per-counterparty")
+    assert rc == 0 and "published `xaa`" in out
+    assert Server.hosted["xaa/packages/xac"] == for_xac.read_bytes()
+
+    # Each counterparty reads the package meant for it, checked under the key read back.
+    keyring = keyring_for(tmp_path, "xaa")
+    for peer, want in (("xab", for_xab), ("xac", for_xac)):
+        ours = peering_package(tmp_path, "xab", "xaa", "198.51.100.20:51821", "169.254.20.0/31")
+        if peer == "xac":
+            # xac has no test key of its own; it only reads, so any package of its own will do.
+            pkg = json.loads(ours.read_bytes())
+            pkg["sovereign_id"] = "xac"
+            ours = tmp_path / "xac-ours.json"
+            ours.write_bytes(d.canonical(pkg))
+        theirs = tmp_path / f"{peer}-theirs.json"
+        rc, out = run("--url", server, "--ours", ours, "--their-id", "xaa", "--theirs", theirs,
+                      "--keyring", keyring, "--per-counterparty")
+        assert rc == 0, out
+        assert "PASS    slot signature" in out and "PASS    package signature" in out, out
+        assert theirs.read_bytes() == want.read_bytes(), peer
+
+
+@needs_ed25519
+def test_a_slot_not_uploaded_under_the_bound_key_is_not_used_and_not_replaced_by_the_pointer(server, tmp_path):
+    for_xab = peering_package(tmp_path, "xaa", "xab", "192.0.2.10:51821", "169.254.10.0/31")
+    run("--url", server, "--ours", for_xab, "--key", KEY["xaa"], "--their-id", "xab", "--per-counterparty")
+    # The directory serves the slot as if written for someone else.
+    Server.signed["xaa/packages/xab"] = (PUB["xaa"], Server.signed["xaa/package"][1])
+    theirs = tmp_path / "theirs.json"
+    rc, out = run("--url", server, "--ours", XAB, "--their-id", "xaa", "--theirs", theirs,
+                  "--keyring", keyring_for(tmp_path, "xaa"), "--per-counterparty")
+    assert rc == 0 and "FAIL    slot signature" in out, out
+    assert not theirs.exists() and "COMPATIBILITY REPORT" not in out
+
+
+@needs_ed25519
+def test_without_a_slot_for_us_the_lookup_falls_back_to_the_pointer(server, tmp_path):
+    serve("xab", XAB)
+    run("--url", server, "--ours", XAB, "--package-url", f"{server}/packages/xab.json", "--key", KEY["xab"])
+    theirs = tmp_path / "theirs.json"
+    rc, out = run("--url", server, "--ours", XAA, "--their-id", "xab", "--theirs", theirs,
+                  "--keyring", keyring_for(tmp_path, "xab"), "--per-counterparty")
+    assert rc == 0, out
+    assert "UNKNOWN package for us" in out and "PASS    package digest" in out
+    assert theirs.read_bytes() == XAB.read_bytes()
+
+
+@needs_ed25519
+def test_an_older_directory_without_slots_keeps_the_single_package_flow(server, tmp_path):
+    Server.no_slots = True
+    rc, out = run("--url", server, "--ours", XAA, "--key", KEY["xaa"], "--their-id", "xab", "--per-counterparty")
+    assert rc == 0
+    assert "does not host a package per counterparty (HTTP 404" in out
+    assert Server.hosted["xaa/package"] == XAA.read_bytes()
+
+
+@needs_ed25519
+def test_without_the_flag_the_single_package_flow_is_unchanged(server, tmp_path, monkeypatch):
+    monkeypatch.delenv("FED_DIRECTORY_PER_COUNTERPARTY", raising=False)
+    for_xab = peering_package(tmp_path, "xaa", "xab", "192.0.2.10:51821", "169.254.10.0/31")
+    for_xac = peering_package(tmp_path, "xaa", "xac", "192.0.2.10:51822", "169.254.10.2/31")
+    run("--url", server, "--ours", for_xab, "--key", KEY["xaa"], "--their-id", "xab")
+    assert sorted(Server.hosted) == ["xaa/package"]
+    assert Server.hosted["xaa/package"] == for_xab.read_bytes()
+    # Today's behavior, kept as the default: the second peering's package replaces the first.
+    run("--url", server, "--ours", for_xac, "--key", KEY["xaa"], "--their-id", "xac")
+    assert sorted(Server.hosted) == ["xaa/package"]
+    assert Server.hosted["xaa/package"] == for_xac.read_bytes()
+    assert not any("/packages/" in r for r in Server.hosted)
+
+
+@needs_ed25519
+def test_the_flag_also_comes_from_the_environment(server, tmp_path, monkeypatch):
+    monkeypatch.setenv("FED_DIRECTORY_PER_COUNTERPARTY", "1")
+    rc, out = run("--url", server, "--ours", XAA, "--key", KEY["xaa"], "--their-id", "xab")
+    assert rc == 0 and Server.hosted["xaa/packages/xab"] == XAA.read_bytes(), out
+
+
+@pytest.fixture(scope="session")
+def fdverify(tmp_path_factory):
+    """The reference implementation's composer (ops/federation/reference), independent of the Rust one."""
+    if not shutil.which("go"):
+        pytest.skip("no Go toolchain to build ops/federation/reference")
+    exe = tmp_path_factory.mktemp("fdverify") / "fdverify"
+    subprocess.run(["go", "build", "-o", str(exe), "./cmd/fdverify"], cwd=REPO / "ops/federation/reference",
+                   check=True, capture_output=True)
+    return exe
+
+
+@needs_ed25519
+def test_an_existing_agreement_keeps_its_bytes_and_digest_through_counterparty_slots(server, tmp_path, fdverify):
+    """The compose-full vector pair, exchanged through per-counterparty slots, composes to the vector's
+    agreement bytes and digest: the slot moves where a package lives, never its bytes."""
+    vec = VEC / "compose-full"
+    now = (VEC / "now.txt").read_text().strip()
+    run("--url", server, "--ours", XAA, "--key", KEY["xaa"], "--their-id", "xab", "--per-counterparty")
+    run("--url", server, "--ours", XAB, "--key", KEY["xab"], "--their-id", "xaa", "--per-counterparty")
+    got = {}
+    for us, them in (("xaa", "xab"), ("xab", "xaa")):
+        theirs = tmp_path / f"{us}-theirs.json"
+        rc, out = run("--url", server, "--ours", XAA if us == "xaa" else XAB, "--their-id", them,
+                      "--theirs", theirs, "--keyring", keyring_for(tmp_path, them), "--per-counterparty")
+        assert rc == 0 and "PASS    slot signature" in out, out
+        got[them] = theirs
+    assert got["xab"].read_bytes() == XAB.read_bytes() and got["xaa"].read_bytes() == XAA.read_bytes()
+    r = subprocess.run([str(fdverify), "compose", "-now", now, "-keydir", str(VEC / "testkeys"),
+                        str(got["xaa"]), str(got["xab"])], capture_output=True, check=True)
+    assert r.stdout == (vec / "agreement.canonical.json").read_bytes()
+    r = subprocess.run([str(fdverify), "compose", "-now", now, "-digest", "-keydir", str(VEC / "testkeys"),
+                        str(got["xab"]), str(got["xaa"])], capture_output=True, check=True, text=True)
+    # Composed in the other argument order, so position comes from sovereign_id, not from who ran it.
+    assert r.stdout.encode() == (vec / "agreement.canonical.json").read_bytes()
+    assert (vec / "agreement.digest.txt").read_text().strip() in r.stderr
+
+
+@needs_ed25519
+def test_a_failed_slot_read_does_not_fall_back_to_the_pointer(server, tmp_path):
+    """Their pointer may name the package of another of their peerings, signed by the same key,
+    so only a 404 sends the lookup to it."""
+    for_xab = peering_package(tmp_path, "xaa", "xab", "192.0.2.10:51821", "169.254.10.0/31")
+    for_xac = peering_package(tmp_path, "xaa", "xac", "192.0.2.10:51822", "169.254.10.2/31")
+    run("--url", server, "--ours", for_xac, "--key", KEY["xaa"], "--their-id", "xac", "--per-counterparty")
+    run("--url", server, "--ours", for_xab, "--key", KEY["xaa"], "--their-id", "xab", "--per-counterparty")
+    assert Server.hosted["xaa/package"] == for_xac.read_bytes()  # the pointer serves the xac peering
+    Server.fail_slot_reads = 503
+    theirs = tmp_path / "theirs.json"
+    rc, out = run("--url", server, "--ours", XAB, "--their-id", "xaa", "--theirs", theirs,
+                  "--keyring", keyring_for(tmp_path, "xaa"), "--per-counterparty")
+    assert rc == 0 and "their pointer is not read in its place" in out, out
+    assert "package digest" not in out and not theirs.exists()
+
+
+@needs_ed25519
+def test_a_slot_written_under_another_key_or_with_a_broken_keyring_key_fails(server, tmp_path):
+    run("--url", server, "--ours", XAA, "--key", KEY["xaa"], "--their-id", "xab", "--per-counterparty")
+    theirs = tmp_path / "theirs.json"
+    Server.signed["xaa/packages/xab"] = (PUB["xab"], Server.signed["xaa/packages/xab"][1])
+    rc, out = run("--url", server, "--ours", XAB, "--their-id", "xaa", "--theirs", theirs,
+                  "--keyring", keyring_for(tmp_path, "xaa"), "--per-counterparty")
+    assert "FAIL    slot signature" in out and not theirs.exists(), out
+    bad = tmp_path / "bad-keys.txt"
+    bad.write_text("xaa=not-a-key\n")
+    rc, out = run("--url", server, "--ours", XAB, "--their-id", "xaa", "--theirs", theirs,
+                  "--keyring", bad, "--per-counterparty")
+    assert rc == 0 and "is not 32 bytes of base64" in out and not theirs.exists(), out
+
+
+@needs_ed25519
+def test_a_reissue_of_the_first_peering_with_a_changed_offer_still_refreshes_the_single_slot(server, tmp_path):
+    work_ab, work_ac = tmp_path / "ab", tmp_path / "ac"
+    work_ab.mkdir()
+    work_ac.mkdir()
+    first = peering_package(tmp_path, "xaa", "xab", "192.0.2.10:51821", "169.254.10.0/31")
+    other = peering_package(tmp_path, "xaa", "xac", "192.0.2.10:51822", "169.254.10.2/31")
+    run("--url", server, "--ours", first, "--key", KEY["xaa"], "--their-id", "xab", "--work", work_ab, "--per-counterparty")
+    run("--url", server, "--ours", other, "--key", KEY["xaa"], "--their-id", "xac", "--work", work_ac, "--per-counterparty")
+    assert Server.hosted["xaa/package"] == first.read_bytes()
+    # The xab peering moves its port: a different transport_offer, the same peering.
+    moved = peering_package(tmp_path, "xaa", "xab", "192.0.2.10:51831", "169.254.10.0/31")
+    rc, out = run("--url", server, "--ours", moved, "--key", KEY["xaa"], "--their-id", "xab", "--work", work_ab,
+                  "--per-counterparty")
+    assert rc == 0, out
+    assert Server.hosted["xaa/package"] == moved.read_bytes()
+    assert json.loads(Server.entries["xaa"][0])["package_sha256"] == d.sha256_of(moved.read_bytes())
+    assert Server.hosted["xaa/packages/xab"] == moved.read_bytes()
+    assert Server.hosted["xaa/packages/xac"] == other.read_bytes()
+
+
+@needs_ed25519
+def test_with_our_own_host_the_pointer_stays_with_the_peering_it_names(server, tmp_path):
+    for_xab = peering_package(tmp_path, "xaa", "xab", "192.0.2.10:51821", "169.254.10.0/31")
+    for_xac = peering_package(tmp_path, "xaa", "xac", "192.0.2.10:51822", "169.254.10.2/31")
+    Server.files["/packages/xaa-xab.json"] = for_xab.read_bytes()
+    Server.files["/packages/xaa-xac.json"] = for_xac.read_bytes()
+    run("--url", server, "--ours", for_xab, "--key", KEY["xaa"], "--package-url", f"{server}/packages/xaa-xab.json",
+        "--their-id", "xab", "--per-counterparty")
+    rc, out = run("--url", server, "--ours", for_xac, "--key", KEY["xaa"], "--package-url",
+                  f"{server}/packages/xaa-xac.json", "--their-id", "xac", "--per-counterparty")
+    assert rc == 0 and "our pointer names another peering's package" in out, out
+    pointer = json.loads(Server.entries["xaa"][0])
+    assert pointer["package_url"] == f"{server}/packages/xaa-xab.json"
+    assert Server.hosted["xaa/packages/xac"] == for_xac.read_bytes()
+    assert "xaa/package" not in Server.hosted
