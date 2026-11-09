@@ -114,19 +114,19 @@ load() {
 
 log "== edge, wireguard: baseline"
 load edge-wireguard
-scan "management source"  198.51.100.10 198.51.100.1 "tcp/22 udp/51820"
-scan "outsider"           203.0.113.9   203.0.113.1  "udp/51820"
-scan "partner endpoint"   192.0.2.10    192.0.2.1    "udp/51820 udp/51821"
-scan "tunnel (wg-fed0)"   169.254.10.0  169.254.10.1 "tcp/7448 tcp/8443 udp/51820"
-scan "mesh (wt0)"         100.127.0.9   100.127.0.1  "udp/51820"
-scan "published port, outsider" 203.0.113.9 203.0.113.1 "udp/51820"
+scan "management source"  198.51.100.10 198.51.100.1 "tcp/22"
+scan "outsider"           203.0.113.9   203.0.113.1  ""
+scan "partner endpoint"   192.0.2.10    192.0.2.1    "udp/51821"
+scan "tunnel (wg-fed0)"   169.254.10.0  169.254.10.1 "tcp/7448 tcp/8443"
+scan "mesh (wt0)"         100.127.0.9   100.127.0.1  ""
+scan "published port, outsider" 203.0.113.9 203.0.113.1 ""
 got_lo="$(inh python3 "$PROBE" scan 127.0.0.1 127.0.0.1 tcp:22,7448 | tr '\n' ' ')"
 [ "$got_lo" = "tcp/22 tcp/7448 " ] && log "PASS  loopback: open [$got_lo]" || {
   log "FAIL  loopback: open [$got_lo]"; FAILS=$((FAILS + 1)); }
 
 log "== edge, wireguard: tightening override"
-load edge-wireguard '{"icmp-echo": {"drop": true}, "wg-fed0/tunnel-extra": {"drop": true}, "mesh-wireguard": {"interface": "eth0"}}'
-scan "management source"  198.51.100.10 198.51.100.1 "tcp/22 udp/51820"
+load edge-wireguard '{"icmp-echo": {"drop": true}, "wg-fed0/tunnel-extra": {"drop": true}, "ssh-management": {"interface": "eth0"}}'
+scan "management source"  198.51.100.10 198.51.100.1 "tcp/22"
 scan "tunnel (wg-fed0)"   169.254.10.0  169.254.10.1 "tcp/7448"
 scan "mesh (wt0)"         100.127.0.9   100.127.0.1  ""
 if inp ping -c 1 -W 1 -I 198.51.100.10 198.51.100.1 >/dev/null 2>&1; then
@@ -137,26 +137,26 @@ fi
 
 log "== edge, wireguard: a loosening with a reason (published port 9000)"
 load edge-wireguard '{"other-tcp": {"ports": [9000], "reason": "a published service the site runs"}}'
-scan "outsider (published 9000 now admitted)" 203.0.113.9 203.0.113.1 "tcp/9000 udp/51820"
+scan "outsider (published 9000 now admitted)" 203.0.113.9 203.0.113.1 "tcp/9000"
 
 log "== edge, ipsec-fips: baseline"
 load edge-ipsec
-scan "partner endpoint"   192.0.2.20    192.0.2.1    "udp/500 udp/4500 udp/51820"
-scan "not the partner"    192.0.2.10    192.0.2.1    "udp/51820"
-scan "tunnel (ipsec-xab)" 169.254.11.0  169.254.11.1 "tcp/7448 udp/51820"
-scan "management source"  198.51.100.10 198.51.100.1 "tcp/22 udp/51820"
+scan "partner endpoint"   192.0.2.20    192.0.2.1    "udp/500 udp/4500"
+scan "not the partner"    192.0.2.10    192.0.2.1    ""
+scan "tunnel (ipsec-xab)" 169.254.11.0  169.254.11.1 "tcp/7448"
+scan "management source"  198.51.100.10 198.51.100.1 "tcp/22"
 
 log "== core: baseline"
 load core
-scan "management source"  198.51.100.10 198.51.100.1 "tcp/22 tcp/7447 udp/51820"
-scan "outsider"           203.0.113.9   203.0.113.1  "tcp/7447 udp/51820"
-scan "mesh (wt0)"         100.127.0.9   100.127.0.1  "tcp/7447 udp/5353 udp/51820"
+scan "management source"  198.51.100.10 198.51.100.1 "tcp/22 tcp/7447"
+scan "outsider"           203.0.113.9   203.0.113.1  "tcp/7447"
+scan "mesh (wt0)"         100.127.0.9   100.127.0.1  "tcp/7447 udp/5353"
 
 log "== core: tightening override"
 load core '{"fabric-tls": {"sources": ["100.127.0.0/16"]}}'
-scan "outsider"           203.0.113.9   203.0.113.1  "udp/51820"
-scan "mesh (wt0)"         100.127.0.9   100.127.0.1  "tcp/7447 udp/5353 udp/51820"
-scan "management source"  198.51.100.10 198.51.100.1 "tcp/22 udp/51820"
+scan "outsider"           203.0.113.9   203.0.113.1  ""
+scan "mesh (wt0)"         100.127.0.9   100.127.0.1  "tcp/7447 udp/5353"
+scan "management source"  198.51.100.10 198.51.100.1 "tcp/22"
 
 if [ "$FAILS" -gt 0 ]; then log "FAIL ($FAILS)"; exit 1; fi
 log "PASS"

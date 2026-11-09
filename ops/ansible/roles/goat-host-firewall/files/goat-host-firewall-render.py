@@ -38,7 +38,12 @@ Input (goat-host-firewall-input/v1):
       "fabric_sources": [],                            # core only; empty = any source
       "mesh_dns_port": 5353,                           # core only; null leaves it out
       "uplink_interfaces": ["eth0"],                   # optional; refused when named br-*
-      "closed_listeners": ["tcp/8000"]                 # optional; ports meant to be closed
+      "bridge_interfaces": ["docker0"],                # optional; non-docker br-* refused
+      "ephemeral_ports": [32768, 60999],               # optional; UDP client sockets skipped
+      "management_prefix_floor": {"ipv4": 24, "ipv6": 64},   # broader sources need a reason
+      "spire_bundle_port": 8443,                       # core only, optional
+      "spire_bundle_sources": ["100.127.0.20"],        # core only; the edge's mesh address
+      "closed_listeners": ["tcp/8000", "chronyd"]      # optional; ports or processes closed on purpose
     },
     "peerings": [                                      # edge only, one per peering
       {"name": "wg-fed0", "transport": "wireguard", "listen_port": 51820,
@@ -58,10 +63,14 @@ Input (goat-host-firewall-input/v1):
     "listening": [{"proto": "tcp", "port": 8000, "addr": "0.0.0.0", "process": "x"}],
     "listening_ss": "<the output of ss -Hlntup>"     # read when listening is absent
   }
-  must_reach, listening and uplink_interfaces are facts of the live host: checks only, never
-  part of the ruleset or its hash.
+  must_reach, listening, listening_ss, uplink_interfaces, bridge_interfaces and
+  ephemeral_ports are facts of the live host: checks only, never part of the ruleset or
+  its hash. A role input wider than the profile (mesh_udp_ports, a mesh_dns_port other than
+  5353, a management source broader than the floor) is a loosening: the override names the
+  rule with a reason, e.g. {"mesh-wireguard": {"reason": "..."}}.
 
 usage: goat-host-firewall-render.py --input FILE|- [--override FILE] [--format text|json]
+       goat-host-firewall-render.py --input FILE|- --peering-only NAME
        goat-host-firewall-render.py --input FILE|- --list-rules
 """
 import argparse
@@ -77,6 +86,14 @@ TABLE = "goat_host_firewall"
 IFNAME = re.compile(r"^[A-Za-z0-9_.-]{1,15}$")
 RULE_NAME = re.compile(r"^[a-z0-9][a-z0-9./-]*$")
 OVERRIDE_KEYS = {"drop", "sources", "ports", "interface", "reason"}
+# What the profile itself would choose for the values a deployment may set as role
+# inputs. An input wider than these loosens the baseline as much as an override does,
+# and needs the same recorded reason.
+PROFILE_MESH_DNS_PORT = 5353
+PROFILE_MANAGEMENT_PREFIX_FLOOR = {"ipv4": 24, "ipv6": 64}
+DOCKER_BRIDGE = re.compile(r"^(docker0|br-[0-9a-f]{12})$")
+PROCESS_NAME = re.compile(r"^[A-Za-z0-9_.@:+-]{1,64}$")
+CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 
 
 class Refusal(Exception):
@@ -108,6 +125,8 @@ class Rule:
         self.published = published and expr is None and proto in ("tcp", "udp")
         self.note = note
         self.dropped = False
+        # Set when a role input, not the override, made this rule wider than the profile.
+        self.input_loosens = []
 
     def as_dict(self):
         d = {"name": self.name, "note": self.note}
@@ -185,6 +204,17 @@ def common_rules(host):
         raise incomplete("host.management_sources is required and must list at least one "
                          "address or CIDR: SSH is admitted from these and from nowhere else")
     mgmt = [_net(s, "host.management_sources") for s in mgmt]
+    floor = dict(PROFILE_MANAGEMENT_PREFIX_FLOOR)
+    floor.update(host.get("management_prefix_floor") or {})
+    broad = []
+    for m in mgmt:
+        n = ipaddress.ip_network(m)
+        if n.prefixlen == 0:
+            raise incomplete(f"host.management_sources holds {m}, which admits SSH from "
+                             f"anywhere; this is refused even with a reason")
+        lim = int(floor["ipv4" if n.version == 4 else "ipv6"])
+        if n.prefixlen < lim:
+            broad.append(f"management source {m} broader than /{lim}")
     ssh_port = _port(host.get("ssh_port", 22), "host.ssh_port")
     rules = [
         Rule("loopback", expr='iifname "lo" accept', locked=True,
@@ -210,12 +240,14 @@ def common_rules(host):
         Rule("ssh-management", proto="tcp", ports=[ssh_port], sources=mgmt,
              note="SSH from the declared management sources only"),
     ]
+    rules[-1].input_loosens = broad
     mesh_if = host.get("mesh_interface")
     mesh_ports = _ports(host.get("mesh_udp_ports", []), "host.mesh_udp_ports")
     if mesh_ports:
         rules.append(Rule("mesh-wireguard", proto="udp", ports=mesh_ports,
                           note="the mesh's own WireGuard port, so mesh peers can reach this "
                                "host directly; the mesh ACL decides what crosses it"))
+        rules[-1].input_loosens = [f"mesh UDP ports {mesh_ports} (the profile lists none)"]
     if mesh_if:
         _ifname(mesh_if, "host.mesh_interface")
     return rules
@@ -280,8 +312,14 @@ def edge_rules(host, peerings):
         if p.get("spire_outbound_port") not in (None, ""):
             sport = _port(p["spire_outbound_port"], f"{where}.spire_outbound_port")
             server = _addr_or_empty(p.get("spire_server_addr"), f"{where}.spire_server_addr")
+            mesh_if = host.get("mesh_interface") or None
+            if not server and not mesh_if:
+                raise incomplete(f"{where}: spire_server_addr is not a literal address and "
+                                 f"host.mesh_interface is empty, so the SPIRE forward would "
+                                 f"be admitted from anywhere")
             rules.append(Rule(f"{name}/spire-forward", proto="tcp", ports=[sport],
                               sources=[server] if server else [],
+                              iif=None if server else _ifname(mesh_if, "host.mesh_interface"),
                               note="our SPIRE server fetching the partner's bundle through the "
                                    "edge's outbound forward (goat-peering-spire, phase 13)"))
     rules += other_rules()
@@ -327,6 +365,22 @@ def core_rules(host):
                           iif=_ifname(mesh_if, "host.mesh_interface"),
                           note="the mesh nameserver, on the mesh interface only (ADR 1219 "
                                "decision 4); drop it on a core that does not serve it"))
+        if int(host["mesh_dns_port"]) != PROFILE_MESH_DNS_PORT:
+            rules[-1].input_loosens = [f"mesh DNS port {host['mesh_dns_port']} (the profile "
+                                       f"uses {PROFILE_MESH_DNS_PORT})"]
+    if host.get("spire_bundle_port") not in (None, ""):
+        bport = _port(host["spire_bundle_port"], "host.spire_bundle_port")
+        bsrc = [_addr_or_empty(a, "host.spire_bundle_sources")
+                for a in host.get("spire_bundle_sources") or []]
+        bsrc = [a for a in bsrc if a]
+        mesh_if = host.get("mesh_interface") or None
+        if not bsrc and not mesh_if:
+            raise incomplete("host.spire_bundle_sources is empty and host.mesh_interface is "
+                             "empty, so the SPIRE bundle endpoint would be admitted from anywhere")
+        rules.append(Rule("spire-bundle", proto="tcp", ports=[bport], sources=bsrc,
+                          iif=None if bsrc else _ifname(mesh_if, "host.mesh_interface"),
+                          note="our SPIRE server's bundle endpoint, for the edge's inbound "
+                               "forward (goat-peering-spire), from the edge's mesh address"))
     rules += other_rules()
     return rules
 
@@ -375,7 +429,7 @@ def apply_override(rules, override):
     """Returns (tightened, loosened). Raises Refusal before anything is changed if any entry
     is refused, so a partly applied override never exists."""
     if override in (None, {}):
-        return [], []
+        override = {}
     if not isinstance(override, dict):
         raise Refusal("GB-211", 3, "the override must be a mapping of rule name to change")
     by_name = {r.name: r for r in rules}
@@ -397,9 +451,16 @@ def apply_override(rules, override):
             raise Refusal("GB-211", 3, f"override {name!r}: this rule is fixed and cannot be "
                                        f"overridden ({r.note})")
         changes = set(entry) - {"reason"}
-        if not changes:
+        if not changes and not r.input_loosens:
             raise Refusal("GB-211", 3, f"override {name!r}: names no change "
                                        f"(drop, sources, ports or interface)")
+        raw_reason = entry.get("reason")
+        if raw_reason is not None and not isinstance(raw_reason, str):
+            raise Refusal("GB-211", 3, f"override {name!r}: reason must be a string")
+        if CONTROL.search(str(raw_reason or "").strip()):
+            raise Refusal("GB-211", 3, f"override {name!r}: the reason holds a line break or "
+                                       f"another control character; it is written into the "
+                                       f"ruleset file, so it must be one line of text")
         if entry.get("drop") is not None and not isinstance(entry.get("drop"), bool):
             raise Refusal("GB-211", 3, f"override {name!r}: drop must be true or false")
         if entry.get("drop") is True and len(changes) > 1:
@@ -442,12 +503,21 @@ def apply_override(rules, override):
                 loosens.append(f"interface {r.iif} -> {iif}")
             new["iif"] = iif
         reason = str(entry.get("reason") or "").strip()
+        if entry.get("drop") is not True:
+            loosens = list(r.input_loosens) + loosens
         if loosens and not reason:
             raise Refusal("GB-212", 3,
                           f"override {name!r} loosens the baseline ({'; '.join(loosens)}) and "
                           f"records no reason. Add `reason:` to this entry in the deployment's "
                           f"configuration, or narrow instead")
         plan.append((r, new, loosens, reason))
+    named = {name for name in override}
+    for r in rules:
+        if r.input_loosens and r.name not in named:
+            raise Refusal("GB-212", 3,
+                          f"{r.name}: a role input loosens the baseline "
+                          f"({'; '.join(r.input_loosens)}) and records no reason. Add "
+                          f"`{r.name}: {{reason: \"...\"}}` to goat_host_firewall_override")
     tightened, loosened = [], []
     for r, new, loosens, reason in plan:
         if new.get("dropped"):
@@ -460,7 +530,7 @@ def apply_override(rules, override):
             r.iif = new["iif"]
         if loosens:
             loosened.append({"rule": r.name, "change": "; ".join(loosens), "reason": reason})
-        else:
+        elif new:
             tightened.append({"rule": r.name, "change": ", ".join(sorted(new))})
     return tightened, loosened
 
@@ -506,7 +576,22 @@ def check_uplinks(rules, host):
         raise incomplete("host.uplink_interfaces must be a list of interface names")
     bridges = sorted({u for u in (_ifname(u, "host.uplink_interfaces") for u in uplinks)
                       if u == "docker0" or u.startswith("br-")})
+    mesh_if = host.get("mesh_interface")
+    if mesh_if and mesh_if in uplinks:
+        raise incomplete(f"host.mesh_interface {mesh_if} is the host's uplink, so the rules "
+                         f"bound to the mesh interface would be open on the uplink; set it to "
+                         f"the mesh client's interface")
+    present = host.get("bridge_interfaces") or []
+    if not isinstance(present, list):
+        raise incomplete("host.bridge_interfaces must be a list of interface names")
+    foreign = sorted({b for b in present
+                      if str(b).startswith("br-") and not DOCKER_BRIDGE.match(str(b))})
     cb = next((r for r in rules if r.name == "container-bridges"), None)
+    if foreign and cb is not None and not cb.dropped:
+        raise incomplete(
+            f"this host has bridge(s) {', '.join(foreign)} that are not docker's, and the "
+            f"container-bridges rule (br-*) would admit everything arriving on them. Drop "
+            f"that rule in the override (container-bridges: {{drop: true}})")
     if bridges and cb is not None and not cb.dropped:
         raise incomplete(
             f"the host's uplink {', '.join(bridges)} is named like a container bridge, so the "
@@ -537,7 +622,7 @@ def parse_ss(text):
     return out
 
 
-def check_listeners(rules, listening, closed):
+def check_listeners(rules, listening, closed, ephemeral=None):
     """Every socket listening on a non-loopback address must be admitted by some rule (from
     some source, on some interface), or named in host.closed_listeners as a port the
     deployment means to close. Returns the ports this ruleset closes."""
@@ -545,13 +630,25 @@ def check_listeners(rules, listening, closed):
         return []
     if not isinstance(closed, list):
         raise incomplete("host.closed_listeners must be a list such as [\"tcp/8000\"]")
-    acknowledged = set()
+    acknowledged, processes = set(), set()
     for c in closed:
         m = re.match(r"^(tcp|udp)/(\d+)$", str(c))
-        if not m:
-            raise incomplete(f"host.closed_listeners: {c!r} is not tcp/<port> or udp/<port>")
-        acknowledged.add(_listener_key(m.group(1), m.group(2)))
+        if m:
+            acknowledged.add(_listener_key(m.group(1), m.group(2)))
+        elif PROCESS_NAME.match(str(c)) and "/" not in str(c) and not str(c).isdigit():
+            processes.add(str(c))
+        else:
+            raise incomplete(f"host.closed_listeners: {c!r} is neither tcp/<port>, udp/<port> "
+                             f"nor a process name")
+    lo = hi = None
+    if ephemeral:
+        if not (isinstance(ephemeral, list) and len(ephemeral) == 2):
+            raise incomplete("host.ephemeral_ports must be [low, high]")
+        lo, hi = (_port(x, "host.ephemeral_ports") for x in ephemeral)
     admitted = set()
+    dhcp = next((r for r in rules if r.name == "dhcp-client"), None)
+    if dhcp is not None and not dhcp.dropped:
+        admitted |= {"udp/68", "udp/546"}
     for r in rules:
         if r.dropped or r.expr is not None or r.proto not in ("tcp", "udp"):
             continue
@@ -575,8 +672,10 @@ def check_listeners(rules, listening, closed):
             pass
         if key in admitted or key in closing:
             continue
+        if proto == "udp" and lo is not None and lo <= int(item.get("port")) <= hi:
+            continue   # a client socket on an ephemeral port, not a service
         closing.append(key)
-        if key not in acknowledged:
+        if key not in acknowledged and str(item.get("process") or "") not in processes:
             unacknowledged.append(f"{key} ({item.get('process') or 'unknown process'} on "
                                   f"{addr or '*'})")
     if unacknowledged:
@@ -698,7 +797,7 @@ def load_override(path):
     return data or {}
 
 
-def run(doc, override_path=None):
+def run(doc, override_path=None, peering_only=None):
     if not isinstance(doc, dict):
         raise incomplete("the input must be a JSON object")
     if doc.get("schema") != INPUT_SCHEMA:
@@ -706,6 +805,22 @@ def run(doc, override_path=None):
     override = doc.get("override") or {}
     if override_path:
         override = load_override(override_path)
+    if peering_only is not None:
+        # Validate one peering's entry before the role stores it: that peering alone,
+        # the override without the entries that name another peering's rules, and none
+        # of the live-host checks. Nothing rendered this way is loaded.
+        doc = dict(doc)
+        doc["peerings"] = [p for p in doc.get("peerings") or []
+                           if str(p.get("name")) == peering_only]
+        if not doc["peerings"]:
+            raise incomplete(f"--peering-only {peering_only!r}: no such peering in the input")
+        if isinstance(override, dict):
+            # A peering rule is named <peering>/<rule>; the other peerings may not be
+            # stored yet, so every entry for a peering other than this one is left out.
+            override = {k: v for k, v in override.items()
+                        if "/" not in str(k) or str(k).split("/", 1)[0] == peering_only}
+        for k in ("must_reach", "listening", "listening_ss"):
+            doc.pop(k, None)
     rules = baseline(doc)
     tightened, loosened = apply_override(rules, override)
     check_uplinks(rules, doc["host"])
@@ -714,7 +829,7 @@ def run(doc, override_path=None):
     if listening is None and doc.get("listening_ss") is not None:
         listening = parse_ss(doc["listening_ss"])
     closing = check_listeners(rules, listening, doc.get("host", {}).get(
-        "closed_listeners", []))
+        "closed_listeners", []), doc.get("host", {}).get("ephemeral_ports"))
     text = render(doc["profile"], rules, tightened, loosened)
     return {
         "schema": RENDER_SCHEMA,
@@ -735,6 +850,9 @@ def main(argv=None):
     ap.add_argument("--override", help="override file (JSON or YAML); replaces the input's")
     ap.add_argument("--format", choices=("text", "json"), default="text")
     ap.add_argument("--list-rules", action="store_true")
+    ap.add_argument("--peering-only", metavar="NAME",
+                    help="validate one peering's entry alone (the role's check before it "
+                         "stores the entry); nothing rendered this way is loaded")
     a = ap.parse_args(argv)
     try:
         try:
@@ -749,7 +867,7 @@ def main(argv=None):
                 tag = " (fixed)" if r.locked else ""
                 print(f"{r.name}{tag}\t{r.note}")
             return 0
-        res = run(doc, a.override)
+        res = run(doc, a.override, a.peering_only)
     except Refusal as e:
         print(f"goat-host-firewall: REFUSED ({e.code}): {e}", file=sys.stderr)
         return e.exit_code

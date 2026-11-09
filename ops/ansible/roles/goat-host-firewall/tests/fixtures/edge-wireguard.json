@@ -3,14 +3,25 @@
   "profile": "edge",
   "host": {
     "ssh_port": 22,
-    "management_sources": ["198.51.100.10/32"],
+    "management_sources": [
+      "198.51.100.10/32"
+    ],
     "mesh_interface": "wt0",
-    "mesh_udp_ports": [51820]
+    "mesh_udp_ports": []
   },
   "peerings": [
-    {"name": "wg-fed0", "transport": "wireguard", "listen_port": 51821,
-     "peer_addr": "192.0.2.10", "tunnel_interface": "wg-fed0",
-     "remote_link_ip": "169.254.10.0", "edge_port": 7448, "extra_tcp_ports": [8443],
-     "via_forwarder": false}
+    {
+      "name": "wg-fed0",
+      "transport": "wireguard",
+      "listen_port": 51821,
+      "peer_addr": "192.0.2.10",
+      "tunnel_interface": "wg-fed0",
+      "remote_link_ip": "169.254.10.0",
+      "edge_port": 7448,
+      "extra_tcp_ports": [
+        8443
+      ],
+      "via_forwarder": false
+    }
   ]
 }

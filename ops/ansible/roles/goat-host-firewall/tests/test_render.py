@@ -56,7 +56,7 @@ def test_edge_wireguard_admits_exactly_the_declared_ports():
     names = [r["name"] for r in res["rules"]]
     assert names == [
         "loopback", "established", "invalid", "icmp-echo", "icmpv6-essential", "dhcp-client",
-        "container-bridges", "ssh-management", "mesh-wireguard",
+        "container-bridges", "ssh-management",
         "wg-fed0/tunnel", "wg-fed0/edge-router", "wg-fed0/tunnel-extra",
         "other-tcp", "other-udp",
     ]
@@ -116,6 +116,8 @@ def test_a_peering_port_the_mesh_rule_also_holds_is_refused(port):
     # The defaults of goat-peering-wg (51820) and of a mesh client (51820) collide; the
     # mesh rule admits any source, which would void the tunnel rule's restriction.
     doc = fixture("edge-wireguard")
+    doc["host"]["mesh_udp_ports"] = [51820]
+    doc["override"] = {"mesh-wireguard": {"reason": "mesh peers dial this host"}}
     doc["peerings"][0]["listen_port"] = port
     e = refused(doc, "GB-210")
     assert "mesh-wireguard" in str(e) and "wg-fed0/tunnel" in str(e)
@@ -283,11 +285,11 @@ def test_incomplete_input_is_refused(mutate):
 
 def test_ipv6_management_source_renders_an_ip6_rule():
     doc = fixture("core")
-    doc["host"]["management_sources"] = ["198.51.100.10/32", "2001:db8::/48"]
+    doc["host"]["management_sources"] = ["198.51.100.10/32", "2001:db8::/64"]
     res = render(doc)
     assert rule_line(res, "ssh-management") == [
         'ip saddr { 198.51.100.10/32 } tcp dport { 22 } accept comment "ssh-management"',
-        'ip6 saddr { 2001:db8::/48 } tcp dport { 22 } accept comment "ssh-management"',
+        'ip6 saddr { 2001:db8::/64 } tcp dport { 22 } accept comment "ssh-management"',
     ]
 
 
@@ -345,11 +347,10 @@ def test_override_tightens_without_a_reason():
         "icmp-echo": {"drop": True},
         "fabric-tls": {"sources": ["100.127.0.0/16"]},
         "ssh-management": {"sources": ["198.51.100.10/32"], "interface": "wt0"},
-        "mesh-wireguard": {"ports": []},
     }
     res = render(doc)
     assert [t["rule"] for t in res["tightened"]] == [
-        "fabric-tls", "icmp-echo", "mesh-wireguard", "ssh-management"]
+        "fabric-tls", "icmp-echo", "ssh-management"]
     assert res["loosened"] == []
     assert "icmp-echo" in res["dropped"]
     assert rule_line(res, "icmp-echo") == []
@@ -358,7 +359,6 @@ def test_override_tightens_without_a_reason():
     assert rule_line(res, "ssh-management") == [
         'iifname "wt0" ip saddr { 198.51.100.10/32 } tcp dport { 22 } accept '
         'comment "ssh-management"']
-    assert rule_line(res, "mesh-wireguard") == []
     assert "# tightened fabric-tls: sources" in res["ruleset"]
     assert render(fixture("core"))["sha256"] != res["sha256"]
 
@@ -505,3 +505,151 @@ def test_cli_list_rules_marks_fixed_rules():
                         "--list-rules"], check=True, capture_output=True, text=True)
     names = [l.split("\t")[0] for l in r.stdout.splitlines()]
     assert "loopback (fixed)" in names and "fabric-tls" in names
+
+
+# --------------------------------------------------------------------------- review of 4232de2
+
+# 2. A reason is written into the ruleset file: a newline in it would end the comment and
+#    let the rest of the reason run as nft commands.
+@pytest.mark.parametrize("reason", [
+    "ok\nflush ruleset",                              # injection
+    "first line of a YAML | block\nsecond line\n",    # what `reason: |` produces
+    "tab\tinside",
+    "nul\x00inside",
+])
+def test_a_reason_with_control_characters_is_refused(reason):
+    doc = fixture("core")
+    doc["override"] = {"other-tcp": {"ports": [9100], "reason": reason}}
+    refused(doc, "GB-211")
+
+
+def test_a_folded_reason_with_only_a_trailing_newline_is_accepted():
+    doc = fixture("core")
+    doc["override"] = {"other-tcp": {"ports": [9100], "reason": "a folded YAML reason\n"}}
+    res = render(doc)
+    assert "# loosened other-tcp: ports [] -> [9100]; reason: a folded YAML reason\n" in res["ruleset"]
+
+
+# 3. Non-docker bridges (the vxlan role's br-l2seg*) would be admitted by br-*.
+def test_a_non_docker_br_bridge_is_refused_unless_container_bridges_is_dropped():
+    doc = fixture("core")
+    doc["host"]["bridge_interfaces"] = ["docker0", "br-0123456789ab", "br-l2seg0"]
+    e = refused(doc, "GB-210")
+    assert "br-l2seg0" in str(e)
+    doc["override"] = {"container-bridges": {"drop": True}}
+    render(doc)
+
+
+def test_docker_bridges_only_pass_and_do_not_change_the_hash():
+    doc = fixture("core")
+    doc["host"]["bridge_interfaces"] = ["docker0", "br-0123456789ab"]
+    assert render(doc)["sha256"] == render(fixture("core"))["sha256"]
+
+
+# 4. GB-215 false positives.
+def test_dhcp_client_sockets_count_as_admitted():
+    doc = fixture("core")
+    doc["listening"] = [{"proto": "udp", "port": 68, "addr": "0.0.0.0", "process": "dhclient"},
+                        {"proto": "udp", "port": 546, "addr": "::", "process": "dhcpcd"}]
+    assert render(doc)["closing"] == []
+
+
+def test_ephemeral_udp_client_sockets_are_skipped():
+    doc = fixture("core")
+    doc["host"]["ephemeral_ports"] = [32768, 60999]
+    doc["listening"] = [{"proto": "udp", "port": 41234, "addr": "0.0.0.0", "process": "x"}]
+    assert render(doc)["closing"] == []
+    # A TCP listener in that range is a service, not a client socket.
+    doc["listening"] = [{"proto": "tcp", "port": 41234, "addr": "0.0.0.0", "process": "x"}]
+    refused(doc, "GB-215")
+
+
+def test_closed_listeners_take_process_names():
+    doc = fixture("core")
+    doc["listening"] = [{"proto": "udp", "port": 323, "addr": "::1", "process": "chronyd"},
+                        {"proto": "udp", "port": 123, "addr": "0.0.0.0", "process": "chronyd"}]
+    refused(doc, "GB-215")
+    doc["host"]["closed_listeners"] = ["chronyd"]
+    assert render(doc)["closing"] == ["udp/123"]
+
+
+# 5. Role inputs that loosen the baseline need a reason too.
+@pytest.mark.parametrize("src", ["0.0.0.0/0", "::/0"])
+def test_management_source_any_is_refused_even_with_a_reason(src):
+    doc = fixture("core")
+    doc["host"]["management_sources"] = [src]
+    doc["override"] = {"ssh-management": {"reason": "anyone"}}
+    refused(doc, "GB-210")
+
+
+def test_management_source_broader_than_the_floor_needs_a_reason():
+    doc = fixture("core")
+    doc["host"]["management_sources"] = ["198.51.0.0/16"]
+    refused(doc, "GB-212")
+    doc["override"] = {"ssh-management": {"reason": "the site's whole management network"}}
+    res = render(doc)
+    assert res["loosened"][0]["rule"] == "ssh-management"
+    doc["host"]["management_prefix_floor"] = {"ipv4": 16, "ipv6": 48}
+    doc["override"] = {}
+    render(doc)
+
+
+def test_mesh_udp_ports_need_a_reason():
+    doc = fixture("core")
+    doc["host"]["mesh_udp_ports"] = [51820]
+    e = refused(doc, "GB-212")
+    assert "mesh-wireguard" in str(e)
+    doc["override"] = {"mesh-wireguard": {"reason": "mesh peers dial this host directly"}}
+    assert [l["rule"] for l in render(doc)["loosened"]] == ["mesh-wireguard"]
+
+
+def test_a_mesh_dns_port_other_than_the_profile_default_needs_a_reason():
+    doc = fixture("core")
+    doc["host"]["mesh_dns_port"] = 53
+    refused(doc, "GB-212")
+    doc["override"] = {"mesh-dns": {"reason": "the mesh nameserver listens on 53 here"}}
+    render(doc)
+
+
+def test_a_mesh_interface_that_is_the_uplink_is_refused():
+    doc = fixture("core")
+    doc["host"]["mesh_interface"] = "eth0"
+    doc["host"]["uplink_interfaces"] = ["eth0"]
+    refused(doc, "GB-210")
+
+
+# 8. SPIRE: the core admits the bundle endpoint from the edge; spire-forward falls back to
+#    the mesh interface.
+def test_core_spire_bundle_from_the_edge_mesh_address():
+    doc = fixture("core")
+    doc["host"]["spire_bundle_port"] = 8443
+    doc["host"]["spire_bundle_sources"] = ["100.127.0.20"]
+    assert rule_line(render(doc), "spire-bundle") == [
+        'ip saddr { 100.127.0.20 } tcp dport { 8443 } accept comment "spire-bundle"']
+    doc["host"]["spire_bundle_sources"] = []
+    assert rule_line(render(doc), "spire-bundle") == [
+        'iifname "wt0" tcp dport { 8443 } accept comment "spire-bundle"']
+
+
+def test_spire_forward_without_a_literal_server_is_bound_to_the_mesh_interface():
+    doc = fixture("edge-wireguard")
+    doc["peerings"][0].update(spire_outbound_port=18443, spire_server_addr="")
+    assert rule_line(render(doc), "wg-fed0/spire-forward") == [
+        'iifname "wt0" tcp dport { 18443 } accept comment "wg-fed0/spire-forward"']
+
+
+# 1. The role validates one peering alone before storing it, so an override that names a
+#    peering not stored yet does not stop the entry from being stored.
+def test_peering_only_ignores_override_entries_for_other_peerings():
+    doc = fixture("edge-wireguard")
+    doc["peerings"].append(dict(doc["peerings"][0], name="wg-fed1", tunnel_interface="wg-fed1",
+                                listen_port=51823, remote_link_ip="169.254.12.0"))
+    doc["override"] = {"wg-fed1/edge-router": {"sources": ["169.254.12.0"]},
+                       "icmp-echo": {"drop": True}}
+    only = copy.deepcopy(doc)
+    only["peerings"] = only["peerings"][:1]
+    refused(only, "GB-211")          # the full render of wg-fed0 alone refuses
+    res = hfr.run(copy.deepcopy(only), None, "wg-fed0")
+    assert "icmp-echo" in res["dropped"]
+    with pytest.raises(hfr.Refusal):
+        hfr.run(copy.deepcopy(only), None, "wg-fed9")
