@@ -78,6 +78,25 @@ class Records(unittest.TestCase):
             self.assertEqual(ev.read_obs(p), {"trace": "line one\nline two", "received": ""})
 
 
+class RestValue(unittest.TestCase):
+    """A surface that cannot be read must never look like a key that is absent."""
+
+    def test_a_row_is_decoded(self):
+        self.assertEqual(ev.rest_value('[{"key":"k","value":"aGVsbG8=","encoding":"zenoh/bytes"}]\n200'), b"hello")
+        self.assertEqual(ev.rest_value('[{"key":"k","value":"in-acc-1","encoding":"text/plain"}]\n200'), b"in-acc-1")
+        self.assertEqual(ev.rest_value('[{"key":"k","value":{"a":1},"encoding":"application/json"}]\n200'), b'{"a":1}')
+        # Spacing is the server's business; the old grep missed `"value": "..."`.
+        self.assertEqual(ev.rest_value('[{"key": "k", "value": "aGVsbG8=", "encoding": "zenoh/bytes"}]\n200'), b"hello")
+
+    def test_no_row_is_empty_and_readable(self):
+        self.assertEqual(ev.rest_value("[]\n200"), b"")
+
+    def test_unreadable_answers_raise(self):
+        for text in ("\n000", "\n500", "<html>proxy error</html>\n200", '{"error":"x"}\n200', "[1]\n200", ""):
+            with self.subTest(text=text), self.assertRaises(ev.Unreadable):
+                ev.rest_value(text)
+
+
 class Bundle(unittest.TestCase):
     def run_cli(self, *argv):
         out = io.StringIO()
