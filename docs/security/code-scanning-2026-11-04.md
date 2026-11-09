@@ -50,16 +50,24 @@ The full browser baseline has seven mobile overflow failures; the changed tree i
 
 Local CodeQL security-extended analysis of the changed JavaScript surfaces produced zero results. Python analysis confirmed removal of the targeted insecure-protocol and plaintext-template-file findings; names-only diagnostic reports remain for contextual triage. Go and Rust findings additionally rely on the downloaded GitHub data-flow traces, source review and the tests above; a local full Go/Rust CodeQL rescan was not performed.
 
+## Browser deployment compatibility
+
+Portal and SNITCH browser sign-in require HTTPS at the browser-facing origin, including mesh names and mesh IP addresses. Only literal localhost and loopback IP addresses support HTTP for local development or an operator-managed SSH forward. An encrypted mesh does not make an HTTP browser origin eligible for a Secure cookie. Keep TLS verification enabled.
+
+TLS may terminate at the existing reverse proxy; its internal HTTP connection to the service does not require a cookie exception. Inventory the actual dashboard URLs before deploying, supply trusted HTTPS for any non-loopback HTTP route, and verify sign-in, navigation, streams and sign-out. Bearer API clients remain supported. This patch does not establish how every deployment exposes its dashboards.
+
+The shared contract is documented in [Browser session authentication](../design/browser-session-authentication.md).
+
 ## Delivery and closure
 
 Contextual dismissals must retain the ledger evidence. Code fixes close the eight affected main-branch alerts only after the patch is merged and the corresponding main-branch scan runs. The final GitHub inventory, rather than a passing local test or PR scan alone, establishes closure.
 
-These public repositories are generated exports under ADR 1215. Replay the changes into the maintained source/export workflow before its next publication so regeneration preserves them. No live deployment is included in this change.
+goatcore is the maintained source. A deployment adopts the reviewed change by updating its pinned revision and building or selecting the corresponding service images. No live deployment is included in this change.
 
 ## CI follow-up
 
 The initial PR run exposed a SNITCH lint regression: test requests needed explicit contexts, and the security linter could not infer the conditional Secure flag. Tests now use NewRequestWithContext. The two cookie statements carry a narrow G124 exception for loopback development, with tests covering external hosts and lookalike hostnames; HttpOnly and SameSite Strict remain unconditional. The exact CI linter, golangci-lint v2.12.1, reports zero issues.
 
-GitHub default setup is configured for the repository and already publishes the authoritative code-scanning results. GitHub rejects advanced-setup uploads while default setup is enabled. The additional security-and-quality workflow still runs its queries and saves SARIF artifacts, without submitting a competing upload. Default setup remains enabled.
+The repository API reports default CodeQL setup as not configured on 9 November 2026. This change preserves the current main-branch CodeQL workflow, including its code-scanning uploads; it does not add artifact-only analysis or change the repository scanning settings.
 
 The Trivy job cannot access the two curated consistency images. Neither image appears among the 43 organization container packages visible to the authenticated operator, so authentication alone does not establish a fix. The workflow retains its original minimal permissions. The images must be published or made accessible before those advisory rows can scan successfully; no image is removed from coverage or marked clean because it could not be scanned.
