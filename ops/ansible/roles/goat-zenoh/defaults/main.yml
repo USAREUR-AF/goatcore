@@ -612,6 +612,15 @@ goat_zenoh_router_peer_deliver_key_exprs: ["**", "**/@adv/**"]
 #                                 # more peerings the whole from/<us>/** is
 #                                 # refused: every peering's republisher writes
 #                                 # onto this core, so it would read the others'.
+#     release_interest_key_exprs: []  # where their INTEREST may reach (the -r-interest
+#                                 # and -rp-w-interest rules). Empty = the same as
+#                                 # release_key_exprs. Set it to the whole wire
+#                                 # name, from/<us>/**, whenever release_key_exprs
+#                                 # names sets: a receiver subscribes to the whole
+#                                 # wire name and zenoh refuses a subscriber
+#                                 # declaration wider than the rule admitting it, so
+#                                 # nothing would be asked for and nothing would
+#                                 # cross. A declaration carries no data.
 #     republisher_cn: ""          # the outbound republisher's CN on THIS core,
 #                                 # minted in peering phase 8 (republisher.pem);
 #                                 # empty renders no republisher subject
