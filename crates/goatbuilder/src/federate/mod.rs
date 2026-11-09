@@ -42,6 +42,7 @@ use crate::{Check, Report, EXIT_OK, EXIT_REFUSED};
 
 pub mod alloc;
 pub mod declaration;
+pub mod forwarder;
 pub mod peering_files;
 
 pub struct Options<'a> {
@@ -438,7 +439,9 @@ pub fn federate(repo: &Path, o: &Options) -> Result<Report> {
     let resume = format!("goatbuilder federate {}{}", o.with, o.env.map(|e| format!(" --env {e}")).unwrap_or_default());
     // Once `goatbuilder federate allocate` has recorded this peering, the run must use its values.
     peering_files::driver_agrees(&cfg, cfg_path.parent().unwrap_or(repo), o, &work, &edge_group)?;
-    let phases = plan(repo, o, &work, &edge_group, &resume);
+    let mut phases = plan(repo, o, &work, &edge_group, &resume);
+    // A peering a forwarder relays: the forwarder runs inside phase 2 (federate/forwarder.rs).
+    forwarder::splice(&mut phases, &cfg, cfg_path.parent().unwrap_or(repo), o, &edge_group)?;
     let executes = !o.dry_run && o.mock.is_none();
     let banner_mode = if o.dry_run {
         "(DRY RUN — nothing executes)"

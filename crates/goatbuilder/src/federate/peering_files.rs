@@ -40,7 +40,7 @@ pub struct Rendered {
     pub body: String,
 }
 
-fn header(what: &str) -> String {
+pub(super) fn header(what: &str) -> String {
     format!(
         "{MARKER}: {what}\n\
          # Do not edit. Pin a value under the peering's `values:` in goatbuilder.yaml and run\n\
@@ -49,7 +49,7 @@ fn header(what: &str) -> String {
     )
 }
 
-fn q(s: &str) -> String {
+pub(super) fn q(s: &str) -> String {
     format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
@@ -114,6 +114,7 @@ fn edge_vars(p: &config::Peering, v: &PeeringValues, inventory: bool, installs: 
             s.push_str(&format!("{var}: {}\n", q(&format!("{c}/{file}"))));
         }
     }
+    s.push_str(&super::forwarder::edge_vars(p, v));
     s
 }
 
@@ -200,7 +201,7 @@ fn retired_groups(
     (edges, cores)
 }
 
-fn inventory(cfg: &Config, values: &[PeeringValues], retired: &Retired) -> String {
+fn inventory(cfg: &Config, values: &[PeeringValues], retired: &Retired) -> Result<String> {
     let mut s = header("the peering inventory, from goatbuilder.yaml peerings: hosts:.");
     s.push_str(
         "# One inventory name per peering for each machine: a host name in two peering\n\
@@ -248,7 +249,8 @@ fn inventory(cfg: &Config, values: &[PeeringValues], retired: &Retired) -> Strin
         ));
     }
     carry(&mut s, &retired.1);
-    s
+    s.push_str(&super::forwarder::inventory(cfg, values)?);
+    Ok(s)
 }
 
 /// Every file for these peerings, the record first. `values` is in declaration
@@ -319,9 +321,10 @@ pub fn render_full(
                 cfg,
                 values,
                 &retired_groups(values, previous, prev_inventory),
-            ),
+            )?,
         });
     }
+    out.extend(super::forwarder::render(cfg, values)?);
     Ok(out)
 }
 
@@ -341,16 +344,18 @@ fn stale(repo: &Path, rendered: &[Rendered]) -> Vec<String> {
         return out;
     };
     for d in dirs.flatten() {
-        let f = d.path().join("peering-values.yml");
-        let rel = format!(
-            "ops/ansible/group_vars/{}/peering-values.yml",
-            d.file_name().to_string_lossy()
-        );
-        let ours = std::fs::read_to_string(&f)
-            .map(|t| t.starts_with(MARKER))
-            .unwrap_or(false);
-        if ours && !rendered.iter().any(|r| r.path == rel) {
-            out.push(rel);
+        for name in ["peering-values.yml", "peering-forwarder.yml"] {
+            let f = d.path().join(name);
+            let rel = format!(
+                "ops/ansible/group_vars/{}/{name}",
+                d.file_name().to_string_lossy()
+            );
+            let ours = std::fs::read_to_string(&f)
+                .map(|t| t.starts_with(MARKER))
+                .unwrap_or(false);
+            if ours && !rendered.iter().any(|r| r.path == rel) {
+                out.push(rel);
+            }
         }
     }
     out.sort();

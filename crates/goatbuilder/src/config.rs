@@ -215,7 +215,6 @@ pub struct PeeringHosts {
 
 /// The peering forwarder in front of the edge (docs/design/peering-forwarder.md).
 #[derive(Debug, Clone, Deserialize)]
-#[allow(dead_code)] // read where the forwarder is rendered and applied
 pub struct PeeringForwarder {
     /// The forwarder's public host the partner and our edge dial.
     pub endpoint: String,
