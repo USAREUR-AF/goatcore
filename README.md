@@ -47,16 +47,22 @@ On top of those, this repository provides two command-line tools: `goatbuilder` 
 
 ## Try it
 
-The fastest way to see goat is a rehearsal: `goatbuilder` stands up a complete example environment against a simulated set of machines, on your laptop. Nothing touches a network. The first `cargo build` takes the longest, often half an hour on a laptop; the rehearsal itself runs in seconds.
+The fastest way to see goat is a rehearsal: `goatbuilder` stands up a complete example environment against a simulated set of machines, on your laptop, in seconds. Nothing touches a network. Download `goatbuilder` for Linux or macOS from the [releases](https://github.com/usareur-af/goatcore/releases) and run it from a clone of this repository:
 
 ```bash
-cd crates && cargo build --release -p goatbuilder && cd ..
+git clone https://github.com/usareur-af/goatcore && cd goatcore
+
+OS="$(uname -s | tr '[:upper:]' '[:lower:]')"; ARCH="$(uname -m | sed 's/x86_64/amd64/; s/aarch64/arm64/')"
+curl -fsSL -o goatbuilder "https://github.com/usareur-af/goatcore/releases/download/goatbuilder/v0.4.3/goatbuilder-$OS-$ARCH"
+chmod +x goatbuilder
 
 WORK="$(mktemp -d)/zagros"
 cp -R ops/goatbuilder/fixtures/goatnet-from-scratch/01-founder "$WORK"
-crates/target/release/goatbuilder standup zagros --site alpha --mock "$WORK" --ack "you" --yes
-crates/target/release/goatbuilder status --env zagros --mock "$WORK"
+./goatbuilder standup zagros --site alpha --mock "$WORK" --ack "you" --yes
+./goatbuilder status --env zagros --mock "$WORK"
 ```
+
+Each release lists a SHA-256 checksum per binary in `SHA256SUMS`, signed with cosign. To build it yourself instead, `cd crates && cargo build --release -p goatbuilder` puts it in `crates/target/release/`; the first build often takes half an hour.
 
 The example environment, `zagros`, has one site with two core machines, one monitoring machine and one recovery machine. [Tutorial 1](docs/tutorials/01-new-goatnet.md) explains each step and carries on to real hardware.
 
