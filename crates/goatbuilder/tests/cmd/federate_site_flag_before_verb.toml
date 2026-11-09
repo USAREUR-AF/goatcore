@@ -5,5 +5,5 @@ args = ["federate", "--context-dir", "/nonexistent", "lint"]
 status.code = 2
 stdout = ""
 stderr = """
-goatbuilder: put --context-dir, --cert and --ca-roots after the verb: goatbuilder federate lint --context-dir <dir> ...
+goatbuilder: put --context-dir, --cert, --ca-roots, --context and --profile-dir after the verb: goatbuilder federate lint --context-dir <dir> ...
 """

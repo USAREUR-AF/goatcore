@@ -79,8 +79,9 @@ Options:
           `update` — to stderr, so `-o json|yaml` stays a clean document. Or set
           RUST_LOG=goatbuilder=debug
 
-      --env <ENV>
-          The environment the peering is declared on (checked against goatbuilder.yaml peerings:)
+      --context <NAME>
+          The six verbs: the goat context to read, as `goat --context` (default: $GOAT_CONTEXT, else
+          current_context in the profile's config.toml, else default)
 
       --timeout <SECS>
           Seconds to bound the connect/reach phase before failing fast — the one phase that can
@@ -88,6 +89,13 @@ Options:
           play's own run or the binary download (stall-bounded). Also reads GOATBUILDER_TIMEOUT
           
           [env: GOATBUILDER_TIMEOUT=]
+
+      --profile-dir <DIR>
+          The six verbs: the goat profile directory, as `goat --profile-dir` (default:
+          $GOAT_PROFILE_DIR, else ~/.goat)
+
+      --env <ENV>
+          The environment the peering is declared on (checked against goatbuilder.yaml peerings:)
 
       --as <SOVEREIGN>
           Which party we are (default: read from the declaration)

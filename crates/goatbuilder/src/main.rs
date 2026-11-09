@@ -430,7 +430,7 @@ pub enum Cmd {
         #[command(subcommand)]
         verb: Option<goat_federation::verbs::FederateCmd>,
         #[command(flatten)]
-        site: federate::verbs::SiteArgs,
+        site: Box<federate::verbs::SiteArgs>,
         /// The peering name (the counterparty, as declared).
         #[arg(required = true)]
         with: Option<String>,
@@ -1031,6 +1031,17 @@ fn main() {
     // The six federation verbs read only the files they are named, and the
     // site (federate/verbs.rs): no repository, no config.
     if let Cmd::Federate { verb: Some(_), .. } = &cli.cmd {
+        // The verbs read no repository, fixture or table output, so a flag that
+        // would choose one is refused rather than silently ignored: under
+        // --mock, `apply --confirm` would still write the files it names.
+        if cli.mock.is_some() || cli.repo.is_some() || !matches!(cli.output, OutputFormat::Table) {
+            eprintln!(
+                "goatbuilder: --mock, -C/--repo and -o/--output do not apply to goatbuilder federate init|lint|compose|diff|verify|apply: \
+                 the verbs read only the files they are named and the party's context, and run for real; \
+                 drop the flag (the verbs take --json for a JSON report)"
+            );
+            std::process::exit(2);
+        }
         if let Cmd::Federate { verb: Some(verb), site, .. } = cli.cmd {
             std::process::exit(federate::verbs::exit_of(verb, &site));
         }
@@ -1324,9 +1335,9 @@ fn main() {
             // A mock executes nothing, with or without --dry-run, so it mutates nothing.
             if !site.is_empty() && goat_federation::verbs::VERB_NAMES.contains(&with) {
                 // `federate --context-dir D init`: clap read the verb as a partner.
-                Err(anyhow::anyhow!("put --context-dir, --cert and --ca-roots after the verb: goatbuilder federate {with} --context-dir <dir> ..."))
+                Err(anyhow::anyhow!("put --context-dir, --cert, --ca-roots, --context and --profile-dir after the verb: goatbuilder federate {with} --context-dir <dir> ..."))
             } else if !site.is_empty() {
-                Err(anyhow::anyhow!("--context-dir, --cert and --ca-roots apply to the six verbs (goatbuilder federate init|lint|compose|diff|verify|apply), not to a peering run"))
+                Err(anyhow::anyhow!("--context-dir, --cert, --ca-roots, --context and --profile-dir apply to the six verbs (goatbuilder federate init|lint|compose|diff|verify|apply), not to a peering run"))
             } else if !cli.yes && !*dry_run && cli.mock.is_none() && !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
                 Err(anyhow::anyhow!("federate is a mutation: pass --yes without a terminal (C10)"))
             } else {
