@@ -28,6 +28,12 @@
 //!
 //! The peering must be declared in goatbuilder.yaml `peerings:` (C1: declared
 //! first). An empty list declares nothing, so it refuses every name.
+//!
+//! Phases 3, 4, 6, 7 and 9 are the federation verbs. By default they run as
+//! `goat federate <verb>` in a shell, as the script does. With
+//! `FED_VERBS=goatbuilder` they run in process instead, through the same
+//! library (`verbs.rs`), and the plan prints them as
+//! `goatbuilder federate <verb> ...`, the words that are parsed and run.
 
 /// `goatbuilder federate init|lint|compose|diff|verify|apply` (the six verbs).
 pub mod verbs;
@@ -69,7 +75,31 @@ struct Phase {
     n: u32,
     kind: &'static str,
     label: String,
+    /// What the plan prints; a shell command, run with `bash -c` unless `verb` is set.
     cmd: String,
+    /// A federation verb run in process. `cmd` is these words, printed.
+    verb: Option<VerbCall>,
+}
+
+/// A federation verb run in process: the environment it runs with, and its
+/// words after `goatbuilder federate`.
+type VerbCall = (Vec<(String, String)>, Vec<String>);
+
+/// Whether phases 3, 4, 6, 7 and 9 run in process (`FED_VERBS=goatbuilder`) or
+/// spawn `goat federate` (unset or `goat`, the default).
+fn verbs_in_process() -> bool {
+    env_or("FED_VERBS", String::new()) == "goatbuilder"
+}
+
+/// A verb's words as a shell line: the verb and each flag bare, every value
+/// single-quoted, the way the script prints them.
+fn shell_words(words: &[String]) -> String {
+    words
+        .iter()
+        .enumerate()
+        .map(|(i, w)| if i == 0 || w.starts_with("--") { w.clone() } else { format!("'{w}'") })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn row(name: &str, detail: String) -> Check {
@@ -174,6 +204,11 @@ fn directory_args(repo: &Path, work: &str) -> Option<Vec<String>> {
 }
 
 fn plan(repo: &Path, o: &Options, work: &str, edge_group: &str, resume: &str) -> Vec<Phase> {
+    plan_verbs(repo, o, work, edge_group, resume, verbs_in_process())
+}
+
+/// `plan`, with the choice of who runs the federation verbs made by the caller.
+fn plan_verbs(repo: &Path, o: &Options, work: &str, edge_group: &str, resume: &str, in_process: bool) -> Vec<Phase> {
     let r = repo.display().to_string();
     let goat = goat_bin();
     let aws = crate::settings::aws_profile(repo);
@@ -185,10 +220,27 @@ fn plan(repo: &Path, o: &Options, work: &str, edge_group: &str, resume: &str) ->
     let applied = format!("{work}/applied");
     let pki = format!("{work}/pki");
     let as_arg = o.r#as.map(|a| format!(" --as '{a}'")).unwrap_or_default();
-    let p = |n: u32, kind: &'static str, label: &str, cmd: String| Phase { n, kind, label: label.to_string(), cmd };
+    let p = |n: u32, kind: &'static str, label: &str, cmd: String| Phase { n, kind, label: label.to_string(), cmd, verb: None };
+    // A federation verb: `goat federate <words>` in a shell, or the same words
+    // run in process and printed as `goatbuilder federate <words>`.
+    let t = |n: u32, label: &str, env: Vec<(String, String)>, words: Vec<String>| {
+        let prefix: String = env.iter().map(|(k, v)| format!("{k}='{v}' ")).collect();
+        if in_process {
+            Phase { n, kind: "T", label: label.to_string(), cmd: format!("{prefix}goatbuilder federate {}", shell_words(&words)), verb: Some((env, words)) }
+        } else {
+            Phase { n, kind: "T", label: label.to_string(), cmd: format!("{prefix}{goat} federate {}", shell_words(&words)), verb: None }
+        }
+    };
+    let w = |items: &[&str]| items.iter().map(|s| s.to_string()).collect::<Vec<String>>();
+    let as_words: Vec<String> = o.r#as.map(|a| vec!["--as".to_string(), a.to_string()]).unwrap_or_default();
 
     let router_host = env_or("FED_ROUTER_DOCKER_HOST", String::new());
-    let init_env = if router_host.is_empty() { String::new() } else { format!("DOCKER_HOST='{router_host}' ") };
+    let init_env: Vec<(String, String)> = if router_host.is_empty() { Vec::new() } else { vec![("DOCKER_HOST".into(), router_host.clone())] };
+    let mut init_words = w(&["init", "--with-transport", "--with-data"]);
+    if !signing.is_empty() {
+        init_words.extend(w(&["--signing-key", &signing]));
+    }
+    init_words.extend(w(&["--out", &ours]));
     let play_on = |limit: &str, name: &str| format!("cd '{r}/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws {aws} -- ../scripts/ansible-preflight.sh -i inventory/peering-edges.ini --limit '{limit}' -e fed_edge_group='{edge_group}' -e fed_work='{work}' -e fed_counterparty='{counterparty}' {name}");
     let play = |name: &str| play_on(edge_group, name);
     // The core host the edge dials: the outbound republisher runs there, beside
@@ -198,13 +250,13 @@ fn plan(repo: &Path, o: &Options, work: &str, edge_group: &str, resume: &str) ->
     let mut ev = vec![
         p(1, "GATE", "peering preflight (fail-closed)", format!("python3 '{r}/ops/federation/standup/preflight.py' '{}' --work '{work}' --edge-group '{edge_group}'", o.with)),
         p(2, "A", "prepare what the package measures: the federation interface and the SPIRE bundle", play("peering-prepare.yml")),
-        p(3, "T", "init — our half, read from the running system", format!("{init_env}{goat} federate init --with-transport --with-data {}--out '{ours}'", if signing.is_empty() { String::new() } else { format!("--signing-key '{signing}' ") })),
-        p(4, "T", "lint our package against the spec", format!("{goat} federate lint '{ours}'")),
+        t(3, "init — our half, read from the running system", init_env, init_words),
+        t(4, "lint our package against the spec", Vec::new(), w(&["lint", &ours])),
         { let (label, body) = exchange(&r, &ours, work, &counterparty, &keyring); p(5, "MANUAL", label, body) },
     ];
     // Each `sovereign=key` line in the keyring becomes one --key argument; a
     // missing keyring is left for compose's own refusal to name.
-    let mut keyargs = String::new();
+    let mut compose_words = w(&["compose", &ours, &counterparty]);
     if let Ok(text) = std::fs::read_to_string(&keyring) {
         for line in text.lines() {
             if line.is_empty() || line.starts_with('#') {
@@ -214,14 +266,15 @@ fn plan(repo: &Path, o: &Options, work: &str, edge_group: &str, resume: &str) ->
             // An unsafe line is left out: compose then refuses, naming the
             // party whose key is not bound (fail closed).
             if shell_safe(&clean) {
-                keyargs.push_str(&format!(" --key '{clean}'"));
+                compose_words.extend(w(&["--key", &clean]));
             }
         }
     }
-    ev.push(p(6, "T", "compose — one agreement, one digest, no perspective", format!("{goat} federate compose '{ours}' '{counterparty}'{keyargs} --out '{agreement}'")));
-    ev.push(p(7, "T", "verify the agreement from our side", format!("{goat} federate verify '{agreement}'{as_arg}")));
+    compose_words.extend(w(&["--out", &agreement]));
+    ev.push(t(6, "compose — one agreement, one digest, no perspective", Vec::new(), compose_words));
+    ev.push(t(7, "verify the agreement from our side", Vec::new(), [w(&["verify", &agreement]), as_words.clone()].concat()));
     ev.push(p(8, "T", "mint the peering leaf certificates from the agreement", format!("'{r}/ops/federation/standup/mint-peering-leaves.sh' '{agreement}' '{pki}'{as_arg}")));
-    ev.push(p(9, "T", "apply — render the access rules and configuration", format!("{goat} federate apply '{agreement}'{as_arg} --edge-group '{edge_group}' --out '{applied}' --confirm")));
+    ev.push(t(9, "apply — render the access rules and configuration", Vec::new(), [w(&["apply", &agreement]), as_words.clone(), w(&["--edge-group", edge_group, "--out", &applied, "--confirm"])].concat()));
     ev.push(p(10, "MANUAL", "review what apply rendered, and admit the edge on our core", format!(
             "Review {applied} against the agreement. The review is the control.\n     Check {work}/theirs-ca.pem against the fingerprint `apply` printed for the\n     counterparty, then place it where goat_zenoh_edge_partner_ca_path says.\n     Splice {applied}/ops/federation/acl/<them>-fragment.json5 into our core's\n     access control with roles/goat-zenoh/files/acl-assemble.py, and give the core\n     {pki}/core.pem and its key. The core has to admit the edge before phase 12's\n     inward-link check can pass, and only this party can change this party's core.")));
     // The transport the agreement chose, read from the agreement itself.
@@ -403,6 +456,12 @@ pub fn federate(repo: &Path, o: &Options) -> Result<Report> {
     if o.with == "allocate" {
         return peering_files::run(repo, o);
     }
+    // An unknown FED_VERBS is refused, as the script refuses it, so a typo
+    // cannot pick a different path on each avenue.
+    let fed_verbs = env_or("FED_VERBS", String::new());
+    if !matches!(fed_verbs.as_str(), "" | "goat" | "goatbuilder") {
+        return Err(anyhow!("FED_VERBS is goat or goatbuilder, not '{fed_verbs}'"));
+    }
     // `--mock <dir>` reads the flat `<dir>/goatbuilder.yaml`, the same fixture
     // shape standup opens; without it, the repository's own config.
     let cfg_path = match o.mock {
@@ -480,11 +539,17 @@ pub fn federate(repo: &Path, o: &Options) -> Result<Report> {
             checks.push(row("note", format!("^ OPERATOR STEP — do the above, then re-run with --from {}", ph.n + 1)));
             break;
         }
-        // -e, like standup and join-node: a phase that is several statements
-        // stops at the first failure instead of running on past it.
-        let status = Command::new("bash").args(["-euo", "pipefail", "-c", &ph.cmd]).current_dir(repo).status().context("bash")?;
-        if !status.success() {
-            let rc = status.code().unwrap_or(1);
+        let rc = match &ph.verb {
+            // A federation verb, in process: the same words the plan printed.
+            Some((env, words)) => run_verb_in_process(repo, env, words),
+            None => {
+                // -e, like standup and join-node: a phase that is several statements
+                // stops at the first failure instead of running on past it.
+                let status = Command::new("bash").args(["-euo", "pipefail", "-c", &ph.cmd]).current_dir(repo).status().context("bash")?;
+                if status.success() { 0 } else { status.code().unwrap_or(1) }
+            }
+        };
+        if rc != 0 {
             checks.push(Check { name: "failed".into(), ok: false, detail: format!("!! Phase {} (\"{}\") FAILED — exit {rc}. No later phase has run; the peering is left partway through phase {}. `goat federate` exit codes are specific: 20 composition refused, 21 lint refused, 22 diff refused, 23 a value could not be derived. Phase 14 (acceptance) exits 3 when a required check was BLOCKED or skipped: nothing was proven by it (X-ACCEPT-001); exit 2 when the agreement or the evidence bundle could not be read or written. docs/operations/sovereign-federation-runbook.md names this phase's \"worked when\"; Steps 7 and 8 are the acceptance criteria.", ph.n, ph.label, ph.n), fix: Some(format!("fix the cause, then resume — every phase is idempotent: {resume} --from {}", ph.n)) });
             exit = EXIT_REFUSED;
             break;
@@ -504,6 +569,35 @@ pub fn federate(repo: &Path, o: &Options) -> Result<Report> {
     r.ok = exit == EXIT_OK;
     r.printed = printed;
     Ok(r)
+}
+
+/// One federation verb in process, run in `dir` (the repository, where the
+/// shell phases run, so a relative path means the same thing either way) with
+/// `env` set for its duration (phase 3's DOCKER_HOST). Returns its exit code:
+/// 0, a verb's own 20 to 24, a coded refusal's catalog code (GB-100: 2), or 1
+/// for any other fault, which is printed.
+fn run_verb_in_process(dir: &Path, env: &[(String, String)], words: &[String]) -> i32 {
+    let saved: Vec<(String, Option<std::ffi::OsString>)> = env.iter().map(|(k, _)| (k.clone(), std::env::var_os(k))).collect();
+    for (k, v) in env {
+        std::env::set_var(k, v);
+    }
+    let here = std::env::current_dir().ok();
+    let rc = match std::env::set_current_dir(dir).map_err(anyhow::Error::from).and_then(|_| verbs::run_argv(words)) {
+        Ok(code) => code,
+        // Printed as `goatbuilder federate <verb>` prints it, with its exit
+        // code: GB-100's catalog code, else 1.
+        Err(e) => verbs::fault_exit(&e),
+    };
+    if let Some(h) = here {
+        let _ = std::env::set_current_dir(h);
+    }
+    for (k, v) in saved {
+        match v {
+            Some(v) => std::env::set_var(&k, v),
+            None => std::env::remove_var(&k),
+        }
+    }
+    rc
 }
 
 fn is_root() -> bool {
@@ -590,6 +684,57 @@ mod tests {
         let phases = plan(&repo(), &o, &work_s, "velmara_edge", "goatbuilder federate velmara");
         let view = plan_view(&repo(), &o, &work_s, "velmara_edge", &phases);
         assert!(view.contains("Open the connection the agreement chooses") && !view.contains("Refused"), "{view}");
+    }
+
+    /// FED_VERBS=goatbuilder: phases 3, 4, 6, 7 and 9 run in process, and the
+    /// plan prints exactly the words that are parsed and run. The default
+    /// spawns goat, as the script does.
+    #[test]
+    fn the_verb_phases_run_in_process_when_chosen_and_print_what_runs() {
+        let work = tempfile::tempdir().unwrap();
+        let work_s = work.path().display().to_string();
+        std::fs::write(work.path().join("keys.txt"), "xaa=QUJD\n").unwrap();
+        let o = Options { with: "velmara", env: None, r#as: Some("xaa"), edge_group: None, work: Some(&work_s), mock: None, from: 1, to: 99, dry_run: true, table: false };
+        let verbs = [3, 4, 6, 7, 9];
+        let inproc = plan_verbs(&repo(), &o, &work_s, "velmara_edge", "resume", true);
+        for ph in &inproc {
+            if verbs.contains(&ph.n) {
+                let (env, words) = ph.verb.as_ref().unwrap_or_else(|| panic!("phase {} runs in process", ph.n));
+                let prefix: String = env.iter().map(|(k, v)| format!("{k}='{v}' ")).collect();
+                assert_eq!(ph.cmd, format!("{prefix}goatbuilder federate {}", shell_words(words)), "phase {}", ph.n);
+            } else {
+                assert!(ph.verb.is_none(), "phase {} is not a verb", ph.n);
+            }
+        }
+        let by = |n: u32| inproc.iter().find(|p| p.n == n).unwrap();
+        assert_eq!(by(4).verb.as_ref().unwrap().1, vec!["lint".to_string(), format!("{work_s}/ours.canonical.json")]);
+        assert!(by(6).cmd.contains("--key 'xaa=QUJD'"), "{}", by(6).cmd);
+        assert!(by(9).cmd.ends_with(&format!("--as 'xaa' --edge-group 'velmara_edge' --out '{work_s}/applied' --confirm")), "{}", by(9).cmd);
+        let spawned = plan_verbs(&repo(), &o, &work_s, "velmara_edge", "resume", false);
+        assert!(spawned.iter().all(|p| p.verb.is_none()), "the default runs every phase in a shell");
+        assert!(spawned.iter().find(|p| p.n == 4).unwrap().cmd.contains(" federate lint '"), "goat federate lint");
+        assert!(!spawned.iter().any(|p| p.cmd.contains("goatbuilder federate")));
+    }
+
+    /// An in-process verb returns the verb's own exit code (21 for a malformed
+    /// package), and the environment it set is put back afterwards.
+    #[test]
+    fn an_in_process_verb_exits_like_goat_and_restores_its_environment() {
+        // Run in the directory the tests already run in: the process has one
+        // working directory, and other tests read it concurrently.
+        let here = std::env::current_dir().unwrap();
+        let v = repo().join("ops/federation/vectors");
+        let good = v.join("compose-full/package-xaa.canonical.json").display().to_string();
+        let bad = v.join("malformed/no-signature.json").display().to_string();
+        assert_eq!(run_verb_in_process(&here, &[], &["lint".into(), good]), 0);
+        let key = "GOATBUILDER_TEST_VERB_ENV";
+        std::env::remove_var(key);
+        assert_eq!(run_verb_in_process(&here, &[(key.into(), "x".into())], &["lint".into(), bad]), 21);
+        assert!(std::env::var_os(key).is_none(), "the verb's environment leaked");
+        assert_eq!(run_verb_in_process(&here, &[], &["lint".into(), "/no/such/package".into()]), 1, "a fault exits 1, as in goat");
+        // A relative path is relative to the directory the verb runs in (the
+        // repository, in the driver), as it is for a shell phase.
+        assert_eq!(run_verb_in_process(&here, &[], &["lint".into(), "../../ops/federation/vectors/compose-full/package-xaa.canonical.json".into()]), 0);
     }
 
     fn fixture() -> std::path::PathBuf {
