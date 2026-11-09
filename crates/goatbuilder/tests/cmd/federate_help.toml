@@ -150,6 +150,13 @@ Options:
           after confirming on the call that it is the package for this peering (its digest, as the
           stop shows it)
 
+      --approve-admission <SHA256>
+          Phase 10: approve exactly this admission digest, after reading what our core will admit.
+          --yes never approves it
+
+      --review-in-pr
+          Phase 10: write what our core would admit for review in a pull request, and stop
+
       --env <ENV>
           The environment the peering is declared on (checked against goatbuilder.yaml peerings:)
 

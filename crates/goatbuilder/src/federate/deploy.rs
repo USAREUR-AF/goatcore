@@ -272,6 +272,8 @@ pub fn deploy(
     plan_flag: Option<&Path>,
     approve_flag: Option<&str>,
     ask: &mut dyn Ask,
+    admission: super::Admission,
+    confirm: bool,
 ) -> Result<Report> {
     let from = match o.from {
         1 | DEPLOY_FROM => DEPLOY_FROM,
@@ -333,13 +335,19 @@ pub fn deploy(
         );
     }
     let approved = approve(repo, &p, &path, approve_flag, ask)?;
+    // Phase 10 asks the same person, at the same terminal, when --confirm.
     let mut s = Surface {
         resume: true,
         only: Some(only),
         stage: "deploy",
         plan: Some(approved),
         again,
-        ..Default::default()
+        admission,
+        values: super::Values {
+            ask: confirm,
+            ..Default::default()
+        },
+        ask: Some(Box::new(super::prompt::Terminal)),
     };
     federate_with(
         repo,

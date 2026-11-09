@@ -41,6 +41,7 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 
+use super::admit;
 use super::confirm;
 use super::deploy::{self, Approved};
 use super::lock::{self, PeeringLock};
@@ -56,6 +57,8 @@ pub struct Surface {
     pub values: confirm::Values,
     /// Who answers questions: the terminal, or nobody.
     pub ask: Option<Box<dyn Ask>>,
+    /// Confirmation 2 (admit.rs): `--approve-admission`, `--review-in-pr`.
+    pub admission: admit::Admission,
     /// `--resume`: skip phases found done (see above).
     pub resume: bool,
     /// A stage runs exactly these phases (deploy: 10 to 13; test: 14)
@@ -130,8 +133,8 @@ impl Paths {
         }
     }
 
-    /// What phase 8 minted: every file in pki/ except the partner's CA,
-    /// which phase 10 places there.
+    /// What phase 8 minted: every file in pki/ except a partner CA kept
+    /// there by hand.
     fn minted(&self) -> Vec<PathBuf> {
         let mut v: Vec<PathBuf> = std::fs::read_dir(&self.pki)
             .map(|rd| {

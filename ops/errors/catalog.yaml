@@ -2279,7 +2279,10 @@ entries:
       - "^unexpected argument '[^']*': only a stage word"
       - "^--plan and --approve-plan belong to"
       - "^deploy: --from [0-9]+ is not a deploy start"
-      - "^--confirm, --partner-key, --partner-ca-fingerprint(, --agreement-digest and --place-pointer-package| and --agreement-digest) belong to phases 5 and 6"
+      - "^--partner-key, --partner-ca-fingerprint(, --agreement-digest and --place-pointer-package| and --agreement-digest) belong to phases 5 and 6"
+      - "^--confirm, --approve-admission and --review-in-pr do not apply to"
+      - "^--approve-admission and --review-in-pr (are for phase 10|belong to)"
+      - "^--approve-admission, --review-in-pr and --confirm are for phase 10"
       - "^--partner-key and --partner-ca-fingerprint are for phase 5"
     exit: 1
 
@@ -2340,6 +2343,66 @@ entries:
     matches:
       - "^GB-193: "
     exit: 1
+
+  - code: GB-194
+    tool: goatbuilder
+    title: the edge cannot be admitted on our core
+    what: "Phase 10 by the command (confirmation 2) did not change our core: the agreement digest has not been confirmed with the partner for the agreement in place, --approve-admission names another digest (something changed since it was read), the deployment does not say where our core's access control lives or how it restarts, their CA does not match the agreement, or the fragment could not be merged, assembled or placed (what was placed is put back)."
+    causes:
+      - phase 6 ran without --agreement-digest (or --confirm), so the digest was never compared
+      - the files were rendered again after the summary was read
+      - FED_CORE_ACL_ORG, FED_CORE_PLAY or FED_CORE_RESTART, or FED_SLOT_* is not set
+      - their CA file holds more than the one certificate the agreement names
+    fixes:
+      - "compare the digest with the partner: goatbuilder federate <partner> --from 6 --to 6 --agreement-digest <digest>"
+      - "read the summary again and approve the digest it shows now"
+      - "set the FED_CORE_* settings in the deployment's environment, or run without the admission flags so phase 10 stops, admit by hand, and run --from 11"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "^GB-194: "
+    exit: 1
+
+  - code: GB-195
+    tool: goatbuilder
+    title: the core's dry run or the slot check refused the admission
+    what: "After placing the new access control (nothing loads it before a restart), the core router's dry run failed, or the committed slot list differs from the registry or the registry could not be read. Restarting now could drop or add stores, so the files placed were put back and the core was not restarted."
+    causes:
+      - the assembled configuration does not pass the core's play in check mode
+      - the slot list in the repository is behind the registry
+    fixes:
+      - "run the dry run by hand to read why (the message prints it)"
+      - "regenerate the slot list with ops/scripts/sync-slot-anchors.py, commit it, deploy the core, then run phase 10 again"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "^GB-195: "
+    exit: 1
+
+  - code: GB-196
+    tool: goatbuilder
+    title: the core restart failed after the admission was placed
+    what: "The new access control is in place on our core, and the restart through the deployment's play or command failed, so it may not be loaded."
+    causes:
+      - the play or restart command failed (its output is above)
+    fixes:
+      - "fix the cause, then run the same stage again with --approve-admission <digest>"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "^GB-196: "
+    exit: 1
+
+  - code: GB-197
+    tool: goatbuilder
+    title: the admission is waiting for approval
+    what: "Phase 10 was asked to admit the edge (by --confirm, --approve-admission or --review-in-pr) and stopped without changing our core: the summary was written for review in a pull request, the person did not type yes, or there is no terminal and no --approve-admission. Exit 0, as a by-hand stop."
+    causes:
+      - --review-in-pr, or pr at the terminal
+      - no approval was given
+    fixes:
+      - "read the summary (or the review in <work>/admission/review.md), then run the same stage with --approve-admission <digest>"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "^GB-197: "
+    exit: 0
 
   - code: GB-200
     tool: goatbuilder
