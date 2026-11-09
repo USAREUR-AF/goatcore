@@ -470,7 +470,7 @@ else
       # session_of KEY-FILTER: the zenoh id zenoh 1.9 prints first on a decision line,
       # `<zid> on Interface(..)+CertCommonName(..)+..+<zid> is authorized to ...`.
       session_of() { lines "$1" | grep -E 'is authorized to ' | tail -1 \
-                     | sed -nE 's/.*[[:space:]]([0-9a-f]{4,32}) on .* is authorized to .*/\1/p'; }
+                     | sed -nE 's/^(.*[^0-9a-f])?([0-9a-f]{4,32}) on .* is authorized to .*/\2/p'; }
       probe()   { curl -s -m 8 -X PUT -d "$3" "$1/$2" -o /dev/null; }
       begin
       IN="$THEIR_WIRE/acceptance-probe/$S"; OUT="ops/fabric/acceptance-probe-$S"; SPOOF="$OUR_WIRE/acceptance-spoof/$S"
@@ -488,7 +488,7 @@ else
         get_side ours "$IN"
         obs key "$IN"; obs trace "$(lines "Put (ingress) on $IN")"; obs received "$GOT"; obs session "$CZID"
         if [ "$v_in" = "is authorized" ] && [ "$GOT_RC" -eq 0 ] && [ "$GOT" = "probe-$S" ] \
-           && [ -n "${FED_PROBE_THEIRS_ZID:-}" ] && [ "$CZID" != "$FED_PROBE_THEIRS_ZID" ]; then
+           && [ -n "${FED_PROBE_THEIRS_ZID:-}" ] && [ -n "$CZID" ] && [ "$CZID" != "$FED_PROBE_THEIRS_ZID" ]; then
           no refusal/control-allowed inbound negative "the allow on our edge came from another session" \
             "the trace names session '${CZID:-<none>}', the probe is '$FED_PROBE_THEIRS_ZID'. The denials below would prove nothing."
           CONTROL=0
