@@ -112,7 +112,7 @@ class Server(http.server.BaseHTTPRequestHandler):
             self.reply(200, Server.hosted[rest], headers)
         elif self.path in Server.files:
             self.reply(200, Server.files[self.path])
-        elif self.path.startswith("/v1/parties/") and sid in Server.entries:
+        elif self.path.startswith("/v1/parties/") and "/" not in rest and sid in Server.entries:
             body, key = Server.entries[sid]
             self.reply(200, body, {"X-Saltlick-Bound-Key": key, "X-Saltlick-Expired": "false"})
         else:
