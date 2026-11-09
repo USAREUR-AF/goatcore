@@ -106,32 +106,59 @@ For each host of the edge and core groups with `goat_host_firewall_baseline`
 true, the plan runs the baseline's own renderer
 (`ops/ansible/roles/goat-host-firewall/files/goat-host-firewall-render.py --input - --format json`,
 [peering-host-firewall.md](peering-host-firewall.md)) and records the ruleset
-text and its sha256. `crates/goatbuilder/src/federate/hostfw.rs` assembles the
-renderer's input the way the role assembles it (`_hf_input` in
-`roles/goat-host-firewall/tasks/main.yml`), from the same variables in Ansible's
-order: the host's inventory line, `host_vars/`, the group's vars, its parent
-group's and `all`, then the role's default, with apply's rendered transport file
-for the peering group. Each peering entry is built as `peering-wg.yml` or
-`peering-edge.yml` builds it, and an edge host carries every declared peering
-whose edge group names the same machine, as the role carries every peering
-stored on the host. The core host's SPIRE bundle port is set as
-`peering-republisher.yml` sets it: only on `peering_spire_server_host` with
-`peering_spire_enabled`, and no sources.
+text and its sha256. `crates/goatbuilder/src/federate/hostfw.rs` builds the
+renderer's input the way the deploy builds it:
+
+- **Variables**, in Ansible's precedence: apply's rendered values (the
+  WireGuard and core plays load `<work>/applied/ops/ansible/group_vars/<edge group>`
+  with `include_vars`; the ipsec-fips play does not), `host_vars/`, the host's
+  inventory line, then every group the host is in (children expanded, deeper
+  groups first; each group's `group_vars/` before its `[group:vars]`), then the
+  defaults of the roles that play has in scope (goat-host-firewall and the
+  play's own role).
+- **Templates**: a value that is `{{ var }}` or `{{ var | default(x) }}`
+  (optionally `| int`, `| bool`, `| trim`, `| string`), or a string holding such
+  expressions, is evaluated; `default(x)` takes a literal or a variable. Any
+  other template, a template inside a list or mapping, an undefined variable, or
+  a declared null is an error, and the host is BLOCKED. An error in reading
+  `goat_host_firewall_baseline` itself is BLOCKED, never "off".
+- **Fields**: the role's `_hf_input` (`roles/goat-host-firewall/tasks/main.yml`),
+  this run's peering entry as `peering-wg.yml` or `peering-edge.yml` builds it,
+  and the core host's SPIRE bundle port as `peering-republisher.yml` sets it
+  (only on `peering_spire_server_host` with `peering_spire_enabled`; no sources).
+- **Peerings on an edge**: the role renders every peering stored on the host
+  (`/etc/goat-host-firewall/peerings/*.json`) with this run's entry in place of
+  its stored copy. Phase 1's read-only probe (`ops/ansible/peering-preflight.yml`)
+  now reads those stored entries into its answer (`host_firewall_peerings`), and
+  the plan uses them the same way. The plan runs phase 1 before it builds the
+  inputs, and removes earlier probe answers first; with no answer for a host
+  (`--no-live`, `--mock`, or the host did not answer), the host is BLOCKED.
 
 The fields the role reads from the live host (bridge interfaces, the ephemeral
-port range, uplinks, the managing session, the listening sockets) are left out.
-They are checks only and never change the ruleset or its hash, so the plan's
-sha256 equals the one the deploy prints for the same declaration. A test renders
-the plan's input and the same input with those fields added, and compares the
-two hashes; another reads the role's assemble task and the two plays and fails
-when they build a field the plan does not.
+port range, uplinks, the managing session, the listening sockets) are left out:
+they are checks only and never change the ruleset or its hash.
 
-A host is BLOCKED, with the reason, when: a value it needs resolves only inside
-a play (a template other than `{{ var | default(x) }}`, optionally `| int`,
-`| bool` or `| trim`); there is no agreement yet (the tunnel is not known); apply
-has not rendered the far link address; the counterparty package is missing; the
-renderer is not in the checkout; or the renderer refuses, in which case the
-entry and its readiness row carry the renderer's code (GB-210 to GB-215).
+How the equality is tested: one synthetic fixture
+(`ops/federation/standup/fixtures/host-firewall/`) exercises `[group:vars]`,
+host_vars over the inventory line, apply's values over a stale group_vars value,
+stored peerings with a stale copy of this run's entry, and the core SPIRE port. A
+Rust test requires the plan to build exactly the recorded input for it. A Python
+test (`tests/test_host_firewall_plan_input.py`, run where ansible-playbook is
+installed) has Ansible build the deploy's input for the same fixture from the
+role's and plays' own tasks and variables, copied out of their YAML, renders
+both, and requires the same sha256. Another Rust test fails when the role, the
+plays or the core play's variables gain a field the plan does not build.
+
+A host is BLOCKED, with the reason, when a value cannot be evaluated outside a
+play (above), there is no agreement yet (the tunnel is not known), apply has not
+rendered the far link address, the counterparty package is missing, the stored
+peerings were not read, the renderer is not in the checkout, or the renderer
+refuses. A refusal puts the renderer's code (GB-210 to GB-215) on the entry and
+its readiness row.
+
+Not covered: hosts whose inventory uses host ranges (`edge[01:02]`), inventory
+sources other than `ops/ansible/inventory/peering-edges.ini`, and templates
+beyond the forms above (they are BLOCKED, not guessed).
 
 ## The recheck before a change
 

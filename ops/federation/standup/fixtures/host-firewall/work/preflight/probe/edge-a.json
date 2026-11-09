@@ -1,0 +1,7 @@
+{
+  "host": "edge-a",
+  "host_firewall_peerings": [
+    {"name": "wg-fed0", "transport": "wireguard", "listen_port": 51820, "peer_addr": "", "tunnel_interface": "wg-fed0", "remote_link_ip": "169.254.10.1", "edge_port": 7448, "extra_tcp_ports": [], "via_forwarder": false},
+    {"name": "wg-fed1", "transport": "wireguard", "listen_port": 51825, "peer_addr": "", "tunnel_interface": "wg-fed1", "remote_link_ip": "169.254.10.3", "edge_port": 7448, "extra_tcp_ports": [], "via_forwarder": false}
+  ]
+}

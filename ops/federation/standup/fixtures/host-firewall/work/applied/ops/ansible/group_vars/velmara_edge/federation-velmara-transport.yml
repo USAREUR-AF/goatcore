@@ -1,0 +1,4 @@
+goat_peering_transport_kind: "wireguard"
+goat_peering_local_link_ip: "169.254.10.0"
+goat_peering_remote_link_ip: "169.254.10.1"
+goat_zenoh_edge_bind_address: "169.254.10.0"

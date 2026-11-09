@@ -1,0 +1,2 @@
+peering_spire_enabled: true
+peering_spire_server_host: core-a
