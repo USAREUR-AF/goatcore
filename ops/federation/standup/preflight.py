@@ -32,6 +32,40 @@ def bad(label, detail, fix=""):
     problems.append(label)
 
 
+def inventory_groups(text):
+    """Every group of an ini inventory and its host names, `:children` sections apart."""
+    groups, children, cur, kids = {}, {}, None, False
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith(("#", ";")):
+            continue
+        if line.startswith("["):
+            name = line[1:-1].strip()
+            kids = name.endswith(":children")
+            cur = name[: -len(":children")] if kids else name
+            (children if kids else groups).setdefault(cur, [])
+            continue
+        if cur is not None:
+            (children if kids else groups)[cur].append(line.split()[0])
+    return groups, children
+
+
+def shared_inventory_names(text, mine):
+    """Host names in one of `mine` (this peering's edge and core groups) that also sit in
+    another peering group. Ansible merges the group_vars of every group an inventory host
+    is in, the group sorting last winning a conflict, so such a host's run reads the other
+    peering's interface, ports and certificate paths. Returns [(host, [groups])]."""
+    groups, children = inventory_groups(text)
+    peering = set(children.get("peering_edges", [])) | set(children.get("peering_cores", []))
+    found = []
+    for g in mine:
+        for h in groups.get(g, []):
+            others = sorted(o for o in peering if o != g and h in groups.get(o, []))
+            if others and (h, [g] + others) not in found:
+                found.append((h, [g] + others))
+    return found
+
+
 def check_local_docker():
     """Refuse an unverified phase-8 dependency before any deployment."""
     import shutil
@@ -268,6 +302,21 @@ def main():
                 "runs nothing and reports success.")
         else:
             ok("republisher inventory", f"[{core}] -> {', '.join(hosts)}")
+
+    # 5c — one inventory name per peering. Two peerings on one machine are two inventory
+    #      names for it (same ansible_host): one name in two peering groups merges both
+    #      groups' variables, and a run for one peering reads the other's values.
+    if inv.is_file():
+        shared = shared_inventory_names(inv.read_text(), [group, f"{a.peering}_core"])
+        for h, gs in shared:
+            bad("one inventory name per peering", f"{h} is in {', '.join(gs)}",
+                "Ansible merges the group_vars of every group a host is in and the group that\n"
+                "sorts last wins, so this peering's run would read another peering's interface,\n"
+                f"ports and certificate paths, and re-running either redeploys the other's values.\n"
+                f"Give this peering its own inventory name for the machine, e.g. {h}-{a.peering},\n"
+                "with the same ansible_host.")
+        if not shared:
+            ok("one inventory name per peering", "no host of this peering is in another peering's group")
 
     # C1 — declared first. goatbuilder refuses an undeclared peering, and the script
     #      holds the same rule here so neither avenue runs one by accident.

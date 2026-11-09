@@ -53,5 +53,47 @@ class DockerPreflight(unittest.TestCase):
                                     text=True, timeout=15)
 
 
+class SharedInventoryNames(unittest.TestCase):
+    def setUp(self):
+        spec = importlib.util.spec_from_file_location("preflight_inv", Path(__file__).with_name("preflight.py"))
+        self.p = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.p)
+
+    INV = """[peering_edges:children]
+b_edge
+c_edge
+
+[b_edge]
+{b_edge} ansible_host=192.0.2.10
+
+[c_edge]
+{c_edge} ansible_host=192.0.2.10
+
+[peering_cores:children]
+b_core
+c_core
+
+[b_core]
+{b_core} ansible_host=192.0.2.20
+
+[c_core]
+{c_core} ansible_host=192.0.2.20
+"""
+
+    def test_one_name_in_two_peering_groups_is_found_for_edge_and_core(self):
+        inv = self.INV.format(b_edge="edge", c_edge="edge", b_core="core", c_core="core")
+        self.assertEqual(self.p.shared_inventory_names(inv, ["c_edge", "c_core"]),
+                         [("edge", ["c_edge", "b_edge"]), ("core", ["c_core", "b_core"])])
+
+    def test_one_name_per_peering_for_the_same_machine_passes(self):
+        inv = self.INV.format(b_edge="edge-b", c_edge="edge-c", b_core="core-b", c_core="core-c")
+        self.assertEqual(self.p.shared_inventory_names(inv, ["c_edge", "c_core"]), [])
+
+    def test_a_group_outside_the_peering_groups_is_not_a_conflict(self):
+        inv = self.INV.format(b_edge="edge-b", c_edge="edge-c", b_core="core-b", c_core="core-c")
+        inv += "\n[monitoring]\nedge-c\n"
+        self.assertEqual(self.p.shared_inventory_names(inv, ["c_edge", "c_core"]), [])
+
+
 if __name__ == "__main__":
     unittest.main()
