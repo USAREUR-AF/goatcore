@@ -234,6 +234,19 @@ class AcceptanceRun(unittest.TestCase):
         self.assertEqual(v["refusal/control-allowed"], "PASS", out)
         self.assertEqual(v["refusal/out-of-lane-denied"], "BLOCKED", out)
 
+    def test_an_earlier_runs_decisions_in_the_log_are_not_evidence(self):
+        # The log still holds an earlier run's "matched no subject" lines for both
+        # probe ids; in this run the edge records nothing for them.
+        with open(self.fabric.trace_path, "w") as f:
+            for z in self.fabric.zids.values():
+                f.write("2026-11-08T00:00:00Z INFO access_control: ACL: peer %s did not match any configured ACL subject\n" % z)
+        self.fabric.faults.silent_probes.update({"forged", "impersonate"})
+        rc, out = self.run_acceptance()
+        v = self.verdicts()
+        self.assertEqual(v["refusal/forged-name"], "BLOCKED", out)
+        self.assertEqual(v["refusal/impersonation"], "BLOCKED", out)
+        self.assertEqual(rc, 3, out)
+
     def test_a_send_only_agreement_is_not_applicable_inbound_and_passes(self):
         ag = fakefabric.agreement(theirs=())
         self.fabric = fakefabric.Fabric(ag, "xaa", self.tmp)

@@ -69,6 +69,7 @@ class Faults:
         self.deny_from_other_session = False  # our edge logs the agreed probe's denials under
         #                                    another session's id (its own decisions are missing)
         self.trace_without_session = False # decision lines carry no session id
+        self.silent_probes = set()         # probe kinds our edge records nothing for in this run
 
 
 class Core:
@@ -206,6 +207,8 @@ class Fabric:
                 self.deliver(self.us, key, value)
             else:
                 lines.append("ACL: peer %s did not match any configured ACL subject" % zid)
+        if which in self.faults.silent_probes:
+            lines = []
         if not self.faults.trace_silent:
             with open(self.trace_path, "a") as f:
                 for line in lines:
