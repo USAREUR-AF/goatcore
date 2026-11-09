@@ -129,7 +129,8 @@
       {%- set out = [] -%}
       {%- for p in zenoh_sovereign_peerings | default([]) -%}
       {%-   for k in p.release_key_exprs | default([]) -%}
-      {%-     if k.split('/')[-1] == '**' and (k.split('/') | length) <= 3 -%}
+      {%-     set segs = k.split('/') -%}
+      {%-     if (segs | length) <= 3 and segs[-1] == '**' or (segs[:3] | select('search', '\\*') | list | length > 0) -%}
       {%-       set _ = out.append(p.sovereign ~ ' (' ~ k ~ ')') -%}
       {%-     endif -%}
       {%-   endfor -%}

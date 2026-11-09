@@ -5,6 +5,9 @@
   ansible.builtin.meta: end_host
   when: not (peering_wg_enabled | bool)
 
+- name: peering-wg | another peering's interface, port, address or carrier is not taken
+  ansible.builtin.import_tasks: ownership.yml
+
 - name: peering-wg | the interface name fits IFNAMSIZ
   ansible.builtin.assert:
     that:
