@@ -1,8 +1,12 @@
-# Endstate acceptance credential
+# Backup acceptance applicability
 
+Status: built. Declare pgBackRest in the endstate service catalog so acceptance
+follows `has_durable_independent_state`, the same declaration that controls the
+role in `site-bootstrap.yml`. A site that explicitly disables independent backup
+state marks the pgBackRest acceptance token absent; a site with backups, including
+the default configuration, still has to pass the backup acceptance row.
 
-Status: built. Declare the credential input required by pgbackrest acceptance in the endstate catalog so the runner resolves it through the existing credential path.
-
-No backup restore or live acceptance request was performed. This change supplies an acceptance input; it does not prove a backup is recoverable.
-
-Offline regression evidence and remaining release gates are recorded in the corresponding draft PR. No live deployment is claimed.
+The three regression tests exercise endstate generation and the acceptance
+runner's absent-token selection. This change does not resolve credentials, run a
+backup, restore data or prove that an alternative durability mechanism works.
+No live deployment is claimed.
