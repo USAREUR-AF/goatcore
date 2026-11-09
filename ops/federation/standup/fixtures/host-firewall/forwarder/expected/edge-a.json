@@ -39,5 +39,15 @@
       "forwarder_addr": "198.51.100.77"
     }
   ],
-  "override": {}
+  "override": {
+    "other-tcp": {
+      "ports": [
+        8080
+      ],
+      "sources": [
+        "198.51.100.0/24"
+      ],
+      "reason": "a site monitoring agent listens on the edge"
+    }
+  }
 }
