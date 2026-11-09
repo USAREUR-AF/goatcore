@@ -634,6 +634,166 @@ pub fn over_ssh(
     move |interface| measure(&hosts, router_flag.as_deref(), interface).map(|(m, _)| m)
 }
 
+// ---------------------------------------------------------------------------
+// `goatbuilder federate init --over-ssh`, and the driver's phase 3
+// ---------------------------------------------------------------------------
+
+/// The flags that make `goatbuilder federate init` measure the edge and the
+/// core over SSH instead of this machine. Without `--over-ssh`, init measures
+/// this machine exactly as `goat federate init` does.
+#[derive(clap::Args, Debug, Clone, Default)]
+pub struct MeasureArgs {
+    /// init: measure this peering's edge and core over SSH from this machine,
+    /// reaching the hosts of inventory groups <PEERING>_edge and <PEERING>_core
+    /// in ops/ansible/inventory/peering-edges.ini as the plays reach them.
+    /// Only read-only commands run there; nothing is copied to either host.
+    #[arg(long, value_name = "PEERING", global = true)]
+    pub over_ssh: Option<String>,
+    /// init --over-ssh: the edge's inventory group (default <PEERING>_edge).
+    #[arg(long, value_name = "GROUP", global = true)]
+    pub ssh_edge_group: Option<String>,
+    /// init --over-ssh: the core's inventory group (default <PEERING>_core).
+    #[arg(long, value_name = "GROUP", global = true)]
+    pub ssh_core_group: Option<String>,
+    /// init --over-ssh: the edge host to measure, when its group has several.
+    #[arg(long, value_name = "HOST", global = true)]
+    pub edge_host: Option<String>,
+    /// init --over-ssh: the core host to measure, when its group has several.
+    #[arg(long, value_name = "HOST", global = true)]
+    pub core_host: Option<String>,
+    /// init --over-ssh: the core router container, by hand (default: the name
+    /// the core host's variables give, else the one discovery finds there).
+    #[arg(long = "router-container", value_name = "NAME", global = true)]
+    pub router_container: Option<String>,
+}
+
+impl MeasureArgs {
+    pub fn is_empty(&self) -> bool {
+        self.over_ssh.is_none()
+            && self.ssh_edge_group.is_none()
+            && self.ssh_core_group.is_none()
+            && self.edge_host.is_none()
+            && self.core_host.is_none()
+            && self.router_container.is_none()
+    }
+
+    /// The peering to measure over SSH; `None` measures this machine. A
+    /// host, group or router flag without `--over-ssh` is refused rather than
+    /// ignored, because ignoring it would measure the wrong machine.
+    pub fn peering(&self) -> Result<Option<&str>> {
+        let Some(p) = self.over_ssh.as_deref() else {
+            if self.is_empty() {
+                return Ok(None);
+            }
+            return Err(anyhow::anyhow!(
+                "--ssh-edge-group, --ssh-core-group, --edge-host, --core-host and \
+                 --router-container choose what `init --over-ssh <peering>` measures; \
+                 without --over-ssh, init measures this machine"
+            ));
+        };
+        let plain = |v: &str| {
+            !v.is_empty()
+                && !v.starts_with('-')
+                && v.chars()
+                    .all(|c| c.is_ascii_alphanumeric() || "_.-".contains(c))
+        };
+        for (flag, v) in [
+            ("--over-ssh", Some(p)),
+            ("--ssh-edge-group", self.ssh_edge_group.as_deref()),
+            ("--ssh-core-group", self.ssh_core_group.as_deref()),
+            ("--edge-host", self.edge_host.as_deref()),
+            ("--core-host", self.core_host.as_deref()),
+        ] {
+            if let Some(v) = v.filter(|v| !plain(v)) {
+                return Err(coded(
+                    "GB-110",
+                    format!("{flag} `{v}` is not an inventory name (letters, digits, `_`, `.`, `-`)"),
+                ));
+            }
+        }
+        Ok(Some(p))
+    }
+
+    /// The edge and core groups for `peering`.
+    pub fn groups(&self, peering: &str) -> (String, String) {
+        (
+            self.ssh_edge_group
+                .clone()
+                .unwrap_or_else(|| format!("{peering}_edge")),
+            self.ssh_core_group
+                .clone()
+                .unwrap_or_else(|| format!("{peering}_core")),
+        )
+    }
+}
+
+/// `goatbuilder federate init --over-ssh <peering>`: the hosts are resolved
+/// from the plays' inventory in `repo`, measured over SSH, and the package is
+/// built and signed here by the library's `init`.
+pub fn run_init(
+    repo: &Path,
+    site: &goat_federation::verbs::Site,
+    a: &goat_federation::verbs::InitArgs,
+    m: &MeasureArgs,
+    out: &mut dyn std::io::Write,
+) -> Result<i32> {
+    let peering = m
+        .peering()?
+        .ok_or_else(|| anyhow::anyhow!("run_init over SSH without --over-ssh"))?;
+    let (edge_group, core_group) = m.groups(peering);
+    let hosts = resolve(
+        repo,
+        &edge_group,
+        &core_group,
+        m.edge_host.as_deref(),
+        m.core_host.as_deref(),
+    )?;
+    let measure = over_ssh(hosts, m.router_container.clone());
+    goat_federation::verbs::run_init_measured(site, a, out, &measure)
+}
+
+/// Whether the driver's phase 3 measures over SSH (`FED_MEASURE=ssh`) instead
+/// of the machine the driver runs on (unset, empty or `here`, the default).
+pub fn driver_measures_over_ssh() -> bool {
+    std::env::var("FED_MEASURE").ok().as_deref() == Some("ssh")
+}
+
+/// Any other value of `FED_MEASURE` is refused, as peering-standup.sh refuses
+/// it: a misspelt `ssh` would otherwise measure the wrong machine.
+pub fn check_driver_measure() -> Result<()> {
+    match std::env::var("FED_MEASURE").ok().as_deref() {
+        None | Some("") | Some("here") | Some("ssh") => Ok(()),
+        Some(other) => Err(anyhow::anyhow!(
+            "FED_MEASURE is here or ssh, not '{other}'"
+        )),
+    }
+}
+
+/// The words after `goatbuilder federate` for phase 3 measured over SSH,
+/// after init's own words (`--with-transport ... --out <file>`): the peering,
+/// the edge group the run uses, the router when `FED_ROUTER_CONTAINER` names
+/// one, and the repository whose inventory names the hosts.
+/// ops/scripts/peering-standup.sh prints the same words.
+pub fn phase3_words(
+    mut init_words: Vec<String>,
+    peering: &str,
+    edge_group: &str,
+    router: Option<&str>,
+    repo: &Path,
+) -> Vec<String> {
+    init_words.extend([
+        "--over-ssh".to_string(),
+        peering.to_string(),
+        "--ssh-edge-group".into(),
+        edge_group.to_string(),
+    ]);
+    if let Some(r) = router.filter(|r| !r.is_empty()) {
+        init_words.extend(["--router-container".to_string(), r.to_string()]);
+    }
+    init_words.extend(["--repo".to_string(), repo.display().to_string()]);
+    init_words
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -994,5 +1154,136 @@ mod tests {
             kind(1, "sudo: sorry, user goat is not allowed to execute cat"),
             ErrorKind::Other
         );
+    }
+
+    /// A checkout whose `ops/scripts/with-aws` prints `inventory` as
+    /// `ansible-inventory --list` would, so `run_init` reads hosts the way it
+    /// does on a real checkout without ansible installed.
+    fn checkout_with_inventory(inventory: &Value) -> tempfile::TempDir {
+        use std::os::unix::fs::PermissionsExt;
+        let d = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(d.path().join("ops/ansible/inventory")).unwrap();
+        std::fs::create_dir_all(d.path().join("ops/scripts")).unwrap();
+        std::fs::write(d.path().join("inventory.json"), inventory.to_string()).unwrap();
+        let script = d.path().join("ops/scripts/with-aws");
+        std::fs::write(&script, "#!/bin/sh\ncat ../../inventory.json\n").unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        d
+    }
+
+    fn init_args() -> goat_federation::verbs::InitArgs {
+        goat_federation::verbs::InitArgs {
+            with_transport: false,
+            with_data: false,
+            signing_key: None,
+            out: None,
+            json: false,
+        }
+    }
+
+    /// A context directory with a declaration and nothing else: init reads
+    /// the declaration before it asks for the measurement.
+    fn site(dir: &Path) -> goat_federation::verbs::Site {
+        std::fs::write(
+            dir.join("federation.toml"),
+            "sovereign_id = \"xaa\"\nterm_days = 30\ncut_contact = \"ops@example.org\"\n",
+        )
+        .unwrap();
+        goat_federation::verbs::Site {
+            context_dir: dir.to_path_buf(),
+            cert_path: dir.join("mtls.cert.pem"),
+            ca_roots_path: dir.join("ca-roots.pem"),
+        }
+    }
+
+    #[test]
+    fn a_host_flag_without_over_ssh_is_refused_not_ignored() {
+        assert_eq!(MeasureArgs::default().peering().unwrap(), None);
+        let m = MeasureArgs {
+            edge_host: Some("xaa-edge".into()),
+            ..Default::default()
+        };
+        let e = m.peering().unwrap_err();
+        assert!(e.to_string().contains("without --over-ssh"), "{e}");
+        let m = MeasureArgs {
+            over_ssh: Some("xab".into()),
+            core_host: Some("-oProxyCommand=x".into()),
+            ..Default::default()
+        };
+        assert_eq!(code(&m.peering().unwrap_err()).as_deref(), Some("GB-110"));
+    }
+
+    #[test]
+    fn the_groups_follow_the_peering_unless_named() {
+        let m = MeasureArgs {
+            over_ssh: Some("xab".into()),
+            ..Default::default()
+        };
+        assert_eq!(m.groups("xab"), ("xab_edge".into(), "xab_core".into()));
+        let m = MeasureArgs {
+            over_ssh: Some("xab".into()),
+            ssh_edge_group: Some("edge-x".into()),
+            ..Default::default()
+        };
+        assert_eq!(m.groups("xab"), ("edge-x".into(), "xab_core".into()));
+    }
+
+    #[test]
+    fn phase_3_words_name_the_peering_group_router_and_checkout() {
+        let w = phase3_words(
+            vec!["init".into(), "--out".into(), "/w/ours.canonical.json".into()],
+            "xab",
+            "xab_edge",
+            Some("xaa-zenoh-router"),
+            Path::new("/repo"),
+        );
+        assert_eq!(
+            w.join(" "),
+            "init --out /w/ours.canonical.json --over-ssh xab --ssh-edge-group xab_edge \
+             --router-container xaa-zenoh-router --repo /repo"
+        );
+        let w = phase3_words(vec!["init".into()], "xab", "xab_edge", Some(""), Path::new("/r"));
+        assert!(!w.contains(&"--router-container".to_string()), "{w:?}");
+    }
+
+    /// The whole path of `init --over-ssh`, short of a real host: the flags
+    /// pick the groups, the inventory names the hosts, the router comes from
+    /// the core host's variables, and the probe runs on the host the
+    /// inventory names (here this machine, `ansible_connection=local`). No
+    /// container of that name runs here, so the refusal is GB-113 and names
+    /// the core host and the variable the name came from.
+    #[test]
+    fn init_over_ssh_reads_the_inventory_and_measures_the_named_hosts() {
+        let inv = json!({
+            "_meta": {"hostvars": {
+                "station": {"ansible_connection": "local", "ansible_become": false,
+                            "zenoh_stack": "gb-w3-test-no-such"}
+            }},
+            "all": {"children": ["xab_edge", "xab_core"]},
+            "xab_edge": {"hosts": ["station"]},
+            "xab_core": {"hosts": ["station"]}
+        });
+        let repo = checkout_with_inventory(&inv);
+        let ctx = tempfile::tempdir().unwrap();
+        let site = site(ctx.path());
+        let m = MeasureArgs {
+            over_ssh: Some("xab".into()),
+            ..Default::default()
+        };
+        let mut out = Vec::new();
+        let e = run_init(repo.path(), &site, &init_args(), &m, &mut out).unwrap_err();
+        assert_eq!(code(&e).as_deref(), Some("GB-113"), "{e:#}");
+        let text = format!("{e:#}");
+        assert!(text.contains("on station"), "{text}");
+
+        // A core group the inventory does not have is GB-110, naming it.
+        let m = MeasureArgs {
+            over_ssh: Some("xab".into()),
+            ssh_core_group: Some("no_such_core".into()),
+            ..Default::default()
+        };
+        let e = run_init(repo.path(), &site, &init_args(), &m, &mut out).unwrap_err();
+        assert_eq!(code(&e).as_deref(), Some("GB-110"), "{e:#}");
+        assert!(format!("{e:#}").contains("no_such_core"), "{e:#}");
     }
 }

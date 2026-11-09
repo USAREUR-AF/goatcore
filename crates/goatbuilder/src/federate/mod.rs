@@ -46,9 +46,8 @@ use anyhow::{anyhow, Context, Result};
 
 use crate::config;
 
-// Phase 3 measured over SSH. Its caller is `goatbuilder federate init`, which
-// arrives with the library verbs; until then nothing outside its tests does.
-#[allow(dead_code)]
+// Phase 3 measured over SSH: `goatbuilder federate init --over-ssh`, and the
+// driver's phase 3 with FED_MEASURE=ssh.
 pub mod measure;
 use crate::{Check, Report, EXIT_OK, EXIT_REFUSED};
 
@@ -222,11 +221,19 @@ fn directory_args(repo: &Path, work: &str) -> Option<Vec<String>> {
 }
 
 fn plan(repo: &Path, o: &Options, work: &str, edge_group: &str, resume: &str) -> Vec<Phase> {
-    plan_verbs(repo, o, work, edge_group, resume, verbs_in_process())
+    plan_with(repo, o, work, edge_group, resume, verbs_in_process(), measure::driver_measures_over_ssh())
 }
 
 /// `plan`, with the choice of who runs the federation verbs made by the caller.
+#[cfg(test)]
 fn plan_verbs(repo: &Path, o: &Options, work: &str, edge_group: &str, resume: &str, in_process: bool) -> Vec<Phase> {
+    plan_with(repo, o, work, edge_group, resume, in_process, false)
+}
+
+/// `plan_verbs`, and whether phase 3 measures over SSH (FED_MEASURE=ssh): then
+/// phase 3 runs `goatbuilder federate init --over-ssh` in process, whoever runs
+/// the other verbs, and no DOCKER_HOST is handed to it.
+fn plan_with(repo: &Path, o: &Options, work: &str, edge_group: &str, resume: &str, in_process: bool, measure_ssh: bool) -> Vec<Phase> {
     let r = repo.display().to_string();
     let goat = goat_bin();
     let aws = crate::settings::aws_profile(repo);
@@ -268,7 +275,12 @@ fn plan_verbs(repo: &Path, o: &Options, work: &str, edge_group: &str, resume: &s
     let mut ev = vec![
         p(1, "GATE", "peering preflight (fail-closed)", format!("python3 '{r}/ops/federation/standup/preflight.py' '{}' --work '{work}' --edge-group '{edge_group}'", o.with)),
         p(2, "A", "prepare what the package measures: the federation interface and the SPIRE bundle", play("peering-prepare.yml")),
-        t(3, "init — our half, read from the running system", init_env, init_words),
+        if measure_ssh {
+            let words = measure::phase3_words(init_words, o.with, edge_group, std::env::var("FED_ROUTER_CONTAINER").ok().as_deref(), repo);
+            Phase { n: 3, kind: "T", label: "init — our half, read from the running system".into(), cmd: format!("goatbuilder federate {}", shell_words(&words)), verb: Some((Vec::new(), words)) }
+        } else {
+            t(3, "init — our half, read from the running system", init_env, init_words)
+        },
         t(4, "lint our package against the spec", Vec::new(), w(&["lint", &ours])),
         { let (label, body) = exchange(&r, &ours, work, &counterparty, &keyring); p(5, "MANUAL", label, body) },
     ];
@@ -501,6 +513,7 @@ pub fn federate_with(repo: &Path, o: &Options, s: &Surface) -> Result<Report> {
         None => repo.join("ops/goatbuilder/goatbuilder.yaml"),
     };
     let cfg = config::load(&cfg_path)?;
+    measure::check_driver_measure()?;
     if let Some(env) = o.env {
         if !cfg.environments.iter().any(|e| e.name == env) {
             return Err(anyhow!("unknown environment \"{env}\"; declared: {:?}", cfg.environments.iter().map(|e| e.name.as_str()).collect::<Vec<_>>()));
@@ -770,6 +783,32 @@ mod tests {
         let phases = plan(&repo(), &o, &work_s, "velmara_edge", "goatbuilder federate velmara");
         let view = plan_view(&repo(), &o, &work_s, "velmara_edge", &phases);
         assert!(view.contains("Open the connection the agreement chooses") && !view.contains("Refused"), "{view}");
+    }
+
+    /// FED_MEASURE=ssh: phase 3 runs `goatbuilder federate init --over-ssh` in
+    /// process with no DOCKER_HOST, whoever runs the other verbs; its words
+    /// parse as the verb line, so the plan runs what it prints. Every other
+    /// phase is the plan it was.
+    #[test]
+    fn phase_3_measures_over_ssh_when_chosen_and_nothing_else_moves() {
+        let work = tempfile::tempdir().unwrap();
+        let work_s = work.path().display().to_string();
+        let o = Options { with: "velmara", env: None, r#as: None, edge_group: None, work: Some(&work_s), mock: None, from: 1, to: 99, dry_run: true, table: false };
+        for in_process in [false, true] {
+            let here = plan_with(&repo(), &o, &work_s, "edge-x", "resume", in_process, false);
+            let ssh = plan_with(&repo(), &o, &work_s, "edge-x", "resume", in_process, true);
+            let p3 = ssh.iter().find(|p| p.n == 3).unwrap();
+            let (env, words) = p3.verb.as_ref().expect("phase 3 runs in process");
+            assert!(env.is_empty(), "no DOCKER_HOST over SSH: {env:?}");
+            assert_eq!(p3.cmd, format!("goatbuilder federate {}", shell_words(words)));
+            let joined = words.join(" ");
+            assert!(joined.starts_with("init --with-transport --with-data"), "{joined}");
+            assert!(joined.contains("--over-ssh velmara --ssh-edge-group edge-x"), "{joined}");
+            assert!(joined.ends_with(&format!("--repo {}", repo().display())), "{joined}");
+            for (a, b) in here.iter().zip(ssh.iter()).filter(|(a, _)| a.n != 3) {
+                assert_eq!((a.n, &a.cmd), (b.n, &b.cmd));
+            }
+        }
     }
 
     /// FED_VERBS=goatbuilder: phases 3, 4, 6, 7 and 9 run in process, and the
