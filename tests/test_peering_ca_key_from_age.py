@@ -1,0 +1,148 @@
+"""Phase 8 opens the deployment's age-encrypted CA key itself, into a file the
+run owns and removes; an explicit key file still wins. No live CA or deployment.
+
+Most tests put a stand-in `age` on PATH (it "decrypts" by copying, and only
+for the identity file that says `good`), so they run wherever OpenSSL does. One
+test uses the real `age` when it is installed.
+"""
+import hashlib
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import tempfile
+import unittest
+
+ROOT = Path(__file__).resolve().parents[1]
+SCRIPT = ROOT / 'ops/federation/standup/mint-peering-leaves.sh'
+
+FAKE_AGE = r'''#!/usr/bin/env bash
+# age -d -i <identity> -o <out> <in>
+set -eu
+id=""; out=""; in=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -d) shift ;;
+    -i) id="$2"; shift 2 ;;
+    -o) out="$2"; shift 2 ;;
+    *) in="$1"; shift ;;
+  esac
+done
+[ "$(cat "$id")" = good ] || { echo "age: error: no identity matched any of the recipients" >&2; exit 1; }
+cp "$in" "$out"
+'''
+
+
+@unittest.skipUnless(shutil.which('openssl'), 'OpenSSL is required')
+class CaKeyFromAge(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.out = self.root / 'leaves'
+        self.ca = self.root / 'ca.pem'
+        self.key = self.root / 'ca-key.pem'
+        subprocess.run(['openssl', 'req', '-x509', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:prime256v1',
+                        '-nodes', '-keyout', str(self.key), '-out', str(self.ca), '-days', '365',
+                        '-subj', '/CN=Test-CA', '-addext', 'basicConstraints=critical,CA:TRUE'],
+                       capture_output=True, check=True)
+        der = subprocess.check_output(['openssl', 'x509', '-in', str(self.ca), '-outform', 'DER'])
+        self.agreement = self.root / 'agreement.json'
+        self.agreement.write_text(json.dumps({
+            'parties': [{'sovereign_id': 'xaa', 'ca_fingerprint': 'sha256:' + hashlib.sha256(der).hexdigest()},
+                        {'sovereign_id': 'xab'}],
+            'transport': {'link_subnet': '169.254.10.0/31'},
+        }))
+        # The run's own temporary directory, so a leftover copy of the key shows.
+        self.tmp = self.root / 'tmp'
+        self.tmp.mkdir()
+        bin_dir = self.root / 'bin'
+        bin_dir.mkdir()
+        (bin_dir / 'age').write_text(FAKE_AGE)
+        (bin_dir / 'age').chmod(0o755)
+        self.fake_path = f"{bin_dir}{os.pathsep}{os.environ['PATH']}"
+        # The stand-in "encrypts" by copying: the .age file holds the PEM.
+        self.age_file = self.root / 'ca.key.age'
+        shutil.copy(self.key, self.age_file)
+        self.good = self.root / 'good-identity.txt'
+        self.good.write_text('good')
+        self.bad = self.root / 'bad-identity.txt'
+        self.bad.write_text('bad')
+
+    def run_mint(self, *extra, env=None, path=None):
+        e = {k: v for k, v in os.environ.items() if not k.startswith('FED_')}
+        e.update({'TMPDIR': str(self.tmp), 'PATH': path or self.fake_path})
+        e.update(env or {})
+        args = ['bash', str(SCRIPT), str(self.agreement), str(self.out), '--as', 'xaa',
+                '--ca-cert', str(self.ca), '--core-cn', 'router', '--core-san', 'core.example.test', *extra]
+        return subprocess.run(args, env=e, capture_output=True, text=True)
+
+    def assert_no_key_left(self):
+        self.assertEqual(list(self.tmp.iterdir()), [], 'the run left its copy of the CA key behind')
+
+    def test_the_age_key_issues_the_leaves_and_its_copy_is_removed(self):
+        r = self.run_mint(env={'FED_CA_KEY_AGE': str(self.age_file), 'FED_AGE_IDENTITY': str(self.good)})
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn('opened', r.stdout)
+        self.assertEqual(len(list(self.out.glob('*.pem'))), 8)
+        self.assert_no_key_left()
+
+    def test_flags_name_the_age_key_too(self):
+        r = self.run_mint('--ca-key-age', str(self.age_file), '--age-identity', str(self.good))
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assert_no_key_left()
+
+    def test_an_explicit_key_file_wins(self):
+        r = self.run_mint('--ca-key', str(self.key),
+                          env={'FED_CA_KEY_AGE': str(self.root / 'absent.age'), 'FED_AGE_IDENTITY': str(self.bad)})
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertNotIn('opened', r.stdout)
+        self.assertNotIn('not opened', r.stderr)
+        r = self.run_mint(env={'FED_CA_KEY': str(self.key), 'FED_CA_KEY_AGE': str(self.root / 'absent.age')})
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertNotIn('not opened', r.stderr)
+
+    def test_a_wrong_identity_refuses_issuance_and_leaves_nothing(self):
+        r = self.run_mint(env={'FED_CA_KEY_AGE': str(self.age_file), 'FED_AGE_IDENTITY': str(self.bad)})
+        self.assertNotEqual(r.returncode, 0, r.stdout)
+        self.assertIn('CA key not opened', r.stderr)
+        self.assertIn('FED_CA_KEY_AGE', r.stdout + r.stderr)
+        self.assertFalse(list(self.out.glob('*.pem')) if self.out.exists() else [])
+        self.assert_no_key_left()
+
+    def test_a_rerun_that_reuses_every_leaf_needs_no_key(self):
+        self.assertEqual(self.run_mint('--ca-key', str(self.key)).returncode, 0)
+        r = self.run_mint(env={'FED_CA_KEY_AGE': str(self.root / 'absent.age')})
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn('reused', r.stdout.lower())
+        self.assertIn('does not exist', r.stderr)
+
+    def test_a_failed_issuance_still_removes_the_copy(self):
+        # An opened key that does not match the CA: issuance refuses, and the
+        # copy of the key is removed all the same.
+        other = self.root / 'other-key.pem'
+        subprocess.run(['openssl', 'genpkey', '-algorithm', 'EC', '-pkeyopt', 'ec_paramgen_curve:prime256v1',
+                        '-out', str(other)], capture_output=True, check=True)
+        shutil.copy(other, self.age_file)
+        r = self.run_mint(env={'FED_CA_KEY_AGE': str(self.age_file), 'FED_AGE_IDENTITY': str(self.good)})
+        self.assertNotEqual(r.returncode, 0, r.stdout)
+        self.assertIn('opened', r.stdout)
+        self.assert_no_key_left()
+
+    @unittest.skipUnless(shutil.which('age') and shutil.which('age-keygen'), 'age is not installed')
+    def test_the_real_age_round_trip(self):
+        identity = self.root / 'keys.txt'
+        subprocess.run(['age-keygen', '-o', str(identity)], capture_output=True, check=True)
+        recipient = subprocess.check_output(['age-keygen', '-y', str(identity)], text=True).strip()
+        real = self.root / 'real.key.age'
+        subprocess.run(['age', '-r', recipient, '-o', str(real), str(self.key)], check=True)
+        r = self.run_mint(env={'FED_CA_KEY_AGE': str(real), 'FED_AGE_IDENTITY': str(identity)},
+                          path=os.environ['PATH'])
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(len(list(self.out.glob('*.pem'))), 8)
+        self.assert_no_key_left()
+
+
+if __name__ == '__main__':
+    unittest.main()
