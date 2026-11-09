@@ -172,11 +172,13 @@ class RolePreflight(unittest.TestCase):
         self.assertFalse(self.trace.exists())
         self.assertNotIn('PASS: a matching receive store', result.stdout)
 
-    def test_malformed_readable_config_fails_without_logging_secrets(self):
-        secret = 'synthetic-private-config-value'
-        result = self.run_play('{password:"' + secret + '", broken: }')
+    def test_malformed_readable_config_fails_without_logging_raw_config(self):
+        # A non-sensitive marker detects raw-config disclosure without putting
+        # a credential-shaped value into the on-disk fixture.
+        marker = 'synthetic-config-marker-must-not-appear'
+        result = self.run_play('{diagnostic_marker:"' + marker + '", broken: }')
         self.assertNotEqual(result.returncode, 0)
-        self.assertNotIn(secret, result.stdout + result.stderr)
+        self.assertNotIn(marker, result.stdout + result.stderr)
         self.assertIn('Cannot inspect storage declarations', result.stdout)
 
 
