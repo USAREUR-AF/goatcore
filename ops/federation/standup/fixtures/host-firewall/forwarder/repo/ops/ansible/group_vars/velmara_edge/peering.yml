@@ -2,3 +2,9 @@ peering_wg_via_forwarder: true
 peering_wg_forwarder_endpoint: "198.51.100.77:51821"
 peering_wg_carrier_listen_port: 51824
 peering_wg_interface: wg-fed2
+# A loosening with its reason: the reason is written into the ruleset text.
+goat_host_firewall_override:
+  other-tcp:
+    ports: [8080]
+    sources: ["198.51.100.0/24"]
+    reason: "a site monitoring agent listens on the edge"

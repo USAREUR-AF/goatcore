@@ -214,8 +214,8 @@ struct Scope<'a> {
     broken: std::cell::RefCell<Vec<String>>,
 }
 
-/// Every vars file under `dir`, recursively, in name order (as Ansible reads a
-/// vars directory).
+/// Every vars file under `dir`, recursively, in name order, hidden names left
+/// out (as Ansible reads a vars directory).
 fn yaml_files(dir: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();
     let Ok(rd) = std::fs::read_dir(dir) else {
@@ -224,6 +224,12 @@ fn yaml_files(dir: &Path) -> Vec<PathBuf> {
     let mut entries: Vec<PathBuf> = rd.filter_map(|e| e.ok().map(|e| e.path())).collect();
     entries.sort();
     for p in entries {
+        // Ansible's vars loaders skip hidden files and directories.
+        if p.file_name()
+            .is_some_and(|n| n.to_string_lossy().starts_with('.'))
+        {
+            continue;
+        }
         if p.is_dir() {
             out.extend(yaml_files(&p));
         } else if p
@@ -1456,5 +1462,26 @@ mod tests {
         let e = entry(&ctx(&f), "edge-a", "192.0.2.10", "velmara_edge", "edge");
         assert_eq!(e.outcome, "BLOCKED", "{}", e.detail);
         assert!(e.detail.contains("does not parse"), "{}", e.detail);
+    }
+
+    /// A hidden file in a vars directory (`.old.yml`) is not read, as Ansible
+    /// does not read it.
+    #[test]
+    fn a_hidden_vars_file_is_not_read() {
+        let f = fixture();
+        write(
+            f.repo
+                .path()
+                .join("ops/ansible/group_vars/velmara_edge/.old.yml"),
+            "peering_wg_listen_port: 1\n",
+        );
+        write(
+            f.repo
+                .path()
+                .join("ops/ansible/group_vars/velmara_edge/.backup/p.yml"),
+            "peering_wg_listen_port: 2\n",
+        );
+        let i = input(&ctx(&f), "edge-a", "edge").unwrap();
+        assert_eq!(i["peerings"][1]["listen_port"], 51823);
     }
 }
