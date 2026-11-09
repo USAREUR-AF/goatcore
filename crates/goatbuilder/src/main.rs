@@ -460,10 +460,15 @@ pub enum Cmd {
         /// --yes never approves a plan.
         #[arg(long, value_name = "SHA256")]
         approve_plan: Option<String>,
-        /// Phases 5 and 6: confirm the keys and the agreement digest here, at
-        /// this terminal, instead of stopping for them by hand.
-        #[arg(long)]
+        /// Phases 5, 6 and 10: confirm the keys, the agreement digest and the
+        /// admission here, at this terminal, instead of stopping for them by
+        /// hand. The default when both stdin and stderr are a terminal.
+        #[arg(long, conflicts_with = "no_confirm")]
         confirm: bool,
+        /// Stop at phases 5 and 10 for the steps by hand even at a terminal,
+        /// as before confirming at the terminal was the default.
+        #[arg(long)]
+        no_confirm: bool,
         /// Phase 5: the partner's verifying key, as read aloud on the call.
         #[arg(long, value_name = "BASE64")]
         partner_key: Option<String>,
@@ -1406,7 +1411,7 @@ fn main() {
                 federate::plan::run(&repo, stage, cli.mock.as_deref())
             }
         }
-        Cmd::Federate { verb: None, site, measure, with, partner, plan, approve_plan, confirm, partner_key, partner_ca_fingerprint, agreement_digest, place_pointer_package, approve_admission, review_in_pr, env, as_party, edge_group, work, from, to, dry_run, resume, no_resume } => {
+        Cmd::Federate { verb: None, site, measure, with, partner, plan, approve_plan, confirm, no_confirm, partner_key, partner_ca_fingerprint, agreement_digest, place_pointer_package, approve_admission, review_in_pr, env, as_party, edge_group, work, from, to, dry_run, resume, no_resume } => {
             let with = with.as_deref().unwrap_or_default();
             let cfg_path = cli.mock.as_ref().map(|m| m.join("goatbuilder.yaml")).unwrap_or_else(|| repo.join("ops/goatbuilder/goatbuilder.yaml"));
             if with == "status" {
@@ -1448,12 +1453,12 @@ fn main() {
                 let name = partner.as_deref().unwrap_or(with);
                 let o = federate::Options { with: name, env: env.as_deref(), r#as: as_party.as_deref(), edge_group: edge_group.as_deref(), work: work.as_deref(), mock: cli.mock.as_deref(), from: *from, to: *to, dry_run: *dry_run, table: matches!(cli.output, OutputFormat::Table) };
                 match with {
-                    "deploy" => federate::deploy::deploy(&repo, &o, plan.as_deref(), approve_plan.as_deref(), &mut federate::prompt::Terminal, federate::Admission { approve: approve_admission.clone(), review_in_pr: *review_in_pr }, *confirm),
+                    "deploy" => federate::deploy::deploy(&repo, &o, plan.as_deref(), approve_plan.as_deref(), &mut federate::prompt::Terminal, federate::Admission { approve: approve_admission.clone(), review_in_pr: *review_in_pr }, federate::prompt::ask_by_default(*confirm, *no_confirm)),
                     "test" => federate::deploy::test(&repo, &o),
                     // `allocate <peering>`: that peering alone, beside hand-written ones.
                     "allocate" if partner.is_some() => federate::peering_files::run_scoped(&repo, &federate::Options { with, ..o }, partner.as_deref()),
                     _ => {
-                        let values = federate::Values { ask: *confirm, partner_key: partner_key.clone(), partner_ca_fingerprint: partner_ca_fingerprint.clone(), agreement_digest: agreement_digest.clone(), pointer_package: place_pointer_package.clone() };
+                        let values = federate::Values { ask: federate::prompt::ask_by_default(*confirm, *no_confirm), partner_key: partner_key.clone(), partner_ca_fingerprint: partner_ca_fingerprint.clone(), agreement_digest: agreement_digest.clone(), pointer_package: place_pointer_package.clone() };
                         let admission = federate::Admission { approve: approve_admission.clone(), review_in_pr: *review_in_pr };
                         federate::federate_with(&repo, &o, &mut federate::Surface { resume: !*no_resume, values, admission, ask: Some(Box::new(federate::prompt::Terminal)), ..Default::default() })
                     }
