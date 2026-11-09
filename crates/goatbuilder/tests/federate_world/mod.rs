@@ -152,6 +152,8 @@ impl World {
             // The world stands in for `goat` with a stub; since the verbs run in
             // goatbuilder by default, name the stub path so the run uses it.
             .env("FED_VERBS", "goat")
+            // Phase 3 measures over SSH by default; the stub measures here.
+            .env("FED_MEASURE", "here")
             .env("GOAT_PROFILE_DIR", &self.profile)
             .env("GOAT_NO_FUN", "1")
             .env("FED_WORK", &self.work)
