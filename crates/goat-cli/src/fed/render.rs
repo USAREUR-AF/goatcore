@@ -509,8 +509,16 @@ pub fn render_all(
     //
     // `release` is still the republisher's SOURCE list — that is the one place the
     // staging name belongs, and it is rendered as such below.
+    //
+    // ONE WIRE KEY PER OFFERED SET, NEVER THE WHOLE WIRE NAME. A party with two
+    // peerings has two republishers writing onto one core, each under
+    // `from/<us>/<set>/**`. An edge granted `from/<us>/**` would carry every set
+    // written there, so partner B would receive the set agreed only with partner C.
+    // Each set is the agreement's own release entry put through the republisher's
+    // mapping (the first segment replaced by `from/<us>`), so this is a narrowing of
+    // what the agreement permits and never a list typed beside it.
     let egress: Vec<String> = outbound
-        .map(|f| vec![f.publish_under.clone()])
+        .map(|f| wire_keys(&f.publish_under, &f.release))
         .unwrap_or_default();
 
     let mut out = Vec::new();
@@ -987,6 +995,29 @@ pub fn attestation_line(digest: &str) -> String {
     format!("conformance ok for {digest}")
 }
 
+/// The wire keys an agreement's outbound flow can produce: each release entry put
+/// through the republisher's mapping (`ops/federation/republisher/src/mapping.rs`:
+/// the staging root, the first segment, becomes `from/<us>`). `release/weather/**`
+/// becomes `from/<us>/weather/**`. An entry with nothing below its root, or an empty
+/// release list, yields the whole wire name, as before: nothing narrower is derivable.
+pub fn wire_keys(publish_under: &str, release: &[String]) -> Vec<String> {
+    let root = publish_under.strip_suffix("/**").unwrap_or(publish_under);
+    let mut out: Vec<String> = Vec::new();
+    for r in release {
+        let k = match r.split_once('/') {
+            Some((_, rest)) if !rest.is_empty() && rest != "**" => format!("{root}/{rest}"),
+            _ => publish_under.to_string(),
+        };
+        if !out.contains(&k) {
+            out.push(k);
+        }
+    }
+    if out.is_empty() || out.iter().any(|k| k == publish_under) {
+        return vec![publish_under.to_string()];
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1069,13 +1100,22 @@ mod tests {
                 !ingress_block.contains(&format!("- \"from/{ours}/**\"")),
                 "ingress must never name our own prefix\n{body}"
             );
-            // The other half of the same rule: egress is OUR wire name, because
-            // that is the only name our data ever carries on the link.
+            // The other half of the same rule: egress is under OUR wire name, because
+            // that is the only name our data ever carries on the link, one key per
+            // offered set and never the whole prefix.
             let egress_block = body.split("\negress:\n").nth(1).expect("an egress block");
-            assert!(
-                egress_block.contains(&format!("- \"from/{ours}/**\"")),
-                "egress must be our own wire name\n{body}"
-            );
+            let egress_keys: Vec<&str> = egress_block
+                .lines()
+                .take_while(|l| l.starts_with("  - "))
+                .map(|l| l.trim_start_matches("  - ").trim_matches('"'))
+                .collect();
+            assert!(!egress_keys.is_empty(), "an egress key\n{body}");
+            for k in &egress_keys {
+                assert!(
+                    k.starts_with(&format!("from/{ours}/")) && *k != format!("from/{ours}/**"),
+                    "egress must be one of our own set's wire keys, never the whole prefix: {k}\n{body}"
+                );
+            }
             assert!(
                 !egress_block.contains("release/"),
                 "egress must never carry the staging name\n{body}"
@@ -1230,8 +1270,64 @@ mod tests {
         };
         assert!(rule_keys("fed-rp-r-xab").contains("\"release/weather/**\""), "{body}");
         assert!(!rule_keys("fed-rp-r-xab").contains("from/"), "{body}");
-        assert!(rule_keys("fed-rp-w-xab").contains("\"from/xaa/**\""), "{body}");
+        assert!(rule_keys("fed-rp-w-xab").contains("\"from/xaa/weather/**\""), "{body}");
+        assert!(!rule_keys("fed-rp-w-xab").contains("\"from/xaa/**\""), "{body}");
         assert!(!rule_keys("fed-rp-w-xab").contains("release/"), "{body}");
         assert!(!body.contains("\"**\""), "no rule names the whole keyspace\n{body}");
     }
+    /// The republisher's mapping, applied to the agreement's release entries.
+    #[test]
+    fn wire_keys_follow_the_republisher_mapping() {
+        let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            wire_keys("from/xaa/**", &s(&["release/all/**", "release/xab/**"])),
+            s(&["from/xaa/all/**", "from/xaa/xab/**"])
+        );
+        assert_eq!(wire_keys("from/xaa/**", &s(&["release/weather/eu/**"])), s(&["from/xaa/weather/eu/**"]));
+        // Nothing narrower is derivable: the whole wire name, as before.
+        assert_eq!(wire_keys("from/xaa/**", &s(&["release/**"])), s(&["from/xaa/**"]));
+        assert_eq!(wire_keys("from/xaa/**", &[]), s(&["from/xaa/**"]));
+        assert_eq!(wire_keys("from/xaa/**", &s(&["release/all/**", "release/**"])), s(&["from/xaa/**"]));
+    }
+
+    /// Two peerings on one core: the set agreed only with one partner is never in
+    /// the other partner's egress, and the set both agreements offer is in both.
+    #[test]
+    fn a_bilateral_set_is_never_in_another_peerings_egress() {
+        let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        let b = wire_keys("from/xaa/**", &s(&["release/all/**", "release/xab/**"]));
+        let c = wire_keys("from/xaa/**", &s(&["release/all/**", "release/xac/**"]));
+        assert!(b.contains(&"from/xaa/all/**".to_string()) && c.contains(&"from/xaa/all/**".to_string()));
+        assert!(!b.iter().any(|k| k.starts_with("from/xaa/xac") || k == "from/xaa/**"), "{b:?}");
+        assert!(!c.iter().any(|k| k.starts_with("from/xaa/xab") || k == "from/xaa/**"), "{c:?}");
+    }
+
+    /// Every artifact that grants our data a way out names the offered sets, not the
+    /// whole wire name: the partner declaration, the edge's egress and the core's
+    /// fed-r (the edge reads) and fed-rp-w (the republisher writes) rules.
+    #[test]
+    fn no_rendered_artifact_grants_the_whole_wire_name_outward() {
+        let ag = agreement();
+        let all = render_all(&ag, "xaa", "sha256:test", Some("edge"), &[]);
+        let find = |suffix: &str| {
+            all.iter()
+                .find(|r| r.path.ends_with(suffix))
+                .unwrap_or_else(|| panic!("no {suffix}"))
+                .body
+                .clone()
+        };
+        let partner = find("partners/xab.yaml");
+        let egress = partner.split("\negress:\n").nth(1).unwrap().split("\n\n").next().unwrap();
+        assert!(egress.contains("from/xaa/weather/**") && !egress.contains("\"from/xaa/**\""), "{partner}");
+        let edge = find("group_vars/edge/federation-xab.yml");
+        let e = edge.split("goat_zenoh_edge_egress_key_exprs:\n").nth(1).unwrap().split("\n\n").next().unwrap();
+        assert!(e.contains("from/xaa/weather/**") && !e.contains("\"from/xaa/**\""), "{edge}");
+        let frag = find("acl/xab-fragment.json5");
+        for id in ["fed-r-xab", "fed-r-interest-xab", "fed-rp-w-xab", "fed-rp-w-interest-xab"] {
+            let keys = frag.split(&format!("id: \"{id}\"")).nth(1).and_then(|r| r.split("},").next()).unwrap();
+            assert!(keys.contains("\"from/xaa/weather/**\""), "{id}\n{frag}");
+            assert!(!keys.contains("\"from/xaa/**\""), "{id} grants the whole wire name\n{frag}");
+        }
+    }
 }
+
