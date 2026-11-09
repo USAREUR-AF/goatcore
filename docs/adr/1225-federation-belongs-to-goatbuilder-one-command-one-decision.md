@@ -166,8 +166,8 @@ Taken from that operator's proposal, as its specification:
   check.
 - **Acceptance as a contract** (the proposal's sections 3 and 4). Checks generated from the agreement's
   actual flows, including send-only, receive-only and asymmetric agreements; a versioned check
-  and result schema; the outcomes PASS, FAIL, BLOCKED, SKIP and NOT APPLICABLE with his
-  meanings, where a required check cannot be waived into PASS; persistent reception proven
+  and result schema; the outcomes PASS, FAIL, BLOCKED, SKIP and NOT APPLICABLE with the
+  proposal's meanings, where a required check cannot be waived into PASS; persistent reception proven
   with no diagnostic subscriber; refusal shown by the receiving edge's allow and deny records
   beside an allowed control; the republisher boundary as its own check; existing partnerships
   checked before and after; bilateral evidence with each operator running locally on their own
