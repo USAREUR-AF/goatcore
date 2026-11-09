@@ -7,6 +7,7 @@ import io
 import json
 import os
 from pathlib import Path
+import shutil
 import tempfile
 import unittest
 
@@ -32,6 +33,7 @@ def at(minutes):
 class Session(unittest.TestCase):
     def setUp(self):
         self.d = tempfile.mkdtemp(prefix="acceptance-session-")
+        self.addCleanup(shutil.rmtree, self.d, True)
         self.ag = os.path.join(self.d, "agreement.json")
         with open(self.ag, "w") as f:
             json.dump(fakefabric.agreement(), f)
@@ -146,6 +148,28 @@ class Session(unittest.TestCase):
         self.write_local([], session="ses-other")
         with self.assertRaises(ses.Refused):
             ses.combine(self.manifest, "xaa", self.evidence)
+
+    def test_a_manifest_with_shell_or_path_characters_is_refused(self):
+        for field, value in (("session_id", "ses-x';touch${IFS}/tmp/p;'"), ("session_id", "../../x"),
+                             ("challenges", {"xaa": "x';id;'", "xab": "0" * 32})):
+            with self.subTest(field=field, value=value), self.assertRaises(ses.Refused):
+                ses.validate(dict(self.m, **{field: value}), self.ag, "xaa", now=at(1))
+
+    def test_combine_resolves_the_partners_rows_that_we_observed(self):
+        self.write_local([
+            {"name": "delivery/inbound/release/all", "required": True, "verdict": "PASS", "observations": {}},
+            {"name": "delivery/outbound/release/all", "required": True, "verdict": "BLOCKED",
+             "observations": {"observed_by_peer": "delivery/inbound/release/all"}}])
+        peer = self.peer_bundle(checks=[
+            {"name": "delivery/inbound/release/all", "required": True, "verdict": "PASS",
+             "observations": {"received": "xaa-%s-all" % self.m["challenges"]["xaa"]}},
+            {"name": "delivery/outbound/release/all", "required": True, "verdict": "BLOCKED",
+             "observations": {"observed_by_peer": "delivery/inbound/release/all"}}])
+        ses.import_bundle(self.manifest, "xaa", self.evidence, peer, now=utc_now_inside(self.m))
+        out = ses.combine(self.manifest, "xaa", self.evidence)
+        row = [r for r in out["rows"] if r["name"] == "xab: delivery/outbound/release/all"][0]
+        self.assertEqual(row["status"], "PASS (local)")
+        self.assertEqual(out["verdict"], "PASS", out)
 
     def test_the_cli_writes_a_manifest_once(self):
         out = os.path.join(self.d, "new.json")

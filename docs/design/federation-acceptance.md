@@ -265,8 +265,10 @@ own core and edge only: no counterparty surface, no shared credentials, no servi
    participant and the sample limits. The file goes to the partner by any means; both read its
    `digest` aloud and compare, as with the agreement.
 2. Each runs phase 14 with `FED_ACCEPTANCE_SESSION=session.json`. The runner first refuses a
-   manifest for another agreement, one that does not name it, one not yet valid or expired
-   (exit 2). Then, in place of the rows that need the partner's core, it stages one sample per
+   manifest for another agreement, one that does not name it, one not yet valid or expired, and one whose session id,
+   participant ids or challenges are not of their fixed shapes (`ses-` plus letters, digits and
+   hyphens; sovereign ids; 16 to 64 lowercase hex digits), because they become keys, bytes and file
+   names (exit 2). Then, in place of the rows that need the partner's core, it stages one sample per
    offered set under `release/<set>/acceptance/<session id>/<itself>` carrying the challenge the
    manifest issued to it, plus one under a set nobody offered, and reads the partner's samples
    from its own core for up to `FED_SESSION_WAIT` seconds (300):
@@ -287,7 +289,8 @@ own core and edge only: no counterparty surface, no shared credentials, no servi
    challenge (it cannot be from this session's samples).
 4. `acceptance_session.py combine` writes `<evidence>/bilateral/<session id>.json` and `.md`:
    our rows and theirs side by side, local and peer-reported in separate columns. A row of ours
-   marked `observed_by_peer` is satisfied only by the partner's mirror row passing. Exit 0 when
+   marked `observed_by_peer` is satisfied only by the partner's mirror row passing, and a row of
+   theirs marked so is decided by our own row. Exit 0 when
    the required scope of both sides passed, 1 on any failure, 3 otherwise.
 
 A signature would only say who reported a result, not whether their infrastructure is honest, and

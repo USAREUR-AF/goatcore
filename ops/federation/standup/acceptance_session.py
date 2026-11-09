@@ -45,6 +45,7 @@ import datetime
 import hashlib
 import json
 import os
+import re
 import secrets
 import sys
 
@@ -52,6 +53,12 @@ SCHEMA = "goat-federation-acceptance-session/v1"
 BUNDLE_SCHEMA = "goat-federation-acceptance/v1"
 DEFAULT_POLICY = "every-generated-check-required/v1"
 FMT = "%Y-%m-%dT%H:%M:%SZ"
+# The session id and the challenges become key segments, payload bytes and file
+# names, and the shell passes them to curl on a core host. Either operator may
+# write the manifest, so nothing outside these shapes is accepted.
+SESSION_ID = re.compile(r"ses-[0-9A-Za-z-]{1,64}")
+CHALLENGE = re.compile(r"[0-9a-f]{16,64}")
+SOVEREIGN = re.compile(r"[a-z0-9][a-z0-9-]{1,15}")
 
 
 class Refused(ValueError):
@@ -124,7 +131,13 @@ def validate(manifest, agreement_path, us, now=None):
     for k in ("session_id", "agreement_sha256", "participants", "not_before", "expires_at", "challenges"):
         if not manifest.get(k):
             raise Refused("the manifest has no %s" % k)
+    if not SESSION_ID.fullmatch(str(manifest["session_id"])):
+        raise Refused("the session id %r is not of the form ses-<letters, digits, hyphens>" % manifest["session_id"])
     ids = [p.get("sovereign_id") for p in manifest["participants"]]
+    if not all(SOVEREIGN.fullmatch(str(i)) for i in ids):
+        raise Refused("a participant id is not a sovereign id: %s" % ids)
+    if not all(CHALLENGE.fullmatch(str(c)) for c in manifest["challenges"].values()):
+        raise Refused("a challenge is not 16 to 64 lowercase hex digits")
     if us not in ids or len(ids) != 2:
         raise Refused("the manifest's participants %s do not name %s and one partner" % (ids, us))
     if set(manifest["challenges"]) != set(ids) or not all(manifest["challenges"].values()):
@@ -144,8 +157,17 @@ def validate(manifest, agreement_path, us, now=None):
     return [i for i in ids if i != us][0]
 
 
+def _shape(m):
+    """The manifest's own shape, as validate checks it, without the agreement."""
+    if m.get("schema") != SCHEMA or not SESSION_ID.fullmatch(str(m.get("session_id"))):
+        raise Refused("not a session manifest of this schema with a well-formed session id")
+    if not all(CHALLENGE.fullmatch(str(c)) for c in (m.get("challenges") or {}).values()):
+        raise Refused("a challenge in the manifest is not 16 to 64 lowercase hex digits")
+    return m
+
+
 def import_bundle(manifest_path, us, evidence, bundle_path, now=None):
-    m = load(manifest_path, "the session manifest")
+    m = _shape(load(manifest_path, "the session manifest"))
     them = [p.get("sovereign_id") for p in m.get("participants", []) if p.get("sovereign_id") != us]
     if len(them) != 1:
         raise Refused("the manifest does not name %s and one partner" % us)
@@ -215,7 +237,7 @@ def mirror(name):
 
 
 def combine(manifest_path, us, evidence):
-    m = load(manifest_path, "the session manifest")
+    m = _shape(load(manifest_path, "the session manifest"))
     sid = m.get("session_id")
     local = load(os.path.join(evidence, "result.json"), "our result")
     if (local.get("session") or {}).get("id") != sid:
@@ -245,10 +267,17 @@ def combine(manifest_path, us, evidence):
             row["status"] = ("PASS (peer-reported)" if mc and mc["verdict"] == "PASS"
                              else "FAIL (peer-reported)" if mc and mc["verdict"] == "FAIL" else "OPEN")
         rows.append(row)
+    local_checks = {c["name"]: c for c in local.get("checks", [])}
     for c in (peer or {}).get("checks", []):
+        status = c["verdict"] + " (peer-reported)" if c["verdict"] in ("PASS", "FAIL") else c["verdict"]
+        by_us = (c.get("observations") or {}).get("observed_by_peer")
+        if c["verdict"] == "BLOCKED" and by_us:
+            # What the partner could not observe and we did: our own row decides it.
+            mine = local_checks.get(by_us)
+            status = ("PASS (local)" if mine and mine["verdict"] == "PASS"
+                      else "FAIL (local)" if mine and mine["verdict"] == "FAIL" else "OPEN")
         rows.append({"name": "%s: %s" % (them, c["name"]), "required": c["required"], "local": None,
-                     "peer_reported": {"name": c["name"], "verdict": c["verdict"]},
-                     "status": c["verdict"] + " (peer-reported)" if c["verdict"] in ("PASS", "FAIL") else c["verdict"]})
+                     "peer_reported": {"name": c["name"], "verdict": c["verdict"]}, "status": status})
     for r in rows:
         if r["status"].startswith("FAIL"):
             failed.append(r["name"])
@@ -332,7 +361,7 @@ def main(argv=None):
             print("session manifest valid for %s with %s" % (a.us, them))
             return 0
         if a.cmd == "fields":
-            m = load(a.manifest, "the session manifest")
+            m = _shape(load(a.manifest, "the session manifest"))
             them = [p.get("sovereign_id") for p in m.get("participants", []) if p.get("sovereign_id") != a.us][0]
             print(m["session_id"], m["challenges"][a.us], m["challenges"][them], them)
             return 0

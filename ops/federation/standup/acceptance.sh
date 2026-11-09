@@ -324,6 +324,10 @@ session_lanes() {
   if [ "$HAVE_IN" = 1 ]; then
     begin
     if [ "$landed" = 1 ]; then
+      # Their unoffered sample is staged a gap after their offered ones and still has
+      # to cross their republisher and both edges: give it the same settle the main
+      # path gives before reading its absence.
+      settle 8
       absent republisher-boundary/inbound inbound negative ours "$(wire_of "$THEM" "release/$THEM-not-offered")/$sk/$THEM" \
         "a staging set of theirs the agreement never offered did NOT arrive on our core in this session" \
         "release/$THEM-not-offered/** arrived on our core: their republisher forwarded a set nobody agreed"
