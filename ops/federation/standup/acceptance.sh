@@ -77,8 +77,25 @@ skp()  { printf '  \033[33mskip\033[0m  %s\n' "$1"; [ -n "${2:-}" ] && printf ' 
 # --- the lanes, from the agreement -------------------------------------------
 read -r US THEM OUR_WIRE THEIR_WIRE THEIR_TD OUR_SETS THEIR_SETS <<EOF
 $(python3 - "$AGREEMENT" "$AS" <<'PY'
-import json, sys
+import json, re, sys
 ag = json.load(open(sys.argv[1])); want = sys.argv[2] or ""
+# Accept only well-formed names from the agreement. They become keys, payloads and
+# arguments of the commands below, so anything outside these shapes stops the run.
+SOVEREIGN = re.compile(r"[a-z0-9][a-z0-9-]{1,15}")
+RELEASE = re.compile(r"release/[A-Za-z0-9._/*-]+")
+TRUST_DOMAIN = re.compile(r"spiffe://[A-Za-z0-9._-]+")
+def refuse(what, value):
+    print("acceptance: the agreement holds %s that is not well-formed: %r" % (what, value), file=sys.stderr)
+    sys.exit(1)
+for p in ag.get("parties", []):
+    if not SOVEREIGN.fullmatch(str(p.get("sovereign_id", ""))):
+        refuse("a sovereign id", p.get("sovereign_id"))
+    if not TRUST_DOMAIN.fullmatch(str(p.get("trust_domain", ""))):
+        refuse("a trust domain", p.get("trust_domain"))
+for f in ag.get("flows", []):
+    for r in f.get("release", []):
+        if not RELEASE.fullmatch(str(r)):
+            refuse("a release set name", r)
 parties = [p["sovereign_id"] for p in ag.get("parties", [])]
 us = want if want in parties else parties[0]
 them = [p for p in parties if p != us][0]
@@ -107,7 +124,7 @@ EOF
 # less its first segment (ops/federation/republisher/README.md, the key mapping).
 wire_of() { printf 'from/%s/%s' "$1" "${2#release/}"; }
 list() { [ "$1" = "-" ] || printf '%s\n' "$1" | tr ',' '\n'; }
-[ -n "$US" ] || { echo "could not read the parties from the agreement" >&2; exit 2; }
+[ -n "$US" ] || { echo "acceptance: could not read well-formed parties and sets from the agreement" >&2; exit 2; }
 echo "acceptance — $US <-> $THEM"
 echo "  our wire name:   $OUR_WIRE/**"
 echo "  their wire name: $THEIR_WIRE/**"
@@ -122,10 +139,12 @@ theirs() { if [ -n "$FED_SSH_THEIRS" ]; then timeout 60 ssh -o StrictHostKeyChec
 # A literal grep finds nothing and reads as "the data never arrived".
 decode() { grep -oE '"value":"[^"]*"' | head -1 | sed 's/.*"value":"//;s/"$//' \
          | { read -r b || true; [ -n "${b:-}" ] && printf '%s' "$b" | base64 -d 2>/dev/null || true; }; }
-get_ours()   { ours   "curl -s -m 8 '$FED_OURS_REST/$1'"   | decode; }
-get_theirs() { theirs "curl -s -m 8 '$FED_THEIRS_REST/$1'" | decode; }
-put_ours()   { ours   "curl -s -m 8 -X PUT -d '$2' '$FED_OURS_REST/$1' -o /dev/null"; }
-put_theirs() { theirs "curl -s -m 8 -X PUT -d '$2' '$FED_THEIRS_REST/$1' -o /dev/null"; }
+# Each argument is quoted with printf %q before it joins a command string that runs
+# here or on the core host.
+get_ours()   { ours   "curl -s -m 8 $(printf %q "$FED_OURS_REST/$1")"   | decode; }
+get_theirs() { theirs "curl -s -m 8 $(printf %q "$FED_THEIRS_REST/$1")" | decode; }
+put_ours()   { ours   "curl -s -m 8 -X PUT -d $(printf %q "$2") $(printf %q "$FED_OURS_REST/$1") -o /dev/null"; }
+put_theirs() { theirs "curl -s -m 8 -X PUT -d $(printf %q "$2") $(printf %q "$FED_THEIRS_REST/$1") -o /dev/null"; }
 
 if [ -z "$FED_THEIRS_REST" ]; then
   skp "no counterparty surface" \
@@ -269,7 +288,7 @@ else
   # One nonce per offered set, staged under it: each pass proves our republisher
   # lifted that set, the link carried it, and THEIR side answered.
   for set in $(list "$OUR_SETS"); do
-    out=$( [ -n "$FED_SSH_OURS" ] && ours "/tmp/fedcheck.sh $set $THEIR_WIRE ${FED_ACCEPTANCE_RT_TIMEOUT:-25}" \
+    out=$( [ -n "$FED_SSH_OURS" ] && ours "/tmp/fedcheck.sh $(printf '%q %q' "$set" "$THEIR_WIRE") ${FED_ACCEPTANCE_RT_TIMEOUT:-25}" \
                                   || BASE="$FED_OURS_REST" "$RT" "$set" "$THEIR_WIRE" "${FED_ACCEPTANCE_RT_TIMEOUT:-25}" )
     case "$out" in
       *PASS*) ok "round trip via $set/**: a nonce staged here crossed as $(wire_of "$US" "$set")/** and came back acknowledged by THEIR side$(printf '%s' "$out" | grep -oE ' in [0-9]+ms')" ;;
@@ -286,13 +305,13 @@ if [ -z "${FED_SPIRE_OURS:-}" ] || [ -z "${FED_SPIRE_THEIRS:-}" ]; then
 else
   refreshed=""
   for _ in $(seq 1 18); do
-    if out=$(eval "$FED_SPIRE_OURS federation refresh -id $THEIR_TD" 2>&1); then refreshed=1; break; fi
+    if out=$(eval "$FED_SPIRE_OURS federation refresh -id $(printf %q "$THEIR_TD")" 2>&1); then refreshed=1; break; fi
     sleep 5
   done
   [ -n "$refreshed" ] && ok "our SPIRE server refreshed $THEIR_TD from its bundle endpoint across the link" \
                       || no "our SPIRE server could not refresh $THEIR_TD" "$out"
   tmp="$(mktemp -d)"
-  eval "$FED_SPIRE_OURS bundle list -id $THEIR_TD -format pem" > "$tmp/held.pem" 2>/dev/null
+  eval "$FED_SPIRE_OURS bundle list -id $(printf %q "$THEIR_TD") -format pem" > "$tmp/held.pem" 2>/dev/null
   eval "$FED_SPIRE_THEIRS bundle show -format pem" > "$tmp/theirs.pem" 2>/dev/null
   eval "$FED_SPIRE_OURS bundle show -format pem" > "$tmp/ours.pem" 2>/dev/null
   fp() { openssl x509 -in "$1" -noout -fingerprint -sha256 2>/dev/null; }
@@ -302,7 +321,7 @@ else
     no "the bundle we hold for $THEIR_TD is not theirs"
   fi
   # `x509 mint` prints the SVID first; the first certificate block is the leaf.
-  eval "$FED_SPIRE_THEIRS x509 mint -spiffeID $THEIR_TD/federation-acceptance" 2>/dev/null \
+  eval "$FED_SPIRE_THEIRS x509 mint -spiffeID $(printf %q "$THEIR_TD/federation-acceptance")" 2>/dev/null \
     | awk '/-----BEGIN CERTIFICATE-----/{f=1} f{print} /-----END CERTIFICATE-----/{if(f)exit}' > "$tmp/svid.pem"
   if [ ! -s "$tmp/svid.pem" ]; then
     no "their server minted no workload SVID to validate"

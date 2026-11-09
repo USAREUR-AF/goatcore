@@ -14,6 +14,10 @@ Phase 14 is the last gate of a peering standup. It answers one question: does th
 carry what the agreement grants, refuse what it does not, and can the publishing side prove it.
 Every key expression it uses is read from the agreement (`<work>/agreement.json`), never typed
 into the script, so the suite agrees with the peering and not with itself.
+It accepts only well-formed names from the agreement: sovereign ids `[a-z0-9][a-z0-9-]{1,15}`,
+trust domains `spiffe://[A-Za-z0-9._-]+`, release entries `release/[A-Za-z0-9._/*-]+`; anything
+else stops the run with exit 2 before any command. Each argument is quoted with `printf %q`
+before it joins a command string run here or on a core host.
 
 ## 2. The four tiers
 
