@@ -12,8 +12,8 @@ recheck and the value resolution.
 anything, and approval bound to the plan's hash (both belong to the deploy
 stage); the allocated per-peering values (the plan reads the group's vars and
 the roles' defaults until allocation is wired in); the check of this peering
-against other peerings on the same host; the baseline host firewall, so every
-host firewall entry is NOT APPLICABLE. **Not measured:** no run against real
+against other peerings on the same host; the call to the baseline host firewall's renderer, so a host with the
+baseline on is BLOCKED. **Not measured:** no run against real
 hosts.
 
 Status: WIP — gate: on the federation test environment, a plan of a clean
@@ -40,11 +40,11 @@ only writes are `<work>/plan.json` and phase 1's result files under
 | `rendered` | every file under `<work>/applied` with its sha256; empty before phase 9 | `goat federate apply`'s output |
 | `pki` | every file under `<work>/pki` with its sha256: a re-minted certificate is a changed input | phase 8's output |
 | `certificates` | subject and expiry of each certificate under `<work>/pki`. An expired one is a FAIL in readiness; with files present and no `openssl`, expiry is SKIP | `openssl x509` |
-| `resources` | what this peering owns: its WireGuard interface, tunnel port, edge router port, edge router container, republisher metrics port and container, the core access-control fragment, the working directory and (with `--as`) the republisher identity. The containers are the group's `goat_zenoh_edge_stack` and `goat_fed_republisher_stack`, else the roles' `<role>-<partner id>`; the core group is `<peering>_core`, the group phase 12 deploys to | the same sources phase 1 reads, in the same order (`PORT_INPUTS` in `preflight_live.py`): the variable, the group's vars, its parent group's, `all`, then the role's default. A templated value is not guessed: its name is empty and its source says so |
+| `resources` | what this peering owns: its WireGuard interface, tunnel port, edge router port, edge router container, republisher metrics port and container, the core access-control fragment, the working directory, the certificate directory (`<work>/pki`), the link subnet (from the agreement; empty before phase 6) and (with `--as`) the republisher identity. The deploy step copies its owned-resources list from here. The containers are the group's `goat_zenoh_edge_stack` and `goat_fed_republisher_stack`, else the roles' `<role>-<partner id>`; the core group is `<peering>_core`, the group phase 12 deploys to | the same sources phase 1 reads, in the same order (`PORT_INPUTS` in `preflight_live.py`): the variable, the group's vars, its parent group's, `all`, then the role's default. A templated value is not guessed: its name is empty and its source says so |
 | `restarts` | the core router (phase 10), this peering's WireGuard interface (11), edge router (12) and republisher (12, only when we offer a release set) | the phases; the agreement's flows decide the republisher |
 | `acceptance` | the runner, whether `FED_ACCEPTANCE_STRICT=1` is set, and for each flow a reception and a refusal that acceptance must show | the agreement's flows |
 | `readiness` | each phase-1 check's outcome and code | `preflight.py`, run with the derived inputs into `<work>/plan/preflight.json`; `--no-live` skips the live reads (each SKIP) |
-| `host_firewall` | one entry per host of the edge and core groups, with its address, NOT APPLICABLE. A host that moves to another address is a changed input | the peering inventory |
+| `host_firewall` | one entry per host of the edge and core groups, with its address. With `goat_host_firewall_baseline` not true (the default): NOT APPLICABLE, "host firewall baseline: off", nothing rendered or applied. With it true: BLOCKED, and a BLOCKED readiness row, because the plan does not render the rule set yet and must show it before anything is applied. A host that moves to another address is a changed input | the peering inventory, the group's vars |
 | `verdict` | `READY`, `READY, <n> check(s) not verified` (SKIP is never a pass), or `BLOCKED` (a FAIL or BLOCKED) | the readiness |
 | `hash` | sha256 over the plan without `hash` and without each readiness `detail` | the plan |
 
