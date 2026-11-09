@@ -1,0 +1,56 @@
+{
+  "schema": "goat-host-firewall-input/v1",
+  "profile": "edge",
+  "host": {
+    "ssh_port": 2222,
+    "management_sources": [
+      "198.51.100.0/24"
+    ],
+    "mesh_interface": "wt0",
+    "mesh_udp_ports": [],
+    "fabric_tcp_port": 7447,
+    "fabric_udp_port": null,
+    "fabric_sources": [],
+    "mesh_dns_port": 5353,
+    "closed_listeners": [],
+    "management_prefix_floor": {
+      "ipv4": 24,
+      "ipv6": 64
+    },
+    "spire_bundle_port": "",
+    "spire_bundle_sources": []
+  },
+  "peerings": [
+    {
+      "name": "wg-fed1",
+      "transport": "wireguard",
+      "listen_port": 51825,
+      "peer_addr": "",
+      "tunnel_interface": "wg-fed1",
+      "remote_link_ip": "169.254.10.3",
+      "edge_port": 7448,
+      "extra_tcp_ports": [],
+      "via_forwarder": false
+    },
+    {
+      "name": "wg-fed0",
+      "transport": "wireguard",
+      "listen_port": 51823,
+      "peer_addr": "203.0.113.7",
+      "tunnel_interface": "wg-fed0",
+      "remote_link_ip": "169.254.10.1",
+      "edge_port": 7448,
+      "extra_tcp_ports": [
+        8443
+      ],
+      "spire_outbound_port": "",
+      "spire_server_addr": "",
+      "via_forwarder": false,
+      "carrier_interface": "wg-carry0",
+      "carrier_remote_ip": "169.254.30.0",
+      "carrier_listen_port": 51822,
+      "forwarder_addr": ""
+    }
+  ],
+  "override": {}
+}

@@ -1,0 +1,4 @@
+peering_wg_listen_port: 51823
+peering_wg_extra_ports: [8443]
+# Stale: apply's rendered file (included with include_vars) overrides it.
+goat_peering_remote_link_ip: "169.254.99.1"

@@ -25,9 +25,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use serde_yaml::Value as Y;
 
-use super::hostalloc::{agreement_of, work_of_other};
-use super::plan::{group_raw, inventory_hosts};
-use crate::config;
+use super::hostalloc::agreement_of;
 
 /// The renderer, relative to the repository.
 pub const RENDERER: &str =
@@ -64,22 +62,162 @@ pub struct HostFirewall {
     pub ruleset: Option<String>,
 }
 
+/// The peering inventory as Ansible reads it for variables: each group's
+/// direct hosts, its children, its `[group:vars]`, and each host line's vars.
+#[derive(Default)]
+struct Inventory {
+    members: std::collections::BTreeMap<String, Vec<String>>,
+    children: std::collections::BTreeMap<String, Vec<String>>,
+    group_vars: std::collections::BTreeMap<String, Vec<(String, Y)>>,
+    host_vars: std::collections::BTreeMap<String, Vec<(String, Y)>>,
+}
+
+fn ini_value(v: &str) -> Y {
+    let t = v.trim();
+    if (t.starts_with('"') && t.ends_with('"') && t.len() >= 2)
+        || (t.starts_with('\'') && t.ends_with('\'') && t.len() >= 2)
+    {
+        return Y::String(t[1..t.len() - 1].to_string());
+    }
+    serde_yaml::from_str::<Y>(t).unwrap_or_else(|_| Y::String(t.to_string()))
+}
+
+fn parse_inventory(repo: &Path) -> Inventory {
+    let text = std::fs::read_to_string(repo.join("ops/ansible/inventory/peering-edges.ini"))
+        .unwrap_or_default();
+    let mut inv = Inventory::default();
+    let mut section: Option<(String, String)> = None;
+    for raw in text.lines() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with('#') || line.starts_with(';') {
+            continue;
+        }
+        if let Some(rest) = line.strip_prefix('[') {
+            let name = rest.split(']').next().unwrap_or_default().trim();
+            section = Some(match name.split_once(':') {
+                Some((g, k)) => (g.to_string(), k.to_string()),
+                None => (name.to_string(), String::new()),
+            });
+            continue;
+        }
+        let Some((g, kind)) = &section else { continue };
+        let body = line.split(" #").next().unwrap_or(line);
+        match kind.as_str() {
+            "" => {
+                let mut words = body.split_whitespace();
+                let Some(name) = words.next() else { continue };
+                inv.members
+                    .entry(g.clone())
+                    .or_default()
+                    .push(name.to_string());
+                for w in words {
+                    if let Some((k, v)) = w.split_once('=') {
+                        inv.host_vars
+                            .entry(name.to_string())
+                            .or_default()
+                            .push((k.to_string(), ini_value(v)));
+                    }
+                }
+            }
+            "children" => inv
+                .children
+                .entry(g.clone())
+                .or_default()
+                .push(body.trim().to_string()),
+            "vars" => {
+                if let Some((k, v)) = body.split_once('=') {
+                    inv.group_vars
+                        .entry(g.clone())
+                        .or_default()
+                        .push((k.trim().to_string(), ini_value(v)));
+                }
+            }
+            _ => {}
+        }
+    }
+    inv
+}
+
+impl Inventory {
+    fn parents(&self, g: &str) -> Vec<String> {
+        self.children
+            .iter()
+            .filter(|(_, cs)| cs.iter().any(|c| c == g))
+            .map(|(p, _)| p.clone())
+            .collect()
+    }
+
+    /// Ansible's depth: `all` is 0, a group with no parent 1, else one more
+    /// than its deepest parent.
+    fn depth(&self, g: &str, seen: &mut Vec<String>) -> u32 {
+        if seen.iter().any(|s| s == g) {
+            return 1;
+        }
+        seen.push(g.to_string());
+        let ps = self.parents(g);
+        if ps.is_empty() {
+            1
+        } else {
+            1 + ps.iter().map(|p| self.depth(p, seen)).max().unwrap_or(0)
+        }
+    }
+
+    /// Every group the host is in, directly or through children, most
+    /// specific first (deeper first; at one depth, the later name first, as
+    /// Ansible applies them in name order and the last wins), then `all`.
+    fn groups_of(&self, host: &str) -> Vec<String> {
+        let mut gs: Vec<String> = self
+            .members
+            .iter()
+            .filter(|(_, hs)| hs.iter().any(|h| h == host))
+            .map(|(g, _)| g.clone())
+            .collect();
+        let mut i = 0;
+        while i < gs.len() {
+            for p in self.parents(&gs[i]) {
+                if !gs.contains(&p) && p != "all" {
+                    gs.push(p);
+                }
+            }
+            i += 1;
+        }
+        let mut keyed: Vec<(u32, String)> = gs
+            .into_iter()
+            .map(|g| (self.depth(&g, &mut Vec::new()), g))
+            .collect();
+        keyed.sort();
+        keyed.reverse();
+        let mut out: Vec<String> = keyed.into_iter().map(|(_, g)| g).collect();
+        out.push("all".to_string());
+        out
+    }
+}
+
 /// Where a host's variables come from, in Ansible's order of precedence (the
-/// first that sets a key wins): inventory host vars, host_vars, then each
-/// group from the most specific, then the files apply rendered for that group.
+/// first that sets a key wins): apply's rendered file (the plays load it with
+/// include_vars), host_vars/, the host's inventory line, then each group from
+/// the most specific (its group_vars/ files, then its `[group:vars]`), then the
+/// role's default.
 struct Scope<'a> {
     repo: &'a Path,
+    inv: Inventory,
     host: String,
     groups: Vec<String>,
-    /// apply's rendered group_vars for this host's peering group, when there.
+    /// apply's rendered group_vars, when the play loads them and they exist.
     applied: Option<PathBuf>,
+    /// The roles whose defaults the play has in scope: goat-host-firewall and
+    /// the play's own role.
+    roles: Vec<&'static str>,
 }
 
 fn yaml_files(dir: &Path) -> Vec<PathBuf> {
     let mut v: Vec<PathBuf> = std::fs::read_dir(dir)
         .map(|rd| {
             rd.filter_map(|e| e.ok().map(|e| e.path()))
-                .filter(|p| p.extension().is_some_and(|x| x == "yml" || x == "yaml"))
+                .filter(|p| {
+                    p.extension()
+                        .is_some_and(|x| x == "yml" || x == "yaml" || x == "json")
+                })
                 .collect()
         })
         .unwrap_or_default();
@@ -87,6 +225,7 @@ fn yaml_files(dir: &Path) -> Vec<PathBuf> {
     v
 }
 
+/// The last file that sets `key` (a null counts: it is set).
 fn last_in(files: &[PathBuf], key: &str) -> Option<Y> {
     let mut found = None;
     for f in files {
@@ -96,111 +235,175 @@ fn last_in(files: &[PathBuf], key: &str) -> Option<Y> {
         else {
             continue;
         };
-        if let Some(v) = doc.get(key).filter(|v| !v.is_null()) {
+        if let Some(v) = doc.get(key) {
             found = Some(v.clone());
         }
     }
     found
 }
 
-/// A host's own variable from its inventory line (`key=value`).
-fn inline_host_var(repo: &Path, host: &str, key: &str) -> Option<Y> {
-    let text =
-        std::fs::read_to_string(repo.join("ops/ansible/inventory/peering-edges.ini")).ok()?;
-    let mut found = None;
-    for line in text.lines().map(str::trim) {
-        if line.starts_with('[') || line.starts_with('#') || line.starts_with(';') {
-            continue;
-        }
-        let body = line.split(" #").next().unwrap_or(line);
-        let mut words = body.split_whitespace();
-        if words.next() != Some(host) {
-            continue;
-        }
-        for w in words {
-            if let Some(v) = w.strip_prefix(&format!("{key}=")) {
-                let v = v.trim_matches(|c| c == '"' || c == '\'');
-                found =
-                    Some(serde_yaml::from_str::<Y>(v).unwrap_or_else(|_| Y::String(v.to_string())));
-            }
-        }
-    }
-    found
+fn named_files(dir: &Path, name: &str) -> Vec<PathBuf> {
+    let mut files = vec![
+        dir.join(name),
+        dir.join(format!("{name}.yml")),
+        dir.join(format!("{name}.yaml")),
+        dir.join(format!("{name}.json")),
+    ];
+    files.retain(|f| f.is_file());
+    files.extend(yaml_files(&dir.join(name)));
+    files
 }
 
 impl Scope<'_> {
     fn raw(&self, key: &str) -> Option<Y> {
-        if let Some(v) = inline_host_var(self.repo, &self.host, key) {
+        if let Some(v) = self
+            .applied
+            .as_ref()
+            .and_then(|d| last_in(&yaml_files(d), key))
+        {
             return Some(v);
         }
-        let hv = self.repo.join("ops/ansible/host_vars");
-        let mut files = vec![
-            hv.join(format!("{}.yml", self.host)),
-            hv.join(format!("{}.yaml", self.host)),
-        ];
-        files.extend(yaml_files(&hv.join(&self.host)));
-        if let Some(v) = last_in(&files, key) {
+        if let Some(v) = last_in(
+            &named_files(&self.repo.join("ops/ansible/host_vars"), &self.host),
+            key,
+        ) {
+            return Some(v);
+        }
+        if let Some(v) = self
+            .inv
+            .host_vars
+            .get(&self.host)
+            .and_then(|kv| kv.iter().rev().find(|(k, _)| k == key))
+            .map(|(_, v)| v.clone())
+        {
             return Some(v);
         }
         for g in &self.groups {
-            if let Some(v) = group_raw(self.repo, g, key).filter(|v| !v.is_null()) {
+            if let Some(v) = last_in(
+                &named_files(&self.repo.join("ops/ansible/group_vars"), g),
+                key,
+            ) {
+                return Some(v);
+            }
+            if let Some(v) = self
+                .inv
+                .group_vars
+                .get(g)
+                .and_then(|kv| kv.iter().rev().find(|(k, _)| k == key))
+                .map(|(_, v)| v.clone())
+            {
                 return Some(v);
             }
         }
-        self.applied
-            .as_ref()
-            .and_then(|d| last_in(&yaml_files(d), key))
+        None
     }
 
-    /// The value of `key`, else the role's default, else `fallback`, with a
-    /// template evaluated when it is `{{ var | default(x) }}` (optionally `| int`
-    /// or `| bool`) or a string with such expressions in it.
+    /// A default from any role the play has in scope (the `role` hint first).
+    fn role_default(&self, role: Option<&str>, key: &str) -> Option<Y> {
+        let mut roles: Vec<&str> = role.into_iter().collect();
+        roles.extend(self.roles.iter().copied().filter(|r| Some(*r) != role));
+        roles.into_iter().find_map(|r| {
+            last_in(
+                &[self
+                    .repo
+                    .join(format!("ops/ansible/roles/{r}/defaults/main.yml"))],
+                key,
+            )
+        })
+    }
+
+    /// The value of `key`, else the role's default, else `fallback`, evaluated.
+    /// A declared null is refused: Ansible keeps it as None, which no field
+    /// here reads the way the plan could repeat.
     fn get(&self, key: &str, role: Option<&str>, fallback: Y) -> Result<Y, String> {
         let v = match self.raw(key) {
+            Some(Y::Null) => {
+                return Err(format!(
+                    "{key} is declared empty (null); give it a value or remove it"
+                ))
+            }
             Some(v) => v,
             None => self.role_default(role, key).unwrap_or(fallback),
         };
         self.eval(&v, key, 0, role)
     }
 
-    fn role_default(&self, role: Option<&str>, key: &str) -> Option<Y> {
-        let f = self
-            .repo
-            .join(format!("ops/ansible/roles/{}/defaults/main.yml", role?));
-        last_in(&[f], key)
+    fn lookup(&self, name: &str, role: Option<&str>) -> Option<Y> {
+        self.raw(name).or_else(|| self.role_default(role, name))
+    }
+
+    /// A Jinja literal or variable inside `default(...)`.
+    fn default_arg(
+        &self,
+        arg: &str,
+        key: &str,
+        depth: u32,
+        role: Option<&str>,
+    ) -> Result<Y, String> {
+        let a = arg.trim();
+        if (a.starts_with('\'') && a.ends_with('\'') || a.starts_with('"') && a.ends_with('"'))
+            && a.len() >= 2
+        {
+            return Ok(Y::String(a[1..a.len() - 1].to_string()));
+        }
+        match a {
+            "true" | "True" => return Ok(Y::Bool(true)),
+            "false" | "False" => return Ok(Y::Bool(false)),
+            "none" | "None" => return Ok(Y::Null),
+            "[]" => return Ok(Y::Sequence(vec![])),
+            "{}" => return Ok(Y::Mapping(Default::default())),
+            _ => {}
+        }
+        if let Ok(n) = a.parse::<i64>() {
+            return Ok(Y::Number(n.into()));
+        }
+        if regex::Regex::new(r"^[A-Za-z_][A-Za-z0-9_]*$")
+            .expect("regex")
+            .is_match(a)
+        {
+            return match self.lookup(a, role) {
+                Some(x) => self.eval(&x, a, depth + 1, role),
+                None => Err(format!("{key} falls back to {a}, which nothing declares")),
+            };
+        }
+        Err(format!(
+            "{key} has default({a}), which the plan does not evaluate outside a play"
+        ))
     }
 
     fn eval(&self, v: &Y, key: &str, depth: u32, role: Option<&str>) -> Result<Y, String> {
-        let Y::String(s) = v else {
-            return Ok(v.clone());
-        };
-        if !s.contains("{{") {
-            return Ok(v.clone());
-        }
-        if depth > 4 {
+        if depth > 6 {
             return Err(format!("{key} refers to itself"));
         }
-        let expr = regex::Regex::new(
-            r"\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?:\|\s*default\(\s*([^()]*?)\s*\))?\s*(?:\|\s*(int|bool|trim))?\s*\}\}",
-        )
-        .expect("regex");
+        let s = match v {
+            Y::String(s) => s,
+            Y::Sequence(_) | Y::Mapping(_) => {
+                return if serde_yaml::to_string(v).unwrap_or_default().contains("{{") {
+                    Err(format!("{key} holds a template inside a list or mapping, which resolves only inside a play"))
+                } else {
+                    Ok(v.clone())
+                };
+            }
+            _ => return Ok(v.clone()),
+        };
+        if !s.contains("{{") && !s.contains("{%") {
+            return Ok(v.clone());
+        }
+        let expr = regex::Regex::new(r"\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?:\|\s*default\(([^()]*)\))?\s*(?:\|\s*(int|bool|trim|string))?\s*\}\}").expect("regex");
         let one = |c: &regex::Captures| -> Result<Y, String> {
-            let inner = match self.raw(&c[1]).or_else(|| self.role_default(role, &c[1])) {
+            let inner = match self.lookup(&c[1], role) {
+                Some(Y::Null) if c.get(2).is_none() => Y::Null,
                 Some(x) => self.eval(&x, &c[1], depth + 1, role)?,
                 None => match c.get(2) {
-                    Some(d) => serde_yaml::from_str::<Y>(d.as_str()).unwrap_or(Y::Null),
+                    Some(d) => self.default_arg(d.as_str(), key, depth, role)?,
                     None => return Err(format!("{key} needs {}, which nothing declares", &c[1])),
                 },
             };
             Ok(match c.get(3).map(|m| m.as_str()) {
-                Some("int") => scalar(&inner)
-                    .and_then(|s| s.trim().parse::<i64>().ok())
-                    .map(|n| Y::Number(n.into()))
-                    .unwrap_or(Y::Number(0.into())),
-                Some("bool") => Y::Bool(scalar(&inner).is_some_and(|s| {
-                    matches!(s.trim().to_lowercase().as_str(), "true" | "yes" | "1")
-                })),
-                Some("trim") => Y::String(scalar(&inner).unwrap_or_default().trim().to_string()),
+                Some("int") => Y::Number(int_of(&inner).unwrap_or(0).into()),
+                Some("bool") => Y::Bool(truthy(&inner)),
+                Some("trim") => Y::String(jinja_str(&inner)?.trim().to_string()),
+                Some("string") => Y::String(jinja_str(&inner)?),
                 _ => inner,
             })
         };
@@ -216,7 +419,7 @@ impl Scope<'_> {
         for c in expr.captures_iter(s) {
             let m = c.get(0).expect("match");
             out.push_str(&s[last..m.start()]);
-            out.push_str(&scalar(&one(&c)?).unwrap_or_default());
+            out.push_str(&jinja_str(&one(&c)?)?);
             last = m.end();
         }
         out.push_str(&s[last..]);
@@ -227,6 +430,23 @@ impl Scope<'_> {
         }
         Ok(Y::String(out))
     }
+}
+
+/// A value as Jinja prints it into a string.
+fn jinja_str(v: &Y) -> Result<String, String> {
+    Ok(match v {
+        Y::String(s) => s.clone(),
+        Y::Number(n) => n.to_string(),
+        Y::Bool(true) => "True".into(),
+        Y::Bool(false) => "False".into(),
+        Y::Null => "None".into(),
+        _ => {
+            return Err(
+                "a list or mapping is interpolated into a string, which the plan does not repeat"
+                    .into(),
+            )
+        }
+    })
 }
 
 fn scalar(v: &Y) -> Option<String> {
@@ -240,11 +460,23 @@ fn scalar(v: &Y) -> Option<String> {
 }
 
 fn int_of(v: &Y) -> Option<i64> {
-    scalar(v).and_then(|s| s.trim().parse().ok())
+    match v {
+        Y::Bool(b) => Some(*b as i64),
+        _ => scalar(v).and_then(|s| s.trim().parse().ok()),
+    }
 }
 
+/// Ansible's `bool`: true, yes, on, y, t, 1 (any case) are true.
 fn truthy(v: &Y) -> bool {
-    scalar(v).is_some_and(|s| matches!(s.trim().to_lowercase().as_str(), "true" | "yes" | "1"))
+    match v {
+        Y::Bool(b) => *b,
+        _ => scalar(v).is_some_and(|s| {
+            matches!(
+                s.trim().to_lowercase().as_str(),
+                "true" | "yes" | "on" | "y" | "t" | "1"
+            )
+        }),
+    }
 }
 
 fn to_json(v: &Y) -> Value {
@@ -262,7 +494,6 @@ fn ints(v: &Y, key: &str) -> Result<Value, String> {
             })
             .collect::<Result<Vec<_>, _>>()
             .map(Value::Array),
-        Y::Null => Ok(json!([])),
         other => Err(format!("{key} is not a list ({other:?})")),
     }
 }
@@ -276,6 +507,7 @@ fn host_input(s: &Scope, profile: &str) -> Result<Value, String> {
     // The role's default for the QUIC port is a conditional, so it is read here
     // as the role writes it: goat_zenoh_quic_port (7448) when goat_zenoh_quic_enabled.
     let fabric_udp = match s.raw("goat_host_firewall_fabric_udp_port") {
+        Some(Y::Null) => return Err("goat_host_firewall_fabric_udp_port is declared empty (null); give it a value or remove it".into()),
         Some(v) => s.eval(
             &v,
             "goat_host_firewall_fabric_udp_port",
@@ -521,88 +753,86 @@ fn peering_entry(s: &Scope, transport: &str, package: &Path) -> Result<Value, St
 /// Everything the input for one host needs from the plan.
 pub struct HostContext<'a> {
     pub repo: &'a Path,
-    pub peerings: &'a [config::Peering],
-    pub ours: &'a config::Peering,
     pub our_edge_group: &'a str,
     pub our_work: &'a Path,
     /// The counterparty package this run uses (FED_COUNTERPARTY, else <work>/theirs.canonical.json).
     pub our_package: PathBuf,
+    /// Phase 1's probe answers, one `<inventory host>.json` per host, with the
+    /// peerings the baseline stored on each edge (`host_firewall_peerings`).
+    pub probe_dir: PathBuf,
+}
+
+/// The roles in scope in the play that applies the baseline to this kind of host.
+fn play_roles(profile: &str, transport: &str) -> Vec<&'static str> {
+    match (profile, transport) {
+        ("core", _) => vec!["goat-host-firewall", "goat-fed-republisher"],
+        (_, "ipsec-fips") => vec!["goat-host-firewall", "goat-peering-edge"],
+        _ => vec!["goat-host-firewall", "goat-peering-wg"],
+    }
 }
 
 fn scope<'a>(
     repo: &'a Path,
     host: &str,
-    group: &str,
-    parent: &str,
     applied: Option<PathBuf>,
+    roles: Vec<&'static str>,
 ) -> Scope<'a> {
+    let inv = parse_inventory(repo);
+    let groups = inv.groups_of(host);
     Scope {
         repo,
+        inv,
         host: host.to_string(),
-        groups: vec![group.to_string(), parent.to_string(), "all".to_string()],
+        groups,
         applied,
+        roles,
     }
 }
 
-/// The renderer input for one host, without the live fields. For an edge host
-/// it carries every declared peering whose edge group names the same machine,
-/// as the role carries every peering stored on the host.
-pub fn input(
-    c: &HostContext,
-    host: &str,
-    address: &str,
-    group: &str,
-    profile: &str,
-) -> Result<Value, String> {
-    let parent = if profile == "core" {
-        "peering_cores"
-    } else {
-        "peering_edges"
-    };
-    let s = scope(c.repo, host, group, parent, None);
+/// The peerings the baseline stored on this edge, as phase 1's probe read them.
+fn stored_peerings(probe_dir: &Path, host: &str) -> Result<Vec<Value>, String> {
+    let f = probe_dir.join(format!("{host}.json"));
+    let text = std::fs::read_to_string(&f).map_err(|_| {
+        format!("the peerings stored on {host} were not read (phase 1's live probe reads them; it did not run, or the host did not answer)")
+    })?;
+    let doc: Value =
+        serde_json::from_str(&text).map_err(|_| format!("{} is not JSON", f.display()))?;
+    match &doc["host_firewall_peerings"] {
+        Value::Array(xs) => Ok(xs.clone()),
+        _ => Err(format!(
+            "the probe of {host} did not read the peerings stored on it"
+        )),
+    }
+}
+
+/// The renderer input for one host, without the live fields. An edge host
+/// carries the peerings the baseline stored on it, with this run's entry in
+/// place of its stored copy, exactly as the role assembles them.
+pub fn input(c: &HostContext, host: &str, profile: &str) -> Result<Value, String> {
+    let transport = agreement_of(c.our_work).map(|(k, _)| k).unwrap_or_default();
+    // peering-wg.yml and peering-republisher.yml load apply's rendered values
+    // with include_vars; peering-edge.yml (ipsec-fips) does not.
+    let applied = c.our_work.join(format!(
+        "applied/ops/ansible/group_vars/{}",
+        c.our_edge_group
+    ));
+    let loads_applied = profile == "core" || transport == "wireguard";
+    let s = scope(
+        c.repo,
+        host,
+        (loads_applied && applied.is_dir()).then_some(applied),
+        play_roles(profile, &transport),
+    );
     let host_v = host_input(&s, profile)?;
     let mut peerings = Vec::new();
     if profile == "edge" {
-        for p in c.peerings {
-            let mine = p.with == c.ours.with && p.environment == c.ours.environment;
-            let edge_group = if mine {
-                c.our_edge_group.to_string()
-            } else {
-                format!("{}_edge", p.with)
-            };
-            let Some((name, _)) = inventory_hosts(c.repo, &edge_group)
-                .into_iter()
-                .find(|(_, a)| a == address)
-            else {
-                continue;
-            };
-            let work = if mine {
-                Some(c.our_work.to_path_buf())
-            } else {
-                work_of_other(c.our_work, &p.with)
-            };
-            let Some(work) = work else {
-                return Err(format!("{} shares this machine, and its working directory (agreement, package) is not found", p.with));
-            };
-            let transport = agreement_of(&work).map(|(k, _)| k).unwrap_or_default();
-            let package = if mine {
-                c.our_package.clone()
-            } else {
-                work.join("theirs.canonical.json")
-            };
-            let applied = work.join(format!("applied/ops/ansible/group_vars/{edge_group}"));
-            let ps = scope(
-                c.repo,
-                &name,
-                &edge_group,
-                "peering_edges",
-                applied.is_dir().then_some(applied),
-            );
-            peerings.push(
-                peering_entry(&ps, &transport, &package)
-                    .map_err(|e| format!("peering {}: {e}", p.with))?,
-            );
-        }
+        let ours = peering_entry(&s, &transport, &c.our_package)?;
+        let name = ours["name"].clone();
+        peerings = stored_peerings(&c.probe_dir, host)?
+            .into_iter()
+            .filter(|p| p["name"] != name)
+            .collect();
+        peerings.push(ours);
     }
     Ok(json!({
         "schema": "goat-host-firewall-input/v1",
@@ -701,16 +931,16 @@ pub fn render(repo: &Path, input: &Value) -> Render {
     }
 }
 
-/// Whether the baseline is on for a host (`goat_host_firewall_baseline`).
-pub fn baseline_on(repo: &Path, host: &str, group: &str, parent: &str) -> bool {
-    scope(repo, host, group, parent, None)
+/// Whether the baseline is on for a host (`goat_host_firewall_baseline`). An
+/// expression the plan cannot evaluate is an error, never "off".
+pub fn baseline_on(repo: &Path, host: &str) -> Result<bool, String> {
+    scope(repo, host, None, vec!["goat-host-firewall"])
         .get(
             "goat_host_firewall_baseline",
             Some("goat-host-firewall"),
             Y::Bool(false),
         )
         .map(|v| truthy(&v))
-        .unwrap_or(false)
 }
 
 /// The plan's entry for one host.
@@ -721,11 +951,6 @@ pub fn entry(
     group: &str,
     profile: &str,
 ) -> HostFirewall {
-    let parent = if profile == "core" {
-        "peering_cores"
-    } else {
-        "peering_edges"
-    };
     let base = |outcome: &str, detail: String| HostFirewall {
         host: host.to_string(),
         address: address.to_string(),
@@ -736,13 +961,17 @@ pub fn entry(
         sha256: None,
         ruleset: None,
     };
-    if !baseline_on(c.repo, host, group, parent) {
-        return base(
-            "NOT APPLICABLE",
-            "host firewall baseline: off (goat_host_firewall_baseline is not true); nothing is rendered or applied".into(),
-        );
+    match baseline_on(c.repo, host) {
+        Ok(false) => {
+            return base(
+                "NOT APPLICABLE",
+                "host firewall baseline: off (goat_host_firewall_baseline is not true); nothing is rendered or applied".into(),
+            )
+        }
+        Err(why) => return base("BLOCKED", format!("cannot tell whether the host firewall baseline is on: {why}")),
+        Ok(true) => {}
     }
-    let input = match input(c, host, address, group, profile) {
+    let input = match input(c, host, profile) {
         Ok(i) => i,
         Err(why) => {
             return base(
@@ -778,22 +1007,19 @@ mod tests {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
     }
 
-    fn p(with: &str) -> config::Peering {
-        config::Peering {
-            with: with.into(),
-            environment: "zagros".into(),
-            site: "alpha".into(),
-            edge_class: "edge".into(),
-        }
-    }
+    const FIXTURE: &str = "ops/federation/standup/fixtures/host-firewall";
 
-    /// A repository with the renderer and the role defaults it is read with,
-    /// one edge and one core host for `velmara`, a work directory with a
-    /// WireGuard agreement, apply's rendered transport file and the partner's
-    /// package, and the baseline on for both groups.
-    struct Fixture {
-        repo: tempfile::TempDir,
-        work: tempfile::TempDir,
+    fn copy_dir(from: &Path, to: &Path) {
+        std::fs::create_dir_all(to).unwrap();
+        for e in std::fs::read_dir(from).unwrap() {
+            let e = e.unwrap();
+            let dst = to.join(e.file_name());
+            if e.file_type().unwrap().is_dir() {
+                copy_dir(&e.path(), &dst);
+            } else {
+                std::fs::copy(e.path(), dst).unwrap();
+            }
+        }
     }
 
     fn write(path: PathBuf, text: &str) {
@@ -801,60 +1027,104 @@ mod tests {
         std::fs::write(path, text).unwrap();
     }
 
+    /// The shared fixture in a fresh repository and working directory, with
+    /// the renderer and the defaults of every role the plays have in scope.
+    struct Fixture {
+        repo: tempfile::TempDir,
+        work: tempfile::TempDir,
+    }
+
     fn fixture() -> Fixture {
         let repo = tempfile::tempdir().unwrap();
-        let r = repo.path();
+        copy_dir(&real().join(FIXTURE).join("repo"), repo.path());
         for f in [
             RENDERER,
             "ops/ansible/roles/goat-host-firewall/defaults/main.yml",
             "ops/ansible/roles/goat-peering-wg/defaults/main.yml",
             "ops/ansible/roles/goat-peering-edge/defaults/main.yml",
+            "ops/ansible/roles/goat-fed-republisher/defaults/main.yml",
         ] {
-            std::fs::create_dir_all(r.join(f).parent().unwrap()).unwrap();
-            std::fs::copy(real().join(f), r.join(f)).unwrap();
+            std::fs::create_dir_all(repo.path().join(f).parent().unwrap()).unwrap();
+            std::fs::copy(real().join(f), repo.path().join(f)).unwrap();
         }
-        write(
-            r.join("ops/ansible/inventory/peering-edges.ini"),
-            "[velmara_edge]\nedge-a ansible_host=192.0.2.10\n[velmara_core]\ncore-a ansible_host=192.0.2.20\n",
-        );
-        write(
-            r.join("ops/ansible/group_vars/all/fw.yml"),
-            "goat_host_firewall_baseline: true\ngoat_host_firewall_management_sources: [\"198.51.100.10/32\"]\n",
-        );
-        write(
-            r.join("ops/ansible/group_vars/velmara_edge/peering.yml"),
-            "peering_wg_listen_port: 51823\n",
-        );
         let work = tempfile::tempdir().unwrap();
-        let w = work.path();
-        write(
-            w.join("agreement.json"),
-            r#"{"transport":{"kind":"wireguard","link_subnet":"169.254.10.0/31"}}"#,
-        );
-        write(
-            w.join("applied/ops/ansible/group_vars/velmara_edge/federation-velmara-transport.yml"),
-            "goat_peering_local_link_ip: \"169.254.10.0\"\ngoat_peering_remote_link_ip: \"169.254.10.1\"\n",
-        );
-        write(
-            w.join("theirs.canonical.json"),
-            r#"{"transport_offer":{"endpoint":"203.0.113.7:51820"}}"#,
-        );
+        copy_dir(&real().join(FIXTURE).join("work"), work.path());
         Fixture { repo, work }
     }
 
-    fn ctx<'a>(
-        f: &'a Fixture,
-        all: &'a [config::Peering],
-        ours: &'a config::Peering,
-    ) -> HostContext<'a> {
+    fn ctx(f: &Fixture) -> HostContext<'_> {
         HostContext {
             repo: f.repo.path(),
-            peerings: all,
-            ours,
             our_edge_group: "velmara_edge",
             our_work: f.work.path(),
             our_package: f.work.path().join("theirs.canonical.json"),
+            probe_dir: f.work.path().join("preflight/probe"),
         }
+    }
+
+    const HOSTS: [(&str, &str, &str, &str); 2] = [
+        ("edge-a", "192.0.2.10", "velmara_edge", "edge"),
+        ("core-a", "192.0.2.20", "velmara_core", "core"),
+    ];
+
+    /// The plan builds exactly the recorded input for each host. The Ansible
+    /// side (tests/test_host_firewall_plan_input.py) evaluates the role's and
+    /// the plays' own expressions on the same fixture and checks the renderer
+    /// gives the same hash for its input as for this one: together, the plan's
+    /// hash equals the deploy's for this declaration.
+    #[test]
+    fn the_plan_builds_the_recorded_input() {
+        let f = fixture();
+        for (host, _, _, profile) in HOSTS {
+            let got = input(&ctx(&f), host, profile).unwrap();
+            let path = real().join(FIXTURE).join(format!("expected/{host}.json"));
+            if std::env::var_os("GOAT_RECORD_HOST_FIREWALL").is_some() {
+                write(
+                    path.clone(),
+                    &(serde_json::to_string_pretty(&got).unwrap() + "\n"),
+                );
+            }
+            let want: Value =
+                serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+            assert_eq!(
+                got,
+                want,
+                "{host}: the plan's input differs from {}",
+                path.display()
+            );
+        }
+    }
+
+    /// The precedence the fixture exercises: `[group:vars]` (ansible_port),
+    /// host_vars over the inventory line (mesh interface), apply's rendered
+    /// file over a stale group_vars value (far link address), the SPIRE port on
+    /// the SPIRE server's core host only, and the stored peerings with this
+    /// run's entry in place of its stale stored copy.
+    #[test]
+    fn the_input_follows_ansible_precedence() {
+        let f = fixture();
+        let c = ctx(&f);
+        let edge = input(&c, "edge-a", "edge").unwrap();
+        assert_eq!(edge["host"]["ssh_port"], 2222);
+        assert_eq!(edge["host"]["mesh_interface"], "wt0");
+        let names: Vec<&str> = edge["peerings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|p| p["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(names, ["wg-fed1", "wg-fed0"]);
+        let ours = &edge["peerings"][1];
+        assert_eq!(ours["remote_link_ip"], "169.254.10.1");
+        assert_eq!(
+            ours["listen_port"], 51823,
+            "this run's entry, not the stale stored one"
+        );
+        assert_eq!(ours["peer_addr"], "203.0.113.7");
+        let core = input(&c, "core-a", "core").unwrap();
+        assert_eq!(core["host"]["spire_bundle_port"], 8443);
+        assert_eq!(core["host"]["spire_bundle_sources"], json!([]));
+        assert_eq!(core["peerings"], json!([]));
     }
 
     /// Baseline off: NOT APPLICABLE, and the renderer is not called.
@@ -862,74 +1132,54 @@ mod tests {
     fn off_is_not_applicable() {
         let f = fixture();
         write(
-            f.repo.path().join("ops/ansible/group_vars/all/fw.yml"),
+            f.repo
+                .path()
+                .join("ops/ansible/group_vars/all/host-firewall.yml"),
             "goat_host_firewall_baseline: false\n",
         );
-        let ours = p("velmara");
-        let all = [ours.clone()];
-        let e = entry(
-            &ctx(&f, &all, &ours),
-            "edge-a",
-            "192.0.2.10",
-            "velmara_edge",
-            "edge",
-        );
+        let e = entry(&ctx(&f), "edge-a", "192.0.2.10", "velmara_edge", "edge");
         assert_eq!(e.outcome, "NOT APPLICABLE");
         assert!(e.detail.starts_with("host firewall baseline: off"));
         assert!(e.sha256.is_none() && e.ruleset.is_none());
     }
 
     /// Baseline on: the plan records the ruleset and the hash the renderer
-    /// printed for this input, in the same run; the input carries the
-    /// peering as peering-wg.yml builds it.
+    /// printed for this input, in the same run.
     #[test]
     fn on_records_the_ruleset_and_its_hash() {
         let f = fixture();
-        let ours = p("velmara");
-        let all = [ours.clone()];
-        let c = ctx(&f, &all, &ours);
-        let e = entry(&c, "edge-a", "192.0.2.10", "velmara_edge", "edge");
-        assert_eq!(e.outcome, "PASS", "{}", e.detail);
-        let i = input(&c, "edge-a", "192.0.2.10", "velmara_edge", "edge").unwrap();
-        let Render::Ruleset { sha256, ruleset } = render(f.repo.path(), &i) else {
-            panic!("refused")
-        };
-        assert_eq!(e.sha256.as_deref(), Some(sha256.as_str()));
-        assert_eq!(e.ruleset.as_deref(), Some(ruleset.as_str()));
-        let peer = &i["peerings"][0];
-        assert_eq!(peer["name"], "wg-fed0");
-        assert_eq!(peer["listen_port"], 51823);
-        assert_eq!(peer["peer_addr"], "203.0.113.7");
-        assert_eq!(peer["remote_link_ip"], "169.254.10.1");
-        assert_eq!(peer["edge_port"], 7448);
-        let core = entry(&c, "core-a", "192.0.2.20", "velmara_core", "core");
-        assert_eq!(core.outcome, "PASS", "{}", core.detail);
-        assert_ne!(core.sha256, e.sha256);
+        let c = ctx(&f);
+        for (host, addr, group, profile) in HOSTS {
+            let e = entry(&c, host, addr, group, profile);
+            assert_eq!(e.outcome, "PASS", "{host}: {}", e.detail);
+            let Render::Ruleset { sha256, ruleset } =
+                render(f.repo.path(), &input(&c, host, profile).unwrap())
+            else {
+                panic!("refused")
+            };
+            assert_eq!(e.sha256.as_deref(), Some(sha256.as_str()));
+            assert_eq!(e.ruleset.as_deref(), Some(ruleset.as_str()));
+        }
     }
 
-    /// The plan's hash equals the hash the deploy prints for the same
-    /// declaration: the role adds the live-host fields (bridges, ephemeral
-    /// range, uplinks, the managing session, the listening sockets) to the same
-    /// input, and the renderer's hash does not move.
+    /// The fields the role reads from the live host never move the hash, so
+    /// leaving them out of the plan keeps its hash the deploy's.
     #[test]
-    fn the_plan_hash_equals_the_deploy_hash() {
+    fn the_live_host_fields_do_not_move_the_hash() {
         let f = fixture();
-        let ours = p("velmara");
-        let all = [ours.clone()];
-        let c = ctx(&f, &all, &ours);
-        for (host, addr, group, profile) in [
-            ("edge-a", "192.0.2.10", "velmara_edge", "edge"),
-            ("core-a", "192.0.2.20", "velmara_core", "core"),
-        ] {
+        let c = ctx(&f);
+        for (host, addr, group, profile) in HOSTS {
             let planned = entry(&c, host, addr, group, profile);
-            let mut deploy = input(&c, host, addr, group, profile).unwrap();
+            let mut deploy = input(&c, host, profile).unwrap();
             deploy["host"]["bridge_interfaces"] = json!(["br-5f1e2d3c4b5a"]);
             deploy["host"]["ephemeral_ports"] = json!([32768, 60999]);
             deploy["host"]["uplink_interfaces"] = json!(["eth0"]);
+            let ssh = deploy["host"]["ssh_port"].clone();
             deploy["must_reach"] =
-                json!([{"saddr": "198.51.100.10", "proto": "tcp", "dport": 22, "iif": "eth0"}]);
-            deploy["listening_ss"] =
-                json!("tcp LISTEN 0 128 0.0.0.0:22 0.0.0.0:* users:((\"sshd\",pid=1,fd=3))\n");
+                json!([{"saddr": "198.51.100.10", "proto": "tcp", "dport": ssh, "iif": "eth0"}]);
+            deploy["listening_ss"] = json!(format!(
+                "tcp LISTEN 0 128 0.0.0.0:{ssh} 0.0.0.0:* users:((\"sshd\",pid=1,fd=3))\n"
+            ));
             let Render::Ruleset { sha256, .. } = render(f.repo.path(), &deploy) else {
                 panic!("deploy-side input refused")
             };
@@ -947,18 +1197,12 @@ mod tests {
     fn a_refusal_is_blocked_with_its_code() {
         let f = fixture();
         write(
-            f.repo.path().join("ops/ansible/group_vars/all/fw.yml"),
+            f.repo
+                .path()
+                .join("ops/ansible/group_vars/all/host-firewall.yml"),
             "goat_host_firewall_baseline: true\ngoat_host_firewall_management_sources: []\n",
         );
-        let ours = p("velmara");
-        let all = [ours.clone()];
-        let e = entry(
-            &ctx(&f, &all, &ours),
-            "edge-a",
-            "192.0.2.10",
-            "velmara_edge",
-            "edge",
-        );
+        let e = entry(&ctx(&f), "edge-a", "192.0.2.10", "velmara_edge", "edge");
         assert_eq!(
             (e.outcome.as_str(), e.code.as_deref()),
             ("BLOCKED", Some("GB-210")),
@@ -967,110 +1211,61 @@ mod tests {
         );
     }
 
-    /// Before the agreement, the tunnel the rules admit is not known: BLOCKED,
-    /// saying so, rather than a ruleset built on a guess.
+    /// What the plan cannot know is BLOCKED, saying why: no agreement yet, or
+    /// no probe answer with the peerings stored on the edge.
     #[test]
-    fn no_agreement_is_blocked() {
+    fn what_the_plan_cannot_know_is_blocked() {
         let f = fixture();
-        std::fs::remove_file(f.work.path().join("agreement.json")).unwrap();
-        let ours = p("velmara");
-        let all = [ours.clone()];
-        let e = entry(
-            &ctx(&f, &all, &ours),
-            "edge-a",
-            "192.0.2.10",
-            "velmara_edge",
-            "edge",
-        );
+        std::fs::remove_file(f.work.path().join("preflight/probe/edge-a.json")).unwrap();
+        let e = entry(&ctx(&f), "edge-a", "192.0.2.10", "velmara_edge", "edge");
         assert_eq!(e.outcome, "BLOCKED");
+        assert!(
+            e.detail.contains("stored on edge-a were not read"),
+            "{}",
+            e.detail
+        );
+        let core = entry(&ctx(&f), "core-a", "192.0.2.20", "velmara_core", "core");
+        assert_eq!(
+            core.outcome, "PASS",
+            "a core host carries no peerings: {}",
+            core.detail
+        );
+        std::fs::remove_file(f.work.path().join("agreement.json")).unwrap();
+        let e = entry(&ctx(&f), "edge-a", "192.0.2.10", "velmara_edge", "edge");
         assert!(e.detail.contains("no agreement yet"), "{}", e.detail);
     }
 
-    /// The core play's SPIRE values: the bundle port only on the SPIRE
-    /// server's host, and never any sources.
+    /// The evaluator never guesses: an undefined variable in the switch is
+    /// BLOCKED (not "off"), a declared null is BLOCKED, `default(var)` reads
+    /// the variable, and `on` is true as Ansible's bool reads it.
     #[test]
-    fn the_core_spire_bundle_port_is_the_plays() {
+    fn the_evaluator_fails_closed() {
         let f = fixture();
-        write(
-            f.repo
-                .path()
-                .join("ops/ansible/group_vars/velmara_core/spire.yml"),
-            "peering_spire_enabled: true\npeering_spire_server_host: core-a\n",
-        );
-        let ours = p("velmara");
-        let all = [ours.clone()];
-        let c = ctx(&f, &all, &ours);
-        let i = input(&c, "core-a", "192.0.2.20", "velmara_core", "core").unwrap();
-        assert_eq!(i["host"]["spire_bundle_port"], 8443);
-        assert_eq!(i["host"]["spire_bundle_sources"], json!([]));
-        let other = input(&c, "core-b", "192.0.2.21", "velmara_core", "core").unwrap();
-        assert_eq!(other["host"]["spire_bundle_port"], "");
-    }
-
-    /// Two declared peerings on one edge machine are both in the input, as the
-    /// role carries every peering stored on the host.
-    #[test]
-    fn every_peering_on_the_machine_is_carried() {
-        let f = fixture();
-        let root = f.work.path().parent().unwrap().to_path_buf();
-        let meadow = root.join("meadow");
-        write(
-            meadow.join("agreement.json"),
-            r#"{"transport":{"kind":"wireguard","link_subnet":"169.254.10.2/31"}}"#,
-        );
-        write(
-            meadow.join("applied/ops/ansible/group_vars/meadow_edge/t.yml"),
-            "goat_peering_remote_link_ip: \"169.254.10.3\"\n",
-        );
-        write(
-            meadow.join("theirs.canonical.json"),
-            r#"{"transport_offer":{"endpoint":"partner.example.org:51820"}}"#,
-        );
-        let inv = f
+        let fw = f
             .repo
             .path()
-            .join("ops/ansible/inventory/peering-edges.ini");
-        let text = std::fs::read_to_string(&inv).unwrap()
-            + "[meadow_edge]\nedge-m ansible_host=192.0.2.10\n";
-        std::fs::write(&inv, text).unwrap();
+            .join("ops/ansible/group_vars/all/host-firewall.yml");
+        let base = "goat_host_firewall_management_sources: [\"198.51.100.0/24\"]\n";
         write(
-            f.repo
-                .path()
-                .join("ops/ansible/group_vars/meadow_edge/p.yml"),
-            "peering_wg_interface: wg-fed1\npeering_wg_listen_port: 51825\n",
+            fw.clone(),
+            &format!("{base}goat_host_firewall_baseline: \"{{{{ site_hardening }}}}\"\n"),
         );
-        let ours = p("velmara");
-        let all = [ours.clone(), p("meadow")];
-        // Ours sits beside meadow's directory, as work_of_other looks for it.
-        let our_dir = root.join("velmara");
-        std::fs::create_dir_all(&our_dir).unwrap();
-        for e in std::fs::read_dir(f.work.path()).unwrap() {
-            let e = e.unwrap();
-            let _ = std::process::Command::new("cp")
-                .arg("-a")
-                .arg(e.path())
-                .arg(&our_dir)
-                .status();
-        }
-        let c = HostContext {
-            our_work: &our_dir,
-            our_package: our_dir.join("theirs.canonical.json"),
-            ..ctx(&f, &all, &ours)
-        };
-        let i = input(&c, "edge-a", "192.0.2.10", "velmara_edge", "edge").unwrap();
-        let names: Vec<&str> = i["peerings"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|x| x["name"].as_str().unwrap())
-            .collect();
-        assert_eq!(names, ["wg-fed0", "wg-fed1"]);
+        let e = entry(&ctx(&f), "edge-a", "192.0.2.10", "velmara_edge", "edge");
+        assert_eq!(e.outcome, "BLOCKED", "{}", e.detail);
+        write(
+            fw.clone(),
+            &format!("{base}goat_host_firewall_baseline: on\ngoat_host_firewall_mesh_dns_port:\n"),
+        );
+        let e = entry(&ctx(&f), "edge-a", "192.0.2.10", "velmara_edge", "edge");
         assert_eq!(
-            i["peerings"][1]["peer_addr"], "",
-            "a name is not filtered on, as the play does"
+            e.outcome, "BLOCKED",
+            "on is true, and a null is refused: {}",
+            e.detail
         );
-        let _ = std::fs::remove_dir_all(&our_dir);
-        let _ = std::fs::remove_dir_all(&meadow);
+        assert!(e.detail.contains("declared empty"), "{}", e.detail);
+        write(fw, &format!("{base}goat_host_firewall_baseline: true\nsite_ssh: 2200\ngoat_host_firewall_ssh_port: \"{{{{ jump_port | default(site_ssh) }}}}\"\n"));
+        let i = input(&ctx(&f), "edge-a", "edge").unwrap();
+        assert_eq!(i["host"]["ssh_port"], 2200);
     }
 
     fn yaml(path: &str) -> Y {
@@ -1085,23 +1280,32 @@ mod tests {
             .collect()
     }
 
-    /// The plan builds exactly the fields the role and the plays build: a field
-    /// added there and not here would make the two hashes differ.
+    fn baseline_task(play: &str, profile: &str) -> Y {
+        let doc = yaml(play);
+        doc[0]["post_tasks"]
+            .as_sequence()
+            .unwrap()
+            .iter()
+            .find(|t| t["vars"]["goat_host_firewall_profile"].as_str() == Some(profile))
+            .expect("the play's baseline task")
+            .clone()
+    }
+
+    /// The plan builds exactly the fields the role and the plays build, and
+    /// the core play passes no variable the plan does not set: a field or a
+    /// play variable added there and not here fails this test.
     #[test]
     fn the_input_has_the_fields_the_role_and_plays_build() {
         let f = fixture();
-        let ours = p("velmara");
-        let all = [ours.clone()];
-        let c = ctx(&f, &all, &ours);
-        let i = input(&c, "edge-a", "192.0.2.10", "velmara_edge", "edge").unwrap();
-        let ours_keys = |v: &Value| {
+        let c = ctx(&f);
+        let i = input(&c, "edge-a", "edge").unwrap();
+        let ours = |v: &Value| {
             v.as_object()
                 .unwrap()
                 .keys()
                 .cloned()
                 .collect::<std::collections::BTreeSet<_>>()
         };
-
         let tasks = yaml("ops/ansible/roles/goat-host-firewall/tasks/main.yml");
         let assemble = tasks
             .as_sequence()
@@ -1114,37 +1318,52 @@ mod tests {
         for k in LIVE_INPUT_FIELDS {
             want.remove(*k);
         }
-        assert_eq!(ours_keys(&i), want, "top-level fields");
+        assert_eq!(ours(&i), want, "top-level fields");
         let mut want = keys(&role_input["host"]);
         for k in LIVE_HOST_FIELDS {
             want.remove(*k);
         }
-        assert_eq!(ours_keys(&i["host"]), want, "host fields");
-
-        let play_peering = |play: &str| {
-            let doc = yaml(play);
-            let tasks = doc[0]["post_tasks"].as_sequence().unwrap().clone();
-            let t = tasks
-                .iter()
-                .find(|t| t["vars"]["goat_host_firewall_profile"].as_str() == Some("edge"))
-                .unwrap()
-                .clone();
-            keys(&t["vars"]["goat_host_firewall_peering"])
-        };
+        assert_eq!(ours(&i["host"]), want, "host fields");
         assert_eq!(
-            ours_keys(&i["peerings"][0]),
-            play_peering("ops/ansible/peering-wg.yml"),
+            ours(&i["peerings"][1]),
+            keys(
+                &baseline_task("ops/ansible/peering-wg.yml", "edge")["vars"]
+                    ["goat_host_firewall_peering"]
+            ),
             "wireguard peering fields"
         );
+        let core_vars = keys(&baseline_task("ops/ansible/peering-republisher.yml", "core")["vars"]);
+        let handled: std::collections::BTreeSet<String> = [
+            "goat_host_firewall_profile",
+            "goat_host_firewall_spire_bundle_port",
+            "goat_host_firewall_spire_bundle_sources",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        assert_eq!(core_vars, handled, "the core play's variables");
+        for play in ["ops/ansible/peering-wg.yml", "ops/ansible/peering-edge.yml"] {
+            let v = keys(&baseline_task(play, "edge")["vars"]);
+            let handled: std::collections::BTreeSet<String> =
+                ["goat_host_firewall_profile", "goat_host_firewall_peering"]
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect();
+            assert_eq!(v, handled, "{play}'s variables");
+        }
         std::fs::write(
             f.work.path().join("agreement.json"),
             r#"{"transport":{"kind":"ipsec-fips","link_subnet":"169.254.10.0/31"}}"#,
         )
         .unwrap();
-        let i = input(&c, "edge-a", "192.0.2.10", "velmara_edge", "edge").unwrap();
+        let i = input(&c, "edge-a", "edge").unwrap();
+        let last = i["peerings"].as_array().unwrap().last().unwrap().clone();
         assert_eq!(
-            ours_keys(&i["peerings"][0]),
-            play_peering("ops/ansible/peering-edge.yml"),
+            ours(&last),
+            keys(
+                &baseline_task("ops/ansible/peering-edge.yml", "edge")["vars"]
+                    ["goat_host_firewall_peering"]
+            ),
             "ipsec peering fields"
         );
     }
