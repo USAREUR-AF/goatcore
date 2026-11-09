@@ -199,6 +199,8 @@ The golden paths landed in September 2026 — the founder-and-joiner standup wal
 
 Status of those paths, in the contract's words: **built, and worked once** — by the end of the September buildout each path had run, fixed in flight as it went; **a fresh, unattended full run has not been proven.** That proof is what `standup --mock` rehearses on the conformance fixture and what the first timed real run measures; until then the one-hour target is a target, not a claim.
 
+`federate`'s phase 1 derives its inputs from the deployment and checks ports, the core router, its receive stores, the slot list and the CA before anything changes: [federation-preflight.md](federation-preflight.md). Status: WIP — gate: the federation test environment's port-collision, wide-store and slot-drift scenarios refuse at phase 1, and a clean peering passes phase 1 with nothing exported by hand.
+
 The edge host and the core router host of a peering can carry a baseline host firewall, opt-in and off by default: inbound default deny with accept rules derived from the peering's own values, and a per-deployment override that tightens freely and loosens only a named rule with a recorded reason ([peering-host-firewall.md](peering-host-firewall.md)). The plan reports its ruleset and hash before anything is applied.
 
 What this adds to the model is only the site level and the peering object; the verbs, the contract and the converger interface are unchanged. `federate` is a declarative verb like any other — which is the point: a sovereign peering becomes something that is declared, reviewed, converged and verified rather than a procedure carried in a runbook.
