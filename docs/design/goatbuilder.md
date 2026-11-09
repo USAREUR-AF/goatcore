@@ -292,6 +292,36 @@ A peering without `offer:` is not checked, and nothing is read: the driver runs 
 
 Not built yet: phase 3 offering a narrowed list. `goat federate init` offers exactly what `federation.toml` declares, so until it takes a narrowed list, an `offer:` narrower than `[data] release` is refused too (GB-129) rather than run with the wider set.
 
+### Per-peering values: allocated and recorded
+
+Status: built (`crates/goatbuilder/src/federate/alloc.rs`, unit tests). Status: WIP — gate: two peerings on one edge host and one core host, both carrying data, in the federation test environment, with every per-peering value allocated and none chosen by hand.
+
+A peering needs values that no agreement carries and that two peerings on one edge host or one core host cannot share. Before this, a person chose them by hand for each peering. The first real run on 9 Nov 2026 hit the case this prevents: the tunnel listen port it chose was NetBird's 51820 on the edge. `federate/alloc.rs` computes them; `allocate(cfg, with, ctx)` returns one peering's `PeeringValues` and `allocate_all(cfg, ctx)` every peering's.
+
+**The values and their sequences.** The first peering of an environment gets index 0 of each sequence. The defaults are port numbers, link-local ranges and the driver's existing working-directory root, so they belong to no deployment.
+
+| Value | Sequence | Unique across |
+|---|---|---|
+| `wg_interface` | `wg-fed0`, `wg-fed1`, ... | interfaces on the edge host |
+| `wg_listen_port` | 51823, 51825, ... (never 51820, NetBird's) | UDP ports on the edge host |
+| `link_subnet` (the subnet we propose) | `169.254.10.0/31`, `169.254.10.2/31`, ... | subnets on the edge host |
+| `spire_outbound_port` | 18443, 18444, ... | TCP ports on the edge host |
+| `republisher_metrics_port` | 9310, 9311, ... | TCP ports on the core host |
+| `edge_listen_port` | 7448 for every peering | shared on purpose: `apply` binds each edge router to its own link address, and the partner dials this port number |
+| `cert_dir` | `/var/lib/goat-federation/<with>/pki`, the driver's own default `<work>/pki` (`/var/lib/goat-federation/<env>-<with>/pki` for the same partner on a second environment) | the repository: the machine running the driver may run every environment's peerings |
+| `edge_group`, `core_group` | `<with>_edge`, `<with>_core` (`<env>_<with>_edge` for the same partner on a second environment) | the repository |
+| `edge_host_name`, `core_host_name` | `<env>-edge-<with>`, `<env>-core-<with>` | the repository |
+| with `forwarder:` only: `public_port`, `carrier_port` | 51820, 51822, ... and 51821, 51823, ... | UDP ports on the forwarder |
+| with `forwarder:` only: `carrier_interface`, `carrier_listen_port`, `carrier_subnet` | `wg-carry0`, ...; 51822, 51824, ...; `169.254.30.0/31`, ... | the edge host, with the values above |
+
+Every host-scoped value is unique within one environment, which is stricter than per host and never wrong. One inventory name per peering per machine matters because Ansible merges the group_vars of every group a host name is in: one name in two peering groups makes each peering's run read the other's interface, ports and certificate paths.
+
+**Where a value comes from, one owner per field.** A pin under `values:` is owned by the person who wrote it. Every other value is owned by the allocation record, `ops/goatbuilder/peering-values.yaml`, which `goatbuilder federate allocate` writes (next section) and the deployment commits like any reviewed change. A value missing from both is allocated: the first candidate in its sequence that no other peering of the environment holds. All pinned and recorded values are registered before any fresh allocation, so a new peering takes only free values.
+
+**Why a record and not only a deterministic order.** Values derived from a peering's position in the list move when an earlier peering is removed or the list is reordered, and a name hashed into a slot can collide. With the record, a value once allocated is never moved by a later run, and adding a peering in any position leaves the others' values as they were. The record is also the reviewable proposal: the change the tool makes to the deployment's own configuration is a diff of this file and the rendered files, read before anything is deployed. Removing a peering's declaration keeps its record entry, and its values stay reserved, because the peering may still be running on the hosts. A person removes the entry once the peering is cut; `allocate` names each such entry. A pinned value is the pin's and is not recorded, so removing a pin lets allocation choose that value afresh; to keep a running peering's value, leave the pin or move the value into its record entry.
+
+**Refusals**, each naming the fix: a pin that another peering's pin or recorded value holds, or a partner declared twice on one environment (GB-121); a pin on a UDP port the edge already holds (GB-122); a malformed pin or a forwarder pin with no forwarder (GB-123); an unusable record, including a recorded value on a port the edge holds (GB-124); a sequence exhausted (GB-127). `goatbuilder validate` reports the pin problems.
+
 ### A goatlite profile (future)
 
 > Designed 2026-10-31: [goatlite.md](goatlite.md) and [ADR 1213](../adr/1213-goatlite-preset-one-box-one-file.md). The paragraph below is the reservation this section made; the design doc is canonical.
