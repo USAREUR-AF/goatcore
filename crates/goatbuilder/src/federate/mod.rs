@@ -577,20 +577,16 @@ pub fn federate(repo: &Path, o: &Options) -> Result<Report> {
 /// One federation verb in process, run in `dir` (the repository, where the
 /// shell phases run, so a relative path means the same thing either way) with
 /// `env` set for its duration (phase 3's DOCKER_HOST). Returns its exit code:
-/// 0, a verb's own 20 to 24, a coded refusal's catalog code (GB-100: 2), or 1
-/// for any other fault, which is printed.
+/// 0, a verb's own 20 to 24, 2 for a refused command line, a coded refusal's
+/// catalog code (GB-100: 2), 101 for a panic, or 1 for any other fault, which
+/// is printed.
 fn run_verb_in_process(dir: &Path, env: &[(String, String)], words: &[String]) -> i32 {
     let saved: Vec<(String, Option<std::ffi::OsString>)> = env.iter().map(|(k, _)| (k.clone(), std::env::var_os(k))).collect();
     for (k, v) in env {
         std::env::set_var(k, v);
     }
     let here = std::env::current_dir().ok();
-    let rc = match std::env::set_current_dir(dir).map_err(anyhow::Error::from).and_then(|_| verbs::run_argv(words)) {
-        Ok(code) => code,
-        // Printed as `goatbuilder federate <verb>` prints it, with its exit
-        // code: GB-100's catalog code, else 1.
-        Err(e) => verbs::fault_exit(&e),
-    };
+    let rc = guarded(|| std::env::set_current_dir(dir).map_err(anyhow::Error::from).and_then(|_| verbs::run_argv(words)));
     if let Some(h) = here {
         let _ = std::env::set_current_dir(h);
     }
@@ -601,6 +597,22 @@ fn run_verb_in_process(dir: &Path, env: &[(String, String)], words: &[String]) -
         }
     }
     rc
+}
+
+/// Run an in-process verb so that whatever goes wrong becomes an exit code,
+/// and the caller's failure row, resume hint, working directory and
+/// environment are kept: a fault is printed as `goatbuilder federate <verb>`
+/// prints it (a refused command line 2, GB-100 its catalog code, else 1), and
+/// a panic exits 101, as a panicking `goat` process would.
+fn guarded(f: impl FnOnce() -> Result<i32>) -> i32 {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
+        Ok(Ok(code)) => code,
+        Ok(Err(e)) => verbs::fault_exit(&e),
+        Err(_) => {
+            eprintln!("goatbuilder federate: the verb panicked (above); nothing after it ran");
+            101
+        }
+    }
 }
 
 fn is_root() -> bool {
@@ -717,6 +729,16 @@ mod tests {
         assert!(spawned.iter().all(|p| p.verb.is_none()), "the default runs every phase in a shell");
         assert!(spawned.iter().find(|p| p.n == 4).unwrap().cmd.contains(" federate lint '"), "goat federate lint");
         assert!(!spawned.iter().any(|p| p.cmd.contains("goatbuilder federate")));
+    }
+
+    /// A panic in an in-process verb exits 101 and a refused command line 2,
+    /// so the driver writes its normal failure row instead of unwinding.
+    #[test]
+    fn an_in_process_panic_or_parse_error_becomes_an_exit_code() {
+        assert_eq!(guarded(|| panic!("a verb panicked")), 101);
+        assert_eq!(guarded(|| Ok(23)), 23);
+        assert_eq!(guarded(|| verbs::run_argv(&["lint".into(), "--no-such-flag".into()])), 2);
+        assert_eq!(guarded(|| Err(anyhow!("a fault"))), 1);
     }
 
     /// An in-process verb returns the verb's own exit code (21 for a malformed
