@@ -59,6 +59,9 @@ ones the operator has not set before it builds the plan, so phase 1, the
 commands of phases 3 to 14 and their helpers read one value. A variable the
 operator sets always wins, which keeps the script avenue working with values
 exported by hand. A value no source declares stays unset and GB-130 names it.
+A declared value holding a quote, `$`, a backtick, a backslash or a control
+character is not exported either, because the phase commands run through
+`bash -c` with values in single quotes; preflight then names it as missing.
 
 | Variable | Read by | Derived from |
 |---|---|---|
@@ -67,7 +70,7 @@ exported by hand. A value no source declares stays unset and GB-130 names it.
 | `FED_CORE_GROUP` | preflight | the allocated core group, else `<with>_core` |
 | `FED_SLOT_ENV` | preflight | `peerings: environment` |
 | `GOAT_AWS_PROFILE` | script, plays, preflight probe | `deploy.aws_profile`, else `default` |
-| `FED_WG_INTERFACE`, `FED_WG_LISTEN_PORT`, `FED_EDGE_LISTEN_PORT`, `FED_REPUBLISHER_METRICS_PORT` | preflight | the allocated values; preflight.py then reads `peering_wg_*`, `goat_zenoh_edge_listen_port` and `goat_fed_republisher_metrics_port` from the group's vars, then the roles' defaults |
+| `FED_WG_INTERFACE`, `FED_WG_LISTEN_PORT`, `FED_EDGE_LISTEN_PORT`, `FED_REPUBLISHER_METRICS_PORT` | preflight | the allocated values; preflight.py then reads `peering_wg_*`, `goat_zenoh_edge_listen_port` and `goat_fed_republisher_metrics_port` from the group's vars, its parent group's (`peering_edges`, `peering_cores`) and `all`, then the roles' defaults. A templated declaration is not guessed: the port check is BLOCKED until the value is exported. host_vars are not read |
 | `FED_SIGNING_KEY` | preflight, phase 3, directory.py | `goat_federation_signing_key` in the edge group's vars |
 | `FED_DIRECTORY_URL`, `FED_NO_DIRECTORY`, `FED_PACKAGE_URL` | preflight, phase 5 | `goat_federation_directory_url`, `goat_federation_no_directory`, `goat_federation_package_url` |
 | `FED_CA_CERT` | preflight, phase 5, phase 8 | `goat_federation_ca_cert`, else `ops/ansible/enrollment/ca/<site>/root-cert.pem` (the portal role's `portal_ca_root_src`) |
@@ -92,13 +95,16 @@ Nothing on a host is changed.
   JSON answer per host on the controller under `<work>/preflight/probe/` (the old
   answers are removed first). Python judges them. A port held by this peering's
   own WireGuard interface, or by a process whose container is this peering's edge
-  router or republisher (directly or through `docker-proxy` for a published port),
-  is a re-run, not a collision. A kernel socket that no WireGuard interface owns,
-  and any other process, is a collision. No answer for a host is GB-133, never a
+  router or republisher (directly, or as the container publishing the port), is a
+  re-run, not a collision. A kernel socket that no WireGuard interface owns, any
+  other process, and any other container publishing the port (with Docker's
+  userland proxy off a published port has no socket for `ss` to show) is a
+  collision. No answer for a host is GB-133, never a
   pass.
 - **Core router.** The same selection as `goat federate init`
   ([federation-router-discovery.md](federation-router-discovery.md)), against the
-  same daemon: `FED_ROUTER_DOCKER_HOST`, else the local runtime. The contract has a
+  same daemon: `FED_ROUTER_DOCKER_HOST`, else an ambient `DOCKER_HOST`, else the
+  local runtime; with a daemon named, Docker only, as phase 3. The contract has a
   Rust and a Python implementation; both are tested against
   `ops/federation/standup/fixtures/router-discovery.tsv`, so one cannot change
   without the other failing.
@@ -124,7 +130,10 @@ immediately before the restart:
 
 - Rust: `federate::preflight::recheck_slot_anchors(repo, peering, work)` returns a
   `SlotRecheck`; `allows_restart()` is true only for PASS and NOT APPLICABLE.
-- Shell: `python3 ops/federation/standup/preflight.py <peering> --work <dir> --only slot-anchors`
+  It writes its own result file, `<work>/preflight/slot-recheck.json`, removed
+  before each run, and refuses when the exit status and the result disagree, so a
+  stale answer or the full phase-1 result never stands in for the recheck.
+- Shell: `python3 ops/federation/standup/preflight.py <peering> --work <dir> --only slot-anchors --result <file>`
   (exit 0 or 1).
 
 ## Dry run
