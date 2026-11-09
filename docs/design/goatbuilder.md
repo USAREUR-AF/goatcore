@@ -416,10 +416,9 @@ The human act stays human: each side reads its verifying key and CA fingerprint 
 - **After phase 6**: the agreement digest (`sha256:` over the composed file, which is the canonical form compose digests) is compared: `--agreement-digest`, which must equal it, or `yes` at the terminal. Journaled as `agreement`, bound to the digest. On a mismatch the composed agreement stays on disk for `goat federate diff`, and the run stops.
 - **Without a terminal, nothing is taken as confirmed.** A missing value stops the run (GB-192, exit 0, as a by-hand stop does) and names the flag to pass; at phase 5 a value that differs fails it (GB-191, exit 1) before the keyring is written. Only the typed word `yes` confirms at a terminal. `--yes` confirms nothing.
 - With `--resume`, given key values are a new answer to phase 5, so phase 5 and everything after it that reads the keyring run again. Values for a phase this run's `--from`/`--to` leave out are refused (GB-189).
-- Without `--confirm` and without those values, phase 5 stops exactly as before and phase 6 does not ask.
+- At a terminal (stdin and stderr both a terminal) confirmation 1 asks by default; `--no-confirm` keeps the stops by hand. Without a terminal, without `--confirm` and without those values, phase 5 stops exactly as before and phase 6 does not ask.
 - The four flags belong to `goatbuilder federate <partner>`; `deploy` and `test` refuse them (GB-189).
 
-**Not built:** asking at the terminal by default (a separate change, held until the gate above passes).
 
 ### `federate`: confirmation 2, approving what our core admits
 
@@ -434,9 +433,9 @@ The human act stays human: a person reads what our core will admit (the partner 
 - **The approval.** `--approve-admission` must name exactly that digest (GB-194 otherwise), or a person at a terminal types `yes`; `pr` at the terminal or `--review-in-pr` writes `<work>/admission/review.md` and stops (GB-197). With no approval and no terminal it stops and names the digest (GB-197). `--yes` approves nothing. The agreement digest must already be confirmed with the partner for the agreement in place (confirmation 1), or nothing changes (GB-194). The approval is journaled as `admission`, bound to the digest, with the plan hash.
 - **On approval**, in order, stopping at the first failure: read the plan again and compare its inputs (GB-188), then place the staged bytes, each written beside its target and renamed into place, with a backup per run in `<work>/admission/<run>/backup/` (a retry never overwrites an earlier run's backup); the core router's dry run; the committed slot list checked against the registry (`ops/scripts/sync-slot-anchors.py --check`); the restart. A failed placement, dry run or slot check puts the backups back and says whether every one went back (GB-194, GB-195); a failed restart leaves the files in place and names the backup folder (GB-196). Commands come from the deployment's environment: `FED_CORE_PLAY` (on `FED_CORE_GROUP`, default `<partner>_core`) or `FED_CORE_RESTART` with `FED_CORE_DRY_RUN`, and `FED_SLOT_REGISTRY_DB` or `FED_SLOT_PG_SSH` (or `FED_SLOT_CHECK=skip`, reported as a check that did not run). Missing settings stop with GB-194 before anything changes, and the fix says how to fall back to the admission by hand.
 - Phase 10 then counts as passed in the journal, so a later deploy skips it while its inputs are unchanged.
-- Without those flags, phase 10 stops for the operator exactly as before.
+- At a terminal, phase 10 asks by default (as with `--confirm`); `--no-confirm` keeps the admission by hand. Without a terminal and without those flags, phase 10 stops for the operator exactly as before.
 
-**Not built:** reaching a core's files over SSH without a play; the planner's own slot-list recheck function in place of the `sync-slot-anchors.py --check` call (the call site is the same); approving at the terminal by default (a separate change, held).
+**Not built:** reaching a core's files over SSH without a play; the planner's own slot-list recheck function in place of the `sync-slot-anchors.py --check` call (the call site is the same).
 
 ### A goatlite profile (future)
 

@@ -50,6 +50,16 @@ impl Ask for Terminal {
     }
 }
 
+/// Whether a run asks its confirmations at the terminal: `--confirm`
+/// always; `--no-confirm` never; otherwise when a person is there to answer.
+pub fn ask_by_default(confirm: bool, no_confirm: bool) -> bool {
+    decide(confirm, no_confirm, Terminal::present())
+}
+
+fn decide(confirm: bool, no_confirm: bool, present: bool) -> bool {
+    confirm || (!no_confirm && present)
+}
+
 /// No person: every question goes unanswered.
 pub struct Nobody;
 
@@ -142,6 +152,23 @@ mod tests {
         assert_eq!(sc.ask("q?").as_deref(), Some("yes"));
         assert_eq!(sc.ask("again?"), None, "the end of input is no answer");
         assert!(sc.transcript.contains("shown") && sc.transcript.contains("q?"));
+    }
+
+    #[test]
+    fn a_terminal_asks_by_default_and_no_confirm_stops_as_before() {
+        assert!(
+            decide(false, false, true),
+            "a person at a terminal is asked"
+        );
+        assert!(
+            !decide(false, false, false),
+            "no terminal: nothing is asked"
+        );
+        assert!(!decide(false, true, true), "--no-confirm: the old stops");
+        assert!(
+            decide(true, false, false),
+            "--confirm: asked (and, with no terminal, it stops for the values)"
+        );
     }
 
     #[test]
