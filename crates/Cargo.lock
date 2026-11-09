@@ -1824,6 +1824,7 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "sha2 0.10.9",
+ "shlex",
  "similar",
  "tempfile",
  "toml 0.8.23",
