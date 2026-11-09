@@ -192,7 +192,8 @@ stops for the key check, it:
    the peering leaves with), else the profile's
    `ca-roots.pem`, only the certificate whose SHA-256 is our `identity.ca_fingerprint`;
 3. looks up `FED_COUNTERPARTY_ID`, fetches their package, checks digest and signatures, and
-   places it where phase 6 reads it when nothing is there yet; fetches their CA, checks it
+   places it where phase 6 reads it when nothing is there yet (a package signature that does
+   not verify under the key in the keyring places nothing); fetches their CA, checks it
    against their `identity.ca_fingerprint`, and places it at `$FED_WORK/theirs-ca.pem` when
    nothing is there yet;
 4. prints their verifying key and CA fingerprint in groups of four for the voice call, and a
@@ -256,8 +257,9 @@ separate change. With it set, the step:
    `$FED_WORK/directory-single-slot.sha256`, which every run that uploads the single slot now
    writes, with or without the flag; the work directory is per peering), holds the package
    named by this peering's last published pointer (`$FED_WORK/ours.pointer.json`, which
-   releases before the mark file also wrote, and which the step now writes only after the
-   directory accepts the pointer, so a run that fails early leaves it as it was), or holds a
+   releases before the mark file also wrote, and which the step now writes only once the
+   directory holds the pointer and, with no `FED_PACKAGE_URL`, serves our package back byte for
+   byte, so a run that fails partway leaves it as it was), or holds a
    package with our `transport_offer`. With
    `FED_PACKAGE_URL` set, the pointer is this peering's when there is none or it names our
    `FED_PACKAGE_URL`. Otherwise the step leaves both alone, so they keep serving the first
@@ -269,9 +271,20 @@ separate change. With it set, the step:
    (printed for the call, where it must match the key read back), and the package's own
    signature verifies under that same key, so a directory that signs the slot under a key of
    its own cannot carry a genuine package. A slot served with no signature, either signature
-   failing, or a keyring key that is not a key, places nothing; and if an earlier run placed
-   exactly the bytes now refused (before the key was read back), the step moves that file to
-   `<file>.refused` so phase 6 does not compose it;
+   failing, or a keyring key that is not a key, places nothing new. A file already on disk is
+   moved to `<file>.refused` only on its own evidence: when the keyring holds their key and
+   the on-disk package's signature does not verify under it. The CA certificate and SPIFFE
+   bundle that came with it go aside with it. A refused upload signature alone moves nothing,
+   so a directory that lies cannot push a correct file aside;
+   then the CA certificate and SPIFFE bundle: before their key is in the keyring, the step
+   saves them as `$FED_WORK/theirs-ca.pem.unconfirmed` and
+   `$FED_WORK/theirs.spiffe-bundle.unconfirmed`, never in place, and says to run phase 5 again
+   once the key is recorded. With the key recorded, it places the CA certificate the checked
+   package names and the bundle whose upload signature verifies under the recorded key,
+   moves aside an on-disk CA certificate without that fingerprint or an on-disk bundle that
+   differs from the verified one, and removes the unconfirmed copies. A bundle that does not
+   verify places and moves nothing. Without the flag, the single-package flow places both as
+   before; the federation end-to-end test reads them in place before it records the keys;
 4. on a 404 there, reads their pointer as §6.2 does, but does **not** place that package: their
    pointer may name another of their peerings' packages, signed by the same key, and the digest
    may not tell (above). It saves it at `$FED_WORK/theirs.pointer.json` with a warning. After
@@ -282,7 +295,20 @@ separate change. With it set, the step:
    the confirming run fetches them. Any failure other than a 404 is a warning and nothing is
    placed;
 5. against a directory that has no such route (a saltlick release before it), warns and keeps
-   the single-package flow.
+   the single-package flow;
+6. on a 409 for our slot upload, says plainly that the directory refuses this package because
+   identical bytes were uploaded there before and then superseded or withdrawn (saltlick keeps
+   those signatures, and an identical package signs identically), that the counterparty still
+   reads what the slot holds now, and names the two remedies: withdraw the slot, which stops the
+   counterparty reading the superseded package but does not make this one uploadable, or
+   reissue the package with a changed field. This is what a party meets going A, then B, then
+   back to A on one day: the package carries day-granular dates, so A reissued the same day is
+   byte-identical to the first A.
+
+Follow-up, **not built**: a per-request nonce in the slot upload statement would let a party
+re-upload identical package bytes after superseding them, without changing the package. It
+needs a new request-statement version in saltlick and a matching reader change, so it waits for
+evidence that same-day reissues happen.
 
 The CA certificate and the SPIFFE bundle stay one per party: they name the party, not a peering.
 
