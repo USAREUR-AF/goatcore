@@ -604,7 +604,7 @@ class AcceptanceRun(unittest.TestCase):
             f.write('    esac\n    echo "HANDLE=$2-$3"; echo "$4" > "$S/$2-$3" ;;\n')
             f.write('  stop) %s ;;\n' % ("true" if stuck else 'rm -f "$S/$2"'))
             f.write('  alive) test -f "$S/$2" ;;\nesac\n')
-        os.chmod(path, 0o755)
+        os.chmod(path, 0o700)
         return path, state
 
     def test_probes_are_started_by_the_run_and_cleaned_up(self):
