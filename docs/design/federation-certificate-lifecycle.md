@@ -5,8 +5,14 @@
 **Built:** phase-8 validation and reuse in `mint-peering-leaves.sh` and its Python
 material helper, explicit replacement, output-directory locking, staged issuance
 and regression tests using disposable CAs. **Not built:** a renewal scheduler,
-service deployment, automatic key distribution or automatic acceptance refresh.
+service deployment, automatic acceptance refresh, or key distribution beyond the
+edge's peering leaves and the republisher's leaf.
 This change does not establish deployment or bilateral acceptance.
+
+**Built:** installation of the two peering leaves and the partner CA on the edge by
+the `goat-zenoh-edge` role, from the run's working directory, behind
+`goat_zenoh_edge_install_certs` (default off), with its refusal checks and a
+localhost test (see "Installing on the edge").
 
 ## Ordinary rerun
 
@@ -51,6 +57,65 @@ installation can leave a mixed set. A `.rotation-pending` journal blocks further
 replacement, including a mixed set of otherwise valid pairs. Restore the previous
 set or complete the approved replacement using the retained private backup, verify
 the complete set, then remove the marker under the operator recovery procedure. This PR does not promise unattended recovery.
+
+## Installing on the edge
+
+Status: WIP — gate: the federation e2e matrix passing with
+`goat_zenoh_edge_install_certs: true` on both sides, then a run on two real
+environments with no certificate file copied by hand.
+
+The edge router reads five files: the outward and inward leaves with their keys,
+from phase 8 (`<work>/pki/`), and the partner's CA, from phase 5
+(`<work>/theirs-ca.pem`). Before this, a person copied them to the edge and
+installed them by hand before phase 12. With `goat_zenoh_edge_install_certs: true`
+the `goat-zenoh-edge` role installs them in phase 12 from the controller, as
+`goat-fed-republisher` already installs its own leaf. The driver already passes
+`fed_work` to every peering play, so no new driver value is needed.
+
+Order, in `roles/goat-zenoh-edge/tasks/certificates.yml`:
+
+1. The five path variables must equal `<cert_dir>/<file>` (the defaults derive
+   them). A deployment that still sets one to another path is refused, naming it.
+2. `goat_zenoh_edge_cert_dir` must be an absolute path at least two levels deep.
+3. Our CA is read from the edge (`goat_zenoh_edge_our_ca_path`, read-only).
+4. `files/check-peering-certs.py` runs on the controller and reports every failed
+   check, not only the first: each key matches its certificate (public keys
+   compared as DER) and has mode 0600; each leaf verifies against the certificate
+   in our CA file whose SHA-256 is our party's `ca_fingerprint` in the agreement,
+   for `sslserver` and `sslclient`, with default trust locations disabled (so an
+   expired leaf fails too); the partner CA file holds exactly one certificate whose
+   SHA-256 over DER is the partner's `ca_fingerprint`. A second certificate in the
+   partner CA file is refused, not ignored: the edge would trust every certificate
+   in it on the partner-facing listener without the agreement naming it.
+5. The `.peering` file in `cert_dir`, when present, must name this partner.
+6. Only then: the directory (0750), the `.peering` file, the certificates and
+   partner CA (0644) and the keys (0600), each with the configured owner.
+
+Steps 1 to 5 write nothing on the edge, so a refusal leaves it as it was. The
+`copy` tasks compare content and mode, so an unchanged file is not rewritten and
+the restart handler is notified only by a real change: a re-run restarts nothing,
+and a rotated leaf restarts the edge once. The checks also run under `--check`.
+
+Several peerings on one edge each have their own `cert_dir`. The default is
+`/etc/goat-zenoh-edge-<partner>/tls`; the driver passes the allocated
+`PeeringValues.cert_dir` once allocation lands. The `.peering` marker makes a
+directory that another peering already holds a refusal rather than an overwrite.
+
+Not built: the driver's phase 10 text still tells the person to place the partner
+CA, which stays correct while the switch defaults to off. Turning the default on,
+and removing that text and the e2e harness's hand install of `partner-ca.pem`, is
+a separate later change. Our CA itself (`goat_zenoh_edge_our_ca_path`) and the
+core's own certificate are still placed by the deployment.
+
+`ops/ansible/roles/goat-zenoh-edge/tests/test-certificates.sh` mints disposable
+CAs with openssl and runs the tasks on localhost: installation with the modes
+above, an idempotent re-run with no restart, a `--check` run, a replaced leaf with
+one restart, a second directory, and a refusal with an unwritten directory for a
+mismatched key, a leaf from another CA, a wrong partner fingerprint, a two-
+certificate partner CA file, a pinned fingerprint that differs from the agreement,
+a key readable by others, a missing leaf, a directory another peering holds, a
+path set by hand and a relative directory. CI runs it in
+`.github/workflows/ansible-syntax-check.yml`.
 
 ## Boundaries and tests
 

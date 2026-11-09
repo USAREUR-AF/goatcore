@@ -120,6 +120,11 @@
   ansible.builtin.include_tasks: ingress-storage-check.yml
   when: goat_zenoh_edge_ingress_key_exprs | default([]) | length > 0
 
+# Before the first write: a refusal here leaves the edge as it was.
+- name: edge | install the peering certificates from the run's working directory
+  ansible.builtin.include_tasks: certificates.yml
+  when: goat_zenoh_edge_install_certs | bool
+
 - name: edge | directories
   ansible.builtin.file:
     path: "{{ item }}"

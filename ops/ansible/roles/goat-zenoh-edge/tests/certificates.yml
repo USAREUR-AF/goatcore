@@ -1,0 +1,21 @@
+---
+# Runs tasks/certificates.yml on localhost against certificates minted by
+# test-certificates.sh. The handler stands in for the edge restart and records
+# each restart, so the test can tell a re-run that changed nothing from one
+# that did. vars_files outranks play vars, so test-certificates.sh passes the
+# peering's own values (partner id, install switch, paths) as extra vars.
+- name: goat-zenoh-edge certificate installation, against local test material
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - ../defaults/main.yml
+  vars:
+    role_path: "{{ playbook_dir }}/.."
+  handlers:
+    - name: Restart goat zenoh edge
+      ansible.builtin.shell: echo restart >> {{ restart_log | quote }}
+      changed_when: true
+  tasks:
+    - name: Install the peering certificates
+      ansible.builtin.include_tasks: ../tasks/certificates.yml

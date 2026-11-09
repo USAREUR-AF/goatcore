@@ -177,4 +177,7 @@ cat <<DONE
 
   The partner's CA — and ONLY the partner's CA — goes in
   goat_zenoh_edge_partner_ca_path. Never in a core router's trust store.
+
+  Or set goat_zenoh_edge_install_certs: true and leave the edge paths unset:
+  phase 12 checks these files and the partner CA and installs them on the edge.
 DONE
