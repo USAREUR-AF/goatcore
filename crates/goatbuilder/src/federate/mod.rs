@@ -29,11 +29,11 @@
 //! The peering must be declared in goatbuilder.yaml `peerings:` (C1: declared
 //! first). An empty list declares nothing, so it refuses every name.
 //!
-//! Phases 3, 4, 6, 7 and 9 are the federation verbs. By default they run as
-//! `goat federate <verb>` in a shell, as the script does. With
-//! `FED_VERBS=goatbuilder` they run in process instead, through the same
-//! library (`verbs.rs`), and the plan prints them as
-//! `goatbuilder federate <verb> ...`, the words that are parsed and run.
+//! Phases 3, 4, 6, 7 and 9 are the federation verbs. By default they run in
+//! process, through the library `goat federate` also runs (`verbs.rs`), and the
+//! plan prints them as `goatbuilder federate <verb> ...`, the words that are
+//! parsed and run. `FED_VERBS=goat` runs them as `goat federate <verb>` in a
+//! shell instead, as before.
 
 pub mod verbs;
 
@@ -80,10 +80,10 @@ struct Phase {
 /// words after `goatbuilder federate`.
 type VerbCall = (Vec<(String, String)>, Vec<String>);
 
-/// Whether phases 3, 4, 6, 7 and 9 run in process (`FED_VERBS=goatbuilder`) or
-/// spawn `goat federate` (unset or `goat`, the default).
+/// Whether phases 3, 4, 6, 7 and 9 run in process (unset or `goatbuilder`, the
+/// default) or spawn `goat federate` (`FED_VERBS=goat`).
 fn verbs_in_process() -> bool {
-    env_or("FED_VERBS", String::new()) == "goatbuilder"
+    env_or("FED_VERBS", String::new()) != "goat"
 }
 
 /// A verb's words as a shell line: the verb and each flag bare, every value
