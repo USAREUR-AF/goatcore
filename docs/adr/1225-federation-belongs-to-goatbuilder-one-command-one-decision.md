@@ -245,7 +245,7 @@ pull request says what stops working, what keeps working and which scenarios cha
 when it is reverted. New behavior arrives beside the existing behavior; the existing avenue
 stays the default until the federation test environment shows the new one passes the same
 scenarios, and **each switch of default is its own small pull request**, so undoing it is one
-revert. Each module's seam, one paragraph per module, is in
+revert. Each module's seam is described below, one paragraph per module, and in
 [`goatbuilder.md`](../design/goatbuilder.md) §"Federation modules and their seams", so a later
 change to one module needs no reading of the others.
 
@@ -270,6 +270,40 @@ branch and no scenario that passes on `main` regresses. The ladder is the merge 
 | 13+ | Switches of default, each alone | one default each (the driver in process; the script on goatbuilder; the directory per counterparty; removal of `goat federate`) | one revert each |
 
 Teaching material follows the switches.
+
+The seams, one paragraph per module: what it owns, its interface, what depends on it, and how
+to revert it alone. The same paragraphs are kept current in `goatbuilder.md` as modules are
+built; this list is the decision's record of the boundaries.
+
+**Stage 0, test-environment baseline.** Owns the scenario matrix the federation test environment runs against a pushed branch (`ops/federation-e2e/`). Interface: a scenario name and its outcome per branch and commit. Every later stage depends on it for graduation. Reverting it leaves `ops/federation-e2e/run.sh` as it is today.
+
+**Stage 1, acceptance cannot pass on skipped checks.** Owns the exit status of `ops/federation/standup/acceptance.sh`: a skipped required check fails the run. Interface: the script's exit code and summary line. Phase 14 of both avenues depends on it. Reverting it restores the old rule, where skips pass unless `FED_ACCEPTANCE_STRICT=1`.
+
+**Stage 2, evidence schema and outcome words.** Owns the versioned check and result schema and the outcomes PASS, FAIL, BLOCKED, SKIP and NOT APPLICABLE (a required check never becomes PASS). Interface: a result bundle under `<work>/evidence/acceptance/`. `status` (stage 12) and the bilateral exchange read it. Reverting it returns acceptance to stage 1's output.
+
+**Stage 2.x, acceptance from the agreement.** Owns checks generated from the agreement's flows, the session manifest, bundles exchanged by file, run-owned probes and their cleanup, and publishing `exchanging` through a reviewable change. Interface: the stage 2 schema. `test` (stage 12) runs it. Each part reverts alone to the fixed four-lane checks.
+
+**Stage 3, library crate (pure move).** Owns `crates/goat-federation`: package format, lint, compose, diff, verify, render and keyring. Interface: the crate's public Rust functions. `goat-cli` and `goatbuilder` depend on it. **Built**, not yet on `main`. Reverting it moves the code back into `crates/goat-cli/src/fed/`, after any later stage that uses it is reverted.
+
+**Stage 4, verbs into the library (pure move).** Owns the six verb implementations, moved out of `crates/goat-cli/src/cmd/federate.rs` with their flags and exit codes. Interface: one library function per verb. Stage 5 and `goat federate` depend on it. Reverting it moves them back into `goat-cli`.
+
+**Stage 5, goatbuilder verbs beside `goat`'s.** Owns `goatbuilder federate init|lint|compose|diff|verify|apply` (same flags and exit codes), an opt-in for the driver to run them in process, and the one-line notice `goat federate` prints. Interface: the command line and exit codes. The switches in stage 13+ depend on it. Reverting it leaves the driver and the script on `goat federate`, which is still the default.
+
+**Stage 6, planner and preflight.** Owns `goatbuilder federate plan`: validates configuration, measures readiness (ports in use, slot list against the registry, receive scopes against the edge's grants, certificate names and expiry, conflicts with existing peerings) and writes a plan with versions, agreement digest, rendered-configuration hashes, resource ownership and restart requirements. Interface: the plan file and its hash. Stage 12's approval binds to that hash. Reverting it leaves `ops/federation/standup/preflight.py` as phase 1.
+
+**Stage 7, edge certificates from the roles.** Owns issuing and installing the per-peering certificates through the edge roles. Interface: role variables naming the peering's certificate directory. Stage 12's `deploy` uses it. Reverting it returns to placing the certificate files by hand.
+
+**Stage 8, allocated peering values.** Owns `crates/goatbuilder/src/federate/alloc.rs` (`PeeringValues`, `allocate`, `allocate_all`): tunnel interface, listen ports, link subnet, edge listen port, republisher metrics port and certificate directory, stable across re-runs, no collision between peerings on one host, proposed as a reviewable change to the deployment's configuration and never expanding what the agreement permits. Interface: `PeeringValues`. Stages 6, 7 and 10 read it. Reverting it returns to hand-written per-peering files.
+
+**Stage 9, phase 3 over SSH.** Owns building our package on the core host from the operator's machine. Interface: phase 3's command and its inputs from the declaration. Reverting it returns to running `init` on the host, with the binary and key copied there.
+
+**Stage 10, forwarder from the declaration.** Owns the peering forwarder's port mapping, applied by the driver from the peering entry ([`peering-forwarder.md`](../design/peering-forwarder.md)). Interface: the forwarder role's variables, filled from `PeeringValues`. Reverting it returns to setting the mapping by hand.
+
+**Stage 11, directory with several packages per party.** Owns per-counterparty directory slots and their lookup in `ops/federation/standup/directory.py`, behind an opt-in switch ([`peering-directory-service.md`](../design/peering-directory-service.md), decision 6). Interface: `/v1/parties/<us>/packages/<counterparty>`. Reverting it leaves the single slot and pointer, which stay the default until their own switch.
+
+**Stage 12, the one-command surface.** Owns `deploy` (executes an approved plan through the existing roles), approval bound to the plan's hash, live prerequisites rechecked before any change, the run journal in `<work>/state.json`, per-peering locks with a host-level allocation check, resume by inspecting actual state, `test` and `status`. Interface: `goatbuilder federate <partner>` and its stages. Each part reverts alone, and the phases then run as today.
+
+**Stage 13+, switches of default.** Each owns one default and nothing else: the driver runs the verbs in process; `peering-standup.sh` calls `goatbuilder federate`; the directory publishes per counterparty; `goat federate` is removed once a goatbuilder release with the verbs reaches partner environments. Each reverts with one commit, restoring the previous default.
 
 ## Alternatives considered
 
