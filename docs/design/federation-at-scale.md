@@ -67,7 +67,7 @@ of the six in `crates/goat-cli/src/cmd/federate.rs:53,67,82,98,111,120` — rend
 | 4 | Partner trust-level declaration | `ops/federation/partners/<id>.yaml` | machine | yes |
 | 5 | Edge group_vars | `ops/ansible/group_vars/EDGE_HOST/federation-<id>.yml` | machine | yes |
 | 6 | ACL fragment | `ops/federation/acl/<id>-fragment.json5` | machine | yes |
-| 7 | Trust anchor placement | manual step named by `crates/goat-cli/src/fed/render.rs:617` | machine | yes |
+| 7 | Trust anchor placement | manual step named by `crates/goat-federation/src/render.rs:617` | machine | yes |
 | 8 | One `zenohd` container | `goat_zenoh_edge_stack` (`roles/goat-zenoh-edge/defaults/main.yml:46`) | machine | **yes — F-424** |
 | 9 | One trust store holding exactly that partner's CA | `goat_zenoh_edge_partner_ca_path` (`:26`) | machine | **yes — F-424** |
 | 10 | One SPIRE federation relationship and one edge trust-sync entry | `spire_federates_with`, `spire_trust_sync_federated_edges` (`roles/spire/defaults/main.yml:156,90`) | machine | yes |

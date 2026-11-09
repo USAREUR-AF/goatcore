@@ -1,0 +1,24 @@
+[package]
+name = "goat-federation"
+version = "0.5.17"
+edition = "2021"
+rust-version = "1.88"
+license = "Apache-2.0"
+description = "Federation package v1 (docs/design/federation-package-spec.md): parse, sign, compose, diff, derive and render. The library behind the federation verbs."
+
+[dependencies]
+base64 = "0.22"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+ed25519-dalek = { version = "2", features = ["pkcs8", "pem"] }
+pem = "3"
+sha2 = "0.10"
+# `verify`: init picks the root that signed the profile certificate's chain by
+# verifying that signature against each bundle root (#1289). The offline CA's
+# X.509 root is Ed25519 (ops/enrollment/x509ca/root.go).
+x509-parser = { version = "0.16", features = ["verify"] }
+
+[dev-dependencies]
+# The trust-anchor tests mint real X.509 chains so the signature checks run
+# against genuine DER.
+rcgen = "0.13"
+tempfile = "3"
