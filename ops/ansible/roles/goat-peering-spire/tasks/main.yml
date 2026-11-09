@@ -199,11 +199,38 @@
     - { src: forward.service.j2, name: "goat-peering-bundle-out-{{ peering_spire_partner_id }}.service", target: "{{ peering_spire_remote_link_ip }}:{{ peering_spire_bundle_port }}" }
   loop_control:
     label: "{{ item.name }}"
+  register: _ps_units
 
-- name: peering-spire | start the forwards
+# A socket cannot be restarted while the proxy it activated is running ("Socket service
+# ... already active, refusing"), and a failed restart leaves the socket closed. So: when
+# a unit changed, stop that direction's proxy, then restart its socket; otherwise only
+# make sure the socket is listening. Re-running phase 13 with nothing changed touches
+# nothing.
+- name: peering-spire | stop a forward whose units changed
+  ansible.builtin.systemd:
+    name: "goat-peering-bundle-{{ item }}-{{ peering_spire_partner_id }}.service"
+    state: stopped
+    daemon_reload: true
+  loop: [in, out]
+  when: >-
+    _ps_units.results | selectattr('changed') | map(attribute='item.name')
+    | select('match', '^goat-peering-bundle-' ~ item ~ '-') | list | length > 0
+
+- name: peering-spire | restart a forward socket whose units changed
+  ansible.builtin.systemd:
+    name: "goat-peering-bundle-{{ item }}-{{ peering_spire_partner_id }}.socket"
+    state: restarted
+    enabled: true
+    daemon_reload: true
+  loop: [in, out]
+  when: >-
+    _ps_units.results | selectattr('changed') | map(attribute='item.name')
+    | select('match', '^goat-peering-bundle-' ~ item ~ '-') | list | length > 0
+
+- name: peering-spire | the forward sockets are listening
   ansible.builtin.systemd:
     name: "{{ item }}"
-    state: restarted
+    state: started
     enabled: true
     daemon_reload: true
   loop:
