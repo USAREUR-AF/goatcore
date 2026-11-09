@@ -1751,6 +1751,34 @@ entries:
       - "goat-host-firewall: REFUSED \\(GB-215\\)"
     exit: 5
 
+  - code: GB-230
+    tool: goatbuilder
+    title: allocate would move a peering that already runs
+    what: "A peering the allocation record does not hold already runs from hand-written configuration (its edge group has hand group_vars, or the hand inventory names it), and the values allocation chose differ from the ones it runs on (its hand group_vars, else the role defaults). Rendering them would move its tunnel or ports on the next phase 2. Nothing was written."
+    causes:
+      - "goatbuilder federate allocate run for the first time in a deployment with a peering set up by hand"
+    fixes:
+      - "adopt it as it runs: pin the values the refusal names under the peering's values: in goatbuilder.yaml (a pin on 51820 needs that environment's peering_edge_reserved_udp to allow it)"
+      - "move it on purpose: FED_ALLOCATE_MOVE=<with> goatbuilder federate allocate --yes"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "\\(GB-230\\)"
+    exit: 2
+
+  - code: GB-231
+    tool: goatbuilder
+    title: the hand-written peering inventory puts one name in two peering groups
+    what: "No peering declares hosts:, so ops/ansible/inventory/peering-edges.ini is hand-written, and it puts one inventory name in two peering groups. Ansible merges the group_vars of every group a name is in, so each peering would read the other's rendered values. Nothing was written."
+    causes:
+      - "one machine listed under the same name for two peerings"
+    fixes:
+      - "give each peering its own inventory name for the machine, with the same ansible_host"
+      - "declare hosts: on every peering and let goatbuilder federate allocate render the inventory"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "\\(GB-231\\)"
+    exit: 2
+
   # ----------------------------------------------------------- external tools
 
   - code: X-ANSIBLE-001
