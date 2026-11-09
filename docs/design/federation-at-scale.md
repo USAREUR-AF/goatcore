@@ -56,9 +56,6 @@ closes.**
 
 ### 1.1 What one peering actually costs
 
-> The six verbs move from `goat` to `goatbuilder federate` ([ADR 1225](../adr/1225-federation-belongs-to-goatbuilder-one-command-one-decision.md), Proposed). The citations
-> below are to where they are built today.
-
 Every row is a real artifact with a real name. `goat federate apply` — the only writing verb
 of the six in `crates/goat-cli/src/cmd/federate.rs:53,67,82,98,111,120` — renders rows 4–7.
 
@@ -499,7 +496,7 @@ small.
 | Piece | State |
 |---|---|
 | The package format, canonical form, signature and digest rules | **Written** — [`federation-package-spec.md`](federation-package-spec.md); the conformance vectors in `ops/federation/vectors/` are normative |
-| The six `goat federate` verbs, `apply` the only writer | **Built** — `crates/goat-cli/src/cmd/federate.rs:53,67,82,98,111,120`. Moving to `goatbuilder federate` on the `goat-federation` library: **designed** ([ADR 1225](../adr/1225-federation-belongs-to-goatbuilder-one-command-one-decision.md)) |
+| The six `goat federate` verbs, `apply` the only writer | **Built** — `crates/goat-cli/src/cmd/federate.rs:53,67,82,98,111,120` |
 | Per-partner edge role and its four CI isolation guards | **Built, deployed once, inward link failed** — F-474 |
 | Peering fired both directions between two purpose-built environments | **Measured** — M-113, 2026-09-05; both environments destroyed after the run |
 | Any goatnet peering with anything | **Not built** |
