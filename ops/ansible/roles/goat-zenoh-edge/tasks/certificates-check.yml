@@ -1,7 +1,8 @@
 ---
-# Install the peering leaves and the partner's CA from the run's working
-# directory (goat_zenoh_edge_install_certs). Every check runs before the first
-# write on the edge; a refusal leaves the edge as it was.
+# Check the peering leaves and the partner's CA before the role writes anything
+# (goat_zenoh_edge_install_certs). Reads only; certificates-install.yml writes
+# them later, after the role's other checks, so a later refusal cannot leave a
+# new certificate installed with its restart lost.
 # docs/design/federation-certificate-lifecycle.md, "Installing on the edge".
 
 - name: edge certs | the paths the edge reads are the files this role installs
@@ -101,7 +102,7 @@
 
 - name: edge certs | the checks that passed
   ansible.builtin.debug:
-    msg: "{{ _ze_certs_check.stdout_lines }}"
+    msg: "{{ _ze_certs_check.stdout_lines | select('match', '^ok: ') | list }}"
 
 - name: edge certs | look for another peering's files in the directory
   ansible.builtin.stat:
@@ -125,46 +126,36 @@
       directory: give this one its own goat_zenoh_edge_cert_dir. Nothing was written.
   when: _ze_certs_marker_stat.stat.exists
 
-- name: edge certs | the per-peering directory
-  ansible.builtin.file:
-    path: "{{ goat_zenoh_edge_cert_dir }}"
-    state: directory
-    owner: "{{ goat_zenoh_edge_cert_owner }}"
-    group: "{{ goat_zenoh_edge_cert_group }}"
-    mode: "0750"
+- name: edge certs | list what an unmarked directory already holds
+  ansible.builtin.find:
+    paths: "{{ goat_zenoh_edge_cert_dir }}"
+    hidden: true
+    file_type: any
+  register: _ze_certs_existing
+  when: not _ze_certs_marker_stat.stat.exists
 
-- name: edge certs | which peering this directory belongs to
-  ansible.builtin.copy:
-    content: "{{ goat_zenoh_edge_partner_id }}\n"
-    dest: "{{ goat_zenoh_edge_cert_dir }}/.peering"
-    owner: "{{ goat_zenoh_edge_cert_owner }}"
-    group: "{{ goat_zenoh_edge_cert_group }}"
-    mode: "0644"
+- name: edge certs | refuse an unmarked directory holding other files
+  # A directory with no .peering file is taken only when it is empty or holds
+  # nothing but the files this role installs: a hand-placed set from another
+  # peering, or a system directory, is never adopted and re-owned.
+  ansible.builtin.assert:
+    that:
+      - _ze_certs_foreign | length == 0
+    fail_msg: >-
+      {{ goat_zenoh_edge_cert_dir }} has no .peering file and holds files this role
+      does not install: {{ _ze_certs_foreign | join(', ') }}. Give this peering its
+      own empty goat_zenoh_edge_cert_dir. Nothing was written.
+  vars:
+    _ze_certs_foreign: >-
+      {{ _ze_certs_existing.files | default([]) | map(attribute='path') | map('basename')
+         | reject('in', ['peering-outward.pem', 'peering-outward-key.pem', 'peering-inward.pem',
+                         'peering-inward-key.pem', 'partner-ca.pem'])
+         | list }}
+  when: not _ze_certs_marker_stat.stat.exists
 
-- name: edge certs | the certificates and the partner CA
-  ansible.builtin.copy:
-    src: "{{ item.src }}"
-    dest: "{{ item.dest }}"
-    owner: "{{ goat_zenoh_edge_cert_owner }}"
-    group: "{{ goat_zenoh_edge_cert_group }}"
-    mode: "0644"
-  loop:
-    - { src: "{{ goat_zenoh_edge_cert_src_dir }}/peering-outward.pem", dest: "{{ goat_zenoh_edge_outward_cert }}" }
-    - { src: "{{ goat_zenoh_edge_cert_src_dir }}/peering-inward.pem", dest: "{{ goat_zenoh_edge_inward_cert }}" }
-    - { src: "{{ goat_zenoh_edge_partner_ca_src }}", dest: "{{ goat_zenoh_edge_partner_ca_path }}" }
-  notify: Restart goat zenoh edge
+- name: edge certs | the checksums of what was checked
+  ansible.builtin.set_fact:
+    _ze_certs_sums: >-
+      {{ _ze_certs_check.stdout_lines | select('match', '^checksums: ') | first
+         | regex_replace('^checksums: ', '') | from_json }}
 
-- name: edge certs | the private keys, readable by their owner alone
-  ansible.builtin.copy:
-    src: "{{ item.src }}"
-    dest: "{{ item.dest }}"
-    owner: "{{ goat_zenoh_edge_cert_owner }}"
-    group: "{{ goat_zenoh_edge_cert_group }}"
-    mode: "0600"
-  loop:
-    - { src: "{{ goat_zenoh_edge_cert_src_dir }}/peering-outward-key.pem", dest: "{{ goat_zenoh_edge_outward_key }}" }
-    - { src: "{{ goat_zenoh_edge_cert_src_dir }}/peering-inward-key.pem", dest: "{{ goat_zenoh_edge_inward_key }}" }
-  loop_control:
-    label: "{{ item.dest }}"
-  diff: false
-  notify: Restart goat zenoh edge

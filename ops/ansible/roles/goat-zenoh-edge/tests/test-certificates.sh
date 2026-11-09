@@ -46,7 +46,13 @@ leaf() { # $1 out dir, $2 name, $3 cn, $4 signing CA name
 }
 fp() { echo "sha256:$(openssl x509 -in "$1" -outform DER | openssl dgst -sha256 -r | cut -d' ' -f1)"; }
 
-ca ours; ca theirs; ca rogue
+ca ours; ca theirs; ca rogue; ca root
+# An intermediate under a shared root, as an operator bundle can name our CA.
+openssl req -new -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -subj /CN=test-mid-ca \
+  -keyout "$T/mid-ca-key.pem" -out "$T/mid.csr" 2>/dev/null
+printf 'basicConstraints=critical,CA:TRUE\nkeyUsage=critical,keyCertSign,cRLSign\n' > "$T/mid.ext"
+openssl x509 -req -in "$T/mid.csr" -CA "$T/root-ca.pem" -CAkey "$T/root-ca-key.pem" -set_serial 0x1001 \
+  -days 30 -sha256 -extfile "$T/mid.ext" -out "$T/mid-ca.pem" 2>/dev/null
 GOOD="$T/good"; mkdir -p "$GOOD/pki"
 leaf "$GOOD/pki" peering-outward fed.xaa.xab.01 ours
 leaf "$GOOD/pki" peering-inward fed.xab.xaa.01 ours
@@ -80,7 +86,7 @@ expect_refusal() { # $1 label, $2 work, $3 cert dir, $4 message fragment, rest: 
     fail "$label: the play passed"; return
   fi
   if ! grep -qF -- "$want" "$LOG"; then
-    fail "$label: no message containing '$want'"; sed -n '/FAILED\|fatal/,+3p' "$LOG" | head -8; return
+    fail "$label: no message containing '$want'"; grep -E -A3 'FAILED|fatal' "$LOG" | head -8; return
   fi
   if [ -e "$dir/peering-outward.pem" ] || [ -e "$dir/partner-ca.pem" ] || [ -e "$dir/peering-outward-key.pem" ]; then
     fail "$label: certificate files were written before the refusal"; return
@@ -133,6 +139,18 @@ else
   fail "second directory"
 fi
 
+W="$(case_work intermediate)"
+leaf "$W/pki" peering-outward fed.xaa.xab.01 mid
+leaf "$W/pki" peering-inward fed.xab.xaa.01 mid
+printf '{"parties":[{"sovereign_id":"xaa","ca_fingerprint":"%s"},{"sovereign_id":"xab","ca_fingerprint":"%s"}]}\n' \
+  "$(fp "$T/mid-ca.pem")" "$(fp "$T/theirs-ca.pem")" > "$W/agreement.json"
+cat "$T/mid-ca.pem" "$T/root-ca.pem" > "$T/edge/mid-bundle.pem"
+if play "$W" "$T/edge/mid/tls" -e "goat_zenoh_edge_our_ca_path=$T/edge/mid-bundle.pem"; then
+  pass "our CA named as an intermediate inside a bundle"
+else
+  fail "intermediate CA: the play failed"; grep -E 'refused' "$LOG" | head -4
+fi
+
 # --- refusals ---------------------------------------------------------------------
 W="$(case_work mismatched-key)"
 openssl ecparam -name prime256v1 -genkey -noout -out "$W/pki/peering-outward-key.pem"; chmod 0600 "$W/pki/peering-outward-key.pem"
@@ -164,6 +182,13 @@ expect_refusal "missing leaf" "$W" "$T/edge/x7/tls" "Run phase 8"
 
 mkdir -p "$T/edge/x8/tls"; echo xac > "$T/edge/x8/tls/.peering"
 expect_refusal "directory another peering holds" "$GOOD" "$T/edge/x8/tls" "holds the certificates of the peering with 'xac'"
+
+W="$(case_work two-leaves)"
+cat "$T/rogue-ca.pem" >> "$W/pki/peering-outward.pem"
+expect_refusal "leaf file with two certificates" "$W" "$T/edge/x10/tls" "holds 2 certificates; it must hold exactly the one leaf"
+
+mkdir -p "$T/edge/x11/tls"; echo other > "$T/edge/x11/tls/somebody-else.pem"
+expect_refusal "unmarked directory holding other files" "$GOOD" "$T/edge/x11/tls" "holds files this role does not install: somebody-else.pem"
 
 expect_refusal "a certificate path set by hand" "$GOOD" "$T/edge/x9/tls" \
   "Remove goat_zenoh_edge_outward_cert" -e "goat_zenoh_edge_outward_cert=$T/elsewhere.pem"

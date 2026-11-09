@@ -1,0 +1,51 @@
+---
+# Install the peering leaves and the partner's CA that certificates-check.yml
+# checked. Each copy carries the checksum the check computed, so a source file
+# changed since the check fails the copy instead of installing unchecked bytes.
+# docs/design/federation-certificate-lifecycle.md, "Installing on the edge".
+
+- name: edge certs | the per-peering directory
+  ansible.builtin.file:
+    path: "{{ goat_zenoh_edge_cert_dir }}"
+    state: directory
+    owner: "{{ goat_zenoh_edge_cert_owner }}"
+    group: "{{ goat_zenoh_edge_cert_group }}"
+    mode: "0750"
+
+- name: edge certs | which peering this directory belongs to
+  ansible.builtin.copy:
+    content: "{{ goat_zenoh_edge_partner_id }}\n"
+    dest: "{{ goat_zenoh_edge_cert_dir }}/.peering"
+    owner: "{{ goat_zenoh_edge_cert_owner }}"
+    group: "{{ goat_zenoh_edge_cert_group }}"
+    mode: "0644"
+
+- name: edge certs | the certificates and the partner CA
+  ansible.builtin.copy:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    owner: "{{ goat_zenoh_edge_cert_owner }}"
+    group: "{{ goat_zenoh_edge_cert_group }}"
+    mode: "0644"
+    checksum: "{{ _ze_certs_sums[item.src] }}"
+  loop:
+    - { src: "{{ goat_zenoh_edge_cert_src_dir }}/peering-outward.pem", dest: "{{ goat_zenoh_edge_outward_cert }}" }
+    - { src: "{{ goat_zenoh_edge_cert_src_dir }}/peering-inward.pem", dest: "{{ goat_zenoh_edge_inward_cert }}" }
+    - { src: "{{ goat_zenoh_edge_partner_ca_src }}", dest: "{{ goat_zenoh_edge_partner_ca_path }}" }
+  notify: Restart goat zenoh edge
+
+- name: edge certs | the private keys, readable by their owner alone
+  ansible.builtin.copy:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    owner: "{{ goat_zenoh_edge_cert_owner }}"
+    group: "{{ goat_zenoh_edge_cert_group }}"
+    mode: "0600"
+    checksum: "{{ _ze_certs_sums[item.src] }}"
+  loop:
+    - { src: "{{ goat_zenoh_edge_cert_src_dir }}/peering-outward-key.pem", dest: "{{ goat_zenoh_edge_outward_key }}" }
+    - { src: "{{ goat_zenoh_edge_cert_src_dir }}/peering-inward-key.pem", dest: "{{ goat_zenoh_edge_inward_key }}" }
+  loop_control:
+    label: "{{ item.dest }}"
+  diff: false
+  notify: Restart goat zenoh edge

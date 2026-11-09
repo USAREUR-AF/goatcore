@@ -6,7 +6,8 @@ and phase 5 (directory.py, or the hand exchange) left the partner's CA. It reads
 and writes nothing on the edge: the role installs the files only when this exits 0.
 
 Checks, all of them, reporting every failure rather than the first:
-  - each leaf and key exists and is a regular file; each key has mode 0600;
+  - each leaf and key exists and is a regular file; each leaf file holds exactly
+    one certificate; each key has mode 0600;
   - each key belongs to its certificate (public keys compared as DER);
   - each leaf chains to OUR CA as the agreement names it (the certificate in
     --our-ca whose SHA-256 is our party's ca_fingerprint), for TLS client and
@@ -21,7 +22,8 @@ Usage:
                          --partner-id <id> --our-ca <pem|-> [--partner-fingerprint sha256:<hex>]
                          [--min-valid-seconds N]
 
-Exit 0 and one `ok:` line per check, or exit 1 and one `refused:` line per failure.
+Exit 0, one `ok:` line per check and a `checksums:` line (JSON, SHA-1 of each
+source file as checked), or exit 1 and one `refused:` line per failure.
 """
 import argparse
 import hashlib
@@ -160,6 +162,12 @@ def main():
             if missing:
                 refused.append(f"{name}: no file at {', '.join(missing)}. Run phase 8 (mint-peering-leaves.sh).")
                 continue
+            with open(cert, "rb") as f:
+                blocks = len(PEM_CERT.findall(f.read()))
+            if blocks != 1:
+                refused.append(f"{name}: {cert} holds {blocks} certificates; it must hold exactly the one leaf "
+                               "phase 8 minted, because every certificate in it is presented to the peer.")
+                continue
             mode = stat.S_IMODE(os.stat(key).st_mode)
             if mode != 0o600:
                 refused.append(f"{name}: {key} has mode {mode:04o}; a private key must be 0600.")
@@ -178,7 +186,10 @@ def main():
                 continue
             chained = True
             for purpose in ("sslserver", "sslclient"):
-                rc, out, err = openssl("verify", *trust, "-trusted", anchor_path, "-purpose", purpose, cert)
+                # -partial_chain: our named CA may be an intermediate under a shared
+                # root; with default locations disabled it is still the only anchor.
+                rc, out, err = openssl("verify", *trust, "-partial_chain", "-trusted", anchor_path,
+                                       "-purpose", purpose, cert)
                 if rc:
                     reason = (err or out.decode(errors="replace")).strip().splitlines()
                     refused.append(f"{name}: {cert} does not chain to our CA {ours_fp} for {purpose}: "
@@ -194,8 +205,19 @@ def main():
             if chained:
                 ok.append(f"{name}: chains to our CA {ours_fp}")
 
+    # SHA-1 of each source as checked, for the copy module's `checksum`: the role
+    # installs exactly these bytes, or fails if a file changed after the check.
+    sums = {}
+    for path in [os.path.join(a.src_dir, n + s) for n in LEAVES for s in (".pem", "-key.pem")] + [a.partner_ca]:
+        try:
+            with open(path, "rb") as f:
+                sums[path] = hashlib.sha1(f.read()).hexdigest()
+        except OSError:
+            pass
     for line in ok:
         print("ok: " + line)
+    if not refused:
+        print("checksums: " + json.dumps(sums, sort_keys=True))
     for line in refused:
         print("refused: " + line)
     return 1 if refused else 0

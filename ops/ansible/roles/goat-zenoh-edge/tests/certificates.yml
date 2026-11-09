@@ -1,6 +1,6 @@
 ---
-# Runs tasks/certificates.yml on localhost against certificates minted by
-# test-certificates.sh. The handler stands in for the edge restart and records
+# Runs tasks/certificates-check.yml and certificates-install.yml on localhost
+# against certificates minted by test-certificates.sh. The handler stands in for the edge restart and records
 # each restart, so the test can tell a re-run that changed nothing from one
 # that did. vars_files outranks play vars, so test-certificates.sh passes the
 # peering's own values (partner id, install switch, paths) as extra vars.
@@ -17,5 +17,7 @@
       ansible.builtin.shell: echo restart >> {{ restart_log | quote }}
       changed_when: true
   tasks:
+    - name: Check the peering certificates
+      ansible.builtin.include_tasks: ../tasks/certificates-check.yml
     - name: Install the peering certificates
-      ansible.builtin.include_tasks: ../tasks/certificates.yml
+      ansible.builtin.include_tasks: ../tasks/certificates-install.yml

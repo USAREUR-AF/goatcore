@@ -40,17 +40,23 @@ installing, the five path variables (`goat_zenoh_edge_outward_cert`, `_key`,
 derived from `goat_zenoh_edge_cert_dir`; a deployment that still sets one of them
 to another path is refused with the name of the setting to remove.
 
-Before anything is written on the edge, `files/check-peering-certs.py` checks on
-the controller, and the role stops on any failure:
+Before the role writes anything on the edge, `tasks/certificates-check.yml`
+runs `files/check-peering-certs.py` on the controller, and the role stops on any
+failure:
 
-- each key belongs to its certificate (public keys compared) and has mode 0600;
+- each leaf file holds exactly one certificate; each key belongs to its
+  certificate (public keys compared) and has mode 0600;
 - each leaf chains to our CA, meaning the certificate in
   `goat_zenoh_edge_our_ca_path` (read from the edge) whose SHA-256 the agreement
   names for us, for TLS client and server use, and has not expired;
 - the partner CA file holds exactly one certificate, and its SHA-256 over DER is
   the `ca_fingerprint` the agreement names for the partner;
-- `goat_zenoh_edge_cert_dir` is not already held by another peering (the
-  directory's `.peering` file names its owner).
+- `goat_zenoh_edge_cert_dir` is not held by another peering: its `.peering` file,
+  when present, names this partner, and a directory without one holds nothing
+  but the five files this role installs.
+
+`tasks/certificates-install.yml` writes the files after the role's other checks,
+each copy pinned to the checksum the check computed.
 
 Keys are installed with mode 0600 and certificates with 0644, in a 0750
 directory. A file whose content and mode are unchanged is left alone, so a re-run
