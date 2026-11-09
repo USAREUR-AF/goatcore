@@ -1750,6 +1750,84 @@ entries:
     matches:
       - "goat-host-firewall: REFUSED \\(GB-215\\)"
     exit: 5
+  # ---------------------------------- goatbuilder federate: journal and locks
+
+  - code: GB-180
+    tool: goatbuilder
+    title: another run of this peering is in progress
+    what: "A real run of `goatbuilder federate` holds <work>/.lock from start to end, so two runs of one peering never interleave phases or overwrite each other's run journal. This run found the lock held and changed nothing."
+    causes:
+      - another terminal or a scheduled job is running `goatbuilder federate` for the same peering
+      - two peerings were given the same working folder (--work or FED_WORK)
+    fixes:
+      - "wait for the other run to finish; the lock file names its process id"
+      - "give each peering its own working folder: --work /var/lib/goat-federation/<partner>"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "another run of peering '[^']*' holds"
+    exit: 1
+
+  - code: GB-181
+    tool: goatbuilder
+    title: a resource this peering needs is held by another peering on the same host
+    what: "Before a peering takes a resource on a shared host (a tunnel interface, a port, a link subnet, a certificate folder), goatbuilder reads every other peering's run journal in the same work root under <root>/.allocation.lock. One of them holds the same resource on the same host, or a journal there could not be read, so nothing was claimed and nothing changed."
+    causes:
+      - two peerings were given the same per-peering value (a pinned value in `peerings:` or a hand-written group_vars file)
+      - a journal in the work root is damaged, so the check cannot tell what it holds
+    fixes:
+      - "give this peering a different value, or let allocation choose one, then make a new plan"
+      - "read the other peering's journal named in the message: <root>/<peering>/state.json"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "cannot take what another peering on the same host holds"
+      - "cannot tell whether peering '[^']*' may take its resources"
+    exit: 1
+
+  - code: GB-182
+    tool: goatbuilder
+    title: the run journal cannot be read
+    what: "<work>/state.json is the only account of what ran for this peering, so a journal that does not parse, was written by a newer goatbuilder, or names another peering is refused rather than overwritten."
+    causes:
+      - the file was edited by hand or cut short
+      - a newer goatbuilder wrote it (its schema is newer than this one reads)
+      - two peerings share one working folder
+    fixes:
+      - "use the goatbuilder that wrote it, or move the file aside and run again (the run then starts with no journal, and --resume skips nothing)"
+      - "give each peering its own working folder: --work /var/lib/goat-federation/<partner>"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "the run journal (does not parse|is goatbuilder|is for peering|cannot be read)"
+      - "cannot read the run journal"
+    exit: 1
+
+  - code: GB-183
+    tool: goatbuilder
+    title: a federate phase failed
+    what: "The word the run journal records for a phase that exited non-zero, with its exit code. The run stopped there; no later phase ran."
+    causes:
+      - "the phase's own error, printed above it (a `goat federate` exit 20 to 24, a play's failed task, a refused gate)"
+    fixes:
+      - "fix the cause, then run the same command again; with --resume, the phases found unchanged are not run again"
+    read: docs/operations/sovereign-federation-runbook.md
+    matches:
+      - "GB-183: phase [0-9]+ failed with exit"
+    exit: 1
+
+  - code: GB-184
+    tool: goatbuilder
+    title: the working folder or its lock cannot be made, taken or written
+    what: "A real run of `goatbuilder federate` keeps its lock and its run journal in the peering's working folder, and the allocation lock in the folder above it. One of them could not be created, locked or written, so the run did not start (or, mid-run, its journal is behind; the run says so in a failed `journal` row)."
+    causes:
+      - the working folder is not writable by this user (the default /var/lib/goat-federation needs root or a folder made for you)
+      - the disk is full or the folder is on a read-only mount
+    fixes:
+      - "sudo install -d -o $USER /var/lib/goat-federation   (or pass --work <a folder you own>)"
+      - "check free space where the working folder is"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "cannot (create|open|take|write|read) the (working folder|peering lock|allocation lock|work root|run journal)"
+      - "cannot rename .*state\\.json"
+    exit: 1
 
   - code: GB-230
     tool: goatbuilder
