@@ -412,6 +412,11 @@ Then, in this order:
    re-adds their certificate authority within minutes and quietly undoes you.
 2. Remove their CA from the edge router's configuration and re-apply.
 3. Restart the edge router.
+4. On a core configured from `roles/goat-zenoh`, remove their entry from
+   `zenoh_sovereign_peerings` and re-apply the core. Their data stays on
+   disk in `<storage path>/sovereign_from_<them>`, one directory that holds only what they sent;
+   the role lists it in `.undeclared-stores` and never deletes it. Deleting it, if the agreement
+   obliges you to, is an operator act.
 
 There is no certificate revocation list and no way to revoke a single certificate. Cutting the
 tunnel is the control that actually works; the rest is cleanup.
@@ -425,6 +430,7 @@ tunnel is the control that actually works; the rest is cleanup.
 | Connection refused immediately | Their certificate does not chain to the CA you installed. Re-check Step 3, and check you installed *their* CA and not your own. |
 | Connects, but nothing arrives | The name they present does not exactly match `goat_zenoh_edge_partner_cn`. Matching is exact — check case, hyphens and whitespace. |
 | Arrives but is not stored | Your core has no storage declared for the landing prefix. Data is being routed and discarded. |
+| Session up, they publish, nothing reaches your core, and nothing is logged on their side | Your core's landing storage is wider than the edge admits — one `from/**` store for every peering. The edge refuses the core's subscriber declaration (the edge log reads `unauthorized to Declare Subscriber (ingress) on from/**`), so it never asks the partner for anything. Give each peering its own store on exactly `from/<them>/**`; `roles/goat-zenoh` renders one per `zenoh_sovereign_peerings` entry, and the edge role refuses to deploy against a `from/**` store. |
 | Worked, then stopped after weeks | A certificate expired, or their CA rotated and the refresh is not running. Check the refresh timer first. |
 | Works in one direction only | The two sides' agreed prefixes do not mirror. Compare Step 2 values side by side. |
 
