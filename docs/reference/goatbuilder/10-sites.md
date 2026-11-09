@@ -27,7 +27,11 @@ cross-goatnet surfaces last
 **Use it** to build a new goatnet's founder site, or a new joiner site of an
 existing goatnet.
 
+## `federate`
 
+**Purpose.** Federate this goatnet with another sovereign goatnet. Today one
+run takes the peering through the fourteen phases below; it stops at the two
+`MANUAL` phases and resumes with `--from`.
 
 | Phase | Kind | What it does |
 |---|---|---|
@@ -60,3 +64,16 @@ goatbuilder federate <partner> --env <goatnet> --from 11 --yes
 edge (default `<partner>_edge`), and `--work` the working directory (default
 `$FED_WORK`, else `/var/lib/goat-federation/<partner>`). **Script:**
 `ops/scripts/peering-standup.sh`. Status: built; not yet run on a live peering.
+
+**The stages.** The same phases are becoming four stages of one command, each
+also runnable alone: `goatbuilder federate plan <partner>` (phases 1 to 9:
+validate, measure, propose the per-peering values, exchange, compose, render;
+asks for the key read-back), `deploy` (phases 10 to 13, after approval bound to
+the plan's hash), `test` (phase 14: a bilateral acceptance session whose checks
+read PASS, FAIL, BLOCKED, SKIP or NOT APPLICABLE) and `status`. The offered
+release sets are owned by `federation.toml` (`[data] release`); the peering's
+declaration may only narrow them. The procedure:
+[sovereign-federation-runbook.md](../../operations/sovereign-federation-runbook.md),
+step 1. Until each stage's default switch lands, the run above is the default.
+
+Status: WIP — gate: the federation end-to-end test drives both sides with goatbuilder federate alone.

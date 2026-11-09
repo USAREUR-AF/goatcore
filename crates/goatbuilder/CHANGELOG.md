@@ -6,6 +6,29 @@ Each release is the tag `goatbuilder/v<semver>` on `main`, built and signed by
 
 ## Unreleased
 
+### Added: the stages of `federate` — `plan`, `deploy`, `test`, `status`
+
+Status: WIP — gate: the federation end-to-end test drives both sides with goatbuilder federate alone.
+
+Federation moves from `goat` into goatbuilder. `goatbuilder federate <partner>`
+runs four stages in order, each also runnable alone: `plan` validates the
+configuration, measures readiness, proposes the per-peering values as a
+reviewable change and shows the bounded change set, and asks for the key
+read-back; approval is bound to the plan's hash; `deploy` carries out the
+approved plan through the existing roles, after rechecking live prerequisites,
+under a per-peering lock, resuming by inspecting actual state, guided by the
+run journal in the working directory; `test` runs a bounded bilateral
+acceptance session whose checks read PASS, FAIL, BLOCKED, SKIP or NOT
+APPLICABLE, where a required check passes only on PASS and never on a skip,
+with evidence in `<work>/evidence/acceptance/` and result bundles exchanged by
+file; `status` shows health and the last evidence with its
+age. `federation.toml` owns the offered release sets; a `peerings:`
+entry may only narrow them. `apply` stays a renderer. `goatbuilder federate init|lint|compose|diff|verify|apply`
+are the package verbs `goat federate` had, with the same flags and exit codes.
+Each stage arrives beside today's fourteen-phase run, which stays the default
+until that stage's default switch. Procedure:
+`docs/operations/sovereign-federation-runbook.md`, step 1.
+
 ## 0.4.3 — 2026-11-08
 
 ### Changed: `update` takes its release signer from the checkout

@@ -26,7 +26,26 @@ only what each deliberately releases.
 
 The supported path is `goatbuilder federate`. The script it stands beside,
 `ops/scripts/peering-standup.sh`, runs the same fourteen phases and stays
-documented; each step below names it. Partners are onboarded with this same
+documented; each step below names it.
+
+**The procedure is becoming four stages.** `goatbuilder federate <partner>`
+will run `plan`, `deploy`, `test` and `status` in order, each also a command of
+its own: you make one decision (the partner, and the release sets it
+receives, which `federation.toml` owns and the peering's declaration may only
+narrow) and two confirmations (the keys and CA fingerprints read aloud with the
+agreement digest compared, and approval of what your core admits, including
+the reviewed configuration change, before anything is deployed). Acceptance
+ends in result bundles both operators exchange by file and review; publishing
+`exchanging` afterwards is a third deliberate act by both operators, through a
+reviewable change. The
+[runbook's step 1](../operations/sovereign-federation-runbook.md#step-1--run-goatbuilder-federate-partner)
+teaches it.
+
+Status: WIP — gate: the federation end-to-end test drives both sides with goatbuilder federate alone.
+
+Until each stage's default switch lands, this tutorial's steps are the
+procedure: one run that stops at phases 5 and 10 and resumes by number.
+Partners are onboarded with this same
 tooling and the onboarding guide, never with a one-off script
 ([partner-onboarding.md](../design/partner-onboarding.md)).
 

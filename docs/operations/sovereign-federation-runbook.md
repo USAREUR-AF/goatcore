@@ -5,16 +5,28 @@ environment run by someone else.** You need no relationship with the authors of 
 no access to anyone else's systems. Everything here is done on machines you control, using
 material both sides are content to publish.
 
-**Read this with your counterpart.** Both sides run the same steps, in the same order, against
+**Read this with your counterpart.** Both sides run the same command, in the same order, against
 each other. Nothing in this procedure is asymmetric, and neither side needs privileged access to
 the other.
 
 Design behind it: `cross-sovereign-federation.md`.
-Decision: [ADR 1157](../adr/1157-cross-sovereign-federation-edge-terminated.md).
+Decision: [ADR 1157](../adr/1157-cross-sovereign-federation-edge-terminated.md); the two
+avenues, command and script: [ADR 1201](../adr/1201-two-avenues-scripts-documented-cli-supported.md);
+federation in goatbuilder: ADR 1225 (`federation-belongs-to-goatbuilder-one-command-one-decision`).
 
-**Status: this procedure has not yet been executed between two real environments.** The
-certificate behaviour it relies on is proven (`ops/federation-smoke/assert-pki.sh`, 7/7); the
-live-fabric rehearsal is written and unrun. Treat it as a first-run procedure, not a routine one.
+Status: WIP — gate: the federation end-to-end test drives both sides with goatbuilder federate alone.
+
+Step 1 describes the procedure as the program that moves federation from `goat` into `goatbuilder`
+builds it: the stages `plan`, `deploy`, `test` and `status`. Each part arrives beside the procedure
+you run today, and today's procedure stays the default until that part's default switch lands. A
+goatbuilder that does not list `plan`, `deploy`, `test` and `status` under
+`goatbuilder federate --help` runs today's procedure: follow
+[Until the switch](#until-the-switch-the-procedure-today).
+
+**Status of the procedure itself: it has not yet been executed between two real environments
+through these stages.** The certificate behaviour it relies on is proven
+(`ops/federation-smoke/assert-pki.sh`, 7/7). Treat a first peering as a first-run procedure, not a
+routine one.
 
 ---
 
@@ -52,7 +64,7 @@ segment: `release/REL-ALL/<rest>` crosses as `from/<you>/REL-ALL/<rest>`.
       peering forwarder first, because its address is a value that side's package carries:
       [`peering-forwarder.md`](../design/peering-forwarder.md) ([ADR 1218](../adr/1218-peering-forwarder-when-neither-edge-accepts-inbound.md)).
       No other reachability is required.
-- [ ] Both sides reach the same **peering directory** (saltlick) over HTTPS. The driver exchanges
+- [ ] Both sides reach the same **peering directory** (saltlick) over HTTPS. The command exchanges
       your packages and CA certificates through it, so neither side needs a public host and
       nothing is sent by email. It grants nothing:
       [`peering-directory-service.md`](../design/peering-directory-service.md).
@@ -62,15 +74,284 @@ segment: `release/REL-ALL/<rest>` crosses as `from/<you>/REL-ALL/<rest>`.
 - [ ] A host you control to run the edge router on. It does not need to be powerful. It must not
       be a machine that already runs your core fabric. It is a peer of your own mesh in node class
       `PEERING-EDGE`, which lets it reach only your core router's fabric port and mesh DNS (ADR 1219).
+- [ ] The machine you run `goatbuilder` on reaches your edge host and your core host over SSH, as
+      the ansible phases already require. Each operator runs everything on their own systems
+      only; no step needs access to the other side's.
 
 ---
 
-## Step 1 — Run the driver, and read its plan first
+## Step 1 — Run `goatbuilder federate <partner>`
 
-Everything below is what the driver does, written out for a reader. **Do not
-follow it by hand** — a peering stood up by hand on 2026-09-07 needed about a
-dozen improvised interventions, and four defects were invisible
-until the GENERATED artifacts were the thing deployed.
+`goatbuilder federate <partner>` runs four stages in order, and each is also a command of its own:
+
+```bash
+goatbuilder federate plan <partner>      # validate and explain the change; nothing that carries traffic changes
+goatbuilder federate deploy <partner>    # carry out the approved plan through the existing roles
+goatbuilder federate test <partner>      # a bounded acceptance session with the partner
+goatbuilder federate status [<partner>]  # deployment health and the last acceptance evidence
+```
+
+You make one decision and two confirmations; the commands do, check and record the rest. A third
+human act ends the procedure: publishing `exchanging` is a reviewable change that both operators
+approve.
+
+**Do not follow the phases by hand.** A peering stood up by hand on 2026-09-07 needed about a dozen
+improvised interventions, and four defects were invisible until the GENERATED artifacts were the
+thing deployed. The tables below say what each stage does so you can check it.
+
+### The one decision: who, and what they receive
+
+The decision has two parts, each with one owner:
+
+- **What you offer** is the `release` list in the `[data]` table of your deployment's
+  `federation.toml`, the file `init` already reads. It is the only place the offered release sets
+  are owned.
+
+  ```toml
+  [data]
+  release = ["release/all/**", "release/xab/**"]
+  ```
+
+- **Who** is a peering entry in your deployment's `goatbuilder.yaml`. It names the partner and
+  where your edge runs. It may narrow what this partner receives to a subset of what
+  `federation.toml` offers (`offer:` in the entry, or `--offer <SET>[,<SET>...]` on the command);
+  `plan` checks that it is a subset and refuses anything wider. It is never a second owner of the
+  offer.
+
+  ```yaml
+  peerings:
+    - with: xab                     # the partner's sovereign id
+      environment: dev
+      site: alpha
+      edge_class: edge
+      # offer: [REL-ALL]            # optional: only narrows what federation.toml offers
+      # transport: wireguard        # or ipsec-fips; default: what both packages accept
+      # values: {}                  # pins for the per-peering values
+  ```
+
+The verified agreement determines what may flow. Your configuration may narrow it or demand
+stronger checks; it never widens it, and there is no second hand-kept access list or lane list.
+`init`, `lint`, `compose`, `diff`, `verify`, `apply`, `plan`, `deploy`, `test` and `status` are
+verbs and can never be a partner name.
+
+### `plan` — validate and explain the change
+
+`plan` checks every input, measures readiness on your own hosts, and prints the change it proposes,
+bounded and complete:
+
+- the source and image versions, the agreement digest and the hash of each rendered configuration
+  file;
+- which resources the peering owns (tunnel interface, ports, link subnet, certificate directory)
+  and which services restart;
+- the acceptance policy: which checks are required, generated from the agreement's flows;
+- conflicts: ports already in use on the edge (the tunnel port NetBird already holds, 51820 by
+  default), subnets, interfaces, certificate names and expiry, receive stores on your core that are
+  wider than the edge grants (`from/**`), and anything that would touch an existing peering.
+
+The per-peering values are **proposed** as a change to your deployment's own configuration, for
+you to review and commit like any other change. Once committed they never move on a re-run; `plan`
+validates them.
+
+To produce the agreement, `plan` runs phases 1 to 9: it prepares the federation interface with no
+peer on it so that it can be measured, measures your half over SSH, exchanges packages and CA
+certificates through the directory, composes and verifies the agreement, validates or mints the
+peering certificates, and renders the configuration. `apply` stays a renderer: it writes files and
+changes no host.
+
+| # | Kind | Phase | Worked when |
+|---|---|---|---|
+| 1 | GATE | preflight, fail-closed | prints `READY`; a failure names the input, where it was looked for, and its catalog code. When the declaration offers a release set, the inventory group `<peering>_core` names the core host and sits under `[peering_cores:children]` |
+| 2 | A | prepare what the package measures: the federation interface and the SPIRE bundle | the interface and its key exist with no peer on them; the bundle is exported when this side runs SPIRE |
+| 3 | T | `init` — our half, measured | a signed package; exit 23 means a value could not be derived and the list is the output |
+| 4 | T | `lint` | every required member present, signature shape valid |
+| 5 | **CONFIRM** | exchange through the directory; read the key and CA fingerprint **aloud** | the directory step uploaded ours and placed theirs and their CA on disk with no FAIL row; on one call each side read its verifying key and CA fingerprint and the other read them back; both keys are recorded |
+| 6 | T | `compose` | one digest, and argument order does not change it |
+| 7 | T | `verify` | the derived names re-derive; the ingress prefix and republish target are stated |
+| 8 | T | validate or mint the peering leaves | four certificates, names derived from the agreement, SANs covering every address that will be dialled: outward, inward, core, and `republisher.pem` with CN `fed.<us>.<them>.republisher.01` |
+| 9 | T | `apply --confirm` | the partner declaration, the edge group_vars, the republisher vars (`federation-<them>-republish.yml`) and the ACL fragment, which carries the edge's subject and the republisher's `fed-rp-<them>` subject |
+
+**Confirmation 1 — read the keys aloud, and compare the agreement digest.** After the exchange,
+`plan` prints both verifying keys and both CA fingerprints in groups of four and a compatibility
+report, and stops for one call with your counterparty:
+
+1. Each side reads its own verifying key (11 groups) and CA fingerprint (16 groups) aloud, group
+   count first; the other reads them back against its own screen. Every group must match. A key
+   taken from the package it verifies, or from the directory that carried it, proves nothing.
+2. The compatibility report has no FAIL row.
+3. When both keys match, confirm. `plan` records both keys and composes the agreement; read the
+   **agreement digest** to each other the same way. A digest that differs is answered by
+   `goatbuilder federate diff`.
+
+If a key does not match, answer no: nothing is recorded or composed. A mismatched key is the attack
+this call exists to catch. If the partner's entry is not in the directory yet, `plan` says so; run it
+again after they have run theirs.
+
+### Confirmation 2 — approve the plan
+
+Approval is bound to the hash of the plan you read. What to check, beyond the list above, in the
+access fragment your **core** will take:
+
+1. Exactly two new subjects and nothing else changed: the edge, by the name derived from the
+   agreement (`fed.<you>.<them>.01`), and the republisher, `fed-rp-<them>`
+   (`fed.<you>.<them>.republisher.01`).
+2. The republisher reads only the release sets you offer, `release/<set>/**`, and writes only
+   `from/<you>/**`.
+3. The edge receives into `from/<them>/**` and nothing wider; no rule names `**`, `from/**` or
+   another partner's prefix.
+4. The partner CA the edge will trust has the fingerprint you read back in confirmation 1.
+5. The router's dry run of the new access configuration passed.
+6. The configuration change `plan` proposed (the per-peering values and the rendered
+   configuration) has been reviewed and merged through your deployment's normal change process.
+   That review is part of this confirmation, and the approval covers it.
+
+If anything the plan covers changes after you approve, the approval no longer applies: run `plan`
+again and approve the new hash.
+
+### `deploy` — carry out the approved plan
+
+`deploy` runs phases 10 to 13 through the existing roles and plays. Immediately before it changes
+anything it checks the live prerequisites again; if an input changed since the plan, it stops and
+asks for a new plan. It takes a lock for this peering, so two runs never act on one peering at once,
+and it never removes or changes another peering's resources.
+
+| # | Phase | What `deploy` does | Worked when |
+|---|---|---|---|
+| 10 | admit the edge on our core | splices the approved fragment into the core's access control, gives the core its peering certificate, restarts the core router and checks it came back | the core runs on the new access configuration |
+| 11 | open the transport the AGREEMENT selected | `wireguard` runs `peering-wg.yml`, `ipsec-fips` runs `peering-edge.yml`, with the peering's values; through a forwarder, its entry too | the link is up. It never substitutes one transport for the other, and any other transport refuses |
+| 12 | deploy the edge, then the outbound republisher (`peering-zenoh-edge.yml`, then `peering-republisher.yml` with `--limit <peering>_core`) | the roles install the peering certificates on the edge and core host | the edge dials our core and accepts the partner's CN; the container `goat-fed-republisher-<them>` runs on the core host, its `/metrics` on loopback reads `goat_fed_republisher_local_subscribed 1` and `goat_fed_republisher_edge_linked 1`, and its log has one `release release/<set>/** -> wire from/<us>/<set>/**` line per offered set |
+| 13 | federate the SPIRE trust domains (ADR 1157 step 2) | runs `peering-spire.yml` | our server refreshes their trust domain across the link, or the play says the step was not done for a side with no SPIRE server |
+
+`deploy` keeps three things apart: the intent (your reviewed configuration and the verified
+agreement), the progress (the run journal in the working directory: the phase attempts and the
+resources this run owns) and the evidence (`<work>/evidence/`). Interrupted, run it again: it
+resumes by inspecting the actual state of your hosts, guided by the run journal in the working
+directory. It never skips a phase because a file says the phase passed.
+
+### `test` — a bounded acceptance session with the partner
+
+`test` is phase 14. Each operator runs it locally, against their own core and edge only:
+
+1. Both import the same **session manifest**. It binds the agreement digest, the acceptance-policy
+   hash, both parties, a unique session id, the schedule, the nonce challenges, limits and an
+   expiry. Each side checks it before running anything.
+2. Each side runs the checks the agreement's flows generate. Send-only, receive-only and
+   asymmetric agreements each get their own set; four lanes is one example, not a rule.
+3. Each side writes a result bundle into `<work>/evidence/acceptance/`, and the two operators
+   exchange bundles **by file**. Your own observations and the results your partner reports are kept
+   apart and labeled; a reported result is not something you observed.
+
+| Check | Required evidence |
+|---|---|
+| Fresh delivery, every agreed direction and set | a unique run id, nonce and payload digest, published through release staging and read back exactly at the receiving core |
+| Persistent reception | a new sample arrives with every test subscriber stopped, so no diagnostic subscription can mask a missing store |
+| Out-of-lane refusal | an allowed control and a prohibited write from the same test identity, matched in the receiving edge's allow and deny records; silence or an HTTP success is not evidence |
+| Republisher boundary | a release set that is not offered, staged beside a valid control, is not lifted |
+| Round trip | only when the agreement has a return path; it adds to delivery evidence, never replaces it |
+| Identity and SPIRE | the approved negative test certificates and the SPIRE checks, when the profile requires them |
+| Existing partnerships | each other peering checked before and after, with no release leaking across partners |
+
+Each check reads one of five outcomes:
+
+| Outcome | Means |
+|---|---|
+| PASS | the expected evidence was observed |
+| FAIL | a violation was observed |
+| BLOCKED | a prerequisite or the evidence was unavailable |
+| SKIP | the check was not exercised |
+| NOT APPLICABLE | excluded by a validated, agreed scope |
+
+A required check passes only on PASS. A SKIP or BLOCKED required check means not ready, never a
+pass; unavailable evidence never counts as a refusal that worked; and no one can waive a required
+FAIL into PASS.
+
+Probes are time-limited, use reserved acceptance key spaces, and are owned by the run that made
+them. `test` removes only what it created; cleanup that did not finish is itself a required FAIL.
+It never stops a production edge, core or tunnel.
+
+**Publishing `exchanging`.** Only after the whole required scope passes on both sides, cleanup is
+confirmed, and both operators approve the result, is `exchanging` published, and only as a
+reviewable change through your normal configuration process. The two bundles are reviewed by
+people; nothing gates on the partner's report automatically.
+
+### `status` — health and evidence, with its age
+
+`goatbuilder federate status` lists every declared peering; `goatbuilder federate status <partner>`
+shows one: where the peering stands, read from its actual state, and what it waits for (you, the
+partner, or a fix), the agreement digest, the offer, the per-peering values, deployment health, and the last
+acceptance evidence with its age and scope. Later drift, expiry or a failed health check marks the
+evidence stale or degraded; it never changes a grant by itself.
+
+### When a phase fails
+
+The stage stops at the failed phase, runs nothing after it, and prints the phase, the error code
+from `ops/errors/catalog.yaml` and the fix. Fix the cause and run the same command again.
+`goatbuilder explain <code>` prints the catalog entry.
+
+| Phase | It failed because | What to do |
+|---|---|---|
+| 1 | an input is missing or a host is not ready | supply the value it names, in the place it names. A port in use: pin another under `values:` or free it. A receive store wider than the edge grants: declare one per admitted scope, `from/<them>/**` ([receive-storage preflight](#receive-storage-preflight)) |
+| 2 | the edge play failed | read the play's failed task |
+| 3 | exit 23, a value could not be derived | the output lists each value and why; fix the measurement, never type the value |
+| 4 | exit 21, the package does not lint | the rule is named; it is a defect in the package |
+| 5 | the partner's entry is missing, or a FAIL row | wait for them, or fix the row on the side that owns it |
+| 6 | exit 20, composition refused | a key is not bound or the packages disagree; compare with `goatbuilder federate diff` |
+| 7 | the agreement does not verify from your side | the names it cannot re-derive are listed; do not continue |
+| 8 | a certificate pair is invalid or changed | inspect it ([phase 8 reruns](#phase-8-reruns-and-deliberate-certificate-replacement)); do not delete files to get past it |
+| 9 | apply refused | its message names the field |
+| 10 | the router's dry run refused, or the core did not come back | if the dry run refused, nothing restarted; otherwise the core's previous access configuration is the way back |
+| 11 | refused: no play for the selected transport | the fix is in the agreement, never the play |
+| 12 | the edge does not link to your core, or the republisher is not subscribed | read the edge log on your side; the [symptom table](#if-something-does-not-work) |
+| 13 | the SPIRE play failed | check the link from phase 11 is up |
+| 14 | a required check is not PASS | the bundle names the check and its evidence; read the router log on the **receiving** side |
+
+The six package verbs, `goatbuilder federate init|lint|compose|diff|verify|apply`, keep the exit
+codes of `goat federate`: `20` refused · `21` malformed · `22` digest mismatch · `23` underived ·
+`24` not conformant. `goat federate <verb>` keeps working through the same library and prints one
+line naming the goatbuilder command; packages and agreements are identical whichever tool made
+them.
+
+## Until the switch: the procedure today
+
+Until each part's default switch lands, `goatbuilder federate <partner>` runs the fourteen phases as
+one run that stops at phases 5 and 10, and you resume it by number. The phase table in
+[`plan`](#plan--validate-and-explain-the-change), [`deploy`](#deploy--carry-out-the-approved-plan) and
+[`test`](#test--a-bounded-acceptance-session-with-the-partner) holds for it, with three
+differences: you record the keys you read back yourself, you carry out the core review in phase 10
+yourself, and acceptance prints counts (`acceptance-counts: pass=… fail=… skip=…`, where a skip
+fails only under `FED_ACCEPTANCE_STRICT=1`). Where this page names
+`goatbuilder federate <verb>` for a package verb, a goatbuilder that does not list the verbs uses
+`goat federate <verb>`, with the same flags and exit codes.
+
+```bash
+goatbuilder federate <peering> --dry-run       # every phase and command; nothing runs
+goatbuilder federate <peering> --yes           # exchanges through the directory, stops at phase 5
+goatbuilder federate <peering> --from 6 --yes  # after the call; stops at phase 10
+goatbuilder federate <peering> --from 11 --yes # after the review
+```
+
+Phase 1 refuses without `FED_DIRECTORY_URL`, `FED_COUNTERPARTY_ID` and `FED_SIGNING_KEY`; the
+[script avenue](#the-script-avenue) lists every variable. At the phase 5 stop, read the keys aloud as
+in confirmation 1, write both to `$FED_WORK/keys.txt`, one `sovereign_id=key` per line, and resume
+with `--from 6`. At the phase 10 stop, review what apply rendered as in confirmation 2, splice
+`<work>/applied/ops/federation/acl/<them>-fragment.json5` into your core's access control with
+`roles/goat-zenoh/files/acl-assemble.py`, give the core `<work>/pki/core.pem` and its key, restart
+it, and resume with `--from 11`.
+
+Phase 3 reads the core image and version from the running core container. If it reports several
+candidates, `export FED_ROUTER_CONTAINER=zagros-zenoh-router` (your actual core name) and rerun
+phase 3. An absent or stopped explicit selection refuses instead of probing another core, and an
+explicit remote Docker endpoint never falls back to local Podman. See
+[core discovery](../design/federation-router-discovery.md).
+
+**Phases 2 and 11–13 run ansible** against `ops/ansible/inventory/peering-edges.ini`: the edge
+group `<peering>_edge`, and for the republisher the core group `<peering>_core`.
+
+### The script avenue
+
+[ADR 1201](../adr/1201-two-avenues-scripts-documented-cli-supported.md) keeps a second avenue:
+`ops/scripts/peering-standup.sh` runs the same fourteen phases with the same numbers, kept identical
+by the parity gate `ops/goatbuilder/parity-federate.sh`. It is documented, and it is not the
+supported path. It stops at phases 5 and 10 and resumes by number; you record the keys by hand.
 
 ```bash
 ops/scripts/peering-standup.sh <peering> --plan     # prints every phase, runs nothing
@@ -79,9 +360,7 @@ ops/scripts/peering-standup.sh <peering> --from 6   # resume after the call; sto
 ops/scripts/peering-standup.sh <peering> --from 11  # resume after the review
 ```
 
-`goatbuilder federate <peering>` runs the same phases with the same numbers and `--from`/`--to`.
-
-Set these before the run; phase 1 refuses without the first three:
+It reads its inputs from the environment; phase 1 refuses without the first three:
 
 | Variable | Value |
 |---|---|
@@ -94,38 +373,7 @@ Set these before the run; phase 1 refuses without the first three:
 | `FED_PACKAGE_URL` | **leave unset**: the directory hosts your package. Set it only to serve the package from a public host of your own, behind TLS, never on a mesh |
 | `FED_NO_DIRECTORY` | `1` only for a counterparty that can reach no directory; phase 5 then names the files to hand over |
 
-| # | Kind | Phase | Worked when |
-|---|---|---|---|
-| 1 | GATE | preflight, fail-closed | prints `READY`; a failure names the input and where it was looked for. When the declaration offers a release set, the inventory group `<peering>_core` names the core host and sits under `[peering_cores:children]` |
-| 2 | A | prepare what the package measures: the federation interface and the SPIRE bundle | the interface and its key exist with no peer on them; the bundle is exported when this side runs SPIRE |
-| 3 | T | `init` — our half, measured | a signed package; exit 23 means a value could not be derived and the list is the output |
-| 4 | T | `lint` | every required member present, signature shape valid |
-| 5 | **MANUAL** | exchange through the directory; read the key and CA fingerprint **aloud** | the directory step uploaded ours and placed theirs and their CA on disk with no FAIL row; on one call each side read its verifying key and CA fingerprint and the other read them back; both keys are in the keyring |
-| 6 | T | `compose` | one digest, and argument order does not change it |
-| 7 | T | `verify` | the derived names re-derive; the ingress prefix and republish target are stated |
-| 8 | T | validate or mint the peering leaves | four certificates, names derived from the agreement, SANs covering every address that will be dialled: outward, inward, core, and `republisher.pem` with CN `fed.<us>.<them>.republisher.01` |
-| 9 | T | `apply --confirm` | the partner declaration, the edge group_vars, the republisher vars (`federation-<them>-republish.yml`) and the ACL fragment, which carries the edge's subject and the republisher's `fed-rp-<them>` subject |
-| 10 | **MANUAL** | review what apply rendered; admit the edge on our core | the fragment is spliced into the core's access control and the core restarted on it |
-| 11 | A | open the transport the AGREEMENT selected | the link is up. `wireguard` runs `peering-wg.yml`, `ipsec-fips` runs `peering-edge.yml`; the phase never substitutes one for the other, and any other transport refuses. A party that needs IPsec declares `ipsec-fips` and NOT `wireguard`, so the intersection selects it |
-| 12 | A | deploy the edge, then the outbound republisher (`peering-zenoh-edge.yml`, then `peering-republisher.yml` with `--limit <peering>_core`) | the edge dials our core and accepts the partner's CN; the republisher container `goat-fed-republisher-<them>` runs on the core host, its `/metrics` on loopback reads `goat_fed_republisher_local_subscribed 1` and `goat_fed_republisher_edge_linked 1`, and its log has one `release release/<set>/** -> wire from/<us>/<set>/**` line per offered set |
-| 13 | A | federate the SPIRE trust domains (ADR 1157 step 2) | our server refreshes their trust domain across the link, or the play says the step was not done for a side with no SPIRE server |
-| 14 | GATE | acceptance | carries both ways, once per offered set: a sample staged under `release/<set>/…` reads back under `from/<sender>/<set>/…` on the receiving side; refuses what the agreement does not name; and round-trips once per set |
-
-Phase 3 reads the core image and version from the same running container. If it
-reports several candidates, list the containers on the selected daemon and
-`export FED_ROUTER_CONTAINER=zagros-zenoh-router` (using your actual core name)
-before rerunning phase 3. An absent or stopped explicit selection refuses instead
-of probing another core. An explicit remote Docker endpoint never falls back to
-local Podman. See [core discovery](../design/federation-router-discovery.md).
-
-**Phases 5 and 10 stop for a person on purpose.** The machine moves every file in phase 5; what it
-cannot do is confirm whose key it fetched, and a verifying key taken from the package it verifies
-proves nothing, so the two sides read the keys to each other. The review in phase 10 is the
-control, and only this party can change this party's core.
-
-**Phases 2 and 11–13 run ansible** against `ops/ansible/inventory/peering-edges.ini`: the edge
-group `<peering>_edge`, and for the republisher the core group `<peering>_core`. The rest run
-`goat` and the standup scripts where the working directory is.
+Its two stops are the ones [Until the switch](#until-the-switch-the-procedure-today) describes.
 
 ## Step 2 — The names and prefixes come from the agreement
 
@@ -155,40 +403,46 @@ wrong.
 
 The directory step (`ops/federation/standup/directory.py`):
 
-1. publishes your pointer entry, signed with your package key; with `FED_PACKAGE_URL` unset it
-   uploads your package to `<directory>/v1/parties/<you>/package` and the pointer names that;
+1. publishes your pointer entry, signed with your package key; unless you serve the package from
+   a public host of your own (`FED_PACKAGE_URL`), it uploads your package to
+   `<directory>/v1/parties/<you>/package` and the pointer names that;
 2. uploads your CA certificate to `<directory>/v1/parties/<you>/ca`: only the certificate whose
    SHA-256 is your package's `identity.ca_fingerprint`;
 3. looks up the counterparty's pointer, fetches their package, checks its sha256 against the
    pointer and its signatures, and places it where phase 6 reads it; fetches their CA
    certificate, checks it against their `identity.ca_fingerprint`, and places it at
-   `$FED_WORK/theirs-ca.pem`;
+   `<work>/theirs-ca.pem`;
 4. prints both verifying keys and both CA fingerprints **in groups of four**, for the call;
 5. prints a **compatibility report** from the two packages: sovereign ids, spec, fabric and tool
    version, the transport the agreement selects, FIPS fabric image, PQC capability, trust
    domains, inbound reachability and expiry, each PASS, WARN, FAIL or UNKNOWN with the fix.
    Nothing in it is asked of the counterparty by message.
 
-If their entry is not there yet, run phase 5 again after they run theirs. A directory that is
+Today the directory holds one package per party, so a party's second peering replaces the first
+one's package. Keeping one package per peering is part of this program and arrives with its own
+default switch; until then, stand up one peering per party at a time.
+
+If their entry is not there yet, run the command again after they run theirs. A directory that is
 down or disagrees with a package is reported, never trusted: `compose` checks their package
 against the key you read back, never against anything the directory served.
 
-**The call.** Each side reads its verifying key (11 groups) and CA fingerprint (16 groups) aloud,
-group count first; the other reads them back against what phase 5 printed. Then record both keys
-in the keyring and resume with `--from 6`. After `compose`, read the agreement digest to each
-other the same way. Those reads, and the decision about what data flows, are the only acts that
-are not machine-driven.
+**The call.** This is confirmation 1 ([Step 1, `plan`](#plan--validate-and-explain-the-change)).
+Each side reads its verifying key (11 groups) and CA fingerprint (16 groups) aloud, group count
+first; the other reads them back against what phase 5 printed. When both match, you confirm and
+the command records both keys and composes. After `compose`, read the agreement digest to each
+other the same way. Those reads, the review in confirmation 2, and the decision about what data
+flows are the only acts that are not machine-driven.
 
 When both sides run SPIRE federation (phase 13), phase 5 also uploads the SPIFFE trust bundle
-phase 2 exported and fetches theirs to `$FED_WORK/theirs.spiffe-bundle`. Nothing in the package
+phase 2 exported and fetches theirs to `<work>/theirs.spiffe-bundle`. Nothing in the package
 names the bundle, so the step checks it against the signature of the upload that stored it,
 under their verifying key (saltlick `SPEC.md`, "Checking a hosted file against the key read
 aloud"), and places it only when that holds. After that first exchange, refresh is automatic:
 each side re-pulls the other's published bundle on a timer, so **the other side replacing their
 certificate authority does not break the link**.
 
-**No directory.** `FED_NO_DIRECTORY=1` is for a counterparty that can reach no directory. Phase 5
-then names the files to hand over directly; the call is unchanged.
+**No directory.** For a counterparty that can reach no directory (`FED_NO_DIRECTORY=1`), phase 5
+names the files to hand over directly; the call is unchanged.
 
 ## Step 4 — Stand up your edge router
 
@@ -338,8 +592,10 @@ read sealed data, and ADR 1169 keeps that decision entirely ours.
 **2. Name the audience when you apply.**
 
 ```bash
-goat federate apply <agreement> --as <us> --edge-group <group> --partner-audience weather
+goatbuilder federate apply <agreement> --as <us> --edge-group <group> --partner-audience weather
 ```
+
+The verb takes the same flags as `goat federate apply`, which keeps working during the transition.
 
 This renders `goat_zenoh_edge_key_bundle_key_exprs: ["keys/weather/**"]` — scoped per release set,
 never `keys/**`, which would hand them every audience's bundle. Withdrawing the scope is re-running
