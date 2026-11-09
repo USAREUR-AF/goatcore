@@ -9,7 +9,7 @@
 // A partner has to be able to trust that handing us their package cannot
 // touch anything, and "we promise" is not a property anyone can check. So:
 //
-//   lint / compose / diff   PURE. `crate::fed::{json,package,compose,diff}`
+//   lint / compose / diff   PURE. `goat_federation::{json,package,compose,diff}`
 //                           read no file the operator did not name, open no
 //                           socket, hold no credential and do not read the
 //                           clock — `now` and the verifying keys arrive as
@@ -24,12 +24,12 @@
 
 use crate::cmd::doctor::Verdict;
 use crate::exit_codes;
-use crate::fed::compose::{compose, digest_of, Composed, KeyRing};
-use crate::fed::derive;
-use crate::fed::diff::{diff, ByteCause, DiffOutcome, Side};
-use crate::fed::json::{canonical, JVal};
-use crate::fed::package::{decode_verifying_key, parse_package, warnings, Package};
-use crate::fed::render;
+use goat_federation::compose::{compose, digest_of, Composed, KeyRing};
+use goat_federation::derive;
+use goat_federation::diff::{diff, ByteCause, DiffOutcome, Side};
+use goat_federation::json::{canonical, JVal};
+use goat_federation::package::{decode_verifying_key, parse_package, warnings, Package};
+use goat_federation::render;
 use chrono::NaiveDate;
 use clap::{Args, Subcommand};
 use serde::Serialize;
@@ -1114,7 +1114,7 @@ fn run_init(ctx: &super::Ctx, a: InitArgs) -> anyhow::Result<()> {
     let mut members: Vec<(String, JVal)> = Vec::new();
     members.push((
         "spec".into(),
-        JVal::Str(crate::fed::package::PACKAGE_SPEC.into()),
+        JVal::Str(goat_federation::package::PACKAGE_SPEC.into()),
     ));
     members.push(("sovereign_id".into(), JVal::Str(decl.sovereign_id.clone())));
 
@@ -1380,7 +1380,7 @@ fn build_data_offer(d: &DeclaredData) -> Result<JVal, String> {
         Some(r) => m.push((
             "release".into(),
             JVal::Arr(
-                crate::fed::json::normalise_set(r)
+                goat_federation::json::normalise_set(r)
                     .into_iter()
                     .map(JVal::Str)
                     .collect(),

@@ -16,7 +16,6 @@ mod classify;
 mod cmd;
 mod errors;
 mod exit_codes;
-mod fed;
 mod fun;
 mod health_wire;
 mod i18n;

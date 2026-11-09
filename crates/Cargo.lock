@@ -1717,6 +1717,7 @@ dependencies = [
  "ed25519-dalek",
  "futures",
  "goat-errors",
+ "goat-federation",
  "goat-fun",
  "goat-selfupdate",
  "grant-crypto",
@@ -1764,6 +1765,20 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "unic-langid",
+]
+
+[[package]]
+name = "goat-federation"
+version = "0.5.17"
+dependencies = [
+ "base64 0.22.1",
+ "chrono",
+ "ed25519-dalek",
+ "pem",
+ "rcgen 0.13.2",
+ "sha2 0.10.9",
+ "tempfile",
+ "x509-parser 0.16.0",
 ]
 
 [[package]]
