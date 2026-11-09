@@ -327,7 +327,7 @@ print(p, sets(us), sets(p))
 ' "$1" "$US" 2>/dev/null || echo "- - -"
 }
 existing_checks() {
-  local works work ag p osets psets sha bsha set out bv prest key before_why n
+  local works work ag p osets psets sha bsha set out bv prest key before_why n cset ckey CTL
   [ -n "${FED_EXISTING_WORKS:-}" ] || return 0
   before_why=""
   if [ "$BEFORE" != 1 ]; then
@@ -395,11 +395,20 @@ EOF
         record "$n" outbound existing SKIP "$set/** (offered to $THEM only) was not read on $p's core: one side cannot read another sovereign's core; the multi-partner test environment proves it (FED_EXISTING_REST)" --optional
         continue
       fi
+      # The control: a sample on a set this partner IS offered, staged beside the
+      # probe, must arrive on its core. Without it, absence proves nothing.
+      cset=$(list "$osets" | head -1); ckey="$(wire_of "$US" "${cset:-release/-}")/acceptance/$S/leak-control-$p"
+      [ -n "$cset" ] && { put_ours "$cset/acceptance/$S/leak-control-$p" "control-$S"; gap; }
       put_ours "$set/acceptance/$S/leak-$p" "leak-$S"
       settle 4
+      CTL=""
+      [ -n "$cset" ] && CTL=$(curl -s -m 8 -w '\n%{http_code}' "$prest/$ckey" | value)
       GOT=$(curl -s -m 8 -w '\n%{http_code}' "$prest/$key" | value); GOT_RC=$?; GOT_ERR=$(cat "$REST_ERR" 2>/dev/null)
-      obs key "$key"; obs received "$GOT"
+      obs key "$key"; obs received "$GOT"; obs control_key "$ckey"; obs control_received "$CTL"
       if [ "$GOT_RC" -ne 0 ]; then blk "$n" outbound existing "$set/** on $p's core: not proven, its REST surface did not answer" "$GOT_ERR"
+      elif [ -z "$GOT" ] && [ "$CTL" != "control-$S" ]; then
+        blk "$n" outbound existing "$set/** on $p's core: not proven, the control on ${cset:-a set offered to $p} did not arrive there either" \
+          "Absence beside a control that did not land proves nothing."
       elif [ -z "$GOT" ]; then ok "$n" outbound existing "$set/**, offered to $THEM only, did NOT reach $p"
       else no "$n" outbound existing "$set/**, offered to $THEM only, reached $p: cross-partner release leakage" "read '$GOT'"; fi
     done

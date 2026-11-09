@@ -150,7 +150,7 @@ not, by the partner's edge, so it is the partner's inbound row in their own bund
 |---|---|
 | `existing/<id>/agreement` | the agreement file's SHA-256 equals the one recorded before. BLOCKED without a snapshot from before, or with one taken for another agreement than this run's |
 | `existing/<id>/roundtrip/<set>` | for each set we offer that partner, a round trip through our core is acknowledged by their responder. A FAIL says whether it passed before the deployment. NOT APPLICABLE without a return path |
-| `existing/<id>/leak/<set>` | for each set we offer the new partner and not this one, a sample staged under it does not reach this partner's core. Read only where a drill names that core's surface (`FED_EXISTING_REST`, `<id>=<url>,...`); otherwise an optional SKIP with its reason, because one side cannot read another sovereign's core and the multi-partner test environment is where leakage is proven |
+| `existing/<id>/leak/<set>` | for each set we offer the new partner and not this one, a sample staged under it does not reach this partner's core, beside a control staged on a set this partner is offered that does reach it (BLOCKED when the control does not land). Read only where a drill names that core's surface (`FED_EXISTING_REST`, `<id>=<url>,...`); otherwise an optional SKIP with its reason, because one side cannot read another sovereign's core and the multi-partner test environment is where leakage is proven |
 
 Without `FED_EXISTING_WORKS` nothing here runs and phase 14 is as before. Running `--before`
 from the driver, and finding the other peerings from the deployment instead of a variable, is not
