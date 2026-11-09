@@ -137,6 +137,10 @@ pub struct Environment {
     pub groups: Vec<String>,
     #[serde(default)]
     pub sites: Vec<Site>,
+    /// UDP ports this environment's edge hosts already hold, which a peering's
+    /// tunnel or carrier never takes. Absent: NetBird's 51820.
+    #[serde(default)]
+    pub peering_edge_reserved_udp: Option<Vec<u16>>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -272,7 +276,18 @@ pub fn problems(value: &Value) -> Result<Vec<String>> {
 
 /// `problems`, with the checkout's own config a lite file may take `repo` and
 /// `components` from.
+#[allow(dead_code)] // the record-free form, for callers without a config path
 pub fn problems_in(value: &Value, checkout: Option<&Value>) -> Result<Vec<String>> {
+    problems_at(value, checkout, None)
+}
+
+/// `problems_in`, reading the peering allocation record in `record_dir` (the
+/// config file's directory), so a pin on a recorded value is reported too.
+pub fn problems_at(
+    value: &Value,
+    checkout: Option<&Value>,
+    record_dir: Option<&Path>,
+) -> Result<Vec<String>> {
     let schema: Value = serde_json::from_str(SCHEMA_JSON).context("embedded schema is not JSON")?;
     let compiled = JSONSchema::options()
         .with_draft(Draft::Draft7)
@@ -303,7 +318,7 @@ pub fn problems_in(value: &Value, checkout: Option<&Value>) -> Result<Vec<String
     }
     let cfg: Config = serde_json::from_value(derive_lite(value, checkout))
         .context("config does not match the typed model")?;
-    out.extend(cross_field(&cfg));
+    out.extend(cross_field_at(&cfg, record_dir));
     Ok(out)
 }
 
@@ -407,7 +422,13 @@ pub fn derive_lite(value: &Value, checkout: Option<&Value>) -> Value {
 }
 
 /// The rules JSON Schema cannot express — identical in intent to validate.py's.
+#[allow(dead_code)] // the record-free form, kept for callers without a config path
 pub fn cross_field(cfg: &Config) -> Vec<String> {
+    cross_field_at(cfg, None)
+}
+
+/// `cross_field`, with the peering allocation record read from `record_dir`.
+pub fn cross_field_at(cfg: &Config, record_dir: Option<&Path>) -> Vec<String> {
     let mut out = Vec::new();
     let names: Vec<&str> = cfg.environments.iter().map(|e| e.name.as_str()).collect();
     let mut dupes: Vec<&str> = names
@@ -493,7 +514,10 @@ pub fn cross_field(cfg: &Config) -> Vec<String> {
     out.extend(crate::federate::declaration::problems(cfg));
     // Pins that are malformed or collide, and partners declared twice
     // (docs/design/goatbuilder.md, "Per-peering values").
-    out.extend(crate::federate::alloc::declaration_problems(cfg));
+    out.extend(match record_dir {
+        Some(d) => crate::federate::alloc::declaration_problems_in(cfg, d),
+        None => crate::federate::alloc::declaration_problems(cfg),
+    });
     out
 }
 
@@ -515,7 +539,7 @@ pub fn op_account(repo: &Path) -> Option<String> {
 pub fn load(path: &Path) -> Result<Config> {
     let value = load_value(path)?;
     let checkout = checkout_for(path);
-    let problems = problems_in(&value, checkout.as_ref())?;
+    let problems = problems_at(&value, checkout.as_ref(), path.parent())?;
     if !problems.is_empty() {
         return Err(anyhow!(
             "{} does not validate:\n  {}",
@@ -529,7 +553,7 @@ pub fn load(path: &Path) -> Result<Config> {
 /// The `validate` verb's report: one check per problem, or one passing check.
 pub fn validate_report(path: &Path) -> Result<Report> {
     let value = load_value(path)?;
-    let problems = problems_in(&value, checkout_for(path).as_ref())?;
+    let problems = problems_at(&value, checkout_for(path).as_ref(), path.parent())?;
     let checks = if problems.is_empty() {
         vec![Check {
             name: "config".into(),

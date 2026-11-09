@@ -250,6 +250,12 @@
         "converger": { "$ref": "#/definitions/converger" },
         "transport": { "$ref": "#/definitions/transport" },
         "inventory": { "type": "string", "minLength": 1 },
+        "peering_edge_reserved_udp": {
+          "description": "UDP ports this environment's peering edge hosts already hold, which goatbuilder federate allocate never gives a peering's tunnel or carrier and a pin may not take. Absent: [51820], NetBird's WireGuard. An environment whose edges run no mesh client may set [] (for example to keep a running peering on the role default 51820).",
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "integer", "minimum": 1, "maximum": 65535 }
+        },
         "classes": {
           "type": "object",
           "propertyNames": { "pattern": "^[a-z][a-z0-9_-]*$" },
