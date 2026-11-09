@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # acceptance.sh — phase 14 of a peering standup. The terminal gate.
 #
-# FOUR TIERS, and the ordering matters (docs/design/staged-delivery-pattern.md):
+# FOUR TIERS, and the ordering matters (docs/design/federation-acceptance.md):
 #
 #   tier 2  POSITIVE   the granted lanes carry, both directions, read back from
 #                      the RECEIVING side's own storage
@@ -15,7 +15,7 @@
 # Tier 1 (per-phase end state) belongs to the phases themselves, not here.
 #
 # WHAT A DRILL ADDS, because it owns both sides. Each is optional; absent, its checks
-# print `skip`, and a skip is not a pass. FED_ACCEPTANCE_STRICT=1 fails on any skip.
+# print `skip`, and a skip is not a pass: a run with any skip exits 3, never 0.
 #
 #   FED_THEIRS_REST          their core's REST surface
 #   FED_EDGE_LOG_OURS        command printing OUR edge router's log, ACL trace on
@@ -31,6 +31,16 @@
 #   FED_PROBE_IMPERSONATE_ZID   that session's zenoh id
 #   FED_SPIRE_OURS           command prefix running OUR `spire-server` CLI
 #   FED_SPIRE_THEIRS         command prefix running THEIR `spire-server` CLI
+#
+# EXIT STATUS. 0 only when every check ran and passed. 1 when a check failed. 3 when
+# none failed but at least one was skipped (not exercised), so the peering is not
+# proven. 2 when the agreement cannot be read. FED_ACCEPTANCE_STRICT is still
+# accepted and changes nothing: a skip fails with or without it.
+#
+# TIMING, for tests only: FED_ACCEPTANCE_WAIT replaces every settle wait (seconds;
+# default the wait each step names), FED_ACCEPTANCE_GAP the pause between two
+# samples (default 0.5), FED_ACCEPTANCE_RT_TIMEOUT the round-trip wait (default 25).
+# A real edge needs the defaults.
 #
 # THE REPUBLISHER IS THE ONLY WRITER OF OUR WIRE NAME. Every positive row publishes
 # under a `release/<set>/...` staging name on the sending core and reads the sample
@@ -58,6 +68,8 @@ done
 : "${FED_SSH_THEIRS:=}"
 
 pass=0; fail=0; skip=0
+settle() { sleep "${FED_ACCEPTANCE_WAIT:-$1}"; }
+gap()    { sleep "${FED_ACCEPTANCE_GAP:-0.5}"; }
 ok()   { printf '  \033[32mpass\033[0m  %s\n' "$1"; pass=$((pass+1)); }
 no()   { printf '  \033[31mFAIL\033[0m  %s\n' "$1"; [ -n "${2:-}" ] && printf '        %s\n' "$2"; fail=$((fail+1)); }
 skp()  { printf '  \033[33mskip\033[0m  %s\n' "$1"; [ -n "${2:-}" ] && printf '        %s\n' "$2"; skip=$((skip+1)); }
@@ -133,9 +145,9 @@ else
   # downsampling interval over the whole wire prefix, so two samples a few
   # milliseconds apart under different sets are one too many for it, and the
   # second is dropped before its access check, with nothing logged.
-  for set in $(list "$THEIR_SETS"); do put_theirs "$set/acceptance/$S" "in-$S"; sleep 0.5; done
-  for set in $(list "$OUR_SETS");   do put_ours   "$set/acceptance/$S" "out-$S"; sleep 0.5; done
-  sleep 8
+  for set in $(list "$THEIR_SETS"); do put_theirs "$set/acceptance/$S" "in-$S"; gap; done
+  for set in $(list "$OUR_SETS");   do put_ours   "$set/acceptance/$S" "out-$S"; gap; done
+  settle 8
   for set in $(list "$THEIR_SETS"); do
     w="$(wire_of "$THEM" "$set")/acceptance/$S"
     got=$(get_ours "$w")
@@ -154,7 +166,7 @@ else
     put_theirs "ops/fabric/acceptance-$S" "nope-$S"
     put_ours   "from/$US-not-granted/acceptance-$S" "nope-$S"
     put_ours   "release/$US-not-offered/acceptance-$S" "nope-$S"
-    sleep 8
+    settle 8
     got=$(get_theirs "$(wire_of "$US" "release/$US-not-offered")/acceptance-$S")
     [ -z "$got" ] && ok "a staging name the agreement never offered was NOT lifted onto our wire name" \
                   || no "release/$US-not-offered/** crossed as $(wire_of "$US" "release/$US-not-offered")/** — the republisher forwarded a set nobody agreed"
@@ -182,7 +194,7 @@ else
       probe "$FED_PROBE_THEIRS_REST" "$IN" "probe-$S"
       probe "$FED_PROBE_THEIRS_REST" "$OUT" "nope-$S"
       probe "$FED_PROBE_THEIRS_REST" "$SPOOF" "nope-$S"
-      sleep 6
+      settle 6
       v_in=$(verdict "Put (ingress) on $IN"); v_out=$(verdict "Put (ingress) on $OUT"); v_spoof=$(verdict "Put (ingress) on $SPOOF")
       got=$(get_ours "$IN")
       if [ "$v_in" = "is authorized" ] && [ "$got" = "probe-$S" ]; then
@@ -201,7 +213,7 @@ else
       if [ -n "${FED_PROBE_FORGED_REST:-}" ] && [ -n "${FED_PROBE_FORGED_ZID:-}" ]; then
         FORGED="$THEIR_WIRE/acceptance-forged/$S"
         probe "$FED_PROBE_FORGED_REST" "$FORGED" "nope-$S"
-        sleep 6
+        settle 6
         unmatched=$(trace | grep -F "$FED_PROBE_FORGED_ZID" | grep -c 'did not match any configured ACL subject' || true)
         allows=$(trace | grep -F "$FED_PROBE_FORGED_ZID" | grep -c 'is authorized to ' || true)
         got=$(get_ours "$FORGED")
@@ -223,7 +235,7 @@ else
         probe "$FED_PROBE_IMPERSONATE_REST" "$I_OUT" "nope-$S"
         probe "$FED_PROBE_IMPERSONATE_REST" "$I_OWN" "nope-$S"
         probe "$FED_PROBE_IMPERSONATE_REST" "$I_IN" "nope-$S"
-        sleep 6
+        settle 6
         unmatched=$(trace | grep -F "$FED_PROBE_IMPERSONATE_ZID" | grep -c 'did not match any configured ACL subject' || true)
         allows=$(trace | grep -F "$FED_PROBE_IMPERSONATE_ZID" | grep -c 'is authorized to ' || true)
         got=$(get_ours "$I_OWN"); got2=$(get_ours "$I_OUT"); got3=$(get_ours "$I_IN")
@@ -257,8 +269,8 @@ else
   # One nonce per offered set, staged under it: each pass proves our republisher
   # lifted that set, the link carried it, and THEIR side answered.
   for set in $(list "$OUR_SETS"); do
-    out=$( [ -n "$FED_SSH_OURS" ] && ours "/tmp/fedcheck.sh $set $THEIR_WIRE 25" \
-                                  || BASE="$FED_OURS_REST" "$RT" "$set" "$THEIR_WIRE" 25 )
+    out=$( [ -n "$FED_SSH_OURS" ] && ours "/tmp/fedcheck.sh $set $THEIR_WIRE ${FED_ACCEPTANCE_RT_TIMEOUT:-25}" \
+                                  || BASE="$FED_OURS_REST" "$RT" "$set" "$THEIR_WIRE" "${FED_ACCEPTANCE_RT_TIMEOUT:-25}" )
     case "$out" in
       *PASS*) ok "round trip via $set/**: a nonce staged here crossed as $(wire_of "$US" "$set")/** and came back acknowledged by THEIR side$(printf '%s' "$out" | grep -oE ' in [0-9]+ms')" ;;
       *)      no "the round trip via $set/** did not complete" "$out" ;;
@@ -306,16 +318,16 @@ fi
 
 echo
 echo "acceptance-counts: pass=$pass fail=$fail skip=$skip as=$US"
-if [ "$fail" -eq 0 ] && [ "$skip" -ne 0 ] && [ "${FED_ACCEPTANCE_STRICT:-0}" = 1 ]; then
-  echo "  ACCEPTANCE FAILED — $skip check(s) skipped under FED_ACCEPTANCE_STRICT."
-  exit 1
-fi
 if [ "$fail" -ne 0 ]; then
   echo "  ACCEPTANCE FAILED — $fail check(s). The peering is not ready to carry anything."
   exit 1
-elif [ "$skip" -ne 0 ]; then
-  echo "  $pass passed, $skip SKIPPED — a skip is not a pass; see the lines above for why."
-  exit 0
+fi
+if [ "$skip" -ne 0 ]; then
+  # A skip is a check that did not run. Nothing was proven by it, so the run is not
+  # a pass, whatever the passes above say (the proposal's outcome rule; it used to
+  # exit 0 here unless FED_ACCEPTANCE_STRICT was set).
+  echo "  ACCEPTANCE FAILED — $pass passed, $skip SKIPPED. A skip is not a pass; see the lines above for why."
+  exit 3
 fi
 echo "  $pass passed. The peering carries what the agreement grants, refuses what it does not,"
 echo "  and the publishing side can prove it without access to the counterparty."
