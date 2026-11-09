@@ -204,6 +204,16 @@ fn key(p: &Peering) -> String {
     format!("{}/{}", p.environment, p.with)
 }
 
+/// The UDP ports an environment's edge hosts hold: its
+/// `peering_edge_reserved_udp`, else the context's default (NetBird's 51820).
+fn reserved_udp(cfg: &Config, ctx: &AllocContext, env: &str) -> Vec<u16> {
+    cfg.environments
+        .iter()
+        .find(|e| e.name == env)
+        .and_then(|e| e.peering_edge_reserved_udp.clone())
+        .unwrap_or_else(|| ctx.reserved_edge_udp.clone())
+}
+
 /// The values of one peering, from a full allocation of every peering.
 #[allow(dead_code)] // the interface the driver's later stages read (the brief's shared interface)
 pub fn allocate(cfg: &Config, with: &str, ctx: &AllocContext) -> Result<PeeringValues> {
@@ -249,6 +259,14 @@ pub fn allocate_all(cfg: &Config, ctx: &AllocContext) -> Result<Vec<PeeringValue
 
 /// The problems a config's peerings have on their own, with no record: what
 /// `goatbuilder validate` reports. Every line names its catalog code.
+pub fn declaration_problems_in(cfg: &Config, record_dir: &Path) -> Vec<String> {
+    match AllocContext::load(record_dir) {
+        Ok(ctx) => run(cfg, &ctx).1.into_iter().map(|p| p.message).collect(),
+        Err(e) => vec![e.to_string()],
+    }
+}
+
+/// `declaration_problems_in` with no record: the declaration on its own.
 pub fn declaration_problems(cfg: &Config) -> Vec<String> {
     run(cfg, &AllocContext::default())
         .1
@@ -646,10 +664,11 @@ fn run(cfg: &Config, ctx: &AllocContext) -> (Vec<PeeringValues>, Vec<Problem>) {
                 }
                 if matches!(f, Field::WgListenPort | Field::CarrierListenPort) {
                     if let Val::P(port) = v {
-                        if ctx.reserved_edge_udp.contains(&port) {
+                        let held = reserved_udp(cfg, ctx, &p.environment);
+                        if held.contains(&port) {
                             problems.push(Problem::new("GB-122", format!(
-                                "{}: values.{} {port} is a UDP port the edge host already holds (GB-122): NetBird's WireGuard listens on {}. Pin another port, or remove the pin to have one allocated",
-                                at(i), f.name(), ctx.reserved_edge_udp.iter().map(|p| p.to_string()).collect::<Vec<_>>().join(", ")
+                                "{}: values.{} {port} is a UDP port the edge hosts of environment '{}' already hold (GB-122): {}. Pin another port, remove the pin to have one allocated, or, when these edges run no mesh client on it, set environments/{} peering_edge_reserved_udp in goatbuilder.yaml",
+                                at(i), f.name(), p.environment, held.iter().map(|p| p.to_string()).collect::<Vec<_>>().join(", "), p.environment
                             )));
                         }
                     }
@@ -673,13 +692,13 @@ fn run(cfg: &Config, ctx: &AllocContext) -> (Vec<PeeringValues>, Vec<Problem>) {
     let envs: std::collections::BTreeSet<&str> =
         peerings.iter().map(|p| p.environment.as_str()).collect();
     for env in &envs {
-        for port in &ctx.reserved_edge_udp {
+        for port in reserved_udp(cfg, ctx, env) {
             taken.take(
                 Pool::EdgeUdp,
                 env,
-                Val::P(*port),
+                Val::P(port),
                 Holder {
-                    who: "the edge host itself (NetBird's WireGuard)".into(),
+                    who: format!("the edge host itself (environment '{env}' peering_edge_reserved_udp, default NetBird's 51820)"),
                     pin_of: None,
                 },
             );
@@ -1253,6 +1272,47 @@ mod tests {
         a["values"] = json!({"wg_listen_port": 51820});
         let (c, msg) = code(allocate_all(&cfg(json!([a])), &AllocContext::default()));
         assert_eq!(c, "GB-122", "{msg}");
+    }
+
+    /// The edge's reserved UDP ports are the environment's configuration: an
+    /// environment whose edges run no mesh client may pin 51820 (adopting a
+    /// peering that runs on the role default), and one whose edges hold another
+    /// port steps around it.
+    #[test]
+    fn the_reserved_udp_ports_are_per_environment() {
+        let mut a = p("xab");
+        a["values"] = json!({"wg_listen_port": 51820});
+        let mut c = cfg(json!([a, p("xac")]));
+        c.environments[0].peering_edge_reserved_udp = Some(vec![51823]);
+        let vs = allocate_all(&c, &AllocContext::default()).unwrap();
+        assert_eq!(by(&vs, "xab").wg_listen_port, 51820);
+        assert_eq!(by(&vs, "xac").wg_listen_port, 51825, "51823 is reserved here");
+        // prod keeps the default.
+        let mut b = p("xab");
+        b["environment"] = json!("prod");
+        b["values"] = json!({"wg_listen_port": 51820});
+        let mut c = cfg(json!([b]));
+        c.environments[0].peering_edge_reserved_udp = Some(vec![]);
+        assert_eq!(code(allocate_all(&c, &AllocContext::default())).0, "GB-122");
+    }
+
+    /// `goatbuilder validate` reads the record beside the config, so a pin on a
+    /// value the record gives another peering is reported there too.
+    #[test]
+    fn validation_reads_the_record_beside_the_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = allocate_all(&cfg(json!([p("xab")])), &AllocContext::default()).unwrap();
+        std::fs::write(
+            dir.path().join(RECORD_FILE),
+            record_text(&record_of(&first, &Record::default())),
+        )
+        .unwrap();
+        let mut b = p("xac");
+        b["values"] = json!({"wg_interface": "wg-fed0"});
+        let c = cfg(json!([p("xab"), b]));
+        assert!(declaration_problems(&c).is_empty(), "no record, no collision");
+        let out = declaration_problems_in(&c, dir.path());
+        assert!(out.iter().any(|m| m.contains("GB-121")), "{out:?}");
     }
 
     #[test]

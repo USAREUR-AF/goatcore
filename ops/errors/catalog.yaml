@@ -1522,11 +1522,13 @@ entries:
   - code: GB-122
     tool: goatbuilder
     title: a pinned port is one the edge host already holds
-    what: "A pinned WireGuard or carrier listen port is a UDP port the edge host already holds: NetBird's WireGuard listens on 51820, and a second listener there fails or steals its traffic."
+    what: "A pinned WireGuard or carrier listen port is a UDP port the environment's edge hosts already hold (environments[].peering_edge_reserved_udp; absent, NetBird's WireGuard on 51820). A second listener there fails or steals its traffic."
     causes:
-      - values.wg_listen_port or values.carrier_listen_port is pinned to 51820
+      - values.wg_listen_port or values.carrier_listen_port is pinned to a reserved port
+      - "a peering running on the role default 51820, on edges with no mesh client, is being adopted"
     fixes:
-      - "remove the pin and run goatbuilder federate allocate (it allocates odd ports from 51823 up and never takes 51820)"
+      - "remove the pin and run goatbuilder federate allocate (it allocates odd ports from 51823 up and never takes a reserved port)"
+      - "when the environment's edges run no mesh client: set peering_edge_reserved_udp: [] on that environment in goatbuilder.yaml"
     read: docs/design/goatbuilder.md
     matches:
       - "\\(GB-122\\)"
