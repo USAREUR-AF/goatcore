@@ -218,6 +218,8 @@ jobs:
         run: python3 -m pip install -q pyyaml ansible-core pytest
       - name: the partner file's forwarder block is validated
         run: python3 -m pytest -q ops/ci/test_validate_partners_forwarder.py
+      - name: the partner file's acceptance block is validated
+        run: python3 -m pytest -q ops/ci/test_validate_partners_acceptance.py
       - name: the forwarder role cannot be handed peering material
         run: |
           python3 ops/ci/check-peering-forwarder-holds-nothing.py

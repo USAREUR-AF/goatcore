@@ -8,6 +8,7 @@ tidiness.
 
 Run: python3 ops/federation/validate-partners.py [--partners DIR]
 """
+import datetime
 import os
 import re
 import sys
@@ -43,7 +44,16 @@ FORWARDER_KEYS = ("operator", "placement", "endpoint")
 PLACEMENTS = ("cloud-vm", "owned-site")
 ENDPOINT = re.compile(r"([A-Za-z0-9.-]+|\[[0-9A-Fa-f:]+\]):([0-9]{1,5})")
 
-errs, seen_cn, seen_id, n = [], {}, {}, 0
+# The acceptance result, published only through review of a change to this file
+# (docs/design/federation-acceptance.md §7). It records evidence; it never widens
+# what `level` grants, and an expired or drifted record goes stale, it does not
+# rewrite anything.
+ACCEPTANCE_STATUS = ("exchanging", "stale", "degraded")
+ACCEPTANCE_KEYS = ("status", "session", "manifest_sha256", "agreement_sha256", "local_bundle_sha256",
+                   "peer_bundle_sha256", "combined_sha256", "verified_at", "expires", "approved_by")
+DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
+
+errs, notes, seen_cn, seen_id, n = [], [], {}, {}, 0
 
 
 def bad(f, msg):
@@ -121,10 +131,46 @@ for fn in sorted(os.listdir(PARTNERS)) if os.path.isdir(PARTNERS) else []:
                     bad(path, f"forwarder.endpoint {ep!r} must be host:port, the address the "
                               "partner dials, as transport_offer.endpoint carries it")
 
+    if "acceptance" in d:
+        ac = d["acceptance"]
+        if not isinstance(ac, dict):
+            bad(path, "acceptance must be a mapping, as acceptance_session.py propose writes it")
+        else:
+            for k in sorted(set(ac) - set(ACCEPTANCE_KEYS)):
+                bad(path, f"acceptance.{k} is not an acceptance field ({', '.join(ACCEPTANCE_KEYS)})")
+            st = ac.get("status")
+            if st not in ACCEPTANCE_STATUS:
+                bad(path, f"acceptance.status must be one of {ACCEPTANCE_STATUS}, got {st!r}")
+            if st == "exchanging":
+                for k in ACCEPTANCE_KEYS:
+                    if ac.get(k) in (None, "", {}):
+                        bad(path, f"acceptance.{k} is required when acceptance.status is exchanging")
+                if d.get("level") != "exchanging":
+                    bad(path, f"acceptance.status is exchanging but level is {d.get('level')!r}: "
+                              "the evidence cannot claim more than the grant")
+                ap = ac.get("approved_by")
+                if ap not in (None, "", {}) and (not isinstance(ap, dict) or len(ap) != 2 or sid not in ap
+                                                 or not all(str(v).strip() for v in ap.values())):
+                    bad(path, f"acceptance.approved_by must name the approver of each side, {sid} and ours")
+            for k in ("manifest_sha256", "agreement_sha256", "local_bundle_sha256", "peer_bundle_sha256",
+                      "combined_sha256"):
+                if ac.get(k) and not DIGEST.fullmatch(str(ac[k])):
+                    bad(path, f"acceptance.{k} must be sha256:<64 hex digits>")
+            exp = str(ac.get("expires") or "")
+            try:
+                if exp and datetime.date.fromisoformat(exp[:10]) < datetime.date.today():
+                    notes.append(f"  {fn}: acceptance evidence expired on {exp[:10]}; it is stale. Run a new "
+                                 "bilateral session; the grant (level) is not changed by this note.")
+            except ValueError:
+                bad(path, f"acceptance.expires {exp!r} is not a date (YYYY-MM-DD)")
+
     if len(str(d["rationale"]).strip()) < 20:
         bad(path, "rationale is too short to be a review artifact")
 
 print(f"[federation-partners] {n} declaration(s) checked")
+if notes:
+    print("[federation-partners] note")
+    print("\n".join(notes))
 if errs:
     print("[federation-partners] FAIL")
     print("\n".join(errs))
