@@ -52,6 +52,7 @@ your laptop.
 goatbuilder doctor                         # every environment
 goatbuilder doctor --env <goatnet>         # one environment
 goatbuilder doctor --site <site>           # also scan every input a standup of <site> reaches
+goatbuilder doctor --browser-tests         # also require the live rows' browser toolchain
 ```
 
 `--site` runs the static required-input scan over every play the site's
@@ -65,10 +66,10 @@ touched. It takes 6 to 13 seconds per site.
 | `config`, `repo` | the config validates; the source repository, image namespace and signing |
 | `tool:*` | git, gh, ansible-playbook, aws-vault, go (intent signing), ssh, image-digest, cosign, crane, op |
 | `python:deps` | PyYAML and jsonschema for the Python tools both avenues call |
-| `checkout` | the checkout is `main` and current with origin |
+| `checkout` | the checkout is `main` and current with origin; or the tree is an assembled tree, which only its `.goat-assembled` marker says, and the row names what the marker records it was built from (goatcore, any public layers, the overlay). An assembled tree is on a detached HEAD by construction, so that is not a failure; the row fails when the marker cannot be read, says `goatcore_ref=local`, or names a goatcore commit that is not the tree's HEAD. A detached HEAD without the marker still fails (F-586) |
 | `secrets:*` | the store in force and whether it can serve |
 | `env:op-refs` | no incomplete `op://` reference anywhere in the shell |
-| `tool:live-rows` | the browser toolchain the live validation rows need |
+| `tool:live-rows` | the browser toolchain the live validation rows need. Only a release runs those rows, so a missing toolchain is a note (the row passes and prints its install line under `Note:`); with `--browser-tests` it is a failure |
 | per environment | transport, each play's target mode, each component's templated secrets |
 
 **Refusals:** GB-009 (not a current `main` checkout), GB-010 (a Python

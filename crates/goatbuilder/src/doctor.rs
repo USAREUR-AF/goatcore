@@ -14,7 +14,7 @@ use anyhow::{anyhow, Result};
 use crate::config::{self, Component};
 use crate::{Check, Report, EXIT_REFUSED};
 
-pub fn run(repo: &Path, only_env: Option<&str>, frozen: bool, credentials: bool) -> Result<Report> {
+pub fn run(repo: &Path, only_env: Option<&str>, frozen: bool, credentials: bool, browser_tests: bool) -> Result<Report> {
     let mut checks = Vec::new();
 
     // 1. The config itself.
@@ -198,7 +198,9 @@ pub fn run(repo: &Path, only_env: Option<&str>, frozen: bool, credentials: bool)
     // 2c. The live acceptance rows run the console's Playwright suite from
     // this laptop (ops/scripts/onboard-intake-smoke.sh); without its
     // toolchain a release reads as failed on the goatnet when it failed here.
-    checks.push(if lite_cfg.is_some() { live_rows_skipped() } else { live_rows_check(repo) });
+    // Only a release runs them, so a missing toolchain is a note unless the run
+    // asks for it (--browser-tests).
+    checks.push(if lite_cfg.is_some() { live_rows_skipped() } else { live_rows_check(repo, browser_tests) });
     if lite_cfg.is_some() {
         checks.push(image_token_row(std::env::var("GHCR_READ_TOKEN").ok().filter(|v| !v.is_empty()).is_some() || crate::secrets::available(repo).contains("GHCR_READ_TOKEN")));
     }
@@ -217,7 +219,8 @@ pub fn run(repo: &Path, only_env: Option<&str>, frozen: bool, credentials: bool)
         checks.extend(goat_contexts_check(repo));
     }
 
-    // 3. The checkout: on main/master, and current with origin (C3).
+    // 3. The checkout: on main/master, and current with origin (C3); or an
+    // assembled tree, which its .goat-assembled marker names.
     checks.push(checkout_check(repo, frozen));
 
     // 3b. The declared secrets posture and whether its store can serve (ADR 1204).
@@ -308,6 +311,20 @@ pub fn run(repo: &Path, only_env: Option<&str>, frozen: bool, credentials: bool)
 }
 
 fn checkout_check(repo: &Path, frozen: bool) -> Check {
+    // An assembled tree (goatcore at the overlay's goatcore.ref with the overlay
+    // copied over it) is on a detached HEAD by construction, and only its marker
+    // says so. Without the marker a detached HEAD is the F-586 case below.
+    match crate::fresh::marker(repo) {
+        Ok(Some(m)) => return assembled_check(repo, &m),
+        Ok(None) => {}
+        Err(e) => {
+            return refused(
+                "checkout",
+                format!("{e:#}: this tree carries {} but it does not say what the tree was built from", crate::fresh::MARKER),
+                "re-assemble the tree from the overlay (its assemble step writes the marker)",
+            )
+        }
+    }
     let branch = git(repo, &["symbolic-ref", "--quiet", "--short", "HEAD"]).unwrap_or_default();
     if branch != "main" && branch != "master" {
         return refused(
@@ -340,6 +357,41 @@ fn checkout_check(repo: &Path, frozen: bool) -> Check {
     ok(
         "checkout",
         format!("on {branch}, current with origin/{branch}"),
+    )
+}
+
+/// The checkout row for an assembled tree: what the marker says it was built
+/// from. Its currency against the overlay is judged by the deploy's own
+/// fresh-source check (ops/scripts/lib/source_of_record.py), not here.
+fn assembled_check(repo: &Path, m: &crate::fresh::Marker) -> Check {
+    if m.goatcore_ref == "local" {
+        return refused(
+            "checkout",
+            format!("{} was assembled from local directories (goatcore_ref=local), which no deploy accepts", repo.display()),
+            "re-assemble the tree from the pinned refs",
+        );
+    }
+    let head = git(repo, &["rev-parse", "HEAD"]).map(|s| s.trim().to_string()).unwrap_or_default();
+    if head != m.goatcore_ref {
+        return refused(
+            "checkout",
+            format!(
+                "{} carries {} naming goatcore {}, but its HEAD is {}: the tree is not what the marker says it was built from",
+                repo.display(),
+                crate::fresh::MARKER,
+                m.goatcore_ref,
+                if head.is_empty() { "unreadable" } else { &head }
+            ),
+            "re-assemble the tree from the overlay (its assemble step writes the marker)",
+        );
+    }
+    ok(
+        "checkout",
+        format!(
+            "assembled tree ({}): built from {}; its detached HEAD is by construction, and the deploy's fresh-source check judges it against the overlay (C3)",
+            crate::fresh::MARKER,
+            m.describe()
+        ),
     )
 }
 
@@ -1419,7 +1471,22 @@ fn image_token_row(set: bool) -> Check {
 /// The toolchain the live rows need on this machine: the console e2e suite's
 /// node_modules, a Playwright that answers, and a chromium under its
 /// browsers directory. The fix is the smoke script's own install line.
-fn live_rows_check(repo: &Path) -> Check {
+/// Only a release runs the live rows, so unless `required` (doctor
+/// `--browser-tests`) a missing piece is a note: the row passes and carries
+/// its fix.
+fn live_rows_check(repo: &Path, required: bool) -> Check {
+    let c = live_rows_toolchain(repo);
+    if c.ok || required {
+        return c;
+    }
+    Check {
+        ok: true,
+        detail: format!("{}; optional unless a release runs the live rows (`goatbuilder doctor --browser-tests` makes this a failure)", c.detail),
+        ..c
+    }
+}
+
+fn live_rows_toolchain(repo: &Path) -> Check {
     let e2e = repo.join("ops/goat-id-console/web/e2e");
     let fix = format!("(cd {} && npm ci && npx playwright install chromium)", e2e.display());
     if !e2e.join("node_modules").is_dir() {
@@ -2458,10 +2525,96 @@ mod tests {
     fn live_rows_check_names_the_install_line_when_node_modules_is_absent() {
         let t = std::env::temp_dir().join(format!("gb-live-rows-{}", std::process::id()));
         std::fs::create_dir_all(t.join("ops/goat-id-console/web/e2e")).unwrap();
-        let c = live_rows_check(&t);
+        let c = live_rows_check(&t, true);
         assert!(!c.ok);
         assert!(c.detail.contains("has no node_modules"), "{}", c.detail);
         assert!(c.fix.as_deref().unwrap_or("").contains("npm ci && npx playwright install chromium"));
+        let _ = std::fs::remove_dir_all(&t);
+    }
+
+    /// Not asked for (no --browser-tests), the missing toolchain is a note: the
+    /// row passes, keeps its fix, and the page prints it under "Note:".
+    #[test]
+    fn absent_node_modules_is_a_note_unless_browser_tests_is_asked_for() {
+        let t = std::env::temp_dir().join(format!("gb-live-rows-note-{}", std::process::id()));
+        std::fs::create_dir_all(t.join("ops/goat-id-console/web/e2e")).unwrap();
+        let c = live_rows_check(&t, false);
+        assert!(c.ok, "{c:?}");
+        assert!(c.detail.contains("has no node_modules") && c.detail.contains("--browser-tests"), "{}", c.detail);
+        assert!(c.fix.as_deref().unwrap_or("").contains("npm ci && npx playwright install chromium"));
+        let r = crate::Report::new("doctor", vec![c], crate::EXIT_REFUSED);
+        let p = summary(&r, &t, None, None, false);
+        assert!(p.contains("All 1 checks passed."), "{p}");
+        assert!(p.contains("Note: ops/goat-id-console/web/e2e has no node_modules"), "{p}");
+        let r = crate::Report::new("doctor", vec![live_rows_check(&t, false)], crate::EXIT_REFUSED);
+        assert_eq!(r.exit, 0);
+        let r = crate::Report::new("doctor", vec![live_rows_check(&t, true)], crate::EXIT_REFUSED);
+        assert_eq!(r.exit, crate::EXIT_REFUSED);
+        let _ = std::fs::remove_dir_all(&t);
+    }
+
+    fn git_in(dir: &Path, args: &[&str]) -> String {
+        let o = Command::new("git").args(args).current_dir(dir)
+            .env("GIT_AUTHOR_NAME", "t").env("GIT_AUTHOR_EMAIL", "t@example.org")
+            .env("GIT_COMMITTER_NAME", "t").env("GIT_COMMITTER_EMAIL", "t@example.org")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null").env("GIT_CONFIG_NOSYSTEM", "1")
+            .output().unwrap();
+        assert!(o.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&o.stderr));
+        String::from_utf8_lossy(&o.stdout).trim().to_string()
+    }
+
+    /// A checkout on a detached HEAD at its one commit; returns (dir, commit).
+    fn detached_checkout(tag: &str) -> (PathBuf, String) {
+        let t = std::env::temp_dir().join(format!("gb-doctor-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&t);
+        std::fs::create_dir_all(&t).unwrap();
+        git_in(&t, &["init", "-q", "-b", "main"]);
+        std::fs::write(t.join("x"), "1").unwrap();
+        git_in(&t, &["add", "x"]);
+        git_in(&t, &["commit", "-q", "-m", "base"]);
+        let head = git_in(&t, &["rev-parse", "HEAD"]);
+        git_in(&t, &["checkout", "-q", "--detach"]);
+        (t, head)
+    }
+
+    #[test]
+    fn an_assembled_tree_on_its_detached_head_passes_and_names_its_source() {
+        let (t, head) = detached_checkout("assembled");
+        let overlay = "0123456789abcdef0123456789abcdef01234567";
+        std::fs::write(t.join(crate::fresh::MARKER), format!("goatcore_ref={head}\noverlay_commit={overlay}\n")).unwrap();
+        let c = checkout_check(&t, false);
+        assert!(c.ok && c.fix.is_none(), "{c:?}");
+        assert!(c.detail.contains("assembled tree"), "{}", c.detail);
+        assert!(c.detail.contains(&format!("goatcore {}", &head[..9])) && c.detail.contains("overlay 012345678"), "{}", c.detail);
+        assert_eq!(crate::Report::new("doctor", vec![c], crate::EXIT_REFUSED).exit, 0);
+        let _ = std::fs::remove_dir_all(&t);
+    }
+
+    #[test]
+    fn an_assembled_tree_whose_head_is_not_the_marked_commit_or_is_local_refuses() {
+        let (t, _) = detached_checkout("assembled-moved");
+        let other = "fedcba9876543210fedcba9876543210fedcba98";
+        std::fs::write(t.join(crate::fresh::MARKER), format!("goatcore_ref={other}\noverlay_commit=abc\n")).unwrap();
+        let c = checkout_check(&t, false);
+        assert!(!c.ok && c.detail.contains("not what the marker says"), "{c:?}");
+        std::fs::write(t.join(crate::fresh::MARKER), "goatcore_ref=local\noverlay_commit=abc\n").unwrap();
+        let c = checkout_check(&t, false);
+        assert!(!c.ok && c.detail.contains("goatcore_ref=local"), "{c:?}");
+        std::fs::write(t.join(crate::fresh::MARKER), "overlay_commit=abc\n").unwrap();
+        let c = checkout_check(&t, false);
+        assert!(!c.ok && c.detail.contains("no goatcore_ref= line"), "{c:?}");
+        let _ = std::fs::remove_dir_all(&t);
+    }
+
+    /// F-586 keeps its teeth: a plain checkout on a detached HEAD, with no
+    /// marker, is refused with the same wording as before.
+    #[test]
+    fn a_plain_checkout_on_a_detached_head_still_refuses() {
+        let (t, _) = detached_checkout("plain-detached");
+        let c = checkout_check(&t, false);
+        assert!(!c.ok, "{c:?}");
+        assert!(c.detail.contains("is on 'a detached HEAD': releases run from a main checkout") && c.detail.contains("F-586"), "{}", c.detail);
+        assert_eq!(c.fix.as_deref(), Some("git checkout main && git pull --ff-only origin main"));
         let _ = std::fs::remove_dir_all(&t);
     }
 
