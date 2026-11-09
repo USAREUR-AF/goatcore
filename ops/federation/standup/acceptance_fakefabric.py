@@ -70,6 +70,8 @@ class Faults:
         #                                    another session's id (its own decisions are missing)
         self.trace_without_session = False # decision lines carry no session id
         self.silent_probes = set()         # probe kinds our edge records nothing for in this run
+        self.existing_down = set()         # existing partners that no longer receive anything from us
+        self.leak_to_existing = set()      # existing partners that receive every set we lift
 
 
 class Core:
@@ -98,6 +100,7 @@ class Fabric:
         self.zids = {"forged": "f" + "1" * 31, "impersonate": "f" + "2" * 31}
         self.diag_zid = "d" + "3" * 31
         self.agreed_zid = "a" * 32
+        self.existing = {}                 # partner id -> (agreement, Core): peerings we already have
 
     # --- the agreement -------------------------------------------------------
     def offered(self, side):
@@ -108,6 +111,45 @@ class Fabric:
                     out.append(r[:-3] if r.endswith("/**") else r)
         return out
 
+    def add_existing(self, agreement):
+        """A peering this side already has, with its own partner core and responder."""
+        pid = [p["sovereign_id"] for p in agreement["parties"] if p["sovereign_id"] != self.us][0]
+        self.existing[pid] = (agreement, Core(pid))
+        return pid
+
+    @staticmethod
+    def offered_in(agreement, side):
+        out = []
+        for f in agreement.get("flows", []):
+            if f.get("from") == side:
+                for r in f.get("release", []):
+                    out.append(r[:-3] if r.endswith("/**") else r)
+        return out
+
+    def put_existing(self, key, value):
+        """Our republisher for each existing peering lifts the sets that peering's
+        agreement offers; that partner's responder acknowledges a round-trip probe
+        under its first offered set, which its republisher lifts back to us."""
+        for pid, (ag, core) in self.existing.items():
+            stem = None
+            for st in self.offered_in(ag, self.us):
+                if key.startswith(st + "/"):
+                    stem = st
+            if stem is None and pid in self.faults.leak_to_existing:
+                stem = "/".join(key.split("/")[:2])
+            if stem is None or pid in self.faults.existing_down:
+                continue
+            wire = "from/%s/%s" % (self.us, key[len("release/"):])
+            with core.lock:
+                core.store[wire] = value
+            m = re.fullmatch(r"from/%s/(?:.+/)?fedcheck/([^/]+)" % re.escape(self.us), wire)
+            theirs = self.offered_in(ag, pid)
+            if m and theirs:
+                ack = json.dumps({"sha256": hashlib.sha256(value).hexdigest(), "observed_key": wire}).encode()
+                back = "from/%s/%s/fedcheck-ack/%s" % (pid, theirs[0][len("release/"):], m.group(1))
+                with self.cores[self.us].lock:
+                    self.cores[self.us].store[back] = ack
+
     def other(self, side):
         return self.them if side == self.us else self.us
 
@@ -116,6 +158,8 @@ class Fabric:
         core = self.cores[side]
         with core.lock:
             core.store[key] = value
+        if key.startswith("release/") and side == self.us and self.existing:
+            self.put_existing(key, value)
         if key.startswith("release/") and side not in self.faults.republisher_down:
             stem = None
             for s in self.offered(side):
@@ -279,6 +323,14 @@ class Fabric:
                            ("impersonate", "FED_PROBE_IMPERSONATE_REST")):
             env[var] = self._serve(self._handler(lambda e: [], lambda k, v, w=which: self.probe_put(w, k, v)))
         env.update(self._spire())
+        if self.existing:
+            surfaces = []
+            for pid, (ag, core) in self.existing.items():
+                def rows(expr, core=core):
+                    return [{"key": k, "value": base64.b64encode(v).decode(), "encoding": "zenoh/bytes"}
+                            for k, v in core.get(urllib.parse.unquote(expr))]
+                surfaces.append("%s=%s" % (pid, self._serve(self._handler(rows, lambda k, v: None))))
+            env["FED_EXISTING_REST"] = ",".join(surfaces)
         return env
 
     def stop(self):

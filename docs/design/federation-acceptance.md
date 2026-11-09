@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | **Built:** `ops/federation/standup/acceptance.sh`, phase 14 of both avenues (`goatbuilder federate` and `ops/scripts/peering-standup.sh`): the checks generated from the agreement's flows (§2), persistent reception (§2.1), the outcome and exit rule (§3), the evidence bundle (§4, `ops/federation/standup/acceptance_evidence.py`, unit tests `test_acceptance_evidence.py`), and the in-process test fabric with the tests that run the real script against it (§5, `acceptance_fakefabric.py`, `test_acceptance.py`). The hermetic federation end-to-end test (`ops/federation-e2e/run.sh`) runs phase 14 from both sides with every check configured; it has not been run on this change. **Not built:** a required-check policy file, checks of existing partnerships before and after, run-owned probe sessions with cleanup, and bilateral evidence exchange (session manifest, exchanged bundles, report signing) |
+| Status | **Built:** `ops/federation/standup/acceptance.sh`, phase 14 of both avenues (`goatbuilder federate` and `ops/scripts/peering-standup.sh`): the checks generated from the agreement's flows (§2), persistent reception (§2.1), refusals tied to the control's session (§2.2), existing partnerships before and after, opt-in (§2.3), the outcome and exit rule (§3), the evidence bundle (§4, `ops/federation/standup/acceptance_evidence.py`, unit tests `test_acceptance_evidence.py`), and the in-process test fabric with the tests that run the real script against it (§5, `acceptance_fakefabric.py`, `test_acceptance.py`). The hermetic federation end-to-end test (`ops/federation-e2e/run.sh`) runs phase 14 from both sides with every check configured; it has not been run on this change. **Not built:** a required-check policy file, the driver running `--before` ahead of phase 11 and naming the other peerings itself, run-owned probe sessions with cleanup, and bilateral evidence exchange (session manifest, exchanged bundles, report signing) |
 | Companions | [`sovereign-federation-runbook.md`](../operations/sovereign-federation-runbook.md) Steps 7 and 8 (the same checks by hand), [`ops/federation/roundtrip/README.md`](../../ops/federation/roundtrip/README.md) (the round trip), [`deployment-e2e.md`](deployment-e2e.md) §"The same pattern for a federation" |
 | Audience | An operator running phase 14; whoever changes `acceptance.sh` |
 
@@ -135,6 +135,27 @@ it hid the connect-time line, and the federation test environment showed both ro
 These rows run on our edge for the inbound direction. The outbound direction is refused, or
 not, by the partner's edge, so it is the partner's inbound row in their own bundle.
 
+### 2.3 Existing partnerships, before and after
+
+**Built, opt-in.** A deployment for one partner must leave every other partnership as it was.
+`FED_EXISTING_WORKS` names the work directories of the peerings this side already has
+(colon-separated; each holds that peering's `agreement.json`). Then:
+
+1. `acceptance.sh <agreement> --as <us> --before`, run ahead of the deployment (between phases
+   10 and 11), checks only the existing partnerships and writes its own bundle to
+   `<evidence>/before/`. Without `FED_EXISTING_WORKS` it exits 2.
+2. The run after the deployment (phase 14) checks them again, after its own rows:
+
+| Check | Evidence |
+|---|---|
+| `existing/<id>/agreement` | the agreement file's SHA-256 equals the one recorded before. BLOCKED without a snapshot from before, or with one taken for another agreement than this run's |
+| `existing/<id>/roundtrip/<set>` | for each set we offer that partner, a round trip through our core is acknowledged by their responder. A FAIL says whether it passed before the deployment. NOT APPLICABLE without a return path |
+| `existing/<id>/leak/<set>` | for each set we offer the new partner and not this one, a sample staged under it does not reach this partner's core. Read only where a drill names that core's surface (`FED_EXISTING_REST`, `<id>=<url>,...`); otherwise an optional SKIP with its reason, because one side cannot read another sovereign's core and the multi-partner test environment is where leakage is proven |
+
+Without `FED_EXISTING_WORKS` nothing here runs and phase 14 is as before. Running `--before`
+from the driver, and finding the other peerings from the deployment instead of a variable, is not
+built; it is a separate change of default.
+
 ## 3. Outcome and exit status
 
 Every check ends with one of five outcome words:
@@ -240,6 +261,7 @@ broken on purpose (`Faults`). `test_acceptance.py` runs the real script against 
 | a diagnostic subscriber carrying a lane whose store's subscription is refused | delivery PASS, `persistence/` BLOCKED, exit 3; with the pause command, FAIL and exit 1, and the subscriber restarted |
 | a subscriber on other keys; a closed admin space; no store for the lane | PASS; BLOCKED (exit 3); FAIL (exit 1) |
 | a denial logged for another session; an allow from a session that is not the probe; decision lines without session ids | denial FAIL (exit 1); control FAIL (exit 1); denials BLOCKED (exit 3) |
+| an existing partnership: unnamed; unchanged before and after; no snapshot from before; its agreement changed; its round trip broken by the deployment; a set for the new partner reaching it; no surface for it | no `existing/` rows; PASS (exit 0); BLOCKED (exit 3); FAIL; FAIL naming "before"; leak FAIL; optional SKIP (exit 0) |
 
 `FED_ACCEPTANCE_WAIT`, `FED_ACCEPTANCE_GAP` and `FED_ACCEPTANCE_RT_TIMEOUT` shorten the waits
 for the test; a real edge needs the defaults.

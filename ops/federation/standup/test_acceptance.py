@@ -370,6 +370,96 @@ class AcceptanceRun(unittest.TestCase):
         self.assertEqual(v["persistence/inbound/release/all"], "BLOCKED", out)
         self.assertEqual(v["persistence/outbound/release/xab"], "BLOCKED", out)
 
+    # --- existing partnerships before and after -----------------------------
+    def existing(self):
+        """xaa already peers with xac (sets release/all and release/xac each way)."""
+        ag = fakefabric.agreement(them="xac", ours=("release/all/**", "release/xac/**"),
+                                  theirs=("release/all/**", "release/xaa/**"))
+        self.fabric.add_existing(ag)
+        work = os.path.join(self.tmp, "peerings", "xac")
+        os.makedirs(work)
+        with open(os.path.join(work, "agreement.json"), "w") as f:
+            json.dump(ag, f)
+        return work
+
+    def run_before(self, extra):
+        path = os.path.join(self.tmp, "agreement.json")
+        with open(path, "w") as f:
+            json.dump(self.ag, f)
+        env = {k: v for k, v in os.environ.items() if k not in SCRUB}
+        env.update(self.fabric.start())
+        env.update({"FED_ACCEPTANCE_WAIT": "0.3", "FED_ACCEPTANCE_GAP": "0", "FED_ACCEPTANCE_RT_TIMEOUT": "3"})
+        env.update(extra)
+        p = subprocess.run(["bash", str(SCRIPT), path, "--as", "xaa", "--before"], env=env,
+                           capture_output=True, text=True, timeout=240)
+        return p.returncode, p.stdout + p.stderr
+
+    def test_no_existing_partnership_is_checked_unless_named(self):
+        self.existing()
+        rc, out = self.run_acceptance()
+        self.assertEqual(rc, 0, out)
+        self.assertFalse([n for n in self.verdicts() if n.startswith("existing/")], out)
+
+    def test_existing_partnerships_are_unchanged_before_and_after(self):
+        extra = {"FED_EXISTING_WORKS": self.existing()}
+        rc, out = self.run_before(extra)
+        self.assertEqual(rc, 0, out)
+        before = json.load(open(os.path.join(self.tmp, "evidence", "acceptance", "before", "result.json")))
+        self.assertEqual({c["name"]: c["verdict"] for c in before["checks"]},
+                         {"existing/xac/agreement": "PASS", "existing/xac/roundtrip/release/all": "PASS",
+                          "existing/xac/roundtrip/release/xac": "PASS"})
+        rc, out = self.run_acceptance(extra=extra)
+        v = self.verdicts()
+        self.assertEqual(rc, 0, out)
+        for name in ("existing/xac/agreement", "existing/xac/roundtrip/release/all", "existing/xac/leak/release/xab"):
+            self.assertEqual(v.get(name), "PASS", (name, out))
+
+    def test_without_a_snapshot_from_before_the_agreement_row_is_blocked(self):
+        rc, out = self.run_acceptance(extra={"FED_EXISTING_WORKS": self.existing()})
+        self.assertEqual(rc, 3, out)
+        self.assertEqual(self.verdicts()["existing/xac/agreement"], "BLOCKED", out)
+        self.assertIn("--before", out)
+
+    def test_a_changed_existing_agreement_fails(self):
+        work = self.existing()
+        self.assertEqual(self.run_before({"FED_EXISTING_WORKS": work})[0], 0)
+        ag = json.load(open(os.path.join(work, "agreement.json")))
+        ag["expires"] = "2027-01-01"
+        json.dump(ag, open(os.path.join(work, "agreement.json"), "w"))
+        rc, out = self.run_acceptance(extra={"FED_EXISTING_WORKS": work})
+        self.assertEqual(rc, 1, out)
+        self.assertEqual(self.verdicts()["existing/xac/agreement"], "FAIL", out)
+
+    def test_an_existing_partnership_broken_by_the_deployment_fails_and_says_so(self):
+        work = self.existing()
+        self.assertEqual(self.run_before({"FED_EXISTING_WORKS": work})[0], 0)
+        self.fabric.faults.existing_down.add("xac")
+        rc, out = self.run_acceptance(extra={"FED_EXISTING_WORKS": work})
+        self.assertEqual(rc, 1, out)
+        c = [c for c in self.bundle()["checks"] if c["name"] == "existing/xac/roundtrip/release/all"][0]
+        self.assertEqual(c["verdict"], "FAIL")
+        self.assertIn("before this deployment, and does not now", c["reason"])
+
+    def test_a_set_offered_to_the_new_partner_only_must_not_reach_an_existing_one(self):
+        work = self.existing()
+        self.assertEqual(self.run_before({"FED_EXISTING_WORKS": work})[0], 0)
+        self.fabric.faults.leak_to_existing.add("xac")
+        rc, out = self.run_acceptance(extra={"FED_EXISTING_WORKS": work})
+        self.assertEqual(rc, 1, out)
+        self.assertEqual(self.verdicts()["existing/xac/leak/release/xab"], "FAIL", out)
+
+    def test_leakage_without_a_surface_is_an_optional_skip(self):
+        work = self.existing()
+        self.assertEqual(self.run_before({"FED_EXISTING_WORKS": work})[0], 0)
+        rc, out = self.run_acceptance(drop=["FED_EXISTING_REST"], extra={"FED_EXISTING_WORKS": work})
+        self.assertEqual(rc, 0, out)
+        c = [c for c in self.bundle()["checks"] if c["name"] == "existing/xac/leak/release/xab"][0]
+        self.assertEqual((c["verdict"], c["required"]), ("SKIP", False))
+
+    def test_before_needs_a_named_partnership(self):
+        rc, out = self.run_before({})
+        self.assertEqual(rc, 2, out)
+
     def test_a_broken_round_trip_fails(self):
         self.fabric.faults.responder_down.add("xab")
         rc, out = self.run_acceptance(extra={})
