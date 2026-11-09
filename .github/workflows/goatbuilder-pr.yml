@@ -37,6 +37,8 @@ on:
       - 'crates/goat-errors/**'
       - 'crates/goat-federation/**'
       - 'crates/goat-cli/src/cmd/federate.rs'
+      - 'crates/goat-cli/src/main.rs'
+      - 'crates/goat-cli/src/profile.rs'
       - 'ops/federation/vectors/**'
       - 'crates/goat-fun/**'
       - 'crates/goat-selfupdate/**'
