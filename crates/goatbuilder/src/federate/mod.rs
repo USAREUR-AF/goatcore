@@ -45,6 +45,11 @@ use std::process::Command;
 use anyhow::{anyhow, Context, Result};
 
 use crate::config;
+
+// Phase 3 measured over SSH. Its caller is `goatbuilder federate init`, which
+// arrives with the library verbs; until then nothing outside its tests does.
+#[allow(dead_code)]
+pub mod measure;
 use crate::{Check, Report, EXIT_OK, EXIT_REFUSED};
 
 pub mod alloc;

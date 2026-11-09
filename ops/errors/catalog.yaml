@@ -1505,6 +1505,67 @@ entries:
       - "no context directory for the federation verbs"
     exit: 2
 
+  - code: GB-110
+    tool: goatbuilder
+    title: the inventory does not name a federation host phase 3 can reach
+    what: "federate phase 3 measures the edge and the core from this machine, reaching each host the way the peering plays do: the host in the edge group and the host in the core group of inventory/peering-edges.ini, with its address, user, port, key and SSH options. The inventory could not be read, the group has no host or several, or the host uses a connection phase 3 does not use."
+    causes:
+      - ansible-inventory is not installed here, or the inventory does not parse
+      - the edge group (<partner>_edge) or the core group (<partner>_core) is empty or missing in inventory/peering-edges.ini
+      - the group has several hosts and none was named
+      - the host uses an ansible_connection other than ssh or local
+    fixes:
+      - "cd ops/ansible && ansible-inventory -i inventory/peering-edges.ini --playbook-dir . --graph   (what the plays see)"
+      - "add the host to the group, or name it: goatbuilder federate init --edge-host <host> --core-host <host>"
+    read: docs/design/federation-router-discovery.md
+    exit: 1
+
+  - code: GB-111
+    tool: goatbuilder
+    title: a federation host did not answer over SSH
+    what: "Before measuring anything, phase 3 runs `true` on the edge and on the core over SSH, with the inventory's connection settings and the plays' privilege escalation. That command failed, so nothing was measured. The message carries the ssh command it ran."
+    causes:
+      - this machine is not on a network that reaches the host (mesh profile, door or jump host)
+      - the host refused the key (see X-SSH-001)
+      - the host key changed (see X-SSH-003)
+    fixes:
+      - "run the ssh command the message prints, without its last argument, and read ssh's own error"
+      - "goatbuilder doctor --env <env>   (the transport row)"
+    read: docs/design/federation-router-discovery.md
+    exit: 1
+
+  - code: GB-112
+    tool: goatbuilder
+    title: sudo on a federation host wants a password
+    what: "The host answered over SSH, but `sudo -n true` failed: phase 3 reads the federation interface and the container runtime as root, the way the plays become root, and it never types a password."
+    causes:
+      - the host's operator user is not NOPASSWD in sudoers (the baseline play sets it)
+      - ansible_become_user names a user this account cannot become without a password
+    fixes:
+      - "run ops/ansible/mgmt-host-baseline.yml against the host once"
+      - "set ansible_become: false for the host if its user can already read wg and the container runtime"
+    read: docs/design/federation-router-discovery.md
+    matches:
+      - "sudo there wants a password"
+    exit: 1
+
+  - code: GB-113
+    tool: goatbuilder
+    title: no core router to measure on the core host
+    what: "Phase 3 measures the core router's image and version on the core host. It takes the router the operator names with --router-container, else the name the deployment's variables give (zenoh_stack, or site_id with the goat-zenoh role's default, as <zenoh_stack>-router), else the one running core router discovery finds. That router was not running, could not be read, or several candidates were found."
+    causes:
+      - the declared router is not running on the core host, or the variables give a different name than the one deployed
+      - nothing declares the router and no running container carries org.goat.component=zenoh-core or a standard name
+      - several core routers run on the host
+    fixes:
+      - "goatbuilder federate init --router-container <name>   (name it by hand)"
+      - "set zenoh_stack or site_id for the core host in the deployment's group_vars or host_vars"
+      - "ssh <user>@<core> sudo docker ps --format '{{.Names}} {{.Label \"org.goat.component\"}}'   (what is running)"
+    read: docs/design/federation-router-discovery.md
+    matches:
+      - "no core router to measure on"
+    exit: 1
+
   - code: GB-120
     tool: goatbuilder
     title: a peering names a partner with a reserved word
