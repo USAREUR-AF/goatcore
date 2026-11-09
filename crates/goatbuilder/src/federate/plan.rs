@@ -104,7 +104,6 @@ pub struct CertFact {
     pub file: String,
     pub subject: String,
     pub not_after: String,
-    pub expired: bool,
 }
 
 /// Something this peering owns. A run creates, changes or removes only these.
@@ -154,6 +153,8 @@ pub struct Readiness {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HostFirewall {
     pub host: String,
+    /// `ansible_host`, else the inventory name: a host that moves is a changed input.
+    pub address: String,
     pub group: String,
     pub outcome: String,
     pub detail: String,
@@ -172,9 +173,15 @@ pub struct Plan {
     pub core_group: String,
     pub work: String,
     pub versions: Versions,
+    /// Every value phase 1 and the live checks read, as the run will see it:
+    /// set in the environment, else derived. Paths, URLs, groups and the core
+    /// router's daemon; a moved host or another key path is a changed input.
+    pub inputs: Vec<Resolved>,
     pub agreement: Option<AgreementFacts>,
     /// `<work>/applied`, file by file. Empty before phase 9 renders it.
     pub rendered: Vec<FileHash>,
+    /// `<work>/pki`, file by file: a re-minted certificate is a changed input.
+    pub pki: Vec<FileHash>,
     pub certificates: Vec<CertFact>,
     pub resources: Vec<Resource>,
     pub restarts: Vec<Restart>,
@@ -190,8 +197,10 @@ pub struct Plan {
 /// The sections an input change can move, by name, for the recheck's report.
 const SECTIONS: &[&str] = &[
     "versions",
+    "inputs",
     "agreement",
     "rendered",
+    "pki",
     "certificates",
     "resources",
     "restarts",
@@ -252,7 +261,8 @@ fn group_raw(repo: &Path, group: &str, key: &str) -> Option<serde_yaml::Value> {
         else {
             continue;
         };
-        if let Some(v) = doc.get(key) {
+        // A null is unset, as in Python's reading: it neither declares nor overrides.
+        if let Some(v) = doc.get(key).filter(|v| !v.is_null()) {
             found = Some(v.clone());
         }
     }
@@ -431,7 +441,9 @@ pub fn rendered_hashes(dir: &Path) -> Vec<FileHash> {
         };
         for e in rd.filter_map(|e| e.ok()) {
             let p = e.path();
-            if p.is_dir() {
+            // The entry's own type: a symlinked directory is not walked (no loop).
+            let is_dir = e.file_type().is_ok_and(|t| t.is_dir());
+            if is_dir {
                 walk(base, &p, out);
             } else if let Ok(bytes) = std::fs::read(&p) {
                 out.push(FileHash {
@@ -447,25 +459,40 @@ pub fn rendered_hashes(dir: &Path) -> Vec<FileHash> {
     out
 }
 
-/// The certificates phase 8 minted into `<work>/pki`: subject and expiry.
-/// A key file, or anything openssl does not read as a certificate, is left out.
-pub fn certificates(pki: &Path) -> Vec<CertFact> {
+/// The certificates phase 8 minted into `<work>/pki`: subject and expiry,
+/// and a readiness row for each one expired. A key file, or anything openssl
+/// does not read as a certificate, is left out; with files present and no
+/// openssl to read them, expiry is SKIP, never a pass.
+pub fn certificates(pki: &Path) -> (Vec<CertFact>, Vec<Readiness>) {
     let Ok(rd) = std::fs::read_dir(pki) else {
-        return Vec::new();
+        return (Vec::new(), Vec::new());
     };
     let mut files: Vec<PathBuf> = rd
         .filter_map(|e| e.ok().map(|e| e.path()))
         .filter(|p| p.extension().is_some_and(|x| x == "pem" || x == "crt"))
         .collect();
     files.sort();
-    let mut out = Vec::new();
+    let (mut facts, mut rows) = (Vec::new(), Vec::new());
+    let openssl = |args: &[&str], f: &Path| Command::new("openssl").args(args).arg(f).output();
     for f in files {
-        let Ok(o) = Command::new("openssl")
-            .args(["x509", "-noout", "-subject", "-enddate", "-in"])
-            .arg(&f)
-            .output()
-        else {
-            continue;
+        let name = f
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+        let o = match openssl(&["x509", "-noout", "-subject", "-enddate", "-in"], &f) {
+            Ok(o) => o,
+            Err(e) => {
+                rows.push(Readiness {
+                    check: "certificates".into(),
+                    outcome: "SKIP".into(),
+                    code: None,
+                    detail: format!(
+                        "{name}: openssl could not run ({e}), so its expiry is not verified"
+                    ),
+                });
+                continue;
+            }
         };
         if !o.status.success() {
             continue;
@@ -477,23 +504,27 @@ pub fn certificates(pki: &Path) -> Vec<CertFact> {
                 .map(|v| v.trim().to_string())
                 .unwrap_or_default()
         };
-        let expired = !Command::new("openssl")
-            .args(["x509", "-noout", "-checkend", "0", "-in"])
-            .arg(&f)
-            .output()
-            .is_ok_and(|o| o.status.success());
-        out.push(CertFact {
-            file: f
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .to_string(),
+        let fact = CertFact {
+            file: name,
             subject: field("subject="),
             not_after: field("notAfter="),
-            expired,
-        });
+        };
+        let current = openssl(&["x509", "-noout", "-checkend", "0", "-in"], &f)
+            .is_ok_and(|o| o.status.success());
+        if !current {
+            rows.push(Readiness {
+                check: "certificates".into(),
+                outcome: "FAIL".into(),
+                code: None,
+                detail: format!(
+                    "{} ({}) expired {}; run phase 8 again",
+                    fact.file, fact.subject, fact.not_after
+                ),
+            });
+        }
+        facts.push(fact);
     }
-    out
+    (facts, rows)
 }
 
 /// What a run of this peering restarts, and when.
@@ -579,10 +610,69 @@ fn phase1_env(
         .map(|v| v.is_empty())
         .unwrap_or(true)
     {
+        // As the driver resolves it (federate/mod.rs): a run under sudo reads
+        // root's profile, not the invoking user's HOME.
         let home = std::env::var("HOME").unwrap_or_default();
-        env.push(("GOAT_PROFILE_DIR".into(), format!("{home}/.goat")));
+        let dir = if is_root() {
+            "/root/.goat".to_string()
+        } else {
+            format!("{home}/.goat")
+        };
+        env.push(("GOAT_PROFILE_DIR".into(), dir));
     }
     env
+}
+
+fn is_root() -> bool {
+    Command::new("id")
+        .arg("-u")
+        .output()
+        .is_ok_and(|o| String::from_utf8_lossy(&o.stdout).trim() == "0")
+}
+
+/// The values phase 1 reads that the operator sets rather than the deployment
+/// derives; each decides what a live check looks at.
+const LIVE_TARGETS: &[&str] = &[
+    "FED_ROUTER_CONTAINER",
+    "FED_CORE_CONFIG_PATH",
+    "FED_SLOT_DB",
+    "FED_SLOT_REGISTRY_STORE",
+    "FED_SLOT_PG_SSH",
+    "DOCKER_HOST",
+];
+
+/// Every input as the run will see it: the environment's value, else the
+/// derived one; then the live-check targets that only the environment sets.
+fn effective_inputs(
+    repo: &Path,
+    peering: &config::Peering,
+    work: &str,
+    edge_group: &str,
+) -> Vec<Resolved> {
+    let set = |k: &str| std::env::var(k).ok().filter(|v| !v.is_empty());
+    let mut out: Vec<Resolved> = preflight::derive_inputs(repo, peering, work, edge_group, None)
+        .into_iter()
+        .map(|i| match set(i.name) {
+            Some(v) => Resolved {
+                name: i.name.into(),
+                value: Some(v),
+                source: format!("${}", i.name),
+            },
+            None => Resolved {
+                name: i.name.into(),
+                value: i.value,
+                source: i.source,
+            },
+        })
+        .collect();
+    for k in LIVE_TARGETS {
+        out.push(Resolved {
+            name: k.to_string(),
+            value: set(k),
+            source: format!("${k}"),
+        });
+    }
+    out
 }
 
 /// Run phase 1 (all checks, or `only`) into its own result file, removed
@@ -739,18 +829,21 @@ const BOUND: &[(&str, bool, &str, &str, &str)] = &[
 ];
 
 /// Everything in the plan but readiness, the verdict and the hash: the part
-/// that depends only on inputs, which the recheck rebuilds and compares.
-fn inputs_part(repo: &Path, o: &PlanOptions, peering: &config::Peering) -> Result<Plan> {
+/// that depends only on inputs, which the recheck rebuilds and compares. With
+/// it, the readiness rows for the certificates (expired, or not readable).
+fn inputs_part(
+    repo: &Path,
+    o: &PlanOptions,
+    peering: &config::Peering,
+) -> Result<(Plan, Vec<Readiness>)> {
     let with = peering.with.as_str();
     let work = work_of(o);
     let edge_group = o
         .edge_group
         .map(String::from)
         .unwrap_or_else(|| format!("{with}_edge"));
-    let core_group = std::env::var("FED_CORE_GROUP")
-        .ok()
-        .filter(|v| !v.is_empty())
-        .unwrap_or_else(|| format!("{with}_core"));
+    // The group the driver's phase 12 deploys the republisher to.
+    let core_group = format!("{with}_core");
     let edge = [edge_group.as_str(), "peering_edges", "all"];
     let core = [core_group.as_str(), "peering_cores", "all"];
     let agreement = agreement_facts(&work)?;
@@ -777,19 +870,50 @@ fn inputs_part(repo: &Path, o: &PlanOptions, peering: &config::Peering) -> Resul
             }
         })
         .collect();
-    resources.extend([
-        fixed(
-            "container",
-            format!("goat-zenoh-edge-{with}"),
+    // The containers, named as the roles name them: the group's own
+    // `*_stack`, else `<role>-<partner id>` (the roles' templated default).
+    let partner_id = std::env::var("FED_COUNTERPARTY_ID")
+        .ok()
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| with.to_string());
+    for (groups, on, role, key) in [
+        (
+            &edge,
             &edge_group,
-            "roles/goat-zenoh-edge goat_zenoh_edge_stack",
+            "goat-zenoh-edge",
+            "goat_zenoh_edge_stack",
         ),
-        fixed(
-            "container",
-            format!("goat-fed-republisher-{with}"),
+        (
+            &core,
             &core_group,
-            "roles/goat-fed-republisher goat_fed_republisher_stack",
+            "goat-fed-republisher",
+            "goat_fed_republisher_stack",
         ),
+    ] {
+        let v = resolve(repo, "container", None, groups, role, key);
+        let templated = v.source.contains("templated");
+        resources.push(match v.value {
+            Some(name) => Resource {
+                kind: "container".into(),
+                name: Some(name),
+                on: on.clone(),
+                source: v.source,
+            },
+            None if templated => Resource {
+                kind: "container".into(),
+                name: None,
+                on: on.clone(),
+                source: v.source,
+            },
+            None => fixed(
+                "container",
+                format!("{role}-{partner_id}"),
+                on,
+                &format!("roles/{role} default {key}"),
+            ),
+        });
+    }
+    resources.extend([
         fixed(
             "core access-control fragment",
             format!("{with}-fragment.json5"),
@@ -831,16 +955,28 @@ fn inputs_part(repo: &Path, o: &PlanOptions, peering: &config::Peering) -> Resul
     ];
     let mut host_firewall = Vec::new();
     for g in [&edge_group, &core_group] {
-        for (name, _) in inventory_hosts(repo, g) {
+        for (name, address) in inventory_hosts(repo, g) {
             host_firewall.push(HostFirewall {
                 host: name,
+                address,
                 group: g.clone(),
                 outcome: "NOT APPLICABLE".into(),
                 detail: "no baseline host firewall is declared for this host; the plan renders and applies no rule".into(),
             });
         }
     }
-    Ok(Plan {
+    // A mock runs nothing, so it asks no binary for a version: its plan is the
+    // same on every machine.
+    let (source, goat) = if o.mock.is_some() {
+        (
+            "not read under --mock".to_string(),
+            "not read under --mock".to_string(),
+        )
+    } else {
+        (source_version(repo), goat_version())
+    };
+    let (certificates, cert_rows) = certificates(&Path::new(&work).join("pki"));
+    let plan = Plan {
         schema: SCHEMA.into(),
         peering: with.into(),
         environment: peering.environment.clone(),
@@ -848,14 +984,16 @@ fn inputs_part(repo: &Path, o: &PlanOptions, peering: &config::Peering) -> Resul
         us: o.r#as.map(String::from),
         versions: Versions {
             goatbuilder: env!("CARGO_PKG_VERSION").into(),
-            source: source_version(repo),
-            goat: goat_version(),
+            source,
+            goat,
             images,
         },
+        inputs: effective_inputs(repo, peering, &work, &edge_group),
         restarts: restarts(o.r#as, agreement.as_ref()),
         acceptance: acceptance(agreement.as_ref()),
         rendered: rendered_hashes(&Path::new(&work).join("applied")),
-        certificates: certificates(&Path::new(&work).join("pki")),
+        pki: rendered_hashes(&Path::new(&work).join("pki")),
+        certificates,
         agreement,
         resources,
         host_firewall,
@@ -865,14 +1003,15 @@ fn inputs_part(repo: &Path, o: &PlanOptions, peering: &config::Peering) -> Resul
         readiness: Vec::new(),
         verdict: String::new(),
         hash: String::new(),
-    })
+    };
+    Ok((plan, cert_rows))
 }
 
 /// Build the plan: the inputs, then phase 1 (unless a mock), the verdict and
 /// the hash.
 pub fn build(repo: &Path, o: &PlanOptions) -> Result<Plan> {
     let peering = declared(repo, o)?;
-    let mut p = inputs_part(repo, o, &peering)?;
+    let (mut p, cert_rows) = inputs_part(repo, o, &peering)?;
     p.readiness = if o.mock.is_some() {
         vec![Readiness {
             check: "preflight".into(),
@@ -892,17 +1031,7 @@ pub fn build(repo: &Path, o: &PlanOptions) -> Result<Plan> {
             o.live,
         )?
     };
-    for c in p.certificates.iter().filter(|c| c.expired) {
-        p.readiness.push(Readiness {
-            check: "certificates".into(),
-            outcome: "FAIL".into(),
-            code: None,
-            detail: format!(
-                "{} ({}) expired {}; run phase 8 again",
-                c.file, c.subject, c.not_after
-            ),
-        });
-    }
+    p.readiness.extend(cert_rows);
     let skipped = p.readiness.iter().filter(|r| r.outcome == "SKIP").count();
     p.verdict = if p.readiness.iter().any(|r| blocks(&r.outcome)) {
         "BLOCKED".into()
@@ -991,19 +1120,28 @@ pub fn changed_sections(a: &Plan, b: &Plan) -> Vec<String> {
 /// The result of rechecking a saved plan immediately before a change.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Recheck {
+    /// The peering the saved plan is for, for the caller to compare.
+    pub peering: String,
     pub plan_hash: String,
+    /// Why the saved plan cannot be approved as it stands: it was not READY, or
+    /// it skipped a check the recheck does not rerun. Empty when it can be.
+    pub unready: Vec<String>,
     /// The plan sections whose inputs changed since it was written.
     pub changed: Vec<String>,
-    /// The live checks, rerun now.
+    /// The live checks, rerun now, and the certificate rows read now.
     pub live: Vec<Readiness>,
 }
 
 impl Recheck {
-    /// A change may go ahead only when no input changed and every live check
-    /// passes or does not apply. SKIP is not a pass.
+    /// A change may go ahead only when the saved plan was ready, no input
+    /// changed, every live check answered, and each answer and certificate row
+    /// is PASS or NOT APPLICABLE. SKIP is not a pass.
     pub fn allows_change(&self) -> bool {
-        self.changed.is_empty()
-            && !self.live.is_empty()
+        self.unready.is_empty()
+            && self.changed.is_empty()
+            && LIVE_CHECKS
+                .iter()
+                .all(|c| self.live.iter().any(|r| r.check == *c))
             && self
                 .live
                 .iter()
@@ -1011,15 +1149,44 @@ impl Recheck {
     }
 }
 
-/// The inputs half of the recheck: the saved plan, its hash checked, and the
-/// sections a plan built now would change.
-pub fn recheck_inputs(
-    repo: &Path,
-    plan_path: &Path,
-    mock: Option<&Path>,
-) -> Result<(Plan, Vec<String>)> {
-    let saved = read(plan_path)?;
-    let o = PlanOptions {
+/// Why a saved plan cannot be approved as it stands: a FAIL or BLOCKED in its
+/// readiness, or a SKIP of a check the recheck does not rerun.
+fn unready(saved: &Plan) -> Vec<String> {
+    saved
+        .readiness
+        .iter()
+        .filter(|r| {
+            blocks(&r.outcome) || (r.outcome == "SKIP" && !LIVE_CHECKS.contains(&r.check.as_str()))
+        })
+        .map(|r| format!("{} was {} when the plan was made", r.check, r.outcome))
+        .collect()
+}
+
+/// The saved plan must be the one for this peering, in this working
+/// directory: a plan copied from another peering's directory is refused.
+fn check_binding(saved: &Plan, plan_path: &Path, with: &str) -> Result<()> {
+    let dir = plan_path
+        .parent()
+        .map(|d| std::fs::canonicalize(d).unwrap_or_else(|_| d.to_path_buf()));
+    let work = std::fs::canonicalize(&saved.work).unwrap_or_else(|_| PathBuf::from(&saved.work));
+    if saved.peering != with || dir.as_deref() != Some(work.as_path()) {
+        return Err(goat_errors::coded(
+            "GB-201",
+            format!(
+                "{} is the plan of peering '{}' in {}, not of '{with}' in {} (GB-201): make a plan for this peering here",
+                plan_path.display(),
+                saved.peering,
+                saved.work,
+                dir.map(|d| d.display().to_string()).unwrap_or_default()
+            ),
+        )
+        .into());
+    }
+    Ok(())
+}
+
+fn saved_options<'a>(saved: &'a Plan, mock: Option<&'a Path>) -> PlanOptions<'a> {
+    PlanOptions {
         with: &saved.peering,
         env: Some(&saved.environment),
         r#as: saved.us.as_deref(),
@@ -1027,32 +1194,39 @@ pub fn recheck_inputs(
         work: Some(&saved.work),
         mock,
         live: false,
-    };
+    }
+}
+
+/// The inputs half of the recheck: the saved plan (its hash checked, and
+/// bound to `with` and the directory it is in), the sections a plan built now
+/// would change, and the certificate rows read now.
+pub fn recheck_inputs(
+    repo: &Path,
+    plan_path: &Path,
+    with: &str,
+    mock: Option<&Path>,
+) -> Result<(Plan, Vec<String>, Vec<Readiness>)> {
+    let saved = read(plan_path)?;
+    check_binding(&saved, plan_path, with)?;
+    let o = saved_options(&saved, mock);
     let peering = declared(repo, &o)?;
-    let now = inputs_part(repo, &o, &peering)?;
+    let (now, cert_rows) = inputs_part(repo, &o, &peering)?;
     let changed = changed_sections(&saved, &now);
-    Ok((saved, changed))
+    Ok((saved, changed, cert_rows))
 }
 
 /// The live prerequisite recheck, for the deploy step to call immediately
-/// before it changes anything: refuses a plan file that was altered (GB-201),
-/// reports the sections whose inputs changed (a new plan is needed), and reruns
-/// the live phase-1 checks into `<work>/plan/recheck.json`. Call
-/// [`Recheck::allows_change`] on the result.
-pub fn recheck_live_prerequisites(repo: &Path, plan_path: &Path) -> Result<Recheck> {
-    let (saved, changed) = recheck_inputs(repo, plan_path, None)?;
-    let o = PlanOptions {
-        with: &saved.peering,
-        env: Some(&saved.environment),
-        r#as: saved.us.as_deref(),
-        edge_group: Some(&saved.edge_group),
-        work: Some(&saved.work),
-        mock: None,
-        live: true,
-    };
-    let peering = declared(repo, &o)?;
+/// before it changes anything, with the peering it is about to change:
+/// refuses a plan file that was altered or belongs to another peering or
+/// directory (GB-201), reports a plan that was not ready, the sections whose
+/// inputs changed (a new plan is needed), and reruns the live phase-1 checks
+/// into `<work>/plan/recheck.json`. Go ahead only when
+/// [`Recheck::allows_change`] is true.
+pub fn recheck_live_prerequisites(repo: &Path, plan_path: &Path, with: &str) -> Result<Recheck> {
+    let (saved, changed, cert_rows) = recheck_inputs(repo, plan_path, with, None)?;
+    let peering = declared(repo, &saved_options(&saved, None))?;
     let result = Path::new(&saved.work).join("plan/recheck.json");
-    let live = run_phase1(
+    let mut live = run_phase1(
         repo,
         &peering,
         &saved.work,
@@ -1061,7 +1235,10 @@ pub fn recheck_live_prerequisites(repo: &Path, plan_path: &Path) -> Result<Reche
         &result,
         true,
     )?;
+    live.extend(cert_rows);
     Ok(Recheck {
+        peering: saved.peering.clone(),
+        unready: unready(&saved),
         plan_hash: saved.hash,
         changed,
         live,
@@ -1151,9 +1328,9 @@ fn rows_of(p: &Plan) -> Vec<Check> {
     for x in &p.certificates {
         c.push(row(
             "certificate",
-            !x.expired,
+            true,
             format!("{} {} until {}", x.file, x.subject, x.not_after),
-            x.expired.then(|| "run phase 8 again".to_string()),
+            None,
         ));
     }
     for r in &p.resources {
@@ -1231,14 +1408,41 @@ pub fn plan(repo: &Path, o: &PlanOptions) -> Result<Report> {
 /// `goatbuilder federate plan <partner> --recheck`: the recheck the deploy step
 /// runs, on demand. Exit 0 only when a change may go ahead.
 pub fn recheck(repo: &Path, o: &PlanOptions) -> Result<Report> {
+    if o.mock.is_some() {
+        return Err(anyhow!(
+            "--recheck reads the hosts, and --mock reads none: recheck without --mock"
+        ));
+    }
+    if !o.live {
+        return Err(anyhow!(
+            "--recheck reruns the live checks; --no-live would skip exactly those"
+        ));
+    }
     let path = Path::new(&work_of(o)).join("plan.json");
-    let r = recheck_live_prerequisites(repo, &path)?;
+    let saved = read(&path)?;
+    let differs = |given: Option<&str>, planned: Option<&str>| given.is_some() && given != planned;
+    if differs(o.edge_group, Some(&saved.edge_group)) || differs(o.r#as, saved.us.as_deref()) {
+        return Err(anyhow!(
+            "--edge-group or --as differs from the saved plan's ({}, {}): make a new plan with them",
+            saved.edge_group,
+            saved.us.as_deref().unwrap_or("not given")
+        ));
+    }
+    let r = recheck_live_prerequisites(repo, &path, o.with)?;
     let mut checks = vec![row(
         "plan",
         true,
         format!("{} {}", path.display(), r.plan_hash),
         None,
     )];
+    for u in &r.unready {
+        checks.push(row(
+            "unready",
+            false,
+            u.clone(),
+            Some("fix it and make a new plan: a plan that was not ready cannot be approved".into()),
+        ));
+    }
     for s in &r.changed {
         checks.push(row(
             "changed",
@@ -1376,14 +1580,18 @@ mod tests {
         }
     }
 
+    /// Built as a mock: it asks no binary for its version, so a test here
+    /// never runs another test's stub `goat` (they share the process
+    /// environment), and the versions are the same on every machine.
     fn opts(work: &str) -> PlanOptions<'_> {
+        static FIXTURE: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
         PlanOptions {
             with: "velmara",
             env: None,
             r#as: Some("xaa"),
             edge_group: None,
             work: Some(work),
-            mock: None,
+            mock: Some(FIXTURE.get_or_init(fixture).as_path()),
             live: false,
         }
     }
@@ -1403,7 +1611,7 @@ mod tests {
     }
 
     fn planned(repo: &Path, work: &str) -> Plan {
-        let mut p = inputs_part(repo, &opts(work), &peering()).unwrap();
+        let (mut p, _) = inputs_part(repo, &opts(work), &peering()).unwrap();
         p.readiness = vec![Readiness {
             check: "edge-ports".into(),
             outcome: "PASS".into(),
@@ -1547,10 +1755,10 @@ mod tests {
             p.verdict
         );
         let path = write(&p).unwrap();
-        let (_, changed) = recheck_inputs(&repo(), &path, Some(&fx)).unwrap();
+        let (_, changed, _) = recheck_inputs(&repo(), &path, "hello-ally", Some(&fx)).unwrap();
         assert!(changed.is_empty(), "{changed:?}");
         std::fs::remove_file(w.path().join("agreement.json")).unwrap();
-        let (_, changed) = recheck_inputs(&repo(), &path, Some(&fx)).unwrap();
+        let (_, changed, _) = recheck_inputs(&repo(), &path, "hello-ally", Some(&fx)).unwrap();
         assert!(
             changed.contains(&"agreement".to_string())
                 && changed.contains(&"acceptance".to_string()),
@@ -1568,16 +1776,49 @@ mod tests {
             code: None,
             detail: String::new(),
         };
-        let r = |changed: Vec<String>, live: Vec<Readiness>| Recheck {
+        let all = |o: &str| {
+            LIVE_CHECKS
+                .iter()
+                .map(|c| Readiness {
+                    check: c.to_string(),
+                    ..l(o)
+                })
+                .collect::<Vec<_>>()
+        };
+        let r = |unready: Vec<String>, changed: Vec<String>, live: Vec<Readiness>| Recheck {
+            peering: "velmara".into(),
             plan_hash: "h".into(),
+            unready,
             changed,
             live,
         };
-        assert!(r(vec![], vec![l("PASS"), l("NOT APPLICABLE")]).allows_change());
-        assert!(!r(vec![], vec![l("PASS"), l("SKIP")]).allows_change());
-        assert!(!r(vec![], vec![l("BLOCKED")]).allows_change());
-        assert!(!r(vec![], vec![]).allows_change());
-        assert!(!r(vec!["rendered".into()], vec![l("PASS")]).allows_change());
+        assert!(r(vec![], vec![], all("PASS")).allows_change());
+        assert!(r(vec![], vec![], all("NOT APPLICABLE")).allows_change());
+        let mut skip = all("PASS");
+        skip[2].outcome = "SKIP".into();
+        assert!(!r(vec![], vec![], skip).allows_change());
+        assert!(!r(vec![], vec![], all("BLOCKED")).allows_change());
+        assert!(!r(vec![], vec![], vec![]).allows_change());
+        assert!(
+            !r(vec![], vec![], vec![l("PASS")]).allows_change(),
+            "every live check must answer"
+        );
+        assert!(!r(vec![], vec!["rendered".into()], all("PASS")).allows_change());
+        assert!(!r(
+            vec!["inputs was FAIL when the plan was made".into()],
+            vec![],
+            all("PASS")
+        )
+        .allows_change());
+        let mut certs = all("PASS");
+        certs.push(Readiness {
+            check: "certificates".into(),
+            ..l("FAIL")
+        });
+        assert!(
+            !r(vec![], vec![], certs).allows_change(),
+            "a certificate that expired since blocks"
+        );
     }
 
     /// The values the plays bind resolve as phase 1 resolves them: the group's
@@ -1653,14 +1894,29 @@ mod tests {
         );
         let w = tempfile::tempdir().unwrap();
         let p = planned(r.path(), &w.path().display().to_string());
-        let hosts: Vec<(&str, &str)> = p
+        let hosts: Vec<(&str, &str, &str)> = p
             .host_firewall
             .iter()
-            .map(|h| (h.host.as_str(), h.outcome.as_str()))
+            .map(|h| (h.host.as_str(), h.address.as_str(), h.outcome.as_str()))
             .collect();
         assert_eq!(
             hosts,
-            [("edge-a", "NOT APPLICABLE"), ("core-a", "NOT APPLICABLE")]
+            [
+                ("edge-a", "192.0.2.10", "NOT APPLICABLE"),
+                ("core-a", "192.0.2.20", "NOT APPLICABLE")
+            ]
+        );
+        // A host that moves to another address is a changed input.
+        std::fs::write(
+            r.path().join("ops/ansible/inventory/peering-edges.ini"),
+            "[velmara_edge]\nedge-a ansible_host=192.0.2.99\n\n[velmara_core]\ncore-a ansible_host=192.0.2.20 ansible_user=ops\n",
+        )
+        .unwrap();
+        let moved = planned(r.path(), &w.path().display().to_string());
+        let changed = changed_sections(&p, &moved);
+        assert!(
+            changed.contains(&"host_firewall".to_string()),
+            "{changed:?}"
         );
     }
 
@@ -1675,5 +1931,103 @@ mod tests {
         assert_eq!(rows[0].code.as_deref(), Some("GB-131"));
         assert_eq!(rows[1].code, None);
         assert!(read_readiness(&d.path().join("none.json")).is_err());
+    }
+
+    /// A plan that was not ready cannot be approved later: a FAIL, a BLOCKED,
+    /// or a SKIP of a check the recheck does not rerun. A SKIP of a live check
+    /// is fine here, because the recheck reruns it.
+    #[test]
+    fn a_plan_that_was_not_ready_is_unready() {
+        let r = tempfile::tempdir().unwrap();
+        let w = tempfile::tempdir().unwrap();
+        let mut p = planned(r.path(), &w.path().display().to_string());
+        let row = |c: &str, o: &str| Readiness {
+            check: c.into(),
+            outcome: o.into(),
+            code: None,
+            detail: String::new(),
+        };
+        p.readiness = vec![row("edge-ports", "SKIP"), row("inputs", "PASS")];
+        assert!(unready(&p).is_empty());
+        p.readiness.push(row("signing-ca", "BLOCKED"));
+        p.readiness.push(row("preflight", "SKIP"));
+        assert_eq!(
+            unready(&p),
+            [
+                "signing-ca was BLOCKED when the plan was made",
+                "preflight was SKIP when the plan was made"
+            ]
+        );
+    }
+
+    /// The saved plan is bound to its peering and to the directory it is in:
+    /// a plan copied into another peering's directory is refused.
+    #[test]
+    fn a_plan_for_another_peering_or_directory_is_refused() {
+        let w = work_with_agreement();
+        let ws = w.path().display().to_string();
+        let fx = fixture();
+        let o = PlanOptions {
+            with: "hello-ally",
+            env: None,
+            r#as: None,
+            edge_group: None,
+            work: Some(&ws),
+            mock: Some(&fx),
+            live: false,
+        };
+        let path = write(&build(&repo(), &o).unwrap()).unwrap();
+        let e = recheck_inputs(&repo(), &path, "velmara", Some(&fx))
+            .unwrap_err()
+            .to_string();
+        assert!(
+            e.contains("GB-201") && e.contains("not of 'velmara'"),
+            "{e}"
+        );
+        let other = tempfile::tempdir().unwrap();
+        let copied = other.path().join("plan.json");
+        std::fs::copy(&path, &copied).unwrap();
+        let e = recheck_inputs(&repo(), &copied, "hello-ally", Some(&fx))
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("GB-201"), "{e}");
+    }
+
+    /// What the live checks look at is an input: another core router daemon
+    /// or container is a changed input, not the same plan.
+    #[test]
+    fn the_live_check_targets_are_inputs() {
+        let r = tempfile::tempdir().unwrap();
+        let w = tempfile::tempdir().unwrap();
+        let ws = w.path().display().to_string();
+        let inputs = effective_inputs(r.path(), &peering(), &ws, "velmara_edge");
+        for k in [
+            "FED_ROUTER_DOCKER_HOST",
+            "FED_CA_CERT",
+            "FED_SIGNING_KEY",
+            "FED_ROUTER_CONTAINER",
+            "FED_CORE_CONFIG_PATH",
+            "FED_SLOT_DB",
+        ] {
+            assert!(
+                inputs.iter().any(|i| i.name == k),
+                "{k} is not a planned input"
+            );
+        }
+    }
+
+    /// A symlinked directory under the rendered tree is not walked, so a loop
+    /// cannot hang the plan.
+    #[cfg(unix)]
+    #[test]
+    fn a_symlink_loop_under_rendered_files_is_not_followed() {
+        let w = tempfile::tempdir().unwrap();
+        let applied = w.path().join("applied");
+        std::fs::create_dir_all(&applied).unwrap();
+        std::fs::write(applied.join("a"), "x").unwrap();
+        std::os::unix::fs::symlink(&applied, applied.join("loop")).unwrap();
+        let h = rendered_hashes(&applied);
+        assert!(h.iter().any(|f| f.path == "a"));
+        assert!(h.len() <= 2, "{h:?}");
     }
 }
