@@ -1,0 +1,2 @@
+goat_host_firewall_baseline: true
+goat_host_firewall_management_sources: ["198.51.100.0/24"]

@@ -7,7 +7,8 @@
 #            --limit '<peering>_edge:<peering>_core'
 #   Design:  docs/design/federation-preflight.md
 #
-# Every command here is a read (`ss`, `wg show`, `docker ps`, `docker inspect`)
+# Every command here is a read (`ss`, `wg show`, `docker ps`, `docker inspect`,
+# and the host firewall baseline's stored peering entries on an edge)
 # with check_mode off and changed_when false. The only file written is one JSON
 # document per host on the CONTROLLER, under fed_preflight_out, which
 # preflight.py reads and then judges: the tunnel listen port, the edge router
@@ -66,11 +67,32 @@
       failed_when: false
       check_mode: false
 
+    # The peerings the host firewall baseline stored on an edge (one JSON entry
+    # per peering, written by goat-host-firewall): the deploy renders every one
+    # of them with this run's, so the plan reads them to render the same input.
+    - name: Find the peerings the host firewall baseline stored on this edge
+      ansible.builtin.find:
+        paths: "{{ goat_host_firewall_dir | default('/etc/goat-host-firewall') }}/peerings"
+        patterns: "*.json"
+      register: _fed_pf_fw_found
+      check_mode: false
+      when: "'peering_edges' in group_names"
+
+    - name: Read them
+      ansible.builtin.slurp:
+        src: "{{ item.path }}"
+      loop: "{{ (_fed_pf_fw_found.files | default([])) | sort(attribute='path') }}"
+      loop_control:
+        label: "{{ item.path | basename }}"
+      register: _fed_pf_fw_stored
+      check_mode: false
+      when: "'peering_edges' in group_names"
+
     - name: Hand the answers to preflight.py on the controller
       ansible.builtin.copy:
         dest: "{{ fed_preflight_out }}/{{ inventory_hostname }}.json"
         mode: "0600"
-        content: "{{ {'host': inventory_hostname, 'groups': group_names, 'ss': _fed_pf_ss.stdout | default(''), 'ss_ok': (_fed_pf_ss.rc | default(1)) == 0, 'wg': _fed_pf_wg.stdout | default(''), 'containers': _fed_pf_containers.stdout | default(''), 'pids': _fed_pf_pids.stdout | default('')} | to_nice_json }}"
+        content: "{{ {'host': inventory_hostname, 'groups': group_names, 'ss': _fed_pf_ss.stdout | default(''), 'ss_ok': (_fed_pf_ss.rc | default(1)) == 0, 'wg': _fed_pf_wg.stdout | default(''), 'containers': _fed_pf_containers.stdout | default(''), 'pids': _fed_pf_pids.stdout | default(''), 'host_firewall_peerings': (((_fed_pf_fw_stored.results | default([])) | map(attribute='content') | map('b64decode') | map('from_json') | list) if ('peering_edges' in group_names) else none)} | to_nice_json }}"
       delegate_to: localhost
       become: false
       check_mode: false

@@ -805,6 +805,15 @@ fn run_phase1(
     live: bool,
 ) -> Result<Vec<Readiness>> {
     let _ = std::fs::remove_file(result);
+    // The probe's answers from an earlier run are not this run's: removed, so
+    // a run that does not probe (--no-live) leaves none to be read.
+    if let Ok(rd) = std::fs::read_dir(Path::new(work).join("preflight/probe")) {
+        for e in rd.filter_map(|e| e.ok()) {
+            if e.path().extension().is_some_and(|x| x == "json") {
+                let _ = std::fs::remove_file(e.path());
+            }
+        }
+    }
     if let Some(dir) = result.parent() {
         std::fs::create_dir_all(dir).with_context(|| format!("mkdir {}", dir.display()))?;
     }
@@ -1096,11 +1105,10 @@ fn inputs_part(
         .unwrap_or_else(|| Path::new(&work).join("theirs.canonical.json"));
     let fw = hostfw::HostContext {
         repo,
-        peerings: all,
-        ours: peering,
         our_edge_group: &edge_group,
         our_work: Path::new(&work),
         our_package,
+        probe_dir: Path::new(&work).join("preflight/probe"),
     };
     let mut host_firewall = Vec::new();
     for (g, profile) in [(&edge_group, "edge"), (&core_group, "core")] {
@@ -1183,8 +1191,14 @@ fn inputs_part(
 /// the hash.
 pub fn build(repo: &Path, o: &PlanOptions) -> Result<Plan> {
     let (peering, all) = declared(repo, o)?;
-    let (mut p, input_rows) = inputs_part(repo, o, &peering, &all)?;
-    p.readiness = if o.mock.is_some() {
+    // Phase 1 first: its live probe reads what the inputs then use (the
+    // peerings the host firewall baseline stored on each edge).
+    let work = work_of(o);
+    let edge_group = o
+        .edge_group
+        .map(String::from)
+        .unwrap_or_else(|| format!("{}_edge", peering.with));
+    let phase1 = if o.mock.is_some() {
         vec![Readiness {
             check: "preflight".into(),
             outcome: "SKIP".into(),
@@ -1192,17 +1206,11 @@ pub fn build(repo: &Path, o: &PlanOptions) -> Result<Plan> {
             detail: "a mock runs nothing, so phase 1 did not run".into(),
         }]
     } else {
-        let result = Path::new(&p.work).join("plan/preflight.json");
-        run_phase1(
-            repo,
-            &peering,
-            &p.work,
-            &p.edge_group,
-            None,
-            &result,
-            o.live,
-        )?
+        let result = Path::new(&work).join("plan/preflight.json");
+        run_phase1(repo, &peering, &work, &edge_group, None, &result, o.live)?
     };
+    let (mut p, input_rows) = inputs_part(repo, o, &peering, &all)?;
+    p.readiness = phase1;
     p.readiness.extend(input_rows);
     let skipped = p.readiness.iter().filter(|r| r.outcome == "SKIP").count();
     p.verdict = if p.readiness.iter().any(|r| blocks(&r.outcome)) {
@@ -1424,7 +1432,11 @@ pub fn recheck_inputs(
 /// into `<work>/plan/recheck.json`. Go ahead only when
 /// [`Recheck::allows_change`] is true.
 pub fn recheck_live_prerequisites(repo: &Path, plan_path: &Path, with: &str) -> Result<Recheck> {
-    let (saved, changed, input_rows) = recheck_inputs(repo, plan_path, with, None)?;
+    // The plan is checked first, so no host is probed for a plan that is not
+    // this peering's; the live checks run before the inputs are rebuilt,
+    // because the inputs read what the probe answers.
+    let saved = read(plan_path)?;
+    check_binding(&saved, plan_path, with)?;
     let (peering, _) = declared(repo, &saved_options(&saved, None))?;
     let result = Path::new(&saved.work).join("plan/recheck.json");
     let mut live = run_phase1(
@@ -1436,6 +1448,7 @@ pub fn recheck_live_prerequisites(repo: &Path, plan_path: &Path, with: &str) -> 
         &result,
         true,
     )?;
+    let (_, changed, input_rows) = recheck_inputs(repo, plan_path, with, None)?;
     live.extend(input_rows);
     Ok(Recheck {
         peering: saved.peering.clone(),
@@ -2263,7 +2276,7 @@ mod tests {
         std::fs::create_dir_all(r.path().join("ops/ansible/inventory")).unwrap();
         std::fs::write(
             r.path().join("ops/ansible/inventory/peering-edges.ini"),
-            "[velmara_edge]\nedge-a ansible_host=192.0.2.10\n",
+            "[peering_edges:children]\nvelmara_edge\n[velmara_edge]\nedge-a ansible_host=192.0.2.10\n",
         )
         .unwrap();
         let w = tempfile::tempdir().unwrap();

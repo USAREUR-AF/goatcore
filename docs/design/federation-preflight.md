@@ -94,7 +94,10 @@ Nothing on a host is changed.
   listen-port`, `docker ps` and `docker inspect` on the edge and core groups,
   through the same inventory and AWS wrapper the peering plays use, and writes one
   JSON answer per host on the controller under `<work>/preflight/probe/` (the old
-  answers are removed first). Python judges them. A port held by this peering's
+  answers are removed first). Python judges them. On an edge it also reads the
+  peerings the host firewall baseline stored there (`host_firewall_peerings`),
+  which the plan uses to render the same input the deploy renders
+  ([federation-plan.md](federation-plan.md#host-firewall)); phase 1 does not judge them. A port held by this peering's
   own WireGuard interface, or by a process whose container is this peering's edge
   router or republisher (directly, or as the container publishing the port), is a
   re-run, not a collision. A kernel socket that no WireGuard interface owns, any
