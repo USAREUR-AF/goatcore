@@ -13,8 +13,8 @@ Conflicts=shutdown.target
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=/usr/sbin/nft -f {{ goat_host_firewall_dir }}/ruleset.nft
-ExecStop=/usr/sbin/nft delete table inet goat_host_firewall
+ExecStart={{ _hf_nft }} -f {{ goat_host_firewall_dir }}/ruleset.nft
+ExecStop={{ _hf_nft }} delete table inet goat_host_firewall
 
 [Install]
 WantedBy=multi-user.target

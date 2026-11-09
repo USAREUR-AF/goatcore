@@ -14,6 +14,18 @@
     - _hf_state.nft_missing | bool
     - ansible_pkg_mgr | default('apt') == 'apt'
 
+- name: host-firewall | where nft is on this host
+  ansible.builtin.shell: command -v nft
+  args:
+    executable: /bin/sh
+  changed_when: false
+  check_mode: false
+  register: _hf_nft_path
+
+- name: host-firewall | nft path
+  ansible.builtin.set_fact:
+    _hf_nft: "{{ _hf_nft_path.stdout | trim }}"
+
 - name: host-firewall | config directories
   ansible.builtin.file:
     path: "{{ item }}"
@@ -92,7 +104,7 @@
           - systemd-run
           - "--unit={{ goat_host_firewall_rollback_unit }}"
           - "--on-active={{ goat_host_firewall_rollback_seconds | int }}"
-          - /usr/sbin/nft
+          - "{{ _hf_nft }}"
           - -f
           - "{{ goat_host_firewall_dir }}/rollback.nft"
       changed_when: true
@@ -119,6 +131,24 @@
 - name: host-firewall | confirm the new ruleset from a fresh connection
   when: _hf_needs_load | bool
   block:
+    # Independent of the connection plugin: a new ssh process from the controller with
+    # multiplexing off, so a connection kept open from before the load proves nothing.
+    # It uses the same user, port, key and ssh arguments (a jump host included) as
+    # Ansible does.
+    - name: host-firewall | a new, unmultiplexed SSH session reaches the host
+      ansible.builtin.shell: >-
+        ssh -o ControlPath=none -o ControlMaster=no -o BatchMode=yes
+        -o ConnectTimeout={{ goat_host_firewall_confirm_timeout | int }}
+        {{ ansible_ssh_common_args | default('') }} {{ ansible_ssh_extra_args | default('') }}
+        -p {{ ansible_port | default(22) | int }}
+        {% if ansible_ssh_private_key_file is defined %}-i {{ ansible_ssh_private_key_file | quote }}{% endif %}
+        {% if ansible_user is defined %}-l {{ ansible_user | quote }}{% endif %}
+        {{ (ansible_host | default(inventory_hostname)) | quote }} true
+      delegate_to: localhost
+      become: false
+      changed_when: false
+      when: _hf_session is not skipped
+
     - name: host-firewall | a fresh connection still reaches the host
       ansible.builtin.wait_for_connection:
         timeout: "{{ goat_host_firewall_confirm_timeout | int }}"

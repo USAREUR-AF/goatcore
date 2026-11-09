@@ -27,6 +27,17 @@
       empty, so SSH would be admitted from nowhere. Set it in this host's group_vars
       to the address or CIDR the deployment manages the host from. Nothing was applied.
 
+- name: host-firewall | the confirmation finishes before the rollback fires
+  ansible.builtin.assert:
+    that:
+      - (goat_host_firewall_confirm_timeout | int) > 0
+      - (goat_host_firewall_confirm_timeout | int) < (goat_host_firewall_rollback_seconds | int)
+    fail_msg: >-
+      goat-host-firewall refuses (GB-210): goat_host_firewall_confirm_timeout
+      ({{ goat_host_firewall_confirm_timeout }}) must be less than
+      goat_host_firewall_rollback_seconds ({{ goat_host_firewall_rollback_seconds }}), or
+      the rollback can fire while the run is still confirming. Nothing was applied.
+
 - name: host-firewall | an edge run carries its peering
   ansible.builtin.assert:
     that:
@@ -47,8 +58,11 @@
     rd() { tr -cd 'a-z0-9' < "$1" 2>/dev/null || true; }
     nft_missing=false; command -v nft >/dev/null 2>&1 || nft_missing=true
     pending=false; systemctl is-active --quiet "$u.timer" 2>/dev/null && pending=true
-    printf '{"nft_missing": %s, "rollback_pending": %s, "profile": "%s", "applied_sha256": "%s", "applied_live_sha256": "%s"}\n' \
-      "$nft_missing" "$pending" "$(rd "$d/profile")" "$(rd "$d/applied.sha256")" "$(rd "$d/applied-live.sha256")"
+    bridges=$(ip -o link show type bridge 2>/dev/null | awk -F': ' '{print $2}' | cut -d@ -f1 \
+              | tr -cd 'A-Za-z0-9_.\n-' | awk 'NF {printf "%s\"%s\"", (n++ ? ", " : ""), $0}')
+    eph=$(tr -s ' \t' ',' < /proc/sys/net/ipv4/ip_local_port_range 2>/dev/null | tr -cd '0-9,')
+    printf '{"nft_missing": %s, "rollback_pending": %s, "profile": "%s", "applied_sha256": "%s", "applied_live_sha256": "%s", "bridges": [%s], "ephemeral": [%s]}\n' \
+      "$nft_missing" "$pending" "$(rd "$d/profile")" "$(rd "$d/applied.sha256")" "$(rd "$d/applied-live.sha256")" "$bridges" "$eph"
   args:
     executable: /bin/sh
   changed_when: false
@@ -181,6 +195,11 @@
         fabric_sources: "{{ goat_host_firewall_fabric_sources }}"
         mesh_dns_port: "{{ (goat_host_firewall_mesh_dns_port | int) if (goat_host_firewall_mesh_dns_port | string | length > 0) else none }}"
         closed_listeners: "{{ goat_host_firewall_closed_listeners }}"
+        management_prefix_floor: "{{ goat_host_firewall_management_prefix_floor }}"
+        spire_bundle_port: "{{ goat_host_firewall_spire_bundle_port }}"
+        spire_bundle_sources: "{{ goat_host_firewall_spire_bundle_sources }}"
+        bridge_interfaces: "{{ _hf_state.bridges }}"
+        ephemeral_ports: "{{ _hf_state.ephemeral if (_hf_state.ephemeral | length == 2) else none }}"
         uplink_interfaces: >-
           {{ ([ansible_default_ipv4.interface | default('')]
               + [(_hf_session.stdout | default('')).split()[2] | default('')])
@@ -193,6 +212,79 @@
              'dport': _hf_session.stdout.split()[1] | int,
              'iif': (_hf_session.stdout.split()[2] | default(''))}] }}
       listening_ss: "{{ _hf_ss.stdout | default('') }}"
+
+# A peering on this host with no stored entry would lose its rules. This run's own
+# entry is checked alone and stored first, so running each peering's play once with the
+# switch on brings the host to the point where every peering is known, and the last of
+# those runs loads. This happens before the full render, because an override may name
+# rules of a peering that is not stored yet.
+- name: host-firewall | config directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+  loop:
+    - "{{ goat_host_firewall_dir }}"
+    - "{{ goat_host_firewall_dir }}/peerings"
+  when:
+    - goat_host_firewall_profile == 'edge'
+    - _hf_unrecorded | length > 0
+    - not ansible_check_mode
+
+- name: host-firewall | check this run's peering alone before storing it
+  ansible.builtin.command:
+    argv:
+      - "{{ ansible_playbook_python }}"
+      - "{{ role_path }}/files/goat-host-firewall-render.py"
+      - --input
+      - "-"
+      - --peering-only
+      - "{{ goat_host_firewall_peering.name }}"
+      - --format
+      - json
+    stdin: "{{ _hf_input | to_json }}"
+  delegate_to: localhost
+  become: false
+  check_mode: false
+  changed_when: false
+  failed_when: false
+  register: _hf_validate
+  when:
+    - goat_host_firewall_profile == 'edge'
+    - _hf_unrecorded | length > 0
+
+- name: host-firewall | this run's peering is refused on its own
+  ansible.builtin.fail:
+    msg: "{{ _hf_validate.stderr | default('the renderer failed') | trim }} (exit {{ _hf_validate.rc }})"
+  when:
+    - _hf_validate is not skipped
+    - _hf_validate.rc | default(0) != 0
+
+- name: host-firewall | store this run's peering before refusing for the others
+  ansible.builtin.copy:
+    content: "{{ goat_host_firewall_peering | to_nice_json(sort_keys=true) }}\n"
+    dest: "{{ goat_host_firewall_dir }}/peerings/{{ goat_host_firewall_peering.name }}.json"
+    owner: root
+    group: root
+    mode: "0600"
+  when:
+    - goat_host_firewall_profile == 'edge'
+    - _hf_unrecorded | length > 0
+    - not ansible_check_mode
+
+- name: host-firewall | every peering on this host is known
+  ansible.builtin.assert:
+    that:
+      - _hf_unrecorded | default([]) | length == 0
+    fail_msg: >-
+      goat-host-firewall refuses (GB-210): this edge also carries
+      {{ _hf_unrecorded | join(', ') }}, which no run of the baseline has recorded, and
+      loading now would drop their tunnels. This run's peering is recorded; run each
+      of those peerings' plays once with the switch on, and the last run loads the
+      ruleset for all of them. Nothing was applied.
+  when: goat_host_firewall_profile == 'edge'
 
 - name: host-firewall | render and check (nothing is applied when this refuses)
   ansible.builtin.command:
@@ -227,33 +319,6 @@
       - "rules: {{ _hf_result.rules | map(attribute='name') | join(', ') }}"
       - "dropped by the override: {{ _hf_result.dropped | join(', ') or 'none' }}"
       - "loosened: {{ _hf_result.loosened | map(attribute='rule') | join(', ') or 'none' }}"
-
-# A peering on this host with no stored entry would lose its rules. This run's own
-# entry is stored, so running each peering's play once with the switch on brings the
-# host to the point where every peering is known, and the last of those runs loads.
-- name: host-firewall | store this run's peering before refusing for the others
-  ansible.builtin.copy:
-    content: "{{ goat_host_firewall_peering | to_nice_json(sort_keys=true) }}\n"
-    dest: "{{ goat_host_firewall_dir }}/peerings/{{ goat_host_firewall_peering.name }}.json"
-    owner: root
-    group: root
-    mode: "0600"
-  when:
-    - goat_host_firewall_profile == 'edge'
-    - _hf_unrecorded | length > 0
-    - not ansible_check_mode
-
-- name: host-firewall | every peering on this host is known
-  ansible.builtin.assert:
-    that:
-      - _hf_unrecorded | default([]) | length == 0
-    fail_msg: >-
-      goat-host-firewall refuses (GB-210): this edge also carries
-      {{ _hf_unrecorded | join(', ') }}, which no run of the baseline has recorded, and
-      loading now would drop their tunnels. This run's peering is recorded; run each
-      of those peerings' plays once with the switch on, and the last run loads the
-      ruleset for all of them. Nothing was applied.
-  when: goat_host_firewall_profile == 'edge'
 
 - name: host-firewall | say which listening ports this ruleset closes
   ansible.builtin.debug:

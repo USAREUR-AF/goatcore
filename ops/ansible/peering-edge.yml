@@ -63,3 +63,8 @@
             {{ peering_spire_server_addr | default('')
                if (peering_spire_server_addr | default('') is match('^[0-9.]+$')) else '' }}
       when: goat_host_firewall_baseline | default(false) | bool
+    - name: Host firewall baseline is off; refuse if a host still carries one
+      ansible.builtin.include_role:
+        name: goat-host-firewall
+        tasks_from: off.yml
+      when: not (goat_host_firewall_baseline | default(false) | bool)

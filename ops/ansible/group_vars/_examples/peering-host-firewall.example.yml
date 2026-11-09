@@ -14,9 +14,12 @@ goat_host_firewall_baseline: false     # <-- the switch
 # deployment's management host or range here.
 goat_host_firewall_management_sources:
   - 198.51.100.10/32
+# A source broader than this (per family) needs `ssh-management: {reason: ...}` below.
+goat_host_firewall_management_prefix_floor: {ipv4: 24, ipv6: 64}
 
 # Ports the host listens on that the baseline closes on purpose. The role refuses
-# (GB-215) to close a listening port that is neither admitted nor named here.
+# (GB-215) to close a listening port that is neither admitted nor named here, as
+# "tcp/<port>", "udp/<port>" or a process name.
 goat_host_firewall_closed_listeners: []
 
 # Optional. Tighten freely; loosen a NAMED rule only, with a reason. List the names:
@@ -25,6 +28,7 @@ goat_host_firewall_closed_listeners: []
 goat_host_firewall_override:
   icmp-echo: {drop: true}
   # fabric-tls: {sources: [100.127.0.0/16]}           # core: fabric port from the mesh only
+  # mesh-wireguard: {reason: "mesh peers dial this host directly"}   # with goat_host_firewall_mesh_udp_ports
   # other-tcp:
   #   ports: [9100]
   #   reason: "node exporter, scraped by the site's monitoring host"

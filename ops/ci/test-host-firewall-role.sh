@@ -18,11 +18,15 @@
 #   6. edge profile: a second peering's run keeps the first peering's tunnel rule
 #   4c. refused while a rollback of an earlier run is pending (GB-214), and when the
 #      ruleset would close a listening port nobody named (GB-215)
-#   6b. an edge play on a host that carries the core profile is refused; a peering the
-#      host carries with no recorded entry is refused, and the refused run keeps its own
+#   6b. an edge play on a host that carries the core profile is refused; from a host with
+#      no /etc/goat-host-firewall, a peering the host carries with no recorded entry is
+#      refused, the refused run stores its own (even when the override names the other
+#      peering's rules), and the other peering's run then loads both
 #   7. rollback: a ruleset that drops the controller, loaded with the rollback armed
 #      by the same commands tasks/apply.yml runs, cuts SSH and is undone by the timer.
 #      This proves the timer, not the role's own failed-confirm path
+#   8. the switch turned off while the baseline is loaded is refused, naming the command
+#      that takes it off; once taken off, the switch-off run passes
 #
 # Every container has its own network namespace; the host's firewall is never touched.
 # Needs docker with --privileged and cgroup v2.
@@ -174,6 +178,10 @@ log "5: a tightening override, then a loosening with a reason"
 vars tight "{$CORE_BASE, \"goat_host_firewall_management_sources\": [\"$CTL/32\"], \"goat_host_firewall_override\": {\"fabric-tls\": {\"sources\": [\"$CTL/32\"]}, \"icmp-echo\": {\"drop\": true}}}"
 play tight || { cat "$LOGS/tight.log"; fail "5: the tightening override did not apply"; }
 tgt 'grep -q "^# tightened fabric-tls" /etc/goat-host-firewall/ruleset.nft' || fail "5: the ruleset does not record the tightening"
+grep -A1 'a new, unmultiplexed SSH session reaches the host' "$LOGS/tight.log" | grep -q '^ok: \[tgt -> localhost\]' \
+  || { cat "$LOGS/tight.log"; fail "5: the load was not confirmed by an unmultiplexed ssh from the controller"; }
+tgt 'grep -q "^ExecStart=$(command -v nft) -f " /etc/systemd/system/goat-host-firewall.service' \
+  || fail "5: the boot unit does not run the nft this host has"
 scan out "an outsider, tightened" ""
 scan ctl "the management source, tightened" "tcp/22 tcp/7447"
 vars loose "{$CORE_BASE, \"goat_host_firewall_management_sources\": [\"$CTL/32\"], \"goat_host_firewall_override\": {\"other-tcp\": {\"ports\": [9100], \"reason\": \"a site exporter\"}}}"
@@ -189,29 +197,28 @@ log "6: edge profile, two peerings on one host"
 vars edgeonce "{\"goat_host_firewall_baseline\": true, \"goat_host_firewall_profile\": \"edge\", \"goat_host_firewall_management_sources\": [\"$CTL/32\"], \"goat_host_firewall_peering\": {\"name\": \"wg-fed0\", \"transport\": \"wireguard\", \"listen_port\": 51821, \"peer_addr\": \"$OUT\", \"tunnel_interface\": \"wg-fed0\", \"remote_link_ip\": \"169.254.10.0\", \"edge_port\": 7448}}"
 refused edgeonce GB-210
 grep -q "already carries the 'core' profile" "$LOGS/edgeonce.log" || fail "6: the profile refusal does not say why"
-tgt 'systemctl disable --now goat-host-firewall.service >/dev/null 2>&1; rm -f /etc/goat-host-firewall/profile /etc/goat-host-firewall/ruleset.nft /etc/goat-host-firewall/applied*.sha256'
-tgt 'nft list table inet goat_host_firewall' >/dev/null 2>&1 && fail "6: stopping the boot unit did not remove the table"
-# A peering this edge carries that no run has recorded: refused, this run's entry kept.
-tgt 'systemd-run --unit=goat-peering-wg@wg-fed2.service sleep 600' >/dev/null 2>&1
-
+# From a host with no /etc/goat-host-firewall at all, carrying two peerings.
 tgt 'ip link add wg-fed0 type dummy && ip link add wg-fed1 type dummy'
 EDGE_BASE="\"goat_host_firewall_baseline\": true, \"goat_host_firewall_profile\": \"edge\", \"goat_host_firewall_management_sources\": [\"$CTL/32\"], \"goat_host_firewall_closed_listeners\": [\"tcp/7447\", \"tcp/8000\", \"tcp/9100\", \"udp/5353\", \"udp/51820\"]"
-vars edge0 "{$EDGE_BASE, \"goat_host_firewall_peering\": {\"name\": \"wg-fed0\", \"transport\": \"wireguard\", \"listen_port\": 51821, \"peer_addr\": \"$OUT\", \"tunnel_interface\": \"wg-fed0\", \"remote_link_ip\": \"169.254.10.0\", \"edge_port\": 7448, \"extra_tcp_ports\": [], \"via_forwarder\": false}}"
-vars edge1 "{$EDGE_BASE, \"goat_host_firewall_peering\": {\"name\": \"wg-fed1\", \"transport\": \"wireguard\", \"listen_port\": 51823, \"peer_addr\": \"192.0.2.30\", \"tunnel_interface\": \"wg-fed1\", \"remote_link_ip\": \"169.254.12.0\", \"edge_port\": 7449, \"extra_tcp_ports\": [], \"via_forwarder\": false}}"
-if play edge0; then cat "$LOGS/edge0.log"; fail "6: an unrecorded peering on the host was not refused"; fi
-grep -q 'also carries wg-fed2' "$LOGS/edge0.log" || { cat "$LOGS/edge0.log"; fail "6: the refusal does not name wg-fed2"; }
-tgt 'test -s /etc/goat-host-firewall/peerings/wg-fed0.json' || fail "6: the refused run did not keep its own entry"
+tgt 'systemctl disable --now goat-host-firewall.service >/dev/null 2>&1; rm -rf /etc/goat-host-firewall'
+tgt 'nft list table inet goat_host_firewall' >/dev/null 2>&1 && fail "6: stopping the boot unit did not remove the table"
+tgt 'systemd-run --unit=goat-peering-wg@wg-fed0.service sleep 900 && systemd-run --unit=goat-peering-wg@wg-fed1.service sleep 900' >/dev/null 2>&1
+# The override names a rule of wg-fed1, which is not stored when wg-fed0 runs first.
+EDGE_OV='"goat_host_firewall_override": {"wg-fed1/edge-router": {"sources": ["169.254.12.0"]}}'
+vars edge0 "{$EDGE_BASE, $EDGE_OV, \"goat_host_firewall_peering\": {\"name\": \"wg-fed0\", \"transport\": \"wireguard\", \"listen_port\": 51821, \"peer_addr\": \"$OUT\", \"tunnel_interface\": \"wg-fed0\", \"remote_link_ip\": \"169.254.10.0\", \"edge_port\": 7448, \"extra_tcp_ports\": [], \"via_forwarder\": false}}"
+vars edge1 "{$EDGE_BASE, $EDGE_OV, \"goat_host_firewall_peering\": {\"name\": \"wg-fed1\", \"transport\": \"wireguard\", \"listen_port\": 51823, \"peer_addr\": \"192.0.2.30\", \"tunnel_interface\": \"wg-fed1\", \"remote_link_ip\": \"169.254.12.0\", \"edge_port\": 7449, \"extra_tcp_ports\": [], \"via_forwarder\": false}}"
+if play edge0; then cat "$LOGS/edge0.log"; fail "6: wg-fed1, carried but unrecorded, was not refused"; fi
+grep -q 'also carries wg-fed1' "$LOGS/edge0.log" || { cat "$LOGS/edge0.log"; fail "6: the refusal does not name wg-fed1"; }
+tgt 'test -s /etc/goat-host-firewall/peerings/wg-fed0.json' || { cat "$LOGS/edge0.log"; fail "6: the refused run did not store its own entry on a fresh host"; }
+[ "$(tgt 'stat -c %a /etc/goat-host-firewall /etc/goat-host-firewall/peerings' | tr '\n' ' ')" = "700 700 " ] || fail "6: the directories are not 0700"
 tgt 'nft list table inet goat_host_firewall' >/dev/null 2>&1 && fail "6: the refused run loaded a table"
-tgt 'systemctl stop goat-peering-wg@wg-fed2.service'
-log "ok: refused while wg-fed2 was unrecorded, wg-fed0's entry kept"
-play edge0 || { cat "$LOGS/edge0.log"; fail "6: the first peering did not converge"; }
+log "ok: fresh host, wg-fed1 unrecorded: refused, wg-fed0's entry stored"
+play edge1 || { cat "$LOGS/edge1.log"; fail "6: the last peering's run did not load"; }
+tgt 'nft list table inet goat_host_firewall' | grep '"wg-fed0/tunnel"' >/dev/null || fail "6: wg-fed0's tunnel rule is missing"
+tgt 'nft list table inet goat_host_firewall' | grep '"wg-fed1/tunnel"' >/dev/null || fail "6: wg-fed1's tunnel rule is missing"
 scan out "the partner endpoint of wg-fed0" "udp/51821"
-play edge1 || { cat "$LOGS/edge1.log"; fail "6: the second peering did not converge"; }
-tgt 'nft list table inet goat_host_firewall' | grep '"wg-fed0/tunnel"' >/dev/null || fail "6: the second peering's run cut the first's tunnel rule"
-tgt 'nft list table inet goat_host_firewall' | grep '"wg-fed1/tunnel"' >/dev/null || fail "6: the second peering's tunnel rule is missing"
-scan out "the partner endpoint of wg-fed0, after wg-fed1" "udp/51821"
-play edge1 || fail "6: a second run of wg-fed1 failed"
-grep -Eq 'changed=0 ' "$LOGS/edge1.log" || { grep -B1 '^changed:' "$LOGS/edge1.log"; fail "6: a second run of wg-fed1 changed something"; }
+play edge0 || fail "6: a run of wg-fed0 after both are stored failed"
+grep -Eq 'changed=0 ' "$LOGS/edge0.log" || { grep -B1 '^changed:' "$LOGS/edge0.log"; fail "6: a run of wg-fed0 after loading changed something"; }
 log "ok: 6"
 
 log "7: rollback"
@@ -233,5 +240,14 @@ done
 fresh_ssh || fail "7: the rollback did not restore SSH"
 [ "$(tgt 'nft -s list table inet goat_host_firewall | sha256sum')" = "$before" ] || fail "7: the restored table is not the previous one"
 log "ok: 7 the timer restored the previous table and SSH"
+
+log "8: switching the baseline off"
+vars off '{"goat_host_firewall_baseline": false}'
+if play off; then cat "$LOGS/off.log"; fail "8: switch off with the baseline still loaded was not refused"; fi
+grep -q 'systemctl disable --now goat-host-firewall' "$LOGS/off.log" || { cat "$LOGS/off.log"; fail "8: the refusal does not name the command that takes it off"; }
+tgt 'systemctl disable --now goat-host-firewall.service >/dev/null 2>&1; rm -rf /etc/goat-host-firewall'
+play off || { cat "$LOGS/off.log"; fail "8: switch off on a host without the baseline failed"; }
+tgt 'nft list table inet goat_host_firewall' >/dev/null 2>&1 && fail "8: the table is still loaded"
+log "ok: 8 refused while loaded, passes once taken off"
 
 log "PASS"

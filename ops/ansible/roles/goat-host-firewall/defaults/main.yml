@@ -23,6 +23,10 @@ goat_host_firewall_profile: ""
 # Sources (IPv4 or IPv6 addresses or CIDRs) admitted to SSH. Required: empty is
 # refused before anything is applied, because it would admit no one.
 goat_host_firewall_management_sources: []
+# A management source broader than this prefix (per address family) loosens
+# ssh-management and needs `ssh-management: {reason: "..."}` in the override. A /0 is
+# refused outright.
+goat_host_firewall_management_prefix_floor: {ipv4: 24, ipv6: 64}
 goat_host_firewall_ssh_port: "{{ ansible_port | default(22) }}"
 
 # --- the mesh ----------------------------------------------------------------
@@ -30,7 +34,10 @@ goat_host_firewall_ssh_port: "{{ ansible_port | default(22) }}"
 # the mesh client then reaches its peers by the connections it opens itself (replies
 # are admitted as established). List the port when mesh peers must be able to dial
 # this host directly; what crosses the mesh stays the mesh ACL's decision (ADR 1219).
-# A port listed here may not be a peering's tunnel, IKE or carrier port (GB-210).
+# A port listed here may not be a peering's tunnel, IKE or carrier port (GB-210), and
+# listing any is a loosening that needs `mesh-wireguard: {reason: "..."}` in the override.
+# Without it, a mesh peer behind NAT that cannot be reached directly carries its traffic
+# through the mesh's relay instead: it still works, slower.
 goat_host_firewall_mesh_interface: "{{ goat_zenoh_mesh_iface | default('wt0') }}"
 goat_host_firewall_mesh_udp_ports: []
 
@@ -50,6 +57,12 @@ goat_host_firewall_fabric_sources: []
 # The mesh nameserver the edge resolves the core's name through (ADR 1219
 # decision 4). Drop it with the override on a core that does not serve it.
 goat_host_firewall_mesh_dns_port: 5353
+
+# The SPIRE bundle endpoint the edge's inbound forward reaches on this core host
+# (goat-peering-spire), admitted from the edge's mesh address. Set by
+# peering-republisher.yml when peering_spire_enabled; empty leaves the rule out.
+goat_host_firewall_spire_bundle_port: ""
+goat_host_firewall_spire_bundle_sources: []
 
 # --- edge profile ------------------------------------------------------------
 # This run's peering, set by the play from the transport role's values (see

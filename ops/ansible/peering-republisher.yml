@@ -36,4 +36,18 @@
         name: goat-host-firewall
       vars:
         goat_host_firewall_profile: core
+        # The edge's inbound SPIRE forward reaches our bundle endpoint here (phase 13);
+        # admitted from the edge hosts' literal addresses, else on the mesh interface.
+        goat_host_firewall_spire_bundle_port: >-
+          {{ (peering_spire_bundle_port | default(8443) | int)
+             if (peering_spire_enabled | default(false) | bool) else '' }}
+        goat_host_firewall_spire_bundle_sources: >-
+          {{ groups.get(fed_edge_group | default(''), [])
+             | map('extract', hostvars) | map(attribute='ansible_host', default='')
+             | select('match', '^[0-9.]+$') | list }}
       when: goat_host_firewall_baseline | default(false) | bool
+    - name: Host firewall baseline is off; refuse if a host still carries one
+      ansible.builtin.include_role:
+        name: goat-host-firewall
+        tasks_from: off.yml
+      when: not (goat_host_firewall_baseline | default(false) | bool)
