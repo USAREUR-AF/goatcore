@@ -56,6 +56,7 @@ pub mod alloc;
 pub mod declaration;
 pub mod forwarder;
 pub mod hostalloc;
+pub mod hostfw;
 pub mod peering_files;
 pub mod lock;
 mod run;

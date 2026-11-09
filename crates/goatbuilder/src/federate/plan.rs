@@ -27,6 +27,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use super::hostalloc;
+use super::hostfw;
 use super::preflight;
 use crate::config;
 use crate::{Check, Report, EXIT_REFUSED};
@@ -153,17 +154,8 @@ pub struct Readiness {
     pub detail: String,
 }
 
-/// The host firewall entry for one host. The baseline host firewall is not
-/// built, so every entry is NOT APPLICABLE and nothing is rendered or applied.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct HostFirewall {
-    pub host: String,
-    /// `ansible_host`, else the inventory name: a host that moves is a changed input.
-    pub address: String,
-    pub group: String,
-    pub outcome: String,
-    pub detail: String,
-}
+/// The host firewall entry for one host (federate/hostfw.rs).
+pub use super::hostfw::HostFirewall;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Plan {
@@ -255,7 +247,7 @@ pub fn plan_hash(p: &Plan) -> String {
 /// The value a group's own vars give `key`, unparsed: group_vars/<group>.yml,
 /// then each file in group_vars/<group>/ in name order, the last that sets it
 /// winning (as Ansible merges them).
-fn group_raw(repo: &Path, group: &str, key: &str) -> Option<serde_yaml::Value> {
+pub(super) fn group_raw(repo: &Path, group: &str, key: &str) -> Option<serde_yaml::Value> {
     let gv = repo.join("ops/ansible/group_vars");
     let mut files = vec![
         gv.join(format!("{group}.yml")),
@@ -1094,38 +1086,26 @@ fn inputs_part(
             "goat_fed_republisher_image",
         ),
     ];
-    // The baseline host firewall is opt-in per group
-    // (`goat_host_firewall_baseline`, default false). Off: NOT APPLICABLE,
-    // nothing rendered or applied. On: the plan must report the rule set before
-    // anything is applied, and it does not render it yet, so it is BLOCKED.
+    // The baseline host firewall is opt-in per host (`goat_host_firewall_baseline`,
+    // default false). Off: NOT APPLICABLE, nothing rendered. On: the ruleset and
+    // hash from the role's own renderer, or BLOCKED naming why it cannot be shown.
+    let our_package = std::env::var("FED_COUNTERPARTY")
+        .ok()
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| Path::new(&work).join("theirs.canonical.json"));
+    let fw = hostfw::HostContext {
+        repo,
+        peerings: all,
+        ours: peering,
+        our_edge_group: &edge_group,
+        our_work: Path::new(&work),
+        our_package,
+    };
     let mut host_firewall = Vec::new();
-    for (g, parent) in [
-        (&edge_group, "peering_edges"),
-        (&core_group, "peering_cores"),
-    ] {
-        let on = resolve(
-            repo,
-            "host firewall baseline",
-            None,
-            &[g.as_str(), parent, "all"],
-            "goat-host-firewall",
-            "goat_host_firewall_baseline",
-        )
-        .value
-        .is_some_and(|v| v.eq_ignore_ascii_case("true"));
+    for (g, profile) in [(&edge_group, "edge"), (&core_group, "core")] {
         for (name, address) in inventory_hosts(repo, g) {
-            let (outcome, detail) = if on {
-                ("BLOCKED", "host firewall baseline: on, and this plan does not render its rule set yet, so it cannot show what would be applied")
-            } else {
-                ("NOT APPLICABLE", "host firewall baseline: off (goat_host_firewall_baseline is not true); nothing is rendered or applied")
-            };
-            host_firewall.push(HostFirewall {
-                host: name,
-                address,
-                group: g.clone(),
-                outcome: outcome.into(),
-                detail: detail.into(),
-            });
+            host_firewall.push(hostfw::entry(&fw, &name, &address, g, profile));
         }
     }
     // A mock runs nothing, so it asks no binary for a version: its plan is the
@@ -1143,7 +1123,7 @@ fn inputs_part(
         rows.push(Readiness {
             check: "host-firewall".into(),
             outcome: "BLOCKED".into(),
-            code: None,
+            code: h.code.clone(),
             detail: format!("{} ({}): {}", h.host, h.group, h.detail),
         });
     }
@@ -2274,10 +2254,11 @@ mod tests {
     }
 
     /// With the baseline host firewall off, each host is NOT APPLICABLE; with
-    /// it on, the plan cannot show the rule set yet, so the host and the plan
-    /// are BLOCKED rather than silently passing.
+    /// it on and no ruleset to show (here the checkout has no renderer and no
+    /// management source), the host and the plan are BLOCKED rather than
+    /// silently passing.
     #[test]
-    fn a_host_firewall_baseline_that_is_on_blocks_the_plan() {
+    fn a_host_firewall_baseline_that_cannot_render_blocks_the_plan() {
         let r = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(r.path().join("ops/ansible/inventory")).unwrap();
         std::fs::write(

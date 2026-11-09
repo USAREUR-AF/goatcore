@@ -7,13 +7,13 @@
 (schema `goat-federation-plan/v1`); `goatbuilder federate plan <partner> --recheck`
 and the function behind it, `recheck_live_prerequisites`; codes GB-200 to GB-202
 in `ops/errors/catalog.yaml`; the host-level allocation check in
-`crates/goatbuilder/src/federate/hostalloc.rs` (GB-203). Unit tests cover the
+`crates/goatbuilder/src/federate/hostalloc.rs` (GB-203); the host firewall
+entries from the baseline's renderer in `crates/goatbuilder/src/federate/hostfw.rs`. Unit tests cover the
 hash, the digest, the recheck, the value resolution and the host check.
 **Not built:** the deploy step that calls the recheck before it changes
 anything, and approval bound to the plan's hash (both belong to the deploy
 stage); the allocated per-peering values (the plan reads the group's vars and
-the roles' defaults until allocation is wired in); the call to the baseline
-host firewall's renderer, so a host with the baseline on is BLOCKED. **Not measured:** no run against real
+the roles' defaults until allocation is wired in); the host firewall input when a value resolves only inside a play (that host is BLOCKED). **Not measured:** no run against real
 hosts.
 
 Status: WIP — gate: on the federation test environment, a plan of a clean
@@ -44,7 +44,7 @@ only writes are `<work>/plan.json` and phase 1's result files under
 | `restarts` | the core router (phase 10), this peering's WireGuard interface (11), edge router (12) and republisher (12, only when we offer a release set) | the phases; the agreement's flows decide the republisher |
 | `acceptance` | the runner, whether `FED_ACCEPTANCE_STRICT=1` is set, and for each flow a reception and a refusal that acceptance must show | the agreement's flows |
 | `readiness` | each phase-1 check's outcome and code | `preflight.py`, run with the derived inputs into `<work>/plan/preflight.json`; `--no-live` skips the live reads (each SKIP) |
-| `host_firewall` | one entry per host of the edge and core groups, with its address. With `goat_host_firewall_baseline` not true (the default): NOT APPLICABLE, "host firewall baseline: off", nothing rendered or applied. With it true: BLOCKED, and a BLOCKED readiness row, because the plan does not render the rule set yet and must show it before anything is applied. A host that moves to another address is a changed input | the peering inventory, the group's vars |
+| `host_firewall` | one entry per host of the edge and core groups, with its address. With `goat_host_firewall_baseline` not true (the default): NOT APPLICABLE, "host firewall baseline: off", nothing rendered. With it true: PASS with the `ruleset` text and its `sha256` from the baseline's own renderer, or BLOCKED (and a BLOCKED readiness row with the renderer's GB-21x code) naming why it cannot be shown (below). A host that moves to another address is a changed input | the peering inventory, the vars the role reads, the renderer |
 | `conflicts` | each value this peering and another declared peering would bind on one machine (below) | the peering inventory, each peering's group vars and agreement |
 | `verdict` | `READY`, `READY, <n> check(s) not verified` (SKIP is never a pass), or `BLOCKED` (a FAIL or BLOCKED) | the readiness |
 | `created_at` | when the plan was made (RFC 3339, UTC); outside the hash, so the same inputs give the same hash | the clock |
@@ -99,6 +99,39 @@ subnets with. Otherwise PASS. Only the conflicts this peering is part of go into
 its plan, so a conflict between two other peerings does not change this plan's
 hash. Ports held by something that is not a declared peering (NetBird on UDP
 51820, any other service) are phase 1's live port check.
+
+## Host firewall
+
+For each host of the edge and core groups with `goat_host_firewall_baseline`
+true, the plan runs the baseline's own renderer
+(`ops/ansible/roles/goat-host-firewall/files/goat-host-firewall-render.py --input - --format json`,
+[peering-host-firewall.md](peering-host-firewall.md)) and records the ruleset
+text and its sha256. `crates/goatbuilder/src/federate/hostfw.rs` assembles the
+renderer's input the way the role assembles it (`_hf_input` in
+`roles/goat-host-firewall/tasks/main.yml`), from the same variables in Ansible's
+order: the host's inventory line, `host_vars/`, the group's vars, its parent
+group's and `all`, then the role's default, with apply's rendered transport file
+for the peering group. Each peering entry is built as `peering-wg.yml` or
+`peering-edge.yml` builds it, and an edge host carries every declared peering
+whose edge group names the same machine, as the role carries every peering
+stored on the host. The core host's SPIRE bundle port is set as
+`peering-republisher.yml` sets it: only on `peering_spire_server_host` with
+`peering_spire_enabled`, and no sources.
+
+The fields the role reads from the live host (bridge interfaces, the ephemeral
+port range, uplinks, the managing session, the listening sockets) are left out.
+They are checks only and never change the ruleset or its hash, so the plan's
+sha256 equals the one the deploy prints for the same declaration. A test renders
+the plan's input and the same input with those fields added, and compares the
+two hashes; another reads the role's assemble task and the two plays and fails
+when they build a field the plan does not.
+
+A host is BLOCKED, with the reason, when: a value it needs resolves only inside
+a play (a template other than `{{ var | default(x) }}`, optionally `| int`,
+`| bool` or `| trim`); there is no agreement yet (the tunnel is not known); apply
+has not rendered the far link address; the counterparty package is missing; the
+renderer is not in the checkout; or the renderer refuses, in which case the
+entry and its readiness row carry the renderer's code (GB-210 to GB-215).
 
 ## The recheck before a change
 
