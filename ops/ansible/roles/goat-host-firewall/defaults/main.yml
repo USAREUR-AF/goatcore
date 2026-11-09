@@ -26,11 +26,19 @@ goat_host_firewall_management_sources: []
 goat_host_firewall_ssh_port: "{{ ansible_port | default(22) }}"
 
 # --- the mesh ----------------------------------------------------------------
-# The mesh client's interface and its own WireGuard UDP port(s). The port lets
-# mesh peers reach this host directly; what crosses the mesh is the mesh ACL's
-# decision (ADR 1219), not this table's. An empty list leaves the rule out.
+# The mesh client's interface, and its own WireGuard UDP port(s). Empty by default:
+# the mesh client then reaches its peers by the connections it opens itself (replies
+# are admitted as established). List the port when mesh peers must be able to dial
+# this host directly; what crosses the mesh stays the mesh ACL's decision (ADR 1219).
+# A port listed here may not be a peering's tunnel, IKE or carrier port (GB-210).
 goat_host_firewall_mesh_interface: "{{ goat_zenoh_mesh_iface | default('wt0') }}"
-goat_host_firewall_mesh_udp_ports: [51820]
+goat_host_firewall_mesh_udp_ports: []
+
+# Ports this host listens on (on a non-loopback address) that the ruleset closes on
+# purpose, as "tcp/<port>" or "udp/<port>". The role reads the host's listening
+# sockets before loading and refuses (GB-215) to close one that is neither admitted
+# by a rule nor named here, so a service sharing the host is never cut by surprise.
+goat_host_firewall_closed_listeners: []
 
 # --- core profile ------------------------------------------------------------
 goat_host_firewall_fabric_tcp_port: "{{ goat_zenoh_listen_port | default(7447) }}"

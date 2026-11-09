@@ -22,6 +22,7 @@ Refusals, each with its code from ops/errors/catalog.yaml:
   exit 3  GB-211  the override names an unknown or fixed rule, or an unknown key
   exit 3  GB-212  the override loosens a rule and records no reason
   exit 4  GB-213  the ruleset would drop a session listed in must_reach
+  exit 5  GB-215  the ruleset would close a listening port nobody acknowledged
 
 Input (goat-host-firewall-input/v1):
   {
@@ -35,12 +36,15 @@ Input (goat-host-firewall-input/v1):
       "fabric_tcp_port": 7447,                         # core only
       "fabric_udp_port": null,                         # core only; QUIC when enabled
       "fabric_sources": [],                            # core only; empty = any source
-      "mesh_dns_port": 5353                            # core only; null leaves it out
+      "mesh_dns_port": 5353,                           # core only; null leaves it out
+      "uplink_interfaces": ["eth0"],                   # optional; refused when named br-*
+      "closed_listeners": ["tcp/8000"]                 # optional; ports meant to be closed
     },
     "peerings": [                                      # edge only, one per peering
       {"name": "wg-fed0", "transport": "wireguard", "listen_port": 51820,
        "peer_addr": "192.0.2.10", "tunnel_interface": "wg-fed0",
        "remote_link_ip": "169.254.10.0", "edge_port": 7448, "extra_tcp_ports": [],
+       "spire_outbound_port": 18443, "spire_server_addr": "100.127.0.5",   # optional
        "via_forwarder": false, "carrier_interface": "wg-carry0",
        "carrier_remote_ip": "169.254.30.0", "carrier_listen_port": 51822,
        "forwarder_addr": ""},
@@ -50,8 +54,12 @@ Input (goat-host-firewall-input/v1):
     ],
     "override": {"<rule name>": {"drop": true} | {"sources": [...]} | {"ports": [...]}
                                 | {"interface": "..."}, "reason": "..."},
-    "must_reach": [{"saddr": "198.51.100.10", "proto": "tcp", "dport": 22, "iif": "eth0"}]
+    "must_reach": [{"saddr": "198.51.100.10", "proto": "tcp", "dport": 22, "iif": "eth0"}],
+    "listening": [{"proto": "tcp", "port": 8000, "addr": "0.0.0.0", "process": "x"}],
+    "listening_ss": "<the output of ss -Hlntup>"     # read when listening is absent
   }
+  must_reach, listening and uplink_interfaces are facts of the live host: checks only, never
+  part of the ruleset or its hash.
 
 usage: goat-host-firewall-render.py --input FILE|- [--override FILE] [--format text|json]
        goat-host-firewall-render.py --input FILE|- --list-rules
@@ -189,13 +197,16 @@ def common_rules(host):
              note="ping, rate limited; errors such as fragmentation-needed arrive as related"),
         Rule("icmpv6-essential",
              expr="meta l4proto ipv6-icmp icmpv6 type { nd-neighbor-solicit, nd-neighbor-advert, "
-                  "nd-router-advert, packet-too-big, echo-request } accept",
-             note="IPv6 neighbor discovery and path MTU; IPv6 does not work without them"),
-        Rule("dhcp-client", expr="udp sport 67 udp dport 68 accept",
-             note="DHCP replies, which conntrack cannot match to the broadcast request"),
+                  "nd-router-advert, packet-too-big, mld-listener-query, echo-request } accept",
+             note="IPv6 neighbor discovery, multicast listener queries and path MTU; IPv6 does "
+                  "not work without them"),
+        Rule("dhcp-client", expr=["udp sport 67 udp dport 68 accept",
+                                  "udp sport 547 udp dport 546 accept"],
+             note="DHCP and DHCPv6 replies, which conntrack cannot match to the multicast or "
+                  "broadcast request"),
         Rule("container-bridges", expr=['iifname "docker0" accept', 'iifname "br-*" accept'],
-             note="the host's own containers reaching services on the host; drop it on a host "
-                  "whose containers must not"),
+             note="the host's own containers (docker0, br-*): to services on the host, and to "
+                  "ports other containers publish; drop it on a host whose containers must not"),
         Rule("ssh-management", proto="tcp", ports=[ssh_port], sources=mgmt,
              note="SSH from the declared management sources only"),
     ]
@@ -266,8 +277,35 @@ def edge_rules(host, peerings):
                               sources=[remote] if remote else [], iif=tun,
                               note="the other ports the transport role carries across the "
                                    "tunnel (the SPIRE bundle endpoint)"))
+        if p.get("spire_outbound_port") not in (None, ""):
+            sport = _port(p["spire_outbound_port"], f"{where}.spire_outbound_port")
+            server = _addr_or_empty(p.get("spire_server_addr"), f"{where}.spire_server_addr")
+            rules.append(Rule(f"{name}/spire-forward", proto="tcp", ports=[sport],
+                              sources=[server] if server else [],
+                              note="our SPIRE server fetching the partner's bundle through the "
+                                   "edge's outbound forward (goat-peering-spire, phase 13)"))
     rules += other_rules()
+    _refuse_udp_overlap(rules)
     return rules
+
+
+def _refuse_udp_overlap(rules):
+    """A peering's UDP port that the mesh rule also admits from any source would void the
+    peering rule's source restriction, and two peerings on one port cannot both work."""
+    owner = {}
+    for r in rules:
+        if r.proto != "udp" or r.expr is not None or not r.ports:
+            continue
+        if r.name.startswith("other-"):
+            continue
+        for p in r.ports:
+            if p in owner:
+                raise incomplete(
+                    f"UDP {p} is claimed by both {owner[p]} and {r.name}. The mesh client's "
+                    f"WireGuard port and each peering's tunnel, IKE and carrier ports must all "
+                    f"differ on one host (the tunnel port already held by the mesh is the "
+                    f"failure preflight reports as edge ports free)")
+            owner[p] = r.name
 
 
 def core_rules(host):
@@ -462,6 +500,95 @@ def check_must_reach(rules, must_reach):
                           f"nothing was applied")
 
 
+def check_uplinks(rules, host):
+    uplinks = host.get("uplink_interfaces") or []
+    if not isinstance(uplinks, list):
+        raise incomplete("host.uplink_interfaces must be a list of interface names")
+    bridges = sorted({u for u in (_ifname(u, "host.uplink_interfaces") for u in uplinks)
+                      if u == "docker0" or u.startswith("br-")})
+    cb = next((r for r in rules if r.name == "container-bridges"), None)
+    if bridges and cb is not None and not cb.dropped:
+        raise incomplete(
+            f"the host's uplink {', '.join(bridges)} is named like a container bridge, so the "
+            f"container-bridges rule would admit everything arriving on it. Drop that rule in "
+            f"the override (container-bridges: {{drop: true}})")
+
+
+def _listener_key(proto, port):
+    return f"{proto}/{int(port)}"
+
+
+def parse_ss(text):
+    """`ss -Hlntup` lines -> [{"proto", "port", "addr", "process"}]."""
+    out = []
+    for line in (text or "").splitlines():
+        cols = line.split()
+        if len(cols) < 5 or cols[0] not in ("tcp", "udp"):
+            continue
+        local = cols[4]
+        if ":" not in local:
+            continue
+        addr, _, port = local.rpartition(":")
+        if not port.isdigit():
+            continue
+        m = re.search(r'users:\(\("([^"]+)"', line)
+        out.append({"proto": cols[0], "port": int(port), "addr": addr.strip("[]"),
+                    "process": m.group(1) if m else ""})
+    return out
+
+
+def check_listeners(rules, listening, closed):
+    """Every socket listening on a non-loopback address must be admitted by some rule (from
+    some source, on some interface), or named in host.closed_listeners as a port the
+    deployment means to close. Returns the ports this ruleset closes."""
+    if not listening:
+        return []
+    if not isinstance(closed, list):
+        raise incomplete("host.closed_listeners must be a list such as [\"tcp/8000\"]")
+    acknowledged = set()
+    for c in closed:
+        m = re.match(r"^(tcp|udp)/(\d+)$", str(c))
+        if not m:
+            raise incomplete(f"host.closed_listeners: {c!r} is not tcp/<port> or udp/<port>")
+        acknowledged.add(_listener_key(m.group(1), m.group(2)))
+    admitted = set()
+    for r in rules:
+        if r.dropped or r.expr is not None or r.proto not in ("tcp", "udp"):
+            continue
+        for p in r.ports:
+            admitted.add(_listener_key(r.proto, p))
+    closing, unacknowledged = [], []
+    for item in listening:
+        if not isinstance(item, dict):
+            raise incomplete("listening entries must be mappings")
+        proto = str(item.get("proto", ""))
+        if proto not in ("tcp", "udp"):
+            continue
+        key = _listener_key(proto, _port(item.get("port"), "listening.port"))
+        addr = str(item.get("addr", "")).strip("[]")
+        try:
+            if addr and ipaddress.ip_address(addr.split("%")[0]).is_loopback:
+                continue
+            if addr.endswith("%lo"):
+                continue
+        except ValueError:
+            pass
+        if key in admitted or key in closing:
+            continue
+        closing.append(key)
+        if key not in acknowledged:
+            unacknowledged.append(f"{key} ({item.get('process') or 'unknown process'} on "
+                                  f"{addr or '*'})")
+    if unacknowledged:
+        raise Refusal(
+            "GB-215", 5,
+            f"the ruleset would close {len(unacknowledged)} port(s) this host listens on: "
+            f"{'; '.join(sorted(unacknowledged))}. Admit each by loosening other-tcp or "
+            f"other-udp with a reason, or name it in goat_host_firewall_closed_listeners to "
+            f"close it deliberately; nothing was applied")
+    return sorted(closing)
+
+
 # --------------------------------------------------------------------------- nftables text
 
 def _src_matches(sources):
@@ -531,9 +658,11 @@ def render(profile, rules, tightened, loosened):
         "    ct status dnat ct direction original jump published_new",
         "  }",
         "  chain published_new {",
-        '    iifname "docker0" return',
-        '    iifname "br-*" return',
     ]
+    cb = next((r for r in rules if r.name == "container-bridges"), None)
+    if cb is not None and not cb.dropped:
+        out += ['    iifname "docker0" return comment "container-bridges"',
+                '    iifname "br-*" return comment "container-bridges"']
     for r in rules:
         out += ["    " + line for line in _rule_lines(r, published=True)]
     out += [
@@ -579,7 +708,13 @@ def run(doc, override_path=None):
         override = load_override(override_path)
     rules = baseline(doc)
     tightened, loosened = apply_override(rules, override)
+    check_uplinks(rules, doc["host"])
     check_must_reach(rules, doc.get("must_reach"))
+    listening = doc.get("listening")
+    if listening is None and doc.get("listening_ss") is not None:
+        listening = parse_ss(doc["listening_ss"])
+    closing = check_listeners(rules, listening, doc.get("host", {}).get(
+        "closed_listeners", []))
     text = render(doc["profile"], rules, tightened, loosened)
     return {
         "schema": RENDER_SCHEMA,
@@ -590,6 +725,7 @@ def run(doc, override_path=None):
         "dropped": [r.name for r in rules if r.dropped],
         "tightened": tightened,
         "loosened": loosened,
+        "closing": closing,
     }
 
 

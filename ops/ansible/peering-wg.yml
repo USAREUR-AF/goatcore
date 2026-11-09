@@ -36,6 +36,13 @@
           remote_link_ip: "{{ peering_wg_remote_link_ip }}"
           edge_port: "{{ peering_wg_fabric_port | int }}"
           extra_tcp_ports: "{{ peering_wg_extra_ports | map('int') | list }}"
+          # Phase 13 opens this forward after this phase; admitted now so it is not cut.
+          spire_outbound_port: >-
+            {{ (peering_spire_outbound_port | default(18443) | int)
+               if (peering_spire_enabled | default(false) | bool) else '' }}
+          spire_server_addr: >-
+            {{ peering_spire_server_addr | default('')
+               if (peering_spire_server_addr | default('') is match('^[0-9.]+$')) else '' }}
           via_forwarder: "{{ peering_wg_via_forwarder | bool }}"
           carrier_interface: "{{ peering_wg_carrier_interface }}"
           carrier_remote_ip: "{{ peering_wg_carrier_remote_ip }}"

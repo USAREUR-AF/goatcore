@@ -15,6 +15,10 @@ goat_host_firewall_baseline: false     # <-- the switch
 goat_host_firewall_management_sources:
   - 198.51.100.10/32
 
+# Ports the host listens on that the baseline closes on purpose. The role refuses
+# (GB-215) to close a listening port that is neither admitted nor named here.
+goat_host_firewall_closed_listeners: []
+
 # Optional. Tighten freely; loosen a NAMED rule only, with a reason. List the names:
 #   python3 ops/ansible/roles/goat-host-firewall/files/goat-host-firewall-render.py \
 #     --input <input.json> --list-rules

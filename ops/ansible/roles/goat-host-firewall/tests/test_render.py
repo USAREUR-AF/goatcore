@@ -80,22 +80,117 @@ def test_edge_wireguard_admits_exactly_the_declared_ports():
 def test_edge_wireguard_published_chain_holds_the_same_ports():
     res = render(fixture("edge-wireguard"))
     pub = lines(res, "published_new")
-    assert pub[:2] == ['iifname "docker0" return', 'iifname "br-*" return']
+    assert pub[:2] == ['iifname "docker0" return comment "container-bridges"',
+                       'iifname "br-*" return comment "container-bridges"']
     assert pub[-1] == 'counter drop comment "default-deny"'
     assert ('iifname "wg-fed0" ip saddr { 169.254.10.0 } meta l4proto tcp ct original '
             'proto-dst { 7448 } accept comment "wg-fed0/edge-router"') in pub
     # Fixed expressions (loopback, ICMP, DHCP) live in the input chain only.
-    assert not any("loopback" in l or "icmp" in l or "container-bridges" in l for l in pub)
+    assert not any("loopback" in l or "icmp" in l or "dhcp" in l for l in pub)
     assert rule_line(res, "container-bridges") == [
         'iifname "docker0" accept comment "container-bridges"',
         'iifname "br-*" accept comment "container-bridges"']
 
 
-def test_container_bridges_can_be_dropped():
+def test_container_bridges_can_be_dropped_from_both_chains():
     doc = fixture("core")
     doc["override"] = {"container-bridges": {"drop": True}}
     res = render(doc)
     assert rule_line(res, "container-bridges") == [] and res["loosened"] == []
+    assert rule_line(res, "container-bridges", "published_new") == []
+
+
+def test_an_uplink_named_like_a_container_bridge_is_refused_unless_the_rule_is_dropped():
+    doc = fixture("core")
+    doc["host"]["uplink_interfaces"] = ["br-lan"]
+    refused(doc, "GB-210")
+    doc["override"] = {"container-bridges": {"drop": True}}
+    render(doc)
+    doc["host"]["uplink_interfaces"] = ["eth0"]
+    doc["override"] = {}
+    assert render(doc)["sha256"] == render(fixture("core"))["sha256"]
+
+
+@pytest.mark.parametrize("port", [51820])
+def test_a_peering_port_the_mesh_rule_also_holds_is_refused(port):
+    # The defaults of goat-peering-wg (51820) and of a mesh client (51820) collide; the
+    # mesh rule admits any source, which would void the tunnel rule's restriction.
+    doc = fixture("edge-wireguard")
+    doc["peerings"][0]["listen_port"] = port
+    e = refused(doc, "GB-210")
+    assert "mesh-wireguard" in str(e) and "wg-fed0/tunnel" in str(e)
+
+
+def test_two_peerings_on_one_udp_port_are_refused():
+    doc = fixture("edge-wireguard")
+    doc["peerings"].append(dict(doc["peerings"][0], name="wg-fed1", tunnel_interface="wg-fed1"))
+    refused(doc, "GB-210")
+
+
+def test_dhcp_client_admits_dhcpv4_and_dhcpv6_replies():
+    res = render(fixture("core"))
+    assert rule_line(res, "dhcp-client") == [
+        'udp sport 67 udp dport 68 accept comment "dhcp-client"',
+        'udp sport 547 udp dport 546 accept comment "dhcp-client"']
+
+
+# --------------------------------------------------------------------------- listeners
+
+LISTENING = [
+    {"proto": "tcp", "port": 22, "addr": "0.0.0.0", "process": "sshd"},
+    {"proto": "tcp", "port": 7447, "addr": "0.0.0.0", "process": "docker-proxy"},
+    {"proto": "tcp", "port": 8000, "addr": "127.0.0.1", "process": "zenohd"},
+    {"proto": "udp", "port": 53, "addr": "127.0.0.53%lo", "process": "systemd-resolve"},
+    {"proto": "tcp", "port": 443, "addr": "198.51.100.1", "process": "management"},
+    {"proto": "udp", "port": 3478, "addr": "::", "process": "management"},
+]
+
+
+def test_a_listener_the_ruleset_would_close_is_refused():
+    doc = fixture("core")
+    doc["listening"] = LISTENING
+    e = refused(doc, "GB-215")
+    assert e.exit_code == 5
+    assert "tcp/443 (management on 198.51.100.1)" in str(e) and "udp/3478" in str(e)
+    # Loopback listeners and admitted ports are not reported.
+    assert "8000" not in str(e) and "udp/53" not in str(e) and "7447" not in str(e)
+
+
+def test_listeners_closed_deliberately_or_admitted_by_a_reasoned_loosening_pass():
+    doc = fixture("core")
+    doc["listening"] = LISTENING
+    doc["host"]["closed_listeners"] = ["udp/3478"]
+    doc["override"] = {"other-tcp": {"ports": [443], "reason": "the management server"}}
+    res = render(doc)
+    assert res["closing"] == ["udp/3478"]
+    # Listeners are a check, never part of the ruleset.
+    del doc["listening"]
+    assert render(doc)["sha256"] == res["sha256"]
+
+
+SS = """tcp   LISTEN 0      4096         0.0.0.0:22        0.0.0.0:*    users:(("sshd",pid=1,fd=3))
+tcp   LISTEN 0      4096       127.0.0.1:8000      0.0.0.0:*    users:(("zenohd",pid=2,fd=9))
+tcp   LISTEN 0      4096            [::]:7447         [::]:*    users:(("docker-proxy",pid=3,fd=4))
+udp   UNCONN 0      0      127.0.0.53%lo:53        0.0.0.0:*    users:(("systemd-resolve",pid=4,fd=13))
+udp   UNCONN 0      0                  *:3478            *:*    users:(("management",pid=5,fd=7))
+tcp   LISTEN 0      511     198.51.100.1:443       0.0.0.0:*
+"""
+
+
+def test_ss_output_is_read_when_no_listening_list_is_given():
+    doc = fixture("core")
+    doc["listening_ss"] = SS
+    e = refused(doc, "GB-215")
+    assert "tcp/443 (unknown process on 198.51.100.1)" in str(e)
+    assert "udp/3478 (management on *)" in str(e)
+    assert "8000" not in str(e) and "udp/53" not in str(e) and "7447" not in str(e)
+
+
+def test_closed_listeners_must_be_proto_and_port():
+    doc = fixture("core")
+    doc["listening"] = LISTENING
+    doc["host"]["closed_listeners"] = ["3478"]
+    refused(doc, "GB-210")
 
 
 def test_edge_wireguard_without_a_literal_endpoint_admits_any_source_to_the_tunnel():
@@ -118,6 +213,16 @@ def test_edge_wireguard_via_forwarder_binds_the_tunnel_to_the_carrier():
         'comment "wg-fed0/tunnel"']
     assert rule_line(res, "wg-fed0/carrier") == [
         'ip saddr { 203.0.113.5 } udp dport { 51822 } accept comment "wg-fed0/carrier"']
+
+
+def test_edge_spire_forward_admits_our_server_only():
+    doc = fixture("edge-wireguard")
+    doc["peerings"][0].update(spire_outbound_port="18443", spire_server_addr="100.127.0.5")
+    res = render(doc)
+    assert rule_line(res, "wg-fed0/spire-forward") == [
+        'ip saddr { 100.127.0.5 } tcp dport { 18443 } accept comment "wg-fed0/spire-forward"']
+    doc["peerings"][0].update(spire_outbound_port="")
+    assert rule_line(render(doc), "wg-fed0/spire-forward") == []
 
 
 def test_edge_ipsec_admits_ike_and_esp_from_the_partner_only():

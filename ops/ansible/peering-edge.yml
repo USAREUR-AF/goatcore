@@ -55,4 +55,11 @@
           remote_link_ip: "{{ peering_edge_remote_link_ip }}"
           edge_port: "{{ goat_zenoh_edge_listen_port | default(7448) | int }}"
           extra_tcp_ports: "{{ peering_wg_extra_ports | default([]) | map('int') | list }}"
+          # Phase 13 opens this forward after this phase; admitted now so it is not cut.
+          spire_outbound_port: >-
+            {{ (peering_spire_outbound_port | default(18443) | int)
+               if (peering_spire_enabled | default(false) | bool) else '' }}
+          spire_server_addr: >-
+            {{ peering_spire_server_addr | default('')
+               if (peering_spire_server_addr | default('') is match('^[0-9.]+$')) else '' }}
       when: goat_host_firewall_baseline | default(false) | bool
