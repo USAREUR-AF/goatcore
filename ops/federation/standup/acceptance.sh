@@ -35,6 +35,10 @@
 #                            THEIR agreed peering identity, connected to our edge
 #   FED_PROBE_THEIRS_ZID     that session's zenoh id (optional): when set, the allowed
 #                            control must have come from exactly that session
+#   FED_PROBE_LAUNCHER       command that starts, stops and checks the three probe
+#                            sessions for this run only (see RUN-OWNED PROBES below);
+#                            FED_PROBE_TTL their lifetime in seconds (default 900)
+#   FED_SSH_KNOWN_HOSTS      known_hosts file: ssh verifies each core's host key
 #   FED_PROBE_FORGED_REST    the same, holding a certificate from THEIR CA with a
 #                            common name the agreement never named
 #   FED_PROBE_FORGED_ZID     that session's zenoh id, the only name the router logs for
@@ -230,8 +234,25 @@ echo "  their offered sets: $THEIR_SETS"
 echo "  evidence: $EVID"
 echo
 
-ours()   { if [ -n "$FED_SSH_OURS" ]; then timeout 60 ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$FED_SSH_OURS" "$1" 2>/dev/null; else eval "$1"; fi; }
-theirs() { if [ -n "$FED_SSH_THEIRS" ]; then timeout 60 ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$FED_SSH_THEIRS" "$1" 2>/dev/null; else eval "$1"; fi; }
+# With FED_SSH_KNOWN_HOSTS (a known_hosts file holding the cores' host keys) every ssh
+# verifies the host's identity and refuses an unknown or changed key. Unset, ssh runs
+# as it always has here, without checking; making verification the default is its
+# own change.
+ssh_opts() {
+  if [ -n "${FED_SSH_KNOWN_HOSTS:-}" ]; then
+    printf '%s\n' -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$FED_SSH_KNOWN_HOSTS"
+  else
+    printf '%s\n' -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+  fi
+}
+side_ssh() { # TARGET COMMAND
+  local IFS='
+'
+  # shellcheck disable=SC2046
+  timeout 60 ssh $(ssh_opts) "$1" "$2" 2>/dev/null
+}
+ours()   { if [ -n "$FED_SSH_OURS" ]; then side_ssh "$FED_SSH_OURS" "$1"; else eval "$1"; fi; }
+theirs() { if [ -n "$FED_SSH_THEIRS" ]; then side_ssh "$FED_SSH_THEIRS" "$1"; else eval "$1"; fi; }
 
 # A read prints the value and exits 0 (nothing printed: the surface answered and
 # holds no such key), or exits 4 when the surface did not answer properly. The two
@@ -406,6 +427,7 @@ finish() { # DIR
     "spire=$(set_or_not "${FED_SPIRE_OURS:-}${FED_SPIRE_THEIRS:-}")" \
     "existing=$(set_or_not "${FED_EXISTING_WORKS:-}")" "existing_rest=$(set_or_not "${FED_EXISTING_REST:-}")" \
     "session=$(set_or_not "${FED_ACCEPTANCE_SESSION:-}")" \
+    "ssh_host_keys_verified=$(set_or_not "${FED_SSH_KNOWN_HOSTS:-}")" "probe_launcher=$(set_or_not "${FED_PROBE_LAUNCHER:-}")" \
     ${FED_ACCEPTANCE_SESSION:+--session "$FED_ACCEPTANCE_SESSION"} \
     --software "$HERE/acceptance.sh" "$HERE/acceptance_evidence.py" "$HERE/acceptance_session.py" "$HERE/../roundtrip/fedcheck.sh" \
     --config-dir "$(dirname "$AGREEMENT")/applied"
@@ -554,6 +576,110 @@ if [ "$BEFORE" = 1 ]; then
   existing_checks
   finish "$BEFORE_DIR"
 fi
+
+# ---- RUN-OWNED PROBES (FED_PROBE_LAUNCHER, opt-in). The refusal rows need client
+#      sessions across the link holding the partner's agreed identity, a name nobody
+#      agreed, and our core's name. A drill used to start them by hand and leave
+#      them running. With a launcher, this run starts them itself, each with a
+#      deadline, records every one in a resource manifest of its own
+#      (<evidence>/probes/<run id>.json), stops exactly those at the end, and checks
+#      they are gone. Incomplete cleanup is a required FAIL. A manifest an earlier
+#      run left behind (killed before its cleanup) is cleaned first, and only the
+#      resources it names. Production edges, cores and tunnels are never touched.
+#
+#      The launcher contract (the deployment or drill provides the command):
+#        <launcher> start <agreed|forged|impersonate> <run id> <deadline, epoch s>
+#             prints REST=<url> ZID=<zenoh id> HANDLE=<opaque id>, one per line;
+#             the session must end by itself at the deadline
+#        <launcher> stop <handle>     ends it
+#        <launcher> alive <handle>    exits 0 while it exists, 1 once it is gone
+PROBES_DIR="$EVID/probes"
+PROBES_FILE="$PROBES_DIR/$RUN_ID.json"
+PROBES_STARTED=""
+probes_note() { # KIND HANDLE STATUS DEADLINE: record one resource in this run's manifest
+  python3 - "$PROBES_FILE" "$RUN_ID" "$1" "$2" "$3" "$4" <<'PY'
+import json, os, sys, time
+path, run, kind, handle, status, deadline = sys.argv[1:]
+m = {"run": run, "resources": {}}
+if os.path.exists(path):
+    m = json.load(open(path))
+r = m["resources"].setdefault(handle, {"kind": kind, "deadline": int(deadline or 0), "started_at": int(time.time())})
+r["status"] = status
+tmp = path + ".tmp"
+json.dump(m, open(tmp, "w"), indent=2, sort_keys=True)
+os.replace(tmp, path)
+PY
+}
+probes_left() { # MANIFEST: the handles it names that were not confirmed gone
+  python3 -c 'import json,sys; m=json.load(open(sys.argv[1])); print("\n".join(h for h,r in m.get("resources",{}).items() if r.get("status")!="gone"))' "$1" 2>/dev/null
+}
+probes_stop() { # MANIFEST: stop and check every resource it names; prints the ones still there
+  local h left=""
+  for h in $(probes_left "$1"); do
+    $FED_PROBE_LAUNCHER stop "$h" >/dev/null 2>&1
+    if $FED_PROBE_LAUNCHER alive "$h" >/dev/null 2>&1; then left="$left $h"
+    else PROBES_FILE="$1" probes_note "-" "$h" gone 0; fi
+  done
+  printf '%s' "$left"
+}
+probes_cleanup_on_signal() {
+  [ -n "$PROBES_STARTED" ] && [ -f "$PROBES_FILE" ] && probes_stop "$PROBES_FILE" >/dev/null
+  exit 130
+}
+if [ -n "${FED_PROBE_LAUNCHER:-}" ]; then
+  mkdir -p "$PROBES_DIR"
+  # An earlier run's manifest with resources not confirmed gone: clean them first.
+  earlier=""; left=""
+  for f in "$PROBES_DIR"/*.json; do
+    [ -f "$f" ] || continue
+    [ "$f" = "$PROBES_FILE" ] && continue
+    [ -n "$(probes_left "$f")" ] || continue
+    earlier="$earlier $(basename "$f" .json)"
+    left="$left$(probes_stop "$f")"
+  done
+  if [ -n "$earlier" ]; then
+    begin; obs runs "$earlier"; obs left "$left"
+    if [ -z "$left" ]; then ok cleanup/earlier-runs local precondition "probes an interrupted run left behind are gone:$earlier"
+    else no cleanup/earlier-runs local precondition "probes an interrupted run left behind are still there:$left" \
+      "Only resources named in those runs' manifests were stopped; stop these by hand."; fi
+  fi
+  trap probes_cleanup_on_signal INT TERM
+  deadline=$(( $(date +%s) + ${FED_PROBE_TTL:-900} ))
+  for kind in agreed forged impersonate; do
+    case "$kind" in
+      agreed)      [ -z "${FED_PROBE_THEIRS_REST:-}" ] || continue ;;
+      forged)      [ -z "${FED_PROBE_FORGED_REST:-}" ] || continue ;;
+      impersonate) [ -z "${FED_PROBE_IMPERSONATE_REST:-}" ] || continue ;;
+    esac
+    out=$($FED_PROBE_LAUNCHER start "$kind" "$RUN_ID" "$deadline" 2>&1); lrc=$?
+    h=$(printf '%s\n' "$out" | sed -n 's/^HANDLE=//p' | head -1)
+    url=$(printf '%s\n' "$out" | sed -n 's/^REST=//p' | head -1)
+    zid=$(printf '%s\n' "$out" | sed -n 's/^ZID=//p' | head -1)
+    if [ -n "$h" ]; then probes_note "$kind" "$h" started "$deadline"; PROBES_STARTED=1; fi
+    if [ "$lrc" -ne 0 ] || [ -z "$h" ] || [ -z "$url" ]; then
+      echo "  probe $kind did not start: $(printf '%s' "$out" | tail -1)"
+      continue
+    fi
+    case "$kind" in
+      agreed)      FED_PROBE_THEIRS_REST="$url"; FED_PROBE_THEIRS_ZID="${FED_PROBE_THEIRS_ZID:-$zid}" ;;
+      forged)      FED_PROBE_FORGED_REST="$url"; FED_PROBE_FORGED_ZID="$zid" ;;
+      impersonate) FED_PROBE_IMPERSONATE_REST="$url"; FED_PROBE_IMPERSONATE_ZID="$zid" ;;
+    esac
+  done
+  echo "  probes: this run's own, until $(date -u -d "@$deadline" +%H:%M:%SZ 2>/dev/null || echo "$deadline") (manifest $PROBES_FILE)"
+fi
+# probes_finish: stop this run's probes and record whether every one is gone.
+probes_finish() {
+  local left
+  [ -n "$PROBES_STARTED" ] || return 0
+  begin
+  left=$(probes_stop "$PROBES_FILE")
+  obs manifest "$PROBES_FILE"; obs left "$left"
+  if [ -z "$left" ]; then ok cleanup/probes local precondition "every probe this run started is stopped and gone"
+  else no cleanup/probes local precondition "probes this run started are still there:$left" \
+    "Incomplete cleanup fails the run. The next run with this launcher stops them first."; fi
+  trap - INT TERM
+}
 
 begin
 if [ "$HAVE_OUT" = 0 ] && [ "$HAVE_IN" = 0 ]; then
@@ -995,5 +1121,8 @@ fi
 
 # ---- EXISTING PARTNERSHIPS, after the deployment (defined above; nothing unless named).
 existing_checks
+
+# ---- THIS RUN'S PROBES, stopped and checked gone (nothing unless a launcher started any).
+probes_finish
 
 finish "$EVID"
