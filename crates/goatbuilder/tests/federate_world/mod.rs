@@ -31,6 +31,69 @@ pub fn exe(p: &Path, text: &str) {
     std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o755)).unwrap();
 }
 
+pub fn sha256_hex(b: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    format!("sha256:{:x}", Sha256::digest(b))
+}
+
+pub fn b64(b: &[u8]) -> String {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD.encode(b)
+}
+
+fn vectors() -> PathBuf {
+    real_repo().join("ops/federation/vectors")
+}
+
+pub fn seed_hex(party: &str) -> String {
+    std::fs::read_to_string(vectors().join(format!("testkeys/{party}.seed.hex")))
+        .unwrap()
+        .trim()
+        .to_string()
+}
+
+pub fn public_b64(party: &str) -> String {
+    std::fs::read_to_string(vectors().join(format!("testkeys/{party}.public.b64")))
+        .unwrap()
+        .trim()
+        .to_string()
+}
+
+/// A conformance-vector package, with its CA fingerprint replaced, signed
+/// again with the committed test seed (worthless keys, public on purpose).
+pub fn resigned(party: &str, fp: &str) -> Vec<u8> {
+    use base64::Engine;
+    use goat_federation::json::{canonical, parse_document, JVal};
+    let bytes =
+        std::fs::read(vectors().join(format!("compose-full/package-{party}.canonical.json")))
+            .unwrap();
+    let JVal::Obj(mut top) = parse_document(&bytes).unwrap().without_member("signature") else {
+        panic!()
+    };
+    for (k, v) in top.iter_mut() {
+        if let (true, JVal::Obj(id)) = (k == "identity", v) {
+            for (ik, iv) in id.iter_mut() {
+                if ik == "ca_fingerprint" {
+                    *iv = JVal::Str(fp.into());
+                }
+            }
+        }
+    }
+    let hex = seed_hex(party);
+    let seed: [u8; 32] = (0..32)
+        .map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).unwrap())
+        .collect::<Vec<u8>>()
+        .try_into()
+        .unwrap();
+    let sk = ed25519_dalek::SigningKey::from_bytes(&seed);
+    let sig = ed25519_dalek::Signer::sign(&sk, canonical(&JVal::Obj(top.clone())).as_bytes());
+    top.push((
+        "signature".into(),
+        JVal::Str(base64::engine::general_purpose::STANDARD.encode(sig.to_bytes())),
+    ));
+    canonical(&JVal::Obj(top)).into_bytes()
+}
+
 pub struct World {
     pub root: tempfile::TempDir,
     pub repo: PathBuf,
@@ -61,10 +124,8 @@ pub fn world() -> World {
     .unwrap();
     let log = r.join("log");
     let fake = r.join("fake");
-    write(
-        &fake.join("ours.json"),
-        r#"{"sovereign_id":"xaa","identity":{"ca_fingerprint":"sha256:00aa"}}"#,
-    );
+    std::fs::create_dir_all(&fake).unwrap();
+    std::fs::write(fake.join("ours.json"), resigned("xaa", &sha256_hex(b"our-ca-der"))).unwrap();
     write(
         &fake.join("agreement.json"),
         r#"{"spec":"federation-agreement/v1","transport":{"kind":"wireguard"}}"#,
@@ -121,11 +182,23 @@ pub fn world() -> World {
     );
     let work = r.join("work").join("hello-ally");
     std::fs::create_dir_all(&work).unwrap();
+    // Their CA certificate (any DER-shaped bytes) and their half naming its
+    // fingerprint, as phase 5 checks them.
+    let der = b"fake-ca-der";
+    let their_fp = sha256_hex(der);
+    std::fs::write(
+        work.join("theirs.canonical.json"),
+        resigned("xab", &their_fp),
+    )
+    .unwrap();
     write(
-        &work.join("theirs.canonical.json"),
-        r#"{"sovereign_id":"xab","identity":{"ca_fingerprint":"sha256:00ab"}}"#,
+        &work.join("theirs-ca.pem"),
+        &format!(
+            "-----BEGIN CERTIFICATE-----\n{}\n-----END CERTIFICATE-----\n",
+            b64(der)
+        ),
     );
-    write(&work.join("theirs-ca.pem"), "their ca\n");
+    write(&r.join("signing.key"), &seed_hex("xaa"));
     let profile = r.join("profile");
     std::fs::create_dir_all(&profile).unwrap();
     World {
@@ -168,6 +241,8 @@ impl World {
             .env("GOAT_NO_FUN", "1")
             .env("FED_WORK", &self.work)
             .env("FED_NO_DIRECTORY", "1")
+            .env("FED_COUNTERPARTY_ID", "xab")
+            .env("FED_SIGNING_KEY", r.join("signing.key"))
             .current_dir(&self.repo)
             .stdin(std::process::Stdio::null());
         c

@@ -58,12 +58,14 @@ pub mod forwarder;
 pub mod hostalloc;
 pub mod hostfw;
 pub mod peering_files;
+mod confirm;
 pub mod deploy;
 pub mod lock;
 pub mod prompt;
 mod run;
 pub mod state;
 pub mod status;
+pub use confirm::Values;
 pub use run::Surface;
 pub mod plan;
 pub mod preflight;
@@ -484,12 +486,12 @@ fn plan_view(repo: &Path, o: &Options, work: &str, edge_group: &str, phases: &[P
 /// A run as it has always been: recorded in the journal, nothing skipped.
 #[cfg_attr(not(test), allow(dead_code))]
 pub fn federate(repo: &Path, o: &Options) -> Result<Report> {
-    federate_with(repo, o, &Surface::default())
+    federate_with(repo, o, &mut Surface::default())
 }
 
 /// A run with what the caller asked for beyond the phases (run.rs). A real
 /// run holds the peering's lock and is recorded in `<work>/state.json`.
-pub fn federate_with(repo: &Path, o: &Options, s: &Surface) -> Result<Report> {
+pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report> {
     // `goatbuilder federate allocate`: the per-peering values and files (a reserved word, never a partner).
     if o.with == "allocate" {
         return peering_files::run(repo, o);
@@ -576,7 +578,11 @@ pub fn federate_with(repo: &Path, o: &Options, s: &Surface) -> Result<Report> {
     }
     let mut exit = EXIT_OK;
     let mut stopped = false;
-    for ph in &phases {
+    // Phase 5 confirmed in this run writes the keyring phase 6 reads: the
+    // phases after it are planned again from what is there now.
+    let mut replanned: Option<Vec<Phase>> = None;
+    for planned in &phases {
+        let ph = replanned.as_ref().and_then(|v| v.iter().find(|p| p.n == planned.n)).unwrap_or(planned);
         if !s.runs(ph.n, o.from, o.to) {
             continue;
         }
@@ -607,10 +613,58 @@ pub fn federate_with(repo: &Path, o: &Options, s: &Surface) -> Result<Report> {
         if ph.kind == "MANUAL" {
             // The directory step, inside phase 5 before the stop. It is
             // advisory: its exit status is never read.
+            let phase_started = std::time::SystemTime::now();
             if ph.n == 5 {
                 if let Some(args) = directory_args(repo, &work) {
                     let _ = Command::new("python3").args(&args).current_dir(repo).status();
                     checks.push(row("directory", "the directory step ran; it is advisory and its result changes no phase".into()));
+                }
+            }
+            // Confirmation 1, when asked for: a package the directory held
+            // back is placed only once a person confirms it is ours.
+            if let (5, Some(r), true) = (ph.n, run.as_mut(), s.values.active()) {
+                // The directory step again, its report on stderr (stdout
+                // carries -o json); success is judged by what it placed.
+                let rerun = || directory_args(repo, &work).map(|a| Command::new("python3").args(&a).env("FED_DIRECTORY_PLACE_POINTER_PACKAGE", "1").current_dir(repo).stdout(std::process::Stdio::from(std::io::stderr())).status().is_ok()).unwrap_or(false);
+                if let Some(step) = confirm::pointer(&r.paths, s, &mut r.state, &r.id.clone(), Some(phase_started), &rerun) {
+                    checks.extend(step.rows);
+                    match step.verdict {
+                        confirm::Verdict::Continue => {}
+                        confirm::Verdict::Stop(d) => {
+                            r.end(ph, state::Outcome::Stopped, &d);
+                            stopped = true;
+                            break;
+                        }
+                        confirm::Verdict::Fail(d) => {
+                            r.end(ph, state::Outcome::Failed, &d);
+                            exit = EXIT_REFUSED;
+                            break;
+                        }
+                    }
+                }
+            }
+            // Confirmation 1, when asked for: the command binds the keys
+            // and carries on instead of stopping.
+            if let (5, Some(r), true) = (ph.n, run.as_mut(), s.values.active()) {
+                let rerun = || directory_args(repo, &work).map(|a| Command::new("python3").args(&a).current_dir(repo).stdout(std::process::Stdio::from(std::io::stderr())).status().is_ok()).unwrap_or(false);
+                let step = confirm::exchange(&r.paths, s, &mut r.state, &r.id.clone(), &rerun);
+                checks.extend(step.rows);
+                match step.verdict {
+                    confirm::Verdict::Continue => {
+                        r.end(ph, state::Outcome::Passed, "keys confirmed");
+                        replanned = Some(plan(repo, o, &work, &edge_group, &resume));
+                        continue;
+                    }
+                    confirm::Verdict::Stop(d) => {
+                        r.end(ph, state::Outcome::Stopped, &d);
+                        stopped = true;
+                        break;
+                    }
+                    confirm::Verdict::Fail(d) => {
+                        r.end(ph, state::Outcome::Failed, &d);
+                        exit = EXIT_REFUSED;
+                        break;
+                    }
                 }
             }
             checks.push(row("note", format!("^ OPERATOR STEP — do the above, then re-run with --from {}", ph.n + 1)));
@@ -645,6 +699,24 @@ pub fn federate_with(repo: &Path, o: &Options, s: &Surface) -> Result<Report> {
             break;
         }
         if let Some(r) = run.as_mut() {
+            // Confirmation 1, second half: the agreement digest after compose.
+            if ph.n == 6 && s.values.active() {
+                let step = confirm::agreement(&r.paths, s, &mut r.state, &r.id.clone());
+                checks.extend(step.rows);
+                match step.verdict {
+                    confirm::Verdict::Continue => {}
+                    confirm::Verdict::Stop(d) => {
+                        r.end(ph, state::Outcome::Stopped, &d);
+                        stopped = true;
+                        break;
+                    }
+                    confirm::Verdict::Fail(d) => {
+                        r.end(ph, state::Outcome::Failed, &d);
+                        exit = EXIT_REFUSED;
+                        break;
+                    }
+                }
+            }
             r.end(ph, state::Outcome::Passed, "");
         }
     }

@@ -109,6 +109,24 @@ Options:
           deploy: approve exactly this plan hash, after reading the plan. --yes never approves a
           plan
 
+      --confirm
+          Phases 5 and 6: confirm the keys and the agreement digest here, at this terminal, instead
+          of stopping for them by hand
+
+      --partner-key <BASE64>
+          Phase 5: the partner's verifying key, as read aloud on the call
+
+      --partner-ca-fingerprint <SHA256>
+          Phase 5: the partner's CA fingerprint, as read aloud on the call
+
+      --agreement-digest <SHA256>
+          Phase 6: the agreement digest, as compared with the partner
+
+      --place-pointer-package <SHA256>
+          Phase 5: place the package the partner's single pointer named and the directory held back,
+          after confirming on the call that it is the package for this peering (its digest, as the
+          stop shows it)
+
       --env <ENV>
           The environment the peering is declared on (checked against goatbuilder.yaml peerings:)
 
