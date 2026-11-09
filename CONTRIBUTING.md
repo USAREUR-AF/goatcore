@@ -13,7 +13,7 @@ Thank you for working on goat. This page is the whole process; nothing else is r
 
 - **Conventional Commits.** `feat`, `fix`, `docs`, `refactor`, `test`, `chore`, `ci`, with a scope in parentheses naming the component (`feat(goatbuilder): …`). The subject is ≤ 100 characters and says what changed, in the imperative.
 - **DCO sign-off on every commit** (`git commit -s`). By signing off you certify the [Developer Certificate of Origin 1.1](https://developercertificate.org/): you wrote the change or have the right to submit it under this project's licence. There is no CLA. The policy is in [Policy](#policy).
-- **Signed commits** are required on `main`; set up [SSH or GPG commit signing](https://docs.github.com/en/authentication/managing-commit-signature-verification) once.
+- **Every commit is signed and verified.** Set up [SSH or GPG commit signing](https://docs.github.com/en/authentication/managing-commit-signature-verification) once and register the key on your GitHub account as a *signing* key. The required check `verified-commits` refuses a pull request while any of its commits is unsigned or signed with an unregistered key; re-sign with `git rebase --exec 'git commit --amend --no-edit -S' origin/main` and `git push --force-with-lease`. Automation commits through the GitHub API, which signs them, never by pushing unsigned commits. The decision is [ADR 1226](docs/adr/1226-every-commit-in-a-pull-request-is-signed-and-verified.md).
 - One logical change per pull request. Refactors and behaviour changes are separate pull requests.
 
 ## Gates
