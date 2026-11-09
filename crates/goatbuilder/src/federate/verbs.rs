@@ -10,10 +10,12 @@
 //!
 //!   1. `--context-dir DIR` (or `$GOAT_CONTEXT_DIR`): the directory that holds
 //!      `federation.toml`, `mtls.cert.pem` and `ca-roots.pem`;
-//!   2. otherwise the goat context directory, found the way `goat` finds it:
-//!      `$GOAT_PROFILE_DIR` (else `~/.goat`), then `contexts/<name>` where the
-//!      name is `$GOAT_CONTEXT`, else `current_context` in `config.toml`, else
-//!      `default`;
+//!   2. otherwise the goat context directory, found the way `goat` finds it
+//!      (crates/goat-cli/src/profile.rs `Profile::resolve`): `--profile-dir`,
+//!      else `$GOAT_PROFILE_DIR`, else `$HOME/.goat` (`%USERPROFILE%` when
+//!      `$HOME` is unset), then `contexts/<name>` where the name is
+//!      `--context`, else `$GOAT_CONTEXT`, else `current_context` in
+//!      `config.toml` (read with goat's own line rule), else `default`;
 //!
 //! and `--cert FILE` / `--ca-roots FILE` override the two files inside it.
 //! Only `init` reads all three; `verify` and `apply` read the declaration only
@@ -43,11 +45,24 @@ pub struct SiteArgs {
     /// directory).
     #[arg(long, value_name = "FILE", global = true)]
     pub ca_roots: Option<PathBuf>,
+    /// The six verbs: the goat context to read, as `goat --context` (default:
+    /// $GOAT_CONTEXT, else current_context in the profile's config.toml, else
+    /// default).
+    #[arg(long, value_name = "NAME", global = true)]
+    pub context: Option<String>,
+    /// The six verbs: the goat profile directory, as `goat --profile-dir`
+    /// (default: $GOAT_PROFILE_DIR, else ~/.goat).
+    #[arg(long, value_name = "DIR", global = true)]
+    pub profile_dir: Option<PathBuf>,
 }
 
 impl SiteArgs {
     pub fn is_empty(&self) -> bool {
-        self.context_dir.is_none() && self.cert.is_none() && self.ca_roots.is_none()
+        self.context_dir.is_none()
+            && self.cert.is_none()
+            && self.ca_roots.is_none()
+            && self.context.is_none()
+            && self.profile_dir.is_none()
     }
 }
 
@@ -61,7 +76,7 @@ pub fn resolve_site(a: &SiteArgs) -> Result<Site> {
     let context_dir =
         match explicit.or_else(|| non_empty_env("GOAT_CONTEXT_DIR").map(PathBuf::from)) {
             Some(d) => d,
-            None => goat_context_dir()?,
+            None => goat_context_dir(a)?,
         };
     Ok(Site {
         cert_path: a
@@ -81,36 +96,64 @@ fn non_empty_env(name: &str) -> Option<String> {
 }
 
 /// The goat context directory, resolved the way `goat` resolves it
-/// (crates/goat-cli/src/profile.rs `Profile::resolve`).
-fn goat_context_dir() -> Result<PathBuf> {
-    let profile =
-        match non_empty_env("GOAT_PROFILE_DIR") {
-            Some(p) => PathBuf::from(p),
-            None => match non_empty_env("HOME") {
-                Some(h) => Path::new(&h).join(".goat"),
-                None => return Err(goat_errors::coded(
-                    "GB-100",
-                    "no context directory for the federation verbs: pass --context-dir <dir> (the \
-                     directory holding federation.toml, mtls.cert.pem and ca-roots.pem), or set \
-                     GOAT_CONTEXT_DIR, or GOAT_PROFILE_DIR for a goat profile",
-                )
-                .into()),
-            },
-        };
-    let name = non_empty_env("GOAT_CONTEXT")
-        .or_else(|| current_context(&profile.join("config.toml")))
+/// (crates/goat-cli/src/profile.rs `Profile::resolve` and `resolve_home_dir`;
+/// goat reads GOAT_PROFILE_DIR and GOAT_CONTEXT through clap, which ignores an
+/// empty value, as `non_empty_env` does).
+fn goat_context_dir(a: &SiteArgs) -> Result<PathBuf> {
+    let home = || {
+        non_empty_env("HOME")
+            .or_else(|| non_empty_env("USERPROFILE"))
+            .map(|h| Path::new(&h).join(".goat"))
+    };
+    let profile = match a
+        .profile_dir
+        .clone()
+        .or_else(|| non_empty_env("GOAT_PROFILE_DIR").map(PathBuf::from))
+        .or_else(home)
+    {
+        Some(p) => p,
+        None => {
+            return Err(goat_errors::coded(
+                "GB-100",
+                "no context directory for the federation verbs: pass --context-dir <dir> (the \
+                 directory holding federation.toml, mtls.cert.pem and ca-roots.pem), or set \
+                 GOAT_CONTEXT_DIR, or GOAT_PROFILE_DIR for a goat profile",
+            )
+            .into())
+        }
+    };
+    let name = a
+        .context
+        .clone()
+        .or_else(|| non_empty_env("GOAT_CONTEXT"))
+        .or_else(|| read_current_context(&profile.join("config.toml")))
         .unwrap_or_else(|| "default".to_string());
     Ok(profile.join("contexts").join(name))
 }
 
-/// `current_context = "<name>"` from a goat `config.toml`, when it says one.
-fn current_context(path: &Path) -> Option<String> {
-    let text = std::fs::read_to_string(path).ok()?;
-    let v: toml::Value = toml::from_str(&text).ok()?;
-    v.get("current_context")?
-        .as_str()
-        .filter(|s| !s.is_empty())
-        .map(str::to_string)
+/// `current_context = "<name>"` from a goat `config.toml`, read with goat's
+/// own rule (crates/goat-cli/src/profile.rs `read_current_context` and
+/// `extract_toml_field`), not a TOML parser, so both tools pick the same
+/// context from the same file: the first line, trimmed, that starts with the
+/// key followed by `=`, its value trimmed and stripped of quotes; empty means
+/// none.
+fn read_current_context(path: &Path) -> Option<String> {
+    let body = std::fs::read_to_string(path).ok()?;
+    goat_toml_field(&body, "current_context").filter(|s| !s.is_empty())
+}
+
+/// goat's `extract_toml_field`, line for line.
+fn goat_toml_field(toml: &str, key: &str) -> Option<String> {
+    for line in toml.lines() {
+        let line = line.trim();
+        if let Some(rest) = line.strip_prefix(key) {
+            let rest = rest.trim_start();
+            if let Some(rest) = rest.strip_prefix('=') {
+                return Some(rest.trim().trim_matches('"').to_string());
+            }
+        }
+    }
+    None
 }
 
 /// Run one verb, its report on `out`. Returns the verb's exit code.
@@ -167,6 +210,59 @@ mod tests {
     use super::*;
     use anyhow::anyhow;
     use clap::Parser;
+
+    /// The context name is read from config.toml the way goat reads it, so a
+    /// file a TOML parser reads differently (or refuses) names the same
+    /// context in both tools.
+    #[test]
+    fn current_context_is_read_with_goats_line_rule() {
+        let d = tempfile::tempdir().unwrap();
+        let cfg = d.path().join("config.toml");
+        let read = |body: &str| {
+            std::fs::write(&cfg, body).unwrap();
+            read_current_context(&cfg)
+        };
+        // Not valid TOML (an unquoted value): goat still reads it.
+        assert_eq!(
+            read("current_context = zagros\n").as_deref(),
+            Some("zagros")
+        );
+        // Under a table, where TOML would put it in [ui]: goat reads the line.
+        assert_eq!(
+            read("[ui]\n  current_context   =  \"xab\"  \n").as_deref(),
+            Some("xab")
+        );
+        // A longer key with the same prefix is not the key.
+        assert_eq!(
+            read("current_context_old = \"a\"\ncurrent_context = \"b\"\n").as_deref(),
+            Some("b")
+        );
+        // The first match wins, as in goat.
+        assert_eq!(
+            read("current_context = \"one\"\ncurrent_context = \"two\"\n").as_deref(),
+            Some("one")
+        );
+        assert_eq!(read("current_context = \"\"\n"), None);
+        assert_eq!(read("# current_context = \"c\"\n"), None);
+    }
+
+    /// --profile-dir and --context choose the context directory as goat's
+    /// flags do.
+    #[test]
+    fn profile_dir_and_context_flags_choose_the_context() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::write(d.path().join("config.toml"), "current_context = \"xaa\"\n").unwrap();
+        let mut a = SiteArgs {
+            profile_dir: Some(d.path().to_path_buf()),
+            context: Some("xab".into()),
+            ..Default::default()
+        };
+        assert_eq!(goat_context_dir(&a).unwrap(), d.path().join("contexts/xab"));
+        if std::env::var_os("GOAT_CONTEXT").is_none() {
+            a.context = None;
+            assert_eq!(goat_context_dir(&a).unwrap(), d.path().join("contexts/xaa"));
+        }
+    }
 
     fn vectors() -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../ops/federation/vectors")
@@ -344,6 +440,7 @@ mod tests {
             context_dir: Some("/ctx".into()),
             cert: None,
             ca_roots: Some("/ca.pem".into()),
+            ..Default::default()
         })
         .unwrap();
         assert_eq!(s.context_dir, PathBuf::from("/ctx"));
