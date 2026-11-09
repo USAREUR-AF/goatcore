@@ -46,8 +46,10 @@ case "$ENV" in ""|*[!a-z0-9_]*) echo "live-canary: '$ENV' is not a goatnet name"
 GOATNET="$(printf '%s' "$ENV" | tr '_' '-')"
 # The ledger reads below and both rollback avenues reach the goatnet the same
 # way: rollback.sh and goatbuilder rollback take --site, which decides the mesh
-# or the door as deploy does; the canary's own ssh takes the management host's
-# mesh address, else, off the mesh, the door (env-door.sh names its port).
+# or the door as deploy does. The canary's own ssh goes to the management
+# host's mesh address; off the mesh it jumps through the door to that same
+# address (onboard-intake-smoke.sh via_ssh, ops/validation/probes.py _ssh_jump):
+# only the door's tunnel hop skips the host-key check, the host's key is checked.
 SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=10)
 if [ -z "$HOST" ]; then
   HOST="$(python3 "$REPO/ops/scripts/goatnet-facts.py" mgmt-ssh "$ENV")" \
@@ -55,10 +57,9 @@ if [ -z "$HOST" ]; then
   if ! ssh "${SSH_OPTS[@]}" "$HOST" true >/dev/null 2>&1 \
      && bash "$REPO/ops/scripts/door-open.sh" "$GOATNET" >/dev/null 2>&1 \
      && DOOR="$(bash "$REPO/ops/scripts/env-door.sh" "$GOATNET" --ssh-target)"; then
-    echo "live-canary: $HOST does not answer; reading its ledger through the $GOATNET door ($DOOR)"
-    HOST="ssh://$DOOR"
-    # The door's port is a tunnel whose host key changes (env-door.sh).
-    SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null)
+    echo "live-canary: $HOST does not answer; reading its ledger by jumping through the $GOATNET door ($DOOR)"
+    SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new
+              -o "ProxyCommand=ssh -o BatchMode=yes -o ConnectTimeout=6 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -p ${DOOR##*:} -W %h:%p ${DOOR%:*}")
   fi
 fi
 [ -n "$GB" ] || GB="$REPO/crates/target/debug/goatbuilder"
@@ -140,7 +141,11 @@ if [ "${REFS:-0}" -ge 2 ]; then
   else
     rec rollback-one-step-scripts --expect-in "rolled back" -- "$REPO/ops/scripts/rollback.sh" "$COMP" 1 --site "$GOATNET"
   fi
-  rec ledger-names-the-rollback -- bash -c "row=\"\$(ssh ${SSH_OPTS[*]} $HOST 'sudo tail -n 1 /var/lib/goat/$COMP/deploy-history.jsonl')\"; echo \"\$row\"; echo \"\$row\" | grep -q '\"action\": *\"rollback\"' && ! echo \"\$row\" | grep -q '\"ref\": *\"$DECLARED\"'"
+  # The ssh options travel as arguments, so a ProxyCommand with spaces stays one word.
+  # shellcheck disable=SC2016  # $1.. expand in the inner shell
+  rec ledger-names-the-rollback -- bash -c 'h="$1" c="$2" d="$3"; shift 3
+    row="$(ssh "$@" "$h" "sudo tail -n 1 /var/lib/goat/$c/deploy-history.jsonl")"; echo "$row"
+    echo "$row" | grep -q "\"action\": *\"rollback\"" && ! echo "$row" | grep -q "\"ref\": *\"$d\""' _ "$HOST" "$COMP" "$DECLARED" "${SSH_OPTS[@]}"
   rec roll-forward --expect-in "every host's ledger names the declared ref" -- "$GB" deploy --env "$ENV" --component "$COMP" --ack "${USER:-operator} (live canary, roll forward)" --yes
   rec verify-after-roll-forward --expect-in "every host's ledger names the declared ref" -- "$GB" deploy --env "$ENV" --component "$COMP" --verify-only --yes
 else
