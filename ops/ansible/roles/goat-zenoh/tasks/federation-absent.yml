@@ -1,0 +1,199 @@
+---
+# Back out ONE peering's admission on our core router (ops/ansible/peering-backout.yml).
+#
+# Phase 10 admits a peering by splicing its rendered fragment into the core's ORG
+# fragment and assembling the live configuration with files/acl-assemble.py (the F-258
+# seed/org split). This takes exactly that fragment's blocks out again:
+# ops/federation/standup/backout_core.py computes the candidate on the controller from
+# copies of the seed, the org fragment and the live file, proves the live file is
+# seed + org and the candidate removes only this partner's lines, and prints the
+# candidate's digest. Nothing on the core changes in that step.
+#
+# With peering_backout_core_apply and peering_backout_core_expect (the digest the survey
+# printed and a person reviewed), the candidate is installed and the router restarted.
+# The driver runs the slot-list recheck immediately before that run, as the admission
+# path does. A core whose live file changed since the survey yields another digest and
+# is refused.
+#
+# A core configured by this role from zenoh_sovereign_peerings admits the partner as
+# sovereign-<partner> ids: that is the deployment's configuration and is reported, never
+# edited. A core with no seed/org split (slot-pool mode) cannot be proven and is refused.
+- name: core | absent | where the core keeps its configuration
+  ansible.builtin.set_fact:
+    _pbc_stack: "{{ zenoh_stack | default((site_id | default('')) ~ '-zenoh') }}"
+
+- name: core | absent | the three files
+  ansible.builtin.set_fact:
+    _pbc_seed: "{{ peering_backout_core_seed | default(goat_zenoh_acl_seed_path | default('/etc/' ~ _pbc_stack ~ '/config.seed.json5')) }}"
+    _pbc_org: "{{ peering_backout_core_org | default(goat_zenoh_acl_org_path | default('/etc/' ~ _pbc_stack ~ '/acl-org-fragment.json5')) }}"
+    _pbc_live: "{{ peering_backout_core_config | default(goat_zenoh_config_path | default('/etc/' ~ _pbc_stack ~ '/config.json5')) }}"
+    _pbc_dir: "{{ fed_work | default('') }}/backout/core/{{ inventory_hostname }}"
+    _pbc_tool: "{{ playbook_dir }}/../federation/standup/backout_core.py"
+
+- name: core | absent | read them
+  ansible.builtin.slurp:
+    src: "{{ item }}"
+  loop: ["{{ _pbc_seed }}", "{{ _pbc_org }}", "{{ _pbc_live }}"]
+  register: _pbc_raw
+  failed_when: false
+
+- name: core | absent | the controller's copy
+  ansible.builtin.file:
+    path: "{{ _pbc_dir }}"
+    state: directory
+    mode: "0700"
+  delegate_to: localhost
+  become: false
+  when: fed_work is defined
+
+- name: core | absent | copy what was read, for the plan and the record
+  ansible.builtin.copy:
+    content: "{{ item.content | b64decode }}"
+    dest: "{{ _pbc_dir }}/{{ ['seed.json5', 'org.json5', 'live.json5'][idx] }}"
+    mode: "0600"
+  loop: "{{ _pbc_raw.results }}"
+  loop_control:
+    index_var: idx
+    label: "{{ item.item }}"
+  delegate_to: localhost
+  become: false
+  when: fed_work is defined and item.content is defined
+
+- name: core | absent | plan the removal (reads the copies, writes only the plan)
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ _pbc_tool }}"
+      - plan
+      - --partner
+      - "{{ peering_backout_id }}"
+      - --seed
+      - "{{ _pbc_dir }}/seed.json5"
+      - --org
+      - "{{ _pbc_dir }}/org.json5"
+      - --live
+      - "{{ _pbc_dir }}/live.json5"
+      - --out-dir
+      - "{{ _pbc_dir }}/plan"
+  delegate_to: localhost
+  become: false
+  register: _pbc_plan_run
+  changed_when: false
+  failed_when: false
+  when: fed_work is defined and (_pbc_raw.results | selectattr('content', 'defined') | list | length == 3)
+
+- name: core | absent | read the plan
+  ansible.builtin.set_fact:
+    _pbc_plan: "{{ (_pbc_plan_run.stdout | from_json) if (_pbc_plan_run.stdout | default('') | length > 0) else {} }}"
+    _pbc_missing: "{{ _pbc_raw.results | rejectattr('content', 'defined') | map(attribute='item') | list }}"
+
+- name: core | absent | record what is there
+  ansible.builtin.set_fact:
+    _pb_rows: >-
+      {%- set out = _pb_rows -%}
+      {%- set p = _pbc_plan -%}
+      {%- set act = 'removed' if (peering_backout_core_apply | default(false) | bool) else 'remove' -%}
+      {%- if fed_work is not defined -%}
+      {%-   set _ = out.append({'component': 'core admission', 'resource': _pbc_live, 'state': 'refused', 'action': 'kept', 'note': 'fed_work is not set: the plan needs a working directory on the controller'}) -%}
+      {%- elif _pbc_missing | length > 0 -%}
+      {%-   set _ = out.append({'component': 'core admission', 'resource': _pbc_live, 'state': ('unknown' if _pbc_live in _pbc_missing else 'refused'), 'action': 'kept', 'note': 'not readable: ' ~ (_pbc_missing | join(', ')) ~ '. A core without the seed/org split (slot-pool mode) cannot be shown to change by this peering alone; set peering_backout_core_seed, _org and _config where this core keeps them'}) -%}
+      {%- elif p.refused | default(none) -%}
+      {%-   set _ = out.append({'component': 'core admission', 'resource': _pbc_live, 'state': 'refused', 'action': 'kept', 'note': p.refused}) -%}
+      {%- else -%}
+      {%-   if p.role_declared | default(false) -%}
+      {%-     set _ = out.append({'component': 'core admission', 'resource': 'zenoh_sovereign_peerings[sovereign=' ~ peering_backout_id ~ ']', 'state': 'present', 'action': 'kept', 'note': 'configuration: remove the entry by review and run the core play (a router restart)'}) -%}
+      {%-   endif -%}
+      {%-   if p.absent | default(true) -%}
+      {%-     set _ = out.append({'component': 'core admission', 'resource': 'fragment ' ~ _pbc_org, 'state': 'absent', 'action': 'none', 'note': 'no block of ' ~ peering_backout_id ~ ' is spliced; no restart'}) -%}
+      {%-   else -%}
+      {%-     for s in p.removed.subjects -%}{%- set _ = out.append({'component': 'core admission', 'resource': 'subject ' ~ s, 'state': 'present', 'action': act, 'note': ''}) -%}{%- endfor -%}
+      {%-     for r in p.removed.rules -%}{%- set _ = out.append({'component': 'core admission', 'resource': 'rule ' ~ r, 'state': 'present', 'action': act, 'note': ''}) -%}{%- endfor -%}
+      {%-     for s in p.removed.policies -%}{%- set _ = out.append({'component': 'core admission', 'resource': 'policy for ' ~ s, 'state': 'present', 'action': act, 'note': ''}) -%}{%- endfor -%}
+      {%-     set _ = out.append({'component': 'core admission', 'resource': 'router restart on ' ~ _pbc_live, 'state': 'present', 'action': ('restarted' if act == 'removed' else 'restart'), 'note': p.live_removed_lines ~ ' lines leave; candidate ' ~ p.candidate_sha256 ~ '; stays admitted: ' ~ ((p.others | join(', ')) or 'no other peering')}) -%}
+      {%-   endif -%}
+      {%- endif -%}
+      {{ out }}
+
+- name: core | absent | install the reviewed candidate and restart the router
+  when:
+    - peering_backout_core_apply | default(false) | bool
+    - not (_pbc_plan.refused | default(none))
+    - _pbc_plan.candidate_sha256 is defined
+    - not (_pbc_plan.absent | default(true))
+  block:
+    - name: core | absent | the candidate is the one that was reviewed
+      ansible.builtin.assert:
+        that:
+          - peering_backout_core_expect | default('') == _pbc_plan.candidate_sha256
+        fail_msg: >-
+          The candidate core configuration is {{ _pbc_plan.candidate_sha256 }}; the reviewed
+          plan said {{ peering_backout_core_expect | default('(none given)') }}. The core changed
+          since the survey, or no digest was passed. Nothing was installed: survey again.
+
+    - name: core | absent | the router to restart
+      ansible.builtin.shell: |
+        set -eu
+        if [ -n "{{ peering_backout_core_container | default(lookup('ansible.builtin.env', 'FED_ROUTER_CONTAINER')) }}" ]; then
+          echo "{{ peering_backout_core_container | default(lookup('ansible.builtin.env', 'FED_ROUTER_CONTAINER')) }}"; exit 0
+        fi
+        found="$(docker ps --filter label=org.goat.component=zenoh-core --format '{{ '{{.Names}}' }}')"
+        [ -n "$found" ] || found="$(docker ps --filter name='^{{ _pbc_stack }}-router$' --format '{{ '{{.Names}}' }}')"
+        [ -n "$found" ] || found="$(docker ps --filter name='^goat-zenoh$' --format '{{ '{{.Names}}' }}')"
+        printf '%s\n' "$found"
+      register: _pbc_ctr
+      changed_when: false
+
+    - name: core | absent | exactly one router
+      ansible.builtin.assert:
+        that:
+          - _pbc_ctr.stdout_lines | length == 1
+          - _pbc_ctr.stdout_lines[0] is match('^[A-Za-z0-9_.-]+$')
+        fail_msg: >-
+          Found {{ _pbc_ctr.stdout_lines | length }} core routers ({{ _pbc_ctr.stdout_lines | join(', ') }}).
+          Name the one to restart with peering_backout_core_container or FED_ROUTER_CONTAINER.
+          Nothing was installed.
+
+    - name: core | absent | keep the org fragment as it was, beside it
+      ansible.builtin.copy:
+        src: "{{ _pbc_org }}"
+        dest: "{{ _pbc_org }}.before-backout-{{ peering_backout_id }}"
+        remote_src: true
+        mode: preserve
+
+    - name: core | absent | the org fragment without this peering
+      ansible.builtin.copy:
+        src: "{{ _pbc_dir }}/plan/org.candidate"
+        dest: "{{ _pbc_org }}"
+        mode: preserve
+
+    - name: core | absent | the live configuration, assembled from the seed and that fragment
+      ansible.builtin.copy:
+        src: "{{ _pbc_dir }}/plan/live.candidate"
+        dest: "{{ _pbc_live }}"
+        mode: preserve
+
+    - name: core | absent | restart the router on it
+      ansible.builtin.command:
+        argv: [docker, restart, "{{ _pbc_ctr.stdout_lines[0] }}"]
+      changed_when: true
+
+    - name: core | absent | the router is running again
+      ansible.builtin.command:
+        argv: [docker, container, inspect, --format, "{{ '{{.State.Running}}' }}", "{{ _pbc_ctr.stdout_lines[0] }}"]
+      register: _pbc_running
+      until: _pbc_running.stdout | trim == 'true'
+      retries: 15
+      delay: 2
+      changed_when: false
+
+    - name: core | absent | read the installed file back
+      ansible.builtin.stat:
+        path: "{{ _pbc_live }}"
+        checksum_algorithm: sha256
+      register: _pbc_after
+
+    - name: core | absent | it is the reviewed candidate
+      ansible.builtin.assert:
+        that:
+          - ('sha256:' ~ _pbc_after.stat.checksum) == _pbc_plan.candidate_sha256
+        fail_msg: "{{ _pbc_live }} reads back as sha256:{{ _pbc_after.stat.checksum }}, not the candidate."

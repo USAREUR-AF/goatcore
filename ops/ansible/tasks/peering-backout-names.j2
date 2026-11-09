@@ -1,0 +1,80 @@
+{#- The exact names of one peering's resources on one host (peering-backout-begin.yml).
+    Output is YAML. Every value is derived from peering_backout_id, this peering's own
+    group values, or the agreement it composed; nothing here is a glob. -#}
+{%- set id = peering_backout_id -%}
+{%- set parties = (_pb_agreement.parties | default([])) -%}
+{%- set them = parties | selectattr('sovereign_id', 'equalto', id) | list -%}
+{%- set ours = parties | rejectattr('sovereign_id', 'equalto', id) | list -%}
+{%- set td = (them[0].trust_domain if them else (goat_peering_partner_trust_domain | default(''))) -%}
+{%- set td = (td if td is match('^spiffe://') else ('spiffe://' ~ td if td else '')) -%}
+{%- set us = (ours[0].sovereign_id if ours else (goat_peering_our_sovereign | default(''))) -%}
+{%- set local_ip = goat_peering_local_link_ip | default('') -%}
+{%- set remote_ip = goat_peering_remote_link_ip | default('') -%}
+{%- set wg_if = peering_wg_interface | default('wg-fed0') -%}
+{%- set wg_dir = peering_wg_config_dir | default('/etc/goat-peering-wg') -%}
+{%- set carrier = peering_wg_carrier_interface | default('wg-carry0') -%}
+{%- set ipsec = peering_edge_name | default('') -%}
+{%- set swan = peering_edge_swanctl_dir | default('/etc/swanctl') -%}
+{%- set bundle_port = peering_spire_bundle_port | default(8443) -%}
+{%- set out_listen = peering_spire_outbound_listen | default('') -%}
+{%- set out_port = peering_spire_outbound_port | default(18443) -%}
+{%- set edge_stack = goat_zenoh_edge_stack | default('goat-zenoh-edge-' ~ id) -%}
+{%- set rp_stack = goat_fed_republisher_stack | default('goat-fed-republisher-' ~ id) -%}
+id: {{ id | to_json }}
+us: {{ us | to_json }}
+rendered_partner: {{ (goat_peering_partner_sovereign | default('')) | to_json }}
+trust_domain: {{ td | to_json }}
+local_link_ip: {{ local_ip | to_json }}
+remote_link_ip: {{ remote_ip | to_json }}
+wg:
+  enabled: {{ (peering_wg_enabled | default(false) | bool) | to_json }}
+  interface: {{ wg_if | to_json }}
+  service: {{ ('goat-peering-wg@' ~ wg_if ~ '.service') | to_json }}
+  files:
+    - {{ (wg_dir ~ '/' ~ wg_if ~ '.env') | to_json }}
+    - {{ (wg_dir ~ '/' ~ wg_if ~ '.nft') | to_json }}
+    - {{ (wg_dir ~ '/' ~ wg_if ~ '.key') | to_json }}
+  state: {{ ('/var/log/goat-peering-wg-' ~ wg_if ~ '-state.json') | to_json }}
+  nft_table: {{ ('goat_peering_' ~ (wg_if | regex_replace('[^a-zA-Z0-9_]', '_'))) | to_json }}
+  via_forwarder: {{ (peering_wg_via_forwarder | default(false) | bool) | to_json }}
+  carrier: {{ carrier | to_json }}
+  carrier_service: {{ ('goat-peering-wg@' ~ carrier ~ '.service') | to_json }}
+  carrier_files:
+    - {{ (wg_dir ~ '/' ~ carrier ~ '.env') | to_json }}
+    - {{ (wg_dir ~ '/' ~ carrier ~ '.key') | to_json }}
+ipsec:
+  name: {{ ipsec | to_json }}
+  their_id: {{ (peering_edge_their_sovereign_id | default('')) | to_json }}
+  service: {{ (('goat-peering-link@' ~ ipsec ~ '.service') if ipsec else '') | to_json }}
+  ifname: {{ (('ipsec-' ~ ipsec) if ipsec else '') | to_json }}
+  state: {{ (('/var/log/goat-peering-edge-' ~ ipsec ~ '-state.json') if ipsec else '') | to_json }}
+  link_env: {{ (('/etc/goat-peering-edge/' ~ ipsec ~ '.link.env') if ipsec else '') | to_json }}
+  files: {{ ([swan ~ '/conf.d/' ~ ipsec ~ '.conf', swan ~ '/x509/' ~ ipsec ~ '-cert.pem', swan ~ '/private/' ~ ipsec ~ '-key.pem', swan ~ '/x509ca/' ~ ipsec ~ '-partner-ca.pem'] if ipsec else []) | to_json }}
+spire:
+  enabled: {{ (peering_spire_enabled | default(false) | bool) | to_json }}
+  server_host: {{ (peering_spire_server_host | default('')) | to_json }}
+  container: {{ (peering_spire_container | default('spire-server')) | to_json }}
+  bin: {{ (peering_spire_bin | default('/opt/spire/bin/spire-server')) | to_json }}
+  units:
+    - {{ ('goat-peering-bundle-in-' ~ id ~ '.socket') | to_json }}
+    - {{ ('goat-peering-bundle-in-' ~ id ~ '.service') | to_json }}
+    - {{ ('goat-peering-bundle-out-' ~ id ~ '.socket') | to_json }}
+    - {{ ('goat-peering-bundle-out-' ~ id ~ '.service') | to_json }}
+  # Before the forwards were named for the partner (one pair per host, fixed names),
+  # a fixed-name forward is this peering's only when it listens or forwards exactly
+  # where this peering's would; those addresses are per peering.
+  legacy_in_listen: {{ ((local_ip ~ ':' ~ bundle_port) if local_ip else '') | to_json }}
+  legacy_out_listen: {{ ((out_listen ~ ':' ~ out_port) if out_listen else '') | to_json }}
+  legacy_out_target: {{ ((remote_ip ~ ':' ~ bundle_port) if remote_ip else '') | to_json }}
+edge:
+  stack: {{ edge_stack | to_json }}
+  dirs:
+    - {{ ('/etc/' ~ edge_stack) | to_json }}
+    - {{ ('/opt/' ~ edge_stack) | to_json }}
+  compose: {{ ('/opt/' ~ edge_stack ~ '/docker-compose.yml') | to_json }}
+republisher:
+  stack: {{ rp_stack | to_json }}
+  dirs:
+    - {{ ('/etc/' ~ rp_stack) | to_json }}
+    - {{ ('/opt/' ~ rp_stack) | to_json }}
+  compose: {{ ('/opt/' ~ rp_stack ~ '/docker-compose.yml') | to_json }}
