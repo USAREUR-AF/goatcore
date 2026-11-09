@@ -15,8 +15,8 @@ image (sshd, NOPASSWD sudo, a WireGuard interface, a labeled router container): 
 read over SSH, the declared, discovered, wrong-name and unreachable cases. **Built:**
 `goatbuilder federate init --over-ssh <peering>` (with `--ssh-edge-group`, `--ssh-core-group`,
 `--edge-host`, `--core-host`, `--router-container`), and the driver's phase 3 using it when
-`FED_MEASURE=ssh`, on both avenues (`peering-standup.sh` takes the same switch); the default
-stays the machine the run is on. **Not built:** automatic selection among several cores. Live deployment and
+`FED_MEASURE` unset or `ssh`, on both avenues (`peering-standup.sh` takes the same switch);
+`FED_MEASURE=here` measures the machine the run is on, as before. **Not built:** automatic selection among several cores. Live deployment and
 bilateral federation acceptance are separate release gates.
 
 > The verb moves to `goatbuilder federate init` ([ADR 1225](../adr/1225-federation-belongs-to-goatbuilder-one-command-one-decision.md), Proposed), which runs
@@ -77,8 +77,8 @@ package back. goatbuilder instead measures both hosts from the operator's machin
   The checkout whose inventory names the hosts is `-C <repository>`, else the git toplevel of
   the current directory. A host, group or router flag without `--over-ssh` is refused, as is
   `--over-ssh` on any verb but init. Without `--over-ssh`, init measures this machine exactly
-  as `goat federate init` does. In a peering run, `FED_MEASURE=ssh` (default `here`) makes
-  phase 3 `goatbuilder federate init ... --over-ssh <peering> --ssh-edge-group <edge group>
+  as `goat federate init` does. In a peering run, `FED_MEASURE=ssh` (the default; `here`
+  measures the machine the run is on) makes phase 3 `goatbuilder federate init ... --over-ssh <peering> --ssh-edge-group <edge group>
   [--router-container $FED_ROUTER_CONTAINER] --repo <repository>`, run in process whoever runs
   the other verbs (`FED_VERBS`), with no `DOCKER_HOST`; `FED_ROUTER_DOCKER_HOST` is not used.
   `peering-standup.sh` prints and runs the same words through `$GOATBUILDER_BIN`, and the

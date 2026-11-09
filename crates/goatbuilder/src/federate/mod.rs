@@ -47,7 +47,7 @@ use anyhow::{anyhow, Context, Result};
 use crate::config;
 
 // Phase 3 measured over SSH: `goatbuilder federate init --over-ssh`, and the
-// driver's phase 3 with FED_MEASURE=ssh.
+// driver's phase 3 unless FED_MEASURE=here.
 pub mod measure;
 use crate::{Check, Report, EXIT_OK, EXIT_REFUSED};
 
