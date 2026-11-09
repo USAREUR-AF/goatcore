@@ -25,7 +25,7 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use clap::{Args, Parser};
 use goat_federation::verbs::{self, FederateCmd, Site};
 
@@ -183,6 +183,9 @@ pub fn exit_of(cmd: FederateCmd, site: &SiteArgs) -> i32 {
 /// code: a coded refusal (GB-100) exits with its catalog code, anything else 1.
 pub fn fault_exit(e: &anyhow::Error) -> i32 {
     eprintln!("goatbuilder: {e:#}");
+    if e.downcast_ref::<clap::Error>().is_some() {
+        return 2;
+    }
     match e.downcast_ref::<goat_errors::Coded>() {
         Some(c) => {
             eprintln!("  ({} — goatbuilder explain {})", c.code, c.code);
@@ -208,14 +211,18 @@ struct VerbLine {
 /// 6, 7 and 9 when FED_VERBS=goatbuilder. The words parsed are the words the
 /// plan prints, so the plan cannot say one thing and run another.
 pub fn run_argv(argv: &[String]) -> Result<i32> {
-    let line = VerbLine::try_parse_from(argv)
-        .map_err(|e| anyhow!("goatbuilder federate {}: {e}", argv.join(" ")))?;
+    // The clap error stays in the chain, so `fault_exit` exits 2 for it, as
+    // goat does for a command line it cannot parse.
+    let line = VerbLine::try_parse_from(argv).map_err(|e| {
+        anyhow::Error::new(e).context(format!("goatbuilder federate {}", argv.join(" ")))
+    })?;
     run(line.cmd, &line.site)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use anyhow::anyhow;
 
     /// The context name is read from config.toml the way goat reads it, so a
     /// file a TOML parser reads differently (or refuses) names the same
@@ -497,6 +504,11 @@ mod tests {
     #[test]
     fn run_argv_refuses_an_unknown_flag() {
         let e = run_argv(&["lint".into(), "x".into(), "--no-such-flag".into()]).unwrap_err();
-        assert!(e.to_string().contains("--no-such-flag"), "{e}");
+        assert!(format!("{e:#}").contains("--no-such-flag"), "{e:#}");
+        assert_eq!(
+            fault_exit(&e),
+            2,
+            "a command line clap refuses exits 2, as in goat"
+        );
     }
 }

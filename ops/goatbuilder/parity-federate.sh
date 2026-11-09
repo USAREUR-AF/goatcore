@@ -16,7 +16,8 @@
 # chosen by FED_VERBS: `goat` (the default, `goat federate <verb>`) or
 # `goatbuilder` (`goatbuilder federate <verb>`; the binary runs them in
 # process). The gate compares the two avenues in both modes, so neither can
-# drift while it is not the default.
+# drift while it is not the default, and once more with FED_VERBS unset, so
+# both avenues always have the same default.
 #
 # usage: parity-federate.sh <goatbuilder binary> <peering> [<peering> ...]
 set -euo pipefail
@@ -50,14 +51,16 @@ for c in json.load(sys.stdin)["checks"]:
 }
 
 fail=0
-for verbs in goat goatbuilder; do
-  export FED_VERBS="$verbs"
+# goat, goatbuilder, then unset: the third pass compares the two avenues'
+# DEFAULTS, so one avenue's default cannot move without the other's.
+for verbs in goat goatbuilder unset; do
+  if [ "$verbs" = unset ]; then unset FED_VERBS; else export FED_VERBS="$verbs"; fi
   for peering in "$@"; do
     a="$(script_side "$peering" || true)"; b="$(binary_side "$peering" || true)"
     if [ -z "$a" ]; then
       fail=1; echo "PARITY FAIL: federate $peering (FED_VERBS=$verbs) — the script produced no phases"; continue
     fi
-    if ! printf '%s\n' "$b" | grep -q "^$( [ "$verbs" = goat ] && echo GOAT || echo goatbuilder) federate lint "; then
+    if [ "$verbs" != unset ] && ! printf '%s\n' "$b" | grep -q "^$( [ "$verbs" = goat ] && echo GOAT || echo goatbuilder) federate lint "; then
       fail=1; echo "PARITY FAIL: federate $peering (FED_VERBS=$verbs) — phase 4 does not run through $verbs"; continue
     fi
     if [ "$a" != "$b" ]; then
