@@ -481,13 +481,16 @@ class AcceptanceRun(unittest.TestCase):
         self.assertEqual(rc, 2, out)
 
     # --- a bilateral session, each side on its own core only -----------------
-    def run_side(self, side, manifest, evidence):
-        """One side's runner: its own core only, no counterparty surface, no probes."""
+    def run_side(self, side, manifest, evidence, full=False):
+        """One side's runner, on its own systems only: its core and no counterparty
+        surface; with `full`, also its own edge's trace, probes and SPIRE commands."""
         path = os.path.join(self.tmp, "agreement.json")
         with open(path, "w") as f:
             json.dump(self.ag, f)
         fab = self.fabric.start()
         env = {k: v for k, v in os.environ.items() if k not in SCRUB}
+        if full:
+            env.update(self.fabric.env_for(side))
         env.update({"FED_OURS_REST": fab["FED_OURS_REST"] if side == "xaa" else fab["FED_THEIRS_REST"],
                     "FED_ACCEPTANCE_SESSION": manifest, "FED_EVIDENCE_DIR": evidence, "FED_SESSION_WAIT": "2",
                     "FED_ACCEPTANCE_WAIT": "0.3", "FED_ACCEPTANCE_GAP": "0", "FED_ACCEPTANCE_RT_TIMEOUT": "3"})
@@ -538,8 +541,38 @@ class AcceptanceRun(unittest.TestCase):
         combined = json.load(open(os.path.join(ev_a, "bilateral", json.load(open(manifest))["session_id"] + ".json")))
         row = [r for r in combined["rows"] if r["name"] == "delivery/outbound/release/all"][0]
         self.assertEqual(row["status"], "PASS (peer-reported)", co.stdout)
-        # Refusals and SPIRE were not configured on either side, so the bilateral scope is open.
+        # Each side ran with its core only: no edge trace, probes or SPIRE commands, so
+        # its refusal and SPIRE rows are BLOCKED or SKIPPED and the bilateral scope is open.
         self.assertEqual((co.returncode, combined["verdict"]), (3, "INCOMPLETE"), co.stdout)
+
+    def test_two_operators_each_on_their_own_systems_reach_a_bilateral_pass(self):
+        path = os.path.join(self.tmp, "agreement.json")
+        with open(path, "w") as f:
+            json.dump(self.ag, f)
+        manifest = os.path.join(self.tmp, "session.json")
+        tool = str(HERE / "acceptance_session.py")
+        subprocess.run(["python3", tool, "new", "--agreement", path, "--us", "xaa", "--out", manifest], check=True,
+                       capture_output=True)
+        ev = {"xaa": os.path.join(self.tmp, "ev-xaa"), "xab": os.path.join(self.tmp, "ev-xab")}
+        self.run_side("xab", manifest, ev["xab"], full=True)           # sees nothing of xaa's yet
+        rc, out, a = self.run_side("xaa", manifest, ev["xaa"], full=True)
+        rows = {c["name"]: c["verdict"] for c in a["checks"]}
+        for name in ("delivery/inbound/release/all", "persistence/inbound/release/all", "out-of-lane/inbound",
+                     "republisher-boundary/inbound", "refusal/control-allowed", "refusal/out-of-lane-denied",
+                     "refusal/forged-name", "roundtrip/outbound/release/all", "spire/svid-chains"):
+            self.assertEqual(rows.get(name), "PASS", (name, out))
+        self.assertEqual(rows["persistence/outbound/release/all"], "BLOCKED", out)
+        rc, out, b = self.run_side("xab", manifest, ev["xab"], full=True)  # now sees xaa's
+        self.assertEqual({c["name"]: c["verdict"] for c in b["checks"]}["refusal/control-allowed"], "PASS", out)
+        for us, them in (("xaa", "xab"), ("xab", "xaa")):
+            imp = subprocess.run(["python3", tool, "import", "--manifest", manifest, "--us", us, "--evidence", ev[us],
+                                  os.path.join(ev[them], "result.json")], capture_output=True, text=True)
+            self.assertEqual(imp.returncode, 0, imp.stderr)
+            co = subprocess.run(["python3", tool, "combine", "--manifest", manifest, "--us", us, "--evidence", ev[us]],
+                                capture_output=True, text=True)
+            combined = json.load(open(os.path.join(ev[us], "bilateral", json.load(open(manifest))["session_id"] + ".json")))
+            self.assertEqual((co.returncode, combined["verdict"]), (0, "PASS"),
+                             (us, combined["open"], combined["failed"]))
 
     def test_a_manifest_for_another_agreement_stops_the_run(self):
         other = os.path.join(self.tmp, "other.json")

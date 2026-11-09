@@ -268,29 +268,39 @@ own core and edge only: no counterparty surface, no shared credentials, no servi
    manifest for another agreement, one that does not name it, one not yet valid or expired, and one whose session id,
    participant ids or challenges are not of their fixed shapes (`ses-` plus letters, digits and
    hyphens; sovereign ids; 16 to 64 lowercase hex digits), because they become keys, bytes and file
-   names (exit 2). Then, in place of the rows that need the partner's core, it stages one sample per
-   offered set under `release/<set>/acceptance/<session id>/<itself>` carrying the challenge the
-   manifest issued to it, plus one under a set nobody offered, and reads the partner's samples
-   from its own core for up to `FED_SESSION_WAIT` seconds (300):
+   names (exit 2); the manifest must name exactly two participants, this side being one. Then, in
+   place of the rows that need the partner's core, it stages on its own core, for each offered set,
+   a sample under `release/<set>/acceptance/<session id>/<itself>` and a second one under
+   `.../<itself>/persist`, both carrying the challenge the manifest issued to it, plus one under a
+   set nobody offered and two writes outside every lane; it then reads the partner's from its own
+   core for up to `FED_SESSION_WAIT` seconds (300), and runs its own edge's refusal rows (§2.2,
+   with the probes and trace it holds) beside the partner's samples that landed:
 
 | Row | Here |
 |---|---|
 | `publish/outbound/<set>` | our sample is staged on our core with our challenge |
-| `delivery/outbound/<set>`, `republisher-boundary/outbound`, `roundtrip/inbound` | BLOCKED: observed by the partner. Each names the partner's row that observes it (`observed_by_peer`) |
+| `delivery/outbound/<set>`, `persistence/outbound/<set>`, `republisher-boundary/outbound`, `out-of-lane/outbound`, `roundtrip/inbound/<their set>` | BLOCKED: observed by the partner. Each names the partner's row that observes it (`observed_by_peer`) |
 | `delivery/inbound/<set>` | the partner's sample arrived on our core with the partner's challenge, byte for byte; BLOCKED while nothing has arrived (they may not have run yet) |
-| `republisher-boundary/inbound` | the partner's unoffered set did not arrive, asserted only beside an inbound sample that did |
+| `persistence/inbound/<set>` | only our core's own store subscribes to the key of the partner's second sample, and that sample reads back (§2.1). The scope is read when we read, not when they published |
+| `republisher-boundary/inbound`, `out-of-lane/inbound` | the partner's unoffered set and their writes outside every lane did not arrive, asserted only beside an inbound sample that did |
+| `refusal/*`, `spire/*`, `roundtrip/outbound/<set>` | as outside a session, on our own edge, SPIRE server and core. The refusal probes hold the partner's agreed identity and our SPIRE check needs the partner's `spire-server` command, so both depend on what the partner provides for acceptance |
 
 3. Each hands the other their `result.json`. `acceptance_session.py import --manifest
    session.json --us <us> --evidence <evidence dir> <their result.json>` keeps it under
    `<evidence>/peer/<them>/` with `peer_reported: true, authenticated: false`, after refusing
    (exit 2) a bundle of another schema, session, manifest, agreement or challenge, one observed by
-   us, one whose run lies outside the session window, any bundle once the session expired, a run
-   id already imported (a replay), and a bundle whose passing inbound delivery does not carry our
+   us, one whose run lies outside the session window, any bundle once the session expired, a run id
+   not of the form `acc-<letters, digits, hyphens>`, a bundle already imported (by its digest or
+   its run id), and a bundle whose passing inbound delivery does not carry our
    challenge (it cannot be from this session's samples).
 4. `acceptance_session.py combine` writes `<evidence>/bilateral/<session id>.json` and `.md`:
    our rows and theirs side by side, local and peer-reported in separate columns. A row of ours
    marked `observed_by_peer` is satisfied only by the partner's mirror row passing, and a row of
-   theirs marked so is decided by our own row. Exit 0 when
+   theirs marked so is decided by our own row. The partner's bundle must hold the mirror of every
+   required row of ours (our outbound is their inbound; a row without a direction keeps its name;
+   `publish/`, `existing/`, `fresh-keys` and earlier-run cleanup are each side's own), and each
+   of those is required whatever their bundle says; each peer row is re-checked with the same rule
+   that wrote ours, and a malformed one is a FAIL. Exit 0 when
    the required scope of both sides passed, 1 on any failure, 3 otherwise.
 
 A signature would only say who reported a result, not whether their infrastructure is honest, and
@@ -322,6 +332,7 @@ broken on purpose (`Faults`). `test_acceptance.py` runs the real script against 
 | a subscriber on other keys; a closed admin space; no store for the lane | PASS; BLOCKED (exit 3); FAIL (exit 1) |
 | a denial logged for another session; an allow from a session that is not the probe; decision lines without session ids | denial FAIL (exit 1); control FAIL (exit 1); denials BLOCKED (exit 3) |
 | a bilateral session, each side on its own core: first runner, second runner, first again; import twice; combine | first: inbound BLOCKED, exit 3; second: inbound PASS with the partner's challenge, outbound BLOCKED naming the partner's row; first again: inbound PASS; second import refused as a replay; outbound PASS (peer-reported), scope INCOMPLETE where refusals were not configured |
+| two operators, each with their own core, edge trace, probes and SPIRE commands, run one session and exchange bundles | both `combine` results PASS |
 | a session manifest made for another agreement | exit 2 |
 | an existing partnership: unnamed; unchanged before and after; no snapshot from before; its agreement changed; its round trip broken by the deployment; a set for the new partner reaching it; no surface for it | no `existing/` rows; PASS (exit 0); BLOCKED (exit 3); FAIL; FAIL naming "before"; leak FAIL; optional SKIP (exit 0) |
 

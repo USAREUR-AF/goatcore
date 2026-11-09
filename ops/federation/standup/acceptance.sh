@@ -286,12 +286,22 @@ EOF
   echo
 fi
 session_lanes() {
-  local set sk key val i landed=0 waits
+  local set sk key val i landed=0 waits ops_key ng_key gops gng
   sk="acceptance/$SESSION_ID"
   waits=$(( ${FED_SESSION_WAIT:-300} / 2 )); [ "$waits" -ge 1 ] || waits=1
   begin
-  for set in $(list "$OUR_SETS"); do put_ours "$set/$sk/$US" "$US-$MY_CHAL-${set#release/}"; gap; done
-  [ "$HAVE_OUT" = 1 ] && { put_ours "release/$US-not-offered/$sk/$US" "nope-$MY_CHAL"; gap; }
+  # What we stage on our own core, for the partner's runner to observe on theirs:
+  # one sample per offered set, a second (persist) sample per set, a set nobody
+  # offered, and two writes outside every lane.
+  for set in $(list "$OUR_SETS"); do
+    put_ours "$set/$sk/$US" "$US-$MY_CHAL-${set#release/}"; gap
+    put_ours "$set/$sk/$US/persist" "$US-$MY_CHAL-${set#release/}-persist"; gap
+  done
+  if [ "$HAVE_OUT" = 1 ]; then
+    put_ours "release/$US-not-offered/$sk/$US" "nope-$MY_CHAL"; gap
+    put_ours "ops/fabric/acceptance-$SESSION_ID-$US" "nope-$MY_CHAL"; gap
+    put_ours "from/$US-not-granted/acceptance-$SESSION_ID" "nope-$MY_CHAL"; gap
+  fi
   for set in $(list "$OUR_SETS"); do
     begin; val="$US-$MY_CHAL-${set#release/}"
     get_side ours "$set/$sk/$US"; obs key "$set/$sk/$US"; obs staged "$GOT"
@@ -301,10 +311,14 @@ session_lanes() {
     begin; obs observed_by_peer "delivery/inbound/$set"; obs key "$(wire_of "$US" "$set")/$sk/$US"
     blk "delivery/outbound/$set" outbound positive "our $set/** arriving on their core is observed by $THEM's runner in this session" \
       "Import their bundle (acceptance_session.py import) and combine."
+    begin; obs observed_by_peer "persistence/inbound/$set"
+    blk "persistence/outbound/$set" outbound persistence "our $set/** persisting in their core's store is observed by $THEM's runner in this session"
   done
   if [ "$HAVE_OUT" = 1 ]; then
     begin; obs observed_by_peer "republisher-boundary/inbound"
     blk republisher-boundary/outbound outbound negative "an unoffered set of ours not lifted: observed by $THEM's runner in this session"
+    begin; obs observed_by_peer "out-of-lane/inbound"
+    blk out-of-lane/outbound outbound negative "our writes outside every lane not reaching them: observed by $THEM's runner in this session"
   fi
   for set in $(list "$THEIR_SETS"); do
     begin; key="$(wire_of "$THEM" "$set")/$sk/$THEM"; val="$THEM-$THEIR_CHAL-${set#release/}"
@@ -320,21 +334,63 @@ session_lanes() {
     elif [ -z "$GOT" ]; then blk "delivery/inbound/$set" inbound positive "nothing from $THEM on $set/** within ${FED_SESSION_WAIT:-300}s" \
       "Either they have not run this session yet, or it was not delivered; re-run once they have."
     else no "delivery/inbound/$set" inbound positive "$THEM's session sample on $set/** arrived with other bytes" "sent sha256 $(sha "$val"), read sha256 $(sha "$GOT")"; fi
+    session_persist "$set"
   done
   if [ "$HAVE_IN" = 1 ]; then
     begin
     if [ "$landed" = 1 ]; then
-      # Their unoffered sample is staged a gap after their offered ones and still has
-      # to cross their republisher and both edges: give it the same settle the main
-      # path gives before reading its absence.
+      # Their unoffered and out-of-lane writes are staged after their offered ones
+      # and still have to reach both edges: give them the main path's settle.
       settle 8
       absent republisher-boundary/inbound inbound negative ours "$(wire_of "$THEM" "release/$THEM-not-offered")/$sk/$THEM" \
         "a staging set of theirs the agreement never offered did NOT arrive on our core in this session" \
         "release/$THEM-not-offered/** arrived on our core: their republisher forwarded a set nobody agreed"
+      begin; ops_key="ops/fabric/acceptance-$SESSION_ID-$THEM"; ng_key="from/$THEM-not-granted/acceptance-$SESSION_ID"
+      get_side ours "$ops_key"; gops="$GOT"; rops=$GOT_RC
+      get_side ours "$ng_key"; gng="$GOT"
+      obs keys "$ops_key $ng_key"; obs received "$gops$gng"
+      if [ "$rops" -ne 0 ] || [ "$GOT_RC" -ne 0 ]; then blk out-of-lane/inbound inbound negative "their writes outside every lane: our core's REST surface did not answer" "$GOT_ERR"
+      elif [ -z "$gops$gng" ]; then ok out-of-lane/inbound inbound negative "their writes outside every lane did NOT arrive on our core in this session"
+      else no out-of-lane/inbound inbound negative "a write of theirs outside every lane arrived on our core" "read '$gops$gng'"; fi
+      begin
+      edge_refusals
     else
       skp republisher-boundary/inbound inbound negative "their unoffered set: not asserted" "no session sample of theirs landed, so its absence would prove nothing"
+      skp out-of-lane/inbound inbound negative "their writes outside every lane: not asserted" "no session sample of theirs landed"
+      skp refusals inbound negative "refusal checks not run" "no session sample of theirs landed, so a refusal here would prove nothing"
     fi
+  else
+    begin; edge_refusals
   fi
+}
+# session_persist SET: the partner's second sample on SET reaches our store when only
+# the store subscribes to its key. The scope is read before the sample is read; the
+# partner staged it in their own run, so a subscriber that existed then and is gone
+# now is not seen (stated in the design document).
+session_persist() {
+  local set="$1" key val n i rc
+  n="persistence/inbound/$set"; key="$(wire_of "$THEM" "$set")/acceptance/$SESSION_ID/$THEM/persist"
+  val="$THEM-$THEIR_CHAL-${set#release/}-persist"
+  begin
+  scope ours "$key"; rc=$?
+  obs key "$key"; obs scope "$SCOPE"
+  case "$rc" in
+    0) ;;
+    1) no "$n" inbound persistence "no store on our core subscribes to $key" "$(scope_reason)"; return 0 ;;
+    5) blk "$n" inbound persistence "$set/** on our core: a session other than the core's own store subscribes to the key" "$(scope_reason)"; return 0 ;;
+    *) blk "$n" inbound persistence "$set/** on our core: who subscribes to the key could not be read" "$(scope_reason)"; return 0 ;;
+  esac
+  for i in 1 2 3 4 5 6 7 8; do
+    get_side ours "$key"
+    [ "$GOT_RC" -eq 0 ] && [ "$GOT" = "$val" ] && break
+    settle 1
+  done
+  obs received "$GOT"; obs attempts "$i"
+  if [ "$GOT_RC" -ne 0 ]; then blk "$n" inbound persistence "$set/** -> $key: our core's REST surface did not answer" "$GOT_ERR"
+  elif [ "$GOT" = "$val" ]; then ok "$n" inbound persistence "$THEM's second sample on $set/** persists on our core with only the core's own store subscribed"
+  elif [ -z "$GOT" ]; then blk "$n" inbound persistence "$THEM's second sample on $set/** has not arrived" "Re-run once they have run this session."
+  else no "$n" inbound persistence "$THEM's second sample on $set/** arrived with other bytes" "read '$GOT'"; fi
+  return 0
 }
 
 # ---- THE VERDICT, from the evidence. acceptance_evidence.py decides it and the exit
@@ -510,95 +566,8 @@ for set in $(list "$THEIR_WILD"); do
   blk "delivery/inbound/$set" inbound positive "$set/** names no single key to publish" "Its lane cannot be proven by a sample; prove it by hand."
 done
 
-if [ -z "$FED_THEIRS_REST" ]; then
-  why="no counterparty surface (FED_THEIRS_REST)"
-  hint="Only a drill owns both sides; in production the counterparty runs their own half."
-  if [ -n "$SESSION" ]; then
-    session_lanes
-  else
-    for set in $(list "$OUR_SETS");   do blk "delivery/outbound/$set" outbound positive "our $set/** read back on their core: $why" "$hint"; done
-    for set in $(list "$THEIR_SETS"); do blk "delivery/inbound/$set" inbound positive "their $set/** read back on our core: $why" "$hint"; done
-    [ "$HAVE_OUT" = 1 ] && blk republisher-boundary/outbound outbound negative "an unoffered set of ours is not lifted: $why"
-    [ "$HAVE_IN" = 1 ]  && blk republisher-boundary/inbound inbound negative "an unoffered set of theirs is not lifted: $why"
-  fi
-  begin
-  blk out-of-lane/inbound inbound negative "their write outside the agreement does not cross: $why"
-  blk out-of-lane/outbound outbound negative "a prefix the agreement never named does not reach them: $why"
-  blk refusal/acl-trace inbound negative "the refusals on our edge's ACL trace: $why"
-  for set in $(list "$OUR_SETS");   do blk "persistence/outbound/$set" outbound persistence "our $set/** persists in their core's store: $why"; done
-  for set in $(list "$THEIR_SETS"); do blk "persistence/inbound/$set" inbound persistence "their $set/** persists in our core's store: $why"; done
-else
-  # ---- TIER 2, POSITIVE. Read back from the RECEIVING side's own storage: an
-  #      ACL allow proves the write was permitted, only a read-back proves it
-  #      was delivered. Each sample is STAGED under a release set and must arrive
-  #      under the wire name, so each row also proves that side's republisher.
-  #      The read is a query against the receiving core's store: the runner declares
-  #      no subscriber, so no diagnostic interest can carry a sample the store would
-  #      not have taken.
-  begin
-  [ "$HAVE_OUT" = 1 ] || na delivery/outbound outbound positive "$NO_OUT"
-  [ "$HAVE_IN" = 1 ]  || na delivery/inbound inbound positive "$NO_IN"
-  # Before sending: each target key must be readable and empty, so the value read
-  # afterwards can only have come from this run.
-  PRE_BAD=""
-  for set in $(list "$THEIR_SETS"); do
-    get_side ours "$(wire_of "$THEM" "$set")/acceptance/$S"
-    { [ "$GOT_RC" -eq 0 ] && [ -z "$GOT" ]; } || PRE_BAD="$PRE_BAD inbound:$set"
-  done
-  for set in $(list "$OUR_SETS"); do
-    get_side theirs "$(wire_of "$US" "$set")/acceptance/$S"
-    { [ "$GOT_RC" -eq 0 ] && [ -z "$GOT" ]; } || PRE_BAD="$PRE_BAD outbound:$set"
-  done
-  for set in $(list "$THEIR_SETS"); do put_theirs "$set/acceptance/$S" "in-$S-${set#release/}"; gap; done
-  for set in $(list "$OUR_SETS");   do put_ours   "$set/acceptance/$S" "out-$S-${set#release/}"; gap; done
-  # deliver DIRECTION SIDE SENDER SET PAYLOAD: bounded retries, then the verdict.
-  deliver() {
-    local w n from there i
-    w="$(wire_of "$3" "$4")/acceptance/$S"; n="delivery/$1/$4"
-    from="their"; there="our core"
-    [ "$1" = outbound ] && { from="our"; there="their core"; }
-    for i in 1 2 3 4 5 6 7 8; do
-      get_side "$2" "$w"
-      [ "$GOT_RC" -eq 0 ] && [ "$GOT" = "$5" ] && break
-      settle 1
-    done
-    obs key "$w"; obs sent "$5"; obs received "$GOT"; obs attempts "$i"
-    obs sent_sha256 "$(sha "$5")"; obs received_sha256 "$(sha "$GOT")"
-    if [ "$GOT_RC" -ne 0 ]; then
-      blk "$n" "$1" positive "$4/** -> $w: $there's REST surface did not answer" "$GOT_ERR"
-    elif [ "$GOT" = "$5" ]; then
-      ok "$n" "$1" positive "$from $4/** staged arrived as $(wire_of "$3" "$4")/** and reads back byte for byte on $there"
-    elif [ -z "$GOT" ]; then
-      no "$n" "$1" positive "not delivered $1: $4/** -> $w" "expected '$5', read <nothing>"
-    else
-      no "$n" "$1" positive "delivered $1 with other bytes: $4/** -> $w" "sent sha256 $(sha "$5"), read sha256 $(sha "$GOT")"
-    fi
-  }
-  settle 2
-  for set in $(list "$THEIR_SETS"); do begin; deliver inbound ours "$THEM" "$set" "in-$S-${set#release/}"; done
-  for set in $(list "$OUR_SETS");   do begin; deliver outbound theirs "$US" "$set" "out-$S-${set#release/}"; done
-  if [ -n "$PRE_BAD" ]; then
-    begin; obs targets "$PRE_BAD"
-    no fresh-keys both precondition "a target key was unreadable or already held a value before this run sent anything:$PRE_BAD" \
-      "The run id is unique, so a value there is not from this run; the reads above prove nothing for those sets."
-  fi
-
-  # ---- PERSISTENCE. The reads above are store queries, and the runner declares no
-  #      subscriber. That is not enough: a session someone else left subscribed on
-  #      the receiving core (a drill's responder, a person's `z_sub`) creates the
-  #      interest that pulls a sample across, and a store whose own subscription the
-  #      edge refuses then looks healthy for as long as that session lives. So, per
-  #      offered set: read who on the receiving core subscribes to the exact key
-  #      (the admin space, `@/*/router/subscriber/<key>`; no storage status query),
-  #      require that the core's own store does and that no other session does,
-  #      stopping a drill's test subscribers when it says how, and only then publish
-  #      a NEW sample and read it back from the store.
-  # The refusals below are gated on the delivery rows alone: a persistence row that
-  # is BLOCKED (a closed admin space, a test subscriber left running) says nothing
-  # about whether the lanes carry, so it must not take the refusal rows with it.
-  T2_FAIL=$fail; T2_BLOCKED=$blocked
-  [ "$HAVE_OUT" = 1 ] || { begin; na persistence/outbound outbound persistence "$NO_OUT"; }
-  [ "$HAVE_IN" = 1 ]  || { begin; na persistence/inbound inbound persistence "$NO_IN"; }
+# ---- Helpers the persistence and refusal checks share, in both the drill path and a
+#      bilateral session. Defined here, called below.
   side_run() { if [ "$1" = ours ]; then ours "$2"; else theirs "$2"; fi; }
   side_get() { # SIDE KEY > curl output with its status line
     if [ "$1" = ours ]; then ours "curl -s -m 8 -w '\n%{http_code}' $(printf %q "$FED_OURS_REST/$2")"
@@ -652,39 +621,9 @@ else
     [ -n "$paused" ] && [ -n "$resume" ] && side_run "$rx" "$resume" >/dev/null 2>&1
     return 0
   }
-  for set in $(list "$THEIR_SETS"); do persist inbound ours theirs "$THEM" "$set"; gap; done
-  for set in $(list "$OUR_SETS");   do persist outbound theirs ours "$US" "$set"; gap; done
 
-  # ---- TIER 3, NEGATIVE. Only meaningful because tier 2 just passed.
-  if [ "$T2_FAIL" -eq 0 ] && [ "$T2_BLOCKED" -eq 0 ]; then
-    begin
-    # The republisher boundary, in each direction the agreement has: a set the
-    # agreement never offered, staged beside the offered ones that just crossed, is
-    # not lifted onto the wire name.
-    [ "$HAVE_OUT" = 1 ] && { put_ours   "release/$US-not-offered/acceptance-$S" "nope-$S"; gap; }
-    [ "$HAVE_IN" = 1 ]  && { put_theirs "release/$THEM-not-offered/acceptance-$S" "nope-$S"; gap; }
-    put_theirs "ops/fabric/acceptance-$S" "nope-$S"; gap
-    put_ours   "from/$US-not-granted/acceptance-$S" "nope-$S"
-    settle 8
-    if [ "$HAVE_OUT" = 1 ]; then
-      absent republisher-boundary/outbound outbound negative theirs "$(wire_of "$US" "release/$US-not-offered")/acceptance-$S" \
-        "a staging set of ours the agreement never offered was NOT lifted onto our wire name" \
-        "release/$US-not-offered/** crossed as $(wire_of "$US" "release/$US-not-offered")/** — our republisher forwarded a set nobody agreed"
-    else
-      na republisher-boundary/outbound outbound negative "$NO_OUT"
-    fi
-    if [ "$HAVE_IN" = 1 ]; then
-      absent republisher-boundary/inbound inbound negative ours "$(wire_of "$THEM" "release/$THEM-not-offered")/acceptance-$S" \
-        "a staging set of theirs the agreement never offered did NOT arrive on our core" \
-        "release/$THEM-not-offered/** arrived as $(wire_of "$THEM" "release/$THEM-not-offered")/** — their republisher forwarded a set nobody agreed"
-    else
-      na republisher-boundary/inbound inbound negative "$NO_IN"
-    fi
-    absent out-of-lane/inbound inbound negative ours "ops/fabric/acceptance-$S" \
-      "their write outside the agreement did NOT cross" "a write to ops/** crossed the edge — the boundary is not holding"
-    absent out-of-lane/outbound outbound negative theirs "from/$US-not-granted/acceptance-$S" \
-      "a prefix the agreement never named did NOT reach them" "an ungranted prefix crossed outbound"
-
+# edge_refusals: the refusal rows read from OUR edge's own record (below, tier 3).
+edge_refusals() {
     # THE ROUTER'S OWN RECORD. The checks above read silence, and silence is what
     # a dead path produces too. A client holding the partner's agreed
     # identity writes one key inside its lane and one outside, on the same session,
@@ -825,6 +764,133 @@ else
         skp refusal/impersonation inbound negative "the F-424 impersonation was not exercised" "Set FED_PROBE_IMPERSONATE_REST and FED_PROBE_IMPERSONATE_ZID."
       fi
     fi
+}
+
+if [ -z "$FED_THEIRS_REST" ]; then
+  why="no counterparty surface (FED_THEIRS_REST)"
+  hint="Only a drill owns both sides; in production the counterparty runs their own half."
+  if [ -n "$SESSION" ]; then
+    session_lanes
+  else
+    for set in $(list "$OUR_SETS");   do blk "delivery/outbound/$set" outbound positive "our $set/** read back on their core: $why" "$hint"; done
+    for set in $(list "$THEIR_SETS"); do blk "delivery/inbound/$set" inbound positive "their $set/** read back on our core: $why" "$hint"; done
+    [ "$HAVE_OUT" = 1 ] && blk republisher-boundary/outbound outbound negative "an unoffered set of ours is not lifted: $why"
+    [ "$HAVE_IN" = 1 ]  && blk republisher-boundary/inbound inbound negative "an unoffered set of theirs is not lifted: $why"
+  fi
+  begin
+  if [ -z "$SESSION" ]; then
+  blk out-of-lane/inbound inbound negative "their write outside the agreement does not cross: $why"
+  blk out-of-lane/outbound outbound negative "a prefix the agreement never named does not reach them: $why"
+  blk refusal/acl-trace inbound negative "the refusals on our edge's ACL trace: $why"
+  for set in $(list "$OUR_SETS");   do blk "persistence/outbound/$set" outbound persistence "our $set/** persists in their core's store: $why"; done
+  for set in $(list "$THEIR_SETS"); do blk "persistence/inbound/$set" inbound persistence "their $set/** persists in our core's store: $why"; done
+  fi
+else
+  # ---- TIER 2, POSITIVE. Read back from the RECEIVING side's own storage: an
+  #      ACL allow proves the write was permitted, only a read-back proves it
+  #      was delivered. Each sample is STAGED under a release set and must arrive
+  #      under the wire name, so each row also proves that side's republisher.
+  #      The read is a query against the receiving core's store: the runner declares
+  #      no subscriber, so no diagnostic interest can carry a sample the store would
+  #      not have taken.
+  begin
+  [ "$HAVE_OUT" = 1 ] || na delivery/outbound outbound positive "$NO_OUT"
+  [ "$HAVE_IN" = 1 ]  || na delivery/inbound inbound positive "$NO_IN"
+  # Before sending: each target key must be readable and empty, so the value read
+  # afterwards can only have come from this run.
+  PRE_BAD=""
+  for set in $(list "$THEIR_SETS"); do
+    get_side ours "$(wire_of "$THEM" "$set")/acceptance/$S"
+    { [ "$GOT_RC" -eq 0 ] && [ -z "$GOT" ]; } || PRE_BAD="$PRE_BAD inbound:$set"
+  done
+  for set in $(list "$OUR_SETS"); do
+    get_side theirs "$(wire_of "$US" "$set")/acceptance/$S"
+    { [ "$GOT_RC" -eq 0 ] && [ -z "$GOT" ]; } || PRE_BAD="$PRE_BAD outbound:$set"
+  done
+  for set in $(list "$THEIR_SETS"); do put_theirs "$set/acceptance/$S" "in-$S-${set#release/}"; gap; done
+  for set in $(list "$OUR_SETS");   do put_ours   "$set/acceptance/$S" "out-$S-${set#release/}"; gap; done
+  # deliver DIRECTION SIDE SENDER SET PAYLOAD: bounded retries, then the verdict.
+  deliver() {
+    local w n from there i
+    w="$(wire_of "$3" "$4")/acceptance/$S"; n="delivery/$1/$4"
+    from="their"; there="our core"
+    [ "$1" = outbound ] && { from="our"; there="their core"; }
+    for i in 1 2 3 4 5 6 7 8; do
+      get_side "$2" "$w"
+      [ "$GOT_RC" -eq 0 ] && [ "$GOT" = "$5" ] && break
+      settle 1
+    done
+    obs key "$w"; obs sent "$5"; obs received "$GOT"; obs attempts "$i"
+    obs sent_sha256 "$(sha "$5")"; obs received_sha256 "$(sha "$GOT")"
+    if [ "$GOT_RC" -ne 0 ]; then
+      blk "$n" "$1" positive "$4/** -> $w: $there's REST surface did not answer" "$GOT_ERR"
+    elif [ "$GOT" = "$5" ]; then
+      ok "$n" "$1" positive "$from $4/** staged arrived as $(wire_of "$3" "$4")/** and reads back byte for byte on $there"
+    elif [ -z "$GOT" ]; then
+      no "$n" "$1" positive "not delivered $1: $4/** -> $w" "expected '$5', read <nothing>"
+    else
+      no "$n" "$1" positive "delivered $1 with other bytes: $4/** -> $w" "sent sha256 $(sha "$5"), read sha256 $(sha "$GOT")"
+    fi
+  }
+  settle 2
+  for set in $(list "$THEIR_SETS"); do begin; deliver inbound ours "$THEM" "$set" "in-$S-${set#release/}"; done
+  for set in $(list "$OUR_SETS");   do begin; deliver outbound theirs "$US" "$set" "out-$S-${set#release/}"; done
+  if [ -n "$PRE_BAD" ]; then
+    begin; obs targets "$PRE_BAD"
+    no fresh-keys both precondition "a target key was unreadable or already held a value before this run sent anything:$PRE_BAD" \
+      "The run id is unique, so a value there is not from this run; the reads above prove nothing for those sets."
+  fi
+
+  # ---- PERSISTENCE. The reads above are store queries, and the runner declares no
+  #      subscriber. That is not enough: a session someone else left subscribed on
+  #      the receiving core (a drill's responder, a person's `z_sub`) creates the
+  #      interest that pulls a sample across, and a store whose own subscription the
+  #      edge refuses then looks healthy for as long as that session lives. So, per
+  #      offered set: read who on the receiving core subscribes to the exact key
+  #      (the admin space, `@/*/router/subscriber/<key>`; no storage status query),
+  #      require that the core's own store does and that no other session does,
+  #      stopping a drill's test subscribers when it says how, and only then publish
+  #      a NEW sample and read it back from the store.
+  # The refusals below are gated on the delivery rows alone: a persistence row that
+  # is BLOCKED (a closed admin space, a test subscriber left running) says nothing
+  # about whether the lanes carry, so it must not take the refusal rows with it.
+  T2_FAIL=$fail; T2_BLOCKED=$blocked
+  [ "$HAVE_OUT" = 1 ] || { begin; na persistence/outbound outbound persistence "$NO_OUT"; }
+  [ "$HAVE_IN" = 1 ]  || { begin; na persistence/inbound inbound persistence "$NO_IN"; }
+  for set in $(list "$THEIR_SETS"); do persist inbound ours theirs "$THEM" "$set"; gap; done
+  for set in $(list "$OUR_SETS");   do persist outbound theirs ours "$US" "$set"; gap; done
+
+  # ---- TIER 3, NEGATIVE. Only meaningful because tier 2 just passed.
+  if [ "$T2_FAIL" -eq 0 ] && [ "$T2_BLOCKED" -eq 0 ]; then
+    begin
+    # The republisher boundary, in each direction the agreement has: a set the
+    # agreement never offered, staged beside the offered ones that just crossed, is
+    # not lifted onto the wire name.
+    [ "$HAVE_OUT" = 1 ] && { put_ours   "release/$US-not-offered/acceptance-$S" "nope-$S"; gap; }
+    [ "$HAVE_IN" = 1 ]  && { put_theirs "release/$THEM-not-offered/acceptance-$S" "nope-$S"; gap; }
+    put_theirs "ops/fabric/acceptance-$S" "nope-$S"; gap
+    put_ours   "from/$US-not-granted/acceptance-$S" "nope-$S"
+    settle 8
+    if [ "$HAVE_OUT" = 1 ]; then
+      absent republisher-boundary/outbound outbound negative theirs "$(wire_of "$US" "release/$US-not-offered")/acceptance-$S" \
+        "a staging set of ours the agreement never offered was NOT lifted onto our wire name" \
+        "release/$US-not-offered/** crossed as $(wire_of "$US" "release/$US-not-offered")/** — our republisher forwarded a set nobody agreed"
+    else
+      na republisher-boundary/outbound outbound negative "$NO_OUT"
+    fi
+    if [ "$HAVE_IN" = 1 ]; then
+      absent republisher-boundary/inbound inbound negative ours "$(wire_of "$THEM" "release/$THEM-not-offered")/acceptance-$S" \
+        "a staging set of theirs the agreement never offered did NOT arrive on our core" \
+        "release/$THEM-not-offered/** arrived as $(wire_of "$THEM" "release/$THEM-not-offered")/** — their republisher forwarded a set nobody agreed"
+    else
+      na republisher-boundary/inbound inbound negative "$NO_IN"
+    fi
+    absent out-of-lane/inbound inbound negative ours "ops/fabric/acceptance-$S" \
+      "their write outside the agreement did NOT cross" "a write to ops/** crossed the edge — the boundary is not holding"
+    absent out-of-lane/outbound outbound negative theirs "from/$US-not-granted/acceptance-$S" \
+      "a prefix the agreement never named did NOT reach them" "an ungranted prefix crossed outbound"
+
+    edge_refusals
   else
     begin
     skp refusals both negative "refusal checks not run" \
@@ -872,8 +938,15 @@ if [ "$HAVE_IN" = 0 ]; then
 elif [ "$HAVE_OUT" = 0 ]; then
   begin; na roundtrip/inbound inbound round-trip "no return path: $NO_OUT, so no acknowledgement can come back"
 elif [ -z "$FED_THEIRS_REST" ]; then
-  begin; [ -n "$SESSION" ] && obs observed_by_peer roundtrip/outbound
-  blk roundtrip/inbound inbound round-trip "their nonce, acknowledged by our responder: no counterparty surface (FED_THEIRS_REST)"
+  if [ -n "$SESSION" ]; then
+    # Their nonce, acknowledged by our responder, is their run's outbound round trip.
+    for set in $(list "$THEIR_SETS"); do
+      begin; obs observed_by_peer "roundtrip/outbound/$set"
+      blk "roundtrip/inbound/$set" inbound round-trip "their nonce via $set/**, acknowledged by our responder: observed by $THEM's runner in this session"
+    done
+  else
+    begin; blk roundtrip/inbound inbound round-trip "their nonce, acknowledged by our responder: no counterparty surface (FED_THEIRS_REST)"
+  fi
 else
   roundtrip inbound theirs "$THEIR_SETS" "$OUR_WIRE" "$FED_THEIRS_REST"
 fi

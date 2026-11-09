@@ -60,7 +60,11 @@ class Session(unittest.TestCase):
                 {"name": "republisher-boundary/inbound", "required": True, "verdict": "PASS", "observations": {}},
             ]),
         }
-        p = os.path.join(self.d, "peer-%s.json" % b["run"]["id"])
+        for c in b["checks"]:
+            if over.get("raw"):
+                break
+            fill(c)
+        p = os.path.join(self.d, "peer-%s.json" % b["run"]["id"].replace("/", "_"))
         with open(p, "w") as f:
             json.dump(b, f)
         return p
@@ -113,6 +117,7 @@ class Session(unittest.TestCase):
             ses.import_bundle(self.manifest, "xaa", self.evidence, self.peer_bundle(run_id="acc-xab-2"), now=at(121))
 
     def write_local(self, checks, session=None):
+        checks = [fill(c) for c in checks]
         os.makedirs(self.evidence, exist_ok=True)
         with open(os.path.join(self.evidence, "result.json"), "w") as f:
             json.dump({"schema": "goat-federation-acceptance/v1", "run": {"id": "acc-xaa-1"},
@@ -128,7 +133,12 @@ class Session(unittest.TestCase):
         out = ses.combine(self.manifest, "xaa", self.evidence)
         self.assertEqual(out["verdict"], "INCOMPLETE")
         self.assertIn("no bundle from xab imported for this session", out["open"])
-        ses.import_bundle(self.manifest, "xaa", self.evidence, self.peer_bundle(), now=utc_now_inside(self.m))
+        peer = self.peer_bundle(checks=[
+            {"name": "delivery/inbound/release/all", "required": True, "verdict": "PASS",
+             "observations": {"received": "xaa-%s-all" % self.m["challenges"]["xaa"]}},
+            {"name": "delivery/outbound/release/all", "required": True, "verdict": "BLOCKED",
+             "observations": {"observed_by_peer": "delivery/inbound/release/all"}}])
+        ses.import_bundle(self.manifest, "xaa", self.evidence, peer, now=utc_now_inside(self.m))
         out = ses.combine(self.manifest, "xaa", self.evidence)
         self.assertEqual(out["verdict"], "PASS", out)
         self.assertFalse(out["authenticated"])
@@ -171,12 +181,72 @@ class Session(unittest.TestCase):
         self.assertEqual(row["status"], "PASS (local)")
         self.assertEqual(out["verdict"], "PASS", out)
 
+    def test_a_manifest_must_name_us_among_two_well_formed_participants(self):
+        for why, parts in (("a stranger", ["xab", "xac"]), ("three", ["xaa", "xab", "xac"]),
+                           ("a malformed id", ["xaa", "../x"])):
+            with self.subTest(why=why):
+                m = dict(self.m, participants=[{"sovereign_id": i} for i in parts],
+                         challenges={i: "0" * 32 for i in parts})
+                with open(self.manifest, "w") as f:
+                    json.dump(m, f)
+                with self.assertRaises(ses.Refused):
+                    ses.import_bundle(self.manifest, "xaa", self.evidence, self.peer_bundle(), now=at(10))
+
+    def test_run_ids_have_one_shape_and_a_bundle_counts_once_by_its_digest(self):
+        with self.assertRaises(ses.Refused):
+            ses.import_bundle(self.manifest, "xaa", self.evidence, self.peer_bundle(run_id="../../x"), now=at(10))
+        p = self.peer_bundle()
+        ses.import_bundle(self.manifest, "xaa", self.evidence, p, now=at(10))
+        copy = os.path.join(self.d, "copy.json")
+        shutil.copy(p, copy)
+        with self.assertRaises(ses.Refused):
+            ses.import_bundle(self.manifest, "xaa", self.evidence, copy, now=at(11))
+        index = json.load(open(os.path.join(self.evidence, "peer", "xab", "imported.json")))
+        self.assertEqual(list(index), [ses.sha256_file(p)])
+
+    def test_combine_requires_the_mirror_of_every_row_of_ours_and_ignores_their_required(self):
+        self.write_local([
+            {"name": "delivery/inbound/release/all", "required": True, "verdict": "PASS", "observations": {}},
+            {"name": "refusal/control-allowed", "required": True, "verdict": "PASS", "observations": {}},
+            {"name": "publish/outbound/release/all", "required": True, "verdict": "PASS", "observations": {}}])
+        # Their bundle holds the mirror of our delivery row, but marks its refusal row
+        # optional and SKIPPED: still required here, so the scope stays open.
+        peer = self.peer_bundle(checks=[
+            {"name": "delivery/outbound/release/all", "required": True, "verdict": "BLOCKED",
+             "observations": {"observed_by_peer": "delivery/inbound/release/all"}},
+            {"name": "refusal/control-allowed", "required": False, "verdict": "SKIP", "observations": {}}])
+        ses.import_bundle(self.manifest, "xaa", self.evidence, peer, now=utc_now_inside(self.m))
+        out = ses.combine(self.manifest, "xaa", self.evidence)
+        self.assertEqual(out["verdict"], "INCOMPLETE", out)
+        self.assertIn("xab: refusal/control-allowed", out["open"])
+        self.assertNotIn("xab: publish/inbound/release/all", [r["name"] for r in out["rows"]])
+
+    def test_a_missing_or_malformed_peer_row_is_not_a_pass(self):
+        self.write_local([{"name": "delivery/inbound/release/all", "required": True, "verdict": "PASS",
+                           "observations": {}}])
+        peer = self.peer_bundle(raw=True, checks=[
+            {"name": "delivery/outbound/release/all", "required": True, "verdict": "PASS", "direction": "sideways",
+             "reason": "", "started_at": "2026-11-09T12:05:00Z", "observations": {}}])
+        ses.import_bundle(self.manifest, "xaa", self.evidence, peer, now=utc_now_inside(self.m))
+        out = ses.combine(self.manifest, "xaa", self.evidence)
+        self.assertEqual(out["verdict"], "FAIL", out)
+
     def test_the_cli_writes_a_manifest_once(self):
         out = os.path.join(self.d, "new.json")
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
             self.assertEqual(ses.main(["new", "--agreement", self.ag, "--us", "xaa", "--out", out]), 0)
             self.assertEqual(ses.main(["new", "--agreement", self.ag, "--us", "xaa", "--out", out]), 2)
             self.assertEqual(ses.main(["validate", "--manifest", out, "--agreement", self.ag, "--us", "xab"]), 0)
+
+
+def fill(c):
+    """The fields acceptance_evidence.py writes on every row."""
+    n = c["name"]
+    c.setdefault("direction", "inbound" if "/inbound" in n else "outbound" if "/outbound" in n else "both")
+    c.setdefault("reason", "seen")
+    c.setdefault("started_at", "2026-11-09T12:05:00Z")
+    c.setdefault("ended_at", "2026-11-09T12:05:30Z")
+    return c
 
 
 def utc_now_inside(m):
