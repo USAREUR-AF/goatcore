@@ -226,35 +226,53 @@ saltlick therefore also keeps one package per counterparty:
 
 | File | Path | Checked on upload | Checked by the reader |
 |---|---|---|---|
-| The package signed for one counterparty | `/v1/parties/<id>/packages/<counterparty>` | as the single package; `<counterparty>` has the form of a `sovereign_id` and is not `<id>` | the upload's request signature, whose resource line is `<id>/packages/<counterparty>`, under the key read back on the call; then the package signature |
+| The package signed for one counterparty | `/v1/parties/<id>/packages/<counterparty>` | as the single package; `<counterparty>` has the form of a `sovereign_id` and is not `<id>`; an upload that was withdrawn is refused | the upload's request signature, whose resource line is `<id>/packages/<counterparty>`, under the key read back on the call (before the call, under the key the directory has bound, which the call then confirms); then the package signature |
 
 A slot is removed with the entry, or alone by a `DELETE` of its path signed by the bound key
-when the peering ends (`saltlick sign -method DELETE -id <id> -upload packages/<counterparty>`
-prints the header; the driver step does not withdraw slots).
+over the sha256 of the package being withdrawn, when the peering ends (`saltlick sign -method
+DELETE -id <id> -upload packages/<counterparty> -file <that package>` prints the header; the
+driver step does not withdraw slots). A withdrawal is final: saltlick keeps the withdrawn
+upload's signature and refuses it if replayed, so the slot returns only with a newly signed
+package (saltlick `SPEC.md`, "One package per counterparty").
 
-The package format does not change (spec §11.1). A misdelivered package is still caught: the two
-sides' agreement digests differ. The slot signature catches it earlier, because it records which
-counterparty the party uploaded the package for.
+The package format does not change (spec §11.1). **The agreement digest does not always catch a
+misdelivered package.** The agreement carries neither the offer's `endpoint` nor its
+`public_key`, and takes `link_subnet` only from the party that sorts first, so a party's two
+packages that differ only there compose with the same counterparty package to the same digest.
+The slot's upload signature is then the only check that the package was meant for us: its
+resource line names both parties. A reader taking a package from a slot must verify that line
+before using it, and the driver step does.
 
 The driver step does this when `FED_DIRECTORY_PER_COUNTERPARTY=1` is set (or
 `directory.py --per-counterparty`). **Built, off by default**; switching the default is a
 separate change. With it set, the step:
 
 1. uploads our package to `/v1/parties/<us>/packages/<FED_COUNTERPARTY_ID>`, and reads it back
-   byte for byte;
+   byte for byte. With no counterparty id it publishes no slot and says so, and step 2 still
+   applies, so the run cannot replace another peering's single slot;
 2. writes the pointer and the single `/package` slot only when they are this peering's: the
    single slot is empty, holds the bytes this peering last wrote (recorded in
-   `$FED_WORK/directory-single-slot.sha256`; the work directory is per peering), or holds a
-   package with our `transport_offer`. With `FED_PACKAGE_URL` set, the pointer is this
-   peering's when there is none or it names our `FED_PACKAGE_URL`. Otherwise the step leaves
-   both alone, so they keep serving the first peering to a counterparty on an older release.
-   Only that first peering's runs refresh the entry's `expires` or rotate its key;
-3. looks the counterparty up at `/v1/parties/<them>/packages/<us>` first. Only a 404 there
-   sends it to their pointer, as §6.2 does: their pointer may name another of their peerings'
-   packages, signed by the same key, so any other failure is a warning and nothing is placed.
-   When the slot's upload signature does not verify under the key read back on the call, or
-   the keyring's key for them is not a key, it uses nothing;
-4. against a directory that has no such route (a saltlick release before it), warns and keeps
+   `$FED_WORK/directory-single-slot.sha256`, which every run that uploads the single slot now
+   writes, with or without the flag; the work directory is per peering), holds the package
+   named by this peering's last pointer (`$FED_WORK/ours.pointer.json`, which releases before
+   the mark file also wrote), or holds a package with our `transport_offer`. With
+   `FED_PACKAGE_URL` set, the pointer is this peering's when there is none or it names our
+   `FED_PACKAGE_URL`. Otherwise the step leaves both alone, so they keep serving the first
+   peering to a counterparty on an older release. Only that first peering's runs refresh the
+   entry's `expires` or rotate its key;
+3. looks the counterparty up at `/v1/parties/<them>/packages/<us>` first, and places that
+   package only when its upload signature verifies over the resource `<them>/packages/<us>`:
+   under the key in the keyring, or, with none yet, under the key the directory has bound
+   (printed for the call, where it must match the key read back). A slot served with no
+   signature, or one that does not verify, or a keyring key that is not a key, places nothing;
+4. on a 404 there, reads their pointer as §6.2 does, but does **not** place that package: their
+   pointer may name another of their peerings' packages, signed by the same key, and the digest
+   may not tell (above). It saves it at `$FED_WORK/theirs.pointer.json` with a warning. After
+   confirming on the call that it is this peering's package, the operator re-runs with
+   `FED_DIRECTORY_PLACE_POINTER_PACKAGE=1` (`--place-pointer-package`; `1`/`true`/`yes` on,
+   `0`/`false`/`no`/empty off, any other value refused) and the step places it. Any failure
+   other than a 404 is a warning and nothing is placed;
+5. against a directory that has no such route (a saltlick release before it), warns and keeps
    the single-package flow.
 
 The CA certificate and the SPIFFE bundle stay one per party: they name the party, not a peering.

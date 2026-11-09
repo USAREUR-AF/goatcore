@@ -1103,15 +1103,30 @@ package per counterparty, each carrying that peering's offer, all signed with th
 naming the same `identity`. Each pair composes exactly as in §6 and §7, from two packages, with
 no knowledge of the party's other peerings.
 
-Three things follow, and none needs a rule of its own:
+Three things follow. The first and third need no rule of their own; the second puts one
+obligation on a reader that fetches a package from a per-counterparty slot:
 
 - **An agreement already composed stays valid.** Composition reads only the two packages' bytes.
   Moving a package to a different place (a per-counterparty slot in a directory, a different
   file name) changes nothing that is hashed, so the agreement's canonical bytes and digest are
   the same.
-- **A package delivered to the wrong counterparty is caught.** If one side composes with the
-  package the other issued for a third party, the two agreements differ, the digests differ, and
-  §9's comparison fails visibly.
+- **The digest catches a package delivered to the wrong counterparty only in part.** The
+  agreement (§8.1) does not carry every member of the two packages: it carries neither
+  `transport_offer.endpoint` nor `transport_offer.public_key`, and it takes `link_subnet` only
+  from `parties[0]`. Two packages of one party that differ only in those members compose with
+  the same counterparty package to the same agreement bytes and the same digest. So if one side
+  composes with the package the other issued for a third party, §9's comparison fails only when
+  the two packages differ in a member the agreement carries (for example `expires`,
+  `measured_mtu`, `listener`, a `data_offer` or `accept_*` value, or `proposed_link_subnet` for
+  the party that sorts first). Otherwise the digests match and nothing in this specification
+  notices. What ties a package to its counterparty is then the upload signature of the
+  directory slot it came from, whose resource line names both parties
+  (`<party>/packages/<counterparty>`, `peering-directory-service.md` §6.3). A reader that takes a
+  package from a per-counterparty slot MUST verify that signature over the resource
+  `<their sovereign_id>/packages/<our sovereign_id>` before it uses the package, under the key
+  read aloud, or, before the call, under the key the directory has bound, which is then the key
+  the two parties confirm on the call. A package exchanged any other way is tied to its
+  counterparty only by what the two parties say on the call.
 - **One offer for several partners is not this version.** A single `transport_offer` shared by
   several peerings would need one `proposed_link_subnet` for several links, and §7 takes
   `link_subnet` from whichever party sorts first, so two partners' proposals could collide on the
