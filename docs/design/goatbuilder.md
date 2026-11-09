@@ -153,6 +153,7 @@ A team points `goatbuilder` at their own config — their components, their envi
 | `goatbuilder standup <env> --site <s>` | declarative | all — declares the site's whole topology (founder or joiner), converges the doctrine's phases in order, verifies every record; the one-hour target | `goat-standup.sh` |
 | `goatbuilder join-node <env> --site <s> --class <c>` | declarative | declares one more machine of a class at a live site → converge → verify | node-addition.md by hand |
 | `goatbuilder federate <partner>` | declarative | declares a sovereign peering → converges ADR 1157's four steps → verifies each; also carries the six package verbs `init\|lint\|compose\|diff\|verify\|apply` ([ADR 1225](../adr/1225-federation-belongs-to-goatbuilder-one-command-one-decision.md)) | the peering runbook by hand; `goat federate` |
+| `goatbuilder federate init\|lint\|compose\|diff\|verify\|apply` | read-only (`init --out`, `compose --out` and `apply --confirm` write the files they name) | the six federation verbs, in process from the `goat-federation` library, with `goat federate <verb>`'s flags and exit codes | `goat federate <verb>`, which runs the same library |
 | `goatbuilder status <component>` | read-only | verify: converged / pending / unknown per machine | `graduate.py status` |
 | `goatbuilder verify <component> --env <e>` | read-only | verify | `deploy-component.sh --verify-only` |
 | `goatbuilder diff <component> --env <e>` | read-only | verify: declared vs actual (C8) | — |

@@ -253,7 +253,9 @@ One more machine of a class at a live site, declared → converged → verified:
 
 ## `goatbuilder federate`
 
-A sovereign peering declared, converged and verified (ADR 1157): our half measured, the packages exchanged through the peering directory, one agreement composed and verified, the leaves minted from it, the rules rendered by the one writer, the edge deployed, the transport the agreement chose opened, acceptance in all four tiers. Replaces ops/scripts/peering-standup.sh step for step
+A sovereign peering declared, converged and verified (ADR 1157): our half measured, the packages exchanged through the peering directory, one agreement composed and verified, the leaves minted from it, the rules rendered by the one writer, the edge deployed, the transport the agreement chose opened, acceptance in all four tiers. Replaces ops/scripts/peering-standup.sh step for step.
+
+`goatbuilder federate init|lint|compose|diff|verify|apply` runs one of the six federation verbs in process, with the flags and exit codes of `goat federate <verb>`.
 
 **Arguments**
 
@@ -272,6 +274,157 @@ A sovereign peering declared, converged and verified (ADR 1157): our half measur
 | `--from <FROM>` | Resume from this phase | `1` |
 | `--to <TO>` | Stop after this phase | `99` |
 | `--dry-run` | Print every phase and command; run nothing |  |
+
+**Subcommands**
+
+- [`goatbuilder federate init`](#goatbuilder-federate-init) — Generate our half of a federation, read from the running system
+- [`goatbuilder federate lint`](#goatbuilder-federate-lint) — Check one package: is it well-formed, and does it agree with itself?
+- [`goatbuilder federate compose`](#goatbuilder-federate-compose) — Combine two packages into one agreement and print its digest
+- [`goatbuilder federate diff`](#goatbuilder-federate-diff) — Two digests disagree? Run this. It names the field
+- [`goatbuilder federate verify`](#goatbuilder-federate-verify) — Could we actually deliver this agreement? Dry-run it here
+- [`goatbuilder federate apply`](#goatbuilder-federate-apply) — Render the access rules and configuration this agreement implies
+
+## `goatbuilder federate init`
+
+Generate our half of a federation, read from the running system.
+
+Every capability in the package is MEASURED here, not typed: what transports are installed and configured, what image the router is actually running, what version the fabric is. A capability an operator types is a claim, and a wrong claim stays wrong until the link fails in front of a partner.
+
+Where a value cannot be derived this fails and names it. It never prompts and never fills one in — a silent default is how a link ends up with no rate limit.
+
+Exit 23 means something could not be derived; the list is the output.
+
+**Options**
+
+| Flag | Description | Default |
+|---|---|---|
+| `--with-transport` | Also derive `transport_offer` — that we are willing to connect |  |
+| `--with-data` | Also derive `data_offer` — that we are willing to exchange |  |
+| `--signing-key <SIGNING_KEY>` | Our Ed25519 signing key: 64 hex characters (the RFC 8032 seed) or 44 base64 characters. Without it this prints the exact bytes to sign and stops — it will not invent a key |  |
+| `--out <OUT>` | Write the package's canonical bytes here |  |
+| `--json` | One JSON object instead of the glyph lines |  |
+
+## `goatbuilder federate lint`
+
+Check one package: is it well-formed, and does it agree with itself?
+
+Runs the structural rules on a single file — required members, integers that are really integers, no duplicate member names, complete blocks, a signature of the right shape. It does NOT verify the signature: the verifying key is bound to a party over a channel authenticated independently of this link, so a lone package cannot be authenticated by looking at it. `compose` does that.
+
+Reads one file and nothing else. No network, no credentials.
+
+Exit 21 means the package is refused, and the finding names the rule.
+
+**Arguments**
+
+| Argument | Description |
+|---|---|
+| `<PACKAGE>` | The package to check |
+
+**Options**
+
+| Flag | Description | Default |
+|---|---|---|
+| `--json` | One JSON object instead of the glyph lines |  |
+
+## `goatbuilder federate compose`
+
+Combine two packages into one agreement and print its digest.
+
+Both parties compose independently and compare the digest. Equal digests prove both sides hold the identical agreement — that is the whole point of the format, and the comparison may travel by any channel at all, including one nobody trusts.
+
+A refusal is an outcome, not a failure: it is the mechanism working. Exit 20, with the rule that fired.
+
+Reads two files and the keys you pass. No network, no credentials, no host access — this runs in an empty container, which is what lets a partner trust it with their package.
+
+**Arguments**
+
+| Argument | Description |
+|---|---|
+| `<FIRST>` | One party's package |
+| `<SECOND>` | The other party's package. Order does not matter: the agreement has no "us" and "them", so both sides compute the same bytes whichever way round they pass the files |
+
+**Options**
+
+| Flag | Description | Default |
+|---|---|---|
+| `--key <KEYS>` | A verifying key bound to a party, as `<sovereign_id>=<44 base64 characters>`. Repeat for each party |  |
+| `--keyring <KEYRING>` | A JSON file of bound keys, `{"<sovereign_id>": "<base64>"}`. Convenient for several partners; it establishes nothing that --key does not |  |
+| `--now <NOW>` | The evaluation date, `YYYY-MM-DD`. Defaults to today in UTC — never the local date, which would let two parties either side of local midnight reach different verdicts on the day a package falls due |  |
+| `--out <OUT>` | Write the agreement's canonical bytes here — no trailing newline, no byte-order mark, because that is the digest input |  |
+| `--print` | Print the agreement's canonical form on stdout |  |
+| `--json` | One JSON object instead of the glyph lines |  |
+
+## `goatbuilder federate diff`
+
+Two digests disagree? Run this. It names the field.
+
+This is the verb for the one loud failure this design has. Two parties compose the same pair, compare digests, and they differ — so each side prints its agreement and this diffs them, and the offending field names itself. Loud in the first hour instead of silent for three weeks.
+
+It also answers the case that reads as impossible: the digests differ and the two agreements are identical. There is then no field to show, and the instinct is to re-run everything. The answer is one measurement — a trailing newline, a byte-order mark, or an encoding difference — and this prints which of the three it is.
+
+Exit 22 when they differ, 0 when they match.
+
+**Arguments**
+
+| Argument | Description |
+|---|---|
+| `<OURS>` | The agreement we composed — the exact bytes we hashed |
+| `<THEIRS>` | The agreement they composed |
+
+**Options**
+
+| Flag | Description | Default |
+|---|---|---|
+| `--json` | One JSON object instead of the glyph lines |  |
+
+## `goatbuilder federate verify`
+
+Could we actually deliver this agreement? Dry-run it here.
+
+Agreeing is not the same as being able to deliver. This runs the agreement through our own configuration generator WITHOUT applying it and asserts the output would be valid on this system, then prints the conformance attestation to publish: one line over the digest, signed with the same key that signed our package.
+
+Reads local state. Changes nothing.
+
+Exit 24 means we could not deliver it, and the failing check says why.
+
+**Arguments**
+
+| Argument | Description |
+|---|---|
+| `<AGREEMENT>` | The composed agreement, as the bytes that were hashed |
+
+**Options**
+
+| Flag | Description | Default |
+|---|---|---|
+| `--as <AS_PARTY>` | Which party we are. Read from the declaration file when omitted |  |
+| `--signing-key <SIGNING_KEY>` | Sign the attestation with this Ed25519 key — the same key that signed our package (§10). Without it the line is printed unsigned and says so |  |
+| `--json` | One JSON object instead of the glyph lines |  |
+
+## `goatbuilder federate apply`
+
+Render the access rules and configuration this agreement implies.
+
+The only verb here that writes. The agreement is the sole input, so the release set we forward and the prefix the far side admits cannot drift apart by being typed twice.
+
+Prints what it would write and stops. Pass --confirm to write.
+
+**Arguments**
+
+| Argument | Description |
+|---|---|
+| `<AGREEMENT>` | The composed agreement |
+
+**Options**
+
+| Flag | Description | Default |
+|---|---|---|
+| `--as <AS_PARTY>` | Which party we are. Read from the declaration file when omitted |  |
+| `--out <OUT>` | Where to write. Files land under this directory, mirroring the repo paths they belong at |  |
+| `--edge-group <EDGE_GROUP>` | The ansible group the edge runs in. The generated group_vars land at `group_vars/<GROUP>/`, and `--limit <GROUP>` is what deploys them |  |
+| `--partner-audience <PARTNER_AUDIENCE>` | Release-sets this partner holds an audience slot in, so the edge grants it a READ of `keys/<set>/**` and it can obtain a data key (ADR 1169 decision 3). Repeatable |  |
+| `--confirm` | Write. Without this, the rendering is printed and nothing is touched |  |
+| `--json` | One JSON object instead of the glyph lines |  |
 
 ## `goatbuilder pins`
 

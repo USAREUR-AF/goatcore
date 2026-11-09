@@ -6,50 +6,112 @@ stdout = """
 A sovereign peering declared, converged and verified (ADR 1157): our half measured, the packages
 exchanged through the peering directory, one agreement composed and verified, the leaves minted from
 it, the rules rendered by the one writer, the edge deployed, the transport the agreement chose
-opened, acceptance in all four tiers. Replaces ops/scripts/peering-standup.sh step for step
+opened, acceptance in all four tiers. Replaces ops/scripts/peering-standup.sh step for step.
+
+`goatbuilder federate init|lint|compose|diff|verify|apply` runs one of the six federation verbs in
+process, with the flags and exit codes of `goat federate <verb>`.
 
 Usage: goatbuilder federate [OPTIONS] <WITH>
+       goatbuilder federate <COMMAND>
+
+Commands:
+  init     Generate our half of a federation, read from the running system
+  lint     Check one package: is it well-formed, and does it agree with itself?
+  compose  Combine two packages into one agreement and print its digest
+  diff     Two digests disagree? Run this. It names the field
+  verify   Could we actually deliver this agreement? Dry-run it here
+  apply    Render the access rules and configuration this agreement implies
+  help     Print this message or the help of the given subcommand(s)
 
 Arguments:
-  <WITH>  The peering name (the counterparty, as declared)
+  <WITH>
+          The peering name (the counterparty, as declared)
 
 Options:
-      --env <ENV>                The environment the peering is declared on (checked against
-                                 goatbuilder.yaml peerings:)
-  -o, --output <OUTPUT>          Output format: a table for a person; JSON or YAML for a program
-                                 [default: table] [possible values: table, json, yaml]
-      --as <SOVEREIGN>           Which party we are (default: read from the declaration)
-  -C, --repo <DIR>               The repository root. Defaults to the checkout this binary is run in
-      --edge-group <EDGE_GROUP>  The ansible group the edge runs in (default <peering>_edge)
-      --yes                      Confirm a declarative verb without prompting (for automation)
-      --frozen                   Refuse any run that would need to fast-forward the checkout (strict
-                                 C3)
-      --work <WORK>              The working directory (default $FED_WORK, else
-                                 /var/lib/goat-federation/<peering>)
-      --from <FROM>              Resume from this phase [default: 1]
-      --offline                  An islanded site: do not fetch the trunk; judge the checkout
-                                 against the cached one, and record the run as offline (C3;
-                                 ops/scripts/fresh-source.sh)
-      --mock <DIR>               Run against a fixture directory instead of hosts: no registry, no
-                                 transport, deterministic (goatbuilder-conformance.md §"The
-                                 fixture")
-      --to <TO>                  Stop after this phase [default: 99]
-      --dry-run                  Print every phase and command; run nothing
-      --lang <TAG>               Language for help and error explanations (a tag such as fr, uk,
-                                 de); output a pipeline reads stays English. Default: the OS locale
-                                 [env: GOAT_LANG=]
-      --color <COLOR>            Color the table's ok/FAIL glyph and verdict (auto|always|never).
-                                 `auto` colors only a terminal; NO_COLOR and CLICOLOR_FORCE
-                                 override. JSON and YAML are never colored [default: auto] [possible
-                                 values: auto, always, never]
-  -v, --verbose                  Log what a run does — the external commands it shells out to, and
-                                 the network phase of `update` — to stderr, so `-o json|yaml` stays
-                                 a clean document. Or set RUST_LOG=goatbuilder=debug
-      --timeout <SECS>           Seconds to bound the connect/reach phase before failing fast — the
-                                 one phase that can block on an unreachable host (`update`'s fetch
-                                 of the served version). Does NOT cap a play's own run or the binary
-                                 download (stall-bounded). Also reads GOATBUILDER_TIMEOUT [env:
-                                 GOATBUILDER_TIMEOUT=]
-  -h, --help                     Print help
+  -o, --output <OUTPUT>
+          Output format: a table for a person; JSON or YAML for a program
+          
+          [default: table]
+          [possible values: table, json, yaml]
+
+  -C, --repo <DIR>
+          The repository root. Defaults to the checkout this binary is run in
+
+      --yes
+          Confirm a declarative verb without prompting (for automation)
+
+      --frozen
+          Refuse any run that would need to fast-forward the checkout (strict C3)
+
+      --offline
+          An islanded site: do not fetch the trunk; judge the checkout against the cached one, and
+          record the run as offline (C3; ops/scripts/fresh-source.sh)
+
+      --mock <DIR>
+          Run against a fixture directory instead of hosts: no registry, no transport, deterministic
+          (goatbuilder-conformance.md §"The fixture")
+
+      --context-dir <DIR>
+          The six verbs: the directory holding federation.toml, mtls.cert.pem and ca-roots.pem
+          (default: $GOAT_CONTEXT_DIR, else the goat context directory, found the way goat finds it)
+
+      --lang <TAG>
+          Language for help and error explanations (a tag such as fr, uk, de); output a pipeline
+          reads stays English. Default: the OS locale
+          
+          [env: GOAT_LANG=]
+
+      --cert <FILE>
+          The six verbs: our mTLS certificate (default: mtls.cert.pem in the context directory)
+
+      --color <COLOR>
+          Color the table's ok/FAIL glyph and verdict (auto|always|never). `auto` colors only a
+          terminal; NO_COLOR and CLICOLOR_FORCE override. JSON and YAML are never colored
+          
+          [default: auto]
+          [possible values: auto, always, never]
+
+      --ca-roots <FILE>
+          The six verbs: the CA roots (default: ca-roots.pem in the context directory)
+
+  -v, --verbose
+          Log what a run does — the external commands it shells out to, and the network phase of
+          `update` — to stderr, so `-o json|yaml` stays a clean document. Or set
+          RUST_LOG=goatbuilder=debug
+
+      --env <ENV>
+          The environment the peering is declared on (checked against goatbuilder.yaml peerings:)
+
+      --timeout <SECS>
+          Seconds to bound the connect/reach phase before failing fast — the one phase that can
+          block on an unreachable host (`update`'s fetch of the served version). Does NOT cap a
+          play's own run or the binary download (stall-bounded). Also reads GOATBUILDER_TIMEOUT
+          
+          [env: GOATBUILDER_TIMEOUT=]
+
+      --as <SOVEREIGN>
+          Which party we are (default: read from the declaration)
+
+      --edge-group <EDGE_GROUP>
+          The ansible group the edge runs in (default <peering>_edge)
+
+      --work <WORK>
+          The working directory (default $FED_WORK, else /var/lib/goat-federation/<peering>)
+
+      --from <FROM>
+          Resume from this phase
+          
+          [default: 1]
+
+      --to <TO>
+          Stop after this phase
+          
+          [default: 99]
+
+      --dry-run
+          Print every phase and command; run nothing
+
+  -h, --help
+          Print help (see a summary with '-h')
 """
 stderr = ""

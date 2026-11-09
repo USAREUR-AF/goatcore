@@ -715,6 +715,20 @@ mod tests {
         rejected(&v, "edge_class 'router'");
     }
 
+    /// Every federation verb `goatbuilder federate` runs is in the one reserved
+    /// list, so a partner named like one is refused where it is declared (GB-120).
+    #[test]
+    fn a_peering_named_like_a_federate_subcommand_is_refused() {
+        for name in ["lint", "apply", "help"] {
+            let mut v = with_sites();
+            v["peerings"] = json!([{"with": name, "environment": "dev", "site": "alpha", "edge_class": "edge"}]);
+            rejected(&v, "(GB-120)");
+        }
+        for verb in goat_federation::verbs::VERB_NAMES {
+            assert!(RESERVED_PEERING_NAMES.contains(verb), "{verb} is a verb and must be reserved");
+        }
+    }
+
     #[test]
     fn peering_to_undeclared_site_is_refused() {
         let mut v = with_sites();

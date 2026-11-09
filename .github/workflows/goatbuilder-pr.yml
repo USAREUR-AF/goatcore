@@ -35,6 +35,9 @@ on:
       - 'ops/scripts/pr-land.sh'
       - '.github/workflows/goatbuilder-pr.yml'
       - 'crates/goat-errors/**'
+      - 'crates/goat-federation/**'
+      - 'crates/goat-cli/src/cmd/federate.rs'
+      - 'ops/federation/vectors/**'
       - 'crates/goat-fun/**'
       - 'crates/goat-selfupdate/**'
       # The committed command reference (docs::tests regenerates it from the
@@ -142,13 +145,13 @@ jobs:
       - name: cargo check
         run: cargo check -p goatbuilder --all-targets
       - name: cargo clippy (deny warnings)
-        run: cargo clippy -p goatbuilder -p goat-fun -p goat-selfupdate --all-targets -- -D warnings
+        run: cargo clippy -p goatbuilder -p goat-federation -p goat-fun -p goat-selfupdate --all-targets -- -D warnings
       - name: Install the Python the pins and promote flows render with
         run: pip install --quiet pyyaml jsonschema
       - name: cargo test (unit, golden commands, tutor; every test target but the flows)
-        run: cargo test -p goatbuilder --bins --test cli_golden --test tutor --test bound_not_a_tty --test update
-      - name: cargo test -p goat-fun (the shared hidden runner, goat and goatbuilder bound)
-        run: cargo test -p goat-fun -p goat-selfupdate
+        run: cargo test -p goatbuilder --bins --test cli_golden --test tutor --test bound_not_a_tty --test update --test federate_verbs
+      - name: cargo test -p goat-fun (the shared hidden runner, goat and goatbuilder bound) and goat-federation (the verbs goatbuilder runs)
+        run: cargo test -p goat-fun -p goat-selfupdate -p goat-federation
       - name: cargo test (whole-flow integration; a skipped flow fails the job)
         run: |
           set -o pipefail
@@ -239,6 +242,11 @@ jobs:
       - name: Parity gate — `federate --dry-run` plans exactly the phases peering-standup.sh plans
         working-directory: ${{ github.workspace }}
         run: ops/goatbuilder/parity-federate.sh crates/target/debug/goatbuilder hello-ally
+      - name: Parity gate — `goatbuilder federate <verb>` answers exactly as `goat federate <verb>` over the conformance vectors
+        working-directory: ${{ github.workspace }}
+        run: |
+          (cd crates && cargo build -p goat-cli)
+          ops/goatbuilder/parity-federate-verbs.sh crates/target/debug/goat crates/target/debug/goatbuilder
       - name: Every operator-facing phase sequence is whole numbers from 1, no gaps, no letters
         working-directory: ${{ github.workspace }}
         env:
