@@ -6,14 +6,20 @@ ops/federation/standup/fixtures/host-firewall/expected/<host>.json. This test
 has Ansible build the deploy's input for the same fixture, from the role's and
 the plays' OWN tasks and variables, copied verbatim out of their YAML:
 
-- the transport play's peering entry (peering-wg.yml's `goat_host_firewall_peering`)
-  and the core play's SPIRE variables (peering-republisher.yml);
+- the transport play's peering entry (`goat_host_firewall_peering` of peering-wg.yml
+  or, for an ipsec-fips agreement, peering-edge.yml) and the core play's SPIRE
+  variables (peering-republisher.yml);
 - goat-peering-wg's tasks that read the counterparty package and derive the peer address;
 - the role's "every peering of this host" and "assemble the input" tasks;
 - the defaults of every role the play has in scope, and apply's rendered vars
   through the real tasks/peering-applied-vars.yml.
 
-Only the live reads are stubbed (the stored peerings come from the fixture's
+Each fixture variant (wireguard, ipsec, forwarder) runs once.
+
+The play passes its variables to the role as include_role vars; here they are a
+set_fact in the role. Both outrank inventory, host_vars and group_vars, and
+apply's include_vars never sets a goat_host_firewall_* name, so the values are
+the same. Only the live reads are stubbed (the stored peerings come from the fixture's
 probe answer, the same entries the plan reads; no bridges, uplinks or session).
 It then renders both inputs with the real renderer, in this run, and requires
 the same sha256. A changed expression in the role or the plays that the plan
@@ -34,7 +40,8 @@ import unittest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
-FIXTURE = ROOT / "ops/federation/standup/fixtures/host-firewall"
+FIXTURES = ROOT / "ops/federation/standup/fixtures/host-firewall"
+VARIANTS = ("wireguard", "ipsec", "forwarder")
 ROLES = ROOT / "ops/ansible/roles"
 RENDERER = ROLES / "goat-host-firewall/files/goat-host-firewall-render.py"
 LIVE_HOST = ("bridge_interfaces", "ephemeral_ports", "uplink_interfaces")
@@ -82,15 +89,19 @@ class PlanEqualsDeploy(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name)
+
+    def prepare(self, variant):
+        self.fixture = FIXTURES / variant
+        self.root = Path(tempfile.mkdtemp(dir=self.temp.name))
         self.play_dir = self.root / "ansible"
-        shutil.copytree(FIXTURE / "repo/ops/ansible", self.play_dir)
+        shutil.copytree(self.fixture / "repo/ops/ansible", self.play_dir)
         (self.play_dir / "tasks").mkdir()
         shutil.copy(ROOT / "ops/ansible/tasks/peering-applied-vars.yml", self.play_dir / "tasks")
         self.work = self.root / "work"
-        shutil.copytree(FIXTURE / "work", self.work)
+        shutil.copytree(self.fixture / "work", self.work)
         self.out = self.root / "out"
         self.out.mkdir()
+        self.transport = json.loads((self.work / "agreement.json").read_text())["transport"]["kind"]
 
     def role(self, name, role_defaults, tasks):
         d = self.play_dir / "roles" / name
@@ -112,15 +123,21 @@ class PlanEqualsDeploy(unittest.TestCase):
 
     def build(self):
         fw = load(ROLES / "goat-host-firewall/tasks/main.yml")
-        wg = load(ROLES / "goat-peering-wg/tasks/main.yml")
         dump = {"name": "hand the input over", "ansible.builtin.copy": {
             "content": "{{ _hf_input | to_json }}", "dest": "{{ out }}/{{ inventory_hostname }}.json"},
             "delegate_to": "localhost"}
-        edge_vars = baseline_vars("peering-wg.yml", "edge")
+        if self.transport == "wireguard":
+            wg = load(ROLES / "goat-peering-wg/tasks/main.yml")
+            edge_roles = ("goat-host-firewall", "goat-peering-wg")
+            edge_pre = [task(wg, "peering-wg | read the counterparty's package"),
+                        task(wg, "peering-wg | compose what the offer and the agreement say")]
+            edge_vars = baseline_vars("peering-wg.yml", "edge")
+        else:
+            edge_roles = ("goat-host-firewall", "goat-peering-edge")
+            edge_pre = []
+            edge_vars = baseline_vars("peering-edge.yml", "edge")
         core_vars = baseline_vars("peering-republisher.yml", "core")
-        self.role("plan_eval_edge", defaults("goat-host-firewall", "goat-peering-wg"), [
-            task(wg, "peering-wg | read the counterparty's package"),
-            task(wg, "peering-wg | compose what the offer and the agreement say"),
+        self.role("plan_eval_edge", defaults(*edge_roles), edge_pre + [
             {"name": "the play's variables for the role", "ansible.builtin.set_fact": edge_vars},
             self.stubs("edge-a"),
             task(fw, "host-firewall | every peering of this host, this run's in place of its stored copy"),
@@ -133,12 +150,15 @@ class PlanEqualsDeploy(unittest.TestCase):
             task(fw, "host-firewall | assemble the input"),
             dump,
         ])
+        # peering-wg.yml and peering-republisher.yml load apply's rendered
+        # values first; peering-edge.yml (ipsec-fips) does not.
+        applied = {"ansible.builtin.include_tasks": "tasks/peering-applied-vars.yml"}
         playbook = [
-            {"hosts": group, "gather_facts": False, "tasks": [
-                {"ansible.builtin.include_tasks": "tasks/peering-applied-vars.yml"},
-                {"ansible.builtin.include_role": {"name": role}},
-            ]}
-            for group, role in (("velmara_edge", "plan_eval_edge"), ("velmara_core", "plan_eval_core"))
+            {"hosts": "velmara_edge", "gather_facts": False, "tasks":
+                ([applied] if self.transport == "wireguard" else [])
+                + [{"ansible.builtin.include_role": {"name": "plan_eval_edge"}}]},
+            {"hosts": "velmara_core", "gather_facts": False, "tasks":
+                [applied, {"ansible.builtin.include_role": {"name": "plan_eval_core"}}]},
         ]
         (self.play_dir / "eval.yml").write_text(yaml.safe_dump(playbook, sort_keys=False))
         env = dict(os.environ, ANSIBLE_ROLES_PATH=str(self.play_dir / "roles"),
@@ -152,18 +172,21 @@ class PlanEqualsDeploy(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stdout[-3000:] + r.stderr[-2000:])
 
     def test_the_deploy_input_renders_to_the_plan_hash(self):
-        self.build()
-        for host in ("edge-a", "core-a"):
-            deploy = json.loads((self.out / f"{host}.json").read_text())
-            for k in LIVE_TOP:
-                deploy.pop(k, None)
-            for k in LIVE_HOST:
-                deploy["host"].pop(k, None)
-            planned = json.loads((FIXTURE / "expected" / f"{host}.json").read_text())
-            self.assertEqual(render(deploy), render(planned),
-                             f"{host}: the plan's ruleset hash differs from the deploy's\n"
-                             f"deploy: {json.dumps(deploy, sort_keys=True)}\n"
-                             f"plan:   {json.dumps(planned, sort_keys=True)}")
+        for variant in VARIANTS:
+            with self.subTest(variant=variant):
+                self.prepare(variant)
+                self.build()
+                for host in ("edge-a", "core-a"):
+                    deploy = json.loads((self.out / f"{host}.json").read_text())
+                    for k in LIVE_TOP:
+                        deploy.pop(k, None)
+                    for k in LIVE_HOST:
+                        deploy["host"].pop(k, None)
+                    planned = json.loads((self.fixture / "expected" / f"{host}.json").read_text())
+                    self.assertEqual(render(deploy), render(planned),
+                                     f"{variant}/{host}: the plan's ruleset hash differs from the deploy's\n"
+                                     f"deploy: {json.dumps(deploy, sort_keys=True)}\n"
+                                     f"plan:   {json.dumps(planned, sort_keys=True)}")
 
 
 if __name__ == "__main__":

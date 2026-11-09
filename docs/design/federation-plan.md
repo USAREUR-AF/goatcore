@@ -109,13 +109,17 @@ true, the plan runs the baseline's own renderer
 text and its sha256. `crates/goatbuilder/src/federate/hostfw.rs` builds the
 renderer's input the way the deploy builds it:
 
-- **Variables**, in Ansible's precedence: apply's rendered values (the
-  WireGuard and core plays load `<work>/applied/ops/ansible/group_vars/<edge group>`
-  with `include_vars`; the ipsec-fips play does not), `host_vars/`, the host's
-  inventory line, then every group the host is in (children expanded, deeper
-  groups first; each group's `group_vars/` before its `[group:vars]`), then the
-  defaults of the roles that play has in scope (goat-host-firewall and the
-  play's own role).
+- **Variables**, in Ansible's precedence, highest first: apply's rendered values
+  (the WireGuard and core plays load `<work>/applied/ops/ansible/group_vars/<edge group>`
+  with `include_vars`, and stop when it is missing, so the plan blocks then; the
+  ipsec-fips play loads none); the playbook's `host_vars/`, the inventory's
+  `host_vars/`, the host's inventory line; then, for every group the host is in
+  other than `all` (children expanded, deeper groups first), all of their
+  playbook `group_vars/`, then all of their inventory `group_vars/`, then all of
+  their `[group:vars]`; then the same three for `all`; then the defaults of the
+  roles that play has in scope (goat-host-firewall and the play's own role).
+  Vars directories are read recursively. A vars file that does not parse blocks
+  the host rather than being skipped.
 - **Templates**: a value that is `{{ var }}` or `{{ var | default(x) }}`
   (optionally `| int`, `| bool`, `| trim`, `| string`), or a string holding such
   expressions, is evaluated; `default(x)` takes a literal or a variable. Any
@@ -132,22 +136,29 @@ renderer's input the way the deploy builds it:
   now reads those stored entries into its answer (`host_firewall_peerings`), and
   the plan uses them the same way. The plan runs phase 1 before it builds the
   inputs, and removes earlier probe answers first; with no answer for a host
-  (`--no-live`, `--mock`, or the host did not answer), the host is BLOCKED.
+  (`--no-live`, `--mock` (which reads no answer at all), or the host did not
+  answer), the host is BLOCKED.
 
 The fields the role reads from the live host (bridge interfaces, the ephemeral
 port range, uplinks, the managing session, the listening sockets) are left out:
 they are checks only and never change the ruleset or its hash.
 
-How the equality is tested: one synthetic fixture
-(`ops/federation/standup/fixtures/host-firewall/`) exercises `[group:vars]`,
-host_vars over the inventory line, apply's values over a stale group_vars value,
-stored peerings with a stale copy of this run's entry, and the core SPIRE port. A
-Rust test requires the plan to build exactly the recorded input for it. A Python
-test (`tests/test_host_firewall_plan_input.py`, run where ansible-playbook is
-installed) has Ansible build the deploy's input for the same fixture from the
-role's and plays' own tasks and variables, copied out of their YAML, renders
-both, and requires the same sha256. Another Rust test fails when the role, the
-plays or the core play's variables gain a field the plan does not build.
+How the equality is tested: a synthetic fixture with three variants
+(`ops/federation/standup/fixtures/host-firewall/`: WireGuard, ipsec-fips, and
+WireGuard behind a forwarder; its README lists what each covers). A Rust test
+requires the plan to build exactly the recorded input for each. A Python test
+(`tests/test_host_firewall_plan_input.py`, run where ansible-playbook is
+installed, as in the CI python job) has Ansible build the deploy's input for the
+same variants from the role's and plays' own tasks and variables, copied out of
+their YAML, renders both, and requires the same sha256. Another Rust test fails
+when the role, the plays or the core play's variables gain a field the plan does
+not build. The fixture is evidence for those declarations, not a proof for
+every possible one; what the plan cannot evaluate it blocks.
+
+A PASS is the ruleset the deploy will try to load, not a promise that it loads:
+the deploy also refuses on what it reads live (a peering unit on the host with no
+stored entry, GB-210; the managing session or a listening port the ruleset would
+cut, GB-213 and GB-215).
 
 A host is BLOCKED, with the reason, when a value cannot be evaluated outside a
 play (above), there is no agreement yet (the tunnel is not known), apply has not
