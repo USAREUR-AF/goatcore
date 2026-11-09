@@ -29,11 +29,12 @@
 //! The peering must be declared in goatbuilder.yaml `peerings:` (C1: declared
 //! first). An empty list declares nothing, so it refuses every name.
 //!
-//! Phases 3, 4, 6, 7 and 9 are the federation verbs. By default they run as
-//! `goat federate <verb>` in a shell, as the script does. With
-//! `FED_VERBS=goatbuilder` they run in process instead, through the same
-//! library (`verbs.rs`), and the plan prints them as
-//! `goatbuilder federate <verb> ...`, the words that are parsed and run.
+//! Phases 3, 4, 6, 7 and 9 are the federation verbs. By default they run in
+//! process, through the library `goat federate` also runs (`verbs.rs`), and the
+//! plan prints them as `goatbuilder federate <verb> ...`, the words that are
+//! parsed and run; the script calls `goatbuilder federate <verb>` too.
+//! `FED_VERBS=goat` runs them as `goat federate <verb>` in a shell instead,
+//! as before, on both avenues.
 
 /// `goatbuilder federate init|lint|compose|diff|verify|apply` (the six verbs).
 pub mod verbs;
@@ -90,10 +91,15 @@ struct Phase {
 /// words after `goatbuilder federate`.
 type VerbCall = (Vec<(String, String)>, Vec<String>);
 
-/// Whether phases 3, 4, 6, 7 and 9 run in process (`FED_VERBS=goatbuilder`) or
-/// spawn `goat federate` (unset or `goat`, the default).
+/// Whether phases 3, 4, 6, 7 and 9 run in process (unset or `goatbuilder`, the
+/// default) or spawn `goat federate` (`FED_VERBS=goat`).
 fn verbs_in_process() -> bool {
-    env_or("FED_VERBS", String::new()) == "goatbuilder"
+    in_process_by(&env_or("FED_VERBS", String::new()))
+}
+
+/// The choice `verbs_in_process` makes, from the value of `FED_VERBS`.
+fn in_process_by(fed_verbs: &str) -> bool {
+    fed_verbs != "goat"
 }
 
 /// A verb's words as a shell line: the verb and each flag bare, every value
@@ -772,6 +778,14 @@ mod tests {
         assert!(spawned.iter().all(|p| p.verb.is_none()), "the default runs every phase in a shell");
         assert!(spawned.iter().find(|p| p.n == 4).unwrap().cmd.contains(" federate lint '"), "goat federate lint");
         assert!(!spawned.iter().any(|p| p.cmd.contains("goatbuilder federate")));
+    }
+
+    /// The default runs the verbs in process; only FED_VERBS=goat spawns goat.
+    #[test]
+    fn the_verbs_run_in_process_unless_goat_is_chosen() {
+        assert!(in_process_by(""), "unset is the default: in process");
+        assert!(in_process_by("goatbuilder"));
+        assert!(!in_process_by("goat"), "FED_VERBS=goat keeps the previous path");
     }
 
     /// A panic in an in-process verb exits 101 and a refused command line 2,

@@ -30,11 +30,10 @@
 #   Environment:
 #     GOAT_BIN            the goat binary (default: whatever is on PATH)
 #     FED_VERBS           who runs the federation verbs of phases 3, 4, 6, 7 and 9:
-#                         `goat` (the default: `$GOAT_BIN federate <verb>`) or
-#                         `goatbuilder` (`$GOATBUILDER_BIN federate <verb>`, the same
-#                         library, flags and exit codes)
-#     GOATBUILDER_BIN     the goatbuilder binary for FED_VERBS=goatbuilder
-#                         (default: whatever is on PATH)
+#                         `goatbuilder` (the default: `$GOATBUILDER_BIN federate <verb>`)
+#                         or `goat` (`$GOAT_BIN federate <verb>`, the same library,
+#                         flags and exit codes)
+#     GOATBUILDER_BIN     the goatbuilder binary (default: whatever is on PATH)
 #     FED_WORK            working directory (default: /var/lib/goat-federation/<peering>)
 #     FED_COUNTERPARTY    path to the counterparty's package (phase 6 needs it)
 #     FED_SIGNING_KEY     our Ed25519 signing key (64 hex or 44 base64)
@@ -86,7 +85,7 @@ while [ $# -gt 0 ]; do
     --to)         TO="$2"; shift 2 ;;
     --as)         AS="$2"; shift 2 ;;
     --edge-group) EDGE_GROUP="$2"; shift 2 ;;
-    -h|--help)    sed -n '2,67p' "$0"; exit 0 ;;
+    -h|--help)    sed -n '2,66p' "$0"; exit 0 ;;
     -*)           echo "unknown flag $1" >&2; exit 2 ;;
     *)            [ -z "$PEERING" ] && PEERING="$1"; shift ;;
   esac
@@ -95,7 +94,7 @@ done
 
 : "${GOAT_BIN:=$(command -v goat || echo goat)}"
 : "${GOATBUILDER_BIN:=$(command -v goatbuilder || echo goatbuilder)}"
-case "${FED_VERBS:-goat}" in
+case "${FED_VERBS:-goatbuilder}" in
   goat)        FED_VERB="$GOAT_BIN federate" ;;
   goatbuilder) FED_VERB="$GOATBUILDER_BIN federate" ;;
   *) echo "peering-standup.sh: FED_VERBS is goat or goatbuilder, not '$FED_VERBS'" >&2; exit 2 ;;
