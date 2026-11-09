@@ -12,7 +12,9 @@
 #   --env    the goatnet (its group_vars name, site_a_dev). Default: the goatnet
 #            of the release ladder's `dev` rung (ops/release/ladder.yaml).
 #   --host   user@host whose deploy ledger the rollback steps read. Default: the
-#            goatnet's first management host in ops/ansible/inventory/doors.yaml.
+#            goatnet's first management host in ops/ansible/inventory/doors.yaml,
+#            reached through the goatnet's door (ssh://user@127.0.0.1:<port>)
+#            when its mesh address does not answer.
 #   --bump   first move the goatnet's canary deviation to the newest image CI
 #            built from main (ghcr.io/<ghcr_org>/e2e-canary:sha-<main>, ghcr_org
 #            from group_vars), regenerate and re-sign its intent (the operator's
@@ -41,8 +43,24 @@ done
   || { echo "live-canary: name the goatnet with --env (the release ladder has no dev rung)" >&2; exit 2; }
 ENV="$(printf '%s' "$ENV" | tr '-' '_')"
 case "$ENV" in ""|*[!a-z0-9_]*) echo "live-canary: '$ENV' is not a goatnet name" >&2; exit 2 ;; esac
-[ -n "$HOST" ] || HOST="$(python3 "$REPO/ops/scripts/goatnet-facts.py" mgmt-ssh "$ENV")" \
-  || { echo "live-canary: no management host for $ENV in ops/ansible/inventory/doors.yaml; pass --host user@host" >&2; exit 2; }
+GOATNET="$(printf '%s' "$ENV" | tr '_' '-')"
+# The ledger reads below and both rollback avenues reach the goatnet the same
+# way: rollback.sh and goatbuilder rollback take --site, which decides the mesh
+# or the door as deploy does; the canary's own ssh takes the management host's
+# mesh address, else, off the mesh, the door (env-door.sh names its port).
+SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=10)
+if [ -z "$HOST" ]; then
+  HOST="$(python3 "$REPO/ops/scripts/goatnet-facts.py" mgmt-ssh "$ENV")" \
+    || { echo "live-canary: no management host for $ENV in ops/ansible/inventory/doors.yaml; pass --host user@host" >&2; exit 2; }
+  if ! ssh "${SSH_OPTS[@]}" "$HOST" true >/dev/null 2>&1 \
+     && bash "$REPO/ops/scripts/door-open.sh" "$GOATNET" >/dev/null 2>&1 \
+     && DOOR="$(bash "$REPO/ops/scripts/env-door.sh" "$GOATNET" --ssh-target)"; then
+    echo "live-canary: $HOST does not answer; reading its ledger through the $GOATNET door ($DOOR)"
+    HOST="ssh://$DOOR"
+    # The door's port is a tunnel whose host key changes (env-door.sh).
+    SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null)
+  fi
+fi
 [ -n "$GB" ] || GB="$REPO/crates/target/debug/goatbuilder"
 [ -x "$GB" ] || { echo "live-canary: no goatbuilder at $GB — build it: (cd crates && cargo build -p goatbuilder) or pass --goatbuilder" >&2; exit 2; }
 [ -n "$RECORD" ] || RECORD="$(mktemp -d "${TMPDIR:-/tmp}/goat-live-canary.XXXXXX")"
@@ -58,7 +76,6 @@ else
   BR="$(git -C "$REPO" symbolic-ref --quiet --short HEAD 2>/dev/null || echo DETACHED)"
   case "$BR" in main|master) ;; *) echo "live-canary: run from a checkout on main (this one is on '$BR')" >&2; exit 1 ;; esac
 fi
-GOATNET="$(printf '%s' "$ENV" | tr '_' '-')"
 
 if [ "$BUMP" = 1 ]; then
   command -v crane >/dev/null || { echo "live-canary: --bump needs crane" >&2; exit 2; }
@@ -107,23 +124,23 @@ rec doctor -- "$GB" doctor --env "$ENV"
 rec deploy-dry-run --expect-in "DRY: would read /var/lib/goat/$COMP/deploy-history.jsonl" -- "$GB" deploy --env "$ENV" --component "$COMP" --dry-run --yes
 rec deploy-live --expect-in "every host's ledger names the declared ref" -- "$GB" deploy --env "$ENV" --component "$COMP" --ack "${USER:-operator} (live canary)" --yes
 rec verify-only --expect-in "every host's ledger names the declared ref" -- "$GB" deploy --env "$ENV" --component "$COMP" --verify-only --yes
-rec rollback-list --expect-in "$COMP" -- "$GB" rollback "$COMP" --list
+rec rollback-list --expect-in "$COMP" -- "$GB" rollback "$COMP" --list --site "$GOATNET"
 
 # A real rollback, then the roll forward — the canary exists only for this.
 # Both avenues (ADR 1201), alternating by day: even days goatbuilder, odd days
 # rollback.sh; --avenue overrides. Needs two refs in the host's ledger, which the
 # second --bump provides; with one, the step says so and the run stays green.
 AVENUE="${LIVE_CANARY_AVENUE:-$( [ $(( $(date -u +%j | sed 's/^0*//') % 2 )) = 0 ] && echo cli || echo scripts )}"
-LEDGER_ROW() { ssh -o BatchMode=yes -o ConnectTimeout=10 "$HOST" "sudo tail -n 1 /var/lib/goat/$COMP/deploy-history.jsonl"; }
-REFS="$(ssh -o BatchMode=yes -o ConnectTimeout=10 "$HOST" "sudo grep -o '\"ref\": *\"[^\"]*\"' /var/lib/goat/$COMP/deploy-history.jsonl | sort -u | wc -l" 2>/dev/null || echo 0)"
+LEDGER_ROW() { ssh "${SSH_OPTS[@]}" "$HOST" "sudo tail -n 1 /var/lib/goat/$COMP/deploy-history.jsonl"; }
+REFS="$(ssh "${SSH_OPTS[@]}" "$HOST" "sudo grep -o '\"ref\": *\"[^\"]*\"' /var/lib/goat/$COMP/deploy-history.jsonl | sort -u | wc -l" 2>/dev/null || echo 0)"
 if [ "${REFS:-0}" -ge 2 ]; then
   DECLARED="$(LEDGER_ROW | python3 -c 'import json,sys; print(json.loads(sys.stdin.read())["ref"])')"
   if [ "$AVENUE" = cli ]; then
-    rec rollback-one-step-cli -- "$GB" rollback "$COMP" 1 --yes
+    rec rollback-one-step-cli -- "$GB" rollback "$COMP" 1 --site "$GOATNET" --yes
   else
-    rec rollback-one-step-scripts --expect-in "rolled back" -- "$REPO/ops/scripts/rollback.sh" "$COMP" 1
+    rec rollback-one-step-scripts --expect-in "rolled back" -- "$REPO/ops/scripts/rollback.sh" "$COMP" 1 --site "$GOATNET"
   fi
-  rec ledger-names-the-rollback -- bash -c "row=\"\$(ssh -o BatchMode=yes $HOST 'sudo tail -n 1 /var/lib/goat/$COMP/deploy-history.jsonl')\"; echo \"\$row\"; echo \"\$row\" | grep -q '\"action\": *\"rollback\"' && ! echo \"\$row\" | grep -q '\"ref\": *\"$DECLARED\"'"
+  rec ledger-names-the-rollback -- bash -c "row=\"\$(ssh ${SSH_OPTS[*]} $HOST 'sudo tail -n 1 /var/lib/goat/$COMP/deploy-history.jsonl')\"; echo \"\$row\"; echo \"\$row\" | grep -q '\"action\": *\"rollback\"' && ! echo \"\$row\" | grep -q '\"ref\": *\"$DECLARED\"'"
   rec roll-forward --expect-in "every host's ledger names the declared ref" -- "$GB" deploy --env "$ENV" --component "$COMP" --ack "${USER:-operator} (live canary, roll forward)" --yes
   rec verify-after-roll-forward --expect-in "every host's ledger names the declared ref" -- "$GB" deploy --env "$ENV" --component "$COMP" --verify-only --yes
 else
