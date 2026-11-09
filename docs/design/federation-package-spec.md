@@ -1125,8 +1125,10 @@ obligation on a reader that fetches a package from a per-counterparty slot:
   package from a per-counterparty slot MUST verify that signature over the resource
   `<their sovereign_id>/packages/<our sovereign_id>` before it uses the package, under the key
   read aloud, or, before the call, under the key the directory has bound, which is then the key
-  the two parties confirm on the call. A package exchanged any other way is tied to its
-  counterparty only by what the two parties say on the call.
+  the two parties confirm on the call. It MUST also verify the package's own signature (§5)
+  under that same key: otherwise a directory could sign the slot statement under a key of its
+  own and serve another peering's genuine package with it. A package exchanged any other way is
+  tied to its counterparty only by what the two parties say on the call.
 - **One offer for several partners is not this version.** A single `transport_offer` shared by
   several peerings would need one `proposed_link_subnet` for several links, and §7 takes
   `link_subnet` from whichever party sorts first, so two partners' proposals could collide on the
