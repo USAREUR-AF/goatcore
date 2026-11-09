@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | **Built:** `ops/federation/standup/acceptance.sh`, phase 14 of both avenues (`goatbuilder federate` and `ops/scripts/peering-standup.sh`): the checks generated from the agreement's flows (§2), persistent reception (§2.1), refusals tied to the control's session (§2.2), existing partnerships before and after, opt-in (§2.3), run-owned probes with cleanup, opt-in (§2.4), the outcome and exit rule (§3), the evidence bundle (§4, `ops/federation/standup/acceptance_evidence.py`, unit tests `test_acceptance_evidence.py`), and a bilateral session exchanged by file (§6, `acceptance_session.py`, tests `test_acceptance_session.py`), and the in-process test fabric with the tests that run the real script against it (§5, `acceptance_fakefabric.py`, `test_acceptance.py`). The hermetic federation end-to-end test (`ops/federation-e2e/run.sh`) runs phase 14 from both sides with every check configured; it has not been run on this change. **Not built:** a required-check policy file, the driver running `--before` ahead of phase 11 and naming the other peerings itself, a launcher for the test environment's probes, ssh host-key verification by default, report signing and any automatic bilateral gate |
+| Status | **Built:** `ops/federation/standup/acceptance.sh`, phase 14 of both avenues (`goatbuilder federate` and `ops/scripts/peering-standup.sh`): the checks generated from the agreement's flows (§2), persistent reception (§2.1), refusals tied to the control's session (§2.2), existing partnerships before and after, opt-in (§2.3), run-owned probes with cleanup, opt-in (§2.4), the outcome and exit rule (§3), the evidence bundle (§4, `ops/federation/standup/acceptance_evidence.py`, unit tests `test_acceptance_evidence.py`), and a bilateral session exchanged by file (§6, `acceptance_session.py`, tests `test_acceptance_session.py`), publishing `exchanging` only as a proposed, reviewable change (§7, `acceptance_session.py propose` and `freshness`, `ops/federation/validate-partners.py`), and the in-process test fabric with the tests that run the real script against it (§5, `acceptance_fakefabric.py`, `test_acceptance.py`). The hermetic federation end-to-end test (`ops/federation-e2e/run.sh`) runs phase 14 from both sides with every check configured; it has not been run on this change. **Not built:** a required-check policy file, the driver running `--before` ahead of phase 11 and naming the other peerings itself, a launcher for the test environment's probes, ssh host-key verification by default, report signing and any automatic bilateral gate |
 | Companions | [`sovereign-federation-runbook.md`](../operations/sovereign-federation-runbook.md) Steps 7 and 8 (the same checks by hand), [`ops/federation/roundtrip/README.md`](../../ops/federation/roundtrip/README.md) (the round trip), [`deployment-e2e.md`](deployment-e2e.md) §"The same pattern for a federation" |
 | Audience | An operator running phase 14; whoever changes `acceptance.sh` |
 
@@ -289,6 +289,38 @@ session (§6).
 The bundle records local observations only (`observed_by`). A partner's bundle is imported
 beside it, never into it (§6).
 
+## 5. Testing without hosts
+
+`acceptance_fakefabric.py` serves two cores' REST surfaces, both republishers, the round-trip
+responder on each core, three probe sessions judged by an edge that writes zenoh-shaped ACL
+trace lines, and a `spire-server` stand-in backed by CAs made with openssl. Each part can be
+broken on purpose (`Faults`). `test_acceptance.py` runs the real script against it:
+
+| Case | Expected |
+|---|---|
+| everything configured and working | exit 0, every row PASS in `result.json`, both round-trip directions |
+| no counterparty surface; no ACL trace; SPIRE not configured | exit 3, BLOCKED or SKIP rows, the outbound round trip still PASS |
+| a republisher down; a responder down | exit 1 |
+| a REST surface answering HTTP 500 | no negative row PASS; delivery BLOCKED |
+| a surface answering every key with an old value | `fresh-keys` FAIL |
+| other bytes on arrival | FAIL with both digests |
+| their republisher lifting an unoffered set | `republisher-boundary/inbound` FAIL |
+| an edge that logs no ACL decisions | the control FAIL, the denials SKIP |
+| send-only, receive-only, no flow | NOT APPLICABLE rows with reasons and exit 0; exit 1 for no flow |
+| an unwritable evidence directory | exit 2 |
+| a diagnostic subscriber carrying a lane whose store's subscription is refused | delivery PASS, `persistence/` BLOCKED, exit 3; with the pause command, FAIL and exit 1, and the subscriber restarted |
+| a subscriber on other keys; a closed admin space; no store for the lane | PASS; BLOCKED (exit 3); FAIL (exit 1) |
+| a denial logged for another session; an allow from a session that is not the probe; decision lines without session ids | denial FAIL (exit 1); control FAIL (exit 1); denials BLOCKED (exit 3) |
+| a bilateral session, each side on its own core: first runner, second runner, first again; import twice; combine | first: inbound BLOCKED, exit 3; second: inbound PASS with the partner's challenge, outbound BLOCKED naming the partner's row; first again: inbound PASS; second import refused as a replay; outbound PASS (peer-reported), scope INCOMPLETE where refusals were not configured |
+| two operators, each with their own core, edge trace, probes and SPIRE commands, run one session and exchange bundles | both `combine` results PASS |
+| a session manifest made for another agreement | exit 2 |
+| a passing bilateral result with cleanup and two approvers; any of them missing, or a level that moves nothing; an open scope; a published record after expiry, a later failure, a changed agreement | a proposed file and diff, the deployment's file unchanged, one block after a second session; refused, nothing written; refused naming the open row; stale, degraded, stale, nothing written |
+| probes from a launcher; a launcher whose stop does nothing; an interrupted run's probe beside a session that is not ours; no launcher | refusal rows and `cleanup/probes` PASS, nothing left; `cleanup/probes` FAIL (exit 1); `cleanup/earlier-runs` PASS and the other session untouched; no `cleanup/` row |
+| an existing partnership: unnamed; unchanged before and after; no snapshot from before; its agreement changed; its round trip broken by the deployment; a set for the new partner reaching it; no surface for it | no `existing/` rows; PASS (exit 0); BLOCKED (exit 3); FAIL; FAIL naming "before"; leak FAIL; optional SKIP (exit 0) |
+
+`FED_ACCEPTANCE_WAIT`, `FED_ACCEPTANCE_GAP` and `FED_ACCEPTANCE_RT_TIMEOUT` shorten the waits
+for the test; a real edge needs the defaults.
+
 ## 6. A bilateral session, exchanged by file
 
 **Built** (`ops/federation/standup/acceptance_session.py`). Each operator runs phase 14 on their
@@ -346,33 +378,33 @@ not authenticated and that it is for the two operators to review; nothing gates 
 phase 14's own exit status stays its local verdict. Report signing, its key lifecycle and an
 automatic bilateral gate are not built.
 
-## 5. Testing without hosts
+## 7. Publishing `exchanging`
 
-`acceptance_fakefabric.py` serves two cores' REST surfaces, both republishers, the round-trip
-responder on each core, three probe sessions judged by an edge that writes zenoh-shaped ACL
-trace lines, and a `spire-server` stand-in backed by CAs made with openssl. Each part can be
-broken on purpose (`Faults`). `test_acceptance.py` runs the real script against it:
+**Built.** A partner file's `level` is the grant (ADR 1157): `apply` renders it, and data moves
+only at `exchanging`. Acceptance does not touch it. What acceptance publishes is a record that
+the agreed scope was proven on both sides, as an `acceptance:` block in the same partner file,
+and only through the deployment's own review of a change:
 
-| Case | Expected |
-|---|---|
-| everything configured and working | exit 0, every row PASS in `result.json`, both round-trip directions |
-| no counterparty surface; no ACL trace; SPIRE not configured | exit 3, BLOCKED or SKIP rows, the outbound round trip still PASS |
-| a republisher down; a responder down | exit 1 |
-| a REST surface answering HTTP 500 | no negative row PASS; delivery BLOCKED |
-| a surface answering every key with an old value | `fresh-keys` FAIL |
-| other bytes on arrival | FAIL with both digests |
-| their republisher lifting an unoffered set | `republisher-boundary/inbound` FAIL |
-| an edge that logs no ACL decisions | the control FAIL, the denials SKIP |
-| send-only, receive-only, no flow | NOT APPLICABLE rows with reasons and exit 0; exit 1 for no flow |
-| an unwritable evidence directory | exit 2 |
-| a diagnostic subscriber carrying a lane whose store's subscription is refused | delivery PASS, `persistence/` BLOCKED, exit 3; with the pause command, FAIL and exit 1, and the subscriber restarted |
-| a subscriber on other keys; a closed admin space; no store for the lane | PASS; BLOCKED (exit 3); FAIL (exit 1) |
-| a denial logged for another session; an allow from a session that is not the probe; decision lines without session ids | denial FAIL (exit 1); control FAIL (exit 1); denials BLOCKED (exit 3) |
-| a bilateral session, each side on its own core: first runner, second runner, first again; import twice; combine | first: inbound BLOCKED, exit 3; second: inbound PASS with the partner's challenge, outbound BLOCKED naming the partner's row; first again: inbound PASS; second import refused as a replay; outbound PASS (peer-reported), scope INCOMPLETE where refusals were not configured |
-| two operators, each with their own core, edge trace, probes and SPIRE commands, run one session and exchange bundles | both `combine` results PASS |
-| a session manifest made for another agreement | exit 2 |
-| probes from a launcher; a launcher whose stop does nothing; an interrupted run's probe beside a session that is not ours; no launcher | refusal rows and `cleanup/probes` PASS, nothing left; `cleanup/probes` FAIL (exit 1); `cleanup/earlier-runs` PASS and the other session untouched; no `cleanup/` row |
-| an existing partnership: unnamed; unchanged before and after; no snapshot from before; its agreement changed; its round trip broken by the deployment; a set for the new partner reaching it; no surface for it | no `existing/` rows; PASS (exit 0); BLOCKED (exit 3); FAIL; FAIL naming "before"; leak FAIL; optional SKIP (exit 0) |
+```
+acceptance_session.py propose --manifest session.json --us <us> --evidence <evidence dir> \
+  --partner-file <overlay>/ops/federation/partners/<them>.yaml \
+  --approved-by <us>=<name> --approved-by <them>=<name> --out <dir>
+```
 
-`FED_ACCEPTANCE_WAIT`, `FED_ACCEPTANCE_GAP` and `FED_ACCEPTANCE_RT_TIMEOUT` shorten the waits
-for the test; a real edge needs the defaults.
+writes `<dir>/<them>.yaml` (the file with the block) and `<dir>/<them>.yaml.diff`, and never edits
+the deployment's file. It refuses unless the combined bilateral result (§6) is PASS, both sides'
+bundles show `cleanup/probes` PASS (§2.4), both operators are named, the session has not
+expired, the file declares this session's partner, and its `level` already grants `exchanging`.
+The block holds the session, the digests of the manifest, agreement, both bundles and the
+combined result, the time, the expiry (the agreement's), and the two approvers. A later session
+replaces the block.
+
+`ops/federation/validate-partners.py` checks the block: known fields only; status `exchanging`,
+`stale` or `degraded`; every field present for `exchanging`; digests well formed; both approvers
+named; and `exchanging` only beside `level: exchanging`, so the record cannot claim more than the
+grant. An expired record is reported as stale in a note and does not fail validation.
+
+`acceptance_session.py freshness --partner-file F --agreement A [--evidence DIR]` says whether a
+published record is current, stale (the agreement's digest changed, or it expired) or degraded (a
+local run after it FAILED), and prints the status change a person should propose. It writes
+nothing: drift and expiry never rewrite a grant or a record by themselves.
