@@ -52,6 +52,8 @@ class Server(http.server.BaseHTTPRequestHandler):
     fail_slot_reads = None  # an HTTP status every GET of a counterparty slot answers with
     fail_reads: dict = {}  # path below /v1/parties/ -> how many GETs of it answer 503 first
     bound_override: dict = {}  # sovereign_id -> the bound key a dishonest directory serves instead
+    fail_puts: dict = {}  # path below /v1/parties/ -> how many PUTs of it answer 503 first
+    refuse_slot_with = None  # an HTTP status every PUT of a counterparty slot answers with
 
     def log_message(self, *a):
         pass
@@ -59,7 +61,12 @@ class Server(http.server.BaseHTTPRequestHandler):
     def do_PUT(self):
         body = self.rfile.read(int(self.headers["Content-Length"]))
         rest = self.path.removeprefix("/v1/parties/")
-        if Server.no_slots and "/packages/" in rest:
+        if Server.fail_puts.get(rest):
+            Server.fail_puts[rest] -= 1
+            code, reply = 503, b"unavailable"
+        elif Server.refuse_slot_with and "/packages/" in rest:
+            code, reply = Server.refuse_slot_with, b"withdrawn or superseded"
+        elif Server.no_slots and "/packages/" in rest:
             code, reply = 404, b"404 page not found"
         elif "/" in rest:
             code, reply = self.put_hosted(rest, body)
@@ -150,6 +157,7 @@ def tls_cert(tmp_path_factory):
 def server(tls_cert, monkeypatch):
     Server.entries, Server.files, Server.hosted, Server.signed, Server.refuse_with = {}, {}, {}, {}, None
     Server.no_slots, Server.fail_slot_reads, Server.fail_reads, Server.bound_override = False, None, {}, {}
+    Server.fail_puts, Server.refuse_slot_with = {}, None
     crt, key = tls_cert
     srv = http.server.HTTPServer(("127.0.0.1", 0), Server)
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
@@ -1016,3 +1024,140 @@ def test_a_held_package_places_no_ca_or_spiffe_bundle_either(server, tmp_path, m
     assert not (work / "theirs.canonical.json").exists()
     assert not (work / "theirs-ca.pem").exists() and not (work / "theirs.spiffe-bundle").exists(), out
     assert "UNKNOWN CA fetch" in out
+
+
+def publish_with_ca_and_bundle(server, tmp_path, sid="xab", their_id="xaa"):
+    """`sid` publishes its package (with a slot for their_id), its CA and its SPIFFE bundle."""
+    ca, fp = mint_ca(tmp_path, sid)
+    (tmp_path / f"{sid}-ca.pem").write_bytes(ca)
+    pkg = package_with_ca(tmp_path, sid, fp)
+    w = tmp_path / f"{sid}-own-work"
+    w.mkdir()
+    (w / "ours.spiffe-bundle").write_bytes(BUNDLE)
+    run("--url", server, "--ours", pkg, "--key", KEY[sid], "--ca", tmp_path / f"{sid}-ca.pem", "--work", w,
+        "--their-id", their_id, "--per-counterparty")
+    return pkg, ca
+
+
+@needs_ed25519
+@needs_openssl
+def test_before_the_key_is_recorded_the_ca_and_bundle_are_saved_unconfirmed_never_in_place(server, tmp_path):
+    pkg, ca = publish_with_ca_and_bundle(server, tmp_path)
+    work = tmp_path / "work"
+    work.mkdir()
+    args = ("--url", server, "--ours", XAA, "--their-id", "xab", "--theirs", work / "theirs.canonical.json",
+            "--work", work, "--per-counterparty")
+    rc, out = run(*args)
+    assert rc == 0, out
+    assert not (work / "theirs-ca.pem").exists() and not (work / "theirs.spiffe-bundle").exists(), out
+    assert d.pem_certificates((work / "theirs-ca.pem.unconfirmed").read_bytes()) == d.pem_certificates(ca)
+    assert (work / "theirs.spiffe-bundle.unconfirmed").read_bytes() == BUNDLE
+    # With the key recorded, the next run places both and drops the unconfirmed copies.
+    rc, out = run(*args, "--keyring", keyring_for(tmp_path, "xab"))
+    assert rc == 0, out
+    assert d.pem_certificates((work / "theirs-ca.pem").read_bytes()) == d.pem_certificates(ca)
+    assert (work / "theirs.spiffe-bundle").read_bytes() == BUNDLE
+    assert not (work / "theirs-ca.pem.unconfirmed").exists() and not (work / "theirs.spiffe-bundle.unconfirmed").exists()
+
+
+@needs_ed25519
+@needs_openssl
+def test_a_refused_package_takes_its_ca_and_bundle_aside_with_it(server, tmp_path):
+    """Files an earlier run placed from a package that does not verify under the recorded key
+    are all moved aside: the package, and the CA and bundle it vouched for."""
+    publish_with_ca_and_bundle(server, tmp_path)
+    work = tmp_path / "work"
+    work.mkdir()
+    pkg = {k: v for k, v in json.loads(XAB.read_bytes()).items() if k != "signature"}
+    forged = d.canonical(dict(pkg, signature=d.b64(d.sign(ROGUE_SEED, d.canonical(pkg)))))
+    (work / "theirs.canonical.json").write_bytes(forged)
+    (work / "theirs-ca.pem").write_bytes(b"rogue CA")
+    (work / "theirs.spiffe-bundle").write_bytes(b"rogue bundle")
+    rc, out = run("--url", server, "--ours", XAA, "--their-id", "xab", "--theirs", work / "theirs.canonical.json",
+                  "--work", work, "--keyring", keyring_for(tmp_path, "xab"), "--per-counterparty")
+    assert rc == 0, out
+    assert (work / "theirs.canonical.json.refused").read_bytes() == forged
+    assert (work / "theirs-ca.pem.refused").read_bytes() == b"rogue CA"
+    assert (work / "theirs.spiffe-bundle.refused").read_bytes() == b"rogue bundle"
+    # The directory's genuine package for us then takes their place.
+    assert (work / "theirs.spiffe-bundle").read_bytes() == BUNDLE
+
+
+@needs_ed25519
+@needs_openssl
+def test_with_the_key_recorded_an_on_disk_ca_or_bundle_the_checked_ones_contradict_is_moved_aside(server, tmp_path):
+    pkg, ca = publish_with_ca_and_bundle(server, tmp_path)
+    work = tmp_path / "work"
+    work.mkdir()
+    (work / "theirs.canonical.json").write_bytes(pkg.read_bytes())
+    other, _ = mint_ca(tmp_path, "other")
+    (work / "theirs-ca.pem").write_bytes(other)
+    (work / "theirs.spiffe-bundle").write_bytes(b"stale bundle")
+    rc, out = run("--url", server, "--ours", XAA, "--their-id", "xab", "--theirs", work / "theirs.canonical.json",
+                  "--work", work, "--keyring", keyring_for(tmp_path, "xab"), "--per-counterparty")
+    assert rc == 0, out
+    assert (work / "theirs-ca.pem.refused").read_bytes() == other
+    assert d.pem_certificates((work / "theirs-ca.pem").read_bytes()) == d.pem_certificates(ca)
+    assert (work / "theirs.spiffe-bundle.refused").read_bytes() == b"stale bundle"
+    assert (work / "theirs.spiffe-bundle").read_bytes() == BUNDLE
+    assert (work / "theirs.canonical.json").read_bytes() == pkg.read_bytes()
+
+
+@needs_ed25519
+def test_a_lying_directory_cannot_move_a_correct_package_aside(server, tmp_path):
+    """The on-disk package verifies under the recorded key; the directory serves the same bytes
+    under a substituted upload key. The slot fails and nothing new is placed, but the correct
+    file stays where it is."""
+    for_xab = peering_package(tmp_path, "xaa", "xab", "192.0.2.10:51821", "169.254.10.0/31")
+    run("--url", server, "--ours", for_xab, "--key", KEY["xaa"], "--their-id", "xab", "--per-counterparty")
+    theirs = tmp_path / "theirs.json"
+    theirs.write_bytes(for_xab.read_bytes())
+    rogue_slot("xaa/packages/xab", for_xab.read_bytes())
+    rc, out = run("--url", server, "--ours", XAB, "--their-id", "xaa", "--theirs", theirs,
+                  "--keyring", keyring_for(tmp_path, "xaa"), "--per-counterparty")
+    assert rc == 0 and "FAIL    slot signature" in out, out
+    assert theirs.read_bytes() == for_xab.read_bytes() and not (tmp_path / "theirs.json.refused").exists()
+
+
+@needs_ed25519
+def test_a_failed_package_upload_does_not_strand_a_prior_release_party(server, tmp_path, monkeypatch):
+    """Hosted: the pointer PUT can succeed and the package PUT fail. ours.pointer.json waits for the
+    package to read back, so the next run still recognises the single slot."""
+    monkeypatch.delenv("FED_DIRECTORY_PER_COUNTERPARTY", raising=False)
+    first = peering_package(tmp_path, "xaa", "xab", "192.0.2.10:51821", "169.254.10.0/31").read_bytes()
+    first_p = tmp_path / "first.json"
+    first_p.write_bytes(first)
+    run("--url", server, "--ours", first_p, "--key", KEY["xaa"], "--their-id", "xab", "--work", tmp_path)
+    (tmp_path / d.SINGLE_SLOT_MARK).unlink()  # the prior release wrote no mark
+    moved = peering_package(tmp_path, "xaa", "xab", "192.0.2.10:51831", "169.254.10.0/31")
+    args = ("--url", server, "--ours", moved, "--key", KEY["xaa"], "--their-id", "xab", "--work", tmp_path,
+            "--per-counterparty")
+    Server.fail_puts["xaa/package"] = 1
+    rc, out = run(*args)
+    assert rc == 0 and "package upload refused, HTTP 503" in out, out
+    assert Server.hosted["xaa/package"] == first
+    assert json.loads((tmp_path / "ours.pointer.json").read_bytes())["package_sha256"] == d.sha256_of(first)
+    rc, out = run(*args)
+    assert rc == 0 and Server.hosted["xaa/package"] == moved.read_bytes(), out
+
+
+@needs_ed25519
+def test_a_409_on_the_slot_names_what_the_counterparty_reads_and_the_two_remedies(server, tmp_path):
+    Server.refuse_slot_with = 409
+    rc, out = run("--url", server, "--ours", XAA, "--key", KEY["xaa"], "--their-id", "xab", "--per-counterparty")
+    assert rc == 0, out
+    assert "`xab` still reads whatever the slot holds now" in out
+    assert "withdraw the slot" in out and "reissue the package with a changed field" in out
+
+
+@needs_ed25519
+def test_on_the_pointer_path_a_package_not_signed_by_the_recorded_key_is_not_placed(server, tmp_path, monkeypatch):
+    monkeypatch.delenv("FED_DIRECTORY_PER_COUNTERPARTY", raising=False)
+    serve("xab", XAB)
+    run("--url", server, "--ours", XAB, "--package-url", f"{server}/packages/xab.json", "--key", KEY["xab"])
+    wrong = tmp_path / "wrong-keys.txt"
+    wrong.write_text(f"xab={PUB['xaa']}\n")  # a key that did not sign their package
+    theirs = tmp_path / "theirs.json"
+    rc, out = run("--url", server, "--ours", XAA, "--their-id", "xab", "--theirs", theirs, "--keyring", wrong)
+    assert rc == 0 and "FAIL    package signature" in out, out
+    assert not theirs.exists() and "COMPATIBILITY REPORT" not in out
