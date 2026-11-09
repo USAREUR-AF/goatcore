@@ -578,8 +578,8 @@ pub fn render_all(
         if ingress.is_empty() {
             y.push_str("  []   # nothing arrives under this agreement\n");
         }
-        y.push_str("\n# What they may receive from us: our release set under THE WIRE NAME it\n\
-         # actually crosses as, `from/<us>/**`. Never the `release/**` staging name,\n\
+        y.push_str("\n# What they may receive from us: each offered set under THE WIRE NAME it\n\
+         # actually crosses as, `from/<us>/<set>/**`. Never the `release/**` staging name,\n\
          # which the republisher lifts off before anything reaches the edge.\negress:\n");
         for k in &egress {
             y.push_str(&format!("  - \"{k}\"\n"));
