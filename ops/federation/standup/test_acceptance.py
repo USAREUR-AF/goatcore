@@ -585,6 +585,80 @@ class AcceptanceRun(unittest.TestCase):
         self.assertEqual(rc, 2, out)
         self.assertIn("another agreement", out)
 
+    # --- run-owned, time-limited probes ---------------------------------------
+    def launcher(self, fab_env, stuck=False):
+        """A launcher in the contract acceptance.sh documents. Its 'sessions' are files;
+        the fabric already serves the three probe surfaces."""
+        state = os.path.join(self.tmp, "launched")
+        os.makedirs(state, exist_ok=True)
+        path = os.path.join(self.tmp, "launcher.sh")
+        rest = {"agreed": fab_env["FED_PROBE_THEIRS_REST"], "forged": fab_env["FED_PROBE_FORGED_REST"],
+                "impersonate": fab_env["FED_PROBE_IMPERSONATE_REST"]}
+        zid = {"agreed": self.fabric.agreed_zid, "forged": self.fabric.zids["forged"],
+               "impersonate": self.fabric.zids["impersonate"]}
+        with open(path, "w") as f:
+            f.write("#!/bin/sh\nS='%s'\n" % state)
+            f.write('case "$1" in\n  start)\n    case "$2" in\n')
+            for k in rest:
+                f.write('      %s) echo "REST=%s"; echo "ZID=%s" ;;\n' % (k, rest[k], zid[k]))
+            f.write('    esac\n    echo "HANDLE=$2-$3"; echo "$4" > "$S/$2-$3" ;;\n')
+            f.write('  stop) %s ;;\n' % ("true" if stuck else 'rm -f "$S/$2"'))
+            f.write('  alive) test -f "$S/$2" ;;\nesac\n')
+        os.chmod(path, 0o755)
+        return path, state
+
+    def test_probes_are_started_by_the_run_and_cleaned_up(self):
+        fab = self.fabric.start()
+        launcher, state = self.launcher(fab)
+        rc, out = self.run_acceptance(
+            drop=["FED_PROBE_THEIRS_REST", "FED_PROBE_FORGED_REST", "FED_PROBE_FORGED_ZID",
+                  "FED_PROBE_IMPERSONATE_REST", "FED_PROBE_IMPERSONATE_ZID"],
+            extra={"FED_PROBE_LAUNCHER": launcher, "FED_PROBE_TTL": "60"})
+        v = self.verdicts()
+        self.assertEqual(rc, 0, out)
+        for name in ("refusal/control-allowed", "refusal/forged-name", "refusal/impersonation", "cleanup/probes"):
+            self.assertEqual(v.get(name), "PASS", (name, out))
+        self.assertEqual(os.listdir(state), [], "a probe is still running")
+        run = self.bundle()["run"]["id"]
+        m = json.load(open(os.path.join(self.tmp, "evidence", "acceptance", "probes", run + ".json")))
+        self.assertEqual(sorted(r["kind"] for r in m["resources"].values()), ["agreed", "forged", "impersonate"])
+        self.assertEqual({r["status"] for r in m["resources"].values()}, {"gone"})
+        self.assertTrue(all(r["deadline"] > 0 for r in m["resources"].values()))
+
+    def test_incomplete_cleanup_is_a_required_failure(self):
+        fab = self.fabric.start()
+        launcher, state = self.launcher(fab, stuck=True)
+        rc, out = self.run_acceptance(
+            drop=["FED_PROBE_THEIRS_REST", "FED_PROBE_FORGED_REST", "FED_PROBE_IMPERSONATE_REST"],
+            extra={"FED_PROBE_LAUNCHER": launcher})
+        self.assertEqual(rc, 1, out)
+        c = [c for c in self.bundle()["checks"] if c["name"] == "cleanup/probes"][0]
+        self.assertEqual((c["verdict"], c["required"]), ("FAIL", True))
+
+    def test_an_interrupted_runs_probes_are_cleaned_first_and_nothing_else(self):
+        fab = self.fabric.start()
+        launcher, state = self.launcher(fab)
+        probes = os.path.join(self.tmp, "evidence", "acceptance", "probes")
+        os.makedirs(probes)
+        # A run killed before its cleanup left one probe; an unrelated session is not ours.
+        open(os.path.join(state, "agreed-acc-old"), "w").close()
+        open(os.path.join(state, "somebody-elses"), "w").close()
+        with open(os.path.join(probes, "acc-old.json"), "w") as f:
+            json.dump({"run": "acc-old", "resources": {"agreed-acc-old": {"kind": "agreed", "status": "started",
+                                                                          "deadline": 1}}}, f)
+        rc, out = self.run_acceptance(
+            drop=["FED_PROBE_THEIRS_REST", "FED_PROBE_FORGED_REST", "FED_PROBE_IMPERSONATE_REST"],
+            extra={"FED_PROBE_LAUNCHER": launcher})
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(self.verdicts()["cleanup/earlier-runs"], "PASS", out)
+        self.assertEqual(os.listdir(state), ["somebody-elses"])
+
+    def test_without_a_launcher_nothing_is_started_or_cleaned(self):
+        rc, out = self.run_acceptance()
+        self.assertEqual(rc, 0, out)
+        self.assertFalse([n for n in self.verdicts() if n.startswith("cleanup/")], out)
+        self.assertFalse(self.bundle()["inputs"]["probe_launcher"])
+
     def test_a_broken_round_trip_fails(self):
         self.fabric.faults.responder_down.add("xab")
         rc, out = self.run_acceptance(extra={})
