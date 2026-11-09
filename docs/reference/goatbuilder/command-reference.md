@@ -271,6 +271,11 @@ A sovereign peering declared, converged and verified (ADR 1157): our half measur
 |---|---|---|
 | `--plan <PLAN>` | deploy: the plan to execute (default <work>/plan.json) |  |
 | `--approve-plan <APPROVE_PLAN>` | deploy: approve exactly this plan hash, after reading the plan. --yes never approves a plan |  |
+| `--confirm` | Phases 5 and 6: confirm the keys and the agreement digest here, at this terminal, instead of stopping for them by hand |  |
+| `--partner-key <PARTNER_KEY>` | Phase 5: the partner's verifying key, as read aloud on the call |  |
+| `--partner-ca-fingerprint <PARTNER_CA_FINGERPRINT>` | Phase 5: the partner's CA fingerprint, as read aloud on the call |  |
+| `--agreement-digest <AGREEMENT_DIGEST>` | Phase 6: the agreement digest, as compared with the partner |  |
+| `--place-pointer-package <PLACE_POINTER_PACKAGE>` | Phase 5: place the package the partner's single pointer named and the directory held back, after confirming on the call that it is the package for this peering (its digest, as the stop shows it) |  |
 | `--env <ENV>` | The environment the peering is declared on (checked against goatbuilder.yaml peerings:) |  |
 | `--as <AS_PARTY>` | Which party we are (default: read from the declaration) |  |
 | `--edge-group <EDGE_GROUP>` | The ansible group the edge runs in (default <peering>_edge) |  |
