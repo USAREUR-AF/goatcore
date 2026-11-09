@@ -37,7 +37,7 @@ agreement independently, with its own implementation of the same `spec` version 
 the normative conformance vectors, and the two compare one digest. Neither side needs the other's
 tool, release or commit. No server, no
 third party, no infrastructure. That is what [`federation-package-spec.md`](federation-package-spec.md)
-and `goat federate` already implement, and it works with a partner who is entirely offline.
+and `goatbuilder federate` implement (until the move under ADR 1225, `docs/adr/1225-federation-belongs-to-goatbuilder-one-command-one-decision.md`, is complete, released `goat federate` runs the same code), and it works with a partner who is entirely offline.
 
 The directory sits *above* that as a convenience. Adding it is not a security decision, which
 is precisely why it can be added later without reopening anything:
@@ -211,6 +211,8 @@ Every directory failure is a warning. Unset, phase 5 is unchanged.
 
 ### 6.3 A party with several peerings: one package per counterparty
 
+Decision: ADR 1225 §6, "Directory: several peerings per party" (`docs/adr/1225-federation-belongs-to-goatbuilder-one-command-one-decision.md`).
+
 Status: WIP — gate: two peerings of one party exchanged through one directory on the test
 environment, each counterparty composing the package meant for it, and both agreements' digests
 matching on both sides.
@@ -270,7 +272,7 @@ They compose; neither replaces the other.
 | | Concern |
 |---|---|
 | This directory | Two parties discover each other and check compatibility before building |
-| `goat federate` | Both sides prove they hold the *identical* agreement — independently computed, one digest compared |
+| `goatbuilder federate` (released `goat federate` until the ADR 1225 move completes) | Both sides prove they hold the *identical* agreement — independently computed, one digest compared |
 | Block 84 portal | Where **our** side approves and applies an agreement, mints the capability, emits the ACL, and records the audit trail |
 
 The portal is a one-sided approval workflow and has no concept of the partner having produced a
@@ -294,7 +296,7 @@ than overlapping.
 | Pointer entry (§6) | **Built** in saltlick (`saltlick-pointer/v1`) |
 | Package per counterparty (§6.3) | **Built** in saltlick and the driver step, off by default (`FED_DIRECTORY_PER_COUNTERPARTY=1`); tested against a stand-in and a local saltlick, not yet on the test environment |
 | Driver step (§6.2) | **Built**; phase 5 of the driver, required by preflight unless `FED_NO_DIRECTORY=1`; exercised end to end by `ops/federation-e2e/run.sh` against a saltlick it starts |
-| The trust mechanism it sits above — package spec, `goat federate`, conformance vectors | **Built and merged** — see [`federation-package-spec.md`](federation-package-spec.md) |
+| The trust mechanism it sits above — package spec, `goatbuilder federate` (today `goat federate`; ADR 1225), conformance vectors | **Built and merged** — see [`federation-package-spec.md`](federation-package-spec.md) |
 
 Federation works without this service. That is by design: the directory is advisory, and a
 peering never waits on it.
