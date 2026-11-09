@@ -7,6 +7,7 @@
 | Conformance vectors | [`../../ops/federation/vectors/`](../../ops/federation/vectors/) — **normative** |
 | Reference implementation | [`../../ops/federation/reference/`](../../ops/federation/reference/) |
 | Transport design | `cross-sovereign-peering-transport.md` |
+| Our tool | `goatbuilder federate init\|lint\|compose\|diff\|verify\|apply`, on the `goat-federation` library ([ADR 1225](../adr/1225-federation-belongs-to-goatbuilder-one-command-one-decision.md), Proposed); `goat federate` runs the same library during the transition |
 
 The contract between two organisations setting up a data link. This document is the
 authority; our tool is one implementation of it. **A partner must be able to implement
@@ -385,8 +386,8 @@ hints only, and **never an input to an access decision**. It is not part of v1 b
 in v1 needs it: release sets are explicit lists, so no lane abstraction crosses the link.
 
 `capabilities.tool_version` is reserved. **Designed, not built.** If a future version adds it,
-it carries the version of the tool that composed the package (`goat --version`), measured by
-`goat federate init` and never declared. It is informational: it changes no negotiated field
+it carries the version of the tool that composed the package (`goatbuilder --version`), measured by
+`goatbuilder federate init` and never declared. It is informational: it changes no negotiated field
 and is never a precondition. The digest matches when both sides compose under the same `spec`
 version, and each side's tool proves it implements that version by passing the normative
 conformance vectors (§10). Two parties do not need the same tool, the same release or the same

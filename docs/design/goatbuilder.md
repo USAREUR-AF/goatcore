@@ -152,7 +152,7 @@ A team points `goatbuilder` at their own config — their components, their envi
 | `goatbuilder pins {check,regenerate}` | declarative | declare | `generate-pins.py` |
 | `goatbuilder standup <env> --site <s>` | declarative | all — declares the site's whole topology (founder or joiner), converges the doctrine's phases in order, verifies every record; the one-hour target | `goat-standup.sh` |
 | `goatbuilder join-node <env> --site <s> --class <c>` | declarative | declares one more machine of a class at a live site → converge → verify | node-addition.md by hand |
-| `goatbuilder federate <with>` | declarative | declares a sovereign peering → converges ADR 1157's four steps → verifies each | the peering runbook by hand |
+| `goatbuilder federate <partner>` | declarative | declares a sovereign peering → converges ADR 1157's four steps → verifies each; also carries the six package verbs `init\|lint\|compose\|diff\|verify\|apply` ([ADR 1225](../adr/1225-federation-belongs-to-goatbuilder-one-command-one-decision.md)) | the peering runbook by hand; `goat federate` |
 | `goatbuilder status <component>` | read-only | verify: converged / pending / unknown per machine | `graduate.py status` |
 | `goatbuilder verify <component> --env <e>` | read-only | verify | `deploy-component.sh --verify-only` |
 | `goatbuilder diff <component> --env <e>` | read-only | verify: declared vs actual (C8) | — |
@@ -199,6 +199,14 @@ The golden paths landed in September 2026 — the founder-and-joiner standup wal
 Status of those paths, in the contract's words: **built, and worked once** — by the end of the September buildout each path had run, fixed in flight as it went; **a fresh, unattended full run has not been proven.** That proof is what `standup --mock` rehearses on the conformance fixture and what the first timed real run measures; until then the one-hour target is a target, not a claim.
 
 What this adds to the model is only the site level and the peering object; the verbs, the contract and the converger interface are unchanged. `federate` is a declarative verb like any other — which is the point: a sovereign peering becomes something that is declared, reviewed, converged and verified rather than a procedure carried in a runbook.
+
+#### Federation belongs to goatbuilder
+
+Status: WIP — gate: the federation end-to-end test drives both sides with goatbuilder federate alone
+
+All federation code lives in the `goat-federation` library crate and in `goatbuilder federate` ([ADR 1225](../adr/1225-federation-belongs-to-goatbuilder-one-command-one-decision.md), Proposed); `goat` keeps none of its own. The library crate holds the package format, lint, compose, diff, verify, render and keyring code (**built**: moved from `goat-cli` with no behavior change). goatbuilder carries the six package verbs with the flags and exit codes `goat federate` has, and `goatbuilder federate <partner>` is the whole procedure (**designed**). Until a goatbuilder release carrying the verbs is available to partner environments, `goat federate <verb>` runs the same library and prints one line naming the goatbuilder command; then it is removed from `goat`.
+
+The person makes one decision, the partner and the release sets it receives (`offer:` in the peering entry), and two confirmations that stay human: reading the verifying key and CA fingerprint aloud and comparing the agreement digest, and approving what the core will admit before its router restarts. Everything else is done, checked and recorded by the command, safe to re-run, and resumed by inspecting actual state. The stages (plan, deploy, test, status) and each phase's behavior are described with the code that builds them. Both avenues stay: the driver and `ops/scripts/peering-standup.sh` both call the `goatbuilder federate` package verbs (ADR 1225 amends [ADR 1201](../adr/1201-two-avenues-scripts-documented-cli-supported.md) rule 2 for this row only).
 
 ### A goatlite profile (future)
 
@@ -266,7 +274,7 @@ These are practitioner and standards sources, not a single authority; the contra
 
 Both avenues stay functional for the three golden paths — founder standup, federating node, deployments across environments — and neither is deleted ([ADR 1201](../adr/1201-two-avenues-scripts-documented-cli-supported.md), amending ADR 1198's "subsume and delete"). The operator's rule, verbatim: "keep both avenues functional … both the scripts method and the cli method and eventually we will document how scripts can work, but support only the cli."
 
-1. **Dual-run.** `goatbuilder <verb>` is built to pass the conformance suite and to produce the same result as the script beside it. The script never depends on the binary.
+1. **Dual-run.** `goatbuilder <verb>` is built to pass the conformance suite and to produce the same result as the script beside it. The script never depends on the binary, with one exception: `peering-standup.sh` calls the `goatbuilder federate` package verbs, because federation's package protocol has one implementation ([ADR 1225](../adr/1225-federation-belongs-to-goatbuilder-one-command-one-decision.md)).
 2. **Parity gate.** A CI check runs the binary and the script against the same input and asserts identical declaration and record outcomes, the way `registry-parity` already gates image refs. A failure on either side fails the check; the fix lands on both sides in the same change.
 3. **Support moves, surface stays.** The runbooks, one-pagers, hosted book and error catalog teach the binary. Each script's page says what it does and that it is unsupported. The CLAUDE.md pointer names the binary as the driver and the script as the documented alternative.
 
