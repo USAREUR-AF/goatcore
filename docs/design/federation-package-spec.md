@@ -1088,3 +1088,10 @@ is what makes them a test of it rather than a description of it.
   locally, and never inside the digest (§7).
 - **A directory.** Convenient, and never required. Two parties who share none federate
   exactly as well (§5.1).
+
+
+## Receiving storage interests
+
+Built: the core router declares one storage subscription on `from/<peer>/**` for each configured sovereign peering. A broader subscription on `from/**` does not fit an edge grant on `from/<peer>/**`, so it cannot establish the interest needed to receive that peer’s data. Access rules remain unchanged.
+
+Each peer store has its own `sovereign_from_<peer>` directory and uses the configured federation retention period. The existing `sovereign_from` store and directory remain in place to preserve previously retained data; this change does not migrate or delete them. New inbound samples can therefore be retained by both stores. Consolidation requires a separate retention and migration plan.

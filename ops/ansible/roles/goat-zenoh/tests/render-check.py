@@ -362,6 +362,30 @@ check('id: "partner-r-' not in pv, "blocks are inert on a per-vendor goatnet (no
 
 check(brace_balanced(out), "brace/bracket balanced with pre-cut partner blocks")
 
+print("== federation ingress storage ==")
+check("sovereign_from:" not in render(), "no peer means no federation store")
+peers = [dict(sovereign="aaa", cn="fed.aaa.bbb.01", release_key_exprs=["from/bbb/**"]),
+         dict(sovereign="ccc", cn="fed.ccc.bbb.01", release_key_exprs=["from/bbb/**"])]
+for identity in ["per-vendor", "per-uuid-slot-pool"]:
+    for count in [1, 2]:
+        cfg = render(zenoh_identity_model=identity, zenoh_sovereign_peerings=peers[:count],
+                     zenoh_from_retention_days=3, zenoh_slot_pool_size=2)
+        check('dir: "/var/lib/zagros-zenoh/rocksdb/sovereign_from",' in cfg,
+              f"{identity}/{count}: existing store path retained")
+        for peer in peers[:count]:
+            name = "sovereign_from_" + peer["sovereign"]
+            match = re.search(r'"' + name + r'": \{(.*?)\n        \},', cfg, re.S)
+            body = match.group(1) if match else ""
+            check(f'key_expr: "from/{peer["sovereign"]}/**"' in body,
+                  f"{identity}/{count}: peer subscription fits its edge grant")
+            check(f'dir: "/var/lib/zagros-zenoh/rocksdb/{name}"' in body,
+                  f"{identity}/{count}: distinct persistent path per peer")
+            check('on_closure: "do_nothing"' in body and 'time_to_live: 259200000' in body,
+                  f"{identity}/{count}: retains data and configured retention")
+        check(cfg.count('"sovereign_from_') == count,
+              f"{identity}/{count}: creates only the declared peer stores")
+        check(brace_balanced(cfg), f"{identity}/{count}: balanced config")
+
 print()
 print("ALL RENDER CHECKS PASSED" if fails == 0 else f"{fails} CHECK(S) FAILED")
 sys.exit(fails)

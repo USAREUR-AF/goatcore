@@ -344,6 +344,22 @@
           garbage_collect_period: 86400,
           time_to_live: {{ zenoh_from_retention_days | int * 86400 * 1000 }},
         },
+        // Preserve the existing store and its data. Each peer also needs an
+        // interest that fits its edge grant; from/** is wider than that grant.
+{% for _p in zenoh_sovereign_peerings %}
+        "sovereign_from_{{ _p.sovereign }}": {
+          key_expr: "from/{{ _p.sovereign }}/**",
+          volume: {
+            id: "rocksdb",
+            dir: "{{ goat_zenoh_storage_path }}/sovereign_from_{{ _p.sovereign }}",
+            on_closure: "do_nothing",
+            create_db: true,
+            db_recovery_enabled: false,
+          },
+          garbage_collect_period: 86400,
+          time_to_live: {{ zenoh_from_retention_days | int * 86400 * 1000 }},
+        },
+{% endfor %}
 {% endif %}
 {% if goat_zenoh_legacy_system_namespace | default(false) | bool %}
         // DEPRECATED operator namespace (ADR 1035) — only rendered for an
