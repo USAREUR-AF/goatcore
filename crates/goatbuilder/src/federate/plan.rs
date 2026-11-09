@@ -1108,7 +1108,12 @@ fn inputs_part(
         our_edge_group: &edge_group,
         our_work: Path::new(&work),
         our_package,
-        probe_dir: Path::new(&work).join("preflight/probe"),
+        // A mock runs no probe, and an earlier run's answers are not this
+        // plan's: under --mock there is none to read.
+        probe_dir: match o.mock {
+            Some(_) => Path::new(&work).join("preflight/probe/(none under --mock)"),
+            None => Path::new(&work).join("preflight/probe"),
+        },
     };
     let mut host_firewall = Vec::new();
     for (g, profile) in [(&edge_group, "edge"), (&core_group, "core")] {

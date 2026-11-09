@@ -1,0 +1,4 @@
+peering_wg_via_forwarder: true
+peering_wg_forwarder_endpoint: "198.51.100.77:51821"
+peering_wg_carrier_listen_port: 51824
+peering_wg_interface: wg-fed2
