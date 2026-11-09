@@ -430,12 +430,14 @@ pub enum Cmd {
     ///
     /// `goatbuilder federate init|lint|compose|diff|verify|apply` runs one of
     /// the six federation verbs in process, with the flags and exit codes of
-    /// `goat federate <verb>`.
+    /// `goat federate <verb>`. `goatbuilder federate plan <partner>` writes
+    /// the bounded plan alone.
     #[command(args_conflicts_with_subcommands = true, subcommand_negates_reqs = true)]
     Federate {
-        /// One federation verb instead of the whole peering.
+        /// One federation verb, or one stage of the one command (`plan`),
+        /// instead of the whole peering.
         #[command(subcommand)]
-        verb: Option<goat_federation::verbs::FederateCmd>,
+        verb: Option<federate::plan::Stage>,
         #[command(flatten)]
         site: Box<federate::verbs::SiteArgs>,
         /// The peering name (the counterparty, as declared), or a stage run
@@ -1045,7 +1047,7 @@ fn main() {
     // candidate lists read the checkout leniently and never fail loudly.
     // The six federation verbs read only the files they are named, and the
     // site (federate/verbs.rs): no repository, no config.
-    if let Cmd::Federate { verb: Some(_), .. } = &cli.cmd {
+    if let Cmd::Federate { verb: Some(federate::plan::Stage::Verb(_)), .. } = &cli.cmd {
         // The verbs read no repository, fixture or table output, so a flag that
         // would choose one is refused rather than silently ignored: under
         // --mock, `apply --confirm` would still write the files it names.
@@ -1057,7 +1059,7 @@ fn main() {
             );
             std::process::exit(2);
         }
-        if let Cmd::Federate { verb: Some(verb), site, .. } = cli.cmd {
+        if let Cmd::Federate { verb: Some(federate::plan::Stage::Verb(verb)), site, .. } = cli.cmd {
             std::process::exit(federate::verbs::exit_of(verb, &site));
         }
     }
@@ -1345,7 +1347,14 @@ fn main() {
                 joinnode::join_node(&repo, &joinnode::Options { env, site, node, class, address: address.as_deref(), pass_var: pass_var.as_deref(), via, from: *from, to: *to, dry_run: *dry_run })
             }
         }
-        Cmd::Federate { verb: _, site, with, partner, env, as_party, edge_group, work, from, to, dry_run, resume } => {
+        Cmd::Federate { verb: Some(stage), site, .. } => {
+            if !site.is_empty() {
+                Err(anyhow::anyhow!("--context-dir, --cert, --ca-roots, --context and --profile-dir apply to the six verbs (goatbuilder federate init|lint|compose|diff|verify|apply), not to goatbuilder federate plan"))
+            } else {
+                federate::plan::run(&repo, stage, cli.mock.as_deref())
+            }
+        }
+        Cmd::Federate { verb: None, site, with, partner, env, as_party, edge_group, work, from, to, dry_run, resume } => {
             let with = with.as_deref().unwrap_or_default();
             let cfg_path = cli.mock.as_ref().map(|m| m.join("goatbuilder.yaml")).unwrap_or_else(|| repo.join("ops/goatbuilder/goatbuilder.yaml"));
             if with == "status" {

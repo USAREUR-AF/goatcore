@@ -256,7 +256,7 @@ One more machine of a class at a live site, declared → converged → verified:
 
 A sovereign peering declared, converged and verified (ADR 1157): our half measured, the packages exchanged through the peering directory, one agreement composed and verified, the leaves minted from it, the rules rendered by the one writer, the edge deployed, the transport the agreement chose opened, acceptance in all four tiers. Replaces ops/scripts/peering-standup.sh step for step.
 
-`goatbuilder federate init|lint|compose|diff|verify|apply` runs one of the six federation verbs in process, with the flags and exit codes of `goat federate <verb>`.
+`goatbuilder federate init|lint|compose|diff|verify|apply` runs one of the six federation verbs in process, with the flags and exit codes of `goat federate <verb>`. `goatbuilder federate plan <partner>` writes the bounded plan alone.
 
 **Arguments**
 
@@ -286,6 +286,7 @@ A sovereign peering declared, converged and verified (ADR 1157): our half measur
 - [`goatbuilder federate diff`](#goatbuilder-federate-diff) — Two digests disagree? Run this. It names the field
 - [`goatbuilder federate verify`](#goatbuilder-federate-verify) — Could we actually deliver this agreement? Dry-run it here
 - [`goatbuilder federate apply`](#goatbuilder-federate-apply) — Render the access rules and configuration this agreement implies
+- [`goatbuilder federate plan`](#goatbuilder-federate-plan) — The bounded plan of one peering before anything changes: versions, agreement digest, rendered-configuration hashes, owned resources, restarts, acceptance policy and phase 1's readiness, written to <work>/plan.json with a stable hash. Reads only; changes no host
 
 ## `goatbuilder federate init`
 
@@ -428,6 +429,27 @@ Prints what it would write and stops. Pass --confirm to write.
 | `--partner-audience <PARTNER_AUDIENCE>` | Release-sets this partner holds an audience slot in, so the edge grants it a READ of `keys/<set>/**` and it can obtain a data key (ADR 1169 decision 3). Repeatable |  |
 | `--confirm` | Write. Without this, the rendering is printed and nothing is touched |  |
 | `--json` | One JSON object instead of the glyph lines |  |
+
+## `goatbuilder federate plan`
+
+The bounded plan of one peering before anything changes: versions, agreement digest, rendered-configuration hashes, owned resources, restarts, acceptance policy and phase 1's readiness, written to <work>/plan.json with a stable hash. Reads only; changes no host
+
+**Arguments**
+
+| Argument | Description |
+|---|---|
+| `<WITH>` | The peering name (the counterparty, as declared) |
+
+**Options**
+
+| Flag | Description | Default |
+|---|---|---|
+| `--env <ENV>` | The environment the peering is declared on |  |
+| `--as <AS_PARTY>` | Which party we are |  |
+| `--edge-group <EDGE_GROUP>` | The ansible group the edge runs in (default <peering>_edge) |  |
+| `--work <WORK>` | The working directory (default $FED_WORK, else /var/lib/goat-federation/<peering>) |  |
+| `--no-live` | Skip phase 1's live reads of the hosts; each is reported SKIP |  |
+| `--recheck` | Recheck the saved plan instead of writing one: refused when the file was altered, an input changed, or a live prerequisite fails |  |
 
 ## `goatbuilder pins`
 
