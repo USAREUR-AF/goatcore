@@ -10,7 +10,7 @@
 # the ordering, executable and inspectable.
 #
 # Same shape as ops/scripts/goat-standup.sh on purpose: numbered phases, a kind
-# per phase, --plan, --from/--to, every phase idempotent. Someone who has run one
+# per phase, --plan and --from/--to for controlled resumption. Someone who has run one
 # has effectively run the other. See docs/design/staged-delivery-pattern.md.
 #
 # Usage:
@@ -20,7 +20,7 @@
 #                   execute NOTHING. Offline-safe; start here, always.
 #     --from/--to   run a sub-range — resume after a manual step, or after a
 #                   failed phase once its cause is fixed. Every phase is
-#                   idempotent, so re-running from the failed number is safe.
+#                   resumable; inspect its inputs and end state before re-running.
 #     --as          which party we are (default: read from the declaration)
 #     --edge-group  the ansible group the edge runs in (default: <peering>_edge)
 #
@@ -162,7 +162,7 @@ step() {   # step <n> <kind> <label> <command...>
        2. Open docs/operations/sovereign-federation-runbook.md — the phase
           table names this phase's "worked when" (the end state you are
           aiming for), and Steps 7 and 8 are the acceptance criteria.
-       3. Fix the cause, then resume — every phase is idempotent:
+       3. Fix the cause, check the inputs and current state, then resume:
             ops/scripts/peering-standup.sh $PEERING --from $n
 RECOVER
         exit "$rc"

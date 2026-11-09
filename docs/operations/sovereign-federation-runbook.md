@@ -101,7 +101,7 @@ Set these before the run; phase 1 refuses without the first three:
 | 5 | **MANUAL** | exchange through the directory; read the key and CA fingerprint **aloud** | the directory step uploaded ours and placed theirs and their CA on disk with no FAIL row; on one call each side read its verifying key and CA fingerprint and the other read them back; both keys are in the keyring |
 | 6 | T | `compose` | one digest, and argument order does not change it |
 | 7 | T | `verify` | the derived names re-derive; the ingress prefix and republish target are stated |
-| 8 | T | mint the peering leaves | four certificates, names derived from the agreement, SANs covering every address that will be dialled: outward, inward, core, and `republisher.pem` with CN `fed.<us>.<them>.republisher.01` |
+| 8 | T | validate or mint the peering leaves | four certificates, names derived from the agreement, SANs covering every address that will be dialled: outward, inward, core, and `republisher.pem` with CN `fed.<us>.<them>.republisher.01` |
 | 9 | T | `apply --confirm` | the partner declaration, the edge group_vars, the republisher vars (`federation-<them>-republish.yml`) and the ACL fragment, which carries the edge's subject and the republisher's `fed-rp-<them>` subject |
 | 10 | **MANUAL** | review what apply rendered; admit the edge on our core | the fragment is spliced into the core's access control and the core restarted on it |
 | 11 | A | open the transport the AGREEMENT selected | the link is up. `wireguard` runs `peering-wg.yml`, `ipsec-fips` runs `peering-edge.yml`; the phase never substitutes one for the other, and any other transport refuses. A party that needs IPsec declares `ipsec-fips` and NOT `wireguard`, so the intersection selects it |
@@ -205,6 +205,43 @@ everything — the single most damaging mistake available in this procedure.
 **Do not reuse your core router's configuration as a starting point.** Use the edge template. The
 permission engine stops at the first rule that allows something, so a permissive rule inherited
 from your core cannot be taken back by adding a narrower one afterwards.
+
+### Phase 8 reruns and deliberate certificate replacement
+
+Phase 8 validates and reuses existing certificate/key pairs. A successful rerun
+preserves their bytes and modification times; the CA private key may remain
+offline when every requested pair already exists and validates. Missing complete
+pairs are issued only when the own CA signing key is available.
+
+Validation binds the own CA fingerprint to the agreement and covers the validity period, exact derived CN and SANs, client
+and server EKUs, non-CA status, key usage, matching public keys and private-key
+mode 0600. The default remaining-validity minimum is 86400 seconds; configure
+`FED_LEAF_MIN_VALID_SECONDS` explicitly if the deployment requires another window.
+An incomplete, invalid or changed pair refuses the run before any leaf is
+replaced. Inspect the discrepancy rather than deleting files to bypass it.
+
+For intentional reissuance, including expiry, invoke the helper explicitly with
+`--rotate`, using the same reviewed agreement, own CA and core SAN inputs:
+
+```bash
+ops/federation/standup/mint-peering-leaves.sh \
+  "$FED_WORK/agreement.json" "$FED_WORK/pki" --as "$OUR_ID" \
+  --core-cn "$FED_CORE_CN" --core-san "$FED_CORE_SAN" --rotate
+```
+
+The signing inputs still come from `FED_CA_CERT` and `FED_CA_KEY`. Rotation
+replaces every requested pair with a new key; keep that action separate from an
+ordinary phase rerun. Previous material is retained in a private `.previous-*`
+directory under the output directory. Protect and retire it through the local key
+retention policy. This command prepares files; it does not deploy them or restart
+services. Plan and review the corresponding deployment separately.
+
+Operations on one output directory are locked. All candidates are staged and
+validated before installation, with rollback on ordinary installation errors.
+Installation across several files is not crash-atomic: after abrupt interruption,
+an outstanding `.rotation-pending` marker blocks further operations. Restore or
+complete the reviewed set, verify it, and only then remove the marker. Incomplete
+or mismatched pairs are also refused. See [Federation certificate lifecycle](../design/federation-certificate-lifecycle.md).
 
 ### The republisher, on your core host
 

@@ -31,7 +31,7 @@
 #   mint-peering-leaves.sh <agreement.json> <out-dir> [--as <sovereign>]
 #                          [--ca-cert <pem>] [--ca-key <pem>]
 #                          [--core-cn <name>] [--core-san <san>[,<san>...]]
-#                          [--link-ip <ip>]
+#                          [--link-ip <ip>] [--rotate] [--min-valid-seconds <n>]
 #
 # Environment: FED_CA_CERT, FED_CA_KEY, FED_CORE_CN, FED_CORE_SAN, FED_LINK_IP
 set -uo pipefail
@@ -40,9 +40,13 @@ AGREEMENT=""; OUT=""; AS=""
 CA_CERT="${FED_CA_CERT:-}"; CA_KEY="${FED_CA_KEY:-}"
 CORE_CN="${FED_CORE_CN:-goat-zenoh}"; CORE_SAN="${FED_CORE_SAN:-}"; LINK_IP="${FED_LINK_IP:-}"
 DAYS="${FED_LEAF_DAYS:-90}"
+ROTATE=0; MIN_VALID_SECONDS="${FED_LEAF_MIN_VALID_SECONDS:-86400}"
+HELPER="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/peering_leaf_material.py"
 
 while [ $# -gt 0 ]; do
   case "$1" in
+    --rotate)   ROTATE=1; shift ;;
+    --min-valid-seconds) MIN_VALID_SECONDS="$2"; shift 2 ;;
     --as)       AS="$2"; shift 2 ;;
     --ca-cert)  CA_CERT="$2"; shift 2 ;;
     --ca-key)   CA_KEY="$2"; shift 2 ;;
@@ -60,7 +64,7 @@ done
 fail() { echo "[✗] $1" >&2; [ -n "${2:-}" ] && printf '     %s\n' "$2" >&2; exit 1; }
 
 # --- the two derived names, read from the agreement, never typed --------------
-read -r US THEM OURS_CN THEIRS_CN DERIVED_LINK_IP REPUBLISHER_CN <<EOF
+read -r US THEM OURS_CN THEIRS_CN DERIVED_LINK_IP REPUBLISHER_CN CA_FINGERPRINT <<EOF
 $(python3 - "$AGREEMENT" "$AS" <<'PY'
 import json, sys
 ag = json.load(open(sys.argv[1]))
@@ -87,7 +91,8 @@ if subnet:
     hosts = list(net) if net.prefixlen == 31 else list(net.hosts())
     if len(hosts) == 2:
         link = str(hosts[parties.index(us)])
-print(us, them, cn(us, them), cn(them, us), link, f"fed.{us}.{them}.republisher.01")
+fingerprint = next(p.get("ca_fingerprint", "-") for p in ag["parties"] if p["sovereign_id"] == us)
+print(us, them, cn(us, them), cn(them, us), link, f"fed.{us}.{them}.republisher.01", fingerprint)
 PY
 )
 EOF
@@ -103,36 +108,11 @@ echo "  outward CN (to them):   $OURS_CN"
 echo "  inward  CN (to core):   $THEIRS_CN   <- the name our core's ACL matches"
 echo "  republisher CN (core):  $REPUBLISHER_CN"
 
-# --- the CA that signs all three ---------------------------------------------
-[ -n "$CA_CERT" ] && [ -n "$CA_KEY" ] || fail "no signing CA" \
-  "Set FED_CA_CERT and FED_CA_KEY (or --ca-cert/--ca-key) to OUR OWN CA.
-Never the counterparty's: a foreign root anywhere near a core router IS an
-authorization grant, because the access layer matches a name and cannot see
-the issuer."
-[ -f "$CA_CERT" ] || fail "CA certificate $CA_CERT does not exist"
-[ -f "$CA_KEY" ]  || fail "CA key $CA_KEY does not exist"
-
-mkdir -p "$OUT" || fail "cannot create $OUT"
-cd "$OUT" || exit 1
-
-mint() { # mint <name> <CN> <SANs>
-  local name="$1" cn="$2" sans="$3"
-  openssl ecparam -name prime256v1 -genkey -noout -out "$name-key.pem" 2>/dev/null \
-    || fail "could not generate a key for $name"
-  openssl req -new -key "$name-key.pem" -out "$name.csr" -subj "/CN=$cn" 2>/dev/null \
-    || fail "could not build a CSR for $name"
-  printf 'subjectAltName=%s\nbasicConstraints=CA:FALSE\nkeyUsage=digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth,clientAuth\n' \
-    "$sans" > "$name.ext"
-  # The serial file lives with the leaves. `-CAcreateserial` alone writes it beside the
-  # CA, and an offline CA's directory is the last place that should need to be writable.
-  openssl x509 -req -in "$name.csr" -CA "$CA_CERT" -CAkey "$CA_KEY" \
-    -CAserial "ca.srl" -CAcreateserial \
-    -out "$name.pem" -days "$DAYS" -sha256 -extfile "$name.ext" 2>/dev/null \
-    || fail "could not sign $name"
-  rm -f "$name.csr" "$name.ext"
-  chmod 600 "$name-key.pem"; chmod 644 "$name.pem"
-  echo "  [✓] $name.pem  CN=$cn  SAN=$sans"
-}
+# Validate every requested pair before issuing or replacing anything. The CA
+# private key is needed only for missing leaves or explicit rotation.
+[ -n "$CA_CERT" ] || fail "no CA certificate" "Set FED_CA_CERT to OUR OWN CA."
+LEAVES=()
+mint() { LEAVES+=(--leaf "$1" "$2" "$3"); }
 
 # Outward: what the partner dials. The link address must be a SAN or their
 # name verification fails, and on this software that failure is quiet.
@@ -173,9 +153,15 @@ else
   echo "      verification, and the edge logs nothing at INFO when it does."
 fi
 
+ARGS=(--out "$OUT" --ca-cert "$CA_CERT" --ca-fingerprint "$CA_FINGERPRINT" --days "$DAYS"
+      --min-valid-seconds "$MIN_VALID_SECONDS")
+[ -z "$CA_KEY" ] || ARGS+=(--ca-key "$CA_KEY")
+[ "$ROTATE" = 0 ] || ARGS+=(--rotate)
+python3 "$HELPER" "${ARGS[@]}" "${LEAVES[@]}" || exit 1
+
 cat <<DONE
 
-  Minted into $OUT. Wire them to the edge role as:
+  Validated material in $OUT. Wire them to the edge role as:
 
     goat_zenoh_edge_outward_cert: $OUT/peering-outward.pem
     goat_zenoh_edge_outward_key:  $OUT/peering-outward-key.pem
