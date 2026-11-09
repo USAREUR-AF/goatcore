@@ -294,6 +294,15 @@ pub(super) fn splice(
     o: &Options,
     edge_group: &str,
 ) -> Result<()> {
+    // Only a relayed entry changes phase 2; ambiguity matters only then.
+    let relayed = cfg.peerings.iter().any(|p| {
+        p.with == o.with
+            && o.env.map(|e| p.environment == e).unwrap_or(true)
+            && p.forwarder.is_some()
+    });
+    if !relayed {
+        return Ok(());
+    }
     let Some(p) = super::declaration::peering(cfg, o.with, o.env)? else {
         return Ok(());
     };
@@ -342,7 +351,13 @@ pub(super) fn splice(
     let forward = with(g, "peering-forwarder.yml");
     let first = ph.cmd.clone();
     // Each step in its own subshell: each begins with a `cd`, which may be relative.
-    ph.cmd = format!("({first}) && ({keys}) && ({forward}) && ({keys}) && ({first})");
+    // The second keys step must leave the forwarder's carrier key on this
+    // machine; without it the edge's carrier would come up with no peer.
+    let fwd_key = format!("{}/{FORWARDER_KEY_FILE}", v.cert_dir);
+    let check = format!(
+        "test -s '{fwd_key}' || {{ echo \"    the forwarder's carrier public key did not reach {fwd_key}: check the forwarder play and peering-carrier-keys.yml on {g}\"; false; }}"
+    );
+    ph.cmd = format!("({first}) && ({keys}) && ({forward}) && ({keys} && {check}) && ({first})");
     ph.label = format!(
         "{}, behind the forwarder {} (public port {}, carrier {})",
         ph.label,
@@ -387,6 +402,36 @@ mod tests {
         alloc::allocate_all(c, &AllocContext::default()).unwrap()
     }
 
+    /// A partner on two environments with no forwarder: phase 2 is left as it
+    /// was, with no --env demanded.
+    #[test]
+    fn splice_demands_env_only_when_a_forwarder_is_declared() {
+        let mut prod = p("xab", false);
+        prod["environment"] = json!("prod");
+        let c = cfg(json!([p("xab", false), prod]));
+        let dir = tempfile::tempdir().unwrap();
+        let o = Options {
+            with: "xab",
+            env: None,
+            r#as: None,
+            edge_group: None,
+            work: None,
+            mock: None,
+            from: 1,
+            to: 99,
+            dry_run: true,
+            table: false,
+        };
+        let mut phases = vec![Phase {
+            n: 2,
+            kind: "A",
+            label: "prepare".into(),
+            cmd: "x peering-prepare.yml".into(),
+        }];
+        splice(&mut phases, &c, dir.path(), &o, "xab_edge").unwrap();
+        assert_eq!(phases[0].cmd, "x peering-prepare.yml");
+    }
+
     #[test]
     fn carrier_pairs_put_the_forwarder_first() {
         assert_eq!(
@@ -429,7 +474,10 @@ mod tests {
         // The rendered entries parse as YAML the role reads.
         let y: serde_yaml::Value = serde_yaml::from_str(b).unwrap();
         assert_eq!(
-            y["goatbuilder_forwarder_peerings"].as_sequence().unwrap().len(),
+            y["goatbuilder_forwarder_peerings"]
+                .as_sequence()
+                .unwrap()
+                .len(),
             2
         );
     }
@@ -582,7 +630,14 @@ mod tests {
             "{}",
             parts[2]
         );
-        assert_eq!(parts[1], parts[3]);
+        assert!(parts[1].starts_with(parts[3].split(" && ").next().unwrap()));
+        // After the second keys step, phase 2 fails unless the forwarder's
+        // carrier key reached the machine running the driver.
+        assert!(
+            parts[3].contains("test -s '/var/lib/goat-federation/xab/pki/forwarder-carrier.pub'"),
+            "{}",
+            parts[3]
+        );
         assert!(parts[4].ends_with(" peering-prepare.yml"));
         assert!(
             phases[0].label.contains(
