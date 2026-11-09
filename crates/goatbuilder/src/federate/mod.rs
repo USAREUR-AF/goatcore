@@ -37,11 +37,9 @@ use anyhow::{anyhow, Context, Result};
 use crate::config;
 use crate::{Check, Report, EXIT_OK, EXIT_REFUSED};
 
-// The allocator's interface: `goatbuilder validate` reads its problems today;
-// `goatbuilder federate allocate` and the driver's later stages read the rest.
-#[allow(dead_code)]
 pub mod alloc;
 pub mod declaration;
+pub mod peering_files;
 
 pub struct Options<'a> {
     pub with: &'a str,
@@ -398,6 +396,10 @@ fn plan_view(repo: &Path, o: &Options, work: &str, edge_group: &str, phases: &[P
 }
 
 pub fn federate(repo: &Path, o: &Options) -> Result<Report> {
+    // `goatbuilder federate allocate`: the per-peering values and files (a reserved word, never a partner).
+    if o.with == "allocate" {
+        return peering_files::run(repo, o);
+    }
     // `--mock <dir>` reads the flat `<dir>/goatbuilder.yaml`, the same fixture
     // shape standup opens; without it, the repository's own config.
     let cfg_path = match o.mock {
@@ -431,6 +433,8 @@ pub fn federate(repo: &Path, o: &Options) -> Result<Report> {
     let work = o.work.map(String::from).unwrap_or_else(|| env_or("FED_WORK", format!("/var/lib/goat-federation/{}", o.with)));
     let edge_group = o.edge_group.map(String::from).unwrap_or_else(|| format!("{}_edge", o.with));
     let resume = format!("goatbuilder federate {}{}", o.with, o.env.map(|e| format!(" --env {e}")).unwrap_or_default());
+    // Once `goatbuilder federate allocate` has recorded this peering, the run must use its values.
+    peering_files::driver_agrees(&cfg, cfg_path.parent().unwrap_or(repo), o, &work, &edge_group)?;
     let phases = plan(repo, o, &work, &edge_group, &resume);
     let executes = !o.dry_run && o.mock.is_none();
     let banner_mode = if o.dry_run {

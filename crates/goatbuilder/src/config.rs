@@ -186,7 +186,6 @@ pub struct Peering {
     /// Step 1's tunnel: `wireguard` or `ipsec` (the FIPS-validated IPsec
     /// transport). Absent: wireguard. The one field for the transport.
     #[serde(default)]
-    #[allow(dead_code)] // read where the per-peering files are rendered
     pub tunnel: Option<String>,
     /// Release sets this peering offers, narrowing the `[data] release` of the
     /// goat context's federation.toml, which owns them. Absent: all of them.
@@ -198,7 +197,6 @@ pub struct Peering {
     pub values: crate::federate::declaration::PeeringPins,
     /// The machines' addresses, for the rendered peering inventory.
     #[serde(default)]
-    #[allow(dead_code)] // read where the peering inventory is rendered
     pub hosts: Option<PeeringHosts>,
     /// Present when a peering forwarder relays the partner to our edge (ADR 1218).
     #[serde(default)]
@@ -208,7 +206,6 @@ pub struct Peering {
 
 /// Where the edge and the core are, as the inventory reaches them.
 #[derive(Debug, Clone, Deserialize)]
-#[allow(dead_code)] // read where the peering inventory is rendered
 pub struct PeeringHosts {
     pub edge: String,
     pub core: String,
