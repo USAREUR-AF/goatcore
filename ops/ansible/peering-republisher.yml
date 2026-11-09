@@ -29,3 +29,11 @@
       ansible.builtin.include_tasks: tasks/peering-applied-vars.yml
   roles:
     - role: goat-fed-republisher
+  post_tasks:
+    # Opt-in (goat_host_firewall_baseline, default false); docs/design/peering-host-firewall.md.
+    - name: Host firewall baseline for the core router host
+      ansible.builtin.include_role:
+        name: goat-host-firewall
+      vars:
+        goat_host_firewall_profile: core
+      when: goat_host_firewall_baseline | default(false) | bool
