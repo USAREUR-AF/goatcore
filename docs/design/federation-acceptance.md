@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | **Built:** `ops/federation/standup/acceptance.sh`, phase 14 of both avenues (`goatbuilder federate` and `ops/scripts/peering-standup.sh`): the checks generated from the agreement's flows (§2), persistent reception (§2.1), refusals tied to the control's session (§2.2), existing partnerships before and after, opt-in (§2.3), the outcome and exit rule (§3), the evidence bundle (§4, `ops/federation/standup/acceptance_evidence.py`, unit tests `test_acceptance_evidence.py`), and a bilateral session exchanged by file (§6, `acceptance_session.py`, tests `test_acceptance_session.py`), and the in-process test fabric with the tests that run the real script against it (§5, `acceptance_fakefabric.py`, `test_acceptance.py`). The hermetic federation end-to-end test (`ops/federation-e2e/run.sh`) runs phase 14 from both sides with every check configured; it has not been run on this change. **Not built:** a required-check policy file, the driver running `--before` ahead of phase 11 and naming the other peerings itself, run-owned probe sessions with cleanup, report signing and any automatic bilateral gate |
+| Status | **Built:** `ops/federation/standup/acceptance.sh`, phase 14 of both avenues (`goatbuilder federate` and `ops/scripts/peering-standup.sh`): the checks generated from the agreement's flows (§2), persistent reception (§2.1), refusals tied to the control's session (§2.2), existing partnerships before and after, opt-in (§2.3), run-owned probes with cleanup, opt-in (§2.4), the outcome and exit rule (§3), the evidence bundle (§4, `ops/federation/standup/acceptance_evidence.py`, unit tests `test_acceptance_evidence.py`), and a bilateral session exchanged by file (§6, `acceptance_session.py`, tests `test_acceptance_session.py`), and the in-process test fabric with the tests that run the real script against it (§5, `acceptance_fakefabric.py`, `test_acceptance.py`). The hermetic federation end-to-end test (`ops/federation-e2e/run.sh`) runs phase 14 from both sides with every check configured; it has not been run on this change. **Not built:** a required-check policy file, the driver running `--before` ahead of phase 11 and naming the other peerings itself, a launcher for the test environment's probes, ssh host-key verification by default, report signing and any automatic bilateral gate |
 | Companions | [`sovereign-federation-runbook.md`](../operations/sovereign-federation-runbook.md) Steps 7 and 8 (the same checks by hand), [`ops/federation/roundtrip/README.md`](../../ops/federation/roundtrip/README.md) (the round trip), [`deployment-e2e.md`](deployment-e2e.md) §"The same pattern for a federation" |
 | Audience | An operator running phase 14; whoever changes `acceptance.sh` |
 
@@ -63,8 +63,11 @@ Rules that keep the checks honest:
 - **Where the probes run.** From the operator's machine. Reads and writes go through
   `FED_SSH_OURS` / `FED_SSH_THEIRS` when set (curl runs on the core host), else directly. The
   round-trip script is streamed over that ssh with `bash -s`; nothing is copied to a host.
-  The probe sessions and the responders are started by whoever runs the drill (the end-to-end
-  test starts them); run-owned, time-limited probes with cleanup are not built.
+  With `FED_SSH_KNOWN_HOSTS` (a known_hosts file holding the cores' host keys) ssh verifies
+  each host's identity and refuses an unknown or changed key; unset, it runs without checking,
+  as before, and the bundle records which (`inputs.ssh_host_keys_verified`). The responders are
+  started by whoever runs the drill. The probe sessions are too, unless a launcher is named
+  (§2.4).
 
 Tier 1 (each phase's own end state) belongs to the phases.
 
@@ -159,6 +162,33 @@ core. An existing agreement whose ids or set names are not well-formed is not us
 Without `FED_EXISTING_WORKS` nothing here runs and phase 14 is as before. Running `--before`
 from the driver, and finding the other peerings from the deployment instead of a variable, is not
 built; it is a separate change of default.
+
+### 2.4 Run-owned, time-limited probes
+
+**Built, opt-in.** The refusal rows need three client sessions across the link: one holding the
+partner's agreed identity, one a name nobody agreed, one our core's name. A drill used to start
+them by hand and leave them running. With `FED_PROBE_LAUNCHER` the run starts them itself:
+
+| Launcher call | Contract |
+|---|---|
+| `start <agreed\|forged\|impersonate> <run id> <deadline, epoch seconds>` | prints `REST=<url>`, `ZID=<zenoh id>`, `HANDLE=<opaque id>`, one per line; the session ends by itself at the deadline |
+| `stop <handle>` | ends it |
+| `alive <handle>` | exits 0 while it exists, 1 once it is gone |
+
+The deadline is now plus `FED_PROBE_TTL` seconds (900). Every resource started is written to
+this run's own manifest, `<evidence>/probes/<run id>.json`, before it is used. At the end the run
+stops exactly those, asks whether each is gone, and records `cleanup/probes`: FAIL, and required,
+when any remains. A manifest an earlier run left behind with resources not confirmed gone (the run
+was killed) is cleaned first, only the resources it names, recorded as `cleanup/earlier-runs`.
+An interrupt or termination stops this run's probes before the run exits. A probe given directly
+(`FED_PROBE_THEIRS_REST` and the rest) is not started or stopped by the run. Probe keys stay
+under the reserved `acceptance-probe/`, `acceptance-forged/` and `acceptance-impersonate/`
+names, and no production edge, core or tunnel is started or stopped. The synthetic samples
+themselves stay in the receiving store under its normal retention; nothing claims to delete them
+downstream.
+
+The launcher is the deployment's or the drill's: it holds whatever certificates the probes need
+(approved negative test identities, never the CA). None ships with this change.
 
 ## 3. Outcome and exit status
 
@@ -334,6 +364,7 @@ broken on purpose (`Faults`). `test_acceptance.py` runs the real script against 
 | a bilateral session, each side on its own core: first runner, second runner, first again; import twice; combine | first: inbound BLOCKED, exit 3; second: inbound PASS with the partner's challenge, outbound BLOCKED naming the partner's row; first again: inbound PASS; second import refused as a replay; outbound PASS (peer-reported), scope INCOMPLETE where refusals were not configured |
 | two operators, each with their own core, edge trace, probes and SPIRE commands, run one session and exchange bundles | both `combine` results PASS |
 | a session manifest made for another agreement | exit 2 |
+| probes from a launcher; a launcher whose stop does nothing; an interrupted run's probe beside a session that is not ours; no launcher | refusal rows and `cleanup/probes` PASS, nothing left; `cleanup/probes` FAIL (exit 1); `cleanup/earlier-runs` PASS and the other session untouched; no `cleanup/` row |
 | an existing partnership: unnamed; unchanged before and after; no snapshot from before; its agreement changed; its round trip broken by the deployment; a set for the new partner reaching it; no surface for it | no `existing/` rows; PASS (exit 0); BLOCKED (exit 3); FAIL; FAIL naming "before"; leak FAIL; optional SKIP (exit 0) |
 
 `FED_ACCEPTANCE_WAIT`, `FED_ACCEPTANCE_GAP` and `FED_ACCEPTANCE_RT_TIMEOUT` shorten the waits
