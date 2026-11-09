@@ -338,6 +338,10 @@ else
   #      require that the core's own store does and that no other session does,
   #      stopping a drill's test subscribers when it says how, and only then publish
   #      a NEW sample and read it back from the store.
+  # The refusals below are gated on the delivery rows alone: a persistence row that
+  # is BLOCKED (a closed admin space, a test subscriber left running) says nothing
+  # about whether the lanes carry, so it must not take the refusal rows with it.
+  T2_FAIL=$fail; T2_BLOCKED=$blocked
   [ "$HAVE_OUT" = 1 ] || { begin; na persistence/outbound outbound persistence "$NO_OUT"; }
   [ "$HAVE_IN" = 1 ]  || { begin; na persistence/inbound inbound persistence "$NO_IN"; }
   side_run() { if [ "$1" = ours ]; then ours "$2"; else theirs "$2"; fi; }
@@ -397,7 +401,7 @@ else
   for set in $(list "$OUR_SETS");   do persist outbound theirs ours "$US" "$set"; gap; done
 
   # ---- TIER 3, NEGATIVE. Only meaningful because tier 2 just passed.
-  if [ "$fail" -eq 0 ] && [ "$blocked" -eq 0 ]; then
+  if [ "$T2_FAIL" -eq 0 ] && [ "$T2_BLOCKED" -eq 0 ]; then
     begin
     # The republisher boundary, in each direction the agreement has: a set the
     # agreement never offered, staged beside the offered ones that just crossed, is

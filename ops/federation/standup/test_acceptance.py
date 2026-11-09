@@ -257,6 +257,7 @@ class AcceptanceRun(unittest.TestCase):
         self.assertEqual(v["persistence/outbound/release/all"], "PASS", out)
         self.assertEqual(rc, 3, out)
         self.assertIn("FED_TEST_SUBSCRIBERS_PAUSE_OURS", out)
+        self.assertEqual(v["refusal/out-of-lane-denied"], "PASS", out)
 
     def test_with_the_test_subscriber_stopped_the_refused_store_fails(self):
         self.fabric.faults.storage_interest_refused.add("xaa")
@@ -284,6 +285,11 @@ class AcceptanceRun(unittest.TestCase):
         self.assertEqual(rc, 3, out)
         self.assertEqual(v["persistence/inbound/release/all"], "BLOCKED", out)
         self.assertIn("adminspace read", out)
+        # A persistence row that could not run does not take the refusal rows with it.
+        for name in ("republisher-boundary/inbound", "out-of-lane/inbound", "refusal/control-allowed",
+                     "refusal/out-of-lane-denied", "refusal/forged-name"):
+            self.assertEqual(v.get(name), "PASS", (name, out))
+        self.assertNotIn("refusals", v)
 
     def test_no_store_for_the_lane_fails(self):
         self.fabric.faults.no_storage.add("xab")

@@ -98,7 +98,11 @@ So after the delivery rows, for each offered set and direction, the runner:
    and reads it back from the receiving store. PASS only when the exact bytes are read.
 
 The scope it saw (`store_subscriptions`, `diagnostic`, `remote_routers`) is kept in the check's
-observations. Measured against `eclipse/zenoh:1.9.0` with a memory store on `from/xab/**`: the
+observations. The refusal rows that follow are gated on the delivery rows alone, so a persistence row
+that is BLOCKED or FAILs does not turn them into SKIP. A subscriber that reaches the core through
+another router (`remote_routers`) is recorded and not counted: a goatnet with several routers
+holds stores on more than one, and telling a store from a person's session on a remote router is
+not built. Measured against `eclipse/zenoh:1.9.0` with a memory store on `from/xab/**`: the
 store alone answers `ready`; a client subscribed to `from/xab/all/**` answers `diagnostic`; a
 client subscribed to `from/xab/**/fedcheck/*` does not count for a `.../persist` key.
 
