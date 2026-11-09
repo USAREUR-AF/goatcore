@@ -6,14 +6,14 @@
 `crates/goatbuilder/src/federate/plan.rs`, which writes `<work>/plan.json`
 (schema `goat-federation-plan/v1`); `goatbuilder federate plan <partner> --recheck`
 and the function behind it, `recheck_live_prerequisites`; codes GB-200 to GB-202
-in `ops/errors/catalog.yaml`. Unit tests cover the hash, the digest, the
-recheck and the value resolution.
+in `ops/errors/catalog.yaml`; the host-level allocation check in
+`crates/goatbuilder/src/federate/hostalloc.rs` (GB-203). Unit tests cover the
+hash, the digest, the recheck, the value resolution and the host check.
 **Not built:** the deploy step that calls the recheck before it changes
 anything, and approval bound to the plan's hash (both belong to the deploy
 stage); the allocated per-peering values (the plan reads the group's vars and
-the roles' defaults until allocation is wired in); the check of this peering
-against other peerings on the same host; the call to the baseline host firewall's renderer, so a host with the
-baseline on is BLOCKED. **Not measured:** no run against real
+the roles' defaults until allocation is wired in); the call to the baseline
+host firewall's renderer, so a host with the baseline on is BLOCKED. **Not measured:** no run against real
 hosts.
 
 Status: WIP — gate: on the federation test environment, a plan of a clean
@@ -45,6 +45,7 @@ only writes are `<work>/plan.json` and phase 1's result files under
 | `acceptance` | the runner, whether `FED_ACCEPTANCE_STRICT=1` is set, and for each flow a reception and a refusal that acceptance must show | the agreement's flows |
 | `readiness` | each phase-1 check's outcome and code | `preflight.py`, run with the derived inputs into `<work>/plan/preflight.json`; `--no-live` skips the live reads (each SKIP) |
 | `host_firewall` | one entry per host of the edge and core groups, with its address. With `goat_host_firewall_baseline` not true (the default): NOT APPLICABLE, "host firewall baseline: off", nothing rendered or applied. With it true: BLOCKED, and a BLOCKED readiness row, because the plan does not render the rule set yet and must show it before anything is applied. A host that moves to another address is a changed input | the peering inventory, the group's vars |
+| `conflicts` | each value this peering and another declared peering would bind on one machine (below) | the peering inventory, each peering's group vars and agreement |
 | `verdict` | `READY`, `READY, <n> check(s) not verified` (SKIP is never a pass), or `BLOCKED` (a FAIL or BLOCKED) | the readiness |
 | `created_at` | when the plan was made (RFC 3339, UTC); outside the hash, so the same inputs give the same hash | the clock |
 | `hash` | sha256 over the plan without `hash`, `created_at` and each readiness `detail` | the plan |
@@ -58,6 +59,31 @@ Phase 1 runs with the inputs `federate/preflight.rs` derives, set only in its
 own environment; the plan exports nothing into the operator's shell. A plan
 under `--mock` runs nothing and writes nothing: phase 1 is SKIP and the plan is
 printed with its hash.
+
+## Conflicts with other peerings
+
+Allocation keeps the peerings of one environment apart in the declaration. The
+host-level check looks at machines. It maps every declared peering's edge
+group (`<peering>_edge`; this run's `--edge-group`) and core group
+(`<peering>_core`) to the hosts the peering inventory names, by address, so two
+inventory names for one machine are one host. It then finds any value two
+peerings would bind on one machine:
+
+| Resource | Where | This peering's value | Another peering's value |
+|---|---|---|---|
+| WireGuard interface | edge host | the plan's resolved resource | its group's vars, else the role default |
+| tunnel UDP port | edge host | the plan's resolved resource | its group's vars, else the role default |
+| link subnet (overlap) | edge host | `transport.link_subnet` of our agreement | of its agreement, beside our working directory or under `/var/lib/goat-federation/<peering>` |
+| republisher metrics port | core host | the plan's resolved resource | its group's vars, else the role default |
+
+Another peering's values never come from this run's environment variables. The
+edge router's partner-facing port is not compared: `goat federate apply` binds
+each edge router to its own link address, so the port is shared by design, and
+the link subnets keep those addresses apart. A conflict that involves this
+peering is a FAIL in readiness with GB-203, naming the host, the resource and
+each peering's value. With no inventory host for this peering, the check is
+SKIP: nothing was compared. Ports held by something that is not a declared
+peering (NetBird on UDP 51820, any other service) are phase 1's live port check.
 
 ## The recheck before a change
 
