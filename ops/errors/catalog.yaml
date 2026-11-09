@@ -2217,6 +2217,48 @@ entries:
     matches:
       - "^status: peering '[^']*' is not declared in "
     exit: 1
+  - code: GB-200
+    tool: goatbuilder
+    title: the federation plan's inputs changed
+    what: "an input the saved plan rests on (versions, the agreement, a rendered file, a certificate, a resource or the acceptance policy) differs from what the plan recorded, so the approval given to that plan does not cover this change."
+    causes:
+      - a phase rendered, minted or composed again after the plan was made
+      - the checkout, the goat binary or a declared value changed after the plan was made
+    fixes:
+      - "goatbuilder federate plan <partner>, then review and approve the new plan"
+    read: docs/design/federation-plan.md
+    exit: 1
+    matches:
+      - "changed since the plan was written"
+
+  - code: GB-201
+    tool: goatbuilder
+    title: the federation plan is missing or altered
+    what: "<work>/plan.json is absent, is not a goat-federation-plan/v1 plan, or does not match its own hash, so it cannot stand for what was approved."
+    causes:
+      - no plan was made for this working directory
+      - the plan file was edited by hand after it was written
+    fixes:
+      - "goatbuilder federate plan <partner> --work <dir>"
+    read: docs/design/federation-plan.md
+    exit: 1
+    matches:
+      - "\\(GB-201\\)"
+
+  - code: GB-202
+    tool: goatbuilder
+    title: a live prerequisite of the federation plan no longer holds
+    what: "rerun immediately before a change, a live phase-1 check (ports, slot list, core router, receive stores) did not pass, so nothing may change. SKIP is not a pass here."
+    causes:
+      - another service took a port the plan expected free
+      - a slot was minted after the slot list was fixed
+      - the core router was replaced or stopped
+    fixes:
+      - "fix the cause the check names (its own code is shown beside GB-202), then goatbuilder federate plan <partner> --recheck"
+    read: docs/design/federation-plan.md
+    exit: 1
+    matches:
+      - "GB-202"
 
   # ------------------------------------------------ federate: the peering forwarder
 

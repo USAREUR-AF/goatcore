@@ -9,7 +9,8 @@ it, the rules rendered by the one writer, the edge deployed, the transport the a
 opened, acceptance in all four tiers. Replaces ops/scripts/peering-standup.sh step for step.
 
 `goatbuilder federate init|lint|compose|diff|verify|apply` runs one of the six federation verbs in
-process, with the flags and exit codes of `goat federate <verb>`.
+process, with the flags and exit codes of `goat federate <verb>`. `goatbuilder federate plan
+<partner>` writes the bounded plan alone.
 
 Usage: goatbuilder federate [OPTIONS] <WITH> [PARTNER]
        goatbuilder federate <COMMAND>
@@ -21,6 +22,9 @@ Commands:
   diff     Two digests disagree? Run this. It names the field
   verify   Could we actually deliver this agreement? Dry-run it here
   apply    Render the access rules and configuration this agreement implies
+  plan     The bounded plan of one peering before anything changes: versions, agreement digest,
+           rendered-configuration hashes, owned resources, restarts, acceptance policy and phase 1's
+           readiness, written to <work>/plan.json with a stable hash. Reads only; changes no host
   help     Print this message or the help of the given subcommand(s)
 
 Arguments:
@@ -56,18 +60,11 @@ Options:
           Run against a fixture directory instead of hosts: no registry, no transport, deterministic
           (goatbuilder-conformance.md §"The fixture")
 
-      --context-dir <DIR>
-          The six verbs: the directory holding federation.toml, mtls.cert.pem and ca-roots.pem
-          (default: $GOAT_CONTEXT_DIR, else the goat context directory, found the way goat finds it)
-
       --lang <TAG>
           Language for help and error explanations (a tag such as fr, uk, de); output a pipeline
           reads stays English. Default: the OS locale
           
           [env: GOAT_LANG=]
-
-      --cert <FILE>
-          The six verbs: our mTLS certificate (default: mtls.cert.pem in the context directory)
 
       --color <COLOR>
           Color the table's ok/FAIL glyph and verdict (auto|always|never). `auto` colors only a
@@ -76,17 +73,20 @@ Options:
           [default: auto]
           [possible values: auto, always, never]
 
-      --ca-roots <FILE>
-          The six verbs: the CA roots (default: ca-roots.pem in the context directory)
+      --context-dir <DIR>
+          The six verbs: the directory holding federation.toml, mtls.cert.pem and ca-roots.pem
+          (default: $GOAT_CONTEXT_DIR, else the goat context directory, found the way goat finds it)
+
+      --cert <FILE>
+          The six verbs: our mTLS certificate (default: mtls.cert.pem in the context directory)
 
   -v, --verbose
           Log what a run does — the external commands it shells out to, and the network phase of
           `update` — to stderr, so `-o json|yaml` stays a clean document. Or set
           RUST_LOG=goatbuilder=debug
 
-      --context <NAME>
-          The six verbs: the goat context to read, as `goat --context` (default: $GOAT_CONTEXT, else
-          current_context in the profile's config.toml, else default)
+      --ca-roots <FILE>
+          The six verbs: the CA roots (default: ca-roots.pem in the context directory)
 
       --timeout <SECS>
           Seconds to bound the connect/reach phase before failing fast — the one phase that can
@@ -94,6 +94,10 @@ Options:
           play's own run or the binary download (stall-bounded). Also reads GOATBUILDER_TIMEOUT
           
           [env: GOATBUILDER_TIMEOUT=]
+
+      --context <NAME>
+          The six verbs: the goat context to read, as `goat --context` (default: $GOAT_CONTEXT, else
+          current_context in the profile's config.toml, else default)
 
       --profile-dir <DIR>
           The six verbs: the goat profile directory, as `goat --profile-dir` (default:

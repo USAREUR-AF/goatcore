@@ -60,6 +60,7 @@ mod run;
 pub mod state;
 pub mod status;
 pub use run::Surface;
+pub mod plan;
 pub mod preflight;
 
 pub struct Options<'a> {

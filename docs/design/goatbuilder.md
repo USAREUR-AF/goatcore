@@ -203,6 +203,8 @@ Status of those paths, in the contract's words: **built, and worked once** — b
 
 The edge host and the core router host of a peering can carry a baseline host firewall, opt-in and off by default: inbound default deny with accept rules derived from the peering's own values, and a per-deployment override that tightens freely and loosens only a named rule with a recorded reason ([peering-host-firewall.md](peering-host-firewall.md)). The plan reports its ruleset and hash before anything is applied.
 
+`goatbuilder federate plan <partner>` writes the bounded plan of one peering before anything changes, with a stable hash, and `--recheck` rechecks it immediately before a change: [federation-plan.md](federation-plan.md). Status: WIP — gate: a clean two-party plan is READY with the same hash on two runs in the federation test environment, and the recheck refuses after the rendered files change.
+
 What this adds to the model is only the site level and the peering object; the verbs, the contract and the converger interface are unchanged. `federate` is a declarative verb like any other — which is the point: a sovereign peering becomes something that is declared, reviewed, converged and verified rather than a procedure carried in a runbook.
 
 #### Federation belongs to goatbuilder
