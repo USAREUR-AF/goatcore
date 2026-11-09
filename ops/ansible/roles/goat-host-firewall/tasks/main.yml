@@ -31,12 +31,13 @@
   ansible.builtin.assert:
     that:
       - (goat_host_firewall_confirm_timeout | int) > 0
-      - (goat_host_firewall_confirm_timeout | int) < (goat_host_firewall_rollback_seconds | int)
+      - (2 * (goat_host_firewall_confirm_timeout | int) + 15) < (goat_host_firewall_rollback_seconds | int)
     fail_msg: >-
-      goat-host-firewall refuses (GB-210): goat_host_firewall_confirm_timeout
-      ({{ goat_host_firewall_confirm_timeout }}) must be less than
-      goat_host_firewall_rollback_seconds ({{ goat_host_firewall_rollback_seconds }}), or
-      the rollback can fire while the run is still confirming. Nothing was applied.
+      goat-host-firewall refuses (GB-210): twice goat_host_firewall_confirm_timeout
+      ({{ goat_host_firewall_confirm_timeout }}) plus 15 s must be less than
+      goat_host_firewall_rollback_seconds ({{ goat_host_firewall_rollback_seconds }}): the
+      confirmation can wait that long, and the rollback must not fire while it does.
+      Nothing was applied.
 
 - name: host-firewall | an edge run carries its peering
   ansible.builtin.assert:
@@ -58,7 +59,9 @@
     rd() { tr -cd 'a-z0-9' < "$1" 2>/dev/null || true; }
     nft_missing=false; command -v nft >/dev/null 2>&1 || nft_missing=true
     pending=false; systemctl is-active --quiet "$u.timer" 2>/dev/null && pending=true
-    bridges=$(ip -o link show type bridge 2>/dev/null | awk -F': ' '{print $2}' | cut -d@ -f1 \
+    # Every link named br-*, not only kernel bridges: the Open vSwitch br-int and br-ex are
+    # links of their own type.
+    bridges=$(ip -o link show 2>/dev/null | awk -F': ' '{print $2}' | cut -d@ -f1 | grep '^br-' \
               | tr -cd 'A-Za-z0-9_.\n-' | awk 'NF {printf "%s\"%s\"", (n++ ? ", " : ""), $0}')
     eph=$(tr -s ' \t' ',' < /proc/sys/net/ipv4/ip_local_port_range 2>/dev/null | tr -cd '0-9,')
     printf '{"nft_missing": %s, "rollback_pending": %s, "profile": "%s", "applied_sha256": "%s", "applied_live_sha256": "%s", "bridges": [%s], "ephemeral": [%s]}\n' \

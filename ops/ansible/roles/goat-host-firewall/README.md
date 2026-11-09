@@ -40,10 +40,9 @@ host still carries a baseline, because turning the switch off does not unload it
 3. In check mode, prints the ruleset's hash and stops.
 4. When the hash, or the loaded table, differs from what the last run recorded: `nft -c`, copies
    the last confirmed ruleset for the rollback, arms a `systemd-run` rollback, loads the new table
-   in one `nft -f`, drops its connection, confirms with a new unmultiplexed `ssh` from the
-   controller and then a fresh Ansible connection, and only then, while the timer is still
-   armed, disarms it and records the hash (GB-214 when it cannot). Key authentication is
-   required for that `ssh`.
+   in one `nft -f`, drops its connection, confirms with a fresh Ansible connection made with
+   multiplexing off, and only then, while the timer is still armed, disarms it and records the
+   hash (GB-214 when it cannot). Password-managed hosts work.
 5. Stores the edge's peering in `/etc/goat-host-firewall/peerings/<if>.json`, so the next
    peering's run on the same host keeps it, and enables `goat-host-firewall.service` for boot.
 

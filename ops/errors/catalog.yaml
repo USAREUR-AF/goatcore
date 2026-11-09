@@ -1499,7 +1499,7 @@ entries:
       - an edge run reached the role without its peering values (the play was not peering-wg.yml or peering-edge.yml)
       - a port, address or interface name in the input is not one (a partner endpoint given as a name, an interface name over 15 characters)
       - "a management source is /0, the mesh interface is the host's uplink, or a br-* bridge that is not docker's (a VXLAN segment bridge) exists while container-bridges is kept"
-      - goat_host_firewall_confirm_timeout is not below goat_host_firewall_rollback_seconds
+      - twice goat_host_firewall_confirm_timeout plus 15 s is not below goat_host_firewall_rollback_seconds
       - the switch is false but the host still carries the baseline (/etc/goat-host-firewall/profile exists)
     fixes:
       - "set goat_host_firewall_management_sources in the host's group_vars to the address or CIDR the deployment manages it from"
@@ -1527,7 +1527,7 @@ entries:
   - code: GB-212
     tool: goatbuilder
     title: the host firewall is loosened without a recorded reason
-    what: "An override entry widens a baseline rule (more sources, other ports, another interface), or a role input is wider than the profile (goat_host_firewall_mesh_udp_ports not empty, a mesh DNS port other than 5353, a management source broader than goat_host_firewall_management_prefix_floor), and no reason is recorded for that rule. Tightening is free; loosening a named rule needs a reason recorded in the deployment's configuration. Nothing was applied."
+    what: "An override entry widens a baseline rule (more sources, other ports, another interface), or a role input is wider than the profile (goat_host_firewall_mesh_udp_ports not empty, a mesh DNS port other than 5353, a management source broader than goat_host_firewall_management_prefix_floor, or that floor set broader than /24 or /64), and no reason is recorded for that rule. Tightening is free; loosening a named rule needs a reason recorded in the deployment's configuration. Nothing was applied."
     causes:
       - "the entry has no reason: key, or a blank one"
       - "an entry meant to narrow widens instead (an empty sources list means any source)"

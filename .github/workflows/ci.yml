@@ -247,7 +247,7 @@ jobs:
           python3 -m pip install -q pyyaml pytest
           sudo apt-get install -y -q nftables
       - name: the baseline renders, and the override contract refuses what it must
-        run: python3 -m pytest -q ops/ansible/roles/goat-host-firewall/tests/test_render.py
+        run: python3 -m pytest -q ops/ansible/roles/goat-host-firewall/tests/test_render.py ops/ansible/roles/goat-host-firewall/tests/test_play_vars.py
       - name: each rendered baseline, loaded in a network namespace, answers on exactly its ports
         timeout-minutes: 5
         run: bash ops/ansible/roles/goat-host-firewall/tests/netns-behavior.sh

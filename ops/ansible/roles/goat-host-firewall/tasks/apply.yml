@@ -59,6 +59,11 @@
          or (_hf_state.applied_sha256 != _hf_result.sha256)
          or (_hf_state.applied_live_sha256 != (_hf_live.stdout | trim)) }}
 
+# Read before the confirmation overrides it for one task.
+- name: host-firewall | the ssh arguments the inventory sets
+  ansible.builtin.set_fact:
+    _hf_inventory_ssh_args: "{{ ansible_ssh_args | default('') }}"
+
 - name: host-firewall | load with a rollback armed
   when: _hf_needs_load | bool
   block:
@@ -131,27 +136,15 @@
 - name: host-firewall | confirm the new ruleset from a fresh connection
   when: _hf_needs_load | bool
   block:
-    # Independent of the connection plugin: a new ssh process from the controller with
-    # multiplexing off, so a connection kept open from before the load proves nothing.
-    # It uses the same user, port, key and ssh arguments (a jump host included) as
-    # Ansible does.
-    - name: host-firewall | a new, unmultiplexed SSH session reaches the host
-      ansible.builtin.shell: >-
-        ssh -o ControlPath=none -o ControlMaster=no -o BatchMode=yes
-        -o ConnectTimeout={{ goat_host_firewall_confirm_timeout | int }}
-        {{ ansible_ssh_common_args | default('') }} {{ ansible_ssh_extra_args | default('') }}
-        -p {{ ansible_port | default(22) | int }}
-        {% if ansible_ssh_private_key_file is defined %}-i {{ ansible_ssh_private_key_file | quote }}{% endif %}
-        {% if ansible_user is defined %}-l {{ ansible_user | quote }}{% endif %}
-        {{ (ansible_host | default(inventory_hostname)) | quote }} true
-      delegate_to: localhost
-      become: false
-      changed_when: false
-      when: _hf_session is not skipped
-
+    # A new SSH session with multiplexing off, so a master kept open from before the load
+    # proves nothing. Through Ansible's own connection, so it uses everything Ansible
+    # resolves (user, key or password, port, ssh_config, ansible.cfg, host key policy).
+    # ssh takes the first value it is given for an option, so these come first.
     - name: host-firewall | a fresh connection still reaches the host
       ansible.builtin.wait_for_connection:
         timeout: "{{ goat_host_firewall_confirm_timeout | int }}"
+      vars:
+        ansible_ssh_args: "-o ControlMaster=no -o ControlPath=none {{ _hf_inventory_ssh_args }}"
 
     # A timer that already fired has put the last confirmed ruleset back, and stopping
     # it would still succeed: confirm only while it is armed.

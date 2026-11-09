@@ -89,9 +89,10 @@ goat_host_firewall_override: {}
 # --- applying ----------------------------------------------------------------
 # The new ruleset is loaded with a rollback armed: unless a fresh connection to the
 # host succeeds and cancels it, the previous ruleset comes back after this many
-# seconds. The confirming connection waits at most confirm_timeout.
+# seconds. The confirming connection waits at most confirm_timeout, and twice that plus
+# 15 s must fit before the rollback (GB-210 otherwise).
 goat_host_firewall_rollback_seconds: 90
-goat_host_firewall_confirm_timeout: 45
+goat_host_firewall_confirm_timeout: 30
 
 goat_host_firewall_dir: /etc/goat-host-firewall
 goat_host_firewall_service: goat-host-firewall.service

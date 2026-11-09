@@ -25,6 +25,10 @@
 #   7. rollback: a ruleset that drops the controller, loaded with the rollback armed
 #      by the same commands tasks/apply.yml runs, cuts SSH and is undone by the timer.
 #      This proves the timer, not the role's own failed-confirm path
+#   4d. a non-bridge link named br-* (Open vSwitch's br-int) is refused; a confirm timeout
+#      that does not fit twice before the rollback is refused
+#   9. a host managed with a password and no key loads and confirms, the confirming
+#      connection made with multiplexing off
 #   8. the switch turned off while the baseline is loaded is refused, naming the command
 #      that takes it off; once taken off, the switch-off run passes
 #
@@ -64,9 +68,10 @@ docker build -q -t "$IMG" - >/dev/null <<'DOCKERFILE' || fail "building the test
 FROM ubuntu:24.04
 RUN apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
       systemd systemd-sysv sudo openssh-server openssh-client python3 python3-pip python3-yaml \
-      nftables iproute2 iputils-ping >/dev/null \
+      nftables iproute2 iputils-ping sshpass >/dev/null \
  && pip3 install --break-system-packages -q 'ansible-core>=2.16,<2.21' \
  && useradd -m -s /bin/bash ops && echo 'ops ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/ops \
+ && echo 'ops:fixture-password-only' | chpasswd \
  && systemctl enable ssh
 CMD ["/sbin/init"]
 DOCKERFILE
@@ -163,6 +168,14 @@ vars pending "{$CORE_BASE, \"goat_host_firewall_management_sources\": [\"$CTL/32
 refused pending "GB-214"
 grep -q 'has not fired or been confirmed yet' "$LOGS/pending.log" || fail "4: the pending-rollback refusal does not say why"
 tgt 'systemctl stop goat-host-firewall-rollback.timer'
+# An Open vSwitch or other non-bridge link named br-* (here a dummy) is listed and refused.
+tgt 'ip link add br-int type dummy'
+refused pending GB-210
+grep -q 'br-int' "$LOGS/pending.log" || { cat "$LOGS/pending.log"; fail "4: the refusal does not name br-int"; }
+tgt 'ip link del br-int'
+# The confirmation, which may take two waits, must end well before the rollback fires.
+vars timing "{$CORE_BASE, \"goat_host_firewall_management_sources\": [\"$CTL/32\"], \"goat_host_firewall_confirm_timeout\": 40, \"goat_host_firewall_rollback_seconds\": 90}"
+refused timing GB-210
 
 log "4b: check mode renders and loads nothing"
 vars checkmode "{$CORE_BASE, \"goat_host_firewall_management_sources\": [\"$CTL/32\"], \"goat_host_firewall_override\": {\"icmp-echo\": {\"drop\": true}}}"
@@ -178,8 +191,6 @@ log "5: a tightening override, then a loosening with a reason"
 vars tight "{$CORE_BASE, \"goat_host_firewall_management_sources\": [\"$CTL/32\"], \"goat_host_firewall_override\": {\"fabric-tls\": {\"sources\": [\"$CTL/32\"]}, \"icmp-echo\": {\"drop\": true}}}"
 play tight || { cat "$LOGS/tight.log"; fail "5: the tightening override did not apply"; }
 tgt 'grep -q "^# tightened fabric-tls" /etc/goat-host-firewall/ruleset.nft' || fail "5: the ruleset does not record the tightening"
-grep -A1 'a new, unmultiplexed SSH session reaches the host' "$LOGS/tight.log" | grep -q '^ok: \[tgt -> localhost\]' \
-  || { cat "$LOGS/tight.log"; fail "5: the load was not confirmed by an unmultiplexed ssh from the controller"; }
 tgt 'grep -q "^ExecStart=$(command -v nft) -f " /etc/systemd/system/goat-host-firewall.service' \
   || fail "5: the boot unit does not run the nft this host has"
 scan out "an outsider, tightened" ""
@@ -240,6 +251,17 @@ done
 fresh_ssh || fail "7: the rollback did not restore SSH"
 [ "$(tgt 'nft -s list table inet goat_host_firewall | sha256sum')" = "$before" ] || fail "7: the restored table is not the previous one"
 log "ok: 7 the timer restored the previous table and SSH"
+
+log "9: a host managed with a password, no key"
+ctl "printf '%s\n' '[t]' 'tgt ansible_host=$TGT ansible_user=ops ansible_password=fixture-password-only ansible_python_interpreter=/usr/bin/python3 ansible_ssh_common_args=\"-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PubkeyAuthentication=no\"' > /t/hosts-pw"
+vars pw "{$CORE_BASE, \"goat_host_firewall_management_sources\": [\"$CTL/32\"], \"goat_host_firewall_override\": {\"icmp-echo\": {\"drop\": true}, \"fabric-tls\": {\"sources\": [\"$CTL/32\"]}}}"
+tgt 'systemctl disable --now goat-host-firewall.service >/dev/null 2>&1; rm -rf /etc/goat-host-firewall'
+ctl "cd $TESTS && ansible-playbook -vvv -i /t/hosts-pw converge.yml -e @/t/pw.json" >"$LOGS/pw.log" 2>&1 \
+  || { grep -E 'fatal|msg' "$LOGS/pw.log" | tail -5; fail "9: the baseline did not load on a password-managed host"; }
+grep -A12 'a fresh connection still reaches the host' "$LOGS/pw.log" | grep -q 'ControlPath=none' \
+  || fail "9: the confirming connection was not made with multiplexing off"
+tgt 'systemctl is-active --quiet goat-host-firewall-rollback.timer' && fail "9: the rollback is still armed"
+log "ok: 9 loaded and confirmed over password authentication, unmultiplexed"
 
 log "8: switching the baseline off"
 vars off '{"goat_host_firewall_baseline": false}'

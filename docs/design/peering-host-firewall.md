@@ -59,8 +59,8 @@ Outbound is unchanged: ADR 1219's outbound limits are the mesh ACL's.
 | `icmp-echo` | both | ICMP echo request, 10/s | — | drop only |
 | `icmpv6-essential` | both | neighbor discovery, multicast listener query, packet-too-big, echo | — | drop only |
 | `dhcp-client` | both | DHCP (UDP 67 → 68) and DHCPv6 (UDP 547 → 546) replies | — | drop only |
-| `container-bridges` | both | the host's own containers (`docker0`, `br-*`) reaching services on the host, and in `published` their connections to ports other containers publish. A pattern, not a list of names, because compose creates new docker networks after this phase (phase 12) | — | drop only; dropping it removes both. Refused (GB-210) while the host has a `br-*` bridge that is not docker's (`br-<12 hex>`), such as a VXLAN segment bridge, or a `br-*` uplink, unless it is dropped |
-| `ssh-management` | both | TCP SSH from the management sources only | `goat_host_firewall_management_sources` (required), `goat_host_firewall_ssh_port` (`ansible_port`) | yes. A `/0` source is refused (GB-210); a source broader than `goat_host_firewall_management_prefix_floor` (/24, /64) is a loosening that needs `ssh-management: {reason: ...}` (GB-212) |
+| `container-bridges` | both | the host's own containers (`docker0`, `br-*`) reaching services on the host, and in `published` their connections to ports other containers publish. A pattern, not a list of names, because compose creates new docker networks after this phase (phase 12). `br-l2*` (VXLAN segment bridges) is dropped ahead of the pattern, so a segment created after a run stays closed until the next | — | drop only; dropping it removes both. Refused (GB-210) while the host has any link named `br-*` that is not docker's (`br-<12 hex>`), such as a VXLAN segment bridge or Open vSwitch's `br-int` / `br-ex`, or a `br-*` uplink, unless it is dropped |
+| `ssh-management` | both | TCP SSH from the management sources only | `goat_host_firewall_management_sources` (required), `goat_host_firewall_ssh_port` (`ansible_port`) | yes. A `/0` source is refused (GB-210); a source broader than `goat_host_firewall_management_prefix_floor` (/24, /64), or a floor set broader than those, is a loosening that needs `ssh-management: {reason: ...}` (GB-212) |
 | `mesh-wireguard` | both | the mesh client's own WireGuard UDP port, when listed. Empty by default: the mesh client's own outbound connections are answered as established, and a peer's direct path that this host did not open goes through the mesh relay instead | `goat_host_firewall_mesh_udp_ports` | yes. Listing any port is a loosening that needs `mesh-wireguard: {reason: ...}` (GB-212) |
 | `<if>/tunnel` | edge, wireguard | the tunnel UDP port from the partner's literal endpoint (any source when the package names a host name) | `peering_wg_listen_port`, the counterparty package's `transport_offer.endpoint` | yes |
 | `<if>/tunnel` | edge, wireguard via forwarder | the tunnel UDP port on the carrier, from the forwarder's carrier address | `peering_wg_carrier_interface`, `peering_wg_carrier_remote_ip` | yes |
@@ -72,7 +72,7 @@ Outbound is unchanged: ADR 1219's outbound limits are the mesh ACL's.
 | `fabric-tls` | core | the core router's fabric TLS port, any source (mutual TLS decides) | `goat_zenoh_listen_port` | yes |
 | `fabric-quic` | core | the QUIC listener, when `goat_zenoh_quic_enabled` | `goat_zenoh_quic_port` | yes |
 | `mesh-dns` | core | the mesh nameserver, on the mesh interface only (ADR 1219 decision 4) | `goat_host_firewall_mesh_dns_port`, `goat_host_firewall_mesh_interface` (`goat_zenoh_mesh_iface`) | yes; drop it on a core that does not serve it. A port other than 5353 needs `mesh-dns: {reason: ...}` (GB-212). A mesh interface that is the uplink is refused (GB-210) |
-| `spire-bundle` | core, when `peering_spire_enabled` | our SPIRE server's bundle endpoint, reached by the edge's inbound forward (goat-peering-spire), from the edge hosts' literal addresses, else on the mesh interface only | `peering_spire_bundle_port`, the edge group's `ansible_host` | yes |
+| `spire-bundle` | core, when `peering_spire_enabled` and this host is `peering_spire_server_host` | our SPIRE server's bundle endpoint, reached by the edge's inbound forward (goat-peering-spire), on the mesh interface only (the edge's inventory address may be an underlay address) | `peering_spire_bundle_port`, `peering_spire_server_host` | yes |
 | `other-tcp`, `other-udp` | both | nothing in the baseline | — | the named rules a host that serves more loosens, with a reason |
 
 `<if>` is the peering's tunnel interface (`wg-fed0`, `ipsec-<name>`). On the edge, ADR 1219
@@ -140,7 +140,7 @@ goat_host_firewall_override:
   as an entry that names the rule and only a reason: `goat_host_firewall_mesh_udp_ports` not
   empty (`mesh-wireguard`), a `goat_host_firewall_mesh_dns_port` other than 5353
   (`mesh-dns`), a management source broader than `goat_host_firewall_management_prefix_floor`
-  (`ssh-management`). Without one: **GB-212**. A `/0` management source, and a mesh interface
+  (`ssh-management`), or a floor set broader than /24 or /64 (`ssh-management`). Without one: **GB-212**. A `/0` management source, and a mesh interface
   that is the host's uplink, are refused outright (**GB-210**).
 - An unknown rule name, a fixed rule, an unknown key, a change a fixed-expression rule cannot
   take, or an entry that changes nothing: **GB-211**. A new allow rule is not a named rule, so it
@@ -157,19 +157,19 @@ goat_host_firewall_override:
    `paramiko`, with or without the `ansible.builtin.` prefix), a session that cannot be read is
    also GB-213. Over a local or container connection there is no SSH session to protect.
 3. A run that starts while an earlier run's rollback is still armed is refused (**GB-214**):
-   that timer must fire or be confirmed first. `goat_host_firewall_confirm_timeout` must be
-   below `goat_host_firewall_rollback_seconds` (**GB-210**).
+   that timer must fire or be confirmed first. Twice `goat_host_firewall_confirm_timeout`
+   plus 15 s must be below `goat_host_firewall_rollback_seconds` (**GB-210**).
 4. Loading is one `nft -f` transaction (the file declares, deletes and re-declares the one table).
    Before it, the role copies the last confirmed ruleset (or, the first time, a file that removes
    the table) to `rollback.nft` and arms
    `systemd-run --on-active=goat_host_firewall_rollback_seconds` to load it. After it, the role
-   drops its SSH connection and confirms twice: a new `ssh` process from the controller with
-   multiplexing off (`-o ControlPath=none`, the inventory's user, port, key and ssh arguments,
-   so a jump host is used as Ansible uses it; key authentication is required), then Ansible's
-   own fresh connection. Only when both succeed, and while the timer is still armed, does it
-   stop the timer, keep the file for boot (`goat-host-firewall.service`,
+   drops its SSH connection and confirms with a fresh Ansible connection made with
+   multiplexing off (`-o ControlMaster=no -o ControlPath=none` ahead of the inventory's own ssh
+   arguments), so it uses everything Ansible resolves: user, key or password, port, ssh_config,
+   ansible.cfg, jump host, host key policy. A host managed with a password works. Only when that
+   succeeds, and while the timer is still armed, does it stop the timer, keep the file for boot (`goat-host-firewall.service`,
    ordered after `nftables.service`, whose stock file flushes the ruleset) and record the hash.
-   If either confirmation fails, or the timer has already fired, the play fails (**GB-214**)
+   If the confirmation fails, or the timer has already fired, the play fails (**GB-214**)
    and the last confirmed ruleset is what is loaded. The rollback and the boot unit run the
    `nft` that `command -v nft` finds on the host.
 5. Idempotent: a run whose rendered hash equals the recorded one, and whose loaded table (listed
@@ -215,6 +215,7 @@ records it as its plan stage 6.4, and that call is not built in this branch.
 | Check | What | State |
 |---|---|---|
 | `roles/goat-host-firewall/tests/test_render.py` | render of edge and core under wireguard, wireguard via forwarder and ipsec-fips; two peerings on one edge; UDP port overlap; every override outcome; reasons with line breaks; role inputs that loosen (management prefix floor, mesh port, mesh DNS port, mesh interface on the uplink); lockout; listeners (DHCP, ephemeral, process names); non-docker bridges; SPIRE rules; `--peering-only`; hash stability | measured |
+| `roles/goat-host-firewall/tests/test_play_vars.py` | the core play puts `spire-bundle` only on the SPIRE server host and never sources it from the edge's inventory address | measured |
 | `roles/goat-host-firewall/tests/netns-behavior.sh` | the rendered rulesets loaded into throwaway network namespaces and scanned from the management source, an outsider, the partner endpoint, the tunnel and the mesh; a tightening override; a loosening through a published (DNAT) port | measured |
-| `ops/ci/test-host-firewall-role.sh` | the role over SSH into a systemd container: converge, second run changes nothing, check mode loads nothing, scans, each refusal (GB-210..215) leaves the loaded table unchanged, tightening and loosening, the confirm by an unmultiplexed `ssh` from the controller, the boot unit running the host's own `nft`; from a host with no `/etc/goat-host-firewall`, a peering the host carries without an entry refused while the refused run stores its own (even with an override naming the other peering), the other peering's run then loading both; the rollback timer restoring SSH after a cutting ruleset armed by the same commands the role runs; the switch turned off refused while the baseline is loaded. The role's own failed-confirm path is not exercised | measured |
+| `ops/ci/test-host-firewall-role.sh` | the role over SSH into a systemd container: converge, second run changes nothing, check mode loads nothing, scans, each refusal (GB-210..215) leaves the loaded table unchanged, tightening and loosening, the boot unit running the host's own `nft`, a non-bridge link named `br-*` refused, a confirm timeout that does not fit twice before the rollback refused, a password-managed host loading and confirming with multiplexing off; from a host with no `/etc/goat-host-firewall`, a peering the host carries without an entry refused while the refused run stores its own (even with an override naming the other peering), the other peering's run then loading both; the rollback timer restoring SSH after a cutting ruleset armed by the same commands the role runs; the switch turned off refused while the baseline is loaded. The role's own failed-confirm path is not exercised | measured |
 | port-scan scenario in the federation test environment | from the partner side and the mesh side, the edge and core answer on exactly the declared ports; baseline and one tightening override; the three-party case with the baseline on | requested, not run |
