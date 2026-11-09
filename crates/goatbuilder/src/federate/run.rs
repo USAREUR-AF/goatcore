@@ -41,8 +41,10 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 
+use super::confirm;
 use super::deploy::{self, Approved};
 use super::lock::{self, PeeringLock};
+use super::prompt::{Ask, Nobody};
 use super::state::{self, Outcome, State};
 use super::Phase;
 use crate::Check;
@@ -50,6 +52,10 @@ use crate::Check;
 /// What a run is asked to do beyond running the phases.
 #[derive(Default)]
 pub struct Surface {
+    /// Confirmation 1 (confirm.rs): `--confirm` and the values read aloud.
+    pub values: confirm::Values,
+    /// Who answers questions: the terminal, or nobody.
+    pub ask: Option<Box<dyn Ask>>,
     /// `--resume`: skip phases found done (see above).
     pub resume: bool,
     /// A stage runs exactly these phases (deploy: 10 to 13; test: 14)
@@ -65,6 +71,11 @@ pub struct Surface {
 }
 
 impl Surface {
+    /// The person to ask, or nobody.
+    pub fn asker(&mut self) -> &mut dyn Ask {
+        self.ask.get_or_insert_with(|| Box::new(Nobody)).as_mut()
+    }
+
     /// Whether phase `n` is in this run: one of a stage's phases, or else
     /// between `--from` and `--to`.
     pub fn runs(&self, n: u32, from: u32, to: u32) -> bool {
@@ -380,6 +391,13 @@ impl Run {
             for p in phases.iter().filter(|p| s.runs(p.n, from, to)) {
                 if !skippable(p) {
                     continue;
+                }
+                // Key values given on the command line are a new answer to
+                // phase 5: it runs, and so does everything that reads its keyring.
+                if p.n == 5
+                    && (s.values.partner_key.is_some() || s.values.partner_ca_fingerprint.is_some())
+                {
+                    break;
                 }
                 let done = state.phases.get(&p.n).is_some_and(|r| {
                     r.outcome == Outcome::Passed

@@ -2279,6 +2279,8 @@ entries:
       - "^unexpected argument '[^']*': only a stage word"
       - "^--plan and --approve-plan belong to"
       - "^deploy: --from [0-9]+ is not a deploy start"
+      - "^--confirm, --partner-key, --partner-ca-fingerprint(, --agreement-digest and --place-pointer-package| and --agreement-digest) belong to phases 5 and 6"
+      - "^--partner-key and --partner-ca-fingerprint are for phase 5"
     exit: 1
 
   - code: GB-190
@@ -2293,6 +2295,50 @@ entries:
     read: docs/design/goatbuilder.md
     matches:
       - "^deploy: phase 10, admitting the edge on our core, is not recorded as done"
+    exit: 1
+
+  - code: GB-191
+    tool: goatbuilder
+    title: a value for confirmation 1 does not match
+    what: "At phase 5 or 6 a value given by flag or typed is not the one the files hold: their CA fingerprint is not their package's, their CA certificate does not carry that fingerprint, their verifying key is not 32 bytes of base64 or does not verify their half, a sovereign id is not a plain id or is not the declared counterparty, or the agreement digest differs. The run stopped; at phase 5 no keyring was written, and at phase 6 the composed agreement is left for inspection."
+    causes:
+      - a value was misheard or mistyped on the call
+      - the partner published a new package or CA after reading theirs aloud
+      - the two sides composed different agreements (their halves differ)
+    fixes:
+      - "read the values back group by group with the partner, then run the same command again"
+      - "goat federate diff <ours> <theirs>   (names the field where two agreements differ)"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "^GB-191: "
+    exit: 1
+
+  - code: GB-192
+    tool: goatbuilder
+    title: confirmation 1 is waiting
+    what: "Phase 5 or 6 was asked to confirm (by --confirm or a value) and something is not there yet: their half or CA certificate has not arrived, a value read aloud was not given and there is no terminal to ask at, or the person did not type yes. The run stopped there, as a by-hand stop does (exit 0); a stop at phase 5 writes no keyring."
+    causes:
+      - the partner has not published yet
+      - one of --partner-key, --partner-ca-fingerprint, --agreement-digest is missing
+    fixes:
+      - "run the same command again with the values read aloud, or with --confirm at a terminal"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "^GB-192: "
+    exit: 0
+
+  - code: GB-193
+    tool: goatbuilder
+    title: our verifying key cannot be read, or does not verify our half
+    what: "Phase 5 shows our verifying key to read aloud, derived from the Ed25519 seed that signs our package (FED_SIGNING_KEY: 64 hex characters or 32 bytes base64). It is unset, unreadable or not a seed, or the key it gives does not verify the signature on our half, so the partner would bind a key that cannot verify our package."
+    causes:
+      - FED_SIGNING_KEY is not set in this environment
+      - it names a file that is not the package-signing seed, or a different seed than phase 3 signed with
+    fixes:
+      - "set FED_SIGNING_KEY to the seed that signed our package (the same one phase 3 uses)"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "^GB-193: "
     exit: 1
 
   - code: GB-200

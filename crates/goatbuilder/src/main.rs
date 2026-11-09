@@ -138,6 +138,9 @@ pub enum OutputFormat {
 }
 
 #[derive(Subcommand, Debug)]
+// `federate` carries the flags of its stages and confirmations; parsed once
+// per run, its size does not matter.
+#[allow(clippy::large_enum_variant)]
 pub enum Cmd {
     /// Check a config against the versioned schema and the cross-field rules, offline.
     Validate {
@@ -457,6 +460,24 @@ pub enum Cmd {
         /// --yes never approves a plan.
         #[arg(long, value_name = "SHA256")]
         approve_plan: Option<String>,
+        /// Phases 5 and 6: confirm the keys and the agreement digest here, at
+        /// this terminal, instead of stopping for them by hand.
+        #[arg(long)]
+        confirm: bool,
+        /// Phase 5: the partner's verifying key, as read aloud on the call.
+        #[arg(long, value_name = "BASE64")]
+        partner_key: Option<String>,
+        /// Phase 5: the partner's CA fingerprint, as read aloud on the call.
+        #[arg(long, value_name = "SHA256")]
+        partner_ca_fingerprint: Option<String>,
+        /// Phase 6: the agreement digest, as compared with the partner.
+        #[arg(long, value_name = "SHA256")]
+        agreement_digest: Option<String>,
+        /// Phase 5: place the package the partner's single pointer named and
+        /// the directory held back, after confirming on the call that it is
+        /// the package for this peering (its digest, as the stop shows it).
+        #[arg(long, value_name = "SHA256")]
+        place_pointer_package: Option<String>,
         /// The environment the peering is declared on (checked against goatbuilder.yaml peerings:).
         #[arg(long)]
         env: Option<String>,
@@ -1372,7 +1393,7 @@ fn main() {
                 federate::plan::run(&repo, stage, cli.mock.as_deref())
             }
         }
-        Cmd::Federate { verb: None, site, measure, with, partner, plan, approve_plan, env, as_party, edge_group, work, from, to, dry_run, resume } => {
+        Cmd::Federate { verb: None, site, measure, with, partner, plan, approve_plan, confirm, partner_key, partner_ca_fingerprint, agreement_digest, place_pointer_package, env, as_party, edge_group, work, from, to, dry_run, resume } => {
             let with = with.as_deref().unwrap_or_default();
             let cfg_path = cli.mock.as_ref().map(|m| m.join("goatbuilder.yaml")).unwrap_or_else(|| repo.join("ops/goatbuilder/goatbuilder.yaml"));
             if with == "status" {
@@ -1386,6 +1407,10 @@ fn main() {
                 Err(goat_errors::coded("GB-189", format!("`goatbuilder federate {with}` needs the partner: goatbuilder federate {with} <partner>")).into())
             } else if partner.is_some() && !matches!(with, "deploy" | "test" | "allocate") {
                 Err(goat_errors::coded("GB-189", format!("unexpected argument '{}': only a stage word (status, deploy, test) takes a partner after it, and `allocate` the one peering to allocate", partner.as_deref().unwrap_or_default())).into())
+            } else if (*confirm || partner_key.is_some() || partner_ca_fingerprint.is_some() || agreement_digest.is_some() || place_pointer_package.is_some()) && matches!(with, "deploy" | "test") {
+                Err(goat_errors::coded("GB-189", format!("--confirm, --partner-key, --partner-ca-fingerprint, --agreement-digest and --place-pointer-package belong to phases 5 and 6 of `goatbuilder federate <partner>`, not to {with}")).into())
+            } else if ((partner_key.is_some() || partner_ca_fingerprint.is_some() || place_pointer_package.is_some()) && !(*from <= 5 && 5 <= *to)) || (agreement_digest.is_some() && !(*from <= 6 && 6 <= *to)) {
+                Err(goat_errors::coded("GB-189", "--partner-key and --partner-ca-fingerprint are for phase 5 and --agreement-digest for phase 6; this run's --from/--to leave that phase out").into())
             } else if (plan.is_some() || approve_plan.is_some()) && with != "deploy" {
                 Err(goat_errors::coded("GB-189", "--plan and --approve-plan belong to `goatbuilder federate deploy <partner>`").into())
             } else if matches!(with, "deploy" | "test") && (*to != 99 || *resume) {
@@ -1408,7 +1433,10 @@ fn main() {
                     "test" => federate::deploy::test(&repo, &o),
                     // `allocate <peering>`: that peering alone, beside hand-written ones.
                     "allocate" if partner.is_some() => federate::peering_files::run_scoped(&repo, &federate::Options { with, ..o }, partner.as_deref()),
-                    _ => federate::federate_with(&repo, &o, &federate::Surface { resume: *resume, ..Default::default() }),
+                    _ => {
+                        let values = federate::Values { ask: *confirm, partner_key: partner_key.clone(), partner_ca_fingerprint: partner_ca_fingerprint.clone(), agreement_digest: agreement_digest.clone(), pointer_package: place_pointer_package.clone() };
+                        federate::federate_with(&repo, &o, &mut federate::Surface { resume: *resume, values, ask: Some(Box::new(federate::prompt::Terminal)), ..Default::default() })
+                    }
                 }
             }
         }
