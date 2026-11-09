@@ -262,13 +262,15 @@ A sovereign peering declared, converged and verified (ADR 1157): our half measur
 
 | Argument | Description |
 |---|---|
-| `<WITH>` | The peering name (the counterparty, as declared), or a stage run alone: `status [<partner>]`, `allocate [<peering>]` |
-| `<PARTNER>` | The partner, after a stage word (`status <partner>`), or after `allocate` the one peering to allocate and render, beside peerings that are still hand-written |
+| `<WITH>` | The peering name (the counterparty, as declared), or a stage run alone: `status [<partner>]`, `deploy <partner>`, `test <partner>`, `allocate [<peering>]` |
+| `<PARTNER>` | The partner, after a stage word; after `allocate`, the one peering to allocate and render, beside peerings that are still hand-written |
 
 **Options**
 
 | Flag | Description | Default |
 |---|---|---|
+| `--plan <PLAN>` | deploy: the plan to execute (default <work>/plan.json) |  |
+| `--approve-plan <APPROVE_PLAN>` | deploy: approve exactly this plan hash, after reading the plan. --yes never approves a plan |  |
 | `--env <ENV>` | The environment the peering is declared on (checked against goatbuilder.yaml peerings:) |  |
 | `--as <AS_PARTY>` | Which party we are (default: read from the declaration) |  |
 | `--edge-group <EDGE_GROUP>` | The ansible group the edge runs in (default <peering>_edge) |  |

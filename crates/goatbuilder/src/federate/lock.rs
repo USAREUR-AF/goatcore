@@ -255,7 +255,18 @@ pub fn claim(
         .into());
     }
     for w in wants {
-        state.own(run, &w.kind, &w.scope, &w.value, "claimed");
+        // A resource this peering already has deployed stays `deployed`.
+        let deployed = state
+            .owned
+            .iter()
+            .any(|o| o.same(&w.kind, &w.scope, &w.value) && o.status == "deployed");
+        state.own(
+            run,
+            &w.kind,
+            &w.scope,
+            &w.value,
+            if deployed { "deployed" } else { "claimed" },
+        );
     }
     state.save(work)?;
     Ok(guard)

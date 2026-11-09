@@ -41,7 +41,8 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 
-use super::lock::PeeringLock;
+use super::deploy::{self, Approved};
+use super::lock::{self, PeeringLock};
 use super::state::{self, Outcome, State};
 use super::Phase;
 use crate::Check;
@@ -51,6 +52,27 @@ use crate::Check;
 pub struct Surface {
     /// `--resume`: skip phases found done (see above).
     pub resume: bool,
+    /// A stage runs exactly these phases (deploy: 10 to 13; test: 14)
+    /// instead of `--from` to `--to`.
+    pub only: Option<BTreeSet<u32>>,
+    /// `federate` (the default), `deploy` or `test`, as the journal names it.
+    pub stage: &'static str,
+    /// The approved plan a deploy executes (deploy.rs).
+    pub plan: Option<Approved>,
+    /// The command that runs this stage again, when it is not
+    /// `goatbuilder federate <partner>` (deploy carries its approval).
+    pub again: Option<String>,
+}
+
+impl Surface {
+    /// Whether phase `n` is in this run: one of a stage's phases, or else
+    /// between `--from` and `--to`.
+    pub fn runs(&self, n: u32, from: u32, to: u32) -> bool {
+        match &self.only {
+            Some(set) => set.contains(&n),
+            None => n >= from && n <= to,
+        }
+    }
 }
 
 /// The files one peering's run reads and writes, resolved the way `plan()`
@@ -163,6 +185,35 @@ fn skippable(p: &Phase) -> bool {
     p.kind == "MANUAL" || (p.kind == "T" && matches!(p.n, 3 | 6 | 9))
 }
 
+/// What a deploy did before the run began: the peering's lock, taken first,
+/// and the planner's live recheck, run under it before the phase-1 inputs are
+/// exported (an exported input would read as changed).
+pub struct Prelude {
+    pub lock: PeeringLock,
+    pub rechecked: String,
+}
+
+impl Prelude {
+    /// Take the lock and run the recheck; a refusal is journaled as a
+    /// `refused` run of this peering.
+    pub fn deploy(with: &str, work: &str, plan: &Approved, from: u32, to: u32) -> Result<Prelude> {
+        let paths = Paths::new(work);
+        let lock = PeeringLock::take(&paths.work, with)?;
+        match deploy::recheck(plan) {
+            Ok(rechecked) => Ok(Prelude { lock, rechecked }),
+            Err(e) => {
+                if let Ok(mut state) = State::load(&paths.work, with) {
+                    let id = state.open_run("deploy", from, to, false, &plan.hash);
+                    state.log(&id, 0, "refused", format!("{e:#}"));
+                    state.close_run(&id, "refused");
+                    let _ = state.save(&paths.work);
+                }
+                Err(e)
+            }
+        }
+    }
+}
+
 /// One real run: the lock, the journal, and what it skips.
 pub(super) struct Run {
     _lock: PeeringLock,
@@ -173,6 +224,10 @@ pub(super) struct Run {
     finished: bool,
     /// Journal writes that failed during the run, shown when it ends.
     save_errors: Vec<String>,
+    /// The approved plan a deploy executes: checked again before each phase
+    /// that changes a host; its claimed resources become `deployed` when the
+    /// run passes.
+    plan: Option<Approved>,
 }
 
 impl Run {
@@ -184,16 +239,25 @@ impl Run {
         phases: &[Phase],
         from: u32,
         to: u32,
-        stage: &str,
         s: &Surface,
+        pre: Option<Prelude>,
     ) -> Result<(Run, Vec<Check>)> {
+        let stage = if s.stage.is_empty() {
+            "federate"
+        } else {
+            s.stage
+        };
         let paths = Paths::new(work);
-        let lock = PeeringLock::take(&paths.work, with)?;
+        let (lock, rechecked) = match pre {
+            Some(p) => (p.lock, p.rechecked),
+            None => (PeeringLock::take(&paths.work, with)?, String::new()),
+        };
         let mut state = State::load(&paths.work, with)?;
-        let resume = s.resume && from <= 1;
-        let id = state.open_run(stage, from, to, resume, "");
+        let resume = s.resume && (from <= 1 || s.only.is_some());
+        let plan_hash = s.plan.as_ref().map(|p| p.hash.clone()).unwrap_or_default();
+        let id = state.open_run(stage, from, to, resume, &plan_hash);
         let mut rows = Vec::new();
-        if s.resume && from > 1 {
+        if s.resume && from > 1 && s.only.is_none() {
             rows.push(row(
                 "resume",
                 format!("--resume skips nothing when --from names the start; phases {from} to {to} all run"),
@@ -245,9 +309,75 @@ impl Run {
             }
         }
 
+        if let Some(plan) = &s.plan {
+            // Under the lock, before anything changes: the plan is the one
+            // approved, its inputs are unchanged, the by-hand admission is
+            // done when this run does not include it, and nothing another
+            // peering holds is taken. A refusal is journaled as `refused`.
+            let checked = (|| -> Result<Vec<Check>> {
+                let _ = plan;
+                if !s.runs(deploy::DEPLOY_FROM, from, to) {
+                    let p10 = phases.iter().find(|p| p.n == deploy::DEPLOY_FROM);
+                    let done = p10.is_some_and(|p| {
+                        state.phases.get(&p.n).is_some_and(|r| {
+                            r.outcome == Outcome::Passed && r.inputs == Self::inputs(&paths, p)
+                        })
+                    });
+                    if !done {
+                        return Err(goat_errors::coded(
+                            "GB-190",
+                            "deploy: phase 10, admitting the edge on our core, is not recorded as done for what is rendered now; run deploy without --from so it stops at phase 10, do the admission, then run deploy --from 11",
+                        )
+                        .into());
+                    }
+                }
+                let mut out = vec![row("recheck", rechecked)];
+                if plan.resources.is_empty() {
+                    out.push(row("allocation", "the plan names no resources with a value yet, so there was nothing to claim in this machine's journals"));
+                } else {
+                    let _guard = lock::claim(
+                        &lock::work_root(&paths.work),
+                        &paths.work,
+                        &mut state,
+                        &id,
+                        &plan.resources,
+                    )?;
+                    out.push(row(
+                        "allocation",
+                        format!(
+                            "claimed {} resources in this machine's run journals; no other peering's journal holds them",
+                            plan.resources.len()
+                        ),
+                    ));
+                }
+                Ok(out)
+            })();
+            match checked {
+                Ok(r) => rows.extend(r),
+                Err(e) => {
+                    state.log(&id, 0, "refused", format!("{e:#}"));
+                    state.close_run(&id, "refused");
+                    let _ = state.save(&paths.work);
+                    return Err(e);
+                }
+            }
+            state.confirm(
+                &id,
+                0,
+                "plan",
+                &plan.how,
+                &plan.hash,
+                BTreeMap::from([("path".to_string(), plan.path.display().to_string())]),
+            );
+            rows.push(row(
+                "approval",
+                format!("plan {} approved ({})", plan.hash, plan.how),
+            ));
+        }
+
         let mut skip = BTreeSet::new();
         if resume {
-            for p in phases.iter().filter(|p| p.n >= from && p.n <= to) {
+            for p in phases.iter().filter(|p| s.runs(p.n, from, to)) {
                 if !skippable(p) {
                     continue;
                 }
@@ -274,19 +404,20 @@ impl Run {
             rows.push(row("resume", detail));
         }
         state.log(&id, from, "start", format!("phases {from} to {to}"));
-        state.save(&paths.work)?;
-        Ok((
-            Run {
-                _lock: lock,
-                state,
-                paths,
-                id,
-                skip,
-                finished: false,
-                save_errors: Vec::new(),
-            },
-            rows,
-        ))
+        let mut run = Run {
+            _lock: lock,
+            state,
+            paths,
+            id,
+            skip,
+            finished: false,
+            save_errors: Vec::new(),
+            plan: s.plan.clone(),
+        };
+        // The run exists from here, so a failed write is shown when it ends
+        // and an early return closes it.
+        run.save();
+        Ok((run, rows))
     }
 
     fn inputs(paths: &Paths, p: &Phase) -> String {
@@ -320,6 +451,23 @@ impl Run {
         )
     }
 
+    /// A deploy checks its plan again just before each phase that changes a
+    /// host (10 to 13): a change since the run began refuses the phase.
+    pub(super) fn guard(&self, p: &Phase) -> Option<Check> {
+        let plan = self.plan.as_ref()?;
+        if p.n < deploy::DEPLOY_FROM {
+            return None;
+        }
+        deploy::inputs_hold(plan).err().map(|e| Check {
+            name: "failed".into(),
+            ok: false,
+            detail: format!("{e:#}"),
+            fix: Some(
+                "make a new plan from what is there now, approve its hash, and deploy again".into(),
+            ),
+        })
+    }
+
     /// A phase is about to run: journaled first, so a run killed during it
     /// shows which phase it was in.
     pub(super) fn start(&mut self, p: &Phase) {
@@ -341,6 +489,30 @@ impl Run {
     /// row for each journal write that did not land, so `-o json` shows it.
     pub(super) fn finish(&mut self, outcome: &str) -> Vec<Check> {
         let id = self.id.clone();
+        if let Some(plan) = self.plan.as_ref().filter(|_| outcome == "passed") {
+            // What the plan names is deployed; what this peering held before
+            // and the plan no longer names is let go.
+            let held: Vec<(String, String, String)> = self
+                .state
+                .owned
+                .iter()
+                .filter(|o| o.held())
+                .map(|o| (o.kind.clone(), o.scope.clone(), o.value.clone()))
+                .collect();
+            for (k, sc, v) in held {
+                let named = plan
+                    .resources
+                    .iter()
+                    .any(|w| w.kind == k && w.scope == sc && w.value == v);
+                self.state.own(
+                    &id,
+                    &k,
+                    &sc,
+                    &v,
+                    if named { "deployed" } else { "released" },
+                );
+            }
+        }
         self.state.close_run(&id, outcome);
         self.save();
         self.finished = true;
@@ -447,8 +619,11 @@ mod tests {
             &phases(),
             from,
             99,
-            "federate",
-            &Surface { resume },
+            &Surface {
+                resume,
+                ..Default::default()
+            },
+            None,
         )
         .unwrap()
         .0
@@ -609,16 +784,8 @@ mod tests {
         st.save(d.path()).unwrap();
         // New rendered files after the stop: the review was of the old ones.
         std::fs::write(d.path().join("applied/x"), "re-rendered").unwrap();
-        let (r, rows) = Run::begin(
-            "xab",
-            &w,
-            &phases(),
-            11,
-            99,
-            "federate",
-            &Surface::default(),
-        )
-        .unwrap();
+        let (r, rows) =
+            Run::begin("xab", &w, &phases(), 11, 99, &Surface::default(), None).unwrap();
         drop(r);
         assert!(
             rows.iter()
@@ -683,7 +850,7 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let w = d.path().display().to_string();
         let held = begin(&w, 1, false);
-        let e = Run::begin("xab", &w, &phases(), 1, 99, "federate", &Surface::default())
+        let e = Run::begin("xab", &w, &phases(), 1, 99, &Surface::default(), None)
             .err()
             .expect("refused while the first run holds the lock");
         assert!(

@@ -57,7 +57,9 @@ pub mod forwarder;
 pub mod hostalloc;
 pub mod hostfw;
 pub mod peering_files;
+pub mod deploy;
 pub mod lock;
+pub mod prompt;
 mod run;
 pub mod state;
 pub mod status;
@@ -65,6 +67,7 @@ pub use run::Surface;
 pub mod plan;
 pub mod preflight;
 
+#[derive(Clone, Copy)]
 pub struct Options<'a> {
     pub with: &'a str,
     pub env: Option<&'a str>,
@@ -540,12 +543,20 @@ pub fn federate_with(repo: &Path, o: &Options, s: &Surface) -> Result<Report> {
     if o.mock.is_none() {
         declaration::driver_check(&cfg, o.with, o.env)?;
     }
-    let work = o.work.map(String::from).unwrap_or_else(|| env_or("FED_WORK", format!("/var/lib/goat-federation/{}", o.with)));
+    let work = work_dir(o);
     let edge_group = o.edge_group.map(String::from).unwrap_or_else(|| format!("{}_edge", o.with));
     let resume = format!("goatbuilder federate {}{}", o.with, o.env.map(|e| format!(" --env {e}")).unwrap_or_default());
     // Once `goatbuilder federate allocate` has recorded this peering, the run must use its values.
     peering_files::driver_agrees(&cfg, cfg_path.parent().unwrap_or(repo), o, &work, &edge_group)?;
     let executes = !o.dry_run && o.mock.is_none();
+    // A deploy takes the peering's lock and runs the planner's live recheck
+    // first, before the phase-1 inputs are exported below.
+    let mut prelude = None;
+    if executes {
+        if let Some(plan) = &s.plan {
+            prelude = Some(run::Prelude::deploy(o.with, &work, plan, o.from, o.to)?);
+        }
+    }
     // Phase 1's inputs, derived from the deployment (federate/preflight.rs). A
     // real run exports each one the operator has not set, before the plan reads
     // them; a dry run lists them and changes no command (the parity gate).
@@ -572,14 +583,14 @@ pub fn federate_with(repo: &Path, o: &Options, s: &Surface) -> Result<Report> {
     }
     let mut run = None;
     if executes {
-        let (r, rows) = run::Run::begin(o.with, &work, &phases, o.from, o.to, "federate", s)?;
+        let (r, rows) = run::Run::begin(o.with, &work, &phases, o.from, o.to, s, prelude.take())?;
         checks.extend(rows);
         run = Some(r);
     }
     let mut exit = EXIT_OK;
     let mut stopped = false;
     for ph in &phases {
-        if ph.n < o.from || ph.n > o.to {
+        if !s.runs(ph.n, o.from, o.to) {
             continue;
         }
         if let Some(r) = run.as_mut().filter(|r| r.skips(ph)) {
@@ -598,6 +609,13 @@ pub fn federate_with(repo: &Path, o: &Options, s: &Surface) -> Result<Report> {
         }
         if let Some(r) = run.as_mut() {
             r.start(ph);
+            if let Some(c) = r.guard(ph) {
+                let d = c.detail.clone();
+                checks.push(c);
+                r.end(ph, state::Outcome::Failed, &d);
+                exit = EXIT_REFUSED;
+                break;
+            }
         }
         if ph.kind == "MANUAL" {
             // The directory step, inside phase 5 before the stop. It is
@@ -609,6 +627,9 @@ pub fn federate_with(repo: &Path, o: &Options, s: &Surface) -> Result<Report> {
                 }
             }
             checks.push(row("note", format!("^ OPERATOR STEP — do the above, then re-run with --from {}", ph.n + 1)));
+            if let Some(again) = &s.again {
+                checks.push(row("note", format!("the command that carries on: {again} --from {}", ph.n + 1)));
+            }
             if let Some(r) = run.as_mut() {
                 r.end(ph, state::Outcome::Stopped, "waiting for the operator step");
             }
@@ -626,7 +647,10 @@ pub fn federate_with(repo: &Path, o: &Options, s: &Surface) -> Result<Report> {
             }
         };
         if rc != 0 {
-            checks.push(Check { name: "failed".into(), ok: false, detail: format!("!! Phase {} (\"{}\") FAILED — exit {rc}. No later phase has run; the peering is left partway through phase {}. `goat federate` exit codes are specific: 20 composition refused, 21 lint refused, 22 diff refused, 23 a value could not be derived. Phase 14 (acceptance) exits 3 when a required check was BLOCKED or skipped: nothing was proven by it (X-ACCEPT-001); exit 2 when the agreement or the evidence bundle could not be read or written. docs/operations/sovereign-federation-runbook.md names this phase's \"worked when\"; Steps 7 and 8 are the acceptance criteria.", ph.n, ph.label, ph.n), fix: Some(format!("fix the cause, then resume — every phase is idempotent: {resume} --from {}", ph.n)) });
+            checks.push(Check { name: "failed".into(), ok: false, detail: format!("!! Phase {} (\"{}\") FAILED — exit {rc}. No later phase has run; the peering is left partway through phase {}. `goat federate` exit codes are specific: 20 composition refused, 21 lint refused, 22 diff refused, 23 a value could not be derived. Phase 14 (acceptance) exits 3 when a required check was BLOCKED or skipped: nothing was proven by it (X-ACCEPT-001); exit 2 when the agreement or the evidence bundle could not be read or written. docs/operations/sovereign-federation-runbook.md names this phase's \"worked when\"; Steps 7 and 8 are the acceptance criteria.", ph.n, ph.label, ph.n), fix: Some(match &s.again {
+                Some(again) => format!("fix the cause, then run the stage again (its checks and plays all run again): {again}"),
+                None => format!("fix the cause, then resume — every phase is idempotent: {resume} --from {}", ph.n),
+            }) });
             if let Some(r) = run.as_mut() {
                 r.end(ph, state::Outcome::Failed, &format!("GB-183: phase {} failed with exit {rc}", ph.n));
             }
@@ -700,6 +724,12 @@ fn guarded(f: impl FnOnce() -> Result<i32>) -> i32 {
             101
         }
     }
+}
+
+/// The working directory: `--work`, else `$FED_WORK`, else
+/// /var/lib/goat-federation/<peering>.
+pub fn work_dir(o: &Options) -> String {
+    o.work.map(String::from).unwrap_or_else(|| env_or("FED_WORK", format!("/var/lib/goat-federation/{}", o.with)))
 }
 
 fn is_root() -> bool {
