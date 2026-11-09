@@ -66,10 +66,10 @@ goat_zenoh_edge_ingress_key_exprs: []     # where they may write, e.g. from/svn/
 # expression in transit, so a rule naming the staging name permits a key that
 # never crosses and forbids the one that does.
 goat_zenoh_edge_egress_key_exprs: []   # e.g. from/<sovereign>/**
-# Refuse a deploy whose core ingress storage is wider than the ingress above
-# (one "from/**" store for every peering). The edge refuses the core's wider
-# declaration silently, so nothing the partner sends is ever forwarded. Set
-# false only to accept that deliberately.
+# Check inspectable local cores for a receive store matching each admitted
+# ingress scope. A retained broad history store is compatible when the required
+# scoped stores exist. Unreadable/separate cores are explicitly SKIP, not PASS.
+# False disables this supplementary inspection and reports that decision.
 goat_zenoh_edge_ingress_scope_check: true
 
 # Key-bundle read for grant-keyed encryption. Empty means this partner

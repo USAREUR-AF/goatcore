@@ -412,16 +412,37 @@ Then, in this order:
    re-adds their certificate authority within minutes and quietly undoes you.
 2. Remove their CA from the edge router's configuration and re-apply.
 3. Restart the edge router.
-4. On a core configured from `roles/goat-zenoh`, remove their entry from
-   `zenoh_sovereign_peerings` and re-apply the core. Their data stays on
-   disk in `<storage path>/sovereign_from_<them>`, one directory that holds only what they sent;
-   the role lists it in `.undeclared-stores` and never deletes it. Deleting it, if the agreement
-   obliges you to, is an operator act.
+4. On a core configured from `roles/goat-zenoh`, review the orphan-store policy,
+   remove their entry from `zenoh_sovereign_peerings`, and apply the reviewed
+   core change. The per-partner directory `<storage path>/sovereign_from_<them>`
+   remains on disk and is listed in `.undeclared-stores`; the role never deletes
+   it. Historical copies can also remain in the shared legacy `sovereign_from`
+   store. Follow the agreed retention/deletion procedure for all copies, while
+   preserving other partners' data. With `zenoh_orphan_stores_fail: true`, an
+   approved disposition or migration is needed before the deploy can proceed.
 
 There is no certificate revocation list and no way to revoke a single certificate. Cutting the
 tunnel is the control that actually works; the rest is cleanup.
 
 ---
+
+## Receive-storage preflight
+
+The edge role checks each configured `goat_zenoh_edge_ingress_key_exprs` value
+against the core's storage declarations when it can read that core locally.
+Every required scope must have an exact matching receive store. This accepts the
+legacy-plus-scoped configuration introduced by #235 and preserves its existing
+history. It does not remove stores, migrate data, alter ACLs or restart the core.
+
+A readable configuration with missing scopes or an unsupported format fails with
+an actionable message. An unreadable or separate core is explicitly **SKIP**, not
+verified. Inspect that core through its own approved workflow. Setting
+`goat_zenoh_edge_ingress_scope_check: false` also reports SKIP and does not inspect
+the core. Actual fresh delivery and persistence still require the acceptance
+checks; a configured store is not evidence that traffic arrived.
+
+The implementation and its limits are described in
+[Federation ingress storage preflight](../design/federation-ingress-storage-preflight.md).
 
 ## If something does not work
 
@@ -430,7 +451,7 @@ tunnel is the control that actually works; the rest is cleanup.
 | Connection refused immediately | Their certificate does not chain to the CA you installed. Re-check Step 3, and check you installed *their* CA and not your own. |
 | Connects, but nothing arrives | The name they present does not exactly match `goat_zenoh_edge_partner_cn`. Matching is exact — check case, hyphens and whitespace. |
 | Arrives but is not stored | Your core has no storage declared for the landing prefix. Data is being routed and discarded. |
-| Session up, they publish, nothing reaches your core, and nothing is logged on their side | Your core's landing storage is wider than the edge admits — one `from/**` store for every peering. The edge refuses the core's subscriber declaration (the edge log reads `unauthorized to Declare Subscriber (ingress) on from/**`), so it never asks the partner for anything. Give each peering its own store on exactly `from/<them>/**`; `roles/goat-zenoh` renders one per `zenoh_sovereign_peerings` entry, and the edge role refuses to deploy against a `from/**` store. |
+| Session up, they publish, nothing reaches your core, and nothing is logged on their side | Check for a receive store matching each admitted ingress scope. A lone `from/**` store declares a subscriber wider than a scoped edge grant and is refused. A matching `from/<them>/**` store, or matching per-lane stores for per-lane grants, supplies the required declarations. A retained legacy store can coexist with them. The edge preflight checks an inspectable local core and explicitly reports SKIP when it cannot read one; inspect a separate core through its own approved workflow. |
 | Worked, then stopped after weeks | A certificate expired, or their CA rotated and the refresh is not running. Check the refresh timer first. |
 | Works in one direction only | The two sides' agreed prefixes do not mirror. Compare Step 2 values side by side. |
 

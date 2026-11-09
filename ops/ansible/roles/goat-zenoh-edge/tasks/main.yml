@@ -116,40 +116,9 @@
     - goat_zenoh_edge_key_scope_check | default(true)
     - _edge_core_key_storages.stdout | default('') is search('"keys/\\*\\*"')
 
-- name: edge | read the core's ingress storages, to compare against what we admit
-  # The same silent refusal, on the inbound side. The core's ingress store
-  # declares its subscriber to this edge, and the core-forward
-  # rule admits only goat_zenoh_edge_ingress_key_exprs. A core storing the whole
-  # of "from/**" is refused here, so this edge never learns the core wants the
-  # partner's data, never asks the partner for it, and nothing crosses.
-  # Read-only and never fatal on its own, like the key-storage read above.
-  ansible.builtin.shell: >-
-    set -o pipefail;
-    docker exec {{ goat_zenoh_edge_core_container | default('goat-zenoh') }}
-    cat /etc/zenoh/config.json5 2>/dev/null
-    | grep -oE 'key_expr:[[:space:]]*"from/[^"]*"' | sed -E 's/^key_expr:[[:space:]]*//'
-    | sort -u | tr '\n' ' '
-  args: { executable: /bin/bash }
-  register: _edge_core_ingress_storages
-  changed_when: false
-  failed_when: false
+- name: edge | inspect scoped ingress storage when a local core is readable
+  ansible.builtin.include_tasks: ingress-storage-check.yml
   when: goat_zenoh_edge_ingress_key_exprs | default([]) | length > 0
-
-- name: edge | refuse when the core's ingress storage is wider than what we admit
-  ansible.builtin.fail:
-    msg: >-
-      The core stores {{ _edge_core_ingress_storages.stdout | trim }}, which is
-      WIDER than the {{ goat_zenoh_edge_ingress_key_exprs | join(', ') }} this
-      edge admits. The core's declaration is refused silently, so partner data
-      is never forwarded and the round trip fails with nothing logged at the
-      sender. Give the core one store per peering on exactly from/<sov>/**
-      (roles/goat-zenoh renders that from zenoh_sovereign_peerings), or set
-      goat_zenoh_edge_ingress_scope_check=false if you have deliberately
-      accepted this.
-  when:
-    - goat_zenoh_edge_ingress_key_exprs | default([]) | length > 0
-    - goat_zenoh_edge_ingress_scope_check | default(true)
-    - _edge_core_ingress_storages.stdout | default('') is search('"from/\\*\\*"')
 
 - name: edge | directories
   ansible.builtin.file:

@@ -365,7 +365,7 @@ check(brace_balanced(out), "brace/bracket balanced with pre-cut partner blocks")
 print("== federation ingress storage ==")
 check("sovereign_from:" not in render(), "no peer means no federation store")
 peers = [dict(sovereign="aaa", cn="fed.aaa.bbb.01", release_key_exprs=["from/bbb/**"]),
-         dict(sovereign="ccc", cn="fed.ccc.bbb.01", release_key_exprs=["from/bbb/**"])]
+         dict(sovereign="zag-ros", cn="fed.zag-ros.bbb.01", release_key_exprs=["from/bbb/**"])]
 for identity in ["per-vendor", "per-uuid-slot-pool"]:
     for count in [1, 2]:
         cfg = render(zenoh_identity_model=identity, zenoh_sovereign_peerings=peers[:count],

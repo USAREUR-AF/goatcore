@@ -1,0 +1,59 @@
+---
+# Inspect a local core only. Missing access is explicitly SKIP, never PASS.
+- name: edge | report disabled ingress storage inspection
+  ansible.builtin.debug:
+    msg: "SKIP: ingress storage inspection is explicitly disabled; receive scopes were not verified."
+  when: not (goat_zenoh_edge_ingress_scope_check | default(true) | bool)
+
+- name: edge | read the local core storage configuration
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - "{{ goat_zenoh_edge_core_container | default('goat-zenoh') }}"
+      - cat
+      - /etc/zenoh/config.json5
+  register: _edge_ingress_core_config
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  no_log: true
+  when: goat_zenoh_edge_ingress_scope_check | default(true) | bool
+
+- name: edge | report unavailable local core storage inspection
+  ansible.builtin.debug:
+    msg: >-
+      SKIP: the local core configuration could not be read. A separate core host
+      must be inspected through its own approved workflow; receive scopes were
+      not verified by this edge play.
+  when:
+    - goat_zenoh_edge_ingress_scope_check | default(true) | bool
+    - (_edge_ingress_core_config.rc | default(-1) | int) != 0
+
+- name: edge | compare admitted ingress scopes with actual storage declarations
+  ansible.builtin.set_fact:
+    _edge_ingress_storage_report: >-
+      {{ _edge_ingress_core_config.stdout |
+         zenoh_ingress_storage_check(goat_zenoh_edge_ingress_key_exprs) }}
+  no_log: true
+  when:
+    - goat_zenoh_edge_ingress_scope_check | default(true) | bool
+    - (_edge_ingress_core_config.rc | default(-1) | int) == 0
+
+- name: edge | require a matching receive store for each admitted ingress scope
+  ansible.builtin.assert:
+    that:
+      - _edge_ingress_storage_report.error | length == 0
+      - _edge_ingress_storage_report.missing | length == 0
+    fail_msg: >-
+      Ingress storage inspection failed. {{ _edge_ingress_storage_report.error }}
+      Missing exact scopes: {{ _edge_ingress_storage_report.missing | join(', ') }}.
+      Observed storage scopes: {{ _edge_ingress_storage_report.observed | join(', ') }}.
+      Configure a receive store matching each admitted ingress scope. A broad
+      from/** store alone does not satisfy that requirement. Existing history
+      stores may remain alongside the matching scoped stores; retain their data
+      under the approved storage policy.
+    success_msg: "PASS: a matching receive store exists for every admitted ingress scope."
+  when:
+    - goat_zenoh_edge_ingress_scope_check | default(true) | bool
+    - (_edge_ingress_core_config.rc | default(-1) | int) == 0
