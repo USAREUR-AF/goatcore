@@ -205,7 +205,7 @@ channel. The roster is where the confirmed value is *kept and reused*; it is not
 value is *learned*. This is the specification's own rule — a directory is a cache of the
 binding, never its source — turned into a refusal in the tool rather than a sentence in a
 document. Concretely: a per-party record under `ops/federation/parties/<sovereign_id>.yaml`
-holds the two values and the act that established them, and `goat federate apply` refuses when
+holds the two values and the act that established them, and `goatbuilder federate apply` refuses when
 the counterparty's package disagrees with that record or no record exists.
 
 **The roster is valid on a threshold of member signatures, not on one operator's.** Tor's
@@ -446,7 +446,7 @@ a foreign CA admitted to an edge, which under F-424 **is** an authorization gran
 
 The counter is one design property, and the recommendation is only sound if that property is
 built rather than written: **the roster may not be the source of a first-contact binding.**
-`goat federate apply` refuses a counterparty with no local corroboration record, so a party
+`goatbuilder federate apply` refuses a counterparty with no local corroboration record, so a party
 that has never been confirmed over an independently authenticated channel cannot be peered with
 no matter what the roster says. The roster then does what PeeringDB does and what eduGAIN's
 aggregate does not — it distributes, and it decides nothing.

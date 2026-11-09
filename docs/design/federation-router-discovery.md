@@ -8,6 +8,10 @@ label, and both federation e2e harnesses use the role's naming pattern and label
 **Not built:** remote host provisioning or automatic selection among several cores.
 Live deployment and bilateral federation acceptance are separate release gates.
 
+> The verb moves to `goatbuilder federate init` ([ADR 1225](../adr/1225-federation-belongs-to-goatbuilder-one-command-one-decision.md), Proposed), which runs
+> where the deployment's declaration is. This document describes the selection as built in
+> `goat federate init` today.
+
 ## Selection contract
 
 The standard role names its service and container `{{ zenoh_stack }}-router`, with
