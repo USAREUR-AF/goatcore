@@ -56,6 +56,32 @@
       Every entry of goat_fed_republisher_release must be a `release/<set>/...`
       staging name: {{ goat_fed_republisher_release }}.
 
+# --- One host, several peerings -----------------------------------------------
+# Every republisher runs on the host network and serves /metrics on loopback. Two of
+# them on one core host with the same port: the second cannot bind it. Refused here,
+# before anything is written, naming the republisher that holds the port.
+- name: republisher | other republishers on this host holding our metrics port
+  ansible.builtin.shell:
+    cmd: >-
+      docker ps -a --filter name=^goat-fed-republisher- --format '{{ '{{' }}.Names{{ '}}' }}' |
+      while read -r n; do
+        [ "$n" = "{{ goat_fed_republisher_stack }}" ] && continue;
+        docker inspect -f '{{ '{{' }}range .Config.Env{{ '}}{{' }}println .{{ '}}{{' }}end{{ '}}' }}' "$n" |
+        grep -qx 'FED_REPUBLISHER_METRICS_BIND=127.0.0.1:{{ goat_fed_republisher_metrics_port }}' && echo "$n";
+      done; true
+    executable: /bin/bash
+  register: _rp_metrics_clash
+  changed_when: false
+
+- name: republisher | no other republisher on this host holds our metrics port
+  ansible.builtin.assert:
+    that: _rp_metrics_clash.stdout_lines | length == 0
+    fail_msg: >-
+      goat-fed-republisher refuses: 127.0.0.1:{{ goat_fed_republisher_metrics_port }} is the
+      metrics port of {{ _rp_metrics_clash.stdout_lines | join(', ') }} on this host. Each
+      peering's republisher needs its own: set goat_fed_republisher_metrics_port in
+      group_vars/<peering>_core/ for this peering.
+
 # --- What it reads, placed on this host --------------------------------------
 - name: republisher | directories
   ansible.builtin.file:
