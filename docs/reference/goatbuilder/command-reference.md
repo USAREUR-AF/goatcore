@@ -275,6 +275,7 @@ A sovereign peering declared, converged and verified (ADR 1157): our half measur
 | `--from <FROM>` | Resume from this phase | `1` |
 | `--to <TO>` | Stop after this phase | `99` |
 | `--dry-run` | Print every phase and command; run nothing |  |
+| `--resume` | Skip the phases the run journal (<work>/state.json) shows passed, whose inputs and local outputs are unchanged now; checks and plays always run again |  |
 
 **Subcommands**
 
