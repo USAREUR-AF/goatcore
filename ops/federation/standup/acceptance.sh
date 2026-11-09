@@ -267,6 +267,72 @@ HAVE_IN=1;  [ "$THEIR_SETS" = "-" ] && [ "$THEIR_WILD" = "-" ] && HAVE_IN=0
 NO_OUT="the agreement offers no release set from $US (a receive-only peering)"
 NO_IN="the agreement offers no release set from $THEM (a send-only peering)"
 
+# ---- A BILATERAL SESSION (FED_ACCEPTANCE_SESSION, acceptance_session.py). Each side
+#      runs on its own core and edge only, with no counterparty surface. The manifest
+#      both imported fixes the keys and the bytes: each side stages under
+#      release/<set>/acceptance/<session id>/<itself> a value carrying the challenge
+#      the manifest issued to it, and reads the partner's from its own core. What
+#      only the partner can observe (our samples arriving on their core) is BLOCKED
+#      here and names the partner's row that observes it (`observed_by_peer`), for
+#      `acceptance_session.py combine` once their bundle is imported.
+SESSION="${FED_ACCEPTANCE_SESSION:-}"
+if [ -n "$SESSION" ]; then
+  python3 "$HERE/acceptance_session.py" validate --manifest "$SESSION" --agreement "$AGREEMENT" --us "$US" \
+    || { echo "acceptance: the session manifest $SESSION is not valid for this run" >&2; exit 2; }
+  read -r SESSION_ID MY_CHAL THEIR_CHAL _ <<EOF
+$(python3 "$HERE/acceptance_session.py" fields --manifest "$SESSION" --us "$US")
+EOF
+  echo "  session: $SESSION_ID"
+  echo
+fi
+session_lanes() {
+  local set sk key val i landed=0 waits
+  sk="acceptance/$SESSION_ID"
+  waits=$(( ${FED_SESSION_WAIT:-300} / 2 )); [ "$waits" -ge 1 ] || waits=1
+  begin
+  for set in $(list "$OUR_SETS"); do put_ours "$set/$sk/$US" "$US-$MY_CHAL-${set#release/}"; gap; done
+  [ "$HAVE_OUT" = 1 ] && { put_ours "release/$US-not-offered/$sk/$US" "nope-$MY_CHAL"; gap; }
+  for set in $(list "$OUR_SETS"); do
+    begin; val="$US-$MY_CHAL-${set#release/}"
+    get_side ours "$set/$sk/$US"; obs key "$set/$sk/$US"; obs staged "$GOT"
+    if [ "$GOT_RC" -ne 0 ]; then blk "publish/outbound/$set" outbound positive "our session sample under $set/**: our core's REST surface did not answer" "$GOT_ERR"
+    elif [ "$GOT" = "$val" ]; then ok "publish/outbound/$set" outbound positive "our session sample is staged under $set/** with our challenge"
+    else no "publish/outbound/$set" outbound positive "our session sample under $set/** was not staged" "read '${GOT:-<nothing>}'"; fi
+    begin; obs observed_by_peer "delivery/inbound/$set"; obs key "$(wire_of "$US" "$set")/$sk/$US"
+    blk "delivery/outbound/$set" outbound positive "our $set/** arriving on their core is observed by $THEM's runner in this session" \
+      "Import their bundle (acceptance_session.py import) and combine."
+  done
+  if [ "$HAVE_OUT" = 1 ]; then
+    begin; obs observed_by_peer "republisher-boundary/inbound"
+    blk republisher-boundary/outbound outbound negative "an unoffered set of ours not lifted: observed by $THEM's runner in this session"
+  fi
+  for set in $(list "$THEIR_SETS"); do
+    begin; key="$(wire_of "$THEM" "$set")/$sk/$THEM"; val="$THEM-$THEIR_CHAL-${set#release/}"
+    for i in $(seq 1 "$waits"); do
+      get_side ours "$key"
+      [ "$GOT_RC" -eq 0 ] && [ -n "$GOT" ] && break
+      settle 2
+    done
+    obs key "$key"; obs sent_expected "$val"; obs received "$GOT"; obs attempts "$i"
+    obs sent_sha256 "$(sha "$val")"; obs received_sha256 "$(sha "$GOT")"
+    if [ "$GOT_RC" -ne 0 ]; then blk "delivery/inbound/$set" inbound positive "$THEM's session sample under $set/**: our core's REST surface did not answer" "$GOT_ERR"
+    elif [ "$GOT" = "$val" ]; then ok "delivery/inbound/$set" inbound positive "$THEM's session sample on $set/** arrived as $(wire_of "$THEM" "$set")/** with their challenge, byte for byte"; landed=1
+    elif [ -z "$GOT" ]; then blk "delivery/inbound/$set" inbound positive "nothing from $THEM on $set/** within ${FED_SESSION_WAIT:-300}s" \
+      "Either they have not run this session yet, or it was not delivered; re-run once they have."
+    else no "delivery/inbound/$set" inbound positive "$THEM's session sample on $set/** arrived with other bytes" "sent sha256 $(sha "$val"), read sha256 $(sha "$GOT")"; fi
+  done
+  if [ "$HAVE_IN" = 1 ]; then
+    begin
+    if [ "$landed" = 1 ]; then
+      absent republisher-boundary/inbound inbound negative ours "$(wire_of "$THEM" "release/$THEM-not-offered")/$sk/$THEM" \
+        "a staging set of theirs the agreement never offered did NOT arrive on our core in this session" \
+        "release/$THEM-not-offered/** arrived on our core: their republisher forwarded a set nobody agreed"
+    else
+      skp republisher-boundary/inbound inbound negative "their unoffered set: not asserted" "no session sample of theirs landed, so its absence would prove nothing"
+    fi
+  fi
+}
+
 # ---- THE VERDICT, from the evidence. acceptance_evidence.py decides it and the exit
 #      status, so the rule "a check that did not run is not a pass" lives in one place.
 set_or_not() { if [ -n "$1" ]; then echo 1; else echo 0; fi; }
@@ -278,7 +344,11 @@ finish() { # DIR
     "probe_agreed=$(set_or_not "${FED_PROBE_THEIRS_REST:-}")" "probe_forged=$(set_or_not "${FED_PROBE_FORGED_REST:-}")" \
     "probe_impersonate=$(set_or_not "${FED_PROBE_IMPERSONATE_REST:-}")" \
     "spire=$(set_or_not "${FED_SPIRE_OURS:-}${FED_SPIRE_THEIRS:-}")" \
-    "existing=$(set_or_not "${FED_EXISTING_WORKS:-}")" "existing_rest=$(set_or_not "${FED_EXISTING_REST:-}")"
+    "existing=$(set_or_not "${FED_EXISTING_WORKS:-}")" "existing_rest=$(set_or_not "${FED_EXISTING_REST:-}")" \
+    "session=$(set_or_not "${FED_ACCEPTANCE_SESSION:-}")" \
+    ${FED_ACCEPTANCE_SESSION:+--session "$FED_ACCEPTANCE_SESSION"} \
+    --software "$HERE/acceptance.sh" "$HERE/acceptance_evidence.py" "$HERE/acceptance_session.py" "$HERE/../roundtrip/fedcheck.sh" \
+    --config-dir "$(dirname "$AGREEMENT")/applied"
   rc=$?
   [ "$rc" -eq 2 ] && echo "  ACCEPTANCE FAILED — the evidence bundle could not be written to $1."
   # A check whose evidence could not be recorded is missing from the bundle, so the
@@ -439,10 +509,15 @@ done
 if [ -z "$FED_THEIRS_REST" ]; then
   why="no counterparty surface (FED_THEIRS_REST)"
   hint="Only a drill owns both sides; in production the counterparty runs their own half."
-  for set in $(list "$OUR_SETS");   do blk "delivery/outbound/$set" outbound positive "our $set/** read back on their core: $why" "$hint"; done
-  for set in $(list "$THEIR_SETS"); do blk "delivery/inbound/$set" inbound positive "their $set/** read back on our core: $why" "$hint"; done
-  [ "$HAVE_OUT" = 1 ] && blk republisher-boundary/outbound outbound negative "an unoffered set of ours is not lifted: $why"
-  [ "$HAVE_IN" = 1 ]  && blk republisher-boundary/inbound inbound negative "an unoffered set of theirs is not lifted: $why"
+  if [ -n "$SESSION" ]; then
+    session_lanes
+  else
+    for set in $(list "$OUR_SETS");   do blk "delivery/outbound/$set" outbound positive "our $set/** read back on their core: $why" "$hint"; done
+    for set in $(list "$THEIR_SETS"); do blk "delivery/inbound/$set" inbound positive "their $set/** read back on our core: $why" "$hint"; done
+    [ "$HAVE_OUT" = 1 ] && blk republisher-boundary/outbound outbound negative "an unoffered set of ours is not lifted: $why"
+    [ "$HAVE_IN" = 1 ]  && blk republisher-boundary/inbound inbound negative "an unoffered set of theirs is not lifted: $why"
+  fi
+  begin
   blk out-of-lane/inbound inbound negative "their write outside the agreement does not cross: $why"
   blk out-of-lane/outbound outbound negative "a prefix the agreement never named does not reach them: $why"
   blk refusal/acl-trace inbound negative "the refusals on our edge's ACL trace: $why"
@@ -793,7 +868,8 @@ if [ "$HAVE_IN" = 0 ]; then
 elif [ "$HAVE_OUT" = 0 ]; then
   begin; na roundtrip/inbound inbound round-trip "no return path: $NO_OUT, so no acknowledgement can come back"
 elif [ -z "$FED_THEIRS_REST" ]; then
-  begin; blk roundtrip/inbound inbound round-trip "their nonce, acknowledged by our responder: no counterparty surface (FED_THEIRS_REST)"
+  begin; [ -n "$SESSION" ] && obs observed_by_peer roundtrip/outbound
+  blk roundtrip/inbound inbound round-trip "their nonce, acknowledged by our responder: no counterparty surface (FED_THEIRS_REST)"
 else
   roundtrip inbound theirs "$THEIR_SETS" "$OUR_WIRE" "$FED_THEIRS_REST"
 fi

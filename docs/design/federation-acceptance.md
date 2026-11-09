@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | **Built:** `ops/federation/standup/acceptance.sh`, phase 14 of both avenues (`goatbuilder federate` and `ops/scripts/peering-standup.sh`): the checks generated from the agreement's flows (§2), persistent reception (§2.1), refusals tied to the control's session (§2.2), existing partnerships before and after, opt-in (§2.3), the outcome and exit rule (§3), the evidence bundle (§4, `ops/federation/standup/acceptance_evidence.py`, unit tests `test_acceptance_evidence.py`), and the in-process test fabric with the tests that run the real script against it (§5, `acceptance_fakefabric.py`, `test_acceptance.py`). The hermetic federation end-to-end test (`ops/federation-e2e/run.sh`) runs phase 14 from both sides with every check configured; it has not been run on this change. **Not built:** a required-check policy file, the driver running `--before` ahead of phase 11 and naming the other peerings itself, run-owned probe sessions with cleanup, and bilateral evidence exchange (session manifest, exchanged bundles, report signing) |
+| Status | **Built:** `ops/federation/standup/acceptance.sh`, phase 14 of both avenues (`goatbuilder federate` and `ops/scripts/peering-standup.sh`): the checks generated from the agreement's flows (§2), persistent reception (§2.1), refusals tied to the control's session (§2.2), existing partnerships before and after, opt-in (§2.3), the outcome and exit rule (§3), the evidence bundle (§4, `ops/federation/standup/acceptance_evidence.py`, unit tests `test_acceptance_evidence.py`), and a bilateral session exchanged by file (§6, `acceptance_session.py`, tests `test_acceptance_session.py`), and the in-process test fabric with the tests that run the real script against it (§5, `acceptance_fakefabric.py`, `test_acceptance.py`). The hermetic federation end-to-end test (`ops/federation-e2e/run.sh`) runs phase 14 from both sides with every check configured; it has not been run on this change. **Not built:** a required-check policy file, the driver running `--before` ahead of phase 11 and naming the other peerings itself, run-owned probe sessions with cleanup, report signing and any automatic bilateral gate |
 | Companions | [`sovereign-federation-runbook.md`](../operations/sovereign-federation-runbook.md) Steps 7 and 8 (the same checks by hand), [`ops/federation/roundtrip/README.md`](../../ops/federation/roundtrip/README.md) (the round trip), [`deployment-e2e.md`](deployment-e2e.md) §"The same pattern for a federation" |
 | Audience | An operator running phase 14; whoever changes `acceptance.sh` |
 
@@ -193,7 +193,8 @@ gate on a single tier. `FED_ACCEPTANCE_STRICT` is still accepted and changes not
 
 A production operator holds only their own side, so a production phase 14 now exits 3 until
 the partner's half is proven too. That is the intended reading: one side alone has not shown
-that the peering works. The bilateral exchange that closes it is not built.
+that the peering works. The bilateral session (§6) is how the partner's half is added, for the
+two operators to review.
 
 ## 4. The evidence bundle
 
@@ -216,6 +217,9 @@ that the peering works. The bilateral exchange that closes it is not built.
           "runner": "ops/federation/standup/acceptance.sh"},
   "agreement": {"path": "...", "sha256": "sha256:...", "spec": "federation-agreement/v1", "expires": "..."},
   "inputs": {"theirs_rest": true, "edge_log_ours": true, "probe_forged": false, "spire": true},
+  "software": {"acceptance.sh": "sha256:...", "acceptance_evidence.py": "sha256:...", "...": "..."},
+  "configuration": {"applied": {"<file apply rendered>": "sha256:..."}},
+  "session": {"id": "ses-...", "manifest_sha256": "sha256:...", "challenge": "<ours>", "expires_at": "..."},
   "counts": {"PASS": 14, "FAIL": 0, "BLOCKED": 0, "SKIP": 1, "NOT APPLICABLE": 0},
   "verdict": "INCOMPLETE",
   "exit": 3,
@@ -240,8 +244,57 @@ Check names are stable (`delivery/<direction>/<set>`, `republisher-boundary/<dir
 `out-of-lane/<direction>`, `refusal/<case>`, `roundtrip/<direction>/<set>`, `spire/<case>`), so
 two runs and two parties' bundles can be compared row by row.
 
-The bundle records local observations only (`observed_by`). Keeping a partner's reported
-results beside it, distinctly labeled, is not built.
+`software` holds the digests of the runner's own files, and `configuration.applied` the digest of
+every file under `<dir of the agreement>/applied/` (what `apply` rendered), so a result is bound
+to the code and configuration it was observed with. `session` is null outside a bilateral
+session (§6).
+
+The bundle records local observations only (`observed_by`). A partner's bundle is imported
+beside it, never into it (§6).
+
+## 6. A bilateral session, exchanged by file
+
+**Built** (`ops/federation/standup/acceptance_session.py`). Each operator runs phase 14 on their
+own core and edge only: no counterparty surface, no shared credentials, no service in between.
+
+1. One operator writes the session manifest:
+   `acceptance_session.py new --agreement <work>/agreement.json --us <us> --out session.json`.
+   It binds the agreement's digest, the acceptance policy's digest (today the built-in
+   `every-generated-check-required/v1`), both participants, a unique session id, the window it
+   is valid in (`not_before`, `expires_at`; 24 hours unless `--hours`), one random challenge per
+   participant and the sample limits. The file goes to the partner by any means; both read its
+   `digest` aloud and compare, as with the agreement.
+2. Each runs phase 14 with `FED_ACCEPTANCE_SESSION=session.json`. The runner first refuses a
+   manifest for another agreement, one that does not name it, one not yet valid or expired
+   (exit 2). Then, in place of the rows that need the partner's core, it stages one sample per
+   offered set under `release/<set>/acceptance/<session id>/<itself>` carrying the challenge the
+   manifest issued to it, plus one under a set nobody offered, and reads the partner's samples
+   from its own core for up to `FED_SESSION_WAIT` seconds (300):
+
+| Row | Here |
+|---|---|
+| `publish/outbound/<set>` | our sample is staged on our core with our challenge |
+| `delivery/outbound/<set>`, `republisher-boundary/outbound`, `roundtrip/inbound` | BLOCKED: observed by the partner. Each names the partner's row that observes it (`observed_by_peer`) |
+| `delivery/inbound/<set>` | the partner's sample arrived on our core with the partner's challenge, byte for byte; BLOCKED while nothing has arrived (they may not have run yet) |
+| `republisher-boundary/inbound` | the partner's unoffered set did not arrive, asserted only beside an inbound sample that did |
+
+3. Each hands the other their `result.json`. `acceptance_session.py import --manifest
+   session.json --us <us> --evidence <evidence dir> <their result.json>` keeps it under
+   `<evidence>/peer/<them>/` with `peer_reported: true, authenticated: false`, after refusing
+   (exit 2) a bundle of another schema, session, manifest, agreement or challenge, one observed by
+   us, one whose run lies outside the session window, any bundle once the session expired, a run
+   id already imported (a replay), and a bundle whose passing inbound delivery does not carry our
+   challenge (it cannot be from this session's samples).
+4. `acceptance_session.py combine` writes `<evidence>/bilateral/<session id>.json` and `.md`:
+   our rows and theirs side by side, local and peer-reported in separate columns. A row of ours
+   marked `observed_by_peer` is satisfied only by the partner's mirror row passing. Exit 0 when
+   the required scope of both sides passed, 1 on any failure, 3 otherwise.
+
+A signature would only say who reported a result, not whether their infrastructure is honest, and
+no report-signing identity exists yet. So every combined result says that peer-reported rows are
+not authenticated and that it is for the two operators to review; nothing gates on it, and
+phase 14's own exit status stays its local verdict. Report signing, its key lifecycle and an
+automatic bilateral gate are not built.
 
 ## 5. Testing without hosts
 
@@ -265,6 +318,8 @@ broken on purpose (`Faults`). `test_acceptance.py` runs the real script against 
 | a diagnostic subscriber carrying a lane whose store's subscription is refused | delivery PASS, `persistence/` BLOCKED, exit 3; with the pause command, FAIL and exit 1, and the subscriber restarted |
 | a subscriber on other keys; a closed admin space; no store for the lane | PASS; BLOCKED (exit 3); FAIL (exit 1) |
 | a denial logged for another session; an allow from a session that is not the probe; decision lines without session ids | denial FAIL (exit 1); control FAIL (exit 1); denials BLOCKED (exit 3) |
+| a bilateral session, each side on its own core: first runner, second runner, first again; import twice; combine | first: inbound BLOCKED, exit 3; second: inbound PASS with the partner's challenge, outbound BLOCKED naming the partner's row; first again: inbound PASS; second import refused as a replay; outbound PASS (peer-reported), scope INCOMPLETE where refusals were not configured |
+| a session manifest made for another agreement | exit 2 |
 | an existing partnership: unnamed; unchanged before and after; no snapshot from before; its agreement changed; its round trip broken by the deployment; a set for the new partner reaching it; no surface for it | no `existing/` rows; PASS (exit 0); BLOCKED (exit 3); FAIL; FAIL naming "before"; leak FAIL; optional SKIP (exit 0) |
 
 `FED_ACCEPTANCE_WAIT`, `FED_ACCEPTANCE_GAP` and `FED_ACCEPTANCE_RT_TIMEOUT` shorten the waits
