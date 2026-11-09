@@ -60,6 +60,7 @@ checkout="$(blocks "Set up Python, Ansible and the browser")"
 printf '%s\n' "$macos" | grep -q 'brew install .*python@3\.14' || fail "macOS does not install python@3.14 (ansible-core 2.20 stops on Homebrew's python, 3.15)"
 printf '%s\n' "$macos" | grep -q 'libexec/bin:\$PATH' || fail "macOS does not put python@3.14's python3 first on PATH before the venv is made"
 printf '%s\n' "$macos" | grep -q 'sh.rustup.rs | sh -s -- -y' || fail "macOS does not install Rust with rustup -y"
+printf '%s\n' "$macos" | grep -q '\.local/bin.*>> ~/\.zprofile' || fail "macOS does not add ~/.local/bin to ~/.zprofile (goatbuilder and goat are installed there)"
 ! printf '%s\n' "$macos" | grep -qE 'brew install .*(rustup|python( |$))' || fail "macOS installs Homebrew's rustup or python formula (no cargo on PATH / Python 3.15)"
 [ -n "$checkout" ] || fail "no bash block under \"Set up Python, Ansible and the browser\" in ${PAGE#"$ROOT"/}"
 ! grep -q -- '--break-system-packages' "$PAGE" || fail "the page overrides the system Python (--break-system-packages); the venv is the route"
@@ -96,6 +97,7 @@ if [ "${1:-}" = "--macos" ]; then
   work="$(mktemp -d)"
   {
     echo 'set -euo pipefail'
+    printf 'macos_profile_line=%q\n' "$(printf '%s\n' "$macos" | grep '\.local/bin.*>> ~/\.zprofile')"
     printf '%s\n' "$macos" "$checkout"
     cat <<'SCRIPT'
 set -euo pipefail
@@ -113,6 +115,21 @@ SCRIPT
 # Homebrew's keg-only rustup on PATH; a clean Mac has neither)
 "$HOME/.cargo/bin/cargo" --version >/dev/null 2>&1 || fail "the page's rustup block left no cargo in ~/.cargo/bin"
 pass "the page's rustup block installed cargo in ~/.cargo/bin"
+
+# a new terminal (a fresh zsh login shell, nothing exported) finds cargo and
+# goatbuilder. This job does not build goatbuilder (the drill does), so a
+# stand-in takes its place in ~/.local/bin when no build is there.
+mkdir -p "$HOME/.local/bin"
+[ -x "$HOME/.local/bin/goatbuilder" ] || { printf '#!/bin/sh\necho goatbuilder stand-in\n' > "$HOME/.local/bin/goatbuilder"; chmod 0755 "$HOME/.local/bin/goatbuilder"; }
+n1="$(grep -c '\.local/bin' "$HOME/.zprofile")"
+fresh="$(env -i HOME="$HOME" USER="${USER:-runner}" SHELL=/bin/zsh /bin/zsh -l -c 'command -v goatbuilder; command -v cargo' 2>&1)" || true
+printf '%s\n' "$fresh" | grep -qx "$HOME/.local/bin/goatbuilder" || fail "a new login shell does not find goatbuilder in ~/.local/bin: $fresh"
+printf '%s\n' "$fresh" | grep -q 'cargo$' || fail "a new login shell does not find cargo: $fresh"
+pass "a new login shell finds goatbuilder in ~/.local/bin and cargo"
+# the profile line is added once, however often the page is run
+eval "$(printf '%s\n' "$macos_profile_line")"
+[ "$(grep -c '\.local/bin' "$HOME/.zprofile")" = "$n1" ] || fail "running the page again added ~/.local/bin to ~/.zprofile a second time"
+pass "re-running the page adds no second ~/.local/bin line"
 
 # the control: the Python the page steers away from cannot start ansible-core 2.20
 brew list python@3.15 >/dev/null 2>&1 || brew install python@3.15 >/dev/null

@@ -127,6 +127,12 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 cargo --version
 ```
 
+The next step installs `goatbuilder` and `goat` into `~/.local/bin`, which macOS does not put on the `PATH`. Add it for every new terminal now. The line is added once, however often you run it:
+
+```bash
+grep -qs '\.local/bin' ~/.zprofile || echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zprofile
+```
+
 #### An SSH key
 
 `goatbuilder` reaches the box over SSH with your key, and phase 1 makes that key the box's administrator key. If `ls ~/.ssh/id_*.pub` lists nothing, make one, then copy it to the box. Replace `ubuntu@192.0.2.50` with the box's user and address:
@@ -159,7 +165,7 @@ goatbuilder --version
 goat --version
 ```
 
-The `export` line covers this terminal. If `--version` says "command not found" in a new terminal, add the same line to your shell profile: `~/.profile` on Ubuntu, `~/.zprofile` on macOS.
+The `export` line covers this terminal. If `--version` says "command not found" in a new terminal, add the same line to your shell profile, `~/.profile` on Ubuntu. On macOS the setup above already added it to `~/.zprofile`.
 
 ### Set up Python, Ansible and the browser
 
