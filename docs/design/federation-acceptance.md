@@ -125,6 +125,10 @@ denials BLOCKED: they cannot be tied to the control. With `FED_PROBE_THEIRS_ZID`
 from any other session fails the control, so the drill's probe is known to be the session that
 was allowed.
 
+Only log lines written after the refusal checks start count: the runner notes the log's length
+first and reads past it, so a decision an earlier run left in the log is not evidence for this one.
+A forged-name or impersonation probe the edge recorded nothing for in this run is BLOCKED.
+
 These rows run on our edge for the inbound direction. The outbound direction is refused, or
 not, by the partner's edge, so it is the partner's inbound row in their own bundle.
 

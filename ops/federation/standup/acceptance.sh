@@ -459,8 +459,12 @@ else
           "Set FED_EDGE_LOG_OURS and FED_PROBE_THEIRS_REST. Without them the refusals
         above rest on silence."
     else
-      # One read of the log per question, kept for the lines each check quotes.
-      trace()   { ours "$FED_EDGE_LOG_OURS" > "$TRACE" 2>&1; }
+      # One read of the log per question, kept for the lines each check quotes. Only
+      # lines written after this run's probes began count: a decision an earlier run
+      # left in the log is not evidence for this one. TRACE_FROM is the log's length
+      # when the refusal checks start.
+      TRACE_FROM=$(ours "$FED_EDGE_LOG_OURS" 2>&1 | wc -l | tr -d ' ')
+      trace()   { ours "$FED_EDGE_LOG_OURS" 2>&1 | tail -n +"$((TRACE_FROM + 1))" > "$TRACE"; }
       lines()   { grep -F "$1" "$TRACE" | grep -E 'is (un)?authorized to ' | tail -3; }
       # verdict [SESSION-FILTER] KEY-FILTER: the last decision, of one session when given.
       verdict() {
@@ -534,6 +538,9 @@ else
           ok refusal/forged-name inbound negative "a name their CA minted and nobody agreed: our edge matched it to no subject, ZERO authorizations, nothing landed"
         elif [ "${allows:-0}" -eq 0 ] && [ "$GOT_RC" -ne 0 ]; then
           blk refusal/forged-name inbound negative "the forged name: our core's REST surface did not answer" "$GOT_ERR"
+        elif [ "${allows:-0}" -eq 0 ] && [ "${unmatched:-0}" -eq 0 ]; then
+          blk refusal/forged-name inbound negative "the forged name: our edge recorded nothing for that session during this run" \
+            "Its decision lines are the evidence; without them the refusal is not proven."
         else
           no refusal/forged-name inbound negative "the forged name was not refused" "matched no subject $unmatched time(s), authorized $allows, our core read '${GOT:-<nothing>}'"
         fi
@@ -564,6 +571,9 @@ else
           ok refusal/impersonation inbound negative "their certificate bearing our core's name: our edge matched it to no subject, ZERO authorizations on any key, nothing landed"
         elif [ "${allows:-0}" -eq 0 ] && [ -z "$landed" ] && [ -n "$unread" ]; then
           blk refusal/impersonation inbound negative "the impersonation: our core's REST surface did not answer for$unread"
+        elif [ "${allows:-0}" -eq 0 ] && [ "${unmatched:-0}" -eq 0 ] && [ -z "$landed" ]; then
+          blk refusal/impersonation inbound negative "the impersonation: our edge recorded nothing for that session during this run" \
+            "Its decision lines are the evidence; without them the refusal is not proven."
         else
           no refusal/impersonation inbound negative "their certificate bearing our core's name was authorized on our edge" "matched no subject $unmatched time(s), authorized $allows time(s), our core read '$landed'"
         fi
