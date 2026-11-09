@@ -54,6 +54,7 @@ pub mod lock;
 mod run;
 pub mod state;
 pub use run::Surface;
+pub mod preflight;
 
 pub struct Options<'a> {
     pub with: &'a str,
@@ -419,6 +420,12 @@ fn plan_view(repo: &Path, o: &Options, work: &str, edge_group: &str, phases: &[P
             }
         }
     }
+    if shown.iter().any(|p| p.n == 1) {
+        s.push_str(&format!("\n{}\n", bold("Phase 1 checks these before anything changes:")));
+        for (id, what, _) in preflight::CHECKS {
+            s.push_str(&format!("  {id:<15} {what}\n"));
+        }
+    }
     s.push_str(&format!("\n{} add -o json to see every phase's command, or read\ndocs/operations/sovereign-federation-runbook.md.\n", bold("To see more:")));
     match shown.iter().find(|p| p.n == 11) {
         Some(_) if !agreement_known => {
@@ -510,10 +517,18 @@ pub fn federate_with(repo: &Path, o: &Options, s: &Surface) -> Result<Report> {
     let resume = format!("goatbuilder federate {}{}", o.with, o.env.map(|e| format!(" --env {e}")).unwrap_or_default());
     // Once `goatbuilder federate allocate` has recorded this peering, the run must use its values.
     peering_files::driver_agrees(&cfg, cfg_path.parent().unwrap_or(repo), o, &work, &edge_group)?;
+    let executes = !o.dry_run && o.mock.is_none();
+    // Phase 1's inputs, derived from the deployment (federate/preflight.rs). A
+    // real run exports each one the operator has not set, before the plan reads
+    // them; a dry run lists them and changes no command (the parity gate).
+    let peering = cfg.peerings.iter().find(|p| p.with == o.with && o.env.map(|e| p.environment == e).unwrap_or(true)).expect("C1 found it");
+    let inputs = preflight::derive_inputs(repo, peering, &work, &edge_group, None);
+    if executes {
+        preflight::export(&inputs);
+    }
     let mut phases = plan(repo, o, &work, &edge_group, &resume);
     // A peering a forwarder relays: the forwarder runs inside phase 2 (federate/forwarder.rs).
     forwarder::splice(&mut phases, &cfg, cfg_path.parent().unwrap_or(repo), o, &edge_group)?;
-    let executes = !o.dry_run && o.mock.is_none();
     let banner_mode = if o.dry_run {
         "(DRY RUN — nothing executes)"
     } else if o.mock.is_some() {
@@ -604,6 +619,7 @@ pub fn federate_with(repo: &Path, o: &Options, s: &Surface) -> Result<Report> {
         print!("{}", plan_view(repo, o, &work, &edge_group, &phases));
     }
     if o.dry_run {
+        checks.extend(preflight::plan_rows(&inputs));
         checks.push(row("footer", "PLAN ONLY — nothing above executed. Phases 5 and 10 are MANUAL and stop the run; resume with --from 6 and --from 11. Acceptance criteria for every phase: docs/operations/sovereign-federation-runbook.md. The shape and why: docs/design/staged-delivery-pattern.md".into()));
     }
     let mut r = Report::new("federate", checks, EXIT_REFUSED);

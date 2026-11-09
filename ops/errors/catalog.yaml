@@ -1828,6 +1828,292 @@ entries:
       - "cannot (create|open|take|write|read) the (working folder|peering lock|allocation lock|work root|run journal)"
       - "cannot rename .*state\\.json"
     exit: 1
+  # ------------------------------------------- federate phase 1, preflight (GB-130..149)
+
+  - code: GB-130
+    tool: goatbuilder
+    title: a federation input is missing
+    what: "federate phase 1 (preflight) found inputs the later phases need that nothing declared and nothing could derive. Every missing input is listed with where to declare it. Nothing was measured, signed or deployed."
+    causes:
+      - the deployment does not declare it (the edge group's group_vars, the peering's entry in goatbuilder.yaml peerings:, the inventory)
+      - the script avenue (peering-standup.sh) was run without exporting it; goatbuilder derives what it can, the script does not
+    fixes:
+      - "declare each listed value where the line names it, then: goatbuilder federate <partner> --from 1 --to 1"
+      - "export FED_<NAME>=...   (one command only; an exported value always overrides what goatbuilder derives)"
+    read: docs/design/federation-preflight.md
+    exit: 1
+    matches:
+      - "required inputs .*\\(GB-130\\)"
+
+  - code: GB-131
+    tool: goatbuilder
+    title: a port this peering needs is already held on the edge
+    what: "the tunnel listen port (UDP) or the edge router listen port (TCP) is held on the edge host by something other than this peering's own interface or container. NetBird holds UDP 51820 on a mesh host, which is also the WireGuard default."
+    causes:
+      - the tunnel listen port is the WireGuard default 51820 and NetBird's interface holds it
+      - another peering's edge router or interface already uses the port on a shared edge host
+    fixes:
+      - "pin another port in the peering declaration: goatbuilder.yaml peerings: values: wg_listen_port / edge_listen_port"
+      - "or set peering_wg_listen_port / goat_zenoh_edge_listen_port in group_vars/<edge group>/, then re-run phase 1"
+    read: docs/design/federation-preflight.md
+    exit: 1
+    matches:
+      - "edge ports free .*\\(GB-131\\)"
+
+  - code: GB-132
+    tool: goatbuilder
+    title: the republisher metrics port is already held on the core
+    what: "the outbound republisher's loopback metrics port is held on the core host by something other than this peering's republisher. One port per peering on a shared core host."
+    causes:
+      - another peering's republisher uses the same metrics port on the core host
+      - another service listens on that loopback port
+    fixes:
+      - "pin republisher_metrics_port in the peering declaration (goatbuilder.yaml peerings: values:)"
+      - "or set goat_fed_republisher_metrics_port in group_vars/<peering>_core/"
+    read: docs/design/federation-preflight.md
+    exit: 1
+    matches:
+      - "core metrics port free .*\\(GB-132\\)"
+
+  - code: GB-133
+    tool: goatbuilder
+    title: the edge or core host could not be probed for its ports
+    what: "the read-only probe (ops/ansible/peering-preflight.yml) returned no answer for a host, or `ss` could not list its sockets, so the ports were not checked. Not a pass."
+    causes:
+      - the host is unreachable with the inventory the peering plays use (mesh down, wrong ansible_host, no SSH key)
+      - iproute2 (`ss`) is not installed on the host
+    fixes:
+      - "cd ops/ansible && ansible -i inventory/peering-edges.ini <group> -m ping"
+      - "install iproute2 on the host, then re-run phase 1"
+    read: docs/design/federation-preflight.md
+    exit: 1
+    matches:
+      - "no probe answer from"
+
+  - code: GB-134
+    tool: goatbuilder
+    title: the committed slot list differs from the slot registry
+    what: "ops/scripts/sync-slot-anchors.py --check found live slots with no declared store or declared stores for slots that are not live. A core router restarted on this list drops or misses receive stores. Slots minted between the fix and the restart drift it again, so the restart step runs this check once more."
+    causes:
+      - slots were minted or revoked since the list was last regenerated and committed
+      - the list was regenerated, and a slot was minted before the core router restarted
+    fixes:
+      - "python3 ops/scripts/sync-slot-anchors.py --env <goatnet> --db <registry.db>   (writes the list; commit it)"
+      - "python3 ops/federation/standup/preflight.py <partner> --work <dir> --only slot-anchors   (re-check just before the restart)"
+    read: docs/design/federation-preflight.md
+    exit: 1
+    matches:
+      - "slot list equals registry .*\\(GB-134\\)"
+
+  - code: GB-135
+    tool: goatbuilder
+    title: the slot registry could not be read
+    what: "sync-slot-anchors.py exited 2: the registry was unreadable, or it reported zero live slots. That is not a verdict on drift, and the check is not passed."
+    causes:
+      - FED_SLOT_DB names a file that is not the portal registry, or it cannot be opened read-only
+      - the management host named by FED_SLOT_PG_SSH is unreachable, or its portal database container differs
+    fixes:
+      - "check FED_SLOT_DB, or FED_SLOT_REGISTRY_STORE=postgres with FED_SLOT_PG_SSH (portal_store in group_vars/<goatnet>_hosts says which)"
+    read: docs/design/federation-preflight.md
+    exit: 1
+    matches:
+      - "slot list equals registry .*\\(GB-135\\)"
+
+  - code: GB-136
+    tool: goatbuilder
+    title: the core has no receive store matching what the edge grants
+    what: "the core router's storage_manager has no store whose key expression equals an ingress scope the edge admits (from/<partner>/** by the spec's rule, or the rendered goat_zenoh_edge_ingress_key_exprs). A store wider than the grant, such as from/**, declares a subscriber the edge refuses, so data would cross and not be kept."
+    causes:
+      - the core keeps only a historical from/** store
+      - the core's per-partner store names a different partner or lane than the edge grants
+    fixes:
+      - "add a store on the core whose key_expr equals each admitted scope (the goat-zenoh role renders one per partner); keep a historical from/** store beside it if its data is needed"
+    read: docs/design/federation-ingress-storage-preflight.md
+    exit: 1
+    matches:
+      - "core receive stores .*\\(GB-136\\)"
+
+  - code: GB-137
+    tool: goatbuilder
+    title: the core router's configuration could not be read
+    what: "preflight found the core router but could not read its configuration, so the receive stores were not checked. Reported SKIP, never PASS; FED_PREFLIGHT_STRICT=1 refuses on it."
+    causes:
+      - the core router reads its configuration from another path than /etc/zenoh/config.json5
+      - the account behind FED_ROUTER_DOCKER_HOST may list containers but not exec in them
+    fixes:
+      - "export FED_CORE_CONFIG_PATH=<path inside the core container>"
+      - "inspect the core's storages through its own approved workflow"
+    read: docs/design/federation-ingress-storage-preflight.md
+    exit: 1
+    matches:
+      - "core receive stores .*\\(GB-137\\)"
+
+  - code: GB-138
+    tool: goatbuilder
+    title: no core router container was found
+    what: "the selection phase 3 uses (goat federate init) found no running core router on the daemon preflight read: FED_ROUTER_DOCKER_HOST, else the local runtime. Discovery accepts the org.goat.component=zenoh-core label, *-zenoh-router names and legacy goat-zenoh."
+    causes:
+      - the core router runs on another host and FED_ROUTER_DOCKER_HOST does not point at it
+      - the core router is stopped, or runs under a custom name without the role label
+    fixes:
+      - "export FED_ROUTER_DOCKER_HOST=ssh://<user>@<core>   (goatbuilder derives it from the inventory group <partner>_core)"
+      - "export FED_ROUTER_CONTAINER=<name or ID>"
+    read: docs/design/federation-router-discovery.md
+    exit: 1
+    matches:
+      - "no running core router found"
+
+  - code: GB-139
+    tool: goatbuilder
+    title: several core router containers were found
+    what: "more than one running container qualifies as the core router, and preflight, like phase 3, will not choose among them."
+    causes:
+      - an old and a new core router run side by side
+      - two stacks on one host both carry a *-zenoh-router name
+    fixes:
+      - "export FED_ROUTER_CONTAINER=<name or ID of the core router>"
+    read: docs/design/federation-router-discovery.md
+    exit: 1
+    matches:
+      - "multiple running core routers found"
+
+  - code: GB-140
+    tool: goatbuilder
+    title: our CA certificate is missing or is not a CA
+    what: "the certificate phase 8 signs the peering leaves with does not exist, is not a PEM certificate, or is not a CA (basicConstraints CA:TRUE)."
+    causes:
+      - FED_CA_CERT, goat_federation_ca_cert or the derived ops/ansible/enrollment/ca/<site>/root-cert.pem names a missing file
+      - a leaf certificate was named instead of the CA
+    fixes:
+      - "set goat_federation_ca_cert in group_vars/<edge group>/ to our own CA certificate (never the partner's)"
+    read: docs/design/federation-preflight.md
+    exit: 1
+    matches:
+      - "signing CA \\(phase 8\\) .*\\(GB-140\\)"
+
+  - code: GB-141
+    tool: goatbuilder
+    title: our CA signing key cannot be resolved
+    what: "the CA private key phase 8 needs is missing, does not decrypt with the age identity, is not a private key, or does not match the CA certificate. The deployment keeps it at <deploy.state_dir>/<site>-ca/ca.key.age; preflight decrypts it in memory to compare and writes no plaintext."
+    causes:
+      - the ca.key.age file is not on this machine
+      - the age identity (~/.config/age/keys.txt, or FED_AGE_IDENTITY) is not the one the key was encrypted to
+      - the key belongs to another CA than the certificate
+    fixes:
+      - "restore <deploy.state_dir>/<site>-ca/ca.key.age, or set goat_federation_ca_key_age / FED_CA_KEY_AGE"
+      - "export FED_AGE_IDENTITY=<the identity file the key was encrypted to>"
+    read: docs/design/federation-preflight.md
+    exit: 1
+    matches:
+      - "signing CA \\(phase 8\\) .*\\(GB-141\\)"
+
+  - code: GB-142
+    tool: goatbuilder
+    title: our federation signing key cannot be read
+    what: "FED_SIGNING_KEY names a file that does not exist, or whose content is neither 64 hex characters (the RFC 8032 seed) nor 44 base64."
+    causes:
+      - goat_federation_signing_key or FED_SIGNING_KEY names the wrong path
+      - the file holds a PEM or a public key rather than the seed
+    fixes:
+      - "set goat_federation_signing_key in group_vars/<edge group>/ to the file holding our Ed25519 seed"
+    read: docs/design/federation-preflight.md
+    exit: 1
+    matches:
+      - "signing key .*\\(GB-142\\)"
+
+  - code: GB-143
+    tool: goatbuilder
+    title: the peering inventory does not reach the edge or core
+    what: "inventory/peering-edges.ini is missing, has no group for this peering's edge or core, lists no host in it, or does not list the group under [peering_edges:children] / [peering_cores:children]. A play limited to such a group runs against nothing and reports success."
+    causes:
+      - the edge or core group was never added to the deployment's inventory
+      - the committed inventory ships the host commented out
+    fixes:
+      - "add [<partner>_edge] and [<partner>_core] with their hosts, and list each group under its parent's :children"
+    read: docs/design/federation-preflight.md
+    exit: 1
+    matches:
+      - "(edge|republisher) inventory .*\\(GB-143\\)"
+
+  - code: GB-144
+    tool: goatbuilder
+    title: the federation declaration or the profile is missing or wrong
+    what: "the goat context has no federation.toml, it has no valid sovereign_id or it declares a measured capability, or the profile certificate or CA bundle is missing."
+    causes:
+      - "`goat profile init` was not run for this context, or ran as another user (sudo -E keeps HOME)"
+      - federation.toml was not written, or declares transports, fabric_version, fabric_fips_image or pqc_capable
+    fixes:
+      - "goat profile init <bundle.cbor>"
+      - "goat federate init   (prints the declaration template when it is absent)"
+    read: docs/design/federation-preflight.md
+    exit: 1
+    matches:
+      - "(declaration|sovereign_id|profile certificate|CA root bundle) .*\\(GB-144\\)"
+
+  - code: GB-145
+    tool: goatbuilder
+    title: the core certificate would not name every address the edge dials
+    what: "FED_CORE_SAN does not cover an address the edge's deployment.yml dials. A core certificate without that SAN fails name verification, and nothing is logged at INFO when it does."
+    causes:
+      - an endpoint was added to group_vars/<edge group>/deployment.yml after FED_CORE_SAN was set by hand
+    fixes:
+      - "unset FED_CORE_SAN and let goatbuilder derive it from deployment.yml, or add the missing address"
+    read: docs/design/federation-preflight.md
+    exit: 1
+    matches:
+      - "FED_CORE_SAN does not cover"
+
+  - code: GB-146
+    tool: goatbuilder
+    title: docker compose is not available for phase 12
+    what: "the edge role deploys with `docker compose`, and this machine has no docker, no compose plugin, or a compose that reports no version."
+    causes:
+      - docker-compose-plugin is not installed
+    fixes:
+      - "install docker-compose-plugin (or drop the plugin binary at /usr/libexec/docker/cli-plugins/docker-compose)"
+    read: docs/design/federation-preflight.md
+    exit: 1
+    matches:
+      - "docker compose plugin \\(phase 12\\) .*\\(GB-146\\)"
+
+  - code: GB-147
+    tool: goatbuilder
+    title: a peering directory value is not usable
+    what: "FED_DIRECTORY_URL is not https, or it, FED_PACKAGE_URL, FED_COUNTERPARTY_ID or FED_CA_CERT holds characters outside a plain URL. Those values reach a command line, so the run refuses them."
+    causes:
+      - an http:// directory address, or a value with spaces or quotes
+    fixes:
+      - "set goat_federation_directory_url to the https:// address of the directory"
+    read: docs/design/federation-preflight.md
+    exit: 1
+    matches:
+      - "peering directory .*\\(GB-147\\)"
+
+  - code: GB-148
+    tool: goatbuilder
+    title: the federation working directory is not writable
+    what: "the run's working directory (--work, FED_WORK, else /var/lib/goat-federation/<partner>) cannot be created or written."
+    causes:
+      - the default under /var/lib needs root
+    fixes:
+      - "goatbuilder federate <partner> --work <a directory you can write>"
+    read: docs/design/federation-preflight.md
+    exit: 1
+    matches:
+      - "working directory .*\\(GB-148\\)"
+
+  - code: GB-149
+    tool: goatbuilder
+    title: the peering is not declared
+    what: "the partner is not in goatbuilder.yaml peerings:. A peering nobody declared is one nobody reviewed (contract C1)."
+    causes:
+      - the peering was never added to the deployment's goatbuilder.yaml
+    fixes:
+      - "add the peering to ops/goatbuilder/goatbuilder.yaml peerings: (with, environment, site, edge_class)"
+    read: docs/design/federation-preflight.md
+    exit: 1
+    matches:
+      - "declared .*\\(GB-149\\)"
 
   - code: GB-230
     tool: goatbuilder

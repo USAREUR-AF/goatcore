@@ -823,4 +823,88 @@ mod tests {
         assert_eq!(parse_version("zenohd 1.9.0"), Some("1.9.0".into()));
         assert_eq!(parse_version("no version here"), None);
     }
+
+    /// The selection contract has two implementations: this one (phase 3) and
+    /// ops/federation/standup/preflight_live.py (phase 1). Both read the same
+    /// cases, so a change to one that the other does not make fails here or there.
+    #[test]
+    fn the_shared_router_discovery_cases_hold() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../ops/federation/standup/fixtures/router-discovery.tsv");
+        let text = std::fs::read_to_string(&path).unwrap();
+        let unescape = |s: &str| {
+            s.replace("\\t", "\t")
+                .replace("\\n", "\n")
+                .replace("\\\\", "\\")
+        };
+        type Case = (
+            String,
+            String,
+            Vec<&'static str>,
+            String,
+            String,
+            Vec<(String, String, bool, String)>,
+        );
+        let mut cases: Vec<Case> = Vec::new();
+        for line in text
+            .lines()
+            .filter(|l| !l.starts_with('#') && !l.is_empty())
+        {
+            let f: Vec<&str> = line.split('\t').collect();
+            match f[0] {
+                "case" => {
+                    let tools = f[3]
+                        .split(',')
+                        .map(|t| if t == "docker" { "docker" } else { "podman" })
+                        .collect();
+                    cases.push((
+                        f[1].into(),
+                        f[2].into(),
+                        tools,
+                        f[4].into(),
+                        f.get(5).copied().unwrap_or("").into(),
+                        Vec::new(),
+                    ));
+                }
+                "reply" => cases.last_mut().unwrap().5.push((
+                    f[1].into(),
+                    f[2].into(),
+                    f[3] == "ok",
+                    unescape(f.get(4).copied().unwrap_or("")),
+                )),
+                other => panic!("unknown row {other}"),
+            }
+        }
+        assert!(cases.len() >= 10, "{} cases", cases.len());
+        for (name, selected, tools, expect, id, replies) in &cases {
+            let mut probe = |tool: &str, args: &[&str]| -> Result<String, String> {
+                let req = if args[0] == "ps" {
+                    "ps".to_string()
+                } else {
+                    format!("inspect:{}", args.last().unwrap())
+                };
+                match replies.iter().find(|(t, r, _, _)| t == tool && *r == req) {
+                    Some((_, _, true, out)) => Ok(out.clone()),
+                    Some((_, _, false, err)) => Err(err.clone()),
+                    None => Err(format!("{tool}: no reply for {req}")),
+                }
+            };
+            let sel = if selected == "-" {
+                None
+            } else {
+                Some(selected.as_str())
+            };
+            let got = select_router(sel, tools, &mut probe);
+            let verdict = match &got {
+                Ok(_) => "ok",
+                Err(e) if e.starts_with("multiple") => "many",
+                Err(e) if e.starts_with("no running core router") => "none",
+                Err(_) => "invalid",
+            };
+            assert_eq!(verdict, expect, "{name}: {got:?}");
+            if let Ok(r) = got {
+                assert_eq!(&r.id, id, "{name}");
+            }
+        }
+    }
 }

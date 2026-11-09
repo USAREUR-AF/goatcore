@@ -1,0 +1,76 @@
+---
+# peering-preflight.yml — READ the listening sockets of a peering's edge and core
+# hosts for federation phase 1, and change nothing.
+#
+#   Caller:  ops/federation/standup/preflight.py (both avenues: goatbuilder
+#            federate and ops/scripts/peering-standup.sh), with
+#            --limit '<peering>_edge:<peering>_core'
+#   Design:  docs/design/federation-preflight.md
+#
+# Every command here is a read (`ss`, `wg show`, `docker ps`, `docker inspect`)
+# with check_mode off and changed_when false. The only file written is one JSON
+# document per host on the CONTROLLER, under fed_preflight_out, which
+# preflight.py reads and then judges: the tunnel listen port, the edge router
+# listen port and the republisher metrics port must be free, or held by this
+# peering's own interface or container on a re-run. The judging is in Python,
+# where it is tested with fakes; this play only reads.
+#
+# Same inventory and same groups as the peering plays, so it reaches the hosts
+# the way phases 2 and 11-13 will.
+- name: Sovereign peering preflight probe (read-only)
+  hosts: peering_edges:peering_cores
+  gather_facts: false
+  become: true
+  tasks:
+    - name: Refuse without a controller directory for the answers
+      ansible.builtin.assert:
+        that:
+          - fed_preflight_out | default('') | length > 0
+        fail_msg: "fed_preflight_out is required (preflight.py passes it)."
+      run_once: true
+      delegate_to: localhost
+      become: false
+
+    - name: Read listening TCP and UDP sockets with their processes
+      ansible.builtin.command:
+        argv: [ss, -H, -l, -n, -t, -u, -p]
+      register: _fed_pf_ss
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: Read WireGuard interfaces and their listen ports
+      ansible.builtin.command:
+        argv: [wg, show, all, listen-port]
+      register: _fed_pf_wg
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: Read running containers and their published ports
+      ansible.builtin.command:
+        argv:
+          - docker
+          - ps
+          - --format
+          - !unsafe "{{.Names}}\t{{.Ports}}"
+      register: _fed_pf_containers
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: Read each running container's main process id
+      ansible.builtin.shell: !unsafe "docker ps -q | xargs -r docker inspect --format '{{.State.Pid}} {{.Name}}'"
+      register: _fed_pf_pids
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: Hand the answers to preflight.py on the controller
+      ansible.builtin.copy:
+        dest: "{{ fed_preflight_out }}/{{ inventory_hostname }}.json"
+        mode: "0600"
+        content: "{{ {'host': inventory_hostname, 'groups': group_names, 'ss': _fed_pf_ss.stdout | default(''), 'ss_ok': (_fed_pf_ss.rc | default(1)) == 0, 'wg': _fed_pf_wg.stdout | default(''), 'containers': _fed_pf_containers.stdout | default(''), 'pids': _fed_pf_pids.stdout | default('')} | to_nice_json }}"
+      delegate_to: localhost
+      become: false
+      check_mode: false
