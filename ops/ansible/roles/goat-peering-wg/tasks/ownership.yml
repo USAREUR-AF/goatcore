@@ -1,0 +1,81 @@
+---
+# ONE EDGE HOST, SEVERAL PEERINGS. Each peering owns its WireGuard interface, its listen
+# port, its link addresses and, behind a forwarder, its carrier. The role keeps one peer
+# per interface and replaces whatever peer it finds, so a run pointed at another peering's
+# interface would silently move that interface to this partner. Read what the other
+# peerings on this host recorded (their state files and link environments) and refuse,
+# before anything is written, when this run would take something of theirs.
+- name: peering-wg | ownership | the state every peering on this host recorded
+  ansible.builtin.find:
+    paths: /var/log
+    patterns: "goat-peering-wg-*-state.json"
+  register: _pw_state_files
+
+- name: peering-wg | ownership | read them
+  ansible.builtin.slurp:
+    src: "{{ item.path }}"
+  loop: "{{ _pw_state_files.files }}"
+  loop_control:
+    label: "{{ item.path }}"
+  register: _pw_state_raw
+
+- name: peering-wg | ownership | the link environments on this host
+  ansible.builtin.find:
+    paths: "{{ peering_wg_config_dir }}"
+    patterns: "*.env"
+  register: _pw_env_files
+
+- name: peering-wg | ownership | read them
+  ansible.builtin.slurp:
+    src: "{{ item.path }}"
+  loop: "{{ _pw_env_files.files }}"
+  loop_control:
+    label: "{{ item.path }}"
+  register: _pw_env_raw
+
+- name: peering-wg | ownership | what this run would take that another peering holds
+  ansible.builtin.set_fact:
+    _pw_clashes: >-
+      {%- set out = [] -%}
+      {%- set ours = [peering_wg_interface] + ([peering_wg_carrier_interface] if (peering_wg_via_forwarder | bool) else []) -%}
+      {%- for r in _pw_state_raw.results | default([]) -%}
+      {%-   set s = r.content | b64decode | from_json -%}
+      {%-   set them = (s.identity | default({})).their_sovereign_id | default('') -%}
+      {%-   set fwd = (s.transport | default({})).via_forwarder | default({}) -%}
+      {%-   if s.interface == peering_wg_interface and them | length > 0 and them != peering_wg_partner_sovereign -%}
+      {%-     set _ = out.append('interface ' ~ peering_wg_interface ~ ' carries the peering with ' ~ them) -%}
+      {%-   endif -%}
+      {%-   if s.interface != peering_wg_interface and (peering_wg_via_forwarder | bool) and (fwd.carrier_interface | default('')) == peering_wg_carrier_interface -%}
+      {%-     set _ = out.append('carrier ' ~ peering_wg_carrier_interface ~ ' carries ' ~ s.interface ~ ', the peering with ' ~ them) -%}
+      {%-   endif -%}
+      {%-   if s.interface != peering_wg_interface and peering_wg_local_link_ip | length > 0 and ((s.transport | default({})).link_subnet | default('')).split('/')[0] in [peering_wg_local_link_ip, peering_wg_remote_link_ip] -%}
+      {%-     set _ = out.append('link address ' ~ (s.transport.link_subnet) ~ ' is on ' ~ s.interface ~ ', the peering with ' ~ them) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {%- for r in _pw_env_raw.results | default([]) -%}
+      {%-   set env = {} -%}
+      {%-   for line in (r.content | b64decode).splitlines() if '=' in line and not line.startswith('#') -%}
+      {%-     set _ = env.update({line.split('=', 1)[0]: line.split('=', 1)[1]}) -%}
+      {%-   endfor -%}
+      {%-   set ifn = env.WG_IFNAME | default('') -%}
+      {%-   if ifn | length > 0 and ifn not in ours -%}
+      {%-     if (env.WG_LISTEN_PORT | default('')) == (peering_wg_listen_port | string) -%}
+      {%-       set _ = out.append('listen port ' ~ peering_wg_listen_port ~ ' is ' ~ ifn ~ "'s") -%}
+      {%-     endif -%}
+      {%-     if (peering_wg_via_forwarder | bool) and (env.WG_LISTEN_PORT | default('')) == (peering_wg_carrier_listen_port | string) -%}
+      {%-       set _ = out.append('carrier listen port ' ~ peering_wg_carrier_listen_port ~ ' is ' ~ ifn ~ "'s") -%}
+      {%-     endif -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: peering-wg | ownership | nothing of another peering's is taken
+  ansible.builtin.assert:
+    that: _pw_clashes | length == 0
+    fail_msg: >-
+      goat-peering-wg refuses: this run, for the peering with
+      {{ peering_wg_partner_sovereign | default('?') }}, would take what another peering on
+      this host holds — {{ _pw_clashes | join('; ') }}. Give this peering its own
+      peering_wg_interface, peering_wg_listen_port and (behind a forwarder) its own carrier
+      in group_vars/<peering>_edge/. If both peerings' values are in one group, the edge
+      host is in two peering groups under one inventory name: give it one name per peering.

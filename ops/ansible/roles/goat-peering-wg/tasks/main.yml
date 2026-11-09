@@ -2,6 +2,10 @@
 # Phase 11. The link the agreement describes, against the key the counterparty's
 # signed package offers. Fails closed on everything: a guessed value here is refused
 # in silence at the far end and reads as a broken link.
+- name: peering-wg | another peering's interface, port, address or carrier is not taken
+  ansible.builtin.import_tasks: ownership.yml
+  when: peering_wg_enabled | bool
+
 - name: peering-wg | prepare (idempotent; a resumed run may not have prepared this host)
   ansible.builtin.import_tasks: prepare.yml
 
