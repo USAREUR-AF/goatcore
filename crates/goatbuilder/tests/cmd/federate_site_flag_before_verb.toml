@@ -1,0 +1,9 @@
+# A site flag written before the verb is read as a partner by clap; the
+# refusal says where the flag goes instead of calling it a peering run.
+bin.name = "goatbuilder"
+args = ["federate", "--context-dir", "/nonexistent", "lint"]
+status.code = 2
+stdout = ""
+stderr = """
+goatbuilder: put --context-dir, --cert and --ca-roots after the verb: goatbuilder federate lint --context-dir <dir> ...
+"""

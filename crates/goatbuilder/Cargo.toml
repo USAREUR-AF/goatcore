@@ -22,6 +22,9 @@ clap_complete = "4"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 goat-errors = { path = "../goat-errors" }
+# `federate init|lint|compose|diff|verify|apply`: the six federation verbs, run
+# in process from the library goat federate also runs (src/federate/verbs.rs).
+goat-federation = { path = "../goat-federation" }
 # `update`: the self-update core goat shares (asset name, version compare,
 # checksum, atomic replace), and a small blocking HTTP client for get.<site>.
 goat-selfupdate = { path = "../goat-selfupdate" }

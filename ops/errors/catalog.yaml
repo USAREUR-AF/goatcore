@@ -1490,6 +1490,21 @@ entries:
       - "NOT clean .*\\(GB-076\\)"
     exit: 3
 
+  - code: GB-100
+    tool: goatbuilder
+    title: the federation verbs cannot find this party's context directory
+    what: "goatbuilder federate init (and verify or apply without --as) reads this party's declaration, federation.toml, and init also reads the mTLS certificate and CA roots beside it. goatbuilder has no profile of its own, so it takes the directory from --context-dir, else $GOAT_CONTEXT_DIR, else the goat profile ($GOAT_PROFILE_DIR, else ~/.goat), and none of those was set."
+    causes:
+      - "none of --context-dir, GOAT_CONTEXT_DIR, GOAT_PROFILE_DIR or HOME is set, as in a bare container or a service unit"
+    fixes:
+      - "goatbuilder federate init --context-dir <dir>   (the directory holding federation.toml, mtls.cert.pem and ca-roots.pem)"
+      - "export GOAT_PROFILE_DIR=<goat profile directory>   (the verbs then read its active context, as goat does)"
+      - "goatbuilder federate verify <agreement> --as <sovereign_id>   (verify and apply need no context when --as is given)"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "no context directory for the federation verbs"
+    exit: 2
+
   - code: GB-120
     tool: goatbuilder
     title: a peering names a partner with a reserved word

@@ -29,6 +29,9 @@
 //! The peering must be declared in goatbuilder.yaml `peerings:` (C1: declared
 //! first). An empty list declares nothing, so it refuses every name.
 
+/// `goatbuilder federate init|lint|compose|diff|verify|apply` (the six verbs).
+pub mod verbs;
+
 use std::path::Path;
 use std::process::Command;
 

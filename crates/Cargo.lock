@@ -1811,6 +1811,7 @@ dependencies = [
  "clap",
  "clap_complete",
  "goat-errors",
+ "goat-federation",
  "goat-fun",
  "goat-selfupdate",
  "i18n-embed",

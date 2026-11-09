@@ -420,9 +420,20 @@ pub enum Cmd {
     /// the one writer, the edge deployed, the transport the agreement chose
     /// opened, acceptance in all four tiers. Replaces
     /// ops/scripts/peering-standup.sh step for step.
+    ///
+    /// `goatbuilder federate init|lint|compose|diff|verify|apply` runs one of
+    /// the six federation verbs in process, with the flags and exit codes of
+    /// `goat federate <verb>`.
+    #[command(args_conflicts_with_subcommands = true, subcommand_negates_reqs = true)]
     Federate {
+        /// One federation verb instead of the whole peering.
+        #[command(subcommand)]
+        verb: Option<goat_federation::verbs::FederateCmd>,
+        #[command(flatten)]
+        site: federate::verbs::SiteArgs,
         /// The peering name (the counterparty, as declared).
-        with: String,
+        #[arg(required = true)]
+        with: Option<String>,
         /// The environment the peering is declared on (checked against goatbuilder.yaml peerings:).
         #[arg(long)]
         env: Option<String>,
@@ -1017,6 +1028,13 @@ fn main() {
     // Verbs that need no repository: the eggs touch nothing (src/fun.rs); the
     // completion script and the reference are walked from the clap tree; the
     // candidate lists read the checkout leniently and never fail loudly.
+    // The six federation verbs read only the files they are named, and the
+    // site (federate/verbs.rs): no repository, no config.
+    if let Cmd::Federate { verb: Some(_), .. } = &cli.cmd {
+        if let Cmd::Federate { verb: Some(verb), site, .. } = cli.cmd {
+            std::process::exit(federate::verbs::exit_of(verb, &site));
+        }
+    }
     match &cli.cmd {
         Cmd::Make { words } => std::process::exit(fun::make(words, cli.yes)),
         Cmd::Argan => std::process::exit(fun::argan()),
@@ -1301,9 +1319,15 @@ fn main() {
                 joinnode::join_node(&repo, &joinnode::Options { env, site, node, class, address: address.as_deref(), pass_var: pass_var.as_deref(), via, from: *from, to: *to, dry_run: *dry_run })
             }
         }
-        Cmd::Federate { with, env, as_party, edge_group, work, from, to, dry_run } => {
+        Cmd::Federate { verb: _, site, with, env, as_party, edge_group, work, from, to, dry_run } => {
+            let with = with.as_deref().unwrap_or_default();
             // A mock executes nothing, with or without --dry-run, so it mutates nothing.
-            if !cli.yes && !*dry_run && cli.mock.is_none() && !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+            if !site.is_empty() && goat_federation::verbs::VERB_NAMES.contains(&with) {
+                // `federate --context-dir D init`: clap read the verb as a partner.
+                Err(anyhow::anyhow!("put --context-dir, --cert and --ca-roots after the verb: goatbuilder federate {with} --context-dir <dir> ..."))
+            } else if !site.is_empty() {
+                Err(anyhow::anyhow!("--context-dir, --cert and --ca-roots apply to the six verbs (goatbuilder federate init|lint|compose|diff|verify|apply), not to a peering run"))
+            } else if !cli.yes && !*dry_run && cli.mock.is_none() && !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
                 Err(anyhow::anyhow!("federate is a mutation: pass --yes without a terminal (C10)"))
             } else {
                 federate::federate(&repo, &federate::Options { with, env: env.as_deref(), r#as: as_party.as_deref(), edge_group: edge_group.as_deref(), work: work.as_deref(), mock: cli.mock.as_deref(), from: *from, to: *to, dry_run: *dry_run, table: matches!(cli.output, OutputFormat::Table) })
