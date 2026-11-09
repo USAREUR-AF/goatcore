@@ -13,9 +13,8 @@
 # the plan footer are not compared.
 #
 # Both avenues run the federation verbs (phases 3, 4, 6, 7, 9) one of two ways,
-# chosen by FED_VERBS: `goat` (the default, `goat federate <verb>`) or
-# `goatbuilder` (`goatbuilder federate <verb>`; the binary runs them in
-# process). The gate compares the two avenues in both modes, so neither can
+# chosen by FED_VERBS: `goatbuilder` (the default, `goatbuilder federate
+# <verb>`; the binary runs them in process) or `goat` (`goat federate <verb>`). The gate compares the two avenues in both modes, so neither can
 # drift while it is not the default, and once more with FED_VERBS unset, so
 # both avenues always have the same default.
 #
