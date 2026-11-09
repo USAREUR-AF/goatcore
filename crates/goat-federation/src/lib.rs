@@ -25,6 +25,8 @@
 //   derive                            reads local state. Never writes.
 //   render                            builds configuration text in memory. The
 //                                     caller decides whether it reaches disk.
+//   verbs                             the six federation verbs over the modules
+//                                     above, shared by every front end.
 
 pub mod anchor;
 pub mod compose;
@@ -33,6 +35,7 @@ pub mod diff;
 pub mod json;
 pub mod package;
 pub mod render;
+pub mod verbs;
 
 #[cfg(test)]
 mod vectors;

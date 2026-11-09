@@ -7,6 +7,13 @@ license = "Apache-2.0"
 description = "Federation package v1 (docs/design/federation-package-spec.md): parse, sign, compose, diff, derive and render. The library behind the federation verbs."
 
 [dependencies]
+# The verbs (src/verbs/): their clap arguments are shared by every front end, so
+# each front end takes the same flags exactly.
+anyhow = "1"
+clap = { version = "4", features = ["derive", "env", "wrap_help"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
 base64 = "0.22"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 ed25519-dalek = { version = "2", features = ["pkcs8", "pem"] }

@@ -57,7 +57,7 @@ closes.**
 ### 1.1 What one peering actually costs
 
 Every row is a real artifact with a real name. `goat federate apply` — the only writing verb
-of the six in `crates/goat-cli/src/cmd/federate.rs:53,67,82,98,111,120` — renders rows 4–7.
+of the six in `crates/goat-federation/src/verbs/mod.rs:83,97,112,128,141,150` — renders rows 4–7.
 
 | # | Artifact | Where | Currency | Forced to be per-pair? |
 |---|---|---|---|---|
@@ -496,7 +496,7 @@ small.
 | Piece | State |
 |---|---|
 | The package format, canonical form, signature and digest rules | **Written** — [`federation-package-spec.md`](federation-package-spec.md); the conformance vectors in `ops/federation/vectors/` are normative |
-| The six `goat federate` verbs, `apply` the only writer | **Built** — `crates/goat-cli/src/cmd/federate.rs:53,67,82,98,111,120` |
+| The six `goat federate` verbs, `apply` the only writer | **Built** — `crates/goat-federation/src/verbs/mod.rs:83,97,112,128,141,150` |
 | Per-partner edge role and its four CI isolation guards | **Built, deployed once, inward link failed** — F-474 |
 | Peering fired both directions between two purpose-built environments | **Measured** — M-113, 2026-09-05; both environments destroyed after the run |
 | Any goatnet peering with anything | **Not built** |
