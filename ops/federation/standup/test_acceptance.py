@@ -199,6 +199,39 @@ class AcceptanceRun(unittest.TestCase):
         self.assertEqual(v["refusal/control-allowed"], "FAIL", out)
         self.assertEqual(v["refusal/out-of-lane-denied"], "SKIP", out)
 
+    # --- refusal tied to the control's session --------------------------------
+    def test_the_denials_are_recorded_for_the_controls_session(self):
+        rc, out = self.run_acceptance(extra={"FED_PROBE_THEIRS_ZID": self.fabric.agreed_zid})
+        self.assertEqual(rc, 0, out)
+        b = {c["name"]: c for c in self.bundle()["checks"]}
+        for name in ("refusal/control-allowed", "refusal/out-of-lane-denied", "refusal/spoof-denied"):
+            self.assertEqual(b[name]["verdict"], "PASS", (name, out))
+            self.assertEqual(b[name]["observations"]["session"], self.fabric.agreed_zid)
+
+    def test_a_denial_recorded_for_another_session_fails(self):
+        self.fabric.faults.deny_from_other_session = True
+        rc, out = self.run_acceptance()
+        v = self.verdicts()
+        self.assertEqual(rc, 1, out)
+        self.assertEqual(v["refusal/control-allowed"], "PASS", out)
+        self.assertEqual(v["refusal/out-of-lane-denied"], "FAIL", out)
+        self.assertIn("another session", out)
+
+    def test_an_allow_from_a_session_that_is_not_the_probe_fails_the_control(self):
+        rc, out = self.run_acceptance(extra={"FED_PROBE_THEIRS_ZID": "b" * 32})
+        v = self.verdicts()
+        self.assertEqual(rc, 1, out)
+        self.assertEqual(v["refusal/control-allowed"], "FAIL", out)
+        self.assertEqual(v["refusal/out-of-lane-denied"], "SKIP", out)
+
+    def test_decisions_without_a_session_id_cannot_prove_a_denial(self):
+        self.fabric.faults.trace_without_session = True
+        rc, out = self.run_acceptance()
+        v = self.verdicts()
+        self.assertEqual(rc, 3, out)
+        self.assertEqual(v["refusal/control-allowed"], "PASS", out)
+        self.assertEqual(v["refusal/out-of-lane-denied"], "BLOCKED", out)
+
     def test_a_send_only_agreement_is_not_applicable_inbound_and_passes(self):
         ag = fakefabric.agreement(theirs=())
         self.fabric = fakefabric.Fabric(ag, "xaa", self.tmp)
