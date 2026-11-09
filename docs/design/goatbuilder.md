@@ -346,7 +346,8 @@ Status: built (`crates/goatbuilder/src/federate/peering_files.rs`, unit tests). 
 | `ops/goatbuilder/peering-values.yaml` | the allocation record |
 | `ops/ansible/group_vars/<edge_group>/peering-values.yml` | the WireGuard interface and listen port, the SPIRE outbound port and server host, the edge listen port, and either the four leaf certificate paths under `cert_dir` (not the two CA paths: phase 8 does not write those files, and the partner CA is placed only after its fingerprint is checked in phase 10) or, when the group's hand-written group_vars turn on `goat_zenoh_edge_install_certs`, `goat_zenoh_edge_cert_dir: /etc/goat-zenoh-edge-<with>/tls` and no leaf path |
 | `ops/ansible/group_vars/<core_group>/peering-values.yml` | the republisher's metrics port and certificate sources |
-| `ops/ansible/inventory/peering-edges.ini` | `peering_edges` and `peering_cores` with one group per peering, when every peering declares `hosts:` |
+| `ops/ansible/inventory/peering-edges.ini` | `peering_edges` and `peering_cores` with one group per peering, when every peering declares `hosts:`; the forwarder's group when a forwarder relays |
+| `ops/ansible/group_vars/<forwarder group>/peering-forwarder.yml` | `peering_forwarder_peerings`, one entry per relayed peering ([peering-forwarder.md](peering-forwarder.md) §7) |
 
 It never writes the agreement's own values: `goat federate apply` renders those beside these files (`federation-<them>.yml`, `-republish.yml`, `-transport.yml`). It never overwrites a file it did not generate, and a re-run that changes nothing writes nothing.
 

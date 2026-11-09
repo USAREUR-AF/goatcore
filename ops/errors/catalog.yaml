@@ -1779,6 +1779,62 @@ entries:
       - "\\(GB-231\\)"
     exit: 2
 
+  # ------------------------------------------------ federate: the peering forwarder
+
+  - code: GB-160
+    tool: goatbuilder
+    title: two peerings on one forwarder would share a value
+    what: "The peerings one forwarder relays must share no carrier interface, public port, carrier port or carrier address on it: the forwarder sends each packet by its port alone. Allocation keeps the peerings of one environment apart; two environments behind one forwarder each start from the first values and collide."
+    causes:
+      - peerings on two environments declare the same forwarder
+      - "a pin under values: (public_port, carrier_port, carrier_interface, carrier_subnet) repeats another peering's value"
+    fixes:
+      - "pin different public_port, carrier_port, carrier_interface and carrier_subnet values under one peering's values:"
+      - "or give each environment its own forwarder (forwarder: group:)"
+    read: docs/design/peering-forwarder.md
+    matches:
+      - "\\(GB-160\\)"
+    exit: 2
+
+  - code: GB-161
+    tool: goatbuilder
+    title: a peering's partner id cannot name a forwarder entry
+    what: "The forwarder names each peering it relays by the partner id, and its role accepts 2-16 characters of a-z 0-9 and hyphen. This partner id is outside that, so the forwarder would refuse the entry."
+    causes:
+      - "the peering's with: holds an underscore, or is one character or longer than 16"
+    fixes:
+      - "declare the partner by its sovereign id (lower-case letters, digits, hyphens)"
+    read: docs/design/peering-forwarder.md
+    matches:
+      - "\\(GB-161\\)"
+    exit: 2
+
+  - code: GB-162
+    tool: goatbuilder
+    title: one forwarder group names two forwarders
+    what: "The forwarder's peerings are rendered into its inventory group's group_vars, so every host in the group would relay every peering. Two peerings name the same group with different forwarder endpoints."
+    causes:
+      - "two forwarders declared without forwarder: group:, so both took the default peering_forwarders"
+    fixes:
+      - "give each forwarder its own group under forwarder: group:"
+    read: docs/design/peering-forwarder.md
+    matches:
+      - "\\(GB-162\\)"
+    exit: 2
+
+  - code: GB-163
+    tool: goatbuilder
+    title: a forwarded peering has no allocated values yet
+    what: "The peering declares forwarder:, so phase 2 runs the forwarder play and copies the carrier keys, and both read the group_vars goatbuilder federate allocate renders from the allocation record. The record does not hold this peering, so those files do not exist. Nothing ran."
+    causes:
+      - "forwarder: was added to the peering and goatbuilder federate allocate was not run since"
+    fixes:
+      - "goatbuilder federate allocate   (then review and commit what it writes)"
+    read: docs/design/peering-forwarder.md
+    matches:
+      - "\\(GB-163\\)"
+    exit: 2
+
   # ----------------------------------------------------------- external tools
 
   - code: X-ANSIBLE-001
