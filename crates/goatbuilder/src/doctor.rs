@@ -562,10 +562,23 @@ pub fn secrets_needed(repo: &Path, groups: &[String], name: &str, ledger: &str, 
     if ledger != name {
         roles.push(ledger.to_string());
     }
+    for r in play_roles(play, 0) {
+        if !roles.contains(&r) {
+            roles.push(r);
+        }
+    }
     let roles = role_closure(repo, &roles);
     let play_text = std::fs::read_to_string(play).unwrap_or_default();
     for (var, alts) in role_default_bindings(repo, &roles, groups, &play_text) {
         out.entry(var).or_insert_with(|| alts.join("|"));
+    }
+    // The lookups the tasks make themselves (set_fact, an assert, a copy's content),
+    // the asserts of a later phase included: a name already found above stays as found.
+    let found: std::collections::HashSet<String> = out.values().flat_map(|a| a.split('|').map(String::from)).collect();
+    for (var, alts) in task_bindings(repo, play, &roles, &group_scalars(repo, groups)) {
+        if !out.contains_key(&var) && !alts.iter().any(|a| found.contains(a)) {
+            out.insert(var, alts.join("|"));
+        }
     }
     // An outbound channel whose empty value turns it off is never a need
     // (ops/secrets/off-when-empty.txt; pluggable-dependencies.md row 16).
@@ -625,37 +638,20 @@ pub fn binding_alternatives(expr: &str, vars: &BTreeMap<String, String>, rvals: 
         return None;
     }
     let lookup = regex::Regex::new(r#"lookup\(\s*['"]env['"]\s*,\s*"#).unwrap();
-    let literal = regex::Regex::new(r#"^['"]([A-Z][A-Z0-9_]*)['"]"#).unwrap();
+    // A literal name closes the lookup: `'ICAM_OIDC_' ~ (p.id …)` is computed, not a name.
+    let literal = regex::Regex::new(r#"^['"]([A-Z][A-Z0-9_]*)['"]\s*\)"#).unwrap();
     let computed = regex::Regex::new(r#"^\(\s*(site_id_upper|site_id)\b(.*?)\)\s*[+~]\s*['"]([A-Z0-9_]+)['"]"#).unwrap();
-    let fallback = regex::Regex::new(r#"default\(\s*['"]([A-Z0-9_]+)['"]"#).unwrap();
     let variable = regex::Regex::new(r#"^([a-z][a-z0-9_]*)\s*\)"#).unwrap();
-    let name_only = regex::Regex::new(r#"^[A-Z][A-Z0-9_]*$"#).unwrap();
-    let templated = regex::Regex::new(r#"^\{\{\s*(site_id_upper|site_id)\b([^}]*)\}\}([A-Z0-9_]+)$"#).unwrap();
-    // A computed name: (site_id … | upper [| replace('-','_')]) +/~ '_SUFFIX'.
-    let resolve = |c: regex::Captures| -> Option<String> {
-        let (base, filters, suffix) = (&c[1], &c[2], &c[3]);
-        let val = if base == "site_id_upper" {
-            vars.get("site_id_upper").cloned().filter(|v| !v.is_empty()).or_else(|| fallback.captures(filters).map(|d| d[1].to_string()))?
-        } else {
-            let sid = vars.get("site_id")?.to_uppercase();
-            if filters.contains("replace") { sid.replace('-', "_") } else { sid }
-        };
-        (!val.contains('{')).then(|| format!("{val}{suffix}"))
-    };
     let mut names = Vec::new();
     for m in lookup.find_iter(expr) {
         let rest = &expr[m.end()..];
         let n = if let Some(c) = literal.captures(rest) {
             c[1].to_string()
         } else if let Some(c) = variable.captures(rest) {
-            let val = vars.get(&c[1]).filter(|v| !v.is_empty()).or_else(|| rvals.get(&c[1]))?.clone();
-            if name_only.is_match(&val) {
-                val
-            } else {
-                resolve(templated.captures(&val)?)?
-            }
+            name_in(&c[1], vars, rvals, 0)?
         } else {
-            resolve(computed.captures(rest)?)?
+            let c = computed.captures(rest)?;
+            site_name(&c[1], &c[2], &c[3], vars)?
         };
         names.push(n);
     }
@@ -663,6 +659,357 @@ pub fn binding_alternatives(expr: &str, vars: &BTreeMap<String, String>, rvals: 
         return None;
     }
     Some(names)
+}
+
+/// A computed name: site_id (or site_id_upper) through the filters, then the suffix.
+fn site_name(base: &str, filters: &str, suffix: &str, vars: &BTreeMap<String, String>) -> Option<String> {
+    let fallback = regex::Regex::new(r#"default\(\s*['"]([A-Z0-9_]+)['"]"#).unwrap();
+    let val = if base == "site_id_upper" {
+        vars.get("site_id_upper").cloned().filter(|v| !v.is_empty()).or_else(|| fallback.captures(filters).map(|d| d[1].to_string()))?
+    } else {
+        let sid = vars.get("site_id")?.to_uppercase();
+        if filters.contains("replace") { sid.replace('-', "_") } else { sid }
+    };
+    (!val.contains('{')).then(|| format!("{val}{suffix}"))
+}
+
+/// The environment name variable `var` holds: the group's value first, then the
+/// roles'; a literal name, `{{ site_id … }}_SUFFIX`, or one more variable
+/// `{{ other_var | default('NAME') }}` (audit-subscriber's root-credential names
+/// default to the minio role's `minio_root_user_envvar`). Mirrors `_name_in`.
+fn name_in(var: &str, vars: &BTreeMap<String, String>, rvals: &BTreeMap<String, String>, depth: u8) -> Option<String> {
+    let name_only = regex::Regex::new(r#"^[A-Z][A-Z0-9_]*$"#).unwrap();
+    let templated = regex::Regex::new(r#"^\{\{\s*(site_id_upper|site_id)\b([^}]*)\}\}([A-Z0-9_]+)$"#).unwrap();
+    let hop = regex::Regex::new(r#"^\{\{\s*([a-z][a-z0-9_]*)\s*(?:\|\s*default\(\s*['"]([A-Z0-9_]*)['"]\s*(?:,\s*true\s*)?\)\s*)?\}\}$"#).unwrap();
+    let val = vars.get(var).filter(|v| !v.is_empty()).or_else(|| rvals.get(var)).cloned().unwrap_or_default();
+    if name_only.is_match(&val) {
+        return Some(val);
+    }
+    if let Some(t) = templated.captures(&val) {
+        return site_name(&t[1], &t[2], &t[3], vars);
+    }
+    let t = hop.captures(&val).filter(|_| depth < 3)?;
+    name_in(&t[1], vars, rvals, depth + 1).or_else(|| t.get(2).map(|m| m.as_str().to_string()).filter(|s| !s.is_empty()))
+}
+
+// --- env lookups in the tasks a deploy runs ---------------------------------------
+// A role can read a secret in a task, not in its defaults: audit-subscriber resolves
+// its S3 keys and the MinIO root pair with set_fact, then asserts them, the root pair
+// in an included lifecycle.yml that runs after the container is recreated. So the
+// tasks the play runs are walked too, `when:` conditions carried down. Mirrors the
+// task walk in ops/scripts/deploy-secrets-needed.py.
+
+const TASK_NOT_NEEDS: [&str; 18] = [
+    "name", "when", "changed_when", "failed_when", "until", "msg", "fail_msg", "success_msg", "tags", "notify", "register", "loop",
+    "with_items", "with_dict", "loop_control", "no_log", "become", "delegate_to",
+];
+
+fn load_yaml(path: &Path) -> serde_yaml::Value {
+    std::fs::read_to_string(path).ok().and_then(|t| serde_yaml::from_str(&t).ok()).unwrap_or(serde_yaml::Value::Null)
+}
+
+fn scalar_text(v: &serde_yaml::Value) -> Option<String> {
+    match v {
+        serde_yaml::Value::String(s) => Some(s.clone()),
+        serde_yaml::Value::Bool(b) => Some(if *b { "True".into() } else { "False".into() }),
+        serde_yaml::Value::Number(n) => Some(n.to_string()),
+        _ => None,
+    }
+}
+
+/// A variable's scalar value (group first, then the roles'), or None when unknown or templated.
+fn var_value(var: &str, vars: &BTreeMap<String, String>, rvals: &BTreeMap<String, String>) -> Option<String> {
+    let v = vars.get(var).or_else(|| rvals.get(var))?;
+    (!v.contains('{')).then(|| v.trim().trim_matches(|c| c == '\'' || c == '"').to_string())
+}
+
+/// True / false for the condition shapes the roles use on a variable; None when it
+/// cannot be decided (the task then counts). Mirrors `eval_when`.
+pub fn eval_when(cond: &str, vars: &BTreeMap<String, String>, rvals: &BTreeMap<String, String>) -> Option<bool> {
+    let mut c = cond.trim();
+    while c.starts_with('(') && c.ends_with(')') && c.matches('(').count() == 1 {
+        c = c[1..c.len() - 1].trim();
+    }
+    if c.contains(" or ") {
+        return None;
+    }
+    if c.contains(" and ") {
+        let parts: Vec<Option<bool>> = c.split(" and ").map(|x| eval_when(x, vars, rvals)).collect();
+        if parts.contains(&Some(false)) {
+            return Some(false);
+        }
+        return if parts.contains(&None) { None } else { Some(true) };
+    }
+    if let Some(rest) = c.strip_prefix("not ") {
+        return eval_when(rest, vars, rvals).map(|b| !b);
+    }
+    let re = regex::Regex::new(r#"^\(?\s*([a-z_][a-z0-9_]*)\s*(?:\|\s*default\([^)]*\)\s*)?(\|\s*(bool|length|trim)\s*)?\)?\s*(?:(==|!=|>=|>|<=|<)\s*(\S+))?$"#).unwrap();
+    let m = re.captures(c)?;
+    let val = var_value(&m[1], vars, rvals)?;
+    let filt = m.get(3).map(|x| x.as_str());
+    let op = m.get(4).map(|x| x.as_str());
+    let rhs = m.get(5).map(|x| x.as_str()).unwrap_or("");
+    if filt == Some("length") {
+        let left = val.chars().count() as i64;
+        let Some(op) = op else { return Some(left > 0) };
+        let n: i64 = rhs.parse().ok()?;
+        return Some(match op {
+            "==" => left == n,
+            "!=" => left != n,
+            ">" => left > n,
+            ">=" => left >= n,
+            "<" => left < n,
+            _ => left <= n,
+        });
+    }
+    match op {
+        Some("==") => return Some(val == rhs.trim_matches(|c| c == '\'' || c == '"')),
+        Some("!=") => return Some(val != rhs.trim_matches(|c| c == '\'' || c == '"')),
+        Some(_) => return None,
+        None => {}
+    }
+    match val.to_lowercase().as_str() {
+        "true" | "yes" | "on" | "1" => Some(true),
+        "false" | "no" | "off" | "0" | "" => Some(false),
+        _ => (filt != Some("bool")).then_some(true),
+    }
+}
+
+fn conds_of(task: &serde_yaml::Value) -> Vec<serde_yaml::Value> {
+    match task.get("when") {
+        None | Some(serde_yaml::Value::Null) => vec![],
+        Some(serde_yaml::Value::Sequence(s)) => s.clone(),
+        Some(v) => vec![v.clone()],
+    }
+}
+
+/// (nearest key, string) for every string leaf, skipping keys that never make a need.
+fn strings_of(node: &serde_yaml::Value, key: Option<&str>, out: &mut Vec<(Option<String>, String)>) {
+    match node {
+        serde_yaml::Value::String(s) => out.push((key.map(String::from), s.clone())),
+        serde_yaml::Value::Mapping(m) => {
+            for (k, v) in m {
+                let ks = k.as_str();
+                if ks.map(|x| TASK_NOT_NEEDS.contains(&x) || x == "listen").unwrap_or(false) {
+                    continue;
+                }
+                strings_of(v, ks.or(key), out);
+            }
+        }
+        serde_yaml::Value::Sequence(s) => s.iter().for_each(|v| strings_of(v, key, out)),
+        _ => {}
+    }
+}
+
+struct TaskWalk<'a> {
+    repo: &'a Path,
+    vars: &'a BTreeMap<String, String>,
+    rvals: BTreeMap<String, String>,
+    out: BTreeMap<String, Vec<String>>,
+    seen: std::collections::HashSet<(PathBuf, String)>,
+    stack: Vec<String>,
+}
+
+impl TaskWalk<'_> {
+    fn live(&self, conds: &[serde_yaml::Value]) -> bool {
+        conds.iter().all(|c| match c {
+            serde_yaml::Value::Bool(b) => *b,
+            other => {
+                let t = scalar_text(other).unwrap_or_default();
+                !t.contains("lookup(") && eval_when(&t, self.vars, &self.rvals) != Some(false)
+            }
+        })
+    }
+
+    fn tasks(&mut self, items: Option<&serde_yaml::Value>, base: &Path, role: &str, conds: &[serde_yaml::Value]) {
+        let Some(serde_yaml::Value::Sequence(items)) = items else { return };
+        for t in items {
+            if !t.is_mapping() {
+                continue;
+            }
+            let mut here = conds.to_vec();
+            here.extend(conds_of(t));
+            let never = match t.get("tags") {
+                Some(serde_yaml::Value::String(s)) => s.contains("never"),
+                Some(serde_yaml::Value::Sequence(s)) => s.iter().any(|x| x.as_str() == Some("never")),
+                _ => false,
+            };
+            if !self.live(&here) || never {
+                continue;
+            }
+            if ["block", "rescue", "always"].iter().any(|k| t.get(*k).is_some()) {
+                for k in ["block", "rescue", "always"] {
+                    self.tasks(t.get(k), base, role, &here);
+                }
+                continue;
+            }
+            let inc = ["include_tasks", "import_tasks", "ansible.builtin.include_tasks", "ansible.builtin.import_tasks"].iter().find_map(|k| t.get(*k));
+            if let Some(inc) = inc {
+                let f = inc.get("file").and_then(|v| v.as_str()).or_else(|| inc.as_str());
+                if let Some(f) = f.filter(|f| !f.contains('{')) {
+                    self.file(&base.join(f), base, role, &here);
+                }
+                continue; // an include's vars: are parameters; the included file decides
+            }
+            let rinc = ["include_role", "import_role", "ansible.builtin.include_role", "ansible.builtin.import_role"].iter().find_map(|k| t.get(*k));
+            if let Some(rinc) = rinc {
+                if let Some(n) = rinc.get("name").and_then(|v| v.as_str()).filter(|n| !n.contains('{')) {
+                    let entry = rinc.get("tasks_from").and_then(|v| v.as_str()).unwrap_or("main").to_string();
+                    self.role(n, &here, &entry);
+                }
+                continue;
+            }
+            self.task(t, role);
+        }
+    }
+
+    fn task(&mut self, t: &serde_yaml::Value, role: &str) {
+        let ident = regex::Regex::new(r"^[a-z][a-z0-9_]*$").unwrap();
+        let soft = regex::Regex::new(r"(?s)\bif\b.*\belse\b").unwrap();
+        let mut facts: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for k in ["set_fact", "ansible.builtin.set_fact", "vars"] {
+            if let Some(serde_yaml::Value::Mapping(m)) = t.get(k) {
+                facts.extend(m.keys().filter_map(|x| x.as_str().map(String::from)));
+            }
+        }
+        let mut leaves = Vec::new();
+        strings_of(t, None, &mut leaves);
+        for (key, text) in leaves {
+            if !text.contains("lookup(") || soft.is_match(&text) {
+                continue;
+            }
+            let Some(alts) = binding_alternatives(&text, self.vars, &self.rvals) else { continue };
+            let var = match key {
+                Some(k) if facts.contains(&k) && ident.is_match(&k) => k,
+                _ => format!("{role}:{}", alts[0]),
+            };
+            self.out.entry(var).or_insert(alts);
+        }
+    }
+
+    fn file(&mut self, path: &Path, base: &Path, role: &str, conds: &[serde_yaml::Value]) {
+        let sig = (path.to_path_buf(), format!("{conds:?}"));
+        if self.seen.contains(&sig) || self.seen.len() > 500 {
+            return;
+        }
+        self.seen.insert(sig);
+        let doc = load_yaml(path);
+        self.tasks(Some(&doc), base, role, conds);
+    }
+
+    fn role(&mut self, name: &str, conds: &[serde_yaml::Value], entry: &str) {
+        let rdir = self.repo.join("ops/ansible/roles").join(name);
+        if !rdir.is_dir() || self.stack.iter().any(|r| r == name) {
+            return;
+        }
+        self.stack.push(name.to_string());
+        let meta = load_yaml(&rdir.join("meta/main.yml"));
+        if let Some(serde_yaml::Value::Sequence(deps)) = meta.get("dependencies") {
+            for dep in deps.clone() {
+                let dname = dep.as_str().or_else(|| dep.get("role").and_then(|v| v.as_str())).map(String::from);
+                if let Some(d) = dname.filter(|d| !d.contains('{')) {
+                    let mut c = conds.to_vec();
+                    c.extend(conds_of(&dep));
+                    self.role(&d, &c, "main");
+                }
+            }
+        }
+        let tdir = rdir.join("tasks");
+        for ext in ["yml", "yaml"] {
+            let f = tdir.join(format!("{entry}.{ext}"));
+            if f.is_file() {
+                self.file(&f, &tdir, name, conds);
+                break;
+            }
+        }
+        self.stack.pop();
+    }
+
+    fn play(&mut self, path: &Path, depth: u8) {
+        let doc = load_yaml(path);
+        let base = path.parent().unwrap_or(self.repo).to_path_buf();
+        let Some(plays) = doc.as_sequence() else { return };
+        for p in plays {
+            if !p.is_mapping() {
+                continue;
+            }
+            if let Some(imp) = p.get("import_playbook").and_then(|v| v.as_str()) {
+                let imp = base.join(imp);
+                if imp.is_file() && imp != path && depth < 3 {
+                    self.play(&imp, depth + 1);
+                }
+                continue;
+            }
+            let pc = conds_of(p);
+            self.tasks(p.get("pre_tasks"), &base, "play", &pc);
+            if let Some(serde_yaml::Value::Sequence(roles)) = p.get("roles") {
+                for r in roles {
+                    let n = r.as_str().or_else(|| r.get("role").and_then(|v| v.as_str())).or_else(|| r.get("name").and_then(|v| v.as_str()));
+                    if let Some(n) = n.filter(|n| !n.contains('{')) {
+                        let mut c = pc.clone();
+                        c.extend(conds_of(r));
+                        self.role(n, &c, "main");
+                    }
+                }
+            }
+            self.tasks(p.get("tasks"), &base, "play", &pc);
+            self.tasks(p.get("post_tasks"), &base, "play", &pc);
+        }
+    }
+}
+
+/// The literal role names a play's `roles:` lists (through import_playbook).
+fn play_roles(play: &Path, depth: u8) -> Vec<String> {
+    let mut out = Vec::new();
+    let doc = load_yaml(play);
+    for p in doc.as_sequence().into_iter().flatten() {
+        if let Some(imp) = p.get("import_playbook").and_then(|v| v.as_str()) {
+            let imp = play.parent().unwrap_or(Path::new(".")).join(imp);
+            if imp.is_file() && imp != play && depth < 3 {
+                out.extend(play_roles(&imp, depth + 1));
+            }
+        }
+        if let Some(serde_yaml::Value::Sequence(roles)) = p.get("roles") {
+            for r in roles {
+                let n = r.as_str().or_else(|| r.get("role").and_then(|v| v.as_str())).or_else(|| r.get("name").and_then(|v| v.as_str()));
+                if let Some(n) = n.filter(|n| !n.contains('{')) {
+                    out.push(n.to_string());
+                }
+            }
+        }
+    }
+    out
+}
+
+/// The scalar top-level values of the roles' defaults and vars, first role first.
+fn role_scalars(repo: &Path, roles: &[String]) -> BTreeMap<String, String> {
+    let scalar = regex::Regex::new(r"^([a-z][a-z0-9_]*):\s*(\S.*)$").unwrap();
+    let mut out = BTreeMap::new();
+    for r in roles {
+        for sub in ["defaults", "vars"] {
+            let Ok(rd) = std::fs::read_dir(repo.join("ops/ansible/roles").join(r).join(sub)) else { continue };
+            let mut files: Vec<PathBuf> = rd.flatten().map(|e| e.path()).filter(|p| p.extension().map(|x| x == "yml" || x == "yaml").unwrap_or(false)).collect();
+            files.sort();
+            for f in files {
+                let Ok(t) = std::fs::read_to_string(&f) else { continue };
+                for line in t.lines() {
+                    if let Some(c) = scalar.captures(line) {
+                        let v = c[2].split(" #").next().unwrap_or("").trim().trim_matches(|ch| ch == '\'' || ch == '"').to_string();
+                        out.entry(c[1].to_string()).or_insert(v);
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+/// ansible var (or `<role>:<NAME>` for a lookup no variable holds) -> names, for the
+/// env lookups in the tasks the play runs on this goatnet. Mirrors `task_bindings`.
+fn task_bindings(repo: &Path, play: &Path, roles: &[String], vars: &BTreeMap<String, String>) -> BTreeMap<String, Vec<String>> {
+    let mut w = TaskWalk { repo, vars, rvals: role_scalars(repo, roles), out: BTreeMap::new(), seen: Default::default(), stack: vec![] };
+    w.play(play, 0);
+    w.out
 }
 
 /// `roles` and every role they pull in: include_role / import_role by a literal
@@ -1844,6 +2191,79 @@ mod tests {
         write(r, "ops/ansible/group_vars/dev_hosts/vars.yml", "site_id: dev-a\napp_store: sqlite\n");
         let got = secrets_needed(r, &["dev_hosts".into()], "app", "app", &play);
         assert!(!got.contains_key("app_db_password"), "a sqlite goatnet reads no database password");
+    }
+
+    /// A secret a task reads (set_fact, an assert), in a later phase reached through an
+    /// include, or in a role the play lists, is part of what the deploy needs, as a
+    /// condition false on the goatnet takes it out. Mirrors
+    /// tests/test_deploy_secrets_task_lookups.py.
+    #[test]
+    fn a_secret_a_task_reads_is_required_before_any_host() {
+        let t = tempfile::tempdir().unwrap();
+        let r = t.path();
+        write(r, "ops/ansible/app-deploy.yml", "- hosts: \"{{ target | mandatory }}\"\n  roles:\n    - role: app\n    - role: app-client\n");
+        write(
+            r,
+            "ops/ansible/roles/app/defaults/main.yml",
+            "app_s3_endpoint: \"\"\napp_apply_policy: true\napp_s3_key_envvar: \"{{ site_id | upper | replace('-', '_') }}_APP_S3_KEY\"\napp_root_user_envvar: \"{{ store_root_user_envvar | default('') }}\"\napp_token_envvar: \"FIXTURE_OPTIONAL\"\n",
+        );
+        write(
+            r,
+            "ops/ansible/roles/app/tasks/main.yml",
+            concat!(
+                "- name: resolve the S3 key\n  ansible.builtin.set_fact:\n    app_s3_key: \"{{ lookup('env', app_s3_key_envvar) }}\"\n  when: app_s3_endpoint | length > 0\n",
+                "- name: optional, guarded by its own presence\n  ansible.builtin.copy:\n    content: \"{{ lookup('env', app_token_envvar) }}\"\n    dest: /tmp/x\n  when: lookup('env', app_token_envvar) | length > 0\n",
+                "- name: later phase\n  ansible.builtin.include_tasks:\n    file: policy.yml\n  when: app_apply_policy | bool\n",
+            ),
+        );
+        write(r, "ops/ansible/roles/app/tasks/policy.yml", "- block:\n    - ansible.builtin.set_fact:\n        app_root_user: \"{{ lookup('env', app_root_user_envvar) }}\"\n");
+        write(r, "ops/ansible/roles/app-client/tasks/main.yml", "- ansible.builtin.assert:\n    that: (lookup('env', 'FIXTURE_CLIENT') | length) >= 16\n");
+        let play = r.join("ops/ansible/app-deploy.yml");
+        write(r, "ops/ansible/group_vars/dev_hosts/vars.yml", "site_id: dev-a\napp_s3_endpoint: http://store:9000\nstore_root_user_envvar: FIXTURE_ROOT_USER\n");
+        let got = secrets_needed(r, &["dev_hosts".into()], "app", "app", &play);
+        assert_eq!(got.get("app_s3_key").map(String::as_str), Some("DEV_A_APP_S3_KEY"));
+        assert_eq!(got.get("app_root_user").map(String::as_str), Some("FIXTURE_ROOT_USER"), "a later phase, through an include");
+        assert_eq!(got.get("app-client:FIXTURE_CLIENT").map(String::as_str), Some("FIXTURE_CLIENT"), "a role the play lists");
+        assert!(!got.values().any(|v| v.contains("FIXTURE_OPTIONAL")), "a task guarded by its own lookup is optional");
+        write(r, "ops/ansible/group_vars/dev_hosts/vars.yml", "site_id: dev-a\napp_apply_policy: false\n");
+        let got = secrets_needed(r, &["dev_hosts".into()], "app", "app", &play);
+        assert!(!got.contains_key("app_s3_key"), "no endpoint, no S3 key");
+        assert!(!got.contains_key("app_root_user"), "the policy phase is off");
+    }
+
+    /// The real audit-subscriber play in durable-write mode on a synthetic goatnet.
+    #[test]
+    fn audit_subscriber_names_its_s3_and_store_root_pairs() {
+        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let t = tempfile::tempdir().unwrap();
+        let r = t.path();
+        let a = r.join("ops/ansible");
+        let copy = |rel: &str| {
+            let src = repo.join("ops/ansible").join(rel);
+            let mut stack = vec![src.clone()];
+            while let Some(d) = stack.pop() {
+                for e in std::fs::read_dir(&d).unwrap().flatten() {
+                    let p = e.path();
+                    let dst = a.join(rel).join(p.strip_prefix(&src).unwrap());
+                    if p.is_dir() {
+                        stack.push(p);
+                    } else {
+                        std::fs::create_dir_all(dst.parent().unwrap()).unwrap();
+                        std::fs::copy(&p, &dst).unwrap();
+                    }
+                }
+            }
+        };
+        copy("roles/audit-subscriber");
+        copy("roles/rollback-ledger");
+        std::fs::copy(repo.join("ops/ansible/audit-subscriber-deploy.yml"), a.join("audit-subscriber-deploy.yml")).unwrap();
+        let fixture = "site_id: fixture\naudit_subscriber_s3_endpoint: \"http://127.0.0.1:9000\"\nminio_root_user_envvar: \"FIXTURE_MINIO_ROOT_USER\"\nminio_root_password_envvar: \"FIXTURE_MINIO_ROOT_PASSWORD\"\n";
+        write(r, "ops/ansible/group_vars/fixture_hosts/audit-subscriber.yml", fixture);
+        let got = secrets_needed(r, &["fixture_hosts".into()], "audit-subscriber", "audit-subscriber", &a.join("audit-subscriber-deploy.yml"));
+        let names: std::collections::BTreeSet<&str> = got.values().map(String::as_str).collect();
+        for n in ["FIXTURE_AUDIT_SUBSCRIBER_S3_ACCESS_KEY", "FIXTURE_AUDIT_SUBSCRIBER_S3_SECRET_KEY", "FIXTURE_MINIO_ROOT_USER", "FIXTURE_MINIO_ROOT_PASSWORD"] {
+            assert!(names.contains(n), "{n} missing from {got:?}");
+        }
     }
 
     /// The real goat-get role: the token is part of what a deploy needs.

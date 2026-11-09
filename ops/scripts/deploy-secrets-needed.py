@@ -109,20 +109,36 @@ def _env_arg(expr, i, svars, rvals=None):
     and a variable (group value first, then the role's own) holding a literal name or
     "{{ site_id … }}_SUFFIX"."""
     rest = expr[i:]
-    m = re.match(r"""['"]([A-Z][A-Z0-9_]*)['"]""", rest)
+    m = re.match(r"""['"]([A-Z][A-Z0-9_]*)['"]\s*\)""", rest)
     if m:
         return m.group(1)
     m = re.match(r"""([a-z][a-z0-9_]*)\s*\)""", rest)
     if m:
-        val = svars.get(m.group(1)) or (rvals or {}).get(m.group(1)) or ""
-        if re.fullmatch(r"[A-Z][A-Z0-9_]*", val):
-            return val
-        t = re.fullmatch(r"""\{\{\s*(site_id_upper|site_id)\b([^}]*)\}\}([A-Z0-9_]+)""", val)
-        return _site_name(t.group(1), t.group(2), t.group(3), svars) if t else None
+        return _name_in(m.group(1), svars, rvals or {})
     m = re.match(r"""\(\s*(site_id_upper|site_id)\b(.*?)\)\s*[+~]\s*['"]([A-Z0-9_]+)['"]""", rest)
     if not m:
         return None
     return _site_name(m.group(1), m.group(2), m.group(3), svars)
+
+
+def _name_in(var, svars, rvals, depth=0):
+    """The environment name variable `var` holds: the group's value first, then the
+    roles' own; a literal name, "{{ site_id … }}_SUFFIX", or one more variable
+    "{{ other_var | default('NAME') }}" (audit-subscriber's root-credential names
+    default to the minio role's `minio_root_user_envvar`). None when unresolvable."""
+    val = svars.get(var) or rvals.get(var) or ""
+    if re.fullmatch(r"[A-Z][A-Z0-9_]*", val):
+        return val
+    t = re.fullmatch(r"""\{\{\s*(site_id_upper|site_id)\b([^}]*)\}\}([A-Z0-9_]+)""", val)
+    if t:
+        return _site_name(t.group(1), t.group(2), t.group(3), svars)
+    t = re.fullmatch(r"""\{\{\s*([a-z][a-z0-9_]*)\s*(?:\|\s*default\(\s*['"]([A-Z0-9_]*)['"]\s*(?:,\s*true\s*)?\)\s*)?\}\}""", val)
+    if t and depth < 3:
+        got = _name_in(t.group(1), svars, rvals, depth + 1)
+        if got:
+            return got
+        return t.group(2) or None
+    return None
 
 
 def _site_name(base, filters, suffix, svars):
@@ -303,6 +319,260 @@ def role_closure(repo, roles):
     return seen
 
 
+# --- env lookups in the tasks a deploy runs ---------------------------------------
+# A role can read a secret in a task, not in its defaults: audit-subscriber resolves
+# its S3 keys and the MinIO root pair with set_fact, then asserts them, the root pair
+# in an included lifecycle.yml that runs after the container is recreated. A check
+# that read only defaults let that deploy replace the container and stop half-way.
+# So the tasks the play runs are walked too: its own pre_tasks/tasks/post_tasks, each
+# role (meta dependencies first, then tasks/main.yml), include_tasks/import_tasks and
+# include_role/import_role by a literal name, with the `when:` conditions of every
+# enclosing block, include and role entry carried down.
+
+TASK_NOT_NEEDS = {"name", "when", "changed_when", "failed_when", "until", "msg", "fail_msg",
+                  "success_msg", "tags", "notify", "register", "loop", "with_items",
+                  "with_dict", "loop_control", "no_log", "become", "delegate_to", "listen"}
+INCLUDE_TASKS = ("include_tasks", "import_tasks", "ansible.builtin.include_tasks", "ansible.builtin.import_tasks")
+INCLUDE_ROLE = ("include_role", "import_role", "ansible.builtin.include_role", "ansible.builtin.import_role")
+TRUE_WORDS = {"true", "yes", "on", "1"}
+FALSE_WORDS = {"false", "no", "off", "0", ""}
+
+
+def _load_yaml(path):
+    try:
+        import yaml
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            return yaml.safe_load(fh)
+    except Exception:
+        return None
+
+
+def _value(var, svars, rvals):
+    """A variable's scalar value (group first, then the roles'), or None when unknown or templated."""
+    v = svars.get(var, rvals.get(var))
+    if v is None or "{" in str(v):
+        return None
+    return str(v).strip().strip("'\"")
+
+
+def eval_when(cond, svars, rvals):
+    """True / False for the condition shapes the roles use on a variable; None when
+    this scan cannot decide it (the task then counts: a deploy may well reach it)."""
+    if isinstance(cond, bool):
+        return cond
+    c = str(cond).strip()
+    while c.startswith("(") and c.endswith(")") and c.count("(") == 1:
+        c = c[1:-1].strip()
+    if " or " in c:
+        return None
+    if " and " in c:
+        parts = [eval_when(x, svars, rvals) for x in c.split(" and ")]
+        if False in parts:
+            return False
+        return None if None in parts else True
+    if c.startswith("not "):
+        r = eval_when(c[4:], svars, rvals)
+        return None if r is None else not r
+    m = re.fullmatch(r"""\(?\s*([a-z_][a-z0-9_]*)\s*(?:\|\s*default\([^)]*\)\s*)?(\|\s*(bool|length|trim)\s*)?\)?\s*(?:(==|!=|>=|>|<=|<)\s*(\S+))?""", c)
+    if not m:
+        return None
+    val = _value(m.group(1), svars, rvals)
+    if val is None:
+        return None
+    filt, op, rhs = m.group(3), m.group(4), m.group(5)
+    if filt == "length":
+        left = len(val)
+        if op is None:
+            return left > 0
+        try:
+            n = int(rhs)
+        except ValueError:
+            return None
+        return {"==": left == n, "!=": left != n, ">": left > n, ">=": left >= n, "<": left < n, "<=": left <= n}[op]
+    if op in ("==", "!="):
+        eq = val == rhs.strip("'\"")
+        return eq if op == "==" else not eq
+    if op:
+        return None
+    low = val.lower()
+    if low in TRUE_WORDS:
+        return True
+    if low in FALSE_WORDS:
+        return False
+    return True if filt != "bool" else None
+
+
+def _conds(task):
+    w = task.get("when") if isinstance(task, dict) else None
+    if w is None:
+        return []
+    return list(w) if isinstance(w, list) else [w]
+
+
+def _strings(node, key=None):
+    """(key, string) for every string leaf, skipping keys that never make a need."""
+    if isinstance(node, str):
+        yield key, node
+    elif isinstance(node, dict):
+        for k, v in node.items():
+            if k not in TASK_NOT_NEEDS:
+                yield from _strings(v, k if isinstance(k, str) else key)
+    elif isinstance(node, list):
+        for v in node:
+            yield from _strings(v, key)
+
+
+class _TaskWalk:
+    def __init__(self, repo, svars, rvals):
+        self.repo, self.svars, self.rvals = repo, svars, rvals
+        self.out, self.seen, self.stack = {}, set(), []
+
+    def live(self, conds):
+        """False when a carried condition is decidedly false or the guard reads the env itself."""
+        for c in conds:
+            if "lookup(" in str(c):
+                return False
+            if eval_when(c, self.svars, self.rvals) is False:
+                return False
+        return True
+
+    def tasks(self, items, base_dir, role, conds):
+        for t in items or []:
+            if not isinstance(t, dict):
+                continue
+            here = conds + _conds(t)
+            if not self.live(here) or "never" in (t.get("tags") or []):
+                continue
+            if any(k in t for k in ("block", "rescue", "always")):
+                for k in ("block", "rescue", "always"):
+                    self.tasks(t.get(k), base_dir, role, here)
+                continue
+            inc = next((t[k] for k in INCLUDE_TASKS if k in t), None)
+            if inc is not None:
+                f = inc.get("file") if isinstance(inc, dict) else inc
+                if isinstance(f, str) and "{" not in f:
+                    self.file(os.path.join(base_dir, f), base_dir, role, here)
+                continue   # an include's vars: are parameters; the included file decides
+            rinc = next((t[k] for k in INCLUDE_ROLE if k in t), None)
+            if rinc is not None:
+                if isinstance(rinc, dict) and isinstance(rinc.get("name"), str) and "{" not in rinc["name"]:
+                    self.role(rinc["name"], here, rinc.get("tasks_from") or "main")
+                continue
+            self.task(t, role)
+
+    def task(self, t, role):
+        facts = {}
+        for mod in ("set_fact", "ansible.builtin.set_fact"):
+            if isinstance(t.get(mod), dict):
+                facts.update(t[mod])
+        if isinstance(t.get("vars"), dict):
+            facts.update(t["vars"])
+        for key, text in _strings(t):
+            if "lookup(" not in text or re.search(r"\bif\b.*\belse\b", text, re.S):
+                continue
+            alts = binding_alternatives(text, self.svars, self.rvals)
+            if not alts:
+                continue
+            var = key if key in facts and isinstance(key, str) and re.fullmatch(r"[a-z][a-z0-9_]*", key) else f"{role}:{alts[0]}"
+            self.out.setdefault(var, alts)
+
+    def file(self, path, base_dir, role, conds):
+        sig = (os.path.normpath(path), tuple(map(str, conds)))
+        if sig in self.seen or len(self.seen) > 500:
+            return
+        self.seen.add(sig)
+        self.tasks(_load_yaml(path), base_dir, role, conds)
+
+    def role(self, name, conds, entry="main"):
+        rdir = os.path.join(self.repo, "ops/ansible/roles", name)
+        if not os.path.isdir(rdir) or name in self.stack:
+            return
+        self.stack.append(name)
+        try:
+            self._role(rdir, name, conds, entry)
+        finally:
+            self.stack.pop()
+
+    def _role(self, rdir, name, conds, entry):
+        meta = _load_yaml(os.path.join(rdir, "meta", "main.yml")) or {}
+        for dep in (meta.get("dependencies") or []) if isinstance(meta, dict) else []:
+            dname = dep.get("role") if isinstance(dep, dict) else dep
+            if isinstance(dname, str) and "{" not in dname:
+                self.role(dname, conds + _conds(dep))
+        tdir = os.path.join(rdir, "tasks")
+        for ext in (".yml", ".yaml"):
+            if os.path.isfile(os.path.join(tdir, entry + ext)):
+                self.file(os.path.join(tdir, entry + ext), tdir, name, conds)
+                break
+
+    def play(self, path):
+        doc = _load_yaml(path)
+        base = os.path.dirname(path)
+        for p in doc if isinstance(doc, list) else []:
+            if not isinstance(p, dict):
+                continue
+            if "import_playbook" in p:
+                imp = os.path.join(base, str(p["import_playbook"]))
+                if os.path.isfile(imp) and imp != path:
+                    self.play(imp)
+                continue
+            pc = _conds(p)
+            self.tasks(p.get("pre_tasks"), base, "play", pc)
+            for r in p.get("roles") or []:
+                rname = r.get("role") or r.get("name") if isinstance(r, dict) else r
+                if isinstance(rname, str) and "{" not in rname:
+                    self.role(rname, pc + (_conds(r) if isinstance(r, dict) else []))
+            self.tasks(p.get("tasks"), base, "play", pc)
+            self.tasks(p.get("post_tasks"), base, "play", pc)
+
+
+def play_roles(play):
+    """The literal role names a play's `roles:` lists (through import_playbook)."""
+    out, doc = [], _load_yaml(play)
+    for p in doc if isinstance(doc, list) else []:
+        if not isinstance(p, dict):
+            continue
+        if "import_playbook" in p:
+            imp = os.path.join(os.path.dirname(play), str(p["import_playbook"]))
+            if os.path.isfile(imp) and imp != play:
+                out += play_roles(imp)
+        for r in p.get("roles") or []:
+            n = r.get("role") or r.get("name") if isinstance(r, dict) else r
+            if isinstance(n, str) and "{" not in n:
+                out.append(n)
+    return out
+
+
+def role_scalars(repo, roles):
+    """The scalar top-level values of the roles' defaults and vars, first role first."""
+    out = {}
+    for r in roles:
+        for sub in ("defaults", "vars"):
+            d = os.path.join(repo, "ops/ansible/roles", r, sub)
+            if not os.path.isdir(d):
+                continue
+            for fn in sorted(os.listdir(d)):
+                if not fn.endswith((".yml", ".yaml")):
+                    continue
+                try:
+                    with open(os.path.join(d, fn), encoding="utf-8", errors="replace") as fh:
+                        for line in fh:
+                            m = SCALAR.match(line)
+                            if m:
+                                out.setdefault(m.group(1), m.group(2).split(" #")[0].strip().strip("'\""))
+                except OSError:
+                    continue
+    return out
+
+
+def task_bindings(repo, play, roles, svars):
+    """ansible var (or `<role>:<NAME>` for a lookup no variable holds) -> [ENV NAME, …],
+    for the env lookups in the tasks the play runs on this goatnet."""
+    w = _TaskWalk(repo, svars, role_scalars(repo, roles))
+    w.play(play)
+    return w.out
+
+
 def needed_for(repo, play, names, groups):
     """ansible var -> [ENV NAME, …]: the group_vars env bindings the play and roles
     reference (one name each), then the role-default bindings no group overrides
@@ -319,8 +589,15 @@ def needed_for(repo, play, names, groups):
         for var, env in env_bindings(repo, g).items():
             if var in words:
                 needed[var] = [env]
-    for var, alts in role_default_bindings(repo, role_closure(repo, names), gv_names, svars, play_words(play)).items():
+    roles = role_closure(repo, names + [r for r in play_roles(play) if r not in names])
+    for var, alts in role_default_bindings(repo, roles, gv_names, svars, play_words(play)).items():
         needed.setdefault(var, alts)
+    # The lookups the tasks make themselves (set_fact, an assert, a copy's content),
+    # the asserts of a later phase included: a name already found above stays as found.
+    found = {e for alts in needed.values() for e in alts}
+    for var, alts in task_bindings(repo, play, roles, svars).items():
+        if var not in needed and not set(alts) & found:
+            needed[var] = alts
     # An outbound channel whose empty value turns it off (ops/secrets/off-when-empty.txt)
     # is never a need: a goatnet with no PagerDuty, Slack or mail account still deploys.
     off = off_when_empty(repo)

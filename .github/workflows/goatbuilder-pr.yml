@@ -82,6 +82,7 @@ on:
       - 'ops/scripts/standup-phase-run'
       - 'ops/secrets/posture.py'
       - 'tests/test_standup_phase_run.py'
+      - 'tests/test_deploy_secrets_*.py'
       - 'ops/scripts/goatlite-render.py'
       - 'tests/test_goatlite_render_*.py'
       - 'ops/ci/check-phase-numbering.sh'
@@ -213,6 +214,9 @@ jobs:
       - name: Each phase runs through the shared runner; a goatlite's phase 1 creates its own secrets store (LP-007)
         working-directory: ${{ github.workspace }}
         run: python3 tests/test_standup_phase_run.py
+      - name: The deploy secrets check names every env lookup the play reaches — role defaults and task lookups
+        working-directory: ${{ github.workspace }}
+        run: python3 -W error::ResourceWarning -m unittest tests/test_deploy_secrets_role_defaults.py tests/test_deploy_secrets_task_lookups.py -v
       - name: goatlite's render — the LAN surface, and lite.internet's internet-correct values (goatlite.md §6)
         working-directory: ${{ github.workspace }}
         run: python3 -W error::ResourceWarning -m unittest discover -s tests -p 'test_goatlite_render_*.py' -v

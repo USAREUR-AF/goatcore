@@ -23,6 +23,26 @@ tier would have moved: **secrets-coverage** (every variable a deploy templates
 has a reference line a deployer can copy) and **deps-named** (every tool the
 release path invokes is named by its preflight).
 
+Both gates, and the presence check `deploy-component.sh` and `goatbuilder deploy`
+run before the first host (`ops/scripts/deploy-secrets-needed.py`, mirrored in
+`crates/goatbuilder/src/doctor.rs`), derive one set: every environment variable
+the component's play reads with `lookup('env', …)` on that goatnet. The set is
+the group_vars bindings the play and its roles reference; the bindings in the
+defaults of every role it reaches (the component's, the roles the play lists,
+`include_role` / `import_role` and meta dependencies); and the lookups its tasks
+make themselves (a `set_fact`, an `assert`, a file's content), walked through
+`include_tasks` / `import_tasks` into later phases with each enclosing `when:`
+carried down. A name computed per goatnet resolves through the group's value,
+then the role's: audit-subscriber in durable-write mode on zagros needs
+`ZAGROS_AUDIT_SUBSCRIBER_S3_ACCESS_KEY` / `…_SECRET_KEY` and, for its lifecycle
+phase, `ZAGROS_MINIO_ROOT_USER` / `…_PASSWORD` (through `minio_root_user_envvar`),
+so a missing one refuses before a container is replaced. A lookup is not a need
+when it has a literal fallback (`| default('')`), sits under an `if … else`,
+names a shell variable (`HOME`, `USER`), is guarded by a `when:` that reads the
+same environment, or its task's condition is false on the goatnet; a condition
+the walk cannot decide counts the task as reached
+(`tests/test_deploy_secrets_task_lookups.py`).
+
 ## The corpus: what two releases on 2026-10-28 ran into, and which gate now holds it
 
 The first two external releases through `rc.sh` — microscope/v0.1.0-rc.2 (six
