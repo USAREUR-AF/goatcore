@@ -438,6 +438,8 @@ pub enum Cmd {
         verb: Option<goat_federation::verbs::FederateCmd>,
         #[command(flatten)]
         site: Box<federate::verbs::SiteArgs>,
+        #[command(flatten)]
+        measure: Box<federate::measure::MeasureArgs>,
         /// The peering name (the counterparty, as declared), or a stage run
         /// alone: `status [<partner>]`.
         #[arg(required = true)]
@@ -1049,16 +1051,21 @@ fn main() {
         // The verbs read no repository, fixture or table output, so a flag that
         // would choose one is refused rather than silently ignored: under
         // --mock, `apply --confirm` would still write the files it names.
-        if cli.mock.is_some() || cli.repo.is_some() || !matches!(cli.output, OutputFormat::Table) {
+        // -C/--repo is the one exception: `init --over-ssh` reads the plays'
+        // inventory in the checkout it names (federate/measure.rs).
+        let over_ssh = matches!(&cli.cmd, Cmd::Federate { measure, .. } if !measure.is_empty());
+        if cli.mock.is_some() || (cli.repo.is_some() && !over_ssh) || !matches!(cli.output, OutputFormat::Table) {
             eprintln!(
                 "goatbuilder: --mock, -C/--repo and -o/--output do not apply to goatbuilder federate init|lint|compose|diff|verify|apply: \
                  the verbs read only the files they are named and the party's context, and run for real; \
-                 drop the flag (the verbs take --json for a JSON report)"
+                 drop the flag (the verbs take --json for a JSON report; -C/--repo is taken only by init --over-ssh)"
             );
             std::process::exit(2);
         }
-        if let Cmd::Federate { verb: Some(verb), site, .. } = cli.cmd {
-            std::process::exit(federate::verbs::exit_of(verb, &site));
+        if let Cmd::Federate { verb: Some(verb), site, measure, .. } = cli.cmd {
+            // Only init --over-ssh reads the checkout (its ansible inventory).
+            let repo = (!measure.is_empty()).then(|| cli.repo.clone().or_else(|| repo_root().ok())).flatten();
+            std::process::exit(federate::verbs::exit_of(verb, &site, &measure, repo.as_deref()));
         }
     }
     match &cli.cmd {
@@ -1345,7 +1352,7 @@ fn main() {
                 joinnode::join_node(&repo, &joinnode::Options { env, site, node, class, address: address.as_deref(), pass_var: pass_var.as_deref(), via, from: *from, to: *to, dry_run: *dry_run })
             }
         }
-        Cmd::Federate { verb: _, site, with, partner, env, as_party, edge_group, work, from, to, dry_run, resume } => {
+        Cmd::Federate { verb: _, site, measure, with, partner, env, as_party, edge_group, work, from, to, dry_run, resume } => {
             let with = with.as_deref().unwrap_or_default();
             let cfg_path = cli.mock.as_ref().map(|m| m.join("goatbuilder.yaml")).unwrap_or_else(|| repo.join("ops/goatbuilder/goatbuilder.yaml"));
             if with == "status" {
@@ -1363,6 +1370,8 @@ fn main() {
                 Err(anyhow::anyhow!("put --context-dir, --cert, --ca-roots, --context and --profile-dir after the verb: goatbuilder federate {with} --context-dir <dir> ..."))
             } else if !site.is_empty() {
                 Err(anyhow::anyhow!("--context-dir, --cert, --ca-roots, --context and --profile-dir apply to the six verbs (goatbuilder federate init|lint|compose|diff|verify|apply), not to a peering run"))
+            } else if !measure.is_empty() {
+                Err(anyhow::anyhow!("--over-ssh and its host flags apply to `goatbuilder federate init`; a peering run measures phase 3 over SSH with FED_MEASURE=ssh (for init, put the flags after the word init)"))
             } else if !cli.yes && !*dry_run && cli.mock.is_none() && !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
                 Err(anyhow::anyhow!("federate is a mutation: pass --yes without a terminal (C10)"))
             } else {
