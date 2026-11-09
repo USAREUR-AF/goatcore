@@ -84,8 +84,15 @@ goat_zenoh_edge_ingress_scope_check: true
 # reads as "no bundle published". Set false only to accept that
 # deliberately.
 goat_zenoh_edge_key_scope_check: true
-# The container name the core router runs as, read to make that comparison.
-goat_zenoh_edge_core_container: "goat-zenoh"
+# The core router container read to make that comparison (and the ingress
+# storage check). Empty (the default) discovers it on this host the way
+# `goat federate init` does: one running container labeled
+# org.goat.component=zenoh-core, else named *-zenoh-router (the standard core
+# role's {{ zenoh_stack }}-router), else the legacy goat-zenoh. None or several
+# found means those checks report "could not run" and the reason; they do not
+# pass. Set a name or ID here only for a layout discovery cannot find
+# (tasks/discover-core.yml, docs/design/federation-router-discovery.md).
+goat_zenoh_edge_core_container: ""
 
 goat_zenoh_edge_key_bundle_key_exprs: []
 
