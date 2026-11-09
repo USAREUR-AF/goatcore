@@ -210,7 +210,8 @@ stops for the key check, it:
 
 Every directory failure is a warning. Unset, phase 5 is unchanged.
 
-Without `FED_DIRECTORY_PER_COUNTERPARTY` the step is the single-package flow as it was before
+With `FED_DIRECTORY_PER_COUNTERPARTY` set to `0`, `false`, `no` or empty, or with
+`--single-package`, the step is the single-package flow as it was before
 §6.3: the same files written, the same requests, the same output (a test runs it beside an
 unmodified copy of the earlier script and compares all three). The stricter checks of §6.3
 (a pointer-path package signature that fails under the key in the keyring is a FAIL and places
@@ -253,10 +254,15 @@ The slot's upload signature is then the only check that the package was meant fo
 resource line names both parties. A reader taking a package from a slot must verify that line
 before using it, and the driver step does.
 
-The driver step does this when `FED_DIRECTORY_PER_COUNTERPARTY` is `1`, `true` or `yes` (or
-`directory.py --per-counterparty`); `0`, `false`, `no`, empty or unset is off, and any other value
-is refused with nothing done. **Built, off by default**; switching the default is a
-separate change. With it set, the step:
+The driver step does this by default. `FED_DIRECTORY_PER_COUNTERPARTY` set to `0`, `false`,
+`no` or empty (or `directory.py --single-package`) keeps the single-package flow; `1`, `true` or
+`yes` is on; any other value is refused and the step does nothing. **Built, on by default**; the
+default was switched in a separate change. A consequence of the default and of step 4: a
+counterparty that hosts no package for us (one with a single peering that does not set
+`FED_COUNTERPARTY_ID`, or one on a release before slots) has its package saved, not placed,
+until the operator confirms it. Another consequence of the default and of step 3: before their
+key is in the keyring, their CA certificate and SPIFFE bundle are saved as `.unconfirmed`, so
+phase 5 is run again once the keys are recorded, and it places them. With it on, the step:
 
 1. uploads our package to `/v1/parties/<us>/packages/<FED_COUNTERPARTY_ID>`, and reads it back
    byte for byte. With no counterparty id it publishes no slot and says so, and step 2 still
@@ -362,7 +368,7 @@ than overlapping.
 | Service | **Built** — image `ghcr.io/usareur-af/saltlick:v0.4.0`, multi-arch, pulls anonymously; hosts package, CA and SPIFFE bundle with the upload's signature |
 | Internet-reachable deployment (§5.1) | **Built** — one instance outside every goatnet, declared in the deploying team's private overlay, never a mesh service on a goatnet host; per-source rate limits in the service designed |
 | Pointer entry (§6) | **Built** in saltlick (`saltlick-pointer/v1`) |
-| Package per counterparty (§6.3) | **Built** in saltlick and the driver step, off by default (`FED_DIRECTORY_PER_COUNTERPARTY=1`); tested against a stand-in and a local saltlick, not yet on the test environment |
+| Package per counterparty (§6.3) | **Built** in saltlick and the driver step, on by default (`FED_DIRECTORY_PER_COUNTERPARTY=0`, `false`, `no` or empty turns it off); tested against a stand-in and a local saltlick, not yet on the test environment |
 | Driver step (§6.2) | **Built**; phase 5 of the driver, required by preflight unless `FED_NO_DIRECTORY=1`; exercised end to end by `ops/federation-e2e/run.sh` against a saltlick it starts |
 | The trust mechanism it sits above — package spec, `goatbuilder federate` (today `goat federate`; ADR 1225), conformance vectors | **Built and merged** — see [`federation-package-spec.md`](federation-package-spec.md) |
 

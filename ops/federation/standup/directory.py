@@ -25,9 +25,10 @@ sha256 of that package, until a date, signed by the party itself. This step:
      one row per fact a partner would otherwise be asked by message,
      PASS / WARN / FAIL / UNKNOWN, each with the fix.
 
-SEVERAL PEERINGS (--per-counterparty, or FED_DIRECTORY_PER_COUNTERPARTY=1, true or yes;
-off by default; 0, false, no or empty is off, and any other value is refused). A
-package carries one transport offer, so a party with two peerings signs two packages, and the single slot <directory>/v1/parties/<us>/package lets the second
+SEVERAL PEERINGS (on by default; --single-package, or FED_DIRECTORY_PER_COUNTERPARTY
+set to 0, false, no or empty, turns it off; 1, true or yes is on; any other value is
+refused). A package carries one transport offer, so a party with two peerings signs
+two packages, and the single slot <directory>/v1/parties/<us>/package lets the second
 replace the first. With the flag on, this step also uploads our package to
 <directory>/v1/parties/<us>/packages/<them>, one slot per counterparty, and looks
 the counterparty's package up at <directory>/v1/parties/<them>/packages/<us> first.
@@ -56,7 +57,7 @@ peering: a directory that is down, refusing or wrong produces a WARN and exit 0.
 usage:
   directory.py --url URL --ours FILE [--package-url URL] [--key FILE] [--ca FILE]
                [--theirs FILE] [--their-id SOVEREIGN_ID] [--keyring FILE] [--work DIR]
-               [--per-counterparty] [--place-pointer-package]
+               [--per-counterparty | --single-package] [--place-pointer-package]
 """
 from __future__ import annotations
 
@@ -1192,15 +1193,19 @@ def main(argv=None) -> int:
     ap.add_argument("--work")
     ap.add_argument("--timeout", type=float, default=10.0)
     try:
-        # 1/true/yes on; 0/false/no, empty or unset off; anything else refused.
-        per_counterparty_default = env_flag("FED_DIRECTORY_PER_COUNTERPARTY")
+        # Unset is the default, on. Set, it is read as every on/off variable here:
+        # 1/true/yes on, 0/false/no or empty off, anything else refused.
+        per_counterparty_default = ("FED_DIRECTORY_PER_COUNTERPARTY" not in os.environ
+                                    or env_flag("FED_DIRECTORY_PER_COUNTERPARTY"))
     except ValueError as e:
         print(f"\n    FAIL    {e}; the directory step did nothing")
         return 0
     ap.add_argument("--per-counterparty", action="store_true",
                     default=per_counterparty_default,
                     help="publish and look up one package per counterparty (several peerings); "
-                         "default from FED_DIRECTORY_PER_COUNTERPARTY (1, true or yes; else off)")
+                         "the default; FED_DIRECTORY_PER_COUNTERPARTY set to 0, false, no or empty turns it off")
+    ap.add_argument("--single-package", dest="per_counterparty", action="store_false",
+                    help="the single-package flow only: one package per party, as before per-counterparty slots")
     ap.add_argument("--place-pointer-package", action="store_true", default=None,
                     help="with --per-counterparty, place the package their pointer names when they host no "
                          "package for us; set only after confirming on the call that it is this peering's "
