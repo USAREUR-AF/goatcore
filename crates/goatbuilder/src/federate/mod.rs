@@ -55,6 +55,7 @@ use crate::{Check, Report, EXIT_OK, EXIT_REFUSED};
 pub mod alloc;
 pub mod declaration;
 pub mod forwarder;
+pub mod hostalloc;
 pub mod peering_files;
 pub mod lock;
 mod run;

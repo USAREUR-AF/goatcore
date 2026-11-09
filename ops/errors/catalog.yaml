@@ -2315,6 +2315,19 @@ entries:
     matches:
       - "\\(GB-163\\)"
     exit: 2
+  - code: GB-203
+    tool: goatbuilder
+    title: two peerings would bind the same value on one machine
+    what: "this peering and another declared peering would bind the same WireGuard interface, tunnel UDP port or republisher metrics port, or overlapping link subnets, on the same machine (by inventory address), so one would break the other."
+    causes:
+      - two environments, or two hand-named inventory groups, place their edges or cores on one machine
+      - a value was pinned or declared by hand without looking at the other peerings on that machine
+    fixes:
+      - "give this peering another value in its edge or core group's vars (or its allocation pin), then goatbuilder federate plan <partner>"
+    read: docs/design/federation-plan.md
+    exit: 1
+    matches:
+      - "GB-203"
 
   # ----------------------------------------------------------- external tools
 
