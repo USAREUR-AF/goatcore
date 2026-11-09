@@ -241,10 +241,13 @@ released tools. None of this is on `main` yet; it arrives as stage 11, opt-in.
 - **Existing agreements stay valid.** Only where the bytes live changes, never the bytes. A
   package fetched from a counterparty slot composes to the same canonical bytes and the same
   digest as before.
-- **A misdelivered package is caught.** If one side composes with the package meant for a third
-  party, the digests differ and the read-aloud comparison (decision 3) fails visibly. The upload
-  signature names the slot, so a reader checks under the key read aloud that the party meant
-  this package for this counterparty.
+- **A misdelivered package is caught by the slot's upload signature, not by the digest.** The
+  agreement carries neither the tunnel endpoint nor the tunnel public key, and takes the link
+  subnet from only one party, so two of one party's packages that differ only in those members
+  compose to the same agreement and the same digest: the read-aloud comparison (decision 3) does
+  not tell them apart. The upload signature names the slot (this party, this counterparty), so
+  a reader MUST verify it, under the key read aloud, before using a package fetched from a slot;
+  the directory step does, and places nothing when it does not verify.
 - **What the directory learns.** The slot name is the counterparty's id, so a reader of the
   directory will be able to see that two parties hold a peering. The directory still computes
   nothing about who should peer with whom; the slot is the party's own statement, and the
