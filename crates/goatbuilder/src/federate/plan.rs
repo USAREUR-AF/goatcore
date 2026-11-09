@@ -656,10 +656,30 @@ fn effective_inputs(
     work: &str,
     edge_group: &str,
 ) -> Vec<Resolved> {
-    let set = |k: &str| std::env::var(k).ok().filter(|v| !v.is_empty());
+    effective_inputs_with(repo, peering, work, edge_group, |k| std::env::var(k).ok())
+}
+
+/// [`effective_inputs`] with the environment given, so a test sets nothing in
+/// the process.
+fn effective_inputs_with(
+    repo: &Path,
+    peering: &config::Peering,
+    work: &str,
+    edge_group: &str,
+    env: impl Fn(&str) -> Option<String>,
+) -> Vec<Resolved> {
+    let set = |k: &str| env(k).filter(|v| !v.is_empty());
     let mut out: Vec<Resolved> = preflight::derive_inputs(repo, peering, work, edge_group, None)
         .into_iter()
         .map(|i| match set(i.name) {
+            // A value set to exactly what the deployment derives is the
+            // derived value: `federate` exports derived inputs before its
+            // phases, and that export must not read as a changed input.
+            Some(v) if Some(&v) == i.value.as_ref() => Resolved {
+                name: i.name.into(),
+                value: i.value,
+                source: i.source,
+            },
             Some(v) => Resolved {
                 name: i.name.into(),
                 value: Some(v),
@@ -2127,6 +2147,36 @@ mod tests {
             rows.iter()
                 .any(|x| x.check == "host-firewall" && x.outcome == "BLOCKED"),
             "{rows:?}"
+        );
+    }
+
+    /// `federate` exports each derived input before its phases. A recheck in
+    /// the same process must see the same inputs, not a change of source.
+    #[test]
+    fn an_exported_derived_input_is_not_a_changed_input() {
+        let r = tempfile::tempdir().unwrap();
+        let w = tempfile::tempdir().unwrap();
+        let ws = w.path().display().to_string();
+        let none = |_: &str| None;
+        let before = effective_inputs_with(r.path(), &peering(), &ws, "velmara_edge", none);
+        let exported: Vec<(String, String)> = before
+            .iter()
+            .filter_map(|i| i.value.clone().map(|v| (i.name.clone(), v)))
+            .collect();
+        let env = |k: &str| {
+            exported
+                .iter()
+                .find(|(n, _)| n == k)
+                .map(|(_, v)| v.clone())
+        };
+        let after = effective_inputs_with(r.path(), &peering(), &ws, "velmara_edge", env);
+        assert_eq!(before, after);
+        let other = |k: &str| (k == "FED_WORK").then(|| "/elsewhere".to_string());
+        let changed = effective_inputs_with(r.path(), &peering(), &ws, "velmara_edge", other);
+        let wk = changed.iter().find(|i| i.name == "FED_WORK").unwrap();
+        assert_eq!(
+            (wk.value.as_deref(), wk.source.as_str()),
+            (Some("/elsewhere"), "$FED_WORK")
         );
     }
 }
