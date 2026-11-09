@@ -430,12 +430,13 @@ pub enum Cmd {
     ///
     /// `goatbuilder federate init|lint|compose|diff|verify|apply` runs one of
     /// the six federation verbs in process, with the flags and exit codes of
-    /// `goat federate <verb>`.
+    /// `goat federate <verb>`. `goatbuilder federate backout <partner>` backs one
+    /// peering out and leaves the others as they were.
     #[command(args_conflicts_with_subcommands = true, subcommand_negates_reqs = true)]
     Federate {
-        /// One federation verb instead of the whole peering.
+        /// One federation verb, or `backout <partner>`, instead of the whole peering.
         #[command(subcommand)]
-        verb: Option<goat_federation::verbs::FederateCmd>,
+        verb: Option<federate::backout::FederateSub>,
         #[command(flatten)]
         site: Box<federate::verbs::SiteArgs>,
         /// The peering name (the counterparty, as declared), or a stage run
@@ -1045,7 +1046,7 @@ fn main() {
     // candidate lists read the checkout leniently and never fail loudly.
     // The six federation verbs read only the files they are named, and the
     // site (federate/verbs.rs): no repository, no config.
-    if let Cmd::Federate { verb: Some(_), .. } = &cli.cmd {
+    if let Cmd::Federate { verb: Some(federate::backout::FederateSub::Verb(_)), .. } = &cli.cmd {
         // The verbs read no repository, fixture or table output, so a flag that
         // would choose one is refused rather than silently ignored: under
         // --mock, `apply --confirm` would still write the files it names.
@@ -1057,7 +1058,7 @@ fn main() {
             );
             std::process::exit(2);
         }
-        if let Cmd::Federate { verb: Some(verb), site, .. } = cli.cmd {
+        if let Cmd::Federate { verb: Some(federate::backout::FederateSub::Verb(verb)), site, .. } = cli.cmd {
             std::process::exit(federate::verbs::exit_of(verb, &site));
         }
     }
@@ -1343,6 +1344,13 @@ fn main() {
                 Err(anyhow::anyhow!("join-node is a mutation: pass --yes without a terminal (C10)"))
             } else {
                 joinnode::join_node(&repo, &joinnode::Options { env, site, node, class, address: address.as_deref(), pass_var: pass_var.as_deref(), via, from: *from, to: *to, dry_run: *dry_run })
+            }
+        }
+        Cmd::Federate { verb: Some(federate::backout::FederateSub::Backout(b)), .. } => {
+            if !cli.yes && !b.dry_run && cli.mock.is_none() && !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+                Err(goat_errors::coded("GB-008", "federate backout is a mutation: pass --yes without a terminal (C10)").into())
+            } else {
+                federate::backout::backout(&repo, &b.options(cli.mock.as_deref(), cli.yes, matches!(cli.output, OutputFormat::Table)))
             }
         }
         Cmd::Federate { verb: _, site, with, partner, env, as_party, edge_group, work, from, to, dry_run, resume } => {

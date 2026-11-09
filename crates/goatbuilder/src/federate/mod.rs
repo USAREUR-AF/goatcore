@@ -42,6 +42,8 @@ pub mod verbs;
 use std::path::Path;
 use std::process::Command;
 
+pub mod backout;
+
 use anyhow::{anyhow, Context, Result};
 
 use crate::config;
