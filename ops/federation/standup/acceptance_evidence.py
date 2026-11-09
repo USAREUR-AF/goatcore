@@ -151,7 +151,39 @@ def sha256_file(path):
     return "sha256:" + h.hexdigest()
 
 
-def bundle(checks, agreement, us, them, run_id, started, inputs, ended=None):
+def file_hashes(paths):
+    """{path as given: sha256} for each file that exists."""
+    return {p: sha256_file(p) for p in paths if os.path.isfile(p)}
+
+
+def tree_hashes(root):
+    """{relative path: sha256} for every file under root (the configuration `apply`
+    rendered), so a result is bound to the configuration it was observed against."""
+    out = {}
+    if root and os.path.isdir(root):
+        for d, _, files in os.walk(root):
+            for name in files:
+                full = os.path.join(d, name)
+                out[os.path.relpath(full, root)] = sha256_file(full)
+    return dict(sorted(out.items()))
+
+
+def session_block(manifest_path, us):
+    """What binds a bundle to a bilateral session: its id, the manifest's digest and
+    the challenge the manifest issued to this side (sent inside every sample)."""
+    if not manifest_path:
+        return None
+    try:
+        with open(manifest_path) as f:
+            m = json.load(f)
+    except (OSError, ValueError) as e:
+        raise Malformed("the session manifest %s cannot be read: %s" % (manifest_path, e))
+    return {"id": m.get("session_id"), "manifest_sha256": sha256_file(manifest_path),
+            "challenge": (m.get("challenges") or {}).get(us), "expires_at": m.get("expires_at")}
+
+
+def bundle(checks, agreement, us, them, run_id, started, inputs, ended=None, session=None, software=None,
+           configuration=None):
     verdict, code, why = overall(checks)
     ag = {}
     try:
@@ -169,6 +201,11 @@ def bundle(checks, agreement, us, them, run_id, started, inputs, ended=None):
         # Which surfaces this run had, by name only: an address is not evidence and
         # does not belong in a file that may be handed to the partner.
         "inputs": dict(inputs),
+        # The software and the rendered configuration this run observed with, and the
+        # bilateral session it belongs to (null outside one).
+        "software": dict(software or {}),
+        "configuration": dict(configuration or {}),
+        "session": session,
         "counts": counts(checks),
         "verdict": verdict,
         "exit": code,
@@ -402,6 +439,9 @@ def main(argv=None):
     f.add_argument("--run-id", required=True)
     f.add_argument("--started", required=True)
     f.add_argument("--inputs", nargs="*", default=[])
+    f.add_argument("--session")
+    f.add_argument("--software", nargs="*", default=[])
+    f.add_argument("--config-dir")
     sub.add_parser("rest-value")
     ps = sub.add_parser("persistence-scope")
     ps.add_argument("--key", required=True)
@@ -457,7 +497,10 @@ def main(argv=None):
         for kv in a.inputs:
             k, _, v = kv.partition("=")
             inputs[k] = v == "1"
-        b = bundle(read_checks(a.checks), a.agreement, a.us, a.them, a.run_id, a.started, inputs)
+        b = bundle(read_checks(a.checks), a.agreement, a.us, a.them, a.run_id, a.started, inputs,
+                   session=session_block(a.session, a.us),
+                   software={os.path.basename(k): v for k, v in file_hashes(a.software).items()},
+                   configuration={"applied": tree_hashes(a.config_dir)} if a.config_dir else {})
         write_bundle(b, a.out)
         print(console(b))
         print("  evidence: %s" % os.path.join(a.out, "result.json"))

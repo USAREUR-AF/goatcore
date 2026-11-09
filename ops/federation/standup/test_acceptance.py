@@ -480,6 +480,78 @@ class AcceptanceRun(unittest.TestCase):
         rc, out = self.run_before({})
         self.assertEqual(rc, 2, out)
 
+    # --- a bilateral session, each side on its own core only -----------------
+    def run_side(self, side, manifest, evidence):
+        """One side's runner: its own core only, no counterparty surface, no probes."""
+        path = os.path.join(self.tmp, "agreement.json")
+        with open(path, "w") as f:
+            json.dump(self.ag, f)
+        fab = self.fabric.start()
+        env = {k: v for k, v in os.environ.items() if k not in SCRUB}
+        env.update({"FED_OURS_REST": fab["FED_OURS_REST"] if side == "xaa" else fab["FED_THEIRS_REST"],
+                    "FED_ACCEPTANCE_SESSION": manifest, "FED_EVIDENCE_DIR": evidence, "FED_SESSION_WAIT": "2",
+                    "FED_ACCEPTANCE_WAIT": "0.3", "FED_ACCEPTANCE_GAP": "0", "FED_ACCEPTANCE_RT_TIMEOUT": "3"})
+        p = subprocess.run(["bash", str(SCRIPT), path, "--as", side], env=env, capture_output=True, text=True,
+                           timeout=240)
+        with open(os.path.join(evidence, "result.json")) as f:
+            return p.returncode, p.stdout + p.stderr, json.load(f)
+
+    def test_a_bilateral_session_exchanged_by_file(self):
+        path = os.path.join(self.tmp, "agreement.json")
+        with open(path, "w") as f:
+            json.dump(self.ag, f)
+        manifest = os.path.join(self.tmp, "session.json")
+        tool = str(HERE / "acceptance_session.py")
+        subprocess.run(["python3", tool, "new", "--agreement", path, "--us", "xaa", "--out", manifest], check=True,
+                       capture_output=True)
+        ev_a, ev_b = os.path.join(self.tmp, "ev-xaa"), os.path.join(self.tmp, "ev-xab")
+        # xab first: nothing of ours yet, so its inbound rows wait and stay BLOCKED.
+        rc, out, b = self.run_side("xab", manifest, ev_b)
+        self.assertEqual(rc, 3, out)
+        rows = {c["name"]: c for c in b["checks"]}
+        self.assertEqual(rows["delivery/inbound/release/all"]["verdict"], "BLOCKED", out)
+        self.assertEqual(rows["publish/outbound/release/all"]["verdict"], "PASS", out)
+        # xaa: reads xab's samples, with xab's challenge, from its own core.
+        rc, out, a = self.run_side("xaa", manifest, ev_a)
+        rows = {c["name"]: c for c in a["checks"]}
+        self.assertEqual(rows["delivery/inbound/release/all"]["verdict"], "PASS", out)
+        self.assertEqual(rows["republisher-boundary/inbound"]["verdict"], "PASS", out)
+        self.assertEqual(rows["delivery/outbound/release/all"]["verdict"], "BLOCKED", out)
+        self.assertEqual(rows["delivery/outbound/release/all"]["observations"]["observed_by_peer"],
+                         "delivery/inbound/release/all")
+        self.assertEqual(a["session"]["id"], json.load(open(manifest))["session_id"])
+        self.assertIn("acceptance.sh", a["software"])
+        self.assertNotIn("theirs_rest", [k for k, v in a["inputs"].items() if v])
+        # xab again: now it sees ours.
+        rc, out, b = self.run_side("xab", manifest, ev_b)
+        self.assertEqual({c["name"]: c["verdict"] for c in b["checks"]}["delivery/inbound/release/all"], "PASS", out)
+        # Exchanged by file: xaa imports xab's bundle; a second import is a replay.
+        imp = subprocess.run(["python3", tool, "import", "--manifest", manifest, "--us", "xaa", "--evidence", ev_a,
+                              os.path.join(ev_b, "result.json")], capture_output=True, text=True)
+        self.assertEqual(imp.returncode, 0, imp.stderr)
+        again = subprocess.run(["python3", tool, "import", "--manifest", manifest, "--us", "xaa", "--evidence", ev_a,
+                                os.path.join(ev_b, "result.json")], capture_output=True, text=True)
+        self.assertEqual(again.returncode, 2, again.stdout)
+        self.assertIn("already imported", again.stderr)
+        co = subprocess.run(["python3", tool, "combine", "--manifest", manifest, "--us", "xaa", "--evidence", ev_a],
+                            capture_output=True, text=True)
+        combined = json.load(open(os.path.join(ev_a, "bilateral", json.load(open(manifest))["session_id"] + ".json")))
+        row = [r for r in combined["rows"] if r["name"] == "delivery/outbound/release/all"][0]
+        self.assertEqual(row["status"], "PASS (peer-reported)", co.stdout)
+        # Refusals and SPIRE were not configured on either side, so the bilateral scope is open.
+        self.assertEqual((co.returncode, combined["verdict"]), (3, "INCOMPLETE"), co.stdout)
+
+    def test_a_manifest_for_another_agreement_stops_the_run(self):
+        other = os.path.join(self.tmp, "other.json")
+        with open(other, "w") as f:
+            json.dump(fakefabric.agreement(them="xac"), f)
+        manifest = os.path.join(self.tmp, "session.json")
+        subprocess.run(["python3", str(HERE / "acceptance_session.py"), "new", "--agreement", other, "--us", "xaa",
+                        "--out", manifest], check=True, capture_output=True)
+        rc, out = self.run_acceptance(extra={"FED_ACCEPTANCE_SESSION": manifest})
+        self.assertEqual(rc, 2, out)
+        self.assertIn("another agreement", out)
+
     def test_a_broken_round_trip_fails(self):
         self.fabric.faults.responder_down.add("xab")
         rc, out = self.run_acceptance(extra={})
