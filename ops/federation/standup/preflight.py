@@ -60,7 +60,9 @@ def shared_inventory_names(text, mine):
     found = []
     for g in mine:
         for h in groups.get(g, []):
-            others = sorted(o for o in peering if o != g and h in groups.get(o, []))
+            # The same peering's own edge and core groups naming one host is one
+            # peering's variables, not two: not a conflict.
+            others = sorted(o for o in peering if o not in mine and h in groups.get(o, []))
             if others and (h, [g] + others) not in found:
                 found.append((h, [g] + others))
     return found

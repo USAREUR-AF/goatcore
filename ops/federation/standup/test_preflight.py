@@ -89,6 +89,10 @@ c_core
         inv = self.INV.format(b_edge="edge-b", c_edge="edge-c", b_core="core-b", c_core="core-c")
         self.assertEqual(self.p.shared_inventory_names(inv, ["c_edge", "c_core"]), [])
 
+    def test_one_peerings_own_edge_and_core_on_one_host_is_not_a_conflict(self):
+        inv = self.INV.format(b_edge="edge-b", c_edge="box-c", b_core="core-b", c_core="box-c")
+        self.assertEqual(self.p.shared_inventory_names(inv, ["c_edge", "c_core"]), [])
+
     def test_a_group_outside_the_peering_groups_is_not_a_conflict(self):
         inv = self.INV.format(b_edge="edge-b", c_edge="edge-c", b_core="core-b", c_core="core-c")
         inv += "\n[monitoring]\nedge-c\n"
