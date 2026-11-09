@@ -30,7 +30,7 @@ def at(minutes):
     return NOW + datetime.timedelta(minutes=minutes)
 
 
-class Session(unittest.TestCase):
+class Fixture(unittest.TestCase):
     def setUp(self):
         self.d = tempfile.mkdtemp(prefix="acceptance-session-")
         self.addCleanup(shutil.rmtree, self.d, True)
@@ -69,6 +69,8 @@ class Session(unittest.TestCase):
             json.dump(b, f)
         return p
 
+
+class Session(Fixture):
     def test_the_manifest_binds_what_the_proposal_lists(self):
         for k in ("session_id", "agreement_sha256", "policy", "participants", "not_before", "expires_at",
                   "challenges", "limits"):
@@ -247,6 +249,115 @@ def fill(c):
     c.setdefault("started_at", "2026-11-09T12:05:00Z")
     c.setdefault("ended_at", "2026-11-09T12:05:30Z")
     return c
+PARTNER = """sovereign_id: xab
+display_name: "Synthetic partner"
+level: exchanging
+partner_cn: fed.xab.01
+ingress:
+  - "from/xab/**"
+egress:
+  - "from/xaa/all/**"
+rationale: >-
+  Synthetic declaration for the acceptance publishing tests. Not a peering.
+"""
+
+
+class Publish(Fixture):
+    """`exchanging` is published only as a reviewable change, after both sides passed."""
+
+    def ready(self, cleanup=True, peer_cleanup=True, level="exchanging"):
+        local = [
+            {"name": "delivery/inbound/release/all", "required": True, "verdict": "PASS", "observations": {}},
+            {"name": "delivery/outbound/release/all", "required": True, "verdict": "BLOCKED",
+             "observations": {"observed_by_peer": "delivery/inbound/release/all"}},
+        ]
+        if cleanup:
+            local.append({"name": "cleanup/probes", "required": True, "verdict": "PASS", "observations": {}})
+        os.makedirs(self.evidence, exist_ok=True)
+        with open(os.path.join(self.evidence, "result.json"), "w") as f:
+            json.dump({"schema": "goat-federation-acceptance/v1", "run": {"id": "acc-xaa-1"},
+                       "agreement": {"path": self.ag}, "session": {"id": self.m["session_id"]}, "checks": local}, f)
+        checks = [{"name": "delivery/inbound/release/all", "required": True, "verdict": "PASS",
+                   "observations": {"received": "xaa-%s-all" % self.m["challenges"]["xaa"]}},
+                  {"name": "delivery/outbound/release/all", "required": True, "verdict": "BLOCKED",
+                   "observations": {"observed_by_peer": "delivery/inbound/release/all"}}]
+        if peer_cleanup:
+            checks.append({"name": "cleanup/probes", "required": True, "verdict": "PASS", "observations": {}})
+        ses.import_bundle(self.manifest, "xaa", self.evidence, self.peer_bundle(checks=checks),
+                          now=utc_now_inside(self.m))
+        self.partner = os.path.join(self.d, "xab.yaml")
+        with open(self.partner, "w") as f:
+            f.write(PARTNER.replace("level: exchanging", "level: " + level))
+        self.out = os.path.join(self.d, "proposed")
+
+    def propose(self, approvals=("xaa=Operator A", "xab=Operator B")):
+        return ses.propose(self.manifest, "xaa", self.evidence, self.partner, list(approvals), self.out,
+                           now=utc_now_inside(self.m))
+
+    def test_a_passing_bilateral_result_becomes_a_proposed_change_not_an_edit(self):
+        self.ready()
+        before = open(self.partner).read()
+        proposed, diff = self.propose()
+        self.assertEqual(open(self.partner).read(), before, "the deployment's file was edited in place")
+        text = open(proposed).read()
+        self.assertIn("status: exchanging", text)
+        self.assertIn('session: "%s"' % self.m["session_id"], text)
+        self.assertIn("level: exchanging", text)
+        self.assertIn("+acceptance:", diff)
+        self.assertTrue(os.path.exists(proposed + ".diff"))
+        import yaml
+        d = yaml.safe_load(text)
+        self.assertEqual(d["acceptance"]["approved_by"], {"xaa": "Operator A", "xab": "Operator B"})
+        self.assertEqual(d["acceptance"]["expires"], "2026-12-01")
+        # A second session replaces the block instead of adding another.
+        with open(self.partner, "w") as f:
+            f.write(text)
+        proposed, _ = self.propose()
+        self.assertEqual(open(proposed).read().count("acceptance:"), 1)
+
+    def test_nothing_is_proposed_without_the_whole_scope_cleanup_and_both_approvals(self):
+        for why, kw, approvals in (("our cleanup", dict(cleanup=False), None),
+                                   ("their cleanup", dict(peer_cleanup=False), None),
+                                   ("a level that moves nothing", dict(level="connected"), None),
+                                   ("one approver", {}, ("xaa=Operator A",))):
+            with self.subTest(why=why):
+                self.setUp()
+                self.ready(**kw)
+                with self.assertRaises(ses.Refused):
+                    self.propose(approvals) if approvals else self.propose()
+                self.assertFalse(os.path.exists(os.path.join(self.out, "xab.yaml")))
+
+    def test_an_open_bilateral_scope_is_refused(self):
+        self.ready()
+        with open(os.path.join(self.evidence, "result.json")) as f:
+            r = json.load(f)
+        r["checks"].append({"name": "refusal/acl-trace", "required": True, "verdict": "BLOCKED", "observations": {}})
+        with open(os.path.join(self.evidence, "result.json"), "w") as f:
+            json.dump(r, f)
+        with self.assertRaises(ses.Refused) as e:
+            self.propose()
+        self.assertIn("refusal/acl-trace", str(e.exception))
+
+    def test_freshness_goes_stale_or_degraded_and_writes_nothing(self):
+        self.ready()
+        proposed, _ = self.propose()
+        now = utc_now_inside(self.m)
+        self.assertEqual(ses.freshness(proposed, self.ag, now=now)[0], "current")
+        self.assertEqual(ses.freshness(proposed, self.ag, now=now + datetime.timedelta(days=60))[0], "stale")
+        with open(os.path.join(self.evidence, "result.json")) as f:
+            r = json.load(f)
+        r.update({"verdict": "FAIL", "why": "1 check(s) failed: delivery/inbound/release/all"})
+        r["run"]["ended_at"] = ses.ts(now + datetime.timedelta(hours=1))
+        with open(os.path.join(self.evidence, "result.json"), "w") as f:
+            json.dump(r, f)
+        self.assertEqual(ses.freshness(proposed, self.ag, self.evidence, now=now)[0], "degraded")
+        ag = json.load(open(self.ag))
+        ag["expires"] = "2027-01-01"
+        json.dump(ag, open(self.ag, "w"))
+        before = open(proposed).read()
+        self.assertEqual(ses.freshness(proposed, self.ag, now=now)[0], "stale")
+        self.assertEqual(open(proposed).read(), before)
+        self.assertEqual(ses.freshness(self.partner, self.ag, now=now)[0], "none")
 
 
 def utc_now_inside(m):

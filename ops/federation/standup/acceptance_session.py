@@ -12,6 +12,9 @@ a file. Each keeps their own observations and the partner's reported ones apart.
     acceptance_session.py fields   --manifest M --us U
     acceptance_session.py import   --manifest M --us U --evidence DIR BUNDLE
     acceptance_session.py combine  --manifest M --us U --evidence DIR
+    acceptance_session.py propose  --manifest M --us U --evidence DIR --partner-file F
+                                   --approved-by ID=NAME --approved-by ID=NAME --out DIR
+    acceptance_session.py freshness --partner-file F --agreement A [--evidence DIR]
 
 `new` writes the manifest: the agreement's digest, the acceptance policy's digest,
 both participants, a unique session id, the window it is valid in, one random
@@ -39,7 +42,23 @@ when the whole required scope of both sides passed, 1 when anything failed, 3
 otherwise. The result says, every time, that peer-reported rows are not
 authenticated: there is no report signing yet, so this is for the two operators to
 review, and nothing gates on it automatically.
+
+`propose` is the only way `exchanging` is published, and it publishes nothing
+itself. It writes, under --out, the partner file with an `acceptance:` block and the
+diff against the deployment's own copy, for the operator to commit through the
+deployment's configuration review. It refuses unless the bilateral result is PASS,
+both sides' bundles show their probes cleaned up (`cleanup/probes` PASS), both
+operators are named as approvers, the session has not expired, and the partner
+file's `level` already grants `exchanging`. It never edits the file in place and
+never touches `level`.
+
+`freshness` reads a partner file's `acceptance:` block and says whether it is still
+current: stale when the agreement changed or the evidence expired, degraded when a
+later local run failed. It prints the status change a person should propose; it
+writes nothing.
 """
+import difflib
+import re
 import argparse
 import datetime
 import hashlib
@@ -376,6 +395,129 @@ def combine(manifest_path, us, evidence):
     return out
 
 
+def _bundle_path(evidence, them, run_id):
+    safe = "".join(ch if ch.isalnum() or ch in "-_." else "_" for ch in str(run_id))
+    return os.path.join(evidence, "peer", them, safe + ".json")
+
+
+def _cleanup_confirmed(bundle):
+    return any(c.get("name") == "cleanup/probes" and c.get("verdict") == "PASS" for c in bundle.get("checks", []))
+
+
+ACCEPTANCE_BLOCK = re.compile(r"^acceptance:[^\n]*\n(?:(?:[ \t]+[^\n]*|[ \t]*)\n)*", re.M)
+
+
+def propose(manifest_path, us, evidence, partner_file, approvals, out_dir, now=None):
+    m = load(manifest_path, "the session manifest")
+    them = [p.get("sovereign_id") for p in m.get("participants", []) if p.get("sovereign_id") != us][0]
+    now = now or utcnow()
+    if now >= parse_ts(m["expires_at"]):
+        raise Refused("the session expired at %s; run a new one before publishing" % m["expires_at"])
+    out = combine(manifest_path, us, evidence)
+    if out["verdict"] != "PASS":
+        raise Refused("the bilateral result is %s (failed: %s; open: %s); exchanging is published only after the "
+                      "whole required scope of both sides passed" % (
+                          out["verdict"], ", ".join(out["failed"]) or "none", ", ".join(out["open"]) or "none"))
+    local = load(os.path.join(evidence, "result.json"), "our result")
+    peer_path = _bundle_path(evidence, them, out["peer_run"])
+    peer = load(peer_path, "the partner's imported bundle")
+    for side, b in ((us, local), (them, peer)):
+        if not _cleanup_confirmed(b):
+            raise Refused("cleanup is not confirmed on %s's side: its bundle has no cleanup/probes PASS "
+                          "(run with a probe launcher)" % side)
+    names = dict(a.split("=", 1) for a in approvals if "=" in a)
+    for side in (us, them):
+        if not names.get(side, "").strip():
+            raise Refused("both operators approve the result: no approver named for %s (--approved-by %s=<name>)"
+                          % (side, side))
+    try:
+        with open(partner_file) as f:
+            text = f.read()
+    except OSError as e:
+        raise Refused("the partner file %s cannot be read: %s" % (partner_file, e))
+    lv = re.search(r"^level:\s*([A-Za-z]+)", text, re.M)
+    if not lv or lv.group(1) != "exchanging":
+        raise Refused("the partner file's level is %r; acceptance records evidence and never widens the grant, so it "
+                      "cannot publish exchanging over a level that does not move data" % (lv.group(1) if lv else None))
+    sid = re.search(r"^sovereign_id:\s*([A-Za-z0-9-]+)", text, re.M)
+    if not sid or sid.group(1) != them:
+        raise Refused("the partner file declares %r, not this session's partner %s" % (sid.group(1) if sid else None,
+                                                                                         them))
+    ag_expires = None
+    try:
+        with open(local["agreement"]["path"]) as f:
+            ag_expires = json.load(f).get("expires")
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    combined_path = os.path.join(evidence, "bilateral", m["session_id"] + ".json")
+    block = "\n".join([
+        "acceptance:",
+        "  # Published through review of this change (docs/design/federation-acceptance.md section 7).",
+        "  # It records evidence; it does not change level, and it goes stale on its own.",
+        "  status: exchanging",
+        '  session: "%s"' % m["session_id"],
+        '  manifest_sha256: "%s"' % sha256_file(manifest_path),
+        '  agreement_sha256: "%s"' % m["agreement_sha256"],
+        '  local_bundle_sha256: "%s"' % sha256_file(os.path.join(evidence, "result.json")),
+        '  peer_bundle_sha256: "%s"' % (peer.get("imported") or {}).get("sha256", sha256_file(peer_path)),
+        '  combined_sha256: "%s"' % sha256_file(combined_path),
+        '  verified_at: "%s"' % ts(now),
+        '  expires: "%s"' % (ag_expires or m["expires_at"][:10]),
+        "  approved_by:",
+        '    %s: "%s"' % (us, names[us].replace('"', "'")),
+        '    %s: "%s"' % (them, names[them].replace('"', "'")),
+    ]) + "\n"
+    if ACCEPTANCE_BLOCK.search(text):
+        new = ACCEPTANCE_BLOCK.sub(lambda _: block, text, count=1)
+    else:
+        new = text + ("" if text.endswith("\n") else "\n") + "\n" + block
+    os.makedirs(out_dir, exist_ok=True)
+    name = os.path.basename(partner_file)
+    proposed = os.path.join(out_dir, name)
+    with open(proposed, "w") as f:
+        f.write(new)
+    diff = "".join(difflib.unified_diff(text.splitlines(True), new.splitlines(True), "a/" + name, "b/" + name))
+    with open(os.path.join(out_dir, name + ".diff"), "w") as f:
+        f.write(diff)
+    return proposed, diff
+
+
+def freshness(partner_file, agreement_path, evidence=None, now=None):
+    """(status, reason) of a partner file's acceptance record: current, stale, degraded
+    or none."""
+    try:
+        import yaml
+    except ImportError:
+        raise Refused("PyYAML is needed to read the partner file")
+    try:
+        with open(partner_file) as f:
+            d = yaml.safe_load(f) or {}
+    except (OSError, yaml.YAMLError) as e:
+        raise Refused("the partner file %s cannot be read: %s" % (partner_file, e))
+    ac = d.get("acceptance")
+    if not isinstance(ac, dict) or ac.get("status") != "exchanging":
+        return "none", "no published acceptance in %s" % partner_file
+    now = now or utcnow()
+    if ac.get("agreement_sha256") != sha256_file(agreement_path):
+        return "stale", "the agreement changed since the acceptance was published (%s, now %s)" % (
+            ac.get("agreement_sha256"), sha256_file(agreement_path))
+    try:
+        if datetime.date.fromisoformat(str(ac.get("expires"))[:10]) < now.date():
+            return "stale", "the acceptance evidence expired on %s" % ac.get("expires")
+    except ValueError:
+        return "stale", "the acceptance record has no readable expiry"
+    if evidence and os.path.exists(os.path.join(evidence, "result.json")):
+        r = load(os.path.join(evidence, "result.json"), "our result")
+        try:
+            later = parse_ts(r["run"]["ended_at"]) > parse_ts(str(ac.get("verified_at")))
+        except (KeyError, ValueError):
+            later = False
+        if later and r.get("verdict") == "FAIL":
+            return "degraded", "a later local run (%s) failed: %s" % (r["run"]["id"], r.get("why", ""))
+    return "current", "published %s for session %s; the agreement is unchanged and the evidence has not expired" % (
+        ac.get("verified_at"), ac.get("session"))
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -403,6 +545,17 @@ def main(argv=None):
     co.add_argument("--manifest", required=True)
     co.add_argument("--us", required=True)
     co.add_argument("--evidence", required=True)
+    pr = sub.add_parser("propose")
+    pr.add_argument("--manifest", required=True)
+    pr.add_argument("--us", required=True)
+    pr.add_argument("--evidence", required=True)
+    pr.add_argument("--partner-file", required=True)
+    pr.add_argument("--approved-by", action="append", default=[])
+    pr.add_argument("--out", required=True)
+    fr = sub.add_parser("freshness")
+    fr.add_argument("--partner-file", required=True)
+    fr.add_argument("--agreement", required=True)
+    fr.add_argument("--evidence")
     a = ap.parse_args(argv)
     try:
         if a.cmd == "new":
@@ -430,6 +583,18 @@ def main(argv=None):
             them, path = import_bundle(a.manifest, a.us, a.evidence, a.bundle)
             print("imported %s's bundle as peer-reported (not authenticated): %s" % (them, path))
             return 0
+        if a.cmd == "propose":
+            proposed, diff = propose(a.manifest, a.us, a.evidence, a.partner_file, a.approved_by, a.out)
+            print(diff, end="")
+            print("proposed: %s (the deployment's file is unchanged; commit this through its review)" % proposed)
+            return 0
+        if a.cmd == "freshness":
+            status, reason = freshness(a.partner_file, a.agreement, a.evidence)
+            print("%s: %s" % (status, reason))
+            if status in ("stale", "degraded"):
+                print("propose: acceptance.status: %s in %s, through review; level is not changed" % (
+                    status, a.partner_file))
+            return 0 if status == "current" else 3
         out = combine(a.manifest, a.us, a.evidence)
         print("bilateral verdict %s (%d failed, %d open). %s." % (out["verdict"], len(out["failed"]), len(out["open"]),
                                                                   out["gate"]))
