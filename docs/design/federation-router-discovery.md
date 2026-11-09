@@ -12,9 +12,11 @@ offline tests; the library's `run_init_measured` (`crates/goat-federation/src/ve
 which takes init's measured half from its caller, and goatbuilder's `measure::over_ssh`,
 which supplies it. **Measured** once against two throwaway hosts built from the harness host
 image (sshd, NOPASSWD sudo, a WireGuard interface, a labeled router container): every value
-read over SSH, the declared, discovered, wrong-name and unreachable cases. **Not built:** the
-`goatbuilder federate init` flags (`--edge-host`, `--core-host`, `--router-container`) that
-call it, and the driver's phase 3 using them; both arrive with the goatbuilder package verbs. **Not built:** automatic selection among several cores. Live deployment and
+read over SSH, the declared, discovered, wrong-name and unreachable cases. **Built:**
+`goatbuilder federate init --over-ssh <peering>` (with `--ssh-edge-group`, `--ssh-core-group`,
+`--edge-host`, `--core-host`, `--router-container`), and the driver's phase 3 using it when
+`FED_MEASURE=ssh`, on both avenues (`peering-standup.sh` takes the same switch); the default
+stays the machine the run is on. **Not built:** automatic selection among several cores. Live deployment and
 bilateral federation acceptance are separate release gates.
 
 > The verb moves to `goatbuilder federate init` ([ADR 1225](../adr/1225-federation-belongs-to-goatbuilder-one-command-one-decision.md), Proposed), which runs
@@ -68,6 +70,21 @@ on either host, and the packages pass lint and compose as before.
 Run as `goat federate init`, phase 3 measures the machine it runs on. The operator copies
 `goat` and a signing key to the edge, gives the edge Docker access to the core, and copies the
 package back. goatbuilder instead measures both hosts from the operator's machine:
+
+- **How it is asked for.** `goatbuilder federate init --over-ssh <peering>` with init's own
+  flags (`--with-transport`, `--with-data`, `--signing-key`, `--out`). The groups default to
+  `<peering>_edge` and `<peering>_core`; `--ssh-edge-group` and `--ssh-core-group` name others.
+  The checkout whose inventory names the hosts is `-C <repository>`, else the git toplevel of
+  the current directory. A host, group or router flag without `--over-ssh` is refused, as is
+  `--over-ssh` on any verb but init. Without `--over-ssh`, init measures this machine exactly
+  as `goat federate init` does. In a peering run, `FED_MEASURE=ssh` (default `here`) makes
+  phase 3 `goatbuilder federate init ... --over-ssh <peering> --ssh-edge-group <edge group>
+  [--router-container $FED_ROUTER_CONTAINER] --repo <repository>`, run in process whoever runs
+  the other verbs (`FED_VERBS`), with no `DOCKER_HOST`; `FED_ROUTER_DOCKER_HOST` is not used.
+  `peering-standup.sh` prints and runs the same words through `$GOATBUILDER_BIN`, and the
+  parity gate compares both avenues with `FED_MEASURE` unset and set. Phase 1's local
+  `docker compose` check still reads the machine the run is on (set
+  `FED_SKIP_LOCAL_DOCKER_CHECK=1` when that is not the edge).
 
 - **Which hosts.** The single host of the edge group and of the core group (`<partner>_core`)
   in `ops/ansible/inventory/peering-edges.ini`, the inventory the peering plays use, read with
@@ -141,7 +158,11 @@ jump options, `sudo -n`, quoting), refusal of non-read-only commands before ssh 
 router precedence, the GB-110, GB-111 and GB-113 refusals, and a remote read error that is
 ssh's own not being taken for the file's permission; `run_init_measured` is tested to ask
 its measurer once, for the declared interface only when a transport is offered, and to
-return a measurer's error as is. Not yet run inside the end-to-end harness.
+return a measurer's error as is. `goatbuilder federate init --over-ssh` is tested end to end
+short of a real host (an inventory naming this machine with `ansible_connection=local`: the
+groups, the router from `zenoh_stack`, the GB-113 and GB-110 refusals), the flag refusals, and
+the driver's phase 3 words with every other phase unchanged. Not yet run inside the
+end-to-end harness (scenario `phase3-from-outside`, requested).
 
 Rust regression cases cover standard and legacy names, custom labels, explicit
 selection, invalid selectors, missing and stopped containers, multiple cores,

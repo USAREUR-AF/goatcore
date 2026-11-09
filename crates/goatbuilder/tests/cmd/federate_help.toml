@@ -98,6 +98,28 @@ Options:
           The six verbs: the goat profile directory, as `goat --profile-dir` (default:
           $GOAT_PROFILE_DIR, else ~/.goat)
 
+      --over-ssh <PEERING>
+          init: measure this peering's edge and core over SSH from this machine, reaching the hosts
+          of inventory groups <PEERING>_edge and <PEERING>_core in
+          ops/ansible/inventory/peering-edges.ini as the plays reach them. Only read-only commands
+          run there; nothing is copied to either host
+
+      --ssh-edge-group <GROUP>
+          init --over-ssh: the edge's inventory group (default <PEERING>_edge)
+
+      --ssh-core-group <GROUP>
+          init --over-ssh: the core's inventory group (default <PEERING>_core)
+
+      --edge-host <HOST>
+          init --over-ssh: the edge host to measure, when its group has several
+
+      --core-host <HOST>
+          init --over-ssh: the core host to measure, when its group has several
+
+      --router-container <NAME>
+          init --over-ssh: the core router container, by hand (default: the name the core host's
+          variables give, else the one discovery finds there)
+
       --env <ENV>
           The environment the peering is declared on (checked against goatbuilder.yaml peerings:)
 

@@ -14,9 +14,13 @@
 #
 # Both avenues run the federation verbs (phases 3, 4, 6, 7, 9) one of two ways,
 # chosen by FED_VERBS: `goatbuilder` (the default, `goatbuilder federate
-# <verb>`; the binary runs them in process) or `goat` (`goat federate <verb>`). The gate compares the two avenues in both modes, so neither can
-# drift while it is not the default, and once more with FED_VERBS unset, so
-# both avenues always have the same default.
+# <verb>`; the binary runs them in process) or `goat` (`goat federate
+# <verb>`). Phase 3 measures one of two ways, chosen by FED_MEASURE: `here`
+# (the machine the run is on) or `ssh` (`goatbuilder federate init
+# --over-ssh`, the edge and core over SSH). The gate compares the two
+# avenues in all four combinations, so none can drift while it is not the
+# default, and once more with FED_VERBS and FED_MEASURE unset, so both
+# avenues always have the same defaults.
 #
 # usage: parity-federate.sh <goatbuilder binary> <peering> [<peering> ...]
 set -euo pipefail
@@ -50,23 +54,28 @@ for c in json.load(sys.stdin)["checks"]:
 }
 
 fail=0
-# goat, goatbuilder, then unset: the third pass compares the two avenues'
+# Each combination, then both unset: the last pass compares the two avenues'
 # DEFAULTS, so one avenue's default cannot move without the other's.
-for verbs in goat goatbuilder unset; do
+for mode in "goat here" "goatbuilder here" "goat ssh" "goatbuilder ssh" "unset unset"; do
+  verbs="${mode% *}"; measure="${mode#* }"
   if [ "$verbs" = unset ]; then unset FED_VERBS; else export FED_VERBS="$verbs"; fi
+  if [ "$measure" = unset ]; then unset FED_MEASURE; else export FED_MEASURE="$measure"; fi
   for peering in "$@"; do
     a="$(script_side "$peering" || true)"; b="$(binary_side "$peering" || true)"
     if [ -z "$a" ]; then
-      fail=1; echo "PARITY FAIL: federate $peering (FED_VERBS=$verbs) — the script produced no phases"; continue
+      fail=1; echo "PARITY FAIL: federate $peering (FED_VERBS=$verbs FED_MEASURE=$measure) — the script produced no phases"; continue
     fi
     if [ "$verbs" != unset ] && ! printf '%s\n' "$b" | grep -q "^$( [ "$verbs" = goat ] && echo GOAT || echo goatbuilder) federate lint "; then
-      fail=1; echo "PARITY FAIL: federate $peering (FED_VERBS=$verbs) — phase 4 does not run through $verbs"; continue
+      fail=1; echo "PARITY FAIL: federate $peering (FED_VERBS=$verbs FED_MEASURE=$measure) — phase 4 does not run through $verbs"; continue
+    fi
+    if [ "$measure" = ssh ] && ! printf '%s\n' "$b" | grep -q "^goatbuilder federate init .*--over-ssh '$peering' "; then
+      fail=1; echo "PARITY FAIL: federate $peering (FED_MEASURE=ssh) — phase 3 does not measure over SSH"; continue
     fi
     if [ "$a" != "$b" ]; then
-      fail=1; echo "PARITY FAIL: federate $peering (FED_VERBS=$verbs)"
+      fail=1; echo "PARITY FAIL: federate $peering (FED_VERBS=$verbs FED_MEASURE=$measure)"
       { diff <(printf '%s\n' "$a") <(printf '%s\n' "$b") || true; } | sed 's/^/    /' | cut -c1-220 | head -40
     else
-      echo "parity ok: federate $peering --dry-run, FED_VERBS=$verbs ($(printf '%s\n' "$a" | grep -c '^=== ') phases, $(printf '%s\n' "$a" | grep -c .) lines identical)"
+      echo "parity ok: federate $peering --dry-run, FED_VERBS=$verbs FED_MEASURE=$measure ($(printf '%s\n' "$a" | grep -c '^=== ') phases, $(printf '%s\n' "$a" | grep -c .) lines identical)"
     fi
   done
 done

@@ -34,6 +34,11 @@
 #                         or `goat` (`$GOAT_BIN federate <verb>`, the same library,
 #                         flags and exit codes)
 #     GOATBUILDER_BIN     the goatbuilder binary (default: whatever is on PATH)
+#     FED_MEASURE         where phase 3 measures: `here` (the default: the host this
+#                         runs on, and the core router through FED_ROUTER_DOCKER_HOST)
+#                         or `ssh` (`$GOATBUILDER_BIN federate init --over-ssh`: the
+#                         hosts of <peering>_edge and <peering>_core over SSH, as the
+#                         plays reach them; nothing is copied to either host)
 #     FED_WORK            working directory (default: /var/lib/goat-federation/<peering>)
 #     FED_COUNTERPARTY    path to the counterparty's package (phase 6 needs it)
 #     FED_SIGNING_KEY     our Ed25519 signing key (64 hex or 44 base64)
@@ -98,6 +103,10 @@ case "${FED_VERBS:-goatbuilder}" in
   goat)        FED_VERB="$GOAT_BIN federate" ;;
   goatbuilder) FED_VERB="$GOATBUILDER_BIN federate" ;;
   *) echo "peering-standup.sh: FED_VERBS is goat or goatbuilder, not '$FED_VERBS'" >&2; exit 2 ;;
+esac
+case "${FED_MEASURE:=here}" in
+  here|ssh) ;;
+  *) echo "peering-standup.sh: FED_MEASURE is here or ssh, not '$FED_MEASURE'" >&2; exit 2 ;;
 esac
 : "${FED_WORK:=/var/lib/goat-federation/$PEERING}"
 : "${FED_COUNTERPARTY:=$FED_WORK/theirs.canonical.json}"
@@ -221,8 +230,23 @@ step 2 A "prepare what the package measures: the federation interface and the SP
 # Phase 3 — OUR HALF, MEASURED. Exit 23 means a value could not be derived and init
 #     refused to invent it; the list of what is missing IS the output.
 # ---------------------------------------------------------------------------
-step 3 T "init — our half, read from the running system" \
-  "${FED_ROUTER_DOCKER_HOST:+DOCKER_HOST='$FED_ROUTER_DOCKER_HOST' }$FED_VERB init --with-transport --with-data ${FED_SIGNING_KEY:+--signing-key '$FED_SIGNING_KEY' }--out '$OURS'"
+#     FED_MEASURE=ssh measures the edge and the core over SSH from this machine
+#     (goatbuilder federate init --over-ssh); only goatbuilder can, so phase 3
+#     then runs goatbuilder whoever runs the other verbs, and FED_ROUTER_DOCKER_HOST
+#     is not used.
+if [ "$FED_MEASURE" = ssh ]; then
+  # Each value below is pasted into a command that step evaluates.
+  for v in "$PEERING" "$EDGE_GROUP" "${FED_ROUTER_CONTAINER:-x}"; do
+    case "$v" in ''|-*|*[!A-Za-z0-9_.-]*)
+      echo "peering-standup.sh: FED_MEASURE=ssh: '$v' is not an inventory or container name" >&2; exit 2 ;;
+    esac
+  done
+  step 3 T "init — our half, read from the running system" \
+    "$GOATBUILDER_BIN federate init --with-transport --with-data ${FED_SIGNING_KEY:+--signing-key '$FED_SIGNING_KEY' }--out '$OURS' --over-ssh '$PEERING' --ssh-edge-group '$EDGE_GROUP' ${FED_ROUTER_CONTAINER:+--router-container '$FED_ROUTER_CONTAINER' }--repo '$REPO'"
+else
+  step 3 T "init — our half, read from the running system" \
+    "${FED_ROUTER_DOCKER_HOST:+DOCKER_HOST='$FED_ROUTER_DOCKER_HOST' }$FED_VERB init --with-transport --with-data ${FED_SIGNING_KEY:+--signing-key '$FED_SIGNING_KEY' }--out '$OURS'"
+fi
 
 step 4 T "lint our package against the spec" \
   "$FED_VERB lint '$OURS'"
