@@ -80,7 +80,9 @@ pub fn world() -> World {
     );
     exe(
         &repo.join("ops/federation/standup/preflight.py"),
-        &format!("#!/usr/bin/env python3\nopen('{l}','a').write('preflight\\n')\n"),
+        &format!(
+            "#!/usr/bin/env python3\nimport json, os, sys\nopen('{l}','a').write('preflight\\n')\na = sys.argv\nif '--result' in a:\n    only = a[a.index('--only') + 1].split(',') if '--only' in a else ['inputs', 'edge-ports', 'core-ports', 'slot-anchors', 'core-router', 'ingress-stores', 'ca-key']\n    open(a[a.index('--result') + 1], 'w').write(json.dumps({{'ready': True, 'results': [{{'check': c, 'outcome': 'PASS', 'detail': 'stub'}} for c in only]}}))\n"
+        ),
     );
     exe(
         &repo.join("ops/federation/standup/mint-peering-leaves.sh"),
@@ -103,6 +105,20 @@ pub fn world() -> World {
         ),
     );
     std::fs::create_dir_all(repo.join("ops/ansible")).unwrap();
+    // This peering's values on its hosts, as the planner and the plays read them.
+    write(
+        &repo.join("ops/ansible/group_vars/hello-ally_edge/peering.yml"),
+        "peering_wg_interface: wg-fed1\npeering_wg_listen_port: 51821\ngoat_zenoh_edge_listen_port: 7448\n",
+    );
+    write(
+        &repo.join("ops/ansible/group_vars/hello-ally_core/peering.yml"),
+        "goat_fed_republisher_metrics_port: 9464\n",
+    );
+    // The peering inventory the planner reads (documentation addresses).
+    write(
+        &repo.join("ops/ansible/inventory/peering-edges.ini"),
+        "[hello-ally_edge]\nedge-1 ansible_host=192.0.2.10\n\n[hello-ally_core]\ncore-1 ansible_host=192.0.2.11\n",
+    );
     let work = r.join("work").join("hello-ally");
     std::fs::create_dir_all(&work).unwrap();
     write(
@@ -133,11 +149,7 @@ impl World {
     pub fn command_with(&self, global: &[&str], extra: &[&str]) -> Command {
         let r = self.root.path();
         let mut args: Vec<String> = global.iter().map(|s| s.to_string()).collect();
-        args.extend([
-            "-C".into(),
-            self.repo.display().to_string(),
-            "--yes".into(),
-        ]);
+        args.extend(["-C".into(), self.repo.display().to_string(), "--yes".into()]);
         if !global.contains(&"-o") {
             args.extend(["-o".into(), "json".into()]);
         }

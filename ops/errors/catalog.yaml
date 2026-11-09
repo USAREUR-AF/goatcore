@@ -2217,6 +2217,84 @@ entries:
     matches:
       - "^status: peering '[^']*' is not declared in "
     exit: 1
+  - code: GB-186
+    tool: goatbuilder
+    title: the plan was not approved
+    what: "`goatbuilder federate deploy` executes a plan only when approval names that plan's hash: `--approve-plan <hash>`, or a person at a terminal typing yes after reading the plan and its hash. `--yes` never approves a plan. No approval was given, or it named another hash, so nothing changed."
+    causes:
+      - there is no terminal and --approve-plan was not passed
+      - --approve-plan names the hash of an older plan (the plan was made again since)
+      - the person answered anything but yes
+    fixes:
+      - "read the plan, then: goatbuilder federate deploy <partner> --approve-plan <the hash it prints>"
+      - "goatbuilder federate plan <partner>   (a new plan, when the old one is out of date)"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "^deploy: (--approve-plan .* is not the hash|the plan was not approved|the plan needs approval)"
+    exit: 1
+
+  - code: GB-187
+    tool: goatbuilder
+    title: the plan is not the one approved
+    what: "The plan deploy was given is for another peering, or its hash changed between approval and execution (it is read again under the peering's lock, just before anything changes). Nothing changed. A plan that does not match its own hash is GB-201."
+    causes:
+      - no plan has been made yet (<work>/plan.json is missing)
+      - the plan was made again, or edited, after it was approved
+      - --plan names another peering's plan
+    fixes:
+      - "goatbuilder federate plan <partner>   (then read it and approve its hash)"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "^deploy: (the plan .* is for peering|the plan .* changed after it was approved|the recheck read plan)"
+    exit: 1
+
+  - code: GB-188
+    tool: goatbuilder
+    title: the plan no longer holds
+    what: "Immediately before anything changes, deploy runs the planner's live recheck: every live prerequisite is checked again and every input section is compared with a plan built now. Something did not hold (a section changed, a check was not PASS or NOT APPLICABLE or was not answered, or the plan was not READY), so the approved plan no longer describes the change, and a saved plan is not proof the environment stayed the same. Nothing changed."
+    causes:
+      - the agreement was composed again (a new package from either side)
+      - apply rendered the files again, or one was edited by hand
+    fixes:
+      - "goatbuilder federate plan <partner>   (a new plan from what is there now; approve its hash)"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "^deploy: (what the plan was made from has changed|the plan no longer holds)"
+    exit: 1
+
+  - code: GB-189
+    tool: goatbuilder
+    title: a stage of `goatbuilder federate` was asked for the wrong way
+    what: "The stages `status`, `deploy` and `test` take the partner after them and run their own phases; `--plan` and `--approve-plan` belong to `deploy`, whose start is phase 10 or, once the admission is done by hand, 11. Nothing ran."
+    causes:
+      - the partner was left out, or given after a peering name instead of a stage word
+      - --to, --resume or a --from other than 10 or 11 was given to a stage
+      - --plan or --approve-plan was given outside `deploy`
+    fixes:
+      - "goatbuilder federate deploy <partner> --approve-plan <hash>   (or --from 11 after the admission)"
+      - "goatbuilder federate test <partner>"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "^`goatbuilder federate (deploy|test)` (needs the partner|runs its own phases)"
+      - "^unexpected argument '[^']*': only a stage word"
+      - "^--plan and --approve-plan belong to"
+      - "^deploy: --from [0-9]+ is not a deploy start"
+    exit: 1
+
+  - code: GB-190
+    tool: goatbuilder
+    title: the admission on our core is not recorded as done for what is rendered now
+    what: "`deploy --from 11` skips phase 10, the by-hand admission of the partner's edge on our core, so it runs only when the journal records phase 10 as done for exactly the files rendered now. It does not, so nothing changed: either the admission was never declared, or the rendered files changed after it."
+    causes:
+      - deploy has not stopped at phase 10 yet, so the admission was never done for these files
+      - the files were rendered again after the admission was declared
+    fixes:
+      - "goatbuilder federate deploy <partner> --approve-plan <hash>   (it stops at phase 10; do the admission, then run it again with --from 11)"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "^deploy: phase 10, admitting the edge on our core, is not recorded as done"
+    exit: 1
+
   - code: GB-200
     tool: goatbuilder
     title: the federation plan's inputs changed

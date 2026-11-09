@@ -30,10 +30,10 @@ Commands:
 Arguments:
   <WITH>
           The peering name (the counterparty, as declared), or a stage run alone: `status
-          [<partner>]`
+          [<partner>]`, `deploy <partner>`, `test <partner>`
 
   [PARTNER]
-          The partner, after a stage word (`status <partner>`)
+          The partner, after a stage word
 
 Options:
   -o, --output <OUTPUT>
@@ -101,6 +101,13 @@ Options:
       --profile-dir <DIR>
           The six verbs: the goat profile directory, as `goat --profile-dir` (default:
           $GOAT_PROFILE_DIR, else ~/.goat)
+
+      --plan <FILE>
+          deploy: the plan to execute (default <work>/plan.json)
+
+      --approve-plan <SHA256>
+          deploy: approve exactly this plan hash, after reading the plan. --yes never approves a
+          plan
 
       --env <ENV>
           The environment the peering is declared on (checked against goatbuilder.yaml peerings:)
