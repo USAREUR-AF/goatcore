@@ -25,6 +25,7 @@ use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use super::hostalloc;
 use super::preflight;
 use crate::config;
 use crate::{Check, Report, EXIT_REFUSED};
@@ -196,6 +197,9 @@ pub struct Plan {
     pub acceptance: AcceptancePolicy,
     pub readiness: Vec<Readiness>,
     pub host_firewall: Vec<HostFirewall>,
+    /// Values this peering and another declared peering would bind on the same
+    /// machine (the host-level allocation check, federate/hostalloc.rs).
+    pub conflicts: Vec<hostalloc::Conflict>,
     /// READY, `READY, <n> check(s) not verified` (SKIP is never a pass), or BLOCKED.
     pub verdict: String,
     /// sha256 over the plan without this field and without readiness details.
@@ -214,6 +218,7 @@ const SECTIONS: &[&str] = &[
     "restarts",
     "acceptance",
     "host_firewall",
+    "conflicts",
 ];
 
 /// sha256 of bytes, as hex.
@@ -291,7 +296,7 @@ fn yaml_scalar(v: &serde_yaml::Value) -> Option<String> {
 /// (preflight_live.py `resolve_port_inputs`): the environment variable, then
 /// the group's vars, its parent group's and `all`, then the role's default.
 /// A templated declaration resolves only inside a play, so it is not guessed.
-fn resolve(
+pub(super) fn resolve(
     repo: &Path,
     name: &str,
     env_name: Option<&str>,
@@ -799,14 +804,16 @@ pub fn read_readiness(path: &Path) -> Result<(bool, Vec<Readiness>)> {
     Ok((ready, rows))
 }
 
-/// The declared peering (C1), from the config `--mock` or the checkout names.
-fn declared(repo: &Path, o: &PlanOptions) -> Result<config::Peering> {
+/// The declared peering (C1), and every declared peering (for the host check),
+/// from the config `--mock` or the checkout names.
+fn declared(repo: &Path, o: &PlanOptions) -> Result<(config::Peering, Vec<config::Peering>)> {
     let cfg_path = match o.mock {
         Some(m) => m.join("goatbuilder.yaml"),
         None => repo.join("ops/goatbuilder/goatbuilder.yaml"),
     };
     let cfg = config::load(&cfg_path)?;
-    cfg.peerings
+    let found = cfg
+        .peerings
         .iter()
         .find(|p| p.with == o.with && o.env.map(|e| p.environment == e).unwrap_or(true))
         .cloned()
@@ -816,7 +823,8 @@ fn declared(repo: &Path, o: &PlanOptions) -> Result<config::Peering> {
                 o.with,
                 cfg_path.display()
             )
-        })
+        })?;
+    Ok((found, cfg.peerings))
 }
 
 fn work_of(o: &PlanOptions) -> String {
@@ -868,6 +876,7 @@ fn inputs_part(
     repo: &Path,
     o: &PlanOptions,
     peering: &config::Peering,
+    all: &[config::Peering],
 ) -> Result<(Plan, Vec<Readiness>)> {
     let with = peering.with.as_str();
     let work = work_of(o);
@@ -1042,15 +1051,25 @@ fn inputs_part(
     } else {
         (source_version(repo), goat_version())
     };
-    let (certificates, mut cert_rows) = certificates(&Path::new(&work).join("pki"));
+    let (certificates, mut rows) = certificates(&Path::new(&work).join("pki"));
     for h in host_firewall.iter().filter(|h| h.outcome == "BLOCKED") {
-        cert_rows.push(Readiness {
+        rows.push(Readiness {
             check: "host-firewall".into(),
             outcome: "BLOCKED".into(),
             code: None,
             detail: format!("{} ({}): {}", h.host, h.group, h.detail),
         });
     }
+    let claims = hostalloc::claims(
+        repo,
+        all,
+        peering,
+        &edge_group,
+        Path::new(&work),
+        &resources,
+    );
+    let conflicts = hostalloc::conflicts(&claims);
+    rows.push(hostalloc::readiness(with, &claims, &conflicts));
     let plan = Plan {
         schema: SCHEMA.into(),
         peering: with.into(),
@@ -1078,6 +1097,7 @@ fn inputs_part(
         agreement,
         resources,
         host_firewall,
+        conflicts,
         edge_group,
         core_group,
         work,
@@ -1086,14 +1106,14 @@ fn inputs_part(
         verdict: String::new(),
         hash: String::new(),
     };
-    Ok((plan, cert_rows))
+    Ok((plan, rows))
 }
 
 /// Build the plan: the inputs, then phase 1 (unless a mock), the verdict and
 /// the hash.
 pub fn build(repo: &Path, o: &PlanOptions) -> Result<Plan> {
-    let peering = declared(repo, o)?;
-    let (mut p, cert_rows) = inputs_part(repo, o, &peering)?;
+    let (peering, all) = declared(repo, o)?;
+    let (mut p, input_rows) = inputs_part(repo, o, &peering, &all)?;
     p.readiness = if o.mock.is_some() {
         vec![Readiness {
             check: "preflight".into(),
@@ -1113,7 +1133,7 @@ pub fn build(repo: &Path, o: &PlanOptions) -> Result<Plan> {
             o.live,
         )?
     };
-    p.readiness.extend(cert_rows);
+    p.readiness.extend(input_rows);
     let skipped = p.readiness.iter().filter(|r| r.outcome == "SKIP").count();
     p.verdict = if p.readiness.iter().any(|r| blocks(&r.outcome)) {
         "BLOCKED".into()
@@ -1211,13 +1231,13 @@ pub struct Recheck {
     pub unready: Vec<String>,
     /// The plan sections whose inputs changed since it was written.
     pub changed: Vec<String>,
-    /// The live checks, rerun now, and the certificate rows read now.
+    /// The live checks, rerun now, and the rows read from the inputs now (certificates, host allocation).
     pub live: Vec<Readiness>,
 }
 
 impl Recheck {
     /// A change may go ahead only when the saved plan was ready, no input
-    /// changed, every live check answered, and each answer and certificate row
+    /// changed, every live check answered, and each answer and input row
     /// is PASS or NOT APPLICABLE. SKIP is not a pass.
     pub fn allows_change(&self) -> bool {
         self.unready.is_empty()
@@ -1310,7 +1330,7 @@ fn saved_options<'a>(saved: &'a Plan, mock: Option<&'a Path>) -> PlanOptions<'a>
 
 /// The inputs half of the recheck: the saved plan (its hash checked, and
 /// bound to `with` and the directory it is in), the sections a plan built now
-/// would change, and the certificate rows read now.
+/// would change, and the rows read from the inputs now (certificates, host allocation).
 pub fn recheck_inputs(
     repo: &Path,
     plan_path: &Path,
@@ -1320,10 +1340,10 @@ pub fn recheck_inputs(
     let saved = read(plan_path)?;
     check_binding(&saved, plan_path, with)?;
     let o = saved_options(&saved, mock);
-    let peering = declared(repo, &o)?;
-    let (now, cert_rows) = inputs_part(repo, &o, &peering)?;
+    let (peering, all) = declared(repo, &o)?;
+    let (now, input_rows) = inputs_part(repo, &o, &peering, &all)?;
     let changed = changed_sections(&saved, &now);
-    Ok((saved, changed, cert_rows))
+    Ok((saved, changed, input_rows))
 }
 
 /// The live prerequisite recheck, for the deploy step to call immediately
@@ -1334,8 +1354,8 @@ pub fn recheck_inputs(
 /// into `<work>/plan/recheck.json`. Go ahead only when
 /// [`Recheck::allows_change`] is true.
 pub fn recheck_live_prerequisites(repo: &Path, plan_path: &Path, with: &str) -> Result<Recheck> {
-    let (saved, changed, cert_rows) = recheck_inputs(repo, plan_path, with, None)?;
-    let peering = declared(repo, &saved_options(&saved, None))?;
+    let (saved, changed, input_rows) = recheck_inputs(repo, plan_path, with, None)?;
+    let (peering, _) = declared(repo, &saved_options(&saved, None))?;
     let result = Path::new(&saved.work).join("plan/recheck.json");
     let mut live = run_phase1(
         repo,
@@ -1346,7 +1366,7 @@ pub fn recheck_live_prerequisites(repo: &Path, plan_path: &Path, with: &str) -> 
         &result,
         true,
     )?;
-    live.extend(cert_rows);
+    live.extend(input_rows);
     Ok(Recheck {
         peering: saved.peering.clone(),
         unready: unready(&saved),
@@ -1724,7 +1744,7 @@ mod tests {
     }
 
     fn planned(repo: &Path, work: &str) -> Plan {
-        let (mut p, _) = inputs_part(repo, &opts(work), &peering()).unwrap();
+        let (mut p, _) = inputs_part(repo, &opts(work), &peering(), &[peering()]).unwrap();
         p.readiness = vec![Readiness {
             check: "edge-ports".into(),
             outcome: "PASS".into(),
@@ -1863,8 +1883,8 @@ mod tests {
         };
         let p = build(&repo(), &o).unwrap();
         assert!(
-            p.verdict.starts_with("READY, 1 check(s) not verified"),
-            "a mock's skipped phase 1 is not a pass: {}",
+            p.verdict.starts_with("READY, 2 check(s) not verified"),
+            "a mock's skipped phase 1, and no inventory host to compare, are not passes: {}",
             p.verdict
         );
         let path = write(&p).unwrap();
@@ -2177,7 +2197,7 @@ mod tests {
         .unwrap();
         let w = tempfile::tempdir().unwrap();
         let ws = w.path().display().to_string();
-        let (p, rows) = inputs_part(r.path(), &opts(&ws), &peering()).unwrap();
+        let (p, rows) = inputs_part(r.path(), &opts(&ws), &peering(), &[peering()]).unwrap();
         assert_eq!(p.host_firewall[0].outcome, "NOT APPLICABLE");
         assert!(p.host_firewall[0]
             .detail
@@ -2186,7 +2206,7 @@ mod tests {
         let gv = r.path().join("ops/ansible/group_vars/peering_edges");
         std::fs::create_dir_all(&gv).unwrap();
         std::fs::write(gv.join("fw.yml"), "goat_host_firewall_baseline: true\n").unwrap();
-        let (p, rows) = inputs_part(r.path(), &opts(&ws), &peering()).unwrap();
+        let (p, rows) = inputs_part(r.path(), &opts(&ws), &peering(), &[peering()]).unwrap();
         assert_eq!(p.host_firewall[0].outcome, "BLOCKED");
         assert!(
             rows.iter()
