@@ -1108,8 +1108,7 @@ fn run_init(ctx: &super::Ctx, a: InitArgs) -> anyhow::Result<()> {
     let cafp = derive::ca_fingerprint(&ctx.profile.ca_roots_path(), &ctx.profile.cert_path());
     // --- capabilities, measured ---
     let transports = derive::transports();
-    let fips = derive::fabric_fips_image();
-    let version = derive::fabric_version();
+    let (fips, version) = derive::fabric_capabilities();
     let pqc = derive::pqc_capable();
 
     let mut members: Vec<(String, JVal)> = Vec::new();

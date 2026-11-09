@@ -4,6 +4,8 @@ services:
   {{ zenoh_stack }}-router:
     image: {{ zenoh_router_image }}
     container_name: {{ zenoh_stack }}-router
+    labels:
+      org.goat.component: zenoh-core
     restart: unless-stopped
     # The per-uuid slot pool spawns one rocksdb storage per slot
     # (per zenoh_slot_pool_size), each holding many open FDs (~9k at idle).

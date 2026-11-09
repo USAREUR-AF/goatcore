@@ -89,6 +89,8 @@ Set these before the run; phase 1 refuses without the first three:
 | `FED_COUNTERPARTY_ID` | the counterparty's `sovereign_id` (ISO 3166-1 alpha-3) |
 | `FED_SIGNING_KEY` | the key that signs your package; it also signs your directory entry and uploads |
 | `FED_CA_CERT` | your CA certificate (PEM), the one phase 8 signs the peering leaves with; unset, the profile's `ca-roots.pem` |
+| `FED_ROUTER_DOCKER_HOST` | Docker endpoint for a separate core, e.g. `ssh://operator@core.example.org`; phase 3 sets `DOCKER_HOST` for the router reads while interface measurements remain on the operator/edge host |
+| `FED_ROUTER_CONTAINER` | optional exported core container name or ID for multiple cores or older custom layouts; unset, phase 3 discovers one running labeled, standard-named or legacy core |
 | `FED_PACKAGE_URL` | **leave unset**: the directory hosts your package. Set it only to serve the package from a public host of your own, behind TLS, never on a mesh |
 | `FED_NO_DIRECTORY` | `1` only for a counterparty that can reach no directory; phase 5 then names the files to hand over |
 
@@ -108,6 +110,13 @@ Set these before the run; phase 1 refuses without the first three:
 | 12 | A | deploy the edge, then the outbound republisher (`peering-zenoh-edge.yml`, then `peering-republisher.yml` with `--limit <peering>_core`) | the edge dials our core and accepts the partner's CN; the republisher container `goat-fed-republisher-<them>` runs on the core host, its `/metrics` on loopback reads `goat_fed_republisher_local_subscribed 1` and `goat_fed_republisher_edge_linked 1`, and its log has one `release release/<set>/** -> wire from/<us>/<set>/**` line per offered set |
 | 13 | A | federate the SPIRE trust domains (ADR 1157 step 2) | our server refreshes their trust domain across the link, or the play says the step was not done for a side with no SPIRE server |
 | 14 | GATE | acceptance | carries both ways, once per offered set: a sample staged under `release/<set>/…` reads back under `from/<sender>/<set>/…` on the receiving side; refuses what the agreement does not name; and round-trips once per set |
+
+Phase 3 reads the core image and version from the same running container. If it
+reports several candidates, list the containers on the selected daemon and
+`export FED_ROUTER_CONTAINER=zagros-zenoh-router` (using your actual core name)
+before rerunning phase 3. An absent or stopped explicit selection refuses instead
+of probing another core. An explicit remote Docker endpoint never falls back to
+local Podman. See [core discovery](../design/federation-router-discovery.md).
 
 **Phases 5 and 10 stop for a person on purpose.** The machine moves every file in phase 5; what it
 cannot do is confirm whose key it fetched, and a verifying key taken from the package it verifies

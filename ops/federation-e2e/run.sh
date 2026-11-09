@@ -5,7 +5,7 @@
 # docs/design/deployment-e2e.md §Hermetic is the pattern. Four privileged hosts run
 # systemd and their own dockerd:
 #
-#   <s>-core   the `goat-zenoh` core router, a real spire-server and, from phase 12, the
+#   <s>-core   the role-named core router, a real spire-server and, from phase 12, the
 #              outbound republisher (built here from ops/federation/republisher)
 #   <s>-edge   the operator's station and the edge host: the driver runs here, the plays
 #              reach it over ssh, its dockerd runs the edge router
@@ -190,7 +190,7 @@ start_core() { # $1 sovereign: seed config, bootstrap cert, the router and the S
   docker cp -q "$WORK/$s/keys/ca.pem" "$h:/etc/goat-core/ca.pem"
   docker cp -q "$WORK/$s/keys/core.pem" "$h:/etc/goat-core/core.pem"
   docker cp -q "$WORK/$s/keys/core-key.pem" "$h:/etc/goat-core/core-key.pem"
-  host_exec "$h" docker run -d --name goat-zenoh --restart unless-stopped \
+  host_exec "$h" docker run -d --name "$s-zenoh-router" --label org.goat.component=zenoh-core --restart unless-stopped \
     -e RUST_LOG=zenoh=info,zenoh::net::routing::interceptor::access_control=trace \
     -p 7447:7447 -p 8000:8000 -v /etc/goat-core:/etc/goat-core:ro \
     "$ZENOH_IMAGE" -c /etc/goat-core/config.json5 >/dev/null
@@ -320,7 +320,7 @@ review_and_admit() { # $1 sovereign
   chmod 0644 "$d/core-key.pem"
   docker cp -q "$d/core.pem" "fed-$s-core:/etc/goat-core/core.pem"
   docker cp -q "$d/core-key.pem" "fed-$s-core:/etc/goat-core/core-key.pem"
-  host_exec "fed-$s-core" docker restart goat-zenoh >/dev/null
+  host_exec "fed-$s-core" docker restart "$s-zenoh-router" >/dev/null
 }
 
 # A fixed id, because a peer matching no ACL subject is logged by its id alone.
@@ -478,7 +478,7 @@ scenario() { # $1 number, $2 first side (it also listens), $3 avenue
   done
   for s in pasture meadow; do
     docker exec "fed-$s-edge" sh -c "docker logs goat-zenoh-edge-$(other "$s") 2>&1 | tail -400" > "$RECORD/s$n-$s-edge-router.log" 2>&1 || true
-    docker exec "fed-$s-core" sh -c "docker logs goat-zenoh 2>&1 | tail -200" > "$RECORD/s$n-$s-core-router.log" 2>&1 || true
+    docker exec "fed-$s-core" sh -c "docker logs $s-zenoh-router 2>&1 | tail -200" > "$RECORD/s$n-$s-core-router.log" 2>&1 || true
     docker exec "fed-$s-core" sh -c "docker logs spire-server 2>&1 | tail -100" > "$RECORD/s$n-$s-spire.log" 2>&1 || true
     docker exec "fed-$s-core" sh -c "docker logs goat-fed-republisher-$(other "$s") 2>&1 | tail -200" > "$RECORD/s$n-$s-republisher.log" 2>&1 || true
     docker exec "fed-$s-edge" wg show wg-fed0 > "$RECORD/s$n-$s-wg.txt" 2>&1 || true

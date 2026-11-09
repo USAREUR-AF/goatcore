@@ -47,9 +47,17 @@ pub const MEASURED_ONLY: [&str; 5] = [
     "transport.public_key",
 ];
 
-/// The container the fabric's router runs as, fleet-wide
-/// (ops/ansible/roles/goat-zenoh).
-const ROUTER_CONTAINER: &str = "goat-zenoh";
+/// Stable role label; names remain deployment configuration.
+const CORE_ROLE: &str = "zenoh-core";
+const ROUTER_LIST_FORMAT: &str = "{{.ID}}\t{{.Names}}\t{{.Label \"org.goat.component\"}}";
+const ROUTER_INSPECT_FORMAT: &str = "{{.Id}}\t{{.State.Running}}\t{{.Config.Image}}";
+
+#[derive(Debug)]
+struct Router {
+    tool: &'static str,
+    id: String,
+    image: String,
+}
 
 /// One derived value, with the source it came from — or the reason it could
 /// not be derived. `source` is printed on success so a reviewer can re-run the
@@ -292,70 +300,81 @@ pub fn transports() -> Derived<Vec<String>> {
     }
 }
 
-/// `capabilities.fabric_fips_image` — the RUNNING router's image, not the
-/// pinned one. A pin says what should be running; the container says what is.
-pub fn fabric_fips_image() -> Derived<bool> {
-    const FIELD: &str = "capabilities.fabric_fips_image";
-    match router_image() {
-        Ok((image, tool)) => {
-            let fips = image.contains("zenoh-pqc-fips");
-            Derived::ok(
-                FIELD,
-                fips,
-                format!("`{tool} inspect {ROUTER_CONTAINER}` → {image}"),
-            )
-        }
-        Err(e) => Derived::fail(
-            FIELD,
-            format!(
-                "{e}. This is read from the running router because a validated build is a \
-                 property of what is executing, not of what is pinned — run this on a router host"
-            ),
-            format!("{ROUTER_CONTAINER} container"),
-        ),
+/// Derive both fabric capabilities from one running core container. A pin
+/// says what should be running; the container and its binary say what is.
+pub fn fabric_capabilities() -> (Derived<bool>, Derived<String>) {
+    let selected = std::env::var("FED_ROUTER_CONTAINER")
+        .ok()
+        .filter(|v| !v.is_empty());
+    // DOCKER_HOST explicitly selects a daemon, often remote. Never replace a
+    // failed remote Docker read with an unrelated local Podman observation.
+    let tools = router_tools(std::env::var_os("DOCKER_HOST").is_some());
+    let router = select_router(selected.as_deref(), tools, &mut run);
+    fabric_from_router(router, &mut run)
+}
+
+fn router_tools(docker_host_set: bool) -> &'static [&'static str] {
+    if docker_host_set {
+        &["docker"]
+    } else {
+        &["docker", "podman"]
     }
 }
 
-/// `capabilities.fabric_version` — from the router itself.
-pub fn fabric_version() -> Derived<String> {
-    const FIELD: &str = "capabilities.fabric_version";
-    // TWO PATHS, AND THE SECOND IS THE ONE THE FLEET USES. The published
-    // zenoh-pqc image ships the router at `/zenohd` with no PATH entry for it,
-    // so the bare name resolves on a developer's box and on nothing the fleet
-    // runs. Probing only the bare name made this field underivable on every
-    // host running the pinned image, which is every host.
-    // Every attempt's actual error used to be discarded, so "docker isn't
-    // installed", "permission denied on the docker socket", and "the
-    // container genuinely isn't running" all asserted the identical hard-
-    // coded conclusion below — very different problems with very different
-    // fixes.
+fn fabric_from_router(
+    router: Result<Router, String>,
+    run: &mut impl FnMut(&str, &[&str]) -> Result<String, String>,
+) -> (Derived<bool>, Derived<String>) {
+    const FIPS: &str = "capabilities.fabric_fips_image";
+    const VERSION: &str = "capabilities.fabric_version";
+    let router = match router {
+        Ok(router) => router,
+        Err(why) => {
+            return (
+                Derived::fail(FIPS, &why, "running core router discovery"),
+                Derived::fail(VERSION, why, "running core router discovery"),
+            )
+        }
+    };
+    let fips = Derived::ok(
+        FIPS,
+        router.image.contains("zenoh-pqc-fips"),
+        format!("`{} inspect {}` → {}", router.tool, router.id, router.image),
+    );
     let mut attempts = Vec::new();
-    for tool in ["docker", "podman"] {
-        for router in ["zenohd", "/zenohd"] {
-            match run(tool, &["exec", ROUTER_CONTAINER, router, "--version"]) {
-                Ok(out) => {
-                    if let Some(v) = parse_version(&out) {
-                        return Derived::ok(
-                            FIELD,
+    // Published images install /zenohd without a PATH entry. Both probes use
+    // the same daemon and immutable container ID as the image observation.
+    for executable in ["zenohd", "/zenohd"] {
+        match run(router.tool, &["exec", &router.id, executable, "--version"]) {
+            Ok(out) => {
+                if let Some(v) = parse_version(&out) {
+                    return (
+                        fips,
+                        Derived::ok(
+                            VERSION,
                             v,
-                            format!("`{tool} exec {ROUTER_CONTAINER} {router} --version`"),
-                        );
-                    }
-                    attempts.push(format!("{tool} exec {router}: ran, but no version in output"));
+                            format!(
+                                "`{} exec {} {executable} --version`",
+                                router.tool, router.id
+                            ),
+                        ),
+                    );
                 }
-                Err(e) => attempts.push(format!("{tool} exec {router}: {e}")),
+                attempts.push(format!("{executable}: ran, but no version in output"));
             }
+            Err(e) => attempts.push(format!("{executable}: {e}")),
         }
     }
-    Derived::fail(
-        FIELD,
+    let version = Derived::fail(
+        VERSION,
         format!(
-            "could not read a version out of the running `{ROUTER_CONTAINER}` container. \
-             Attempts: {}",
+            "could not read a version from the selected running core router {}. Attempts: {}",
+            router.id,
             attempts.join(" | ")
         ),
-        format!("{ROUTER_CONTAINER} container"),
-    )
+        format!("{} container {}", router.tool, router.id),
+    );
+    (fips, version)
 }
 
 /// `capabilities.pqc_capable` — whether the intra-mesh PQC layer is RUNNING.
@@ -432,28 +451,107 @@ pub fn interface_mtu(interface: &str) -> Option<i64> {
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn router_image() -> Result<(String, &'static str), String> {
+fn container_name(value: &str) -> bool {
+    !value.is_empty()
+        && value.starts_with(|c: char| c.is_ascii_alphanumeric())
+        && value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "_.-".contains(c))
+}
+
+fn inspect_router(
+    tool: &'static str,
+    name: &str,
+    run: &mut impl FnMut(&str, &[&str]) -> Result<String, String>,
+) -> Result<Router, String> {
+    // Podman's template struct spells the field ID; Docker spells it Id.
+    let format = if tool == "podman" {
+        "{{.ID}}\t{{.State.Running}}\t{{.Config.Image}}"
+    } else {
+        ROUTER_INSPECT_FORMAT
+    };
+    let out = run(
+        tool,
+        &["inspect", "--type", "container", "--format", format, name],
+    )?;
+    let parts: Vec<_> = out.trim().split('\t').collect();
+    if parts.len() != 3 || !container_name(parts[0]) || parts[1] != "true" || parts[2].is_empty() {
+        return Err(format!(
+            "{tool} container {name}: no complete running-container observation"
+        ));
+    }
+    Ok(Router {
+        tool,
+        id: parts[0].to_string(),
+        image: parts[2].to_string(),
+    })
+}
+
+fn select_router(
+    selected: Option<&str>,
+    tools: &[&'static str],
+    run: &mut impl FnMut(&str, &[&str]) -> Result<String, String>,
+) -> Result<Router, String> {
+    if selected.is_some_and(|name| !container_name(name)) {
+        return Err(
+            "FED_ROUTER_CONTAINER must be a container name or ID, not an option or expression"
+                .into(),
+        );
+    }
+    let mut found: Vec<Router> = Vec::new();
     let mut attempts = Vec::new();
-    for tool in ["docker", "podman"] {
-        match run(
-            tool,
-            &["inspect", "--format", "{{.Config.Image}}", ROUTER_CONTAINER],
-        ) {
-            Ok(out) if !out.trim().is_empty() => return Ok((out.trim().to_string(), tool)),
-            Ok(_) => attempts.push(format!("{tool}: ran, but printed nothing")),
-            Err(e) => attempts.push(format!("{tool}: {e}")),
+    for &tool in tools {
+        let candidates = match selected {
+            Some(name) => vec![name.to_string()],
+            None => match run(tool, &["ps", "--no-trunc", "--format", ROUTER_LIST_FORMAT]) {
+                Ok(out) => {
+                    let mut ids = Vec::new();
+                    for line in out.lines().filter(|line| !line.is_empty()) {
+                        let parts: Vec<_> = line.split('\t').collect();
+                        if parts.len() != 3
+                            || !container_name(parts[0])
+                            || !container_name(parts[1])
+                        {
+                            return Err(format!(
+                                "{tool}: could not parse the running container listing"
+                            ));
+                        }
+                        if parts[2] == CORE_ROLE
+                            || parts[1] == "goat-zenoh"
+                            || parts[1].ends_with("-zenoh-router")
+                        {
+                            ids.push(parts[0].to_string());
+                        }
+                    }
+                    ids
+                }
+                Err(e) => {
+                    attempts.push(format!("{tool}: {e}"));
+                    continue;
+                }
+            },
+        };
+        for name in candidates {
+            match inspect_router(tool, &name, run) {
+                Ok(router) => {
+                    // Docker may be an alias of Podman: one immutable ID is
+                    // one observation, not two different router candidates.
+                    if !found.iter().any(|old| old.id == router.id) {
+                        found.push(router);
+                    }
+                }
+                Err(e) => attempts.push(format!("{tool}: {e}")),
+            }
         }
     }
-    // Every attempt's actual error used to be discarded here too, asserting
-    // one hard-coded "not running" conclusion regardless of whether the real
-    // cause was a missing docker/podman binary, a permission-denied docker
-    // socket, or the container genuinely being absent — three different
-    // fixes collapsed into one wrong-sounding diagnosis for two of them.
-    Err(format!(
-        "the `{ROUTER_CONTAINER}` container is not running under docker or podman here. \
-         Attempts: {}",
-        attempts.join(" | ")
-    ))
+    match found.len() {
+        1 => Ok(found.remove(0)),
+        0 => Err(format!("no running core router found. Set FED_ROUTER_CONTAINER to its name or ID; \
+            discovery accepts org.goat.component=zenoh-core, standard *-zenoh-router names and legacy goat-zenoh. \
+            Attempts: {}", attempts.join(" | "))),
+        _ => Err(format!("multiple running core routers found ({}); set FED_ROUTER_CONTAINER to select one",
+            found.iter().map(|r| format!("{}:{}", r.tool, r.id)).collect::<Vec<_>>().join(", "))),
+    }
 }
 
 /// `zenohd 1.9.0 …` → `1.9.0`. First dotted-numeric token, so a build suffix
@@ -554,6 +652,166 @@ mod tests {
                 "{why}"
             );
         }
+    }
+
+    fn runtime(rows: &str) -> impl FnMut(&str, &[&str]) -> Result<String, String> + '_ {
+        move |tool, args| {
+            if tool != "docker" {
+                return Err("runtime unavailable".into());
+            }
+            match args[0] {
+                "ps" => Ok(rows.into()),
+                "inspect" => Ok(format!(
+                    "{}\ttrue\tregistry.example.org/zenoh-pqc-fips@sha256:fixture",
+                    args.last().unwrap()
+                )),
+                "exec" if args[2] == "/zenohd" => Ok("zenohd 1.9.0".into()),
+                _ => Err("executable not found".into()),
+            }
+        }
+    }
+
+    #[test]
+    fn discovers_the_standard_role_name_and_reads_both_values_from_its_id() {
+        let mut probe = runtime("coreid\tzagros-zenoh-router\t\nedgeid\tgoat-zenoh-edge-xab\t\n");
+        let router = select_router(None, &["docker", "podman"], &mut probe).unwrap();
+        assert_eq!(router.id, "coreid");
+        let (fips, version) = fabric_from_router(Ok(router), &mut probe);
+        assert_eq!(fips.outcome, Ok(true));
+        assert_eq!(version.outcome.as_deref(), Ok("1.9.0"));
+        assert!(fips.source.contains("docker inspect coreid"));
+        assert!(version
+            .source
+            .contains("docker exec coreid /zenohd --version"));
+    }
+
+    #[test]
+    fn role_label_supports_a_custom_stack_without_matching_unrelated_images() {
+        let mut probe =
+            runtime("customid\tcustom-router\tzenoh-core\nunrelated\tother-service\t\n");
+        assert_eq!(
+            select_router(None, &["docker"], &mut probe).unwrap().id,
+            "customid"
+        );
+    }
+
+    #[test]
+    fn existing_legacy_name_is_compatible() {
+        let mut probe = runtime("legacyid\tgoat-zenoh\t\n");
+        assert_eq!(
+            select_router(None, &["docker"], &mut probe).unwrap().id,
+            "legacyid"
+        );
+    }
+
+    #[test]
+    fn multiple_cores_are_refused_instead_of_picking_the_first() {
+        let mut probe =
+            runtime("first\tzagros-zenoh-router\t\nsecond\tcustom-router\tzenoh-core\n");
+        let why = select_router(None, &["docker"], &mut probe).unwrap_err();
+        assert!(why.contains("multiple") && why.contains("FED_ROUTER_CONTAINER"));
+    }
+
+    #[test]
+    fn explicit_selector_never_falls_back_to_discovery() {
+        let mut calls = Vec::new();
+        let mut probe = |tool: &str, args: &[&str]| {
+            calls.push(format!("{tool} {}", args.join(" ")));
+            Err("no such container".into())
+        };
+        assert!(select_router(Some("missing"), &["docker"], &mut probe).is_err());
+        assert_eq!(calls.len(), 1);
+        assert!(calls[0].contains("inspect") && calls[0].ends_with(" missing"));
+    }
+
+    #[test]
+    fn explicit_selector_works_without_a_role_label() {
+        let mut probe = runtime("");
+        assert_eq!(
+            select_router(Some("custom-router"), &["docker"], &mut probe)
+                .unwrap()
+                .id,
+            "custom-router"
+        );
+    }
+
+    #[test]
+    fn selector_options_and_expressions_are_refused_before_any_command() {
+        for name in ["--help", "x y", "x;echo", "$(id)", "", "/router"] {
+            let mut probe = |_: &str, _: &[&str]| panic!("invalid selector executed");
+            assert!(select_router(Some(name), &["docker"], &mut probe).is_err());
+        }
+    }
+
+    #[test]
+    fn missing_and_stopped_routers_are_not_measured() {
+        let mut empty = runtime("");
+        let why = select_router(None, &["docker"], &mut empty).unwrap_err();
+        assert!(why.contains("no running core router") && why.contains("FED_ROUTER_CONTAINER"));
+        let mut stopped = |_: &str, _: &[&str]| Ok("id\tfalse\timage".into());
+        assert!(select_router(Some("stopped"), &["docker"], &mut stopped).is_err());
+    }
+
+    #[test]
+    fn failed_discovery_fails_both_fields_without_running_version_probes() {
+        let mut probe = |_: &str, _: &[&str]| panic!("unselected router executed");
+        let (fips, version) = fabric_from_router(Err("ambiguous".into()), &mut probe);
+        assert_eq!(fips.outcome.unwrap_err(), "ambiguous");
+        assert_eq!(version.outcome.unwrap_err(), "ambiguous");
+    }
+
+    #[test]
+    fn version_failure_never_switches_daemon_or_container() {
+        let router = Router {
+            tool: "docker",
+            id: "coreid".into(),
+            image: "eclipse/zenoh:1.9.0".into(),
+        };
+        let mut probe = |tool: &str, args: &[&str]| {
+            assert_eq!(tool, "docker");
+            assert_eq!(args[1], "coreid");
+            Err("container stopped during observation".into())
+        };
+        let (fips, version) = fabric_from_router(Ok(router), &mut probe);
+        assert_eq!(fips.outcome, Ok(false));
+        assert!(version.outcome.unwrap_err().contains("container stopped"));
+    }
+
+    #[test]
+    fn podman_is_supported_and_runtime_aliases_do_not_create_ambiguity() {
+        let mut probe = |_: &str, args: &[&str]| match args[0] {
+            "ps" => Ok("sameid\tgoat-zenoh\t\n".into()),
+            "inspect" => Ok("sameid\ttrue\timage".into()),
+            _ => unreachable!(),
+        };
+        let router = select_router(None, &["docker", "podman"], &mut probe).unwrap();
+        assert_eq!(router.id, "sameid");
+        assert_eq!(
+            select_router(None, &["podman"], &mut probe).unwrap().tool,
+            "podman"
+        );
+    }
+
+    #[test]
+    fn an_explicit_docker_host_never_probes_local_podman() {
+        let mut probe = |tool: &str, _: &[&str]| {
+            assert_eq!(tool, "docker", "an unrelated local runtime was probed");
+            Err("remote daemon unreachable".into())
+        };
+        let why = select_router(None, router_tools(true), &mut probe).unwrap_err();
+        assert!(why.contains("remote daemon unreachable"));
+    }
+
+    #[test]
+    fn malformed_runtime_output_and_permission_errors_are_not_capabilities() {
+        let mut malformed = |_: &str, _: &[&str]| Ok("not a container listing".into());
+        assert!(select_router(None, &["docker"], &mut malformed)
+            .unwrap_err()
+            .contains("could not parse"));
+        let mut denied = |_: &str, _: &[&str]| Err("permission denied".into());
+        assert!(select_router(None, &["docker"], &mut denied)
+            .unwrap_err()
+            .contains("permission denied"));
     }
 
     #[test]

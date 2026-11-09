@@ -36,6 +36,9 @@
 #                         this host, e.g. ssh://<user>@<core>. `init` reads the
 #                         federation interface here and the running router there; the
 #                         edge must not share a machine with the core.
+#     FED_ROUTER_CONTAINER  optional exported core container name or ID for phase 3;
+#                         unset, init discovers a running core by role label or
+#                         standard/legacy name. Multiple candidates refuse.
 #     GOAT_AWS_PROFILE    aws-vault profile the ansible phases run under
 #     FED_DIRECTORY_URL   the peering directory (saltlick), required unless
 #                         FED_NO_DIRECTORY=1. Phase 5 uploads our package and CA,

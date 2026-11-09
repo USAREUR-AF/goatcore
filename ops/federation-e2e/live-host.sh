@@ -151,8 +151,8 @@ UNIT
   [ -f /etc/goat-core/config.json5 ] || cp "$D/core-seed.json5" /etc/goat-core/config.json5
   install -m 0644 "$K/ca.pem" /etc/goat-core/ca.pem
   [ -f /etc/goat-core/core.pem ] || { install -m 0644 "$K/core.pem" /etc/goat-core/core.pem; install -m 0644 "$K/core-key.pem" /etc/goat-core/core-key.pem; }
-  docker rm -f goat-zenoh >/dev/null 2>&1 || true
-  docker run -d --name goat-zenoh --restart unless-stopped --network host \
+  docker rm -f goat-zenoh "$us-zenoh-router" >/dev/null 2>&1 || true
+  docker run -d --name "$us-zenoh-router" --label org.goat.component=zenoh-core --restart unless-stopped --network host \
     -e RUST_LOG=zenoh=info,zenoh::net::routing::interceptor::access_control=trace \
     -v /etc/goat-core:/etc/goat-core:ro "$FED_ZENOH_IMAGE" -c /etc/goat-core/config.json5 >/dev/null
   install -d -m 0755 /opt/spire/config; install -d -o 1000 -g 1000 -m 0750 /opt/spire/data /opt/spire/data/server
@@ -228,7 +228,7 @@ admit)
     --org "$w/applied/ops/federation/acl/$them-fragment.json5" --out /etc/goat-core/config.json5
   install -m 0644 "$w/pki/core.pem" /etc/goat-core/core.pem
   install -m 0644 "$w/pki/core-key.pem" /etc/goat-core/core-key.pem
-  docker restart goat-zenoh >/dev/null
+  docker restart "$us-zenoh-router" >/dev/null
   echo "admit ok: $them's CA matches $want; fragment spliced; core restarted on the minted certificate"
   ;;
 
@@ -266,7 +266,7 @@ collect)
   echo "=== wg"; wg show wg-fed0 2>&1 | grep -v 'private key' || true
   echo "=== wg state"; cat /var/log/goat-peering-wg-wg-fed0-state.json 2>&1 || true
   echo "=== edge router"; docker logs "goat-zenoh-edge-$them" 2>&1 | tail -400 || true
-  echo "=== core router"; docker logs goat-zenoh 2>&1 | tail -200 || true
+  echo "=== core router"; docker logs "$us-zenoh-router" 2>&1 | tail -200 || true
   echo "=== spire-server"; docker logs spire-server 2>&1 | tail -100 || true
   echo "=== host"; . /etc/os-release; echo "$PRETTY_NAME $(uname -r)"
   ;;
@@ -275,7 +275,7 @@ reset)
   systemctl stop fed-live-responder goat-peering-bundle-in.socket goat-peering-bundle-out.socket \
     goat-peering-bundle-in.service goat-peering-bundle-out.service 'goat-peering-wg@wg-fed0.service' >/dev/null 2>&1 || true # oss-allow: systemd unit instance, not a mailbox
   systemctl disable goat-peering-bundle-in.socket goat-peering-bundle-out.socket 'goat-peering-wg@wg-fed0.service' >/dev/null 2>&1 || true # oss-allow: systemd unit instance, not a mailbox
-  ids="$(docker ps -aq --filter name=goat-zenoh --filter name=spire-server --filter name=fed-probe- 2>/dev/null || true)"
+  ids="$( { docker ps -aq --filter name=goat-zenoh --filter name=spire-server --filter name=fed-probe-; docker ps -aq --filter label=org.goat.component=zenoh-core; } 2>/dev/null | sort -u || true)"
   [ -z "$ids" ] || docker rm -f $ids >/dev/null
   for c in /opt/goat-zenoh-edge-*; do [ -d "$c" ] && (cd "$c" && docker compose down -v >/dev/null 2>&1 || true); done
   ip link del wg-fed0 >/dev/null 2>&1 || true
