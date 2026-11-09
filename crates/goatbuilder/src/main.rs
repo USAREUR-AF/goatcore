@@ -505,9 +505,14 @@ pub enum Cmd {
         dry_run: bool,
         /// Skip the phases the run journal (<work>/state.json) shows passed,
         /// whose inputs and local outputs are unchanged now; checks and plays
-        /// always run again.
-        #[arg(long)]
+        /// always run again. This is the default; the flag is kept so
+        /// scripts that pass it keep working.
+        #[arg(long, conflicts_with = "no_resume")]
         resume: bool,
+        /// Run every phase in range, even ones the run journal shows passed
+        /// with unchanged inputs (the behavior before resuming was the default).
+        #[arg(long)]
+        no_resume: bool,
     },
     /// ONE resolution pass with TWO renderings: every listed member's
     /// group_vars pins.yml and every listed goatnet's IntentV1 artifact, from
@@ -1390,7 +1395,7 @@ fn main() {
                 federate::plan::run(&repo, stage, cli.mock.as_deref())
             }
         }
-        Cmd::Federate { verb: None, site, with, partner, plan, approve_plan, confirm, partner_key, partner_ca_fingerprint, agreement_digest, place_pointer_package, approve_admission, review_in_pr, env, as_party, edge_group, work, from, to, dry_run, resume } => {
+        Cmd::Federate { verb: None, site, with, partner, plan, approve_plan, confirm, partner_key, partner_ca_fingerprint, agreement_digest, place_pointer_package, approve_admission, review_in_pr, env, as_party, edge_group, work, from, to, dry_run, resume, no_resume } => {
             let with = with.as_deref().unwrap_or_default();
             let cfg_path = cli.mock.as_ref().map(|m| m.join("goatbuilder.yaml")).unwrap_or_else(|| repo.join("ops/goatbuilder/goatbuilder.yaml"));
             if with == "status" {
@@ -1416,8 +1421,8 @@ fn main() {
                 Err(goat_errors::coded("GB-189", "--partner-key and --partner-ca-fingerprint are for phase 5 and --agreement-digest for phase 6; this run's --from/--to leave that phase out").into())
             } else if (plan.is_some() || approve_plan.is_some()) && with != "deploy" {
                 Err(goat_errors::coded("GB-189", "--plan and --approve-plan belong to `goatbuilder federate deploy <partner>`").into())
-            } else if matches!(with, "deploy" | "test") && (*to != 99 || *resume) {
-                Err(goat_errors::coded("GB-189", format!("`goatbuilder federate {with}` runs its own phases: --to and --resume do not apply to it")).into())
+            } else if matches!(with, "deploy" | "test") && (*to != 99 || *resume || *no_resume) {
+                Err(goat_errors::coded("GB-189", format!("`goatbuilder federate {with}` runs its own phases: --to, --resume and --no-resume do not apply to it")).into())
             // A mock executes nothing, with or without --dry-run, so it mutates nothing.
             } else if !site.is_empty() && goat_federation::verbs::VERB_NAMES.contains(&with) {
                 // `federate --context-dir D init`: clap read the verb as a partner.
@@ -1435,7 +1440,7 @@ fn main() {
                     _ => {
                         let values = federate::Values { ask: *confirm, partner_key: partner_key.clone(), partner_ca_fingerprint: partner_ca_fingerprint.clone(), agreement_digest: agreement_digest.clone(), pointer_package: place_pointer_package.clone() };
                         let admission = federate::Admission { approve: approve_admission.clone(), review_in_pr: *review_in_pr };
-                        federate::federate_with(&repo, &o, &mut federate::Surface { resume: *resume, values, admission, ask: Some(Box::new(federate::prompt::Terminal)), ..Default::default() })
+                        federate::federate_with(&repo, &o, &mut federate::Surface { resume: !*no_resume, values, admission, ask: Some(Box::new(federate::prompt::Terminal)), ..Default::default() })
                     }
                 }
             }
