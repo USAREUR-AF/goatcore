@@ -162,8 +162,10 @@ step() {   # step <n> <kind> <label> <command...>
        1. Read the error above. \`goat federate\` exit codes are specific:
             20 composition refused   21 lint refused
             22 diff refused          23 a value could not be derived
-          Phase 14 (acceptance) exits 3 when a check was skipped: nothing
-          was proven by it (catalog X-ACCEPT-001).
+          Phase 14 (acceptance) exits 3 when a required check was BLOCKED or
+          skipped: nothing was proven by it (catalog X-ACCEPT-001); exit 2
+          when the agreement or the evidence bundle could not be read or
+          written.
        2. Open docs/operations/sovereign-federation-runbook.md — the phase
           table names this phase's "worked when" (the end state you are
           aiming for), and Steps 7 and 8 are the acceptance criteria.

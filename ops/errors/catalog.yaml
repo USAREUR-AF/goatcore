@@ -2290,14 +2290,14 @@ entries:
 
   - code: X-ACCEPT-001
     tool: acceptance.sh
-    title: "acceptance skipped a check, so the peering is not accepted"
-    what: "ops/federation/standup/acceptance.sh (phase 14) ran every check it could, none failed, but at least one was skipped. A skipped check proves nothing, so the run exits 3, not 0. The lines above the counts say why each check was skipped."
+    title: "acceptance could not run a required check, so the peering is not accepted"
+    what: "ops/federation/standup/acceptance.sh (phase 14) found no failure, but a required check was BLOCKED (its input or evidence was unavailable) or SKIPPED (not exercised). Such a check proves nothing, so the verdict in <work>/evidence/acceptance/result.json is INCOMPLETE and the run exits 3, not 0."
     causes:
       - a surface the check reads is not configured (for example the partner's REST endpoint or the SPIRE servers)
       - the agreement offers nothing in one direction, so that direction's checks had nothing to send
       - a probe session the check needs was not started
     fixes:
-      - "read the skipped lines above the acceptance-counts line; set what each names, then run phase 14 again"
+      - "read the BLOCKED and skipped lines above the acceptance-counts line, or the why field of result.json; set what each names, then run phase 14 again"
       - "ops/scripts/peering-standup.sh <peering> --from 14"
     read: docs/design/federation-acceptance.md
     matches:
