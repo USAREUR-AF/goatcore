@@ -112,6 +112,9 @@ def derive_lite(config: dict, checkout: dict | None = None) -> dict:
     return out
 
 
+RESERVED_PEERING_NAMES = ("init", "lint", "compose", "diff", "verify", "apply",
+                          "status", "plan", "deploy", "test")
+
 def errors_for(config: dict, schema: dict | None = None, checkout: dict | None = None) -> list[str]:
     """Every problem with `config`, as 'where: what' lines; empty means valid.
     `checkout` is the checkout's own ops/goatbuilder/goatbuilder.yaml, when a lite
@@ -157,6 +160,11 @@ def errors_for(config: dict, schema: dict | None = None, checkout: dict | None =
     # peerings: the environment, the site and the edge class it names must all be declared
     for pi, p in enumerate(config.get("peerings") or []):
         env, site, cls = p.get("environment"), p.get("site"), p.get("edge_class")
+        # A partner named like a `goatbuilder federate` subcommand could never be run
+        # (crates/goatbuilder/src/config.rs RESERVED_PEERING_NAMES).
+        if p.get("with") in RESERVED_PEERING_NAMES:
+            out.append(f"peerings/{pi}: '{p.get('with')}' is a goatbuilder federate subcommand, "
+                       f"so it cannot name a partner; reserved: {', '.join(RESERVED_PEERING_NAMES)}")
         if env not in declared:
             out.append(f"peerings/{pi}: names undeclared environment '{env}'")
             continue

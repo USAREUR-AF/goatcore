@@ -29,6 +29,12 @@
 #
 #   Environment:
 #     GOAT_BIN            the goat binary (default: whatever is on PATH)
+#     FED_VERBS           who runs the federation verbs of phases 3, 4, 6, 7 and 9:
+#                         `goat` (the default: `$GOAT_BIN federate <verb>`) or
+#                         `goatbuilder` (`$GOATBUILDER_BIN federate <verb>`, the same
+#                         library, flags and exit codes)
+#     GOATBUILDER_BIN     the goatbuilder binary for FED_VERBS=goatbuilder
+#                         (default: whatever is on PATH)
 #     FED_WORK            working directory (default: /var/lib/goat-federation/<peering>)
 #     FED_COUNTERPARTY    path to the counterparty's package (phase 6 needs it)
 #     FED_SIGNING_KEY     our Ed25519 signing key (64 hex or 44 base64)
@@ -80,7 +86,7 @@ while [ $# -gt 0 ]; do
     --to)         TO="$2"; shift 2 ;;
     --as)         AS="$2"; shift 2 ;;
     --edge-group) EDGE_GROUP="$2"; shift 2 ;;
-    -h|--help)    sed -n '2,58p' "$0"; exit 0 ;;
+    -h|--help)    sed -n '2,67p' "$0"; exit 0 ;;
     -*)           echo "unknown flag $1" >&2; exit 2 ;;
     *)            [ -z "$PEERING" ] && PEERING="$1"; shift ;;
   esac
@@ -88,6 +94,12 @@ done
 [ -n "$PEERING" ] || { echo "usage: peering-standup.sh <peering-name> [--plan] [--from N] [--to N]" >&2; exit 2; }
 
 : "${GOAT_BIN:=$(command -v goat || echo goat)}"
+: "${GOATBUILDER_BIN:=$(command -v goatbuilder || echo goatbuilder)}"
+case "${FED_VERBS:-goat}" in
+  goat)        FED_VERB="$GOAT_BIN federate" ;;
+  goatbuilder) FED_VERB="$GOATBUILDER_BIN federate" ;;
+  *) echo "peering-standup.sh: FED_VERBS is goat or goatbuilder, not '$FED_VERBS'" >&2; exit 2 ;;
+esac
 : "${FED_WORK:=/var/lib/goat-federation/$PEERING}"
 : "${FED_COUNTERPARTY:=$FED_WORK/theirs.canonical.json}"
 : "${FED_SIGNING_KEY:=}"
@@ -207,10 +219,10 @@ step 2 A "prepare what the package measures: the federation interface and the SP
 #     refused to invent it; the list of what is missing IS the output.
 # ---------------------------------------------------------------------------
 step 3 T "init — our half, read from the running system" \
-  "${FED_ROUTER_DOCKER_HOST:+DOCKER_HOST='$FED_ROUTER_DOCKER_HOST' }$GOAT_BIN federate init --with-transport --with-data ${FED_SIGNING_KEY:+--signing-key '$FED_SIGNING_KEY' }--out '$OURS'"
+  "${FED_ROUTER_DOCKER_HOST:+DOCKER_HOST='$FED_ROUTER_DOCKER_HOST' }$FED_VERB init --with-transport --with-data ${FED_SIGNING_KEY:+--signing-key '$FED_SIGNING_KEY' }--out '$OURS'"
 
 step 4 T "lint our package against the spec" \
-  "$GOAT_BIN federate lint '$OURS'"
+  "$FED_VERB lint '$OURS'"
 
 # ---------------------------------------------------------------------------
 # Phase 5 — THE EXCHANGE, through the directory (ops/federation/standup/directory.py),
@@ -284,10 +296,10 @@ if [ -f "$FED_KEYRING" ]; then
 fi
 
 step 6 T "compose — one agreement, one digest, no perspective" \
-  "$GOAT_BIN federate compose '$OURS' '$FED_COUNTERPARTY'$KEYARGS --out '$AGREEMENT'"
+  "$FED_VERB compose '$OURS' '$FED_COUNTERPARTY'$KEYARGS --out '$AGREEMENT'"
 
 step 7 T "verify the agreement from our side" \
-  "$GOAT_BIN federate verify '$AGREEMENT' ${AS:+--as '$AS'}"
+  "$FED_VERB verify '$AGREEMENT' ${AS:+--as '$AS'}"
 
 # ---------------------------------------------------------------------------
 # Phase 8 — PEERING LEAVES, minted from the agreement's DERIVED names. Hand-minting
@@ -303,7 +315,7 @@ step 8 T "mint the peering leaf certificates from the agreement" \
 #     cannot drift apart by being typed twice.
 # ---------------------------------------------------------------------------
 step 9 T "apply — render the access rules and configuration" \
-  "$GOAT_BIN federate apply '$AGREEMENT' ${AS:+--as '$AS'} --edge-group '$EDGE_GROUP' --out '$APPLIED' --confirm"
+  "$FED_VERB apply '$AGREEMENT' ${AS:+--as '$AS'} --edge-group '$EDGE_GROUP' --out '$APPLIED' --confirm"
 
 # ---------------------------------------------------------------------------
 # Phase 10 — WHAT ONLY THIS PARTY MAY CHANGE. `apply` renders the core's access

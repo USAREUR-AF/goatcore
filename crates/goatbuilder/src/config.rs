@@ -412,6 +412,13 @@ pub fn cross_field(cfg: &Config) -> Vec<String> {
         }
     }
     for (pi, p) in cfg.peerings.iter().enumerate() {
+        if RESERVED_PEERING_NAMES.contains(&p.with.as_str()) {
+            out.push(format!(
+                "peerings/{pi} (with '{}'): is a goatbuilder federate subcommand, so it cannot name a partner; reserved: {}",
+                p.with,
+                RESERVED_PEERING_NAMES.join(", ")
+            ));
+        }
         let Some(sites) = sites_of.get(p.environment.as_str()) else {
             out.push(format!(
                 "peerings/{pi} (with '{}'): names undeclared environment '{}'",
@@ -435,6 +442,12 @@ pub fn cross_field(cfg: &Config) -> Vec<String> {
     }
     out
 }
+
+/// Words `goatbuilder federate <word>` takes as a subcommand, so a peering
+/// declared with one could never be run: the six federation verbs, and the
+/// stages of the one command (`status`, `plan`, `deploy`, `test`).
+pub const RESERVED_PEERING_NAMES: &[&str] =
+    &["init", "lint", "compose", "diff", "verify", "apply", "status", "plan", "deploy", "test"];
 
 /// Load, validate, and return the typed config — the entry every verb uses.
 /// The GitHub owner this checkout belongs to, from `repo: source:`. A fork or
@@ -628,6 +641,20 @@ mod tests {
         let mut v = with_sites();
         v["peerings"] = json!([{"with": "velmara", "environment": "dev", "site": "alpha", "edge_class": "router"}]);
         rejected(&v, "edge_class 'router'");
+    }
+
+    /// A partner named like a `goatbuilder federate` subcommand could never be
+    /// run, so it is refused where it is declared.
+    #[test]
+    fn a_peering_named_like_a_federate_subcommand_is_refused() {
+        for name in ["lint", "apply", "status", "plan"] {
+            let mut v = with_sites();
+            v["peerings"] = json!([{"with": name, "environment": "dev", "site": "alpha", "edge_class": "edge"}]);
+            rejected(&v, "cannot name a partner");
+        }
+        for verb in goat_federation::verbs::VERB_NAMES {
+            assert!(RESERVED_PEERING_NAMES.contains(verb), "{verb} is a verb and must be reserved");
+        }
     }
 
     #[test]

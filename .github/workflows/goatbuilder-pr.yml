@@ -35,6 +35,9 @@ on:
       - 'ops/scripts/pr-land.sh'
       - '.github/workflows/goatbuilder-pr.yml'
       - 'crates/goat-errors/**'
+      - 'crates/goat-federation/**'
+      - 'crates/goat-cli/src/cmd/federate.rs'
+      - 'ops/federation/vectors/**'
       - 'crates/goat-fun/**'
       - 'crates/goat-selfupdate/**'
       # The committed command reference (docs::tests regenerates it from the
@@ -239,6 +242,11 @@ jobs:
       - name: Parity gate — `federate --dry-run` plans exactly the phases peering-standup.sh plans
         working-directory: ${{ github.workspace }}
         run: ops/goatbuilder/parity-federate.sh crates/target/debug/goatbuilder hello-ally
+      - name: Parity gate — `goatbuilder federate <verb>` answers exactly as `goat federate <verb>` over the conformance vectors
+        working-directory: ${{ github.workspace }}
+        run: |
+          (cd crates && cargo build -p goat-cli)
+          ops/goatbuilder/parity-federate-verbs.sh crates/target/debug/goat crates/target/debug/goatbuilder
       - name: Every operator-facing phase sequence is whole numbers from 1, no gaps, no letters
         working-directory: ${{ github.workspace }}
         env:
