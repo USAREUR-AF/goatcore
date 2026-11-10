@@ -3,3 +3,11 @@
   community.docker.docker_compose_v2:
     project_src: "/opt/{{ goat_zenoh_edge_stack }}"
     state: restarted
+
+# Notified together with the restart by certificates-install.yml. Handlers run in
+# the order they are defined here, so this runs only after the restart above has
+# succeeded; a failed restart leaves the file for the next run to honour.
+- name: Clear goat zenoh edge restart-pending
+  ansible.builtin.file:
+    path: "{{ goat_zenoh_edge_cert_dir }}/.restart-pending"
+    state: absent
