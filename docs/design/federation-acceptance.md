@@ -46,6 +46,9 @@ Rules that keep the checks honest:
   rows still run. An agreement with no flow at all fails.
 - **A release pattern with a wildcard before its tail** names no single key to publish; its
   delivery row is BLOCKED, never silently left out.
+- **An empty read means absent.** `rest-value` returns nothing both when the store holds no
+  row and when a row's stored value is empty; every value the runner writes is non-empty, so for
+  the runner's own keys the two cannot be confused.
 - **A REST surface that does not answer is BLOCKED, never a pass.** Every read parses the JSON
   answer and the HTTP status (`acceptance_evidence.py rest-value`). Before this change a failed
   read printed nothing, which is what every refusal check wanted to see, and the value was

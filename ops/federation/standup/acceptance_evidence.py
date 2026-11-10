@@ -227,7 +227,10 @@ class Unreadable(ValueError):
 
 def rest_value(text):
     """The value of the first row a zenoh REST GET returned, as bytes; b"" when the
-    surface answered with no row. Raises Unreadable when it did not answer, answered
+    surface answered with no row. A row whose stored value is empty also gives b"":
+    the two read the same. Every value acceptance.sh writes is non-empty, so for its
+    own keys an empty read means the key is absent; a delivery read expecting a value
+    fails on either, and an absence check never sees an empty value it wrote. Raises Unreadable when it did not answer, answered
     with an error, or answered with something that is not a row list: a surface that
     cannot be read must never look like a key that is absent.
 
