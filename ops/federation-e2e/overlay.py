@@ -2,7 +2,8 @@
 """One sovereign's own declarations, written into that sovereign's clone.
 
     overlay.py <clone> <us> <them> <subnet-octet> <image>
-               [--core-addr A] [--spire-listen A] [--local] [--republisher-image I]
+               [--core-addr A] [--spire-listen A] [--edge-addr A] [--local]
+               [--republisher-image I]
                [--also THEM:INTERFACE:PORT:SPIRE_OUT_PORT:METRICS_PORT]...
 
 Each party has its own repository, as two organisations would. Only synthetic names
@@ -12,6 +13,9 @@ and addresses: this run reaches no goatnet.
                   (default 10.77.<octet>.10, the container core host)
   --spire-listen  where the outbound bundle-endpoint forward listens
                   (default 10.77.<octet>.20, the container edge host)
+  --edge-addr     the edge's address in the inventory (default 127.0.0.1: the driver
+                  runs on the edge host). An address here is a driver on another machine,
+                  an operator's workspace, reaching the edge over ssh like the core
   --local         ansible reaches the edge and the core on this machine with a local
                   connection: the live run, where one host carries both
   --republisher-image
@@ -39,6 +43,7 @@ for name in ("clone", "us", "them", "octet", "image"):
     ap.add_argument(name)
 ap.add_argument("--core-addr")
 ap.add_argument("--spire-listen")
+ap.add_argument("--edge-addr")
 ap.add_argument("--local", action="store_true")
 ap.add_argument("--republisher-image", default="")
 ap.add_argument("--also", action="append", default=[])
@@ -49,6 +54,7 @@ core_ip = a.core_addr or f"10.77.{a.octet}.10"
 spire_listen = a.spire_listen or f"10.77.{a.octet}.20"
 conn = "ansible_connection=local" if a.local else "ansible_user=goat"
 core_host = "127.0.0.1" if a.local else core_ip
+edge_host = "127.0.0.1" if a.local or not a.edge_addr else a.edge_addr
 
 # (them, per-peering overrides). The first peering keeps every role default.
 peerings = [(a.them, {})]
@@ -61,7 +67,7 @@ assert len(set(names)) == len(names), f"a partner named twice: {names}"
 
 inv = ["[peering_edges:children]", *[f"{t}_edge" for t in names], ""]
 for t in names:
-    inv += [f"[{t}_edge]", f"{us}-edge-{t} ansible_host=127.0.0.1 {conn}", ""]
+    inv += [f"[{t}_edge]", f"{us}-edge-{t} ansible_host={edge_host} {conn}", ""]
 inv += ["# The core host each peering's edge dials: that peering's outbound republisher runs",
         "# there (phase 12). One machine, one inventory name per peering.",
         "[peering_cores:children]", *[f"{t}_core" for t in names], ""]
