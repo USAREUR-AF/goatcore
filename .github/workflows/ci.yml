@@ -227,6 +227,9 @@ jobs:
         run: |
           sudo modprobe wireguard
           bash ops/ci/test-peering-forwarder-e2e.sh
+      - name: the carrier-keys play copies public keys and keeps the certificate directory 0700
+        timeout-minutes: 5
+        run: bash ops/ci/test-peering-carrier-keys.sh
       - name: the forwarder play, run on a systemd host, converges and refuses
         timeout-minutes: 10
         run: bash ops/ci/test-peering-forwarder-role.sh
