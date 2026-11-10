@@ -3,11 +3,12 @@
 # scenario matrix run against any goatcore ref (docs/design/federation-e2e-environment.md).
 #
 #   env build  --ref REF                          build goat, goatbuilder and the republisher image from REF
-#   env up     --ref REF [--lab N] [--parties "xaa xab"] [--avenue A]
+#   env up     --ref REF [--lab N] [--parties "xaa xab"] [--avenue A] [--directory-ref DREF]
 #                                                 bring a pair up and federate it; leave it running
 #   env down   [--lab N | --all]                  remove what this environment created, and nothing else
 #   env run    --ref REF [--avenue script|goatbuilder|both] [--scenario ID[,ID]|all]
 #              [--jobs N] [--out DIR] [--name NAME] [--merged NAME@SHA]... [--goat-version ID=VER]...
+#              [--directory-ref DREF]
 #                                                 run scenarios; write results.json and a page per avenue
 #   env list                                      the scenarios, where each runs, and its pass condition
 #   env status                                    the labs in use and what holds them
@@ -18,10 +19,16 @@
 # under test is that ref; the harness is the checkout this script is in, copied into the
 # run first so that editing it does not disturb a running matrix.
 #
+# DREF is a ref of the saltlick repository (FE2E_SALTLICK_REPO, default the saltlick clone
+# beside this goatcore clone; it is fetched from origin first). The peering directory is then
+# that commit's image, built with its own Dockerfile as fe2e-saltlick:<sha12>, instead of the
+# pinned release; the result's `directory` field and each unit's tools.txt name it, and it
+# enters the harness fingerprint, so such a row never compares with one on the pinned image.
+#
 # Everything created is named fe2e-l<N>-*, carries the label org.goat.fe2e.lab=fe2e-l<N>,
 # and sits on 10.<230+N>.0.0/16 (N = 1..14). `down` removes by that label alone. Images are
-# tagged fe2e-host:<hash> and fe2e-republisher:<sha12>. State lives in FE2E_HOME
-# (default ~/.cache/fe2e): src/<sha>, bin/<sha>, runs/<run-id>, labs/.
+# tagged fe2e-host:<hash>, fe2e-republisher:<sha12> and fe2e-saltlick:<sha12>. State lives in FE2E_HOME
+# (default ~/.cache/fe2e): src/<sha>, bin/<sha>, saltlick/<sha>, runs/<run-id>, labs/.
 #
 # Needs: Linux, Docker, the wireguard kernel module, a Rust toolchain, python3 with pyyaml
 # (jsonschema to validate results). Touches no goatnet and no public directory.
@@ -36,7 +43,7 @@ MAX_LAB=14
 
 die() { echo "env: $*" >&2; exit 1; }
 say() { printf '\033[1m==> %s\033[0m\n' "$*" >&2; }
-usage() { sed -n '2,26p' "$0"; exit "${1:-0}"; }
+usage() { sed -n '2,34p' "$0"; exit "${1:-0}"; }
 
 # --- refs and builds --------------------------------------------------------------------
 resolve() { # $1 ref -> sha
@@ -88,6 +95,41 @@ build() { # $1 sha: the tree, the binaries, the republisher image; prints nothin
   fi
   unlock "$FE2E_HOME/locks/build"
 }
+# The peering directory from a saltlick commit: its tree under FE2E_HOME/saltlick/<sha>, and
+# its image fe2e-saltlick:<sha12> built with the commit's own Dockerfile.
+saltlick_repo() {
+  if [ -n "${FE2E_SALTLICK_REPO:-}" ]; then echo "$FE2E_SALTLICK_REPO"; return 0; fi
+  local common; common="$(git -C "$REPO" rev-parse --path-format=absolute --git-common-dir)"
+  echo "$(dirname "$(dirname "$common")")/saltlick"
+}
+directory_resolve() { # $1 saltlick ref -> sha
+  local r="$1" repo sha cand
+  repo="$(saltlick_repo)"
+  git -C "$repo" rev-parse --git-dir >/dev/null 2>&1 || die "no saltlick clone at $repo (set FE2E_SALTLICK_REPO)"
+  git -C "$repo" fetch -q origin || die "git fetch origin failed in $repo"
+  for cand in "$r" "origin/$r"; do
+    sha="$(git -C "$repo" rev-parse -q --verify "$cand^{commit}" 2>/dev/null)" && { echo "$sha"; return 0; }
+  done
+  die "no saltlick commit for ref '$r' in $repo"
+}
+directory_build() { # $1 saltlick sha: its tree and its image; prints nothing on success
+  local sha="$1" repo src tag common
+  repo="$(saltlick_repo)"; src="$FE2E_HOME/saltlick/$sha"; tag="fe2e-saltlick:${sha:0:12}"
+  mkdir -p "$FE2E_HOME/saltlick" "$FE2E_HOME/locks"
+  lock "$FE2E_HOME/locks/build-saltlick"
+  if [ ! -d "$src/.git" ]; then
+    common="$(git -C "$repo" rev-parse --path-format=absolute --git-common-dir)"
+    rm -rf "$src"
+    git clone -q --shared --no-checkout "$common" "$src"
+    git -C "$src" checkout -q --detach "$sha"
+  fi
+  if ! docker image inspect "$tag" >/dev/null 2>&1; then
+    say "build the saltlick image at ${sha:0:12}"
+    docker build -q -t "$tag" "$src" >/dev/null \
+      || { unlock "$FE2E_HOME/locks/build-saltlick"; die "the saltlick image did not build at ${sha:0:12}"; }
+  fi
+  unlock "$FE2E_HOME/locks/build-saltlick"
+}
 rp_id() { # $1 sha: the republisher image's config digest, computed once
   local f="$FE2E_HOME/bin/$1/republisher.id"
   [ -s "$f" ] || docker save "fe2e-republisher:${1:0:12}" | tar -xO manifest.json \
@@ -96,8 +138,11 @@ rp_id() { # $1 sha: the republisher image's config digest, computed once
 }
 # What a result depends on besides the ref: the catalog, the units, the engine and the
 # verdict, and the scenario subset. Rows compare only when this is equal (lib/matrix.py).
+# With --directory-ref, the directory's ref and commit are part of it too; without, the
+# fingerprint is computed exactly as before that option existed.
 fingerprint() { # $1 harness ops/federation-e2e dir, $2 scenario subset
-  { cat "$1"/scenarios/*.yaml "$1"/units/*.sh "$1"/lib/engine.sh "$1"/lib/unit.sh "$1"/lib/verdict.py; echo "$2"; } | sha256sum | cut -c1-12
+  { cat "$1"/scenarios/*.yaml "$1"/units/*.sh "$1"/lib/engine.sh "$1"/lib/unit.sh "$1"/lib/verdict.py; echo "$2"
+    [ -z "${DIRECTORY_REF:-}" ] || echo "directory=$DIRECTORY_REF@$DIRECTORY_SHA"; } | sha256sum | cut -c1-12
 }
 host_tag() { echo "fe2e-host:$(cd "$HERE/host" && cat Dockerfile daemon.json fed-e2e-keys.service | sha256sum | cut -c1-12)"; }
 
@@ -241,6 +286,9 @@ run_unit() { # $1 unit, $2 avenue, $3 sha, $4 run dir, $5 lab (taken), [$6 keep]
   say "unit $unit, avenue $av, lab $lab, parties $parties"
   local extra=() kv
   for kv in $(unit_tools "$unit" "$sha"); do extra+=("$kv"); done
+  if [ -n "${DIRECTORY_REF:-}" ]; then
+    extra+=("FE2E_SALTLICK_IMAGE=fe2e-saltlick:${DIRECTORY_SHA:0:12}" "FE2E_DIRECTORY_REF=$DIRECTORY_REF" "FE2E_DIRECTORY_SHA=$DIRECTORY_SHA")
+  fi
   printf '%s\n' ${extra[@]+"${extra[@]}"} > "$rec/tools.txt"
   # shellcheck disable=SC2046
   env $(lab_env "$lab") FE2E_PARTIES="$parties" FE2E_HOST_IMAGE="$(host_tag)" \
@@ -274,6 +322,10 @@ cmd_run() {
     cat "$run/build.log" >&2
     blocked="the tools did not build at ${sha:0:12}: $(grep -m1 -E '^error|^env:' "$run/build.log" | cut -c1-200)"
   fi
+  if [ -z "$blocked" ] && [ -n "$DIRECTORY_REF" ] && ! ( directory_build "$DIRECTORY_SHA" ) 2> "$run/build-saltlick.log"; then
+    cat "$run/build-saltlick.log" >&2
+    blocked="the peering directory did not build at saltlick ${DIRECTORY_SHA:0:12} ($DIRECTORY_REF): $(grep -m1 -E '^ERROR|^env:' "$run/build-saltlick.log" | cut -c1-200)"
+  fi
   # Units run in parallel, one lab each.
   local pids=() INTERRUPTED=0
   # An interrupted run publishes nothing: its stopped units would read BLOCKED everywhere.
@@ -299,6 +351,8 @@ cmd_run() {
   fi
   local hsha; hsha="$(head -1 "$run/harness.txt")"
   local rc=0 outd="" short="${sha:0:12}"
+  # A row on another directory is filed beside the default row, never over it.
+  [ -z "$DIRECTORY_REF" ] || short="$short-saltlick-${DIRECTORY_SHA:0:12}"
   if [ -n "$OUT" ]; then outd="$OUT/$NAME"; mkdir -p "$outd"; fi
   for av in $avenues; do
     local recs=(); for unit in $(catalog_units "$av" "$SCENARIOS"); do recs+=(--record "$run/$av/$unit"); done
@@ -308,11 +362,14 @@ cmd_run() {
       ${merged[@]+"${merged[@]}"} $( [ "$SCENARIOS" = all ] || echo "--only $SCENARIOS" ) \
       --harness-fp "$(fingerprint "$run/harness/ops/federation-e2e" "$SCENARIOS")" \
       ${blocked:+--blocked-all "$blocked"} \
+      ${DIRECTORY_REF:+--directory-ref "$DIRECTORY_REF" --directory-sha "$DIRECTORY_SHA"} \
       --out "$run/results-$av.json" --markdown "$run/results-$av.md" || rc=1
     if [ -n "$outd" ]; then cp "$run/results-$av.json" "$outd/$short-$av.json"; fi
   done
   if [ -n "$outd" ]; then
-    { echo "# Federation e2e: $NAME @ $short"; echo; echo "Run $run, harness $hsha, started $started."; echo
+    { echo "# Federation e2e: $NAME @ $short"; echo; echo "Run $run, harness $hsha, started $started."
+      [ -z "$DIRECTORY_REF" ] || echo "Peering directory: saltlick $DIRECTORY_REF @ $DIRECTORY_SHA (image fe2e-saltlick:${DIRECTORY_SHA:0:12})."
+      echo
       for av in $avenues; do cat "$run/results-$av.md"; echo; done; } > "$outd/$short.md"
     python3 "$HERE/lib/matrix.py" --out "$OUT" >/dev/null || true
   fi
@@ -323,6 +380,7 @@ cmd_run() {
 
 cmd_up() {
   local sha lab; sha="$(resolve "$REF")"; build "$sha"
+  [ -z "$DIRECTORY_REF" ] || directory_build "$DIRECTORY_SHA"
   local run="$FE2E_HOME/runs/up-${sha:0:12}-$(date -u +%Y%m%dT%H%M%S)"; mkdir -p "$run"; snapshot_harness "$run"
   if [ -n "$LAB_N" ]; then lab="$LAB_N"; mkdir -p "$FE2E_HOME/labs/l$lab"; echo "held-by-up" > "$FE2E_HOME/labs/l$lab/pid.up"; else lab="$(lab_take "up")"; fi
   rm -f "$FE2E_HOME/labs/l$lab/pid"; echo "up" > "$FE2E_HOME/labs/l$lab/held"
@@ -358,6 +416,7 @@ PY
 }
 
 REF=""; AVENUE="both"; SCENARIOS="all"; OUT=""; NAME=""; LAB_N=""; ALL=0; MERGED=""; GOAT_VERSIONS=""
+DIRECTORY_REF=""; DIRECTORY_SHA=""
 CMD="${1:-}"; [ -n "$CMD" ] || usage 2; shift
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -372,6 +431,7 @@ while [ $# -gt 0 ]; do
     --merged) MERGED="$MERGED $2"; shift 2 ;;
     --goat-version) GOAT_VERSIONS="$GOAT_VERSIONS $2"; shift 2 ;;
     --parties) export FE2E_UP_PARTIES="$2"; shift 2 ;;
+    --directory-ref) DIRECTORY_REF="$2"; shift 2 ;;
     -h|--help) usage 0 ;;
     *) die "unknown argument $1" ;;
   esac
@@ -387,6 +447,11 @@ if [ -n "$GOAT_VERSIONS" ]; then
   GOAT_VERSIONS="$resolved"
 fi
 export GOAT_VERSIONS GOAT_VERSIONS_ASKED
+# The directory's commit is resolved once, before any unit starts.
+if [ -n "$DIRECTORY_REF" ]; then
+  case "$CMD" in run|up|fingerprint) DIRECTORY_SHA="$(directory_resolve "$DIRECTORY_REF")" ;; *) die "--directory-ref applies to run, up and fingerprint" ;; esac
+fi
+export DIRECTORY_REF DIRECTORY_SHA
 case "$CMD" in
   build) [ -n "$REF" ] || die "build needs --ref"; cmd_build ;;
   run) [ -n "$REF" ] || die "run needs --ref"; cmd_run ;;

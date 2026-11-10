@@ -29,6 +29,8 @@ ops/federation-e2e/env down --lab 3                          # remove one lab, n
 
 `run` prints the outcome per scenario and the run directory. The run directory holds each unit's step logs (`<avenue>/<unit>/NN-<step>.log`), `report.jsonl`, and `results-<avenue>.json` and `.md`. With `--out DIR` it also writes `DIR/<name>/<sha12>.md`, `DIR/<name>/<sha12>-<avenue>.json` and rewrites `DIR/latest.md`.
 
+`--directory-ref REF` (built) runs the peering directory from a saltlick commit instead of the pinned image: env fetches `origin` in the saltlick clone (`FE2E_SALTLICK_REPO`, default the `saltlick` clone beside this goatcore clone), resolves REF, clones that commit into `FE2E_HOME/saltlick/<sha>` and builds `fe2e-saltlick:<sha12>`, which units receive as `FE2E_SALTLICK_IMAGE`. Each unit's `tools.txt` records `FE2E_DIRECTORY_REF` and `FE2E_DIRECTORY_SHA`; the result carries `directory: {ref, sha}`; the files under `--out` are named `<sha12>-saltlick-<dsha12>`; and the ref and commit enter the harness fingerprint, so `lib/matrix.py` never compares such a row with `main` on the pinned image. Without the option the fingerprint is unchanged.
+
 ## What one sovereign is
 
 Each sovereign is generated fresh for a run and shares nothing with another sovereign except the boundary network. That matches two organizations that never hold each other's keys.
@@ -40,7 +42,7 @@ Each sovereign is generated fresh for a run and shares nothing with another sove
 | Core host | a privileged container running systemd and its own dockerd: the core router (`<id>-zenoh-router`, label `org.goat.component=zenoh-core`), `spire-server`, and from phase 12 the republisher |
 | Edge host | a second privileged container: the edge router, the WireGuard interface, the driver |
 | Release producers | samples written under `release/<set>/` on the core, as a producer would write them |
-| Peering directory | saltlick behind a TLS front with a local CA, on the boundary network; never the public directory |
+| Peering directory | saltlick behind a TLS front with a local CA, on the boundary network; never the public directory. The pinned saltlick image by default; with `--directory-ref REF` on `env run` or `env up`, the image built from that saltlick commit with its own Dockerfile (built) |
 
 Party ids are the repository's synthetic ids (`xaa`, `xab`, `xac`, `xad`). run.sh's defaults keep the ids it has always used.
 
@@ -54,8 +56,8 @@ Several runs share one Docker daemon, and other work on the machine uses Docker 
 | Networks | `fe2e-lN-<id>` (one per sovereign), `fe2e-lN-boundary` (internal) |
 | Subnets | `10.<230+N>.0.0/16`: sovereign `/24`s at `.1`, `.2`, `.4`, `.5`, boundary at `.3` |
 | Label | `org.goat.fe2e.lab=fe2e-lN` on every container and network |
-| Images | `fe2e-host:<hash of host/>`, `fe2e-republisher:<sha12>` |
-| State | `FE2E_HOME` (default `~/.cache/fe2e`): `src/<sha>`, `bin/<sha>`, `runs/`, `labs/` (one lock per lab) |
+| Images | `fe2e-host:<hash of host/>`, `fe2e-republisher:<sha12>`, and `fe2e-saltlick:<sha12>` with `--directory-ref` |
+| State | `FE2E_HOME` (default `~/.cache/fe2e`): `src/<sha>`, `bin/<sha>`, `saltlick/<sha>`, `runs/`, `labs/` (one lock per lab) |
 
 `env down --lab N` removes the containers and networks carrying that lab's label and nothing else. Containers inside a host (edge router, probes, republisher) live in that host's own dockerd and disappear with it.
 

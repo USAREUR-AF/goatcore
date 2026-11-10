@@ -157,8 +157,10 @@ def verdict_of(scenarios):
 def markdown(res):
     v = res["verdict"]
     lines = [f"## Federation e2e: {res['ref']['name']} @ {res['ref']['sha'][:12]}, avenue {res['avenue']}: {v['outcome']}", "",
-             " · ".join(f"{k} {n}" for k, n in v["counts"].items()), "",
-             "| scenario | outcome | where | reason |", "|---|---|---|---|"]
+             " · ".join(f"{k} {n}" for k, n in v["counts"].items()), ""]
+    if res.get("directory"):
+        lines += [f"Peering directory: saltlick {res['directory']['ref']} @ {res['directory']['sha'][:12]}, not the pinned image.", ""]
+    lines += ["| scenario | outcome | where | reason |", "|---|---|---|---|"]
     for s in res["scenarios"]:
         lines.append(f"| `{s['id']}` | {s['outcome']} | {s['runs_where']} | {s['reason'].replace('|', '/')[:300]} |")
     lines += ["", "### Checks", ""]
@@ -189,6 +191,8 @@ def main():
     ap.add_argument("--out")
     ap.add_argument("--markdown")
     ap.add_argument("--versions", default="", help="JSON object: sovereign id -> tool version")
+    ap.add_argument("--directory-ref", default="", help="the saltlick ref the peering directory was built from (env --directory-ref)")
+    ap.add_argument("--directory-sha", default="", help="that ref's commit")
     a = ap.parse_args()
     with open(a.catalog, encoding="utf-8") as fh:
         catalog = yaml.safe_load(fh)
@@ -214,6 +218,8 @@ def main():
     }
     if a.versions:
         res["versions"] = json.loads(a.versions)
+    if a.directory_ref:
+        res["directory"] = {"ref": a.directory_ref, "sha": a.directory_sha}
     # An unvalidated result is not written: jsonschema is required.
     try:
         import jsonschema

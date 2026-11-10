@@ -105,6 +105,13 @@ def verdict_checks():
         r4 = json.load(open(out + ".4")) if os.path.exists(out + ".4") else {"scenarios": []}
         check(p4.returncode == 1 and r4["scenarios"] and all(x["outcome"] == "BLOCKED" for x in r4["scenarios"]), "verdict: --blocked-all did not make every scenario BLOCKED")
         check(r4.get("harness", {}).get("fingerprint") == "abc123", "verdict: the harness fingerprint is not in the result")
+        check("directory" not in r4, "verdict: a result on the pinned directory carries a directory field")
+        # A directory built from a saltlick commit is named in the result.
+        p5 = subprocess.run([sys.executable, os.path.join(ROOT, "lib", "verdict.py"), "--catalog", cp, "--record", u1,
+                             "--directory-ref", "origin/example", "--directory-sha", "1" * 40,
+                             "--ref-name", "fixture", "--ref-sha", "0" * 40, "--avenue", "goatbuilder", "--out", out + ".5"], capture_output=True, text=True)
+        r5 = json.load(open(out + ".5")) if os.path.exists(out + ".5") else {}
+        check(r5.get("directory") == {"ref": "origin/example", "sha": "1" * 40}, "verdict: --directory-ref is not in the result: " + p5.stderr[-300:])
         # A mark may not say PASS or FAIL.
         write(u2, "marks.jsonl", [{"check": "stopped.c", "outcome": "PASS", "reason": "trust me"}])
         p3 = subprocess.run([sys.executable, os.path.join(ROOT, "lib", "verdict.py"), "--catalog", cp, "--record", u2,

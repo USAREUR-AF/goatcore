@@ -14,6 +14,7 @@
 #   FE2E_NET_BASE    the first two octets of the run's /24s (default 10.77)
 #   FE2E_LAB         the value of label org.goat.fe2e.lab on all of it (default fed-e2e)
 #   FE2E_HOST_IMAGE, FE2E_RP_TAG   the host image and the republisher's local tag
+#   FE2E_SALTLICK_IMAGE the peering directory's image (default the pinned saltlick release)
 #   FE2E_CORE        how each sovereign's core router is deployed (default hand):
 #                    hand  `docker run` from core-seed.json5; phase 10 splices the fragment
 #                          with acl-assemble.py and restarts the container
@@ -40,8 +41,10 @@ SPIRE_IMAGE="$(python3 -c 'import sys, yaml; print(((yaml.safe_load(open(sys.arg
 [[ "$SPIRE_IMAGE" =~ ^ghcr\.io/spiffe/spire-server:[^@[:space:]]+@sha256:[0-9a-f]{64}$ ]] || { echo "run.sh: ops/pins/fleet-pins.yaml declares no digest-pinned SPIRE image (components.spire.fleet)" >&2; exit 2; }
 HOST_IMAGE="${FE2E_HOST_IMAGE:-fed-e2e-host}"
 # The peering directory both edges reach, and the TLS front that issues its certificate
-# from a local CA: saltlick refuses a pointer whose package_url is not https.
-SALTLICK_IMAGE="ghcr.io/usareur-af/saltlick@sha256:6ec46ca98819e1523f30e85de8210db33f71040f1214171366e459f79bab7971"
+# from a local CA: saltlick refuses a pointer whose package_url is not https. The pinned
+# release by default; FE2E_SALTLICK_IMAGE names another (env --directory-ref builds one from
+# a saltlick commit).
+SALTLICK_IMAGE="${FE2E_SALTLICK_IMAGE:-ghcr.io/usareur-af/saltlick@sha256:6ec46ca98819e1523f30e85de8210db33f71040f1214171366e459f79bab7971}"
 DIRECTORY_TLS_IMAGE="caddy@sha256:c3d7ee5d2b11f9dc54f947f68a734c84e9c9666c92c88a7f30b9cba5da182adb"
 DIRECTORY_IP="$NB.3.40"; export DIRECTORY_IP
 # The republisher, built from this checkout and loaded into each core host's dockerd.

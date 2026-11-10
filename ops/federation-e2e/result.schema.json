@@ -63,6 +63,13 @@
       "properties": {"sha": {"type": "string"}, "dirty": {"type": "boolean"}, "fingerprint": {"type": "string", "description": "env fingerprint: the catalog, units, engine and verdict and the scenario subset; rows compare only when equal"}}
     },
     "versions": {"type": "object", "description": "The tool versions each sovereign ran, by sovereign id.", "additionalProperties": {"type": "string"}},
+    "directory": {
+      "type": "object",
+      "description": "Present only when the peering directory was built from a saltlick commit (env --directory-ref) instead of the pinned image.",
+      "required": ["ref", "sha"],
+      "additionalProperties": false,
+      "properties": {"ref": {"type": "string", "minLength": 1}, "sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"}}
+    },
     "started": {"type": "string", "format": "date-time"},
     "finished": {"type": "string", "format": "date-time"},
     "scenarios": {"type": "array", "items": {"$ref": "#/$defs/scenario"}},

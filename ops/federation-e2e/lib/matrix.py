@@ -81,7 +81,8 @@ def main():
                 c = f"**{c} REGRESSION**"
                 regress.append(f"{k[0]}@{r['ref']['sha'][:12]} {k[1]} {sid}: {s['outcome']} (main PASS) — {s['reason'][:200]}")
             cells.append(c)
-        lines.append(f"| {k[0]} | `{r['ref']['sha'][:12]}` | {k[1]} | {r['verdict']['outcome']} | " + " | ".join(cells) + f" | {r['_path']} |")
+        dref = f" (directory saltlick `{r['directory']['sha'][:12]}`)" if r.get("directory") else ""
+        lines.append(f"| {k[0]}{dref} | `{r['ref']['sha'][:12]}` | {k[1]} | {r['verdict']['outcome']} | " + " | ".join(cells) + f" | {r['_path']} |")
     lines += ["", "## Regressions against " + a.baseline, ""]
     lines += [f"- {x}" for x in regress] or ["None."]
     lines += ["", f"## Not comparable with {a.baseline} (measured with a different harness)", ""]
