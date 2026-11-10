@@ -101,7 +101,7 @@ Every check and every scenario ends in exactly one of five words. A required che
 | SKIP | not exercised | the scenario is not built, or its unit was not run |
 | NOT APPLICABLE | excluded by the agreement | the unit marked it, naming the agreement clause |
 
-A scenario takes the worst required outcome in the order FAIL, BLOCKED, SKIP; NOT APPLICABLE only when all its required checks are. The schema is `ops/federation-e2e/result.schema.json` (`fed-e2e-result/1`): the ref name and sha (and for an integration preview the branch heads merged), the avenue, the harness sha, per scenario the pass condition, where it runs, the outcome and its reason, and per check `required`, `outcome`, `reason`, `observer` (`local` here; `peer-reported` is reserved for bilateral evidence) and the step log that is its evidence. A reason is required for every outcome except PASS.
+A scenario takes the worst required outcome in the order FAIL, BLOCKED, SKIP; NOT APPLICABLE only when all its required checks are. The schema is `ops/federation-e2e/result.schema.json` (`fed-e2e-result/1`): the ref name and sha (and for an integration preview the branch heads merged), the avenue, the harness sha, per scenario the pass condition, where it runs, the outcome and its reason, and per check `required`, `outcome`, `reason`, `observer` (`local`, or `peer-reported` for a check whose evidence the partner reported by file, as the solo unit's are; a catalog check sets it with `observer:`) and the step log that is its evidence. A reason is required for every outcome except PASS.
 
 ## Where each scenario runs
 
@@ -127,6 +127,59 @@ The engine reaches a host through four operations, and only these: run a command
 - network profiles become preconditions checked before a unit runs (inbound reachability, a held port), not things the harness creates; a profile the hosts cannot provide makes its scenarios BLOCKED with that reason;
 - each operator runs only the units for the hosts they hold, and the two sides' result files are exchanged by file, with the partner's checks labeled `observer: peer-reported`.
 
+## Solo party (an outside partner)
+
+**Built** (unit `solo`, scenario `solo-external-partner`, `runs_where: local`). One lab sovereign federates with a partner that is not in the lab, so that an operator's laptop can drive the partner's side against an environment the lab never touches. `FE2E_PARTNER=external` (`lib/engine.sh`) makes `setup_hosts` create only the lab sovereign's core and edge, with no peering directory: phase 5 runs by hand (`FED_NO_DIRECTORY=1`). Nothing in the lab logs in to the partner's hosts. Only the WireGuard tunnel crosses, with SPIRE's bundle forward and the samples inside it. Everything else crosses as files through two folders that the operator carries.
+
+How to run it:
+
+```bash
+FE2E_PARTNER=external FE2E_PARTNER_FACTS=$PWD/facts.txt \
+FE2E_EXCHANGE_OUT=$PWD/out FE2E_EXCHANGE_IN=$PWD/in FE2E_SOLO_PUBLIC_ADDR=203.0.113.7 \
+  ops/federation-e2e/env run --ref <sha> --avenue goatbuilder --scenario solo-external-partner \
+    --jobs 1 --out <dir> --goat-version xae=0.5.19 --parties "xae xab"
+```
+
+`--parties "<lab id> <partner id>"` names the lab sovereign (A) and the partner (B). The core is deployed by the goat-zenoh role. The lab edge's public side:
+
+| Partner edge | Lab edge | Set |
+|---|---|---|
+| listens (`listens=true`) | dials, out through the docker bridge's NAT; listener=false | `FE2E_SOLO_PUBLIC_ADDR`: the address the partner's edge sees our packets from. Its tunnel firewall drops every other source |
+| cannot listen (`listens=false`) | listens on a UDP port the machine publishes (`docker -p` on the edge host) | `FE2E_SOLO_PUBLISH=<host port>` and `FE2E_SOLO_PUBLIC_ADDR` (the address the partner dials). Built, not yet run lab to lab |
+
+**The facts file** (`FE2E_PARTNER_FACTS`) holds `key=value` lines about the partner. `#` starts a comment.
+
+```
+sovereign_id=xab
+edge_address=198.51.100.20      # the partner edge's public address
+edge_port=51823                 # its inner WireGuard UDP port
+listens=true
+release=release/all/** release/xae/**
+```
+
+**What the laptop does.** Each pause writes `out/<step>.waiting`, which says what the pause waits for. The pause then waits for a file in `in/`, for `FE2E_SOLO_STEP_TIMEOUT` seconds (default 6 hours). After that the unit stops, and every later check reads BLOCKED, naming the step. The unit refuses to start if `in/` already holds answers from an earlier run.
+
+| Step | The lab writes to `out/` | The laptop puts in `in/` |
+|---|---|---|
+| phase 5 (`exchange`) | `xae.canonical.json`, `xae-ca.pem`, `xae.spiffe-bundle`, and `xae-voice-call.txt` (`signing_key=`, `ca_fingerprint=`) | the partner's `xab.canonical.json`, `xab-ca.pem`, `xab.spiffe-bundle`. The package must match the facts file |
+| voice call (`voice-call`) | none; read `xae-voice-call.txt` aloud | `voice-call.ok`: `signing_key=<44 base64>` and `ca_fingerprint=sha256:<hex>`, both the partner's and as read aloud. The fingerprint must match `xab-ca.pem` |
+| after compose (`digest`) | `xae-agreement-digest.txt` | `digest.ok`, holding the partner's digest. If it differs from ours, the unit stops and reports the mismatch |
+| phase 10 (`admit`) | none | `admit.ok` (may be empty): go ahead and admit the partner's edge on our core |
+| phase 11 (`tunnel`) | none | `tunnel.ok`, once the partner's phase 10 is done |
+| phase 14 (`accept`) | `acceptance-xae.json` (our result) | `accept.ok`, once the partner's phase 13 is done |
+| persistent reception (`persist`) | none | `persist.ok`, once both sides have run acceptance. Optionally `acceptance-xab.json`, which is recorded as peer-reported |
+| samples, round 1 | `xae-sample-1.txt` (`key=from/xae/all/<nonce>`, `value=<nonce>`), then `xae-received-1.txt` (what our store read of the partner's sample) | `xab-sample-1.txt`: a value the partner staged under `release/all/` on its core, named by its wire key (`key=from/xab/all/<k>`, `value=<v>`). Then `xab-received-1.txt` (`key=`, `read=`, `result=stored`): what the partner's store read of our sample |
+| core restart | `xae-core-restarted.txt`, after our core restarts (our edge does not) | `xab-core-restarted.txt`, after the partner restarts its receiving core |
+| samples, round 2 | `xae-sample-2.txt`, `xae-received-2.txt` | `xab-sample-2.txt`, after reading `xae-core-restarted.txt`; then `xab-received-2.txt` |
+
+The checks on the lab side are local observations. What the partner reports reading of our samples, and the partner's acceptance, are recorded with `observer: peer-reported`, never as local observations.
+
+**Strict acceptance from one side.** Phase 14 runs locally, with only the lab's own surfaces: its core's REST, its edge's ACL trace and its SPIRE server. At the ref measured (28492160), `acceptance.sh` cannot complete from one side. Each delivery, persistence and refusal check, and the SPIRE check, needs a surface that only the partner holds, and the exchange of the partner's half is not built (`docs/design/federation-acceptance.md` §3). So the unit records the counts. When every check that did not run is waiting on a partner-held surface, it marks `acceptance-strict-local` BLOCKED and names that reason. When a check failed, it is FAIL. The file-exchanged samples above are the lab's evidence that delivery works in both directions.
+
+**Validated lab to lab** with `ops/federation-e2e/tests/solo-pair.sh --ref <sha> --dir <scratch>`. Two solo units, `xae` and `xaf`, each run in its own lab and each is the other's outside partner. Their folders are crossed, so one side's `out/` is the other's `in/`. The script answers each pause the way the laptop would. Both edges' public sides sit on one docker network that the script creates and removes (198.51.100.0/24), standing in for the internet: `xae` dials and `xaf` listens.
+
+**Measured** on 2026-11-10 at goatbuilder 28492160 with released goat 0.5.19. Each side passed 24 of 26 checks: every phase, the facts, the voice call, an equal agreement digest, the role admit, the handshake, phase 13, the tunnel carrying traffic both ways, and persistent reception in both directions, including after each receiving core restarted. The partner's half of the persistent-reception checks is peer-reported. Each scenario comes out BLOCKED on `acceptance-strict-local`. Both sides printed `acceptance-counts: pass=2 fail=0 skip=1 blocked=14`, because each blocked check needs a partner-held surface. `partner-acceptance` (optional, peer-reported) is BLOCKED for the same reason. Strict acceptance with `fail=0 skip=0` from each side alone needs the bilateral exchange of acceptance halves, which the product does not have.
+
 ## Files
 
 | Path | Purpose |
@@ -137,6 +190,7 @@ The engine reaches a host through four operations, and only these: run a command
 | `ops/federation-e2e/lib/unit.sh` | runs one unit in one lab |
 | `ops/federation-e2e/lib/verdict.py`, `lib/matrix.py`, `lib/watch.sh` | outcomes, the matrix page, the watcher |
 | `ops/federation-e2e/units/` | the units |
+| `ops/federation-e2e/tests/solo-pair.sh` | the solo unit validated lab to lab: two solo units with crossed exchange folders |
 | `ops/federation-e2e/scenarios/catalog.yaml` | scenarios and checks |
 | `ops/federation-e2e/result.schema.json` | `fed-e2e-result/1` |
 | `ops/federation-e2e/overlay.py` | one sovereign's declarations in its own clone |
