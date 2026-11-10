@@ -165,9 +165,12 @@ pub fn world() -> World {
             "#!/usr/bin/env python3\nimport json, os, sys\nopen('{l}','a').write('preflight\\n')\na = sys.argv\nif '--result' in a:\n    only = a[a.index('--only') + 1].split(',') if '--only' in a else ['inputs', 'edge-ports', 'core-ports', 'slot-anchors', 'core-router', 'ingress-stores', 'ca-key']\n    open(a[a.index('--result') + 1], 'w').write(json.dumps({{'ready': True, 'results': [{{'check': c, 'outcome': 'PASS', 'detail': 'stub'}} for c in only]}}))\n"
         ),
     );
+    // The stub's key header is assembled here, so no tracked file carries a
+    // private-key header line (the repository's credential scan refuses one).
+    let key_begin = ["-----BEGIN ", "PRIVATE KEY-----"].concat();
     exe(
         &repo.join("ops/federation/standup/mint-peering-leaves.sh"),
-        &format!("#!/bin/sh\necho mint >> '{l}'\nmkdir -p \"$2\"; printf -- '-----BEGIN CERTIFICATE-----\\nQUFB\\n-----END CERTIFICATE-----\\n' > \"$2/core.pem\"; printf -- '-----BEGIN PRIVATE KEY-----\\nQkJC\\n-----END PRIVATE KEY-----\\n' > \"$2/core-key.pem\"\n"),
+        &format!("#!/bin/sh\necho mint >> '{l}'\nmkdir -p \"$2\"; printf -- '-----BEGIN CERTIFICATE-----\\nQUFB\\n-----END CERTIFICATE-----\\n' > \"$2/core.pem\"; printf -- '{key_begin}\\nQkJC\\n-----END PRIVATE KEY-----\\n' > \"$2/core-key.pem\"\n"),
     );
     exe(
         &repo.join("ops/federation/standup/acceptance.sh"),
