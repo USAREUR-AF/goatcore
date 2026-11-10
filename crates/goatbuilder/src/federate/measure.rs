@@ -338,6 +338,25 @@ pub fn choose_router(explicit: Option<&str>, core: &Target) -> Result<RouterChoi
 }
 
 // ---------------------------------------------------------------------------
+// The core's SPIRE server
+// ---------------------------------------------------------------------------
+
+/// The SPIRE server config phase 3 reads the trust domain from (#247):
+/// `{{ spire_config_dir }}/server.conf`, the spire role's layout, with the
+/// role's default `/opt/spire/config` when the core host's variables do not set
+/// it. A value this cannot resolve (a template) still names a path, so the
+/// read fails and says why instead of a default standing in silently.
+pub fn spire_conf(core: &Target) -> String {
+    let dir = core
+        .vars
+        .get("spire_config_dir")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .unwrap_or("/opt/spire/config");
+    format!("{}/server.conf", dir.trim_end_matches('/'))
+}
+
+// ---------------------------------------------------------------------------
 // Reaching a host
 // ---------------------------------------------------------------------------
 
@@ -606,6 +625,7 @@ pub fn measure(
         RUNTIMES,
         ROUTER_FLAG,
         interface,
+        Some(&spire_conf(&hosts.core)),
     );
     router_refusal(&m, &choice, &hosts.core)?;
     Ok((m, choice))
@@ -1028,6 +1048,37 @@ mod tests {
         );
     }
 
+    #[test]
+    fn the_spire_config_follows_the_role_layout_and_the_core_hosts_variables() {
+        let mut core = Target {
+            name: "core-a".into(),
+            address: "core-a".into(),
+            user: None,
+            port: None,
+            key: None,
+            ssh_args: vec![],
+            become_root: None,
+            local: false,
+            vars: serde_json::json!({}),
+        };
+        assert_eq!(spire_conf(&core), derive::SPIRE_SERVER_CONF);
+        core.vars = serde_json::json!({"spire_config_dir": "/etc/spire/server/"});
+        assert_eq!(spire_conf(&core), "/etc/spire/server/server.conf");
+        // A template is not resolved and not replaced by the default: the read
+        // is refused and says so.
+        core.vars = serde_json::json!({"spire_config_dir": "{{ spire_root }}/config"});
+        assert!(!derive::spire_conf_path(&spire_conf(&core)));
+        let role = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../ops/ansible/roles/spire/defaults/main.yml"
+        ))
+        .unwrap();
+        assert!(
+            role.contains("spire_config_dir: \"/opt/spire/config\""),
+            "the spire role's config dir changed; update derive::SPIRE_SERVER_CONF"
+        );
+    }
+
     fn measured(fips: Result<bool, String>) -> Measured {
         let d = |field: &'static str, outcome| derive::Derived {
             field,
@@ -1053,6 +1104,7 @@ mod tests {
             },
             public_key: None,
             interface_mtu: None,
+            spire_trust_domain: None,
         }
     }
 
