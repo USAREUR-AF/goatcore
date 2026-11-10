@@ -137,10 +137,11 @@ impl World {
             "-C".into(),
             self.repo.display().to_string(),
             "--yes".into(),
-            "-o".into(),
-            "json".into(),
-            "federate".into(),
         ]);
+        if !global.contains(&"-o") {
+            args.extend(["-o".into(), "json".into()]);
+        }
+        args.push("federate".into());
         args.extend(extra.iter().map(|s| s.to_string()));
         let mut c = Command::new(bin());
         c.args(&args)

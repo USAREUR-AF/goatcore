@@ -1856,6 +1856,20 @@ entries:
     matches:
       - "\\(GB-231\\)"
     exit: 2
+  - code: GB-185
+    tool: goatbuilder
+    title: the partner named to `federate status` is not a declared peering
+    what: "`goatbuilder federate status <partner>` reads a peering declared in goatbuilder.yaml `peerings:` (on `--env`, when given). The name given is not one of them, so nothing was read."
+    causes:
+      - the name is misspelled, or the peering is declared under another environment's config
+      - the peering has not been declared yet
+    fixes:
+      - "goatbuilder federate status   (every declared peering)"
+      - "declare it under peerings: in goatbuilder.yaml first (C1)"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "^status: peering '[^']*' is not declared in "
+    exit: 1
 
   # ------------------------------------------------ federate: the peering forwarder
 

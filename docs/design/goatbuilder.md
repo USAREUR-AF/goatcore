@@ -308,6 +308,15 @@ Where it is checked:
 A peering without `offer:` is not checked, and nothing is read: the driver runs as before.
 
 Not built yet: phase 3 offering a narrowed list. `goat federate init` offers exactly what `federation.toml` declares, so until it takes a narrowed list, an `offer:` narrower than `[data] release` is refused too (GB-129) rather than run with the wider set.
+### `federate status`: what each peering's journal and evidence say
+
+Status: WIP — gate: on two environments, `goatbuilder federate status` reads back a peering stood up by `goatbuilder federate`, with the acceptance verdict, its age and its scope, and marks evidence stale after the agreement changes.
+
+The specification is section 2 of the 9 November federation automation proposal: `status` shows deployment health and the last acceptance evidence, with its age and scope.
+
+**Built** (`crates/goatbuilder/src/federate/status.rs`, `stage.rs`; tests there and in `crates/goatbuilder/tests/federate_status.rs`). `goatbuilder federate status [<partner>]` reads, for every declared peering (or the one named, or those on `--env`): the journal's last run and how it ended; each phase's last outcome, attempts and detail; the confirmations given; the resources held on shared hosts; the digest of `<work>/agreement.json`; and the last acceptance evidence, `result.json` (`goat-federation-acceptance/v1`): its verdict, when it ended and how long ago, its counts by outcome word, and whether the agreement it names is the one in the working folder (`current`) or another (`stale`). A run with no end in the journal reads `in progress` when the process id in its `.lock` file is alive and `killed` when it is not; a process id can be reused, so `in progress` can be wrong after a reboot. Status names the next command from the last run (not from the highest phase recorded), aimed at the same working folder. It prints a table, or `-o json` / `-o yaml` (`goatbuilder.federate.status/v1`). It writes nothing, creates nothing and takes no lock, so it can never make a starting run refuse; a journal, agreement or evidence file it cannot read is shown as unreadable, never as absent. With one partner named, its folder follows the run's own rule (`--work`, else `$FED_WORK`, else `/var/lib/goat-federation/<partner>`) and its evidence folder is `$FED_EVIDENCE_DIR` when set, else `<work>/evidence/acceptance`. Without a partner, each peering's folder is `$FED_WORK_ROOT/<partner>`, else `/var/lib/goat-federation/<partner>`, and `--work` is refused. A partner that is not declared is refused (GB-185). A stage word can never name a partner: the peering declaration refuses every word in `config::RESERVED_PEERING_NAMES` (GB-120).
+
+**Not built:** a live health probe of the deployed edge and core; `status` reports the recorded evidence and its age, not a fresh measurement.
 
 ### Per-peering values: allocated and recorded
 

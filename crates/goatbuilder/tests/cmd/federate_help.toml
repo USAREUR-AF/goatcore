@@ -11,7 +11,7 @@ opened, acceptance in all four tiers. Replaces ops/scripts/peering-standup.sh st
 `goatbuilder federate init|lint|compose|diff|verify|apply` runs one of the six federation verbs in
 process, with the flags and exit codes of `goat federate <verb>`.
 
-Usage: goatbuilder federate [OPTIONS] <WITH>
+Usage: goatbuilder federate [OPTIONS] <WITH> [PARTNER]
        goatbuilder federate <COMMAND>
 
 Commands:
@@ -25,7 +25,11 @@ Commands:
 
 Arguments:
   <WITH>
-          The peering name (the counterparty, as declared)
+          The peering name (the counterparty, as declared), or a stage run alone: `status
+          [<partner>]`
+
+  [PARTNER]
+          The partner, after a stage word (`status <partner>`)
 
 Options:
   -o, --output <OUTPUT>

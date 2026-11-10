@@ -296,11 +296,17 @@ impl State {
         resume: bool,
         plan: &str,
     ) -> String {
-        let id = format!(
+        let base = format!(
             "run-{}-{}",
             chrono::Utc::now().format("%Y%m%dT%H%M%SZ"),
             std::process::id()
         );
+        let mut id = base.clone();
+        let mut k = 1;
+        while self.runs.iter().any(|r| r.id == id) {
+            k += 1;
+            id = format!("{base}-{k}");
+        }
         self.runs.push(RunEntry {
             id: id.clone(),
             stage: stage.into(),
