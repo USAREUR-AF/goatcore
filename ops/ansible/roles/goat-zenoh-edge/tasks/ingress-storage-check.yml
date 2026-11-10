@@ -5,12 +5,28 @@
     msg: "SKIP: ingress storage inspection is explicitly disabled; receive scopes were not verified."
   when: not (goat_zenoh_edge_ingress_scope_check | default(true) | bool)
 
+# main.yml has already looked for the core; included on its own, look here.
+- name: edge | find the local core router
+  ansible.builtin.include_tasks: discover-core.yml
+  when:
+    - goat_zenoh_edge_ingress_scope_check | default(true) | bool
+    - _edge_core_container is not defined
+
+- name: edge | report ingress storage inspection that could not run
+  ansible.builtin.debug:
+    msg: >-
+      SKIP: could not run: ingress storage inspection found no core to read
+      ({{ _edge_core_problem }}). Receive scopes were not verified by this edge play.
+  when:
+    - goat_zenoh_edge_ingress_scope_check | default(true) | bool
+    - _edge_core_container | default('') | length == 0
+
 - name: edge | read the local core storage configuration
   ansible.builtin.command:
     argv:
       - docker
       - exec
-      - "{{ goat_zenoh_edge_core_container | default('goat-zenoh') }}"
+      - "{{ _edge_core_container }}"
       - cat
       - /etc/zenoh/config.json5
   register: _edge_ingress_core_config
@@ -18,7 +34,9 @@
   failed_when: false
   check_mode: false
   no_log: true
-  when: goat_zenoh_edge_ingress_scope_check | default(true) | bool
+  when:
+    - goat_zenoh_edge_ingress_scope_check | default(true) | bool
+    - _edge_core_container | default('') | length > 0
 
 - name: edge | report unavailable local core storage inspection
   ansible.builtin.debug:
@@ -28,6 +46,7 @@
       not verified by this edge play.
   when:
     - goat_zenoh_edge_ingress_scope_check | default(true) | bool
+    - _edge_core_container | default('') | length > 0
     - (_edge_ingress_core_config.rc | default(-1) | int) != 0
 
 - name: edge | compare admitted ingress scopes with actual storage declarations

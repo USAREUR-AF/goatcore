@@ -31,6 +31,13 @@ argument, rejects options and expressions, and never falls back to discovery if
 that container is absent or stopped. Both standup drivers inherit the exported
 variable into phase 3.
 
+The sovereign edge role (`goat-zenoh-edge`) reads the core's storage
+configuration for two advisory checks and finds the core with the same label and
+names, through Docker on the host the play runs against. Its
+`goat_zenoh_edge_core_container`, when set, wins; empty, the default, discovers.
+No match or several matches make those checks report "could not run" with the
+reason, never a pass (`roles/goat-zenoh-edge/tasks/discover-core.yml`).
+
 Without `DOCKER_HOST`, Docker and Podman are supported; unavailable runtimes are
 reported in failure diagnostics. An explicit `DOCKER_HOST` restricts observation
 to Docker on that daemon, so an unreachable remote core cannot be replaced by a

@@ -96,3 +96,10 @@ peering_wg_state_path: "/var/log/goat-peering-wg-{{ peering_wg_interface }}-stat
 peering_wg_carrier_key_path: "{{ peering_wg_config_dir }}/{{ peering_wg_carrier_interface }}.key"
 peering_wg_carrier_env_path: "{{ peering_wg_config_dir }}/{{ peering_wg_carrier_interface }}.env"
 peering_wg_carrier_service: "goat-peering-wg@{{ peering_wg_carrier_interface }}.service"
+
+# Each peering on a host owns its interface, listen port, link addresses and carrier
+# (tasks/ownership.yml, run first in phases 2 and 11). Set this to a reason only to take
+# over what another peering recorded: a retired peering's leftover state, or the same
+# peering under a renamed partner. The reason is printed and the run proceeds.
+peering_wg_ownership_override: ""
+
