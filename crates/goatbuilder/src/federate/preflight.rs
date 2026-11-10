@@ -486,13 +486,16 @@ fn read_slot_result(path: &Path) -> Result<SlotRecheck> {
 mod tests {
     use super::*;
 
+    /// From its declared fields, as the config loader reads it: a field added
+    /// to the declaration later takes its default here too.
     fn peering() -> config::Peering {
-        config::Peering {
-            with: "xab".into(),
-            environment: "zagros".into(),
-            site: "alpha".into(),
-            edge_class: "edge".into(),
-        }
+        serde_json::from_value(serde_json::json!({
+            "with": "xab",
+            "environment": "zagros",
+            "site": "alpha",
+            "edge_class": "edge",
+        }))
+        .expect("a peering declaration")
     }
 
     fn get<'a>(v: &'a [Input], name: &str) -> &'a Input {
