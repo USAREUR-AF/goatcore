@@ -38,7 +38,7 @@ only writes are `<work>/plan.json` and phase 1's result files under
 | `inputs` | every value phase 1 and the live checks read, as the run will see it: the variable when set, else the derived value (`federate/preflight.rs`), and the live-check targets only the environment sets (`FED_ROUTER_CONTAINER`, `FED_CORE_CONFIG_PATH`, `FED_SLOT_*`, `DOCKER_HOST`). A variable set to exactly the derived value counts as derived, so `federate` exporting its derived inputs before the phases is not a change. Another core router daemon or key path is a changed input | the environment and the deployment |
 | `agreement` | path, digest, transport, parties and flows; absent before phase 6 | `<work>/agreement.json`; the digest is sha256 over its bytes, which are the canonical form, so it equals what `goat federate compose` prints |
 | `rendered` | every file under `<work>/applied` with its sha256; empty before phase 9 | `goat federate apply`'s output |
-| `pki` | every file under `<work>/pki` with its sha256: a re-minted certificate is a changed input | phase 8's output |
+| `pki` | every file under `<work>/pki` with its sha256, except private keys (`*-key.pem`, `*.key`): a re-minted certificate is a changed input, and a key's fingerprint in a reviewable file buys nothing | phase 8's output |
 | `certificates` | subject and expiry of each certificate under `<work>/pki`. An expired one is a FAIL in readiness; with files present and no `openssl`, expiry is SKIP | `openssl x509` |
 | `resources` | what this peering owns: its WireGuard interface, tunnel port, edge router port, edge router container, republisher metrics port and container, the core access-control fragment, the working directory, the certificate directory (`<work>/pki`), the link subnet (from the agreement; empty before phase 6) and (with `--as`) the republisher identity. The deploy step copies its owned-resources list from here. The containers are the group's `goat_zenoh_edge_stack` and `goat_fed_republisher_stack`, else the roles' `<role>-<partner id>`; the core group is `<peering>_core`, the group phase 12 deploys to | the same sources phase 1 reads, in the same order (`PORT_INPUTS` in `preflight_live.py`): the variable, the group's vars, its parent group's, `all`, then the role's default. A templated value is not guessed: its name is empty and its source says so |
 | `restarts` | the core router (phase 10), this peering's WireGuard interface (11), edge router (12) and republisher (12, only when we offer a release set) | the phases; the agreement's flows decide the republisher |
@@ -46,7 +46,8 @@ only writes are `<work>/plan.json` and phase 1's result files under
 | `readiness` | each phase-1 check's outcome and code | `preflight.py`, run with the derived inputs into `<work>/plan/preflight.json`; `--no-live` skips the live reads (each SKIP) |
 | `host_firewall` | one entry per host of the edge and core groups, with its address. With `goat_host_firewall_baseline` not true (the default): NOT APPLICABLE, "host firewall baseline: off", nothing rendered or applied. With it true: BLOCKED, and a BLOCKED readiness row, because the plan does not render the rule set yet and must show it before anything is applied. A host that moves to another address is a changed input | the peering inventory, the group's vars |
 | `verdict` | `READY`, `READY, <n> check(s) not verified` (SKIP is never a pass), or `BLOCKED` (a FAIL or BLOCKED) | the readiness |
-| `hash` | sha256 over the plan without `hash` and without each readiness `detail` | the plan |
+| `created_at` | when the plan was made (RFC 3339, UTC); outside the hash, so the same inputs give the same hash | the clock |
+| `hash` | sha256 over the plan without `hash`, `created_at` and each readiness `detail` | the plan |
 
 The hash is stable: the plan serializes its fields in one fixed order, and
 nothing in the hashed part carries a time. A readiness `detail` is left out
@@ -71,7 +72,10 @@ changes anything, and goes ahead only when `Recheck::allows_change()` is true:
    catches an edited file, not a forged one.
 2. A plan that was not ready cannot be approved later: a FAIL or BLOCKED in
    its readiness, or a SKIP of a check step 4 does not rerun, is listed in
-   `unready`.
+   `unready`. So is a plan older than `FED_PLAN_MAX_AGE_HOURS` (default 24) by
+   its `created_at`, or one without it: an old plan with unchanged inputs is
+   aged out. `created_at` is outside the hash, so, like the hash itself, it
+   catches a mistake, not a forgery.
 3. Every input section is built again from the current state and compared
    with the saved plan. Each section that differs is listed in `changed`
    (GB-200): a new plan is needed, and a new approval.

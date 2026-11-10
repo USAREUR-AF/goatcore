@@ -175,6 +175,11 @@ pub struct Plan {
     pub edge_group: String,
     pub core_group: String,
     pub work: String,
+    /// When the plan was made (RFC 3339, UTC). Outside the hash, so the same
+    /// inputs give the same hash; the recheck refuses a plan older than
+    /// `FED_PLAN_MAX_AGE_HOURS` (default 24).
+    #[serde(default)]
+    pub created_at: String,
     pub versions: Versions,
     /// Every value phase 1 and the live checks read, as the run will see it:
     /// set in the environment, else derived. Paths, URLs, groups and the core
@@ -225,6 +230,7 @@ pub fn plan_hash(p: &Plan) -> String {
     let mut v = serde_json::to_value(p).expect("a plan serializes");
     if let Some(o) = v.as_object_mut() {
         o.remove("hash");
+        o.remove("created_at");
         if let Some(rs) = o.get_mut("readiness").and_then(|r| r.as_array_mut()) {
             for r in rs {
                 if let Some(ro) = r.as_object_mut() {
@@ -1061,7 +1067,13 @@ fn inputs_part(
         restarts: restarts(o.r#as, agreement.as_ref()),
         acceptance: acceptance(agreement.as_ref()),
         rendered: rendered_hashes(&Path::new(&work).join("applied")),
-        pki: rendered_hashes(&Path::new(&work).join("pki")),
+        // Certificates and other public material only: a private key's
+        // fingerprint in a reviewable file buys nothing (a re-minted key comes
+        // with a new certificate, which is hashed).
+        pki: rendered_hashes(&Path::new(&work).join("pki"))
+            .into_iter()
+            .filter(|f| !f.path.ends_with("-key.pem") && !f.path.ends_with(".key"))
+            .collect(),
         certificates,
         agreement,
         resources,
@@ -1069,6 +1081,7 @@ fn inputs_part(
         edge_group,
         core_group,
         work,
+        created_at: String::new(),
         readiness: Vec::new(),
         verdict: String::new(),
         hash: String::new(),
@@ -1109,6 +1122,7 @@ pub fn build(repo: &Path, o: &PlanOptions) -> Result<Plan> {
     } else {
         "READY".into()
     };
+    p.created_at = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
     p.hash = plan_hash(&p);
     Ok(p)
 }
@@ -1218,17 +1232,45 @@ impl Recheck {
     }
 }
 
+/// The oldest a plan may be at the recheck, in hours: `FED_PLAN_MAX_AGE_HOURS`,
+/// else 24. A saved plan is not proof the environment stayed the same, and an
+/// old one with unchanged inputs is aged out by this.
+fn plan_max_age_hours() -> i64 {
+    std::env::var("FED_PLAN_MAX_AGE_HOURS")
+        .ok()
+        .and_then(|v| v.trim().parse::<i64>().ok())
+        .filter(|h| *h > 0)
+        .unwrap_or(24)
+}
+
 /// Why a saved plan cannot be approved as it stands: a FAIL or BLOCKED in its
-/// readiness, or a SKIP of a check the recheck does not rerun.
+/// readiness, a SKIP of a check the recheck does not rerun, or its age.
 fn unready(saved: &Plan) -> Vec<String> {
-    saved
+    unready_at(saved, chrono::Utc::now(), plan_max_age_hours())
+}
+
+fn unready_at(saved: &Plan, now: chrono::DateTime<chrono::Utc>, max_hours: i64) -> Vec<String> {
+    let mut out: Vec<String> = saved
         .readiness
         .iter()
         .filter(|r| {
             blocks(&r.outcome) || (r.outcome == "SKIP" && !LIVE_CHECKS.contains(&r.check.as_str()))
         })
         .map(|r| format!("{} was {} when the plan was made", r.check, r.outcome))
-        .collect()
+        .collect();
+    match chrono::DateTime::parse_from_rfc3339(&saved.created_at) {
+        Ok(t) => {
+            let age = now.signed_duration_since(t.with_timezone(&chrono::Utc));
+            if age > chrono::Duration::hours(max_hours) {
+                out.push(format!(
+                    "the plan was made {} hour(s) ago, more than the {max_hours} allowed (FED_PLAN_MAX_AGE_HOURS); make a new plan",
+                    age.num_hours()
+                ));
+            }
+        }
+        Err(_) => out.push("the plan has no creation time; make a new plan".into()),
+    }
+    out
 }
 
 /// The saved plan must be the one for this peering, in this working
@@ -2017,6 +2059,7 @@ mod tests {
             detail: String::new(),
         };
         p.readiness = vec![row("edge-ports", "SKIP"), row("inputs", "PASS")];
+        p.created_at = chrono::Utc::now().to_rfc3339();
         assert!(unready(&p).is_empty());
         p.readiness.push(row("signing-ca", "BLOCKED"));
         p.readiness.push(row("preflight", "SKIP"));
@@ -2178,5 +2221,48 @@ mod tests {
             (wk.value.as_deref(), wk.source.as_str()),
             (Some("/elsewhere"), "$FED_WORK")
         );
+    }
+
+    /// A plan carries when it was made, outside the hash; the recheck refuses
+    /// one older than the limit, or one with no creation time.
+    #[test]
+    fn an_old_plan_is_aged_out_and_the_time_is_not_hashed() {
+        let r = tempfile::tempdir().unwrap();
+        let w = tempfile::tempdir().unwrap();
+        let mut p = planned(r.path(), &w.path().display().to_string());
+        p.readiness.clear();
+        let made = chrono::DateTime::parse_from_rfc3339("2026-11-09T08:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        p.created_at = made.to_rfc3339();
+        let h = plan_hash(&p);
+        p.created_at = (made + chrono::Duration::hours(1)).to_rfc3339();
+        assert_eq!(plan_hash(&p), h, "the creation time is not hashed");
+        p.created_at = made.to_rfc3339();
+        assert!(unready_at(&p, made + chrono::Duration::hours(23), 24).is_empty());
+        let old = unready_at(&p, made + chrono::Duration::hours(25), 24);
+        assert!(
+            old.len() == 1 && old[0].contains("25 hour(s) ago"),
+            "{old:?}"
+        );
+        p.created_at = String::new();
+        assert_eq!(
+            unready_at(&p, made, 24),
+            ["the plan has no creation time; make a new plan"]
+        );
+    }
+
+    /// Private keys under <work>/pki are not hashed into the plan; the
+    /// certificates are.
+    #[test]
+    fn private_keys_are_not_in_the_plan() {
+        let r = tempfile::tempdir().unwrap();
+        let w = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(w.path().join("pki")).unwrap();
+        std::fs::write(w.path().join("pki/core.pem"), "cert").unwrap();
+        std::fs::write(w.path().join("pki/core-key.pem"), "key").unwrap();
+        let p = planned(r.path(), &w.path().display().to_string());
+        let names: Vec<&str> = p.pki.iter().map(|f| f.path.as_str()).collect();
+        assert_eq!(names, ["core.pem"]);
     }
 }
