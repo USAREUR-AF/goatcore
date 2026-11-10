@@ -45,14 +45,23 @@ patches, embargo/<id>/core.patch (applied to goatcore) and embargo/<id>/stuff.pa
 patch's sha256 in embargo/<id>/patches.sha256 ("<sha256>  core.patch" lines) and
 its assemble step fetches the patch from where the overlay names it and writes
 it into the tree at that path. The assemble step applies them, in id order,
-after goatstuff and before the overlay, and records each in the embargo= line
-with the sha256 of its bytes. The tree is then current only if the marker lists
-exactly the patches the overlay commit declares, with those digests, and every
-file the patches change is in the tree byte for byte as the pinned commit plus
-the patches has it (a file a patch deletes is absent). Those files are judged
-against that and nothing else; any other change to a goatcore or goatstuff file
-is still refused. Without the embargo= line and with no patches in the overlay
-commit, nothing about patches is checked or recorded.
+each to its own repository's files and before the overlay, and records each in
+the embargo= line with the sha256 of its bytes. The tree is then current only if
+the marker lists exactly the patches the overlay commit declares, with those
+digests, and every file the patches change is in the tree byte for byte as the
+pinned commit plus the patches has it (a file a patch deletes is absent). Those
+files are judged against that and nothing else; any other change to a goatcore
+or goatstuff file is still refused. Without the embargo= line and with no
+patches in the overlay commit, nothing about patches is checked or recorded.
+
+Each patch is judged against its own repository. A path goatcore carries (at the
+pinned commit plus its patches) is goatcore's in the tree, so a goatstuff patch
+to that path is judged this way: where it leaves the same bytes as goatcore's
+file, the tree is checked against those bytes; where the path is one each
+repository carries for itself (repo_own: root documents, .github/, the crates
+workspace manifest and lockfile, docs/RELEASE-CONTENTS.md) or the goatstuff
+patch deletes it, goatcore's file stays and the goatstuff change is not looked
+for in the tree; any other difference is refused (GB-064, naming the path).
 
     source_of_record.py kind     --repo DIR   prints "assembled" or "clone"
     source_of_record.py check    --repo DIR [--offline] [--quiet]
@@ -161,8 +170,15 @@ def read_ref(repo, name):
         return fh.read().strip()
 
 
-def blobs(od, commit, prefixes=None):
-    """{path: blob} for the regular files of commit (under prefixes, when given)."""
+def repo_own(path):
+    """True for a file each public repository carries for itself; the assemble step keeps goatcore's."""
+    if path.startswith(".github/") or path in ("crates/Cargo.toml", "crates/Cargo.lock", "docs/RELEASE-CONTENTS.md"):
+        return True
+    return "/" not in path
+
+
+def blobs(od, commit, prefixes=None, links=False):
+    """{path: blob} for the regular files of commit (under prefixes, when given; symlinks too with links)."""
     rc, out, err = git(od, "ls-tree", "-r", "-z", "--full-tree", commit, *(prefixes or []))
     if rc != 0:
         return None, err
@@ -172,7 +188,7 @@ def blobs(od, commit, prefixes=None):
             continue
         meta, path = rec.split("\t", 1)
         mode, kind, blob = meta.split()
-        if kind != "blob" or mode == "120000":
+        if kind != "blob" or (mode == "120000" and not links):
             continue  # symlinks and submodules: not compared
         want[path] = blob
     return want, ""
@@ -333,8 +349,9 @@ def check_embargo(repo, m, supplied, od, ocsha, ref, sref, sd):
     """The paths the recorded pre-disclosure patches change, after showing the tree holds exactly them.
 
     Refuses when the marker's patches or digests are not the ones the overlay
-    commit declares, a patch in the tree differs, a patch does not apply, or a
-    patched file is not as the patches make it.
+    commit declares, a patch in the tree differs, a patch does not apply, a
+    goatstuff patch leaves other bytes than goatcore's at a path both carry
+    (repo_own paths aside), or a patched file is not as the patches make it.
     """
     reassemble = "fix: re-assemble from the overlay checkout (its assemble.sh into a new directory) and deploy from that tree."
     entries = embargo_entries(m)
@@ -371,10 +388,23 @@ def check_embargo(repo, m, supplied, od, ocsha, ref, sref, sd):
         got, err = patched(sd, sref, stuff)
         if got is None:
             refuse("GB-065", f"could not apply the pre-disclosure patches to goatstuff {sref[:12]} ({err})", [reassemble])
-        both = sorted(set(got) & set(want))
-        if both:
-            refuse("GB-064", "a path is changed by both a goatcore and a goatstuff patch: " + ", ".join(both[:5]), [reassemble])
-        want.update(got)
+        base, err = blobs(repo, ref, links=True)
+        if base is None:
+            refuse("GB-065", f"could not read goatcore {ref[:12]} ({err})", [reassemble])
+        differ = []
+        for p, b in sorted(got.items()):
+            # goatcore's file at this path, with its patches: the tree's copy when there is one
+            core_has = want[p] if p in want else base.get(p)
+            if core_has is None or b == core_has:
+                want[p] = b
+            elif b is None or repo_own(p):
+                continue  # goatcore's file stays; the goatstuff change is not in the tree
+            else:
+                differ.append(p)
+        if differ:
+            shown = ", ".join(differ[:5]) + (f" … and {len(differ) - 5} more" if len(differ) > 5 else "")
+            refuse("GB-064", "a goatstuff patch and goatcore leave different content at a path both repositories carry: " + shown,
+                   ["A path both repositories carry holds the same bytes in each; make the goatcore patch and the goatstuff patch agree on it.", reassemble])
     gone = sorted(p for p, b in want.items() if b is None and os.path.lexists(os.path.join(repo, p)))
     diff, err = differing(repo, {p: b for p, b in want.items() if b is not None})
     if diff is None:
