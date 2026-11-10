@@ -402,6 +402,15 @@ strings so a name lands exactly; a name with a control character, or longer than
 refused. A later session
 replaces the block.
 
+**What is reachable on this stack.** `propose` can succeed: a bilateral session (§6) reaches a
+combined PASS when each side runs phase 14 in the session with its own edge's trace and refusal
+probes (holding the partner's agreed identity for acceptance), both sides' `spire-server`
+commands, and a probe launcher, so that its bundle carries `cleanup/probes` PASS (§2.4); the test
+`test_two_operators_each_on_their_own_systems_reach_a_bilateral_pass` shows it end to end. A
+bundle from a drill run (with `FED_THEIRS_REST`, outside a session) cannot be used: `import`
+refuses it, because its payloads carry the run id, not the session's challenge. `propose` rewrites
+`<evidence>/bilateral/<session id>.json` and `.md` each time, as `combine` does.
+
 `ops/federation/validate-partners.py` checks the block: known fields only; status `exchanging`,
 `stale` or `degraded`; every field present for `exchanging`; digests well formed; both approvers
 named; and `exchanging` only beside `level: exchanging`, so the record cannot claim more than the
