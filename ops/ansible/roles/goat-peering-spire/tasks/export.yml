@@ -6,6 +6,12 @@
     msg: "peering_spire_enabled is false on {{ inventory_hostname }}: no bundle written for the exchange."
   when: not (peering_spire_enabled | bool)
 
+- name: peering-spire | enabled export names its SPIRE server
+  ansible.builtin.assert:
+    that: peering_spire_server_host | length > 0
+    fail_msg: "Set peering_spire_server_host when peering_spire_enabled is true."
+  when: peering_spire_enabled | bool
+
 - name: peering-spire | read our bundle
   ansible.builtin.command:
     argv:
@@ -17,7 +23,7 @@
       - show
       - -format
       - spiffe
-  delegate_to: "{{ peering_spire_server_host }}"
+  delegate_to: "{{ peering_spire_server_host if (peering_spire_enabled | bool) else inventory_hostname }}"
   register: _ps_ours
   changed_when: false
   when: peering_spire_enabled | bool
