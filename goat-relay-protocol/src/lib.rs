@@ -29,7 +29,7 @@
 //! - [`keepalive`] — in-conn HealthCheck state machines (Sender + Receiver).
 //! - [`error`] — protocol error types.
 
-#![doc(html_root_url = "https://docs.rs/goat-relay-protocol/0.0.1-alpha")]
+#![doc(html_root_url = "https://docs.rs/goat-relay-protocol/0.1.0")]
 
 pub mod error;
 pub mod framing;

@@ -164,6 +164,11 @@ pub enum Cmd {
         /// only what is declared on this machine and prompts for nothing.
         #[arg(long)]
         credentials: bool,
+        /// Require the browser tests' toolchain (the console's Playwright suite
+        /// the release's live rows run). Without this flag a missing toolchain
+        /// is a note, not a failure.
+        #[arg(long)]
+        browser_tests: bool,
     },
     /// Declared against recorded, per machine: converged, pending or unknown
     /// (C7, C8). Reads only. Exit 3 while any machine is not converged.
@@ -1150,7 +1155,7 @@ fn main() {
             let path = path.clone().unwrap_or_else(|| if !own.is_file() && lite.is_file() { lite } else { own });
             config::validate_report(&path)
         }
-        Cmd::Doctor { env, site, all, credentials } => doctor::run(&repo, env.as_deref(), cli.frozen, *credentials).map(|mut r| {
+        Cmd::Doctor { env, site, all, credentials, browser_tests } => doctor::run(&repo, env.as_deref(), cli.frozen, *credentials, *browser_tests).map(|mut r| {
             if let Some(site) = site {
                 let extra = doctor::site_inputs(&repo, site);
                 r = r.with_checks(extra);

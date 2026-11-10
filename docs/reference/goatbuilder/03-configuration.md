@@ -98,6 +98,7 @@ vocabulary is fixed:
 | `soak` | the candidate has run on the previous rung for at least `min_days` |
 | `convergence-evidence` | every host of the previous rung's environment converged on the candidate |
 | `operator-ack` | a named person acknowledged the hop |
+| `runtime-health` | on the previous rung, since its deploy and over at least the soak: zero container restarts, zero OOM kills, peak memory at most `max_memory_fraction` (default 0.8) of the container limit — read by `ops/release/rung-health.py` into the record |
 
 goat's own repository declares three rungs, `dev`, `preprod` and `prod`, with
 the gates shown above.

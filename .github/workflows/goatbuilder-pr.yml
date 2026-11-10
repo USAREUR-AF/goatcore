@@ -213,6 +213,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}   # cannot read the GHCR packages API; both sides refuse at the digest step with the same words
         run: ops/goatbuilder/parity-fastlane.sh crates/target/debug/goatbuilder microscope sha-b7a1621
+      - name: The ladder's readiness document and runtime-health gate (ops/release/tests)
+        working-directory: ${{ github.workspace }}
+        run: |
+          python3 ops/release/tests/test_readiness.py
+          python3 ops/release/tests/test_runtime_health.py
       - name: Every input a standup reaches is set — the scan finds the fixture's gaps in one pass
         working-directory: ${{ github.workspace }}
         run: python3 ops/scripts/test_standup_required_inputs.py

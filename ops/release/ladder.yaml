@@ -1,4 +1,11 @@
 # The promotion rungs. Add your goatnets in order.
+# Gate semantics: docs/design/release-graduation.md §4. A hop's gates, e.g.:
+#   gates:
+#     - id: candidate-record
+#     - id: soak
+#       min_days: 1
+#     - id: runtime-health          # graded on the hop's lower rung
+#       max_memory_fraction: 0.8    # peak memory ceiling, fraction of the limit
 rungs: []
 hops: []
 class_overrides: {}

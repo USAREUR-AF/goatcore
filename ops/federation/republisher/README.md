@@ -7,9 +7,9 @@ and republishes each sample under `from/<our sovereign_id>/`, the wire name.
 
 **On our core host, the host the peering edge dials, and both of its sessions dial our core
 router.** The local session subscribes to each offered `release/<set>/**`; the publishing session
-puts each sample under `from/<us>/<set>/**` on the same core. The edge already carries
-`from/<us>/**` from our core to the partner, so the partner-facing edge has no listener and no rule
-for this process.
+puts each sample under `from/<us>/<set>/**` on the same core. The edge carries the wire key of
+each set this agreement offers, `from/<us>/<set>/**`, from our core to the partner, so the
+partner-facing edge has no listener and no rule for this process.
 
 | | |
 |---|---|
@@ -17,11 +17,22 @@ for this process.
 | Inventory | the core host in group `<peering>_core`, under `[peering_cores:children]` |
 | Image | `ghcr.io/<owner>/goat-fed-republisher`, built by `.github/workflows/goat-fed-republisher-image.yml`, pinned by digest as `components.goat-fed-republisher` in `ops/pins/fleet-pins.yaml` |
 | Identity | one leaf for both sessions, `republisher.pem`, CN `fed.<us>.<them>.republisher.01`, minted in phase 8 by our CA |
-| Admitted by | the core subject `fed-rp-<them>` that `goat federate apply` renders into the ACL fragment: read the offered `release/<set>/**`, write `from/<us>/**`, nothing else |
+| Admitted by | the core subject `fed-rp-<them>` that `goat federate apply` renders into the ACL fragment: read the offered `release/<set>/**`, write their wire keys `from/<us>/<set>/**`, nothing else |
 | Worked when | `/metrics` on loopback reads `local_subscribed 1` and `edge_linked 1`, and the log has one `release … -> wire …` line per offered set |
 
-It is the **only writer of `from/<us>/**`** on our side. Stopping its container stops our data
-crossing without touching the edge.
+It is the **only writer of its sets' wire keys** for its peering. Stopping its container stops our
+data crossing on that peering without touching the edge.
+
+**Two peerings on one core.** Each peering has its own republisher, and each writes only the wire
+keys of the sets its own agreement offers. Every grant `goat federate apply` renders outward (the
+edge's egress, the core's `fed-r-<them>` read and `fed-rp-w-<them>` write) names those keys, never
+the whole `from/<us>/**`, so a set agreed with one partner is never readable by another partner's
+edge. The INTEREST rules (`fed-r-interest-<them>`, `fed-rp-w-interest-<them>`, the edge's
+`partner-receive-interest` and `core-return`) keep the whole `from/<us>/**`: a receiver subscribes to
+the whole wire name, zenoh refuses a subscriber declaration wider than the rule admitting it, and a
+declaration carries no data. A set BOTH agreements offer is written by both republishers: each partner then receives every
+sample of that set twice. Nothing in the agreement can remove that; it is a property of one writer
+per peering on a shared core.
 
 ## Why this is a process and not a router feature
 

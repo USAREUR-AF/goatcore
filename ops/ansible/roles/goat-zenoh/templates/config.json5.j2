@@ -624,7 +624,7 @@
         messages: ["declare_subscriber", "query", "declare_queryable"],
         flows: ["ingress"],
         permission: "allow",
-        key_exprs: [{% for _k in _p.release_key_exprs %}"{{ _k }}"{% if not loop.last %}, {% endif %}{% endfor %}],
+        key_exprs: [{% for _k in (_p.release_interest_key_exprs | default(_p.release_key_exprs, true)) %}"{{ _k }}"{% if not loop.last %}, {% endif %}{% endfor %}],
       },
 {% endif %}
 {% if (_p.republisher_cn | default('')) | length > 0 %}
@@ -658,7 +658,7 @@
         messages: ["declare_subscriber", "query", "declare_queryable"],
         flows: ["egress"],
         permission: "allow",
-        key_exprs: [{% for _k in _p.release_key_exprs %}"{{ _k }}"{% if not loop.last %}, {% endif %}{% endfor %}],
+        key_exprs: [{% for _k in (_p.release_interest_key_exprs | default(_p.release_key_exprs, true)) %}"{{ _k }}"{% if not loop.last %}, {% endif %}{% endfor %}],
       },
 {% endif %}
 {% endfor %}

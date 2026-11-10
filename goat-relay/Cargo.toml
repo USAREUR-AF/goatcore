@@ -1,6 +1,6 @@
 [package]
 name = "goat-relay"
-version = "0.0.1-alpha"
+version = "0.1.0"
 edition = "2021"
 rust-version = "1.75"
 license = "Apache-2.0"
@@ -11,7 +11,7 @@ keywords = ["netbird", "relay", "wireguard", "vpn", "mesh"]
 categories = ["network-programming"]
 
 [dependencies]
-goat-relay-protocol = { path = "../goat-relay-protocol", version = "0.0.1-alpha" }
+goat-relay-protocol = { path = "../goat-relay-protocol", version = "0.1.0" }
 # Async runtime per ADR 0709 D7. NOT `rt-multi-thread` — single-threaded
 # `Builder::new_current_thread()` per pinned thread.
 tokio = { version = "1", features = ["rt", "sync", "net", "io-util", "macros", "time", "signal"] }

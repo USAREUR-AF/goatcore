@@ -162,7 +162,7 @@ dependencies = [
 
 [[package]]
 name = "goat-relay-protocol"
-version = "0.0.1-alpha"
+version = "0.1.0"
 dependencies = [
  "bytes",
  "thiserror",

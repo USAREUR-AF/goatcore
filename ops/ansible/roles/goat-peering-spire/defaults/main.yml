@@ -27,6 +27,8 @@ peering_spire_bundle_port: 8443
 # TLS passes through both untouched: https_spiffe authenticates the far server by its
 # own SVID, so the forwards see ciphertext and vouch for nothing.
 peering_spire_outbound_listen: ""
+# Every peering on one edge host forwards outbound on peering_spire_outbound_listen, so
+# each needs its own port here; the role refuses one another peering already listens on.
 peering_spire_outbound_port: 18443
 
 # From the agreement, through federation-<them>-transport.yml.
@@ -36,3 +38,10 @@ peering_spire_remote_link_ip: "{{ goat_peering_remote_link_ip | default('') }}"
 
 peering_spire_our_bundle_file: "{{ fed_work | default('') }}/ours.spiffe-bundle"
 peering_spire_their_bundle_file: "{{ fed_work | default('') }}/theirs.spiffe-bundle"
+
+# The partner these forwards serve, in their unit names: goat-peering-bundle-in-<partner>
+# and goat-peering-bundle-out-<partner>. One edge host can carry several peerings, and
+# each has its own pair of forwards; a fixed name would make the second peering replace
+# the first's. Rendered by `goat federate apply` (federation-<them>-transport.yml).
+peering_spire_partner_id: "{{ goat_peering_partner_sovereign | default('') }}"
+

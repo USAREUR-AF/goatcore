@@ -28,7 +28,7 @@ traffic, the bytes flow, only the per-packet AEAD bypass benefit
 See [`defaults/main.yml`](defaults/main.yml). Common overrides:
 
 ```yaml
-goat_relay_image: ghcr.io/usareur-af/goat-relay:v0.0.1-alpha
+goat_relay_image: ghcr.io/usareur-af/goat-relay:v0.1.0
 goat_relay_bind_addr: "0.0.0.0:33073"
 goat_relay_cert_host_path: /etc/goat-relay/cert.pem
 goat_relay_key_host_path: /etc/goat-relay/key.pem
@@ -58,7 +58,7 @@ The role assumes:
   roles:
     - role: goat-relay
       vars:
-        goat_relay_image: ghcr.io/usareur-af/goat-relay:v0.0.1-alpha
+        goat_relay_image: ghcr.io/usareur-af/goat-relay:v0.1.0
 ```
 
 ```bash

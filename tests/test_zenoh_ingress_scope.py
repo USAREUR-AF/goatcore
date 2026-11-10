@@ -110,7 +110,11 @@ class RolePreflight(unittest.TestCase):
         bindir = self.root / 'bin'
         bindir.mkdir()
         docker = bindir / 'docker'
-        docker.write_text('#!/bin/sh\nprintf "invoked\\n" >> "$INGRESS_TRACE"\n'
+        # `docker ps` answers from INGRESS_PS (core discovery); anything else
+        # is the config read.
+        docker.write_text('#!/bin/sh\n'
+                          'if [ "$1" = ps ]; then printf "$INGRESS_PS"; exit 0; fi\n'
+                          'printf "invoked %s\\n" "$*" >> "$INGRESS_TRACE"\n'
                           'if [ "$INGRESS_UNREADABLE" = 1 ]; then exit 1; fi\n'
                           'cat "$INGRESS_CONFIG"\n')
         docker.chmod(0o755)
@@ -124,19 +128,22 @@ class RolePreflight(unittest.TestCase):
                     'ANSIBLE_NOCOLOR': '1', 'ANSIBLE_STDOUT_CALLBACK': 'default',
                     'OBJC_DISABLE_INITIALIZE_FORK_SAFETY': 'YES'}
 
-    def run_play(self, text, enabled=True, unreadable=False, required=None):
+    def run_play(self, text, enabled=True, unreadable=False, required=None,
+                 ps='coreid\\tsample-zenoh-router\\t\\n', container=None):
         self.input.write_text(text)
         task = ROOT / 'ops/ansible/roles/goat-zenoh-edge/tasks/ingress-storage-check.yml'
         play = [{'hosts': 'localhost', 'connection': 'local', 'gather_facts': False,
                  'become': False, 'vars': {
                      'ansible_python_interpreter': sys.executable,
                      'goat_zenoh_edge_ingress_scope_check': enabled,
-                     'goat_zenoh_edge_ingress_key_exprs': required or REQUIRED},
+                     'goat_zenoh_edge_ingress_key_exprs': required or REQUIRED,
+                     **({'goat_zenoh_edge_core_container': container} if container else {})},
                  'tasks': [{'ansible.builtin.include_tasks': str(task)}]}]
         path = self.root / 'play.yml'
         path.write_text(yaml.safe_dump(play, sort_keys=False))
         return subprocess.run(['ansible-playbook', '-i', 'localhost,', str(path)],
-                              env={**self.env, 'INGRESS_UNREADABLE': '1' if unreadable else '0'},
+                              env={**self.env, 'INGRESS_UNREADABLE': '1' if unreadable else '0',
+                                   'INGRESS_PS': ps},
                               capture_output=True, text=True, timeout=45)
 
     def test_legacy_plus_scoped_passes_the_real_role_tasks(self):
@@ -180,6 +187,42 @@ class RolePreflight(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertNotIn(marker, result.stdout + result.stderr)
         self.assertIn('Cannot inspect storage declarations', result.stdout)
+
+    def test_the_standard_core_name_is_discovered_and_read(self):
+        result = self.run_play(config(*REQUIRED))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('core router: sample-zenoh-router', result.stdout)
+        self.assertIn('exec sample-zenoh-router cat', self.trace.read_text())
+
+    def test_the_role_label_and_legacy_name_are_discovered(self):
+        for row, name in (('cid\\tcustom-core\\tzenoh-core\\n', 'custom-core'),
+                          ('lid\\tgoat-zenoh\\t\\n', 'goat-zenoh')):
+            result = self.run_play(config(*REQUIRED),
+                                   ps='eid\\tgoat-zenoh-edge-sample\\t\\n' + row)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('core router: ' + name, result.stdout)
+
+    def test_no_core_router_is_reported_as_not_run(self):
+        result = self.run_play(config(*REQUIRED), ps='eid\\tgoat-zenoh-edge-sample\\t\\n')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('could not run', result.stdout)
+        self.assertIn('no core router found', result.stdout)
+        self.assertFalse(self.trace.exists())
+        self.assertNotIn('PASS: a matching receive store', result.stdout)
+
+    def test_several_core_routers_are_reported_as_ambiguous(self):
+        result = self.run_play(config(*REQUIRED),
+                               ps='a\\tsample-zenoh-router\\t\\nb\\tgoat-zenoh\\t\\n')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('ambiguous: sample-zenoh-router, goat-zenoh', result.stdout)
+        self.assertFalse(self.trace.exists())
+        self.assertNotIn('PASS: a matching receive store', result.stdout)
+
+    def test_an_explicit_container_wins_over_discovery(self):
+        result = self.run_play(config(*REQUIRED), container='chosen-core',
+                               ps='a\\tsample-zenoh-router\\t\\nb\\tgoat-zenoh\\t\\n')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('exec chosen-core cat', self.trace.read_text())
 
 
 if __name__ == '__main__':

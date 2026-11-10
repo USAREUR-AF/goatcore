@@ -94,6 +94,31 @@ worse-looking than an attributed one. The waived graduations of 2026-08-10/11/12
 `id-admin-console` records that moved both rungs) were backfilled into this
 field from their own `operator_ack` prose; `test_readiness.py` fails if a
 record says a soak was waived and carries no field.
+**Runtime health is a field, captured at the soak's end.** The acceptance rows
+show that each service answers; they do not show how it behaved under a day of
+real load. `ops/release/rung-health.py <component> --goatnet <goatnet>
+--write-record <record>` reads that from the hosts of the rung and writes it
+into the record:
+
+```yaml
+runtime_health:
+  preprod:                       # the rung it was read on (the hop's lower rung)
+    captured: '2026-08-12T10:00:00Z'
+    deployed: '2026-08-10T09:00:00Z'   # the newest container's Created time
+    digests: [sha256:…]          # what was running — must include the candidate's
+    restarts: 0                  # docker RestartCount, summed over the containers
+    oom_kills: 0                 # kernel OOM kills charged to the containers' cgroups
+    peak_memory_fraction: 0.42   # highest memory.peak / container limit
+    containers: [...]            # the per-container readings behind the totals
+runtime_health_override:         # only when an operator graduates past a failure
+  preprod: {by: <who>, reason: <why>, recorded: <date>, failures: [...]}
+```
+
+A count the reading could not obtain is `null`, never `0`, and fails the gate.
+Unlike a soak waiver, an override with a named `by` and a `reason` satisfies the
+gate: it is the operator's decision to ship past a measured failure, and the
+failures it overrode are kept beside it.
+
 Records are the durable answer to "how did this reach prod?" — greppable,
 reviewable in the PR that made the change, and cheap enough that skipping one
 is never justified. They are governance metadata, not a deploy mechanism: the
@@ -109,6 +134,25 @@ deploy ledger (ADR 1060) remains the only truth about what ran.
 | `validation-evidence` | ✓ | record names what validated the change — the ADR 1115 acceptance suite when live; CI + targeted tests until then |
 | `validation-evidence` (dev→preprod, planned) | — | same presence check on the dev hop; for goat-id-console the named validator is the browser-driven intake smoke (`ops/scripts/onboard-intake-smoke.sh`, manifest row `intake-form-browser-submit`), run against zagros-dev after the candidate deploy. The candidate is a release-candidate tag and the rows are the ones the change affects — [release-candidate-validation.md](release-candidate-validation.md) ([ADR 1173](../adr/1173-release-candidate-tags-trigger-affected-flow-validation.md)) |
 | `operator-ack` | ✓ | a named human approves the prod hop (`graduate --ack`) |
+| `runtime-health` | any hop that declares it | the record's `runtime_health.<lower rung>` block (§3) was captured no earlier than the soak's end, on the candidate digest, and shows **0 restarts, 0 OOM kills, and peak memory ≤ `max_memory_fraction` of the container limit** (default 0.8). Refused unless `runtime_health_override.<lower rung>` names who and why |
+
+The runtime-health gate is configured per hop in `ladder.yaml`, and applies to
+every hop that lists it, dev→preprod as well as preprod→prod:
+
+```yaml
+- id: runtime-health
+  max_memory_fraction: 0.8      # peak memory ceiling, fraction of the limit, in (0, 1]
+  min_days: 1                   # default: the hop's soak min_days, else 1
+  require_memory_limit: true    # a container with no limit fails (default true)
+  records_opened_from: '<date>' # optional: C10 leaves older open candidates to `graduate`
+```
+
+It is graded on the hop's **lower** rung — the goatnet the candidate soaked
+on. `graduate` enforces it on preprod→prod. The dev→preprod move is a pin edit,
+not a `graduate`, so `check` C10 holds that hop: a candidate already running on
+preprod must pass the gate for dev. `graduate --override-runtime-health REASON
+--ack NAME` records an override and proceeds; for a dev override, or a set
+member, the same block is written into the record in the PR.
 
 Evidence gates are **presence** checks: the tool requires the record to name
 evidence; it cannot verify the evidence is true. That signature is the
@@ -123,9 +167,22 @@ only — soak and ack weight belongs at the prod boundary.
 |---|---|
 | `status` | cross-rung matrix per component, graded: `aligned` / `candidate` / `hotfix-backfill-owed` / `env-local` / `legacy-declared` / `UNDECLARED-SKEW`; every adjacent hop (dev→preprod, preprod→prod) is graded and the component carries its worst hop, so a deviation on the middle rung alone is seen; lists open records |
 | `open <c> --ref --reason` | writes the candidate record; **prints** the exact preprod deviation edit |
-| `graduate <c> --ack` | verifies every hop gate, marks the record graduated, **prints** the fold-to-fleet edit; with no ladder candidate open it closes the component's open hotfix record instead — a fastlane's backfill |
+| `graduate <c> --ack` | verifies every hop gate, marks the record graduated, **prints** the fold-to-fleet edit; with no ladder candidate open it closes the component's open hotfix record instead — a fastlane's backfill. `--override-runtime-health REASON` writes the override (§3) and graduates past a failing runtime-health gate |
 | `hotfix <c> --ref --reason --ack` | writes the hotfix record; prints the prod deviation edit |
-| `check` | CI invariants C1–C9 (§6); C9 fails an open hotfix record older than three days with no validation evidence |
+| `check` | CI invariants C1–C10 (§6); C9 fails an open hotfix record older than three days with no validation evidence |
+
+`ops/release/rung-health.py <component> --goatnet <goatnet> [--write-record
+<record>]` is the reading behind the runtime-health gate. It is read-only on
+the host: one `sudo -n python3` per host reads `docker inspect`, the
+container's cgroup (`memory.peak`, `memory.events`, cgroup v1 equivalents) and
+the kernel journal since the container was created. Hosts and container names
+come from the component's connection map (`hosts:` in
+`ops/ansible/roles/<component>/deploy-history.yml`, narrowed to `site:
+<goatnet>`), reached directly, through `GOAT_ROWS_SSH_JUMP`, or through the
+goatnet's door — the same paths `rollback.sh` and the acceptance rows use. It
+prints the block as JSON and a one-line verdict computed by the gate's own
+function; exit 0 pass, 1 fail, 2 unknown. `--host` and `--container` read a
+component that has no connection map.
 
 It **prints pin edits instead of making them**, on purpose: `fleet-pins.yaml`'s
 comments are load-bearing review context that YAML round-tripping would
@@ -139,12 +196,17 @@ its pin edit (or vice versa) fails C3–C6. First run against the real tree:
 C1 ladder well-formed, rungs name real goatnets, gates/classes known, every
 override and allowlist row carries a reason · C2 records parse, name real
 components, digest-pinned refs, hotfix ⇒ ack, a `soak_waiver:` carries a reason
-and an explicit `by` (`null` allowed, absent not) · C3 preprod-ahead skew ⇒ open
+and an explicit `by` (`null` allowed, absent not), a `runtime_health_override:`
+names a non-empty `by` and `reason` per rung · C3 preprod-ahead skew ⇒ open
 candidate record or shrink-only `legacy_skew_allowlist` row · C4 prod-ahead
 skew ⇒ hotfix record · C5 latest graduated record's ref = current fleet value
 (the fold actually happened) · C6 no record stays open for a ref its rung no
-longer runs (stale candidates get abandoned, not forgotten). Current-tree, not
-diff-scoped: a violation cannot hide behind an unrelated PR.
+longer runs (stale candidates get abandoned, not forgotten) · C10 an open
+ladder candidate running on the upper rung of a live hop that lists
+`runtime-health` passes that gate for the lower rung, or carries an override
+(records opened before the gate's `records_opened_from` are left to
+`graduate`). Current-tree, not diff-scoped: a violation cannot hide behind an
+unrelated PR.
 
 ## 7. Observation, and the line not crossed
 

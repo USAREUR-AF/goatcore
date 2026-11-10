@@ -22,19 +22,26 @@
 use std::time::Duration;
 
 use anyhow::{anyhow, bail, Context, Result};
-use futures::StreamExt;
-
-/// Concurrent object fetches per listing page. Bounded rather than unbounded:
-/// this reads a shared MinIO other surfaces depend on, and a burst of thousands
-/// of parallel GETs would trade one surface's latency for everyone else's.
-const AUDIT_FETCH_CONCURRENCY: usize = 16;
 use chrono::{Datelike, Timelike, Utc};
+use futures::StreamExt;
 use rusty_s3::{actions::S3Action, Bucket, Credentials, UrlStyle};
 use serde::Deserialize;
 use tracing::{debug, warn};
 use url::Url;
 
 use crate::audit_event::AuditEvent;
+
+/// Default for [`AuditTailConfig::fetch_concurrency`]. Bounded rather than
+/// unbounded: this reads a shared MinIO other surfaces depend on, and a burst
+/// of parallel GETs would trade one surface's latency for everyone else's.
+/// Each in-flight fetch can hold a whole object body, so this number times the
+/// largest object is the walker's peak body memory.
+pub const DEFAULT_AUDIT_FETCH_CONCURRENCY: usize = 4;
+
+/// Concurrent fetches for [`fetch_presigned_events`]. Higher than the walker's
+/// default because every URL in a presigned batch shares one short TTL; at most
+/// this many bodies are held at once.
+const PRESIGNED_FETCH_CONCURRENCY: usize = 16;
 
 /// Operator-tunable config. `enabled` gates the real S3 calls; the
 /// defaults make the walker a no-op so a missing MinIO substrate doesn't
@@ -59,6 +66,11 @@ pub struct AuditTailConfig {
     /// Hard ceiling on objects fetched per call. Defends against a
     /// runaway bucket growing the working set.
     pub max_objects: usize,
+    /// Objects fetched concurrently, in listing order. Each body is parsed
+    /// and dropped when its turn in listing order comes, so at most this many
+    /// object bodies are held at once: peak body memory is about
+    /// `fetch_concurrency` x the largest object. `0` is treated as `1`.
+    pub fetch_concurrency: usize,
 }
 
 impl Default for AuditTailConfig {
@@ -73,6 +85,7 @@ impl Default for AuditTailConfig {
             secret_key: String::new(),
             request_timeout: Duration::from_secs(30),
             max_objects: 5_000,
+            fetch_concurrency: DEFAULT_AUDIT_FETCH_CONCURRENCY,
         }
     }
 }
@@ -188,8 +201,10 @@ impl AuditTail {
     }
 
     /// The walk, streaming. Invokes `on_event` for each parsed AuditEvent as
-    /// it is decoded and keeps nothing, so peak memory is one object's worth
-    /// of bytes rather than the whole window.
+    /// it is decoded and keeps no events. Objects are fetched
+    /// `cfg.fetch_concurrency` at a time and each body is dropped once parsed,
+    /// so peak memory is about `fetch_concurrency` object bodies, independent
+    /// of the window or page size.
     ///
     /// Ordering, filtering, the max_objects ceiling and the returned stats are
     /// IDENTICAL to [`Self::recent_events`] — that method is now a thin wrapper
@@ -230,9 +245,12 @@ impl AuditTail {
                 // and a 24 h window can hold thousands of objects, even against a MinIO that
                 // answers a single request in milliseconds.
                 //
-                // Fetch a page's objects concurrently, bounded. Order is
-                // preserved by `buffered` (not `buffer_unordered`), so any
-                // caller relying on listing order still gets it.
+                // Fetch a page's objects concurrently, bounded, and parse each
+                // as it comes off the stream. `buffered` (not
+                // `buffer_unordered`) keeps listing order, and it holds at most
+                // `fetch_concurrency` futures — in flight or finished — so no
+                // more than that many bodies are alive at once. Collecting the
+                // stream first would hold every body of the page (up to 1000).
                 let take = self
                     .cfg
                     .max_objects
@@ -245,22 +263,19 @@ impl AuditTail {
                     );
                 }
                 stats.objects_listed += resp.contents.len();
-                let keys: Vec<String> =
-                    resp.contents.iter().take(take).map(|o| o.key.clone()).collect();
                 let hit_ceiling = take < resp.contents.len();
-                let fetched: Vec<(String, Result<Vec<u8>, anyhow::Error>)> =
-                    futures::stream::iter(keys.into_iter().map(|key| {
+                let mut fetches = futures::stream::iter(
+                    resp.contents.into_iter().take(take).map(|o| {
                         let http = &self.http;
                         async move {
-                            let r = fetch_object(http, bucket, creds, &key).await;
-                            (key, r)
+                            let r = fetch_object(http, bucket, creds, &o.key).await;
+                            (o.key, r)
                         }
-                    }))
-                    .buffered(AUDIT_FETCH_CONCURRENCY)
-                    .collect()
-                    .await;
+                    }),
+                )
+                .buffered(self.cfg.fetch_concurrency.max(1));
 
-                for (key, res) in fetched {
+                while let Some((key, res)) = fetches.next().await {
                     match res {
                         Ok(body) => {
                             stats.objects_fetched += 1;
@@ -343,17 +358,17 @@ pub async fn fetch_presigned_events(urls: &[String]) -> Result<PresignedFetch> {
         .timeout(Duration::from_secs(60))
         .build()
         .context("build presigned-fetch client")?;
-    let fetched: Vec<(&String, std::result::Result<Vec<u8>, String>)> =
-        futures::stream::iter(urls.iter().map(|u| {
-            let http = &http;
-            async move { (u, fetch_presigned_object(http, u).await) }
-        }))
-        .buffered(AUDIT_FETCH_CONCURRENCY)
-        .collect()
-        .await;
+    // Parse each body as it comes off the stream rather than collecting the
+    // stream first: at most PRESIGNED_FETCH_CONCURRENCY bodies are held at
+    // once, not every object of the window.
+    let mut fetches = futures::stream::iter(urls.iter().map(|u| {
+        let http = &http;
+        async move { (u, fetch_presigned_object(http, u).await) }
+    }))
+    .buffered(PRESIGNED_FETCH_CONCURRENCY);
 
     let mut out = PresignedFetch::default();
-    for (u, res) in fetched {
+    while let Some((u, res)) = fetches.next().await {
         let body = match res {
             Ok(b) => b,
             Err(reason) => {
@@ -677,6 +692,248 @@ mod tests {
         };
         let msg = AuditTail::new(cfg).err().unwrap().to_string();
         assert!(msg.contains("endpoint, access_key, secret_key"), "{msg}");
+    }
+
+    /// A minimal path-style S3 stand-in for the walker: one bucket, `objects`
+    /// keys `obj-000.ndjson`, `obj-001.ndjson`, ... listed `page_size` per
+    /// ListObjectsV2 page with a numeric continuation token. Object `i` holds
+    /// one event whose `key_expr` is `v/obj/<i>`. `object_gets` counts object
+    /// GETs the server has received, so a test can see how far ahead of the
+    /// parser the fetcher has run.
+    struct S3Stub {
+        endpoint: String,
+        object_gets: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    fn stub_event(i: usize) -> String {
+        format!(
+            concat!(
+                r#"{{"vendor":"v","key_expr":"v/obj/{}","ts":"2026-09-21T12:00:00.000Z","#,
+                r#""payload_hash":"sha256:00","payload_len":0}}"#,
+                "\n"
+            ),
+            i
+        )
+    }
+
+    #[allow(clippy::disallowed_methods)] // test-only server; dies with the test runtime
+    async fn s3_stub(objects: usize, page_size: usize) -> S3Stub {
+        use std::sync::atomic::Ordering;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let object_gets = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let gets = object_gets.clone();
+        tokio::spawn(async move {
+            while let Ok((mut sock, _)) = listener.accept().await {
+                let gets = gets.clone();
+                tokio::spawn(async move {
+                    let mut raw = Vec::new();
+                    let mut buf = [0u8; 4096];
+                    loop {
+                        match sock.read(&mut buf).await {
+                            Ok(0) | Err(_) => break,
+                            Ok(n) => {
+                                raw.extend_from_slice(&buf[..n]);
+                                if raw.windows(4).any(|w| w == b"\r\n\r\n") {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    let req = String::from_utf8_lossy(&raw);
+                    let target = req.split_whitespace().nth(1).unwrap_or("/").to_string();
+                    let url = Url::parse(&format!("http://stub{target}")).unwrap();
+                    let (status, body) = if url.path() == "/audit-integrity"
+                        || url.path() == "/audit-integrity/"
+                    {
+                        let start: usize = url
+                            .query_pairs()
+                            .find(|(k, _)| k == "continuation-token")
+                            .and_then(|(_, v)| v.parse().ok())
+                            .unwrap_or(0);
+                        let end = (start + page_size).min(objects);
+                        let mut xml = String::from("<ListBucketResult>");
+                        for i in start..end {
+                            xml.push_str(&format!(
+                                "<Contents><Key>obj-{i:03}.ndjson</Key></Contents>"
+                            ));
+                        }
+                        if end < objects {
+                            xml.push_str(&format!(
+                                "<IsTruncated>true</IsTruncated>\
+                                 <NextContinuationToken>{end}</NextContinuationToken>"
+                            ));
+                        }
+                        xml.push_str("</ListBucketResult>");
+                        ("200 OK", xml)
+                    } else if let Some(i) = url
+                        .path()
+                        .strip_prefix("/audit-integrity/obj-")
+                        .and_then(|r| r.strip_suffix(".ndjson"))
+                        .and_then(|n| n.parse::<usize>().ok())
+                    {
+                        gets.fetch_add(1, Ordering::SeqCst);
+                        ("200 OK", stub_event(i))
+                    } else {
+                        ("404 Not Found", String::new())
+                    };
+                    let resp = format!(
+                        "HTTP/1.1 {status}\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    let _ = sock.write_all(resp.as_bytes()).await;
+                });
+            }
+        });
+        S3Stub {
+            endpoint: format!("http://{addr}"),
+            object_gets,
+        }
+    }
+
+    fn stub_cfg(stub: &S3Stub) -> AuditTailConfig {
+        AuditTailConfig {
+            endpoint: stub.endpoint.clone(),
+            ..live_cfg()
+        }
+    }
+
+    fn object_index(ev: &AuditEvent) -> usize {
+        ev.key_expr.rsplit('/').next().unwrap().parse().unwrap()
+    }
+
+    #[test]
+    fn default_fetch_concurrency_is_small() {
+        assert_eq!(
+            AuditTailConfig::default().fetch_concurrency,
+            DEFAULT_AUDIT_FETCH_CONCURRENCY
+        );
+        assert_eq!(DEFAULT_AUDIT_FETCH_CONCURRENCY, 4);
+    }
+
+    /// The walker must parse each object as it arrives, not fetch the whole
+    /// page first: when the event from object `i` is handed to `on_event`,
+    /// the server has seen at most `i + 1 + fetch_concurrency` object GETs.
+    /// Collecting the page before parsing has fetched all 40 by the time the
+    /// first event is seen.
+    #[tokio::test]
+    async fn stream_parses_each_object_before_fetching_past_the_concurrency_window() {
+        use std::sync::atomic::Ordering;
+        let stub = s3_stub(40, 1000).await;
+        let concurrency = 3;
+        let tail = AuditTail::new(AuditTailConfig {
+            fetch_concurrency: concurrency,
+            ..stub_cfg(&stub)
+        })
+        .unwrap();
+        let mut seen: Vec<(usize, usize)> = Vec::new();
+        let gets = stub.object_gets.clone();
+        let stats = tail
+            .stream_recent_events(1, None, |ev| {
+                seen.push((object_index(&ev), gets.load(Ordering::SeqCst)));
+            })
+            .await
+            .unwrap();
+        assert_eq!(stats.objects_fetched, 40);
+        assert_eq!(seen.len(), 40);
+        assert!(
+            seen[0].1 <= concurrency,
+            "first event parsed only after {} of 40 objects were requested",
+            seen[0].1
+        );
+        for (i, gets_then) in &seen {
+            assert!(
+                *gets_then <= i + 1 + concurrency,
+                "event from object {i} parsed after {gets_then} GETs (concurrency {concurrency})"
+            );
+        }
+    }
+
+    /// A `fetch_concurrency` of 0 must not stall the walk.
+    #[tokio::test]
+    async fn zero_fetch_concurrency_still_reads_every_object() {
+        let stub = s3_stub(5, 1000).await;
+        let tail = AuditTail::new(AuditTailConfig {
+            fetch_concurrency: 0,
+            ..stub_cfg(&stub)
+        })
+        .unwrap();
+        let (events, stats) = tail.recent_events(1, None).await.unwrap();
+        assert_eq!(events.len(), 5);
+        assert_eq!(stats.objects_fetched, 5);
+    }
+
+    /// Listing order is kept across pages, whatever the concurrency.
+    #[tokio::test]
+    async fn stream_keeps_listing_order_across_pages() {
+        let stub = s3_stub(23, 7).await;
+        let tail = AuditTail::new(AuditTailConfig {
+            fetch_concurrency: 5,
+            ..stub_cfg(&stub)
+        })
+        .unwrap();
+        let mut order = Vec::new();
+        let stats = tail
+            .stream_recent_events(1, None, |ev| order.push(object_index(&ev)))
+            .await
+            .unwrap();
+        assert_eq!(order, (0..23).collect::<Vec<_>>());
+        assert_eq!(stats.objects_listed, 23);
+        assert_eq!(stats.objects_fetched, 23);
+        assert_eq!(stats.events_parsed, 23);
+    }
+
+    /// The max_objects ceiling stops mid-page and the stats say so: page one
+    /// (4 objects) is read whole, page two is listed (4 more) but only one
+    /// object of it is fetched.
+    #[tokio::test]
+    async fn stream_honours_the_max_objects_ceiling() {
+        let stub = s3_stub(12, 4).await;
+        let tail = AuditTail::new(AuditTailConfig {
+            max_objects: 5,
+            fetch_concurrency: 2,
+            ..stub_cfg(&stub)
+        })
+        .unwrap();
+        let mut order = Vec::new();
+        let stats = tail
+            .stream_recent_events(1, None, |ev| order.push(object_index(&ev)))
+            .await
+            .unwrap();
+        assert_eq!(order, vec![0, 1, 2, 3, 4]);
+        assert_eq!(stats.objects_listed, 8);
+        assert_eq!(stats.objects_fetched, 5);
+        assert_eq!(stats.events_parsed, 5);
+    }
+
+    /// `recent_events` and `stream_recent_events` return the same events in
+    /// the same order with the same stats, filtered or not.
+    #[tokio::test]
+    async fn recent_and_stream_agree_on_events_and_stats() {
+        let stub = s3_stub(17, 6).await;
+        let tail = AuditTail::new(AuditTailConfig {
+            max_objects: 15,
+            ..stub_cfg(&stub)
+        })
+        .unwrap();
+        for filter in [None, Some("v"), Some("other")] {
+            let (events, a) = tail.recent_events(1, filter).await.unwrap();
+            let mut streamed = Vec::new();
+            let b = tail
+                .stream_recent_events(1, filter, |ev| streamed.push(ev.key_expr))
+                .await
+                .unwrap();
+            let listed: Vec<String> = events.into_iter().map(|e| e.key_expr).collect();
+            assert_eq!(listed, streamed, "filter {filter:?}");
+            assert_eq!(
+                (a.objects_listed, a.objects_fetched, a.events_parsed),
+                (b.objects_listed, b.objects_fetched, b.events_parsed),
+                "filter {filter:?}"
+            );
+            assert_eq!(a.objects_fetched, 15);
+            assert_eq!(listed.len(), if filter == Some("other") { 0 } else { 15 });
+        }
     }
 
     #[test]

@@ -30,6 +30,15 @@
       {{ peering_spire_bundle_port }}: the tunnel firewall drops every port it was not
       told about, and a dropped bundle endpoint reads as a partner who never rotated.
 
+- name: peering-spire | the forwards are named for the partner
+  ansible.builtin.assert:
+    that:
+      - peering_spire_partner_id is match('^[a-z0-9][a-z0-9-]{1,15}$')
+    fail_msg: >-
+      goat-peering-spire needs peering_spire_partner_id (the partner's sovereign_id, from
+      the rendered agreement) to name this peering's forward units; got
+      '{{ peering_spire_partner_id }}'.
+
 - name: peering-spire | read the bundle the exchange placed
   ansible.builtin.set_fact:
     _ps_their_bundle: "{{ lookup('ansible.builtin.file', peering_spire_their_bundle_file) }}"
@@ -88,6 +97,94 @@
   delegate_to: "{{ peering_spire_server_host }}"
   changed_when: true
 
+# Before forwards were named for the partner, one pair served the host's one peering
+# under fixed names. Such a unit is this peering's own only when it listens where this
+# peering's new unit will: then it is replaced. A fixed-name unit listening anywhere
+# else is another peering's live forward, and removing it would silently stop that
+# partner's bundle refresh: refuse, so that peering's phase 13 migrates its own first.
+- name: peering-spire | the forward sockets on this host, legacy and per partner
+  ansible.builtin.find:
+    paths: /etc/systemd/system
+    patterns: "goat-peering-bundle-*.socket"
+  register: _ps_sockets
+
+- name: peering-spire | read them
+  ansible.builtin.slurp:
+    src: "{{ item.path }}"
+  loop: "{{ _ps_sockets.files }}"
+  loop_control:
+    label: "{{ item.path }}"
+  register: _ps_socket_raw
+
+- name: peering-spire | what each forward socket listens on
+  ansible.builtin.set_fact:
+    _ps_listen: >-
+      {%- set out = {} -%}
+      {%- for r in _ps_socket_raw.results | default([]) -%}
+      {%-   set name = r.item.path | basename -%}
+      {%-   for line in (r.content | b64decode).splitlines() if line.startswith('ListenStream=') -%}
+      {%-     set _ = out.update({name: line.split('=', 1)[1] | trim}) -%}
+      {%-   endfor -%}
+      {%- endfor -%}
+      {{ out }}
+    _ps_want:
+      in: "{{ peering_spire_local_link_ip }}:{{ peering_spire_bundle_port }}"
+      out: "{{ peering_spire_outbound_listen }}:{{ peering_spire_outbound_port }}"
+
+- name: peering-spire | no other peering's forward listens where ours will
+  ansible.builtin.assert:
+    that: _ps_taken | length == 0
+    fail_msg: >-
+      goat-peering-spire refuses: {{ _ps_taken | join('; ') }}. A fixed-name forward
+      belongs to the peering that wrote it before forwards were named per partner: run
+      that peering's phase 13 first and it moves to its own names. A per-partner forward
+      on our address means two peerings share it: give this peering its own
+      peering_spire_outbound_port (the outbound forwards share
+      peering_spire_outbound_listen).
+  vars:
+    _ps_taken: >-
+      {%- set out = [] -%}
+      {%- for dir in ['in', 'out'] -%}
+      {%-   set legacy = 'goat-peering-bundle-' ~ dir ~ '.socket' -%}
+      {%-   if legacy in _ps_listen and _ps_listen[legacy] != _ps_want[dir] -%}
+      {%-     set _ = out.append(legacy ~ ' listens on ' ~ _ps_listen[legacy] ~ ', another peering\'s address') -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {%- for name, addr in _ps_listen.items() -%}
+      {%-   if name is match('^goat-peering-bundle-(in|out)-.+\\.socket$') and not name.endswith('-' ~ peering_spire_partner_id ~ '.socket') and addr in [_ps_want['in'], _ps_want['out']] -%}
+      {%-     set _ = out.append(name ~ ' already listens on ' ~ addr) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: peering-spire | stop and remove this peering's own fixed-name forwards
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: stopped
+    enabled: false
+  loop: "{{ _ps_legacy_own }}"
+  failed_when: false
+  vars:
+    _ps_legacy_own: >-
+      {%- set out = [] -%}
+      {%- for dir in ['in', 'out'] if ('goat-peering-bundle-' ~ dir ~ '.socket') in _ps_listen -%}
+      {%-   set _ = out.extend(['goat-peering-bundle-' ~ dir ~ '.socket', 'goat-peering-bundle-' ~ dir ~ '.service']) -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: peering-spire | delete this peering's own fixed-name forward unit files
+  ansible.builtin.file:
+    path: "/etc/systemd/system/{{ item }}"
+    state: absent
+  loop: "{{ _ps_legacy_own }}"
+  vars:
+    _ps_legacy_own: >-
+      {%- set out = [] -%}
+      {%- for dir in ['in', 'out'] if ('goat-peering-bundle-' ~ dir ~ '.socket') in _ps_listen -%}
+      {%-   set _ = out.extend(['goat-peering-bundle-' ~ dir ~ '.socket', 'goat-peering-bundle-' ~ dir ~ '.service']) -%}
+      {%- endfor -%}
+      {{ out }}
+
 - name: peering-spire | forward units
   ansible.builtin.template:
     src: "{{ item.src }}"
@@ -96,22 +193,49 @@
     group: root
     mode: "0644"
   loop:
-    - { src: forward.socket.j2, name: goat-peering-bundle-in.socket, listen: "{{ peering_spire_local_link_ip }}:{{ peering_spire_bundle_port }}" }
-    - { src: forward.service.j2, name: goat-peering-bundle-in.service, target: "{{ peering_spire_server_addr }}:{{ peering_spire_bundle_port }}" }
-    - { src: forward.socket.j2, name: goat-peering-bundle-out.socket, listen: "{{ peering_spire_outbound_listen }}:{{ peering_spire_outbound_port }}" }
-    - { src: forward.service.j2, name: goat-peering-bundle-out.service, target: "{{ peering_spire_remote_link_ip }}:{{ peering_spire_bundle_port }}" }
+    - { src: forward.socket.j2, name: "goat-peering-bundle-in-{{ peering_spire_partner_id }}.socket", listen: "{{ peering_spire_local_link_ip }}:{{ peering_spire_bundle_port }}" }
+    - { src: forward.service.j2, name: "goat-peering-bundle-in-{{ peering_spire_partner_id }}.service", target: "{{ peering_spire_server_addr }}:{{ peering_spire_bundle_port }}" }
+    - { src: forward.socket.j2, name: "goat-peering-bundle-out-{{ peering_spire_partner_id }}.socket", listen: "{{ peering_spire_outbound_listen }}:{{ peering_spire_outbound_port }}" }
+    - { src: forward.service.j2, name: "goat-peering-bundle-out-{{ peering_spire_partner_id }}.service", target: "{{ peering_spire_remote_link_ip }}:{{ peering_spire_bundle_port }}" }
   loop_control:
     label: "{{ item.name }}"
+  register: _ps_units
 
-- name: peering-spire | start the forwards
+# A socket cannot be restarted while the proxy it activated is running ("Socket service
+# ... already active, refusing"), and a failed restart leaves the socket closed. So: when
+# a unit changed, stop that direction's proxy, then restart its socket; otherwise only
+# make sure the socket is listening. Re-running phase 13 with nothing changed touches
+# nothing.
+- name: peering-spire | stop a forward whose units changed
   ansible.builtin.systemd:
-    name: "{{ item }}"
+    name: "goat-peering-bundle-{{ item }}-{{ peering_spire_partner_id }}.service"
+    state: stopped
+    daemon_reload: true
+  loop: [in, out]
+  when: >-
+    _ps_units.results | selectattr('changed') | map(attribute='item.name')
+    | select('match', '^goat-peering-bundle-' ~ item ~ '-') | list | length > 0
+
+- name: peering-spire | restart a forward socket whose units changed
+  ansible.builtin.systemd:
+    name: "goat-peering-bundle-{{ item }}-{{ peering_spire_partner_id }}.socket"
     state: restarted
     enabled: true
     daemon_reload: true
+  loop: [in, out]
+  when: >-
+    _ps_units.results | selectattr('changed') | map(attribute='item.name')
+    | select('match', '^goat-peering-bundle-' ~ item ~ '-') | list | length > 0
+
+- name: peering-spire | the forward sockets are listening
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: started
+    enabled: true
+    daemon_reload: true
   loop:
-    - goat-peering-bundle-in.socket
-    - goat-peering-bundle-out.socket
+    - "goat-peering-bundle-in-{{ peering_spire_partner_id }}.socket"
+    - "goat-peering-bundle-out-{{ peering_spire_partner_id }}.socket"
 
 # TIER 1: our server holds the partner's bundle, read back from the server.
 - name: peering-spire | our server holds the partner's bundle

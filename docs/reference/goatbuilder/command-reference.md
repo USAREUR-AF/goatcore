@@ -75,6 +75,7 @@ Probe what a run needs before anything is cut: deps, checkout freshness, each en
 | `--site <SITE>` | Also scan every input a standup of this site will reach (role asserts, `\| mandatory`, the secrets its plays template) and list each one that is missing, all at once, before any host is touched |  |
 | `--all` | Print every check, not only the problems. `-o json` always has them all |  |
 | `--credentials` | Check the stored credentials as well: the AWS profile, and whether a 1Password session is open. Either can prompt you (a Keychain or biometric prompt, or a wait on a passphrase), so a plain run reads only what is declared on this machine and prompts for nothing |  |
+| `--browser-tests` | Require the browser tests' toolchain (the console's Playwright suite the release's live rows run). Without this flag a missing toolchain is a note, not a failure |  |
 
 ## `goatbuilder status`
 
@@ -450,7 +451,7 @@ Guide and observe release graduation across the goatnet ladder (ADR 1120, 1125):
 - [`goatbuilder promote review`](#goatbuilder-promote-review) — The start-of-day / end-of-day review: every open record sorted by what a person must DO. Read-only
 - [`goatbuilder promote readiness`](#goatbuilder-promote-readiness) — The `release-readiness-v1` document. Read-only, derived, no verdict of its own
 - [`goatbuilder promote abandon`](#goatbuilder-promote-abandon) — Mark a record abandoned WITH a machine-readable reason (C8)
-- [`goatbuilder promote check`](#goatbuilder-promote-check) — CI invariants C1–C9 (fail-closed, current-tree). Exit 0/1
+- [`goatbuilder promote check`](#goatbuilder-promote-check) — CI invariants C1–C10 (fail-closed, current-tree). Exit 0/1
 
 ## `goatbuilder promote status`
 
@@ -494,6 +495,7 @@ Verify the hop gates, mark the record graduated, print the fold-to-fleet edit
 | Flag | Description | Default |
 |---|---|---|
 | `--ack <ACK>` |  |  |
+| `--override-runtime-health <OVERRIDE_RUNTIME_HEALTH>` | Graduate although the runtime-health gate fails; REASON and the --ack name are written into the record |  |
 
 ## `goatbuilder promote graduate-set`
 
@@ -578,7 +580,7 @@ Mark a record abandoned WITH a machine-readable reason (C8)
 
 ## `goatbuilder promote check`
 
-CI invariants C1–C9 (fail-closed, current-tree). Exit 0/1
+CI invariants C1–C10 (fail-closed, current-tree). Exit 0/1
 
 ## `goatbuilder explain`
 
