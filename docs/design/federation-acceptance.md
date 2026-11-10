@@ -230,8 +230,8 @@ that the peering works. The bilateral exchange that closes it is not built.
 ```
 
 `direction` is `outbound` (ours to theirs), `inbound` (theirs to ours), `both` or `local`.
-`tier` is one of `positive`, `persistence`, `negative`, `round-trip`, `spire`, `precondition`;
-`persistence` was added to that list without a new schema version, since a reader that ignores
+`tier` is one of `positive`, `persistence`, `negative`, `round-trip`, `spire`, `existing`,
+`precondition`; `persistence` and `existing` were added to that list without a new schema version, since a reader that ignores
 unknown tiers reads the bundle the same.
 `inputs` names which surfaces the run had, as booleans only: an address is not evidence and
 does not belong in a file that may be handed to the partner. `observations` holds what the
