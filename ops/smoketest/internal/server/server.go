@@ -34,7 +34,7 @@ type ServerConfig struct {
 	Store        *store.Store
 	Netbird      *netbird.Client
 	Catalogue    []ServiceEntry
-	DashboardDir string // path to Vite build output (dashboard/dist)
+	DashboardDir string // directory of the dashboard's static files (ops/smoketest/dashboard)
 }
 
 // Server is the HTTP API server.

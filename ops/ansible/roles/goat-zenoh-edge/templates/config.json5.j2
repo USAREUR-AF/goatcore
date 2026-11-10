@@ -213,7 +213,7 @@
         flows: ["ingress"],
         permission: "allow",
         key_exprs: [
-{% for _k in goat_zenoh_edge_egress_key_exprs | default([]) %}
+{% for _k in (goat_zenoh_edge_egress_interest_key_exprs | default(goat_zenoh_edge_egress_key_exprs, true) | default([])) %}
           "{{ _k }}",
 {% endfor %}
         ],
@@ -325,7 +325,7 @@
         flows: ["ingress", "egress"],
         permission: "allow",
         key_exprs: [
-{% for k in goat_zenoh_edge_egress_key_exprs %}
+{% for k in (goat_zenoh_edge_egress_interest_key_exprs | default(goat_zenoh_edge_egress_key_exprs, true)) %}
           "{{ k }}",
 {% endfor %}
         ],

@@ -2751,6 +2751,7 @@ mod tests {
             inventory: None,
             groups: vec![],
             sites: vec![],
+            peering_edge_reserved_udp: None,
         }
     }
 

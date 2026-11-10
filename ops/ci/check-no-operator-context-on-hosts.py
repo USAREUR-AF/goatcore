@@ -29,7 +29,7 @@ from pathlib import Path
 NON_PERSON = {"goat_sponsor_context": "acceptance", "probe_context": "assay-probe"}
 SCANNED = ["docs/design/*.md", "docs/operations/*.md", "docs/reference/**/*.md",
            "ops/scripts/*", "ops/validation/*", "ops/e2e/**/*.py", "ops/e2e/**/*.sh",
-           "crates/goatbuilder/src/*.rs"]
+           "crates/goatbuilder/src/**/*.rs"]
 RETIRED = [
     (re.compile(r"goat_op_context"), "names the retired operator context field goat_op_context"),
     (re.compile(r"--op-context"), "names the retired --op-context flag"),

@@ -67,7 +67,6 @@ ops/monitoring/docker-compose.yml prom/prometheus:v2.54.1   # 2026-09-22 seed
 ops/serve/docker-compose.yml caddy:latest   # 2026-09-22 seed
 ops/smoketest/Dockerfile debian:bookworm-slim   # 2026-09-22 seed
 ops/smoketest/Dockerfile golang:1.26-bookworm   # 2026-09-22 seed
-ops/smoketest/Dockerfile node:20-slim   # 2026-09-22 seed
 ops/smoketest/docker-compose.yml smoketest:latest   # 2026-09-22 seed
 ops/snitch/Dockerfile debian:bookworm-slim   # 2026-09-22 seed
 ops/snitch/Dockerfile golang:1.26-bookworm   # 2026-09-22 seed

@@ -8,6 +8,10 @@ label, and both federation e2e harnesses use the role's naming pattern and label
 **Not built:** remote host provisioning or automatic selection among several cores.
 Live deployment and bilateral federation acceptance are separate release gates.
 
+> The verb moves to `goatbuilder federate init` ([ADR 1225](../adr/1225-federation-belongs-to-goatbuilder-one-command-one-decision.md), Proposed), which runs
+> where the deployment's declaration is. This document describes the selection as built in
+> `goat federate init` today.
+
 ## Selection contract
 
 The standard role names its service and container `{{ zenoh_stack }}-router`, with
@@ -30,6 +34,13 @@ observation target, never the capability values. The selector is passed as an
 argument, rejects options and expressions, and never falls back to discovery if
 that container is absent or stopped. Both standup drivers inherit the exported
 variable into phase 3.
+
+The sovereign edge role (`goat-zenoh-edge`) reads the core's storage
+configuration for two advisory checks and finds the core with the same label and
+names, through Docker on the host the play runs against. Its
+`goat_zenoh_edge_core_container`, when set, wins; empty, the default, discovers.
+No match or several matches make those checks report "could not run" with the
+reason, never a pass (`roles/goat-zenoh-edge/tasks/discover-core.yml`).
 
 Without `DOCKER_HOST`, Docker and Podman are supported; unavailable runtimes are
 reported in failure diagnostics. An explicit `DOCKER_HOST` restricts observation

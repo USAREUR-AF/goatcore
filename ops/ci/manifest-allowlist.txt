@@ -25,6 +25,7 @@ goat-relay/Cargo.toml | @USAREUR-AF/goat-owners | Rust crate: relay server (ADR 
 crates/Cargo.toml | @USAREUR-AF/goat-owners | Rust workspace root for the operator and build tooling
 crates/goat-cli/Cargo.toml | @USAREUR-AF/goat-owners | Rust crate: the goat operator CLI
 crates/goat-errors/Cargo.toml | @USAREUR-AF/goat-owners | Rust crate: the error catalog interpreter (ADR 1199)
+crates/goat-federation/Cargo.toml | @USAREUR-AF/goat-owners | Rust crate: federation package, plan and acceptance library shared by goat and goatbuilder (ADR 1225)
 crates/goat-fun/Cargo.toml | @USAREUR-AF/goat-owners | Rust crate: goat CLI extras
 crates/goat-selfupdate/Cargo.toml | @USAREUR-AF/goat-owners | Rust crate: release self-update
 crates/goatbuilder/Cargo.toml | @USAREUR-AF/goat-owners | Rust crate: goatbuilder build, release, deploy and standup tool
@@ -79,5 +80,3 @@ ops/goat-zenoh-portal/web/e2e/package-lock.json | @USAREUR-AF/goat-owners | npm 
 # --- npm: other
 ops/grant-crypto/sdk/bindings/ts/package.json | @USAREUR-AF/goat-owners | npm: TypeScript binding of the grant-crypto SDK for partner use (ADR 1106)
 ops/grant-crypto/sdk/bindings/ts/package-lock.json | @USAREUR-AF/goat-owners | npm lockfile for the grant-crypto TypeScript binding
-ops/smoketest/dashboard/package.json | @USAREUR-AF/goat-owners | npm: Preact and Vite build of the smoketest dashboard; being converted to plain JavaScript
-ops/smoketest/dashboard/package-lock.json | @USAREUR-AF/goat-owners | npm lockfile for the smoketest dashboard build

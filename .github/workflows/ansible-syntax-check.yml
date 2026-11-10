@@ -108,3 +108,6 @@ jobs:
           bash ops/ansible/roles/admit-audit/tests/pg-role-standby.sh
           bash ops/ansible/roles/mesh-coredns/tests/apex-pin-standby.sh
           bash ops/ansible/tests/smoke-standby/run.sh
+
+      - name: Peering edge certificate installation (disposable CAs, localhost only)
+        run: bash ops/ansible/roles/goat-zenoh-edge/tests/test-certificates.sh

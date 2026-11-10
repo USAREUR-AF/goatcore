@@ -23,6 +23,7 @@ on:
   pull_request:
     paths:
       - 'crates/goat-cli/**'
+      - 'crates/goat-federation/**'
       - 'crates/panoscope-core/**'
       - 'crates/Cargo.toml'
       - 'crates/Cargo.lock'

@@ -1,0 +1,12 @@
+---
+# Runs the whole role (tasks/main.yml) on localhost, to show where the
+# certificate check and install sit in it. test-certificates.sh passes values
+# that make a later check in tasks/main.yml refuse on purpose (a core endpoint
+# CA override that is not the mounted path), so the play stops before anything
+# touches Docker; the test then reads which files exist.
+- name: goat-zenoh-edge, the whole role, stopped by a later check
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  roles:
+    - role: goat-zenoh-edge

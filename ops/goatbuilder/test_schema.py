@@ -150,6 +150,17 @@ class MinimalShape(unittest.TestCase):
         }]
         self.assertEqual(validate.errors_for(c), [])
 
+    def test_peering_offer_transport_values_hosts_forwarder_validate(self):
+        c = with_sites()
+        c["peerings"] = [{
+            "with": "xab", "environment": "dev", "site": "alpha", "edge_class": "edge",
+            "offer": ["REL-ALL", "release/xab/**"], "tunnel": "wireguard",
+            "values": {"wg_listen_port": 51825, "link_subnet": "169.254.10.2/31"},
+            "hosts": {"edge": "192.0.2.20", "core": "192.0.2.10", "user": "goat"},
+            "forwarder": {"endpoint": "203.0.113.7", "group": "peering_forwarders", "ansible_host": "203.0.113.7"},
+        }]
+        self.assertEqual(validate.errors_for(c), [])
+
 
 class FailClosed(unittest.TestCase):
     def assertRejected(self, config: dict, fragment: str):
@@ -269,6 +280,26 @@ class FailClosed(unittest.TestCase):
         c = with_sites()
         c["peerings"] = [{"with": "velmara", "environment": "dev", "site": "alpha", "edge_class": "edge", "trust": "handshake"}]
         self.assertRejected(c, "trust")
+
+    def test_peering_unknown_value_key(self):
+        c = with_sites()
+        c["peerings"] = [{"with": "xab", "environment": "dev", "site": "alpha", "edge_class": "edge", "values": {"mtu": 1300}}]
+        self.assertRejected(c, "mtu")
+
+    def test_peering_offer_is_set_names_or_release_key_expressions(self):
+        c = with_sites()
+        c["peerings"] = [{"with": "xab", "environment": "dev", "site": "alpha", "edge_class": "edge", "offer": ["from/xaa/**"]}]
+        self.assertRejected(c, "from/xaa/**")
+
+    def test_peering_offer_is_never_empty(self):
+        c = with_sites()
+        c["peerings"] = [{"with": "xab", "environment": "dev", "site": "alpha", "edge_class": "edge", "offer": []}]
+        self.assertRejected(c, "offer")
+
+    def test_peering_reserved_name(self):
+        c = with_sites()
+        c["peerings"] = [{"with": "status", "environment": "dev", "site": "alpha", "edge_class": "edge"}]
+        self.assertRejected(c, "GB-120")
 
     def test_peering_ingress_prefix_shape(self):
         c = with_sites()

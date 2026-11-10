@@ -23,13 +23,65 @@ goat_zenoh_edge_partner_cn: ""            # AGREED Subject CN they present; exac
 # --- trust ------------------------------------------------------------------
 # THE partner's anchors and nothing else. On a host also running SPIRE, point
 # spire_trust_sync_router_trust_file at THIS path — never at a core router's.
-goat_zenoh_edge_partner_ca_path: ""
+# When the role installs the certificates (below), this is
+# <cert_dir>/partner-ca.pem and must not be set to anything else.
+goat_zenoh_edge_partner_ca_path: "{{ (goat_zenoh_edge_cert_dir ~ '/partner-ca.pem') if goat_zenoh_edge_install_certs | bool else '' }}"
 
 # --- our own identities, one per direction ----------------------------------
-goat_zenoh_edge_outward_cert: ""          # presented TO the partner
-goat_zenoh_edge_outward_key: ""
-goat_zenoh_edge_inward_cert: ""           # presented INWARD to our core
-goat_zenoh_edge_inward_key: ""
+# Paths ON THE EDGE. When the role installs the certificates, each is the file of
+# the same name in goat_zenoh_edge_cert_dir, and setting one to anything else is
+# refused; otherwise each must be set and the file placed by hand.
+goat_zenoh_edge_outward_cert: "{{ (goat_zenoh_edge_cert_dir ~ '/peering-outward.pem') if goat_zenoh_edge_install_certs | bool else '' }}"          # presented TO the partner
+goat_zenoh_edge_outward_key: "{{ (goat_zenoh_edge_cert_dir ~ '/peering-outward-key.pem') if goat_zenoh_edge_install_certs | bool else '' }}"
+goat_zenoh_edge_inward_cert: "{{ (goat_zenoh_edge_cert_dir ~ '/peering-inward.pem') if goat_zenoh_edge_install_certs | bool else '' }}"           # presented INWARD to our core
+goat_zenoh_edge_inward_key: "{{ (goat_zenoh_edge_cert_dir ~ '/peering-inward-key.pem') if goat_zenoh_edge_install_certs | bool else '' }}"
+
+# --- installing them from the run's working directory ------------------------
+# docs/design/federation-certificate-lifecycle.md, "Installing on the edge".
+#
+# Off by default while the hand placement stays the default avenue. When true,
+# the role takes the two peering leaves phase 8 minted (<fed_work>/pki/) and the
+# partner's CA phase 5 fetched (<fed_work>/theirs-ca.pem) from the CONTROLLER and
+# installs them in goat_zenoh_edge_cert_dir, after checking on the controller,
+# before anything is written on the edge, that:
+#   - each leaf carries the identity the agreement derives (outward CN
+#     fed.<us>.<them>.01, inward CN fed.<them>.<us>.01, the same DNS SAN,
+#     CA:FALSE) and is not a CA certificate itself;
+#   - each key belongs to its certificate (public keys compared) and is mode 0600;
+#   - each leaf chains to OUR CA, the certificate in goat_zenoh_edge_our_ca_path
+#     whose SHA-256 the agreement names for us, and is valid for at least
+#     goat_zenoh_edge_cert_min_valid_seconds;
+#   - the partner CA file is exactly one CA certificate (CA:TRUE), valid as long,
+#     whose SHA-256 is the ca_fingerprint the agreement names for the partner;
+#   - goat_zenoh_edge_cert_dir holds no other peering's files: its .peering file
+#     names this partner, or it is empty or holds only these exact files.
+# The agreement in the working directory is trusted as phase 6 verified it.
+# Unchanged files are left alone, so a re-run restarts nothing. A run that
+# changes a file and stops before the edge restarts leaves .restart-pending in
+# the directory, and the next run restarts the edge.
+goat_zenoh_edge_install_certs: false
+# The per-peering directory on the edge. Each peering has its own: several
+# peerings on one edge never share or overwrite files. goatbuilder federate
+# allocate renders this same value for an edge group with the switch on. It is
+# never the allocated PeeringValues.cert_dir: that is <work>/pki on the
+# controller, the source below (goat_zenoh_edge_cert_src_dir), and it holds the
+# core's and republisher's leaves too.
+goat_zenoh_edge_cert_dir: "/etc/goat-zenoh-edge-{{ goat_zenoh_edge_partner_id }}/tls"
+# Sources ON THE CONTROLLER. fed_work is the run's working directory, passed by
+# the driver (`-e fed_work=...`), as for goat-fed-republisher.
+goat_zenoh_edge_cert_src_dir: "{{ fed_work | default('') }}/pki"
+goat_zenoh_edge_partner_ca_src: "{{ fed_work | default('') }}/theirs-ca.pem"
+goat_zenoh_edge_agreement_src: "{{ fed_work | default('') }}/agreement.json"
+# Empty: read from the agreement. Set it only to pin the value as well; a value
+# that differs from the agreement is refused.
+goat_zenoh_edge_partner_ca_fingerprint: ""
+# Refuse a leaf or the partner CA with less remaining lifetime than this, in
+# seconds (0: refuse only an expired one).
+goat_zenoh_edge_cert_min_valid_seconds: 0
+# Owner of the installed files. Keys are 0600 and certificates 0644, owned by the
+# user the edge container reads them as (root in the fleet image).
+goat_zenoh_edge_cert_owner: root
+goat_zenoh_edge_cert_group: root
 
 # --- reachability -----------------------------------------------------------
 goat_zenoh_edge_listen_port: 7448         # the ONLY port facing the partner
@@ -66,6 +118,14 @@ goat_zenoh_edge_ingress_key_exprs: []     # where they may write, e.g. from/svn/
 # expression in transit, so a rule naming the staging name permits a key that
 # never crosses and forbids the one that does.
 goat_zenoh_edge_egress_key_exprs: []   # e.g. from/<sovereign>/**
+# Where the partner's interest may reach on this edge, and what the core link carries:
+# our whole wire name, `from/<our sovereign>/**`. Empty means the same as
+# goat_zenoh_edge_egress_key_exprs. A receiver subscribes to the whole wire name, and
+# zenoh refuses a subscriber declaration wider than the rule admitting it, so interest
+# narrowed to the sets means nothing is ever asked for. Declarations carry no data:
+# partner-receive (egress) still sends only goat_zenoh_edge_egress_key_exprs, and the
+# core sends this edge only the offered sets (the fragment's fed-r rule).
+goat_zenoh_edge_egress_interest_key_exprs: []
 # Check inspectable local cores for a receive store matching each admitted
 # ingress scope. A retained broad history store is compatible when the required
 # scoped stores exist. Unreadable/separate cores are explicitly SKIP, not PASS.
@@ -84,8 +144,15 @@ goat_zenoh_edge_ingress_scope_check: true
 # reads as "no bundle published". Set false only to accept that
 # deliberately.
 goat_zenoh_edge_key_scope_check: true
-# The container name the core router runs as, read to make that comparison.
-goat_zenoh_edge_core_container: "goat-zenoh"
+# The core router container read to make that comparison (and the ingress
+# storage check). Empty (the default) discovers it on this host the way
+# `goat federate init` does: one running container labeled
+# org.goat.component=zenoh-core, else named *-zenoh-router (the standard core
+# role's {{ zenoh_stack }}-router), else the legacy goat-zenoh. None or several
+# found means those checks report "could not run" and the reason; they do not
+# pass. Set a name or ID here only for a layout discovery cannot find
+# (tasks/discover-core.yml, docs/design/federation-router-discovery.md).
+goat_zenoh_edge_core_container: ""
 
 goat_zenoh_edge_key_bundle_key_exprs: []
 

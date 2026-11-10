@@ -40,7 +40,7 @@ def shipped_lines(path: pathlib.Path):
 
 
 def scanned(root: pathlib.Path):
-    yield from sorted(root.glob("crates/goatbuilder/src/*.rs"))
+    yield from sorted(root.glob("crates/goatbuilder/src/**/*.rs"))
     yield root / "crates/goatbuilder/i18n/en/goatbuilder.ftl"
     yield root / "ops/errors/catalog.yaml"
     yield from sorted(root.glob("docs/reference/goatbuilder/*.md"))

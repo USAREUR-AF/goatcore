@@ -1,0 +1,18 @@
+---
+# Converge fixture for ops/ci/test-host-firewall-role.sh: the role over SSH, included
+# the way the peering plays include it (the baseline when the switch is on, the
+# switch-off check when it is off), with the values passed as extra vars.
+- name: goat-host-firewall | converge
+  hosts: all
+  gather_facts: true
+  become: true
+  tasks:
+    - name: Host firewall baseline
+      ansible.builtin.include_role:
+        name: "{{ playbook_dir | dirname }}"
+      when: goat_host_firewall_baseline | default(false) | bool
+    - name: Host firewall baseline is off
+      ansible.builtin.include_role:
+        name: "{{ playbook_dir | dirname }}"
+        tasks_from: off.yml
+      when: not (goat_host_firewall_baseline | default(false) | bool)
