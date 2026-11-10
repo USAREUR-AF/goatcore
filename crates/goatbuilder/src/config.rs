@@ -848,8 +848,7 @@ mod tests {
         assert_eq!(cfg.repo.unwrap().source, "example-org/goatnet-from-scratch");
         assert_eq!(cfg.components.len(), 1);
         // The four-fact file at a checkout root loads through `load`, finding the checkout config beside it.
-        let root = std::env::temp_dir().join(format!("gb-lite-root-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
+        let root = crate::testdir::path("gb-lite-root-");
         std::fs::create_dir_all(root.join("ops/goatbuilder")).unwrap();
         std::fs::copy(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../ops/goatbuilder/goatbuilder.yaml"), root.join("ops/goatbuilder/goatbuilder.yaml")).unwrap();
         std::fs::write(root.join("goatlite.yaml"), "schema: goatbuilder/v1\npreset: lite\nlite:\n  name: pasture\n  host: 192.0.2.50\n  ssh_user: ubuntu\n  admin: me@example.org\n").unwrap();

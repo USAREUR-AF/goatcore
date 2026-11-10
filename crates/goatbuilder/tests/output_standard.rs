@@ -48,6 +48,15 @@ fn checkout_declares_a_deployment() -> bool {
     repo().join("ops/goatbuilder/goatbuilder.yaml").is_file()
 }
 
+/// A test's own directory under the system temp directory, removed when the
+/// returned guard drops (a panicking test included).
+fn scratch(prefix: &str) -> tempfile::TempDir {
+    tempfile::Builder::new()
+        .prefix(prefix)
+        .tempdir()
+        .expect("a temporary directory for the test")
+}
+
 fn copy_tree(from: &Path, to: &Path) {
     std::fs::create_dir_all(to).unwrap();
     for e in std::fs::read_dir(from).unwrap() {
@@ -166,8 +175,8 @@ fn on_a_terminal(args: &[String], dir: &Path) -> String {
 /// into one entry, and `doctor_prints_problems_...` covers that.
 #[test]
 fn a_failing_row_is_on_the_page_a_person_reads() {
-    let dir = std::env::temp_dir().join(format!("goatbuilder-standard-failing-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
+    let held = scratch("goatbuilder-standard-failing-");
+    let dir = held.path().to_path_buf();
     let tutor = dir.join("tutor");
     copy_tree(&repo().join("ops/goatbuilder/fixtures/tutor"), &tutor);
     let t = tutor.display().to_string();
@@ -196,9 +205,8 @@ fn stdout(o: &Output) -> String {
 }
 
 fn with_corpus(name: &str, f: impl Fn(&Case, &Path)) {
-    let dir = std::env::temp_dir().join(format!("goatbuilder-standard-{name}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
+    let held = scratch(&format!("goatbuilder-standard-{name}-"));
+    let dir = held.path().to_path_buf();
     for c in corpus(&dir) {
         f(&c, &dir);
     }
@@ -294,8 +302,8 @@ fn doctor_prints_problems_and_keeps_every_row_for_machines() {
     if !checkout_declares_a_deployment() {
         return; // a public clone of goatcore ships no deployment
     }
-    let dir = std::env::temp_dir().join(format!("goatbuilder-standard-doctor-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
+    let held = scratch("goatbuilder-standard-doctor-");
+    let dir = held.path().to_path_buf();
     let r = repo().display().to_string();
     let args = |extra: &[&str]| -> Vec<String> { ["-C", &r, "doctor", "--env", "zagros_dev"].iter().chain(extra).map(|s| s.to_string()).collect() };
     let page = stdout(&run(&args(&[]), false, &dir));
@@ -331,8 +339,8 @@ fn json_on_a_terminal_is_the_document() {
     if !checkout_declares_a_deployment() {
         return; // a public clone of goatcore ships no deployment
     }
-    let dir = std::env::temp_dir().join(format!("goatbuilder-standard-jsontty-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
+    let held = scratch("goatbuilder-standard-jsontty-");
+    let dir = held.path().to_path_buf();
     let r = repo().display().to_string();
     let out = on_a_terminal(&["-o".into(), "json".into(), "-C".into(), r, "promote".into(), "readiness".into()], &dir);
     let v: serde_json::Value = serde_json::from_str(&out).unwrap_or_else(|e| panic!("{e}: {out}"));

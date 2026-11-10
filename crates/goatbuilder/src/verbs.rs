@@ -623,12 +623,12 @@ mod tests {
     }
 
     /// A throwaway copy of the basic fixture: the tests write records into it.
-    fn fixture(tag: &str) -> Fixture {
+    fn fixture(tag: &str) -> crate::testdir::Held<Fixture> {
         let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../ops/goatbuilder/fixtures/basic");
-        let dst = std::env::temp_dir().join(format!("goatbuilder-fixture-{tag}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dst);
+        let dst = crate::testdir::path(&format!("goatbuilder-fixture-{tag}-"));
         copy_dir(&src, &dst);
-        Fixture::open(&dst).unwrap()
+        let f = Fixture::open(&dst).unwrap();
+        crate::testdir::Held::with(dst, f)
     }
 
     fn tree_hash(root: &Path) -> Vec<(String, String)> {
@@ -726,12 +726,12 @@ mod tests {
         assert!(status(&f, "prod", None).is_err());
     }
 
-    fn tutor_fixture(tag: &str) -> Fixture {
+    fn tutor_fixture(tag: &str) -> crate::testdir::Held<Fixture> {
         let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../ops/goatbuilder/fixtures/tutor");
-        let dst = std::env::temp_dir().join(format!("goatbuilder-tutor-fixture-{tag}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dst);
+        let dst = crate::testdir::path(&format!("goatbuilder-tutor-fixture-{tag}-"));
         copy_dir(&src, &dst);
-        Fixture::open(&dst).unwrap()
+        let f = Fixture::open(&dst).unwrap();
+        crate::testdir::Held::with(dst, f)
     }
 
     /// `deploy --dry-run` on a fixture decides and publishes nothing: no

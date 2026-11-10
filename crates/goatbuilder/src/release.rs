@@ -1081,8 +1081,7 @@ mod tests {
 
     #[test]
     fn a_run_finds_the_open_record_only_when_preprod_already_pins_the_ref() {
-        let d = std::env::temp_dir().join(format!("goatbuilder-release-{}-reuse", std::process::id()));
-        let _ = std::fs::remove_dir_all(&d);
+        let d = crate::testdir::path("goatbuilder-release-reuse-");
         std::fs::create_dir_all(d.join("ops/pins")).unwrap();
         std::fs::create_dir_all(d.join("ops/release/records/comp")).unwrap();
         let r = "ghcr.io/o/comp:v1-rc.1@sha256:cccccccccccc0000";

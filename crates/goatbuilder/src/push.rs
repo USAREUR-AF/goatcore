@@ -999,8 +999,7 @@ mod tests {
     /// `preflight <c> --env <lite goatnet>` said "unknown goatnet; known: []".
     #[test]
     fn a_goatnet_declared_only_in_the_lite_sidecar_is_known() {
-        let d = std::env::temp_dir().join(format!("goatbuilder-push-lite-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&d);
+        let d = crate::testdir::path("goatbuilder-push-lite-");
         std::fs::create_dir_all(d.join("ops/pins")).unwrap();
         std::fs::write(d.join("ops/pins/fleet-pins.yaml"), "goatnets: {}\ncomponents:\n  alpha:\n    var: alpha_image\n    fleet: \"a@sha256:1\"\n").unwrap();
         std::fs::write(d.join("ops/pins/lite-pins.yaml"), "goatnets:\n  pasture:\n    members: [pasture_hosts]\ncomponents: {}\n").unwrap();

@@ -2462,7 +2462,7 @@ mod tests {
 
     #[test]
     fn goat_contexts_check_names_missing_and_endpointless_contexts() {
-        let t = std::env::temp_dir().join(format!("gb-contexts-{}", std::process::id()));
+        let t = crate::testdir::path("gb-contexts-");
         std::fs::create_dir_all(t.join("ops/validation")).unwrap();
         std::fs::write(t.join("ops/validation/goatnet-runners.yaml"), "schema: goatnet-runners/v0\ngoatnets:\n  a:\n    goat_via: \"\"\n    values: va.yaml\n  c:\n    goat_via: \"\"\n    values: vc.yaml\n  b:\n    goat_via: user@host\n    values: vb.yaml\n").unwrap();
         std::fs::write(t.join("va.yaml"), "goat_context: a\ngoat_sponsor_context: acceptance\n").unwrap();
@@ -2553,7 +2553,7 @@ mod tests {
 
     #[test]
     fn live_rows_check_names_the_install_line_when_node_modules_is_absent() {
-        let t = std::env::temp_dir().join(format!("gb-live-rows-{}", std::process::id()));
+        let t = crate::testdir::path("gb-live-rows-");
         std::fs::create_dir_all(t.join("ops/goat-id-console/web/e2e")).unwrap();
         let c = live_rows_check(&t, true);
         assert!(!c.ok);
@@ -2566,7 +2566,7 @@ mod tests {
     /// row passes, keeps its fix, and the page prints it under "Note:".
     #[test]
     fn absent_node_modules_is_a_note_unless_browser_tests_is_asked_for() {
-        let t = std::env::temp_dir().join(format!("gb-live-rows-note-{}", std::process::id()));
+        let t = crate::testdir::path("gb-live-rows-note-");
         std::fs::create_dir_all(t.join("ops/goat-id-console/web/e2e")).unwrap();
         let c = live_rows_check(&t, false);
         assert!(c.ok, "{c:?}");
@@ -2594,9 +2594,8 @@ mod tests {
     }
 
     /// A checkout on a detached HEAD at its one commit; returns (dir, commit).
-    fn detached_checkout(tag: &str) -> (PathBuf, String) {
-        let t = std::env::temp_dir().join(format!("gb-doctor-{tag}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&t);
+    fn detached_checkout(tag: &str) -> (crate::testdir::Held<PathBuf>, String) {
+        let t = crate::testdir::path(&format!("gb-doctor-{tag}-"));
         std::fs::create_dir_all(&t).unwrap();
         git_in(&t, &["init", "-q", "-b", "main"]);
         std::fs::write(t.join("x"), "1").unwrap();
@@ -2724,11 +2723,8 @@ mod tests {
     }
 
     /// A throwaway repository holding only the two files `reach` reads.
-    fn reach_repo(tag: &str, ini: Option<&str>, doors: Option<&str>) -> PathBuf {
-        let repo = std::env::temp_dir().join(format!(
-            "goatbuilder-reach-{tag}-{}",
-            std::process::id()
-        ));
+    fn reach_repo(tag: &str, ini: Option<&str>, doors: Option<&str>) -> crate::testdir::Held<PathBuf> {
+        let repo = crate::testdir::path(&format!("goatbuilder-reach-{tag}-"));
         let inv = repo.join("ops/ansible/inventory");
         std::fs::create_dir_all(&inv).unwrap();
         for f in ["mgmt-hosts-mesh.ini", "doors.yaml"] {
@@ -3006,7 +3002,7 @@ mod summary_tests {
 
     #[test]
     fn only_the_names_in_local_secret_files_are_read() {
-        let d = std::env::temp_dir().join(format!("goatbuilder-doctor-names-{}", std::process::id()));
+        let d = crate::testdir::path("goatbuilder-doctor-names-");
         let local = d.join(".envrc.local.d");
         std::fs::create_dir_all(&local).unwrap();
         std::fs::write(local.join("a.refs"), "# comment\nONE=op://v/i/f\nexport TWO=\"op://v/i/g\"\nFIVE=\nexport SIX=\"${SIX:-$OTHER}\"\n").unwrap();
@@ -3090,7 +3086,7 @@ mod summary_tests {
         assert!(script.contains("/goat-credentials/contents/refs/goat.refs"), "{script}");
         assert_eq!(steps[4], "eval $(op signin)");
         // Run it: a failed fetch leaves the refs file alone; a good one lands 0600.
-        let t = std::env::temp_dir().join(format!("goatbuilder-refs-fix-{}", std::process::id()));
+        let t = crate::testdir::path("goatbuilder-refs-fix-");
         let bin = t.join("bin");
         std::fs::create_dir_all(&bin).unwrap();
         let run = |gh: &str| {
