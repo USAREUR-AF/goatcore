@@ -215,7 +215,7 @@ fn reserved_udp(cfg: &Config, ctx: &AllocContext, env: &str) -> Vec<u16> {
 }
 
 /// The values of one peering, from a full allocation of every peering.
-#[allow(dead_code)] // the interface the driver's later stages read (the brief's shared interface)
+#[allow(dead_code)] // the one-peering form of allocate_all, for the driver's later stages
 pub fn allocate(cfg: &Config, with: &str, ctx: &AllocContext) -> Result<PeeringValues> {
     allocate_in(cfg, None, with, ctx)
 }
@@ -368,6 +368,36 @@ impl Field {
     }
 }
 
+/// Every (pool, place) a field's value must be unique in for one peering. A
+/// place is the environment (its edge and core hosts) or, for what lives on a
+/// peering forwarder, that forwarder's endpoint: one forwarder may relay
+/// peerings of several environments. Carrier interfaces and subnets are on
+/// both the edge and the forwarder, so they are unique in both.
+fn places(f: Field, p: &Peering) -> Vec<(Pool, String)> {
+    let fwd = p
+        .forwarder
+        .as_ref()
+        .map(|x| format!("forwarder {}", x.endpoint));
+    let mut out = Vec::new();
+    match (f, fwd) {
+        (Field::PublicPort | Field::CarrierPort, Some(w)) => out.push((Pool::ForwarderUdp, w)),
+        (Field::CarrierInterface, Some(w)) => {
+            out.push((Pool::Interface, p.environment.clone()));
+            out.push((Pool::ForwarderInterface, w));
+        }
+        (Field::CarrierSubnet, Some(w)) => {
+            out.push((Pool::Subnet, p.environment.clone()));
+            out.push((Pool::ForwarderSubnet, w));
+        }
+        _ => {
+            if let Some(pool) = f.pool() {
+                out.push((pool, p.environment.clone()));
+            }
+        }
+    }
+    out
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 enum Pool {
     Interface,
@@ -376,6 +406,8 @@ enum Pool {
     EdgeTcp,
     CoreTcp,
     ForwarderUdp,
+    ForwarderInterface,
+    ForwarderSubnet,
     CertDir,
     InventoryName,
 }
@@ -397,6 +429,8 @@ impl Pool {
             Pool::EdgeTcp => "TCP port on the edge host",
             Pool::CoreTcp => "TCP port on the core host",
             Pool::ForwarderUdp => "UDP port on the forwarder",
+            Pool::ForwarderInterface => "carrier interface on the forwarder",
+            Pool::ForwarderSubnet => "carrier subnet on the forwarder",
             Pool::CertDir => "certificate directory",
             Pool::InventoryName => "inventory name",
         }
@@ -615,7 +649,9 @@ impl Taken {
         let list = self.held.get(&Self::scope(pool, env))?;
         list.iter()
             .find(|(held, _)| match (held, v) {
-                (Val::S(a), Val::S(b)) if pool == Pool::Subnet => overlaps(a, b),
+                (Val::S(a), Val::S(b)) if matches!(pool, Pool::Subnet | Pool::ForwarderSubnet) => {
+                    overlaps(a, b)
+                }
                 (a, b) => a == b,
             })
             .map(|(_, h)| h)
@@ -704,22 +740,47 @@ fn run(cfg: &Config, ctx: &AllocContext) -> (Vec<PeeringValues>, Vec<Problem>) {
             );
         }
     }
+    // A retired entry does not say which forwarder relayed it, so its
+    // forwarder values stay reserved on every forwarder declared.
+    let forwarders: std::collections::BTreeSet<String> = peerings
+        .iter()
+        .filter_map(|p| {
+            p.forwarder
+                .as_ref()
+                .map(|x| format!("forwarder {}", x.endpoint))
+        })
+        .collect();
     for (k, entry) in retired_entries(cfg, ctx) {
         let env = k.split('/').next().unwrap_or_default().to_string();
         for f in FIELDS.iter().copied() {
             let (Some(v), Some(pool)) = (pins_get(entry, f), f.pool()) else {
                 continue;
             };
-            if taken.clash(pool, &env, &v).is_none() {
-                taken.take(
-                    pool,
-                    &env,
-                    v,
-                    Holder {
-                        who: format!("the record's entry {k}, no longer declared ({})", f.name()),
-                        pin_of: None,
-                    },
-                );
+            let mut at_places = vec![(pool, env.clone())];
+            let fpool = match f {
+                Field::PublicPort | Field::CarrierPort => Some(Pool::ForwarderUdp),
+                Field::CarrierInterface => Some(Pool::ForwarderInterface),
+                Field::CarrierSubnet => Some(Pool::ForwarderSubnet),
+                _ => None,
+            };
+            if let Some(fp) = fpool {
+                at_places.extend(forwarders.iter().map(|w| (fp, w.clone())));
+            }
+            for (pool, place) in at_places {
+                if taken.clash(pool, &place, &v).is_none() {
+                    taken.take(
+                        pool,
+                        &place,
+                        v.clone(),
+                        Holder {
+                            who: format!(
+                                "the record's entry {k}, no longer declared ({})",
+                                f.name()
+                            ),
+                            pin_of: None,
+                        },
+                    );
+                }
             }
         }
     }
@@ -745,8 +806,9 @@ fn run(cfg: &Config, ctx: &AllocContext) -> (Vec<PeeringValues>, Vec<Problem>) {
                         continue;
                     }
                 }
-                if let Some(pool) = f.pool() {
-                    if let Some(h) = taken.clash(pool, &p.environment, &v) {
+                let mut clashed = false;
+                for (pool, place) in places(f, p) {
+                    if let Some(h) = taken.clash(pool, &place, &v) {
                         let problem = match (pass_pins, h.pin_of) {
                             // A pin took what this peering had recorded: the pin is the change.
                             (false, Some(j)) => Problem::new("GB-121", format!(
@@ -763,7 +825,8 @@ fn run(cfg: &Config, ctx: &AllocContext) -> (Vec<PeeringValues>, Vec<Problem>) {
                             )),
                         };
                         problems.push(problem);
-                        continue;
+                        clashed = true;
+                        break;
                     }
                     let who = if pass_pins {
                         format!("values.{} of {}", f.name(), at(i))
@@ -772,13 +835,16 @@ fn run(cfg: &Config, ctx: &AllocContext) -> (Vec<PeeringValues>, Vec<Problem>) {
                     };
                     taken.take(
                         pool,
-                        &p.environment,
+                        &place,
                         v.clone(),
                         Holder {
                             who,
                             pin_of: pass_pins.then_some(i),
                         },
                     );
+                }
+                if clashed {
+                    continue;
                 }
                 if pass_pins {
                     pinned[i].push(f.name().to_string());
@@ -800,10 +866,9 @@ fn run(cfg: &Config, ctx: &AllocContext) -> (Vec<PeeringValues>, Vec<Problem>) {
             let mut got = None;
             let mut idx = 0;
             while let Some(c) = candidate(f, idx, p, ctx) {
-                let free = f
-                    .pool()
-                    .map(|pool| taken.clash(pool, &p.environment, &c).is_none())
-                    .unwrap_or(true);
+                let free = places(f, p)
+                    .iter()
+                    .all(|(pool, place)| taken.clash(*pool, place, &c).is_none());
                 if free {
                     got = Some(c);
                     break;
@@ -812,8 +877,8 @@ fn run(cfg: &Config, ctx: &AllocContext) -> (Vec<PeeringValues>, Vec<Problem>) {
             }
             match got {
                 Some(v) => {
-                    if let Some(pool) = f.pool() {
-                        taken.take(pool, &p.environment, v.clone(), Holder { who: format!("{}.{}", at(i), f.name()), pin_of: None });
+                    for (pool, place) in places(f, p) {
+                        taken.take(pool, &place, v.clone(), Holder { who: format!("{}.{}", at(i), f.name()), pin_of: None });
                     }
                     pins_set(&mut fixed[i], f, v);
                 }
@@ -1286,7 +1351,11 @@ mod tests {
         c.environments[0].peering_edge_reserved_udp = Some(vec![51823]);
         let vs = allocate_all(&c, &AllocContext::default()).unwrap();
         assert_eq!(by(&vs, "xab").wg_listen_port, 51820);
-        assert_eq!(by(&vs, "xac").wg_listen_port, 51825, "51823 is reserved here");
+        assert_eq!(
+            by(&vs, "xac").wg_listen_port,
+            51825,
+            "51823 is reserved here"
+        );
         // prod keeps the default.
         let mut b = p("xab");
         b["environment"] = json!("prod");
@@ -1310,7 +1379,10 @@ mod tests {
         let mut b = p("xac");
         b["values"] = json!({"wg_interface": "wg-fed0"});
         let c = cfg(json!([p("xab"), b]));
-        assert!(declaration_problems(&c).is_empty(), "no record, no collision");
+        assert!(
+            declaration_problems(&c).is_empty(),
+            "no record, no collision"
+        );
         let out = declaration_problems_in(&c, dir.path());
         assert!(out.iter().any(|m| m.contains("GB-121")), "{out:?}");
     }
@@ -1336,6 +1408,63 @@ mod tests {
 
     /// Behind a forwarder, the carrier values come too, and the first peering's
     /// match the forwarder role's defaults.
+    /// One forwarder relaying peerings of two environments: its ports, carrier
+    /// interfaces and carrier subnets are the forwarder's, so the second
+    /// environment's peering steps past the first's there, while the edge-only
+    /// values (on each environment's own edge) may repeat.
+    #[test]
+    fn two_environments_behind_one_forwarder_share_nothing_on_it() {
+        let mut a = p("xab");
+        a["forwarder"] = json!({"endpoint": "203.0.113.7"});
+        let mut b = p("xac");
+        b["environment"] = json!("prod");
+        b["forwarder"] = json!({"endpoint": "203.0.113.7"});
+        let mut c = p("xad");
+        c["environment"] = json!("prod");
+        c["forwarder"] = json!({"endpoint": "203.0.113.8"});
+        let vs = allocate_all(&cfg(json!([a, b, c])), &AllocContext::default()).unwrap();
+        let (x, y, z) = (by(&vs, "xab"), by(&vs, "xac"), by(&vs, "xad"));
+        assert_eq!(
+            (
+                x.public_port,
+                x.carrier_port,
+                x.carrier_interface.as_deref(),
+                x.carrier_subnet.as_deref()
+            ),
+            (
+                Some(51820),
+                Some(51821),
+                Some("wg-carry0"),
+                Some("169.254.30.0/31")
+            )
+        );
+        assert_eq!(
+            (
+                y.public_port,
+                y.carrier_port,
+                y.carrier_interface.as_deref(),
+                y.carrier_subnet.as_deref()
+            ),
+            (
+                Some(51822),
+                Some(51823),
+                Some("wg-carry1"),
+                Some("169.254.30.2/31")
+            ),
+            "the same forwarder as xab"
+        );
+        assert_eq!(y.wg_interface, "wg-fed0", "prod's own edge");
+        // xad is on prod's edge beside xac, behind another forwarder: its
+        // forwarder ports start over; its edge carrier values step past xac's.
+        assert_eq!((z.public_port, z.carrier_port), (Some(51820), Some(51821)));
+        assert_eq!(
+            (z.carrier_interface.as_deref(), z.carrier_subnet.as_deref()),
+            (Some("wg-carry0"), Some("169.254.30.0/31"))
+        );
+        assert_ne!(z.carrier_interface, y.carrier_interface, "one edge host");
+        assert_ne!(z.carrier_subnet, y.carrier_subnet, "one edge host");
+    }
+
     #[test]
     fn a_forwarder_peering_gets_carrier_values_that_do_not_collide() {
         let mut a = p("xab");

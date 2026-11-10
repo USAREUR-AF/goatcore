@@ -311,8 +311,8 @@ A peering needs values that no agreement carries and that two peerings on one ed
 | `cert_dir` | `/var/lib/goat-federation/<with>/pki`, the driver's own default `<work>/pki` (`/var/lib/goat-federation/<env>-<with>/pki` for the same partner on a second environment) | the repository: the machine running the driver may run every environment's peerings |
 | `edge_group`, `core_group` | `<with>_edge`, `<with>_core` (`<env>_<with>_edge` for the same partner on a second environment) | the repository |
 | `edge_host_name`, `core_host_name` | `<env>-edge-<with>`, `<env>-core-<with>` | the repository |
-| with `forwarder:` only: `public_port`, `carrier_port` | 51820, 51822, ... and 51821, 51823, ... | UDP ports on the forwarder |
-| with `forwarder:` only: `carrier_interface`, `carrier_listen_port`, `carrier_subnet` | `wg-carry0`, ...; 51822, 51824, ...; `169.254.30.0/31`, ... | the edge host, with the values above |
+| with `forwarder:` only: `public_port`, `carrier_port` | 51820, 51822, ... and 51821, 51823, ... | UDP ports on that forwarder (by its `endpoint`), across every environment it relays |
+| with `forwarder:` only: `carrier_interface`, `carrier_listen_port`, `carrier_subnet` | `wg-carry0`, ...; 51822, 51824, ...; `169.254.30.0/31`, ... | the edge host, with the values above; the interface and subnet also on that forwarder, across environments |
 
 Every host-scoped value is unique within one environment, which is stricter than per host and never wrong. One inventory name per peering per machine matters because Ansible merges the group_vars of every group a host name is in: one name in two peering groups makes each peering's run read the other's interface, ports and certificate paths.
 
