@@ -63,7 +63,8 @@ lock() { # $1 lock dir: wait for it, hold it for this process
     if [ -f "$l/pid" ] && ! kill -0 "$(cat "$l/pid")" 2>/dev/null; then rm -rf "$l"; continue; fi
     sleep 3
   done
-  echo $$ > "$l/pid"
+  # Written whole: a reader that found the file empty would take a held lock for stale.
+  echo $$ > "$l/pid.tmp" && mv "$l/pid.tmp" "$l/pid"
 }
 unlock() { rm -rf "$1"; }
 
