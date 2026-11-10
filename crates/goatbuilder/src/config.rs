@@ -227,6 +227,16 @@ pub struct PeeringForwarder {
     pub ansible_host: Option<String>,
 }
 
+/// Words `goatbuilder federate <word>` takes, or is reserved to take, as a
+/// subcommand, so a peering declared with one could never be run: the six
+/// federation verbs, clap's `help`, the stages of the one command (`status`,
+/// `plan`, `deploy`, `test`), and `allocate`. The one list; ops/goatbuilder/
+/// validate.py's RESERVED_PEERING_NAMES mirrors it.
+pub const RESERVED_PEERING_NAMES: &[&str] = &[
+    "init", "lint", "compose", "diff", "verify", "apply", "help", "status", "plan", "deploy",
+    "test", "allocate",
+];
+
 /// Read a YAML config file into a JSON value (the form the schema validates).
 pub fn load_value(path: &Path) -> Result<Value> {
     let text = std::fs::read_to_string(path)

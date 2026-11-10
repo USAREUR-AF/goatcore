@@ -273,7 +273,7 @@ peerings:
     forwarder: { endpoint: 203.0.113.7 }   # present when a peering forwarder relays (ADR 1218)
 ```
 
-`init lint compose diff verify apply status plan deploy test allocate` are words of `goatbuilder federate` and can never name a partner (GB-120).
+`init lint compose diff verify apply help status plan deploy test allocate` are words of `goatbuilder federate` and can never name a partner (GB-120).
 
 `tunnel` is this party's local choice of transport, spelled as the schema has always spelled it: `ipsec` is the agreement's `ipsec-fips`. Like `offer:`, it may only narrow: the agreement picks the transport from both packages' measured capabilities, and phase 11 runs the play for the transport the agreement chose, never the one `tunnel` names. A `tunnel` that disagrees with the agreement is a configuration to correct, not an override.
 

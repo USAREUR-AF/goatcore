@@ -24,11 +24,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::{Config, Peering};
 
-/// Words of `goatbuilder federate` that can never name a partner.
-pub const RESERVED_NAMES: &[&str] = &[
-    "init", "lint", "compose", "diff", "verify", "apply", "status", "plan", "deploy", "test",
-    "allocate",
-];
+/// Words of `goatbuilder federate` that can never name a partner: the one
+/// shared list, `config::RESERVED_PEERING_NAMES` (validate.py mirrors it).
+pub use crate::config::RESERVED_PEERING_NAMES as RESERVED_NAMES;
 
 /// The declaration file `goat federate init` reads, in the goat context.
 pub const DECLARATION_FILE: &str = "federation.toml";
@@ -505,5 +503,18 @@ mod tests {
         let e = driver_check(&c, "xab", None).unwrap_err();
         assert!(e.to_string().contains("pass --env"), "{e}");
         assert_eq!(driver_check(&c, "xab", Some("dev")).unwrap(), None);
+    }
+
+    /// One reserved list: validate.py's RESERVED_PEERING_NAMES is the Rust list.
+    #[test]
+    fn validate_py_reserves_the_same_words() {
+        let py = include_str!("../../../../ops/goatbuilder/validate.py");
+        let start = py.find("RESERVED_PEERING_NAMES = (").expect("validate.py defines it");
+        let body = &py[start..py[start..].find(')').map(|e| start + e).unwrap()];
+        let words: Vec<&str> = body.split('"').skip(1).step_by(2).collect();
+        assert_eq!(words, RESERVED_NAMES.to_vec());
+        for w in ["help", "allocate", "status"] {
+            assert!(RESERVED_NAMES.contains(&w), "{w}");
+        }
     }
 }
