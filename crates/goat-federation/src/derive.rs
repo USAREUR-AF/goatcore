@@ -1440,7 +1440,7 @@ mod tests {
             } else {
                 Some(selected.as_str())
             };
-            let got = select_router(sel, tools, &mut probe);
+            let got = select_router(sel, tools, &mut probe, "FED_ROUTER_CONTAINER");
             let verdict = match &got {
                 Ok(_) => "ok",
                 Err(e) if e.starts_with("multiple") => "many",
