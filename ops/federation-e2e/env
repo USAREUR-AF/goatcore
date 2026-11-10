@@ -354,6 +354,7 @@ cmd_run() {
   # A row on another directory is filed beside the default row, never over it.
   [ -z "$DIRECTORY_REF" ] || short="$short-saltlick-${DIRECTORY_SHA:0:12}"
   if [ -n "$OUT" ]; then outd="$OUT/$NAME"; mkdir -p "$outd"; fi
+  local subset=all; [ "$SCENARIOS" = all ] || subset="$(printf '%s' "$SCENARIOS" | sha256sum | cut -c1-8)"
   for av in $avenues; do
     local recs=(); for unit in $(catalog_units "$av" "$SCENARIOS"); do recs+=(--record "$run/$av/$unit"); done
     local merged=(); local m; for m in ${MERGED:-}; do merged+=(--merged "$m"); done
@@ -364,13 +365,22 @@ cmd_run() {
       ${blocked:+--blocked-all "$blocked"} \
       ${DIRECTORY_REF:+--directory-ref "$DIRECTORY_REF" --directory-sha "$DIRECTORY_SHA"} \
       --out "$run/results-$av.json" --markdown "$run/results-$av.md" || rc=1
-    if [ -n "$outd" ]; then cp "$run/results-$av.json" "$outd/$short-$av.json"; fi
+    # Published as <sha12>-<avenue>-<subset>.json: runs of different scenario subsets never overwrite
+    # each other. harness.revision is the fingerprint without the subset; lib/matrix.py merges a ref's
+    # subsets and compares cells only on one revision.
+    if [ -n "$outd" ]; then
+      python3 - "$run/results-$av.json" "$outd/$short-$av-$subset.json" "$(fingerprint "$run/harness/ops/federation-e2e" "")" <<'PY'
+import json, sys
+r = json.load(open(sys.argv[1])); r["harness"]["revision"] = sys.argv[3]
+open(sys.argv[2], "w").write(json.dumps(r, indent=2) + "\n")
+PY
+    fi
   done
   if [ -n "$outd" ]; then
     { echo "# Federation e2e: $NAME @ $short"; echo; echo "Run $run, harness $hsha, started $started."
       [ -z "$DIRECTORY_REF" ] || echo "Peering directory: saltlick $DIRECTORY_REF @ $DIRECTORY_SHA (image fe2e-saltlick:${DIRECTORY_SHA:0:12})."
       echo
-      for av in $avenues; do cat "$run/results-$av.md"; echo; done; } > "$outd/$short.md"
+      for av in $avenues; do cat "$run/results-$av.md"; echo; done; } > "$outd/$short-$subset.md"
     python3 "$HERE/lib/matrix.py" --out "$OUT" >/dev/null || true
   fi
   for av in $avenues; do sed -n '1,4p' "$run/results-$av.md"; done

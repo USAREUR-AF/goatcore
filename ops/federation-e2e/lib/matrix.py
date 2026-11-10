@@ -19,10 +19,12 @@ SHORT = {"PASS": "PASS", "FAIL": "FAIL", "BLOCKED": "BLOCKED", "SKIP": "SKIP", "
 
 
 def load(out):
-    best = {}
+    """Every result under out (archive*/ left out), merged per (ref name, avenue): for each scenario the
+    newest result, with the harness revision it was measured on."""
+    rows = {}
     for p in glob.glob(os.path.join(out, "**", "*-*.json"), recursive=True):
-        # Results kept for comparison under archive*/ never enter the table.
-        if os.path.relpath(p, out).split(os.sep)[0].startswith("archive"):
+        rel = os.path.relpath(p, out)
+        if rel.split(os.sep)[0].startswith("archive"):
             continue
         try:
             with open(p, encoding="utf-8") as fh:
@@ -31,11 +33,24 @@ def load(out):
             continue
         if r.get("schema") != "fed-e2e-result/1":
             continue
-        k = (r["ref"]["name"], r["avenue"])
-        if k not in best or r["finished"] > best[k]["finished"]:
-            r["_path"] = os.path.relpath(p, out)
-            best[k] = r
-    return best
+        h = r.get("harness", {})
+        rev = h.get("revision") or h.get("fingerprint") or "unknown"
+        name = r["ref"]["name"]
+        if r.get("directory"):
+            name += f" (directory saltlick {r['directory']['sha'][:12]})"
+        k = (name, r["avenue"])
+        row = rows.setdefault(k, {"ref": r["ref"], "avenue": r["avenue"], "scen": {}, "paths": set(), "finished": ""})
+        if r["finished"] > row["finished"]:
+            row["finished"], row["ref"] = r["finished"], r["ref"]
+        for sc in r["scenarios"]:
+            cur = row["scen"].get(sc["id"])
+            if cur is None or r["finished"] > cur["_finished"]:
+                row["scen"][sc["id"]] = dict(sc, _finished=r["finished"], _rev=rev, _path=rel)
+        row["paths"].add(rel)
+    for row in rows.values():
+        outs = [s["outcome"] for s in row["scen"].values() if s.get("required", True)]
+        row["verdict"] = next((w for w in ("FAIL", "BLOCKED", "SKIP") if w in outs), "PASS")
+    return rows
 
 
 def main():
@@ -46,43 +61,42 @@ def main():
     best = load(a.out)
     scen = []
     for r in best.values():
-        for s in r["scenarios"]:
-            if s["id"] not in scen:
-                scen.append(s["id"])
+        for sid in r["scen"]:
+            if sid not in scen:
+                scen.append(sid)
     order = sorted(best, key=lambda k: (k[0] != a.baseline, k[0] != "integration", k[0], k[1]))
     lines = ["# Federation e2e: every ref against every scenario", "",
              "Outcome words: PASS (expected evidence observed), FAIL (violation observed), BLOCKED "
              "(prerequisite or evidence unavailable), SKIP (not exercised), N/A = NOT APPLICABLE "
              "(excluded by the agreement). A required BLOCKED or SKIP never counts as passing. "
-             f"REGRESSION marks a cell worse than `{a.baseline}` for the same scenario and avenue.", "",
+             "A row merges every scenario subset measured for that ref and avenue, newest result per scenario. "
+             f"A cell is compared with `{a.baseline}` only when both were measured on the same harness revision; "
+             "REGRESSION marks a cell worse than a PASS on main; `≠` marks a cell measured on another revision than main's.", "",
              "Columns: " + ", ".join(f"{i + 1} `{s}`" for i, s in enumerate(scen)), "",
-             "| ref | sha | avenue | verdict | " + " | ".join(str(i + 1) for i in range(len(scen))) + " | result |",
-             "|---|---|---|---|" + "---|" * len(scen) + "---|"]
+             "| ref | sha | avenue | verdict | " + " | ".join(str(i + 1) for i in range(len(scen))) + " |",
+             "|---|---|---|---|" + "---|" * len(scen)]
     regress, notcmp = [], []
     for k in order:
         r = best[k]
-        by = {s["id"]: s for s in r["scenarios"]}
         base = best.get((a.baseline, k[1]))
-        # Rows compare only when measured with the same harness (fingerprint).
-        fp, bfp = r.get("harness", {}).get("fingerprint"), (base or {}).get("harness", {}).get("fingerprint")
-        comparable = bool(base) and bool(fp) and fp == bfp
-        if base and k[0] != a.baseline and not comparable:
-            notcmp.append(f"{k[0]}@{r['ref']['sha'][:12]} {k[1]}: harness {fp or 'unknown'}, {a.baseline} {bfp or 'unknown'}")
-        bby = {s["id"]: s for s in base["scenarios"]} if comparable else {}
+        bby = base["scen"] if base else {}
         cells = []
         for sid in scen:
-            s = by.get(sid)
+            s = r["scen"].get(sid)
             if not s:
                 cells.append("·")
                 continue
             c = SHORT[s["outcome"]]
             b = bby.get(sid)
-            if k[0] != a.baseline and b and RANK[s["outcome"]] > RANK[b["outcome"]] and b["outcome"] == "PASS":
-                c = f"**{c} REGRESSION**"
-                regress.append(f"{k[0]}@{r['ref']['sha'][:12]} {k[1]} {sid}: {s['outcome']} (main PASS) — {s['reason'][:200]}")
+            if k[0] != a.baseline and b is not None:
+                if b["_rev"] != s["_rev"]:
+                    c += " ≠"
+                    notcmp.append(f"{k[0]}@{r['ref']['sha'][:12]} {k[1]} {sid}: revision {s['_rev']}, {a.baseline} {b['_rev']}")
+                elif RANK[s["outcome"]] > RANK[b["outcome"]] and b["outcome"] == "PASS":
+                    c = f"**{c} REGRESSION**"
+                    regress.append(f"{k[0]}@{r['ref']['sha'][:12]} {k[1]} {sid}: {s['outcome']} (main PASS) — {s['reason'][:200]}")
             cells.append(c)
-        dref = f" (directory saltlick `{r['directory']['sha'][:12]}`)" if r.get("directory") else ""
-        lines.append(f"| {k[0]}{dref} | `{r['ref']['sha'][:12]}` | {k[1]} | {r['verdict']['outcome']} | " + " | ".join(cells) + f" | {r['_path']} |")
+        lines.append(f"| {k[0]} | `{r['ref']['sha'][:12]}` | {k[1]} | {r['verdict']} | " + " | ".join(cells) + " |")
     lines += ["", "## Regressions against " + a.baseline, ""]
     lines += [f"- {x}" for x in regress] or ["None."]
     lines += ["", f"## Not comparable with {a.baseline} (measured with a different harness)", ""]
@@ -102,8 +116,8 @@ def main():
             lines.append(f"- module `{m}` {av}: BLOCKED — the integration head before it is not measured yet")
             rows += 1
             continue
-        bb = {x["id"]: x["outcome"] for x in before["scenarios"]}
-        diffs = [f"{x['id']} {bb.get(x['id'])} -> {x['outcome']}" for x in r["scenarios"] if x["id"] in bb and bb[x["id"]] != x["outcome"]]
+        bb = {sid: x["outcome"] for sid, x in before["scen"].items()}
+        diffs = [f"{sid} {bb.get(sid)} -> {x['outcome']}" for sid, x in r["scen"].items() if sid in bb and bb[sid] != x["outcome"]]
         lines.append(f"- module `{m}` {av}: " + ("PASS" if not diffs else "FAIL — " + "; ".join(diffs)))
         rows += 1
     if not rows:
