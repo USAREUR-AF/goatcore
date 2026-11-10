@@ -279,7 +279,11 @@ fn plan_with(repo: &Path, o: &Options, work: &str, edge_group: &str, resume: &st
         init_words.extend(w(&["--signing-key", &signing]));
     }
     init_words.extend(w(&["--out", &ours]));
-    let play_on = |limit: &str, name: &str| format!("cd '{r}/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws {aws} -- ../scripts/ansible-preflight.sh -i inventory/peering-edges.ini --limit '{limit}' -e fed_edge_group='{edge_group}' -e fed_work='{work}' -e fed_counterparty='{counterparty}' {name}");
+    // This peering's own inventory file (`goatbuilder federate allocate`, when
+    // not every peering declares hosts:), read beside the hand-written one.
+    let own_inv = format!("inventory/peering-{edge_group}.ini");
+    let more_inv = if repo.join("ops/ansible").join(&own_inv).is_file() { format!(" -i {own_inv}") } else { String::new() };
+    let play_on = |limit: &str, name: &str| format!("cd '{r}/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws {aws} -- ../scripts/ansible-preflight.sh -i inventory/peering-edges.ini{more_inv} --limit '{limit}' -e fed_edge_group='{edge_group}' -e fed_work='{work}' -e fed_counterparty='{counterparty}' {name}");
     let play = |name: &str| play_on(edge_group, name);
     // The core host the edge dials: the outbound republisher runs there, beside
     // our core router, and both of its sessions dial that router (phase 12).
@@ -895,6 +899,28 @@ mod tests {
 
     fn repo() -> std::path::PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
+    }
+
+    /// A peering whose inventory `allocate` rendered into its own file (not
+    /// every peering declares hosts:) has every play read that file beside the
+    /// hand-written one; without the file the commands are as before.
+    #[test]
+    fn the_plays_read_the_peerings_own_inventory_file_when_there_is_one() {
+        let r = tempfile::tempdir().unwrap();
+        let work = tempfile::tempdir().unwrap();
+        let work_s = work.path().display().to_string();
+        let o = Options { with: "xab", env: None, r#as: None, edge_group: None, work: Some(&work_s), mock: None, from: 1, to: 99, dry_run: true, table: false };
+        let before = plan(r.path(), &o, &work_s, "xab_edge", "resume");
+        assert!(before.iter().all(|p| !p.cmd.contains("peering-xab_edge.ini")));
+        let inv = r.path().join("ops/ansible/inventory");
+        std::fs::create_dir_all(&inv).unwrap();
+        std::fs::write(inv.join("peering-xab_edge.ini"), "[xab_edge]\n").unwrap();
+        let after = plan(r.path(), &o, &work_s, "xab_edge", "resume");
+        let plays: Vec<&Phase> = after.iter().filter(|p| p.cmd.contains("ansible-preflight.sh")).collect();
+        assert!(!plays.is_empty());
+        for p in plays {
+            assert!(p.cmd.contains("-i inventory/peering-edges.ini -i inventory/peering-xab_edge.ini "), "{}", p.cmd);
+        }
     }
 
     /// A value from the agreement or the keyring never runs as shell code: the
