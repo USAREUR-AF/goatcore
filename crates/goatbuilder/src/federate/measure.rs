@@ -619,7 +619,13 @@ pub fn resolve(
     edge_pick: Option<&str>,
     core_pick: Option<&str>,
 ) -> Result<Hosts> {
-    let inv = read_inventory(repo, &[INVENTORY])?;
+    // This peering's own inventory file, when `allocate` rendered one.
+    let own = format!("inventory/peering-{edge_group}.ini");
+    let inv = if repo.join("ops/ansible").join(&own).is_file() {
+        read_inventory(repo, &[INVENTORY, &own])?
+    } else {
+        read_inventory(repo, &[INVENTORY])?
+    };
     hosts(&inv, edge_group, core_group, edge_pick, core_pick)
 }
 

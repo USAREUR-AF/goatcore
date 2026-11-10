@@ -195,8 +195,12 @@ echo "peering-standup: peering=$PEERING  work=$FED_WORK  edge-group=$EDGE_GROUP 
 
 # Every ansible phase, one shape. The generated vars and the two exchanged files
 # reach the plays through these, so a phase cannot read an older run's copy.
+# This peering's own inventory file (goatbuilder federate allocate, when not every
+# peering declares hosts:), read beside the hand-written one.
+MORE_INV=""
+[ -f "$REPO/ops/ansible/inventory/peering-$EDGE_GROUP.ini" ] && MORE_INV=" -i inventory/peering-$EDGE_GROUP.ini"
 play() {
-  printf "%s" "cd '$REPO/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws $GOAT_AWS_PROFILE -- ../scripts/ansible-preflight.sh -i inventory/peering-edges.ini --limit '${2:-$EDGE_GROUP}' -e fed_edge_group='$EDGE_GROUP' -e fed_work='$FED_WORK' -e fed_counterparty='$FED_COUNTERPARTY' $1"
+  printf "%s" "cd '$REPO/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws $GOAT_AWS_PROFILE -- ../scripts/ansible-preflight.sh -i inventory/peering-edges.ini$MORE_INV --limit '${2:-$EDGE_GROUP}' -e fed_edge_group='$EDGE_GROUP' -e fed_work='$FED_WORK' -e fed_counterparty='$FED_COUNTERPARTY' $1"
 }
 
 # ---------------------------------------------------------------------------
