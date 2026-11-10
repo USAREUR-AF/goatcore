@@ -75,6 +75,7 @@ character is not exported either, because the phase commands run through
 | `FED_DIRECTORY_URL`, `FED_NO_DIRECTORY`, `FED_PACKAGE_URL` | preflight, phase 5 | `goat_federation_directory_url`, `goat_federation_no_directory`, `goat_federation_package_url` |
 | `FED_CA_CERT` | preflight, phase 5, phase 8 | `goat_federation_ca_cert`, else `ops/ansible/enrollment/ca/<site>/root-cert.pem` (the portal role's `portal_ca_root_src`) |
 | `FED_CA_KEY` | phase 8 | `goat_federation_ca_key` (a plaintext PEM path) |
+| `FED_CA_KEY_FROM_AGE` | phase 8 | `goat_federation_ca_key_from_age: true` gives `1`; unset otherwise (phase 8 then opens no age-encrypted key) |
 | `FED_CA_KEY_AGE`, `FED_AGE_IDENTITY` | preflight, phase 8 | `goat_federation_ca_key_age`, else `<deploy.state_dir>/<site>-ca/ca.key.age` (`portal_ca_key_src`); `goat_federation_age_identity`, else `~/.config/age/keys.txt` |
 | `FED_CORE_SAN` | preflight, phase 8 | the addresses `group_vars/<edge>/deployment.yml` dials |
 | `FED_ROUTER_DOCKER_HOST` | preflight, phase 3 | `ssh://<ansible_user>@<ansible_host>` of the one host in `[<core group>]` (`deploy.ssh_user` when the host names no user); nothing when the group has several hosts |
@@ -82,7 +83,7 @@ character is not exported either, because the phase commands run through
 
 Preflight proves the age-encrypted key opens and matches the certificate,
 decrypting in memory and writing nothing. Phase 8 opens the same key itself when
-no plaintext key file is given
+no plaintext key file is given and the deployment opts in
 ([federation-certificate-lifecycle.md](federation-certificate-lifecycle.md#the-ca-key)).
 
 ## Live reads

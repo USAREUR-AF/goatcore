@@ -338,6 +338,15 @@ pub fn derive_inputs(
         ),
     };
     v.push(input("FED_AGE_IDENTITY", ident, ident_src));
+    // Phase 8 opens the age-encrypted key only when the deployment opts in.
+    let from_age = gv("goat_federation_ca_key_from_age")
+        .filter(|b| b == "true")
+        .map(|_| "1".to_string());
+    v.push(input(
+        "FED_CA_KEY_FROM_AGE",
+        from_age,
+        at("goat_federation_ca_key_from_age (true opts phase 8 in to opening the age-encrypted CA key)"),
+    ));
     let sans = dialled(repo, edge_group);
     v.push(input(
         "FED_CORE_SAN",
@@ -699,5 +708,19 @@ mod tests {
             !read_slot_result(&path).unwrap().allows_restart(),
             "a skip is not a pass"
         );
+    }
+
+    /// Opening the age-encrypted CA key in phase 8 is opt-in: derived only
+    /// from goat_federation_ca_key_from_age: true, otherwise left unset.
+    #[test]
+    fn opening_the_ca_key_from_age_is_opt_in() {
+        let repo = tempfile::tempdir().unwrap();
+        let v = derive_inputs(repo.path(), &peering(), "/w", "xab_edge", None);
+        assert_eq!(get(&v, "FED_CA_KEY_FROM_AGE").value, None);
+        let gv = repo.path().join("ops/ansible/group_vars/xab_edge");
+        std::fs::create_dir_all(&gv).unwrap();
+        std::fs::write(gv.join("fed.yml"), "goat_federation_ca_key_from_age: true\n").unwrap();
+        let v = derive_inputs(repo.path(), &peering(), "/w", "xab_edge", None);
+        assert_eq!(get(&v, "FED_CA_KEY_FROM_AGE").value.as_deref(), Some("1"));
     }
 }

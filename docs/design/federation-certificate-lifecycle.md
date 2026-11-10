@@ -18,27 +18,37 @@ localhost test (see "Installing on the edge").
 ## The CA key
 
 Issuing a missing leaf, or rotating, needs our CA's private key. An explicit key
-file always wins: `--ca-key` or `FED_CA_KEY`. Without one, phase 8 opens the
-deployment's age-encrypted key: `--ca-key-age` or `FED_CA_KEY_AGE` with
-`--age-identity` or `FED_AGE_IDENTITY`. `goatbuilder federate` derives both, from
+file always wins: `--ca-key` or `FED_CA_KEY`.
+
+Opening the deployment's age-encrypted key is opt-in and off by default. With
+`FED_CA_KEY_FROM_AGE=1` (or `--ca-key-from-age`; `goatbuilder federate` sets it
+from `goat_federation_ca_key_from_age: true` in the edge group's vars), phase 8
+opens `--ca-key-age` or `FED_CA_KEY_AGE` with `--age-identity` or
+`FED_AGE_IDENTITY`. `goatbuilder federate` derives both, from
 `goat_federation_ca_key_age` (else `<deploy.state_dir>/<site>-ca/ca.key.age`, the
 portal role's `portal_ca_key_src`) and `goat_federation_age_identity` (else
-`~/.config/age/keys.txt`).
+`~/.config/age/keys.txt`). Without the opt-in, an age key that is present is not
+opened, phase 8 says so on stderr, and a run that must issue refuses with the
+helper's message, which names the opt-in.
 
 The decrypted key goes to `ca-key.pem` in a fresh directory (mode 0700, the
-file 0600) under `$TMPDIR` when it is set, else under memory-backed `/dev/shm`
-where there is one, else under `/tmp`. That directory belongs to this run and is removed when
-the script exits, by any exit, including an interrupt or termination. A kill
-the shell cannot trap (SIGKILL) leaves it behind. An age key that does not open is
-reported on stderr, and the run goes on without it. The report never repeats
-quoted text from age or anything shaped like an age secret key, because age
-quotes the first line of a file it cannot read, and that line is a secret when
-an identity file is named by mistake. A re-run that reuses every
-leaf needs no key; one that must issue refuses with the helper's message.
+file 0600) under `FED_CA_KEY_TMP` when it is set, else under memory-backed
+`/dev/shm` where there is one, else under `$TMPDIR`, else `/tmp`. That directory
+belongs to this run and is removed when the script exits, by any exit, including
+an interrupt or termination. A kill the shell cannot trap (SIGKILL) leaves it
+behind. An age key that does not open is reported on stderr, and the run goes on
+without it. The report never repeats quoted text from age or anything shaped like
+an age secret key, because age quotes the first line of a file it cannot read,
+and that line is a secret when an identity file is named by mistake. A re-run
+that reuses every leaf needs no key; one that must issue refuses with the
+helper's message.
+
+A later, separate change may make the opt-in the default.
 
 Status: WIP — gate: on the federation test environment, phase 8 issues a fresh
-peering's leaves with only the deployment's `ca.key.age` and age identity
-declared, and leaves no key file behind.
+peering's leaves with only the deployment's `ca.key.age`, its age identity and
+the opt-in declared, and leaves no key file behind; without the opt-in nothing is
+decrypted.
 
 ## Ordinary rerun
 
