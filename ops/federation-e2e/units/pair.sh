@@ -116,7 +116,12 @@ pair_wrong_ca() {
   printf 'subjectAltName=DNS:fed.%s.edge.01\nextendedKeyUsage=clientAuth\n' "$s" > "$d/ext"
   openssl x509 -req -in "$d/req.csr" -CA "$d/ca.pem" -CAkey "$d/ca-key.pem" -CAcreateserial -out "$d/cert.pem" -days 30 -extfile "$d/ext" 2>/dev/null
   chmod 0644 "$d"/*.pem
-  docker cp -q "$d/cert.pem" "$HP-$s-edge:/tmp/wrongca-cert.pem"; docker cp -q "$d/key.pem" "$HP-$s-edge:/tmp/wrongca-key.pem"
+  # Not under /tmp: systemd mounts a tmpfs there inside the host, and docker cp writes beneath it.
+  docker cp -q "$d/cert.pem" "$HP-$s-edge:/root/wrongca-cert.pem"; docker cp -q "$d/key.pem" "$HP-$s-edge:/root/wrongca-key.pem"
+  if ! docker exec "$HP-$s-edge" test -s /root/wrongca-key.pem; then
+    mark identity-refused.wrong-ca BLOCKED "the wrong-CA certificate could not be placed on $s's edge host"
+    return 0
+  fi
   # The evidence is the far edge's own TLS answer: a handshake from our edge to its fabric
   # port across the tunnel with the wrong-CA certificate must draw a fatal alert, and the same
   # handshake with the agreed certificate (the control) must not. The client stays open a few
@@ -127,7 +132,7 @@ pair_wrong_ca() {
   local hs="(sleep 4) | timeout 15 openssl s_client -connect $far:7448 -CAfile $w/pki/partner-ca.pem"
   rec "s$n-wrong-ca-session-is-refused" -- bash -c \
     "docker exec $HP-$s-edge bash -c '$hs -cert $w/pki/peering-outward.pem -key $w/pki/peering-outward-key.pem' > '$RECORD/s$n-tls-agreed.log' 2>&1;
-     docker exec $HP-$s-edge bash -c '$hs -cert /tmp/wrongca-cert.pem -key /tmp/wrongca-key.pem' > '$RECORD/s$n-tls-wrong-ca.log' 2>&1;
+     docker exec $HP-$s-edge bash -c '$hs -cert /root/wrongca-cert.pem -key /root/wrongca-key.pem' > '$RECORD/s$n-tls-wrong-ca.log' 2>&1;
      pat='alert (unknown ca|bad certificate|certificate unknown|certificate required|decrypt error|handshake failure)';
      echo \"agreed: \$(grep -iE \"\$pat\" '$RECORD/s$n-tls-agreed.log' | head -1)\"; echo \"wrong ca: \$(grep -iE \"\$pat\" '$RECORD/s$n-tls-wrong-ca.log' | head -1)\";
      grep -q 'CONNECTED' '$RECORD/s$n-tls-agreed.log' || { echo 'the control did not reach the far edge: no evidence'; exit 1; };
