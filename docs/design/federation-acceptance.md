@@ -125,9 +125,12 @@ denials BLOCKED: they cannot be tied to the control. With `FED_PROBE_THEIRS_ZID`
 from any other session fails the control, so the drill's probe is known to be the session that
 was allowed.
 
-Only log lines written after the refusal checks start count: the runner notes the log's length
-first and reads past it, so a decision an earlier run left in the log is not evidence for this one.
-A forged-name or impersonation probe the edge recorded nothing for in this run is BLOCKED.
+The whole log is read. The control and the denials are found by keys carrying this run's id, so an
+earlier run's line cannot match them. The edge names a peer that matches no subject once, when its
+session connects, which can be before the run began; that line carries the probe's own session id,
+so it is evidence for that session. A forged-name or impersonation probe whose session the log names
+nowhere is BLOCKED. (Reading only lines after a count taken at the start was tried and dropped:
+it hid the connect-time line, and the federation test environment showed both rows BLOCKED.)
 
 These rows run on our edge for the inbound direction. The outbound direction is refused, or
 not, by the partner's edge, so it is the partner's inbound row in their own bundle.

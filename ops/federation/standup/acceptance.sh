@@ -459,12 +459,12 @@ else
           "Set FED_EDGE_LOG_OURS and FED_PROBE_THEIRS_REST. Without them the refusals
         above rest on silence."
     else
-      # One read of the log per question, kept for the lines each check quotes. Only
-      # lines written after this run's probes began count: a decision an earlier run
-      # left in the log is not evidence for this one. TRACE_FROM is the log's length
-      # when the refusal checks start.
-      TRACE_FROM=$(ours "$FED_EDGE_LOG_OURS" 2>&1 | wc -l | tr -d ' ')
-      trace()   { ours "$FED_EDGE_LOG_OURS" 2>&1 | tail -n +"$((TRACE_FROM + 1))" > "$TRACE"; }
+      # One read of the log per question, kept for the lines each check quotes. The
+      # whole log is read: the control and the denials are found by keys that carry
+      # this run's id, so no earlier run's line can match them; and the edge names a
+      # peer that matches no subject once, when its session connects, which may be
+      # before this run began. That line is tied to the probe's own session id.
+      trace()   { ours "$FED_EDGE_LOG_OURS" > "$TRACE" 2>&1; }
       lines()   { grep -F "$1" "$TRACE" | grep -E 'is (un)?authorized to ' | tail -3; }
       # verdict [SESSION-FILTER] KEY-FILTER: the last decision, of one session when given.
       verdict() {
@@ -539,7 +539,7 @@ else
         elif [ "${allows:-0}" -eq 0 ] && [ "$GOT_RC" -ne 0 ]; then
           blk refusal/forged-name inbound negative "the forged name: our core's REST surface did not answer" "$GOT_ERR"
         elif [ "${allows:-0}" -eq 0 ] && [ "${unmatched:-0}" -eq 0 ]; then
-          blk refusal/forged-name inbound negative "the forged name: our edge recorded nothing for that session during this run" \
+          blk refusal/forged-name inbound negative "the forged name: our edge's log names that session nowhere" \
             "Its decision lines are the evidence; without them the refusal is not proven."
         else
           no refusal/forged-name inbound negative "the forged name was not refused" "matched no subject $unmatched time(s), authorized $allows, our core read '${GOT:-<nothing>}'"
@@ -572,7 +572,7 @@ else
         elif [ "${allows:-0}" -eq 0 ] && [ -z "$landed" ] && [ -n "$unread" ]; then
           blk refusal/impersonation inbound negative "the impersonation: our core's REST surface did not answer for$unread"
         elif [ "${allows:-0}" -eq 0 ] && [ "${unmatched:-0}" -eq 0 ] && [ -z "$landed" ]; then
-          blk refusal/impersonation inbound negative "the impersonation: our edge recorded nothing for that session during this run" \
+          blk refusal/impersonation inbound negative "the impersonation: our edge's log names that session nowhere" \
             "Its decision lines are the evidence; without them the refusal is not proven."
         else
           no refusal/impersonation inbound negative "their certificate bearing our core's name was authorized on our edge" "matched no subject $unmatched time(s), authorized $allows time(s), our core read '$landed'"
