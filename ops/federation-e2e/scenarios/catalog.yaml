@@ -34,6 +34,9 @@ units:
   shapes-oneway: {parties: "xaa xab"}
   shapes-asym: {parties: "xac xad"}
   workspace: {parties: "xaa xab"}
+  # The solo unit waits on people at each human step (FE2E_SOLO_STEP_TIMEOUT each), so its
+  # limit (timeout, seconds) is two days; env --parties "<lab> <partner>" replaces these ids.
+  solo: {parties: "xae xaf", timeout: 172800}
 
 scenarios:
   - id: two-party-full
@@ -832,3 +835,48 @@ scenarios:
       For each module merged into integration/federation-turnkey, the integration head with
       that merge reverted produces the same outcomes as the integration head before it.
     checks: [{id: same-outcomes, step: "mr-same-outcomes"}]
+
+  - id: solo-external-partner
+    title: One lab sovereign federates with a partner outside the lab, exchanging by file
+    unit: {goatbuilder: solo}
+    runs_where: local
+    pass_condition: >
+      One lab sovereign (A), its core deployed by the ref's goat-zenoh role, federates with a
+      partner (B) that is not in the lab (FE2E_PARTNER=external): no peering directory, phase 5
+      by hand through two exchange folders, and a pause at each human step that waits for a
+      file. On the lab side: phases 1-5, 6-10, 11-12 and 13 pass; the partner's package
+      matches the facts file; the key and CA fingerprint read on the voice call match the
+      partner's files; the agreement selects WireGuard and its digest equals the partner's;
+      phase 10 admits through the role; the tunnel handshakes and carries traffic both ways;
+      a sample staged on each side with no subscriber but the stores reaches the other side's
+      store, again after each receiving core restarts (its edge not restarted); and strict
+      acceptance run locally with this side's own surfaces passes (fail=0, skip=0). What the
+      partner read of our samples, and its acceptance, are peer-reported, never local
+      observations.
+    checks:
+      - {id: core-is-the-roles, step: "solo-core-is-the-roles"}
+      - {id: partner-facts, step: "solo-partner-facts-are-consistent"}
+      - {id: phases-1-to-5, step: "solo-phases-1-to-5"}
+      - {id: our-files-out, step: "solo-our-files-are-in-out"}
+      - {id: partner-files-in-place, step: "solo-partner-files-are-in-place"}
+      - {id: partner-package-matches-facts, step: "solo-partner-package-matches-the-facts"}
+      - {id: voice-call, step: "solo-voice-call-matches-the-partner-files"}
+      - {id: phases-6-to-10, step: "solo-phases-6-to-10"}
+      - {id: wireguard-selected, step: "solo-the-agreement-selected-wireguard"}
+      - {id: agreement-digest-equal, step: "solo-agreement-digest-equals-the-partners"}
+      - {id: core-dry-run, step: "s0-[a-z0-9]+-[a-z0-9]+-core-role-dry-run", regex: true}
+      - {id: core-admits, step: "s0-[a-z0-9]+-[a-z0-9]+-core-role-admits", regex: true}
+      - {id: phases-11-to-12, step: "solo-phases-11-to-12"}
+      - {id: republisher-sets, step: "solo-republisher-maps-both-sets"}
+      - {id: handshake, step: "solo-wireguard-handshake"}
+      - {id: phase-13, step: "solo-phase-13"}
+      - {id: acceptance-ran, step: "solo-acceptance-local-ran"}
+      - {id: acceptance-strict-local, step: "solo-acceptance-strict-local"}
+      - {id: partner-acceptance, step: "solo-partner-acceptance", observer: peer-reported, required: false}
+      - {id: no-diagnostic-subscriber, step: "solo-no-diagnostic-subscriber-runs"}
+      - {id: received-from-partner, step: "solo-received-from-partner-without-a-subscriber"}
+      - {id: partner-received, step: "solo-partner-received-without-a-subscriber", observer: peer-reported}
+      - {id: received-after-our-core-restarts, step: "solo-received-from-partner-after-our-core-restarts"}
+      - {id: our-edge-not-restarted, step: "solo-our-edge-was-not-restarted"}
+      - {id: partner-received-after-its-core-restarts, step: "solo-partner-received-after-its-core-restarts", observer: peer-reported}
+      - {id: tunnel-both-ways, step: "solo-tunnel-carried-both-ways"}
