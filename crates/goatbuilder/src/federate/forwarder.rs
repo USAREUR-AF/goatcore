@@ -540,14 +540,17 @@ mod tests {
     /// naming the pins that separate them.
     #[test]
     fn two_environments_behind_one_forwarder_must_not_share_a_port() {
+        // Allocation keeps one forwarder's values apart across environments.
         let mut b = p("xac", true);
         b["environment"] = json!("prod");
-        let c = cfg(json!([p("xab", true), b.clone()]));
-        let e = render(&c, &values(&c)).unwrap_err();
-        assert_eq!(code(e), "GB-160");
-        b["values"] = json!({"public_port": 51840, "carrier_port": 51841, "carrier_interface": "wg-carry9", "carrier_subnet": "169.254.30.40/31"});
         let c = cfg(json!([p("xab", true), b]));
-        assert!(render(&c, &values(&c)).is_ok());
+        let vs = values(&c);
+        assert!(render(&c, &vs).is_ok());
+        // GB-160 is the backstop for values that collide anyway (a record
+        // edited by hand).
+        let mut bad = vs.clone();
+        bad[1].public_port = bad[0].public_port;
+        assert_eq!(code(render(&c, &bad).unwrap_err()), "GB-160");
     }
 
     #[test]
