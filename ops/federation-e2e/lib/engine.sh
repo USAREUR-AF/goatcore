@@ -30,6 +30,17 @@
 #                               the clone, goat, goatbuilder, the goat context, the working
 #                               directory and the ssh key; the inventory names the edge and
 #                               the core by their addresses. A unit sets it before setup_hosts.
+#   FE2E_PARTNER     where each sovereign's federation partner is (default lab):
+#                    lab       both parties in this lab, as every unit but solo runs them
+#                    external  the partner is outside the lab (units/solo.sh): setup_hosts
+#                              creates only the parties that have partners (the lab
+#                              sovereign's core and edge), no peering directory and no
+#                              isolation checks; the edge offers FE2E_SOLO_PUBLIC_ADDR,
+#                              and reaches the partner through the docker bridge's NAT,
+#                              through FE2E_SOLO_WAN (a docker network, attached at
+#                              FE2E_SOLO_WAN_IP: a stand-in for the internet), or listens
+#                              on FE2E_SOLO_PUBLISH, a UDP port the machine publishes
+#                              (docker -p on the edge host). See solo_endpoint below.
 SRC="${SRC:-$REPO}"
 read -r A B C D <<<"${FE2E_PARTIES:-pasture meadow paddock}"
 PARTIES="$A $B ${C:-} ${D:-}"
@@ -38,8 +49,10 @@ LAB="${FE2E_LAB:-fed-e2e}"
 LABEL=(--label "org.goat.fe2e.lab=$LAB")
 FE2E_CORE="${FE2E_CORE:-hand}"
 FE2E_DRIVER="${FE2E_DRIVER:-edge}"
+FE2E_PARTNER="${FE2E_PARTNER:-lab}"
+case "$FE2E_PARTNER" in lab|external) ;; *) echo "engine: FE2E_PARTNER must be lab or external, not '$FE2E_PARTNER'" >&2; exit 2 ;; esac
 case "$FE2E_CORE" in hand|role) ;; *) echo "engine: FE2E_CORE must be hand or role, not '$FE2E_CORE'" >&2; exit 2 ;; esac
-export SRC A B C D PARTIES HP NP NB LAB FE2E_CORE FE2E_DRIVER
+export SRC A B C D PARTIES HP NP NB LAB FE2E_CORE FE2E_DRIVER FE2E_PARTNER
 # The fleet image, by digest, and the SPIRE release the fleet pins: the `spire`
 # component's value of record in ops/pins/fleet-pins.yaml, which every checkout carries
 # (a public one declares no goatnet there, but keeps every component). Both pull
@@ -194,10 +207,10 @@ gen_sovereign() { # $1 sovereign: its CA, its signing key, its operator's identi
   git -C "$d/clone" fetch -q origin
 }
 
-start_host() { # $1 name, $2 sovereign, $3 internal ip
-  local n="$1" s="$2" ip="$3"
+start_host() { # $1 name, $2 sovereign, $3 internal ip, [more docker run arguments]
+  local n="$1" s="$2" ip="$3"; shift 3
   docker run -d --name "$n" --hostname "$n" "${LABEL[@]}" --privileged --cgroupns=private \
-    --network "$NP-$s" --ip "$ip" \
+    --network "$NP-$s" --ip "$ip" "$@" \
     --tmpfs /run --tmpfs /run/lock -v /var/lib/docker -v /lib/modules:/lib/modules:ro \
     -v "$WORK/$s/keys:/etc/fed-e2e:ro" -v "$WORK/$s/origin.git:/srv/goat.git:ro" \
     -v "$(goat_of "$s"):/usr/local/bin/goat:ro" -v "$GB:/usr/local/bin/goatbuilder:ro" \
@@ -350,9 +363,39 @@ start_spire() { # $1 sovereign: the SPIRE server on its core host
 # Network profile seams. A unit may redefine these after sourcing the engine. The
 # defaults are the direct path every other unit runs: the edge holds its own boundary
 # address and offers it, with the role's default MTU.
-offer_endpoint() { echo "$(boundary_ip "$1"):$(wgport "$1" "$2")"; } # $1 us, $2 them
+offer_endpoint() { # $1 us, $2 them
+  if [ "$FE2E_PARTNER" = external ]; then solo_endpoint "$1" "$2"; else echo "$(boundary_ip "$1"):$(wgport "$1" "$2")"; fi
+}
 offer_mtu() { echo 1380; }                                           # $1 us, $2 them
-attach_boundary() { docker network connect --ip "$(boundary_ip "$1")" "$NP-boundary" "$HP-$1-edge"; } # $1 sovereign
+attach_boundary() { # $1 sovereign
+  if [ "$FE2E_PARTNER" = external ]; then solo_attach "$1"; return 0; fi
+  docker network connect --ip "$(boundary_ip "$1")" "$NP-boundary" "$HP-$1-edge"
+}
+
+# --- a partner outside the lab (FE2E_PARTNER=external) ------------------------------------
+# The lab edge's public side. It dials by default (the partner listens), out through the
+# docker bridge's NAT, and offers FE2E_SOLO_PUBLIC_ADDR, the address the partner sees it
+# at (the partner's edge drops tunnel packets from any other address). When the partner
+# cannot listen, the lab edge listens: on FE2E_SOLO_PUBLISH, a UDP port the machine
+# publishes to the edge host's tunnel port, or at FE2E_SOLO_WAN_IP on FE2E_SOLO_WAN.
+# FE2E_SOLO_WAN is a docker network that stands in for the internet when two labs play
+# both sides; the edge is attached to it, and its address there is the default public one.
+solo_public_addr() { echo "${FE2E_SOLO_PUBLIC_ADDR:-${FE2E_SOLO_WAN_IP:-}}"; }
+solo_endpoint() { # $1 us, $2 them: host:port as the partner reaches this edge
+  local a; a="$(solo_public_addr)"
+  [ -n "$a" ] || die "FE2E_PARTNER=external: set FE2E_SOLO_PUBLIC_ADDR, the address the partner's edge sees this edge at"
+  echo "$a:${FE2E_SOLO_PUBLISH:-$(wgport "$1" "$2")}"
+}
+solo_attach() { # $1 sovereign
+  [ -n "${FE2E_SOLO_WAN:-}" ] || return 0
+  [ -n "${FE2E_SOLO_WAN_IP:-}" ] || die "FE2E_SOLO_WAN is set without FE2E_SOLO_WAN_IP, this edge's address on it"
+  docker network connect --ip "$FE2E_SOLO_WAN_IP" "$FE2E_SOLO_WAN" "$HP-$1-edge"
+}
+solo_edge_args() { # $1 sovereign: docker run arguments of its edge host
+  [ "$FE2E_PARTNER" = external ] && [ -n "${FE2E_SOLO_PUBLISH:-}" ] || return 0
+  local them; them="$(partners "$1" | awk '{print $1}')"
+  echo "-p ${FE2E_SOLO_PUBLISH}:$(wgport "$1" "$them")/udp"
+}
 
 # --- the core router by the ref's goat-zenoh role (FE2E_CORE=role) ----------------------
 # What a real goatnet's core is: container <site_id>-zenoh-router, label
@@ -681,7 +724,8 @@ setup_hosts() { # $1 scenario number
   for s in $(partner_list); do gen_sovereign "$s"; done
   for s in $(partner_list); do
     start_host "$HP-$s-core" "$s" "$(core_ip "$s")"
-    start_host "$HP-$s-edge" "$s" "$(edge_ip "$s")"
+    # shellcheck disable=SC2046
+    start_host "$HP-$s-edge" "$s" "$(edge_ip "$s")" $(solo_edge_args "$s")
     attach_boundary "$s"
     # The operator's workspace: the internal network only, never the boundary.
     [ "$FE2E_DRIVER" != workspace ] || start_host "$HP-$s-ops" "$s" "$(ops_ip "$s")"
@@ -693,6 +737,8 @@ setup_hosts() { # $1 scenario number
   for s in $(partner_list); do start_core "$s"; done
   for s in $(partner_list); do docker save "$RP_TAG" | docker exec -i "$HP-$s-core" docker load -q >/dev/null; done
   for s in $(partner_list); do host_exec "$(drv_host "$s")" sh -c "[ -d /opt/goat/.git ] || git clone -q /srv/goat.git /opt/goat"; done
+  # A partner outside the lab: no directory (phase 5 by hand), and nothing to isolate from.
+  [ "$FE2E_PARTNER" = external ] && return 0
   start_directory
 
   say "scenario $n: the isolation the rest of the run depends on"

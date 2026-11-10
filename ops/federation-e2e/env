@@ -8,12 +8,15 @@
 #   env down   [--lab N | --all]                  remove what this environment created, and nothing else
 #   env run    --ref REF [--avenue script|goatbuilder|both] [--scenario ID[,ID]|all]
 #              [--jobs N] [--out DIR] [--name NAME] [--merged NAME@SHA]... [--goat-version ID=VER]...
-#              [--directory-ref DREF]
+#              [--directory-ref DREF] [--parties "xae xaf"]
 #                                                 run scenarios; write results.json and a page per avenue
 #   env list                                      the scenarios, where each runs, and its pass condition
 #   env status                                    the labs in use and what holds them
 #   env report --out DIR                          rewrite DIR/latest.md from every result under DIR
 #   env fingerprint [--scenario ID,ID]            the harness fingerprint a result is measured with
+#
+# --parties replaces the sovereign ids the catalog gives each unit (units:), in order A B C D:
+# the solo unit's lab sovereign is A and its outside partner B (units/solo.sh).
 #
 # REF is any git ref or sha the repository knows (origin/<branch> is tried too). The tree
 # under test is that ref; the harness is the checkout this script is in, copied into the
@@ -43,7 +46,7 @@ MAX_LAB=14
 
 die() { echo "env: $*" >&2; exit 1; }
 say() { printf '\033[1m==> %s\033[0m\n' "$*" >&2; }
-usage() { sed -n '2,34p' "$0"; exit "${1:-0}"; }
+usage() { sed -n '2,37p' "$0"; exit "${1:-0}"; }
 
 # --- refs and builds --------------------------------------------------------------------
 resolve() { # $1 ref -> sha
@@ -282,10 +285,13 @@ run_unit() { # $1 unit, $2 avenue, $3 sha, $4 run dir, $5 lab (taken), [$6 keep]
   local unit="$1" av="$2" sha="$3" run="$4" lab="$5" keep="${6:-0}" rec work parties
   rec="$run/$av/$unit"; work="$run/work/$av-$unit"
   rm -rf "$rec" "$work"; mkdir -p "$rec" "$work"
-  parties="$(catalog_parties "$unit")"
+  parties="${FE2E_UP_PARTIES:-$(catalog_parties "$unit")}"
   say "unit $unit, avenue $av, lab $lab, parties $parties"
-  local extra=() kv
+  local extra=() kv ut
   for kv in $(unit_tools "$unit" "$sha"); do extra+=("$kv"); done
+  # A unit that waits on people (solo) declares a longer limit under units: (timeout, s).
+  ut="$(catalog_unit_field "$unit" timeout)"
+  [ -z "$ut" ] || [ -n "${FE2E_UNIT_TIMEOUT:-}" ] || extra+=("FE2E_UNIT_TIMEOUT=$ut")
   if [ -n "${DIRECTORY_REF:-}" ]; then
     extra+=("FE2E_SALTLICK_IMAGE=fe2e-saltlick:${DIRECTORY_SHA:0:12}" "FE2E_DIRECTORY_REF=$DIRECTORY_REF" "FE2E_DIRECTORY_SHA=$DIRECTORY_SHA")
   fi

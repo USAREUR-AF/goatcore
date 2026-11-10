@@ -95,7 +95,9 @@ def judge(catalog, records, avenue, only):
             step = ck.get("step", "")
             for k, v in subst.items():
                 step = step.replace("{" + k + "}", str(v))
-            c = {"id": ck["id"], "required": bool(ck.get("required", True)), "observer": "local"}
+            # observer: peer-reported for a check whose evidence the partner reported by file
+            # (units/solo.sh); every other check is observed by this machine.
+            c = {"id": ck["id"], "required": bool(ck.get("required", True)), "observer": ck.get("observer", "local")}
             if step:
                 c["step"] = step
             row = None
@@ -169,6 +171,8 @@ def markdown(res):
         lines.append("")
         for c in s["checks"]:
             req = "required" if c["required"] else "optional"
+            if c.get("observer") == "peer-reported":
+                req += ", peer-reported"
             lines.append(f"- {c['outcome']} `{c['id']}` ({req}){': ' + c['reason'] if c['reason'] else ''}")
         lines.append("")
     return "\n".join(lines) + "\n"
