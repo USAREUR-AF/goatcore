@@ -33,6 +33,7 @@ units:
   nodesec: {parties: "xaa xab xac"}
   shapes-oneway: {parties: "xaa xab"}
   shapes-asym: {parties: "xac xad"}
+  workspace: {parties: "xaa xab"}
 
 scenarios:
   - id: two-party-full
@@ -735,6 +736,60 @@ scenarios:
       - {id: second-phase-13, step: "s4-{B}-{A}-phase-13"}
       - {id: acceptance-first, step: "s4-acceptance-as-{A}-with-{B}"}
       - {id: acceptance-second, step: "s4-acceptance-as-{B}-with-{A}"}
+
+  - id: operator-workspace
+    title: Each side driven from its operator's workspace, which reaches only its own hosts
+    unit: {goatbuilder: workspace}
+    runs_where: local
+    pass_condition: >
+      Each sovereign's driver runs on a third host, its operator's workspace, on the
+      sovereign's internal network only: it reaches its own edge and core over ssh, and not
+      the other sovereign's hosts, the boundary network or the directory. From both
+      workspaces (goatbuilder, packages exchanged by hand) phases 1 to 13 complete; phase 3's
+      package, written on the workspace, carries the edge's federation interface key and the
+      core router's zenohd version; both sides hold one agreement digest that selects
+      WireGuard, the tunnel handshakes, and phase 14 acceptance passes from both sides with
+      FED_ACCEPTANCE_STRICT=1.
+    checks:
+      - {id: first-reaches-edge, step: "ws-{A}-workspace-reaches-its-edge"}
+      - {id: first-reaches-core, step: "ws-{A}-workspace-reaches-its-core"}
+      - {id: second-reaches-edge, step: "ws-{B}-workspace-reaches-its-edge"}
+      - {id: second-reaches-core, step: "ws-{B}-workspace-reaches-its-core"}
+      - {id: first-not-other-edge, step: "ws-{A}-workspace-cannot-reach-{B}-edge"}
+      - {id: first-not-other-core, step: "ws-{A}-workspace-cannot-reach-{B}-core"}
+      - {id: first-not-other-boundary, step: "ws-{A}-workspace-cannot-reach-{B}-boundary"}
+      - {id: first-not-own-boundary, step: "ws-{A}-workspace-cannot-reach-its-own-boundary"}
+      - {id: first-not-directory, step: "ws-{A}-workspace-cannot-reach-the-directory"}
+      - {id: first-no-boundary-address, step: "ws-{A}-workspace-holds-no-boundary-address"}
+      - {id: second-not-other-edge, step: "ws-{B}-workspace-cannot-reach-{A}-edge"}
+      - {id: second-not-other-core, step: "ws-{B}-workspace-cannot-reach-{A}-core"}
+      - {id: second-not-other-boundary, step: "ws-{B}-workspace-cannot-reach-{A}-boundary"}
+      - {id: second-not-own-boundary, step: "ws-{B}-workspace-cannot-reach-its-own-boundary"}
+      - {id: second-not-directory, step: "ws-{B}-workspace-cannot-reach-the-directory"}
+      - {id: second-no-boundary-address, step: "ws-{B}-workspace-holds-no-boundary-address"}
+      - {id: first-edge-no-context, step: "ws-{A}-edge-holds-no-goat-context"}
+      - {id: second-edge-no-context, step: "ws-{B}-edge-holds-no-goat-context"}
+      - {id: first-phases-1-to-5, step: "sws-{A}-{B}-phases-1-to-5"}
+      - {id: second-phases-1-to-5, step: "sws-{B}-{A}-phases-1-to-5"}
+      - {id: first-package-written, step: "sws-{A}-package-written-on-the-workspace"}
+      - {id: second-package-written, step: "sws-{B}-package-written-on-the-workspace"}
+      - {id: first-package-edge-key, step: "sws-{A}-package-carries-the-edge-interface-key"}
+      - {id: second-package-edge-key, step: "sws-{B}-package-carries-the-edge-interface-key"}
+      - {id: first-package-router-version, step: "sws-{A}-package-carries-the-core-router-version"}
+      - {id: second-package-router-version, step: "sws-{B}-package-carries-the-core-router-version"}
+      - {id: first-files-in-place, step: "sws-{A}-{B}-their-files-are-in-place"}
+      - {id: second-files-in-place, step: "sws-{B}-{A}-their-files-are-in-place"}
+      - {id: first-phases-6-to-10, step: "sws-{A}-{B}-phases-6-to-10"}
+      - {id: second-phases-6-to-10, step: "sws-{B}-{A}-phases-6-to-10"}
+      - {id: one-agreement, step: "sws-{A}-{B}-both-sides-hold-one-agreement"}
+      - {id: wireguard-selected, step: "sws-{A}-{B}-the-agreement-selected-wireguard"}
+      - {id: first-phases-11-to-12, step: "sws-{A}-{B}-phases-11-to-12"}
+      - {id: second-phases-11-to-12, step: "sws-{B}-{A}-phases-11-to-12"}
+      - {id: handshake, step: "sws-{A}-{B}-a-wireguard-handshake"}
+      - {id: first-phase-13, step: "sws-{A}-{B}-phase-13"}
+      - {id: second-phase-13, step: "sws-{B}-{A}-phase-13"}
+      - {id: acceptance-first, step: "sws-acceptance-as-{A}-with-{B}"}
+      - {id: acceptance-second, step: "sws-acceptance-as-{B}-with-{A}"}
 
   - id: back-out-one-peering
     title: One of two peerings backed out while the other carries traffic
