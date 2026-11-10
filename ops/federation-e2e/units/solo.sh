@@ -278,11 +278,11 @@ solo_partner_acceptance() { # the partner's result, if dropped in IN: peer-repor
 # (not its edge) and the exchange runs again.
 solo_sample() { # $1 round: stage a sample and name it in OUT
   local s="$A" nonce key; nonce="solo$1$(date +%s)$RANDOM"; key="from/$s/all/$nonce"
-  put_release "$s" all "$nonce" > /dev/null
+  put_release "$s" all "$B" "$nonce" > /dev/null
   printf 'key=%s\nvalue=%s\nstaged_as=release/all/%s\nstaged_at=%s\n' "$key" "$nonce" "$nonce" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" | text_out "$s-sample-$1.txt"
   # Staged again at 15 s and 30 s, the same value: a sending core that restarted may not
   # have its republisher back yet. One stored value is all the partner reads.
-  ( sleep 15; put_release "$s" all "$nonce"; sleep 15; put_release "$s" all "$nonce" ) > /dev/null 2>&1 &
+  ( sleep 15; put_release "$s" all "$B" "$nonce"; sleep 15; put_release "$s" all "$B" "$nonce" ) > /dev/null 2>&1 &
 }
 solo_receive() { # $1 round, $2 step name: read the partner's sample from our store, report it
   local s="$A" them="$B" key value got=""
