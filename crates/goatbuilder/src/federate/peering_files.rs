@@ -1013,6 +1013,7 @@ pub fn run_scoped(repo: &Path, o: &Options, only: Option<&str>) -> Result<Report
         &installs,
     )?;
     rendered.extend(deployment_halves(repo, &cfg, &values)?);
+    rendered.extend(super::federation_toml::render(repo, &cfg, &values)?);
     if only.is_some() {
         // One peering: its own files and the record. The inventory is the
         // whole repository's, and other peerings' files are not this run's.
