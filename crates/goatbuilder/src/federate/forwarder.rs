@@ -502,6 +502,30 @@ mod tests {
         assert_eq!(edge_vars(&c.peerings[2], &vs[2]), "");
     }
 
+    /// With goat-zenoh-edge installing the certificates, a relayed edge's
+    /// rendered values still carry its carrier variables.
+    #[test]
+    fn a_relayed_edge_keeps_its_carrier_with_the_roles_install_on() {
+        let c = cfg(json!([p("xab", true)]));
+        let vs = values(&c);
+        let installs: std::collections::BTreeSet<String> = ["xab_edge".to_string()].into();
+        let fs = super::super::peering_files::render_full(
+            &c,
+            &vs,
+            &alloc::Record::default(),
+            None,
+            &installs,
+        )
+        .unwrap();
+        let e = &fs
+            .iter()
+            .find(|r| r.path == "ops/ansible/group_vars/xab_edge/peering-values.yml")
+            .unwrap()
+            .body;
+        assert!(e.contains("goat_zenoh_edge_cert_dir:"), "{e}");
+        assert!(e.contains("peering_wg_via_forwarder: true"), "{e}");
+    }
+
     #[test]
     fn the_inventory_lists_the_forwarder_in_its_own_group() {
         let c = cfg(json!([p("xab", true)]));
