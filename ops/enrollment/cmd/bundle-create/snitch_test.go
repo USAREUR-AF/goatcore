@@ -24,9 +24,9 @@ func TestRun_Snitch_KeyGeneratedAndEmbedded(t *testing.T) {
 	outPath := filepath.Join(t.TempDir(), "bundle.cbor")
 
 	args := runArgs{
-		Site: "vega", DeviceID: "mgmt-test-01-laptop",
+		Site: "lab", DeviceID: "mgmt-test-01-laptop",
 		WGCP0Address: "10.99.0.10/24",
-		RelaysPath:   relaysPath, ACLGroupsRaw: "VEGA",
+		RelaysPath:   relaysPath, ACLGroupsRaw: "LAB",
 		CAID: "dev-test", CAKeyPath: caKey, AgeIdentityPath: ageID,
 		OutPath: outPath,
 		TTLDays: 90, ActivationDays: 14, Now: fixedNow(),
@@ -60,7 +60,7 @@ func TestRun_Snitch_DefaultOff(t *testing.T) {
 	outPath := filepath.Join(t.TempDir(), "bundle.cbor")
 
 	args := runArgs{
-		Site: "vega", DeviceID: "x", WGCP0Address: "10.99.0.10/24",
+		Site: "lab", DeviceID: "x", WGCP0Address: "10.99.0.10/24",
 		RelaysPath: relaysPath, ACLGroupsRaw: "G",
 		CAID: "dev-test", CAKeyPath: caKey, AgeIdentityPath: ageID,
 		OutPath: outPath,
@@ -114,9 +114,9 @@ func TestRun_Snitch_RegistersWithCollector(t *testing.T) {
 	defer srv.Close()
 
 	args := runArgs{
-		Site: "vega", DeviceID: "mgmt-test-01-laptop",
+		Site: "lab", DeviceID: "mgmt-test-01-laptop",
 		WGCP0Address: "10.99.0.10/24",
-		RelaysPath:   relaysPath, ACLGroupsRaw: "VEGA",
+		RelaysPath:   relaysPath, ACLGroupsRaw: "LAB",
 		CAID: "dev-test", CAKeyPath: caKey, AgeIdentityPath: ageID,
 		OutPath: outPath,
 		TTLDays: 90, ActivationDays: 14, Now: fixedNow(),
@@ -184,7 +184,7 @@ func TestRun_Snitch_RegistrationFailureRollsBack(t *testing.T) {
 	defer srv.Close()
 
 	args := runArgs{
-		Site: "vega", DeviceID: "x", WGCP0Address: "10.99.0.10/24",
+		Site: "lab", DeviceID: "x", WGCP0Address: "10.99.0.10/24",
 		RelaysPath: relaysPath, ACLGroupsRaw: "G",
 		CAID: "dev-test", CAKeyPath: caKey, AgeIdentityPath: ageID,
 		OutPath: outPath,
@@ -211,7 +211,7 @@ func TestRun_Snitch_CollectorRequiresAdminKey(t *testing.T) {
 	t.Setenv("SNITCH_ADMIN_KEY", "") // make sure env doesn't sneak in
 
 	args := runArgs{
-		Site: "vega", DeviceID: "x", WGCP0Address: "10.99.0.10/24",
+		Site: "lab", DeviceID: "x", WGCP0Address: "10.99.0.10/24",
 		RelaysPath: relaysPath, ACLGroupsRaw: "G",
 		CAID: "dev-test", CAKeyPath: caKey, AgeIdentityPath: ageID,
 		OutPath: filepath.Join(t.TempDir(), "bundle.cbor"),
@@ -236,7 +236,7 @@ func TestRun_Snitch_CollectorRequiresSnitchTrue(t *testing.T) {
 	relaysPath := fixtureRelays(t)
 
 	args := runArgs{
-		Site: "vega", DeviceID: "x", WGCP0Address: "10.99.0.10/24",
+		Site: "lab", DeviceID: "x", WGCP0Address: "10.99.0.10/24",
 		RelaysPath: relaysPath, ACLGroupsRaw: "G",
 		CAID: "dev-test", CAKeyPath: caKey, AgeIdentityPath: ageID,
 		OutPath: filepath.Join(t.TempDir(), "bundle.cbor"),

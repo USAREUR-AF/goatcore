@@ -16,7 +16,7 @@ func TestLoadRoster_NationalityIsNotInheritedFromTheOrg(t *testing.T) {
 	body := `{
       "orgs": [
         {"id": "usareur-af", "kind": "organic", "nation": "USA"},
-        {"id": "org79x", "kind": "partner", "nation": "NATO"}
+        {"id": "example-hq", "kind": "partner", "nation": "NATO"}
       ],
       "members": [
         {"handle": "a-canadian-officer", "type": "person", "org": "usareur-af",
@@ -25,7 +25,7 @@ func TestLoadRoster_NationalityIsNotInheritedFromTheOrg(t *testing.T) {
          "status": "active", "nationality": "USA"},
         {"handle": "undeclared", "type": "person", "org": "usareur-af",
          "status": "active"},
-        {"handle": "a-belgian-at-org79x", "type": "person", "org": "org79x",
+        {"handle": "a-belgian-at-example-hq", "type": "person", "org": "example-hq",
          "status": "active", "nationality": "BEL"}
       ]
     }`
@@ -49,7 +49,7 @@ func TestLoadRoster_NationalityIsNotInheritedFromTheOrg(t *testing.T) {
 		{"a-us-officer", "USA", "USA"},
 		// Undeclared stays undeclared. Copying "USA" here is the whole bug.
 		{"undeclared", "USA", ""},
-		{"a-belgian-at-org79x", "NATO", "BEL"},
+		{"a-belgian-at-example-hq", "NATO", "BEL"},
 	} {
 		e, ok := byHandle[tc.handle]
 		if !ok {

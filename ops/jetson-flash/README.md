@@ -341,7 +341,7 @@ the `qemu-user-static` chroot pre-bake. Both are host-side and one-time.
 ## References
 
 - `docs/operations/pilot-bringup.md` — wider Orin bringup runbook
-- `docs/design/os-baseline-and-luks.md` — fleet OS baseline + LUKS
+- [`docs/design/os-baseline-and-luks.md`](../../docs/design/os-baseline-and-luks.md) — fleet OS baseline + LUKS
 - `docs/adr/0826-per-site-three-orin-topology.md` — A/B/C role split
 - [`ops/scripts/seed-ssh-key.sh`](../scripts/seed-ssh-key.sh) — first-contact SSH bootstrap
 - NVIDIA Developer L4T R36.4.3 BSP — pinned URL inside `flash-jetson-ubuntu.sh`

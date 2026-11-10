@@ -248,7 +248,7 @@ type YubikeyGenerateOptions struct {
 	CAID          string
 
 	// CertSubject controls the self-signed cert's CN. Defaults to
-	// "goat-ca-<CAID>". The cert is needed because PIV slots
+	// YubikeyCertSubjectPrefix + CAID. The cert is needed because PIV slots
 	// store certificates, not raw pubkeys; we read the pubkey back
 	// from the cert at NewYubikeySigner time.
 	CertSubject string
@@ -288,7 +288,7 @@ func YubikeyGenerate(opts YubikeyGenerateOptions) (*ecdsa.PublicKey, *x509.Certi
 	}
 	subject := opts.CertSubject
 	if subject == "" {
-		subject = "goat-ca-" + opts.CAID
+		subject = YubikeyCertSubjectPrefix + opts.CAID
 	}
 	years := opts.CertValidityYears
 	if years <= 0 {

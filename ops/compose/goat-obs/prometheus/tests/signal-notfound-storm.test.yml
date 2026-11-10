@@ -64,7 +64,7 @@ tests:
               summary: 'signal plane on orin-a is answering notfound 13.0/s'
               description: >-
                 Sustained for 30 minutes. Peers are retrying sessions to peers that are not registered, and NetBird does not back off. This is load and log volume, not an outage — the mesh keeps working for everyone who is actually present. Find the caller in the signal log, then look at what policy grants it reach to absent peers; a clique group whose members have gone offline is the usual cause.
-              runbook_url: 'https://github.com/usareur-af/goatcore/blob/main/docs/design/mesh-acl.md'
+              runbook_url: 'docs/design/mesh-acl.md'
 
   # Case 3 — THE SMALL-GOATNET SHAPE. Same pathology, low volume: 2/s notfound
   # against 0.5/s delivered. Below the absolute threshold, so the storm rule
@@ -93,7 +93,7 @@ tests:
               summary: '80% of signal traffic on orin-a is notfound'
               description: >-
                 Over an hour, most signal delivery attempts are to peers that are not registered. Expect this briefly during a bringup; sustained, it means peers hold policy reach to peers that no longer exist and are retrying them indefinitely. Reconcile the group membership against who is actually on the mesh.
-              runbook_url: 'https://github.com/usareur-af/goatcore/blob/main/docs/design/mesh-acl.md'
+              runbook_url: 'docs/design/mesh-acl.md'
 
   # Case 4 — BRINGUP, MUST NOT PAGE. 100% notfound for 45 minutes while a site
   # comes up and nothing has registered yet, then it clears. The ratio rule's

@@ -5,8 +5,11 @@
 #   - portal_operator_api_key (passed via env var PORTAL_OPERATOR_API_KEY)
 #   - site_dns_zone (used to derive portal_traefik_host)
 
-portal_image: "ghcr.io/{{ ghcr_org }}/goat-zenoh-portal@sha256:b8a3da7b3ddbd87794aab5bb26639bf182b754d0319bc6c1800e114e75459a1d"
-# Bump this pin and prepend a row to roles/goat-zenoh-portal/deploy-history.yml together (ADR 0859).
+# Image — portal_image has NO role default. The pin of record is the
+# `goat-zenoh-portal` row of ops/pins/fleet-pins.yaml, rendered into
+# group_vars/<member>/pins.yml; group_vars/all.yml carries the pin for hosts
+# outside the pin table. A bump prepends a row to
+# roles/goat-zenoh-portal/deploy-history.yml (ADR 0859).
 portal_listen_port: 8090
 portal_container_name: "goat-zenoh-portal"
 
@@ -70,11 +73,34 @@ portal_roster_env: ""
 # then notes release-set membership is not declared).
 portal_release_sets_path: "{{ portal_data_dir }}/release-sets.yaml"
 
+# This goatnet's own release sets, declared in its group_vars (e.g.
+# group_vars/<site>_hosts/data-access.yml). Same shape as the release_sets
+# list in ops/permissions/release-sets.yaml:
+#   portal_release_sets:
+#     - set: REL-ALL
+#       prefix: release/REL-ALL/   # optional, defaults to release/<set>/
+#       members: []                # org ids; optional, defaults to []
+# Non-empty => the role renders portal_release_sets_path from this list
+# (templates/release-sets.yaml.j2). Empty => the deploy STOPS, unless
+# portal_release_sets_use_example says to install the example registry
+# ops/permissions/release-sets.yaml. List every lane the goatnet's
+# zenoh_release_writers / zenoh_partner_read_lanes / zenoh_partner_slot_blocks
+# name, or the COP will not show it.
+portal_release_sets: []
+
+# true installs the example registry ops/permissions/release-sets.yaml (the
+# example goatnet's sets) when portal_release_sets is empty. True by default
+# only on the example goatnet (zagros, zagros-*), which keeps the committed
+# file; a learning box sets it on purpose. Anywhere else an empty
+# portal_release_sets fails the deploy (tasks/release-sets-guard.yml) rather
+# than showing another goatnet's release lanes as this one's.
+portal_release_sets_use_example: "{{ (site_id | default('')) is match('^zagros(-|$)') }}"
+
 # ADR 1138 portal half — the pre-cut partner slot blocks, RENDERED FROM THE SAME
 # group_var the router reads (`zenoh_partner_slot_blocks`). One fact, one home:
 # if these two ever disagree the portal hands a partner a slot the router does
-# not treat as a partner slot, and that partner reads the whole fabric silently
-#. Rendering rather than hand-maintaining a second copy is the point.
+# not treat as a partner slot, and that partner reads the whole fabric silently.
+# Rendering rather than hand-maintaining a second copy is the point.
 # Empty declaration => the portal REFUSES a partner mint rather than issuing an
 # ordinary slot.
 portal_partner_slot_blocks_path: "{{ portal_data_dir }}/partner-slot-blocks.yaml"
@@ -137,6 +163,11 @@ portal_slot_pool_size: 0
 # pre-cuts a store per pool slot). See zenoh-storage-taxonomy-sharding.md.
 portal_lazy_slot_storage: false
 
+# Concurrent /api/topics/stream connections one org or slot key may hold
+# (operators are exempt). Empty leaves the portal's built-in default (8); set a
+# number to raise it where people share one org key, or 0 to turn the cap off.
+portal_max_streams_per_principal: ""
+
 # Path to the live zenohd config.json5 (bind-mounted r/w into the
 # portal container). The zenoh role renders this file under its per-stack
 # /etc/<zenoh_stack> dir with BEGIN/END markers the portal edits between
@@ -182,20 +213,40 @@ portal_ca_bundle_dir: "/etc/{{ site_id }}-ca"   # a shared role must not name a 
 # the host by the role (real-mint mode). Per-goatnet, derived from site_id — the
 # CA key + age identity live on the operator laptop, never in the repo.
 portal_ca_root_src: "{{ playbook_dir }}/../enrollment/ca/{{ site_id }}/root-cert.pem"
-portal_ca_key_src: "{{ lookup('env', 'HOME') }}/.goat/state/{{ site_id }}-ca/ca.key.age"
+portal_ca_key_src: "{{ goat_controller_state_dir | default(lookup('env', 'HOME') ~ '/.goat/state') }}/{{ site_id }}-ca/ca.key.age"
 portal_age_identity_src: "{{ lookup('env', 'HOME') }}/.config/age/keys.txt"
 portal_age_identity_path: "/etc/{{ site_id }}-age/keys.txt"   # a shared role must not name a goatnet
-portal_nova_root_cert: "/etc/{{ site_id }}-ca/root-cert.pem"   # a shared role must not name a goatnet
+portal_ca_root_cert: "/etc/{{ site_id }}-ca/root-cert.pem"   # a shared role must not name a goatnet
+# The portal flag that takes portal_ca_root_cert. One flag, or a list of
+# candidates: the role then passes the first one the pinned image's `serve -h`
+# defines, so an overlay whose goatnets run images from different source trees
+# lists every name once (neutral first) and a pin move needs no flag change.
+# Both names by default: the pinned image (ops/pins/fleet-pins.yaml) predates
+# the neutral --ca-root-cert and defines only the legacy -nova-root-cert, which
+# the source still accepts; a string here refused every standup on that pin.
+# `nova` here is the legacy flag's name, not a goatnet's, so
+# ops/ci/goatnet-defaults.allow exempts this variable.
+portal_ca_root_cert_flag: ["--ca-root-cert", "--nova-root-cert"]
 portal_onboarding_packet_path: "/etc/goat-zenoh-portal/zenoh-trial-onboarding.md"
 portal_cert_sign_ca_id: ""   # REQUIRED per goatnet — a shared default
 # would sign certs for a new goatnet under ANOTHER goatnet's authority.
 portal_cert_sign_site_id: "{{ site_id }}"   # a shared role must not name a goatnet
+# Subject O of every leaf the portal mints, passed as cert-sign --org. Read
+# from goat_cert_organization (group_vars/all.yml), the same fact the operator
+# plays state on their cert-sign calls, so a cert-sign built from this tree
+# stamps the goatnet's organisation rather than its built-in default. Empty
+# omits the flag and leaves cert-sign's default.
+portal_cert_sign_org: "{{ goat_cert_organization | default('') }}"
 # Per-goatnet cert identity + onboarding-filename strings. Each goatnet MUST
 # override these in its group_vars so its minted certs + tarballs carry its own
 # names. The URI-SAN prefix in particular is frozen
 # into every cert and pinned by external integrations — set it before the first
 # external org mints. See docs/design/portal-lexicon.md §"Cert identity layer".
-portal_cert_sign_uri_prefix: "urn:goat-nova:vendor="
+# portal_cert_sign_uri_prefix has no default: the compose template falls back
+# to portal_cert_sign_uri_prefix_default, which only this role reads, so a role
+# that requires the goatnet's own prefix (grant-keyd) refuses when the goatnet
+# sets none.
+portal_cert_sign_uri_prefix_default: "urn:goat:{{ site_id }}:org="
 portal_cert_sign_cn_suffix: "-trial-peer"        # per-vendor-mode CN suffix; slot-pool mode ignores it (CN = bare anchor)
 portal_cert_sign_dns_suffix: "{{ site_id }}.peer"   # a shared role must not name a goatnet    # DNS-SAN suffix: client.<principal>.<suffix>
 portal_onboarding_packet_name: "zenoh-trial-onboarding.md"  # in-tarball onboarding packet filename
@@ -331,6 +382,11 @@ portal_intake_base_url: ""
 # env-var name shell-legal for hyphenated site_ids.
 portal_netbird_mgmt_url: "https://{{ site_dns_zone }}"
 portal_netbird_api_token_envvar: "{{ site_id | upper | replace('-', '_') }}_NB_API_TOKEN"
+# The name the token carries INSIDE the container (portal.env). A goatnet whose
+# pinned image predates PORTAL_NETBIRD_API_TOKEN sets the name that image reads,
+# or a list of names: portal.env then carries the token under each, and any of
+# the images reads its own.
+portal_netbird_api_token_env: "PORTAL_NETBIRD_API_TOKEN"
 # Where the NetBird management hostname in portal_netbird_mgmt_url points INSIDE the container.
 # On a mgmt host `mesh-coredns` pins that name to 127.0.0.1 in /etc/hosts, and
 # Docker's embedded DNS hands the host resolver's answer to containers, where it
@@ -357,7 +413,7 @@ portal_mesh_site_prefix: "{{ site_id | upper }}"
 portal_mesh_key_mint_enabled: false
 # How long a minted machine setup key stays usable — the window to JOIN, not
 # the peer's lifetime (the key is single-use + group-exact). Goatnets override
-# to 720h per operator decision D4 (the site-one hand-carry precedent); the role
+# to 720h where keys are hand-carried to a site; the role
 # default matches the binary's own 24h.
 portal_mesh_key_ttl: "24h"
 # Persistent SITE scopes (netbird_exercises rows WITHOUT an `ex-` prefix) that
@@ -412,10 +468,15 @@ portal_audit_s3_secret_key_envvar: "{{ site_id | upper | replace('-', '_') }}_PO
 # readers (portal/panoscope/stethoscope) must query the SAME segment or they see
 # nothing. SoT is the per-site `audit_subscriber_id` group_var. REQUIRED per-site
 # — define audit_subscriber_id in group_vars for any goatnet running the portal.
-# The built-in fallback is legacy back-compat only; a new instance MUST set it
+# The built-in fallback derives it from site_id; a new instance MUST set it
 # (instance-variability-model).
-portal_audit_subscriber_id: "{{ audit_subscriber_id | default('nova-a') }}"
+portal_audit_subscriber_id: "{{ audit_subscriber_id | default(site_id ~ '-A') }}"
 portal_audit_tail_interval: "30s"
+
+# The fabric_name GET /api/fabric/config reports, which clients show and record.
+# Stated per goatnet in group_vars. Empty = the variable is rendered empty and
+# the portal uses its built-in value.
+portal_fabric_name: ""
 
 # Traefik front. Mesh-only; no public DNS. Pattern is
 # `<surface>.<site_id>.<site_dns_zone>` per the canonical naming;
@@ -425,19 +486,21 @@ portal_traefik_router_name: "portal"
 portal_traefik_network: "mgmt"
 # Traefik cert resolver name — matches the Traefik static config
 # (`le` = Let's Encrypt via Cloudflare DNS-01). Same pattern panoscope
-# + demogame / auth / dashboard / oauth2 use.
+# + airdefenders / auth / dashboard / oauth2 use.
 portal_traefik_cert_resolver: "le"
 # File-provider directory + filename for the Traefik dynamic route.
 # Traefik is file-provider-only (no docker provider); each
 # service ships its own file here. Filename intentionally distinct from
-# mgmt.yml + demogame.yml + panoscope.yml so a portal
+# mgmt.yml + airdefenders.yml + panoscope.yml so a portal
 # redeploy can't stomp neighboring routes.
 portal_traefik_dynamic_dir: "/etc/traefik/dynamic"
 portal_traefik_dynamic_filename: "portal.yml"
 
 # The pre-rename filename, removed from the host on deploy. Leaving it
-# behind would give Traefik two routers on the same Host() rule.
-portal_traefik_dynamic_filename_legacy: "nova-portal.yml"
+# behind would give Traefik two routers on the same Host() rule. Empty = no
+# such file on this goatnet's hosts; a goatnet that carried one names it in
+# group_vars.
+portal_traefik_dynamic_filename_legacy: ""
 # Mesh-only gating — portal is mesh-internal and not part of the
 # enrollment surface; restrict to the netbird mesh CIDR via the
 # `mesh-only-allowlist` middleware defined in mgmt-dynamic.yml.j2.
@@ -510,7 +573,7 @@ portal_memory_limit: "512m"
 # private `portal` network + the Traefik network.
 portal_zenoh_network: ""
 
-# Cloudflare DNS publish — mirrors the demogame + panoscope pattern.
+# Cloudflare DNS publish — mirrors the airdefenders + panoscope pattern.
 # When `portal_publish_cloudflare_dns: true`, the role looks up the zone
 # id, lists existing A records, and POSTs any missing ones from
 # `portal_cloudflare_a_record_ips`. Auth from the CLOUDFLARE_API_TOKEN

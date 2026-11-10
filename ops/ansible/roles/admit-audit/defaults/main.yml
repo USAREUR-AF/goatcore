@@ -22,11 +22,12 @@ pg_admit_audit_role: admit_audit
 pg_admit_audit_db: netbird
 
 # Container image: the build .github/workflows/admit-audit-image.yml publishes
-# as goat-admit-audit, pinned by digest. The bare name `admit-audit` is a
-# hand-pushed mirror from 2026-08-18 under ghcr.io/usareur-af that nothing
-# builds, and it does not exist under any other namespace, so a goatnet pulling
-# `admit-audit:latest` ran a stale image, and one on a fresh namespace pulled
-# nothing. Moving a running goatnet onto this image is a version change: take
-# it through the release ladder. Override via
-# -e admit_audit_image=ghcr.io/{{ ghcr_org }}/goat-admit-audit:sha-<rev>@sha256:<digest>
-admit_audit_image: "ghcr.io/{{ ghcr_org }}/goat-admit-audit@sha256:4b4d996ced4999507630266a21ec69a16bf19644df102d205c268d972ca64645"
+# as goat-admit-audit, pinned by digest. The role carries no pin. The pin of
+# record is the `admit-audit` row of ops/pins/fleet-pins.yaml, rendered into
+# group_vars/<member>/pins.yml for every goatnet the table lists; a host group
+# outside the table sets admit_audit_image in its own group_vars. The deploy
+# refuses an empty value. The bare name `admit-audit` is an old hand-pushed
+# image that nothing builds: never pin it. Moving a running goatnet onto a new
+# image is a version change: take it through the release ladder.
+#   admit_audit_image: ghcr.io/{{ ghcr_org }}/goat-admit-audit:sha-<rev>@sha256:<digest>
+admit_audit_image: ""

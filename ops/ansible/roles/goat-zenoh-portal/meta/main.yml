@@ -2,7 +2,7 @@
 galaxy_info:
   role_name: goat_zenoh_portal
   author: goat-maintainer
-  description: goat Zenoh trial-fabric / ZAGROS fabric portal (per docs/design/zenoh-trial-fabric.md).
+  description: goat Zenoh trial-fabric / fabric portal (per docs/design/zenoh-trial-fabric.md).
   license: Apache-2.0
   min_ansible_version: "2.14"
   platforms:

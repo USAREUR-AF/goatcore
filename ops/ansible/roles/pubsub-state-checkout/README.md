@@ -27,6 +27,9 @@ half that runs on the ACTIVE node and pushes portal state into Forgejo.
 | -------------------- | -------------------------------------------------- |
 | `FORGEJO_PUBSUB_TOKEN` | Read the Forgejo repo (the mirror bot PAT is reused) |
 
+The Forgejo this reads from is one you run: goatcore ships no Forgejo role. See
+[`pubsub-state-repo`](../pubsub-state-repo/README.md#it-needs-a-forgejo-which-goatcore-does-not-deploy).
+
 ## What it does NOT do
 
 It never runs `pubsub-apply`. Reconciling mutates the portal (mints certs,

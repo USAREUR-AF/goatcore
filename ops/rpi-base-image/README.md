@@ -146,11 +146,14 @@ If checks 1, 2, and 3 come back with FIPS-approved values, the userspace chain i
 
 ## Prerequisites
 
-**On your Mac:**
+**On your workstation** (`00-prerequisites.sh` checks for these and offers to install them):
 
-```bash
-brew install nmap pv xz
-```
+| macOS | Debian / Ubuntu | Fedora | Arch |
+|---|---|---|---|
+| `brew install nmap pv xz` | `sudo apt-get install -y nmap pv xz-utils curl` | `sudo dnf install -y nmap pv xz curl` | `sudo pacman -S --needed nmap pv xz curl` |
+
+On Linux, `01-flash.sh` also uses `lsblk`, `findmnt` and `mount` (util-linux,
+always present) and `partprobe` (package `parted`; it falls back to `blockdev`).
 
 **Hardware per Pi:**
 
@@ -170,6 +173,10 @@ brew install nmap pv xz
 ./00-prerequisites.sh
 ```
 
+On macOS it installs missing tools with Homebrew. On Linux it names the
+missing tools and the `apt-get` / `dnf` / `pacman` command that installs them,
+and runs that command only if you answer `y`.
+
 ### 2. Edit cloud-init configs
 
 ```bash
@@ -181,12 +188,30 @@ vim cloud-init-configs/network-config     # set WiFi SSID + password (optional)
 
 ### 3. Flash SD card
 
-```bash
-diskutil list                             # find SD card (/dev/diskN)
-./01-flash.sh /dev/diskN ~/Downloads/ubuntu-*-preinstalled-server-arm64+raspi.img.xz
-```
+| | macOS | Linux |
+|---|---|---|
+| Find the SD card | `diskutil list` → `/dev/diskN` | `lsblk -d -o NAME,SIZE,RM,TRAN,MODEL` → `/dev/sdX` (USB reader) or `/dev/mmcblkN` (built-in reader) |
+| Check the target, write nothing | `./01-flash.sh --dry-run /dev/diskN <image>` | `./01-flash.sh --dry-run /dev/sdX <image>` |
+| Flash | `./01-flash.sh /dev/diskN ~/Downloads/ubuntu-*-preinstalled-server-arm64+raspi.img.xz` | `./01-flash.sh /dev/sdX ~/Downloads/ubuntu-*-preinstalled-server-arm64+raspi.img.xz` |
 
-All deployment scripts are automatically copied to the boot partition.
+Pass the whole disk, not a partition (`/dev/sdX`, not `/dev/sdX1`).
+`01-flash.sh` refuses before writing when the target is not removable, USB or
+an SD card, or holds the running system's `/`. On Linux it also refuses a disk
+with any mounted partition, so unmount a desktop automount first:
+`udisksctl unmount -b /dev/sdX1` (or `sudo umount /dev/sdX1`). For a fixed disk
+that really is the target, such as an NVMe in a second slot (`/dev/nvmeXnY`),
+add `--allow-non-removable`; the `/` check still applies.
+
+On Linux the script writes with `dd bs=4M conv=fsync status=progress iflag=fullblock`,
+re-reads the partition table, mounts the boot partition (`/dev/sdX1`, or
+`/dev/mmcblkNp1` / `/dev/nvmeXnYp1`) at a temporary directory, copies, and
+unmounts. On macOS it uses `diskutil` and finds the boot partition at `/Volumes/system-boot`.
+
+These land on the boot partition: `user-data`, `network-config` (if present),
+`02-clone-to-nvme.sh`, `03-prepare-encryption.sh`,
+`03b-headless-dropbear-unlock.sh`, `04-enroll-yubikey.sh`, `05-enable-fips.sh`,
+`encrypt-rootfs.sh` and `encrypt-rootfs-unlock.sh` at the top level, and the
+whole `helper-scripts/` directory. A file missing from the checkout stops the run.
 
 ### 4. Boot from SD and clone to NVMe
 
@@ -416,8 +441,8 @@ Each application repo lives separately and only adds its own binaries / configs 
 
 | Script | Runs On | Purpose |
 |--------|---------|---------|
-| `00-prerequisites.sh` | Mac | Installs tools, downloads Ubuntu image, injects SSH key into user-data |
-| `01-flash.sh` | Mac | Flashes image to SD card, copies all deployment scripts to boot partition |
+| `00-prerequisites.sh` | Workstation (macOS or Linux) | Checks for or installs tools, downloads Ubuntu image, injects SSH key into user-data |
+| `01-flash.sh` | Workstation (macOS or Linux) | Refuses unsafe targets, flashes image to SD card, copies all deployment scripts and `helper-scripts/` to boot partition |
 | `02-clone-to-nvme.sh` | Pi | Clones SD to NVMe, applies NVMe power-saving fix + IO timeout, sets boot order |
 | `03-prepare-encryption.sh` | Pi | Configures fstab, cmdline.txt, and initramfs hooks for LUKS unlock |
 | `03b-headless-dropbear-unlock.sh` | Pi | Adopt-in-place companion to `03`: bakes `dropbear-initramfs` + static initramfs IP + NIC driver so a headless SSH-only Pi can be encrypted over the network; fail-closed verify of the loaded initramfs before you reboot |

@@ -13,6 +13,7 @@ package welcome
 
 import (
 	"net/url"
+	"path"
 	"strings"
 	"time"
 )
@@ -83,6 +84,14 @@ type Catalog struct {
 	// name-only rendering, never a fabricated description.
 	Tagline string
 	Purpose string
+
+	// RepoURL is the platform source repository (PLATFORM_REPO_URL): the
+	// operator section's admin-guide link and git clone come from it. Blank
+	// renders the guide by name and asks the operator for the clone URL.
+	RepoURL string
+	// CollabURL is the collaboration environment's front door
+	// (NOTIFY_COLLAB_URL). Blank renders the collab block without an address.
+	CollabURL string
 }
 
 // EnrollCommand returns the one-time `sudo netbird up` mesh-enrollment command a
@@ -1136,15 +1145,13 @@ func build(cat Catalog, r Recipient, a Artifacts, up *Upgrade, reissue bool) *do
 		d.rule()
 		d.h2("COLLABORATION ENVIRONMENT — set up your account")
 		d.rule()
-		d.para("You also have access to the cloud collaboration environment (Outline knowledge")
-		d.para("base, file sharing, and chat) at https://collab.goat.example. It has its OWN sign-in,")
-		d.para("separate from the mesh password above, and does NOT need NetBird.")
+		collabIntro(d, cat.CollabURL)
 		d.blank()
 		if strings.TrimSpace(a.CollabAccount) != "" {
 			d.credSep("  ", "Your collab username", ":  ", a.CollabAccount)
 		}
-		// Deliver the setup as a CODE TO PASTE, never as a one-click link
-		//. This credential session is one-shot, and mail-security
+		// Deliver the setup as a CODE TO PASTE, never as a one-click link.
+		// This credential session is one-shot, and mail-security
 		// gateways open links in transit — so a scanner that reaches it first
 		// spends it, and the reader gets "IntentTokenConflict" with no way
 		// through.
@@ -1165,8 +1172,13 @@ func build(cat Catalog, r Recipient, a Artifacts, up *Upgrade, reissue bool) *do
 		d.blank()
 		d.para("On that page set your own credentials. Multi-factor auth is required, so choose")
 		d.para("EITHER a passkey (Face ID / Touch ID / security key) OR a password plus an")
-		d.para("authenticator app (TOTP). Then sign in with your collab username at")
-		d.para("https://collab.goat.example — one login across Outline, Files, and Chat.")
+		if cat.CollabURL != "" {
+			d.para("authenticator app (TOTP). Then sign in with your collab username at")
+			d.para(cat.CollabURL + " — one login across Outline, Files, and Chat.")
+		} else {
+			d.para("authenticator app (TOTP). Then sign in with your collab username — one")
+			d.para("login across Outline, Files, and Chat.")
+		}
 		d.blank()
 	}
 
@@ -1182,9 +1194,7 @@ func build(cat Catalog, r Recipient, a Artifacts, up *Upgrade, reissue bool) *do
 		d.rule()
 		d.h2("COLLABORATION ENVIRONMENT — you have an account")
 		d.rule()
-		d.para("You also have access to the cloud collaboration environment (Outline knowledge")
-		d.para("base, file sharing, and chat) at https://collab.goat.example. It has its OWN sign-in,")
-		d.para("separate from the mesh password above, and does NOT need NetBird.")
+		collabIntro(d, cat.CollabURL)
 		d.blank()
 		d.credSep("  ", "Your collab username", ":  ", a.CollabAccount)
 		d.blank()
@@ -1566,7 +1576,11 @@ func renderOperatorSetup(d *doc, cat Catalog, r Recipient) {
 		d.para("Your operator handle is assigned with your operator bundle — ask your")
 		d.para("operator for it. EVERY admin action you take is attributed to it.")
 	}
-	d.para("Full guide: https://github.com/usareur-af/goatcore/blob/main/docs/operations/admin-operator-guide.md")
+	if cat.RepoURL != "" {
+		d.para("Full guide: " + strings.TrimRight(cat.RepoURL, "/") + "/blob/main/docs/operations/admin-operator-guide.md")
+	} else {
+		d.para("Full guide: docs/operations/admin-operator-guide.md in the platform repository.")
+	}
 	d.blank()
 	d.step("1) Install your operator certificate.")
 	d.cont("   Your operator bundle is hand-delivered out of band — never emailed. It")
@@ -1656,10 +1670,15 @@ func renderOperatorSetup(d *doc, cat Catalog, r Recipient) {
 		d.cont("     a) Mint your OWN NetBird token (per-person + attributable — never reuse a")
 		d.cont("        shared one) from the NetBird dashboard's Access Tokens, then export it:")
 	}
-	d.cmd("            export ZAGROS_NB_API_TOKEN='<the token you just minted>'")
+	d.cmd("            export " + strings.ToUpper(strings.ReplaceAll(env, "-", "_")) + "_NB_API_TOKEN='<the token you just minted>'")
 	d.cont("     b) Clone the repo — goat admin onboard must run from inside it (it reads the")
 	d.cont("        manifest); the step-3 commands do NOT need it:")
-	d.cmd("            git clone https://github.com/usareur-af/goatcore.git && cd goat")
+	if cat.RepoURL != "" {
+		repo := strings.TrimRight(cat.RepoURL, "/")
+		d.cmd("            git clone " + repo + ".git && cd " + path.Base(repo))
+	} else {
+		d.cmd("            git clone <platform repository URL from your operator> && cd <repo>")
+	}
 	d.cont("     c) Onboarding writes an encrypted audit record — put the roster recipients")
 	d.cont("        (from your operator) in the clone's gitignored, direnv-loaded")
 	d.cmd("        .envrc.local.d/40-dev-ca-operators.envrc:")
@@ -1851,4 +1870,15 @@ func renderNetworkBlock(d *doc, cat Catalog) {
 	d.cont("  `netbird status -d` shows it: \"Peers count: 0/N Connected\" and relays")
 	d.cont("  \"context deadline exceeded\". The guide's firewall page has the full list.")
 	d.blank()
+}
+
+// collabIntro is the opening of both collaboration-environment blocks.
+func collabIntro(d *doc, collabURL string) {
+	d.para("You also have access to the cloud collaboration environment (Outline knowledge")
+	if collabURL != "" {
+		d.para("base, file sharing, and chat) at " + collabURL + ". It has its OWN sign-in,")
+	} else {
+		d.para("base, file sharing, and chat). It has its OWN sign-in,")
+	}
+	d.para("separate from the mesh password above, and does NOT need NetBird.")
 }

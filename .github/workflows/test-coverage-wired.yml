@@ -1,0 +1,51 @@
+name: test-coverage-wired
+
+# Wires ops/ci/check-test-coverage-wired.py — a module's tests must actually
+# RUN in some workflow.
+#
+# F-417: ops/goat-id-console shipped *_test.go that no workflow executed; a
+# sweep found ~20 modules in the same state (a *-image.yml that
+# builds the container but never invokes `cargo test`/`go test`, or no workflow
+# at all). A suite that runs nowhere looks like coverage and provides none.
+#
+# This guard freezes the current unwired set in
+# ops/ci/test-coverage-wired-allowlist.txt (shrink-only) and fails a NEW module
+# that ships tests with no workflow to run them. It does NOT fix the existing
+# gap — that is separate per-module work. Wiring a module up makes its allowlist
+# line stale and the guard fails ("remove this line"), so the set only shrinks.
+#
+# Doctrine P6: the guard proves itself RED on a planted violation (--self-test)
+# before its verdict on the real tree is trusted.
+
+on:
+  pull_request:
+    paths:
+      # a new/changed module manifest can introduce an unwired suite
+      - '**/go.mod'
+      - '**/Cargo.toml'
+      # A first Go test makes an existing module test-bearing without a manifest change.
+      - '**/*_test.go'
+      # a workflow change can wire or unwire a suite
+      - '.github/workflows/**'
+      - 'ops/ci/check-test-coverage-wired.py'
+      - 'ops/ci/test-coverage-wired-allowlist.txt'
+# Supersede in-flight runs for the same ref; never cancel on main.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: install PyYAML (workflow parsing)
+        run: python3 -m pip install --quiet pyyaml
+      - name: "self-test: guard proves RED on a planted unwired module first (P6)"
+        run: python3 ops/ci/check-test-coverage-wired.py --self-test
+      - name: every test-bearing module runs in some workflow
+        run: python3 ops/ci/check-test-coverage-wired.py

@@ -68,7 +68,7 @@ func TestPrintPlan_RendersAllSections(t *testing.T) {
 			{Op: PlanAdd, Subject: "relays[]: relay-rld", Detail: "endpoint=x.example.com:51821"},
 		},
 		Apply: []PlanLine{
-			{Op: PlanReuseKeypair, Subject: "vega-a", Detail: "re-mint via bundle-create"},
+			{Op: PlanReuseKeypair, Subject: "lab-a", Detail: "re-mint via bundle-create"},
 		},
 		Notes: []string{"REUSING KEYPAIR for 1 peer."},
 	})
@@ -311,8 +311,8 @@ func TestNormalizeRelayPubkey_RejectsGarbage(t *testing.T) {
 }
 
 func TestInferACLGroups_SiteOnly(t *testing.T) {
-	got := inferACLGroups(peerset.Peer{Site: "vega"})
-	if len(got) != 1 || got[0] != "VEGA" {
+	got := inferACLGroups(peerset.Peer{Site: "lab"})
+	if len(got) != 1 || got[0] != "LAB" {
 		t.Errorf("got %v", got)
 	}
 }
@@ -326,7 +326,7 @@ func TestInferACLGroups_NoSite(t *testing.T) {
 
 func TestUpperKebab(t *testing.T) {
 	cases := []struct{ in, want string }{
-		{"vega", "VEGA"},
+		{"lab", "LAB"},
 		{"prov_fra", "PROV-FRA"},
 		{"already-up", "ALREADY-UP"},
 		{"", ""},
@@ -340,9 +340,9 @@ func TestUpperKebab(t *testing.T) {
 
 func TestBuildBundleCreateArgs_HappyPath(t *testing.T) {
 	p := peerset.Peer{
-		Name:         "vega-a",
+		Name:         "lab-a",
 		WGCP0Address: "198.18.0.1",
-		Site:         "vega",
+		Site:         "lab",
 	}
 	relays := []peerset.Relay{{Name: "relay-rla"}}
 	args, err := buildBundleCreateArgs(invokeOpts{
@@ -355,14 +355,14 @@ func TestBuildBundleCreateArgs_HappyPath(t *testing.T) {
 	}
 	joined := strings.Join(args, " ")
 	for _, w := range []string{
-		"--site vega",
-		"--device-id vega-a",
+		"--site lab",
+		"--device-id lab-a",
 		"--wg-cp0-address 198.18.0.1/24",
 		"--wg-cp0-relays /tmp/relays.json",
-		"--acl-groups VEGA",
+		"--acl-groups LAB",
 		"--out /tmp/out.cbor",
 		"--ttl-days 90",
-		"--reuse-keypair-from vega-a",
+		"--reuse-keypair-from lab-a",
 		"--update-allowlist /tmp/allow.json",
 		"--mode dev",
 	} {
@@ -374,7 +374,7 @@ func TestBuildBundleCreateArgs_HappyPath(t *testing.T) {
 
 func TestBuildBundleCreateArgs_OverridesACLGroups(t *testing.T) {
 	args, err := buildBundleCreateArgs(invokeOpts{
-		Peer:      peerset.Peer{Name: "p", WGCP0Address: "198.18.0.1", Site: "vega"},
+		Peer:      peerset.Peer{Name: "p", WGCP0Address: "198.18.0.1", Site: "lab"},
 		Relays:    []peerset.Relay{{Name: "r"}},
 		ACLGroups: []string{"CUSTOM-GROUP", "ANOTHER"},
 		OutPath:   "/tmp/out.cbor",
@@ -392,8 +392,8 @@ func TestBuildBundleCreateArgs_RejectsMissingFields(t *testing.T) {
 		{},                                                                                                  // empty
 		{Peer: peerset.Peer{Name: "p"}},                                                                     // missing address
 		{Peer: peerset.Peer{Name: "p", WGCP0Address: "198.18.0.1"}},                                         // missing site
-		{Peer: peerset.Peer{Name: "p", WGCP0Address: "198.18.0.1", Site: "vega"}},                         // missing OutPath
-		{Peer: peerset.Peer{Name: "p", WGCP0Address: "198.18.0.1", Site: "vega"}, OutPath: "/tmp/out"},     // missing relays
+		{Peer: peerset.Peer{Name: "p", WGCP0Address: "198.18.0.1", Site: "lab"}},                         // missing OutPath
+		{Peer: peerset.Peer{Name: "p", WGCP0Address: "198.18.0.1", Site: "lab"}, OutPath: "/tmp/out"},     // missing relays
 	}
 	for i, b := range bad {
 		if _, err := buildBundleCreateArgs(b, "/tmp/r.json", "", nil); err == nil {
@@ -415,7 +415,7 @@ func TestBuildBundleCreateArgs_NoACLGroupsWithoutSite(t *testing.T) {
 
 func TestBuildBundleCreateArgs_DefaultTTL(t *testing.T) {
 	args, _ := buildBundleCreateArgs(invokeOpts{
-		Peer:    peerset.Peer{Name: "p", WGCP0Address: "198.18.0.1", Site: "vega"},
+		Peer:    peerset.Peer{Name: "p", WGCP0Address: "198.18.0.1", Site: "lab"},
 		Relays:  []peerset.Relay{{Name: "r"}},
 		OutPath: "/tmp/out.cbor",
 	}, "/tmp/r.json", "", nil)
@@ -456,9 +456,9 @@ func TestJoinCSV(t *testing.T) {
 
 func TestComputeDefaultOutPath_NamesByDate(t *testing.T) {
 	when := time.Date(2026, 5, 14, 12, 0, 0, 0, time.UTC)
-	p := peerset.Peer{Name: "vega-a", Site: "vega"}
+	p := peerset.Peer{Name: "lab-a", Site: "lab"}
 	got := computeDefaultOutPath(p, "/tmp/bundles", when)
-	want := "/tmp/bundles/vega-vega-a-2026-05-14.bundle.cbor"
+	want := "/tmp/bundles/lab-lab-a-2026-05-14.bundle.cbor"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}

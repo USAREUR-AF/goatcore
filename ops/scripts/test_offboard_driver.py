@@ -86,6 +86,12 @@ class DriverTests(unittest.TestCase):
             "handle": "example-user", "email": "person@example.test", "status": "active",
             "github": "example"},
             "org": {"short_tag": "example-user"}}))
+        # What the checkout declares: the organisations a person is removed from,
+        # and the name its secret references carry for the public door password.
+        declared = self.root / "ops/ansible/group_vars/all.yml"
+        declared.parent.mkdir(parents=True)
+        declared.write_text('goat_offboard_github_orgs: "first-org,second-org"\n'
+                            'public_door_idm_admin_pw_env: "DOOR_PW_UNDER_ANOTHER_NAME"  # declared\n')
         self.home = self.root / "home"
         self.home.mkdir()
         self.bindir = self.root / "bin"
@@ -111,7 +117,7 @@ class DriverTests(unittest.TestCase):
 
     def invoke(self, mode="success", *, apply=True, explicit_receipt=True,
                goat_profile=None, github_user=None, github_unverified=False,
-               goatnets=None, openbao_user=None, bao_addr=None):
+               goatnets=None, openbao_user=None, bao_addr=None, door_env=None):
         receipt = self.root / "receipt.json"
         collab_url = f"http://127.0.0.1:{self.servers[0].server_port}"
         public_url = f"http://127.0.0.1:{self.servers[1].server_port}"
@@ -120,8 +126,10 @@ class DriverTests(unittest.TestCase):
                    HOME=str(self.home), FIXTURE_ROOT=str(self.root),
                    FIXTURE_STATE=str(self.state), FIXTURE_MODE=mode,
                    COLLAB_KANIDM_URL=collab_url, COLLAB_KANIDM_IDM_ADMIN_PW="test-password",
-                   PUBLIC_DOOR_KANIDM_URL=public_url, GOAT_IDM_ADMIN_PW="test-password",
-                   GOAT_OFFBOARD_GITHUB_ORGS="")
+                   PUBLIC_DOOR_KANIDM_URL=public_url, GOAT_OFFBOARD_GITHUB_ORGS="")
+        for name in ("GOAT_IDM_ADMIN_PW", "DOOR_PW_UNDER_ANOTHER_NAME"):
+            env.pop(name, None)
+        env.update({"DOOR_PW_UNDER_ANOTHER_NAME": "test-password"} if door_env is None else door_env)
         env.pop("GOAT_PROFILE_DIR", None)
         env.pop("BAO_ADDR", None)
         if bao_addr is not None:
@@ -213,8 +221,8 @@ class DriverTests(unittest.TestCase):
         self.assertEqual(self.handlers[1].puts, 1)
         self.assertTrue((self.state / "op-revoked-platform").exists())
         self.assertTrue((self.state / "op-revoked-software").exists())
-        self.assertTrue((self.state / "gh-member-usareur-af").exists())
-        self.assertTrue((self.state / "gh-outside-usareur-af").exists())
+        self.assertTrue((self.state / "gh-member-first-org").exists())
+        self.assertTrue((self.state / "gh-outside-first-org").exists())
         self.assertIn("shared credentials to assess separately", proc.stdout)
         calls = self.calls()
         mutations = self.mutations(calls)
@@ -229,7 +237,7 @@ class DriverTests(unittest.TestCase):
             ["op", "group", "user", "revoke", "--group", "software",
              "--user", "person@example.test"],
             *(["gh", "api", "-X", "DELETE", f"orgs/{org}/{kind}/example"]
-              for org in dict.fromkeys(("usareur-af", "USAREUR-AF"))
+              for org in dict.fromkeys(("first-org", "second-org"))
               for kind in ("memberships", "outside_collaborators")),
         ])
         audits = [call for call in calls
@@ -381,32 +389,51 @@ fi
     def test_org_invitation_by_login_is_removed_and_read_back(self):
         proc, receipt = self.invoke("org-invitation")
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
-        self.assertTrue((self.state / "gh-org-invite-usareur-af-101").exists())
+        self.assertTrue((self.state / "gh-org-invite-first-org-101").exists())
         self.assertEqual(receipt["goatnets"]["test"]["github"]["before"], "present")
 
     def test_email_only_org_invitation_is_removed(self):
         proc, _ = self.invoke("email-invitation")
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
-        self.assertTrue((self.state / "gh-org-invite-usareur-af-102").exists())
+        self.assertTrue((self.state / "gh-org-invite-first-org-102").exists())
 
     def test_repository_invitation_is_removed(self):
         proc, _ = self.invoke("repo-invitation")
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
-        self.assertTrue((self.state / "gh-repo-invite-usareur-af-goat-201").exists())
+        self.assertTrue((self.state / "gh-repo-invite-first-org-goat-201").exists())
 
     def test_lingering_invitation_fails_and_names_receipt(self):
         proc, receipt = self.invoke("lingering-invitation")
         self.assertNotEqual(proc.returncode, 0)
         row = receipt["goatnets"]["test"]["github"]
         self.assertEqual(row["status"], "check-failed")
-        self.assertIn("usareur-af", row["detail"])
+        self.assertIn("first-org", row["detail"])
         self.assertIn("invitation remains", row["detail"])
 
     def test_unreadable_invitation_list_fails_before_mutation(self):
         proc, receipt = self.invoke("unreadable-invitations")
         self.assertNotEqual(proc.returncode, 0)
         self.assertEqual(self.mutations(self.calls()), [])
-        self.assertIn("usareur-af organisation invitations", " ".join(receipt["errors"]))
+        self.assertIn("first-org organisation invitations", " ".join(receipt["errors"]))
+
+    def test_public_door_password_is_read_from_the_neutral_name(self):
+        proc, receipt = self.invoke(door_env={"GOAT_IDM_ADMIN_PW": "test-password"})
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertEqual(receipt["goatnets"]["test"]["public-door-kanidm"]["status"],
+                         "removed-and-checked")
+
+    def test_missing_public_door_password_names_the_neutral_variable(self):
+        proc, receipt = self.invoke(door_env={})
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertEqual(self.mutations(self.calls()), [])
+        self.assertIn("GOAT_IDM_ADMIN_PW is missing", " ".join(receipt["errors"]))
+
+    def test_no_declared_github_organisation_fails_the_run(self):
+        (self.root / "ops/ansible/group_vars/all.yml").write_text("")
+        proc, receipt = self.invoke(door_env={"GOAT_IDM_ADMIN_PW": "test-password"})
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("GOAT_OFFBOARD_GITHUB_ORGS does not name any targets",
+                      json.dumps(receipt))
 
     def test_skipped_system_fails_and_receipt_says_not_run(self):
         proc, receipt = self.invoke("skip")
@@ -678,18 +705,18 @@ elif name == "gh":
         _, org, repo, _, invite = endpoint.split("/")
         (root / f"gh-repo-invite-{org}-{repo}-{invite}").touch()
     elif endpoint.startswith("orgs/") and "/invitations?" in endpoint:
-        if mode == "unreadable-invitations" and org == "usareur-af": sys.exit(1)
+        if mode == "unreadable-invitations" and org == "first-org": sys.exit(1)
         rows = []
-        if org == "usareur-af" and mode in ("org-invitation", "lingering-invitation") and not (root / f"gh-org-invite-{org}-101").exists():
+        if org == "first-org" and mode in ("org-invitation", "lingering-invitation") and not (root / f"gh-org-invite-{org}-101").exists():
             rows = [{"id":101,"login":"ExAmPlE","email":None}]
-        if org == "usareur-af" and mode == "email-invitation" and not (root / f"gh-org-invite-{org}-102").exists():
+        if org == "first-org" and mode == "email-invitation" and not (root / f"gh-org-invite-{org}-102").exists():
             rows = [{"id":102,"login":None,"email":"PERSON@example.test"}]
         for row in rows: print(json.dumps(row))
     elif endpoint.startswith("orgs/") and "/repos?" in endpoint:
         print(json.dumps({"name":"goat"}))
     elif endpoint.startswith("repos/") and "/invitations?" in endpoint:
         _, org, repo, _ = endpoint.split("/", 3)
-        if mode == "repo-invitation" and org == "usareur-af" and not (root / f"gh-repo-invite-{org}-{repo}-201").exists():
+        if mode == "repo-invitation" and org == "first-org" and not (root / f"gh-repo-invite-{org}-{repo}-201").exists():
             print(json.dumps({"id":201,"invitee":{"login":"EXAMPLE"}}))
 elif name == "goat":
     if "status" in args:

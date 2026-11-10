@@ -94,7 +94,7 @@ func TestSetMachineQuota_UpsertPreservesGrantedAt(t *testing.T) {
 func TestRecordMachineEnrollment_HappyPathAndQuotaConsumption(t *testing.T) {
 	ctx := context.Background()
 	r := open(t)
-	if _, err := r.InitializeSlotPool(ctx, "zagros-test", 8); err != nil {
+	if _, err := r.InitializeSlotPool(ctx, "galaxy-test", 8); err != nil {
 		t.Fatalf("InitializeSlotPool: %v", err)
 	}
 	if err := r.SetMachineQuota(ctx, "alice", 2, "operator:root"); err != nil {
@@ -130,7 +130,7 @@ func TestRecordMachineEnrollment_HappyPathAndQuotaConsumption(t *testing.T) {
 func TestRecordMachineEnrollment_QuotaCeilingFailClosed(t *testing.T) {
 	ctx := context.Background()
 	r := open(t)
-	_, _ = r.InitializeSlotPool(ctx, "zagros-test", 8)
+	_, _ = r.InitializeSlotPool(ctx, "galaxy-test", 8)
 	if err := r.SetMachineQuota(ctx, "bob", 1, "op"); err != nil {
 		t.Fatalf("SetMachineQuota: %v", err)
 	}
@@ -156,7 +156,7 @@ func TestRecordMachineEnrollment_QuotaCeilingFailClosed(t *testing.T) {
 func TestRecordMachineEnrollment_RevocationReturnsQuota(t *testing.T) {
 	ctx := context.Background()
 	r := open(t)
-	_, _ = r.InitializeSlotPool(ctx, "zagros-test", 8)
+	_, _ = r.InitializeSlotPool(ctx, "galaxy-test", 8)
 	_ = r.SetMachineQuota(ctx, "dana", 1, "op")
 	slotID := enrollSlot(t, r, ctx, "dana-1", "dana", "PROCESSOR", "autonomous", "unit-z")
 
@@ -177,7 +177,7 @@ func TestRecordMachineEnrollment_RevocationReturnsQuota(t *testing.T) {
 func TestRecordMachineEnrollment_RestampIsIdempotent(t *testing.T) {
 	ctx := context.Background()
 	r := open(t)
-	_, _ = r.InitializeSlotPool(ctx, "zagros-test", 8)
+	_, _ = r.InitializeSlotPool(ctx, "galaxy-test", 8)
 	_ = r.SetMachineQuota(ctx, "erin", 1, "op")
 	slotID := enrollSlot(t, r, ctx, "erin-1", "erin", "SENSOR", "manual", "unit-e")
 
@@ -195,7 +195,7 @@ func TestRecordMachineEnrollment_RestampIsIdempotent(t *testing.T) {
 func TestAllocateSlot_ClearsStaleStampSoQuotaIsNotMisattributed(t *testing.T) {
 	ctx := context.Background()
 	r := open(t)
-	_, _ = r.InitializeSlotPool(ctx, "zagros-test", 2) // tiny pool forces slot reuse
+	_, _ = r.InitializeSlotPool(ctx, "galaxy-test", 2) // tiny pool forces slot reuse
 	_ = r.SetMachineQuota(ctx, "frank", 2, "op")
 	slotID := enrollSlot(t, r, ctx, "frank-1", "frank", "SENSOR", "manual", "unit-f")
 
@@ -224,7 +224,7 @@ func TestAllocateSlot_ClearsStaleStampSoQuotaIsNotMisattributed(t *testing.T) {
 func TestRecordMachineEnrollment_Validation(t *testing.T) {
 	ctx := context.Background()
 	r := open(t)
-	_, _ = r.InitializeSlotPool(ctx, "zagros-test", 4)
+	_, _ = r.InitializeSlotPool(ctx, "galaxy-test", 4)
 	_ = r.SetMachineQuota(ctx, "gina", 4, "op")
 	s, _ := r.AllocateSlot(ctx, "gina-1")
 
@@ -246,7 +246,7 @@ func TestRecordMachineEnrollment_Validation(t *testing.T) {
 func TestAllEnrolledMachines_FleetView(t *testing.T) {
 	ctx := context.Background()
 	r := open(t)
-	_, _ = r.InitializeSlotPool(ctx, "zagros-test", 8)
+	_, _ = r.InitializeSlotPool(ctx, "galaxy-test", 8)
 	_ = r.SetMachineGrant(ctx, "alice", 3, "usareur-af", "", "op")
 	_ = r.SetMachineGrant(ctx, "bob", 3, "unit-b", "", "op")
 
@@ -279,7 +279,7 @@ func TestAllEnrolledMachines_FleetView(t *testing.T) {
 func TestRecordMachineEnrollment_PlatformWorkloads(t *testing.T) {
 	ctx := context.Background()
 	r := open(t)
-	_, _ = r.InitializeSlotPool(ctx, "zagros-test", 8)
+	_, _ = r.InitializeSlotPool(ctx, "galaxy-test", 8)
 	_ = r.SetMachineGrant(ctx, "uas-op", 4, "usareur-af", "", "op")
 
 	// A PLATFORM may declare a function-workload composition.

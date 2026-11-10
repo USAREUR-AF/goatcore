@@ -99,7 +99,7 @@ pub enum LiveMode {
 
 #[derive(Args, Debug)]
 pub struct FlowArgs {
-    /// Key expression to report on (e.g. `org11x/**`). Default: every
+    /// Key expression to report on (e.g. `acme/**`). Default: every
     /// topic any engaged observer knows about.
     pub key_expr: Option<String>,
 

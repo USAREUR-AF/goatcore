@@ -42,7 +42,7 @@ func probationServer(t *testing.T, lane string, groups ...string) (*Server, stri
 		peerGroups = append(peerGroups, meshstate.Group{ID: "g-" + group, Name: group})
 	}
 	s.probationPeerSource = func(context.Context) ([]meshstate.Peer, error) {
-		return []meshstate.Peer{{ID: "peer-1", Name: "peer-jane-zagros-laptop", IP: "100.127.0.49", Connected: true, LastSeen: time.Now().UTC().Add(-30 * time.Second), Groups: peerGroups}}, nil
+		return []meshstate.Peer{{ID: "peer-1", Name: "peer-jane-zagros-laptop", IP: "100.127.0.45", Connected: true, LastSeen: time.Now().UTC().Add(-30 * time.Second), Groups: peerGroups}}, nil
 	}
 	return s, record
 }
@@ -58,7 +58,7 @@ func probationRecord(t *testing.T, raw string) meshstate.HoldRecord {
 
 func probationRequest(method, target, body string) *http.Request {
 	req := httptest.NewRequestWithContext(context.Background(), method, target, strings.NewReader(body))
-	req.Header.Set("X-Forwarded-For", "100.127.0.49")
+	req.Header.Set("X-Forwarded-For", "100.127.0.45")
 	req.Header.Set("X-Forwarded-Method", method)
 	req.Header.Set("Accept", "text/html,application/xhtml+xml")
 	if body != "" {
@@ -149,7 +149,7 @@ func TestProbationExplainerDurationComesFromHoldRecord(t *testing.T) {
 	renderDetail := func(lastSeen time.Time) string {
 		t.Helper()
 		s.probationPeerSource = func(context.Context) ([]meshstate.Peer, error) {
-			return []meshstate.Peer{{ID: "peer-1", Name: "peer-jane-zagros-laptop", IP: "100.127.0.49", Connected: true, LastSeen: lastSeen, Groups: groups}}, nil
+			return []meshstate.Peer{{ID: "peer-1", Name: "peer-jane-zagros-laptop", IP: "100.127.0.45", Connected: true, LastSeen: lastSeen, Groups: groups}}, nil
 		}
 		s.probationMu.Lock()
 		s.probationSnapshot = nil
@@ -176,7 +176,7 @@ func TestProbationExplainerDurationComesFromHoldRecord(t *testing.T) {
 func TestProbationAuthRefusesSpoofableOrHeldNonDocumentInputs(t *testing.T) {
 	s, _ := probationServer(t, meshstate.HoldKindDormancy, "ZAGROS-PROBATION-DEVELOPER")
 	for name, mutate := range map[string]func(*http.Request){
-		"forwarded chain": func(r *http.Request) { r.Header.Set("X-Forwarded-For", "203.0.113.5, 100.127.0.49") },
+		"forwarded chain": func(r *http.Request) { r.Header.Set("X-Forwarded-For", "203.0.113.5, 100.127.0.45") },
 		"missing":         func(r *http.Request) { r.Header.Del("X-Forwarded-For") },
 		"asset":           func(r *http.Request) { r.Header.Set("Accept", "text/css,*/*") },
 		"JSON API": func(r *http.Request) {
@@ -412,8 +412,8 @@ func TestProbationPeerSnapshotRejectsDuplicateAddress(t *testing.T) {
 	s, _ := probationServer(t, meshstate.HoldKindDormancy, "ZAGROS-PROBATION-DEVELOPER")
 	s.probationPeerSource = func(context.Context) ([]meshstate.Peer, error) {
 		return []meshstate.Peer{
-			{ID: "peer-1", IP: "100.127.0.49"},
-			{ID: "peer-2", IP: "100.127.0.49"},
+			{ID: "peer-1", IP: "100.127.0.45"},
+			{ID: "peer-2", IP: "100.127.0.45"},
 		}, nil
 	}
 	rec := httptest.NewRecorder()
@@ -505,7 +505,7 @@ func TestProbationPeerSnapshotExpiryDeniesReassignedAddressAfterRefreshFailure(t
 	assignedPeer := meshstate.Peer{
 		ID:       "peer-1",
 		Name:     "peer-jane-zagros-laptop",
-		IP:       "100.127.0.49",
+		IP:       "100.127.0.45",
 		LastSeen: time.Now().UTC(),
 		Groups:   []meshstate.Group{{ID: "hold", Name: "ZAGROS-PROBATION-DEVELOPER"}},
 	}
@@ -530,7 +530,7 @@ func TestProbationPeerSnapshotExpiryDeniesReassignedAddressAfterRefreshFailure(t
 	assignedPeer = meshstate.Peer{
 		ID:       "peer-2",
 		Name:     "peer-new-owner",
-		IP:       "100.127.0.49",
+		IP:       "100.127.0.45",
 		LastSeen: time.Now().UTC(),
 		Groups:   []meshstate.Group{{ID: "all", Name: "All"}},
 	}
@@ -782,13 +782,13 @@ func TestProbationPeerSnapshotAdmitsNewPeerAfterBackgroundRefresh(t *testing.T) 
 	}
 
 	s.probationPeerSource = func(context.Context) ([]meshstate.Peer, error) {
-		return []meshstate.Peer{{ID: "peer-new", Name: "peer-new", IP: "100.127.0.64", LastSeen: time.Now().UTC()}}, nil
+		return []meshstate.Peer{{ID: "peer-new", Name: "peer-new", IP: "100.127.0.60", LastSeen: time.Now().UTC()}}, nil
 	}
 	s.probationMu.Lock()
 	s.probationRefreshAfter = time.Time{}
 	s.probationMu.Unlock()
 	req := probationRequest(http.MethodGet, "/internal/probation/auth", "")
-	req.Header.Set("X-Forwarded-For", "100.127.0.64")
+	req.Header.Set("X-Forwarded-For", "100.127.0.60")
 	if _, decision := s.classifyProbation(req); decision != probationDeny {
 		t.Fatalf("decision from stale snapshot=%v, want fail-closed deny", decision)
 	}

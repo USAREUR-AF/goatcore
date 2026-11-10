@@ -1,0 +1,66 @@
+---
+# Cleanup — delete what one run kept, named by postgres_encoding_migrate_confirm:
+#   - a COMPLETE run: the old PGDATA volume, the old pgBackRest repository
+#     (<repo>.pre-utf8-<run>) and the dumps. After this there is no rollback.
+#   - a ROLLED-BACK run: its copy volume (identical to the live data, which
+#     rollback restored from it), the new cluster's repository it set aside
+#     (<repo>.utf8-<run>) and the dumps. Safe at any time after the rollback,
+#     including after a later run has opened.
+# An open run that has not completed is refused: its copy is the rollback.
+# Reports, row counts and the stop record stay in <dir>/<run>/.
+
+- name: "context"
+  ansible.builtin.include_tasks: context.yml
+
+- name: "cleanup | the run named"
+  ansible.builtin.set_fact:
+    _pem_cl_run: "{{ postgres_encoding_migrate_confirm | default('') | trim }}"
+
+- name: "cleanup | its state on this host"
+  ansible.builtin.shell:
+    executable: /bin/bash
+    cmd: |
+      d={{ (_pem_dir ~ '/' ~ (postgres_encoding_migrate_confirm | default('') | trim)) | quote }}
+      [ -n {{ postgres_encoding_migrate_confirm | default('') | trim | quote }} ] && [ -d "$d" ] || { echo none; exit 0; }
+      for f in cleaned rolled-back complete; do [ -f "$d/$f" ] && { echo "$f"; exit 0; }; done
+      echo open
+  register: _pem_cl_state
+  changed_when: false
+
+- name: "cleanup | refuse a run that is open, unknown or already cleaned"
+  ansible.builtin.assert:
+    that:
+      - (_pem_cl_state.stdout | trim) in ['complete', 'rolled-back']
+    fail_msg: >-
+      Run '{{ _pem_cl_run }}' on {{ inventory_hostname }} is
+      {{ _pem_cl_state.stdout | trim }}. Cleanup acts on a run that completed
+      (phase 9) or was rolled back; an open run's copy is its rollback.
+      action=status lists this host's runs.
+    quiet: true
+
+- name: "cleanup | delete the kept volume, the set-aside repository and the dumps"
+  ansible.builtin.shell:
+    executable: /bin/bash
+    cmd: |
+      set -euo pipefail
+      run={{ _pem_cl_run | quote }}
+      D={{ _pem_dir | quote }}/"$run"
+      A={{ _pem_volume | quote }}-pre-utf8-"$run"
+      if docker volume inspect "$A" >/dev/null 2>&1; then docker volume rm "$A" >/dev/null; echo "removed volume $A"; fi
+      R={{ postgres_encoding_migrate_pgbackrest_repo | quote }}
+      parent=$(dirname "$R"); base=$(basename "$R")
+      for side in "$base.pre-utf8-$run" "$base.utf8-$run"; do
+        if [ -d "$parent/$side" ]; then
+          docker run --rm --user 0 --entrypoint rm -v "$parent":/p {{ _pem_image | quote }} -rf "/p/$side"
+          echo "removed $parent/$side"
+        fi
+      done
+      rm -f "$D"/db-*.dump "$D"/globals.sql "$D"/postgresql.auto.conf.pre "$D"/env.pre
+      echo "$run" > "$D/cleaned"
+      echo "removed dumps from $D"
+  register: _pem_cleaned
+  changed_when: true
+
+- name: "cleanup | done"
+  ansible.builtin.debug:
+    msg: "{{ inventory_hostname }} run {{ _pem_cl_run }} ({{ _pem_cl_state.stdout | trim }}): {{ _pem_cleaned.stdout_lines | join('; ') }}"

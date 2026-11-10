@@ -28,7 +28,7 @@ import re
 
 import yaml
 
-from .paths import ALLOWLIST, CAPS_FILE, GROUP_VARS, LITE_TABLE, ROLES, TABLE, rel
+from .paths import ALLOWLIST, CAPS_FILE, GROUP_VARS, ROLES, TABLE, rel
 
 # Keys the pin table governs: image pins and release tags. Deliberately NOT
 # `*_version` — a version string (netbird_version: 0.75.1) is not a deploy pin
@@ -43,6 +43,45 @@ GENERATED_BASENAME = "pins.yml"
 # point at restore / rotate instead.
 ARTIFACT_TYPES = ("image", "config", "acl", "data", "cert", "forward-only")
 DEFAULT_ARTIFACT_TYPE = "image"
+
+# Placement (goatnet-deployment-doctrine.md P13). A component is single-homed
+# only while it is an admin write class ADR 1165 has not yet lifted, and it says
+# so by declaring `single_homed_role:`. A deviation reason that claims
+# single-homing for a component that declares none is the wrong reason for an
+# absence; a component declared `read_only: true` is never single-homed.
+SINGLE_HOMING_CLAIM_RE = re.compile(r"single[- ]?homed|\bD3\b", re.IGNORECASE)
+
+
+def check_placement(components):
+    """The two P13 placement rules, raised as SchemaError."""
+    for cname, spec in components.items():
+        spec = spec or {}
+        role = spec.get("single_homed_role")
+        read_only = spec.get("read_only")
+        if read_only is not None and not isinstance(read_only, bool):
+            die("component '%s': `read_only:` must be true or false" % cname)
+        if role is not None and (not isinstance(role, str) or not role.strip()):
+            die("component '%s': `single_homed_role:` must be a router_role "
+                "letter such as \"A\"" % cname)
+        if read_only and role:
+            die("component '%s' declares both `read_only: true` and "
+                "`single_homed_role: %s`. A read-only surface runs at every site "
+                "of its goatnet and is never single-homed "
+                "(goatnet-deployment-doctrine.md P13)." % (cname, role))
+        if role:
+            continue
+        for scope, dev in (spec.get("deviations") or {}).items():
+            reason = " ".join(str((dev or {}).get("reason") or "").split())
+            hit = SINGLE_HOMING_CLAIM_RE.search(reason)
+            if hit:
+                die("component '%s': deviation '%s' gives single-homing as its "
+                    "reason (\"%s\"), but the component declares no "
+                    "`single_homed_role:`. Only an admin write class not yet "
+                    "lifted by ADR 1165 is single-homed, and it declares the "
+                    "role. Declare it, or state the real reason for the "
+                    "deviation (goatnet-deployment-doctrine.md P13)."
+                    % (cname, scope, hit.group(0)))
+
 
 TRUTHY = {"true", "yes", "on"}
 FALSY = {"false", "no", "off"}
@@ -276,6 +315,7 @@ def validate(goatnets, components):
                         die("component '%s' has `fleet: null` but '%s' (goatnet "
                             "'%s') carries no deviation — the pin is unresolvable"
                             % (cname, m, gn))
+    check_placement(components)
     return member_of
 
 
@@ -434,10 +474,28 @@ def render_value(value, source):
 # the curated capability half, and the ungoverned tail
 # ---------------------------------------------------------------------------
 
-def load_caps(path=None):
+# Rows keyed by these fields; an extension row with the same key replaces the
+# row in place, a new key is appended.
+CAPS_ROW_KEYS = (("capabilities", "var"), ("node_shape", "var"),
+                 ("retired", "var"), ("cross_goatnet", "capability"))
+
+
+def caps_files(path=None):
+    """The capabilities file and its extensions, in merge order.
+
+    A deployment supplies its own goatnets' rows in <file>.d/*.yaml beside it
+    (for ops/pins/parity-capabilities.yaml: ops/pins/parity-capabilities.d/):
+    the same sections, merged in file-name order. A `capabilities`/`node_shape`/
+    `retired` row with the `var` of an existing row (a `cross_goatnet` row with
+    its `capability`) replaces it; others are appended. Under `deviations`, a var
+    an extension declares carries the extension's scopes only: the public file's
+    deviations describe its example goatnets, which a deployment does not run."""
     path = path or CAPS_FILE
-    with open(path) as f:
-        data = yaml.safe_load(f) or {}
+    ext = path[:-len(".yaml")] + ".d" if path.endswith(".yaml") else path + ".d"
+    return [path] + sorted(glob.glob(os.path.join(ext, "*.yaml")))
+
+
+def _check_caps(path, data):
     for section in ("capabilities", "node_shape", "retired"):
         rows = data.get(section) or []
         if not isinstance(rows, list):
@@ -457,6 +515,36 @@ def load_caps(path=None):
                 die("%s: deviation %s/%s has no `reason:` — a deviation without "
                     "a reason is a schema error (design doc §2 principle 2)"
                     % (rel(path), var, scope))
+
+
+def load_caps(path=None):
+    files = caps_files(path)
+    data = None
+    for f in files:
+        with open(f) as fh:
+            part = yaml.safe_load(fh) or {}
+        _check_caps(f, part)
+        if data is None:
+            data = part
+            continue
+        for section, key in CAPS_ROW_KEYS:
+            rows = part.get(section) or []
+            if not rows:
+                continue
+            base = list(data.get(section) or [])
+            at = {(r or {}).get(key): i for i, r in enumerate(base)}
+            for row in rows:
+                k = (row or {}).get(key)
+                if k in at:
+                    base[at[k]] = row
+                else:
+                    at[k] = len(base)
+                    base.append(row)
+            data[section] = base
+        if part.get("deviations"):
+            devs = dict(data.get("deviations") or {})
+            devs.update(part["deviations"])
+            data["deviations"] = devs
     return data
 
 

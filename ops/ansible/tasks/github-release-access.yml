@@ -1,0 +1,130 @@
+---
+# SPDX-License-Identifier: Apache-2.0
+#
+# github-release-access.yml — decide how a role reads one GitHub release:
+# with the operator's token, or anonymously. Include it before the role
+# resolves the release by tag:
+#
+#   - name: <role> | <family> | decide how to read the GitHub release
+#     ansible.builtin.include_tasks: "{{ role_path }}/../../tasks/github-release-access.yml"
+#     vars:
+#       ghr_label: "goat-get | sdk"
+#       ghr_repo: "{{ goat_get_sdk_release_repo }}"
+#       ghr_tag: "{{ goat_get_sdk_release_tag }}"
+#       ghr_token: "{{ goat_get_github_token }}"
+#       ghr_token_name: "goat_get_github_token (GOAT_CLI_RELEASE_TOKEN, else GH_TOKEN, else GHCR_READ_TOKEN)"
+#       ghr_private: "{{ goat_get_sdk_release_private }}"
+#       ghr_private_var: goat_get_sdk_release_private
+#       ghr_hint: "Cut the tag, or fix the token."   # optional, appended to a failure
+#
+# Output: the fact ghr_auth_headers, either {} or {"Authorization": "Bearer …"}.
+# The caller copies it into its own fact and combines it into every request's
+# headers, so the Authorization key is absent when the release is read
+# anonymously.
+#
+# Rules:
+#   - ghr_private true: a token is required, and only the token is tried.
+#   - token set and GitHub answers 200: the token is used.
+#   - token set and GitHub answers 401 or 403 (a token the release's
+#     organisation refuses): an anonymous probe follows; if the repository
+#     answers it with 200 the release is read anonymously, with a warning
+#     naming the rejected token. Skipped when ghr_private is true.
+#   - no token: the release is read anonymously; a non-200 answer fails with
+#     a message saying a private repository needs the token.
+#   - token set and GitHub answers 404: fails as before — on a private
+#     repository that usually means the token lacks contents:read.
+# No task here prints the token.
+
+- name: "{{ ghr_label }} | a private release repository needs a token"
+  ansible.builtin.assert:
+    that:
+      - not (ghr_private | default(false) | bool) or (ghr_token | default('') | length > 0)
+    fail_msg: >-
+      {{ ghr_private_var | default('the private flag') }} is true, so
+      {{ ghr_repo }} is declared private, and {{ ghr_token_name | default('the release token') }}
+      is empty. Set it with contents:read on {{ ghr_repo }} so the host can
+      download the {{ ghr_tag }} release assets
+      (e.g. GH_TOKEN=$(gh auth token)).
+    quiet: true
+  run_once: true
+
+- name: "{{ ghr_label }} | probe the release with the token"
+  ansible.builtin.uri:
+    url: "https://api.github.com/repos/{{ ghr_repo }}/releases/tags/{{ ghr_tag }}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ ghr_token }}"
+      Accept: "application/vnd.github+json"
+      X-GitHub-Api-Version: "2022-11-28"
+    status_code: [200, 401, 403, 404]
+  register: ghr_token_probe
+  when: ghr_token | default('') | length > 0
+  delegate_to: localhost
+  become: false
+  run_once: true
+  no_log: true
+
+- name: "{{ ghr_label }} | probe the release anonymously"
+  ansible.builtin.uri:
+    url: "https://api.github.com/repos/{{ ghr_repo }}/releases/tags/{{ ghr_tag }}"
+    method: GET
+    headers:
+      Accept: "application/vnd.github+json"
+      X-GitHub-Api-Version: "2022-11-28"
+    status_code: [200, 401, 403, 404]
+  register: ghr_anon_probe
+  when:
+    - not (ghr_private | default(false) | bool)
+    - >-
+      ghr_token | default('') | length == 0
+      or (ghr_token_probe.status | default(0)) in [401, 403]
+  delegate_to: localhost
+  become: false
+  run_once: true
+
+- name: "{{ ghr_label }} | record how the release is read"
+  ansible.builtin.set_fact:
+    ghr_mode: >-
+      {{ 'token' if (ghr_token_probe.status | default(0)) == 200
+         else ('anonymous' if (ghr_anon_probe.status | default(0)) == 200 else 'none') }}
+
+- name: "{{ ghr_label }} | warn that the token was refused and the public release is read without it"
+  ansible.builtin.debug:
+    msg: >-
+      WARNING: GitHub refused {{ ghr_token_name | default('the release token') }}
+      with HTTP {{ ghr_token_probe.status }} for {{ ghr_repo }} {{ ghr_tag }}.
+      The repository is public, so the release is downloaded without a token.
+      Replace or unset that token; a private release would fail here.
+  when:
+    - ghr_mode == 'anonymous'
+    - ghr_token | default('') | length > 0
+  run_once: true
+
+- name: "{{ ghr_label }} | the release is readable"
+  ansible.builtin.assert:
+    that:
+      - ghr_mode != 'none'
+    fail_msg: >-
+      {% if ghr_token | default('') | length == 0 -%}
+      No release token is set and GitHub returned
+      {{ ghr_anon_probe.status | default('no answer') }} to an anonymous request for
+      {{ ghr_repo }} {{ ghr_tag }}. A private repository answers 404 to an anonymous
+      request: set {{ ghr_token_name | default('the release token') }} with contents:read
+      on it (and {{ ghr_private_var | default('the private flag') }}: true). A 404
+      can also mean the tag is not cut.
+      {%- else -%}
+      The release token is present but GitHub returned
+      {{ ghr_token_probe.status | default('no answer') }}
+      {%- if (ghr_anon_probe.status | default(0)) > 0 %} (and
+      {{ ghr_anon_probe.status }} to an anonymous request){% endif %} for
+      {{ ghr_repo }} {{ ghr_tag }}. On a private repo a 404 here usually means the
+      token lacks contents:read (not a missing release). Use a token with
+      contents:read, e.g. GH_TOKEN=$(gh auth token).
+      {%- endif %} {{ ghr_hint | default('') }}
+  run_once: true
+
+- name: "{{ ghr_label }} | headers that carry the token, or none"
+  ansible.builtin.set_fact:
+    ghr_auth_headers: >-
+      {{ {'Authorization': 'Bearer ' ~ ghr_token} if ghr_mode == 'token' else {} }}
+  no_log: true

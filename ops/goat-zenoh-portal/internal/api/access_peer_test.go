@@ -10,7 +10,7 @@ func TestMatchPeerHandle(t *testing.T) {
 	roster := []access.RosterEntry{
 		{Handle: "pat-example", Org: "usareur-af"},
 		{Handle: "pat-example-2", Org: "usareur-af"}, // longer handle that shares a prefix
-		{Handle: "user905x", Org: "org63x"},
+		{Handle: "alex-smith-example-org", Org: "example-org"},
 		{Handle: "", Org: "x"}, // empty handle must never match
 	}
 	cases := []struct {
@@ -18,12 +18,12 @@ func TestMatchPeerHandle(t *testing.T) {
 		peer string
 		want string
 	}{
-		{"exact + site + date", "peer-pat-example-zagros-2026-06-09", "pat-example"},
-		{"longest prefix wins (—2 not —)", "peer-pat-example-2-zagros-2026-06-09", "pat-example-2"},
-		{"handle with hyphens + short_tag", "peer-user905x-user903x-zagros-2026-06-14-WSAMZN", "user905x"},
-		{"no peer- prefix", "pat-example-zagros", ""},
-		{"unknown handle", "peer-nobody-here-zagros-2026-01-01", ""},
-		{"handle must be followed by a hyphen", "peer-pat-exampleXzagros", ""},
+		{"exact + site + date", "peer-pat-example-galaxy-2026-06-09", "pat-example"},
+		{"longest prefix wins (—2 not —)", "peer-pat-example-2-galaxy-2026-06-09", "pat-example-2"},
+		{"handle with hyphens + short_tag", "peer-alex-smith-example-org-alex-galaxy-2026-06-14-WSAMZN", "alex-smith-example-org"},
+		{"no peer- prefix", "pat-example-galaxy", ""},
+		{"unknown handle", "peer-nobody-here-galaxy-2026-01-01", ""},
+		{"handle must be followed by a hyphen", "peer-pat-exampleXgalaxy", ""},
 	}
 	for _, c := range cases {
 		if got := access.MatchPeerHandle(c.peer, roster); got != c.want {

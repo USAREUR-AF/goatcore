@@ -23,20 +23,20 @@ const (
 	satlinkTCPCount  = 20
 )
 
-// Post-13-Apr-2026 Satlink egress ranges.
+// Satellite-link provider egress ranges.
 var satlinkCIDRs []*net.IPNet
 
 func init() {
 	for _, cidr := range []string{"216.255.176.0/20", "75.78.128.0/17"} { // oss-allow: Starlink's published egress ranges, a public fact
 		_, n, err := net.ParseCIDR(cidr)
 		if err != nil {
-			panic("invalid built-in Satlink CIDR: " + cidr)
+			panic("invalid built-in satellite-link CIDR: " + cidr)
 		}
 		satlinkCIDRs = append(satlinkCIDRs, n)
 	}
 }
 
-// RunSatlinkProbe measures network performance from behind Satlink
+// RunSatlinkProbe measures network performance from behind the satellite link
 // to each relay VPS, identifying the egress PoP (ground station).
 func RunSatlinkProbe(ctx context.Context) (*types.SatlinkProbeResult, error) {
 	result := &types.SatlinkProbeResult{
@@ -227,7 +227,7 @@ func httpTimingMeasure(ctx context.Context, ip string) (connectMs, tlsMs, firstb
 		return 0, 0, 0
 	}
 
-	// gosec G402 false-positive: this Satlink characterization probe
+	// gosec G402 false-positive: this satellite-link characterization probe
 	// dials the gateway IP directly (no DNS); cert verification is
 	// off because the gateway terminal presents a self-signed cert and
 	// we are NOT establishing a trusted channel — we're measuring whether

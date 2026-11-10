@@ -84,7 +84,7 @@ func TestSlotOnboard_LazyStorageLiveAdd(t *testing.T) {
 		CertSignFake:      true,
 		VendorBundleDir:   filepath.Join(dir, "bundles"),
 		SchemaDir:         filepath.Join(dir, "schemas"),
-		CertSignURIPrefix: "urn:goat-nova:vendor=",
+		CertSignURIPrefix: "urn:goat:galaxy:org=",
 		LazySlotStorage:   true,
 	}
 	reg, err := registry.Open(pgtest.DSN(t))

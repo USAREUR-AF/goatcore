@@ -224,7 +224,7 @@
       relay-health PUBLIC (PHASE 2) requires relay_health_fqdn, the dedicated Dex
       client secret (relay_health_public_oidc_client_secret), an oauth2-proxy
       cookie secret of EXACTLY 16/24/32 bytes (use `openssl rand -hex 16`), the
-      zagros.example Cloudflare DNS-01 token
+      Cloudflare DNS-01 token for the zone of relay_health_fqdn
       (relay_health_public_cloudflare_dns_api_token), and a NON-EMPTY
       relay_health_public_allowed_emails allowlist. The public gate is
       fail-closed: it will not deploy a public surface that admits any
@@ -859,8 +859,8 @@
       - ntfy_admin_password | length >= 24
       - ntfy_alertmanager_password | length >= 24
     fail_msg: >-
-      ntfy_enabled is true but ntfy_fqdn / ZAGROS_NTFY_ADMIN_PASSWORD /
-      ZAGROS_NTFY_ALERTMANAGER_PASSWORD are not all set (24+ chars). See
+      ntfy_enabled is true but ntfy_fqdn / ntfy_admin_password /
+      ntfy_alertmanager_password are not all set (24+ chars). See
       group_vars/<env>_relay_health/vars.yml.
   when:
     - relay_health_standalone | bool
@@ -1159,7 +1159,7 @@
         Dashboard:     http://{{ mesh_ip_a | default('<mesh-ip>') }}:{{ relay_health_listen_port }}/  (mesh-only; egress-only SG blocks the public internet)
         Vantage:       {{ relay_health_vantage }}  (external — :443/STUN/QUIC are health-driving, F-213 fixed)
         Probe timer:   relay-health-probe.timer every {{ relay_health_probe_interval }} (fast, no creds)
-      Next (PHASE 2, gated): attach the EIP + open :443 in terraform-zagros
+      Next (PHASE 2, gated): attach the EIP + open :443 in the goatnet's terraform root
       (public_enabled=true), add the oauth2-proxy/Dex gate + Cloudflare A-record.
   when:
     - relay_health_standalone | bool

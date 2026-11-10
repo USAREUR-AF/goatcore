@@ -24,7 +24,7 @@
 #
 # Usage:
 #   OPENOBSERVE_URL=http://192.168.1.253:5080 \
-#   OPENOBSERVE_USER=person-81@example.org \
+#   OPENOBSERVE_USER=person-69@example.org \
 #   OPENOBSERVE_PASS='...' \
 #   MINIO_HOST=192.168.1.253 \
 #   MINIO_USER=... MINIO_PASS=... \

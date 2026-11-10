@@ -66,21 +66,21 @@ func TestRender_InsertsAllFourStanzas(t *testing.T) {
 		StorageDirPrefix: storageDir,
 		ReloadFake:       true,
 	}
-	if err := r.Render(context.Background(), []string{"org11x"}); err != nil {
+	if err := r.Render(context.Background(), []string{"acme"}); err != nil {
 		t.Fatalf("render: %v", err)
 	}
 	body, _ := os.ReadFile(configPath)
 	s := string(body)
 	for _, frag := range []string{
-		`"trial-peer-w-org11x"`,
-		`key_exprs: ["org11x/**"]`,
-		`"vendor-org11x"`,
-		`cert_common_names: ["org11x-trial-peer"]`,
-		`rules: ["trial-peer-w-org11x", "trial-peer-w-attest-schema"]`,
-		`subjects: ["vendor-org11x"]`,
-		`"org11x": {`,
-		`key_expr: "org11x/**"`,
-		`dir: "` + storageDir + `/org11x"`,
+		`"trial-peer-w-acme"`,
+		`key_exprs: ["acme/**"]`,
+		`"vendor-acme"`,
+		`cert_common_names: ["acme-trial-peer"]`,
+		`rules: ["trial-peer-w-acme", "trial-peer-w-attest-schema"]`,
+		`subjects: ["vendor-acme"]`,
+		`"acme": {`,
+		`key_expr: "acme/**"`,
+		`dir: "` + storageDir + `/acme"`,
 		`time_to_live: 604800000`,
 	} {
 		if !strings.Contains(s, frag) {
@@ -88,7 +88,7 @@ func TestRender_InsertsAllFourStanzas(t *testing.T) {
 		}
 	}
 	// Storage dir was provisioned.
-	if _, err := os.Stat(filepath.Join(storageDir, "org11x")); err != nil {
+	if _, err := os.Stat(filepath.Join(storageDir, "acme")); err != nil {
 		t.Errorf("storage dir not created: %v", err)
 	}
 }
@@ -100,12 +100,12 @@ func TestRender_Idempotent(t *testing.T) {
 		StorageDirPrefix: storageDir,
 		ReloadFake:       true,
 	}
-	if err := r.Render(context.Background(), []string{"org11x"}); err != nil {
+	if err := r.Render(context.Background(), []string{"acme"}); err != nil {
 		t.Fatalf("first render: %v", err)
 	}
 	// Capture the file size after the first render.
 	first, _ := os.ReadFile(configPath)
-	if err := r.Render(context.Background(), []string{"org11x"}); err != nil {
+	if err := r.Render(context.Background(), []string{"acme"}); err != nil {
 		t.Fatalf("second render: %v", err)
 	}
 	second, _ := os.ReadFile(configPath)
@@ -115,21 +115,21 @@ func TestRender_Idempotent(t *testing.T) {
 	// The rule id appears twice per apply (once in the rule definition,
 	// once in the policy's rules-ref). Idempotency means count stays
 	// at 2, not 4.
-	count := strings.Count(string(second), `"trial-peer-w-org11x"`)
+	count := strings.Count(string(second), `"trial-peer-w-acme"`)
 	if count != 2 {
-		t.Errorf("expected 2 occurrences of trial-peer-w-org11x (rule + policy ref), got %d", count)
+		t.Errorf("expected 2 occurrences of trial-peer-w-acme (rule + policy ref), got %d", count)
 	}
 	// Subject + storage anchors are single-occurrence.
-	if strings.Count(string(second), `"vendor-org11x"`) != 2 {
+	if strings.Count(string(second), `"vendor-acme"`) != 2 {
 		// 2 because the policy's subjects-ref also names it. Rule of thumb:
 		// the policy block double-references both anchors.
-		t.Errorf("expected 2 vendor-org11x occurrences, got %d",
-			strings.Count(string(second), `"vendor-org11x"`))
+		t.Errorf("expected 2 vendor-acme occurrences, got %d",
+			strings.Count(string(second), `"vendor-acme"`))
 	}
-	if strings.Count(string(second), `cert_common_names: ["org11x-trial-peer"]`) != 1 {
+	if strings.Count(string(second), `cert_common_names: ["acme-trial-peer"]`) != 1 {
 		t.Errorf("subject cert_common_names duplicated on re-render")
 	}
-	if strings.Count(string(second), `dir: "`+filepath.Join(filepath.Dir(configPath), "rocksdb", "org11x")+`"`) > 1 {
+	if strings.Count(string(second), `dir: "`+filepath.Join(filepath.Dir(configPath), "rocksdb", "acme")+`"`) > 1 {
 		t.Errorf("storage stanza duplicated on re-render")
 	}
 }
@@ -308,15 +308,15 @@ func TestRemoveVendor_RoundTrip(t *testing.T) {
 		StorageDirPrefix: storageDir,
 		ReloadFake:       true,
 	}
-	if err := r.Render(context.Background(), []string{"org11x"}); err != nil {
+	if err := r.Render(context.Background(), []string{"acme"}); err != nil {
 		t.Fatalf("render: %v", err)
 	}
 	// Verify the per-vendor storage dir got created.
-	if _, err := os.Stat(filepath.Join(storageDir, "org11x")); err != nil {
+	if _, err := os.Stat(filepath.Join(storageDir, "acme")); err != nil {
 		t.Fatalf("storage dir missing after render: %v", err)
 	}
 
-	if err := r.RemoveVendor(context.Background(), "org11x"); err != nil {
+	if err := r.RemoveVendor(context.Background(), "acme"); err != nil {
 		t.Fatalf("remove: %v", err)
 	}
 	body, _ := os.ReadFile(configPath)
@@ -325,7 +325,7 @@ func TestRemoveVendor_RoundTrip(t *testing.T) {
 		t.Errorf("post-remove config != fresh fixture:\n---got---\n%s\n---want---\n%s\n", got, fixtureConfig)
 	}
 	// Storage dir should be gone (best-effort cleanup).
-	if _, err := os.Stat(filepath.Join(storageDir, "org11x")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(storageDir, "acme")); !os.IsNotExist(err) {
 		t.Errorf("storage dir for removed vendor should not exist; stat err = %v", err)
 	}
 }
@@ -355,7 +355,7 @@ func TestRemoveVendor_LeavesOthers(t *testing.T) {
 		StorageDirPrefix: storageDir,
 		ReloadFake:       true,
 	}
-	if err := r.Render(context.Background(), []string{"org11x", "shield-ai", "skydio"}); err != nil {
+	if err := r.Render(context.Background(), []string{"acme", "shield-ai", "skydio"}); err != nil {
 		t.Fatalf("render: %v", err)
 	}
 	if err := r.RemoveVendor(context.Background(), "shield-ai"); err != nil {
@@ -366,7 +366,7 @@ func TestRemoveVendor_LeavesOthers(t *testing.T) {
 	if strings.Contains(got, "shield-ai") {
 		t.Errorf("removed vendor still present in config:\n%s", got)
 	}
-	if !strings.Contains(got, "trial-peer-w-org11x") || !strings.Contains(got, "trial-peer-w-skydio") {
+	if !strings.Contains(got, "trial-peer-w-acme") || !strings.Contains(got, "trial-peer-w-skydio") {
 		t.Errorf("neighboring vendors removed accidentally:\n%s", got)
 	}
 }

@@ -2,12 +2,12 @@
 # Rendered by ops/ansible/lan-traefik-routes.yml to
 # /etc/traefik/dynamic/lan-mgmt-{{ site_id }}.yml.
 #
-# GENERALIZED (no site literals): the LAN sibling of the nova/ZAGROS
+# GENERALIZED (no site literals): the LAN sibling of the public-DNS
 # mgmt-dynamic.yml.j2 overlay. Differences from the ACME original:
 #   - TLS comes from ONE internal-CA multi-SAN file cert (ADR 0407 path,
 #     tls.certificates below) — no certResolver, no ACME, no cert-split
 #     (there is no public/mesh cert boundary: nothing here is
-#     internet-reachable; the LAN is the perimeter, nova-lan posture).
+#     internet-reachable; the LAN is the perimeter).
 #   - No `enrollment` entrypoint / rathole: peers enroll over the LAN on
 #     websecure. The apex + signal routers therefore carry NO source
 #     allowlist (peers dial pre-mesh from LAN addresses).
@@ -22,8 +22,8 @@ tls:
     # Internal-CA multi-SAN leaf covering the apex + <svc>.{{ site_id }}.{{ site_dns_zone }}
     # (+ admin.auth second-level). Minted at bootstrap; delivered by
     # lan-traefik-routes.yml.
-    - certFile: "{{ traefik_tls_root | default('/etc/goat/tls') }}/mgmt-identity/cert.pem"
-      keyFile: "{{ traefik_tls_root | default('/etc/goat/tls') }}/mgmt-identity/key.pem"
+    - certFile: "{{ tls_root }}/mgmt-identity/cert.pem"
+      keyFile: "{{ tls_root }}/mgmt-identity/key.pem"
 
 http:
   middlewares:

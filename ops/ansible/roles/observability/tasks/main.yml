@@ -195,8 +195,7 @@
   # Render the peer targets at deploy time from inventory vars.
   # Docker bind-mounts single files by inode, so the `notify:` must
   # restart the container — a `POST /-/reload` won't pick up the new
-  # inode after an atomic file replace. See
-  # docs/operations/region-a-deploy.md troubleshooting section.
+  # inode after an atomic file replace.
   ansible.builtin.template:
     src: "prometheus.yml.j2"
     dest: "{{ compose_dir }}/monitoring/prometheus.yml"

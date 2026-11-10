@@ -9,7 +9,7 @@ timed standup on hardware is the measurement.
 |---|---|
 | Targets | founder site ≤ 60 min · one new node ≤ 15 min · burn-down ≤ 15 min |
 | Design | [goatbuilder-speed.md](../../design/goatbuilder-speed.md) |
-| Status | budget written; levers 1 to 4 built in both avenues; levers 5 and 6 designed with dates |
+| Status | budget written; levers 1 to 6 built in both avenues (lever 5 WIP until a seeded host is timed); the hour not yet measured on hardware |
 
 ## The budget
 
@@ -34,10 +34,10 @@ timed standup on hardware is the measurement.
 |---|---|---|---|
 | 1 | defects found during the run, one stop each | `doctor --site` and phase 1's gate scan every play the run reaches for required inputs and secrets, in one pass | built; measured at 91–132 requirements per site in 6–13 s |
 | 2 | a new SSH connection per Ansible task | connection multiplexing for direct hosts | built; measured 6.4 s to 1.5 s per call |
-| 3 | human pauses | the bot-token pause removed; phase 8 enrolment scripted | first built; second designed for 2026-11-13 |
+| 3 | human pauses | the bot-token pause removed; phase 8 enrolment scripted | both built; phase 8 not yet run on hardware |
 | 4 | fourteen phase-12 steps one after another | `--parallel` runs them in six dependency waves | built; modelled at about 8 min |
-| 5 | host baseline and disk encryption, 10–20 min per host | an installer seed per node class | designed for 2026-11-27; modelled at 3–5 min per host |
-| 6 | image pulls per role | a site-local mirror on the observability host and a pre-pull of every pinned digest | designed for 2026-11-20 |
+| 5 | host baseline and disk encryption, 10–20 min per host | an installer seed per node class (`node-seed.py`) | built, WIP until a seeded host is timed; modelled at 3–5 min per host |
+| 6 | image pulls per role | a pre-pull of every pinned digest, and a package cache and Docker Hub mirror on the observability host | built; not yet measured |
 
 Phase 11 stays a person: the first NetBird token needs the first
 administrator's browser login.

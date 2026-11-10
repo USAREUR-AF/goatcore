@@ -1,0 +1,132 @@
+name: goat-id-console integration tests
+
+on:
+  push:
+    paths:
+      - 'ops/goat-id-console/**'
+      - 'ops/ansible/templates/traefik-acme/**'
+      - '.github/workflows/goat-id-console-integration.yml'
+  pull_request:
+    paths:
+      - 'ops/goat-id-console/**'
+      - 'ops/ansible/templates/traefik-acme/**'
+      - '.github/workflows/goat-id-console-integration.yml'
+
+# The job checks out and executes PR-authored harness code (compose + go
+# test); keep the token it can see read-only.
+permissions:
+  contents: read
+
+# Overlapping runs on rapid pushes would race for the same fixed loopback
+# ports; cancel a superseded run rather than let the newer one fail to bind.
+concurrency:
+  group: goat-id-console-integration-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  integration:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    services:
+      # ADR 1165 step A: the onboarding and org stores live in Postgres. Store
+      # tests (and every handler test that opens a store) take a fresh schema
+      # on this server per test via TEST_PG_DSN; without it they skip.
+      postgres:
+        image: postgres:16.4@sha256:e62fbf9d3e2b49816a32c400ed2dba83e3b361e6833e624024309c35d334b412
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          # 5432 on the host is the Kratos stack's own Postgres (compose).
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    defaults:
+      run:
+        working-directory: ops/goat-id-console
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          # Paths here are repo-root relative regardless of any later
+          # working-directory, and this module's go.mod is not at the root.
+          go-version-file: ops/goat-id-console/go.mod
+          cache: true
+          cache-dependency-path: ops/goat-id-console/go.sum
+
+      - name: Start Kratos stack
+        working-directory: ops/goat-id-console/test/integration
+        run: |
+          docker compose up -d
+
+      - name: Wait for Kratos to be healthy
+        working-directory: ops/goat-id-console/test/integration
+        run: |
+          set -euo pipefail
+          for _ in $(seq 1 30); do
+            # /admin/health/ready, not /health/ready: on the admin port the
+            # latter answers 307, and `curl -f` treats a redirect as success
+            # without following it — so the gate would pass before Kratos was
+            # actually ready.
+            if [ "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:4434/admin/health/ready)" = "200" ]; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Kratos did not become healthy in time"
+          exit 1
+
+      - name: Run integration tests (tag=integration)
+        env:
+          IDP_TENANT_KRATOS_ADMIN_URL: http://127.0.0.1:4434
+          IDP_TENANT_HYDRA_ADMIN_URL: http://127.0.0.1:4445
+          IDP_OPERATOR_KRATOS_ADMIN_URL: http://127.0.0.1:4434
+          IDP_OPERATOR_HYDRA_ADMIN_URL: http://127.0.0.1:4445
+          # The TOTP seeder drives Kratos self-service (login + settings) flows,
+          # which live on the PUBLIC port, not the admin one.
+          KRATOS_PUBLIC_URL: http://127.0.0.1:4433
+          TEST_PG_DSN: postgres://postgres:postgres@127.0.0.1:55432/postgres?sslmode=disable
+        run: |
+          set -euo pipefail
+
+          # Pre-flight safety guard must succeed for the configured URLs.
+          # RequireLoopbackEnv reads the process environment and fails closed
+          # when a required variable is unset, so this cannot pass vacuously.
+          go test ./test/integration -run 'TestRequireLoopbackEnvConfig'
+
+          # Execute tagged integration tests and fail if none run.
+          go test ./test/integration -tags=integration -run . -count=1 -json | tee /tmp/integration-tests.json
+
+          # Assert that at least one test CASE actually ran.
+          #
+          # Do not pattern-match the JSON: `go test -json` emits fields in the
+          # order Time, Action, Package, Test, Elapsed, so '"Action":"pass","Test"'
+          # never matches and the check either fails unconditionally or, once
+          # loosened, silently stops asserting. Parse the NDJSON instead.
+          #
+          # Counts pass|fail only — deliberately NOT skip. A suite that skipped
+          # every case inspected nothing, and an empty suite must never look green.
+          ran=$(jq -rs '[.[] | select(.Test != null and (.Action == "pass" or .Action == "fail"))] | length' \
+                  /tmp/integration-tests.json)
+          echo "integration test cases executed: $ran"
+          if [ "$ran" -eq 0 ]; then
+            echo "no integration tests were executed (tag=integration)"
+            cat /tmp/integration-tests.json
+            exit 1
+          fi
+
+      - name: Exercise the pinned Traefik ForwardAuth contract
+        run: bash test/forwardauth/run.sh
+
+      - name: Tear down Kratos stack
+        if: always()
+        working-directory: ops/goat-id-console/test/integration
+        run: |
+          docker compose down -v

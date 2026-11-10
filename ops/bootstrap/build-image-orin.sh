@@ -30,6 +30,17 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+# The image's install directories (the repo under $GOAT_HOST_OPT_DIR/repo, the
+# state and log dirs first-boot.sh writes): the environment, else the tree's
+# group_vars/all.yml, else /opt/goat and friends (lib-host-layout.sh).
+# shellcheck source=ops/bootstrap/lib-host-layout.sh
+. "$REPO_ROOT/ops/bootstrap/lib-host-layout.sh"
+host_layout_load "$REPO_ROOT"
+# The image namespace the cache pulls goat's own images from: GHCR_ORG, else
+# the ghcr_org default group_vars/all.yml sets (the one every play renders a pin
+# with), else usareur-af.
+IMAGE_ORG="${GHCR_ORG:-$(sed -nE "s/^ghcr_org:.*[\"' ]([A-Za-z0-9][A-Za-z0-9._-]*)[\"']?[ }\"]*\$/\\1/p" "$REPO_ROOT/ops/ansible/group_vars/all.yml" 2>/dev/null | head -1 || true)}"
+IMAGE_ORG="${IMAGE_ORG:-usareur-af}"
 
 usage() {
   cat <<EOF
@@ -79,6 +90,9 @@ step() { echo ""; echo "=== $* ==="; }
 step "Step 1: snapshot repo at $BUNDLE_TAG"
 git -C "$REPO_ROOT" archive --format=tar "$BUNDLE_TAG" \
   | tar -x -C "$STAGE" -f -
+# The unit and the script it starts name this build's layout.
+host_layout_render "$STAGE/ops/bootstrap/first-boot/first-boot.service" \
+  "$STAGE/ops/bootstrap/first-boot/first-boot.sh"
 echo "  $(find "$STAGE" -type f | wc -l) files staged"
 
 # -- Step 2: pre-load Docker image cache ---------------------------------
@@ -91,7 +105,7 @@ IMAGES_FILE="$STAGE/var-cache-docker-images/manifest.txt"
 {
   # Hard-coded core mgmt-stack list. Future improvement: derive from
   # ops/compose/mgmt-host/docker-compose.yml + observability roles.
-  echo "ghcr.io/usareur-af/postgres-spock:latest"
+  echo "ghcr.io/$IMAGE_ORG/postgres-spock:latest"
   echo "netbirdio/netbird-mgmt:patched-53b04e5"
   echo "netbirdio/signal:latest"
   echo "traefik:v3.0"
@@ -118,7 +132,7 @@ docker save -o "$CACHE_TAR" $(< "$IMAGES_FILE")
 
 # -- Step 3: stage first-boot artifacts ---------------------------------
 step "Step 3: stage first-boot.service + script"
-mkdir -p "$STAGE/etc/systemd/system" "$STAGE/opt/goat"
+mkdir -p "$STAGE/etc/systemd/system" "$STAGE$GOAT_HOST_OPT_DIR"
 cp "$STAGE/ops/bootstrap/first-boot/first-boot.service" \
    "$STAGE/etc/systemd/system/first-boot.service"
 ln -sf /etc/systemd/system/first-boot.service \
@@ -148,7 +162,7 @@ else
   fi
   sudo rsync -aH --delete-excluded \
     --exclude '.git' \
-    "$STAGE/" "$L4T_BSP/rootfs/opt/goat/staged/"
+    "$STAGE/" "$L4T_BSP/rootfs$GOAT_HOST_OPT_DIR/staged/"
 
   echo "  4b: ensure first-boot systemd units are enabled in target rootfs"
   sudo install -m 0644 \
@@ -156,7 +170,7 @@ else
     "$L4T_BSP/rootfs/etc/systemd/system/first-boot.service"
   sudo install -m 0755 \
     "$STAGE/ops/bootstrap/first-boot/first-boot.sh" \
-    "$L4T_BSP/rootfs/opt/goat/repo/ops/bootstrap/first-boot/first-boot.sh"
+    "$L4T_BSP/rootfs$GOAT_HOST_OPT_DIR/repo/ops/bootstrap/first-boot/first-boot.sh"
   sudo ln -sf /etc/systemd/system/first-boot.service \
     "$L4T_BSP/rootfs/etc/systemd/system/multi-user.target.wants/first-boot.service"
 

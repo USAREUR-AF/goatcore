@@ -15,7 +15,7 @@ traefik_image: "traefik:v3.7.16@sha256:1336e85aaed293bd63d005086e0dd013b04078b26
 # live. The traefik container mounts this directory read-only at the same
 # path. Sub-directory per service — operator laptop's cert-sign output
 # is delivered into <traefik_tls_root>/<service>/{cert.pem,key.pem}.
-traefik_tls_root: /etc/goat/tls
+traefik_tls_root: "{{ goat_host_etc_dir | default('/etc/goat') }}/tls"
 
 # Path to the next-up trust anchor (PEM) on the operator laptop. Concatenated
 # onto the leaf to form the chain Traefik presents on the wire. Naming
@@ -36,7 +36,7 @@ traefik_dynamic_dir: /etc/traefik/dynamic
 # traefik_services — required, set per-host or per-group. List of dicts;
 # each dict declares one TLS-terminated service.
 #
-#   - name:       service identifier (becomes /etc/goat/tls/<name>/)
+#   - name:       service identifier (becomes <traefik_tls_root>/<name>/)
 #     hosts:      list of Host header rules — peer-reachable hostnames + IPs
 #     backend:    docker-network URL of the upstream container
 #                 (e.g. "http://management-a:80")

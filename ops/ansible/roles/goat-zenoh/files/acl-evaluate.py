@@ -13,7 +13,7 @@ string matching and not the intersection test people reach for by reflex:
 `<anchor>/**` INTERSECTS `**` (they share keys) but does NOT INCLUDE it, so a
 rule on `<anchor>/**` refuses a declared `**`. Getting that backwards is how a
 narrowing either leaks the whole keyspace or silently blinds every reader
-
+(a denial in zenoh is silent at both ends).
 
 WHAT IT IMPLEMENTS. A faithful port of zenoh-keyexpr 1.9.0
 `key_expr/include.rs` (`LTRIncluder`) plus the decision order of

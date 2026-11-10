@@ -17,7 +17,7 @@ func TestEgressResolver_keepsPublicAddressesAndCaches(t *testing.T) {
 			case "netbird.example.net":
 				return []string{"198.51.100.10", "10.0.0.1"}, nil
 			case "relay-a.example.net":
-				return []string{"100.127.1.32"}, nil // mesh-only answer
+				return []string{"100.127.1.23"}, nil // mesh-only answer
 			}
 			return nil, errors.New("nxdomain")
 		}}

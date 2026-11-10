@@ -212,6 +212,11 @@
           docs/findings/F-070-management-json-default-stun-host-nxdomain.md
           for full context.
 
+    # A proxy with no peer address dies at startup; an ingress without a token
+    # is an unauthenticated public Forward surface. Refused before .env exists.
+    - name: Refuse a half-configured signal federation
+      ansible.builtin.include_tasks: tasks/signal-federation-assert.yml
+
     - name: Ensure compose directory exists
       ansible.builtin.file:
         path: "{{ compose_dir }}"
@@ -227,6 +232,12 @@
     - name: Check pgBackRest config before publishing the base Compose mount
       ansible.builtin.import_tasks: tasks/pgbackrest-config-preflight.yml
       tags: [always]
+
+    # The compose file mounts Traefik's certificate directory from
+    # TRAEFIK_TLS_ROOT. Written before the file lands, so no compose command
+    # on this host ever reads the file without the key.
+    - name: Write the Traefik certificate directory to .env before the compose file
+      ansible.builtin.import_tasks: tasks/mgmt-host-tls-root-env.yml
 
     - name: Copy base docker-compose.yml (port via MGMT_CONTAINER_HOST_PORT in .env)
       ansible.builtin.copy:
@@ -300,6 +311,26 @@
     - name: Pre-flight | relay secret is the one this host already signs with
       ansible.builtin.include_tasks: tasks/assert-relay-secret-unchanged.yml
 
+    # The management server trusts the deployment's internal CA through files
+    # this play places here, not through a CA baked into the image: compose
+    # mounts the directory at /etc/netbird/trust and adds it to SSL_CERT_DIR.
+    # netbird_mgmt_trust_certs lists PEM files on the controller (a goatnet's
+    # internal root and intermediate); empty, the directory stays empty and
+    # only the image's system trust applies.
+    - name: Ensure management-a trust directory exists
+      ansible.builtin.file:
+        path: "{{ compose_dir }}/management-a/trust"
+        state: directory
+        mode: "0755"
+
+    - name: Place the deployment's CA certificates for management-a
+      ansible.builtin.copy:
+        src: "{{ item }}"
+        dest: "{{ compose_dir }}/management-a/trust/{{ item | basename | regex_replace('\\.(crt|pem)$', '') }}.pem"
+        mode: "0644"
+      loop: "{{ netbird_mgmt_trust_certs | default([]) }}"
+      register: _mgmt_trust_certs
+
     - name: Render management-a/management.json from template
       ansible.builtin.template:
         src: templates/management.json.j2
@@ -364,6 +395,13 @@
           SITE_NAME={{ site_name }}
           POSTGRES_SUPERUSER_PASSWORD={{ postgres_superuser_password }}
           MGMT_CONTAINER_HOST_PORT={{ mgmt_container_host_port | default('8080') }}
+          {# A joiner initialises Postgres with its founder's encoding       #}
+          {# (site-bootstrap.yml Phase 1C sets postgres_initdb_encoding);   #}
+          {# unset, the compose default (UTF8) applies. initdb reads it only #}
+          {# on an empty PGDATA.                                             #}
+          {% if postgres_initdb_encoding is defined and postgres_initdb_encoding %}
+          POSTGRES_INITDB_ARGS="--locale=C --encoding={{ postgres_initdb_encoding }}"
+          {% endif %}
           {# F-102 closure — SITE_FQDN feeds docker-compose.yml's          #}
           {# `extra_hosts: ["oauth2.${SITE_FQDN}:host-gateway", ...]`     #}
           {# block. management-a's JWKS-fetch needs `oauth2.<site>...`    #}
@@ -422,8 +460,8 @@
           {% endif %}
           {# ORY images: pin the multi-arch INDEX digest, never a per-arch    #}
           {# manifest. The compose defaults are amd64-only manifests, so on   #}
-          {# an arm64 Thor they pull and then die with "exec format error"    #}
-          {#. The bare tag resolves correctly; the default digest     #}
+          {# an arm64 Thor they pull and then die with "exec format error".   #}
+          {# The bare tag resolves correctly; the default digest              #}
           {# does not.                                                       #}
           {% if ory_hydra_image is defined and ory_hydra_image %}
           ORY_HYDRA_IMAGE={{ ory_hydra_image }}
@@ -446,11 +484,17 @@
           {% if traefik_image is defined and traefik_image %}
           TRAEFIK_IMAGE={{ traefik_image }}
           {% endif %}
+          {# The host directory of Traefik's certificates, mounted at the    #}
+          {# same path inside the container: the traefik role's dynamic      #}
+          {# config names each cert by this path. Always written, so the     #}
+          {# mount never falls back to the compose default on a host whose   #}
+          {# certificates live elsewhere.                                    #}
+          TRAEFIK_TLS_ROOT={{ traefik_tls_root | default((goat_host_etc_dir | default('/etc/goat')) ~ '/tls') }}
           {# Where Traefik's :8082 metrics entrypoint is published (ADR 1161). #}
           {# Unset -> the compose default of 127.0.0.1, which is correct for   #}
           {# every co-located obs stack. Sites whose obs host is a separate    #}
           {# machine set this to the mgmt host's MESH address so Prometheus    #}
-          {# can reach it; never 0.0.0.0.                              #}
+          {# can reach it; never 0.0.0.0.                                      #}
           {% if traefik_metrics_bind is defined and traefik_metrics_bind %}
           TRAEFIK_METRICS_BIND={{ traefik_metrics_bind }}
           {% endif %}
@@ -559,6 +603,14 @@
           {% if _mgmt_acme_overlay.stat.exists %}-f docker-compose.acme.yml{% endif %}
           up -d
         chdir: "{{ compose_dir }}"
+      changed_when: true
+
+    # compose recreates management-a when its definition changes, not when a
+    # mounted file does; a new or changed CA file needs the process restarted.
+    - name: Restart management-a after its trusted CA files changed
+      ansible.builtin.command:
+        cmd: docker restart management-a
+      when: _mgmt_trust_certs is changed
       changed_when: true
 
     # =====================================================================

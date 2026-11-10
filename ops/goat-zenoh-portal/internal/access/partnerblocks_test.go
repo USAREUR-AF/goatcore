@@ -16,7 +16,7 @@ func writeBlocks(t *testing.T, body string) string {
 }
 
 // A representative deployed shape.
-const zagrosProdBlocks = `version: 1
+const galaxyProdBlocks = `version: 1
 partner_slot_blocks:
   - lanes: ["REL-ALL"]
     from: 900
@@ -26,8 +26,8 @@ partner_slot_blocks:
     to: 949
 `
 
-func TestLoadPartnerSlotBlocks_Zagros(t *testing.T) {
-	got, err := LoadPartnerSlotBlocks(writeBlocks(t, zagrosProdBlocks))
+func TestLoadPartnerSlotBlocks_Galaxy(t *testing.T) {
+	got, err := LoadPartnerSlotBlocks(writeBlocks(t, galaxyProdBlocks))
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
@@ -84,7 +84,7 @@ partner_slot_blocks:
 }
 
 func TestMatchPartnerBlock(t *testing.T) {
-	blocks, err := LoadPartnerSlotBlocks(writeBlocks(t, zagrosProdBlocks))
+	blocks, err := LoadPartnerSlotBlocks(writeBlocks(t, galaxyProdBlocks))
 	if err != nil {
 		t.Fatal(err)
 	}

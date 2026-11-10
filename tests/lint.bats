@@ -3,7 +3,14 @@
 
 REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/.." && pwd)"
 
+# This tree may not carry the code a test reads (a public goatcore checkout
+# does not carry a goatnet's own scripts); such a test is skipped by name,
+# and runs wherever that code is present.
 setup() {
+  case "$BATS_TEST_DESCRIPTION" in
+    *deploy.sh*) [ -f "$REPO_ROOT/deploy.sh" ] || skip "deploy.sh is not in this tree" ;;
+    *) [ -d "$REPO_ROOT/provisioning" ] || skip "provisioning/ is not in this tree" ;;
+  esac
   # Lint tools are optional outside CI but required when CI is set.
   if ! command -v shellcheck >/dev/null 2>&1; then
     if [ -n "${CI:-}" ]; then

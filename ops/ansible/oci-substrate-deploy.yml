@@ -46,7 +46,7 @@
     # Same vars passed via -e on the bootstrap so admit-audit
     # role's step 4 (.env append) has all required values. These are typically
     # in .envrc.local on the operator workstation per CLAUDE.md.
-    admit_audit_password: "{{ lookup('env', 'VEGA_ADMIT_AUDIT_PASS') | default('changeme', true) }}"
+    admit_audit_password: "{{ lookup('env', admit_audit_password_env | default('ADMIT_AUDIT_PASS')) | default('changeme', true) }}"
   roles:
     - role: admit-audit
       tags: [admit-audit]

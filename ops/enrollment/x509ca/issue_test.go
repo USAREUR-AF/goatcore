@@ -60,10 +60,10 @@ func TestIssueCert_Happy(t *testing.T) {
 	}
 
 	tpl := &LeafTemplate{
-		CommonName: "mgmt.vega.netbird.legacy.example",
-		OrgUnit:    "vega",
+		CommonName: "mgmt.lab.netbird.example.net",
+		OrgUnit:    "lab",
 		SANs: []string{
-			"mgmt.vega.netbird.legacy.example",
+			"mgmt.lab.netbird.example.net",
 			"10.99.0.1",
 			"127.0.0.1",
 		},
@@ -105,7 +105,7 @@ func TestIssueCert_Happy(t *testing.T) {
 	}
 
 	// SAN partitioning
-	wantDNS := []string{"mgmt.vega.netbird.legacy.example"}
+	wantDNS := []string{"mgmt.lab.netbird.example.net"}
 	wantIPs := []string{"10.99.0.1", "127.0.0.1"}
 	if len(leaf.DNSNames) != len(wantDNS) || leaf.DNSNames[0] != wantDNS[0] {
 		t.Errorf("DNSNames: got %v want %v", leaf.DNSNames, wantDNS)
@@ -129,7 +129,7 @@ func TestIssueCert_Happy(t *testing.T) {
 	if _, err := leaf.Verify(x509.VerifyOptions{
 		Roots:     roots,
 		KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-		DNSName:   "mgmt.vega.netbird.legacy.example",
+		DNSName:   "mgmt.lab.netbird.example.net",
 	}); err != nil {
 		t.Fatalf("leaf verify against root: %v", err)
 	}
@@ -172,9 +172,9 @@ func TestIssueCert_CustomValidityAndEKU(t *testing.T) {
 	}
 
 	tpl := &LeafTemplate{
-		CommonName: "mtls.vega.netbird.legacy.example",
-		OrgUnit:    "vega",
-		SANs:       []string{"mtls.vega.netbird.legacy.example"},
+		CommonName: "mtls.lab.netbird.example.net",
+		OrgUnit:    "lab",
+		SANs:       []string{"mtls.lab.netbird.example.net"},
 		Validity:   90 * 24 * time.Hour,
 		EKU:        []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
 	}
@@ -213,12 +213,12 @@ func TestIssueCert_URISANRoundTrip(t *testing.T) {
 	}
 
 	want := []string{
-		"urn:goat-nova:vendor=org11x",
-		"urn:goat:peer:site=vega,role=mgmt,echelon=OPSCTR",
+		"urn:goat-nebula:vendor=example-org",
+		"urn:goat:peer:site=lab,role=mgmt,echelon=OPSCTR",
 	}
 	tpl := &LeafTemplate{
-		CommonName: "org11x-lattice",
-		OrgUnit:    "nova-trial",
+		CommonName: "example-org-lattice",
+		OrgUnit:    "nebula-trial",
 		SANs:       []string{"placeholder.invalid"},
 		URISANs:    want,
 		EKU:        []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
@@ -255,7 +255,7 @@ func TestIssueCert_URISANRejectsRelative(t *testing.T) {
 		name string
 		uri  string
 	}{
-		{"relative reference", "vendor=org11x"},
+		{"relative reference", "vendor=example-org"},
 		{"empty entry", ""},
 	}
 	for _, c := range cases {
@@ -285,7 +285,7 @@ func TestIssueCert_RejectsInvalidTemplate(t *testing.T) {
 		tpl  *LeafTemplate
 	}{
 		{"nil template", nil},
-		{"missing CN", &LeafTemplate{OrgUnit: "vega", SANs: []string{"x"}}},
+		{"missing CN", &LeafTemplate{OrgUnit: "lab", SANs: []string{"x"}}},
 		{"missing OU", &LeafTemplate{CommonName: "x", SANs: []string{"x"}}},
 		{"empty SANs", &LeafTemplate{CommonName: "x", OrgUnit: "y", SANs: nil}},
 		{"empty SAN entry", &LeafTemplate{CommonName: "x", OrgUnit: "y", SANs: []string{""}}},

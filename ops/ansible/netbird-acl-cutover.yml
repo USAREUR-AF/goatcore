@@ -98,7 +98,7 @@
   become: false
   module_defaults:
     ansible.builtin.uri:
-      ca_path: "{{ (playbook_dir ~ '/../enrollment/ca/' ~ target_site ~ '/root-cert.pem') if (playbook_dir ~ '/../enrollment/ca/' ~ target_site ~ '/root-cert.pem') is exists else omit }}"
+      ca_path: "{{ omit if (netbird_api_ca | default('auto')) == 'public' else ((playbook_dir ~ '/../enrollment/ca/' ~ target_site ~ '/root-cert.pem') if (playbook_dir ~ '/../enrollment/ca/' ~ target_site ~ '/root-cert.pem') is exists else omit) }}"
   gather_facts: false
 
   vars:
@@ -114,20 +114,12 @@
     matrix_path: "{{ playbook_dir }}/netbird_acl_matrix.yml"
 
     # Reuse the same site→URL + site→env-var maps as netbird-acl-bootstrap.yml
-    # + operator-onboard.yml — single token across all three playbooks.
-    netbird_site_url_map:
-      vega: https://mgmt.vega.netbird-prod.goat.example
-      legacy: https://netbird.legacy.example
-      zagros: https://netbird.zagros.example
-      zagros-prod: https://netbird.zagros-prod.example
-      zagros-dev: https://netbird.zagros-dev.example
-
-    netbird_site_env_var_map:
-      vega: VEGA_NB_API_TOKEN
-      legacy: LEGACY_NB_API_TOKEN
-      zagros: ZAGROS_NB_API_TOKEN
-      zagros-prod: ZAGROS_PROD_NB_API_TOKEN
-      zagros-dev: ZAGROS_DEV_NB_API_TOKEN
+    # + operator-onboard.yml — single token across all three playbooks. The
+    # maps name no goatnet here: a deployment sets goatnet_netbird_site_url_map
+    # and goatnet_netbird_site_env_var_map for localhost
+    # (ops/ansible/host_vars/localhost/), keyed by site name.
+    netbird_site_url_map: "{{ goatnet_netbird_site_url_map | default({}) }}"
+    netbird_site_env_var_map: "{{ goatnet_netbird_site_env_var_map | default({}) }}"
 
     # Which mgmt API and which token (ADR 1185: the standup must be able to
     # apply the ACL to a goatnet this file has never heard of). Precedence:
@@ -252,7 +244,8 @@
         fail_msg: >-
           No mgmt API URL for '{{ target_site }}'. Pass
           -e netbird_mgmt_url=https://<public_mgmt_fqdn from its group_vars>
-          (goat-standup.sh does), or add the site to netbird_site_url_map.
+          (goat-standup.sh does), or add the site to
+          goatnet_netbird_site_url_map in ops/ansible/host_vars/localhost/.
 
     - name: "Assert PAT env var present"
       ansible.builtin.assert:
@@ -678,7 +671,7 @@
     # first means there is never an instant where neither policy exists — the
     # replacement is live before the old one goes. Reaping first would open a
     # gap in which the traffic the rule governs is denied.
-    - name: "DELETE orphaned policies"
+    - name: "DELETE orphaned policies (requires reap_orphans=true)"
       ansible.builtin.uri:
         url: "{{ nb_url }}/api/policies/{{ item.id }}"
         method: DELETE
@@ -763,7 +756,7 @@
           '{{ netbird_acl_matrix[target_site].cutover.default_policy_name_pattern }}'.
           Either it was already disabled/deleted in a prior cutover, or
           the pattern doesn't match the actual policy name. Inspect with:
-            curl -H "Authorization: Token $NOVA_NB_API_TOKEN" \
+            curl -H "Authorization: Token ${{ nb_token_env }}" \
               {{ nb_url }}/api/policies | jq '.[] | {id,name,enabled}'
       when: cutover_action == 'disable'
 
@@ -852,7 +845,7 @@
             - Operator laptop (ADMIN) still reaches every service: yes
             - Synth-vendor publishers (VENDOR) still reach Zenoh :7447: yes
             - Panoscope subscriber still receives Zenoh traffic: yes
-            - An unauthorized peer attempting SSH to nova-a: connection refused
+            - An unauthorized peer attempting SSH to a management host: connection refused
 
           To undo if anything is broken: git revert the rule PR, then
             ansible-playbook netbird-acl-cutover.yml \
@@ -874,9 +867,12 @@
   # The API may serve a certificate from the goatnet's own CA (a LAN goatnet
   # does). When that CA's root is in the repository, verify against it; a
   # goatnet behind a public CA verifies as before. Never turn verification off.
+  # A goatnet whose root is in the repository but whose API is served under a
+  # public CA passes -e netbird_api_ca=public, which verifies against the
+  # system trust store instead.
   module_defaults:
     ansible.builtin.uri:
-      ca_path: "{{ (playbook_dir ~ '/../enrollment/ca/' ~ target_site ~ '/root-cert.pem') if (playbook_dir ~ '/../enrollment/ca/' ~ target_site ~ '/root-cert.pem') is exists else omit }}"
+      ca_path: "{{ omit if (netbird_api_ca | default('auto')) == 'public' else ((playbook_dir ~ '/../enrollment/ca/' ~ target_site ~ '/root-cert.pem') if (playbook_dir ~ '/../enrollment/ca/' ~ target_site ~ '/root-cert.pem') is exists else omit) }}"
   gather_facts: false
 
   vars:
@@ -891,19 +887,8 @@
     taxonomy_path: "{{ playbook_dir }}/netbird_acl_taxonomy.yml"
     matrix_path: "{{ playbook_dir }}/netbird_acl_matrix.yml"
 
-    netbird_site_url_map:
-      vega: https://mgmt.vega.netbird-prod.goat.example
-      legacy: https://netbird.legacy.example
-      zagros: https://netbird.zagros.example
-      zagros-prod: https://netbird.zagros-prod.example
-      zagros-dev: https://netbird.zagros-dev.example
-
-    netbird_site_env_var_map:
-      vega: VEGA_NB_API_TOKEN
-      legacy: LEGACY_NB_API_TOKEN
-      zagros: ZAGROS_NB_API_TOKEN
-      zagros-prod: ZAGROS_PROD_NB_API_TOKEN
-      zagros-dev: ZAGROS_DEV_NB_API_TOKEN
+    netbird_site_url_map: "{{ goatnet_netbird_site_url_map | default({}) }}"
+    netbird_site_env_var_map: "{{ goatnet_netbird_site_env_var_map | default({}) }}"
 
     # Which mgmt API and which token (ADR 1185: the standup must be able to
     # apply the ACL to a goatnet this file has never heard of). Precedence:
@@ -960,7 +945,7 @@
   # goatnet behind a public CA verifies as before. Never turn verification off.
   module_defaults:
     ansible.builtin.uri:
-      ca_path: "{{ (playbook_dir ~ '/../enrollment/ca/' ~ target_site ~ '/root-cert.pem') if (playbook_dir ~ '/../enrollment/ca/' ~ target_site ~ '/root-cert.pem') is exists else omit }}"
+      ca_path: "{{ omit if (netbird_api_ca | default('auto')) == 'public' else ((playbook_dir ~ '/../enrollment/ca/' ~ target_site ~ '/root-cert.pem') if (playbook_dir ~ '/../enrollment/ca/' ~ target_site ~ '/root-cert.pem') is exists else omit) }}"
   gather_facts: false
 
   vars:
@@ -976,19 +961,8 @@
     taxonomy_path: "{{ playbook_dir }}/netbird_acl_taxonomy.yml"
     matrix_path: "{{ playbook_dir }}/netbird_acl_matrix.yml"
 
-    netbird_site_url_map:
-      vega: https://mgmt.vega.netbird-prod.goat.example
-      legacy: https://netbird.legacy.example
-      zagros: https://netbird.zagros.example
-      zagros-prod: https://netbird.zagros-prod.example
-      zagros-dev: https://netbird.zagros-dev.example
-
-    netbird_site_env_var_map:
-      vega: VEGA_NB_API_TOKEN
-      legacy: LEGACY_NB_API_TOKEN
-      zagros: ZAGROS_NB_API_TOKEN
-      zagros-prod: ZAGROS_PROD_NB_API_TOKEN
-      zagros-dev: ZAGROS_DEV_NB_API_TOKEN
+    netbird_site_url_map: "{{ goatnet_netbird_site_url_map | default({}) }}"
+    netbird_site_env_var_map: "{{ goatnet_netbird_site_env_var_map | default({}) }}"
 
     # Which mgmt API and which token (ADR 1185: the standup must be able to
     # apply the ACL to a goatnet this file has never heard of). Precedence:

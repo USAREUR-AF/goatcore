@@ -90,12 +90,14 @@
 # metrics, and do it within a bounded time so a hung collector shows up here
 # rather than as a mystery target-down days later.
 - name: node-exporter | confirm it emits node metrics (catches a hung collector)
+  # The same address as the readiness probe above: an exporter bound to
+  # node_exporter_listen_addr does not answer on localhost.
   args:
     executable: /bin/bash
   ansible.builtin.shell:
     cmd: >-
       set -o pipefail;
-      curl -s --max-time 10 http://localhost:{{ node_exporter_port }}/metrics
+      curl -s --max-time 10 http://{{ node_exporter_listen_addr | default('localhost', true) or 'localhost' }}:{{ node_exporter_port }}/metrics
       | grep -c '^node_' || true
     executable: /bin/bash
   register: _ne_metric_count
@@ -106,7 +108,9 @@
     that:
       - (_ne_metric_count.stdout | trim | int) > 0
     fail_msg: >-
-      node_exporter is listening on {{ node_exporter_port }} but returned no
+      node_exporter is listening on
+      {{ node_exporter_listen_addr | default('localhost', true) or 'localhost' }}:{{ node_exporter_port }}
+      but returned no
       node_* metrics within 10s. That is the concurrency-limit signature from
       F-289: a collector is hanging and holding request slots until all 40 fill,
       after which every scrape 503s. Check

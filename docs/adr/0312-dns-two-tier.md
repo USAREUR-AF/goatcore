@@ -59,7 +59,7 @@ Properties:
   file is local).
 - **Source of truth.** `ops/dns/mesh-hosts` is the single
   zone file; CoreDNS and dnsmasq read it. Service-onboarding
-  helper `ops/dns/publish-service.sh` adds entries.
+  helper script on the network host adds entries.
 
 The full design is in
 `../design/dns-service-discovery.md`.

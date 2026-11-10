@@ -7,6 +7,7 @@ test('catalog initializes without a stored API key', async ({ page }) => {
   await page.addInitScript(() => localStorage.clear());
   await page.route('**/api/**', route => {
     const path = new URL(route.request().url()).pathname;
+    if (path === '/api/whoami') return route.fulfill({status: 401, json: {error: {message: 'missing session'}}});
     if (path === '/api/catalog') catalogCalls++;
     return route.fulfill({ json: path === '/api/catalog'
       ? { orgs: [], totals: { orgs: 0 } } : {} });
@@ -46,7 +47,7 @@ for (const [url, path] of [['/index.html', '/api/orgs'], ['/vendor.html', '/api/
       await expect(page.getByRole('alert').filter({ hasText: message })).toBeVisible();
       if (status === 401) await expect(page.locator('#auth-banner')).toBeVisible();
       else await expect(page.locator('#auth-banner')).toBeHidden();
-      expect(await page.evaluate(() => localStorage.getItem('portalApiKey'))).toBe('fixture-key');
+      expect(await page.evaluate(() => localStorage.getItem('portalApiKey'))).toBeNull();
     });
   }
   test(`${url} retry recovers from server failure`, async ({ page }) => {
@@ -116,7 +117,7 @@ for (const theme of ['light', 'dark']) for (const width of [390, 1280]) {
     await page.route('**/api/orgs/fixture/topics', route => {
       if (route.request().method() !== 'POST') return route.fulfill({json: {topics: []}});
       posts++;
-      expect(route.request().headers().authorization).toBe('Bearer fixture-key');
+      expect(route.request().headers().authorization).toBeUndefined();
       return allow ? route.fulfill({json: {id: 1}}) : route.fulfill({status: 403, json: {error: {message: detail}}});
     });
     await page.goto('/topics.html');
@@ -137,7 +138,7 @@ for (const theme of ['light', 'dark']) for (const width of [390, 1280]) {
     await expect(page.locator('#who')).toHaveText(identity!);
     await expect(page.locator('#t-key')).toHaveValue('fixture/topic');
     await expect(page.locator('#t-desc')).toHaveValue('Keep this input');
-    expect(await page.evaluate(() => localStorage.getItem('portalApiKey'))).toBe('fixture-key');
+    expect(await page.evaluate(() => localStorage.getItem('portalApiKey'))).toBeNull();
     expect(posts).toBe(1);
     await page.screenshot({path: testInfo.outputPath(`permission-${theme}-${width}.png`), fullPage: true});
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);

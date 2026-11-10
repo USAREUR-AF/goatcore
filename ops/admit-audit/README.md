@@ -37,7 +37,7 @@ One JSON object per line, stdout:
   "peer_id": "peer_...",
   "account_id": "acc_...",
   "wg_key": "...",
-  "ip": "100.127.1.37",
+  "ip": "100.127.1.28",
   "name": "orin-04",
   "source_user": "usr_...",
   "meta_hostname": "orin-04"

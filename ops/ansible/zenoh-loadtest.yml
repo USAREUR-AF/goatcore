@@ -156,7 +156,7 @@
               environment:
                 AUDIT_SUBSCRIBER_ENDPOINT: "{{ audit_subscriber_zenoh_endpoint }}"
                 AUDIT_SUBSCRIBER_KEY: "{{ loadtest_key_prefix }}/**"
-                AUDIT_SUBSCRIBER_ID: "nova-a-loadtest"
+                AUDIT_SUBSCRIBER_ID: "{{ loadtest_audit_subscriber_id | default(inventory_hostname ~ '-loadtest') }}"
                 AUDIT_SUBSCRIBER_METRICS_BIND: "0.0.0.0:9303"
                 AUDIT_SUBSCRIBER_S3_ENDPOINT: "{{ loadtest_s3_endpoint }}"
                 AUDIT_SUBSCRIBER_S3_BUCKET: "{{ loadtest_bucket }}"
@@ -184,13 +184,13 @@
     # ---- 5. Narrow the REAL audit-subscriber off ** -------------------------
     # Keeps load bytes out of the locked audit-integrity bucket. This sets the
     # role var and re-applies the audit-subscriber role; persist the same value
-    # in group_vars/nova_hosts/audit-subscriber.yml so it survives future runs.
+    # in group_vars/<site>_hosts/audit-subscriber.yml so it survives future runs.
     - name: Narrow real audit-subscriber to the real-vendor prefix list
       ansible.builtin.debug:
         msg: >-
           Set `audit_subscriber_subscribe_key` to "{{ loadtest_real_vendor_prefixes }}"
-          in group_vars/nova_hosts/audit-subscriber.yml and re-run the audit-subscriber
-          role (or the nova-a refresh play). This is the one change that survives across
+          in group_vars/<site>_hosts/audit-subscriber.yml and re-run the audit-subscriber
+          role (or the site's refresh play). This is the one change that survives across
           runs; leaving it narrowed is a hardening improvement (ADR 0844 ACL tightening).
       when: loadtest_state == 'present'
 

@@ -16,7 +16,8 @@
       - otel_openobserve_user | length > 0
       - otel_openobserve_pass | length > 0
     fail_msg: |
-      VEGA_C_OPENOBSERVE_ROOT_EMAIL / _PASSWORD must be exported so
+      The environment variables that otel_openobserve_user and
+      otel_openobserve_pass read (defaults/main.yml) must be exported so
       the OTel Collector can forward OTLP to OpenObserve.
 
 - name: Pre-flight — OpenObserve /healthz is up

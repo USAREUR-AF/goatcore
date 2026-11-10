@@ -58,7 +58,7 @@ running *our* netbird build. Two vectors reach controllable clients: (a) the
 operator-laptop-onboarding playbook's patched-binary step (retired 2026-07-20 —
 the playbook now installs goat-client, collapsing (a) into (b)), and (b) **goat-client**,
 which embeds the netbird client from our fork (`client/embed`, `replace =>
-goat-maintainer/netbird`) — bump its fork dep + rebuild and every goat-client user gets
+USAREUR-AF/netbird`) — bump its fork dep + rebuild and every goat-client user gets
 L1. **Stock netbird from `pkgs.netbird.io` does NOT get L1.** And the server
 cannot make a stock client self-throttle: the signal client's `Send()`
 (`shared/signal/client/grpc.go`) ignores the gRPC error code and just retries 4×

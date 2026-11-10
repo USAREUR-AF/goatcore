@@ -12,9 +12,8 @@
     msg: >-
       fabric_crawler_json_out_host_path is empty for this host, so the fabric
       crawler writes no band file and budget-notify would decline every run.
-      Set it (group_vars/<site>_hosts/fabric-crawler.yml, precedent
-      zagros_prod_hosts) and redeploy fabric-crawler first — the two are one
-      contract, F-509.
+      Set it (group_vars/<site>_hosts/fabric-crawler.yml) and redeploy
+      fabric-crawler first — the two are one contract.
   when: (fabric_crawler_json_out_host_path | default('')) | length == 0
 
 - name: budget-notify | ensure dir
@@ -75,7 +74,10 @@
 
 - name: budget-notify | fail closed on empty SMTP credentials (before writing anything)
   ansible.builtin.fail:
-    msg: "ZAGROS_SES_SMTP_USERNAME/PASSWORD empty in the deploy environment — source 30-site-services.envrc"
+    msg: >-
+      budget_notify_smtp_username/password is empty: the SES SMTP credentials
+      the goatnet's group_vars read from the deploy environment are not set —
+      source 30-site-services.envrc.
   when: budget_notify_smtp_username | length == 0 or budget_notify_smtp_password | length == 0
 
 - name: budget-notify | fail closed on an empty sender

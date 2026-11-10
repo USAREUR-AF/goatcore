@@ -1,0 +1,86 @@
+---
+# SPDX-License-Identifier: Apache-2.0
+#
+# Exercise ops/ansible/tasks/github-release-access.yml against a real GitHub
+# release from localhost only (no remote host is touched). The token comes
+# from the environment and is never printed.
+#
+#   GOAT_CLI_RELEASE_TOKEN=          ansible-playbook -i localhost, -c local github-release-access.yml -e expect=anonymous
+#   GOAT_CLI_RELEASE_TOKEN=garbage   ansible-playbook -i localhost, -c local github-release-access.yml -e expect=anonymous
+#   GH_TOKEN=$(gh auth token)        ansible-playbook -i localhost, -c local github-release-access.yml -e expect=token
+#   ansible-playbook -i localhost, -c local github-release-access.yml -e tag=no-such-tag -e expect=fail
+#
+# Defaults: repo USAREUR-AF/goatcore, tag goat-cli-v0.5.15, private false.
+- name: github-release-access | probe one release
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    repo: "USAREUR-AF/goatcore"
+    tag: "goat-cli-v0.5.15"
+    private: false
+    expect: anonymous
+  tasks:
+    - name: github-release-access | run the shared tasks
+      block:
+        - name: github-release-access | decide how to read the release
+          ansible.builtin.include_tasks: "{{ playbook_dir }}/../../../tasks/github-release-access.yml"
+          vars:
+            ghr_label: "test"
+            ghr_repo: "{{ repo }}"
+            ghr_tag: "{{ tag }}"
+            ghr_token: "{{ lookup('env', 'GOAT_CLI_RELEASE_TOKEN') | default(lookup('env', 'GH_TOKEN'), true) }}"
+            ghr_token_name: "GOAT_CLI_RELEASE_TOKEN (else GH_TOKEN)"
+            ghr_private: "{{ private }}"
+            ghr_private_var: private
+      rescue:
+        - name: github-release-access | a failure was expected
+          ansible.builtin.assert:
+            that:
+              - expect == 'fail'
+            fail_msg: "the shared tasks failed: {{ ansible_failed_result.msg | default('') }}"
+        - name: github-release-access | show the failure message
+          ansible.builtin.debug:
+            msg: "{{ ansible_failed_result.msg | default('') }}"
+
+    # The same request shapes the roles use: API headers and download headers
+    # combined with ghr_auth_headers, so the Authorization key is absent on an
+    # anonymous read. Downloads one small asset into a temporary directory.
+    - name: github-release-access | resolve the release with the combined headers
+      ansible.builtin.uri:
+        url: "https://api.github.com/repos/{{ repo }}/releases/tags/{{ tag }}"
+        method: GET
+        headers: "{{ {'Accept': 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28'} | combine(ghr_auth_headers) }}"
+        return_content: true
+      register: test_release
+      no_log: true
+      when: ghr_mode | default('none') != 'none'
+
+    - name: github-release-access | temporary download directory
+      ansible.builtin.tempfile:
+        state: directory
+      register: test_dir
+      when: ghr_mode | default('none') != 'none'
+
+    - name: github-release-access | download SHA256SUMS with the combined headers
+      ansible.builtin.get_url:
+        url: "{{ (test_release.json.assets | selectattr('name', 'equalto', 'SHA256SUMS') | first).url }}"
+        headers: "{{ {'Accept': 'application/octet-stream'} | combine(ghr_auth_headers) }}"
+        dest: "{{ test_dir.path }}/SHA256SUMS"
+        mode: "0644"
+      no_log: true
+      when: ghr_mode | default('none') != 'none'
+
+    - name: github-release-access | remove the temporary directory
+      ansible.builtin.file:
+        path: "{{ test_dir.path }}"
+        state: absent
+      when: ghr_mode | default('none') != 'none'
+
+    - name: github-release-access | the outcome matches the expectation
+      ansible.builtin.assert:
+        that:
+          - (ghr_mode | default('fail')) == expect or (expect == 'fail' and ghr_mode | default('none') == 'none')
+          - (ghr_auth_headers | default({}) | length > 0) == (expect == 'token')
+        fail_msg: "expected {{ expect }}, got {{ ghr_mode | default('none') }}"
+        success_msg: "mode={{ ghr_mode | default('none') }} authorization_header={{ 'Authorization' in (ghr_auth_headers | default({})) }}"

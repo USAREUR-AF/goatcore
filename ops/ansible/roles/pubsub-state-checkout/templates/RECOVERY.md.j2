@@ -23,7 +23,7 @@ PIP=$(sudo docker inspect goat-zenoh-portal \
 {{ pubsub_state_apply_binary_dest }} \
   -from {{ pubsub_state_checkout_dir }}/repo \
   -portal-url "http://$PIP:8090" \
-  -api-key "$ZAGROS_PROD_PUBSUB_MIRROR_PORTAL_KEY" \
+  -api-key "${{ site_id | upper | replace('-', '_') }}_PUBSUB_MIRROR_PORTAL_KEY" \
   -dry-run
 
 # 3. Execute (creates missing vendors → re-mints certs/bundles, topics,
@@ -31,10 +31,10 @@ PIP=$(sudo docker inspect goat-zenoh-portal \
 {{ pubsub_state_apply_binary_dest }} \
   -from {{ pubsub_state_checkout_dir }}/repo \
   -portal-url "http://$PIP:8090" \
-  -api-key "$ZAGROS_PROD_PUBSUB_MIRROR_PORTAL_KEY"
+  -api-key "${{ site_id | upper | replace('-', '_') }}_PUBSUB_MIRROR_PORTAL_KEY"
 ```
 
-`$ZAGROS_PROD_PUBSUB_MIRROR_PORTAL_KEY` is the `pubsub-state-mirror` service
+`${{ site_id | upper | replace('-', '_') }}_PUBSUB_MIRROR_PORTAL_KEY` is the `pubsub-state-mirror` service
 operator key. If it is not in the failover shell's env, use any operator key
 present in this node's `/opt/goat-zenoh-portal/operator-keys.d/` (strip the
 `handle:` prefix — the `-api-key` value is the part after the colon).
@@ -44,7 +44,7 @@ present in this node's `/opt/goat-zenoh-portal/operator-keys.d/` (strip the
 Fall back to the MinIO backup tier, then apply from the extracted tree:
 
 ```bash
-mc cp local-zagros-prod/pubsub-state-snapshots/latest.tar.gz /tmp/
+mc cp {{ pubsub_state_minio_alias | default('local-' ~ site_id) }}/pubsub-state-snapshots/latest.tar.gz /tmp/
 mkdir -p /tmp/pubsub-restore && tar xzf /tmp/latest.tar.gz -C /tmp/pubsub-restore
 # the tarball's top dir is pubsub-state/ :
 {{ pubsub_state_apply_binary_dest }} -from /tmp/pubsub-restore/pubsub-state -portal-url "http://$PIP:8090" -api-key "$KEY" -dry-run

@@ -346,13 +346,17 @@ fn review_status(lang: &str) -> &str {
         .unwrap_or("machine")
 }
 
-/// The feedback channels as a single human string for the notice, with
-/// env overrides (`GOAT_I18N_FEEDBACK_EMAIL` / `GOAT_I18N_FEEDBACK_REPO`)
-/// taking precedence over the embedded config. The repo is omitted when
-/// unset (still provisional), so the notice degrades to email-only.
-fn feedback_channels() -> String {
+/// The feedback channels as a single human string for the notice. The email
+/// is `GOAT_I18N_FEEDBACK_EMAIL`, else the goatnet's published
+/// `i18n_feedback_email` (`goat context refresh`), else the embedded config;
+/// the repo is `GOAT_I18N_FEEDBACK_REPO`, else the embedded config. The repo
+/// is omitted when unset (still provisional), so the notice degrades to
+/// email-only.
+fn feedback_channels(goatnet_email: Option<&str>) -> String {
     let email = std::env::var("GOAT_I18N_FEEDBACK_EMAIL")
-        .unwrap_or_else(|_| PROVENANCE.feedback.email.clone());
+        .ok()
+        .or_else(|| goatnet_email.map(str::to_string))
+        .unwrap_or_else(|| PROVENANCE.feedback.email.clone());
     let repo = std::env::var("GOAT_I18N_FEEDBACK_REPO")
         .unwrap_or_else(|_| PROVENANCE.feedback.repo.clone());
     match (email.is_empty(), repo.is_empty()) {
@@ -366,7 +370,8 @@ fn feedback_channels() -> String {
 /// Emit the machine-translation notice to stderr if the active locale is
 /// non-English and not native-reviewed. Suppressed by `GOAT_I18N_NO_WARN`.
 /// Prose-only and stderr-only: never touches stdout or any `--json`.
-pub fn warn_if_machine_translated() {
+/// `goatnet_email` is the active context's published feedback address.
+pub fn warn_if_machine_translated(goatnet_email: Option<&str>) {
     if std::env::var_os("GOAT_I18N_NO_WARN").is_some() {
         return;
     }
@@ -375,7 +380,7 @@ pub fn warn_if_machine_translated() {
     if lang == "en" || review_status(lang) == "native-reviewed" {
         return;
     }
-    let channels = feedback_channels();
+    let channels = feedback_channels(goatnet_email);
     let notice = i18n_embed_fl::fl!(
         LANGUAGE_LOADER,
         "i18n-machine-translation-warning",

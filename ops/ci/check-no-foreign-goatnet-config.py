@@ -593,7 +593,7 @@ def report_mesh_ips(problems):
         print("answers, so nothing fails at deploy time while the data crosses the boundary.")
         print("Point the value at this goatnet's own mesh host (its inventory: doors.yaml,")
         print("its relay-health/mesh-dns ini, mgmt-hosts-mesh.ini), or mark it inline:")
-        print(f'    some_target: "100.127.0.9"   # {MARKER} <reason>')
+        print(f'    some_target: "100.127.0.7"   # {MARKER} <reason>')
         return 1
     print("ok: every mesh address in goatnet group_vars belongs to that goatnet")
     return 0

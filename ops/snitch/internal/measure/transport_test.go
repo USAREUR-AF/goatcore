@@ -1,7 +1,7 @@
 // Tests for transport-quality measurement.
 //
 // Every `ss` fixture below is a REAL capture from the RCA
-//, not an invention. That matters: the point of this probe is
+// of two production failures, not an invention. That matters: the point of this probe is
 // to recognize those two failures, so the tests assert against the actual
 // bytes the kernel emitted while each failure was happening. A synthetic
 // fixture would only prove the parser matches my idea of the format.
@@ -14,18 +14,18 @@ import (
 // The shape of a congestion collapse: 5 Mbps on a link
 // carrying 30 Mbps of UDP. cwnd pinned at the floor with data queued.
 const ssCollapsed = `State Recv-Q Send-Q Local Address:Port   Peer Address:Port
-ESTAB 0      3229312 100.127.0.221:5401   100.127.0.232:65513
+ESTAB 0      3229312 100.127.0.217:5401   100.127.0.228:65513
 	 cubic wscale:7,7 rto:276 rtt:72.235/28.649 ato:40 mss:1188 pmtu:1280 rcvmss:1228 advmss:1228 cwnd:2 ssthresh:2 bytes_sent:13491015 bytes_retrans:2060584 bytes_acked:11430431 segs_out:11354 segs_in:5521 data_segs_out:11350 send 263000bps lastsnd:4 pacing_rate 526000bps delivery_rate 331680bps delivered:9672 busy:38268ms unacked:2 retrans:2/1678 lost:2 notsent:38068 minrtt:46.829`
 
 // Captured on the same host minutes later under BBR: the fix working.
 const ssHealthy = `State Recv-Q Send-Q Local Address:Port   Peer Address:Port
-ESTAB 0      1310720 100.127.0.221:5401   100.127.0.232:65530
+ESTAB 0      1310720 100.127.0.217:5401   100.127.0.228:65530
 	 bbr wscale:7,7 rto:264 rtt:63.112/4.201 ato:40 mss:1188 pmtu:1280 rcvmss:1228 advmss:1228 cwnd:906 ssthresh:64 bytes_sent:44201984 bytes_retrans:1517184 bytes_acked:42684800 segs_out:37207 segs_in:12004 data_segs_out:37203 send 136000000bps pacing_rate 149000000bps delivery_rate 34240000bps delivered:35921 busy:10400ms retrans:0/1277 notsent:1310720 minrtt:60.104`
 
 // An idle-but-established connection: the app has nothing to send. cwnd is
 // small for a legitimate reason and MUST NOT be flagged.
 const ssAppLimited = `State Recv-Q Send-Q Local Address:Port   Peer Address:Port
-ESTAB 0      0      100.127.0.221:22   100.127.0.232:65513
+ESTAB 0      0      100.127.0.217:22   100.127.0.228:65513
 	 cubic wscale:6,7 rto:276 rtt:72.235/28.649 ato:40 mss:1228 pmtu:1280 cwnd:10 bytes_sent:4342 bytes_acked:4270 segs_out:15 delivered:11 app_limited busy:660ms minrtt:46.829`
 
 func TestParseSS_CollapsedWindowIsFlagged(t *testing.T) {
@@ -119,7 +119,7 @@ func TestParseSS_ReadsKernelReorderingEstimate(t *testing.T) {
 	// Real shape, carrying `reordering:8`. The kernel measures displacement on live traffic;
 	// reading it costs nothing and needs no listening port.
 	const withReord = `State Recv-Q Send-Q Local Address:Port   Peer Address:Port
-ESTAB 0      0      100.127.0.221:5401   100.127.0.232:65513
+ESTAB 0      0      100.127.0.217:5401   100.127.0.228:65513
 	 cubic wscale:7,7 rto:276 rtt:72.2/28.6 mss:1188 cwnd:40 reordering:8 bytes_sent:100 bytes_acked:90 minrtt:46.8`
 	q := parseSSOutput(withReord)
 	if q == nil {
@@ -137,7 +137,7 @@ func TestParseSS_DefaultReorderingDegreeIsNotAFinding(t *testing.T) {
 	// Linux SEEDS the estimate at 3. Treating the seed as evidence would flag
 	// every healthy socket on the fleet and train operators to ignore it.
 	const seeded = `State Recv-Q Send-Q Local Address:Port   Peer Address:Port
-ESTAB 0      0      100.127.0.221:22   100.127.0.232:65530
+ESTAB 0      0      100.127.0.217:22   100.127.0.228:65530
 	 bbr wscale:7,7 rto:264 rtt:63.1/4.2 mss:1188 cwnd:900 reordering:3 bytes_sent:100 bytes_acked:100 minrtt:60.1`
 	q := parseSSOutput(seeded)
 	if q == nil {
@@ -153,9 +153,9 @@ func TestParseSS_WorstReorderingWins(t *testing.T) {
 	// Same rule as cwnd: one badly-reordering path is the finding, and an
 	// average against well-behaved connections would bury it.
 	const two = `State Recv-Q Send-Q Local Address:Port   Peer Address:Port
-ESTAB 0 0 100.127.0.221:22 100.127.0.232:1
+ESTAB 0 0 100.127.0.217:22 100.127.0.228:1
 	 bbr wscale:7,7 rtt:63.1/4.2 mss:1188 cwnd:900 reordering:3 bytes_sent:1 bytes_acked:1 minrtt:60.1
-ESTAB 0 0 100.127.0.221:5401 100.127.0.232:2
+ESTAB 0 0 100.127.0.217:5401 100.127.0.228:2
 	 cubic wscale:7,7 rtt:72.2/28.6 mss:1188 cwnd:40 reordering:11 bytes_sent:1 bytes_acked:1 minrtt:46.8`
 	q := parseSSOutput(two)
 	if q == nil {

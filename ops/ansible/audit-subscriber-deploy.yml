@@ -37,7 +37,7 @@
 # COMPLIANCE 1y per ADR 0811 (Block 82S.3 — irreversible).
 
 - name: deploy goat-audit-subscriber (Block 82S.2)
-  hosts: "{{ target | mandatory }}"   # -e target=zagros_hosts for the ZAGROS sibling goatnet
+  hosts: "{{ target | mandatory }}"   # -e target=<site>_hosts
   become: true
   gather_facts: true
   vars:

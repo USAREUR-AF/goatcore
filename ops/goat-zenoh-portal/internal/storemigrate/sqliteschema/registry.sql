@@ -8,8 +8,8 @@
 -- ADR 0413: raw SQL, no ORM.
 
 CREATE TABLE IF NOT EXISTS vendors (
-    -- Vendor prefix is the primary key. It IS the identity ("org11x",
-    -- "org116x", "community"). Lowercase ASCII + digits + '-' only,
+    -- Vendor prefix is the primary key. It IS the identity ("acme",
+    -- "example-co", "community"). Lowercase ASCII + digits + '-' only,
     -- enforced at the application layer.
     prefix              TEXT PRIMARY KEY,
     -- bcrypt hash of the portal API key. Token presented at vendor mint
@@ -62,7 +62,7 @@ CREATE TABLE IF NOT EXISTS topics (
     id                  INTEGER PRIMARY KEY AUTOINCREMENT,
     vendor_prefix       TEXT NOT NULL REFERENCES vendors(prefix) ON DELETE CASCADE,
     -- Exact key expression the producer publishes to, e.g.
-    -- "org11x/lattice/entity/track/v1". Validated at insert: must start
+    -- "acme/sensor/entity/track/v1". Validated at insert: must start
     -- with "<vendor_prefix>/<system>/..." (i.e. at least one '/' past
     -- the vendor prefix).
     key_pattern         TEXT NOT NULL,

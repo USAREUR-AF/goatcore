@@ -45,10 +45,10 @@ func TestUpsertAllowlist_AppendsWhenNonEmpty(t *testing.T) {
 	p := filepath.Join(dir, "allowlist.json")
 	first := allowlistEntry{Name: "orin-a", Pubkey: "AAAA", Address: "198.18.0.1"}
 	second := allowlistEntry{Name: "orin-b", Pubkey: "BBBB", Address: "198.18.0.5"}
-	if err := upsertAllowlist(p, first, "vega", "", time.Time{}); err != nil {
+	if err := upsertAllowlist(p, first, "lab", "", time.Time{}); err != nil {
 		t.Fatalf("first: %v", err)
 	}
-	if err := upsertAllowlist(p, second, "vega", "", time.Time{}); err != nil {
+	if err := upsertAllowlist(p, second, "lab", "", time.Time{}); err != nil {
 		t.Fatalf("second: %v", err)
 	}
 	ps, _ := peerset.Load(p)
@@ -67,7 +67,7 @@ func TestUpsertAllowlist_ReplacesByName(t *testing.T) {
 	v2 := allowlistEntry{Name: "orin-a", Pubkey: "NEW=", Address: "198.18.0.1"}
 	other := allowlistEntry{Name: "orin-b", Pubkey: "BBBB", Address: "198.18.0.5"}
 	for _, e := range []allowlistEntry{v1, other, v2} {
-		if err := upsertAllowlist(p, e, "vega", "", time.Time{}); err != nil {
+		if err := upsertAllowlist(p, e, "lab", "", time.Time{}); err != nil {
 			t.Fatalf("upsert %s: %v", e.Name, err)
 		}
 	}
@@ -89,7 +89,7 @@ func TestUpsertAllowlist_RejectsIncomplete(t *testing.T) {
 		{Name: "x", Pubkey: "", Address: "198.18.0.1"},
 		{Name: "x", Pubkey: "AAAA", Address: ""},
 	} {
-		if err := upsertAllowlist(p, tc, "vega", "", time.Time{}); err == nil {
+		if err := upsertAllowlist(p, tc, "lab", "", time.Time{}); err == nil {
 			t.Errorf("expected error for %+v", tc)
 		}
 	}
@@ -99,7 +99,7 @@ func TestUpsertAllowlist_MissingFileIsTreatedAsEmpty(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "absent.json")
 	entry := allowlistEntry{Name: "x", Pubkey: "P", Address: "198.18.0.1"}
-	if err := upsertAllowlist(p, entry, "vega", "", time.Time{}); err != nil {
+	if err := upsertAllowlist(p, entry, "lab", "", time.Time{}); err != nil {
 		t.Fatalf("upsert against missing file: %v", err)
 	}
 	ps, err := peerset.Load(p)
@@ -119,10 +119,10 @@ func TestUpsertAllowlist_PubkeyCollisionSurfacesAsError(t *testing.T) {
 	p := filepath.Join(dir, "allowlist.json")
 	first := allowlistEntry{Name: "orin-a", Pubkey: "SHARED", Address: "198.18.0.1"}
 	second := allowlistEntry{Name: "orin-b", Pubkey: "SHARED", Address: "198.18.0.2"}
-	if err := upsertAllowlist(p, first, "vega", "", time.Time{}); err != nil {
+	if err := upsertAllowlist(p, first, "lab", "", time.Time{}); err != nil {
 		t.Fatal(err)
 	}
-	err := upsertAllowlist(p, second, "vega", "", time.Time{})
+	err := upsertAllowlist(p, second, "lab", "", time.Time{})
 	if err == nil {
 		t.Fatal("expected collision error")
 	}
@@ -135,7 +135,7 @@ func TestUpsertAllowlist_WritesV2EnvelopeOnDisk(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "allowlist.json")
 	entry := allowlistEntry{Name: "orin-a", Pubkey: "Y2", Address: "198.18.0.1"}
-	if err := upsertAllowlist(p, entry, "vega", "mgmt-host", time.Time{}); err != nil {
+	if err := upsertAllowlist(p, entry, "lab", "mgmt-host", time.Time{}); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
 	// Re-load via peerset and assert v2 schema_version on disk.
@@ -164,7 +164,7 @@ func TestUpsertAllowlist_AutoMigratesLegacyV1FileOnFirstWrite(t *testing.T) {
 		t.Fatal(err)
 	}
 	added := allowlistEntry{Name: "newly-added", Pubkey: "CCC", Address: "198.18.0.3"}
-	if err := upsertAllowlist(p, added, "vega", "", time.Time{}); err != nil {
+	if err := upsertAllowlist(p, added, "lab", "", time.Time{}); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
 	ps, _ := peerset.Load(p)

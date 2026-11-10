@@ -18,7 +18,7 @@
 # whole path exists to prevent.
 set -euo pipefail
 
-ENV_NAME="${GOAT_ENV:?set GOAT_ENV (zagros | zagros-prod | ...)}"
+ENV_NAME="${GOAT_ENV:?set GOAT_ENV to the name of this goatnet}"
 PG_CONTAINER="${HERD_PG_CONTAINER:-herd-postgres}"
 PG_USER="${HERD_PG_USER:-herd}"
 PG_DB="${HERD_PG_DB:-herd}"

@@ -4,7 +4,8 @@
 #
 # Three facts must agree before the portal is (re)deployed:
 #   declared  portal_store in group_vars                      sqlite | postgres
-#   image     the image's org.usareur-af.goat-zenoh-portal.store label
+#   image     the image's store label: portal_store_label, else the first of
+#             portal_store_label_aliases the image carries
 #             (absent = an image built before the Postgres server = sqlite)
 #   host      portal_store_marker, written by the cutover (postgres) and the
 #             rollback (sqlite); absent = never cut over = sqlite
@@ -61,9 +62,11 @@
 - name: goat-zenoh-portal-store | gate — derive image, host and fresh-host facts
   ansible.builtin.set_fact:
     gzps_image_store: >-
-      {{ ((gzps_image_labels_pulled.stdout if gzps_image_labels.rc != 0 else gzps_image_labels.stdout)
-          | default('null', true) | from_json | default({}, true))[portal_store_label]
-         | default('sqlite', true) }}
+      {%- set l = ((gzps_image_labels_pulled.stdout if gzps_image_labels.rc != 0 else gzps_image_labels.stdout)
+          | default('null', true) | from_json | default({}, true)) -%}
+      {%- set hit = ([portal_store_label] + (portal_store_label_aliases | default([], true)))
+          | select('in', l) | list -%}
+      {{ (l[hit[0]] if hit else '') | default('sqlite', true) }}
     gzps_host_store: >-
       {{ ((gzps_store_marker.content | b64decode).splitlines() | first | trim)
          if (gzps_store_marker.content | default('') | length > 0) else '' }}

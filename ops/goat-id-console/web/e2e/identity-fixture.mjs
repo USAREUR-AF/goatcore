@@ -47,19 +47,19 @@ createServer(async (req, res) => {
   if (apiPath === '/api/peers' && site === 'zagros') return res.end(JSON.stringify([
     {
       id: 'd0f1e2a3b4c5d6e7f8091a2b', name: 'peer-jane-doe-acme-zagros-20260601-laptop',
-      ip: '100.127.0.49', connected: true, last_seen: new Date().toISOString(),
+      ip: '100.127.0.45', connected: true, last_seen: new Date().toISOString(),
       groups: [{ id: 'g-all', name: 'All' }, { id: 'g-probation', name: 'ZAGROS-PROBATION-DEVELOPER' }],
     },
     {
       id: 'b1c2d3e4f5a60718293b4c5d', name: 'peer-release-target-acme-zagros-20260602-laptop',
-      ip: '100.127.0.50', connected: true, last_seen: new Date().toISOString(),
+      ip: '100.127.0.46', connected: true, last_seen: new Date().toISOString(),
       groups: [{ id: 'g-all', name: 'All' }, { id: 'g-probation', name: 'ZAGROS-PROBATION-DEVELOPER' }],
     },
   ]));
   if (apiPath === '/api/peers' && site === 'zagros-dev') return res.end(JSON.stringify([
     {
       id: 'c2d3e4f5a60718293b4c5d6e', name: 'peer-governed-target-acme-zagros-dev-20260603-laptop',
-      ip: '100.127.0.51', connected: true, last_seen: new Date().toISOString(),
+      ip: '100.127.0.47', connected: true, last_seen: new Date().toISOString(),
       groups: [{ id: 'g-all', name: 'All' }, { id: 'g-dev-probation', name: 'ZAGROS-DEV-PROBATION-DEVELOPER' }],
     },
   ]));

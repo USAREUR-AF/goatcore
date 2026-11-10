@@ -20,7 +20,7 @@ package main
 //   - GOAT_CA_KEY           — path to age-encrypted CA private key (dev)
 //   - GOAT_AGE_IDENTITY     — path to age identity file (dev)
 //   - GOAT_CA_ID            — CA identifier matching the public key
-//                             distribution (e.g. "dev-goat-
+//                             distribution (e.g. "dev-galaxy-
 //                             ca-ecdsa-2026-05-09")
 //   - GOAT_TLS_TRUST_ANCHOR — path to ADR 0407 internal-CA root cert
 //                             PEM (optional; surfaces as
@@ -105,7 +105,7 @@ func caSigningEnv() ([]string, error) {
 	}
 	caID := os.Getenv("GOAT_CA_ID")
 	if caID == "" {
-		return nil, fmt.Errorf("GOAT_CA_ID is required (e.g. dev-goat-ca-ecdsa-2026-05-09)")
+		return nil, fmt.Errorf("GOAT_CA_ID is required (e.g. dev-galaxy-ca-ecdsa-2026-05-09)")
 	}
 	flags := []string{"--mode", mode, "--ca-id", caID}
 
@@ -227,13 +227,13 @@ func inferACLGroups(p peerset.Peer) []string {
 		return nil
 	}
 	// Site prefix uppercased to match the docs/design/mesh-acl.md
-	// canonical group naming (e.g. VEGA, PROV-FRA).
+	// canonical group naming (e.g. SITE-A, SITE-B).
 	prefix := upperKebab(p.Site)
 	return []string{prefix}
 }
 
-// upperKebab uppercases a kebab-cased site identifier so "vega"
-// becomes "VEGA". Replaces underscores with hyphens defensively
+// upperKebab uppercases a kebab-cased site identifier so "site-a"
+// becomes "SITE-A". Replaces underscores with hyphens defensively
 // (site identifiers in inventory occasionally use underscores).
 func upperKebab(s string) string {
 	out := make([]byte, 0, len(s))

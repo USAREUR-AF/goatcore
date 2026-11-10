@@ -73,6 +73,8 @@ whose package disagrees with it.** This is the decision's load-bearing half. It 
 specification's rule — *a directory is a cache of this binding, never its source* — a refusal
 in the tool rather than a sentence in a document.
 
+> **Amended by [ADR 1225](1225-federation-belongs-to-goatbuilder-one-command-one-decision.md) (Proposed).** The verb is `goatbuilder federate apply`; federation moves out of `goat`. The refusal is unchanged.
+
 **3. A framework may publish a roster of its members' corroborated identities.** The roster
 carries `sovereign_id`, the two §5.1 values, trust domain and bundle endpoint, and the
 corroboration date and method for each entry. It carries no `transport_offer`, no `data_offer`
@@ -93,7 +95,7 @@ holding exactly one certificate authority, and its own tunnel.
 
 **7. Transitive reachability is refused.** A party reaches only parties it has peered with. No
 roster membership, and no chain of peerings, creates a path between two parties that have not
-peered.
+peered. *Amended by [ADR 1224](1224-transit-is-one-hop-unless-the-owner-marks-a-general-release.md) (Proposed): data its owner marks as a general release travels to every federated environment, and a roster supplies the trust bundle that verifies its origin.*
 
 **8. Withdrawing a party from a framework is a roster revision, and each member converges
 through the retirement path that already exists** — moving the peering's entry from

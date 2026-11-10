@@ -322,6 +322,93 @@
       when: has_mgmt_api | default(false) | bool
 
 # ============================================================================
+# Phase 1C — a joiner's cluster encoding follows its founder's
+#
+# Spock replicates between clusters of ONE encoding: a UTF8 joiner subscribed
+# to a SQL_ASCII founder fails every apply with "encoding conversion for binary
+# datum not supported yet". The compose file initialises a fresh PGDATA with
+# POSTGRES_INITDB_ARGS (default UTF8); a founder initialised before that
+# default is SQL_ASCII. So a joiner (goatnet_founder: false) reads the
+# founder's template1 encoding and initialises with the same one: the fact
+# set here (postgres_initdb_encoding) is what the .env render writes as
+# POSTGRES_INITDB_ARGS. A joiner whose cluster already exists with another
+# encoding is refused: initdb never runs again on an existing PGDATA.
+# A founder is untouched. A SQL_ASCII goatnet moves to UTF8 with
+# postgres-encoding-migrate.yml, every Spock member at once
+# (docs/operations/postgres-utf8-migration.md); its joiners then follow a
+# UTF8 founder here.
+# ============================================================================
+- name: "site-bootstrap: joiner cluster encoding follows the founder (when goatnet_founder false)"
+  tags: [stack]
+  hosts: "{{ (site_id | replace('-', '_')) ~ '_hosts' }}"
+  gather_facts: false
+  become: true
+  vars:
+    _founder_group: "{{ (join_founder_site | default('')) | replace('-', '_') ~ '_hosts' }}"
+    _founder_host: "{{ (groups[_founder_group] | default([])) | first | default('') }}"
+    _encoding_sql: "select pg_encoding_to_char(encoding) from pg_database where datname='template1'"
+  tasks:
+    - name: joiner encoding gate
+      when: not (goatnet_founder | default(true) | bool)
+      block:
+        - name: "encoding | a joiner names a founder in the inventory"
+          ansible.builtin.assert:
+            that:
+              - _founder_host | length > 0
+            fail_msg: >-
+              {{ site_id }} declares goatnet_founder: false but no founder host
+              resolves: join_founder_site={{ join_founder_site | default('(unset)') }},
+              group {{ _founder_group }} has no host in this run's inventory.
+              The joiner's Postgres must be initialised with the founder's
+              encoding, so the founder must be reachable from here.
+            quiet: true
+
+        - name: "encoding | read the founder's cluster encoding ({{ _founder_host }})"
+          ansible.builtin.command:
+            argv: [docker, exec, -u, postgres,
+                   "{{ hostvars[_founder_host].spock_mesh_postgres_container | default('postgres-a') }}",
+                   psql, -X, -U, postgres, -tAc, "{{ _encoding_sql }}"]
+          # delegate_to is templated before the block's `when`, so a founder
+          # (no _founder_host) needs a non-empty value to skip on.
+          delegate_to: "{{ _founder_host or inventory_hostname }}"
+          run_once: true
+          register: _founder_encoding
+          changed_when: false
+
+        - name: "encoding | the founder answered with an encoding name"
+          ansible.builtin.assert:
+            that:
+              - _founder_encoding.stdout | trim is match('^[A-Z0-9_]+$')
+            fail_msg: >-
+              Could not read the founder's template1 encoding on {{ _founder_host }}
+              (got "{{ _founder_encoding.stdout | trim }}").
+            quiet: true
+
+        - name: "encoding | initialise this joiner with the founder's encoding"
+          ansible.builtin.set_fact:
+            postgres_initdb_encoding: "{{ _founder_encoding.stdout | trim }}"
+
+        - name: "encoding | read this node's cluster encoding, if its Postgres already runs"
+          ansible.builtin.command:
+            argv: [docker, exec, -u, postgres, postgres-a, psql, -X, -U, postgres, -tAc, "{{ _encoding_sql }}"]
+          register: _local_encoding
+          changed_when: false
+          failed_when: false
+
+        - name: "encoding | refuse an existing cluster whose encoding differs from the founder's"
+          ansible.builtin.assert:
+            that:
+              - _local_encoding.rc != 0 or (_local_encoding.stdout | trim) == postgres_initdb_encoding
+            fail_msg: >-
+              {{ inventory_hostname }} already runs a Postgres cluster encoded
+              {{ _local_encoding.stdout | trim }}; the founder {{ _founder_host }}
+              is {{ postgres_initdb_encoding }}. Spock cannot replicate between
+              them, and initdb never re-runs on an existing PGDATA. On a joiner
+              that holds no data yet: stop the stack, remove the pgdata-a volume,
+              and re-run this play so Postgres initialises as {{ postgres_initdb_encoding }}.
+            quiet: true
+
+# ============================================================================
 # Phase 2A — full mgmt-stack via mgmt-host.yml
 #
 # mgmt-host.yml targets `hosts: mgmt_hosts`. Only sites that ACTUALLY
@@ -411,6 +498,13 @@
               # expands the mgmt-stack scope, add the relevant *_IMAGE env vars here.
               SITE_NAME={{ site_id }}
               POSTGRES_SUPERUSER_PASSWORD={{ postgres_superuser_password }}
+              {# The compose file's Traefik mount reads this key. Traefik is not #}
+              {# started under this profile; the key keeps the mount on this     #}
+              {# host's certificate directory if it ever is.                     #}
+              TRAEFIK_TLS_ROOT={{ traefik_tls_root | default((goat_host_etc_dir | default('/etc/goat')) ~ '/tls') }}
+              {% if postgres_initdb_encoding is defined and postgres_initdb_encoding %}
+              POSTGRES_INITDB_ARGS="--locale=C --encoding={{ postgres_initdb_encoding }}"
+              {% endif %}
               {% if postgres_spock_image is defined and postgres_spock_image %}
               POSTGRES_SPOCK_IMAGE={{ postgres_spock_image }}
               {% endif %}
@@ -493,6 +587,44 @@
           changed_when: false
           failed_when: not_running_check.stdout | length > 0
 
+# Phase 1C's other half: once the stack is up, the joiner's cluster IS the
+# founder's encoding (catches a PGDATA that existed before Postgres was running
+# for Phase 1C to read).
+- name: "site-bootstrap: joiner cluster encoding matches the founder (after the stack is up)"
+  tags: [stack]
+  hosts: "{{ (site_id | replace('-', '_')) ~ '_hosts' }}"
+  gather_facts: false
+  become: true
+  tasks:
+    - name: "encoding | read this node's cluster encoding"
+      ansible.builtin.command:
+        argv: [docker, exec, -u, postgres, postgres-a, psql, -X, -U, postgres, -tAc,
+               "select pg_encoding_to_char(encoding) from pg_database where datname='template1'"]
+      register: _joiner_encoding
+      changed_when: false
+      when:
+        - not (goatnet_founder | default(true) | bool)
+        - postgres_initdb_encoding is defined
+        # The Spock node; a B standby's cluster is a copy of A's.
+        - (router_role | default('A')) == 'A'
+
+    - name: "encoding | this joiner's cluster encoding is the founder's"
+      ansible.builtin.assert:
+        that:
+          - (_joiner_encoding.stdout | trim) == postgres_initdb_encoding
+        fail_msg: >-
+          {{ inventory_hostname }}'s cluster is {{ _joiner_encoding.stdout | trim }};
+          the founder's is {{ postgres_initdb_encoding }}. The PGDATA existed
+          before this run, so initdb did not run with the founder's encoding.
+          On a joiner that holds no data yet: stop the stack, remove the
+          pgdata-a volume, and re-run.
+        quiet: true
+      when:
+        - not (goatnet_founder | default(true) | bool)
+        - postgres_initdb_encoding is defined
+        # The Spock node; a B standby's cluster is a copy of A's.
+        - (router_role | default('A')) == 'A'
+
 # ============================================================================
 # Phase 2.5 — Traefik TLS terminator (Block 22J / ADR 0407)
 #
@@ -564,7 +696,7 @@
             that:
               - bootstrap_owner_email is defined
               - bootstrap_owner_email | length > 0
-            fail_msg: "Pass -e bootstrap_owner_email=<owner-email> (e.g. person-81@example.org)."
+            fail_msg: "Pass -e bootstrap_owner_email=<owner-email> (e.g. ops@goat.example)."
 
         # The wait sits in a block so its FAILURE can name its cause (#383).
         # management-a restart-loops dialing hydra:4444 until Ory is deployed,
@@ -825,10 +957,19 @@
   gather_facts: false
   become: true
   vars:
+    # The per-host seed is the name recorded on the host the first time this
+    # runs (tasks/pgbackrest-cipher-seed.yml), so a renamed host keeps the
+    # passphrase its repo was made with. A host with no record gets its
+    # current inventory_hostname, the value this derivation always used.
     pgbackrest_repo1_cipher_pass: >-
-      {{ (pgbackrest_cipher_pass | default('') ~ '-repo1-' ~ inventory_hostname)
+      {{ (pgbackrest_cipher_pass | default('') ~ '-repo1-'
+          ~ (pgbackrest_cipher_seed | default(inventory_hostname)))
          | hash('sha256') | truncate(32, True, '') }}
   tasks:
+    - name: Record or read the pgBackRest cipher seed
+      ansible.builtin.include_tasks: tasks/pgbackrest-cipher-seed.yml
+      when: has_durable_independent_state | default(true) | bool
+
     - name: Apply pgbackrest role
       ansible.builtin.import_role:
         name: pgbackrest
@@ -904,13 +1045,26 @@
   gather_facts: false
   become: true
   tasks:
-    - name: management-a is up (when has_mgmt_api)
+    # management-a crash-loops on a streaming standby until that node is promoted
+    # (its Ory stays stopped; roles/keepalived-mgmt/README.md), so it is checked
+    # only where postgres-a is not in recovery. A promoted B is checked again.
+    - name: Ask whether postgres-a is a streaming standby (when has_mgmt_api)
+      ansible.builtin.command:
+        cmd: docker exec postgres-a psql -U postgres -tAc 'SELECT pg_is_in_recovery()'
+      register: smoke_pg_recovery
+      changed_when: false
+      failed_when: false
+      when: has_mgmt_api | default(false) | bool
+
+    - name: management-a is up (when has_mgmt_api, not on a standby)
       ansible.builtin.command:
         cmd: docker ps --filter name=management-a --format '{{ "{{" }}.Status{{ "}}" }}'
       register: mgmt_status
       changed_when: false
       failed_when: mgmt_status.stdout is not search('Up')
-      when: has_mgmt_api | default(false) | bool
+      when:
+        - has_mgmt_api | default(false) | bool
+        - (smoke_pg_recovery.stdout | default('') | trim) != 't'
 
     - name: postgres-a is up
       ansible.builtin.command:
@@ -1007,7 +1161,7 @@
           {{ site_id }} bootstrap complete for {{ inventory_hostname }} (profile={{ mgmt_stack_profile }}).
           postgres-a:    {{ pg_status.stdout }}
           {% if has_mgmt_api | default(false) | bool %}
-          management-a:  {{ mgmt_status.stdout }}
+          management-a:  {{ mgmt_status.stdout | default('not checked: postgres-a is a streaming standby') }}
           mgmt-host-bootstrap wrapper: {{ wrapper_path.stdout | trim }}
           {% endif %}
           {% if participates_in_spock | default(false) | bool %}
@@ -1111,7 +1265,7 @@
 # bringup vintage:
 #
 #   - Block 68 rapid-bringup hosts (today: prov-conus) carry the
-#     bootstrap-bundle layout natively at /opt/goat/bootstrap/
+#     bootstrap-bundle layout natively under the bundle's install root
 #     and were minted with `--snitch=true` so the per-device probe
 #     key is in the offline-enrollment bundle. Set snitch_enabled=true.
 #

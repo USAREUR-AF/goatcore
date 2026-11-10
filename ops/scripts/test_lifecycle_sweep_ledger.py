@@ -70,9 +70,13 @@ class RevokeLaneDoneSetTest(unittest.TestCase):
         sweep.HOLD_RECORDS = str(Path(self.tmp.name) / "hold_records.jsonl")
         self._env = patch.dict(os.environ, {"NB_TOKEN": "test-token"})
         self._env.start()
+        # The sweep has no built-in goatnet; the unit's environment names it.
+        self._site_was = sweep.SITE
+        sweep.SITE = "site-a"
 
     def tearDown(self):
         self._env.stop()
+        sweep.SITE = self._site_was
         sweep.LEDGER = self._ledger_was
         sweep.HOLD_RECORDS = self._holds_was
         self.tmp.cleanup()

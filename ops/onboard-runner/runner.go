@@ -682,7 +682,7 @@ func (r *runner) provisionCollab(ctx context.Context, p proposal, l *slog.Logger
 	}
 	// Stage the out-file too (fallback); a failure there doesn't lose the pair —
 	// the welcome email still carries it.
-	if err := writeCollabOut(r.repoRoot, p.Handle, r.collab.Name(), acct, url); err != nil {
+	if err := writeCollabOut(r.repoRoot, p.Handle, r.collab.Name(), acct, url, collabSignInURL(r.collab)); err != nil {
 		l.Warn("collab account provisioned, but staging the setup-link file failed", "provider", r.collab.Name(), "account", acct, "err", err)
 	}
 	// Never log url — it is a credential-bearing one-time link.

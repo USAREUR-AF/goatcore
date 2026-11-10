@@ -42,6 +42,28 @@ def outcome(status=NOT_RUN, before="unknown", after="unknown", detail="not run")
             "verified": status in VERIFIED_STATUSES}
 
 
+def declared_value(repo, key: str) -> str:
+    """One plain `key: value` line of ops/ansible/group_vars/all.yml, the file a
+    checkout declares its own names in; '' when the file or the key is absent."""
+    try:
+        text = (Path(repo) / "ops/ansible/group_vars/all.yml").read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return ""
+    found = re.search(rf"^{re.escape(key)}:[ \t]*(.*?)[ \t]*(?:#.*)?$", text, re.M)
+    return found.group(1).strip().strip("\"'") if found else ""
+
+
+def public_door_admin_var(repo) -> str:
+    """The variable the public door's idm_admin password is read from:
+    GOAT_IDM_ADMIN_PW, else the variable the checkout names as
+    public_door_idm_admin_pw_env when that one is set and GOAT_IDM_ADMIN_PW is not."""
+    if not os.getenv("GOAT_IDM_ADMIN_PW"):
+        name = declared_value(repo, "public_door_idm_admin_pw_env")
+        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name) and os.getenv(name):
+            return name
+    return "GOAT_IDM_ADMIN_PW"
+
+
 def atomic_json(path: Path, value: dict, private_parent: bool = False) -> None:
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700 if private_parent else 0o777)
     if private_parent:
@@ -496,7 +518,8 @@ class Driver:
                                 outcome(CHECK_FAILED, "unknown", "unknown", detail))
         if shutil.which("op") and run(["op", "whoami"]).returncode:
             self.fail("preflight: 1Password CLI is not signed in")
-        for name in ("COLLAB_KANIDM_URL", "PUBLIC_DOOR_KANIDM_URL", "GOAT_IDM_ADMIN_PW"):
+        for name in ("COLLAB_KANIDM_URL", "PUBLIC_DOOR_KANIDM_URL",
+                     public_door_admin_var(self.args.repo)):
             if not os.getenv(name):
                 self.fail(f"preflight: {name} is missing")
         if not os.getenv("COLLAB_KANIDM_IDM_ADMIN_PW"):
@@ -694,11 +717,11 @@ class Driver:
             return "unknown"
         return "present" if status.get("present") is True else "absent"
 
-    @staticmethod
-    def kanidm_client(plane: str) -> Kanidm:
+    def kanidm_client(self, plane: str) -> Kanidm:
         if plane == "collab-kanidm":
             return Kanidm(os.environ["COLLAB_KANIDM_URL"], os.environ["COLLAB_KANIDM_IDM_ADMIN_PW"])
-        return Kanidm(os.environ["PUBLIC_DOOR_KANIDM_URL"], os.environ["GOAT_IDM_ADMIN_PW"])
+        return Kanidm(os.environ["PUBLIC_DOOR_KANIDM_URL"],
+                      os.environ[public_door_admin_var(self.args.repo)])
 
     def kanidm(self, goatnet: str, plane: str) -> None:
         client, known = self.kanidm_before[(goatnet, plane)]
@@ -865,7 +888,11 @@ class Driver:
         return matches
 
     def github_orgs(self) -> list[str]:
-        return list(dict.fromkeys(self.configured_list("GOAT_OFFBOARD_GITHUB_ORGS", "usareur-af,USAREUR-AF")))
+        # The organisations to remove the person from: GOAT_OFFBOARD_GITHUB_ORGS,
+        # else what the checkout declares as goat_offboard_github_orgs. With
+        # neither, the plane names no target and fails the run.
+        return list(dict.fromkeys(self.configured_list(
+            "GOAT_OFFBOARD_GITHUB_ORGS", declared_value(self.args.repo, "goat_offboard_github_orgs"))))
 
     def read_github_orgs(self) -> dict[
             str, tuple[set[str], set[str], tuple[list[dict], dict[str, list[dict]]]]
@@ -1032,7 +1059,7 @@ def main() -> int:
                      "the run."),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""examples:
-  ops/scripts/offboard.sh <email-or-handle> --goatnet zagros
+  ops/scripts/offboard.sh <email-or-handle> --goatnet <name>
   ops/scripts/offboard.sh <email-or-handle> --all-goatnets --apply
   ops/scripts/offboard.sh <email-or-handle> --goatnet <name> --apply \\
     --github-user <login> --github-user-unverified
@@ -1049,7 +1076,9 @@ ordered planes:
 apply credentials and environment:
   goat contexts <goatnet>-op; signed-in gh and op; COLLAB_KANIDM_URL;
   COLLAB_KANIDM_IDM_ADMIN_PW; PUBLIC_DOOR_KANIDM_URL;
-  GOAT_IDM_ADMIN_PW; optional GOAT_OFFBOARD_GITHUB_ORGS;
+  GOAT_IDM_ADMIN_PW (or the variable the checkout names as
+  public_door_idm_admin_pw_env); GOAT_OFFBOARD_GITHUB_ORGS (or the
+  checkout's goat_offboard_github_orgs);
   BAO_ADDR plus a store token and --openbao-user for the openbao plane;
   GOAT_OPERATOR_HANDLE; GOAT_PROFILE_DIR.
 
@@ -1064,7 +1093,7 @@ what it does NOT do (ADR 1187 section 7):
     parser.add_argument("--goatnet", action="append", dest="goatnets", default=[],
                         help="select one goatnet; repeat to select more than one")
     parser.add_argument("--all-goatnets", action="store_true",
-                        help="select zagros-dev, zagros, and zagros-prod")
+                        help="select every goatnet ops/goatnets/cross-env.yaml declares")
     parser.add_argument("--apply", action="store_true",
                         help="perform removals; without this flag, only print the plan")
     parser.add_argument("--github-user", default="",

@@ -13,7 +13,7 @@ import (
 
 func testCoalitionRegistry(t *testing.T) *coalition.Registry {
 	t.Helper()
-	path := filepath.Join("..", "..", "..", "identity", "coalition framework registry")
+	path := filepath.Join("..", "..", "..", "identity", "coalition-frameworks.yaml")
 	reg, err := coalition.Load(path)
 	if err != nil {
 		t.Skipf("canonical coalition registry unavailable: %v", err)

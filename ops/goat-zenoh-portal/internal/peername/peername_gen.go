@@ -57,9 +57,9 @@ func Rest(name string) (string, bool) {
 // `foo` never claims `peer-foobar-…`, and longest-wins so a key that is a prefix of
 // another cannot shadow it. This is the one matcher behind both the handle-keyed
 // (person) and prefix-keyed (org) joins. Its limit is stated rather than papered over:
-// the separator also occurs INSIDE handles and tags, so `maintainer` does match
-// `peer-maintainer-smith-…` whenever `maintainer-smith` is not itself among the candidates. Pass
-// the FULL candidate set and let longest-wins disambiguate; for anything that acts on a
+// the separator also occurs INSIDE handles and tags, so `sam` does match
+// `peer-sam-smith-…` whenever `sam-smith` is not itself among the candidates. Pass the
+// FULL candidate set and let longest-wins disambiguate; for anything that acts on a
 // principal, use `belongs_to`, which anchors on the site too.
 func MatchLongestKey(name string, keys []string) string {
 	rest, ok := Rest(name)
@@ -93,8 +93,8 @@ func Mint(handle, orgShortTag, site, date string) string {
 	// A tag equal to the handle carries no information and is omitted.
 	// On per-uuid goatnets short_tag is FORCED to equal the handle (it
 	// doubles as the Zenoh prefix), which minted names like
-	// peer-user371x-user371x-zagros-... — 23 of 111 peers
-	// on ZAGROS. Same degenerate value the Ory org trait already corrects.
+	// peer-sam-lee-sam-lee-<site>-... for every person
+	// on such a goatnet. Same degenerate value the Ory org trait corrects.
 	if tag := strings.TrimSpace(orgShortTag); tag != "" && tag != h {
 		b.WriteString(Sep)
 		b.WriteString(tag)

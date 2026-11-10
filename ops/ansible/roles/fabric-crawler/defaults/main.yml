@@ -16,13 +16,14 @@
 # exception, not the setup step.
 
 # Image — pinned per ADR 0859 (easy rollback); multi-arch INDEX digest.
-# Built by .github/workflows/fabric-crawler-image.yml (sha-b625ab0 = PR #1973
-# merge, the tier-ladder revision: starting block 100 / sponsor 1,000 as
-# binary defaults, matching the role env plumbing). To bump: resolve the
-# new index digest with
+# Built by .github/workflows/fabric-crawler-image.yml. The role carries no
+# pin: a goatnet's pin table (ops/pins/fleet-pins.yaml, rendered into
+# group_vars/<group>/pins.yml) or its group_vars set it, and an empty value
+# stops the deploy at `docker compose`. To bump: resolve the new index
+# digest with
 #   docker buildx imagetools inspect ghcr.io/{{ ghcr_org }}/goat-fabric-crawler:sha-<short> --format '{{.Manifest.Digest}}'
 # and append a matching deploy-history row.
-fabric_crawler_image: "ghcr.io/{{ ghcr_org }}/goat-fabric-crawler@sha256:06ba0657585cf2e07a0ca24b63ca135e7d9bdefb5d7b5405a9ca55195a46998c"
+fabric_crawler_image: ""
 
 # ---------------------------------------------------------------------------
 # Instance parameterization — ONE required input, everything else derives.
@@ -95,7 +96,7 @@ fabric_crawler_json_out_host_path: ""
 #   ops/fabric/{cardinality,census}/** AND the admin census selectors
 #   (trial-peer-r-admin-census). Requires the leaf minted (offline-CA
 #   cert-sign ceremony) + the router config re-rendered + a router restart
-#.
+#   (ACL edits are a no-op on a running router).
 #
 #   DEGRADED (bring-up fallback, the shipped default): reuse the
 #   fabric-health infra leaf. Its rule already covers the two publish keys

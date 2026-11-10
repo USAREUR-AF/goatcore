@@ -9,7 +9,7 @@ live.
 |---|---|
 | File | `ops/goatbuilder/goatbuilder.yaml` |
 | Schema | `ops/goatbuilder/schema/goatbuilder-v1.schema.json` (`schema: goatbuilder/v1`) |
-| In goat's repository | **Generated** by `ops/goatbuilder/gen-config.py` from `ops/pins/fleet-pins.yaml` and `ops/release/ladder.yaml`. Do not edit it; change a source and regenerate |
+| In goat's repository | **Generated** by `ops/goatbuilder/gen-config.py` from `ops/pins/fleet-pins.yaml`, `ops/release/ladder.yaml`, `ops/goatbuilder/project.yml` (`repo:`, `deploy:`) and `ops/goatbuilder/posture.yml` (`secrets:`). Do not edit it; change a source and regenerate. A deployment that keeps its values in a private overlay carries its own `project.yml` and `posture.yml` there |
 | Gate | `.github/workflows/goatbuilder-schema.yml` validates the file and the schema's refusal tests on every pull request |
 
 ## The shape
@@ -25,6 +25,7 @@ repo:
   source: <org>/<repo>             # where declarations and tags live
   image_namespace: ghcr.io/<org>   # where component images are pushed
   signing: intent-sign             # how intents are signed
+  release_source: <org>/<repo>     # who signs the goatbuilder binaries; default: source
 deploy:
   aws_profile: <profile>           # GOAT_AWS_PROFILE overrides it; default: default
   ssh_user: <user>                 # the account join-node first reaches a machine as
@@ -97,6 +98,7 @@ vocabulary is fixed:
 | `soak` | the candidate has run on the previous rung for at least `min_days` |
 | `convergence-evidence` | every host of the previous rung's environment converged on the candidate |
 | `operator-ack` | a named person acknowledged the hop |
+| `runtime-health` | on the previous rung, since its deploy and over at least the soak: zero container restarts, zero OOM kills, peak memory at most `max_memory_fraction` (default 0.8) of the container limit — read by `ops/release/rung-health.py` into the record |
 
 goat's own repository declares three rungs, `dev`, `preprod` and `prod`, with
 the gates shown above.

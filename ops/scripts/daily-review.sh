@@ -103,10 +103,24 @@ echo
        if(!n && !plain) print "  none active"}'
 echo
 echo
-if PRS="$(gh pr list --repo USAREUR-AF/goatcore --author @me --state open --limit 40 --json number,title,isDraft,mergeStateStatus,updatedAt \
-      --jq 'sort_by(.updatedAt) | reverse | .[] | "\(.number)\t\(.mergeStateStatus)\t\(if .isDraft then "draft" else "" end)\t\(.title)"' 2>/dev/null)"; then
+# Every repository this checkout's work lands in: the clone's own, and in an
+# overlay checkout the public code repositories too (ops/scripts/repo-slug.sh).
+PR_REPOS="$("$HERE/repo-slug.sh" pr-repos "$REPO" 2>/dev/null || "$HERE/project-setting.sh" repo source 2>/dev/null)"
+pr_list() {   # updatedAt<TAB>number<TAB>state<TAB>draft<TAB>title, every repo; 1 if none answered
+  local r tag ok=1 n
+  n="$(printf '%s\n' $PR_REPOS | grep -c .)"
+  for r in $PR_REPOS; do
+    tag=""; [ "$n" -gt 1 ] && tag="${r#*/}#"
+    gh pr list --repo "$r" --author @me --state open --limit 40 --json number,title,isDraft,mergeStateStatus,updatedAt \
+      --jq '.[] | "\(.updatedAt)\t\(.number)\t\(.mergeStateStatus)\t\(if .isDraft then "draft" else "" end)\t\(.title)"' \
+      2>/dev/null | awk -F'\t' -v OFS='\t' -v t="$tag" '{$2=t $2; print}' || continue
+    ok=0
+  done
+  return $ok
+}
+if PRS="$(set -o pipefail; pr_list | sort -r | cut -f2-)"; then
   printf '%s\n' "$PRS" | awk -F'\t' -v w="$W" 'BEGIN{m["BLOCKED"]="needs review"; m["CLEAN"]="mergeable"; m["BEHIND"]="behind main"; m["DIRTY"]="conflicts"; m["UNSTABLE"]="checks failing"; m["UNKNOWN"]="…"}
-       NF>1 {n++; if(n<=8){st=($2 in m)?m[$2]:$2; if($3!="")st=st" "$3; line[n]=sprintf("  #%-5s %-14s %s", $1, st, $4)}}
+       NF>1 {n++; if(n<=8){st=($2 in m)?m[$2]:$2; if($3!="")st=st" "$3; line[n]=sprintf("  %-6s %-14s %s", ($1 ~ /#/ ? $1 : "#" $1), st, $4)}}
        END{k=(n<8?n:8); printf "PRS  %d open, newest %d          gh pr list --author @me\n", n, k; for(i=1;i<=k;i++) print substr(line[i],1,w-1); if(!n) print "  none"}'
 else
   echo "PRS  (gh did not answer — gh pr list --author @me)"

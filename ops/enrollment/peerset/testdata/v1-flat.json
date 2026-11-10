@@ -1,7 +1,7 @@
 [
-  {"name": "vega-a", "pubkey": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", "address": "198.18.0.1"},
-  {"name": "vega-b", "pubkey": "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=", "address": "198.18.0.5"},
-  {"name": "vega-c", "pubkey": "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC=", "address": "198.18.0.9"},
+  {"name": "lab-a", "pubkey": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", "address": "198.18.0.1"},
+  {"name": "lab-b", "pubkey": "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=", "address": "198.18.0.5"},
+  {"name": "lab-c", "pubkey": "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC=", "address": "198.18.0.9"},
   {"name": "prov-rla", "pubkey": "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD=", "address": "198.18.0.6"},
   {"name": "prov-x", "pubkey": "EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE=", "address": "198.18.0.7"},
   {"name": "prov-conus", "pubkey": "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF=", "address": "198.18.0.8"},

@@ -76,3 +76,25 @@ groups:
             Check the cron on the mgmt host:
               sudo crontab -l | grep dormancy-report
               journalctl -t dormancy-report | tail
+
+      # ADR 1216. A NETWORK, CONTROL or EDGE-SERVER device with a NetBird login
+      # or inactivity expiration turned on leaves the mesh when the timer runs
+      # out, and only someone re-enrolling it at the device brings it back. The
+      # series is written for every class x kind, zeros included, whenever the
+      # peer list was read, so this is a value comparison: silent on a goatnet
+      # without the report, and silent when the count is zero.
+      - alert: DevicePeerCanExpire
+        expr: goat_device_peer_expiry_enabled > 0
+        for: 10m
+        labels:
+          severity: warning
+          component: mesh
+        annotations:
+          summary: "{{ $value }} {{ $labels.class }} peer(s) on {{ $labels.env }} have NetBird {{ $labels.kind }} expiration turned on"
+          description: |
+            {{ $labels.class }} devices leave the mesh when their {{ $labels.kind }}
+            expiration runs out and come back only when someone re-enrolls them
+            at the device (ADR 1216). Peer names: `journalctl -t dormancy-report
+            | grep EXPIRABLE-DEVICE` on the mgmt host. Turn the expiration off
+            on each named peer (NetBird peer settings, "Login expiration" /
+            "Inactivity expiration") and record who turned it on.

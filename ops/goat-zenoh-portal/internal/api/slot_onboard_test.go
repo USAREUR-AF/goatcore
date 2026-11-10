@@ -17,7 +17,7 @@ import (
 	"github.com/usareur-af/goatcore/ops/goat-zenoh-portal/internal/zenohproxy"
 )
 
-const slotSalt = "zagros-onboard-test"
+const slotSalt = "galaxy-onboard-test"
 
 // newSlotPoolServer wires a per-uuid-slot-pool (ADR 1025) portal: a 3-slot pool
 // baked from slotSalt, fake cert-sign, and an ACL config file the test asserts
@@ -37,7 +37,7 @@ func newSlotPoolServer(t *testing.T, aclPath string, mutate ...func(*config.Conf
 		CertSignFake:      true,
 		VendorBundleDir:   filepath.Join(dir, "bundles"),
 		SchemaDir:         filepath.Join(dir, "schemas"),
-		CertSignURIPrefix: "urn:goat-nova:vendor=",
+		CertSignURIPrefix: "urn:goat:galaxy:org=",
 		// Configured so /api/budget-projection gets past its config guard and the
 		// tests can exercise the sanity floor behind it.
 		TopicBudgetSelfBlock: 100,
@@ -104,7 +104,7 @@ func TestSlotOnboard_AllocatesRouterEnforcedAnchors(t *testing.T) {
 			t.Errorf("onboard %s system_handle=%q, want %q", handle, got, handle)
 		}
 		// prefix=anchor was passed to the minter, so the URI-SAN carries it.
-		if got, _ := body["uri_san"].(string); got != "urn:goat-nova:vendor="+wantAnchor {
+		if got, _ := body["uri_san"].(string); got != "urn:goat:galaxy:org="+wantAnchor {
 			t.Errorf("onboard %s uri_san=%q, want vendor=%s", handle, got, wantAnchor)
 		}
 	}

@@ -92,7 +92,7 @@ class RegistryTest(unittest.TestCase):
         self.assertEqual(sp.identifier(us, leaf), "1603452492")
         leaf["san_upn"] = ["1234567890@mil"]              # the older shape
         self.assertEqual(sp.identifier(us, leaf), "1234567890")
-        leaf["san_upn"] = ["person-127@example.org"]            # not an EDIPI UPN -> refuse
+        leaf["san_upn"] = ["person-114@example.org"]            # not an EDIPI UPN -> refuse
         self.assertIsNone(sp.identifier(us, leaf))
         leaf["san_upn"] = []
         self.assertIsNone(sp.identifier(us, leaf))
@@ -274,9 +274,9 @@ class NginxLiveTest(unittest.TestCase):
 
     def test_us_dod_card_resolves_to_pki_colon_edipi(self):
         crt, key = self._card("us-dod")
-        headers = () if self.js_module else ("X-Test-Upn: 1603452492121002@mil", "X-Test-Email: person-28@example.org")
+        headers = () if self.js_module else ("X-Test-Upn: 1603452492121002@mil", "X-Test-Email: person-23@example.org")
         code, body = self._get(crt, key, headers)
-        self.assertEqual((code, body), (200, "us-dod:1603452492|us-dod|person-28@example.org"), self._why())
+        self.assertEqual((code, body), (200, "us-dod:1603452492|us-dod|person-23@example.org"), self._why())
 
     def test_est_id_card_resolves_from_the_subject_cn(self):
         crt, key = self._card("est-id")
@@ -292,7 +292,7 @@ class NginxLiveTest(unittest.TestCase):
         if self.js_module:
             self.skipTest("the UPN comes from the certificate; this case needs the header stub")
         crt, key = self._card("us-dod")
-        code, body = self._get(crt, key, ("X-Test-Upn: person-127@example.org",))
+        code, body = self._get(crt, key, ("X-Test-Upn: person-114@example.org",))
         self.assertEqual((code, body), (403, "no identifier"))
 
     def test_no_card_is_refused(self):

@@ -45,6 +45,13 @@ services:
       --key-file /app/data/identity.key
     environment:
       - SNITCH_DB_URL=postgres://snitch:${SNITCH_DB_PASS}@snitch-db:5432/snitch?sslmode=disable
+      # Passed through from .env, where the deploying play writes them per
+      # collector. Absent or empty = the built-in value.
+      - SNITCH_PEER_DOMAIN_SUFFIXES
+      - SNITCH_GATEWATCH_URL
+      - SNITCH_PUBLIC_URL
+      - SNITCH_SATLINK_NAME
+      - SNITCH_SATLINK_TARGETS
     cap_add:
       - NET_RAW
     ports:

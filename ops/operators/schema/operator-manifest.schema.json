@@ -90,7 +90,7 @@
         "nationality": {
           "type": "string",
           "pattern": "^[A-Z]{2,8}$",
-          "description": "The PERSON's own citizenship — ISO 3166-1 alpha-3 (CAN, USA, SVK). A fact about the person, true regardless of who employs them, and DISTINCT from affiliation.nation, which is the controlling nation of the ORGANISATION they belong to. Neither is derived from the other and the two are permitted to disagree: a Canadian officer assigned to a US command carries nationality CAN while his affiliation carries nation USA, and that is information, not an error. It lives on `identity` rather than inside `affiliation` because the affiliation block describes WHO THE PRINCIPAL BELONGS TO and this describes the principal. Asked of the candidate at intake; the organisation's nation is never asked there — that is an org fact typed by an admin at org registration. Optional; absent means undeclared, never inferred from the organisation. Rationale: ADR 1171."
+          "description": "The PERSON's own citizenship — ISO 3166-1 alpha-3 (CAN, USA). A fact about the person, true regardless of who employs them, and DISTINCT from affiliation.nation, which is the controlling nation of the ORGANISATION they belong to. Neither is derived from the other and the two are permitted to disagree: a Canadian officer assigned to a US command carries nationality CAN while his affiliation carries nation USA, and that is information, not an error. It lives on `identity` rather than inside `affiliation` because the affiliation block describes WHO THE PRINCIPAL BELONGS TO and this describes the principal. Asked of the candidate at intake; the organisation's nation is never asked there — that is an org fact typed by an admin at org registration. Optional; absent means undeclared, never inferred from the organisation. Rationale: ADR 1171."
         }
       }
     },
@@ -174,7 +174,7 @@
             "partner"
           ],
           "deprecated": true,
-          "description": "Coalition / alliance standing of the affiliation RELATIVE TO the goatnet's active coalition framework (ops/identity/coalition-frameworks.yaml; the framework is a per-goatnet / per-AOR choice — NATO is the first, others such as Five Eyes / AUKUS / a regional coalition add additively, no code change): member = the org's nation is a member of the active framework (or a framework body) and is eligible for that framework's member release-lane (e.g. REL NATO); partner = not a member — bilateral / coalition release-lanes only, never the member lane by standing. Framework-neutral by design so goat net serves any region (AFRICOM / the command / INDOPACOM / SOUTHCOM / Arctic / Homeland / Global), not just the Euro-Atlantic / NATO case. Nation-derived and effective-dated — membership changes (FIN member 2023-04-04, SWE 2024-03-07) — so it rides the registry (currently-is), never the frozen cert and never the Ory aff claim; the manifest may seed an explicit value and the framework registry is authoritative when nation is known. Omitted when no nation. The eligibility predicate for the reserved data-access coalition / releaseset scopes (ADR 1074 / ADR 1027)."
+          "description": "Coalition / alliance standing of the affiliation RELATIVE TO the goatnet's active coalition framework (ops/identity/coalition-frameworks.yaml; the framework is a per-goatnet / per-AOR choice — NATO is the first, others such as Five Eyes / AUKUS / a regional coalition add additively, no code change): member = the org's nation is a member of the active framework (or a framework body) and is eligible for that framework's member release-lane (e.g. REL NATO); partner = not a member — bilateral / coalition release-lanes only, never the member lane by standing. Framework-neutral by design so goat net serves any region (AFRICOM / INDOPACOM / SOUTHCOM / Arctic / Homeland / Global), not just the Euro-Atlantic / NATO case. Nation-derived and effective-dated — membership changes (FIN member 2023-04-04, SWE 2024-03-07) — so it rides the registry (currently-is), never the frozen cert and never the Ory aff claim; the manifest may seed an explicit value and the framework registry is authoritative when nation is known. Omitted when no nation. The eligibility predicate for the reserved data-access coalition / releaseset scopes (ADR 1074 / ADR 1027)."
         },
         "sector": {
           "type": "string",
@@ -211,7 +211,7 @@
         "nation": {
           "type": "string",
           "pattern": "^[A-Z]{2,8}$",
-          "description": "Controlling nation / multinational OF THE ORGANISATION named by affiliation.id — ISO 3166-1 alpha-3 preferred (USA, EST, FIN, SVK), or a multinational marker (NATO, EU). This is an ORG fact, not the person's: a Canadian officer at the US command `usareur-af` carries affiliation.nation USA and identity.nationality CAN, and the two disagreeing is the normal state for a liaison or an internationally recruited member. It is typed by an admin when the organisation is registered and is never taken from a candidate's own answer (ADR 1171). Alliance standing and the derived organic test read THIS field only, never a contributor's nation, so an organisation neither gains nor loses standing because of who is attached to it. Load-bearing for partner-kind orgs (sovereignty + data-residency + releasability attribution); optional for vendor/organic. Carried into the cert URI-SAN as nation=<code> (ADR 1043). Releasability *marking* itself stays the ADR 1027 release-set layer — this field is the org's nationality attribution, not a per-message marking."
+          "description": "Controlling nation / multinational OF THE ORGANISATION named by affiliation.id — ISO 3166-1 alpha-3 preferred (USA, EST, FIN), or a multinational marker (NATO, EU). This is an ORG fact, not the person's: a Canadian officer at the US command `usareur-af` carries affiliation.nation USA and identity.nationality CAN, and the two disagreeing is the normal state for a liaison or an internationally recruited member. It is typed by an admin when the organisation is registered and is never taken from a candidate's own answer (ADR 1171). Alliance standing and the derived organic test read THIS field only, never a contributor's nation, so an organisation neither gains nor loses standing because of who is attached to it. Load-bearing for partner-kind orgs (sovereignty + data-residency + releasability attribution); optional for vendor/organic. Carried into the cert URI-SAN as nation=<code> (ADR 1043). Releasability *marking* itself stays the ADR 1027 release-set layer — this field is the org's nationality attribution, not a per-message marking."
         },
         "sovereignty": {
           "type": "string",
@@ -290,7 +290,7 @@
           "items": {
             "type": "string",
             "pattern": "^[a-z][a-z0-9-]{0,30}[a-z0-9]$",
-            "description": "Site identifier matching the <SITE>_NB_API_TOKEN env-var naming (e.g. 'vega' → VEGA_NB_API_TOKEN, 'nova' → NOVA_NB_API_TOKEN via an alias map in the orchestrator)."
+            "description": "Site identifier matching the <SITE>_NB_API_TOKEN env-var naming (e.g. 'galaxy' → GALAXY_NB_API_TOKEN, 'galaxy-dev' → GALAXY_DEV_NB_API_TOKEN; a site whose token name differs is mapped by an alias map in the orchestrator)."
           },
           "uniqueItems": true,
           "minItems": 1
@@ -365,7 +365,7 @@
           "additionalProperties": {
             "type": "string"
           },
-          "description": "Recorded at onboard (docs/design/peer-identity-resolution.md, Option B): per-site NetBird setup-key id the orchestrator minted for this person, keyed by site id (e.g. {\"zagros\": \"<key-id>\"}). Written back by the orchestrator after the /api/setup-keys POST — turns the fire-and-forget mint into a recorded person↔key edge for audit + peer→person resolution. Optional; absent for pre-Option-B manifests."
+          "description": "Recorded at onboard (docs/design/peer-identity-resolution.md, Option B): per-site NetBird setup-key id the orchestrator minted for this person, keyed by site id (e.g. {\"galaxy\": \"<key-id>\"}). Written back by the orchestrator after the /api/setup-keys POST — turns the fire-and-forget mint into a recorded person↔key edge for audit + peer→person resolution. Optional; absent for pre-Option-B manifests."
         },
         "auto_peer_names": {
           "type": "object",
@@ -711,7 +711,7 @@
         },
         "observer": {
           "type": "boolean",
-          "description": "Read-only fabric WATCHER (not a vendor). When true, the orchestrator mints a nova-CA leaf with CN observer-<handle> via cert-sign — universal-read only (subscribe everywhere, publish nowhere), no portal vendor row, no publish ACL — and packages it as a goat-cli bundle for `goat ui` / `goat sub --tui` / `goat inspect --tui`. Mutually exclusive with trial + prod. For cluster admins / observers who watch the fabric but don't publish (e.g. the maintainer manifest)."
+          "description": "Read-only fabric WATCHER (not a vendor). When true, the orchestrator mints a goatnet-CA leaf with CN observer-<handle> via cert-sign — universal-read only (subscribe everywhere, publish nowhere), no portal vendor row, no publish ACL — and packages it as a goat-cli bundle for `goat ui` / `goat sub --tui` / `goat inspect --tui`. Mutually exclusive with trial + prod. For cluster admins / observers who watch the fabric but don't publish (e.g. a maintainer's manifest)."
         },
         "trial": {
           "type": "object",
@@ -732,12 +732,12 @@
             "org": {
               "type": "string",
               "pattern": "^[a-z0-9-]{1,32}$",
-              "description": "Publisher prefix for the trial fabric — the org-neutral alias of 'vendor' (ADR 1052, additive). The portal mints the AUTHORITATIVE URI-SAN per goatnet (e.g. urn:goat:zagros:org=<anchor> on ZAGROS; legacy nova-a urn:goat-nova:vendor=<prefix>); the cert string is not derived from this field. Must match across all siblings of the same org (one cert per org)."
+              "description": "Publisher prefix for the trial fabric — the org-neutral alias of 'vendor' (ADR 1052, additive). The portal mints the AUTHORITATIVE URI-SAN per goatnet (e.g. urn:goat:galaxy:org=<anchor>; older goatnets use urn:goat-<site>:vendor=<prefix>); the cert string is not derived from this field. Must match across all siblings of the same org (one cert per org)."
             },
             "vendor": {
               "type": "string",
               "pattern": "^[a-z0-9-]{1,32}$",
-              "description": "Legacy alias of zenoh.trial.org (ADR 1052; author 'org' going forward). Publisher prefix for the trial fabric. The portal mints the AUTHORITATIVE URI-SAN per goatnet (e.g. urn:goat:zagros:org=<anchor> on ZAGROS; legacy nova-a urn:goat-nova:vendor=<prefix>). Must match across all siblings (one cert per org)."
+              "description": "Legacy alias of zenoh.trial.org (ADR 1052; author 'org' going forward). Publisher prefix for the trial fabric. The portal mints the AUTHORITATIVE URI-SAN per goatnet (e.g. urn:goat:galaxy:org=<anchor>; older goatnets use urn:goat-<site>:vendor=<prefix>). Must match across all siblings (one cert per org)."
             },
             "partner_lanes": {
               "type": "array",
@@ -747,7 +747,7 @@
               },
               "minItems": 1,
               "uniqueItems": true,
-              "description": "ADR 1138 — allocate this org's slot from the PRE-CUT PARTNER BLOCK bound to this lane-set (e.g. [\"REL-ALL\",\"REL-PARTNER\"]) instead of the lowest free slot, so the minted CN matches a partner subject the router has ALREADY rendered: no ACL edit, no fabric restart. Order-insensitive. ABSENT = an ordinary slot; for a PARTNER that means they are NOT partitioned and read the whole fabric until somebody hand-carves them, silently. EXPLICIT, never derived from affiliation.nation or affiliation.kind: which lanes a partner may read is a release decision with an owner. The portal REFUSES the mint when no declared block carries this exact lane-set rather than falling back to an ordinary slot."
+              "description": "ADR 1138 — allocate this org's slot from the PRE-CUT PARTNER BLOCK bound to this lane-set (e.g. [\"REL-ALL\",\"REL-XAA\"]) instead of the lowest free slot, so the minted CN matches a partner subject the router has ALREADY rendered: no ACL edit, no fabric restart. Order-insensitive. ABSENT = an ordinary slot; for a PARTNER that means they are NOT partitioned and read the whole fabric until somebody hand-carves them, silently. EXPLICIT, never derived from affiliation.nation or affiliation.kind: which lanes a partner may read is a release decision with an owner. The portal REFUSES the mint when no declared block carries this exact lane-set rather than falling back to an ordinary slot."
             }
           }
         },

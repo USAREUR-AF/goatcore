@@ -34,7 +34,7 @@ func postOffboardCut(t *testing.T, h http.Handler, s *Server, pid string) *httpt
 func TestOffboardCut_QueuesTheRealCut(t *testing.T) {
 	s := newOnboardTestServer(t)
 	h := s.Routes()
-	pid := onboardedProposalInState(t, s, h, "person-100@example.org", onboardstore.ProposalOnboarded)
+	pid := onboardedProposalInState(t, s, h, "person-87@example.org", onboardstore.ProposalOnboarded)
 
 	rec := postOffboardCut(t, h, s, pid)
 	if rec.Code != http.StatusSeeOther {
@@ -58,7 +58,7 @@ func TestOffboardCut_RefusesAPreProvisioningRow(t *testing.T) {
 	s := newOnboardTestServer(t)
 	h := s.Routes()
 	tok := mintTokenViaStore(t, s)
-	pid := submit(t, h, tok, map[string]any{"name": "Pat Start", "email": "person-106@example.org", "organization": "Offboard Org"})
+	pid := submit(t, h, tok, map[string]any{"name": "Pat Start", "email": "person-93@example.org", "organization": "Offboard Org"})
 
 	rec := postOffboardCut(t, h, s, pid)
 	if rec.Code != http.StatusSeeOther {
@@ -77,7 +77,7 @@ func TestOffboardCut_RefusesAPreProvisioningRow(t *testing.T) {
 func TestOffboardCut_SecondClickIsRefusedLoudly(t *testing.T) {
 	s := newOnboardTestServer(t)
 	h := s.Routes()
-	pid := onboardedProposalInState(t, s, h, "person-116@example.org", onboardstore.ProposalEnrolled)
+	pid := onboardedProposalInState(t, s, h, "person-103@example.org", onboardstore.ProposalEnrolled)
 
 	if rec := postOffboardCut(t, h, s, pid); rec.Code != http.StatusSeeOther {
 		t.Fatalf("first click: want 303, got %d", rec.Code)
@@ -98,14 +98,14 @@ func TestOffboardCut_SecondClickIsRefusedLoudly(t *testing.T) {
 func TestOffboardCut_ButtonRendersOnlyForEligibleRows(t *testing.T) {
 	s := newOnboardTestServer(t)
 	h := s.Routes()
-	eligible := onboardedProposalInState(t, s, h, "person-97@example.org", onboardstore.ProposalOnboarded)
+	eligible := onboardedProposalInState(t, s, h, "person-84@example.org", onboardstore.ProposalOnboarded)
 	tok := mintTokenViaStore(t, s)
-	early := submit(t, h, tok, map[string]any{"name": "Pat Btn", "email": "person-93@example.org", "organization": "Offboard Org"})
+	early := submit(t, h, tok, map[string]any{"name": "Pat Btn", "email": "person-80@example.org", "organization": "Offboard Org"})
 	// The real-cut states: failed re-queues (the person still has access);
 	// queued and running offer nothing (the cut is already in flight).
-	failed := offboardRowTo(t, s, h, "person-94@example.org", onboardstore.ProposalOffboardFailed)
-	queued := offboardRowTo(t, s, h, "person-95@example.org", onboardstore.ProposalOffboardRequested)
-	running := offboardRowTo(t, s, h, "person-96@example.org", onboardstore.ProposalOffboarding)
+	failed := offboardRowTo(t, s, h, "person-81@example.org", onboardstore.ProposalOffboardFailed)
+	queued := offboardRowTo(t, s, h, "person-82@example.org", onboardstore.ProposalOffboardRequested)
+	running := offboardRowTo(t, s, h, "person-83@example.org", onboardstore.ProposalOffboarding)
 
 	for _, tc := range []struct {
 		status, pid string
@@ -139,8 +139,8 @@ func TestOffboardCut_ButtonRendersOnlyForEligibleRows(t *testing.T) {
 func TestOffboardCut_ArchivedConfirmNamesTheOneWayRecord(t *testing.T) {
 	s := newOnboardTestServer(t)
 	h := s.Routes()
-	archived := onboardedProposalInState(t, s, h, "person-90@example.org", onboardstore.ProposalArchived)
-	onboarded := onboardedProposalInState(t, s, h, "person-109@example.org", onboardstore.ProposalOnboarded)
+	archived := onboardedProposalInState(t, s, h, "person-77@example.org", onboardstore.ProposalArchived)
+	onboarded := onboardedProposalInState(t, s, h, "person-96@example.org", onboardstore.ProposalOnboarded)
 
 	const oneWay = "an offboarded record cannot be restored"
 	for _, tc := range []struct {

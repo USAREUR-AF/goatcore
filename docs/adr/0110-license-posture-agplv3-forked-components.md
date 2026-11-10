@@ -97,7 +97,7 @@ binaries built from them. Today that is:
 
 The rest of upstream netbird (client agent, dashboard, libraries)
 is still BSD-3-Clause. Our own services (`mgmt-host-bootstrap`,
-`signal-server`, `db-policy-engine`, `gatewatch`, `demogame`,
+`signal-server`, `db-policy-engine`, `gatewatch`, `airdefenders`,
 `ntp-health-agent`, `admit-audit`, etc.) are not derived works of
 AGPL code; they remain under whatever license we choose for them.
 

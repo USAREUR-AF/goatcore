@@ -1,0 +1,125 @@
+---
+# Phase 9 — prove replication with a real write, then start everything phase 2
+# stopped. Input: pem_step = probe | restart.
+#
+# probe (primaries with subscriptions): in each replicated database, a probe
+# table goat_utf8_probe is created on every node and added to the
+# replication set the subscriptions pull; each node writes one row of
+# non-ASCII text; every node must then hold its own row plus one from each
+# node it subscribes to, byte for byte. The table leaves the repset and is
+# dropped again on every node.
+
+- name: "finish | probe databases on this node"
+  ansible.builtin.set_fact:
+    _pem_probe_dbs: >-
+      {%- set out = [] -%}
+      {%- for d in _pem_pre.spock | default([]) if d.subs | length > 0 -%}
+        {%- set _ = out.append({'db': d.db, 'set': (d.subs | first).sets | first, 'expect': 1 + (d.subs | map(attribute='provider') | unique | list | length)}) -%}
+      {%- endfor -%}
+      {{ out }}
+    _pem_probe_text: "goat UTF-8 probe — Zürich, Ελλάδα, 東京 ✓"
+  when: pem_step == 'probe'
+
+- name: "finish | probe"
+  when:
+    - pem_step == 'probe'
+    - not (_pem_standby | bool)
+    - _pem_probe_dbs | length > 0
+  block:
+    - name: "finish | probe table in the replication set"
+      ansible.builtin.command:
+        argv: "{{ _pem_psql + ['-d', item.db, '-c', _sql] }}"
+      vars:
+        _sql: >-
+          DROP TABLE IF EXISTS public.goat_utf8_probe;
+          CREATE TABLE public.goat_utf8_probe (node text PRIMARY KEY, v text NOT NULL);
+          SELECT spock.repset_add_table('{{ item.set }}', 'public.goat_utf8_probe', false);
+      loop: "{{ _pem_probe_dbs }}"
+      changed_when: true
+
+    - name: "finish | write this node's row"
+      ansible.builtin.command:
+        argv: "{{ _pem_psql + ['-d', item.db, '-c', \"INSERT INTO public.goat_utf8_probe VALUES ('\" ~ inventory_hostname ~ \"', '\" ~ _pem_probe_text ~ \"')\"] }}"
+      loop: "{{ _pem_probe_dbs }}"
+      changed_when: true
+
+    - name: "finish | every peer's row arrives intact"
+      ansible.builtin.command:
+        argv: "{{ _pem_psql + ['-d', item.db, '-tAc', _sql] }}"
+      vars:
+        _sql: >-
+          SELECT count(*) FILTER (WHERE v = '{{ _pem_probe_text }}') || ' ' || count(*) FROM public.goat_utf8_probe
+      loop: "{{ _pem_probe_dbs }}"
+      register: _pem_probe_seen
+      until: (_pem_probe_seen.stdout | trim) == (item.expect ~ ' ' ~ item.expect)
+      retries: "{{ (postgres_encoding_migrate_probe_seconds | int / 2) | int }}"
+      delay: 2
+      changed_when: false
+      failed_when: false
+
+    - name: "finish | refuse when a row did not replicate"
+      ansible.builtin.assert:
+        that:
+          - _pem_probe_bad | length == 0
+        fail_msg: >-
+          {{ inventory_hostname }}: probe rows (intact / total, expected
+          each = local + one per provider): {{ _pem_probe_bad | join('; ') }}.
+          Subscriptions report replicating but writes do not arrive; check
+          spock.exception_log on the providers. The run resumes at phase 9.
+        quiet: true
+      vars:
+        _pem_probe_bad: >-
+          {%- set out = [] -%}
+          {%- for r in _pem_probe_seen.results -%}
+            {%- if (r.stdout | trim) != (r.item.expect ~ ' ' ~ r.item.expect) -%}{%- set _ = out.append(r.item.db ~ ': ' ~ (r.stdout | trim) ~ ', expected ' ~ r.item.expect) -%}{%- endif -%}
+          {%- endfor -%}
+          {{ out }}
+
+    - name: "finish | probe table out of the replication set"
+      ansible.builtin.command:
+        argv: "{{ _pem_psql + ['-d', item.db, '-c', \"SELECT spock.repset_remove_table('\" ~ item.set ~ \"', 'public.goat_utf8_probe')\"] }}"
+      loop: "{{ _pem_probe_dbs }}"
+      changed_when: true
+
+    - name: "finish | drop the probe table"
+      ansible.builtin.command:
+        argv: "{{ _pem_psql + ['-d', item.db, '-c', 'DROP TABLE IF EXISTS public.goat_utf8_probe'] }}"
+      loop: "{{ _pem_probe_dbs }}"
+      changed_when: true
+
+- name: "finish | start what phase 2 stopped"
+  when: pem_step == 'restart'
+  ansible.builtin.include_tasks: start-writers.yml
+
+- name: "finish | each node is still what it was: primary out of recovery, standby in it"
+  ansible.builtin.include_tasks: stays-up.yml
+  vars:
+    pem_expect_recovery: "{{ _pem_standby | bool }}"
+    pem_stays_up_why: "the writers and units started again"
+  when: pem_step == 'restart'
+
+- name: "finish | report"
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}: run {{ _pem_run }} complete.
+      {% if _pem_pre.dropped | default([]) %}Subscriptions DROPPED (not created again):
+      {% for d in _pem_pre.dropped %}{{ d.db }} {{ d.name }} from {{ d.provider }} (was {{ d.status }}){{ '; ' if not loop.last }}{% endfor %}.
+      Those peers rejoin only with join-node at the new encoding; take them out of
+      the inventory and the peers lists (inter_site_spock_peers) until then.{% else %}No subscription dropped.{% endif %}
+  when: pem_step == 'restart'
+
+- name: "finish | the run is complete"
+  ansible.builtin.copy:
+    dest: "{{ _pem_rundir }}/complete"
+    content: "{{ _pem_run }}\n"
+    mode: "0600"
+  when: pem_step == 'restart'
+
+- name: "finish | record the migration in the deploy ledger"
+  ansible.builtin.include_role:
+    name: rollback-ledger
+    tasks_from: promote
+  vars:
+    rollback_component: postgres-encoding-migrate
+    rollback_ref: "encoding={{ postgres_encoding_migrate_target }}"
+  when: pem_step == 'restart'

@@ -41,7 +41,9 @@ Two parallel test paths, both runnable from this directory:
 
 - Docker (compose v2)
 - `ansible-playbook` ≥ 2.13
-- Network reachable to `ghcr.io/usareur-af/postgres-spock:latest`
+- The postgres-spock image pullable: `run-test.sh` takes it from
+  `POSTGRES_SPOCK_IMAGE`, else from the `postgres-spock` row of
+  `ops/pins/fleet-pins.yaml`
 
 ## Operator's runbook
 

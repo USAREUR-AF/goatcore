@@ -14,7 +14,12 @@ info:
 
     **Authentication.** All operations except `GET /health` and the one-time
     org/vendor bundle downloads require an `Authorization: Bearer <key>`
-    header. The operator key is provisioned at deploy time; per-vendor keys
+    header or a browser session cookie. Browsers exchange their key with
+    POST /browser-session, then use an opaque HttpOnly, SameSite=Strict cookie.
+    Cookie-authenticated writes require an exact same-origin Origin header.
+    Sessions expire after eight hours and are lost when the serving process
+    restarts; the API key is never persisted in browser storage.
+    The operator key is provisioned at deploy time; per-vendor keys
     are issued once by `POST /vendors` and re-issued by `POST /vendors/{vendor}/rotate`.
 
     **Scope.** Vendor-scoped routes (`/vendors/{vendor}/topics/...`)
@@ -80,6 +85,7 @@ servers:
     description: Local dev (portal run from source on the developer machine)
 security:
   - bearerAuth: []
+  - browserSession: []
 
 tags:
   - name: machines
@@ -103,6 +109,11 @@ tags:
 
 components:
   securitySchemes:
+    browserSession:
+      type: apiKey
+      in: cookie
+      name: goat_portal_session
+      description: Managed by portal sign-in. The browser sends this HttpOnly cookie automatically; do not enter an API key or session ID here.
     bearerAuth:
       type: http
       scheme: bearer
@@ -917,7 +928,7 @@ components:
         uri_san:
           type: string
           description: The URI-SAN minted into the vendor's certificate.
-          example: "urn:goat-nova:vendor=homemade-sensors"
+          example: "urn:goat:example:org=homemade-sensors"
         approved:
           type: boolean
           description: Whether the vendor is already approved (auto-approved or approval not required).
@@ -945,7 +956,7 @@ components:
         api_key: example-vendor-key-shown-once
         bundle_url: /api/org-bundle/homemade-sensors/example-bundle-token
         bundle_token: example-bundle-token
-        uri_san: "urn:goat-nova:vendor=homemade-sensors"
+        uri_san: "urn:goat:example:org=homemade-sensors"
         approved: true
         note_to_share: ""
 
@@ -1501,11 +1512,46 @@ components:
         type: string
         example: no-store
     Vary:
-      description: The response differs per bearer, so caches key on `Authorization` (and `Accept-Encoding`).
+      description: The response differs per bearer or browser session, so caches key on Authorization, Cookie and Accept-Encoding.
       schema:
         type: string
-        example: Authorization, Accept-Encoding
+        example: Authorization, Cookie, Accept-Encoding
 paths:
+  /browser-session:
+    parameters:
+      - $ref: '#/components/parameters/ApiVersion'
+    post:
+      operationId: createBrowserSession
+      tags: [meta]
+      summary: Exchange a bearer key for a browser session
+      security:
+        - bearerAuth: []
+      description: Requires an exact same-origin Origin header. Returns a host-only HttpOnly SameSite Strict cookie, Secure outside loopback development, with an eight-hour lifetime. Credentials are revalidated on every API request. Responses are never cached.
+      responses:
+        "204":
+          description: Session created
+          headers:
+            Api-Version:
+              $ref: '#/components/headers/ApiVersion'
+        "401":
+          description: Invalid bearer key
+        "403":
+          description: Invalid or missing Origin
+        "503":
+          description: Session capacity reached
+    delete:
+      operationId: deleteBrowserSession
+      tags: [meta]
+      summary: Sign out the current browser
+      description: Requires an exact same-origin Origin header. Invalidates the current session and expires its cookie. Responses are never cached.
+      responses:
+        "204":
+          description: Session cleared
+          headers:
+            Api-Version:
+              $ref: '#/components/headers/ApiVersion'
+        "403":
+          description: Invalid or missing Origin
   /machines/affiliation/repair:
     parameters:
       - $ref: '#/components/parameters/ApiVersion'
@@ -1815,7 +1861,7 @@ paths:
         new slot or changing its anchor, the "rotate" sibling of revocation
         (ADR 1031). Use it for expiry renewal, post-compromise rotation, or
         retrofitting a new URI-SAN scheme onto already-issued certs (e.g.
-        re-minting the ZAGROS fleet to `urn:goat:zagros:org=`).
+        re-minting a goatnet's fleet from a legacy prefix to `urn:goat:<goatnet>:org=`).
 
         Everything identity-bearing is unchanged: anchor, CN, alias / handle,
         slot assignment, write namespace, and the pre-baked ACL. Only the leaf
@@ -2633,6 +2679,16 @@ paths:
                 example: no-cache
         "400":
           description: "`key` is missing."
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        "409":
+          description: >
+            `stream_limit`: this org or slot key already holds the maximum
+            number of live streams (`PORTAL_MAX_STREAMS_PER_PRINCIPAL`, default
+            8; operators are exempt). Close one and retry. Not 429, which the
+            proxy's errors middleware reserves.
           content:
             application/problem+json:
               schema:

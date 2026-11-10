@@ -1,9 +1,7 @@
 package main
 
 // The healthcheck subcommand is the portal's container healthcheck: the runtime
-// image is distroless, so no shell/curl/wget probe can run in it (F-173 — a
-// wget healthcheck in a distroless image reports permanently unhealthy while
-// the service is fine). These tests pin the exit-code contract the compose
+// image is distroless, so no shell/curl/wget probe can run in it. These tests pin the exit-code contract the compose
 // stanza depends on: nil only for a 200 that says status "ok".
 
 import (

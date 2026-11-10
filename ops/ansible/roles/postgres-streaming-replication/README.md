@@ -95,11 +95,11 @@ report no change (the ALTER SYSTEM is unconditional but no-op-on-equal).
 
 ## Where this role is invoked
 
-- `ops/ansible/vega-bootstrap.yml` Phase 6 (between management-a
-  initial bring-up and the smoke check).
 - `ops/ansible/site-bootstrap.yml` Phase 6 (per-site turnkey
-  orchestrator; delegates to `vega-bootstrap.yml` shape but with
-  per-site var overrides).
+  orchestrator, between management-a initial bring-up and the smoke
+  check, with per-site var overrides).
+- `ops/ansible/site-split-brain-recovery.yml` (re-basebackup of the
+  standby).
 
 ## Related
 

@@ -15,7 +15,7 @@ import (
 const defaultIterations = 5
 
 // LatencyProbe measures TCP connect RTT to each relay and optionally ICMP RTT
-// to the NETHOST mesh IP, computing percentile statistics.
+// to the mesh host's IP, computing percentile statistics.
 type LatencyProbe struct{}
 
 func init() {
@@ -31,9 +31,9 @@ func (p *LatencyProbe) Run(ctx context.Context, cfg *Config) []Result {
 		results = append(results, p.measureTCP(ctx, relay))
 	}
 
-	// ICMP to NETHOST only in full mode.
-	if cfg.Mode == "full" && cfg.NETHOSTMeshIP != "" {
-		results = append(results, p.measureICMP(ctx, cfg.NETHOSTMeshIP))
+	// ICMP to the mesh host only in full mode.
+	if cfg.Mode == "full" && cfg.HostMeshIP != "" {
+		results = append(results, p.measureICMP(ctx, cfg.HostMeshIP))
 	}
 
 	return results
@@ -98,7 +98,7 @@ func (p *LatencyProbe) measureICMP(ctx context.Context, ip string) Result {
 	if err != nil {
 		return Result{
 			Category:  CatLatency,
-			Name:      "icmp-latency-nethost",
+			Name:      "icmp-latency-mesh-host",
 			Status:    Fail,
 			Detail:    fmt.Sprintf("ping %s failed: %v", ip, err),
 			Timestamp: time.Now().UTC(),
@@ -120,7 +120,7 @@ func (p *LatencyProbe) measureICMP(ctx context.Context, ip string) Result {
 	if len(samples) == 0 {
 		return Result{
 			Category:  CatLatency,
-			Name:      "icmp-latency-nethost",
+			Name:      "icmp-latency-mesh-host",
 			Status:    Fail,
 			Detail:    fmt.Sprintf("no RTT values from ping %s", ip),
 			Timestamp: time.Now().UTC(),
@@ -131,7 +131,7 @@ func (p *LatencyProbe) measureICMP(ctx context.Context, ip string) Result {
 
 	return Result{
 		Category:  CatLatency,
-		Name:      "icmp-latency-nethost",
+		Name:      "icmp-latency-mesh-host",
 		Status:    Pass,
 		Detail:    fmt.Sprintf("avg=%.1fms p50=%.1fms p95=%.1fms (%d samples)", stats["avg"], stats["p50"], stats["p95"], len(samples)),
 		LatencyMs: stats["avg"],

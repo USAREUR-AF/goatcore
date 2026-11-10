@@ -14,12 +14,16 @@
 # ACL already grants that subject write on ops/fabric/** (which covers
 # ops/fabric/crypto/**). No new cert to mint.
 
-# Image — SHA-pinned per ADR 0859. Bumps require a deploy-history.yml append.
-# Built by .github/workflows/crypto-posture-image.yml. Placeholder until the
-# first image publishes on merge to main; the ZAGROS pin lands in a follow-up.
-crypto_posture_image: "ghcr.io/{{ ghcr_org }}/goat-crypto-posture@sha256:d7128303dcf829f7133d43239dc196f2803ce165c243eb0373288abc8fe620c3"
+# Image — digest-pinned per ADR 0859. Bumps require a deploy-history.yml
+# append. Built by .github/workflows/crypto-posture-image.yml. The role
+# carries no pin: a goatnet's pin table (ops/pins/fleet-pins.yaml, rendered
+# into group_vars/<group>/pins.yml) or its group_vars set it, and an empty
+# value stops the deploy at `docker compose`.
+crypto_posture_image: ""
 
-crypto_posture_site: "{{ fabric_health_site | default('nova-a') }}"
+# The `<site>` segment of ops/fabric/crypto/<site>: the fabric-health site
+# where the goatnet sets one, else the site short code.
+crypto_posture_site: "{{ fabric_health_site | default(site_id) }}"
 
 # Router for the raw-TLS probe (host:port) and the zenoh publish endpoint.
 crypto_posture_router_host: "{{ zenoh_stack | default('goat-zenoh') }}-router"
@@ -28,7 +32,7 @@ crypto_posture_endpoint: "tls/{{ crypto_posture_router_host }}:7447"
 crypto_posture_rest_url: "http://{{ crypto_posture_router_host }}:8000"
 crypto_posture_zenoh_network: "{{ zenoh_stack | default('goat-zenoh') }}_default"
 
-# The SNI the router leaf is issued for. nova-a + ZAGROS both issue the router
+# The SNI the router leaf is issued for. The goat-zenoh role issues the router
 # leaf with a SAN that matches the container name; override per-goatnet only
 # if the router cert SAN differs.
 crypto_posture_sni: "{{ crypto_posture_router_host }}"

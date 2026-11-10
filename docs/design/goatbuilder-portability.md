@@ -9,7 +9,7 @@ goatbuilder works for any team that points it at its own config, so nothing it p
 
 ## Where a value comes from
 
-A project declares its values in `ops/goatbuilder/goatbuilder.yaml`. An environment variable overrides a value for one command. A value nobody declared falls back to a name that belongs to no project, or the command refuses when no such name can be right.
+A project declares its values in `ops/goatbuilder/goatbuilder.yaml`. Where that file is generated, `gen-config.py` takes `repo:` and `deploy:` from `ops/goatbuilder/project.yml` and `secrets:` from `ops/goatbuilder/posture.yml`; a deployment that keeps its values in a private overlay carries its own copies of both files there. An environment variable overrides a value for one command. A value nobody declared falls back to a name that belongs to no project, or the command refuses when no such name can be right.
 
 | Value | Override for one command | Declared in `goatbuilder.yaml` | Undeclared |
 |---|---|---|---|
@@ -21,7 +21,7 @@ A project declares its values in `ops/goatbuilder/goatbuilder.yaml`. An environm
 | Stage names offered by `--env` completion | none | `promotion.path[].name` | none offered |
 | Secrets store and 1Password account | `GOAT_SECRET_STORE`, `OP_ACCOUNT` | `secrets:` (ADR 1204) | `env-file` |
 
-`crates/goatbuilder/src/settings.rs` reads the deploy values in that order. goat's own values are declared by `ops/goatbuilder/gen-config.py`, so goat's behaviour does not change: `deploy: {aws_profile: usareur-af, ssh_user: goat, state_dir: ~/.goat/state}`.
+`crates/goatbuilder/src/settings.rs` reads the deploy values in that order. The public tree's `project.yml` declares the public repository's release source and image namespace and no `deploy:` values; `gen-config.py` itself names no deployment, and without `project.yml` it writes the placeholder `example-org/example-repo`.
 
 ## What a person reads
 
@@ -44,7 +44,7 @@ Tests, fixtures and CI parity jobs may use real goatnet names: a reader of the t
 
 **Phase 1, built.** The additions the rest depend on:
 
-- `settings.rs`, the `deploy:` schema block, and goat's values in `gen-config.py`
+- `settings.rs`, the `deploy:` schema block, and the deploy values in `ops/goatbuilder/project.yml`
 - `join-node`: the AWS profile and SSH user are read from the checkout, and a real run refuses without an SSH user
 - `adopt`: the image organisation comes from `repo.image_namespace`
 - `--env` completion: stage names come from `promotion.path`
@@ -53,14 +53,14 @@ Tests, fixtures and CI parity jobs may use real goatnet names: a reader of the t
 **Phase 2, built:**
 
 - `deploy`, `release`, `doctor`, `federate` and `standup` read the AWS profile and image organisation through `settings.rs`, so `GOAT_AWS_PROFILE` and `GHCR_ORG` work on every verb.
-- `deploy.state_dir` holds the local state directory; the CA key path, standup logs and the name-snapshot step read it. goat declares `~/.goat/state`, which the scripts avenue still writes literally.
+- `deploy.state_dir` holds the local state directory; the CA key path, standup logs and the name-snapshot step read it. Undeclared, it is `~/.goat/state`, which the scripts avenue still writes literally.
 - Help text, error messages, the error catalog, the reference pages and the tutor use placeholders. Lessons that run against the checkout take their goatnet, site and component from its `goatbuilder.yaml`.
 
 Four lines stay in the baseline, each naming something real rather than a deployment:
 
 | File | Line | Why it stays |
 |---|---|---|
-| `crates/goatbuilder/src/standup.rs` | the synthetic-vendors phase | runs the playbook `ops/ansible/zagros-zenoh-synth-vendors-deploy.yml` by its file name |
+| `crates/goatbuilder/src/standup.rs` | the synthetic-vendors phase | runs the playbook `ops/ansible/zenoh-synth-vendors-slot-pool-deploy.yml` by its file name |
 | `crates/goatbuilder/src/update.rs` | the signer when no config can be read | the binary's own publisher; `update` always verifies the signature, so it needs a signer even outside a checkout |
 | `docs/reference/goatbuilder/02-install.md` | the `cosign verify-blob` example | goatbuilder's own releases are signed by `USAREUR-AF/goatcore`'s workflow |
 | `docs/reference/goatbuilder/11-workflows.md` | the worked example | names the example repository `USAREUR-AF/hello-galaxy-goatenv` |

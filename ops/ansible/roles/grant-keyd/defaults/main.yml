@@ -12,8 +12,11 @@
 # identity to the router AND the key it signs bundles with; its Subject CN
 # admits it through the router's keys/** write-ACL carve (subject `infra-keyd`).
 
-# Image — SHA-pinned per ADR 0859. A bump requires an append to deploy-history.yml.
-grant_keyd_image: "ghcr.io/{{ ghcr_org }}/grant-keyd@sha256:60a60e17b03442395ae2fb620e166dec4897991a6ef30854fecbfaae9126ba7c"
+# Image — grant_keyd_image has NO role default. The pin of record is the
+# `grant-keyd` row of ops/pins/fleet-pins.yaml, rendered into
+# group_vars/<member>/pins.yml; group_vars/all.yml carries the pin for hosts
+# outside the pin table. SHA-pinned per ADR 0859: a bump requires an append to
+# deploy-history.yml.
 
 grant_keyd_site: "{{ site_id }}"
 

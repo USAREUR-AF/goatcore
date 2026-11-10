@@ -19,8 +19,8 @@ func TestRotateAllowlist_EmptyArgs(t *testing.T) {
 		expectErrContains string
 	}{
 		{"empty deviceID", "", "abc==", "rotation", "empty deviceID"},
-		{"empty pubkey", "vega-a", "", "rotation", "empty deviceID"},
-		{"empty reason", "vega-a", "abc==", "", "empty deviceID"},
+		{"empty pubkey", "lab-a", "", "rotation", "empty deviceID"},
+		{"empty reason", "lab-a", "abc==", "", "empty deviceID"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			err := rotateAllowlist("/tmp/whatever", tc.dev, tc.pub, tc.reason)
@@ -63,10 +63,10 @@ func TestUpsertAllowlist_BundleExpiryPropagates(t *testing.T) {
 	path := filepath.Join(dir, "peerset.json")
 	expiry := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	err := upsertAllowlist(path, allowlistEntry{
-		Name:    "vega-a",
+		Name:    "lab-a",
 		Pubkey:  "validpubkey==",
 		Address: "198.18.0.1",
-	}, "vega", "mgmt-host", expiry)
+	}, "lab", "mgmt-host", expiry)
 	if err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
@@ -84,7 +84,7 @@ func TestUpsertAllowlist_BundleExpiryPropagates(t *testing.T) {
 // error.
 func TestRotateAllowlist_LoadErrorOnDirectory(t *testing.T) {
 	dir := t.TempDir() // dir-as-path
-	err := rotateAllowlist(dir, "vega-a", "pubkey==", "test")
+	err := rotateAllowlist(dir, "lab-a", "pubkey==", "test")
 	if err == nil {
 		t.Fatal("expected error for dir-as-path")
 	}
@@ -98,10 +98,10 @@ func TestRotateAllowlist_LoadErrorOnDirectory(t *testing.T) {
 func TestUpsertAllowlist_LoadErrorOnDirectory(t *testing.T) {
 	dir := t.TempDir()
 	err := upsertAllowlist(dir, allowlistEntry{
-		Name:    "vega-a",
+		Name:    "lab-a",
 		Pubkey:  "validpubkey==",
 		Address: "198.18.0.1",
-	}, "vega", "mgmt-host", time.Time{})
+	}, "lab", "mgmt-host", time.Time{})
 	if err == nil {
 		t.Fatal("expected error for dir-as-path")
 	}

@@ -8,10 +8,11 @@
 #
 # Without --services a teardown refuses (exit 3) as soon as any reached step
 # would destroy data, is not built yet, or is undeclared — a half-removed site
-# is worse than a standing one. --services stops every compose-down service,
-# volumes kept, and lists what it left in place. Each stop is proved on the
-# host (`docker compose ps -q` lists nothing) and recorded in
-# /var/lib/goat/<component>/teardown.jsonl; deploy-history.jsonl is untouched.
+# is worse than a standing one. --services runs every step that stops a
+# service (compose-down, service-stop, systemd-stop), volumes kept, and lists
+# what it left in place. Each stop is proved on the host (nothing of it still
+# runs) and recorded in /var/lib/goat/<component>/teardown.jsonl;
+# deploy-history.jsonl is untouched.
 set -uo pipefail
 # Hold the Mac awake for the whole run (#2122; ops/scripts/lib/keep-awake.sh).
 _keep_awake="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/keep-awake.sh"
@@ -44,4 +45,4 @@ while IFS= read -r cmd; do
     exit "$rc"
   fi
 done < <(python3 "$REPO/ops/goatbuilder/teardown-plan.py" "$SITE" "${ARGS[@]}" --commands)
-echo "teardown of $SITE: $n service step(s) down, volumes kept."
+echo "teardown of $SITE: $n step(s) down, volumes kept."

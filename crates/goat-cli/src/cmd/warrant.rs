@@ -22,11 +22,9 @@
 // time, rather than implying a completeness it does not have.
 
 use clap::{Args, Subcommand};
-use panoscope_core::aclcheck::{Declaration, Model, Permit};
+use panoscope_core::aclcheck::{Model, Permit};
 use panoscope_core::portsets::{PortSet, Vocabulary};
 
-const TAXONOMY_YAML: &str = include_str!("../../../../ops/ansible/netbird_acl_taxonomy.yml");
-const MATRIX_YAML: &str = include_str!("../../../../ops/ansible/netbird_acl_matrix.yml");
 /// The vocabulary, so a blocked verdict can propose a NAMED set rather than
 /// asking the operator for a port list. Asking for ports is how the vocabulary
 /// re-fragments (docs/design/warrant.md §2).
@@ -63,7 +61,7 @@ pub enum WarrantCmd {
 
 pub async fn run(ctx: &super::Ctx, cmd: WarrantCmd) -> anyhow::Result<()> {
     match cmd {
-        WarrantCmd::WhyBlocked(a) => run_why_blocked(a),
+        WarrantCmd::WhyBlocked(a) => run_why_blocked(&ctx.profile, a),
         WarrantCmd::PortSets(a) => run_port_sets(a),
         WarrantCmd::Apply(a) => membership::run_apply(ctx, a).await,
         WarrantCmd::Pause(a) => membership::run_pause(ctx, a).await,
@@ -74,13 +72,14 @@ pub async fn run(ctx: &super::Ctx, cmd: WarrantCmd) -> anyhow::Result<()> {
 #[cfg(test)]
 pub(crate) use membership::{email_hash, BaselineSource};
 pub(crate) use membership::{
-    entry_yaml, is_governed, key_joins, load_decl, membership_path, merge_people,
+    entry_yaml, governance, key_joins, load_decl, membership_path, merge_people,
     ory_identity_quarantine_refusal, people_from_manifests, quarantine_refusal_with_owner_reason,
     read_ory_privileges, resolve_baselines, target_fragment, unproven_owner_refusal, write_entry,
     Baseline, EntryForm, KeyJoin, LivePeer, MembershipDecl, MembershipEntry, OryPrivilegeIndex,
     OwnerJoin, PersonBaseline, PEOPLE_FILE, RUNBOOK,
 };
 pub use membership::{ApplyArgs, PauseArgs, ResumeArgs, WarrantExit};
+pub(crate) use membership::CONTEXT_CONVERGE_KEY;
 
 #[path = "warrant_membership.rs"]
 mod membership;
@@ -104,6 +103,11 @@ pub struct WhyBlockedArgs {
     pub proto: String,
     #[arg(long)]
     pub json: bool,
+    /// Directory holding the goatnet's netbird_acl_taxonomy.yml and
+    /// netbird_acl_matrix.yml. Omitted: GOAT_ACL_DECLARATION_DIR, the active
+    /// context, then the checkout (see `goat acl test --help`).
+    #[arg(long, value_name = "DIR")]
+    pub declaration: Option<std::path::PathBuf>,
 }
 
 #[derive(Args, Debug)]
@@ -133,11 +137,11 @@ fn qualify(model: &Model, name: &str) -> String {
     }
 }
 
-fn run_why_blocked(args: WhyBlockedArgs) -> anyhow::Result<()> {
+fn run_why_blocked(profile: &crate::profile::Profile, args: WhyBlockedArgs) -> anyhow::Result<()> {
     // `{e:?}` (Debug) discarded DeclError's own hand-authored Display prose;
     // acl.rs's identical case just uses `?` (Display, via anyhow's blanket
     // conversion), which is what this should have done too.
-    let decl = Declaration::parse(TAXONOMY_YAML, MATRIX_YAML)?;
+    let decl = super::acl::declaration(profile, args.declaration.as_deref(), "warrant why-blocked")?;
     let model = decl.model(&args.scope)?;
 
     let from = qualify(&model, &args.from);

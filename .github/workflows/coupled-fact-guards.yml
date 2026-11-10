@@ -1,0 +1,302 @@
+name: coupled-fact-guards
+
+# Redteam remediation: three production defects shared one class — a config
+# flag reads "on" while the rendered/effective behavior is "off" (coupled
+# facts with no coupling enforcement). These guards make each un-reshippable:
+#   1. check-partition-render-consistency.sh — partner-read partition flag
+#      true while the lanes map is empty renders flat universal read.
+#   2. check-alerting-receiver-not-noop.sh — alerting stack up while every
+#      critical/Watchdog route resolves to webhook-noop.
+#   3. check-rosenpass-pq-actually-negotiated.sh — rosenpass_enabled: true
+#      whose PQ claim nothing (static or runtime) can verify.
+#   5. check-no-floating-image-pins.sh — a hand-authored group_vars pin naming a
+#      mutable tag instead of a digest. Same class again: the config reads as a
+#      fixed version and is not one: a mutable tag moves, and the next pull
+#      silently upgrades whatever runs from it.
+#   6. check-no-foreign-goatnet-config.py — a goatnet's group_vars naming
+#      ANOTHER goatnet's domain. Same class: the config reads as this goatnet's
+#      and deploys against another's, and the other goatnet's hosts answer, so
+#      nothing fails (a standup scaffold copying list items from a reference
+#      goatnet unchecked does exactly this). Deliberate cross-goatnet lines carry
+#      `# cross-goatnet: <reason>` inline. Its second pass checks relay
+#      ADDRESSES against the relay inventories (ops/relay/health/relays*.conf),
+#      which a domain check cannot see.
+#   7. check-deadman-sources.py — an obs host whose dead-man heartbeat reads
+#      "watched" while another obs host's heartbeat keeps the same watcher
+#      timestamp fresh, so a dead host sharing a watcher never pages. Each
+#      sender needs its own path, and the watcher must expect it. test-deadman.sh proves the watcher judges senders separately.
+#   4. check-no-decaying-fact-port-bind.sh — a container port published on an
+#      address resolved from a host fact at deploy time. Same class,
+#      one step further out: the config does not lie when written, it rots
+#      into a lie when the host's network moves under it, and the failure
+#      surfaces as a router that will not come back on the next recreate.
+#   8. check-fence-client-registered.py — an oauth2-proxy fence presenting a
+#      Hydra client id that nothing in the tree registers. The container, DNS,
+#      Traefik and TLS are green and every page load ends at Ory
+#      `invalid_client` (consistency-console on zagros-dev, #2126). A goatnet's
+#      own Phase-12 play does not count: it registers on that goatnet only.
+#   9. check-assay-probe-identity.py — a goatnet that declares the assay's
+#      non-person probe identity carries all four of its facts (cert manifest
+#      leaf, the CN in a partitioned universal read, the regenerated values,
+#      the router subject bound to its two write keys). A missing one makes
+#      every goat row of the assay read UNKNOWN or FAIL on a healthy goatnet.
+#  10. check-leaf-paths-through-goat-leaf.py — a play reading a site's leaf
+#      cert or key from a copy staged inside the checkout. The leaf exists in
+#      the checkout someone staged it into and nowhere else, so a deploy from a
+#      fresh worktree (C3) refuses (#2165). goat_leaf reads the manifest out_dir.
+#  11. check-no-operator-context-on-hosts.py — a runner, values file, doc or
+#      script that has a goatnet's management host hold an operator context for
+#      the acceptance rows. The rows run there as non-person identities only
+#      (ADR 1207: `acceptance`, `assay-probe`); operator keys never go on a host.
+#  12. check-fence-cookie-secret-length.py — an oauth2-proxy fence whose role
+#      does not assert the cookie secret is 16, 24 or 32 characters. Any other
+#      length crash-loops the proxy at boot behind a green play recap, and the
+#      surface answers 502.
+# Doctrine P6: each guard proves itself RED against a broken fixture
+# (--self-test) before its verdict on the real tree is trusted — the
+# self-test step runs first, every time.
+
+on:
+  pull_request:
+    paths:
+      - 'ops/ansible/group_vars/**'
+      - 'ops/ansible/inventory/group_vars/**'
+      - 'ops/ansible/roles/goat-zenoh/**'
+      - 'ops/ansible/roles/obs-host/**'
+      - 'ops/ansible/roles/observability/**'
+      - 'ops/ansible/roles/*-oidc-client/**'
+      - 'ops/ansible/roles/goat-zenoh-portal/**'
+      - 'ops/validation/**'
+      - 'ops/ci/check-partition-render-consistency.sh'
+      - 'ops/ci/check-alerting-receiver-not-noop.sh'
+      - 'ops/ci/check-rosenpass-pq-actually-negotiated.sh'
+      - 'ops/ci/check-no-decaying-fact-port-bind.sh'
+      - 'ops/ci/check-apt-steps-are-bounded.sh'
+      - 'ops/ci/check-no-foreign-goatnet-config.py'
+      - 'ops/relay/health/relays*.conf'
+      - 'ops/dns/*/mesh-hosts'
+      - 'ops/dns/*/name-snapshot.json'
+      - 'ops/ci/check-deadman-sources.py'
+      - 'ops/ci/check-fence-client-registered.py'
+      - 'ops/ci/check-fence-cookie-secret-length.py'
+      - 'ops/ansible/roles/*/tasks/**'
+      - 'ops/ansible/roles/*/templates/**'
+      - 'ops/ansible/roles/rollback-ledger/**'
+      - 'ops/ansible/roles/goat-get/meta/**'
+      - 'ops/ansible/roles/goat-docs/meta/**'
+      - 'ops/scripts/served-payloads.py'
+      - 'ops/ci/test-served-payloads.py'
+      - 'ops/ci/test-ledger-promote-pending.py'
+      - 'ops/ci/check-assay-probe-identity.py'
+      - 'ops/ci/check-leaf-paths-through-goat-leaf.py'
+      - 'ops/ci/check-no-operator-context-on-hosts.py'
+      - 'docs/design/*.md'
+      - 'docs/operations/*.md'
+      - 'ops/scripts/rc.sh'
+      - 'ops/scripts/onboard-intake-smoke.sh'
+      - 'ops/e2e/**'
+      - 'crates/goatbuilder/src/release.rs'
+      - 'crates/goatbuilder/src/doctor.rs'
+      - 'ops/ansible/filter_plugins/goat_leaf.py'
+      - 'ops/ansible/filter_plugins/test_goat_leaf.py'
+      - 'ops/scripts/mint-site-certs.sh'
+      - 'ops/enrollment/manifests/**'
+      - 'ops/scripts/create-assay-probe-identity.sh'
+      - 'ops/ansible/roles/*/templates/*.env.j2'
+      - 'ops/ansible/roles/*/defaults/main.yml'
+      - 'ops/ansible/*.yml'
+      - 'ops/ansible/templates/traefik-acme/**'
+      - 'ops/ci/check-acme-san-requests.py'
+      - 'ops/ci/check-alertmanager-goatnets.py'
+      - 'ops/deadman-watch/**'
+      - 'ops/ansible/roles/deadman-watch/**'
+      - 'ops/ansible/inventory/*.ini'
+      - 'ops/scripts/standup-config-preflight.py'
+      - 'ops/scripts/ansible-preflight.sh'
+      - 'ops/scripts/newsite-secrets.sh'
+      - 'ops/scripts/newsite-secret-store.py'
+      - 'tests/test_newsite_secrets.py'
+      - 'tests/test_scaffold_reference_address.py'
+      - 'tests/newsite-secrets.bats'
+      - '.github/workflows/**'
+      - 'ops/ansible/zenoh-deploy.yml'
+      - 'ops/ansible/zenoh-acl-migrate.yml'
+      - '.github/workflows/coupled-fact-guards.yml'
+      # Image digest guard (ADR 0703): anything that names an image.
+      - 'ops/ci/check-no-floating-image-pins.sh'
+      - 'ops/ci/check-image-refs-pinned.py'
+      - 'ops/ci/floating-image-pins.allow'
+      - 'ops/ci/test_image_refs_assembled.py'
+      - '.github/dependabot.yml'
+      - 'ops/ansible/roles/*/defaults/**'
+      - '**/Dockerfile'
+      - '**/Dockerfile.*'
+      - '**/*.Dockerfile'
+      - '**/*compose*.yml'
+      - '**/*compose*.yaml'
+      - '**/*compose*.j2'
+  # push: on main REMOVED — this workflow is a guard, not a publisher. It
+  # already gates the pull request, and a squash merge puts the reviewed diff
+  # on main unchanged, so re-running it there re-verifies a commit whose answer
+  # is known. 98 of 119 workflows did that; measured at 4,787 runs in
+  # one day, roughly half of them this shape.
+  #
+  # An earlier draft of this comment also said "main is protected from
+  # force-push". IT IS NOT — this plan cannot have branch protection at all
+  # (the API answers "Upgrade to GitHub Pro"). A force-push to main therefore
+  # bypasses this guard entirely. That is a repository-settings decision, not
+  # something a paths filter or a trigger change can close.
+  # Publishers keep push: on purpose — the merge commit is the artifact.
+# Supersede in-flight runs for the same ref. A push during review used to
+# leave the previous run going to completion, so a branch pushed three
+# times paid three times for an answer only the last one needed. Keyed on
+# the workflow plus the ref, and NEVER cancels on main — a merge-commit run
+# is the one whose result is recorded.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install credential coverage parser
+        run: pip install --quiet pyyaml ansible-core==2.21.3
+      # amtool from the same Alertmanager release the fleet runs
+      # (prom/alertmanager:v0.27.0), checksum-pinned.
+      - name: Install amtool (alertmanager v0.27.0)
+        run: |
+          cd "$RUNNER_TEMP"
+          curl -fsSLO --retry 6 --retry-delay 15 --retry-all-errors https://github.com/prometheus/alertmanager/releases/download/v0.27.0/alertmanager-0.27.0.linux-amd64.tar.gz
+          echo "23c3f5a3c73de91dbaec419f3c492bef636deb02680808e5d842e6553aa16074  alertmanager-0.27.0.linux-amd64.tar.gz" | sha256sum -c
+          tar xzf alertmanager-0.27.0.linux-amd64.tar.gz
+          echo "AMTOOL=$RUNNER_TEMP/alertmanager-0.27.0.linux-amd64/amtool" >> "$GITHUB_ENV"
+      # The P12 OIDC-client coverage contract (check-newsite-secrets-coverage,
+      # test_oidc_contract, test_portal_key_preflight) asserts over one
+      # goatnet's own OIDC-client playbook, which lives in that goatnet's
+      # environment repository, so it runs there against the assembled tree.
+      - name: Verify newsite credential persistence
+        run: |
+          python3 tests/test_newsite_secrets.py
+          python3 tests/test_scaffold_reference_address.py
+      - name: "self-test: every guard proves RED on a broken fixture first (P6)"
+        run: |
+          ops/ci/check-partition-render-consistency.sh --self-test
+          ops/ci/check-alerting-receiver-not-noop.sh --self-test
+          ops/ci/check-rosenpass-pq-actually-negotiated.sh --self-test
+          ops/ci/check-no-decaying-fact-port-bind.sh --self-test
+          ops/ci/check-apt-steps-are-bounded.sh --self-test
+          python3 ops/ansible/roles/goat-zenoh/files/assert-universal-read-coverage.py --self-test
+          python3 ops/ci/check-no-foreign-goatnet-config.py --self-test
+          python3 ops/ci/check-deadman-sources.py --self-test
+          python3 ops/ci/check-fence-client-registered.py --self-test
+          python3 ops/ci/check-acme-san-requests.py --self-test
+          python3 ops/ci/check-alertmanager-goatnets.py --self-test
+          python3 ops/ci/check-assay-probe-identity.py --self-test
+          python3 ops/ci/check-fence-cookie-secret-length.py --self-test
+          python3 ops/ci/check-leaf-paths-through-goat-leaf.py --self-test
+          python3 ops/ci/check-no-operator-context-on-hosts.py --self-test
+      - name: partition flag vs rendered read carve
+        run: ops/ci/check-partition-render-consistency.sh
+      - name: alerting enabled vs all-routes-noop
+        run: ops/ci/check-alerting-receiver-not-noop.sh
+      - name: rosenpass declaration coherent + runtime probe present
+        run: ops/ci/check-rosenpass-pq-actually-negotiated.sh
+      - name: no container port bound to a deploy-time host fact
+        run: ops/ci/check-no-decaying-fact-port-bind.sh
+      - name: every apt step is time-bounded
+        run: ops/ci/check-apt-steps-are-bounded.sh
+      - name: no goatnet config names another goatnet's domain or relay address
+        run: python3 ops/ci/check-no-foreign-goatnet-config.py
+      - name: every obs host's dead-man heartbeat is judged on its own
+        run: python3 ops/ci/check-deadman-sources.py
+      - name: every oauth2-proxy fence's Hydra client is registered (#2126)
+        run: python3 ops/ci/check-fence-client-registered.py
+      - name: every oauth2-proxy fence refuses a cookie secret of the wrong length
+        run: python3 ops/ci/check-fence-cookie-secret-length.py
+      - name: no certificate request names a host its wildcard covers (#2149)
+        run: python3 ops/ci/check-acme-san-requests.py
+      # The full render (every mgmt host's real group_vars through
+      # render-alertmanager.yml) needs goatnets in inventory/mgmt-hosts.ini;
+      # this repository carries none, so it runs in an environment repository's
+      # assembled tree. Here the routing judge proves itself on its fixtures.
+      - name: a declared assay probe identity carries all of its facts
+        run: python3 ops/ci/check-assay-probe-identity.py
+      - name: every leaf read goes through goat_leaf, never a checkout-staged copy (#2165)
+        run: python3 ops/ci/check-leaf-paths-through-goat-leaf.py
+      - name: no acceptance row needs an operator context on a host (ADR 1207)
+        run: python3 ops/ci/check-no-operator-context-on-hosts.py
+      - name: goat_leaf finds a leaf from a brand-new worktree (#2165)
+        run: python3 ops/ansible/filter_plugins/test_goat_leaf.py
+      - name: the dead-man watcher judges each sender separately
+        run: bash ops/deadman-watch/test-deadman.sh
+      # The universal-read coverage assert itself can only run on a target host
+      # (it reads that goatnet's reader certs), so CI verifies its RED-first
+      # proof and nothing more. The real verdict is a deploy-time task in
+      # roles/goat-zenoh — see F-364.
+      # The ACL evaluator is a port of zenoh 1.9.0's key-expression inclusion
+      # and rule matching (roles/goat-zenoh/files/acl-evaluate.py). Its
+      # self-test carries the upstream vectors, so it is what a zenoh version
+      # bump has to re-prove before the scoped-read decisions below mean
+      # anything.
+      - name: zenoh ACL evaluator --self-test
+        run: |
+          pip install --quiet jinja2
+          python3 ops/ansible/roles/goat-zenoh/files/acl-evaluate.py --self-test
+
+      # And the decisions themselves: a normal peer is refused `**` / `*/**` /
+      # every leading wildcard while keeping read on every namespace, only a
+      # named identity subscribes fabric-wide, and the flag off renders exactly
+      # what shipped before.
+      - name: scoped peer read allows + refuses what it claims
+        run: python3 ops/ansible/roles/goat-zenoh/tests/scoped-read-check.py
+
+      # The rest of the router template's render contract (ADR 1025 slot
+      # isolation, ADR 1105 co-publish, ADR 1138 pre-cut partner blocks, the
+      # F-207 audit carve-out). It had no CI leg; the scoped read is the third
+      # thing to render off the same template and the first to be able to break
+      # the other two silently.
+      - name: goat-zenoh router template render contract
+        run: python3 ops/ansible/roles/goat-zenoh/tests/render-check.py
+
+      # The goatlite founder grant: inert where zenoh_founder_cn is
+      # unset (byte-identical to main), exactly one rule, subject and policy
+      # where it is set.
+      - name: goatlite founder grant renders only where declared
+        run: python3 ops/ansible/roles/goat-zenoh/tests/founder/render-test.py
+
+      # The two transmit-queue levers are a coupled fact: M-119 measured that
+      # tightening the close deadline WITHOUT raising the receive workers is
+      # worse than leaving both at stock (42-59 s stalls, 3-7x the transport
+      # closes). The matrix lived only in a defaults comment, which cannot fail
+      # a PR.
+      - name: zenoh transmit-queue levers move together
+        run: python3 ops/ci/check-zenoh-txqueue-pairing.py
+
+      # The deploy ledger is written before the gate that can refuse the deploy,
+      # so the row starts `pending` and a handler promotes it only for hosts
+      # that finished the play. This tests both halves: that the
+      # promotion moves the right row, and that a re-run after a refused
+      # deploy still reaches the handler at all.
+      - name: deploy ledger promotes pending only on success
+        run: python3 ops/ci/test-ledger-promote-pending.py
+
+      # A serving surface (goat-get, goat-docs) is versioned by role vars, not by
+      # its image: the ledger row records what the host serves, and both avenues
+      # judge it against main through one module (served payloads).
+      - name: served payloads resolve and are judged one way for both avenues
+        run: python3 ops/ci/test-served-payloads.py
+
+      - name: check-no-floating-image-pins --self-test
+        run: ops/ci/check-no-floating-image-pins.sh --self-test
+      - name: the image-ref guard reads an assembled tree's layers
+        run: python3 ops/ci/test_image_refs_assembled.py
+
+      # Also runs ops/ci/check-image-refs-pinned.py: role defaults, every
+      # compose file, every Dockerfile FROM, against the shrink-only list
+      # ops/ci/floating-image-pins.allow, and dependabot coverage of pinned
+      # bases (ADR 0703).
+      - name: check-no-floating-image-pins
+        run: ops/ci/check-no-floating-image-pins.sh

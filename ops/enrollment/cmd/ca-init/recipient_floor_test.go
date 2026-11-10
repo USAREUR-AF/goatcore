@@ -176,7 +176,7 @@ func TestVerifyFlagsASingleRecipientKey(t *testing.T) {
 
 func TestVerifyFlagsLegacyAndUnexpandedRootCN(t *testing.T) {
 	bin := buildCAInit(t)
-	for _, cn := range []string{"goat Root CA", "$SITE Root CA"} {
+	for _, cn := range []string{legacyRootCN, "$SITE Root CA"} {
 		key, root, pub := mint(t, bin, t.TempDir(), "cn-ca", cn, 2)
 		out, err := verifyCommand(t, bin, key, root, pub)
 		if err == nil {

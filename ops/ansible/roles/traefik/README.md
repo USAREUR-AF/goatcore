@@ -12,7 +12,7 @@ Configures the `traefik` service in the mgmt-host compose stack:
    referenced cert/key file is missing on the operator laptop. Catches
    "forgot to run cert-sign" before it lands as a confusing Traefik
    container error.
-2. **Host filesystem** — creates `/etc/goat/tls/` (mode 0700)
+2. **Host filesystem** — creates `traefik_tls_root` (mode 0700)
    and per-service sub-dirs.
 3. **Cert delivery** — pushes leaf cert PEM (mode 0644) and leaf key
    PEM (mode 0400) from operator laptop into the per-service dir.

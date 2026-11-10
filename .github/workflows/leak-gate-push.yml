@@ -1,0 +1,43 @@
+# leak-gate on every branch push (the pull-request gate never sees a branch
+# that is pushed and deleted without a PR). It scans the commits the pushed
+# branch adds over main with the gate as merged on main, prints only
+# <file>:<line>: <class> (never a matched value), and fails the run on a hit so
+# the pusher is notified at once. It blocks nothing: nobody waits on it.
+name: leak-gate (branch push)
+
+on:
+  push:
+    branches-ignore: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: leak-gate-push-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  leak-gate-push:
+    name: leak-gate (branch push)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: check out main (the gate as merged)
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: fetch the pushed commit as data
+        env:
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          git fetch --no-tags --quiet origin "${HEAD_SHA}"
+          echo "BASE_SHA=$(git merge-base origin/main "${HEAD_SHA}")" >> "$GITHUB_ENV"
+
+      - name: scan the lines the branch adds over main
+        env:
+          GOAT_LEAK_NEEDLES: ${{ secrets.GOAT_LEAK_NEEDLES }}
+          HEAD_SHA: ${{ github.sha }}
+        run: python3 .github/leak-gate/scan-diff.py --base "${BASE_SHA}" --head "${HEAD_SHA}"

@@ -4,7 +4,7 @@ Synthetic Network Inspection: Topology, Connectivity, Health.
 
 See `docs/design/snitch.md` for architecture, security model, and data model.
 
-Dashboard: `https://snitch.netbird.legacy.example`
+Dashboard: `https://snitch.<site>.<zone>`
 
 ## Deploy the Collector (Network Host)
 
@@ -44,16 +44,16 @@ With the admin key:
 
 ```
 # List keys
-curl -s -H "Authorization: Bearer $ADMIN_KEY" https://snitch.netbird.legacy.example/api/keys
+curl -s -H "Authorization: Bearer $ADMIN_KEY" https://snitch.<site>.<zone>/api/keys
 
 # Create a new key
 curl -s -X POST -H "Authorization: Bearer $ADMIN_KEY" \
   -d '{"role":"viewer","label":"monitoring"}' \
-  https://snitch.netbird.legacy.example/api/keys
+  https://snitch.<site>.<zone>/api/keys
 
 # Delete a key
 curl -s -X DELETE -H "Authorization: Bearer $ADMIN_KEY" \
-  https://snitch.netbird.legacy.example/api/keys?id=3
+  https://snitch.<site>.<zone>/api/keys?id=3
 ```
 
 ## Install the Probe
@@ -85,7 +85,7 @@ From any mesh peer (Block 50E.2 — bearer header only; URL-query auth removed b
 
 ```
 curl -fsSL -H "Authorization: Bearer $OPERATOR_KEY" \
-  https://snitch.netbird.legacy.example/install | \
+  https://snitch.<site>.<zone>/install | \
   sudo OPERATOR_KEY="$OPERATOR_KEY" SNITCH_PROBE_KEY="$PROBE_KEY" bash
 ```
 
@@ -95,9 +95,9 @@ Options:
 
 ```
 curl -fsSL -H "Authorization: Bearer $OPERATOR_KEY" \
-  https://snitch.netbird.legacy.example/install | \
+  https://snitch.<site>.<zone>/install | \
   sudo OPERATOR_KEY="$OPERATOR_KEY" bash -s -- \
-  --collector https://snitch.netbird.legacy.example \
+  --collector https://snitch.<site>.<zone> \
   --probe-key $PROBE_KEY \
   --interval 60
 ```
@@ -108,7 +108,7 @@ Operator MacBook joining fleet-health visibility. Uses launchd; binary at `/usr/
 
 ```
 curl -fsSL -H "Authorization: Bearer $OPERATOR_KEY" \
-  "https://snitch.netbird.legacy.example/install?os=darwin" | \
+  "https://snitch.<site>.<zone>/install?os=darwin" | \
   sudo OPERATOR_KEY="$OPERATOR_KEY" SNITCH_PROBE_KEY="$PROBE_KEY" bash
 ```
 
@@ -132,7 +132,7 @@ $env:OPERATOR_KEY = "<operator key>"
 $env:SNITCH_PROBE_KEY = "<probe key>"
 Invoke-RestMethod `
   -Headers @{Authorization = "Bearer $env:OPERATOR_KEY"} `
-  -Uri "https://snitch.netbird.legacy.example/install?os=windows" `
+  -Uri "https://snitch.<site>.<zone>/install?os=windows" `
   -OutFile install-probe-windows.ps1
 powershell -ExecutionPolicy Bypass -File .\install-probe-windows.ps1 `
   -OperatorKey $env:OPERATOR_KEY `
@@ -323,12 +323,30 @@ All endpoints except `/` and `/health` require authentication via `Authorization
 | `/install` | GET | operator | Probe install script |
 | `/bin/snitch` | GET | operator | Download snitch binary |
 | `/api/keys` | GET/POST/DELETE | admin | API key management |
+| `/satlink` | GET | public | Satellite-link PoP tracker page |
+| `/api/satlink/latest`, `/trend`, `/pops` | GET | viewer | Satellite-link PoP benchmark results |
+| `/api/satlink/probe` | POST | operator | Start one satellite-link PoP benchmark |
+
+The satellite-link routes also answer under their earlier names (listed in `ops/snitch/internal/compat/names.go`), and their JSON carries the range flag under both `in_satlink_range` and the earlier key. The subcommand `snitch satlink-probe` and the serve flag `--satlink-interval` likewise accept their earlier names.
+
+### Collector settings
+
+| Variable | Used for | When unset |
+|---|---|---|
+| `SNITCH_PEER_DOMAIN_SUFFIXES` | Comma-separated FQDN suffixes stripped from a peer's NetBird name to make its auto-alias | none: no suffix is stripped |
+| `SNITCH_GATEWATCH_URL` | gatewatch base URL the dashboard reads bridge status from | none: the bridge panel has no source |
+| `SNITCH_PUBLIC_URL` | Collector URL the served `/install` script uses when the installing host sets no `SNITCH_COLLECTOR` | none: the script then needs `SNITCH_COLLECTOR` or `--collector` |
+| `SNITCH_SATLINK_NAME` | The word the satellite-link tables, columns, indexes and earlier route, subcommand, flag and JSON names are formed from (`<word>_probes`, `/api/<word>/`, ...). A collector keeps the word its history was written under; set it on its probes too | `satlink` |
+| `SNITCH_SATLINK_TARGETS` | Relays the satellite-link benchmark measures, `name=ip=region` comma-separated | none: the benchmark measures no relay |
+
+The collector's `docker-compose.yml` also reads, from the `.env` the deploying play writes: `SNITCH_HOST` (the Traefik host rule) and `SNITCH_DNS` (the container's first resolver), both required, and `SNITCH_GATE_STATUS_FILE` (the host file mounted as `/data/gate-status.json`, default `/opt/goat/gate-status.json`). A probe needs its collector named: `--collector` or `SNITCH_COLLECTOR`; the installers and `snitch probe` refuse without one.
 
 ## Data & Retention
 
 - **PostgreSQL** (`snitch-db` container): All measurements, events, identities
 - **Raw data retention**: 30 days (reports, measurements)
-- **Event retention**: 90 days
+- **Event retention**: 90 days (satellite-link PoP benchmarks: 90 days)
+- **Satellite-link PoP tables**: named from `SNITCH_SATLINK_NAME` (`ops/snitch/internal/compat/names.go`) so a collector keeps reading the history it already holds
 - **Cleanup**: Automatic, runs hourly
 - **Identity key**: `/opt/goat/snitch/data/identity.key` — auto-generated, do not delete (identities become unreadable without it)
 - **PG password**: `/opt/goat/snitch/.env` — generated by Ansible on first deploy, persisted across re-deploys
@@ -385,9 +403,11 @@ ops/snitch/
     store/analytics.go            Time-series bucketing, events, uptime queries
     auth/auth.go                  API key RBAC, middleware
     collector/collector.go        Report ingestion, event detection, mesh state
+    compat/                       Names and built-in defaults existing deployments depend on
     server/server.go              HTTP API + auth-protected routes
     server/dashboard.html         Embedded dashboard (Chart.js, login, events)
     server/install.sh             Embedded probe install script
+    server/satlink.{go,html}      Satellite-link PoP tracker (routes + page)
   Dockerfile                      Multi-stage Go build (golang:1.25 + debian:bookworm-slim)
   docker-compose.yml              snitch + snitch-db (Postgres 16), Traefik labels
   go.mod / go.sum                 Dependencies (pgx/v5)

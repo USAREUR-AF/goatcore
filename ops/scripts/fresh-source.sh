@@ -32,9 +32,17 @@
 #   --quiet     print nothing on success (the per-play call under a pinned trunk)
 # Prints the trunk commit it judged against on stdout (empty when there is none).
 #
-# The trunk remote: --remote, else $GOAT_ANSIBLE_TRUNK_REMOTE, else a remote
-# named `usareur-af` if one exists, else `origin` — the same order as
-# ansible-preflight.sh.
+# The trunk remote: --remote, else $GOAT_ANSIBLE_TRUNK_REMOTE, else the remote
+# whose URL is the source repository the checkout declares (repo.source in
+# ops/goatbuilder/goatbuilder.yaml, read by project-setting.sh), else `origin` —
+# the same order as ansible-preflight.sh.
+#
+# An assembled tree (a `.goat-assembled` marker at the root: goatcore at the
+# commit in goatcore.ref, optional public layers goatstuff and goatrodeo at the
+# commits in goatstuff.ref and goatrodeo.ref, and an environment overlay copied
+# over it) is judged against those commits instead — goatcore.ref, each layer's
+# ref and the overlay's main; see
+# ops/scripts/lib/source_of_record.py. --remote does not apply to it.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -46,17 +54,32 @@ while [ $# -gt 0 ]; do
     --remote) REMOTE="$2"; shift 2 ;;
     --offline) OFFLINE=1; shift ;;
     --quiet) QUIET=1; shift ;;
-    -h|--help) sed -n '2,36p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,45p' "$0"; exit 0 ;;
     *) echo "fresh-source: unknown argument $1" >&2; exit 2 ;;
   esac
 done
 [ "$OFFLINE" = 1 ] || OFFLINE=0
 PATHS=(ops/ansible ops/pins)
 
+# --- an assembled tree: goatcore at goatcore.ref with an overlay copied over it ---
+# Its source of record is the pair (goatcore commit, overlay commit), not a trunk
+# remote of this checkout: the tree's HEAD must be the goatcore.ref commit, the
+# files it deploys from must be the overlay commit's, and that overlay commit must
+# not be behind the overlay's main. Same codes, same stdout contract (the commit
+# the drivers pin in GOAT_FRESH_SOURCE_TRUNK). ops/scripts/lib/source_of_record.py.
+if [ -f "$REPO/.goat-assembled" ]; then
+  SOR_ARGS=(check --repo "$REPO")
+  [ "$OFFLINE" = 1 ] && SOR_ARGS+=(--offline)
+  [ "$QUIET" = 1 ] && SOR_ARGS+=(--quiet)
+  exec python3 "$HERE/lib/source_of_record.py" "${SOR_ARGS[@]}"
+fi
+
 if [ -z "$REMOTE" ]; then
   if [ -n "${GOAT_ANSIBLE_TRUNK_REMOTE:-}" ]; then REMOTE="$GOAT_ANSIBLE_TRUNK_REMOTE"
-  elif git -C "$REPO" remote get-url usareur-af >/dev/null 2>&1; then REMOTE=usareur-af
-  else REMOTE=origin; fi
+  else
+    REMOTE="$("$HERE/project-setting.sh" --repo "$REPO" trunk-remote 2>/dev/null || true)"
+    [ -n "$REMOTE" ] || REMOTE=origin
+  fi
 fi
 TRUNK="$REMOTE/main"
 

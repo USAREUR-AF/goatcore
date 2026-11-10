@@ -1,0 +1,76 @@
+---
+# ops/ansible/tasks/pgbackrest-cipher-seed.yml
+#
+# The seed a host's pgBackRest repo1 cipher is derived from, recorded on the
+# host so the cipher survives a rename.
+#
+# site-bootstrap.yml derives the repo1 passphrase as
+#   sha256(pgbackrest_cipher_pass ~ '-repo1-' ~ <seed>)[:32]
+# The seed used to be inventory_hostname read fresh on every run, so renaming
+# a host in the inventory changed its passphrase and left its existing repo
+# unreadable (pgBackRest reports a FormatError reading archive.info). The seed
+# is now read from a file on the host:
+#
+#   - file present  -> its content is the seed (the name the repo was made under)
+#   - file absent   -> seed = inventory_hostname, exactly the value used before
+#                      this file existed, and the file is written with it
+#
+# An existing repo therefore keeps its passphrase, and a renamed host keeps
+# reading its repo. The file holds a host name, never the secret; it is
+# root-only anyway because it is one input to the key.
+#
+# Sets the fact `pgbackrest_cipher_seed`. Inputs (all optional):
+#   pgbackrest_cipher_seed_path   default /etc/pgbackrest/cipher-seed
+#   pgbackrest_cipher_seed_owner  default root
+#   pgbackrest_cipher_seed_group  default root
+#
+# To re-key a host deliberately (a new repo, not a rename), remove the file
+# together with the repo it keys; the next run records the current name.
+
+- name: pgBackRest cipher seed | look for the recorded seed
+  ansible.builtin.stat:
+    path: "{{ pgbackrest_cipher_seed_path | default('/etc/pgbackrest/cipher-seed') }}"
+  register: _pgbr_seed_stat
+
+- name: pgBackRest cipher seed | read the recorded seed
+  ansible.builtin.slurp:
+    src: "{{ pgbackrest_cipher_seed_path | default('/etc/pgbackrest/cipher-seed') }}"
+  register: _pgbr_seed_raw
+  when: _pgbr_seed_stat.stat.exists
+
+- name: pgBackRest cipher seed | the recorded seed, else this host's current name
+  ansible.builtin.set_fact:
+    pgbackrest_cipher_seed: >-
+      {{ (_pgbr_seed_raw.content | b64decode | trim)
+         if _pgbr_seed_stat.stat.exists else inventory_hostname }}
+
+- name: pgBackRest cipher seed | refuse an empty seed file
+  ansible.builtin.assert:
+    that:
+      - pgbackrest_cipher_seed | length > 0
+    fail_msg: >-
+      {{ pgbackrest_cipher_seed_path | default('/etc/pgbackrest/cipher-seed') }}
+      exists on {{ inventory_hostname }} but is empty. It must hold the host
+      name this host's pgBackRest repo was created under (its inventory name
+      at the time). Write that name into the file and re-run; if the repo is
+      to be re-keyed instead, remove the file together with the repo.
+    quiet: true
+
+- name: pgBackRest cipher seed | its directory exists
+  ansible.builtin.file:
+    path: "{{ (pgbackrest_cipher_seed_path | default('/etc/pgbackrest/cipher-seed')) | dirname }}"
+    state: directory
+    owner: "{{ pgbackrest_cipher_seed_owner | default('root') }}"
+    group: "{{ pgbackrest_cipher_seed_group | default('root') }}"
+    mode: "0755"
+  when: not _pgbr_seed_stat.stat.exists
+
+- name: pgBackRest cipher seed | record it (first use only; never rewritten)
+  ansible.builtin.copy:
+    dest: "{{ pgbackrest_cipher_seed_path | default('/etc/pgbackrest/cipher-seed') }}"
+    content: "{{ pgbackrest_cipher_seed }}\n"
+    owner: "{{ pgbackrest_cipher_seed_owner | default('root') }}"
+    group: "{{ pgbackrest_cipher_seed_group | default('root') }}"
+    mode: "0600"
+    force: false
+  when: not _pgbr_seed_stat.stat.exists

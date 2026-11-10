@@ -39,7 +39,15 @@ no credentials, no network and no VPN:
 goat warrant why-blocked --scope zagros --from DEVELOPER --to INFRA --port 7447
 ```
 
-It reads the declaration compiled into the binary and answers one of three ways.
+It reads the goatnet's ACL declaration from the first of these and answers one of three ways:
+
+1. `--declaration <dir>` (`--acl-declaration <dir>` on `goat warrant apply`);
+2. the directory `GOAT_ACL_DECLARATION_DIR` names;
+3. the active context: the directory its `profile.toml` names as `acl_declaration_dir`, else its own `acl/` directory, which `goat context refresh` fills from `get.<site>/acl/` when the goatnet serves its declaration there;
+4. `ops/ansible/` of the checkout or deployment overlay you run it in.
+
+goat carries no deployment's declaration. With none of these, the command stops with `E_ACL_DECLARATION_MISSING` (`goat explain E_ACL_DECLARATION_MISSING`).
+
 
 **PERMITTED** — the ACL is not your problem:
 

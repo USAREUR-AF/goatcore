@@ -151,7 +151,7 @@ func TestIsMember_ParityWithCanonicalRegistry(t *testing.T) {
 		want   bool
 	}{
 		{"USA", true},
-		{"SVN", true},
+		{"DEU", true},
 		{"FIN", true},
 		{"SWE", true},
 		{"NATO", true}, // the marker, from the shipped registry

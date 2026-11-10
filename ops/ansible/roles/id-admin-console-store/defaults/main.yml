@@ -30,8 +30,13 @@
 #     SQLite), and sqlite on a host the cutover has marked postgres.
 id_admin_console_store: sqlite
 # The image label the gate reads; absent on every image built before the
-# Postgres server, which the gate reads as "sqlite".
-id_admin_console_store_label: "org.usareur-af.goat-id-console.store"
+# Postgres server, which the gate reads as "sqlite". A goatnet whose pinned
+# image predates this key sets the key that image carries.
+id_admin_console_store_label: "goat.id-console.store"
+# Older names for the same label, read in order when the one above is absent.
+# A goatnet whose pinned images were built under another label key lists that
+# key here, so images built either way pass the gate.
+id_admin_console_store_label_aliases: []
 # Host-side record of which store holds this console's rows. Written by the
 # cutover (postgres) and the rollback (sqlite); absent = never cut over.
 id_admin_console_store_marker: /var/lib/goat-id-console/STORE
@@ -56,7 +61,7 @@ id_admin_console_org_db_name: id_console_orgs
 # ZAGROS_ID_CONSOLE_DB_PASS, ZAGROS_PROD_ID_CONSOLE_DB_PASS. Read only when the store
 # is postgres; tasks/store-gate.yml refuses an empty value then.
 id_admin_console_db_password_env: "{{ site_id | upper | replace('-', '_') }}_ID_CONSOLE_DB_PASS"
-id_admin_console_db_password: "{{ lookup('env', id_admin_console_db_password_env) }}"
+id_admin_console_db_password: "{{ lookup('env', id_admin_console_db_password_env) }}"  # when: id_admin_console_store=postgres
 # Percent-encoded in full ('/' included, which urlencode leaves alone), so any
 # password survives the URL and the compose env file unchanged.
 id_admin_console_db_password_url: "{{ id_admin_console_db_password | urlencode | replace('/', '%2F') }}"

@@ -2,7 +2,7 @@
 //!
 //! goat ships knowing about no goatnet. Every root is one an operator added
 //! here, which is what makes one binary usable against any environment
-//!: adding a goatnet, or rotating its CA, must not require a release.
+//! adding a goatnet, or rotating its CA, must not require a release.
 //!
 //! Three verbs. `ls` to see what is trusted, `add` to trust one more, `rm` to
 //! stop. Nothing here reaches the network — a root arrives by whatever channel

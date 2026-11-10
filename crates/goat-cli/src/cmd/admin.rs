@@ -165,7 +165,7 @@ pub enum AdminCmd {
         handle: Option<String>,
         /// ORG-scope revoke (cascade). Instead of one handle, revoke EVERY
         /// active member of the affiliation org `<id>` (the `affiliation.id`,
-        /// e.g. `org63x`) — persons + systems, the whole unit. Resolves the
+        /// e.g. `acme`) — persons + systems, the whole unit. Resolves the
         /// members from the declared registry (`docs/operators/roster.json`,
         /// the affiliation-grouped roster) and runs the per-handle revoke for
         /// each, after printing the blast radius and asking to confirm
@@ -483,9 +483,10 @@ pub enum AdminCmd {
         /// for machine-readable output.
         #[arg(long)]
         fleet: bool,
-        /// SSH user for `--peer` (default `goat`, the mgmt-host baseline).
-        #[arg(long, default_value = "goat")]
-        ssh_user: String,
+        /// SSH user for `--peer` (default: the context's `mgmt_ssh_user`,
+        /// written by `goat context refresh`).
+        #[arg(long)]
+        ssh_user: Option<String>,
         /// Override the NetBird mgmt URL for peer resolution (else env / profile).
         #[arg(long)]
         mgmt_url: Option<String>,
@@ -1261,7 +1262,7 @@ pub async fn run(ctx: &super::Ctx, op: AdminCmd) -> anyhow::Result<()> {
         // a feature-COVERAGE test and none is a safety test, which meant the
         // ADR 1062 rule that nobody both invites and admits could be defeated on
         // a production goatnet by one command against a hand-written file
-        //. This closes that half.
+        // This closes that half.
         //
         // REVOKE is deliberately untouched on both paths — it is the live
         // offboarding mechanism (ADR 1031) and has already returned above.
@@ -1388,7 +1389,10 @@ pub async fn run(ctx: &super::Ctx, op: AdminCmd) -> anyhow::Result<()> {
                 state: *state,
                 peer: peer.as_deref(),
                 fleet: *fleet,
-                ssh_user,
+                ssh_user: &ssh_user
+                    .clone()
+                    .or_else(|| ctx.profile.profile_field("mgmt_ssh_user"))
+                    .unwrap_or_default(),
                 mgmt_url: mgmt_url.as_deref(),
                 yes: *yes,
                 dry_run: *dry_run,
@@ -3416,7 +3420,7 @@ async fn pqc_remote(ctx: &super::Ctx, args: &PqcArgs<'_>, selector: &str) -> any
     let zmode = if state.is_on() { "pq" } else { "classical" };
     let zfile = panoscope_core::tls::PQC_MODE_SYSTEM_FILE;
     // Detached zenoh-file write + down → up. The zenoh kx-mode file goes first
-    //, then each netbird
+    // then each netbird
     // call tries NOPASSWD sudo (the mgmt-host baseline) then falls back to
     // non-sudo. The status read-back is written to a file on the peer for the
     // operator to inspect once the link re-forms.
@@ -5076,63 +5080,21 @@ struct MfZenohTrial {
     partner_lanes: Vec<String>,
 }
 
-/// Pre-fill router endpoint for the known goatnets. NOT authoritative — the
-/// portal mints the real endpoint into the bundle tarball's NOTES.md; this is a
-/// convenience hint mirrored from `zenoh_router_endpoint_map` in
-/// `ops/ansible/operator-onboard.yml` (that map is the SoT). Unknown env → None,
-/// and the bundle points the reader at the tarball for the definitive value.
-/// Every goatnet the `--native` onboard path claims to support.
-///
-/// The three tables below (`native_router_endpoint`, `native_netbird_config`,
-/// `native_ory_config`) are written independently, so a goatnet can be added to
-/// one and missed in the others. A goatnet missing from a table either mints a
-/// stub with every native leg silently deferred, or refuses its first mint.
-///
-/// `native_tables_cover_every_declared_goatnet` fails the build's test run if a
-/// name here is missing from any table. Adding a goatnet means adding it FOUR
-/// times — here plus the three tables — and the test is what makes the fourth
-/// omission loud instead of silent.
-/// Test-only: nothing in a release build reads it, and clippy runs `-D warnings`.
-/// It lives HERE rather than in the test module because its explanation belongs
-/// next to the tables it describes, where someone adding a goatnet will read it.
-#[cfg(test)]
-const NATIVE_GOATNETS: &[&str] = &["zagros", "zagros-prod", "zagros-dev"];
-
-/// Profile-first router endpoint. A context that declares `router_endpoint`
-/// overrides the table below, which is what lets a NEW goatnet work without a
-/// goat-cli release. Returns an owned String because a profile value
-/// cannot be `&'static`.
+/// Router endpoint for `env`, from the context whose profile names that goatnet
+/// (`goat context refresh` writes it from get.<site>/goatnet.toml). goat holds
+/// no goatnet of its own; no context for `env` resolves to None. A pre-fill hint:
+/// the portal mints the authoritative endpoint into the bundle tarball's NOTES.md.
 fn native_router_endpoint_for(
     env: Option<&str>,
     profile: &crate::profile::Profile,
 ) -> Option<String> {
-    if let Some(v) = profile.goatnet_endpoints().router_endpoint {
-        return Some(v);
-    }
-    native_router_endpoint(env).map(str::to_string)
-}
-
-fn native_router_endpoint(env: Option<&str>) -> Option<&'static str> {
-    // No env means no goatnet: an unset --env resolves to nothing.
-    match env? {
-        "zagros" => Some("tls/zenoh.zagros.netbird.zagros.example:7447"),
-        // A goatnet missing from this table mints a stub with every native leg
-        // silently deferred, while the welcome email still fires.
-        "zagros-prod" => Some("tls/zenoh.zagros-prod.examplebird.zagros-prod.example:7447"),
-        // Every goatnet needs a row in this table and the ones below, or every
-        // native leg is skipped and its mint is refused.
-        // Mirrors `portal_router_endpoint` in the goatnet's group_vars.
-        "zagros-dev" => Some("tls/zenoh.zagros-dev.examplebird.zagros-dev.example:7447"),
-        _ => None,
-    }
+    profile.goatnet_endpoints_for(env).router_endpoint
 }
 
 /// Per-goatnet NetBird config the native mesh-enrollment leg needs: the mgmt-API
 /// origin, the operator-token env var, and the ACL group-name site prefix.
-/// Mirrored from `netbird_site_url_map` / `netbird_site_env_var_map` /
-/// `netbird_acl_taxonomy[site].site_prefix` in the playbook + taxonomy yaml
-/// under `ops/ansible/` (those are the SoT). Unknown env → None, and the
-/// NetBird leg is skipped with a pointer to the Ansible path.
+/// Each value comes from the goatnet's group_vars through goatnet.toml
+/// (roles/goat-get, `goat_get_goatnet_facts`).
 pub(crate) struct NbEnvConfig {
     pub(crate) mgmt_url: &'static str,
     pub(crate) token_env_var: &'static str,
@@ -5146,74 +5108,35 @@ pub(crate) struct NbEnvConfig {
     rosenpass: bool,
 }
 
-/// Profile-first NetBird config. Each field a context declares overrides the
-/// table; anything it omits keeps the table's value, so a partial declaration is
-/// safe. A context that declares a mgmt URL and a token env var is enough to
-/// onboard to a goatnet the table has never heard of.
-///
-/// `rosenpass` is only overridden by an explicitly parseable value: turning an
-/// intra-mesh transport ON because a field was absent or misspelled is the one
-/// failure this must not have.
+/// NetBird config for `env`, from the context whose profile names that goatnet.
+/// A mgmt URL and a token env var are both required; without them the mesh leg
+/// is skipped with a pointer to `goat context refresh`. Rosenpass is on only for
+/// an explicit `true`.
 pub(crate) fn native_netbird_config_for(
     env: Option<&str>,
     profile: &crate::profile::Profile,
 ) -> Option<NbEnvConfig> {
-    let g = profile.goatnet_endpoints();
-    let base = native_netbird_config(env);
-    match (base, g.netbird_mgmt_url.clone(), g.netbird_token_env.clone()) {
-        // Nothing in the table and no complete profile declaration: unsupported,
-        // and the caller says so rather than half-minting.
-        (None, None, _) | (None, _, None) => None,
-        (base, url, tok) => {
-            let b = base.unwrap_or(NbEnvConfig {
-                mgmt_url: "", token_env_var: "", site_prefix: "", rosenpass: false,
-            });
-            Some(NbEnvConfig {
-                mgmt_url: leak_or(url, b.mgmt_url),
-                token_env_var: leak_or(tok, b.token_env_var),
-                site_prefix: leak_or(g.netbird_site_prefix.clone(), b.site_prefix),
-                rosenpass: g.netbird_rosenpass.unwrap_or(b.rosenpass),
-            })
-        }
-    }
+    let g = profile.goatnet_endpoints_for(env);
+    let (Some(url), Some(tok)) = (g.netbird_mgmt_url, g.netbird_token_env) else {
+        return None;
+    };
+    Some(NbEnvConfig {
+        mgmt_url: leak_or(Some(url), ""),
+        token_env_var: leak_or(Some(tok), ""),
+        site_prefix: leak_or(g.netbird_site_prefix, ""),
+        // Absent or unparseable is off: a transport is never turned on by omission.
+        rosenpass: g.netbird_rosenpass.unwrap_or(false),
+    })
 }
 
-/// NbEnvConfig holds `&'static str` because the table's values are literals.
-/// A profile-sourced value is owned, so it is leaked deliberately: it lives for
+/// NbEnvConfig holds `&'static str`. A profile-sourced value is owned, so it is
+/// leaked deliberately: it lives for
 /// the process either way, one allocation per goatnet per run, and the
 /// alternative is threading a lifetime through every native leg for no gain.
 fn leak_or(v: Option<String>, fallback: &'static str) -> &'static str {
     match v {
         Some(s) if !s.trim().is_empty() => Box::leak(s.into_boxed_str()),
         _ => fallback,
-    }
-}
-
-fn native_netbird_config(env: Option<&str>) -> Option<NbEnvConfig> {
-    match env? {
-        "zagros" => Some(NbEnvConfig {
-            mgmt_url: "https://netbird.zagros.example",
-            token_env_var: "ZAGROS_NB_API_TOKEN",
-            site_prefix: "ZAGROS",
-            rosenpass: true,
-        }),
-        "zagros-prod" => Some(NbEnvConfig {
-            mgmt_url: "https://netbird.zagros-prod.example",
-            token_env_var: "ZAGROS_PROD_NB_API_TOKEN",
-            site_prefix: "ZAGROS-PROD",
-            rosenpass: true,
-        }),
-        // mgmt_url = public_mgmt_fqdn, site_prefix =
-        // netbird_acl_taxonomy[<env>].site_prefix, and rosenpass FALSE
-        // because the goatnet's group_vars pin rosenpass_enabled
-        // false — this table must not turn on a transport the goatnet has not.
-        "zagros-dev" => Some(NbEnvConfig {
-            mgmt_url: "https://netbird.zagros-dev.example",
-            token_env_var: "ZAGROS_DEV_NB_API_TOKEN",
-            site_prefix: "ZAGROS-DEV",
-            rosenpass: false,
-        }),
-        _ => None,
     }
 }
 
@@ -5572,6 +5495,7 @@ fn render_bundle_md(
 /// nothing Zenoh-side consumed and the onboard is cleanly retryable.
 async fn provision_netbird_native(
     env: Option<&str>,
+    profile: &crate::profile::Profile,
     handle: &str,
     nb: &MfNetbird,
     org_short_tag: &str,
@@ -5580,12 +5504,12 @@ async fn provision_netbird_native(
     if !nb.enabled {
         return Ok(None);
     }
-    let cfg = match native_netbird_config(env) {
+    let cfg = match native_netbird_config_for(env, profile) {
         Some(c) => c,
         None => {
             eprintln!(
-                "note: native NetBird onboard supports zagros/zagros-prod/zagros-dev only; env `{}` has no \
-                 native config — provision the mesh leg via the Ansible path.",
+                "note: no NetBird facts for goatnet `{}` — run `goat context refresh` in that \
+                 goatnet's context (it reads get.<site>/goatnet.toml); the mesh leg is skipped.",
                 env.unwrap_or("(none)")
             );
             return Ok(None);
@@ -5787,12 +5711,16 @@ async fn revoke_keys(
 /// Revoke the setup keys a native onboard minted, after a LATER leg failed
 /// (#1587). Without this a failed-then-retried mint left the first attempt's
 /// keys valid and unsent: live enrolment credentials nobody was given.
-async fn revoke_minted_setup_keys(env: Option<&str>, nb: Option<&NbProvision>) {
+async fn revoke_minted_setup_keys(
+    env: Option<&str>,
+    profile: &crate::profile::Profile,
+    nb: Option<&NbProvision>,
+) {
     let Some(nb) = nb else { return };
     if keys_to_revoke_after_failure(&nb.minted).is_empty() {
         return;
     }
-    let Some(cfg) = native_netbird_config(env) else { return };
+    let Some(cfg) = native_netbird_config_for(env, profile) else { return };
     let token = std::env::var(cfg.token_env_var).unwrap_or_default();
     if token.trim().is_empty() {
         eprintln!(
@@ -6049,13 +5977,20 @@ async fn reissue_handset_key_native(
              Raise it in the manifest first."
         );
     }
-    let cfg = native_netbird_config(env).ok_or_else(|| {
+    // With no --env the key is for the active context's goatnet: the one its
+    // profile names, else the context's own name.
+    let envname: String = env
+        .map(str::to_string)
+        .or_else(|| profile.goatnet_endpoints().goatnet)
+        .unwrap_or_else(|| profile.context.clone());
+    let envname = envname.as_str();
+    let cfg = native_netbird_config_for(env, profile).ok_or_else(|| {
         anyhow::anyhow!(
-            "env `{}` has no native NetBird config — the handset key can only be reissued natively.",
-            env.unwrap_or("nova")
+            "no NetBird facts for goatnet `{}` — run `goat context refresh` in that goatnet's context; \
+             the handset key is reissued natively only.",
+            envname
         )
     })?;
-    let envname = env.unwrap_or("nova");
     let tag = manifest.org.short_tag.trim().to_string();
     let date = chrono::Local::now().format("%Y-%m-%d").to_string();
     let key_name = peername::mint(handle, &tag, envname, &date);
@@ -6231,8 +6166,11 @@ async fn reissue_device_key_native(
     let Some(envname) = env.filter(|e| !e.trim().is_empty()) else {
         anyhow::bail!("--reissue-device-key needs --env <goatnet>: a key is minted on one goatnet");
     };
-    let cfg = native_netbird_config(Some(envname)).ok_or_else(|| {
-        anyhow::anyhow!("env `{envname}` has no native NetBird config — the device key can only be reissued natively.")
+    let cfg = native_netbird_config_for(Some(envname), profile).ok_or_else(|| {
+        anyhow::anyhow!(
+            "no NetBird facts for goatnet `{envname}` — run `goat context refresh` in that goatnet's \
+             context; the device key is reissued natively only."
+        )
     })?;
     let manifest = read_reissue_manifest(&repo_root, handle, Some(envname))?;
     if let Some((_, m)) = &manifest {
@@ -6434,71 +6372,26 @@ pub(crate) fn ssh_proxy_for(env: &str) -> Option<String> {
         .filter(|v| !v.is_empty())
 }
 
-/// Profile-first Ory config, same overlay rule as the NetBird one: a context's
-/// declared fields win, omissions keep the table's, and a context declaring an
-/// auth URL plus an SSH host is enough for a goatnet the table lacks.
+/// Ory config for `env`, from the context whose profile names that goatnet. An
+/// auth URL and an SSH host are both required; without them the login leg is
+/// skipped with a pointer to `goat context refresh`.
 pub(crate) fn native_ory_config_for(
     env: Option<&str>,
     profile: &crate::profile::Profile,
 ) -> Option<OryEnvConfig> {
-    let g = profile.goatnet_endpoints();
-    let base = native_ory_config(env);
-    match (base.is_none(), g.ory_auth_url.clone(), g.ory_ssh_host.clone()) {
-        (true, None, _) | (true, _, None) => None,
-        _ => {
-            let kratos_admin_url = std::env::var("GOAT_ONBOARD_KRATOS_ADMIN_URL")
-                .unwrap_or_else(|_| "http://127.0.0.1:4434".to_string());
-            let b = base.unwrap_or(OryEnvConfig {
-                ssh_host: "", ssh_user: "", kratos_admin_url: String::new(), auth_url: "",
-                ssh_proxy: None,
-            });
-            Some(OryEnvConfig {
-                ssh_host: leak_or(g.ory_ssh_host.clone(), b.ssh_host),
-                ssh_user: leak_or(g.ory_ssh_user.clone(), b.ssh_user),
-                kratos_admin_url,
-                auth_url: leak_or(g.ory_auth_url.clone(), b.auth_url),
-                ssh_proxy: b.ssh_proxy.or_else(|| env.and_then(ssh_proxy_for)),
-            })
-        }
-    }
-}
-
-pub(crate) fn native_ory_config(env: Option<&str>) -> Option<OryEnvConfig> {
-    // The Kratos admin API binds 127.0.0.1:4434 in-container on the Thor (no auth
-    // of its own — reachable only from the Thor). When the onboard runs ON the
-    // Thor as a CONTAINER (the onboard-runner) it can't use the host loopback, so
-    // it reaches a sibling Kratos container by name — GOAT_ONBOARD_KRATOS_ADMIN_URL
-    // overrides the default (e.g. http://<env>-kratos:4434).
+    let g = profile.goatnet_endpoints_for(env);
+    let (Some(auth_url), Some(ssh_host)) = (g.ory_auth_url, g.ory_ssh_host) else {
+        return None;
+    };
     let kratos_admin_url = std::env::var("GOAT_ONBOARD_KRATOS_ADMIN_URL")
         .unwrap_or_else(|_| "http://127.0.0.1:4434".to_string());
-    match env? {
-        "zagros" => Some(OryEnvConfig {
-            ssh_host: "100.127.0.179",
-            ssh_user: "goat",
-            kratos_admin_url,
-            auth_url: "https://auth.zagros.netbird.zagros.example",
-            ssh_proxy: ssh_proxy_for("zagros"),
-        }),
-        "zagros-prod" => Some(OryEnvConfig {
-            ssh_host: "100.127.0.221",
-            // This goatnet uses its own baseline SSH account, declared in its inventory.
-            ssh_user: "goat",
-            kratos_admin_url,
-            auth_url: "https://auth.zagros-prod.examplebird.zagros-prod.example",
-            ssh_proxy: ssh_proxy_for("zagros-prod"),
-        }),
-        // ssh_host is mesh_ip_a from the goatnet's group_vars; the on-Thor runner sets
-        // GOAT_ONBOARD_KRATOS_LOCAL=1 and never uses it, but a laptop-run
-        // onboard against this goatnet does.
-        "zagros-dev" => Some(OryEnvConfig {
-            ssh_host: "100.127.0.152",
-            ssh_user: "goat",
-            kratos_admin_url,
-            auth_url: "https://auth.zagros-dev.examplebird.zagros-dev.example",
-            ssh_proxy: ssh_proxy_for("zagros-dev"),
-        }),
-        _ => None,
-    }
+    Some(OryEnvConfig {
+        ssh_host: leak_or(Some(ssh_host), ""),
+        ssh_user: leak_or(g.ory_ssh_user, ""),
+        kratos_admin_url,
+        auth_url: leak_or(Some(auth_url), ""),
+        ssh_proxy: env.and_then(ssh_proxy_for),
+    })
 }
 
 /// Result of the native Ory leg: the login pointer + whatever credential was
@@ -6905,6 +6798,7 @@ fn identity_resync_patch(
 /// silently partial).
 async fn provision_ory_native(
     env: Option<&str>,
+    profile: &crate::profile::Profile,
     handle: &str,
     manifest: &OnboardManifest,
     dry_run: bool,
@@ -6914,12 +6808,12 @@ async fn provision_ory_native(
         return Ok(None);
     }
     let envname = env.unwrap_or("(none)");
-    let cfg = match native_ory_config(env) {
+    let cfg = match native_ory_config_for(env, profile) {
         Some(c) => c,
         None => {
             eprintln!(
-                "note: native Ory onboard supports zagros/zagros-prod/zagros-dev only; env `{envname}` has no \
-                 native config — provision the OIDC login via the Ansible path."
+                "note: no Ory facts for goatnet `{envname}` — run `goat context refresh` in that \
+                 goatnet's context (it reads get.<site>/goatnet.toml); the login leg is skipped."
             );
             return Ok(None);
         }
@@ -7743,7 +7637,7 @@ fn native_revoke_eligibility(
         .map_err(|e| anyhow::anyhow!("parse {}: {e}", manifest_path.display()))?;
     if native_netbird_config_for(env, profile).is_none() {
         return Ok(Some(format!(
-            "env `{}` has no native NetBird/Ory config (native revoke covers zagros/zagros-prod/zagros-dev)",
+            "no NetBird/Ory facts for goatnet `{}` — run `goat context refresh` in that goatnet's context",
             env.unwrap_or("(none)")
         )));
     }
@@ -8954,7 +8848,7 @@ async fn onboard_native(
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
         .unwrap_or(false);
     let ory_applies = manifest.ory_site.enabled
-        && native_ory_config(env).is_some()
+        && native_ory_config_for(env, &ctx.profile).is_some()
         && (manifest.ory_site.sites.is_empty()
             || manifest
                 .ory_site
@@ -9105,6 +8999,7 @@ async fn onboard_native(
         // NetBird leg first (matches real ordering); prints its plan, mints nothing.
         provision_netbird_native(
             env,
+            &ctx.profile,
             handle,
             &manifest.netbird,
             &manifest.org.short_tag,
@@ -9124,7 +9019,7 @@ async fn onboard_native(
             eprintln!("dry-run: zenoh.enabled=false — skipping the Zenoh slot mint (browse/web-only tier)");
         }
         // Ory leg last (matches real ordering); prints its plan, creates nothing.
-        provision_ory_native(env, handle, &manifest, true).await?;
+        provision_ory_native(env, &ctx.profile, handle, &manifest, true).await?;
         eprintln!(
             "dry-run: would render the bundle → {}",
             bundle_md_path.display()
@@ -9172,6 +9067,7 @@ async fn onboard_native(
     // consumed and the onboard is cleanly retryable. Hard failures bail here.
     let nb_prov = match provision_netbird_native(
         env,
+        &ctx.profile,
         handle,
         &manifest.netbird,
         &manifest.org.short_tag,
@@ -9227,7 +9123,7 @@ async fn onboard_native(
         match portal.onboard_org(req).await {
             Ok(o) => Some(o),
             Err(PortalError::Http { status, .. }) if status.as_u16() == 409 => {
-                revoke_minted_setup_keys(env, nb_prov.as_ref()).await;
+                revoke_minted_setup_keys(env, &ctx.profile, nb_prov.as_ref()).await;
                 finish_audit("failed", Some("409 already onboarded".into())).await;
                 anyhow::bail!(
                     "portal: `{prefix}` is already onboarded (HTTP 409) — its api_key + bundle are \
@@ -9238,7 +9134,7 @@ async fn onboard_native(
                 );
             }
             Err(e) => {
-                revoke_minted_setup_keys(env, nb_prov.as_ref()).await;
+                revoke_minted_setup_keys(env, &ctx.profile, nb_prov.as_ref()).await;
                 finish_audit("failed", Some(e.to_string())).await;
                 return Err(super::vendor::map_portal_err(e));
             }
@@ -9248,7 +9144,7 @@ async fn onboard_native(
     };
 
     if let Err(e) = std::fs::create_dir_all(&out_dir) {
-        revoke_minted_setup_keys(env, nb_prov.as_ref()).await;
+        revoke_minted_setup_keys(env, &ctx.profile, nb_prov.as_ref()).await;
         anyhow::bail!("create {}: {e}", out_dir.display());
     }
 
@@ -9268,7 +9164,7 @@ async fn onboard_native(
         anyhow::bail!(
             "refusing to write a bundle for `{handle}`: the manifest enables the NetBird mesh \
              surface but no leg provisioned anything, so the bundle would carry no credentials. \
-             This is the stub-mint shape (zagros-prod, 2026-08-04) — nothing was delivered and \
+             This is the stub-mint shape — nothing was delivered and \
              nothing should be reported as delivered. Check the leg warnings above, then re-run."
         );
     }
@@ -9282,7 +9178,7 @@ async fn onboard_native(
         None,
     );
     if let Err(e) = std::fs::write(&bundle_md_path, &md) {
-        revoke_minted_setup_keys(env, nb_prov.as_ref()).await;
+        revoke_minted_setup_keys(env, &ctx.profile, nb_prov.as_ref()).await;
         anyhow::bail!("write {}: {e}", bundle_md_path.display());
     }
 
@@ -9316,14 +9212,22 @@ async fn onboard_native(
     // portal delete the same revoke path uses) so the re-run is clean — no 409.
     // The browse/web-only tier (no slot minted) keeps the prior partial behavior:
     // there is nothing to orphan and the NetBird bundle is genuinely usable.
-    let (ory_prov, ory_error) = match provision_ory_native(env, handle, &manifest, false).await {
+    let (ory_prov, ory_error) = match provision_ory_native(
+        env,
+        &ctx.profile,
+        handle,
+        &manifest,
+        false,
+    )
+    .await
+    {
         Ok(p) => (p, None),
         Err(e) => {
             // Every exit below fails the run, so nobody is sent the setup keys
             // this run minted; the browse-tier arm at the end does NOT fail, and
             // keeps them (#1587).
             if onboarded.is_some() {
-                revoke_minted_setup_keys(env, nb_prov.as_ref()).await;
+                revoke_minted_setup_keys(env, &ctx.profile, nb_prov.as_ref()).await;
             }
             if let Some(o) = onboarded.as_ref().filter(|o| o.reused) {
                 // A reused slot (#1576) existed before this onboard — it is the
@@ -9414,7 +9318,7 @@ async fn onboard_native(
         // A reused slot already carries a linkage; it must be this person's.
         // Never relink one person's slot to another (#1576).
         if let Some(msg) = reused_slot_identity_conflict(o, id) {
-            revoke_minted_setup_keys(env, nb_prov.as_ref()).await;
+            revoke_minted_setup_keys(env, &ctx.profile, nb_prov.as_ref()).await;
             finish_audit("failed", Some(msg.clone())).await;
             anyhow::bail!("{msg}");
         }
@@ -12779,6 +12683,57 @@ zenoh: { enabled: true, trial: { org: acme-corp-jane } }
         (td, p)
     }
 
+    /// Three goatnets' facts as context fixtures, read the way production reads
+    /// them: through a profile (`goatnet_endpoints_for`). goat itself holds no
+    /// goatnet; these exist only so the onboard tests have facts to render.
+    fn fixture_profile() -> &'static crate::profile::Profile {
+        use std::sync::OnceLock;
+        static P: OnceLock<(tempfile::TempDir, crate::profile::Profile)> = OnceLock::new();
+        &P.get_or_init(|| {
+            let td = tempfile::tempdir().expect("tempdir");
+            let facts = [
+                ("zagros", "tls/zenoh.zagros.netbird.zagros.example:7447", "https://netbird.zagros.example",
+                 "ZAGROS_NB_API_TOKEN", "ZAGROS", "https://auth.zagros.netbird.zagros.example", "192.0.2.10", "goat"),
+                ("zagros-prod", "tls/zenoh.zagros-prod.examplebird.zagros-prod.example:7447", "https://netbird.zagros-prod.example",
+                 "ZAGROS_PROD_NB_API_TOKEN", "ZAGROS-PROD", "https://auth.zagros-prod.examplebird.zagros-prod.example", "192.0.2.20", "goat"),
+                ("zagros-dev", "tls/zenoh.zagros-dev.examplebird.zagros-dev.example:7447", "https://netbird.zagros-dev.example",
+                 "ZAGROS_DEV_NB_API_TOKEN", "ZAGROS-DEV", "https://auth.zagros-dev.examplebird.zagros-dev.example", "192.0.2.30", "goat"),
+            ];
+            for (g, router, nb, tok, prefix, auth, host, user) in facts {
+                let d = td.path().join("contexts").join(g);
+                std::fs::create_dir_all(&d).expect("mkdir");
+                std::fs::write(
+                    d.join("profile.toml"),
+                    format!(
+                        "goatnet = \"{g}\"\nrouter_endpoint = \"{router}\"\nnetbird_mgmt_url = \"{nb}\"\n\
+                         netbird_token_env = \"{tok}\"\nnetbird_site_prefix = \"{prefix}\"\n\
+                         netbird_rosenpass = \"false\"\nory_auth_url = \"{auth}\"\n\
+                         ory_ssh_host = \"{host}\"\nory_ssh_user = \"{user}\"\n"
+                    ),
+                )
+                .expect("write");
+            }
+            let p = crate::profile::Profile { dir: td.path().to_path_buf(), context: "zagros".to_string() };
+            (td, p)
+        })
+        .1
+    }
+
+    fn native_router_endpoint(env: Option<&str>) -> Option<&'static str> {
+        env?;
+        native_router_endpoint_for(env, fixture_profile()).map(|s| &*Box::leak(s.into_boxed_str()))
+    }
+
+    fn native_netbird_config(env: Option<&str>) -> Option<NbEnvConfig> {
+        env?;
+        native_netbird_config_for(env, fixture_profile())
+    }
+
+    fn native_ory_config(env: Option<&str>) -> Option<OryEnvConfig> {
+        env?;
+        native_ory_config_for(env, fixture_profile())
+    }
+
     #[test]
     fn a_context_can_serve_a_goatnet_the_table_never_heard_of() {
         // The F-485 case, inverted: no table row exists for this name, and the
@@ -12813,37 +12768,29 @@ ory_ssh_user = "operator"
     }
 
     #[test]
-    fn an_empty_profile_leaves_every_table_value_alone() {
-        // Old bundles must be unaffected: all-None means the built-in row wins.
+    fn a_profile_without_facts_resolves_no_native_leg() {
+        // goat holds no goatnet: a context that has not been refreshed knows none,
+        // and every leg says so instead of guessing.
         let (_td, p) = profile_with("portal_endpoint = \"http://portal:8090\"\n");
-        assert_eq!(
-            native_router_endpoint_for(Some("zagros"), &p).as_deref(),
-            native_router_endpoint(Some("zagros"))
-        );
-        let nb = native_netbird_config_for(Some("zagros"), &p).expect("zagros is in the table");
-        assert_eq!(nb.mgmt_url, "https://netbird.zagros.example");
-        assert!(nb.rosenpass, "zagros's table value is rosenpass ON and must survive");
+        assert!(native_router_endpoint_for(Some("zagros"), &p).is_none());
+        assert!(native_netbird_config_for(Some("zagros"), &p).is_none());
+        assert!(native_ory_config_for(Some("zagros"), &p).is_none());
     }
 
     #[test]
-    fn rosenpass_is_never_flipped_by_an_absent_or_bad_value() {
-        // Turning an intra-mesh transport on or off by omission is the one
-        // mistake this overlay must not make.
-        let (_td, absent) = profile_with("netbird_mgmt_url = \"https://x\"\n");
-        assert!(
-            native_netbird_config_for(Some("zagros"), &absent).unwrap().rosenpass,
-            "absent must keep zagros's ON"
-        );
-        let (_td2, garbage) = profile_with("netbird_rosenpass = \"perhaps\"\n");
-        assert!(
-            native_netbird_config_for(Some("zagros"), &garbage).unwrap().rosenpass,
-            "an unparseable value must keep the table's, not silently mean false"
-        );
-        let (_td3, off) = profile_with("netbird_rosenpass = \"false\"\n");
-        assert!(
-            !native_netbird_config_for(Some("zagros"), &off).unwrap().rosenpass,
-            "an explicit false must be honoured"
-        );
+    fn rosenpass_is_on_only_when_the_goatnet_says_true() {
+        // Turning an intra-mesh transport on by omission is the one mistake this
+        // must not make.
+        let base = "netbird_mgmt_url = \"https://x\"\nnetbird_token_env = \"T\"\n";
+        for (extra, on) in [
+            ("", false),
+            ("netbird_rosenpass = \"perhaps\"\n", false),
+            ("netbird_rosenpass = \"false\"\n", false),
+            ("netbird_rosenpass = \"true\"\n", true),
+        ] {
+            let (_td, p) = profile_with(&format!("{base}{extra}"));
+            assert_eq!(native_netbird_config_for(Some("zagros"), &p).unwrap().rosenpass, on, "{extra:?}");
+        }
     }
 
     #[test]
@@ -12856,23 +12803,19 @@ ory_ssh_user = "operator"
     }
 
     #[test]
-    fn native_tables_cover_every_declared_goatnet() {
-        for env in NATIVE_GOATNETS {
+    fn a_context_carrying_goatnet_toml_gives_every_native_leg_its_config() {
+        // Every leg reads the same profile, so a goatnet whose context carries the
+        // published facts is known to all three legs or to none.
+        for env in ["zagros", "zagros-prod", "zagros-dev"] {
             assert!(
                 native_router_endpoint(Some(env)).is_some(),
-                "native_router_endpoint has no row for goatnet {env:?} — a Zenoh \
-                 leg would be skipped. Add it, or remove {env:?} from NATIVE_GOATNETS."
+                "{env}: fabric leg"
             );
             assert!(
                 native_netbird_config(Some(env)).is_some(),
-                "native_netbird_config has no row for goatnet {env:?} — a mesh \
-                 setup key would be skipped. Add it, or remove {env:?} from NATIVE_GOATNETS."
+                "{env}: mesh leg"
             );
-            assert!(
-                native_ory_config(Some(env)).is_some(),
-                "native_ory_config has no row for goatnet {env:?} — the site login \
-                 would be skipped. Add it, or remove {env:?} from NATIVE_GOATNETS."
-            );
+            assert!(native_ory_config(Some(env)).is_some(), "{env}: login leg");
         }
     }
 
@@ -13018,8 +12961,10 @@ ory_ssh_user = "operator"
 
     #[test]
     fn native_netbird_config_carries_rosenpass_flag() {
-        // The canary goatnet is on; unknown env → None; no env → None (no silent default).
-        assert!(native_netbird_config(Some("zagros")).unwrap().rosenpass);
+        // Rosenpass is off on every live goatnet, matching each
+        // goatnet's rosenpass_enabled; unknown env → None; no env → None.
+        assert!(!native_netbird_config(Some("zagros")).unwrap().rosenpass);
+        assert!(!native_netbird_config(Some("zagros-prod")).unwrap().rosenpass);
         assert!(native_netbird_config(None).is_none());
         assert!(native_netbird_config(Some("vega")).is_none());
     }
@@ -13096,7 +13041,7 @@ ory_ssh_user = "operator"
     #[test]
     fn native_ory_config_known_and_unknown() {
         let zagros = native_ory_config(Some("zagros")).unwrap();
-        assert_eq!(zagros.ssh_host, "100.127.0.179");
+        assert_eq!(zagros.ssh_host, "192.0.2.10");
         assert_eq!(zagros.kratos_admin_url, "http://127.0.0.1:4434");
         assert!(native_ory_config(Some("vega")).is_none());
         // No --env resolves to no config: an unset env never means a goatnet.
@@ -13145,7 +13090,7 @@ ory_ssh_user = "operator"
         let args = ssh_kratos_argv(&cfg, "curl -sS http://127.0.0.1:4434/admin/identities");
         assert!(args.iter().any(|a| a == "BatchMode=yes"));
         assert!(args.iter().any(|a| a == "ConnectTimeout=15"));
-        assert_eq!(args[args.len() - 2], "goat@100.127.0.179");
+        assert_eq!(args[args.len() - 2], "goat@192.0.2.10");
         // The remote command is the last word; the body (secrets) is never here.
         assert_eq!(
             args[args.len() - 1],
@@ -13471,30 +13416,6 @@ ory_ssh_user = "operator"
             .contains("no zenoh.trial.org"));
         // missing manifest → Err (caller falls back to Ansible).
         assert!(native_eligibility(Some(td.path()), "ghost", Some("zagros")).is_err());
-    }
-
-    /// The three per-env config tables must agree on which goatnets --native
-    /// supports. A goatnet in one table but not the others passes the leg that
-    /// has an arm and silently skips the ones that don't.
-    #[test]
-    fn native_env_tables_cover_the_same_goatnets() {
-        // NATIVE_GOATNETS, not a second copy of the list: a guard against a missing
-        // goatnet must not itself be a hardcoded list nobody edits when one is stood up.
-        for env in NATIVE_GOATNETS {
-            let e = Some(*env);
-            assert!(
-                native_netbird_config(e).is_some(),
-                "{env}: native_netbird_config has no arm — the mesh leg would silently skip"
-            );
-            assert!(
-                native_ory_config(e).is_some(),
-                "{env}: native_ory_config has no arm — the login leg would silently skip"
-            );
-            assert!(
-                native_router_endpoint(e).is_some(),
-                "{env}: native_router_endpoint has no arm — the fabric leg would silently skip"
-            );
-        }
     }
 
     /// An env absent from the tables must be recognizable as unsupported by

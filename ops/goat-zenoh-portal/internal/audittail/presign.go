@@ -37,7 +37,7 @@ func NewPresigner(cfg Config) *Presigner {
 		cfg.Region = "us-east-1"
 	}
 	if cfg.SubscriberID == "" {
-		cfg.SubscriberID = "nova-a"
+		cfg.SubscriberID = "site-A"
 	}
 	return &Presigner{cfg: cfg, cli: &http.Client{Timeout: 30 * time.Second}}
 }
@@ -74,7 +74,7 @@ func sinceStartAfter(prefix string, since time.Time) string {
 		return ""
 	}
 	u := since.UTC()
-	// e.g. "nova-a/2026/06/12/14/1781279545000" — the same hour-partition path
+	// e.g. "site-A/2026/06/12/14/1781279545000" — the same hour-partition path
 	// the audit-subscriber writes, then the epoch-millis (fixed 13-digit
 	// width, so lexical order == chronological order).
 	return prefix + u.Format("2006/01/02/15/") + strconv.FormatInt(u.UnixMilli(), 10)

@@ -71,8 +71,12 @@ import time
 import urllib.request
 import fcntl
 
-API = os.environ.get("NB_API", "https://netbird.zagros.example")
-SITE = os.environ.get("GOATNET", "zagros")
+# No built-in goatnet: the management API and the goatnet's name come from the
+# environment. The peerview role's unit carries both in its EnvironmentFile
+# (/etc/goat/lifecycle-sweep.env) and the onboard runner sets both on the
+# command it runs; a hand-run names them the same way.
+API = os.environ.get("NB_API", "")
+SITE = os.environ.get("GOATNET", "")
 
 # ADR 1136 D2. Days.
 PERSON_QUARANTINE, PERSON_REVOKE = 14, 60
@@ -303,6 +307,9 @@ def container_env(name, key):
 
 
 def api(path, method="GET", body=None, token=""):
+    if not API:
+        raise SystemExit("NB_API is not set: the goatnet's management API base URL "
+                         "(/etc/goat/lifecycle-sweep.env carries it on a mgmt host).")
     req = urllib.request.Request(API + path, method=method)
     req.add_header("Authorization", "Token " + token)
     req.add_header("Content-Type", "application/json")
@@ -949,6 +956,11 @@ def main():
                     help="Governed scope, --lane quarantine: write the hold entries here "
                          "instead of stdout.")
     a = ap.parse_args()
+    if not SITE:
+        print("GOATNET is not set: the goatnet this sweep reads "
+              "(/etc/goat/lifecycle-sweep.env carries it, with NB_API, on a mgmt host).",
+              file=sys.stderr)
+        return 2
     governed = membership_file()
     if a.apply:
         if not a.lane:
@@ -1000,15 +1012,18 @@ def main():
               file=sys.stderr)
 
     # NB_TOKEN first, and it is what the systemd unit supplies via its
-    # EnvironmentFile. The two fallbacks below are goatnet-specific and exist for
-    # hand-runs on that goatnet's mgmt host; a scheduled guard must not depend
-    # on them. Scraping the token out of a running container needs `sudo docker`,
-    # which forces the unit to hold docker-socket write access and defeats the
-    # confinement the guard-scheduling contract asks for — and it silently reads
-    # the wrong goatnet's variable name on any other host.
+    # EnvironmentFile. The two fallbacks below exist for hand-runs on a
+    # goatnet's mgmt host; a scheduled guard must not depend on them. Scraping
+    # the token out of a running container needs `sudo docker`, which forces the
+    # unit to hold docker-socket write access and defeats the confinement the
+    # guard-scheduling contract asks for. Both names carry the goatnet's own
+    # prefix (<SITE>_NB_API_TOKEN is the name the onboard-runner role renders
+    # and the runner reads; <SITE>_PORTAL_NB_SVC_TOKEN is the operator variable
+    # ops/netbird/service-identities.yaml declares).
+    site_env = SITE.upper().replace("-", "_")
     token = (os.environ.get("NB_TOKEN", "")
-             or container_env("onboard-runner", "ZAGROS_NB_API_TOKEN")
-             or os.environ.get("ZAGROS_PORTAL_NB_SVC_TOKEN", "")).strip()
+             or container_env("onboard-runner", site_env + "_NB_API_TOKEN")
+             or os.environ.get(site_env + "_PORTAL_NB_SVC_TOKEN", "")).strip()
     if not token:
         print("no NetBird API token available", file=sys.stderr)
         return 2

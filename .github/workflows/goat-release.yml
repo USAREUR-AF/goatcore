@@ -27,3 +27,6 @@ jobs:
       bin: goat
       tag_prefix: goat-cli-v
       notes: goat.md
+      # The book the goat-docs role serves at docs.<site>, built from this tag.
+      docs_script: docs/goat-cli-book/build.sh
+      docs_asset: goat-docs.tar.gz

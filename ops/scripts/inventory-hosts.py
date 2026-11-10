@@ -9,11 +9,31 @@ Prints nothing and exits 0 when the group does not exist, because "this site has
 no hosts yet" is the normal state before a standup's first phase, not an error.
 """
 import argparse
+import getpass
 import re
 import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
+
+
+def default_user() -> str:
+    """The account this project reaches a machine as: deploy.ssh_user in
+    ops/goatbuilder/goatbuilder.yaml, else the login name, which is what ssh
+    itself uses."""
+    try:
+        lines = (REPO / "ops/goatbuilder/goatbuilder.yaml").read_text().splitlines()
+    except OSError:
+        lines = []
+    inside = False
+    for line in lines:
+        if line[:1] not in ("", " ", "\t", "#"):
+            inside = line.rstrip() == "deploy:"
+        elif inside and line.strip().startswith("ssh_user:"):
+            value = line.split(":", 1)[1].split("#", 1)[0].strip().strip("'\"")
+            if value:
+                return value
+    return getpass.getuser()
 
 
 def main() -> int:
@@ -31,7 +51,7 @@ def main() -> int:
                          "(user from ansible_user=, else --user); a host with no "
                          "ansible_host= is skipped. For tools that need a reachable "
                          "address, e.g. the Forgejo bot mint in goat-standup.sh")
-    ap.add_argument("--user", default="goat",
+    ap.add_argument("--user", default=default_user(),
                     help="ssh user when the inventory line carries no ansible_user=")
     a = ap.parse_args()
 

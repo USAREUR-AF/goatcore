@@ -37,7 +37,7 @@
       (e.g. netbird.nova.example, netbird-prod.goat.example) — it has NO
       role default (fail-closed per docs/design/instance-variability-model.md),
       so a forgotten override fails here instead of silently rendering
-      legacy URLs into this instance's identity plane.
+      another instance's URLs into this instance's identity plane.
 
 - name: Require secrets
   ansible.builtin.assert:
@@ -186,11 +186,32 @@
     state: directory
     mode: "0755"
 
+# A claim map records our relying-party id in metadata_public.external_subjects
+# (`local client_id = '...';`). The committed file carries the example
+# goatnet's id; a provider's `subject_client_id` replaces it with this
+# goatnet's own, so the recorded binding names the RP the IdP really issued to.
+- name: ICAM claim-maps | subject_client_id is a plain identifier
+  ansible.builtin.assert:
+    that:
+      - item.subject_client_id is not defined or (item.subject_client_id is match('^[A-Za-z0-9][A-Za-z0-9:./_-]*$'))
+    fail_msg: "icam_federation provider {{ item.id }}: subject_client_id must be a plain identifier (letters, digits, : . / _ -)"
+    quiet: true
+  loop: "{{ icam_federation.providers | default([]) }}"
+  loop_control:
+    label: "{{ item.id }}"
+  when: icam_federation.enabled | default(false) | bool
+
 - name: Sync referenced ICAM claim-maps into the config dir
   ansible.builtin.copy:
-    src: "{{ playbook_dir }}/../identity/claim-maps/{{ item.claim_map | default(item.id) }}.jsonnet"
+    content: "{{ _claim_map_out }}"
     dest: "{{ ory_compose_dir }}/{{ ory_config_subdir }}/claim-maps/{{ item.claim_map | default(item.id) }}.jsonnet"
     mode: "0644"
+  vars:
+    _claim_map_src: "{{ lookup('file', playbook_dir ~ '/../identity/claim-maps/' ~ (item.claim_map | default(item.id)) ~ '.jsonnet', rstrip=False) }}"
+    _claim_map_out: >-
+      {{ _claim_map_src if item.subject_client_id is not defined
+         else _claim_map_src | regex_replace("(?m)^local client_id = '[^'\\n]*';",
+                                             "local client_id = '" ~ item.subject_client_id ~ "';") }}
   loop: "{{ icam_federation.providers | default([]) }}"
   loop_control:
     label: "{{ item.claim_map | default(item.id) }}.jsonnet"

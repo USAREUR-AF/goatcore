@@ -17,7 +17,7 @@ import (
 // credentials (NetBird token / SSH / portal operator key for the cert mint) live
 // in the process env and are handed to `goat`, not to this client.
 type portalClient struct {
-	base string // e.g. https://portal.zagros.netbird.zagros.example
+	base string // e.g. https://portal.galaxy.example
 	key  string // operator-tier bearer key
 	http *http.Client
 }

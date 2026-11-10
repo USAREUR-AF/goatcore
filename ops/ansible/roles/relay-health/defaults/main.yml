@@ -26,6 +26,12 @@ relay_health_compose_file: /opt/mgmt-host/docker-compose.relay-health.yml
 # zenoh-cardinality-budget-and-lazy-crawler.md §4. Flip both in the SAME
 # group_vars change.
 relay_health_fabric_sampler_enabled: true
+# The sampler unit enters the router container the health probe enters and
+# reports under the probe's router name (zenoh-health-probe.env.j2):
+#   relay_health_fabric_sampler_router_container   defaults to zenoh_health_router_container,
+#                                                  else "{{ zenoh_stack }}-router"
+#   relay_health_fabric_sampler_router_name        defaults to zenoh_health_router_name,
+#                                                  else zenoh_health_goatnet, else site_id
 
 # --- iperf3 capacity-probe target (the stable endpoint hosts speed-test to) ---
 # Enabled on the always-on cloud box (per-goatnet group_vars). Binds ONLY

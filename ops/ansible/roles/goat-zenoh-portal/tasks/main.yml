@@ -145,7 +145,7 @@
     public: true
 
 # ---------------------------------------------------------------------------
-# Cloudflare DNS publish — mirrors the demogame + panoscope pattern.
+# Cloudflare DNS publish — mirrors the airdefenders + panoscope pattern.
 # Runs only when portal_publish_cloudflare_dns is true; delegate_to:
 # localhost so the API call leaves the operator workstation, not the
 # target host. Auth via CLOUDFLARE_API_TOKEN env var resolved through
@@ -370,42 +370,8 @@
         path: /usr/local/bin/cert-sign
       register: portal_cert_sign_bin
 
-    - name: Build cert-sign on the controller for this host's architecture (missing on the host)
-      ansible.builtin.command:
-        argv:
-          - go
-          - build
-          - -tags
-          - nopiv
-          - -o
-          - "{{ playbook_dir }}/../../.cert-sign-{{ inventory_hostname }}"
-          - ./cmd/cert-sign
-        chdir: "{{ playbook_dir }}/../enrollment"
-      environment:
-        GOOS: linux
-        GOARCH: "{{ 'arm64' if ansible_architecture in ['aarch64', 'arm64'] else 'amd64' }}"
-        CGO_ENABLED: "0"
-      delegate_to: localhost
-      become: false
-      when: not portal_cert_sign_bin.stat.exists
-      changed_when: true
-
-    - name: Install cert-sign on the host (missing on the host)
-      ansible.builtin.copy:
-        src: "{{ playbook_dir }}/../../.cert-sign-{{ inventory_hostname }}"
-        dest: /usr/local/bin/cert-sign
-        mode: "0755"
-        owner: root
-        group: root
-      become: true
-      when: not portal_cert_sign_bin.stat.exists
-
-    - name: Remove the controller-side build artefact
-      ansible.builtin.file:
-        path: "{{ playbook_dir }}/../../.cert-sign-{{ inventory_hostname }}"
-        state: absent
-      delegate_to: localhost
-      become: false
+    - name: Build and install cert-sign (missing on the host)
+      ansible.builtin.include_tasks: cert-sign-install.yml
       when: not portal_cert_sign_bin.stat.exists
 
     - name: Stat the host cert-sign binary again
@@ -482,16 +448,44 @@
   # ops/operators/{{ portal_roster_env }}/ — the manifests this goatnet's own
   # console minted — so no other environment's people can reach this host.
 
-- name: Copy release-set registry (release-sets.yaml) from controller
+- name: Refuse a malformed portal_release_sets declaration (ADR 1027)
+  ansible.builtin.assert:
+    that:
+      - portal_release_sets is sequence
+      - portal_release_sets is not string
+      - portal_release_sets | rejectattr('set', 'defined') | list | length == 0
+      - portal_release_sets | map(attribute='set') | map('string') | map('trim') | select('equalto', '') | list | length == 0
+      - portal_release_sets | map(attribute='set') | map('string') | map('trim') | unique | list | length == portal_release_sets | length
+    fail_msg: >-
+      portal_release_sets must be a list of {set, prefix, members} entries, each
+      with a non-blank, unique `set` (prefix defaults to release/<set>/, members
+      to []). Shape: ops/permissions/release-sets.yaml.
+    quiet: true
+  when: portal_release_sets_path | length > 0 and (portal_release_sets | default([]) | length) > 0
+
+- name: Render release-set registry from this goatnet's portal_release_sets
+  ansible.builtin.template:
+    src: release-sets.yaml.j2
+    dest: "{{ portal_release_sets_path }}"
+    mode: "0644"
+  when: portal_release_sets_path | length > 0 and (portal_release_sets | default([]) | length) > 0
+  notify: restart goat-zenoh-portal
+  # ADR 1027 (data-access program B2). A goatnet declares its own release sets
+  # in its group_vars; the Data-Access COP shows exactly those lanes.
+
+- name: Refuse the example release-set registry on a goatnet other than the example
+  ansible.builtin.include_tasks: release-sets-guard.yml
+  when: portal_release_sets_path | length > 0 and (portal_release_sets | default([]) | length) == 0
+
+- name: Copy the example release-set registry (release-sets.yaml) from controller
   ansible.builtin.copy:
     src: "{{ playbook_dir }}/../../ops/permissions/release-sets.yaml"
     dest: "{{ portal_release_sets_path }}"
     mode: "0644"
-  when: portal_release_sets_path | length > 0
+  when: portal_release_sets_path | length > 0 and (portal_release_sets | default([]) | length) == 0
   notify: restart goat-zenoh-portal
-  # ADR 1027 (data-access program B2). The committed release-set registry is the
-  # Data-Access COP's release-governance picture (org → release lane); edit
-  # ops/permissions/release-sets.yaml to change membership, then redeploy.
+  # ADR 1027 (data-access program B2). Reached only with
+  # portal_release_sets_use_example: true (the assert above).
 
 - name: Render partner slot blocks (ADR 1138) from the SAME group_var the router reads
   ansible.builtin.copy:
@@ -569,6 +563,35 @@
   when: portal_bundle_create_bin | length > 0
   notify: restart goat-zenoh-portal
 
+# portal_ca_root_cert_flag may be one flag or a list of candidates: an overlay
+# whose goatnets run portal images from different source trees lists every
+# name, and the role passes the first one the pinned image's `serve -h`
+# defines. A string is used as it is, with no probe.
+- name: CA-root flag | probe the pinned image when there is a choice
+  when: portal_ca_root_cert_flag is not string
+  ansible.builtin.command:
+    argv: [docker, run, --rm, "{{ portal_image }}", serve, -h]
+  register: portal_ca_root_flag_help
+  changed_when: false
+  failed_when: false
+  become: true
+
+- name: CA-root flag | the first candidate the pinned image defines
+  vars:
+    _help: "{{ (portal_ca_root_flag_help.stdout | default('')) ~ '\n' ~ (portal_ca_root_flag_help.stderr | default('')) }}"
+    _defined: "{{ _help | regex_findall('(?m)^\\s+-{1,2}([A-Za-z0-9][A-Za-z0-9._-]*)') }}"
+    _chosen: "{{ portal_ca_root_cert_flag | select('in', _defined | map('regex_replace', '^', '--') | list) | list }}"
+  when: portal_ca_root_cert_flag is not string
+  block:
+    - name: CA-root flag | refuse when the image defines none of the candidates
+      ansible.builtin.assert:
+        that: _chosen | length > 0
+        fail_msg: "{{ portal_image }} defines none of {{ portal_ca_root_cert_flag | join(', ') }}; the running portal is untouched."
+        quiet: true
+    - name: CA-root flag | use it
+      ansible.builtin.set_fact:
+        portal_ca_root_cert_flag_effective: "{{ _chosen | first }}"
+
 - name: Render docker-compose for portal
   ansible.builtin.template:
     src: docker-compose.yml.j2
@@ -645,6 +668,108 @@
   community.docker.docker_compose_v2_pull:
     project_src: "{{ portal_data_dir }}"
   changed_when: false
+
+# The image's CLI against the rendered command line, BEFORE anything restarts.
+# A flag the compose passes and the pinned binary does not define stops
+# `serve` at startup, and the settle-window check below only sees that after
+# the running container has been replaced. Probe the pinned image's
+# `serve -h` (the same probe the cert-sign block uses) and refuse here, while
+# the running portal is untouched. The rendered docker-compose.yml on disk is
+# already the new one; the next deploy with a matching configuration
+# re-renders it.
+- name: CLI surface | the serve flags the pinned image defines
+  ansible.builtin.command:
+    argv:
+      - docker
+      - run
+      - --rm
+      - "{{ portal_image }}"
+      - serve
+      - -h
+  register: portal_serve_help
+  changed_when: false
+  failed_when: false
+  become: true
+
+- name: CLI surface | the rendered compose file
+  ansible.builtin.slurp:
+    src: "{{ portal_data_dir }}/docker-compose.yml"
+  register: portal_compose_rendered
+  become: true
+
+- name: CLI surface | every flag the compose passes is one the image defines
+  vars:
+    _help: "{{ (portal_serve_help.stdout | default('')) ~ '\n' ~ (portal_serve_help.stderr | default('')) }}"
+    _defined: "{{ _help | regex_findall('(?m)^\\s+-{1,2}([A-Za-z0-9][A-Za-z0-9._-]*)') | unique }}"
+    _command: "{{ ((portal_compose_rendered.content | b64decode | from_yaml).services['goat-zenoh-portal'].command) | default([]) }}"
+    _passed: "{{ _command | map('string') | select('match', '^-') | map('regex_replace', '=.*$', '') | map('regex_replace', '^-+', '') | unique }}"
+    _missing: "{{ _passed | difference(_defined) }}"
+  ansible.builtin.assert:
+    that:
+      - _defined | length > 0
+      - _missing | length == 0
+    fail_msg: >-
+      {{ 'The pinned image printed no flags for `serve -h`, so its command line cannot be checked: ' ~ portal_image
+         if (_defined | length == 0) else
+         'The rendered command passes flags the pinned image does not define: ' ~ (_missing | map('regex_replace', '^', '--') | join(', '))
+         ~ '. `serve` would refuse them and the portal would crash-loop. The running portal is untouched. '
+         ~ 'The usual cause is a goatnet variable naming a flag from another source tree, such as '
+         ~ 'portal_ca_root_cert_flag; set it to a name ' ~ portal_image ~ ' defines.' }}
+    quiet: true
+
+# Subject O of minted leaves. portal.env carries PORTAL_CERT_SIGN_ORG from
+# goat_cert_organization; a portal image that reads it passes cert-sign --org on
+# every mint. A host cert-sign installed before --org existed rejects the flag,
+# so every mint would 500 — replace it with one built from this checkout, but
+# only when the pinned image passes the flag: a binary built from this tree run
+# WITHOUT --org stamps cert-sign's built-in default, not the goatnet's O.
+- name: Bring the host cert-sign up to --org (real-mint mode, organisation set)
+  when:
+    - not (portal_cert_sign_fake | bool)
+    - portal_cert_sign_org | trim | length > 0
+  block:
+    - name: Probe the pinned portal image for PORTAL_CERT_SIGN_ORG support
+      ansible.builtin.command:
+        argv:
+          - docker
+          - run
+          - --rm
+          - "{{ portal_image }}"
+          - serve
+          - -h
+      register: portal_image_help
+      changed_when: false
+      failed_when: false
+      become: true
+
+    - name: Probe the host cert-sign for the --org flag
+      ansible.builtin.command:
+        argv:
+          - /usr/local/bin/cert-sign
+          - -h
+      register: portal_cert_sign_help
+      changed_when: false
+      failed_when: false
+
+    - name: Read what the image and the host binary support
+      ansible.builtin.include_tasks: cert-sign-org-support.yml
+
+    - name: Rebuild cert-sign (the image passes --org; the host binary predates it)
+      ansible.builtin.include_tasks: cert-sign-install.yml
+      when:
+        - portal_image_passes_org | bool
+        - not (portal_cert_sign_has_org | bool)
+
+    - name: Restart the portal onto the rebuilt cert-sign
+      # The compose file bind-mounts the binary by path; a running container
+      # holds the replaced file until it restarts.
+      ansible.builtin.debug:
+        msg: cert-sign replaced; the portal restarts at the end of the play.
+      changed_when: true
+      notify: restart goat-zenoh-portal
+      when:
+        - portal_image_passes_org | bool
+        - not (portal_cert_sign_has_org | bool)
 
 # A Traefik router that names a middleware nothing defines does
 # not fail loudly — it goes into ERROR STATE and stops serving, which presents

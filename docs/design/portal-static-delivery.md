@@ -1,5 +1,8 @@
 # portal-static-delivery — how the portal frontend reaches a browser
 
+Browser credential handling follows the [browser session authentication contract](browser-session-authentication.md), including the HTTPS deployment requirement.
+
+
 | | |
 |---|---|
 | Scope | Delivery of `goat-zenoh-portal`'s embedded frontend and its JSON API to a browser: content encoding, cache revalidation, and the per-page request chain. Not the frontend's content or the API's semantics. |

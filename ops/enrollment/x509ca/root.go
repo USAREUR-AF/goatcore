@@ -17,9 +17,9 @@ import (
 // RootCertOptions configures GenerateRootCert. Zero values yield sensible
 // defaults documented per field.
 type RootCertOptions struct {
-	// Organization defaults to "goat".
+	// Organization defaults to DefaultOrganization.
 	Organization string
-	// CommonName defaults to "goat Root CA".
+	// CommonName defaults to DefaultRootCommonName.
 	CommonName string
 	// OrgUnit defaults to "offline-ca".
 	OrgUnit string
@@ -43,10 +43,10 @@ func GenerateRootCert(signer ca.Signer, opts RootCertOptions) (certPEM []byte, p
 		return nil, nil, errors.New("x509ca: nil ca signer")
 	}
 	if opts.Organization == "" {
-		opts.Organization = "goat"
+		opts.Organization = DefaultOrganization
 	}
 	if opts.CommonName == "" {
-		opts.CommonName = "goat Root CA"
+		opts.CommonName = DefaultRootCommonName
 	}
 	if opts.OrgUnit == "" {
 		opts.OrgUnit = "offline-ca"

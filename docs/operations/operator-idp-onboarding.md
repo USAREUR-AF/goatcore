@@ -35,7 +35,7 @@ SSH into the per-site Orin-C and run the enrollment script. Two examples:
 ```
 ssh <orin-c-host>
 sudo /usr/local/bin/operator-idp-enroll.sh \
-  --email person-17@example.org \
+  --email person-13@example.org \
   --name "Alice Admin" \
   --groups obs-admin
 ```
@@ -44,7 +44,7 @@ sudo /usr/local/bin/operator-idp-enroll.sh \
 
 ```
 sudo /usr/local/bin/operator-idp-enroll.sh \
-  --email person-23@example.org \
+  --email person-19@example.org \
   --name "Bob SRE" \
   --groups grafana-admin,minio-readonly,prometheus-readonly,alertmanager-admin
 ```
@@ -90,7 +90,7 @@ The simplest path is via Kratos admin API directly (no script wrapper yet — TB
 ```
 # Find the identity ID
 ssh <orin-c-host>
-curl -fsS http://127.0.0.1:4436/admin/identities | jq '.[] | select(.traits.email=="person-17@example.org") | .id'
+curl -fsS http://127.0.0.1:4436/admin/identities | jq '.[] | select(.traits.email=="person-13@example.org") | .id'
 
 # PATCH the groups (RFC 6902 JSON Patch)
 curl -fsS -X PATCH "http://127.0.0.1:4436/admin/identities/<id>" \

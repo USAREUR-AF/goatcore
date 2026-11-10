@@ -224,7 +224,7 @@ import { readResponse, request } from "/app.js";
         rootCALines = rootCALines.concat([
           el("dt", null, ["Root CA bundle"]),
           el("dd", null, [
-            el("a", { href: t.root_ca.bundle_url, download: "nova-root-ca.pem" }, ["download (.pem) ↓"])
+            el("a", { href: t.root_ca.bundle_url, download: "root-ca.pem" }, ["download (.pem) ↓"])
           ])
         ]);
       }

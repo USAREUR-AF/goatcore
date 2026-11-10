@@ -23,9 +23,9 @@ func getBody(t *testing.T, s *Server, path string) (int, string) {
 	return rec.Code, string(b)
 }
 
-// Default (nova-a) lexicon renders the historical wording and leaves no tokens.
-func TestStaticHandler_DefaultRendersNova(t *testing.T) {
-	cfg, err := config.LoadFromFlags(nil) // normalizes the empty lexicon to nova defaults
+// Default (site-A) lexicon renders the historical wording and leaves no tokens.
+func TestStaticHandler_DefaultRendersBuiltInLexicon(t *testing.T) {
+	cfg, err := config.LoadFromFlags(nil) // normalizes the empty lexicon to the built-in defaults
 	if err != nil {
 		t.Fatalf("LoadFromFlags: %v", err)
 	}
@@ -50,11 +50,11 @@ func TestStaticHandler_DefaultRendersNova(t *testing.T) {
 	}
 }
 
-// ZAGROS override renders the org wording; still no tokens left behind.
-func TestStaticHandler_ZAGROSOverride(t *testing.T) {
+// GALAXY override renders the org wording; still no tokens left behind.
+func TestStaticHandler_GoatnetOverride(t *testing.T) {
 	cfg, err := config.LoadFromFlags([]string{
-		"--lex-product-name", "ZAGROS Fabric",
-		"--lex-product-title", "ZAGROS Fabric Portal",
+		"--lex-product-name", "GALAXY Fabric",
+		"--lex-product-title", "GALAXY Fabric Portal",
 		"--lex-org", "org",
 	})
 	if err != nil {
@@ -67,17 +67,17 @@ func TestStaticHandler_ZAGROSOverride(t *testing.T) {
 		t.Fatalf("status = %d", code)
 	}
 	for _, want := range []string{
-		"ZAGROS Fabric — Portal",
-		"<h1>ZAGROS Fabric Portal</h1>",
+		"GALAXY Fabric — Portal",
+		"<h1>GALAXY Fabric Portal</h1>",
 		">Orgs</a>",
 		"register an org",
 	} {
 		if !strings.Contains(body, want) {
-			t.Errorf("ZAGROS render missing %q\nbody: %s", want, body)
+			t.Errorf("GALAXY render missing %q\nbody: %s", want, body)
 		}
 	}
 	if strings.Contains(body, "__LEX_") {
-		t.Errorf("unresolved token leaked into ZAGROS render:\n%s", body)
+		t.Errorf("unresolved token leaked into GALAXY render:\n%s", body)
 	}
 }
 

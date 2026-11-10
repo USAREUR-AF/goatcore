@@ -5,7 +5,7 @@
 | Status | Accepted |
 | Date | 2026-04-25 |
 | Repo scope | goat core |
-| Related | [`0103-crypto-boundary-discipline.md`](0103-crypto-boundary-discipline.md), [`0605-op-tee-key-custody.md`](0605-op-tee-key-custody.md), [`0606-tamper-response-zeroization.md`](0606-tamper-response-zeroization.md), `../design/os-baseline-and-luks.md` |
+| Related | [`0103-crypto-boundary-discipline.md`](0103-crypto-boundary-discipline.md), [`0605-op-tee-key-custody.md`](0605-op-tee-key-custody.md), [`0606-tamper-response-zeroization.md`](0606-tamper-response-zeroization.md), [`../design/os-baseline-and-luks.md`](../design/os-baseline-and-luks.md) |
 
 ## TL;DR (for a layperson)
 
@@ -68,7 +68,7 @@ Implementation:
   zeroes LUKS header on physical intrusion.
 
 Full design at
-`../design/os-baseline-and-luks.md`.
+[`../design/os-baseline-and-luks.md`](../design/os-baseline-and-luks.md).
 
 ## Alternatives considered
 

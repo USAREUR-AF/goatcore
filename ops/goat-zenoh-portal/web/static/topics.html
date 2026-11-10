@@ -237,9 +237,9 @@
         <strong>The key is a literal string, not a template.</strong>
         Whatever placeholder notation you see in our docs &mdash; <code>&lt;__LEX_ORG__&gt;</code>, <code>&lt;system&gt;</code>, <code>&lt;your-discretion&gt;</code> &mdash; is a fill-in-the-blank convention. The portal stores this field verbatim and matches it byte-for-byte against incoming publishes.
         <br><br>
-        <strong>Right:</strong> publisher emits <code>example-vendor/sensor21/SENSOR-EXAMPLE/position_attitude</code>; you register key_pattern <code>example-vendor/sensor21/SENSOR-EXAMPLE/position_attitude</code>. Identical strings → match → schema viewer lights up.
+        <strong>Right:</strong> publisher emits <code>acme/radar1/RADAR-EXAMPLE/position_attitude</code>; you register key_pattern <code>acme/radar1/RADAR-EXAMPLE/position_attitude</code>. Identical strings → match → schema viewer lights up.
         <br><br>
-        <strong>Wrong:</strong> publisher emits <code>example-vendor/sensor21/SENSOR-EXAMPLE/position_attitude</code>; you register <code>example-vendor/sensor21/&lt;system&gt;/position_attitude</code>. Two different strings → no match → <code>/schema.html</code> says "topic not found" even though your bytes are flowing.
+        <strong>Wrong:</strong> publisher emits <code>acme/radar1/RADAR-EXAMPLE/position_attitude</code>; you register <code>acme/radar1/&lt;system&gt;/position_attitude</code>. Two different strings → no match → <code>/schema.html</code> says "topic not found" even though your bytes are flowing.
         <br><br>
         Substitute every <code>&lt;...&gt;</code> with a real value here AND in <code>session.declare_publisher(KEY)</code>; the two must be identical.
       </div>

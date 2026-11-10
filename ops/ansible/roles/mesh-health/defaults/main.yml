@@ -15,16 +15,17 @@
 #
 # Out-of-the-box config targets the default host group; override with -e target=<site>_hosts.
 
-# Image — pinned per ADR 0859 (easy rollback). Built by
-# .github/workflows/mesh-health-image.yml. Multi-arch index digest
-# (linux/amd64 + linux/arm64) verified against ghcr. To bump: resolve the
+# Image — mesh_health_image has NO role default. The pin of record is the
+# `mesh-health` row of ops/pins/fleet-pins.yaml, rendered into
+# group_vars/<member>/pins.yml; group_vars/all.yml carries the pin for hosts
+# outside the pin table. Built by .github/workflows/mesh-health-image.yml.
+# Multi-arch index digest (linux/amd64 + linux/arm64). To bump: resolve the
 # new index digest with
 #   docker buildx imagetools inspect ghcr.io/{{ ghcr_org }}/goat-mesh-health:sha-<short> --format '{{.Manifest.Digest}}'
 # and append a matching deploy-history row.
-mesh_health_image: "ghcr.io/{{ ghcr_org }}/goat-mesh-health@sha256:c788a98aa3ce8b3aa00afe91e86d935115a41b4894a1f949d90844e31c68f9ea"
 
 # Site identifier — the `<site>` segment of ops/mesh/health/<site>.
-mesh_health_site: "nova-a"
+mesh_health_site: "{{ site_id }}"
 
 # Zenoh router endpoint + network (internal docker, container-name resolution),
 # derived from zenoh_stack.

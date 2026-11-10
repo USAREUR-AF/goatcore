@@ -243,7 +243,7 @@ groups:
             whole-site failure is a config or terminator fault, not many
             simultaneous service outages.
 
-      # ---- relay tier -------------------------------------------
+      # ---- relay tier ---------------------------------------------------
       # Separate rules from the Traefik ones above, because the renewal
       # mechanism is different and so is every step of the runbook: the relays
       # run standalone certbot with the Cloudflare DNS-01 plugin on the relay

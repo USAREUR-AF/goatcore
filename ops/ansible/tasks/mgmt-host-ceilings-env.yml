@@ -17,6 +17,15 @@
 # writers cannot disagree: each key is written when its var is set and
 # non-empty, and removed when it is not.
 #
+# ONE IMAGE KEY RIDES ALONG: MGMT_HOST_BOOTSTRAP_IMAGE. The compose file's own
+# reference for the profile-gated mgmt-host-bootstrap service is the public
+# build, so on a host whose .env predates the key the operator wrapper
+# (`docker compose --profile bootstrap run --rm mgmt-host-bootstrap`) would
+# run that build instead of the goatnet's pin after one of these plays
+# delivers the file. It is the only image key here because the service it
+# names is never part of a running stack: writing it recreates nothing. The
+# images of the long-lived services stay with mgmt-host.yml's full render.
+#
 # Requires: compose_dir. Include BEFORE the task that recreates the service.
 - name: Write each mgmt-host container ceiling to .env, or remove it when unset
   ansible.builtin.lineinfile:
@@ -35,5 +44,6 @@
     - { key: MANAGEMENT_A_MEMORY, var: mgmt_management_memory }
     - { key: SIGNAL_A_CPUS, var: mgmt_signal_cpus }
     - { key: SIGNAL_A_MEMORY, var: mgmt_signal_memory }
+    - { key: MGMT_HOST_BOOTSTRAP_IMAGE, var: mgmt_host_bootstrap_image }
   loop_control:
     label: "{{ item.key }}"

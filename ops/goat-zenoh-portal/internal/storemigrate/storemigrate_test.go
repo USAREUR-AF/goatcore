@@ -43,7 +43,7 @@ line two')`,
 	 VALUES ('aardwolf', 1800000010, 1800000020, NULL, 1800000030, 2, 1800000040, 179000000, 'aardwolf/telemetry/a')`,
 	`INSERT INTO vendor_progress (prefix, updated_at) VALUES ('zoë-ünïcode', 1800000040)`,
 	`INSERT INTO vendor_topic_activity (prefix, topic, publish_count, first_seen_at, last_seen_at) VALUES ('aardwolf', 'aardwolf/telemetry/a', 40, 1800000000, 1800000100)`,
-	`INSERT INTO audit_replay_cursor (subscriber_id, last_key, last_seen_at) VALUES ('nova-a', 'audit/2027/01/01/x.ndjson', 1800000000)`,
+	`INSERT INTO audit_replay_cursor (subscriber_id, last_key, last_seen_at) VALUES ('site-A', 'audit/2027/01/01/x.ndjson', 1800000000)`,
 	`INSERT INTO trashgoat_specs (slug, description, topic_pattern, payload_spec_json, cadence_spec_json, state, notes, created_at, created_by, last_activated_at)
 	 VALUES ('noise-1', 'noise', 'trashgoat/noise/**', '{"kind":"random"}', '{"hz":1}', 'active', '', 1800000000, 'operator', 1800000100)`,
 	`INSERT INTO slots (slot_id, idx, assigned_to, assigned_at, cert_minted_at, bundle_token, bundle_path, bundle_minted_at, revoked_at, enrolled_by, node_class, autonomy, affiliation, workloads, enrolled_at, identity_id, collected_at, lifecycle_class)

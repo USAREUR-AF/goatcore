@@ -191,8 +191,12 @@ class Preflight(unittest.TestCase):
                                             "tasks/pgbackrest-config-preflight.yml" and
                                             "always" in previous.get("tags", [])
                                             for previous in tasks[:index]), path.name)
-        self.assertEqual(set(writers), {"mgmt-host.yml", "traefik-acme.yml",
-                                       "site-bootstrap.yml"})
+        # goatcore's own writers must all be found. A deployment's overlay may add
+        # playbooks that write the same file; each one is held to the same
+        # preflight rule above, so the set is a floor, not an exact list.
+        self.assertLessEqual({"mgmt-host.yml", "traefik-acme.yml",
+                              "site-bootstrap.yml",
+                              "signal-federation-transport.yml"}, set(writers))
 
 
 if __name__ == "__main__":

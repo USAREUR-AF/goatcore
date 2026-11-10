@@ -35,7 +35,7 @@ while [ $# -gt 0 ]; do
 done
 CTX="${CTX:-$GOATNET}"
 case "$GOATNET" in
-  zagros-dev) GET="https://get.zagros-dev.examplebird.zagros-dev.example"; VIA="goat@100.127.0.152" ;;
+  zagros-dev) GET="https://get.zagros-dev.examplebird.zagros-dev.example"; VIA="goat@100.127.0.148" ;;
   *) echo "live.sh: no get.<site> declared here for $GOATNET (add its URL and runner)" >&2; exit 2 ;;
 esac
 ST="$(mktemp -d "${TMPDIR:-/tmp}/goat-live.XXXXXX")"

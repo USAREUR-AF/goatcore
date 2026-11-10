@@ -57,7 +57,7 @@ one-time bootstrap, not the steady-state path.
 Once T1 is wired:
 
 ```bash
-ssh orin-c.<site>.netbird-prod.goat.example /usr/local/bin/oci-goat-sync.sh
+ssh orin-c.<site>.<zone> /usr/local/bin/oci-goat-sync.sh
 tail -f /var/log/oci-goat-sync.jsonl
 ```
 

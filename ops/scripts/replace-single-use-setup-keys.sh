@@ -78,14 +78,16 @@ if [ -z "$SITE" ]; then
   exit 2
 fi
 
-# Site → management URL. Mirrors netbird_site_url_map in operator-onboard.yml;
-# add a site here when it stands up its mgmt stack.
-case "$SITE" in
-  zagros)       MGMT="https://netbird.zagros.example" ;;
-  zagros-prod)  MGMT="https://netbird.zagros-prod.example" ;;
-  vega)     MGMT="https://mgmt.vega.netbird-prod.goat.example" ;;
-  *) echo "unknown goatnet '$SITE' — add it to the case block" >&2; exit 2 ;;
-esac
+# Site → management URL: https://<public_mgmt_fqdn>, the name the goatnet's own
+# group_vars declare (ops/ansible/group_vars/<site>_hosts/vars.yml), the rule
+# peer-attribution.py follows. NB_API names another.
+GROUP_VARS="$(cd "$(dirname "${BASH_SOURCE[0]}")/../ansible/group_vars" && pwd)/$(echo "$SITE" | tr '-' '_')_hosts/vars.yml"
+MGMT="${NB_API:-}"
+if [ -z "$MGMT" ]; then
+  FQDN="$(sed -nE "s/^public_mgmt_fqdn:[[:space:]]*[\"']?([A-Za-z0-9][A-Za-z0-9.-]*)[\"']?[[:space:]]*(#.*)?\$/\1/p" "$GROUP_VARS" 2>/dev/null | head -1 || true)"
+  [ -n "$FQDN" ] || { echo "unknown goatnet '$SITE' — $GROUP_VARS declares no public_mgmt_fqdn; set NB_API=https://<management host>" >&2; exit 2; }
+  MGMT="https://$FQDN"
+fi
 
 TOKEN_VAR="$(echo "$SITE" | tr 'a-z-' 'A-Z_')_NB_API_TOKEN"
 TOKEN="${!TOKEN_VAR:-}"

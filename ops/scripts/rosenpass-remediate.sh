@@ -18,19 +18,27 @@
 # READ-ONLY by default. It reports; it does not revoke, expire or mutate.
 #
 # usage:
-#   ops/scripts/rosenpass-remediate.sh            # roster, grouped by owner
-#   ops/scripts/rosenpass-remediate.sh --csv      # machine-readable
-#   ops/scripts/rosenpass-remediate.sh --connected-only
+#   ops/scripts/rosenpass-remediate.sh <goatnet>                   # roster, grouped by owner
+#   ops/scripts/rosenpass-remediate.sh <goatnet> --csv             # machine-readable
+#   ops/scripts/rosenpass-remediate.sh <goatnet> --connected-only
+#
+# <goatnet> names the goatnet (site-a or site_a). The owner of a peer is the
+# <handle> of its name, peer-<handle>-<goatnet>-<YYYY-MM-DD>-<host>.
 #
 # env:
-#   THOR_HOST   mgmt host to query (default the ZAGROS Thor mesh IP)
+#   MGMT_HOST     user@host of the management host to query (default: the
+#                 goatnet's first management host in ops/ansible/inventory/doors.yaml,
+#                 read by ops/scripts/goatnet-facts.py)
 #   PG_CONTAINER  postgres container name (default postgres-a)
 set -euo pipefail
 
-THOR_HOST="${THOR_HOST:-100.127.0.179}"
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+GOATNET="${1:-}"
+case "$GOATNET" in ""|-*) echo "usage: $(basename "$0") <goatnet> [--csv|--connected-only]" >&2; exit 2 ;; esac
+MODE="${2:-report}"
 PG_CONTAINER="${PG_CONTAINER:-postgres-a}"
-SSH_USER="${SSH_USER:-goat}"
-MODE="${1:-report}"
+MGMT_HOST="${MGMT_HOST:-$(python3 "$HERE/goatnet-facts.py" mgmt-ssh "$GOATNET")}" \
+  || { echo "rosenpass-remediate: no management host for $GOATNET; set MGMT_HOST=user@host" >&2; exit 2; }
 
 # psql quoting is hostile through two layers of shell; write the file locally
 # and copy it, exactly as the investigation did.
@@ -55,8 +63,8 @@ SQL
 # reports all-clear because it could not read anything is worse than no guard.
 chmod 644 "$tmp"
 
-scp -q -o BatchMode=yes "$tmp" "${SSH_USER}@${THOR_HOST}:/tmp/rp-remediate.sql"
-raw="$(ssh -o BatchMode=yes "${SSH_USER}@${THOR_HOST}" \
+scp -q -o BatchMode=yes "$tmp" "${MGMT_HOST}:/tmp/rp-remediate.sql"
+raw="$(ssh -o BatchMode=yes "${MGMT_HOST}" \
   "sudo docker cp /tmp/rp-remediate.sql ${PG_CONTAINER}:/tmp/rp.sql >/dev/null 2>&1;
    sudo docker exec ${PG_CONTAINER} psql -U postgres -d netbird -f /tmp/rp.sql 2>/dev/null;
    rm -f /tmp/rp-remediate.sql")"
@@ -65,14 +73,14 @@ rm -f "$tmp"
 # Fail loudly rather than reporting an empty roster we did not actually observe.
 if [ -z "${raw//[[:space:]]/}" ]; then
   echo "rosenpass-remediate: FAILED to read the peer table (empty result)." >&2
-  echo "  This is NOT an all-clear. Check ssh to ${THOR_HOST}, sudo docker," >&2
+  echo "  This is NOT an all-clear. Check ssh to ${MGMT_HOST}, sudo docker," >&2
   echo "  and that ${PG_CONTAINER} is running." >&2
   exit 2
 fi
 
-python3 - "$MODE" <<PYEOF
+python3 - "$MODE" "$GOATNET" <<PYEOF
 import re, sys, collections
-mode = sys.argv[1]
+mode, goatnet = sys.argv[1], sys.argv[2].replace("_", "-")
 raw = """$raw"""
 rows = [l.strip().split("|") for l in raw.splitlines() if "|" in l]
 by_owner = collections.defaultdict(list)
@@ -80,7 +88,7 @@ for r in rows:
     if len(r) < 5:
         continue
     name, state, os_, ver, seen = r[0], r[1], r[2], r[3], r[4]
-    m = re.match(r"peer-(.+?)-zagros-\d{4}-\d{2}-\d{2}-(.*)\$", name)
+    m = re.match(r"peer-(.+?)-" + re.escape(goatnet) + r"-\d{4}-\d{2}-\d{2}-(.*)\$", name)
     owner = m.group(1) if m else "(infrastructure — no handle in peer name)"
     host = m.group(2) if m else name
     by_owner[owner].append((state, host, os_, ver, seen))

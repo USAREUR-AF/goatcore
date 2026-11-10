@@ -1,5 +1,8 @@
 # SNITCH — Design & Architecture
 
+Browser credential handling follows the [browser session authentication contract](browser-session-authentication.md), including the HTTPS deployment requirement.
+
+
 Synthetic Network Inspection: Topology, Connectivity, Health.
 
 SNITCH is the mesh performance monitoring subsystem of goat. It continuously measures latency, jitter, loss, pathing, and gateway hardware across every peer-to-peer link in the WireGuard mesh, stores time-series analytics in PostgreSQL, and presents a live dashboard with historical trend analysis.

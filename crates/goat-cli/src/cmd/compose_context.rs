@@ -116,7 +116,7 @@ pub fn classify(value_name: Option<&str>) -> ContextKind {
 /// label it renders under. The completion grammar is a property of the feed,
 /// not the CLI — so it lives with the feed definition and ports with it.
 ///   - a write prefix continues the topic-key path, so it completes with a
-///     trailing `/` (`org11x` → `org11x/…`);
+///     trailing `/` (`acme` → `acme/…`);
 ///   - a recent topic / declared schema is a finished token, so it completes
 ///     with a trailing space.
 ///
@@ -420,7 +420,7 @@ mod tests {
                 created_at: 30,
             },
             TopicMeta {
-                key: "demogame/tracks/v1".into(),
+                key: "airdefenders/tracks/v1".into(),
                 format: "".into(), // no declared format
                 last_seen_at: Some(100),
                 created_at: 5,
@@ -437,7 +437,7 @@ mod tests {
                     items,
                     vec![
                         "org11x/observations/v1".to_string(),
-                        "demogame/tracks/v1".to_string(),
+                        "airdefenders/tracks/v1".to_string(),
                         "goat-maintainer/probe/v2".to_string(),
                         "goat-maintainer/test/v1".to_string(),
                     ]

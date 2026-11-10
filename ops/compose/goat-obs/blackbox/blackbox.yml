@@ -144,7 +144,7 @@ modules:
   # DNS resolution check — "does this resolver answer for this name?"
   # Generic A-record lookup; the target is the DNS server, the
   # `query_name` is fixed (we pin the hostname we expect to resolve).
-  dns_nova_a:
+  dns_zone_a:
     prober: dns
     timeout: 5s
     dns:

@@ -102,9 +102,9 @@ func TestSlotOnboard_RejectsNonUUIDIdentity(t *testing.T) {
 	ts, reg := newSlotPoolServer(t, filepath.Join(dir, "config.json5"))
 	c := &http.Client{}
 
-	for _, bad := range []string{"maintainer", "maintainer@example.test", "not-a-uuid"} {
+	for _, bad := range []string{"jane", "jane@example.test", "not-a-uuid"} {
 		resp := doJSON(t, c, "POST", ts.URL+"/api/vendors", "dev-operator-key", map[string]any{
-			"prefix":      "vega-fires-bn",
+			"prefix":      "alpha-fires-bn",
 			"identity_id": bad,
 		})
 		if resp.StatusCode != http.StatusBadRequest {

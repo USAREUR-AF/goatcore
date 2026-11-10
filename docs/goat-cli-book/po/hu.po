@@ -934,7 +934,7 @@ msgstr "A hozzáférési tokenje működik"
 
 #: src/troubleshooting.md:18
 msgid "Token expired or revoked — ask to be re-onboarded"
-msgstr "A token lejárt vagy visszavonva — kérje az únovaóli beléptetést"
+msgstr "A token lejárt vagy visszavonva — kérje az újbóli beléptetést"
 
 #: src/troubleshooting.md:20
 msgid ""

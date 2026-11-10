@@ -139,6 +139,11 @@
 #
 # Each is skipped when the goatnet does not declare it, so a smaller goatnet
 # runs the same file and gets a smaller site.
+#
+# The peripheral surfaces (panoscope, stethoscope, flashlight, netvis,
+# microscope, gym, dataflows, the zenoh sandbox, herd) ship with their roles,
+# apart from this file: site-services-surfaces.yml, same contract, run after
+# this one.
 
 - name: "site-services: portal and identity surfaces"
   ansible.builtin.import_playbook: portal-deploy.yml
@@ -150,7 +155,7 @@
 - name: "site-services: consistency console"
   ansible.builtin.import_playbook: consistency-console-deploy.yml
 
-- name: "site-services: content and demo surfaces"
+- name: "site-services: content surfaces"
   ansible.builtin.import_playbook: goat-docs-deploy.yml
 - name: "site-services: goat CLI download"
   ansible.builtin.import_playbook: goat-get-deploy.yml

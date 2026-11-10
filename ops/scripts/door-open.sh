@@ -24,6 +24,10 @@ MODE="${2:---open}"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENV_DOOR="${REPO_ROOT}/scripts/env-door.sh"
+# The AWS profile the printed deploy line runs under: GOAT_AWS_PROFILE, else
+# the checkout's deploy.aws_profile, else `default`, the order env-door.sh reads.
+AWS_PROFILE_NAME="${GOAT_AWS_PROFILE:-$("${REPO_ROOT}/scripts/project-setting.sh" deploy aws_profile 2>/dev/null)}"
+AWS_PROFILE_NAME="${AWS_PROFILE_NAME:-default}"
 RUN_DIR="${TMPDIR:-/tmp}/goat-doors"
 mkdir -p "$RUN_DIR"
 
@@ -126,7 +130,7 @@ cat <<EOF
 
   service deploy (templates from group_vars — base inventory FIRST):
     cd ops/ansible && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES \\
-      aws-vault exec usareur-af --no-session -- ../scripts/ansible-preflight.sh \\
+      aws-vault exec ${AWS_PROFILE_NAME} --no-session -- ../scripts/ansible-preflight.sh \\
         -i inventory/mgmt-hosts.ini -i inventory/doors-groupvars.ini \\
         <play>.yml -e target=${TARGET_GROUP} 2>&1 | tee /tmp/deploy-${ENV}.log
 

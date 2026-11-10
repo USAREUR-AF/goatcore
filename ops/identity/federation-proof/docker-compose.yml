@@ -24,7 +24,7 @@ services:
             "requestMappings": [
               {"requestParam": "grant_type", "match": "authorization_code",
                "claims": {"sub": "mock-pairwise-001",
-                          "email": "person-27@example.org",
+                          "email": "person-22@example.org",
                           "name": "CAC User",
                           "acr": "aal2",
                           "groups": ["goat-admins"]}}]}]}

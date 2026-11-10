@@ -61,4 +61,4 @@ groups:
           severity: critical
         annotations:
           summary: "{{ $labels.instance }}: the unit graph has {{ $value }} systemd ordering cycle(s)"
-          description: "On the next boot systemd will delete a job of its choosing to break each cycle — on 2026-09-26 it deleted tangd.socket and locked zagros-prod for 53 h. Run `systemd-analyze verify default.target` on the host to name the units."
+          description: "On the next boot systemd will delete a job of its choosing to break each cycle — on 2026-09-26 it deleted tangd.socket and locked a production goatnet for 53 h. Run `systemd-analyze verify default.target` on the host to name the units."

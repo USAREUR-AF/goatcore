@@ -34,9 +34,13 @@ The door is now part of the golden path.
 
 `ops/ansible/inventory/doors.yaml` is the source of truth — one entry per
 goatnet declaring its door transport. `ops/scripts/generate-door-inventory.py`
-renders each goatnet's rows into the three artifacts (`env-door.sh` arm,
-`doors.ini`, `doors-groupvars.ini`), and `goat-standup.sh` runs it as a phase-1
-gate, so a goatnet is door-reachable by construction. The generator **adds, never
+renders each goatnet's rows into the two door inventories (`doors.ini`,
+`doors-groupvars.ini`), and `goat-standup.sh` runs it as a phase-1
+gate, so a goatnet is door-reachable by construction. `env-door.sh` holds no
+goatnet: each time it runs it reads the door's instance, region, port, user and
+landed host from the registry (`generate-door-inventory.py --arm <goatnet>`),
+and opens it under the AWS profile the checkout declares (`GOAT_AWS_PROFILE`,
+else `deploy.aws_profile` in `ops/goatbuilder/goatbuilder.yaml`). The generator **adds, never
 reformats**: a goatnet already present (the legacy hand-written zagros / zagros-prod
 blocks, with their own comments) is left untouched; only a goatnet missing from a
 file gets its block appended. The golden-path linter runs `--all --check` as a
@@ -55,7 +59,7 @@ a management host elsewhere, and any use of a bad-day address (the
 
 Two transport types:
 
-| type | when | door lands on | env-door.sh arm |
+| type | when | door lands on | env-door.sh opens it |
 |---|---|---|---|
 | `ssm` | mgmt host reached through a cloud mesh peer over SSM | `127.0.0.1:<port>` (port-forward); other mgmt hosts jump through it | yes |
 | `tailscale` | no goatnet since 2026-10-27; the generator still renders it for history | the Tailscale IP, no port-forward | no |
@@ -161,8 +165,8 @@ NetBird profile on another goatnet throughout and untouched: the run resolved
 the target's `site_id`, `site_dns_zone` and `router_role` from the base inventory
 and its transport from the door file.
 
-`env-door.sh` decides each door's port and user; both door inventories restate
-them, so the script asserts agreement on every run and **refuses to open** a
+`env-door.sh` takes each door's port and user from the registry; both door
+inventories restate them, so the script asserts agreement on every run and **refuses to open** a
 door whose inventories disagree — a mismatch otherwise surfaces as
 "unreachable", or connects somewhere unintended.
 

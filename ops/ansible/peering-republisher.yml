@@ -1,0 +1,52 @@
+---
+# peering-republisher.yml — deploy the OUTBOUND REPUBLISHER of one peering, on our
+# core host, the host the peering edge dials.
+#
+#   Role:     roles/goat-fed-republisher/
+#   Process:  ops/federation/republisher/ (README.md: the mapping and what survives it)
+#   Driver:   ops/scripts/peering-standup.sh and goatbuilder federate, phase 12,
+#             after peering-zenoh-edge.yml, with --limit <peering>_core
+#
+# Both of its sessions dial our core router. It subscribes to the offered
+# `release/<set>/**` staging names and publishes each sample under
+# `from/<us>/<set>/**`, the wire name; the edge carries that name out. It is the
+# only writer of `from/<us>/**` on our side, admitted by the core's
+# `fed-rp-<them>` subject (the fragment `goat federate apply` renders).
+#
+# Inventory: the core host in group <peering>_core, under [peering_cores:children]
+# in inventory/peering-edges.ini. Its deployment values (image, core endpoint, our
+# CA) go in group_vars/<peering>_core/; the agreement's values come from
+# `goat federate apply`, read from fed_work like every other peering play.
+#
+# Rollback: revert the image pin and re-run (ADR 1060). To stop our data
+# crossing at once, stop the container: nothing else writes our wire name.
+- name: Sovereign peering outbound republisher
+  hosts: peering_cores
+  gather_facts: true
+  become: true
+  pre_tasks:
+    - name: Read what `goat federate apply` rendered for this run
+      ansible.builtin.include_tasks: tasks/peering-applied-vars.yml
+  roles:
+    - role: goat-fed-republisher
+  post_tasks:
+    # Opt-in (goat_host_firewall_baseline, default false); docs/design/peering-host-firewall.md.
+    - name: Host firewall baseline for the core router host
+      ansible.builtin.include_role:
+        name: goat-host-firewall
+      vars:
+        goat_host_firewall_profile: core
+        # The edge's inbound SPIRE forward reaches our bundle endpoint (phase 13), on the
+        # host that runs the SPIRE server only, and on the mesh interface: the edge's
+        # inventory address may be an underlay address, not the one it arrives from.
+        goat_host_firewall_spire_bundle_port: >-
+          {{ (peering_spire_bundle_port | default(8443) | int)
+             if ((peering_spire_enabled | default(false) | bool)
+                 and inventory_hostname == (peering_spire_server_host | default(''))) else '' }}
+        goat_host_firewall_spire_bundle_sources: []
+      when: goat_host_firewall_baseline | default(false) | bool
+    - name: Host firewall baseline is off; refuse if a host still carries one
+      ansible.builtin.include_role:
+        name: goat-host-firewall
+        tasks_from: off.yml
+      when: not (goat_host_firewall_baseline | default(false) | bool)

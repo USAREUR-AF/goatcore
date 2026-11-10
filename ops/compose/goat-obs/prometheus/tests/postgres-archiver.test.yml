@@ -53,7 +53,7 @@ tests:
                 archive_command is failing and nothing has archived for
                 1h 0m 0s. PostgreSQL keeps every unarchived
                 segment, so pg_wal grows until the disk fills and postgres
-                crash-loops (zagros, 2026-10-13: the whole goatnet went down).
+                crash-loops (2026-10-13: a whole goatnet went down).
                 Read the error first:
                   sudo docker logs --since 10m postgres-a 2>&1 | grep -A2 "archive command failed"
                 The known cause ([055] unable to open missing file

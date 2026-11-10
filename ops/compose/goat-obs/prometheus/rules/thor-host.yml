@@ -79,7 +79,7 @@ groups:
             Free space is trending to zero. Find the grower before trimming:
             `du -xh -d1 /opt` then drill. Known unbounded writers and their
             bounds are in docs/operations/disk-runway-and-retention.md.
-            NOTE: on ZAGROS, severity=warning is routed to webhook-noop — if you
+            NOTE: where severity=warning is routed to webhook-noop — if you
             are reading this in the Prom UI, nobody was paged.
 
       - alert: ThorDiskRunwayCritical

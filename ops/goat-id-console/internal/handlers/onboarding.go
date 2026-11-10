@@ -563,11 +563,6 @@ func (s *Server) handleOnboarding(w http.ResponseWriter, r *http.Request) {
 				v.OrgTypedName, v.OrgClaimed = f.Typed, f.Registered
 				s.fillEditable(&v, p, hints)
 			}
-			// Enrolled devices and their OS (#1586): admin sessions, onboarded or
-			// enrolled. Display only; the enrolled state machine is untouched.
-			if sponsorKeys == nil && (p.Status == onboardstore.ProposalOnboarded || p.Status == onboardstore.ProposalEnrolled) {
-				v.Devices, v.DevicesErr = s.devicesForHandle(r.Context(), p.Handle)
-			}
 			// Registered-org chain: read-only proof of capture, all
 			// stages, sponsor sessions included.
 			v.OrgResolved = s.orgChainForProposal(p)
@@ -686,6 +681,9 @@ func (s *Server) handleOnboarding(w http.ResponseWriter, r *http.Request) {
 			if sponsorKeys == nil && (p.Status == onboardstore.ProposalOnboarded || p.Status == onboardstore.ProposalEnrolled) {
 				v.GitHubPostMint = true
 				_, v.GitHub = manifestIdentity(p.ManifestJSON)
+				// Device reads belong to the selected card, never the list.
+				// Load after HTML arrives so NetBird cannot block navigation (#2384).
+				v.DevicesURL = "/onboarding/" + url.PathEscape(p.ID) + "/devices"
 			}
 			// Registered-org chain: read-only proof of capture, all
 			// stages, sponsor sessions included.
@@ -833,7 +831,7 @@ func (s *Server) handleOnboardInviteCreate(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if !envPattern.MatchString(env) {
-		s.renderError(w, r, 400, "env must be a lowercase goatnet slug (e.g. zagros)")
+		s.renderError(w, r, 400, "env must be a lowercase goatnet slug (e.g. galaxy)")
 		return
 	}
 	quotaStr := strings.TrimSpace(r.FormValue("machine_quota"))

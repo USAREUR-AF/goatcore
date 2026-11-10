@@ -45,7 +45,7 @@
   gather_facts: true
 
   vars:
-    zagros_portal_url: "{{ portal_public_url }}"
+    synth_portal_url: "{{ portal_public_url }}"
 
   tasks:
     # synth_vendor_compose_dir / synth_vendor_cert_dir are zenoh-synth-vendors
@@ -94,7 +94,7 @@
         fail_msg: >-
           No {{ synth_anchors_path }} (or it is empty) on this host — the
           fleet is not onboarded, so there is nothing to rotate. Run
-          zagros-zenoh-synth-vendors-deploy.yml first.
+          the synth-vendor deploy playbook first.
 
     - name: rotate | build the rotation list (handle, anchor)
       ansible.builtin.set_fact:
@@ -119,7 +119,7 @@
       # Portal calls run from the CONTROLLER, not the Thor (the Thor cannot
       # reach its own portal by mesh hostname) — mirrors the onboard play.
       ansible.builtin.uri:
-        url: "{{ zagros_portal_url }}/api/vendors/{{ item.anchor }}/rotate"
+        url: "{{ synth_portal_url }}/api/vendors/{{ item.anchor }}/rotate"
         method: POST
         headers:
           Authorization: "Bearer {{ lookup('env', (site_id | upper | replace('-', '_')) ~ '_PORTAL_OPERATOR_API_KEY') }}"
@@ -149,7 +149,7 @@
     # unarchive can wedge.
     - name: rotate | download the fresh one-time bundle tarball (on controller)
       ansible.builtin.get_url:
-        url: "{{ zagros_portal_url }}{{ item.json.bundle_url }}"
+        url: "{{ synth_portal_url }}{{ item.json.bundle_url }}"
         dest: "/tmp/synth-rotate-{{ item.item.handle }}.tar.gz"
         mode: "0600"
         force: true

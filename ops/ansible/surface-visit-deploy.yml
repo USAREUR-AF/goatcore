@@ -68,7 +68,7 @@
       ansible.builtin.set_fact:
         surface_visit_age_recipients: >-
           {{ [
-               lookup('env', 'DEV_CA_AGE_OPERATOR_1'),
+               lookup('env', dev_ca_age_operator_env | default('DEV_CA_AGE_OPERATOR_1')),
                lookup('env', 'DEV_CA_AGE_BREAK_GLASS'),
              ] | select('match', '^age1') | list }}
 

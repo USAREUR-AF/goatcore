@@ -195,7 +195,7 @@ func parseURISANs(raw []string) ([]*url.URL, error) {
 			return nil, fmt.Errorf("URI-SAN[%d] %q: %w", i, s, err)
 		}
 		if u.Scheme == "" {
-			return nil, fmt.Errorf("URI-SAN[%d] %q: missing scheme (must be an absolute URI, e.g. urn:goat-nova:vendor=org11x)", i, s)
+			return nil, fmt.Errorf("URI-SAN[%d] %q: missing scheme (must be an absolute URI, e.g. urn:goat-galaxy:vendor=example-org)", i, s)
 		}
 		out = append(out, u)
 	}

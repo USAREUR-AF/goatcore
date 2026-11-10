@@ -1,8 +1,5 @@
 ---
-# site-infra.yml — Tier 1: VPS relays + NETHOST infrastructure
-#
-# Deploys the core infrastructure: VPS relay servers, NETHOST firewall,
-# mesh DNS, and NETHOST relay client configuration.
+# site-infra.yml — Tier 1: the relays.
 #
 # Usage:
 #   ansible-playbook site-infra.yml
@@ -11,6 +8,6 @@
 #
 # Prerequisites:
 #   - terraform apply
-#   - inventory/generate.sh
+#   - inventory/generate-relays.sh
 
 - import_playbook: relay-server.yml

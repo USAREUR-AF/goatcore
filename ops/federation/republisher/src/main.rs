@@ -80,9 +80,11 @@ struct Args {
     #[arg(long, env = "FED_REPUBLISHER_LOCAL_ROOT_CA")]
     local_root_ca: Option<String>,
 
-    /// Peering edge router, e.g. `tls/fed-edge:7447`. A SEPARATE process from
-    /// the core: the partner's authority terminates there, never at a core
-    /// router.
+    /// Where the wire name is published, e.g. `tls/goat-zenoh-router:7447`.
+    /// Deployed (roles/goat-fed-republisher) it is OUR CORE router, the same
+    /// one as --local-endpoint: the core admits this process to write
+    /// `from/<us>/**`, and the peering edge carries that name out. The
+    /// partner's authority still terminates at the edge, never at the core.
     #[arg(long, env = "FED_REPUBLISHER_EDGE_ENDPOINT")]
     edge_endpoint: String,
     #[arg(long, env = "FED_REPUBLISHER_EDGE_CERT")]
@@ -197,7 +199,7 @@ async fn main() -> Result<()> {
     )
     .await;
     let our_ts_id = provenance::timestamp_id_from_zid(&edge_session.zid().to_le_bytes())?;
-    info!(zid = %edge_session.zid(), endpoint = args.edge_endpoint.as_str(), "peering edge session open");
+    info!(zid = %edge_session.zid(), endpoint = args.edge_endpoint.as_str(), "publishing session open");
 
     let local_session = open_session(
         "local",

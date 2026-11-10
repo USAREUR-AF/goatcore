@@ -13,6 +13,8 @@
 // Endpoints used (NetBird mgmt API):
 //   GET    /api/peers          → list mesh peers
 //   DELETE /api/peers/{id}     → eject a peer (drops its WireGuard tunnel)
+//   GET    /api/peers/{id}     → one peer's settings, re-sent on update
+//   PUT    /api/peers/{id}     → turn NetBird SSH on or off (settings echoed)
 //   GET    /api/groups         → resolve auto-group suffixes → UUIDs (onboard)
 //   GET    /api/groups/{id}    → a group's network resources, re-sent on update
 //   PUT    /api/groups/{id}    → replace a group's peers (resources echoed)
@@ -295,6 +297,26 @@ pub struct NbPeer {
     /// the lines on the page cannot disagree.
     #[serde(default)]
     pub accessible_peers_count: u32,
+    /// The peer's NetBird SSH server setting (ADR 1216 port 22022).
+    #[serde(default)]
+    pub ssh_enabled: bool,
+    /// The peer drops off the mesh when its login expires (only for peers a
+    /// user added; ADR 1216 devices must have this off).
+    #[serde(default)]
+    pub login_expiration_enabled: bool,
+    /// The peer drops off the mesh after a period of inactivity.
+    #[serde(default)]
+    pub inactivity_expiration_enabled: bool,
+}
+
+/// What [`NetbirdClient::set_peer_ssh`] found and did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PeerSshChange {
+    pub name: String,
+    /// False when the peer already had the requested setting: nothing was sent.
+    pub changed: bool,
+    pub login_expiration_enabled: bool,
+    pub inactivity_expiration_enabled: bool,
 }
 
 impl NbPeer {
@@ -395,6 +417,92 @@ impl NetbirdClient {
             StatusCode::NOT_FOUND => Err(NetbirdError::NotFound),
             s => {
                 warn!(id, url = %url, status = %s, "delete_peer non-2xx");
+                Err(NetbirdError::Http { status: s })
+            }
+        }
+    }
+
+    /// Turn a peer's NetBird SSH server on or off (`PUT /api/peers/{id}`).
+    ///
+    /// The peer PUT replaces the peer's settings: `name`, `ssh_enabled`,
+    /// `login_expiration_enabled` and `inactivity_expiration_enabled` are all
+    /// required, and a field sent wrong is a field changed. So the peer is read
+    /// with `GET /api/peers/{id}` immediately before the PUT and every other
+    /// setting is sent back as read; only `ssh_enabled` differs. If the read
+    /// fails, or the record lacks any of those fields, nothing is written. If
+    /// the peer already has the requested setting, nothing is written either.
+    /// `ip` and `approval_required` are optional in the request and omitted,
+    /// which leaves them as they are.
+    pub async fn set_peer_ssh(&self, id: &str, enabled: bool) -> Result<PeerSshChange, NetbirdError> {
+        #[derive(Deserialize)]
+        struct PeerSettings {
+            name: Option<String>,
+            ssh_enabled: Option<bool>,
+            login_expiration_enabled: Option<bool>,
+            inactivity_expiration_enabled: Option<bool>,
+        }
+        let inner = self.inner.as_ref().ok_or(NetbirdError::Disabled)?;
+        let url = format!("{}/api/peers/{}", inner.base_url, id);
+        let resp = inner
+            .http
+            .get(&url)
+            .header("Authorization", format!("Token {}", inner.token))
+            .header("Accept", "application/json")
+            .send()
+            .await
+            .map_err(|e| NetbirdError::Transient(e.to_string()))?;
+        let cur = match resp.status() {
+            StatusCode::OK => resp
+                .json::<PeerSettings>()
+                .await
+                .map_err(|e| NetbirdError::Transient(format!("decode: {e}")))?,
+            StatusCode::NOT_FOUND => return Err(NetbirdError::NotFound),
+            s => {
+                warn!(id, url = %url, status = %s, "peer read before update non-2xx");
+                return Err(NetbirdError::Http { status: s });
+            }
+        };
+        let (Some(name), Some(ssh), Some(login), Some(inactivity)) = (
+            cur.name,
+            cur.ssh_enabled,
+            cur.login_expiration_enabled,
+            cur.inactivity_expiration_enabled,
+        ) else {
+            return Err(NetbirdError::Transient(
+                "the peer record lacks name, ssh_enabled, login_expiration_enabled or \
+                 inactivity_expiration_enabled; nothing was written"
+                    .into(),
+            ));
+        };
+        let change = PeerSshChange {
+            name: name.clone(),
+            changed: ssh != enabled,
+            login_expiration_enabled: login,
+            inactivity_expiration_enabled: inactivity,
+        };
+        if !change.changed {
+            return Ok(change);
+        }
+        let body = serde_json::json!({
+            "name": name,
+            "ssh_enabled": enabled,
+            "login_expiration_enabled": login,
+            "inactivity_expiration_enabled": inactivity,
+        });
+        let resp = inner
+            .http
+            .put(&url)
+            .header("Authorization", format!("Token {}", inner.token))
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| NetbirdError::Transient(e.to_string()))?;
+        match resp.status() {
+            StatusCode::OK | StatusCode::NO_CONTENT => Ok(change),
+            StatusCode::NOT_FOUND => Err(NetbirdError::NotFound),
+            s => {
+                warn!(id, url = %url, status = %s, "set_peer_ssh non-2xx");
                 Err(NetbirdError::Http { status: s })
             }
         }
@@ -1212,5 +1320,115 @@ mod group_update_tests {
         );
         let reqs = requests(&seen);
         assert!(reqs.iter().all(|r| r.method == "GET"), "a PUT followed a failed read: {reqs:?}");
+    }
+
+    fn peer_body(ssh: bool, login: bool, inactivity: bool) -> String {
+        serde_json::json!({
+            "id": "peer-1", "name": "machine-switch-a-host", "ip": "100.127.0.67",
+            "ssh_enabled": ssh,
+            "login_expiration_enabled": login,
+            "inactivity_expiration_enabled": inactivity,
+            "approval_required": false,
+            "groups": [{"id": "g1", "name": "SITE_ONE-NETWORK"}]
+        })
+        .to_string()
+    }
+
+    /// The peer PUT replaces every required setting, so only `ssh_enabled` may
+    /// differ from what was read: an expiry flag sent wrong would be changed.
+    #[tokio::test]
+    async fn set_peer_ssh_changes_only_ssh_and_echoes_the_rest() {
+        fn reply(method: &str, _path: &str) -> (&'static str, String) {
+            match method {
+                "GET" => ("200 OK", peer_body(false, true, false)),
+                _ => ("200 OK", "{}".to_string()),
+            }
+        }
+        let (base, seen) = fixture_mgmt(reply).await;
+        let nb = NetbirdClient::new(base, "fixture-token".into());
+        let change = tokio::time::timeout(Duration::from_secs(5), nb.set_peer_ssh("peer-1", true))
+            .await
+            .expect("client did not finish")
+            .expect("set_peer_ssh failed");
+        assert!(change.changed);
+        assert_eq!(change.name, "machine-switch-a-host");
+        assert!(change.login_expiration_enabled);
+        assert!(!change.inactivity_expiration_enabled);
+        let reqs = requests(&seen);
+        assert_eq!(reqs.len(), 2, "{reqs:?}");
+        assert_eq!((reqs[0].method.as_str(), reqs[0].path.as_str()), ("GET", "/api/peers/peer-1"));
+        assert_eq!((reqs[1].method.as_str(), reqs[1].path.as_str()), ("PUT", "/api/peers/peer-1"));
+        let body: serde_json::Value = serde_json::from_str(&reqs[1].body).unwrap();
+        assert_eq!(
+            body,
+            serde_json::json!({
+                "name": "machine-switch-a-host",
+                "ssh_enabled": true,
+                "login_expiration_enabled": true,
+                "inactivity_expiration_enabled": false
+            })
+        );
+    }
+
+    /// Already on: the read is the only request.
+    #[tokio::test]
+    async fn set_peer_ssh_writes_nothing_when_already_set() {
+        fn reply(_m: &str, _p: &str) -> (&'static str, String) {
+            ("200 OK", peer_body(true, false, false))
+        }
+        let (base, seen) = fixture_mgmt(reply).await;
+        let nb = NetbirdClient::new(base, "fixture-token".into());
+        let change = nb.set_peer_ssh("peer-1", true).await.unwrap();
+        assert!(!change.changed);
+        let reqs = requests(&seen);
+        assert!(reqs.iter().all(|r| r.method == "GET"), "{reqs:?}");
+    }
+
+    /// A record missing a required setting is never guessed at.
+    #[tokio::test]
+    async fn set_peer_ssh_writes_nothing_when_the_record_is_incomplete() {
+        fn reply(_m: &str, _p: &str) -> (&'static str, String) {
+            ("200 OK", r#"{"id":"peer-1","name":"x","ssh_enabled":false}"#.to_string())
+        }
+        let (base, seen) = fixture_mgmt(reply).await;
+        let nb = NetbirdClient::new(base, "fixture-token".into());
+        let err = nb.set_peer_ssh("peer-1", true).await.unwrap_err();
+        assert!(
+            matches!(err, NetbirdError::Transient(ref m) if m.contains("nothing was written")),
+            "got {err:?}"
+        );
+        assert!(requests(&seen).iter().all(|r| r.method == "GET"));
+    }
+
+    /// A failed read writes nothing; a 403 on the PUT comes back as the status.
+    #[tokio::test]
+    async fn set_peer_ssh_reports_read_and_write_refusals() {
+        fn not_found(_m: &str, _p: &str) -> (&'static str, String) {
+            ("404 Not Found", "{}".to_string())
+        }
+        let (base, seen) = fixture_mgmt(not_found).await;
+        let nb = NetbirdClient::new(base, "fixture-token".into());
+        assert!(matches!(nb.set_peer_ssh("gone", true).await.unwrap_err(), NetbirdError::NotFound));
+        assert!(requests(&seen).iter().all(|r| r.method == "GET"));
+
+        fn forbidden_put(method: &str, _p: &str) -> (&'static str, String) {
+            match method {
+                "GET" => ("200 OK", peer_body(false, false, false)),
+                _ => ("403 Forbidden", "{}".to_string()),
+            }
+        }
+        let (base, _seen) = fixture_mgmt(forbidden_put).await;
+        let nb = NetbirdClient::new(base, "fixture-token".into());
+        let err = nb.set_peer_ssh("peer-1", true).await.unwrap_err();
+        assert!(
+            matches!(err, NetbirdError::Http { status } if status == StatusCode::FORBIDDEN),
+            "got {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn set_peer_ssh_on_a_disabled_client_sends_nothing() {
+        let nb = NetbirdClient::new(String::new(), String::new());
+        assert!(matches!(nb.set_peer_ssh("peer-1", true).await.unwrap_err(), NetbirdError::Disabled));
     }
 }

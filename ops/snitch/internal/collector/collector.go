@@ -9,9 +9,12 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/usareur-af/goatcore/ops/snitch/internal/compat"
 	"github.com/usareur-af/goatcore/ops/snitch/internal/identity"
 	"github.com/usareur-af/goatcore/ops/snitch/internal/store"
 	"github.com/usareur-af/goatcore/ops/snitch/internal/types"
@@ -32,6 +35,9 @@ type Collector struct {
 	prev   map[string]peerState         // previous state for change detection
 	store  *store.Store
 	idm    *identity.Manager
+
+	// peerSuffixes are stripped from peer FQDNs to form auto-aliases.
+	peerSuffixes []string
 }
 
 // New creates a collector backed by PostgreSQL and identity encryption.
@@ -41,7 +47,25 @@ func New(s *store.Store, idm *identity.Manager) *Collector {
 		prev:   make(map[string]peerState),
 		store:  s,
 		idm:    idm,
+
+		peerSuffixes: PeerSuffixesFromEnv(os.Getenv("SNITCH_PEER_DOMAIN_SUFFIXES")),
 	}
+}
+
+// PeerSuffixesFromEnv parses SNITCH_PEER_DOMAIN_SUFFIXES (comma-separated
+// FQDN suffixes, each with its leading dot). Unset or empty yields the
+// built-in compat.PeerFQDNSuffixes.
+func PeerSuffixesFromEnv(v string) []string {
+	var out []string
+	for _, p := range strings.Split(v, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	if len(out) == 0 {
+		return compat.PeerFQDNSuffixes
+	}
+	return out
 }
 
 // Ingest processes an incoming probe report: stores in memory, persists to PG,
@@ -386,7 +410,7 @@ func (c *Collector) autoAliasPeer(ctx context.Context, peerIP, peerName string) 
 	}
 	// Strip FQDN suffix to get short hostname.
 	alias := peerName
-	for _, suffix := range []string{".netbird.legacy.example", ".local.netbird.legacy.example"} {
+	for _, suffix := range c.peerSuffixes {
 		if idx := len(alias) - len(suffix); idx > 0 && alias[idx:] == suffix {
 			alias = alias[:idx]
 			break

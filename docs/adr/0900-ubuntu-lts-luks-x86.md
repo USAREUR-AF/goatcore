@@ -5,7 +5,7 @@
 | Status | Accepted |
 | Date | 2026-04-25 |
 | Repo scope | goat core |
-| Related | [`0604-luks-data-at-rest.md`](0604-luks-data-at-rest.md), [`0809-boot-chain-integrity.md`](0809-boot-chain-integrity.md), `0902-goat-drop.md`, `../design/os-baseline-and-luks.md` |
+| Related | [`0604-luks-data-at-rest.md`](0604-luks-data-at-rest.md), [`0809-boot-chain-integrity.md`](0809-boot-chain-integrity.md), `0902-goat-drop.md`, [`../design/os-baseline-and-luks.md`](../design/os-baseline-and-luks.md) |
 
 ## TL;DR (for a layperson)
 
@@ -48,7 +48,7 @@ x86 mgmt-hosts run:
 
 The fleet-wide OS baseline (three-tier storage, NBDE, CSfC
 DAR framing, FIDO2 break-glass) is at
-`../design/os-baseline-and-luks.md`.
+[`../design/os-baseline-and-luks.md`](../design/os-baseline-and-luks.md).
 
 ## Alternatives considered
 

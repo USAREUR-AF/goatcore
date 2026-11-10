@@ -543,7 +543,7 @@ context; it does **not** destroy the audit record.
 | Enrollment / de-enrollment of peers | Netbird management API | Perimeter change events |
 
 **Out of scope (v1).** Application-level logs (efforts, gatewatch,
-demogame, Zenoh samples), Traefik access logs, routine Prometheus
+airdefenders, Zenoh samples), Traefik access logs, routine Prometheus
 scrapes. These stay in local Loki with normal retention.
 
 **Destination.** Per-site append-only store, **not** cross-site
@@ -563,7 +563,7 @@ posture). Options ranked by preference:
    is available at deploy time.
 
 v1 picks option 1 with site-local MinIO on the mgmt-host's second NVMe
-(already part of the storage plan — see `os-baseline-and-luks.md`
+(already part of the storage plan — see [`os-baseline-and-luks.md`](os-baseline-and-luks.md)
 three-tier storage). Object Lock retention: 1 year. Keys to MinIO are
 held by a separate service account not shared with the Squid /
 Ansible / operator accounts.

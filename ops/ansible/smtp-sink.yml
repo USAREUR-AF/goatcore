@@ -1,0 +1,16 @@
+---
+# smtp-sink.yml — run the mail sink on a site's hosts (ops/recipes/smtp-sink/README.md,
+# docs/design/pluggable-dependencies.md row 14).
+#
+#   ansible-playbook -i inventory/mgmt-hosts.ini smtp-sink.yml -e target=<site>_hosts
+#
+# Deploys only where the site declares smtp_sink_enabled: true. Idempotent.
+- name: "smtp-sink: a mail sink for {{ target | default('?') }}"
+  hosts: "{{ target | mandatory }}"
+  become: true
+  gather_facts: false
+  tasks:
+    - name: smtp-sink is declared on for this site
+      ansible.builtin.include_role:
+        name: smtp-sink
+      when: smtp_sink_enabled | default(false) | bool

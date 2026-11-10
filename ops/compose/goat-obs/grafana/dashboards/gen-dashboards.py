@@ -664,9 +664,9 @@ def d_storage():
     L.text("", (
         "### Audit Integrity & MinIO Storage\n"
         "The compliance-grade storage board (ADR 0811). Bucket usage vs configured "
-        "quota with a **`predict_linear` days-to-full forecast**, oldest-object age "
-        ", and the audit-subscriber S3 put success/fail rate "
-        ". Grafana strength: forecasting + ratio gauges + the put-fail "
+        "quota with a **`predict_linear` days-to-full forecast**, oldest-object age, "
+        "and the audit-subscriber S3 put success/fail rate. "
+        "Grafana strength: forecasting + ratio gauges + the put-fail "
         "early-warning that took 4 days to notice by hand."), h=4)
 
     L.gauge("audit-integrity quota used",

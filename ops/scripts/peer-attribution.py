@@ -17,7 +17,7 @@ WHY THIS EXISTS
     The management server already knows the answer.  Every setup-key enrolment
     writes a `peer.setupkey.add` event carrying the peer id (`target_id`) and
     the key that admitted it (`meta.setup_key_name`).  That link does not care
-    what the peer is called.  Measured on zagros 2026-08-17: the name grammar
+    what the peer is called.  Measured on one goatnet 2026-08-17: the name grammar
     covers 95 of 116 peers, the event log covers 115, and the union covers all
     116 — the two signals are complementary, so use both.
 
@@ -37,7 +37,8 @@ USAGE
         a name-matching cut.  This is the preflight for an offboard.
 
     Token comes from <SITE>_NB_API_TOKEN, matching operator-onboard.yml.
-    Reading events requires an admin token.
+    Reading events requires an admin token.  The management URL is the
+    goatnet's `public_mgmt_fqdn` (its group_vars); --api-url names another.
 
 CAVEAT — EVENT RETENTION
     The event log is finite.  A peer enrolled before the oldest retained event
@@ -51,16 +52,34 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 import urllib.error
 import urllib.request
 
-# Mirrors netbird_site_url_map in ops/ansible/operator-onboard.yml.
-SITE_URLS = {
-    "zagros": "https://netbird.zagros.example",
-    "zagros-prod": "https://netbird.zagros-prod.example",
-    "vega": "https://mgmt.vega.netbird-prod.goat.example",
-}
+GROUP_VARS = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                          "..", "ansible", "group_vars")
+_MGMT_FQDN = re.compile(r"""^public_mgmt_fqdn:\s*["']?([A-Za-z0-9][A-Za-z0-9.-]*)["']?\s*(#.*)?$""", re.M)
+
+
+def mgmt_url(goatnet: str, api_url: str = "", group_vars: str = GROUP_VARS) -> str:
+    """The goatnet's NetBird management API base.
+
+    --api-url when given. Otherwise the goatnet's own declaration: the
+    `public_mgmt_fqdn` its group_vars set (group_vars/<goatnet>_hosts/vars.yml),
+    the name its peers enrol against. A goatnet with no such declaration gets
+    the rule operator-onboard.yml and host-census-reconcile.py fall back to,
+    https://netbird.<goatnet>.net.
+    """
+    if api_url:
+        return api_url.rstrip("/")
+    path = os.path.join(group_vars, goatnet.replace("-", "_") + "_hosts", "vars.yml")
+    try:
+        with open(path, encoding="utf-8") as fh:
+            m = _MGMT_FQDN.search(fh.read())
+    except OSError:
+        m = None
+    return f"https://{m.group(1)}" if m else f"https://netbird.{goatnet}.net"
 
 
 def api(base: str, token: str, path: str):
@@ -197,14 +216,15 @@ def main() -> int:
                     help="report attribution for every peer on the goatnet")
     ap.add_argument("--handle", help="report candidates for one person (offboard preflight)")
     ap.add_argument("--site", help="site token used in peer names (default: the goatnet)")
+    ap.add_argument("--api-url", default="",
+                    help="NetBird management URL (default: https://<public_mgmt_fqdn> from "
+                         "the goatnet's group_vars, else https://netbird.<goatnet>.net)")
     a = ap.parse_args()
 
     if not a.audit and not a.handle:
         ap.error("choose --audit or --handle")
 
-    base = SITE_URLS.get(a.goatnet)
-    if not base:
-        ap.error(f"unknown goatnet {a.goatnet!r}; add it to SITE_URLS")
+    base = mgmt_url(a.goatnet, a.api_url)
 
     var = a.goatnet.upper().replace("-", "_") + "_NB_API_TOKEN"
     token = os.environ.get(var, "")

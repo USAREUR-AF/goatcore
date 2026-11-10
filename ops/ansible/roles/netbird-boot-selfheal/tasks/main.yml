@@ -62,7 +62,10 @@
   ansible.builtin.systemd:
     name: netbird.service
     enabled: true
-  when: "'netbird.service' in (ansible_facts.services | default({}))"
+  # A drop-in directory (netbird.service.d, staged above) makes systemd list the
+  # unit with status `not-found` before netbird is installed, so presence in the
+  # facts is not installation: the unit must be loaded.
+  when: "((ansible_facts.services | default({}))['netbird.service'] | default({})).status | default('not-found') != 'not-found'"
 
 - name: netbird-boot-selfheal | NOTICE — netbird not installed yet, skipping enable
   ansible.builtin.debug:
@@ -70,7 +73,7 @@
       netbird.service is not present on this host yet, so boot-enable is skipped.
       This is expected during mgmt-host-baseline (netbird is installed by a later
       site-bringup phase); re-running this role after netbird install enables it.
-  when: "'netbird.service' not in (ansible_facts.services | default({}))"
+  when: "((ansible_facts.services | default({}))['netbird.service'] | default({})).status | default('not-found') == 'not-found'"
 
 - name: netbird-boot-selfheal | boot-DNS fallback (resolve mgmt when the mesh is down)
   ansible.builtin.copy:
@@ -94,9 +97,12 @@
 # ExecStartPre that resolves the mgmt endpoint DIRECTLY against the permitted
 # resolver (bypassing resolved) and pins the CURRENT IPs in /etc/hosts before
 # netbird starts — self-refreshing every boot, so no stale pin either.
+# A template only for the two fallback values the script uses when run with no
+# arguments: this site's enrollment name and its first permitted resolver, the
+# same two values the ExecStartPre below passes.
 - name: netbird-boot-selfheal | install boot-DNS bootstrap script
-  ansible.builtin.copy:
-    src: netbird-dns-bootstrap.sh
+  ansible.builtin.template:
+    src: netbird-dns-bootstrap.sh.j2
     dest: /usr/local/bin/netbird-dns-bootstrap.sh
     mode: "0755"
   when: (netbird_selfheal_bootstrap_dns | default([])) | length > 0

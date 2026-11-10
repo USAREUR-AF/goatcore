@@ -44,7 +44,7 @@ func newPresenceTestServer(t *testing.T) *httptest.Server {
 		CertSignFake:        true,
 		VendorBundleDir:     filepath.Join(dir, "bundles"),
 		SchemaDir:           filepath.Join(dir, "schemas"),
-		CertSignURIPrefix:   "urn:goat-nova:vendor=",
+		CertSignURIPrefix:   "urn:goat:galaxy:org=",
 	}
 	if err := os.WriteFile(cfg.ACLConfigPath, []byte(aclFixture), 0o644); err != nil {
 		t.Fatalf("write acl fixture: %v", err)
@@ -87,7 +87,7 @@ func presenceGet(t *testing.T, ts *httptest.Server, bearer, query string) *http.
 func TestPersonPresenceRefusesWithoutToken(t *testing.T) {
 	ts := newPresenceTestServer(t)
 	for name, bearer := range map[string]string{"no token": "", "garbage": "not-a-real-token"} {
-		resp := presenceGet(t, ts, bearer, "?id=person-119@example.org")
+		resp := presenceGet(t, ts, bearer, "?id=pat@partner.example")
 		_ = resp.Body.Close()
 		if resp.StatusCode != http.StatusUnauthorized {
 			t.Errorf("%s: want 401, got %d", name, resp.StatusCode)
@@ -101,7 +101,7 @@ func TestPersonPresenceAdmitsConsoleSecretAndOperator(t *testing.T) {
 		"console lookup secret": "console-secret",
 		"operator key":          "dev-operator-key",
 	} {
-		resp := presenceGet(t, ts, bearer, "?id=person-119@example.org")
+		resp := presenceGet(t, ts, bearer, "?id=pat@partner.example")
 		if resp.StatusCode != http.StatusOK {
 			t.Errorf("%s: want 200, got %d", name, resp.StatusCode)
 			_ = resp.Body.Close()
@@ -121,7 +121,7 @@ func TestPersonPresenceAdmitsConsoleSecretAndOperator(t *testing.T) {
 		// An empty registry knows nobody: the honest answer is an unresolved
 		// WhoResult, not an error — absence of evidence is a real finding for
 		// the offboard verifier.
-		if body.Query != "person-119@example.org" || body.Resolved != "" {
+		if body.Query != "pat@partner.example" || body.Resolved != "" {
 			t.Errorf("%s: want unresolved echo of the query, got query=%q resolved=%q", name, body.Query, body.Resolved)
 		}
 		if body.Writes == nil || body.Reads == nil {

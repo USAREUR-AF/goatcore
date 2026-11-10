@@ -43,6 +43,11 @@ compliance_proxy_oidc_client_id: "oauth2-proxy-compliance"
 # `COMPLIANCE` group, granted/revoked via `goat admin onboard` (ADR 1029).
 compliance_proxy_allowed_groups: "COMPLIANCE"
 
+# The Traefik route file's name before it became compliance.yml, removed from
+# the host on deploy. Empty removes nothing; a goatnet whose hosts once carried
+# the route under another name sets that name in its group_vars.
+compliance_proxy_traefik_dynamic_filename_legacy: ""
+
 # On-host DNS override for the OIDC issuer.
 compliance_proxy_oidc_host_entry: "oauth2.{{ site_id }}.{{ site_dns_zone }}:{{ mesh_ip_a }}"
 

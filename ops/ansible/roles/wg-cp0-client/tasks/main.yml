@@ -186,7 +186,7 @@
         # Without this, a darwin or windows operator's controller-side
         # `go build` produces a host-arch binary that errno-8 ENOEXECs
         # on the target. Surfaced during Block 22K.4 cutover
-        # of vega-A from a darwin/arm64 controller. Block 22K.7
+        # of a mgmt host from a darwin/arm64 controller. Block 22K.7
         # follow-on; minimal change to unblock fleet-wide cutover.
         GOOS: linux
         GOARCH: "{{ _wg_cp0_bundle_apply_goarch }}"

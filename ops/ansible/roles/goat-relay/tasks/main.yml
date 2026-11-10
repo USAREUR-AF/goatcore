@@ -47,7 +47,7 @@
       goat_relay_auth_secret is empty. The goat-relay rewrite tier
       authenticates relay clients with a per-site shared secret
       (timed-HMAC, wire-compatible with the legacy relay tier). Set
-      `relay_secret` for this site (env-sourced, e.g. VEGA_RELAY_SECRET)
+      `relay_secret` for this site (env-sourced, e.g. <SITE>_RELAY_SECRET)
       or pass goat_relay_auth_secret explicitly. The relay refuses to
       start without it — deploying an open relay is not permitted.
 

@@ -730,11 +730,11 @@ func (s *Server) apiMintInvite(w http.ResponseWriter, r *http.Request) {
 	// message so the CLI/caller passes one.
 	if env == "" {
 		onboardError(w, http.StatusBadRequest, "env_required",
-			`env is required (e.g. "zagros") — a blank env strands the proposal for a scoped onboard-runner`)
+			`env is required (e.g. "galaxy") — a blank env strands the proposal for a scoped onboard-runner`)
 		return
 	}
 	if !envPattern.MatchString(env) {
-		onboardError(w, http.StatusBadRequest, "bad_env", "env must be a lowercase goatnet slug (e.g. zagros)")
+		onboardError(w, http.StatusBadRequest, "bad_env", "env must be a lowercase goatnet slug (e.g. galaxy)")
 		return
 	}
 	// Validate the pre-bound affiliation KIND here, at mint.
@@ -1002,7 +1002,7 @@ func (s *Server) apiOnboardIntake(w http.ResponseWriter, r *http.Request) {
 	}
 	env := strings.TrimSpace(req.Env)
 	if env != "" && !envPattern.MatchString(env) {
-		onboardError(w, http.StatusBadRequest, "bad_env", "env must be a lowercase goatnet slug (e.g. zagros)")
+		onboardError(w, http.StatusBadRequest, "bad_env", "env must be a lowercase goatnet slug (e.g. galaxy)")
 		return
 	}
 	var tree map[string]any

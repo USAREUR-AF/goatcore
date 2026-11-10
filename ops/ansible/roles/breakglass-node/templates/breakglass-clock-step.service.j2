@@ -14,8 +14,8 @@ Documentation=file:///usr/local/sbin/breakglass-clock-step.sh
 After=network-online.target
 Wants=network-online.target
 # Start BEFORE anything that authenticates against a certificate. Both overlay
-# transports do, and both failed closed for two days on echo-breakglass because
-# the clock was 49 days behind. Ordering only (no Requires=): if this cannot
+# transports do, and both fail closed for as long as the clock is far enough
+# behind to reject their certificates. Ordering only (no Requires=): if this cannot
 # reach a time source, the transports still start and a later retry fixes them.
 Before=tailscaled.service
 Before=netbird.service

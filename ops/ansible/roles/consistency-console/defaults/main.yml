@@ -53,8 +53,8 @@ consistency_console_enabled: false
 # Multi-arch INDEX digest from .github/workflows/consistency-console-image.yml.
 #   docker buildx imagetools inspect ghcr.io/{{ ghcr_org }}/goat-consistency-console:sha-<short> --format '{{.Manifest.Digest}}'
 # sha-7c9a662 = the first successful main build (#2108, CF-6 merge); digest
-# verified as the OCI image INDEX (amd64+arm64), never a per-arch leaf
-#, identical in both ghcr namespaces. For governed goatnets the
+# verified as the OCI image INDEX (amd64+arm64), never a per-arch leaf,
+# identical in both ghcr namespaces. For governed goatnets the
 # value of record renders from ops/pins/fleet-pins.yaml into the generated
 # group_vars pins.yml, which shadows this default; bump BOTH in lockstep.
 consistency_console_image: "ghcr.io/{{ ghcr_org }}/goat-consistency-console:sha-7c9a662@sha256:79d40ca11dcc108a5a516d40caf797690e96c8640221a1434c66cdaaa3f1da8f"
@@ -105,9 +105,9 @@ consistency_console_oauth2_proxy_oidc_issuer_url: ""
 consistency_console_oauth2_proxy_client_id: "consistency-console"
 consistency_console_oauth2_proxy_client_secret: ""
 consistency_console_oauth2_proxy_cookie_secret: ""
-# On-container OIDC-discovery resolution for the issuer's mesh-DNS name
-#.
-consistency_console_oauth2_proxy_oidc_host_entry: "oauth2.{{ site_id | mandatory }}.{{ public_mgmt_fqdn | default(site_dns_zone | mandatory) }}:{{ mesh_ip_a | default('100.127.0.190') }}"
+# On-container OIDC-discovery resolution for the issuer's mesh-DNS name,
+# pinned to this host's mesh address (mesh_ip_a, bind-safe at boot).
+consistency_console_oauth2_proxy_oidc_host_entry: "oauth2.{{ site_id | mandatory }}.{{ public_mgmt_fqdn | default(site_dns_zone | mandatory) }}:{{ mesh_ip_a | mandatory }}"
 # Ory groups admitted at the fence. Widened by operator decision
 # (bus msg p1522): the CF-6 IAM-ADMIN exclusion is superseded for these
 # read-only drift pages — PLATFORM-ADMIN + IAM-ADMIN both view. (No
@@ -163,10 +163,9 @@ consistency_aggregator_image: "ghcr.io/{{ ghcr_org }}/goat-consistency-console:s
 
 # Sibling of the hosting box's relay-health FQDN on the same host, same
 # zone, same Traefik — the fleet naming scheme <service>.<env>.<org>.<suffix>.
-# EMPTY here;
-# the hosting group_vars set the literal
-# (group_vars/zagros_prod_relay_health/consistency-aggregator.yml) and the
-# aggregate tasks assert it non-empty.
+# EMPTY here (a shared role default must not hardcode a site's zone); the
+# hosting group's group_vars set the literal (consistency-aggregator.yml)
+# and the aggregate tasks assert it non-empty.
 consistency_aggregator_hostname: ""
 
 consistency_aggregator_compose_dir: /opt/consistency-aggregator
@@ -181,21 +180,27 @@ consistency_aggregator_cert_dir: /opt/consistency-aggregator/certs
 consistency_aggregator_rollup_stale_after_ms: 900000
 consistency_aggregator_rust_log: "goat_consistency_console=info,zenoh=warn"
 
-# --- zagros-door: the env-doors Tier 2 lane client (ADR 1117, first as-built
-# instance; consistency-foundation.md §7.8 as-built). A TLS-wrap haproxy
-# sidecar that carries the console's ZAGROS zenoh session inside an outer mTLS
-# connection through the ZAGROS relay ingress (SNI-pinned, fail-closed to
+# --- the door: the env-doors Tier 2 lane client (ADR 1117;
+# consistency-foundation.md §7.8 as-built). A TLS-wrap haproxy sidecar that
+# carries the console's zenoh session to a peer goatnet inside an outer mTLS
+# connection through that goatnet's relay ingress (SNI-pinned, fail-closed to
 # offline-CA cert holders; the inner zenoh mTLS session unchanged). Default
-# OFF + empty;
-# the hosting group_vars set the literals. Requires an operator-staged
-# combined client cert+key at <cert_dir>/zagros-door/client.pem (haproxy `crt`
-# format) — never committed; the aggregate tasks fail closed without it. ---
-consistency_aggregator_zagros_door_enabled: false
-# Same haproxy pin as the mgmt-host federation-proxy (the proven
-# relay-tunneled TLS client) — multi-arch INDEX digest.
-consistency_aggregator_zagros_door_image: "haproxy:3.0-alpine@sha256:dee54db8b27cd6c21519ea4f0ba0604f3742e8e7369bc16fb5b69133dec3f47f"
-consistency_aggregator_zagros_door_sni: ""
-consistency_aggregator_zagros_door_relays: []
+# OFF + empty (a shared role must not hardcode a goatnet's zone): the hosting
+# group_vars set the name, the SNI, the relays and the image pin. Requires an
+# operator-staged combined client cert+key at
+# <cert_dir>/<door_name>/client.pem (haproxy `crt` format) — never committed;
+# the aggregate tasks fail closed without it. ---
+consistency_aggregator_door_enabled: false
+# The sidecar's compose service and container name, the stem of its rendered
+# haproxy config (<compose_dir>/<door_name>-haproxy.cfg) and of its cert seat.
+# A goatnet entry in consistency_aggregator_goatnets reaches the door at
+# tls/<door_name>:17447.
+consistency_aggregator_door_name: "zenoh-door"
+# haproxy, multi-arch INDEX digest — the pin the mgmt-host federation-proxy
+# runs (the proven relay-tunneled TLS client). Set by the hosting group_vars.
+consistency_aggregator_door_image: ""
+consistency_aggregator_door_sni: ""
+consistency_aggregator_door_relays: []
 
 # The goatnets the aggregator LISTENS to — rendered into aggregator.yaml.
 # Per entry: name (display + anchor), site (ops/consistency/health/<site>
@@ -245,7 +250,7 @@ consistency_aggregator_oauth2_proxy_allowed_groups: "PLATFORM-ADMIN,IAM-ADMIN"
 # dex-allowlist mode inputs (used only when consistency_aggregator_gate is
 # dex-allowlist). Client = the SHARED public-Dex `oauth2-proxy` static client
 # (same as the relay-health public gate; the per-host redirect URI is what is
-# registered per surface in usareur-af-infra). The allowlist file is
+# registered per surface in the infrastructure repository). The allowlist file is
 # the relay-health box's roster-synced authenticated-emails file. The issuer
 # default is empty by design (F-188: shared artifacts must not hardcode a
 # site's zone) — the hosting group_vars own the literal; the dex-allowlist

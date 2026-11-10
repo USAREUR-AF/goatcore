@@ -400,7 +400,7 @@ gb-051-cause-3 = plan rollback sa --mock
 gb-052-title = taj fajl nije goatbuilder plan
 gb-052-what = apply izvršava samo fajl koji je napisao plan, a on nosi schema goatbuilder.plan/v1.
 gb-052-cause-1 = apply-ju je proslijeđen pogrešan fajl
-gb-052-cause-2 = plan je ručno uređuser903x i izgubio je schema liniju
+gb-052-cause-2 = plan je ručno uređivan i izgubio je schema liniju
 
 # machine-translated additions (2026-10-29) — review per i18n-provenance.toml
 gb-060-title = obavezan ulaz standupa nije postavljen

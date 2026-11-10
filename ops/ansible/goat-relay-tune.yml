@@ -18,7 +18,7 @@
 #
 # Usage:
 #   cd ops/ansible
-#   OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES aws-vault exec legacy --no-session -- \
+#   OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES aws-vault exec <profile> --no-session -- \
 #     ansible-playbook -i inventory/hosts.ini goat-relay-tune.yml
 
 - name: goat-relay tier — optimization (host tuning, no reboot)

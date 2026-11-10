@@ -567,7 +567,7 @@ func (s *Server) handleAccessRoster(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleAccessTopic(w http.ResponseWriter, r *http.Request) {
 	key := strings.TrimSpace(r.URL.Query().Get("key"))
 	if key == "" {
-		writeError(w, http.StatusBadRequest, "decode", "missing ?key= (a topic key, e.g. org11x/observations/v1)")
+		writeError(w, http.StatusBadRequest, "decode", "missing ?key= (a topic key, e.g. acme/observations/v1)")
 		return
 	}
 	_ = s.reg.LogAuditEvent(r.Context(), actorOf(r), "access.topic.read", key, "")

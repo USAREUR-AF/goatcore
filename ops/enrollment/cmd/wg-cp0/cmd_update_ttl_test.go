@@ -29,10 +29,10 @@ func fixtureWithOnePeer(t *testing.T) (path, peerName string) {
 	prior := time.Now().UTC().Add(30 * 24 * time.Hour)
 	ps := peerset.PeerSet{
 		Peers: []peerset.Peer{{
-			Name:          "vega-a",
+			Name:          "lab-a",
 			WGCP0Address:  "198.18.0.1",
 			CurrentPubkey: peerPubB64,
-			Site:          "vega",
+			Site:          "lab",
 			BundleExpiry:  &prior,
 		}},
 		Relays: []peerset.Relay{{
@@ -46,7 +46,7 @@ func fixtureWithOnePeer(t *testing.T) (path, peerName string) {
 	}
 	path = filepath.Join(t.TempDir(), "allow.json")
 	writeV2Fixture(t, path, ps)
-	return path, "vega-a"
+	return path, "lab-a"
 }
 
 func TestCmdUpdateTTL_RequiresExtend(t *testing.T) {
@@ -111,9 +111,9 @@ func TestCmdUpdateTTL_DryRunPreview(t *testing.T) {
 		t.Fatalf("code = %d", code)
 	}
 	for _, w := range []string{
-		"PLAN — wg-cp0 update-ttl vega-a --extend 90d",
+		"PLAN — wg-cp0 update-ttl lab-a --extend 90d",
 		"~ UPDATE",
-		"peers[].bundle_expiry: vega-a",
+		"peers[].bundle_expiry: lab-a",
 		"* REUSING KEYPAIR",
 		"REUSING KEYPAIR for 1 peer(s)",
 		"Re-run with --apply",
@@ -157,7 +157,7 @@ func TestCmdUpdateTTL_ApplySingleHappyPath(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("code = %d, stderr=%q stdout=%q", code, stderr, stdout)
 	}
-	if !strings.Contains(stdout, "Applied: update-ttl vega-a --extend 120d") {
+	if !strings.Contains(stdout, "Applied: update-ttl lab-a --extend 120d") {
 		t.Errorf("applied line missing: %q", stdout)
 	}
 	// Verify bundle file landed in --out-dir.

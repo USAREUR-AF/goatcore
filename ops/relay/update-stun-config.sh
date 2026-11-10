@@ -5,11 +5,13 @@
 # STUN servers running on the VPS relays. Optionally registers VPS-hosted
 # Netbird relay servers for lower-latency data relay (vs relaying through NETHOST).
 #
-# Usage (from admin machine):
-#   ssh -t goat@100.127.1.32 'bash -s' < ops/relay/update-stun-config.sh
+# Usage (from admin machine, at the top of the tree; the relay tier's addresses
+# come from ops/relay-env.sh, which a deployment's ops/relay-env.d/ supplies):
+#   ssh -t goat@100.127.1.23 "STUN_IPS='$(. ops/relay-env.sh; echo "${RELAY_IPS[*]}")' bash -s" < ops/relay/update-stun-config.sh
+# Run in place (bash ops/relay/update-stun-config.sh), it reads ops/relay-env.sh itself.
 #
 # Optional env vars:
-#   STUN_IPS — space-separated VPS IPs (overrides hardcoded defaults)
+#   STUN_IPS — space-separated VPS IPs (default: RELAY_IPS of ops/relay-env.sh)
 #   RELAY_IPS — space-separated VPS IPs running Netbird relay on port 33073
 #   RELAY_SECRET — auth secret for relay servers (reads from existing config if not set)
 #
@@ -18,7 +20,13 @@
 set -euo pipefail
 
 # External STUN servers — accepts STUN_IPS env var (space-separated IPs)
-# or falls back to current deployed relay IPs
+# or falls back to the relay tier's IPs in ops/relay-env.sh beside this script
+# (read in a subshell: its RELAY_IPS array is not this script's RELAY_IPS).
+_relay_env="$(dirname "${BASH_SOURCE[0]:-.}")/../relay-env.sh"
+if [ -z "${STUN_IPS:-}" ] && [ -n "${BASH_SOURCE[0]:-}" ] && [ -f "$_relay_env" ]; then
+  # shellcheck disable=SC1090
+  STUN_IPS="$(. "$_relay_env"; echo "${RELAY_IPS[*]}")"
+fi
 if [ -n "${STUN_IPS:-}" ]; then
   STUN_SERVERS=()
   for ip in $STUN_IPS; do
@@ -27,7 +35,7 @@ if [ -n "${STUN_IPS:-}" ]; then
 else
   STUN_SERVERS=(
     "stun:203.0.113.2:3478"      # fra (region 1)
-    "stun:203.0.113.20:3478"     # isr (Tel Aviv)
+    "stun:203.0.113.20:3478"     # isr (region 2)
     "stun:203.0.113.30:3478"     # mum (region 3)
   )
 fi

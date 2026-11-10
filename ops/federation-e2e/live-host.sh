@@ -24,7 +24,7 @@
 #   collect    <us> <them>        logs and state for the record, on stdout
 #   reset                         everything this run made, packages and images kept
 #
-# Environment: FED_ZENOH_IMAGE, FED_SPIRE_IMAGE (digest-pinned).
+# Environment: FED_ZENOH_IMAGE, FED_SPIRE_IMAGE, FED_REPUBLISHER_IMAGE (digest-pinned).
 set -euo pipefail
 VERB="${1:?verb}"; shift
 D=/opt/fed-live
@@ -73,7 +73,9 @@ images)
   need_images
   docker pull -q "$FED_ZENOH_IMAGE" >/dev/null
   docker pull -q "$FED_SPIRE_IMAGE" >/dev/null
-  echo "images ok: $FED_ZENOH_IMAGE, $FED_SPIRE_IMAGE"
+  case "${FED_REPUBLISHER_IMAGE:-}" in *@sha256:*) ;; *) die "FED_REPUBLISHER_IMAGE must be digest-pinned" ;; esac
+  docker pull -q "$FED_REPUBLISHER_IMAGE" >/dev/null
+  echo "images ok: $FED_ZENOH_IMAGE, $FED_SPIRE_IMAGE, $FED_REPUBLISHER_IMAGE"
   ;;
 
 logout)
@@ -117,7 +119,7 @@ clone)
   git -C "$D/src" init -q -b main
   git -C "$D/src" config user.name "$us operator"; git -C "$D/src" config user.email "ops@$us.test"
   "$PY" "$D/src/ops/federation-e2e/overlay.py" "$D/src" "$us" "$them" 0 "$FED_ZENOH_IMAGE" \
-    --core-addr "$core" --spire-listen "$core" --local
+    --core-addr "$core" --spire-listen "$core" --local --republisher-image "${FED_REPUBLISHER_IMAGE:-}"
   git -C "$D/src" add -A; git -C "$D/src" commit -q -m "$us: this sovereign's tree and its declarations for the peering"
   git clone -q --bare "$D/src" /srv/goat.git
   git clone -q /srv/goat.git /opt/goat
@@ -149,8 +151,8 @@ UNIT
   [ -f /etc/goat-core/config.json5 ] || cp "$D/core-seed.json5" /etc/goat-core/config.json5
   install -m 0644 "$K/ca.pem" /etc/goat-core/ca.pem
   [ -f /etc/goat-core/core.pem ] || { install -m 0644 "$K/core.pem" /etc/goat-core/core.pem; install -m 0644 "$K/core-key.pem" /etc/goat-core/core-key.pem; }
-  docker rm -f goat-zenoh >/dev/null 2>&1 || true
-  docker run -d --name goat-zenoh --restart unless-stopped --network host \
+  docker rm -f goat-zenoh "$us-zenoh-router" >/dev/null 2>&1 || true
+  docker run -d --name "$us-zenoh-router" --label org.goat.component=zenoh-core --restart unless-stopped --network host \
     -e RUST_LOG=zenoh=info,zenoh::net::routing::interceptor::access_control=trace \
     -v /etc/goat-core:/etc/goat-core:ro "$FED_ZENOH_IMAGE" -c /etc/goat-core/config.json5 >/dev/null
   install -d -m 0755 /opt/spire/config; install -d -o 1000 -g 1000 -m 0750 /opt/spire/data /opt/spire/data/server
@@ -186,7 +188,7 @@ proposed_link_subnet = "169.254.77.0/31"
 measured_mtu         = 1380
 
 [data]
-release                  = ["release/$us/**"]
+release                  = ["release/all/**", "release/$them/**"]
 accept_hz                = 100
 accept_bytes_per_message = 1048576
 accept_distinct_keys     = 5000
@@ -202,6 +204,8 @@ drive)
   export FED_CA_CERT="$K/ca.pem" FED_CA_KEY="$K/ca-key.pem" FED_CORE_CN="core-$us"
   FED_CORE_SAN="$(openssl x509 -in "$K/core.pem" -noout -ext subjectAltName | grep -oE 'IP Address:[0-9.]+' | cut -d: -f2)"
   export FED_CORE_SAN GOAT_AWS_MODE=none GOAT_BIN=/usr/local/bin/goat GOAT_ANSIBLE_TRUNK_REMOTE=origin HOME=/root
+  # The harness places each side's package and CA itself; phase 5 runs without a directory.
+  export FED_NO_DIRECTORY=1
   cd /opt/goat
   case "$avenue" in
     goatbuilder) exec goatbuilder -C /opt/goat --yes federate "$them" --as "$us" --from "$from" --to "$to" ;;
@@ -224,7 +228,7 @@ admit)
     --org "$w/applied/ops/federation/acl/$them-fragment.json5" --out /etc/goat-core/config.json5
   install -m 0644 "$w/pki/core.pem" /etc/goat-core/core.pem
   install -m 0644 "$w/pki/core-key.pem" /etc/goat-core/core-key.pem
-  docker restart goat-zenoh >/dev/null
+  docker restart "$us-zenoh-router" >/dev/null
   echo "admit ok: $them's CA matches $want; fragment spliced; core restarted on the minted certificate"
   ;;
 
@@ -248,8 +252,8 @@ responder)
   install -m 0755 /opt/goat/ops/federation/roundtrip/responder.py /usr/local/bin/fed-responder.py
   systemctl stop fed-live-responder >/dev/null 2>&1 || true
   systemctl reset-failed fed-live-responder >/dev/null 2>&1 || true
-  systemd-run --quiet --unit fed-live-responder python3 /usr/local/bin/fed-responder.py "from/$them" "from/$us"
-  echo "responder ok: answers from/$them under from/$us"
+  systemd-run --quiet --unit fed-live-responder python3 /usr/local/bin/fed-responder.py "from/$them" "release/all"
+  echo "responder ok: answers from/$them under release/all, crossing as from/$us/all"
   ;;
 
 ansible)
@@ -262,7 +266,7 @@ collect)
   echo "=== wg"; wg show wg-fed0 2>&1 | grep -v 'private key' || true
   echo "=== wg state"; cat /var/log/goat-peering-wg-wg-fed0-state.json 2>&1 || true
   echo "=== edge router"; docker logs "goat-zenoh-edge-$them" 2>&1 | tail -400 || true
-  echo "=== core router"; docker logs goat-zenoh 2>&1 | tail -200 || true
+  echo "=== core router"; docker logs "$us-zenoh-router" 2>&1 | tail -200 || true
   echo "=== spire-server"; docker logs spire-server 2>&1 | tail -100 || true
   echo "=== host"; . /etc/os-release; echo "$PRETTY_NAME $(uname -r)"
   ;;
@@ -271,7 +275,7 @@ reset)
   systemctl stop fed-live-responder goat-peering-bundle-in.socket goat-peering-bundle-out.socket \
     goat-peering-bundle-in.service goat-peering-bundle-out.service 'goat-peering-wg@wg-fed0.service' >/dev/null 2>&1 || true # oss-allow: systemd unit instance, not a mailbox
   systemctl disable goat-peering-bundle-in.socket goat-peering-bundle-out.socket 'goat-peering-wg@wg-fed0.service' >/dev/null 2>&1 || true # oss-allow: systemd unit instance, not a mailbox
-  ids="$(docker ps -aq --filter name=goat-zenoh --filter name=spire-server --filter name=fed-probe- 2>/dev/null || true)"
+  ids="$( { docker ps -aq --filter name=goat-zenoh --filter name=spire-server --filter name=fed-probe-; docker ps -aq --filter label=org.goat.component=zenoh-core; } 2>/dev/null | sort -u || true)"
   [ -z "$ids" ] || docker rm -f $ids >/dev/null
   for c in /opt/goat-zenoh-edge-*; do [ -d "$c" ] && (cd "$c" && docker compose down -v >/dev/null 2>&1 || true); done
   ip link del wg-fed0 >/dev/null 2>&1 || true

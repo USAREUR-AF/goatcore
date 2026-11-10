@@ -36,7 +36,7 @@ func newBudgetTestServer(t *testing.T, selfBlock int) *httptest.Server {
 		CertSignFake:         true,
 		VendorBundleDir:      filepath.Join(dir, "bundles"),
 		SchemaDir:            filepath.Join(dir, "schemas"),
-		CertSignURIPrefix:    "urn:goat-nova:vendor=",
+		CertSignURIPrefix:    "urn:goat:galaxy:org=",
 		TopicBudgetSelfBlock: selfBlock,
 	}
 	if err := os.WriteFile(cfg.ACLConfigPath, []byte(aclFixture), 0o644); err != nil {

@@ -12,16 +12,17 @@
 #
 # Out-of-the-box config targets the default host group; override with -e target=<site>_hosts.
 
-# Image — pinned per ADR 0859 (easy rollback). Built by
-# .github/workflows/presence-health-image.yml. PENDING first build: the
-# sha-<short>@sha256:<index-digest> pin lands after the first image build off
-# main. To pin: resolve the index digest with
+# Image — presence_health_image has NO role default. The pin of record is the
+# `presence-health` row of ops/pins/fleet-pins.yaml, rendered into
+# group_vars/<member>/pins.yml; group_vars/all.yml carries the pin for hosts
+# outside the pin table. Pinned per ADR 0859 (easy rollback). Built by
+# .github/workflows/presence-health-image.yml. To bump: resolve the index
+# digest with
 #   docker buildx imagetools inspect ghcr.io/{{ ghcr_org }}/goat-presence-health:sha-<short> --format '{{.Manifest.Digest}}'
 # and append a matching deploy-history row.
-presence_health_image: "ghcr.io/{{ ghcr_org }}/goat-presence-health@sha256:88a12cf48c1dd9868659d573f3895ebff5accdce6537ac08007fad5166ed5a8e"
 
 # Site identifier — the `<site>` segment of ops/presence/health/<site>.
-presence_health_site: "nova-a"
+presence_health_site: "{{ site_id }}"
 
 # Zenoh router endpoint + network (internal docker, container-name resolution),
 # derived from zenoh_stack.

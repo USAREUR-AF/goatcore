@@ -319,7 +319,7 @@ groups:
       # rate — is what grows the routing table the wedge contends on. These give
       # a lead on a stall instead of only counting restarts after the fact.
 
-      # Cardinality-budget: one owner dominating the keyspace is the user93x/video
+      # Cardinality-budget: one owner dominating the keyspace is the per-frame video
       # pattern (9,149 stored video keys → 64k routing edges). Threshold is a
       # STORED-key lower bound; tune per goatnet once producer-3 gives true edges.
       # --- Topic budget (cardinality-budget strategy layer 2) -------------
@@ -344,8 +344,8 @@ groups:
             (sponsor <= request tier, platform-admin above it — record it in
             the per-goatnet topic-budget grants), or the owner needs the
             stable-key contract (docs/design/pubsub-best-practices.md §1b) —
-            high cardinality is what stalls the fabric for every tenant
-            , and it cannot be fixed with more hardware. (On a goatnet
+            high cardinality is what stalls the fabric for every tenant,
+            and it cannot be fixed with more hardware. (On a goatnet
             without a budget source the tier is still the global-default
             awareness classification: "big", pending an allocation.)
 
@@ -624,7 +624,7 @@ groups:
           summary: "CRITICAL: zenoh router {{ $labels.router }} blocked on slow consumers for 15m+"
           description: |
             {{ $value | humanize }} slow-consumer transport closes in 15 minutes —
-            the 2026-09-17 zagros outage shape. Identify the subscriber from
+            the 2026-09-17 outage shape. Identify the subscriber from
             goat_zenoh_slow_consumer_last_close_timestamp_seconds and stop it
             (stop the container or revoke the peer) rather than restarting the
             router, which it will simply reconnect to. F-287 amendment.
@@ -691,8 +691,8 @@ groups:
             The named list (zenoh_fabric_wide_read) is a grandfather list: it
             names the peers that already held a whole-fabric subscription, so
             enforcement broke nobody, and its purpose is to stop the NEXT one.
-            This counts SESSIONS, not identities: one named peer held three at
-            once on zagros, so the ceiling is a measured number plus headroom
+            This counts SESSIONS, not identities: one named peer has held three at
+            once, so the ceiling is a measured number plus headroom
             (zenoh_health_fabric_wide_max_sessions), never the length of the
             grant list. Over it means a new whole-fabric subscriber appeared, or
             an existing one multiplied its sessions. Reconcile against the list

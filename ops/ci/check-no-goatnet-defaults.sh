@@ -10,7 +10,7 @@
 # The shapes this catches, each a default that names one goatnet:
 #
 #   goat-zenoh          zenoh_stack: "<goatnet>-zenoh"
-#                       <goatnet>_router_leaf_cert_path -> ../enrollment/<goatnet>/
+#                       zenoh_router_leaf_cert_path -> ../enrollment/<goatnet>/
 #   goat-zenoh-portal   portal_cert_sign_ca_id: "dev-<goatnet>-ca-ecdsa-..."
 #                       portal_ca_bundle_dir: "/etc/<goatnet>-ca"
 #   lan-coredns         lan_coredns_zone_dir: ../dns/<goatnet>-lan
@@ -28,9 +28,25 @@
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel 2>/dev/null || echo .)"
 
-export GOATNETS='nova|nova-zone|nova-lan|nova_hosts|lab-node|hobby_hosts|zagros-backbone|zagros-prod\.net|team\.example|vega-domain|vega-zone|legacy'
-# Roles whose NAME declares the goatnet they serve. Not shared, so not a leak.
+# The goatnet names a default must not carry (regex alternatives), and the
+# roles whose NAME declares the goatnet they serve (not shared, so not a leak).
+# The public example names are below. A deployment adds its own goatnets in
+# ops/ci/check-no-goatnet-defaults.d/: every `*.needles` file adds one regex
+# per line to GOATNETS, every `*.exempt` file one role-path regex per line to
+# EXEMPT. Blank lines and `#` comments are ignored.
+GOATNETS='nova|nova-zone|nova-lan|nova_hosts|lab-node|hobby_hosts|zagros-backbone|zagros-prod\.net|team\.example|vega-domain|vega-zone'
 EXEMPT='^ops/ansible/roles/nova-lan-[a-z-]+/'
+EXT_DIR=ops/ci/check-no-goatnet-defaults.d   # relative to the repository root (cwd)
+ext_entries() {  # ext_entries <suffix> — entry lines of every $EXT_DIR/*<suffix>
+  local f
+  for f in "$EXT_DIR"/*"$1"; do
+    [ -f "$f" ] || continue
+    sed -e 's/[[:space:]]*#.*$//' -e 's/^[[:space:]]*//' "$f" | grep -v '^$' || true
+  done
+}
+while IFS= read -r e; do [ -n "$e" ] && GOATNETS="$GOATNETS|$e"; done < <(ext_entries .needles)
+while IFS= read -r e; do [ -n "$e" ] && EXEMPT="$EXEMPT|$e"; done < <(ext_entries .exempt)
+export GOATNETS
 
 # Match the VALUE only. A comment is allowed to name a goatnet — the ones on
 # the fixed lines say which goatnet the default USED to name, which is the most
@@ -38,7 +54,7 @@ EXEMPT='^ops/ansible/roles/nova-lan-[a-z-]+/'
 # guard's own remediation.
 scan() {
   # VALUE side only. A variable NAME may carry a legacy goatnet word
-  # (<goatnet>_ca_root_cert_path) while its value is correct; renaming those
+  # (goat_ca_root_cert_path) while its value is correct; renaming those
   # keys is a separate change with its own blast radius across every group_vars
   # that sets them. What must not name a goatnet is what the role USES.
   grep -rnE "^[a-z_]+:" ops/ansible/roles/*/defaults/main.yml 2>/dev/null \
@@ -76,7 +92,7 @@ if [ "${1:-}" = "--self-test" ]; then
 fi
 
 # Deliberate exceptions live in ops/ci/goatnet-defaults.allow, one
-# `roles/<role>/defaults/main.yml:<variable>` per line. Shrink-only: an entry
+# `ops/ansible/roles/<role>/defaults/main.yml:<variable>` per line. Shrink-only: an entry
 # whose default no longer names a goatnet is stale and refused, so the list can
 # only get shorter. The first two entries are the provisioning tier on the
 # provisioning tier, which is documented as a shared

@@ -126,7 +126,10 @@ async fn main() {
     let secret = std::env::var("RELAY_SECRET").expect("set RELAY_SECRET");
     let secret = secret.as_bytes();
     let hosts: Vec<String> = std::env::args().skip(1).collect();
-    let hosts = if hosts.is_empty() { vec!["203.0.113.225".to_string()] } else { hosts };
+    if hosts.is_empty() {
+        eprintln!("usage: RELAY_SECRET=<secret> relay-auth-probe <relay-host> [<relay-host> ...]");
+        std::process::exit(2);
+    }
 
     let expiry = (SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as i64) + 3600;
     let peer_a = peer_id(0xAA);
@@ -151,7 +154,7 @@ async fn main() {
         ),
         (
             "algo-2 wrong secret               -> REJECT",
-            Auth::new(PeerId(peer_a), Bytes::from(make_token(b"wrong-secret-not-nova", 2, Some(&peer_a), expiry))).unwrap().marshal(),
+            Auth::new(PeerId(peer_a), Bytes::from(make_token(b"wrong-secret-not-this-relay", 2, Some(&peer_a), expiry))).unwrap().marshal(),
             false,
         ),
         (

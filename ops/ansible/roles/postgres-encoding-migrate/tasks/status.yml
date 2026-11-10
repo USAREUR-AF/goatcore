@@ -1,0 +1,29 @@
+---
+# Status — every run this host has seen: its state, its phases done, and what
+# it still keeps (copy volume, set-aside repositories, dumps).
+
+- name: "status | read"
+  ansible.builtin.shell:
+    executable: /bin/bash
+    cmd: |
+      dir={{ _pem_dir | quote }}; V={{ _pem_volume | quote }}
+      R={{ postgres_encoding_migrate_pgbackrest_repo | quote }}
+      echo "open run: {{ _pem_run or 'none' }}"
+      for D in "$dir"/[0-9]*T*Z; do
+        [ -d "$D" ] || continue
+        run=$(basename "$D"); state=open
+        for f in cleaned rolled-back complete; do [ -f "$D/$f" ] && { state=$f; break; }; done
+        keeps=""
+        docker volume inspect "$V-pre-utf8-$run" >/dev/null 2>&1 && keeps="$keeps volume $V-pre-utf8-$run;"
+        for side in "$R.pre-utf8-$run" "$R.utf8-$run"; do [ -d "$side" ] && keeps="$keeps repository $side;"; done
+        ls "$D"/db-*.dump >/dev/null 2>&1 && keeps="$keeps dumps $(du -ch "$D"/db-*.dump | tail -1 | cut -f1);"
+        phases=$(ls "$D" | sed -n 's/^phase-\(.*\)\.done$/\1/p' | sort -V | tr '\n' ' ')
+        echo "run $run: $state; phases done: ${phases:-none}; keeps:${keeps:- nothing}"
+      done
+      true
+  register: _pem_status
+  changed_when: false
+
+- name: "status | {{ inventory_hostname }}"
+  ansible.builtin.debug:
+    msg: "{{ _pem_status.stdout_lines }}"

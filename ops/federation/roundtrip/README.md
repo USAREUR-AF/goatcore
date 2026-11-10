@@ -5,8 +5,9 @@ reads the partner's store directly; the smoke harness inspects both routers. A r
 neither, so until now the sending side had no way to learn whether anything it published ever
 arrived.
 
-**A round trip closes that gap.** The publisher emits a nonce under its own wire name and waits for
-the counterparty's acknowledgement to come back under theirs. A pass means four things at once:
+**A round trip closes that gap.** The publisher stages a nonce under one of its release sets, its
+republisher lifts it onto its wire name, and it waits for the counterparty's acknowledgement to come
+back under theirs. A pass means four things at once:
 
 1. the sample crossed the peering,
 2. the **partner's own router** delivered it to a process on their side,
@@ -23,8 +24,8 @@ The check rides entirely on the two grants the agreement already makes:
 
 | Leg | Key | Grant it uses |
 |---|---|---|
-| probe out | `from/<us>/fedcheck/<nonce>` | our egress — our own wire name |
-| ack back | `from/<them>/fedcheck-ack/<nonce>` | our ingress — their landing prefix |
+| probe out | staged `release/<set>/fedcheck/<nonce>`, crosses as `from/<us>/<set>/fedcheck/<nonce>` | our republisher, then our egress — our own wire name |
+| ack back | staged `release/<their set>/fedcheck-ack/<nonce>`, arrives as `from/<them>/<their set>/fedcheck-ack/<nonce>` | their republisher, then our ingress — their landing prefix |
 
 No new ACL rule, no new subject, no widening. If the check cannot pass, the agreement's own lanes
 are not working — which is exactly what it exists to report.
@@ -34,14 +35,18 @@ are not working — which is exactly what it exists to report.
 On the receiving sovereign, once:
 
 ```bash
-python3 responder.py from/<them> from/<us>      # e.g. from/zagros from/xaa
+python3 responder.py from/<them> release/<one of our sets>   # e.g. from/zagros release/weather
 ```
 
 On the publishing sovereign, whenever you want the answer:
 
 ```bash
-./fedcheck.sh from/<us> from/<them> [timeout]   # e.g. from/zagros from/xaa 20
+./fedcheck.sh release/<one of our sets> from/<them> [timeout]   # e.g. release/weather from/xaa 20
 ```
+
+Phase 14 (`ops/federation/standup/acceptance.sh`) runs it once per set we offer, and, when the
+partner's surface is reachable (a drill), once per set they offer in the other direction. It
+streams `fedcheck.sh` to the host that runs it (`bash -s` over ssh); nothing is copied there.
 
 ## Measured
 

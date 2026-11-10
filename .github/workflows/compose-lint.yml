@@ -44,6 +44,11 @@ jobs:
       # CI is not actually bringing containers up.
       SITE_NAME: ci
       POSTGRES_SUPERUSER_PASSWORD: ci-test-only
+      # The compose files name no image for postgres-a/-b or signal-a/-b; a
+      # deploy renders these two from the goatnet's pins. Any reference
+      # satisfies interpolation here.
+      POSTGRES_SPOCK_IMAGE: ghcr.io/example/postgres-spock:sha-abc1234
+      SIGNAL_SERVER_IMAGE: ghcr.io/example/signal-server:sha-abc1234
     steps:
       - uses: actions/checkout@v4
 

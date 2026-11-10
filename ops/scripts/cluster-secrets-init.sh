@@ -24,12 +24,14 @@
 # /opt/mgmt-host/.env.
 #
 # Usage:
-#   ops/scripts/cluster-secrets-init.sh                # writes to repo's .envrc.local
-#   ops/scripts/cluster-secrets-init.sh --target ~/.envrc.local
-#   ops/scripts/cluster-secrets-init.sh --sites vega,prov-rla,prov-x,integdev
+#   ops/scripts/cluster-secrets-init.sh --sites <site1,site2,...>      # writes to repo's .envrc.local
+#   ops/scripts/cluster-secrets-init.sh --sites <site1,site2,...> --target ~/.envrc.local
+#
+# --sites names the cluster's sites; it is required, because the sites are the
+# cluster's own. The first is the source of truth and the rest mirror it.
 #
 # After running:
-#   1. Persist the four VEGA_* values to 1Password (operator-side).
+#   1. Persist the four <FIRST_SITE>_* values to 1Password (operator-side).
 #   2. `direnv allow` to load the new env vars.
 #   3. Run `site-preflight.yml -e site_id=<site>` to confirm pre-flight passes.
 #   4. Run the Ory deploy chain per docs/operations/ory-deploy-handoff.md.
@@ -41,7 +43,7 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 
 target=".envrc.local"
-sites="vega,prov-rla,prov-x,integdev"
+sites=""
 
 # ---------------------------------------------------------------------------
 # Arg parsing
@@ -58,10 +60,16 @@ while [[ $# -gt 0 ]]; do
       exit 0 ;;
     *)
       echo "error: unknown arg: $1" >&2
-      echo "usage: $0 [--target <path>] [--sites <site1,site2,...>]" >&2
+      echo "usage: $0 --sites <site1,site2,...> [--target <path>]" >&2
       exit 64 ;;
   esac
 done
+
+if [[ -z "$sites" ]]; then
+  echo "error: --sites is required: the cluster's sites, comma-separated, source of truth first." >&2
+  echo "usage: $0 --sites <site1,site2,...> [--target <path>]" >&2
+  exit 64
+fi
 
 # ---------------------------------------------------------------------------
 # Pre-flight checks
@@ -89,7 +97,7 @@ if [[ "$existing" -gt 0 ]]; then
   echo "error: $target already contains $existing cluster-shared Ory secret line(s)." >&2
   echo "  refusing to overwrite. If you genuinely need to rotate, do it manually" >&2
   echo "  and roll the values across every site's /opt/mgmt-host/.env in lockstep." >&2
-  echo "  if you're trying to ADD a new site, copy the existing VEGA_* values" >&2
+  echo "  if you're trying to ADD a new site, copy the existing source-of-truth values" >&2
   echo "  to <NEW_SITE>_* aliases — see docs/operations/ory-deploy-handoff.md" >&2
   echo "  §'Cluster secrets'." >&2
   exit 67
@@ -157,6 +165,6 @@ echo "  3. \`ansible-playbook -i ops/ansible/inventory/hosts.ini ops/ansible/sit
 echo "     should now PASS — confirms the gate sees the new vars."
 echo "  4. Proceed with the Ory deploy chain per docs/operations/ory-deploy-handoff.md."
 echo
-echo "Reminder: if a future site joins the cluster (e.g. vega-bd, wsb), add"
+echo "Reminder: if a future site joins the cluster, add"
 echo "its mirror block to the same .envrc.local under the cluster-shared"
 echo "section — do NOT re-run this script. It refuses to overwrite by design."

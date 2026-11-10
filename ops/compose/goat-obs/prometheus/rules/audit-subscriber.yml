@@ -69,8 +69,7 @@ groups:
               - `docker logs --tail 30 audit-subscriber` for the
                 underlying SDK error.
               - `mc cp /tmp/probe.ndjson root/audit-integrity/probe.ndjson`
-                as the MinIO root user to see the unmasked error
-                
+                as the MinIO root user to see the unmasked error.
 
       # Subscriber receives events from Zenoh but emits nothing — the
       # service is wedged upstream of S3 (zenoh session dropped,
@@ -159,9 +158,8 @@ groups:
 
             Immediate action:
               - Raise the quota: `mc quota set local/audit-integrity --size <new>GiB`.
-                Underlying disk usually has plenty of room (nova-a had
-                841 GB free behind a 12 GiB cap during the F-169
-                incident).
+                Underlying disk usually has plenty of room (a host has had
+                841 GB free behind a 12 GiB cap).
               - Verify writes resume: `docker logs --tail 5 audit-subscriber`
                 should show `batch uploaded` within ~70s — one
                 `batch_interval_ms` (60s since F-374) plus upload. This

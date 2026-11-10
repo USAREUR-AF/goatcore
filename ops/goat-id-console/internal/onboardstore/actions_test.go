@@ -10,7 +10,7 @@ import (
 func onboardedProposal(t *testing.T, s *Store) *Proposal {
 	t.Helper()
 	ctx := context.Background()
-	p := &Proposal{Sponsor: "jane-admin", Env: "zagros", Handle: "pat-liaison", Email: "person-118@example.org", ManifestJSON: `{"identity":{"handle":"pat-liaison"}}`, Tier: "observer"}
+	p := &Proposal{Sponsor: "jane-admin", Env: "zagros", Handle: "pat-liaison", Email: "person-105@example.org", ManifestJSON: `{"identity":{"handle":"pat-liaison"}}`, Tier: "observer"}
 	if err := s.CreateProposal(ctx, p); err != nil {
 		t.Fatalf("CreateProposal: %v", err)
 	}
@@ -238,7 +238,7 @@ func TestActionEnqueueRefusals(t *testing.T) {
 		t.Fatalf("unknown proposal: want ErrNotFound, got %v", err)
 	}
 	// Not onboarded yet.
-	p := &Proposal{Sponsor: "jane-admin", Env: "zagros", Handle: "sam", Email: "person-124@example.org", ManifestJSON: `{}`}
+	p := &Proposal{Sponsor: "jane-admin", Env: "zagros", Handle: "sam", Email: "person-111@example.org", ManifestJSON: `{}`}
 	if err := s.CreateProposal(ctx, p); err != nil {
 		t.Fatal(err)
 	}

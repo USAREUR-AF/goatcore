@@ -2,22 +2,22 @@
 # goat-relay-coturn.yml — deploy coturn (STUN) onto the all-Rust goat-relay tier.
 #
 # WHY THIS EXISTS: coturn lived inline only in the legacy relay-server.yml. The
-# all-Rust goat-relay tier (goat-relay-deploy.yml) shipped without it, so ZAGROS
+# all-Rust goat-relay tier (goat-relay-deploy.yml) shipped without it, so that tier
 # ran zero STUN — every peer relay-forced, no direct P2P. The coturn
 # role is wired into goat-relay-deploy.yml, but that play also re-pushes the
 # goat-relay image + re-runs the data-plane deploy; this standalone play applies
 # JUST coturn to already-running relays without that churn. Mirrors the
 # goat-relay-rathole.yml pattern.
 #
-# RUN (ZAGROS, SSM to the relays):
+# RUN (SSM to the relays):
 #   cd ops/ansible
-#   OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES aws-vault exec usareur-af --no-session -- \
+#   OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES aws-vault exec <profile> --no-session -- \
 #     ../scripts/ansible-preflight.sh \
-#     -i inventory/hosts-zagros.ini -i inventory/zagros-goat-relay-alias.ini \
+#     -i inventory/hosts-<site>.ini -i inventory/<site>-goat-relay-alias.ini \
 #     goat-relay-coturn.yml
 #
 # Requires UDP+TCP 3478 open in the goat-relay SG (terraform coturn_enabled).
-# deploy_coturn is read from the relay group vars (zagros-goat-relay-alias.ini
+# deploy_coturn is read from the relay group vars (<site>-goat-relay-alias.ini
 # [goat_relay_hosts:vars]); pass -e deploy_coturn=true for a tier that hasn't
 # set it. STUN-first: TURN stays off (see the coturn role).
 
@@ -31,7 +31,7 @@
         that: deploy_coturn | default(false) | bool
         fail_msg: >-
           deploy_coturn is not set for these hosts. Set it in the relay group
-          vars (ZAGROS: inventory/zagros-goat-relay-alias.ini [goat_relay_hosts:vars])
+          vars (inventory/<site>-goat-relay-alias.ini [goat_relay_hosts:vars])
           or pass -e deploy_coturn=true.
 
     # coturn external-ip must be the PUBLIC IP. The [relay_servers] inventory

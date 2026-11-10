@@ -17,7 +17,7 @@ import (
 
 func main() {
 	var (
-		env       = flag.String("env", "", "goatnet env (e.g. zagros-prod)")
+		env       = flag.String("env", "", "goatnet env (e.g. galaxy)")
 		mgmt      = flag.String("mgmt-url", "", "NOTIFY_MGMT_URL")
 		get       = flag.String("get-url", "", "NOTIFY_GET_URL")
 		portal    = flag.String("portal-url", "", "NOTIFY_PORTAL_URL")

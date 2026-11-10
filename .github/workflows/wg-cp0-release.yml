@@ -1,0 +1,191 @@
+# Publishes the wg-cp0 orchestrator binary (ops/enrollment/cmd/wg-cp0) on a tag
+# wg-cp0/v<semver>, e.g. wg-cp0/v0.1.0.
+#
+# Assets, per release:
+#   wg-cp0-<goos>-<goarch>[.exe]   linux, darwin and windows, amd64 and arm64;
+#                                  CGO off, -trimpath, stripped
+#   <asset>.sha256                 one per binary
+#   SHA256SUMS                     every asset's digest
+#   SHA256SUMS.cosign-bundle       a keyless cosign signature over SHA256SUMS,
+#                                  made under this workflow's GitHub OIDC identity
+#
+# The same shape as _release-binary.yml, which builds this repository's Rust
+# binaries: a tag is built only when it is on main and was pushed by a
+# repository admin, and the signature is verified the way a downloader checks
+# it. wg-cp0 is a Go binary, so the build legs are Go cross-compiles on one
+# runner rather than cargo on one runner per platform.
+#
+# Dry paths: workflow_dispatch builds and signs without publishing, and a pull
+# request that edits this file builds every leg and writes SHA256SUMS (and signs
+# it when the branch is in this repository). Per-PR builds of the source itself
+# are wg-cp0-accessor.yml's.
+
+name: wg-cp0-release
+
+on:
+  push:
+    tags:
+      - 'wg-cp0/v*'
+  pull_request:
+    paths:
+      - '.github/workflows/wg-cp0-release.yml'
+      - '.github/release-notes/wg-cp0.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
+
+jobs:
+  nominator:
+    name: the tag is on main and pushed by a repository admin
+    if: github.ref_type == 'tag' && startsWith(github.ref_name, 'wg-cp0/v')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: The pusher holds the admin role
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          role=$(gh api "repos/${GITHUB_REPOSITORY}/collaborators/${GITHUB_ACTOR}/permission" --jq .role_name 2>/dev/null || echo unknown)
+          echo "${GITHUB_ACTOR} holds role: ${role}"
+          if [ "$role" != admin ]; then
+            echo "::error::${GITHUB_ACTOR} holds the '${role}' role; only a repository admin cuts a release. Nothing is built for ${GITHUB_REF_NAME}."
+            exit 1
+          fi
+      - name: The tagged commit is on main
+        run: |
+          set -euo pipefail
+          git fetch -q origin main
+          if ! git merge-base --is-ancestor "${GITHUB_SHA}" origin/main; then
+            echo "::error::${GITHUB_REF_NAME} points at ${GITHUB_SHA}, which is not on main. Nothing is built."
+            exit 1
+          fi
+
+  build:
+    name: build ${{ matrix.goos }}-${{ matrix.goarch }}
+    needs: [nominator]
+    # A pull request or workflow_dispatch has no tag: nominator is skipped and the build runs.
+    if: ${{ !cancelled() && (needs.nominator.result == 'success' || needs.nominator.result == 'skipped') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        goos: [linux, darwin, windows]
+        goarch: [amd64, arm64]
+    defaults:
+      run:
+        working-directory: ops/enrollment
+    env:
+      CGO_ENABLED: "0"
+      GOOS: ${{ matrix.goos }}
+      GOARCH: ${{ matrix.goarch }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          # 'stable', as wg-cp0-accessor.yml: a pinned patch level goes stale
+          # on standard-library security fixes.
+          go-version: 'stable'
+          cache-dependency-path: ops/enrollment/go.sum
+      - name: go vet (this target's build tags)
+        run: go vet ./cmd/wg-cp0/...
+      - name: the test binary compiles for this target
+        run: go test -c -o "$RUNNER_TEMP/wg-cp0.test" ./cmd/wg-cp0
+      - name: Build and stage the asset and its .sha256
+        env:
+          EXT: ${{ matrix.goos == 'windows' && '.exe' || '' }}
+        run: |
+          set -euo pipefail
+          out="wg-cp0-${GOOS}-${GOARCH}${EXT}"
+          mkdir -p "$GITHUB_WORKSPACE/dist"
+          go build -trimpath -ldflags="-s -w" -o "$GITHUB_WORKSPACE/dist/$out" ./cmd/wg-cp0
+          cd "$GITHUB_WORKSPACE/dist"
+          sum=$(sha256sum "$out" | awk '{print $1}')
+          echo "$sum  $out" > "$out.sha256"
+          echo "- \`$out\` sha256 \`$sum\`" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wg-cp0-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 30
+
+  checksums:
+    name: SHA256SUMS, signed with cosign (keyless)
+    needs: [build]
+    if: ${{ !cancelled() && needs.build.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: wg-cp0-*
+          merge-multiple: true
+      - name: SHA256SUMS
+        run: |
+          set -euo pipefail
+          cat artifacts/*.sha256 | sort -k 2 > SHA256SUMS
+          test "$(wc -l < SHA256SUMS)" -eq 6
+          (cd artifacts && sha256sum -c ../SHA256SUMS)
+          { echo '```'; cat SHA256SUMS; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      # A pull request from a fork gets no OIDC token, so it cannot sign.
+      - uses: sigstore/cosign-installer@v3
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+      - name: Sign SHA256SUMS, then verify it the way a downloader does
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        run: |
+          set -euo pipefail
+          cosign sign-blob --yes --bundle SHA256SUMS.cosign-bundle SHA256SUMS
+          cosign verify-blob --bundle SHA256SUMS.cosign-bundle \
+            --certificate-identity-regexp "^https://github.com/${GITHUB_REPOSITORY}/" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wg-cp0-checksums
+          path: |
+            SHA256SUMS
+            SHA256SUMS.cosign-bundle
+          if-no-files-found: ignore
+          retention-days: 30
+
+  release:
+    name: attach the assets to the release
+    needs: [build, checksums]
+    if: ${{ !cancelled() && github.ref_type == 'tag' && startsWith(github.ref_name, 'wg-cp0/v') && needs.checksums.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+      - name: Every asset, its digest and the signature are present
+        run: |
+          set -euo pipefail
+          ls -la release-assets/
+          test -s release-assets/SHA256SUMS.cosign-bundle
+          (cd release-assets && sha256sum -c SHA256SUMS)
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: release-assets/*
+          body_path: .github/release-notes/wg-cp0.md
+          generate_release_notes: true
+          fail_on_unmatched_files: true

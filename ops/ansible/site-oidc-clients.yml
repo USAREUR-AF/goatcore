@@ -1,0 +1,182 @@
+---
+# site-oidc-clients.yml — register a site's OIDC clients at its Hydra.
+#
+# Phase 10 [internet] of goat-standup.sh, after Ory and before the service
+# deploys that depend on these clients.
+#
+#   cd ops/ansible
+#   ansible-playbook -i inventory/mgmt-hosts.ini site-oidc-clients.yml \
+#     -e target=<site>_hosts
+#
+# Registers the core clients goatcore ships a role for:
+#   oauth2-proxy-dashboard, isitup, oauth2-proxy-id-console, and grafana when
+#   the site runs the operator IdP (site_oidc_include_grafana: true).
+# A site adds any other client by declaring site_extra_oidc_clients in its
+# group_vars, each entry {client_id, client_name, client_secret, redirect_uri}:
+#
+#   site_extra_oidc_clients:
+#     - client_id: oauth2-proxy-compliance
+#       client_name: "oauth2-proxy-compliance ({{ site_id }})"
+#       client_secret: "{{ lookup('env', 'SITE_COMPLIANCE_OIDC_CLIENT_SECRET') }}"
+#       redirect_uri: "https://compliance.{{ site_id }}.{{ site_dns_zone }}/oauth2/callback"
+#
+# Secrets come from the environment under the names newsite-secrets.sh mints
+# (<SITE>_..., the site id upper-cased with '-' as '_'), resolved for the run by
+# the declared secrets posture. Re-runs upsert existing client IDs; they never
+# mint or rotate a credential.
+#
+# A site needing a different client set keeps its own <site>-oidc-clients.yml;
+# goat-standup.sh runs that file in place of this one when it exists.
+
+# `[0]`: the first host of the group is the active mgmt node, the only one
+# running Hydra.
+- name: Register the site's OIDC clients at its Hydra
+  hosts: "{{ target | mandatory }}[0]"
+  gather_facts: false
+  become: false
+
+  vars:
+    hydra_admin: "http://127.0.0.1:{{ hydra_admin_host_port | default(4445) }}"
+    _site_env: "{{ site_id | upper | replace('-', '_') }}"
+    _include_grafana: "{{ site_oidc_include_grafana | default(false) | bool }}"
+    _extra_clients: "{{ site_extra_oidc_clients | default([]) }}"
+
+    oauth2_proxy_dashboard_oidc_client_secret: "{{ lookup('env', _site_env ~ '_DASHBOARD_OAUTH2_PROXY_CLIENT_SECRET') }}"
+    isitup_oidc_client_secret: "{{ lookup('env', _site_env ~ '_ISITUP_OIDC_CLIENT_SECRET') }}"
+    oauth2_proxy_id_console_oidc_client_secret: "{{ lookup('env', _site_env ~ '_ID_ADMIN_CONSOLE_OAUTH2_PROXY_CLIENT_SECRET') }}"
+    operator_idp_grafana_client_secret: "{{ lookup('env', _site_env ~ '_GRAFANA_OIDC_CLIENT_SECRET') }}"
+
+    _role_client_secrets: >-
+      {{ {
+        'oauth2-proxy-dashboard-oidc-client': oauth2_proxy_dashboard_oidc_client_secret,
+        'isitup-oidc-client': isitup_oidc_client_secret,
+        'oauth2-proxy-id-console-oidc-client': oauth2_proxy_id_console_oidc_client_secret
+      } | combine({'grafana-oidc-client': operator_idp_grafana_client_secret} if _include_grafana else {}) }}
+    _all_client_secrets: >-
+      {{ _role_client_secrets | combine(
+           dict(_extra_clients | map(attribute='client_id') | zip(
+                _extra_clients | map(attribute='client_secret')))) }}
+
+  pre_tasks:
+    - name: Assert the site identity the redirect URIs are built from
+      ansible.builtin.assert:
+        that:
+          - site_id is defined and (site_id | length) > 0
+          - site_dns_zone is defined and (site_dns_zone | length) > 0
+        fail_msg: "site_id or site_dns_zone is unset in the site's group_vars."
+        quiet: true
+
+    # Check the whole set before registering any of it: a half-registered Hydra
+    # brings up some fenced services and fails the rest later, one by one.
+    - name: Assert every client secret is present, resolved and long enough
+      ansible.builtin.assert:
+        that:
+          - _all_client_secrets[item] is string
+          - (_all_client_secrets[item] | length) >= 32
+          - not _all_client_secrets[item].startswith(lookup('env', 'GOAT_SECRET_REF_PREFIX') | default('op://', true))
+        fail_msg: >-
+          Client {{ item }} needs a resolved secret of at least 32 characters.
+          Mint missing credentials with ops/scripts/newsite-secrets.sh {{ site_id }}
+          and run through the declared secrets posture.
+        quiet: true
+      # Loop over identifiers only, so no item or message carries a value.
+      loop: "{{ _all_client_secrets.keys() | list }}"
+
+    - name: Wait for the Hydra admin API
+      ansible.builtin.uri:
+        url: "{{ hydra_admin }}/health/ready"
+        status_code: 200
+      register: _hydra_ready
+      until: _hydra_ready is succeeded
+      retries: 5
+      delay: 2
+
+  roles:
+    - role: oauth2-proxy-dashboard-oidc-client
+    - role: isitup-oidc-client
+    - role: oauth2-proxy-id-console-oidc-client
+    - role: grafana-oidc-client
+      when: _include_grafana
+
+  tasks:
+    - name: Check whether each extra client exists at Hydra
+      ansible.builtin.uri:
+        url: "{{ hydra_admin }}/admin/clients/{{ item.client_id }}"
+        status_code: [200, 404]
+      loop: "{{ _extra_clients }}"
+      loop_control:
+        label: "{{ item.client_id }}"
+      register: _extra_client_get
+      # A failed result would otherwise print item.client_secret.
+      no_log: true
+
+    - name: Create or re-sync each extra client
+      ansible.builtin.uri:
+        url: >-
+          {{ hydra_admin }}/admin/clients{{
+            '' if item.status == 404 else '/' ~ item.item.client_id
+          }}
+        method: "{{ 'POST' if item.status == 404 else 'PUT' }}"
+        body_format: json
+        body:
+          client_id: "{{ item.item.client_id }}"
+          client_name: "{{ item.item.client_name }}"
+          client_secret: "{{ item.item.client_secret }}"
+          grant_types: [authorization_code, refresh_token]
+          response_types: [code]
+          # offline_access lets oauth2-proxy refresh the session silently
+          # instead of sending the user back through consent.
+          scope: "openid profile email groups offline_access"
+          redirect_uris: ["{{ item.item.redirect_uri }}"]
+          token_endpoint_auth_method: client_secret_post
+          skip_consent: true
+          access_token_strategy: jwt
+          audience: ["{{ item.item.client_id }}"]
+        status_code: [200, 201]
+      loop: "{{ _extra_client_get.results }}"
+      loop_control:
+        label: "{{ item.item.client_id }}"
+      no_log: true
+
+    # The NetBird CLI client is public: no secret (a CLI on an operator laptop
+    # cannot hold one, so PKCE stands in), loopback redirect URIs, and an
+    # audience of auth_audience so management accepts its tokens. Registered
+    # only when the site's group_vars set netbird_pkce_client_id, which also
+    # switches on the PKCE block in management.json.
+    - name: Check whether the NetBird CLI client exists at Hydra
+      ansible.builtin.uri:
+        url: "{{ hydra_admin }}/admin/clients/{{ netbird_pkce_client_id }}"
+        status_code: [200, 404]
+      register: _netbird_cli_client_get
+      when: netbird_pkce_client_id | default('') | length > 0
+
+    - name: Create or re-sync the NetBird CLI public PKCE client
+      ansible.builtin.uri:
+        url: >-
+          {{ hydra_admin }}/admin/clients{{
+            '' if _netbird_cli_client_get.status == 404 else '/' ~ netbird_pkce_client_id
+          }}
+        method: "{{ 'POST' if _netbird_cli_client_get.status == 404 else 'PUT' }}"
+        body_format: json
+        body:
+          client_id: "{{ netbird_pkce_client_id }}"
+          client_name: "{{ netbird_pkce_client_id }} ({{ site_id }})"
+          grant_types: [authorization_code, refresh_token]
+          response_types: [code]
+          scope: "{{ netbird_pkce_scopes | default(['openid', 'profile', 'email', 'offline_access']) | join(' ') }}"
+          redirect_uris: "{{ netbird_pkce_redirect_urls }}"
+          token_endpoint_auth_method: none
+          skip_consent: true
+          access_token_strategy: jwt
+          subject_type: public
+          audience: ["{{ netbird_pkce_audience | default(auth_audience) }}"]
+        status_code: [200, 201]
+      when: netbird_pkce_client_id | default('') | length > 0
+
+    - name: Report the registered clients
+      ansible.builtin.debug:
+        msg: >-
+          OIDC clients registered at {{ hydra_admin }}:
+          {{ (_role_client_secrets.keys() | list | map('regex_replace', '-oidc-client$', '') | list
+              + _extra_clients | map(attribute='client_id') | list) | join(', ') }}{{
+          ', ' ~ netbird_pkce_client_id if netbird_pkce_client_id | default('') | length > 0 else '' }}.

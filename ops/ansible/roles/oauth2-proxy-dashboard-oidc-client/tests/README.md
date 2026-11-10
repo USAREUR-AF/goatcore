@@ -1,8 +1,7 @@
 # oauth2-proxy-dashboard-oidc-client role tests
 
 Parse-only smoke. End-to-end Hydra OAuth2 client provisioning is covered by
-the operator-fired first deploy on nova-a per
-`docs/operations/nova-bringup.md`
-Step 9.7 (oauth2-proxy-dashboard subsection).
+the operator-fired first deploy of a site (the oauth2-proxy-dashboard step of
+its bring-up runbook).
 
 Run: `./syntax-check.sh`.

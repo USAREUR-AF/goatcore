@@ -166,3 +166,29 @@ func TestUnknownIdPLookup(t *testing.T) {
 		t.Error("IdP() returned ok=true for nonsense key")
 	}
 }
+
+func TestPublicDoorAdminPWAlias(t *testing.T) {
+	cases := []struct{ old, neutral, want string }{
+		{"", "", ""},
+		{"old-pw", "", "old-pw"},
+		{"", "neutral-pw", "neutral-pw"},
+		{"old-pw", "neutral-pw", "old-pw"},
+	}
+	const oldName, neutralName = "GOAT_IDM_ADMIN_PW", "GOAT_IDM_ADMIN_PW"
+	for _, tc := range cases {
+		// In a build where both names are the same string there is one
+		// variable, so only the cases that set it once apply.
+		if oldName == neutralName && tc.old != "" {
+			continue
+		}
+		t.Setenv(oldName, tc.old)
+		t.Setenv(neutralName, tc.neutral)
+		c, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.PublicDoorAdminPW != tc.want {
+			t.Errorf("old=%q neutral=%q: PublicDoorAdminPW = %q, want %q", tc.old, tc.neutral, c.PublicDoorAdminPW, tc.want)
+		}
+	}
+}

@@ -127,7 +127,7 @@ print(env.get_template("spire-trust-sync.sh.j2").render(
     spire_data_dir=os.environ["DATA_DIR"],
     spire_compose_dir=os.environ["DATA_DIR"],
     spire_bin_dir=os.environ["BIN_DIR"],
-    spire_trust_domain="zagros.zagros.example",
+    spire_trust_domain="zagros.goat.example",
     spire_agent_node_path="agent/thor",
     spire_agent_rescue_enabled=False,
     spire_trust_sync_interval="15min",

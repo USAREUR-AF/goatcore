@@ -47,6 +47,19 @@ ALLOWED='/opt/spire/data/server/spire-ca.pem
 {{ goat_zenoh_tls_dir }}/zagros-root-cert.pem
 {{ goat_zenoh_tls_dir }}/shared-root-cert.pem'
 
+# A deployment declares its own goatnets' issuers — the <site>-root-cert.pem
+# entry above, for each goatnet that carries one — in
+# ops/ci/check-zenoh-trust-anchors.d/*.allow, one path per line (blank lines and
+# `#` comments ignored), under the same review rule.
+for f in ops/ci/check-zenoh-trust-anchors.d/*.allow; do
+  [ -f "$f" ] || continue
+  while IFS= read -r p; do
+    p="${p%%#*}"; p="${p%"${p##*[![:space:]]}"}"; p="${p#"${p%%[![:space:]]*}"}"
+    [ -n "$p" ] && ALLOWED="$ALLOWED
+$p"
+  done < "$f"
+done
+
 echo "[trust-anchors] extra CA paths"
 while IFS= read -r line; do
   f="${line%%:*}"; rest="${line#*:}"; n="${rest%%:*}"

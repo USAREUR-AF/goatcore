@@ -20,7 +20,7 @@ class ReferenceAddress(unittest.TestCase):
             self.assertTrue(preflight._names_reference_address(val), val)
 
     def test_mesh_private_and_templated_values_are_kept(self):
-        for val in ('"100.127.0.152"', "10.0.11.50", "192.168.1.172", "127.0.0.1:9193",
+        for val in ('"100.127.0.148"', "10.0.11.50", "192.168.1.172", "127.0.0.1:9193",
                     '"{{ mesh_ip_a }}"', "netbird.zagros-dev.example", "1.2.3", ""):
             self.assertFalse(preflight._names_reference_address(val), val)
 

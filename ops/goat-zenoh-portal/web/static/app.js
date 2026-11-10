@@ -2,15 +2,26 @@
 //
 // Vanilla JS, ES modules. No framework, no bundler. Format decoders are
 // loaded on-demand from /decoders.js. Lives behind the portal API key in
-// localStorage at `portalApiKey`.
+// an opaque HttpOnly session cookie; API keys stay in server memory.
 
 import { formatUptime, compareDisplayNames } from "/display.js";
 
-const STORAGE_KEY = "portalApiKey";
-
-export function getKey() { return localStorage.getItem(STORAGE_KEY) || ""; }
-export function setKey(k) { localStorage.setItem(STORAGE_KEY, k); }
-export function clearKey() { localStorage.removeItem(STORAGE_KEY); }
+// Remove credentials persisted by older clients without reusing them.
+try { localStorage.removeItem("portalApiKey"); } catch (_) {}
+let authenticated = false;
+export function hasAuth() { return authenticated; }
+export async function setKey(key) {
+  await readResponse(await request("/api/browser-session", {
+    method: "POST", headers: { Authorization: "Bearer " + key },
+  }));
+  authenticated = true;
+  authPromise = undefined;
+}
+export async function clearKey() {
+  await readResponse(await request("/api/browser-session", { method: "DELETE" }));
+  authenticated = false;
+  authPromise = undefined;
+}
 
 export class ApiError extends Error {
   constructor(message, status = 0, category = "network", retryAfter = null) {
@@ -56,8 +67,6 @@ export async function readResponse(res) {
 export async function api(path, opts = {}) {
   const headers = new Headers(opts.headers || {});
   headers.set("Accept", "application/json");
-  const key = getKey();
-  if (key) headers.set("Authorization", "Bearer " + key);
   if (opts.body && !(opts.body instanceof FormData) && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
   return readResponse(await request(path, { ...opts, headers }));
 }
@@ -109,7 +118,7 @@ export async function lexicon() {
 }
 
 // Share the page's identity transition with page-specific authorization UI.
-// Credential replacement reloads the page, starting a fresh identity probe.
+// Credential replacement establishes a server session before reloading.
 let authPromise;
 export function hydrateAuth() {
   if (!authPromise) authPromise = hydrateAuthOnce();
@@ -123,13 +132,6 @@ async function hydrateAuthOnce() {
   const welcome = document.getElementById("welcome");
   const operatorControls = document.querySelectorAll(".operator-only, #operator-actions");
   operatorControls.forEach(el => el.classList.add("hidden"));
-  const key = getKey();
-  if (!key) {
-    if (banner) banner.classList.remove("hidden");
-    if (welcome) welcome.classList.remove("hidden");
-    if (who) who.textContent = "unauthenticated";
-    return null;
-  }
   try {
     // Probe a low-cost auth-required endpoint. /api/whoami is ~60 bytes and
     // carries visible_orgs, the only thing the header needed; this used to
@@ -137,6 +139,7 @@ async function hydrateAuthOnce() {
     // one count. The lexicon fetch is independent, so both go at once rather
     // than one after the other.
     const [v, lex] = await Promise.all([api("/api/whoami"), lexicon()]);
+    authenticated = true;
     if (banner) banner.classList.add("hidden");
     if (welcome) welcome.classList.add("hidden");
     const count = v.visible_orgs || 0;
@@ -145,10 +148,11 @@ async function hydrateAuthOnce() {
     if (v.operator === true) operatorControls.forEach(el => el.classList.remove("hidden"));
     return v;
   } catch (e) {
+    authenticated = false;
     if (banner) banner.classList.toggle("hidden", !isAuthError(e));
     if (welcome) welcome.classList.toggle("hidden", !isAuthError(e));
-    if (who) who.textContent = e.message;
-    showRequestError(e);
+    if (who) who.textContent = isAuthError(e) ? "unauthenticated" : e.message;
+    if (!isAuthError(e)) showRequestError(e);
     return null;
   }
 }
@@ -356,17 +360,19 @@ document.addEventListener("DOMContentLoaded", installThemeToggle);
 function wireKeyForm() {
   const saveBtn = document.getElementById("api-key-save");
   const input = document.getElementById("api-key-input");
-  if (saveBtn) saveBtn.addEventListener("click", () => {
-    const v = input.value.trim();
-    if (v) { setKey(v); location.reload(); }
+  const signIn = async () => {
+    const key = input?.value.trim();
+    if (!key) return;
+    try {
+      await setKey(key);
+      input.value = "";
+      location.reload();
+    } catch (error) { input.value = ""; showRequestError(error); }
+  };
+  if (saveBtn) { saveBtn.textContent = "Sign in"; saveBtn.addEventListener("click", signIn); }
+  if (input) input.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") signIn();
   });
-  if (input) input.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") {
-      const v = input.value.trim();
-      if (v) { setKey(v); location.reload(); }
-    }
-  });
-
 }
 
 // Home-page wiring.

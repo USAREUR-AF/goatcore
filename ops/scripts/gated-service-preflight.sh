@@ -3,7 +3,10 @@
 # goatnet. Every check below is a real failure mode of standing up a gated
 # service, in the order it bites; each one costs a deploy round-trip or an outage.
 #
-#   ./ops/scripts/gated-service-preflight.sh <goatnet> <service> [--fqdn <public-fqdn>]
+#   ./ops/scripts/gated-service-preflight.sh <goatnet> <service> [--fqdn <public-fqdn>] [--issuer <url>]
+#
+# --issuer is the OIDC issuer the gate signs in against (check 8). Left out, it
+# is read from the goatnet's group_vars (<service>_public_oidc_issuer).
 #
 # e.g. ./ops/scripts/gated-service-preflight.sh site-a relay_health \
 #          --fqdn relay-health.example.net
@@ -20,12 +23,12 @@
 set -uo pipefail
 
 GOATNET="${1:-}"; SERVICE="${2:-}"; shift 2 2>/dev/null || true
-FQDN=""
-while [ $# -gt 0 ]; do case "$1" in --fqdn) FQDN="$2"; shift 2;; *) shift;; esac; done
+FQDN=""; ISSUER=""
+while [ $# -gt 0 ]; do case "$1" in --fqdn) FQDN="$2"; shift 2;; --issuer) ISSUER="$2"; shift 2;; *) shift;; esac; done
 
 if [ -z "$GOATNET" ] || [ -z "$SERVICE" ]; then
-  echo "usage: $0 <goatnet> <service> [--fqdn <public-fqdn>]" >&2
-  echo "  e.g. $0 zagros-prod relay_health --fqdn relay-health.zagros-prod.goat.example" >&2
+  echo "usage: $0 <goatnet> <service> [--fqdn <public-fqdn>] [--issuer <url>]" >&2
+  echo "  e.g. $0 site-a relay_health --fqdn relay-health.example.net" >&2
   exit 2
 fi
 
@@ -41,7 +44,7 @@ sec(){  printf '\n\033[1m%s\033[0m\n' "$1"; }
 echo "gated-service preflight — goatnet=$GOATNET service=$SERVICE${FQDN:+ fqdn=$FQDN}"
 
 # ---------------------------------------------------------------------------
-sec "1. enablement declared"
+sec "1. enablement declared (absent means DESTROY, not skip)"
 # The role's sunset path fires on a FALSY flag and ends the play with
 # `meta: end_host`, BEFORE the asserts that would fail loudly. A surface stood
 # up with `-e` overrides therefore gets deleted by the next routine re-run.
@@ -139,12 +142,14 @@ sec "7. no environment-specific role default silently inherited"
 # A role default naming ONE environment's artifact is a bug, not a default: the
 # fixed relays.conf makes one goatnet's dashboard render another's relays under
 # its own vantage — a populated panel describing the wrong infrastructure,
+# The goatnet says which relay list is its own by declaring
+# relay_health_relays_conf in its group_vars; one that declares nothing would
+# inherit the role default, which is one goatnet's fleet.
 if [ "$SERVICE" = "relay_health" ]; then
   CONF="$(grep -rh "^relay_health_relays_conf:" "$GV_DIR"/*"$(echo "$GOATNET" | tr '-' '_')"* 2>/dev/null | awk '{print $2}' | head -1)"
-  if [ -n "$CONF" ] && [ "$CONF" != "relays.conf" ]; then ok "relays conf overridden ($CONF)"
-  elif [ "$GOATNET" = "zagros" ]; then ok "zagros legitimately uses the default relays.conf"
-  else fail "relay_health_relays_conf not overridden for $GOATNET" \
-       "It will probe ZAGROS's fleet and label the results with THIS goatnet's vantage."; fi
+  if [ -n "$CONF" ]; then ok "relays conf declared ($CONF)"
+  else fail "relay_health_relays_conf not declared for $GOATNET" \
+       "It will probe the fleet the role default names and label the results with THIS goatnet's vantage."; fi
 fi
 
 # ---------------------------------------------------------------------------
@@ -154,15 +159,22 @@ sec "8. Dex knows the callback — ask DEX, not the dashboard"
 # committing it is not applying it. Landing only the commit gives a surface with
 # a valid cert and a clean redirect that dead-ends at "Unregistered
 # redirect_uri" after the user clicks.
+# Which Dex: the issuer this goatnet declares for the service's public gate
+# (<service>_public_oidc_issuer in its group_vars), or --issuer.
+if [ -z "$ISSUER" ]; then
+  ISSUER="$(grep -rh "^${SERVICE}_public_oidc_issuer:" "$GV_DIR"/*"$(echo "$GOATNET" | tr '-' '_')"* 2>/dev/null | head -1 | cut -d' ' -f2- | tr -d '"' || true)"
+fi
+ISSUER="${ISSUER%/}"
 if [ -z "$FQDN" ]; then warn "no --fqdn given" "Cannot check the Dex callback registration; pass --fqdn to enable it."
+elif [ -z "$ISSUER" ]; then warn "no ${SERVICE}_public_oidc_issuer declared for $GOATNET" "Cannot check the Dex callback registration; declare it in group_vars or pass --issuer <url>."
 else
   CB="https://${FQDN}/oauth2/callback"
   ENC="$(python3 -c 'import sys,urllib.parse;print(urllib.parse.quote(sys.argv[1],safe=""))' "$CB")"
-  RESP="$(curl -s --max-time 20 "https://auth.goat.example/auth?client_id=oauth2-proxy&response_type=code&scope=openid&redirect_uri=${ENC}" 2>/dev/null || true)"
-  if [ -z "$RESP" ]; then warn "could not reach auth.goat.example" "Network, or Dex is down. Re-run before deploying."
+  RESP="$(curl -s --max-time 20 "${ISSUER}/auth?client_id=oauth2-proxy&response_type=code&scope=openid&redirect_uri=${ENC}" 2>/dev/null || true)"
+  if [ -z "$RESP" ]; then warn "could not reach ${ISSUER}" "Network, or Dex is down. Re-run before deploying."
   elif echo "$RESP" | grep -qi 'Unregistered redirect_uri'; then
     fail "Dex does NOT know $CB" \
-      "Add it to oauth2_proxy_redirect_uris in usareur-af/usareur-af-infra environments/aws/prod/main_identity.tf, then APPLY IT:
+      "Add it to oauth2_proxy_redirect_uris in the infra repository's identity terraform (environments/aws/prod/main_identity.tf), then APPLY IT:
        terraform -chdir=environments/aws/prod apply -target=module.dex
        Use -target: that shared tree routinely carries unrelated pending work (it wanted to replace the compliance-dashboard Lambda on 2026-08-07)."
   else ok "Dex accepts $CB"; fi

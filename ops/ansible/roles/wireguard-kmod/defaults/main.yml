@@ -5,9 +5,12 @@
 # absent  = remove modules + restart netbird back into userspace.
 wg_kmod_state: present
 
-# Local checkout of goat-wireguard-kmod on the control machine.
+# Local checkout of the goat-wireguard-kmod repository on the control machine:
+# ~/src/github.com/<org>/goat-wireguard-kmod, where <org> is the GitHub
+# organisation of `source_repo` (group_vars/all.yml). WG_KMOD_ARTIFACT_ROOT,
+# or -e wg_kmod_artifact_root=<path>, names a checkout kept anywhere else.
 # Artifacts are resolved per host as: <root>/artifacts/<ansible_kernel>/*.ko
-wg_kmod_artifact_root: "{{ lookup('env', 'WG_KMOD_ARTIFACT_ROOT') | default(lookup('env', 'HOME') ~ '/src/github.com/usareur-af/goatcore-wireguard-kmod', true) }}"
+wg_kmod_artifact_root: "{{ lookup('env', 'WG_KMOD_ARTIFACT_ROOT') | default(lookup('env', 'HOME') ~ '/src/github.com/' ~ (source_repo | dirname) ~ '/goat-wireguard-kmod', true) }}"
 
 wg_kmod_netbird_service: netbird
 

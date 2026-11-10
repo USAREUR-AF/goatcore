@@ -62,7 +62,7 @@ func TestSetNetworkAdminFailsClosed(t *testing.T) {
 	}
 
 	// With a site, the grant takes.
-	if err := reg.SetMachineGrant(ctx, "riley", 5, "usareur-af", "site-one", "operator"); err != nil {
+	if err := reg.SetMachineGrant(ctx, "riley", 5, "usareur-af", "harbor", "operator"); err != nil {
 		t.Fatalf("seed grant with site: %v", err)
 	}
 	if err := reg.SetNetworkAdmin(ctx, "riley", true, "operator"); err != nil {
@@ -75,8 +75,8 @@ func TestSetNetworkAdminFailsClosed(t *testing.T) {
 	if !g.NetworkAdmin {
 		t.Error("network_admin not persisted")
 	}
-	if g.Site != "site-one" {
-		t.Errorf("site = %q, want site-one (the entitlement's bound)", g.Site)
+	if g.Site != "harbor" {
+		t.Errorf("site = %q, want harbor (the entitlement's bound)", g.Site)
 	}
 
 	// Revocable.
@@ -93,13 +93,13 @@ func TestSetNetworkAdminFailsClosed(t *testing.T) {
 func TestQuotaChangeDoesNotDisturbNetworkAdmin(t *testing.T) {
 	reg := testRegistry(t)
 	ctx := context.Background()
-	if err := reg.SetMachineGrant(ctx, "riley", 5, "usareur-af", "site-one", "operator"); err != nil {
+	if err := reg.SetMachineGrant(ctx, "riley", 5, "usareur-af", "harbor", "operator"); err != nil {
 		t.Fatalf("seed grant: %v", err)
 	}
 	if err := reg.SetNetworkAdmin(ctx, "riley", true, "operator"); err != nil {
 		t.Fatalf("grant entitlement: %v", err)
 	}
-	if err := reg.SetMachineGrant(ctx, "riley", 12, "usareur-af", "site-one", "operator"); err != nil {
+	if err := reg.SetMachineGrant(ctx, "riley", 12, "usareur-af", "harbor", "operator"); err != nil {
 		t.Fatalf("adjust quota: %v", err)
 	}
 	g, err := reg.MachineGrantFor(ctx, "riley")
@@ -118,7 +118,7 @@ func TestQuotaChangeDoesNotDisturbNetworkAdmin(t *testing.T) {
 func TestLegacyGrantIsNotNetworkAdmin(t *testing.T) {
 	reg := testRegistry(t)
 	ctx := context.Background()
-	if err := reg.SetMachineGrant(ctx, "legacy", 3, "usareur-af", "zagros-prod", "operator"); err != nil {
+	if err := reg.SetMachineGrant(ctx, "legacy", 3, "usareur-af", "galaxy-prod", "operator"); err != nil {
 		t.Fatalf("seed grant: %v", err)
 	}
 	g, err := reg.MachineGrantFor(ctx, "legacy")

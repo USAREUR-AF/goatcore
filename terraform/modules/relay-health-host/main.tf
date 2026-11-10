@@ -78,9 +78,20 @@ resource "aws_iam_instance_profile" "this" {
   role = aws_iam_role.this.name
 }
 
+# Resource descriptions. Every one is an input: a security-group description
+# is immutable (changing it replaces the group), so a root whose live goatnet
+# carries other text passes it in `descriptions` and plans no change.
+locals {
+  descriptions = merge({
+    security_group = "Cloud-resident relay-health host ${var.name} - egress-only in PHASE 1; :443 opened only when public_enabled (the gated PHASE 2 flip)"
+    public_443     = "relay-health public 443 (PHASE 2)"
+    public_80      = "relay-health public 80 (PHASE 2)"
+  }, var.descriptions)
+}
+
 resource "aws_security_group" "this" {
   name        = "relay-health-${var.goatnet}-${var.name}"
-  description = "ZAGROS cloud-resident relay-health host ${var.name} - egress-only in PHASE 1; :443 opened only when public_enabled (the gated PHASE 2 flip)"
+  description = local.descriptions.security_group
   vpc_id      = data.aws_vpc.default.id
 
   # PHASE 2 public ingress — gated on public_enabled. :443 (Traefik/oauth2-proxy)
@@ -93,7 +104,7 @@ resource "aws_security_group" "this" {
       to_port     = ingress.value
       protocol    = "tcp"
       cidr_blocks = var.public_ingress_cidrs
-      description = "relay-health public ${ingress.value} (PHASE 2)"
+      description = local.descriptions["public_${ingress.value}"]
     }
   }
 

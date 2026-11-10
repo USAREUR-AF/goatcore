@@ -1,0 +1,5 @@
+---
+- name: fixture | write a certificate
+  ansible.builtin.template:
+    src: carrier.env.j2
+    dest: /etc/goat-peering-forwarder/partner.pem

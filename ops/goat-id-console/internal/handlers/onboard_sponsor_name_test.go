@@ -92,7 +92,7 @@ func TestSponsorNameCarriesToPreviewAndProposal(t *testing.T) {
 		t.Fatalf("preview sponsor must be the human label: want maintainer-operator, got %q", pv.Sponsor)
 	}
 
-	pid := submit(t, h, tok, map[string]any{"name": "Pat Liaison", "email": "person-119@example.org", "organization": "Sponsor Org"})
+	pid := submit(t, h, tok, map[string]any{"name": "Pat Liaison", "email": "person-106@example.org", "organization": "Sponsor Org"})
 	p, err := s.Onboard.GetProposal(context.Background(), pid)
 	if err != nil {
 		t.Fatalf("get proposal: %v", err)

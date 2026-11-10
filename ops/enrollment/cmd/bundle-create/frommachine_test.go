@@ -48,12 +48,12 @@ func TestRun_FromMachine_DerivedGroupsAndProvenanceStamp(t *testing.T) {
 	portal := fakePortal(t, "op-key-test", map[string]portalMachine{
 		"slot-kid-7": {
 			SlotID: "slot-kid-7", SystemHandle: "gateway-one-gw-1", NodeClass: "KID",
-			MeshGroups: []string{"ZAGROS-PROD-KID"}, MeshDerivable: true,
+			MeshGroups: []string{"GALAXY-PROD-KID"}, MeshDerivable: true,
 		},
 	})
 
 	args := runArgs{
-		Site:              "zagros-prod",
+		Site:              "galaxy-prod",
 		DeviceID:          "gateway-one-gw-1",
 		WGCP0Address:      "10.99.0.20/24",
 		RelaysPath:        relaysPath,
@@ -84,8 +84,8 @@ func TestRun_FromMachine_DerivedGroupsAndProvenanceStamp(t *testing.T) {
 	if err := b.Verify(caPub); err != nil {
 		t.Fatalf("verify: %v", err)
 	}
-	if len(b.ACLGroups) != 1 || b.ACLGroups[0] != "ZAGROS-PROD-KID" {
-		t.Fatalf("ACLGroups = %v, want the DERIVED [ZAGROS-PROD-KID]", b.ACLGroups)
+	if len(b.ACLGroups) != 1 || b.ACLGroups[0] != "GALAXY-PROD-KID" {
+		t.Fatalf("ACLGroups = %v, want the DERIVED [GALAXY-PROD-KID]", b.ACLGroups)
 	}
 	if b.EnrollmentAnchor != "slot-kid-7" {
 		t.Fatalf("EnrollmentAnchor = %q, want slot-kid-7", b.EnrollmentAnchor)
@@ -107,7 +107,7 @@ func TestRun_FromMachine_RefusesUnderivableClass(t *testing.T) {
 	})
 
 	err := run(runArgs{
-		Site: "zagros-prod", DeviceID: "legacy-1", WGCP0Address: "10.99.0.21/24",
+		Site: "galaxy-prod", DeviceID: "legacy-1", WGCP0Address: "10.99.0.21/24",
 		RelaysPath: relaysPath, FromMachine: "slot-legacy",
 		PortalURL: portal.URL, PortalOperatorKey: "op-key-test", portalHTTPClient: portal.Client(),
 		CAID: "dev-test", CAKeyPath: caKey, AgeIdentityPath: ageID,
@@ -165,13 +165,13 @@ func TestValidateArgs_FromMachineContract(t *testing.T) {
 func fixtureTaxonomy(t *testing.T) string {
 	t.Helper()
 	content := `netbird_acl_taxonomy:
-  zagros:
-    site_prefix: ZAGROS
+  galaxy:
+    site_prefix: GALAXY
     groups:
       - suffix: INFRA
         description: "substrate"
-  zagros-prod:
-    site_prefix: ZAGROS-PROD
+  galaxy-prod:
+    site_prefix: GALAXY-PROD
     groups:
       - suffix: INFRA
         description: "substrate"
@@ -184,7 +184,7 @@ netbird_exercise_gear_template:
 netbird_exercises:
   site-one:
     site_prefix: SITE_ONE
-    host_site: zagros-prod
+    host_site: galaxy-prod
     gear: true
 `
 	path := filepath.Join(t.TempDir(), "taxonomy.yml")
@@ -197,10 +197,10 @@ netbird_exercises:
 func TestRefuseHandTypedGearGroups(t *testing.T) {
 	tax := fixtureTaxonomy(t)
 	refused := [][]string{
-		{"ZAGROS-PROD-KID"},                  // longest-prefix strip (ZAGROS-PROD, not ZAGROS)
-		{"SITE_ONE-KID"},                     // exercise/site-rung prefix
-		{"KID"},                            // bare gear suffix
-		{"ZAGROS-INFRA", "ZAGROS-SENSOR-FEED"}, // one gear group poisons the list
+		{"GALAXY-PROD-KID"},                    // longest-prefix strip (GALAXY-PROD, not GALAXY)
+		{"SITE_ONE-KID"},                       // exercise/site-rung prefix
+		{"KID"},                                // bare gear suffix
+		{"GALAXY-INFRA", "GALAXY-SENSOR-FEED"}, // one gear group poisons the list
 	}
 	for _, groups := range refused {
 		err := refuseHandTypedGearGroups(tax, groups)
@@ -212,10 +212,10 @@ func TestRefuseHandTypedGearGroups(t *testing.T) {
 		}
 	}
 	allowed := [][]string{
-		{"VEGA", "VEGA-MGMT"}, // unknown prefix, not gear — the existing legitimate use
-		{"ZAGROS-INFRA"},            // site infra group
-		{"ZAGROS-PROD-INFRA"},       // longest-prefix strip leaves INFRA
-		{"OPERATORS", "G"},        // pre-existing test vocabulary
+		{"LAB", "LAB-MGMT"},   // unknown prefix, not gear — the existing legitimate use
+		{"GALAXY-INFRA"},      // site infra group
+		{"GALAXY-PROD-INFRA"}, // longest-prefix strip leaves INFRA
+		{"OPERATORS", "G"},    // pre-existing test vocabulary
 	}
 	for _, groups := range allowed {
 		if err := refuseHandTypedGearGroups(tax, groups); err != nil {
@@ -226,15 +226,33 @@ func TestRefuseHandTypedGearGroups(t *testing.T) {
 
 func TestRefuseHandTypedGearGroups_DefaultPathWalksUpToRepo(t *testing.T) {
 	// The default --taxonomy resolves repo-relative by walking up from the
-	// working directory — from this package dir it must find the real
-	// ops/ansible/netbird_acl_taxonomy.yml, whose gear vocabulary refuses
-	// SENSOR-FEED.
-	err := refuseHandTypedGearGroups(defaultTaxonomyRelPath, []string{"ZAGROS-PROD-SENSOR-FEED"})
-	if err == nil || !strings.Contains(err.Error(), gearGroupRefusal) {
-		t.Fatalf("real-taxonomy gear refusal: err = %v", err)
+	// working directory: from a package directory deep in a tree it must find
+	// that tree's ops/ansible/netbird_acl_taxonomy.yml, whose gear vocabulary
+	// refuses SENSOR-FEED. The tree here is a fixture, so the test reads no
+	// goatnet's taxonomy.
+	content, err := os.ReadFile(fixtureTaxonomy(t))
+	if err != nil {
+		t.Fatalf("read fixture taxonomy: %v", err)
 	}
-	if err := refuseHandTypedGearGroups(defaultTaxonomyRelPath, []string{"VEGA", "ZAGROS-INFRA"}); err != nil {
-		t.Fatalf("real-taxonomy infra groups should pass: %v", err)
+	root := t.TempDir()
+	taxonomy := filepath.Join(root, filepath.FromSlash(defaultTaxonomyRelPath))
+	if err := os.MkdirAll(filepath.Dir(taxonomy), 0o750); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(taxonomy, content, 0o644); err != nil {
+		t.Fatalf("write taxonomy: %v", err)
+	}
+	pkg := filepath.Join(root, "ops", "enrollment", "cmd", "bundle-create")
+	if err := os.MkdirAll(pkg, 0o750); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	t.Chdir(pkg)
+	err = refuseHandTypedGearGroups(defaultTaxonomyRelPath, []string{"GALAXY-PROD-SENSOR-FEED"})
+	if err == nil || !strings.Contains(err.Error(), gearGroupRefusal) {
+		t.Fatalf("walked-up taxonomy gear refusal: err = %v", err)
+	}
+	if err := refuseHandTypedGearGroups(defaultTaxonomyRelPath, []string{"LAB", "GALAXY-INFRA"}); err != nil {
+		t.Fatalf("walked-up taxonomy infra groups should pass: %v", err)
 	}
 }
 
@@ -242,8 +260,8 @@ func TestRun_ACLGroups_GearClassRefusedEndToEnd(t *testing.T) {
 	caKey, ageID, _ := devCA(t)
 	relaysPath := fixtureRelays(t)
 	err := run(runArgs{
-		Site: "zagros-prod", DeviceID: "sneaky-1", WGCP0Address: "10.99.0.22/24",
-		RelaysPath: relaysPath, ACLGroupsRaw: "ZAGROS-PROD-KID",
+		Site: "galaxy-prod", DeviceID: "sneaky-1", WGCP0Address: "10.99.0.22/24",
+		RelaysPath: relaysPath, ACLGroupsRaw: "GALAXY-PROD-KID",
 		TaxonomyPath: fixtureTaxonomy(t),
 		CAID:         "dev-test", CAKeyPath: caKey, AgeIdentityPath: ageID,
 		OutPath: filepath.Join(t.TempDir(), "b.cbor"),

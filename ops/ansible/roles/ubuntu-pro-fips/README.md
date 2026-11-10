@@ -1,6 +1,6 @@
 # ubuntu-pro-fips
 
-Attach Ubuntu Pro and enable FIPS-validated kernel + crypto modules on the target host. Part of the fleet OS baseline — see `docs/design/os-baseline-and-luks.md` §5.
+Attach Ubuntu Pro and enable FIPS-validated kernel + crypto modules on the target host. Part of the fleet OS baseline — see [`docs/design/os-baseline-and-luks.md`](../../../../docs/design/os-baseline-and-luks.md) §5.
 
 ## What it does
 

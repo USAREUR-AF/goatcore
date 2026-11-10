@@ -1,0 +1,89 @@
+---
+# SPDX-License-Identifier: Apache-2.0
+#
+# audit-fifo-evict — the middle tier's FIFO-eviction service.
+#
+# WHY THIS EXISTS. The audit-integrity bucket carries a hard quota and
+# GOVERNANCE-mode Object Lock. GOVERNANCE was chosen over COMPLIANCE for one
+# reason: so the substrate can drop the OLDEST records under quota pressure
+# instead of refusing the NEWEST ones. ADR 0811's implementation note and
+# docs/design/audit-cold-storage-offload.md §"Quota pressure + FIFO-eviction"
+# both state that trade plainly — losing old history beats losing live
+# visibility into what is happening right now.
+#
+# Without this service the substrate has GOVERNANCE's weaker guarantee AND
+# COMPLIANCE's failure mode: a bucket that reaches its quota makes MinIO refuse
+# every audit write while nothing evicts anything.
+#
+# WHAT IT DOES. Every interval: measure the bucket, and if it is at or above
+# the high-water mark, delete oldest-first until it is at or below the
+# low-water mark, then write a record of what it deleted back into the bucket
+# so the eviction itself is auditable.
+#
+# WHAT IT DOES NOT DO. It never touches the cold-storage tier, which is
+# COMPLIANCE-locked and where evidence-grade preservation lives. Eviction is a
+# working-tier policy only.
+
+# Bucket under management, and the alias the mc client uses for it.
+audit_fifo_evict_bucket: audit-integrity
+audit_fifo_evict_alias: evictor
+
+# The quota this service measures against, in GiB. It is NOT read from the
+# server: reading a quota is an admin API, and this service deliberately holds
+# no admin rights. Keep it equal to minio_audit_bucket_quota_gib for the same
+# host — the assertion in tasks/main.yml fails the run if they disagree, because
+# a service evicting against the wrong ceiling is worse than one not running.
+audit_fifo_evict_quota_gib: "{{ minio_audit_bucket_quota_gib | default(0) }}"
+
+# Water marks, as a percentage of the quota.
+#
+# 90/80 comes from the design doc. The gap matters more than the values: too
+# narrow and every interval evicts a little, which turns a rare, loud event
+# into constant quiet deletion of the audit record.
+audit_fifo_evict_high_water_pct: 90
+audit_fifo_evict_low_water_pct: 80
+
+# How often to measure. A bucket takes weeks to cross its quota at a normal
+# producer rate, so this is not a hot loop; 15 minutes bounds how long a sudden producer
+# spike can sit at the wall refusing writes.
+audit_fifo_evict_interval: "15min"
+
+# Eviction granularity: the oldest N hours of objects removed per pass once
+# over the high-water mark. Keys are time-ordered (<site>/YYYY/MM/DD/HH/...),
+# so "oldest" is a prefix walk, not a sort of the whole listing.
+audit_fifo_evict_batch_hours: 6
+
+# A pass will never delete more than this fraction of the bucket, however far
+# over the mark it is. A single pass that empties the audit record because a
+# quota was mistyped is the failure this bounds.
+audit_fifo_evict_max_pass_pct: 25
+
+# The eviction trail is written here, inside the same bucket, so it survives
+# into the next cold-archive milestone with the data it describes.
+audit_fifo_evict_trail_prefix: "ops/eviction"
+
+# Identity. A SEPARATE MinIO user from audit-subscriber, holding only
+# list + version-read + delete + bypass-governance on this bucket, with
+# append-only writes to its own trail (ops/minio/policies/
+# audit-evict.json). audit-subscriber's own user is append-only, so a
+# compromised producer cannot evict, and every eviction this identity performs
+# is written into the trail above.
+audit_fifo_evict_access_key: goat-audit-evictor
+# The operator-environment variable holding the evictor's secret; the same
+# per-site naming as audit_subscriber_s3_secret_key_envvar.
+audit_fifo_evict_secret_envvar: "{{ site_id | upper | replace('-', '_') }}_AUDIT_EVICTOR_S3_SECRET_KEY"
+
+audit_fifo_evict_endpoint: "http://127.0.0.1:9000"
+audit_fifo_evict_dir: /opt/audit-fifo-evict
+# The MinIO client the role runs with `--entrypoint mc`: the same Chainguard
+# image and digest the minio role pins as minio_mc_image (amd64 + arm64 index).
+# minio/mc is no longer published on Docker Hub, so a tag-only pin there cannot
+# be pulled by a host that has not cached it. Change it with a ledger row in
+# deploy-history.yml.
+audit_fifo_evict_mc_image: "cgr.dev/chainguard/minio-client:latest-dev@sha256:9dc099d7951b8e1b257042713a3b1bfbf231fb21dc60455c6c349a29d2b42ad9"
+# node_exporter textfile dir differs per goatnet — declare it with the host.
+audit_fifo_evict_textfile_dir: /var/lib/node_exporter/textfile_collector
+
+# Installation and the default timer only measure. Explicitly enable eviction
+# after reviewing the observed quota, cold-tier policy and first pass scope.
+audit_fifo_evict_enabled: false

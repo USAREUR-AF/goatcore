@@ -8,7 +8,7 @@
 #
 # Usage:
 #   ansible-playbook relay-server.yml
-#   ansible-playbook relay-server.yml --limit relay-rla
+#   ansible-playbook relay-server.yml --limit relay-<region>
 #   ansible-playbook relay-server.yml -e shared_turn_secret=abc123
 #
 # Required host vars (set by inventory/generate.sh):
@@ -196,12 +196,13 @@
 
         # Relay DNS name comes from the inventory's per-host
         # `relay_dns_name` var (emitted by generate-relays.sh from the
-        # terraform `relays.<name>.relay_url` output). Falls back to the
-        # legacy hardcoded mapping for backward compat with inventories
-        # written before the var existed.
+        # terraform `relays.<name>.relay_url` output). An inventory written
+        # before the var existed declares `relay_dns_name_fallback` in its
+        # relay group's group_vars instead; with neither, this task stops the
+        # play as undefined.
         - name: Set relay DNS name (fallback for legacy inventories)
           ansible.builtin.set_fact:
-            relay_dns_name: "{{ 'relay.legacy.example' if inventory_hostname == 'relay-rla' else inventory_hostname + '.legacy.example' }}"
+            relay_dns_name: "{{ relay_dns_name_fallback }}"
           when: relay_dns_name is not defined
 
         # TLS for the relay uses certbot, NOT the relay binary's built-in
@@ -261,13 +262,16 @@
             mode: "0600"
           when: relay_cert_dns01 | default(false) | bool
 
+        # relay_certbot_email: the contact address certbot registers with the
+        # certificate authority, declared in the relay group's group_vars. It
+        # has no default here; unset, the two certbot tasks stop as undefined.
         - name: Obtain TLS cert via certbot DNS-01 (Cloudflare)
           ansible.builtin.shell: |
             certbot certonly --dns-cloudflare \
               --dns-cloudflare-credentials /etc/letsencrypt/cloudflare.ini \
               --dns-cloudflare-propagation-seconds 30 \
               -d {{ relay_dns_name }} \
-              --email {{ relay_certbot_email | default('person-33@example.org') }} \
+              --email {{ relay_certbot_email }} \
               --agree-tos --non-interactive
           when:
             - relay_cert_dns01 | default(false) | bool
@@ -315,7 +319,7 @@
           ansible.builtin.shell: |
             certbot certonly --standalone --preferred-challenges http \
               -d {{ relay_dns_name }} \
-              --email {{ relay_certbot_email | default('person-33@example.org') }} \
+              --email {{ relay_certbot_email }} \
               --agree-tos --non-interactive --force-renewal
           when:
             - not (relay_cert_dns01 | default(false) | bool)
@@ -408,20 +412,20 @@
 
         - name: Create DNS config directory
           ansible.builtin.file:
-            path: /etc/goat-dns
+            path: "{{ relay_mesh_dns_dir | default('/etc/goat-dns') }}"
             state: directory
             mode: "0755"
 
         - name: Deploy mesh-hosts
           ansible.builtin.copy:
             src: "{{ playbook_dir }}/../dns/mesh-hosts"
-            dest: /etc/goat-dns/mesh-hosts
+            dest: "{{ relay_mesh_dns_dir | default('/etc/goat-dns') }}/mesh-hosts"
             mode: "0644"
           notify: Restart dnsmasq
 
         - name: Write dnsmasq config
           ansible.builtin.copy:
-            dest: /etc/dnsmasq.d/goat.conf
+            dest: "{{ relay_dnsmasq_conf | default('/etc/dnsmasq.d/goat.conf') }}"
             mode: "0644"
             content: |
               # Mesh DNS fallback
@@ -431,7 +435,7 @@
               listen-address={{ ansible_facts['default_ipv4']['address'] }}
               listen-address=127.0.0.1
               bind-interfaces
-              addn-hosts=/etc/goat-dns/mesh-hosts
+              addn-hosts={{ relay_mesh_dns_dir | default('/etc/goat-dns') }}/mesh-hosts
               server=1.1.1.1
               server=8.8.8.8
               no-resolv
@@ -474,12 +478,12 @@
 
         - name: Remove dnsmasq config drop-in directory
           ansible.builtin.file:
-            path: /etc/dnsmasq.d/goat.conf
+            path: "{{ relay_dnsmasq_conf | default('/etc/dnsmasq.d/goat.conf') }}"
             state: absent
 
-        - name: Remove goat-dns staging directory
+        - name: Remove the mesh-hosts staging directory
           ansible.builtin.file:
-            path: /etc/goat-dns
+            path: "{{ relay_mesh_dns_dir | default('/etc/goat-dns') }}"
             state: absent
 
         - name: Re-enable systemd-resolved stub listener (gives :53 a default)

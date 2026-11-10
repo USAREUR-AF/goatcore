@@ -3,8 +3,8 @@
 You will stand up a **boundary node**: a dedicated router that lets your goatnet
 release chosen data to an ally or partner who runs their own goatnet, under
 their own authority, without either side joining the other's network. You
-declare the peering, exchange a package with the counterparty, and converge the
-edge, ending at an acceptance gate that proves data crosses in the agreed
+declare the peering, exchange packages with the counterparty through the
+peering directory, and converge the edge, ending at an acceptance gate that proves data crosses in the agreed
 direction and nothing else does. You rehearse the plan on your laptop first;
 the live run needs the counterparty, so it is the one tutorial you cannot finish
 alone.
@@ -12,7 +12,7 @@ alone.
 | | |
 |---|---|
 | Audience | A platform admin who has finished tutorial 2, or who runs an existing goatnet, and has a counterparty ready to peer |
-| Time | The rehearsal: a few minutes. The real run: days, most of it waiting on the counterparty to exchange their package |
+| Time | The rehearsal: a few minutes. The real run: days, most of it waiting on the counterparty to publish their package |
 | You need | A goatnet whose gate is green, the `goatbuilder` binary, an edge host, and a counterparty running their own goatnet |
 | You finish with | One peering live: your goatnet reads the partner's released topics and the partner reads yours, each refused everything else, proven by a round trip |
 | Prior | [Tutorial 2 — the first federated node](02-first-federated-node.md) |
@@ -110,15 +110,15 @@ line. Read it before moving on:
 - The fourteen phases run in the staged-delivery order: a fail-closed preflight
   (1), the federation interface and the bundle prepared so they can be measured
   (2), your half of the package read from your running system (3) and linted (4),
-  the manual exchange (5), one agreement composed from both packages with no
+  the exchange through the peering directory and the key read-back (5), one agreement composed from both packages with no
   perspective (6), verified from your side (7), the peering certificates minted
   from it (8), the access rules and configuration rendered (9, the only writer),
   the manual review that admits the edge on your core (10), the agreed transport
   opened (11), the edge router deployed (12), the SPIRE trust domains federated
   (13), and acceptance (14).
 - Phases 5 and 10 are `MANUAL`. The plan names them and, on a real run, the verb
-  stops at each: you exchange packages with the counterparty and resume with
-  `--from 6`, then review what was rendered and resume with `--from 11`.
+  stops at each: phase 5 exchanges packages through the directory, you and the
+  counterparty read your keys to each other and resume with `--from 6`, then review what was rendered and resume with `--from 11`.
 - Phase 11 opens the transport the **agreement** chose, read from the agreement
   itself. Here that is `ipsec-fips`, so it runs `peering-edge.yml`; `wireguard`
   runs `peering-wg.yml`. If the two
@@ -136,23 +136,37 @@ Everything the driver cannot create for you. The canonical procedure behind it
 is the sovereign-federation runbook
 (`docs/operations/sovereign-federation-runbook.md`).
 
-1. **A counterparty running their own goatnet**, ready to exchange a package and
-   agree the peering's name, the release prefixes each side shares, the transport
-   and the certificate names. Without the far side there is no peering to
-   complete; this is why the tutorial stops at the plan on a laptop.
-2. **An edge host**, on neither side's management plane, in an ansible group
-   named by `--edge-group` (default `<peering>_edge`, declared in
-   `ops/ansible/inventory/peering-edges.ini`). The boundary router runs here, not
-   on a core host.
+1. **A counterparty running their own goatnet**, and an agreement on what data
+   flows each way. The peering's names, prefixes, transport and certificate names
+   are derived from the two packages, never agreed by hand. Without the far side
+   there is no peering to complete; this is why the tutorial stops at the plan on
+   a laptop.
+2. **An edge host**, a peer of your own goatnet's mesh in node class `PEERING-EDGE` (it reaches
+   only your core router's fabric port and mesh DNS; ADR 1219), in an ansible group
+   named by `--edge-group` (default `<peering>_edge`). The boundary router runs
+   here, not on a core host. Declare the group in
+   `ops/ansible/inventory/peering-edges.ini` in your goatnet's own repository;
+   goatcore ships none, because the hosts are yours. One group per peering,
+   listed under `[peering_edges:children]`:
+
+   ```ini
+   [peering_edges:children]
+   <peering>_edge
+
+   [<peering>_edge]
+   <edge-host> ansible_host=<address on the peering transport or the mesh> ansible_user=ubuntu
+   ```
 3. **The peering declared**, when you keep peerings in `goatbuilder.yaml`: a row
    under `peerings:` for this counterparty on this environment. With any peering
    declared, the one you name must be among them, so a typo is refused before
    anything runs.
-4. **The partner's verifying key, bound out of band.** Phase 4 has you record
-   both parties' keys, one per line, and bind the partner's over a channel
-   authenticated independently of this link — a key taken from the package it
-   verifies proves nothing. Phase 5 refuses to compose for any party whose key is
-   not bound.
+4. **A peering directory both sides reach** (saltlick), named by
+   `FED_DIRECTORY_URL`, with `FED_COUNTERPARTY_ID` and `FED_SIGNING_KEY`; phase 1
+   refuses without them. Phase 5 uploads your package and CA, fetches theirs, and
+   prints both verifying keys and CA fingerprints. You read yours to each other on
+   one call and record both keys, one per line: a key taken from the package it
+   verifies proves nothing, and phase 6 refuses to compose for any party whose key
+   is not bound.
 5. **A FIPS-mode fabric image on both edge routers**, which belongs in the
    agreement: the data's cryptography is carried by the fabric TLS session, not
    by the tunnel (cross-sovereign-federation.md §5.1).
@@ -176,9 +190,10 @@ ops/scripts/with-secrets \
   goatbuilder federate <peering> --env <env> --as <ours>
 ```
 
-The run stops at **phase 5** and prints exactly what to exchange. Send your
-package to the counterparty, place theirs where the plan names, bind their
-verifying key out of band, record both keys, then resume:
+The run stops at **phase 5**, after the directory step has uploaded your package
+and CA and fetched theirs. If their entry is not there yet, run phase 5 again
+once they have run theirs. Read your verifying key and CA fingerprint to each
+other on one call, record both keys where the plan names, then resume:
 
 ```text
 ops/scripts/with-secrets \
@@ -217,8 +232,10 @@ uses — **carries, refuses, and round-trips**:
   and carrying nothing, with nothing logged at either end.
 
 The access decision itself is a reviewable record: one file per partner under
-`ops/federation/partners/`, changed by pull request and gated by
-`ops/federation/validate-partners.py`. Adding the file grants nothing; access
+`ops/federation/partners/` in your goatnet's own repository, changed by pull
+request and gated by `ops/federation/validate-partners.py`. goatcore ships one
+file there, `EXAMPLE-hello-ally.yaml`, as the shape to copy; the fields are
+explained in `ops/federation/README.md`. Adding the file grants nothing; access
 follows only when the edge runs with it.
 
 ## Undo

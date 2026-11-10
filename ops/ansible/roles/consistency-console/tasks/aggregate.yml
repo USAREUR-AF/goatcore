@@ -112,33 +112,34 @@
 - name: consistency-aggregator | door config must be complete when enabled
   ansible.builtin.assert:
     that:
-      - consistency_aggregator_zagros_door_sni | length > 0
-      - consistency_aggregator_zagros_door_relays | length >= 1
-      - "'@sha256:' in consistency_aggregator_zagros_door_image"
+      - consistency_aggregator_door_name | length > 0
+      - consistency_aggregator_door_sni | length > 0
+      - consistency_aggregator_door_relays | length >= 1
+      - "'@sha256:' in consistency_aggregator_door_image"
     fail_msg: >-
-      consistency_aggregator_zagros_door_enabled=true but the lane's SNI /
+      consistency_aggregator_door_enabled=true but the lane's name / SNI /
       relay list / digest-pinned image are unset — the sidecar would deploy
       with no road to dial. The hosting group_vars own the literals.
-  when: consistency_aggregator_zagros_door_enabled | bool
+  when: consistency_aggregator_door_enabled | bool
 
 - name: consistency-aggregator | door client cert seat (fail-closed)
   ansible.builtin.stat:
-    path: "{{ consistency_aggregator_cert_dir }}/zagros-door/client.pem"
+    path: "{{ consistency_aggregator_cert_dir }}/{{ consistency_aggregator_door_name }}/client.pem"
   register: gca_door_cert_stat
-  when: consistency_aggregator_zagros_door_enabled | bool
+  when: consistency_aggregator_door_enabled | bool
 
 - name: consistency-aggregator | fail on a missing door client cert
   ansible.builtin.fail:
     msg: >-
-      zagros-door is enabled but
-      {{ consistency_aggregator_cert_dir }}/zagros-door/client.pem is missing.
+      {{ consistency_aggregator_door_name }} is enabled but
+      {{ consistency_aggregator_cert_dir }}/{{ consistency_aggregator_door_name }}/client.pem is missing.
       Mint a lane client cert with the offline dev CA
       (docs/operations/dev-ca-cert-sign.md), concatenate cert+key into one
       PEM (haproxy `crt` format) and stage it there — the outer mTLS
-      handshake at the ZAGROS Traefik refuses anything else, so deploying
+      handshake at the peer goatnet's Traefik refuses anything else, so deploying
       without it would only manufacture a silent indeterminate.
   when:
-    - consistency_aggregator_zagros_door_enabled | bool
+    - consistency_aggregator_door_enabled | bool
     - not (gca_door_cert_stat.stat.exists | default(false))
 
 - name: consistency-aggregator | dirs
@@ -281,12 +282,12 @@
 
 - name: consistency-aggregator | render door haproxy config (Tier 2 lane client)
   ansible.builtin.template:
-    src: zagros-door-haproxy.cfg.j2
-    dest: "{{ consistency_aggregator_compose_dir }}/zagros-door-haproxy.cfg"
+    src: door-haproxy.cfg.j2
+    dest: "{{ consistency_aggregator_compose_dir }}/{{ consistency_aggregator_door_name }}-haproxy.cfg"
     owner: root
     group: root
     mode: "0644"
-  when: consistency_aggregator_zagros_door_enabled | bool
+  when: consistency_aggregator_door_enabled | bool
   notify: consistency-aggregator | recreate container
 
 - name: consistency-aggregator | render docker-compose.yml

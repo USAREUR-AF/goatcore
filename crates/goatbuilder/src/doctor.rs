@@ -14,7 +14,7 @@ use anyhow::{anyhow, Result};
 use crate::config::{self, Component};
 use crate::{Check, Report, EXIT_REFUSED};
 
-pub fn run(repo: &Path, only_env: Option<&str>, frozen: bool, credentials: bool) -> Result<Report> {
+pub fn run(repo: &Path, only_env: Option<&str>, frozen: bool, credentials: bool, browser_tests: bool) -> Result<Report> {
     let mut checks = Vec::new();
 
     // 1. The config itself.
@@ -89,6 +89,10 @@ pub fn run(repo: &Path, only_env: Option<&str>, frozen: bool, credentials: bool)
     // in the run reaches AWS (goatlite.md §5 row 1): GOAT_AWS_MODE=none, or every
     // declared environment is reached directly and no door is ssm.
     let aws_skip = aws_rows_skipped(lite_cfg.as_ref().or(cfg.as_ref()), std::env::var("GOAT_AWS_MODE").ok().as_deref());
+    // A goatlite cuts no release (ADR 1213): the rows that only a release reads
+    // (gh, a candidate's digest, the live rows' goat contexts) are skipped, as
+    // declared, so the lite doctor grades only what the standup needs (#148).
+    let lite = lite_cfg.is_some();
     for (tool, why, fix) in [
         ("git", "the source of record", "install git"),
         (
@@ -117,11 +121,19 @@ pub fn run(repo: &Path, only_env: Option<&str>, frozen: bool, credentials: bool)
             "ships with the OS",
         ),
     ] {
+        if tool == "gh" && lite {
+            checks.push(release_row_skipped("tool:gh", "release tags, pull requests and checks"));
+            continue;
+        }
         if tool == "aws-vault" {
             if let Some(reason) = aws_skip.as_deref() {
                 checks.push(ok("tool:aws-vault", format!("skipped: declared: {reason}")));
                 continue;
             }
+        }
+        if tool == "ansible-playbook" && which(tool) {
+            checks.push(ansible_row(Command::new(tool).arg("--version").output()));
+            continue;
         }
         if which(tool) {
             checks.push(ok(&format!("tool:{tool}"), why.to_string()));
@@ -136,6 +148,7 @@ pub fn run(repo: &Path, only_env: Option<&str>, frozen: bool, credentials: bool)
     // A candidate's digest: ops/scripts/image-digest uses whichever of crane,
     // skopeo or docker is on PATH (ADR 1204).
     match ["crane", "skopeo", "docker"].iter().find(|t| which(t)) {
+        _ if lite => checks.push(release_row_skipped("tool:image-digest", "a candidate's digest")),
         Some(t) => checks.push(ok("tool:image-digest", format!("{t} reads a candidate's digest from the registry (release)"))),
         None => checks.push(refused("tool:image-digest", "none of crane, skopeo or docker is on PATH (release reads a candidate's digest with one)".to_string(), "brew install crane (or skopeo, or Docker)")),
     }
@@ -185,7 +198,9 @@ pub fn run(repo: &Path, only_env: Option<&str>, frozen: bool, credentials: bool)
     // 2c. The live acceptance rows run the console's Playwright suite from
     // this laptop (ops/scripts/onboard-intake-smoke.sh); without its
     // toolchain a release reads as failed on the goatnet when it failed here.
-    checks.push(if lite_cfg.is_some() { live_rows_skipped() } else { live_rows_check(repo) });
+    // Only a release runs them, so a missing toolchain is a note unless the run
+    // asks for it (--browser-tests).
+    checks.push(if lite_cfg.is_some() { live_rows_skipped() } else { live_rows_check(repo, browser_tests) });
     if lite_cfg.is_some() {
         checks.push(image_token_row(std::env::var("GHCR_READ_TOKEN").ok().filter(|v| !v.is_empty()).is_some() || crate::secrets::available(repo).contains("GHCR_READ_TOKEN")));
     }
@@ -196,14 +211,21 @@ pub fn run(repo: &Path, only_env: Option<&str>, frozen: bool, credentials: bool)
     // contexts the live rows mint invites from.
     checks.push(op_session_check(repo, credentials));
     checks.extend(aws_vault_check(repo, aws_skip.as_deref(), credentials));
-    checks.push(crane_check());
-    checks.extend(goat_contexts_check(repo));
+    if lite {
+        checks.push(release_row_skipped("tool:crane", "a candidate's digest"));
+        checks.push(release_row_skipped("tool:goat-contexts", "the goat contexts the live rows mint invites from"));
+    } else {
+        checks.push(crane_check());
+        checks.extend(goat_contexts_check(repo));
+    }
 
-    // 3. The checkout: on main/master, and current with origin (C3).
+    // 3. The checkout: on main/master, and current with origin (C3); or an
+    // assembled tree, which its .goat-assembled marker names.
     checks.push(checkout_check(repo, frozen));
 
     // 3b. The declared secrets posture and whether its store can serve (ADR 1204).
-    checks.extend(crate::secrets::doctor_rows(repo, credentials));
+    let secrets = crate::secrets::doctor_rows(repo, credentials);
+    checks.extend(if lite { secrets.into_iter().map(lite_secrets_row).collect() } else { secrets });
 
     if let Some(cfg) = cfg {
         // 4. Each environment's transport, as the resolver would choose it.
@@ -289,6 +311,20 @@ pub fn run(repo: &Path, only_env: Option<&str>, frozen: bool, credentials: bool)
 }
 
 fn checkout_check(repo: &Path, frozen: bool) -> Check {
+    // An assembled tree (goatcore at the overlay's goatcore.ref with the overlay
+    // copied over it) is on a detached HEAD by construction, and only its marker
+    // says so. Without the marker a detached HEAD is the F-586 case below.
+    match crate::fresh::marker(repo) {
+        Ok(Some(m)) => return assembled_check(repo, &m),
+        Ok(None) => {}
+        Err(e) => {
+            return refused(
+                "checkout",
+                format!("{e:#}: this tree carries {} but it does not say what the tree was built from", crate::fresh::MARKER),
+                "re-assemble the tree from the overlay (its assemble step writes the marker)",
+            )
+        }
+    }
     let branch = git(repo, &["symbolic-ref", "--quiet", "--short", "HEAD"]).unwrap_or_default();
     if branch != "main" && branch != "master" {
         return refused(
@@ -322,6 +358,71 @@ fn checkout_check(repo: &Path, frozen: bool) -> Check {
         "checkout",
         format!("on {branch}, current with origin/{branch}"),
     )
+}
+
+/// The checkout row for an assembled tree: what the marker says it was built
+/// from. The marker is trusted as rc.sh and `release` trust it. Its currency
+/// against the overlay is judged by the deploy's own fresh-source check
+/// (ops/scripts/lib/source_of_record.py), not here; the refusals below are the
+/// ones that check, `release` or rc.sh would make from the marker alone.
+fn assembled_check(repo: &Path, m: &crate::fresh::Marker) -> Check {
+    const REASSEMBLE: &str = "re-assemble the tree from the overlay (its assemble step writes the marker)";
+    if m.goatcore_ref == "local" {
+        return refused(
+            "checkout",
+            format!("{} was assembled from local directories (goatcore_ref=local), which no deploy accepts", repo.display()),
+            "re-assemble the tree from the pinned refs",
+        );
+    }
+    // source_of_record.py refuses it at deploy time (GB-064): no commit records
+    // what the tree deploys.
+    if m.overlay_commit.ends_with("-dirty") {
+        return refused(
+            "checkout",
+            format!(
+                "{} was assembled from uncommitted overlay changes (overlay_commit={}), so no commit records what this tree deploys",
+                repo.display(),
+                m.overlay_commit
+            ),
+            &format!("commit the overlay change, then {REASSEMBLE}"),
+        );
+    }
+    let head = git(repo, &["rev-parse", "HEAD"]).map(|s| s.trim().to_string()).unwrap_or_default();
+    if head != m.goatcore_ref {
+        return refused(
+            "checkout",
+            format!(
+                "{} carries {} naming goatcore {}, but its HEAD is {}: the tree is not what the marker says it was built from",
+                repo.display(),
+                crate::fresh::MARKER,
+                m.goatcore_ref,
+                if head.is_empty() { "unreadable" } else { &head }
+            ),
+            REASSEMBLE,
+        );
+    }
+    let built = format!(
+        "assembled tree ({}): built from {} (overlay commit {}); its detached HEAD is by construction, and the deploy's fresh-source check judges it against the overlay (C3)",
+        crate::fresh::MARKER,
+        m.describe(),
+        m.overlay_commit
+    );
+    // release and rc.sh refuse (GB-009) a marker that names no overlay checkout
+    // with an assemble.sh. A deploy does not: its preflight finds the overlay
+    // through GOAT_OVERLAY_DIR. So this is a note, not a failure.
+    let ovp = m.overlay_path.clone().unwrap_or_default();
+    if ovp.is_empty() || !Path::new(&ovp).join("assemble.sh").is_file() {
+        return Check {
+            name: "checkout".to_string(),
+            ok: true,
+            detail: format!(
+                "{built}; but the marker names no overlay checkout with an assemble.sh (overlay_path={}), so `release` and rc.sh refuse this tree (GB-009); a deploy finds the overlay through GOAT_OVERLAY_DIR",
+                if ovp.is_empty() { "<none>" } else { &ovp }
+            ),
+            fix: Some(format!("{REASSEMBLE} so it records overlay_path=, or set GOAT_OVERLAY_DIR=<overlay checkout> for a deploy")),
+        };
+    }
+    ok("checkout", built)
 }
 
 /// Who can deploy to a push environment, read from the files that decide it:
@@ -547,11 +648,39 @@ pub fn secrets_needed(repo: &Path, groups: &[String], name: &str, ledger: &str, 
     if ledger != name {
         roles.push(ledger.to_string());
     }
+    for r in play_roles(play, 0) {
+        if !roles.contains(&r) {
+            roles.push(r);
+        }
+    }
+    let roles = role_closure(repo, &roles);
     let play_text = std::fs::read_to_string(play).unwrap_or_default();
     for (var, alts) in role_default_bindings(repo, &roles, groups, &play_text) {
         out.entry(var).or_insert_with(|| alts.join("|"));
     }
+    // The lookups the tasks make themselves (set_fact, an assert, a copy's content),
+    // the asserts of a later phase included: a name already found above stays as found.
+    let found: std::collections::HashSet<String> = out.values().flat_map(|a| a.split('|').map(String::from)).collect();
+    for (var, alts) in task_bindings(repo, play, &roles, &group_scalars(repo, groups)) {
+        if !out.contains_key(&var) && !alts.iter().any(|a| found.contains(a)) {
+            out.insert(var, alts.join("|"));
+        }
+    }
+    // An outbound channel whose empty value turns it off is never a need
+    // (ops/secrets/off-when-empty.txt; pluggable-dependencies.md row 16).
+    let off = off_when_empty(repo);
+    out.retain(|_, alts| !alts.split('|').all(|a| off.contains(a)));
     out
+}
+
+/// The names in ops/secrets/off-when-empty.txt (first word of each non-comment
+/// line). Mirrors `off_when_empty` in ops/scripts/deploy-secrets-needed.py.
+pub fn off_when_empty(repo: &Path) -> std::collections::HashSet<String> {
+    std::fs::read_to_string(repo.join("ops/secrets/off-when-empty.txt"))
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|l| l.split('#').next().and_then(|w| w.split_whitespace().next()).map(String::from))
+        .collect()
 }
 
 /// True when any one of `alts` (`A|B|C`, as [`secrets_needed`] renders a role
@@ -585,32 +714,30 @@ pub(crate) fn group_scalars(repo: &Path, groups: &[String]) -> BTreeMap<String, 
 /// For a role-default value: the names any one of which satisfies it, or `None`
 /// when it is not a need (a literal fallback, a shell name, or a name computed
 /// from something unresolvable). Mirrors ops/scripts/deploy-secrets-needed.py.
-pub fn binding_alternatives(expr: &str, vars: &BTreeMap<String, String>) -> Option<Vec<String>> {
+///
+/// `rvals` are the role's own scalar values, so a lookup whose argument is a variable
+/// (`lookup('env', portal_db_password_env)`) resolves through it: the group's value
+/// first, then the role's, holding a literal name or `{{ site_id … }}_SUFFIX`.
+pub fn binding_alternatives(expr: &str, vars: &BTreeMap<String, String>, rvals: &BTreeMap<String, String>) -> Option<Vec<String>> {
     const NOT_SECRETS: [&str; 7] = ["HOME", "USER", "LOGNAME", "PATH", "PWD", "SHELL", "TMPDIR"];
     if regex::Regex::new(r#"default\(\s*['"]"#).unwrap().is_match(expr) {
         return None;
     }
     let lookup = regex::Regex::new(r#"lookup\(\s*['"]env['"]\s*,\s*"#).unwrap();
-    let literal = regex::Regex::new(r#"^['"]([A-Z][A-Z0-9_]*)['"]"#).unwrap();
+    // A literal name closes the lookup: `'ICAM_OIDC_' ~ (p.id …)` is computed, not a name.
+    let literal = regex::Regex::new(r#"^['"]([A-Z][A-Z0-9_]*)['"]\s*\)"#).unwrap();
     let computed = regex::Regex::new(r#"^\(\s*(site_id_upper|site_id)\b(.*?)\)\s*[+~]\s*['"]([A-Z0-9_]+)['"]"#).unwrap();
-    let fallback = regex::Regex::new(r#"default\(\s*['"]([A-Z0-9_]+)['"]"#).unwrap();
-    // A computed name: (site_id … | upper [| replace('-','_')]) +/~ '_SUFFIX'.
-    let resolve = |c: regex::Captures| -> Option<String> {
-        let (base, filters, suffix) = (&c[1], &c[2], &c[3]);
-        let val = if base == "site_id_upper" {
-            vars.get("site_id_upper").cloned().filter(|v| !v.is_empty()).or_else(|| fallback.captures(filters).map(|d| d[1].to_string()))?
-        } else {
-            let sid = vars.get("site_id")?.to_uppercase();
-            if filters.contains("replace") { sid.replace('-', "_") } else { sid }
-        };
-        (!val.contains('{')).then(|| format!("{val}{suffix}"))
-    };
+    let variable = regex::Regex::new(r#"^([a-z][a-z0-9_]*)\s*\)"#).unwrap();
     let mut names = Vec::new();
     for m in lookup.find_iter(expr) {
         let rest = &expr[m.end()..];
-        let n = match literal.captures(rest) {
-            Some(c) => c[1].to_string(),
-            None => resolve(computed.captures(rest)?)?,
+        let n = if let Some(c) = literal.captures(rest) {
+            c[1].to_string()
+        } else if let Some(c) = variable.captures(rest) {
+            name_in(&c[1], vars, rvals, 0)?
+        } else {
+            let c = computed.captures(rest)?;
+            site_name(&c[1], &c[2], &c[3], vars)?
         };
         names.push(n);
     }
@@ -620,6 +747,408 @@ pub fn binding_alternatives(expr: &str, vars: &BTreeMap<String, String>) -> Opti
     Some(names)
 }
 
+/// A computed name: site_id (or site_id_upper) through the filters, then the suffix.
+fn site_name(base: &str, filters: &str, suffix: &str, vars: &BTreeMap<String, String>) -> Option<String> {
+    let fallback = regex::Regex::new(r#"default\(\s*['"]([A-Z0-9_]+)['"]"#).unwrap();
+    let val = if base == "site_id_upper" {
+        vars.get("site_id_upper").cloned().filter(|v| !v.is_empty()).or_else(|| fallback.captures(filters).map(|d| d[1].to_string()))?
+    } else {
+        let sid = vars.get("site_id")?.to_uppercase();
+        if filters.contains("replace") { sid.replace('-', "_") } else { sid }
+    };
+    (!val.contains('{')).then(|| format!("{val}{suffix}"))
+}
+
+/// The environment name variable `var` holds: the group's value first, then the
+/// roles'; a literal name, `{{ site_id … }}_SUFFIX`, or one more variable
+/// `{{ other_var | default('NAME') }}` (audit-subscriber's root-credential names
+/// default to the minio role's `minio_root_user_envvar`). Mirrors `_name_in`.
+fn name_in(var: &str, vars: &BTreeMap<String, String>, rvals: &BTreeMap<String, String>, depth: u8) -> Option<String> {
+    let name_only = regex::Regex::new(r#"^[A-Z][A-Z0-9_]*$"#).unwrap();
+    let templated = regex::Regex::new(r#"^\{\{\s*(site_id_upper|site_id)\b([^}]*)\}\}([A-Z0-9_]+)$"#).unwrap();
+    let hop = regex::Regex::new(r#"^\{\{\s*([a-z][a-z0-9_]*)\s*(?:\|\s*default\(\s*['"]([A-Z0-9_]*)['"]\s*(?:,\s*true\s*)?\)\s*)?\}\}$"#).unwrap();
+    let val = vars.get(var).filter(|v| !v.is_empty()).or_else(|| rvals.get(var)).cloned().unwrap_or_default();
+    if name_only.is_match(&val) {
+        return Some(val);
+    }
+    if let Some(t) = templated.captures(&val) {
+        return site_name(&t[1], &t[2], &t[3], vars);
+    }
+    let t = hop.captures(&val).filter(|_| depth < 3)?;
+    name_in(&t[1], vars, rvals, depth + 1).or_else(|| t.get(2).map(|m| m.as_str().to_string()).filter(|s| !s.is_empty()))
+}
+
+// --- env lookups in the tasks a deploy runs ---------------------------------------
+// A role can read a secret in a task, not in its defaults: audit-subscriber resolves
+// its S3 keys and the MinIO root pair with set_fact, then asserts them, the root pair
+// in an included lifecycle.yml that runs after the container is recreated. So the
+// tasks the play runs are walked too, `when:` conditions carried down. Mirrors the
+// task walk in ops/scripts/deploy-secrets-needed.py.
+
+const TASK_NOT_NEEDS: [&str; 18] = [
+    "name", "when", "changed_when", "failed_when", "until", "msg", "fail_msg", "success_msg", "tags", "notify", "register", "loop",
+    "with_items", "with_dict", "loop_control", "no_log", "become", "delegate_to",
+];
+
+fn load_yaml(path: &Path) -> serde_yaml::Value {
+    std::fs::read_to_string(path).ok().and_then(|t| serde_yaml::from_str(&t).ok()).unwrap_or(serde_yaml::Value::Null)
+}
+
+fn scalar_text(v: &serde_yaml::Value) -> Option<String> {
+    match v {
+        serde_yaml::Value::String(s) => Some(s.clone()),
+        serde_yaml::Value::Bool(b) => Some(if *b { "True".into() } else { "False".into() }),
+        serde_yaml::Value::Number(n) => Some(n.to_string()),
+        _ => None,
+    }
+}
+
+/// A variable's scalar value (group first, then the roles'), or None when unknown or templated.
+fn var_value(var: &str, vars: &BTreeMap<String, String>, rvals: &BTreeMap<String, String>) -> Option<String> {
+    let v = vars.get(var).or_else(|| rvals.get(var))?;
+    (!v.contains('{')).then(|| v.trim().trim_matches(|c| c == '\'' || c == '"').to_string())
+}
+
+/// True / false for the condition shapes the roles use on a variable; None when it
+/// cannot be decided (the task then counts). Mirrors `eval_when`.
+pub fn eval_when(cond: &str, vars: &BTreeMap<String, String>, rvals: &BTreeMap<String, String>) -> Option<bool> {
+    let mut c = cond.trim();
+    while c.starts_with('(') && c.ends_with(')') && c.matches('(').count() == 1 {
+        c = c[1..c.len() - 1].trim();
+    }
+    if c.contains(" or ") {
+        return None;
+    }
+    if c.contains(" and ") {
+        let parts: Vec<Option<bool>> = c.split(" and ").map(|x| eval_when(x, vars, rvals)).collect();
+        if parts.contains(&Some(false)) {
+            return Some(false);
+        }
+        return if parts.contains(&None) { None } else { Some(true) };
+    }
+    if let Some(rest) = c.strip_prefix("not ") {
+        return eval_when(rest, vars, rvals).map(|b| !b);
+    }
+    let re = regex::Regex::new(r#"^\(?\s*([a-z_][a-z0-9_]*)\s*(?:\|\s*default\([^)]*\)\s*)?(\|\s*(bool|length|trim)\s*)?\)?\s*(?:(==|!=|>=|>|<=|<)\s*(\S+))?$"#).unwrap();
+    let m = re.captures(c)?;
+    let val = var_value(&m[1], vars, rvals)?;
+    let filt = m.get(3).map(|x| x.as_str());
+    let op = m.get(4).map(|x| x.as_str());
+    let rhs = m.get(5).map(|x| x.as_str()).unwrap_or("");
+    if filt == Some("length") {
+        let left = val.chars().count() as i64;
+        let Some(op) = op else { return Some(left > 0) };
+        let n: i64 = rhs.parse().ok()?;
+        return Some(match op {
+            "==" => left == n,
+            "!=" => left != n,
+            ">" => left > n,
+            ">=" => left >= n,
+            "<" => left < n,
+            _ => left <= n,
+        });
+    }
+    match op {
+        Some("==") => return Some(val == rhs.trim_matches(|c| c == '\'' || c == '"')),
+        Some("!=") => return Some(val != rhs.trim_matches(|c| c == '\'' || c == '"')),
+        Some(_) => return None,
+        None => {}
+    }
+    match val.to_lowercase().as_str() {
+        "true" | "yes" | "on" | "1" => Some(true),
+        "false" | "no" | "off" | "0" | "" => Some(false),
+        _ => (filt != Some("bool")).then_some(true),
+    }
+}
+
+fn conds_of(task: &serde_yaml::Value) -> Vec<serde_yaml::Value> {
+    match task.get("when") {
+        None | Some(serde_yaml::Value::Null) => vec![],
+        Some(serde_yaml::Value::Sequence(s)) => s.clone(),
+        Some(v) => vec![v.clone()],
+    }
+}
+
+/// (nearest key, string) for every string leaf, skipping keys that never make a need.
+fn strings_of(node: &serde_yaml::Value, key: Option<&str>, out: &mut Vec<(Option<String>, String)>) {
+    match node {
+        serde_yaml::Value::String(s) => out.push((key.map(String::from), s.clone())),
+        serde_yaml::Value::Mapping(m) => {
+            for (k, v) in m {
+                let ks = k.as_str();
+                if ks.map(|x| TASK_NOT_NEEDS.contains(&x) || x == "listen").unwrap_or(false) {
+                    continue;
+                }
+                strings_of(v, ks.or(key), out);
+            }
+        }
+        serde_yaml::Value::Sequence(s) => s.iter().for_each(|v| strings_of(v, key, out)),
+        _ => {}
+    }
+}
+
+struct TaskWalk<'a> {
+    repo: &'a Path,
+    vars: &'a BTreeMap<String, String>,
+    rvals: BTreeMap<String, String>,
+    out: BTreeMap<String, Vec<String>>,
+    seen: std::collections::HashSet<(PathBuf, String)>,
+    stack: Vec<String>,
+}
+
+impl TaskWalk<'_> {
+    fn live(&self, conds: &[serde_yaml::Value]) -> bool {
+        conds.iter().all(|c| match c {
+            serde_yaml::Value::Bool(b) => *b,
+            other => {
+                let t = scalar_text(other).unwrap_or_default();
+                !t.contains("lookup(") && eval_when(&t, self.vars, &self.rvals) != Some(false)
+            }
+        })
+    }
+
+    fn tasks(&mut self, items: Option<&serde_yaml::Value>, base: &Path, role: &str, conds: &[serde_yaml::Value]) {
+        let Some(serde_yaml::Value::Sequence(items)) = items else { return };
+        for t in items {
+            if !t.is_mapping() {
+                continue;
+            }
+            let mut here = conds.to_vec();
+            here.extend(conds_of(t));
+            let never = match t.get("tags") {
+                Some(serde_yaml::Value::String(s)) => s.contains("never"),
+                Some(serde_yaml::Value::Sequence(s)) => s.iter().any(|x| x.as_str() == Some("never")),
+                _ => false,
+            };
+            if !self.live(&here) || never {
+                continue;
+            }
+            if ["block", "rescue", "always"].iter().any(|k| t.get(*k).is_some()) {
+                for k in ["block", "rescue", "always"] {
+                    self.tasks(t.get(k), base, role, &here);
+                }
+                continue;
+            }
+            let inc = ["include_tasks", "import_tasks", "ansible.builtin.include_tasks", "ansible.builtin.import_tasks"].iter().find_map(|k| t.get(*k));
+            if let Some(inc) = inc {
+                let f = inc.get("file").and_then(|v| v.as_str()).or_else(|| inc.as_str());
+                if let Some(f) = f.filter(|f| !f.contains('{')) {
+                    self.file(&base.join(f), base, role, &here);
+                }
+                continue; // an include's vars: are parameters; the included file decides
+            }
+            let rinc = ["include_role", "import_role", "ansible.builtin.include_role", "ansible.builtin.import_role"].iter().find_map(|k| t.get(*k));
+            if let Some(rinc) = rinc {
+                if let Some(n) = rinc.get("name").and_then(|v| v.as_str()).filter(|n| !n.contains('{')) {
+                    let entry = rinc.get("tasks_from").and_then(|v| v.as_str()).unwrap_or("main").to_string();
+                    self.role(n, &here, &entry);
+                }
+                continue;
+            }
+            self.task(t, role);
+        }
+    }
+
+    fn task(&mut self, t: &serde_yaml::Value, role: &str) {
+        let ident = regex::Regex::new(r"^[a-z][a-z0-9_]*$").unwrap();
+        let soft = regex::Regex::new(r"(?s)\bif\b.*\belse\b").unwrap();
+        let mut facts: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for k in ["set_fact", "ansible.builtin.set_fact", "vars"] {
+            if let Some(serde_yaml::Value::Mapping(m)) = t.get(k) {
+                facts.extend(m.keys().filter_map(|x| x.as_str().map(String::from)));
+            }
+        }
+        let mut leaves = Vec::new();
+        strings_of(t, None, &mut leaves);
+        for (key, text) in leaves {
+            if !text.contains("lookup(") || soft.is_match(&text) {
+                continue;
+            }
+            let Some(alts) = binding_alternatives(&text, self.vars, &self.rvals) else { continue };
+            let var = match key {
+                Some(k) if facts.contains(&k) && ident.is_match(&k) => k,
+                _ => format!("{role}:{}", alts[0]),
+            };
+            self.out.entry(var).or_insert(alts);
+        }
+    }
+
+    fn file(&mut self, path: &Path, base: &Path, role: &str, conds: &[serde_yaml::Value]) {
+        let sig = (path.to_path_buf(), format!("{conds:?}"));
+        if self.seen.contains(&sig) || self.seen.len() > 500 {
+            return;
+        }
+        self.seen.insert(sig);
+        let doc = load_yaml(path);
+        self.tasks(Some(&doc), base, role, conds);
+    }
+
+    fn role(&mut self, name: &str, conds: &[serde_yaml::Value], entry: &str) {
+        let rdir = self.repo.join("ops/ansible/roles").join(name);
+        if !rdir.is_dir() || self.stack.iter().any(|r| r == name) {
+            return;
+        }
+        self.stack.push(name.to_string());
+        let meta = load_yaml(&rdir.join("meta/main.yml"));
+        if let Some(serde_yaml::Value::Sequence(deps)) = meta.get("dependencies") {
+            for dep in deps.clone() {
+                let dname = dep.as_str().or_else(|| dep.get("role").and_then(|v| v.as_str())).map(String::from);
+                if let Some(d) = dname.filter(|d| !d.contains('{')) {
+                    let mut c = conds.to_vec();
+                    c.extend(conds_of(&dep));
+                    self.role(&d, &c, "main");
+                }
+            }
+        }
+        let tdir = rdir.join("tasks");
+        for ext in ["yml", "yaml"] {
+            let f = tdir.join(format!("{entry}.{ext}"));
+            if f.is_file() {
+                self.file(&f, &tdir, name, conds);
+                break;
+            }
+        }
+        self.stack.pop();
+    }
+
+    fn play(&mut self, path: &Path, depth: u8) {
+        let doc = load_yaml(path);
+        let base = path.parent().unwrap_or(self.repo).to_path_buf();
+        let Some(plays) = doc.as_sequence() else { return };
+        for p in plays {
+            if !p.is_mapping() {
+                continue;
+            }
+            if let Some(imp) = p.get("import_playbook").and_then(|v| v.as_str()) {
+                let imp = base.join(imp);
+                if imp.is_file() && imp != path && depth < 3 {
+                    self.play(&imp, depth + 1);
+                }
+                continue;
+            }
+            let pc = conds_of(p);
+            self.tasks(p.get("pre_tasks"), &base, "play", &pc);
+            if let Some(serde_yaml::Value::Sequence(roles)) = p.get("roles") {
+                for r in roles {
+                    let n = r.as_str().or_else(|| r.get("role").and_then(|v| v.as_str())).or_else(|| r.get("name").and_then(|v| v.as_str()));
+                    if let Some(n) = n.filter(|n| !n.contains('{')) {
+                        let mut c = pc.clone();
+                        c.extend(conds_of(r));
+                        self.role(n, &c, "main");
+                    }
+                }
+            }
+            self.tasks(p.get("tasks"), &base, "play", &pc);
+            self.tasks(p.get("post_tasks"), &base, "play", &pc);
+        }
+    }
+}
+
+/// The literal role names a play's `roles:` lists (through import_playbook).
+fn play_roles(play: &Path, depth: u8) -> Vec<String> {
+    let mut out = Vec::new();
+    let doc = load_yaml(play);
+    for p in doc.as_sequence().into_iter().flatten() {
+        if let Some(imp) = p.get("import_playbook").and_then(|v| v.as_str()) {
+            let imp = play.parent().unwrap_or(Path::new(".")).join(imp);
+            if imp.is_file() && imp != play && depth < 3 {
+                out.extend(play_roles(&imp, depth + 1));
+            }
+        }
+        if let Some(serde_yaml::Value::Sequence(roles)) = p.get("roles") {
+            for r in roles {
+                let n = r.as_str().or_else(|| r.get("role").and_then(|v| v.as_str())).or_else(|| r.get("name").and_then(|v| v.as_str()));
+                if let Some(n) = n.filter(|n| !n.contains('{')) {
+                    out.push(n.to_string());
+                }
+            }
+        }
+    }
+    out
+}
+
+/// The scalar top-level values of the roles' defaults and vars, first role first.
+fn role_scalars(repo: &Path, roles: &[String]) -> BTreeMap<String, String> {
+    let scalar = regex::Regex::new(r"^([a-z][a-z0-9_]*):\s*(\S.*)$").unwrap();
+    let mut out = BTreeMap::new();
+    for r in roles {
+        for sub in ["defaults", "vars"] {
+            let Ok(rd) = std::fs::read_dir(repo.join("ops/ansible/roles").join(r).join(sub)) else { continue };
+            let mut files: Vec<PathBuf> = rd.flatten().map(|e| e.path()).filter(|p| p.extension().map(|x| x == "yml" || x == "yaml").unwrap_or(false)).collect();
+            files.sort();
+            for f in files {
+                let Ok(t) = std::fs::read_to_string(&f) else { continue };
+                for line in t.lines() {
+                    if let Some(c) = scalar.captures(line) {
+                        let v = c[2].split(" #").next().unwrap_or("").trim().trim_matches(|ch| ch == '\'' || ch == '"').to_string();
+                        out.entry(c[1].to_string()).or_insert(v);
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+/// ansible var (or `<role>:<NAME>` for a lookup no variable holds) -> names, for the
+/// env lookups in the tasks the play runs on this goatnet. Mirrors `task_bindings`.
+fn task_bindings(repo: &Path, play: &Path, roles: &[String], vars: &BTreeMap<String, String>) -> BTreeMap<String, Vec<String>> {
+    let mut w = TaskWalk { repo, vars, rvals: role_scalars(repo, roles), out: BTreeMap::new(), seen: Default::default(), stack: vec![] };
+    w.play(play, 0);
+    w.out
+}
+
+/// `roles` and every role they pull in: include_role / import_role by a literal
+/// name in their tasks and handlers, and meta dependencies. Mirrors `role_closure`
+/// in ops/scripts/deploy-secrets-needed.py.
+fn role_closure(repo: &Path, roles: &[String]) -> Vec<String> {
+    let included = regex::Regex::new(r#"(?m)(?:include_role|import_role):\s*\n\s+name:\s*['"]?([A-Za-z0-9_.-]+)['"]?\s*$"#).unwrap();
+    let mut seen: Vec<String> = Vec::new();
+    let mut queue: std::collections::VecDeque<String> = roles.iter().cloned().collect();
+    while let Some(r) = queue.pop_front() {
+        if seen.contains(&r) {
+            continue;
+        }
+        seen.push(r.clone());
+        let rdir = repo.join("ops/ansible/roles").join(&r);
+        if !rdir.is_dir() {
+            continue;
+        }
+        for sub in ["tasks", "handlers"] {
+            let mut stack = vec![rdir.join(sub)];
+            let mut found: Vec<PathBuf> = Vec::new();
+            while let Some(d) = stack.pop() {
+                let Ok(rd) = std::fs::read_dir(&d) else { continue };
+                for e in rd.flatten() {
+                    let p = e.path();
+                    if p.is_dir() {
+                        stack.push(p);
+                    } else if p.extension().map(|x| x == "yml" || x == "yaml").unwrap_or(false) {
+                        found.push(p);
+                    }
+                }
+            }
+            found.sort();
+            for p in found {
+                let Ok(t) = std::fs::read_to_string(&p) else { continue };
+                queue.extend(included.captures_iter(&t).map(|c| c[1].to_string()));
+            }
+        }
+        if let Ok(t) = std::fs::read_to_string(rdir.join("meta/main.yml")) {
+            let doc: serde_yaml::Value = serde_yaml::from_str(&t).unwrap_or_default();
+            if let Some(deps) = doc.get("dependencies").and_then(|d| d.as_sequence()) {
+                for dep in deps {
+                    let name = dep.as_str().or_else(|| dep.get("role").and_then(|v| v.as_str()));
+                    if let Some(n) = name.filter(|n| !n.contains('{')) {
+                        queue.push_back(n.to_string());
+                    }
+                }
+            }
+        }
+    }
+    seen
+}
+
 /// ansible var -> names, for the env lookups in the defaults and vars of `roles`
 /// that no member group overrides and that the play or the role's own tasks and
 /// templates reference (goat-get's GOAT_CLI_RELEASE_TOKEN lives there).
@@ -627,6 +1156,9 @@ fn role_default_bindings(repo: &Path, roles: &[String], groups: &[String], play_
     let word = regex::Regex::new(r"\b[a-z][a-z0-9_]+\b").unwrap();
     let binding = regex::Regex::new(r#"^([a-z][a-z0-9_]*):\s*["'](.*)["']\s*(#.*)?$"#).unwrap();
     let or_names = regex::Regex::new(r"#\s*or:\s*([A-Z][A-Z0-9_]*(?:\s*,\s*[A-Z][A-Z0-9_]*)*)").unwrap();
+    // `# when: <var>=<value>`: needed only when the group's value (else the role's) is that.
+    let when = regex::Regex::new(r"#.*?\bwhen:\s*([a-z][a-z0-9_]*)\s*=\s*([A-Za-z0-9_.-]+)").unwrap();
+    let scalar = regex::Regex::new(r"^([a-z][a-z0-9_]*):\s*(\S.*)$").unwrap();
     let vars = group_scalars(repo, groups);
     let mut out = BTreeMap::new();
     for r in roles {
@@ -647,29 +1179,45 @@ fn role_default_bindings(repo: &Path, roles: &[String], groups: &[String], play_
                 }
             }
         }
+        let mut lines: Vec<String> = Vec::new();
         for sub in ["defaults", "vars"] {
             let Ok(rd) = std::fs::read_dir(rdir.join(sub)) else { continue };
             let mut files: Vec<PathBuf> = rd.flatten().map(|e| e.path()).filter(|p| p.extension().map(|x| x == "yml" || x == "yaml").unwrap_or(false)).collect();
             files.sort();
             for f in files {
                 let Ok(t) = std::fs::read_to_string(&f) else { continue };
-                for line in t.lines() {
-                    let Some(c) = binding.captures(line) else { continue };
-                    let (var, expr) = (&c[1], &c[2]);
-                    if !expr.contains("lookup(") || vars.contains_key(var) || !used.contains(var) {
-                        continue;
-                    }
-                    if let Some(mut alts) = binding_alternatives(expr, &vars) {
-                        if let Some(o) = c.get(3).and_then(|m| or_names.captures(m.as_str())) {
-                            for n in o[1].split(',').map(str::trim) {
-                                if !alts.iter().any(|a| a == n) {
-                                    alts.push(n.to_string());
-                                }
-                            }
+                lines.extend(t.lines().map(str::to_string));
+            }
+        }
+        let mut rvals: BTreeMap<String, String> = BTreeMap::new();
+        for line in &lines {
+            if let Some(c) = scalar.captures(line) {
+                let v = c[2].split(" #").next().unwrap_or("").trim().trim_matches(|ch| ch == '\'' || ch == '"').to_string();
+                rvals.entry(c[1].to_string()).or_insert(v);
+            }
+        }
+        for line in &lines {
+            let Some(c) = binding.captures(line) else { continue };
+            let (var, expr) = (&c[1], &c[2]);
+            if !expr.contains("lookup(") || vars.contains_key(var) || !used.contains(var) {
+                continue;
+            }
+            let comment = c.get(3).map(|m| m.as_str()).unwrap_or("");
+            if let Some(w) = when.captures(comment) {
+                let actual = vars.get(&w[1]).filter(|v| !v.is_empty()).or_else(|| rvals.get(&w[1]));
+                if actual.map(String::as_str) != Some(&w[2]) {
+                    continue;
+                }
+            }
+            if let Some(mut alts) = binding_alternatives(expr, &vars, &rvals) {
+                if let Some(o) = or_names.captures(comment) {
+                    for n in o[1].split(',').map(str::trim) {
+                        if !alts.iter().any(|a| a == n) {
+                            alts.push(n.to_string());
                         }
-                        out.insert(var.to_string(), alts);
                     }
                 }
+                out.insert(var.to_string(), alts);
             }
         }
     }
@@ -896,25 +1444,79 @@ fn live_rows_skipped() -> Check {
     ok("tool:live-rows", "skipped: declared: a goatlite cuts no release, so the browser rows do not run from this machine".to_string())
 }
 
-/// The one account a goatlite needs until public images land (goatlite.md §5 row 7).
-/// Unset is a warning, not a refusal: phase 5 is where it is used, and a learner
-/// rehearsing does not need it. An `ok` row with a `fix` prints as a note.
+/// A row only a release reads, skipped under the lite preset with its reason.
+fn release_row_skipped(name: &str, what: &str) -> Check {
+    ok(name, format!("skipped: declared: a goatlite cuts no release, so this machine does not need {what}"))
+}
+
+/// Under the lite preset phase 3 of the standup writes the secrets file
+/// (`goatbuilder secrets init`), so before the first standup its absence is
+/// the expected state, named with the phase that produces it, not a refusal.
+fn lite_secrets_row(c: Check) -> Check {
+    if c.name == "secrets:env-file" && !c.ok && c.detail.contains("does not exist") {
+        return ok(&c.name, format!("{}: produced by phase 3 of the standup", c.detail));
+    }
+    c
+}
+
+/// ansible-core supports only some Python releases as its controller: 2.20 runs
+/// on 3.12 to 3.14 and stops with a traceback on 3.15, which is what Homebrew's
+/// `python` formula installs. On PATH is therefore not enough; the row runs
+/// `ansible-playbook --version` and names the interpreter it reports.
+fn ansible_row(out: std::io::Result<std::process::Output>) -> Check {
+    const FIX: &str = "ansible-core 2.20 runs on Python 3.12 to 3.14: recreate the venv with one (macOS: brew install python@3.14, then python3.14 -m venv --clear ~/.venvs/goatlite) and reinstall its modules (docs/tutorials/00-goatlite.md section 1)";
+    match out {
+        Ok(o) if o.status.success() => {
+            let text = String::from_utf8_lossy(&o.stdout);
+            let core = text.lines().next().unwrap_or("").trim().to_string();
+            let py = text
+                .lines()
+                .find_map(|l| l.trim().strip_prefix("python version = "))
+                .map(|v| v.split_whitespace().next().unwrap_or(v).to_string());
+            match py {
+                Some(v) => ok("tool:ansible-playbook", format!("{core} on Python {v} (the push converger)")),
+                None => ok("tool:ansible-playbook", format!("{core} (the push converger)")),
+            }
+        }
+        Ok(o) => {
+            let err = String::from_utf8_lossy(&o.stderr);
+            let last = err.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("no output").trim().to_string();
+            refused("tool:ansible-playbook", format!("ansible-playbook is on PATH but does not start: {last}"), FIX)
+        }
+        Err(e) => refused("tool:ansible-playbook", format!("ansible-playbook is on PATH but cannot run: {e}"), FIX),
+    }
+}
+
+/// The image-pull token (goatlite.md §5 row 7). The goatnet's images are public
+/// on ghcr.io and a goatlite standup pulls every one without credentials, so
+/// unset is the normal case and prints no note; set, phase 5 logs in with it
+/// (a mirror or private registry that needs one).
 fn image_token_row(set: bool) -> Check {
     if set {
-        return ok("secret:GHCR_READ_TOKEN", "set: pulls the goatnet's container images in phase 5".to_string());
+        return ok("secret:GHCR_READ_TOKEN", "set: phase 5 logs in to the registry with it".to_string());
     }
-    Check {
-        name: "secret:GHCR_READ_TOKEN".to_string(),
-        ok: true,
-        detail: "GHCR_READ_TOKEN is not set: phase 5 needs it to pull the goatnet's container images".to_string(),
-        fix: Some("export GHCR_READ_TOKEN=<a GitHub token with read:packages>".to_string()),
-    }
+    ok("secret:GHCR_READ_TOKEN", "not set: the goatnet's images are public and pull without it".to_string())
 }
 
 /// The toolchain the live rows need on this machine: the console e2e suite's
 /// node_modules, a Playwright that answers, and a chromium under its
 /// browsers directory. The fix is the smoke script's own install line.
-fn live_rows_check(repo: &Path) -> Check {
+/// Only a release runs the live rows, so unless `required` (doctor
+/// `--browser-tests`) a missing piece is a note: the row passes and carries
+/// its fix.
+fn live_rows_check(repo: &Path, required: bool) -> Check {
+    let c = live_rows_toolchain(repo);
+    if c.ok || required {
+        return c;
+    }
+    Check {
+        ok: true,
+        detail: format!("{}; optional unless a release runs the live rows (`goatbuilder doctor --browser-tests` makes this a failure)", c.detail),
+        ..c
+    }
+}
+
+fn live_rows_toolchain(repo: &Path) -> Check {
     let e2e = repo.join("ops/goat-id-console/web/e2e");
     let fix = format!("(cd {} && npm ci && npx playwright install chromium)", e2e.display());
     if !e2e.join("node_modules").is_dir() {
@@ -1697,6 +2299,102 @@ mod tests {
         assert!(!got.contains_key("goat_get_github_token"));
     }
 
+    /// A store role the component includes holds its database password, named
+    /// through a variable and read only on Postgres (as goat-zenoh-portal-store's).
+    #[test]
+    fn an_included_store_roles_password_is_required_on_postgres_only() {
+        let t = tempfile::tempdir().unwrap();
+        let r = t.path();
+        write(r, "ops/ansible/app-deploy.yml", "- hosts: \"{{ target }}\"\n  roles: [app]\n");
+        write(r, "ops/ansible/roles/app/tasks/main.yml", "- name: app | the store\n  ansible.builtin.include_role:\n    name: app-store\n    public: true\n");
+        write(
+            r,
+            "ops/ansible/roles/app-store/defaults/main.yml",
+            "app_store: sqlite\napp_db_password_env: \"{{ site_id | upper | replace('-', '_') }}_APP_DB_PASS\"\napp_db_password: \"{{ lookup('env', app_db_password_env) }}\"  # when: app_store=postgres\n",
+        );
+        write(r, "ops/ansible/roles/app-store/tasks/main.yml", "- debug: msg=\"{{ app_db_password | length }}\"\n");
+        let play = r.join("ops/ansible/app-deploy.yml");
+        write(r, "ops/ansible/group_vars/dev_hosts/vars.yml", "site_id: dev-a\napp_store: postgres\n");
+        let got = secrets_needed(r, &["dev_hosts".into()], "app", "app", &play);
+        assert_eq!(got.get("app_db_password").map(String::as_str), Some("DEV_A_APP_DB_PASS"));
+        write(r, "ops/ansible/group_vars/dev_hosts/vars.yml", "site_id: dev-a\napp_store: sqlite\n");
+        let got = secrets_needed(r, &["dev_hosts".into()], "app", "app", &play);
+        assert!(!got.contains_key("app_db_password"), "a sqlite goatnet reads no database password");
+    }
+
+    /// A secret a task reads (set_fact, an assert), in a later phase reached through an
+    /// include, or in a role the play lists, is part of what the deploy needs, as a
+    /// condition false on the goatnet takes it out. Mirrors
+    /// tests/test_deploy_secrets_task_lookups.py.
+    #[test]
+    fn a_secret_a_task_reads_is_required_before_any_host() {
+        let t = tempfile::tempdir().unwrap();
+        let r = t.path();
+        write(r, "ops/ansible/app-deploy.yml", "- hosts: \"{{ target | mandatory }}\"\n  roles:\n    - role: app\n    - role: app-client\n");
+        write(
+            r,
+            "ops/ansible/roles/app/defaults/main.yml",
+            "app_s3_endpoint: \"\"\napp_apply_policy: true\napp_s3_key_envvar: \"{{ site_id | upper | replace('-', '_') }}_APP_S3_KEY\"\napp_root_user_envvar: \"{{ store_root_user_envvar | default('') }}\"\napp_token_envvar: \"FIXTURE_OPTIONAL\"\n",
+        );
+        write(
+            r,
+            "ops/ansible/roles/app/tasks/main.yml",
+            concat!(
+                "- name: resolve the S3 key\n  ansible.builtin.set_fact:\n    app_s3_key: \"{{ lookup('env', app_s3_key_envvar) }}\"\n  when: app_s3_endpoint | length > 0\n",
+                "- name: optional, guarded by its own presence\n  ansible.builtin.copy:\n    content: \"{{ lookup('env', app_token_envvar) }}\"\n    dest: /tmp/x\n  when: lookup('env', app_token_envvar) | length > 0\n",
+                "- name: later phase\n  ansible.builtin.include_tasks:\n    file: policy.yml\n  when: app_apply_policy | bool\n",
+            ),
+        );
+        write(r, "ops/ansible/roles/app/tasks/policy.yml", "- block:\n    - ansible.builtin.set_fact:\n        app_root_user: \"{{ lookup('env', app_root_user_envvar) }}\"\n");
+        write(r, "ops/ansible/roles/app-client/tasks/main.yml", "- ansible.builtin.assert:\n    that: (lookup('env', 'FIXTURE_CLIENT') | length) >= 16\n");
+        let play = r.join("ops/ansible/app-deploy.yml");
+        write(r, "ops/ansible/group_vars/dev_hosts/vars.yml", "site_id: dev-a\napp_s3_endpoint: http://store:9000\nstore_root_user_envvar: FIXTURE_ROOT_USER\n");
+        let got = secrets_needed(r, &["dev_hosts".into()], "app", "app", &play);
+        assert_eq!(got.get("app_s3_key").map(String::as_str), Some("DEV_A_APP_S3_KEY"));
+        assert_eq!(got.get("app_root_user").map(String::as_str), Some("FIXTURE_ROOT_USER"), "a later phase, through an include");
+        assert_eq!(got.get("app-client:FIXTURE_CLIENT").map(String::as_str), Some("FIXTURE_CLIENT"), "a role the play lists");
+        assert!(!got.values().any(|v| v.contains("FIXTURE_OPTIONAL")), "a task guarded by its own lookup is optional");
+        write(r, "ops/ansible/group_vars/dev_hosts/vars.yml", "site_id: dev-a\napp_apply_policy: false\n");
+        let got = secrets_needed(r, &["dev_hosts".into()], "app", "app", &play);
+        assert!(!got.contains_key("app_s3_key"), "no endpoint, no S3 key");
+        assert!(!got.contains_key("app_root_user"), "the policy phase is off");
+    }
+
+    /// The real audit-subscriber play in durable-write mode on a synthetic goatnet.
+    #[test]
+    fn audit_subscriber_names_its_s3_and_store_root_pairs() {
+        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let t = tempfile::tempdir().unwrap();
+        let r = t.path();
+        let a = r.join("ops/ansible");
+        let copy = |rel: &str| {
+            let src = repo.join("ops/ansible").join(rel);
+            let mut stack = vec![src.clone()];
+            while let Some(d) = stack.pop() {
+                for e in std::fs::read_dir(&d).unwrap().flatten() {
+                    let p = e.path();
+                    let dst = a.join(rel).join(p.strip_prefix(&src).unwrap());
+                    if p.is_dir() {
+                        stack.push(p);
+                    } else {
+                        std::fs::create_dir_all(dst.parent().unwrap()).unwrap();
+                        std::fs::copy(&p, &dst).unwrap();
+                    }
+                }
+            }
+        };
+        copy("roles/audit-subscriber");
+        copy("roles/rollback-ledger");
+        std::fs::copy(repo.join("ops/ansible/audit-subscriber-deploy.yml"), a.join("audit-subscriber-deploy.yml")).unwrap();
+        let fixture = "site_id: fixture\naudit_subscriber_s3_endpoint: \"http://127.0.0.1:9000\"\nminio_root_user_envvar: \"FIXTURE_MINIO_ROOT_USER\"\nminio_root_password_envvar: \"FIXTURE_MINIO_ROOT_PASSWORD\"\n";
+        write(r, "ops/ansible/group_vars/fixture_hosts/audit-subscriber.yml", fixture);
+        let got = secrets_needed(r, &["fixture_hosts".into()], "audit-subscriber", "audit-subscriber", &a.join("audit-subscriber-deploy.yml"));
+        let names: std::collections::BTreeSet<&str> = got.values().map(String::as_str).collect();
+        for n in ["FIXTURE_AUDIT_SUBSCRIBER_S3_ACCESS_KEY", "FIXTURE_AUDIT_SUBSCRIBER_S3_SECRET_KEY", "FIXTURE_MINIO_ROOT_USER", "FIXTURE_MINIO_ROOT_PASSWORD"] {
+            assert!(names.contains(n), "{n} missing from {got:?}");
+        }
+    }
+
     /// The real goat-get role: the token is part of what a deploy needs.
     #[test]
     fn goat_get_on_zagros_dev_needs_its_release_token() {
@@ -1704,6 +2402,24 @@ mod tests {
         let play = repo.join("ops/ansible/goat-get-deploy.yml");
         let got = secrets_needed(&repo, &["zagros_dev_hosts".into()], "goat-get", "goat-get", &play);
         assert_eq!(got.get("goat_get_github_token").map(String::as_str), Some("GOAT_CLI_RELEASE_TOKEN|GH_TOKEN|GHCR_READ_TOKEN"));
+    }
+
+    /// An outside alert channel left empty is off, never a missing secret
+    /// (ops/secrets/off-when-empty.txt); the goatnet's own ntfy still is one.
+    #[test]
+    fn observability_on_zagros_dev_needs_no_outside_alert_channel() {
+        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        if !repo.join("ops/ansible/group_vars/zagros_dev_hosts").is_dir() {
+            eprintln!("skipped: no zagros_dev_hosts in this tree (a goatcore checkout carries no goatnet)");
+            return;
+        }
+        let play = repo.join("ops/ansible/obs.yml");
+        let got = secrets_needed(&repo, &["zagros_dev_hosts".into()], "observability", "observability", &play);
+        for var in ["pagerduty_integration_key", "slack_webhook_url", "smtp_smarthost", "smtp_auth_username", "smtp_auth_password", "email_digest_recipients"] {
+            assert!(!got.contains_key(var), "{var} is an outside alert channel; empty turns it off");
+        }
+        assert!(got.contains_key("ntfy_alertmanager_webhook_url"), "control: the goatnet's own channel is still a need");
+        assert!(off_when_empty(&repo).contains("PAGERDUTY_INTEGRATION_KEY"));
     }
 
     #[test]
@@ -1776,10 +2492,46 @@ mod tests {
     }
 
     #[test]
-    fn the_image_token_row_warns_and_never_refuses() {
+    fn under_lite_the_release_rows_are_skipped_as_declared() {
+        for (name, what) in [("tool:gh", "release tags"), ("tool:crane", "a candidate's digest")] {
+            let c = release_row_skipped(name, what);
+            assert!(c.ok && c.fix.is_none() && c.detail.starts_with("skipped: declared"), "{c:?}");
+        }
+    }
+
+    #[test]
+    fn under_lite_a_missing_secrets_file_is_phase_3s_and_other_rows_keep_their_grade() {
+        let missing = Check { name: "secrets:env-file".into(), ok: false, detail: ".envrc.local.d/secrets.env does not exist".into(), fix: Some("goatbuilder secrets init --env <goatnet>".into()) };
+        let c = lite_secrets_row(missing);
+        assert!(c.ok && c.detail.ends_with("produced by phase 3 of the standup"), "{c:?}");
+        let unreadable = Check { name: "secrets:env-file".into(), ok: false, detail: ".envrc.local.d/secrets.env is mode 0644".into(), fix: Some("chmod 600".into()) };
+        assert!(!lite_secrets_row(unreadable).ok);
+        let other = Check { name: "secrets:posture".into(), ok: false, detail: "does not exist".into(), fix: None };
+        assert!(!lite_secrets_row(other).ok);
+    }
+
+    #[cfg(unix)]
+    fn output(code: i32, stdout: &str, stderr: &str) -> std::process::Output {
+        use std::os::unix::process::ExitStatusExt;
+        std::process::Output { status: std::process::ExitStatus::from_raw(code << 8), stdout: stdout.into(), stderr: stderr.into() }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_ansible_that_does_not_start_refuses_and_names_the_python_range() {
+        let good = ansible_row(Ok(output(0, "ansible-playbook [core 2.20.11]\n  config file = None\n  python version = 3.14.10 (main) [Clang]\n", "")));
+        assert!(good.ok && good.detail.contains("core 2.20.11") && good.detail.contains("Python 3.14.10"), "{good:?}");
+        let crash = ansible_row(Ok(output(1, "", "Traceback (most recent call last):\nAttributeError: module 'dataclasses' has no attribute '_is_type'\n")));
+        assert!(!crash.ok && crash.detail.contains("_is_type"), "{crash:?}");
+        assert!(crash.fix.as_deref().unwrap_or("").contains("python@3.14"), "{crash:?}");
+        let gone = ansible_row(Err(std::io::Error::from(std::io::ErrorKind::NotFound)));
+        assert!(!gone.ok);
+    }
+
+    #[test]
+    fn the_image_token_row_never_refuses_and_needs_no_token() {
         let unset = image_token_row(false);
-        assert!(unset.ok && unset.fix.as_deref().unwrap().contains("read:packages"), "{unset:?}");
-        assert!(unset.detail.contains("phase 5"));
+        assert!(unset.ok && unset.fix.is_none() && unset.detail.contains("public"), "{unset:?}");
         let set = image_token_row(true);
         assert!(set.ok && set.fix.is_none());
     }
@@ -1803,10 +2555,115 @@ mod tests {
     fn live_rows_check_names_the_install_line_when_node_modules_is_absent() {
         let t = std::env::temp_dir().join(format!("gb-live-rows-{}", std::process::id()));
         std::fs::create_dir_all(t.join("ops/goat-id-console/web/e2e")).unwrap();
-        let c = live_rows_check(&t);
+        let c = live_rows_check(&t, true);
         assert!(!c.ok);
         assert!(c.detail.contains("has no node_modules"), "{}", c.detail);
         assert!(c.fix.as_deref().unwrap_or("").contains("npm ci && npx playwright install chromium"));
+        let _ = std::fs::remove_dir_all(&t);
+    }
+
+    /// Not asked for (no --browser-tests), the missing toolchain is a note: the
+    /// row passes, keeps its fix, and the page prints it under "Note:".
+    #[test]
+    fn absent_node_modules_is_a_note_unless_browser_tests_is_asked_for() {
+        let t = std::env::temp_dir().join(format!("gb-live-rows-note-{}", std::process::id()));
+        std::fs::create_dir_all(t.join("ops/goat-id-console/web/e2e")).unwrap();
+        let c = live_rows_check(&t, false);
+        assert!(c.ok, "{c:?}");
+        assert!(c.detail.contains("has no node_modules") && c.detail.contains("--browser-tests"), "{}", c.detail);
+        assert!(c.fix.as_deref().unwrap_or("").contains("npm ci && npx playwright install chromium"));
+        let r = crate::Report::new("doctor", vec![c], crate::EXIT_REFUSED);
+        let p = summary(&r, &t, None, None, false);
+        assert!(p.contains("All 1 checks passed."), "{p}");
+        assert!(p.contains("Note: ops/goat-id-console/web/e2e has no node_modules"), "{p}");
+        let r = crate::Report::new("doctor", vec![live_rows_check(&t, false)], crate::EXIT_REFUSED);
+        assert_eq!(r.exit, 0);
+        let r = crate::Report::new("doctor", vec![live_rows_check(&t, true)], crate::EXIT_REFUSED);
+        assert_eq!(r.exit, crate::EXIT_REFUSED);
+        let _ = std::fs::remove_dir_all(&t);
+    }
+
+    fn git_in(dir: &Path, args: &[&str]) -> String {
+        let o = Command::new("git").args(args).current_dir(dir)
+            .env("GIT_AUTHOR_NAME", "t").env("GIT_AUTHOR_EMAIL", "t@example.org")
+            .env("GIT_COMMITTER_NAME", "t").env("GIT_COMMITTER_EMAIL", "t@example.org")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null").env("GIT_CONFIG_NOSYSTEM", "1")
+            .output().unwrap();
+        assert!(o.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&o.stderr));
+        String::from_utf8_lossy(&o.stdout).trim().to_string()
+    }
+
+    /// A checkout on a detached HEAD at its one commit; returns (dir, commit).
+    fn detached_checkout(tag: &str) -> (PathBuf, String) {
+        let t = std::env::temp_dir().join(format!("gb-doctor-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&t);
+        std::fs::create_dir_all(&t).unwrap();
+        git_in(&t, &["init", "-q", "-b", "main"]);
+        std::fs::write(t.join("x"), "1").unwrap();
+        git_in(&t, &["add", "x"]);
+        git_in(&t, &["commit", "-q", "-m", "base"]);
+        let head = git_in(&t, &["rev-parse", "HEAD"]);
+        git_in(&t, &["checkout", "-q", "--detach"]);
+        (t, head)
+    }
+
+    #[test]
+    fn an_assembled_tree_on_its_detached_head_passes_and_names_its_source() {
+        let (t, head) = detached_checkout("assembled");
+        let overlay = "0123456789abcdef0123456789abcdef01234567";
+        let ov = t.join("overlay");
+        std::fs::create_dir_all(&ov).unwrap();
+        std::fs::write(ov.join("assemble.sh"), "#!/bin/sh\n").unwrap();
+        std::fs::write(t.join(crate::fresh::MARKER), format!("goatcore_ref={head}\noverlay_commit={overlay}\noverlay_path={}\n", ov.display())).unwrap();
+        let c = checkout_check(&t, false);
+        assert!(c.ok && c.fix.is_none(), "{c:?}");
+        assert!(c.detail.contains("assembled tree"), "{}", c.detail);
+        assert!(c.detail.contains(&format!("goatcore {}", &head[..9])) && c.detail.contains(&format!("overlay commit {overlay}")), "{}", c.detail);
+        assert_eq!(crate::Report::new("doctor", vec![c], crate::EXIT_REFUSED).exit, 0);
+        // No overlay checkout with an assemble.sh: release and rc.sh would refuse
+        // (GB-009) but a deploy would not, so the row passes with a note.
+        std::fs::remove_file(ov.join("assemble.sh")).unwrap();
+        for marker in [format!("goatcore_ref={head}\noverlay_commit={overlay}\noverlay_path={}\n", ov.display()), format!("goatcore_ref={head}\noverlay_commit={overlay}\n")] {
+            std::fs::write(t.join(crate::fresh::MARKER), marker).unwrap();
+            let c = checkout_check(&t, false);
+            assert!(c.ok, "{c:?}");
+            assert!(c.detail.contains("GB-009") && c.detail.contains("GOAT_OVERLAY_DIR"), "{}", c.detail);
+            assert!(c.fix.as_deref().unwrap_or("").contains("overlay_path="), "{c:?}");
+            assert_eq!(crate::Report::new("doctor", vec![c], crate::EXIT_REFUSED).exit, 0);
+        }
+        let _ = std::fs::remove_dir_all(&t);
+    }
+
+    #[test]
+    fn an_assembled_tree_whose_head_is_not_the_marked_commit_or_is_local_refuses() {
+        let (t, head) = detached_checkout("assembled-moved");
+        let dirty = "0123456789abcdef0123456789abcdef01234567-dirty";
+        std::fs::write(t.join(crate::fresh::MARKER), format!("goatcore_ref={head}\noverlay_commit={dirty}\n")).unwrap();
+        let c = checkout_check(&t, false);
+        assert!(!c.ok && c.detail.contains(&format!("overlay_commit={dirty}")), "{c:?}");
+        assert!(c.fix.as_deref().unwrap_or("").contains("re-assemble"), "{c:?}");
+        let other = "fedcba9876543210fedcba9876543210fedcba98";
+        std::fs::write(t.join(crate::fresh::MARKER), format!("goatcore_ref={other}\noverlay_commit=abc\n")).unwrap();
+        let c = checkout_check(&t, false);
+        assert!(!c.ok && c.detail.contains("not what the marker says"), "{c:?}");
+        std::fs::write(t.join(crate::fresh::MARKER), "goatcore_ref=local\noverlay_commit=abc\n").unwrap();
+        let c = checkout_check(&t, false);
+        assert!(!c.ok && c.detail.contains("goatcore_ref=local"), "{c:?}");
+        std::fs::write(t.join(crate::fresh::MARKER), "overlay_commit=abc\n").unwrap();
+        let c = checkout_check(&t, false);
+        assert!(!c.ok && c.detail.contains("no goatcore_ref= line"), "{c:?}");
+        let _ = std::fs::remove_dir_all(&t);
+    }
+
+    /// F-586 keeps its teeth: a plain checkout on a detached HEAD, with no
+    /// marker, is refused with the same wording as before.
+    #[test]
+    fn a_plain_checkout_on_a_detached_head_still_refuses() {
+        let (t, _) = detached_checkout("plain-detached");
+        let c = checkout_check(&t, false);
+        assert!(!c.ok, "{c:?}");
+        assert!(c.detail.contains("is on 'a detached HEAD': releases run from a main checkout") && c.detail.contains("F-586"), "{}", c.detail);
+        assert_eq!(c.fix.as_deref(), Some("git checkout main && git pull --ff-only origin main"));
         let _ = std::fs::remove_dir_all(&t);
     }
 
@@ -1848,8 +2705,8 @@ mod tests {
             return; // a public clone of goatcore ships no deployment
         }
         let a = ansible();
-        let r = resolve_target_mode(&a, &a.join("demogame-deploy.yml")).unwrap();
-        assert_eq!(r.mode, "-e demogame_host_group=<group>");
+        let r = resolve_target_mode(&a, &a.join("airdefenders-deploy.yml")).unwrap();
+        assert_eq!(r.mode, "-e airdefenders_host_group=<group>");
     }
 
     #[test]
@@ -1894,10 +2751,11 @@ mod tests {
             inventory: None,
             groups: vec![],
             sites: vec![],
+            peering_edge_reserved_udp: None,
         }
     }
 
-    const MESH_ROW: &str = "[zagros_hosts]\nmgmt-zagros-01 ansible_host=100.127.0.45\n\n[zagros_dev_hosts]\n# the Thor\nmgmt-zagros-dev-01-thor ansible_host=100.127.0.152\n";
+    const MESH_ROW: &str = "[zagros_hosts]\nmgmt-zagros-01 ansible_host=100.127.0.45\n\n[zagros_dev_hosts]\n# the Thor\nmgmt-zagros-dev-01-thor ansible_host=100.127.0.155\n";
 
     #[test]
     fn mesh_row_and_ssm_door_is_reachable_two_ways() {
@@ -1917,7 +2775,7 @@ mod tests {
     /// No mesh row, and the only door an address on one operator's own network.
     #[test]
     fn a_one_machine_door_is_refused() {
-        let repo = reach_repo("tailscale", Some("[zagros_hosts]\nx ansible_host=100.127.0.45\n"), Some("doors:\n  zagros-dev:\n    type: tailscale\n    ip: 100.127.1.4\n"));
+        let repo = reach_repo("tailscale", Some("[zagros_hosts]\nx ansible_host=100.127.0.45\n"), Some("doors:\n  zagros-dev:\n    type: tailscale\n    ip: 100.127.1.7\n"));
         let c = reach_check(&repo, &env("zagros_dev"));
         assert!(!c.ok);
         assert!(c.detail.contains("door type 'tailscale'"), "{}", c.detail);

@@ -151,10 +151,12 @@ the failure if it does not: the container is healthy, every probe is green, and
 each real page load ends at `invalid_client`. The role therefore reads the registration back from Hydra and
 asserts the redirect URI and scope match what the proxy will send.
 
-**A door and its route deploy in one run.** A door that is running but not
+**A door and its route deploy in order.** A door that is running but not
 routed to changes nothing; a route pointed at a door that is not running takes
-the surface down. `ops/ansible/authenticated-doors.yml` does both, in that
-order, with the registration verified between them.
+the surface down. `ops/ansible/authenticated-doors.yml` puts the doors up and
+verifies each registration; `ops/ansible/authenticated-doors-routes.yml` then
+swings the routes, and refuses a surface whose door is switched on but not
+running.
 
 **Rollback is one variable and no state.** Set
 `<surface>_oauth2_proxy_enabled: false` and re-run that surface's playbook: its

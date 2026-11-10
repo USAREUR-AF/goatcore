@@ -612,7 +612,7 @@ func patchManifestCollab(path string, part backfillPart, apply bool, w io.Writer
 		collab = &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
 		root.Content = append(root.Content,
 			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "collab",
-				HeadComment: "Cloud collaboration environment."},
+				HeadComment: "Cloud collaboration environment (durable record)."},
 			collab)
 	}
 	dirty := false

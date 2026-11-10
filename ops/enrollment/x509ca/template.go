@@ -17,7 +17,7 @@ type LeafTemplate struct {
 	// TLS clients verify SAN, not CN, but CN aids human inspection.
 	CommonName string
 
-	// Organization defaults to "goat" if empty.
+	// Organization defaults to DefaultOrganization if empty.
 	Organization string
 
 	// OrgUnit is typically the site_id or a service-class
@@ -34,7 +34,7 @@ type LeafTemplate struct {
 	// net/url.Parse and is set on the leaf's x509.Certificate.URIs.
 	//
 	// Used by per-peer identity schemes that key off a stable URN rather
-	// than a hostname — a trial X.509 identity (`urn:goat-nova:vendor=...`)
+	// than a hostname — a trial X.509 identity (`urn:goat-galaxy:vendor=...`)
 	// and ADR 0844 production v1 (`urn:goat:peer:site=,role=,echelon=`).
 	// Optional; empty slice / nil yields no URI SANs on the cert.
 	URISANs []string
@@ -75,7 +75,7 @@ func (t *LeafTemplate) validate() error {
 func (t *LeafTemplate) withDefaults() *LeafTemplate {
 	out := *t
 	if out.Organization == "" {
-		out.Organization = "goat"
+		out.Organization = DefaultOrganization
 	}
 	if out.Validity == 0 {
 		out.Validity = 365 * 24 * time.Hour

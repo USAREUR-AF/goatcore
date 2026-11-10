@@ -39,7 +39,7 @@
       <input type="hidden" name="expires_at" value="{{.InviteResult.ExpiresAt}}">
       <label for="invite-email-recipient">Candidate email</label>
       <div class="copyrow">
-        <input type="email" name="candidate_email" value="{{.InviteCandidateEmail}}" placeholder="person-57@example.org" id="invite-email-recipient">
+        <input type="email" name="candidate_email" value="{{.InviteCandidateEmail}}" placeholder="jane@example.org" id="invite-email-recipient">
       </div>
       <div class="ob-actions">
         {{if .InviteSandbox}}
@@ -65,7 +65,7 @@
     <input type="hidden" name="csrf" value="{{.CSRFToken}}">
     {{/* No env field. The console stamps the goatnet it serves. */}}
     <label for="invite-candidate_email">Candidate email <span class="muted">· {{if .MailerEnabled}}we'll email them the link{{else}}email sending is off; you'll copy the link{{end}}</span></label>
-    <input type="email" name="candidate_email" placeholder="person-57@example.org" id="invite-candidate_email">
+    <input type="email" name="candidate_email" placeholder="jane@example.org" id="invite-candidate_email">
     <label for="invite-tier">Access tier <span class="muted">· optional</span></label>
     <select name="tier" id="invite-tier">
       <option value="">(let the candidate choose)</option>

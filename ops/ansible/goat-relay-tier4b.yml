@@ -534,7 +534,7 @@
 # =============================================================================
 # netbird-mgmt 0.68.3 reads its Relay config from management.json's top-level
 # "Relay" object (verified against
-# /Users/maintainer/src/github.com/goat-maintainer/netbird/management/internals/server/config/config.go:89,
+# ~/src/github.com/USAREUR-AF/netbird/management/internals/server/config/config.go:89,
 # example shape at management/server/testdata/management.json:23). The base
 # template at templates/management.json.j2 was extended (this session) with
 # an optional Relay block that activates when `relay_addresses` is defined.

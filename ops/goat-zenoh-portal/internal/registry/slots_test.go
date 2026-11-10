@@ -30,12 +30,12 @@ func TestSlotPoolLifecycle(t *testing.T) {
 	ctx := context.Background()
 	r := open(t)
 
-	n, err := r.InitializeSlotPool(ctx, "zagros-test", 4)
+	n, err := r.InitializeSlotPool(ctx, "galaxy-test", 4)
 	if err != nil || n != 4 {
 		t.Fatalf("InitializeSlotPool = (%d,%v), want (4,nil)", n, err)
 	}
 	// idempotent
-	if n2, err := r.InitializeSlotPool(ctx, "zagros-test", 4); err != nil || n2 != 0 {
+	if n2, err := r.InitializeSlotPool(ctx, "galaxy-test", 4); err != nil || n2 != 0 {
 		t.Fatalf("re-init = (%d,%v), want (0,nil) — must be idempotent", n2, err)
 	}
 
@@ -44,8 +44,8 @@ func TestSlotPoolLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetFreeSlot: %v", err)
 	}
-	if free.Idx != 0 || free.SlotID != registry.SlotAnchor("zagros-test", 0) {
-		t.Fatalf("free slot = idx %d id %s, want idx 0 / %s", free.Idx, free.SlotID, registry.SlotAnchor("zagros-test", 0))
+	if free.Idx != 0 || free.SlotID != registry.SlotAnchor("galaxy-test", 0) {
+		t.Fatalf("free slot = idx %d id %s, want idx 0 / %s", free.Idx, free.SlotID, registry.SlotAnchor("galaxy-test", 0))
 	}
 
 	// allocate in idx order, distinct anchors
@@ -73,7 +73,7 @@ func TestSlotPoolLifecycle(t *testing.T) {
 	}
 
 	// revoke frees the slot back to the pool, lowest-idx first
-	if err := r.RevokeSlot(ctx, registry.SlotAnchor("zagros-test", 1)); err != nil {
+	if err := r.RevokeSlot(ctx, registry.SlotAnchor("galaxy-test", 1)); err != nil {
 		t.Fatalf("RevokeSlot: %v", err)
 	}
 	free2, err := r.GetFreeSlot(ctx)

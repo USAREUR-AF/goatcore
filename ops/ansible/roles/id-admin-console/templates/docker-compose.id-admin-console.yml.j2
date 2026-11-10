@@ -26,7 +26,7 @@ services:
     # other services. The role writes ID_ADMIN_CONSOLE_IMAGE to
     # /opt/mgmt-host/.env from its id_admin_console_image default; rollback.sh
     # flips it via the env_file path in deploy-history.yml.
-    image: ${ID_ADMIN_CONSOLE_IMAGE:-ghcr.io/{{ ghcr_org }}/goat-id-console@sha256:60401f3cff3e84d1de92735294ed70a818094f8c267284a1f427cda59fc517c8}
+    image: ${ID_ADMIN_CONSOLE_IMAGE:-{{ id_admin_console_image_compose_fallback }}}
     # Force the manifest-list member to the host arch. Without this,
     # `docker compose up` resolves the digest-pinned multi-arch reference to
     # the amd64 member on the arm64 Thor hosts and crash-loops (exec format

@@ -52,7 +52,7 @@
     # F-282: DNS-hosting nodes cannot receive the zone via netbird (management
     # withholds a nameserver group from any peer that IS one of its nameservers,
     # by design) — route the zone to the local CoreDNS listener instead.
-    # nethost-dns.yml / mesh-coredns.yml stay on the role's default-off
+    # The older mesh-DNS plays stay on the role's default-off
     # until the route is verified on those goatnets.
     mesh_coredns_host_zone_route_enabled: true
 
@@ -180,6 +180,7 @@
         mesh_dns_ns_array: []
       run_once: true
       delegate_to: localhost
+      become: false   # an HTTPS call from the operator's machine: no local sudo
       when: mesh_dns_register_group | bool
 
     - name: Build the netbird nameserver array from mesh_dns_servers (1 or 3)
@@ -190,6 +191,7 @@
       loop: "{{ mesh_dns_servers }}"
       run_once: true
       delegate_to: localhost
+      become: false   # an HTTPS call from the operator's machine: no local sudo
       when: mesh_dns_register_group | bool
 
     - name: Get existing Netbird DNS nameserver groups
@@ -203,6 +205,7 @@
       register: ns_groups
       run_once: true
       delegate_to: localhost
+      become: false   # an HTTPS call from the operator's machine: no local sudo
       when: mesh_dns_register_group | bool
 
     - name: Look up this site's mesh-dns group (if it already exists)
@@ -225,6 +228,7 @@
       register: nb_groups
       run_once: true
       delegate_to: localhost
+      become: false   # an HTTPS call from the operator's machine: no local sudo
       when: mesh_dns_register_group | bool and mesh_dns_group is none
 
     - name: Resolve the All group ID
@@ -256,6 +260,7 @@
         status_code: 200
       run_once: true
       delegate_to: localhost
+      become: false   # an HTTPS call from the operator's machine: no local sudo
       when: mesh_dns_register_group | bool and mesh_dns_group is none
       register: ns_create
 
@@ -283,6 +288,7 @@
         status_code: 200
       run_once: true
       delegate_to: localhost
+      become: false   # an HTTPS call from the operator's machine: no local sudo
       when: mesh_dns_register_group | bool and mesh_dns_group is not none
       register: ns_update
 
@@ -310,6 +316,7 @@
       register: handset_nb_groups
       run_once: true
       delegate_to: localhost
+      become: false   # an HTTPS call from the operator's machine: no local sudo
       when: mesh_dns_register_group | bool and (handset_dns_enabled | default(false) | bool)
 
     - name: Refuse when the HANDSET group does not exist on this goatnet
@@ -355,6 +362,7 @@
         status_code: 200
       run_once: true
       delegate_to: localhost
+      become: false   # an HTTPS call from the operator's machine: no local sudo
       when: mesh_dns_register_group | bool and (handset_dns_enabled | default(false) | bool) and handset_dns_group is none
       register: handset_ns_create
 
@@ -379,6 +387,7 @@
         status_code: 200
       run_once: true
       delegate_to: localhost
+      become: false   # an HTTPS call from the operator's machine: no local sudo
       when: mesh_dns_register_group | bool and (handset_dns_enabled | default(false) | bool) and handset_dns_group is not none
       register: handset_ns_update
 

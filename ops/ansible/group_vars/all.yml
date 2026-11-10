@@ -77,7 +77,7 @@ rathole_retry_interval: 1
 # cross-group (nethost + bridge_servers via c2-map-gate + inventory/generate.sh); it is inert
 # for other instances (no other instance runs the nethost-* / c2-map-gate service playbooks).
 # A second instance of this shape must override this — it is not a shared/global value.
-nethost_mesh_ip: 100.127.1.32
+nethost_mesh_ip: 100.127.1.23
 nethost_user: goat
 netbird_config_path: /opt/netbird/config.yaml
 
@@ -153,7 +153,7 @@ service_tiers:
   relay_metrics_ingest: 2
   compliance_proxy: 2
   # nicety — no effect on operational value
-  demogame: 3
+  airdefenders: 3
   zenoh_sandbox: 3
   synth_vendors: 3
   brief: 3
@@ -412,3 +412,162 @@ admin_authorized_keys: >-
 # the bring-up for nodes with dropbear_remote_unlock: true.
 dropbear_authorized_keys: "{{ admin_authorized_keys }}"
 dropbear_initramfs_ssh_port: 2222
+
+# === oss-generic roles-g4: obs-host, observability, onboard-runner, ory, presence-health ===
+# Values these roles used to carry as literals. Each role's own default is a
+# neutral example; this block holds what our goatnets run. A goatnet that sets
+# one of these in its own group_vars overrides the value here.
+#
+# Alertmanager warning tier (obs-host, observability).
+smtp_from: "person-8@example.org"
+slack_warnings_channel: "#goat-alerts"
+alertmanager_email_subject_tag: "goat"
+# obs-host: Grafana's zone when grafana_server_domain is not set, the offline-CA
+# root on the host, and the record the data-root alert cites.
+obs_host_grafana_default_zone: "netbird-prod.goat.example"
+offline_ca_root_path: "/opt/goat/bootstrap/offline-ca-root.pem"
+obs_host_data_root_alert_record: "F-093"
+# onboard-runner: the record its healthcheck message cites.
+onboard_runner_mgmt_probe_record: "F-512"
+# ory: WebAuthn relying-party display name, TOTP issuer, identity schema title.
+ory_brand_name: "goat"
+# presence-health: the site segment for a group that sets none.
+presence_health_site: "nova-a"
+# Image pins for groups outside ops/pins/fleet-pins.yaml. A listed goatnet's
+# generated pins.yml overrides these.
+onboard_runner_image: "ghcr.io/{{ ghcr_org }}/onboard-runner@sha256:12cb6a42fed11397e7e31fb376be9b1fe7454d27895afe50d1634ac1bfe23929"
+kratos_selfservice_ui_image: "ghcr.io/{{ ghcr_org }}/kratos-selfservice-ui-node-patched@sha256:323c1111339e8a62160d7fd2b2a1505d24cfca930e3269bd2192caab292e7748"
+presence_health_image: "ghcr.io/{{ ghcr_org }}/goat-presence-health@sha256:88a12cf48c1dd9868659d573f3895ebff5accdce6537ac08007fad5166ed5a8e"
+# === end oss-generic roles-g4 ===
+
+# ---------------------------------------------------------------------------
+# BEGIN role values of this deployment: goat-get, goat-zenoh-portal,
+# grant-keyd, id-admin-console. A goatnet's group_vars and its generated
+# pins.yml override every line here
+# (docs/design/open-source-split-public-core-private-overlay.md).
+# ---------------------------------------------------------------------------
+
+# goat-get: the release repositories of the goatbuilder, kmod and octo-pod
+# payloads, and the release-asset mirror (goat_release_mirror_base overrides it).
+goat_get_goatbuilder_release_repo: "USAREUR-AF/goatcore"
+goat_get_kmod_release_repo: "usareur-af/jetson-wireguard-kmod"
+goat_get_octopod_release_repo: "usareur-af/octo-pod"
+goat_get_mirror_base: "{{ goat_release_mirror_base | default('https://get.goat.example') }}"
+
+# Pre-rename Traefik route files the goat-get and goat-zenoh-portal roles
+# remove from a host on deploy.
+goat_get_traefik_dynamic_filename_legacy: "nova-goat-get.yml"
+portal_traefik_dynamic_filename_legacy: "nova-portal.yml"
+
+# goat-zenoh-portal: the cert URI-SAN prefix and the audit object-key segment
+# of a goatnet that sets neither in its group_vars.
+portal_cert_sign_uri_prefix_default: "urn:goat-nova:vendor="
+portal_audit_subscriber_id: "{{ audit_subscriber_id | default('nova-a') }}"
+
+# Image pins of the goatnets ops/pins/fleet-pins.yaml does not govern, equal
+# to the three roles' defaults: bump both together, with a row in the role's
+# deploy-history.yml (ADR 0859). A tree assembled from goatcore and the
+# overlay takes these, so those goatnets keep the same images (switch-over
+# plan rule T2).
+portal_image: "ghcr.io/{{ ghcr_org }}/goat-zenoh-portal@sha256:6cf2252dc27403da513907f2e97c2af5e20d2aaa9b2c57adbae1ea6b18e586b5"
+grant_keyd_image: "ghcr.io/{{ ghcr_org }}/grant-keyd@sha256:60a60e17b03442395ae2fb620e166dec4897991a6ef30854fecbfaae9126ba7c"
+id_admin_console_image: "ghcr.io/{{ ghcr_org }}/goat-id-console@sha256:60401f3cff3e84d1de92735294ed70a818094f8c267284a1f427cda59fc517c8"
+
+# id-admin-console: the image its compose overlay names when
+# ID_ADMIN_CONSOLE_IMAGE is absent from /opt/mgmt-host/.env, and the SPIFFE
+# trust domain of the onboard-runner client id on a goatnet that sets no
+# spire_trust_domain.
+id_admin_console_image_compose_fallback: "ghcr.io/{{ ghcr_org }}/goat-id-console@sha256:60401f3cff3e84d1de92735294ed70a818094f8c267284a1f427cda59fc517c8"
+id_admin_console_onboard_trust_domain_fallback: "zagros.zagros.example"
+# END role values of this deployment: goat-get, goat-zenoh-portal, grant-keyd, id-admin-console
+
+# --- oss-generic roles-g3 ---------------------------------------------------
+# Values that the mesh-health, node-net-health, ntp-health-pub and minio roles
+# read from group_vars and do not default. A group that sets its own value
+# overrides the one here.
+#
+# Image pins for hosts outside the fleet pin table. The pin of record is the
+# component's row in ops/pins/fleet-pins.yaml, rendered into
+# group_vars/<member>/pins.yml for every listed goatnet; these three lines
+# carry the same `fleet:` value and change with it.
+mesh_health_image: "ghcr.io/{{ ghcr_org }}/goat-mesh-health@sha256:c788a98aa3ce8b3aa00afe91e86d935115a41b4894a1f949d90844e31c68f9ea"
+node_net_health_image: "ghcr.io/{{ ghcr_org }}/goat-node-net-health@sha256:fc1741dc7b9035129acf9e0ec54d47adf39b097bdd39286618857f21caa2895a"
+ntp_health_pub_image: "ghcr.io/{{ ghcr_org }}/goat-ntp-health-pub@sha256:327760d397571be90a6ade4181d5c3024374ce065ce28e2882b0f460aa1789db"
+# The `<site>` segment of ops/mesh/health/<site> for a host group that sets no
+# mesh_health_site of its own.
+mesh_health_site: "nova-a"
+# The goatnet whose measurement the MinIO delete-marker alert description cites.
+minio_delete_marker_evidence_site: "ZAGROS"
+# --- end oss-generic roles-g3 -----------------------------------------------
+
+# === BEGIN legacy names of this deployment (oss-switchover fin-roles) ========
+# Names our hosts, laptops and pinned images already carry. The roles and plays
+# name a neutral default; each line here is the name in use on our goatnets
+# today, and stays until the host, laptop or image that carries it is moved
+# (docs/design/open-source-split-public-core-private-overlay.md
+# §"Role values our goatnets set").
+#
+# Three roots every legacy host or controller path derives from.
+goat_host_etc_dir: /etc/goat
+goat_host_opt_dir: /opt/goat
+goat_controller_state_dir: "{{ lookup('env', 'HOME') }}/.goat/state"
+
+# The environment variable that carries the public door's idm_admin password:
+# the id-admin-console container reads it, and the operator scripts that sign in
+# to the door (create-door-audit-identity.sh, kanidm-door-audit.sh,
+# kanidm-reissue-code.sh, offboard.sh) read it from the controller environment
+# when GOAT_IDM_ADMIN_PW is unset.
+public_door_idm_admin_pw_env: "GOAT_IDM_ADMIN_PW"
+# The image label each store gate reads from the pinned image.
+portal_store_label: "org.usareur-af.goat-zenoh-portal.store"
+id_admin_console_store_label: "org.usareur-af.goat-id-console.store"
+# goat-zenoh: the deploy-ledger and render-manifest component,
+# /var/lib/goat/<component> on every router host (ledger_component of the
+# zenoh-router row in ops/pins/fleet-pins.yaml).
+goat_zenoh_ledger_component: "nova-zenoh"
+# snitch-bundle: the launchd label of the probe on macOS.
+snitch_probe_launchd_label: "net.goat.snitch-probe"
+# openobserve, otel-collector: the environment variables that hold the
+# OpenObserve root account and the MinIO root account it stores into.
+openobserve_root_email: "{{ lookup('env', 'VEGA_C_OPENOBSERVE_ROOT_EMAIL') | default('', true) }}"
+openobserve_root_password: "{{ lookup('env', 'VEGA_C_OPENOBSERVE_ROOT_PASSWORD') | default('', true) }}"
+openobserve_s3_access_key: "{{ lookup('env', 'VEGA_C_MINIO_ROOT_USER') | default('', true) }}"
+openobserve_s3_secret_key: "{{ lookup('env', 'VEGA_C_MINIO_ROOT_PASSWORD') | default('', true) }}"
+otel_openobserve_user: "{{ lookup('env', 'VEGA_C_OPENOBSERVE_ROOT_EMAIL') | default('', true) }}"
+otel_openobserve_pass: "{{ lookup('env', 'VEGA_C_OPENOBSERVE_ROOT_PASSWORD') | default('', true) }}"
+# Top-level plays whose hosts have no single group directory.
+# oci-substrate-deploy.yml: the environment variable that holds the admit-audit
+# password.
+admit_audit_password_env: "VEGA_ADMIT_AUDIT_PASS"
+# spire-ca-standby.yml, surface-visit-deploy.yml: the environment variable that
+# holds the first dev-CA age recipient.
+dev_ca_age_operator_env: "DEV_CA_AGE_OPERATOR_1"
+# mgmt-host-dns.yml: the NetBird nameserver group of the mesh DNS.
+mesh_dns_nameserver_group: "goat-mesh-dns"
+# goat-relay-deploy.yml: the contact address certbot registers with, for relay
+# hosts outside group_vars/relay_servers (which sets the same address).
+relay_certbot_email: "person-28@example.org"
+# === END legacy names of this deployment (oss-switchover fin-roles) ==========
+
+# === BEGIN names of this deployment that operator tools read (oss-switchover tail-tools) ===
+# Values our operators' scripts, the signing tools and two plays took from a
+# literal. The tools name a neutral default; each line here is the value in use
+# on our goatnets today. Scripts read a line through
+# `ops/scripts/project-setting.sh var <name>`, plays as a variable
+# (docs/design/open-source-split-public-core-private-overlay.md
+# §"Role values our goatnets set").
+#
+# The two identity doors, as the base URL of each door's Kanidm:
+# create-door-audit-identity.sh, kanidm-door-audit.sh and kanidm-reissue-code.sh
+# reach them here when PUBLIC_DOOR_KANIDM_URL / COLLAB_KANIDM_URL are unset, and
+# the door-credential-audit role writes one into its unit's environment.
+public_door_kanidm_url: "https://idm.goat.example"
+collab_door_kanidm_url: "https://idm.collab.goat.example"
+# The Subject O of every certificate our CAs issue: mint-site-certs.sh,
+# operator-tier-onboard.yml and operator-onboard.yml state it on the call, so a
+# leaf carries it whatever the tool was built from.
+goat_cert_organization: "goat"
+# offboard.sh: the GitHub organisations a person is removed from when
+# GOAT_OFFBOARD_GITHUB_ORGS is unset.
+goat_offboard_github_orgs: "usareur-af,USAREUR-AF"
+# === END names of this deployment that operator tools read (oss-switchover tail-tools) =====

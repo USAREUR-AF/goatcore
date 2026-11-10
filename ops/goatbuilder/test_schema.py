@@ -17,6 +17,7 @@ import copy
 import importlib.util
 import os
 import sys
+import tempfile
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -149,6 +150,17 @@ class MinimalShape(unittest.TestCase):
         }]
         self.assertEqual(validate.errors_for(c), [])
 
+    def test_peering_offer_transport_values_hosts_forwarder_validate(self):
+        c = with_sites()
+        c["peerings"] = [{
+            "with": "xab", "environment": "dev", "site": "alpha", "edge_class": "edge",
+            "offer": ["REL-ALL", "release/xab/**"], "tunnel": "wireguard",
+            "values": {"wg_listen_port": 51825, "link_subnet": "169.254.10.2/31"},
+            "hosts": {"edge": "192.0.2.20", "core": "192.0.2.10", "user": "goat"},
+            "forwarder": {"endpoint": "203.0.113.7", "group": "peering_forwarders", "ansible_host": "203.0.113.7"},
+        }]
+        self.assertEqual(validate.errors_for(c), [])
+
 
 class FailClosed(unittest.TestCase):
     def assertRejected(self, config: dict, fragment: str):
@@ -269,10 +281,101 @@ class FailClosed(unittest.TestCase):
         c["peerings"] = [{"with": "velmara", "environment": "dev", "site": "alpha", "edge_class": "edge", "trust": "handshake"}]
         self.assertRejected(c, "trust")
 
+    def test_peering_unknown_value_key(self):
+        c = with_sites()
+        c["peerings"] = [{"with": "xab", "environment": "dev", "site": "alpha", "edge_class": "edge", "values": {"mtu": 1300}}]
+        self.assertRejected(c, "mtu")
+
+    def test_peering_offer_is_set_names_or_release_key_expressions(self):
+        c = with_sites()
+        c["peerings"] = [{"with": "xab", "environment": "dev", "site": "alpha", "edge_class": "edge", "offer": ["from/xaa/**"]}]
+        self.assertRejected(c, "from/xaa/**")
+
+    def test_peering_offer_is_never_empty(self):
+        c = with_sites()
+        c["peerings"] = [{"with": "xab", "environment": "dev", "site": "alpha", "edge_class": "edge", "offer": []}]
+        self.assertRejected(c, "offer")
+
+    def test_peering_reserved_name(self):
+        c = with_sites()
+        c["peerings"] = [{"with": "status", "environment": "dev", "site": "alpha", "edge_class": "edge"}]
+        self.assertRejected(c, "GB-120")
+
     def test_peering_ingress_prefix_shape(self):
         c = with_sites()
         c["peerings"] = [{"with": "velmara", "environment": "dev", "site": "alpha", "edge_class": "edge", "ingress_prefix": "velmara/"}]
         self.assertRejected(c, "ingress_prefix")
+
+
+class ProjectValues(unittest.TestCase):
+    """repo:, deploy: and secrets: come from the deployment's own files."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        d = self.tmp.name
+        self.pins = self._write("pins.yaml", "components:\n  example-service:\n    var: example_service_image\n"
+                                "goatnets:\n  dev:\n    members: [dev_hosts]\n")
+        self.ladder = self._write("ladder.yaml", "rungs:\n  - {name: dev, goatnet: dev, status: live}\n")
+        self.none = os.path.join(d, "absent.yml")
+
+    def _write(self, name, text):
+        path = os.path.join(self.tmp.name, name)
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        return path
+
+    def gen(self, project, posture=None):
+        return gen_config.generate(self.pins, self.ladder, project, posture or self.none)
+
+    def test_no_project_file_names_no_one(self):
+        cfg = self.gen(self.none)
+        self.assertEqual(cfg["repo"], gen_config.DEFAULT_REPO)
+        self.assertNotIn("deploy", cfg, "undeclared deploy values are left to goatbuilder's own fallbacks")
+        self.assertEqual(cfg["secrets"], {"store": "env-file"})
+        self.assertEqual(validate.errors_for(cfg), [])
+
+    def test_declared_values_are_carried_in_schema_order(self):
+        project = self._write("project.yml", "deploy:\n  state_dir: ~/.pasture/state\n  ssh_user: shepherd\n"
+                              "  aws_profile: pasture\nrepo:\n  image_namespace: ghcr.io/pasture\n  source: pasture/flock\n")
+        posture = self._write("posture.yml", "store: 1password\nop_account: pasture.1password.com\n")
+        cfg = self.gen(project, posture)
+        self.assertEqual(list(cfg["repo"].items()),
+                         [("source", "pasture/flock"), ("image_namespace", "ghcr.io/pasture"), ("signing", "intent-sign")])
+        self.assertEqual(list(cfg["deploy"].items()),
+                         [("aws_profile", "pasture"), ("ssh_user", "shepherd"), ("state_dir", "~/.pasture/state")])
+        self.assertEqual(cfg["secrets"], {"store": "1password", "op_account": "pasture.1password.com"})
+        self.assertEqual(list(cfg)[:4], ["schema", "preset", "repo", "deploy"])
+        self.assertEqual(validate.errors_for(cfg), [])
+
+    def test_release_source_is_carried_when_declared(self):
+        project = self._write("project.yml", "repo:\n  signing: cosign\n  release_source: pasture/release\n"
+                              "  image_namespace: ghcr.io/pasture\n  source: pasture/flock\n")
+        cfg = self.gen(project)
+        self.assertEqual(list(cfg["repo"].items()),
+                         [("source", "pasture/flock"), ("image_namespace", "ghcr.io/pasture"),
+                          ("release_source", "pasture/release"), ("signing", "cosign")])
+        self.assertEqual(validate.errors_for(cfg), [])
+
+    def test_this_checkouts_project_file_validates(self):
+        repo, deploy = gen_config.project()
+        cfg = self.gen(gen_config.PROJECT, gen_config.POSTURE)
+        self.assertEqual(cfg["repo"], repo)
+        self.assertEqual(cfg.get("deploy", {}), deploy)
+        self.assertEqual(validate.errors_for(cfg), [])
+
+    def test_refuses_a_repo_without_source_or_namespace(self):
+        project = self._write("project.yml", "repo:\n  source: pasture/flock\n")
+        with self.assertRaises(SystemExit) as e:
+            self.gen(project)
+        self.assertIn("image_namespace", str(e.exception))
+
+    def test_refuses_unknown_keys(self):
+        for text, word in (("repo: {source: a/b, image_namespace: ghcr.io/a}\nrepos: {}\n", "repos"),
+                           ("repo: {source: a/b, image_namespace: ghcr.io/a}\ndeploy: {aws_prof: x}\n", "aws_prof")):
+            with self.subTest(word=word), self.assertRaises(SystemExit) as e:
+                self.gen(self._write("project.yml", text))
+            self.assertIn(word, str(e.exception))
 
 
 @unittest.skipUnless(HAS_LIVE_LADDER, "ops/release/ladder.yaml has no rungs in this tree")

@@ -78,13 +78,9 @@ fn ktls_available() -> bool {
             .map(|s| s.split_whitespace().any(|p| p == "tls"))
             .unwrap_or(false);
         if avail {
-            eprintln!(
-                "ws_ktls: kernel TLS ULP available — using kTLS hand-off"
-            );
+            eprintln!("ws_ktls: kernel TLS ULP available — using kTLS hand-off");
         } else {
-            eprintln!(
-                "ws_ktls: kernel TLS ULP NOT available — using userspace TLS"
-            );
+            eprintln!("ws_ktls: kernel TLS ULP NOT available — using userspace TLS");
         }
         avail
     })

@@ -15,20 +15,20 @@ spec.loader.exec_module(cov)
 
 POLICY = """
 version: 1
-default_owner: usareur-af
+default_owner: example-org
 rules:
   - name: everyone
     match: {}
     grant:
-      - repo: zagros-moon-pod
+      - repo: alpha-pod
         permission: pull
-      - repo: hello-galaxy-time-hygiene
+      - repo: beta-tutorial
         permission: pull
   - name: admins
     match: {tier: [platform-admin]}
     grant:
-      - repo: hello-galaxy-goatnet-from-scratch
-      - repo: zagros-moon-pod
+      - repo: gamma-from-scratch
+      - repo: alpha-pod
 """
 
 
@@ -61,19 +61,19 @@ class Coverage(unittest.TestCase):
 
     def test_lists_each_repo_once_with_the_default_owner(self):
         self.assertEqual(cov.policy_repos(POLICY), [
-            "USAREUR-AF/zagros-moon-pod", "usareur-af/hello-galaxy-time-hygiene",
-            "USAREUR-AF/hello-galaxy-goatenv"])
+            "example-org/alpha-pod", "example-org/beta-tutorial",
+            "example-org/gamma-from-scratch"])
 
     def test_passes_when_the_token_sees_every_repo(self):
-        srv = serve({"USAREUR-AF/zagros-moon-pod", "usareur-af/hello-galaxy-time-hygiene",
-                     "USAREUR-AF/hello-galaxy-goatenv"})
+        srv = serve({"example-org/alpha-pod", "example-org/beta-tutorial",
+                     "example-org/gamma-from-scratch"})
         try:
             self.assertEqual(cov.main(["--policy", self.policy.name, "--api", f"http://127.0.0.1:{srv.server_port}"]), 0)
         finally:
             srv.shutdown()
 
     def test_fails_when_one_policy_repo_is_outside_the_token(self):
-        srv = serve({"USAREUR-AF/zagros-moon-pod", "USAREUR-AF/hello-galaxy-goatenv"})
+        srv = serve({"example-org/alpha-pod", "example-org/gamma-from-scratch"})
         try:
             from io import StringIO
             from contextlib import redirect_stdout
@@ -82,7 +82,7 @@ class Coverage(unittest.TestCase):
                 rc = cov.main(["--policy", self.policy.name, "--api", f"http://127.0.0.1:{srv.server_port}", "--json"])
             self.assertEqual(rc, 1)
             out = json.loads(buf.getvalue())
-            self.assertEqual(out["not_covered"], [{"repo": "usareur-af/hello-galaxy-time-hygiene", "status": 404}])
+            self.assertEqual(out["not_covered"], [{"repo": "example-org/beta-tutorial", "status": 404}])
         finally:
             srv.shutdown()
 

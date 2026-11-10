@@ -55,7 +55,7 @@ func seedRepoAccessProposal(t *testing.T, s *Server) string {
 		Sponsor:      "onboard-runner",
 		Env:          "zagros",
 		Handle:       "dev-x",
-		Email:        "person-40@example.org",
+		Email:        "person-35@example.org",
 		Status:       onboardstore.ProposalSponsorApproved,
 		ManifestJSON: string(mj),
 		Tier:         "developer",
@@ -237,13 +237,13 @@ func TestRepoAccessSetIsOperatorOnly(t *testing.T) {
 	}
 	s.Cfg.RepoAccessConfigPath = path
 	manifest := map[string]any{
-		"identity":    map[string]any{"handle": "mine-x", "email": "person-69@example.org", "name": "Mine X", "github": "octomine"},
+		"identity":    map[string]any{"handle": "mine-x", "email": "person-58@example.org", "name": "Mine X", "github": "octomine"},
 		"affiliation": map[string]any{"id": "zagros-dev", "kind": "partner"},
 	}
 	mj, _ := json.Marshal(manifest)
 	p := &onboardstore.Proposal{
 		ID: "p-own-repo", Sponsor: "0ff404dd", Env: "zagros", Handle: "mine-x",
-		Email: "person-69@example.org", Status: onboardstore.ProposalSponsorApproved,
+		Email: "person-58@example.org", Status: onboardstore.ProposalSponsorApproved,
 		ManifestJSON: string(mj), Tier: "developer", Complete: true,
 	}
 	if err := s.Onboard.CreateProposal(context.Background(), p); err != nil {

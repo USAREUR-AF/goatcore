@@ -1,0 +1,33 @@
+---
+# Row count of every table in every database (Spock's own schema excluded:
+# its catalog is rebuilt by the re-wire). Writes <rundir>/<pem_counts_file>
+# and sets _pem_counts {db: {table: rows}}.
+
+- name: "counts | count rows"
+  ansible.builtin.shell:
+    executable: /bin/bash
+    cmd: |
+      set -euo pipefail
+      P=(docker exec -u postgres {{ _pem_c | quote }} psql -X -q -v ON_ERROR_STOP=1 -U postgres -tA)
+      for db in $(cat {{ (_pem_rundir ~ '/databases.txt') | quote }} 2>/dev/null || "${P[@]}" -d postgres -c "SELECT datname FROM pg_database WHERE datallowconn AND datname <> 'template1' ORDER BY 1"); do
+        "${P[@]}" -d "$db" -c "SELECT json_build_object('db', current_database(), 'tables', coalesce(json_object_agg(t, n), '{}'::json))
+          FROM (SELECT quote_ident(ns.nspname) || '.' || quote_ident(c.relname) AS t,
+                       (xpath('/row/n/text()', query_to_xml(format('SELECT count(*) AS n FROM %I.%I', ns.nspname, c.relname), false, true, '')))[1]::text::bigint AS n
+                FROM pg_class c JOIN pg_namespace ns ON ns.oid = c.relnamespace
+                WHERE c.relkind IN ('r', 'p') AND ns.nspname NOT IN ('pg_catalog', 'information_schema', 'spock')
+                  AND ns.nspname NOT LIKE 'pg_toast%' AND ns.nspname NOT LIKE 'pg_temp%') s"
+      done
+  register: _pem_counts_raw
+  changed_when: false
+
+- name: "counts | collect"
+  ansible.builtin.set_fact:
+    _pem_counts: >-
+      {{ dict(_pem_counts_raw.stdout_lines | map('from_json') | map(attribute='db')
+         | zip(_pem_counts_raw.stdout_lines | map('from_json') | map(attribute='tables'))) }}
+
+- name: "counts | save {{ pem_counts_file }}"
+  ansible.builtin.copy:
+    dest: "{{ _pem_rundir }}/{{ pem_counts_file }}"
+    content: "{{ _pem_counts | to_nice_json }}\n"
+    mode: "0600"

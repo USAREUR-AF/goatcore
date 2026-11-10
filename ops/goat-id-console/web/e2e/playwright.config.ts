@@ -139,7 +139,7 @@ export default defineConfig({
         }, consoleServer(), consoleServer(
           GOVERNED_CONSOLE_PORT,
           "zagros-dev",
-          join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "warrant", "membership", "zagros-dev", "_scope.yaml"),
+          join(dirname(fileURLToPath(import.meta.url)), "fixtures", "membership-scope-governed.yaml"),
         )] : []),
       ],
 });

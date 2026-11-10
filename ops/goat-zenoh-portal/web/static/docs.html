@@ -190,8 +190,8 @@
           <table>
             <thead><tr><th>Operation</th><th>Surface</th><th>Who is allowed</th></tr></thead>
             <tbody>
-              <tr><td>Read / subscribe any topic</td><td>Zenoh wire</td><td>Anyone with a nova-CA-rooted leaf cert.</td></tr>
-              <tr><td>Publish under <code>&lt;__LEX_ORG__&gt;/**</code></td><td>Zenoh wire</td><td>Holder of the per-__LEX_ORG__ cert (<code>urn:goat-nova:vendor=&lt;v&gt;</code> URI-SAN).</td></tr>
+              <tr><td>Read / subscribe any topic</td><td>Zenoh wire</td><td>Anyone with a leaf cert rooted in this goatnet&rsquo;s CA.</td></tr>
+              <tr><td>Publish under <code>&lt;__LEX_ORG__&gt;/**</code></td><td>Zenoh wire</td><td>Holder of the per-__LEX_ORG__ cert (<code>&lt;uri-prefix&gt;&lt;v&gt;</code> URI-SAN; the prefix is set per goatnet).</td></tr>
               <tr><td>Register / edit __LEX_ORGS__</td><td>Portal API</td><td>Operator only.</td></tr>
               <tr><td>Register / edit a topic under <code>&lt;__LEX_ORG__&gt;/...</code></td><td>Portal API</td><td>The __LEX_ORG__'s portal API key, or operator.</td></tr>
               <tr><td>Inspect / view any topic</td><td>Portal UI</td><td>Anyone on the fabric.</td></tr>
@@ -301,11 +301,11 @@ topics:
           <p>Two quick-curl examples:</p>
           <pre class="shell"><code># list __LEX_ORGS__
 curl -H "Authorization: Bearer $PORTAL_API_KEY" \
-     https://portal.nova.netbird.nova.example/api/vendors | jq .
+     https://portal.goat.example/api/vendors | jq .
 
 # export topics for homemade-sensors as YAML
 curl -H "Authorization: Bearer $PORTAL_API_KEY" \
-     "https://portal.nova.netbird.nova.example/api/vendors/homemade-sensors/topics/export?format=yaml"</code></pre>
+     "https://portal.goat.example/api/vendors/homemade-sensors/topics/export?format=yaml"</code></pre>
         </section>
 
         <section id="troubleshooting">

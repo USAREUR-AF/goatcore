@@ -66,12 +66,12 @@ func TestCeremony_EndToEnd(t *testing.T) {
 		t.Fatalf("GenerateRootCert: %v", err)
 	}
 
-	// Step 4 — issue a leaf cert for the vega mgmt-API SAN list
+	// Step 4 — issue a leaf cert for the lab mgmt-API SAN list
 	tpl := &LeafTemplate{
-		CommonName: "mgmt.vega.netbird.legacy.example",
-		OrgUnit:    "vega",
+		CommonName: "mgmt.lab.netbird.example.net",
+		OrgUnit:    "lab",
 		SANs: []string{
-			"mgmt.vega.netbird.legacy.example",
+			"mgmt.lab.netbird.example.net",
 			"10.99.0.1",
 			"127.0.0.1",
 		},
@@ -132,7 +132,7 @@ func TestCeremony_EndToEnd(t *testing.T) {
 	if _, err := leafCert.Verify(x509.VerifyOptions{
 		Roots:     roots,
 		KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-		DNSName:   "mgmt.vega.netbird.legacy.example",
+		DNSName:   "mgmt.lab.netbird.example.net",
 	}); err != nil {
 		t.Fatalf("end-to-end leaf-via-bundle-anchor verify: %v", err)
 	}
@@ -157,7 +157,7 @@ func makeMinimalBundle(t *testing.T) *bundle.EnrollmentBundle {
 		DeviceID:   "ceremony-test-device",
 		PeerPubkey: peerPub,
 		ACLGroups:  []string{"test"},
-		Site:       "vega",
+		Site:       "lab",
 		Nonce:      nonce,
 		CAID:       "test-ca",
 	}

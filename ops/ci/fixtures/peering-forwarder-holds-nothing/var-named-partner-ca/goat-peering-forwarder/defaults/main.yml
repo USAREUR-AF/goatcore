@@ -1,0 +1,4 @@
+---
+# A forwarder variable that would carry a partner CA.
+peering_forwarder_enabled: false
+peering_forwarder_partner_ca_path: /etc/goat-peering-forwarder/partner.txt

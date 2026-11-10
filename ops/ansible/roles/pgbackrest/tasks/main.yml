@@ -45,9 +45,9 @@
     that: pgbackrest_repo1_cipher_pass is defined and pgbackrest_repo1_cipher_pass | length >= 32
     fail_msg: >
       Pass -e pgbackrest_repo1_cipher_pass="$PGBACKREST_REPO1_CIPHER_PASS"
-      (sourced from 1Password item "goat - pgBackRest {{ site_name }} repo1").
+      (sourced from the secret-store item for the {{ site_name }} pgBackRest repo1 passphrase).
       Must be >= 32 chars. Generate once per site with `openssl rand -hex 32`
-      and store in 1Password BEFORE first run.
+      and store it in the secret store BEFORE first run.
 
 - name: Require pgbackrest_archive_mode
   ansible.builtin.assert:

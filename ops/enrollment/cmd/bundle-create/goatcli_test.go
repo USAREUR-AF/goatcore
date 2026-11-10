@@ -33,9 +33,9 @@ func fullGoatCLIArgs(t *testing.T) runArgs {
 		t.Fatal(err)
 	}
 	return runArgs{
-		GoatCLIPortalEndpoint:  "https://portal.nova.netbird.nova.example",
+		GoatCLIPortalEndpoint:  "https://portal.nebula.netbird.nebula.example",
 		GoatCLIPortalTokenPath: tokenPath,
-		GoatCLIRouterEndpoint:  "tls/100.127.0.190:7447",
+		GoatCLIRouterEndpoint:  "tls/192.0.2.10:7447",
 		GoatCLIMTLSCertPath:    certPath,
 		GoatCLIMTLSKeyPath:     keyPath,
 		GoatCLICARootsPath:     caRootsPath,
@@ -127,7 +127,7 @@ func TestBuildGoatCLIExtras_RejectsNonHTTPSPortal(t *testing.T) {
 // host:port" mistake before signing.
 func TestBuildGoatCLIExtras_RejectsBareIPRouter(t *testing.T) {
 	args := fullGoatCLIArgs(t)
-	args.GoatCLIRouterEndpoint = "100.127.0.190:7447"
+	args.GoatCLIRouterEndpoint = "192.0.2.10:7447"
 	_, err := buildGoatCLIExtras(args)
 	if err == nil || !strings.Contains(err.Error(), "Zenoh transport prefix") {
 		t.Errorf("expected transport-prefix error, got %v", err)
@@ -224,11 +224,11 @@ func TestRun_GoatCLIExtras_EndToEnd(t *testing.T) {
 
 	args := runArgs{
 		Site:                   "site-a",
-		DeviceID:               "operator-user140x",
+		DeviceID:               "operator-example-user",
 		WGCP0Address:           "10.99.0.42/24",
 		RelaysPath:             relaysPath,
 		ACLGroupsRaw:           "OPERATORS",
-		CAID:                   "dev-nova-ca-test",
+		CAID:                   "dev-nebula-ca-test",
 		CAKeyPath:              caKey,
 		AgeIdentityPath:        ageID,
 		OutPath:                outPath,
@@ -296,9 +296,9 @@ func TestRun_OperatorBundle_NoWGCP0(t *testing.T) {
 
 	args := runArgs{
 		Site:                   "site-a",
-		DeviceID:               "operator-user140x",
+		DeviceID:               "operator-example-user",
 		ACLGroupsRaw:           "OPERATORS",
-		CAID:                   "dev-nova-ca-test",
+		CAID:                   "dev-nebula-ca-test",
 		CAKeyPath:              caKey,
 		AgeIdentityPath:        ageID,
 		OutPath:                outPath,
@@ -355,10 +355,10 @@ func TestRun_OperatorBundle_RejectsHalfWGCP0(t *testing.T) {
 	gArgs := fullGoatCLIArgs(t)
 	args := runArgs{
 		Site:                   "site-a",
-		DeviceID:               "operator-user140x",
+		DeviceID:               "operator-example-user",
 		WGCP0Address:           "10.99.0.42/24", // set
 		ACLGroupsRaw:           "OPERATORS",
-		CAID:                   "dev-nova-ca-test",
+		CAID:                   "dev-nebula-ca-test",
 		CAKeyPath:              caKey,
 		AgeIdentityPath:        ageID,
 		OutPath:                filepath.Join(t.TempDir(), "out.cbor"),
@@ -391,11 +391,11 @@ func TestRun_GoatCLIExtras_TamperedAtRest(t *testing.T) {
 
 	args := runArgs{
 		Site:                   "site-a",
-		DeviceID:               "operator-user140x",
+		DeviceID:               "operator-example-user",
 		WGCP0Address:           "10.99.0.42/24",
 		RelaysPath:             relaysPath,
 		ACLGroupsRaw:           "OPERATORS",
-		CAID:                   "dev-nova-ca-test",
+		CAID:                   "dev-nebula-ca-test",
 		CAKeyPath:              caKey,
 		AgeIdentityPath:        ageID,
 		OutPath:                outPath,

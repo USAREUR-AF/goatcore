@@ -1,16 +1,16 @@
 ---
 # mesh-coredns role — deploy CoreDNS as the per-site mesh-internal DNS server
-# for *.netbird.legacy.example + *.netbird-prod.goat.example. Generic across
+# for the site's mesh zone (*.<site_dns_zone>). Generic across
 # every mgmt-host site; the wrapper play sets per-site bind IP + paths.
 #
-# Replaces the previous NETHOST-only inline play (ops/ansible/nethost-dns.yml).
+# Replaces the previous single-site inline play.
 # Block 13A supply chain hardening: CoreDNS replaces jpillora/dnsmasq.
 #
 # Block 79: added optional wg-cp0 bind so operator laptops
 # on the silent control plane can resolve mesh-internal hostnames
 # pre-netbird-enrollment. Without this, the chicken-and-egg problem is:
 # Mac is on wg-cp0 → can dial 198.18.0.1 → but cannot resolve
-# mgmt.vega.netbird-prod.goat.example → forced to use IP-literal URLs
+# mgmt.<site_id>.<site_dns_zone> → forced to use IP-literal URLs
 # which trip F-104 in stock netbird's gRPC dialer. Binding CoreDNS on
 # the wg-cp0 address is the structural answer.
 
@@ -18,9 +18,9 @@
 #   mesh_coredns_bind_ip          — host's MESH IP (e.g. 100.X.Y.Z) for
 #                                   netbird-mesh peers post-enrollment.
 #                                   Empty string when the host isn't on
-#                                   the netbird data-plane mesh (vega
-#                                   Orins are NOT netbird peers; they
-#                                   reach mgmt-API over wg-cp0 only).
+#                                   the netbird data-plane mesh (a
+#                                   host that is NOT a netbird peer and
+#                                   reaches mgmt-API over wg-cp0 only).
 # Optional:
 #   mesh_coredns_wg_cp0_bind_ip   — host's wg-cp0 IP (e.g. 198.18.0.1).
 #                                   When set, CoreDNS additionally binds
@@ -30,7 +30,7 @@
 #                                   enrollment. Empty = no extra bind.
 
 # Defaults (override per-site only when needed):
-mesh_coredns_dir: /opt/goat/dns
+mesh_coredns_dir: "{{ goat_host_opt_dir | default('/opt/goat') }}/dns"
 mesh_coredns_image: coredns/coredns:1.15.0
 mesh_coredns_port: 5353
 # Optional second bind for the wg-cp0 silent-control-plane interface.
@@ -48,10 +48,10 @@ mesh_coredns_group: "{{ ansible_user }}"
 # Smoke-test target — a known mesh-internal DNS name expected to resolve.
 # Derives from the per-instance identity (the silent-control-plane mgmt VIP,
 # which mesh CoreDNS always serves: mgmt.<site_id>.<site_dns_zone>), so a new
-# env smoke-tests its OWN record instead of a legacy one. Previously hard-
-# coded to NETHOST's `legacy.examplebird.legacy.example`, which only resolved on
-# legacy — every other consumer (e.g. mgmt-host-dns.yml) silently tested a
-# foreign record. Override per-site if a different known record is preferred.
+# env smoke-tests its OWN record. A name hard-coded to one site's record
+# resolves only on that site, and every other consumer (e.g.
+# mgmt-host-dns.yml) would silently test a foreign record. Override per-site
+# if a different known record is preferred.
 mesh_coredns_smoke_test_name: "mgmt.{{ site_id }}.{{ site_dns_zone }}"
 
 # --- F-282: host-local mesh-zone resolver route -----------------------------

@@ -37,7 +37,7 @@
           - --member
           - "{{ target }}"
           - --ghcr-org
-          - "{{ ghcr_org | default('usareur-af') }}"
+          - "{{ ghcr_org }}"
       delegate_to: localhost
       become: false
       run_once: true

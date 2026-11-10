@@ -121,8 +121,14 @@ SELF = os.path.relpath(os.path.abspath(__file__), REPO)
 
 
 def tracked_files():
-    out = subprocess.run(["git", "-C", REPO, "ls-files"],
-                         capture_output=True, text=True, check=True).stdout
+    # An assembled tree (.goat-assembled at its root) holds its layers
+    # uncommitted over goatcore's HEAD, so their consumers are untracked there:
+    # it is read as tracked plus untracked, ignored files left out, or a
+    # deployment's own variables would drop out of the file it documents.
+    cmd = ["git", "-C", REPO, "ls-files"]
+    if os.path.isfile(os.path.join(REPO, ".goat-assembled")):
+        cmd += ["-co", "--exclude-standard"]
+    out = subprocess.run(cmd, capture_output=True, text=True, check=True).stdout
     for rel in out.splitlines():
         if rel == SELF:
             continue

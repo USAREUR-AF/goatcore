@@ -11,7 +11,7 @@
 #   VPS_RELAY_PUBKEY  — server's Noise public key
 #
 # Usage (from admin machine):
-#   ssh -t goat@100.127.1.32 \
+#   ssh -t goat@100.127.1.23 \
 #     RELAY_NAME=isr \
 #     VPS_RELAY_IP=203.0.113.20 \
 #     VPS_RELAY_TOKEN=abc123 \

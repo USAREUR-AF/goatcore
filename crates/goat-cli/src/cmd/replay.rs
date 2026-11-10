@@ -21,7 +21,7 @@ use zenoh::key_expr::KeyExpr;
 
 #[derive(Args, Debug)]
 pub struct ReplayArgs {
-    /// Key expression to replay from the audit-tail (e.g. `org11x/**`).
+    /// Key expression to replay from the audit-tail (e.g. `acme/**`).
     pub key_pattern: String,
     /// How far back: a duration (`1h`, `90m`, `2h30m`) or an RFC3339
     /// timestamp. Default: last 1h.

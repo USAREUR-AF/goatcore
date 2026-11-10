@@ -1,0 +1,23 @@
+---
+# Fixture: make pem-standby the founder's physical standby the way a pair site
+# gets one (site-bootstrap Phase 6A applies the same role): primary side on
+# the founder, standby side (wipe, pg_basebackup, application_name) on the
+# standby. Input: -e image=<postgres-spock image> (the basebackup client).
+
+- name: "fixture | founder's physical standby"
+  hosts: pem-founder,pem-standby
+  gather_facts: false
+  become: "{{ postgres_encoding_migrate_become | default(false) }}"
+  tasks:
+    - name: "fixture | postgres-streaming-replication"
+      ansible.builtin.include_role:
+        name: postgres-streaming-replication
+      vars:
+        router_role: "{{ 'B' if inventory_hostname == 'pem-standby' else 'A' }}"
+        postgres_replicator_password: "{{ lookup('env', 'UTF8_FOUNDER_REPLICATOR_PASS') }}"
+        postgres_primary_app_name: utf8_founder_a
+        postgres_streaming_container: "{{ spock_mesh_postgres_container }}"
+        postgres_data_volume: pemtest-standby_pgdata-a
+        mgmt_compose_dir: "{{ inventory_dir }}/standby"
+        mgmt_services_to_stop_for_basebackup: [postgres-a]
+        postgres_basebackup_client_image: "{{ image }}"

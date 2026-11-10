@@ -42,13 +42,13 @@ func hierarchyServer(t *testing.T, chained bool) *Server {
 	body := `{
       "generated_at": "2026-08-04T00:00:00Z",
       "orgs": [
-        {"id": "nation-hq", "kind": "partner", "nation": "SVN", "parent": null, "members": [
+        {"id": "nation-hq", "kind": "partner", "nation": "DEU", "parent": null, "members": [
           {"handle": "hq-node", "type": "machine", "state": "active", "vendor_tag": "hq-node", "email_hash": ""}
         ]},
-        {"id": "service-branch", "kind": "partner", "nation": "SVN", "parent": ` + parentService + `, "members": [
+        {"id": "service-branch", "kind": "partner", "nation": "DEU", "parent": ` + parentService + `, "members": [
           {"handle": "svc-node", "type": "machine", "state": "active", "vendor_tag": "svc-node", "email_hash": ""}
         ]},
-        {"id": "field-unit", "kind": "partner", "nation": "SVN", "parent": ` + parentUnit + `, "members": [
+        {"id": "field-unit", "kind": "partner", "nation": "DEU", "parent": ` + parentUnit + `, "members": [
           {"handle": "unit-node", "type": "machine", "state": "active", "vendor_tag": "unit-node", "email_hash": ""},
           {"handle": "unit-person", "type": "person", "state": "active", "vendor_tag": null, "email_hash": "deadbeef"}
         ]}

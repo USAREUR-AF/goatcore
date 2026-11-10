@@ -10,7 +10,7 @@ The companion (separate) effort is Anycast — see [`docs/design/anycast-relay-t
 
 ## 1. Substrate classes — what they are, where they fit
 
-Four substrate classes for the in-flight transit tier. Site-plane workloads stay sovereign-edge regardless (`docs/design/os-baseline-and-luks.md`, [ADR 0604](../adr/0604-luks-data-at-rest.md), [ADR 0900](../adr/0900-ubuntu-lts-luks-x86.md)).
+Four substrate classes for the in-flight transit tier. Site-plane workloads stay sovereign-edge regardless ([`docs/design/os-baseline-and-luks.md`](os-baseline-and-luks.md), [ADR 0604](../adr/0604-luks-data-at-rest.md), [ADR 0900](../adr/0900-ubuntu-lts-luks-x86.md)).
 
 ### 1.1 Sovereign edge
 

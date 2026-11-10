@@ -8,12 +8,27 @@
 #   compose-down  stop the service's compose projects; volumes are KEPT, so a
 #                 standup brings it back with its data. Proved from the host:
 #                 `docker compose ps -q` lists nothing for each project.
+#   service-stop  stop named services of a shared compose project (`project`
+#                 is its working directory, `services` the compose service
+#                 names); containers and volumes are KEPT. Proved from the host:
+#                 no container of those services runs.
+#   systemd-stop  stop and disable systemd units (`units`, globs allowed);
+#                 the unit files stay, so a standup starts them again. Proved
+#                 from the host: no matching unit is active.
+#   command       run the declared `run` line on the operator machine (`{repo}`
+#                 and `{site}` are filled in). Not a service stop, so
+#                 `--services` lists it as left in place; a full teardown whose
+#                 range reaches no refused step runs it.
 #   keep          nothing to reverse here (a gate, a file written on the laptop,
 #                 the host baseline the next standup reuses).
 #   refused       reversing it destroys data (the NetBird account, the identity
 #                 store, the database). A teardown that reaches one refuses
 #                 (exit 3) before touching anything; take it down by hand.
-#   designed      the reverse is defined but not built yet (named, dated).
+#   designed      the reverse is defined but not built yet.
+#
+# `target: obs` runs a step against the site's observability host group
+# (<site>_obs_hosts) instead of its core group. A `dirs` default may carry
+# `<site>`, which both avenues replace with the site id.
 #
 # Teardown writes /var/lib/goat/<component>/teardown.jsonl and never touches
 # deploy-history.jsonl, so rollback's history is unchanged.
@@ -45,8 +60,10 @@ steps:
     component: goat-zenoh-portal
     dirs: [{var: portal_data_dir, default: /opt/goat-zenoh-portal}]
   - label: "mesh CoreDNS"
-    action: designed
-    why: "the mesh-DNS server is a systemd-managed CoreDNS under /opt/goat/dns, not a compose project; its stop + the nameserver-group removal land with the account teardown (2026-11-20)"
+    action: compose-down
+    component: mesh-coredns
+    dirs: [{var: mesh_coredns_dir, default: /opt/goat/dns}]
+    why: "the nameserver group that points peers at it is a NetBird account row; it stays with the account baseline"
   - label: "netbird account baseline"
     action: refused
     why: "writes rows into the NetBird account; removing them is an account change, not a service stop"
@@ -56,21 +73,26 @@ steps:
   - label: "declared NetBird"
     action: refused
     why: "the declared ACL lives in the NetBird account"
-  - label: "enforce: no Default All->All"
-    action: refused
-    why: "the declared ACL lives in the NetBird account"
   - label: "register OIDC clients"
     action: refused
     why: "clients live in the identity store (Hydra)"
   - label: "dashboard"
-    action: designed
-    why: "the dashboard shares the mgmt-host compose project with the control plane; a per-service stop lands with the mgmt-stack split (2026-11-20)"
+    action: service-stop
+    component: netbird-dashboard
+    project: /opt/mgmt-host
+    services: [dashboard, dashboard-admin]
   - label: "SPIRE server on the founder"
-    action: designed
-    why: "SPIRE shares the mgmt-host compose project; its CA is data (2026-11-20)"
+    action: service-stop
+    component: spire
+    project: /opt/mgmt-host
+    services: [spire-server]
   - label: "zenoh router"
-    action: designed
-    why: "the router's compose path is templated per site; the teardown play needs the rendered path (2026-11-20)"
+    action: compose-down
+    component: goat-zenoh
+    dirs: [{var: goat_zenoh_compose_dir, default: "/opt/<site>-zenoh"}]
+  - label: "mesh-enroll the hosts"
+    action: keep
+    why: "the host stays a peer of its own goatnet; removing the peer is a NetBird account change, and the next standup finds it enrolled"
   - label: "relay tier"
     action: refused
     why: "the relays are shared cloud infrastructure, torn down by terraform, not by a site"
@@ -90,17 +112,28 @@ steps:
     action: refused
     why: "the mgmt stack holds the database: NetBird account, Ory identities, Spock replication"
   - label: "relay-connect"
-    action: designed
-    why: "stopping the rathole client unwires the site from its relays; lands with the relay teardown (2026-11-20)"
+    action: systemd-stop
+    component: rathole-client
+    units: ["rathole-client@*.service"]
   - label: "host baseline + LUKS"
     action: keep
     why: "the host keeps its OS, encryption and baseline; the next standup reuses them"
-  - label: "[obs]"
-    action: designed
-    why: "the obs host's stacks come down with the obs leg teardown (2026-11-20)"
+  - label: "observability host: stack"
+    action: compose-down
+    target: obs
+    component: obs-host
+    dirs: [{var: obs_compose_dir, default: /opt/obs-host}]
+  - label: "observability host: baseline + LUKS, then utility"
+    action: compose-down
+    target: obs
+    component: forgejo
+    dirs: [{var: forgejo_compose_dir, default: /opt/forgejo}, {var: docker_registry_mirror_compose_dir, default: /opt/docker-registry-mirror}]
+    why: "the obs host keeps its OS, encryption and baseline; Forgejo's repositories stay on disk"
   - label: "join the cross-goatnet surfaces"
-    action: designed
-    why: "removing the site from every relay-health overview is a cross-env.yaml change plus a redeploy of every box (2026-11-20)"
+    action: command
+    component: cross-env
+    run: "'{repo}/ops/goatnets/cross-env-apply.sh' --absent {site}"
+    why: "refuses while ops/goatnets/cross-env.yaml still lists the site: remove its row by pull request first, then every relay-health box is redeployed without it"
   - label: "network-jump host"
     action: keep
     why: "a rescue node is the way in when the mesh and control plane are both down; a site teardown leaves it standing (ADR 1183)"

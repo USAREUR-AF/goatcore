@@ -89,7 +89,7 @@ backend pin_{{ b.name }}
 {% endif %}
 {% endfor %}
 {% if signal_ingress_pin_enabled | default(false) %}
-{% set signal_backend_name = (signal_home_backend_by_relay | default({}))[inventory_hostname] | default(signal_ingress_default_backend | default('zagros-a')) %}
+{% set signal_backend_name = (signal_home_backend_by_relay | default({}))[inventory_hostname] | default(signal_ingress_default_backend) %}
 {% set sb = (rathole_ingress_backends | selectattr('name', 'equalto', signal_backend_name) | list | first) %}
 
 # ADR 1102 Decision A — signal home for THIS relay ({{ inventory_hostname }}) is

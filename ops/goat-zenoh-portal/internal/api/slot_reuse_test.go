@@ -30,7 +30,7 @@ func TestSlotReuse_DeferredAliasTakenReturnsExistingSlot(t *testing.T) {
 	c := &http.Client{}
 
 	first, ob := deferredOnboard(t, c, ts.URL, map[string]any{
-		"prefix": "user228x", "identity_id": collectorIdentity, "defer_credential": true,
+		"prefix": "mlee", "identity_id": collectorIdentity, "defer_credential": true,
 	})
 	if first.StatusCode != http.StatusCreated {
 		t.Fatalf("first deferred onboard: %d", first.StatusCode)
@@ -38,7 +38,7 @@ func TestSlotReuse_DeferredAliasTakenReturnsExistingSlot(t *testing.T) {
 	anchor, _ := ob["slot_id"].(string)
 
 	again, body := deferredOnboard(t, c, ts.URL, map[string]any{
-		"prefix": "user228x", "identity_id": collectorIdentity, "defer_credential": true,
+		"prefix": "mlee", "identity_id": collectorIdentity, "defer_credential": true,
 	})
 	if again.StatusCode != http.StatusOK {
 		t.Fatalf("re-onboard of a held handle: want 200 reused, got %d %s", again.StatusCode, mustReadBody(t, again))
@@ -64,7 +64,7 @@ func TestSlotReuse_DeferredAliasTakenReturnsExistingSlot(t *testing.T) {
 
 	// No identity on the request (the native onboard's order) still reuses, and
 	// reports the slot's recorded identity so the caller can check it.
-	_, body = deferredOnboard(t, c, ts.URL, map[string]any{"prefix": "user228x", "defer_credential": true})
+	_, body = deferredOnboard(t, c, ts.URL, map[string]any{"prefix": "mlee", "defer_credential": true})
 	if got, _ := body["identity_id"].(string); got != collectorIdentity {
 		t.Errorf("identity-less reuse reported identity_id %q, want the recorded %q", got, collectorIdentity)
 	}

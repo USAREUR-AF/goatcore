@@ -101,7 +101,7 @@ func TestBrowserOffboard_ArchivedBlankNoteRefusedBeforeKratos(t *testing.T) {
 		t.Run(fmt.Sprintf("note=%q", note), func(t *testing.T) {
 			s := newOnboardTestServer(t)
 			h := s.Routes()
-			email := "person-112@example.org"
+			email := "person-99@example.org"
 			pid := onboardedProposalInState(t, s, h, email, onboardstore.ProposalArchived)
 			calls := 0
 			cli := kratos.NewClient("https://kratos.example.test")

@@ -109,7 +109,7 @@
           No netbird account + 'All' group in {{ netbird_pg_container }} yet —
           skipping the nameserver-group seed. This is expected before
           the operator's first dashboard OIDC login (which creates the account +
-          owner). After logging in, re-run this play or zagros-refresh.yml to seed:
+          owner). After logging in, re-run this play or <site>-refresh.yml to seed:
             ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini \
               -i inventory/mgmt-hosts-mesh.ini -l {{ inventory_hostname }} \
               goat-netbird-account-init.yml

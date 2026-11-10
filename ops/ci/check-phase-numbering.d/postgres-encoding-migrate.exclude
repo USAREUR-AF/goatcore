@@ -1,0 +1,5 @@
+# postgres-encoding-migrate numbers the steps of its own migration (phase 1..9,
+# with sub-steps) in its task names; that is its procedure's numbering, not a
+# standup's phases. Left alone until its task names are put in words.
+ops/ansible/postgres-encoding-migrate.yml
+ops/ansible/roles/postgres-encoding-migrate/**

@@ -1,7 +1,5 @@
-# check-no-goatnet-defaults.sh exemptions. One `roles/<role>/defaults/main.yml:<variable>`
+# check-no-goatnet-defaults.sh exemptions. One `ops/ansible/roles/<role>/defaults/main.yml:<variable>`
 # per line. Shrink-only: a listed default that stops naming a goatnet is refused
 # until its line is removed. Add a line only with the reason in the role's own
-# comment; these two carry it (the provisioning tier is a shared
-# cross-goatnet service).
-ops/ansible/roles/goat-docs/defaults/main.yml:goat_docs_mirror_base
-ops/ansible/roles/goat-get/defaults/main.yml:goat_get_mirror_base
+# comment.
+ops/ansible/roles/goat-zenoh-portal/defaults/main.yml:portal_ca_root_cert_flag

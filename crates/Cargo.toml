@@ -1,6 +1,7 @@
 # Cargo workspace for goat's operator and build tooling:
 #   - goat-cli/          the `goat` operator CLI
 #   - goatbuilder/       build, release, deploy, standup
+#   - goat-federation/   federation package v1: the library behind the federation verbs
 #   - goat-errors/       the error catalog every message is interpreted from
 #   - goat-selfupdate/   release self-update
 #   - goat-fun/          the easter eggs
@@ -16,6 +17,7 @@ resolver = "2"
 members = [
     "panoscope-core",
     "goat-cli",
+    "goat-federation",
     "goatbuilder",
     "goat-errors",
     "goat-fun",

@@ -424,11 +424,13 @@ json.dump({name: prefix + "fixture/item/" + name for name in payload["secrets"]}
         self.assertFalse(marker.exists())
 
     def test_legacy_migration_still_wins(self):
+        # A value a legacy file sets is not a reference, so it reaches the play
+        # as it is; the references still in the environment are resolved rather
+        # than handed to the play as literal op:// strings.
         self.env["GOAT_REFERENCES_ONLY"] = "0"
         self.generate()
         (self.credentials / "legacy.envrc").write_text('export FIXTURE_SITE_PG_PASS="fixture-legacy"\n')
         self.assertTrue(self.consumer()["legacy"])
-        self.assertFalse(self.calls.exists())
 
     def test_surrounding_injector_values_are_preserved(self):
         self.generate()

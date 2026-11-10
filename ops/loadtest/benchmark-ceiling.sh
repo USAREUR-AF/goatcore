@@ -46,7 +46,7 @@ source "${HERE}/lib-loadtest.sh"
 : "${BENCH_AUDIT_IMAGE:=ghcr.io/usareur-af/goat-audit-subscriber:sha-51d9a8b}"
 : "${BENCH_AUDIT_CERT_DIR:=/opt/audit-subscriber/certs}"   # reused: universal-read covers loadtest/**
 : "${BENCH_CA_ROOT:=/etc/goat-zenoh/tls/ca-root-cert.pem}"
-: "${BENCH_S3_ENDPOINT:=http://100.127.0.190:9000}"
+: "${BENCH_S3_ENDPOINT:=http://100.127.0.186:9000}"
 : "${BENCH_SUB_METRICS_PORT:=9305}"
 : "${BENCH_LOADGEN_IMAGE:=${LOADTEST_LOADGEN_IMAGE:-goat-loadgen:local}}"
 : "${BENCH_LADDER:=2000:8:15,20000:16:12,200000:16:10,0:16:10}"

@@ -198,14 +198,14 @@ selfservice:
       config:
         passwordless: false
         rp:
-          display_name: "goat {{ site_id | upper }}"
+          display_name: "{{ ory_brand_name | default('goat') }} {{ site_id | upper }}"
           id: "auth.{{ site_id }}.{{ site_dns_zone }}"
           origins:
             - "https://auth.{{ site_id }}.{{ site_dns_zone }}"
     totp:
       enabled: true
       config:
-        issuer: "goat {{ site_id | upper }}"
+        issuer: "{{ ory_brand_name | default('goat') }} {{ site_id | upper }}"
 {% if icam_federation.enabled | default(false) and (icam_federation.providers | default([]) | length > 0) %}
     # ---- External ICAM federation — the CAC-ingress broker (default-off) --------
     # docs/design/external-icam-federation.md · role default icam_federation (off).

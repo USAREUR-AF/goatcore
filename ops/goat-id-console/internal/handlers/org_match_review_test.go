@@ -1265,7 +1265,7 @@ func TestOrgNew_RealisticCallerPayload(t *testing.T) {
 		"composition":  {"national"},
 		"sector":       {"state"},
 		"gov_branch":   {" MiLiTaRy "}, // Human free text with mixed case/spaces
-		"nation":       {" gBr "},
+		"nation":       {" iSl "},
 		"display_name": {"Unknown Defense Ltd"},
 		"parent":       {""},
 		"despite":      {"some-other-org"}, // despite checkboxes, if any were shown

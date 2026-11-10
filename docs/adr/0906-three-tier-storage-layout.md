@@ -5,7 +5,7 @@
 | Status | Accepted |
 | Date | 2026-04-25 |
 | Repo scope | goat core |
-| Related | [`0905-nvme-per-site.md`](0905-nvme-per-site.md), [`0604-luks-data-at-rest.md`](0604-luks-data-at-rest.md), [`0809-boot-chain-integrity.md`](0809-boot-chain-integrity.md), `../design/os-baseline-and-luks.md` |
+| Related | [`0905-nvme-per-site.md`](0905-nvme-per-site.md), [`0604-luks-data-at-rest.md`](0604-luks-data-at-rest.md), [`0809-boot-chain-integrity.md`](0809-boot-chain-integrity.md), [`../design/os-baseline-and-luks.md`](../design/os-baseline-and-luks.md) |
 
 ## TL;DR (for a layperson)
 
@@ -56,7 +56,7 @@ Properties:
   cross-mount pattern ([`0811`](0811-audit-log-integrity.md)).
 
 Full layout in
-`../design/os-baseline-and-luks.md`.
+[`../design/os-baseline-and-luks.md`](../design/os-baseline-and-luks.md).
 
 ## Alternatives considered
 

@@ -178,7 +178,7 @@ fn an_absent_rollup_renders_nothing_heard_never_healthy() {
     let page = fx.render("zagros-sandbox");
     assert!(page.contains("nothing heard"), "absence is an answer");
     assert!(page.contains("chip-unmetered"), "absence of signal is unmetered");
-    assert!(page.contains("F-177"), "the silent-denial hypothesis is named");
+    assert!(page.contains("silently denied"), "the silent-denial hypothesis is named");
     assert!(
         !page.contains("chip chip-green"),
         "an empty console must not render a green chip anywhere (the stylesheet may define one)"
@@ -1449,7 +1449,7 @@ fn the_api_states_unreachability_with_age_never_omits_a_goatnet() {
     let never = &gns[0];
     assert_eq!(never["reachability"]["state"], "never-heard");
     assert!(never["reachability"]["last_heard_age_s"].is_null(), "no fabricated age");
-    assert!(never["reachability"]["note"].as_str().unwrap().contains("F-177"));
+    assert!(never["reachability"]["note"].as_str().unwrap().contains("silently denied"));
     assert!(never["convergence"].is_null(), "no convergence is fabricated");
     assert_eq!(never["intent"]["verified"], true, "the repo-side facts still carry");
 

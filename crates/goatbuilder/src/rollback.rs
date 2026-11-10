@@ -226,7 +226,17 @@ pub fn list(repo: &Path, component: &str, site: Option<&str>) -> Result<Report> 
     for h in &hosts {
         let rows = host_rows_newest_first(h, component);
         if !rows.is_empty() {
-            checks.push(line(format!("  (on-host ledger @ {} — source of truth)", h.host)));
+            // Name the goatnet the host belongs to, and with no --site on a
+            // multi-host map say that only the first reachable host is shown,
+            // as rollback.sh --list does.
+            let goatnet = if h.site.is_empty() { String::new() } else { format!(", goatnet {}", h.site) };
+            checks.push(line(format!("  (on-host ledger @ {}{goatnet} — source of truth)", h.host)));
+            if site.is_none() && hosts.len() > 1 {
+                checks.push(line(format!(
+                    "this is the first reachable of {} hosts; pass --site <goatnet> for one goatnet's history",
+                    hosts.len()
+                )));
+            }
             for r in rows {
                 checks.push(line(format_row(&r)));
             }
@@ -593,7 +603,7 @@ mod more_tests {
             return; // a public clone of goatcore ships no deployment
         }
         let hs = [sited("zagros"), sited("nova-a"), sited("zagros"), host(&[], "", "")];
-        assert_eq!(goatnets_of(&hs), vec!["zagros".to_string(), "nova-a".to_string()]);
+        assert_eq!(goatnets_of(&hs), vec!["nova-a".to_string(), "zagros".to_string()]);
         // A group-based ledger (every host site-less) spans zero goatnets here.
         assert!(goatnets_of(&[host(&[], "", ""), host(&[], "", "")]).is_empty());
     }
@@ -616,8 +626,8 @@ mod more_tests {
         assert_eq!(e.downcast_ref::<goat_errors::Coded>().map(|c| c.code.as_str()), Some("GB-055"));
         let m = e.to_string();
         assert!(m.contains("deployed on 3 goatnets"), "{m}");
-        assert!(m.contains("zagros, zagros-prod, nova-a"), "{m}");
-        assert!(m.contains("prod included") && m.contains("--site <zagros|zagros-prod|nova-a>"), "{m}");
+        assert!(m.contains("nova-a, zagros, zagros-prod"), "{m}");
+        assert!(m.contains("prod included") && m.contains("--site <nova-a|zagros|zagros-prod>"), "{m}");
     }
 
     #[test]

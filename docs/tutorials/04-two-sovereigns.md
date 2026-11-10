@@ -17,8 +17,12 @@ data carries both ways, refusals fire, and a round trip completes.
 
 Tutorial 3 left you with a plan and a counterparty to wait for. Here you play
 the counterparty too. Nothing about the driver changes: every phase you run is
-the one you would run against a real partner, and phase 5's exchange and phase
-10's review are done the way two operators do them, by copying files and
+the one you would run against a real partner. On container hosts, phase 5
+exchanges both packages, CA certificates and SPIFFE bundles through a peering
+directory the run starts beside the two edges (saltlick behind a TLS front),
+exactly as against a real partner; the voice call is a keyring the run writes. On
+cloud hosts (`live.sh`) the run hands the files between its own two hosts with
+`FED_NO_DIRECTORY=1`. Phase 10's review is done the way two operators do it, by
 reading what arrived.
 
 Both runs below are synthetic: two sovereigns of your own, synthetic samples, and FIPS waived. A real
@@ -43,7 +47,7 @@ peering also needs a counterparty, and the validated FIPS backend where your acc
 | 2 | task | Prepare the edge: the WireGuard interface and the SPIRE bundle export |
 | 3 | task | `goat federate init`: your half, read from the running system |
 | 4 | task | `goat federate lint` |
-| 5 | manual | Exchange packages and keys out of band |
+| 5 | manual | Exchange packages, CA certificates and SPIFFE bundles through the peering directory; read the keys aloud and record them |
 | 6 | task | `goat federate compose`: one agreement |
 | 7 | task | `goat federate verify` from your side |
 | 8 | task | Mint the peering leaf certificates from the agreement |

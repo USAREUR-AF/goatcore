@@ -83,7 +83,7 @@ func TestRun_Onboard_PeerNameRequired(t *testing.T) {
 	// validateOnboardArgs via a positional with --site filled.
 	path := seedPeerset(t, nil, nil)
 	code, _, stderr := runArgs(t, "onboard",
-		"--site", "vega", "--role", "mgmt-host",
+		"--site", "lab", "--role", "mgmt-host",
 		"--wg-cp0-address", "198.18.0.99/24",
 		"--path", path)
 	if code != 2 {
@@ -137,7 +137,7 @@ func TestRun_Rotate_TooManyPositionals(t *testing.T) {
 
 func TestRun_Rotate_ApplyRequiresBundleOut(t *testing.T) {
 	path := seedPeerset(t, nil, nil)
-	code, _, stderr := runArgs(t, "rotate", "vega-a",
+	code, _, stderr := runArgs(t, "rotate", "lab-a",
 		"--reason", "test",
 		"--apply",
 		"--path", path)
@@ -247,8 +247,8 @@ func TestDashOr(t *testing.T) {
 	if got := dashOr(""); got != "-" {
 		t.Errorf("dashOr(\"\") = %q; want -", got)
 	}
-	if got := dashOr("vega"); got != "vega" {
-		t.Errorf("dashOr(\"vega\") = %q; want passthrough", got)
+	if got := dashOr("lab"); got != "lab" {
+		t.Errorf("dashOr(\"lab\") = %q; want passthrough", got)
 	}
 }
 
@@ -296,7 +296,7 @@ func TestRun_Resurrect_RejectsPubkeyCollisionWithActive(t *testing.T) {
 	path := filepath.Join(dir, "peerset.json")
 	if err := os.WriteFile(path, []byte(`{
 		"schema_version": 2,
-		"peers": [{"name": "other-peer", "wg_cp0_address": "198.18.0.99", "current_pubkey": "abc-shared==", "role": "mgmt-host", "site": "vega"}],
+		"peers": [{"name": "other-peer", "wg_cp0_address": "198.18.0.99", "current_pubkey": "abc-shared==", "role": "mgmt-host", "site": "lab"}],
 		"deprecated_peers": [{"name": "old-peer", "wg_cp0_address": "198.18.0.5", "current_pubkey": "abc-shared==", "removed_at": "2026-01-01T00:00:00Z", "removed_reason": "test"}],
 		"relays": [],
 		"metadata": {"schema_min_compatible_version": 2}
@@ -317,7 +317,7 @@ func TestRun_Resurrect_RejectsAddressCollisionWithActive(t *testing.T) {
 	path := filepath.Join(dir, "peerset.json")
 	if err := os.WriteFile(path, []byte(`{
 		"schema_version": 2,
-		"peers": [{"name": "other-peer", "wg_cp0_address": "198.18.0.5", "current_pubkey": "different==", "role": "mgmt-host", "site": "vega"}],
+		"peers": [{"name": "other-peer", "wg_cp0_address": "198.18.0.5", "current_pubkey": "different==", "role": "mgmt-host", "site": "lab"}],
 		"deprecated_peers": [{"name": "old-peer", "wg_cp0_address": "198.18.0.5", "current_pubkey": "olds==", "removed_at": "2026-01-01T00:00:00Z", "removed_reason": "test"}],
 		"relays": [],
 		"metadata": {"schema_min_compatible_version": 2}
@@ -346,7 +346,7 @@ func TestRun_Onboard_ApplyNonPendingError(t *testing.T) {
 	path := seedPeerset(t, nil, nil)
 	bundleOut := filepath.Join(t.TempDir(), "b.cbor")
 	code, _, stderr := runArgs(t, "onboard", "new-orin",
-		"--site", "vega", "--role", "mgmt-host",
+		"--site", "lab", "--role", "mgmt-host",
 		"--wg-cp0-address", "198.18.0.99/24",
 		"--bundle-out", bundleOut,
 		"--apply",
@@ -367,7 +367,7 @@ func TestRun_Rotate_ApplyNonPendingError(t *testing.T) {
 		return errSyntheticApply
 	}))
 	path := seedPeerset(t, []peerset.Peer{activePeer()}, nil)
-	code, _, stderr := runArgs(t, "rotate", "vega-a",
+	code, _, stderr := runArgs(t, "rotate", "lab-a",
 		"--reason", "test",
 		"--bundle-out", filepath.Join(t.TempDir(), "b.cbor"),
 		"--apply",
@@ -385,7 +385,7 @@ func TestRun_Remove_ApplyNonPendingError(t *testing.T) {
 		return errSyntheticApply
 	}))
 	path := seedPeerset(t, []peerset.Peer{activePeer()}, nil)
-	code, _, stderr := runArgs(t, "remove", "vega-a",
+	code, _, stderr := runArgs(t, "remove", "lab-a",
 		"--reason", "test", "--apply", "--path", path)
 	if code != 1 {
 		t.Errorf("code = %d, want 1", code)
@@ -402,7 +402,7 @@ func TestRun_Resurrect_ApplyNonPendingError(t *testing.T) {
 	path := seedPeerset(t, nil, []peerset.DeprecatedPeer{
 		{Peer: activePeer(), RemovedAt: time.Now().UTC(), RemovedReason: "test"},
 	})
-	code, _, stderr := runArgs(t, "resurrect", "vega-a", "--apply", "--path", path)
+	code, _, stderr := runArgs(t, "resurrect", "lab-a", "--apply", "--path", path)
 	if code != 1 {
 		t.Errorf("code = %d, want 1", code)
 	}

@@ -123,8 +123,7 @@ type Config struct {
 	// creates the org, this is whether an unregistered one may be approved at
 	// all. A goatnet can match without requiring.
 	RequireRegisteredOrg bool
-	// OnboardOperatorAPIKeys is the MACHINE realm's PER-HANDLE operator-key map
-	//,
+	// OnboardOperatorAPIKeys is the MACHINE realm's PER-HANDLE operator-key map,
 	// mirroring the portal's PORTAL_OPERATOR_API_KEYS. Parsed from
 	// ONBOARD_OPERATOR_API_KEYS in the form "handle1:key1,handle2:key2"
 	// (comma-separated handle:key pairs); keyed by KEY → handle for O(1) resolve.
@@ -245,6 +244,13 @@ type Config struct {
 	// blank renders the names without links plus instructions to ask, which is the
 	// honest failure mode rather than a page of 404s.
 	GuideRepoBaseURL string
+	// PlatformRepoURL is the platform source repository the welcome package
+	// and the membership-authority panel link to (admin guide, git clone,
+	// warrant membership declarations), e.g. "https://github.com/example/goat".
+	PlatformRepoURL string
+	// CollabURL is the collaboration environment's front door named in the
+	// welcome package's collab block (NOTIFY_COLLAB_URL).
+	CollabURL string
 	// NOTIFY_RELAY_HEALTH_URL — public relay-health dashboard surfaced in the welcome
 	// package so new onboardees learn they have access. Off-mesh zone, not derivable
 	// from the portal base, so it is configured explicitly. Empty = not surfaced.
@@ -346,7 +352,7 @@ func Load() (*Config, error) {
 			"/etc/goat-id-console/coalition-frameworks.yaml"),
 		CoalitionFramework: os.Getenv("COALITION_FRAMEWORK"),
 		OperatingSovereign: strings.ToUpper(strings.TrimSpace(os.Getenv("OPERATING_SOVEREIGN"))),
-		StepUpReturnToBase: envOr("STEP_UP_RETURN_TO_BASE", "https://admin.auth.nova.netbird.nova.example"),
+		StepUpReturnToBase: envOr("STEP_UP_RETURN_TO_BASE", "https://admin.auth.goat.example"),
 		StepUpEnforced:     envBoolDefault("STEP_UP_ENFORCED", true),
 		LogLevel:           envOr("LOG_LEVEL", "info"),
 		AuditBackend:       envOr("AUDIT_BACKEND", "stderr"),
@@ -403,6 +409,8 @@ func Load() (*Config, error) {
 	c.CollabDoorURL = envOr("COLLAB_KANIDM_URL", "")
 	c.CollabDoorAdminPW = envOr("COLLAB_KANIDM_IDM_ADMIN_PW", "")
 	c.PublicDoorURL = envOr("PUBLIC_DOOR_KANIDM_URL", "")
+	// The role writes GOAT_IDM_ADMIN_PW whatever name the deployment gives the
+	// variable on its controllers (public_door_idm_admin_pw_env).
 	c.PublicDoorAdminPW = envOr("GOAT_IDM_ADMIN_PW", "")
 	c.PortalInternalURL = envOr("PORTAL_INTERNAL_URL", "")
 	c.PortalLookupToken = envOr("PORTAL_LOOKUP_TOKEN", envOr("NOTIFY_TOKEN", ""))
@@ -466,6 +474,8 @@ func Load() (*Config, error) {
 	c.NotifyGetURL = envOr("NOTIFY_GET_URL", "")
 	c.NotifyPortalURL = envOr("NOTIFY_PORTAL_URL", "")
 	c.GuideRepoBaseURL = envOr("GUIDE_REPO_BASE_URL", "")
+	c.PlatformRepoURL = strings.TrimRight(envOr("PLATFORM_REPO_URL", "https://github.com/usareur-af/goatcore"), "/")
+	c.CollabURL = strings.TrimRight(envOr("NOTIFY_COLLAB_URL", "https://collab.goat.example"), "/")
 	c.NotifyRelayHealthURL = envOr("NOTIFY_RELAY_HEALTH_URL", "")
 	c.NotifyMapURL = envOr("NOTIFY_MAP_URL", "")
 	c.NotifyRelayAddresses = parseCommaList(envOr("NOTIFY_RELAY_ADDRESSES", ""))

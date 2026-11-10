@@ -58,7 +58,7 @@ docker run --rm --network "$NET" badouralix/curl-jq sh -c '
 # The oidc mapper sets traits (email/name/groups) AND metadata_public.external_subjects
 # in one shot at registration. Assert the native identity was minted from the federated
 # login with the fail-closed role mapping AND the external binding in metadata_public.
-FED=$(curl -fsS "$ADMIN/admin/identities" | jq '[.[] | select(.traits.email=="person-27@example.org")][0]')
+FED=$(curl -fsS "$ADMIN/admin/identities" | jq '[.[] | select(.traits.email=="person-22@example.org")][0]')
 if [ "$(echo "$FED" | jq -r '.id // empty')" = "" ]; then
   echo "   FAIL: federated identity not minted"; exit 1
 fi

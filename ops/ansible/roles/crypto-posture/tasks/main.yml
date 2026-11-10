@@ -12,6 +12,15 @@
 #      {{ crypto_posture_cert_dir }}/{{ crypto_posture_cert_file,key_file }}.
 #   3. CA root present at {{ crypto_posture_ca_root_src }}.
 
+- name: crypto-posture | the image pin is set
+  ansible.builtin.assert:
+    that:
+      - crypto_posture_image | length > 0
+    fail_msg: >-
+      crypto_posture_image is empty. The role carries no pin: set it in the
+      goatnet's pin table (ops/pins/fleet-pins.yaml) or in its group_vars.
+    quiet: true
+
 - name: crypto-posture | ensure cert dir
   ansible.builtin.file:
     path: "{{ crypto_posture_cert_dir }}"

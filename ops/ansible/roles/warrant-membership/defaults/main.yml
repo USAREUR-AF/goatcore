@@ -28,6 +28,19 @@ warrant_membership_scope: ""
 warrant_membership_src_dir: "{{ playbook_dir }}/../warrant/membership/{{ warrant_membership_scope }}"
 warrant_membership_dest_dir: "/etc/goat/warrant/membership/{{ warrant_membership_scope }}"
 
+# The goatnet's ACL declaration: netbird_acl_taxonomy.yml and
+# netbird_acl_matrix.yml. goat compiles in no deployment's declaration, and
+# `goat warrant apply --membership` reads both (group names and prefixes from
+# the taxonomy, policy coverage from the matrix), so the role installs them
+# from this checkout and the unit names the directory in
+# GOAT_ACL_DECLARATION_DIR. Without them every run exits
+# E_ACL_DECLARATION_MISSING.
+warrant_membership_acl_src_dir: "{{ playbook_dir }}"
+warrant_membership_acl_dest_dir: "/etc/goat/warrant/acl"
+warrant_membership_acl_files:
+  - netbird_acl_taxonomy.yml
+  - netbird_acl_matrix.yml
+
 # Env var on the operator's shell holding the svc-<site>-warrant PAT (the
 # warrant-membership identity in ops/netbird/service-identities.yaml). Mint:
 #   ops/scripts/netbird-service-identities.py <goatnet> --mint

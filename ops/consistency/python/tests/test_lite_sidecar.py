@@ -122,7 +122,7 @@ def main():
 goatnets:
   pasture:
     members: [pasture_hosts]
-    ca_id_var: nova_ca_id
+    ca_id_var: goat_ca_id
 components:
   alpha:
     deviations:

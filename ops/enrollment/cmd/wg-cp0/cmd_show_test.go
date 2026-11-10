@@ -64,7 +64,7 @@ func TestEmitPeer_NoLiveState_TextStaysCompact(t *testing.T) {
 
 func TestRun_Show_IncludeLiveState_OfflineMode_OK(t *testing.T) {
 	withOffline(t, func() {
-		code, _, _ := runArgs(t, "show", "vega-a", "--path", fixturePath, "--include-live-state")
+		code, _, _ := runArgs(t, "show", "lab-a", "--path", fixturePath, "--include-live-state")
 		// In offline mode, live state is empty; show still succeeds
 		// and prints the peer row. Live-state section may be absent or
 		// empty.

@@ -46,7 +46,7 @@ def render(**overrides) -> str:
         goat_zenoh_audit_retention_days=365,
         goat_zenoh_storage_path="/var/lib/zagros-zenoh/rocksdb",
         goat_zenoh_tls_dir="/etc/zagros-zenoh/tls",
-        nova_seed_vendors=["community", "caracal"],
+        zenoh_seed_vendors=["community", "caracal"],
         zenoh_identity_model="per-vendor",
         zenoh_slot_pool_size=256,
         zenoh_slot_pool_salt="",
@@ -113,8 +113,8 @@ for k, a in enumerate(anchors):
 # isolation property: slot 0's rule must NOT grant slot 1's anchor
 check(f'"slot-w-{anchors[0]}"' in sp and anchors[1] not in sp.split(f'slot-w-{anchors[0]}')[1].split("}")[0],
       "slot 0's write rule does not mention any other anchor (isolation)")
-# F-517: a SEEDED vendor (nova_seed_vendors) publishes with
-# CN=<vendor>-trial-peer even on a slot-pool goatnet (demogame via the
+# F-517: a SEEDED vendor (zenoh_seed_vendors) publishes with
+# CN=<vendor>-trial-peer even on a slot-pool goatnet (airdefenders via the
 # rest-pub-bridge sidecar). Previously slot-pool mode rendered nothing for
 # it, so the CN matched only trial-peer-read and every PUT was dropped silently
 # at ingress. Seeded vendors get the same write rule + subject + policy
@@ -126,7 +126,7 @@ for v in ("community", "caracal"):
           f"seeded vendor {v}: subject CN = {v}-trial-peer")
     check(f'rules: ["trial-peer-w-{v}", "trial-peer-w-attest-schema"]' in sp and f'subjects: ["vendor-{v}"]' in sp,
           f"seeded vendor {v}: policy binds subject→its own rule")
-sp_noseed = render(zenoh_identity_model="per-uuid-slot-pool", zenoh_slot_pool_salt=SALT, zenoh_slot_pool_size=N, nova_seed_vendors=[])
+sp_noseed = render(zenoh_identity_model="per-uuid-slot-pool", zenoh_slot_pool_salt=SALT, zenoh_slot_pool_size=N, zenoh_seed_vendors=[])
 check("trial-peer-w-community" not in sp_noseed and "vendor-community" not in sp_noseed,
       "no seeded vendors ⇒ no per-vendor entries in slot-pool mode")
 check(brace_balanced(sp_noseed), "brace/bracket balanced with no seeded vendors")
@@ -361,6 +361,47 @@ pv = render(zenoh_identity_model="per-vendor", zenoh_partner_read_partition=True
 check('id: "partner-r-' not in pv, "blocks are inert on a per-vendor goatnet (no slot pool to pre-cut)")
 
 check(brace_balanced(out), "brace/bracket balanced with pre-cut partner blocks")
+
+# Two peerings on one core: each reads its own sets, interest on the whole wire name.
+peers = [dict(sovereign="aaa", cn="fed.aaa.bbb.01", release_key_exprs=["from/bbb/all/**", "from/bbb/aaa/**"],
+              release_interest_key_exprs=["from/bbb/**"]),
+         dict(sovereign="zag-ros", cn="fed.zag-ros.bbb.01", release_key_exprs=["from/bbb/all/**", "from/bbb/zag-ros/**"],
+              release_interest_key_exprs=["from/bbb/**"])]
+print("== sovereign reads: data per set, interest on the wire name ==")
+cfg = render(zenoh_sovereign_peerings=peers, zenoh_from_retention_days=3, zenoh_slot_pool_size=2)
+for peer in peers:
+    s = peer["sovereign"]
+    for rid, want in [(f"sovereign-{s}-r", f'"from/bbb/{s}/**"'), (f"sovereign-{s}-r-interest", '"from/bbb/**"')]:
+        m = re.search(r'id: "' + re.escape(rid) + r'",.*?key_exprs: \[([^\]]*)\]', cfg, re.S)
+        check(m is not None and want in m.group(1), f"{rid} carries {want}")
+    other = [p["sovereign"] for p in peers if p["sovereign"] != s][0]
+    m = re.search(r'id: "sovereign-' + re.escape(s) + r'-r",.*?key_exprs: \[([^\]]*)\]', cfg, re.S)
+    check(m is not None and f"from/bbb/{other}/" not in m.group(1), f"sovereign-{s}-r never names {other}'s set")
+one = render(zenoh_sovereign_peerings=[dict(sovereign="aaa", cn="fed.aaa.bbb.01", release_key_exprs=["from/bbb/**"])], zenoh_from_retention_days=3, zenoh_slot_pool_size=2)
+m = re.search(r'id: "sovereign-aaa-r-interest",.*?key_exprs: \[([^\]]*)\]', one, re.S)
+check(m is not None and m.group(1).strip() == '"from/bbb/**"', "no interest list: interest follows release_key_exprs (unchanged)")
+
+print("== federation ingress storage ==")
+check("sovereign_from:" not in render(), "no peer means no federation store")
+for identity in ["per-vendor", "per-uuid-slot-pool"]:
+    for count in [1, 2]:
+        cfg = render(zenoh_identity_model=identity, zenoh_sovereign_peerings=peers[:count],
+                     zenoh_from_retention_days=3, zenoh_slot_pool_size=2)
+        check('dir: "/var/lib/zagros-zenoh/rocksdb/sovereign_from",' in cfg,
+              f"{identity}/{count}: existing store path retained")
+        for peer in peers[:count]:
+            name = "sovereign_from_" + peer["sovereign"]
+            match = re.search(r'"' + name + r'": \{(.*?)\n        \},', cfg, re.S)
+            body = match.group(1) if match else ""
+            check(f'key_expr: "from/{peer["sovereign"]}/**"' in body,
+                  f"{identity}/{count}: peer subscription fits its edge grant")
+            check(f'dir: "/var/lib/zagros-zenoh/rocksdb/{name}"' in body,
+                  f"{identity}/{count}: distinct persistent path per peer")
+            check('on_closure: "do_nothing"' in body and 'time_to_live: 259200000' in body,
+                  f"{identity}/{count}: retains data and configured retention")
+        check(cfg.count('"sovereign_from_') == count,
+              f"{identity}/{count}: creates only the declared peer stores")
+        check(brace_balanced(cfg), f"{identity}/{count}: balanced config")
 
 print()
 print("ALL RENDER CHECKS PASSED" if fails == 0 else f"{fails} CHECK(S) FAILED")

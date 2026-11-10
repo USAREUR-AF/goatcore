@@ -242,7 +242,7 @@ for p in peers:
 # as a `- peer:` row.
 GOATNET_PREFIX = os.environ.get("MEMBERSHIP_GOATNET_PREFIX", "").strip().upper()
 
-# ADR 1116 gear classes + the ADR 1092/1113/1114/1131/1216 node classes. A MACHINE
+# ADR 1116 gear classes + the ADR 1092/1113/1114/1131/1216/1219 node classes. A MACHINE
 # wears these; a person never does. Listed rather than derived because the
 # role-vs-machine split is a fact about the vocabulary, not about the live data
 # — DEVELOPER exists at both rungs too and belongs at neither exclusively.
@@ -251,7 +251,7 @@ MACHINE_SUFFIXES = {
     "SENSOR", "SENSOR-FEED", "SENSOR-TASKING", "SENSOR-TELEMETRY", "SENSOR-ARBITER",
     "EFFECTOR", "EFFECTOR-CUE", "EFFECTOR-TRACK", "EFFECTOR-TELEMETRY",
     "EFFECTOR-COMMAND", "EFFECTOR-ARBITER",
-    "POD", "MOON", "NETWORK", "NETWORK-JUMP", "BREAKGLASS", "EDGE-SERVER",
+    "POD", "MOON", "NETWORK", "NETWORK-JUMP", "BREAKGLASS", "EDGE-SERVER", "PEERING-EDGE",
 }
 
 wrong_rung = []

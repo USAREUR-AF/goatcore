@@ -1,0 +1,12 @@
+# ops/base-images/vendor-refs.allow — image references in the public tree that
+# name a subscription registry (ops/base-images/base-images.py, ADR 1220).
+#
+# Each line is a deployed third-party image with no publicly redistributable
+# build: the public tree points at the vendor's own free image, which every
+# user pulls from the vendor under the vendor's terms; goat redistributes
+# nothing built on it. This list only SHRINKS: when a public build exists, pin
+# it in the role default and delete the line.
+#
+# Format: <path> <key>   # reason
+#   role default -> key is the variable name
+#   compose      -> key is the image without its digest

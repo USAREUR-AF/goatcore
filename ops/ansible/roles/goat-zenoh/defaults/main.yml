@@ -45,7 +45,7 @@ goat_zenoh_extra_ca_deliver: []
 # FIPS goatnets override this to ghcr.io/{{ ghcr_org }}/zenoh-pqc-fips + set
 # goat_zenoh_fips_variant: true (see below). Prior bare-upstream base:
 # eclipse/zenoh:1.9.0@sha256:157965d7 (kept in the deploy-history ledger).
-nova_zenoh_image: "ghcr.io/{{ ghcr_org }}/zenoh-pqc@sha256:372de39d2e8b64fe7157194173f1b7ac6eac2700ff04c49cce2ce3c284a6fdb2"
+zenoh_router_image: "ghcr.io/{{ ghcr_org }}/zenoh-pqc@sha256:372de39d2e8b64fe7157194173f1b7ac6eac2700ff04c49cce2ce3c284a6fdb2"
 
 # ---- File-descriptor bulkhead --------------------------------------
 # nofile ulimit for the router container. The per-uuid slot pool spawns one
@@ -158,7 +158,7 @@ goat_zenoh_zid_seed:   "{{ inventory_hostname }}|{{ goat_zenoh_zid_realm }}|zeno
 goat_zenoh_router_zid: "{{ (goat_zenoh_zid_seed | hash('sha256'))[:32] | regex_replace('^0+', '') }}"
 
 # ---- RocksDB backend artifact (upstream eclipse-zenoh release) -------------
-# Pinned in lockstep with nova_zenoh_image; see the parent zenoh role
+# Pinned in lockstep with zenoh_router_image; see the parent zenoh role
 # defaults for the same shape. SHA256s come from the GitHub release-asset
 # API for eclipse-zenoh/zenoh-backend-rocksdb at the matching tag.
 goat_zenoh_rocksdb_backend_version: "1.9.0"
@@ -175,12 +175,6 @@ goat_zenoh_rocksdb_backend_sha256_map:
 # The rocksdb backend .so lands here; config.json5's
 # storage_manager.backend_search_dirs picks it up.
 goat_zenoh_plugin_dir: "/opt/{{ zenoh_stack }}/plugins"
-
-# ---- Trial identity --------------------------------------------------------
-# Trial fabric ID — appears in every metric label + audit emission so the
-# trial-fabric output is distinguishable from any production zenoh tier
-# evidence post-sunset.
-goat_zenoh_trial_id: "nova-trial-2026"
 
 # ---- Network bind ----------------------------------------------------------
 # Router listener — TLS-required by default. The trial design has vendors
@@ -206,8 +200,8 @@ goat_zenoh_connect_endpoints: []
 # TLS 1.3 handshake + the same transport/link/tls block below (server cert,
 # mTLS client_auth, offline-CA root) — so mTLS + the URI-SAN ACL apply
 # unchanged, and on the zenoh-pqc / zenoh-pqc-fips images the QUIC link
-# inherits X25519MLKEM768 from the same crypto provider with NO extra work
-#. Enabling QUIC is therefore a transport-
+# inherits X25519MLKEM768 from the same crypto provider with NO extra work.
+# Enabling QUIC is therefore a transport-
 # availability decision, not a PQC one.
 # Default false. A goatnet opts in via group_vars.
 # QUIC is UDP: the compose port-map publishes /udp on this port (distinct
@@ -251,7 +245,7 @@ goat_zenoh_mesh_boot_timeout: 180
 # Trial question #3 ("schema + format discipline under low pressure")
 # cannot be answered with audit-mode counts until the plugin lands;
 # Block 23 substrate is the natural home.
-nova_schema_enforcer_enabled: false       # see GAP above
+goat_schema_enforcer_enabled: false       # see GAP above
 
 # ---- Storage ---------------------------------------------------------------
 # RocksDB retention applies to every registered <vendor>/** prefix. 7-day
@@ -296,13 +290,13 @@ goat_zenoh_legacy_system_namespace: false
 # `ops/enrollment/...` would resolve to the nonexistent ops/ansible/ops/...
 # which makes the router pre-flight false-fail on certs that are present.
 # playbook_dir is the absolute ops/ansible dir.
-nova_ca_root_cert_path: "{{ playbook_dir }}/../enrollment/ca/{{ site_id }}/root-cert.pem"   # a shared role must not name a goatnet
-# The router leaf on the controller: the manifest out_dir (~/.goat/state/<site>-leaves)
+goat_ca_root_cert_path: "{{ playbook_dir }}/../enrollment/ca/{{ site_id }}/root-cert.pem"   # a shared role must not name a goatnet
+# The router leaf on the controller: the site manifest's out_dir
 # first, the old in-checkout copy as a fallback (filter_plugins/goat_leaf.py, #2165). A site
 # that serves another site's router leaf sets goat_router_leaf_site.
 goat_router_leaf_site: "{{ site_id }}"
-nova_router_leaf_cert_path: "{{ 'router-cert.pem' | goat_leaf(goat_router_leaf_site) }}"
-nova_router_leaf_key_path:  "{{ 'router-key.pem' | goat_leaf(goat_router_leaf_site) }}"
+zenoh_router_leaf_cert_path: "{{ 'router-cert.pem' | goat_leaf(goat_router_leaf_site) }}"
+zenoh_router_leaf_key_path:  "{{ 'router-key.pem' | goat_leaf(goat_router_leaf_site) }}"
 
 # Host-side install paths (inside the zenohd container's view).
 goat_zenoh_tls_dir: "/etc/{{ zenoh_stack }}/tls"
@@ -321,7 +315,7 @@ goat_zenoh_tls_dir: "/etc/{{ zenoh_stack }}/tls"
 
 # Seed vendors at deploy. Operator can extend at deploy time via
 # group_vars or extend post-deploy via the add-vendor.sh helper script.
-nova_seed_vendors:
+zenoh_seed_vendors:
   - community
   - caracal
 
@@ -612,6 +606,27 @@ goat_zenoh_router_peer_deliver_key_exprs: ["**", "**/@adv/**"]
 #                                 # out of band and set as the FIRST dns_name on
 #                                 # their SPIRE entry
 #     release_key_exprs: []       # what they may READ from us. Empty = nothing.
+#                                 # The wire key of each set their agreement
+#                                 # offers, e.g. from/<us>/REL-ALL/**, as
+#                                 # `goat federate apply` renders it. With two or
+#                                 # more peerings the whole from/<us>/** is
+#                                 # refused: every peering's republisher writes
+#                                 # onto this core, so it would read the others'.
+#     release_interest_key_exprs: []  # where their INTEREST may reach (the -r-interest
+#                                 # and -rp-w-interest rules). Empty = the same as
+#                                 # release_key_exprs. Set it to the whole wire
+#                                 # name, from/<us>/**, whenever release_key_exprs
+#                                 # names sets: a receiver subscribes to the whole
+#                                 # wire name and zenoh refuses a subscriber
+#                                 # declaration wider than the rule admitting it, so
+#                                 # nothing would be asked for and nothing would
+#                                 # cross. A declaration carries no data.
+#     republisher_cn: ""          # the outbound republisher's CN on THIS core,
+#                                 # minted in peering phase 8 (republisher.pem);
+#                                 # empty renders no republisher subject
+#     republisher_release_key_exprs: []   # the offered release sets it reads,
+#                                 # e.g. ["release/REL-ALL/**"]; it writes
+#                                 # release_key_exprs (our wire name) and nothing else
 #
 # DELIBERATELY NOT PRE-CUT, unlike zenoh_partner_slot_blocks (ADR 1138). A
 # partner slot's anchor is a hash, so subjects can exist before anyone holds the

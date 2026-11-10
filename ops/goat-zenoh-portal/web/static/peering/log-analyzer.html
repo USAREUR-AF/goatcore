@@ -370,7 +370,7 @@ import { readResponse, request } from "/app.js";
       ["tls-handshake-hostname-mismatch", "Cert validates but its SAN doesn't match the hostname you dialed.", "Connect via DNS hostname, not raw IP. Set verify_name_on_connect:true."],
       ["tls-handshake-client-cert-missing", "Server demanded a client cert but you didn't present a valid one.", "Verify connect_certificate_file path/permissions (0644 minimum, see F-133)."],
       ["tls-handshake-uri-san-rejected", "Cert's URI-SAN doesn't match the prefix you're trying to use.", "Re-mint with the correct prefix — config edit alone won't fix this."],
-      ["endpoint-dns-resolution-failed", "DNS can't resolve the router hostname.", "Finish netbird enrollment; mesh resolver answers for zenoh.nova.netbird.nova.example."],
+      ["endpoint-dns-resolution-failed", "DNS can't resolve the router hostname.", "Finish netbird enrollment; mesh resolver answers for zenoh.goat.example."],
       ["endpoint-tcp-refused", "TCP to 7447 actively refused.", "Run /peering/probe.html for layer-by-layer diagnosis."],
       ["endpoint-tcp-timeout", "TCP to 7447 silently dropped.", "Firewall in the path. Run /peering/probe.html."],
       ["python-eclipse-zenoh-import", "Python can't import the zenoh module.", "pip install eclipse-zenoh==1.9.0 protobuf."],

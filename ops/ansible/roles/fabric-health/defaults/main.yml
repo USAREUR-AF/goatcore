@@ -12,14 +12,16 @@
 # ops/fabric/footprint/<peer>. It PERSISTS NOTHING — no S3, no MinIO, no
 # durable store (contrast the audit-subscriber role).
 
-# Image — SHA-pinned per ADR 0859 (easy rollback). Bumps to this value
-# require an append to deploy-history.yml (CI checks via
-# .github/workflows/deploy-history-check.yml). Built by
+# Image — digest-pinned per ADR 0859 (easy rollback). The role carries no
+# pin: a goatnet's pin table (ops/pins/fleet-pins.yaml, rendered into
+# group_vars/<group>/pins.yml) or its group_vars set it, and an empty value
+# stops the deploy at `docker compose`. Built by
 # .github/workflows/fabric-health-image.yml.
-fabric_health_image: "ghcr.io/{{ ghcr_org }}/goat-fabric-health@sha256:253970777185295252f3e30d4ee8096a85552af3bc9aa03f5d8b17751aff57ef"
+fabric_health_image: ""
 
-# Site identifier — the `<site>` segment of ops/fabric/health/<site>.
-fabric_health_site: "nova-a"
+# Site identifier — the `<site>` segment of ops/fabric/health/<site>. The
+# default is the site short code.
+fabric_health_site: "{{ site_id }}"
 
 # Zenoh router endpoint. Internal docker network — container-name
 # resolution. The router listens mTLS-only on 7447; `<zenoh_stack>-router`

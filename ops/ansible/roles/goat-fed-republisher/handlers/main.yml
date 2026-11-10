@@ -1,0 +1,5 @@
+---
+- name: Restart goat fed republisher
+  community.docker.docker_compose_v2:
+    project_src: "/opt/{{ goat_fed_republisher_stack }}"
+    state: restarted

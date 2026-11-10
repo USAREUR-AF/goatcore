@@ -167,7 +167,7 @@ func TestTrashgoat_AuthOperatorOnly(t *testing.T) {
 	//    test uses to verify the vendor key is rejected on
 	//    /api/admin/trashgoat/* endpoints).
 	resp := doJSON(t, c, "POST", ts.URL+"/api/vendors", "dev-operator-key", map[string]any{
-		"prefix":       "user52x",
+		"prefix":       "otter",
 		"auto_approve": true,
 	})
 	if resp.StatusCode != http.StatusCreated {

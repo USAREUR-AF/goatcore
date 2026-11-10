@@ -38,9 +38,10 @@ MDBOOK_BOOK__LANGUAGE=<lang> mdbook build -d book/<lang>
 
 [mdbook-i18n-helpers]: https://github.com/google/mdbook-i18n-helpers
 
-## Currency lock (CI)
+## Currency report (CI)
 
 `ops/ci/check-docs-translations-current.sh` (workflow `docs-i18n-currency.yml`)
-hard-fails any PR where English moved but a translation didn't — translations
-are locked to the CLI version. When it flags drift, `msgmerge` has marked the
+reports, without failing, every language whose translation has not caught up
+with an English change; those entries render in English until refreshed
+(`--strict` makes drift fail). When it reports drift, `msgmerge` has marked the
 exact fuzzy/untranslated entries; refresh just those and re-run.

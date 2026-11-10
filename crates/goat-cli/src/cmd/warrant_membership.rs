@@ -37,15 +37,10 @@ use std::path::{Path, PathBuf};
 
 use clap::{Args, ValueEnum};
 use panoscope_core::aclcheck::Declaration;
-use panoscope_core::netbird::{NbEvent, NbGroup, NbPeer, NetbirdClient, SetupKeyMeta};
+use panoscope_core::netbird::{NbEvent, NbGroup, NbPeer, NbUser, NetbirdClient, SetupKeyMeta};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use super::{MATRIX_YAML, TAXONOMY_YAML};
-
-mod compiled {
-    include!(concat!(env!("OUT_DIR"), "/governed_scopes.rs"));
-}
 
 /// Where the declarations live, relative to the repo root.
 pub const MEMBERSHIP_DIR: &str = "ops/warrant/membership";
@@ -101,6 +96,11 @@ pub struct ApplyArgs {
     /// alias.
     #[arg(long, alias = "dir")]
     pub file: PathBuf,
+    /// Directory holding the goatnet's netbird_acl_taxonomy.yml and
+    /// netbird_acl_matrix.yml, read to check the scope's prefix. Omitted:
+    /// GOAT_ACL_DECLARATION_DIR, the active context, then the checkout.
+    #[arg(long, value_name = "DIR")]
+    pub acl_declaration: Option<PathBuf>,
     /// `report` changes nothing. `enforce` converges, and is refused when
     /// `_scope.yaml` says `converge: report`.
     #[arg(long, value_enum, default_value = "report")]
@@ -799,9 +799,15 @@ pub fn load_decl(dir: &Path, scope: &str) -> anyhow::Result<MembershipDecl> {
 /// root found by walking up from the cwd (the same discovery operator
 /// manifests use). None outside a checkout.
 pub fn membership_path(scope: &str) -> Option<PathBuf> {
+    membership_root().map(|r| r.join(scope))
+}
+
+/// `<repo root>/ops/warrant/membership`, whether or not it exists. None
+/// outside a checkout.
+fn membership_root() -> Option<PathBuf> {
     let cwd = std::env::current_dir().ok()?;
     let root = super::super::admin::discover_repo_root(&cwd)?;
-    Some(root.join(MEMBERSHIP_DIR).join(scope))
+    Some(root.join(MEMBERSHIP_DIR))
 }
 
 /// What a scope's `converge:` says, as far as governance goes.
@@ -853,36 +859,178 @@ fn repo_converge(dir: &Path) -> Option<FileConverge> {
     None
 }
 
-/// The `converge:` compiled in by build.rs for `scope`, if it had a
-/// declaration.
-fn compiled_converge(scope: &str, compiled: &[(&str, &str)]) -> Option<FileConverge> {
-    compiled
-        .iter()
-        .find(|(s, _)| *s == scope)
-        .map(|(_, c)| converge_word(c))
+/// One source's answer to "is this scope's membership declared?".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ScopeAnswer {
+    /// The source knows this goatnet and it has no membership declaration:
+    /// the audited tools write live.
+    Undeclared,
+    /// A declaration, with what its `converge:` says.
+    Declared(FileConverge),
 }
 
-/// Pure half of [`is_governed`]. The checkout's declaration, when there is
-/// one, is newer than the compiled-in value and wins; with neither, not
-/// governed.
-fn governed_by(repo: Option<FileConverge>, compiled: Option<FileConverge>) -> bool {
-    match repo.or(compiled) {
-        None | Some(FileConverge::Report) => false,
-        Some(FileConverge::Enforce | FileConverge::Unreadable) => true,
+/// Where the governance answer came from, for the message an operator reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GovernanceSource {
+    /// `ops/warrant/membership/` in the current checkout.
+    Checkout,
+    /// `warrant_membership_converge` in the active context's profile.toml.
+    Context,
+    /// The goatnet's NetBird account: a warrant service user, or none.
+    Live,
+}
+
+/// Is this scope's membership governed by warrant, and which source said so.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Governance {
+    pub governed: bool,
+    pub source: GovernanceSource,
+}
+
+impl Governance {
+    /// One line naming the source, for a refusal or a dry-run.
+    pub fn because(&self) -> &'static str {
+        match self.source {
+            GovernanceSource::Checkout => {
+                "decided by this checkout's ops/warrant/membership/<scope>/_scope.yaml \
+                 (no directory = no declaration)"
+            }
+            GovernanceSource::Context => {
+                "decided by `warrant_membership_converge` in the context's profile.toml"
+            }
+            GovernanceSource::Live => {
+                "decided by the goatnet's NetBird account: a warrant service user \
+                 (svc-<goatnet>-warrant) = governed, none = not; run from a checkout that \
+                 carries ops/warrant/membership/ or set `warrant_membership_converge` in the \
+                 context to decide it from the declaration"
+            }
+        }
     }
 }
 
-/// Is this scope's membership governed by warrant? Only when its declaration
-/// directory exists AND its `_scope.yaml` says `converge: enforce`
-/// (mesh-change-control.md §4.1); unreadable counts as governed. A `converge:
-/// report` scope is an adoption draft: the converger reports against it, and
+/// The checkout's answer: only a checkout that carries `ops/warrant/membership/`
+/// knows the goatnets' declarations, and then a scope with no directory there
+/// has none. Any other checkout (the public tree, an unrelated repository)
+/// does not answer.
+fn checkout_answer(membership_root: Option<&Path>, scope: &str) -> Option<ScopeAnswer> {
+    let root = membership_root.filter(|r| r.is_dir())?;
+    Some(match repo_converge(&root.join(scope)) {
+        None => ScopeAnswer::Undeclared,
+        Some(c) => ScopeAnswer::Declared(c),
+    })
+}
+
+/// The profile.toml key that carries a goatnet's `converge:` with its context.
+pub const CONTEXT_CONVERGE_KEY: &str = "warrant_membership_converge";
+
+/// The context's answer, from `warrant_membership_converge`: `enforce` and
+/// `report` as in `_scope.yaml`, `none` for a goatnet with no declaration.
+/// Any other value is a declaration that cannot be read (governed). It answers
+/// only for the goatnet the context is bound to: its `goatnet` field, or, with
+/// none, the context's own name (the binding `require_env_binding` checks).
+fn context_answer(
+    value: Option<&str>,
+    bound_goatnet: Option<&str>,
+    context_name: &str,
+    scope: &str,
+) -> Option<ScopeAnswer> {
+    let bound = match bound_goatnet.map(str::trim).filter(|g| !g.is_empty()) {
+        Some(g) => g == scope,
+        None => context_name == scope,
+    };
+    let v = value.map(str::trim).filter(|v| !v.is_empty())?;
+    if !bound {
+        return None;
+    }
+    Some(match v {
+        "none" => ScopeAnswer::Undeclared,
+        v => ScopeAnswer::Declared(converge_word(v)),
+    })
+}
+
+/// A warrant converger's NetBird service user: `svc-<goatnet>-warrant`
+/// (ops/netbird/service-identities.yaml `warrant-membership`). One NetBird
+/// account is one goatnet, so any such user means warrant runs here.
+fn is_warrant_service_user(u: &NbUser) -> bool {
+    let n = u.name.trim();
+    n.len() > "svc--warrant".len() && n.starts_with("svc-") && n.ends_with("-warrant")
+}
+
+/// The goatnet's own answer, when no checkout and no context knew: an account
+/// with a warrant service user runs a converger whose mode nothing here can
+/// read, so it is governed (fail closed); an account without one has no
+/// converger, so the tools write live as they always have; an account that
+/// could not be read is governed.
+fn live_answer<E>(users: Result<&[NbUser], E>) -> ScopeAnswer {
+    match users {
+        Ok(us) if !us.iter().any(is_warrant_service_user) => ScopeAnswer::Undeclared,
+        _ => ScopeAnswer::Declared(FileConverge::Unreadable),
+    }
+}
+
+fn governed_by(answer: ScopeAnswer) -> bool {
+    match answer {
+        ScopeAnswer::Undeclared | ScopeAnswer::Declared(FileConverge::Report) => false,
+        ScopeAnswer::Declared(FileConverge::Enforce | FileConverge::Unreadable) => true,
+    }
+}
+
+/// Pure half of [`governance`]: the first source that answers decides —
+/// the checkout, then the context, then the goatnet's NetBird account (`live`
+/// is read only when neither of the others answered; None there = not read,
+/// which is governed).
+fn decide(
+    checkout: Option<ScopeAnswer>,
+    context: Option<ScopeAnswer>,
+    live: Option<ScopeAnswer>,
+) -> Governance {
+    let (answer, source) = checkout
+        .map(|a| (a, GovernanceSource::Checkout))
+        .or_else(|| context.map(|a| (a, GovernanceSource::Context)))
+        .unwrap_or((
+            live.unwrap_or(ScopeAnswer::Declared(FileConverge::Unreadable)),
+            GovernanceSource::Live,
+        ));
+    Governance {
+        governed: governed_by(answer),
+        source,
+    }
+}
+
+/// Is this scope's membership governed by warrant (mesh-change-control.md
+/// §4.1)? Governed when its declaration says `converge: enforce`; a
+/// declaration that cannot be read counts as governed. A `converge: report`
+/// scope is an adoption draft: the converger reports against it, and
 /// `members move --apply` / `platform-admin` still write live, as on an
-/// ungoverned scope. The directory in the current checkout decides; outside a
-/// checkout (or when the checkout has none) the value compiled in at build
-/// time does, so a released binary run elsewhere still refuses.
-pub fn is_governed(scope: &str) -> bool {
-    let repo = membership_path(scope).and_then(|p| repo_converge(&p));
-    governed_by(repo, compiled_converge(scope, compiled::MEMBERSHIP_SCOPES))
+/// ungoverned scope.
+///
+/// Read at run time, never compiled in, so the binary carries no goatnet's
+/// data. The first source that answers decides:
+///   1. a checkout that carries `ops/warrant/membership/` — the scope's
+///      `_scope.yaml`, or no directory = no declaration;
+///   2. the active context's `warrant_membership_converge`
+///      (`enforce` | `report` | `none`), for the goatnet it is bound to;
+///   3. `nb`, the NetBird account the command is about to write: a warrant
+///      service user there = governed, none = not governed, unreadable =
+///      governed.
+pub async fn governance(
+    scope: &str,
+    profile: &crate::profile::Profile,
+    nb: &NetbirdClient,
+) -> Governance {
+    let checkout = checkout_answer(membership_root().as_deref(), scope);
+    let context = context_answer(
+        profile.profile_field(CONTEXT_CONVERGE_KEY).as_deref(),
+        profile.profile_field("goatnet").as_deref(),
+        &profile.context,
+        scope,
+    );
+    let live = if checkout.is_none() && context.is_none() {
+        Some(live_answer(nb.list_users().await.as_deref()))
+    } else {
+        None
+    };
+    decide(checkout, context, live)
 }
 
 fn yaml_scalar(s: &str) -> String {
@@ -2496,7 +2644,11 @@ pub async fn run_apply(ctx: &crate::cmd::Ctx, a: ApplyArgs) -> anyhow::Result<()
     }
     let decl = load_decl(&a.file, &a.scope)?;
     let prefix = scope_prefix(&a.scope);
-    let tax = Declaration::parse(TAXONOMY_YAML, MATRIX_YAML)?;
+    let tax = super::super::acl::declaration(
+        &ctx.profile,
+        a.acl_declaration.as_deref(),
+        "warrant apply",
+    )?;
     if let Ok(m) = tax.model(&a.scope) {
         if m.prefix != prefix {
             anyhow::bail!(
@@ -4547,9 +4699,7 @@ mod tests {
         let (_t, dir) = scope_dir(&[("_scope.yaml", SCOPE_REPORT)]);
         let repo = repo_converge(&dir);
         assert_eq!(repo, Some(FileConverge::Report));
-        assert!(!governed_by(repo, None));
-        // The checkout's report scope wins over an older compiled enforce.
-        assert!(!governed_by(repo, Some(FileConverge::Enforce)));
+        assert!(!governed_by(ScopeAnswer::Declared(FileConverge::Report)));
     }
 
     #[test]
@@ -4562,52 +4712,170 @@ mod tests {
             // converge in a fragment is not what decides
             ("people.yaml", "version: 1\nentries: []\n"),
         ]);
-        let repo = repo_converge(&dir);
-        assert_eq!(repo, Some(FileConverge::Enforce));
-        assert!(governed_by(repo, None));
-        assert!(governed_by(repo, Some(FileConverge::Report)));
-    }
-
-    #[test]
-    fn missing_declaration_is_not_governed() {
-        let t = tempfile::tempdir().unwrap();
-        let repo = repo_converge(&t.path().join("zagros-dev"));
-        assert_eq!(repo, None);
-        assert!(!governed_by(repo, None));
-        // Outside a checkout the compiled-in value decides.
-        assert!(governed_by(
-            None,
-            compiled_converge("x", &[("x", "enforce")])
-        ));
-        assert!(!governed_by(
-            None,
-            compiled_converge("x", &[("x", "report")])
-        ));
-        assert!(!governed_by(
-            None,
-            compiled_converge("y", &[("x", "enforce")])
-        ));
+        assert_eq!(repo_converge(&dir), Some(FileConverge::Enforce));
     }
 
     #[test]
     fn unreadable_converge_is_governed() {
         let (_t, dir) = scope_dir(&[("_scope.yaml", "converge: [not, a, word]\n")]);
         assert_eq!(repo_converge(&dir), Some(FileConverge::Unreadable));
-        assert!(governed_by(repo_converge(&dir), None));
+        assert!(governed_by(ScopeAnswer::Declared(FileConverge::Unreadable)));
         // A scope directory with no _scope.yaml.
         let (_t, dir) = scope_dir(&[("people.yaml", "version: 1\nentries: []\n")]);
         assert_eq!(repo_converge(&dir), Some(FileConverge::Unreadable));
-        assert!(governed_by(None, compiled_converge("x", &[("x", "")])));
+    }
+
+    /// `<tmp>/ops/warrant/membership/` holding the given scopes' `_scope.yaml`.
+    fn membership_tree(scopes: &[(&str, &str)]) -> (tempfile::TempDir, PathBuf) {
+        let t = tempfile::tempdir().unwrap();
+        let root = t.path().join(MEMBERSHIP_DIR);
+        std::fs::create_dir_all(&root).unwrap();
+        for (scope, converge) in scopes {
+            std::fs::create_dir_all(root.join(scope)).unwrap();
+            std::fs::write(
+                root.join(scope).join(SCOPE_FILE),
+                format!("version: 1\nscope: {scope}\nconverge: {converge}\n"),
+            )
+            .unwrap();
+        }
+        (t, root)
+    }
+
+    fn user(name: &str, service: bool) -> NbUser {
+        NbUser {
+            name: name.into(),
+            is_service_user: service,
+            ..NbUser::default()
+        }
     }
 
     #[test]
-    fn shipped_scopes_are_compiled_in() {
-        // zagros-dev ships in the repo; build.rs compiles it in whichever
-        // layout the checkout carries (a retired single file as "").
-        if compiled::MEMBERSHIP_SCOPES.is_empty() {
-            return; // a checkout that ships no scope compiles none
+    fn in_checkout_the_declaration_decides() {
+        let (_t, root) = membership_tree(&[("zagros-dev", "enforce"), ("zagros", "report")]);
+        let live_says_governed = Some(ScopeAnswer::Declared(FileConverge::Unreadable));
+        let enforce = decide(
+            checkout_answer(Some(&root), "zagros-dev"),
+            context_answer(Some("none"), Some("zagros-dev"), "x", "zagros-dev"),
+            None,
+        );
+        assert_eq!(
+            enforce,
+            Governance {
+                governed: true,
+                source: GovernanceSource::Checkout
+            }
+        );
+        // The checkout's report beats a context that says enforce.
+        let report = decide(
+            checkout_answer(Some(&root), "zagros"),
+            context_answer(Some("enforce"), Some("zagros"), "x", "zagros"),
+            live_says_governed,
+        );
+        assert_eq!(
+            report,
+            Governance {
+                governed: false,
+                source: GovernanceSource::Checkout
+            }
+        );
+        // A checkout that carries the goatnets' declarations and has no
+        // directory for this one: no declaration, live writes as today.
+        let undeclared = decide(checkout_answer(Some(&root), "zagros-prod"), None, None);
+        assert_eq!(
+            undeclared,
+            Governance {
+                governed: false,
+                source: GovernanceSource::Checkout
+            }
+        );
+        // A checkout without ops/warrant/membership/ (the public tree, an
+        // unrelated repository) does not answer.
+        let t = tempfile::tempdir().unwrap();
+        assert_eq!(
+            checkout_answer(Some(&t.path().join(MEMBERSHIP_DIR)), "zagros-dev"),
+            None
+        );
+        assert_eq!(checkout_answer(None, "zagros-dev"), None);
+    }
+
+    #[test]
+    fn context_supplied_converge_decides_outside_a_checkout() {
+        for (v, governed) in [
+            ("enforce", true),
+            ("report", false),
+            ("none", false),
+            ("bogus", true),
+        ] {
+            let g = decide(
+                None,
+                context_answer(Some(v), Some("zagros-dev"), "c", "zagros-dev"),
+                None,
+            );
+            assert_eq!(
+                g,
+                Governance {
+                    governed,
+                    source: GovernanceSource::Context
+                },
+                "{v}"
+            );
         }
-        assert!(compiled_converge("zagros-dev", compiled::MEMBERSHIP_SCOPES).is_some());
+        // Bound by the context's name when it has no `goatnet` field.
+        assert_eq!(
+            context_answer(Some("report"), None, "zagros", "zagros"),
+            Some(ScopeAnswer::Declared(FileConverge::Report))
+        );
+        // A context bound to another goatnet, or with no value, does not answer.
+        assert_eq!(
+            context_answer(Some("none"), Some("zagros"), "zagros", "zagros-dev"),
+            None
+        );
+        assert_eq!(context_answer(Some("none"), None, "zagros", "zagros-dev"), None);
+        assert_eq!(
+            context_answer(None, Some("zagros-dev"), "c", "zagros-dev"),
+            None
+        );
+        assert_eq!(
+            context_answer(Some("  "), Some("zagros-dev"), "c", "zagros-dev"),
+            None
+        );
+    }
+
+    #[test]
+    fn nothing_known_asks_the_goatnet_and_fails_closed() {
+        // A warrant service user on the account: governed, mode unknown.
+        let with_warrant = [user("svc-zagros-dev-warrant", true), user("", false)];
+        let g = decide(None, None, Some(live_answer::<()>(Ok(&with_warrant))));
+        assert_eq!(
+            g,
+            Governance {
+                governed: true,
+                source: GovernanceSource::Live
+            }
+        );
+        // No converger on the account (zagros-prod, goatlite, a partner's
+        // goatnet today): the tools write live, as they always have.
+        let without = [user("svc-zagros-prod-onboard", true), user("", false)];
+        let g = decide(None, None, Some(live_answer::<()>(Ok(&without))));
+        assert_eq!(
+            g,
+            Governance {
+                governed: false,
+                source: GovernanceSource::Live
+            }
+        );
+        assert!(!governed_by(live_answer::<()>(Ok(&[]))));
+        // The account could not be read, or was never read: governed.
+        assert!(governed_by(live_answer::<&str>(Err("timeout"))));
+        assert!(decide(None, None, None).governed);
+        // Only `svc-<goatnet>-warrant` counts.
+        assert!(is_warrant_service_user(&user("svc-zagros-warrant", true)));
+        assert!(!is_warrant_service_user(&user("svc--warrant", true)));
+        assert!(!is_warrant_service_user(&user("warrant", true)));
+        assert!(!is_warrant_service_user(&user(
+            "svc-zagros-warrant-old",
+            true
+        )));
     }
 
     #[test]

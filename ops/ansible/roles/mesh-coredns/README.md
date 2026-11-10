@@ -38,7 +38,7 @@ This role replaces the previous NETHOST-only inline play (`ops/ansible/nethost-d
 
 - Docker + docker-compose plugin installed (handled by `mgmt-host-baseline.yml` → `docker-engine` role).
 - Host has a netbird mesh IP — host must be **enrolled** into the mesh before this role runs.
-- `ops/dns/mesh-hosts` populated locally (sourced from netbird API via `ops/dns/sync-peers.sh`).
+- `ops/dns/mesh-hosts` populated locally (sourced from the NetBird API by the network host's peer-sync script).
 
 ## Wiring netbird's nameserver group
 

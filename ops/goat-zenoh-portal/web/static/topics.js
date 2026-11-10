@@ -1,6 +1,6 @@
 import { readResponse, request, showRequestError } from "/app.js";
 // goat-zenoh-portal — vendor topics screen.
-import { api, escapeHTML, getKey, lexicon } from "/app.js";
+import { api, escapeHTML, hasAuth, lexicon } from "/app.js";
 
 // Display lexicon (docs/design/portal-lexicon.md). Module-level; set by
 // initTopics before any handler that reads it runs. nova-a fallback seed.
@@ -296,14 +296,13 @@ async function uploadSchema(e) {
   fd.append("compatibility", compatibility);
   fd.append("format", format);
 
-  const key = getKey();
   out.textContent = "Uploading…";
   try {
     const res = await request(
       `/api/orgs/${encodeURIComponent(vendor)}/topics/${encodeURIComponent(topicID)}/schemas`,
       {
         method: "POST",
-        headers: { "Authorization": "Bearer " + key },
+        headers: {},
         body: fd,
       });
     const body = await readResponse(res);
@@ -325,10 +324,10 @@ async function uploadSchema(e) {
 // and saves the response body as a .fds file. Plain <a download> can't
 // add Authorization headers; the blob dance mirrors exportTopics.
 function downloadSchema(keyPattern, version) {
-  const k = getKey();
+  const k = hasAuth();
   if (!k) { alert("Sign in first."); return; }
   const url = `/api/schemas/${keyPattern}?version=${encodeURIComponent(version)}`;
-  request(url, { headers: { "Authorization": "Bearer " + k } })
+  request(url, { headers: {} })
     .then(async (r) => {
       if (!r.ok) {
         await readResponse(r);
@@ -350,12 +349,12 @@ function downloadSchema(keyPattern, version) {
 
 function exportTopics(format) {
   const v = document.getElementById("vendor-select").value;
-  const key = getKey();
+  const key = hasAuth();
   if (!v || !key) { alert(`Pick ${/^[aeiou]/i.test(LEX.org) ? "an" : "a"} ${LEX.org} and sign in first.`); return; }
   // We can't add Authorization headers to a plain <a download>, so fetch
   // the blob, then save it.
   const url = `/api/orgs/${encodeURIComponent(v)}/topics/export?format=${encodeURIComponent(format)}`;
-  request(url, { headers: { "Authorization": "Bearer " + key } })
+  request(url)
     .then(async (r) => {
       if (!r.ok) {
         await readResponse(r);
@@ -390,7 +389,6 @@ async function bulkImport(dryRun) {
   const f = fileInput.files[0];
   const text = await f.text();
   const ct = guessContentType(f.name);
-  const key = getKey();
   const params = new URLSearchParams({ mode });
   if (dryRun) params.set("dry_run", "true");
 
@@ -401,7 +399,6 @@ async function bulkImport(dryRun) {
       {
         method: "POST",
         headers: {
-          "Authorization": "Bearer " + key,
           "Content-Type": ct,
         },
         body: text,

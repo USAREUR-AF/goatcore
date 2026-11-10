@@ -8,12 +8,17 @@ ory_hydra_image: "oryd/hydra:v2.3.0"
 # `requested_access_token_audience` (patch 2, F-144), and falls back
 # to `body.client.scope.split(' ')` when grantScope is empty (patch 3,
 # F-161). Source: `ops/ory-consent/`. Digest-pinned per ADR 0859 —
-# bumps require an append to `deploy-history.yml` alongside the value
-# here (CI check enforces). Sites override per-site in group_vars only
-# if a site needs a DIFFERENT pin than the fleet default.
-kratos_selfservice_ui_image: "ghcr.io/{{ ghcr_org }}/kratos-selfservice-ui-node-patched@sha256:323c1111339e8a62160d7fd2b2a1505d24cfca930e3269bd2192caab292e7748"
+# bumps require an append to `deploy-history.yml`.
+# kratos_selfservice_ui_image has NO role default: the pin of record is the
+# `kratos-selfservice-ui` row of ops/pins/fleet-pins.yaml, rendered into
+# group_vars/<member>/pins.yml; group_vars/all.yml carries the pin for hosts
+# outside the pin table.
 ory_compose_dir: /opt/mgmt-host
 ory_config_subdir: ory
+
+# Name people see for this identity plane: the WebAuthn relying-party display
+# name and the TOTP issuer ("<name> <SITE_ID>"), and the identity schema title.
+ory_brand_name: "goat"
 
 # Operator-driven one-shot list of {subject, client} pairs whose
 # stored Hydra consent sessions should be revoked at the end of the
@@ -52,7 +57,7 @@ site_admins: []
 # Values are subdomain prefixes — rendered as `https://<prefix>.<site_id>.<site_dns_zone>/`.
 # `_default` is the catchall for users whose `groups` does not match any
 # other entry; `isitup` is the safe v1 choice because every Hydra OIDC
-# client surface (dashboard / panoscope / portal / demogame) shares
+# client surface (dashboard / panoscope / portal / airdefenders) shares
 # the same Kratos session — landing on isitup never blocks a downstream
 # admin who needed the dashboard, just adds one extra click.
 bootstrap_first_login_url_by_group:
@@ -200,6 +205,7 @@ icam_federation:
   #     client_id: "goat-example"
   #     scopes: ["openid", "profile", "email"]
   #     claim_map: eams-a          # -> ops/identity/claim-maps/<claim_map>.jsonnet
+  #     subject_client_id: <id>    # replaces the claim map's `local client_id` (the RP id it records)
   #     asserts_min: { ial: ial2, aal: aal2, fal: fal2 }   # fail-closed downstream gate
   #     boundary_il: 5             # authorization boundary / impact level tag
 

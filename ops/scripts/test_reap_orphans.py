@@ -99,7 +99,7 @@ class ClassifyTest(unittest.TestCase):
     def props(self):
         return [
             # healthy onboard: slot + kratos
-            {"id": "p-ok", "handle": "healthy", "email": "person-48@example.org", "status": "onboarded", "env": "zagros", "created_at": 1},
+            {"id": "p-ok", "handle": "healthy", "email": "person-41@example.org", "status": "onboarded", "env": "zagros", "created_at": 1},
             # crash-orphan: slot, proposal onboarded, NO kratos (user312x shape)
             {"id": "p-orph", "handle": "tyler", "email": "person-903@example.org", "status": "onboarded", "env": "zagros", "created_at": 2},
             # test orphan: slot + failed proposal on a test domain, no kratos
@@ -108,7 +108,7 @@ class ClassifyTest(unittest.TestCase):
             {"id": "p-res", "handle": "gate-test", "email": "gate-test@zagros.invite.local", "status": "failed", "env": "zagros", "created_at": 4},
             # failed but retried-successfully later is represented by latest row only
             # partial: failed, no slot, but a live netbird peer remains
-            {"id": "p-part", "handle": "partial", "email": "person-88@example.org", "status": "failed", "env": "zagros", "created_at": 5},
+            {"id": "p-part", "handle": "partial", "email": "person-75@example.org", "status": "failed", "env": "zagros", "created_at": 5},
         ]
 
     def slots(self):
@@ -120,7 +120,7 @@ class ClassifyTest(unittest.TestCase):
         ]
 
     def kratos(self):
-        return {"person-48@example.org": "active", "drill-producer@zagros.test": "active"}
+        return {"person-41@example.org": "active", "drill-producer@zagros.test": "active"}
 
     def nb(self):
         peers = [{"name": "peer-partial-zagros-2026-07-01-host.local"}]
@@ -131,7 +131,7 @@ class ClassifyTest(unittest.TestCase):
         peers, keys = self.nb()
         kw = dict(
             proposals=self.props(), slots=self.slots(), kratos=self.kratos(),
-            nb_peers=peers, nb_keys=keys, roster_hashes={reap.email_hash("person-48@example.org")},
+            nb_peers=peers, nb_keys=keys, roster_hashes={reap.email_hash("person-41@example.org")},
         )
         kw.update(over)
         return reap.classify(**kw)
@@ -179,10 +179,10 @@ class ClassifyTest(unittest.TestCase):
 
     def test_undeclared_excludes_rostered_and_test(self):
         kratos = dict(self.kratos())
-        kratos["person-70@example.org"] = "active"
-        kratos["person-51@example.org"] = "inactive"
+        kratos["person-59@example.org"] = "active"
+        kratos["person-44@example.org"] = "inactive"
         plan = self.run_classify(kratos=kratos)
-        self.assertEqual(plan["undeclared"], ["person-70@example.org"])
+        self.assertEqual(plan["undeclared"], ["person-59@example.org"])
 
     def test_no_kratos_drops_slot_orphans_keeps_netbird_evidence(self):
         plan = self.run_classify(kratos=None, roster_hashes=None)

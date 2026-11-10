@@ -335,7 +335,9 @@ fn run(repo: &Path, o: &Options, checks: &mut Vec<Check>) -> Result<Report> {
         .map(|s| s.success())
         .unwrap_or(false);
     if !landed {
-        return Err(refuse("the pin PR did not land — nothing was deployed".into()));
+        return Err(refuse(
+            "the pin PR did not land — nothing was deployed".into(),
+        ));
     }
     // Back to main at the merge (fastlane.sh does the same): the deploys run
     // Ansible from this checkout, and leaving it on the landed branch made the

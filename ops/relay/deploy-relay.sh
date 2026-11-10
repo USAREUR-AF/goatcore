@@ -11,10 +11,22 @@
 #   ops/relay/deploy-relay.sh fra      # Deploy/verify specific region
 #
 # Prerequisites:
-#   - aws-vault configured (legacy profile)
+#   - aws-vault configured (the profile RELAY_AWS_PROFILE names; default the
+#     deployment's deploy.aws_profile in ops/goatbuilder/project.yml, else default)
 #   - direnv loaded (.envrc + .envrc.local with CLOUDFLARE_API_TOKEN)
 #   - terraform init already run in terraform/
 #   - ansible installed (brew install ansible)
+#
+# Values a deployment sets in its ops/env-aliases.d/*.sh
+# (ops/scripts/lib/env-aliases.sh), each with an example default:
+#   NETHOST_HOST / NETHOST_USER / NETHOST_PASS   the network host to read the
+#                          relay auth secret from (default user: deploy.ssh_user
+#                          in ops/goatbuilder/project.yml; default host:
+#                          NETHOST_MESH_ADDRESS)
+#   NETHOST_NAME           the network host's name in the ansible inventory
+#   NETBIRD_DOMAIN         the management domain the relays forward
+#   GOAT_DEPLOYMENT        names the NetBird nameserver group, <name>-mesh-dns
+#   RELAY_AWS_PROFILE      the aws-vault profile the relay tree is applied with
 
 set -euo pipefail
 
@@ -30,8 +42,12 @@ if [ -f "$REPO_DIR/.envrc" ]; then
   [ -f "$REPO_DIR/.envrc.local" ] && source "$REPO_DIR/.envrc.local" 2>/dev/null || true
   set +a
 fi
+# shellcheck source=../scripts/lib/env-aliases.sh
+. "$REPO_DIR/ops/scripts/lib/env-aliases.sh"
 
-AWS_CMD="aws-vault exec legacy --no-session --"
+FACTS="$REPO_DIR/ops/scripts/goatnet-facts.py"
+RELAY_AWS_PROFILE="${RELAY_AWS_PROFILE:-$(python3 "$FACTS" deploy aws_profile 2>/dev/null || echo default)}"
+AWS_CMD="aws-vault exec $RELAY_AWS_PROFILE --no-session --"
 
 # Relay definitions: name:region
 RELAYS=(
@@ -45,7 +61,10 @@ target="${1:-all}"
 log() { echo "[$(date +%H:%M:%S)] $*"; }
 err() { echo "[$(date +%H:%M:%S)] ERROR: $*" >&2; }
 
-NETHOST_HOST="${NETHOST_USER:-goat}@${NETHOST_HOST:-100.127.1.32}"
+NETHOST_SSH="${NETHOST_USER:-$(python3 "$FACTS" deploy ssh_user 2>/dev/null || echo goat)}@${NETHOST_HOST:-${NETHOST_MESH_ADDRESS:-100.127.1.23}}"
+NETHOST_INVENTORY_NAME="${NETHOST_NAME:-nethost}"
+MGMT_DOMAIN="${NETBIRD_DOMAIN:-netbird.legacy.example}"
+NS_GROUP_PREFIX="${GOAT_DEPLOYMENT:-goat}"
 SHARED_TURN_SECRET=""
 NB_RELAY_AUTH_SECRET=""
 RELAY_OUTPUT=""
@@ -124,9 +143,9 @@ get_relay_auth_secret() {
   # Build SSH command
   local ssh_cmd
   if [ -n "${NETHOST_PASS:-}" ]; then
-    ssh_cmd="sshpass -p '$NETHOST_PASS' ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 $NETHOST_HOST"
+    ssh_cmd="sshpass -p '$NETHOST_PASS' ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 $NETHOST_SSH"
   else
-    ssh_cmd="ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 $NETHOST_HOST"
+    ssh_cmd="ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 $NETHOST_SSH"
   fi
 
   # Read authSecret from Netbird config.yaml on NETHOST
@@ -164,7 +183,7 @@ step_ansible() {
   # Build limit flag
   local limit_flag=""
   if [ "$target" != "all" ]; then
-    limit_flag="--limit relay-${target},nethost"
+    limit_flag="--limit relay-${target},${NETHOST_INVENTORY_NAME}"
   fi
 
   log "Running site.yml..."
@@ -182,7 +201,7 @@ step_dns_nameserver_group() {
     return
   fi
 
-  local mgmt_url="https://netbird.legacy.example"
+  local mgmt_url="https://$MGMT_DOMAIN"
 
   # Collect VPS relay IPs
   local ns_entries=""
@@ -213,15 +232,15 @@ step_dns_nameserver_group() {
     | python3 -c "
 import sys,json
 groups=json.load(sys.stdin)
-matches=[g for g in groups if 'goat' in g.get('name','').lower()]
+matches=[g for g in groups if '$NS_GROUP_PREFIX' in g.get('name','').lower()]
 print(matches[0]['id'] if matches else '')
 " 2>/dev/null)
 
   local payload="{
-    \"name\": \"goat-mesh-dns\",
-    \"description\": \"Mesh DNS — resolves *.netbird.legacy.example via VPS relay dnsmasq.\",
+    \"name\": \"${NS_GROUP_PREFIX}-mesh-dns\",
+    \"description\": \"Mesh DNS — resolves *.${MGMT_DOMAIN} via VPS relay dnsmasq.\",
     \"nameservers\": [$ns_entries],
-    \"domains\": [\"netbird.legacy.example\", \"legacy.example\"],
+    \"domains\": [\"${MGMT_DOMAIN}\", \"${MGMT_DOMAIN#*.}\"],
     \"groups\": [\"$all_group_id\"],
     \"enabled\": true,
     \"primary\": false,
@@ -266,8 +285,8 @@ verify_relays() {
 
     # Test management forwarding
     local mgmt_result
-    mgmt_result=$(curl -sk --connect-timeout 5 --resolve "netbird.legacy.example:443:$public_ip" \
-      "https://netbird.legacy.example/api/accounts" 2>/dev/null)
+    mgmt_result=$(curl -sk --connect-timeout 5 --resolve "$MGMT_DOMAIN:443:$public_ip" \
+      "https://$MGMT_DOMAIN/api/accounts" 2>/dev/null)
 
     local mgmt_ok="FAIL"
     echo "$mgmt_result" | grep -q "401" && mgmt_ok="OK"
@@ -293,7 +312,7 @@ verify_relays() {
     # Test DNS (dnsmasq)
     local dns_ok="FAIL"
     local dns_result
-    dns_result=$(dig +short "@$public_ip" demogame.netbird.legacy.example 2>/dev/null)
+    dns_result=$(dig +short "@$public_ip" "airdefenders.$MGMT_DOMAIN" 2>/dev/null)
     [ -n "$dns_result" ] && dns_ok="OK"
 
     printf "  %-4s %-15s  mgmt=%s  stun=%s  rathole=%s  relay=%s  dns=%s\n" "$name" "$public_ip" "$mgmt_ok" "$stun_ok" "$ctl_ok" "$relay_ok" "$dns_ok"

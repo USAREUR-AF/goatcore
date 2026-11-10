@@ -54,7 +54,7 @@ services:
 {% endif %}
 {# Block 94 sibling: this site page -> the cross-env comparison page. Its OWN
    conditional — it was first written inside the portal block above, and since
-   portal is empty on zagros the whole block was skipped and this env var never
+   portal is empty on some goatnets the whole block was skipped and this env var never
    rendered. The container came up on the right image serving no link, and the
    ansible recap said changed=7 either way. Each sibling gates independently. #}
 {% if consistency_console_sibling_crossenv_url | length > 0 %}

@@ -1,0 +1,141 @@
+---
+# Offline test for tasks/crypttab-keep-installer.yml + templates/crypttab.j2.
+# A node with an installer-encrypted root AND a role-managed data volume must keep
+# the installer's root line when the role renders /etc/crypttab; without it the
+# initramfs is rebuilt with no root unlock and the box does not boot.
+#
+#   cd ops/ansible/roles/luks-unlock/tests
+#   ansible-playbook -i localhost, -c local crypttab-keep-installer.yml
+#
+# Runs the real task file and the real template against fixture crypttabs in a
+# temp dir. Touches nothing outside it.
+
+- name: luks-unlock | crypttab keeps the installer's entries
+  hosts: localhost
+  gather_facts: false
+  # The role's defaults, as the role sees them. vars_files outranks play vars, so
+  # the fixture below is set with set_fact, which outranks both.
+  vars_files:
+    - ../defaults/main.yml
+  vars:
+    root_uuid: 11111111-2222-3333-4444-555555555555
+    data_uuid: 66666666-7777-8888-9999-000000000000
+    root_line: "dm_crypt-0 UUID=11111111-2222-3333-4444-555555555555 none luks"
+  tasks:
+    - name: "Fixture: one role-managed data volume and an installer-encrypted root"
+      ansible.builtin.set_fact:
+        luks_volumes:
+          - name: docker-data
+            device: /dev/loop0
+            mount_point: /opt/docker-data
+            filesystem: ext4
+            passphrase: stub
+            unlock_modes: [passphrase, tpm2]
+            format_if_unformatted: false
+        luks_volume_uuids:
+          docker-data: "{{ data_uuid }}"
+        luks_installer_partitions:
+          - name: cryptroot
+            device: /dev/nvme0n1p3
+            expected_vg: ubuntu-vg
+            unlock_class: tpm2
+            passphrase: stub
+
+    - name: Make a scratch dir
+      ansible.builtin.tempfile:
+        state: directory
+      register: tmp
+
+    # --- 1: the installer's root line survives a render ---------------------------
+    - name: "1 | fixture: installer comment, root line, a stale managed line"
+      ansible.builtin.copy:
+        dest: "{{ tmp.path }}/crypttab"
+        content: |
+          # written by the installer
+          {{ root_line }}
+          docker-data UUID={{ data_uuid }} none luks,noauto
+        mode: "0644"
+
+    - name: 1 | run the task file
+      ansible.builtin.include_tasks: ../tasks/crypttab-keep-installer.yml
+      vars:
+        luks_crypttab_path: "{{ tmp.path }}/crypttab"
+        installer_part_uuids: {cryptroot: "{{ root_uuid }}"}
+
+    - name: 1 | render the real template
+      ansible.builtin.template:
+        src: ../templates/crypttab.j2
+        dest: "{{ tmp.path }}/rendered-1"
+        mode: "0644"
+
+    - name: 1 | read the result
+      ansible.builtin.slurp:
+        src: "{{ tmp.path }}/rendered-1"
+      register: r1
+
+    - name: 1 | root line kept once, data line rendered once, stale data line gone
+      vars:
+        lines: "{{ (r1.content | b64decode).splitlines() | reject('match', '^\\s*(#|$)') | list }}"
+      ansible.builtin.assert:
+        that:
+          - lines | select('equalto', root_line) | list | length == 1
+          - lines | select('match', '^docker-data UUID=' ~ data_uuid ~ ' ') | list | length == 1
+          - lines | select('search', 'noauto') | list | length == 0
+          - lines | length == 2
+        fail_msg: "rendered crypttab: {{ lines }}"
+
+    # --- 2: no installer line in the file -> refuse, never render --------------
+    - name: "2 | fixture: the installer's root line is already gone"
+      ansible.builtin.copy:
+        dest: "{{ tmp.path }}/crypttab-2"
+        content: |
+          docker-data UUID={{ data_uuid }} none luks,tpm2-device=auto
+        mode: "0644"
+
+    - name: 2 | the task file refuses
+      block:
+        - name: 2 | run the task file
+          ansible.builtin.include_tasks: ../tasks/crypttab-keep-installer.yml
+          vars:
+            luks_crypttab_path: "{{ tmp.path }}/crypttab-2"
+            installer_part_uuids: {cryptroot: "{{ root_uuid }}"}
+        - name: 2 | it should not get here
+          ansible.builtin.set_fact:
+            case2_passed: true
+      rescue:
+        - name: 2 | refused, as it must
+          ansible.builtin.set_fact:
+            case2_refused: true
+
+    - name: 2 | assert it refused
+      ansible.builtin.assert:
+        that:
+          - case2_refused | default(false)
+          - not (case2_passed | default(false))
+
+    # --- 3: no installer partitions -> template unchanged from before ------------
+    - name: 3 | render with no kept lines
+      ansible.builtin.template:
+        src: ../templates/crypttab.j2
+        dest: "{{ tmp.path }}/rendered-3"
+        mode: "0644"
+      vars:
+        luks_crypttab_installer_lines: []
+
+    - name: 3 | read the result
+      ansible.builtin.slurp:
+        src: "{{ tmp.path }}/rendered-3"
+      register: r3
+
+    - name: 3 | only the managed data line
+      vars:
+        lines: "{{ (r3.content | b64decode).splitlines() | reject('match', '^\\s*(#|$)') | list }}"
+      ansible.builtin.assert:
+        that:
+          - lines | length == 1
+          - lines[0] is match('^docker-data ')
+
+    - name: Clean up
+      ansible.builtin.file:
+        path: "{{ tmp.path }}"
+        state: absent

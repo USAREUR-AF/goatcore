@@ -48,6 +48,10 @@
               {% for t in nethealth_targets | default([]) %}
               {{ t.name }}	{{ t.mesh_ip }}	{{ t.lan_ip | default('-') }}	{{ t.service_url | default('-') }}	{{ t.goatnet | default(site_id | mandatory) }}
               {% endfor %}
+        # The token is the one the vantage already posts its relay metrics
+        # with: relay_metrics_bearer_token, which the goatnet's group_vars read
+        # from the operator's environment. Set net_health_token_env to read a
+        # different environment variable instead.
         - name: render env
           ansible.builtin.copy:
             dest: /opt/net-health/net-health.env
@@ -56,7 +60,7 @@
               NETHEALTH_VANTAGE={{ net_health_vantage_name | default(inventory_hostname) }}
               NETHEALTH_TARGETS_FILE=/opt/net-health/targets.tsv
               NETHEALTH_INGEST_URLS={{ net_health_ingest_urls | default('') }}
-              NETHEALTH_TOKEN={{ lookup('env', net_health_token_env | default('ZAGROS_RELAY_METRICS_BEARER_TOKEN')) }}
+              NETHEALTH_TOKEN={{ lookup('env', net_health_token_env) if net_health_token_env is defined else (relay_metrics_bearer_token | mandatory) }}
         - name: systemd unit + timer
           ansible.builtin.template:
             src: "{{ item }}.j2"

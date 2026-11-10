@@ -28,6 +28,18 @@ ory_spock_enabled: "{{ ory_spock_enabled | default(false) | bool }}"
 # both netbird (default repset, Block 64Q) and Ory (ory_narrow,
 # Block 21G).
 ory_spock_topology: "{{ inter_site_spock_topology | default('none') }}"
+
+# Staging for a join (goatbuilder join-node, phase 13). Each side subscribes
+# only to a peer that already has its ory_narrow node and repset, and the
+# history reconcile verifies the REVERSE subscription on the peer, so the
+# first side to run cannot finish alone. A join therefore runs:
+#   1. joiner, ory_spock_wire_subscriptions=false  node + repset only
+#   2. founder, ory_spock_reconcile_history=false  node, repset, subscription
+#   3. joiner, both true                            subscription + reconcile
+# The reconcile copies history both ways, so step 3 covers both sides.
+# Both default true: an ordinary run does everything.
+ory_spock_wire_subscriptions: true
+ory_spock_reconcile_history: true
 ory_spock_explicit_peers: "{{ inter_site_spock_peers | default([]) }}"
 
 # Databases this role manages. Both get the Spock extension, both

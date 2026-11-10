@@ -7,7 +7,9 @@
 # check, review, review --json, readiness (modulo its clock). Then on two
 # scratch copies, one per side, the record mutations: open, hotfix, the three
 # refusals (hotfix with previous == candidate, graduate not ready, graduate of
-# a set member), graduate once the record is ready, abandon — comparing every
+# a set member), the runtime-health gate switched on (awaiting, C10, a failing
+# capture), graduate once ready with the runtime-health override recorded,
+# abandon — comparing every
 # printed line, and the records as DATA (parsed), since the two YAML dumpers
 # fold long strings differently. The only normalisation is the tool's own
 # name in the commands it prints (`python3 ops/release/graduate.py` /
@@ -52,8 +54,10 @@ for side in py rs; do
   ( cd "$REPO" && tar cf - ops/pins ops/ansible/group_vars ops/ansible/roles ops/release ops/consistency 2>/dev/null ) | ( cd "$SCRATCH/$side" && tar xf - )
 done
 COMP=netvis
-REF='ghcr.io/{{ ghcr_org }}/netvis@sha256:89528e88c0814c4629d4c9facfb7083c005e4e9b4e74f48d6334cd3daf0cf053'
-HOT='ghcr.io/{{ ghcr_org }}/netvis@sha256:89528e88c0814c4629d4c9facfb7083c005e4e9b4e74f48d6334cd3daf0cf053'
+# Two synthetic refs, distinct from each other and from any pin, so open,
+# hotfix and the previous == candidate refusal each exercise their own path.
+REF='ghcr.io/{{ ghcr_org }}/netvis:sha-abcdef0@sha256:2222222222222222222222222222222222222222222222222222222222222222'  # oss-allow: synthetic fixture ref
+HOT='ghcr.io/{{ ghcr_org }}/netvis:sha-1234567@sha256:3333333333333333333333333333333333333333333333333333333333333333'  # oss-allow: synthetic fixture ref
 compare "promote open" "$(py "$SCRATCH/py" open $COMP --ref "$REF" --reason "parity gate")" "$(rs "$SCRATCH/rs" open $COMP --ref "$REF" --reason "parity gate")"
 R=""; for f in "$SCRATCH/py/ops/release/records/$COMP"/*.yaml; do case "$f" in *hotfix*) ;; *) R="$(basename "$f")" ;; esac; done
 same_record "the opened record" "$SCRATCH/py/ops/release/records/$COMP/$R" "$SCRATCH/rs/ops/release/records/$COMP/$R"
@@ -73,7 +77,30 @@ d["opened"] = "2026-10-01"; d["evidence"] = {"validation": "rows PASS", "preprod
 open(p, "w").write(yaml.safe_dump(d, sort_keys=False))
 PY
 done
-compare "promote graduate (ready)" "$(py "$SCRATCH/py" graduate $COMP --ack "Parity Gate")" "$(rs "$SCRATCH/rs" graduate $COMP --ack "Parity Gate")"
+# The runtime-health gate on every hop of both copies (whatever the committed
+# ladder carries): awaiting its capture, check's C10 over the dev->preprod hop,
+# a capture that fails, then the recorded override.
+for side in py rs; do python3 - "$SCRATCH/$side/ops/release/ladder.yaml" <<'PY'
+import sys, yaml
+p = sys.argv[1]; d = yaml.safe_load(open(p))
+for h in d.get("hops") or []:
+    h.setdefault("gates", []).append({"id": "runtime-health", "max_memory_fraction": 0.8})
+open(p, "w").write(yaml.safe_dump(d, sort_keys=False))
+PY
+done
+compare "graduate refused (runtime-health awaiting)" "$(py "$SCRATCH/py" graduate $COMP --ack A)" "$(rs "$SCRATCH/rs" graduate $COMP --ack A)"
+compare "check with the runtime-health gate on (C10)" "$(py "$SCRATCH/py" check)" "$(rs "$SCRATCH/rs" check)"
+for side in py rs; do python3 - "$SCRATCH/$side/ops/release/records/$COMP/$R" <<'PY'
+import sys, yaml
+p = sys.argv[1]; d = yaml.safe_load(open(p))
+d["runtime_health"] = {"preprod": {"captured": "2026-10-03T10:00:00Z", "deployed": "2026-10-01T09:00:00Z",
+                                   "digests": ["sha256:" + "2" * 64], "restarts": 1, "oom_kills": 2,
+                                   "peak_memory_fraction": 0.95}}
+open(p, "w").write(yaml.safe_dump(d, sort_keys=False))
+PY
+done
+compare "graduate refused (runtime-health measured)" "$(py "$SCRATCH/py" graduate $COMP --ack A)" "$(rs "$SCRATCH/rs" graduate $COMP --ack A)"
+compare "promote graduate (ready, runtime-health overridden)" "$(py "$SCRATCH/py" graduate $COMP --ack "Parity Gate" --override-runtime-health "parity gate")" "$(rs "$SCRATCH/rs" graduate $COMP --ack "Parity Gate" --override-runtime-health "parity gate")"
 same_record "the graduated record" "$SCRATCH/py/ops/release/records/$COMP/$R" "$SCRATCH/rs/ops/release/records/$COMP/$R"
 compare "promote abandon" "$(py "$SCRATCH/py" abandon "ops/release/records/$COMP/$H" --reason "parity" --superseded-by "$R")" "$(rs "$SCRATCH/rs" abandon "ops/release/records/$COMP/$H" --reason "parity" --superseded-by "$R")"
 same_record "the abandoned record" "$SCRATCH/py/ops/release/records/$COMP/$H" "$SCRATCH/rs/ops/release/records/$COMP/$H"

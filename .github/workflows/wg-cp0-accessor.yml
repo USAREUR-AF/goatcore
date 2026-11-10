@@ -12,11 +12,7 @@ name: wg-cp0-accessor
 #   - six-target cross-compile build matrix for the wg-cp0 binary
 #     so platform-specific regressions surface at PR time
 #
-# Block 22R.2 will extend this workflow with the mutating
-# subcommand surface + a `release` job firing on the first
-# wg-cp0-v* tag (modeled on snitch.yml). 22R.1 deliberately does
-# NOT cut a release tag — the orchestrator binary is the operator
-# release surface and lands when the apply path is in.
+# Releases are wg-cp0-release.yml's, on a wg-cp0/v<semver> tag.
 #
 # Triggers:
 #   - PR / push touching ops/enrollment/peerset/**,

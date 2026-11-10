@@ -85,7 +85,6 @@ interesting state than peers relay-forced by NAT.
    local-secrets-pattern.md):
    - `aws-vault` profile `legacy` (dev tree, `legacy.example`)
    - `CLOUDFLARE_API_TOKEN` — dev-tree token, for both DNS-01 challenges
-   - `GHCR_READ_TOKEN` — the goat-relay image is a private GHCR package
    - `TF_VAR_aws_account_id` — the cross-account fuse; no default, fail-closed
 2. **Two throwaway secrets you generate now**, not reused from any live env:
    ```
@@ -222,7 +221,7 @@ OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES aws-vault exec legacy --no-session -- \
     -e cf_api_token="$CLOUDFLARE_API_TOKEN" \
     -e cloudflare_api_token="$CLOUDFLARE_API_TOKEN" \
     -e "mesh_only_allowlist_extra_cidrs=[\"$NATGW_IP/32\"]" \
-    -e assay_owner_email=person-81@example.org
+    -e assay_owner_email=person-69@example.org
 ```
 
 For the F-269 token-self-heal check (run-assay.sh check D), also pass

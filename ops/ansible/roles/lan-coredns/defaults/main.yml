@@ -20,7 +20,7 @@ lan_coredns_port: 53
 
 # Zone data lives under ops/dns/<zone-short-name>/<zone-name>.hosts.
 # Default path mirrors the per-site convention.
-lan_coredns_zone_dir: "{{ playbook_dir }}/../dns/{{ site_id }}"   # was a nova default; a shared role must not name a goatnet
+lan_coredns_zone_dir: "{{ playbook_dir }}/../dns/{{ site_id }}"   # derived from site_id; a shared role must not name a goatnet
 
 # Host paths
 lan_coredns_dir: "/opt/lan-dns"
@@ -31,8 +31,7 @@ lan_coredns_owner: "{{ ansible_user }}"
 lan_coredns_group: "{{ ansible_user }}"
 
 # CoreDNS image. Same as mesh-coredns — official CNCF, Docker Hub verified
-# publisher. Swap to cgr.dev/chainguard/coredns once Chainguard procurement
-# lands (Block 13C).
+# publisher. An overlay may set a hardened catalogue image here (ADR 1220).
 lan_coredns_image: "coredns/coredns:1.15.0"
 
 # Container name. Distinct from mesh-coredns's "mesh-dns" — both could

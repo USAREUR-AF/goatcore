@@ -20,9 +20,14 @@ live-fabric rehearsal is written and unrun. Treat it as a first-run procedure, n
 
 ## What you are building
 
-One extra data router on each side, dedicated to the other party.
+One extra data router on each side, dedicated to the other party, and one small process beside
+each core that names your data for the crossing.
 
 ```
+ release/<set>/**                                                      release/<set>/**
+       │ republisher (on your core host)          republisher (on their core host) │
+       ▼                                                                           ▼
+ from/<you>/<set>/**                                                 from/<them>/<set>/**
 your core fabric ── your edge router ══ tunnel ══ their edge router ── their core fabric
    trusts YOUR CA       trusts THEIR CA              trusts YOUR CA        trusts THEIR CA
 ```
@@ -30,17 +35,33 @@ your core fabric ── your edge router ══ tunnel ══ their edge router 
 Your edge router is the only thing that trusts their certificate authority. Your core fabric
 never does. Their side mirrors it exactly.
 
+**The republisher** runs on your core host, the host your edge dials, and both of its sessions
+dial your core router. It subscribes to each release set you offer, `release/<set>/**`, and
+publishes every sample under `from/<you>/<set>/**`, the wire name. It is the only writer of
+`from/<you>/**` on your side; your core admits it by its own certificate name, and your edge
+carries the wire name out. Several sets share the one wire prefix, the set kept as a path
+segment: `release/REL-ALL/<rest>` crosses as `from/<you>/REL-ALL/<rest>`.
+
 ## Before you start
 
 - [ ] Both sides run this software with **their own** certificate authority. If one side does not
       have its own CA, stop — you do not have two sovereign environments, and a different pattern
       applies.
-- [ ] Both sides can expose **one** UDP port to the other. No other reachability is required.
-- [ ] You have agreed, in writing, three things: **what data flows**, **in which direction**, and
-      **the name the other side's router will present**. Everything below is mechanical; these
-      three are the decisions.
+- [ ] **One** side can accept inbound UDP on one port, directly or through a forwarder. The other
+      side only dials out. If both edges sit behind NAT with no inbound port, one side runs a
+      peering forwarder first, because its address is a value that side's package carries:
+      [`peering-forwarder.md`](../design/peering-forwarder.md) ([ADR 1218](../adr/1218-peering-forwarder-when-neither-edge-accepts-inbound.md)).
+      No other reachability is required.
+- [ ] Both sides reach the same **peering directory** (saltlick) over HTTPS. The driver exchanges
+      your packages and CA certificates through it, so neither side needs a public host and
+      nothing is sent by email. It grants nothing:
+      [`peering-directory-service.md`](../design/peering-directory-service.md).
+- [ ] You have agreed, in writing, **what data flows** and **in which direction**. Everything
+      below is mechanical; that is the decision. The names each router presents are derived from
+      the agreement, not agreed by hand (Step 2).
 - [ ] A host you control to run the edge router on. It does not need to be powerful. It must not
-      be a machine that already runs your core fabric.
+      be a machine that already runs your core fabric. It is a peer of your own mesh in node class
+      `PEERING-EDGE`, which lets it reach only your core router's fabric port and mesh DNS (ADR 1219).
 
 ---
 
@@ -53,68 +74,121 @@ until the GENERATED artifacts were the thing deployed.
 
 ```bash
 ops/scripts/peering-standup.sh <peering> --plan     # prints every phase, runs nothing
-ops/scripts/peering-standup.sh <peering>            # stops at phase 4, which is yours
-ops/scripts/peering-standup.sh <peering> --from 5   # resume after the exchange
+ops/scripts/peering-standup.sh <peering>            # exchanges through the directory, stops at phase 5
+ops/scripts/peering-standup.sh <peering> --from 6   # resume after the call; stops at phase 10
+ops/scripts/peering-standup.sh <peering> --from 11  # resume after the review
 ```
+
+`goatbuilder federate <peering>` runs the same phases with the same numbers and `--from`/`--to`.
+
+Set these before the run; phase 1 refuses without the first three:
+
+| Variable | Value |
+|---|---|
+| `FED_DIRECTORY_URL` | the peering directory, `https://…`, the same one your counterparty uses |
+| `FED_COUNTERPARTY_ID` | the counterparty's `sovereign_id` (ISO 3166-1 alpha-3) |
+| `FED_SIGNING_KEY` | the key that signs your package; it also signs your directory entry and uploads |
+| `FED_CA_CERT` | your CA certificate (PEM), the one phase 8 signs the peering leaves with; unset, the profile's `ca-roots.pem` |
+| `FED_ROUTER_DOCKER_HOST` | Docker endpoint for a separate core, e.g. `ssh://operator@core.example.org`; phase 3 sets `DOCKER_HOST` for the router reads while interface measurements remain on the operator/edge host |
+| `FED_ROUTER_CONTAINER` | optional exported core container name or ID for multiple cores or older custom layouts; unset, phase 3 discovers one running labeled, standard-named or legacy core |
+| `FED_PACKAGE_URL` | **leave unset**: the directory hosts your package. Set it only to serve the package from a public host of your own, behind TLS, never on a mesh |
+| `FED_NO_DIRECTORY` | `1` only for a counterparty that can reach no directory; phase 5 then names the files to hand over |
 
 | # | Kind | Phase | Worked when |
 |---|---|---|---|
-| 1 | GATE | preflight, fail-closed | prints `READY`; a failure names the input and where it was looked for |
-| 2 | T | `init` — our half, measured | a signed package; exit 23 means a value could not be derived and the list is the output |
-| 3 | T | `lint` | every required member present, signature shape valid |
-| 4 | **MANUAL** | exchange packages; bind their key **out of band** | their package is on disk and their verifying key came from a channel authenticated independently of this link |
-| 5 | T | `compose` | one digest, and argument order does not change it |
-| 6 | T | `verify` | the derived names re-derive; the ingress prefix and republish target are stated |
-| 7 | T | mint the peering leaves | three certificates, names derived from the agreement, SANs covering every address that will be dialled |
-| 8 | T | `apply --confirm` | the partner declaration, the edge group_vars, the republisher vars and the ACL fragment |
-| 9 | A | deploy the edge | the edge dials our core and accepts the partner's CN |
-| 10 | A | open the transport the AGREEMENT selected | the link is up. **`wireguard` has no play in this repository** — the phase refuses rather than substituting IPsec. A party that needs IPsec declares `ipsec-fips` and NOT `wireguard`, so the intersection selects it |
-| 11 | GATE | acceptance | carries both ways, refuses what the agreement does not name, and round-trips |
+| 1 | GATE | preflight, fail-closed | prints `READY`; a failure names the input and where it was looked for. When the declaration offers a release set, the inventory group `<peering>_core` names the core host and sits under `[peering_cores:children]` |
+| 2 | A | prepare what the package measures: the federation interface and the SPIRE bundle | the interface and its key exist with no peer on them; the bundle is exported when this side runs SPIRE |
+| 3 | T | `init` — our half, measured | a signed package; exit 23 means a value could not be derived and the list is the output |
+| 4 | T | `lint` | every required member present, signature shape valid |
+| 5 | **MANUAL** | exchange through the directory; read the key and CA fingerprint **aloud** | the directory step uploaded ours and placed theirs and their CA on disk with no FAIL row; on one call each side read its verifying key and CA fingerprint and the other read them back; both keys are in the keyring |
+| 6 | T | `compose` | one digest, and argument order does not change it |
+| 7 | T | `verify` | the derived names re-derive; the ingress prefix and republish target are stated |
+| 8 | T | validate or mint the peering leaves | four certificates, names derived from the agreement, SANs covering every address that will be dialled: outward, inward, core, and `republisher.pem` with CN `fed.<us>.<them>.republisher.01` |
+| 9 | T | `apply --confirm` | the partner declaration, the edge group_vars, the republisher vars (`federation-<them>-republish.yml`) and the ACL fragment, which carries the edge's subject and the republisher's `fed-rp-<them>` subject |
+| 10 | **MANUAL** | review what apply rendered; admit the edge on our core | the fragment is spliced into the core's access control and the core restarted on it |
+| 11 | A | open the transport the AGREEMENT selected | the link is up. `wireguard` runs `peering-wg.yml`, `ipsec-fips` runs `peering-edge.yml`; the phase never substitutes one for the other, and any other transport refuses. A party that needs IPsec declares `ipsec-fips` and NOT `wireguard`, so the intersection selects it |
+| 12 | A | deploy the edge, then the outbound republisher (`peering-zenoh-edge.yml`, then `peering-republisher.yml` with `--limit <peering>_core`) | the edge dials our core and accepts the partner's CN; the republisher container `goat-fed-republisher-<them>` runs on the core host, its `/metrics` on loopback reads `goat_fed_republisher_local_subscribed 1` and `goat_fed_republisher_edge_linked 1`, and its log has one `release release/<set>/** -> wire from/<us>/<set>/**` line per offered set |
+| 13 | A | federate the SPIRE trust domains (ADR 1157 step 2) | our server refreshes their trust domain across the link, or the play says the step was not done for a side with no SPIRE server |
+| 14 | GATE | acceptance | carries both ways, once per offered set: a sample staged under `release/<set>/…` reads back under `from/<sender>/<set>/…` on the receiving side; refuses what the agreement does not name; and round-trips once per set |
 
-**Phase 4 is manual on purpose.** The channel is the counterparty's to choose,
-and a verifying key taken from the package it verifies proves nothing.
+Phase 3 reads the core image and version from the same running container. If it
+reports several candidates, list the containers on the selected daemon and
+`export FED_ROUTER_CONTAINER=zagros-zenoh-router` (using your actual core name)
+before rerunning phase 3. An absent or stopped explicit selection refuses instead
+of probing another core. An explicit remote Docker endpoint never falls back to
+local Podman. See [core discovery](../design/federation-router-discovery.md).
 
-**Phases 1–8 run where the fabric is; phases 9–10 are ansible from the operator's
-machine.** Use `--to 8` and `--from 9` when those are different hosts.
+**Phases 5 and 10 stop for a person on purpose.** The machine moves every file in phase 5; what it
+cannot do is confirm whose key it fetched, and a verifying key taken from the package it verifies
+proves nothing, so the two sides read the keys to each other. The review in phase 10 is the
+control, and only this party can change this party's core.
 
-## Step 2 — Agree the names and prefixes
+**Phases 2 and 11–13 run ansible** against `ops/ansible/inventory/peering-edges.ini`: the edge
+group `<peering>_edge`, and for the republisher the core group `<peering>_core`. The rest run
+`goat` and the standup scripts where the working directory is.
 
-Do this on a call, and write it down. Four values, and both sides need all four.
+## Step 2 — The names and prefixes come from the agreement
+
+None of these is asked of the partner. Each is in a package or derived by `compose`, and both
+sides derive the same values from the same agreement.
 
 | Value | Example | Whose |
 |---|---|---|
-| Your sovereign identifier | `xab` | yours, short, lowercase |
-| The name your edge router presents to them | `peer-xab` | yours |
-| Where their data lands on your side | `from/xab/**` | yours |
+| Your sovereign identifier | `xab` | yours, in your package |
+| The name your edge router presents to them | `fed.xab.xaa.01` | derived from the agreement (`peering_cn`) |
+| Where their data lands on your side | `from/xaa/**` | derived from the agreement |
 | What you will send them | `release/all/**` — the **staging** name, internal to you | yours |
-| The name that data carries once it crosses | `from/<your sovereign>/**` — the **wire** name; the republisher lifts the staging name onto it before anything reaches the edge, and it is what the counterparty's ingress prefix admits | derived |
+| The name that data carries once it crosses | `from/<your sovereign>/**` — the **wire** name. Your republisher, on your core host, lifts `release/<set>/<rest>` onto `from/<your sovereign>/<set>/<rest>` before anything reaches the edge, every set under the one prefix; it is what the counterparty's ingress prefix admits | derived |
 
-Their four values mirror these. **The name is load-bearing**: the other side's permission rules
-will match it exactly, character for character. Agree it once and do not change it casually — a
-change means a coordinated configuration edit on both sides.
+Their values mirror these. **The name is load-bearing**: the other side's permission rules
+will match it exactly, character for character, which is why it is derived rather than typed. A
+change to a `sovereign_id` changes every derived name and means a new agreement on both sides.
 
 Do **not** choose a name that already exists in your own fabric. Their router presenting a name
 your own routers use is the failure mode this whole design is built to prevent.
 
-## Step 3 — Exchange trust material
+## Step 3 — Exchange packages and CA certificates through the directory
 
-Each side publishes its **public** certificate authority material and pulls the other's. No
-private key is exchanged, ever, in any step of this procedure. If anyone asks you to send a
-private key, the procedure is being done wrong.
+Phase 5 does the exchange. Neither side sends a file, and no private key is exchanged in any
+step of this procedure. If anyone asks you to send a private key, the procedure is being done
+wrong.
 
-The first exchange is out of band — email, a call, a physical handover, whatever your policy
-allows. Verify the fingerprint by a **different channel** than the one that carried the file:
+The directory step (`ops/federation/standup/directory.py`):
 
-```bash
-openssl x509 -in their-ca.pem -noout -subject -fingerprint -sha256
-```
+1. publishes your pointer entry, signed with your package key; with `FED_PACKAGE_URL` unset it
+   uploads your package to `<directory>/v1/parties/<you>/package` and the pointer names that;
+2. uploads your CA certificate to `<directory>/v1/parties/<you>/ca`: only the certificate whose
+   SHA-256 is your package's `identity.ca_fingerprint`;
+3. looks up the counterparty's pointer, fetches their package, checks its sha256 against the
+   pointer and its signatures, and places it where phase 6 reads it; fetches their CA
+   certificate, checks it against their `identity.ca_fingerprint`, and places it at
+   `$FED_WORK/theirs-ca.pem`;
+4. prints both verifying keys and both CA fingerprints **in groups of four**, for the call;
+5. prints a **compatibility report** from the two packages: sovereign ids, spec, fabric and tool
+   version, the transport the agreement selects, FIPS fabric image, PQC capability, trust
+   domains, inbound reachability and expiry, each PASS, WARN, FAIL or UNKNOWN with the fix.
+   Nothing in it is asked of the counterparty by message.
 
-Read the fingerprint to your counterpart aloud, or check it against a value they published
-separately. A trust anchor accepted without out-of-band verification is not a trust anchor.
+If their entry is not there yet, run phase 5 again after they run theirs. A directory that is
+down or disagrees with a package is reported, never trusted: `compose` checks their package
+against the key you read back, never against anything the directory served.
 
-After the first exchange, refresh is automatic: each side re-pulls the other's published material
-on a timer, so **the other side replacing their certificate authority does not break the link**.
-That is the reason for using the identity service rather than copying a file into place.
+**The call.** Each side reads its verifying key (11 groups) and CA fingerprint (16 groups) aloud,
+group count first; the other reads them back against what phase 5 printed. Then record both keys
+in the keyring and resume with `--from 6`. After `compose`, read the agreement digest to each
+other the same way. Those reads, and the decision about what data flows, are the only acts that
+are not machine-driven.
+
+When both sides run SPIRE federation (phase 13), phase 5 also uploads the SPIFFE trust bundle
+phase 2 exported and fetches theirs to `$FED_WORK/theirs.spiffe-bundle`. Nothing in the package
+names the bundle, so the step checks it against the signature of the upload that stored it,
+under their verifying key (saltlick `SPEC.md`, "Checking a hosted file against the key read
+aloud"), and places it only when that holds. After that first exchange, refresh is automatic:
+each side re-pulls the other's published bundle on a timer, so **the other side replacing their
+certificate authority does not break the link**.
+
+**No directory.** `FED_NO_DIRECTORY=1` is for a counterparty that can reach no directory. Phase 5
+then names the files to hand over directly; the call is unchanged.
 
 ## Step 4 — Stand up your edge router
 
@@ -133,6 +207,12 @@ Set these, and nothing else:
 | `goat_zenoh_edge_outward_cert` / `_key` | what you present to them |
 | `goat_zenoh_edge_inward_cert` / `_key` | what you present to your own core |
 
+**Or let the role install the certificates.** With `goat_zenoh_edge_install_certs: true`, leave
+the three certificate rows above unset: phase 12 checks the phase 8 leaves and their CA from
+`$FED_WORK` (keys match, leaves chain to your CA, their CA's fingerprint equals the agreement's)
+and installs them in the peering's own directory on the edge, `goat_zenoh_edge_cert_dir`. Nothing
+is copied by hand. See [roles/goat-zenoh-edge/README.md](../../ops/ansible/roles/goat-zenoh-edge/README.md).
+
 **Do not point the trust refresh at your core router.** It must write to the edge router's trust
 file. Pointing it at the core puts a foreign certificate authority on the machine that holds
 everything — the single most damaging mistake available in this procedure.
@@ -140,6 +220,68 @@ everything — the single most damaging mistake available in this procedure.
 **Do not reuse your core router's configuration as a starting point.** Use the edge template. The
 permission engine stops at the first rule that allows something, so a permissive rule inherited
 from your core cannot be taken back by adding a narrower one afterwards.
+
+### Phase 8 reruns and deliberate certificate replacement
+
+Phase 8 validates and reuses existing certificate/key pairs. A successful rerun
+preserves their bytes and modification times; the CA private key may remain
+offline when every requested pair already exists and validates. Missing complete
+pairs are issued only when the own CA signing key is available.
+
+Validation binds the own CA fingerprint to the agreement and covers the validity period, exact derived CN and SANs, client
+and server EKUs, non-CA status, key usage, matching public keys and private-key
+mode 0600. The default remaining-validity minimum is 86400 seconds; configure
+`FED_LEAF_MIN_VALID_SECONDS` explicitly if the deployment requires another window.
+An incomplete, invalid or changed pair refuses the run before any leaf is
+replaced. Inspect the discrepancy rather than deleting files to bypass it.
+
+For intentional reissuance, including expiry, invoke the helper explicitly with
+`--rotate`, using the same reviewed agreement, own CA and core SAN inputs:
+
+```bash
+ops/federation/standup/mint-peering-leaves.sh \
+  "$FED_WORK/agreement.json" "$FED_WORK/pki" --as "$OUR_ID" \
+  --core-cn "$FED_CORE_CN" --core-san "$FED_CORE_SAN" --rotate
+```
+
+The signing inputs still come from `FED_CA_CERT` and `FED_CA_KEY`. Rotation
+replaces every requested pair with a new key; keep that action separate from an
+ordinary phase rerun. Previous material is retained in a private `.previous-*`
+directory under the output directory. Protect and retire it through the local key
+retention policy. This command prepares files; it does not deploy them or restart
+services. Plan and review the corresponding deployment separately.
+
+Operations on one output directory are locked. All candidates are staged and
+validated before installation, with rollback on ordinary installation errors.
+Installation across several files is not crash-atomic: after abrupt interruption,
+an outstanding `.rotation-pending` marker blocks further operations. Restore or
+complete the reviewed set, verify it, and only then remove the marker. Incomplete
+or mismatched pairs are also refused. See [Federation certificate lifecycle](../design/federation-certificate-lifecycle.md).
+
+### The republisher, on your core host
+
+Phase 12 deploys it with `peering-republisher.yml` on the inventory group `<peering>_core`, which
+names the core host your edge dials. The agreement's values (`goat_fed_republisher_sovereign_id`,
+`_partner_id`, `_cn`, `_publish_under`, `_release`) come from `apply`. Set these in
+`group_vars/<peering>_core/`, and nothing else:
+
+| Setting | What it is |
+|---|---|
+| `goat_fed_republisher_image` | the image, digest-pinned: `components.goat-fed-republisher.fleet` in `ops/pins/fleet-pins.yaml` |
+| `goat_fed_republisher_core_endpoint` | your core router as this host dials it, e.g. `tls/<core address>:7447`, with no `#` fragment |
+| `goat_fed_republisher_core_ca_src` | **your** CA, the roots your core's certificate chains to, as a path on the machine running the driver |
+
+Its certificate is phase 8's `republisher.pem`, and the agreement is phase 6's; the role copies both
+from the working directory. Your core admits it through the fragment's `fed-rp-<them>` subject: read
+the offered `release/<set>/**`, write `from/<you>/**`, nothing else. A core configured from
+`roles/goat-zenoh` carries the same grant through `zenoh_sovereign_peerings[].republisher_cn` and
+`republisher_release_key_exprs`.
+
+Its `edge_linked` and `dropped_total{reason="edge_down"}` metrics describe its session to **your
+core**. They do not see the partner link; phase 14's round trip does.
+
+To stop your data crossing at once without touching the edge, stop the container
+`goat-fed-republisher-<them>` on the core host: nothing else writes your wire name.
 
 ## Step 5 — Open the tunnel
 
@@ -151,6 +293,21 @@ Firewall it to exactly this, on the edge host:
 - **inbound**: the tunnel port, from their address only. Everything else denied and logged.
 - **outbound**: the tunnel port, to their address only.
 - **nothing else crosses** — no management, no shell, no administrative interface.
+
+**Behind a forwarder** (status: built, not yet run between two goatnets), the side that listens
+receives the tunnel port on its carrier interface (`wg-carry0`), not from the partner's address,
+and its only outbound is the carrier port to the forwarder. The side that dials sends to the
+forwarder's address. The forwarder is up before step 1
+([`peering-forwarder.md`](../design/peering-forwarder.md) §7):
+
+| Host | Play | Variables |
+|---|---|---|
+| Forwarder (group `peering_forwarders`) | `ops/ansible/peering-forwarder.yml` (`roles/goat-peering-forwarder`) | `peering_forwarder_enabled: true`; `peering_forwarder_peerings`, one entry per peering: `name`, `edge_carrier_public_key`, optional `partner_sources`. Ports 51820/51821 and carrier 169.254.30.0/31 are defaults |
+| Our edge | `peering-prepare.yml` and `peering-wg.yml` (`roles/goat-peering-wg`) | `peering_wg_via_forwarder: true`, `peering_wg_forwarder_carrier_public_key`, `peering_wg_forwarder_endpoint: <forwarder>:51821` |
+
+With `peering_wg_via_forwarder: true` the edge's firewall binds the tunnel port to `wg-carry0`,
+and phase 11 refuses unless this side listens and the link MTU is at most 1340. Offer
+`measured_mtu = 1300`. Declare the forwarder under `forwarder:` in the partner file.
 
 ## Step 6 — Sealed data for this partner, if they need it
 
@@ -229,21 +386,23 @@ refused.
 **Every check in Step 7 needs shell on both sides.** You read their store, you read their log. A
 real publisher has neither, and none of those checks is available to them.
 
-The round trip is the one check the sending side can make alone. Publish a nonce under your own
-wire name and wait for their acknowledgement to come back under theirs:
+The round trip is the one check the sending side can make alone. Stage a nonce under one of your
+release sets, let your republisher lift it onto your wire name, and wait for their acknowledgement
+to come back under theirs:
 
 ```bash
-# on their side, once
-python3 ops/federation/roundtrip/responder.py from/<them> from/<us>
+# on their side, once: watch for your probes, stage the ack under one of THEIR sets
+python3 ops/federation/roundtrip/responder.py from/<you> release/<one of their sets>
 
-# on yours, whenever you want the answer
-ops/federation/roundtrip/fedcheck.sh from/<us> from/<them>
+# on yours, once per set you offer (phase 14 does this for every set)
+ops/federation/roundtrip/fedcheck.sh release/<one of your sets> from/<them>
 ```
 
 A pass means the sample crossed, **their own router delivered it to a process on their side**, the
 payload arrived with the digest you sent, and the answer came back over the same agreement. It uses
 no access the agreement does not already grant — the probe goes out on your wire name and the ack
-returns on their landing prefix, which are the two lanes you just built.
+returns on their landing prefix, which are the two lanes you just built. Because the probe is
+staged, a pass also proves your republisher lifted that set; with the republisher stopped it fails.
 
 Run it last, because it is the only stage that fails when an earlier one silently half-works. A
 peering can be ESTABLISHED, fully authenticated, and carrying nothing at all with no denial logged
@@ -268,11 +427,37 @@ Then, in this order:
    re-adds their certificate authority within minutes and quietly undoes you.
 2. Remove their CA from the edge router's configuration and re-apply.
 3. Restart the edge router.
+4. On a core configured from `roles/goat-zenoh`, review the orphan-store policy,
+   remove their entry from `zenoh_sovereign_peerings`, and apply the reviewed
+   core change. The per-partner directory `<storage path>/sovereign_from_<them>`
+   remains on disk and is listed in `.undeclared-stores`; the role never deletes
+   it. Historical copies can also remain in the shared legacy `sovereign_from`
+   store. Follow the agreed retention/deletion procedure for all copies, while
+   preserving other partners' data. With `zenoh_orphan_stores_fail: true`, an
+   approved disposition or migration is needed before the deploy can proceed.
 
 There is no certificate revocation list and no way to revoke a single certificate. Cutting the
 tunnel is the control that actually works; the rest is cleanup.
 
 ---
+
+## Receive-storage preflight
+
+The edge role checks each configured `goat_zenoh_edge_ingress_key_exprs` value
+against the core's storage declarations when it can read that core locally.
+Every required scope must have an exact matching receive store. This accepts the
+legacy-plus-scoped configuration introduced by #235 and preserves its existing
+history. It does not remove stores, migrate data, alter ACLs or restart the core.
+
+A readable configuration with missing scopes or an unsupported format fails with
+an actionable message. An unreadable or separate core is explicitly **SKIP**, not
+verified. Inspect that core through its own approved workflow. Setting
+`goat_zenoh_edge_ingress_scope_check: false` also reports SKIP and does not inspect
+the core. Actual fresh delivery and persistence still require the acceptance
+checks; a configured store is not evidence that traffic arrived.
+
+The implementation and its limits are described in
+[Federation ingress storage preflight](../design/federation-ingress-storage-preflight.md).
 
 ## If something does not work
 
@@ -281,6 +466,7 @@ tunnel is the control that actually works; the rest is cleanup.
 | Connection refused immediately | Their certificate does not chain to the CA you installed. Re-check Step 3, and check you installed *their* CA and not your own. |
 | Connects, but nothing arrives | The name they present does not exactly match `goat_zenoh_edge_partner_cn`. Matching is exact — check case, hyphens and whitespace. |
 | Arrives but is not stored | Your core has no storage declared for the landing prefix. Data is being routed and discarded. |
+| Session up, they publish, nothing reaches your core, and nothing is logged on their side | Check for a receive store matching each admitted ingress scope. A lone `from/**` store declares a subscriber wider than a scoped edge grant and is refused. A matching `from/<them>/**` store, or matching per-lane stores for per-lane grants, supplies the required declarations. A retained legacy store can coexist with them. The edge preflight checks an inspectable local core and explicitly reports SKIP when it cannot read one; inspect a separate core through its own approved workflow. |
 | Worked, then stopped after weeks | A certificate expired, or their CA rotated and the refresh is not running. Check the refresh timer first. |
 | Works in one direction only | The two sides' agreed prefixes do not mirror. Compare Step 2 values side by side. |
 

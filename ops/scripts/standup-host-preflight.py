@@ -48,6 +48,7 @@ Usage:
 Exit 0 all invariants hold; 1 otherwise.
 """
 import argparse
+import getpass
 import re
 import shlex
 import subprocess
@@ -123,23 +124,18 @@ class Host:
 
 
 def _root_is_sole_data_volume(h):
-    """True when root is the node's only large data-bearing filesystem — the
-    single-encrypted-volume node-class where Tier-3 legitimately lives on the
-    encrypted root because there is no separate NVMe/LV to move container data to
+    """True when root is the node's only large data-bearing filesystem, so
+    Tier-3 legitimately lives on root because there is no separate NVMe/LV to
+    move container data to: the single-encrypted-volume node-class
     (host-site-node-disk-encryption.md §6/§82/§122, the Pi dropbear-reencrypt
-    plain-partition shape).
+    plain-partition shape) and a goatlite VM's one plain disk.
 
-    Two conditions: root sits on LUKS (the whole-disk container that gives
-    at-rest encryption to /opt/docker-data on this class), and no OTHER mounted
-    real filesystem is anywhere near root's size. If a bigger data disk exists
-    and the runtimes are not on it, both-on-root IS the F-093 failure, so this
-    returns False and the caller fails the node."""
-    ok, rsrc = h.sh("findmnt -no SOURCE /")
-    if not ok or not rsrc:
-        return False
-    ok, rchain = h.sh(f"lsblk -s -no TYPE {shlex.quote(rsrc)} 2>/dev/null")
-    if not ok or "crypt" not in rchain.split():
-        return False
+    The test is size only: no OTHER mounted real filesystem is anywhere near
+    root's size. If a bigger data disk exists and the runtimes are not on it,
+    both-on-root IS the F-093 failure, so this returns False and the caller
+    fails the node. Whether root must be encrypted is the "disk encryption"
+    row's question, graded against the site's declaration; this row does not
+    repeat it."""
     ok, out = h.sh("df -B1 --output=size,target -x tmpfs -x devtmpfs "
                    "-x squashfs -x overlay 2>/dev/null | tail -n +2")
     if not ok or not out:
@@ -257,8 +253,8 @@ def check(h):
             # by asking whether a larger data disk sits unused.
             if _root_is_sole_data_volume(h):
                 h.ok("container data-roots",
-                     "both on / — single encrypted-volume node-class; Tier-3 is the "
-                     "encrypted root, no separate data disk (design §82 variation)")
+                     "both on / — root is the only data filesystem, so Tier-3 is "
+                     "root; no separate data disk (design §82 variation)")
             else:
                 h.bad("container data-roots",
                       "both on / while a larger data filesystem sits unused",
@@ -279,13 +275,13 @@ def check(h):
     for key in ("net.ipv4.ip_nonlocal_bind", "net.ipv6.ip_nonlocal_bind"):
         ok, val = h.sh(f"sysctl -n {key} 2>/dev/null")
         if not ok or val == "":
-            h.unknown(f"{key}", val or "no value")
+            h.unknown(key, val or "no value")
         elif val.strip() == "1":
-            h.ok(f"{key}", "1")
+            h.ok(key, "1")
         elif h.baseline_pending:
-            h.set_by_phase_2(f"{key}", f"is {val.strip()}")
+            h.set_by_phase_2(key, f"is {val.strip()}")
         else:
-            h.bad(f"{key}", f"is {val.strip()}, must be 1",
+            h.bad(key, f"is {val.strip()}, must be 1",
                   "A VIP cannot be bound before it is held; failover then fails "
                   "in a way that reads as a service crash.")
 
@@ -374,10 +370,31 @@ def load_inventory(files):
     return hosts
 
 
+def default_user() -> str:
+    """The account this project reaches a machine as: deploy.ssh_user in
+    ops/goatbuilder/goatbuilder.yaml, else the login name, which is what ssh
+    itself uses."""
+    try:
+        lines = (Path(__file__).resolve().parents[2] / "ops/goatbuilder/goatbuilder.yaml").read_text().splitlines()
+    except OSError:
+        lines = []
+    inside = False
+    for line in lines:
+        if line[:1] not in ("", " ", "\t", "#"):
+            inside = line.rstrip() == "deploy:"
+        elif inside and line.strip().startswith("ssh_user:"):
+            value = line.split(":", 1)[1].split("#", 1)[0].strip().strip("'\"")
+            if value:
+                return value
+    return getpass.getuser()
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("hosts", nargs="+")
-    ap.add_argument("--user", default="goat")
+    ap.add_argument("--user", default=default_user(),
+                    help="ssh user for a host the inventory names no ansible_user for "
+                         "(default: deploy.ssh_user in ops/goatbuilder/goatbuilder.yaml, else the login name)")
     ap.add_argument("--inventory", action="append", default=None,
                     help="ansible inventory file(s) that carry the host transport "
                          "(ansible_host / ansible_user / ansible_ssh_common_args); "

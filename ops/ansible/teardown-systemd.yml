@@ -1,0 +1,59 @@
+---
+# teardown-systemd.yml — stop and disable a service's systemd units on a site
+# and prove it from the host (ops/goatbuilder/teardown.yaml action systemd-stop;
+# `goatbuilder teardown`, ops/scripts/goat-teardown.sh).
+#
+#   ansible-playbook teardown-systemd.yml -e target=<group> \
+#     -e teardown_component=rathole-client -e 'teardown_units=["rathole-client@*.service"]'
+#
+# A unit name may be a glob: the template instances (rathole-client@<relay>)
+# are matched by what systemd has loaded. Unit files stay on disk, so the next
+# standup's play enables and starts them again. The proof is the host's own
+# answer: `systemctl list-units --state=active <unit>` lists nothing for each
+# name afterwards, or the play fails. One row per run goes to
+# /var/lib/goat/<component>/teardown.jsonl; deploy-history.jsonl is never touched.
+- name: teardown — stop and disable systemd units
+  hosts: "{{ target | mandatory }}"
+  become: true
+  gather_facts: false
+  tasks:
+    - name: teardown | the loaded units each name matches
+      ansible.builtin.command:
+        argv: [systemctl, list-units, --all, --plain, --no-legend, --no-pager, "{{ item }}"]
+      loop: "{{ teardown_units | mandatory }}"
+      register: _tsd_units
+      changed_when: false
+
+    - name: teardown | stop and disable each one (unit files kept)
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: stopped
+        enabled: false
+      loop: >-
+        {{ _tsd_units.results | map(attribute='stdout_lines') | flatten
+           | map('split') | map('first') | list | unique }}
+
+    - name: teardown | read what is still active
+      ansible.builtin.command:
+        argv: [systemctl, list-units, --state=active, --plain, --no-legend, --no-pager, "{{ item }}"]
+      loop: "{{ teardown_units }}"
+      register: _tsd_after
+      changed_when: false
+
+    - name: teardown | no matching unit may still be active
+      ansible.builtin.assert:
+        that:
+          - (item.stdout | default('') | trim | length) == 0
+        fail_msg: "{{ item.item }} still active after stop: {{ item.stdout }}"
+        quiet: true
+      loop: "{{ _tsd_after.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: teardown | record it (deploy-history.jsonl is not touched)
+      ansible.builtin.shell:
+        cmd: >-
+          mkdir -p /var/lib/goat/{{ teardown_component | mandatory }} &&
+          printf '%s\n' '{"ts":"'"$(date -u +%Y-%m-%dT%H:%M:%SZ)"'","component":"{{ teardown_component }}","action":"teardown","unit_files":"kept","units":{{ teardown_units | to_json }}}'
+          >> /var/lib/goat/{{ teardown_component }}/teardown.jsonl
+      changed_when: true

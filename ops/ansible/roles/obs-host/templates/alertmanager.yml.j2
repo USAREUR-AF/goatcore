@@ -42,7 +42,7 @@ global:
   resolve_timeout: 5m
 {% if smtp_smarthost | default('') | length > 0 %}
   smtp_smarthost: "{{ smtp_smarthost }}"
-  smtp_from: "{{ smtp_from | default('person-12@example.org') }}"
+  smtp_from: "{{ smtp_from | default('alertmanager@goat.example') }}"
   smtp_auth_username: "{{ smtp_auth_username | default('') }}"
   smtp_auth_password: "{{ smtp_auth_password | default('') }}"
   smtp_require_tls: true
@@ -356,7 +356,7 @@ receivers:
       - to: "{{ email_digest_recipients }}"
         send_resolved: false
         headers:
-          Subject: "[goat] {{ '{{' }} .CommonLabels.severity {{ '}}' }}: {{ '{{' }} .CommonLabels.alertname {{ '}}' }}"
+          Subject: "[{{ alertmanager_email_subject_tag | default('goat') }}] {{ '{{' }} .CommonLabels.severity {{ '}}' }}: {{ '{{' }} .CommonLabels.alertname {{ '}}' }}"
 {% endif %}
 {% if ntfy_alertmanager_webhook_url | default('') | length > 0 %}
     # ntfy bridge for warnings — uses a different topic than critical

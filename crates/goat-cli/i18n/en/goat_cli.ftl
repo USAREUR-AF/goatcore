@@ -30,6 +30,10 @@ error-token-invalid-summary = portal rejected the Bearer token
 error-not-admin-summary = operator-only action — you are not authorized (`goat admin` is inert for non-admins)
 error-topic-conflict-summary = topic `{ $topic }` already exists
 error-bundle-invalid-summary = bundle signature or expiry verification failed
+error-machine-unresolved-summary = `{ $machine }` is not exactly one enrolled machine
+error-mesh-peer-unresolved-summary = enrolled machine `{ $machine }` has no single mesh peer
+error-netbird-failed-summary = the NetBird management API call failed; nothing was changed
+error-acl-declaration-missing-summary = no ACL declaration was supplied, so there is nothing to check
 
 # Machine-translation notice (ADR 1024 / docs/design/goat-cli-i18n.md).
 # Emitted to stderr when a non-English locale that is not native-reviewed
@@ -219,6 +223,8 @@ status-session-timeout = zenoh session did not open in { $secs }s — the router
 status-ztol-refused = TCP refused to router { $host }:{ $port }: { $err }
 status-ztol-unreachable = off-mesh (router { $host }:{ $port } unreachable in { $ms }ms)
 status-portal-ok = portal /api/health 2xx
+status-portal-ok-no-key = portal /api/health 2xx (this context holds no portal key: liveness only)
+status-portal-no-endpoint = portal not probed (this context names no portal)
 status-portal-failed = portal /api/health failed: { $err }
 status-portal-timeout = portal /api/health timed out in { $secs }s
 status-cert-read-failed = cert read failed: { $err }

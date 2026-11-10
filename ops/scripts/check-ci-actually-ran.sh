@@ -35,7 +35,10 @@
 # which is NOT the same as pass and is reported as its own outcome.
 set -uo pipefail
 
-REPO="${REPO:-USAREUR-AF/goatcore}"
+# The repository this checkout releases from (repo.source in
+# ops/goatbuilder/goatbuilder.yaml), read with project-setting.sh.
+REPO="${REPO:-$("$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/project-setting.sh" repo source 2>/dev/null)}"
+[ -n "$REPO" ] || { echo "check-ci-actually-ran: no repository: set REPO=<owner>/<name>, or declare repo.source in ops/goatbuilder/goatbuilder.yaml" >&2; exit 2; }
 PR=""; REF="main"; LAST=3
 while [ $# -gt 0 ]; do
   case "$1" in

@@ -24,8 +24,8 @@ func TestParseNetbirdStatus(t *testing.T) {
 	if ip != "100.127.0.1" {
 		t.Errorf("local IP = %q, want 100.127.0.1", ip)
 	}
-	if name != "legacy.examplebird.selfhosted" {
-		t.Errorf("local name = %q, want legacy.examplebird.selfhosted", name)
+	if name != "example.netbird.selfhosted" {
+		t.Errorf("local name = %q, want example.netbird.selfhosted", name)
 	}
 
 	// Peers

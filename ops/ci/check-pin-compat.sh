@@ -20,6 +20,16 @@
 #   4. Asserts every flag in command: appears in --help output
 #   5. Image-specific contract checks (postgres-spock pg_hba rule count etc.)
 #
+# Which image. A service whose compose line carries a fallback
+# (`${VAR:-<ref>}`) is checked against that fallback. A service whose line
+# carries none (`${VAR:?...}`) is checked against, in order: the environment
+# variable VAR; then the `fleet:` value of the pin-table row whose `var:` is
+# VAR in lower case (ops/pins/fleet-pins.yaml, with `{{ ghcr_org }}` taken
+# from GHCR_ORG or the default in ops/ansible/group_vars/all.yml). A tree with
+# a pin table and no value for VAR fails. A tree with no pin table and VAR
+# unset skips that service and says so: the pins live elsewhere, and so does
+# this check.
+#
 # Exit 0 on all checks pass, 1 on any failure.
 #
 # Run locally:
@@ -56,6 +66,47 @@ path = sys.argv[1]
 with open(path) as f:
     data = yaml.safe_load(f)
 
+PIN_TABLE = "ops/pins/fleet-pins.yaml"
+ALL_VARS = "ops/ansible/group_vars/all.yml"
+
+
+def ghcr_org():
+    org = os.environ.get("GHCR_ORG")
+    if org:
+        return org
+    try:
+        with open(ALL_VARS) as f:
+            for line in f:
+                if line.startswith("ghcr_org:"):
+                    m = re.search(r"or\s+'([^']+)'", line)
+                    return m.group(1) if m else None
+    except OSError:
+        return None
+    return None
+
+
+def pinned_image(var):
+    """(image, None) for a compose variable with no fallback, else (None, why)."""
+    if os.environ.get(var):
+        return os.environ[var], None
+    if not os.path.isfile(PIN_TABLE):
+        return None, "no-table"
+    with open(PIN_TABLE) as f:
+        table = yaml.safe_load(f) or {}
+    for cname, spec in (table.get("components") or {}).items():
+        if (spec or {}).get("var") == var.lower():
+            ref = spec.get("fleet")
+            if not ref:
+                return None, f"pin-table row {cname} has no fleet value"
+            if "{{ ghcr_org }}" in ref:
+                org = ghcr_org()
+                if not org:
+                    return None, f"cannot read ghcr_org from {ALL_VARS}; set GHCR_ORG"
+                ref = ref.replace("{{ ghcr_org }}", org)
+            return ref, None
+    return None, f"no pin-table row has var: {var.lower()}"
+
+
 services = data.get("services", {}) or {}
 for name, spec in services.items():
     if not spec:
@@ -66,6 +117,18 @@ for name, spec in services.items():
         continue
     # Resolve ${VAR:-default} → default (the pinned fallback)
     image = re.sub(r"\$\{[^:}]+:-([^}]+)\}", r"\1", image)
+    # ${VAR:?message} / ${VAR:-} carry no reference: the environment names
+    # the image, else the pin table does.
+    m = re.fullmatch(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::\?[^}]*|:-)?\}", image.strip())
+    if m:
+        var = m.group(1)
+        image, why = pinned_image(var)
+        if not image:
+            if why == "no-table":
+                print(f"SKIP|{name}|{var}")
+                continue
+            print(f"UNRESOLVED|{name}|{var}: {why}")
+            continue
     # command can be a list or a string
     if isinstance(command, list):
         tokens = command
@@ -165,15 +228,13 @@ check_postgres_spock() {
 # Any new entry to the allowlist needs a comment in the relevant compose
 # file naming this script and explaining why a tag-only default is OK.
 DIGEST_ALLOWLIST=(
-  # mgmt-host-bootstrap: private image, rebuilt by CI on every main push.
-  # See compose comment in ops/compose/mgmt-host/docker-compose.yml.
+  # mgmt-host-bootstrap: rebuilt by CI on every main push, and run one-shot
+  # (`compose run --rm`), never long-lived. A goatnet names its own reference
+  # in .env. See the compose comment in ops/compose/mgmt-host/docker-compose.yml.
   "ghcr.io/usareur-af/mgmt-host-bootstrap"
-  # admit-audit: same shape — private image, rebuilt by us. Production
-  # deployments override ADMIT_AUDIT_IMAGE via Ansible.
-  "ghcr.io/usareur-af/admit-audit"
-  # SPIRE server/agent (ZAGROS Phase-A overlay docker-compose.spire.yml):
-  # upstream images, deploy-time-pinned by digest via group_vars/zagros_hosts/
-  # spire.yml (SPIRE_SERVER_IMAGE/SPIRE_AGENT_IMAGE). In-tree default is a
+  # SPIRE server/agent (Phase-A overlay docker-compose.spire.yml):
+  # upstream images, deploy-time-pinned by digest via the goatnet's pins
+  # (SPIRE_SERVER_IMAGE/SPIRE_AGENT_IMAGE). In-tree default is a
   # dev-only tag until the source/license decision lands (ADR 0412).
   "ghcr.io/spiffe/spire-server"
   "ghcr.io/spiffe/spire-agent"
@@ -212,6 +273,13 @@ for fn in sorted(os.listdir(compose_dir)):
         raw = spec.get('image') or ''
         if not raw:
             continue
+        # A line with no fallback (${VAR:?message} or ${VAR:-}) names no
+        # image in this tree: the pin that feeds VAR is governed where it
+        # lives (ops/pins/generate-pins.py refuses a bare tag as a fleet
+        # value), so there is nothing here to judge.
+        if re.fullmatch(r'\$\{[A-Za-z_][A-Za-z0-9_]*(?::\?[^}]*|:-)?\}', raw.strip()):
+            print(f"  none  {fn}:{name} = {raw.strip()[:40]}  (no in-tree reference)")
+            continue
         # Resolve ${VAR:-default}; if no default is present we can't judge,
         # so fall back to the raw string and let the check still run on a
         # plain `image: foo:tag` line.
@@ -244,6 +312,18 @@ echo ""
 echo "=== pin-compat guard: $COMPOSE_FILE ==="
 while IFS='|' read -r service image flags; do
   [[ -z "$service" ]] && continue
+  if [[ "$service" == "SKIP" ]]; then
+    echo ""
+    echo "[$image] skipped: $flags is unset and this tree has no pin table"
+    echo "  set $flags to check the image a goatnet pins"
+    continue
+  fi
+  if [[ "$service" == "UNRESOLVED" ]]; then
+    echo ""
+    echo "[$image] FAIL: no image for $flags"
+    FAIL=1
+    continue
+  fi
   echo ""
   echo "[$service] image=$image"
   echo "  pulling..."

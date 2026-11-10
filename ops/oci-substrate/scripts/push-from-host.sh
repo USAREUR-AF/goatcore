@@ -68,7 +68,7 @@ fi
 
 PROXY_JUMP_FLAG=""
 if [[ "$SOURCE_HOST" == *"@192.168."* || "$ORIN_C_HOST" == *"@192.168."* ]]; then
-  PROXY_JUMP_FLAG="-o ProxyJump=goat@100.127.1.32"
+  PROXY_JUMP_FLAG="-o ProxyJump=goat@100.127.1.23"
 fi
 
 echo "[1/5] Streaming docker save | docker load: $LOCAL_TAG → $ORIN_C_HOST"

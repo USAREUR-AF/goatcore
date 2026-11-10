@@ -144,11 +144,11 @@ func TestCeremony_EndToEnd(t *testing.T) {
 	bundlePath := filepath.Join(work, "device.bundle.cbor")
 	allowlistPath := filepath.Join(work, "wg-cp0-bundle-allowlist.json")
 	createCmd := exec.Command(bundleCreatePath,
-		"--site", "vega",
+		"--site", "lab",
 		"--device-id", "mgmt-prov-site3-01-orin",
 		"--wg-cp0-address", "10.99.0.6/24",
 		"--wg-cp0-relays", relaysPath,
-		"--acl-groups", "VEGA,VEGA-MGMT",
+		"--acl-groups", "LAB,LAB-MGMT",
 		"--ca-id", "dev-test-ca",
 		"--ca-key", caKeyPath,
 		"--age-identity", ageIdentityPath,
@@ -207,7 +207,7 @@ func TestCeremony_EndToEnd(t *testing.T) {
 		"Endpoint   = 203.0.113.10:51821",
 		"AllowedIPs = 10.99.0.4/32, 198.18.0.0/24",
 		"PersistentKeepalive = 25",
-		"# Site:        vega",
+		"# Site:        lab",
 		"# Device:      mgmt-prov-site3-01-orin",
 	} {
 		if !strings.Contains(conf, want) {
@@ -338,7 +338,7 @@ func TestCeremony_RotationOverwritesAllowlistEntry(t *testing.T) {
 		out := filepath.Join(work, "bundle.cbor")
 		_ = os.Remove(out)
 		args := []string{
-			"--site", "vega",
+			"--site", "lab",
 			"--device-id", "orin-rotation-target",
 			"--wg-cp0-address", "10.99.0.10/24",
 			"--wg-cp0-relays", relaysPath,
@@ -434,7 +434,7 @@ func TestCeremony_BareReissueFailsLoud(t *testing.T) {
 	allowlistPath := filepath.Join(work, "allowlist.json")
 
 	common := []string{
-		"--site", "vega",
+		"--site", "lab",
 		"--device-id", "double-reissue-victim",
 		"--wg-cp0-address", "10.99.0.11/24",
 		"--wg-cp0-relays", relaysPath,

@@ -4,7 +4,7 @@
 #   - postgres-a  (Spock-enabled PG16 built by ops/postgres/spock/)
 #   - signal-a    (our custom federated signal server)
 #   - management-a (netbird-mgmt; image override via NETBIRD_MGMT_IMAGE
-#                   in .env — production sites use ghcr.io/usareur-af/netbird-mgmt:patched-<ref>
+#                   in .env — production sites use ghcr.io/<org>/netbird-mgmt:patched-<ref>
 #                   per Block 21A regression hook + ADR 0413; pilot/dev
 #                   sites use upstream netbirdio/management:0.68.3)
 #                   — configured via /etc/netbird/management.json rendered
@@ -39,10 +39,13 @@
 
 services:
   postgres-a:
-    # Pinned to the build with full pg_hba + pgBackRest baked in (see
-    # ops/postgres/spock/Dockerfile). Any future pin bump is validated by
-    # ops/ci/check-pin-compat.sh (wired into .github/workflows/compose-lint.yml).
-    image: ${POSTGRES_SPOCK_IMAGE:-ghcr.io/usareur-af/postgres-spock@sha256:038f12f0e5339b2722754c06273a2277fcc4e4e17056c8afd2f52f28ed16e56c}
+    # This file carries no image reference for postgres-a. POSTGRES_SPOCK_IMAGE
+    # is rendered into .env by Ansible from the goatnet's postgres_spock_image
+    # pin (the pin table for a listed goatnet, group_vars otherwise). It must
+    # name a build with full pg_hba + pgBackRest baked in (see
+    # ops/postgres/spock/Dockerfile). ops/ci/check-pin-compat.sh validates the
+    # pinned image against this file (.github/workflows/compose-lint.yml).
+    image: ${POSTGRES_SPOCK_IMAGE:?set POSTGRES_SPOCK_IMAGE in .env}
     container_name: postgres-a
     restart: unless-stopped
     # Bulkhead — cgroup limits per failure-isolation.md §10.
@@ -65,19 +68,24 @@ services:
       - config_file=/etc/postgresql/postgresql.conf
     environment:
       POSTGRES_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD:?set POSTGRES_SUPERUSER_PASSWORD in .env}
-      # Cluster encoding = UTF8, NOT the pgedge base image's SQL_ASCII initdb
-      # default. Every database created here inherits template1, so a
+      # Cluster encoding. Default UTF8, NOT the pgedge base image's SQL_ASCII
+      # initdb default: every database created here inherits template1, so a
       # UTF8 cluster makes netbird/kratos/hydra UTF8 with no per-DB change —
       # identity and org names validate and store as Unicode. --locale=C keeps
-      # the current byte-order collation; only the encoding moves.
+      # the byte-order collation.
       #
-      # NON-DISRUPTIVE BY CONSTRUCTION: the upstream entrypoint applies
-      # POSTGRES_INITDB_ARGS ONLY when it runs initdb on an EMPTY PGDATA. A
-      # container with an already-initialized data dir skips initdb entirely
-      # so this is a no-op on every already-running goatnet and takes
-      # effect only on a FRESH standup. Existing SQL_ASCII clusters migrate
-      # separately — destructive and coordinated.
-      POSTGRES_INITDB_ARGS: "--locale=C --encoding=UTF8"
+      # The upstream entrypoint applies POSTGRES_INITDB_ARGS ONLY when it runs
+      # initdb on an EMPTY PGDATA; an existing cluster keeps the encoding it
+      # was created with. That makes it matter for a goatnet with more than
+      # one site: Spock replicates only between clusters of the same encoding,
+      # and a founder created before this default is SQL_ASCII. So the value
+      # comes from .env: a joiner's .env carries its founder's encoding
+      # (site-bootstrap.yml Phase 1C reads it), and anything that renders no
+      # value gets UTF8. Existing SQL_ASCII clusters migrate separately —
+      # destructive and coordinated, every Spock member together:
+      # docs/operations/postgres-utf8-migration.md
+      # (ops/ansible/postgres-encoding-migrate.yml).
+      POSTGRES_INITDB_ARGS: "${POSTGRES_INITDB_ARGS:---locale=C --encoding=UTF8}"
     ports:
       # Bound to 0.0.0.0 so peer sites reach us via the Netbird mesh
       # interface for Spock logical replication. EC2/Orin SG rules
@@ -117,11 +125,14 @@ services:
       - mgmt
 
   signal-a:
-    # Pinned to the build that accepts -federation-peers. sha-9df2a27 removed
-    # that flag, breaking the compose command below. If the CLI surface
-    # changes again, update the `command:` block in lockstep BEFORE bumping
-    # the pin, and run a throwaway `docker compose up --wait` to verify.
-    image: ${SIGNAL_SERVER_IMAGE:-ghcr.io/usareur-af/signal-server@sha256:3a26d0e8884e90edcf8dfc0fba5261a16ce45c7e585d9ca325a0913d9029241d}
+    # This file carries no image reference for signal-a. SIGNAL_SERVER_IMAGE
+    # is rendered into .env by Ansible from the goatnet's signal_server_image
+    # pin (the pin table for a listed goatnet, group_vars otherwise). It must
+    # name a build that accepts -federation-peers: sha-9df2a27 removed that
+    # flag, breaking the compose command below. If the CLI surface changes
+    # again, update the `command:` block in lockstep BEFORE bumping the pin,
+    # and run a throwaway `docker compose up --wait` to verify.
+    image: ${SIGNAL_SERVER_IMAGE:?set SIGNAL_SERVER_IMAGE in .env}
     container_name: signal-a
     restart: unless-stopped
     # Bulkhead — cgroup limits per failure-isolation.md §10.
@@ -143,7 +154,7 @@ services:
       # FEDERATION_PEERS is a comma-separated list of peer signal-server
       # mesh addresses (host:port). Empty = standalone/no federation;
       # peers enrolled here cannot reach peers enrolled at other sites.
-      # Set via .env from Ansible: FEDERATION_PEERS=100.127.1.14:10000
+      # Set via .env from Ansible: FEDERATION_PEERS=<peer mesh address>:10000
       - --federation-peers=${FEDERATION_PEERS:-}
     environment:
       # CVE-2026-98432 mitigation (IPv4 TCP request-socket use-after-free, CVSS
@@ -231,7 +242,7 @@ services:
     # Default: upstream netbirdio/management (AutoMigrate runs on every start —
     # fine for single-instance pilot). For Phase 2 multi-master on the EC2
     # pair or any Phase 3+ site, override via .env:
-    #   NETBIRD_MGMT_IMAGE=ghcr.io/usareur-af/netbird-mgmt:patched-<ref>
+    #   NETBIRD_MGMT_IMAGE=ghcr.io/<org>/netbird-mgmt:patched-<ref>
     # The patched image honors NETBIRD_SKIP_MIGRATIONS / NETBIRD_MIGRATION_MARKER;
     # the stock image ignores them (harmless on either).
     image: ${NETBIRD_MGMT_IMAGE:-netbirdio/management:0.68.3@sha256:8d3ac9d38c9589520d9d1563c8ae3646b9a038596aae16b9ed089602060a8001}
@@ -278,6 +289,10 @@ services:
       # delays the final push after a burst.
       NB_PEER_UPDATE_INTERVAL_MS: "${NB_PEER_UPDATE_INTERVAL_MS:-500}"
       NB_PEER_UPDATE_STARTUP_PERIOD_S: "${NB_PEER_UPDATE_STARTUP_PERIOD_S:-90}"
+      # The system trust directories plus the deployment's internal CA, which
+      # mgmt-host.yml places in ./management-a/trust (netbird_mgmt_trust_certs).
+      # No deployment CA is baked into the image.
+      SSL_CERT_DIR: /etc/ssl/certs:/etc/netbird/trust
     volumes:
       # management.json rendered by ops/ansible/mgmt-host.yml from
       # ops/ansible/templates/management.json.j2 — see that file for var contract.
@@ -287,6 +302,8 @@ services:
       # at deploy time; touching / removing migrations.allow inside it gates
       # AutoMigrate on the patched image. No-op for stock image.
       - ./management-a/marker:/opt/netbird-ha:rw
+      # The deployment's internal CA (see SSL_CERT_DIR above).
+      - ./management-a/trust:/etc/netbird/trust:ro
     ports:
       # REST + gRPC on port 80 inside the container, loopback-only exposure
       # to the host (kept for direct local debugging via curl from the host).
@@ -323,8 +340,8 @@ services:
   # traefik — TLS terminator at :443 for the mgmt-API (and future
   # dashboard / Ory / db-policy-engine / snitch collector at the same Orin).
   # File-provider only: no docker labels, no ACME, no Cloudflare. Cert and
-  # key are PEM files mounted read-only from the host filesystem at
-  # /etc/goat/tls/<service>/{cert.pem,key.pem}, delivered by the
+  # key are PEM files mounted read-only from the host's TLS directory (the
+  # first volume below), <service>/{cert.pem,key.pem}, delivered by the
   # `traefik` ansible role from operator-laptop output of
   # `cert-sign` per ADR 0407 + docs/design/internal-tls-ca.md.
   #
@@ -487,7 +504,13 @@ services:
       # Cert + key mounted read-only. Traefik file-watcher picks up
       # rotations without restart. Mode 0400 root:root for the key
       # is enforced on the host by the ansible role.
-      - /etc/goat/tls/:/etc/goat/tls/:ro
+      #
+      # The same path on both sides: the dynamic config the traefik role
+      # renders names each cert by its HOST path (traefik_tls_root), and
+      # Traefik reads that path inside the container. Every play that
+      # delivers this file writes TRAEFIK_TLS_ROOT to .env from
+      # traefik_tls_root first (ops/ansible/tasks/mgmt-host-tls-root-env.yml).
+      - ${TRAEFIK_TLS_ROOT:-/etc/goat/tls}/:${TRAEFIK_TLS_ROOT:-/etc/goat/tls}/:ro
       # Dynamic routing config rendered by the traefik ansible role
       # from ops/ansible/templates/traefik-mgmt-host-dynamic.yml.j2
       # per ADR 0407 + docs/design/internal-tls-ca.md §6.2.
@@ -512,13 +535,15 @@ services:
   #
   # Source: ops/mgmt-host-bootstrap/. Tests at .github/workflows/mgmt-host-bootstrap.yml.
   #
-  # Pin discipline (ADR 0703): production deployments MUST set
-  # MGMT_HOST_BOOTSTRAP_IMAGE in .env to a digest-pinned reference
-  # (e.g. ghcr.io/usareur-af/mgmt-host-bootstrap:<sha>@sha256:<digest>),
-  # rendered by Ansible group_vars. The :latest fallback below is for
-  # ad-hoc operator invocation (`compose run --rm`) only — never long-lived.
-  # The compose-lint pin-compat job (ops/ci/check-pin-compat.sh) flags any
-  # service whose effective image is a tag-only ref.
+  # Image: a goatnet names its own in .env as MGMT_HOST_BOOTSTRAP_IMAGE,
+  # rendered by Ansible from its mgmt_host_bootstrap_image pin (the pin table
+  # for a listed goatnet, group_vars otherwise), as
+  # ghcr.io/<org>/mgmt-host-bootstrap:<tag>[@sha256:<digest>]. Pin discipline
+  # (ADR 0703) asks for a digest-pinned reference in production. The :latest
+  # fallback below is the public build, for ad-hoc invocation
+  # (`compose run --rm`) where no pin is set — never long-lived. The
+  # compose-lint pin-compat job (ops/ci/check-pin-compat.sh) flags any service
+  # whose in-file fallback is a tag-only ref; this one is on its allowlist.
   mgmt-host-bootstrap:
     image: ${MGMT_HOST_BOOTSTRAP_IMAGE:-ghcr.io/usareur-af/mgmt-host-bootstrap:latest}
     profiles: ["bootstrap"]

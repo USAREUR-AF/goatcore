@@ -1,6 +1,6 @@
 # usg-stig
 
-Apply DISA STIG hardening via Canonical's Ubuntu Security Guide (USG). Builds on the `ubuntu-pro-fips` role (which enables the `usg` Pro service). Part of the fleet OS baseline — see `docs/design/os-baseline-and-luks.md` §5.
+Apply DISA STIG hardening via Canonical's Ubuntu Security Guide (USG). Builds on the `ubuntu-pro-fips` role (which enables the `usg` Pro service). Part of the fleet OS baseline — see [`docs/design/os-baseline-and-luks.md`](../../../../docs/design/os-baseline-and-luks.md) §5.
 
 ## What it does
 

@@ -3,7 +3,7 @@
 #
 # Usage (from any mesh peer):
 #   curl -fsSL -H "Authorization: Bearer $OPERATOR_KEY" \
-#     https://snitch.netbird.legacy.example/install | sudo OPERATOR_KEY="$OPERATOR_KEY" bash
+#     https://<collector>/install | sudo OPERATOR_KEY="$OPERATOR_KEY" bash
 #
 # OPERATOR_KEY is forwarded to the inner /bin/snitch download via the
 # Authorization header (Block 50E.2 — query-string auth removed; bearer
@@ -14,7 +14,8 @@
 
 set -euo pipefail
 
-COLLECTOR="${SNITCH_COLLECTOR:-https://snitch.netbird.legacy.example}"
+# The collector fills in its own URL when it serves this script.
+COLLECTOR="${SNITCH_COLLECTOR:-__SNITCH_PUBLIC_URL__}"
 PROBE_KEY="${SNITCH_PROBE_KEY:-}"
 # OPERATOR_KEY authenticates the binary download (operator-role).
 # Distinct from PROBE_KEY which the installed daemon uses to POST reports.
@@ -31,6 +32,11 @@ while [[ $# -gt 0 ]]; do
     *)            echo "Unknown arg: $1" >&2; exit 1 ;;
   esac
 done
+
+if [ -z "$COLLECTOR" ]; then
+  echo "snitch: no collector URL: pass --collector <url> or set SNITCH_COLLECTOR" >&2
+  exit 1
+fi
 
 log() { echo "[snitch] $(date +%H:%M:%S) $*"; }
 

@@ -15,11 +15,11 @@ func TestInterpretProbe_AllLayersPass(t *testing.T) {
 		Hostname:      "zenoh.example.net",
 		Port:          7447,
 		IntendedPrefix: "my-vendor",
-		DNS: &probeLayerDNS{OK: true, ResolvedIPs: []string{"100.127.0.46"}},
+		DNS: &probeLayerDNS{OK: true, ResolvedIPs: []string{"192.0.2.2"}},
 		TCP: &probeLayerTCP{OK: true},
 		TLS: &probeLayerTLS{OK: true, NegotiatedCipher: "TLS_AES_256_GCM_SHA384", NegotiatedProto: "TLSv1.3"},
 		CertChain: &probeLayerChain{OK: true, ObservedFingerprintSHA256: "AABBCCDD"},
-		URISAN: &probeLayerURISAN{OK: true, DeclaredPrefix: "my-vendor", CertURISANs: []string{"spiffe://goat.nova/my-vendor"}},
+		URISAN: &probeLayerURISAN{OK: true, DeclaredPrefix: "my-vendor", CertURISANs: []string{"spiffe://goat.example/my-vendor"}},
 	}
 	findings := interpretProbe(res, "AABBCCDD")
 	if got := overallStatus(findings); got != "pass" {
@@ -98,7 +98,7 @@ func TestInterpretProbe_URISANMismatch(t *testing.T) {
 		TCP: &probeLayerTCP{OK: true},
 		TLS: &probeLayerTLS{OK: true},
 		CertChain: &probeLayerChain{OK: true, ObservedFingerprintSHA256: "AA"},
-		URISAN: &probeLayerURISAN{OK: false, DeclaredPrefix: "my-vendor", CertURISANs: []string{"spiffe://goat.nova/other-vendor"}, Error: "no URI-SAN contains the declared prefix my-vendor"},
+		URISAN: &probeLayerURISAN{OK: false, DeclaredPrefix: "my-vendor", CertURISANs: []string{"spiffe://goat.example/other-vendor"}, Error: "no URI-SAN contains the declared prefix my-vendor"},
 	}
 	findings := interpretProbe(res, "AA")
 	uri := findingByLayer(findings, "5-uri-san")

@@ -26,7 +26,12 @@ revocation; the new key exists so the owner is handed the corrected command.
 
 Run ON the mgmt host (needs docker for the console notify + the API token).
 
-usage:
+The goatnet is named by GOATNET (site-a) and its management API by NB_API
+(https://<public_mgmt_fqdn>); ops/scripts/rosenpass-revoke-and-reinvite.sh sets
+both from the goatnet's configuration. The NetBird token is read from the
+onboard-runner's <GOATNET>_NB_API_TOKEN (site-a: SITE_A_NB_API_TOKEN).
+
+usage (GOATNET and NB_API set):
   rosenpass_revoke_and_reinvite.py                 # dry run
   rosenpass_revoke_and_reinvite.py --apply
   rosenpass_revoke_and_reinvite.py --apply --only-offline   # safest first pass
@@ -46,9 +51,12 @@ APPLY = "--apply" in sys.argv
 ONLY_OFFLINE = "--only-offline" in sys.argv
 LIMIT = next((int(a.split("=")[1]) for a in sys.argv if a.startswith("--limit=")), None)
 
-API = os.environ.get("NB_API", "https://netbird.zagros.example")
+API = os.environ.get("NB_API", "").rstrip("/")
 CONSOLE = os.environ.get("CONSOLE_URL", "http://127.0.0.1:8088")
-ENV_NAME = os.environ.get("GOATNET", "zagros")
+# The goatnet's name as the console and the peer names carry it (site-a), and
+# the prefix of its per-goatnet variables (SITE_A).
+ENV_NAME = os.environ.get("GOATNET", "").replace("_", "-")
+ENV_PREFIX = ENV_NAME.upper().replace("-", "_")
 # NOT expanduser("~"): this runs under sudo, where ~ is /root and ~/rp-notice
 # does not exist. that raised FileNotFoundError AFTER the mint,
 # the delete and the notify had completed, so 20 owners were revoked and
@@ -59,7 +67,8 @@ LEDGER = os.environ.get("RP_LEDGER", "/var/lib/peerview/rosenpass-revoked.log")
 # wrong place; handing back exactly what was taken guarantees a support ticket
 # the first time any of those happens. Matches the onboarding default.
 REISSUE_MIN_DEVICES = int(os.environ.get("REISSUE_MIN_DEVICES", "5"))
-NAMED = re.compile(r"^peer-(.+?)-zagros-\d{4}-\d{2}-\d{2}[a-z]?-(.*)$")
+NAMED = re.compile(r"^peer-(.+?)-" + re.escape(ENV_NAME) + r"-\d{4}-\d{2}-\d{2}[a-z]?-(.*)$")
+KEY_NAMED = re.compile(r"^peer-(.+?)-" + re.escape(ENV_NAME) + r"-\d{4}-\d{2}-\d{2}")
 
 
 def sh(*args):
@@ -93,14 +102,20 @@ def notify(payload, token):
 
 
 def main():
+    if not re.fullmatch(r"[a-z0-9][a-z0-9-]*", ENV_NAME):
+        print("REFUSING: GOATNET names no goatnet (set GOATNET=<goatnet>, for example site-a).")
+        return 2
+    if not API.startswith("https://"):
+        print("REFUSING: NB_API is not the goatnet's management URL (https://<public_mgmt_fqdn>).")
+        return 2
     # onboard-runner's token FIRST: it is the identity that already mints setup
     # keys, so it demonstrably carries the authority this needs. The console's
     # ENROLL_WATCH_NB_TOKEN reads as the obvious choice and can be EMPTY,
     # which fails as a clean "no token available" rather than as a permission
     # error — check the length, not just the key's presence.
-    nb_token = (container_env("onboard-runner", "ZAGROS_NB_API_TOKEN")
+    nb_token = (container_env("onboard-runner", ENV_PREFIX + "_NB_API_TOKEN")
                 or container_env("goat-id-console", "ENROLL_WATCH_NB_TOKEN")
-                or os.environ.get("ZAGROS_PORTAL_NB_SVC_TOKEN", "")).strip()
+                or os.environ.get(ENV_PREFIX + "_PORTAL_NB_SVC_TOKEN", "")).strip()
     notify_token = container_env("goat-id-console", "NOTIFY_TOKEN")
 
     # ── precondition ────────────────────────────────────────────────────────
@@ -157,7 +172,7 @@ def main():
         handle = m.group(1) if m else None
         if not handle:
             kn = keys.get(enroller.get(p["name"], ""), {}).get("name", "")
-            km = re.match(r"^peer-(.+?)-zagros-\d{4}-\d{2}-\d{2}", kn)
+            km = KEY_NAMED.match(kn)
             handle = km.group(1) if km else None
         o = owners.setdefault(handle or "__UNATTRIBUTED__",
                               {"peers": [], "groups": set()})
@@ -239,7 +254,7 @@ def main():
             # The allowance is deliberately at least the number of peers being
             # deleted, so nobody comes out of this with fewer devices than they
             # went in with.
-            key_name = "peer-%s-zagros-%s-rosenpass-reissue" % (h, time.strftime("%Y-%m-%d"))
+            key_name = "peer-%s-%s-%s-rosenpass-reissue" % (h, ENV_NAME, time.strftime("%Y-%m-%d"))
             devices = max(REISSUE_MIN_DEVICES, len(o["peers"]))
             nk = api("/api/setup-keys", "POST", {
                 "name": key_name,

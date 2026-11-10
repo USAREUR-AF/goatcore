@@ -1,0 +1,219 @@
+---
+# signal-federation-transport.yml — turn on (or re-converge) signal federation
+# on ONE management node of a goatnet, touching only the federation surface:
+# the shared token, the node-local dual-path federation-proxy (peer mesh IP
+# primary, relay-tunneled public backup) and signal-a's peer list. ADR 1085
+# Amendment 1; ADR 1084 (the two-node goatnet).
+#
+# Run it once per side of a founder + joiner pair, joiner first, after both
+# sides' group_vars declare the pair and
+#   ops/scripts/signal-federation-check.py <joiner-site> --resolve --require-env
+# passes. `goatbuilder join-node` plans it in phase 13 of a joiner core node.
+#
+# Per node it:
+#   1. refuses a half-configured federation (tasks/signal-federation-assert.yml)
+#      and an empty token
+#   2. delivers the base compose file (it defines the federation-proxy service)
+#      and renders federation-proxy/haproxy.cfg
+#   3. sets the federation .env keys from the SAME group_vars mgmt-host.yml
+#      renders from, including the signal-server image pin
+#   4. pulls and starts signal-a + federation-proxy, then asserts signal-a logs
+#      "federation auth enforced": proof the running image enforces the token
+#      and the token reached the process
+#   5. re-renders the compose-watch allowlist so the watcher revives the proxy
+#   6. writes the node's deploy ledger row (ADR 1060)
+#
+# ORDER for a pair (the token is enforced before any public path exists):
+#   1. this play on the joiner, then the founder (mesh leg carries; the public
+#      backup legs show DOWN until 2-4 — harmless)
+#   2. traefik-acme.yml on each side (the federation router + its certificate)
+#   3. the joiner's rathole client, then relay-ingress-add-site.yml on the
+#      founder's relays (each federation hostname pinned to its node's tunnel)
+#   4. signal-federation-verify.yml
+#
+# Never pass -e site_id (an extra var sets every host's site_id).
+#
+# Run:
+#   cd ops/ansible
+#   ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini \
+#     -i inventory/mgmt-hosts-mesh.ini signal-federation-transport.yml \
+#     -e federation_site=<site>
+#
+# Rollback: set federation_peers_for_a: "" on BOTH sides (and, to remove the
+# proxy, signal_federation_proxy_enabled: false) and re-run on both. Turning one
+# side off alone leaves the other forwarding offers nobody can deliver.
+
+- name: "signal federation transport — refuse a run without -e federation_site"
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Require federation_site naming a declared site group
+      ansible.builtin.assert:
+        that:
+          - federation_site is defined and (federation_site | length) > 0
+          - (federation_site | replace('-', '_')) ~ '_hosts' in groups
+        fail_msg: "pass -e federation_site=<site>; group <site>_hosts must be in the inventory"
+        quiet: true
+
+- name: "signal federation transport — token + dual-path proxy ({{ federation_site | default('SET -e federation_site') }})"
+  hosts: "{{ federation_site | default('unset') | replace('-', '_') }}_hosts[0]"
+  # Facts: the compose-watch role reads ansible_os_family.
+  gather_facts: true
+  become: true
+  vars:
+    compose_dir: /opt/mgmt-host
+  tasks:
+    - name: Refuse a half-configured signal federation
+      ansible.builtin.include_tasks: tasks/signal-federation-assert.yml
+
+    - name: Refuse to run without the shared token
+      ansible.builtin.assert:
+        that:
+          - signal_federation_token | default('', true) | length > 0
+          - signal_federation_proxy_enabled | default(false) | bool
+        fail_msg: >-
+          {{ inventory_hostname }}: this play turns federation ON. It needs
+          signal_federation_proxy_enabled: true and the token variable that
+          signal_federation_token reads set in the controller environment (the
+          same value on both sides). To turn federation off, set
+          federation_peers_for_a: "" on both sides and run mgmt-host.yml or this
+          play's rollback (header).
+        quiet: true
+
+    - name: Check pgBackRest config before publishing the base Compose mount
+      ansible.builtin.import_tasks: tasks/pgbackrest-config-preflight.yml
+      tags: [always]
+
+    - name: Write the Traefik certificate directory to .env before the compose file
+      ansible.builtin.import_tasks: tasks/mgmt-host-tls-root-env.yml
+
+    - name: Deliver the base compose file that defines the federation-proxy service
+      ansible.builtin.copy:
+        src: ../compose/mgmt-host/docker-compose.yml
+        dest: "{{ compose_dir }}/docker-compose.yml"
+        mode: "0644"
+
+    - name: Ensure federation-proxy config dir
+      ansible.builtin.file:
+        path: "{{ compose_dir }}/federation-proxy"
+        state: directory
+        mode: "0755"
+
+    - name: Render federation-proxy haproxy.cfg
+      ansible.builtin.template:
+        src: templates/federation-proxy-haproxy.cfg.j2
+        dest: "{{ compose_dir }}/federation-proxy/haproxy.cfg"
+        mode: "0644"
+      register: _fedproxy_cfg
+
+    - name: Set SIGNAL_FEDERATION_TOKEN in .env
+      ansible.builtin.lineinfile:
+        path: "{{ compose_dir }}/.env"
+        regexp: "^SIGNAL_FEDERATION_TOKEN="
+        line: "SIGNAL_FEDERATION_TOKEN={{ signal_federation_token }}"
+        mode: "0600"
+      no_log: true
+
+    - name: Point FEDERATION_PEERS at the local dual-path proxy
+      ansible.builtin.lineinfile:
+        path: "{{ compose_dir }}/.env"
+        regexp: "^FEDERATION_PEERS="
+        line: "FEDERATION_PEERS={{ federation_peers_for_a | default('', true) }}"
+
+    - name: Set the peer authority for the public leg's Host match
+      ansible.builtin.lineinfile:
+        path: "{{ compose_dir }}/.env"
+        regexp: "^SIGNAL_FEDERATION_AUTHORITY="
+        line: "SIGNAL_FEDERATION_AUTHORITY={{ federation_peer_public_sni }}"
+
+    - name: Raise the per-Forward deadline for the dual path
+      ansible.builtin.lineinfile:
+        path: "{{ compose_dir }}/.env"
+        regexp: "^SIGNAL_FEDERATION_FORWARD_TIMEOUT_MS="
+        line: "SIGNAL_FEDERATION_FORWARD_TIMEOUT_MS={{ signal_federation_forward_timeout_ms | default(1000) }}"
+
+    - name: Set the negative-cache TTL (ADR 1081 L2) when declared
+      ansible.builtin.lineinfile:
+        path: "{{ compose_dir }}/.env"
+        regexp: "^SIGNAL_NEGATIVE_CACHE_TTL="
+        line: "SIGNAL_NEGATIVE_CACHE_TTL={{ signal_negative_cache_ttl }}"
+      when: signal_negative_cache_ttl | default(0, true) | int > 0
+
+    - name: Enable the federation-proxy compose profile
+      ansible.builtin.lineinfile:
+        path: "{{ compose_dir }}/.env"
+        regexp: "^COMPOSE_PROFILES="
+        line: "COMPOSE_PROFILES=federation-proxy"
+
+    # The token is enforced only by a signal-server build that implements it;
+    # pin the image from the group_var mgmt-host.yml renders, so the two
+    # writers agree and the pull below cannot fetch an older build.
+    - name: Pin the signal-server image in .env
+      ansible.builtin.lineinfile:
+        path: "{{ compose_dir }}/.env"
+        regexp: "^SIGNAL_SERVER_IMAGE="
+        line: "SIGNAL_SERVER_IMAGE={{ signal_server_image }}"
+      when: signal_server_image | default('', true) | length > 0
+
+    # The compose file falls back to fleet ceilings without these, and the
+    # `compose up` below would recreate signal-a on that fallback.
+    - name: Sync mgmt-host container ceilings into .env
+      ansible.builtin.include_tasks: tasks/mgmt-host-ceilings-env.yml
+
+    - name: Pull signal-a + federation-proxy images
+      ansible.builtin.command:
+        cmd: docker compose pull signal-a federation-proxy
+        chdir: "{{ compose_dir }}"
+      changed_when: true
+
+    - name: Bring up signal-a + federation-proxy
+      ansible.builtin.command:
+        cmd: docker compose up -d signal-a federation-proxy
+        chdir: "{{ compose_dir }}"
+      changed_when: true
+
+    # `compose up` recreates on image/env changes but not on a bind-mounted
+    # config edit — restart explicitly when only haproxy.cfg moved.
+    - name: Restart federation-proxy on config change
+      ansible.builtin.command:
+        cmd: docker compose restart federation-proxy
+        chdir: "{{ compose_dir }}"
+      changed_when: true
+      when: _fedproxy_cfg.changed
+
+    - name: Verify both containers are running
+      ansible.builtin.command:
+        cmd: docker inspect -f '{% raw %}{{.State.Status}}{% endraw %}' signal-a federation-proxy
+      register: _fed_status
+      changed_when: false
+      failed_when: >-
+        _fed_status.rc != 0
+        or (_fed_status.stdout_lines | length) != 2
+        or (_fed_status.stdout_lines | select('ne', 'running') | list | length) > 0
+
+    # The line prints only in a build that enforces the token AND only when the
+    # token reached the process. No pipefail: `grep -q` closes the pipe on the
+    # first match and a busy `docker logs` then takes SIGPIPE.
+    - name: Assert the running signal-a enforces federation auth
+      ansible.builtin.shell: >-
+        docker logs signal-a 2>&1 | grep -q "federation auth enforced"
+      args:
+        executable: /bin/bash
+      register: _fed_auth_log
+      changed_when: false
+      retries: 5
+      delay: 2
+      until: _fed_auth_log.rc == 0
+
+    - name: Refresh mgmt-host-compose-watch allowlist
+      ansible.builtin.include_role:
+        name: mgmt-host-compose-watch
+
+    - name: Deploy ledger (ADR 1060)
+      ansible.builtin.include_role:
+        name: rollback-ledger
+      vars:
+        rollback_component: signal-federation-transport
+        rollback_artifact_type: config
+        rollback_ref: "token+dual-path-proxy peers={{ federation_peers_for_a | default('', true) }} peer={{ federation_peer_public_sni }}"

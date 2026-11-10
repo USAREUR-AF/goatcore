@@ -67,9 +67,9 @@ the replication so writes flow both ways.
 | | |
 |---|---|
 | Audience | A platform admin who has finished tutorial 1 |
-| Prerequisites | A founder whose gate is green; the joiner's configuration with `goatnet_founder: false` and `join_founder_site`; the founder's configuration naming the joiner as a replication peer; the pins row's member group |
+| Prerequisites | A founder whose gate is green; the joiner's configuration with `goatnet_founder: false` and `join_founder_site`; the founder's configuration naming the joiner as a replication peer; the pins row's member group; signal federation declared on both sides, the founder's relay pin and the federation DNS records ([signal-federation-pair.md](signal-federation-pair.md)) |
 | Commands | `standup <env> --site <joiner-site> --dry-run` then `--yes`; `join-node <env> --site <site> --node <n> --class <c>` for each further machine. Scripts: `goat-standup.sh <joiner-site>`; the node-addition runbook |
-| Checkpoints | (1) the rehearsal matches `checkpoints/02-first-federated-node.txt`, including the founder-side mirror recorded on the founder's machines; (2) the joiner's gate green from the joiner's network; (3) every subscription `replicating` both ways, a founder write visible on the joiner, a deletion replicated back; (4) `status` across both sites |
+| Checkpoints | (1) the rehearsal matches `checkpoints/02-first-federated-node.txt`, including the founder-side mirror recorded on the founder's machines; (2) the joiner's gate green from the joiner's network; (3) every subscription `replicating` both ways, a founder write visible on the joiner, a deletion replicated back; `signal-federation-verify.yml` passing; (4) `status` across both sites |
 | Done | Checkpoints 2–4 on hardware |
 | Undo | Re-run from the failed phase; removing a joiner reverses the founder-side mirror in the same change |
 
@@ -90,13 +90,13 @@ F-424).
 | | |
 |---|---|
 | Audience | A platform admin who has finished tutorial 2, with a counterparty ready to peer |
-| Prerequisites | A goatnet whose gate is green; an edge host in a `--edge-group`; the peering declared when `goatbuilder.yaml` keeps peerings; the partner's verifying key bound out of band; a FIPS-mode fabric image on both edge routers |
-| Commands | `federate <peering> --env <env> --as <ours> --dry-run` then without `--dry-run`; it stops at phases 5 and 10 (the manual package exchange and the review of what was rendered) and resumes with `--from 6` and `--from 11`. Scripts: `peering-standup.sh <peering> --plan`, then without `--plan` |
+| Prerequisites | A goatnet whose gate is green; an edge host in a `--edge-group`; the peering declared when `goatbuilder.yaml` keeps peerings; a peering directory both sides reach (`FED_DIRECTORY_URL`); a FIPS-mode fabric image on both edge routers |
+| Commands | `federate <peering> --env <env> --as <ours> --dry-run` then without `--dry-run`; it stops at phases 5 and 10 (the exchange through the peering directory with the key read-back, and the review of what was rendered) and resumes with `--from 6` and `--from 11`. Scripts: `peering-standup.sh <peering> --plan`, then without `--plan` |
 | Checkpoints | (1) the rehearsal matches `checkpoints/03-boundary-node.txt` — the plan of all fourteen phases; (2) phase 14 acceptance green: a sample **carries** in the agreed direction, a write outside the agreed prefix is **refused** (live fire, not by reading config — F-177), and a nonce **round-trips** through the counterparty's own router |
 | Done | Checkpoint 2 on a live peering |
 | Undo | Cut the peering on your own edge host; the partner's certificate-authority file is the revocation instrument (`cross-sovereign-federation.md` §7) |
 
-It wraps `goatbuilder federate` (`crates/goatbuilder/src/federate.rs`), the
+It wraps `goatbuilder federate` (`crates/goatbuilder/src/federate/`), the
 fourteen-phase peering verb that subsumes `ops/scripts/peering-standup.sh`. It
 needs no new standup class: the boundary node is the router `federate` already
 deploys. What crosses is release-set namespaces the owner deliberately shares; a

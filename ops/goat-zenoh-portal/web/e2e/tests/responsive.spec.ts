@@ -24,7 +24,7 @@ async function mockPortalApi(page: import("@playwright/test").Page): Promise<voi
     route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify({ vendors: [{ prefix: "drs", approved: true }] }),
+      body: JSON.stringify({ vendors: [{ prefix: "acme", approved: true }] }),
     }),
   );
 
@@ -49,7 +49,7 @@ async function mockPortalApiWithTopic(page: import("@playwright/test").Page): Pr
     route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify({ vendors: [{ prefix: "drs", approved: true }] }),
+      body: JSON.stringify({ vendors: [{ prefix: "acme", approved: true }] }),
     }),
   );
 
@@ -68,7 +68,7 @@ async function mockPortalApiWithTopic(page: import("@playwright/test").Page): Pr
         topics: [
           {
             id: 1,
-            key_pattern: "org-1/radar1/RADAR-EXAMPLE/position_attitude",
+            key_pattern: "acme/radar1/RADAR-EXAMPLE/position_attitude",
             format: "json",
             publish_to_storage: false,
             last_seen_at: null,
@@ -83,7 +83,7 @@ async function mockPortalApiWithTopic(page: import("@playwright/test").Page): Pr
 
 async function openTopics(page: import("@playwright/test").Page): Promise<void> {
   await page.goto("/topics.html");
-  await expect(page.locator("#vendor-select")).toHaveValue("drs");
+  await expect(page.locator("#vendor-select")).toHaveValue("acme");
 }
 
 test.describe("portal responsive layout", () => {
@@ -165,7 +165,7 @@ test.describe("portal responsive layout", () => {
     await expectStorySurfacesFitViewport();
 
     // Pick an org from the 100% width select.
-    await page.selectOption("#vendor-select", "drs");
+    await page.selectOption("#vendor-select", "acme");
     await expectStorySurfacesFitViewport();
 
     // Reveal the bulk-import form via the Upload button.
@@ -329,6 +329,7 @@ test.describe("portal responsive layout", () => {
 
   test("390x844 #who auth status aligns left and shows unauthenticated pre-auth", async ({ page }) => {
     await mockPortalApi(page);
+    await page.route('**/api/whoami', route => route.fulfill({status: 401, json: {error: {message: 'missing session'}}}));
     await page.setViewportSize({ width: 390, height: 844 });
     await openTopics(page);
 

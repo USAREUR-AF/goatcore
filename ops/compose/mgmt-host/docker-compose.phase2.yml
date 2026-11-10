@@ -9,13 +9,13 @@
 # postgres-b are NOT in this file — they need site identity + a replicator
 # password and are driven by Ansible after both PGs are up.
 #
-# When the pilot ships to region A (Phase 2→3 gate), we stop using this
+# When the pilot ships to its site (Phase 2→3 gate), we stop using this
 # override — each site runs a single instance.
 
 services:
   postgres-b:
-    # See note in docker-compose.yml — pinned to the build with complete pg_hba.conf.
-    image: ${POSTGRES_SPOCK_IMAGE:-ghcr.io/usareur-af/postgres-spock@sha256:038f12f0e5339b2722754c06273a2277fcc4e4e17056c8afd2f52f28ed16e56c}
+    # See note in docker-compose.yml — the pin names a build with complete pg_hba.conf.
+    image: ${POSTGRES_SPOCK_IMAGE:?set POSTGRES_SPOCK_IMAGE in .env}
     container_name: postgres-b
     restart: unless-stopped
     command:
@@ -49,8 +49,8 @@ services:
       - mgmt
 
   signal-b:
-    # See note in docker-compose.yml — pinned to the build that accepts -federation-peers.
-    image: ${SIGNAL_SERVER_IMAGE:-ghcr.io/usareur-af/signal-server@sha256:3a26d0e8884e90edcf8dfc0fba5261a16ce45c7e585d9ca325a0913d9029241d}
+    # See note in docker-compose.yml — the pin names a build that accepts -federation-peers.
+    image: ${SIGNAL_SERVER_IMAGE:?set SIGNAL_SERVER_IMAGE in .env}
     container_name: signal-b
     restart: unless-stopped
     command:

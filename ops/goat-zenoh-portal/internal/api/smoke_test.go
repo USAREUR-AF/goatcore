@@ -71,7 +71,7 @@ func newTestServer(t *testing.T) *httptest.Server {
 		CertSignFake:             true,
 		VendorBundleDir:          filepath.Join(dir, "bundles"),
 		SchemaDir:                filepath.Join(dir, "schemas"),
-		CertSignURIPrefix:        "urn:goat-nova:vendor=",
+		CertSignURIPrefix:        "urn:goat:galaxy:org=",
 		OperatorApprovalRequired: false,
 	}
 	// Seed a fixture config.json5 with the four markers so renderACL
@@ -147,7 +147,7 @@ func TestSmoke_VendorRegisterTopicLifecycle(t *testing.T) {
 	if !strings.HasPrefix(vendorKey, "vp_community_") {
 		t.Errorf("api_key %q has unexpected prefix", vendorKey)
 	}
-	if uriSAN, _ := regResp["uri_san"].(string); uriSAN != "urn:goat-nova:vendor=community" {
+	if uriSAN, _ := regResp["uri_san"].(string); uriSAN != "urn:goat:galaxy:org=community" {
 		t.Errorf("uri_san = %q", uriSAN)
 	}
 
@@ -160,7 +160,7 @@ func TestSmoke_VendorRegisterTopicLifecycle(t *testing.T) {
 
 	// 5. vendor creates topic
 	resp = doJSON(t, c, "POST", ts.URL+"/api/vendors/community/topics", vendorKey, map[string]any{
-		"key_pattern": "community/maintainer-test/foo/v1",
+		"key_pattern": "community/jane-test/foo/v1",
 		"format":      "json",
 		"description": "hello",
 	})
@@ -169,8 +169,8 @@ func TestSmoke_VendorRegisterTopicLifecycle(t *testing.T) {
 	}
 
 	// 6. cross-vendor write rejected
-	resp = doJSON(t, c, "POST", ts.URL+"/api/vendors/org11x/topics", vendorKey, map[string]any{
-		"key_pattern": "org11x/foo/v1",
+	resp = doJSON(t, c, "POST", ts.URL+"/api/vendors/acme/topics", vendorKey, map[string]any{
+		"key_pattern": "acme/foo/v1",
 		"format":      "json",
 	})
 	if resp.StatusCode != http.StatusForbidden {
@@ -179,19 +179,19 @@ func TestSmoke_VendorRegisterTopicLifecycle(t *testing.T) {
 
 	// 7. operator can act on any vendor
 	resp = doJSON(t, c, "POST", ts.URL+"/api/vendors", "dev-operator-key", map[string]any{
-		"prefix":       "org11x",
-		"display_name": "org11x",
+		"prefix":       "acme",
+		"display_name": "Acme",
 		"auto_approve": true,
 	})
 	if resp.StatusCode != http.StatusCreated {
-		t.Fatalf("operator register org11x: %d", resp.StatusCode)
+		t.Fatalf("operator register acme: %d", resp.StatusCode)
 	}
-	resp = doJSON(t, c, "POST", ts.URL+"/api/vendors/org11x/topics", "dev-operator-key", map[string]any{
-		"key_pattern": "org11x/lattice/entity/track/v1",
+	resp = doJSON(t, c, "POST", ts.URL+"/api/vendors/acme/topics", "dev-operator-key", map[string]any{
+		"key_pattern": "acme/lattice/entity/track/v1",
 		"format":      "json",
 	})
 	if resp.StatusCode != http.StatusCreated {
-		t.Fatalf("operator create org11x topic: %d", resp.StatusCode)
+		t.Fatalf("operator create acme topic: %d", resp.StatusCode)
 	}
 
 	// 8. inspector latest (fake zenoh)

@@ -20,6 +20,15 @@
 # Persists nothing — no S3/MinIO, no secrets, no .env. The meter only
 # reads `**` and publishes the health/footprint topics back on-bus.
 
+- name: fabric-health | the image pin is set
+  ansible.builtin.assert:
+    that:
+      - fabric_health_image | length > 0
+    fail_msg: >-
+      fabric_health_image is empty. The role carries no pin: set it in the
+      goatnet's pin table (ops/pins/fleet-pins.yaml) or in its group_vars.
+    quiet: true
+
 - name: fabric-health | pre-flight leaf cert exists (static identity + tls/ endpoint)
   ansible.builtin.stat:
     path: "{{ fabric_health_cert_dir }}/fabric-health-cert.pem"

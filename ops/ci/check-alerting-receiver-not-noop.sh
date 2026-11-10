@@ -69,7 +69,7 @@ EOF
   mkdir -p "$tmp/green/group_vars/wired_obs_hosts"
   cat > "$tmp/green/group_vars/wired_obs_hosts/vars.yml" <<'EOF'
 pagerduty_integration_key: "{{ lookup('env', 'PAGERDUTY_INTEGRATION_KEY') | default('', true) }}"
-deadman_webhook_url: "http://100.127.0.221:9099/"
+deadman_webhook_url: "http://100.127.0.217:9099/"
 EOF
   KNOWN_OPEN_FILE=/dev/null "$self" "$tmp/green" >/dev/null
   echo "self-test: GREEN proven — wired obs scope passes"
@@ -188,7 +188,7 @@ for scope, keys in sorted(scopes().items()):
         print(f"      ({' / '.join(CRITICAL_KEYS)} all absent or literally empty; role defaults are \"\",")
         print( "      roles/obs-host/defaults/main.yml:58-72). The rendered critical route resolves to")
         print( "      webhook-noop with static certainty — alerts fire, reach Alertmanager, reach nobody")
-        print( ". Declare at")
+        print( "      (amtool config routes test severity=critical -> webhook-noop). Declare at")
         print( "      least one vendor receiver var for this scope.")
         fail = 1
     else:
@@ -207,7 +207,7 @@ for scope, keys in sorted(scopes().items()):
         else:
             print(f"FAIL: group_vars/{scope}: obs-host scope with no {DEADMAN_KEY} declared — the Watchdog")
             print( "      route renders webhook-noop, making the dead-man's switch decorative: a dead")
-            print( "      Prometheus stops the heartbeat and no external watcher ever notices
+            print( "      Prometheus stops the heartbeat and no external watcher ever notices (the")
             print( "      acceptance row deadman-switch-has-external-receiver is the runtime twin of this")
             print( "      check). Wire an off-host absence-watcher endpoint.")
             fail = 1

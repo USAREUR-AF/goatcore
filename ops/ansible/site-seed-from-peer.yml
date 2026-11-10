@@ -1,0 +1,355 @@
+---
+# site-seed-from-peer.yml — the guarded initial seed for a JOINER site.
+#
+# Pass 2 of the three-pass join (ADR 1084). Copies the founder's current
+# identity and mesh state into the joiner's freshly migrated, empty schema,
+# DATA-ONLY, so that the Spock subscriptions wired afterwards carry only
+# incremental writes (subscriptions are synchronize_data: false).
+#
+# WHERE THIS RUNS IN THE SEQUENCE:
+#   PASS 1  site-bootstrap.yml -e participates_in_spock=false   (schema created)
+#           + ory-deploy.yml, so the kratos/hydra schemas exist too: the seed
+#             is data-only and loads into tables that already exist.
+#   PASS 2  >>> THIS PLAYBOOK <<<                                (data seeded)
+#   PASS 3  site-bootstrap.yml with Spock on                     (Spock wired)
+#
+# goat-standup.sh (phase 6) and `goatbuilder standup` / `goatbuilder join-node`
+# run it for a joiner. A site that needs a different seed keeps its own
+# <site>-seed-from-peer.yml; the drivers run that file in place of this one
+# when it exists.
+#
+# Inputs:
+#   site_id             (-e, required) the joiner's site id. The play targets
+#                       the group <site_id>_hosts ('-' as '_'); seed_target
+#                       names a different group.
+#   join_founder_site   (the joiner's group_vars, already required of a
+#                       joiner) the founder's site id. The seed source is the
+#                       first host of <join_founder_site>_hosts, the founder's
+#                       active mgmt node; seed_peer_host names a different one.
+#   force_reseed        (-e, default false) re-seed an already-populated
+#                       node: the seed tables (exactly the sets below) are
+#                       emptied first, then loaded. The guard below refuses
+#                       otherwise, and refuses force_reseed on a node that is
+#                       already a Spock node (emptying a subscribed table
+#                       would replicate the deletes to the goatnet).
+#
+# The seed runs on ONE node: the first host of the target group (the active
+# mgmt node), or the node `-l` narrows to. A second node at the joiner site
+# receives the data through intra-site streaming replication.
+#
+# The seed MUST precede subscription wiring: seeding into an already-subscribed
+# table replicates the inserts back to the founder (primary-key conflicts).
+#
+# Reachability: both the joiner and the founder's mgmt node must be reachable
+# from the controller. Run with the same inventory pair as bootstrap:
+#
+#   cd ops/ansible
+#   ../scripts/ansible-preflight.sh \
+#     -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini \
+#     site-seed-from-peer.yml -e site_id=<joiner-site>
+#     # add -e force_reseed=true only to deliberately overwrite
+
+- name: "seed-from-peer — data-only initial replication seed from the founder"
+  hosts: "{{ seed_target | default((site_id | mandatory) | replace('-', '_') ~ '_hosts') }}"
+  gather_facts: false
+  become: true
+  vars_files:
+    # Single source of truth for the netbird_mgmt table list (ADR 1084 D1,
+    # plus the ADR 1193 revocation ledger).
+    - roles/spock-mesh-peering/defaults/main.yml
+  vars:
+    _founder_group: "{{ (join_founder_site | default('')) | replace('-', '_') ~ '_hosts' }}"
+    peer_host: "{{ seed_peer_host | default((groups[_founder_group] | default([])) | first | default('')) }}"
+    postgres_container: postgres-a
+    force_reseed: false
+    seed_stage_name: "{{ site_id | default('site') }}-seed"
+    local_stage_dir: "/tmp/{{ seed_stage_name }}-stage"
+    marker_file: /opt/mgmt-host/management-a/marker/migrations.allow
+    # Per-database data-only seed sets. netbird = the curated netbird_mgmt
+    # tables (from the vars_files above). kratos/hydra = the ory_narrow
+    # inclusion list (ADR 1084 D2).
+    seed_databases:
+      - db: netbird
+        tables: "{{ spock_mesh_netbird_mgmt_tables }}"
+      # `networks` (the ADR 1009 shared-nid row) is deliberately NOT seeded:
+      # ory-deploy pre-seeds the same deterministic nid row on every node
+      # before Kratos/Hydra start, so a data-only copy of it always
+      # primary-key-conflicts. It stays in the ory_narrow repset for
+      # steady-state replication of any future rows.
+      - db: kratos
+        # `identity_credential_types` is deliberately NOT seeded: Kratos's
+        # migrations populate it (the credential-type enum: password / oidc /
+        # webauthn / ...), byte-identical on every node at the same schema
+        # version. A data-only copy of it always primary-key-conflicts, and
+        # ON_ERROR_STOP would then abort the whole kratos restore, leaving
+        # identities without their credentials. The joiner keeps its own
+        # identical rows; the foreign keys from identity_credentials and
+        # identity_credential_identifiers resolve against them.
+        tables:
+          - identities
+          - identity_credentials
+          - identity_credential_identifiers
+          - identity_recovery_addresses
+          - identity_verifiable_addresses
+          - goat_revocations      # revocation ledger (ADR 1193)
+      - db: hydra
+        tables:
+          - hydra_client
+          - hydra_jwk
+
+  tasks:
+    # The seed loads on one node only: the first of the play's hosts (the
+    # group's active mgmt node, or the node -l narrowed to).
+    - name: "seed | run on the first targeted node only"
+      ansible.builtin.meta: end_host
+      when: inventory_hostname != (ansible_play_hosts_all | first)
+
+    # -----------------------------------------------------------------------
+    # Guard — know the source, and refuse to clobber an already-seeded node.
+    # -----------------------------------------------------------------------
+    - name: "seed | require a founder to seed from"
+      ansible.builtin.assert:
+        that:
+          - peer_host | length > 0
+          - peer_host != inventory_hostname
+        fail_msg: >-
+          No seed source for {{ inventory_hostname }}. Set join_founder_site in
+          this joiner's group_vars (the founder's site id; its first host in
+          {{ _founder_group }} is the source), or pass -e seed_peer_host=<host>.
+          The source must be a founder node, not this one.
+
+    - name: "seed | probe local netbird.accounts row count"
+      ansible.builtin.command:
+        cmd: >-
+          docker exec {{ postgres_container }} psql -U postgres -d netbird -tAc
+          "SELECT count(*) FROM accounts"
+      register: local_accounts
+      changed_when: false
+      failed_when: false
+
+    - name: "seed | require the netbird schema to already exist (PASS 1 must have run)"
+      ansible.builtin.assert:
+        that:
+          - local_accounts.rc == 0
+        fail_msg: >-
+          Could not read netbird.accounts on {{ inventory_hostname }}
+          (rc={{ local_accounts.rc }}). The schema is not present yet; run
+          PASS 1 first: site-bootstrap.yml -e participates_in_spock=false. The
+          seed is data-only and needs the migrated (empty) schema to load into.
+
+    - name: "seed | refuse to overwrite a populated account unless -e force_reseed=true"
+      ansible.builtin.assert:
+        that:
+          - (local_accounts.stdout | trim | int) == 0 or (force_reseed | bool)
+        fail_msg: >-
+          netbird.accounts on {{ inventory_hostname }} already has
+          {{ local_accounts.stdout | trim }} row(s): this node looks already
+          seeded or already federated. Refusing to re-seed. To overwrite on
+          purpose, re-run with -e force_reseed=true (it empties the seed
+          tables, then loads the dumps).
+
+    - name: "seed | with force_reseed, probe whether this node is already a Spock node"
+      ansible.builtin.shell:
+        cmd: |
+          set -euo pipefail
+          for db in {{ seed_databases | map(attribute='db') | join(' ') }}; do
+            q() { docker exec -u postgres {{ postgres_container }} psql -X -U postgres -d "$db" -tAc "$1" | tr -d '[:space:]'; }
+            exists=$(q "select to_regclass('spock.local_node') is not null")
+            if [ "$exists" = t ]; then
+              count=$(q 'select count(*) from spock.local_node')
+              echo "$db=$count"
+            elif [ "$exists" = f ]; then
+              echo "$db=0"
+            else
+              exit 1
+            fi
+          done
+        executable: /bin/bash
+      register: _spock_local_nodes
+      changed_when: false
+      when: force_reseed | bool
+
+    - name: "seed | refuse force_reseed on a node that is already a Spock node"
+      ansible.builtin.assert:
+        that:
+          - _spock_local_nodes.stdout_lines | reject('match', '^[a-z_]+=0$') | list | length == 0
+        fail_msg: >-
+          force_reseed empties the seed tables, and {{ inventory_hostname }} is
+          already a Spock node ({{ _spock_local_nodes.stdout_lines | join(', ') }}):
+          the deletes would replicate to every site it subscribes with. A seed
+          precedes subscription wiring; re-seeding a federated node is a
+          detach-and-rejoin, not a re-run of this play.
+        quiet: true
+      when: force_reseed | bool
+
+    # Revocation guard (ADR 1193) on BOTH ends before the dump: goat_revocations
+    # is in the seed set, so it must exist on the peer to dump and here to
+    # restore into. Idempotent. The restore transaction saves and disables
+    # triggers only on the seed tables, then restores their exact firing modes.
+    - name: "seed | install the revocation guard on the peer and locally"
+      ansible.builtin.command:
+        argv: [docker, exec, -i, -u, postgres, "{{ postgres_container }}",
+               psql, -U, postgres, -d, "{{ item.1 }}", -v, ON_ERROR_STOP=1, -q]
+        stdin: "{{ lookup('ansible.builtin.file', playbook_dir ~ '/../postgres/spock/revocation-guard/' ~ item.1 ~ '.sql') }}"
+      delegate_to: "{{ item.0 }}"
+      loop: "{{ [peer_host, inventory_hostname] | product(['netbird', 'kratos']) | list }}"
+      loop_control:
+        label: "{{ item.0 }} {{ item.1 }}"
+      changed_when: true
+
+    # Hub directive ledger (ADR 1205) on BOTH ends, the same file and the same
+    # way spock-mesh-peering installs it: goat_hub_directives is in the netbird
+    # seed set, a federated founder has it, and a joiner's freshly migrated
+    # schema does not, so the data-only load would fail on the missing table.
+    - name: "seed | install the hub directive ledger on the peer and locally"
+      ansible.builtin.command:
+        argv: [docker, exec, -i, -u, postgres, "{{ postgres_container }}",
+               psql, -U, postgres, -d, netbird, -v, ON_ERROR_STOP=1, -q]
+        stdin: "{{ lookup('ansible.builtin.file', playbook_dir ~ '/../postgres/spock/hub-authority/netbird.sql') }}"
+      delegate_to: "{{ item }}"
+      loop: "{{ [peer_host, inventory_hostname] }}"
+      changed_when: true
+
+    # The dumps hold identity credentials. Everything from the dump to the
+    # restore runs in one block whose `always` removes every copy (peer, this
+    # node, the controller's staging dir), on success and on failure alike.
+    - name: "seed | dump, stage, load"
+      block:
+        # -------------------------------------------------------------------
+        # Dump on the peer — one data-only pg_dump per database so pg_dump
+        # orders tables foreign-key-safely. The restore transaction manages
+        # trigger modes itself, including ALWAYS triggers.
+        # -------------------------------------------------------------------
+        - name: "seed | dump each database data-only on the peer ({{ peer_host }})"
+          ansible.builtin.shell:
+            cmd: >-
+              umask 077 &&
+              docker exec -u postgres {{ postgres_container }}
+              pg_dump --data-only
+              {{ item.tables | map('regex_replace', '^', '-t public.') | join(' ') }}
+              -U postgres -d {{ item.db }}
+              > /tmp/{{ seed_stage_name }}-{{ item.db }}.sql
+          args:
+            executable: /bin/bash
+          delegate_to: "{{ peer_host }}"
+          loop: "{{ seed_databases }}"
+          loop_control:
+            label: "{{ item.db }} ({{ item.tables | length }} tables)"
+          changed_when: true
+
+        - name: "seed | ensure controller staging dir exists"
+          ansible.builtin.file:
+            path: "{{ local_stage_dir }}"
+            state: directory
+            mode: "0700"
+          delegate_to: localhost
+          become: false
+          run_once: true
+
+        - name: "seed | fetch each dump from the peer to the controller"
+          ansible.builtin.fetch:
+            src: "/tmp/{{ seed_stage_name }}-{{ item.db }}.sql"
+            dest: "{{ local_stage_dir }}/{{ item.db }}.sql"
+            flat: true
+          delegate_to: "{{ peer_host }}"
+          loop: "{{ seed_databases }}"
+          loop_control:
+            label: "{{ item.db }}"
+
+        - name: "seed | copy each dump onto {{ inventory_hostname }}"
+          ansible.builtin.copy:
+            src: "{{ local_stage_dir }}/{{ item.db }}.sql"
+            dest: "/tmp/{{ seed_stage_name }}-{{ item.db }}.sql"
+            mode: "0600"
+          loop: "{{ seed_databases }}"
+          loop_control:
+            label: "{{ item.db }}"
+
+        # Save trigger modes, optionally delete, load, and restore the modes in
+        # ONE transaction per database. ALWAYS triggers ignore replica mode;
+        # disabling them explicitly is required for populated immutable ledgers.
+        # A failed load rolls back this database's deletion and trigger changes.
+        - name: "seed | restore each dump into the local postgres (data-only)"
+          ansible.builtin.shell:
+            cmd: |
+              set -euo pipefail
+              {
+                cat <<'GOAT_SEED_BEGIN'
+              {{ lookup('ansible.builtin.template', 'seed-from-peer-begin.sql.j2') }}
+              GOAT_SEED_BEGIN
+                cat {{ ('/tmp/' ~ seed_stage_name ~ '-' ~ item.db ~ '.sql') | quote }}
+                cat <<'GOAT_SEED_END'
+              {{ lookup('ansible.builtin.file', playbook_dir ~ '/templates/seed-from-peer-end.sql') }}
+              GOAT_SEED_END
+              } | docker exec -i -u postgres {{ postgres_container | quote }} \
+                psql -X -U postgres -d {{ item.db | quote }} -v ON_ERROR_STOP=1
+          args:
+            executable: /bin/bash
+          loop: "{{ seed_databases }}"
+          loop_control:
+            label: "{{ item.db }}"
+          changed_when: true
+
+      always:
+        - name: "seed | remove the controller staging dir"
+          ansible.builtin.file:
+            path: "{{ local_stage_dir }}"
+            state: absent
+          delegate_to: localhost
+          become: false
+          run_once: true
+
+        - name: "seed | remove the dumps from the peer and this node"
+          ansible.builtin.file:
+            path: "/tmp/{{ seed_stage_name }}-{{ item.1 }}.sql"
+            state: absent
+          delegate_to: "{{ item.0 }}"
+          loop: "{{ [peer_host, inventory_hostname] | product(seed_databases | map(attribute='db')) | list }}"
+          loop_control:
+            label: "{{ item.0 }} {{ item.1 }}"
+          ignore_unreachable: true
+
+    # -----------------------------------------------------------------------
+    # Marker removal — make this node a NON-migrator. PASS 1 left
+    # migrations.allow present (it created the schema on the empty database).
+    # Removing it makes later management-a restarts export
+    # NETBIRD_SKIP_MIGRATIONS=true, and coordinated-upgrade.yml's "marker
+    # present on a non-migrator" guard passes. The founder is the migrator.
+    # -----------------------------------------------------------------------
+    - name: "seed | remove the netbird migration marker (this node = non-migrator)"
+      ansible.builtin.file:
+        path: "{{ marker_file }}"
+        state: absent
+
+    # -----------------------------------------------------------------------
+    # Restart the identity containers so they load the seeded rows.
+    # -----------------------------------------------------------------------
+    - name: "seed | restart management-a + kratos + hydra to load seeded rows"
+      ansible.builtin.command:
+        cmd: "docker restart {{ item }}"
+      register: seed_restart
+      changed_when: true
+      failed_when:
+        - seed_restart.rc != 0
+        - "'No such container' not in (seed_restart.stderr | default(''))"
+      loop:
+        # Compose-generated names (no container_name set): mgmt-host-kratos-1 /
+        # mgmt-host-hydra-1. Bare names kept as fallbacks; "No such container"
+        # is tolerated per failed_when above.
+        - management-a
+        - mgmt-host-kratos-1
+        - kratos
+        - mgmt-host-hydra-1
+        - hydra
+      loop_control:
+        label: "{{ item }}"
+
+    - name: "seed | summary"
+      ansible.builtin.debug:
+        msg: |
+          seed-from-peer complete on {{ inventory_hostname }} (source: {{ peer_host }}).
+            netbird: {{ (seed_databases | selectattr('db','eq','netbird') | first).tables | length }} tables
+            kratos:  {{ (seed_databases | selectattr('db','eq','kratos') | first).tables | length }} tables
+            hydra:   {{ (seed_databases | selectattr('db','eq','hydra') | first).tables | length }} tables
+          Migration marker removed: this node is now a non-migrator.
+          NEXT: PASS 3, site-bootstrap.yml with Spock on (wires the subscriptions).

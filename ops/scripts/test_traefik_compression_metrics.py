@@ -105,7 +105,7 @@ class Accumulate(unittest.TestCase):
         self.assertEqual(resp[("portal@file", "gateway", "true")], 1)
 
     def test_client_class_covers_the_whole_mesh_range(self):
-        for host in ("100.127.0.5", "100.127.0.252", "100.127.1.6", "100.127.0.5"):
+        for host in ("100.127.0.5", "100.127.0.251", "100.127.1.5", "100.127.0.5"):
             self.assertEqual(tcm.client_class(host), "mesh", host)
         for host in ("203.0.113.219", "198.51.100.204", "100.x.0.1"):
             self.assertEqual(tcm.client_class(host), "other", host)

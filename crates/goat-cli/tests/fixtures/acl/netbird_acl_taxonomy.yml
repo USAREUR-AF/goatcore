@@ -1,0 +1,11 @@
+# A synthetic ACL declaration for goat-cli's tests. It names no deployment.
+netbird_acl_taxonomy:
+  lone:
+    site_prefix: LONE
+    groups:
+    - suffix: INFRA
+    - suffix: DEVELOPER
+  quiet:
+    site_prefix: QUIET
+    groups:
+    - suffix: INFRA

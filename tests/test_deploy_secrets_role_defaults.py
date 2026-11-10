@@ -90,5 +90,41 @@ class RoleDefaults(unittest.TestCase):
         self.assertIn("GH_TOKEN=$(gh auth token)", lines)
 
 
+
+class IncludedStoreRole(unittest.TestCase):
+    """A store role the component includes holds its database password, named through
+    a variable and read only on Postgres: the check follows include_role, resolves the
+    name through the variable, and asks for it only where the store is postgres."""
+
+    def fixture(self, store):
+        root = tempfile.mkdtemp()
+        write(root, "ops/ansible/app-deploy.yml", '- hosts: "{{ target }}"\n  roles: [app]\n')
+        write(root, "ops/ansible/group_vars/dev_hosts/vars.yml", f"site_id: dev-a\napp_store: {store}\n")
+        write(root, "ops/ansible/roles/app/tasks/main.yml", """\
+            - name: app | the store
+              ansible.builtin.include_role:
+                name: app-store
+                public: true
+            """)
+        write(root, "ops/ansible/roles/app-store/defaults/main.yml", """\
+            app_store: sqlite
+            app_db_password_env: "{{ site_id | upper | replace('-', '_') }}_APP_DB_PASS"
+            app_db_password: "{{ lookup('env', app_db_password_env) }}"  # when: app_store=postgres
+            """)
+        write(root, "ops/ansible/roles/app-store/tasks/main.yml", '- debug: msg="{{ app_db_password | length }}"\n')
+        return root
+
+    def needed(self, root):
+        return load().needed_for(root, os.path.join(root, "ops/ansible/app-deploy.yml"), ["app"], ["dev_hosts"])
+
+    def test_postgres_goatnet_needs_the_included_roles_password(self):
+        self.assertEqual(self.needed(self.fixture("postgres")).get("app_db_password"), ["DEV_A_APP_DB_PASS"])
+
+    def test_sqlite_goatnet_does_not(self):
+        self.assertNotIn("app_db_password", self.needed(self.fixture("sqlite")))
+
+    def test_closure_follows_include_role(self):
+        self.assertEqual(load().role_closure(self.fixture("postgres"), ["app"]), ["app", "app-store"])
+
 if __name__ == "__main__":
     unittest.main()

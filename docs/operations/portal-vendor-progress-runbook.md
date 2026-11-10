@@ -101,7 +101,7 @@ existing `roles/minio` (see
 4. Verify the tailer ran:
 
    ```
-   ssh goat@100.127.0.190 'sudo sqlite3 /opt/goat-zenoh-portal/registry.db \
+   ssh goat@100.127.0.186 'sudo sqlite3 /opt/goat-zenoh-portal/registry.db \
      "SELECT subscriber_id, last_key, updated_at FROM audit_replay_cursor"'
    ```
 

@@ -24,7 +24,7 @@ func TestProposalLifecycle(t *testing.T) {
 	s := openTest(t)
 	ctx := context.Background()
 
-	p := &Proposal{Sponsor: "jane-admin", Env: "zagros", Handle: "pat-liaison", Email: "person-118@example.org", ManifestJSON: `{"identity":{"handle":"pat-liaison"}}`, Tier: "operator"}
+	p := &Proposal{Sponsor: "jane-admin", Env: "zagros", Handle: "pat-liaison", Email: "person-105@example.org", ManifestJSON: `{"identity":{"handle":"pat-liaison"}}`, Tier: "operator"}
 	if err := s.CreateProposal(ctx, p); err != nil {
 		t.Fatalf("CreateProposal: %v", err)
 	}
@@ -74,7 +74,7 @@ func TestProposalLifecycle(t *testing.T) {
 func TestSetProposalResultCollab(t *testing.T) {
 	s := openTest(t)
 	ctx := context.Background()
-	p := &Proposal{Sponsor: "jane-admin", Env: "zagros", Handle: "col-user", Email: "person-26@example.org", ManifestJSON: `{}`, Tier: "developer"}
+	p := &Proposal{Sponsor: "jane-admin", Env: "zagros", Handle: "col-user", Email: "person-21@example.org", ManifestJSON: `{}`, Tier: "developer"}
 	if err := s.CreateProposal(ctx, p); err != nil {
 		t.Fatalf("CreateProposal: %v", err)
 	}
@@ -137,7 +137,7 @@ func TestInviteConsumeSingleUse(t *testing.T) {
 	}
 
 	build := func(iv *Invite, pid string) (*Proposal, error) {
-		rec, handle, email, err := AssembleIntakeRecord(iv, json.RawMessage(`{"handle":"pat-liaison","email":"person-118@example.org"}`))
+		rec, handle, email, err := AssembleIntakeRecord(iv, json.RawMessage(`{"handle":"pat-liaison","email":"person-105@example.org"}`))
 		if err != nil {
 			return nil, err
 		}
@@ -240,7 +240,7 @@ func TestInviteDeliveryRecord(t *testing.T) {
 	ctx := context.Background()
 
 	inv := &Invite{Sponsor: "op@example.org", Env: "zagros", ExpiresAt: time.Now().Add(72 * time.Hour).Unix(),
-		CandidateEmail: "  person-57@example.org  "}
+		CandidateEmail: "  person-49@example.org  "}
 	if _, err := s.MintInvite(ctx, inv); err != nil {
 		t.Fatalf("MintInvite: %v", err)
 	}
@@ -248,7 +248,7 @@ func TestInviteDeliveryRecord(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetInvite: %v", err)
 	}
-	if got.CandidateEmail != "person-57@example.org" {
+	if got.CandidateEmail != "person-49@example.org" {
 		t.Fatalf("addressed-at-mint email = %q, want the trimmed address", got.CandidateEmail)
 	}
 	if got.SentAt != nil || got.SentVia != "" {
@@ -259,16 +259,16 @@ func TestInviteDeliveryRecord(t *testing.T) {
 	if err := s.AddressInvite(ctx, inv.ID, "  "); err != nil {
 		t.Fatalf("AddressInvite(blank): %v", err)
 	}
-	if got, _ = s.GetInvite(ctx, inv.ID); got.CandidateEmail != "person-57@example.org" {
+	if got, _ = s.GetInvite(ctx, inv.ID); got.CandidateEmail != "person-49@example.org" {
 		t.Fatalf("blank AddressInvite erased the recipient: %q", got.CandidateEmail)
 	}
 
 	at := time.Now().Unix()
-	if err := s.RecordInviteSend(ctx, inv.ID, "person-86@example.org", SentViaEmail, at); err != nil {
+	if err := s.RecordInviteSend(ctx, inv.ID, "person-73@example.org", SentViaEmail, at); err != nil {
 		t.Fatalf("RecordInviteSend: %v", err)
 	}
 	got, _ = s.GetInvite(ctx, inv.ID)
-	if got.CandidateEmail != "person-86@example.org" || got.SentVia != SentViaEmail || got.SentAt == nil || *got.SentAt != at {
+	if got.CandidateEmail != "person-73@example.org" || got.SentVia != SentViaEmail || got.SentAt == nil || *got.SentAt != at {
 		t.Fatalf("send record = %q/%q/%v, want the re-addressed send", got.CandidateEmail, got.SentVia, got.SentAt)
 	}
 }

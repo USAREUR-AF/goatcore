@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """external-service-finish.py -- finish an external service the proposer opened.
 
-When a service owner's declaration is approved in
-usareur-af/hello-galaxy-external-service, a pull request opens here carrying it.
+When a service owner's declaration is approved in the proposal repository
+(hello-galaxy-external-service, beside this one), a pull request opens here
+carrying it.
 A platform engineer runs this, once, from a laptop that can reach the goatnet:
 
     python3 ops/scripts/external-service-finish.py <goat PR number>
@@ -45,9 +46,14 @@ usage:
   --dry-run   do every read, print every write, change nothing
   --from      resume at a step (state is kept in ~/.goat/external-service-finish/)
   --email     skip the lookup and deliver to this address
+This repository, the proposal repository beside it, the state directory holding
+the goatnet CA key and the AWS profile an env door opens under are the
+checkout's own: repo.source, deploy.state_dir and deploy.aws_profile in
+ops/goatbuilder/goatbuilder.yaml (GOAT_AWS_PROFILE overrides the profile).
 Design: docs/design/external-service-golden-path.md, "Finishing a proposed service".
 """
 import argparse
+import base64
 import datetime
 import glob
 import json
@@ -71,7 +77,39 @@ except ImportError:
 REPO = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
 sys.path.insert(0, os.path.join(REPO, "ops", "warrant"))
 import membership as warrant_membership  # noqa: E402  (ops/warrant/membership.py)
-GH_REPO = "USAREUR-AF/goatcore"
+
+
+def declared(section, key, default=""):
+    """What this checkout declares about itself in ops/goatbuilder/goatbuilder.yaml,
+    read as the builder reads it (crates/goatbuilder/src/settings.rs)."""
+    try:
+        with open(os.path.join(REPO, "ops", "goatbuilder", "goatbuilder.yaml"), encoding="utf-8") as fh:
+            value = ((yaml.safe_load(fh) or {}).get(section) or {}).get(key)
+    except (OSError, yaml.YAMLError, AttributeError):
+        return default
+    return str(value).strip() if value else default
+
+
+def _clone_slug():
+    """The current clone's trunk remote as owner/name (ops/scripts/repo-slug.sh), or ""."""
+    try:
+        return subprocess.run([os.path.join(REPO, "ops", "scripts", "repo-slug.sh"), "primary"],
+                              capture_output=True, text=True, timeout=10).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+# The repository the pull request is in (owner/name): GH_REPO, else the
+# checkout's declared repo.source, else the clone's trunk remote. The proposal
+# repository lives beside it under the same owner.
+GH_REPO = os.environ.get("GH_REPO") or declared("repo", "source") or _clone_slug()
+SOURCE_REPO = "%s/hello-galaxy-external-service" % GH_REPO.split("/")[0] if GH_REPO else ""
+# Where this machine keeps the goatnet CA keys, and the AWS profile a door opens under.
+PROJECT_STATE_DIR = declared("deploy", "state_dir", "~/.goat/state")
+# The audit log name-snapshot-sign appends to: ca-audit.jsonl beside the state
+# directory, named on the call (ops/scripts/project-setting.sh ca-audit-log).
+CA_AUDIT_LOG = os.path.join(os.path.dirname(os.path.expanduser(PROJECT_STATE_DIR.rstrip("/"))) or ".", "ca-audit.jsonl")
+AWS_PROFILE = os.environ.get("GOAT_AWS_PROFILE") or declared("deploy", "aws_profile", "default")
 STEPS = ["check", "read", "peer", "prepare", "review", "merge", "pull", "tier", "apply", "verify", "email"]
 STATE_DIR = os.path.expanduser("~/.goat/external-service-finish")
 TTY = sys.stdout.isatty() and not os.environ.get("NO_COLOR")
@@ -224,10 +262,15 @@ def external_infra_entry(st, facts, today=None):
     if expires is None or expires < today:
         expires = today + datetime.timedelta(days=180)
     reason = "external service %s host (ADR 1178), goat #%s" % (st.get("name") or "?", st.get("pr") or "?")
+    owner = str(st.get("owner") or "").strip()
+    if not owner:
+        # ops/ansible/external-service.yml refuses a declaration without one.
+        raise Stop("The declaration names no `owner` (who to call about the service), so the membership "
+                   "entry has none to carry. Add it to the declaration and re-run.")
     return {
         "peer": st["peer_name"],
         "exact": [facts["external_infra"]],
-        "owner": str(st.get("owner") or "user369x"),
+        "owner": owner,
         "reason": reason[:warrant_membership.REASON_MAX],
         "expires": expires.isoformat(),
     }
@@ -285,6 +328,9 @@ def transport(facts):
 
 def do_check(a, st):
     step("check", "tools, credentials and a route to the goatnet")
+    if not GH_REPO:
+        raise Stop("ops/goatbuilder/goatbuilder.yaml declares no repo.source (owner/name), so the repository "
+                   "the pull request is in is unknown. Nothing has changed.")
     missing = []
     # aws-vault is NOT here: over the mesh the apply is plain SSH. Only an env
     # door needs AWS, and check_site asks for it once it knows the route.
@@ -306,7 +352,7 @@ def check_site(a, facts):
         need += [facts["smtp_user_env"], facts["smtp_pass_env"]]
     missing = [v for v in need if not os.environ.get(v)]
     if facts["snapshot"]:
-        rk = os.path.expanduser(a.root_key or "~/.goat/state/%s-ca/ca.key.age" % facts["site_id"])
+        rk = os.path.expanduser(a.root_key or "%s/%s-ca/ca.key.age" % (PROJECT_STATE_DIR, facts["site_id"]))
         ai = os.path.expanduser(a.age_identity)
         if not os.path.exists(rk):
             missing.append("the %s CA key at %s (or pass --root-key)" % (facts["site_id"], rk))
@@ -321,15 +367,15 @@ def check_site(a, facts):
         raise Stop("No route to %s: connect this laptop to the %s NetBird profile (no AWS needed), or register an "
                    "env door (ops/scripts/env-door.sh, docs/design/env-doors.md)." % (facts["site_id"], facts["site_id"]))
     if how == "door" and not shutil.which("aws-vault"):
-        raise Stop("The route to %s is an env door, which opens through AWS: install aws-vault and add the `usareur-af` "
+        raise Stop("The route to %s is an env door, which opens through AWS: install aws-vault and add the `%s` "
                    "profile -- or connect this laptop to the %s NetBird profile instead, which needs no AWS."
-                   % (facts["site_id"], facts["site_id"]))
+                   % (facts["site_id"], AWS_PROFILE, facts["site_id"]))
     ok("credentials for %s present; route: %s%s" % (facts["site_id"], how, "" if how == "door" else " (no AWS needed)"))
 
 
 # ---- 2 read ------------------------------------------------------------------
 DECL_PATH = re.compile(r"^ops/ansible/group_vars/([a-z0-9_]+)/external-service-([a-z0-9-]+)\.yml$")
-SOURCE_URL = re.compile(r"https://github\.com/usareur-af/hello-galaxy-external-service/pull/(\d+)")
+SOURCE_URL = re.compile(r"https://github\.com/%s/pull/(\d+)" % re.escape(SOURCE_REPO))
 
 
 def do_read(a, st):
@@ -481,7 +527,8 @@ def do_prepare(a, st, facts):
                 note("signing ops/dns/%s/name-snapshot.json with the %s CA key (age may ask for a passphrase)"
                      % (facts["zone_dir"], facts["site_id"]))
                 run(["go", "run", "./cmd/name-snapshot-sign", "--snapshot", "../dns/%s/name-snapshot.json" % facts["zone_dir"],
-                     "--root-key", a.root_key, "--age-identity", a.age_identity],
+                     "--root-key", a.root_key, "--age-identity", a.age_identity,
+                     "--audit-log", CA_AUDIT_LOG],
                     cwd=os.path.join(tmp, "ops", "enrollment"), capture=False, write=True)
                 if not DRY:
                     run(["bash", "ops/ci/check-name-snapshot-sig.sh"], cwd=tmp)
@@ -539,7 +586,11 @@ def do_merge(a, st, facts):
     if pr["reviewDecision"] != "APPROVED":
         raise Stop("the new commits dismissed the approval (review decision: %s). Re-approve %s, then re-run with --from merge."
                    % (pr["reviewDecision"] or "none", st["url"]))
-    run(["gh", "pr", "merge", str(st["pr"]), "--repo", GH_REPO, "--squash", "--delete-branch"], write=True)
+    checked_head = st.get("checked_head")
+    if not checked_head:
+        raise Stop("No checked proposal head; restart from read before merging.")
+    run(["gh", "pr", "merge", str(st["pr"]), "--repo", GH_REPO, "--squash", "--delete-branch",
+         "--match-head-commit", checked_head], write=True)
     st["merged"] = not DRY
     ok("merged")
 
@@ -757,7 +808,7 @@ def linked_email(st, facts):
     """(login, email or None, why) -- the goatnet identity whose onboarding record names the PR author's GitHub login."""
     if not st.get("source_pr"):
         return None, None, "the goat PR does not record which hello-galaxy-external-service PR requested it"
-    login = gh_json(["api", "repos/usareur-af/hello-galaxy-external-service/pulls/%s" % st["source_pr"]])["user"]["login"]
+    login = gh_json(["api", "repos/%s/pulls/%s" % (SOURCE_REPO, st["source_pr"])])["user"]["login"]
     key = os.environ.get(facts["portal_key_env"])
     if not key:
         return login, None, "%s is not set, so the onboarding records could not be read" % facts["portal_key_env"]
@@ -849,6 +900,8 @@ def do_email(a, st, facts):
         note("DRY: would send from %s via %s:%s:\n" % (facts["smtp_from"], facts["smtp_host"], facts["smtp_port"]))
         print("\n".join("        " + l for l in msg.get_content().splitlines()))
         return
+    # Recipient prompts may wait while the owner withdraws the proposal.
+    require_present_declaration(st)
     with smtplib.SMTP(facts["smtp_host"], facts["smtp_port"], timeout=30) as s:
         s.starttls(context=ssl.create_default_context())
         s.login(os.environ[facts["smtp_user_env"]], os.environ[facts["smtp_pass_env"]])
@@ -898,6 +951,41 @@ def do_review(a, st, facts):
     ok("all checks passed")
 
 
+def require_present_declaration(st):
+    """Recheck the source before each step, including resumed steps."""
+    path = "ops/ansible/group_vars/%s/external-service-%s.yml" % (st["group"], st["stem"])
+    pr = gh_json(["pr", "view", str(st["pr"]), "--repo", GH_REPO,
+                  "--json", "state,headRefOid"])
+    if pr["state"] not in ("OPEN", "MERGED"):
+        raise Stop("Cannot finish a closed, unmerged proposal.")
+    # The apply path uses main after merge; the PR branch may already be deleted.
+    ref = "main" if pr["state"] == "MERGED" else pr["headRefOid"]
+    blob = gh_json(["api", "repos/%s/contents/%s?ref=%s" % (GH_REPO, path, ref)])
+    try:
+        content = base64.b64decode("".join(blob["content"].split()), validate=True)
+        data = yaml.safe_load(content)
+    except (KeyError, TypeError, ValueError, AttributeError, yaml.YAMLError):
+        raise Stop("Cannot read a valid external-service declaration; nothing can continue.") from None
+    if not isinstance(data, dict):
+        raise Stop("The external-service declaration must be a mapping.")
+    entries = [v for k, v in data.items() if isinstance(k, str) and k.startswith("external_service_")]
+    if len(entries) != 1 or not isinstance(entries[0], dict) or entries[0].get("enabled", True) is not True:
+        raise Stop("This finisher accepts enabled declarations only. For withdrawal, retain the disabled "
+                   "declaration, sign the regenerated DNS snapshot and apply external-service.yml state=absent "
+                   "with named zone_record_removal_allow entries. No membership or email steps are needed.")
+    if pr["state"] == "OPEN":
+        st["checked_head"] = ref
+    elif st.get("apply_tree") and "pull" in st.get("done", []):
+        local_path = os.path.join(st["apply_tree"], path)
+        try:
+            with open(local_path, "rb") as fh:
+                local_content = fh.read()
+        except OSError:
+            raise Stop("Saved apply worktree has no readable declaration; restart from pull.") from None
+        if local_content != content:
+            raise Stop("Saved apply declaration differs from current main; restart from pull.")
+
+
 # ---- runner ------------------------------------------------------------------
 def main():
     global DRY
@@ -923,7 +1011,10 @@ def main():
     handlers = dict(check=do_check, read=do_read, peer=do_peer, prepare=do_prepare, review=do_review, merge=do_merge,
                     pull=do_pull, tier=do_tier, apply=do_apply, verify=do_verify, email=do_email)
     facts = None
+    s = "read"
     try:
+        if "read" in st["done"]:
+            require_present_declaration(st)
         for s in STEPS:
             if s in st["done"]:
                 note("[%s] done earlier" % s)
@@ -933,8 +1024,13 @@ def main():
             if s in ("check", "read"):
                 handlers[s](a, st)
             else:
+                # Review can wait while the proposal changes. Recheck before
+                # each subsequent action, especially merge, tier and apply.
+                if facts is not None:
+                    require_present_declaration(st)
                 handlers[s](a, st, facts)
             if s == "read":
+                require_present_declaration(st)
                 facts = site_facts(REPO, st["group"])
                 check_site(a, facts)
             if not DRY:

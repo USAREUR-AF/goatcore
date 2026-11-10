@@ -133,7 +133,7 @@ func mustContain(t *testing.T, body string, wants ...string) {
 func TestOffboardVerifyFlagsLingeringCredentials(t *testing.T) {
 	s := newOnboardTestServer(t)
 	h := s.Routes()
-	const email, handle = "person-119@example.org", "pat-liaison"
+	const email, handle = "person-106@example.org", "pat-liaison"
 	seedOffboardedPerson(t, s, h, email)
 	s.Kratos = map[string]*kratos.Client{"tenant": fakeKratosIdentityList(t, email, "active")}
 	portal, bearer := fakePresencePortal(t, presenceLingering(handle))
@@ -166,7 +166,7 @@ func TestOffboardVerifyFlagsLingeringCredentials(t *testing.T) {
 func TestOffboardVerifyAllClear(t *testing.T) {
 	s := newOnboardTestServer(t)
 	h := s.Routes()
-	const email = "person-119@example.org"
+	const email = "person-106@example.org"
 	seedOffboardedPerson(t, s, h, email)
 	s.Kratos = map[string]*kratos.Client{"tenant": fakeKratosIdentityList(t, email, "inactive")}
 	portal, _ := fakePresencePortal(t, presenceGone(email))
@@ -198,7 +198,7 @@ func TestOffboardVerifyAllClear(t *testing.T) {
 func TestOffboardVerifyPortalDownNeverGreen(t *testing.T) {
 	s := newOnboardTestServer(t)
 	h := s.Routes()
-	const email = "person-119@example.org"
+	const email = "person-106@example.org"
 	seedOffboardedPerson(t, s, h, email)
 	s.Kratos = map[string]*kratos.Client{"tenant": fakeKratosIdentityList(t, email, "inactive")}
 	dead := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
@@ -227,7 +227,7 @@ func TestOffboardVerifyPortalDownNeverGreen(t *testing.T) {
 func TestOffboardVerifyNoReceiptIsExplicit(t *testing.T) {
 	s := newOnboardTestServer(t)
 	h := s.Routes()
-	const email = "person-45@example.org"
+	const email = "person-39@example.org"
 	s.Kratos = map[string]*kratos.Client{"tenant": fakeKratosIdentityList(t, "someone-else@example.org", "active")}
 	portal, _ := fakePresencePortal(t, presenceGone(email))
 	s.Cfg.PortalInternalURL = portal.URL
@@ -246,7 +246,7 @@ func TestOffboardVerifyNoReceiptIsExplicit(t *testing.T) {
 func TestOffboardVerifyNotOffboardedIsExplicit(t *testing.T) {
 	s := newOnboardTestServer(t)
 	h := s.Routes()
-	const email = "person-119@example.org"
+	const email = "person-106@example.org"
 	onboardedProposalInState(t, s, h, email, onboardstore.ProposalOnboarded) // onboarded, never offboarded
 	s.Kratos = map[string]*kratos.Client{"tenant": fakeKratosIdentityList(t, email, "active")}
 	portal, _ := fakePresencePortal(t, presenceLingering("pat-liaison"))
@@ -268,7 +268,7 @@ func TestOffboardVerifyRequiresAdmin(t *testing.T) {
 	s.Cfg.DevBypassAuth = false
 	h := s.Routes()
 
-	rec := getOffboardVerify(t, h, "person-119@example.org")
+	rec := getOffboardVerify(t, h, "person-106@example.org")
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("want 403 without an admin group, got %d", rec.Code)
 	}

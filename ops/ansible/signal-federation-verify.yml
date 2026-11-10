@@ -1,0 +1,230 @@
+---
+# signal-federation-verify.yml — prove signal federation between a joiner and
+# its founder carries offers, from both management nodes. Read-only on the
+# goatnet: it starts no service and changes no config. The one write is a
+# synthetic signal offer (the signal-federation-probe image, --mode=validation)
+# addressed to the OTHER node's own mesh key, which that node's daemon drops.
+#
+# Per node, toward its peer:
+#   transport  federation-proxy running; signal-a enforces the token; the
+#              peer's signal answers on its mesh address :10000; a TLS handshake
+#              through at least one relay with the peer's federation hostname
+#              as SNI returns the peer's certificate for that name (the public
+#              backup leg, end to end through the relay pin and the tunnel)
+#   delivery   signal_server_forward_sent_total{outcome="delivered"} on THIS
+#              node rises when the probe offers to the peer node's key
+#
+# A direction whose target key is homed on the sending node's own signal (both
+# daemons dial the goatnet apex, and the relays send that to one node) is
+# delivered locally with no forward: it is reported UNPROVEN, not passed. The
+# play passes when transport holds on both nodes and at least one direction is
+# proven by a forward; the summary names each direction's result.
+#
+# Run (after signal-federation-transport.yml on both sides, traefik-acme.yml on
+# both, and the relay pins):
+#   cd ops/ansible
+#   ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini \
+#     -i inventory/mgmt-hosts-mesh.ini signal-federation-verify.yml \
+#     -e federation_site=<joiner-site> -e federation_peer_site=<founder-site>
+
+- name: "signal federation verify — refuse a run without -e federation_site and federation_peer_site"
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Require federation_site naming a declared site group
+      ansible.builtin.assert:
+        that:
+          - federation_site is defined and (federation_site | length) > 0
+          - (federation_site | replace('-', '_')) ~ '_hosts' in groups
+          - federation_peer_site is defined and (federation_peer_site | replace('-', '_')) ~ '_hosts' in groups
+        fail_msg: "pass -e federation_site=<joiner> -e federation_peer_site=<founder>; both <site>_hosts groups must be in the inventory"
+        quiet: true
+
+- name: "signal federation verify — each node's own mesh key"
+  hosts: "{{ federation_site | default('unset') | replace('-', '_') }}_hosts[0]:{{ federation_peer_site | default('unset') | replace('-', '_') }}_hosts[0]"
+  gather_facts: false
+  become: true
+  tasks:
+    - name: Read this node's NetBird public key
+      ansible.builtin.command:
+        argv: [netbird, status, --json]
+      register: _nb_status
+      changed_when: false
+
+    - name: Record it
+      ansible.builtin.set_fact:
+        sigfed_pubkey: "{{ (_nb_status.stdout | from_json).publicKey }}"
+
+- name: "signal federation verify — transport and delivery toward the peer"
+  hosts: "{{ federation_site | default('unset') | replace('-', '_') }}_hosts[0]:{{ federation_peer_site | default('unset') | replace('-', '_') }}_hosts[0]"
+  gather_facts: false
+  become: true
+  vars:
+    _a: "{{ groups[(federation_site | replace('-', '_')) ~ '_hosts'][0] }}"
+    _b: "{{ groups[(federation_peer_site | replace('-', '_')) ~ '_hosts'][0] }}"
+    _peer: "{{ _b if inventory_hostname == _a else _a }}"
+    _metrics: "http://127.0.0.1:9090/metrics"
+    _delivered_sum: >-
+      curl -sf {{ _metrics }} | awk '/^signal_server_forward_sent_total[{]/ && /outcome="delivered"/ {s+=$NF} END {printf "%d\n", s}'
+  tasks:
+    # The canary role's defaults hold the probe pin. Read them into their own
+    # namespace so a goatnet's group_vars override of
+    # signal_federation_probe_image still wins (include_vars straight into the
+    # host's vars would outrank group_vars and silently undo the override).
+    - name: Probe image | read the canary role's pin
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/roles/signal-federation-canary/defaults/main.yml"
+        name: _sigfed_canary_defaults
+
+    - name: Probe image | the goatnet's override, else the canary role's pin
+      ansible.builtin.set_fact:
+        _sigfed_probe_image: >-
+          {{ signal_federation_probe_image
+             | default(_sigfed_canary_defaults.signal_federation_probe_image | default(''), true)
+             | string | trim }}
+
+    - name: Refuse a node that does not declare federation
+      ansible.builtin.include_tasks: tasks/signal-federation-assert.yml
+
+    - name: Transport | federation-proxy and signal-a are running
+      ansible.builtin.command:
+        cmd: docker inspect -f '{% raw %}{{.State.Status}}{% endraw %}' signal-a federation-proxy
+      register: _run
+      changed_when: false
+      failed_when: false
+
+    - name: Transport | signal-a enforces the federation token
+      ansible.builtin.shell: docker logs signal-a 2>&1 | grep -q "federation auth enforced"
+      args:
+        executable: /bin/bash
+      register: _auth
+      changed_when: false
+      failed_when: false
+
+    - name: Transport | the peer's signal answers on its mesh address
+      ansible.builtin.shell: >-
+        timeout 5 bash -c '</dev/tcp/{{ federation_peer_mesh_addr.rsplit(':', 1)[0] }}/{{ federation_peer_mesh_addr.rsplit(':', 1)[1] }}'
+      args:
+        executable: /bin/bash
+      register: _mesh
+      changed_when: false
+      failed_when: false
+
+    - name: Transport | the public leg — TLS to the peer's federation name through each relay
+      ansible.builtin.shell: >-
+        timeout 10 openssl s_client -connect {{ item }}:443
+        -servername {{ federation_peer_public_sni }}
+        -verify_hostname {{ federation_peer_public_sni }}
+        -verify_return_error -brief </dev/null
+      args:
+        executable: /bin/bash
+      loop: "{{ federation_public_relays }}"
+      register: _pub
+      changed_when: false
+      failed_when: false
+
+    - name: Delivery | forwards delivered before the probe
+      ansible.builtin.shell: "{{ _delivered_sum }}"
+      args:
+        executable: /bin/bash
+      register: _before
+      changed_when: false
+
+    - name: Delivery | offer to the peer node's own key
+      ansible.builtin.command:
+        argv:
+          - docker
+          - run
+          - --rm
+          - --network
+          - host
+          - "{{ _sigfed_probe_image }}"
+          - --mode=validation
+          - --target=localhost:10000
+          - "--remote-key={{ hostvars[_peer].sigfed_pubkey }}"
+      register: _probe
+      changed_when: false
+      failed_when: false
+      when: _sigfed_probe_image | length > 0
+
+    # A probe that did not run, could not pull its image, or exited non-zero
+    # is a FAILED direction with its cause named — never an empty outcome.
+    # Exit codes (ops/signal-federation-probe/main.go, --mode=validation):
+    # 0 delivered, 1 any other offer outcome, 2 bad arguments; docker run
+    # itself exits 125 when it cannot create the container (pull refused,
+    # manifest unknown) and 126/127 when the entrypoint cannot run.
+    - name: Delivery | name the probe's outcome
+      ansible.builtin.set_fact:
+        sigfed_probe_error: >-
+          {%- set out = ((_probe.stdout | default('')) ~ ' ' ~ (_probe.stderr | default(''))) | trim -%}
+          {%- set tail = (out | regex_replace('\\s+', ' '))[-300:] -%}
+          {%- if _sigfed_probe_image | length == 0 -%}
+          probe image undefined: signal_federation_probe_image is unset and the canary role's defaults carry no pin
+          {%- elif _probe.rc | default(0) == 0 -%}
+          {%- elif _probe.rc == 125 and out is search('manifest unknown|not found|pull access denied|denied|unauthorized|toomanyrequests|no such host|i/o timeout', ignorecase=true) -%}
+          image pull failed for {{ _sigfed_probe_image }} (docker exit 125): {{ tail }}
+          {%- elif _probe.rc in [125, 126, 127] -%}
+          docker could not run {{ _sigfed_probe_image }} (exit {{ _probe.rc }}): {{ tail | default('no output', true) }}
+          {%- elif _probe.rc == 1 -%}
+          probe ran and the offer was not delivered (exit 1): {{ tail | default('no output', true) }}
+          {%- else -%}
+          probe exited {{ _probe.rc }}: {{ tail | default('no output', true) }}
+          {%- endif -%}
+
+    - name: Delivery | forwards delivered after the probe
+      ansible.builtin.shell: "{{ _delivered_sum }}"
+      args:
+        executable: /bin/bash
+      register: _after
+      changed_when: false
+
+    - name: Record this direction
+      ansible.builtin.set_fact:
+        sigfed_transport_ok: >-
+          {{ _run.rc == 0 and (_run.stdout_lines | select('ne', 'running') | list | length) == 0
+             and _auth.rc == 0 and _mesh.rc == 0
+             and (_pub.results | selectattr('rc', 'equalto', 0) | list | length) > 0 }}
+        sigfed_direction: >-
+          {{ inventory_hostname }} -> {{ _peer }}:
+          {{ 'PROVEN (forward delivered)' if (_after.stdout | int) > (_before.stdout | int)
+             else ('FAILED: ' ~ sigfed_probe_error if (sigfed_probe_error | default('', true) | length) > 0
+                   else 'UNPROVEN: the probe was delivered without a forward — ' ~ _peer ~ "'s key is homed on this node's signal") }};
+          proxy+signal {{ 'running' if _run.rc == 0 else 'NOT running' }},
+          token {{ 'enforced' if _auth.rc == 0 else 'NOT enforced' }},
+          mesh leg {{ 'up' if _mesh.rc == 0 else 'DOWN' }},
+          public leg {{ _pub.results | selectattr('rc', 'equalto', 0) | list | length }}/{{ _pub.results | length }} relays
+        sigfed_proven: "{{ (_after.stdout | int) > (_before.stdout | int) }}"
+
+- name: "signal federation verify — verdict"
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    _nodes:
+      - "{{ groups[(federation_site | replace('-', '_')) ~ '_hosts'][0] }}"
+      - "{{ groups[(federation_peer_site | replace('-', '_')) ~ '_hosts'][0] }}"
+  tasks:
+    - name: Each direction
+      ansible.builtin.debug:
+        msg: "{{ hostvars[item].sigfed_direction | default(item ~ ': not reached') | trim }}"
+      loop: "{{ _nodes }}"
+
+    - name: Transport on both nodes, delivery proven in at least one direction
+      ansible.builtin.assert:
+        that:
+          - _nodes | map('extract', hostvars, 'sigfed_transport_ok') | map('bool') | select | list | length == 2
+          - _nodes | map('extract', hostvars, 'sigfed_proven') | map('bool') | select | list | length >= 1
+          # A probe error ("" or None when the probe was clean) fails the
+          # verdict even when the other direction proved delivery.
+          - _nodes | map('extract', hostvars, 'sigfed_probe_error') | map('default', 'not reached') | select | list | length == 0
+        fail_msg: >-
+          signal federation {{ federation_site }} <-> {{ federation_peer_site }} is
+          not proven. Read the two direction lines above: a FAILED probe names
+          its cause (image pull, undefined image, exit code), a DOWN leg names the
+          path (mesh: the peer's mesh_ip_a:10000; public: relay pin, tunnel,
+          the peer's Traefik federation router and certificate).
+        success_msg: >-
+          signal federation {{ federation_site }} <-> {{ federation_peer_site }}:
+          transport up on both nodes; an UNPROVEN direction becomes provable
+          when a peer homes on that node's signal.

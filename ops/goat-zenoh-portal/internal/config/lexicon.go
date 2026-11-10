@@ -6,11 +6,12 @@ import (
 )
 
 // Lexicon is the display-only vocabulary of the portal web UI. It exists so
-// one image can serve every goatnet with goatnet-appropriate wording: nova-a
-// renders "Zenoh Trial — Vendor Portal" (the trial-fabric framing where
-// participants really are synthetic vendors), while ZAGROS renders "ZAGROS Fabric
-// Portal" with "org" as the top-level entity (its participants are
-// organizations — commands, units, and vendors alike).
+// one image can serve every goatnet with goatnet-appropriate wording: the
+// legacy per-vendor goatnet renders "Zenoh Trial — Vendor Portal" (the
+// trial-fabric framing where participants really are synthetic vendors), while
+// a slot-pool goatnet renders "<Name> Fabric Portal" with its own top-level
+// entity noun (its participants are organizations — commands, units, and
+// vendors alike).
 //
 // INVARIANT — this is render-time substitution only. The display layer never
 // changes a path, key, or token: API routes stay /api/vendors and the registry
@@ -20,28 +21,30 @@ import (
 //
 // NOTE — the cert *identity* layer is NOT part of this display-only invariant.
 // The minted cert URI-SAN / CN / DNS-SAN are per-goatnet machine values set
-// by the role (config.CertSign* fields), NOT lexicon tokens: nova-a mints
-// urn:goat-nova:vendor=<v>, ZAGROS mints urn:goat:zagros:org=<anchor>. Those are
-// real, frozen-on-cert grammar — generalized so a new goatnet specifies its
-// own rather than inheriting the nova string. See docs/design/portal-lexicon.md.
+// by the role (config.CertSign* fields), NOT lexicon tokens: the legacy
+// per-vendor goatnet mints <legacy-prefix><v>, a slot-pool goatnet mints
+// urn:goat:<goatnet>:org=<anchor>. Those are real, frozen-on-cert grammar —
+// generalized so a new goatnet specifies its own rather than inheriting
+// another's. See docs/design/portal-lexicon.md.
 //
-// Defaults reproduce the nova-a wording so an unconfigured portal is byte-stable
-// with what shipped before the lexicon existed. ZAGROS overrides the handful of
-// fields below via PORTAL_LEX_* env (wired by the ansible role from
+// Defaults reproduce the legacy per-vendor wording so an unconfigured portal is
+// byte-stable with what shipped before the lexicon existed. A goatnet overrides
+// the handful of fields below via PORTAL_LEX_* env (wired by the ansible role from
 // group_vars). Tokens are substituted into the embedded HTML at serve time and
 // served as JSON at GET /api/branding for the frontend JS.
 type Lexicon struct {
 	// ProductName is the bare product name used as a title prefix
-	// ("<ProductName> — Topics"). nova-a: "Zenoh Trial". ZAGROS: "ZAGROS Fabric".
+	// ("<ProductName> — Topics"). Default "Zenoh Trial"; a goatnet sets its own,
+	// e.g. "Galaxy Fabric".
 	ProductName string
 	// ProductTitle is the full masthead <h1>. Kept distinct from ProductName
-	// because the two don't compose uniformly: nova-a wants
-	// "Zenoh Trial — Vendor Portal" but ZAGROS wants the shorter
-	// "ZAGROS Fabric Portal", not "ZAGROS Fabric — Org Portal".
+	// because the two don't compose uniformly: the default is
+	// "Zenoh Trial — Vendor Portal" but a goatnet may want the shorter
+	// "Galaxy Fabric Portal", not "Galaxy Fabric — Org Portal".
 	ProductTitle string
 	// Org / Orgs / OrgTitle / OrgsTitle are the top-level-entity noun in its
-	// four surface forms (singular/plural × lower/title case). nova-a:
-	// vendor/vendors/Vendor/Vendors. ZAGROS: org/orgs/Org/Orgs. Only Org need be
+	// four surface forms (singular/plural × lower/title case). Default:
+	// vendor/vendors/Vendor/Vendors; e.g. org/orgs/Org/Orgs. Only Org need be
 	// set; the rest derive (regular pluralization + first-letter case) unless
 	// explicitly overridden for an irregular noun.
 	Org       string
@@ -52,13 +55,13 @@ type Lexicon struct {
 	// peering docs (`export VENDOR=…` / `export ORG=…`). Derived from Org.
 	OrgUpper string
 	// PanoscopeURL is the masthead "Panoscope ↗" nav link target. Per-goatnet
-	// (nova panoscope ≠ ZAGROS panoscope); historically hardcoded to the nova host
-	// in the static HTML, which is why an ZAGROS portal linked operators back to
-	// the nova surface. Now a lexicon field so each env points at its own.
+	// (each goatnet runs its own panoscope), so a lexicon field and not a
+	// literal in the static HTML: each env points at its own. The built-in
+	// default is a placeholder; the role always sets PORTAL_LEX_PANOSCOPE_URL.
 	PanoscopeURL string
 }
 
-// normalize fills unset fields with derived or nova-a-default values. Called
+// normalize fills unset fields with derived or built-in default values. Called
 // once after flag/env parsing. Idempotent.
 func (l *Lexicon) normalize() {
 	if l.ProductName == "" {
@@ -80,12 +83,12 @@ func (l *Lexicon) normalize() {
 		l.OrgUpper = strings.ToUpper(l.Org)
 	}
 	if l.ProductTitle == "" {
-		// nova-a default: "Zenoh Trial — Vendor Portal". ZAGROS overrides the whole
-		// string, so this composition only ever produces the nova wording.
+		// Default: "Zenoh Trial — Vendor Portal". A goatnet that sets a product
+		// name sets the whole title too, so this composes only the default.
 		l.ProductTitle = l.ProductName + " — " + l.OrgTitle + " Portal"
 	}
 	if l.PanoscopeURL == "" {
-		l.PanoscopeURL = "https://panoscope.nova.netbird.nova.example/"
+		l.PanoscopeURL = "https://panoscope.goat.example/"
 	}
 }
 

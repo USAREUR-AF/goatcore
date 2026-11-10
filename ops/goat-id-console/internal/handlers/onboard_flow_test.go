@@ -103,7 +103,7 @@ func TestOnboardFlow(t *testing.T) {
 	}
 
 	// --- PUBLIC realm: submit. Enrollee fills identity; sponsor-locked fields win.
-	sub := map[string]any{"name": "Pat Liaison", "email": "person-119@example.org", "organization": "Flow Org", "nationality": "CAN"}
+	sub := map[string]any{"name": "Pat Liaison", "email": "person-106@example.org", "organization": "Flow Org", "nationality": "CAN"}
 	pid := submit(t, h, tok, sub)
 	if pid == "" {
 		t.Fatalf("submit: empty proposal id")
@@ -305,7 +305,7 @@ func TestMachineRealmAuth(t *testing.T) {
 	// F-207: an intake through the machine realm is sponsored by the RESOLVED
 	// handle ("onboard-runner"), not a generic label.
 	manifest := map[string]any{
-		"identity":    map[string]any{"handle": "svc-x", "email": "person-130@example.org", "name": "Svc X", "added_by": "person-123@example.org"},
+		"identity":    map[string]any{"handle": "svc-x", "email": "person-117@example.org", "name": "Svc X", "added_by": "person-110@example.org"},
 		"affiliation": map[string]any{"id": "zagros-svc", "kind": "organic"},
 		"netbird":     map[string]any{"enabled": true, "auto_groups": []string{"OBSERVER"}, "sites": []string{"zagros"}, "role": "peer"},
 		"ory_site":    map[string]any{"enabled": true, "sites": []string{"zagros"}, "credentials": map[string]any{"password": true}},

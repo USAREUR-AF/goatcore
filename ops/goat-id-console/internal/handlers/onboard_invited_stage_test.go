@@ -453,7 +453,7 @@ func TestOnboardingInviteRecordShowsDelivery(t *testing.T) {
 	form.Set("collab", "1")
 	form.Set("ttl_hours", "48")
 	form.Set("note", "romania cohort")
-	form.Set("candidate_email", "person-57@example.org")
+	form.Set("candidate_email", "person-49@example.org")
 	r := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/onboarding/invite", strings.NewReader(form.Encode()))
 	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
@@ -469,7 +469,7 @@ func TestOnboardingInviteRecordShowsDelivery(t *testing.T) {
 	inv := invs[0]
 	// The mailer is unconfigured here, so nothing was sent — the address is
 	// still on the record, and the row must not claim a delivery.
-	if inv.CandidateEmail != "person-57@example.org" {
+	if inv.CandidateEmail != "person-49@example.org" {
 		t.Fatalf("candidate_email = %q, want the address typed at mint", inv.CandidateEmail)
 	}
 	if inv.SentAt != nil || inv.SentVia != "" {
@@ -483,7 +483,7 @@ func TestOnboardingInviteRecordShowsDelivery(t *testing.T) {
 	}
 	body := rec.Body.String()
 	for _, want := range []string{
-		"person-57@example.org",                                     // who it went to
+		"person-49@example.org",                                     // who it went to
 		"this console sent nothing",                            // delivery, stated honestly
 		time.Unix(inv.ExpiresAt, 0).UTC().Format(time.RFC3339), // absolute deadline
 		"lifetime 2d from minting",                             // the 48h TTL the sponsor chose
@@ -497,7 +497,7 @@ func TestOnboardingInviteRecordShowsDelivery(t *testing.T) {
 	}
 
 	// A recorded send shows the route and the time it left.
-	if err := s.Onboard.RecordInviteSend(context.Background(), inv.ID, "person-57@example.org", onboardstore.SentViaEmail, time.Now().Unix()); err != nil {
+	if err := s.Onboard.RecordInviteSend(context.Background(), inv.ID, "person-49@example.org", onboardstore.SentViaEmail, time.Now().Unix()); err != nil {
 		t.Fatalf("record send: %v", err)
 	}
 	rec = httptest.NewRecorder()

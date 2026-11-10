@@ -103,7 +103,7 @@
 - name: rollback-ledger | derive prior ref + compare key
   ansible.builtin.set_fact:
     _rbl_prior_ref: "{{ _rbl_prev.ref | default(_rbl_prev.image | default('')) }}"
-    _rbl_changed: >-
+    _rbl_ref_changed: >-
       {{
         (_rbl_prev.ref | default(_rbl_prev.image | default(''))) != rollback_ref
         or (_rbl_prev.artifact_type | default('')) != rollback_artifact_type
@@ -153,10 +153,74 @@
     _rbl_row: "{{ _rbl_row | combine({'source': 'offline'}) }}"
   when: lookup('env', 'GOAT_DEPLOY_OFFLINE') == '1'
 
+# The source of record the play rendered from, in one key: `source_tree`.
+# {"commit": <sha>} from a clone; {"goatcore": <sha>, "goatcore_ref": …,
+# "overlay": <sha>, "goatcore_export_of": <sha>?, "goatstuff": <sha>?,
+# "goatstuff_ref": …?, "embargo": [<id>, …]?} from an assembled tree
+# (ops/scripts/lib/source_of_record.py describe). ansible-preflight.sh exports it
+# as GOAT_DEPLOY_SOURCE_TREE on every play of both avenues, and that value wins.
+#
+# A play from an assembled tree that did not go through the wrapper gets the
+# same object built from the tree's .goat-assembled marker on the controller
+# (ops/goatprivate/assemble.sh): goatcore, overlay, goatstuff when the marker
+# names it, and the ids of the pre-disclosure patches (the marker's
+# embargo=<id>/<kind>.patch:<sha256>,… line), so the ledger shows which deploys
+# ran a fix that was not yet public. A plain checkout outside the wrapper writes
+# no source_tree.
+#
+# Rows written before this carried the marker's commits a second time at the top
+# level (goatcore_ref, overlay_commit, embargo). Nothing reads those keys; the
+# rows stay valid and every ledger reader takes them as before.
+- name: rollback-ledger | the row names the source tree it was rendered from
+  ansible.builtin.set_fact:
+    _rbl_row: "{{ _rbl_row | combine({'source_tree': lookup('env', 'GOAT_DEPLOY_SOURCE_TREE') | from_json}) }}"
+  when: (lookup('env', 'GOAT_DEPLOY_SOURCE_TREE') | trim) is match('[{].+[}]$')
+
+- name: rollback-ledger | outside the wrapper, an assembled tree's row names it from the marker
+  ansible.builtin.set_fact:
+    _rbl_row: >-
+      {{ _rbl_row | combine({'source_tree': dict(
+           [('goatcore', _rbl_m_goatcore), ('overlay', _rbl_m_overlay)]
+           + ([('goatstuff', _rbl_m_goatstuff)] if (_rbl_m_goatstuff | length > 0) else [])
+           + ([('embargo', _rbl_m_embargo)] if (_rbl_m_embargo | length > 0) else []))}) }}
+  vars:
+    _rbl_marker_lines: "{{ lookup('file', rollback_assembled_marker).splitlines() | map('trim') | list }}"
+    _rbl_m_goatcore: "{{ _rbl_marker_lines | select('match', 'goatcore_ref=') | map('regex_replace', '^goatcore_ref=', '') | first | default('', true) }}"
+    _rbl_m_overlay: "{{ _rbl_marker_lines | select('match', 'overlay_commit=') | map('regex_replace', '^overlay_commit=', '') | first | default('', true) }}"
+    _rbl_m_goatstuff: "{{ _rbl_marker_lines | select('match', 'goatstuff_ref=') | map('regex_replace', '^goatstuff_ref=', '') | first | default('', true) }}"
+    _rbl_m_embargo_line: "{{ _rbl_marker_lines | select('match', 'embargo=') | map('regex_replace', '^embargo=', '') | first | default('', true) }}"
+    _rbl_m_embargo: "{{ _rbl_m_embargo_line.split(',') | map('trim') | select | map('regex_replace', '/.*$', '') | unique | sort }}"
+  when:
+    - _rbl_row.source_tree is not defined
+    - rollback_assembled_marker is file
+
 # The rollout preflight's accepted risk (ADR 1211): when a deploy of a `none`
 # or `restore-required` rollout proceeded with --ack, the deploy driver passed
 # rollback_preflight_accept, and the row records what was knowingly accepted and
 # by whom. Empty by default, so every other deploy's row is unchanged.
+# A deploy from an assembled tree whose overlay commit or pre-disclosure patch
+# set differs from the prior row's is a change even when the ref is the same: a
+# patch or an overlay change that touches only role files leaves the image as it
+# was, and without a row the ledger would not show which tree the host was last
+# converged from. Compared only when this row has a source_tree (an assembled
+# tree, or any play through ansible-preflight.sh); a prior row without one counts
+# as an empty tree. A plain checkout outside the wrapper writes no source_tree and
+# keeps the ref-only comparison.
+- name: rollback-ledger | a change of overlay commit or patch set is a change
+  ansible.builtin.set_fact:
+    _rbl_tree_changed: >-
+      {{
+        (_rbl_row.source_tree is defined)
+        and (
+          ((_rbl_prev.source_tree | default({})).overlay | default('')) != (_rbl_row.source_tree.overlay | default(''))
+          or (((_rbl_prev.source_tree | default({})).embargo | default([])) | sort) != ((_rbl_row.source_tree.embargo | default([])) | sort)
+        )
+      }}
+
+- name: rollback-ledger | compare key
+  ansible.builtin.set_fact:
+    _rbl_changed: "{{ (_rbl_ref_changed | bool) or (_rbl_tree_changed | bool) }}"
+
 - name: rollback-ledger | a preflight-acknowledged rollout records the accepted risk
   ansible.builtin.set_fact:
     _rbl_row: "{{ _rbl_row | combine({'accepted': rollback_preflight_accept}) }}"
@@ -199,7 +263,8 @@
   notify: rollback-ledger promote
   when: _rbl_changed | bool
 
-# The dedup above compares only the REF. So a re-run after a refused deploy
+# The dedup above compares the ref (and, for an assembled tree, the overlay
+# commit and patch set). So a re-run after a refused deploy
 # finds its own `pending` row already naming this ref, skips the append, and
 # notifies nothing -- leaving the row reading `pending` on a host that then
 # deployed successfully. A ledger that hides a deploy that happened is as wrong

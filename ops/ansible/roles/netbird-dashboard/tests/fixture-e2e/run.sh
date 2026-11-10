@@ -41,6 +41,18 @@ if [[ "$mode" == "local" ]]; then
   export DASHBOARD_BASE_URL="${DASHBOARD_BASE_URL:-https://dashboard.localhost.test}"
   export E2E_OPERATOR_EMAIL="${E2E_OPERATOR_EMAIL:-e2e-test@localhost.test}"
   export E2E_OPERATOR_PASSWORD="${E2E_OPERATOR_PASSWORD:-e2e-test-password-fixed-1234}"
+  # docker-compose.yml pulls netbird-mgmt from the image namespace GHCR_ORG.
+  # Same rule as every deploy script: the caller's GHCR_ORG wins, else ghcr_org
+  # from ops/ansible/group_vars/all.yml, the namespace this checkout deploys from.
+  if [[ -z "${GHCR_ORG:-}" ]]; then
+    GHCR_ORG="$(sed -nE "s/^ghcr_org:.*[\"' ]([A-Za-z0-9][A-Za-z0-9._-]*)[\"']?[ }\"]*\$/\\1/p" \
+      "$HERE/../../../../group_vars/all.yml" 2>/dev/null | head -1 || true)"
+  fi
+  if [[ -z "${GHCR_ORG:-}" ]]; then
+    echo "FATAL: no image namespace. Export GHCR_ORG, or set ghcr_org in ops/ansible/group_vars/all.yml." >&2
+    exit 64
+  fi
+  export GHCR_ORG
   # Container-log capture lives in EXIT trap so it survives the
   # `docker compose up -d --wait` failure path. compose --wait fails
   # fast when a service exits before its healthcheck (kratos config

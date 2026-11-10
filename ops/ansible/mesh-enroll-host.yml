@@ -1,0 +1,174 @@
+---
+# mesh-enroll-host.yml — standup phase 8 as a scripted step: enrol each of a
+# site's mgmt hosts onto its own goatnet and report the mesh IP it got
+# (docs/design/goatbuilder-speed.md §"Phase 8 enrolment as a scripted step").
+#
+#   ansible-playbook mesh-enroll-host.yml -e target=<site>_hosts \
+#     -e mesh_ips_out=<operator state dir>/standup-<site>-mesh-ips.json
+#
+# Per host:
+#   1. Already enrolled (`netbird status --json` shows the management connection
+#      and a mesh IP)? Nothing is minted and nothing changes; the IP is reported.
+#   2. Otherwise the declared enrolment URL (`mesh_enrollment_url` in the site's
+#      group_vars) is checked against what the host resolves its name to (F-188:
+#      a name that resolves to this host itself takes :8443, the relay path
+#      :443). A pair that does not agree is refused here, before any key exists.
+#   3. A single-use setup key (one use, one-hour TTL, role bootstrap) is minted
+#      with `mgmt-host-bootstrap create-setup-key` on the site's first host, the
+#      host that holds the NetBird database, as site-bootstrap.yml does. It is
+#      held under no_log, written to a 0600 file under /run on the enrolling
+#      host, handed to `netbird up --setup-key-file`, and the file is removed
+#      whatever the outcome. The rosenpass flags come from `rosenpass_enabled`.
+#   4. The play waits for the management connection and a mesh IP
+#      (mesh_enroll_wait_seconds, default 180 s).
+# Then one JSON object {host: mesh IP} is written on the operator machine at
+# `mesh_ips_out`; ops/scripts/standup-mesh-record.py reads it to fill the
+# site's group_vars, mesh inventory and router certificate (phase 8, second step).
+- name: mesh-enroll — each host joins its own goatnet
+  hosts: "{{ target | mandatory }}"
+  become: true
+  gather_facts: false
+  serial: 1
+  vars:
+    _me_first_host: "{{ groups[target][0] }}"
+    _me_url_parts: "{{ (mesh_enrollment_url | default('')) | regex_search('^https://([^/:]+):(443|8443)$', '\\1', '\\2') }}"
+  tasks:
+    - name: mesh-enroll | the site declares where its hosts enrol
+      ansible.builtin.assert:
+        that:
+          - mesh_enrollment_url is defined
+          - _me_url_parts is not none
+          - (_me_url_parts | length) == 2
+        fail_msg: >-
+          Set mesh_enrollment_url in group_vars/{{ target }}/vars.yml to
+          https://<enrolment name>:443 (the name resolves to the relays) or
+          https://<enrolment name>:8443 (it resolves to this host itself), F-188.
+          Got: {{ mesh_enrollment_url | default('(unset)') }}
+        quiet: true
+
+    - name: mesh-enroll | read the netbird client's state
+      ansible.builtin.command: netbird status --json
+      register: _me_status
+      changed_when: false
+      failed_when: false
+
+    - name: mesh-enroll | already enrolled?
+      ansible.builtin.set_fact:
+        _me_enrolled: >-
+          {{ _me_status.rc == 0
+             and ((_me_status.stdout | from_json).management.connected | default(false) | bool)
+             and ((_me_status.stdout | from_json).netbirdIp | default('') | length > 0) }}
+
+    - name: mesh-enroll | enrol (a single-use key, minted where the database is)
+      when: not (_me_enrolled | bool)
+      block:
+        - name: mesh-enroll | the address the host resolves its enrolment name to
+          ansible.builtin.command:
+            argv: [getent, ahostsv4, "{{ _me_url_parts[0] }}"]
+          register: _me_resolve
+          changed_when: false
+          failed_when: false
+
+        - name: mesh-enroll | the URL's port agrees with where the name resolves
+          vars:
+            _me_addr: "{{ (_me_resolve.stdout_lines | default(['']))[0].split() | first | default('') }}"
+            _me_loopback: "{{ _me_addr is match('^127\\.') }}"
+          ansible.builtin.assert:
+            that:
+              - _me_addr | length > 0
+              - (_me_url_parts[1] == '8443') == (_me_loopback | bool)
+            fail_msg: >-
+              {{ _me_url_parts[0] }} resolves on {{ inventory_hostname }} to
+              {{ _me_addr | default('nothing', true) }}, and mesh_enrollment_url names port
+              {{ _me_url_parts[1] }}. A name that resolves to this host itself takes
+              :8443; one that resolves to the relays takes :443. Correct
+              mesh_enrollment_url or the host's resolution, then resume with --from 8.
+            quiet: true
+
+        - name: mesh-enroll | the NetBird account on the site's first host
+          ansible.builtin.command:
+            argv: [docker, exec, postgres-a, psql, -U, postgres, -d, netbird, -tAc, "SELECT id FROM accounts"]
+          delegate_to: "{{ _me_first_host }}"
+          register: _me_accounts
+          changed_when: false
+
+        - name: mesh-enroll | exactly one account to enrol into
+          ansible.builtin.assert:
+            that:
+              - (_me_accounts.stdout_lines | select | list | length) == 1
+            fail_msg: >-
+              {{ _me_first_host }} holds {{ _me_accounts.stdout_lines | select | list | length }}
+              NetBird account(s); phase 8 enrols into exactly one. Phase 6 seeds it.
+            quiet: true
+
+        - name: mesh-enroll | mint a single-use setup key (one use, one hour)
+          ansible.builtin.command:
+            argv:
+              - mgmt-host-bootstrap
+              - create-setup-key
+              - --account
+              - "{{ _me_accounts.stdout_lines | select | first | trim }}"
+              - --role
+              - bootstrap
+              - --ttl
+              - 1h
+              - --usage
+              - "1"
+              - --name
+              - "phase8-{{ inventory_hostname }}-{{ lookup('pipe', 'date -u +%Y%m%dT%H%M%SZ') }}"
+          delegate_to: "{{ _me_first_host }}"
+          register: _me_key
+          changed_when: true
+          no_log: true
+
+        - name: mesh-enroll | hand the key to the client through a 0600 file
+          ansible.builtin.copy:
+            dest: /run/goat-phase8-setup-key
+            content: "{{ _me_key.stdout | regex_search('plaintext:\\s+(\\S+)', '\\1') | first }}"
+            mode: "0600"
+            owner: root
+            group: root
+          no_log: true
+
+        - name: mesh-enroll | netbird up against the declared URL
+          ansible.builtin.command:
+            argv: >-
+              {{ ['netbird', 'up', '--management-url', mesh_enrollment_url,
+                  '--setup-key-file', '/run/goat-phase8-setup-key']
+                 + (['--enable-rosenpass', '--rosenpass-permissive']
+                    if (rosenpass_enabled | default(false) | bool) else []) }}
+          changed_when: true
+      always:
+        - name: mesh-enroll | remove the key file
+          ansible.builtin.file:
+            path: /run/goat-phase8-setup-key
+            state: absent
+
+    - name: mesh-enroll | wait for the management connection and a mesh IP
+      ansible.builtin.command: netbird status --json
+      register: _me_after
+      changed_when: false
+      retries: "{{ ((mesh_enroll_wait_seconds | default(180) | int) / 5) | round(0, 'ceil') | int }}"
+      delay: 5
+      until: >-
+        _me_after.rc == 0
+        and ((_me_after.stdout | from_json).management.connected | default(false) | bool)
+        and ((_me_after.stdout | from_json).netbirdIp | default('') | length > 0)
+
+    - name: mesh-enroll | the mesh IP this host holds
+      ansible.builtin.set_fact:
+        mesh_enrolled_ip: "{{ ((_me_after.stdout | from_json).netbirdIp).split('/') | first }}"
+
+- name: mesh-enroll — report each host's mesh IP to the operator machine
+  hosts: "{{ target | mandatory }}"
+  gather_facts: false
+  become: false
+  tasks:
+    - name: "mesh-enroll | write each host and its mesh IP for standup-mesh-record.py"
+      ansible.builtin.copy:
+        dest: "{{ mesh_ips_out | mandatory }}"
+        content: >-
+          {{ dict(ansible_play_hosts | zip(ansible_play_hosts | map('extract', hostvars, 'mesh_enrolled_ip'))) | to_nice_json }}
+        mode: "0600"
+      delegate_to: localhost
+      run_once: true

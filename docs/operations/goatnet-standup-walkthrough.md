@@ -190,9 +190,10 @@ replication is wired — otherwise replication would truncate an empty table or
 collide on a populated one.
 
 1. **Pass 1 (phase 5)** — `site-bootstrap` with `participates_in_spock=false`. The account and schema are not seeded locally; they arrive by replication.
-2. **Pass 2 (phase 6, joiner-only)** — `<site>-seed-from-peer.yml`, the guarded, data-only copy of identity + mesh state from the founder. `synchronize_data:=false` means no wipe, so the seed must precede wiring.
-3. **Pass 3 (phase 6)** — re-run `site-bootstrap` with Spock enabled, creating the `netbird_mgmt` subscriptions.
-4. **Founder-side mirror (phase 6, joiner-only)** — `spock-mesh-wire.yml` on the founder, scoped to this joiner only, so the subscriptions exist in **both** directions and an unrelated down peer cannot block the join.
+2. **Pass 2 (phase 6, joiner-only)** — `site-seed-from-peer.yml` (or the site's own `<site>-seed-from-peer.yml` when it keeps one), the guarded, data-only copy of identity + mesh state from the founder. `synchronize_data:=false` means no wipe, so the seed must precede wiring.
+3. **Pass 3 (phase 6)** — re-run `site-bootstrap` with Spock enabled, creating the `netbird_mgmt` subscriptions and the joiner's `ory_narrow` node and repset (no Ory subscription yet).
+4. **Founder-side mirror (phase 6, joiner-only)** — `spock-mesh-wire.yml` on the founder, scoped to this joiner only: Phase 7B and Phase 7D, so the subscriptions exist in **both** directions and an unrelated down peer cannot block the join.
+5. **Joiner again (phase 6, joiner-only)** — `spock-mesh-wire.yml` on the joiner: its `ory_narrow` subscription to the founder and the two-way revocation-history reconcile.
 
 The identity plane (Ory) federates the same way on a second subscription set
 (`ory_narrow`, kratos + hydra), declared by `ory_spock_enabled: true` — which
@@ -222,7 +223,7 @@ The relays are built in two places, on purpose — provisioning is Terraform's j
 configuration is the driver's:
 
 1. **Provision (before the run, Terraform):** `terraform-<env>/` creates the relay VPSes, the public DNS zone, and the records. *The driver has no terraform phase* — you apply this before the run.
-2. **Connect (phase 5, internet):** `<site>-rathole-client.yml` links the management host out to the relays (rathole tunnel).
+2. **Connect (phase 5, internet):** `site-rathole-client.yml` (or the site's own `<site>-rathole-client.yml`) links the management host out to the relays (rathole tunnel).
 3. **Build the tier (phase 7, two steps):** `generate-relays.sh` reads Terraform's `relays` output → writes `inventory/hosts-<site>.ini`; then `relay-server.yml` installs **coturn + rathole + the certbot TLS-renewal path** onto those hosts. Two steps because a relay VPS that exists in Terraform but has no inventory row is a relay no playbook can target, and nothing reports it.
 
 A **joiner** builds no relays of its own — phase 7 wires it into the *founder's*

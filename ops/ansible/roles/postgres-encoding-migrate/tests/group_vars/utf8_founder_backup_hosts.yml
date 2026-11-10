@@ -1,0 +1,5 @@
+---
+# The founder's physical standby, in a group of its own.
+site_id: utf8-founder
+participates_in_spock: false
+mgmt_services_to_stop_for_basebackup: [postgres-a]

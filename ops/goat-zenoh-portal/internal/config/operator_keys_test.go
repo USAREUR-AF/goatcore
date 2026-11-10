@@ -10,11 +10,11 @@ import (
 // parseOperatorAPIKeys accepts the documented "handle:key,handle:key" form,
 // trims whitespace, and ignores blank comma-entries.
 func TestParseOperatorAPIKeys_Valid(t *testing.T) {
-	got, err := parseOperatorAPIKeys(" maintainer-operator : k1 , alice-op:k2 , ")
+	got, err := parseOperatorAPIKeys(" jane-operator : k1 , alice-op:k2 , ")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	want := map[string]string{"maintainer-operator": "k1", "alice-op": "k2"}
+	want := map[string]string{"jane-operator": "k1", "alice-op": "k2"}
 	if len(got) != len(want) {
 		t.Fatalf("got %d keys, want %d: %#v", len(got), len(want), got)
 	}
@@ -74,7 +74,7 @@ func TestParseOperatorAPIKeys_ErrorNeverContainsValue(t *testing.T) {
 func TestValidate_OperatorKeysMapSatisfiesRequirement(t *testing.T) {
 	c := baseValidConfig()
 	c.OperatorAPIKey = ""
-	c.OperatorAPIKeys = map[string]string{"maintainer-operator": "k1"}
+	c.OperatorAPIKeys = map[string]string{"jane-operator": "k1"}
 	if err := c.Validate(); err != nil {
 		t.Fatalf("validate with map-only operator keys: %v", err)
 	}
@@ -102,12 +102,12 @@ func TestValidate_NoOperatorKeyIsError(t *testing.T) {
 
 // LoadFromFlags merges the env-provided per-person map (single key omitted).
 func TestLoadFromFlags_ParsesOperatorAPIKeys(t *testing.T) {
-	t.Setenv("PORTAL_OPERATOR_API_KEYS", "maintainer-operator:k1,alice-op:k2")
+	t.Setenv("PORTAL_OPERATOR_API_KEYS", "jane-operator:k1,alice-op:k2")
 	cfg, err := LoadFromFlags(nil)
 	if err != nil {
 		t.Fatalf("LoadFromFlags: %v", err)
 	}
-	if cfg.OperatorAPIKeys["maintainer-operator"] != "k1" || cfg.OperatorAPIKeys["alice-op"] != "k2" {
+	if cfg.OperatorAPIKeys["jane-operator"] != "k1" || cfg.OperatorAPIKeys["alice-op"] != "k2" {
 		t.Errorf("operator keys not parsed: %#v", cfg.OperatorAPIKeys)
 	}
 }
@@ -138,19 +138,19 @@ func TestMergeOperatorKeysFromDir(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	writeFile("onboard-runner.key", "# the runner's own key\nonboard-runner-zagros:svc-key-1\n")
+	writeFile("onboard-runner.key", "# the runner's own key\nonboard-runner-galaxy:svc-key-1\n")
 	writeFile("other.key", "another-svc:svc-key-2\n\n")
 
 	// env already carries a human key AND a colliding handle — env must win.
-	m := map[string]string{"maintainer-operator": "human-key", "another-svc": "ENV-WINS"}
+	m := map[string]string{"jane-operator": "human-key", "another-svc": "ENV-WINS"}
 	if err := mergeOperatorKeysFromDir(dir, m); err != nil {
 		t.Fatalf("merge: %v", err)
 	}
-	if m["onboard-runner-zagros"] != "svc-key-1" {
-		t.Errorf("service key not merged: %q", m["onboard-runner-zagros"])
+	if m["onboard-runner-galaxy"] != "svc-key-1" {
+		t.Errorf("service key not merged: %q", m["onboard-runner-galaxy"])
 	}
-	if m["maintainer-operator"] != "human-key" {
-		t.Errorf("env human key clobbered: %q", m["maintainer-operator"])
+	if m["jane-operator"] != "human-key" {
+		t.Errorf("env human key clobbered: %q", m["jane-operator"])
 	}
 	if m["another-svc"] != "ENV-WINS" {
 		t.Errorf("env should win on conflict, got %q", m["another-svc"])

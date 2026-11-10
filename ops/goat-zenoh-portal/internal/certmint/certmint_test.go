@@ -30,11 +30,11 @@ func TestMint_FakeMode(t *testing.T) {
 
 	m := &certmint.Minter{
 		Fake:             true,
-		NovaRoot:    root,
+		CARoot:           root,
 		OnboardingPacket: onb,
 		VendorBundleDir:  filepath.Join(dir, "bundles"),
-		RouterEndpoint:   "tls/zenoh.nova.netbird.nova.example:7447",
-		PortalURL:        "https://portal.nova.netbird.nova.example",
+		RouterEndpoint:   "tls/zenoh.goat.example:7447",
+		PortalURL:        "https://portal.goat.example",
 		TrialSunset:      "open-ended (trial-fabric)",
 		FeedbackChannel:  "Matrix #goat-trial-feedback",
 	}
@@ -42,8 +42,8 @@ func TestMint_FakeMode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("mint: %v", err)
 	}
-	if !strings.HasSuffix(res.URISAN, "vendor=community") {
-		t.Errorf("URI-SAN %q does not end with vendor=community", res.URISAN)
+	if res.URISAN != "urn:goat:example:org=community" {
+		t.Errorf("URI-SAN %q is not the built-in default prefix + community", res.URISAN)
 	}
 	if _, err := os.Stat(res.TarballPath); err != nil {
 		t.Fatalf("tarball not created: %v", err)
@@ -63,7 +63,7 @@ func TestMint_FakeMode(t *testing.T) {
 		"community-cert.pem":        false,
 		"community-key.pem":         false,
 		"community-goat-cli.cbor":   false, // fake-mode .cbor placeholder rides the tarball
-		"nova-ca-root.pem":     false,
+		"ca-root.pem":               false,
 		"zenoh-trial-onboarding.md": false,
 		"NOTES.md":                  false,
 		"first-publisher.py":        false,
@@ -75,30 +75,30 @@ func TestMint_FakeMode(t *testing.T) {
 	// asking the operator.
 	contentChecks := map[string][]string{
 		"zenoh-trial-onboarding.md": {
-			"endpoint=tls/zenoh.nova.netbird.nova.example:7447", // F-DOG-5: router-endpoint placeholder substituted
-			"vendor=community", // F-DOG-5: vendor placeholder substituted
+			"endpoint=tls/zenoh.goat.example:7447", // F-DOG-5: router-endpoint placeholder substituted
+			"vendor=community",                     // F-DOG-5: vendor placeholder substituted
 		},
 		"first-publisher.py": {
-			"VENDOR = \"community\"",                                     // baked-in prefix
-			"ROUTER = \"tls/zenoh.nova.netbird.nova.example:7447\"", // baked-in endpoint
-			"\"enable_mtls\": True",                                      // F-DOG-11: client-cert send enabled
-			"\"verify_name_on_connect\": True",                           // F-DOG-10 resolved: DNS-SAN cert + hostname endpoint = hostname verification stays on
-			"insert_json5(\"transport/link/tls\"",                        // F-DOG-11: whole-block insert (not per-sub-key)
+			"VENDOR = \"community\"",                   // baked-in prefix
+			"ROUTER = \"tls/zenoh.goat.example:7447\"", // baked-in endpoint
+			"\"enable_mtls\": True",                    // F-DOG-11: client-cert send enabled
+			"\"verify_name_on_connect\": True",         // F-DOG-10 resolved: DNS-SAN cert + hostname endpoint = hostname verification stays on
+			"insert_json5(\"transport/link/tls\"",      // F-DOG-11: whole-block insert (not per-sub-key)
 		},
 		"first-subscriber.py": {
-			"CERT_SLOT_ID = \"community\"",                               // baked-in prefix
-			"ROUTER = \"tls/zenoh.nova.netbird.nova.example:7447\"", // baked-in endpoint
-			"declare_subscriber",                                         // subscriber, not publisher
-			"TOPIC_SLOT_ID + \"/**\"",                                    // default key expression is the topic slot's subtree
-			"TOPIC_SLOT_ID = CERT_SLOT_ID",                               // by default the subscriber reads the cert's own slot
-			"\"enable_mtls\": True",                                      // same mTLS posture as publisher
+			"CERT_SLOT_ID = \"community\"",             // baked-in prefix
+			"ROUTER = \"tls/zenoh.goat.example:7447\"", // baked-in endpoint
+			"declare_subscriber",                       // subscriber, not publisher
+			"TOPIC_SLOT_ID + \"/**\"",                  // default key expression is the topic slot's subtree
+			"TOPIC_SLOT_ID = CERT_SLOT_ID",             // by default the subscriber reads the cert's own slot
+			"\"enable_mtls\": True",                    // same mTLS posture as publisher
 			"\"verify_name_on_connect\": True",
 			"insert_json5(\"transport/link/tls\"",
 		},
 		"NOTES.md": {
-			"tls/zenoh.nova.netbird.nova.example:7447", // router endpoint surfaced
-			"https://portal.nova.netbird.nova.example", // portal URL surfaced
-			"pip install eclipse-zenoh protobuf",            // worked-install path
+			"tls/zenoh.goat.example:7447",        // router endpoint surfaced
+			"https://portal.goat.example",        // portal URL surfaced
+			"pip install eclipse-zenoh protobuf", // worked-install path
 		},
 	}
 	bodies := map[string]string{}
@@ -139,47 +139,47 @@ func TestMint_FakeMode(t *testing.T) {
 	}
 }
 
-// TestMint_PerGoatnetOverride_ZAGROS: when a goatnet specifies its own per-goatnet
+// TestMint_PerGoatnetOverride_Galaxy: when a goatnet specifies its own per-goatnet
 // identity strings (URIPrefix, DNSSuffix, CNSuffix) and onboarding filenames
 // (TarballStem, PacketName, RootCertName), the minted cert + tarball carry ZERO
 // legacy wording. This is the freeze-critical guarantee — the cert URI-SAN
-// grammar external orgs pin must not say "goat-nova" / "vendor" / "trial".
-func TestMint_PerGoatnetOverride_ZAGROS(t *testing.T) {
+// grammar external orgs pin must not carry the built-in default prefix / "vendor" / "trial".
+func TestMint_PerGoatnetOverride_Galaxy(t *testing.T) {
 	dir := t.TempDir()
 	root := filepath.Join(dir, "fake-root.pem")
 	_ = os.WriteFile(root, []byte("FAKE ROOT"), 0o644)
 	onb := filepath.Join(dir, "onboarding.md")
-	_ = os.WriteFile(onb, []byte("# zagros onboarding\nvendor=<vendor>\n"), 0o644)
+	_ = os.WriteFile(onb, []byte("# galaxy onboarding\nvendor=<vendor>\n"), 0o644)
 
 	m := &certmint.Minter{
 		Fake:             true,
-		NovaRoot:    root,
+		CARoot:           root,
 		OnboardingPacket: onb,
 		VendorBundleDir:  filepath.Join(dir, "bundles"),
 		// Per-goatnet identity + filenames.
-		URIPrefix:    "urn:goat:zagros:org=",
-		DNSSuffix:    "zagros.peer",
+		URIPrefix:    "urn:goat:galaxy:org=",
+		DNSSuffix:    "galaxy.peer",
 		CNSuffix:     "-peer",
-		TarballStem:  "zagros-onboarding",
-		PacketName:   "zagros-fabric-onboarding.md",
-		RootCertName: "zagros-ca-root.pem",
+		TarballStem:  "galaxy-onboarding",
+		PacketName:   "galaxy-fabric-onboarding.md",
+		RootCertName: "galaxy-ca-root.pem",
 	}
-	res, err := m.Mint(context.Background(), "lithuania-mil", "vp_x", certmint.MintOptions{})
+	res, err := m.Mint(context.Background(), "example-mil", "vp_x", certmint.MintOptions{})
 	if err != nil {
 		t.Fatalf("mint: %v", err)
 	}
-	if res.URISAN != "urn:goat:zagros:org=lithuania-mil" {
-		t.Errorf("URI-SAN = %q; want urn:goat:zagros:org=lithuania-mil (no goat-nova/vendor)", res.URISAN)
+	if res.URISAN != "urn:goat:galaxy:org=example-mil" {
+		t.Errorf("URI-SAN = %q; want urn:goat:galaxy:org=example-mil (no default prefix, no vendor=)", res.URISAN)
 	}
-	if strings.Contains(res.URISAN, "goat-nova") || strings.Contains(res.URISAN, "vendor=") {
-		t.Errorf("URI-SAN %q still carries a nova-ism", res.URISAN)
+	if strings.HasPrefix(res.URISAN, "urn:goat:example:") || strings.Contains(res.URISAN, "vendor=") {
+		t.Errorf("URI-SAN %q still carries the built-in default prefix", res.URISAN)
 	}
 	stem := filepath.Base(res.TarballPath)
-	if !strings.HasPrefix(stem, "zagros-onboarding-") {
-		t.Errorf("tarball %q does not use the zagros-onboarding stem", stem)
+	if !strings.HasPrefix(stem, "galaxy-onboarding-") {
+		t.Errorf("tarball %q does not use the galaxy-onboarding stem", stem)
 	}
-	if strings.Contains(stem, "nova") {
-		t.Errorf("tarball filename %q still says nova", stem)
+	if strings.HasPrefix(stem, "goat-onboarding-") {
+		t.Errorf("tarball filename %q still uses the built-in default stem", stem)
 	}
 	// The onboarding packet + CA-root file inside the tarball must use the
 	// per-goatnet filenames, with no legacy filenames present.
@@ -187,7 +187,7 @@ func TestMint_PerGoatnetOverride_ZAGROS(t *testing.T) {
 	defer f.Close()
 	gz, _ := gzip.NewReader(f)
 	tr := tar.NewReader(gz)
-	want := map[string]bool{"zagros-fabric-onboarding.md": false, "zagros-ca-root.pem": false}
+	want := map[string]bool{"galaxy-fabric-onboarding.md": false, "galaxy-ca-root.pem": false}
 	for {
 		h, err := tr.Next()
 		if err == io.EOF {
@@ -199,13 +199,13 @@ func TestMint_PerGoatnetOverride_ZAGROS(t *testing.T) {
 		if _, ok := want[h.Name]; ok {
 			want[h.Name] = true
 		}
-		if h.Name == "nova-ca-root.pem" || h.Name == "zenoh-trial-onboarding.md" {
-			t.Errorf("tarball still contains nova file %q", h.Name)
+		if h.Name == "ca-root.pem" || h.Name == "zenoh-trial-onboarding.md" {
+			t.Errorf("tarball still contains built-in default file %q", h.Name)
 		}
 	}
 	for name, present := range want {
 		if !present {
-			t.Errorf("tarball missing ZAGROS file %q", name)
+			t.Errorf("tarball missing GALAXY file %q", name)
 		}
 	}
 }
@@ -276,26 +276,26 @@ func TestMint_PerGoatnetRootCert(t *testing.T) {
 
 	m := &certmint.Minter{
 		Fake:             true,
-		NovaRoot:    root,
+		CARoot:           root,
 		OnboardingPacket: onb,
 		VendorBundleDir:  filepath.Join(dir, "bundles"),
-		RouterEndpoint:   "tls/zenoh.zagros.netbird.zagros.example:7447",
-		PortalURL:        "https://portal.zagros.netbird.zagros.example",
-		RootCertName:     "zagros-ca-root.pem", // per-goatnet
-		TarballStem:      "zagros-onboarding",
+		RouterEndpoint:   "tls/zenoh.galaxy.goat.example:7447",
+		PortalURL:        "https://portal.galaxy.goat.example",
+		RootCertName:     "galaxy-ca-root.pem", // per-goatnet
+		TarballStem:      "galaxy-onboarding",
 	}
-	res, err := m.Mint(context.Background(), "org107x-blake", "vp_blake_testkey", certmint.MintOptions{})
+	res, err := m.Mint(context.Background(), "example-org-blake", "vp_blake_testkey", certmint.MintOptions{})
 	if err != nil {
 		t.Fatalf("mint: %v", err)
 	}
 	bodies, names := readTarball(t, res.TarballPath)
 
 	// The CA file ships under the per-goatnet name, not the legacy literal.
-	if !names["zagros-ca-root.pem"] {
-		t.Errorf("tarball missing zagros-ca-root.pem; members=%v", names)
+	if !names["galaxy-ca-root.pem"] {
+		t.Errorf("tarball missing galaxy-ca-root.pem; members=%v", names)
 	}
-	if names["nova-ca-root.pem"] {
-		t.Errorf("tarball still ships nova-ca-root.pem under ZAGROS RootCertName")
+	if names["ca-root.pem"] {
+		t.Errorf("tarball still ships the default ca-root.pem under a per-goatnet RootCertName")
 	}
 	// The scripts must reference the file that's actually in the tarball.
 	for _, script := range []string{"first-publisher.py", "first-subscriber.py"} {
@@ -303,16 +303,16 @@ func TestMint_PerGoatnetRootCert(t *testing.T) {
 		if !ok {
 			t.Fatalf("tarball missing %s", script)
 		}
-		if !strings.Contains(b, `"zagros-ca-root.pem"`) {
-			t.Errorf("%s does not reference the shipped CA filename zagros-ca-root.pem", script)
+		if !strings.Contains(b, `"galaxy-ca-root.pem"`) {
+			t.Errorf("%s does not reference the shipped CA filename galaxy-ca-root.pem", script)
 		}
-		if strings.Contains(b, "nova-ca-root.pem") {
-			t.Errorf("%s still references nova-ca-root.pem (the bug) — would ZError on connect", script)
+		if strings.Contains(b, "<ca-root-cert-name>") || strings.Contains(b, `"ca-root.pem"`) {
+			t.Errorf("%s does not reference the per-goatnet CA filename — would ZError on connect", script)
 		}
 	}
 }
 
-// TestMint_OnboardingDoc_ZAGROSNoLeakage renders the REAL onboarding template
+// TestMint_OnboardingDoc_GoatnetNoLeakage renders the REAL onboarding template
 // (docs/operations/zenoh-trial-onboarding.md) through a full mint and asserts
 // the packet the org receives carries none of:
 //   - a doubled router port (`tls/host:7447:7447`, `http://host:7447:8000`) —
@@ -321,7 +321,7 @@ func TestMint_PerGoatnetRootCert(t *testing.T) {
 //   - the legacy CA-root filename.
 //
 // A stub body cannot catch template drift, so this uses the real template.
-func TestMint_OnboardingDoc_ZAGROSNoLeakage(t *testing.T) {
+func TestMint_OnboardingDoc_GoatnetNoLeakage(t *testing.T) {
 	// The real template lives at repo docs/operations/; the test package is
 	// four levels down under ops/goat-zenoh-portal/internal/certmint.
 	tmpl := filepath.Join("..", "..", "..", "..", "docs", "operations", "zenoh-trial-onboarding.md")
@@ -337,26 +337,26 @@ func TestMint_OnboardingDoc_ZAGROSNoLeakage(t *testing.T) {
 
 	m := &certmint.Minter{
 		Fake:             true,
-		NovaRoot:    root,
+		CARoot:           root,
 		OnboardingPacket: tmpl,
 		VendorBundleDir:  filepath.Join(dir, "bundles"),
 		// Per-goatnet identity + connection details.
-		URIPrefix:      "urn:goat:zagros:org=",
-		DNSSuffix:      "zagros.peer",
-		TarballStem:    "zagros-onboarding",
-		PacketName:     "zagros-fabric-onboarding.md",
-		RootCertName:   "zagros-ca-root.pem",
-		RouterEndpoint: "tls/zenoh.zagros.netbird.zagros.example:7447",
-		PortalURL:      "https://portal.zagros.netbird.zagros.example",
+		URIPrefix:      "urn:goat:galaxy:org=",
+		DNSSuffix:      "galaxy.peer",
+		TarballStem:    "galaxy-onboarding",
+		PacketName:     "galaxy-fabric-onboarding.md",
+		RootCertName:   "galaxy-ca-root.pem",
+		RouterEndpoint: "tls/zenoh.galaxy.goat.example:7447",
+		PortalURL:      "https://portal.galaxy.goat.example",
 	}
 	res, err := m.Mint(context.Background(), "9876f7eb3db3e8cca39ca5d0fc1f92c5", "vp_x", certmint.MintOptions{})
 	if err != nil {
 		t.Fatalf("mint: %v", err)
 	}
 	bodies, _ := readTarball(t, res.TarballPath)
-	body, ok := bodies["zagros-fabric-onboarding.md"]
+	body, ok := bodies["galaxy-fabric-onboarding.md"]
 	if !ok {
-		t.Fatalf("tarball missing zagros-fabric-onboarding.md")
+		t.Fatalf("tarball missing galaxy-fabric-onboarding.md")
 	}
 
 	// Must NOT contain any of this drift.
@@ -370,20 +370,20 @@ func TestMint_OnboardingDoc_ZAGROSNoLeakage(t *testing.T) {
 		"Time-sync server",      // the connection-details row that made that promise
 	} {
 		if strings.Contains(body, bad) {
-			t.Errorf("rendered ZAGROS onboarding packet still contains %q", bad)
+			t.Errorf("rendered GALAXY onboarding packet still contains %q", bad)
 		}
 	}
 
 	// Must contain — the correctly-substituted per-goatnet values.
 	for _, want := range []string{
-		"tls/zenoh.zagros.netbird.zagros.example:7447",    // <router-endpoint>
-		"http://zenoh.zagros.netbird.zagros.example:8000", // <router-host> (no doubled port)
-		"urn:goat:zagros:org=",                               // <uri-san-prefix>
-		"https://portal.zagros.netbird.zagros.example",    // <portal-url>
-		"zagros-ca-root.pem",                                 // per-goatnet CA filename
+		"tls/zenoh.galaxy.goat.example:7447",    // <router-endpoint>
+		"http://zenoh.galaxy.goat.example:8000", // <router-host> (no doubled port)
+		"urn:goat:galaxy:org=",                  // <uri-san-prefix>
+		"https://portal.galaxy.goat.example",    // <portal-url>
+		"galaxy-ca-root.pem",                    // per-goatnet CA filename
 	} {
 		if !strings.Contains(body, want) {
-			t.Errorf("rendered ZAGROS onboarding packet is missing %q", want)
+			t.Errorf("rendered GALAXY onboarding packet is missing %q", want)
 		}
 	}
 }
@@ -401,7 +401,7 @@ func TestMint_PersistsRecipientCert(t *testing.T) {
 
 	m := &certmint.Minter{
 		Fake:             true,
-		NovaRoot:    root,
+		CARoot:           root,
 		OnboardingPacket: onb,
 		VendorBundleDir:  filepath.Join(dir, "bundles"),
 		RecipientKeysDir: keysDir,
@@ -500,6 +500,99 @@ func TestMint_EKUArgv(t *testing.T) {
 	}
 }
 
+// TestMint_OrgArgv pins the Subject O handed to cert-sign: --org <value> as one
+// argv element when Minter.Org is set (spaces survive), and no --org at all when
+// it is empty or blank, so cert-sign's built-in default applies and a cert-sign
+// that predates the flag keeps working.
+func TestMint_OrgArgv(t *testing.T) {
+	stubDir := t.TempDir()
+	argsFile := filepath.Join(stubDir, "args.txt")
+	stub := filepath.Join(stubDir, "cert-sign")
+	// One argv element per line, so a value with a space is visible as one.
+	script := "#!/bin/sh\n" +
+		": > " + argsFile + "\n" +
+		"for a in \"$@\"; do printf '%s\\n' \"$a\" >> " + argsFile + "; done\n" +
+		"while [ $# -gt 0 ]; do\n" +
+		"  case $1 in\n" +
+		"    --out-cert) echo stub-cert > \"$2\"; shift 2;;\n" +
+		"    --out-key)  echo stub-key  > \"$2\"; shift 2;;\n" +
+		"    *) shift;;\n" +
+		"  esac\n" +
+		"done\n"
+	if err := os.WriteFile(stub, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	mint := func(org string) []string {
+		t.Helper()
+		m := &certmint.Minter{
+			BinaryPath:      stub,
+			CABundleDir:     stubDir,
+			AgeIdentityPath: filepath.Join(stubDir, "age.key"),
+			VendorBundleDir: t.TempDir(),
+			Org:             org,
+		}
+		if _, err := m.Mint(context.Background(), "acme", "vp_acme_testkey", certmint.MintOptions{}); err != nil {
+			t.Fatalf("mint: %v", err)
+		}
+		argv, err := os.ReadFile(argsFile)
+		if err != nil {
+			t.Fatalf("stub argv not recorded: %v", err)
+		}
+		return strings.Split(strings.TrimRight(string(argv), "\n"), "\n")
+	}
+	orgArg := func(argv []string) (string, bool) {
+		for i, a := range argv {
+			if a == "--org" {
+				if i+1 < len(argv) {
+					return argv[i+1], true
+				}
+				return "", true
+			}
+		}
+		return "", false
+	}
+
+	if v, ok := orgArg(mint("Example Org")); !ok || v != "Example Org" {
+		t.Errorf("Org set: want --org \"Example Org\", got present=%v value=%q", ok, v)
+	}
+	if v, ok := orgArg(mint("  Example Org  ")); !ok || v != "Example Org" {
+		t.Errorf("Org padded: want --org trimmed to \"Example Org\", got present=%v value=%q", ok, v)
+	}
+	for _, empty := range []string{"", "   "} {
+		if _, ok := orgArg(mint(empty)); ok {
+			t.Errorf("Org %q: want no --org in the argv", empty)
+		}
+	}
+}
+
+// A cert-sign that predates --org fails with Go's flag error; the mint error
+// names the fix instead of passing the bare usage text through.
+func TestMint_OrgRejectedByOldCertSign(t *testing.T) {
+	stubDir := t.TempDir()
+	stub := filepath.Join(stubDir, "cert-sign")
+	script := "#!/bin/sh\n" +
+		"for a in \"$@\"; do [ \"$a\" = --org ] && { echo 'flag provided but not defined: -org' >&2; exit 2; }; done\n" +
+		"exit 0\n"
+	if err := os.WriteFile(stub, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	m := &certmint.Minter{
+		BinaryPath:      stub,
+		CABundleDir:     stubDir,
+		AgeIdentityPath: filepath.Join(stubDir, "age.key"),
+		VendorBundleDir: t.TempDir(),
+		Org:             "Example Org",
+	}
+	_, err := m.Mint(context.Background(), "acme", "vp_acme_testkey", certmint.MintOptions{})
+	if err == nil {
+		t.Fatal("want an error from a cert-sign that rejects --org")
+	}
+	if !strings.Contains(err.Error(), "predates the flag") {
+		t.Errorf("error does not name the fix: %v", err)
+	}
+}
+
 // A .cbor that nobody can verify is not a profile bundle, it is a file.
 // goat-cli compiles in no CA root: roots are operator-supplied, so one binary
 // works everywhere. That puts the burden here: whoever hands out a .cbor must
@@ -515,7 +608,7 @@ func TestMint_ShipsTheCAThatVerifiesTheCbor(t *testing.T) {
 	if err := os.WriteFile(root, []byte("FAKE ROOT"), 0o644); err != nil {
 		t.Fatalf("seed root: %v", err)
 	}
-	caPub := filepath.Join(dir, "dev-zagros-prod-ca-ecdsa-2026-08-03.pem")
+	caPub := filepath.Join(dir, "dev-galaxy-prod-ca-ecdsa-2026-08-03.pem")
 	if err := os.WriteFile(caPub, []byte("FAKE CA PUBKEY"), 0o644); err != nil {
 		t.Fatalf("seed ca pubkey: %v", err)
 	}
@@ -531,40 +624,40 @@ func TestMint_ShipsTheCAThatVerifiesTheCbor(t *testing.T) {
 	newMinter := func(bundleCreate, caPubkey string) *certmint.Minter {
 		return &certmint.Minter{
 			Fake:             true,
-			NovaRoot:    root,
+			CARoot:           root,
 			BundleCreatePath: bundleCreate,
 			BundleCAPubkey:   caPubkey,
 			CABundleDir:      dir,
 			AgeIdentityPath:  filepath.Join(dir, "age.key"),
 			VendorBundleDir:  filepath.Join(dir, "bundles"),
-			RouterEndpoint:   "tls/zenoh.zagros-prod.example:7447",
-			PortalURL:        "https://portal.zagros-prod.example",
-			RootCertName:     "zagros-prod-ca-root.pem",
-			TarballStem:      "zagros-prod-onboarding",
+			RouterEndpoint:   "tls/zenoh.galaxy-prod.example:7447",
+			PortalURL:        "https://portal.galaxy-prod.example",
+			RootCertName:     "galaxy-prod-ca-root.pem",
+			TarballStem:      "galaxy-prod-onboarding",
 		}
 	}
 
 	res, err := newMinter(bc, caPub).Mint(
-		context.Background(), "svk-dev", "vp_ltu_testkey", certmint.MintOptions{})
+		context.Background(), "lab-dev", "vp_ltu_testkey", certmint.MintOptions{})
 	if err != nil {
 		t.Fatalf("mint: %v", err)
 	}
 	bodies, names := readTarball(t, res.TarballPath)
 
-	if !names["svk-dev-goat-cli.cbor"] {
+	if !names["lab-dev-goat-cli.cbor"] {
 		t.Fatalf("no .cbor in the tarball, so this test proves nothing; members=%v", names)
 	}
 	// Sibling names: the two files are useless apart, and a directory listing
 	// should make the pairing obvious.
-	if !names["svk-dev-goat-cli-ca.pem"] {
+	if !names["lab-dev-goat-cli-ca.pem"] {
 		t.Errorf("tarball ships a .cbor with no CA to verify it; members=%v", names)
 	}
-	if got := bodies["svk-dev-goat-cli-ca.pem"]; got != "FAKE CA PUBKEY" {
+	if got := bodies["lab-dev-goat-cli-ca.pem"]; got != "FAKE CA PUBKEY" {
 		t.Errorf("CA file body = %q, want the configured pubkey", got)
 	}
 
 	notes := bodies["NOTES.md"]
-	if !strings.Contains(notes, "goat ca add svk-dev-goat-cli-ca.pem") {
+	if !strings.Contains(notes, "goat ca add lab-dev-goat-cli-ca.pem") {
 		t.Errorf("NOTES.md does not tell the reader to add the root before init:\n%s", notes)
 	}
 	// The trust step is worthless if the reader is not told to check it against
@@ -580,15 +673,15 @@ func TestMint_ShipsTheCAThatVerifiesTheCbor(t *testing.T) {
 	// unset. That must degrade to "no CA file in the tarball", not to a failed
 	// mint — an unconfigured convenience must never block issuing credentials.
 	res2, err := newMinter(bc, "").Mint(
-		context.Background(), "svk-dev2", "vp_ltu2_testkey", certmint.MintOptions{})
+		context.Background(), "lab-dev2", "vp_ltu2_testkey", certmint.MintOptions{})
 	if err != nil {
 		t.Fatalf("mint with no BundleCAPubkey must still succeed: %v", err)
 	}
 	_, names2 := readTarball(t, res2.TarballPath)
-	if names2["svk-dev2-goat-cli-ca.pem"] {
+	if names2["lab-dev2-goat-cli-ca.pem"] {
 		t.Errorf("shipped a CA pubkey that was never configured; members=%v", names2)
 	}
-	if !names2["svk-dev2-goat-cli.cbor"] {
+	if !names2["lab-dev2-goat-cli.cbor"] {
 		t.Errorf("the .cbor must still ship; members=%v", names2)
 	}
 }

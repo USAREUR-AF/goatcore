@@ -1,0 +1,30 @@
+# node-classes.yaml — the Ubuntu autoinstall seed per node class
+# (docs/design/goatbuilder-speed.md, sink 5). ops/scripts/node-seed.py reads it.
+#
+# Status: WIP, not for production use — gate: a timed host baseline on a
+# seeded Karbon 801 against a stock one, recorded as a measurement.
+#
+# A seed, not an image: each host's own installer creates its LUKS volume, so
+# every host has its own volume key (a cloned disk would share one). The
+# installer lays down the layout docs/design/host-site-node-disk-encryption.md
+# §2 asserts (crypto_LUKS partition -> LVM PV -> volume group `ubuntu-vg`),
+# sets the passphrase the secrets store holds for the host, and installs the
+# baseline's packages through the site's apt cache. Ubuntu Pro attach, FIPS,
+# and the TPM2 or Tang unlock slot stay with the existing plays, unchanged.
+#
+# `packages` names packages outright; `package_lists` names a role default
+# list (role:variable) the generator reads, so the seed installs what the role
+# would and cannot drift from it.
+classes:
+  x86-tpm2:
+    description: "x86 node with a TPM 2.0 (Karbon 801 core or obs node): unlock class tpm2"
+    arch: amd64
+    # The installer's disk: the largest NVMe. A host whose disk differs passes
+    # --disk-serial or sets node_seed_disk_match in its host_vars.
+    disk_match: {path: /dev/nvme*, size: largest}
+    unlock_class: tpm2
+    packages: [chrony, openssh-server, python3, curl, ca-certificates, gnupg, lvm2, tpm2-tools]
+    package_lists:
+      - luks-unlock:luks_packages_base
+      - luks-unlock:luks_packages_tpm2_initramfs
+      - tang-server:tang_packages

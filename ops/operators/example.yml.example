@@ -14,7 +14,7 @@
 
 identity:
   handle: alice-smith                   # kebab-case slug; filename = ops/operators/<handle>.yml
-  email: person-16@example.org
+  email: person-12@example.org
   name: Alice Smith                     # → Ory traits.name (person display)
   status: active                        # active | revoked
   added: 2026-05-20

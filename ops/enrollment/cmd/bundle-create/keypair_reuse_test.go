@@ -37,7 +37,7 @@ func seedPeerset(t *testing.T, deviceID, wgAddress string) (string, []byte) {
 		WGCP0Address:  wgAddress,
 		CurrentPubkey: storedPubB64,
 		Role:          "mgmt-host",
-		Site:          "vega",
+		Site:          "lab",
 	}
 	if err := ps.Upsert(peer); err != nil {
 		t.Fatalf("seed: upsert: %v", err)
@@ -55,11 +55,11 @@ func baseArgs(t *testing.T, deviceID string) runArgs {
 	caKey, ageID, _ := devCA(t)
 	relaysPath := fixtureRelays(t)
 	return runArgs{
-		Site:            "vega",
+		Site:            "lab",
 		DeviceID:        deviceID,
 		WGCP0Address:    "10.99.0.6/24",
 		RelaysPath:      relaysPath,
-		ACLGroupsRaw:    "VEGA",
+		ACLGroupsRaw:    "LAB",
 		CAID:            "dev-test",
 		CAKeyPath:       caKey,
 		AgeIdentityPath: ageID,
@@ -76,7 +76,7 @@ func baseArgs(t *testing.T, deviceID string) runArgs {
 //	bundle-create --reuse-keypair-from produces a bundle with the exact
 //	same pubkey as the prior bundle for that peer.
 func TestRun_ReuseKeypairFrom_PreservesPubkey(t *testing.T) {
-	const deviceID = "vega-a"
+	const deviceID = "lab-a"
 	peersetPath, storedPub := seedPeerset(t, deviceID, "10.99.0.6")
 
 	args := baseArgs(t, deviceID)
@@ -124,7 +124,7 @@ func TestRun_ReuseKeypairFrom_PreservesPubkey(t *testing.T) {
 // passes --rotate-keypair without --reason. Rotations must carry an
 // audit string.
 func TestRun_RotateKeypair_RequiresReason(t *testing.T) {
-	const deviceID = "vega-a"
+	const deviceID = "lab-a"
 	peersetPath, _ := seedPeerset(t, deviceID, "10.99.0.6")
 
 	args := baseArgs(t, deviceID)
@@ -145,7 +145,7 @@ func TestRun_RotateKeypair_RequiresReason(t *testing.T) {
 // the rotation in pubkey_history[], and updates current_pubkey to the
 // new value.
 func TestRun_RotateKeypair_AppendsToHistory(t *testing.T) {
-	const deviceID = "vega-a"
+	const deviceID = "lab-a"
 	peersetPath, storedPub := seedPeerset(t, deviceID, "10.99.0.6")
 	storedPubB64 := base64.StdEncoding.EncodeToString(storedPub)
 
@@ -201,7 +201,7 @@ func TestRun_RotateKeypair_AppendsToHistory(t *testing.T) {
 // class: bare bundle-create against an existing peer without an explicit
 // declared intent (reuse/rotate) is no longer silently re-minted.
 func TestRun_BareCallForExistingPeer_FailsLoud(t *testing.T) {
-	const deviceID = "vega-a"
+	const deviceID = "lab-a"
 	peersetPath, _ := seedPeerset(t, deviceID, "10.99.0.6")
 
 	args := baseArgs(t, deviceID)
@@ -239,7 +239,7 @@ func TestRun_BareCallForNewPeer_StillWorks(t *testing.T) {
 // TestRun_MutuallyExclusiveFlags fails-loud when both --reuse-keypair-from
 // and --rotate-keypair are passed in the same invocation.
 func TestRun_MutuallyExclusiveFlags(t *testing.T) {
-	const deviceID = "vega-a"
+	const deviceID = "lab-a"
 	peersetPath, _ := seedPeerset(t, deviceID, "10.99.0.6")
 
 	args := baseArgs(t, deviceID)
@@ -260,8 +260,8 @@ func TestRun_MutuallyExclusiveFlags(t *testing.T) {
 // TestRun_ReuseKeypair_RequiresPeerset fails-loud when --reuse-keypair-from
 // is passed without --update-allowlist (the read path).
 func TestRun_ReuseKeypair_RequiresPeerset(t *testing.T) {
-	args := baseArgs(t, "vega-a")
-	args.ReuseKeypairFrom = "vega-a"
+	args := baseArgs(t, "lab-a")
+	args.ReuseKeypairFrom = "lab-a"
 	// UpdateAllowlistPath intentionally empty.
 
 	err := run(args)

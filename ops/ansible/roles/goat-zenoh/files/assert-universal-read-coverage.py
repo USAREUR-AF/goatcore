@@ -2,17 +2,17 @@
 """assert-universal-read-coverage.py — refuse to narrow the universal read out
 from under a live reader.
 
-THE FAILURE THIS EXISTS TO STOP, as it actually happened on zagros-prod:
+THE FAILURE THIS EXISTS TO STOP, as it happened on a production goatnet:
 
   `zenoh_universal_read_cns` lists the non-slot readers that keep fabric read
   when the B2.1 partner partition narrows `trial-peer-read` off link_protocols
   to an enumerated CN list. Miss a reader and it silently stops reading the
   whole fabric — no error, no log line, it just goes quiet.
 
-  The zagros-prod standup on 2026-08-04 copied zagros's list verbatim:
+  Its standup copied the first goatnet's list verbatim:
   panoscope-trial-peer, flashlight-trial-peer, names-collector-trial-peer,
-  demogame-trial-peer. Reader cert CNs are minted PER GOATNET, and none of
-  those four exist on zagros-prod — its readers are `panoscope`, `flashlight`,
+  airdefenders-trial-peer. Reader cert CNs are minted PER GOATNET, and none of
+  those four exist on the new goatnet — its readers are `panoscope`, `flashlight`,
   `stethoscope`. The list was 100% wrong and 100% silent, and it stayed that
   way for fifteen days because the partition never actually rendered (the lane
   map was empty). The first correct partner carve would have blinded three
@@ -42,7 +42,7 @@ carries `link_protocols` (partition off, or lane map empty), nothing can lose
 read and the check reports and exits 0. It only bites when narrowing is real.
 
 usage: assert-universal-read-coverage.py <rendered-config.json5> [cert-glob ...]
-       --self-test    prove RED against the zagros-prod defect, GREEN when fixed
+       --self-test    prove RED against that defect, GREEN when fixed
 """
 import glob
 import os
@@ -57,8 +57,8 @@ import sys
 #
 #   /etc/<svc>/zenoh-client-cert.pem   panoscope, flashlight, stethoscope,
 #                                      fabric-health, the *-health publishers
-#   /opt/<svc>/certs/<svc>-cert.pem    demogame (its zenoh sidecar
-#                                      bind-mounts /opt/demogame/certs)
+#   /opt/<svc>/certs/<svc>-cert.pem    airdefenders (its zenoh sidecar
+#                                      bind-mounts /opt/airdefenders/certs)
 #
 # Add a path here rather than assuming; the cost of missing one is a reader that
 # goes silently dark on the next narrowing.
@@ -190,8 +190,8 @@ def main(argv):
         print()
         print("FAIL: narrowing this read would silently blind the reader(s) below — they")
         print("      match no subject in the rendered ACL, so once trial-peer-read stops")
-        print("      granting on link_protocols they read NOTHING, with no error anywhere")
-        print(". The router has NOT been restarted; the ACL in force is still")
+        print("      granting on link_protocols they read NOTHING, with no error anywhere.")
+        print("      The router has NOT been restarted; the ACL in force is still")
         print("      the previous one.")
         for cn, p in sorted(missing.items()):
             print(f"        {cn}   ({p})")
@@ -215,7 +215,7 @@ def self_test():
         cert_common_names: [
           "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
           "panoscope-trial-peer",
-          "demogame-trial-peer",
+          "airdefenders-trial-peer",
         ],
       },
       {
@@ -254,14 +254,14 @@ def self_test():
     # RED — a narrowed ACL naming another goatnet's CNs.
     rc = main([write("narrowed.json5", narrowed), cglob])
     if rc == 0:
-        print("SELF-TEST FAIL: passed the zagros-prod defect (narrowed ACL, wrong CNs)")
+        print("SELF-TEST FAIL: passed the known defect (narrowed ACL, wrong CNs)")
         ok = False
     else:
         print("self-test: RED proven — narrowed ACL missing live reader CNs fails")
 
     # GREEN — same ACL with the live CNs added.
     fixed = narrowed.replace(
-        '"demogame-trial-peer",',
+        '"airdefenders-trial-peer",',
         '"panoscope",\n          "flashlight",\n          "stethoscope",',
     )
     if main([write("fixed.json5", fixed), cglob]) != 0:

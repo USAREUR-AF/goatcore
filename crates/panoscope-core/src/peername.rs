@@ -48,10 +48,10 @@ pub fn rest(name: &str) -> Option<&str> {
 /// `peer-foobar-…`, and longest-wins so a key that is a prefix of another cannot shadow
 /// it. This is the one matcher behind both the handle-keyed (person) and prefix-keyed
 /// (org) joins. Its limit is stated rather than papered over: the separator also occurs
-/// INSIDE handles and tags, so `maintainer` does match `peer-maintainer-smith-…` whenever
-/// `maintainer-smith` is not itself among the candidates. Pass the FULL candidate set and let
-/// longest-wins disambiguate; for anything that acts on a principal, use `belongs_to`,
-/// which anchors on the site too.
+/// INSIDE handles and tags, so `sam` does match `peer-sam-smith-…` whenever `sam-smith`
+/// is not itself among the candidates. Pass the FULL candidate set and let longest-wins
+/// disambiguate; for anything that acts on a principal, use `belongs_to`, which anchors
+/// on the site too.
 pub fn match_longest_key<'a>(name: &str, keys: &[&'a str]) -> Option<&'a str> {
     let rest = rest(name)?;
     let mut best: Option<&'a str> = None;
@@ -82,7 +82,7 @@ pub fn mint(handle: &str, org_short_tag: &str, site: &str, date: &str) -> String
     // On per-uuid goatnets `short_tag` is FORCED to equal the handle (it
     // doubles as the Zenoh prefix), which minted names like
     // `peer-user371x-user371x-zagros-...` — 23 of 111 peers
-    // on ZAGROS. Same degenerate value the Ory org trait already corrects.
+    // on such a goatnet. Same degenerate value the Ory org trait corrects.
     let tag = if tag == h { "" } else { tag };
     let tag_seg = if tag.is_empty() {
         String::new()

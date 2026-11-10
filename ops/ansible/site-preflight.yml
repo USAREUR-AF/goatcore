@@ -5,7 +5,7 @@
 #
 # Usage:
 #
-#   ansible-playbook site-preflight.yml -e site_id=vega
+#   ansible-playbook site-preflight.yml -e site_id=<site>
 #
 # Exits 0 = all env vars present. Exits non-zero = at least one missing
 # (the assert task names the var).
@@ -18,7 +18,7 @@
 # list is selected from `profile_required_env_vars[mgmt_stack_profile]`,
 # loaded from the shared file ops/ansible/vars/site-required-env-vars.yml.
 # Per-site group_vars MAY override `required_env_vars` directly to
-# declare an explicit list (e.g. prov-rla uses single-Orin var names
+# declare an explicit list (e.g. a one-Orin site uses single-Orin var names
 # without an A/B router-role suffix).
 
 - name: "site-preflight: env var gate"
@@ -72,5 +72,5 @@
               -e postgres_superuser_password="${{ '{' }}{{ site_id_upper }}_PG_PASS{{ '}' }}" \
               -e netbird_encryption_key="${{ '{' }}{{ site_id_upper }}_NB_ENCKEY{{ '}' }}" \
               -e pgbackrest_cipher_pass="${{ '{' }}{{ site_id_upper }}_BKP_KEY{{ '}' }}" \
-              -e bootstrap_owner_email="person-81@example.org"{% else %} \
+              -e bootstrap_owner_email="<owner-email>"{% else %} \
               -e postgres_superuser_password="${{ '{' }}{{ site_id_upper }}_PG_PASS{{ '}' }}"{% endif %}

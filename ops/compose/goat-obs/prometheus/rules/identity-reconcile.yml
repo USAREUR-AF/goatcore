@@ -1,4 +1,4 @@
-# Identity reconciliation — live-vs-declared strays (the user209x backstop).
+# Identity reconciliation — live-vs-declared strays (the missing-manifest backstop).
 #
 # The access COP classifies a live person with no declared manifest as
 # `out_of_band` (data-access-cop.md); identity-reconcile/reconcile.py surfaces
@@ -11,7 +11,7 @@ groups:
     rules:
       # GATE: one or more live person-identities have no declared record and
       # aren't allowlisted (test/service accounts). Each is either a real
-      # participant needing a manifest backfill (like user209x) or an
+      # participant needing a manifest backfill or an
       # identity that should be revoked.
       - alert: IdentityStrayUntracked
         expr: goat_identity_strays{scope="unallowlisted"} > 0
@@ -21,7 +21,7 @@ groups:
           component: identity
         annotations:
           summary: "{{ $value }} live identity(ies) on {{ $labels.env }} have no declared record"
-          description: "{{ $value }} unallowlisted person-stray(s) reconcile to out_of_band — live (login/mesh) but absent from the declared registry (roster.json). Each is a real participant needing a manifest backfill (see the user209x backfill) or an identity to revoke; if it's a legitimate test/service account, add it to identity-reconcile-allowlist.txt. Names: `journalctl -t identity-reconcile` on the mgmt host."
+          description: "{{ $value }} unallowlisted person-stray(s) reconcile to out_of_band — live (login/mesh) but absent from the declared registry (roster.json). Each is a real participant needing a manifest backfill or an identity to revoke; if it's a legitimate test/service account, add it to identity-reconcile-allowlist.txt. Names: `journalctl -t identity-reconcile` on the mgmt host."
 
       # STALENESS: the reconciler stopped running (cron dead / portal unreachable
       # for >90m), so a silence here is "we've gone blind," not "all clear."

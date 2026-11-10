@@ -1,0 +1,81 @@
+---
+# Start every container and unit phase 2 recorded as running. A container
+# removed in phase 5 (it held the PGDATA volume) is re-created through its own
+# compose project; the rest are started as they are. Units start last, so
+# compose-watch finds the stack already up.
+
+- name: "writers | read the record"
+  ansible.builtin.command:
+    argv: [cat, "{{ _pem_rundir }}/stopped.json"]
+  register: _pem_stopped_raw
+  changed_when: false
+  failed_when: false
+
+- name: "writers | record"
+  ansible.builtin.set_fact:
+    _pem_stopped: "{{ (_pem_stopped_raw.stdout | from_json) if _pem_stopped_raw.rc == 0 else {'units': [], 'containers': []} }}"
+
+- name: "writers | start or re-create each container"
+  ansible.builtin.shell:
+    executable: /bin/bash
+    cmd: |
+      set -euo pipefail
+      n={{ item.name | quote }}
+      if docker inspect "$n" >/dev/null 2>&1; then
+        docker start "$n" >/dev/null; echo "started $n"
+      elif [ -n {{ item.project | quote }} ] && [ -n {{ item.service | quote }} ]; then
+        docker compose -p {{ item.project | quote }} --project-directory {{ item.workdir | quote }} \
+          {% for f in item.files %}-f {{ f | quote }} {% endfor %} up -d --no-deps {{ item.service | quote }}
+        echo "re-created $n"
+      else
+        echo "cannot start $n: gone and not from compose" >&2; exit 1
+      fi
+  loop: "{{ _pem_stopped.containers }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: _pem_started
+  changed_when: true
+
+- name: "writers | start units"
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: started
+  loop: "{{ _pem_stopped.units | reject('equalto', 'keepalived.service') | list }}"
+
+# keepalived last, and on the primaries before the standbys: a pair's VIP
+# goes back to the primary (higher priority, its stack already up) before the
+# standby's keepalived starts and could take MASTER on its own.
+- name: "writers | keepalived on the primaries"
+  ansible.builtin.systemd:
+    name: keepalived.service
+    state: started
+  when:
+    - "'keepalived.service' in _pem_stopped.units"
+    - not (_pem_standby | bool)
+
+- name: "writers | keepalived on the standbys"
+  ansible.builtin.systemd:
+    name: keepalived.service
+    state: started
+  when:
+    - "'keepalived.service' in _pem_stopped.units"
+    - _pem_standby | bool
+
+- name: "writers | which containers stay down"
+  ansible.builtin.shell:
+    executable: /bin/bash
+    cmd: |
+      sleep 10
+      for n in {{ _pem_stopped.containers | map(attribute='name') | map('quote') | join(' ') }}; do
+        [ "$(docker inspect -f '{{ "{{" }}.State.Running{{ "}}" }}' "$n" 2>/dev/null)" = true ] || echo "$n"
+      done
+      true
+  register: _pem_down
+  changed_when: false
+
+- name: "writers | state"
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}: started {{ _pem_stopped.containers | length }} containers,
+      {{ _pem_stopped.units | length }} units.
+      {{ ('NOT RUNNING after start: ' ~ (_pem_down.stdout_lines | join(', '))) if _pem_down.stdout_lines else 'All running.' }}

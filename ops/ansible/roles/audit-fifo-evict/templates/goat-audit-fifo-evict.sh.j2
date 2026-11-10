@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# {{ ansible_managed }}. Default invocation measures; --evict is explicit.
+set -euo pipefail
+exec python3 '{{ audit_fifo_evict_dir }}/evict.py' --config '{{ audit_fifo_evict_dir }}/config.json' "$@"

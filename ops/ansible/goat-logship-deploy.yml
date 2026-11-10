@@ -4,18 +4,18 @@
 # Deploy the goat-logship off-box cyber-logging collector (Vector) — ADR 1078
 # Phase 1. Collects host/OS + fabric security events, normalizes to OCSF, and
 # ships them off the Thor to Object-Lock S3, retaining near-zero locally.
-# ZAGROS first (sandbox), per the standard cutover discipline.
+# The sandbox goatnet first, per the standard cutover discipline.
 #
 # Run from any laptop on the netbird mesh:
 #
-#   OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES aws-vault exec legacy --no-session -- \
+#   OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES aws-vault exec <profile> --no-session -- \
 #     ansible-playbook \
 #       -i inventory/mgmt-hosts.ini \
 #       -i inventory/mgmt-hosts-mesh.ini \
-#       goat-logship-deploy.yml -e target=zagros_hosts
+#       goat-logship-deploy.yml -e target=<site>_hosts
 #
 # Pre-flight (operator-side, one-time per fresh deploy):
-#   1. The dedicated Object-Lock bucket exists in the usareur-af account
+#   1. The dedicated Object-Lock bucket exists in the goatnet's cloud account
 #      (terraform-govcloud/cyber-logging-s3.tf applied — GovCloud). Confirm the name matches
 #      logship_s3_bucket.
 #   2. An ingest-only access key for the goat-logship-ingest IAM user is
@@ -35,7 +35,7 @@
 #   - Stopping the collector fires GoatLogshipStreamSilent within ~15m.
 
 - name: deploy goat-logship off-box cyber-logging collector
-  hosts: "{{ target | mandatory }}"   # -e target=zagros_hosts for the ZAGROS sibling goatnet
+  hosts: "{{ target | mandatory }}"   # -e target=<site>_hosts
   become: true
   gather_facts: true
 

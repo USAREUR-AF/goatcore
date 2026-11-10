@@ -73,10 +73,10 @@ func newMeshMintServer(t *testing.T, mgmtURL string) (*httptest.Server, *registr
 		CertSignFake:         true,
 		VendorBundleDir:      filepath.Join(dir, "bundles"),
 		SchemaDir:            filepath.Join(dir, "schemas"),
-		CertSignURIPrefix:    "urn:goat-nova:vendor=",
+		CertSignURIPrefix:    "urn:goat:galaxy:org=",
 		NetbirdMgmtURL:       mgmtURL,
 		NetbirdAPIToken:      "fake-pat",
-		MeshSitePrefix:       "ZAGROS",
+		MeshSitePrefix:       "GALAXY",
 		MeshKeyMintEnabled:   true,
 		MeshKeyTTL:           "720h",
 		MeshExercisePrefixes: "drill1=EX-DRILL1, drill2=EX-DRILL2",
@@ -107,9 +107,9 @@ func TestMachineEnroll_PodMoonExactAutoGroupsAndInvalidCompositionsDoNotMint(t *
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/groups", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode([]map[string]string{
-			{"id": "gid-pod", "name": "ZAGROS-POD"},
-			{"id": "gid-moon", "name": "ZAGROS-MOON"},
-			{"id": "gid-kid", "name": "ZAGROS-KID"},
+			{"id": "gid-pod", "name": "GALAXY-POD"},
+			{"id": "gid-moon", "name": "GALAXY-MOON"},
+			{"id": "gid-kid", "name": "GALAXY-KID"},
 		})
 	})
 	mux.HandleFunc("/api/setup-keys", func(w http.ResponseWriter, r *http.Request) {
@@ -185,7 +185,7 @@ func TestMachineEnroll_PodMoonExactAutoGroupsAndInvalidCompositionsDoNotMint(t *
 }
 
 func TestMachineMeshKey_RemintIsQuotaNeutral(t *testing.T) {
-	mgmt := fakeMgmt(t, "ZAGROS-SENSOR-FEED", "ZAGROS-KID")
+	mgmt := fakeMgmt(t, "GALAXY-SENSOR-FEED", "GALAXY-KID")
 	ts, reg := newMeshMintServer(t, mgmt.URL)
 	ctx := t.Context()
 	_ = reg.SetMachineGrant(ctx, "alice", 1, "usareur-af", "", "op")
@@ -215,8 +215,8 @@ func TestMachineMeshKey_RemintIsQuotaNeutral(t *testing.T) {
 		t.Fatalf("re-mint key = %q (first %q); want a fresh non-empty key", newKey, firstKey)
 	}
 	mg, _ := rb["mesh_groups"].([]any)
-	if len(mg) != 1 || mg[0] != "ZAGROS-SENSOR-FEED" {
-		t.Fatalf("re-mint mesh_groups = %v, want the born-as derivation [ZAGROS-SENSOR-FEED]", rb["mesh_groups"])
+	if len(mg) != 1 || mg[0] != "GALAXY-SENSOR-FEED" {
+		t.Fatalf("re-mint mesh_groups = %v, want the born-as derivation [GALAXY-SENSOR-FEED]", rb["mesh_groups"])
 	}
 	q, _ := reg.MachineQuotaFor(ctx, "alice")
 	if q.Used != 1 || q.Remaining != 0 {
@@ -228,7 +228,7 @@ func TestMachineMeshKey_RemintIsQuotaNeutral(t *testing.T) {
 // goes through the shared reader (#1296): the decoder's io.EOF is not an
 // error here.
 func TestMachineMeshKey_WhitespaceBodyMeansDefaults(t *testing.T) {
-	mgmt := fakeMgmt(t, "ZAGROS-SENSOR-FEED", "ZAGROS-KID")
+	mgmt := fakeMgmt(t, "GALAXY-SENSOR-FEED", "GALAXY-KID")
 	ts, reg := newMeshMintServer(t, mgmt.URL)
 	_ = reg.SetMachineGrant(t.Context(), "alice", 1, "usareur-af", "", "op")
 	c := &http.Client{}
@@ -254,7 +254,7 @@ func TestMachineMeshKey_WhitespaceBodyMeansDefaults(t *testing.T) {
 }
 
 func TestMachineMeshKey_GateNotFoundAndLegacyClass(t *testing.T) {
-	mgmt := fakeMgmt(t, "ZAGROS-SENSOR-FEED")
+	mgmt := fakeMgmt(t, "GALAXY-SENSOR-FEED")
 	ts, reg := newMeshMintServer(t, mgmt.URL)
 	ctx := t.Context()
 	_ = reg.SetMachineGrant(ctx, "alice", 2, "usareur-af", "", "op")
@@ -300,7 +300,7 @@ func TestMachineMeshKey_GateNotFoundAndLegacyClass(t *testing.T) {
 }
 
 func TestBulkEnroll_OneActTwoMachines(t *testing.T) {
-	mgmt := fakeMgmt(t, "ZAGROS-SENSOR-FEED", "ZAGROS-KID")
+	mgmt := fakeMgmt(t, "GALAXY-SENSOR-FEED", "GALAXY-KID")
 	ts, reg := newMeshMintServer(t, mgmt.URL)
 	ctx := t.Context()
 	_ = reg.SetMachineGrant(ctx, "bob", 2, "unit-b", "", "op")
@@ -345,7 +345,7 @@ func TestBulkEnroll_OneActTwoMachines(t *testing.T) {
 }
 
 func TestBulkEnroll_QuotaCeilingPartialFailure(t *testing.T) {
-	mgmt := fakeMgmt(t, "ZAGROS-SENSOR-FEED")
+	mgmt := fakeMgmt(t, "GALAXY-SENSOR-FEED")
 	ts, reg := newMeshMintServer(t, mgmt.URL)
 	_ = reg.SetMachineGrant(t.Context(), "carol", 1, "unit-c", "", "op")
 	c := &http.Client{}
@@ -375,7 +375,7 @@ func TestBulkEnroll_QuotaCeilingPartialFailure(t *testing.T) {
 }
 
 func TestBulkEnroll_InfraEntryStaysOperatorGated(t *testing.T) {
-	mgmt := fakeMgmt(t, "ZAGROS-SENSOR-FEED", "ZAGROS-INFRA")
+	mgmt := fakeMgmt(t, "GALAXY-SENSOR-FEED", "GALAXY-INFRA")
 	ts, reg := newMeshMintServer(t, mgmt.URL)
 	_ = reg.SetMachineGrant(t.Context(), "dave", 5, "unit-d", "", "op")
 	c := &http.Client{}
@@ -398,7 +398,7 @@ func TestEnroll_ExerciseScopeMintsEXGroups(t *testing.T) {
 	// The exercise scope only exists where the exercise declared its gear
 	// groups on the live mgmt server — EX-DRILL1-SENSOR-FEED is present,
 	// drill2's is NOT, so drill1 mints and drill2 fail-closes.
-	mgmt := fakeMgmt(t, "ZAGROS-SENSOR-FEED", "EX-DRILL1-SENSOR-FEED")
+	mgmt := fakeMgmt(t, "GALAXY-SENSOR-FEED", "EX-DRILL1-SENSOR-FEED")
 	ts, reg := newMeshMintServer(t, mgmt.URL)
 	_ = reg.SetMachineGrant(t.Context(), "erin", 3, "unit-e", "", "op")
 	c := &http.Client{}

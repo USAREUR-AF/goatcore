@@ -6,7 +6,24 @@ and seeds the first commit from the live portal.
 
 **Design:** `docs/design/pubsub-state-as-code.md`.
 
-**Apply playbook:** `ops/ansible/nova-pubsub-state-repo-bootstrap.yml`.
+**Apply playbook:** [`ops/ansible/pubsub-state-mirror-deploy.yml`](../../pubsub-state-mirror-deploy.yml).
+
+## It needs a Forgejo, which goatcore does not deploy
+
+The mirror's primary tier is a Forgejo instance for the goatnet. goatcore ships
+no Forgejo role or play: run Forgejo the way its own documentation describes (a
+container on the obs host is the shape this role was written against), then
+declare it in `group_vars/<site>_hosts/pubsub-state.yml` (`pubsub_state_forgejo_url`,
+or `FORGEJO_URL` in the environment) and mint the mirror bot with
+`ops/scripts/forgejo-mint-pubsub-bot.sh <forgejo-ssh-target>`, which writes
+`FORGEJO_PUBSUB_TOKEN`.
+
+The mirror is optional. A goatnet with no `group_vars/<site>_hosts/pubsub-state.yml`
+has no mirror: `goatbuilder standup` and `ops/scripts/goat-standup.sh` print
+the phase-12 bot mint and mirror deploy as skipped, with that reason, and go on.
+Run directly, this role and `pubsub-state-mirror-deploy.yml` refuse at their
+pre-flight when the token is unset or the Forgejo does not answer
+`<url>/api/v1/version`.
 
 ## Required env vars
 
@@ -18,7 +35,7 @@ and seeds the first commit from the live portal.
 ## Portal-by-container resolve mode (opt-in)
 
 Default off: the mirror reaches the portal at `pubsub_state_portal_url`
-(`127.0.0.1:8090`), which assumes the portal's 8090 is host-published (nova-a).
+(`127.0.0.1:8090`), which assumes the portal's 8090 is host-published (a single-host site).
 
 On the three-Orin topology the portal's 8090 is reachable only by container name
 on a docker network (no host publish, no Traefik front), and its container IP
@@ -45,7 +62,7 @@ mirror-commit messages.
 ## What it pushes to MinIO
 
 When `pubsub_state_minio_bucket` + `pubsub_state_minio_alias` are set
-(both default values are populated for nova-a), every cycle also drops
+(both have defaults; the alias is `local-<site>`), every cycle also drops
 `pubsub-state-snapshots/snapshot-<ts>.tar.gz` and overwrites
 `pubsub-state-snapshots/latest.tar.gz`. The MinIO push is best-effort —
 a failure logs to stderr but does not abort the mirror cycle.
@@ -57,7 +74,10 @@ See the operator runbook `docs/operations/pubsub-state-rebuild.md`.
 ## Operator one-shot
 
 ```
+$ cd ops/ansible
 $ FORGEJO_PUBSUB_TOKEN=... PORTAL_OPERATOR_API_KEY=... \
-    OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES aws-vault exec legacy --no-session -- \
-    ansible-playbook -i inventory/nova-a.ini nova-pubsub-state-repo-bootstrap.yml
+    OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES aws-vault exec <profile> --no-session -- \
+    ../scripts/ansible-preflight.sh \
+      -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini \
+      -e target=<site>_hosts pubsub-state-mirror-deploy.yml
 ```

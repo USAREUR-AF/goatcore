@@ -1,7 +1,7 @@
 ---
 # SPDX-License-Identifier: Apache-2.0
 #
-# Deploy the grant-keyd E1 key-distribution daemon on a mgmt-host (ZAGROS Thor).
+# Deploy the grant-keyd E1 key-distribution daemon on a mgmt-host.
 # docs/design/grant-keyed-encryption.md §8 (Option B). Identity = SPIRE SVID via
 # a spiffe-helper sidecar; the SVID is the daemon's mTLS client cert AND its
 # bundle signing key. Reversible via the deploy-rollback ledger (meta dep).

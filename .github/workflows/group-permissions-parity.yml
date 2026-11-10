@@ -1,0 +1,72 @@
+name: group-permissions-parity
+
+# Wires ops/ci/check-group-permissions-parity.sh — the ADR 1073 ratchet.
+# ops/permissions/group-permissions.yml is the ENFORCED authorization matrix:
+# every oauth2-proxy fence's allowed-groups list (role default + group_vars
+# overrides) must equal the set of groups the matrix grants that service, and
+# any new fence var must be registered in the ratchet's coverage map.
+# Divergence fails the build instead of living as a doc footnote (the
+# pre-ADR-1073 state this replaces).
+
+on:
+  pull_request:
+    paths:
+      - 'ops/permissions/group-permissions.yml'
+      - 'ops/permissions/data-access-roles.yaml'
+      - 'ops/panoscope/src/**'
+      - 'ops/goat-id-console/internal/**'
+      - 'ops/ansible/roles/**/defaults/main.yml'
+      - 'ops/ansible/group_vars/**'
+      - 'ops/ci/check-data-access-roles.sh'
+      - 'ops/ci/check-no-forgeable-authz-header.sh'
+      - '.github/workflows/group-permissions-parity.yml'
+  # push: on main REMOVED — this workflow is a guard, not a publisher. It
+  # already gates the pull request, and a squash merge puts the reviewed diff
+  # on main unchanged, so re-running it there re-verifies a commit whose answer
+  # is known. 98 of 119 workflows did that; measured at 4,787 runs in
+  # one day, roughly half of them this shape.
+  #
+  # An earlier draft of this comment also said "main is protected from
+  # force-push". IT IS NOT — this plan cannot have branch protection at all
+  # (the API answers "Upgrade to GitHub Pro"). A force-push to main therefore
+  # bypasses this guard entirely. That is a repository-settings decision, not
+  # something a paths filter or a trigger change can close.
+  # Publishers keep push: on purpose — the merge commit is the artifact.
+# Supersede in-flight runs for the same ref. A push during review used to
+# leave the previous run going to completion, so a branch pushed three
+# times paid three times for an answer only the last one needed. Keyed on
+# the workflow plus the ref, and NEVER cancels on main — a merge-commit run
+# is the one whose result is recorded.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install PyYAML
+        run: pip install --quiet pyyaml
+      # The fence-parity half (check-group-permissions-parity.sh) judges every
+      # surface's fence against what each goatnet enables in its group_vars,
+      # and most fenced surfaces' roles live in goatstuff. It runs in an
+      # environment repository's assembled tree (goatcore + goatstuff + that
+      # environment's goatnets); this repository alone has no goatnet to judge.
+      #
+      # The data-access grammar reads panoscope's viewer constants, and
+      # panoscope lives in goatstuff, so its current main is checked out beside
+      # this tree and only ops/panoscope is copied in.
+      - name: Check out goatstuff for the panoscope viewer
+        uses: actions/checkout@v4
+        with:
+          repository: USAREUR-AF/goatstuff
+          path: .goatstuff
+          persist-credentials: false
+      - name: Place ops/panoscope from goatstuff
+        run: cp -R .goatstuff/ops/panoscope ops/panoscope
+      - name: data-access role grammar (ADR 1074 — G1/G7)
+        run: ops/ci/check-data-access-roles.sh
+      - name: no surface reads the forgeable X-Auth-Request-Groups header
+        run: ops/ci/check-no-forgeable-authz-header.sh

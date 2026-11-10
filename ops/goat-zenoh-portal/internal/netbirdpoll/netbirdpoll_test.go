@@ -44,11 +44,11 @@ func TestPollMatchesPeerNamesAndUpdatesProgress(t *testing.T) {
 			return
 		}
 		peers := []netbirdpoll.Peer{
-			{ID: "p1", Name: "peer-aardwolf-nova-2026-05-21-laptop"},
-			{ID: "p2", Name: "peer-aardwolf-nova-2026-05-21-phone"},
-			{ID: "p3", Name: "peer-user52x-nova-2026-05-22-thinkpad"},
+			{ID: "p1", Name: "peer-aardwolf-lab-2026-05-21-laptop"},
+			{ID: "p2", Name: "peer-aardwolf-lab-2026-05-21-phone"},
+			{ID: "p3", Name: "peer-otter-lab-2026-05-22-thinkpad"},
 			{ID: "p4", Name: "some-other-peer"},
-			{ID: "p5", Name: "peer-unknown-nova-2026-05-21-x"},
+			{ID: "p5", Name: "peer-unknown-lab-2026-05-21-x"},
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(peers)
@@ -57,7 +57,7 @@ func TestPollMatchesPeerNamesAndUpdatesProgress(t *testing.T) {
 
 	r := openReg(t)
 	ctx := context.Background()
-	for _, p := range []string{"aardwolf", "user52x"} {
+	for _, p := range []string{"aardwolf", "otter"} {
 		if err := r.CreateVendor(ctx, &registry.Vendor{Prefix: p, APIKeyHash: "h"}); err != nil {
 			t.Fatalf("create %s: %v", p, err)
 		}
@@ -89,15 +89,15 @@ func TestPollMatchesPeerNamesAndUpdatesProgress(t *testing.T) {
 	if got := byPrefix["aardwolf"]; got.L2At == nil {
 		t.Errorf("aardwolf L2At should be set")
 	}
-	if got := byPrefix["user52x"]; got.PeerCount != 1 {
-		t.Errorf("user52x peer_count = %d, want 1", got.PeerCount)
+	if got := byPrefix["otter"]; got.PeerCount != 1 {
+		t.Errorf("otter peer_count = %d, want 1", got.PeerCount)
 	}
 }
 
 func TestPollPrefersLongestVendorMatch(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode([]netbirdpoll.Peer{
-			{ID: "p1", Name: "peer-foobar-nova-2026-05-21-host"},
+			{ID: "p1", Name: "peer-foobar-lab-2026-05-21-host"},
 		})
 	}))
 	defer srv.Close()
@@ -145,7 +145,7 @@ func TestPollUpstreamError(t *testing.T) {
 // A slot-pool goatnet keys its org rows by a 32-hex anchor, while the peer name
 // carries the PERSON's handle and no anchor at all. Offering only anchors as
 // candidate keys made L2 unreachable for every such org — the swimlane read
-// "no peers" for people who were demonstrably enrolled (ZAGROS
+// "no peers" for people who were demonstrably enrolled (GALAXY
 // cohort: three peers on the mesh, L2 blank on all three).
 func TestPollMatchesHandleKeyedPeersOnSlotPoolGoatnet(t *testing.T) {
 	r := openReg(t)
@@ -153,7 +153,7 @@ func TestPollMatchesHandleKeyedPeersOnSlotPoolGoatnet(t *testing.T) {
 	if _, err := r.InitializeSlotPool(ctx, "salt-test", 8); err != nil {
 		t.Fatalf("init pool: %v", err)
 	}
-	slot, err := r.AllocateSlot(ctx, "user178x")
+	slot, err := r.AllocateSlot(ctx, "river-s")
 	if err != nil {
 		t.Fatalf("allocate: %v", err)
 	}
@@ -164,8 +164,8 @@ func TestPollMatchesHandleKeyedPeersOnSlotPoolGoatnet(t *testing.T) {
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode([]netbirdpoll.Peer{
-			{ID: "p1", Name: "peer-user178x-zagros-2026-08-11-rhs-g14"},
-			{ID: "p2", Name: "peer-someone-else-zagros-2026-08-11-box"},
+			{ID: "p1", Name: "peer-river-s-galaxy-2026-08-11-rhs-g14"},
+			{ID: "p2", Name: "peer-someone-else-galaxy-2026-08-11-box"},
 		})
 	}))
 	defer srv.Close()
@@ -209,7 +209,7 @@ func TestPollSkipsHandleWithNoOrgRow(t *testing.T) {
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode([]netbirdpoll.Peer{
-			{ID: "p1", Name: "peer-orphan-handle-zagros-2026-08-11-box"},
+			{ID: "p1", Name: "peer-orphan-handle-galaxy-2026-08-11-box"},
 		})
 	}))
 	defer srv.Close()

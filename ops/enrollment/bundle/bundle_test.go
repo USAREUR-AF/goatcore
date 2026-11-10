@@ -29,7 +29,7 @@ func fixtureBundle(t *testing.T) *EnrollmentBundle {
 		ACLGroups:          []string{"c2", "engagement-authority"},
 		Site:               "region-a-cp",
 		KnownEndpoints: []KnownEndpoint{
-			{Addr: "rla-relay.legacy.example:51820", Pubkey: pub, Kind: KindRelay},
+			{Addr: "rla-relay.example.net:51820", Pubkey: pub, Kind: KindRelay},
 			{Addr: "10.0.0.5:51820", Pubkey: pub, Kind: KindPeer},
 		},
 		IssuedAt:           issued,
@@ -480,14 +480,14 @@ func TestKnownEndpointAllowedIPs_Roundtrip(t *testing.T) {
 	pub := b.KnownEndpoints[0].Pubkey
 	b.KnownEndpoints = []KnownEndpoint{
 		{
-			Addr:       "rla-relay.legacy.example:51820",
+			Addr:       "rla-relay.example.net:51820",
 			Pubkey:     pub,
 			Kind:       Kind("cp-relay"),
 			MeshAddr:   "10.99.0.2",
 			AllowedIPs: []string{"10.99.0.2/32", "10.99.0.0/24"},
 		},
 		{
-			Addr:     "rlb-relay.legacy.example:51820",
+			Addr:     "rlb-relay.example.net:51820",
 			Pubkey:   pub,
 			Kind:     Kind("cp-relay"),
 			MeshAddr: "10.99.0.3",
@@ -545,7 +545,7 @@ func TestKnownEndpointAllowedIPs_TamperDetected(t *testing.T) {
 	pub := b.KnownEndpoints[0].Pubkey
 	b.KnownEndpoints = []KnownEndpoint{
 		{
-			Addr:       "rla-relay.legacy.example:51820",
+			Addr:       "rla-relay.example.net:51820",
 			Pubkey:     pub,
 			Kind:       Kind("cp-relay"),
 			MeshAddr:   "10.99.0.2",
@@ -568,9 +568,9 @@ func TestKnownEndpointAllowedIPs_TamperDetected(t *testing.T) {
 // equality without needing reflect.DeepEqual on every sub-field.
 func fixtureGoatCLIExtras() GoatCLIExtras {
 	return GoatCLIExtras{
-		PortalEndpoint: "https://portal.nova.netbird.nova.example",
+		PortalEndpoint: "https://portal.nebula.netbird.nebula.example",
 		PortalToken:    []byte("opaque-bearer-token-32-bytes-pad"),
-		RouterEndpoint: "tls/100.127.0.190:7447",
+		RouterEndpoint: "tls/192.0.2.10:7447",
 		MTLSCert:       []byte("-----BEGIN CERTIFICATE-----\nMIIB...AB\n-----END CERTIFICATE-----\n"),
 		MTLSKey:        []byte("-----BEGIN PRIVATE KEY-----\nMIIE...AB\n-----END PRIVATE KEY-----\n"),
 		CARoots:        []byte("-----BEGIN CERTIFICATE-----\nMIIC...AB\n-----END CERTIFICATE-----\n"),

@@ -29,7 +29,7 @@ Exit code 0 if all cases match expectations on all hosts, 1 otherwise.
 # hashes it (SHA256) internally, matching the relay's key derivation.
 RELAY_SECRET="$NOVA_RELAY_SECRET" cargo run -- \
   198.51.100.162 198.51.100.98 198.51.100.60 203.0.113.225
-# default host if none given: 203.0.113.225 (goat-relay-rla)
+# at least one host is required; with none the probe prints its usage and exits 2
 ```
 
 ## Caveats

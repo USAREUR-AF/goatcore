@@ -53,6 +53,17 @@ Nothing was changed. Walk through it:
 2. **Have you sourced your operator environment?** Admin actions read operator credentials from the environment (for example `GOAT_OPERATOR_HANDLE` and the NetBird admin token) — never from the profile on disk.
 3. **Should you have this access at all?** If you've checked the above and the portal still refuses, your role isn't authorized for this action. Contact your goat administrator — re-onboarding the same identity won't grant it.
 
+## Your goatnet's ACL declaration
+
+`goat acl test` and `goat warrant` check access against your goatnet's declaration: the two files `netbird_acl_taxonomy.yml` and `netbird_acl_matrix.yml`. goat reads them from the first of:
+
+1. `--declaration <dir>` (`--acl-declaration <dir>` on `goat warrant apply`);
+2. the directory `GOAT_ACL_DECLARATION_DIR` names;
+3. the active context: the directory its `profile.toml` names as `acl_declaration_dir`, else its own `acl/` directory, which `goat context refresh` fills from `get.<site>/acl/` when the goatnet serves its declaration there;
+4. `ops/ansible/` of the checkout or deployment overlay you run it in.
+
+goat carries no deployment's declaration. With none of these, the command stops with `E_ACL_DECLARATION_MISSING` (`goat explain E_ACL_DECLARATION_MISSING`).
+
 ## The full operator workflow
 
 This chapter orients you to the surface and how it behaves. The end-to-end operator workflow — the capability model, setting up your environment and certificates, and the onboard / revoke / rotate / audit loop — lives in the **admin-operator guide** that ships with your goatnet's operations docs, not in this book.

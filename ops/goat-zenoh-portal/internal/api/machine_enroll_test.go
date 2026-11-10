@@ -346,7 +346,7 @@ func TestMachineEnroll_StandaloneOnlyClassesRejectedAsPlatformWorkloads(t *testi
 
 // TestMachineEnroll_GearClassGate proves the ADR 1116 §9 mint-time refusals
 // FIRE, which is the whole claim: "the setup key is the enforcement point, not
-// this document." The site-one cohort of put an effector ground
+// this document." The Harbor cohort of put an effector ground
 // station, a sensor gateway and a human laptop into one group in a single
 // sitting because the mint had no opinion. Each case below is a shape that
 // sitting would have produced.
@@ -437,12 +437,12 @@ func TestMachineEnroll_GearClassGate(t *testing.T) {
 // EFFECTOR-CUE and EFFECTOR-ARBITER.
 func TestMachineEnroll_PlatformDerivesFromWorkloads(t *testing.T) {
 	ts, reg := newMachineServer(t)
-	_ = reg.SetMachineGrant(t.Context(), "effector-one", 2, "usareur-af", "", "op")
+	_ = reg.SetMachineGrant(t.Context(), "falcon", 2, "usareur-af", "", "op")
 	c := &http.Client{}
 
 	r := doJSON(t, c, "POST", ts.URL+"/api/machines/enroll", "dev-operator-key", map[string]any{
 		"machine_handle": "navigator-1", "node_class": "PLATFORM", "autonomy": "supervised",
-		"custodian": "effector-one", "workloads": []string{"EFFECTOR-CUE", "EFFECTOR-ARBITER"},
+		"custodian": "falcon", "workloads": []string{"EFFECTOR-CUE", "EFFECTOR-ARBITER"},
 	})
 	if r.StatusCode != http.StatusCreated {
 		t.Fatalf("platform enroll: %d %s", r.StatusCode, mustReadBody(t, r))

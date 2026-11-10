@@ -578,8 +578,27 @@ def _reach(addr, port=22):
         return False
 
 
+# The AWS profile with-aws reads the hosts through: GOAT_AWS_PROFILE, then
+# deploy.aws_profile in the tree's ops/goatbuilder/project.yml
+# (ops/scripts/goatnet-facts.py deploy aws_profile), else this one.
+DEFAULT_AWS_PROFILE = "usareur-af"
+
+
+def aws_profile(root=REPO):
+    env = os.environ.get("GOAT_AWS_PROFILE", "").strip()
+    if env:
+        return env
+    try:
+        p = subprocess.run([sys.executable, str(Path(root) / "ops/scripts/goatnet-facts.py"), "deploy", "aws_profile"],
+                           capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        return DEFAULT_AWS_PROFILE
+    return (p.stdout.strip() if p.returncode == 0 else "") or DEFAULT_AWS_PROFILE
+
+
 def observe(m, root=REPO):
     root = Path(root)
+    profile = aws_profile(root)
     facts = {"site": m["site"], "hosts": {}}
     first_mgmt = m["hosts"]["mgmt"][0] if m["hosts"]["mgmt"] else None
     routes, health = [], []
@@ -603,7 +622,7 @@ def observe(m, root=REPO):
         reach = _reach(addr)
         invs = [a for inv in m.get("inventories") or ["mgmt-hosts.ini"]
                 if reach or inv != "mgmt-hosts-mesh.ini" for a in ("-i", f"inventory/{inv}")]
-        argv = [str(root / "ops/scripts/with-aws"), "usareur-af", "--", "ansible", *invs, host, "-b", "-m", "shell", "-a", cmd_py]
+        argv = [str(root / "ops/scripts/with-aws"), profile, "--", "ansible", *invs, host, "-b", "-m", "shell", "-a", cmd_py]
         try:
             p = subprocess.run(argv, cwd=root / "ops/ansible", capture_output=True, text=True, timeout=600,
                                env={**os.environ, "OBJC_DISABLE_INITIALIZE_FORK_SAFETY": "YES", "ANSIBLE_HOST_KEY_CHECKING": "False"})

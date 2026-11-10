@@ -110,17 +110,17 @@ wire_read_posture:
     M1.5-compliance-floor: >-
       the goat client libraries/SDK refuse to subscribe beyond the
       caller's grants (ADR 1076) — binds well-behaved code only, NOT
-      adversaries; every mention must say so. Raises the floor while
-      M2 lands.
+      adversaries; every mention must say so. Raised the floor while
+      M2 landed; not needed now that M2 is built.
     M2-committed: >-
       grant-keyed payload encryption (ADR 1027 arc, reserved releaseset
       scope) — the router routes ciphertext under the same static ACL;
       a grant-gated service distributes keys per THE SAME grant rows the
       surfaces evaluate (human sessions via surfaces, workloads via
-      SPIFFE, ADR 0412). Revocation = key rotation. COMMITTED roadmap
-      item (ratified 2026-07-09, ADR 1076 — machine parity is the
-      goal, not a contingency), sequenced after the resolver + the
-      ADR 1075 grant-loop build-out whose rows it consumes.
+      SPIFFE, ADR 0412). Revocation = key rotation. BUILT: the
+      grant-crypto SDK and grant-keyd (ops/grant-crypto/) seal to the
+      audience grant-keyd reads from the portal's grant rows (ADR 1076
+      machine parity; ratified 2026-07-09).
   hard_floor: The environment boundary is the machine-read trust boundary.
     Each sovereign runs its own environment; cross-sovereign sharing goes
     through release namespaces over federated boundary nodes; M2 is a

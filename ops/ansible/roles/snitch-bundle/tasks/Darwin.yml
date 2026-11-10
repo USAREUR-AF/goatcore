@@ -50,7 +50,7 @@
 - name: Render snitch-probe LaunchDaemon plist
   ansible.builtin.template:
     src: snitch-probe.plist.j2
-    dest: /Library/LaunchDaemons/net.goat.snitch-probe.plist
+    dest: "/Library/LaunchDaemons/{{ snitch_probe_launchd_label }}.plist"
     owner: root
     group: wheel
     mode: "0644"
@@ -59,7 +59,7 @@
 
 - name: Bootstrap snitch-probe LaunchDaemon
   ansible.builtin.command:
-    cmd: launchctl bootstrap system /Library/LaunchDaemons/net.goat.snitch-probe.plist
+    cmd: launchctl bootstrap system /Library/LaunchDaemons/{{ snitch_probe_launchd_label }}.plist
   register: launchctl_bootstrap
   failed_when:
     - launchctl_bootstrap.rc != 0
@@ -70,7 +70,7 @@
 
 - name: Ensure snitch-probe LaunchDaemon is started
   ansible.builtin.command:
-    cmd: launchctl kickstart -k system/net.goat.snitch-probe
+    cmd: launchctl kickstart -k system/{{ snitch_probe_launchd_label }}
   register: launchctl_kickstart
   changed_when: launchctl_kickstart.rc == 0
   failed_when: false  # kickstart returns non-zero if not loaded; bootstrap above handles that

@@ -125,9 +125,8 @@
         1. Apply traefik-acme.yml so the dashboard router's
            loadBalancer points at oauth2-proxy-dashboard:4180 instead of
            dashboard:80.
-        2. Drill the gate end-to-end per
-           docs/design/nova-l7-admin-fence-implementation.md
-           §3 (example-vendor → 403, maintainer → 200).
+        2. Drill the gate end-to-end: an account outside the allowed
+           group gets 403, an account in it gets 200.
 # Deploy ledger now written by the shared `rollback-ledger`
 # meta-dependency (meta/main.yml) per ADR 1060 — no per-role task here.
 

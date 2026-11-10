@@ -16,7 +16,7 @@ It is **not** the Orin-A Traefik — that lives in the mgmt-host compose project
 
 Traefik static config (entryPoints, providers, log) lives in `/opt/obs-traefik/traefik.yml`.
 
-Dynamic config lives in `/etc/goat/traefik-dynamic/`:
+Dynamic config lives in `obs_traefik_dynamic_dir` (`defaults/main.yml`), mounted into the container at the same path:
 
 - `00-middlewares.yml` — named-middleware catalog (forwardauth-operator-idp, future redirects)
 - `route-<name>.yml` — one file per route, rendered by this role from the `obs_traefik_routes` group_var
@@ -52,8 +52,8 @@ cert-sign \
   -san 198.18.0.9 \
   -san 192.168.1.253 \
   -san 127.0.0.1 \
-  -out-cert ~/.goat/state/vega-c/operator-idp-cert.pem \
-  -out-key  ~/.goat/state/vega-c/operator-idp-key.pem
+  -out-cert <operator state dir>/vega-c/operator-idp-cert.pem \
+  -out-key  <operator state dir>/vega-c/operator-idp-key.pem
 ```
 
 (Concrete invocation per vega's group_vars; substitute SAN list per site.)

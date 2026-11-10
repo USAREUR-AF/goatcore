@@ -20,7 +20,8 @@ into the operator manifest store:
 reads onboarded proposals from the ID-ADMIN-CONSOLE, which owns the proposal
 store (the portal served this route before the onboarding extraction and now
 answers 404). Base from --url / $ID_CONSOLE_URL, bearer from
-$ZAGROS_PORTAL_OPERATOR_API_KEY / $PORTAL_OPERATOR_API_KEY. Writes each as
+$<ENV>_PORTAL_OPERATOR_API_KEY / $PORTAL_OPERATOR_API_KEY, <ENV> being --env in
+capitals with `-` as `_` (site-a reads $SITE_A_PORTAL_OPERATOR_API_KEY). Writes each as
 ops/operators/<env>/<handle>.yml, then the normal `gen-roster.py` regen +
 roster PR + portal deploy picks them up.
 
@@ -46,7 +47,12 @@ from pathlib import Path
 import yaml
 
 
-def console_base() -> str:
+def env_prefix(env: str) -> str:
+    """--env as the prefix of the goatnet's own variables: site-a -> SITE_A."""
+    return env.upper().replace("-", "_")
+
+
+def console_base(env: str) -> str:
     """Where the onboarding proposals actually live.
 
     THE PROPOSAL STORE MOVED. This tool was written when the portal served
@@ -60,27 +66,28 @@ def console_base() -> str:
     Reaching the console: its public URL is behind oauth2-proxy and answers a
     Bearer call with a 302 to the login page, so a server-to-server caller must
     reach the APP port — `127.0.0.1:8088` on the mgmt host, or a port-forward of
-    it. Pass `--url`, or set `ID_CONSOLE_URL` / `ZAGROS_ID_CONSOLE_URL`.
+    it. Pass `--url`, or set `ID_CONSOLE_URL` / `<ENV>_ID_CONSOLE_URL`.
     """
-    for var in ("ID_CONSOLE_URL", "ZAGROS_ID_CONSOLE_URL"):
+    for var in ("ID_CONSOLE_URL", f"{env_prefix(env)}_ID_CONSOLE_URL"):
         v = os.environ.get(var, "").strip()
         if v:
             return v.rstrip("/")
     return "http://127.0.0.1:8088"
 
 
-def console_key() -> str:
+def console_key(env: str) -> str:
     """A key the console's onboard-API gate accepts.
 
     The gate resolves the presented bearer against its own operator-key map and
     then, failing that, delegates to the portal's whoami — so a portal operator
     key works too, which is what most callers have to hand.
     """
-    for var in ("ZAGROS_PORTAL_OPERATOR_API_KEY", "PORTAL_OPERATOR_API_KEY"):
+    own = f"{env_prefix(env)}_PORTAL_OPERATOR_API_KEY"
+    for var in (own, "PORTAL_OPERATOR_API_KEY"):
         v = os.environ.get(var, "").strip()
         if v:
             return v
-    sys.exit("no operator key in $ZAGROS_PORTAL_OPERATOR_API_KEY / $PORTAL_OPERATOR_API_KEY")
+    sys.exit(f"no operator key in ${own} / $PORTAL_OPERATOR_API_KEY")
 
 
 def fetch_live_emails(admin_url: str) -> set[str]:
@@ -163,8 +170,8 @@ def main() -> int:
     outdir.mkdir(parents=True, exist_ok=True)
     validate = Path(args.operators_dir) / "validate.py"
 
-    base = args.url.rstrip('/') if args.url else console_base()
-    key = console_key()
+    base = args.url.rstrip('/') if args.url else console_base(args.env)
+    key = console_key(args.env)
     proposals = fetch_onboarded(base, key)
     print(f'read {len(proposals)} onboarded proposal(s) from {base}', file=sys.stderr)
 

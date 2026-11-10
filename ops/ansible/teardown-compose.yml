@@ -17,11 +17,16 @@
   become: true
   gather_facts: false
   tasks:
+    # A role default under /opt/goat/ (mesh_coredns_dir: "{{ goat_host_opt_dir }}/dns")
+    # lives under the site's goat_host_opt_dir; the plan carries the literal default,
+    # so the prefix is re-rooted here when the site names its own opt dir.
     - name: teardown | resolve each compose directory (the site's value, else the role default)
       ansible.builtin.set_fact:
         _teardown_dirs: >-
-          {{ _teardown_dirs | default([]) + [ lookup('vars', item.var, default=item.default) ] }}
-      loop: "{{ teardown_dirs | mandatory }}"
+          {{ _teardown_dirs | default([]) + [ lookup('vars', item.var, default=(
+               (goat_host_opt_dir ~ item.default[9:]) if (goat_host_opt_dir is defined and item.default.startswith('/opt/goat/'))
+               else item.default)) ] }}
+      loop: "{{ (teardown_dirs | mandatory | from_json) if (teardown_dirs is string) else teardown_dirs }}"
 
     - name: teardown | find the compose files
       ansible.builtin.stat:

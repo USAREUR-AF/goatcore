@@ -1,0 +1,24 @@
+---
+# Pending declaration under ADR 0859/1060. This is not a deployment receipt.
+service: audit-fifo-evict
+artifact_type: forward-only
+hosts: []
+history:
+  - sha: PENDING
+    image: "minio/mc:RELEASE.2024-10-29T15-34-59Z@sha256:PENDING"
+    pr: 1885
+    merged_at: null
+    do_not_roll_to: true
+    summary: >-
+      No reviewed accessible client digest is available. The role rejects this
+      sentinel before installation. Supply a verified multi-architecture client
+      pin and its ledger row together; add a connection map only for an actual
+      authorized deployment. Deleted versions cannot be restored by code rollback.
+  - sha: 9dc099d7951b
+    image: "cgr.dev/chainguard/minio-client:latest-dev@sha256:9dc099d7951b8e1b257042713a3b1bfbf231fb21dc60455c6c349a29d2b42ad9"
+    pr: null
+    merged_at: null
+    summary: >-
+      First deployable client pin: the Chainguard minio-client index (amd64 and
+      arm64) the minio role already pins. Measured on an arm64 host: runs as
+      `--entrypoint mc`, and `mc rm` offers --bypass for GOVERNANCE retention.

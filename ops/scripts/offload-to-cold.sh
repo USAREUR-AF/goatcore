@@ -47,7 +47,7 @@ usage() {
   sed -n 's/^# \{0,1\}//p' "$0" | sed -n '1,40p'
   echo
   echo "Required flags:"
-  echo "  --ssh-host          goat@<mesh-ip>      (the MinIO host)"
+  echo "  --ssh-host          <user>@<mesh-ip>           (the MinIO host)"
   echo "  --source-bucket     <name>                     (e.g. audit-integrity)"
   echo "  --dataset-id        <kebab-case>               (e.g. nova-1.0)"
   echo "  --operator          <handle>                   (your operator handle)"

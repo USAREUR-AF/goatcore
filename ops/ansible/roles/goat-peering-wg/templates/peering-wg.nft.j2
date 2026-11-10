@@ -16,7 +16,15 @@ table inet {{ _pw_table }} {
     iifname "{{ peering_wg_interface }}" meta l4proto icmp accept
     iifname "{{ peering_wg_interface }}" ip saddr {{ peering_wg_remote_link_ip }} ip daddr {{ peering_wg_local_link_ip }} tcp dport { {{ _pw_ports }} } accept
     iifname "{{ peering_wg_interface }}" counter drop
-{% if _pw_peer_addr | trim | length > 0 %}
+{% if peering_wg_via_forwarder | bool %}
+    # Behind a forwarder the tunnel port arrives on the carrier, from the forwarder's
+    # carrier address, and from nowhere else. Nothing else is accepted on the carrier.
+    iifname "{{ peering_wg_carrier_interface }}" ip saddr {{ peering_wg_carrier_remote_ip }} ip daddr {{ peering_wg_carrier_local_ip }} udp dport {{ peering_wg_listen_port }} accept
+    iifname "{{ peering_wg_carrier_interface }}" ct state established,related accept
+    iifname "{{ peering_wg_carrier_interface }}" meta l4proto icmp accept
+    iifname "{{ peering_wg_carrier_interface }}" counter drop
+    udp dport {{ peering_wg_listen_port }} counter drop
+{% elif _pw_peer_addr | trim | length > 0 %}
     # The tunnel port answers its one counterparty.
     udp dport {{ peering_wg_listen_port }} ip saddr != {{ _pw_peer_addr | trim }} counter drop
 {% endif %}

@@ -4,6 +4,6 @@ args = ["docs"]
 stdout = """
 goat docs — browsable, searchable docs for the goat CLI.
 
-  On the mesh:  https://docs.nova.<your-zone>/
+  On the mesh:  https://docs.<site>.<your-zone>/
   Offline:      goat docs --markdown    # the full command reference
 """

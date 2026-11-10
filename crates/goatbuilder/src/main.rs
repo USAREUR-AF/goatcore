@@ -164,6 +164,11 @@ pub enum Cmd {
         /// only what is declared on this machine and prompts for nothing.
         #[arg(long)]
         credentials: bool,
+        /// Require the browser tests' toolchain (the console's Playwright suite
+        /// the release's live rows run). Without this flag a missing toolchain
+        /// is a note, not a failure.
+        #[arg(long)]
+        browser_tests: bool,
     },
     /// Declared against recorded, per machine: converged, pending or unknown
     /// (C7, C8). Reads only. Exit 3 while any machine is not converged.
@@ -342,6 +347,11 @@ pub enum Cmd {
         /// ops/goatbuilder/standup-dag.yaml declares (the script's --parallel).
         #[arg(long)]
         parallel: bool,
+        /// Run the acceptance phase (13) on a goatlite, where it is off by
+        /// default; `goatbuilder assay <site>` runs it on its own. Every other
+        /// goatnet runs it always.
+        #[arg(long)]
+        check: bool,
     },
     /// A site from verified to nothing — standup's mirror, records kept (a
     /// burn-down appends teardown rows, never erases). On a fixture (`--mock`)
@@ -372,10 +382,11 @@ pub enum Cmd {
         to: u32,
     },
     /// One more machine of a class at a live site, declared → converged →
-    /// verified: docs/operations/node-addition.md's executed sequence as
-    /// numbered phases with its gates (reach, key, repo work first, baseline,
-    /// kernel WireGuard before and after enrolment, the kernel ACL plane as the
-    /// enrolment gate, the class's converge, acceptance).
+    /// verified: the node-addition sequence of
+    /// docs/tutorials/02-first-federated-node.md as numbered phases with its
+    /// gates (reach, key, repo work first, baseline, kernel WireGuard before and
+    /// after enrolment, the kernel ACL plane as the enrolment gate, the class's
+    /// converge, acceptance).
     JoinNode {
         /// The environment (goatnet).
         env: String,
@@ -394,6 +405,10 @@ pub enum Cmd {
         /// The env var holding the node's first-login password (default <SITE>_NODE_PASS).
         #[arg(long)]
         pass_var: Option<String>,
+        /// How this machine reaches the goatnet's hosts: `mesh` (this machine is on
+        /// its mesh) or `door` (through its env door; the plan opens it first).
+        #[arg(long, default_value = "mesh", value_parser = ["mesh", "door"])]
+        via: String,
         /// Resume from this phase.
         #[arg(long, default_value_t = 1)]
         from: u32,
@@ -405,14 +420,25 @@ pub enum Cmd {
         dry_run: bool,
     },
     /// A sovereign peering declared, converged and verified (ADR 1157): our
-    /// half measured, the packages exchanged out of band, one agreement
+    /// half measured, the packages exchanged through the peering directory, one agreement
     /// composed and verified, the leaves minted from it, the rules rendered by
     /// the one writer, the edge deployed, the transport the agreement chose
     /// opened, acceptance in all four tiers. Replaces
     /// ops/scripts/peering-standup.sh step for step.
+    ///
+    /// `goatbuilder federate init|lint|compose|diff|verify|apply` runs one of
+    /// the six federation verbs in process, with the flags and exit codes of
+    /// `goat federate <verb>`.
+    #[command(args_conflicts_with_subcommands = true, subcommand_negates_reqs = true)]
     Federate {
+        /// One federation verb instead of the whole peering.
+        #[command(subcommand)]
+        verb: Option<goat_federation::verbs::FederateCmd>,
+        #[command(flatten)]
+        site: Box<federate::verbs::SiteArgs>,
         /// The peering name (the counterparty, as declared).
-        with: String,
+        #[arg(required = true)]
+        with: Option<String>,
         /// The environment the peering is declared on (checked against goatbuilder.yaml peerings:).
         #[arg(long)]
         env: Option<String>,
@@ -1007,6 +1033,24 @@ fn main() {
     // Verbs that need no repository: the eggs touch nothing (src/fun.rs); the
     // completion script and the reference are walked from the clap tree; the
     // candidate lists read the checkout leniently and never fail loudly.
+    // The six federation verbs read only the files they are named, and the
+    // site (federate/verbs.rs): no repository, no config.
+    if let Cmd::Federate { verb: Some(_), .. } = &cli.cmd {
+        // The verbs read no repository, fixture or table output, so a flag that
+        // would choose one is refused rather than silently ignored: under
+        // --mock, `apply --confirm` would still write the files it names.
+        if cli.mock.is_some() || cli.repo.is_some() || !matches!(cli.output, OutputFormat::Table) {
+            eprintln!(
+                "goatbuilder: --mock, -C/--repo and -o/--output do not apply to goatbuilder federate init|lint|compose|diff|verify|apply: \
+                 the verbs read only the files they are named and the party's context, and run for real; \
+                 drop the flag (the verbs take --json for a JSON report)"
+            );
+            std::process::exit(2);
+        }
+        if let Cmd::Federate { verb: Some(verb), site, .. } = cli.cmd {
+            std::process::exit(federate::verbs::exit_of(verb, &site));
+        }
+    }
     match &cli.cmd {
         Cmd::Make { words } => std::process::exit(fun::make(words, cli.yes)),
         Cmd::Argan => std::process::exit(fun::argan()),
@@ -1111,7 +1155,7 @@ fn main() {
             let path = path.clone().unwrap_or_else(|| if !own.is_file() && lite.is_file() { lite } else { own });
             config::validate_report(&path)
         }
-        Cmd::Doctor { env, site, all, credentials } => doctor::run(&repo, env.as_deref(), cli.frozen, *credentials).map(|mut r| {
+        Cmd::Doctor { env, site, all, credentials, browser_tests } => doctor::run(&repo, env.as_deref(), cli.frozen, *credentials, *browser_tests).map(|mut r| {
             if let Some(site) = site {
                 let extra = doctor::site_inputs(&repo, site);
                 r = r.with_checks(extra);
@@ -1262,7 +1306,7 @@ fn main() {
             Some(dir) => verbs::Fixture::open(dir).and_then(|f| inspect::adopt_mock(&f, env, cli.yes)),
             None => inspect::adopt(&repo, env, cli.yes),
         },
-        Cmd::Standup { env, site, profile, ack, from, to, skip_obs, obs_only, dry_run, parallel } => match &cli.mock {
+        Cmd::Standup { env, site, profile, ack, from, to, skip_obs, obs_only, dry_run, parallel, check } => match &cli.mock {
             // The site is derived when --site is left out (one box, ADR 1213), and a
             // rehearsal still honours --dry-run, --from and --to.
             Some(dir) => verbs::Fixture::open(dir).and_then(|mut f| {
@@ -1273,7 +1317,7 @@ fn main() {
                 if !cli.yes && !*dry_run && !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
                     Err(anyhow::anyhow!("standup is a mutation: pass --yes without a terminal (C10)"))
                 } else {
-                    standup::standup(&repo, &standup::Options { env, site: &site, profile: profile.as_deref(), from: *from, to: *to, skip_obs: *skip_obs, obs_only: *obs_only, dry_run: *dry_run, parallel: *parallel })
+                    standup::standup(&repo, &standup::Options { env, site: &site, profile: profile.as_deref(), from: *from, to: *to, skip_obs: *skip_obs, obs_only: *obs_only, dry_run: *dry_run, parallel: *parallel, check: *check })
                 }
             }),
         },
@@ -1282,18 +1326,24 @@ fn main() {
             None if !cli.yes && !*dry_run && !std::io::IsTerminal::is_terminal(&std::io::stdin()) => {
                 Err(anyhow::anyhow!("teardown is a mutation: pass --yes without a terminal (C10)"))
             }
-            None => standup::teardown(&repo, &standup::Options { env, site, profile: profile.as_deref(), from: *from, to: *to, skip_obs: false, obs_only: false, dry_run: *dry_run, parallel: false }, *services),
+            None => standup::teardown(&repo, &standup::Options { env, site, profile: profile.as_deref(), from: *from, to: *to, skip_obs: false, obs_only: false, dry_run: *dry_run, parallel: false, check: false }, *services),
         },
-        Cmd::JoinNode { env, site, node, class, address, pass_var, from, to, dry_run } => {
+        Cmd::JoinNode { env, site, node, class, address, pass_var, via, from, to, dry_run } => {
             if !cli.yes && !*dry_run && !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
                 Err(anyhow::anyhow!("join-node is a mutation: pass --yes without a terminal (C10)"))
             } else {
-                joinnode::join_node(&repo, &joinnode::Options { env, site, node, class, address: address.as_deref(), pass_var: pass_var.as_deref(), from: *from, to: *to, dry_run: *dry_run })
+                joinnode::join_node(&repo, &joinnode::Options { env, site, node, class, address: address.as_deref(), pass_var: pass_var.as_deref(), via, from: *from, to: *to, dry_run: *dry_run })
             }
         }
-        Cmd::Federate { with, env, as_party, edge_group, work, from, to, dry_run } => {
+        Cmd::Federate { verb: _, site, with, env, as_party, edge_group, work, from, to, dry_run } => {
+            let with = with.as_deref().unwrap_or_default();
             // A mock executes nothing, with or without --dry-run, so it mutates nothing.
-            if !cli.yes && !*dry_run && cli.mock.is_none() && !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+            if !site.is_empty() && goat_federation::verbs::VERB_NAMES.contains(&with) {
+                // `federate --context-dir D init`: clap read the verb as a partner.
+                Err(anyhow::anyhow!("put --context-dir, --cert, --ca-roots, --context and --profile-dir after the verb: goatbuilder federate {with} --context-dir <dir> ..."))
+            } else if !site.is_empty() {
+                Err(anyhow::anyhow!("--context-dir, --cert, --ca-roots, --context and --profile-dir apply to the six verbs (goatbuilder federate init|lint|compose|diff|verify|apply), not to a peering run"))
+            } else if !cli.yes && !*dry_run && cli.mock.is_none() && !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
                 Err(anyhow::anyhow!("federate is a mutation: pass --yes without a terminal (C10)"))
             } else {
                 federate::federate(&repo, &federate::Options { with, env: env.as_deref(), r#as: as_party.as_deref(), edge_group: edge_group.as_deref(), work: work.as_deref(), mock: cli.mock.as_deref(), from: *from, to: *to, dry_run: *dry_run, table: matches!(cli.output, OutputFormat::Table) })

@@ -2,14 +2,15 @@
 # authenticated-doors.yml — put an authenticated door in front of the surfaces
 # that had no identity gate at all.
 #
-# WHAT THIS CHANGES. demogame, brief and dataflows were `mesh-only` until
+# WHAT THIS CHANGES. brief, dataflows and the surfaces a goatnet lists in
+# `authenticated_doors_site_surfaces` were `mesh-only` until
 # a Traefik IP allowlist on the mesh range was the only gate, so
 # every caller that reached the mesh was served and no identity was ever
-# recorded. The permissions console meanwhile rendered all three as denied to
+# recorded. The permissions console meanwhile rendered them as denied to
 # every group but PLATFORM-ADMIN, which is what prompted this work.
 #
-# The doors refuse nobody. `*_oauth2_proxy_allowed_groups` is empty on all
-# three, so any identity the site Hydra will issue a token for passes. The
+# The doors refuse nobody. `*_oauth2_proxy_allowed_groups` is empty on each
+# of them, so any identity the site Hydra will issue a token for passes. The
 # point is ATTRIBUTION: Hydra records one consent grant per (person, client),
 # and microscope's hydra-consents adapter reads exactly that. A surface with no
 # door emits no grant and no session, so it is invisible to that machinery
@@ -24,6 +25,14 @@
 # then verifies /oauth2/start redirects at this site's issuer. A fence whose
 # client Hydra never heard of is healthy in every probe and broken in every
 # browser.
+#
+# THE ROUTES ARE A SECOND STEP. This playbook puts the doors up and stops: a
+# door that is running but not routed to changes nothing. Each surface's Traefik
+# route is rendered by the surface's own role, so the swing onto the doors is
+# authenticated-doors-routes.yml, which ships with those roles. Run it after
+# this one, with the same `-l`. A route pointed at a door that is not running
+# takes the surface down, which is why that playbook refuses to run before
+# this one has put the door up.
 #
 # RUN:
 #   cd ops/ansible
@@ -59,11 +68,15 @@
     authenticated_doors_dataflows_upstream_host: "dataflows"
     authenticated_doors_dataflows_upstream_port: 80
 
-    # demogame_url_host IS a group_var on every goatnet that runs it, so it
-    # is in scope; the port is the registry's container_port for the service.
-    authenticated_doors_demogame_hostname: "{{ demogame_url_host }}"
-    authenticated_doors_demogame_upstream_host: "demogame"
-    authenticated_doors_demogame_upstream_port: 8095
+    # A goatnet's own surfaces are not named in this play. Its group_vars list
+    # them in `authenticated_doors_site_surfaces`, one entry per door:
+    #   - name: <surface>            # also the prefix of <surface>_oauth2_proxy_*
+    #     hostname: <fqdn>
+    #     upstream_host: <container>
+    #     upstream_port: <the registry's container_port for the service>
+    #     api_routes: <regex>        # optional
+    #     skip_auth_routes: <regex>  # optional
+    # The list is NOT defaulted here: a play var would shadow the group_var.
 
     authenticated_doors_traefik_network: "mgmt"
 
@@ -73,8 +86,7 @@
         that:
           - target is not defined
         fail_msg: >-
-          REFUSING: pass `-l <the console host>` (zagros -> mgmt-zagros-01-thor,
-          zagros-prod -> mgmt-zagros-prod-01-orin). `-e target=` would widen this
+          REFUSING: pass `-l <the console host>`. `-e target=` would widen this
           to every host in the loaded inventory.
       run_once: true
       delegate_to: localhost
@@ -120,42 +132,46 @@
         oauth2_proxy_surface_request_log_file: "/var/log/oauth2-proxy/request.log"
       when: dataflows_oauth2_proxy_enabled | default(false) | bool
 
-    # ---- demogame: the only one of the three with machine callers and
-    # long-lived connections, and therefore the only one with real risk.
+    # ---- a goatnet's own surfaces (authenticated_doors_site_surfaces). One
+    # with machine callers and long-lived connections is the one with real
+    # risk, and its entry says how the door treats them:
     #
-    # Its handlers (ops/serve/demogame/main.go): GET/POST /api/scores,
-    # GET /api/scores/stream (SSE), GET /api/mp/ws (websocket), GET /health,
-    # GET /metrics.
-    #
-    #   api_routes ^/api/    — the leaderboard polls, the stream reconnects and
-    #     the websocket drops. Each of those retried against an invalid session
+    #   api_routes (for example ^/api/) — a poll, a reconnecting stream or a
+    #     dropped websocket retried against an invalid session
     #     would start an OIDC flow and mint a fresh 15-minute CSRF cookie, with
     #     nobody ever completing a flow to clear them, until the Cookie header
-    #     outgrows the proxy buffer and the player gets `400 Request Header Or
-    #     Cookie Too Large` with no way back but clearing cookies by hand
-    #. With api_routes they 401 like an XHR should and mint nothing.
+    #     outgrows the proxy buffer and the caller gets `400 Request Header Or
+    #     Cookie Too Large` with no way back but clearing cookies by hand.
+    #     With api_routes they 401 like an XHR should and mint nothing.
     #
-    #   skip_auth_routes ^/(health|metrics)$ — the Prometheus `blackbox-https`
-    #     job probes https://<fqdn>/health through this FRONT DOOR, and a
-    #     scrape reaches /metrics. Neither has a cookie jar or any way to log
-    #     in, so gating them turns a healthy service red and adds a guaranteed
-    #     login-initiation per probe interval.
-    - name: demogame | authenticated door
+    #   skip_auth_routes (for example ^/(health|metrics)$) — the Prometheus
+    #     `blackbox-https` job probes https://<fqdn>/health through this FRONT
+    #     DOOR, and a scrape reaches /metrics. Neither has a cookie jar or any
+    #     way to log in, so gating them turns a healthy service red and adds a
+    #     guaranteed login-initiation per probe interval.
+    #
+    # The secrets are read by name inside `vars:` and never carried in the loop
+    # item, so a run at -v prints no secret with the item.
+    - name: site surfaces | authenticated door
       ansible.builtin.include_role:
         name: oauth2-proxy-surface
       vars:
-        oauth2_proxy_surface_name: "demogame"
-        oauth2_proxy_surface_hostname: "{{ authenticated_doors_demogame_hostname }}"
-        oauth2_proxy_surface_upstream_host: "{{ authenticated_doors_demogame_upstream_host }}"
-        oauth2_proxy_surface_upstream_port: "{{ authenticated_doors_demogame_upstream_port }}"
-        oauth2_proxy_surface_allowed_groups: "{{ demogame_oauth2_proxy_allowed_groups }}"
-        oauth2_proxy_surface_client_secret: "{{ demogame_oauth2_proxy_client_secret }}"
-        oauth2_proxy_surface_cookie_secret: "{{ demogame_oauth2_proxy_cookie_secret }}"
+        oauth2_proxy_surface_name: "{{ door.name }}"
+        oauth2_proxy_surface_hostname: "{{ door.hostname }}"
+        oauth2_proxy_surface_upstream_host: "{{ door.upstream_host }}"
+        oauth2_proxy_surface_upstream_port: "{{ door.upstream_port }}"
+        oauth2_proxy_surface_allowed_groups: "{{ lookup('vars', door.name ~ '_oauth2_proxy_allowed_groups') }}"
+        oauth2_proxy_surface_client_secret: "{{ lookup('vars', door.name ~ '_oauth2_proxy_client_secret') }}"
+        oauth2_proxy_surface_cookie_secret: "{{ lookup('vars', door.name ~ '_oauth2_proxy_cookie_secret') }}"
         oauth2_proxy_surface_traefik_network: "{{ authenticated_doors_traefik_network }}"
         oauth2_proxy_surface_request_log_file: "/var/log/oauth2-proxy/request.log"
-        oauth2_proxy_surface_api_routes: "^/api/"
-        oauth2_proxy_surface_skip_auth_routes: "^/(health|metrics)$"
-      when: demogame_oauth2_proxy_enabled | default(false) | bool
+        oauth2_proxy_surface_api_routes: "{{ door.api_routes | default('') }}"
+        oauth2_proxy_surface_skip_auth_routes: "{{ door.skip_auth_routes | default('') }}"
+      loop: "{{ authenticated_doors_site_surfaces | default([]) }}"
+      loop_control:
+        loop_var: door
+        label: "{{ door.name }}"
+      when: lookup('vars', door.name ~ '_oauth2_proxy_enabled', default=false) | bool
 
     # ---- help: the help desk of ADR 1176. The APPLICATION runs on another peer
     # (for example a partner-run host in EXTERNAL-INFRA); only the door and the
@@ -187,39 +203,6 @@
       ansible.builtin.debug:
         msg: >-
           Doors up and their Hydra registrations verified. The routes still
-          address the containers directly until the second play below swings
-          them.
-      run_once: true
-
-# SECOND PLAY: point each surface's Traefik route at its new door.
-#
-# This is deliberately part of the same playbook. A door that is running but not
-# routed to changes nothing, and a route pointed at a door that is not running
-# takes the surface down — so the two belong in one run, in this order, with the
-# door's Hydra registration already verified above.
-#
-# Each surface's route is rendered by its OWN role, which is why the roles are
-# re-run here rather than the template being copied into this repo twice. The
-# roles are idempotent; the only thing that changes is the upstream, because
-# `<surface>_oauth2_proxy_enabled` is now true.
-- name: Swing the routes onto the doors
-  hosts: all
-  # `become: true` at play level: these roles talk to the Docker socket, and the
-  # goat account is not in the docker group. Without it the role fails at
-  # its first handler with "permission denied while trying to connect to the
-  # Docker API", after having already rendered the route file — which leaves the
-  # route pointing at a door whose container was never reconciled.
-  become: true
-  gather_facts: true
-
-
-  post_tasks:
-    - name: What is now attributable
-      ansible.builtin.debug:
-        msg: >-
-          Each visitor now produces a Hydra consent grant per surface, readable
-          in microscope (hydra-consents adapter) as "reached this, last at
-          <handled_at>". demogame' route is rendered by
-          ops/ansible/demogame-deploy.yml, which must be re-run separately —
-          its template is in ops/ansible/templates/, not in a role.
+          address the containers directly until authenticated-doors-routes.yml
+          swings them: run it next, with the same `-l`.
       run_once: true

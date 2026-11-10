@@ -1,0 +1,72 @@
+name: id-console-web-e2e
+
+# Playwright e2e for goat-id-console: the candidate intake form
+# (ops/goat-id-console/web/static/onboard.html, mocked backend) and the
+# /onboarding review page (a real console built from cmd/console against
+# throwaway SQLite files, no Kratos). Path-filtered to the console module so
+# a handler or store change re-runs the review-page spec too.
+#
+# Why it exists: a markup rename (#569) left the form's submit
+# handler reading a control that no longer existed; the handler threw and
+# "Submit for review" did nothing for ~26h on ZAGROS (#601). Every Go test was
+# green — nothing ran the page's own script against the page's own markup.
+# Mirrors portal-web-e2e.yml.
+
+on:
+  pull_request:
+    paths:
+      - 'ops/goat-id-console/**'
+      - '.github/workflows/id-console-web-e2e.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  e2e:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    services:
+      # ADR 1165 step A: the onboarding and org stores live in Postgres. The
+      # review-page specs run real consoles against it (E2E_PG_DSN); each
+      # console gets its own freshly created schemas.
+      postgres:
+        image: postgres:16.4@sha256:e62fbf9d3e2b49816a32c400ed2dba83e3b361e6833e624024309c35d334b412
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    defaults:
+      run:
+        working-directory: ops/goat-id-console/web/e2e
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: ops/goat-id-console/go.mod
+          cache-dependency-path: ops/goat-id-console/go.sum
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: ops/goat-id-console/web/e2e/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+      - name: Run e2e specs (mocked intake + real console)
+        env:
+          E2E_PG_DSN: postgres://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
+        run: npm test
+      - name: Upload playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: id-console-web-playwright-report
+          path: ops/goat-id-console/web/e2e/playwright-report/
+          retention-days: 7

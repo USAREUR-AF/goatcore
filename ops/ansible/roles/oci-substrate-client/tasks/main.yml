@@ -11,7 +11,7 @@
     quiet: true
     msg: |
       oci_substrate_t2_endpoint must be set in group_vars/<site>_hosts/vars.yml
-      (e.g. "192.168.1.253:3030" for vega). Empty value is allowed for
+      (e.g. "192.168.1.253:3030"). Empty value is allowed for
       single-Orin sites that skip T2 — the role no-ops those.
 
 - name: oci-substrate-client | skip if no T2 endpoint set (single-Orin sites today)

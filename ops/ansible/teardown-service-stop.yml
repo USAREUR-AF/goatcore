@@ -1,0 +1,78 @@
+---
+# teardown-service-stop.yml — stop named services of a SHARED compose project
+# (the mgmt-host project carries the dashboard and SPIRE beside the control
+# plane), keeping their containers and volumes, and prove it from the host
+# (ops/goatbuilder/teardown.yaml action service-stop; `goatbuilder teardown`,
+# ops/scripts/goat-teardown.sh).
+#
+#   ansible-playbook teardown-service-stop.yml -e target=<group> \
+#     -e teardown_component=<name> -e teardown_project=/opt/mgmt-host \
+#     -e 'teardown_services=["dashboard"]'
+#
+# Containers are found by their compose labels: the project's working directory
+# and the service name. `docker stop` leaves each container and its volumes in
+# place, and a stopped container with restart policy unless-stopped stays down
+# across a reboot; the next standup's deploy play starts it again. The rest of
+# the project (postgres, management, signal) is not touched. The proof is the
+# host's own answer: no container of the named services is running afterwards,
+# or the play fails. One row per run goes to
+# /var/lib/goat/<component>/teardown.jsonl; deploy-history.jsonl is never touched.
+- name: teardown — stop named services of a shared compose project
+  hosts: "{{ target | mandatory }}"
+  become: true
+  gather_facts: false
+  tasks:
+    - name: teardown | find the services' running containers
+      ansible.builtin.command:
+        argv:
+          - docker
+          - ps
+          - -q
+          - --filter
+          - "label=com.docker.compose.project.working_dir={{ teardown_project | mandatory }}"
+          - --filter
+          - "label=com.docker.compose.service={{ item }}"
+      loop: "{{ (teardown_services | mandatory | from_json) if (teardown_services is string) else teardown_services }}"
+      register: _ts_running
+      changed_when: false
+
+    - name: teardown | stop them (containers and volumes kept)
+      ansible.builtin.command:
+        argv: "{{ ['docker', 'stop'] + (item.stdout_lines | default([])) }}"
+      loop: "{{ _ts_running.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+      when: (item.stdout_lines | default([])) | length > 0
+      changed_when: true
+
+    - name: teardown | read what still runs
+      ansible.builtin.command:
+        argv:
+          - docker
+          - ps
+          - -q
+          - --filter
+          - "label=com.docker.compose.project.working_dir={{ teardown_project }}"
+          - --filter
+          - "label=com.docker.compose.service={{ item }}"
+      loop: "{{ (teardown_services | mandatory | from_json) if (teardown_services is string) else teardown_services }}"
+      register: _ts_after
+      changed_when: false
+
+    - name: teardown | none of the services may still run
+      ansible.builtin.assert:
+        that:
+          - (item.stdout | default('') | trim | length) == 0
+        fail_msg: "{{ item.item }} in {{ teardown_project }} still runs after stop: {{ item.stdout }}"
+        quiet: true
+      loop: "{{ _ts_after.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: teardown | record it (deploy-history.jsonl is not touched)
+      ansible.builtin.shell:
+        cmd: >-
+          mkdir -p /var/lib/goat/{{ teardown_component | mandatory }} &&
+          printf '%s\n' '{"ts":"'"$(date -u +%Y-%m-%dT%H:%M:%SZ)"'","component":"{{ teardown_component }}","action":"teardown","containers":"kept","volumes":"kept","project":"{{ teardown_project }}","services":{{ teardown_services | to_json }}}'
+          >> /var/lib/goat/{{ teardown_component }}/teardown.jsonl
+      changed_when: true

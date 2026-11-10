@@ -16,8 +16,11 @@
 
 # --- container image (see ops/onboard-runner + the onboard-runner-image.yml
 #     workflow). Digest-pinned per ADR 0859 (recorded in deploy-history.yml).
-#     CI multi-arch index (linux/amd64 + linux/arm64), built on main. ---
-onboard_runner_image: "ghcr.io/{{ ghcr_org }}/onboard-runner@sha256:12cb6a42fed11397e7e31fb376be9b1fe7454d27895afe50d1634ac1bfe23929"
+#     CI multi-arch index (linux/amd64 + linux/arm64), built on main.
+#     onboard_runner_image has NO role default: the pin of record is the
+#     `onboard-runner` row of ops/pins/fleet-pins.yaml, rendered into
+#     group_vars/<member>/pins.yml; group_vars/all.yml carries the pin for
+#     hosts outside the pin table. ---
 onboard_runner_container_name: "onboard-runner"
 onboard_runner_dir: "/opt/onboard-runner"           # compose dir (host)
 
@@ -195,6 +198,10 @@ onboard_runner_defer_credential: false
 # goatnet, for a while. `onboard_runner_traefik_ip` remains as a per-goatnet
 # override for a host where :443 is not published on the host.
 onboard_runner_mgmt_fqdn_addr: "{{ onboard_runner_traefik_ip | default('host-gateway', true) }}"
+
+# Record id cited in the healthcheck's "mgmt API unreachable" message; empty
+# cites none.
+onboard_runner_mgmt_probe_record: ""
 
 # Zenoh router endpoint written into the runner's materialized goat profile, so
 # `goat admin onboard`'s operator-action audit emit reaches the fabric instead of

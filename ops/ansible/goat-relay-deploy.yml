@@ -16,7 +16,7 @@
 #   OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES aws-vault exec <profile> --no-session -- \
 #     ansible-playbook -i inventory/hosts.ini goat-relay-deploy.yml
 #
-# Optional --limit goat-relay-rla to deploy a single region first.
+# Optional --limit goat-relay-<region> to deploy a single region first.
 #
 # Deploy shape: docker (existing role at roles/goat-relay/), authorized for
 # early cutover by docs/design/relay-blue-green-cutover.md Phase 1. Production
@@ -61,7 +61,9 @@
   tags: ["archive_load"]
   vars:
     goat_relay_image_archive: "{{ lookup('env', 'GOAT_RELAY_IMAGE_ARCHIVE') | default('/tmp/goat-relay-phase1.tar.gz', true) }}"
-    ssm_bucket: "{{ lookup('env', 'SSM_BUCKET') | default('example-legacy-ansible-ssm-20260405131504905400000001', true) }}"
+    # No bucket is named here: without SSM_BUCKET the relays' own inventory
+    # value is used (ansible_aws_ssm_bucket_name, written by the generators).
+    ssm_bucket: "{{ lookup('env', 'SSM_BUCKET') or hostvars[groups['goat_relay_hosts'] | first]['ansible_aws_ssm_bucket_name'] }}"
   tasks:
     - name: verify image archive exists locally
       ansible.builtin.stat:
@@ -319,7 +321,7 @@
           --dns-cloudflare-credentials /etc/letsencrypt/cloudflare.ini \
           --dns-cloudflare-propagation-seconds 30 \
           -d {{ relay_dns_name }} \
-          --email {{ relay_certbot_email | default('person-33@example.org') }} \
+          --email {{ relay_certbot_email | mandatory('set relay_certbot_email: the contact address certbot registers with the certificate authority') }} \
           --agree-tos --non-interactive
       when:
         - goat_relay_le_dns01 | default(false) | bool

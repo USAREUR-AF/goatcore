@@ -308,7 +308,7 @@ mod tests {
         let artifact = serde_json::to_vec(&ClaimArtifact {
             format: CLAIM_FORMAT.to_string(),
             name: name.into(),
-            ip: "100.127.0.64".into(),
+            ip: "100.127.0.67".into(),
             anchor: "0123456789abcdef0123456789abcdef".into(),
             issued_at_unix: issued,
             ttl_seconds: 3600,

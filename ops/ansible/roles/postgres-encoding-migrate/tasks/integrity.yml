@@ -1,0 +1,113 @@
+---
+# Two checks that decide, before anything stops, whether the restore in
+# phase 5 can succeed and whether the re-wired subscriptions start from
+# identical data. Run on every primary of the play; a standby is a copy of
+# its primary.
+#
+#   keys     For every replicated (Spock repset) table of the databases in
+#            pem_key_dbs: row count, a hash of the sorted primary keys, and
+#            the keys themselves when there are at most 500. Compared across
+#            members in _pem_keydiff: a table whose key sets differ holds rows
+#            on one node that never reached another (rows written before the
+#            subscriptions existed, which synchronize_data false does not
+#            copy).
+#   orphans  For every foreign key in every database this node will restore:
+#            child rows whose parent row does not exist on this node. Spock
+#            applies replicated rows as the replication role, which does not
+#            enforce foreign keys, so a child row can arrive while its parent
+#            (an unreplicated or divergent row) exists only on its origin.
+#            The restore re-creates each foreign key and validates it, so any
+#            orphan fails phase 5.
+#
+# Input: pem_key_dbs (list of database names). Output: _pem_keys (per host),
+# _pem_keydiff (run_once: [{table, detail}]), _pem_orphans (per host).
+
+- name: "integrity | replicated tables: key sets"
+  ansible.builtin.shell:
+    executable: /bin/bash
+    cmd: |
+      set -euo pipefail
+      P=(docker exec -u postgres {{ _pem_c | quote }} psql -X -q -v ON_ERROR_STOP=1 -U postgres -tA)
+      for d in {{ pem_key_dbs | map('quote') | join(' ') }}; do
+        for t in $("${P[@]}" -d "$d" -c "SELECT DISTINCT quote_ident(nspname) || '.' || quote_ident(relname) FROM spock.tables WHERE set_name IS NOT NULL ORDER BY 1"); do
+          pk=$("${P[@]}" -d "$d" -c "SELECT coalesce(string_agg(format('t.%I', a.attname), ', ' ORDER BY k.ord), '')
+                FROM pg_index i CROSS JOIN LATERAL unnest(i.indkey) WITH ORDINALITY k(attnum, ord)
+                JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = k.attnum
+                WHERE i.indrelid = '$t'::regclass AND i.indisprimary")
+          if [ -n "$pk" ]; then expr="ROW($pk)::text"; else expr="t::text"; fi
+          "${P[@]}" -d "$d" -c "SELECT json_build_object('db', current_database(), 'table', '$t', 'pk', '$pk',
+                'rows', count(*), 'hash', md5(coalesce(string_agg(k, E'\n' ORDER BY k), '')),
+                'keys', CASE WHEN count(*) <= 500 THEN coalesce(json_agg(k ORDER BY k), '[]'::json) END)
+              FROM (SELECT $expr AS k FROM $t t) s"
+        done
+      done
+  register: _pem_keys_raw
+  changed_when: false
+  when: not (_pem_standby | bool)
+
+- name: "integrity | key sets on this node"
+  ansible.builtin.set_fact:
+    _pem_keys: "{{ (_pem_keys_raw.stdout_lines | default([])) | map('from_json') | list }}"
+
+- name: "integrity | replicated tables whose key sets differ between members"
+  ansible.builtin.set_fact:
+    _pem_keydiff: >-
+      {%- set by = {} -%}
+      {%- for h in ansible_play_hosts -%}
+        {%- for r in hostvars[h]._pem_keys | default([]) -%}
+          {%- set k = r.db ~ '.' ~ r.table -%}
+          {%- set _ = by.update({k: (by[k] | default([])) + [{'host': h, 'rows': r.rows, 'hash': r.hash, 'k': r['keys']}]}) -%}
+        {%- endfor -%}
+      {%- endfor -%}
+      {%- set out = [] -%}
+      {%- for k, v in by.items() -%}
+        {%- if v | map(attribute='hash') | unique | list | length > 1 -%}
+          {%- if v | selectattr('k', 'none') | list | length == 0 -%}
+            {%- set allk = v | map(attribute='k') | flatten | unique | list -%}
+            {%- set parts = [] -%}
+            {%- for e in v -%}
+              {%- set miss = allk | difference(e.k) | list -%}
+              {%- if miss | length > 0 -%}
+                {%- set _ = parts.append(e.host ~ ' lacks ' ~ (miss | length) ~ ' (' ~ (miss[:5] | join(' ')) ~ ('…' if miss | length > 5 else '') ~ ')') -%}
+              {%- endif -%}
+            {%- endfor -%}
+            {%- set _ = out.append({'table': k, 'detail': parts | join('; ')}) -%}
+          {%- else -%}
+            {%- set parts = [] -%}
+            {%- for e in v -%}{%- set _ = parts.append(e.host ~ ' ' ~ e.rows ~ ' rows') -%}{%- endfor -%}
+            {%- set _ = out.append({'table': k, 'detail': (parts | join(', ')) ~ ' (over 500 rows: keys not listed)'}) -%}
+          {%- endif -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ out }}
+  run_once: true
+
+- name: "integrity | foreign keys with child rows whose parent is absent"
+  ansible.builtin.shell:
+    executable: /bin/bash
+    cmd: |
+      set -euo pipefail
+      P=(docker exec -u postgres {{ _pem_c | quote }} psql -X -q -v ON_ERROR_STOP=1 -U postgres -tA)
+      for db in $("${P[@]}" -d postgres -c "SELECT datname FROM pg_database WHERE datallowconn AND datname <> 'template1' ORDER BY 1"); do
+        "${P[@]}" -d "$db" -c "SELECT json_build_object('db', x.db, 'constraint', x.conname, 'child', x.child, 'parent', x.parent, 'rows', x.n)
+          FROM (SELECT current_database() AS db, con.conname, con.conrelid::regclass::text AS child, con.confrelid::regclass::text AS parent,
+                       (xpath('/row/n/text()', query_to_xml(format('SELECT count(*) AS n FROM %s c WHERE %s AND NOT EXISTS (SELECT 1 FROM %s p WHERE %s)',
+                          con.conrelid::regclass, cols.nn, con.confrelid::regclass, cols.j), false, true, '')))[1]::text::bigint AS n
+                FROM pg_constraint con
+                CROSS JOIN LATERAL (
+                  SELECT string_agg(format('c.%I IS NOT NULL', ca.attname), ' AND ') AS nn,
+                         string_agg(format('p.%I = c.%I', pa.attname, ca.attname), ' AND ') AS j
+                  FROM unnest(con.conkey, con.confkey) AS u(ck, fk)
+                  JOIN pg_attribute ca ON ca.attrelid = con.conrelid AND ca.attnum = u.ck
+                  JOIN pg_attribute pa ON pa.attrelid = con.confrelid AND pa.attnum = u.fk) cols
+                WHERE con.contype = 'f' AND con.conparentid = 0
+                  AND con.connamespace NOT IN (SELECT oid FROM pg_namespace WHERE nspname IN ('spock', 'pg_catalog', 'information_schema'))) x
+          WHERE x.n > 0"
+      done
+  register: _pem_orphans_raw
+  changed_when: false
+  when: not (_pem_standby | bool)
+
+- name: "integrity | orphans on this node"
+  ansible.builtin.set_fact:
+    _pem_orphans: "{{ (_pem_orphans_raw.stdout_lines | default([])) | map('from_json') | list }}"

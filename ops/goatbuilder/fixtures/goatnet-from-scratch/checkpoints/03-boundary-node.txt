@@ -9,38 +9,34 @@ PHASE  TYPE     STEP
 2      ansible  Make the link interface and export our trust bundle
 3      tool     Build our half of the agreement from the running system
 4      tool     Check our half is valid
-5      manual   Swap halves with the other party, and confirm their key
+5      manual   Swap halves through the directory, and read their key back
 6      tool     Combine both halves into one agreement
 7      tool     Check the agreement from our side
 8      tool     Create the certificates for this peering
 9      tool     Write the access rules and settings
 10     manual   Review what was written, and let the router onto our core
 11     ansible  Open the connection the agreement chooses
-12     ansible  Deploy the router that connects the two networks
+12     ansible  Deploy the edge router, and the republisher on our core
 13     ansible  Trust the other party's identity service
 14     gate     Test that allowed traffic passes and the rest is refused
 
 What a real run would leave to you, at phase 5:
 
-  1. Send your half and your CA certificate to the other party:
+  1. Phase 5 exchanges your half and CA certificate with theirs through the
+     peering directory (saltlick):
 
-     /tmp/goat-peering-rehearsal/ours.canonical.json
+     It uploads yours, fetches theirs, checks both, and prints both keys and CA
+     fingerprints and a compatibility report. It grants no access. If their
+     entry is not there yet, run phase 5 again after they run theirs.
 
-  2. Get their half, CA certificate and trust bundle, and save them here:
+  2. Read your key and CA fingerprint aloud on one call:
 
-     /tmp/goat-peering-rehearsal/theirs.canonical.json
+     Each side reads the other's back. A key that arrives inside their package
+     proves nothing.
 
-  3. Confirm their key another way:
-
-     Use a call or another channel you trust. A key that arrives inside their
-     package proves nothing.
-
-  4. Save both keys here, one per line, as sovereign_id=key:
+  3. Save both keys here, one per line, as sovereign_id=key:
 
      /tmp/goat-peering-rehearsal/keys.txt
-
-Optional: list this peering in the directory at ops/saltlick. That only helps
-others recognise you. It grants no access.
 
 To see more: add -o json to see every phase's command, or read
 docs/operations/sovereign-federation-runbook.md.

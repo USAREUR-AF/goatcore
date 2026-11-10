@@ -1,0 +1,20 @@
+[
+  {"id": "p1", "name": "switch-a", "connected": true, "last_seen": "2026-11-05T00:00:00Z",
+   "login_expiration_enabled": true, "inactivity_expiration_enabled": false,
+   "groups": [{"id": "g1", "name": "All"}, {"id": "g2", "name": "SITE_ONE-NETWORK"}]},
+  {"id": "p2", "name": "c2-console-a", "connected": true, "last_seen": "2026-11-05T00:00:00Z",
+   "login_expiration_enabled": true, "inactivity_expiration_enabled": true,
+   "groups": [{"id": "g3", "name": "SITE_ONE-CONTROL"}]},
+  {"id": "p3", "name": "edge-server-a", "connected": false, "last_seen": "2026-11-01T00:00:00Z",
+   "login_expiration_enabled": false, "inactivity_expiration_enabled": true,
+   "groups": [{"id": "g4", "name": "EDGE-SERVER"}]},
+  {"id": "p4", "name": "switch-b", "connected": true, "last_seen": "2026-11-05T00:00:00Z",
+   "login_expiration_enabled": false, "inactivity_expiration_enabled": false,
+   "groups": [{"id": "g5", "name": "ZAGROS-NETWORK"}]},
+  {"id": "p5", "name": "jump-box-a", "connected": true, "last_seen": "2026-11-05T00:00:00Z",
+   "login_expiration_enabled": true, "inactivity_expiration_enabled": true,
+   "groups": [{"id": "g6", "name": "SITE_ONE-NETWORK-JUMP"}]},
+  {"id": "p6", "name": "engineer-laptop-a", "connected": true, "last_seen": "2026-11-05T00:00:00Z",
+   "login_expiration_enabled": true, "inactivity_expiration_enabled": false,
+   "groups": [{"id": "g7", "name": "SITE_ONE-NET-ENGINEER"}]}
+]

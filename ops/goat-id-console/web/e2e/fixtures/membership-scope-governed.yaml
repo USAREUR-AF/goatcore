@@ -1,0 +1,7 @@
+# A warrant membership scope declaration (docs/design/mesh-change-control.md §4)
+# for the governed console this suite starts: `converge: enforce` makes the
+# example goatnet zagros-dev warrant-governed, so the console offers no direct
+# release. The suite owns this copy; it does not read a goatnet's declaration.
+version: 1
+scope: zagros-dev
+converge: enforce

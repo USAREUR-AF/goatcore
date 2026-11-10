@@ -16,7 +16,6 @@ mod classify;
 mod cmd;
 mod errors;
 mod exit_codes;
-mod fed;
 mod fun;
 mod health_wire;
 mod i18n;
@@ -199,7 +198,9 @@ enum Cmd {
     /// binary and runs its `netbird_acl_tests` block through the same
     /// evaluator the PR gate and netvis `/assertions` use. No network, no
     /// context, no credentials — a check that needs a working profile is a
-    /// check people skip.
+    /// check people skip. A scope, or a whole declaration, with no
+    /// assertions fails: nothing was checked. `--none-expected` accepts that
+    /// outcome when it is intended.
     Acl {
         #[command(subcommand)]
         op: cmd::acl::AclCmd,
@@ -235,8 +236,8 @@ enum Cmd {
         op: cmd::audit::AuditCmd,
     },
     /// Run a fabric demo end-to-end: open the browser-side traffic generator
-    /// and tail the resulting Zenoh traffic in this terminal. Currently the
-    /// only target is `demogame` (8 auto-pilot bots in one page).
+    /// and tail the resulting Zenoh traffic in this terminal. With no name it runs
+    /// the demo service the goatnet publishes (`demo_service`).
     Demo(cmd::demo::DemoArgs),
     /// Publish a payload to a topic key.
     Pub(cmd::pubsub::PubArgs),
@@ -445,7 +446,12 @@ async fn main() {
         cli.cmd,
         Cmd::Completion { .. } | Cmd::Complete { .. } | Cmd::Docs { .. }
     ) {
-        i18n::warn_if_machine_translated();
+        // The feedback address is the active context's goatnet fact; a context
+        // that cannot be resolved yet simply has none.
+        let goatnet_email = profile::Profile::resolve(cli.profile_dir.as_deref(), cli.context.as_deref())
+            .ok()
+            .and_then(|p| p.goatnet_endpoints().i18n_feedback_email);
+        i18n::warn_if_machine_translated(goatnet_email.as_deref());
     }
 
     let exit = run(cli).await;
@@ -471,7 +477,7 @@ async fn run(cli: Cli) -> i32 {
         Cmd::Vendor { op } => cmd::vendor::run(&ctx, op).await,
         Cmd::Topic { op } => cmd::topic::run(&ctx, op).await,
         Cmd::Schema { op } => cmd::schema::run(&ctx, op).await,
-        Cmd::Acl { op } => cmd::acl::run(op).await,
+        Cmd::Acl { op } => cmd::acl::run(&ctx, op).await,
         Cmd::Warrant { op } => cmd::warrant::run(&ctx, op).await,
         Cmd::Access { op } => cmd::access::run(&ctx, op).await,
         Cmd::Machine { op } => cmd::machine::run(&ctx, op).await,
@@ -495,7 +501,10 @@ async fn run(cli: Cli) -> i32 {
         Cmd::Complete { op } => cmd::complete::run(&ctx, op).await,
         Cmd::Explain(args) => cmd::explain::run(&ctx, args).await,
         Cmd::Mock(args) => cmd::mock::run(&ctx, args).await,
-        Cmd::Admin { op } => cmd::admin::run(&ctx, op).await,
+        Cmd::Admin { op } => {
+            cmd::context::ensure_goatnet_facts(&ctx.profile).await;
+            cmd::admin::run(&ctx, op).await
+        }
         Cmd::Status(args) => cmd::status::run(&ctx, args).await,
         Cmd::Heal(args) => cmd::heal::run(&ctx, args).await,
         Cmd::Services(args) => cmd::services::run(&ctx, args).await,
@@ -570,7 +579,7 @@ fn report_anyhow(err: anyhow::Error) -> i32 {
 ///
 /// We skip global flags that take values (`--profile-dir <p>`,
 /// `--context <c>`, `--color <m>`) so that
-/// `goat --color always org11x foo` still resolves `org11x` as the
+/// `goat --color always acme foo` still resolves `acme` as the
 /// subcommand. Boolean global flags (`--narrate`, `--verbose`/`-v`)
 /// don't take values.
 ///

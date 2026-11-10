@@ -50,8 +50,8 @@ func twoPeerSet() *peerset.PeerSet {
 	return &peerset.PeerSet{
 		SchemaVersion: peerset.SchemaVersion,
 		Peers: []peerset.Peer{
-			{Name: "alpha", WGCP0Address: "198.18.0.10", CurrentPubkey: "PK_ALPHA", Site: "vega"},
-			{Name: "bravo", WGCP0Address: "198.18.0.11", CurrentPubkey: "PK_BRAVO", Site: "vega"},
+			{Name: "alpha", WGCP0Address: "198.18.0.10", CurrentPubkey: "PK_ALPHA", Site: "lab"},
+			{Name: "bravo", WGCP0Address: "198.18.0.11", CurrentPubkey: "PK_BRAVO", Site: "lab"},
 		},
 		Relays: []peerset.Relay{
 			{Name: "relay-rla", Endpoint: "relay-rla.example:51821", MeshAddress: "198.18.0.2"},

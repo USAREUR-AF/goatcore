@@ -27,7 +27,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/usareur-af/federation-directory/internal/fedpkg"
+	"github.com/usareur-af/goatcore/ops/federation/reference/internal/fedpkg"
 )
 
 const usage = `fdverify — federation package v1

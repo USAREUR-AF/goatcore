@@ -11,16 +11,15 @@
 # `-e target=<site>_hosts`. The zenoh router container + network + CA names
 # derive from zenoh_stack.
 
-# Image — pinned per ADR 0859 (easy rollback). A bump requires an append to
-# deploy-history.yml (CI: deploy-history-check.yml). Built by
-# .github/workflows/ntp-health-image.yml.
+# Image — ntp_health_pub_image has NO role default. The pin of record is the
+# `ntp-health-pub` row of ops/pins/fleet-pins.yaml, rendered into
+# group_vars/<member>/pins.yml; group_vars/all.yml carries the pin for hosts
+# outside the pin table. Built by .github/workflows/ntp-health-image.yml.
 #
-# Multi-arch index digest verified against ghcr (sha-3a4bb4e == the
-# current :latest, built by PR #980). To bump: a new main build retags :latest;
-# resolve the index digest with
+# Multi-arch index digest. To bump: a new main build retags :latest; resolve
+# the index digest with
 #   docker buildx imagetools inspect ghcr.io/{{ ghcr_org }}/goat-ntp-health-pub:sha-<short> --format '{{.Manifest.Digest}}'
 # and append a matching deploy-history row.
-ntp_health_pub_image: "ghcr.io/{{ ghcr_org }}/goat-ntp-health-pub@sha256:327760d397571be90a6ade4181d5c3024374ce065ce28e2882b0f460aa1789db"
 
 # Host identifier — the `<host_id>` segment of ops/time/attest/<host_id>. MUST
 # match the ntp-health-agent's host_id (the agent defaults to the OS hostname),

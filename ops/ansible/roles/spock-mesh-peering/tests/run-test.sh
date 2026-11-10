@@ -30,6 +30,30 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# The image under test. The compose file carries no reference of its own:
+# POSTGRES_SPOCK_IMAGE names it, else it is the `postgres-spock` row of the
+# fleet pin table, with `ghcr_org` resolved from group_vars/all.yml.
+if [[ -z "${POSTGRES_SPOCK_IMAGE:-}" ]]; then
+  pins="../../../../pins/fleet-pins.yaml"
+  if [[ ! -f "$pins" ]]; then
+    echo "[run-test] FAIL: POSTGRES_SPOCK_IMAGE is unset and $pins does not exist." >&2
+    echo "[run-test]   export POSTGRES_SPOCK_IMAGE=<registry>/postgres-spock@sha256:<digest>" >&2
+    exit 1
+  fi
+  POSTGRES_SPOCK_IMAGE="$(
+    ansible localhost -i localhost, -c local -m ansible.builtin.debug \
+      -e @../../../group_vars/all.yml -e "@$pins" \
+      -a 'msg={{ components["postgres-spock"].fleet }}' 2>/dev/null \
+      | sed -n 's/.*"msg": "\([^"]*\)".*/\1/p' || true
+  )"
+  if [[ -z "$POSTGRES_SPOCK_IMAGE" ]]; then
+    echo "[run-test] FAIL: could not read the postgres-spock pin from $pins." >&2
+    exit 1
+  fi
+fi
+export POSTGRES_SPOCK_IMAGE
+echo "[run-test] image under test: $POSTGRES_SPOCK_IMAGE"
+
 echo "[run-test] phase 1 — bring up 2-node postgres-spock fixture"
 dc up -d --wait
 

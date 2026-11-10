@@ -24,7 +24,7 @@ groups:
           description: >-
             machine_provenance_guard_last_run_timestamp_seconds is absent from
             Prometheus. Either the timer is not running, or it is writing its
-            textfile into a directory this host's node_exporter does not read
+            textfile into a directory this host's node_exporter does not read.
             Check `systemctl list-timers machine-provenance-guard.timer`
             first, then `ps -o args= -C node_exporter | grep textfile.directory`.
             A guard nobody runs is indistinguishable from no guard.

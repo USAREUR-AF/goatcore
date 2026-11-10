@@ -3,7 +3,7 @@
 #
 # Defaults for the goat-get role — a mesh-internal download surface that
 # re-serves the goat-cli release binaries at `get.<site>.<zone>` so on-mesh
-# vendors can install `goat` without reaching the private GitHub
+# vendors can install `goat` without reaching the GitHub
 # release page (which they cannot download from). Mirrors the `brief`
 # role shape: nginx:alpine + Traefik file-provider + mesh-only gating.
 # Per-goatnet: the hostname is site-templated below, so each
@@ -54,10 +54,9 @@ goat_get_hostname: "get.{{ site_id | mandatory }}.{{ site_dns_zone | mandatory }
 #   - No command exits 0 having failed — 56 defects from a full-surface audit,
 #     including the missing-cert error that named the build machine's own paths
 #     instead of "re-run `goat profile init`" (#1153).
-# Verify 13 assets in BOTH repos before deploying — goat_get_release_repo is
-# self-referential ({{ source_repo }}) and resolves to whichever repo the
-# deploy runs from, and the tag builds twice with non-matching bytes,
-# so parity is repaired by COPYING from the primary, never by rebuilding.
+# Verify 13 assets on the release repository before deploying
+# (ops/ci/check-release-asset-parity.sh); goat_get_release_repo resolves
+# through {{ source_repo }} to the primary repo.
 # goat-cli-v0.5.8: `goat warrant apply --membership`, the ADR 1189
 #   membership converger (#1450). Bumping this default moves no goatnet: each
 #   serves the new release only when goat-get-deploy.yml runs there.
@@ -78,11 +77,17 @@ goat_get_hostname: "get.{{ site_id | mandatory }}.{{ site_dns_zone | mandatory }
 #   reissue accepts a legacy -rosenpass-reissue key name (#2036); platform-admin
 #   revoke reports SSH removal evidence, which the offboarding driver needs
 #   (#1976); native onboarding derives the affiliation kind (#1870).
-goat_get_release_tag: "goat-cli-v0.5.14"
-# Self-referential — resolves to whichever repo the deploy runs from
-# (group_vars/all.yml `source_repo`). Both repos carry these releases
-# byte-identically; ops/ci/check-release-asset-parity.sh keeps it that way.
+# goat-cli-v0.5.15: no built-in goatnet table; the CLI reads each
+#   goatnet's facts from get.<site>/goatnet.toml (`goat context refresh`).
+goat_get_release_tag: "goat-cli-v0.5.15"
+# Resolves through group_vars/all.yml `source_repo` to the release repository;
+# ops/ci/check-release-asset-parity.sh confirms the release carries its assets.
 goat_get_release_repo: "{{ source_repo }}"
+# Whether the release repository is private. false (the default): the release
+# is read anonymously when no token is set, and a token GitHub refuses (401/403)
+# falls back to an anonymous read with a warning. true: the token is required
+# and only the token is tried. Each payload family below has its own flag.
+goat_get_release_private: false
 goat_get_assets:
   - goat-linux-amd64
   - goat-linux-amd64.sha256
@@ -100,10 +105,13 @@ goat_get_assets:
   - goat-windows-amd64.exe.sha256
   - SHA256SUMS
 
-# GitHub token used to read the PRIVATE repo's release assets at download
-# time. Needs `contents:read` on the repo (classic `repo` scope, or a
-# fine-grained PAT). Sourced from the operator's env; passed transiently
-# to the host download task (no_log) and never persisted on the host.
+# GitHub token for reading release assets at download time. Optional for a
+# public release repository: empty means every GitHub request goes without an
+# Authorization header. Needed for a private one (`contents:read` on the repo:
+# classic `repo` scope, or a fine-grained PAT), declared with the family's
+# *_release_private flag. When set and accepted it is used for public releases
+# too (higher API rate limit). Sourced from the operator's env; passed
+# transiently to the host download task (no_log) and never persisted on the host.
 goat_get_github_token: "{{ lookup('env', 'GOAT_CLI_RELEASE_TOKEN') | default(lookup('env', 'GH_TOKEN'), true) | default(lookup('env', 'GHCR_READ_TOKEN'), true) }}"
 
 # ---------------------------------------------------------------------------
@@ -124,6 +132,7 @@ goat_get_github_token: "{{ lookup('env', 'GOAT_CLI_RELEASE_TOKEN') | default(loo
 goat_get_sdk_enabled: false
 goat_get_sdk_release_tag: "grant-crypto-sdk-v0.1.0"
 goat_get_sdk_release_repo: "{{ goat_get_release_repo }}"
+goat_get_sdk_release_private: "{{ goat_get_release_private }}"
 
 # The version string embedded in the source-tarball asset name, derived from the
 # SAME tag that pins the served assets (mirrors version.json.j2's derivation) —
@@ -203,8 +212,10 @@ goat_get_traefik_dynamic_dir: "/etc/traefik/dynamic"
 goat_get_traefik_dynamic_filename: "goat-get.yml"
 
 # The pre-rename filename, removed from the host on deploy. Leaving it
-# behind would give Traefik two routers on the same Host() rule.
-goat_get_traefik_dynamic_filename_legacy: "nova-goat-get.yml"
+# behind would give Traefik two routers on the same Host() rule. Empty = no
+# such file on this goatnet's hosts; a goatnet that carried one names it in
+# group_vars.
+goat_get_traefik_dynamic_filename_legacy: ""
 goat_get_traefik_cert_resolver: "le"
 goat_get_traefik_router_name: "goat-get"
 
@@ -225,13 +236,15 @@ goat_get_cloudflare_a_record_ips: []
 # ---------------------------------------------------------------------------
 # jetson-wireguard-kmod assets — OPT-IN parallel payload at get.<site>/kmod/.
 # Same host/cert/DNS/mesh-gate as the goat-cli surface; the public sibling
-# repo's release (jetson-wireguard-kmod, ADR 1118) pinned by tag,
+# repo's release (goat_get_kmod_release_repo, ADR 1118) pinned by tag,
 # fetched host-side into a www/kmod/ subdir nginx already serves. Guarded by
 # goat_get_kmod_enabled, default OFF. Mirrors the SDK family exactly.
 # On-mesh Jetsons install kernelspace WireGuard without any GitHub reach:
 #   curl -LO https://get.<site>.<zone>/kmod/jetson-wireguard-kmod-$(uname -r).tar.gz
 goat_get_kmod_enabled: false
 goat_get_kmod_release_repo: "usareur-af/jetson-wireguard-kmod"
+# true requires goat_get_github_token; false also tries an anonymous read.
+goat_get_kmod_release_private: false
 goat_get_kmod_release_tag: "v1.0.0"
 goat_get_kmod_www_subdir: "kmod"
 goat_get_kmod_assets:
@@ -239,7 +252,7 @@ goat_get_kmod_assets:
   - jetson-wireguard-kmod-6.8.12-tegra.tar.gz
   - SHA256SUMS
 
-# octo-pod appliance (octo-pod) — OPT-IN parallel payload at
+# octo-pod appliance (goat_get_octopod_release_repo) — OPT-IN parallel payload at
 # get.<site>/octo-pod/. Same shape as the kmod family: sibling repo pinned by
 # tag, fetched host-side into a www subdir nginx already serves, default OFF.
 #
@@ -258,6 +271,8 @@ goat_get_kmod_assets:
 # templated off the tag the way the SDK family does — one variable to bump.
 goat_get_octopod_enabled: false
 goat_get_octopod_release_repo: "usareur-af/octo-pod"
+# true requires goat_get_github_token; false also tries an anonymous read.
+goat_get_octopod_release_private: false
 goat_get_octopod_release_tag: "octo-pod-v0.1.0"
 goat_get_octopod_version: "{{ goat_get_octopod_release_tag | regex_replace('^octo-pod-v', '') }}"
 goat_get_octopod_www_subdir: "octo-pod"
@@ -294,8 +309,8 @@ goat_get_mirror_prefix: "cli/{{ goat_get_release_tag }}"
 # without the fix that teaches it to recognise the onboard-runner, so `goat
 # admin onboard --native` refuses the runner and onboarding stops on any goatnet
 # that serves it. It has never bitten because every live goatnet still runs
-# 0.4.44, which predates the fence — the exposure is one line in this file
-#. Superseded by v0.5.1.
+# 0.4.44, which predates the fence — the exposure is one line in this file.
+# Superseded by v0.5.1.
 goat_get_refused_release_tags:
   - "goat-cli-v0.5.0"
 
@@ -310,26 +325,30 @@ goat_get_refused_release_reason:
 # (docs/design/goatbuilder-distribution.md). The build/release binary for a
 # goat environment, served to platform admins from inside the goatnet: the
 # SAME signed release assets the public GitHub Release carries, never a
-# rebuild. Same family shape as kmod/octo-pod: token-authz probe on the tag,
+# rebuild. Same family shape as kmod/octo-pod: release-access probe on the tag,
 # set-equality assert on assets, host-side fetch, fail-closed. The release is
 # cut by .github/workflows/goatbuilder-release.yml on a `goatbuilder/v<semver>`
 # tag; bump the tag here and re-run goat-get-deploy.yml to serve it. The docs
 # book for the same tag is served beside it by the goat-docs role
 # (goat_docs_goatbuilder_release_tag — keep the two tags coupled).
 #
-# The release repo is the source repository by name, not `source_repo`: the
-# release is cut and signed there (ADR 1195 direction — one release source).
+# The release repo is the source repository: the release is cut and signed
+# there (ADR 1195 direction — one release source). A deployment that sets
+# GOAT_SOURCE_REPO names the release repository itself in group_vars.
 #
 # The tag is EMPTY until the first release is cut: the release-asset parity
 # guard (ops/ci/check-release-asset-parity.sh) refuses a pin that names a
-# release existing in neither repo, which is what a tag ahead of its release
+# release that does not exist on the release repository, which is what a tag ahead of its release
 # would be. Bump path, once `goatbuilder/v<semver>` exists: set the tag here
 # (the first is goatbuilder/v0.1.0), flip the flag per goatnet in group_vars
 # (a test goatnet first), re-run goat-get-deploy.yml, record the served tag in
 # deploy-history.yml. The role refuses `enabled` with an empty tag.
 goat_get_goatbuilder_enabled: false
-goat_get_goatbuilder_release_repo: "USAREUR-AF/goatcore"
-goat_get_goatbuilder_release_tag: "goatbuilder/v0.4.1"
+goat_get_goatbuilder_release_repo: "{{ source_repo }}"
+goat_get_goatbuilder_release_private: "{{ goat_get_release_private }}"
+# goatbuilder/v0.4.2 is the first release of this repository that carries
+# goatbuilder-docs.tar.gz and goatbuilder-darwin-amd64.
+goat_get_goatbuilder_release_tag: "goatbuilder/v0.4.2"
 goat_get_goatbuilder_version: "{{ goat_get_goatbuilder_release_tag | regex_replace('^goatbuilder/v', '') }}"
 goat_get_goatbuilder_www_subdir: "goatbuilder"
 # Set-equality: a release missing SHA256SUMS.cosign-bundle is not served — the
@@ -347,3 +366,49 @@ goat_get_goatbuilder_assets:
   - goatbuilder-docs.tar.gz.sha256
   - SHA256SUMS
   - SHA256SUMS.cosign-bundle
+
+# --- goatnet.toml: this goatnet's own facts, for the goat CLI ----------------
+# goat-cli holds no goatnet. `goat context refresh` reads get.<site>/goatnet.toml
+# and writes its keys into the context's profile.toml, where every command that
+# needs a per-goatnet fact reads it (crates/goat-cli/src/profile.rs,
+# GoatnetEndpoints). Each value derives from the group_var that is already this
+# goatnet's source of truth, by the same derivations the onboard-runner role uses
+# (roles/onboard-runner/defaults/main.yml, F-485), so a correctly configured
+# goatnet needs no new declaration. An empty value is left out of the file.
+goat_get_goatnet_facts:
+  goatnet: "{{ site_id }}"
+  # Same fallback as roles/goat-zenoh-portal/defaults/main.yml, which a goatnet
+  # without portal_router_endpoint in its group_vars (zagros-prod) runs on.
+  router_endpoint: "{{ portal_router_endpoint | default('tls/zenoh.' ~ site_id ~ '.' ~ site_dns_zone ~ ':7447', true) }}"
+  netbird_mgmt_url: "https://{{ public_mgmt_fqdn }}"
+  netbird_token_env: "{{ (site_id | upper | replace('-', '_')) ~ '_NB_API_TOKEN' }}"
+  netbird_site_prefix: "{{ site_id | upper }}"
+  netbird_rosenpass: "{{ rosenpass_enabled | default('') | string | lower }}"
+  ory_auth_url: "https://auth.{{ site_id }}.{{ site_dns_zone }}"
+  ory_ssh_host: "{{ mesh_ip_a | default('', true) }}"
+  ory_ssh_user: "{{ ansible_user | default('', true) }}"
+  mgmt_ssh_user: "{{ ansible_user | default('', true) }}"
+  # Set per goatnet in its group_vars; empty (the default) leaves the key out.
+  demo_service: "{{ goat_get_demo_service | default('', true) }}"
+  i18n_feedback_email: "{{ goat_get_i18n_feedback_email | default('', true) }}"
+  # The goatnet's warrant membership declaration, so `goat` outside a checkout
+  # answers from it instead of the live NetBird account (see below).
+  warrant_membership_converge: "{{ goat_get_warrant_membership_converge }}"
+
+# `converge:` of ops/warrant/membership/<site_id>/_scope.yaml, read on the
+# controller from the tree the play runs from. `none` when that tree carries
+# declarations but none for this goatnet; empty (the key is left out) when the
+# tree carries no declarations at all, so the CLI keeps asking the goatnet's
+# NetBird account (crates/goat-cli/src/cmd/warrant_membership.rs, governance).
+goat_get_warrant_membership_root: "{{ playbook_dir }}/../warrant/membership"
+goat_get_warrant_membership_converge: >-
+  {%- set f = goat_get_warrant_membership_root ~ '/' ~ site_id ~ '/_scope.yaml' -%}
+  {%- if f is file -%}{{ (lookup('file', f) | from_yaml).converge | default('unreadable', true) }}
+  {%- elif goat_get_warrant_membership_root is directory -%}none
+  {%- endif -%}
+
+# Serve this goatnet's ACL declaration (netbird_acl_taxonomy.yml and
+# netbird_acl_matrix.yml from goat_get_acl_declaration_src_dir) at
+# get.<site>/acl/, for `goat context refresh` to copy into a context.
+goat_get_acl_declaration: false
+goat_get_acl_declaration_src_dir: "{{ playbook_dir }}"

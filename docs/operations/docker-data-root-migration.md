@@ -1,7 +1,7 @@
 # Docker data-root migration — eMMC → NVMe ceremony
 
 > **Triggered by F-093.** Production mgmt-host Orins ship with a 1 TB
-> NVMe at `/opt/docker-data` per `os-baseline-and-luks.md`
+> NVMe at `/opt/docker-data` per [`os-baseline-and-luks.md`](../design/os-baseline-and-luks.md)
 > §"Three-tier storage", but the initial bootstrap never wired
 > Docker's `data-root` flag — Docker stayed on the eMMC default.
 > This runbook is the operator-fired migration to
@@ -362,4 +362,4 @@ sudo rm -rf /var/lib/containerd.bak-2026-05-09
 - [`postgres-streaming-replication` role](../../ops/ansible/roles/postgres-streaming-replication/) — `max_slot_wal_keep_size` controls the `pg_wal/` retention that was the dominant disk consumer
 - `compute-spec-minimums.md` — per-site storage spec; eMMC is intentionally small
 - [`site-bootstrap.yml`](../../ops/ansible/site-bootstrap.yml) — pre-flight + canonical compose-up shape; future versions add the data-root pre-flight gate
-- `os-baseline-and-luks.md` §"Three-tier storage" — why the NVMe exists at `/opt/docker-data`
+- [`os-baseline-and-luks.md`](../design/os-baseline-and-luks.md) §"Three-tier storage" — why the NVMe exists at `/opt/docker-data`

@@ -31,10 +31,11 @@ trusts their authority and nobody else's.
 
 ## Context
 
-Partner nations are expected to come online in their **own** sovereign environments. The
-interim pattern makes a nation a host site and a set of identities *inside* another sovereign's
-managed environment. The end state is each nation owning its environment and federating, and the
-process must exist and be proven before the transition.
+Each nation runs its **own** sovereign environment. A nation's nodes may sit at locations in
+another nation's territory and remain in their own nation's environment; they never become part of
+the host nation's environment, and the host nation's nodes never join theirs. Nations share by
+federating their environments, and that process must exist and be proven before two sovereigns
+exchange data.
 
 This decision was reached by a three-team, 74-agent investigation across ten lines of pursuit,
 then a second round settling twelve contested claims at source. Findings below are cited to the
@@ -179,6 +180,8 @@ Network boundary, firewall placement and the full RMF control mapping:
 `cross-sovereign-federation.md` §5.
 
 ### 8. Refuse lateral transit; permit hierarchical transit; seal anything crossing more than one link.
+
+> **Amended by [ADR 1224](1224-transit-is-one-hop-unless-the-owner-marks-a-general-release.md) (Proposed).** Released data goes one hop. It moves further only by a deliberate re-release, or when its owner marks it as a general release, which travels to every federated environment. Sealing is not required for transit. The text below is kept for its link-state sizing.
 
 Bilateral-only is 1,984 two-party accreditation documents at N=32 and contradicts how the
 alliance actually shares. Two-level regions give a link-state domain of V=N rather than

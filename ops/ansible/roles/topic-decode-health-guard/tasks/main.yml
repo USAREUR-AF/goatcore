@@ -109,7 +109,7 @@
           will report "not checked" rather than an empty list. Everything that can
           fail this guard still runs — grading goes through the portal. Set the
           router URL only if this host can actually reach the router's published
-          REST port; on zagros-prod it cannot.
+          REST port; where the router publishes none, it cannot.
       when: topic_decode_health_guard_router_url | length == 0
 
     - name: topic-decode-health-guard | warn when this host will publish no metric
@@ -239,7 +239,7 @@
           No alert rules installed ({{ 'no rules dir at ' ~ topic_decode_health_guard_rules_dir
           if not (tdh_rules_dir.stat.exists | default(false))
           else 'no textfile dir, so the series would never arrive' }}).
-          Expected on zagros-prod, whose obs stack runs on a different host. The audit
+          Expected where the obs stack runs on a different host. The audit
           still runs and still writes its report, but a topic publishing unreadable
           bytes on this goatnet will page nobody — the systemd unit is the only
           alarm, so somebody has to be watching failed units or reading the journal.

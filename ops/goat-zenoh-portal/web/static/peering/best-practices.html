@@ -205,10 +205,10 @@
         <h3>Pattern A &mdash; Single channel, all events: <code>__LEX_ORG__/system/v1</code></h3>
         <div class="meta">One topic; every message goes to the same key.</div>
         <pre><code># Publisher:
-session.put("org164x/router/cot/v2", cot_xml_bytes)
+session.put("acme/router/cot/v2", cot_xml_bytes)
 
 # Subscriber:
-session.declare_subscriber("org164x/router/cot/v2", handler)</code></pre>
+session.declare_subscriber("acme/router/cot/v2", handler)</code></pre>
         <ul>
           <li><strong>Best for:</strong> continuous event streams where consumers want "everything that happened on this channel."</li>
           <li><strong>Storage behavior:</strong> rocksdb-style storages keep only the <strong>latest</strong> value per key &mdash; this pattern preserves only the most recent event in history. If you need replay of every event, use Pattern C.</li>
@@ -220,13 +220,13 @@ session.declare_subscriber("org164x/router/cot/v2", handler)</code></pre>
         <h3>Pattern B &mdash; Per-entity state: <code>__LEX_ORG__/system/v1/&lt;entity-id&gt;</code></h3>
         <div class="meta">One topic per logical entity, stable key per entity.</div>
         <pre><code># Publisher (entity X's latest state):
-session.put(f"org164x/router/cot/v2/{entity_uid}", cot_xml_bytes)
+session.put(f"acme/router/cot/v2/{entity_uid}", cot_xml_bytes)
 
 # Subscriber (all entities, live):
-session.declare_subscriber("org164x/router/cot/v2/*", handler)
+session.declare_subscriber("acme/router/cot/v2/*", handler)
 
 # OR get latest known state for a specific entity (queryable history):
-session.get(f"org164x/router/cot/v2/{specific_entity_uid}", queue)</code></pre>
+session.get(f"acme/router/cot/v2/{specific_entity_uid}", queue)</code></pre>
         <ul>
           <li><strong>Best for:</strong> "latest known state per object" semantics &mdash; vehicle tracks, sensor positions, anything where consumers want "what's entity X doing right now?"</li>
           <li><strong>Storage behavior:</strong> rocksdb keeps the latest message per entity. Storage size scales with <strong>number of entities</strong>, not number of events.</li>
@@ -238,13 +238,13 @@ session.get(f"org164x/router/cot/v2/{specific_entity_uid}", queue)</code></pre>
         <h3>Pattern C &mdash; Per-event archive: <code>__LEX_ORG__/system/v1/&lt;entity-id&gt;/&lt;event-id&gt;</code> or <code>__LEX_ORG__/system/v1/&lt;uuid&gt;</code></h3>
         <div class="meta">Every message gets its own unique key.</div>
         <pre><code># Publisher (fresh UUID per message):
-session.put(f"org164x/router/cot/v2/{uuid.uuid4()}", cot_xml_bytes)
+session.put(f"acme/router/cot/v2/{uuid.uuid4()}", cot_xml_bytes)
 
 # Subscriber (live tap):
-session.declare_subscriber("org164x/router/cot/v2/**", handler)
+session.declare_subscriber("acme/router/cot/v2/**", handler)
 
 # OR query history (returns every event ever stored):
-session.get("org164x/router/cot/v2/**", queue)</code></pre>
+session.get("acme/router/cot/v2/**", queue)</code></pre>
         <ul>
           <li><strong>Best for:</strong> archival / audit / replay workloads where every individual event must be queryable in retrospect.</li>
           <li><strong>Storage behavior:</strong> every message is a new key; rocksdb stores all of them up to the configured time-to-live (7 days on the trial fabric). Storage size scales with <strong>event volume</strong>, which can be large.</li>
@@ -260,7 +260,7 @@ session.get("org164x/router/cot/v2/**", queue)</code></pre>
 
       <h3>Picking between B and C</h3>
       <p>If a downstream consumer asks "what's the current state of entity X?", use Pattern B. If they ask "give me every event entity X has ever emitted," use Pattern C. If both, use Pattern C and have consumers do the latest-state dedup in their client, OR run two publishers (one B, one C) on different topic prefixes.</p>
-      <p><strong>CoT specifically:</strong> the Cursor on Target XML format already carries <code>uid="..."</code> as an attribute <em>inside the payload</em> &mdash; that's the canonical entity identity. If you're publishing CoT and your consumer wants "latest known position per track," Pattern B with the CoT uid in the topic path is correct: <code>org164x/router/cot/v2/&lt;cot-uid&gt;</code>. Don't mint a fresh UUID per message for the topic path &mdash; that's Pattern C, which has different consumer ergonomics and accumulates entries proportional to message rate, not entity count.</p>
+      <p><strong>CoT specifically:</strong> the Cursor on Target XML format already carries <code>uid="..."</code> as an attribute <em>inside the payload</em> &mdash; that's the canonical entity identity. If you're publishing CoT and your consumer wants "latest known position per track," Pattern B with the CoT uid in the topic path is correct: <code>acme/router/cot/v2/&lt;cot-uid&gt;</code>. Don't mint a fresh UUID per message for the topic path &mdash; that's Pattern C, which has different consumer ergonomics and accumulates entries proportional to message rate, not entity count.</p>
       <p><strong>Registering the format:</strong> register these topics with <code>format: xml</code> so the payload is declared as <code>application/xml</code> rather than opaque <code>raw</code> bytes. If you want the portal to hold a schema for the CoT event structure, register <code>format: xml:event</code> and upload your CoT <code>.xsd</code> via the per-row schema button (the <code>.xsd</code> must declare a top-level <code>&lt;xs:element name="event"&gt;</code>). The bytes on the wire are identical either way &mdash; the format string is registry metadata, not a wire transform. With the <code>.xsd</code> uploaded, the schema viewer renders the CoT data dictionary, per-language code tabs (Rust/Go/Python/TypeScript), and inspector sample-decode &mdash; the same surfaces protobuf topics get.</p>
     </section>
 
@@ -271,26 +271,26 @@ session.get("org164x/router/cot/v2/**", queue)</code></pre>
       <div class="footgun-callout">
         <h3>Footgun 1: Literal subscriber against a wildcarded publish</h3>
         <pre><code># Publisher puts to a unique-per-event key:
-session.put(f"org164x/router/cot/v2/{uuid.uuid4()}", payload)
+session.put(f"acme/router/cot/v2/{uuid.uuid4()}", payload)
 
 # Subscriber waits on the literal parent:
-session.declare_subscriber("org164x/router/cot/v2", handler)   # WRONG &mdash; never matches</code></pre>
-        <p>The publisher's key is <code>org164x/router/cot/v2/&lt;some-uuid&gt;</code>. The subscriber's literal key is <code>org164x/router/cot/v2</code>. In Zenoh's key-expression matching, those are different keys. The subscriber sees nothing.</p>
+session.declare_subscriber("acme/router/cot/v2", handler)   # WRONG &mdash; never matches</code></pre>
+        <p>The publisher's key is <code>acme/router/cot/v2/&lt;some-uuid&gt;</code>. The subscriber's literal key is <code>acme/router/cot/v2</code>. In Zenoh's key-expression matching, those are different keys. The subscriber sees nothing.</p>
         <p><strong>Fix:</strong> add <code>/**</code> (any depth) or <code>/*</code> (exactly one more segment):</p>
-        <pre><code>session.declare_subscriber("org164x/router/cot/v2/**", handler)   # RIGHT</code></pre>
+        <pre><code>session.declare_subscriber("acme/router/cot/v2/**", handler)   # RIGHT</code></pre>
       </div>
 
       <div class="footgun-callout">
         <h3>Footgun 2: Subscriber not alive at publish time</h3>
         <p>Live pub/sub has <strong>no backlog</strong>. If your publisher fires before any subscriber declares interest, the message is forwarded to whatever subscribers exist (could be zero) and then it's gone. Storage helps late joiners <em>query history</em>, but it doesn't replay live samples retroactively.</p>
         <pre><code># This shape works only if you keep the subscriber process alive:
-sub = session.declare_subscriber("org164x/**", handler)
+sub = session.declare_subscriber("acme/**", handler)
 # ... your publisher in another window puts messages now ...
 # sub is alive &mdash; receives them.
 
 # This shape fails:
-session.put("org164x/router/cot/v2/abc", payload)   # router has no subscribers, drops
-sub = session.declare_subscriber("org164x/**", h)   # too late</code></pre>
+session.put("acme/router/cot/v2/abc", payload)   # router has no subscribers, drops
+sub = session.declare_subscriber("acme/**", h)   # too late</code></pre>
         <p>If pub + sub are in the same script, declare the subscriber <strong>before</strong> any put, and give the declaration time to round-trip to the router. If pub + sub are in separate processes, <strong>start the subscriber first</strong> and verify it's actually connected before you fire the publisher.</p>
       </div>
 
@@ -321,12 +321,12 @@ if not got_any:
       <h3><code>session.get</code> is a query, not a subscription.</h3>
       <p>It returns once with the current state. To receive future updates, use <code>declare_subscriber</code>. A common shape combines both: query for current state at startup, then subscribe for live updates.</p>
       <pre><code># At startup: get current state of every track:
-replies = session.get("org164x/router/cot/v2/*", zenoh.Queue())
+replies = session.get("acme/router/cot/v2/*", zenoh.Queue())
 for r in replies:
     handle_track(r.ok.key_expr, r.ok.payload)
 
 # Then subscribe for live updates going forward:
-session.declare_subscriber("org164x/router/cot/v2/*", handle_track_update)</code></pre>
+session.declare_subscriber("acme/router/cot/v2/*", handle_track_update)</code></pre>
     </section>
 
     <section id="large-payloads">
@@ -422,7 +422,7 @@ while True:
     for track in get_tracks():
         cot_xml = render_cot_xml(track)         # has uid=track.uid inside
         # Use the track's stable uid as the key &mdash; NOT a fresh UUID:
-        session.put(f"org164x/router/cot/v2/{track.uid}", cot_xml.encode())
+        session.put(f"acme/router/cot/v2/{track.uid}", cot_xml.encode())
     time.sleep(1)</code></pre>
       <pre><code># subscriber.py &mdash; live tap on every track update
 import zenoh
@@ -441,7 +441,7 @@ def on_sample(sample):
     print(sample.key_expr, "->", bytes(sample.payload).decode("utf-8"))
 
 # Wildcard match: any entity uid under v2:
-sub = session.declare_subscriber("org164x/router/cot/v2/*", on_sample)
+sub = session.declare_subscriber("acme/router/cot/v2/*", on_sample)
 print("subscriber declared, waiting...")
 
 import time
@@ -457,10 +457,10 @@ while True:
           <tr><th>Expression</th><th>Matches</th></tr>
         </thead>
         <tbody>
-          <tr><td><code>org164x/router/cot/v2</code></td><td>The literal key <code>org164x/router/cot/v2</code>. Nothing else.</td></tr>
-          <tr><td><code>org164x/router/cot/v2/*</code></td><td>One more segment, exactly. E.g. <code>org164x/router/cot/v2/abc</code> (matches), <code>org164x/router/cot/v2/abc/def</code> (does NOT match).</td></tr>
-          <tr><td><code>org164x/router/cot/v2/**</code></td><td>Any depth, including zero segments. E.g. <code>org164x/router/cot/v2</code> (matches), <code>org164x/router/cot/v2/abc/def/ghi</code> (matches).</td></tr>
-          <tr><td><code>org164x/**</code></td><td>Anything under your __LEX_ORG__ prefix. The "fire hose" form.</td></tr>
+          <tr><td><code>acme/router/cot/v2</code></td><td>The literal key <code>acme/router/cot/v2</code>. Nothing else.</td></tr>
+          <tr><td><code>acme/router/cot/v2/*</code></td><td>One more segment, exactly. E.g. <code>acme/router/cot/v2/abc</code> (matches), <code>acme/router/cot/v2/abc/def</code> (does NOT match).</td></tr>
+          <tr><td><code>acme/router/cot/v2/**</code></td><td>Any depth, including zero segments. E.g. <code>acme/router/cot/v2</code> (matches), <code>acme/router/cot/v2/abc/def/ghi</code> (matches).</td></tr>
+          <tr><td><code>acme/**</code></td><td>Anything under your __LEX_ORG__ prefix. The "fire hose" form.</td></tr>
           <tr><td><code>**</code></td><td>Everything on the entire fabric. Subscribers don't usually want this; it's what the audit log uses.</td></tr>
         </tbody>
       </table>
@@ -473,7 +473,7 @@ while True:
       <ol>
         <li><strong>Did the router accept my publish?</strong> The portal's <a href="/inspector.html">Inspector</a> shows recent publishes. If your topic appears there, the router got your message.</li>
         <li><strong>Is my subscriber actually peered?</strong> Run a <code>session.get("@/*/router", q)</code> and confirm at least one reply. If zero replies, your TLS handshake probably failed silently &mdash; check cert paths + endpoint hostname.</li>
-        <li><strong>Does my subscriber's key_expr actually match my publisher's key?</strong> Print both side by side. If publisher puts to <code>org164x/router/cot/v2/&lt;uuid&gt;</code> and subscriber declares on <code>org164x/router/cot/v2</code> (no wildcard) &mdash; that's footgun 1.</li>
+        <li><strong>Does my subscriber's key_expr actually match my publisher's key?</strong> Print both side by side. If publisher puts to <code>acme/router/cot/v2/&lt;uuid&gt;</code> and subscriber declares on <code>acme/router/cot/v2</code> (no wildcard) &mdash; that's footgun 1.</li>
         <li><strong>Was my subscriber running BEFORE my publisher fired?</strong> If you can't answer this for sure, run them in two separate shells and start the subscriber first.</li>
         <li><strong>Can I <code>session.get</code> what I just put?</strong> If yes, the publish + storage path works. If subscribers still don't receive, the issue is purely subscriber-side (footguns 1&ndash;3).</li>
       </ol>

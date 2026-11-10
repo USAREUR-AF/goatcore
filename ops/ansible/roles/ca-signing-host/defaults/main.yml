@@ -13,8 +13,9 @@ ca_signing_host_operators: []
 
 # Dev CA ID string — must match the public-key file at
 # ops/enrollment/public-keys/<id>.pem and the encrypted blob's recipient set.
-# Override per-environment when the dev CA is rotated.
-ca_signing_host_ca_id: "dev-goat-ca-2026-04-20"
+# REQUIRED, no default: the deployment names its own CA in the group_vars of
+# the host group it applies this role to. The role refuses to run without it.
+ca_signing_host_ca_id: ""
 
 # Repo to clone for the allowlist git checkout. Operators commit + push the
 # allowlist update from this clone after each issuance.
@@ -27,8 +28,10 @@ ca_signing_host_ca_id: "dev-goat-ca-2026-04-20"
 # credentials. Making that follow whichever checkout an operator happened to run
 # from turns an operator's working directory into an input to certificate
 # issuance. Which repo the CA trusts is a security decision, not a naming
-# convention, so it stays an explicit, reviewable constant here. See F-362.
-ca_signing_host_repo_url: "https://github.com/usareur-af/goatcore.git"
+# convention, so it is an explicit, reviewable constant. REQUIRED, no default:
+# the deployment sets it in the group_vars of the host group it applies this
+# role to, and the role refuses to run without it.
+ca_signing_host_repo_url: ""
 ca_signing_host_repo_branch: "main"
 
 # Path on the Ansible controller of the operator-curated relays file.

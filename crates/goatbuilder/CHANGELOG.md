@@ -4,6 +4,98 @@ Each release is the tag `goatbuilder/v<semver>` on `main`, built and signed by
 `.github/workflows/goatbuilder-release.yml`. Design of record:
 `docs/design/goatbuilder.md`; conformance: `docs/design/goatbuilder-conformance.md`.
 
+## Unreleased
+
+## 0.4.3 — 2026-11-08
+
+### Changed: `update` takes its release signer from the checkout
+
+`goatbuilder update` verifies a new binary against the repository named by
+`repo.release_source` in `ops/goatbuilder/goatbuilder.yaml`, else `repo.source`;
+no repository name is compiled in. The config accepts `repo.release_source`.
+
+### Added: `join-node` turns on signal federation for a joiner's core node
+
+After the joiner's Spock wiring, phase 13 runs the signal-federation steps
+(docs/design/signal-federation-pair.md): a gate,
+`ops/scripts/signal-federation-check.py <site> --peer <founder> --resolve
+--require-env`, that refuses a half-configured pair from the repository;
+`signal-federation-transport.yml` on the joiner, then the founder;
+`traefik-acme.yml` on both; the joiner's relay tunnel; the founder's relay pin
+(`relay-ingress-add-site.yml`); and `signal-federation-verify.yml`, which
+proves an offer forwarded and delivered. A joiner declaring
+`signal_federation_absent_reason` gets the gate and a SKIP line.
+
+### Added: `join-node --via door`
+
+`join-node` gave every play `-i inventory/mgmt-hosts.ini -i
+inventory/mgmt-hosts-mesh.ini`, so it ran only from a machine on that
+goatnet's mesh. `--via <mesh|door>` (default `mesh`) picks the transport;
+`door` gives every play `-i inventory/mgmt-hosts.ini -i
+inventory/doors-groupvars.ini` and never the mesh inventory too
+(docs/design/env-doors.md). The plan's first line is the door step,
+`ops/scripts/door-open.sh <env>`, and a run opens the door before phase 1,
+refusing if it does not open.
+
+### Changed: `join-node` phases 2, 6 and 13 at a joiner obs site
+
+- Phase 2 first probes `ssh -o BatchMode=yes <user>@<address> sudo -n true`
+  and skips `seed-ssh-key.sh` with a note when it passes (a box installed
+  unattended with the operator's key and NOPASSWD sudo). The dry-run prints
+  the probe.
+- Phase 6 no longer masks every failure of the first `wireguard-kmod.yml`
+  pass. It passes only when the run succeeds, or when its sole failure is the
+  role's `verify wt0 is kernelspace wireguard` check reporting that `wt0` does
+  not exist (the node is not enrolled yet). Any other failure stops the run,
+  with the play's output kept in a temporary file the message names.
+- Phase 13 for class `obs` at a joiner site (the core group's
+  `goatnet_founder: false`) skips `utility-host-bootstrap.yml` (Forgejo, the
+  pub/sub state-of-record primary): the state of record stays with the
+  founder. The plan line says so, as a `SKIP` phase.
+
+### Fixed: a joiner's bootstrap wires its peers, and Ory replicates both ways
+
+`join-node` (phase 13) and `standup` ran a joiner's bootstrap as
+`site-bootstrap.yml -e site_id=<site>`. An extra variable sets site_id on every
+inventory host, so the Spock roles' walk over the other sites found none and
+wired zero peers. A joiner's passes now run `site-bootstrap-for.yml -e
+bootstrap_site=<site>`, which sets site_id as a play variable, or the site's
+own `<site>-bootstrap.yml` when it keeps one.
+
+- Ory (Phase 7D) is staged across both sides: pass 3 builds the joiner's
+  ory_narrow node and repset only (`-e ory_spock_wire_subscriptions=false`);
+  the founder-side mirror now runs Phase 7D as well as 7B
+  (`spock-mesh-wire.yml`, `ory_spock_reconcile_history: false`); then a new
+  step re-runs `spock-mesh-wire.yml` on the joiner, which subscribes to the
+  founder and reconciles revocation history in both directions.
+
+### Fixed: `join-node` runs every node against its own class's group
+
+An obs, breakglass or network-jump node was baselined, kmod-converged and
+gated against the site's CORE group: `-e target=<site>_hosts -l <obs node>`
+matches no host, so the play passed having done nothing. Phases 3-12 now use
+the class's group, and an obs node's config preflight runs as
+`standup-config-preflight.py <site>_hosts --obs <site>_obs_hosts`.
+
+- Phase 12 refuses any `TBD_` left in the node's group_vars. It only tripped
+  on a line carrying the node's name, which a `mesh_ip_a: "TBD_…"` never does.
+- Phase 7 refuses the unnamed default CA (`<mode>-goat-ca-<date>`). It refused
+  any `ca_id` starting `dev-`, which is the key-mode prefix every goatnet's own
+  CA id carries.
+- Phase 8 names the dashboard of the goatnet a joiner enrols into (its founder).
+- Phase 1 says the Jetson USB-bridge address applies to a Jetson only.
+- Phase 9 passes the goatnet's enrolment apex (`site_enrollment_dns`) and the
+  setup key over stdin; it checked a placeholder URL with no key, and its
+  command carried an unclosed quote.
+- Phase 13 reads secrets inside the play (`lookup('env', …)`) instead of
+  `"$(printenv …)"` on the command line, which the calling shell expanded to the
+  unresolved `op://` reference before `with-secrets` ran, and put values on argv.
+
+### Fixed: `wireguard-kmod` on a kernel with WireGuard in-tree
+
+A stock distribution kernel ships WireGuard; the role now ends for such a host
+instead of refusing for want of prebuilt artifacts.
+
 ## 0.4.1 — 2026-11-02
 
 goatbuilder names no deployment of its own: what a person reads uses

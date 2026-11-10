@@ -41,6 +41,9 @@ pub struct Options<'a> {
     pub obs_only: bool,
     pub dry_run: bool,
     pub parallel: bool,
+    /// Run the acceptance phase (13) on a goatlite, where it is off by default.
+    /// Every other goatnet runs it always.
+    pub check: bool,
 }
 
 /// One phase, as the script's `step <n> <kind> <label> <command>`.
@@ -67,7 +70,7 @@ enum Event {
     /// Its banners are `phase` rows, so the table prints them as section titles.
     PullStart { label: String, cmd: String, log: String },
     PullJoin { at: u32 },
-    Skip { label: String, lines: Vec<String> },
+    Skip { n: u32, kind: &'static str, label: String, lines: Vec<String> },
 }
 
 /// What the script reads from the site's group_vars before any phase, and the
@@ -207,16 +210,32 @@ fn inventory_hosts(repo: &Path, groups: &[&str], ssh_target: bool) -> Vec<String
         .unwrap_or_default()
 }
 
+/// Why the obs leg cannot run in this tree, when its utility play is absent.
+pub(crate) fn obs_play_missing(repo: &Path) -> Option<String> {
+    if repo.join("ops/ansible/utility-host-bootstrap.yml").is_file() {
+        return None;
+    }
+    Some("has_obs_host: true, but ops/ansible/utility-host-bootstrap.yml is not in this tree, so the obs leg cannot run.".to_string())
+}
+
 fn read_site(repo: &Path, o: &Options) -> Result<Site> {
     let site = o.site.to_string();
     let site_us = site.replace('-', "_");
     let group = format!("{site_us}_hosts");
     let obs_group = format!("{site_us}_obs_hosts");
     let upper = site_us.to_uppercase();
-    let aws = crate::settings::aws_profile(repo);
     let gv = repo.join("ops/ansible/group_vars").join(&group).join("vars.yml");
     let lite_cfg = resolve_lite(repo, &site)?;
     let lite = lite_cfg.is_some();
+    // A goatlite grown to the internet (goatlite.md §6) declares its own AWS profile,
+    // lite.internet.aws_profile or else its name, read after GOAT_AWS_PROFILE and
+    // before the project's (the script reads the same order).
+    let lite_internet_aws = lite_cfg.as_ref().and_then(|c| c.lite.as_ref()).and_then(|l| {
+        l.internet.as_ref().map(|i| i.aws_profile.clone().filter(|p| !p.is_empty()).unwrap_or_else(|| l.name.clone()))
+    });
+    let aws = std::env::var("GOAT_AWS_PROFILE").ok().filter(|s| !s.is_empty())
+        .or_else(|| lite_internet_aws.clone())
+        .unwrap_or_else(|| crate::settings::aws_profile(repo));
     // A goatlite declares its administrator (lite.admin), so the run uses that
     // rather than an OWNER_EMAIL the person must remember to export: phase 5
     // expanded "$OWNER_EMAIL" in its arguments and died before Ansible, and
@@ -240,10 +259,16 @@ fn read_site(repo: &Path, o: &Options) -> Result<Site> {
     if o.obs_only && !obs {
         return Err(anyhow!("--obs-only: no obs leg to run — {obs_why}"));
     }
+    // Refuse here rather than at phase 2, after the core leg has started beside it.
+    if obs {
+        if let Some(missing) = obs_play_missing(repo) {
+            return Err(anyhow!("{missing} Re-run with --skip-obs to stand up the site without its obs host."));
+        }
+    }
 
     let profile = match o.profile {
         Some(p) => p.to_string(),
-        None if lite => "lan".to_string(),
+        None if lite => if lite_internet_aws.is_some() { "internet".to_string() } else { "lan".to_string() },
         None => if gv_matches(&gv, "dashboard_cert_delivery_mode", "acme") { "internet".to_string() } else { "lan".to_string() },
     };
     if profile != "lan" && profile != "internet" {
@@ -265,12 +290,13 @@ fn read_site(repo: &Path, o: &Options) -> Result<Site> {
         upper,
         obs_group,
         state_dir: crate::settings::state_dir_abs(repo),
-        // A goatlite reaches its one box directly at its inventory address and
+        // A LAN goatlite reaches its one box directly at its inventory address and
         // declares no cloud, so no play needs AWS. with-aws defaults to
         // aws-vault whenever aws-vault is installed (ADR 1204), so without this
-        // every play asked the operator's keychain, once per play.
+        // every play asked the operator's keychain, once per play. On the internet
+        // profile the relay plays reach AWS (SSM, Secrets Manager), so it stays.
         ansible_pre: format!("OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES {}../scripts/with-aws {aws} -- ../scripts/ansible-preflight.sh",
-                             if lite { "GOAT_AWS_MODE=none " } else { "" }),
+                             if lite && profile == "lan" { "GOAT_AWS_MODE=none " } else { "" }),
         inv: INV,
         profile,
         joiner,
@@ -292,6 +318,32 @@ fn or_q(s: &str) -> &str {
 
 /// The plan, in the script's order. `resume` is how the operator re-enters
 /// this verb (printed in the manual steps' instructions).
+/// The playbook a phase runs for `site`: the site's own `<site>-<suffix>` when
+/// it keeps one under ops/ansible, else the generic `site-<suffix>`.
+/// The site-bootstrap invocation for one site with site_id as a PLAY
+/// variable: the site's own `<site>-bootstrap.yml` when it keeps one (it sets
+/// site_id itself), else the generic wrapper `site-bootstrap-for.yml -e
+/// bootstrap_site=<site>`. Never `site-bootstrap.yml -e site_id=<site>`: an
+/// extra var sets site_id on every inventory host, so the Spock roles' walk
+/// over the other sites' hostvars sees only this site and wires no peer.
+pub(crate) fn bootstrap_play(repo: &Path, site: &str) -> String {
+    let own = format!("{site}-bootstrap.yml");
+    if repo.join("ops/ansible").join(&own).is_file() {
+        own
+    } else {
+        format!("site-bootstrap-for.yml -e bootstrap_site={site}")
+    }
+}
+
+pub(crate) fn site_play(repo: &Path, site: &str, suffix: &str) -> String {
+    let own = format!("{site}-{suffix}");
+    if repo.join("ops/ansible").join(&own).is_file() {
+        own
+    } else {
+        format!("site-{suffix}")
+    }
+}
+
 fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
     let r = &s.repo;
     let g = &s.group;
@@ -362,10 +414,19 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
     let mint_ca = if s.lite { " --mint-ca-if-missing" } else { "" };
     ev.push(p(4, "T", "mint leaf certs".into(), format!("'{r}/ops/scripts/mint-site-certs.sh' {site}{mint_ca}")));
     let state = crate::settings::state_dir(repo);
+    let audit = crate::settings::ca_audit_log(repo);
     ev.push(p(4, "T", "name-fallback snapshot (generate + sign)".into(), format!(
-        "if grep -qE 'name_snapshot_enabled:[[:space:]]*true' '{r}/ops/ansible/group_vars/{g}/vars.yml' 2>/dev/null; then      python3 '{r}/ops/dns/generate-mesh-hosts.py';      if [ -f {state}/{site}-ca/ca.key.age ]; then        ( cd '{r}/ops/enrollment' && go run ./cmd/name-snapshot-sign --snapshot '{r}/ops/dns/{site}/name-snapshot.json' --root-key {state}/{site}-ca/ca.key.age --age-identity ~/.config/age/keys.txt );      else echo 'name_snapshot: no {state}/{site}-ca/ca.key.age — generate ran, SIGN manually with ops/enrollment/cmd/name-snapshot-sign'; fi;    else echo 'name_snapshot_enabled not true for {g} — skipping (ADR 1082)'; fi")));
+        "if grep -qE 'name_snapshot_enabled:[[:space:]]*true' '{r}/ops/ansible/group_vars/{g}/vars.yml' 2>/dev/null; then      python3 '{r}/ops/dns/generate-mesh-hosts.py';      if [ -f {state}/{site}-ca/ca.key.age ]; then        ( cd '{r}/ops/enrollment' && go run ./cmd/name-snapshot-sign --snapshot '{r}/ops/dns/{site}/name-snapshot.json' --root-key {state}/{site}-ca/ca.key.age --age-identity ~/.config/age/keys.txt --audit-log {audit} );      else echo 'name_snapshot: no {state}/{site}-ca/ca.key.age — generate ran, SIGN manually with ops/enrollment/cmd/name-snapshot-sign'; fi;    else echo 'name_snapshot_enabled not true for {g} — skipping (ADR 1082)'; fi")));
 
-    let ev_bootstrap = format!("-e site_id={site} -e bootstrap_owner_email=\"{oe}\" -e postgres_superuser_password=\"$(printenv {u}_PG_PASS)\" -e netbird_encryption_key=\"$(printenv {u}_NB_ENCKEY)\" -e pgbackrest_cipher_pass=\"$(printenv {u}_BKP_KEY)\"");
+    let ev_secrets = format!("-e bootstrap_owner_email=\"{oe}\" -e postgres_superuser_password=\"$(printenv {u}_PG_PASS)\" -e netbird_encryption_key=\"$(printenv {u}_NB_ENCKEY)\" -e pgbackrest_cipher_pass=\"$(printenv {u}_BKP_KEY)\"");
+    // A joiner's bootstrap carries site_id as a play variable (bootstrap_play):
+    // as an extra var it would reach every host and the Spock roles would find
+    // no peer. A founder keeps the plain form.
+    let (sb, ev_bootstrap) = if s.joiner {
+        (bootstrap_play(repo, site), ev_secrets.clone())
+    } else {
+        ("site-bootstrap.yml".to_string(), format!("-e site_id={site} {ev_secrets}"))
+    };
     let ev_p1 = if s.joiner {
         if s.intra_pair { format!("{ev_bootstrap} -e participates_in_spock=false") } else { format!("{ev_bootstrap} -e participates_in_spock=false -e has_durable_independent_state=true") }
     } else {
@@ -378,36 +439,49 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
     // for the netbird schema, which management-a writes only once it can reach
     // Hydra, so the seed and every play after it run in phase 6, after
     // ory-deploy. Any refusal here is a real one and fails the phase.
-    ev.push(p(5, "A", "mgmt-stack (site-bootstrap up to the account seed; the seed needs Ory and runs in phase 6)".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} site-bootstrap.yml {ev_p1} --skip-tags after-ory")));
+    ev.push(p(5, "A", "mgmt-stack (site-bootstrap up to the account seed; the seed needs Ory and runs in phase 6)".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} {sb} {ev_p1} --skip-tags after-ory")));
     let internet = s.profile == "internet";
     if internet {
-        ev.push(p(5, "A", "[internet] relay-connect (rathole-client)".into(), format!("cd '{r}/ops/ansible' && ( ls {site}-rathole-client.yml >/dev/null 2>&1 && {pre} -i inventory/hosts-{site}.ini {inv} {site}-rathole-client.yml -e rathole_client_target={g} || echo 'no {site}-rathole-client.yml — make it from nova-rathole-client.yml (handbook phase 5), then re-run --from 5' )")));
+        // site-rathole-client.yml is the generic play; a site that keeps its
+        // own <site>-rathole-client.yml gets that one instead.
+        let rathole_play = site_play(repo, site, "rathole-client.yml");
+        ev.push(p(5, "A", format!("[internet] relay-connect (rathole-client, {rathole_play})"), format!("cd '{r}/ops/ansible' && {pre} -i inventory/hosts-{site}.ini {inv} {rathole_play} -e rathole_client_target={g}")));
     }
     ev.push(p(6, "A", "ory (kratos/hydra/ui)".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} ory-deploy.yml --limit {g} -e postgres_superuser_password=\"$(printenv {u}_PG_PASS)\"")));
     let jfs = &s.join_founder_site;
     let jfg = &s.join_founder_group;
     if s.joiner {
-        ev.push(p(6, "A", format!("[joiner] seed-from-peer (pass 2 — data-only copy from founder {}; guarded)", or_q(jfs)), format!("cd '{r}/ops/ansible' && {{ [ -n '{jfs}' ] || {{ echo 'joiner: group_vars/{g}/vars.yml must set join_founder_site (the founder site-id to seed from)'; exit 1; }}; }} && {{ ls {site}-seed-from-peer.yml >/dev/null 2>&1 || {{ echo 'missing {site}-seed-from-peer.yml — clone it from any site that has <site>-seed-from-peer.yml (node-addition.md §4)'; exit 1; }}; }} && {pre} {inv} {site}-seed-from-peer.yml -e site_id={site}")));
+        // site-seed-from-peer.yml is the generic play; a site that keeps its
+        // own <site>-seed-from-peer.yml gets that one instead.
+        let seed_play = site_play(repo, site, "seed-from-peer.yml");
+        ev.push(p(6, "A", format!("[joiner] seed-from-peer (pass 2 — data-only copy from founder {}; guarded)", or_q(jfs)), format!("cd '{r}/ops/ansible' && {{ [ -n '{jfs}' ] || {{ echo 'joiner: group_vars/{g}/vars.yml must set join_founder_site (the founder site-id to seed from)'; exit 1; }}; }} && {pre} {inv} {seed_play} -e site_id={site}")));
     }
     // The rest of site-bootstrap, now that Ory is up: the seed's schema wait is
     // bounded (netbird_schema_wait_seconds) and names its cause. A joiner runs
     // the whole file again: its pass 3 turns Spock on, which the stack plays set.
     if s.joiner {
-        ev.push(p(6, "A", "[joiner] re-run site-bootstrap with Spock on (pass 3; prints + saves the setup key)".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} site-bootstrap.yml {ev_bootstrap}")));
+        // Ory (Phase 7D) is staged across both sides: see join-node phase 13.
+        ev.push(p(6, "A", "[joiner] re-run site-bootstrap with Spock on (pass 3; Ory node + repset only; prints + saves the setup key)".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} {sb} {ev_bootstrap} -e ory_spock_wire_subscriptions=false")));
     } else {
-        ev.push(p(6, "A", "the rest of site-bootstrap: wait for the netbird schema, seed the account, print + save the setup key".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} site-bootstrap.yml {ev_bootstrap} --skip-tags stack")));
+        ev.push(p(6, "A", "the rest of site-bootstrap: wait for the netbird schema, seed the account, print + save the setup key".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} {sb} {ev_bootstrap} --skip-tags stack")));
     }
     if s.joiner {
-        ev.push(p(6, "A", format!("[joiner] founder-side mirror (spock-mesh-wire on {}, peer={site} only — both-direction subscriptions)", or_q(jfg)), format!("cd '{r}/ops/ansible' && {{ [ -n '{jfg}' ] || {{ echo 'joiner: join_founder_site not set in group_vars/{g}/vars.yml'; exit 1; }}; }} && {pre} {inv} spock-mesh-wire.yml --limit {jfg} -e '{{\"inter_site_spock_peers\":[\"{site}\"]}}'")));
+        ev.push(p(6, "A", format!("[joiner] founder-side mirror (spock-mesh-wire on {}, peer={site} only — both-direction subscriptions)", or_q(jfg)), format!("cd '{r}/ops/ansible' && {{ [ -n '{jfg}' ] || {{ echo 'joiner: join_founder_site not set in group_vars/{g}/vars.yml'; exit 1; }}; }} && {pre} {inv} spock-mesh-wire.yml --limit {jfg} -e '{{\"inter_site_spock_peers\":[\"{site}\"],\"ory_spock_reconcile_history\":false}}'")));
+        ev.push(p(6, "A", "[joiner] the joiner's Spock wiring again, now that the founder's half exists (Ory subscription + history reconcile)".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} spock-mesh-wire.yml --limit {g}")));
     }
     if internet {
         ev.push(p(7, "A", "[internet] public TLS certificate (traefik-acme)".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} traefik-acme.yml -e target={g} -e cf_api_token=\"$(printenv CLOUDFLARE_API_TOKEN_{u})\"")));
         ev.push(p(7, "T", "[internet] generate relay inventory from terraform".into(), format!("'{r}/ops/ansible/inventory/generate-relays.sh' {site} terraform-{site}")));
         ev.push(p(7, "A", "[internet] relay tier (coturn + rathole + TLS renewal)".into(), format!("cd '{r}/ops/ansible' && umask 077 && VF=$(mktemp -t goat-relay-vars.XXXXXX) && printf 'nb_relay_auth_secret: \"%s\"\\nrelay_secret: \"%s\"\\ncloudflare_api_token: \"%s\"\\n' \"$(printenv {u}_RELAY_SECRET)\" \"$(printenv {u}_RELAY_SECRET)\" \"$(printenv CLOUDFLARE_API_TOKEN_{u})\" > \"$VF\" && {pre} -i inventory/hosts-{site}.ini relay-server.yml -e @\"$VF\"; rc=$?; rm -f \"$VF\"; exit $rc")));
         if s.joiner {
-            ev.push(p(7, "A", format!("[joiner] wire {site} into the founder ({}) relay ingress + re-render", or_q(jfs)), format!("cd '{r}/ops/ansible' && {{ [ -n '{jfs}' ] || {{ echo 'joiner: join_founder_site not set in group_vars/{g}/vars.yml'; exit 1; }}; }} && {{ ls inventory/hosts-{jfs}.ini >/dev/null 2>&1 || {{ echo 'founder relay inventory inventory/hosts-{jfs}.ini missing — generate it first: inventory/generate-relays.sh {jfs} terraform-{jfs}'; exit 1; }}; }} && {pre} -i inventory/hosts-{jfs}.ini -i inventory/{jfs}-goat-relay-alias.ini relay-ingress-add-site.yml -e target=goat_relay_hosts -e founder_site={jfs} -e join_site={site}")));
+            ev.push(p(7, "A", format!("[joiner] wire {site} into the founder ({}) relay ingress + re-render", or_q(jfs)), format!("cd '{r}/ops/ansible' && {{ [ -n '{jfs}' ] || {{ echo 'joiner: join_founder_site not set in group_vars/{g}/vars.yml'; exit 1; }}; }} && {{ ls inventory/hosts-{jfs}.ini >/dev/null 2>&1 || {{ echo 'founder relay inventory inventory/hosts-{jfs}.ini missing — generate it first: inventory/generate-relays.sh {jfs} terraform-{jfs}'; exit 1; }}; }} && {pre} -i inventory/hosts-{jfs}.ini -i inventory/{jfs}-goat-relay-alias.ini {inv} relay-ingress-add-site.yml -e target=goat_relay_hosts -e founder_site={jfs} -e join_site={site}")));
         }
-        ev.push(p(8, "MANUAL", "[internet] mesh-enroll the host + re-mint the router cert".into(), format!("see docs/operations/goatnet-standup.md §'Phase 8' for the exact block; run ops/preflight-enrollment.sh first (it PRINTS the netbird up line, rosenpass flags included); confirm 'netbird status' shows Management: Connected + a 100.x IP BEFORE re-minting; then fill the mesh IP into inventory + the cert manifest and re-mint: mint-site-certs.sh {site} --only router (delete the phase-4 router pair first, or the mint is a no-op)")));
+        // Phase 8, scripted (goatbuilder-speed.md): enrol with a single-use key
+        // against the declared mesh_enrollment_url, then record the mesh IPs and
+        // re-mint the router pair. A host already enrolled mints nothing.
+        let mesh_ips = format!("{}/standup-{site}-mesh-ips.json", s.state_dir);
+        ev.push(p(8, "A", "[internet] mesh-enroll the hosts (a single-use key each, the declared enrolment URL)".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} mesh-enroll-host.yml -e target={g} -e mesh_ips_out='{mesh_ips}'")));
+        ev.push(p(8, "T", "[internet] record the mesh IPs (group_vars, mesh inventory, cert manifest) and re-mint the router cert".into(), format!("python3 '{r}/ops/scripts/standup-mesh-record.py' {site} --ips '{mesh_ips}'")));
     }
     ev.push(p(9, "A", "zenoh router".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} zenoh-deploy.yml -e target={g}")));
     ev.push(p(9, "A", "SPIRE server on the founder (workload identity)".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} spire-deploy.yml -e target={g} -l 'mgmt-{site}-01*' -e spire_enabled=true -e postgres_superuser_password=\"$(printenv {u}_PG_PASS)\"")));
@@ -428,14 +502,16 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
         }
     } else {
         ev.push(p(10, "A", "[internet] dashboard".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} -l 'mgmt-{site}-01*' dashboard-deploy.yml -e site_id={site}")));
-        ev.push(p(10, "A", "[internet] register OIDC clients".into(), format!("cd '{r}/ops/ansible' && ( ls {site}-oidc-clients.yml >/dev/null 2>&1 && {pre} {inv} {site}-oidc-clients.yml -e target={g} || echo 'no {site}-oidc-clients.yml — extract one from any site that has <site>-oidc-clients.yml (ADR 1016), then re-run --from 10' )")));
+        let oidc_play = site_play(repo, site, "oidc-clients.yml");
+        ev.push(p(10, "A", format!("[internet] register OIDC clients ({oidc_play})"), format!("cd '{r}/ops/ansible' && {pre} {inv} {oidc_play} -e target={g}")));
         ev.push(p(11, "MANUAL", "[internet] first login, admin-promote, the bootstrap NetBird token".into(), format!("handbook §'Phase 11' has the exact block. In short: enroll YOUR laptop (netbird up), pin the three dashboard hosts in /etc/hosts, read the one-time password from /opt/mgmt-host/.bootstrap-passwords/{oe}.txt, log in; re-run the phase-10 dashboard-deploy line ONCE (promotes you to admin — the UI 403s until then); create service user svc-{site}-netbird-infra (Team > Service Users, role admin), create its token, add 'export {u}_NB_API_TOKEN=<token>' to .envrc.local.d/30-site-services.envrc and store it in 1Password as {site}-netbird / api_token. THEN resume: {resume} --from 12")));
     }
     let fqdn = &s.mgmt_fqdn;
     if !s.joiner {
-        ev.push(p(12, "A", "declared NetBird groups (netbird-acl-bootstrap)".into(), format!("cd '{r}/ops/ansible' && ansible-playbook -i localhost, --connection local netbird-acl-bootstrap.yml -e target_site={site} -e netbird_mgmt_url=https://{fqdn}")));
-        ev.push(p(12, "A", "declared NetBird policies (cutover apply)".into(), format!("cd '{r}/ops/ansible' && ansible-playbook -i localhost, --connection local netbird-acl-cutover.yml -e target_site={site} -e mode=apply -e netbird_mgmt_url=https://{fqdn}")));
-        ev.push(p(12, "A", "enforce: no Default All->All (cutover enforce)".into(), format!("cd '{r}/ops/ansible' && ansible-playbook -i localhost, --connection local netbird-acl-cutover.yml -e target_site={site} -e mode=enforce -e confirm_cutover=YES -e netbird_mgmt_url=https://{fqdn}")));
+        // One ansible-playbook run of the two plays, in order: groups, then the
+        // cutover in enforce mode, which creates every declared policy before it
+        // applies the Default-policy action (goatlite.md §11 measure 3).
+        ev.push(p(12, "A", "declared NetBird ACL: groups, then policies, then enforce (one play run)".into(), format!("cd '{r}/ops/ansible' && ansible-playbook -i localhost, --connection local netbird-acl-bootstrap.yml netbird-acl-cutover.yml -e target_site={site} -e mode=enforce -e confirm_cutover=YES -e netbird_mgmt_url=https://{fqdn}")));
     }
     let acl_upper = s.acl_site.replace('-', "_").to_uppercase();
     ev.push(p(12, "GATE", format!("the live NetBird account holds only the declared ACL for {}, and no All-group rule", s.acl_site), format!("python3 '{r}/ops/scripts/netbird-policy-posture.py' '{}' --url https://{fqdn} --token-env {acl_upper}_NB_API_TOKEN", s.acl_site)));
@@ -450,15 +526,25 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
     ev.push(p(12, "A", "portal (registry, certificate minting, grant rows)".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} portal-deploy.yml -e target={g} -l 'mgmt-{site}-01*' -e postgres_superuser_password=\"$(printenv {u}_PG_PASS)\"")));
     if s.obs {
         ev.push(Event::LegJoin { leg: "host", at: 12 });
+    }
+    // The bot lives on the goatnet's Forgejo, which goatcore does not deploy: a
+    // goatnet that declares no pub/sub state forge skips the mint and goes on.
+    let forge = repo.join(format!("ops/ansible/group_vars/{g}/pubsub-state.yml")).is_file();
+    if s.obs && !forge && in_range(12, o) {
+        ev.push(Event::Skip { n: 12, kind: "T", label: "mint the pubsub-state mirror bot on the obs host's Forgejo (once; skipped when FORGEJO_PUBSUB_TOKEN is set)".into(), lines: vec![
+            format!("SKIPPED — no group_vars/{g}/pubsub-state.yml: this goatnet declares no Forgejo for the pub/sub state mirror"),
+            "goatcore ships no Forgejo role; to turn the mirror on, run a Forgejo for this goatnet and declare it (ops/ansible/roles/pubsub-state-repo/README.md)".into()] });
+    }
+    if s.obs && forge {
         let obs_ssh = inventory_hosts(repo, &[og], true).into_iter().next().unwrap_or_default();
         ev.push(Event::Phase(Phase { n: 12, kind: "T", label: "mint the pubsub-state mirror bot on the obs host's Forgejo (once; skipped when FORGEJO_PUBSUB_TOKEN is set)".into(), cmd: format!("if [ -n \"${{FORGEJO_PUBSUB_TOKEN:-}}\" ]; then echo '    FORGEJO_PUBSUB_TOKEN already set — bot minted; skipping';    else '{r}/ops/scripts/forgejo-mint-pubsub-bot.sh' '{obs_ssh}'      && eval \"$('{r}/ops/scripts/envrc-var.sh' FORGEJO_PUBSUB_TOKEN)\"      && '{r}/ops/scripts/standup-keep-secret' FORGEJO_PUBSUB_TOKEN      && echo '    token loaded from the operator envrc; the run continues'; fi"), stop_after: true }));
     }
     ev.push(p(12, "GATE", "every input the phases after the manual step will reach is set (the NetBird service token phase 11 issues)".into(), format!("python3 '{r}/ops/scripts/standup-required-inputs.py' {site} --profile {} --from 12", s.profile)));
-    ev.push(p(12, "A", "pubsub-state Repl mirror (Block 86)".into(), format!("cd '{r}/ops/ansible' && ( ls group_vars/{g}/pubsub-state.yml >/dev/null 2>&1 && {pre} {inv} pubsub-state-mirror-deploy.yml -e target={g} || echo 'no group_vars/{g}/pubsub-state.yml — Repl not configured for this goatnet; add one by copying any goatnet that has one, mint the bot, then re-run --from 12' )")));
+    ev.push(p(12, "A", "pubsub-state Repl mirror (Block 86)".into(), format!("cd '{r}/ops/ansible' && if ls group_vars/{g}/pubsub-state.yml >/dev/null 2>&1; then {pre} {inv} pubsub-state-mirror-deploy.yml -e target={g}; else echo 'no group_vars/{g}/pubsub-state.yml — the pub/sub state mirror is not configured for this goatnet; skipping. It needs a Forgejo you run for this goatnet (goatcore ships no Forgejo role): see ops/ansible/roles/pubsub-state-repo/README.md, then re-run --from 12'; fi")));
     ev.push(p(12, "A", "onboarding intake front desk (public, ADR 1062 stage 1)".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} onboard-intake-deploy.yml -e target={g} -e site_id={site}")));
     ev.push(p(12, "A", "onboard-runner (auto-mint on approval, ADR 1062 stage 3)".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} onboard-runner-deploy.yml -e target={g} -e site_id={site}")));
     ev.push(p(12, "A", "grant-keyd (encryption key distribution)".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} grant-keyd-deploy.yml -e target={g} -l 'mgmt-{site}-01*'")));
-    ev.push(p(12, "A", "notional pub/sub (synthetic vendors — opt-in via synth_vendors_enabled)".into(), format!("cd '{r}/ops/ansible' && ( grep -qE 'synth_vendors_enabled:[[:space:]]*true' group_vars/{g}/synth-vendors.yml 2>/dev/null && {pre} {inv} zagros-zenoh-synth-vendors-deploy.yml -e target={g} || echo 'synth_vendors_enabled not true for {g} — notional pub/sub not requested, skipping' )")));
+    ev.push(p(12, "A", "notional pub/sub (synthetic vendors — opt-in via synth_vendors_enabled)".into(), format!("cd '{r}/ops/ansible' && {{ [ ! -e group_vars/{g}/synth-vendors.yml ] || [ -r group_vars/{g}/synth-vendors.yml ] || {{ echo 'cannot read group_vars/{g}/synth-vendors.yml' >&2; false; }}; }} && if grep -qE '^[[:space:]]*synth_vendors_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' group_vars/{g}/synth-vendors.yml 2>/dev/null; then {pre} {inv} zenoh-synth-vendors-slot-pool-deploy.yml -e target={g}; else echo 'synth_vendors_enabled not true for {g} — notional pub/sub not requested, skipping'; fi")));
     if s.obs {
         ev.push(Event::LegJoin { leg: "stack", at: 13 });
     }
@@ -466,7 +552,18 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
     // `requires` names only services the site declares absent reads N/A, so a
     // one-box goatnet is graded against what it declares, not against the fleet.
     let sd = &s.state_dir;
-    ev.push(p(13, "GATE", "acceptance suite (values derived from config; all applicable rows green)".into(), crate::assay::phase13(Path::new(r), site, sd).phase_line()));
+    // On a goatlite the acceptance phase is off by default (goatlite.md §11
+    // measure 4): `--check` runs it here, `goatbuilder assay <site>` at any time.
+    let acceptance = "acceptance suite (values derived from config; all applicable rows green)";
+    if s.lite && !o.check {
+        if in_range(13, o) {
+            ev.push(Event::Skip { n: 13, kind: "GATE", label: acceptance.into(), lines: vec![
+                "SKIPPED — goatlite (ADR 1213): the acceptance phase is off by default; --check runs it in the standup".into(),
+                format!("run it on its own at any time: goatbuilder assay {site}")] });
+        }
+    } else {
+        ev.push(p(13, "GATE", acceptance.into(), crate::assay::phase13(Path::new(r), site, sd).phase_line()));
+    }
 
     // Phase 14 — the two rescue classes (ADR 1183): declared-but-not-inventoried is a
     // real state and prints its reason outside the phase gate, as the script does.
@@ -474,18 +571,18 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
     let site_us = site.replace('-', "_");
     let rescue = [
         ("has_breakglass_node", "breakglass_absent_reason", "breakglass", format!("inventory/{site}-breakglass-nodes.ini"), "break-glass node (ADR 1114 — the way in when mesh + control plane are both down)".to_string(), "breakglass-nodes.yml".to_string()),
-        ("has_network_jump_node", "network_jump_absent_reason", "network_jump", format!("inventory/{site}-network-jump.ini"), "network-jump host (ADR 1131 — reach to switch, router and out-of-band gear)".to_string(), format!("herd-connector-deploy.yml -e herd_connector_target_hosts={site_us}_network_jump_hosts")),
+        ("has_network_jump_node", "network_jump_absent_reason", "network_jump", format!("inventory/{site}-network-jump.ini"), "network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses)".to_string(), format!("herd-connector-deploy.yml -e herd_connector_target_hosts={site_us}_network_jump_hosts")),
     ];
     for (flag, reason_key, suffix, extra_inv, label, play) in rescue {
         let rgroup = format!("{site_us}_{suffix}_hosts");
         let declared = gv_value(&gv, flag).unwrap_or_default();
         if declared != "True" && declared != "true" {
             let why = gv_value(&gv, reason_key).filter(|w| !w.is_empty()).unwrap_or_else(|| "(none recorded — the phase-1 config gate refuses this; ADR 1183)".to_string());
-            ev.push(Event::Skip { label: label.clone(), lines: vec![format!("SKIPPED — {flag} is not true in group_vars/{g}/vars.yml"), format!("declared reason: {why}")] });
+            ev.push(Event::Skip { n: 14, kind: "A", label: label.clone(), lines: vec![format!("SKIPPED — {flag} is not true in group_vars/{g}/vars.yml"), format!("declared reason: {why}")] });
             continue;
         }
         if inventory_hosts(repo, &[&rgroup], false).is_empty() {
-            ev.push(Event::Skip { label: label.clone(), lines: vec![format!("SKIPPED — {flag}: true but no host in inventory group [{rgroup}] yet."), "Declared and not yet built is a real state; add the host when the box arrives.".to_string()] });
+            ev.push(Event::Skip { n: 14, kind: "A", label: label.clone(), lines: vec![format!("SKIPPED — {flag}: true but no host in inventory group [{rgroup}] yet."), "Declared and not yet built is a real state; add the host when the box arrives.".to_string()] });
             continue;
         }
         let inv_extra = if repo.join("ops/ansible").join(&extra_inv).is_file() { format!("-i {extra_inv}") } else { String::new() };
@@ -496,7 +593,7 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
         // cross-env.yaml -- other goatnets' machines. A goatlite must not
         // reach past its one box (ADR 1213), and a fresh checkout's roster
         // names goatnets whose credentials a learner does not hold.
-        ev.push(Event::Skip { label: "join the cross-goatnet surfaces (relay-health overview on every box)".into(), lines: vec![
+        ev.push(Event::Skip { n: 14, kind: "A", label: "join the cross-goatnet surfaces (relay-health overview on every box)".into(), lines: vec![
             "SKIPPED — goatlite (ADR 1213): one box on its own LAN; this step reaches every relay-health box in ops/goatnets/cross-env.yaml, none of which belong to this goatnet".into(),
             "declared reason: cross-env.yaml carries this goatnet as relay_health absent; the overviews pick its roster row up on their next deploy".into()] });
     } else {
@@ -756,8 +853,8 @@ pub fn standup(repo: &Path, o: &Options) -> Result<Report> {
             }
         }
         match ev {
-            Event::Skip { label, lines } => {
-                checks.push(row("phase", format!("=== Phase 14 [A] {label} ===")));
+            Event::Skip { n, kind, label, lines } => {
+                checks.push(row("phase", format!("=== Phase {n} [{kind}] {label} ===")));
                 for l in lines {
                     checks.push(row("note", l.clone()));
                 }
@@ -887,7 +984,7 @@ pub fn standup(repo: &Path, o: &Options) -> Result<Report> {
         }
     }
     if o.dry_run {
-        checks.push(row("footer", format!("PLAN complete ({} profile). Remove --dry-run to execute. Manual steps (phase 8 enrolment and phase 11 first login, internet only) pause the run; resume with --from <next>. Read docs/operations/goatnet-standup.md first.", s.profile)));
+        checks.push(row("footer", format!("PLAN complete ({} profile). Remove --dry-run to execute. The one manual step (phase 11 first login) pauses the run; resume with --from <next>. Read docs/operations/goatnet-standup.md first.", s.profile)));
     } else if o.obs_only && exit == EXIT_OK {
         checks.push(row("footer", format!("obs leg complete for {}.", s.site)));
     }
@@ -1164,6 +1261,51 @@ struct TeardownDecl {
     dirs: Vec<TeardownDir>,
     #[serde(default)]
     why: String,
+    /// `obs`: the step runs against the site's observability host group.
+    #[serde(default)]
+    target: String,
+    /// service-stop: the shared compose project's working directory, and the
+    /// compose service names to stop in it.
+    #[serde(default)]
+    project: String,
+    #[serde(default)]
+    services: Vec<String>,
+    /// systemd-stop: the unit names (globs allowed).
+    #[serde(default)]
+    units: Vec<String>,
+    /// command: the line run on the operator machine ({repo} and {site} filled in).
+    #[serde(default)]
+    run: String,
+}
+
+/// The actions `--services` runs: each stops something and keeps its data.
+const SERVICE_ACTIONS: [&str; 3] = ["compose-down", "service-stop", "systemd-stop"];
+
+/// The command that takes a runnable step down (the same string
+/// ops/goatbuilder/teardown-plan.py prints), or None for keep/refused/designed.
+fn teardown_cmd(s: &Site, d: &TeardownDecl) -> Result<Option<String>> {
+    let group = if d.target == "obs" { s.obs_group.clone() } else { s.group.clone() };
+    let pre = format!("cd '{}/ops/ansible' && {} {}", s.repo, s.ansible_pre, s.inv);
+    Ok(match d.action.as_str() {
+        "compose-down" => {
+            let dirs: Vec<TeardownDir> = d.dirs.iter().map(|x| TeardownDir { var: x.var.clone(), default: x.default.replace("<site>", &s.site) }).collect();
+            let dirs = serde_json::to_string(&dirs)?;
+            Some(format!("{pre} teardown-compose.yml -e target={group} -e teardown_component={} -e 'teardown_dirs={dirs}'", d.component))
+        }
+        "service-stop" => Some(format!("{pre} teardown-service-stop.yml -e target={group} -e teardown_component={} -e teardown_project={} -e 'teardown_services={}'", d.component, d.project, serde_json::to_string(&d.services)?)),
+        "systemd-stop" => Some(format!("{pre} teardown-systemd.yml -e target={group} -e teardown_component={} -e 'teardown_units={}'", d.component, serde_json::to_string(&d.units)?)),
+        "command" => Some(d.run.replace("{repo}", &s.repo).replace("{site}", &s.site)),
+        _ => None,
+    })
+}
+
+fn teardown_what(action: &str, component: &str) -> String {
+    match action {
+        "compose-down" => format!("stop {component}, volumes kept"),
+        "service-stop" => format!("stop {component} in its shared compose project, containers and volumes kept"),
+        "systemd-stop" => format!("stop and disable {component}, unit files kept"),
+        _ => format!("{component} on the operator machine"),
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, serde::Serialize)]
@@ -1203,28 +1345,35 @@ pub fn teardown(repo: &Path, o: &Options, services: bool) -> Result<Report> {
     let decls = load_teardown(repo)?;
     let events = plan(repo, &s, &Options { from: 1, to: 14, ..*o }, &resume);
     let mut checks = vec![row("banner", format!("teardown: site={}  group={}  {}", s.site, s.group, if o.dry_run { "(DRY RUN — nothing executes)" } else { "" }))];
-    let applied: Vec<&Phase> = events.iter().filter_map(|e| if let Event::Phase(p) = e { Some(p) } else { None }).filter(|p| p.kind == "A" && p.n >= o.from && p.n <= o.to).collect();
+    // The applied phases ([A] only) and the observability legs, in plan order;
+    // a leg counts as the phase it starts with (host 2, stack 9).
+    let applied: Vec<(u32, String, &str)> = events.iter().filter_map(|e| match e {
+        Event::Phase(p) if p.kind == "A" => Some((p.n, format!("phase {} [A]", p.n), p.label.as_str())),
+        Event::LegStart { leg, label, .. } => { let n = if *leg == "stack" { 9 } else { 2 }; Some((n, format!("observability leg \"{leg}\" [A ∥]"), label.as_str())) }
+        _ => None,
+    }).filter(|(n, _, _)| *n >= o.from && *n <= o.to).collect();
     let mut cmds: Vec<(String, String)> = Vec::new();
     let mut blocking: Vec<String> = Vec::new();
-    for p in applied.iter().rev() {
-        checks.push(row("phase", format!("=== Teardown of phase {} [A] {} ===", p.n, p.label)));
-        match teardown_decl(&decls, &p.label) {
-            None => {
-                checks.push(row("note", "undeclared: no line in ops/goatbuilder/teardown.yaml says how this step comes down".into()));
-                blocking.push(format!("{} {} (undeclared)", p.n, p.label));
-            }
-            Some(d) if d.action == "compose-down" => {
-                let dirs = serde_json::to_string(&d.dirs)?;
-                let cmd = format!("cd '{}/ops/ansible' && {} {} teardown-compose.yml -e target={} -e teardown_component={} -e 'teardown_dirs={dirs}'", s.repo, s.ansible_pre, s.inv, s.group, d.component);
-                checks.push(row("note", format!("compose-down: stop {}, volumes kept", d.component)));
-                checks.push(row("cmd", cmd.clone()));
+    for (n, head, label) in applied.iter().rev() {
+        checks.push(row("phase", format!("=== Teardown of {head} {label} ===")));
+        let Some(d) = teardown_decl(&decls, label) else {
+            checks.push(row("note", "undeclared: no line in ops/goatbuilder/teardown.yaml says how this step comes down".into()));
+            blocking.push(format!("{n} {label} (undeclared)"));
+            continue;
+        };
+        if let Some(cmd) = teardown_cmd(&s, d)? {
+            let why = if d.why.is_empty() { String::new() } else { format!(" ({})", d.why) };
+            checks.push(row("note", format!("{}: {}{why}", d.action, teardown_what(&d.action, &d.component))));
+            checks.push(row("cmd", cmd.clone()));
+            if SERVICE_ACTIONS.contains(&d.action.as_str()) || !services {
                 cmds.push((d.component.clone(), cmd));
+            } else {
+                blocking.push(format!("{n} {label} ({})", d.action));
             }
-            Some(d) => {
-                checks.push(row("note", format!("{}: {}", d.action, d.why)));
-                if d.action == "refused" || d.action == "designed" {
-                    blocking.push(format!("{} {} ({})", p.n, p.label, d.action));
-                }
+        } else {
+            checks.push(row("note", format!("{}: {}", d.action, d.why)));
+            if d.action == "refused" || d.action == "designed" {
+                blocking.push(format!("{n} {label} ({})", d.action));
             }
         }
     }
@@ -1239,7 +1388,7 @@ pub fn teardown(repo: &Path, o: &Options, services: bool) -> Result<Report> {
         return Ok(r);
     }
     let left = if blocking.is_empty() { String::new() } else { format!("; {} step(s) left in place", blocking.len()) };
-    checks.push(row("phase", format!("=== Teardown verdict: {} service(s) come down, volumes kept{left}. Records go to teardown.jsonl; deploy-history.jsonl is untouched. ===", cmds.len())));
+    checks.push(row("phase", format!("=== Teardown verdict: {} step(s) come down, volumes kept{left}. Records go to teardown.jsonl; deploy-history.jsonl is untouched. ===", cmds.len())));
     if o.dry_run {
         return Ok(Report::new("teardown", checks, EXIT_OK));
     }
@@ -1290,18 +1439,61 @@ mod tests {
 
     #[test]
     fn a_full_teardown_of_a_live_site_is_refused_and_services_only_is_not() {
-        let o = Options { env: "zagros_dev", site: "zagros-dev", profile: None, from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false };
+        let o = Options { env: "zagros_dev", site: "zagros-dev", profile: None, from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false, check: false };
         let full = teardown(&repo_root(), &o, false).unwrap();
         assert!(full.checks.iter().any(|c| c.detail.starts_with("=== Teardown verdict: refused:")));
         let svc = teardown(&repo_root(), &Options { from: 12, ..o }, true).unwrap();
-        assert!(svc.checks.iter().any(|c| c.detail.contains("service(s) come down, volumes kept")));
+        assert!(svc.checks.iter().any(|c| c.detail.contains("step(s) come down, volumes kept")));
         assert!(svc.checks.iter().filter(|c| c.detail.contains("teardown-compose.yml")).count() >= 4);
+    }
+
+    /// Phase 8 is two scripted steps on an internet site, the play's IP file
+    /// handed to the recorder, and no step of the run is manual but phase 11.
+    #[test]
+    fn phase_8_enrols_and_records_with_no_pause() {
+        // The fixture site, not a real goatnet's config, so the test holds in any
+        // checkout (a goatcore tree carries no goatnet).
+        let o = Options { env: "e", site: "zagros", profile: None, from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false, check: false };
+        let mut s = test_site(false);
+        s.profile = "internet".into();
+        let ev = plan(&repo_root(), &s, &o, "RESUME");
+        let p8: Vec<&Phase> = ev.iter().filter_map(|e| if let Event::Phase(p) = e { Some(p) } else { None }).filter(|p| p.n == 8).collect();
+        assert_eq!(p8.iter().map(|p| p.kind).collect::<Vec<_>>(), vec!["A", "T"]);
+        let ips = format!("{}/standup-zagros-mesh-ips.json", s.state_dir);
+        assert!(p8[0].cmd.contains(&format!("mesh-enroll-host.yml -e target=zagros_hosts -e mesh_ips_out='{ips}'")), "{}", p8[0].cmd);
+        assert!(p8[1].cmd.ends_with(&format!("standup-mesh-record.py' zagros --ips '{ips}'")), "{}", p8[1].cmd);
+        let manual: Vec<u32> = ev.iter().filter_map(|e| if let Event::Phase(p) = e { Some(p) } else { None }).filter(|p| p.kind == "MANUAL").map(|p| p.n).collect();
+        assert_eq!(manual, vec![11]);
+    }
+
+    /// Every step the standup applies now has a built way down or a reason it
+    /// stays: no `designed` declaration is left, the router's compose path is
+    /// the site's, the shared-project services stop by name, the tunnel client
+    /// stops by unit, and the cross-goatnet removal is a command `--services`
+    /// leaves in place.
+    #[test]
+    fn the_rest_of_the_teardown_is_declared_and_built() {
+        let decls = load_teardown(&repo_root()).unwrap();
+        assert!(decls.iter().all(|d| d.action != "designed"), "a step is still only designed");
+        let o = Options { env: "zagros_prod", site: "zagros-prod", profile: None, from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false, check: false };
+        let s = read_site(&repo_root(), &o).unwrap();
+        let cmd = |label: &str| teardown_cmd(&s, teardown_decl(&decls, label).unwrap()).unwrap().unwrap();
+        assert!(cmd("zenoh router").contains(r#"{"var":"goat_zenoh_compose_dir","default":"/opt/zagros-prod-zenoh"}"#));
+        assert!(cmd("[internet] dashboard").contains(r#"teardown-service-stop.yml -e target=zagros_prod_hosts -e teardown_component=netbird-dashboard -e teardown_project=/opt/mgmt-host -e 'teardown_services=["dashboard","dashboard-admin"]'"#));
+        assert!(cmd("[internet] relay-connect (rathole-client, site-rathole-client.yml)").contains(r#"teardown-systemd.yml -e target=zagros_prod_hosts -e teardown_component=rathole-client -e 'teardown_units=["rathole-client@*.service"]'"#));
+        assert!(cmd("observability host: stack (Prometheus)").contains("-e target=zagros_prod_obs_hosts"));
+        assert!(cmd("join the cross-goatnet surfaces").ends_with("/ops/goatnets/cross-env-apply.sh' --absent zagros-prod"));
+        let svc = teardown(&repo_root(), &Options { from: 13, ..o }, true).unwrap();
+        assert!(svc.checks.iter().any(|c| c.detail.contains("0 step(s) come down, volumes kept; 1 step(s) left in place")), "--services leaves the cross-env removal in place");
+        let full = teardown(&repo_root(), &Options { from: 13, ..o }, false).unwrap();
+        assert!(full.checks.iter().any(|c| c.detail.contains("1 step(s) come down")), "a full teardown of phase 14 runs the cross-env removal");
     }
 
     #[test]
     fn dag_is_read_and_matches_labels_past_their_profile_tag() {
         let dag = load_dag(&repo_root());
-        assert_eq!(dag.len(), 14);
+        assert_eq!(dag.len(), 12);
+        assert_eq!(dag_lookup(&dag, "declared NetBird ACL: groups, then policies, then enforce (one play run)").unwrap().id, "acl");
         assert_eq!(dag_lookup(&dag, "portal (registry, certificate minting, grant rows)").unwrap().id, "portal");
         assert_eq!(dag_lookup(&dag, "[internet] mesh CoreDNS (only if this site has a mesh zone)").unwrap().id, "mesh-dns");
         assert!(dag_lookup(&dag, "mint the pubsub-state mirror bot on the obs host's Forgejo").is_none());
@@ -1311,19 +1503,18 @@ mod tests {
     fn waves_put_independent_steps_together_and_respect_needs() {
         let q = |id: &str, n: &[&str]| (id.to_string(), n.iter().map(|x| x.to_string()).collect::<Vec<_>>());
         let w = waves(&[
-            q("acl-groups", &[]), q("acl-policies", &["acl-groups"]), q("acl-enforce", &["acl-policies"]),
-            q("acl-gate", &["acl-enforce"]), q("si-mint", &["acl-groups"]), q("si-gate", &["si-mint"]),
-            q("account-baseline", &["acl-groups"]), q("mesh-dns", &["account-baseline"]),
+            q("acl", &[]), q("acl-gate", &["acl"]), q("si-mint", &["acl"]), q("si-gate", &["si-mint"]),
+            q("account-baseline", &["acl"]), q("mesh-dns", &["account-baseline"]),
             q("portal", &["acl-gate", "si-gate"]), q("pubsub-mirror", &["portal"]), q("intake", &["portal"]),
             q("runner", &["portal"]), q("grant-keyd", &["portal"]), q("synth", &["portal"]),
         ]);
-        assert_eq!(w, vec![1, 2, 3, 4, 2, 3, 2, 3, 5, 6, 6, 6, 6, 6]);
+        assert_eq!(w, vec![1, 2, 2, 3, 2, 3, 4, 5, 5, 5, 5, 5]);
     }
 
     #[test]
     fn a_need_the_site_never_queued_is_met() {
         // a joiner queues no ACL steps: the portal then needs only the identities
-        let q = vec![("si-mint".to_string(), vec!["acl-groups".to_string()]), ("si-gate".to_string(), vec!["si-mint".to_string()]), ("portal".to_string(), vec!["acl-gate".to_string(), "si-gate".to_string()])];
+        let q = vec![("si-mint".to_string(), vec!["acl".to_string()]), ("si-gate".to_string(), vec!["si-mint".to_string()]), ("portal".to_string(), vec!["acl-gate".to_string(), "si-gate".to_string()])];
         assert_eq!(waves(&q), vec![1, 2, 3]);
     }
 
@@ -1380,7 +1571,7 @@ mod tests {
     /// the `after-ory` plays, whose seed waits for the schema with Ory up.
     #[test]
     fn phase_5_runs_the_stack_and_phase_6_the_rest_after_ory() {
-        let o = Options { env: "e", site: "zagros", profile: None, from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false };
+        let o = Options { env: "e", site: "zagros", profile: None, from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false, check: false };
         let lines = phase_lines(&test_site(false), &o);
         let sb: Vec<&(u32, String, String)> = lines.iter().filter(|l| l.2.contains("site-bootstrap.yml")).collect();
         assert_eq!(sb.len(), 2, "{sb:?}");
@@ -1394,16 +1585,76 @@ mod tests {
         assert!(ory < rest, "Ory deploys before the account seed");
         // A joiner's pass 3 turns Spock on, which the stack plays configure: the whole file again.
         let j = phase_lines(&test_site(true), &o);
-        let jsb: Vec<&(u32, String, String)> = j.iter().filter(|l| l.2.contains("site-bootstrap.yml")).collect();
+        let jsb: Vec<&(u32, String, String)> = j.iter().filter(|l| l.2.contains(" site-bootstrap")).collect();
         assert!(jsb[0].2.ends_with("--skip-tags after-ory"));
         assert!(!jsb[1].2.contains("--skip-tags"), "{}", jsb[1].2);
+        // A joiner's site_id is a play variable: an extra one reaches every host.
+        for l in &jsb {
+            assert!(l.2.contains(" site-bootstrap-for.yml -e bootstrap_site=zagros "), "{}", l.2);
+            assert!(!l.2.contains("-e site_id="), "{}", l.2);
+        }
+        // Ory is staged: joiner node + repset, founder subscription, joiner subscription + reconcile.
+        let pass3 = j.iter().position(|l| l.2.contains("-e ory_spock_wire_subscriptions=false")).unwrap();
+        let mirror = j.iter().position(|l| l.1.contains("founder-side mirror")).unwrap();
+        let again = j.iter().position(|l| l.2.ends_with("spock-mesh-wire.yml --limit zagros_hosts")).unwrap();
+        assert!(pass3 < mirror && mirror < again, "{pass3} {mirror} {again}");
+        assert!(j[mirror].2.contains("\"ory_spock_reconcile_history\":false"), "{}", j[mirror].2);
+        // A founder keeps the plain form.
+        assert!(sb.iter().all(|l| l.2.contains(" site-bootstrap.yml -e site_id=zagros ")), "{sb:?}");
+    }
+
+    /// A joiner's pass 2 runs the generic site-seed-from-peer.yml when the site
+    /// keeps no <site>-seed-from-peer.yml of its own, and the site's own play
+    /// when it does.
+    #[test]
+    fn joiner_seed_falls_back_to_the_generic_play() {
+        let o = Options { env: "e", site: "zagros", profile: None, from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false, check: false };
+        let j = phase_lines(&test_site(true), &o);
+        let seed: Vec<&(u32, String, String)> = j.iter().filter(|l| l.1.starts_with("[joiner] seed-from-peer")).collect();
+        assert_eq!(seed.len(), 1, "{seed:?}");
+        assert_eq!(seed[0].0, 6);
+        assert!(seed[0].2.contains(" site-seed-from-peer.yml -e site_id=zagros"), "{}", seed[0].2);
+        assert!(!seed[0].2.contains("missing "), "no refusal for an absent per-site play: {}", seed[0].2);
+        let f = phase_lines(&test_site(false), &o);
+        assert!(!f.iter().any(|l| l.2.contains("seed-from-peer")), "a founder never seeds");
+        let t = std::env::temp_dir().join(format!("gb-seed-play-{}", std::process::id()));
+        std::fs::create_dir_all(t.join("ops/ansible")).unwrap();
+        assert_eq!(site_play(&t, "zagros", "seed-from-peer.yml"), "site-seed-from-peer.yml");
+        std::fs::write(t.join("ops/ansible/zagros-seed-from-peer.yml"), "---\n").unwrap();
+        assert_eq!(site_play(&t, "zagros", "seed-from-peer.yml"), "zagros-seed-from-peer.yml");
+        assert_eq!(bootstrap_play(&t, "zagros"), "site-bootstrap-for.yml -e bootstrap_site=zagros");
+        std::fs::write(t.join("ops/ansible/zagros-bootstrap.yml"), "---\n").unwrap();
+        assert_eq!(bootstrap_play(&t, "zagros"), "zagros-bootstrap.yml");
+        let _ = std::fs::remove_dir_all(&t);
+    }
+
+    /// goatcore deploys no Forgejo: an obs host on a goatnet that declares no
+    /// pub/sub state forge gets the bot mint as a SKIPPED line, not a step that
+    /// stops the run; a goatnet that declares one gets the mint, stop and all.
+    #[test]
+    fn the_forgejo_bot_mint_skips_when_no_forge_is_declared() {
+        let o = Options { env: "e", site: "zagros", profile: None, from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false, check: false };
+        let mut s = test_site(false);
+        s.obs = true;
+        s.obs_group = "zagros_obs_hosts".into();
+        let tree = tempfile::tempdir().unwrap();
+        let mint = |ev: &[Event]| -> (bool, bool) {
+            let skip = ev.iter().any(|e| matches!(e, Event::Skip { n: 12, label, .. } if label.starts_with("mint the pubsub-state mirror bot")));
+            let step = ev.iter().any(|e| matches!(e, Event::Phase(p) if p.n == 12 && p.stop_after && p.label.starts_with("mint the pubsub-state mirror bot")));
+            (skip, step)
+        };
+        assert_eq!(mint(&plan(tree.path(), &s, &o, "RESUME")), (true, false));
+        let gv = tree.path().join("ops/ansible/group_vars/zagros_hosts");
+        std::fs::create_dir_all(&gv).unwrap();
+        std::fs::write(gv.join("pubsub-state.yml"), "---\n").unwrap();
+        assert_eq!(mint(&plan(tree.path(), &s, &o, "RESUME")), (false, true));
     }
 
     /// The image pull starts after phase 2 and is joined before phase 5, and only
     /// when phase 5 is in the run's range.
     #[test]
     fn the_image_pull_runs_between_phase_2_and_phase_5() {
-        let o = Options { env: "e", site: "zagros", profile: None, from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false };
+        let o = Options { env: "e", site: "zagros", profile: None, from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false, check: false };
         let at = |ev: &[Event]| -> Vec<String> { ev.iter().map(|e| match e {
             Event::Phase(p) => format!("{}", p.n), Event::PullStart { .. } => "pull".into(), Event::PullJoin { at } => format!("join{at}"), _ => "other".into() }).collect() };
         let ev = plan(&repo_root(), &test_site(false), &o, "RESUME");
@@ -1420,6 +1671,26 @@ mod tests {
             let seq = at(&plan(&repo_root(), &test_site(false), &Options { from, to, ..o }, "RESUME"));
             assert!(!seq.iter().any(|x| x == "pull" || x == "join5"), "--from {from} --to {to}: {seq:?}");
         }
+    }
+
+    /// Phase 12's ACL is one ansible-playbook run: the groups play, then the
+    /// cutover in enforce mode (which creates the declared policies before it
+    /// applies the Default-policy action). A joiner applies none.
+    #[test]
+    fn the_declared_acl_is_one_play_run_groups_then_enforce() {
+        let o = Options { env: "e", site: "zagros", profile: None, from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false, check: false };
+        let lines = phase_lines(&test_site(false), &o);
+        let acl: Vec<&(u32, String, String)> = lines.iter().filter(|l| l.2.contains("netbird-acl-")).collect();
+        assert_eq!(acl.len(), 1, "{acl:?}");
+        let cmd = &acl[0].2;
+        assert_eq!(acl[0].0, 12);
+        assert_eq!(cmd.matches("ansible-playbook").count(), 1, "{cmd}");
+        let (b, c) = (cmd.find("netbird-acl-bootstrap.yml").unwrap(), cmd.find("netbird-acl-cutover.yml").unwrap());
+        assert!(b < c, "groups before the cutover: {cmd}");
+        assert!(cmd.contains("-e mode=enforce -e confirm_cutover=YES"), "{cmd}");
+        let gate = lines.iter().position(|l| l.1.starts_with("the live NetBird account holds only the declared ACL")).unwrap();
+        assert!(lines.iter().position(|l| l.2 == *cmd).unwrap() < gate, "the posture gate still follows");
+        assert!(!phase_lines(&test_site(true), &o).iter().any(|l| l.2.contains("netbird-acl-")), "a joiner applies no ACL");
     }
 
     /// The two parts phases 5 and 6 select: every play but the untagged pre-flight
@@ -1556,7 +1827,7 @@ mod tests {
         if !crate::config::checkout_declares_a_deployment() {
             return; // a public clone of goatcore ships no deployment
         }
-        let o = Options { env: "zagros_prod", site: "zagros-prod", profile: None, from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false };
+        let o = Options { env: "zagros_prod", site: "zagros-prod", profile: None, from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false, check: false };
         let r = standup(&repo(), &o).unwrap();
         assert_eq!(r.exit, EXIT_OK);
         let phases: Vec<&str> = r.checks.iter().filter(|c| c.name == "phase").map(|c| c.detail.as_str()).collect();
@@ -1572,9 +1843,47 @@ mod tests {
         assert_eq!(seen, (1..=LAST_PHASE).collect::<Vec<_>>(), "an internet site walks every phase 1..14: {seen:?}");
     }
 
+    /// An obs leg whose play is absent is named before anything runs.
+    #[test]
+    fn a_missing_obs_play_is_named() {
+        let dir = std::env::temp_dir().join(format!("goatbuilder-obs-play-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("ops/ansible")).unwrap();
+        let why = obs_play_missing(&dir).expect("an absent play is reported");
+        assert!(why.contains("utility-host-bootstrap.yml"), "{why}");
+        std::fs::write(dir.join("ops/ansible/utility-host-bootstrap.yml"), "---\n").unwrap();
+        assert_eq!(obs_play_missing(&dir), None);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// The synth guard reads YAML, so it has to agree with what YAML means:
+    /// every truthy spelling enables the step, and a comment does not.
+    #[test]
+    fn the_synth_guard_agrees_with_yaml() {
+        let o = Options { env: "e", site: "zagros", profile: None, from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false, check: false };
+        let lines = phase_lines(&test_site(false), &o);
+        let line = lines.iter().find(|l| l.2.contains("synth-vendors-slot-pool-deploy.yml")).expect("the synth step is planned");
+        assert!(line.2.contains("'^[[:space:]]*synth_vendors_enabled:"), "anchored past comments: {}", line.2);
+        assert!(line.2.contains("(true|True|TRUE|yes|Yes|YES|on|On|ON|1)"), "{}", line.2);
+        assert!(line.2.contains("cannot read group_vars/"), "an unreadable file fails: {}", line.2);
+    }
+
+    /// A play that fails must fail its step, so these two steps may not end in
+    /// the `|| echo` that used to report a failed play as "not configured".
+    #[test]
+    fn optional_plays_do_not_mask_their_own_failure() {
+        let o = Options { env: "e", site: "zagros", profile: None, from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false, check: false };
+        let lines = phase_lines(&test_site(false), &o);
+        for play in ["pubsub-state-mirror-deploy.yml", "zenoh-synth-vendors-slot-pool-deploy.yml"] {
+            let line = lines.iter().find(|l| l.2.contains(play)).unwrap_or_else(|| panic!("{play} is in the plan"));
+            assert!(line.2.contains("; then ") && line.2.ends_with("; fi"), "{}", line.2);
+            assert!(!line.2.contains("|| echo"), "{}", line.2);
+        }
+    }
+
     #[test]
     fn undeclared_environment_is_refused() {
-        let o = Options { env: "nowhere", site: "zagros-prod", profile: None, from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false };
+        let o = Options { env: "nowhere", site: "zagros-prod", profile: None, from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false, check: false };
         assert!(standup(&repo(), &o).is_err());
     }
 
@@ -1608,7 +1917,7 @@ mod tests {
     /// parity gate diffs against goat-standup.sh.
     #[test]
     fn a_goatlite_plan_renders_first_mints_the_ca_and_pauses_for_the_lan_token() {
-        let o = Options { env: "pasture", site: "pasture", profile: Some("lan"), from: 1, to: 14, skip_obs: true, obs_only: false, dry_run: true, parallel: false };
+        let o = Options { env: "pasture", site: "pasture", profile: Some("lan"), from: 1, to: 14, skip_obs: true, obs_only: false, dry_run: true, parallel: false, check: false };
         let ev = plan(Path::new("/r"), &lan_site(true, false), &o, "goatbuilder standup pasture --site pasture");
         let ph = phases_of(&ev);
         assert_eq!((ph[0].n, ph[0].kind, ph[0].label.as_str()), (1, "GATE", "goatlite: render the config surface from goatlite.yaml (idempotent; an edited file is reported, never overwritten)"));
@@ -1638,7 +1947,7 @@ mod tests {
     /// while the token is missing, and never when it is available.
     #[test]
     fn a_lan_site_that_is_not_lite_keeps_its_plan_and_pauses_only_without_the_token() {
-        let o = Options { env: "pasture", site: "pasture", profile: Some("lan"), from: 1, to: 14, skip_obs: true, obs_only: false, dry_run: true, parallel: false };
+        let o = Options { env: "pasture", site: "pasture", profile: Some("lan"), from: 1, to: 14, skip_obs: true, obs_only: false, dry_run: true, parallel: false, check: false };
         let ev = plan(Path::new("/r"), &lan_site(false, false), &o, "RESUME");
         let ph = phases_of(&ev);
         assert_eq!(ph[0].label, "config preflight (fail-closed)");
@@ -1649,6 +1958,25 @@ mod tests {
         assert!(!phases_of(&ev).iter().any(|p| p.n == 11), "the token is available: no pause");
         let ev = plan(Path::new("/r"), &lan_site(true, true), &o, "RESUME");
         assert!(!phases_of(&ev).iter().any(|p| p.n == 11), "lite with the token available: no pause either");
+    }
+
+    /// On a goatlite the acceptance phase is off by default and says how to run
+    /// it; `--check` puts it back; every other goatnet runs it always.
+    #[test]
+    fn a_goatlite_runs_acceptance_only_with_check() {
+        let o = Options { env: "pasture", site: "pasture", profile: Some("lan"), from: 1, to: 14, skip_obs: true, obs_only: false, dry_run: true, parallel: false, check: false };
+        let gate = |ev: &[Event]| phases_of(ev).iter().any(|p| p.n == 13 && p.cmd.contains("run-acceptance.py"));
+        let skip = |ev: &[Event]| ev.iter().find_map(|e| match e { Event::Skip { n: 13, kind, label, lines } => Some((*kind, label.clone(), lines.clone())), _ => None });
+        let lite = plan(Path::new("/r"), &lan_site(true, true), &o, "RESUME");
+        assert!(!gate(&lite), "off by default on a goatlite");
+        let (kind, label, lines) = skip(&lite).expect("the skip is printed");
+        assert_eq!((kind, label.as_str()), ("GATE", "acceptance suite (values derived from config; all applicable rows green)"));
+        assert!(lines[0].contains("--check runs it") && lines[1] == "run it on its own at any time: goatbuilder assay pasture", "{lines:?}");
+        assert!(skip(&plan(Path::new("/r"), &lan_site(true, true), &Options { from: 12, to: 12, ..o }, "RESUME")).is_none(), "outside the range: nothing printed");
+        let checked = plan(Path::new("/r"), &lan_site(true, true), &Options { check: true, ..o }, "RESUME");
+        assert!(gate(&checked) && skip(&checked).is_none(), "--check runs it");
+        let full = plan(Path::new("/r"), &lan_site(false, true), &o, "RESUME");
+        assert!(gate(&full) && skip(&full).is_none(), "a goatnet that is not lite keeps phase 13");
     }
 
     /// Tutorial 1's rehearsal: a new goatnet's founder site converges and

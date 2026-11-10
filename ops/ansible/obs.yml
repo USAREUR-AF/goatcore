@@ -101,8 +101,19 @@
           # Legacy on-mgmt-host obs (grafana+prometheus on the Thor) for sites
           # without a dedicated obs Orin (has_obs_host=false). Container/host
           # names still derive per-site below via site_id.
-          - site_id in ['nova', 'zagros', 'zagros-dev']
-        fail_msg: "This playbook targets on-mgmt-host obs sites (nova, zagros, zagros-dev)."
+          #
+          # A site that takes this play declares it: obs_colocated_site_zones
+          # in the target's group_vars maps the site's own site_id to the DNS
+          # zone its names live under. A target whose group_vars do not carry
+          # the map, or whose site_id is not a key of it, is refused.
+          - obs_colocated_site_zones is defined
+          - site_id in obs_colocated_site_zones
+        fail_msg: >-
+          This playbook targets on-mgmt-host obs sites. A site declares itself
+          one with obs_colocated_site_zones (its site_id mapped to its DNS zone)
+          in the target's group_vars; this target declares
+          {{ obs_colocated_site_zones | default({}) | list | join(', ') | default('none', true) }}
+          and its site_id is {{ site_id | default('undefined') }}.
 
     # The DNS zone must come from the target's own group_vars and must belong to
     # the site being deployed. A pin in this play's `vars:` block outranks group_vars
@@ -111,15 +122,19 @@
     # recap to say so (the play reports `changed`, not `wrong`).
     #
     # Asserting the pair matches is what makes the failure loud: a zone from the
-    # wrong goatnet cannot satisfy both halves at once.
+    # wrong goatnet cannot satisfy both halves at once. The zone must carry the
+    # one obs_colocated_site_zones declares for this site_id, and none it
+    # declares for another site_id.
     - name: Pre-flight | DNS zone comes from this site's group_vars, not another goatnet's
       ansible.builtin.assert:
         that:
           - site_dns_zone is defined
           - public_mgmt_fqdn is defined
-          - (site_id == 'nova') == ('nova.example' in site_dns_zone)
-          - (site_id == 'zagros') == ('zagros.example' in site_dns_zone)
-          - (site_id == 'zagros-dev') == ('zagros-dev.example' in site_dns_zone)
+          - obs_colocated_site_zones[site_id] in site_dns_zone
+          - >-
+            obs_colocated_site_zones | dict2items
+            | rejectattr('key', 'equalto', site_id) | map(attribute='value')
+            | select('in', site_dns_zone) | list | length == 0
           - public_mgmt_fqdn.endswith(site_dns_zone.split('.', 1)[1]) or public_mgmt_fqdn == site_dns_zone
         fail_msg: |
           site_dns_zone / public_mgmt_fqdn do not match site_id={{ site_id }}.
@@ -138,11 +153,11 @@
           - (operator_idp_grafana_client_secret | length) >= 32
         fail_msg: |
           One or more required inputs missing. Set:
-            -e postgres_superuser_password="$NOVA_PG_PASS"
+            -e postgres_superuser_password="${{ _site_env_prefix }}_PG_PASS"
           And in .envrc.local:
-            NOVA_POSTGRES_EXPORTER_PASS (16+ chars)
-            NOVA_GRAFANA_ADMIN_PASS (16+ chars)
-            NOVA_GRAFANA_OIDC_CLIENT_SECRET (32+ chars; openssl rand -hex 32)
+            {{ _site_env_prefix }}_POSTGRES_EXPORTER_PASS (16+ chars)
+            {{ _site_env_prefix }}_GRAFANA_ADMIN_PASS (16+ chars)
+            {{ _site_env_prefix }}_GRAFANA_OIDC_CLIENT_SECRET (32+ chars; openssl rand -hex 32)
 
     - name: Pre-flight | mgmt-host compose is up (postgres-a expected to be healthy)
       ansible.builtin.command: docker inspect -f '{{ "{{" }}.State.Health.Status{{ "}}" }}' postgres-a
@@ -419,7 +434,7 @@
       changed_when: false
       failed_when: _docker_bridge_gw.rc != 0 or (_docker_bridge_gw.stdout | trim | length) == 0
 
-    - name: Render /opt/nova-obs/.env (mode 0600)
+    - name: Render the obs stack .env (mode 0600)
       ansible.builtin.copy:
         dest: "{{ compose_dest_dir }}/.env"
         owner: root
@@ -488,7 +503,7 @@
 
     # ---------------------------------------------------------------------
     # 4c. Identity-reconcile cron — live-vs-declared stray detection (the
-    #     user209x backstop; docs/design/data-access-cop.md §reconcile).
+    #     backstop for an identity nobody declared; docs/design/data-access-cop.md §reconcile).
     # ---------------------------------------------------------------------
     # reconcile.py queries the portal's already-computed /api/access/roster and
     # writes goat_identity_reconcile.prom into the same textfile dir. It needs a
@@ -707,12 +722,12 @@
             Prometheus: http://127.0.0.1:9192   (SSH tunnel from operator laptop)
 
           Next steps if not already done:
-            1. Confirm grafana.nova.* in ops/dns/nova/mesh-hosts +
-               ansible-playbook -i inventory/mgmt-hosts-mesh.ini mesh-coredns.yml
-               (mesh CoreDNS resolves grafana.nova.* for netbird peers; no public DNS)
+            1. Confirm {{ grafana_server_domain }} in this goatnet's mesh-hosts zone
+               under ops/dns/, then re-run the mesh CoreDNS play
+               (mesh CoreDNS resolves the name for netbird peers; no public DNS)
             2. ansible-playbook -i inventory/mgmt-hosts.ini traefik-acme.yml
-               (mints LE cert with grafana.nova.* SAN via DNS-01 ACME, adds router)
-            3. Visit Grafana, click "Sign in with Ory (nova)" → Kratos login.
+               (mints LE cert with the {{ grafana_server_domain }} SAN via DNS-01 ACME, adds router)
+            3. Visit Grafana, click "Sign in with Ory" → Kratos login.
 
   handlers:
     # F-137: prometheus.yml is bind-mounted as a single file. Any

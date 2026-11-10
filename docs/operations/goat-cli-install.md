@@ -104,7 +104,7 @@ Vendor rollout: [`goat-cli-vendor-rollout.md`](goat-cli-vendor-rollout.md).
 
 ```bash
 # Pick latest. Substitute the version + OS/arch for your laptop.
-VERSION=goat-cli-v0.5.14
+VERSION=goat-cli-v0.5.15
 OS=$(uname -s | tr '[:upper:]' '[:lower:]')   # darwin | linux
 ARCH=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
 
@@ -127,7 +127,7 @@ aggregate `SHA256SUMS`. For air-gapped or
 high-assurance installs, verify before exec:
 
 ```bash
-VERSION=goat-cli-v0.5.14
+VERSION=goat-cli-v0.5.15
 OS=$(uname -s | tr '[:upper:]' '[:lower:]')
 ARCH=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
 
@@ -194,7 +194,7 @@ The repo is private, so download with the GitHub CLI (`gh auth login` first).
 Command Prompt:
 
 ```bat
-set "VERSION=goat-cli-v0.5.14"
+set "VERSION=goat-cli-v0.5.15"
 gh release download %VERSION% --repo USAREUR-AF/goatcore --pattern goat-windows-amd64.exe --output "%USERPROFILE%\goat.exe" --clobber
 "%USERPROFILE%\goat.exe" --version
 ```
@@ -202,7 +202,7 @@ gh release download %VERSION% --repo USAREUR-AF/goatcore --pattern goat-windows-
 PowerShell:
 
 ```powershell
-$VERSION = "goat-cli-v0.5.14"
+$VERSION = "goat-cli-v0.5.15"
 gh release download $VERSION --repo USAREUR-AF/goatcore --pattern goat-windows-amd64.exe --output "$env:USERPROFILE\goat.exe" --clobber
 & "$env:USERPROFILE\goat.exe" --version
 ```

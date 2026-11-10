@@ -82,6 +82,15 @@ WAIVERS=(
   "ops/ansible/group_vars/integdev_hosts/vars.yml:*"       # integration rig; floats to surface breakage early
   "ops/ansible/group_vars/goat_client_assay_hosts/vars.yml:*"  # assay rig pins per-run, deliberately unset
 
+  # The mgmt-host-bootstrap CLI. Its floating tag was the fallback written in
+  # ops/compose/mgmt-host/docker-compose.yml; that file now falls back to the
+  # public build and these two files carry the earlier reference for the host
+  # groups outside the pin table, so no host runs a different image. A digest
+  # of record is a value change with its own deploy; these lines go when it
+  # lands.
+  "ops/ansible/group_vars/mgmt_hosts.yml:mgmt_host_bootstrap_image"
+  "ops/ansible/group_vars/goat_client_assay_hosts/oss-generic-fin-compose-mgmt.yml:mgmt_host_bootstrap_image"
+
 )
 
 fail=0

@@ -1,0 +1,345 @@
+# Publishes the grant-crypto SDK (ADR 1106) on a tag grant-crypto-sdk-v<semver>,
+# e.g. grant-crypto-sdk-v0.1.0. workflow_dispatch builds and checks every asset
+# without publishing. The goat-get role serves exactly these assets at
+# get.<site>/sdk/ (goat_get_sdk_assets); a version bump is goat_get_sdk_release_tag.
+#
+# Assets, per release (<ver> is the tag's semver):
+#   grant-crypto-sdk-<ver>-src.tar.gz     the wire spec, the shared conformance
+#                       vectors and the SDK workspace, re-rooted to grant-crypto/
+#                       so the SDK's tests find ../../envelope/testdata/vectors
+#                       from inside the tarball; the job unpacks it and runs
+#                       cargo test there, so a tarball that cannot test itself
+#                       is never published
+#   grant-crypto-sdk-docs-<ver>.tar.gz    the SDK's documentation site
+#                       (ops/grant-crypto/sdk/docs/site), re-rooted to docs/
+#   grant-crypto-capi-<os>-<arch>.tar.gz  the C ABI cdylib + staticlib + header
+#                       for linux/darwin x amd64/arm64; darwin-amd64 is
+#                       cross-compiled on Apple Silicon (a library: nothing to
+#                       run), the dylib ad-hoc signed and not notarized
+#   <asset>.sha256      one per tarball
+#   SHA256SUMS          every tarball's digest
+#   SHA256SUMS.cosign-bundle  a keyless cosign signature over SHA256SUMS, made
+#                       under this workflow's GitHub OIDC identity
+name: grant-crypto-sdk-release
+
+on:
+  push:
+    tags:
+      - 'grant-crypto-sdk-v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  nominator:
+    name: the tag is on main and pushed by a repository admin
+    if: github.ref_type == 'tag' && startsWith(github.ref_name, 'grant-crypto-sdk-v')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: The pusher holds the admin role
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          role=$(gh api "repos/${GITHUB_REPOSITORY}/collaborators/${GITHUB_ACTOR}/permission" --jq .role_name 2>/dev/null || echo unknown)
+          echo "${GITHUB_ACTOR} holds role: ${role}"
+          if [ "$role" != admin ]; then
+            echo "::error::${GITHUB_ACTOR} holds the '${role}' role; only a repository admin cuts a release. Nothing is built for ${GITHUB_REF_NAME}."
+            exit 1
+          fi
+      - name: The tagged commit is on main
+        run: |
+          set -euo pipefail
+          git fetch -q origin main
+          if ! git merge-base --is-ancestor "${GITHUB_SHA}" origin/main; then
+            echo "::error::${GITHUB_REF_NAME} points at ${GITHUB_SHA}, which is not on main. Nothing is built."
+            exit 1
+          fi
+
+  version:
+    name: the version the asset names carry
+    needs: [nominator]
+    if: ${{ !cancelled() && (needs.nominator.result == 'success' || needs.nominator.result == 'skipped') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+    steps:
+      - id: ver
+        # grant-crypto-sdk-v0.1.0 -> 0.1.0. A dispatch has no tag and builds
+        # under a dev marker; only a tag publishes.
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_REF_TYPE}" = tag ]; then
+            ver="${GITHUB_REF_NAME#grant-crypto-sdk-v}"
+          else
+            ver="0.0.0-dev.${GITHUB_SHA::7}"
+          fi
+          echo "version=$ver" >> "$GITHUB_OUTPUT"
+          echo "version: $ver" >> "$GITHUB_STEP_SUMMARY"
+
+  source-tarball:
+    name: source tarball, tested from the tarball
+    needs: [version]
+    # The nominator is skipped on a dispatch; version then runs and so does this.
+    if: ${{ !cancelled() && needs.version.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - name: git archive the spec, the vectors and the SDK; re-root to grant-crypto/
+        id: stage
+        # git archive carries tracked files only, so no target/ or node_modules/.
+        env:
+          VER: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          out="grant-crypto-sdk-${VER}-src.tar.gz"
+          rm -rf stage out-tree && mkdir -p stage out-tree dist
+          git archive --format=tar HEAD \
+            ops/grant-crypto/WIRE-FORMAT.md \
+            ops/grant-crypto/envelope/testdata/vectors \
+            ops/grant-crypto/sdk \
+            | tar -x -C stage
+          mv stage/ops/grant-crypto out-tree/grant-crypto
+          tar czf "dist/$out" -C out-tree grant-crypto
+          (cd dist && sha256sum "$out" > "$out.sha256")
+          echo "tarball=$out" >> "$GITHUB_OUTPUT"
+          echo "- \`$out\` sha256 \`$(awk '{print $1}' "dist/$out.sha256")\`" >> "$GITHUB_STEP_SUMMARY"
+      - name: Unpack the tarball and run cargo test inside grant-crypto/sdk
+        env:
+          TARBALL: dist/${{ steps.stage.outputs.tarball }}
+        run: |
+          set -euo pipefail
+          rm -rf verify && mkdir -p verify
+          tar xzf "$TARBALL" -C verify
+          test -f verify/grant-crypto/envelope/testdata/vectors/vectors.json \
+            || { echo "::error::the conformance vectors are missing from the tarball"; exit 1; }
+          (cd verify/grant-crypto/sdk && cargo test --locked)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: grant-crypto-sdk-src
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 30
+
+  docs:
+    name: documentation site tarball
+    needs: [version]
+    # The nominator is skipped on a dispatch; version then runs and so does this.
+    if: ${{ !cancelled() && needs.version.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: git archive the docs site; re-root to docs/
+        # Re-rooted so the goat-get role unpacks it into www/sdk/ and the pages
+        # land at www/sdk/docs/ (get.<site>/sdk/docs/).
+        env:
+          VER: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          out="grant-crypto-sdk-docs-${VER}.tar.gz"
+          rm -rf stage-docs docs-tree && mkdir -p stage-docs docs-tree dist
+          git archive --format=tar HEAD ops/grant-crypto/sdk/docs/site | tar -x -C stage-docs
+          test -f stage-docs/ops/grant-crypto/sdk/docs/site/index.html \
+            || { echo "::error::the docs site has no index.html"; exit 1; }
+          mv stage-docs/ops/grant-crypto/sdk/docs/site docs-tree/docs
+          tar czf "dist/$out" -C docs-tree docs
+          (cd dist && sha256sum "$out" > "$out.sha256")
+          echo "- \`$out\` sha256 \`$(awk '{print $1}' "dist/$out.sha256")\`" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: grant-crypto-sdk-docs
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 30
+
+  capi:
+    name: capi ${{ matrix.os }}-${{ matrix.arch }}
+    needs: [version]
+    # The nominator is skipped on a dispatch; version then runs and so does this.
+    if: ${{ !cancelled() && needs.version.result == 'success' }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            os: linux
+            arch: amd64
+            rust_target: x86_64-unknown-linux-gnu
+            lib: libgrant_crypto_capi.so
+          - runner: ubuntu-24.04-arm
+            os: linux
+            arch: arm64
+            rust_target: aarch64-unknown-linux-gnu
+            lib: libgrant_crypto_capi.so
+          - runner: macos-15
+            os: darwin
+            arch: arm64
+            rust_target: aarch64-apple-darwin
+            lib: libgrant_crypto_capi.dylib
+          - runner: macos-15
+            os: darwin
+            arch: amd64
+            rust_target: x86_64-apple-darwin
+            lib: libgrant_crypto_capi.dylib
+    defaults:
+      run:
+        shell: bash
+        working-directory: ops/grant-crypto/sdk
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.95.0
+        with:
+          targets: ${{ matrix.rust_target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ops/grant-crypto/sdk
+          key: sdk-release-${{ matrix.rust_target }}
+      - name: cargo build --release --locked -p grant-crypto-capi
+        env:
+          RUST_TARGET: ${{ matrix.rust_target }}
+        run: cargo build --release --locked -p grant-crypto-capi --target "$RUST_TARGET"
+      - name: Ad-hoc sign the macOS dylib
+        # The linker's own ad-hoc signature is fragile under a loader's trust
+        # evaluation; a codesign ad-hoc signature is not. The .a staticlib is an
+        # ar archive, not a Mach-O, and ships as built.
+        if: runner.os == 'macOS'
+        env:
+          LIB: target/${{ matrix.rust_target }}/release/${{ matrix.lib }}
+        run: |
+          set -euo pipefail
+          codesign --force --sign - "$LIB"
+          codesign --verify --strict --verbose=2 "$LIB"
+      - name: Stage the tarball (cdylib + staticlib + header + INSTALL.txt)
+        env:
+          NAME: grant-crypto-capi-${{ matrix.os }}-${{ matrix.arch }}
+          RELDIR: target/${{ matrix.rust_target }}/release
+          LIB: ${{ matrix.lib }}
+        run: |
+          set -euo pipefail
+          rm -rf "$NAME" && mkdir -p "$NAME/include" "$GITHUB_WORKSPACE/dist"
+          cp "$RELDIR/$LIB" "$NAME/"
+          cp "$RELDIR/libgrant_crypto_capi.a" "$NAME/"
+          cp capi/include/grant_crypto.h "$NAME/include/"
+          cat > "$NAME/INSTALL.txt" <<EOF
+          grant-crypto SDK: prebuilt C ABI library (ADR 1106)
+
+          Contents
+            $LIB    the shared library (cdylib), loaded at run time
+            libgrant_crypto_capi.a    the static library, linked at build time (Go cgo)
+            include/grant_crypto.h    the versioned C ABI header (cbindgen-generated)
+
+          Key material never crosses this interface as bytes: only opaque handles
+          and wire JSON. Core and ABI ship together from one tag; there is no
+          cross-version ABI promise (gc_abi_version()).
+
+          From a language binding
+            Go       point the cgo LDFLAGS search path at this directory (it links
+                     libgrant_crypto_capi.a statically), then go build.
+            Python   export GRANT_CRYPTO_CAPI_LIB=/path/to/this/directory
+            TS/Node  export GRANT_CRYPTO_CAPI_LIB=/path/to/$LIB
+
+          Each binding's README in the source tarball (grant-crypto/sdk/bindings/<lang>/)
+          has the full quickstart. Check this tarball against its .sha256 or the
+          release's SHA256SUMS before use.
+          EOF
+          tar czf "$GITHUB_WORKSPACE/dist/$NAME.tar.gz" "$NAME"
+          cd "$GITHUB_WORKSPACE/dist"
+          if command -v sha256sum >/dev/null; then sum=$(sha256sum "$NAME.tar.gz" | awk '{print $1}'); else sum=$(shasum -a 256 "$NAME.tar.gz" | awk '{print $1}'); fi
+          echo "$sum  $NAME.tar.gz" > "$NAME.tar.gz.sha256"
+          echo "- \`$NAME.tar.gz\` sha256 \`$sum\`" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: grant-crypto-capi-${{ matrix.os }}-${{ matrix.arch }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 30
+
+  checksums:
+    name: SHA256SUMS, signed with cosign (keyless)
+    needs: [version, source-tarball, docs, capi]
+    if: ${{ !cancelled() && needs.source-tarball.result == 'success' && needs.docs.result == 'success' && needs.capi.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: SHA256SUMS, and the set the goat-get role serves
+        env:
+          VER: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          cat artifacts/*.sha256 | sort -k 2 > SHA256SUMS
+          (cd artifacts && sha256sum -c ../SHA256SUMS)
+          want="grant-crypto-capi-darwin-amd64.tar.gz
+          grant-crypto-capi-darwin-arm64.tar.gz
+          grant-crypto-capi-linux-amd64.tar.gz
+          grant-crypto-capi-linux-arm64.tar.gz
+          grant-crypto-sdk-docs-${VER}.tar.gz
+          grant-crypto-sdk-${VER}-src.tar.gz"
+          got="$(awk '{print $2}' SHA256SUMS)"
+          if [ "$(printf '%s\n' "$want" | sed 's/^ *//' | sort)" != "$(printf '%s\n' "$got" | sort)" ]; then
+            echo "::error::the built set differs from the set goat_get_sdk_assets names"
+            diff <(printf '%s\n' "$want" | sed 's/^ *//' | sort) <(printf '%s\n' "$got" | sort) || true
+            exit 1
+          fi
+          { echo '```'; cat SHA256SUMS; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - uses: sigstore/cosign-installer@v3
+      - name: Sign SHA256SUMS, then verify the signature
+        run: |
+          set -euo pipefail
+          cosign sign-blob --yes --bundle SHA256SUMS.cosign-bundle SHA256SUMS
+          cosign verify-blob --bundle SHA256SUMS.cosign-bundle \
+            --certificate-identity-regexp "^https://github.com/${GITHUB_REPOSITORY}/" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: grant-crypto-sdk-checksums
+          path: |
+            SHA256SUMS
+            SHA256SUMS.cosign-bundle
+          if-no-files-found: error
+          retention-days: 30
+
+  release:
+    name: attach the assets to the release
+    needs: [source-tarball, docs, capi, checksums]
+    if: ${{ !cancelled() && github.ref_type == 'tag' && startsWith(github.ref_name, 'grant-crypto-sdk-v') && needs.checksums.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+      - run: ls -la release-assets/
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: release-assets/*
+          body_path: .github/release-notes/grant-crypto-sdk.md
+          generate_release_notes: true
+          fail_on_unmatched_files: true

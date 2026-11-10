@@ -54,7 +54,7 @@ func (s *Server) apiOnboardBatch(w http.ResponseWriter, r *http.Request) {
 	}
 	env := strings.TrimSpace(req.Env)
 	if env != "" && !envPattern.MatchString(env) {
-		onboardError(w, http.StatusBadRequest, "bad_env", "env must be a lowercase goatnet slug (e.g. zagros)")
+		onboardError(w, http.StatusBadRequest, "bad_env", "env must be a lowercase goatnet slug (e.g. galaxy)")
 		return
 	}
 	records, err := parseBatch(req.Content, req.Format)

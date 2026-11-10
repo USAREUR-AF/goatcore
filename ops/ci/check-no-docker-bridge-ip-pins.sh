@@ -155,7 +155,7 @@ self_test() {
   printf '%s\n' '# the exporter binds 172.17.0.1 on the host' 'key: value  # reachable at 172.17.0.1' > "$fx/ok/comments.yml"
   printf '%s\n' '{# was 172.18.0.5 before host-gateway #}' 'x: 1' > "$fx/ok/jinja-comment.j2"
   printf '%s\n' "gateway: 172.20.0.1   # ${MARKER} this line defines the network" > "$fx/ok/ipam.yml"
-  printf '%s\n' 'a: 10.0.0.5' 'b: 203.0.113.243' 'c: 198.51.100.32' 'd: 1172.18.0.5' > "$fx/ok/other-ranges.yml"
+  printf '%s\n' 'a: 10.0.0.5' 'b: 172.15.0.1' 'c: 172.32.0.1' 'd: 1172.18.0.5' > "$fx/ok/other-ranges.yml"  # oss-allow: the two addresses either side of 172.16.0.0/12, the boundary the guard's regex must respect
 
   local f
   for f in "$fx"/bad/*; do

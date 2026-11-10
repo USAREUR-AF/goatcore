@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-// MeshProbe checks Netbird mesh status and ICMP reachability to the NETHOST.
+// MeshProbe checks Netbird mesh status and ICMP reachability to the mesh host.
 // Only runs in "full" mode.
 type MeshProbe struct{}
 
@@ -150,29 +150,29 @@ func parsePeerCounts(output string) (total, connected int) {
 	return total, connected
 }
 
-// checkICMP pings the NETHOST mesh IP.
+// checkICMP pings the mesh host's IP.
 func (p *MeshProbe) checkICMP(ctx context.Context, cfg *Config) Result {
-	if cfg.NETHOSTMeshIP == "" {
+	if cfg.HostMeshIP == "" {
 		return Result{
 			Category:  CatMesh,
-			Name:      "icmp-nethost",
+			Name:      "icmp-mesh-host",
 			Status:    Skip,
-			Detail:    "no NETHOST mesh IP configured",
+			Detail:    "no mesh host IP configured",
 			Timestamp: time.Now().UTC(),
 		}
 	}
 
 	start := time.Now()
-	cmd := exec.CommandContext(ctx, "ping", "-c", "1", "-W", "3", cfg.NETHOSTMeshIP)
+	cmd := exec.CommandContext(ctx, "ping", "-c", "1", "-W", "3", cfg.HostMeshIP)
 	out, err := cmd.CombinedOutput()
 	elapsed := time.Since(start)
 
 	if err != nil {
 		return Result{
 			Category:  CatMesh,
-			Name:      "icmp-nethost",
+			Name:      "icmp-mesh-host",
 			Status:    Fail,
-			Detail:    fmt.Sprintf("ping %s failed: %v", cfg.NETHOSTMeshIP, err),
+			Detail:    fmt.Sprintf("ping %s failed: %v", cfg.HostMeshIP, err),
 			Timestamp: time.Now().UTC(),
 		}
 	}
@@ -189,9 +189,9 @@ func (p *MeshProbe) checkICMP(ctx context.Context, cfg *Config) Result {
 
 	return Result{
 		Category:  CatMesh,
-		Name:      "icmp-nethost",
+		Name:      "icmp-mesh-host",
 		Status:    Pass,
-		Detail:    fmt.Sprintf("ping %s: %.1fms", cfg.NETHOSTMeshIP, rttMs),
+		Detail:    fmt.Sprintf("ping %s: %.1fms", cfg.HostMeshIP, rttMs),
 		LatencyMs: rttMs,
 		Timestamp: time.Now().UTC(),
 	}

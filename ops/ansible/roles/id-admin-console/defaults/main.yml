@@ -35,12 +35,22 @@ id_admin_console_envfile: /opt/mgmt-host/id-admin-console.env
 # `latest` is intentionally NOT pinned in this default; deploy_history.yml
 # carries the canonical pinned digest.
 #
-# WHO READS THIS DEFAULT: only goatnets ops/pins/fleet-pins.yaml does NOT
-# govern; a governed goatnet gets a generated pins.yml that overrides it. For
-# an ungoverned goatnet this line is load-bearing even though it reads like a
-# seed value, so bump it in lockstep with every fleet move. If it lags,
-# re-running that goatnet's deploy downgrades its console.
-id_admin_console_image: "ghcr.io/{{ ghcr_org }}/goat-id-console@sha256:60401f3cff3e84d1de92735294ed70a818094f8c267284a1f427cda59fc517c8"
+# id_admin_console_image has NO role default. The pin of record is the
+# `id-admin-console` row of ops/pins/fleet-pins.yaml, rendered into
+# group_vars/<member>/pins.yml. A goatnet the pin table does NOT govern takes
+# the pin group_vars/all.yml carries, so bump that line in lockstep with every
+# fleet move. If it lags, re-running that goatnet's deploy downgrades its
+# console.
+
+# The image the compose overlay names when ID_ADMIN_CONSOLE_IMAGE is absent from
+# /opt/mgmt-host/.env (a raw hand-run; the role always writes the variable).
+id_admin_console_image_compose_fallback: "{{ id_admin_console_image }}"
+
+# SPIFFE trust domain of the onboard-runner client id the mTLS onboard listener
+# admits, used when the goatnet sets neither
+# id_admin_console_mtls_onboard_allowed_client_ids nor spire_trust_domain.
+# Same derivation as the spire role's own default.
+id_admin_console_onboard_trust_domain_fallback: "{{ site_id }}.{{ site_dns_zone }}"
 
 # Platform selector for the multi-arch LIST-digest pin above. `docker
 # compose up` on a digest-pinned multi-arch reference does NOT reliably
@@ -257,6 +267,14 @@ id_admin_console_notify_relay_health_url: ""
 # onboards people (turnkey standup step).
 id_admin_console_notify_goatnet_tagline: ""
 id_admin_console_notify_goatnet_purpose: ""
+# Two addresses the welcome package prints, stated per goatnet in group_vars.
+# platform_repo_url: the source repository the operator section links to (the
+# admin guide, the git clone line) and the membership page's warrant-procedure
+# link. notify_collab_url: the collaboration environment's front door named in
+# the welcome package's collab block. Empty = the variable is rendered empty
+# and the console uses its built-in value.
+id_admin_console_platform_repo_url: ""
+id_admin_console_notify_collab_url: ""
 
 # Comma-separated addresses emailed when a candidate clears the sponsor gate and
 # is waiting on the ADMIN gate. Blank = off, and the admin queue stays pull-only.

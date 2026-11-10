@@ -1,0 +1,46 @@
+#!/bin/sh
+# {{ ansible_managed }}
+#
+# Create or remove one carrier of a peering forwarder, and load the forwarder's one
+# nftables table. Driven by goat-peering-forwarder@<interface>.service, which reads
+# {{ peering_forwarder_config_dir }}/<interface>.env. The carrier has exactly one
+# peer, the edge, which dials it; this side sets no endpoint.
+set -eu
+
+: "${WG_IFNAME:?WG_IFNAME not set}"
+
+case "${1:-up}" in
+  up)
+    : "${WG_KEY_FILE:?WG_KEY_FILE not set}"
+    : "${WG_LISTEN_PORT:?WG_LISTEN_PORT not set}"
+    : "${WG_LINK_ADDR:?WG_LINK_ADDR not set}"
+    : "${WG_PEER_KEY:?WG_PEER_KEY not set}"
+    : "${WG_PEER_ALLOWED:?WG_PEER_ALLOWED not set}"
+    ip link show "$WG_IFNAME" >/dev/null 2>&1 || ip link add "$WG_IFNAME" type wireguard
+    # The key goes in through a pipe, not as a path. Ubuntu's AppArmor profile for
+    # /usr/bin/wg (26.04 onward) lets wg open key files under /etc/wireguard only, and
+    # `wg set private-key <path>` is refused anywhere else ("fopen: Permission denied").
+    # This shell reads the file; wg reads the pipe.
+    [ -r "$WG_KEY_FILE" ] || { echo "$WG_KEY_FILE is not readable" >&2; exit 1; }
+    cat "$WG_KEY_FILE" | wg set "$WG_IFNAME" private-key /dev/stdin listen-port "$WG_LISTEN_PORT"
+    [ -z "${WG_MTU:-}" ] || ip link set "$WG_IFNAME" mtu "$WG_MTU"
+    ip addr replace "$WG_LINK_ADDR" dev "$WG_IFNAME"
+    # One peer, ever: the edge. A key left over from an earlier edge is an open door.
+    for p in $(wg show "$WG_IFNAME" peers); do
+      [ "$p" = "$WG_PEER_KEY" ] || wg set "$WG_IFNAME" peer "$p" remove
+    done
+    wg set "$WG_IFNAME" peer "$WG_PEER_KEY" allowed-ips "$WG_PEER_ALLOWED"
+    # The table covers every peering on this host; `-f` replaces only that table.
+    [ -z "${WG_NFT_FILE:-}" ] || nft -f "$WG_NFT_FILE"
+    ip link set "$WG_IFNAME" up
+    ;;
+  down)
+    # The table stays: with the carrier gone, nothing it admits has a route, and the
+    # public interface stays closed.
+    ip link del "$WG_IFNAME" >/dev/null 2>&1 || true
+    ;;
+  *)
+    echo "usage: $0 {up|down}" >&2
+    exit 2
+    ;;
+esac

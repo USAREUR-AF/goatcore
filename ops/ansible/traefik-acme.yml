@@ -30,8 +30,8 @@
 #      compose-watch allowlist so the watcher can revive Traefik with
 #      the overlay if the container ever disappears. The first patch
 #      is upstream-in-tree (re-runnable role), the second is the
-#      `mgmt_host_compose_watch_services` group_var which nova_hosts/vars.yml
-#      owns.
+#      `mgmt_host_compose_watch_services` group_var which the site's
+#      vars.yml owns.
 #   5. Brings up Traefik against the merged stack via
 #      `docker compose -f docker-compose.yml -f docker-compose.acme.yml
 #      up -d traefik`.
@@ -109,6 +109,17 @@
     # reaches the host only through compose env interpolation, never as
     # plaintext substituted into a rendered file.
     cf_api_token: "{{ cloudflare_api_token | default('', true) }}"
+    # The certificate this host's Traefik serves for SNI {{ item }}: exit 0
+    # when it is not Traefik's default and covers the name; else the reason.
+    _served_cert_check: |
+      set -o pipefail
+      pem=$(timeout 10 openssl s_client -connect 127.0.0.1:{{ traefik_acme_served_check_port | default(443) }} -servername '{{ item }}' </dev/null 2>/dev/null | openssl x509 2>/dev/null) \
+        || { echo "no certificate served for {{ item }}"; exit 1; }
+      iss=$(printf '%s\n' "$pem" | openssl x509 -noout -issuer)
+      case "$iss" in *"TRAEFIK DEFAULT"*) echo "TRAEFIK DEFAULT CERT for {{ item }}"; exit 1;; esac
+      printf '%s\n' "$pem" | openssl x509 -noout -checkhost '{{ item }}' | grep -q 'does match' \
+        || { echo "served certificate ($iss) does not cover {{ item }}"; exit 1; }
+      echo "{{ item }}: $iss"
 
   pre_tasks:
     # #390: ACME routes the public_mgmt_fqdn hostname family, while Ory
@@ -154,9 +165,9 @@
 
           It defaults to `cloudflare_api_token` from the TARGET GROUP's
           group_vars, which every ACME group declares as a lookup of its own
-          zone's token, e.g. in group_vars/zagros_hosts/vars.yml:
+          zone's token, e.g. in group_vars/<site>_hosts/vars.yml:
 
-            cloudflare_api_token: "{{ '{{' }} lookup('env', 'CLOUDFLARE_API_TOKEN_ZAGROS') {{ '}}' }}"
+            cloudflare_api_token: "{{ '{{' }} lookup('env', 'CLOUDFLARE_API_TOKEN_<SITE>') {{ '}}' }}"
 
           Empty means one of two things: the group has no `cloudflare_api_token`
           (declare it), or the CLOUDFLARE_API_TOKEN_* variable it names is not
@@ -276,6 +287,9 @@
       ansible.builtin.import_tasks: tasks/pgbackrest-config-preflight.yml
       tags: [always]
 
+    - name: Write the Traefik certificate directory to .env before the compose file
+      ansible.builtin.import_tasks: tasks/mgmt-host-tls-root-env.yml
+
     - name: Re-sync base mgmt-host docker-compose.yml (canonical at ops/compose/mgmt-host/)
       ansible.builtin.copy:
         src: ../compose/mgmt-host/docker-compose.yml
@@ -321,14 +335,14 @@
     # clients against the OFFLINE dev CA — the same root that signs this
     # goatnet's zenoh leaves, already on this host at zenoh_door_client_ca_src
     # (default /etc/<zenoh_stack>/tls/ca-root-cert.pem). Copy it (public
-    # material, remote_src) into /etc/goat/tls/, which the base
+    # material, remote_src) into the host TLS directory, which the base
     # compose already mounts read-only into the Traefik container — no new
     # mount, no secret transfer. Must land BEFORE the dynamic render so the
     # file-watcher reload finds the CA file.
     # =====================================================================
-    - name: Ensure /etc/goat/tls exists (zenoh-door client-CA home)
+    - name: Ensure the host TLS directory exists (zenoh-door client-CA home)
       ansible.builtin.file:
-        path: /etc/goat/tls
+        path: "{{ goat_host_etc_dir | default('/etc/goat') }}/tls"
         state: directory
         owner: root
         group: root
@@ -338,7 +352,7 @@
     - name: Install zenoh-door client-CA for Traefik mTLS (env-doors Tier 2)
       ansible.builtin.copy:
         src: "{{ zenoh_door_client_ca_src }}"
-        dest: /etc/goat/tls/zenoh-door-client-ca.pem
+        dest: "{{ goat_host_etc_dir | default('/etc/goat') }}/tls/zenoh-door-client-ca.pem"
         remote_src: true
         owner: root
         group: root
@@ -353,8 +367,10 @@
         src: traefik-acme/mgmt-dynamic.yml.j2
         dest: "{{ dynamic_dir }}/mgmt.yml"
 
-    # The route filename is mgmt.yml; an older deployment may still hold
-    # nova-mgmt.yml. Traefik's file provider reads the whole directory, so leaving
+    # The route filename is mgmt.yml; an older deployment may still hold the
+    # file under its earlier name, which the goatnet declares as
+    # traefik_acme_dynamic_filename_legacy (unset: nothing to remove).
+    # Traefik's file provider reads the whole directory, so leaving
     # the old file behind is not inert: every router in it would be declared a
     # second time, on the same Host() rules, including the two enrollment
     # routers. Removed here, in the same play that renders the replacement, so
@@ -365,11 +381,14 @@
     # middleware flag already depends on.
     - name: Remove the pre-rename mgmt route file
       ansible.builtin.file:
-        path: "{{ dynamic_dir }}/nova-mgmt.yml"
+        path: "{{ dynamic_dir }}/{{ traefik_acme_dynamic_filename_legacy }}"
         state: absent
         owner: root
         group: root
         mode: "0644"
+      when:
+        - traefik_acme_dynamic_filename_legacy | default('') | length > 0
+        - traefik_acme_dynamic_filename_legacy != 'mgmt.yml'
       register: _dynamic_rendered
 
     # =====================================================================
@@ -499,7 +518,7 @@
     # =====================================================================
     # --no-deps: traefik depends_on management-a, which depends on postgres-a.
     # Without it, a base compose file that changed recreates that whole chain:
-    # on 2026-11-03 this task restarted Postgres on zagros-prod A and started the
+    # on 2026-11-03 this task restarted Postgres on a production router A and started the
     # stopped standby stack on Router-B. Only Traefik is meant to move here.
     - name: Recreate Traefik with the ACME overlay
       ansible.builtin.command:
@@ -542,6 +561,10 @@
       delay: 10
       until: _acme_ready.rc == 0
       changed_when: false
+      # Not fatal here: the served-certificate check below judges every
+      # declared name, this one included, and repairs a stale DNS-01 record
+      # before it fails.
+      failed_when: false
 
     - name: Show Traefik logs (last 50 lines) for the audit trail
       ansible.builtin.command:
@@ -552,6 +575,99 @@
     - name: Print Traefik logs
       ansible.builtin.debug:
         var: _traefik_logs.stdout_lines
+
+    # =====================================================================
+    # 6b. Every declared name is served with its own certificate, not
+    #     Traefik's default. A DNS-01 order that failed part-way can leave
+    #     `_acme-challenge.<name>` TXT behind; Cloudflare then refuses the
+    #     retry ("An identical record already exists") and Traefik keeps the
+    #     default certificate for that name. Repair once: delete the stale
+    #     records with this play's token, restart Traefik, re-check. Still
+    #     default fails the play naming the name.
+    #
+    #     Names: public_mgmt_fqdn, plus signal_federation_ingress_fqdn when
+    #     signal_federation_ingress_enabled; traefik_acme_verify_names
+    #     replaces the list.
+    # =====================================================================
+    - name: Served certificate | the names this host must serve with its own certificate
+      ansible.builtin.set_fact:
+        _acme_names: >-
+          {{ (traefik_acme_verify_names | default(
+                [public_mgmt_fqdn]
+                + ([signal_federation_ingress_fqdn]
+                   if (signal_federation_ingress_enabled | default(false) | bool)
+                      and (signal_federation_ingress_fqdn | default('', true) | length) > 0
+                   else []), true))
+             | map('trim') | select | unique | list }}
+
+    - name: Served certificate | read each name's certificate on this host's :443
+      ansible.builtin.shell:
+        cmd: "{{ _served_cert_check }}"
+        executable: /bin/bash
+      loop: "{{ _acme_names }}"
+      register: _served
+      changed_when: false
+      failed_when: false
+      retries: 12
+      delay: 10
+      until: _served.rc == 0
+
+    - name: Served certificate | names on the default certificate
+      ansible.builtin.set_fact:
+        _acme_default: "{{ _served.results | rejectattr('rc', 'equalto', 0) | map(attribute='item') | list }}"
+
+    - name: Served certificate | repair a stale DNS-01 record once
+      when: _acme_default | length > 0
+      block:
+        - name: Served certificate | delete stale _acme-challenge TXT records (Cloudflare API, controller)
+          ansible.builtin.command:
+            argv: "{{ ['python3', playbook_dir ~ '/../scripts/cf-acme-challenge-clean.py'] + _acme_default }}"
+          environment:
+            CF_DNS_API_TOKEN: "{{ cf_api_token }}"
+          delegate_to: localhost
+          become: false
+          register: _acme_clean
+          changed_when: _acme_clean.stdout is search('deleted [1-9]')
+          failed_when: false
+
+        - name: Served certificate | what the clean-up did
+          ansible.builtin.debug:
+            msg: "{{ (_acme_clean.stdout_lines + _acme_clean.stderr_lines) | default([]) }}"
+
+        - name: Served certificate | restart Traefik once so it retries the orders
+          ansible.builtin.command:
+            argv: [docker, restart, traefik]
+          changed_when: true
+
+        - name: Served certificate | re-read each repaired name's certificate
+          ansible.builtin.shell:
+            cmd: "{{ _served_cert_check }}"
+            executable: /bin/bash
+          loop: "{{ _acme_default }}"
+          register: _served_after
+          changed_when: false
+          failed_when: false
+          retries: 30
+          delay: 10
+          until: _served_after.rc == 0
+
+    - name: Served certificate | every declared name is served with its own certificate
+      ansible.builtin.assert:
+        that:
+          - _acme_still | length == 0
+        fail_msg: >-
+          {{ inventory_hostname }} still serves no certificate of its own for
+          {{ _acme_still | map(attribute='item') | join(', ') }}
+          ({{ _acme_still | map(attribute='stdout') | map('regex_replace', '\\s+', ' ') | join('; ') }}).
+          Stale-record clean-up: {{ (_acme_clean.stdout_lines | default(['not run'])) | join('; ') }}.
+          Read the Traefik log above for the ACME error for that name (token
+          scope Zone:Read + DNS:Edit on its zone, the name's DNS, the Let's
+          Encrypt rate limit).
+        success_msg: "{{ inventory_hostname }}: {{ _acme_names | join(', ') }} served with their own certificates"
+      vars:
+        _acme_still: >-
+          {{ (_served_after.results | default([]) if _acme_default | length > 0 else [])
+             | rejectattr('rc', 'equalto', 0) | list }}
 
     # =====================================================================
     # 7. External verification — from the controller, openssl-connect
@@ -581,5 +697,5 @@
           If issuer reads "C=US, O=Let's Encrypt, CN=..." then Phase 2.5
           is closed. If issuer still says "TRAEFIK DEFAULT CERT", check
           the Traefik logs above — common causes are CF token scope
-          (must include `Zone:DNS:Edit` for `nova.example`) or
+          (must include `Zone:DNS:Edit` for the goatnet's zone) or
           DNS propagation slower than the 5min wait budget.

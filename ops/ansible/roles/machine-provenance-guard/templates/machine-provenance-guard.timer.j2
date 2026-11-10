@@ -10,7 +10,7 @@ Documentation=https://github.com/usareur-af/goatcore/blob/main/docs/design/live-
 [Timer]
 # Hourly at :17 — offset from the sibling membership audit (06:41) and from the
 # host's other timers. A side door open for at most an hour is a different thing
-# from one open for five days, which is what the site-one cohort cost.
+# from one open for five days.
 OnCalendar={{ machine_provenance_guard_oncalendar }}
 RandomizedDelaySec={{ machine_provenance_guard_jitter_sec }}
 AccuracySec=1min

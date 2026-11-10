@@ -39,6 +39,17 @@
       Pass -e admit_audit_password=... — password for the least-privilege
       'admit_audit' PG role used by the admit-audit sidecar. Rotate via re-run.
 
+# The role carries no image pin (defaults/main.yml). An empty value would write
+# an empty ADMIT_AUDIT_IMAGE into the compose .env and fail later at pull.
+- name: Require admit_audit_image
+  ansible.builtin.assert:
+    that: admit_audit_image is defined and admit_audit_image | length > 0
+    fail_msg: >
+      admit_audit_image is empty. The role carries no pin: the `admit-audit`
+      row of ops/pins/fleet-pins.yaml renders it into
+      group_vars/<member>/pins.yml for a listed goatnet; a host group outside
+      the pin table sets admit_audit_image in its own group_vars.
+
 # ---------------------------------------------------------------------------
 # 1. Least-privilege read-only role in postgres.
 # ---------------------------------------------------------------------------
@@ -47,51 +58,8 @@
 # ALTER ROLE resets the password on every run (so rotation is just re-run).
 # Role gets SELECT on public.peers ONLY — no setup_keys, no users, no spock.
 
-- name: Create 'admit_audit' PG role if missing
-  ansible.builtin.command:
-    argv:
-      - docker
-      - exec
-      - -e
-      - "PGPASSWORD={{ postgres_superuser_password }}"
-      - postgres-a
-      - psql
-      - -U
-      - postgres
-      - -d
-      - postgres
-      - -v
-      - ON_ERROR_STOP=1
-      - -c
-      - |
-        DO $$
-        BEGIN
-          IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '{{ pg_admit_audit_role }}') THEN
-            CREATE ROLE {{ pg_admit_audit_role }} LOGIN;
-          END IF;
-        END
-        $$;
-  changed_when: false
-
-- name: Set 'admit_audit' role password (idempotent-on-rotate)
-  ansible.builtin.command:
-    argv:
-      - docker
-      - exec
-      - -e
-      - "PGPASSWORD={{ postgres_superuser_password }}"
-      - postgres-a
-      - psql
-      - -U
-      - postgres
-      - -d
-      - postgres
-      - -v
-      - ON_ERROR_STOP=1
-      - -c
-      - "ALTER ROLE {{ pg_admit_audit_role }} WITH PASSWORD '{{ admit_audit_password }}';"
-  changed_when: true
-  no_log: true
+- name: Create the admit_audit PG role, set its password and grant (primary only)
+  ansible.builtin.import_tasks: pg-role.yml
 
 - name: Ensure pg_hba.conf admits admit_audit from the docker compose network
   # The admit-audit sidecar connects from inside the docker compose mgmt
@@ -108,60 +76,6 @@
       fi
   changed_when: true
   no_log: true
-
-- name: Grant CONNECT on target DB to 'admit_audit' role
-  ansible.builtin.command:
-    argv:
-      - docker
-      - exec
-      - -e
-      - "PGPASSWORD={{ postgres_superuser_password }}"
-      - postgres-a
-      - psql
-      - -U
-      - postgres
-      - -d
-      - postgres
-      - -v
-      - ON_ERROR_STOP=1
-      - -c
-      - "GRANT CONNECT ON DATABASE {{ pg_admit_audit_db }} TO {{ pg_admit_audit_role }};"
-  changed_when: false
-
-# Grant SELECT on public.peers only. Wrapped in a DO block so the role
-# no-ops cleanly if Netbird hasn't migrated the schema yet (greenfield
-# ordering: this role can run before the first management-a start, and
-# the table materializes later).
-- name: Grant SELECT on public.peers to 'admit_audit' (best-effort)
-  ansible.builtin.command:
-    argv:
-      - docker
-      - exec
-      - -e
-      - "PGPASSWORD={{ postgres_superuser_password }}"
-      - postgres-a
-      - psql
-      - -U
-      - postgres
-      - -d
-      - "{{ pg_admit_audit_db }}"
-      - -v
-      - ON_ERROR_STOP=0
-      - -c
-      - |
-        DO $$
-        BEGIN
-          IF EXISTS (
-            SELECT 1 FROM information_schema.tables
-            WHERE table_schema = 'public' AND table_name = 'peers'
-          ) THEN
-            EXECUTE 'GRANT USAGE ON SCHEMA public TO {{ pg_admit_audit_role }}';
-            EXECUTE 'GRANT SELECT ON public.peers TO {{ pg_admit_audit_role }}';
-          END IF;
-        END
-        $$;
-  changed_when: false
-  failed_when: false
 
 # ---------------------------------------------------------------------------
 # 2. Copy the compose overlay + IOC rules file.
@@ -244,12 +158,12 @@
     create: false
 
 # ---------------------------------------------------------------------------
-# 5a. Build admit-audit image locally from committed source.
+# 5a. The image: pulled by its digest pin, or built from committed source.
 # ---------------------------------------------------------------------------
-# The admit-audit image isn't published to GHCR yet (no CI workflow).
-# Build on the host from the source at ops/admit-audit/ — same pattern as
-# ops/wave3/soak-gen and signal-server/cmd/federation-probe. Source is
-# tiny (~500 LOC Go) so tarball+base64 push fits SSM's 100KB cap.
+# .github/workflows/admit-audit-image.yml publishes goat-admit-audit and the
+# goatnet's pin names it by digest, so a host pulls it (5b). A tag-only override is
+# built on the host from the source at ops/admit-audit/. Source is tiny
+# (~500 LOC Go) so tarball+base64 push fits SSM's 100KB cap.
 #
 # Block 75E gate: when admit_audit_use_substrate is true, the image flows
 # from the OCI distribution substrate (T2 Orin-C Forgejo) instead of being
@@ -257,8 +171,14 @@
 # substrate URL set in group_vars/<site>_hosts/vars.yml, and Step 5a is
 # skipped entirely. See ADR 0838 + docs/design/oci-goat-substrate.md.
 
-- name: Build admit-audit locally (skipped on substrate)
-  when: not (admit_audit_use_substrate | default(false))
+# A reference pinned by digest (the pin of record, the image CI publishes) is
+# pulled, never built: `docker build -t` refuses a tag that carries a digest,
+# so building it failed on every host. The local build stays for an operator
+# override that names a tag only.
+- name: Build admit-audit locally (a tag-only override; skipped on substrate or a digest pin)
+  when:
+    - not (admit_audit_use_substrate | default(false))
+    - "'@' not in admit_audit_image"
   block:
     - name: Package admit-audit source into base64 tarball
       # Runs on the controller (my laptop), NOT the target. delegate_to +
@@ -300,8 +220,8 @@
       poll: 30
       changed_when: true
 
-- name: Pull admit-audit from OCI substrate (Block 75E)
-  when: admit_audit_use_substrate | default(false)
+- name: Pull admit-audit (the digest pin, or the OCI substrate of Block 75E)
+  when: (admit_audit_use_substrate | default(false)) or ('@' in admit_audit_image)
   ansible.builtin.command:
     cmd: docker pull {{ admit_audit_image }}
   register: admit_audit_pull

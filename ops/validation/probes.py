@@ -230,6 +230,7 @@ def _system_trust_error(host, port, timeout, sni=None, verify_name=True) -> str 
 def _fetch_cert_text(host, port, timeout) -> str | None:
     try:
         ctx = ssl.create_default_context()
+        ctx.minimum_version = ssl.TLSVersion.TLSv1_2
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE
         with socket.create_connection((host, port), timeout=timeout) as sock:
@@ -252,6 +253,7 @@ def tls_alpn(params) -> Verdict:
         return Verdict(UNKNOWN, "no host", "tls-alpn")
     try:
         ctx = ssl.create_default_context()
+        ctx.minimum_version = ssl.TLSVersion.TLSv1_2
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE
         with socket.create_connection((host, port), timeout=_timeout(params)) as sock:
@@ -395,6 +397,48 @@ def _host_run(host, cmd, timeout=30):
         return _Run(124, "", "timed out", True)
     return _Run(proc.returncode, proc.stdout, proc.stderr,
                 _local(host) or proc.returncode != 255)
+
+
+
+def onboard_runner_profile(params) -> Verdict:
+    """Check the default profile materialized by the runner entrypoint, not binary strings.
+
+    Match goat-cli's flat extract_toml_field reader. Do not print endpoint values
+    or read portal.token; this proves configuration presence, not a live mint.
+    """
+    kind = "onboard-runner-profile"
+    goatnet = params.get("goatnet")
+    if not goatnet:
+        return Verdict(UNKNOWN, "no goatnet in params", kind)
+    container = shlex.quote(params.get("container", "onboard-runner"))
+    command = (f"docker exec {container} sh -c " +
+               shlex.quote('test -r "$HOME/.goat/contexts/default/profile.toml" || exit 42; '
+                           'cat "$HOME/.goat/contexts/default/profile.toml"'))
+    result = _host_run(params.get("host"), command, _timeout(params, 20))
+    if result.rc == 42:
+        return Verdict(FAIL, "runner default profile is missing or unreadable", kind)
+    if not result.reached or result.rc != 0:
+        return Verdict(UNKNOWN, "could not read the running container's profile", kind)
+
+    def value(key):
+        for line in result.out.splitlines():
+            line = line.strip()
+            if line.startswith(key):
+                rest = line[len(key):].lstrip()
+                if rest.startswith("="):
+                    return rest[1:].strip().strip('"').strip()
+        return ""
+
+    named = value("goatnet")
+    if named and named != goatnet:
+        return Verdict(FAIL, "runner default profile names another goatnet", kind)
+    required = ("portal_endpoint", "router_endpoint", "netbird_mgmt_url",
+                "netbird_token_env", "netbird_site_prefix", "ory_auth_url",
+                "ory_ssh_host", "ory_ssh_user")
+    missing = [key for key in required if not value(key) or "{{" in value(key)]
+    if missing:
+        return Verdict(FAIL, "runner profile lacks settings: " + ", ".join(missing), kind)
+    return Verdict(PASS, "runner profile contains native onboarding settings", kind)
 
 
 def _curl(url, timeout=8, method="GET", headers=(), data=None, host=None, follow=False):
@@ -1276,4 +1320,5 @@ REGISTRY = {
     "enroll-probe": enroll_probe,
     "goat-cli": goat_cli,
     "container-health": container_health,
+    "onboard-runner-profile": onboard_runner_profile,
 }

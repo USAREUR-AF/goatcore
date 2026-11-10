@@ -6,6 +6,8 @@ the surfaces and the migration.
 
 **Status: built for access rules** — `ops/ansible/netbird_acl_matrix.yml` is generated from `ops/warrant/` and CI refuses a hand edit ([warrant-runbook](../operations/warrant-runbook.md)). **Extended to peer membership** by [ADR 1189](../adr/1189-netbird-read-only-dashboard-and-warrant-owned-membership.md): design [`mesh-change-control.md`](mesh-change-control.md), live on zagros-dev.
 
+**Where the CLI reads the declaration.** `goat acl test` and `goat warrant` compile in no deployment's declaration. They read it from `--declaration <dir>`, else `GOAT_ACL_DECLARATION_DIR`, else the active context (`acl_declaration_dir`, or its `acl/` directory that `goat context refresh` fills from `get.<site>/acl/`), else the `ops/ansible/` of the checkout they run in; none is `E_ACL_DECLARATION_MISSING`. The goat-get role serves the declaration at `get.<site>/acl/` when `goat_get_acl_declaration` is true.
+
 ---
 
 ## The thesis in one page

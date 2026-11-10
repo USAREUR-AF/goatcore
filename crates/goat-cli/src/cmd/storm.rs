@@ -47,8 +47,6 @@ use crate::i18n::LANGUAGE_LOADER;
 const DEFAULT_SIGNAL_CONTAINER: &str = "signal-a";
 /// Default mgmt-host compose directory (ops/ansible/mgmt-host.yml `compose_dir`).
 const DEFAULT_COMPOSE_DIR: &str = "/opt/mgmt-host";
-/// Default SSH user for the mgmt host (matches the native-onboard Ory leg).
-const DEFAULT_MGMT_USER: &str = "goat";
 /// Default bounded TIGHTEN window, minutes (advisory — operator-reverted, no timer).
 const DEFAULT_TIGHTEN_WINDOW_MIN: u32 = 30;
 /// Remote-command exit code the TIGHTEN step uses to signal "flags not
@@ -91,7 +89,7 @@ pub enum StormCmd {
         #[arg(long)]
         mgmt_host: Option<String>,
         /// Override the mgmt-host SSH user. Precedence: this flag >
-        /// `$GOAT_MGMT_SSH_USER` > `mgmt_ssh_user` in profile.toml > `goat`.
+        /// `$GOAT_MGMT_SSH_USER` > `mgmt_ssh_user` in profile.toml (goatnet.toml).
         #[arg(long)]
         mgmt_user: Option<String>,
         /// mgmt-host compose directory (holds docker-compose.yml + .env) the
@@ -380,7 +378,12 @@ fn pick_mgmt_target(
     let user = clean(user_flag)
         .or_else(|| clean(user_env))
         .or_else(|| clean(user_profile))
-        .unwrap_or_else(|| DEFAULT_MGMT_USER.to_string());
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "no SSH user for the management host: pass --mgmt-user, set GOAT_MGMT_SSH_USER, \
+                 or run `goat context refresh` (it writes mgmt_ssh_user)"
+            )
+        })?;
     if !is_safe_token(&host) {
         anyhow::bail!("unsafe mgmt host `{host}`");
     }
@@ -810,8 +813,7 @@ fn print_trigger_guidance(ctx: &super::Ctx) {
     // site hint from the active context.
     let site = ctx
         .profile
-        .derive_demogame()
-        .map(|(_, s)| s)
+        .derive_site()
         .unwrap_or_else(|| "<site>".to_string());
     println!(
         "  {}",
@@ -941,11 +943,17 @@ mod tests {
             Some("profile-host".into()),
             None,
             None,
-            None,
+            Some("profile-user".into()),
         )
         .unwrap();
         assert_eq!(t.host, "flag-host");
-        assert_eq!(t.user, "goat"); // default
+        assert_eq!(t.user, "profile-user");
+    }
+
+    #[test]
+    fn mgmt_target_without_a_user_from_anywhere_is_refused() {
+        let e = pick_mgmt_target(Some("h".into()), None, None, None, None, None, None).unwrap_err();
+        assert!(e.to_string().contains("goat context refresh"));
     }
 
     #[test]

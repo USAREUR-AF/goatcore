@@ -10,7 +10,7 @@ catalog does (`sync-org-catalog.py`, ADR 1112).
 WHY A GENERATOR AND NOT A LIST. The interim list was a one-off census of slot
 directories holding `.sst` data. A census cannot follow a mint or a revoke, so
 it drifts in both directions at once, and F-428 measured what that costs on
-zagros 2026-09-03: 252 declared stores against 179 live slots — 94 correct, 85
+one goatnet, 2026-09-03: 252 declared stores against 179 live slots — 94 correct, 85
 live slots with NO store (writes permitted, nothing retained, queries answering
 EMPTY), and 158 stores for slots that are not live, of which 141 were pool
 indices the portal has no row for at all.

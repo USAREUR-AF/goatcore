@@ -1,0 +1,46 @@
+---
+# Offline guard for installer-luks.yml's Clevis TPM2 bind. In a folded (>-) YAML
+# scalar a more-indented line keeps its newline, so a pin on its own indented line
+# reaches bash as a separate command and `clevis luks bind` runs without one
+# ("Did not specify a pin!"). This reads the real task file and checks that every
+# `clevis luks bind` command carries its pin on the same shell line.
+#
+#   cd ops/ansible/roles/luks-unlock/tests
+#   ansible-playbook -i localhost, -c local clevis-bind-one-line.yml
+
+- name: luks-unlock | clevis luks bind keeps its pin on one line
+  hosts: localhost
+  gather_facts: false
+  vars:
+    tasks_file: "{{ playbook_dir }}/../tasks/installer-luks.yml"
+    # A backslash-newline continues a shell line; join those before checking.
+    bs: "\\"
+    nl: "\n"
+    bind_cmds: >-
+      {{ lookup('file', tasks_file) | from_yaml
+         | map('dict2items') | flatten
+         | selectattr('key', 'equalto', 'ansible.builtin.shell')
+         | map(attribute='value')
+         | selectattr('cmd', 'defined')
+         | map(attribute='cmd')
+         | select('search', 'clevis luks bind')
+         | list }}
+  tasks:
+    - name: There is a bind command to check
+      ansible.builtin.assert:
+        that: bind_cmds | length > 0
+        fail_msg: "no `clevis luks bind` shell command found in {{ tasks_file }}"
+
+    - name: Each bind's shell line names a pin (tpm2, tang or sss)
+      ansible.builtin.assert:
+        that:
+          - >-
+            item.replace(bs ~ nl, ' ').splitlines()
+            | select('search', 'clevis luks bind')
+            | select('search', 'clevis luks bind .* (tpm2|tang|sss) ')
+            | list | length
+            == item.replace(bs ~ nl, ' ').splitlines() | select('search', 'clevis luks bind') | list | length
+        fail_msg: "a `clevis luks bind` line has no pin on it: {{ item.replace(bs ~ nl, ' ').splitlines() | select('search', 'clevis luks bind') | list }}"
+      loop: "{{ bind_cmds }}"
+      loop_control:
+        label: "{{ item | truncate(60) }}"

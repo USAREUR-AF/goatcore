@@ -60,9 +60,9 @@ func TestLoad_V1AutoMigratesToV2(t *testing.T) {
 	}
 	// Specific peers (from CLAUDE.md canonical fleet) survived.
 	wants := map[string]string{
-		"vega-a":         "198.18.0.1",
-		"prov-conus":       "198.18.0.8",
-		"op-laptop": "198.18.0.10",
+		"lab-a":      "198.18.0.1",
+		"prov-conus": "198.18.0.8",
+		"op-laptop":  "198.18.0.10",
 	}
 	for name, addr := range wants {
 		p, ok := ps.Lookup(name)

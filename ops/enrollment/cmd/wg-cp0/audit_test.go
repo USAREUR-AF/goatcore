@@ -97,11 +97,11 @@ func TestSummarizePlan_OnboardShape(t *testing.T) {
 	// Onboard-style intent: StatePlan has an Added row.
 	plan := &ApplyPlan{
 		StatePlan: &PeerSetDiff{
-			Added: []PeerDelta{{Name: "vega-d"}},
+			Added: []PeerDelta{{Name: "lab-d"}},
 		},
 		LivePlan: &LiveStateDiff{
 			PerRelay: []RelayLiveDiff{
-				{Relay: "relay-rla", WouldAdd: []LivePeerOp{{PeerName: "vega-d", NewPubkey: "PK"}}},
+				{Relay: "relay-rla", WouldAdd: []LivePeerOp{{PeerName: "lab-d", NewPubkey: "PK"}}},
 			},
 		},
 	}
@@ -109,7 +109,7 @@ func TestSummarizePlan_OnboardShape(t *testing.T) {
 	if s.Adds != 2 { // 1 state-side + 1 live-side
 		t.Errorf("Adds = %d, want 2 (state + live)", s.Adds)
 	}
-	if len(s.AffectedPeers) != 1 || s.AffectedPeers[0] != "vega-d" {
+	if len(s.AffectedPeers) != 1 || s.AffectedPeers[0] != "lab-d" {
 		t.Errorf("AffectedPeers = %+v", s.AffectedPeers)
 	}
 	if len(s.AffectedRelays) != 1 || s.AffectedRelays[0] != "relay-rla" {

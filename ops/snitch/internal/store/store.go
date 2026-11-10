@@ -17,6 +17,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/usareur-af/goatcore/ops/snitch/internal/compat"
 )
 
 // Store is the PostgreSQL persistence layer.
@@ -311,7 +313,7 @@ func (s *Store) cleanup() {
 		{"measurements", `DELETE FROM measurements WHERE ts < $1`, cut30d},
 		{"reports", `DELETE FROM reports WHERE ts < $1`, cut30d},
 		{"events", `DELETE FROM events WHERE ts < $1`, cut90d},
-		{"satlink_probes", `DELETE FROM satlink_probes WHERE ts < $1`, cut90d},
+		{compat.SatlinkProbesTable, `DELETE FROM ` + compat.SatlinkProbesTable + ` WHERE ts < $1`, cut90d},
 	} {
 		tag, err := s.pool.Exec(ctx, q.sql, q.cut)
 		if err != nil {

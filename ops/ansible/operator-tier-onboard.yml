@@ -43,75 +43,61 @@
   # ansible.cfg sets `become = true` globally; the operator-tier work needs NO
   # root — local cert-sign + bundle files must be owned by the operator running
   # this (else they can't read their own bundle), the SSH-key install edits
-  # goat's own authorized_keys, and the Kratos calls curl localhost.
+  # host user's own authorized_keys, and the Kratos calls curl localhost.
   # Without this the bundle dir + key came out root-owned (caught in e2e).
   become: false
   gather_facts: false
   vars:
     repo_root: "{{ playbook_dir }}/.."
-    onboard_env: "{{ operator_env | default('nova') }}"
+    onboard_env: "{{ operator_env | mandatory('pass -e operator_env=<goatnet> (goat admin operator onboard <handle> --env <goatnet>)') }}"
     operator_handle: "{{ operator }}"
     manifest_path: >-
       {{ repo_root }}/operators/{{ (onboard_env ~ '/') if (operator_env is defined and operator_env | length > 0) else '' }}{{ operator_handle }}.yml
     out_dir: "{{ repo_root }}/operators/out"
     op_bundle_dir: "{{ out_dir }}/{{ operator_handle }}-operator"
 
-    # ---- per-goatnet maps (mirror operator-onboard.yml; keep in lock-step) ----
-    # The offline CA the leaf is signed by. A goatnet signs under its own root.
-    op_ca_root_path_map:
-      nova: "{{ repo_root }}/enrollment/ca/nova/root-cert.pem"
-      zagros: "{{ repo_root }}/enrollment/ca/zagros/root-cert.pem"
-    # What ships in the bundle as <env>-ca-root.pem, concatenated in order: the
-    # roots a client verifies the router with. Kept apart from the signing
-    # root, as in the runbook's step 3: a goatnet can ship both roots while the
-    # router's own server certificate still chains to the shared one.
-    op_ca_trust_roots_path_map:
-      nova:
-        - "{{ repo_root }}/enrollment/ca/nova/root-cert.pem"
-      zagros:
-        - "{{ repo_root }}/enrollment/ca/nova/root-cert.pem"
-        - "{{ repo_root }}/enrollment/ca/zagros/root-cert.pem"
-    op_ca_key_path_map:
-      nova: "{{ lookup('env','HOME') }}/.goat/state/nova-ca/ca.key.age"
-      zagros: "{{ lookup('env','HOME') }}/.goat/state/zagros-ca/ca.key.age"
-    op_ca_id_map:
-      nova: dev-nova-ca-ecdsa-2026-05-14
-      zagros: dev-zagros-ca-ecdsa-2026-09-03
+    # ---- per-goatnet values ------------------------------------------------
+    # Everything that differs from one goatnet to the next is declared by the
+    # goatnet itself, as ONE mapping `operator_tier` in its host group's
+    # group_vars directory, and loaded in O0.1b. This play runs on localhost
+    # (`-i localhost,`), which is in no goatnet's group, so the file is read by
+    # path. The group is the goatnet name with `-` as `_`, plus `_hosts`.
+    #
+    #   operator_tier:
+    #     ca_root_path:    the offline CA root the leaf is signed by (a goatnet
+    #                      signs under its own root)
+    #     ca_trust_roots:  list of root paths shipped in the bundle as
+    #                      <env>-ca-root.pem, concatenated in order: the roots a
+    #                      client verifies the router with. Kept apart from the
+    #                      signing root, as in the runbook's step 3: a goatnet
+    #                      can ship both roots while the router's own server
+    #                      certificate still chains to the shared one.
+    #     ca_key_path:     the age-encrypted CA key on the operator's machine
+    #     ca_id:           the CA id recorded in the audit log
+    #     ca_audit_log:    the CA audit log on the operator's machine
+    #     dns_suffix:      DNS SAN suffix of the operator leaf
+    #     uri_san:         URI-SAN of the operator leaf (cosmetic: the ACL keys
+    #                      on CN, not URI-SAN)
+    #     router_endpoint: the router endpoint printed in the NOTES
+    #     kratos:          {ssh_host, ssh_user, kratos_admin_url, auth_url} —
+    #                      the Ory Kratos admin host for the ADMINS PATCH
+    #     host:            {ssh_host, ssh_user} — the host the operator gets
+    #                      shell on (for the SSH-key install)
+    #     ntfy:            optional {instance_id, region, ssm_bucket, fqdn,
+    #                      goatnet, topics} — the ntfy pager admin host
+    #                      (ADR 1168), the relay-health cloud box, reached over
+    #                      SSM (port 22 is closed to the internet). Absent means
+    #                      "no pager here yet" and the paging step is skipped,
+    #                      not failed.
+    op_goatnet_group: "{{ onboard_env | replace('-', '_') }}_hosts"
+    op_goatnet_vars_file: "{{ playbook_dir }}/group_vars/{{ op_goatnet_group }}/operator-tier.yml"
     op_age_identity_path: "{{ lookup('env','HOME') }}/.config/age/keys.txt"
-    op_ca_audit_log: "{{ lookup('env','HOME') }}/.goat/ca-audit.jsonl"
     # The operator leaf's identity. CN is the SHARED operator ACL subject
-    # (matches `operator` subject cert_common_names: ["operator-trial-peer"]);
-    # URI-SAN is per-goatnet (cosmetic — the ACL keys on CN, not URI-SAN).
+    # (matches `operator` subject cert_common_names: ["operator-trial-peer"]).
     op_cn: "operator-trial-peer"
-    op_dns_suffix_map:
-      nova: "nova.peer"
-      zagros: "zagros.peer"
-    op_uri_san_map:
-      nova: "urn:goat-nova:operator"
-      zagros: "urn:goat:zagros:operator"
     op_validity: "8760h"
-    # Router endpoint (for the NOTES) + Ory Kratos admin host (for the ADMINS PATCH).
-    op_router_endpoint_map:
-      nova: "tls/zenoh.nova.netbird.nova.example:7447"
-      zagros: "tls/zenoh.zagros.netbird.zagros.example:7447"
-    op_kratos_admin_host_map:
-      nova: {ssh_host: "100.127.0.190", ssh_user: "goat", kratos_admin_url: "http://127.0.0.1:4434", auth_url: "https://auth.nova.netbird.nova.example"}
-      zagros: {ssh_host: "100.127.0.179", ssh_user: "goat", kratos_admin_url: "http://127.0.0.1:4434", auth_url: "https://auth.zagros.netbird.zagros.example"}
-    # Host(s) the operator gets shell on (for the SSH-key install).
-    op_host_map:
-      nova: {ssh_host: "100.127.0.190", ssh_user: "goat"}
-      zagros: {ssh_host: "100.127.0.179", ssh_user: "goat"}
-    # ntfy pager admin host per env (ADR 1168) — the relay-health cloud box,
-    # reached over SSM (port 22 is closed to the internet). Absent for an env
-    # means "no pager here yet" and the paging step is skipped, not failed.
-    op_ntfy_map:
-      zagros:
-        instance_id: "i-0000000f58150972e"
-        region: "eu-central-1"
-        ssm_bucket: "example-zagros-ansible-ssm-20260608180451703600000001"
-        fqdn: "ntfy.sandbox.zagros.goat.example"
-        goatnet: "zagros"
-        topics: ["critical", "warning"]
+    # Read by templates/operator-tier/NOTES.md.j2 as op_ntfy_map[onboard_env].
+    op_ntfy_map: "{{ {onboard_env: operator_tier.ntfy} if (operator_tier.ntfy is defined) else {} }}"
     # Ory groups whose grant means "you are on the pager". ADMINS is the legacy
     # name of PLATFORM-ADMIN (mesh-and-ory-roles.md), dual-accepted.
     op_paging_groups: ["PLATFORM-ADMIN", "ADMINS"]
@@ -131,13 +117,26 @@
           playbook provisions the backend-operator tier; add the block (see the
           header) or use operator-onboard.yml for the participant tier.
 
+    - name: "O0.1a — the goatnet declares its operator-tier values"
+      ansible.builtin.assert:
+        that:
+          - op_goatnet_vars_file is file
+        fail_msg: >-
+          {{ onboard_env }} declares no operator-tier values: {{ op_goatnet_vars_file }}
+          does not exist. Add it with the `operator_tier` mapping described at
+          the top of this playbook.
+
+    - name: "O0.1b — load the goatnet's operator-tier values"
+      ansible.builtin.include_vars:
+        file: "{{ op_goatnet_vars_file }}"
+
     - name: "O0.2 — resolve env facts"
       ansible.builtin.set_fact:
-        op_dns_suffix: "{{ op_dns_suffix_map[onboard_env] }}"
-        op_uri_san: "{{ op_uri_san_map[onboard_env] }}"
-        op_router_endpoint: "{{ op_router_endpoint_map[onboard_env] }}"
-        op_kratos: "{{ op_kratos_admin_host_map[onboard_env] }}"
-        op_host: "{{ op_host_map[onboard_env] }}"
+        op_dns_suffix: "{{ operator_tier.dns_suffix }}"
+        op_uri_san: "{{ operator_tier.uri_san }}"
+        op_router_endpoint: "{{ operator_tier.router_endpoint }}"
+        op_kratos: "{{ operator_tier.kratos }}"
+        op_host: "{{ operator_tier.host }}"
 
     - name: "O0.3 — ensure the operator bundle dir exists (0700)"
       ansible.builtin.file:
@@ -166,13 +165,13 @@
         argv:
           - "{{ op_build_tmp.path }}/cert-sign"
           - "--root-cert"
-          - "{{ op_ca_root_path_map[onboard_env] }}"
+          - "{{ operator_tier.ca_root_path }}"
           - "--root-key"
-          - "{{ op_ca_key_path_map[onboard_env] }}"
+          - "{{ operator_tier.ca_key_path }}"
           - "--age-identity"
           - "{{ op_age_identity_path }}"
           - "--ca-id"
-          - "{{ op_ca_id_map[onboard_env] }}"
+          - "{{ operator_tier.ca_id }}"
           - "--site-id"
           - "{{ onboard_env }}"
           - "--cn"
@@ -190,7 +189,11 @@
           - "--out-key"
           - "{{ op_bundle_dir }}/operator-key.pem"
           - "--audit-log"
-          - "{{ op_ca_audit_log }}"
+          - "{{ operator_tier.ca_audit_log }}"
+          # The Subject O the goatnet's CA issues (goat_cert_organization in
+          # group_vars/all.yml); empty leaves cert-sign's own default.
+          - "--org"
+          - "{{ goat_cert_organization | default('') }}"
       changed_when: true
       when: manifest.operator.zenoh_operator_cert | default(true)
 
@@ -202,7 +205,7 @@
 
     - name: "O1.3 — stage the CA trust roots under the per-goatnet name"
       ansible.builtin.copy:
-        content: "{{ query('file', *op_ca_trust_roots_path_map[onboard_env]) | join('\n') }}"
+        content: "{{ query('file', *operator_tier.ca_trust_roots) | join('\n') }}"
         dest: "{{ op_bundle_dir }}/{{ onboard_env }}-ca-root.pem"
         mode: "0644"
       when: manifest.operator.zenoh_operator_cert | default(true)

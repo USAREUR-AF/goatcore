@@ -89,8 +89,8 @@ services:
       GF_PLUGINS_PLUGIN_CATALOG_HIDDEN: "true"
       GF_HELP_ENABLED: "false"
       GF_SERVER_HTTP_PORT: "3000"
-      GF_SERVER_DOMAIN: "{{ grafana_server_domain | default('grafana.' + (site_id) + '.netbird-prod.goat.example') }}"
-      GF_SERVER_ROOT_URL: "https://{{ grafana_server_domain | default('grafana.' + (site_id) + '.netbird-prod.goat.example') }}"
+      GF_SERVER_DOMAIN: "{{ grafana_server_domain | default('grafana.' + (site_id) + '.' + (obs_host_grafana_default_zone | default('netbird-prod.goat.example'))) }}"
+      GF_SERVER_ROOT_URL: "https://{{ grafana_server_domain | default('grafana.' + (site_id) + '.' + (obs_host_grafana_default_zone | default('netbird-prod.goat.example'))) }}"
 {% if operator_idp_enabled | default(false) | bool %}
       # OIDC via operator-IdP Hydra per ADR 0842 + Block 21H.3a.
       # The local-admin path (GF_SECURITY_ADMIN_*) above is preserved

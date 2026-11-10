@@ -34,7 +34,7 @@
 # failure. What lands on the standby is age-encrypted to the operator AND the
 # break-glass recipient, so a standby compromise does not hand over the CA —
 # promotion needs an operator identity, the same posture the offline CA already
-# has (~/.goat/state/<env>-ca/ca.key.age).
+# has (its key is age-encrypted on the operator's machine).
 #
 # THIS PLAY STARTS NOTHING. The standby receives a file. `spire_enabled` stays
 # false there, roles/spire's fail-closed guard still refuses to run a server, and
@@ -71,7 +71,7 @@
          | selectattr('spire_enabled')
          | map(attribute='inventory_hostname') | list }}
     spire_ca_recipients: >-
-      {{ [lookup('env', 'DEV_CA_AGE_OPERATOR_1'),
+      {{ [lookup('env', dev_ca_age_operator_env | default('DEV_CA_AGE_OPERATOR_1')),
           lookup('env', 'DEV_CA_AGE_BREAK_GLASS')]
          | map('trim') | reject('equalto', '') | list }}
 
@@ -107,7 +107,7 @@
         that:
           - spire_ca_recipients | length == 2
         fail_msg: >-
-          spire-ca-standby: need DEV_CA_AGE_OPERATOR_1 and
+          spire-ca-standby: need {{ dev_ca_age_operator_env | default('DEV_CA_AGE_OPERATOR_1') }} and
           DEV_CA_AGE_BREAK_GLASS in the environment
           (.envrc.local.d/40-dev-ca-operators.envrc). Encrypting to one recipient
           makes a single lost identity a lost trust domain, which defeats the

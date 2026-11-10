@@ -18,15 +18,23 @@
 # deploy-history.yml hosts-map.
 #
 # Usage: ops/scripts/rollback-coverage.sh <site-label> <host> [ssh_user]
-#   e.g. ops/scripts/rollback-coverage.sh zagros 100.127.0.179 goat
+#   e.g. ops/scripts/rollback-coverage.sh zagros <the host's mesh address>
+#   ssh_user defaults to the account the project declares for its machines
+#   (deploy.ssh_user in ops/goatbuilder/goatbuilder.yaml); with neither, ssh
+#   picks the account itself (~/.ssh/config, else the local user name).
 set -euo pipefail
 
 SITE="${1:?usage: $0 <site-label> <host> [ssh_user]}"
 HOST="${2:?usage: $0 <site-label> <host> [ssh_user]}"
-SSH_USER="${3:-goat}"
 
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 ROLES_DIR="${REPO_ROOT}/ops/ansible/roles"
+
+SSH_USER="${3:-}"
+if [ -z "$SSH_USER" ] && [ -f "$REPO_ROOT/ops/goatbuilder/goatbuilder.yaml" ]; then
+  SSH_USER="$(python3 -c 'import sys, yaml; print(str(((yaml.safe_load(open(sys.argv[1])) or {}).get("deploy") or {}).get("ssh_user") or "").strip())' "$REPO_ROOT/ops/goatbuilder/goatbuilder.yaml" 2>/dev/null || true)"
+fi
+SSH_TARGET="${SSH_USER:+${SSH_USER}@}${HOST}"
 
 # Deploying roles = those carrying the rollback-ledger meta-dependency
 # (the universal-coverage invariant; see check-rollback-coverage.sh).
@@ -39,7 +47,7 @@ done < <(
 )
 
 # One round-trip: which roles have an on-host ledger dir here.
-LEDGERS="$(ssh -o StrictHostKeyChecking=no -o ConnectTimeout=8 "${SSH_USER}@${HOST}" \
+LEDGERS="$(ssh -o StrictHostKeyChecking=no -o ConnectTimeout=8 "$SSH_TARGET" \
   'ls -1 /var/lib/goat/ 2>/dev/null' 2>/dev/null || true)"
 deployed_here() { echo "$LEDGERS" | grep -qxF "$1"; }
 

@@ -36,6 +36,10 @@
 #     sudo access to /var/log, /var/spool, /opt/docker-data.
 #   - The override is a NEW file — the repo compose files are untouched.
 #   - No cloud calls. Images are pulled from GHCR on first run.
+#   - The base compose names no image for postgres-a or signal-a.
+#     POSTGRES_SPOCK_IMAGE / SIGNAL_SERVER_IMAGE name them; unset, each is the
+#     `fleet:` value of its row in ops/pins/fleet-pins.yaml, with
+#     `{{ ghcr_org }}` taken from GHCR_ORG or ops/ansible/group_vars/all.yml.
 #
 # USAGE -----------------------------------------------------------------------
 #   bash ops/ansible/tests/local-smoke/smoke.sh            # run + teardown
@@ -63,6 +67,9 @@ OVERRIDE_COMPOSE="${PROJECT_DIR}/docker-compose.smoke-override.yml"
 
 PROJECT_NAME="smoke-mgmt-host"
 STANZA="smoke-netbird"
+
+PIN_TABLE="${REPO_ROOT}/ops/pins/fleet-pins.yaml"
+ALL_VARS="${REPO_ROOT}/ops/ansible/group_vars/all.yml"
 
 # Ports the stack binds on the host. We refuse to start if any are in use
 # because docker would silently fail bind and only one service would break.
@@ -93,6 +100,40 @@ fail()   { RESULTS+=("FAIL $1: $2"); printf '  FAIL %s: %s\n' "$1" "$2"; }
 die() {
   printf '[smoke] FATAL: %s\n' "$*" >&2
   exit 2
+}
+
+# ============================================================================
+# Images
+# ============================================================================
+
+# pinned_image <ansible var>: the `fleet:` value of the pin-table row whose
+# `var:` is the argument, with the registry organisation filled in. Prints
+# nothing when the table, the row or the organisation cannot be read.
+pinned_image() {
+  local var="$1" ref org
+  [[ -f "$PIN_TABLE" ]] || return 0
+  ref="$(awk -v v="$var" '
+    $1 == "var:" && $2 == v { hit = 1; next }
+    hit && $1 == "fleet:"   { sub(/^[[:space:]]*fleet:[[:space:]]*/, ""); gsub(/"/, ""); print; exit }
+    hit && /^  [^[:space:]#]/ { exit }
+  ' "$PIN_TABLE")"
+  [[ -n "$ref" && "$ref" != "null" ]] || return 0
+  org="${GHCR_ORG:-}"
+  if [[ -z "$org" && -f "$ALL_VARS" ]]; then
+    org="$(sed -n "s/^ghcr_org:.* or '\\([^']*\\)'.*/\\1/p" "$ALL_VARS" | head -n 1)"
+  fi
+  [[ -n "$org" ]] || return 0
+  printf '%s\n' "${ref//\{\{ ghcr_org \}\}/$org}"
+}
+
+resolve_images() {
+  header "Images"
+  : "${POSTGRES_SPOCK_IMAGE:=$(pinned_image postgres_spock_image)}"
+  : "${SIGNAL_SERVER_IMAGE:=$(pinned_image signal_server_image)}"
+  [[ -n "$POSTGRES_SPOCK_IMAGE" ]] || die "POSTGRES_SPOCK_IMAGE is unset and no postgres-spock pin could be read from $PIN_TABLE"
+  [[ -n "$SIGNAL_SERVER_IMAGE"  ]] || die "SIGNAL_SERVER_IMAGE is unset and no signal-server pin could be read from $PIN_TABLE"
+  log "postgres-a: $POSTGRES_SPOCK_IMAGE"
+  log "signal-a:   $SIGNAL_SERVER_IMAGE"
 }
 
 # ============================================================================
@@ -206,6 +247,8 @@ YAML
   # Dummy-but-valid env. The compose :?required checks enforce non-empty.
   cat > "$PROJECT_DIR/.env" <<ENV
 POSTGRES_SUPERUSER_PASSWORD=smokepass
+POSTGRES_SPOCK_IMAGE=${POSTGRES_SPOCK_IMAGE}
+SIGNAL_SERVER_IMAGE=${SIGNAL_SERVER_IMAGE}
 SITE_NAME=smoke-a
 FEDERATION_PEERS=
 PEER_NODE_EXPORTER_TARGET=127.0.0.1:9100
@@ -662,6 +705,7 @@ summary() {
 
 main() {
   preflight
+  resolve_images
   scaffold
   bring_up_base
   run_base_invariants

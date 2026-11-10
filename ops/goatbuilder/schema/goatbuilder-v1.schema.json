@@ -66,15 +66,37 @@
           "type": "string",
           "minLength": 1
         },
+        "image_registry": {
+          "description": "Run goat's images from this registry instead of ghcr.io/<org>: <host>[:<port>]/<namespace>, e.g. 127.0.0.1:5000/usareur-af. Every goat image pin keeps its name and digest under this prefix; ops/recipes/local-registry/ fills the registry. Read by the renderer; default unset (ghcr.io).",
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9.-]*(:[0-9]{1,5})?(/[a-z0-9][a-z0-9._-]*)+$"
+        },
         "internet": {
-          "description": "Growing out of lite (goatlite.md §6): the public zone and the cloud accounts an internet-enrollable goatnet needs. Shape only in v1 — nothing acts on it yet.",
+          "description": "Growing out of lite (goatlite.md §6): the public zone and the cloud accounts an internet-enrollable goatnet needs. ops/scripts/goatlite-render.py renders the internet surface from it; the standup's profile becomes internet.",
           "type": "object",
           "additionalProperties": false,
           "required": ["zone"],
           "properties": {
-            "zone": { "type": "string", "minLength": 1, "description": "The public DNS zone (ACME, relays, enrolment apex)." },
-            "aws_profile": { "type": "string", "minLength": 1, "description": "The AWS profile the relay tier's Terraform tree and SSM door run under." },
-            "cloudflare_token_ref": { "type": "string", "minLength": 1, "description": "A reference to the Cloudflare API token under the declared secrets posture (an op:// reference or an env-file key), never a value." }
+            "zone": { "type": "string", "minLength": 1, "description": "The public DNS zone, served by Cloudflare (ACME DNS-01, the relay records, the enrolment apex netbird.<zone>). Never a LAN-only suffix such as .lan." },
+            "acme_email": { "type": "string", "pattern": "^[^@\\s]+@[^@\\s]+$", "description": "Let's Encrypt's account contact. Default lite.admin." },
+            "aws_profile": { "type": "string", "minLength": 1, "description": "The AWS profile the relay tier's Terraform tree and its SSM and Secrets Manager calls run under. Default lite.name; generate-relays.sh reads AWS_VAULT_PROFILE_<NAME> when it differs." },
+            "cloudflare_token_ref": { "type": "string", "minLength": 1, "description": "Where the Cloudflare API token comes from, never a value: an op://, bao:// or bw:// reference under a reference store (written to .envrc.local.d/goatlite-<name>.refs), or CLOUDFLARE_API_TOKEN_<NAME>, the store key phase 7 reads (the default)." },
+            "relays": {
+              "description": "The relays, one to four, each a name and an AWS region. Default two: a in us-east-2, b in eu-west-1.",
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 4,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["name", "region"],
+                "properties": {
+                  "name": { "type": "string", "pattern": "^[a-z0-9]{1,8}$" },
+                  "region": { "type": "string", "pattern": "^[a-z]{2}(-gov)?-[a-z]+-[0-9]$" }
+                }
+              }
+            },
+            "mesh_ip": { "type": "string", "pattern": "^[0-9]{1,3}(\\.[0-9]{1,3}){3}$", "description": "The box's mesh address, set after standup phase 8 enrols it; the router and mesh CoreDNS bind it." }
           }
         }
       }
@@ -93,6 +115,11 @@
           "description": "The registry namespace images are published under, e.g. ghcr.io/<org>. Refs are always pinned by digest beneath it (contract C1).",
           "type": "string",
           "pattern": "^[a-z0-9.-]+(/[a-z0-9._-]+)+$"
+        },
+        "release_source": {
+          "description": "The repository whose release workflow signs the goatbuilder binaries this project installs, as owner/name. `goatbuilder update` checks the SHA256SUMS signature against it. Omitted: source.",
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
         },
         "signing": {
           "description": "How a published declaration is signed at the source (contract C2): intent-sign for the git-published intents, cosign for a registry-published index.",
@@ -223,6 +250,12 @@
         "converger": { "$ref": "#/definitions/converger" },
         "transport": { "$ref": "#/definitions/transport" },
         "inventory": { "type": "string", "minLength": 1 },
+        "peering_edge_reserved_udp": {
+          "description": "UDP ports this environment's peering edge hosts already hold, which goatbuilder federate allocate never gives a peering's tunnel or carrier and a pin may not take. Absent: [51820], NetBird's WireGuard. An environment whose edges run no mesh client may set [] (for example to keep a running peering on the role default 51820).",
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "integer", "minimum": 1, "maximum": 65535 }
+        },
         "classes": {
           "type": "object",
           "propertyNames": { "pattern": "^[a-z][a-z0-9_-]*$" },
@@ -328,6 +361,70 @@
           "description": "The key prefix the partner's data arrives under on our side, so provenance is in the name (cross-sovereign-federation.md §5.6).",
           "type": "string",
           "pattern": "^from/[a-z0-9][a-z0-9-]*/$"
+        },
+        "offer": {
+          "description": "Narrows, for this partner, the release sets this party offers. The goat context's federation.toml owns them ([data] release); every entry here must be one it offers, and an entry it does not offer is refused (GB-129): local configuration narrows an agreement, never widens it. A set name X means release/X/**. Absent: every set federation.toml declares.",
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^([A-Za-z0-9][A-Za-z0-9._-]*|release/[A-Za-z0-9][A-Za-z0-9._-]*(/([A-Za-z0-9][A-Za-z0-9._-]*|\\*|\\*\\*))*)$" }
+        },
+        "values": {
+          "description": "Pins that override allocation: the per-peering values goatbuilder federate allocate otherwise chooses and records in peering-values.yaml (docs/design/goatbuilder.md, Per-peering values). A pin is owned by this file and is never recorded; a pin that collides with another peering's value is refused.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "wg_interface": { "type": "string" },
+            "wg_listen_port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+            "public_port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+            "link_subnet": { "type": "string" },
+            "edge_listen_port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+            "republisher_metrics_port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+            "spire_outbound_port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+            "cert_dir": { "type": "string" },
+            "edge_group": { "type": "string" },
+            "core_group": { "type": "string" },
+            "edge_host_name": { "type": "string" },
+            "core_host_name": { "type": "string" },
+            "carrier_interface": { "type": "string" },
+            "carrier_listen_port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+            "carrier_port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+            "carrier_subnet": { "type": "string" }
+          }
+        },
+        "hosts": {
+          "description": "The machines as the inventory reaches them: goatbuilder federate allocate renders the peering inventory from these, one inventory name per peering per machine.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["edge", "core"],
+          "properties": {
+            "edge": { "type": "string", "minLength": 1, "pattern": "^[A-Za-z0-9.:_-]+$" },
+            "core": { "type": "string", "minLength": 1, "pattern": "^[A-Za-z0-9.:_-]+$" },
+            "user": { "type": "string", "pattern": "^[a-z_][a-z0-9_-]*$" }
+          }
+        },
+        "forwarder": {
+          "description": "Present when a peering forwarder relays the partner to our edge (ADR 1218, docs/design/peering-forwarder.md). Allocation then gives the peering a public port on the forwarder and a carrier; the driver applies the forwarder from these values.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["endpoint"],
+          "properties": {
+            "endpoint": {
+              "description": "The forwarder's public host, as the partner and our edge dial it (no port: the ports are allocated).",
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9.-]+$"
+            },
+            "group": {
+              "description": "The inventory group the forwarder is in. Default peering_forwarders.",
+              "$ref": "#/definitions/name"
+            },
+            "ansible_host": {
+              "description": "The forwarder's address as the inventory reaches it, for the rendered inventory.",
+              "type": "string",
+              "pattern": "^[A-Za-z0-9.:_-]+$"
+            }
+          }
         }
       }
     }

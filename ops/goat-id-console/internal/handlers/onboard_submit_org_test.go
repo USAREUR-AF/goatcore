@@ -31,7 +31,7 @@ func TestSubmit_LongMixedCaseOrg(t *testing.T) {
 	orgName := "  The Very Long Mixed-Case Organization Name With Spaces And Symbols!  "
 	fullPayload := map[string]any{
 		"name":              "Real Caller",
-		"email":             "person-122@example.org",
+		"email":             "person-109@example.org",
 		"principal_type":    "person",
 		"organization":      orgName,
 		"nationality":       "CAN",

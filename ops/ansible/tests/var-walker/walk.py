@@ -7,17 +7,17 @@ and cross-checks each against the declared sources available at invocation
 time (group_vars + inventory host_vars + bootstrap `-e` args).
 
 Reports any required var that is NOT provided, BEFORE the playbook runs.
-Would have caught 5 of the 9 live iterations of vega-bootstrap.yml on
+Would have caught 5 of the 9 live iterations of one site bootstrap on
 2026-04-20.
 
 Usage:
     python3 ops/ansible/tests/var-walker/walk.py \\
         --roles ops/ansible/roles \\
-        --bootstrap ops/ansible/vega-bootstrap.yml \\
+        --bootstrap ops/ansible/<site>-bootstrap.yml \\
         --inventory ops/ansible/inventory/mgmt-hosts.ini \\
-        --group-vars ops/ansible/group_vars/kwt_hosts/vars.yml \\
+        --group-vars ops/ansible/group_vars/<site>_hosts/vars.yml \\
         --bootstrap-e-args 'postgres_superuser_password,netbird_encryption_key,pgbackrest_cipher_pass' \\
-        --group kwt_hosts
+        --group <site>_hosts
 
 Exit 0 = every required var is provided somewhere; exit 1 = gap.
 """

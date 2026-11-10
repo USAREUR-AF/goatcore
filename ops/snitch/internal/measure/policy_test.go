@@ -149,7 +149,7 @@ func TestPolicyClient_FetchSuccess(t *testing.T) {
 			Mode:      types.PolicyFocusedResearch,
 			ExpiresAt: expires,
 			Reason:    "weekly net-health snapshot",
-			SetBy:     "operator:maintainer",
+			SetBy:     "operator:alice",
 		})
 	}))
 	defer srv.Close()

@@ -15,13 +15,13 @@ func testPresigner() *Presigner {
 		Region:       "us-east-1",
 		AccessKey:    "AKIATEST",
 		SecretKey:    "secrettestkey",
-		SubscriberID: "nova-a",
+		SubscriberID: "site-A",
 	})
 }
 
 func TestPresignGetURLShape(t *testing.T) {
 	p := testPresigner()
-	raw, err := p.PresignGet("nova-a/2026/06/11/13/000-1.ndjson", 5*time.Minute)
+	raw, err := p.PresignGet("site-A/2026/06/11/13/000-1.ndjson", 5*time.Minute)
 	if err != nil {
 		t.Fatalf("PresignGet: %v", err)
 	}
@@ -33,7 +33,7 @@ func TestPresignGetURLShape(t *testing.T) {
 		t.Errorf("unexpected scheme/host: %s://%s", u.Scheme, u.Host)
 	}
 	// Path-style: /<bucket>/<key>, slashes preserved (not %2F).
-	wantPath := "/audit-integrity/nova-a/2026/06/11/13/000-1.ndjson"
+	wantPath := "/audit-integrity/site-A/2026/06/11/13/000-1.ndjson"
 	if u.Path != wantPath {
 		t.Errorf("path = %q, want %q", u.Path, wantPath)
 	}
@@ -67,11 +67,11 @@ func TestPresignGetIsDeterministicWithinASecond(t *testing.T) {
 	// stamp is second-resolution). Guards against accidental nondeterminism
 	// like map iteration leaking into the canonical query.
 	p := testPresigner()
-	a, err := p.PresignGet("nova-a/x.ndjson", time.Minute)
+	a, err := p.PresignGet("site-A/x.ndjson", time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := p.PresignGet("nova-a/x.ndjson", time.Minute)
+	b, err := p.PresignGet("site-A/x.ndjson", time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,8 +84,8 @@ func TestPresignGetIsDeterministicWithinASecond(t *testing.T) {
 
 func TestPresignDifferentKeysDifferentSignatures(t *testing.T) {
 	p := testPresigner()
-	a, _ := p.PresignGet("nova-a/a.ndjson", time.Minute)
-	b, _ := p.PresignGet("nova-a/b.ndjson", time.Minute)
+	a, _ := p.PresignGet("site-A/a.ndjson", time.Minute)
+	b, _ := p.PresignGet("site-A/b.ndjson", time.Minute)
 	if mustSig(t, a) == mustSig(t, b) {
 		t.Errorf("different keys produced the same signature")
 	}
@@ -101,8 +101,8 @@ func mustSig(t *testing.T, raw string) string {
 }
 
 func TestS3EscapePathKeepsSlashes(t *testing.T) {
-	got := s3EscapePath("nova-a/2026/06/11/13/000-1.ndjson")
-	if got != "nova-a/2026/06/11/13/000-1.ndjson" {
+	got := s3EscapePath("site-A/2026/06/11/13/000-1.ndjson")
+	if got != "site-A/2026/06/11/13/000-1.ndjson" {
 		t.Errorf("escape mangled a safe key: %q", got)
 	}
 	// A space in a segment is percent-encoded; slashes stay.
@@ -116,15 +116,15 @@ func TestSinceStartAfterIsMillisecondGranular(t *testing.T) {
 	// an hour-granular bound returns the oldest objects of the since-hour and
 	// the 500-cap drops the recent tail.
 	since := time.Date(2026, 6, 12, 14, 52, 25, 0, time.UTC)
-	got := sinceStartAfter("zagros-A/", since)
-	want := "zagros-A/2026/06/12/14/" + strconv.FormatInt(since.UnixMilli(), 10)
+	got := sinceStartAfter("galaxy-A/", since)
+	want := "galaxy-A/2026/06/12/14/" + strconv.FormatInt(since.UnixMilli(), 10)
 	if got != want {
 		t.Errorf("start-after = %q, want %q", got, want)
 	}
 	// It must sit AT the since time: after objects earlier in the same hour
 	// and before objects later in the hour (lexical == chronological).
-	earlier := "zagros-A/2026/06/12/14/" + strconv.FormatInt(since.Add(-10*time.Minute).UnixMilli(), 10) + "-3.ndjson"
-	later := "zagros-A/2026/06/12/14/" + strconv.FormatInt(since.Add(2*time.Minute).UnixMilli(), 10) + "-7.ndjson"
+	earlier := "galaxy-A/2026/06/12/14/" + strconv.FormatInt(since.Add(-10*time.Minute).UnixMilli(), 10) + "-3.ndjson"
+	later := "galaxy-A/2026/06/12/14/" + strconv.FormatInt(since.Add(2*time.Minute).UnixMilli(), 10) + "-7.ndjson"
 	if !(earlier < got) {
 		t.Errorf("earlier-in-hour object %q should sort before start-after %q", earlier, got)
 	}
@@ -134,7 +134,7 @@ func TestSinceStartAfterIsMillisecondGranular(t *testing.T) {
 }
 
 func TestSinceStartAfterZeroIsEmpty(t *testing.T) {
-	if got := sinceStartAfter("zagros-A/", time.Time{}); got != "" {
+	if got := sinceStartAfter("galaxy-A/", time.Time{}); got != "" {
 		t.Errorf("zero since should yield empty start-after, got %q", got)
 	}
 }

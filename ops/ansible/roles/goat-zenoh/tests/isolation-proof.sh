@@ -44,7 +44,7 @@ rendered = e.from_string(open(tpl).read()).render(
     goat_zenoh_listen_host="0.0.0.0", goat_zenoh_listen_port=7447,
     goat_zenoh_rest_port=8000, goat_zenoh_retention_days=7,
     goat_zenoh_storage_path="/data", goat_zenoh_tls_dir="/certs",
-    nova_seed_vendors=[], zenoh_identity_model="per-uuid-slot-pool",
+    zenoh_seed_vendors=[], zenoh_identity_model="per-uuid-slot-pool",
     zenoh_slot_pool_size=4, zenoh_slot_pool_salt="isoproof")
 # brace-extract the access_control: { ... } block
 i = rendered.index("access_control: {")

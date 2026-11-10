@@ -5,6 +5,9 @@
   ansible.builtin.meta: end_host
   when: not (peering_wg_enabled | bool)
 
+- name: peering-wg | another peering's interface, port, address or carrier is not taken
+  ansible.builtin.import_tasks: ownership.yml
+
 - name: peering-wg | the interface name fits IFNAMSIZ
   ansible.builtin.assert:
     that:
@@ -80,6 +83,10 @@
   ansible.builtin.command: "wg show {{ peering_wg_interface }} public-key"
   register: _pw_public
   changed_when: false
+
+- name: peering-wg | the carrier to a peering forwarder
+  ansible.builtin.include_tasks: carrier.yml
+  when: peering_wg_via_forwarder | bool
 
 - name: peering-wg | say what init will read
   ansible.builtin.debug:

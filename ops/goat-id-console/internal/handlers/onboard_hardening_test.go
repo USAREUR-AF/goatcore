@@ -58,7 +58,7 @@ func TestDecide_IncompleteDraftCannotAdvance(t *testing.T) {
 	mk := func(complete bool, status string) string {
 		p := &onboardstore.Proposal{
 			Sponsor: "dev@bypass.local", Env: "zagros", Handle: "draftee",
-			Email: "person-41@example.org", Status: status, ManifestJSON: "{}", Complete: complete,
+			Email: "person-36@example.org", Status: status, ManifestJSON: "{}", Complete: complete,
 		}
 		if err := s.Onboard.CreateProposal(context.Background(), p); err != nil {
 			t.Fatalf("create proposal: %v", err)
@@ -121,7 +121,7 @@ func TestSubmit_DuplicateEmailRefusedBeforeConsumingInvite(t *testing.T) {
 	h := s.Routes()
 
 	tok1 := mintTokenViaStore(t, s)
-	sub := map[string]any{"name": "Pat Liaison", "email": "person-119@example.org", "organization": "Duplicate Org", "nationality": "CAN"}
+	sub := map[string]any{"name": "Pat Liaison", "email": "person-106@example.org", "organization": "Duplicate Org", "nationality": "CAN"}
 	if pid := submit(t, h, tok1, sub); pid == "" {
 		t.Fatal("first submit: empty proposal id")
 	}
@@ -133,7 +133,7 @@ func TestSubmit_DuplicateEmailRefusedBeforeConsumingInvite(t *testing.T) {
 	}
 	// The second token must still be OPEN (not consumed) — a different email
 	// completes on it, proving the duplicate guard ran before ConsumeInvite.
-	if pid := submit(t, h, tok2, map[string]any{"name": "Other Person", "email": "person-86@example.org", "organization": "Duplicate Org", "nationality": "CAN"}); pid == "" {
+	if pid := submit(t, h, tok2, map[string]any{"name": "Other Person", "email": "person-73@example.org", "organization": "Duplicate Org", "nationality": "CAN"}); pid == "" {
 		t.Fatal("second token should still be usable for a non-duplicate email")
 	}
 }
@@ -147,7 +147,7 @@ func TestReenrollAfterOffboardedAllowsNewProposal(t *testing.T) {
 
 	// Initial proposal submitted and fully onboarded.
 	tok1 := mintTokenViaStore(t, s)
-	sub := map[string]any{"name": "Pat Liaison", "email": "person-119@example.org", "organization": "Duplicate Org", "nationality": "CAN"}
+	sub := map[string]any{"name": "Pat Liaison", "email": "person-106@example.org", "organization": "Duplicate Org", "nationality": "CAN"}
 	pid := submit(t, h, tok1, sub)
 	if pid == "" {
 		t.Fatal("first submit: empty proposal id")
@@ -198,13 +198,13 @@ func TestSubmit_InvalidNationRefusedBeforeConsumingInvite(t *testing.T) {
 	h := s.Routes()
 
 	tok := mintTokenViaStore(t, s)
-	bad := map[string]any{"name": "Matt C", "email": "person-68@example.org", "organization": "Nation Org", "nation": "Canada", "nationality": "CAN"}
+	bad := map[string]any{"name": "Matt C", "email": "person-57@example.org", "organization": "Nation Org", "nation": "Canada", "nationality": "CAN"}
 	if code := submitRaw(t, h, tok, bad); code != http.StatusUnprocessableEntity {
 		t.Fatalf("invalid nation submit: want 422, got %d", code)
 	}
 	// The token must still be OPEN (rejected before ConsumeInvite): a valid
 	// ISO 3166-1 alpha-3 code completes on the same token.
-	ok := map[string]any{"name": "Matt C", "email": "person-68@example.org", "organization": "Nation Org", "nation": "CAN", "nationality": "CAN"}
+	ok := map[string]any{"name": "Matt C", "email": "person-57@example.org", "organization": "Nation Org", "nation": "CAN", "nationality": "CAN"}
 	if pid := submit(t, h, tok, ok); pid == "" {
 		t.Fatal("valid nation (CAN) should complete on the still-open token")
 	}
@@ -359,7 +359,7 @@ func TestOffboard_RequiresOperatorPrincipal(t *testing.T) {
 		Sponsor:      "dev@bypass.local",
 		Env:          "zagros",
 		Handle:       "pat-liaison",
-		Email:        "person-119@example.org",
+		Email:        "person-106@example.org",
 		Status:       onboardstore.ProposalOnboarded,
 		ManifestJSON: "{}",
 	}
@@ -469,7 +469,7 @@ func TestHandleOnboardingDecide_OffboardRequiresCSRF(t *testing.T) {
 		Sponsor:      "dev@bypass.local",
 		Env:          "zagros",
 		Handle:       "pat-liaison",
-		Email:        "person-119@example.org",
+		Email:        "person-106@example.org",
 		Status:       onboardstore.ProposalOnboarded,
 		ManifestJSON: "{}",
 	}
@@ -501,7 +501,7 @@ func TestHandleOnboardingDecide_OffboardRaceReportsConflict(t *testing.T) {
 		Sponsor:      "dev@bypass.local",
 		Env:          "zagros",
 		Handle:       "pat-liaison",
-		Email:        "person-119@example.org",
+		Email:        "person-106@example.org",
 		Status:       onboardstore.ProposalOffboarded,
 		ManifestJSON: "{}",
 	}
@@ -577,7 +577,7 @@ func TestSSHKeyHandleFor_OffboardedNoLongerResolves(t *testing.T) {
 		Sponsor:      "dev@bypass.local",
 		Env:          "zagros",
 		Handle:       "dana-signals",
-		Email:        "person-32@example.org",
+		Email:        "person-27@example.org",
 		Status:       onboardstore.ProposalOnboarded,
 		ManifestJSON: "{}",
 	}
@@ -586,7 +586,7 @@ func TestSSHKeyHandleFor_OffboardedNoLongerResolves(t *testing.T) {
 	}
 
 	req := httptest.NewRequestWithContext(ctx, http.MethodGet, "/ssh-keys", nil)
-	handle, err := s.sshKeyHandleFor(req, "person-32@example.org")
+	handle, err := s.sshKeyHandleFor(req, "person-27@example.org")
 	if err != nil || handle != "dana-signals" {
 		t.Fatalf("while onboarded: want handle dana-signals, got %q (err %v)", handle, err)
 	}
@@ -595,7 +595,7 @@ func TestSSHKeyHandleFor_OffboardedNoLongerResolves(t *testing.T) {
 		t.Fatalf("offboard: %v", err)
 	}
 
-	handle, err = s.sshKeyHandleFor(req, "person-32@example.org")
+	handle, err = s.sshKeyHandleFor(req, "person-27@example.org")
 	if err == nil {
 		t.Fatalf("after offboard: want a refusal, got handle %q", handle)
 	}
@@ -619,7 +619,7 @@ func TestSubmit_DuplicateEmail409NamesBlockingProposal(t *testing.T) {
 	// every surface the operator would reasonably check first.
 	p := &onboardstore.Proposal{
 		Sponsor: "dev@bypass.local", Env: "zagros", Handle: "pat",
-		Email: "person-119@example.org", Status: onboardstore.ProposalArchived,
+		Email: "person-106@example.org", Status: onboardstore.ProposalArchived,
 		ManifestJSON: "{}", Complete: true,
 	}
 	if err := s.Onboard.CreateProposal(context.Background(), p); err != nil {
@@ -629,7 +629,7 @@ func TestSubmit_DuplicateEmail409NamesBlockingProposal(t *testing.T) {
 	tok := mintTokenViaStore(t, s)
 	body, _ := json.Marshal(map[string]any{
 		"token":      tok,
-		"submission": map[string]any{"name": "Pat Liaison", "email": "person-119@example.org", "organization": "Duplicate Org", "nationality": "CAN"},
+		"submission": map[string]any{"name": "Pat Liaison", "email": "person-106@example.org", "organization": "Duplicate Org", "nationality": "CAN"},
 	})
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/public/onboard/submit", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -674,7 +674,7 @@ func TestSubmit_BlankNationalityRefusedBeforeConsumingInvite(t *testing.T) {
 	h := s.Routes()
 	tok := mintTokenViaStore(t, s)
 
-	person := map[string]any{"name": "Pat Liaison", "email": "person-119@example.org", "organization": "BlankNat Org"}
+	person := map[string]any{"name": "Pat Liaison", "email": "person-106@example.org", "organization": "BlankNat Org"}
 	if code := submitRaw(t, h, tok, person); code != http.StatusUnprocessableEntity {
 		t.Fatalf("person without nationality: want 422, got %d", code)
 	}
@@ -685,7 +685,7 @@ func TestSubmit_BlankNationalityRefusedBeforeConsumingInvite(t *testing.T) {
 	}
 
 	tok2 := mintTokenViaStore(t, s)
-	system := map[string]any{"name": "Radar 21", "email": "person-121@example.org", "organization": "Radar Org", "principal_type": "system"}
+	system := map[string]any{"name": "Radar 21", "email": "person-108@example.org", "organization": "Radar Org", "principal_type": "system"}
 	if pid := submit(t, h, tok2, system); pid == "" {
 		t.Fatal("system without nationality should be accepted")
 	}
@@ -695,7 +695,7 @@ func TestSubmit_BlankOrganizationRefusedBeforeConsumingInvite(t *testing.T) {
 	h := s.Routes()
 	tok := mintTokenViaStore(t, s)
 
-	person := map[string]any{"name": "Pat Liaison", "email": "person-117@example.org", "nationality": "CAN"}
+	person := map[string]any{"name": "Pat Liaison", "email": "person-104@example.org", "nationality": "CAN"}
 	code := submitRaw(t, h, tok, person)
 	if code != http.StatusUnprocessableEntity {
 		t.Fatalf("person without organization: want 422, got %d", code)

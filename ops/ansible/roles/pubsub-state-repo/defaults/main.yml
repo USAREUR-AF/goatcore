@@ -56,10 +56,11 @@ pubsub_state_workdir: /var/lib/pubsub-state-mirror
 # mode). Real default at the trial fabric is "pubsub-state-snapshots".
 pubsub_state_minio_bucket: "pubsub-state-snapshots"
 
-# MinIO alias the local `mc` binary already knows about. The minio role
-# sets up `mc alias set local-nova http://127.0.0.1:9000 ...` at first run;
-# this role's script references that alias. Empty = skip MinIO push.
-pubsub_state_minio_alias: "local-nova"
+# MinIO alias the local `mc` binary already knows about, `local-<site>` by
+# default. The deploy play (pubsub-state-mirror-deploy.yml) sets it up for
+# root with `mc alias set`; this role's script references that alias.
+# Empty = skip MinIO push.
+pubsub_state_minio_alias: "local-{{ pubsub_state_site_id | mandatory }}"
 
 # Git author identity baked into commits. Distinguishes mirror-generated
 # commits from operator-authored ones in the log.

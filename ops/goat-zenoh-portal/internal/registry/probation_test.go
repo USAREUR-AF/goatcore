@@ -22,7 +22,7 @@ func TestProbationHoldListDecide(t *testing.T) {
 	r := openProbReg(t)
 	ctx := context.Background()
 
-	p := &Probation{Ref: "kid-1", Label: "oliver@mil.example", Reason: "stray:untracked", HeldBy: "maintainer-operator"}
+	p := &Probation{Ref: "kid-1", Label: "oliver@mil.example", Reason: "stray:untracked", HeldBy: "jane-operator"}
 	if err := r.HoldProbation(ctx, p); err != nil {
 		t.Fatalf("hold: %v", err)
 	}
@@ -45,7 +45,7 @@ func TestProbationHoldListDecide(t *testing.T) {
 	}
 
 	// Decide → repaired; it leaves the open list, and the ref can be held again.
-	if err := r.DecideProbation(ctx, p.ID, ProbationRepaired, "maintainer-operator", "onboarded"); err != nil {
+	if err := r.DecideProbation(ctx, p.ID, ProbationRepaired, "jane-operator", "onboarded"); err != nil {
 		t.Fatalf("decide: %v", err)
 	}
 	if open, _ := r.ListProbation(ctx, true); len(open) != 0 {

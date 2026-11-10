@@ -30,26 +30,27 @@ import (
 // Server owns the HTTP surface. Constructed once at startup; handlers
 // pull dependencies off the struct.
 type Server struct {
-	cfg       *config.Config
-	reg       *registry.Registry
-	zenoh     *zenohproxy.Proxy
-	minter    *certmint.Minter
-	aclRender *acl.Renderer
-	schemas   *schemastore.Store  // nil-able; routes 503 when unset
-	kratos    *kratosadmin.Client // nil-able; admin/vendor-activity hides the identities column when nil
+	browserSessions browserSessions
+	cfg             *config.Config
+	reg             *registry.Registry
+	zenoh           *zenohproxy.Proxy
+	minter          *certmint.Minter
+	aclRender       *acl.Renderer
+	schemas         *schemastore.Store  // nil-able; routes 503 when unset
+	kratos          *kratosadmin.Client // nil-able; admin/vendor-activity hides the identities column when nil
 	// humans resolves an Ory identity by UUID or (as an alias) login email for
 	// the data-roles resolver; nil when kratos is unset (the human paths then
 	// fail closed). Kratos-backed in production; overridable in tests.
-	humans     humanResolver
-	nb         *netbirdpoll.Client // shared, cache-backed mgmt client; the background poller warms its cache
-	nbKeys     *netbirdkeys.Client // ADR 1116 §9 machine setup-key mint; disabled unless mesh-key-mint-enabled + prefix + creds
-	notifier   *notify.Notifier    // candidate stage-notification channel (increment 3); disabled → every call no-ops
+	humans   humanResolver
+	nb       *netbirdpoll.Client // shared, cache-backed mgmt client; the background poller warms its cache
+	nbKeys   *netbirdkeys.Client // ADR 1116 §9 machine setup-key mint; disabled unless mesh-key-mint-enabled + prefix + creds
+	notifier *notify.Notifier    // candidate stage-notification channel (increment 3); disabled → every call no-ops
 	// activity answers "how many declared topics has this org published
 	// under" for the swimlane. Never nil — an unconfigured goatnet gets
 	// activity.Disabled, which answers "unavailable" rather than zero, so the
 	// surface cannot present a fabricated count as a real one. See F-537 and
 	// internal/activity.
-	activity activity.Source
+	activity   activity.Source
 	staticFS   fs.FS
 	startedAt  time.Time
 	reqCounter atomic.Uint64
@@ -65,6 +66,10 @@ type Server struct {
 	// from, resolved once from config at construction.
 	envBaselines    registry.BaselineSet
 	envDefaultClass string
+
+	// streams counts the live /api/topics/stream connections per key, for
+	// the MaxStreamsPerPrincipal cap (stream_limit.go).
+	streams streamSlots
 }
 
 // New builds a Server with the supplied dependencies. staticFS holds the
@@ -153,6 +158,8 @@ func (s *Server) Routes() http.Handler {
 // can resolve every documented method and path against it.
 func (s *Server) mux() *http.ServeMux {
 	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/browser-session", s.handleBrowserSession)
+	mux.HandleFunc("DELETE /api/browser-session", s.handleBrowserSession)
 
 	// Liveness / readiness.
 	mux.HandleFunc("GET /api/health", revalidated(s.handleHealth))

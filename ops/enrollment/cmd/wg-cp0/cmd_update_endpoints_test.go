@@ -27,8 +27,8 @@ func fixtureWithRelayMix(t *testing.T) (path, peerName string) {
 	prior := time.Now().UTC().Add(30 * 24 * time.Hour)
 	ps := peerset.PeerSet{
 		Peers: []peerset.Peer{{
-			Name: "vega-a", WGCP0Address: "198.18.0.1",
-			CurrentPubkey: pub(0xA1), Site: "vega", BundleExpiry: &prior,
+			Name: "lab-a", WGCP0Address: "198.18.0.1",
+			CurrentPubkey: pub(0xA1), Site: "lab", BundleExpiry: &prior,
 		}},
 		Relays: []peerset.Relay{
 			{Name: "relay-rla", Endpoint: "relay-rla:51821", MeshAddress: "198.18.0.2", CurrentPubkey: pub(0x02), Tier: "relay_servers"},
@@ -38,7 +38,7 @@ func fixtureWithRelayMix(t *testing.T) (path, peerName string) {
 	}
 	path = filepath.Join(t.TempDir(), "allow.json")
 	writeV2Fixture(t, path, ps)
-	return path, "vega-a"
+	return path, "lab-a"
 }
 
 func TestCmdUpdateEndpoints_DryRunBasic(t *testing.T) {
@@ -48,9 +48,9 @@ func TestCmdUpdateEndpoints_DryRunBasic(t *testing.T) {
 		t.Fatalf("code = %d", code)
 	}
 	for _, w := range []string{
-		"PLAN — wg-cp0 update-endpoints vega-a",
+		"PLAN — wg-cp0 update-endpoints lab-a",
 		"* REUSING KEYPAIR",
-		"vega-a",
+		"lab-a",
 		"relays=[relay-rla, relay-rlb, relay-rlc]",
 		"REUSING KEYPAIR for 1 peer(s)",
 		"Re-run with --apply",
@@ -211,7 +211,7 @@ func TestCmdUpdateEndpoints_ApplyAllPeersAddNewRelay(t *testing.T) {
 	}
 	// Verify the invocation log captured the --add-relay's effect.
 	logData, _ := os.ReadFile(logPath)
-	if !strings.Contains(string(logData), "--reuse-keypair-from vega-a") {
+	if !strings.Contains(string(logData), "--reuse-keypair-from lab-a") {
 		t.Errorf("invocation log missing reuse-keypair-from: %s", logData)
 	}
 }

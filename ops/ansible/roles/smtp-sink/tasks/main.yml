@@ -1,0 +1,54 @@
+---
+- name: smtp-sink | the docker network exists (created only when smtp_sink_network_create)
+  ansible.builtin.command:
+    argv: [docker, network, create, "{{ smtp_sink_network }}"]
+  register: smtp_sink_net
+  changed_when: smtp_sink_net.rc == 0
+  failed_when: smtp_sink_net.rc != 0 and 'already exists' not in smtp_sink_net.stderr
+  when: smtp_sink_network_create | bool
+
+- name: smtp-sink | directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - "{{ smtp_sink_dir }}"
+    - "{{ smtp_sink_dir }}/data"
+
+- name: smtp-sink | compose file
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ smtp_sink_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0644"
+  register: smtp_sink_compose
+
+- name: smtp-sink | up
+  ansible.builtin.command:
+    argv: [docker, compose, -f, "{{ smtp_sink_dir }}/docker-compose.yml", up, -d, --remove-orphans]
+    chdir: "{{ smtp_sink_dir }}"
+  register: smtp_sink_up
+  changed_when: "'Started' in smtp_sink_up.stderr or 'Recreated' in smtp_sink_up.stderr or 'Created' in smtp_sink_up.stderr"
+
+- name: smtp-sink | the API answers
+  ansible.builtin.uri:
+    url: "http://{{ smtp_sink_ui_publish }}/api/v1/info"
+    status_code: 200
+  register: smtp_sink_info
+  retries: 30
+  delay: 1
+  until: smtp_sink_info.status == 200
+
+- name: smtp-sink | how the console uses it
+  ansible.builtin.debug:
+    msg: >-
+      smtp-sink up. The identity console sends to it with
+      id_admin_console_smtp_host: "{{ smtp_sink_container }}",
+      id_admin_console_smtp_port: "1025", an empty username and password, and
+      id_admin_console_smtp_from set. Captured mail: ssh -L
+      {{ smtp_sink_ui_publish.split(':') | last }}:{{ smtp_sink_ui_publish }} to the box,
+      then http://{{ smtp_sink_ui_publish }}.

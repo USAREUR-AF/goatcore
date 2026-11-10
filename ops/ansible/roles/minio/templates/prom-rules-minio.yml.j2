@@ -99,7 +99,7 @@ groups:
             not cycling.
 
             A delete marker left as the only thing at a key stores nothing and
-            records nothing, but the scanner walks it on every pass. At ZAGROS's
+            records nothing, but the scanner walks it on every pass. At {{ minio_delete_marker_evidence_site }}'s
             531k markers that was 47% of the versions the scanner walked and 1.128 MB/s of disk
             read to serve 33 KB/s of client traffic. It will not show up in
             bucket size, quota utilisation, or any other byte-oriented metric.

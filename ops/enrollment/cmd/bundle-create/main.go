@@ -90,15 +90,15 @@ const (
 )
 
 func main() {
-	site := flag.String("site", "", "Site identifier (e.g. vega, prov-rla). Required.")
-	deviceID := flag.String("device-id", "", "Device identifier (e.g. mgmt-prov-site3-01-orin). Required.")
+	site := flag.String("site", "", "Site identifier (e.g. site-a, site-b). Required.")
+	deviceID := flag.String("device-id", "", "Device identifier (e.g. mgmt-site-a-01-orin). Required.")
 	wgCP0Address := flag.String("wg-cp0-address", "", "Device's wg-cp0 interface address as CIDR (e.g. 198.18.0.6/24). Required.")
 	relaysPath := flag.String("wg-cp0-relays", "", "Path to JSON file listing wg-cp0 relays (name, endpoint, address, pubkey). Required.")
-	aclGroupsRaw := flag.String("acl-groups", "", "Comma-separated ACL group names (e.g. VEGA,VEGA-MGMT). Required unless --from-machine is used (mutually exclusive). Gear-class groups (ADR 1116) are REFUSED here — they are derived from the machine's node-class via --from-machine, never hand-typed. Infra/site groups stay allowed.")
+	aclGroupsRaw := flag.String("acl-groups", "", "Comma-separated ACL group names (e.g. SITE-A,SITE-A-MGMT). Required unless --from-machine is used (mutually exclusive). Gear-class groups (ADR 1116) are REFUSED here — they are derived from the machine's node-class via --from-machine, never hand-typed. Infra/site groups stay allowed.")
 	fromMachine := flag.String("from-machine", "", "machine-mesh-alignment D6a. Portal-registry slot anchor of an enrolled machine. The bundle's acl_groups are DERIVED from the machine's born-as node-class (GET /api/machines/{anchor} on --portal-url) and the bundle is stamped with enrollment_anchor + node_class so the joined peer ties back to its custody edge. Mutually exclusive with --acl-groups. Requires --portal-url + $GOAT_PORTAL_OPERATOR_KEY.")
-	portalURL := flag.String("portal-url", "", "Portal base URL (https) for --from-machine, e.g. https://portal.zagros.netbird.zagros.example. The operator API key is read from $GOAT_PORTAL_OPERATOR_KEY — an env var, never a flag.")
+	portalURL := flag.String("portal-url", "", "Portal base URL (https) for --from-machine, e.g. https://portal.galaxy.example. The operator API key is read from $GOAT_PORTAL_OPERATOR_KEY — an env var, never a flag.")
 	taxonomyPath := flag.String("taxonomy", defaultTaxonomyRelPath, "Path to netbird_acl_taxonomy.yml, used by the hand-typed --acl-groups path to refuse gear-class groups. The default resolves repo-relative by walking up from the working directory.")
-	caID := flag.String("ca-id", "", "CA identifier matching the public-keys distribution (e.g. dev-goat-ca-2026-04-20). Required.")
+	caID := flag.String("ca-id", "", "CA identifier matching the public-keys distribution (e.g. dev-galaxy-ca-2026-04-20). Required.")
 
 	// Signing-mode selector + per-mode flags. Default `dev` until an
 	// operator explicitly switches to YubiKey (Block 22K.4 cutover).
@@ -150,10 +150,10 @@ func main() {
 	// the bundle gets a populated goat_cli_extras map covered by the
 	// CA signature. Devices/relays don't carry this; only operator-
 	// onboard bundles do.
-	goatCLIPortalEndpoint := flag.String("goat-cli-portal-endpoint", "", "ADR 1019. Optional. Operator-facing portal URL (https), e.g. https://portal.nova.netbird.nova.example. Required when any other --goat-cli-* flag is set.")
+	goatCLIPortalEndpoint := flag.String("goat-cli-portal-endpoint", "", "ADR 1019. Optional. Operator-facing portal URL (https), e.g. https://portal.galaxy.example. Required when any other --goat-cli-* flag is set.")
 	goatCLIPortalTokenPath := flag.String("goat-cli-portal-token", "", "ADR 1019. Optional. Path to a file containing the opaque Bearer API key for the portal REST API (one line). Required when any other --goat-cli-* flag is set.")
-	goatCLIRouterEndpoint := flag.String("goat-cli-router-endpoint", "", "ADR 1019. Optional. Zenoh router locator the goat-cli connects to, e.g. tls/100.127.0.190:7447. Required when any other --goat-cli-* flag is set.")
-	goatCLIOnboardEndpoint := flag.String("goat-cli-onboard-endpoint", "", "Optional. Onboarding-engine URL (https), e.g. https://onboard.zagros.netbird.zagros.example — the goat-id-console machine realm the CLI targets for /api/onboard/* (docs/design/onboarding-extraction-plan.md). NOT part of the atomic --goat-cli-* set: omit it on a goatnet without the onboard route and the CLI falls back to the portal endpoint.")
+	goatCLIRouterEndpoint := flag.String("goat-cli-router-endpoint", "", "ADR 1019. Optional. Zenoh router locator the goat-cli connects to, e.g. tls/router.galaxy.example:7447. Required when any other --goat-cli-* flag is set.")
+	goatCLIOnboardEndpoint := flag.String("goat-cli-onboard-endpoint", "", "Optional. Onboarding-engine URL (https), e.g. https://onboard.galaxy.example — the goat-id-console machine realm the CLI targets for /api/onboard/* (docs/design/onboarding-extraction-plan.md). NOT part of the atomic --goat-cli-* set: omit it on a goatnet without the onboard route and the CLI falls back to the portal endpoint.")
 	goatCLIMTLSCertPath := flag.String("goat-cli-mtls-cert", "", "ADR 1019. Optional. Path to PEM file containing the per-operator client cert (leaf, chain). Required when any other --goat-cli-* flag is set.")
 	goatCLIMTLSKeyPath := flag.String("goat-cli-mtls-key", "", "ADR 1019. Optional. Path to PEM file containing the per-operator client private key. Required when any other --goat-cli-* flag is set.")
 	goatCLICARootsPath := flag.String("goat-cli-ca-roots", "", "ADR 1019. Optional. Path to PEM bundle containing the CA root(s) the goat-cli verifies the portal + router server certs against. Required when any other --goat-cli-* flag is set.")

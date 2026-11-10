@@ -186,7 +186,7 @@
       <ul>
         <li><strong>Key expression</strong> &mdash; the address of a piece of data, like a slash-separated path: <code>acme/sensors/lidar/front/v1</code>. Subscribers match by pattern (<code>acme/**</code> matches everything under <code>acme/</code>).</li>
         <li><strong>Publisher / Subscriber</strong> &mdash; your code writes (<code>session.put(key, bytes)</code>) or watches (<code>session.declare_subscriber(key_expr, callback)</code>). Bytes flow asynchronously through the fabric.</li>
-        <li><strong>Router</strong> &mdash; a Zenoh process that ferries data between publishers and subscribers that can't reach each other directly. On this trial there is <strong>one router</strong> (on <code>nova-a</code>); your processes connect to it.</li>
+        <li><strong>Router</strong> &mdash; a Zenoh process that ferries data between publishers and subscribers that can't reach each other directly. On this trial there is <strong>one router</strong>; your processes connect to it.</li>
       </ul>
       <p>
         That's it. There's no broker concept, no exchange concept, no consumer-group concept &mdash; Zenoh is much smaller than Kafka or MQTT in surface area. If you're coming from those tools, the closest mental model is "MQTT, but key-paths are routable patterns and there's no broker process."
@@ -234,7 +234,7 @@
 
     <section id="flavor-a">
       <h2>3. Flavor A walkthrough &mdash; Publisher</h2>
-      <p>The full path from zero to publishing. Pre-reqs: a machine that can reach <code>zenoh.nova.netbird.nova.example</code> on TCP 7447 (you must be on the goat NetBird mesh).</p>
+      <p>The full path from zero to publishing. Pre-reqs: a machine that can reach <code>zenoh.goat.example</code> on TCP 7447 (you must be on the goat NetBird mesh).</p>
 
       <h3>3.1 Get an operator to mint you one __LEX_ORG__ row</h3>
       <p>
@@ -243,14 +243,14 @@
       <p>
         Before you even ask: pick a prefix that isn't already taken. The live list is on <a href="/peering/our-config.html">Our Config</a> under <em>Currently-taken __LEX_ORG__ prefixes</em>, or programmatically:
       </p>
-<pre><code>curl -s https://portal.nova.netbird.nova.example/api/fabric/config | jq '.namespacing'</code></pre>
+<pre><code>curl -s https://portal.goat.example/api/fabric/config | jq '.namespacing'</code></pre>
 
       <h3>3.2 Unpack the bundle</h3>
       <p>The bundle is a tarball; unpack it somewhere safe. You'll see:</p>
 <pre><code>my-__LEX_ORG__-bundle/
   &lt;__LEX_ORG__&gt;-cert.pem            # your client cert (signed by us; URI-SAN-pinned)
   &lt;__LEX_ORG__&gt;-key.pem             # your private key (DO NOT share)
-  nova-ca-root.pem        # our root CA (your trust anchor for our router)
+  &lt;goatnet&gt;-ca-root.pem   # our root CA (your trust anchor for our router)
   first-publisher.py           # a worked publisher pre-wired to your prefix
   first-subscriber.py          # companion subscriber for self-validation
   zenoh-trial-onboarding.md    # the full onboarding doc (offline copy)
@@ -299,7 +299,7 @@ python3 first-publisher.py</code></pre>
 
       <p>The portal API key is in your bundle (delivered out-of-band). Set up your shell &mdash; <strong>substitute the bold parts</strong>:</p>
 <pre><code>export PORTAL_TOKEN=<strong>&lt;your-portal-api-key&gt;</strong>     # ← from your OOB bundle
-export PORTAL=https://portal.nova.netbird.nova.example
+export PORTAL=https://portal.goat.example
 export __LEX_ORG_UPPER__=<strong>&lt;your-__LEX_ORG__-prefix&gt;</strong>          # ← your real prefix, e.g. acme</code></pre>
 
       <p><strong>Step 1 &mdash; register the topic.</strong> Worked example for __LEX_ORG__ <code>acme</code> publishing on <code>acme/radar1/RADAR-EXAMPLE/position_attitude</code>:</p>
@@ -373,7 +373,7 @@ curl -sS -X POST "$PORTAL/api/vendors/$__LEX_ORG_UPPER__/topics/$TOPIC_ID/schema
       <p>
         Easiest path: open the <a href="/peering/zenohd-config.html">Router Config Generator</a>, punch in your intended prefix, click Generate, then copy or download. Or curl it:
       </p>
-<pre><code>curl -s "https://portal.nova.netbird.nova.example/api/fabric/zenohd-config?prefix=my-__LEX_ORG__" \
+<pre><code>curl -s "https://portal.goat.example/api/fabric/zenohd-config?prefix=my-__LEX_ORG__" \
   &gt; zenohd.json5</code></pre>
       <p>
         If you'd rather hand-roll, here's the same template &mdash; replace <code>&lt;your-prefix&gt;</code> conceptually (the prefix doesn't appear in the file; see callout below) and the cert paths:
@@ -382,7 +382,7 @@ curl -sS -X POST "$PORTAL/api/vendors/$__LEX_ORG_UPPER__/topics/$TOPIC_ID/schema
   // Your router connects OUT to ours; downstream clients connect to localhost.
   mode: "router",
   connect: {
-    endpoints: ["tls/zenoh.nova.netbird.nova.example:7447"],
+    endpoints: ["tls/zenoh.goat.example:7447"],
   },
   listen: {
     endpoints: ["tcp/127.0.0.1:7447"],   // your downstream clients connect here
@@ -451,7 +451,7 @@ curl -sS -X POST "$PORTAL/api/vendors/$__LEX_ORG_UPPER__/topics/$TOPIC_ID/schema
         <li>Your __LEX_ORG__ prefix</li>
         <li>The exact error message from your zenoh client (or the <code>zenohd</code> log if you're on Flavor B)</li>
         <li>The wire-format you're publishing as (JSON / protobuf / etc.)</li>
-        <li>Whether you can reach <code>zenoh.nova.netbird.nova.example:7447</code> from your machine</li>
+        <li>Whether you can reach <code>zenoh.goat.example:7447</code> from your machine</li>
       </ol>
       <p>
         <span id="feedback-channel-row" hidden>Feedback channel: <strong id="feedback-channel-value"></strong></span>

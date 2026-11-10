@@ -70,8 +70,8 @@ func signedBundle(t *testing.T, mutate func(*bundle.EnrollmentBundle)) (wire []b
 		Version:    bundle.Version,
 		DeviceID:   "mgmt-prov-site3-01-orin",
 		PeerPubkey: make([]byte, 32),
-		ACLGroups:  []string{"VEGA", "VEGA-MGMT"},
-		Site:       "vega",
+		ACLGroups:  []string{"LAB", "LAB-MGMT"},
+		Site:       "lab",
 		KnownEndpoints: []bundle.KnownEndpoint{
 			{Addr: "203.0.113.1:51821", Pubkey: relayPubs[0], Kind: bundle.Kind("cp-relay"), MeshAddr: "10.99.0.2"},
 			{Addr: "203.0.113.23:51821", Pubkey: relayPubs[1], Kind: bundle.Kind("cp-relay"), MeshAddr: "10.99.0.3"},
@@ -156,7 +156,7 @@ func TestRun_HappyPath(t *testing.T) {
 		"Endpoint   = 203.0.113.23:51821",
 		"AllowedIPs = 10.99.0.3/32, 198.18.0.0/24",
 		"PersistentKeepalive = 25",
-		"# Site:        vega",
+		"# Site:        lab",
 		"# Device:      mgmt-prov-site3-01-orin",
 	} {
 		if !strings.Contains(conf, want) {

@@ -24,7 +24,7 @@ groups:
             looks like a page that explains it has nothing to show. Read the
             body the health path returns; it names the refusal. From the
             mgmt host, through the probe's own network (the blackbox-exporter
-            container is named per site, e.g. zagros-obs-blackbox-exporter):
+            container is named per site, e.g. <site>-obs-blackbox-exporter):
               docker exec <blackbox-exporter container> wget -qO- {{ $labels.instance }}
             A wrong or rotated API token is the usual cause; redeploy the
             surface with the current one.

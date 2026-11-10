@@ -18,6 +18,11 @@
 # one it cannot fetch the trunk for (GB-065); --offline (an islanded site)
 # judges against the cached trunk and the ledger row records it.
 #
+# Runs from a clone of the trunk or from an ASSEMBLED tree (goatcore at the
+# commit in goatcore.ref, an environment overlay copied over it, `.goat-assembled`
+# at the root). The assembled tree is judged against that pair of commits, not a
+# trunk remote, and each ledger row names the pair (`source_tree`).
+#
 # Transport, decided per goatnet:
 #   - the laptop's NetBird profile IS this goatnet and Management is Connected
 #       -> -i mgmt-hosts.ini -i mgmt-hosts-mesh.ini   (mesh SSH)
@@ -63,6 +68,19 @@ if ! "$PY" -c 'import yaml' 2>/dev/null; then
   if [ -n "$_ap" ] && "$_ap" -c 'import yaml' 2>/dev/null; then PY="$_ap"; fi
 fi
 "$PY" -c 'import yaml' 2>/dev/null || die "python dep missing — this needs PyYAML. Install once:  pip install pyyaml  (or pipx/venv), then re-run."
+# The AWS profile and the image organisation are the project's, not this
+# script's: GOAT_AWS_PROFILE / GHCR_ORG for one command, then what the checkout
+# declares in ops/goatbuilder/goatbuilder.yaml (deploy.aws_profile and
+# repo.image_namespace, read by project-setting.sh), then `default`, the name
+# the AWS tools fall back to themselves. The builder reads the same three in
+# the same order (crate::settings), so both avenues run under one profile.
+AWS_PROFILE_DEPLOY="${GOAT_AWS_PROFILE:-$("$HERE/project-setting.sh" --repo "$REPO" deploy aws_profile 2>/dev/null || true)}"
+[ -n "$AWS_PROFILE_DEPLOY" ] || AWS_PROFILE_DEPLOY=default
+IMAGE_ORG="${GHCR_ORG:-}"
+if [ -z "$IMAGE_ORG" ]; then
+  _ns="$("$HERE/project-setting.sh" --repo "$REPO" repo image_namespace 2>/dev/null || true)"
+  case "$_ns" in ghcr.io/*) IMAGE_ORG="${_ns#ghcr.io/}" ;; esac
+fi
 
 # --- prep phase: the rollout readiness/reversibility readout (ADR 1211) --------
 # The three declared facts, printed first, before anything is cut — the script
@@ -125,8 +143,8 @@ else
 fi
 # The target mode is decided by the play that actually declares `hosts:`. A
 # fleet-standard <component>-deploy.yml may be an alias that only imports the
-# real play (microscope-deploy.yml -> microscope.yml, demogame-deploy.yml
-# -> demogame.yml), so follow import_playbook first; deciding on the alias
+# real play (microscope-deploy.yml -> microscope.yml), so follow
+# import_playbook first; deciding on the alias
 # read it as a plain `-l` play, and the imported `hosts: "{{ target | mandatory }}"`
 # refused the run before any task ("Mandatory variable 'target' not defined",
 # F-587). A play whose hosts is a mandatory variable gets `-e <that var>=<group>`,
@@ -211,6 +229,12 @@ fi
 # mutating deploy play below, keep going through with-aws unchanged.
 READONLY_AWS_MODE=""
 case "$TRANSPORT_KIND" in direct|mesh) READONLY_AWS_MODE="none" ;; esac
+# The source of record this run renders from, said once and recorded in every
+# ledger row it writes (rollback-ledger `source_tree`): the commit of a clone, or
+# goatcore.ref + the overlay commit of an assembled tree (source_of_record.py).
+GOAT_DEPLOY_SOURCE_TREE="$(python3 "$HERE/lib/source_of_record.py" describe --repo "$REPO" 2>/dev/null || true)"
+export GOAT_DEPLOY_SOURCE_TREE
+note "source tree $(python3 "$HERE/lib/source_of_record.py" kind --repo "$REPO" 2>/dev/null || echo unknown) $GOAT_DEPLOY_SOURCE_TREE"
 note "goatnet $GOATNET ($NAME): groups [$MEMBERS] via $TRANSPORT"
 note "playbook $(basename "$PLAY") ${TARGET_FLAG}<group>; ledger component $LEDGER"
 
@@ -227,14 +251,17 @@ for G in $MEMBERS; do
   WANT_DIGEST="${WANT##*@}"
   LOG="$LOGDIR/goat-deploy-$COMP-$G-$TS.log"
   if [ "$VERIFY_ONLY" = 0 ]; then
-    # Show the ref with ghcr_org resolved (same default as group_vars/all.yml),
-    # so the note does not read like an unrendered/broken variable. Ansible still
-    # renders the real value at apply time from the goatnet's group_vars.
-    note "$G: deploying $(printf '%s' "$WANT" | sed "s#{{ ghcr_org }}#${GHCR_ORG:-usareur-af}#g")"
+    # Show the ref with ghcr_org resolved (GHCR_ORG, else the organisation the
+    # checkout declares), so the note does not read like an unrendered/broken
+    # variable. Ansible still renders the real value at apply time from the
+    # goatnet's group_vars.
+    SHOWN="$WANT"
+    [ -z "$IMAGE_ORG" ] || SHOWN="$(printf '%s' "$WANT" | sed "s#{{ ghcr_org }}#${IMAGE_ORG}#g")"
+    note "$G: deploying $SHOWN"
     if [ "$DRY" = 1 ]; then
-      note "DRY: (cd ops/ansible && ../scripts/with-aws usareur-af -- ../scripts/ansible-preflight.sh $INV $(basename "$PLAY") ${TARGET_FLAG}$G) > $LOG"
+      note "DRY: (cd ops/ansible && ../scripts/with-aws $AWS_PROFILE_DEPLOY -- ../scripts/ansible-preflight.sh $INV $(basename "$PLAY") ${TARGET_FLAG}$G) > $LOG"
     else
-      ( cd "$REPO/ops/ansible" && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws usareur-af -- \
+      ( cd "$REPO/ops/ansible" && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws "$AWS_PROFILE_DEPLOY" -- \
           ../scripts/ansible-preflight.sh $INV "$(basename "$PLAY")" ${TARGET_FLAG}"$G" ) > "$LOG" 2>&1 \
         && DEPLOY_RC=0 || DEPLOY_RC=$?
       RECAP="$(grep -A8 'PLAY RECAP' "$LOG" | grep -E 'ok=' || true)"
@@ -270,7 +297,7 @@ for G in $MEMBERS; do
   # design-absence, so a missing ledger there is the correct state, not drift.
   # The inventory read is also what says which hosts MUST answer: a failed read,
   # or a host that never returns a row, is not convergence (#1545).
-  if ! INVENTORY="$( cd "$REPO/ops/ansible" && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES GOAT_AWS_MODE="$READONLY_AWS_MODE" ../scripts/with-aws usareur-af -- \
+  if ! INVENTORY="$( cd "$REPO/ops/ansible" && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES GOAT_AWS_MODE="$READONLY_AWS_MODE" ../scripts/with-aws "$AWS_PROFILE_DEPLOY" -- \
       ansible-inventory $INV --list 2> "$LOG.inventory" )"; then
     note "$G: inventory read FAILED — log $LOG.inventory"; RC=1; continue
   fi
@@ -300,7 +327,7 @@ print(" ".join(skip))
     note "$G: no host of this group is expected to carry $LEDGER in the loaded inventories — nothing to verify"; continue
   fi
   SEENFILE="$LOGDIR/.deploy-$COMP-$G-$TS.seen"; : > "$SEENFILE"
-  ROWS="$( cd "$REPO/ops/ansible" && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES GOAT_AWS_MODE="$READONLY_AWS_MODE" ../scripts/with-aws usareur-af -- \
+  ROWS="$( cd "$REPO/ops/ansible" && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES GOAT_AWS_MODE="$READONLY_AWS_MODE" ../scripts/with-aws "$AWS_PROFILE_DEPLOY" -- \
       ansible $INV "$G" -m shell -a "tail -n 1 /var/lib/goat/$LEDGER/deploy-history.jsonl 2>/dev/null || echo NO_LEDGER" -o 2> "$LOG.verify" )" \
     && LEDGER_RC=0 || LEDGER_RC=$?
   printf '%s\n' "$ROWS" | while IFS= read -r line; do

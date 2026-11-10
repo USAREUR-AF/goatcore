@@ -1,0 +1,185 @@
+---
+# Reconcile — copy rows that exist on one member and are missing on another,
+# for the tables named in postgres_encoding_migrate_reconcile_tables
+# (<database>.<schema>.<table>, comma-separated). For each table, every
+# member receives the rows its peers hold and it lacks, matched by primary
+# key, written with Spock's repair mode on for that transaction so the insert
+# is not replicated back out (each member receives its copy directly).
+#
+# Refused: a key present on two members with different content (that is a
+# conflict, not a missing row); a table without a primary key; a table over
+# 10000 rows (this action is for small identifier tables); an open run that
+# has stopped the writers.
+#
+# The writers stay up. That is right for tables only written when a service
+# migrates its schema (Ory's `networks`, one row per node's own migration);
+# for a table that services write in normal operation, stop its writers
+# first or a concurrent insert can collide with the copied key.
+#
+# Input: pem_step = fetch | apply | verify.
+
+- name: "reconcile | tables"
+  ansible.builtin.set_fact:
+    _pem_rec_specs: >-
+      {{ (postgres_encoding_migrate_reconcile_tables | default('')).split(',') | map('trim') | select | list }}
+
+- name: "reconcile | read every named table (fetch)"
+  when:
+    - pem_step == 'fetch'
+    - not (_pem_standby | bool)
+  block:
+    - name: "reconcile | refuse without tables, or a spec that is not <db>.<schema>.<table>"
+      ansible.builtin.assert:
+        that:
+          - _pem_rec_specs | length > 0
+          - _pem_rec_specs | reject('match', '^[^.]+\.[^.]+\.[^.]+$') | list | length == 0
+        fail_msg: >-
+          Pass -e postgres_encoding_migrate_reconcile_tables=<db>.<schema>.<table>[,...]
+          (got '{{ postgres_encoding_migrate_reconcile_tables | default('') }}'). The
+          migrate preflight prints the list to use.
+        quiet: true
+
+    - name: "reconcile | rows, primary key and Spock presence per table"
+      ansible.builtin.shell:
+        executable: /bin/bash
+        cmd: |
+          set -euo pipefail
+          P=(docker exec -u postgres {{ _pem_c | quote }} psql -X -q -v ON_ERROR_STOP=1 -U postgres -tA)
+          for spec in {{ _pem_rec_specs | map('quote') | join(' ') }}; do
+            db=${spec%%.*}; rel=${spec#*.}
+            "${P[@]}" -d "$db" -c "SELECT json_build_object(
+                'spec', '$spec', 'rel', '$rel',
+                'spock', EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'spock'),
+                'pk', (SELECT coalesce(json_agg(a.attname ORDER BY k.ord), '[]'::json)
+                       FROM pg_index i CROSS JOIN LATERAL unnest(i.indkey) WITH ORDINALITY k(attnum, ord)
+                       JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = k.attnum
+                       WHERE i.indrelid = '$rel'::regclass AND i.indisprimary),
+                'count', (SELECT count(*) FROM $rel),
+                'rows', (SELECT CASE WHEN count(*) <= 10000 THEN coalesce(json_agg(row_to_json(t)), '[]'::json) END FROM $rel t))"
+          done
+      register: _pem_rec_raw
+      changed_when: false
+
+    - name: "reconcile | parse"
+      ansible.builtin.set_fact:
+        _pem_rec: "{{ _pem_rec_raw.stdout_lines | map('from_json') | list }}"
+
+- name: "reconcile | decide what each member lacks (fetch)"
+  when: pem_step == 'fetch'
+  ansible.builtin.set_fact:
+    _pem_rec_plan: >-
+      {%- set prim = [] -%}
+      {%- for h in ansible_play_hosts if not (hostvars[h]._pem_standby | bool) -%}{%- set _ = prim.append(h) -%}{%- endfor -%}
+      {%- set plan = {'refuse': [], 'insert': {}} -%}
+      {%- for spec in _pem_rec_specs -%}
+        {%- set ents = [] -%}
+        {%- for h in prim -%}
+          {%- for e in hostvars[h]._pem_rec | default([]) if e.spec == spec -%}
+            {%- set _ = ents.append({'host': h, 'e': e}) -%}
+          {%- endfor -%}
+        {%- endfor -%}
+        {%- if ents | length < prim | length -%}
+          {%- set _ = plan.refuse.append(spec ~ ': not read on every member') -%}
+        {%- elif ents | selectattr('e.pk', 'equalto', []) | list | length > 0 -%}
+          {%- set _ = plan.refuse.append(spec ~ ': no primary key') -%}
+        {%- elif ents | selectattr('e.rows', 'none') | list | length > 0 -%}
+          {%- set _ = plan.refuse.append(spec ~ ': over 10000 rows on ' ~ (ents | selectattr('e.rows', 'none') | map(attribute='host') | join(', '))) -%}
+        {%- else -%}
+          {%- set pk = ents[0].e.pk -%}
+          {%- set seen = {} -%}
+          {%- for x in ents -%}
+            {%- for r in x.e.rows -%}
+              {%- set key = pk | map('extract', r) | list | to_json -%}
+              {%- if key in seen and seen[key] != r -%}
+                {%- set _ = plan.refuse.append(spec ~ ': key ' ~ key ~ ' differs between members') -%}
+              {%- endif -%}
+              {%- set _ = seen.update({key: r}) -%}
+            {%- endfor -%}
+          {%- endfor -%}
+          {%- for x in ents -%}
+            {%- set have = [] -%}
+            {%- for r in x.e.rows -%}{%- set _ = have.append(pk | map('extract', r) | list | to_json) -%}{%- endfor -%}
+            {%- set miss = [] -%}
+            {%- for key, r in seen.items() if key not in have -%}{%- set _ = miss.append(r) -%}{%- endfor -%}
+            {%- if miss -%}
+              {%- set _ = plan.insert.update({x.host: (plan.insert[x.host] | default([])) + [{'spec': spec, 'rel': x.e.rel, 'spock': x.e.spock, 'rows': miss}]}) -%}
+            {%- endif -%}
+          {%- endfor -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ plan }}
+  run_once: true
+
+- name: "reconcile | refuse what is not a missing row"
+  when: pem_step == 'fetch'
+  ansible.builtin.assert:
+    that:
+      - _pem_rec_plan.refuse | length == 0
+    fail_msg: >-
+      Reconcile refused, nothing written: {{ _pem_rec_plan.refuse | unique | join('; ') }}.
+      Only rows missing on a member are copied; a key with different content on
+      two members needs a decision about which is right.
+    quiet: true
+  run_once: true
+
+- name: "reconcile | plan"
+  when: pem_step == 'fetch'
+  ansible.builtin.debug:
+    msg: >-
+      {% for h, items in _pem_rec_plan.insert.items() %}{{ h }} receives
+      {% for i in items %}{{ i.rows | length }} row(s) of {{ i.spec }}{{ ', ' if not loop.last }}{% endfor %}{{ '; ' if not loop.last }}{% endfor %}
+      {{ 'nothing to copy: every member already holds every row' if not _pem_rec_plan.insert else '' }}
+  run_once: true
+
+- name: "reconcile | copy the missing rows, not replicated (apply)"
+  when:
+    - pem_step == 'apply'
+    - inventory_hostname in _pem_rec_plan.insert
+  block:
+    - name: "reconcile | refuse a payload that would end its own quoting"
+      ansible.builtin.assert:
+        that:
+          - "'$goatrows$' not in (_pem_rec_plan.insert[inventory_hostname] | to_json)"
+        fail_msg: "A row contains the text $goatrows$; copy it by hand."
+        quiet: true
+
+    - name: "reconcile | insert"
+      ansible.builtin.command:
+        argv: "{{ _pem_psql + ['-d', item.spec.split('.')[0]] }}"
+        stdin: |
+          BEGIN;
+          {% if item.spock %}SELECT spock.repair_mode(true);{% endif %}
+          INSERT INTO {{ item.rel }} SELECT * FROM json_populate_recordset(NULL::{{ item.rel }}, $goatrows${{ item.rows | to_json }}$goatrows$);
+          {% if item.spock %}SELECT spock.repair_mode(false);{% endif %}
+          COMMIT;
+      loop: "{{ _pem_rec_plan.insert[inventory_hostname] }}"
+      loop_control:
+        label: "{{ item.spec }}: {{ item.rows | length }} row(s)"
+      changed_when: true
+
+- name: "reconcile | checks again (verify)"
+  when: pem_step == 'verify'
+  block:
+    - name: "reconcile | key sets and orphans now"
+      ansible.builtin.include_tasks: integrity.yml
+      vars:
+        pem_key_dbs: "{{ _pem_rec_specs | map('regex_replace', '\\..*$', '') | unique | list }}"
+
+    - name: "reconcile | report"
+      ansible.builtin.debug:
+        msg: >-
+          Named tables still different: {{ _pem_keydiff | selectattr('table', 'in', _pem_rec_specs) | map(attribute='table') | join(', ') or 'none' }}.
+          Other replicated tables different: {{ _pem_keydiff | rejectattr('table', 'in', _pem_rec_specs) | map(attribute='table') | join(', ') or 'none' }}.
+          Foreign-key orphans: {% set o = [] %}{% for h in ansible_play_hosts %}{% for x in hostvars[h]._pem_orphans | default([]) %}{% set _ = o.append(h ~ ' ' ~ x.db ~ ' ' ~ x.child ~ ' (' ~ x.constraint ~ ') ' ~ x.rows) %}{% endfor %}{% endfor %}{{ o | join('; ') or 'none' }}.
+      run_once: true
+
+    - name: "reconcile | refuse when a named table still differs"
+      ansible.builtin.assert:
+        that:
+          - _pem_keydiff | selectattr('table', 'in', _pem_rec_specs) | list | length == 0
+        fail_msg: >-
+          {{ _pem_keydiff | selectattr('table', 'in', _pem_rec_specs) | list }} still
+          differ after the copy (a writer added rows meanwhile, or the table is
+          not in a replication set on every member).
+        quiet: true
+      run_once: true

@@ -1,0 +1,16 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Peering forwarder carrier (%i)
+Documentation=file://{{ peering_forwarder_config_dir }}/%i.env
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+EnvironmentFile={{ peering_forwarder_config_dir }}/%i.env
+ExecStart=/usr/local/sbin/goat-peering-forwarder-link up
+ExecStop=/usr/local/sbin/goat-peering-forwarder-link down
+
+[Install]
+WantedBy=multi-user.target

@@ -43,7 +43,7 @@ Defaults (overridable):
 
 | Var | Default | Meaning |
 |---|---|---|
-| `admit_audit_image` | `ghcr.io/<ghcr_org>/goat-admit-audit:sha-<rev>@sha256:<digest>` | the CI build, pinned by digest |
+| `admit_audit_image` | none; set by the `admit-audit` row of `ops/pins/fleet-pins.yaml` (rendered into `group_vars/<member>/pins.yml`) or by the host group's group_vars, as `ghcr.io/<ghcr_org>/goat-admit-audit:sha-<rev>@sha256:<digest>` | the CI build, pinned by digest; the deploy refuses an empty value |
 | `pg_admit_audit_role` | `admit_audit` | PG role name |
 | `pg_admit_audit_db` | `netbird` | DB holding the `peers` table |
 

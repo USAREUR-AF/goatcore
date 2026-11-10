@@ -5,7 +5,7 @@
 # with exit 255, and takes every mTLS client down with it. See the script
 # header for the why.
 [Unit]
-Description=Start nova Zenoh router once the netbird mesh IP is assigned
+Description=Start the Zenoh router once the netbird mesh IP is assigned
 # Docker must be up (we drive `docker compose`). netbird.service active is
 # necessary-but-not-sufficient (the daemon goes active before it finishes
 # enrolling + binding the mesh IP), so the script still polls for the IP.

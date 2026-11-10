@@ -162,7 +162,7 @@ Run `inchworm apply image preflight phase2 phase3 phase35 phase4 phase5 enrol ra
 | `phase4` smoke | ✅ setup-key file + DB row both verified |
 | `phase4` idempotency (run twice) | ✅ **byte-identical sha256 across consecutive runs**, preserve mode kicked in correctly |
 | `phase5` smoke | ✅ Relay block in management.json, mgmt-a TCP listener up post-restart, "Relay addresses: [rels://198.51.100.234:33073]" emitted |
-| `enrol` | ✅ both peers got mesh IPs (100.127.0.108, 100.127.0.217), management Connected, Relays 1/2 Available |
+| `enrol` | ✅ both peers got mesh IPs (100.127.0.104, 100.127.0.213), management Connected, Relays 1/2 Available |
 | `ramp` | ✅ ran to completion, captured 4 flow counts (1/4/8/16) into JSONL evidence |
 | `verdict` | ✅ emitted FAIL with exact failing assertion ("single-flow Mbps: 0.0 < 110 Mbps acceptance bar") |
 | `teardown` | (queued — see release notes) |

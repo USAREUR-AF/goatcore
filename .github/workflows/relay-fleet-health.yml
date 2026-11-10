@@ -1,0 +1,45 @@
+name: relay-fleet-health
+
+# The prober behind the relay fleet health check: a public TCP :33073 probe of
+# each relay in a goatnet's inventory (ops/relay/health/relays*.conf) and of
+# every address in its enrollment DNS pool.
+#
+# This tree carries the prober and its tests, not a fleet. The scheduled probe
+# of a real fleet runs where that fleet's inventory is committed, beside the
+# goatnet's overlay. Here the pull request proves the prober's failure handling:
+# an unreachable listener, an empty or malformed inventory, a DNS pool that
+# resolves to nothing, and a region filter that selects nothing all exit as
+# documented instead of reading as healthy.
+
+on:
+  pull_request:
+    paths:
+      - 'ops/scripts/relay-fleet-healthcheck.*'
+      - 'ops/scripts/test_relay_fleet_healthcheck.py'
+      - '.github/workflows/relay-fleet-health.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: prober failure handling
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Test probe failure handling
+        run: python3 -W error::ResourceWarning ops/scripts/test_relay_fleet_healthcheck.py
+      - name: The wrapper parses and refuses an unknown environment
+        run: |
+          bash -n ops/scripts/relay-fleet-healthcheck.sh
+          rc=0
+          ops/scripts/relay-fleet-healthcheck.sh --environment no-such-goatnet >/dev/null 2>&1 || rc=$?
+          test "$rc" -eq 2

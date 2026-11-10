@@ -22,8 +22,8 @@ func TestWelcomeDownloadNamesTheCollabAccount(t *testing.T) {
 	ctx := context.Background()
 
 	p := &onboardstore.Proposal{Sponsor: "jane-admin", Env: "zagros", Handle: "pat-liaison",
-		Email:        "person-118@example.org",
-		ManifestJSON: `{"identity":{"handle":"pat-liaison","email":"person-118@example.org","name":"Pat Liaison","status":"active","added":"2026-06-01","added_by":"admin@example.test"},"netbird":{"enabled":true,"sites":["zagros"],"role":"peer","auto_groups":["OBSERVER"],"handset_limit":1},"ory_site":{"enabled":false},"ory_idp":{"enabled":false},"zenoh":{"enabled":false}}`, Tier: "observer"}
+		Email:        "person-105@example.org",
+		ManifestJSON: `{"identity":{"handle":"pat-liaison","email":"person-105@example.org","name":"Pat Liaison","status":"active","added":"2026-06-01","added_by":"admin@example.test"},"netbird":{"enabled":true,"sites":["zagros"],"role":"peer","auto_groups":["OBSERVER"],"handset_limit":1},"ory_site":{"enabled":false},"ory_idp":{"enabled":false},"zenoh":{"enabled":false}}`, Tier: "observer"}
 	if err := s.Onboard.CreateProposal(ctx, p); err != nil {
 		t.Fatal(err)
 	}

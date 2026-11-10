@@ -463,7 +463,7 @@
         "align": false,
         "alignLevel": null
       },
-      "description": "HOST TOTAL, not per-container. cadvisor runs sockless raw-cgroup mode here (see the cadvisor service comment in ops/compose/goat-obs/docker-compose.yml), and network is a network-namespace property rather than a cgroup one, so raw mode reports it only for the root cgroup \u2014 measured on ZAGROS 2026-08-19: container_network_receive_bytes_total has exactly ONE distinct id, \"/\". A per-container breakdown would render permanently empty, which reads as \"no traffic\" rather than \"not measurable\". Per-container network needs either the docker factory (which cannot read the containerd-snapshotter storage driver) or a netns-aware exporter."
+      "description": "HOST TOTAL, not per-container. cadvisor runs sockless raw-cgroup mode here (see the cadvisor service comment in ops/compose/goat-obs/docker-compose.yml), and network is a network-namespace property rather than a cgroup one, so raw mode reports it only for the root cgroup \u2014 measured 2026-08-19: container_network_receive_bytes_total has exactly ONE distinct id, \"/\". A per-container breakdown would render permanently empty, which reads as \"no traffic\" rather than \"not measurable\". Per-container network needs either the docker factory (which cannot read the containerd-snapshotter storage driver) or a netns-aware exporter."
     },
     {
       "aliasColors": {},
@@ -563,7 +563,7 @@
         "align": false,
         "alignLevel": null
       },
-      "description": "HOST TOTAL, not per-container. cadvisor runs sockless raw-cgroup mode here (see the cadvisor service comment in ops/compose/goat-obs/docker-compose.yml), and network is a network-namespace property rather than a cgroup one, so raw mode reports it only for the root cgroup \u2014 measured on ZAGROS 2026-08-19: container_network_receive_bytes_total has exactly ONE distinct id, \"/\". A per-container breakdown would render permanently empty, which reads as \"no traffic\" rather than \"not measurable\". Per-container network needs either the docker factory (which cannot read the containerd-snapshotter storage driver) or a netns-aware exporter."
+      "description": "HOST TOTAL, not per-container. cadvisor runs sockless raw-cgroup mode here (see the cadvisor service comment in ops/compose/goat-obs/docker-compose.yml), and network is a network-namespace property rather than a cgroup one, so raw mode reports it only for the root cgroup \u2014 measured 2026-08-19: container_network_receive_bytes_total has exactly ONE distinct id, \"/\". A per-container breakdown would render permanently empty, which reads as \"no traffic\" rather than \"not measurable\". Per-container network needs either the docker factory (which cannot read the containerd-snapshotter storage driver) or a netns-aware exporter."
     },
     {
       "collapsed": false,

@@ -12,7 +12,7 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-Environment=ZENOH_CT={{ zenoh_stack | default('zagros-sandbox-zenoh') }}-router
-Environment=ZENOH_ROUTER_NAME={{ zenoh_router_health_name | default('zagros') }}
+Environment=ZENOH_CT={{ relay_health_fabric_sampler_router_container | default(zenoh_health_router_container | default(zenoh_stack ~ '-router')) }}
+Environment=ZENOH_ROUTER_NAME={{ relay_health_fabric_sampler_router_name | default(zenoh_health_router_name | default(zenoh_health_goatnet | default(site_id))) }}
 Environment=FABRIC_JSON={{ relay_health_www_dir }}/ingest/zenoh-fabric.json
 ExecStart=/usr/bin/env bash {{ relay_health_dir }}/zenoh-fabric-sampler.sh

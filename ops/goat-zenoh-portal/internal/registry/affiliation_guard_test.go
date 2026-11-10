@@ -119,7 +119,7 @@ func TestAffiliationComposedAndDecomposedFormsAreOneSpelling(t *testing.T) {
 	}
 
 	// The stamp path stores the same form.
-	if _, err := r.InitializeSlotPool(ctx, "zagros-test", 4); err != nil {
+	if _, err := r.InitializeSlotPool(ctx, "galaxy-test", 4); err != nil {
 		t.Fatalf("init slot pool: %v", err)
 	}
 	s, err := r.AllocateSlot(ctx, "dana-1")

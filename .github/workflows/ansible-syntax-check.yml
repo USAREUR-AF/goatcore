@@ -71,7 +71,7 @@ jobs:
         # Roles import modules from ansible.posix (sysctl, authorized_key,
         # etc.), community.general (timezone, htpasswd, etc.), and
         # community.docker (docker_image, docker_compose_v2 — panoscope,
-        # goat-zenoh-portal, demogame, isitup, …). Without these,
+        # goat-zenoh-portal, airdefenders, isitup, …). Without these,
         # ansible-playbook --syntax-check warns "No module named
         # 'ansible_collections.<ns>.<col>'" and the syntax-check.sh
         # scripts exit non-zero. Pin major versions to keep the gate
@@ -99,3 +99,15 @@ jobs:
           done < <(find ops/ansible/roles -path '*/tests/syntax-check.sh' -print0 | sort -z)
           echo "ansible-syntax-check: ran=$ran fails=$fails"
           [[ "$fails" -eq 0 ]] || exit 1
+
+      - name: External-service client and delegation lifecycle (loopback only)
+        run: python3 ops/ansible/tests/test-external-service-lifecycle.py
+
+      - name: Standby database, DNS and management guards (local fixtures only)
+        run: |
+          bash ops/ansible/roles/admit-audit/tests/pg-role-standby.sh
+          bash ops/ansible/roles/mesh-coredns/tests/apex-pin-standby.sh
+          bash ops/ansible/tests/smoke-standby/run.sh
+
+      - name: Peering edge certificate installation (disposable CAs, localhost only)
+        run: bash ops/ansible/roles/goat-zenoh-edge/tests/test-certificates.sh

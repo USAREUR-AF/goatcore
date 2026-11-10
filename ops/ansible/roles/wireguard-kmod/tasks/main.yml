@@ -8,6 +8,22 @@
 # running userspace exactly as before, and the play aborts (any_errors_fatal
 # at the play level).
 
+# A stock distribution kernel (Ubuntu's x86 kernels among them) ships WireGuard
+# in-tree. There is nothing to build or install there: netbird uses the kernel
+# module as it stands. The artifacts this role installs exist for kernels that
+# lack it (Jetson Tegra), so an in-tree module ends the role for this host.
+- name: is WireGuard in this kernel's own tree?
+  ansible.builtin.command: modinfo -F intree wireguard
+  register: wg_kmod_intree
+  changed_when: false
+  failed_when: false
+
+- name: in-tree WireGuard — nothing to install on this host
+  ansible.builtin.meta: end_host
+  when:
+    - wg_kmod_state == 'present'
+    - (wg_kmod_intree.stdout | default('') | trim) == 'Y'
+
 - name: resolve artifact paths for kernel {{ ansible_kernel }}
   ansible.builtin.set_fact:
     wg_kmod_artifact_dir: "{{ wg_kmod_artifact_root }}/artifacts/{{ ansible_kernel }}"

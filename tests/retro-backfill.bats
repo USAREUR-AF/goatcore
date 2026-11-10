@@ -29,9 +29,9 @@ con.execute("""CREATE TABLE onboard_proposals (
   escalated INTEGER, complete INTEGER, petitions TEXT, tier TEXT,
   retroactive INTEGER)""")
 rows = [
-  ("prop-retro-aaaaaaaaaaaa", "jane",        "person-54@example.org", "enrolled", 1),
-  ("prop-retro-bbbbbbbbbbbb", "g1x-gcs",     "person-44@example.org",  "enrolled", 1),
-  ("prop-1111",               "gone-person", "person-46@example.org",     "enrolled", 0),
+  ("prop-retro-aaaaaaaaaaaa", "jane",        "person-46@example.org", "enrolled", 1),
+  ("prop-retro-bbbbbbbbbbbb", "g1x-gcs",     "person-38@example.org",  "enrolled", 1),
+  ("prop-1111",               "gone-person", "person-40@example.org",     "enrolled", 0),
 ]
 for id_, handle, email, status, retro in rows:
     con.execute(
@@ -44,7 +44,7 @@ for id_, handle, email, status, retro in rows:
 con.commit()
 EOF
   printf 'g1x-gcs\njane-doe\n# a comment line\n' > "$ROSTER"
-  printf 'person-54@example.org,jane-doe\n' > "$MAP"
+  printf 'person-46@example.org,jane-doe\n' > "$MAP"
 }
 
 @test "retro-backfill: the self-test proves the pure logic red then green" {

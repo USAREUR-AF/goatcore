@@ -26,8 +26,8 @@ obs_traefik_data_root: "/opt/docker-data/obs-traefik"
 # delivers the cert + key under <tls_root>/operator-idp/ (single
 # multi-SAN cert covers auth.ops.<site> + oauth2.ops.<site> + future
 # obs hostnames).
-obs_traefik_tls_root: "/etc/goat/tls"
-obs_traefik_dynamic_dir: "/etc/goat/traefik-dynamic"
+obs_traefik_tls_root: "{{ goat_host_etc_dir | default('/etc/goat') }}/tls"
+obs_traefik_dynamic_dir: "{{ goat_host_etc_dir | default('/etc/goat') }}/traefik-dynamic"
 
 # Listen ports. :443 is the public-facing TLS terminator (reachable
 # via the Orin-C wg-cp0 IP 198.18.0.9 + the LAN IP). :8080 is the
@@ -36,7 +36,7 @@ obs_traefik_https_port: 443
 obs_traefik_admin_port: 8080
 
 # Routes — list of dicts, each rendered into a Traefik dynamic-config
-# file at /etc/goat/traefik-dynamic/<name>.yml. Schema:
+# file at <obs_traefik_dynamic_dir>/<name>.yml. Schema:
 #
 #   - name: route identifier (becomes <name>.yml + tls/<name>/cert.pem)
 #     hosts: list of Host header rules

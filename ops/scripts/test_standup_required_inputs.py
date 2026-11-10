@@ -106,6 +106,17 @@ class Classify(unittest.TestCase):
         self.assertEqual(sri.mandatory_vars("- not (a | default(false) and (z | mandatory | length) == 0)"), [])
         self.assertEqual(sri.mandatory_vars('hosts: "{{ t | mandatory }}"'), ["t"])
 
+    def test_an_env_lookup_that_tests_the_run_is_not_a_need(self):
+        # group_vars/all.yml's aws_cmd asks whether the run is inside aws-vault; an
+        # internet site's relay plays reach it, and AWS_VAULT is not a secret to supply.
+        aws_cmd = ("{% if lookup('env', 'AWS_VAULT') %}{% else %}aws-vault exec "
+                   "{{ aws_profile | mandatory }} --no-session -- {% endif %}")
+        self.assertFalse(sri.env_lookup_is_a_need(aws_cmd))
+        self.assertFalse(sri.env_lookup_is_a_need("{{ lookup('env', 'GHCR_ORG') | default('x') }}"))
+        self.assertFalse(sri.env_lookup_is_a_need("{{ lookup('env', 'SRC') or 'goat' }}"))
+        self.assertTrue(sri.env_lookup_is_a_need("{{ lookup('env', 'CLOUDFLARE_API_TOKEN_X') }}"))
+        self.assertTrue(sri.env_lookup_is_a_need("{{ lookup('env', 'X_PASS') | default('', true) }}"))
+
 
 class Leaves(unittest.TestCase):
     """#2165: a reached play's controller-held leaf is checked where goat_leaf looks."""

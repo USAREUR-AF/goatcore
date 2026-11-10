@@ -15,9 +15,12 @@
 
 node_net_health_enabled: false
 
+# node_net_health_image has NO role default. The pin of record is the
+# `node-net-health` row of ops/pins/fleet-pins.yaml, rendered into
+# group_vars/<member>/pins.yml; group_vars/all.yml carries the pin for hosts
+# outside the pin table. The role asserts a digest-pinned value.
 # Multi-arch INDEX digest from .github/workflows/node-net-health-image.yml.
 #   docker buildx imagetools inspect ghcr.io/{{ ghcr_org }}/goat-node-net-health:sha-<short> --format '{{.Manifest.Digest}}'
-node_net_health_image: "ghcr.io/{{ ghcr_org }}/goat-node-net-health@sha256:fc1741dc7b9035129acf9e0ec54d47adf39b097bdd39286618857f21caa2895a"
 
 # --- on-host layout ---
 node_net_health_compose_dir: /opt/node-net-health

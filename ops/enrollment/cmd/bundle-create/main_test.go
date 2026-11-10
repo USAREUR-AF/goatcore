@@ -52,7 +52,7 @@ func devCA(t *testing.T) (caKeyPath, ageIdentityPath string, caPub *ecdsa.Public
 }
 
 // fixtureRelays writes a relays.json under tmpDir and returns its path.
-// Three relays mirroring the vega prod fleet — endpoint shapes match
+// Three relays mirroring the lab prod fleet — endpoint shapes match
 // inventory/wg-cp0-prod.ini exactly so a relay-roster regression here
 // catches schema drift early.
 func fixtureRelays(t *testing.T) string {
@@ -103,11 +103,11 @@ func TestRun_OperatorWorkflow(t *testing.T) {
 	outPath := filepath.Join(t.TempDir(), "bundle.cbor")
 
 	args := runArgs{
-		Site:            "vega",
+		Site:            "lab",
 		DeviceID:        "mgmt-prov-site3-01-orin",
 		WGCP0Address:    "10.99.0.6/24",
 		RelaysPath:      relaysPath,
-		ACLGroupsRaw:    "VEGA,VEGA-MGMT",
+		ACLGroupsRaw:    "LAB,LAB-MGMT",
 		CAID:            "dev-goat-ca-test",
 		CAKeyPath:       caKey,
 		AgeIdentityPath: ageID,
@@ -143,11 +143,11 @@ func TestRun_OperatorWorkflow(t *testing.T) {
 	if b.DeviceID != "mgmt-prov-site3-01-orin" {
 		t.Errorf("DeviceID = %q; want mgmt-prov-site3-01-orin", b.DeviceID)
 	}
-	if b.Site != "vega" {
-		t.Errorf("Site = %q; want vega", b.Site)
+	if b.Site != "lab" {
+		t.Errorf("Site = %q; want lab", b.Site)
 	}
-	if got := strings.Join(b.ACLGroups, ","); got != "VEGA,VEGA-MGMT" {
-		t.Errorf("ACLGroups = %q; want VEGA,VEGA-MGMT", got)
+	if got := strings.Join(b.ACLGroups, ","); got != "LAB,LAB-MGMT" {
+		t.Errorf("ACLGroups = %q; want LAB,LAB-MGMT", got)
 	}
 	if len(b.KnownEndpoints) != 3 {
 		t.Errorf("KnownEndpoints count = %d; want 3", len(b.KnownEndpoints))
@@ -219,7 +219,7 @@ func TestRun_RejectsNonCIDRAddress(t *testing.T) {
 	caKey, ageID, _ := devCA(t)
 	relaysPath := fixtureRelays(t)
 	args := runArgs{
-		Site: "vega", DeviceID: "x", WGCP0Address: "10.99.0.10",
+		Site: "lab", DeviceID: "x", WGCP0Address: "10.99.0.10",
 		RelaysPath: relaysPath, ACLGroupsRaw: "G",
 		CAID: "dev-test", CAKeyPath: caKey, AgeIdentityPath: ageID,
 		OutPath: filepath.Join(t.TempDir(), "bundle.cbor"),
@@ -244,7 +244,7 @@ func TestRun_RejectsTLSAnchorThatIsntPEM(t *testing.T) {
 		t.Fatalf("write bogus: %v", err)
 	}
 	args := runArgs{
-		Site: "vega", DeviceID: "x", WGCP0Address: "10.99.0.10/24",
+		Site: "lab", DeviceID: "x", WGCP0Address: "10.99.0.10/24",
 		RelaysPath: relaysPath, ACLGroupsRaw: "G",
 		CAID: "dev-test", CAKeyPath: caKey, AgeIdentityPath: ageID,
 		TLSTrustAnchorPath: bogusAnchor,
@@ -267,7 +267,7 @@ func TestRun_RejectsActivationLongerThanTTL(t *testing.T) {
 	caKey, ageID, _ := devCA(t)
 	relaysPath := fixtureRelays(t)
 	args := runArgs{
-		Site: "vega", DeviceID: "x", WGCP0Address: "10.99.0.10/24",
+		Site: "lab", DeviceID: "x", WGCP0Address: "10.99.0.10/24",
 		RelaysPath: relaysPath, ACLGroupsRaw: "G",
 		CAID: "dev-test", CAKeyPath: caKey, AgeIdentityPath: ageID,
 		OutPath: filepath.Join(t.TempDir(), "bundle.cbor"),
@@ -285,7 +285,7 @@ func TestRun_RejectsMissingRequiredFlags(t *testing.T) {
 	caKey, ageID, _ := devCA(t)
 	relaysPath := fixtureRelays(t)
 	full := runArgs{
-		Site: "vega", DeviceID: "x", WGCP0Address: "10.99.0.10/24",
+		Site: "lab", DeviceID: "x", WGCP0Address: "10.99.0.10/24",
 		RelaysPath: relaysPath, ACLGroupsRaw: "G",
 		CAID: "dev-test", CAKeyPath: caKey, AgeIdentityPath: ageID,
 		OutPath: filepath.Join(t.TempDir(), "bundle.cbor"),
@@ -448,7 +448,7 @@ func TestRun_TamperedBundleFailsVerify(t *testing.T) {
 	relaysPath := fixtureRelays(t)
 	outPath := filepath.Join(t.TempDir(), "bundle.cbor")
 	args := runArgs{
-		Site: "vega", DeviceID: "x", WGCP0Address: "10.99.0.10/24",
+		Site: "lab", DeviceID: "x", WGCP0Address: "10.99.0.10/24",
 		RelaysPath: relaysPath, ACLGroupsRaw: "G",
 		CAID: "dev-test", CAKeyPath: caKey, AgeIdentityPath: ageID,
 		OutPath: outPath, TTLDays: 90, ActivationDays: 14, Now: fixedNow(),
@@ -492,11 +492,11 @@ func TestRun_MeshRouteSubnet(t *testing.T) {
 	outPath := filepath.Join(t.TempDir(), "bundle.cbor")
 
 	args := runArgs{
-		Site:               "vega",
+		Site:               "lab",
 		DeviceID:           "mgmt-prov-site3-01-orin",
 		WGCP0Address:       "10.99.0.6/24",
 		RelaysPath:         relaysPath,
-		ACLGroupsRaw:       "VEGA",
+		ACLGroupsRaw:       "LAB",
 		CAID:               "dev-goat-ca-test",
 		CAKeyPath:          caKey,
 		AgeIdentityPath:    ageID,
@@ -546,11 +546,11 @@ func TestRun_FirstRelayRouteSubnet_BackCompat(t *testing.T) {
 	outPath := filepath.Join(t.TempDir(), "bundle.cbor")
 
 	args := runArgs{
-		Site:                     "vega",
+		Site:                     "lab",
 		DeviceID:                 "mgmt-prov-site3-01-orin",
 		WGCP0Address:             "10.99.0.6/24",
 		RelaysPath:               relaysPath,
-		ACLGroupsRaw:             "VEGA",
+		ACLGroupsRaw:             "LAB",
 		CAID:                     "dev-goat-ca-test",
 		CAKeyPath:                caKey,
 		AgeIdentityPath:          ageID,
@@ -600,8 +600,8 @@ func TestRun_RejectsInvalidMeshRouteSubnet(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			args := runArgs{
-				Site: "vega", DeviceID: "x", WGCP0Address: "10.99.0.6/24",
-				RelaysPath: relaysPath, ACLGroupsRaw: "VEGA",
+				Site: "lab", DeviceID: "x", WGCP0Address: "10.99.0.6/24",
+				RelaysPath: relaysPath, ACLGroupsRaw: "LAB",
 				CAID: "dev-goat-ca-test", CAKeyPath: caKey, AgeIdentityPath: ageID,
 				MeshRouteSubnetRaw: tc.raw,
 				OutPath:                  filepath.Join(t.TempDir(), "out.cbor"),
@@ -626,8 +626,8 @@ func TestRun_NoMeshRouteSubnet(t *testing.T) {
 	relaysPath := fixtureRelays(t)
 	outPath := filepath.Join(t.TempDir(), "bundle.cbor")
 	args := runArgs{
-		Site: "vega", DeviceID: "x", WGCP0Address: "10.99.0.6/24",
-		RelaysPath: relaysPath, ACLGroupsRaw: "VEGA",
+		Site: "lab", DeviceID: "x", WGCP0Address: "10.99.0.6/24",
+		RelaysPath: relaysPath, ACLGroupsRaw: "LAB",
 		CAID: "dev-goat-ca-test", CAKeyPath: caKey, AgeIdentityPath: ageID,
 		// MeshRouteSubnetRaw not set
 		OutPath: outPath,
@@ -675,11 +675,11 @@ func TestRun_BundleSymmetryInvariant(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			outPath := filepath.Join(t.TempDir(), "bundle.cbor")
 			a := tc.args
-			a.Site = "vega"
+			a.Site = "lab"
 			a.DeviceID = "test-device"
 			a.WGCP0Address = "10.99.0.6/24"
 			a.RelaysPath = relaysPath
-			a.ACLGroupsRaw = "VEGA"
+			a.ACLGroupsRaw = "LAB"
 			a.CAID = "dev-goat-ca-test"
 			a.CAKeyPath = caKey
 			a.AgeIdentityPath = ageID

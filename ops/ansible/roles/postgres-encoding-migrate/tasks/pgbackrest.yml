@@ -1,0 +1,91 @@
+---
+# Phase 7 — a new pgBackRest stanza for the new cluster, then archiving back
+# on, in this order:
+#   1. stanza-create in the empty repository phase 4 left (the old repository
+#      stays beside it as <repo>.pre-utf8-<run> until cleanup). The config file
+#      is unchanged: same stanza name, same cipher passphrase.
+#   2. the old archive_mode line back into postgresql.auto.conf (phase 5 held
+#      it 'off'), restart, and Postgres must stay up. Only now does a
+#      postmaster point archive-push at a repository, and the repository is
+#      there. pgbackrest check needs archiving on (it switches WAL and waits for
+#      the segment), so it comes after this step, not before.
+#   3. check and a full backup — the first backup of the new cluster.
+# WAL written between phase 5 and step 2 is not archived; the phase 3 full
+# backup of the old cluster and the full backup here bracket that window.
+#
+# A primary must pass all three. A standby's stanza result is reported, not
+# gated (its stanza does not hold the goatnet's data); its archive_mode line
+# is put back the same way, so its settings match its primary's.
+
+- name: "pgbackrest | stanza-create ({{ _pem_pre.stanza | default('') }})"
+  ansible.builtin.command:
+    argv: [docker, exec, -u, postgres, "{{ _pem_c }}", pgbackrest, "--stanza={{ _pem_pre.stanza }}", stanza-create]
+  register: _pem_stanza_create
+  changed_when: true
+  failed_when: _pem_stanza_create.rc != 0 and not (_pem_standby | bool)
+  when: _pem_pre.stanza | default('') | length > 0
+
+- name: "pgbackrest | was archiving held off in phase 5, and is it back"
+  ansible.builtin.stat:
+    path: "{{ _pem_rundir }}/{{ item }}"
+  loop: [archive-held, archive.ok]
+  register: _pem_arch_state
+
+- name: "pgbackrest | archiving back on"
+  when:
+    - _pem_arch_state.results[0].stat.exists
+    - not _pem_arch_state.results[1].stat.exists
+  block:
+    - name: "pgbackrest | the old archive_mode line back into postgresql.auto.conf, restart"
+      ansible.builtin.shell:
+        executable: /bin/bash
+        cmd: |
+          set -euo pipefail
+          D={{ _pem_rundir | quote }}; C={{ _pem_c | quote }}
+          docker exec -i -u postgres -e F={{ (postgres_encoding_migrate_pgdata ~ '/postgresql.auto.conf') | quote }} "$C" sh -c '
+            set -e
+            grep -v "^[[:space:]]*archive_mode[[:space:]]*=" "$F" > "$F.goat-tmp" || true
+            cat >> "$F.goat-tmp"
+            cat "$F.goat-tmp" > "$F"; rm -f "$F.goat-tmp"' < "$D/archive-mode.pre"
+          docker restart -t 60 "$C" >/dev/null
+          echo "restored: $(cat "$D/archive-mode.pre")"
+      register: _pem_arch_on
+      changed_when: true
+
+    - name: "pgbackrest | wait after the restart"
+      ansible.builtin.include_tasks: wait-ready.yml
+
+    - name: "pgbackrest | Postgres stays up with archiving on"
+      ansible.builtin.include_tasks: stays-up.yml
+      vars:
+        pem_expect_recovery: "{{ _pem_standby | bool }}"
+        pem_stays_up_why: "archiving was turned back on"
+
+    - name: "pgbackrest | archiving back"
+      ansible.builtin.copy:
+        dest: "{{ _pem_rundir }}/archive.ok"
+        content: "{{ _pem_arch_on.stdout }}\n"
+        mode: "0600"
+
+- name: "pgbackrest | check and full backup"
+  when: _pem_pre.stanza | default('') | length > 0
+  block:
+    - name: "pgbackrest | check, full backup ({{ _pem_pre.stanza }})"
+      ansible.builtin.shell:
+        executable: /bin/bash
+        cmd: |
+          set -euo pipefail
+          B=(docker exec -u postgres {{ _pem_c | quote }} pgbackrest --stanza={{ _pem_pre.stanza | quote }})
+          "${B[@]}" check
+          "${B[@]}" backup --type=full
+          "${B[@]}" info
+      register: _pem_bkp
+      changed_when: true
+      failed_when: _pem_bkp.rc != 0 and not (_pem_standby | bool)
+
+    - name: "pgbackrest | result"
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }} {{ _pem_pre.stanza }}:
+          {{ 'ok' if (_pem_bkp.rc == 0 and (_pem_stanza_create.rc | default(0)) == 0)
+             else 'FAILED on this standby (not gated): ' ~ ((_pem_stanza_create.stderr | default('')) ~ ' ' ~ (_pem_bkp.stderr | default(''))) | trim }}

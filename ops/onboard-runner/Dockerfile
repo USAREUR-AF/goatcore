@@ -8,12 +8,13 @@
 #
 # Two-stage build:
 #   1. build   — static Go binary (CGO disabled), no runtime deps of its own.
-#   2. runtime — Chainguard wolfi-base (glibc). The runner SHELLS OUT to `goat
+#   2. runtime — the runtime-shell base (glibc, a shell, apt-get or apk; ADR
+#      1220). The runner SHELLS OUT to `goat
 #      admin onboard --native`, so the runtime carries:
 #        - glibc         — the site `goat` binary is glibc-linked
-#                          (aarch64-unknown-linux-gnu); wolfi-base's rolling
-#                          glibc is >= the Ubuntu-24.04 build target (verified
-#                          on the ZAGROS Thor: wolfi-base runs the host goat).
+#                          (aarch64-unknown-linux-gnu); the base's glibc must
+#                          be >= the Ubuntu-24.04 build target (2.39): Debian 13
+#                          (2.41) and Wolfi's rolling glibc both are.
 #        - sh + curl     — the native onboard's Ory leg runs `sh -c 'curl …'`
 #                          in-container against the sibling Kratos admin API
 #                          (GOAT_ONBOARD_KRATOS_LOCAL=1).
@@ -25,6 +26,10 @@
 #      (portal endpoint + the runner's own portal token) is materialized at
 #      startup by docker-entrypoint.sh from the deploy env-file.
 
+# Base images are build arguments named for their role; the defaults are
+# the public images in ops/base-images/ (docs/design/base-images.md).
+ARG BASE_RUNTIME_SHELL=cgr.dev/chainguard/wolfi-base:latest@sha256:8509ee4351a2e501b7f98201f2e2642396e82020c61a589cacdcfe74b9de46c1
+
 FROM golang:1.26-bookworm@sha256:23ce71337b726608afb1bc00986e630a05034a87a87ea1fc2cd1ae5cf33387eb AS build
 WORKDIR /src
 # Cache module downloads first for layer reuse.
@@ -34,9 +39,18 @@ COPY *.go ./
 ENV CGO_ENABLED=0
 RUN go build -trimpath -ldflags="-s -w" -o /onboard-runner .
 
-FROM cgr.dev/chainguard/wolfi-base:latest
-# curl (+ ca-certificates) for the native onboard's local Kratos-admin leg.
-RUN apk add --no-cache curl ca-certificates python-3.13
+FROM ${BASE_RUNTIME_SHELL}
+# curl (+ ca-certificates) for the native onboard's local Kratos-admin leg, and
+# python 3.13. The public base (Chainguard wolfi-base) takes both from apk. A
+# Debian base takes curl from apt-get and must already carry python3
+# (python:3.13-slim does). The RUN fails if python3 is not on PATH afterwards.
+RUN if command -v apk >/dev/null 2>&1; then \
+      apk add --no-cache curl ca-certificates python-3.13; \
+    else \
+      apt-get update && apt-get install -y --no-install-recommends curl ca-certificates \
+      && rm -rf /var/lib/apt/lists/*; \
+    fi \
+    && python3 --version
 # A writable home for the materialized goat profile — non-root uid, no passwd
 # entry needed (goat reads $HOME, not /etc/passwd).
 RUN mkdir -p /home/runner && chown 65532:65532 /home/runner

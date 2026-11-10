@@ -19,7 +19,7 @@
 set -u
 
 : "${STATE_DIR:=/var/lib/host-net-publish}"
-: "${CAPACITY_TARGET_MESH:=}"        # target mesh IP, e.g. 100.127.0.124 (cloud box)
+: "${CAPACITY_TARGET_MESH:=}"        # target mesh IP, e.g. 100.127.0.120 (cloud box)
 : "${CAPACITY_TARGET_PUBLIC:=}"      # target public IP (optional; needs SG:5201 open)
 : "${CAPACITY_TARGET_NAME:=cloud}"   # provenance label for the dashboard
 # Cross-node federation leg: on a multi-node goatnet the
@@ -29,7 +29,7 @@ set -u
 # federation leg rides the relay VPS, so its capacity is already the existing
 # relay-path capacity measurement — not re-probed here. Optional; unset on
 # single-node goatnets.
-: "${CAPACITY_TARGET_CROSSNODE:=}"   # peer mgmt-node mesh IP, e.g. 100.127.0.205 (zagros-b)
+: "${CAPACITY_TARGET_CROSSNODE:=}"   # peer mgmt-node mesh IP, e.g. 100.127.0.201 (zagros-b)
 : "${CAPACITY_CROSSNODE_NAME:=peer-node}"  # provenance label
 : "${CAPACITY_PORT:=5201}"
 : "${CAPACITY_DURATION_S:=4}"        # per-measurement; keep total <= ~10s

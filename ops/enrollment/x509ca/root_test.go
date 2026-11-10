@@ -22,7 +22,7 @@ func TestGenerateRootCert_Defaults(t *testing.T) {
 	}
 
 	// Defaults
-	if parsed.Subject.CommonName != "goat Root CA" {
+	if parsed.Subject.CommonName != DefaultRootCommonName {
 		t.Errorf("CN: got %q", parsed.Subject.CommonName)
 	}
 	if !parsed.IsCA {

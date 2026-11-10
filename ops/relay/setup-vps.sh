@@ -180,7 +180,7 @@ if [ -n "${NB_RELAY_AUTH_SECRET:-}" ]; then
     sudo docker rm -f netbird-relay 2>/dev/null || true
     sudo certbot certonly --standalone --preferred-challenges http \
       -d "${RELAY_DNS_NAME}" \
-      --email person-33@example.org \
+      --email person-28@example.org \
       --agree-tos --non-interactive --force-renewal
   fi
 

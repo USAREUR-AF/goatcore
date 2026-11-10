@@ -1,0 +1,30 @@
+# {{ ansible_managed }}
+# smtp-sink — Mailpit on the goatnet's docker network (ops/recipes/smtp-sink/README.md).
+# Accepts every message, relays none. SMTP: {{ smtp_sink_container }}:1025 on
+# network {{ smtp_sink_network }}; web UI + API: http://{{ smtp_sink_ui_publish }}.
+services:
+  smtp-sink:
+    image: {{ smtp_sink_image }}
+    container_name: {{ smtp_sink_container }}
+    restart: unless-stopped
+    environment:
+      MP_MAX_MESSAGES: "{{ smtp_sink_max_messages }}"
+      MP_DATABASE: /data/mailpit.db
+    volumes:
+      - {{ smtp_sink_dir }}/data:/data
+    ports:
+      - "{{ smtp_sink_ui_publish }}:8025"
+{% if smtp_sink_smtp_publish | length > 0 %}
+      - "{{ smtp_sink_smtp_publish }}:1025"
+{% endif %}
+    networks:
+      - {{ smtp_sink_network }}
+    deploy:
+      resources:
+        limits:
+          memory: {{ smtp_sink_memory_limit }}
+
+networks:
+  {{ smtp_sink_network }}:
+    external: true
+    name: {{ smtp_sink_network }}

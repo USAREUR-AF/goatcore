@@ -160,7 +160,7 @@ assert_no_operational_calls() {
 # inventory host answers on tcp/22, whatever the netbird profile is called.
 mesh_fixture() {
   mkdir -p "$FIXTURE/ops/ansible/inventory"
-  printf '%s\n' '[valid_hosts]' 'mgmt-test-01 ansible_host=100.127.0.64 ansible_user=u' \
+  printf '%s\n' '[valid_hosts]' 'mgmt-test-01 ansible_host=100.127.0.60 ansible_user=u' \
     > "$FIXTURE/ops/ansible/inventory/mgmt-hosts-mesh.ini"
   cat > "$BIN/nc" <<SH
 #!/usr/bin/env bash
@@ -175,7 +175,7 @@ SH
   run_deploy widget --goatnet test_site --dry-run
 
   [ "$status" -eq 0 ]
-  [[ "$output" == *"via mesh (this laptop reaches 100.127.0.64:22; netbird profile reads 'somewhere-else')"* ]]
+  [[ "$output" == *"via mesh (this laptop reaches 100.127.0.60:22; netbird profile reads 'somewhere-else')"* ]]
   [[ "$output" == *"mgmt-hosts-mesh.ini"* ]]
 }
 
@@ -319,7 +319,7 @@ SH
 }
 
 mesh_fixture_edge() {
-  printf '%s\n' '[edge_hosts]' 'mgmt-edge-01 ansible_host=100.127.0.64 ansible_user=u' \
+  printf '%s\n' '[edge_hosts]' 'mgmt-edge-01 ansible_host=100.127.0.60 ansible_user=u' \
     > "$FIXTURE/ops/ansible/inventory/mgmt-hosts-mesh.ini"
   cat > "$BIN/nc" <<'SH'
 #!/usr/bin/env bash
@@ -345,7 +345,7 @@ SH
   run_deploy probe --goatnet verify_site --group edge_hosts --verify-only
 
   [ "$status" -eq 0 ]
-  [[ "$output" == *"via mesh (this laptop reaches 100.127.0.64:22"* ]]
+  [[ "$output" == *"via mesh (this laptop reaches 100.127.0.60:22"* ]]
   [[ "$output" == *"edge-1: converged on sha256:abc123"* ]]
   grep -q 'with-aws mode=none .*ansible-inventory' "$CALLS"
   grep -q 'with-aws mode=none .*ansible ' "$CALLS"

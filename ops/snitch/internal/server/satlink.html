@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>SNITCH — Satlink PoP Tracker</title>
+<title>SNITCH — Satellite Link PoP Tracker</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3"></script>
 <style>
@@ -28,12 +28,14 @@
   .pop-field { }
   .pop-label { font-size: 11px; color: var(--muted); text-transform: uppercase; }
   .pop-value { font-size: 18px; font-weight: bold; }
+  .pop-value.germany { color: var(--green); }
   .pop-value.satlink { color: var(--orange); }
   .pop-value.commercial { color: var(--blue); }
 
   .badge { display: inline-block; font-size: 10px; padding: 2px 6px; border-radius: 3px; font-weight: bold; letter-spacing: 0.3px; vertical-align: middle; margin-left: 6px; }
   .badge-satlink { background: var(--orange); color: #000; }
   .badge-commercial { background: var(--blue); color: #000; }
+  .badge-germany { background: var(--green); color: #000; }
 
   .delta { font-size: 12px; margin-top: 2px; }
   .delta-up { color: var(--red); }
@@ -72,7 +74,7 @@
 
 <div id="login-overlay" style="display:none">
   <div class="card">
-    <h2>SNITCH — Satlink PoP Tracker</h2>
+    <h2>SNITCH — Satellite Link PoP Tracker</h2>
     <p style="color:var(--muted);font-size:13px;margin-top:8px">Enter API key to continue</p>
     <input id="key-input" type="password" placeholder="API key" autofocus>
     <button onclick="doLogin()">Authenticate</button>
@@ -80,7 +82,7 @@
   </div>
 </div>
 
-<h1>Satlink PoP Tracker</h1>
+<h1>Satellite Link PoP Tracker</h1>
 <p class="subtitle"><a href="/">← Mesh Dashboard</a> · Egress ground station and relay latency monitoring</p>
 
 <div id="content" style="display:none">
@@ -140,7 +142,7 @@
 </div><!-- /content -->
 
 <script>
-let apiKey = localStorage.getItem('snitch_key') || '';
+try { localStorage.removeItem('snitch_key'); } catch (_) {}
 let currentRange = '30d';
 let trendChart = null;
 
@@ -157,10 +159,9 @@ function zuluDateTime(d) {
 }
 
 // --- Auth ---
-function headers() { return { 'Authorization': 'Bearer ' + apiKey }; }
+function headers() { return {}; }
 
 async function checkAuth() {
-  if (!apiKey) { showLogin(); return; }
   try {
     const r = await fetch('/api/satlink/latest', { headers: headers() });
     if (r.status === 401 || r.status === 403) { showLogin(); return; }
@@ -175,11 +176,17 @@ function showLogin() {
   document.getElementById('content').style.display = 'none';
 }
 
-function doLogin() {
-  apiKey = document.getElementById('key-input').value.trim();
-  if (!apiKey) return;
-  localStorage.setItem('snitch_key', apiKey);
-  checkAuth();
+async function doLogin() {
+  const key = document.getElementById('key-input').value.trim();
+  if (!key) return;
+  document.getElementById('key-input').value = '';
+  try {
+    const response = await fetch('/api/browser-session', {
+      method: 'POST', headers: { Authorization: 'Bearer ' + key },
+    });
+    if (!response.ok) { showLogin(); return; }
+    await checkAuth();
+  } catch (_) { showLogin(); }
 }
 
 document.getElementById('key-input').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
@@ -237,11 +244,13 @@ function renderPopStatus(probe) {
   const tsEl = document.getElementById('pop-timestamp');
   if (!probe) { el.innerHTML = '<div style="color:var(--muted)">No probe data yet</div>'; return; }
 
+  const isGermany = probe.country === 'DE';
   const isSatlink = probe.in_satlink_range;
 
-  let cityClass = isSatlink ? 'satlink' : 'commercial';
+  let cityClass = isGermany ? 'germany' : (isSatlink ? 'satlink' : 'commercial');
   let badge = '';
-  if (isSatlink) badge = '<span class="badge badge-satlink">PRIVATE RANGE</span>';
+  if (isGermany) badge = '<span class="badge badge-germany">' + probe.country + ' PoP</span>';
+  else if (isSatlink) badge = '<span class="badge badge-satlink">SAT RANGE</span>';
   else badge = '<span class="badge badge-commercial">COMMERCIAL</span>';
 
   el.innerHTML = `
@@ -433,13 +442,15 @@ function renderPopTimeline(pops) {
   for (let i = 0; i < pops.length; i++) {
     const p = pops[i];
     const changed = p.city !== lastCity || p.egress_ip !== lastIP;
-    const dotColor = changed ? 'var(--orange)' : 'var(--muted)';
+    const isGermany = p.country === 'DE';
+    const dotColor = changed ? (isGermany ? 'var(--green)' : 'var(--orange)') : 'var(--muted)';
 
     if (changed || i === pops.length - 1) {
       const ts = new Date(p.ts * 1000);
       const tz = zuluDateTime(ts);
       const tl = ts.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit'});
-      const badge = p.in_satlink_range ? '<span class="badge badge-satlink">PVT</span>' : '<span class="badge badge-commercial">COM</span>';
+      const badge = p.in_satlink_range ? '<span class="badge badge-satlink">SAT</span>' : '<span class="badge badge-commercial">COM</span>';
+      const germanyBadge = isGermany ? ' <span class="badge badge-germany">' + p.country + '</span>' : '';
 
       html += `<div class="pop-event">
         <div class="pop-event-dot" style="background:${dotColor}"></div>
@@ -447,7 +458,7 @@ function renderPopTimeline(pops) {
         <div class="pop-event-msg">
           ${changed && lastCity ? `<strong>${lastCity} → ${p.city}</strong>` : `<strong>${p.city}</strong>`}
           · ${p.egress_ip} · ${p.asn || ''}
-          ${badge}
+          ${badge}${germanyBadge}
         </div>
       </div>`;
     }

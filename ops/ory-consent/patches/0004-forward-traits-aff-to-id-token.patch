@@ -1,5 +1,5 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: goat-maintainer <person-35@example.org>
+From: goat-maintainer <person-30@example.org>
 Date: Mon, 16 Jun 2026 00:30:00 +0000
 Subject: [PATCH] consent: forward identity traits.aff into JWT id_token
 

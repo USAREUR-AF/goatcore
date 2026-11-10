@@ -12,6 +12,9 @@
 #     --plan      print the box list and the command per box; run nothing
 #     --check     ansible --check (NEVER --diff: the role stages secrets)
 #     --require   refuse unless <goatnet> has a cross-env.yaml entry (standup)
+#     --absent    refuse while <goatnet> still has a cross-env.yaml entry
+#                 (teardown: remove its row by pull request first; this then
+#                 redeploys every box so the overviews drop it)
 #
 # Order of operations it enforces:
 #   1. render-cross-env.py --check — the committed generated files match
@@ -30,12 +33,13 @@
 set -uo pipefail
 
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
-PLAN=0; CHECK=(); REQUIRE=""
+PLAN=0; CHECK=(); REQUIRE=""; ABSENT=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --plan) PLAN=1 ;;
     --check) CHECK=(--check) ;;
     --require) REQUIRE="${2:?--require needs a goatnet}"; shift ;;
+    --absent) ABSENT="${2:?--absent needs a goatnet}"; shift ;;
     -h|--help) sed -n '2,30p' "$0"; exit 0 ;;
     *) echo "cross-env-apply: unknown argument $1" >&2; exit 2 ;;
   esac
@@ -46,6 +50,10 @@ RENDER="$REPO/ops/goatnets/render-cross-env.py"
 
 if [ -n "$REQUIRE" ]; then
   python3 "$RENDER" --require "$REQUIRE" || exit 1
+fi
+if [ -n "$ABSENT" ] && python3 "$RENDER" --require "$ABSENT" >/dev/null 2>&1; then
+  echo "cross-env-apply: refusing — ops/goatnets/cross-env.yaml still lists $ABSENT. Remove its row (and re-render with render-cross-env.py) by pull request, then re-run; every relay-health box is then redeployed without it." >&2
+  exit 1
 fi
 python3 "$RENDER" --check || {
   echo "cross-env-apply: refusing to deploy — the generated relay-health config is stale or the roster is inconsistent (above)." >&2

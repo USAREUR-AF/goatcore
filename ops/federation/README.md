@@ -43,5 +43,5 @@ Validate with `ops/federation/validate-partners.py` — wired into CI.
 |---|---|
 | [`reference/`](reference/) | Reference implementation of the package format — one implementation of the spec, not the contract |
 | [`vectors/`](vectors/) | Byte-exact conformance vectors. These, and the spec, ARE the contract |
-| [`republisher/`](republisher/) | The **outbound** republisher: lifts our declared release set from its local staging name onto the wire name `from/<our sovereign_id>/`, because the fabric cannot rename a key expression in transit |
+| [`republisher/`](republisher/) | The **outbound** republisher: lifts our declared release set from its local staging name onto the wire name `from/<our sovereign_id>/<set>/`, because the fabric cannot rename a key expression in transit. Runs on our core host, both sessions on our core router; deployed in peering phase 12 |
 | [`bundle/`](bundle/) | Packs the spec and the vectors into one archive a partner can be handed, with a manifest binding them and a verifier the partner runs. Closes spec §8.3's own concession that *"an external partner may not have"* the vectors |

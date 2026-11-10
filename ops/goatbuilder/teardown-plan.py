@@ -9,7 +9,7 @@ usage: teardown-plan.py <site> [--profile lan|internet] [--from N] [--to N]
 Prints, in reverse standup order, one block per applied step:
     === Teardown of phase N [A] <label> ===
         <action>: <why or what>
-        <command>                       (compose-down steps only)
+        <command>                       (runnable steps only)
 and a closing verdict line. --commands prints only the commands to run, one
 per line, in order (empty when the teardown is refused). Exit 0 runnable,
 3 refused (a reached step destroys data, is not built, or is undeclared).
@@ -45,9 +45,38 @@ def declaration(decls, label):
     return None
 
 
-def compose_cmd(prefix, group, d):
-    dirs = json.dumps([{"var": x["var"], "default": x["default"]} for x in d.get("dirs", [])], separators=(",", ":"))
-    return f"{prefix} teardown-compose.yml -e target={group} -e teardown_component={d['component']} -e 'teardown_dirs={dirs}'"
+def step_group(site, d):
+    """The inventory group a step runs against: the core group, or the obs
+    group for a step declared `target: obs`."""
+    base = site.replace("-", "_")
+    return f"{base}_obs_hosts" if d.get("target") == "obs" else f"{base}_hosts"
+
+
+def step_cmd(prefix, site, d):
+    """The command that takes a runnable step down, or None for keep/refused/designed."""
+    group = step_group(site, d)
+    act = d["action"]
+    if act == "compose-down":
+        dirs = json.dumps([{"var": x["var"], "default": x["default"].replace("<site>", site)} for x in d.get("dirs", [])], separators=(",", ":"))
+        return f"{prefix} teardown-compose.yml -e target={group} -e teardown_component={d['component']} -e 'teardown_dirs={dirs}'"
+    if act == "service-stop":
+        svcs = json.dumps(d.get("services", []), separators=(",", ":"))
+        return f"{prefix} teardown-service-stop.yml -e target={group} -e teardown_component={d['component']} -e teardown_project={d['project']} -e 'teardown_services={svcs}'"
+    if act == "systemd-stop":
+        units = json.dumps(d.get("units", []), separators=(",", ":"))
+        return f"{prefix} teardown-systemd.yml -e target={group} -e teardown_component={d['component']} -e 'teardown_units={units}'"
+    if act == "command":
+        return d["run"].replace("{repo}", str(REPO)).replace("{site}", site)
+    return None
+
+
+SERVICE_ACTIONS = ("compose-down", "service-stop", "systemd-stop")
+WHAT = {"compose-down": "stop {c}, volumes kept",
+        "service-stop": "stop {c} in its shared compose project, containers and volumes kept",
+        "systemd-stop": "stop and disable {c}, unit files kept",
+        "command": "{c} on the operator machine"}
+# The background observability legs, and the phase each starts with.
+LEG_PHASE = {"host": 2, "stack": 9}
 
 
 def phase_arg(v):
@@ -83,38 +112,42 @@ def main(argv):
         cmd = [str(REPO / "ops/scripts/goat-standup.sh"), a.site, "--plan"] + (["--profile", a.profile] if a.profile else [])
         text = subprocess.run(cmd, capture_output=True, text=True).stdout
     decls = (yaml.safe_load((REPO / "ops/goatbuilder/teardown.yaml").read_text()) or {}).get("steps") or []
-    group = a.site.replace("-", "_") + "_hosts"
 
     m = re.search(r"(cd '[^']+/ops/ansible' && .*?ansible-preflight\.sh -i inventory/mgmt-hosts\.ini -i inventory/mgmt-hosts-mesh\.ini)", text)
     prefix = m.group(1) if m else f"cd '{REPO}/ops/ansible' && ansible-playbook -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini"
 
+    # Phases ([A] only) and the observability legs, in plan order.
     applied = []
-    for h in re.finditer(r"^=== Phase (\d+) \[A\] (.*?) ===\n(.*)$", text, re.M):
-        n = int(h.group(1))
-        if h.group(3).strip().startswith("SKIPPED"):
+    for h in re.finditer(r'^=== (?:Phase (\d+) \[A\]|Observability leg "(\w+)" \[A ∥\]) (.*?) ===\n(.*)$', text, re.M):
+        if h.group(4).strip().startswith("SKIPPED"):
             continue   # a rescue class the site does not declare: never applied, nothing to take down
+        n = int(h.group(1)) if h.group(1) else LEG_PHASE.get(h.group(2), 2)
+        head = f"phase {n} [A]" if h.group(1) else f'observability leg "{h.group(2)}" [A ∥]'
         if a.frm <= n <= a.to:
-            applied.append((n, h.group(2)))
+            applied.append((n, head, h.group(3)))
 
     out, cmds, blocking = [], [], []
-    for n, label in reversed(applied):
+    for n, head, label in reversed(applied):
         d = declaration(decls, label)
-        out.append(f"=== Teardown of phase {n} [A] {label} ===")
+        out.append(f"=== Teardown of {head} {label} ===")
+        tag = f"{n} {label}"
         if d is None:
             out.append("    undeclared: no line in ops/goatbuilder/teardown.yaml says how this step comes down")
-            blocking.append(f"{n} {label} (undeclared)")
+            blocking.append(f"{tag} (undeclared)")
             continue
         act = d["action"]
-        if act == "compose-down":
-            c = compose_cmd(prefix, group, d)
-            out.append(f"    compose-down: stop {d['component']}, volumes kept")
+        c = step_cmd(prefix, a.site, d)
+        if c is not None:
+            out.append(f"    {act}: " + WHAT[act].format(c=d["component"]) + (f" ({d['why']})" if d.get("why") else ""))
             out.append(f"    {c}")
-            cmds.append(c)
+            if act in SERVICE_ACTIONS or not a.services:
+                cmds.append(c)
+            else:
+                blocking.append(f"{tag} ({act})")
         else:
-            why = d.get("why", "")
-            out.append(f"    {act}: {why}")
+            out.append(f"    {act}: {d.get('why', '')}")
             if act in ("refused", "designed"):
-                blocking.append(f"{n} {label} ({act})")
+                blocking.append(f"{tag} ({act})")
 
     if blocking and not a.services:
         verdict = (f"refused: {len(blocking)} step(s) cannot come down by this teardown (data, not built, or undeclared): "
@@ -123,7 +156,7 @@ def main(argv):
         cmds = []
     else:
         left = f"; {len(blocking)} step(s) left in place" if blocking else ""
-        verdict = f"{len(cmds)} service(s) come down, volumes kept{left}. Records go to teardown.jsonl; deploy-history.jsonl is untouched."
+        verdict = f"{len(cmds)} step(s) come down, volumes kept{left}. Records go to teardown.jsonl; deploy-history.jsonl is untouched."
         rc = 0
     out.append(f"=== Teardown verdict: {verdict} ===")
 

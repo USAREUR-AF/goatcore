@@ -10,7 +10,7 @@ bin.name = "goat"
 args = ["--profile-dir", "[..]/goat-trycmd-warn-fixture", "doctor"]
 status.code = 3
 stderr = """
-note: uk output is machine-translated and not yet native-reviewed — the English text is authoritative. Report translation errors to person-42@example.org. Suppress with GOAT_I18N_NO_WARN=1.
+note: uk output is machine-translated and not yet native-reviewed — the English text is authoritative. Report translation errors to your goat administrator. Suppress with GOAT_I18N_NO_WARN=1.
 error: немає профілю для контексту `default`
   help: no profile at [..]/goat-trycmd-warn-fixture/contexts/default. Run `goat profile init <bundle.cbor>` first.
   code: E_PROFILE_MISSING

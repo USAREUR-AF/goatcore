@@ -1,0 +1,239 @@
+---
+# site-rathole-client.yml — connect a mgmt host to its relays over rathole.
+#
+# Phase 5 [internet] of goat-standup.sh. A relay's :443 is a rathole-server
+# listener: it carries nothing until a rathole client on the mgmt host
+# connects to the relay's control port (2333) and registers the forwarded
+# service. This play runs that client, one tunnel per relay in the
+# [relay_servers] group.
+#
+# Inputs, all produced by earlier steps:
+#   - inventory/hosts-<site>.ini from inventory/generate-relays.sh: each relay
+#     carries aws_region and rathole_secret_name.
+#   - each relay's Secrets Manager entry, written by relay-server.yml as
+#     {"token", "public_key", "relay_ip", "turn_secret"}.
+#   - aws_profile in the site's group_vars, or the run wrapped in
+#     `aws-vault exec <profile> --no-session --` (aws_cmd in group_vars/all.yml).
+#
+# Usage:
+#   cd ops/ansible
+#   ansible-playbook -i inventory/hosts-<site>.ini -i inventory/mgmt-hosts.ini \
+#     site-rathole-client.yml -e rathole_client_target=<site>_hosts
+#
+# A second mgmt host behind the same relays (relay ingress dispatch) runs the
+# same play with its own group as rathole_client_target; that group's vars set
+# rathole_client_service_name to the service it registers on every relay.
+#
+# A site needing different behaviour keeps its own <site>-rathole-client.yml;
+# goat-standup.sh runs that file in place of this one when it exists.
+
+- name: Mgmt host — rathole client, one tunnel per relay
+  hosts: "{{ rathole_client_target | mandatory }}"
+  become: true
+
+  vars:
+    # rathole publishes x86_64 as a gnu build and aarch64 as a musl build.
+    rathole_asset_by_arch:
+      x86_64: rathole-x86_64-unknown-linux-gnu.zip
+      aarch64: rathole-aarch64-unknown-linux-musl.zip
+    rathole_url: >-
+      https://github.com/rapiz1/rathole/releases/download/{{ rathole_version }}/{{
+      rathole_asset_by_arch[ansible_architecture] }}
+
+  pre_tasks:
+    - name: Assert the relay inventory is loaded
+      ansible.builtin.assert:
+        that:
+          - groups['relay_servers'] is defined
+          - groups['relay_servers'] | length > 0
+        fail_msg: >-
+          No [relay_servers] group. Generate it with
+          ops/ansible/inventory/generate-relays.sh <site> <terraform_dir> and pass
+          -i inventory/hosts-<site>.ini alongside the mgmt inventory.
+        quiet: true
+
+    - name: Assert every relay names its region and rathole secret
+      ansible.builtin.assert:
+        that:
+          - hostvars[item].aws_region is defined
+          - hostvars[item].rathole_secret_name is defined
+        fail_msg: >-
+          {{ item }} lacks aws_region or rathole_secret_name. Regenerate the relay
+          inventory with generate-relays.sh after `terraform apply`.
+        quiet: true
+      loop: "{{ groups['relay_servers'] }}"
+
+    - name: Assert this host's architecture has a rathole build
+      ansible.builtin.assert:
+        that:
+          - ansible_architecture in rathole_asset_by_arch
+        fail_msg: "No rathole build mapped for {{ ansible_architecture }}."
+        quiet: true
+
+  tasks:
+    # ==================================================================
+    # Relay credentials
+    # ==================================================================
+    - name: Fetch each relay's rathole credentials from Secrets Manager
+      delegate_to: localhost
+      become: false
+      ansible.builtin.shell: >
+        {{ aws_cmd }} aws secretsmanager get-secret-value
+        --region "{{ hostvars[item].aws_region }}"
+        --secret-id "{{ hostvars[item].rathole_secret_name }}"
+        --query SecretString --output text
+      register: relay_secrets_raw
+      loop: "{{ groups['relay_servers'] }}"
+      changed_when: false
+      no_log: true
+
+    # turn_secret can hold literal newlines, which from_json rejects inside a
+    # string, so they are escaped before parsing.
+    - name: Parse relay credentials
+      ansible.builtin.set_fact:
+        relay_credentials: >-
+          {{ relay_credentials | default({}) | combine({
+            item.item | regex_replace('^relay-', ''): {
+              'ip': _cred.relay_ip | default(hostvars[item.item].ansible_host),
+              'token': _cred.token,
+              'public_key': _cred.public_key
+            }
+          }) }}
+      vars:
+        _cred: "{{ (item.stdout | regex_replace('\n', '\\n')) | from_json }}"
+      loop: "{{ relay_secrets_raw.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+      no_log: true
+
+    # ==================================================================
+    # rathole binary
+    # ==================================================================
+    - name: Check for the rathole binary
+      ansible.builtin.stat:
+        path: "{{ rathole_bin }}"
+      register: rathole_binary
+
+    - name: Install rathole
+      when: not rathole_binary.stat.exists
+      block:
+        - name: Install unzip
+          ansible.builtin.apt:
+            name: [unzip]
+            state: present
+            update_cache: true
+            cache_valid_time: 3600
+
+        - name: Download rathole
+          ansible.builtin.get_url:
+            url: "{{ rathole_url }}"
+            dest: /tmp/rathole.zip
+            mode: "0644"
+
+        - name: Create the extraction directory
+          ansible.builtin.file:
+            path: /tmp/rathole-extract
+            state: directory
+            mode: "0755"
+
+        - name: Extract rathole
+          ansible.builtin.unarchive:
+            src: /tmp/rathole.zip
+            dest: /tmp/rathole-extract
+            remote_src: true
+
+        - name: Install the rathole binary
+          ansible.builtin.copy:
+            src: /tmp/rathole-extract/rathole
+            dest: "{{ rathole_bin }}"
+            mode: "0755"
+            remote_src: true
+
+        - name: Remove download artifacts
+          ansible.builtin.file:
+            path: "{{ item }}"
+            state: absent
+          loop:
+            - /tmp/rathole.zip
+            - /tmp/rathole-extract
+
+    # ==================================================================
+    # Per-relay client configs
+    # ==================================================================
+    - name: Ensure the rathole config directory exists
+      ansible.builtin.file:
+        path: "{{ rathole_config_dir }}"
+        state: directory
+        mode: "0700"
+
+    - name: Render one client config per relay
+      ansible.builtin.template:
+        src: templates/client.toml.j2
+        dest: "{{ rathole_config_dir }}/client-{{ item.key }}.toml"
+        mode: "0600"
+      vars:
+        relay_name: "{{ item.key }}"
+        relay_ip: "{{ item.value.ip }}"
+        relay_token: "{{ item.value.token }}"
+        relay_pubkey: "{{ item.value.public_key }}"
+      loop: "{{ relay_credentials | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+      no_log: true
+      notify: Restart rathole clients
+
+    # ==================================================================
+    # systemd
+    # ==================================================================
+    # A unit-file change governs the next start only, so installing it reloads
+    # systemd and leaves running tunnels alone.
+    - name: Install the rathole-client@<relay> template unit
+      ansible.builtin.template:
+        src: templates/rathole-client@.service.j2
+        dest: /etc/systemd/system/rathole-client@.service
+        mode: "0644"
+      vars:
+        rathole_client_label: "{{ site_id | default(inventory_hostname) }}"
+      notify: Reload systemd for rathole clients
+
+    - name: Enable and start one rathole client per relay
+      ansible.builtin.systemd:
+        name: "rathole-client@{{ item }}"
+        enabled: true
+        state: started
+        daemon_reload: true
+      loop: "{{ relay_credentials.keys() | list }}"
+
+    # ==================================================================
+    # Verify
+    # ==================================================================
+    - name: Probe each relay's rathole control port
+      ansible.builtin.wait_for:
+        host: "{{ relay_credentials[item].ip }}"
+        port: 2333
+        timeout: 10
+      loop: "{{ relay_credentials.keys() | list }}"
+      register: rathole_control_probe
+      ignore_errors: true
+
+    - name: Report the tunnels
+      ansible.builtin.debug:
+        msg: |
+          rathole clients on {{ inventory_hostname }}:
+          {% for name in relay_credentials.keys() | list %}
+            - {{ name }}: {{ relay_credentials[name].ip }}:2333
+          {% endfor %}
+          Check with `systemctl status 'rathole-client@*'` and
+          `ss -tnp | grep 2333` (one ESTABLISHED line per relay).
+
+  handlers:
+    - name: Restart rathole clients
+      ansible.builtin.systemd:
+        name: "rathole-client@{{ item }}"
+        state: restarted
+        daemon_reload: true
+      loop: "{{ relay_credentials.keys() | list }}"
+
+    - name: Reload systemd for rathole clients
+      ansible.builtin.systemd:
+        daemon_reload: true

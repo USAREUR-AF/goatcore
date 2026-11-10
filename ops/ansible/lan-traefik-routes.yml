@@ -27,7 +27,7 @@
   vars:
     lan_cert_src: "{{ 'mgmt-identity-cert.pem' | goat_leaf(site_id) }}"   # state dir first, checkout fallback (#2165)
     lan_key_src: "{{ 'mgmt-identity-key.pem' | goat_leaf(site_id) }}"
-    tls_root: "{{ traefik_tls_root | default('/etc/goat/tls') }}"
+    tls_root: "{{ traefik_tls_root | default((goat_host_etc_dir | default('/etc/goat')) ~ '/tls') }}"
   tasks:
     - name: lan-routes | assert controller-side cert material exists
       delegate_to: localhost

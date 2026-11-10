@@ -3,7 +3,7 @@
 **Status:** measured 2026-09-06 against live AWS instances of 22.04, 24.04 and 26.04. The table
 below is the measurement, not a plan someone hopes is true.
 
-**Related:** `os-baseline-and-luks.md` (what the OS must provide),
+**Related:** [`os-baseline-and-luks.md`](os-baseline-and-luks.md) (what the OS must provide),
 `fips-pqc-path.md` (why the compliance services matter),
 `environment-parity.md` (one fact, one home).
 

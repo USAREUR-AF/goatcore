@@ -204,3 +204,26 @@ variable "ab_stock_relay_port" {
   type        = number
   default     = 0
 }
+
+variable "descriptions" {
+  description = <<-EOT
+    Resource description overrides, by key: security_group, ssh, websocket,
+    quic, wg_cp0, rathole_ingress, rathole_control, coturn_stun_udp,
+    coturn_stun_tcp, coturn_turn, ab_websocket, ab_quic, icmp, egress,
+    ssh_key_secret, rathole_secret. A key not given keeps the module default
+    (see locals.descriptions in main.tf). Pass a live goatnet's existing text
+    so a plan shows no change: a security-group description cannot be edited
+    in place, so a different one replaces the group.
+  EOT
+  type        = map(string)
+  default     = {}
+
+  validation {
+    condition = length(setsubtract(keys(var.descriptions), [
+      "security_group", "ssh", "websocket", "quic", "wg_cp0", "rathole_ingress",
+      "rathole_control", "coturn_stun_udp", "coturn_stun_tcp", "coturn_turn",
+      "ab_websocket", "ab_quic", "icmp", "egress", "ssh_key_secret", "rathole_secret",
+    ])) == 0
+    error_message = "descriptions has an unknown key; the keys are listed in this variable's description."
+  }
+}

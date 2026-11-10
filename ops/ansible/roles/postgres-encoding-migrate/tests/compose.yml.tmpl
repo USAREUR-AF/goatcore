@@ -1,0 +1,46 @@
+# One fixture node: Postgres as the mgmt-host compose file defines it (image,
+# config file, POSTGRES_INITDB_ARGS from .env, PGDATA volume), a writer that
+# holds a session open, and a container that mounts PGDATA read-only the way
+# pgbackrest-runner does.
+services:
+  postgres-a:
+    image: ${POSTGRES_SPOCK_IMAGE:?}
+    container_name: pemtest-@NODE@-pg
+    command: [postgres, -c, config_file=/etc/postgresql/postgresql.conf]
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD:?}
+      POSTGRES_INITDB_ARGS: "${POSTGRES_INITDB_ARGS:---locale=C --encoding=UTF8}"
+    volumes:
+      - pgdata-a:/var/lib/pgsql/16/data
+      - ./pgbackrest-repo:/var/lib/pgbackrest
+      - ./pgbackrest-etc:/etc/pgbackrest:ro
+      - ./pgbackrest-log:/var/log/pgbackrest
+      - ./pgbackrest-spool:/var/spool/pgbackrest
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+@PORTS@    networks: [pemtest]
+  writer:
+    image: ${POSTGRES_SPOCK_IMAGE:?}
+    container_name: pemtest-@NODE@-writer
+    entrypoint: [sh, -c]
+    command:
+      - "while true; do PGPASSWORD=$$PW psql -h pemtest-@NODE@-pg -U postgres -d netbird -c 'SELECT pg_sleep(86400)' >/dev/null 2>&1; sleep 2; done"
+    environment:
+      PW: ${POSTGRES_SUPERUSER_PASSWORD:?}
+    networks: [pemtest]
+  volreader:
+    image: ${POSTGRES_SPOCK_IMAGE:?}
+    container_name: pemtest-@NODE@-volreader
+    entrypoint: [sleep, infinity]
+    volumes:
+      - pgdata-a:/data:ro
+    networks: [pemtest]
+volumes:
+  pgdata-a: {}
+networks:
+  pemtest:
+    external: true
+    name: pemtest-net

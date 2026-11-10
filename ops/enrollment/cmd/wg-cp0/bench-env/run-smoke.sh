@@ -64,7 +64,7 @@ ok "validate PASS"
 # ---------------------------------------------------------------------
 step "Phase 2 — list (table)"
 out=$("${WGCP0}" list --path "${FIXTURE}")
-for canon in vega-a vega-b prov-rla prov-conus op-laptop; do
+for canon in lab-a lab-b prov-rla prov-conus op-laptop; do
     echo "${out}" | grep -q "${canon}" || fail "list missing canonical peer ${canon}"
 done
 ok "list table contains canonical peers"
@@ -78,10 +78,10 @@ ok "list --json has 11 peers"
 # ---------------------------------------------------------------------
 # Phase 3: show
 # ---------------------------------------------------------------------
-step "Phase 3 — show vega-a"
-out=$("${WGCP0}" show vega-a --path "${FIXTURE}")
+step "Phase 3 — show lab-a"
+out=$("${WGCP0}" show lab-a --path "${FIXTURE}")
 echo "${out}" | grep -q "198.18.0.1" || fail "show didn't print expected address"
-ok "show vega-a contains expected address"
+ok "show lab-a contains expected address"
 
 step "Phase 3b — show ghost (expected exit 1)"
 if "${WGCP0}" show ghost --path "${FIXTURE}" 2>/dev/null; then

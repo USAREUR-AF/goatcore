@@ -127,7 +127,11 @@ setting `account_expire` to the Unix epoch. The driver identifies each account
 by its mail attribute and reads it back after the write. It uses
 `COLLAB_KANIDM_URL` plus `COLLAB_KANIDM_IDM_ADMIN_PW` for the collaboration
 door (the onboarding service token cannot delete people), and
-`PUBLIC_DOOR_KANIDM_URL` plus `GOAT_IDM_ADMIN_PW` for the public door.
+`PUBLIC_DOOR_KANIDM_URL` plus `GOAT_IDM_ADMIN_PW` for the public door; when
+`GOAT_IDM_ADMIN_PW` is unset it reads the variable the checkout names as
+`public_door_idm_admin_pw_env` in `ops/ansible/group_vars/all.yml`. The GitHub
+organisations are `GOAT_OFFBOARD_GITHUB_ORGS`, else `goat_offboard_github_orgs`
+in the same file.
 
 The driver enumerates every 1Password group, including built-in groups, tries
 to remove the person from every group where they appear, and enumerates every

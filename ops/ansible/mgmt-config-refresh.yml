@@ -62,7 +62,7 @@
     - name: Pre-flight | target group was named
       ansible.builtin.assert:
         that: target is defined and target | length > 0
-        fail_msg: "pass -e target=<group>, e.g. -e target=zagros_prod_hosts"
+        fail_msg: "pass -e target=<group>, e.g. -e target=<site>_hosts"
         quiet: true
 
     - name: Pre-flight | netbird_encryption_key resolved from the environment

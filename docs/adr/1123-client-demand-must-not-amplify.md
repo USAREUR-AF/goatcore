@@ -22,7 +22,7 @@ flashlight, stethoscope, microscope, the portal — sits behind Traefik on the
 mesh, gated by oauth2-proxy. None of them had any request-rate ceiling. An
 audit on 2026-08-11 found no HTTP-layer rate limiting anywhere on the fleet;
 what rate limiting exists (wg-cp0 nftables, the ntp-admit sidecar,
-demogame' per-player input) sits below or beside the web tier, not in
+airdefenders' per-player input) sits below or beside the web tier, not in
 front of it.
 
 The audit also found that the surfaces are not equivalent in what client

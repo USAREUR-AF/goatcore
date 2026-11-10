@@ -131,11 +131,11 @@ func Lint(content []byte, format string) Result {
 
 	// Normalize through JSON so the schema validator sees canonical JSON types
 	// (float64 numbers, dates already coerced to ISO strings by parse()).
-	nova, err := json.Marshal(raw)
+	buf, err := json.Marshal(raw)
 	if err != nil {
 		return Result{OK: false, Findings: []Finding{{Severity: "error", Field: "(parse)", Message: "cannot encode manifest: " + err.Error()}}}
 	}
-	inst, err := jsonschema.UnmarshalJSON(bytes.NewReader(nova))
+	inst, err := jsonschema.UnmarshalJSON(bytes.NewReader(buf))
 	if err != nil {
 		return Result{OK: false, Findings: []Finding{{Severity: "error", Field: "(parse)", Message: "cannot re-decode manifest: " + err.Error()}}}
 	}

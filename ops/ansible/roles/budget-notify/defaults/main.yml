@@ -38,7 +38,7 @@ budget_notify_pg_user: "{{ portal_db_user | default('portal') }}"
 # gitignored, so they must be present in the CONTROLLER tree the deploy runs
 # from; reading zero of them fails the deploy rather than blanking the live
 # projection.
-budget_notify_manifest_glob: "{{ playbook_dir }}/../operators/zagros/*.yml"
+budget_notify_manifest_glob: "{{ playbook_dir }}/../operators/{{ site_id | mandatory }}/*.yml"
 
 # Escape hatch for a goatnet that genuinely has no operator manifests yet.
 # Everywhere else, zero manifests means the controller tree is missing them.
@@ -77,12 +77,14 @@ budget_notify_metrics_out: "{{ (budget_notify_textfile_dir ~ '/budget-notify.pro
 # SMTP (SES) — the same SES account the id-console onboarding mailer uses
 # (verified against the live console). Host/port/from are
 # non-secret config; the credentials ride the standing envrc entries
-# (ZAGROS_SES_SMTP_* in 30-site-services) and land in a root-only env file
-# on the host, never in the repo.
+# (<SITE>_SES_SMTP_* in 30-site-services, SITE = site_id upper-cased with
+# hyphens as underscores) and land in a root-only env file on the host, never
+# in the repo. A goatnet that mails through another account's credentials
+# names those variables in its group_vars.
 budget_notify_smtp_host: "email-smtp.eu-central-1.amazonaws.com"
 budget_notify_smtp_port: "587"
-budget_notify_smtp_username: "{{ lookup('env', 'ZAGROS_SES_SMTP_USERNAME') }}"
-budget_notify_smtp_password: "{{ lookup('env', 'ZAGROS_SES_SMTP_PASSWORD') }}"
+budget_notify_smtp_username: "{{ lookup('env', (site_id | mandatory | upper | replace('-', '_')) + '_SES_SMTP_USERNAME') }}"
+budget_notify_smtp_password: "{{ lookup('env', (site_id | mandatory | upper | replace('-', '_')) + '_SES_SMTP_PASSWORD') }}"
 # The sender is the site's onboarding mailer address, so one fact has one home.
 # Empty refuses at deploy: budget-notify.py will not run without a sender.
 budget_notify_smtp_from: "{{ id_admin_console_smtp_from | default('') }}"

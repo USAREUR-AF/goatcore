@@ -417,11 +417,20 @@ PG_B=$(docker compose ps -q postgres-b)
 # postgres-spock images run init scripts on first start which trigger a
 # post-init restart. Wait until psql can run a trivial query inside each
 # container — that's the real ready signal, not just `pg_isready`.
+# Ready means the FINAL server answers. During first-boot init the entrypoint
+# runs a temporary server on the Unix socket only, then shuts it down, so a
+# socket probe can succeed against the server that is about to stop ("the
+# database system is shutting down" on the next query). Probe over TCP, which
+# only the final server listens on, and require three answers in a row.
 wait_pg() {
-  local cid="$1"
-  for _ in $(seq 1 90); do
-    docker exec -e PGPASSWORD="$POSTGRES_SUPERUSER_PASSWORD" "$cid" \
-      psql -U postgres -d postgres -tAXc "SELECT 1" >/dev/null 2>&1 && return 0
+  local cid="$1" ok=0
+  for _ in $(seq 1 120); do
+    if docker exec -e PGPASSWORD="$POSTGRES_SUPERUSER_PASSWORD" "$cid" \
+         psql -h 127.0.0.1 -U postgres -d postgres -tAXc "SELECT 1" >/dev/null 2>&1; then
+      ok=$((ok + 1)); [ "$ok" -ge 3 ] && return 0
+    else
+      ok=0
+    fi
     sleep 2
   done
   return 1

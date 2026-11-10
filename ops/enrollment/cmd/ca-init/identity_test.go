@@ -13,16 +13,16 @@ import (
 )
 
 func TestRootSubjectCN(t *testing.T) {
-	cn, derived := rootSubjectCN("zagros-prod Root CA", "dev-zagros-prod-ca")
-	if cn != "zagros-prod Root CA" || derived {
+	cn, derived := rootSubjectCN("galaxy-prod Root CA", "dev-galaxy-prod-ca")
+	if cn != "galaxy-prod Root CA" || derived {
 		t.Errorf("explicit --root-cn: got (%q, %v), want it kept, not derived", cn, derived)
 	}
-	a, _ := rootSubjectCN("", "dev-zagros-ca-2026-09-03")
+	a, _ := rootSubjectCN("", "dev-galaxy-ca-2026-09-03")
 	b, derived := rootSubjectCN("", "dev-hobby-ca-2026-07-15")
 	if !derived || a == b {
 		t.Errorf("two CA ids derived %q and %q: roots of different goatnets must not share a subject", a, b)
 	}
-	if !strings.HasPrefix(a, "dev-zagros-ca-2026-09-03") {
+	if !strings.HasPrefix(a, "dev-galaxy-ca-2026-09-03") {
 		t.Errorf("derived CN %q does not name its CA id", a)
 	}
 }

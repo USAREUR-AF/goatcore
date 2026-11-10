@@ -144,8 +144,13 @@
       - obs_scrape_targets | length > 0
     fail_msg: |
       The obs-host role requires `obs_scrape_targets` set in group_vars.
-      Each entry: {name, addr, job}. See group_vars/vega_obs_hosts/vars.yml
-      for the vega instance.
+      Each entry: {name, addr, job}. See group_vars/<obs-group>/vars.yml
+      for an instance.
+
+# New scrape inputs must serve real samples before any configuration change.
+# Kept separate so the read-only checks can also be exercised in isolation.
+- name: obs-host | verify required scrape inputs
+  ansible.builtin.import_tasks: verify-scrape-inputs.yml
 
 - name: Pre-flight — obs_data_root parent (NVMe at /opt/docker-data) exists
   ansible.builtin.stat:
@@ -310,7 +315,7 @@
   # this file, compose start fails because the volume mount
   # references a non-existent file.
   ansible.builtin.copy:
-    src: "{{ offline_ca_root_path | default('/opt/goat/bootstrap/offline-ca-root.pem') }}"
+    src: "{{ offline_ca_root_path }}"
     dest: "{{ obs_compose_dir }}/grafana/offline-ca.pem"
     remote_src: true
     owner: root
@@ -328,7 +333,7 @@
     mode: "0644"
   notify: prometheus reload
 
-- name: Render base alert rules
+- name: Render base alert rules (the rules dir is never left empty)
   ansible.builtin.template:
     src: base-alerts.rules.yml.j2
     dest: "{{ obs_compose_dir }}/rules/base-alerts.yml"

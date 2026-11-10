@@ -1,0 +1,111 @@
+name: federation-e2e
+
+# Rung 9, end to end (docs/operations/sovereign-federation-runbook.md,
+# ops/federation-e2e/README.md).
+#
+# Two sovereigns with separate CAs, generated fresh, run the REAL driver without
+# --dry-run on container hosts: the real `goat federate` verbs, the real plays, a real
+# WireGuard link, real pinned zenohd routers and real spire-servers. The terminal gate is
+# the real acceptance.sh from both sides, and the proof is read back from the receiving
+# side. Twice, with the listener and the first mover swapped, once per avenue (ADR 1201).
+#
+# A hermetic run with no real counterparty and no goatnet, FIPS-waived. No GitHub runner
+# reaches a goatnet (ops/validation/goatnet-runners.yaml), and this one reaches none.
+on:
+  pull_request:
+    paths:
+      - 'ops/federation-e2e/**'
+      - 'ops/e2e/report.py'
+      - 'ops/federation/standup/**'
+      - 'ops/federation/roundtrip/**'
+      - 'ops/federation/republisher/**'
+      - 'ops/scripts/peering-standup.sh'
+      - 'ops/goatbuilder/parity-federate.sh'
+      - 'ops/ansible/roles/goat-peering-wg/**'
+      - 'ops/ansible/roles/goat-peering-spire/**'
+      - 'ops/ansible/roles/goat-zenoh-edge/**'
+      - 'ops/ansible/roles/goat-fed-republisher/**'
+      - 'ops/ansible/roles/goat-zenoh/templates/config.json5.j2'
+      - 'ops/ansible/roles/spire/templates/server.conf.j2'
+      - 'ops/ansible/tasks/peering-applied-vars.yml'
+      - 'ops/ansible/peering-*.yml'
+      - 'crates/goatbuilder/src/federate/**'
+      - 'crates/goatbuilder/src/main.rs'
+      - 'crates/goat-federation/**'
+      - 'crates/goat-cli/src/cmd/federate.rs'
+      - 'ops/ci/check-federation-e2e-prepare.sh'
+      - '.github/workflows/federation-e2e.yml'
+  schedule:
+    - cron: '37 4 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+jobs:
+  federation:
+    name: two sovereigns through the real driver, proved from the receiving side
+    runs-on: ubuntu-24.04
+    timeout-minutes: 100
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install Rust toolchain (stable)
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo registry + build target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            crates/target
+          key: federation-e2e-cargo-${{ runner.os }}-${{ hashFiles('crates/Cargo.lock') }}
+      - name: Install the tools the harness needs
+        timeout-minutes: 8
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends jq libpcsclite-dev pkg-config wireguard-tools "linux-modules-extra-$(uname -r)" || sudo apt-get install -y -qq --no-install-recommends jq libpcsclite-dev pkg-config wireguard-tools
+          python3 -m pip install --quiet pyyaml jinja2 jsonschema
+          sudo modprobe wireguard
+          grep -q '^wireguard ' /proc/modules
+      # Release, because a debug build reads its embedded message catalogs from the
+      # source tree at run time, and these binaries run on hosts that have no such path.
+      - name: Build goat and goatbuilder
+        working-directory: crates
+        run: cargo build --release --locked -p goat-cli -p goatbuilder
+      # The runner on a checkout shaped like the public one (no group_vars pins.yml, no
+      # goatbuilder.yaml, no goatnet in fleet-pins.yaml): it prepares both sovereigns
+      # from files every checkout carries (docs/tutorials/04-two-sovereigns.md).
+      - name: The runner prepares from a public-shaped checkout
+        timeout-minutes: 10
+        run: ops/ci/check-federation-e2e-prepare.sh crates/target/release/goatbuilder
+      - name: Two sovereigns, both scenarios
+        run: ops/federation-e2e/run.sh --goat crates/target/release/goat --goatbuilder crates/target/release/goatbuilder --record "$RUNNER_TEMP/federation-report"
+      - name: The acceptance counts
+        if: always()
+        run: cat "$RUNNER_TEMP/federation-report/acceptance-counts.txt" || true
+      # The binaries this run proved, for ops/federation-e2e/live.sh on real hosts: the
+      # live run then ships the commit CI measured, not a build of its own.
+      - name: Upload the binaries this run proved
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: federation-live-binaries
+          path: |
+            crates/target/release/goat
+            crates/target/release/goatbuilder
+          retention-days: 14
+      - name: Upload the run record
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: federation-e2e-report
+          path: ${{ runner.temp }}/federation-report
+          retention-days: 14

@@ -14,7 +14,7 @@
 #
 # Usage (after ops/scripts/mint-site-certs.sh <site>):
 #   ansible-playbook -i inventory/mgmt-hosts.ini -e target=<group> stage-service-leaves.yml \
-#     -e leaf_src_dir=~/.goat/state/<site>-leaves
+#     -e leaf_src_dir=<the out= directory that script printed>
 # where <group> is the goatnet's host group (e.g. zagros_dev_hosts). Narrow to one
 # host within it with `-l <host>` if the group has more than one.
 #
@@ -62,7 +62,7 @@
           - leaf_src_dir | length > 0
         fail_msg: >-
           stage-service-leaves: pass -e leaf_src_dir=<dir> pointing at the output of
-          ops/scripts/mint-site-certs.sh (default ~/.goat/state/<site>-leaves).
+          ops/scripts/mint-site-certs.sh (the out= directory it printed).
         quiet: true
 
     - name: resolve the source directory on the control node

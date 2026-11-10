@@ -14,6 +14,8 @@ import unittest.mock
 import uuid
 
 
+# The script takes its aws-vault profile from the caller; the shim ignores it.
+os.environ.setdefault("AWS_VAULT_PROFILE", "example")
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "ops/ansible/scripts/create-setup-key.sh"
 spec = importlib.util.spec_from_file_location("setup_key", SCRIPT.with_suffix(".py"))

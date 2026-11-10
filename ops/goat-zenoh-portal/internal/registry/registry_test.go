@@ -25,7 +25,7 @@ func TestVendorPrefixValidation(t *testing.T) {
 		prefix string
 		ok     bool
 	}{
-		{"org11x", true},
+		{"acme", true},
 		{"goat", true},
 		{"a", true},
 		{"community-test", true},
@@ -56,16 +56,16 @@ func TestVendorPrefixValidation(t *testing.T) {
 func TestCreateAndGetVendor(t *testing.T) {
 	r := open(t)
 	ctx := context.Background()
-	v := &registry.Vendor{Prefix: "org11x", APIKeyHash: "h", DisplayName: "org11x"}
+	v := &registry.Vendor{Prefix: "acme", APIKeyHash: "h", DisplayName: "Acme"}
 	if err := r.CreateVendor(ctx, v); err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	got, err := r.GetVendor(ctx, "org11x")
+	got, err := r.GetVendor(ctx, "acme")
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	if got.Prefix != "org11x" || got.DisplayName != "org11x" {
-		t.Errorf("got %+v, want prefix=org11x name=org11x", got)
+	if got.Prefix != "acme" || got.DisplayName != "Acme" {
+		t.Errorf("got %+v, want prefix=acme name=Acme", got)
 	}
 	if got.ApprovedAt != nil {
 		t.Errorf("expected approved_at nil at creation, got %v", *got.ApprovedAt)
@@ -75,11 +75,11 @@ func TestCreateAndGetVendor(t *testing.T) {
 func TestCreateVendorDuplicate(t *testing.T) {
 	r := open(t)
 	ctx := context.Background()
-	v := &registry.Vendor{Prefix: "org11x", APIKeyHash: "h"}
+	v := &registry.Vendor{Prefix: "acme", APIKeyHash: "h"}
 	if err := r.CreateVendor(ctx, v); err != nil {
 		t.Fatalf("first create: %v", err)
 	}
-	err := r.CreateVendor(ctx, &registry.Vendor{Prefix: "org11x", APIKeyHash: "h2"})
+	err := r.CreateVendor(ctx, &registry.Vendor{Prefix: "acme", APIKeyHash: "h2"})
 	if err != registry.ErrVendorExists {
 		t.Errorf("expected ErrVendorExists, got %v", err)
 	}
@@ -88,11 +88,11 @@ func TestCreateVendorDuplicate(t *testing.T) {
 func TestApproveVendor(t *testing.T) {
 	r := open(t)
 	ctx := context.Background()
-	_ = r.CreateVendor(ctx, &registry.Vendor{Prefix: "org11x", APIKeyHash: "h"})
-	if err := r.ApproveVendor(ctx, "org11x", "operator"); err != nil {
+	_ = r.CreateVendor(ctx, &registry.Vendor{Prefix: "acme", APIKeyHash: "h"})
+	if err := r.ApproveVendor(ctx, "acme", "operator"); err != nil {
 		t.Fatalf("approve: %v", err)
 	}
-	v, _ := r.GetVendor(ctx, "org11x")
+	v, _ := r.GetVendor(ctx, "acme")
 	if v.ApprovedAt == nil {
 		t.Errorf("expected approved_at set")
 	}
@@ -105,10 +105,10 @@ func TestApproveVendor(t *testing.T) {
 	}
 	// Idempotency: re-approve doesn't change approved_at.
 	prevAt := *v.ApprovedAt
-	if err := r.ApproveVendor(ctx, "org11x", "operator2"); err != nil {
+	if err := r.ApproveVendor(ctx, "acme", "operator2"); err != nil {
 		t.Fatalf("re-approve: %v", err)
 	}
-	v2, _ := r.GetVendor(ctx, "org11x")
+	v2, _ := r.GetVendor(ctx, "acme")
 	if *v2.ApprovedAt != prevAt {
 		t.Errorf("approved_at changed on re-approve: %d → %d", prevAt, *v2.ApprovedAt)
 	}
@@ -117,16 +117,16 @@ func TestApproveVendor(t *testing.T) {
 func TestApprovedVendorPrefixes(t *testing.T) {
 	r := open(t)
 	ctx := context.Background()
-	_ = r.CreateVendor(ctx, &registry.Vendor{Prefix: "org11x", APIKeyHash: "h"})
+	_ = r.CreateVendor(ctx, &registry.Vendor{Prefix: "acme", APIKeyHash: "h"})
 	_ = r.CreateVendor(ctx, &registry.Vendor{Prefix: "community", APIKeyHash: "h"})
 	_ = r.CreateVendor(ctx, &registry.Vendor{Prefix: "goat", APIKeyHash: "h"})
-	_ = r.ApproveVendor(ctx, "org11x", "operator")
+	_ = r.ApproveVendor(ctx, "acme", "operator")
 	_ = r.ApproveVendor(ctx, "goat", "operator")
 	ps, err := r.ApprovedVendorPrefixes(ctx)
 	if err != nil {
 		t.Fatalf("approved: %v", err)
 	}
-	want := []string{"org11x", "goat"}
+	want := []string{"acme", "goat"}
 	if len(ps) != len(want) {
 		t.Fatalf("got %v, want %v", ps, want)
 	}
@@ -140,16 +140,16 @@ func TestApprovedVendorPrefixes(t *testing.T) {
 func TestTopicValidation(t *testing.T) {
 	r := open(t)
 	ctx := context.Background()
-	_ = r.CreateVendor(ctx, &registry.Vendor{Prefix: "org11x", APIKeyHash: "h"})
+	_ = r.CreateVendor(ctx, &registry.Vendor{Prefix: "acme", APIKeyHash: "h"})
 
 	goodCases := []struct {
 		name string
 		t    *registry.Topic
 	}{
-		{"json", &registry.Topic{VendorPrefix: "org11x", KeyPattern: "org11x/lattice/entity/track/v1", Format: "json"}},
-		{"opaque xml", &registry.Topic{VendorPrefix: "org11x", KeyPattern: "org11x/tak/cot/v1", Format: "xml"}},
-		{"schema-bound xml", &registry.Topic{VendorPrefix: "org11x", KeyPattern: "org11x/tak/event/v1", Format: "xml:event"}},
-		{"protobuf with msg", &registry.Topic{VendorPrefix: "org11x", KeyPattern: "org11x/lattice/pa/v1", Format: "protobuf:PositionAttitude"}},
+		{"json", &registry.Topic{VendorPrefix: "acme", KeyPattern: "acme/lattice/entity/track/v1", Format: "json"}},
+		{"opaque xml", &registry.Topic{VendorPrefix: "acme", KeyPattern: "acme/tak/cot/v1", Format: "xml"}},
+		{"schema-bound xml", &registry.Topic{VendorPrefix: "acme", KeyPattern: "acme/tak/event/v1", Format: "xml:event"}},
+		{"protobuf with msg", &registry.Topic{VendorPrefix: "acme", KeyPattern: "acme/lattice/pa/v1", Format: "protobuf:PositionAttitude"}},
 	}
 	for _, tc := range goodCases {
 		if _, err := r.CreateTopic(ctx, tc.t); err != nil {
@@ -161,17 +161,17 @@ func TestTopicValidation(t *testing.T) {
 		name string
 		t    *registry.Topic
 	}{
-		{"wrong vendor prefix segment", &registry.Topic{VendorPrefix: "org11x", KeyPattern: "org116x/foo/v1", Format: "json"}},
-		{"too few segments", &registry.Topic{VendorPrefix: "org11x", KeyPattern: "org11x/foo", Format: "json"}},
+		{"wrong vendor prefix segment", &registry.Topic{VendorPrefix: "acme", KeyPattern: "example-co/foo/v1", Format: "json"}},
+		{"too few segments", &registry.Topic{VendorPrefix: "acme", KeyPattern: "acme/foo", Format: "json"}},
 		// A complete mid-pattern `*` segment is now registrable (wildcard
 		// topic registration); embedded/multi-segment wildcards stay out.
-		{"embedded wildcard in segment", &registry.Topic{VendorPrefix: "org11x", KeyPattern: "org11x/lat*ice/x/v1", Format: "json"}},
-		{"multi-segment wildcard", &registry.Topic{VendorPrefix: "org11x", KeyPattern: "org11x/lattice/**", Format: "json"}},
+		{"embedded wildcard in segment", &registry.Topic{VendorPrefix: "acme", KeyPattern: "acme/lat*ice/x/v1", Format: "json"}},
+		{"multi-segment wildcard", &registry.Topic{VendorPrefix: "acme", KeyPattern: "acme/lattice/**", Format: "json"}},
 		{"first-segment wildcard", &registry.Topic{VendorPrefix: "*", KeyPattern: "*/lattice/x/v1", Format: "json"}},
-		{"empty segment", &registry.Topic{VendorPrefix: "org11x", KeyPattern: "org11x//foo/v1", Format: "json"}},
-		{"unknown format", &registry.Topic{VendorPrefix: "org11x", KeyPattern: "org11x/x/y/v1", Format: "yaml"}},
-		{"protobuf without msg", &registry.Topic{VendorPrefix: "org11x", KeyPattern: "org11x/x/y/v1", Format: "protobuf:"}},
-		{"xml without root element", &registry.Topic{VendorPrefix: "org11x", KeyPattern: "org11x/x/y/v1", Format: "xml:"}},
+		{"empty segment", &registry.Topic{VendorPrefix: "acme", KeyPattern: "acme//foo/v1", Format: "json"}},
+		{"unknown format", &registry.Topic{VendorPrefix: "acme", KeyPattern: "acme/x/y/v1", Format: "yaml"}},
+		{"protobuf without msg", &registry.Topic{VendorPrefix: "acme", KeyPattern: "acme/x/y/v1", Format: "protobuf:"}},
+		{"xml without root element", &registry.Topic{VendorPrefix: "acme", KeyPattern: "acme/x/y/v1", Format: "xml:"}},
 	}
 	for _, tc := range badCases {
 		if _, err := r.CreateTopic(ctx, tc.t); err == nil {
@@ -186,7 +186,7 @@ func TestTopicCRUD(t *testing.T) {
 	_ = r.CreateVendor(ctx, &registry.Vendor{Prefix: "community", APIKeyHash: "h"})
 	id, err := r.CreateTopic(ctx, &registry.Topic{
 		VendorPrefix: "community",
-		KeyPattern:   "community/maintainer-test/foo/v1",
+		KeyPattern:   "community/jane-test/foo/v1",
 		Format:       "json",
 		Description:  "test",
 	})
@@ -226,7 +226,7 @@ func TestTopicCRUD(t *testing.T) {
 	// DeleteTopic path below.
 	if _, err := r.CreateTopic(ctx, &registry.Topic{
 		VendorPrefix: "community",
-		KeyPattern:   "community/maintainer-test/foo/v1",
+		KeyPattern:   "community/jane-test/foo/v1",
 		Format:       "json",
 	}); err != registry.ErrTopicExists {
 		t.Errorf("re-create after retire: expected ErrTopicExists, got %v", err)
@@ -241,7 +241,7 @@ func TestTopicCRUD(t *testing.T) {
 	// Same key_pattern is now creatable again.
 	newID, err := r.CreateTopic(ctx, &registry.Topic{
 		VendorPrefix: "community",
-		KeyPattern:   "community/maintainer-test/foo/v1",
+		KeyPattern:   "community/jane-test/foo/v1",
 		Format:       "json",
 	})
 	if err != nil {
@@ -284,11 +284,11 @@ func TestBundleTokenMultiUse(t *testing.T) {
 func TestAuditLog(t *testing.T) {
 	r := open(t)
 	ctx := context.Background()
-	if err := r.LogAuditEvent(ctx, "operator", "vendor-register", "org11x", `{"x":1}`); err != nil {
+	if err := r.LogAuditEvent(ctx, "operator", "vendor-register", "acme", `{"x":1}`); err != nil {
 		t.Fatalf("log: %v", err)
 	}
 	// Empty details should round-trip as `{}`.
-	if err := r.LogAuditEvent(ctx, "org11x", "topic-create", "org11x/x/v1", ""); err != nil {
+	if err := r.LogAuditEvent(ctx, "acme", "topic-create", "acme/x/v1", ""); err != nil {
 		t.Fatalf("log empty: %v", err)
 	}
 	var count int

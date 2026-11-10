@@ -28,7 +28,7 @@ set -uo pipefail
 
 C="${1:-}"; SINCE="${2:-1h}"
 if [ -z "$C" ]; then
-  echo "usage: $0 <edge-container> [since]   e.g. $0 zagros-edge-svn 30m" >&2
+  echo "usage: $0 <edge-container> [since]   e.g. $0 edge-router 30m" >&2
   exit 2
 fi
 

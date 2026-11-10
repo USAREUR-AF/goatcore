@@ -23,7 +23,7 @@ It does NOT do:
 
 - Bundle issuance — that's a separate operator-side ceremony with age identity custody (see `operator-bundle-issuance.md`)
 - Bundle import — interactive; the operator drags `bundle.cbor` onto the GUI window
-- wg-cp0 plumbing — that's [`operator-laptop-onboarding.yml`](../../ops/ansible/operator-laptop-onboarding.yml)'s job (sister playbook)
+- wg-cp0 plumbing — that's `operator-laptop-onboarding.yml`'s job (sister playbook)
 
 ## Pre-flight
 
@@ -98,7 +98,7 @@ The playbook stops short of bringing wg-cp0 up because that requires an enrollme
 2. **Import + connect.** Launch `goat-client`, drag the `bundle.cbor` onto the window (or `File → Import Bundle...`), click **Connect**.
 3. **Confirm tunnel.** `ip addr show wg-cp0` (Linux) / `ifconfig | grep -A2 utun` (macOS) — the `198.18.0.<X>` address from your bundle should be bound.
 
-Sister playbook [`operator-laptop-onboarding.yml`](../../ops/ansible/operator-laptop-onboarding.yml) handles steps 2-3 via the legacy `wg-cp0-bundle-apply` CLI path (operator-class, no GUI). Either is correct; goat-client's GUI path is the friendlier one for non-CLI-fluent users.
+Sister playbook `operator-laptop-onboarding.yml` handles steps 2-3 via the legacy `wg-cp0-bundle-apply` CLI path (operator-class, no GUI). Either is correct; goat-client's GUI path is the friendlier one for non-CLI-fluent users.
 
 ## Idempotency
 

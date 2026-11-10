@@ -7,16 +7,13 @@ services.env (what check.sh probes) and data/meta.json (lifecycle, source,
 owner) from it. This pins the rules that decide the list:
 
   - one row per id, first home wins: isitup_services, then the off-mesh
-    catalog, then external-service declarations. zagros and zagros-prod rendered
-    all seven catalog rows twice before this;
+    catalog, then external-service declarations;
   - `listed: false` (and a declaration's `status.list` / per-hostname
     `status.hostnames.<h>.list`) keeps a row off the page and out of the probe;
-  - a row past its `retire_after` date is dropped (wbo and excalidraw on zagros
-    stayed listed past 2026-09-26 because only `enabled` was checked);
+  - a row past its `retire_after` date is dropped, whatever `enabled` says;
   - `lifecycle` and `owner` reach meta.json, and every external declaration
     row is `source: external`, so the page can move them to /external;
-  - a hostname can carry its own probe path (org16x's twelve hostnames shared
-    one, which 404'd on most of them).
+  - a hostname can carry its own probe path.
 
 Needs python3 + jinja2; skips without jinja2, like free-text-columns.sh.
 """

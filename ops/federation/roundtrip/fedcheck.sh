@@ -1,17 +1,24 @@
 #!/usr/bin/env bash
 # Federation round-trip check — the final validation stage.
 #
-# Publishes a nonce under OUR wire name and waits for the counterparty's
-# acknowledgement to come back under THEIRS. A pass means the sample crossed the
-# peering, was delivered by the PARTNER'S OWN ROUTER to a process on their side,
-# and the answer returned across the same agreement.
+# STAGES a nonce under one of OUR release sets and waits for the counterparty's
+# acknowledgement to come back under THEIR wire name. Our republisher is the only
+# writer of our wire name, so the nonce crosses only if it lifted
+# `release/<set>/fedcheck/<nonce>` onto `from/<us>/<set>/fedcheck/<nonce>`. A pass
+# means the republisher ran, the sample crossed the peering, was delivered by the
+# PARTNER'S OWN ROUTER to a process on their side, and the answer returned across
+# the same agreement.
 #
 # This is the only check the SENDING side can make alone. Every other federation
 # assertion requires shell on both sides, which no real publisher has.
 set -uo pipefail
 BASE=${BASE:-http://127.0.0.1:8000}
-OUR_WIRE=${1:?our wire prefix, e.g. from/zagros}
+OUR_SET=${1:?one of our release sets, staging name without the tail, e.g. release/weather}
 THEIR_WIRE=${2:?their wire prefix, e.g. from/xaa}
+case "$OUR_SET" in
+  release/*) ;;
+  *) echo "  FAIL  $OUR_SET is not a release/<set> staging name; our republisher is the only writer of our wire name"; exit 2 ;;
+esac
 TIMEOUT=${3:-20}
 
 NONCE="rt$(date +%s)$$"
@@ -19,11 +26,12 @@ PAYLOAD="fedcheck-$NONCE"
 WANT=$(printf '%s' "$PAYLOAD" | shasum -a 256 2>/dev/null | cut -d' ' -f1 || printf '%s' "$PAYLOAD" | sha256sum | cut -d' ' -f1)
 
 t0=$(python3 -c 'import time;print(time.time())')
-curl -s -m 8 -X PUT -d "$PAYLOAD" "$BASE/$OUR_WIRE/fedcheck/$NONCE" -o /dev/null
+curl -s -m 8 -X PUT -d "$PAYLOAD" "$BASE/$OUR_SET/fedcheck/$NONCE" -o /dev/null
 
 got=""; 
 for _ in $(seq 1 $((TIMEOUT*2))); do
-  r=$(curl -s -m 5 "$BASE/$THEIR_WIRE/fedcheck-ack/$NONCE" 2>/dev/null)
+  # `**`: the ack arrives under whichever of their sets they answer on.
+  r=$(curl -s -m 5 "$BASE/$THEIR_WIRE/**/fedcheck-ack/$NONCE" 2>/dev/null)
   v=$(printf '%s' "$r" | grep -oE '"value":"[^"]*"' | head -1 | sed 's/.*"value":"//;s/"$//')
   if [ -n "$v" ]; then got=$(printf '%s' "$v" | base64 -d 2>/dev/null); break; fi
   sleep 0.5

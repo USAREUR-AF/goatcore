@@ -46,10 +46,7 @@ spock-subscriptions  beta-core-1         converged  v1.2.0   v1.2.0
 zenoh-router         alpha-core-1        converged  v1.9.0   v1.9.0
 zenoh-router         alpha-core-2        converged  v1.9.0   v1.9.0
 zenoh-router         beta-core-1         converged  v1.9.0   v1.9.0
-assay plan: env=zagros  53 applicable rows, 26 N/A
-
-  audit (1)
-    prove  audit-offload-pipeline-runs                  container-health
+assay plan: env=zagros  44 applicable rows, 35 N/A
 
   data (1)
     prove  pgbackrest-stanza-and-first-backup           cmd-assert
@@ -67,14 +64,13 @@ assay plan: env=zagros  53 applicable rows, 26 N/A
     prove  fresh-peer-enrolls                           enroll-probe
     prove  fresh-peer-mesh-reaches-mgmt                 enroll-probe
 
-  fabric (12)
+  fabric (11)
     prove  router-tls-identity-mesh-ip                  tls-identity
     prove  router-storages-spawned                      cmd-assert
     prove  health-keys-carry-own-site-id                bus-roundtrip
     prove  zenoh-router-answers                         cmd-assert
     refuse adminspace-is-not-writable-from-the-fabric   cmd-assert
     prove  goat-status-chain                            goat-cli
-    prove  portal-health-answers                        cmd-assert
     prove  goat-hello-roundtrip                         goat-cli
     prove  fabric-put-subscribe-roundtrip               bus-roundtrip
     prove  goat-presence-has-peers                      goat-cli
@@ -105,34 +101,21 @@ assay plan: env=zagros  53 applicable rows, 26 N/A
     prove  goat-health-mesh                             goat-cli
     prove  goat-acl-declaration-holds                   goat-cli
 
-  mgmt-stack (5)
-    prove  netbird-service-identities                   cmd-assert
+  mgmt-stack (4)
     prove  signal-tls-not-cleartext                     tls-alpn
     prove  enrollment-entrypoint-cert-identity          tls-identity
     refuse mgmt-api-refuses-an-unauthenticated-caller   http-ok
     refuse enrollment-entrypoint-refuses-the-default-cert tls-identity
 
-  microscope (1)
-    prove  microscope-every-source-live                 http-ok
-
-  onboarding (5)
-    prove  intake-form-browser-submit                   cmd-assert
-    prove  review-gate-accepts-open-field-invite        cmd-assert
-    prove  onboard-runner-knows-this-goatnet            cmd-assert
+  onboarding (3)
+    prove  onboard-runner-knows-this-goatnet            onboard-runner-profile
     prove  onboard-runner-reaches-mgmt-api              cmd-assert
     prove  onboard-runner-audit-reaches-the-fabric      cmd-assert
-
-  portal (2)
-    prove  portal-resolves-a-person                     http-ok
-    prove  portal-anchor-linkage-is-recorded            http-ok
 
   services (1)
     prove  declared-service-actually-deployed           cmd-assert
 
-  surfaces (1)
-    prove  panoscope-serves-authenticated               http-ok
-
   time (1)
     prove  goat-health-time                             goat-cli
 
-  N/A here: admin-fences-are-enforcing, breakglass-clock-recovery-armed, breakglass-node-is-on-the-mesh, console-audit-path-is-a-file, deadman-switch-firing, deadman-switch-has-external-receiver, docker-data-on-encrypted-mount, mesh-apex-fallback-is-this-goatnets-relays, mgmt-api-answers, operator-ssh-login-core-b, operator-ssh-login-obs, pg-replication-standby-streaming, pg-standby-encoding-utf8, prometheus-alert-rules-loaded, prometheus-reaches-alertmanager, prometheus-scrape-targets-up, pubsub-state-forgejo-primary-up, pubsub-state-mirror-live, relay-cert-system-trust, relay-fleet-answers-if-declared, relay-protocol-cert-system-trust, relay-tls-targets-are-scraped, rosenpass-pq-negotiated, unattended-boot-health-a, unattended-boot-health-b, unattended-boot-health-c
+  N/A here: admin-fences-are-enforcing, audit-offload-pipeline-runs, breakglass-clock-recovery-armed, breakglass-node-is-on-the-mesh, console-audit-path-is-a-file, deadman-switch-firing, deadman-switch-has-external-receiver, docker-data-on-encrypted-mount, intake-form-browser-submit, mesh-apex-fallback-is-this-goatnets-relays, mgmt-api-answers, microscope-every-source-live, netbird-service-identities, operator-ssh-login-core-b, operator-ssh-login-obs, panoscope-serves-authenticated, pg-replication-standby-streaming, pg-standby-encoding-utf8, portal-anchor-linkage-is-recorded, portal-health-answers, portal-resolves-a-person, prometheus-alert-rules-loaded, prometheus-reaches-alertmanager, prometheus-scrape-targets-up, pubsub-state-forgejo-primary-up, pubsub-state-mirror-live, relay-cert-system-trust, relay-fleet-answers-if-declared, relay-protocol-cert-system-trust, relay-tls-targets-are-scraped, review-gate-accepts-open-field-invite, rosenpass-pq-negotiated, unattended-boot-health-a, unattended-boot-health-b, unattended-boot-health-c

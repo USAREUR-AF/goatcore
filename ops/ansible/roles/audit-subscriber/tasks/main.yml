@@ -26,6 +26,15 @@
 # counted but not stored. The subscriber is the canonical audit path
 # (ADR 0858).
 
+- name: audit-subscriber | the image pin is set
+  ansible.builtin.assert:
+    that:
+      - audit_subscriber_image | length > 0
+    fail_msg: >-
+      audit_subscriber_image is empty. The role carries no pin: set it in the
+      goatnet's pin table (ops/pins/fleet-pins.yaml) or in its group_vars.
+    quiet: true
+
 - name: audit-subscriber | pre-flight leaf cert exists (when tls/ endpoint)
   ansible.builtin.stat:
     path: "{{ audit_subscriber_cert_dir }}/audit-subscriber-cert.pem"

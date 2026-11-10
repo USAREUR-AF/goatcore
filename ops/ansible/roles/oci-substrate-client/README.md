@@ -40,10 +40,10 @@ get a T1-only variant via empty `oci_substrate_t2_endpoint`).
 | `oci_substrate_enable_dockerio_mirror` | `false` | Add Orin-C's `docker.io` pull-through to `registry-mirrors`. |
 | `oci_substrate_enable_containerd_hosts_toml` | `false` | Drop containerd `hosts.toml` (Block 16 Quadlet trigger). |
 
-## Per-site config example (group_vars/vega_hosts/vars.yml)
+## Per-site config example (group_vars/<site>_hosts/vars.yml)
 
 ```yaml
-oci_substrate_t2_endpoint: "192.168.1.253:3030"   # vega Orin-C LAN address
+oci_substrate_t2_endpoint: "192.168.1.253:3030"   # Orin-C LAN address       
 oci_substrate_t2_insecure_http: true              # Forgejo HTTP-only on :3030
 oci_substrate_enable_dockerio_mirror: false       # not yet wired
 ```

@@ -12,22 +12,26 @@ import (
 	"strings"
 
 	"filippo.io/age/armor"
+
+	"github.com/usareur-af/goatcore/ops/enrollment/x509ca"
 )
 
-// legacyRootCN is the subject every early root shared,
-// which made roots of different goatnets indistinguishable in a chain dump.
-const legacyRootCN = "goat Root CA"
+// legacyRootCN is the subject a root carries when it was issued with no
+// CommonName (the x509ca default), which makes roots of different goatnets
+// indistinguishable in a chain dump. --shared-root-cn names another such
+// subject, for a CA whose early roots share one.
+const legacyRootCN = x509ca.DefaultRootCommonName
 
 // runVerify checks an existing CA without minting anything and exits 1 when
 // any check fails. The round-trip decrypt is not repeated here: it already
 // runs at mint time, and these are the static checks that catch a CA minted
 // with too few recipients, a default or unexpanded subject, or a stale public
 // key file. Recipient stanzas are randomized and cannot prove distinct identities.
-func runVerify(keyPath, rootCertPath, publicKeyPath string) {
+func runVerify(keyPath, rootCertPath, publicKeyPath, sharedRootCN string) {
 	if keyPath == "" && rootCertPath == "" && publicKeyPath == "" {
 		fatal("--verify needs at least one of --out (CA key), --root-cert, --public-key")
 	}
-	problems := verifyCA(keyPath, rootCertPath, publicKeyPath)
+	problems := verifyCA(keyPath, rootCertPath, publicKeyPath, sharedRootCN)
 	for _, p := range problems {
 		fmt.Fprintf(os.Stderr, "ca-init: verify: %s\n", p)
 	}
@@ -41,7 +45,7 @@ func runVerify(keyPath, rootCertPath, publicKeyPath string) {
 }
 
 // verifyCA returns one line per failed check. Empty paths skip their checks.
-func verifyCA(keyPath, rootCertPath, publicKeyPath string) []string {
+func verifyCA(keyPath, rootCertPath, publicKeyPath, sharedRootCN string) []string {
 	var problems []string
 	if keyPath != "" {
 		n, err := countRecipientsInFile(keyPath)
@@ -60,7 +64,7 @@ func verifyCA(keyPath, rootCertPath, publicKeyPath string) []string {
 			problems = append(problems, fmt.Sprintf("root cert %s: %v", rootCertPath, err))
 		} else {
 			root = cert
-			if p := rootCNProblem(cert.Subject.CommonName); p != "" {
+			if p := rootCNProblem(cert.Subject.CommonName, sharedRootCN); p != "" {
 				problems = append(problems, fmt.Sprintf("root cert %s: %s", rootCertPath, p))
 			}
 		}
@@ -79,12 +83,12 @@ func verifyCA(keyPath, rootCertPath, publicKeyPath string) []string {
 }
 
 // rootCNProblem names what is wrong with a root subject CN, or returns "".
-func rootCNProblem(cn string) string {
+func rootCNProblem(cn, sharedRootCN string) string {
 	switch {
 	case strings.TrimSpace(cn) == "":
 		return "root CN is empty"
-	case cn == legacyRootCN:
-		return fmt.Sprintf("root CN is the legacy shared default %q; a root must name its goatnet", legacyRootCN)
+	case cn == legacyRootCN || (sharedRootCN != "" && cn == sharedRootCN):
+		return fmt.Sprintf("root CN is the legacy shared default %q; a root must name its goatnet", cn)
 	case strings.Contains(cn, "$"):
 		return fmt.Sprintf("root CN %q contains '$', an unexpanded shell variable", cn)
 	}

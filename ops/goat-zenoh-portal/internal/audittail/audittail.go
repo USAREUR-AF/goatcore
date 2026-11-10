@@ -44,12 +44,12 @@ import (
 
 // Config holds the MinIO/S3 endpoint + credentials.
 type Config struct {
-	Endpoint     string // e.g. "http://100.127.0.190:9000"
+	Endpoint     string // e.g. "http://minio.goat.example:9000"
 	Bucket       string // e.g. "audit-integrity"
 	Region       string // e.g. "us-east-1"
 	AccessKey    string
 	SecretKey    string
-	SubscriberID string // e.g. "nova-a" — also the top-level object-key prefix
+	SubscriberID string // e.g. "site-A" — also the top-level object-key prefix
 	// PollInterval defaults to 30s when zero.
 	PollInterval time.Duration
 }
@@ -68,7 +68,7 @@ func New(cfg Config, reg *registry.Registry) *Tailer {
 		cfg.Region = "us-east-1"
 	}
 	if cfg.SubscriberID == "" {
-		cfg.SubscriberID = "nova-a"
+		cfg.SubscriberID = "site-A"
 	}
 	if cfg.PollInterval <= 0 {
 		cfg.PollInterval = 30 * time.Second

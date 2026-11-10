@@ -1,0 +1,27 @@
+---
+# peering-forwarder.yml — a peering forwarder, for a peering where neither edge
+# accepts inbound traffic.
+#
+#   Design: docs/design/peering-forwarder.md (ADR 1218)
+#   Role:   roles/goat-peering-forwarder/README.md
+#   Edge:   peering-prepare.yml / peering-wg.yml with peering_wg_via_forwarder: true
+#
+# Runs before step 1 of the federation runbook: the forwarder's address is a value
+# the edge's package carries. Order:
+#   1. peering-prepare.yml on the edge, with peering_wg_via_forwarder: true and no
+#      forwarder key yet: it makes the edge's carrier key and prints it.
+#   2. this play, with that key as edge_carrier_public_key: it prints the forwarder's
+#      carrier key.
+#   3. peering-prepare.yml on the edge again, with the forwarder's key and endpoint:
+#      the carrier comes up.
+#
+# The host group holds no peering material and is in no goatnet inventory group.
+#
+# Rollback: `systemctl stop goat-peering-forwarder@<interface>` removes that carrier
+# and severs that peering. Local, immediate, needs nothing from either edge.
+- name: Peering forwarder
+  hosts: peering_forwarders
+  gather_facts: true
+  become: true
+  roles:
+    - role: goat-peering-forwarder

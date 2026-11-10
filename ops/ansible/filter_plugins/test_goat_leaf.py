@@ -84,6 +84,21 @@ class Unit(unittest.TestCase):
         want = self.put(other)
         self.assertEqual(gl.goat_leaf("router-cert.pem", "zz-test"), want)
 
+    def test_declared_state_root_is_honoured(self):
+        """A caller outside a play gets the root group_vars/all.yml declares."""
+        (self.ops / "ansible" / "group_vars").mkdir(parents=True)
+        (self.ops / "ansible" / "group_vars" / "all.yml").write_text(
+            "domain: x\ngoat_controller_state_dir: \"{{ lookup('env', 'HOME') }}/.elsewhere/state\"\n")
+        want = self.put(self.home / ".elsewhere" / "state" / "zz-test-leaves")
+        self.put(self.state)
+        self.assertEqual(gl.goat_leaf("router-cert.pem", "zz-test"), want)
+
+    def test_root_argument_wins(self):
+        """Inside a play the filter passes the play's goat_controller_state_dir."""
+        want = self.put(self.tmp / "root" / "zz-test-leaves")
+        self.put(self.state)
+        self.assertEqual(gl.goat_leaf("router-cert.pem", "zz-test", str(self.tmp / "root")), want)
+
     def test_override_dir(self):
         want = self.put(self.tmp / "override")
         os.environ["GOAT_LEAF_DIR"] = str(self.tmp / "override")
@@ -116,6 +131,10 @@ class FreshWorktreeDeploy(unittest.TestCase):
             shutil.copy(HERE / "goat_leaf.py", repo / "ops" / "ansible" / "filter_plugins")
             (repo / "ops" / "ansible" / "ansible.cfg").write_text(
                 "[defaults]\nfilter_plugins = ./filter_plugins\n")
+            (repo / "ops" / "ansible" / "group_vars").mkdir(parents=True)
+            # the state root a deployment declares; the filter reads it as a play variable
+            (repo / "ops" / "ansible" / "group_vars" / "all.yml").write_text(
+                "goat_controller_state_dir: \"{{ lookup('env', 'HOME') }}/.elsewhere/state\"\n")
             (repo / "ops" / "ansible" / "probe.yml").write_text(textwrap.dedent("""\
                 - hosts: localhost
                   gather_facts: false
@@ -135,7 +154,7 @@ class FreshWorktreeDeploy(unittest.TestCase):
             wt = tmp / "fresh"
             git("worktree", "add", "-q", str(wt), cwd=repo)
             home = tmp / "home"
-            state = home / ".goat" / "state" / "zz-test-leaves"
+            state = home / ".elsewhere" / "state" / "zz-test-leaves"
             state.mkdir(parents=True)
             (state / "router-cert.pem").write_text("CERT\n")
             # A fake HOME hides a pip --user ansible; keep the real user site visible.

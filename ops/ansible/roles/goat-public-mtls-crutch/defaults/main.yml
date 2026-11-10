@@ -27,8 +27,9 @@ crutch_relay_host: "relay.{{ crutch_host_fqdn }}"
 # Server cert + key for the Traefik mTLS terminator. Minted out-of-band by
 # offline-CA cert-sign with SAN covering the three per-route hostnames + the
 # host's primary FQDN. Sub-directory per service mirroring the existing
-# `traefik` role's convention (traefik_tls_root pattern).
-crutch_tls_root: "/etc/goat/tls"
+# `traefik` role's convention (traefik_tls_root pattern). A tier whose hosts
+# keep their certificates elsewhere sets crutch_tls_root in its group_vars.
+crutch_tls_root: "{{ goat_host_etc_dir | default('/etc/goat') }}/tls"
 crutch_server_cert_path: "{{ crutch_tls_root }}/goat-public-mtls-crutch/cert.pem"
 crutch_server_key_path: "{{ crutch_tls_root }}/goat-public-mtls-crutch/key.pem"
 

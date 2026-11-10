@@ -108,7 +108,7 @@ func (s *Server) rootCAFingerprintHex() string {
 	v, _ := serverFingerprints.LoadOrStore(s, &rootCAFingerprintCache{})
 	cache := v.(*rootCAFingerprintCache)
 	cache.once.Do(func() {
-		path := s.cfg.NovaRootCert
+		path := s.cfg.CARootCert
 		if path == "" {
 			return
 		}
@@ -152,7 +152,7 @@ func (s *Server) handleFabricConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := fabricConfigResponse{
-		FabricName: "nova-trial",
+		FabricName: s.cfg.FabricName,
 		Maturity:   "two-week-hackathon",
 		Router: routerInfo{
 			Endpoint: s.cfg.RouterEndpoint,
@@ -320,7 +320,7 @@ func (s *Server) handleFabricZenohdConfig(w http.ResponseWriter, r *http.Request
 
 	routerEndpoint := s.cfg.RouterEndpoint
 	if routerEndpoint == "" {
-		routerEndpoint = "tls/zenoh.nova.netbird.nova.example:7447"
+		routerEndpoint = "tls/zenoh.goat.example:7447"
 	}
 	body := fmt.Sprintf(zenohdConfigTemplate,
 		routerEndpoint,                  // %[1]s
@@ -348,10 +348,10 @@ func (s *Server) handleFabricZenohdConfig(w http.ResponseWriter, r *http.Request
 // but unreadable — that's an operator misconfiguration, not a vendor-
 // facing condition we should mask.
 func (s *Server) handleRootCABundle(w http.ResponseWriter, r *http.Request) {
-	path := s.cfg.NovaRootCert
+	path := s.cfg.CARootCert
 	if path == "" {
 		writeError(w, http.StatusNotFound, "no_root_ca",
-			"this portal has no NOVA_ROOT_CERT configured; ask the operator")
+			"this portal has no CA root cert configured (--ca-root-cert); ask the operator")
 		return
 	}
 	raw, err := os.ReadFile(path)
@@ -361,8 +361,18 @@ func (s *Server) handleRootCABundle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/x-pem-file")
-	w.Header().Set("Content-Disposition", `inline; filename="nova-root-ca.pem"`)
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`inline; filename=%q`, rootCADownloadName(s.cfg.OnboardingRootCertName)))
 	_, _ = w.Write(raw)
+}
+
+// rootCADownloadName is the filename the root-CA download is saved under:
+// the goatnet's in-tarball CA-root name, so the file a partner downloads
+// matches the one the onboarding tarball and sample scripts reference.
+func rootCADownloadName(name string) string {
+	if name = strings.TrimSpace(name); name != "" && !strings.ContainsAny(name, "/\\\"") {
+		return name
+	}
+	return "root-ca.pem"
 }
 
 // Ensure context import stays referenced if the linter is strict about

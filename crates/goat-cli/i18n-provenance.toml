@@ -9,8 +9,9 @@
 [feedback]
 # Where operators report translation errors. The email is the durable
 # channel; the repo takes issues and PRs against the catalogs. Each
-# deployment sets its own values here.
-email = "person-42@example.org"
+# goatnet publishes its email in goatnet.toml (`i18n_feedback_email`); a
+# value here is the fallback for a context without one.
+email = ""  # each goatnet publishes its own (goatnet.toml i18n_feedback_email)
 repo = ""   # provisional — set to the shared partner repo URL when it exists
 
 [review]

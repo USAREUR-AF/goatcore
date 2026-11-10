@@ -101,7 +101,7 @@ Required (operator env, per site, cluster-shared value):
 
 | Env var | Purpose |
 |---|---|
-| `<SITE_UPPER>_REPLICATOR_PASS` | Subscription DSN password. Cluster-shared (== `VEGA_REPLICATOR_PASS`). |
+| `<SITE_UPPER>_REPLICATOR_PASS` | Subscription DSN password. Cluster-shared: the same value at every site. |
 
 Tunables (defaults in `defaults/main.yml`):
 
@@ -149,7 +149,7 @@ prod adoption is separately gated (ADR 0833 + N-way review); do NOT set
 
 1. New site's `group_vars/<site>_hosts/vars.yml` declares
    `participates_in_spock: true` + `inter_site_spock_topology: full_mesh`.
-2. Operator exports `<SITE>_REPLICATOR_PASS=$VEGA_REPLICATOR_PASS` in
+2. Operator exports `<SITE>_REPLICATOR_PASS` (the cluster-shared value) in
    `.envrc.local`.
 3. Operator runs `site-bootstrap.yml -e site_id=<new-site>`.
 4. Phase 7B fires the role; mesh closure happens automatically (local
@@ -197,7 +197,7 @@ spock` failure that blocked the pre-Block-64Q.4 attempts.
 
 This role does NOT remove subscriptions. Operator-fired:
 `spock.sub_drop('sub_X_to_Y')` on each side, plus `spock.node_drop`
-when the site itself is decommissioned. Per `docs/operations/goat-ha-dev-validation.md`
+when the site itself is decommissioned. Per the HA dev validation runbook,
 §"Spock node DSN caching" — drop subs first, then nodes.
 
 ## Tests

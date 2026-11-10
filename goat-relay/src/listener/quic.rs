@@ -469,7 +469,7 @@ async fn run_reader(
 
         // Any successfully-parsed inbound frame is evidence the peer is
         // alive — credit liveness on data, not only on HealthCheck echoes
-        //. Tight borrow scope (no `.await` held).
+        // Tight borrow scope (no `.await` held).
         ka_sender.borrow_mut().mark_alive();
 
         match msg_type {

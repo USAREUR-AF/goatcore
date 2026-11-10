@@ -1,0 +1,46 @@
+---
+# F-188 guard: refuse rathole ingress on a relay host with no running relay
+# data plane. Included by goat-relay-rathole.yml before any change.
+#
+# Either data plane counts:
+#   goat-relay     the all-Rust relay (goat-relay-deploy.yml); container name
+#                  goat_relay_container_name, default goat-relay
+#   netbird-relay  the upstream NetBird relay (relay-server.yml); container
+#                  netbird-relay, or any container running image netbirdio/relay
+# Neither running -> fail, unless -e allow_rathole_without_relay=true marks a
+# deliberate ingress-only host.
+- name: F-188 guard — detect a relay data plane on this host
+  ansible.builtin.command:
+    argv: [docker, ps, --filter, status=running, --format, "{% raw %}{{.Names}}\t{{.Image}}{% endraw %}"]
+  register: relay_containers
+  changed_when: false
+  failed_when: false
+
+# A line is "<name>\t<image>". A data plane is a container named goat-relay
+# (goat_relay_container_name) or netbird-relay, or any container running the
+# netbirdio/relay image.
+- name: F-188 guard — record which data plane runs
+  ansible.builtin.set_fact:
+    relay_data_plane: >-
+      {{ relay_containers.stdout_lines | default([])
+         | select('search', _by_name ~ '|' ~ _by_image)
+         | map('regex_replace', '\t.*$', '')
+         | list }}
+  vars:
+    _by_name: "^({{ (goat_relay_container_name | default('goat-relay')) | regex_escape }}|netbird-relay)\t"
+    _by_image: "\t([^\t]*/)?netbirdio/relay([:@][^\t]*)?$"
+
+- name: F-188 guard — require a relay data plane (or explicit waiver)
+  ansible.builtin.assert:
+    that:
+      - (relay_data_plane | length > 0) or (allow_rathole_without_relay | default(false) | bool)
+    fail_msg: |
+      No running relay data plane on {{ inventory_hostname }}: neither a
+      goat-relay nor a netbird-relay container is running{{ '' if relay_containers.rc == 0 else ' (docker ps failed: ' ~ (relay_containers.stderr | default('') | trim) ~ ')' }}.
+      Rathole ingress alone leaves :443 enrollment working but NO :33073
+      data-plane relay — the F-188 failure (peers enroll, then reach
+      nothing; Relays 0/N). Deploy the data plane first:
+        ansible-playbook ... goat-relay-deploy.yml
+      or run both in one pass: goat-relay-colocated.yml. For a deliberate
+      ingress-only host, re-run with -e allow_rathole_without_relay=true.
+    success_msg: "relay data plane present ({{ relay_data_plane | unique | join(', ') }}) — rathole colocation valid."

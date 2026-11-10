@@ -1,0 +1,80 @@
+---
+# Exercises tasks/cert-sign-org-support.yml on fixture usage texts:
+#   ansible-playbook -i localhost, --connection local \
+#     ops/ansible/roles/goat-zenoh-portal/tests/cert-sign-org-support.yml
+- name: cert-sign --org support detection
+  hosts: localhost
+  gather_facts: false
+  vars:
+    old_cert_sign: |
+      Usage of cert-sign:
+        -ca-id string
+        	CA identifier
+        -uri-san value
+        	Optional URI Subject Alternative Name (e.g. urn:goat-galaxy:vendor=example-org).
+    new_cert_sign: |
+      Usage of cert-sign:
+        -ca-id string
+        	CA identifier
+        -org string
+        	Subject Organization (O) of the leaf.
+        -uri-san value
+        	Optional URI Subject Alternative Name (e.g. urn:goat-galaxy:vendor=example-org).
+    old_portal: |
+      Usage of serve:
+        -ca-id string
+        -site-id string
+    new_portal: |
+      Usage of serve:
+        -ca-id string
+        -cert-org string
+        	--org (Subject O) passed to cert-sign
+        -site-id string
+  tasks:
+    - name: Old image, old cert-sign (usage on stderr, as Go's flag package prints it)
+      # The task file alone: include_role would also run the role's meta deps.
+      ansible.builtin.include_tasks: ../tasks/cert-sign-org-support.yml
+      vars:
+        portal_image_help: {stdout: "", stderr: "{{ old_portal }}"}
+        portal_cert_sign_help: {stdout: "", stderr: "{{ old_cert_sign }}"}
+    - name: An image without --cert-org passes no --org; "example-org" is not the flag
+      ansible.builtin.assert:
+        that:
+          - not (portal_image_passes_org | bool)
+          - not (portal_cert_sign_has_org | bool)
+
+    - name: New image, old cert-sign
+      # The task file alone: include_role would also run the role's meta deps.
+      ansible.builtin.include_tasks: ../tasks/cert-sign-org-support.yml
+      vars:
+        portal_image_help: {stdout: "", stderr: "{{ new_portal }}"}
+        portal_cert_sign_help: {stdout: "", stderr: "{{ old_cert_sign }}"}
+    - name: The rebuild case
+      ansible.builtin.assert:
+        that:
+          - portal_image_passes_org | bool
+          - not (portal_cert_sign_has_org | bool)
+
+    - name: New image, new cert-sign (usage on stdout)
+      # The task file alone: include_role would also run the role's meta deps.
+      ansible.builtin.include_tasks: ../tasks/cert-sign-org-support.yml
+      vars:
+        portal_image_help: {stdout: "{{ new_portal }}", stderr: ""}
+        portal_cert_sign_help: {stdout: "{{ new_cert_sign }}", stderr: ""}
+    - name: Nothing to rebuild
+      ansible.builtin.assert:
+        that:
+          - portal_image_passes_org | bool
+          - portal_cert_sign_has_org | bool
+
+    - name: Probes that produced nothing (binary not runnable)
+      # The task file alone: include_role would also run the role's meta deps.
+      ansible.builtin.include_tasks: ../tasks/cert-sign-org-support.yml
+      vars:
+        portal_image_help: {rc: 125}
+        portal_cert_sign_help: {rc: 126}
+    - name: No support claimed from an empty probe
+      ansible.builtin.assert:
+        that:
+          - not (portal_image_passes_org | bool)
+          - not (portal_cert_sign_has_org | bool)

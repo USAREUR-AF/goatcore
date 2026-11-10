@@ -1,0 +1,35 @@
+---
+# smtp-sink — a mail sink on the goatnet's own docker network, so the identity
+# console's invite mail works with no outside mail account
+# (docs/design/pluggable-dependencies.md row 14; ops/recipes/smtp-sink/README.md).
+#
+# Mailpit accepts every message on SMTP and keeps it; nothing is relayed out.
+# An administrator reads the captured invites in its web UI and hands the link
+# over, as they would with mail off. Off unless a site declares
+# smtp_sink_enabled: true.
+smtp_sink_enabled: false
+
+# Mailpit, digest-pinned (multi-arch index). Rollback: the previous pin.
+smtp_sink_image: "docker.io/axllent/mailpit:v1.32.0@sha256:0790692be935ea4420d085694f7985b1f692ca6a8771ab0e0bd8ba75ac180498"
+
+smtp_sink_dir: /opt/smtp-sink
+smtp_sink_container: goat-smtp-sink
+
+# The docker network the console is on (the mgmt-host compose network `mgmt`).
+# The console reaches the sink as goat-smtp-sink:1025 on it. The role creates
+# the network only when told to (a test runner); on a mgmt host it exists.
+smtp_sink_network: mgmt
+smtp_sink_network_create: false
+
+# The web UI and its API on the HOST, loopback only by default: reach it with
+# `ssh -L 8025:127.0.0.1:8025 <box>` and open http://127.0.0.1:8025.
+smtp_sink_ui_publish: "127.0.0.1:8025"
+
+# SMTP on the host as well, "" (default) = only on the docker network.
+# The recipe's test sets 127.0.0.1:1025 so a test on the host can send.
+smtp_sink_smtp_publish: ""
+
+# Messages kept before the oldest is dropped.
+smtp_sink_max_messages: 500
+
+smtp_sink_memory_limit: 128m

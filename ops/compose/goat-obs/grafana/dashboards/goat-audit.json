@@ -2,8 +2,8 @@
   "id": null,
   "uid": "goat-audit",
   "title": "GOAT Audit Subscriber",
-  "description": "Per-vendor + per-topic visibility into the external Zenoh audit subscriber on nova-a (Block 82S; ADR 0858). Replaces what the retired in-process audit-logger plugin tried (and silently failed) to provide.",
-  "tags": ["goat", "zenoh", "audit", "nova-a"],
+  "description": "Per-vendor + per-topic visibility into the external Zenoh audit subscriber on the mgmt host (Block 82S; ADR 0858). Replaces what the retired in-process audit-logger plugin tried (and silently failed) to provide.",
+  "tags": ["goat", "zenoh", "audit"],
   "timezone": "browser",
   "schemaVersion": 39,
   "version": 1,
@@ -96,7 +96,7 @@
       "id": 4,
       "type": "stat",
       "title": "Write errors / 5min",
-      "description": "MinIO PutObject failures. Non-zero = alertable. QuotaExceeded shows up here (per the nova-a 12 GiB cap on audit-integrity).",
+      "description": "MinIO PutObject failures. Non-zero = alertable. QuotaExceeded shows up here (per the 12 GiB cap on audit-integrity).",
       "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
@@ -130,7 +130,7 @@
       "id": 5,
       "type": "timeseries",
       "title": "Samples / second by topic-family",
-      "description": "Per-second publish rate the subscriber sees, one series per first-two-segments key-pattern (e.g. `caracal/mantis/*`). Pivots on `key_pattern` rather than `vendor` because the nova-a trial fabric routes every logical vendor through one of two cert-bound prefixes (caracal, community); grouping by `vendor` collapses ~18 logical vendors into 2 series, hiding most of what's actually flowing. Production sites where each vendor owns its own cert will see the two views converge.",
+      "description": "Per-second publish rate the subscriber sees, one series per first-two-segments key-pattern (e.g. `caracal/mantis/*`). Pivots on `key_pattern` rather than `vendor` because a trial fabric routes every logical vendor through one of two cert-bound prefixes (caracal, community); grouping by `vendor` collapses ~18 logical vendors into 2 series, hiding most of what's actually flowing. Production sites where each vendor owns its own cert will see the two views converge.",
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [

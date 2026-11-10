@@ -1,0 +1,67 @@
+name: federation-republisher
+
+# Tests ops/federation/republisher — the outbound republisher that lifts data
+# staged under a party's own release set onto the wire name the far side
+# enforces, from `release/<...>` to `from/<our sovereign_id>/<...>`.
+#
+# Per docs/design/federation-package-spec.md §3.2. It exists because the fabric
+# cannot rename key expressions in transit (F-446), so the lift is a process on
+# our own side over our own data rather than a router feature.
+#
+# Tests run here rather than nowhere. A test no workflow runs looks like
+# coverage and provides none, and this crate carries the two properties
+# that are invisible when they break: the key mapping is injective, so two
+# release prefixes cannot silently merge onto one wire key; and a sample is
+# dropped BEFORE the put when the edge has no transport peer, because a put on a
+# linkless session succeeds locally and is discarded by the transport — loss no
+# counter would otherwise see.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'ops/federation/republisher/**'
+      - '.github/workflows/federation-republisher.yml'
+  pull_request:
+    paths:
+      - 'ops/federation/republisher/**'
+      - '.github/workflows/federation-republisher.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: federation-republisher-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install protoc
+        timeout-minutes: 5
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ops/federation/republisher
+
+      - name: cargo fmt
+        working-directory: ops/federation/republisher
+        run: cargo fmt --check
+
+      - name: cargo clippy
+        working-directory: ops/federation/republisher
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: cargo test
+        working-directory: ops/federation/republisher
+        run: cargo test --all-features

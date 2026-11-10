@@ -54,7 +54,7 @@ func run() error {
 		rootKeyPath     = flag.String("root-key", "", "Path to the age-encrypted CA private key (required)")
 		ageIdentityPath = flag.String("age-identity", "", "Path to the age identity file (required)")
 		pubkeyDir       = flag.String("pubkey-dir", "", "Dir holding <ca_id>.pem SPKI public keys (default: ops/enrollment/public-keys next to this repo's intent path)")
-		auditLog        = flag.String("audit-log", defaultAuditLog(), "Path to append-only JSON audit log")
+		auditLog        = flag.String("audit-log", ca.DefaultAuditLogPath(), "Path to append-only JSON audit log")
 	)
 	flag.Parse()
 	switch {
@@ -199,12 +199,4 @@ func appendAuditLog(path string, entry map[string]any) (err error) {
 		err = errors.Join(err, f.Close())
 	}()
 	return json.NewEncoder(f).Encode(entry)
-}
-
-func defaultAuditLog() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "./ca-audit.jsonl"
-	}
-	return filepath.Join(home, ".goat", "ca-audit.jsonl")
 }

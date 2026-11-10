@@ -16,6 +16,8 @@ func zagrosCatalog() Catalog {
 		"https://get.zagros.netbird.zagros.example",
 		"https://portal.zagros.netbird.zagros.example")
 	c.Guide = ""
+	c.CollabURL = "https://collab.goat.example"
+	c.RepoURL = "https://github.com/example-org/goat"
 	return c
 }
 
@@ -301,7 +303,7 @@ func TestRender_githubSummaryAndRepoSection(t *testing.T) {
 			GitHubUsername: "octocat",
 			RepoGrants: []RepoGrant{
 				{Owner: "example-org", Repo: "example-pod", Permission: "pull", Outcome: "invited"},
-				{Owner: "usareur-af", Repo: "hello-galaxy-access-mgmt", Permission: "pull", Outcome: "added"},
+				{Owner: "example-org", Repo: "hello-galaxy-access-mgmt", Permission: "pull", Outcome: "added"},
 			}},
 		Artifacts{SetupKey: "K"})
 
@@ -309,7 +311,7 @@ func TestRender_githubSummaryAndRepoSection(t *testing.T) {
 		"| github: octocat", // summary line append
 		"Repository access", // the section heading
 		"example-org/example-pod (pull) — https://github.com/example-org/example-pod",
-		"usareur-af/hello-galaxy-access-mgmt (pull) — https://github.com/usareur-af/hello-galaxy-access-mgmt",
+		"example-org/hello-galaxy-access-mgmt (pull) — https://github.com/example-org/hello-galaxy-access-mgmt",
 	}
 	for _, m := range must {
 		if !strings.Contains(out, m) {
@@ -324,12 +326,12 @@ func TestRender_repoGrantSourceTag(t *testing.T) {
 			Groups: []string{"DEVELOPER"}, GitHubUsername: "octocat",
 			RepoGrants: []RepoGrant{
 				{Owner: "example-org", Repo: "example-pod", Permission: "pull", Outcome: "added", Source: "policy"},
-				{Owner: "usareur-af", Repo: "extra-repo", Permission: "push", Outcome: "invited", Source: "audible"},
+				{Owner: "example-org", Repo: "extra-repo", Permission: "push", Outcome: "invited", Source: "audible"},
 			}},
 		Artifacts{SetupKey: "K"})
 	must := []string{
 		"example-org/example-pod (pull) (policy) — https://github.com/example-org/example-pod",
-		"usareur-af/extra-repo (push) (audible) — https://github.com/usareur-af/extra-repo",
+		"example-org/extra-repo (push) (audible) — https://github.com/example-org/extra-repo",
 	}
 	for _, m := range must {
 		if !strings.Contains(out, m) {
@@ -378,7 +380,7 @@ func TestRender_adminOperatorSectionForEscalatedTiers(t *testing.T) {
 			"admin-operator-guide.md",                          // orientation pointer
 			"attributed to it",                                 // attribution note
 			"SHARED operator account",                          // host shell is not a per-handle login
-			"git clone https://github.com/usareur-af/goatcore.git", // onboarding-others workflow
+			"git clone https://github.com/example-org/goat.git && cd goat", // onboarding-others workflow
 			"ops/operators/example-vendor.yml.example",         // manifest scaffolding
 			"validate.py",                                      // manifest validation gate
 			"netbird.auto_groups",                              // manifest field vocabulary (v3 parity)
@@ -1641,5 +1643,28 @@ func TestRender_staleBinaryUpdateSurvivesRootOwnedInstall(t *testing.T) {
 		if strings.Contains(out, "sudo goat update") {
 			t.Errorf("%s: a bare `sudo goat update` drops GOAT_GET_ENDPOINT and cannot resolve the surface", name)
 		}
+	}
+}
+
+// Blank collab and repo URLs render without an address, never a stale default.
+func TestRender_blankCollabAndRepoURLs(t *testing.T) {
+	cat := zagrosCatalog()
+	cat.CollabURL = ""
+	cat.RepoURL = ""
+	out := Render(cat,
+		Recipient{Name: "Adm", Handle: "adm-op", Tier: "platform-admin", AdminConsole: true, AdminOperator: true},
+		Artifacts{SetupKey: "K", CollabAccount: "adm", CollabSetupLink: "https://idm.collab.goat.example/ui/reset?token=ABC"})
+	for _, want := range []string{
+		"base, file sharing, and chat). It has its OWN sign-in,",
+		"git clone <platform repository URL from your operator>",
+		"admin-operator-guide.md in the platform repository",
+		"ZAGROS_NB_API_TOKEN",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q", want)
+		}
+	}
+	if strings.Contains(out, "github.com") || strings.Contains(out, " at https://collab") {
+		t.Error("blank URLs must not render an address")
 	}
 }

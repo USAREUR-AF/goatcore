@@ -169,6 +169,32 @@ def generate(env, gv_dir=None, inv_path=None):
             values[key] = v
     values.setdefault("public_mgmt_fqdn", values.get("site_dns_zone"))
 
+    # The ACL scope. ACL declarations are per goatnet (ops/warrant renders one
+    # netbird_acl_taxonomy entry per goatnet), and a joiner site enrols into the
+    # goatnet of the founder it joins, so its scope is join_founder_site, not
+    # its own site id (the same rule `goatbuilder standup` applies to its ACL
+    # gates). A founder's scope is its own site id.
+    founder = (_extract(text, "join_founder_site") or "").strip()
+    if not _bool(values.get("goatnet_founder", "true")) and founder and "{{" not in founder:
+        values["acl_scope"] = founder
+    else:
+        values["acl_scope"] = env
+
+    # The cluster encoding the Postgres rows expect. A goatnet has one encoding
+    # (Spock replicates only between clusters of the same one), and it is the
+    # founder's: a joiner initialises with whatever its founder runs
+    # (site-bootstrap.yml phase 1C). So a joiner takes the founder's declared
+    # `postgres_initdb_encoding`, then its own; a founder takes its own; a site
+    # declaring none runs the compose default, UTF8. A founder whose cluster
+    # predates the declaration and is not UTF8 declares what it runs.
+    enc = None
+    if not _bool(values.get("goatnet_founder", "true")) and founder and "{{" not in founder:
+        fvars = gv_dir.parent / (founder.replace("-", "_") + "_hosts") / "vars.yml"
+        if fvars.is_file():
+            enc = _extract(fvars.read_text(), "postgres_initdb_encoding")
+    enc = enc or _extract(text, "postgres_initdb_encoding")
+    values["postgres_encoding"] = enc if enc and "{{" not in enc else "UTF8"
+
     # pubsub-state replication applies only if the goatnet declares it.
     values["pubsub_state_repl_enabled"] = (gv_dir / "pubsub-state.yml").is_file()
 
@@ -406,6 +432,11 @@ def generate(env, gv_dir=None, inv_path=None):
     nbv = _extract(text, "netbird_version")
     if nbv and "{{" not in nbv:
         values["enroll_client_image"] = f"netbirdio/netbird:{nbv}"
+    else:
+        # No pinned client version: the rows are opt-in, and an unresolved image
+        # would read UNKNOWN before their opt-in is even asked. Empty lets them
+        # report SKIPPED (opt-in) unopted, and "needs image" when opted in.
+        values["enroll_client_image"] = ""
 
     # The enrollment entrypoint's TLS issuer (tls-identity row
     # enrollment-entrypoint-cert-identity). Every goatnet in this tree today
@@ -415,6 +446,26 @@ def generate(env, gv_dir=None, inv_path=None):
     # graded against an issuer it cannot present. No site yet names its
     # internal CA's CN in committed config, so that case is left unresolved
     # (derive, never invent) until one does, via internal_ca_cn.
+    # A goatlite (ADR 1213): one box on its own LAN, rendered from goatlite.yaml
+    # (goatlite_host is written only by ops/scripts/goatlite-render.py). Rows
+    # for surfaces a goatlite does not have (a relay tier, the relay ingress on
+    # 8443, isitup's service list, public names, a presence publisher) read N/A
+    # on it through `applies_when: {goatlite: false}`.
+    lite_host = _extract(text, "goatlite_host")
+    values["goatlite"] = bool(lite_host)
+    # A curl on the box reaching the box's own names: the box's resolver does not
+    # ask the goatnet's CoreDNS, so on a goatlite the curl options that already
+    # carry the goatnet's root (curl_ca_opt) also pin the portal name to the box.
+    if lite_host and "{{" not in lite_host and values.get("site_dns_zone"):
+        pin = f"--resolve portal.{env}.{values['site_dns_zone']}:443:{lite_host.strip(chr(34))}"
+        values["curl_ca_opt"] = (values.get("curl_ca_opt", "") + " " + pin).strip()
+    # The person the portal identity rows look up: the declared value, else the
+    # first administrator the site declares (site_admins).
+    if not values.get("acceptance_known_person_email"):
+        m = re.search(r'^site_admins:\s*\n\s*-\s*email:\s*["\']?([^"\'\s#]+)', text, re.M)
+        if m:
+            values["acceptance_known_person_email"] = m.group(1)
+
     cert_mode = _extract(text, "dashboard_cert_delivery_mode")
     if cert_mode == "acme":
         values["entrypoint_cert_issuer"] = "Let's Encrypt"
@@ -719,18 +770,18 @@ def self_test():
     import tempfile
     d = Path(tempfile.mkdtemp())
     (d / "gv").mkdir(); (d / "gv" / "vars.yml").write_text(
-        'site_dns_zone: netbird.demo.net\nmesh_ip_a: "100.127.0.9"\n'
+        'site_dns_zone: netbird.demo.net\nmesh_ip_a: "100.127.0.7"\n'
         'name_snapshot_enabled: true\nhas_obs_host: false\nintra_site_pair: false\n'
         'dashboard_cert_delivery_mode: acme\n')
     inv = d / "inv.ini"
-    inv.write_text("[demo_hosts]\nmgmt-demo-01 ansible_host=100.127.0.9 router_role=A\n")
+    inv.write_text("[demo_hosts]\nmgmt-demo-01 ansible_host=100.127.0.7 router_role=A\n")
     v = generate("demo", gv_dir=d / "gv", inv_path=inv)
     problems = []
     if v.get("site_dns_zone") != "netbird.demo.net": problems.append("site_dns_zone not derived")
-    if v.get("mesh_ip_a") != "100.127.0.9": problems.append("mesh_ip_a not derived")
+    if v.get("mesh_ip_a") != "100.127.0.7": problems.append("mesh_ip_a not derived")
     if v.get("name_snapshot_enabled") is not True: problems.append("name_snapshot_enabled not bool-true")
     if v.get("has_obs_host") is not False: problems.append("has_obs_host not bool-false")
-    if v.get("orin_a") != "goat@100.127.0.9": problems.append("orin_a not user@addr")
+    if v.get("orin_a") != "goat@100.127.0.7": problems.append("orin_a not user@addr")
     if v.get("public_mgmt_fqdn") != "netbird.demo.net": problems.append("public_mgmt_fqdn fallback failed")
     if v.get("pubsub_state_repl_enabled") is not False: problems.append("pubsub flag not false")
     if v.get("nb_api_token_env") != "DEMO_NB_API_TOKEN": problems.append("nb_api_token_env not <SITE>_NB_API_TOKEN")
@@ -743,10 +794,10 @@ def self_test():
     d4 = Path(tempfile.mkdtemp())
     (d4 / "ca_hosts").mkdir(parents=True)
     (d4 / "ca_hosts" / "vars.yml").write_text(
-        'site_dns_zone: netbird.ca-site.net\nmesh_ip_a: "100.127.0.22"\n'
+        'site_dns_zone: netbird.ca-site.net\nmesh_ip_a: "100.127.0.20"\n'
         'dashboard_cert_delivery_mode: file\ninternal_ca_cn: ca-site-internal-ca\n')
     inv4 = d4 / "inv.ini"
-    inv4.write_text("[ca_hosts]\nmgmt-ca-01 ansible_host=100.127.0.22 router_role=A\n")
+    inv4.write_text("[ca_hosts]\nmgmt-ca-01 ansible_host=100.127.0.20 router_role=A\n")
     v4 = generate("ca-site", gv_dir=d4 / "ca_hosts", inv_path=inv4)
     if v.get("curl_ca_opt") != "":
         problems.append(f"acme site: curl_ca_opt should be empty (got {v.get('curl_ca_opt')!r})")
@@ -761,10 +812,10 @@ def self_test():
     d5 = Path(tempfile.mkdtemp())
     (d5 / "nocn_hosts").mkdir(parents=True)
     (d5 / "nocn_hosts" / "vars.yml").write_text(
-        'site_dns_zone: netbird.nocn.net\nmesh_ip_a: "100.127.0.23"\n'
+        'site_dns_zone: netbird.nocn.net\nmesh_ip_a: "100.127.0.21"\n'
         'dashboard_cert_delivery_mode: file\n')
     inv5 = d5 / "inv.ini"
-    inv5.write_text("[nocn_hosts]\nmgmt-nocn-01 ansible_host=100.127.0.23 router_role=A\n")
+    inv5.write_text("[nocn_hosts]\nmgmt-nocn-01 ansible_host=100.127.0.21 router_role=A\n")
     v5 = generate("nocn", gv_dir=d5 / "nocn_hosts", inv_path=inv5)
     if "entrypoint_cert_issuer" in v5:
         problems.append("non-acme site with no internal_ca_cn: must not invent entrypoint_cert_issuer")
@@ -775,7 +826,7 @@ def self_test():
     # These four assertions are the point of the change: a goatnet is
     # checked because it RUNS a Prometheus, not because a hand-set topology flag
     # says it has a separate box for one.
-    if v.get("obs_prometheus_host") != "goat@100.127.0.9":
+    if v.get("obs_prometheus_host") != "goat@100.127.0.7":
         problems.append("co-resident obs: prometheus host should be orin_a")
     if v.get("obs_prometheus_url") != "http://localhost:9192":
         problems.append("co-resident obs: goat-obs serves :9192, not :9090")
@@ -786,7 +837,7 @@ def self_test():
     d2 = Path(tempfile.mkdtemp())
     (d2 / "ded_hosts").mkdir(parents=True)
     (d2 / "ded_hosts" / "vars.yml").write_text(
-        'site_dns_zone: netbird.ded.net\nmesh_ip_a: "100.127.0.18"\n'
+        'site_dns_zone: netbird.ded.net\nmesh_ip_a: "100.127.0.16"\n'
         'has_obs_host: true\nintra_site_pair: false\n')
     # …and its relay TLS targets declared in the OBS group, not the site group —
     # the placement that hides a declaration from every check.
@@ -800,14 +851,14 @@ def self_test():
         '  - "relay-b.ded.net:33073"\n'
         'obs_blackbox_enabled: true\n')
     inv2 = d2 / "inv.ini"
-    inv2.write_text("[ded_hosts]\nmgmt-ded-01 ansible_host=100.127.0.18 router_role=A\n"
-                    "[ded_obs_hosts]\nmgmt-ded-obs ansible_host=100.127.0.20 router_role=C\n")
+    inv2.write_text("[ded_hosts]\nmgmt-ded-01 ansible_host=100.127.0.16 router_role=A\n"
+                    "[ded_obs_hosts]\nmgmt-ded-obs ansible_host=100.127.0.18 router_role=C\n")
     v2 = generate("ded", gv_dir=d2 / "ded_hosts", inv_path=inv2)
     if v2.get("obs_prometheus_url") != "http://localhost:9090":
         problems.append("dedicated obs: obs-host serves :9090")
     if v2.get("obs_alertmanager_config") != "/opt/obs-host/alertmanager.yml":
         problems.append("dedicated obs: alertmanager path is the role's")
-    if not (v2.get("obs_prometheus_host") or "").endswith("100.127.0.20"):
+    if not (v2.get("obs_prometheus_host") or "").endswith("100.127.0.18"):
         problems.append("dedicated obs: prometheus host should be the obs group's node")
     if v2.get("obs_relay_tls_targets") != ["relay-a.ded.net:33073", "relay-b.ded.net:33073"]:
         problems.append("declared relay TLS targets: obs-group placement, comment mid-list "
@@ -824,18 +875,18 @@ def self_test():
     d3 = Path(tempfile.mkdtemp())
     (d3 / "join_hosts").mkdir(parents=True)
     (d3 / "join_hosts" / "vars.yml").write_text(
-        'site_dns_zone: netbird.join.net\nmesh_ip_a: "100.127.0.63"\n'
+        'site_dns_zone: netbird.join.net\nmesh_ip_a: "100.127.0.59"\n'
         'participates_in_spock: true\ngoatnet_founder: false\nintra_site_pair: false\n'
         'ory_spock_enabled: true\n'
         'inter_site_spock_topology: explicit\ninter_site_spock_peers:\n  - orig\n')
     # the founder ("orig") the joiner peers with — its mesh_ip_a is the DSN host.
     (d3 / "orig_hosts").mkdir(parents=True)
     (d3 / "orig_hosts" / "vars.yml").write_text(
-        'site_dns_zone: netbird.join.net\nmesh_ip_a: "100.127.0.62"\n'
+        'site_dns_zone: netbird.join.net\nmesh_ip_a: "100.127.0.58"\n'
         'participates_in_spock: true\ngoatnet_founder: true\n'
         'spock_mesh_publisher_host: "{{ mesh_ip_a }}"\n')
     inv3 = d3 / "inv.ini"
-    inv3.write_text("[join_hosts]\nmgmt-join-01 ansible_host=100.127.0.63 router_role=A\n")
+    inv3.write_text("[join_hosts]\nmgmt-join-01 ansible_host=100.127.0.59 router_role=A\n")
     vj = generate("join", gv_dir=d3 / "join_hosts", inv_path=inv3)
     if vj.get("spock_joiner") is not True:
         problems.append("joiner: spock_joiner should be true")
@@ -845,13 +896,22 @@ def self_test():
         problems.append(f"joiner: spock_peer_node (got {vj.get('spock_peer_node')})")
     if vj.get("spock_inbound_sub") != "sub_orig_to_join":
         problems.append(f"joiner: spock_inbound_sub (got {vj.get('spock_inbound_sub')})")
-    if vj.get("spock_peer_dsn_host") != "100.127.0.62":
+    if vj.get("spock_peer_dsn_host") != "100.127.0.58":
         problems.append(f"joiner: peer DSN host should be the founder's mesh_ip_a "
                         f"(got {vj.get('spock_peer_dsn_host')})")
     if vj.get("spock_ory_dbs") != ["kratos", "hydra"]:
         problems.append(f"joiner: spock_ory_dbs (got {vj.get('spock_ory_dbs')})")
     if not (vj.get("spock_seed_marker") or "").endswith("migrations.allow"):
         problems.append("joiner: spock_seed_marker not derived")
+    # A joiner that names its founder takes the founder's ACL scope, never
+    # its own site id (which no ACL declaration carries).
+    (d3 / "join_hosts" / "vars.yml").write_text(
+        (d3 / "join_hosts" / "vars.yml").read_text() + "join_founder_site: orig\n")
+    vj = generate("join", gv_dir=d3 / "join_hosts", inv_path=inv3)
+    if vj.get("acl_scope") != "orig":
+        problems.append(f"joiner: acl_scope should be the founder's goatnet (got {vj.get('acl_scope')})")
+    if vj.get("goatnet_founder") is not False:
+        problems.append("joiner: goatnet_founder should read false (founder-only rows N/A)")
 
     # A single-site founder emits NONE of the joiner values (rows stay N/A).
     vf = generate("orig", gv_dir=d3 / "orig_hosts", inv_path=inv3)
@@ -859,6 +919,25 @@ def self_test():
         problems.append("founder: spock_joiner should be false")
     if "spock_inbound_sub" in vf or "spock_peer_dsn_host" in vf:
         problems.append("founder: must not emit joiner-only values")
+    if vf.get("acl_scope") != "orig":
+        problems.append(f"founder: acl_scope should be its own site id (got {vf.get('acl_scope')})")
+
+    # The Postgres encoding rows expect the goatnet's encoding: UTF8 when
+    # nothing is declared; the founder's declaration on the founder AND on
+    # every joiner (which initialises with the founder's), even when the
+    # joiner's own group_vars say otherwise.
+    if vf.get("postgres_encoding") != "UTF8" or vj.get("postgres_encoding") != "UTF8":
+        problems.append("encoding: an undeclared goatnet should expect UTF8")
+    (d3 / "orig_hosts" / "vars.yml").write_text(
+        (d3 / "orig_hosts" / "vars.yml").read_text() + "postgres_initdb_encoding: SQL_ASCII\n")
+    (d3 / "join_hosts" / "vars.yml").write_text(
+        (d3 / "join_hosts" / "vars.yml").read_text() + "postgres_initdb_encoding: UTF8\n")
+    vf = generate("orig", gv_dir=d3 / "orig_hosts", inv_path=inv3)
+    vj = generate("join", gv_dir=d3 / "join_hosts", inv_path=inv3)
+    if vf.get("postgres_encoding") != "SQL_ASCII":
+        problems.append(f"encoding: the founder's declaration (got {vf.get('postgres_encoding')})")
+    if vj.get("postgres_encoding") != "SQL_ASCII":
+        problems.append(f"encoding: a joiner expects its founder's encoding (got {vj.get('postgres_encoding')})")
 
     if problems:
         print("self-test FAILED:")

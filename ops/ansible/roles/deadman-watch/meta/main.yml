@@ -1,7 +1,7 @@
 ---
 galaxy_info:
   role_name: deadman-watch
-  author: goat
+  author: goat-maintainer
   description: |
     External dead-man's-switch watcher. Receives the obs host's
     Watchdog heartbeat and pages PagerDuty directly when it stops. Must run

@@ -49,10 +49,11 @@ type Minter struct {
 	AgeIdentityPath  string
 	CAID             string
 	SiteID           string
-	URIPrefix        string // URI-SAN prefix; per-goatnet (legacy "urn:goat-nova:vendor="). Frozen into every minted cert — the integration-pinned identity grammar.
+	Org              string // Subject O of every minted leaf, passed as cert-sign --org. Empty omits the flag (cert-sign's built-in default applies).
+	URIPrefix        string // URI-SAN prefix; per-goatnet (e.g. "urn:goat:<site>:org="). Frozen into every minted cert — the integration-pinned identity grammar.
 	CNSuffix         string // per-vendor-mode leaf CN suffix (legacy "-trial-peer"). Empty → "-trial-peer". Slot-pool mode overrides CN to the bare anchor via MintOptions, so this is unused there.
-	DNSSuffix        string // DNS-SAN suffix; the SAN is "client.<prefix>.<DNSSuffix>" (per-goatnet). In the cert; not load-bearing for the ACL (keys on URI-SAN + CN) but per-goatnet for audit cleanliness. Empty → "nova.peer".
-	NovaRoot    string
+	DNSSuffix        string // DNS-SAN suffix; the SAN is "client.<prefix>.<DNSSuffix>" (per-goatnet). In the cert; not load-bearing for the ACL (keys on URI-SAN + CN) but per-goatnet for audit cleanliness. Empty → "example.peer".
+	CARoot           string
 	// BundleCAPubkey is the path to the PUBLIC key of the CA that signs the
 	// .cbor — ops/enrollment/public-keys/<ca_id>.pem. Shipped in the tarball
 	// beside the .cbor it verifies.
@@ -97,8 +98,8 @@ type Minter struct {
 	// the right endpoint into the worked first-publisher.py example.
 	// Filled in at portal-deploy time by the Ansible role (defaults
 	// match the legacy trial fabric).
-	RouterEndpoint  string // e.g., "tls/zenoh.nova.netbird.nova.example:7447" — what vendors connect their Zenoh client to
-	PortalURL       string // e.g., "https://portal.nova.netbird.nova.example" — vendor-facing portal base URL
+	RouterEndpoint  string // e.g., "tls/zenoh.goat.example:7447" — what vendors connect their Zenoh client to
+	PortalURL       string // e.g., "https://portal.goat.example" — vendor-facing portal base URL
 	OnboardURL      string // OPTIONAL, e.g. "https://onboard.site.netbird.example.net" — the goat-id-console onboarding-engine URL baked into the bundle as onboard_endpoint (docs/design/onboarding-extraction-plan.md). Empty on goatnets without the onboard route (CLI portal-falls-back).
 	TrialSunset     string // e.g., "2026-12-31" or "open-ended (trial-fabric)"
 	FeedbackChannel string // e.g., "Matrix #goat-trial-feedback" — where vendors report friction
@@ -145,26 +146,25 @@ func (m *Minter) Mint(ctx context.Context, prefix, apiKey string, opts MintOptio
 	if prefix == "" {
 		return nil, errors.New("org prefix required")
 	}
-	// Per-goatnet defaults reproduce the legacy wording so an unconfigured
-	// portal stays byte-stable. A goatnet overrides each via the role
-	// (PORTAL_* env / cert-sign flags).
+	// Per-goatnet values come from the role (PORTAL_* env / cert-sign flags)
+	// on every goatnet; these fallbacks are example values.
 	if m.CNSuffix == "" {
 		m.CNSuffix = "-trial-peer"
 	}
 	if m.URIPrefix == "" {
-		m.URIPrefix = "urn:goat-nova:vendor="
+		m.URIPrefix = "urn:goat:example:org="
 	}
 	if m.DNSSuffix == "" {
-		m.DNSSuffix = "nova.peer"
+		m.DNSSuffix = "example.peer"
 	}
 	if m.PacketName == "" {
 		m.PacketName = "zenoh-trial-onboarding.md"
 	}
 	if m.TarballStem == "" {
-		m.TarballStem = "nova-onboarding"
+		m.TarballStem = "goat-onboarding"
 	}
 	if m.RootCertName == "" {
-		m.RootCertName = "nova-ca-root.pem"
+		m.RootCertName = defaultRootCertName
 	}
 	commonName := prefix + m.CNSuffix
 	if opts.CommonName != "" {
@@ -265,7 +265,7 @@ func (m *Minter) Mint(ctx context.Context, prefix, apiKey string, opts MintOptio
 		KeyPath:         keyPath,
 		CborPath:        cborPath,
 		BundleCAPubkey:  m.BundleCAPubkey,
-		RootPath:        m.NovaRoot,
+		RootPath:        m.CARoot,
 		RootCertName:    m.RootCertName,
 		PacketName:      m.PacketName,
 		OnboardingPath:  m.OnboardingPacket,
@@ -370,14 +370,24 @@ func (m *Minter) invokeCertSign(ctx context.Context, prefix, certPath, keyPath, 
 		"--out-cert", certPath,
 		"--out-key", keyPath,
 	}
+	// The goatnet's Subject O. Without it a cert-sign built from this tree
+	// stamps its built-in default, which is not the organisation a goatnet's
+	// earlier leaves carry. Empty leaves cert-sign's default (and keeps a
+	// cert-sign that predates --org working).
+	if org := strings.TrimSpace(m.Org); org != "" {
+		args = append(args, "--org", org)
+	}
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Stdout = nil
 	stderrBuf := &strings.Builder{}
 	cmd.Stderr = io.MultiWriter(os.Stderr, stderrBuf)
 	if err := cmd.Run(); err != nil {
 		errStr := stderrBuf.String()
+		if strings.Contains(errStr, "flag provided but not defined: -org") {
+			return fmt.Errorf("cert-sign rejected --org: this cert-sign build predates the flag; install a cert-sign built from ops/enrollment/cmd/cert-sign (the portal role rebuilds it) or clear the portal's --cert-org — underlying error: %w", err)
+		}
 		if strings.Contains(errStr, "--uri-san") {
-			return fmt.Errorf("cert-sign rejected --uri-san: this is the Track A substrate extension (docs/design/nova-x509-identity.md §Substrate extension required); land that before flipping --cert-sign-fake off — underlying error: %w", err)
+			return fmt.Errorf("cert-sign rejected --uri-san: this cert-sign build lacks the URI-SAN extension; install one that has it before flipping --cert-sign-fake off — underlying error: %w", err)
 		}
 		return fmt.Errorf("cert-sign: %w; stderr: %s", err, strings.TrimSpace(errStr))
 	}
@@ -424,7 +434,7 @@ func (m *Minter) invokeBundleCreate(ctx context.Context, prefix, certPath, keyPa
 		"--goat-cli-router-endpoint", m.RouterEndpoint,
 		"--goat-cli-mtls-cert", certPath,
 		"--goat-cli-mtls-key", keyPath,
-		"--goat-cli-ca-roots", m.NovaRoot,
+		"--goat-cli-ca-roots", m.CARoot,
 		"--out", outCbor,
 	}
 	// OPTIONAL onboarding-engine endpoint — baked into the bundle as
@@ -466,11 +476,11 @@ func writeFakeCertKey(certPath, keyPath, prefix, uriSAN string) error {
 Generated by --cert-sign-fake.
 Org prefix: %s
 URI-SAN the real mint would carry: %s
-Replace with output of cert-sign per docs/design/nova-x509-identity.md.
+Replace with output of cert-sign.
 `, prefix, uriSAN)
 	key := fmt.Sprintf(`FAKE KEY PLACEHOLDER (not PEM; no key material).
 Generated by --cert-sign-fake for org %s.
-Replace with output of cert-sign per docs/design/nova-x509-identity.md.
+Replace with output of cert-sign.
 `, prefix)
 	if err := os.WriteFile(certPath, []byte(cert), 0o644); err != nil {
 		return fmt.Errorf("write fake cert: %w", err)
@@ -493,7 +503,7 @@ type tarballParams struct {
 	CborPath        string // goat-cli profile bundle; "" omits it
 	BundleCAPubkey  string // CA public key that verifies CborPath; "" omits it
 	RootPath        string
-	RootCertName    string // in-tarball filename for the CA root cert (per-goatnet); "" → "nova-ca-root.pem"
+	RootCertName    string // in-tarball filename for the CA root cert (per-goatnet); "" → defaultRootCertName
 	PacketName      string // in-tarball filename for the onboarding packet (per-goatnet); "" → "zenoh-trial-onboarding.md"
 	OnboardingPath  string
 	URISAN          string
@@ -567,7 +577,7 @@ func assembleTarball(tarballPath string, p tarballParams) error {
 	if err := addFile(fmt.Sprintf("%s-key.pem", p.Prefix), p.KeyPath); err != nil {
 		return err
 	}
-	if err := addFile(defaultStr(p.RootCertName, "nova-ca-root.pem"), p.RootPath); err != nil {
+	if err := addFile(defaultStr(p.RootCertName, defaultRootCertName), p.RootPath); err != nil {
 		return err
 	}
 
@@ -709,6 +719,23 @@ func defaultStr(s, def string) string {
 // so the generated example stays valid; the subscriber names its slots
 // `CERT_SLOT_ID`/`TOPIC_SLOT_ID`, which no lexicon rewrites. See
 // docs/design/portal-lexicon.md.
+// defaultRootCertName is the in-tarball CA-root filename when the goatnet sets
+// none (the role sets it on every goatnet).
+const defaultRootCertName = "ca-root.pem"
+
+// caRootCertNameToken is the placeholder the generated sample scripts and
+// templates use for the per-goatnet CA-root filename.
+const caRootCertNameToken = "<ca-root-cert-name>"
+
+// The onboarding-doc template (docs/operations/zenoh-trial-onboarding.md,
+// placed on the host by the role) names the CA root and the tarball row by
+// these literal strings; renderOnboardingDoc rewrites them to the goatnet's
+// values. They must match the template's text exactly.
+const (
+	docTemplateCARootName = "nova-ca-root.pem"
+	docTemplateTarballRow = "`<filled-in-at-deploy>` — distributed OOB at vendor registration. Contains your per-vendor X.509 cert + key + the nova CA root cert."
+)
+
 func applyLexicon(s string, p tarballParams) string {
 	return strings.NewReplacer(
 		"VENDOR", p.OrgUpper,
@@ -717,13 +744,13 @@ func applyLexicon(s string, p tarballParams) string {
 		"your vendor prefix", "your "+p.OrgNoun+" prefix",
 		"your whole vendor subtree", "your whole "+p.OrgNoun+" subtree",
 		`vendor "`, p.OrgNoun+` "`,
-		"nova trial Zenoh fabric", p.ProductName,
+		"<fabric-product-name>", p.ProductName,
 		// The sample scripts + NOTES.md reference the in-tarball CA root by name;
-		// repoint it at the per-goatnet filename the tarball actually ships
-		// (addFile uses the same RootCertName at line ~456), or
-		// first-publisher.py/first-subscriber.py point at a file not in the tarball
-		// and fail on connect. Byte-unchanged when RootCertName is the legacy default.
-		"nova-ca-root.pem", defaultStr(p.RootCertName, "nova-ca-root.pem"),
+		// point it at the per-goatnet filename the tarball actually ships
+		// (addFile uses the same RootCertName), or first-publisher.py /
+		// first-subscriber.py point at a file not in the tarball and fail on
+		// connect.
+		caRootCertNameToken, defaultStr(p.RootCertName, defaultRootCertName),
 	).Replace(s)
 }
 
@@ -740,7 +767,8 @@ func applyLexicon(s string, p tarballParams) string {
 //	<router-LAN-IP>         → host:port from RouterEndpoint (legacy form)
 //	<portal-url>            → full portal base URL (scheme + host)
 //	<uri-san-prefix>        → per-goatnet URI-SAN scheme, e.g. urn:goat:<site>:org=
-//	nova-ca-root.pem   → per-goatnet CA-root filename (RootCertName)
+//	<ca-root-cert-name>     → per-goatnet CA-root filename (RootCertName); the
+//	                          template's legacy literal filename is rewritten too
 //	<vendor>                → vendor prefix
 //	<portal-host>           → host of PortalURL
 //	<trial-zone>            → DNS zone of PortalURL host
@@ -755,7 +783,7 @@ func renderOnboardingDoc(src string, p tarballParams) string {
 		// `<filled-in-at-deploy>` cells in the connection-details table —
 		// replace with the corresponding actual value where we can; leave
 		// alone otherwise (operator can fix in a follow-up sed if needed).
-		"`<filled-in-at-deploy>` — distributed OOB at vendor registration. Contains your per-vendor X.509 cert + key + the nova CA root cert.",
+		docTemplateTarballRow,
 		"Vendor cert tarball — distributed OOB at vendor registration. Contains your per-vendor X.509 cert + key + the fabric CA root cert.",
 	}
 	if p.TrialSunset != "" {
@@ -773,10 +801,9 @@ func renderOnboardingDoc(src string, p tarballParams) string {
 		}
 	}
 	replacements = append(replacements,
-		// Per-goatnet CA-root filename; the template carries the legacy literal.
-		// Mirrors applyLexicon + addFile (~L456). Byte-unchanged when RootCertName is
-		// the legacy default.
-		"nova-ca-root.pem", defaultStr(p.RootCertName, "nova-ca-root.pem"),
+		// Per-goatnet CA-root filename. Mirrors applyLexicon + addFile.
+		caRootCertNameToken, defaultStr(p.RootCertName, defaultRootCertName),
+		docTemplateCARootName, defaultStr(p.RootCertName, defaultRootCertName),
 	)
 	// <router-host> is the bare host (no scheme, no port). The REST endpoint
 	// (:8000) wants host-only, NOT host:port — feeding host:port there
@@ -809,7 +836,7 @@ func routerHostPort(endpoint string) string {
 	if endpoint == "" {
 		return ""
 	}
-	// Endpoint shapes the bundle uses: "tls/zenoh.nova.netbird.nova.example:7447"
+	// Endpoint shapes the bundle uses: "tls/zenoh.goat.example:7447"
 	// or "tcp/127.0.0.1:7447". Strip the leading scheme prefix.
 	for _, prefix := range []string{"tls/", "tcp/", "quic/", "udp/"} {
 		if strings.HasPrefix(endpoint, prefix) {
@@ -836,9 +863,9 @@ func routerHost(endpoint string) string {
 // — the router endpoint is a DNS hostname matching a DNS SAN on the
 // router leaf cert, so standard rustls hostname verification stays on.
 func renderFirstPublisher(p tarballParams) string {
-	endpoint := defaultStr(p.RouterEndpoint, "tls/zenoh.nova.netbird.nova.example:7447")
+	endpoint := defaultStr(p.RouterEndpoint, "tls/zenoh.goat.example:7447")
 	return applyLexicon(fmt.Sprintf(`#!/usr/bin/env python3
-"""first-publisher.py — vendor "%s" → nova trial Zenoh fabric.
+"""first-publisher.py — vendor "%s" → <fabric-product-name>.
 
 A working starting point. Run this from the directory the tarball
 unpacked into; the cert/key/root paths assume sibling files.
@@ -881,7 +908,7 @@ def make_config() -> "zenoh.Config":
     # (transport/link/tls/connect_certificate, etc.) do NOT enable the
     # client-cert mTLS send path on at least eclipse-zenoh-python 1.x.
     conf.insert_json5("transport/link/tls", json.dumps({
-        "root_ca_certificate": os.path.join(HERE, "nova-ca-root.pem"),
+        "root_ca_certificate": os.path.join(HERE, "<ca-root-cert-name>"),
         "connect_certificate": os.path.join(HERE, VENDOR + "-cert.pem"),
         "connect_private_key": os.path.join(HERE, VENDOR + "-key.pem"),
         "enable_mtls": True,
@@ -920,9 +947,9 @@ if __name__ == "__main__":
 // back). Same mTLS config shape as the publisher — the only difference
 // is declare_subscriber instead of declare_publisher.
 func renderFirstSubscriber(p tarballParams) string {
-	endpoint := defaultStr(p.RouterEndpoint, "tls/zenoh.nova.netbird.nova.example:7447")
+	endpoint := defaultStr(p.RouterEndpoint, "tls/zenoh.goat.example:7447")
 	return applyLexicon(fmt.Sprintf(`#!/usr/bin/env python3
-"""first-subscriber.py — vendor "%s" → nova trial Zenoh fabric.
+"""first-subscriber.py — vendor "%s" → <fabric-product-name>.
 
 Self-validation companion to first-publisher.py. Run this in one shell
 and first-publisher.py in another; you'll see your own publishes echo
@@ -968,7 +995,7 @@ def make_config() -> "zenoh.Config":
     # Same whole-block insert as first-publisher.py — per-sub-key
     # inserts do NOT enable the client-cert send path on eclipse-zenoh-python 1.x.
     conf.insert_json5("transport/link/tls", json.dumps({
-        "root_ca_certificate": os.path.join(HERE, "nova-ca-root.pem"),
+        "root_ca_certificate": os.path.join(HERE, "<ca-root-cert-name>"),
         "connect_certificate": os.path.join(HERE, CERT_SLOT_ID + "-cert.pem"),
         "connect_private_key": os.path.join(HERE, CERT_SLOT_ID + "-key.pem"),
         "enable_mtls": True,

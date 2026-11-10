@@ -60,7 +60,7 @@
 #       -e netbird_encryption_key="$ASSAY_NB_ENCKEY" \
 #       -e cf_api_token="$CLOUDFLARE_API_TOKEN" \
 #       -e cloudflare_api_token="$CLOUDFLARE_API_TOKEN" \
-#       -e assay_owner_email=person-81@example.org
+#       -e assay_owner_email=<owner mailbox>
 #
 # `--skip-tags archive_load` IS REQUIRED, not optional. goat-relay-deploy.yml's
 # imported phase0 is an offline image-transport path that runs on localhost and

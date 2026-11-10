@@ -29,7 +29,7 @@ $EDITOR expected-vendors.yml      # add/remove a vendor
 python3 generate.py               # regenerate the .prom
 python3 generate.py --check       # CI guard: .prom matches the manifest
 git add expected-vendors.yml textfile/goat_expected_vendor.prom
-# then re-deploy nova-obs (operator): ansible obs.yml — rsync + compose up
+# then re-deploy the obs stack (operator): ansible obs.yml — copy + compose up
 ```
 
 Test the rules: `promtool test rules ../prometheus/rules/expected-vendor.test.yml`.

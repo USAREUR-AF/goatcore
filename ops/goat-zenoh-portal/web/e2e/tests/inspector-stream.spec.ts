@@ -4,7 +4,7 @@
 // an EventSource with the portal API key in the query string, which proxies
 // write to their access logs, and the server (which reads only the
 // Authorization header) answered 401 every time. The stream now reads the
-// event stream with fetch and sends the key as a bearer header.
+// event stream with fetch and authenticates through its HttpOnly session.
 //
 // Backend is mocked via page.route, matching tests/topic-form.spec.ts: every
 // /api/* call the page makes on load gets an empty 200, and the stream route
@@ -41,7 +41,7 @@ async function openInspector(
 }
 
 test.describe("inspector live stream", () => {
-  test("sends the key as a bearer header, never in the URL, and renders samples", async ({ page }) => {
+  test("uses the browser session without putting credentials in the URL or headers", async ({ page }) => {
     const requests = await openInspector(page, {
       status: 200,
       contentType: "text/event-stream",
@@ -60,7 +60,8 @@ test.describe("inspector live stream", () => {
     expect(url.searchParams.get("key")).toBe(TOPIC);
     expect(url.searchParams.has("api_key")).toBe(false);
     expect(requests[0].url()).not.toContain(TEST_KEY);
-    expect(requests[0].headers()["authorization"]).toBe(`Bearer ${TEST_KEY}`);
+    expect(requests[0].headers()["authorization"]).toBeUndefined();
+    expect(await page.evaluate(() => localStorage.getItem("portalApiKey"))).toBeNull();
   });
 
   test("a refused stream says why and turns the button back off", async ({ page }) => {

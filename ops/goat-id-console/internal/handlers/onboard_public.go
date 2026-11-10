@@ -344,8 +344,9 @@ var errTierExceedsSponsorship = errors.New("the requested role exceeds what your
 // one-time invite is consumed so the candidate can reopen the same link and
 // fix everything in one pass. The keys match intake field names; messages are
 // the same ones the single-field errors used to carry, and they surface in
-// the 422 `validation_failed` `error.fields` payload.
-func validationErrorsForSubmission(inv *onboardstore.Invite, sub candidateSubmission) (map[string]string, error) {
+// the 422 `validation_failed` `error.fields` payload. Valid GitHub logins are
+// normalized in place so the value passed to manifest assembly is canonical.
+func validationErrorsForSubmission(inv *onboardstore.Invite, sub *candidateSubmission) (map[string]string, error) {
 	fields := map[string]string{}
 
 	// Name + email: required for any submission.
@@ -398,7 +399,7 @@ func validationErrorsForSubmission(inv *onboardstore.Invite, sub candidateSubmis
 
 	// Organisation nation (legacy field; the form no longer renders it).
 	if n := strings.TrimSpace(sub.Nation); n != "" && !validNationCode(n) {
-		fields["nation"] = "nation must be an ISO 3166-1 alpha-3 code (e.g. CAN, USA, SVK) or a multinational marker (NATO, EU), not a full country name — got " + strconv.Quote(n)
+		fields["nation"] = "nation must be an ISO 3166-1 alpha-3 code (e.g. CAN, USA) or a multinational marker (NATO, EU), not a full country name — got " + strconv.Quote(n)
 	}
 
 	// Person nationality: required for a person, optional for a system; both
@@ -409,10 +410,17 @@ func validationErrorsForSubmission(inv *onboardstore.Invite, sub candidateSubmis
 	nat := strings.TrimSpace(sub.Nationality)
 	if nat != "" {
 		if !validNationCode(nat) {
-			fields["nationality"] = "nationality must be an ISO 3166-1 alpha-3 code (e.g. CAN, USA, SVK), not a full country name — got " + strconv.Quote(nat)
+			fields["nationality"] = "nationality must be an ISO 3166-1 alpha-3 code (e.g. CAN, USA), not a full country name — got " + strconv.Quote(nat)
 		}
 	} else if !isSystem {
-		fields["nationality"] = "please provide your nationality as an ISO 3166-1 alpha-3 code (e.g. CAN, USA, SVK) — it decides which shared data you may be shown, so a request without it cannot be reviewed"
+		fields["nationality"] = "please provide your nationality as an ISO 3166-1 alpha-3 code (e.g. CAN, USA) — it decides which shared data you may be shown, so a request without it cannot be reviewed"
+	}
+
+	github, githubErr := normalizeGitHubLogin(sub.GitHubUsername)
+	if githubErr != nil {
+		fields["github_username"] = githubErr.Message
+	} else {
+		sub.GitHubUsername = github
 	}
 
 	if len(fields) == 0 {
@@ -470,7 +478,7 @@ func (s *Server) handleOnboardSubmit(w http.ResponseWriter, r *http.Request) {
 		onboardError(w, http.StatusBadRequest, "bad_submission", "submission must be a JSON object")
 		return
 	}
-	fields, perr := validationErrorsForSubmission(inv, sub)
+	fields, perr := validationErrorsForSubmission(inv, &sub)
 	if perr != nil {
 		onboardError(w, http.StatusInternalServerError, "invalid_invite", "this invite has invalid access metadata")
 		return

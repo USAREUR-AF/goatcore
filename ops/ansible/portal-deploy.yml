@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # portal-deploy.yml — operator-fired deploy of the
-# goat-zenoh-portal on the site's portal host. Mirrors the demogame +
+# goat-zenoh-portal on the site's portal host. Mirrors the airdefenders +
 # zenoh-deploy + panoscope pattern: thin wrapper around the role, single
 # command, Cloudflare DNS publish in the same fire.
 #
@@ -25,7 +25,7 @@
 #      is true in group_vars/<site>_hosts).
 #   4. When portal_cert_sign_fake: false (steady-state), the site's
 #      offline-CA root + age identity must already be present on the
-#      host at portal_nova_root_cert + portal_age_identity_path.
+#      host at portal_ca_root_cert + portal_age_identity_path.
 #      In fake-mint mode (the first-deploy default), these aren't
 #      required — vendor cert tarballs are stubs.
 

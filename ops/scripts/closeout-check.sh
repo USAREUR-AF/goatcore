@@ -18,7 +18,12 @@ TRACK=""
 
 R=$(git rev-parse --show-toplevel 2>/dev/null) || { echo "not a git repo" >&2; exit 2; }
 MASTER=$(git -C "$R" worktree list --porcelain | awk '/^worktree /{print $2; exit}')
-REPO="${GH_REPO:-USAREUR-AF/goatcore}"
+# The repository this checkout's pull requests live in: GH_REPO, else the
+# clone's trunk remote (ops/scripts/repo-slug.sh), else repo.source in
+# ops/goatbuilder/goatbuilder.yaml (project-setting.sh).
+REPO="$("${BASH_SOURCE[0]%/*}/repo-slug.sh" primary "$R" 2>/dev/null)"
+[ -n "$REPO" ] || REPO="$("${BASH_SOURCE[0]%/*}/project-setting.sh" repo source 2>/dev/null)"
+[ -n "$REPO" ] || { echo "closeout-check: no repository: set GH_REPO=<owner>/<name>, or declare repo.source in ops/goatbuilder/goatbuilder.yaml" >&2; exit 2; }
 OUT=0
 note() { printf '  %s\n' "$*"; }
 bad()  { printf '  OUTSTANDING: %s\n' "$*"; OUT=1; }

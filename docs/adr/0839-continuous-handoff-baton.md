@@ -123,7 +123,7 @@ Cheap when nothing's happening. Catches steady-state drift between explicit `/ha
 
 ### Self-discipline memory rule
 
-Memory hook ([`ops/scripts/feedback-memory-hooks/feedback_handoff_at_pause_points.md`](../../ops/scripts/feedback-memory-hooks/feedback_handoff_at_pause_points.md)) instructs agents to fire `/handoff` proactively at natural pause points:
+Memory hook (`feedback_handoff_at_pause_points.md` (`ops/scripts/feedback-memory-hooks/`)) instructs agents to fire `/handoff` proactively at natural pause points:
 
 - Before any long-running background task that might outlast the session
 - Before `/clear` or `/iso exit`

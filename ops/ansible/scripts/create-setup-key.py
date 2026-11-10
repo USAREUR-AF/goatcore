@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Create a NetBird setup key without putting its plaintext in SSM or files."""
+"""Create a NetBird setup key without putting its plaintext in SSM or files.
+
+AWS_VAULT_PROFILE names the aws-vault profile of the account that holds the
+instance; the script reads no other credential setting.
+"""
 
 import argparse
 import base64
@@ -7,6 +11,7 @@ import datetime as dt
 import getpass
 import hashlib
 import json
+import os
 import re
 import secrets
 import shlex
@@ -19,7 +24,15 @@ import uuid
 
 DEFAULTS = {"bootstrap": (1, 1), "admin": (7, 3), "operator": (30, 25), "peer": (7, 1)}
 TERMINAL = {"Success", "Failed", "TimedOut", "Cancelled"}
-AWS = ["aws-vault", "exec", "legacy", "--no-session", "--", "aws", "ssm"]
+
+
+def aws_command():
+    """The SSM command prefix, under the caller's aws-vault profile."""
+    profile = os.environ.get("AWS_VAULT_PROFILE", "")
+    if not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", profile):
+        raise RuntimeError(
+            "AWS_VAULT_PROFILE must name the aws-vault profile of the account that holds the instance")
+    return ["aws-vault", "exec", profile, "--no-session", "--", "aws", "ssm"]
 
 
 def arguments(argv):
@@ -121,7 +134,7 @@ COMMIT;
 def aws_call(arguments, payload=None):
     try:
         result = subprocess.run(
-            AWS + arguments, input=payload, text=True, capture_output=True,
+            aws_command() + arguments, input=payload, text=True, capture_output=True,
             timeout=60, check=False,
         )
     except (OSError, subprocess.TimeoutExpired):
@@ -181,6 +194,7 @@ def run(args):
 def main():
     args = arguments(sys.argv[1:])
     try:
+        aws_command()  # a missing profile stops the run before a key is generated
         output = run(args)
     except RuntimeError as error:
         print(str(error), file=sys.stderr)

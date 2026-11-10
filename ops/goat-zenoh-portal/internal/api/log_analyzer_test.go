@@ -68,15 +68,30 @@ func TestAnalyzeLog_URISANRejected(t *testing.T) {
 }
 
 func TestAnalyzeLog_DNSResolutionFailed(t *testing.T) {
-	const sample = `ERROR failed to resolve zenoh.nova.netbird.nova.example: name not known`
+	const sample = `ERROR failed to resolve zenoh.goat.example: name not known`
 	findings := analyzeLog(sample)
 	if !hasFinding(findings, "endpoint-dns-resolution-failed") {
 		t.Fatalf("expected endpoint-dns-resolution-failed, got %v", findingIDs(findings))
 	}
 }
 
+// The DNS signature names no one goatnet: it fires for any zenoh.<zone> host.
+func TestAnalyzeLog_DNSResolutionFailed_AnyGoatnet(t *testing.T) {
+	for _, sample := range []string{
+		`ERROR failed to resolve zenoh.galaxy.goat.example:7447: no such host`,
+		`WARN dns lookup failed for tls/zenoh.site-a.example.net:7447`,
+	} {
+		if !hasFinding(analyzeLog(sample), "endpoint-dns-resolution-failed") {
+			t.Errorf("expected endpoint-dns-resolution-failed for %q", sample)
+		}
+	}
+	if hasFinding(analyzeLog(`ERROR failed to resolve api.example.org: no such host`), "endpoint-dns-resolution-failed") {
+		t.Error("DNS signature fired for a host that is not a zenoh router")
+	}
+}
+
 func TestAnalyzeLog_TCPRefused(t *testing.T) {
-	const sample = `ERROR dial tls/zenoh.nova.netbird.nova.example:7447: connection refused`
+	const sample = `ERROR dial tls/zenoh.goat.example:7447: connection refused`
 	findings := analyzeLog(sample)
 	if !hasFinding(findings, "endpoint-tcp-refused") {
 		t.Fatalf("expected endpoint-tcp-refused, got %v", findingIDs(findings))
@@ -84,7 +99,7 @@ func TestAnalyzeLog_TCPRefused(t *testing.T) {
 }
 
 func TestAnalyzeLog_TCPTimeout(t *testing.T) {
-	const sample = `ERROR dial tls/zenoh.nova.netbird.nova.example:7447: i/o timeout`
+	const sample = `ERROR dial tls/zenoh.goat.example:7447: i/o timeout`
 	findings := analyzeLog(sample)
 	if !hasFinding(findings, "endpoint-tcp-timeout") {
 		t.Fatalf("expected endpoint-tcp-timeout, got %v", findingIDs(findings))
@@ -140,7 +155,7 @@ error: could not find ` + "`zenoh-cli`" + ` in registry`
 // drifting into false-positive matches on benign output.
 func TestAnalyzeLog_CleanLog(t *testing.T) {
 	const sample = `INFO starting up
-INFO connected to tls/zenoh.nova.netbird.nova.example:7447
+INFO connected to tls/zenoh.goat.example:7447
 INFO sample 1 published successfully
 INFO sample 2 published successfully
 INFO shutdown clean
@@ -172,7 +187,7 @@ ERROR dial tls/foo:7447: connection refused
 
 // WindowsCRLF paste — splitLines must strip \r so regexes match.
 func TestAnalyzeLog_WindowsCRLF(t *testing.T) {
-	sample := strings.ReplaceAll(`ERROR dial tls/zenoh.nova.netbird.nova.example:7447: connection refused
+	sample := strings.ReplaceAll(`ERROR dial tls/zenoh.goat.example:7447: connection refused
 `, "\n", "\r\n")
 	findings := analyzeLog(sample)
 	if !hasFinding(findings, "endpoint-tcp-refused") {

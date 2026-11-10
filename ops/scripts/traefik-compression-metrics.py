@@ -7,7 +7,7 @@ WHY THIS EXISTS
 Traefik's own Prometheus output cannot see compression. `traefik_service_
 responses_bytes_total` counts what the BACKEND produced, not what Traefik put
 on the wire, so it moves identically whether or not `goat-compress` is
-attached. That was measured on ZAGROS 2026-08-18: over one window the metric
+attached. That was measured on a live goatnet 2026-08-18: over one window the metric
 tracked the origin figure while the wire figure was a third of it. Anything
 built on that counter will report a healthy-looking number after compression
 silently stops.
@@ -28,7 +28,7 @@ WHAT IT PUBLISHES  (node_exporter textfile collector)
   goat_traefik_compression_exporter_*        (self-honesty; see below)
 
 `client_class` is the single most important label here and the reason this is
-not just a global ratio. Measured on ZAGROS the day compression shipped:
+not just a global ratio. Measured on a live goatnet the day compression shipped:
 
     mesh peers 100.64/10  (real users)   4,153 req   5.97 -> 1.71 MB   71.4%
     gateway    172.18.0.1 (our probes)  27,769 req  21.53 -> 21.87 MB   -1.6%
@@ -46,7 +46,7 @@ The raw `origin`/`wire` pair is every measurable response. Its ratio is honest
 only when the workload is dominated by compressible pages. When a service is
 dominated instead by tiny API polls (under the size floor), event streams, or
 chunked responses, its raw ratio collapses toward zero for reasons that have
-nothing to do with whether compression works. Measured on ZAGROS 2026-09-21: the
+nothing to do with whether compression works. Measured on a live goatnet 2026-09-21: the
 portal's raw mesh ratio read 8.5% while its ratio over the responses
 goat-compress can actually act on read 36.5%.
 

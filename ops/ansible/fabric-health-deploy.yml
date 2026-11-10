@@ -34,7 +34,7 @@
 # the seed targets; an idle class honestly reads IDLE, never a false green.
 
 - name: deploy goat-fabric-health meter (ADR 1034)
-  hosts: "{{ target | mandatory }}"   # -e target=zagros_hosts for the ZAGROS sibling goatnet
+  hosts: "{{ target | mandatory }}"   # -e target=<site>_hosts
   become: true
   gather_facts: true
 

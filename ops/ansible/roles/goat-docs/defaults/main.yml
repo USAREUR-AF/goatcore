@@ -23,13 +23,20 @@ goat_docs_hostname: "docs.{{ site_id | mandatory }}.{{ site_dns_zone | mandatory
 #
 # Keep this coupled to goat_get_release_tag unless the "Currency lock"
 # section in docs/design/goat-cli-hosted-docs.md says otherwise.
-goat_docs_release_tag: "goat-cli-v0.4.19"
+# goat-cli-v0.5.16 is the first release of this repository that carries
+# goat-docs.tar.gz (goat-release.yml builds it from the tag).
+goat_docs_release_tag: "goat-cli-v0.5.16"
 # Self-referential — see goat-get/defaults/main.yml.
 goat_docs_release_repo: "{{ source_repo }}"
+# Whether the release repository is private (see goat_get_release_private).
+# false: read anonymously when no token is set; a refused token falls back to
+# an anonymous read with a warning. true: the token is required.
+goat_docs_release_private: false
 goat_docs_asset: "goat-docs.tar.gz"
 
-# GitHub token to read the PRIVATE repo's release assets at download time
-# (contents:read). Sourced from the operator env; passed transiently to
+# GitHub token for reading release assets at download time. Optional for a
+# public release repository (empty = no Authorization header); needed, with
+# contents:read, for a private one. Sourced from the operator env; passed transiently to
 # the host download task (no_log), never persisted on the host. Mirrors
 # goat-get so a single GOAT_CLI_RELEASE_TOKEN drives both deploys.
 goat_docs_github_token: "{{ lookup('env', 'GOAT_CLI_RELEASE_TOKEN') | default(lookup('env', 'GH_TOKEN'), true) | default(lookup('env', 'GHCR_READ_TOKEN'), true) }}"
@@ -52,9 +59,11 @@ goat_docs_traefik_network: "mgmt"
 goat_docs_traefik_dynamic_dir: "/etc/traefik/dynamic"
 goat_docs_traefik_dynamic_filename: "goat-docs.yml"
 
-# The pre-rename filename, removed from the host on deploy. Leaving it
-# behind would give Traefik two routers on the same Host() rule.
-goat_docs_traefik_dynamic_filename_legacy: "nova-goat-docs.yml"
+# A pre-rename filename to remove from the host on deploy. Leaving one
+# behind would give Traefik two routers on the same Host() rule. Empty:
+# nothing to remove. A goatnet whose hosts once carried the route under
+# another filename names it in its group_vars.
+goat_docs_traefik_dynamic_filename_legacy: ""
 goat_docs_traefik_cert_resolver: "le"
 goat_docs_traefik_router_name: "goat-docs"
 
@@ -68,7 +77,9 @@ goat_docs_traefik_mesh_only_middleware: "mesh-only-allowlist@file"
 # fronted at a public download host) under `cli/<tag>/<asset>`. The role probes this first
 # and only reaches api.github.com when the mirror lacks the tag. The .sha256
 # sidecar is enforced either way, so this is a transport choice, not a trust one.
-# The provisioning tier is a deliberate cross-goatnet shared service — not config bleed.
+# The provisioning tier is a deliberate cross-goatnet shared service, so the
+# mirror is ONE fleet value: goat_release_mirror_base, set in the goatnet's
+# group_vars. The fallback here is an example host that serves nothing.
 goat_docs_mirror_base: "{{ goat_release_mirror_base | default('https://get.goat.example') }}"
 goat_docs_mirror_prefix: "cli/{{ goat_docs_release_tag }}"
 
@@ -85,7 +96,11 @@ goat_docs_mirror_prefix: "cli/{{ goat_docs_release_tag }}"
 # refuses a pin naming a release that exists nowhere); then set it here, the
 # same value as goat_get_goatbuilder_release_tag, and re-run goat-docs-deploy.yml.
 goat_docs_goatbuilder_enabled: false
-goat_docs_goatbuilder_release_repo: "USAREUR-AF/goatcore"
-goat_docs_goatbuilder_release_tag: "goatbuilder/v0.4.1"
+# Self-referential by default, like goat_docs_release_repo above. A goatnet
+# whose goatbuilder release is cut in one named repository sets that name in
+# its group_vars.
+goat_docs_goatbuilder_release_repo: "{{ source_repo }}"
+goat_docs_goatbuilder_release_private: "{{ goat_docs_release_private }}"
+goat_docs_goatbuilder_release_tag: "goatbuilder/v0.4.2"
 goat_docs_goatbuilder_asset: "goatbuilder-docs.tar.gz"
 goat_docs_goatbuilder_www_subdir: "goatbuilder"

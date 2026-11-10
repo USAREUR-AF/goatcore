@@ -49,15 +49,16 @@ Commands:
               teardown rows, never erases). On a fixture (`--mock`) it rehearses the burn-down in
               reverse phase order; on real hosts it prints the order and refuses to execute until
               each phase declares its teardown play (docs/design/goatbuilder-speed.md)
-  join-node   One more machine of a class at a live site, declared → converged → verified:
-              docs/operations/node-addition.md's executed sequence as numbered phases with its gates
-              (reach, key, repo work first, baseline, kernel WireGuard before and after enrolment,
-              the kernel ACL plane as the enrolment gate, the class's converge, acceptance)
+  join-node   One more machine of a class at a live site, declared → converged → verified: the
+              node-addition sequence of docs/tutorials/02-first-federated-node.md as numbered phases
+              with its gates (reach, key, repo work first, baseline, kernel WireGuard before and
+              after enrolment, the kernel ACL plane as the enrolment gate, the class's converge,
+              acceptance)
   federate    A sovereign peering declared, converged and verified (ADR 1157): our half measured,
-              the packages exchanged out of band, one agreement composed and verified, the leaves
-              minted from it, the rules rendered by the one writer, the edge deployed, the transport
-              the agreement chose opened, acceptance in all four tiers. Replaces
-              ops/scripts/peering-standup.sh step for step
+              the packages exchanged through the peering directory, one agreement composed and
+              verified, the leaves minted from it, the rules rendered by the one writer, the edge
+              deployed, the transport the agreement chose opened, acceptance in all four tiers.
+              Replaces ops/scripts/peering-standup.sh step for step
   pins        ONE resolution pass with TWO renderings: every listed member's group_vars pins.yml and
               every listed goatnet's IntentV1 artifact, from ops/pins/fleet-pins.yaml. Replaces
               ops/pins/generate-pins.py byte for byte. `--check` validates, regenerates and refuses

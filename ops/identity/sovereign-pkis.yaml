@@ -99,7 +99,7 @@ pkis:
       subject_dn: "CN=MAINTAINER.TEST.MI.1234567890,OU=USA,OU=PKI,OU=DoD,O=U.S. Government,C=US"
       issuer_dn: "CN=DOD ID CA-81,OU=PKI,OU=DoD,O=U.S. Government,C=US"
       san_upn: "1234567890121002@mil"
-      san_email: "person-28@example.org"
+      san_email: "person-23@example.org"
     sources:
       - what: "CA bundle, its signature and the ID-CA set"
         url: "https://public.cyber.mil/pki-pke/"

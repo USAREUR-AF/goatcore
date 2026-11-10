@@ -57,11 +57,16 @@ scrape_configs:
     static_configs:
       - targets: ["traefik:8082"]
     # ---------------------------------------------------------------------
-    # STRIP THE LEGACY `nova-` PREFIX AT INGEST (ADR 1132).
+    # STRIP A LEGACY NAME PREFIX AT INGEST (ADR 1132).
     # ---------------------------------------------------------------------
-    # Traefik routers and services can carry a legacy `nova-` name
-    # (`nova-portal`, `nova-signal`, `nova-mgmt`…). Unstripped, every dashboard and
+    # Traefik routers and services can carry a prefix from an earlier naming
+    # convention (`<prefix>-portal`, `<prefix>-signal`, `<prefix>-mgmt`…).
+    # Unstripped, every dashboard and
     # netview page reads as though it shows a different goatnet.
+    #
+    # The prefix is obs_traefik_legacy_name_prefix, set in the goatnet's
+    # group_vars. A goatnet that never carried one leaves it unset and this
+    # block renders no relabel rule.
     #
     # Renaming the ROUTERS is the real fix and it is a separate, larger change
     # that breaks historical continuity because the label VALUE changes. This
@@ -73,23 +78,25 @@ scrape_configs:
     # `--metrics.prometheus.addRoutersLabels=true` and would otherwise
     # reintroduce the prefix on the very split that exists to remove noise.
     #
-    # Deliberately anchored `^nova-`: a service legitimately containing "nova"
-    # elsewhere in its name is untouched. Services already un-prefixed
-    # (`netvis`, `microscope`, `demogame`, `consistency-console`) pass
+    # Deliberately anchored at the start: a service legitimately containing the
+    # prefix elsewhere in its name is untouched. Services already un-prefixed
+    # (`netvis`, `microscope`, `consistency-console`) pass
     # through unchanged — this narrows three live naming conventions toward
     # one without renaming anything.
     #
     # Reversible: delete this block and the raw labels return on the next
     # scrape. Nothing on the host or in the routing table changes.
+{% if obs_traefik_legacy_name_prefix | default('') | length > 0 %}
     metric_relabel_configs:
       - source_labels: [service]
-        regex: '^nova-(.*)$'
+        regex: '^{{ obs_traefik_legacy_name_prefix }}-(.*)$'
         target_label: service
         replacement: '${1}'
       - source_labels: [router]
-        regex: '^nova-(.*)$'
+        regex: '^{{ obs_traefik_legacy_name_prefix }}-(.*)$'
         target_label: router
         replacement: '${1}'
+{% endif %}
 
   # cAdvisor — per-container CPU/mem/network/disk + uptime + restart
   # count + start time. Drives the "Services overview" dashboard.
@@ -324,7 +331,7 @@ scrape_configs:
   - job_name: blackbox-dns
     metrics_path: /probe
     params:
-      module: [dns_nova_a]
+      module: [dns_zone_a]
     static_configs:
       - targets:
           - 1.1.1.1
@@ -340,6 +347,9 @@ scrape_configs:
 
   # Blackbox ICMP — Thor mesh-peer reach (extend later as more
   # peers come online; v1 lists relays we expect to be reachable).
+  # Targets come from obs_blackbox_icmp_targets, a plain list of addresses set
+  # in the goatnet's group_vars; with none declared the job is omitted.
+{% if obs_blackbox_icmp_targets | default([]) | length > 0 %}
   - job_name: blackbox-icmp
     metrics_path: /probe
     params:
@@ -347,9 +357,9 @@ scrape_configs:
     static_configs:
       - targets:
           # Public relay IPs (3 Cloudflare A records resolve here too).
-          - 203.0.113.5
-          - 203.0.113.19
-          - 198.51.100.234
+{% for t in obs_blackbox_icmp_targets %}
+          - {{ t }}
+{% endfor %}
     relabel_configs:
       - source_labels: [__address__]
         target_label: __param_target
@@ -357,6 +367,7 @@ scrape_configs:
         target_label: instance
       - target_label: __address__
         replacement: blackbox-exporter:9115
+{% endif %}
 
   # node-exporter on OTHER mesh hosts (ADR 1128). The `node-exporter`
   # job above scrapes exactly one target — this Thor — so before this
@@ -397,7 +408,7 @@ scrape_configs:
   # netbird-mgmt /metrics is NOT enabled in the current mgmt-host
   # compose — netbirdio/management:0.68.3 listens on :80 only and
   # doesn't expose a Prometheus endpoint by default. When that
-  # changes (or we move to the patched ghcr.io/goat-maintainer image with
+  # changes (or we move to a patched image with
   # metrics on), add:
   #   - job_name: netbird-mgmt
   #     static_configs:

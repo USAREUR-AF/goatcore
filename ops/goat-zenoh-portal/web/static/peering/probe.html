@@ -397,25 +397,25 @@ import { readResponse, request } from "/app.js";
     // running the script.
     var EXAMPLE_PASS = {
       schema_version: 1,
-      hostname: "zenoh.nova.netbird.nova.example",
+      hostname: "zenoh.goat.example",
       port: 7447,
       intended_prefix: "my-__LEX_ORG__",
-      dns: { ok: true, resolved_ips: ["100.127.0.190"] },
+      dns: { ok: true, resolved_ips: ["192.0.2.10"] },
       tcp: { ok: true },
       tls: { ok: true, negotiated_proto: "TLSv1.3", negotiated_cipher: "TLS_AES_256_GCM_SHA384" },
       cert_chain: { ok: true, observed_fingerprint_sha256: "ABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABAB" },
-      uri_san: { ok: true, declared_prefix: "my-__LEX_ORG__", cert_uri_sans: ["spiffe://goat.nova/my-__LEX_ORG__"] }
+      uri_san: { ok: true, declared_prefix: "my-__LEX_ORG__", cert_uri_sans: ["spiffe://goat.example/my-__LEX_ORG__"] }
     };
     var EXAMPLE_FAIL = {
       schema_version: 1,
-      hostname: "zenoh.nova.netbird.nova.example",
+      hostname: "zenoh.goat.example",
       port: 7447,
       intended_prefix: "my-__LEX_ORG__",
-      dns: { ok: true, resolved_ips: ["100.127.0.190"] },
+      dns: { ok: true, resolved_ips: ["192.0.2.10"] },
       tcp: { ok: true },
       tls: { ok: true, negotiated_proto: "TLSv1.3", negotiated_cipher: "TLS_AES_256_GCM_SHA384" },
       cert_chain: { ok: true, observed_fingerprint_sha256: "DEADBEEFAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" },
-      uri_san: { ok: false, declared_prefix: "my-__LEX_ORG__", cert_uri_sans: ["spiffe://goat.nova/other-__LEX_ORG__"], error: "no URI-SAN contains the declared prefix my-__LEX_ORG__" }
+      uri_san: { ok: false, declared_prefix: "my-__LEX_ORG__", cert_uri_sans: ["spiffe://goat.example/other-__LEX_ORG__"], error: "no URI-SAN contains the declared prefix my-__LEX_ORG__" }
     };
     document.getElementById("example-pass-btn").addEventListener("click", function () {
       document.getElementById("paste").value = JSON.stringify(EXAMPLE_PASS);

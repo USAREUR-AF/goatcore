@@ -34,7 +34,7 @@ func newFixture(t *testing.T) *bundle.EnrollmentBundle {
 		DeviceID:           "orin-region-a-01.c2",
 		PeerPubkey:         pub,
 		ACLGroups:          []string{"c2", "engagement-authority"},
-		Site:               "vega",
+		Site:               "lab",
 		IssuedAt:           issued,
 		ActivationDeadline: issued.Add(14 * 24 * time.Hour),
 		ExpiresAt:          issued.Add(90 * 24 * time.Hour),

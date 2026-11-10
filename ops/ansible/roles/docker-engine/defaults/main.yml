@@ -42,6 +42,14 @@ docker_engine_apt_arch: "{{ {'x86_64': 'amd64', 'aarch64': 'arm64', 'arm64': 'ar
 # (single-disk envs).
 docker_engine_data_root: ""
 
+# Docker Hub pull-through mirrors, written to daemon.json `registry-mirrors`.
+# Docker falls back to Docker Hub when a mirror does not answer. Derived from
+# site_cache_host (the obs host that runs docker-registry-mirror, Docker Hub on
+# :5000; goatbuilder-speed.md sink 6); empty leaves daemon.json as before, so
+# no daemon restarts on a site that declares no cache. Docker has no mirror
+# setting for any other registry, so ghcr.io images still pull from ghcr.io.
+docker_engine_registry_mirrors: "{{ ['http://' ~ site_cache_host ~ ':5000'] if (site_cache_host | default('') | length > 0) else [] }}"
+
 # containerd root path. Empty string = leave containerd on its default
 # (/var/lib/containerd); production mgmt-host group_vars MUST override
 # to the NVMe path. Separate concern from Docker's data-root: containerd
@@ -66,6 +74,15 @@ docker_engine_containerd_root: ""
 # (separate concern from data-root, both load-bearing).
 docker_engine_log_max_size: "100m"
 docker_engine_log_max_file: "3"
+
+# Registries the daemon may reach over plain HTTP (daemon.json
+# `insecure-registries`), as host:port. Empty by default: daemon.json is then
+# byte-identical to what it was before this knob. A goatlite whose
+# lite.image_registry names a LAN registry gets it from the renderer
+# (ops/recipes/local-registry/README.md). Pins are digest-pinned, so the
+# content pulled is still checked against the digest; what plain HTTP gives
+# up is the registry's identity, not the image's. 127.0.0.0/8 needs no entry.
+docker_engine_insecure_registries: []
 
 # Docker group membership: OPT-IN, and root-equivalent. Empty by default,
 # so no new membership is granted unless explicitly configured. Accounts

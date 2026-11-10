@@ -20,6 +20,15 @@
 #
 # Persists nothing but the optional band JSON — no secrets, no .env.
 
+- name: fabric-crawler | the image pin is set
+  ansible.builtin.assert:
+    that:
+      - fabric_crawler_image | length > 0
+    fail_msg: >-
+      fabric_crawler_image is empty. The role carries no pin: set it in the
+      goatnet's pin table (ops/pins/fleet-pins.yaml) or in its group_vars.
+    quiet: true
+
 - name: fabric-crawler | pre-flight leaf cert exists (when tls/ endpoint)
   ansible.builtin.stat:
     path: "{{ fabric_crawler_cert_dir }}/{{ fabric_crawler_cert_file }}"

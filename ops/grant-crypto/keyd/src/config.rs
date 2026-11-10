@@ -297,7 +297,10 @@ mod tests {
             r#"{"signer_id":"s","signing_key_pem":"k","cert_dir":"d","release_sets":{"rs":["a"]},"portal_ca_bundle":"/root-cert.pem","portal_uri_prefix":"urn:goat:zagros:org="}"#,
         );
         let cfg = Config::load(&both).expect("both set is valid");
-        assert_eq!(cfg.portal_uri_prefix.as_deref(), Some("urn:goat:zagros:org="));
+        assert_eq!(
+            cfg.portal_uri_prefix.as_deref(),
+            Some("urn:goat:zagros:org=")
+        );
     }
 
     #[test]

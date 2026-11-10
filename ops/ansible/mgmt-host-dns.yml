@@ -3,16 +3,16 @@
 # add this site's mesh CoreDNS to the Netbird nameserver group (additive,
 # multi-site pattern).
 #
-# Generic for ANY site (vega, future region B, future Karbon swaps).
+# Generic for ANY site.
 # Per-site bind IP is derived from inventory `mesh_ip_a` (Router-A) or
 # `mesh_ip_b` (Router-B); pick which Router runs CoreDNS via `--limit`.
 #
 # Usage:
-#   # for vega Router-A:
+#   # for a site's Router-A:
 #   OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES \
 #     ansible-playbook -i inventory/hosts.ini -i inventory/mgmt-hosts.ini \
 #       -i inventory/mgmt-hosts-mesh.ini \
-#       -l mgmt-vega-01-orin mgmt-host-dns.yml
+#       -l mgmt-<site>-01 mgmt-host-dns.yml
 #
 # Pre-requisites:
 #   - Host has a netbird mesh IP (`netbird up` already enrolled it)
@@ -25,11 +25,12 @@
 # nameserver group if not already present; otherwise no-op on the API side.
 #
 # Convention:
-#   - One netbird nameserver group per mesh ("goat-mesh-dns").
+#   - One netbird nameserver group per mesh (mesh_dns_nameserver_group;
+#     unset, "<site_id>-mesh-dns").
 #   - Each site's mgmt CoreDNS adds itself as an entry; peers query
 #     whichever resolver they're closest to (netbird picks one).
-#   - This is "additive" rather than "replace" — NETHOST's resolver remains
-#     in the group alongside vega's, etc.
+#   - This is "additive" rather than "replace" — a resolver already in the
+#     group remains alongside this site's.
 
 - name: Deploy mesh DNS (CoreDNS) on mgmt-host site + register with Netbird
   hosts: "{{ target | mandatory }}"
@@ -37,8 +38,8 @@
 
   vars:
     # Two possible binds, both optional; at least one MUST be set:
-    # 1) mesh_coredns_bind_ip — netbird-mesh IP (legacy NETHOST + future
-    #    netbird-enrolled mgmt-hosts). "TBD" or empty for goat-prod Orins
+    # 1) mesh_coredns_bind_ip — netbird-mesh IP (netbird-enrolled
+    #    mgmt-hosts). "TBD" or empty for goat-prod Orins
     #    which are NOT netbird peers — in that case the role binds only
     #    on the wg-cp0 IP.
     # 2) mesh_coredns_wg_cp0_bind_ip — Block 79 silent-control-plane bind.
@@ -49,8 +50,8 @@
     mesh_coredns_bind_ip: "{{ '' if (mesh_ip_resolved in ['TBD', '']) else mesh_ip_resolved }}"
     mesh_coredns_wg_cp0_bind_ip: "{{ wg_cp0_client_address | default('') }}"
     netbird_api_token: "{{ lookup('env', 'NETBIRD_API_TOKEN') }}"
-    netbird_api: "https://netbird.legacy.example/api"
-    netbird_nameserver_group_name: "goat-mesh-dns"
+    netbird_api: "https://{{ netbird_domain }}/api"
+    netbird_nameserver_group_name: "{{ mesh_dns_nameserver_group | default((site_id | default('goat')) ~ '-mesh-dns') }}"
 
   pre_tasks:
     - name: Validate at least one bind IP is resolvable (netbird-mesh OR wg-cp0)
@@ -100,7 +101,7 @@
       when: mesh_coredns_bind_ip | length > 0
 
     # Block 79 closure: when mesh_coredns_bind_ip is empty
-    # (host is wg-cp0-only — vega-A/B/C, prov-rla/jdn/conus), the
+    # (host is wg-cp0-only), the
     # set_fact above is skipped and downstream `when: mesh_dns_group
     # is not none` evaluates against an UNDEFINED variable → fatal.
     # Default to None here so the downstream guards behave as designed.
@@ -137,7 +138,7 @@
         body_format: json
         body:
           name: "{{ mesh_dns_group.name }}"
-          description: "Mesh DNS — resolves *.netbird.legacy.example via mesh CoreDNS over WireGuard (multi-site)."
+          description: "Mesh DNS — resolves *.{{ netbird_domain }} via mesh CoreDNS over WireGuard (multi-site)."
           nameservers: "{{ (mesh_dns_group.nameservers + [ns_new_entry]) }}"
           domains: "{{ mesh_dns_group.domains }}"
           groups: >-
@@ -169,7 +170,8 @@
       ansible.builtin.debug:
         msg: >-
           WARNING: No nameserver group named '{{ netbird_nameserver_group_name }}' found.
-          Create it via the Netbird dashboard or `nethost-dns.yml`.
+          Create it in the Netbird dashboard, or with the playbook that
+          deploys this mesh's first resolver.
           Available groups: {{ ns_groups.json | map(attribute='name') | list }}
       when:
         - mesh_coredns_bind_ip | length > 0

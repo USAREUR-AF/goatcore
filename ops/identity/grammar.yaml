@@ -193,7 +193,7 @@ dimensions:
       body) and is eligible for that framework's member release-lane (e.g. REL
       NATO); partner = not a member — bilateral / coalition release-lanes only,
       never the member lane by standing. Framework-neutral by design so goat net
-      serves any region (AFRICOM / the command / INDOPACOM / SOUTHCOM / Arctic /
+      serves any region (AFRICOM / INDOPACOM / SOUTHCOM / Arctic /
       Homeland / Global), not just the Euro-Atlantic / NATO case. Nation-derived
       and effective-dated — membership changes (FIN member 2023-04-04, SWE
       2024-03-07) — so it rides the registry (currently-is), never the frozen cert
@@ -838,6 +838,16 @@ dimensions:
           Reached by that site's network engineers on the device-admin ports.
         authority: native
         basis: "ADR 1216"
+      PEERING-EDGE:
+        definition: >-
+          A federation edge router (ADR 1157) that stays a peer of our own mesh.
+          It initiates to FABRIC-CORE on the fabric TLS port and nothing else;
+          PLATFORM-ADMIN reaches it on tcp 22 and nothing else does. No other
+          fabric, web or DNS reach, no lateral reach, never P2P. Placed by the
+          membership declaration, never minted: the setup key that enrolled the
+          box does not grant it.
+        authority: native
+        basis: "ADR 1219"
       MOON:
         definition: >-
           Uplink peer of a foreign-stack goatnet (its own mgmt / identity / CA,

@@ -6,7 +6,7 @@
 # soak window costs more than the risk of skipping it.
 #
 # WHAT IT DOES (the fourteen steps `graduate.py hotfix` prints for you):
-#   resolve the image digest under ghcr.io/usareur-af (ADR 1195) -> move fleet-pins `fleet:` and clear that component's
+#   resolve the image digest under the one image namespace (ADR 1195) -> move fleet-pins `fleet:` and clear that component's
 #   deviations -> regenerate pins + intents -> re-sign every goatnet's intent
 #   -> write a hotfix-class record marking it a fastlane -> open a PR and set
 #   it to auto-merge -> deploy to every goatnet -> report.
@@ -34,6 +34,15 @@ if [ -f "$_keep_awake" ]; then . "$_keep_awake"; goat_keep_awake; fi
 REPO="$(git rev-parse --show-toplevel)"
 PINS="$REPO/ops/pins/fleet-pins.yaml"
 GRADUATE="$REPO/ops/release/graduate.py"
+# Where this machine keeps the project's CA keys (deploy.state_dir in
+# ops/goatbuilder/goatbuilder.yaml, else ~/.goat/state) and the audit log
+# intent-sign appends to, ca-audit.jsonl beside it: the builder's rule.
+STATE_DIR="$("$REPO/ops/scripts/project-setting.sh" --repo "$REPO" deploy state_dir 2>/dev/null || true)"
+# shellcheck disable=SC2088  # a declared path is written with a literal "~/"
+[ -n "$STATE_DIR" ] || STATE_DIR="~/.goat/state"
+# shellcheck disable=SC2088  # matching the literal "~/" of a declared path
+case "$STATE_DIR" in "~/"*) STATE_DIR="$HOME/${STATE_DIR#\~/}" ;; esac
+AUDIT_LOG="$(dirname "$STATE_DIR")/ca-audit.jsonl"
 
 die()  { printf '\nfastlane: REFUSE — %s\n\n' "$*" >&2; exit 1; }
 step() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
@@ -158,8 +167,8 @@ fi
 note "not in an open set"
 
 # ---------------------------------------------------------------------------
-# 3. Resolve the ref to its digest under ghcr.io/usareur-af, the only namespace
-#    (ADR 1195). The image must already exist — fastlane never builds.
+# 3. Resolve the ref to its digest under the registry owner the checkout
+#    declares, the only namespace (ADR 1195). The image must already exist — fastlane never builds.
 # ---------------------------------------------------------------------------
 step "resolving image digest"
 IMAGE_NAME="$(printf '%s' "$CURRENT_FLEET" | sed -E 's#.*/([^/:@]+)[:@].*#\1#')"
@@ -337,7 +346,7 @@ PY
   [ -n "$CA" ] || die "intent for goatnet $GOATNET declares no ca_id"
   # Derive the key path from the ca_id rather than listing goatnets here.
   # A ca_id is `dev-<ca-name>-ecdsa-<date>` and the operator's key store is
-  # `~/.goat/state/<ca-name>/ca.key.age`, so the name is already in the
+  # `<state dir>/<ca-name>/ca.key.age`, so the name is already in the
   # data — `dev-site-a-ca-ecdsa-2026-01-01` -> `site-a-ca`. A case statement
   # naming goatnets would make a new goatnet's CA a code change in a script
   # nobody thinks about at standup time.
@@ -350,15 +359,16 @@ PY
   if [ -z "$KEY" ]; then
     CA_NAME="$(printf '%s' "$CA" | sed -e 's/^dev-//' -e 's/-ecdsa-[0-9-]*$//')"
     [ -n "$CA_NAME" ] || die "cannot derive a CA name from ca_id '$CA' (goatnet $GOATNET)"
-    KEY="$HOME/.goat/state/$CA_NAME/ca.key.age"
+    KEY="$STATE_DIR/$CA_NAME/ca.key.age"
   fi
   if [ ! -f "$KEY" ]; then
     die "CA key not found at $KEY for goatnet $GOATNET (ca_id '$CA').
     This goatnet's root key is not on this laptop, or its store does not follow
-    ~/.goat/state/<ca-name>/ca.key.age. Point $CA_OVERRIDE at the file."
+    <deploy.state_dir>/<ca-name>/ca.key.age. Point $CA_OVERRIDE at the file."
   fi
   ( cd "$REPO/ops/enrollment" && go run ./cmd/intent-sign \
-      --intent "$INTENT" --root-key "$KEY" --age-identity "$HOME/.config/age/keys.txt" ) \
+      --intent "$INTENT" --root-key "$KEY" --age-identity "$HOME/.config/age/keys.txt" \
+      --audit-log "$AUDIT_LOG" ) \
     | sed 's/^/    /'
 done
 

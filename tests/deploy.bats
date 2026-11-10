@@ -3,6 +3,13 @@
 
 REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/.." && pwd)"
 
+# This tree may not carry the code a test reads (a public goatcore checkout
+# does not carry a goatnet's own scripts); such a test is skipped by name,
+# and runs wherever that code is present.
+setup() {
+  [ -f "$REPO_ROOT/deploy.sh" ] || skip "deploy.sh is not in this tree"
+}
+
 # ── Script structure ────────────────────────────────────
 
 @test "deploy.sh: uses set -euo pipefail" {

@@ -7,7 +7,7 @@ package certmint_test
 // target, ECDH over P-256 (envelope.RecipientFromCert / grant-keyd's EC-only
 // rule). Ed25519 can sign but cannot ECDH — so if certmint's argv ever drops
 // --key-type ecdsa-p256, every portal-minted participant silently loses the
-// ability to decrypt.
+// ability to decrypt .
 //
 // This test runs the REAL production path — certmint.Mint shelling to the real
 // cert-sign against a throwaway offline CA — and asserts the minted leaf is
@@ -43,7 +43,7 @@ func TestMint_RealCertSign_LeafIsP256Recipient(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-	// cert-sign appends to ~/.goat/ca-audit.jsonl by default; keep the
+	// cert-sign appends to a CA audit log under $HOME by default; keep the
 	// conformance mint's audit line out of the operator's real audit log.
 	t.Setenv("HOME", dir)
 	run := func(name string, args ...string) string {
@@ -86,14 +86,15 @@ func TestMint_RealCertSign_LeafIsP256Recipient(t *testing.T) {
 		AgeIdentityPath:  ident,
 		CAID:             "conformance-ca",
 		SiteID:           "conformance",
-		URIPrefix:        "urn:goat:zagros:org=",
-		DNSSuffix:        "zagros.peer",
-		NovaRoot:    filepath.Join(caDir, "root-cert.pem"),
+		Org:              "Conformance Org",
+		URIPrefix:        "urn:goat:galaxy:org=",
+		DNSSuffix:        "galaxy.peer",
+		CARoot:           filepath.Join(caDir, "root-cert.pem"),
 		OnboardingPacket: onb,
 		VendorBundleDir:  filepath.Join(dir, "bundles"),
 		Validity:         24 * time.Hour,
 	}
-	// Slot-pool shape (ADR 1025): CN = the bare anchor, exactly as ZAGROS mints.
+	// Slot-pool shape (ADR 1025): CN = the bare anchor, exactly as GALAXY mints.
 	res, err := m.Mint(context.Background(), "acme", "vp_conformance", certmint.MintOptions{CommonName: "acme"})
 	if err != nil {
 		t.Fatalf("real-mode mint: %v", err)
@@ -128,6 +129,10 @@ func TestMint_RealCertSign_LeafIsP256Recipient(t *testing.T) {
 	}
 	if pub.Curve != elliptic.P256() {
 		t.Fatalf("minted leaf curve is %s; the recipient contract requires P-256", pub.Curve.Params().Name)
+	}
+	// The goatnet's Subject O reaches the leaf (cert-sign --org).
+	if len(cert.Subject.Organization) != 1 || cert.Subject.Organization[0] != "Conformance Org" {
+		t.Errorf("leaf O = %q; want [\"Conformance Org\"] from Minter.Org", cert.Subject.Organization)
 	}
 	if cert.Subject.CommonName != "acme" {
 		t.Errorf("leaf CN = %q; want the bare anchor \"acme\" (slot-pool shape)", cert.Subject.CommonName)

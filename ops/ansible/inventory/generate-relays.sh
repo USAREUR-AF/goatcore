@@ -23,8 +23,11 @@
 #                       aws-vault — use `aws-vault exec <profile> --no-session`
 #                                   where <profile> resolves in this order:
 #                                     (1) AWS_VAULT_PROFILE_<ENV_UPPER> env var
-#                                     (2) hardcoded mapping (prod → usareur-af)
-#                                     (3) env name (legacy → legacy)
+#                                     (2) GOAT_AWS_PROFILE env var
+#                                     (3) deploy.aws_profile in the checkout's
+#                                         ops/goatbuilder/goatbuilder.yaml
+#                                     (4) hardcoded mapping (prod → usareur-af)
+#                                     (5) env name (legacy → legacy)
 #                     Default: envvars if present, else aws-vault.
 #
 # Examples:
@@ -34,7 +37,13 @@
 #
 # Outputs:
 #   inventory/hosts-<env>.ini    Ansible inventory with [relay_servers] group
-#   /tmp/<env>-ssh-keys/         SSH private keys per relay (mode 0600)
+#   <state_dir>/relay-ssh-keys/<env>/
+#                                SSH private keys per relay (dir 0700, files
+#                                0600). state_dir = deploy.state_dir in
+#                                ops/goatbuilder/goatbuilder.yaml, else
+#                                ~/.goat/state; RELAY_SSH_KEY_DIR overrides.
+#                                Never under /tmp: a copy an earlier run left in
+#                                /tmp/<env>-ssh-keys/ is removed.
 #   ops/relay-env-<env>.sh       Bash-friendly relay metadata
 #
 # Pre-requisites:
@@ -78,7 +87,17 @@ ANSIBLE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 REPO_DIR="$(cd "$ANSIBLE_DIR/../.." && pwd)"
 TF_DIR="$REPO_DIR/$TF_DIR_RELATIVE"
 INVENTORY_FILE="$SCRIPT_DIR/hosts-${ENV_NAME}.ini"
-KEY_DIR="/tmp/${ENV_NAME}-ssh-keys"
+PROJECT_SETTING="$REPO_DIR/ops/scripts/project-setting.sh"
+project_setting() {  # project_setting <section> <key> — empty when undeclared
+  [ -x "$PROJECT_SETTING" ] || [ -f "$PROJECT_SETTING" ] || return 0
+  bash "$PROJECT_SETTING" --repo "$REPO_DIR" "$@" 2>/dev/null || true
+}
+STATE_DIR="$(project_setting deploy state_dir)"
+STATE_DIR="${STATE_DIR:-~/.goat/state}"
+# shellcheck disable=SC2088  # expand a leading ~ the declaration may carry
+case "$STATE_DIR" in "~"|"~/"*) STATE_DIR="$HOME${STATE_DIR#\~}" ;; esac
+KEY_DIR="${RELAY_SSH_KEY_DIR:-${STATE_DIR%/}/relay-ssh-keys/${ENV_NAME}}"
+LEGACY_TMP_KEY_DIR="/tmp/${ENV_NAME}-ssh-keys"
 RELAY_ENV_FILE="$REPO_DIR/ops/relay-env-${ENV_NAME}.sh"
 
 if [ ! -d "$TF_DIR" ]; then
@@ -195,24 +214,32 @@ elif [ "$AUTH_MODE" = "aws-vault" ]; then
   #      env-var override per (1) — DO NOT extend this fallback further;
   #      it's load-bearing-by-historical-accident only.
   #   3. Otherwise: env name = profile name (the original assumption).
+  #   Between (1) and (2): GOAT_AWS_PROFILE, then the checkout's declared
+  #   deploy.aws_profile (ops/goatbuilder/goatbuilder.yaml), the same profile
+  #   goatbuilder runs every ansible call under (crates/goatbuilder/src/settings.rs).
   AWS_VAULT_PROFILE_VAR="AWS_VAULT_PROFILE_${ENV_UPPER}"
+  DECLARED_AWS_PROFILE="$(project_setting deploy aws_profile)"
+  # The source is recorded so a failure can say WHERE the profile name came
+  # from, which is the difference between "you set it wrong" and "nobody set
+  # it at all".
   if [ -n "${!AWS_VAULT_PROFILE_VAR:-}" ]; then
     AWS_VAULT_PROFILE="${!AWS_VAULT_PROFILE_VAR}"
+    AWS_AUTH_SOURCE="\$$AWS_VAULT_PROFILE_VAR"
+  elif [ -n "${GOAT_AWS_PROFILE:-}" ]; then
+    AWS_VAULT_PROFILE="$GOAT_AWS_PROFILE"
+    AWS_AUTH_SOURCE="\$GOAT_AWS_PROFILE"
+  elif [ -n "$DECLARED_AWS_PROFILE" ]; then
+    AWS_VAULT_PROFILE="$DECLARED_AWS_PROFILE"
+    AWS_AUTH_SOURCE="deploy.aws_profile in ops/goatbuilder/goatbuilder.yaml"
   elif [ "$ENV_NAME" = "prod" ]; then
     AWS_VAULT_PROFILE="usareur-af"
-  else
-    AWS_VAULT_PROFILE="$ENV_NAME"
-  fi
-  AWS_WRAP="aws-vault exec ${AWS_VAULT_PROFILE} --no-session --"
-  # Recorded so a failure can say WHERE the profile name came from, which is
-  # the difference between "you set it wrong" and "nobody set it at all".
-  if [ -n "${!AWS_VAULT_PROFILE_VAR:-}" ]; then
-    AWS_AUTH_SOURCE="\$$AWS_VAULT_PROFILE_VAR"
-  elif [ "$ENV_NAME" = "prod" ]; then
     AWS_AUTH_SOURCE="the prod->usareur-af fallback"
   else
-    AWS_AUTH_SOURCE="the env name, because \$$AWS_VAULT_PROFILE_VAR is unset"
+    AWS_VAULT_PROFILE="$ENV_NAME"
+    AWS_AUTH_SOURCE="the env name, because \$$AWS_VAULT_PROFILE_VAR, \$GOAT_AWS_PROFILE and deploy.aws_profile are unset"
   fi
+  AWS_WRAP="aws-vault exec ${AWS_VAULT_PROFILE} --no-session --"
+  echo "==> aws-vault profile: $AWS_VAULT_PROFILE (from $AWS_AUTH_SOURCE)"
 else
   echo "ERROR: unknown aws_auth_mode '$AUTH_MODE' (expected envvars or aws-vault)" >&2
   exit 67
@@ -248,17 +275,23 @@ SSM_BUCKET=$($AWS_WRAP terraform output -json ansible_ssm_bucket 2>/dev/null \
 # if the read came back empty. Both reads above send stderr to /dev/null so a
 # noisy-but-successful terraform does not corrupt the JSON — which also throws
 # away the one line that says WHY an empty result happened.
+# The capture ends in `|| true`: under `set -euo pipefail` a failing aws-vault
+# or terraform would otherwise end the script right here, silently, which is
+# the one moment its error is the answer.
 TF_STDERR=""
 if [ -z "$RELAY_JSON" ] || [ "$RELAY_JSON" = "{}" ] || [ -z "$SSM_BUCKET" ]; then
-  TF_STDERR=$($AWS_WRAP terraform output -json relays 2>&1 >/dev/null | head -4)
+  TF_STDERR=$($AWS_WRAP terraform output -json relays 2>&1 >/dev/null | head -8 || true)
 fi
 
 if [ -z "$RELAY_JSON" ] || [ "$RELAY_JSON" = "{}" ]; then
   echo "ERROR: could not read the 'relays' output from $TF_DIR_RELATIVE." >&2
   echo >&2
   if [ -n "$TF_STDERR" ]; then
-    echo "  terraform said:" >&2
-    printf '    %s\n' "$TF_STDERR" >&2
+    echo "  ${AWS_WRAP:+aws-vault / }terraform said:" >&2
+    printf '%s\n' "$TF_STDERR" | sed 's/^/    /' >&2
+    echo >&2
+  else
+    echo "  (${AWS_WRAP:+aws-vault and }terraform printed no error.)" >&2
     echo >&2
   fi
   # The old text said only "Apply first, or confirm the tree exposes a 'relays'
@@ -268,10 +301,15 @@ if [ -z "$RELAY_JSON" ] || [ "$RELAY_JSON" = "{}" ]; then
   # `aws-vault exec zagros-dev`, a profile that does not exist. Naming the wrong
   # cause sent the reader to check the one thing that was already fine.
   echo "  Checked in this order:" >&2
+  if [ "$AUTH_MODE" = "aws-vault" ]; then
   echo "    1. AWS profile — this run used '$AWS_VAULT_PROFILE' (from $AWS_AUTH_SOURCE)." >&2
   echo "       If that profile does not exist, terraform cannot reach the state" >&2
-  echo "       backend and every output reads empty. Set" >&2
-  echo "       AWS_VAULT_PROFILE_${ENV_UPPER}=<profile> in .envrc.local." >&2
+  echo "       backend and every output reads empty. Declare deploy.aws_profile in" >&2
+  echo "       ops/goatbuilder/goatbuilder.yaml, or set" >&2
+  echo "       AWS_VAULT_PROFILE_${ENV_UPPER}=<profile> for this env." >&2
+  else
+  echo "    1. AWS credentials — this run used \$$ACCESS_KEY_VAR / \$$SECRET_KEY_VAR." >&2
+  fi
   echo "    2. terraform init — an uninitialised tree cannot read remote state." >&2
   echo "    3. apply — the tree may genuinely have no relays yet." >&2
   echo "    4. the output itself — confirm a 'relays' map output exists." >&2
@@ -281,6 +319,9 @@ fi
 if [ -z "$SSM_BUCKET" ]; then
   echo "ERROR: 'ansible_ssm_bucket' output empty or unparseable in $TF_DIR_RELATIVE." >&2
   echo "       Apply first, or confirm the tree exposes 'ansible_ssm_bucket'." >&2
+  if [ -n "$TF_STDERR" ]; then
+    printf '%s\n' "$TF_STDERR" | sed 's/^/    /' >&2
+  fi
   exit 69
 fi
 
@@ -288,8 +329,14 @@ fi
 RELAY_NAMES=$(echo "$RELAY_JSON" | python3 -c "import sys,json; print(' '.join(sorted(json.load(sys.stdin).keys())))")
 echo "==> Found relays: $RELAY_NAMES"
 
-# Fetch SSH keys from Secrets Manager
-mkdir -p "$KEY_DIR"
+# Fetch SSH keys from Secrets Manager into a private directory under the
+# user's state dir. A copy an earlier version of this script left in /tmp is
+# removed: private keys do not stay in a world-listable directory.
+if [ -d "$LEGACY_TMP_KEY_DIR" ] && [ -O "$LEGACY_TMP_KEY_DIR" ]; then
+  rm -rf -- "$LEGACY_TMP_KEY_DIR"
+  echo "==> Removed the old relay key copy in $LEGACY_TMP_KEY_DIR/"
+fi
+(umask 077 && mkdir -p "$KEY_DIR")
 chmod 700 "$KEY_DIR"
 
 for name in $RELAY_NAMES; do
@@ -298,9 +345,10 @@ for name in $RELAY_NAMES; do
   key_file="$KEY_DIR/${name}.pem"
 
   echo "==> Fetching SSH key for $name (region $region, secret $secret_name)"
-  $AWS_WRAP aws secretsmanager get-secret-value \
-    --secret-id "$secret_name" --region "$region" \
-    --query SecretString --output text > "$key_file" 2>/dev/null || {
+  ( umask 077
+    $AWS_WRAP aws secretsmanager get-secret-value \
+      --secret-id "$secret_name" --region "$region" \
+      --query SecretString --output text > "$key_file" 2>/dev/null ) || {
       echo "  WARNING: could not fetch $secret_name; key file empty"
     }
   chmod 600 "$key_file"
@@ -366,7 +414,7 @@ deploy_rathole=false
 # mesh-internal DNS is per-site CoreDNS on Orin-A; relay-side dnsmasq
 # only ever served the legacy single-NETHOST topology and is vestigial
 # on prod (its addn-hosts zone resolves *.netbird.legacy.example to
-# the legacy NETHOST at 100.127.1.32 — unreachable + irrelevant for
+# the legacy NETHOST at 100.127.1.23 — unreachable + irrelevant for
 # prod peers). relay-server.yml fires the explicit stop+disable+purge
 # path when this flag is false.
 deploy_dnsmasq=false
@@ -493,6 +541,6 @@ echo "==> Generating $RELAY_ENV_FILE"
 echo ""
 echo "==> Inventory:  $INVENTORY_FILE"
 echo "==> Relay env:  $RELAY_ENV_FILE"
-echo "==> SSH keys:   $KEY_DIR/"
+echo "==> SSH keys:   $KEY_DIR/ (mode 0700; private keys, delete with the inventory)"
 echo ""
 echo "Next: ansible-playbook -i $INVENTORY_FILE relay-server.yml"

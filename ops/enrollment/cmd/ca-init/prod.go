@@ -37,10 +37,10 @@ import (
 	"github.com/usareur-af/goatcore/ops/enrollment/x509ca"
 )
 
-func runProd(idFlag, cardSelector, pivSlotName, mgmtKeyHex, pinFlag, genRootCertPath, rootCN, rootOU, pubKeyDir string) {
+func runProd(idFlag, cardSelector, pivSlotName, mgmtKeyHex, pinFlag, genRootCertPath, rootCN, rootOU, org, slotCertSubject, pubKeyDir string) {
 	caID := idFlag
 	if caID == "" {
-		caID = "prod-goat-ca-" + time.Now().UTC().Format("2006-01-02")
+		caID = "prod-" + ca.DefaultCAIDStem + "-" + time.Now().UTC().Format("2006-01-02")
 	} else if !strings.HasPrefix(caID, "prod-") && !strings.HasPrefix(caID, "test-") {
 		caID = "prod-" + caID
 	}
@@ -82,6 +82,7 @@ func runProd(idFlag, cardSelector, pivSlotName, mgmtKeyHex, pinFlag, genRootCert
 		ManagementKey: mgmtKey,
 		PIN:           pin,
 		CAID:          caID,
+		CertSubject:   slotCertSubject,
 	})
 	if err != nil {
 		fatal("YubikeyGenerate: %v", err)
@@ -127,8 +128,9 @@ func runProd(idFlag, cardSelector, pivSlotName, mgmtKeyHex, pinFlag, genRootCert
 			warnDerivedCN(cn)
 		}
 		rootPEM, _, err := x509ca.GenerateRootCert(signer, x509ca.RootCertOptions{
-			CommonName: cn,
-			OrgUnit:    rootOU,
+			CommonName:   cn,
+			OrgUnit:      rootOU,
+			Organization: org,
 		})
 		if err != nil {
 			fatal("generate root cert: %v", err)

@@ -8,6 +8,9 @@
 #                       [--cascade-from-operator USER --since RFC3339]
 #                       --ssm-instance i-... --ssm-region eu-central-1
 #
+# AWS_VAULT_PROFILE names the aws-vault profile of the account that holds the
+# instance.
+#
 # Modes:
 #   single:  revoke exactly the named key
 #   cascade: revoke every unrevoked key created by a named operator since
@@ -26,12 +29,13 @@ while [ $# -gt 0 ]; do
     --since)                 CASCADE_SINCE=$2; shift 2;;
     --ssm-instance)          SSM_INSTANCE=$2; shift 2;;
     --ssm-region)            SSM_REGION=$2; shift 2;;
-    -h|--help) sed -n '2,15p' "$0"; exit 0;;
+    -h|--help) sed -n '2,18p' "$0"; exit 0;;
     *) echo "unknown arg: $1" >&2; exit 2;;
   esac
 done
 
 [ -z "$SSM_INSTANCE" ] && { echo "--ssm-instance required" >&2; exit 2; }
+: "${AWS_VAULT_PROFILE:?set AWS_VAULT_PROFILE to the aws-vault profile of the account that holds the instance}"
 [ -z "$SSM_REGION" ]   && { echo "--ssm-region required" >&2; exit 2; }
 [ -z "$KEY_NAME$CASCADE_OP" ] && { echo "--key-name or --cascade-from-operator required" >&2; exit 2; }
 
@@ -74,12 +78,12 @@ cat >"$JSON" <<JSON
 {"commands":["docker exec -i postgres-a psql -U postgres netbird <<'EOF'\n$SQL\nEOF"]}
 JSON
 
-CMD_ID=$(aws-vault exec legacy --no-session -- aws ssm send-command \
+CMD_ID=$(aws-vault exec "$AWS_VAULT_PROFILE" --no-session -- aws ssm send-command \
   --region "$SSM_REGION" --instance-ids "$SSM_INSTANCE" \
   --document-name AWS-RunShellScript --parameters "file://$JSON" \
   --output text --query 'Command.CommandId')
 for _ in $(seq 1 30); do
-  STATUS=$(aws-vault exec legacy --no-session -- aws ssm get-command-invocation \
+  STATUS=$(aws-vault exec "$AWS_VAULT_PROFILE" --no-session -- aws ssm get-command-invocation \
     --region "$SSM_REGION" --instance-id "$SSM_INSTANCE" --command-id "$CMD_ID" \
     --query 'Status' --output text 2>/dev/null || true)
   case "$STATUS" in
@@ -87,7 +91,7 @@ for _ in $(seq 1 30); do
   esac
   sleep 2
 done
-OUT=$(aws-vault exec legacy --no-session -- aws ssm get-command-invocation \
+OUT=$(aws-vault exec "$AWS_VAULT_PROFILE" --no-session -- aws ssm get-command-invocation \
   --region "$SSM_REGION" --instance-id "$SSM_INSTANCE" --command-id "$CMD_ID" \
   --query 'StandardOutputContent' --output text 2>/dev/null || true)
 rm -f "$JSON"

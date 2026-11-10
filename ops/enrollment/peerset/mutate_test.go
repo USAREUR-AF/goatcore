@@ -7,16 +7,16 @@ import (
 )
 
 func samplePeer(name, pubkey, addr string) Peer {
-	return Peer{Name: name, CurrentPubkey: pubkey, WGCP0Address: addr, Role: "mgmt-host", Site: "vega"}
+	return Peer{Name: name, CurrentPubkey: pubkey, WGCP0Address: addr, Role: "mgmt-host", Site: "lab"}
 }
 
 func TestUpsert_InsertsNewPeerAndStampsMetadata(t *testing.T) {
 	t.Cleanup(fixedClock(time.Date(2026, 5, 14, 10, 0, 0, 0, time.UTC)))
 	ps := emptyV2()
-	if err := ps.Upsert(samplePeer("vega-a", "PUB1", "198.18.0.1")); err != nil {
+	if err := ps.Upsert(samplePeer("lab-a", "PUB1", "198.18.0.1")); err != nil {
 		t.Fatalf("Upsert: %v", err)
 	}
-	got, ok := ps.Lookup("vega-a")
+	got, ok := ps.Lookup("lab-a")
 	if !ok || got.CurrentPubkey != "PUB1" {
 		t.Fatalf("did not insert: %+v", ps.Peers)
 	}
@@ -31,8 +31,8 @@ func TestUpsert_InsertsNewPeerAndStampsMetadata(t *testing.T) {
 func TestUpsert_ReplacesByName(t *testing.T) {
 	t.Cleanup(fixedClock(time.Date(2026, 5, 14, 10, 0, 0, 0, time.UTC)))
 	ps := emptyV2()
-	_ = ps.Upsert(samplePeer("vega-a", "PUB1", "198.18.0.1"))
-	if err := ps.Upsert(samplePeer("vega-a", "PUB2", "198.18.0.1")); err != nil {
+	_ = ps.Upsert(samplePeer("lab-a", "PUB1", "198.18.0.1"))
+	if err := ps.Upsert(samplePeer("lab-a", "PUB2", "198.18.0.1")); err != nil {
 		t.Fatalf("re-upsert: %v", err)
 	}
 	if len(ps.Peers) != 1 {

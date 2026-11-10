@@ -83,6 +83,12 @@
       {%- if docker_engine_data_root | length > 0 %}
         "data-root": "{{ docker_engine_data_root }}",
       {%- endif %}
+      {%- if docker_engine_registry_mirrors | length > 0 %}
+        "registry-mirrors": {{ docker_engine_registry_mirrors | to_json }},
+      {%- endif %}
+      {%- if docker_engine_insecure_registries | default([]) | length > 0 %}
+        "insecure-registries": {{ docker_engine_insecure_registries | to_json }},
+      {%- endif %}
         "log-driver": "json-file",
         "log-opts": {
           "max-size": "{{ docker_engine_log_max_size }}",

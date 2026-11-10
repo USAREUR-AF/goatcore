@@ -96,7 +96,7 @@ rules:
       prefix of another cannot shadow it. This is the one matcher behind both
       the handle-keyed (person) and prefix-keyed (org) joins. Its limit is
       stated rather than papered over: the separator also occurs INSIDE handles
-      and tags, so `maintainer` does match `peer-maintainer-smith-…` whenever `maintainer-smith`
+      and tags, so `sam` does match `peer-sam-smith-…` whenever `sam-smith`
       is not itself among the candidates. Pass the FULL candidate set and let
       longest-wins disambiguate; for anything that acts on a principal, use
       `belongs_to`, which anchors on the site too.

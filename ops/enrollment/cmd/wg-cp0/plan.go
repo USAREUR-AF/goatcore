@@ -51,11 +51,11 @@ type PlanLine struct {
 // default) and --apply paths. Empty Plan is valid (operator-scannable
 // "nothing to do" output).
 type Plan struct {
-	Command     string     // command-line shape, e.g. "wg-cp0 update-endpoints vega-a --add-relay rld"
+	Command     string     // command-line shape, e.g. "wg-cp0 update-endpoints site-a --add-relay relay-b"
 	StateTarget string     // what file the state plan would mutate ("ops/enrollment/wg-cp0-bundle-allowlist.json")
 	State       []PlanLine // what would change in the JSON-of-record
 	Apply       []PlanLine // what would change in live wire state (bundle re-mint, relay-side wg syncconf, etc.)
-	Notes       []string   // free-form lines surfaced under the plan (e.g. "REUSING KEYPAIR for vega-a")
+	Notes       []string   // free-form lines surfaced under the plan (e.g. "REUSING KEYPAIR for site-a")
 }
 
 // glyph returns the leading character for a plan op, matching the

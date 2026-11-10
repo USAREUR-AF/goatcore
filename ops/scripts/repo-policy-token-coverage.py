@@ -4,7 +4,7 @@
 The identity console grants repository access with a fine-grained token, which
 sees only the repositories chosen when it was set up. A repository added to the
 repo-access policy later answers 404 to that token, and every grant to it fails
-for everyone onboarded after (USAREUR-AF/goatcore#2107). The id-admin-console role
+for everyone onboarded after (#2107). The id-admin-console role
 runs this before it deploys, with the deploying admin's token, and refuses the
 deploy when any policy repository is not covered.
 

@@ -701,7 +701,7 @@ impl WhoState {
 
     /// The human label for an anchor, in priority order:
     /// 1. the slot alias (`AliasRegistry`, e.g. `jane-doe`) — ADR 1039;
-    /// 2. the registry display name (`/api/vendors`, e.g. `org89x`) —
+    /// 2. the registry display name (`/api/vendors`, e.g. `acme`) —
     ///    vendors carry a display name but no slot alias, so without this they
     ///    rendered as a bare UUID even when the portal answered (a real
     ///    goat-who 0.4.7 bug, distinct from the portal-timeout one);

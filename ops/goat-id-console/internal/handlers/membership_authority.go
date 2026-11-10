@@ -31,7 +31,7 @@ func (a membershipAuthority) AllowsLiveRelease() bool {
 // inconsistent configuration is unknown and cannot authorize a live write.
 func (s *Server) membershipAuthority() membershipAuthority {
 	site := strings.TrimSpace(s.Cfg.NotifyGoatnet)
-	procedure := "https://github.com/usareur-af/goatcore/tree/main/ops/warrant/membership/" + url.PathEscape(site)
+	procedure := strings.TrimRight(s.Cfg.PlatformRepoURL, "/") + "/tree/main/ops/warrant/membership/" + url.PathEscape(site)
 	switch strings.TrimSpace(s.Cfg.MembershipAuthority) {
 	case authorityUngoverned:
 		return membershipAuthority{Mode: authorityUngoverned, Detail: "live membership is not warrant-governed", Procedure: procedure}

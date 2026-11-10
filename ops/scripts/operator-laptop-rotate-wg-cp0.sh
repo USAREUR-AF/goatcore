@@ -49,9 +49,16 @@ done
 # Locate bundle if not specified — first *.bundle.cbor in
 # ~/.goat/state/ (recursive).
 if [[ -z "$BUNDLE" ]]; then
-  BUNDLE="$(find "${HOME}/.goat/state" -name '*.bundle.cbor' -type f 2>/dev/null | head -1)"
+  # The project's state directory: deploy.state_dir in
+  # ops/goatbuilder/goatbuilder.yaml, else ~/.goat/state.
+  STATE_DIR="$("$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/project-setting.sh" deploy state_dir 2>/dev/null || true)"
+  # shellcheck disable=SC2088  # a declared path is written with a literal "~/"
+  [[ -n "$STATE_DIR" ]] || STATE_DIR="~/.goat/state"
+  # shellcheck disable=SC2088  # matching the literal "~/" of a declared path
+  case "$STATE_DIR" in "~/"*) STATE_DIR="${HOME}/${STATE_DIR#\~/}" ;; esac
+  BUNDLE="$(find "$STATE_DIR" -name '*.bundle.cbor' -type f 2>/dev/null | head -1)"
   if [[ -z "$BUNDLE" ]]; then
-    echo "ERROR: --bundle not given and no *.bundle.cbor found under ~/.goat/state/" >&2
+    echo "ERROR: --bundle not given and no *.bundle.cbor found under $STATE_DIR/" >&2
     exit 1
   fi
   echo "(auto-detected bundle: $BUNDLE)"

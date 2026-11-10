@@ -12,4 +12,5 @@ stderr = """
 error: no device manifest at /tmp/goat-cli-phase-f-4-no-such-repo-root/ops/devices/no-such-device.yml — author it from ops/devices/example.yml.example first
 """
 [env]
-add = { GOAT_OPERATOR_HANDLE = "trycmd-operator" }
+# Keep this fixture away from an operator's active profile and automatic refresh.
+add = { GOAT_OPERATOR_HANDLE = "trycmd-operator", GOAT_PROFILE_DIR = "/tmp/goat-cli-trycmd-uninitialized" }

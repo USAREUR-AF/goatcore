@@ -590,7 +590,7 @@ mod tests {
     #[test]
     fn passthrough_reports_inner_tool_before_outer_verb() {
         let text = "goatbuilder: GB-029: deploy FAILED — log /var/folders/x/goat-deploy-netvis.log\n\
-                    zagros_dev_hosts | UNREACHABLE! => {\"changed\": false, \"msg\": \"Failed to connect to the host via ssh: goat@100.127.0.152: Permission denied (publickey).\", \"unreachable\": true}";
+                    zagros_dev_hosts | UNREACHABLE! => {\"changed\": false, \"msg\": \"Failed to connect to the host via ssh: goat@100.127.0.155: Permission denied (publickey).\", \"unreachable\": true}";
         let i = interpret(text);
         let codes: Vec<&str> = i.hits.iter().map(|h| h.code.as_str()).collect();
         assert!(codes.contains(&"GB-029"), "{codes:?}");

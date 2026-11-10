@@ -215,8 +215,7 @@ fn resolve_move_ory_config(
     let cfg = super::admin::native_ory_config_for(Some(env), profile);
     if required && cfg.is_none() {
         anyhow::bail!(
-            "env `{env}` has no native Ory config — the Ory-plane leg supports \
-             zagros/zagros-prod/zagros-dev today"
+            "no Ory facts for goatnet `{env}` — run `goat context refresh` in that goatnet's context"
         );
     }
     Ok(cfg)
@@ -792,12 +791,22 @@ async fn run_move(ctx: &super::Ctx, a: MoveArgs) -> anyhow::Result<()> {
     // Warrant owns membership on a governed scope (mesh-change-control.md
     // §4.5): the mesh leg becomes an entry in the declaration, never a live
     // write. An ungoverned scope never enters this block.
-    let governed = mesh_plane && super::warrant::is_governed(&env);
+    let governance = if mesh_plane {
+        Some(super::warrant::governance(&env, &ctx.profile, &nb).await)
+    } else {
+        None
+    };
+    let governed = governance.is_some_and(|g| g.governed);
+    if let Some(g) = governance.filter(|g| g.governed) {
+        eprintln!("`{env}` membership is governed by warrant — {}", g.because());
+    }
     if a.write_entry && !governed {
         anyhow::bail!(
             "--write-entry applies only on a scope governed by warrant \
-             (ops/warrant/membership/<scope>/_scope.yaml says `converge: enforce`); \
-             `{env}` is not governed"
+             (its `_scope.yaml` says `converge: enforce`); `{env}` is not governed{}",
+            governance
+                .map(|g| format!(" — {}", g.because()))
+                .unwrap_or_default()
         );
     }
     if governed && (a.apply || a.write_entry) {
@@ -916,8 +925,7 @@ async fn run_move(ctx: &super::Ctx, a: MoveArgs) -> anyhow::Result<()> {
     if ory_plane || markers {
         let cfg = ory_config.as_ref().ok_or_else(|| {
             anyhow::anyhow!(
-                "env `{env}` has no native Ory config — the Ory-plane leg supports \
-                 zagros/zagros-prod/zagros-dev today"
+                "no Ory facts for goatnet `{env}` — run `goat context refresh` in that goatnet's context"
             )
         })?;
         for sel in &selectors {

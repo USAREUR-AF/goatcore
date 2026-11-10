@@ -74,7 +74,7 @@ func TestRun_List_PrintsCanonicalFleet(t *testing.T) {
 		t.Fatalf("code = %d", code)
 	}
 	// Canonical peers from CLAUDE.md fleet must appear.
-	wants := []string{"vega-a", "prov-conus", "op-laptop"}
+	wants := []string{"lab-a", "prov-conus", "op-laptop"}
 	for _, w := range wants {
 		if !strings.Contains(stdout, w) {
 			t.Errorf("list output missing peer %q", w)
@@ -86,11 +86,11 @@ func TestRun_List_FilterBySite(t *testing.T) {
 	// The v1 fixture migrates without site metadata, so a --site filter
 	// produces an empty result. That's the correct shape — the test
 	// asserts the filter logic runs.
-	code, stdout, _ := runArgs(t, "list", "--path", fixturePath, "--site", "vega")
+	code, stdout, _ := runArgs(t, "list", "--path", fixturePath, "--site", "lab")
 	if code != 0 {
 		t.Fatalf("code = %d, want 0", code)
 	}
-	for _, p := range []string{"vega-a", "prov-conus"} {
+	for _, p := range []string{"lab-a", "prov-conus"} {
 		if strings.Contains(stdout, p) {
 			t.Errorf("filter should have excluded %q (v1 has no site metadata)", p)
 		}
@@ -119,7 +119,7 @@ func TestRun_List_JSON(t *testing.T) {
 }
 
 func TestRun_Show_PrintsPeer(t *testing.T) {
-	code, stdout, _ := runArgs(t, "show", "vega-a", "--path", fixturePath)
+	code, stdout, _ := runArgs(t, "show", "lab-a", "--path", fixturePath)
 	if code != 0 {
 		t.Fatalf("code = %d", code)
 	}

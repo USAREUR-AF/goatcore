@@ -7,21 +7,23 @@
 # ops/time/attest/** and publishes a per-site honesty-graded reading on
 # ops/time/health/<site> (EnvHealthV1{domain:"time"}). Persists nothing.
 #
-# Out-of-the-box config targets nova-a; the same role covers ZAGROS (-e target=zagros_hosts).
+# Deployed per goatnet by time-health-deploy.yml (-e target=<site>_hosts).
 
-# Image — pinned per ADR 0859 (easy rollback). Built by
-# .github/workflows/time-health-image.yml. Multi-arch index digest verified
-# against ghcr (sha-3a4bb4e == the current :latest, built by PR #980).
-# To bump: resolve the new index digest with
+# Image — digest-pinned per ADR 0859 (easy rollback). The role carries no
+# pin: a goatnet's pin table (ops/pins/fleet-pins.yaml, rendered into
+# group_vars/<group>/pins.yml) or its group_vars set it, and the role
+# refuses an empty value. Built by .github/workflows/time-health-image.yml.
+# To bump: resolve the new multi-arch index digest with
 #   docker buildx imagetools inspect ghcr.io/{{ ghcr_org }}/goat-time-health:sha-<short> --format '{{.Manifest.Digest}}'
 # and append a matching deploy-history row.
-time_health_image: "ghcr.io/{{ ghcr_org }}/goat-time-health@sha256:d875d0d11ca1fe236367cdae109975ddd6e03cc2ebc2cac09c730b5b0fb32bec"
+time_health_image: ""
 
-# Site identifier — the `<site>` segment of ops/time/health/<site>.
-time_health_site: "nova-a"
+# Site identifier — the `<site>` segment of ops/time/health/<site>. The
+# default is the site short code.
+time_health_site: "{{ site_id }}"
 
 # Zenoh router endpoint + network (internal docker, container-name resolution),
-# derived from zenoh_stack (goat-zenoh on nova-a + ZAGROS).
+# derived from zenoh_stack.
 time_health_zenoh_endpoint: "tls/{{ zenoh_stack | default('goat-zenoh') }}-router:7447"
 time_health_zenoh_network: "{{ zenoh_stack | default('goat-zenoh') }}_default"
 

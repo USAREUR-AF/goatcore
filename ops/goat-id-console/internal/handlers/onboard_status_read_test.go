@@ -15,7 +15,7 @@ func TestConsumedInviteIsStatusRead(t *testing.T) {
 	h := s.Routes()
 	tok := mintTokenViaStore(t, s)
 
-	pid := submit(t, h, tok, map[string]any{"name": "Pat Liaison", "email": "person-119@example.org", "organization": "Status Org"})
+	pid := submit(t, h, tok, map[string]any{"name": "Pat Liaison", "email": "person-106@example.org", "organization": "Status Org"})
 
 	phase := func(want, detail string) {
 		t.Helper()
@@ -64,7 +64,7 @@ func TestConsumedInviteStatusRejected(t *testing.T) {
 	s := newOnboardTestServer(t)
 	h := s.Routes()
 	tok := mintTokenViaStore(t, s)
-	pid := submit(t, h, tok, map[string]any{"name": "Pat Liaison", "email": "person-119@example.org", "organization": "Status Org"})
+	pid := submit(t, h, tok, map[string]any{"name": "Pat Liaison", "email": "person-106@example.org", "organization": "Status Org"})
 	if err := s.Onboard.DecideProposal(context.Background(), pid, onboardstore.ProposalRejected, "admin@x", "no"); err != nil {
 		t.Fatalf("reject: %v", err)
 	}
@@ -80,11 +80,11 @@ func TestSubmitEmitAudit(t *testing.T) {
 	s := newOnboardTestServer(t)
 	h := s.Routes()
 	tok := mintTokenViaStore(t, s)
-	pid := submit(t, h, tok, map[string]any{"name": "Pat Liaison", "email": "person-119@example.org", "organization": "Status Org"})
+	pid := submit(t, h, tok, map[string]any{"name": "Pat Liaison", "email": "person-106@example.org", "organization": "Status Org"})
 
 	for _, e := range s.Audit.Recent(50) {
 		if e.Action == "onboard_submit" {
-			if e.Actor.Email != "person-119@example.org" {
+			if e.Actor.Email != "person-106@example.org" {
 				t.Fatalf("audit actor: want candidate email, got %q", e.Actor.Email)
 			}
 			if e.After["proposal_id"] != pid {
@@ -104,7 +104,7 @@ func TestConsumedInviteStatusOffboarded(t *testing.T) {
 	s := newOnboardTestServer(t)
 	h := s.Routes()
 	tok := mintTokenViaStore(t, s)
-	pid := submit(t, h, tok, map[string]any{"name": "Pat Liaison", "email": "person-119@example.org", "organization": "Status Org"})
+	pid := submit(t, h, tok, map[string]any{"name": "Pat Liaison", "email": "person-106@example.org", "organization": "Status Org"})
 	for _, st := range []string{onboardstore.ProposalSponsorApproved, onboardstore.ProposalApproved} {
 		if err := s.Onboard.DecideProposal(context.Background(), pid, st, "admin@x", ""); err != nil {
 			t.Fatalf("%s: %v", st, err)

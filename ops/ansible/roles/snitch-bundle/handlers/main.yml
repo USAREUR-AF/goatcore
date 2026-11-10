@@ -10,5 +10,5 @@
 
 - name: Restart snitch-probe (launchd)
   ansible.builtin.command:
-    cmd: launchctl kickstart -k system/net.goat.snitch-probe
+    cmd: launchctl kickstart -k system/{{ snitch_probe_launchd_label }}
   changed_when: true

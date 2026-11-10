@@ -142,7 +142,7 @@ func enrollForRevoke(t *testing.T, ts *httptest.Server, handle, custodian string
 // — a standing invitation carrying gear groups is the exact shape ADR 1116 §9
 // exists to eliminate.
 func TestMachineRevoke_DeletesUnconsumedKeyAndReturnsQuota(t *testing.T) {
-	mgmt, fleet := newMgmtFleet(t, "ZAGROS-SENSOR-FEED")
+	mgmt, fleet := newMgmtFleet(t, "GALAXY-SENSOR-FEED")
 	ts, reg := newMeshMintServer(t, mgmt.URL)
 	ctx := t.Context()
 	_ = reg.SetMachineGrant(ctx, "alice", 1, "usareur-af", "", "op")
@@ -189,7 +189,7 @@ func TestMachineRevoke_DeletesUnconsumedKeyAndReturnsQuota(t *testing.T) {
 // A machine that actually joined: the peer is the cut that matters, and the
 // spent key is left behind on purpose as the record of how the peer got there.
 func TestMachineRevoke_CutsPeerFirstShutsKeyBeforeEvicting(t *testing.T) {
-	mgmt, fleet := newMgmtFleet(t, "ZAGROS-SENSOR-FEED", "ZAGROS-KID")
+	mgmt, fleet := newMgmtFleet(t, "GALAXY-SENSOR-FEED", "GALAXY-KID")
 	ts, reg := newMeshMintServer(t, mgmt.URL)
 	ctx := t.Context()
 	_ = reg.SetMachineGrant(ctx, "alice", 2, "usareur-af", "", "op")
@@ -239,7 +239,7 @@ func TestMachineRevoke_CutsPeerFirstShutsKeyBeforeEvicting(t *testing.T) {
 // The failure that matters: the mgmt server refuses the cut. The registry must
 // be exactly as it was, so a retry is a retry and not a second half-revoke.
 func TestMachineRevoke_MgmtFailureLeavesRegistryUntouched(t *testing.T) {
-	mgmt, fleet := newMgmtFleet(t, "ZAGROS-SENSOR-FEED")
+	mgmt, fleet := newMgmtFleet(t, "GALAXY-SENSOR-FEED")
 	ts, reg := newMeshMintServer(t, mgmt.URL)
 	ctx := t.Context()
 	_ = reg.SetMachineGrant(ctx, "alice", 1, "usareur-af", "", "op")
@@ -296,7 +296,7 @@ func TestMachineRevoke_NoMgmtCredentialSaysSoAndStillRetires(t *testing.T) {
 // Gate + selector. Same custody model as the re-mint, and the handle the
 // enroll issued is accepted alongside the anchor.
 func TestMachineRevoke_GateNotFoundAndHandleSelector(t *testing.T) {
-	mgmt, _ := newMgmtFleet(t, "ZAGROS-SENSOR-FEED")
+	mgmt, _ := newMgmtFleet(t, "GALAXY-SENSOR-FEED")
 	ts, reg := newMeshMintServer(t, mgmt.URL)
 	ctx := t.Context()
 	_ = reg.SetMachineGrant(ctx, "alice", 2, "usareur-af", "", "op")

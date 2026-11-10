@@ -49,19 +49,19 @@ services:
     labels:
       - "traefik.enable=false"
 
-{% if consistency_aggregator_zagros_door_enabled | bool %}
-  # zagros-door — the env-doors Tier 2 lane CLIENT (ADR 1117; env-doors.md
+{% if consistency_aggregator_door_enabled | bool %}
+  # {{ consistency_aggregator_door_name }} — the env-doors Tier 2 lane CLIENT (ADR 1117; env-doors.md
   # §"Tier 2"; consistency-foundation.md §7.8 as-built). A TLS-wrap haproxy
   # (the federation-proxy pattern): accepts the console's zenoh TLS stream on
   # :17447 and carries it inside an OUTER mTLS connection (offline-dev-CA
-  # client cert, SNI {{ consistency_aggregator_zagros_door_sni }}) to the ZAGROS
-  # relay fleet :443 → relay haproxy SNI pin → rathole → zagros-a Traefik
-  # (RequireAndVerifyClientCert) → the Thor's zenoh tls/:7447. The INNER
+  # client cert, SNI {{ consistency_aggregator_door_sni }}) to the peer goatnet's
+  # relay fleet :443 → relay haproxy SNI pin → rathole → the door host's Traefik
+  # (RequireAndVerifyClientCert) → that router's zenoh tls/:7447. The INNER
   # zenoh mTLS session is unchanged end-to-end; this hop only opens the
-  # road. Lane down ⇒ the console renders ZAGROS indeterminate-with-age.
-  zagros-door:
-    image: "{{ consistency_aggregator_zagros_door_image }}"
-    container_name: zagros-door
+  # road. Lane down ⇒ the console renders that goatnet indeterminate-with-age.
+  {{ consistency_aggregator_door_name }}:
+    image: "{{ consistency_aggregator_door_image }}"
+    container_name: {{ consistency_aggregator_door_name }}
     restart: unless-stopped
     # Match the cert dir's ownership (the role chowns it to 65532 for the
     # non-root console container); haproxy must read the client cert+key.
@@ -71,10 +71,10 @@ services:
     expose:
       - "17447"
     volumes:
-      - "{{ consistency_aggregator_compose_dir }}/zagros-door-haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro"
+      - "{{ consistency_aggregator_compose_dir }}/{{ consistency_aggregator_door_name }}-haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro"
       # Combined client cert + key (haproxy `crt` format), operator-minted
       # via the offline-CA ceremony — never committed.
-      - "{{ consistency_aggregator_cert_dir }}/zagros-door/client.pem:/certs/zagros-door/client.pem:ro"
+      - "{{ consistency_aggregator_cert_dir }}/{{ consistency_aggregator_door_name }}/client.pem:/certs/{{ consistency_aggregator_door_name }}/client.pem:ro"
     labels:
       - "traefik.enable=false"
 {% endif %}

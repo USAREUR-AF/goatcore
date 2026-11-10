@@ -32,7 +32,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 TEMPLATE="ops/compose/goat-obs/prometheus/prometheus.yml"
 [ -r "$TEMPLATE" ] || { echo "missing $TEMPLATE" >&2; exit 1; }
 
-python3 - "$TEMPLATE" <<'PYEOF'
+python3 - "$TEMPLATE" "$@" <<'PYEOF'
 import re, sys, yaml
 
 try:
@@ -56,11 +56,42 @@ template_path = sys.argv[1]
 # It grows a blackbox job when obs_blackbox_enabled is set, and both states are
 # asserted below.
 #
-# Add a goatnet here on the day it deploys goat-obs, not on the day it declares
-# services.
-GOATNETS = [
-    ("zagros", "zagros_hosts", "zagros", "netbird.zagros.example"),
-]
+# The goatnets to render are named on the command line, `--goatnet <name>`
+# (repeatable): the ones that deploy this template, which only the deployment
+# knows. Each one's group, site_id and site_dns_zone come from its own
+# ops/ansible/group_vars/<name>_hosts. With no --goatnet nothing is rendered
+# here (the public tree carries no goatnet); the obs-host pass below still runs.
+def _group_vars(group):
+    out = {}
+    base = f"ops/ansible/group_vars/{group}"
+    for path in sorted(_glob.glob(base + "/*.yml")) + [p for p in (base + ".yml",) if os.path.isfile(p)]:
+        try:
+            data = yaml.safe_load(open(path)) or {}
+        except yaml.YAMLError:
+            continue
+        if isinstance(data, dict):
+            out.update(data)
+    return out
+
+
+import glob as _glob
+import os
+GOATNETS = []
+_args = sys.argv[2:]
+while _args:
+    if _args[0] != "--goatnet" or len(_args) < 2:
+        print("usage: check-prometheus-template-renders.sh [--goatnet <name>]...", file=sys.stderr)
+        raise SystemExit(2)
+    _name = _args[1]
+    _args = _args[2:]
+    _group = _name.replace("-", "_") + "_hosts"
+    _gv = _group_vars(_group)
+    _site, _zone = _gv.get("site_id"), _gv.get("site_dns_zone")
+    if not isinstance(_site, str) or not isinstance(_zone, str) or "{{" in _site + _zone:
+        print(f"check-prometheus-template-renders: group_vars/{_group} declares no plain "
+              f"site_id and site_dns_zone", file=sys.stderr)
+        raise SystemExit(1)
+    GOATNETS.append((_name, _group, _site, _zone))
 
 # Jobs that must survive rendering with at least one target. These are the
 # ones whose absence is silent: Prometheus starts happily with a job that
@@ -116,8 +147,24 @@ def relay_tls_targets(gv_path):
     return yaml.safe_load("obs_relay_tls_targets:\n" + m.group(1))["obs_relay_tls_targets"]
 
 
+def declared(gv, var):
+    """One top-level scalar or plain list from any file of a group_vars directory.
+
+    The Traefik name prefix and the ICMP targets are values the goatnet declares
+    and the template only reads. Absent is not an error: the template omits the
+    relabel rules and the ICMP job for a goatnet that declares neither."""
+    import glob
+    for path in sorted(glob.glob(f"ops/ansible/group_vars/{gv}/*.yml")):
+        m = re.search(rf"^{re.escape(var)}:[^\n]*\n(?:[ \t]+-[^\n]*\n)*", open(path).read(), re.M)
+        if m:
+            return yaml.safe_load(m.group(0))[var]
+    return None
+
+
 for name, gv, site, zone in GOATNETS:
     gv_path = f"ops/ansible/group_vars/{gv}/vars.yml"
+    legacy_prefix = declared(gv, "obs_traefik_legacy_name_prefix")
+    icmp_targets = declared(gv, "obs_blackbox_icmp_targets")
     svcs = isitup_services(gv_path, site, zone)
     if svcs is None:
         failures.append(f"{name}: {gv_path} declares no isitup_services")
@@ -128,6 +175,8 @@ for name, gv, site, zone in GOATNETS:
         rendered = tmpl.render(site_id=site, site_dns_zone=zone,
                                isitup_services=svcs,
                                obs_relay_tls_targets=relay_tls_targets(gv_path),
+                               obs_traefik_legacy_name_prefix=legacy_prefix,
+                               obs_blackbox_icmp_targets=icmp_targets,
                                portal_traefik_host=f"portal.{site}.{zone}", now=_now)
     except jinja2.TemplateError as e:
         failures.append(f"{name}: template did not render — {e}")
@@ -180,6 +229,26 @@ for name, gv, site, zone in GOATNETS:
                 if "://" in t or ":" not in t:
                     failures.append(
                         f"{name}: relay target {t!r} must be host:port, not a URL")
+
+    # Declared values the template only reads. A goatnet that declares a
+    # Traefik name prefix must get both relabel rules built from it, and one
+    # that declares ICMP targets must get exactly those behind the exporter.
+    # Without this a renamed variable renders a config with neither and the
+    # only symptom is a label that changed value or a panel with no data.
+    if legacy_prefix:
+        want = f"^{legacy_prefix}-(.*)$"
+        got = {r.get("target_label"): r.get("regex")
+               for r in (jobs.get("traefik", {}).get("metric_relabel_configs") or [])}
+        if got != {"service": want, "router": want}:
+            failures.append(f"{name}: traefik job must strip {legacy_prefix!r}- from "
+                            f"service and router, rendered {got}")
+    if icmp_targets:
+        icmp = jobs.get("blackbox-icmp", {})
+        got = [t for sc in (icmp.get("static_configs") or []) for t in (sc.get("targets") or [])]
+        if got != list(icmp_targets):
+            failures.append(f"{name}: blackbox-icmp targets {got} are not the declared {icmp_targets}")
+        if not icmp.get("relabel_configs"):
+            failures.append(f"{name}: job 'blackbox-icmp' lost its relabel_configs")
 
     # LIFECYCLE (#1518). Render once more with three rows that must NOT be
     # probed — planned, retiring, listed: false — and one live control row,

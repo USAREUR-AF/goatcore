@@ -11,8 +11,8 @@
 # zenoh version. Fails if:
 #   - A Cargo.toml has `zenoh = "1"` / `"1.9"` (range) rather than
 #     `"=1.9.0"` (exact-pin).
-#   - A deploy-target config references the retired `ghcr.io/usareur-af/zenoh`
-#     image lineage. That image was retired in ADR 0858 step 5 in favor of
+#   - A deploy-target config references the retired project-built router
+#     image `ghcr.io/<org>/zenoh` (any registry namespace). That image was retired in ADR 0858 step 5 in favor of
 #     upstream `eclipse/zenoh` (since audit-logger moved out-of-process,
 #     the supply-chain-build justification dissolved — F-122 closed).
 #   - A deploy-target config references the upstream `eclipse/zenoh` image
@@ -49,11 +49,13 @@ scan "Cargo dep uses zenoh range instead of =1.9.0" \
     -- . \
     || true
 
-# Retired goat-maintainer zenoh image lineage referenced in deploy config
-# (ADR 0858 step 5 pivoted to upstream).
-scan "Retired ghcr.io/usareur-af/zenoh image reference (ADR 0858 step 5 pivoted to upstream eclipse/zenoh)" \
+# Retired project-built zenoh router image referenced in deploy config
+# (ADR 0858 step 5 pivoted to upstream). Matched under any namespace, so the
+# rule holds whichever organisation published it; `zenoh-pqc`, `zenoh-sandbox`
+# and the other live images carry a suffix and do not match.
+scan "Retired ghcr.io/<org>/zenoh image reference (ADR 0858 step 5 pivoted to upstream eclipse/zenoh)" \
     --include='*.yml' --include='*.yaml' --include='*.j2' -r \
-    'ghcr\.io/goat-maintainer/zenoh:' \
+    'ghcr\.io/[^/]+/zenoh:' \
     -- ops/ \
     || true
 

@@ -69,8 +69,8 @@ func TestRotateVendor_ReissuesInPlace(t *testing.T) {
 	}
 	// URI-SAN is re-derived from the current minter config (the scheme-retrofit
 	// mechanism): always <prefix>+anchor for this server.
-	if got, _ := rot["uri_san"].(string); got != "urn:goat-nova:vendor="+anchor {
-		t.Errorf("rotate uri_san=%q, want urn:goat-nova:vendor=%s", got, anchor)
+	if got, _ := rot["uri_san"].(string); got != "urn:goat:galaxy:org="+anchor {
+		t.Errorf("rotate uri_san=%q, want urn:goat:galaxy:org=%s", got, anchor)
 	}
 
 	// Credentials are fresh: new api_key + new one-time bundle token.

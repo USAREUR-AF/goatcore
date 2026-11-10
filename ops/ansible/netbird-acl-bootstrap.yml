@@ -41,7 +41,7 @@
   # goatnet behind a public CA verifies as before. Never turn verification off.
   module_defaults:
     ansible.builtin.uri:
-      ca_path: "{{ (playbook_dir ~ '/../enrollment/ca/' ~ target_site ~ '/root-cert.pem') if (playbook_dir ~ '/../enrollment/ca/' ~ target_site ~ '/root-cert.pem') is exists else omit }}"
+      ca_path: "{{ omit if (netbird_api_ca | default('auto')) == 'public' else ((playbook_dir ~ '/../enrollment/ca/' ~ target_site ~ '/root-cert.pem') if (playbook_dir ~ '/../enrollment/ca/' ~ target_site ~ '/root-cert.pem') is exists else omit) }}"
   gather_facts: false
 
   vars:
@@ -50,20 +50,14 @@
     taxonomy_path: "{{ playbook_dir }}/netbird_acl_taxonomy.yml"
 
     # Mirror operator-onboard.yml's site→URL + site→env-var maps so the
-    # operator runs the same `target_site` token across both playbooks.
-    netbird_site_url_map:
-      vega: https://mgmt.vega.netbird-prod.goat.example
-      legacy: https://netbird.legacy.example
-      zagros: https://netbird.zagros.example
-      zagros-prod: https://netbird.zagros-prod.example
-      zagros-dev: https://netbird.zagros-dev.example
-
-    netbird_site_env_var_map:
-      vega: VEGA_NB_API_TOKEN
-      legacy: LEGACY_NB_API_TOKEN
-      zagros: ZAGROS_NB_API_TOKEN
-      zagros-prod: ZAGROS_PROD_NB_API_TOKEN
-      zagros-dev: ZAGROS_DEV_NB_API_TOKEN
+    # operator runs the same `target_site` token across both playbooks. The
+    # maps name no goatnet here: a deployment sets goatnet_netbird_site_url_map
+    # and goatnet_netbird_site_env_var_map for localhost
+    # (ops/ansible/host_vars/localhost/), keyed by site name. A site in neither
+    # is reached at https://netbird.<site>.net (or -e netbird_mgmt_url=...)
+    # with the token in <SITE>_NB_API_TOKEN.
+    netbird_site_url_map: "{{ goatnet_netbird_site_url_map | default({}) }}"
+    netbird_site_env_var_map: "{{ goatnet_netbird_site_env_var_map | default({}) }}"
 
   tasks:
 
@@ -104,8 +98,8 @@
           - (target_site in netbird_site_url_map) or (target_site is match('^[a-z][a-z0-9-]+[a-z0-9]$'))
         fail_msg: |
           Site '{{ target_site }}' is in the taxonomy but missing URL / env-var
-          mapping. Add it to netbird_site_url_map + netbird_site_env_var_map
-          in this playbook AND in ops/ansible/operator-onboard.yml.
+          mapping. Add it to goatnet_netbird_site_url_map +
+          goatnet_netbird_site_env_var_map in ops/ansible/host_vars/localhost/.
 
     - name: "Assert API token env var is set"
       ansible.builtin.assert:

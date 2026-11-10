@@ -20,9 +20,9 @@ import (
 // IntermediateCertOptions configures GenerateIntermediate. Zero values
 // yield sensible defaults documented per field.
 type IntermediateCertOptions struct {
-	// Organization defaults to "goat".
+	// Organization defaults to DefaultOrganization.
 	Organization string
-	// CommonName defaults to "goat Intermediate CA".
+	// CommonName defaults to DefaultIntermediateCommonName.
 	CommonName string
 	// OrgUnit defaults to "intermediate-ca".
 	OrgUnit string
@@ -56,10 +56,10 @@ func GenerateIntermediate(parentSigner ca.Signer, parentCert *x509.Certificate, 
 		return nil, nil, errors.New("x509ca: nil parent cert (run GenerateRootCert first)")
 	}
 	if opts.Organization == "" {
-		opts.Organization = "goat"
+		opts.Organization = DefaultOrganization
 	}
 	if opts.CommonName == "" {
-		opts.CommonName = "goat Intermediate CA"
+		opts.CommonName = DefaultIntermediateCommonName
 	}
 	if opts.OrgUnit == "" {
 		opts.OrgUnit = "intermediate-ca"

@@ -28,6 +28,22 @@ pub enum ContextCmd {
         #[arg(long, short = 'y')]
         yes: bool,
     },
+    /// Write this goatnet's own facts into the context's profile.toml.
+    ///
+    /// Reads `goatnet.toml` from the goatnet's download surface
+    /// (`get.<site>/goatnet.toml`): its NetBird management URL and group
+    /// prefix, Ory URL, router endpoint and the hosts' SSH user. Commands that
+    /// need a per-goatnet fact read it from the profile; goat holds none.
+    Refresh {
+        /// Defaults to the active context.
+        name: Option<String>,
+        /// Read the facts from this URL or local file instead of get.<site>.
+        #[arg(long)]
+        from: Option<String>,
+        /// Print what would change without writing.
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
 
 pub async fn run(ctx: &super::Ctx, op: ContextCmd) -> anyhow::Result<()> {
@@ -40,6 +56,327 @@ pub async fn run(ctx: &super::Ctx, op: ContextCmd) -> anyhow::Result<()> {
             switch_to,
             yes,
         } => rm(&ctx.profile, &name, switch_to.as_deref(), yes),
+        ContextCmd::Refresh {
+            name,
+            from,
+            dry_run,
+        } => refresh(&ctx.profile, name.as_deref(), from.as_deref(), dry_run).await,
+    }
+}
+
+/// The keys `goatnet.toml` may set in a profile. Anything else in the file is
+/// ignored, so a goatnet's file can never overwrite the context's credentials
+/// or the endpoints its signed bundle wrote (see BUNDLE_KEYS).
+pub(crate) const GOATNET_KEYS: &[&str] = &[
+    "goatnet",
+    "router_endpoint",
+    "netbird_mgmt_url",
+    "netbird_token_env",
+    "netbird_site_prefix",
+    "netbird_rosenpass",
+    "ory_auth_url",
+    "ory_ssh_host",
+    "ory_ssh_user",
+    "mgmt_ssh_user",
+    "demo_service",
+    "i18n_feedback_email",
+    // The goatnet's warrant membership declaration (`enforce` | `report` |
+    // `none`), read by cmd::warrant (membership governance).
+    crate::cmd::warrant::CONTEXT_CONVERGE_KEY,
+];
+const GOATNET_SCHEMA: &str = "goat/goatnet/v1";
+/// Keys the signed bundle also writes: `goatnet.toml` fills them only when the
+/// profile lacks them, never replaces the bundle's value.
+const BUNDLE_KEYS: &[&str] = &["router_endpoint"];
+
+/// Parse `goatnet.toml`: `schema` must be `goat/goatnet/v1`; returns the
+/// recognised `key = "value"` pairs in file order, empty values dropped.
+pub(crate) fn parse_goatnet_toml(body: &str) -> anyhow::Result<Vec<(String, String)>> {
+    use crate::profile::extract_toml_field;
+    match extract_toml_field(body, "schema") {
+        Some(s) if s == GOATNET_SCHEMA => {}
+        Some(s) => {
+            anyhow::bail!("goatnet.toml has schema `{s}`; this goat reads `{GOATNET_SCHEMA}`")
+        }
+        None => anyhow::bail!("not a goatnet.toml: no `schema = \"{GOATNET_SCHEMA}\"` line"),
+    }
+    let mut out = Vec::new();
+    for k in GOATNET_KEYS {
+        if let Some(v) = extract_toml_field(body, k).filter(|v| !v.trim().is_empty()) {
+            out.push((k.to_string(), v));
+        }
+    }
+    if !out.iter().any(|(k, _)| k == "goatnet") {
+        anyhow::bail!("goatnet.toml names no `goatnet`");
+    }
+    Ok(out)
+}
+
+/// Merge the facts into a profile.toml body: a key already present is
+/// replaced in place, a new key is appended. Returns the new body and the
+/// keys whose value changed. Refuses when the profile already names a
+/// different goatnet, so a context is never re-pointed by a wrong URL.
+pub(crate) fn merge_goatnet_facts(
+    profile_toml: &str,
+    facts: &[(String, String)],
+) -> anyhow::Result<(String, Vec<String>)> {
+    use crate::profile::extract_toml_field;
+    let want = facts
+        .iter()
+        .find(|(k, _)| k == "goatnet")
+        .map(|(_, v)| v.as_str());
+    if let (Some(have), Some(want)) = (extract_toml_field(profile_toml, "goatnet"), want) {
+        if have != want {
+            anyhow::bail!(
+                "this context is goatnet `{have}` but the facts are for `{want}`; \
+                 check --from, or use the context for `{want}`"
+            );
+        }
+    }
+    let mut lines: Vec<String> = profile_toml.lines().map(str::to_string).collect();
+    let mut changed = Vec::new();
+    for (k, v) in facts {
+        let new_line = format!("{k} = \"{v}\"");
+        let pos = lines.iter().position(|l| {
+            let t = l.trim_start();
+            t.strip_prefix(k.as_str())
+                .map(|r| r.trim_start().starts_with('='))
+                .unwrap_or(false)
+        });
+        match pos {
+            Some(i) if lines[i].trim() == new_line => {}
+            Some(_) if BUNDLE_KEYS.contains(&k.as_str()) => {}
+            Some(i) => {
+                lines[i] = new_line;
+                changed.push(k.clone());
+            }
+            None => {
+                lines.push(new_line);
+                changed.push(k.clone());
+            }
+        }
+    }
+    let mut body = lines.join("\n");
+    body.push('\n');
+    Ok((body, changed))
+}
+
+async fn refresh(
+    profile: &Profile,
+    name: Option<&str>,
+    from: Option<&str>,
+    dry_run: bool,
+) -> anyhow::Result<()> {
+    let mut target = profile.clone();
+    target.context = name
+        .map(String::from)
+        .unwrap_or_else(|| current_context(profile));
+    target.require_initialized()?;
+
+    let source = match from {
+        Some(s) => s.to_string(),
+        None => match crate::version_check::get_base_url(&target) {
+            Some(base) => format!("{}/goatnet.toml", base.trim_end_matches('/')),
+            None => anyhow::bail!(
+                "cannot find this context's download surface (get.<site>): its profile has no \
+                 portal.<site> endpoint. Pass --from <url-or-file> with the goatnet's goatnet.toml"
+            ),
+        },
+    };
+    let body = if source.starts_with("https://") || source.starts_with("http://") {
+        let resp = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(15))
+            .build()?
+            .get(&source)
+            .send()
+            .await
+            .map_err(|e| {
+                anyhow::anyhow!("fetch {source}: {e} (is this machine on the goatnet's mesh?)")
+            })?;
+        if !resp.status().is_success() {
+            anyhow::bail!(
+                "fetch {source}: HTTP {}; the goatnet's download surface does not serve goatnet.toml yet \
+                 (goat-get role, docs/design/goat-cli-mesh-download.md)",
+                resp.status()
+            );
+        }
+        resp.text().await?
+    } else {
+        std::fs::read_to_string(&source).map_err(|e| anyhow::anyhow!("read {source}: {e}"))?
+    };
+    let facts = parse_goatnet_toml(&body).map_err(|e| anyhow::anyhow!("{source}: {e}"))?;
+    refresh_acl_declaration(&target, &source, dry_run).await?;
+    let path = target.profile_toml_path();
+    let current = target.read_classified(&path)?;
+    let (merged, changed) = merge_goatnet_facts(&current, &facts)?;
+
+    if changed.is_empty() {
+        println!(
+            "context `{}`: already current with {source}",
+            target.context
+        );
+        return Ok(());
+    }
+    for k in &changed {
+        let v = facts
+            .iter()
+            .find(|(fk, _)| fk == k)
+            .map(|(_, v)| v.as_str())
+            .unwrap_or("");
+        println!("  {k} = \"{v}\"");
+    }
+    if dry_run {
+        println!(
+            "context `{}`: {} key(s) would change (dry run, nothing written)",
+            target.context,
+            changed.len()
+        );
+        return Ok(());
+    }
+    write_profile_toml(&path, &merged)?;
+    println!(
+        "context `{}`: {} key(s) written from {source}",
+        target.context,
+        changed.len()
+    );
+    Ok(())
+}
+
+/// The goatnet's ACL declaration, beside its goatnet.toml: `<base>/acl/` holds
+/// netbird_acl_taxonomy.yml and netbird_acl_matrix.yml when the goatnet serves
+/// them. Both found: written to the context's `acl/` directory, where
+/// `goat acl` / `goat warrant` read them. Either absent: the context's copy is
+/// left as it is, and a goatnet that serves none is said so.
+async fn refresh_acl_declaration(
+    target: &Profile,
+    source: &str,
+    dry_run: bool,
+) -> anyhow::Result<()> {
+    use crate::cmd::acl::{CONTEXT_SUBDIR, MATRIX_FILE, TAXONOMY_FILE};
+    let base = match source.rsplit_once('/') {
+        Some((b, _)) => b.to_string(),
+        None => ".".to_string(),
+    };
+    let mut got = Vec::new();
+    for name in [TAXONOMY_FILE, MATRIX_FILE] {
+        let at = format!("{base}/{CONTEXT_SUBDIR}/{name}");
+        let body = if at.starts_with("https://") || at.starts_with("http://") {
+            let resp = reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(15))
+                .build()?
+                .get(&at)
+                .send()
+                .await
+                .map_err(|e| anyhow::anyhow!("fetch {at}: {e}"))?;
+            if !resp.status().is_success() {
+                None
+            } else {
+                Some(resp.text().await?)
+            }
+        } else {
+            std::fs::read_to_string(&at).ok()
+        };
+        match body {
+            Some(b) => got.push((name, b)),
+            None => {
+                println!(
+                    "context `{}`: the goatnet serves no ACL declaration at {base}/{CONTEXT_SUBDIR}/; \
+                     the context's copy is unchanged",
+                    target.context
+                );
+                return Ok(());
+            }
+        }
+    }
+    let dir = target.context_dir().join(CONTEXT_SUBDIR);
+    let unchanged = got
+        .iter()
+        .all(|(n, b)| std::fs::read_to_string(dir.join(n)).ok().as_deref() == Some(b.as_str()));
+    if unchanged {
+        return Ok(());
+    }
+    if dry_run {
+        println!(
+            "context `{}`: the ACL declaration in {} would be replaced (dry run)",
+            target.context,
+            dir.display()
+        );
+        return Ok(());
+    }
+    std::fs::create_dir_all(&dir)?;
+    for (n, b) in &got {
+        let tmp = dir.join(format!("{n}.tmp"));
+        std::fs::write(&tmp, b.as_bytes())?;
+        std::fs::rename(&tmp, dir.join(n))?;
+    }
+    println!(
+        "context `{}`: ACL declaration written to {}",
+        target.context,
+        dir.display()
+    );
+    Ok(())
+}
+
+/// Replace profile.toml atomically, mode 0600 like the rest of the context.
+fn write_profile_toml(path: &std::path::Path, body: &str) -> anyhow::Result<()> {
+    let tmp = path.with_extension("toml.tmp");
+    std::fs::write(&tmp, body.as_bytes())?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600))?;
+    }
+    std::fs::rename(&tmp, path)?;
+    Ok(())
+}
+
+/// Run before a `goat admin` command. A context that names no goatnet yet (it
+/// has never been refreshed) gets its goatnet's facts once, from
+/// get.<site>/goatnet.toml, with a short timeout. Any failure is left to the
+/// command, which names `goat context refresh` wherever it needs a fact.
+pub(crate) async fn ensure_goatnet_facts(profile: &Profile) {
+    let path = profile.profile_toml_path();
+    let Ok(body) = std::fs::read_to_string(&path) else {
+        return;
+    };
+    if crate::profile::extract_toml_field(&body, "goatnet").is_some() {
+        return;
+    }
+    let Some(base) = crate::version_check::get_base_url(profile) else {
+        return;
+    };
+    let url = format!("{}/goatnet.toml", base.trim_end_matches('/'));
+    let Ok(client) = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(4))
+        .build()
+    else {
+        return;
+    };
+    let Ok(resp) = client.get(&url).send().await else {
+        return;
+    };
+    if !resp.status().is_success() {
+        return;
+    }
+    let Ok(text) = resp.text().await else {
+        return;
+    };
+    let Ok(facts) = parse_goatnet_toml(&text) else {
+        return;
+    };
+    let Ok((merged, changed)) = merge_goatnet_facts(&body, &facts) else {
+        return;
+    };
+    if !changed.is_empty() && write_profile_toml(&path, &merged).is_ok() {
+        let g = facts
+            .iter()
+            .find(|(k, _)| k == "goatnet")
+            .map(|(_, v)| v.as_str())
+            .unwrap_or("?");
+        eprintln!(
+            "goat: context `{}` now carries goatnet `{g}`'s facts from {url}",
+            profile.context
+        );
     }
 }
 
@@ -74,9 +411,7 @@ fn ls(profile: &Profile, json: bool) -> anyhow::Result<()> {
 fn use_(profile: &Profile, name: &str) -> anyhow::Result<()> {
     let contexts = list_contexts(profile)?;
     if !contexts.iter().any(|c| c == name) {
-        anyhow::bail!(
-            "context `{name}` does not exist. `goat context ls` shows what does."
-        );
+        anyhow::bail!("context `{name}` does not exist. `goat context ls` shows what does.");
     }
     write_current_context(profile, name)?;
     println!("switched to context `{name}` ({})", profile.dir.display());
@@ -110,12 +445,7 @@ fn show(profile: &Profile, name: Option<&str>) -> anyhow::Result<()> {
 /// the operator names a different `--switch-to`. Refuses on the
 /// `default` context if it's the only one (degrades gracefully into
 /// the empty-profile state otherwise).
-fn rm(
-    profile: &Profile,
-    name: &str,
-    switch_to: Option<&str>,
-    yes: bool,
-) -> anyhow::Result<()> {
+fn rm(profile: &Profile, name: &str, switch_to: Option<&str>, yes: bool) -> anyhow::Result<()> {
     let contexts = list_contexts(profile)?;
     if !contexts.iter().any(|c| c == name) {
         anyhow::bail!("context `{name}` does not exist.");
@@ -139,10 +469,7 @@ fn rm(
 
     if !yes {
         let dir = profile.contexts_dir().join(name);
-        eprint!(
-            "Delete context `{name}` at {}? [y/N] ",
-            dir.display()
-        );
+        eprint!("Delete context `{name}` at {}? [y/N] ", dir.display());
         std::io::stderr().flush().ok();
         let mut answer = String::new();
         std::io::stdin().read_line(&mut answer)?;
@@ -325,5 +652,114 @@ mod tests {
         let p = fixture_profile(&tmp, &["default"], Some("default"));
         let err = rm(&p, "nope", None, true).unwrap_err();
         assert!(err.to_string().contains("does not exist"));
+    }
+
+    const FACTS: &str = "# rendered\nschema = \"goat/goatnet/v1\"\ngoatnet = \"zagros\"\n\
+        netbird_mgmt_url = \"https://netbird.zagros.example\"\nnetbird_rosenpass = \"false\"\n\
+        mgmt_ssh_user = \"goat\"\nportal_endpoint = \"https://evil.example\"\n";
+
+    #[tokio::test]
+    async fn refresh_copies_the_goatnets_acl_declaration_into_the_context() {
+        use crate::cmd::acl::{MATRIX_FILE, TAXONOMY_FILE};
+        let served = tempfile::tempdir().expect("temp dir");
+        std::fs::create_dir_all(served.path().join("acl")).expect("acl dir");
+        std::fs::write(served.path().join("acl").join(TAXONOMY_FILE), "t: 1\n").expect("tax");
+        let source = served.path().join("goatnet.toml").display().to_string();
+        let home = tempfile::tempdir().expect("temp dir");
+        let p = Profile {
+            dir: home.path().to_path_buf(),
+            context: "t".into(),
+        };
+        // Only one file served: the context is left alone.
+        refresh_acl_declaration(&p, &source, false)
+            .await
+            .expect("refresh");
+        assert!(!p.context_dir().join("acl").exists());
+        std::fs::write(served.path().join("acl").join(MATRIX_FILE), "m: 1\n").expect("mat");
+        refresh_acl_declaration(&p, &source, false)
+            .await
+            .expect("refresh");
+        let got = std::fs::read_to_string(p.context_dir().join("acl").join(MATRIX_FILE));
+        assert_eq!(got.expect("written"), "m: 1\n");
+    }
+
+    #[test]
+    fn goatnet_toml_needs_its_schema() {
+        assert!(parse_goatnet_toml("goatnet = \"zagros\"\n").is_err());
+        assert!(
+            parse_goatnet_toml("schema = \"goat/goatnet/v9\"\ngoatnet = \"zagros\"\n").is_err()
+        );
+        assert!(
+            parse_goatnet_toml("schema = \"goat/goatnet/v1\"\n").is_err(),
+            "must name its goatnet"
+        );
+    }
+
+    #[test]
+    fn goatnet_toml_sets_only_its_own_keys() {
+        let f = parse_goatnet_toml(FACTS).unwrap();
+        assert!(f.iter().any(|(k, v)| k == "mgmt_ssh_user" && v == "goat"));
+        assert!(
+            !f.iter().any(|(k, _)| k == "portal_endpoint"),
+            "a goatnet.toml must never overwrite a bundle-issued endpoint"
+        );
+    }
+
+    #[test]
+    fn goatnet_toml_carries_the_warrant_membership_declaration() {
+        let f = parse_goatnet_toml(
+            "schema = \"goat/goatnet/v1\"\ngoatnet = \"zagros\"\n\
+             warrant_membership_converge = \"none\"\n",
+        )
+        .unwrap();
+        assert!(f
+            .iter()
+            .any(|(k, v)| k == "warrant_membership_converge" && v == "none"));
+        let (body, changed) = merge_goatnet_facts("goatnet = \"zagros\"\n", &f).unwrap();
+        assert!(body.contains("warrant_membership_converge = \"none\"\n"));
+        assert_eq!(changed, vec!["warrant_membership_converge".to_string()]);
+    }
+
+    #[test]
+    fn merge_replaces_in_place_and_appends_new_keys() {
+        let profile =
+            "portal_endpoint = \"https://portal.zagros.example\"\nnetbird_rosenpass = \"true\"\n";
+        let (body, changed) =
+            merge_goatnet_facts(profile, &parse_goatnet_toml(FACTS).unwrap()).unwrap();
+        assert!(body.starts_with(
+            "portal_endpoint = \"https://portal.zagros.example\"\nnetbird_rosenpass = \"false\"\n"
+        ));
+        assert!(body.contains("mgmt_ssh_user = \"goat\"\n"));
+        assert!(changed.contains(&"netbird_rosenpass".to_string()));
+        let (_, again) = merge_goatnet_facts(&body, &parse_goatnet_toml(FACTS).unwrap()).unwrap();
+        assert!(again.is_empty(), "a second refresh changes nothing");
+    }
+
+    #[test]
+    fn merge_keeps_the_bundle_router_endpoint_and_fills_it_when_absent() {
+        let facts = parse_goatnet_toml(
+            "schema = \"goat/goatnet/v1\"\ngoatnet = \"zagros\"\nrouter_endpoint = \"tls/b:7447\"\n",
+        )
+        .unwrap();
+        let (kept, _) = merge_goatnet_facts("router_endpoint = \"tls/a:7447\"\n", &facts).unwrap();
+        assert!(kept.contains("router_endpoint = \"tls/a:7447\"") && !kept.contains("tls/b"));
+        let (filled, _) = merge_goatnet_facts("portal_endpoint = \"x\"\n", &facts).unwrap();
+        assert!(filled.contains("router_endpoint = \"tls/b:7447\""));
+    }
+
+    #[test]
+    fn merge_refuses_facts_for_another_goatnet() {
+        let profile = "goatnet = \"nova\"\n";
+        let err = merge_goatnet_facts(profile, &parse_goatnet_toml(FACTS).unwrap()).unwrap_err();
+        assert!(err.to_string().contains("`nova`"));
+    }
+
+    #[test]
+    fn merge_does_not_match_a_longer_key_with_the_same_prefix() {
+        let profile = "goatnet_label = \"x\"\n";
+        let (body, _) = merge_goatnet_facts(profile, &parse_goatnet_toml(FACTS).unwrap()).unwrap();
+        assert!(
+            body.contains("goatnet_label = \"x\"\n") && body.contains("goatnet = \"zagros\"\n")
+        );
     }
 }

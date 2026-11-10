@@ -131,7 +131,12 @@ pub(crate) async fn gather(ctx: &super::Ctx) -> anyhow::Result<Verdicts> {
     // Read endpoints once for the ZTOL probe; portal client builds
     // separately via portal_client().
     let router = router_endpoint(&ctx.profile)?;
-    let mut portal = ctx.profile.portal_client()?;
+    // A context without a portal key file still gets every other row;
+    // the portal row then reads the endpoint itself (probe_portal_any).
+    let mut portal = ctx
+        .profile
+        .portal_client()
+        .unwrap_or_else(|_| panoscope_core::portal::PortalClient::new(String::new(), String::new()));
 
     // Name-resolution pass (ADR 1082): live DNS first, signed-snapshot
     // fallback second, per target. The outcome feeds (a) the `names`
@@ -151,11 +156,13 @@ pub(crate) async fn gather(ctx: &super::Ctx) -> anyhow::Result<Verdicts> {
         Some(Ok(r)) if r.source.fallback_note().is_some() => Some(r.addr),
         _ => None,
     };
+    let mut portal_fallback: Option<(String, std::net::SocketAddr)> = None;
     if let (Some((host, _)), Some(Ok(res))) = (portal_hp.as_ref(), portal_res.as_ref()) {
         // Any fallback source (snapshot OR observed) needs the socket
         // override — live answers resolve normally inside reqwest.
         if res.source.fallback_note().is_some() {
             portal = portal.with_resolve(host, res.addr);
+            portal_fallback = Some((host.clone(), res.addr));
         }
     }
 
@@ -178,7 +185,7 @@ pub(crate) async fn gather(ctx: &super::Ctx) -> anyhow::Result<Verdicts> {
     };
     let ((ztol, session), portal_v, cert, pqc, device) = tokio::join!(
         reach,
-        probe_portal(&portal),
+        probe_portal_any(&ctx.profile, &portal, portal_fallback),
         probe_cert(&ctx.profile),
         probe_pqc(),
         probe_device(),
@@ -674,6 +681,76 @@ pub(crate) async fn probe_ztol_at(router_locator: &str, addr: Option<std::net::S
     }
 }
 
+/// The portal row. A context with a portal key probes through the keyed
+/// client, as every other portal call does. A context with none (a
+/// goatlite founder's, which holds no portal key) still gets a real
+/// liveness verdict: `/api/health` takes no bearer token, so the probe
+/// runs without one and trusts the context's own CA roots beside the
+/// public ones, because a goatlite's portal certificate comes from the
+/// goatnet's own authority. Neutral only when the context names no portal.
+async fn probe_portal_any(
+    profile: &Profile,
+    portal: &panoscope_core::portal::PortalClient,
+    fallback: Option<(String, std::net::SocketAddr)>,
+) -> Verdict {
+    if portal.is_enabled() {
+        return probe_portal(portal).await;
+    }
+    let endpoint = std::fs::read_to_string(profile.profile_toml_path())
+        .ok()
+        .and_then(|t| extract_toml_string(&t, "portal_endpoint"))
+        .map(|e| e.trim().trim_end_matches('/').to_string())
+        .filter(|e| !e.is_empty());
+    let Some(endpoint) = endpoint else {
+        return verdict_neutral(tr2!("status-portal-no-endpoint"));
+    };
+    let ca_pem = std::fs::read(profile.ca_roots_path()).ok();
+    match probe_portal_keyless(&endpoint, ca_pem.as_deref(), fallback).await {
+        Ok(()) => verdict(true, tr2!("status-portal-ok-no-key")),
+        Err(e) => verdict(false, tr2!("status-portal-failed", err = e.clone())),
+    }
+}
+
+/// `GET <endpoint>/api/health` with no bearer token. `ca_pem` adds the
+/// context's CA roots (every PEM certificate in it) to the public ones;
+/// `fallback` pins the host to a fallback-resolved address (ADR 1082).
+async fn probe_portal_keyless(
+    endpoint: &str,
+    ca_pem: Option<&[u8]>,
+    fallback: Option<(String, std::net::SocketAddr)>,
+) -> Result<(), String> {
+    let mut builder = reqwest::Client::builder()
+        .timeout(PORTAL_PROBE_TIMEOUT)
+        .connect_timeout(PORTAL_PROBE_TIMEOUT);
+    if let Some(pem) = ca_pem {
+        if let Ok(certs) = reqwest::Certificate::from_pem_bundle(pem) {
+            for c in certs {
+                builder = builder.add_root_certificate(c);
+            }
+        }
+    }
+    if let Some((host, addr)) = fallback.as_ref() {
+        builder = builder.resolve(host, *addr);
+    }
+    let http = builder.build().map_err(|e| e.to_string())?;
+    let url = format!("{endpoint}/api/health");
+    let resp = match timeout(PORTAL_PROBE_TIMEOUT, http.get(&url).send()).await {
+        Ok(Ok(r)) => r,
+        Ok(Err(e)) => return Err(e.to_string()),
+        Err(_) => {
+            return Err(format!(
+                "timed out in {}s",
+                PORTAL_PROBE_TIMEOUT.as_secs()
+            ))
+        }
+    };
+    if resp.status().is_success() {
+        Ok(())
+    } else {
+        Err(format!("portal returned {}", resp.status()))
+    }
+}
+
 async fn probe_portal(portal: &panoscope_core::portal::PortalClient) -> Verdict {
     match timeout(PORTAL_PROBE_TIMEOUT, portal.health()).await {
         Ok(Ok(())) => verdict(true, tr2!("status-portal-ok")),
@@ -767,8 +844,8 @@ mod tests {
     #[test]
     fn locator_parses() {
         assert_eq!(
-            parse_zenoh_locator("tls/100.127.0.190:7447"),
-            Some(("100.127.0.190".into(), 7447))
+            parse_zenoh_locator("tls/100.127.0.193:7447"),
+            Some(("100.127.0.193".into(), 7447))
         );
     }
 
@@ -848,6 +925,56 @@ mod tests {
         assert!(!all.any_fail());
     }
 
+    /// One-shot HTTP server: answers the first request with `status_line`
+    /// and hands back the request head it read.
+    async fn one_shot(status_line: &'static str) -> (String, tokio::task::JoinHandle<String>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", l.local_addr().unwrap());
+        let h = tokio::spawn(async move {
+            let (mut sock, _) = l.accept().await.unwrap();
+            let mut buf = vec![0u8; 4096];
+            let n = sock.read(&mut buf).await.unwrap();
+            let body = "{}";
+            let resp = format!(
+                "{status_line}\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            sock.write_all(resp.as_bytes()).await.unwrap();
+            String::from_utf8_lossy(&buf[..n]).to_string()
+        });
+        (url, h)
+    }
+
+    #[tokio::test]
+    async fn keyless_portal_probe_reads_health_without_a_bearer() {
+        let (url, h) = one_shot("HTTP/1.1 200 OK").await;
+        assert_eq!(probe_portal_keyless(&url, None, None).await, Ok(()));
+        let head = h.await.unwrap();
+        assert!(head.starts_with("GET /api/health "), "request: {head}");
+        assert!(!head.to_ascii_lowercase().contains("authorization"), "sent a bearer: {head}");
+    }
+
+    #[tokio::test]
+    async fn keyless_portal_probe_reports_a_non_2xx() {
+        let (url, h) = one_shot("HTTP/1.1 503 Service Unavailable").await;
+        let err = probe_portal_keyless(&url, None, None).await.unwrap_err();
+        assert!(err.contains("503"), "{err}");
+        h.await.unwrap();
+    }
+
+    #[test]
+    fn keyless_portal_strings() {
+        let v = verdict(true, tr2!("status-portal-ok-no-key"));
+        assert_eq!(
+            v.summary,
+            "portal /api/health 2xx (this context holds no portal key: liveness only)"
+        );
+        let n = verdict_neutral(tr2!("status-portal-no-endpoint"));
+        assert!(n.ok && n.neutral);
+        assert_eq!(n.summary, "portal not probed (this context names no portal)");
+    }
+
     #[test]
     fn verdict_pins_english_in_json_half() {
         // The `tr2!` pair behind `verdict()`: the serialized `summary`
@@ -890,10 +1017,10 @@ mod tests {
         let fronted = "resolver #5\n  domain   : netbird.zagros.example\n  nameserver[0] : 127.0.0.1\n  port     : 53531\n  flags    : Supplemental\n";
         assert!(scutil_zone_fronted(fronted, "netbird.zagros.example", "127.0.0.1", "53531"));
         // Same zone pointed at the netbird proxy → not fronted.
-        let direct = "resolver #5\n  domain   : netbird.zagros.example\n  nameserver[0] : 100.127.0.249\n  port     : 53\n";
+        let direct = "resolver #5\n  domain   : netbird.zagros.example\n  nameserver[0] : 100.127.0.252\n  port     : 53\n";
         assert!(!scutil_zone_fronted(direct, "netbird.zagros.example", "127.0.0.1", "53531"));
         // The ip+port must be claimed by the ZONE's block, not another's.
-        let split = "resolver #4\n  domain   : other.zone\n  nameserver[0] : 127.0.0.1\n  port     : 53531\nresolver #5\n  domain   : netbird.zagros.example\n  nameserver[0] : 100.127.0.249\n";
+        let split = "resolver #4\n  domain   : other.zone\n  nameserver[0] : 127.0.0.1\n  port     : 53531\nresolver #5\n  domain   : netbird.zagros.example\n  nameserver[0] : 100.127.0.252\n";
         assert!(!scutil_zone_fronted(split, "netbird.zagros.example", "127.0.0.1", "53531"));
     }
 }

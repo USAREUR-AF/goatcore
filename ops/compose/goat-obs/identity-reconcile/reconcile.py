@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """identity-reconcile — detect live identities with no declared record (strays).
 
-The durable backstop for the user209x gap (2026-07): a person can be live
+The durable backstop for the missing-manifest gap (2026-07): a person can be live
 on the mesh + logged in yet have no manifest / roster entry, because no path
 enforces "every live identity is declared." The access COP already CLASSIFIES
 this (a person node reconciles to `out_of_band`), but nothing WATCHED that
@@ -36,7 +36,7 @@ like a healthy one (`strays=0`), so `_up` also goes to 0 when the payload's
 `notes[]` says a layer feeding the verdict is unavailable — see degrading_notes.
 
 Usage: reconcile.py <output-dir>
-  env: PORTAL_URL, PORTAL_OPERATOR_API_KEY, GOAT_ENV (default zagros),
+  env: PORTAL_URL, PORTAL_OPERATOR_API_KEY, GOAT_ENV (default unknown; obs.yml sets it),
        IDENTITY_RECONCILE_ALLOWLIST (default <script-dir>/identity-reconcile-allowlist.txt)
 Exit: 0 clean, 2 unallowlisted strays found, 1 fetch/config error. Degradation
 is reported on `_up`, NOT on the exit code — the deploy legs in obs.yml treat
@@ -206,7 +206,7 @@ def main() -> int:
     outdir.mkdir(parents=True, exist_ok=True)
     out_path = outdir / "goat_identity_reconcile.prom"
 
-    env = os.environ.get("GOAT_ENV", "zagros")
+    env = os.environ.get("GOAT_ENV", "unknown")
     url = os.environ.get("PORTAL_URL", "").strip()
     key = os.environ.get("PORTAL_OPERATOR_API_KEY", "").strip()
     allow_path = pathlib.Path(
@@ -284,7 +284,7 @@ def main() -> int:
     if unallowlisted:
         print(
             "identity-reconcile: ACTION — each unallowlisted stray is a live identity with no "
-            "declared record. Author its manifest (see user209x backfill) or revoke it. "
+            "declared record. Author its manifest or revoke it. "
             "If it's a legitimate test/service account, add it to the allowlist."
         )
         return 2

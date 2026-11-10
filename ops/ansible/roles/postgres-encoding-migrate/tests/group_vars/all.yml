@@ -1,0 +1,21 @@
+---
+# Test fixture: two local "hosts" on one Docker daemon. Every value here
+# exists so the role reaches the fixture's containers and paths instead of a
+# mgmt host's.
+ansible_connection: local
+postgres_encoding_migrate_become: false
+participates_in_spock: true
+intra_site_pair: false
+inter_site_spock_topology: full_mesh
+spock_mesh_databases:
+  - name: netbird
+    replication_sets: [utf8_test]
+    repset:
+      name: utf8_test
+      tables: [utf8_shared, utf8_net, utf8_client]
+# The fixture has no NetBird tables for the guards to attach to.
+spock_mesh_revocation_guard: false
+spock_mesh_hub_authority: false
+ory_spock_enabled: false
+postgres_encoding_migrate_stop_units: [pemtest-absent.service]
+postgres_encoding_migrate_drain_seconds: 30

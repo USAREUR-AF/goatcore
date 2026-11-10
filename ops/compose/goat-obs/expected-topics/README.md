@@ -39,7 +39,7 @@ $EDITOR declared-topics.yml        # add/remove a declared topic under an anchor
 python3 generate.py                # regenerate the .prom
 python3 generate.py --check        # CI guard: .prom matches the snapshot
 git add declared-topics.yml textfile/goat_declared_topic.prom
-# then re-deploy nova-obs (operator): ansible obs.yml — rsync + compose up
+# then re-deploy the obs stack (operator): ansible obs.yml — copy + compose up
 ```
 
 Test the rule: `promtool test rules ../prometheus/tests/undeclared-topic.test.yml`.
@@ -63,3 +63,9 @@ to auto-derive this snapshot from the portal topic registry
 (`GET /api/vendors/{v}/topics` / `goat topic export`) — tracked as a follow-on.
 Until then, keep it synced with the producers. Mirrors the expected-vendor
 `allowed`-set caveat exactly.
+
+## Coverage scope
+
+This monitor runs where the stack (audit-subscriber-fed Prometheus + these
+rules) is deployed by `obs.yml`. A goatnet without it has no automated
+declared-vs-actual detection at any granularity.

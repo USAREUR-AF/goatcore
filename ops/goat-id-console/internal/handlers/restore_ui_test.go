@@ -47,7 +47,7 @@ func adminGet(t *testing.T, h http.Handler, path string) string {
 func TestBrowserRestore_ArchivedCardOrderAndWording(t *testing.T) {
 	s := newOnboardTestServer(t)
 	h := s.Routes()
-	pid := onboardedProposalInState(t, s, h, "person-114@example.org", onboardstore.ProposalArchived)
+	pid := onboardedProposalInState(t, s, h, "pat-restore@example.org", onboardstore.ProposalArchived)
 	body := adminGet(t, h, "/onboarding?status=archived&id="+pid)
 
 	restore := strings.Index(body, "/onboarding/"+pid+"/restore")
@@ -63,7 +63,7 @@ func TestBrowserRestore_ArchivedCardOrderAndWording(t *testing.T) {
 		`<button class="primary" type="submit" aria-label="Restore pat-restore and resend key">Restore and resend key</button>`,
 		// The confirm names the goatnet and the destination email, and says the
 		// old key is dead and a fresh one is minted + emailed.
-		"The old setup key is dead. A fresh one will be minted on zagros and the welcome package emailed to person-114@example.org.",
+		"The old setup key is dead. A fresh one will be minted on zagros and the welcome package emailed to pat-restore@example.org.",
 		"Offboarding an archived record is one-way and refuses until the person's access is actually cut.",
 	} {
 		if !strings.Contains(body, want) {
@@ -80,7 +80,7 @@ func TestBrowserRestore_ArchivedCardOrderAndWording(t *testing.T) {
 func TestBrowserRestore_LandsOnApprovedWithBannerAndMark(t *testing.T) {
 	s := newOnboardTestServer(t)
 	h := s.Routes()
-	pid := onboardedProposalInState(t, s, h, "person-92@example.org", onboardstore.ProposalArchived)
+	pid := onboardedProposalInState(t, s, h, "pat-back@example.org", onboardstore.ProposalArchived)
 
 	rec := postBrowserRestore(t, h, s, pid)
 	if rec.Code != http.StatusSeeOther {
@@ -99,7 +99,7 @@ func TestBrowserRestore_LandsOnApprovedWithBannerAndMark(t *testing.T) {
 	}
 
 	body := adminGet(t, h, loc.String())
-	if !strings.Contains(body, "Restored. A fresh key will be minted and the welcome package sent to person-92@example.org. Follow this row through Provisioning to Onboarded.") {
+	if !strings.Contains(body, "Restored. A fresh key will be minted and the welcome package sent to pat-back@example.org. Follow this row through Provisioning to Onboarded.") {
 		t.Error("landing page lacks the restored banner naming the destination email")
 	}
 	if !strings.Contains(body, "<b>Restored</b> by admin@example.org at ") {
@@ -139,13 +139,12 @@ func TestBrowserRestore_LandsOnApprovedWithBannerAndMark(t *testing.T) {
 	}
 }
 
-// The setup key value never appears on the row, in a flash or in the confirm
-//.
+// The setup key value never appears on the row, in a flash or in the confirm.
 func TestBrowserRestore_KeyNeverInline(t *testing.T) {
 	s := newOnboardTestServer(t)
 	h := s.Routes()
 	const secret = "nbs-inline-secret-key" //nolint:gosec // a fake value the test looks for in page output, not a credential
-	pid := onboardedProposalInState(t, s, h, "person-108@example.org", onboardstore.ProposalOnboarded)
+	pid := onboardedProposalInState(t, s, h, "pat-key@example.org", onboardstore.ProposalOnboarded)
 	ctx := context.Background()
 	if err := s.Onboard.SetProposalResult(ctx, pid, onboardstore.ProposalOnboarded, secret, "", "", "", "", false); err != nil {
 		t.Fatalf("set key: %v", err)
@@ -188,12 +187,12 @@ func TestBrowserRestore_RefusedWhenNoLongerArchived(t *testing.T) {
 			if state == onboardstore.ProposalApproved {
 				// Restored by somebody else meanwhile: archived, then restored via
 				// the API, then the browser's stale form arrives.
-				pid = onboardedProposalInState(t, s, h, "person-113@example.org", onboardstore.ProposalArchived)
+				pid = onboardedProposalInState(t, s, h, "pat-race@example.org", onboardstore.ProposalArchived)
 				if r := postMachine(t, h, "/api/onboard/proposals/"+pid+"/restore", nil); r.code != http.StatusOK {
 					t.Fatalf("api restore: %d %s", r.code, r.body)
 				}
 			} else {
-				pid = onboardedProposalInState(t, s, h, "person-113@example.org", state)
+				pid = onboardedProposalInState(t, s, h, "pat-race@example.org", state)
 			}
 			rec := postBrowserRestore(t, h, s, pid)
 			if rec.Code != http.StatusSeeOther {
@@ -231,7 +230,7 @@ func TestBrowserRestore_RefusedWhenNoLongerArchived(t *testing.T) {
 func TestBrowserRestore_CSRFAndUnknownRow(t *testing.T) {
 	s := newOnboardTestServer(t)
 	h := s.Routes()
-	pid := onboardedProposalInState(t, s, h, "person-99@example.org", onboardstore.ProposalArchived)
+	pid := onboardedProposalInState(t, s, h, "pat-csrf@example.org", onboardstore.ProposalArchived)
 
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/onboarding/"+pid+"/restore", strings.NewReader("csrf=wrong"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -255,7 +254,7 @@ func TestBrowserRestore_CSRFAndUnknownRow(t *testing.T) {
 func TestBrowserRestore_SponsorSeesNoButtonAndIsRefused(t *testing.T) {
 	s := newOnboardTestServer(t)
 	h := s.Routes()
-	pid := onboardedProposalInState(t, s, h, "person-115@example.org", onboardstore.ProposalArchived)
+	pid := onboardedProposalInState(t, s, h, "pat-sp@example.org", onboardstore.ProposalArchived)
 	sp := &sponsorSession{Email: "dev@bypass.local", Prefix: "dev@bypass.local"}
 	withSponsor := func(r *http.Request) *http.Request {
 		ctx := context.WithValue(r.Context(), ctxKeyActor, Actor{Email: sp.Email})

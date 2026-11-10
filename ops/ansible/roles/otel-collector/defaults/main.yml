@@ -40,8 +40,8 @@ otel_metrics_port: 8888
 # v1 simplification: Collector authenticates with OpenObserve root
 # creds. Block 27D introduces a dedicated ingest-only token.
 otel_openobserve_endpoint: "http://host.docker.internal:5080/api/default"
-otel_openobserve_user: "{{ lookup('env', 'VEGA_C_OPENOBSERVE_ROOT_EMAIL') | default('', true) }}"
-otel_openobserve_pass: "{{ lookup('env', 'VEGA_C_OPENOBSERVE_ROOT_PASSWORD') | default('', true) }}"
+otel_openobserve_user: "{{ lookup('env', 'OPENOBSERVE_ROOT_EMAIL') | default('', true) }}"
+otel_openobserve_pass: "{{ lookup('env', 'OPENOBSERVE_ROOT_PASSWORD') | default('', true) }}"
 
 # -- Site identity (auto-stamped on every record) ---------------------------
 otel_site_id: "{{ site_id | mandatory }}"

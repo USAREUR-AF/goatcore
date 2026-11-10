@@ -17,6 +17,12 @@
 # on the author (Class A, docs/design/instance-variability-model.md §1 — URI
 # SANs are freeze-critical identity, not a label you can fix later).
 #
+# TBD_STATE_DIR is where the operator machine keeps this project's local state
+# (CA keys, minted leaves): `deploy.state_dir` in ops/goatbuilder/goatbuilder.yaml
+# when the project declares one, else ~/.goat/state. The builder, the release
+# drivers and the intent signer look for the CA key under that same directory,
+# at <state dir>/<ca name>/ca.key.age, so write the declared value, not another.
+#
 # WHAT IS NOT HERE, deliberately:
 #   - Org-anchored app peers (CN = a 32-hex slot anchor). Those are PORTAL-
 #     minted per goatnet via `goat admin rotate <anchor>`; a template cannot
@@ -32,12 +38,12 @@ site_id: TBD_SITE_ID          # lowercase instance id, e.g. hobby — must match
 
 ca:
   root_cert: ops/enrollment/ca/TBD_SITE_ID/root-cert.pem
-  root_key: ~/.goat/state/TBD_SITE_ID-ca/ca.key.age
+  root_key: TBD_STATE_DIR/TBD_SITE_ID-ca/ca.key.age
   age_identity: ~/.config/age/keys.txt
   ca_id: TBD_CA_ID            # e.g. dev-<site>-ca-ecdsa-<YYYY-MM-DD>; read it
                               # back from the root cert, do not invent one
 
-out_dir: ~/.goat/state/TBD_SITE_ID-leaves
+out_dir: TBD_STATE_DIR/TBD_SITE_ID-leaves
 
 # CN convention: <service>-trial-peer, matching the other tiers. A dev tier
 # exists to be the same shape as the tiers above it, and the zenoh ACL matches

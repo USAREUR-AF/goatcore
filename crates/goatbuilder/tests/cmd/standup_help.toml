@@ -45,6 +45,9 @@ Options:
   -v, --verbose            Log what a run does — the external commands it shells out to, and the
                            network phase of `update` — to stderr, so `-o json|yaml` stays a clean
                            document. Or set RUST_LOG=goatbuilder=debug
+      --check              Run the acceptance phase (13) on a goatlite, where it is off by default;
+                           `goatbuilder assay <site>` runs it on its own. Every other goatnet runs
+                           it always
       --timeout <SECS>     Seconds to bound the connect/reach phase before failing fast — the one
                            phase that can block on an unreachable host (`update`'s fetch of the
                            served version). Does NOT cap a play's own run or the binary download

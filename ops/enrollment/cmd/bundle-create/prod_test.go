@@ -83,7 +83,7 @@ func TestRun_RejectsUnknownMode(t *testing.T) {
 	caKey, ageID, _ := devCA(t)
 	relaysPath := fixtureRelays(t)
 	args := runArgs{
-		Site: "vega", DeviceID: "x", WGCP0Address: "10.99.0.10/24",
+		Site: "lab", DeviceID: "x", WGCP0Address: "10.99.0.10/24",
 		RelaysPath: relaysPath, ACLGroupsRaw: "G",
 		CAID: "dev-test", CAKeyPath: caKey, AgeIdentityPath: ageID,
 		Mode:    "bogus",
@@ -101,7 +101,7 @@ func TestRun_DefaultsToDevMode(t *testing.T) {
 	caKey, ageID, _ := devCA(t)
 	relaysPath := fixtureRelays(t)
 	args := runArgs{
-		Site: "vega", DeviceID: "x", WGCP0Address: "10.99.0.10/24",
+		Site: "lab", DeviceID: "x", WGCP0Address: "10.99.0.10/24",
 		RelaysPath: relaysPath, ACLGroupsRaw: "G",
 		CAID: "dev-test", CAKeyPath: caKey, AgeIdentityPath: ageID,
 		Mode:    "", // explicit
@@ -119,7 +119,7 @@ func TestRun_ProdModeRequiresNoCardWhenNoneAvailable(t *testing.T) {
 	// silently producing a broken bundle.
 	relaysPath := fixtureRelays(t)
 	args := runArgs{
-		Site: "vega", DeviceID: "x", WGCP0Address: "10.99.0.10/24",
+		Site: "lab", DeviceID: "x", WGCP0Address: "10.99.0.10/24",
 		RelaysPath: relaysPath, ACLGroupsRaw: "G",
 		CAID: "prod-test",
 		Mode: "prod", PIVSlotName: "9c", PINFlag: "123456",
@@ -137,7 +137,7 @@ func TestRun_ProdModeRequiresNoCardWhenNoneAvailable(t *testing.T) {
 
 func TestValidateArgs_DevModeRequiresAgeFlags(t *testing.T) {
 	a := &runArgs{
-		Site: "vega", DeviceID: "x", WGCP0Address: "10.99.0.10/24",
+		Site: "lab", DeviceID: "x", WGCP0Address: "10.99.0.10/24",
 		RelaysPath: "/tmp/r", ACLGroupsRaw: "G",
 		CAID:    "dev-test",
 		Mode:    "dev",
@@ -151,7 +151,7 @@ func TestValidateArgs_DevModeRequiresAgeFlags(t *testing.T) {
 
 func TestValidateArgs_ProdModeDoesNotRequireAgeFlags(t *testing.T) {
 	a := &runArgs{
-		Site: "vega", DeviceID: "x", WGCP0Address: "10.99.0.10/24",
+		Site: "lab", DeviceID: "x", WGCP0Address: "10.99.0.10/24",
 		RelaysPath: "/tmp/r", ACLGroupsRaw: "G",
 		CAID: "prod-test", Mode: "prod",
 		OutPath: "/tmp/o",

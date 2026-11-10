@@ -32,7 +32,7 @@ func promStub(t *testing.T, body string, status int) (*httptest.Server, *atomic.
 
 const twoOrgs = `{"status":"success","data":{"resultType":"vector","result":[
  {"metric":{"vendor":"aardwolf"},"value":[1789798547.547,"12"]},
- {"metric":{"vendor":"user52x"},"value":[1789798547.547,"3"]}]}}`
+ {"metric":{"vendor":"otter"},"value":[1789798547.547,"3"]}]}}`
 
 func TestPrometheusCountsDeclaredPatternsPerOrg(t *testing.T) {
 	srv, _ := promStub(t, twoOrgs, http.StatusOK)
@@ -40,15 +40,15 @@ func TestPrometheusCountsDeclaredPatternsPerOrg(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new: %v", err)
 	}
-	got, err := p.ForOrgs(context.Background(), []string{"aardwolf", "user52x", "never-published"})
+	got, err := p.ForOrgs(context.Background(), []string{"aardwolf", "otter", "never-published"})
 	if err != nil {
 		t.Fatalf("for orgs: %v", err)
 	}
 	if !got["aardwolf"].Available || got["aardwolf"].DistinctTopics != 12 {
 		t.Errorf("aardwolf = %+v, want 12 available", got["aardwolf"])
 	}
-	if got["user52x"].DistinctTopics != 3 {
-		t.Errorf("user52x = %+v, want 3", got["user52x"])
+	if got["otter"].DistinctTopics != 3 {
+		t.Errorf("otter = %+v, want 3", got["otter"])
 	}
 	// An org the metrics do not mention has published nothing. That is a real
 	// answer, not an unavailable one — the distinction the old per-topic table

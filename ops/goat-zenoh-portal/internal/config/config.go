@@ -15,6 +15,11 @@ import (
 	"strings"
 )
 
+// DefaultMaxStreamsPerPrincipal is the per-key live-stream cap when
+// PORTAL_MAX_STREAMS_PER_PRINCIPAL is unset: room for a person with several
+// inspector tabs, not for a fan-out of polls against the router.
+const DefaultMaxStreamsPerPrincipal = 8
+
 // Identity-model values for Config.IdentityModel.
 const (
 	// IdentityModelPerVendor is the legacy trial-fabric model: one cert per
@@ -45,11 +50,17 @@ type Config struct {
 	// goatnets. Size must be ≥ the router's zenoh_slot_pool_size.
 	SlotPoolSalt string
 	SlotPoolSize int
+	// MaxStreamsPerPrincipal caps how many /api/topics/stream connections one
+	// vendor or slot key may hold open at once. Each stream polls the router's
+	// REST plugin every second, and the stream router carries no proxy rate
+	// limiter, so without it any key could open N streams for N polls a
+	// second. Operators are exempt. 0 disables the cap.
+	MaxStreamsPerPrincipal int
 
 	// LazySlotStorage (per-uuid-slot-pool only): when true, the router does NOT
 	// pre-cut a rocksdb store per pool slot (zenoh_lazy_slot_storage), so the
 	// portal live-adds a slot's <anchor>/** store via the admin REST API at mint
-	//. When false the store is pre-cut and no
+	// (AddStorage, best-effort). When false the store is pre-cut and no
 	// live add is needed. See zenoh-storage-taxonomy-sharding.md.
 	LazySlotStorage bool
 
@@ -160,10 +171,11 @@ type Config struct {
 	AgeIdentityPath        string // operator's age identity file (decrypts the CA key)
 	CertSignCAID           string // --ca-id value for cert-sign invocation
 	CertSignSiteID         string // --site-id value (the CA site id)
-	CertSignURIPrefix      string // URI-SAN prefix; per-goatnet (legacy default "urn:goat-nova:vendor="). Set per env via the role; the default only keeps an unconfigured portal byte-stable with the legacy default.
+	CertSignOrg            string // --org value: the Subject O of minted leaves. "" omits the flag, so cert-sign uses its built-in default.
+	CertSignURIPrefix      string // URI-SAN prefix; per-goatnet Set per env via the role; the built-in default is an example value.
 	CertSignCNSuffix       string // per-vendor-mode leaf CN suffix (legacy "-trial-peer"). Per-uuid-slot-pool mode overrides CN to the bare slot anchor, so this is unused there; kept configurable so a non-slot goatnet can drop the "trial" wording.
 	CertSignDNSSuffix      string // DNS-SAN suffix; SAN is "client.<principal>.<suffix>" (per-goatnet). In the cert; not ACL-load-bearing.
-	NovaRootCert      string // path to the CA root cert PEM (bundled into onboarding tarballs)
+	CARootCert             string // path to the CA root cert PEM (bundled into onboarding tarballs)
 	BundleCAPubkey         string // path to the PUBLIC key of the CA that signs the .cbor; shipped in the tarball so `goat ca add` works. "" omits it.
 	OnboardingPacket       string // path to the onboarding markdown bundled into the tarball
 	OnboardingPacketName   string // in-tarball filename for the onboarding packet (legacy "zenoh-trial-onboarding.md"); per-goatnet
@@ -276,18 +288,20 @@ type Config struct {
 	// markdown and to bake the right endpoint into the worked
 	// first-publisher.py example. Closes F-DOG-5 (verbatim onboarding doc)
 	// and F-DOG-10/11/14 (vendor has to discover the mTLS posture).
-	RouterEndpoint  string // e.g. "tls/zenoh.nova.netbird.nova.example:7447"
-	PortalPublicURL string // e.g. "https://portal.nova.netbird.nova.example"
+	RouterEndpoint  string // e.g. "tls/zenoh.goat.example:7447"
+	PortalPublicURL string // e.g. "https://portal.goat.example"
 	// OnboardPublicURL is the OPTIONAL onboarding-engine URL (goat-id-console),
 	// e.g. "https://onboard.site.netbird.example.net". Baked into minted
 	// goat-cli bundles as onboard_endpoint (docs/design/onboarding-extraction-plan.md);
 	// empty on goatnets without the onboard route (CLI portal-falls-back).
 	OnboardPublicURL string
 	FeedbackChannel  string // e.g. "Matrix #goat-trial-feedback"
+	// FabricName is the fabric_name /api/fabric/config reports.
+	FabricName string
 
 	// IntakeBaseURL is the PUBLIC front-desk base a candidate-onboarding
 	// one-time link is built against (ADR 1062), e.g.
-	// "https://intake.nova.example". This is the thin stateless public
+	// "https://intake.goat.example". This is the thin stateless public
 	// collector (step 2), distinct from PortalPublicURL (the mesh-only portal).
 	// When empty, POST /api/onboard/invite returns the token + a relative
 	// intake_path only — it never fabricates an absolute URL.
@@ -344,7 +358,7 @@ type Config struct {
 	AuditS3Region        string // default "us-east-1"
 	AuditS3AccessKey     string
 	AuditS3SecretKey     string
-	AuditSubscriberID    string // default "nova-a"
+	AuditSubscriberID    string // default "site-A"; the role sets it per goatnet
 	AuditTailInterval    string // e.g. "30s"
 
 	// Block 94 cross-surface deep-link contract — sibling-surface
@@ -401,8 +415,9 @@ func LoadFromFlags(args []string) (*Config, error) {
 	cfg := &Config{}
 
 	fs.StringVar(&cfg.Listen, "listen", envOr("PORTAL_LISTEN", "127.0.0.1:8090"), "HTTP listener address")
-	fs.StringVar(&cfg.IdentityModel, "identity-model", envOr("PORTAL_IDENTITY_MODEL", IdentityModelPerVendor), "Onboarding identity model: per-vendor (nova-a) or per-uuid-slot-pool (ZAGROS, ADR 1025)")
+	fs.StringVar(&cfg.IdentityModel, "identity-model", envOr("PORTAL_IDENTITY_MODEL", IdentityModelPerVendor), "Onboarding identity model: per-vendor or per-uuid-slot-pool (ADR 1025)")
 	fs.StringVar(&cfg.SlotPoolSalt, "slot-pool-salt", envOr("PORTAL_SLOT_POOL_SALT", ""), "Per-goatnet salt for the per-uuid slot pool; MUST match the router template's zenoh_slot_pool_salt (per-uuid mode only)")
+	fs.IntVar(&cfg.MaxStreamsPerPrincipal, "max-streams-per-principal", envInt("PORTAL_MAX_STREAMS_PER_PRINCIPAL", DefaultMaxStreamsPerPrincipal), "Concurrent /api/topics/stream connections one vendor or slot key may hold (operators exempt); 0 disables the cap")
 	fs.IntVar(&cfg.SlotPoolSize, "slot-pool-size", envInt("PORTAL_SLOT_POOL_SIZE", 0), "Number of slots to bake into the registry; MUST equal the router's zenoh_slot_pool_size (per-uuid mode only)")
 	fs.BoolVar(&cfg.LazySlotStorage, "lazy-slot-storage", envBool("PORTAL_LAZY_SLOT_STORAGE", false), "Per-uuid mode: the router does not pre-cut a store per pool slot; live-add the slot's <anchor>/** store via admin-REST at mint (must match the router's zenoh_lazy_slot_storage)")
 	fs.IntVar(&cfg.TopicBudgetSelfBlock, "topic-budget-self-block", envInt("PORTAL_TOPIC_BUDGET_SELF_BLOCK", 0), "Automatic self-service topic-budget allowance every onboarded slot holds (must equal zenoh_topic_budget_self_block); 0 disables the budget-projection endpoint")
@@ -427,25 +442,28 @@ func LoadFromFlags(args []string) (*Config, error) {
 	fs.StringVar(&cfg.CABundleDir, "ca-bundle-dir", envOr("PORTAL_CA_BUNDLE_DIR", "/etc/goat-zenoh-portal/ca"), "Directory holding root-cert.pem + ca.key.age")
 	fs.StringVar(&cfg.AgeIdentityPath, "age-identity", envOr("PORTAL_AGE_IDENTITY", ""), "Path to age identity file (decrypts CA key)")
 	fs.StringVar(&cfg.CertSignCAID, "ca-id", envOr("PORTAL_CA_ID", ""), "--ca-id value passed to cert-sign; required unless --cert-sign-fake")
-	fs.StringVar(&cfg.CertSignSiteID, "site-id", envOr("PORTAL_SITE_ID", "nova-trial"), "--site-id (Subject OU) passed to cert-sign")
-	fs.StringVar(&cfg.CertSignURIPrefix, "uri-prefix", envOr("PORTAL_URI_PREFIX", "urn:goat-nova:vendor="), "URI-SAN prefix; <prefix><principal> is the minted SAN. Per-goatnet (nova-a legacy 'urn:goat-nova:vendor=', ZAGROS 'urn:goat:zagros:org='); the default only keeps an unconfigured portal byte-stable with nova-a")
+	fs.StringVar(&cfg.CertSignSiteID, "site-id", envOr("PORTAL_SITE_ID", "example-site"), "--site-id (Subject OU) passed to cert-sign")
+	fs.StringVar(&cfg.CertSignOrg, "cert-org", envOr("PORTAL_CERT_SIGN_ORG", ""), "--org (Subject O) passed to cert-sign; empty = omit the flag and take cert-sign's built-in default. The role sets it from goat_cert_organization")
+	fs.StringVar(&cfg.CertSignURIPrefix, "uri-prefix", envOr("PORTAL_URI_PREFIX", "urn:goat:example:org="), "URI-SAN prefix; <prefix><principal> is the minted SAN. Per-goatnet, e.g. 'urn:goat:<site>:org='; the role sets it on every goatnet")
 	fs.StringVar(&cfg.CertSignCNSuffix, "cn-suffix", envOr("PORTAL_CERT_SIGN_CN_SUFFIX", "-trial-peer"), "per-vendor-mode leaf CN suffix (legacy '-trial-peer'); slot-pool mode ignores it (CN = bare anchor)")
-	fs.StringVar(&cfg.CertSignDNSSuffix, "dns-suffix", envOr("PORTAL_CERT_SIGN_DNS_SUFFIX", "nova.peer"), "DNS-SAN suffix; SAN is client.<principal>.<suffix> (per-goatnet; ZAGROS 'zagros.peer')")
-	fs.StringVar(&cfg.NovaRootCert, "nova-root-cert", envOr("PORTAL_NOVA_ROOT_CERT", ""), "Path to CA root cert PEM (bundled into onboarding tarball)")
+	fs.StringVar(&cfg.CertSignDNSSuffix, "dns-suffix", envOr("PORTAL_CERT_SIGN_DNS_SUFFIX", "example.peer"), "DNS-SAN suffix; SAN is client.<principal>.<suffix> (per-goatnet, e.g. '<site>.peer')")
+	fs.StringVar(&cfg.CARootCert, "nova-root-cert", envOr("PORTAL_NOVA_ROOT_CERT", ""), "Legacy name of --ca-root-cert; wins when both are set")
+	var caRootCertAlias string
+	fs.StringVar(&caRootCertAlias, "ca-root-cert", envOr("PORTAL_CA_ROOT_CERT", ""), "Path to CA root cert PEM (bundled into onboarding tarball)")
 	// goat-cli compiles in no CA root, so the recipient of a .cbor needs the
 	// matching public key. Same tarball, same channel — the key verifies the
 	// bundle; it does not authenticate the channel, and NOTES.md says so.
 	fs.StringVar(&cfg.BundleCAPubkey, "bundle-ca-pubkey", envOr("PORTAL_BUNDLE_CA_PUBKEY", ""), "Path to the PUBLIC key of the CA that signs the goat-cli .cbor; shipped in the onboarding tarball for `goat ca add`. Empty = omit.")
 	fs.StringVar(&cfg.OnboardingPacket, "onboarding-packet", envOr("PORTAL_ONBOARDING_PACKET", ""), "Path to community-onboarding.md (bundled into onboarding tarball)")
-	fs.StringVar(&cfg.OnboardingPacketName, "onboarding-packet-name", envOr("PORTAL_ONBOARDING_PACKET_NAME", "zenoh-trial-onboarding.md"), "in-tarball filename for the onboarding packet (per-goatnet; ZAGROS 'zagros-fabric-onboarding.md')")
-	fs.StringVar(&cfg.OnboardingTarballStem, "onboarding-tarball-stem", envOr("PORTAL_ONBOARDING_TARBALL_STEM", "nova-onboarding"), "filename stem for the minted onboarding tarball (per-goatnet; ZAGROS 'zagros-onboarding')")
-	fs.StringVar(&cfg.OnboardingRootCertName, "onboarding-root-cert-name", envOr("PORTAL_ONBOARDING_ROOT_CERT_NAME", "nova-ca-root.pem"), "in-tarball filename for the CA root cert (per-goatnet; ZAGROS 'zagros-ca-root.pem')")
+	fs.StringVar(&cfg.OnboardingPacketName, "onboarding-packet-name", envOr("PORTAL_ONBOARDING_PACKET_NAME", "zenoh-trial-onboarding.md"), "in-tarball filename for the onboarding packet (per-goatnet, e.g. '<site>-fabric-onboarding.md')")
+	fs.StringVar(&cfg.OnboardingTarballStem, "onboarding-tarball-stem", envOr("PORTAL_ONBOARDING_TARBALL_STEM", "goat-onboarding"), "filename stem for the minted onboarding tarball (per-goatnet, e.g. '<site>-onboarding')")
+	fs.StringVar(&cfg.OnboardingRootCertName, "onboarding-root-cert-name", envOr("PORTAL_ONBOARDING_ROOT_CERT_NAME", "ca-root.pem"), "in-tarball filename for the CA root cert (per-goatnet, e.g. '<site>-ca-root.pem')")
 	fs.StringVar(&cfg.VendorBundleDir, "vendor-bundle-dir", envOr("PORTAL_VENDOR_BUNDLE_DIR", "/var/lib/goat-zenoh-portal/bundles"), "Directory for minted vendor tarballs")
 	fs.StringVar(&cfg.RecipientKeysDir, "recipient-keys-dir", envOr("PORTAL_RECIPIENT_KEYS_DIR", "/var/lib/goat-zenoh-portal/recipient-keys"), "By-anchor PUBLIC recipient-cert store: mint drops <anchor>.pem here, /api/access/recipient-cert serves it (U7 publish-my-key). Empty disables")
 	fs.StringVar(&cfg.SchemaDir, "schema-dir", envOr("PORTAL_SCHEMA_DIR", "/var/lib/goat-zenoh-portal/schemas"), "Directory for uploaded schema bodies (Block 85)")
 	fs.StringVar(&cfg.OperatorAPIKey, "operator-api-key", envOr("PORTAL_OPERATOR_API_KEY", ""), "Operator super-user API key (Bearer token); resolves to the default 'operator' handle")
 	var operatorAPIKeysRaw string
-	fs.StringVar(&operatorAPIKeysRaw, "operator-api-keys", envOr("PORTAL_OPERATOR_API_KEYS", ""), "Per-person operator keys as 'handle1:key1,handle2:key2'")
+	fs.StringVar(&operatorAPIKeysRaw, "operator-api-keys", envOr("PORTAL_OPERATOR_API_KEYS", ""), "Per-person operator keys as 'handle1:key1,handle2:key2' (attributes audit to a named person)")
 	fs.StringVar(&cfg.OperatorAPIKeysDir, "operator-api-keys-dir", envOr("PORTAL_OPERATOR_API_KEYS_DIR", ""), "On-host dir of SERVICE operator keys ('handle:key' lines) merged into the env keys; decouples machine credentials (e.g. onboard-runner) from the deploy env so a redeploy can't drop them. Empty = disabled")
 	fs.StringVar(&cfg.OperatorAPIKeysReloadInterval, "operator-api-keys-reload", envOr("PORTAL_OPERATOR_API_KEYS_RELOAD", "30s"), "How often to re-read the operator-keys dir so issuing/revoking a key needs no restart. 0 disables (startup-only, the old behaviour)")
 	fs.BoolVar(&cfg.OperatorApprovalRequired, "operator-approval", envBool("PORTAL_OPERATOR_APPROVAL_REQUIRED", true), "Require operator approval at vendor registration")
@@ -454,26 +472,27 @@ func LoadFromFlags(args []string) (*Config, error) {
 	fs.StringVar(&cfg.PrometheusURL, "prometheus-url", envOr("PORTAL_PROMETHEUS_URL", ""), "Prometheus base URL for swimlane activity counts; empty = counts render as unavailable")
 	fs.StringVar(&cfg.ForwardedIdentityHeader, "forwarded-identity-header", envOr("PORTAL_FORWARDED_IDENTITY_HEADER", ""), "HTTP header carrying client identity from Traefik (e.g. X-Forwarded-User)")
 	fs.StringVar(&cfg.SunsetDate, "sunset-date", envOr("PORTAL_SUNSET_DATE", ""), "Trial sunset date string for the UI banner")
-	fs.StringVar(&cfg.RouterEndpoint, "router-endpoint", envOr("PORTAL_ROUTER_ENDPOINT", ""), "Vendor-facing Zenoh router endpoint (e.g. tls/zenoh.nova.netbird.nova.example:7447); baked into vendor tarball + first-publisher.py")
-	fs.StringVar(&cfg.PortalPublicURL, "portal-public-url", envOr("PORTAL_PUBLIC_URL", ""), "Vendor-facing portal URL (e.g. https://portal.nova.netbird.nova.example); baked into vendor tarball NOTES.md")
-	fs.StringVar(&cfg.OnboardPublicURL, "onboard-public-url", envOr("PORTAL_ONBOARD_URL", ""), "OPTIONAL onboarding-engine URL (goat-id-console), e.g. https://onboard.zagros.netbird.zagros.example; baked into minted goat-cli bundles as onboard_endpoint. Empty = CLI portal-falls-back.")
+	fs.StringVar(&cfg.RouterEndpoint, "router-endpoint", envOr("PORTAL_ROUTER_ENDPOINT", ""), "Vendor-facing Zenoh router endpoint (e.g. tls/zenoh.goat.example:7447); baked into vendor tarball + first-publisher.py")
+	fs.StringVar(&cfg.PortalPublicURL, "portal-public-url", envOr("PORTAL_PUBLIC_URL", ""), "Vendor-facing portal URL (e.g. https://portal.goat.example); baked into vendor tarball NOTES.md")
+	fs.StringVar(&cfg.OnboardPublicURL, "onboard-public-url", envOr("PORTAL_ONBOARD_URL", ""), "OPTIONAL onboarding-engine URL (goat-id-console), e.g. https://onboard.goat.example; baked into minted goat-cli bundles as onboard_endpoint. Empty = CLI portal-falls-back.")
+	fs.StringVar(&cfg.FabricName, "fabric-name", envOr("PORTAL_FABRIC_NAME", "nova-trial"), "fabric_name reported by /api/fabric/config")
 	fs.StringVar(&cfg.FeedbackChannel, "feedback-channel", envOr("PORTAL_FEEDBACK_CHANNEL", ""), "Vendor-facing feedback channel description (e.g. 'Matrix #goat-trial-feedback')")
-	fs.StringVar(&cfg.IntakeBaseURL, "intake-base-url", envOr("PORTAL_INTAKE_BASE_URL", ""), "Public candidate-onboarding front-desk base URL (e.g. https://intake.nova.example); ADR 1062 one-time invite links are built against it. Empty → invite mint returns a relative intake_path only")
+	fs.StringVar(&cfg.IntakeBaseURL, "intake-base-url", envOr("PORTAL_INTAKE_BASE_URL", ""), "Public candidate-onboarding front-desk base URL (e.g. https://intake.goat.example); ADR 1062 one-time invite links are built against it. Empty → invite mint returns a relative intake_path only")
 	fs.StringVar(&cfg.NotifyConsoleURL, "notify-console-url", envOr("PORTAL_NOTIFY_CONSOLE_URL", ""), "id-console base URL for candidate stage-notification emails (e.g. http://goat-id-console:8080); empty disables the notify channel (onboarding-notifications.md increment 3)")
 	fs.StringVar(&cfg.NotifyToken, "notify-token", envOr("PORTAL_NOTIFY_TOKEN", ""), "Shared bearer for the id-console /api/notify server-to-server call; empty disables the notify channel")
 	fs.StringVar(&cfg.ConsoleLookupToken, "console-lookup-token", envOr("PORTAL_CONSOLE_LOOKUP_TOKEN", ""), "Bearer the id-console presents for the sponsorship-by-email lookup (ADR 1072); empty falls back to the notify token")
 	fs.StringVar(&cfg.KratosAdminURL, "kratos-admin-url", envOr("PORTAL_KRATOS_ADMIN_URL", ""), "Site-Kratos admin URL (e.g. http://kratos:4434); empty disables the per-vendor identity-roster column on /admin/vendor-activity.html")
-	fs.StringVar(&cfg.DataLabelAccessDefault, "data-label-access-default", envOr("PORTAL_DATA_LABEL_ACCESS_DEFAULT", "community"), "Per-goatnet access lane an unlabeled producer inherits (ADR 1075): community | org | controlled. ZAGROS/sandbox = community; operational goatnets choose org/controlled")
+	fs.StringVar(&cfg.DataLabelAccessDefault, "data-label-access-default", envOr("PORTAL_DATA_LABEL_ACCESS_DEFAULT", "community"), "Per-goatnet access lane an unlabeled producer inherits (ADR 1075): community | org | controlled. a sandbox goatnet = community; operational goatnets choose org/controlled")
 	fs.BoolVar(&cfg.GovernBootstrapOpen, "govern-bootstrap-open", envBool("PORTAL_GOVERN_BOOTSTRAP_OPEN", true), "Org data-governance default (ADR 1102): true = any member of a not-yet-nominated org may govern it (kick-start posture; orgs narrow themselves); false = fail-closed to nominated admins only (canonical). An org with active nominations is ALWAYS governed only by its nominees. Default true preserves current behavior")
 
 	// Block 88 vendor-progress swimlane.
 	fs.StringVar(&cfg.NetbirdMgmtURL, "netbird-mgmt-url", envOr("PORTAL_NETBIRD_MGMT_URL", ""), "NetBird mgmt API base URL for L2 peer polling (empty = disable)")
-	fs.StringVar(&cfg.NetbirdAPIToken, "netbird-api-token", envOr("NOVA_NB_API_TOKEN", ""), "NetBird API PAT for the mgmt URL (empty = disable poller)")
+	fs.StringVar(&cfg.NetbirdAPIToken, "netbird-api-token", envOrAlias("NOVA_NB_API_TOKEN", "PORTAL_NETBIRD_API_TOKEN", ""), "NetBird API PAT for the mgmt URL (empty = disable poller); env PORTAL_NETBIRD_API_TOKEN (the legacy env name wins when both are set)")
 	fs.StringVar(&cfg.GovernReconcileInterval, "govern-reconcile-interval", envOr("PORTAL_GOVERN_RECONCILE_INTERVAL", "5m"), "ADR 1102 governance cutover: how often to re-check for a new zero-admin org to first-member-seed (fail-closed only)")
 	fs.StringVar(&cfg.NetbirdPollInterval, "netbird-poll-interval", envOr("PORTAL_NETBIRD_POLL_INTERVAL", "60s"), "Interval between netbird peer polls")
 
 	// ADR 1116 §9 — the machine mint derives auto_groups from the node-class.
-	fs.StringVar(&cfg.MeshSitePrefix, "mesh-site-prefix", envOr("PORTAL_MESH_SITE_PREFIX", ""), "This goatnet's NetBird group-name prefix (e.g. ZAGROS-PROD), matching netbird_acl_taxonomy.yml. Required to mint machine setup keys")
+	fs.StringVar(&cfg.MeshSitePrefix, "mesh-site-prefix", envOr("PORTAL_MESH_SITE_PREFIX", ""), "This goatnet's NetBird group-name prefix (e.g. GALAXY-PROD), matching netbird_acl_taxonomy.yml. Required to mint machine setup keys")
 	fs.BoolVar(&cfg.MeshKeyMintEnabled, "mesh-key-mint-enabled", envBool("PORTAL_MESH_KEY_MINT_ENABLED", false), "ADR 1116 §9: let the machine mint create the NetBird setup key with auto_groups DERIVED from the node-class, instead of a human choosing them. Off = the derived groups are reported and a human still assigns them")
 	fs.StringVar(&cfg.MeshKeyTTL, "mesh-key-ttl", envOr("PORTAL_MESH_KEY_TTL", "24h"), "How long a minted machine setup key stays usable — the window to join, not the peer's lifetime")
 	fs.StringVar(&cfg.MeshExercisePrefixes, "mesh-exercise-prefixes", envOr("PORTAL_MESH_EXERCISE_PREFIXES", ""), "Exercise name → EX-* group-prefix map (name=EX-PREFIX, comma-separated), rendered from netbird_acl_taxonomy.yml's netbird_exercises. Lets the machine mint scope a key to an exercise's synthetic-site groups")
@@ -482,11 +501,11 @@ func LoadFromFlags(args []string) (*Config, error) {
 	fs.StringVar(&cfg.AuditS3Region, "audit-s3-region", envOr("PORTAL_AUDIT_S3_REGION", "us-east-1"), "AWS region for SigV4")
 	fs.StringVar(&cfg.AuditS3AccessKey, "audit-s3-access-key", envOr("PORTAL_AUDIT_S3_ACCESS_KEY", ""), "S3 access key for the audit bucket (empty = disable L3/L4)")
 	fs.StringVar(&cfg.AuditS3SecretKey, "audit-s3-secret-key", envOr("PORTAL_AUDIT_S3_SECRET_KEY", ""), "S3 secret key for the audit bucket (empty = disable L3/L4)")
-	fs.StringVar(&cfg.AuditSubscriberID, "audit-subscriber-id", envOr("PORTAL_AUDIT_SUBSCRIBER_ID", "nova-a"), "Top-level object-key prefix written by the audit-subscriber")
+	fs.StringVar(&cfg.AuditSubscriberID, "audit-subscriber-id", envOr("PORTAL_AUDIT_SUBSCRIBER_ID", "site-A"), "Top-level object-key prefix written by the audit-subscriber")
 	fs.StringVar(&cfg.AuditTailInterval, "audit-tail-interval", envOr("PORTAL_AUDIT_TAIL_INTERVAL", "30s"), "Interval between MinIO audit tail pulls")
 
 	// Block 94 cross-surface deep-link contract (sibling base URLs).
-	fs.StringVar(&cfg.SiblingPanoscopeURL, "sibling-panoscope-url", envOr("PORTAL_SIBLING_PANOSCOPE_URL", ""), "Block 94 sibling: panoscope origin (e.g. https://panoscope.nova.netbird.nova.example). Empty = no panoscope deep-link.")
+	fs.StringVar(&cfg.SiblingPanoscopeURL, "sibling-panoscope-url", envOr("PORTAL_SIBLING_PANOSCOPE_URL", ""), "Block 94 sibling: panoscope origin (e.g. https://panoscope.goat.example). Empty = no panoscope deep-link.")
 	fs.StringVar(&cfg.SiblingStethoscopeURL, "sibling-stethoscope-url", envOr("PORTAL_SIBLING_STETHOSCOPE_URL", ""), "Block 94 sibling: stethoscope origin. Empty = no diagnose-button rendered.")
 	fs.StringVar(&cfg.SiblingFlashlightURL, "sibling-flashlight-url", envOr("PORTAL_SIBLING_FLASHLIGHT_URL", ""), "Block 94 sibling: flashlight origin. Empty = no tail-button rendered.")
 
@@ -499,10 +518,13 @@ func LoadFromFlags(args []string) (*Config, error) {
 	fs.StringVar(&cfg.Lexicon.Orgs, "lex-orgs", envOr("PORTAL_LEX_ORGS", ""), "Display lexicon: entity noun plural (default '<Org>s')")
 	fs.StringVar(&cfg.Lexicon.OrgTitle, "lex-org-title", envOr("PORTAL_LEX_ORG_TITLE", ""), "Display lexicon: entity noun singular title-case (default first-letter-upper of Org)")
 	fs.StringVar(&cfg.Lexicon.OrgsTitle, "lex-orgs-title", envOr("PORTAL_LEX_ORGS_TITLE", ""), "Display lexicon: entity noun plural title-case (default first-letter-upper of Orgs)")
-	fs.StringVar(&cfg.Lexicon.PanoscopeURL, "lex-panoscope-url", envOr("PORTAL_LEX_PANOSCOPE_URL", ""), "Display lexicon: masthead Panoscope nav link target (default nova panoscope host)")
+	fs.StringVar(&cfg.Lexicon.PanoscopeURL, "lex-panoscope-url", envOr("PORTAL_LEX_PANOSCOPE_URL", ""), "Display lexicon: masthead Panoscope nav link target (the role sets it per goatnet)")
 
 	if err := fs.Parse(args); err != nil {
 		return nil, err
+	}
+	if cfg.CARootCert == "" {
+		cfg.CARootCert = caRootCertAlias
 	}
 	keys, err := parseOperatorAPIKeys(operatorAPIKeysRaw)
 	if err != nil {
@@ -594,14 +616,20 @@ func (c *Config) Validate() error {
 		if c.AgeIdentityPath == "" {
 			return errors.New("cert-sign requires --age-identity (or pass --cert-sign-fake for dev)")
 		}
-		if c.NovaRootCert == "" {
-			return errors.New("cert-sign requires --nova-root-cert to bundle into vendor tarballs (or --cert-sign-fake)")
+		if c.CARootCert == "" {
+			return errors.New("cert-sign requires --ca-root-cert to bundle into vendor tarballs (or --cert-sign-fake)")
 		}
 		if strings.TrimSpace(c.CertSignCAID) == "" {
 			return errors.New("cert-sign requires --ca-id, the id of this goatnet's signing CA (or --cert-sign-fake)")
 		}
 	}
 	return nil
+}
+
+// envOrAlias reads the legacy env name first, then its neutral alias; the
+// legacy name wins when both are set.
+func envOrAlias(legacy, alias, dflt string) string {
+	return envOr(legacy, envOr(alias, dflt))
 }
 
 func envOr(key, dflt string) string {

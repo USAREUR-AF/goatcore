@@ -5,8 +5,11 @@
 # /metrics endpoint (127.0.0.1:9123). Asserts:
 #   (a) offset_seconds (chrony_tracking_last_offset_seconds) absolute
 #       value < chrony_smoketest_offset_s
-#   (b) at least one chrony source reported
-#       (count of chrony_sources_state_info > 0)
+#   (b) at least one chrony source reported: counted from the exporter's
+#       chrony_sources_* lines when its `sources` collector runs; from
+#       `chronyc -n -c sources` on the host when it does not (a host on the
+#       F-411 loopback command port runs `chrony_exporter_collectors:
+#       [tracking]` and never exports a source line)
 #
 # Metric names are as emitted by github.com/SuperQ/chrony_exporter v0.13.3
 # (see README.md of this role for the attribution to upstream collectors).
@@ -26,6 +29,16 @@
           | first
           | default('nan')) | float }}
 
+- name: Smoketest — count chrony sources on the host (exporter runs without the sources collector)
+  # chronyc failing fails the task (its error is the finding); a source list
+  # that is empty prints 0 and the assert below says so.
+  ansible.builtin.shell: out=$(timeout 30 chronyc -n -c sources) || exit $?; printf '%s\n' "$out" | grep -c . || true
+  args:
+    executable: /bin/bash
+  register: _smoketest_chronyc_sources
+  changed_when: false
+  when: "'sources' not in chrony_exporter_collectors"
+
 - name: Smoketest — count configured chrony sources
   # Count lines that begin with chrony_sources_reachability_ratio{...}
   # using regex_findall with a multiline flag. Earlier attempt split
@@ -40,6 +53,7 @@
       {{ _smoketest_metrics.content
          | regex_findall('^chrony_sources_reachability_ratio\{', multiline=True)
          | length }}
+  when: "'sources' in chrony_exporter_collectors"
 
 - name: Smoketest — assert offset within ceiling
   ansible.builtin.assert:
@@ -52,14 +66,21 @@
       NTP smoke-test OK on {{ inventory_hostname }}: offset
       {{ _smoketest_offset }}s within {{ chrony_smoketest_offset_s }}s ceiling.
 
+- name: Smoketest — the source count chronyc reported
+  ansible.builtin.set_fact:
+    _smoketest_source_count: "{{ _smoketest_chronyc_sources.stdout | trim | int }}"
+  when: "'sources' not in chrony_exporter_collectors"
+
 - name: Smoketest — assert source count > 0
   ansible.builtin.assert:
     that:
       - (_smoketest_source_count | int) > 0
     fail_msg: >-
-      NTP smoke-test FAILED on {{ inventory_hostname }}: chrony_exporter
+      NTP smoke-test FAILED on {{ inventory_hostname }}:
+      {{ 'chrony_exporter' if 'sources' in chrony_exporter_collectors else 'chronyc -n -c sources' }}
       reports zero sources (expected >0). chronyd may be running but
       unable to use any configured NTS source.
     success_msg: >-
       NTP smoke-test OK on {{ inventory_hostname }}: {{ _smoketest_source_count }}
-      source(s) reported by chrony_exporter.
+      source(s) reported by
+      {{ 'chrony_exporter' if 'sources' in chrony_exporter_collectors else 'chronyc -n -c sources' }}.

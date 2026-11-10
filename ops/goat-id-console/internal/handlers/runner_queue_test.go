@@ -99,7 +99,7 @@ func TestRunnerBand_RendersOnTheQueuePageForAStuckCut(t *testing.T) {
 	s := newOnboardTestServer(t)
 	s.runnerLateAfter = time.Nanosecond // a freshly queued row is already "late"
 	h := s.Routes()
-	pid := offboardRowTo(t, s, h, "person-128@example.org", onboardstore.ProposalOffboardRequested)
+	pid := offboardRowTo(t, s, h, "person-115@example.org", onboardstore.ProposalOffboardRequested)
 
 	body := adminGet(t, h, "/onboarding?status="+onboardstore.ProposalOffboardRequested)
 	for _, want := range []string{
@@ -134,12 +134,12 @@ func TestRunnerBand_CallsTheRunnerBlindWhenItClaimedOtherWorkSince(t *testing.T)
 	s := newOnboardTestServer(t)
 	s.runnerLateAfter = time.Nanosecond
 	h := s.Routes()
-	pid := offboardRowTo(t, s, h, "person-128@example.org", onboardstore.ProposalOffboardRequested)
+	pid := offboardRowTo(t, s, h, "person-115@example.org", onboardstore.ProposalOffboardRequested)
 	// Another person's mint is claimed afterwards: the runner is alive. The
 	// store keeps whole seconds and the verdict is strictly "claimed AFTER
 	// queued", so the claim has to land in a later second than the click.
 	time.Sleep(1100 * time.Millisecond)
-	onboardedProposalInState(t, s, h, "person-86@example.org", onboardstore.ProposalOnboarded)
+	onboardedProposalInState(t, s, h, "person-73@example.org", onboardstore.ProposalOnboarded)
 
 	body := adminGet(t, h, "/onboarding?status="+onboardstore.ProposalOffboardRequested)
 	for _, want := range []string{
@@ -169,7 +169,7 @@ func TestRunnerBand_AbsentWhenNoPayload(t *testing.T) {
 func TestSettleQueuedCut_RequiresNoteAndInactiveLogin(t *testing.T) {
 	s := newOnboardTestServer(t)
 	h := s.Routes()
-	email := "person-126@example.org"
+	email := "person-113@example.org"
 	pid := offboardRowTo(t, s, h, email, onboardstore.ProposalOffboardRequested)
 
 	// Login still active: refused, row does not move.
@@ -211,7 +211,7 @@ func TestSettleQueuedCut_RequiresNoteAndInactiveLogin(t *testing.T) {
 func TestSettleQueuedCut_RefusesAClaimedCut(t *testing.T) {
 	s := newOnboardTestServer(t)
 	h := s.Routes()
-	email := "person-31@example.org"
+	email := "person-26@example.org"
 	pid := offboardRowTo(t, s, h, email, onboardstore.ProposalOffboarding)
 	s.Kratos = map[string]*kratos.Client{"tenant": fakeKratosIdentityList(t, email, "inactive")}
 	rec := postBrowserOffboardNote(t, h, s, pid, "cut by hand")

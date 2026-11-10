@@ -173,7 +173,7 @@ type createSetupKeyRequest struct {
 	AutoGroups []string `json:"auto_groups"`
 	UsageLimit int      `json:"usage_limit"`
 	Ephemeral  bool     `json:"ephemeral"`
-	// AutoPeerName is the label prefix the patched goat-maintainer mgmt image combines
+	// AutoPeerName is the label prefix the patched goat mgmt image combines
 	// with the joining peer's hostname as "<auto_peer_name>-<hostname>". Send
 	// it or the peer registers under its bare hostname, and a bare hostname is
 	// not a name anyone can trace back to a person or a machine record.
@@ -395,8 +395,8 @@ func (c *Client) CutMachine(ctx context.Context, keyName, peerName string) (*Mes
 //	keyName              auto_peer_name with no hostname appended.
 //	keyName + "-" + host the shape the mgmt image actually produces.
 //
-// The trailing hyphen is load-bearing: without it keyName "machine-gateway-one-1"
-// would also claim "machine-gateway-one-11-host", cutting a different machine.
+// The trailing hyphen is load-bearing: without it keyName "machine-gw-1"
+// would also claim "machine-gw-11-host", cutting a different machine.
 func ownedPeerName(name, keyName, handle string) bool {
 	return name == handle || name == keyName || strings.HasPrefix(name, keyName+"-")
 }

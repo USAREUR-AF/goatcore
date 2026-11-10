@@ -94,13 +94,12 @@
 <div id="status-msg" class="msg"></div>
 
 <script>
-let authKey = localStorage.getItem('snitch_key') || '';
+try { localStorage.removeItem('snitch_key'); } catch (_) {}
 
 function showLogin() { document.getElementById('login-overlay').style.display = 'flex'; }
 function hideLogin() { document.getElementById('login-overlay').style.display = 'none'; }
 
 async function authFetch(url, opts = {}) {
-  if (authKey) opts.headers = Object.assign(opts.headers || {}, { 'Authorization': 'Bearer ' + authKey });
   const resp = await fetch(url, opts);
   if (resp.status === 401) { showLogin(); throw new Error('unauthorized'); }
   return resp;
@@ -110,10 +109,9 @@ async function doLogin() {
   const key = document.getElementById('key-input').value.trim();
   const errEl = document.getElementById('login-error');
   try {
-    const resp = await fetch('/api/mesh', { headers: { 'Authorization': 'Bearer ' + key } });
+    const resp = await fetch('/api/browser-session', { method: 'POST', headers: { 'Authorization': 'Bearer ' + key } });
     if (resp.ok) {
-      authKey = key;
-      localStorage.setItem('snitch_key', key);
+      document.getElementById('key-input').value = '';
       hideLogin();
       errEl.style.display = 'none';
       refresh();
@@ -248,7 +246,7 @@ function renderGateways(state) {
     h += '<td style="font-family:monospace;font-size:12px">' + (gw.subnet || '-') + '</td>';
     h += '<td style="font-size:12px">' + (peerNames || '-') + '</td>';
     h += '<td>' + (gw.avg_rtt_ms > 0 ? gw.avg_rtt_ms.toFixed(1) + 'ms' : '-') + '</td>';
-    h += '<td><input type="text" id="' + inputId + '" value="' + alias + '" placeholder="e.g. the satellite link"></td>';
+    h += '<td><input type="text" id="' + inputId + '" value="' + alias + '" placeholder="e.g. satellite uplink"></td>';
     h += '<td>' + (isReg ? '<span class="badge badge-yes">Yes</span>' : '<span class="badge badge-no">No</span>') + '</td>';
     h += '<td><button onclick="setAlias(\'gateway\',\'' + gw.ip + '\',\'' + inputId + '\')">Save</button>';
     if (isReg) h += ' <button class="danger" onclick="removeAlias(\'gateway\',\'' + gw.ip + '\')">Remove</button>';

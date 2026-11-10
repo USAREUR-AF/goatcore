@@ -5,7 +5,7 @@
 # heavy-equivalent restart picks it up. The add-vendor.sh helper still
 # SIGHUPs zenohd in steady state for low-touch vendor additions.
 
-- name: Restart nova zenoh router
+- name: Restart zenoh router
   ansible.builtin.command:
     argv:
       - docker

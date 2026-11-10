@@ -53,8 +53,8 @@ const defaultOperatorHandle = "operator"
 type Principal struct {
 	Operator bool
 	Vendor   string // vendor prefix when not operator
-	// Actor is the resolved person handle for an operator principal
-	//. Empty for vendors (vendor identity is in Vendor); set to
+	// Actor is the resolved person handle for an operator principal.
+	// Empty for vendors (vendor identity is in Vendor); set to
 	// the per-person handle, or the legacy "operator" default, for
 	// operators.
 	Actor string
@@ -73,8 +73,8 @@ func PrincipalFromContext(ctx context.Context) *Principal {
 	return nil
 }
 
-// actorOf returns the person handle to attribute an audited action to
-//. For an operator principal that's the resolved Actor; it falls
+// actorOf returns the person handle to attribute an audited action to.
+// For an operator principal that's the resolved Actor; it falls
 // back to the shared "operator" label only if the principal is somehow
 // unset, so an audit row never carries an empty actor.
 func actorOf(r *http.Request) string {
@@ -114,6 +114,9 @@ func extractToken(r *http.Request) string {
 func (s *Server) AuthMiddleware(required bool, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		token := extractToken(r)
+		if token == "" && r.Header.Get("Authorization") == "" {
+			token = s.browserSessions.credential(r)
+		}
 		if token == "" {
 			if required {
 				writeError(w, http.StatusUnauthorized, "auth", "missing bearer token")

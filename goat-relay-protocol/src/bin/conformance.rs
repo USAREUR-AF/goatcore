@@ -166,7 +166,7 @@ fn build_fixtures() -> BTreeMap<String, Vec<u8>> {
     out.insert(
         "050-authresponse-typical.bin".into(),
         Frame::AuthResponse(
-            AuthResponse::new("rels://relay-rlb.legacy.example:33073".to_owned()).unwrap(),
+            AuthResponse::new("rels://relay-a.goat.example:33073".to_owned()).unwrap(),
         )
         .marshal()
         .unwrap(),

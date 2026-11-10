@@ -3,7 +3,11 @@ package probe
 
 import (
 	"context"
+	"fmt"
+	"os"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 // Status represents the outcome of a single check.
@@ -20,24 +24,24 @@ const (
 type Category string
 
 const (
-	CatDNS        Category = "dns"
-	CatRelay      Category = "relay"
-	CatSTUN       Category = "stun"
-	CatTLS        Category = "tls"
-	CatMesh       Category = "mesh"
-	CatService    Category = "service"
-	CatLatency    Category = "latency"
-	CatLoad       Category = "load"
+	CatDNS     Category = "dns"
+	CatRelay   Category = "relay"
+	CatSTUN    Category = "stun"
+	CatTLS     Category = "tls"
+	CatMesh    Category = "mesh"
+	CatService Category = "service"
+	CatLatency Category = "latency"
+	CatLoad    Category = "load"
 )
 
 // Result captures the outcome of a single check.
 type Result struct {
-	Category  Category      `json:"category"`
-	Name      string        `json:"name"`
-	Status    Status        `json:"status"`
-	Detail    string        `json:"detail"`
-	LatencyMs float64       `json:"latency_ms,omitempty"`
-	Timestamp time.Time     `json:"timestamp"`
+	Category  Category       `json:"category"`
+	Name      string         `json:"name"`
+	Status    Status         `json:"status"`
+	Detail    string         `json:"detail"`
+	LatencyMs float64        `json:"latency_ms,omitempty"`
+	Timestamp time.Time      `json:"timestamp"`
 	Metadata  map[string]any `json:"metadata,omitempty"`
 }
 
@@ -73,7 +77,7 @@ type RelayInfo struct {
 type Config struct {
 	Domain       string      `yaml:"domain" json:"domain"`
 	Relays       []RelayInfo `yaml:"relays" json:"relays"`
-	NETHOSTMeshIP   string      `yaml:"nethost_mesh_ip" json:"nethost_mesh_ip"`
+	HostMeshIP   string      `yaml:"host_mesh_ip" json:"host_mesh_ip"`
 	RelayDNS     []string    `yaml:"relay_dns" json:"relay_dns"`
 	ExpectedIPs  []string    `yaml:"expected_ips" json:"expected_ips"`
 	NetbirdToken string      `yaml:"-" json:"-"`
@@ -81,22 +85,26 @@ type Config struct {
 	Categories   []Category  `yaml:"-" json:"-"` // filter to these categories (empty = all)
 }
 
-// DefaultConfig returns the standard goat configuration.
+// DefaultConfig returns the built-in configuration: quick mode and no targets.
+// The goatnet's domain, relays and mesh host come from a config file (LoadConfig).
 func DefaultConfig() *Config {
-	return &Config{
-		Domain:     "netbird.legacy.example",
-		NETHOSTMeshIP: "100.127.1.32",
-		Relays: []RelayInfo{
-			{Name: "fra", IP: "203.0.113.2", Region: "eu-central-1", InstanceID: "i-00000cea114dd2d2f"},
-			{Name: "isr", IP: "203.0.113.20", Region: "il-central-1", InstanceID: "i-00000c028101b56e6"},
-			{Name: "mum", IP: "203.0.113.30", Region: "ap-south-1", InstanceID: "i-00000aeee9f4c9fcd"},
-		},
-		RelayDNS: []string{
-			"relay.legacy.example",
-			"relay-rlb.legacy.example",
-			"relay-rlc.legacy.example",
-		},
-		ExpectedIPs: []string{"203.0.113.2", "203.0.113.20", "203.0.113.30"},
-		Mode:        "quick",
+	return &Config{Mode: "quick"}
+}
+
+// LoadConfig returns DefaultConfig overlaid with the YAML file at path
+// (keys: domain, relays, host_mesh_ip, relay_dns, expected_ips). An empty path
+// returns DefaultConfig unchanged.
+func LoadConfig(path string) (*Config, error) {
+	cfg := DefaultConfig()
+	if path == "" {
+		return cfg, nil
 	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	if err := yaml.Unmarshal(b, cfg); err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	return cfg, nil
 }

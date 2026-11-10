@@ -1,0 +1,6 @@
+---
+- name: fixture | forwarder and an edge on one host
+  hosts: peering_forwarders
+  roles:
+    - role: goat-peering-forwarder
+    - role: goat-peering-wg

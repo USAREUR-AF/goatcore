@@ -1,0 +1,146 @@
+# promtool unit test for dormancy.yml — DevicePeerCanExpire (ADR 1216).
+# Run:  promtool test rules ops/compose/goat-obs/prometheus/tests/dormancy.test.yml
+#
+# Case 1 feeds the series dormancy_report.py writes for the fixture
+# ops/compose/goat-obs/dormancy-report/fixtures/peers.json (asserted in
+# test_dormancy_report.py): one NETWORK peer with login expiration on, one
+# CONTROL peer with both kinds on, one EDGE-SERVER peer with inactivity
+# expiration on; every other class x kind pair is written as 0.
+rule_files:
+  - ../rules/dormancy.yml
+
+evaluation_interval: 1m
+
+tests:
+  # 1. The fixture's counts: one alert per non-zero series after 10m, none for zeros.
+  - interval: 1m
+    input_series:
+      - series: 'goat_device_peer_expiry_enabled{env="site-one",class="NETWORK",kind="login"}'
+        values: '1x30'
+      - series: 'goat_device_peer_expiry_enabled{env="site-one",class="NETWORK",kind="inactivity"}'
+        values: '0x30'
+      - series: 'goat_device_peer_expiry_enabled{env="site-one",class="CONTROL",kind="login"}'
+        values: '1x30'
+      - series: 'goat_device_peer_expiry_enabled{env="site-one",class="CONTROL",kind="inactivity"}'
+        values: '1x30'
+      - series: 'goat_device_peer_expiry_enabled{env="site-one",class="EDGE-SERVER",kind="login"}'
+        values: '0x30'
+      - series: 'goat_device_peer_expiry_enabled{env="site-one",class="EDGE-SERVER",kind="inactivity"}'
+        values: '1x30'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: DevicePeerCanExpire
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: DevicePeerCanExpire
+        exp_alerts:
+          - exp_labels:
+              env: site-one
+              class: NETWORK
+              kind: login
+              severity: warning
+              component: mesh
+            exp_annotations:
+              summary: "1 NETWORK peer(s) on site-one have NetBird login expiration turned on"
+              description: |
+                NETWORK devices leave the mesh when their login
+                expiration runs out and come back only when someone re-enrolls them
+                at the device (ADR 1216). Peer names: `journalctl -t dormancy-report
+                | grep EXPIRABLE-DEVICE` on the mgmt host. Turn the expiration off
+                on each named peer (NetBird peer settings, "Login expiration" /
+                "Inactivity expiration") and record who turned it on.
+          - exp_labels:
+              env: site-one
+              class: CONTROL
+              kind: login
+              severity: warning
+              component: mesh
+            exp_annotations:
+              summary: "1 CONTROL peer(s) on site-one have NetBird login expiration turned on"
+              description: |
+                CONTROL devices leave the mesh when their login
+                expiration runs out and come back only when someone re-enrolls them
+                at the device (ADR 1216). Peer names: `journalctl -t dormancy-report
+                | grep EXPIRABLE-DEVICE` on the mgmt host. Turn the expiration off
+                on each named peer (NetBird peer settings, "Login expiration" /
+                "Inactivity expiration") and record who turned it on.
+          - exp_labels:
+              env: site-one
+              class: CONTROL
+              kind: inactivity
+              severity: warning
+              component: mesh
+            exp_annotations:
+              summary: "1 CONTROL peer(s) on site-one have NetBird inactivity expiration turned on"
+              description: |
+                CONTROL devices leave the mesh when their inactivity
+                expiration runs out and come back only when someone re-enrolls them
+                at the device (ADR 1216). Peer names: `journalctl -t dormancy-report
+                | grep EXPIRABLE-DEVICE` on the mgmt host. Turn the expiration off
+                on each named peer (NetBird peer settings, "Login expiration" /
+                "Inactivity expiration") and record who turned it on.
+          - exp_labels:
+              env: site-one
+              class: EDGE-SERVER
+              kind: inactivity
+              severity: warning
+              component: mesh
+            exp_annotations:
+              summary: "1 EDGE-SERVER peer(s) on site-one have NetBird inactivity expiration turned on"
+              description: |
+                EDGE-SERVER devices leave the mesh when their inactivity
+                expiration runs out and come back only when someone re-enrolls them
+                at the device (ADR 1216). Peer names: `journalctl -t dormancy-report
+                | grep EXPIRABLE-DEVICE` on the mgmt host. Turn the expiration off
+                on each named peer (NetBird peer settings, "Login expiration" /
+                "Inactivity expiration") and record who turned it on.
+
+  # 2. All zeros: silent.
+  - interval: 1m
+    input_series:
+      - series: 'goat_device_peer_expiry_enabled{env="zagros",class="NETWORK",kind="login"}'
+        values: '0x30'
+      - series: 'goat_device_peer_expiry_enabled{env="zagros",class="CONTROL",kind="inactivity"}'
+        values: '0x30'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: DevicePeerCanExpire
+        exp_alerts: []
+
+  # 3. A goatnet without the report has no series: silent.
+  - interval: 1m
+    input_series:
+      - series: 'goat_dormancy_report_up{env="zagros"}'
+        values: '1x30'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: DevicePeerCanExpire
+        exp_alerts: []
+
+  # 4. Turned off again: the alert clears.
+  - interval: 1m
+    input_series:
+      - series: 'goat_device_peer_expiry_enabled{env="zagros",class="NETWORK",kind="login"}'
+        values: '1x20 0x20'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: DevicePeerCanExpire
+        exp_alerts:
+          - exp_labels:
+              env: zagros
+              class: NETWORK
+              kind: login
+              severity: warning
+              component: mesh
+            exp_annotations:
+              summary: "1 NETWORK peer(s) on zagros have NetBird login expiration turned on"
+              description: |
+                NETWORK devices leave the mesh when their login
+                expiration runs out and come back only when someone re-enrolls them
+                at the device (ADR 1216). Peer names: `journalctl -t dormancy-report
+                | grep EXPIRABLE-DEVICE` on the mgmt host. Turn the expiration off
+                on each named peer (NetBird peer settings, "Login expiration" /
+                "Inactivity expiration") and record who turned it on.
+      - eval_time: 35m
+        alertname: DevicePeerCanExpire
+        exp_alerts: []

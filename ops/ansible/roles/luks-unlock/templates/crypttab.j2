@@ -2,6 +2,9 @@
 # See docs/design/os-baseline-and-luks.md §3 for unlock mechanism semantics.
 #
 # format: <target> <source> <keyfile|none> <options>
+{% for line in luks_crypttab_installer_lines | default([]) %}
+{{ line }}
+{% endfor %}
 {% for vol in luks_volumes %}
 {#-
    Choice of options depends on modes enrolled on the volume.
@@ -24,7 +27,7 @@
     noauto whenever has_passphrase=true, which prevented boot-time TPM2
     auto-unseal even when tpm2 was also enrolled. New rule: noauto if
     AND ONLY IF no auto-unseal mode is present. -#}
-{#- F-285 (zagros-prod 2026-08-06): `tang_client` is DELIBERATELY NOT counted as a
+{#- F-285: `tang_client` is DELIBERATELY NOT counted as a
     boot-time auto-unseal mode any more, so it no longer suppresses `noauto`.
 
     Clevis/Tang unlock is delivered AFTER boot by

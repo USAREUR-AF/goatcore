@@ -32,7 +32,7 @@ A release candidate is a git tag. Cutting it is the one act that starts the expe
 affected-flows.py --component id-admin-console --head goat-id-console/v1.4.0-rc.1
 ```
 
-The base of the diff is the commit the fleet runs for that component: `ops/pins/fleet-pins.yaml`'s `fleet:` value carries the image's `sha-<short>` tag, which is the git short sha the image workflow built from. So the answer is "everything that changed since what the fleet runs", which is what a release candidate is.
+The base of the diff is the commit the fleet runs for that component: `ops/pins/fleet-pins.yaml`'s `fleet:` value carries the image's `sha-<short>` tag, which is the git short sha the image workflow built from. So the answer is "everything that changed since what the fleet runs", which is what a release candidate is. A pin that names only a digest carries no commit; the base is then the component's previous `<component>/v*` tag, and with none the empty tree, so every mapped flow counts as affected.
 
 **What a candidate carries is written down where it is reviewed.** The tag names only the component and version (`<component>/v<semver>-rc.N`), the semver convention. `rc.sh` (and `goatbuilder release`) list the commits since the component's previous tag that touch the paths its image workflow builds from. That list goes into the dev pin PR body and the preprod PR body, and its one-line form (`N change(s) since <tag>: #a, #b`) into the candidate record's `reason`.
 
@@ -64,15 +64,19 @@ The live half runs from the mesh because that is the path people traverse and be
 A row runs `goat` where the context is. `ops/validation/goatnet-runners.yaml`
 names, per goatnet, the host that holds the context (`goat_via`): zagros-dev's
 management host over the mesh, and for zagros and zagros-prod `door:<env>` — the
-driver opens the door (`door-open.sh`), resolves `env-door.sh <env> --ssh-target`
-to `user@127.0.0.1:port`, and the smoke runs its `goat` legs there. The laptop
+driver opens the door (`door-open.sh`), takes the management host's address from
+`env-door.sh <env> --host-target` (`user@<mesh address>`) and the door from
+`--ssh-target` (`user@127.0.0.1:port`), and every ssh the rows make goes to the
+host through the door: the smoke runs its `goat` legs there. The laptop
 needs neither that goatnet's mesh nor its contexts, which is the door model
 ([env-doors.md](env-doors.md)). The host must hold the contexts the rows name, all
 non-person: `acceptance` for the intake rows, and `assay-probe`
 (`probe_context`, where the goatnet declares it) for the rows that read the
-fabric. The runners file names no context; operator keys never go on a host. Rows that run a command on a goatnet host (`cmd-assert` with a
-`host:`) reach it through the same door: the driver exports
-`GOAT_ROWS_SSH_JUMP` and the probe adds `-o ProxyJump` (#2100). A row that
+fabric. The runners file names no context; operator keys never go on a host. The driver passes the door as
+`GOAT_ROWS_SSH_JUMP`; `goat` rows, host rows (`cmd-assert` with a `host:`) and
+`onboard-intake-smoke.sh` all jump through it with a ProxyCommand (#2100). The
+door address is never the ssh destination itself: it is a tunnel port whose host
+key changes between goatnets, so only the host behind it is verified. A row that
 cannot run (the runner exits 2: a tool or a context missing) is reported
 **UNTESTED** and stops the run — never a failed row, never a dead candidate.
 
@@ -119,6 +123,7 @@ ops/scripts/rc.sh <component> --tag <component>/vX.Y.Z-rc.N --from dev --ack "Yo
 - **Secrets.** A deploy templates each component's secrets for a goatnet out of **your environment** (`group_vars/<group>/vars.yml` binds `<component>_…: lookup('env', NAME)`); a fresh clone has none. `deploy-component.sh` derives the full set for the component and goatnet (`ops/scripts/deploy-secrets-needed.py`) and refuses **before any host is touched**, naming every unset variable. The references (pointers, no values) are in the private `goat-credentials` repository, `refs/goat.refs`; put the named lines in `.envrc.local.d/<file>.refs` and run the same command under `op run --env-file=.envrc.local.d/<file>.refs -- …` (that repository's `local-secrets-pattern.md` §"A deployer's first run"). The values exist only inside that one process.
 - **Python deps.** The pin and intent render (`ops/pins/generate-pins.py`, `ops/consistency/.../intent.py`) need `jsonschema` and `PyYAML`. Install them once — `pip install jsonschema pyyaml` (or a pipx/venv) — before running `rc.sh`. The driver now preflights this in step 1 and fails fast with the install command, rather than stopping halfway through a deploy after the tag and image already exist.
 - **Run from a `main` checkout.** `rc.sh` authors the pin in a scratch worktree, merges it to `origin/main`, and then deploys from **the checkout you invoked it in** — Ansible reads the pins and group_vars from that working copy. Only a `main`/`master` checkout is fast-forwarded to carry the just-merged pin (and `ansible-preflight.sh` enforces its staleness guard only there); a feature-branch worktree both skips that guard and need not hold the merged pin, so it can silently deploy a stale ref and still verify green. `rc.sh` now refuses at preflight if it is not run from `main`/`master`, and fast-forwards that checkout after every merge. Keep the clone you run releases from on a current `main`.
+- **Or run from an assembled tree.** A team that keeps its goatnets' pins, intents and release records in an overlay repository deploys from the tree the overlay's `assemble.sh` builds (the `.goat-assembled` marker). `rc.sh` and `goatbuilder release` recognise the marker and run every step after the tag there (`--from dev|rows|preprod|preprod-rows|prod`, with `--tag`). Its scratch tree is a second assembled tree, built from a fresh overlay worktree on `origin/main`, so every tool a step calls is the pinned one. Each step's edits land as a pull request on the overlay repository, carrying exactly the files the step changed. After a landing the scratch tree is assembled again from the merged overlay and the deploy runs from it, so `fresh-source.sh` sees a current overlay. The nominator check reads the overlay repository's admins. Cutting the tag stays with a checkout of the repository whose image workflow builds the component.
 - **Re-running is safe.** `rc.sh` is resumable: re-running with the same `--tag` validates the existing tag as-is (step 2 prints "tag exists on origin — validating it as-is") rather than erroring, and the deploy and verify steps are idempotent. So after fixing a missing dep or a transient failure, just run the same command again. `--from <step>` resumes at one step; `--dry-run` prints every step without acting.
 - **A re-run whose pin already merged lands nothing.** The regenerate step re-signs only an intent whose body changed (an ECDSA signature is fresh every time, so re-signing an unchanged body is a diff of `.sig` files and nothing else), and the landing step compares the worktree with `origin/main` first: when they differ in signatures alone, or not at all, it prints `pins already current on main; nothing to land` and opens no pull request. `pr-land.sh` holds the same rule for every driver, and `goatbuilder release` / `fastlane` apply it in process.
 - **The stale-tree-after-merge pitfall (fixed, and how to escape it).** `rc.sh` lands each pin/record PR to `origin/main` and then deploys **from your local checkout**, which `deploy-component.sh` → `ansible-preflight.sh` requires to be current — Ansible reads role defaults (image pins, group_vars) from the working tree. The driver now fast-forwards your local `main` to `origin/main` inside `land()` after every merge, so the deploy that follows is never stale. If you ever still see `ansible-preflight: REFUSE — local main is N behind origin/main` (for example a pre-fix checkout, or you ran from a branch), the escape is exactly what the message prints: `GOAT_ALLOW_MASTER_GIT_MUTATE=1 git -C <repo> pull --ff-only origin main`, then re-run the same `rc.sh … --from <rung>` — the pin PR already landed, so the resume just deploys it.

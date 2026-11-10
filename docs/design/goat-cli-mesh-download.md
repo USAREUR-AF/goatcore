@@ -81,8 +81,12 @@ a direct mirror of the `brief` role:
   --encoding`, and the `goat admin lan` triage kit; `goat-cli-v0.2.0` was the
   first release with `goat-windows-amd64.exe`) **on
   the host** at deploy time (host has internet egress; nothing multi-MB
-  crosses the mesh via scp). The private-repo read uses a transient
-  `GOAT_CLI_RELEASE_TOKEN` (no_log, never persisted on the host).
+  crosses the mesh via scp). A public release repository is read
+  anonymously; a private one (`goat_get_release_private: true`) needs a
+  transient `GOAT_CLI_RELEASE_TOKEN` (no_log, never persisted on the host).
+  A set token is used when GitHub accepts it; one GitHub refuses (401/403) on
+  a public repository falls back to an anonymous read with a warning
+  (`ops/ansible/tasks/github-release-access.yml`).
 - **DNS:** `get.<site>.<zone>` → that goatnet's mesh IP in its
   `ops/dns/<goatnet>/mesh-hosts` (e.g.
   `ops/dns/nova/mesh-hosts` on
@@ -169,6 +173,42 @@ per-goatnet surface `version_check` resolves.
 - **Fail-closed + honest.** Any resolve/fetch/verify/replace error is a
   non-zero exit with a specific message; the installed binary is never left
   half-written.
+
+### `goatnet.toml`: the goatnet's own facts
+
+goat-cli holds no goatnet. Each goatnet publishes the facts the CLI needs at
+`get.<site>/goatnet.toml`, and `goat context refresh` writes them into the
+context's `profile.toml`, where `Profile::goatnet_endpoints()`
+(`crates/goat-cli/src/profile.rs`) reads them.
+
+| Key | Derived from (group_vars) |
+|---|---|
+| `goatnet` | `site_id` |
+| `router_endpoint` | `portal_router_endpoint`, else `tls/zenoh.<site_id>.<site_dns_zone>:7447` |
+| `netbird_mgmt_url` | `https://<public_mgmt_fqdn>` |
+| `netbird_token_env` | `<SITE_ID>_NB_API_TOKEN` |
+| `netbird_site_prefix` | `site_id` upper-cased |
+| `netbird_rosenpass` | `rosenpass_enabled` |
+| `ory_auth_url` | `https://auth.<site_id>.<site_dns_zone>` |
+| `ory_ssh_host` | `mesh_ip_a` |
+| `ory_ssh_user`, `mgmt_ssh_user` | `ansible_user` |
+| `demo_service` | `goat_get_demo_service` (declared per goatnet; the service `goat demo` opens with no name given) |
+| `i18n_feedback_email` | `goat_get_i18n_feedback_email` (declared per goatnet; where operators report translation errors) |
+| `warrant_membership_converge` | `converge:` of `ops/warrant/membership/<site_id>/_scope.yaml` in the tree the play runs from; `none` when that tree has declarations but not this goatnet's; left out when it has none. Lets `goat` outside a checkout decide warrant governance from the declaration instead of the live NetBird account |
+
+The goat-get role renders it (`roles/goat-get/defaults/main.yml`,
+`goat_get_goatnet_facts`) with the same derivations as the onboard-runner role,
+so a goatnet needs no new declaration for those; `demo_service` and
+`i18n_feedback_email` are the two a goatnet declares, and an empty one is left
+out of the file. The surface is mesh-only, like the rest
+of `get.<site>`.
+
+goat-cli carries no table of goatnets. Every command that acts on a goatnet
+reads these keys from the context whose profile names that goatnet
+(`Profile::goatnet_endpoints_for`), so `--env <goatnet>` never borrows another
+goatnet's facts. Before any `goat admin` command, a context that names no
+goatnet yet fetches its `goatnet.toml` once (4 s timeout); when the facts are
+still missing, the command says to run `goat context refresh`.
 
 ## SDK assets (grant-crypto)
 
@@ -267,8 +307,8 @@ serves the `jetson-wireguard-kmod` release (pinned by
 tarballs (`jetson-wireguard-kmod-<uname -r>.tar.gz`: .ko set + SHA256SUMS +
 PROVENANCE + install.sh + README + GPL-2.0 LICENSE) plus aggregate
 SHA256SUMS and a landing page with the one-liner install. Host-side fetch
-with `goat_get_github_token`, token-probe + asset set-equality asserts,
-fail-closed. Why on this surface: an on-mesh Jetson can adopt kernelspace
+with `goat_get_github_token` (anonymous for a public release), release-access
+probe + asset set-equality asserts, fail-closed. Why on this surface: an on-mesh Jetson can adopt kernelspace
 WireGuard (ADR 1118) with zero GitHub reach — same argument as the CLI
 binaries; and the artifacts keep working when the WAN doesn't, which is
 exactly when a Jetson site is installing things. Bump the release tag here +
@@ -282,8 +322,8 @@ Fourth asset family, same shape as the kmod family: `goat_get_octopod_enabled`
 `goat_get_octopod_release_tag`) at `get.<site>.<zone>/octo-pod/` — the
 `Architecture: all` .deb, the tarball for a box with no apt, per-artifact
 `.sha256`, the aggregate `SHA256SUMS`, its cosign bundle, and `LATEST`.
-Host-side fetch with `goat_get_github_token`, token-probe + asset
-set-equality asserts, fail-closed. Artifact names carry the version, so the
+Host-side fetch with `goat_get_github_token` (anonymous for a public release),
+release-access probe + asset set-equality asserts, fail-closed. Artifact names carry the version, so the
 asset list is templated off the tag the way the SDK family does — one
 variable to bump.
 

@@ -70,8 +70,8 @@
       deliberately rather than leaving it to fail here.
 
       This is an ASSERTION and not a skip on purpose. Skipping quietly on a
-      credential problem is precisely how zagros-prod ended up with no
-      lifecycle configuration on its audit bucket for months.
+      credential problem leaves a goatnet with no lifecycle configuration
+      on its audit bucket, and nothing reports it.
     success_msg: "MinIO root credentials resolved from the environment."
 
 # MC_HOST_<alias> is mc's env-var alias form — the same mechanism

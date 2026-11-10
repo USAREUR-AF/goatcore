@@ -30,11 +30,12 @@
 #   MGMT_HOST                  ssh target of the mgmt host, for the portal key
 #   MGMT_SSH_OPTS              extra ssh options, UNQUOTED and word-split on
 #                              purpose — e.g. through an env door (ADR 1117):
-#                                MGMT_HOST=goat@127.0.0.1
+#                                MGMT_HOST=<door user>@127.0.0.1
 #                                MGMT_SSH_OPTS="-p 12202 -o StrictHostKeyChecking=no"
 #                              Folding these into MGMT_HOST does not work: ssh
 #                              gets one quoted argument and reports "Bad port".
-#   PORTAL_URL                 that goatnet's portal (for the load check)
+#   PORTAL_URL                 that goatnet's portal base URL, for the load
+#                              check (required unless --dry-run; no built-in zone)
 #   PORTAL_KEYS_DIR            portal operator-key dir (default below)
 set -euo pipefail
 
@@ -51,6 +52,10 @@ fi
 # even inside double quotes, and the whole script fails to parse with an error
 # pointing at a line far below the real one.
 : "${MGMT_HOST:?set MGMT_HOST — ssh target of the mgmt host for this goatnet}"
+# Asked for before anything is minted, so a run cannot stop after step 1 for
+# want of the address step 2 proves itself against.
+[ "$DRY_RUN" = "1" ] || : "${PORTAL_URL:?set PORTAL_URL — the base URL of this goatnet portal, for the load check}"
+PORTAL_URL="${PORTAL_URL:-}"; PORTAL_URL="${PORTAL_URL%/}"
 PORTAL_KEYS_DIR="${PORTAL_KEYS_DIR:-/opt/goat-zenoh-portal/operator-keys.d}"
 # Deliberately unquoted at use: these are multiple ssh words, not one argument.
 MGMT_SSH_OPTS="${MGMT_SSH_OPTS:-}"
@@ -99,7 +104,7 @@ else
   # rereads the directory on its own interval, so poll instead of racing it.
   echo "     waiting for the portal to load it..."
   for _ in $(seq 1 10); do
-    code="$(ssh $MGMT_SSH_OPTS "$MGMT_HOST" "curl -s -o /dev/null -w '%{http_code}' -H 'Authorization: Bearer ${portal_key}' '${PORTAL_URL:-https://portal.${GOATNET}.netbird.zagros.example}/api/machines'" 2>/dev/null || true)"
+    code="$(ssh $MGMT_SSH_OPTS "$MGMT_HOST" "curl -s -o /dev/null -w '%{http_code}' -H 'Authorization: Bearer ${portal_key}' '${PORTAL_URL}/api/machines'" 2>/dev/null || true)"
     [ "$code" = "200" ] && { echo "     portal accepts it (200)"; break; }
     sleep 6
   done

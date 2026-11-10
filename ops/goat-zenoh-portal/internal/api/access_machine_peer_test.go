@@ -8,21 +8,21 @@ import (
 
 func TestMatchMachineHandle(t *testing.T) {
 	machines := []access.MachineIn{
-		{SystemHandle: "alpha-baxter"},
-		{SystemHandle: "alpha-baxter-1"}, // longer handle sharing a prefix
-		{SystemHandle: ""},              // an empty handle must never match
+		{SystemHandle: "sam-baxter"},
+		{SystemHandle: "sam-baxter-1"}, // longer handle sharing a prefix
+		{SystemHandle: ""},             // an empty handle must never match
 	}
 	cases := []struct {
 		name string
 		peer string
 		want string
 	}{
-		{"minted key name + NetBird hostname", "machine-alpha-baxter-1-alpha-baxter-1", "alpha-baxter-1"},
-		{"minted key name, no hostname", "machine-alpha-baxter-1", "alpha-baxter-1"},
-		{"shorter handle keeps its own peer", "machine-alpha-baxter-orin", "alpha-baxter"},
-		{"handle must end at a hyphen", "machine-alpha-baxter-10", "alpha-baxter"},
-		{"a person's peer is not a machine", "peer-alpha-baxter-1-zagros-2026-08-25-box", ""},
-		{"a bare handle is not claimed", "alpha-baxter-1", ""},
+		{"minted key name + NetBird hostname", "machine-sam-baxter-1-sam-baxter-1", "sam-baxter-1"},
+		{"minted key name, no hostname", "machine-sam-baxter-1", "sam-baxter-1"},
+		{"shorter handle keeps its own peer", "machine-sam-baxter-orin", "sam-baxter"},
+		{"handle must end at a hyphen", "machine-sam-baxter-10", "sam-baxter"},
+		{"a person's peer is not a machine", "peer-sam-baxter-1-galaxy-2026-08-25-box", ""},
+		{"a bare handle is not claimed", "sam-baxter-1", ""},
 		{"unknown machine", "machine-nobody-box", ""},
 	}
 	for _, c := range cases {
@@ -34,7 +34,7 @@ func TestMatchMachineHandle(t *testing.T) {
 
 // machineSources is one custodian person, live in Ory and declared in the
 // roster, who enrolled one machine through the portal. The custodian column
-// holds the custodian's slot anchor, as ZAGROS's live rows do.
+// holds the custodian's slot anchor, as GALAXY's live rows do.
 func machineSources() access.Sources {
 	return access.Sources{
 		Vendors: []access.VendorIn{
@@ -106,7 +106,7 @@ func TestResolvePeerNameMachineWithUnknownCustodianNamesNobody(t *testing.T) {
 }
 
 func TestResolvePeerNamePersonPathUnchanged(t *testing.T) {
-	resp := resolvePeerName(machineSources(), "peer-a-person-zagros-2026-06-10-mac")
+	resp := resolvePeerName(machineSources(), "peer-a-person-galaxy-2026-06-10-mac")
 	if resp["handle"] != "a-person" || resp["resolved"] != true {
 		t.Fatalf("person path changed: %v", resp)
 	}

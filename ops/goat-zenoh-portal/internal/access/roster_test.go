@@ -17,7 +17,7 @@ func TestLoadRoster(t *testing.T) {
         {"id": "nation-demo-forces", "kind": "organic", "nation": "EST", "parent": null, "members": []}
       ],
       "members": [
-        {"handle": "user105x", "type": "person", "org": "example-vendor", "vendor_tag": "org67x", "status": "active"},
+        {"handle": "sam-fowler", "type": "person", "org": "example-vendor", "vendor_tag": "example-org-sam", "status": "active"},
         {"handle": "nation-analyst", "type": "person", "org": "nation-demo-forces", "vendor_tag": null, "status": "active"},
         {"handle": "synth-1", "type": "system", "org": "goat", "vendor_tag": "goat-synth", "status": "revoked"}
       ]
@@ -36,8 +36,8 @@ func TestLoadRoster(t *testing.T) {
 
 	// vendor_tag becomes the reconciliation key (Org), matching what a live
 	// Kratos identity's traits.vendor.short_tag presents.
-	if got[0].Org != "org67x" {
-		t.Errorf("member 0 Org = %q, want vendor_tag 'org67x'", got[0].Org)
+	if got[0].Org != "example-org-sam" {
+		t.Errorf("member 0 Org = %q, want vendor_tag 'example-org-sam'", got[0].Org)
 	}
 	// No vendor_tag ⇒ fall back to the affiliation org id.
 	if got[1].Org != "nation-demo-forces" {

@@ -1076,7 +1076,7 @@ async fn grant(
 /// generation excluding the member — and a portal call returning success says
 /// nothing about whether that happened. Worse, a publish can be accepted by the
 /// router and silently discarded, so no error appears on the writing side either
-///. `--confirm` therefore reads the bundle BACK off the fabric and
+/// `--confirm` therefore reads the bundle BACK off the fabric and
 /// reports who can still decrypt, which is the only evidence that means anything.
 ///
 /// Without `--confirm` the behaviour is unchanged, because the fabric is not

@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// E2E spec for the topic-registration form's protobuf footgun guard
-// (the F-162 / DRS class). The form's format dropdown used to submit the
-// literal placeholder `protobuf:MyMessage`; DRS shipped exactly that on
-// all three radar topics and landed in the broken-decode state. The fix
+// E2E spec for the topic-registration form's protobuf footgun guard.
+// The form's format dropdown used to submit the
+// literal placeholder `protobuf:MyMessage`; a vendor shipped exactly that on
+// all three of its radar topics and landed in the broken-decode state. The fix
 // (topics.html + topics.js): the dropdown carries the bare `protobuf:`
 // prefix and reveals a dedicated message-name field; createTopic splices
 // the entered name into `protobuf:<name>` and refuses an empty value or
@@ -16,7 +16,7 @@
 
 import { test, expect, type Route, type Request } from "@playwright/test";
 
-const KEY = "org-1/radar1/RADAR-EXAMPLE/status";
+const KEY = "acme/radar1/RADAR-EXAMPLE/status";
 
 // Install the API mocks and return a live array of captured POST bodies.
 async function mockPortalApi(page: import("@playwright/test").Page): Promise<Array<Record<string, unknown>>> {
@@ -27,7 +27,7 @@ async function mockPortalApi(page: import("@playwright/test").Page): Promise<Arr
     route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify({ vendors: [{ prefix: "drs", approved: true }] }),
+      body: JSON.stringify({ vendors: [{ prefix: "acme", approved: true }] }),
     }),
   );
 
@@ -55,7 +55,7 @@ async function mockPortalApi(page: import("@playwright/test").Page): Promise<Arr
 async function openForm(page: import("@playwright/test").Page) {
   await page.goto("/topics.html");
   // Init fetches /api/orgs and populates the vendor select; wait for it.
-  await expect(page.locator("#vendor-select")).toHaveValue("drs");
+  await expect(page.locator("#vendor-select")).toHaveValue("acme");
 }
 
 test.describe("topic-registration protobuf footgun guard", () => {

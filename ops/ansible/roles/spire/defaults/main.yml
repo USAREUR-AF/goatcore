@@ -41,7 +41,7 @@ spire_default_svid_ttl_seconds: 3600  # `entry create -x509SVIDTTL` wants intege
 spire_ca_ttl: "2160h"
 spire_agent_svid_ttl: "360h"          # server.conf agent_ttl — agent survives power-off up to this
 
-# --- spire-trust-sync -----------------------------------------
+# --- spire-trust-sync --------------------------------------------------------
 # Systemd timer that keeps the zenoh router trusting SPIRE's *rotating* CA
 # (re-exports the bundle, appends any new CA cert to the router trust file,
 # bounces the router only on change) and rescues a join-token-dead agent
@@ -58,8 +58,8 @@ spire_trust_sync_router_trust_file: ""
 # domain whose bundle belongs in it.
 #
 #   spire_trust_sync_federated_edges:
-#     - trust_file: "/etc/goat-zenoh-edge-svn/tls/partner-ca.pem"
-#       trust_domain: "svn.partner.example"        # "spiffe://svn.partner.example" also accepted
+#     - trust_file: "/etc/goat-zenoh-edge-partner-a/tls/partner-ca.pem"
+#       trust_domain: "partner-a.example"          # "spiffe://partner-a.example" also accepted
 #
 # THIS IS THE MOST DANGEROUS VARIABLE IN THE FEDERATION WORK. A federated bundle
 # is a foreign certificate authority. Per F-424 the Zenoh ACL matches a peer's
@@ -89,8 +89,8 @@ spire_trust_sync_federated_edges: []
 # RETIRED peerings — same shape, one entry per peering that has ENDED:
 #
 #   spire_trust_sync_federated_edges_retired:
-#     - trust_file: "/etc/goat-zenoh-edge-svn/tls/partner-ca.pem"
-#       trust_domain: "svn.partner.example"        # for the record + the log line
+#     - trust_file: "/etc/goat-zenoh-edge-partner-a/tls/partner-ca.pem"
+#       trust_domain: "partner-a.example"          # for the record + the log line
 #
 # Retiring a peering means MOVING its entry from spire_trust_sync_federated_edges
 # to here, not deleting it. Deleting it stops the partner's authority being
@@ -168,8 +168,11 @@ spire_container_uid: 1000                # ghcr.io/spiffe/spire-* run as nonroot
 spire_db_name: "spire"
 spire_db_user: "spire"
 # Password resolved from env at deploy (no plaintext on disk); set
-# <SITE>_SPIRE_DB_PASS in the operator's secret references.
-spire_db_password: "{{ lookup('env', (site_id_upper | default('ZAGROS')) ~ '_SPIRE_DB_PASS') }}"
+# <SITE>_SPIRE_DB_PASS in the operator's secret references. <SITE> is
+# spire_db_password_env_prefix: site_id_upper where a play sets it, else the
+# site short code in upper case (`my-site` reads MY_SITE_SPIRE_DB_PASS).
+spire_db_password_env_prefix: "{{ site_id_upper | default(site_id | upper | replace('-', '_')) }}"
+spire_db_password: "{{ lookup('env', spire_db_password_env_prefix ~ '_SPIRE_DB_PASS') }}"
 
 # The node SPIFFE path the single Thor agent attests as (join_token attestor).
 spire_agent_node_path: "agent/{{ inventory_hostname }}"

@@ -7,6 +7,7 @@
 | Conformance vectors | [`../../ops/federation/vectors/`](../../ops/federation/vectors/) — **normative** |
 | Reference implementation | [`../../ops/federation/reference/`](../../ops/federation/reference/) |
 | Transport design | `cross-sovereign-peering-transport.md` |
+| Our tool | `goat federate init\|lint\|compose\|diff\|verify\|apply` today; moving to `goatbuilder federate` on the `goat-federation` library, **designed** ([ADR 1225](../adr/1225-federation-belongs-to-goatbuilder-one-command-one-decision.md), Proposed) |
 
 The contract between two organisations setting up a data link. This document is the
 authority; our tool is one implementation of it. **A partner must be able to implement
@@ -299,6 +300,12 @@ runs **on its own side, over its own data**. It is deliberately not a router fea
 underlying fabric cannot rename key expressions in transit, and building that capability
 would mean forking it.
 
+The mapping is fixed: `release/<set>/<rest>` crosses as `from/<sovereign_id>/<set>/<rest>`, so
+several sets share one wire prefix with the set kept as a path segment. Where a party runs that
+process is its own decision. This repository's republisher (`ops/federation/republisher/`) runs on
+the party's core host, with both of its sessions on the party's core router, and is the only writer
+of the party's wire name there; the party's edge carries that name out.
+
 ## 3.3 Coalitions, alliances and frameworks
 
 **No coalition is named anywhere in this specification, and no package declares its own
@@ -365,10 +372,26 @@ reason that it is mutable; here it is excluded because it would be self-asserted
 
 ### Reserved for a later version
 
+`transport_offer.via` is reserved. If a future version adds it, it records that
+`transport_offer.endpoint` is a peering forwarder and who operates it, as
+`{"kind": "forwarder", "operator": "<sovereign-id>"}`. It is informational: it changes no
+negotiated field and no rule, and its presence puts the forwarder into the digest. In v1 a party
+behind a forwarder offers the forwarder's `host:port` as `endpoint` with `listener: true`, and
+declares the forwarder in its partner declaration and interconnection agreement
+([`peering-forwarder.md`](peering-forwarder.md) §6).
+
 `frameworks` is reserved as a member name. If a future version adds it, it means *"the
 frameworks this party claims to belong to"* — an assertion, for display and for compatibility
 hints only, and **never an input to an access decision**. It is not part of v1 because nothing
 in v1 needs it: release sets are explicit lists, so no lane abstraction crosses the link.
+
+`capabilities.tool_version` is reserved. **Designed, not built.** If a future version adds it,
+it would carry the version of the tool that composed the package, measured by
+`goatbuilder federate init`, or `goat federate init` during the transition, and never declared. It is informational: it changes no negotiated field
+and is never a precondition. The digest matches when both sides compose under the same `spec`
+version, and each side's tool proves it implements that version by passing the normative
+conformance vectors (§10). Two parties do not need the same tool, the same release or the same
+commit; a tool-version difference is a diagnostic hint when a digest unexpectedly differs.
 
 ---
 
@@ -941,8 +964,8 @@ and digest are in [`../../ops/federation/vectors/`](../../ops/federation/vectors
 
 The example above is pretty-printed, and the vectors hold its byte-exact form. That is a
 convenience, and it must not become the only place a rule lives. **The vectors are normative
-(§10), and an external partner may not have them** — they sit in a repository; this document
-travels by email, in a meeting pack, as an attachment to an interconnection agreement.
+(§10), and this document is also read on its own** — as an attachment to an interconnection
+agreement, away from the repository the vectors live in.
 
 So: **every rule that changes the bytes, or changes whether an agreement exists at all, is
 stated in prose in this document.** The vectors confirm an implementation. They are not where it
@@ -1066,3 +1089,10 @@ is what makes them a test of it rather than a description of it.
   locally, and never inside the digest (§7).
 - **A directory.** Convenient, and never required. Two parties who share none federate
   exactly as well (§5.1).
+
+
+## Receiving storage interests
+
+Built: the core router declares one storage subscription on `from/<peer>/**` for each configured sovereign peering. A broader subscription on `from/**` does not fit an edge grant on `from/<peer>/**`, so it cannot establish the interest needed to receive that peer’s data. Access rules remain unchanged.
+
+Each peer store has its own `sovereign_from_<peer>` directory and uses the configured federation retention period. The existing `sovereign_from` store and directory remain in place to preserve previously retained data; this change does not migrate or delete them. New inbound samples can therefore be retained by both stores. Consolidation requires a separate retention and migration plan.

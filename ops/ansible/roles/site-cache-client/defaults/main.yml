@@ -1,0 +1,14 @@
+---
+# SPDX-License-Identifier: Apache-2.0
+#
+# site-cache-client — point a host's apt at the site cache on the obs host
+# (apt-cacher-ng, utility-host-bootstrap.yml), falling back to the upstream
+# mirrors when the cache does not answer. docs/design/goatbuilder-speed.md sink 6.
+#
+# The address the core hosts reach the obs host at (its LAN address). Empty =
+# no cache: the role removes its two files and the host's apt is as before.
+# The same value gives Docker its Docker Hub mirror (docker-engine role).
+site_cache_host: ""
+site_cache_apt_port: 3142
+# How long apt waits for the cache before it goes upstream, per apt run.
+site_cache_probe_timeout_seconds: 2

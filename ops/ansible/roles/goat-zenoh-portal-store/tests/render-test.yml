@@ -10,6 +10,8 @@
     site_id: zagros-dev
     site_dns_zone: example.test
     ghcr_org: usareur-af
+    # The portal role has no default image; a deploy takes it from pins.
+    portal_image: "registry.example/goat-zenoh-portal@sha256:0000000000000000000000000000000000000000000000000000000000000000"
     gzrt_dir: "{{ lookup('env', 'TMPDIR') | default('/tmp', true) }}"
     # Every character that must not survive raw in a URL userinfo or a compose
     # env file.

@@ -74,8 +74,10 @@ done < <(systemctl list-units --type=service --state=running,failed --no-legend 
 # Advisory, not fail-closed: infrastructure containers legitimately live in
 # compose overlays rather than services.yaml. Named so a human can judge,
 # because the alternative is silence.
+# The registry files are every /opt/<root>/status/services.env (the status
+# role's own, under whatever root this host's deploy uses) and the mgmt-host one.
 REG=""
-for c in /opt/goat/status/services.env /opt/mgmt-host/services.env; do
+for c in /opt/*/status/services.env /opt/mgmt-host/services.env; do
   [[ -f "$c" ]] && REG="$REG $(cat "$c" 2>/dev/null)"
 done
 if command -v docker >/dev/null 2>&1 && [[ -n "$REG" ]]; then

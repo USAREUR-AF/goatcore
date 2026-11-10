@@ -32,7 +32,7 @@
 # zenoh-fabric.json.
 
 - name: deploy goat-fabric-crawler (single lazy crawler, cardinality-budget layer 4)
-  hosts: "{{ target | mandatory }}"   # -e target=zagros_hosts for the ZAGROS sibling goatnet
+  hosts: "{{ target | mandatory }}"   # -e target=<site>_hosts
   become: true
   gather_facts: true
 

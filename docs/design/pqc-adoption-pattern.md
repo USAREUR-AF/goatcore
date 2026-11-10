@@ -207,7 +207,7 @@ before touching the stack.
 | panoscope / stethoscope / flashlight | native mTLS | §4 Rust — `panoscope-core` chokepoint | code merged; images redeploying |
 | `audit-subscriber`, `fabric-health`, mesh/presence/time/net-health, `ntp-health-pub` | native mTLS | §4 Rust (same 2-line recipe each) | remaining incremental flips |
 | `goat-zenoh-portal` | REST/HTTP (plaintext, mesh-protected) | **N/A** — not a zenoh-TLS peer | no action (correct) |
-| `demogame` | zenoh sidecar | §6 — PQ is the sidecar's property | via sidecar |
+| `airdefenders` | zenoh sidecar | §6 — PQ is the sidecar's property | via sidecar |
 | `zenoh-synth-vendors` | Python native or bridge | §4 Python (OpenSSL 3.5+) or §6 bridge | classical today; bridge is the clean path |
 
 Keep this table current: a new fabric endpoint is "onboarded to PQC" when it

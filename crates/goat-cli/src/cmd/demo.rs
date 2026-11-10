@@ -1,37 +1,32 @@
 // `goat demo` — one command to run a fabric demo end-to-end.
 //
-// Today the only target is `demogame`: it opens the service's `/demo`
-// page (the eight auto-pilot bots in one tab, see
-// the game's own documentation) in your browser AND tails the
-// resulting Zenoh traffic in this terminal — both halves of the demo from a
-// single command, no macOS-only window-positioning script.
+// A demo is a service the goatnet runs beside the portal: `goat demo <name>`
+// opens its `/demo` page in your browser AND tails the Zenoh traffic it
+// publishes under `<name>/<site>/**` in this terminal — both halves of the
+// demo from a single command, no macOS-only window-positioning script.
 //
 // Pure convenience over capabilities that already exist: the browser does the
-// playing, `goat sub` does the watching. The demo host + site_id are derived
-// from the active profile's portal endpoint (sibling-surface swap), overridable
-// with --url / --site for off-profile or localhost runs.
+// playing, `goat sub` does the watching. The demo name defaults to the
+// goatnet's published `demo_service` (goatnet.toml, `goat context refresh`);
+// the demo host + site_id are derived from the active profile's portal
+// endpoint (sibling-surface swap), overridable with --url / --site for
+// off-profile or localhost runs.
 
-use clap::{Args, ValueEnum};
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
-pub enum DemoTarget {
-    /// Demo Game: 8 auto-pilot bots fill the co-op room and drive all four
-    /// event types onto the fabric while you watch the tail.
-    Demogame,
-}
+use clap::Args;
 
 #[derive(Args, Debug)]
 pub struct DemoArgs {
-    /// Which demo to run. Currently only `demogame`.
-    #[arg(value_enum, default_value = "demogame")]
-    pub target: DemoTarget,
+    /// The demo service to run: its host label and key prefix. Defaults to the
+    /// goatnet's `demo_service` (written by `goat context refresh`).
+    #[arg(value_name = "NAME")]
+    pub target: Option<String>,
 
     /// Override the demo page URL (e.g. http://localhost:8095 for a local
     /// run, or a different goatnet). The `/demo` path is appended if absent.
     #[arg(long, value_name = "URL")]
     pub url: Option<String>,
 
-    /// Override the site_id used for the watch key `demogame/<site>/**`.
+    /// Override the site_id used for the watch key `<name>/<site>/**`.
     /// Defaults to the site derived from the profile (or the --url host).
     #[arg(long, value_name = "SITE")]
     pub site: Option<String>,
@@ -53,25 +48,49 @@ pub struct DemoArgs {
 }
 
 pub async fn run(ctx: &super::Ctx, args: DemoArgs) -> anyhow::Result<()> {
-    match args.target {
-        DemoTarget::Demogame => run_demogame(ctx, args).await,
-    }
+    let name = demo_name(args.target.as_deref(), ctx.profile.goatnet_endpoints().demo_service)?;
+    run_demo(ctx, &name, args).await
 }
 
-async fn run_demogame(ctx: &super::Ctx, args: DemoArgs) -> anyhow::Result<()> {
+/// The demo to run: the one named on the command line, else the goatnet's
+/// published `demo_service`. A name is one DNS label (it becomes the host's
+/// first label and the key's first chunk), so anything else is refused.
+fn demo_name(given: Option<&str>, published: Option<String>) -> anyhow::Result<String> {
+    let name = match given {
+        Some(n) => n.to_string(),
+        None => published.ok_or_else(|| {
+            anyhow::anyhow!(
+                "no demo named and this context's goatnet publishes no `demo_service`. \
+                 Name one (`goat demo <name>`), or run `goat context refresh` to read the \
+                 goatnet's facts."
+            )
+        })?,
+    };
+    let ok = !name.is_empty()
+        && name.len() <= 63
+        && name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+        && !name.starts_with('-')
+        && !name.ends_with('-');
+    if !ok {
+        anyhow::bail!("`{name}` is not a demo name: one lowercase DNS label (a-z, 0-9, -)");
+    }
+    Ok(name)
+}
+
+async fn run_demo(ctx: &super::Ctx, name: &str, args: DemoArgs) -> anyhow::Result<()> {
     // Resolve the demo URL + site_id: explicit flags win, else derive from the
     // active profile's portal endpoint.
-    let (base_url, site) = resolve_target(ctx, &args)?;
+    let (base_url, site) = resolve_target(ctx, name, &args)?;
     let demo_url = if base_url.trim_end_matches('/').ends_with("/demo") {
         base_url.trim_end_matches('/').to_string()
     } else {
         format!("{}/demo", base_url.trim_end_matches('/'))
     };
-    let watch_key = format!("demogame/{site}/**");
+    let watch_key = format!("{name}/{site}/**");
 
     if !args.no_open {
         match open_in_browser(&demo_url) {
-            Ok(()) => println!("opened {demo_url}  (8 auto-pilot bots fill the room)"),
+            Ok(()) => println!("opened {demo_url}"),
             Err(e) => {
                 // Non-fatal: print the URL so the operator can open it by hand.
                 eprintln!("could not open a browser automatically ({e}).");
@@ -109,7 +128,7 @@ async fn run_demogame(ctx: &super::Ctx, args: DemoArgs) -> anyhow::Result<()> {
         key_service_bundle: None,
         trust_domain: None,
         key_service_id: None,
-        // The key is generated from the site, not typed, and `demogame/`
+        // The key is generated from the site, not typed, and the demo's prefix
         // is a seeded vendor prefix, not a slot alias — on a slot-pool
         // goatnet the resolver would refuse it.
         literal: true,
@@ -118,13 +137,13 @@ async fn run_demogame(ctx: &super::Ctx, args: DemoArgs) -> anyhow::Result<()> {
 }
 
 /// Resolve (base_url, site_id) from explicit flags or the active profile.
-fn resolve_target(ctx: &super::Ctx, args: &DemoArgs) -> anyhow::Result<(String, String)> {
+fn resolve_target(ctx: &super::Ctx, name: &str, args: &DemoArgs) -> anyhow::Result<(String, String)> {
     // Both flags given: trust them outright (covers localhost / off-profile).
     if let (Some(url), Some(site)) = (&args.url, &args.site) {
         return Ok((url.clone(), site.clone()));
     }
 
-    let derived = ctx.profile.derive_demogame();
+    let derived = ctx.profile.derive_sibling(name);
 
     let base_url = match &args.url {
         Some(u) => u.clone(),
@@ -133,9 +152,9 @@ fn resolve_target(ctx: &super::Ctx, args: &DemoArgs) -> anyhow::Result<(String, 
             .map(|(u, _)| u.clone())
             .ok_or_else(|| {
                 anyhow::anyhow!(
-                    "couldn't derive the Demo Game URL from profile '{}'. \
-                     Pass --url (e.g. --url https://demogame.<site>.netbird.<backbone>, \
-                     if your goatnet runs one; the game server is not part of this repository).",
+                    "couldn't derive the `{name}` URL from profile '{}'. \
+                     Pass --url (e.g. --url https://{name}.<site>.netbird.<backbone>, \
+                     or --url http://localhost:<port> for a local server).",
                     ctx.profile.context
                 )
             })?,
@@ -151,7 +170,7 @@ fn resolve_target(ctx: &super::Ctx, args: &DemoArgs) -> anyhow::Result<(String, 
             .ok_or_else(|| {
                 anyhow::anyhow!(
                     "couldn't derive site_id — pass --site <site> so the watch key \
-                     'demogame/<site>/**' is correct."
+                     '{name}/<site>/**' is correct."
                 )
             })?,
     };
@@ -160,7 +179,7 @@ fn resolve_target(ctx: &super::Ctx, args: &DemoArgs) -> anyhow::Result<(String, 
 }
 
 /// Best-effort site_id from an explicit `--url` of shape
-/// `<scheme>://demogame.<site>.netbird.<backbone>`. Returns None for
+/// `<scheme>://<name>.<site>.netbird.<backbone>`. Returns None for
 /// hosts that don't carry a site (e.g. localhost).
 fn site_from_url(url: &str) -> Option<String> {
     let host = url
@@ -200,13 +219,27 @@ mod tests {
     #[test]
     fn site_from_url_extracts_label_before_netbird() {
         assert_eq!(
-            site_from_url("https://demogame.nova.netbird.nova.example"),
+            site_from_url("https://airdefenders.nova.netbird.nova.example"),
             Some("nova".to_string())
         );
         assert_eq!(
-            site_from_url("https://demogame.zagros.netbird.example.net/demo"),
+            site_from_url("https://airdefenders.zagros.netbird.example.net/demo"),
             Some("zagros".to_string())
         );
+    }
+
+    #[test]
+    fn demo_name_prefers_the_argument_then_the_published_fact() {
+        assert_eq!(demo_name(Some("tagdemo"), Some("other".into())).unwrap(), "tagdemo");
+        assert_eq!(demo_name(None, Some("tagdemo".into())).unwrap(), "tagdemo");
+        assert!(demo_name(None, None).is_err());
+    }
+
+    #[test]
+    fn demo_name_is_one_dns_label() {
+        for bad in ["", "Upper", "a/b", "a.b", "-a", "a-", "a*"] {
+            assert!(demo_name(Some(bad), None).is_err(), "{bad:?} accepted");
+        }
     }
 
     #[test]

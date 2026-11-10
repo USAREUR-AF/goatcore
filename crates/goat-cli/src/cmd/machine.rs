@@ -126,6 +126,13 @@ pub enum MachineCmd {
         #[arg(long)]
         json: bool,
     },
+    /// NetBird SSH on an enrolled machine's mesh peer (ADR 1216 `device-admin`,
+    /// tcp 22022). Needs the NetBird admin token; recorded in the
+    /// operator-action audit.
+    Ssh {
+        #[command(subcommand)]
+        op: super::machine_ssh::MachineSshCmd,
+    },
     /// Set (create or adjust) a custodian's machine enrollment quota. Operator-only.
     /// This is the management path for the enrollment grant that onboarding seeds:
     /// `goat machine grant <custodian> --quota 5`. Include `--affiliation` the FIRST
@@ -206,6 +213,7 @@ pub async fn run(ctx: &super::Ctx, op: MachineCmd) -> anyhow::Result<()> {
             revoke(out, &portal, machine, yes, json).await
         }
         MachineCmd::Ls { custodian, json } => list(out, &portal, custodian, json).await,
+        MachineCmd::Ssh { op } => super::machine_ssh::run(ctx, &portal, op).await,
         MachineCmd::Grant {
             custodian,
             quota,
@@ -475,6 +483,32 @@ async fn enroll(
 /// grant/gate refusals, 409 for quota/alias, 400 for bad grammar.
 fn map_enroll_err(e: PortalError) -> anyhow::Error {
     let server = server_line(&e);
+    // The server names the refusal; when it does, say THAT one plainly instead
+    // of listing every 403 cause. `no_enrollment_grant` is by far the common
+    // one, and a person told "one of three things" cannot tell that the fix is
+    // an admin's `goat machine grant`.
+    match e.error_code() {
+        Some("no_enrollment_grant") => {
+            return anyhow::anyhow!(
+                "enrollment refused (403): you hold no machine-enrollment grant on this \
+                 goatnet, so your allowance is 0 machines.\n\
+                 \n\
+                 A grant belongs to the PERSON who enrolls, not to their organisation. \
+                 Ask a goatnet admin to run, with their operator key:\n\
+                 \x20 goat machine grant <your-handle> --quota <n> --affiliation <your-org>\n\
+                 then check it with `goat machine ls`, which prints your quota.{server}"
+            );
+        }
+        Some("quota_exhausted") => {
+            return anyhow::anyhow!(
+                "enrollment refused (409): every machine your grant allows is already \
+                 enrolled. Revoke one you no longer use (`goat machine revoke <machine>`) \
+                 or ask a goatnet admin to raise your quota \
+                 (`goat machine grant <your-handle> --quota <n>`).{server}"
+            );
+        }
+        _ => {}
+    }
     match e.http_status().map(|s| s.as_u16()) {
         Some(403) => anyhow::anyhow!(
             "enrollment refused (403): no enrollment grant for this custodian, an \
@@ -915,6 +949,43 @@ mod tests {
         assert!(msg.contains("enrollment refused (400)"), "{msg}");
         assert!(msg.contains("ADR 1116"), "{msg}");
         assert!(msg.contains("server: workload KID has no mesh mapping"), "{msg}");
+    }
+
+    fn coded_err(status: u16, code: &str, message: &str) -> PortalError {
+        PortalError::HttpWithBody {
+            status: reqwest::StatusCode::from_u16(status).unwrap(),
+            code: Some(code.into()),
+            message: message.into(),
+            path: String::new(),
+            retry_after: None,
+        }
+    }
+
+    #[test]
+    fn no_enrollment_grant_names_the_grant_and_the_admin_command() {
+        let msg = map_enroll_err(coded_err(
+            403,
+            "no_enrollment_grant",
+            "custodian \"x\" holds no machine enrollment grant",
+        ))
+        .to_string();
+        assert!(msg.contains("no machine-enrollment grant"), "{msg}");
+        assert!(msg.contains("goat machine grant <your-handle>"), "{msg}");
+        assert!(!msg.contains("infrastructure node-class"), "{msg}");
+    }
+
+    #[test]
+    fn quota_exhausted_names_revoke_and_raise() {
+        let msg = map_enroll_err(coded_err(409, "quota_exhausted", "5/5 used")).to_string();
+        assert!(msg.contains("goat machine revoke"), "{msg}");
+        assert!(msg.contains("--quota"), "{msg}");
+        assert!(msg.contains("5/5 used"), "{msg}");
+    }
+
+    #[test]
+    fn other_403_codes_keep_the_generic_arm() {
+        let msg = map_enroll_err(coded_err(403, "infra_requires_operator", "x")).to_string();
+        assert!(msg.contains("infrastructure node-class"), "{msg}");
     }
 
     #[test]

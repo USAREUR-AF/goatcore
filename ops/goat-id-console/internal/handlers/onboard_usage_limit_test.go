@@ -147,7 +147,7 @@ func TestCandidateNumberSetsCapacityNotAuthorization(t *testing.T) {
 	t.Run("sponsor left it blank: candidate sets capacity only", func(t *testing.T) {
 		tok := mintTokenWithQuota(t, s, 0)
 		pid := submit(t, h, tok, map[string]any{
-			"name": "Pat Liaison", "email": "person-89@example.org", "organization": "Usage Org", "machine_quota": 7,
+			"name": "Pat Liaison", "email": "person-76@example.org", "organization": "Usage Org", "machine_quota": 7,
 		})
 		m := manifestOf(pid)
 		if got, _ := toInt(getPath(m, "netbird.usage_limit")); got != 7 {
@@ -163,7 +163,7 @@ func TestCandidateNumberSetsCapacityNotAuthorization(t *testing.T) {
 
 	t.Run("candidate blank: the intake-form default stands", func(t *testing.T) {
 		tok := mintTokenWithQuota(t, s, 0)
-		pid := submit(t, h, tok, map[string]any{"name": "Pat Two", "email": "person-91@example.org", "organization": "Usage Org"})
+		pid := submit(t, h, tok, map[string]any{"name": "Pat Two", "email": "person-78@example.org", "organization": "Usage Org"})
 		m := manifestOf(pid)
 		got, _ := toInt(getPath(m, "netbird.usage_limit"))
 		if got < 2 {
@@ -175,7 +175,7 @@ func TestCandidateNumberSetsCapacityNotAuthorization(t *testing.T) {
 	t.Run("an absurd candidate number is clamped, not refused", func(t *testing.T) {
 		tok := mintTokenWithQuota(t, s, 0)
 		pid := submit(t, h, tok, map[string]any{
-			"name": "Pat Three", "email": "person-98@example.org", "organization": "Usage Org", "machine_quota": 100000,
+			"name": "Pat Three", "email": "person-85@example.org", "organization": "Usage Org", "machine_quota": 100000,
 		})
 		m := manifestOf(pid)
 		if got, _ := toInt(getPath(m, "netbird.usage_limit")); got != maxCandidateUsageLimit {
@@ -188,7 +188,7 @@ func TestCandidateNumberSetsCapacityNotAuthorization(t *testing.T) {
 	t.Run("sponsor set it: the sponsor's number wins both fields", func(t *testing.T) {
 		tok := mintTokenWithQuota(t, s, 4)
 		pid := submit(t, h, tok, map[string]any{
-			"name": "Pat Four", "email": "person-105@example.org", "organization": "Usage Org", "machine_quota": 9,
+			"name": "Pat Four", "email": "person-92@example.org", "organization": "Usage Org", "machine_quota": 9,
 		})
 		m := manifestOf(pid)
 		if got, _ := toInt(getPath(m, "machine_quota")); got != 4 {

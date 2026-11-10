@@ -4,19 +4,19 @@
 # One-command operator-laptop install of goat-client (the Block 76 cross-
 # platform daemon + GUI for wg-cp0 silent-control-plane onboarding). This
 # playbook is the alternative to the manual quickstart at
-# goat-client —
+# docs/quickstart.md in the goat-client repository (goat_client_repo_url) —
 # every step that doc walks through is automated here, idempotently.
 #
-# Authored right after goat-client-v0.1.0 shipped. Sister to
-# operator-laptop-onboarding.yml (which onboards the laptop onto the
-# netbird-prod mesh via wg-cp0-bundle-apply) — that ceremony and this
+# Authored right after goat-client-v0.1.0 shipped. Sister to a
+# deployment's operator-laptop onboarding play (which puts the laptop on
+# the mesh via wg-cp0-bundle-apply) — that ceremony and this
 # one are independent: you can run either without the other. Most
 # operators will run both: this one to get the goat-client app
 # installed; the other to make the wg-cp0 plumbing actually work.
 #
 # Sister artifacts:
 #   - docs/operations/goat-client-install.md (canonical runbook)
-#   - goat-client
+#   - docs/quickstart.md in the goat-client repository
 #     (the manual walkthrough this playbook replaces)
 #
 # Scope:
@@ -95,8 +95,8 @@
 
   vars:
     # === Tunables (override via -e) ===
-    # Keep this in step with the operator-laptop pin in
-    # operator-laptop-onboarding.yml (0.3.7, the assay-validated
+    # Keep this in step with the operator-laptop pin in the deployment's
+    # operator-laptop onboarding play (0.3.7, the assay-validated
     # wedge-fix release) — two playbooks installing different clients
     # on the same laptop is the drift this default exists to prevent.
     goat_client_version: "v0.3.7"
@@ -130,8 +130,13 @@
 
     # === Derived (don't override) ===
     goat_client_release_tag: "goat-client-{{ goat_client_version }}"
-    goat_client_release_url: "https://github.com/usareur-af/goat-client/releases/download/{{ goat_client_release_tag }}"
-    goat_client_repo_url: "https://github.com/usareur-af/goat-client"
+    goat_client_release_url: "{{ goat_client_repo_url }}/releases/download/{{ goat_client_release_tag }}"
+    # The repository the release is downloaded from and verified against, and
+    # the launchd label of the macOS LaunchAgent. A deployment whose laptops
+    # already carry other names sets the goatnet_ pair for localhost
+    # (host_vars/localhost).
+    goat_client_repo_url: "{{ goatnet_goat_client_repo_url | default('https://github.com/usareur-af/goat-client') }}"
+    goat_client_launchd_label: "{{ goatnet_goat_client_launchd_label | default('io.goat-maintainer.goat-clientd') }}"
     # Kept so a stale `-e goat_client_build_gui=false` fails loudly in
     # pre_tasks instead of silently installing a GUI the operator asked
     # not to have. Renamed when Phase 6 stopped building.
@@ -188,7 +193,7 @@
           goat-client-install supports Linux + macOS, amd64 + arm64.
           Detected: {{ ansible_facts['system'] }}/{{ ansible_architecture }}.
           For Windows, follow the manual quickstart at
-          https://github.com/usareur-af/goat-client/blob/main/docs/quickstart.md.
+          {{ goat_client_repo_url }}/blob/main/docs/quickstart.md.
 
     - name: 'Pre-flight: cosign present (warn-only)'
       command: which cosign
@@ -266,7 +271,7 @@
           command: >
             cosign verify-blob
               --bundle {{ goat_client_cache_dir }}/{{ goat_client_archive }}.cosign-bundle
-              --certificate-identity-regexp '^https://github.com/usareur-af/goat-client/'
+              --certificate-identity-regexp '^{{ goat_client_repo_url }}/'
               --certificate-oidc-issuer https://token.actions.githubusercontent.com
               {{ goat_client_cache_dir }}/{{ goat_client_archive }}
           register: cosign_verify
@@ -384,7 +389,7 @@
             content: |
               [Unit]
               Description=goat-client daemon (wg-cp0 outer tunnel)
-              Documentation=https://github.com/usareur-af/goat-client/blob/main/docs/quickstart.md
+              Documentation={{ goat_client_repo_url }}/blob/main/docs/quickstart.md
               After=default.target
 
               [Service]
@@ -417,14 +422,14 @@
 
         - name: macOS — write LaunchAgent plist
           copy:
-            dest: "{{ ansible_env.HOME }}/Library/LaunchAgents/io.goat-maintainer.goat-clientd.plist"
+            dest: "{{ ansible_env.HOME }}/Library/LaunchAgents/{{ goat_client_launchd_label }}.plist"
             mode: '0644'
             content: |
               <?xml version="1.0" encoding="UTF-8"?>
               <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
               <plist version="1.0">
               <dict>
-                <key>Label</key>            <string>io.goat-maintainer.goat-clientd</string>
+                <key>Label</key>            <string>{{ goat_client_launchd_label }}</string>
                 <key>ProgramArguments</key>
                 <array>
                   <string>{{ goat_client_install_prefix }}/bin/goat-clientd</string>
@@ -442,8 +447,8 @@
         - name: macOS — load LaunchAgent (idempotent)
           shell: |
             set -euo pipefail
-            launchctl bootstrap gui/$(id -u) "{{ ansible_env.HOME }}/Library/LaunchAgents/io.goat-maintainer.goat-clientd.plist" 2>/dev/null || true
-            launchctl kickstart -k gui/$(id -u)/io.goat-maintainer.goat-clientd
+            launchctl bootstrap gui/$(id -u) "{{ ansible_env.HOME }}/Library/LaunchAgents/{{ goat_client_launchd_label }}.plist" 2>/dev/null || true
+            launchctl kickstart -k gui/$(id -u)/{{ goat_client_launchd_label }}
           args:
             executable: /bin/bash
           changed_when: false
@@ -470,7 +475,7 @@
 
               Trust-roots:    {{ goat_client_config_dir }}/trust-roots.pem
               IPC socket:     {{ goat_client_runtime_socket }}
-              Service:        {% if goat_client_install_service %}{{ 'systemd-user goat-clientd.service' if ansible_facts['system'] == 'Linux' else 'launchd LaunchAgent io.goat-maintainer.goat-clientd' }}{% else %}NOT installed (run `goat-clientd` in a terminal){% endif %}
+              Service:        {% if goat_client_install_service %}{{ 'systemd-user goat-clientd.service' if ansible_facts['system'] == 'Linux' else ('launchd LaunchAgent ' ~ goat_client_launchd_label) }}{% else %}NOT installed (run `goat-clientd` in a terminal){% endif %}
 
               ─── Next steps (manual; not automatable) ──────────────────────
               1. Mint yourself a wg-cp0 enrollment bundle via the
@@ -487,6 +492,6 @@
                    {% if ansible_facts['system'] == 'Linux' %}ip addr show wg-cp0
                    {% else %}ifconfig | grep -A2 utun{% endif %}
 
-              See https://github.com/usareur-af/goat-client/blob/main/docs/quickstart.md
+              See {{ goat_client_repo_url }}/blob/main/docs/quickstart.md
               for the manual equivalent of every step this playbook ran.
               ────────────────────────────────────────────────────────────────

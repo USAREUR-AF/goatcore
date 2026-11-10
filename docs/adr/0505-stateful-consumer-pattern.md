@@ -46,7 +46,7 @@ Stateful consumers follow this pattern:
 - **Schema evolution** ([`0506`](0506-fabric-schema-evolution.md))
   governs state-shape changes.
 
-Reference: demogame Phase 2D-interim leaderboard is the
+Reference: airdefenders Phase 2D-interim leaderboard is the
 first caller; the design doc
 [`../design/fabric-stateful-consumers.md`](../design/fabric-stateful-consumers.md)
 codifies the pattern.

@@ -33,6 +33,7 @@ pub mod inspect;
 pub mod lan;
 pub mod machine;
 mod machine_affiliation;
+mod machine_ssh;
 pub mod members;
 pub mod microscope;
 pub mod mock;

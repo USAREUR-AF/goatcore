@@ -32,6 +32,42 @@ def bad(label, detail, fix=""):
     problems.append(label)
 
 
+def inventory_groups(text):
+    """Every group of an ini inventory and its host names, `:children` sections apart."""
+    groups, children, cur, kids = {}, {}, None, False
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith(("#", ";")):
+            continue
+        if line.startswith("["):
+            name = line[1:-1].strip()
+            kids = name.endswith(":children")
+            cur = name[: -len(":children")] if kids else name
+            (children if kids else groups).setdefault(cur, [])
+            continue
+        if cur is not None:
+            (children if kids else groups)[cur].append(line.split()[0])
+    return groups, children
+
+
+def shared_inventory_names(text, mine):
+    """Host names in one of `mine` (this peering's edge and core groups) that also sit in
+    another peering group. Ansible merges the group_vars of every group an inventory host
+    is in, the group sorting last winning a conflict, so such a host's run reads the other
+    peering's interface, ports and certificate paths. Returns [(host, [groups])]."""
+    groups, children = inventory_groups(text)
+    peering = set(children.get("peering_edges", [])) | set(children.get("peering_cores", []))
+    found = []
+    for g in mine:
+        for h in groups.get(g, []):
+            # The same peering's own edge and core groups naming one host is one
+            # peering's variables, not two: not a conflict.
+            others = sorted(o for o in peering if o not in mine and h in groups.get(o, []))
+            if others and (h, [g] + others) not in found:
+                found.append((h, [g] + others))
+    return found
+
+
 def check_local_docker():
     """Refuse an unverified phase-8 dependency before any deployment."""
     import shutil
@@ -148,6 +184,33 @@ def main():
     else:
         bad("signing key", f"FED_SIGNING_KEY points at {key}, which does not exist")
 
+    # 3b — the peering directory. Phase 5 exchanges packages and CA certificates
+    #     through it, so a run without one would stop at phase 5 with nothing to
+    #     exchange. FED_NO_DIRECTORY=1 is the one exception: a counterparty that
+    #     can reach no directory, where phase 5 names the files to hand over.
+    if os.environ.get("FED_NO_DIRECTORY", "") == "1":
+        ok("peering directory", "FED_NO_DIRECTORY=1: phase 5 names the files to hand over directly")
+    else:
+        url = os.environ.get("FED_DIRECTORY_URL", "")
+        their = os.environ.get("FED_COUNTERPARTY_ID", "")
+        plain = re.compile(r"^[A-Za-z0-9._:/?=&%~+@-]*$")
+        values = [url, their, os.environ.get("FED_PACKAGE_URL", ""), os.environ.get("FED_CA_CERT", "")]
+        if not url:
+            bad("peering directory", "FED_DIRECTORY_URL is unset",
+                "Phase 5 exchanges packages and CA certificates through the peering directory\n"
+                "(saltlick): set FED_DIRECTORY_URL=https://<directory> and FED_COUNTERPARTY_ID.\n"
+                "FED_NO_DIRECTORY=1 only for a counterparty that can reach no directory.")
+        elif not url.startswith("https://"):
+            bad("peering directory", f"FED_DIRECTORY_URL is {url}, not an https:// address")
+        elif not their:
+            bad("peering directory", "FED_COUNTERPARTY_ID is unset",
+                "The counterparty's sovereign_id (ISO 3166-1 alpha-3), to look them up.")
+        elif not all(plain.match(v) for v in values):
+            bad("peering directory", "FED_DIRECTORY_URL, FED_PACKAGE_URL, FED_COUNTERPARTY_ID or "
+                "FED_CA_CERT holds characters outside a plain URL")
+        else:
+            ok("peering directory", f"{url}, counterparty {their}")
+
     # 4 — somewhere to work.
     work = Path(a.work)
     try:
@@ -205,6 +268,57 @@ def main():
             bad("edge inventory", f"[{group}] exists but lists no hosts",
                 "`--limit` on an empty group runs against nothing and reports SUCCESS,\n"
                 "so phase 12 would 'pass' having deployed no edge at all.")
+
+    # 5b — where the outbound republisher runs. When the declaration offers a
+    #      release set, phase 12 deploys the republisher on our core host with
+    #      --limit <peering>_core, under [peering_cores:children]. A missing or empty
+    #      group would deploy nothing and report success, and nothing would ever
+    #      appear under our wire name.
+    offers = False
+    if decl.is_file():
+        m = re.search(r'^\s*release\s*=\s*\[([^\]]*)\]', decl.read_text(), re.M)
+        offers = bool(m and m.group(1).strip().strip(","))
+    core = f"{a.peering}_core"
+    if offers and inv.is_file():
+        want, hosts, children, inside = False, [], [], False
+        for line in inv.read_text().splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if line.startswith("["):
+                want = line[1:-1].strip() == core
+                inside = line == "[peering_cores:children]"
+                continue
+            if want:
+                hosts.append(line.split()[0])
+            if inside:
+                children.append(line.split()[0])
+        if not hosts:
+            bad("republisher inventory", f"{inv} has no [{core}] group with a host in it",
+                f"The declaration offers a release set, so phase 12 deploys the outbound\n"
+                f"republisher on our core host with --limit {core}. Name the core host the\n"
+                f"edge dials there; an empty or missing group deploys nothing and reports success.")
+        elif core not in children:
+            bad("republisher inventory", f"[{core}] is not listed under [peering_cores:children] in {inv}",
+                "peering-republisher.yml targets peering_cores, so `--limit` on this group\n"
+                "runs nothing and reports success.")
+        else:
+            ok("republisher inventory", f"[{core}] -> {', '.join(hosts)}")
+
+    # 5c — one inventory name per peering. Two peerings on one machine are two inventory
+    #      names for it (same ansible_host): one name in two peering groups merges both
+    #      groups' variables, and a run for one peering reads the other's values.
+    if inv.is_file():
+        shared = shared_inventory_names(inv.read_text(), [group, f"{a.peering}_core"])
+        for h, gs in shared:
+            bad("one inventory name per peering", f"{h} is in {', '.join(gs)}",
+                "Ansible merges the group_vars of every group a host is in and the group that\n"
+                "sorts last wins, so this peering's run would read another peering's interface,\n"
+                f"ports and certificate paths, and re-running either redeploys the other's values.\n"
+                f"Give this peering its own inventory name for the machine, e.g. {h}-{a.peering},\n"
+                "with the same ansible_host.")
+        if not shared:
+            ok("one inventory name per peering", "no host of this peering is in another peering's group")
 
     # C1 — declared first. goatbuilder refuses an undeclared peering, and the script
     #      holds the same rule here so neither avenue runs one by accident.

@@ -18,7 +18,7 @@
 #   1 preflight   main fetched, this account holds admin on the repository
 #                 (the rule rc-validate.yml enforces), next rc number
 #   2 tag         <image>/vX.Y.Z-rc.N on origin/main, pushed; wait for rc-validate
-#                 and the image build; resolve the digest under ghcr.io/usareur-af
+#                 and the image build; resolve the digest under the image namespace
 #   3 dev pin     declared deviation on the dev rung's goatnet, pins + intents
 #                 regenerated and re-signed, gates run, PR landed (pr-land.sh)
 #   4 dev deploy  deploy-component.sh --goatnet <dev>, ledger-verified
@@ -41,6 +41,22 @@
 # Refusals (none is ceremony): not a nominator; tag commit not on main; image
 # missing or split between orgs; rc-validate says "not a member" (the tag is
 # gone); a live row FAILs (the candidate is dead: fix on main, cut rc.N+1).
+#
+# From an assembled tree (a checkout carrying the .goat-assembled marker that an
+# overlay's assemble.sh writes): the goatnets' pins, intents and release records
+# belong to the overlay repository the marker names (overlay_path), not to this
+# tree's origin. rc.sh then runs every step after the tag (--from dev|rows|
+# preprod|preprod-rows|prod, with --tag):
+#   - its scratch tree is a second assembled tree, built by the overlay's own
+#     assemble.sh from a fresh overlay worktree on origin/main, so every tool a
+#     step calls (generate-pins.py, graduate.py, intent-sign) is the pinned one;
+#   - a step's edits land as a pull request on the overlay repository, carrying
+#     exactly the files the step changed in the scratch tree;
+#   - after a landing the scratch tree is assembled again from the merged overlay
+#     and the deploy runs from it, so fresh-source.sh sees a current overlay.
+# The nominator check reads the overlay repository. Cutting the tag (--from tag)
+# stays with a single-repository checkout: the tag goes where the component's
+# image workflow builds it.
 set -euo pipefail
 # Hold the Mac awake for the whole run (#2122; ops/scripts/lib/keep-awake.sh).
 _keep_awake="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/keep-awake.sh"
@@ -50,10 +66,36 @@ HERE="$(cd "$(dirname "$0")" && pwd)"; REPO="$(cd "$HERE/../.." && pwd)"
 PINS="$REPO/ops/pins/fleet-pins.yaml"; LADDER="$REPO/ops/release/ladder.yaml"
 RUNNERS="$REPO/ops/validation/goatnet-runners.yaml"
 die() { echo "rc: $*" >&2; exit 1; }
+# An assembled tree (see the header): ASSEMBLED=1 and OVERLAY = the overlay
+# checkout its marker names. DEPLOY_HERE holds the deploy driver the run uses: this
+# one, until a landing re-assembles the scratch tree.
+ASSEMBLED=0; OVERLAY=""; DEPLOY_HERE="$HERE"
+if [ -f "$REPO/.goat-assembled" ]; then
+  ASSEMBLED=1
+  OVERLAY="$(sed -n 's/^overlay_path=//p' "$REPO/.goat-assembled" | head -1)"
+  [ "$(sed -n 's/^goatcore_ref=//p' "$REPO/.goat-assembled" | head -1)" != local ] \
+    || die "$REPO was assembled from local directories (goatcore_ref=local), which no deploy accepts; assemble from the pinned refs"
+  [ -n "$OVERLAY" ] && [ -x "$OVERLAY/assemble.sh" ] \
+    || die "$REPO/.goat-assembled names no overlay checkout with an assemble.sh (overlay_path=${OVERLAY:-<none>}); re-assemble from the overlay"
+fi
+# One value this checkout declares about itself in ops/goatbuilder/goatbuilder.yaml
+# (<section> <key>), as the builder reads it; empty when it declares none.
+declared() { python3 -c 'import sys, yaml; print(str(((yaml.safe_load(open(sys.argv[1])) or {}).get(sys.argv[2]) or {}).get(sys.argv[3]) or "").strip())' "$REPO/ops/goatbuilder/goatbuilder.yaml" "$1" "$2" 2>/dev/null || true; }
+# The image namespace this checkout deploys from: the ghcr_org default
+# ops/ansible/group_vars/all.yml sets, the value every play renders a pin with.
+IMAGE_ORG="$(sed -nE "s/^ghcr_org:.*[\"' ]([A-Za-z0-9][A-Za-z0-9._-]*)[\"']?[ }\"]*\$/\\1/p" "$REPO/ops/ansible/group_vars/all.yml" 2>/dev/null | head -1 || true)"
+# Where this machine keeps the project's local state (its CA keys):
+# deploy.state_dir, else ~/.goat/state, the builder's rule.
+STATE_DIR="$(declared deploy state_dir)"; [ -n "$STATE_DIR" ] || STATE_DIR="$HOME/.goat/state"
+# shellcheck disable=SC2088  # a declared path is written with a literal "~/"
+case "$STATE_DIR" in "~/"*) STATE_DIR="$HOME/${STATE_DIR#\~/}" ;; esac
+# The audit log intent-sign appends to: ca-audit.jsonl beside the state
+# directory, named on every call (the builder derives the same path).
+AUDIT_LOG="$(dirname "$STATE_DIR")/ca-audit.jsonl"
 # Display-only: render {{ ghcr_org }} (the default org, as group_vars/all.yml) so
 # a printed ref does not read like an unrendered/broken variable. The stored pin
 # keeps the template; Ansible renders the real value per goatnet at deploy time.
-render() { printf '%s' "$1" | sed "s#{{ ghcr_org }}#${GHCR_ORG:-usareur-af}#g"; }
+render() { if [ -n "${GHCR_ORG:-$IMAGE_ORG}" ]; then printf '%s' "$1" | sed "s#{{ ghcr_org }}#${GHCR_ORG:-$IMAGE_ORG}#g"; else printf '%s' "$1"; fi; }
 step() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
 note() { printf '    %s\n' "$*"; }
 run() { if [ "$DRY" = 1 ]; then note "DRY: $*"; else "$@"; fi; }
@@ -113,10 +155,20 @@ fi
 # guard AND need not hold the merged pin, so it can silently deploy a stale ref and
 # verify green. Require main/master here, before anything is cut.
 RBR0="$(git -C "$REPO" symbolic-ref --quiet --short HEAD 2>/dev/null || echo DETACHED)"
+if [ "$ASSEMBLED" = 1 ]; then
+  # An assembled tree is detached by construction. Its currency is the overlay
+  # commit it was built from, which deploy-component.sh (fresh-source.sh) checks
+  # against the overlay's origin/main before any host is touched.
+  RBR0="assembled tree, overlay $(sed -n 's/^overlay_commit=//p' "$REPO/.goat-assembled" | cut -c1-12)"
+  [ "$FROM" != tag ] || die "--from tag cuts the tag on this tree's origin ($REPO_SLUG); from an assembled tree, cut the tag where the component's image workflow builds it, then re-run here with --tag <that tag> --from dev"
+  [ -n "$TAG" ] || die "from an assembled tree, name the candidate with --tag <component>/vX.Y.Z-rc.N"
+  OVERLAY_SLUG="$(git -C "$OVERLAY" remote get-url origin | sed -E 's#.*[:/]([^/]+/[^/]+)\.git$#\1#; s#.*[:/]([^/]+/[^/]+)$#\1#')"
+else
 case "$RBR0" in
   main|master) ;;
   *) die "run rc.sh from a checkout on main — this one ($REPO) is on '$RBR0'. rc.sh deploys from the invoking checkout and only a main checkout is kept current with the pin it merges; a feature-branch run can deploy a stale pin and verify green. Switch to a current main checkout (git checkout main && git pull --ff-only origin main) and re-run." ;;
 esac
+fi
 
 # --- facts ----------------------------------------------------------------------
 step "component $COMP"
@@ -147,7 +199,13 @@ step "preflight"
 note "deploying from $REPO on $RBR0; deps ok (PyYAML, jsonschema)"
 # GOAT_RC_ROLE_CHECK=0 skips the nominator check where there is no person (the
 # goatbuilder parity gate in CI); `goatbuilder release` honours the same variable.
-if [ "${GOAT_RC_ROLE_CHECK:-1}" != 0 ]; then
+if [ "${GOAT_RC_ROLE_CHECK:-1}" != 0 ] && [ "$ASSEMBLED" = 1 ]; then
+  # From an assembled tree nothing is tagged here; what this run changes is the
+  # overlay repository's pins and records, so its admins are the nominators.
+  ME="$(gh api user -q .login)"
+  ROLE="$(gh api "repos/$OVERLAY_SLUG/collaborators/$ME/permission" -q .role_name 2>/dev/null || echo unknown)"
+  case "$ROLE" in admin) note "$ME holds $ROLE on $OVERLAY_SLUG (the overlay this tree was assembled from)" ;; *) die "$ME holds '$ROLE' on $OVERLAY_SLUG; only an admin of the overlay repository may put a release candidate on its goatnets" ;; esac
+elif [ "${GOAT_RC_ROLE_CHECK:-1}" != 0 ]; then
   ME="$(gh api user -q .login)"
   ROLE="$(gh api "repos/$REPO_SLUG/collaborators/$ME/permission" -q .role_name 2>/dev/null || echo unknown)"
   case "$ROLE" in admin) note "$ME holds $ROLE on $REPO_SLUG" ;; *) die "$ME holds '$ROLE' on $REPO_SLUG; only a repository admin may nominate a release candidate (the rule rc-validate.yml enforces)" ;; esac
@@ -202,7 +260,7 @@ PY
 # panoscope run did exactly that; the dry run had not looked). A dry run prints
 # the same report and continues, so the operator sees it before the real run.
 secrets_preflight() { # $1 goatnet key -> 0 ok, 1 missing (printed)
-  local g="$1" play hosts_play members report rc missing
+  local g="$1" play hosts_play members report rc missing owner account
   members="$(python3 - "$PINS" "$COMP" "$g" <<'PY'
 import sys, yaml
 pins = yaml.safe_load(open(sys.argv[1])); comp = pins["components"][sys.argv[2]]
@@ -226,8 +284,11 @@ PY
   if [ "$rc" = 1 ]; then
     missing="$(printf '%s\n' "$report" | awk '$3=="MISSING"{print $2}' | tr '\n' ' ')"
     note "secrets: $COMP on $g templates $(printf '%s\n' "$report" | grep -c .) variable(s) from your environment; NOT SET: $missing"
-    note "         references (pointers, no values) live in usareur-af/goat-credentials refs/goat.refs; put the lines for those names in .envrc.local.d/<file>.refs, then"
-    note "         OP_ACCOUNT=example.1password.com op run --env-file=.envrc.local.d/<file>.refs -- <this same command>   (under direnv: direnv exec . env OP_ACCOUNT=… op run …)"
+    # Named by this checkout, as the builder's release names them: `repo: source:`
+    # and `secrets: op_account:` in ops/goatbuilder/goatbuilder.yaml.
+    owner="$(declared repo source)"; owner="${owner%%/*}"; account="$(declared secrets op_account)"
+    note "         references (pointers, no values) live in ${owner:-<owner>}/goat-credentials refs/goat.refs; put the lines for those names in .envrc.local.d/<file>.refs, then"
+    note "         OP_ACCOUNT=${account:-<your account>} op run --env-file=.envrc.local.d/<file>.refs -- <this same command>   (under direnv: direnv exec . env OP_ACCOUNT=… op run …)"
     return 1
   fi
   [ "$rc" = 0 ] && note "secrets: $COMP on $g — every variable the play templates is set" || note "secrets: could not derive what $COMP needs on $g ($report)"
@@ -276,8 +337,9 @@ TMPDIR_RC_DIGEST_ERR="$(mktemp)"
 if [ "$DRY" = 0 ]; then
   # Any of crane, skopeo or docker resolves it (ADR 1204); a tool's own error is kept,
   # so a missing tool or a refused login never reads as "image not found".
-  D1="$("$HERE/image-digest" "ghcr.io/usareur-af/$IMAGE:${TAG#*/}" 2>"$TMPDIR_RC_DIGEST_ERR")" || D1=""
-  [ -n "$D1" ] || die "no digest for ghcr.io/usareur-af/$IMAGE:${TAG#*/}: $(cat "$TMPDIR_RC_DIGEST_ERR" 2>/dev/null)"
+  [ -n "$IMAGE_ORG" ] || die "no image namespace: ops/ansible/group_vars/all.yml sets no ghcr_org default, so there is nowhere to resolve $IMAGE:${TAG#*/}"
+  D1="$("$HERE/image-digest" "ghcr.io/$IMAGE_ORG/$IMAGE:${TAG#*/}" 2>"$TMPDIR_RC_DIGEST_ERR")" || D1=""
+  [ -n "$D1" ] || die "no digest for ghcr.io/$IMAGE_ORG/$IMAGE:${TAG#*/}: $(cat "$TMPDIR_RC_DIGEST_ERR" 2>/dev/null)"
   DIG="$D1"
 else
   DIG="sha256:<digest of $IMAGE:${TAG#*/}>"
@@ -287,7 +349,60 @@ note "candidate ref $(render "$REF")"
 
 # --- helpers for pin edits + landing -----------------------------------------------
 WT="$REPO/../$(basename "$REPO")-wt-rc-$(date -u +%H%M%S)"
-mkwt() { [ -d "$WT" ] || run git -C "$REPO" worktree add -q "$WT" -b "chore/rc-$IMAGE-$(date -u +%Y%m%d-%H%M%S)" origin/main; }
+mkwt() {
+  [ -d "$WT" ] && return 0
+  if [ "$ASSEMBLED" = 1 ]; then
+    run git -C "$OVERLAY" fetch -q origin main
+    run git -C "$OVERLAY" worktree add -q "$OWT" -b "chore/rc-$IMAGE-$(date -u +%Y%m%d-%H%M%S)" origin/main
+    if [ "$DRY" = 1 ]; then note "DRY: $OWT/assemble.sh $WT  (the scratch tree: goatcore + goatstuff + the overlay worktree)"; return 0; fi
+    assemble_wt
+  else
+    run git -C "$REPO" worktree add -q "$WT" -b "chore/rc-$IMAGE-$(date -u +%Y%m%d-%H%M%S)" origin/main
+  fi
+}
+# --- assembled tree only ---------------------------------------------------------
+# $OWT: the overlay worktree a step's edits land from. $WT: the scratch tree the
+# overlay's assemble.sh builds from $OWT; its HEAD stays the goatcore commit
+# (source_of_record.py requires that), so its starting content is kept as a git
+# tree object ($WT_SNAP) and a step's edits are the diff against it. Once built,
+# the run reads its facts and deploys from $WT, the newest assembly it has.
+OWT="$WT-overlay"; WT_SNAP=""; EVID_ROOT="$REPO"
+assemble_wt() {
+  local log; log="$(mktemp)"
+  rm -rf "$WT"
+  "$OWT/assemble.sh" "$WT" >"$log" 2>&1 || { cat "$log" >&2; die "$OWT/assemble.sh could not build the scratch tree $WT"; }
+  git -C "$WT" add -A --force
+  WT_SNAP="$(git -C "$WT" write-tree)"
+  git -C "$WT" reset -q
+  REPO="$WT"; PINS="$WT/ops/pins/fleet-pins.yaml"; LADDER="$WT/ops/release/ladder.yaml"
+  RUNNERS="$WT/ops/validation/goatnet-runners.yaml"; DEPLOY_HERE="$WT/ops/scripts"
+  note "scratch tree $WT assembled from overlay $(git -C "$OWT" rev-parse --short HEAD)"
+}
+land_overlay() { # $1 title, $2 body: the step's edits in $WT, as a PR on the overlay
+  local changes st p B
+  git -C "$WT" add -A --force
+  changes="$(git -C "$WT" diff-index --cached --name-status --no-renames "$WT_SNAP")"
+  git -C "$WT" reset -q
+  if [ -z "$(printf '%s\n' "$changes" | awk 'NF{print $2}' | grep -v '\.sig$' || true)" ]; then
+    note "pins already current on the overlay's main; nothing to land"
+    return 0
+  fi
+  while IFS="$(printf '\t')" read -r st p; do
+    [ -n "$p" ] || continue
+    case "$st" in
+      D) git -C "$OWT" rm -q --ignore-unmatch -- "$p" ;;
+      *) mkdir -p "$OWT/$(dirname "$p")"; cp -p "$WT/$p" "$OWT/$p" ;;
+    esac
+    note "lands $st $p"
+  done <<< "$changes"
+  B="$(mktemp)"; printf '%s\n' "$2" > "$B"
+  "$HERE/pr-land.sh" --worktree "$OWT" --branch "$(git -C "$OWT" rev-parse --abbrev-ref HEAD)" --title "$1" --body-file "$B"
+  # The overlay's main now carries the edit: build the next scratch tree from it,
+  # so the deploy that follows reads a current overlay.
+  git -C "$OWT" fetch -q origin main
+  git -C "$OWT" checkout -q -B "chore/rc-$IMAGE-$(date -u +%Y%m%d-%H%M%S)" origin/main
+  assemble_wt
+}
 set_deviation() {  # $1 goatnet key, $2 reason
   run python3 - "$WT/ops/pins/fleet-pins.yaml" "$COMP" "$1" "$REF" "$2" <<'PY'
 import sys, yaml, re
@@ -372,19 +487,24 @@ regen_sign_check() {
     if [ "$DRY" = 0 ] && [ -f "$BEFORE/$g.json" ] && cmp -s "$BEFORE/$g.json" "$I"; then continue; fi
     SRC="$I"; [ -f "$SRC" ] || SRC="$REPO/ops/consistency/intent/$g/intent.json"
     CA="$(python3 -c "import json; print(json.load(open('$SRC')).get('ca_id',''))")"; N="$(printf '%s' "$CA" | sed -e 's/^dev-//' -e 's/-ecdsa-[0-9-]*$//')"
-    K="$HOME/.goat/state/$N/ca.key.age"
+    K="$STATE_DIR/$N/ca.key.age"
     # A dry run signs nothing: say what a real run needs and go on, so the
     # rehearsal of a step runs anywhere (ops/e2e/rehearsal.sh).
     if [ ! -f "$K" ]; then
       [ "$DRY" = 1 ] && { note "DRY: CA key for $g not at $K — a real run signs $g's intent with it and refuses without it"; continue; }
       die "CA key for $g not at $K"
     fi
-    run bash -c "cd '$WT/ops/enrollment' && go run ./cmd/intent-sign --intent '$I' --root-key '$K' --age-identity '$HOME/.config/age/keys.txt' >/dev/null"
+    run bash -c "cd '$WT/ops/enrollment' && go run ./cmd/intent-sign --intent '$I' --root-key '$K' --age-identity '$HOME/.config/age/keys.txt' --audit-log '$AUDIT_LOG' >/dev/null"
   done
   run python3 "$WT/ops/release/graduate.py" check
   run python3 "$WT/ops/pins/generate-pins.py" --check
 }
 land() { # $1 title, $2 body
+  if [ "$ASSEMBLED" = 1 ]; then
+    if [ "$DRY" = 1 ]; then note "DRY: the step's edits in $WT land as a PR on $OVERLAY_SLUG via $HERE/pr-land.sh --worktree $OWT: $1"
+    else land_overlay "$1" "$2"; fi
+    return 0
+  fi
   if [ "$DRY" = 0 ]; then
     # A re-run whose pin is already merged regenerates the same bytes: the tree
     # differs from main in nothing (signatures are no longer re-signed) — there
@@ -423,7 +543,9 @@ with open(sys.argv[1]) as stream:
 print((runners['goatnets'].get(sys.argv[2]) or {}).get(sys.argv[3], ''))
 PY
 }
-evidence_path() { printf '%s' "$REPO/ops/validation/evidence/$IMAGE-${TAG#*/}-$1.jsonl"; }
+# EVID_ROOT is the invoking tree: a re-assembled scratch tree is replaced on the
+# next landing, and the record names this path.
+evidence_path() { printf '%s' "$EVID_ROOT/ops/validation/evidence/$IMAGE-${TAG#*/}-$1.jsonl"; }
 browser_toolchain_check() { # $1 rows (comma list) -> notes; returns 1 when a browser row cannot run here
   local e2e="$REPO/ops/goat-id-console/web/e2e"
   case ",$1," in *,intake-form-browser-submit,*|*,review-gate-accepts-open-field-invite,*) ;; *) return 0 ;; esac
@@ -456,7 +578,7 @@ rows_on() { # $1 goatnet key -> writes evidence file, returns runner exit
     die "could not compute the live rows $TAG affects (affected-flows.py failed above) — fix that, then re-run the same command"
   fi
   local rows; rows="$(printf '%s' "$flows_json" | python3 -c 'import json,sys; print(",".join(json.load(sys.stdin)["live_rows"]))')"
-  if [ -z "$rows" ]; then note "no live rows are mapped for what $TAG changed (ops/validation/flow-map.yaml) — evidence is the cheap suites only"; echo "" > "$EVID"; return 0; fi
+  if [ -z "$rows" ]; then note "no live rows are mapped for what $TAG changed (ops/validation/flow-map.yaml) — evidence is the cheap suites only"; EVID=""; return 0; fi
   # A row that cannot run here is UNTESTED, not FAILED: say what is missing and
   # stop before the runner, rather than let an exit 2 read as a dead candidate.
   if ! browser_toolchain_check "$rows"; then
@@ -471,23 +593,23 @@ PY
   note "rows on $name: $rows (requires $req)"
   # The contexts the rows run as come from the values file (goat_sponsor_context,
   # probe_context): non-person identities, never an operator key (ADR 1207).
-  local via res; via="$(runner_var "$g" goat_via)"; res="$(runner_var "$g" intake_resolve)"
+  local via res jump=""; via="$(runner_var "$g" goat_via)"; res="$(runner_var "$g" intake_resolve)"
   # A rung this laptop is not meshed to runs its rows on its own management
-  # host through the door: goat_via `door:<env>` resolves to the door's ssh
-  # endpoint (docs/design/env-doors.md; release-candidate-validation.md).
-  unset GOAT_ROWS_SSH_JUMP
+  # host through the door: goat_via `door:<env>` resolves to that host's mesh
+  # address, and every ssh the rows make (goat rows and host rows) jumps through
+  # the door to reach it (docs/design/env-doors.md; ops/validation/probes.py
+  # _ssh_jump). The door address itself is never the ssh destination: it is a
+  # tunnel port whose host key churns.
   case "$via" in door:*)
     local door="${via#door:}"
     if [ "$DRY" = 1 ]; then note "DRY: $HERE/door-open.sh $door  (the rows run goat on $name's management host through the door)"
     else "$HERE/door-open.sh" "$door" >/dev/null 2>&1 || die "door to $door did not open for the rows on $name"; fi
-    via="$("$HERE/env-door.sh" "$door" --ssh-target 2>/dev/null || true)"
-    [ -n "$via" ] || [ "$DRY" = 1 ] || die "env-door.sh $door --ssh-target printed no user@host:port"
-    # Host rows (cmd-assert on the goatnet's hosts) jump through the same door
-    # to each host's mesh address (ops/validation/probes.py _ssh_jump, #2100).
-    [ "$DRY" = 1 ] || export GOAT_ROWS_SSH_JUMP="$via" ;;
+    jump="$("$HERE/env-door.sh" "$door" --ssh-target 2>/dev/null || true)"
+    via="$("$HERE/env-door.sh" "$door" --host-target 2>/dev/null || true)"
+    { [ -n "$jump" ] && [ -n "$via" ]; } || [ "$DRY" = 1 ] || die "env-door.sh $door printed no door (--ssh-target) or host (--host-target)" ;;
   esac
   local rc=0
-  run env INTAKE_RESOLVE="$res" python3 "$REPO/ops/validation/run-acceptance.py" --env "$name" --values "$REPO/$(runner_var "$g" values)" \
+  run env GOAT_ROWS_SSH_JUMP="$jump" INTAKE_RESOLVE="$res" python3 "$REPO/ops/validation/run-acceptance.py" --env "$name" --values "$REPO/$(runner_var "$g" values)" \
       --deployed "$req" --only "$rows" --var "goat_via=$via" --var "env=$name" --json "$EVID" --require-pass || rc=$?
   # exit 2 from the runner is an environment problem (a tool missing, a context
   # not configured) — the rows did not run. That is UNTESTED, never FAIL.
@@ -509,7 +631,7 @@ What $TAG carries ($CHANGES_LINE):
 $CHANGES"
   # --- 4 dev deploy
   step "deploy $TAG to $DEV"
-  run_with_dry_flag "$HERE/deploy-component.sh" "$COMP" --goatnet "$DEV"
+  run_with_dry_flag "$DEPLOY_HERE/deploy-component.sh" "$COMP" --goatnet "$DEV"
 fi
 
 # --- 5 rows on dev -------------------------------------------------------------------
@@ -517,7 +639,7 @@ EVID=""
 if [ "$FROM" != preprod ] && [ "$FROM" != preprod-rows ] && [ "$FROM" != prod ]; then
   step "live rows on $DEV"
   if ! rows_on "$DEV"; then die "a live row FAILED on $DEV — the candidate is dead: fix on main, cut rc.$((RCN+1)) (delete $TAG)"; fi
-  DEV_EVID="$EVID"
+  DEV_EVID="$EVID"; dev_rows_ran=1
 fi
 
 # --- 6 preprod -----------------------------------------------------------------------
@@ -561,7 +683,9 @@ if [ "$FROM" != preprod-rows ]; then
 step "preprod rung: open the candidate and put $TAG on $PRE"
 # A resume from preprod reads the dev evidence from disk — the dev step wrote it
 # there — rather than from a variable only the dev step sets.
-if [ -z "${DEV_EVID:-}" ]; then DEV_EVID="$(evidence_path "$(runner_var "$DEV" name)")"; [ -s "$DEV_EVID" ] || DEV_EVID=""; fi
+# Only when this run did not run the dev rows: a run that did and found none
+# mapped has no dev evidence, and an older file on disk is not this candidate's.
+if [ -z "${dev_rows_ran:-}" ]; then DEV_EVID="$(evidence_path "$(runner_var "$DEV" name)")"; [ -s "$DEV_EVID" ] || DEV_EVID=""; fi
 mkwt
 rc_changes
 # Not inside the capture: a `run` in a dry run prints its DRY line, and a
@@ -637,7 +761,7 @@ fi
 note "record $REC"
 fi
 step "deploy $TAG to $PRE"
-run_with_dry_flag "$HERE/deploy-component.sh" "$COMP" --goatnet "$PRE"
+run_with_dry_flag "$DEPLOY_HERE/deploy-component.sh" "$COMP" --goatnet "$PRE"
 step "live rows on $PRE"
 if ! rows_on "$PRE"; then die "a live row FAILED on $PRE after the dev PASS — leave the candidate open, investigate; graduate.py refuses without convergence evidence"; fi
 mkwt
@@ -736,10 +860,19 @@ PY
   regen_sign_check
   land "chore(release): $TAG graduates; fleet runs it and $PROD folds (ADR 1120/1173)" "Candidate record $(basename "$REC") graduated with the operator ack of $ACK after the soak on $PRE. fleet: is now $REF; the $DEV, $PRE and $PROD deviations that carried the candidate (or the hotfix it replaces) are deleted, so every rung reads one value. Pins and intents regenerated and re-signed; graduate.py check and generate-pins --check pass."
   step "deploy $TAG to $PROD"
-  run_with_dry_flag "$HERE/deploy-component.sh" "$COMP" --goatnet "$PROD"
+  run_with_dry_flag "$DEPLOY_HERE/deploy-component.sh" "$COMP" --goatnet "$PROD"
   step "every rung reads $TAG"
-  for g in "$DEV" "$PRE"; do run_with_dry_flag "$HERE/deploy-component.sh" "$COMP" --goatnet "$g" --verify-only; done
+  for g in "$DEV" "$PRE"; do run_with_dry_flag "$DEPLOY_HERE/deploy-component.sh" "$COMP" --goatnet "$g" --verify-only; done
   if [ "$DRY" = 1 ]; then note "$COMP: DRY: a real run puts fleet $REF on $DEV, $PRE and $PROD and reads every ledger"
   else note "$COMP: fleet $REF on $DEV, $PRE and $PROD (ledger-verified)"; fi
 fi
+if [ "$ASSEMBLED" = 1 ]; then
+  # The scratch tree is a plain directory. The overlay worktree is clean once its
+  # PR merged; its branch stays for the reflog, as a single-repository run's does.
+  if [ "$DRY" = 0 ]; then
+    rm -rf "$WT"
+    [ -d "$OWT" ] && git -C "$OVERLAY" worktree remove "$OWT" 2>/dev/null || true
+  fi
+else
 [ -d "$WT" ] && [ "$DRY" = 0 ] && git -C "$REPO" worktree remove "$WT" 2>/dev/null || true
+fi

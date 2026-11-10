@@ -45,6 +45,23 @@ pub fn state_dir_abs(repo: &Path) -> String {
     expand(&state_dir(repo))
 }
 
+/// The append-only audit log the signing tools write (`cert-sign`,
+/// `intent-sign`, `name-snapshot-sign`), as the project declares its state
+/// directory, `~` and all: `ca-audit.jsonl` beside `state_dir`. Every call
+/// names it with `--audit-log`, so the file does not depend on a default
+/// built into the tool (`ops/scripts/project-setting.sh ca-audit-log` is the
+/// same rule for the shell drivers).
+pub fn ca_audit_log(repo: &Path) -> String {
+    beside_state(&state_dir(repo))
+}
+
+fn beside_state(state: &str) -> String {
+    match state.trim_end_matches('/').rsplit_once('/') {
+        Some((parent, _)) => format!("{parent}/ca-audit.jsonl"),
+        None => "./ca-audit.jsonl".to_string(),
+    }
+}
+
 fn expand(p: &str) -> String {
     match p.strip_prefix("~/") {
         Some(rest) => format!("{}/{rest}", std::env::var("HOME").unwrap_or_default()),
@@ -72,6 +89,11 @@ pub fn state_dir_abs_global() -> String {
     #[cfg(test)]
     init(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."));
     expand(GLOBAL.get().map_or("~/.goat/state", |g| g.1.as_str()))
+}
+
+/// `ca_audit_log` with `~` expanded, for the checkout `init` read.
+pub fn ca_audit_log_abs_global() -> String {
+    beside_state(&state_dir_abs_global())
 }
 
 /// The registry namespace images are published under (`repo.image_namespace`).
@@ -121,6 +143,14 @@ mod tests {
         assert_eq!(state_dir(checkout("deploy: {state_dir: ~/.acme/state}\n").path()), "~/.acme/state");
         assert_eq!(state_dir(checkout("repo: {source: a/b}\n").path()), "~/.goat/state");
         assert!(state_dir_abs(checkout("deploy: {state_dir: /srv/s}\n").path()) == "/srv/s");
+    }
+
+    #[test]
+    fn the_audit_log_sits_beside_the_state_dir() {
+        assert_eq!(ca_audit_log(checkout("deploy: {state_dir: ~/.acme/state}\n").path()), "~/.acme/ca-audit.jsonl");
+        assert_eq!(ca_audit_log(checkout("repo: {source: a/b}\n").path()), "~/.goat/ca-audit.jsonl");
+        assert_eq!(beside_state("/srv/s/"), "/srv/ca-audit.jsonl");
+        assert_eq!(beside_state("state"), "./ca-audit.jsonl");
     }
 
     // The two environment overrides are read in one test: tests share a process.

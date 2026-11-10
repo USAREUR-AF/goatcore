@@ -29,7 +29,7 @@
         - site_id, site_dns_zone
         - id_admin_console_onboard_operator_api_keys entries must each be a
           complete "handle:key" pair — an entry ending in ":" means the key's
-          env var (ZAGROS: ZAGROS_ONBOARD_RUNNER_PORTAL_KEY) is unset in the
+          env var (<SITE>_ONBOARD_RUNNER_PORTAL_KEY) is unset in the
           deploying shell. Export it and re-run; never deploy an empty key.
 
 - name: id-admin-console | require the NetBird service identity (console-enrollwatch)
@@ -317,8 +317,7 @@
       cannot be derived. This play runs with gather_facts disabled — set
       gather_facts: true. Guessing here writes linux/amd64 into
       /opt/mgmt-host/.env, and the compose overlay then DEMANDS amd64: on an
-      aarch64 Jetson the console crash-loops with `exec format error`. Both
-      zagros and zagros-prod consoles went down that way on 2026-08-10.
+      aarch64 Jetson the console crash-loops with `exec format error`.
 
 - name: Set ID_ADMIN_CONSOLE_PLATFORM in /opt/mgmt-host/.env
   ansible.builtin.lineinfile:

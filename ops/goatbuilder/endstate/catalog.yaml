@@ -104,6 +104,18 @@ services:
     ledger: null
     mesh: {internal: [tcp/5432]}
     assay: [postgres-spock]
+  # pgBackRest: a site's own backups. site-bootstrap.yml applies the role only
+  # when has_durable_independent_state (default true); a site that sets it false
+  # carries durability another way (Spock, or an intra-site A->B standby), and
+  # its phase-13 backup row (requires: [pgbackrest]) is then N/A, not a FAIL.
+  pgbackrest:
+    class: mgmt
+    play: site-bootstrap.yml
+    present: {var: has_durable_independent_state, default: true}
+    containers: [pgbackrest-runner]
+    ledger: null
+    assay: [pgbackrest]
+    guard: [ops/ansible/site-bootstrap.yml]
   zenoh-router:
     class: mgmt
     present: {pin: zenoh-router}
@@ -393,13 +405,13 @@ services:
     ledger: dataflows
     surfaces: [dataflows]
     oidc_clients: [dataflows]
-  demogame:
+  airdefenders:
     class: mgmt
-    present: {var: demogame_enabled}
-    containers: [demogame, demogame-zenoh-sidecar, oauth2-proxy-demogame]
-    ledger: demogame
-    surfaces: [demogame]
-    oidc_clients: [demogame]
+    present: {var: airdefenders_enabled}
+    containers: [airdefenders, airdefenders-zenoh-sidecar, oauth2-proxy-airdefenders]
+    ledger: airdefenders
+    surfaces: [airdefenders]
+    oidc_clients: [airdefenders]
   zenoh-sandbox:
     class: mgmt
     present: {var: zenoh_sandbox_enabled}
@@ -410,7 +422,7 @@ services:
     class: mgmt
     play: zenoh-synth-vendors-deploy.yml
     present: {var: synth_vendors_enabled}
-    guard: [ops/ansible/zenoh-synth-vendors-deploy.yml, ops/ansible/zagros-zenoh-synth-vendors-deploy.yml]
+    guard: [ops/ansible/zenoh-synth-vendors-deploy.yml, ops/ansible/zenoh-synth-vendors-slot-pool-deploy.yml]
     containers: ["synth-*"]
     ledger: null
   goat-trashgoat:

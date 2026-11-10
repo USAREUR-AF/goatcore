@@ -11,7 +11,7 @@ You will stand up a working goatnet on one Ubuntu host or VM on your LAN and use
 
 goatlite is `preset: lite` in the goatbuilder configuration. It runs the same fourteen-phase standup every goatnet runs, in its LAN profile, with every decision already made ([goatlite.md](../design/goatlite.md), [ADR 1213](../adr/1213-goatlite-preset-one-box-one-file.md)). The procedure behind every phase is the standup runbook, [goatnet-standup.md](../operations/goatnet-standup.md); this tutorial is one instance of it, not a second procedure. The script that stands beside the builder, `ops/scripts/goat-standup.sh`, runs the same phases and stays documented.
 
-Until ADR 1197's public images land, pulling the goatnet's container images needs one account: a GitHub token with `read:packages`, exported as `GHCR_READ_TOKEN`. Nothing else in this tutorial needs an account with any outside service.
+Nothing in this tutorial needs an account with any outside service. The goatnet's container images are public on `ghcr.io` and pull without credentials.
 
 ## The words used here
 
@@ -37,9 +37,9 @@ You never run `goatbuilder` on the box. It runs on your laptop and does everythi
 
 ### First, install the tools
 
-The run uses these programs on your laptop. Install them now, so nothing stops you partway through. Section 4's doctor command checks every one of them and prints the install command for anything missing, so you can also run the doctor first and follow what it says.
+The run uses these programs on your laptop. Install them now, so nothing stops you partway through. Section 4's doctor command checks the laptop and prints the install command for anything it finds missing.
 
-The laptop can run Linux or macOS. ⚠️ Windows itself is not supported yet. WSL runs the Linux path and may work, but no run has been tested on it. Package names are the same on apt, dnf and brew unless the table says otherwise.
+The laptop can run Linux or macOS. ⚠️ Windows itself is not supported yet. WSL runs the Linux path and may work, but no run has been tested on it. The Linux commands below are for Ubuntu 24.04, and CI runs them as written on a fresh Ubuntu 24.04 on every change to this page; it runs the macOS commands as written on a GitHub macOS runner, which comes with Homebrew already installed (`.github/workflows/goatlite-workstation.yml`).
 
 | Program                                                   | Used for                                                                                           |
 | --------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
@@ -48,36 +48,104 @@ The laptop can run Linux or macOS. ⚠️ Windows itself is not supported yet. W
 | `netbird` | joins your laptop to the goatnet's mesh in section 6; install it from `https://docs.netbird.io/how-to/installation` |
 | `git`                                                   | the checkout                                                                                       |
 | `ssh`                                                   | reaching the box                                                                                   |
-| `cargo` (Rust) | building `goatbuilder` and `goat`; install it from `https://rustup.rs/` |
-| `ansible-playbook`                                      | every deploy step on the box                                                                       |
-| `python3` with `pyyaml`, `jsonschema`, `jmespath` | the render, the checks, and the access-rule steps                                                  |
+| `cargo` (Rust)                                          | building `goatbuilder` and `goat`; install it from `https://rustup.rs/`                            |
+| `yq`, version 4, by mikefarah                           | reading the certificate manifest when phase 1 mints the goatnet's certificate authority. The `yq` that apt installs is a different program with the same name |
+| `age`                                                   | encrypting the certificate authority's key                                                         |
+| `go` 1.26 or newer, `pkg-config` and the PC/SC headers  | building the certificate tools phase 1 runs (`ops/enrollment`). The PC/SC headers are `libpcsclite-dev` on Linux; macOS has them built in |
+| `python3` 3.12 to 3.14, with `venv`                     | one Python environment for this tutorial, set up in the checkout below                            |
+| `ansible-playbook`                                      | every deploy step on the box; `ansible-core` 2.20.11 from pip, inside that environment            |
+| `pyyaml`, `jsonschema`, `jmespath`                      | the render, the checks, and the access-rule steps; from pip, inside that environment              |
 | `node`, `npm`, Playwright with Chromium               | the two acceptance checks that drive a browser                                                     |
 
-Install the packages on Ubuntu or Debian:
+#### On Ubuntu 24.04
 
-```text
-sudo apt install git openssh-client ansible nodejs npm python3-pip
+Refresh the package lists, then install the packages. A fresh image has no package lists yet, so `apt install` on its own cannot find them:
+
+```bash
+sudo apt update
+sudo apt install -y git openssh-client curl ca-certificates build-essential python3 python3-venv nodejs npm age pkg-config libpcsclite-dev
 ```
 
-Install the packages on macOS with Homebrew:
+Install mikefarah's `yq`, version 4. Ubuntu's `yq` package is a different program; do not install it:
 
-```text
-brew install git ansible node
+```bash
+sudo curl -fsSL -o /usr/local/bin/yq "https://github.com/mikefarah/yq/releases/download/v4.44.3/yq_linux_$(dpkg --print-architecture)"
+sudo chmod 0755 /usr/local/bin/yq
+yq --version
 ```
 
-Install the Python modules:
+Install Go from `go.dev`. Ubuntu's `golang-go` is older than the version `ops/enrollment/go.mod` asks for:
 
-```text
-python3 -m pip install pyyaml jsonschema jmespath
+```bash
+curl -fsSL "https://go.dev/dl/go1.26.10.linux-$(dpkg --print-architecture).tar.gz" | sudo tar -C /usr/local -xz
+export PATH="/usr/local/go/bin:$PATH"
+go version
 ```
 
-Install the browser for the two browser checks. Run this after the clone step below, from the root of the checkout:
+Add `export PATH="/usr/local/go/bin:$PATH"` to your shell profile too, so a new terminal finds `go`.
 
-```text
-cd ops/goat-id-console/web/e2e && npm ci && npx playwright install chromium
+Install Rust with `rustup`, the installer from `https://rustup.rs/`. `-y` accepts its defaults instead of asking, and the second line puts `cargo` on the `PATH` of this terminal; a new terminal finds it on its own:
+
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+. "$HOME/.cargo/env"
+cargo --version
 ```
 
-One registry token is also needed before images can be pulled; section 4 names it and where to put it.
+#### On macOS
+
+These commands are for Apple Silicon and Intel Macs, in the default shell, zsh. Install Homebrew first, from `https://brew.sh`, if `brew --version` does not answer. Its installer asks for your password, installs Apple's Command Line Tools (the compiler the builds below use), and ends by printing two lines that put `brew` on your `PATH`; run them. On Apple Silicon they are:
+
+```text
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> ~/.zprofile
+eval "$(/opt/homebrew/bin/brew shellenv)"
+```
+
+On an Intel Mac Homebrew lives in `/usr/local`, which is already on the `PATH`, and the installer prints no such lines.
+
+Install the packages. macOS has the PC/SC framework built in, so it needs no `pkg-config` or PC/SC headers:
+
+```bash
+brew install git python@3.14 node yq age go
+```
+
+`ansible-core` 2.20 runs on Python 3.12 to 3.14. macOS's own `python3` is 3.9, too old, and Homebrew's `python` formula is now 3.15, too new: `ansible-playbook` stops with a traceback ending `module 'dataclasses' has no attribute '_is_type'`. So install `python@3.14`, and put its `python3` first on the `PATH` of this terminal, so that the Python environment below is made with it. The environment keeps that Python, so later terminals need only activate it:
+
+```bash
+export PATH="$(brew --prefix python@3.14)/libexec/bin:$PATH"
+python3 --version
+```
+
+It prints `Python 3.14` and a patch number. If it prints another version, your `python@3.14` predates the `python3` name in that directory: run `brew upgrade python@3.14` and the two lines again.
+
+Install Rust with `rustup`, the same way as on Linux. Do not use Homebrew's `rustup` formula: it installs no toolchain and leaves `cargo` off the `PATH`. The installer adds `cargo` to new terminals itself; the second line puts it on the `PATH` of this one:
+
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+. "$HOME/.cargo/env"
+cargo --version
+```
+
+The next step installs `goatbuilder` and `goat` into `~/.local/bin`, which macOS does not put on the `PATH`. Add it for every new terminal now. The line is added once, however often you run it:
+
+```bash
+grep -qs '\.local/bin' ~/.zprofile || echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zprofile
+```
+
+#### An SSH key
+
+`goatbuilder` reaches the box over SSH with your key, and phase 1 makes that key the box's administrator key. If `ls ~/.ssh/id_*.pub` lists nothing, make one, then copy it to the box. Replace `ubuntu@192.0.2.50` with the box's user and address:
+
+```text
+ssh-keygen -t ed25519
+ssh-copy-id ubuntu@192.0.2.50
+ssh ubuntu@192.0.2.50 true
+```
+
+The last line must return without asking for a password. If you gave the key a passphrase, load it into the SSH agent once, so the standup's many connections do not each ask for it: `ssh-add ~/.ssh/id_ed25519` on Linux, `ssh-add --apple-use-keychain ~/.ssh/id_ed25519` on macOS.
+
+### Get the checkout and build the two programs
 
 Get the checkout. Every later command runs from its root:
 
@@ -86,18 +154,47 @@ git clone https://github.com/usareur-af/goatcore.git
 cd goatcore
 ```
 
-There is no release page yet, so build both programs from the checkout with [Rust](https://rustup.rs/). The first build takes several minutes.
+There is no release page yet, so build both programs from the checkout with Rust. The first build takes several minutes.
 
 ```text
 (cd crates && cargo build --release --locked -p goatbuilder -p goat-cli)
 mkdir -p ~/.local/bin
 install -m 0755 crates/target/release/goatbuilder crates/target/release/goat ~/.local/bin/
+export PATH="$HOME/.local/bin:$PATH"
 goatbuilder --version
 goat --version
 ```
 
-If `--version` says "command not found", add `export PATH="$HOME/.local/bin:$PATH"` to your shell profile and open a new terminal.
+The `export` line covers this terminal. If `--version` says "command not found" in a new terminal, add the same line to your shell profile, `~/.profile` on Ubuntu. On macOS the setup above already added it to `~/.zprofile`.
 
+### Set up Python, Ansible and the browser
+
+Every command here runs on your laptop, from the root of the checkout.
+
+Create one Python environment for this tutorial and install its modules and Ansible into it. Ubuntu 24.04 refuses `pip install` into the system Python, and the environment keeps the tutorial's versions apart from anything else on the laptop:
+
+```bash
+python3 -m venv ~/.venvs/goatlite
+. ~/.venvs/goatlite/bin/activate
+python3 -m pip install pyyaml jsonschema jmespath 'ansible-core==2.20.11'
+ansible-galaxy collection install -r ops/ansible/requirements.yml
+```
+
+`ansible-core` 2.20 is the newest line the repository's Ansible CI accepts (`.github/workflows/ansible-syntax-check.yml`). It carries no collections of its own; `ops/ansible/requirements.yml` names the ones the plays use.
+
+⚠️ Every terminal you use for this tutorial activates the environment first, with `. ~/.venvs/goatlite/bin/activate`. `goatbuilder` runs `python3` and `ansible-playbook` from your `PATH`, so in a terminal without the environment the first phase that needs them fails.
+
+Install the browser for the two browser checks. `--with-deps` also installs the system libraries Chromium needs on Linux, and asks for your password to do it; macOS needs none, and it asks for nothing there:
+
+```bash
+(cd ops/goat-id-console/web/e2e && npm ci && npx playwright install --with-deps chromium)
+```
+
+Check that the browser starts. It prints `chromium launched`; an error naming a missing library, such as `libatk-1.0.so.0`, means the system libraries are not installed, so run the line above again:
+
+```bash
+(cd ops/goat-id-console/web/e2e && node -e "import('@playwright/test').then(({ chromium }) => chromium.launch()).then((b) => { console.log('chromium launched'); return b.close(); })")
+```
 
 ## 2. Write the one file
 
@@ -162,7 +259,7 @@ goatbuilder assay pasture --values ops/goatbuilder/fixtures/goatnet-from-scratch
 goatbuilder doctor
 ```
 
-The doctor reads your `goatlite.yaml` and prints one `lite` row naming every decision it derived from your four facts: the box, the SSH user, the administrator, the zone, the environment and its one site, disk encryption, the secrets store. Then it names every tool it needs on the laptop, and checks that `GHCR_READ_TOKEN` is set; when it is not, the doctor prints a note, because phase 5 needs it to pull the images. The cloud checks and the browser-test check show as skipped, because the lite preset declares that no cloud is used and no release is cut. Fix what it names, then run it again until every row passes. The doctor does not reach the box; phase 1 of the standup does.
+The doctor reads your `goatlite.yaml` and prints one `lite` row naming every decision it derived from your four facts: the box, the SSH user, the administrator, the zone, the environment and its one site, disk encryption, the secrets store. Then it names every tool it needs on the laptop; the `GHCR_READ_TOKEN` row passes unset, because the images are public. The cloud checks, the browser-test check and the release checks (`gh`, `crane`, the image-digest tool, the goat contexts) show as skipped, because the lite preset declares that no cloud is used and no release is cut. Before your first standup the secrets file does not exist yet; its row passes and says phase 3 of the standup produces it. Fix what it names, then run it again until every row passes. The doctor does not reach the box; phase 1 of the standup does.
 
 ## 5. Stand it up
 
@@ -187,7 +284,7 @@ goatbuilder standup pasture
 | 10    | The LAN services come up: the dashboard, the name server for your zone, the login pages                        | the dashboard answers on the LAN                                                                                              |
 | 11    | **The one browser step.** The run pauses and prints what to do, below                                    | you resume with `--from 12`                                                                                                 |
 | 12    | The access policy is applied, the service identities are minted, the portal and the remaining services come up | `OK: no All-group rule; every enabled policy is declared.` then `OK: every required identity is present and verified.`    |
-| 13    | The assay                                                                                                      | every applicable row `PASS`                                                                                                 |
+| 13    | Skipped under the lite preset: you run the assay yourself in section 7                                         | it says so                                                                                                                  |
 | 14    | Skipped: no rescue node and no relay tier are declared                                                         | it says so                                                                                                                    |
 
 A phase that fails says which phase, what state the box is in, and the resume command. Running a phase again is safe; it changes only what is missing. The repair is always the same: fix the cause, then resume from that number.
@@ -296,9 +393,10 @@ You want `Management: Connected` and an address in the mesh range. From here the
 
 ## 7. Prove it is finished
 
-Phase 13 ran the assay. The rows that use the `goat` command run as the goatnet's own probe identity on the box, not as you, and that identity is minted once by you, because minting key material is never a playbook's side effect. **On your laptop, once:**
+Under the lite preset phase 13 does not run the assay; you run it here. The rows that use the `goat` command run as the goatnet's own probe identity on the box, not as you, and that identity is minted once by you, because minting key material is never a playbook's side effect. First write the values the assay reads from your goatnet's configuration, then mint the identity. **On your laptop, once:**
 
 ```text
+python3 ops/validation/generate-values.py pasture
 ops/scripts/create-assay-probe-identity.sh pasture
 ```
 
@@ -337,7 +435,7 @@ goat --context pasture status
 goat --context pasture health
 ```
 
-`goat status` opens one real session to the router and gives one verdict per layer. `goat health` reads the fabric's own health beat.
+`goat status` opens one real session to the router and gives one verdict per layer; the `session` row is the one that proves your identity. This identity holds no portal key, so its `portal` row checks only that the portal answers (`liveness only`). `goat health` reads the fabric's own health beat; a goatlite runs no health publisher, so it reports that it saw none.
 
 **Send a message to yourself.** `goat hello` publishes through the fabric and receives its own message back.
 
@@ -355,7 +453,7 @@ goat --context pasture sub 'founder/**' --take 1 --for 60s
 goat --context pasture pub founder/hello/v1 --payload 'first message on pasture' --confirm
 ```
 
-`--confirm` reads the value back from the router's storage, so a denied write is reported instead of silently dropped.
+The subscriber prints the message and stops. `--confirm` reads the value back from the router's storage, where a goatlite keeps everything written under `founder/**`, and the publisher prints `confirm: ✓ landed`.
 
 ## When something fails
 
@@ -381,6 +479,6 @@ Re-running is the repair: fix the cause and resume from the failed phase. `goatb
 
 ## What you have
 
-A real goatnet on one box: its own mesh with your laptop on it, its own identity service with you as its administrator, its own certificate authority, its own data-fabric router carrying your messages, every secret in one local file, and no account with any outside service beyond the image-pull token. What you learn on it applies to every larger goatnet. The growth path to an internet-enrollable goatnet is an `internet:` block added to the `lite:` entry and a re-run, never a second standup; the block parses today and nothing acts on it yet, and what growing costs is measured in [goatlite.md §6](../design/goatlite.md#6-growing-out-of-lite).
+A real goatnet on one box: its own mesh with your laptop on it, its own identity service with you as its administrator, its own certificate authority, its own data-fabric router carrying your messages, every secret in one local file, and no account with any outside service. What you learn on it applies to every larger goatnet. The growth path to an internet-enrollable goatnet is an `internet:` block added to the `lite:` entry and a re-run, never a second standup; the renderer writes the internet surface from it, and its status (built, not yet stood up against real relays) is in [goatlite.md §6](../design/goatlite.md#6-growing-out-of-lite).
 
 The next tutorial is [Tutorial 1](01-new-goatnet.md), the full shape: the same fourteen phases with every decision this preset made for you written out, a founder site that can take an observability host, a rescue node and, later, federated nodes.

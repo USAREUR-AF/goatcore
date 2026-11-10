@@ -1,20 +1,20 @@
 #!/usr/bin/env bash
 # Install the snitch probe on any mesh peer.
 #
-# Downloads the pre-built binary from the NETHOST collector and installs a
+# Downloads the pre-built binary from the collector and installs a
 # systemd service that probes every 60s and reports to the collector.
 #
 # Usage:
-#   curl -fsSL http://100.127.1.32:8080/install | bash
+#   curl -fsSL <collector-url>/install | bash
 #   # or manually:
-#   bash install-probe.sh [--collector URL] [--interval SECONDS]
+#   bash install-probe.sh --collector URL [--interval SECONDS]   (or SNITCH_COLLECTOR=URL)
 #
 # Requires: root (for systemd), ping, arp, ip
 # Idempotent: safe to re-run (updates binary and restarts service)
 
 set -euo pipefail
 
-COLLECTOR="${SNITCH_COLLECTOR:-http://100.127.1.32:8080}"
+COLLECTOR="${SNITCH_COLLECTOR:-}"
 INTERVAL=60
 INSTALL_DIR=/usr/local/bin
 SERVICE_NAME=snitch-probe
@@ -26,6 +26,11 @@ while [[ $# -gt 0 ]]; do
     *)           echo "Unknown arg: $1" >&2; exit 1 ;;
   esac
 done
+
+if [ -z "$COLLECTOR" ]; then
+  echo "snitch: no collector URL: pass --collector <url> or set SNITCH_COLLECTOR" >&2
+  exit 1
+fi
 
 log() { echo "[snitch] $(date +%H:%M:%S) $*"; }
 

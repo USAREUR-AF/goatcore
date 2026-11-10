@@ -250,7 +250,9 @@ mod tests {
 
     #[test]
     fn a_wildcard_staging_root_is_refused() {
-        let err = KeyMap::new("zagros", &["**".into()]).unwrap_err().to_string();
+        let err = KeyMap::new("zagros", &["**".into()])
+            .unwrap_err()
+            .to_string();
         assert!(
             err.contains("single segment") || err.contains("wildcard"),
             "{err}"

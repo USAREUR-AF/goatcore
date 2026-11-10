@@ -167,7 +167,7 @@ func TestAffiliationVariantRefusedOnMachineStamp(t *testing.T) {
 	r := affRegistry(t)
 	ctx := t.Context()
 
-	if _, err := r.InitializeSlotPool(ctx, "zagros-test", 4); err != nil {
+	if _, err := r.InitializeSlotPool(ctx, "galaxy-test", 4); err != nil {
 		t.Fatalf("init slot pool: %v", err)
 	}
 	if err := r.SetMachineGrant(ctx, "dana-ops", 3, "unit-alpha", "fra", "operator"); err != nil {

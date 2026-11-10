@@ -74,8 +74,10 @@
           - (door_credential_audit_token | length > 0)
             or (door_credential_audit_admin_password | length > 0)
           - door_credential_audit_textfile_dir | length > 0
+          - door_credential_audit_door_url | length > 0
         fail_msg: >-
-          door-credential-audit needs a valid plane (public|collab), a credential
+          door-credential-audit needs a valid plane (public|collab), the door's
+          Kanidm URL (door_credential_audit_door_url), a credential
           (door_credential_audit_token — mint with
           ops/scripts/create-door-audit-identity.sh — or, worse,
           door_credential_audit_admin_password), and an explicit

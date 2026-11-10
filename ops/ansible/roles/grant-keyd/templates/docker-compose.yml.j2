@@ -52,7 +52,7 @@ services:
     # audit's "grant-keyd: zero observability" finding: no metric, no
     # healthcheck, no alert, stderr only).
     #
-    # DEFAULT-OFF ON PURPOSE. Runtime is cgr.dev/chainguard/glibc-dynamic
+    # DEFAULT-OFF ON PURPOSE. Runtime is the distroless runtime-cc base
     # (ops/grant-crypto/keyd/Dockerfile) — no shell, no curl/wget — so a
     # wget-style probe is unrunnable and would pin the container
     # `Up (unhealthy)` forever, which now PAGES: grant-keyd is in the

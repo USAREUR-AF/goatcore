@@ -73,7 +73,11 @@ PY
 
 REF="$ROOT/docs/reference/goatbuilder"
 mkdir -p "$OUT/reference/figures"
-cp "$REF"/figures/*.svg "$OUT/reference/figures/"
+# The figures directory is optional: a tree that carries no figures builds the
+# book without them.
+if compgen -G "$REF/figures/*.svg" >/dev/null; then
+  cp "$REF"/figures/*.svg "$OUT/reference/figures/"
+fi
 
 # The table of contents: the reference in its own order (its README lists the
 # chapters), then the generated command reference, then the guides and design

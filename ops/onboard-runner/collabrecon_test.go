@@ -176,11 +176,11 @@ func reconcileFixture(t *testing.T, accts []CollabAccount) reconcileReport {
 
 func TestReconcileVerdicts(t *testing.T) {
 	rep := reconcileFixture(t, []CollabAccount{
-		{Handle: "ada-lovelace", Email: "person-5@example.org"}, // recorded + active
-		{Handle: "grace-hopper", Email: "person-47@example.org"},        // active, unrecorded
-		{Handle: "user8x-example", Email: "person-60@example.org"},     // revoked, live account
-		{Handle: "nobody-here", Email: "person-72@example.org"},        // no identity at all
-		{Handle: "jvanhay", Email: "person-58@example.org"},              // roster-only, matched by email
+		{Handle: "ada-lovelace", Email: "person-5@example.org"},    // recorded + active
+		{Handle: "grace-hopper", Email: "person-47@example.org"},   // active, unrecorded
+		{Handle: "user8x-example", Email: "person-60@example.org"}, // revoked, live account
+		{Handle: "nobody-here", Email: "person-72@example.org"},    // no identity at all
+		{Handle: "jvanhay", Email: "person-58@example.org"},        // roster-only, matched by email
 	})
 	got := map[string]string{}
 	for _, r := range rep.Rows {

@@ -28,14 +28,14 @@ Every stateful consumer declares its correlation shape at startup:
 
 ```go
 consumer := stateful.New(stateful.Config{
-    Name:           "demo-game-correlator",
+    Name:           "air-defenders-correlator",
     CorrelationKey: "payload.track_id",           // JSONPath into the event payload
     OpenOn:         []string{"game/fire"},  // keyexpr suffix(es) that open a session
     CloseOn:        []string{"game/terminate", "impact"}, // close normally
     SessionTimeout: 30 * time.Second,             // grace period for B after A
     MaxOpenSessions: 10_000,                      // hard memory cap; evict oldest when hit
     PersistencePath: "/data/state.bolt",          // optional — see "Persistence tiers" below
-    DLQTopic:       "demo-game/{site}/_dlq/orphaned-rounds", // where orphans go
+    DLQTopic:       "air-defenders/{site}/_dlq/orphaned-rounds", // where orphans go
 })
 
 consumer.OnComplete(func(s Session) {

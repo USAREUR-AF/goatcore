@@ -4,7 +4,7 @@ Provisions an OAuth2 client for Grafana at the operator-IdP Hydra per [ADR 0842]
 
 ## What this is (and is not)
 
-This role only manages the **Hydra-side** OAuth2 client config (idempotent GET-then-POST-or-PUT). It does NOT manage the Grafana container — that's the [`obs-host`](../obs-host/) role's job. The matching Grafana env-var changes (GF_AUTH_GENERIC_OAUTH_*) live in `group_vars/vega_obs_hosts/vars.yml` and are consumed by obs-host.
+This role only manages the **Hydra-side** OAuth2 client config (idempotent GET-then-POST-or-PUT). It does NOT manage the Grafana container — that's the [`obs-host`](../obs-host/) role's job. The matching Grafana env-var changes (GF_AUTH_GENERIC_OAUTH_*) live in the obs host group's `group_vars/<site>_obs_hosts/vars.yml` and are consumed by obs-host.
 
 The split is deliberate: this role is the only thing that talks to Hydra; obs-host is the only thing that runs Grafana. Re-running either is safe.
 
@@ -14,7 +14,7 @@ The split is deliberate: this role is the only thing that talks to Hydra; obs-ho
 export <SITE>_C_OPERATOR_IDP_GRAFANA_CLIENT_SECRET=$(openssl rand -hex 32)
 ```
 
-For vega: `VEGA_C_OPERATOR_IDP_GRAFANA_CLIENT_SECRET`.
+For a site named `zagros`: `ZAGROS_C_OPERATOR_IDP_GRAFANA_CLIENT_SECRET`.
 
 The same secret value MUST be set in:
 

@@ -22,7 +22,7 @@ the legacy `curl <collector>/install | bash` flow at
 | OS / family | Status | Service manager | Install path | Per-OS task file |
 |---|---|---|---|---|
 | Linux | supported | systemd | `/usr/local/bin/snitch` + `/etc/systemd/system/snitch-probe.service` | [`tasks/Linux.yml`](tasks/Linux.yml) |
-| Darwin | supported | launchd | `/usr/local/bin/snitch` + `/Library/LaunchDaemons/net.goat.snitch-probe.plist` | [`tasks/Darwin.yml`](tasks/Darwin.yml) |
+| Darwin | supported | launchd | `/usr/local/bin/snitch` + the LaunchDaemon plist `tasks/Darwin.yml` installs | [`tasks/Darwin.yml`](tasks/Darwin.yml) |
 | Windows | **not supported in this role** | sc.exe / Windows Service | n/a | use [`../../../snitch/install-probe-windows.ps1`](../../../snitch/install-probe-windows.ps1) |
 
 ### Why Windows is a sibling installer, not part of this role

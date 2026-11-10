@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -91,7 +92,13 @@ func newCollabProviderFromEnv(timeout time.Duration, log *slog.Logger) CollabPro
 		log.Warn("COLLAB_PROVISION_ENABLED set but neither COLLAB_KANIDM_API_TOKEN nor COLLAB_KANIDM_IDM_ADMIN_PW is set — collab leg stays disabled")
 		return nil
 	}
-	base := strings.TrimRight(envOr("COLLAB_KANIDM_URL", "https://idm.collab.goat.example"), "/")
+	// No built-in door: the role renders COLLAB_KANIDM_URL on every goatnet that
+	// enables the leg (and renders no credential without it).
+	base := strings.TrimRight(os.Getenv("COLLAB_KANIDM_URL"), "/")
+	if base == "" {
+		log.Warn("COLLAB_PROVISION_ENABLED set but COLLAB_KANIDM_URL is empty — collab leg stays disabled")
+		return nil
+	}
 	authMode := "service-account-token"
 	if apiToken == "" {
 		authMode = "idm_admin-password"
@@ -114,6 +121,33 @@ type kanidmProvider struct {
 }
 
 func (k *kanidmProvider) Name() string { return "goat-collab" }
+
+// SignInURL is the collab front a person signs in at once their account is set
+// up: COLLAB_SIGNIN_URL when set, else the Kanidm door with its leading "idm."
+// label dropped (the collab plane serves Kanidm at idm.<front>).
+func (k *kanidmProvider) SignInURL() string {
+	if v := strings.TrimRight(os.Getenv("COLLAB_SIGNIN_URL"), "/"); v != "" {
+		return v
+	}
+	u, err := url.Parse(k.base)
+	if err != nil || u.Host == "" {
+		return k.base
+	}
+	u.Host = strings.TrimPrefix(u.Host, "idm.")
+	u.Path, u.RawQuery, u.Fragment = "", "", ""
+	return u.String()
+}
+
+// collabSignInURL asks a provider for its sign-in front; a provider without one
+// gets the generic wording.
+func collabSignInURL(p CollabProvider) string {
+	if s, ok := p.(interface{ SignInURL() string }); ok {
+		if v := s.SignInURL(); v != "" {
+			return v
+		}
+	}
+	return "the collaboration environment"
+}
 
 func (k *kanidmProvider) Provision(ctx context.Context, handle, email, displayName string) (string, string, error) {
 	if handle == "" || email == "" {
@@ -383,7 +417,7 @@ func (k *kanidmProvider) call(ctx context.Context, method, path, token string, b
 // (readBundlePath). The welcome-package flow / operator picks this up to send the
 // person their collab username + setup link. The link is credential-bearing, so
 // the file is mode 0600 and the link is never logged.
-func writeCollabOut(repoRoot, handle, provider, account, setupURL string) error {
+func writeCollabOut(repoRoot, handle, provider, account, setupURL, signIn string) error {
 	dir := filepath.Join(repoRoot, "ops", "operators", "out")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
@@ -396,7 +430,7 @@ func writeCollabOut(repoRoot, handle, provider, account, setupURL string) error 
 
   %s
 
-After setup, sign in at https://collab.goat.example — single sign-on across Outline, Files, and Chat.
-`, handle, provider, account, setupURL)
+After setup, sign in at %s — single sign-on across Outline, Files, and Chat.
+`, handle, provider, account, setupURL, signIn)
 	return os.WriteFile(filepath.Join(dir, handle+"-collab.md"), []byte(md), 0o600)
 }

@@ -56,6 +56,8 @@ func (s *Server) welcomeCatalog(env string) welcome.Catalog {
 	cat.MintOnCollect = s.Cfg.NotifyMintOnCollect
 	cat.Tagline = s.Cfg.NotifyGoatnetTagline
 	cat.Purpose = s.Cfg.NotifyGoatnetPurpose
+	cat.RepoURL = s.Cfg.PlatformRepoURL
+	cat.CollabURL = s.Cfg.CollabURL
 	if n, ok := s.networkRequirements(); ok {
 		cat.Network = &n
 	}

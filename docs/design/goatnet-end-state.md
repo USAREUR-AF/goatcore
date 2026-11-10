@@ -31,7 +31,7 @@ python3 ops/goatbuilder/endstate/endstate.py model zagros-dev   # the derived en
 | group_vars `<name>_enabled` flags | Presence for about 20 services; the rest have no flag at all |
 | `isitup_services` | The served names and their health paths (35 on zagros-dev, 45 on zagros) |
 | repo ledger `ops/ansible/roles/*/deploy-history.yml` | Rollback host rows: 4 of zagros-dev's 31 pinned components carry an zagros-dev row |
-| whichever plays were run | Everything else: minio, demogame, goat-get, goat-docs, admit-audit and lan-dns run on zagros-dev with no flag of their own in any role |
+| whichever plays were run | Everything else: minio, airdefenders, goat-get, goat-docs, admit-audit and lan-dns run on zagros-dev with no flag of their own in any role |
 
 The end state therefore uses each source only for what it is authoritative for:
 

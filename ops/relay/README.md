@@ -236,7 +236,7 @@ sudo journalctl -u 'rathole-client@rla' -f
 | Relay TLS cert missing | certbot failed or was never run. Run: `certbot certonly --standalone -d <relay-dns-name>`. Port 80 must be free. |
 | Relay container crash-loops and disappears | Missing TLS cert file. The relay binary exits immediately if cert path does not exist. Check `docker ps -a` and `docker logs`. |
 | Peers show `rels://netbird.legacy.example:443` | VPS relay TLS is broken. Check relay container logs and cert. Peers silently fall back to management server relay. |
-| DNS queries to relay time out | AWS SG missing UDP 53? `dig +short +time=3 @<relay-ip> demogame.netbird.legacy.example` |
+| DNS queries to relay time out | AWS SG missing UDP 53? `dig +short +time=3 @<relay-ip> airdefenders.netbird.legacy.example` |
 | dnsmasq running but not answering | Check listen address: must be EC2 private IP, not `0.0.0.0`. `ss -ulnp \| grep :53` |
 | Peer DNS works but service DNS doesn't | Nameserver group DNS (dnsmasq) is separate from Netbird peer DNS. See `docs/design/dns-service-discovery.md` |
 

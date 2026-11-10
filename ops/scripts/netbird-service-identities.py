@@ -45,7 +45,6 @@ import json
 import os
 import subprocess
 import sys
-import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -160,8 +159,12 @@ def expand(template, goatnet):
     return template.replace("{goatnet}", goatnet).replace("{SITE}", site_upper(goatnet))
 
 
-def service_user_name(ident, goatnet):
-    return (ident.get("declared_names") or {}).get(goatnet) or expand(ident["service_user"], goatnet)
+def service_user_name(key, ident, goatnet, gvars):
+    """The goatnet's own name for the identity's service user: its group_vars
+    netbird_service_user_names[<identity>], then the registry's declared_names
+    for the goatnet, then the registry's service_user pattern."""
+    own = (gvars.get("netbird_service_user_names") or {}).get(key)
+    return own or (ident.get("declared_names") or {}).get(goatnet) or expand(ident["service_user"], goatnet)
 
 
 # ---------------------------------------------------------------------------
@@ -301,17 +304,24 @@ def verify_owner(nb, token, expected_user, users):
 # 1Password
 # ---------------------------------------------------------------------------
 
+def onepassword_account(spec):
+    """The 1Password account the item lives in: the one the secrets posture pins
+    (OP_ACCOUNT, else `secrets: op_account:` in goatbuilder.yaml, ADR 1204),
+    else the registry's onepassword.account."""
+    return posture().op_account(str(REPO)) or (spec.get("onepassword") or {}).get("account", "")
+
+
 def store_in_1password(spec, ident, goatnet, value):
     """Make the registry's 1Password item hold `value`. Writes go through a JSON
-    template file (0600, deleted after) so the secret never appears on a command
-    line. Never overwrites a different value already stored. Returns
+    template on stdin so the secret never appears on disk or a command line.
+    Never overwrites a different value already stored. Returns
     (ok, status)."""
     op = spec.get("onepassword") or {}
     where = ident.get("onepassword")
     if not where or not op:
         return True, "no 1Password item declared"
     item, field = expand(where["item"], goatnet), where["field"]
-    base = ["op", "--account", op["account"]]
+    base = ["op", "--account", onepassword_account(spec)]
     got = subprocess.run(base + ["item", "get", item, "--vault", op["vault"], "--format", "json"],
                          capture_output=True, text=True)
     if got.returncode == 0:
@@ -332,15 +342,14 @@ def store_in_1password(spec, ident, goatnet, value):
         doc = {"title": item, "category": "PASSWORD",
                "fields": [{"id": "password", "type": "CONCEALED", "purpose": "PASSWORD", "label": "password", "value": value},
                           {"label": field, "type": "CONCEALED", "value": value}]}
-        action = ["item", "create", "--vault", op["vault"]]
-    with tempfile.TemporaryDirectory() as tmp:
-        path = Path(tmp) / "item.json"
-        path.write_text(json.dumps(doc))
-        os.chmod(path, 0o600)
-        res = subprocess.run(base + action + [f"--template={path}"], capture_output=True, text=True)
+        action = ["item", "create", "--vault", op["vault"], "-"]
+    # `op item create -` and `op item edit <id>` both accept JSON on stdin.
+    # Keep the document off disk, argv, stdout, and diagnostic messages.
+    res = subprocess.run(base + action, input=json.dumps(doc), capture_output=True, text=True)
     if res.returncode != 0:
-        err = " ".join(res.stderr.split())[:200]
-        return False, f"NOT stored in 1Password {op['vault']}/{item} ({err})"
+        # The CLI can echo submitted fields in an error. Report the status,
+        # not stderr from a process that received the credential document.
+        return False, f"NOT stored in 1Password {op['vault']}/{item} (op exited {res.returncode})"
     return True, f"stored in 1Password {op['vault']}/{item} field {field}"
 
 
@@ -395,7 +404,7 @@ def main():
         required, why = requirement(ident, gvars)
         rows.append({"key": key, "ident": ident, "required": required, "why": why,
                      "env": expand(ident["token_env"], a.goatnet),
-                     "user": service_user_name(ident, a.goatnet)})
+                     "user": service_user_name(key, ident, a.goatnet, gvars)})
     values = envrc_values([r["env"] for r in rows], envrc_dir)
 
     boot = next(r for r in rows if r["key"] == bootstrap[0])

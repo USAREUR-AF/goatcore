@@ -33,10 +33,9 @@
       host it is invoked against, and a server mints its own CA. Two servers in
       one trust domain means two CAs issuing SVIDs that do not chain to each
       other — a split-brain identity plane that looks healthy on both nodes.
-      ZAGROS never hit this because zagros_hosts and zagros_b_hosts hold ONE host
-      each; zagros_prod_hosts holds the Orin PAIR, so `-e target=zagros_prod_hosts`
-      would have done exactly that. It was avoided by a hand-typed --limit,
-      which is not a mitigation.
+      A group that holds ONE host never hits this; a group that holds a
+      PAIR does, because `-e target=<site>_hosts` reaches both nodes. A
+      hand-typed --limit avoids it and is not a mitigation.
       Set `spire_enabled: true` in host_vars for the ONE node that should run
       the server (host_vars outranks group_vars — the documented mechanism for
       values where Orin-A and Orin-B genuinely differ), and leave every other
@@ -49,7 +48,7 @@
   ansible.builtin.fail:
     msg: >-
       spire: spire_server_image / spire_agent_image still placeholder. Pin
-      real SHA digests in group_vars/zagros_hosts/spire.yml (confirm SPIRE
+      real SHA digests in group_vars/<site>_hosts/spire.yml (confirm SPIRE
       license posture first — ADR 0412 revisit trigger).
   when: >-
     (spire_server_image | default('TODO_PIN_unset')) is search('TODO_PIN') or
@@ -119,7 +118,7 @@
       - spire_db_password | default('') | length > 0
     fail_msg: >-
       spire_db_password is empty, so the SPIRE datastore has no password. It
-      reads ${{ site_id_upper | default('ZAGROS') }}_SPIRE_DB_PASS from the
+      reads ${{ spire_db_password_env_prefix }}_SPIRE_DB_PASS from the
       environment. Re-run standup phase 3 to create it (values that already
       exist are kept), or on an env-file store run: goatbuilder secrets init
       --env {{ site_id | default('<goatnet>') }}. Then resume the standup
@@ -409,7 +408,7 @@
   when: "'Found 0 entries' in item.stdout"
   changed_when: true
 
-# --- spire-trust-sync timer
+# --- spire-trust-sync timer (router trust freshness + agent rescue)
 - name: spire | refuse the deprecated flat federated trust-file list
   # spire_trust_sync_federated_trust_files was a LIST OF FILES with no way to say
   # which partner's bundle belonged in which file, so the trust-sync script wrote
@@ -428,8 +427,8 @@
       {{ inventory_hostname }} and is no longer honoured. It was a flat list, so
       every federated partner bundle was written into every file it named — with
       two partners, the edge facing B also trusted A's certificate authority, and
-      because the Zenoh ACL matches a Common Name and cannot see the issuer
-      , A could mint B's agreed peering CN and be admitted at B's edge.
+      because the Zenoh ACL matches a Common Name and cannot see the issuer,
+      A could mint B's agreed peering CN and be admitted at B's edge.
       Replace it with `spire_trust_sync_federated_edges`, one entry per peering:
       `- trust_file: <edge router trust file>` / `trust_domain: <partner trust
       domain>`. See roles/spire/defaults/main.yml and

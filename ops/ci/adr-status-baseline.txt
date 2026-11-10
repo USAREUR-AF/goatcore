@@ -1,0 +1,34 @@
+# Known under-claiming ADRs — the shrink-only baseline for
+# check-adr-status-vs-code.sh.
+#
+# Each ADR below has a Status line that reads Proposed / designed-not-built /
+# no-code-yet, while the code it NAMES (an ansible role dir, an image-pin key,
+# or a `goat <subcommand>` that appears in its own title) already exists in the
+# tree. The Status under-claims what is built. Fixing that is one edit per ADR —
+# read the ADR, confirm what actually shipped and where it runs, and correct the
+# Status line — deliberately NOT done in the PR that added this guard.
+#
+# This file FREEZES the set found on 2026-09-02 so the guard ships GREEN and
+# blocks NEW under-claimers immediately, while the known set stays VISIBLE here
+# instead of silent.
+#
+# SHRINK-ONLY, enforced by the guard: correct an ADR's Status (or the evidence
+# goes away) and its line here becomes stale — the guard FAILS ("remove this
+# line"). So the set can only shrink, and every removal is a real status fix.
+#
+# A NEW under-claimer is NOT grandfathered — it fails the guard on its own PR.
+# Add a line here only for a genuine false match (the named artifact is an
+# unrelated pre-existing thing), never to silence a real one.
+#
+# format: <adr-number>   # note
+
+0842   # role ops/ansible/roles/operator-idp-kratos exists
+1026   # `goat access` (data-access COP) exists
+1033   # `goat health` network-health surface exists
+1034   # `goat health` fabric-health surface exists (ADR notes 1034 live)
+1036   # `goat health` environment-health surface exists (built + ZAGROS-live)
+1038   # `goat access` / `goat blob` / `goat schema` (Phase G) exist
+1061   # `goat admin onboard` intake exists
+1062   # `goat admin onboard` three-stage onboarding exists (ZAGROS-live)
+1090   # `goat microscope` exists (status says "no code yet")
+1129   # `goat warrant` exists (ACL generated from ops/warrant/)

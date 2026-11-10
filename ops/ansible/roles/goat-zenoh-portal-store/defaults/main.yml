@@ -33,8 +33,13 @@
 #     SQLite), and sqlite on a host the cutover has marked postgres.
 portal_store: sqlite
 # The image label the gate reads; absent on every image built before the
-# Postgres server, which the gate reads as "sqlite".
-portal_store_label: "org.usareur-af.goat-zenoh-portal.store"
+# Postgres server, which the gate reads as "sqlite". A goatnet whose pinned
+# image predates this key sets the key that image carries.
+portal_store_label: "io.goat.zenoh-portal.store"
+# Older names for the same label, read in order when the one above is absent.
+# A goatnet whose pinned images were built under another label key lists that
+# key here, so images built either way pass the gate.
+portal_store_label_aliases: []
 # Host-side record of which store holds the registry's rows. Written by the
 # cutover (postgres) and the rollback (sqlite); absent = never cut over.
 portal_store_marker: /var/lib/goat-zenoh-portal/STORE
@@ -61,7 +66,7 @@ portal_db_name: portal_registry
 # ZAGROS_PORTAL_DB_PASS, ZAGROS_PROD_PORTAL_DB_PASS. Read only when the store is
 # postgres; tasks/gate.yml refuses an empty value then.
 portal_db_password_env: "{{ site_id | upper | replace('-', '_') }}_PORTAL_DB_PASS"
-portal_db_password: "{{ lookup('env', portal_db_password_env) }}"
+portal_db_password: "{{ lookup('env', portal_db_password_env) }}"  # when: portal_store=postgres
 # Percent-encoded in full ('/' included, which urlencode leaves alone), so any
 # password survives the URL and the compose env file unchanged.
 portal_db_password_url: "{{ portal_db_password | urlencode | replace('/', '%2F') }}"

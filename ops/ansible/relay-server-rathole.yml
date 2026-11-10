@@ -168,13 +168,16 @@
     mode: "0600"
   when: rathole_public_key | length > 0
 
+# rathole_unit_label: the deployment's name in the unit descriptions. A relay
+# group that already runs these units under another label declares it, so a
+# deploy does not rewrite the unit and restart the tunnel for a description.
 - name: Install rathole systemd service
   ansible.builtin.copy:
     dest: /etc/systemd/system/rathole-server.service
     mode: "0644"
     content: |
       [Unit]
-      Description=Rathole Relay Server (goat)
+      Description=Rathole Relay Server ({{ rathole_unit_label | default('goat') }})
       After=network-online.target
       Wants=network-online.target
 
@@ -298,7 +301,7 @@
     mode: "0644"
     content: |
       [Unit]
-      Description=Rathole tunnel self-heal watchdog (goat, F-213)
+      Description=Rathole tunnel self-heal watchdog ({{ rathole_unit_label | default('goat') }}, F-213)
       After=rathole-server.service
 
       [Service]

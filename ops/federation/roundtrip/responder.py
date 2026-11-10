@@ -5,14 +5,18 @@ It answers probes that arrived through the peering. It can only see a probe if
 the partner's own router delivered it, so the acknowledgement is evidence the
 sample transited THIS side, not merely that it left the other one.
 
-Rides on the two grants the agreement already makes: we write under our own wire
-name, they receive it. No additional access is required, and none is asked for.
+Rides on the two grants the agreement already makes: we stage the ack under one of
+our own release sets, our republisher lifts it onto our wire name, they receive
+it. No additional access is required, and none is asked for.
+
+    responder.py <their wire prefix> <one of our release sets>
+    e.g.         responder.py from/zagros release/weather
 """
 import json, time, base64, hashlib, urllib.request, sys
 
 BASE      = "http://127.0.0.1:8000"
-THEIR_WIRE= sys.argv[1]          # e.g. from/<them>   — where their probes land
-OUR_WIRE  = sys.argv[2]          # e.g. from/xaa    — where our ack goes
+THEIR_WIRE= sys.argv[1]          # e.g. from/<them>       — where their probes land
+OUR_SET   = sys.argv[2]          # e.g. release/weather   — where our ack is staged
 seen = set()
 
 def get(k):
@@ -27,7 +31,8 @@ def put(k, v):
         urllib.request.Request(f"{BASE}/{k}", data=v.encode(), method="PUT"), timeout=5)
 
 while True:
-    for row in get(f"{THEIR_WIRE}/fedcheck/**"):
+    # Under any of their sets: from/<them>/<set>/fedcheck/<nonce>.
+    for row in get(f"{THEIR_WIRE}/**/fedcheck/*"):
         key = row.get("key", "")
         if key in seen:
             continue
@@ -42,7 +47,7 @@ while True:
             "observed_key": key,
             "sha256":       hashlib.sha256(raw).hexdigest(),
             "observed_at":  time.time(),
-            "responder":    OUR_WIRE,
+            "responder":    OUR_SET,
         }, sort_keys=True)
-        put(f"{OUR_WIRE}/fedcheck-ack/{nonce}", ack)
+        put(f"{OUR_SET}/fedcheck-ack/{nonce}", ack)
     time.sleep(0.2)

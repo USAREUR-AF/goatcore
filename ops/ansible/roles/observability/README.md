@@ -13,9 +13,9 @@ Required per-host (set in inventory):
 
 | Var | Example | Meaning |
 |---|---|---|
-| `site_name` | `vega-a` | Prometheus `external_labels.site` |
-| `peer_node_exporter_target` | `100.127.1.9:9100` | peer mgmt-host mesh IP + node-exporter port |
-| `peer_signal_metrics_target` | `100.127.1.9:9090` | peer mgmt-host mesh IP + signal-server /metrics port |
+| `site_name` | `<site>-a` | Prometheus `external_labels.site` |
+| `peer_node_exporter_target` | `<peer mesh IP>:9100` | peer mgmt-host mesh IP + node-exporter port |
+| `peer_signal_metrics_target` | `<peer mesh IP>:9090` | peer mgmt-host mesh IP + signal-server /metrics port |
 
 Required at play invocation time (from env / 1Password):
 

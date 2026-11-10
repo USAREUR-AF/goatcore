@@ -2,19 +2,23 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	_ "embed"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"runtime"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/usareur-af/goatcore/ops/snitch/internal/auth"
 	"github.com/usareur-af/goatcore/ops/snitch/internal/collector"
+	"github.com/usareur-af/goatcore/ops/snitch/internal/compat"
 	"github.com/usareur-af/goatcore/ops/snitch/internal/identity"
 	"github.com/usareur-af/goatcore/ops/snitch/internal/measure"
 	"github.com/usareur-af/goatcore/ops/snitch/internal/store"
@@ -30,23 +34,72 @@ var inventoryHTML []byte
 //go:embed install.sh
 var installScript []byte
 
+// Placeholders in the embedded pages, filled when the server starts.
+const (
+	gatewatchPlaceholder = "__GATEWATCH_URL__"
+	publicURLPlaceholder = "__SNITCH_PUBLIC_URL__"
+)
+
 // Config holds server configuration.
 type Config struct {
 	Collector   *collector.Collector
 	Auth        *auth.Auth
 	IsCollector bool
+
+	// GatewatchURL is the gatewatch base URL the dashboard reads bridge
+	// status from. Empty: SNITCH_GATEWATCH_URL, else compat.GatewatchURL.
+	GatewatchURL string
+	// PublicURL is the collector URL the served /install script defaults
+	// to. Empty: SNITCH_PUBLIC_URL, else compat.InstallCollectorURL.
+	PublicURL string
 }
 
 // Server is the SNITCH HTTP server.
 type Server struct {
-	cfg Config
-	mux *http.ServeMux
+	cfg       Config
+	mux       *http.ServeMux
+	dashboard []byte
+	install   []byte
+}
+
+// configuredURL returns the first of value, the environment variable env and
+// fallback that is a usable http(s) base URL, without a trailing slash.
+func configuredURL(value, env, fallback string) string {
+	for _, v := range []string{value, os.Getenv(env)} {
+		if v == "" {
+			continue
+		}
+		if safeBaseURL(v) {
+			return strings.TrimRight(v, "/")
+		}
+		log.Printf("ignoring the configured %s: not an http(s) URL without quotes, spaces or shell characters", env)
+	}
+	return fallback
+}
+
+// safeBaseURL accepts an absolute http(s) URL that can be written into an
+// HTML attribute, a JS string and a double-quoted shell word unchanged.
+func safeBaseURL(v string) bool {
+	if strings.ContainsAny(v, "\"'<>`$\\ \t\r\n") {
+		return false
+	}
+	u, err := url.Parse(v)
+	return err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != ""
 }
 
 // New creates a server with auth-protected routes.
 func New(cfg Config) *Server {
-	s := &Server{cfg: cfg, mux: http.NewServeMux()}
+	cfg.GatewatchURL = configuredURL(cfg.GatewatchURL, "SNITCH_GATEWATCH_URL", compat.GatewatchURL)
+	cfg.PublicURL = configuredURL(cfg.PublicURL, "SNITCH_PUBLIC_URL", compat.InstallCollectorURL)
+	s := &Server{
+		cfg:       cfg,
+		mux:       http.NewServeMux(),
+		dashboard: bytes.ReplaceAll(dashboardHTML, []byte(gatewatchPlaceholder), []byte(cfg.GatewatchURL)),
+		install:   bytes.ReplaceAll(installScript, []byte(publicURLPlaceholder), []byte(cfg.PublicURL)),
+	}
 	a := cfg.Auth
+	s.mux.HandleFunc("POST /api/browser-session", a.BrowserSession)
+	s.mux.HandleFunc("DELETE /api/browser-session", a.BrowserSession)
 
 	// Public endpoints (no auth).
 	s.mux.HandleFunc("/", s.handleDashboard)
@@ -81,7 +134,7 @@ func New(cfg Config) *Server {
 	// Admin endpoints.
 	s.mux.Handle("/api/keys", a.Require(auth.RoleAdmin, s.handleKeys))
 
-	// Satlink PoP tracker.
+	// Satellite-link PoP tracker.
 	s.registerSatlinkRoutes()
 
 	return s
@@ -118,7 +171,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	//nolint:errcheck // HTTP response delivery is best-effort after the handler has selected its result.
-	_, _ = w.Write(dashboardHTML)
+	_, _ = w.Write(s.dashboard)
 }
 
 func (s *Server) handleGateStatus(w http.ResponseWriter, r *http.Request) {
@@ -204,7 +257,7 @@ func (s *Server) handleInstall(w http.ResponseWriter, r *http.Request) {
 	auth.LogAccess(r, "/install")
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	//nolint:errcheck // HTTP response delivery is best-effort after the handler has selected its result.
-	_, _ = w.Write(installScript)
+	_, _ = w.Write(s.install)
 }
 
 // validBinaryTarget gates handleBinary's targetOS / targetArch query params

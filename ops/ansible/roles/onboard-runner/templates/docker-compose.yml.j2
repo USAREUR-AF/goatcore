@@ -17,8 +17,8 @@ services:
     # docker bridge gateway, where traefik publishes :443. Without this the
     # mint dies at
     #   error: NetBird GET /api/groups failed: network or parse error
-    # which is the fourth wall a new goatnet hits and says nothing about DNS
-    #. Same class as the F-198 issuer/extra_hosts gotcha.
+    # which is the fourth wall a new goatnet hits and says nothing about DNS.
+    # Same class as the F-198 issuer/extra_hosts gotcha.
     #
     # Never a literal bridge IP here (see onboard_runner_mgmt_fqdn_addr in
     # defaults/main.yml): the address is per host and per container start, and
@@ -119,7 +119,7 @@ services:
     # Container healthcheck.
     #
     # Unlike the portal / crawler / grant-keyd containers, this image CAN run a
-    # probe: it is cgr.dev/chainguard/wolfi-base with curl + a shell
+    # probe: it is built on the runtime-shell base with curl + a shell
     # (ops/onboard-runner/Dockerfile), added for the native onboard's local
     # Kratos leg. So the check below is real, not aspirational.
     #
@@ -151,7 +151,7 @@ services:
           --cert /svid/onboard-runner-cert.pem --key /svid/onboard-runner-key.pem
           --cacert /svid/spire-bundle.pem {{ onboard_runner_mtls_onboard_url }}/healthz >/dev/null
           && case "$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 https://{{ public_mgmt_fqdn }}/api/groups)" in
-          200|401|403) exit 0 ;; *) echo "mgmt API unreachable at https://{{ public_mgmt_fqdn }}" >&2; exit 1 ;; esac
+          200|401|403) exit 0 ;; *) echo "mgmt API unreachable at https://{{ public_mgmt_fqdn }}{% if onboard_runner_mgmt_probe_record | default('') %} ({{ onboard_runner_mgmt_probe_record }}){% endif %}" >&2; exit 1 ;; esac
 {% else %}
     #   docker exec {{ onboard_runner_container_name }} curl -fsS --max-time 5 {{ onboard_runner_onboard_internal_url }}/healthz
     #
@@ -164,7 +164,7 @@ services:
         - >-
           curl -fsS --max-time 5 {{ onboard_runner_onboard_internal_url }}/healthz >/dev/null
           && case "$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 https://{{ public_mgmt_fqdn }}/api/groups)" in
-          200|401|403) exit 0 ;; *) echo "mgmt API unreachable at https://{{ public_mgmt_fqdn }}" >&2; exit 1 ;; esac
+          200|401|403) exit 0 ;; *) echo "mgmt API unreachable at https://{{ public_mgmt_fqdn }}{% if onboard_runner_mgmt_probe_record | default('') %} ({{ onboard_runner_mgmt_probe_record }}){% endif %}" >&2; exit 1 ;; esac
 {% endif %}
       interval: 60s
       timeout: 10s

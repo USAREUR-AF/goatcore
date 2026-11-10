@@ -4,7 +4,8 @@
 #
 # Three facts must agree before the console is (re)deployed:
 #   declared  id_admin_console_store in group_vars           sqlite | postgres
-#   image     the image's org.usareur-af.goat-id-console.store label
+#   image     the image's store label: id_admin_console_store_label, else the
+#             first of id_admin_console_store_label_aliases the image carries
 #             (absent = an image built before the Postgres server = sqlite)
 #   host      id_admin_console_store_marker, written by the cutover (postgres)
 #             and the rollback (sqlite); absent = never cut over = sqlite
@@ -74,9 +75,11 @@
 - name: id-admin-console-store | gate — derive image, host and fresh-host facts
   ansible.builtin.set_fact:
     idac_image_store: >-
-      {{ ((idac_image_labels_pulled.stdout if idac_image_labels.rc != 0 else idac_image_labels.stdout)
-          | default('null', true) | from_json | default({}, true))[id_admin_console_store_label]
-         | default('sqlite', true) }}
+      {%- set l = ((idac_image_labels_pulled.stdout if idac_image_labels.rc != 0 else idac_image_labels.stdout)
+          | default('null', true) | from_json | default({}, true)) -%}
+      {%- set hit = ([id_admin_console_store_label] + (id_admin_console_store_label_aliases | default([], true)))
+          | select('in', l) | list -%}
+      {{ (l[hit[0]] if hit else '') | default('sqlite', true) }}
     idac_host_store: >-
       {{ ((idac_store_marker.content | b64decode).splitlines() | first | trim)
          if (idac_store_marker.content | default('') | length > 0) else '' }}

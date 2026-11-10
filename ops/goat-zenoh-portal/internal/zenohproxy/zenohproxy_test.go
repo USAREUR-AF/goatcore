@@ -8,7 +8,7 @@ func TestValidateStreamKeyBoundsCrossOwnerWildcards(t *testing.T) {
 	allowed := []string{
 		"a2dc159217715948e66e3d77a327ccd7/video/frame",
 		"a2dc159217715948e66e3d77a327ccd7/**",
-		"ops/fabric/cardinality/zagros-sandbox",
+		"ops/fabric/cardinality/galaxy-sandbox",
 		"ops/fabric/health/*",
 		"notional/foo/v1",
 	}

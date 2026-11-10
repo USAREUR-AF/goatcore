@@ -3,8 +3,8 @@ bin.name = "goatbuilder"
 args = ["join-node", "--help"]
 status.code = 0
 stdout = """
-One more machine of a class at a live site, declared → converged → verified:
-docs/operations/node-addition.md's executed sequence as numbered phases with its gates (reach, key,
+One more machine of a class at a live site, declared → converged → verified: the node-addition
+sequence of docs/tutorials/02-first-federated-node.md as numbered phases with its gates (reach, key,
 repo work first, baseline, kernel WireGuard before and after enrolment, the kernel ACL plane as the
 enrolment gate, the class's converge, acceptance)
 
@@ -28,17 +28,20 @@ Options:
                              ops/scripts/fresh-source.sh)
       --pass-var <PASS_VAR>  The env var holding the node's first-login password (default
                              <SITE>_NODE_PASS)
-      --from <FROM>          Resume from this phase [default: 1]
       --mock <DIR>           Run against a fixture directory instead of hosts: no registry, no
                              transport, deterministic (goatbuilder-conformance.md §"The fixture")
+      --via <VIA>            How this machine reaches the goatnet's hosts: `mesh` (this machine is
+                             on its mesh) or `door` (through its env door; the plan opens it first)
+                             [default: mesh] [possible values: mesh, door]
+      --from <FROM>          Resume from this phase [default: 1]
       --lang <TAG>           Language for help and error explanations (a tag such as fr, uk, de);
                              output a pipeline reads stays English. Default: the OS locale [env:
                              GOAT_LANG=]
-      --to <TO>              Stop after this phase [default: 99]
       --color <COLOR>        Color the table's ok/FAIL glyph and verdict (auto|always|never). `auto`
                              colors only a terminal; NO_COLOR and CLICOLOR_FORCE override. JSON and
                              YAML are never colored [default: auto] [possible values: auto, always,
                              never]
+      --to <TO>              Stop after this phase [default: 99]
       --dry-run              Print every phase and command; run nothing
   -v, --verbose              Log what a run does — the external commands it shells out to, and the
                              network phase of `update` — to stderr, so `-o json|yaml` stays a clean

@@ -22,7 +22,7 @@ pub fn run(args: DocsArgs) -> anyhow::Result<()> {
     if !args.markdown {
         println!("goat docs — browsable, searchable docs for the goat CLI.");
         println!();
-        println!("  On the mesh:  https://docs.nova.<your-zone>/");
+        println!("  On the mesh:  https://docs.<site>.<your-zone>/");
         println!("  Offline:      goat docs --markdown    # the full command reference");
         return Ok(());
     }

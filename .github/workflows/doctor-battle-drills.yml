@@ -1,0 +1,21 @@
+name: doctor-battle-drills
+
+on:
+  pull_request:
+    paths:
+      - 'docs/operations/battle-drills/**'
+      - 'ops/ci/check-doctor-battle-drills.sh'
+      - '.github/workflows/doctor-battle-drills.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check drill structure and index
+        run: bash ops/ci/check-doctor-battle-drills.sh

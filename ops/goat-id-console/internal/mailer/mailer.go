@@ -61,6 +61,18 @@ func New(host, port, username, password, from, replyTo string) *Mailer {
 
 func (m *Mailer) Enabled() bool { return m != nil && m.host != "" && m.from != "" }
 
+// auth is PLAIN with the configured credentials, or nil when SMTP_USERNAME is
+// empty: a relay on the goatnet's own network (the smtp-sink recipe,
+// ops/recipes/smtp-sink/) takes mail without AUTH, and net/smtp refuses to
+// send through a server that does not advertise AUTH when an auth is passed.
+// SES always has a username, so its path is unchanged.
+func (m *Mailer) auth() smtp.Auth {
+	if m.username == "" {
+		return nil
+	}
+	return smtp.PlainAuth("", m.username, m.password, m.host)
+}
+
 // ComposeInvite builds the full RFC 5322 invite message. Shared by the SMTP
 // send and the .eml download (out-of-band delivery), so the two can never
 // drift. Usable even when SMTP is unconfigured (From falls back to a
@@ -165,7 +177,7 @@ func (m *Mailer) Send(to, subject, body string) error {
 		"Content-Type: text/plain; charset=UTF-8\r\n" +
 		"\r\n" + body
 	addr := m.host + ":" + m.port
-	auth := smtp.PlainAuth("", m.username, m.password, m.host)
+	auth := m.auth()
 	if err := smtp.SendMail(addr, auth, m.from, []string{to}, []byte(msg)); err != nil {
 		return fmt.Errorf("smtp send: %w", err)
 	}
@@ -190,7 +202,7 @@ func (m *Mailer) SendMultipart(to, subject, text, html string) error {
 		return err
 	}
 	addr := m.host + ":" + m.port
-	auth := smtp.PlainAuth("", m.username, m.password, m.host)
+	auth := m.auth()
 	if err := smtp.SendMail(addr, auth, m.from, []string{to}, []byte(msg)); err != nil {
 		return fmt.Errorf("smtp send: %w", err)
 	}
@@ -257,7 +269,8 @@ func (m *Mailer) SendInvite(to, link, sponsor, goatnet, tagline, purpose string,
 	msg := m.ComposeInvite(to, link, sponsor, goatnet, tagline, purpose, expiresAt)
 
 	addr := m.host + ":" + m.port
-	auth := smtp.PlainAuth("", m.username, m.password, m.host)
+	auth := m.auth()
+	//nolint:gosec // G707: checkRecipient refused CR/LF in the recipient; headers() passes every value through headerValue
 	if err := smtp.SendMail(addr, auth, m.from, []string{to}, []byte(msg)); err != nil {
 		return fmt.Errorf("smtp send: %w", err)
 	}

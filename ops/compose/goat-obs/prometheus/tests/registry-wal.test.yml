@@ -113,7 +113,7 @@ tests:
                 registry.db-wal is over 2 GiB — the unbounded pinned-reader growth,
                 not a burst a checkpoint will clean up. At the 2026-09 recurrence
                 rate (~200 GB/day) this fills a Thor in days (and would fill an
-                zagros-prod Orin’s
+                Orin’s
                 57 GB root in hours — that host does not run the collector yet, a
                 stated non-goal). Act now, in runbook order (quiesce and STOP first:
                 a backup is only valid quiescent):

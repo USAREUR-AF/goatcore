@@ -3,24 +3,33 @@
 
 A goatnet is deployable off-profile (through its door, without flipping the
 laptop's shared netbird profile) only once it appears in the door inventories.
-Those are hand-maintained, so a fresh goatnet had none — zagros-dev was reachable
-only because its Thor happened to be on Tailscale, and every deploy to it needed
-a hand-rolled ad-hoc inventory. This closes that: it reads the door registry
-(ops/ansible/inventory/doors.yaml) and, for a goatnet whose door is not yet in
-the inventories, appends its blocks to the three door artifacts. goat-standup.sh
-runs it as a standup phase, and the finish gate asserts the block is present, so
-a fresh goatnet is door-reachable by construction.
+Those are hand-maintained, so a fresh goatnet had none, and every deploy to it
+needed a hand-rolled ad-hoc inventory. This closes that: it reads the door
+registry (ops/ansible/inventory/doors.yaml) and, for a goatnet whose door is not
+yet in the inventories, appends its blocks to the two door inventories
+(doors.ini, doors-groupvars.ini). goat-standup.sh runs it as a standup phase, and
+the finish gate asserts the block is present, so a fresh goatnet is
+door-reachable by construction.
+
+env-door.sh is not one of the artifacts: it reads an ssm door's facts from the
+registry each time it runs (`--arm`), so the script names no goatnet and nothing
+is rendered into it.
 
 Contract: ADD, never reformat. If a goatnet's block is already present (the
-legacy hand-written zagros / zagros-prod entries, with their own comments and group
-splits) it is left exactly as is; only a goatnet missing from a file gets its
-generated block appended. So the tool is safe to run against the hand-owned
-files and `--check` gates on presence, not byte-equality.
+legacy hand-written entries, with their own comments and group splits) it is
+left exactly as is; only a goatnet missing from a file gets its generated block
+appended. So the tool is safe to run against the hand-owned files and `--check`
+gates on presence, not byte-equality.
 
 Usage:  generate-door-inventory.py <goatnet>           # establish its door if missing
         generate-door-inventory.py <goatnet> --check    # nonzero if its door is missing
         generate-door-inventory.py --all [--check]       # every goatnet in the registry
+        generate-door-inventory.py --arm <goatnet>       # print its ssm door facts as KEY=value
         generate-door-inventory.py --self-test
+
+--arm is what env-door.sh reads for every goatnet: in an assembled tree
+(goatcore + an environment overlay) env-door.sh is goatcore's and the registry
+is the overlay's.
 """
 import re
 import sys
@@ -31,7 +40,6 @@ REPO = HERE.parent.parent
 REG = REPO / "ops/ansible/inventory/doors.yaml"
 DOORS_INI = REPO / "ops/ansible/inventory/doors.ini"
 GROUPVARS_INI = REPO / "ops/ansible/inventory/doors-groupvars.ini"
-ENV_DOOR = REPO / "ops/scripts/env-door.sh"
 
 SSH_TAIL = "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ControlMaster=no -o ControlPath=none"
 
@@ -39,7 +47,9 @@ SSH_TAIL = "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o Contr
 def _load_registry(text=None):
     import yaml
     data = yaml.safe_load(text if text is not None else REG.read_text())
-    return (data or {}).get("doors", {})
+    # `doors:` with no entries loads as None, not {} -- the shipped public
+    # registry starts empty.
+    return (data or {}).get("doors") or {}
 
 
 def _resolve_door(env, doors):
@@ -116,23 +126,6 @@ def _groupvars_ini_blocks(door):
     return out
 
 
-def _env_door_arm(env, door):
-    """The `case` arm for env-door.sh — ssm doors only (tailscale needs none)."""
-    if door["type"] != "ssm":
-        return None
-    landed = door["mgmt"][0]
-    return (
-        f'  {env})\n'
-        f'    INSTANCE={door["instance"]}\n'
-        f'    REGION={door["region"]}\n'
-        f'    TARGET_IP={landed["mesh_ip"]}   # {landed["name"]}\n'
-        f'    TARGET_NAME={landed["name"]}\n'
-        f'    PORT={door["port"]}\n'
-        f'    DOOR_USER={door["user"]}\n'
-        f'    ;;\n'
-    )
-
-
 def _has_group(text, name):
     return re.search(rf'^\[{re.escape(name)}\]', text, re.M) is not None
 
@@ -142,12 +135,6 @@ def _append_block(text, block):
         block += "\n"
     sep = "" if text.endswith("\n\n") else ("\n" if text.endswith("\n") else "\n\n")
     return text + sep + block
-
-
-def _ensure_env_door(text, env, arm):
-    if arm is None or re.search(rf'^  {re.escape(env)}\)\n', text, re.M):
-        return text
-    return re.sub(r'^  \*\)', arm + '  *)', text, count=1, flags=re.M)
 
 
 def establish(env, doors, files):
@@ -181,22 +168,15 @@ def establish(env, doors, files):
     if gv_missing:
         missing.append("doors-groupvars.ini")
 
-    arm = _env_door_arm(env, door)
-    ed = _ensure_env_door(out["env_door"], env, arm)
-    if ed != out["env_door"]:
-        out["env_door"] = ed
-        missing.append("env-door.sh")
-
     return out, missing
 
 
 def _read_files():
     return {"doors_ini": DOORS_INI.read_text(),
-            "groupvars_ini": GROUPVARS_INI.read_text(),
-            "env_door": ENV_DOOR.read_text()}
+            "groupvars_ini": GROUPVARS_INI.read_text()}
 
 
-_PATHS = {"doors_ini": DOORS_INI, "groupvars_ini": GROUPVARS_INI, "env_door": ENV_DOOR}
+_PATHS = {"doors_ini": DOORS_INI, "groupvars_ini": GROUPVARS_INI}
 
 
 def run(envs, check):
@@ -232,13 +212,13 @@ def self_test():
     instance: i-abc
     region: eu-central-1
     port: 12250
-    user: goat
+    user: ops
     mgmt:
-      - {name: mgmt-demo-01, mesh_ip: 100.127.0.9, group: demo_door_hosts, gv_group: demo_hosts, landed: true}
-      - {name: mgmt-demo-02, mesh_ip: 100.127.0.10, group: demo_door_hosts, gv_group: demo_obs_hosts}
+      - {name: mgmt-demo-01, mesh_ip: 192.0.2.9, group: demo_door_hosts, gv_group: demo_hosts, landed: true}
+      - {name: mgmt-demo-02, mesh_ip: 192.0.2.10, group: demo_door_hosts, gv_group: demo_obs_hosts}
 """
     doors = _load_registry(reg_ssm)
-    files = {"doors_ini": "[keep_me]\nx y\n", "groupvars_ini": "[keep_me]\nx y\n", "env_door": "  *)\n    exit 1\n"}
+    files = {"doors_ini": "[keep_me]\nx y\n", "groupvars_ini": "[keep_me]\nx y\n"}
     out, missing = establish("demo", doors, files)
     problems = []
     if "[demo_door_hosts]" not in out["doors_ini"]:
@@ -253,27 +233,33 @@ def self_test():
         problems.append("groupvars missing ansible_connection")
     if "[keep_me]" not in out["doors_ini"] or "[keep_me]" not in out["groupvars_ini"]:
         problems.append("clobbered hand-owned content")
-    if "  demo)\n" not in out["env_door"] or "INSTANCE=i-abc" not in out["env_door"]:
-        problems.append("env-door arm not inserted before default")
+    if set(out) != {"doors_ini", "groupvars_ini"} or missing != ["doors.ini", "doors-groupvars.ini"]:
+        problems.append("an artifact other than the two door inventories was written")
+    arm = arm_facts("demo", doors) or ""
+    if arm.splitlines() != ["INSTANCE=i-abc", "REGION=eu-central-1", "TARGET_IP=192.0.2.9",
+                            "TARGET_NAME=mgmt-demo-01", "PORT=12250", "DOOR_USER=ops"]:
+        problems.append("--arm does not print the landed host's ssm door facts")
+    if arm_facts("demo-obs", doors) != arm_facts("demo", doors):
+        problems.append("--arm does not resolve a joiner site to its founder's door")
     # idempotence: re-running adds nothing
     out2, missing2 = establish("demo", doors, out)
     if out2 != out or missing2:
         problems.append("not idempotent")
-    # tailscale: no env-door arm
+    # tailscale: no ssm door facts
     ts = _load_registry("""doors:
   ts:
     type: tailscale
-    ip: 100.127.1.7
-    user: goat
+    ip: 198.51.100.9
+    user: ops
     mgmt:
       - {name: mgmt-ts-01, group: ts_door_hosts, gv_group: ts_hosts, landed: true}
 """)
-    out3, _ = establish("ts", ts, {"doors_ini": "", "groupvars_ini": "", "env_door": "  *)\n"})
-    if out3["env_door"] != "  *)\n":
-        problems.append("tailscale wrongly wrote an env-door arm")
-    if "ansible_host=100.127.1.7" not in out3["doors_ini"]:
+    out3, _ = establish("ts", ts, {"doors_ini": "", "groupvars_ini": ""})
+    if arm_facts("ts", ts) is not None:
+        problems.append("tailscale wrongly has ssm door facts")
+    if "ansible_host=198.51.100.9" not in out3["doors_ini"]:
         problems.append("tailscale lands on ip")
-    # direct (ADR 1213): no env-door arm, the host as-is, no ssh overrides
+    # direct (ADR 1213): no ssm door facts, the host as-is, no ssh overrides
     direct = _load_registry("""doors:
   pasture:
     type: direct
@@ -282,9 +268,9 @@ def self_test():
     mgmt:
       - {name: mgmt-pasture-01, router_role: A, group: pasture_door_hosts, gv_group: pasture_hosts, landed: true}
 """)
-    out4, _ = establish("pasture", direct, {"doors_ini": "", "groupvars_ini": "", "env_door": "  *)\n"})
-    if out4["env_door"] != "  *)\n":
-        problems.append("direct wrongly wrote an env-door arm")
+    out4, _ = establish("pasture", direct, {"doors_ini": "", "groupvars_ini": ""})
+    if arm_facts("pasture", direct) is not None:
+        problems.append("direct wrongly has ssm door facts")
     if "mgmt-pasture-01 ansible_host=192.168.1.50 ansible_user=ubuntu" not in out4["doors_ini"]:
         problems.append("direct does not land on the host as-is")
     if "ansible_ssh_common_args" in out4["doors_ini"] or "ansible_ssh_common_args" in out4["groupvars_ini"]:
@@ -298,12 +284,41 @@ def self_test():
     return 0
 
 
+def arm_facts(env, doors):
+    """KEY=value lines env-door.sh assigns for an ssm door, or None."""
+    door = _resolve_door(env, doors)
+    if not door or door.get("type") != "ssm" or not door.get("mgmt"):
+        return None
+    landed = door["mgmt"][0]
+    facts = {"INSTANCE": door["instance"], "REGION": door["region"], "TARGET_IP": landed["mesh_ip"],
+             "TARGET_NAME": landed["name"], "PORT": door["port"], "DOOR_USER": door["user"]}
+    for k, v in facts.items():
+        if not re.fullmatch(r"[A-Za-z0-9._-]+", str(v)):
+            raise SystemExit(f"generate-door-inventory: door {env}: {k} is not a plain token")
+    return "".join(f"{k}={v}\n" for k, v in facts.items())
+
+
 def main():
     if "--self-test" in sys.argv:
         sys.exit(self_test())
+    if "--arm" in sys.argv:
+        envs = [a for a in sys.argv[1:] if not a.startswith("--")]
+        if len(envs) != 1:
+            raise SystemExit("usage: generate-door-inventory.py --arm <goatnet>")
+        out = arm_facts(envs[0], _load_registry()) if REG.is_file() else None
+        if out is None:
+            sys.exit(1)
+        sys.stdout.write(out)
+        sys.exit(0)
     check = "--check" in sys.argv
     envs = list(_load_registry().keys()) if "--all" in sys.argv else [a for a in sys.argv[1:] if not a.startswith("--")]
     if not envs:
+        if "--all" in sys.argv:
+            # An empty registry has nothing to generate or verify; the shipped
+            # public doors.yaml starts this way.
+            print("ok: the doors registry is empty, no door inventories to "
+                  + ("check" if check else "generate"))
+            sys.exit(0)
         raise SystemExit("usage: generate-door-inventory.py <goatnet> [--check] | --all [--check] | --self-test")
     sys.exit(run(envs, check))
 

@@ -211,6 +211,13 @@ minio_audit_bucket_quota_gib: null
 minio_telemetry_bucket_quota_gib: null
 minio_runtime_detection_bucket_quota_gib: null
 
+# -- Alert text --------------------------------------------------------------
+# The goatnet whose measured delete-marker load the description of the
+# MinIOAuditBucketDeleteMarkersNeverReclaimed alert cites
+# (templates/prom-rules-minio.yml.j2). Display text only; group_vars names
+# the goatnet that measured the figures.
+minio_delete_marker_evidence_site: "one goatnet"
+
 # -- Healthcheck timing ------------------------------------------------------
 minio_health_retries: 30
 minio_health_delay_seconds: 2

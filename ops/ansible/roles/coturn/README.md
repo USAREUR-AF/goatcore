@@ -2,8 +2,7 @@
 
 Re-adds coturn (STUN, UDP 3478) to relays deployed by `goat-relay-deploy.yml`.
 The legacy Go `relay-server.yml` carried coturn inline; the all-Rust tier never
-did, so goatnets on it ran zero STUN — every peer relay-forced, no direct P2P
-(F-192).
+did, so goatnets on it ran zero STUN — every peer relay-forced, no direct P2P.
 
 ## What it does
 

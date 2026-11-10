@@ -1,6 +1,6 @@
 ---
 galaxy_info:
-  role_name: nova_zenoh
+  role_name: goat_zenoh
   author: goat-maintainer
   license: Apache-2.0
   min_ansible_version: "2.14"
@@ -14,6 +14,6 @@ galaxy_info:
 dependencies:
   - role: rollback-ledger
     vars:
-      rollback_component: nova-zenoh
+      rollback_component: "{{ goat_zenoh_ledger_component | default('goat-zenoh') }}"
       rollback_artifact_type: image
-      rollback_ref: "{{ nova_zenoh_image }}"
+      rollback_ref: "{{ zenoh_router_image }}"

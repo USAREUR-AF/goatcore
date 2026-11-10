@@ -70,8 +70,8 @@ func TestRunProbeWithFixture(t *testing.T) {
 	if report.PeerIP != "100.127.0.1" {
 		t.Errorf("PeerIP = %q, want 100.127.0.1", report.PeerIP)
 	}
-	if report.PeerName != "legacy.examplebird.selfhosted" {
-		t.Errorf("PeerName = %q, want legacy.examplebird.selfhosted", report.PeerName)
+	if report.PeerName != "example.netbird.selfhosted" {
+		t.Errorf("PeerName = %q, want example.netbird.selfhosted", report.PeerName)
 	}
 
 	// Should have measurements for all 27 peers

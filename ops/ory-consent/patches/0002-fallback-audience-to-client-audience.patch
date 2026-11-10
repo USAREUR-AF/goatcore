@@ -1,5 +1,5 @@
 From 0000000000000000000000000000000000000001 Mon Sep 17 00:00:00 2001
-From: goat-maintainer <person-35@example.org>
+From: goat-maintainer <person-30@example.org>
 Date: Mon, 19 May 2026 19:00:00 +0000
 Subject: [PATCH] consent: fall back to client.audience when
  requested_access_token_audience is empty

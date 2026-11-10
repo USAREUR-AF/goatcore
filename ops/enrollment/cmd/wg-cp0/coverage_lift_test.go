@@ -378,7 +378,7 @@ func TestRun_Diff_JSON_Mode(t *testing.T) {
 
 func TestRun_Diff_SiteFilter(t *testing.T) {
 	withOffline(t, func() {
-		code, _, _ := runArgs(t, "diff", "--path", fixturePath, "--site", "vega")
+		code, _, _ := runArgs(t, "diff", "--path", fixturePath, "--site", "lab")
 		if code != 0 {
 			t.Errorf("code = %d, want 0", code)
 		}

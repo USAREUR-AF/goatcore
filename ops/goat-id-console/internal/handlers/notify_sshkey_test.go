@@ -56,13 +56,13 @@ func TestSSHKeyNotificationsClaimOnlyWhatIsTrue(t *testing.T) {
 	t.Run("ssh_key_installed names the hosts and the attribution", func(t *testing.T) {
 		_, body, ok := srv.candidateEmail(notifyRequest{
 			Event: "ssh_key_installed", Email: "a@b.test",
-			Hosts: []string{"goat@100.127.0.221", "goat@100.127.0.172"},
+			Hosts: []string{"goat@100.127.0.217", "goat@100.127.0.168"},
 		})
 		if !ok {
 			t.Fatal("event not handled")
 		}
 		// A person told "you have a shell" must be told WHERE.
-		for _, h := range []string{"100.127.0.221", "100.127.0.172"} {
+		for _, h := range []string{"100.127.0.217", "100.127.0.168"} {
 			if !strings.Contains(body, h) {
 				t.Errorf("host %s not named", h)
 			}

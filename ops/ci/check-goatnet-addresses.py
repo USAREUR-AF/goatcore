@@ -137,21 +137,21 @@ def self_test():
         os.makedirs(os.path.join(t, "ops/ansible/group_vars/x_hosts"))
         os.makedirs(os.path.join(t, "ops/validation"))
         Path(t, "ops/ansible/inventory/doors.yaml").write_text(
-            "doors:\n  x:\n    type: ssm\n    mgmt:\n      - {name: mgmt-x-01-thor, mesh_ip: 100.127.0.45}\n")
+            "doors:\n  x:\n    type: ssm\n    mgmt:\n      - {name: mgmt-x-01-thor, mesh_ip: 100.127.0.41}\n")
         Path(t, "ops/ansible/group_vars/x_hosts/vars.yml").write_text(
-            "operator_ssh_scopes:\n  host-nodes:\n    - { ssh_host: \"100.127.0.45\", ssh_user: u }\n"
-            "  breakglass-path:\n    - { ssh_host: \"100.127.1.3\", ssh_user: u }   # bad-day\n")
+            "operator_ssh_scopes:\n  host-nodes:\n    - { ssh_host: \"100.127.0.41\", ssh_user: u }\n"
+            "  breakglass-path:\n    - { ssh_host: \"100.127.0.252\", ssh_user: u }   # bad-day\n")
         Path(t, "ops/ansible/inventory/mgmt-hosts.ini").write_text(
-            "[x_hosts]\nmgmt-x-01-thor ansible_host=100.127.0.45 ansible_user=u\n")
-        Path(t, "ops/validation/values-x.yaml").write_text("orin_a: \"u@100.127.0.45\"\n")
+            "[x_hosts]\nmgmt-x-01-thor ansible_host=100.127.0.41 ansible_user=u\n")
+        Path(t, "ops/validation/values-x.yaml").write_text("orin_a: \"u@100.127.0.41\"\n")
         mesh, bad = declared_mesh(t), declared_bad_day(t)
         assert scan(t, mesh, bad) == [], scan(t, mesh, bad)
-        Path(t, "ops/validation/values-x.yaml").write_text("orin_a: \"u@100.127.1.3\"\n")
+        Path(t, "ops/validation/values-x.yaml").write_text("orin_a: \"u@100.127.0.252\"\n")
         with open(os.path.join(t, "ops/ansible/inventory/mgmt-hosts.ini"), "a") as fixture:
-            fixture.write("[x_other]\nmgmt-x-01-thor ansible_host=100.127.0.253 ansible_user=u\n")
+            fixture.write("[x_other]\nmgmt-x-01-thor ansible_host=100.127.0.248 ansible_user=u\n")
         got = scan(t, mesh, bad)
         assert any("bad-day" in o and o.startswith("ops/validation/values-x.yaml") for o in got), got
-        assert any("100.127.0.253" in o for o in got), got
+        assert any("100.127.0.248" in o for o in got), got
         assert not any(o.startswith("ops/ansible/group_vars") for o in got), got
         assert len(got) == 2, got
     print("self-test ok: clean tree passes; a bad-day address in a value and a foreign inventory address are both refused")

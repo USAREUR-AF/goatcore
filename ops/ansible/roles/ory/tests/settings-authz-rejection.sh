@@ -30,14 +30,15 @@ trap cleanup EXIT
 
 # Render the identity schema for a given flag state. Mirrors the two Jinja
 # conditionals in the template (ory_authz_in_metadata, ory_site_vendor_trait_compat);
-# vendor compat is false here to match zagros/zagros-dev/zagros-cloud.
+# vendor compat is false here, as on a goatnet that never carried the vendor trait.
 render_schema() {  # $1 = authz_in_metadata (true|false)  -> stdout JSON
   AUTHZ="$1" python3 - "$TEMPLATE" <<'PY'
 import json, os, sys
 src = open(sys.argv[1]).read()
 authz = os.environ["AUTHZ"] == "true"
-vendor = False  # match zagros group_vars
+vendor = False  # ory_site_vendor_trait_compat off
 base = src.replace("{{ site_dns_zone }}", "test.local").replace("{{ site_id }}", "test")
+base = base.replace("{{ ory_brand_name | default('goat') }}", "goat")
 out, stack = [], []
 for ln in base.splitlines(keepends=True):
     st = ln.strip()

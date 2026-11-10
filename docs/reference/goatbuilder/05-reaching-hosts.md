@@ -29,8 +29,8 @@ A door reaches a goatnet's management host without joining the laptop to that
 goatnet's mesh ([ADR 1117](../../adr/1117-per-env-doors-cross-env-management.md),
 [env-doors.md](../../design/env-doors.md)). The registry is
 `ops/ansible/inventory/doors.yaml`, one entry per goatnet;
-`ops/scripts/generate-door-inventory.py` renders it into `env-door.sh` and the
-two door inventories.
+`ops/scripts/generate-door-inventory.py` renders it into the two door
+inventories, and `env-door.sh` reads a door's facts from it each time it runs.
 
 An `ssm` door is an AWS Systems Manager port-forward through a cloud mesh peer
 to the landed management host on `127.0.0.1:<port>`. The other management hosts

@@ -69,7 +69,7 @@ truth (the group_vars service registry; one registry, two renderings):
   "generated_at": "2026-07-15T00:00:00Z",
   "ttl_seconds": 2592000,
   "ca_id": "dev-nova-ca-ecdsa-2026-05-14",
-  "records": [ {"name": "portal.zagros.netbird.zagros.example", "ip": "100.127.0.179"}, … ]
+  "records": [ {"name": "portal.zagros.netbird.zagros.example", "ip": "100.127.0.175"}, … ]
 }
 ```
 

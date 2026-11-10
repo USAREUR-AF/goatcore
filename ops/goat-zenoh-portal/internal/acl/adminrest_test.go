@@ -149,13 +149,13 @@ func TestAdminREST_AddStorage_WriteEnabled(t *testing.T) {
 		BaseURL:    srv.URL,
 		HTTPClient: &http.Client{Timeout: 2 * time.Second},
 	}
-	if err := c.AddStorage(context.Background(), "org164x", "/var/lib/rocksdb/org164x", 604800000); err != nil {
+	if err := c.AddStorage(context.Background(), "acme", "/var/lib/rocksdb/acme", 604800000); err != nil {
 		t.Fatalf("add: %v", err)
 	}
 	if f.putCount.Load() != 1 {
 		t.Errorf("expected 1 PUT, got %d", f.putCount.Load())
 	}
-	if _, ok := f.storages["org164x"]; !ok {
+	if _, ok := f.storages["acme"]; !ok {
 		t.Errorf("storage not persisted in fake router")
 	}
 }
@@ -173,7 +173,7 @@ func TestAdminREST_AddStorage_SilentRejectCaught(t *testing.T) {
 		BaseURL:    srv.URL,
 		HTTPClient: &http.Client{Timeout: 2 * time.Second},
 	}
-	err := c.AddStorage(context.Background(), "org164x", "/var/lib/rocksdb/org164x", 604800000)
+	err := c.AddStorage(context.Background(), "acme", "/var/lib/rocksdb/acme", 604800000)
 	if err == nil {
 		t.Fatal("expected verify-via-GET to catch silent reject when adminspace.write=false; got nil")
 	}
@@ -183,14 +183,14 @@ func TestAdminREST_AddStorage_SilentRejectCaught(t *testing.T) {
 	if f.putCount.Load() != 1 {
 		t.Errorf("expected 1 PUT attempt, got %d", f.putCount.Load())
 	}
-	if _, ok := f.storages["org164x"]; ok {
+	if _, ok := f.storages["acme"]; ok {
 		t.Errorf("storage should NOT be persisted when write disabled")
 	}
 }
 
 func TestAdminREST_RemoveStorage(t *testing.T) {
 	f := newFakeRouter("zid001", true)
-	f.storages["org164x"] = json.RawMessage(`{}`) // pre-existing
+	f.storages["acme"] = json.RawMessage(`{}`) // pre-existing
 	srv := httptest.NewServer(f.handler())
 	defer srv.Close()
 
@@ -198,10 +198,10 @@ func TestAdminREST_RemoveStorage(t *testing.T) {
 		BaseURL:    srv.URL,
 		HTTPClient: &http.Client{Timeout: 2 * time.Second},
 	}
-	if err := c.RemoveStorage(context.Background(), "org164x"); err != nil {
+	if err := c.RemoveStorage(context.Background(), "acme"); err != nil {
 		t.Fatalf("remove: %v", err)
 	}
-	if _, ok := f.storages["org164x"]; ok {
+	if _, ok := f.storages["acme"]; ok {
 		t.Errorf("storage should be removed; still present")
 	}
 }
@@ -225,7 +225,7 @@ func TestRender_WithAdminREST_LiveAddSucceeds(t *testing.T) {
 			HTTPClient: &http.Client{Timeout: 2 * time.Second},
 		},
 	}
-	if err := r.Render(context.Background(), []string{"org164x"}); err != nil {
+	if err := r.Render(context.Background(), []string{"acme"}); err != nil {
 		t.Fatalf("render: %v", err)
 	}
 	// The on-disk write happened (Render always writes); under

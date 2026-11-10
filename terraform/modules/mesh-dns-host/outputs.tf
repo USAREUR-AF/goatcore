@@ -3,7 +3,7 @@ output "instance_id" {
 }
 
 output "hostname" {
-  value = "mesh-dns-zagros-${var.name}"
+  value = "mesh-dns-${var.goatnet}-${var.name}"
 }
 
 output "private_ip" {

@@ -10,7 +10,8 @@
 #   1. `ops/compose/goat-obs/prometheus/prometheus.yml` carries a
 #      `metric_relabel_configs` block on the traefik job that rewrites the
 #      `service` and `router` labels at INGEST, stripping a legacy prefix.
-#      It is unconditional — every goatnet running goat-obs gets it.
+#      The prefix is the goatnet's `obs_traefik_legacy_name_prefix`
+#      (group_vars); every goatnet that declares one gets the relabel.
 #
 #   2. netview excludes SSE endpoints from its latency percentiles, because a
 #      stream's duration is its held-open lifetime and not a response time.
@@ -57,7 +58,7 @@ while IFS= read -r _line; do
   PREFIXES+=("$_line")
 done < <(
   python3 - "$PROM" <<'PY'
-import re, sys
+import glob, re, sys
 text = open(sys.argv[1]).read()
 # ^nova-(.*)$ -> nova-      ; tolerate quoting and anchors
 seen = []
@@ -65,6 +66,15 @@ for m in re.finditer(r"regex:\s*['\"]?\^([A-Za-z0-9_-]+)-\(\.\*\)\$?['\"]?", tex
     p = m.group(1) + "-"
     if p not in seen:
         seen.append(p)
+# The prefix as a variable: regex: '^{{ <var> }}-(.*)$'. The values are whatever
+# the goatnets declare for that variable in group_vars, so the guard follows
+# the declaration instead of standing down when the literal left the template.
+for m in re.finditer(r"regex:\s*['\"]?\^\{\{\s*([A-Za-z0-9_]+)\s*\}\}-\(\.\*\)\$?['\"]?", text):
+    decl = re.compile(r"^" + re.escape(m.group(1)) + r":\s*['\"]?([A-Za-z0-9_-]+)['\"]?\s*(?:#.*)?$", re.M)
+    for gv in sorted(glob.glob("ops/ansible/group_vars/**/*.yml", recursive=True)):
+        for v in decl.findall(open(gv).read()):
+            if v + "-" not in seen:
+                seen.append(v + "-")
 for p in seen:
     print(p)
 PY

@@ -865,11 +865,11 @@ mod provenance_tests {
 
     #[test]
     fn a_rollback_row_is_not_called_an_unfinished_play() {
-        let d = "sha256:f73a621e1905aaaa";
-        let row = format!("thor | CHANGED | rc=0 | (stdout) {{\"ts\": \"2026-10-29T17:14:19Z\", \"action\": \"rollback\", \"ref\": \"ghcr.io/x/herd:v0.2.0@sha256:3a4954cd0000000000\", \"prior_ref\": \"ghcr.io/x/herd:v0.2.1@{d}\"}}");
+        let d = "sha256:0123456789abaaaa";
+        let row = format!("thor | CHANGED | rc=0 | (stdout) {{\"ts\": \"2026-10-29T17:14:19Z\", \"action\": \"rollback\", \"ref\": \"ghcr.io/x/demo:v0.2.0@sha256:3a4954cd0000000000\", \"prior_ref\": \"ghcr.io/x/demo:v0.2.1@{d}\"}}");
         assert_eq!(
             not_deploy_reason(&row, d, "t"),
-            "NOT converged — rolled back from ghcr.io/x/herd:v0.2.1@sha256:f73a621e1905 to ghcr.io/x/herd:v0.2.0@sha256:3a4954cd0000 at 2026-10-29T17:14:19Z; the host is not at the declared ref"
+            "NOT converged — rolled back from ghcr.io/x/demo:v0.2.1@sha256:0123456789ab to ghcr.io/x/demo:v0.2.0@sha256:3a4954cd0000 at 2026-10-29T17:14:19Z; the host is not at the declared ref"
         );
         let pending = format!("thor | CHANGED | rc=0 | (stdout) {{\"action\": \"pending\", \"ref\": \"h@{d}\"}}");
         assert!(not_deploy_reason(&pending, d, "t").contains("the play did not finish on this host"));

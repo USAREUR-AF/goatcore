@@ -580,7 +580,7 @@ msgstr ""
 
 #: src/everyday.md:58
 msgid "This is the contract: **friendly on a terminal, clean in a pipe.**"
-msgstr "Toto je kontrakt: **přátelský na terminálu, čistý v svnře.**"
+msgstr "Toto je kontrakt: **přátelský na terminálu, čistý v rouře.**"
 
 #: src/everyday.md:60
 msgid ""
@@ -663,7 +663,7 @@ msgid ""
 "`SHA256SUMS`. For a high-assurance install, verify before you run:"
 msgstr ""
 "Stahovací plocha publikuje pro každou binárku `*.sha256` a agregovaný "
-"`SHA256SUMS`. Pro instalaci s vysokou mísvn jistoty ověřte před spuštěním:"
+"`SHA256SUMS`. Pro instalaci s vysokou mírou jistoty ověřte před spuštěním:"
 
 #: src/install.md:33
 msgid "\"https://get.<your-goatnet>\""

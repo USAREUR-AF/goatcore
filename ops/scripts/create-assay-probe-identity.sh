@@ -105,6 +105,26 @@ subject="$(openssl x509 -in "$LEAF_CERT" -noout -subject)"
 case "$subject" in *"CN=$CN"*|*"CN = $CN"*) ;; *) die "leaf subject is '$subject', not CN=$CN" ;; esac
 openssl verify -CAfile "$ROOT_CERT" "$LEAF_CERT" >/dev/null || die "leaf does not chain to $ROOT_CERT"
 
+# 1b. goat on the host. The assay runs its goat rows there, as this context;
+#     a box no play installed goat on (every goatlite) gets the public goat-cli
+#     release of the version this machine runs. The host downloads it itself
+#     and checks it against the release's own .sha256 before installing.
+GOAT_RELEASES="${GOAT_RELEASES:-https://github.com/usareur-af/goatcore/releases/download}"
+if ! on_host "command -v goat >/dev/null"; then
+  ver="$(goat --version 2>/dev/null | awk '{print $2}')"
+  [ -n "$ver" ] || die "goat is on neither this machine nor $MGMT_HOST: build it first (docs/tutorials/00-goatlite.md section 1)"
+  echo "installing goat $ver on $MGMT_HOST from $GOAT_RELEASES/goat-cli-v$ver"
+  on_host "set -e; case \$(uname -m) in x86_64) a=amd64 ;; aarch64|arm64) a=arm64 ;; *) echo \"no goat-cli release for \$(uname -m)\" >&2; exit 1 ;; esac
+    t=\$(mktemp -d); cd \"\$t\"
+    curl -fsSL -o goat-linux-\$a '$GOAT_RELEASES/goat-cli-v$ver/goat-linux-'\$a
+    curl -fsSL -o goat-linux-\$a.sha256 '$GOAT_RELEASES/goat-cli-v$ver/goat-linux-'\$a.sha256
+    sha256sum -c goat-linux-\$a.sha256
+    sudo install -m 0755 goat-linux-\$a /usr/local/bin/goat
+    rm -f goat-linux-\$a goat-linux-\$a.sha256; cd /; rmdir \"\$t\"" \
+    || die "could not install goat $ver on $MGMT_HOST (no release goat-cli-v$ver, no network, or no sudo): install goat there by hand, then re-run"
+  on_host "goat --version" || die "goat installed on $MGMT_HOST but does not run"
+fi
+
 # 2. Install, unless the host already holds this exact cert. The key travels on
 #    ssh's stdin into a 0600 file; it is never printed or written elsewhere.
 want="$(openssl x509 -in "$LEAF_CERT" -noout -fingerprint -sha256)"

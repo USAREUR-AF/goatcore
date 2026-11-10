@@ -37,22 +37,22 @@ func fakeNetbird(t *testing.T, groups map[string]string) (*httptest.Server, *map
 
 func TestMintForGroups_DerivedGroupsAndOneOffShape(t *testing.T) {
 	ts, captured := fakeNetbird(t, map[string]string{
-		"ZAGROS-PROD-KID":      "gid-kid",
-		"ZAGROS-PROD-OPSYSTEM": "gid-opsystem",
+		"GALAXY-PROD-KID":      "gid-kid",
+		"GALAXY-PROD-OPSYSTEM": "gid-opsystem",
 	})
-	c := netbirdkeys.New(ts.URL, "tok", "ZAGROS-PROD")
+	c := netbirdkeys.New(ts.URL, "tok", "GALAXY-PROD")
 	if !c.Enabled() {
 		t.Fatal("client should be enabled")
 	}
 
-	sk, err := c.MintForGroups(t.Context(), "machine-gateway-one-svn-001", []string{"KID"}, 24*time.Hour)
+	sk, err := c.MintForGroups(t.Context(), "machine-gw-rtr-001", []string{"KID"}, 24*time.Hour)
 	if err != nil {
 		t.Fatalf("MintForGroups: %v", err)
 	}
 	if sk.Key != "AAAA-BBBB-CCCC" {
 		t.Fatalf("key = %q", sk.Key)
 	}
-	if len(sk.Groups) != 1 || sk.Groups[0] != "ZAGROS-PROD-KID" {
+	if len(sk.Groups) != 1 || sk.Groups[0] != "GALAXY-PROD-KID" {
 		t.Fatalf("groups = %v, want the prefixed KID group", sk.Groups)
 	}
 
@@ -87,7 +87,7 @@ func TestMintForGroups_DerivedGroupsAndOneOffShape(t *testing.T) {
 	// Without this field every machine minted through this path lands
 	// unattributable, and its peer can only be recovered from the management
 	// server's enrolment events (ops/scripts/peer-attribution.py).
-	if body["auto_peer_name"] != "machine-gateway-one-svn-001" {
+	if body["auto_peer_name"] != "machine-gw-rtr-001" {
 		t.Errorf("auto_peer_name = %v, want the key name — a peer with no name prefix "+
 			"cannot be traced to its machine record and is invisible to the revoke",
 			body["auto_peer_name"])
@@ -98,14 +98,14 @@ func TestMintForGroups_DerivedGroupsAndOneOffShape(t *testing.T) {
 // with the groups that do resolve would quietly under-enroll the machine, and an
 // under-enrolled peer looks configured while reaching nothing.
 func TestMintForGroups_MissingGroupRefuses(t *testing.T) {
-	ts, captured := fakeNetbird(t, map[string]string{"ZAGROS-PROD-KID": "gid-kid"})
-	c := netbirdkeys.New(ts.URL, "tok", "ZAGROS-PROD")
+	ts, captured := fakeNetbird(t, map[string]string{"GALAXY-PROD-KID": "gid-kid"})
+	c := netbirdkeys.New(ts.URL, "tok", "GALAXY-PROD")
 
 	_, err := c.MintForGroups(t.Context(), "m", []string{"KID", "SENSOR-FEED"}, time.Hour)
 	if !errors.Is(err, netbirdkeys.ErrGroupMissing) {
 		t.Fatalf("err = %v, want ErrGroupMissing", err)
 	}
-	if !strings.Contains(err.Error(), "ZAGROS-PROD-SENSOR-FEED") {
+	if !strings.Contains(err.Error(), "GALAXY-PROD-SENSOR-FEED") {
 		t.Fatalf("refusal should name the missing group: %v", err)
 	}
 	if *captured != nil {
@@ -123,16 +123,16 @@ func TestMintForGroups_DisabledAndEmpty(t *testing.T) {
 		t.Fatalf("want ErrDisabled, got %v", err)
 	}
 
-	ts, _ := fakeNetbird(t, map[string]string{"ZAGROS-KID": "g"})
-	c := netbirdkeys.New(ts.URL, "tok", "ZAGROS")
+	ts, _ := fakeNetbird(t, map[string]string{"GALAXY-KID": "g"})
+	c := netbirdkeys.New(ts.URL, "tok", "GALAXY")
 	if _, err := c.MintForGroups(t.Context(), "m", nil, time.Hour); err == nil {
 		t.Fatal("a key with no auto_groups is a peer that enrols into nothing; want a refusal")
 	}
 }
 
 func TestGroupName_TrimsTrailingSeparator(t *testing.T) {
-	c := netbirdkeys.New("https://x", "t", "ZAGROS-PROD-")
-	if got := c.GroupName("KID"); got != "ZAGROS-PROD-KID" {
+	c := netbirdkeys.New("https://x", "t", "GALAXY-PROD-")
+	if got := c.GroupName("KID"); got != "GALAXY-PROD-KID" {
 		t.Fatalf("GroupName = %q", got)
 	}
 }

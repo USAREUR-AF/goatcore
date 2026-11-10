@@ -52,7 +52,7 @@ groups:
             is actually present. Find the caller in the signal log, then look at
             what policy grants it reach to absent peers; a clique group whose
             members have gone offline is the usual cause.
-          runbook_url: 'https://github.com/usareur-af/goatcore/blob/main/docs/design/mesh-acl.md'
+          runbook_url: 'docs/design/mesh-acl.md'
 
       # ── Ratio ──────────────────────────────────────────────────────────
       # The absolute rule alone misses a small goatnet where the same pathology
@@ -80,7 +80,7 @@ groups:
             means peers hold policy reach to peers that no longer exist and are
             retrying them indefinitely. Reconcile the group membership against
             who is actually on the mesh.
-          runbook_url: 'https://github.com/usareur-af/goatcore/blob/main/docs/design/mesh-acl.md'
+          runbook_url: 'docs/design/mesh-acl.md'
 
       # ── Why there is no absent() guard here ──────────────────────────
       # The first version of this file carried SignalMeterUnread,

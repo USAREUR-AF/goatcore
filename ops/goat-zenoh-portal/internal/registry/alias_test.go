@@ -9,7 +9,7 @@ import (
 )
 
 func TestValidAlias(t *testing.T) {
-	ok := []string{"maintainer-operator", "acme", "fra-land-bde", "a1", "x", "node-7"}
+	ok := []string{"jane-operator", "acme", "fra-land-bde", "a1", "x", "node-7"}
 	for _, a := range ok {
 		if err := registry.ValidAlias(a); err != nil {
 			t.Errorf("ValidAlias(%q) = %v, want nil", a, err)
@@ -21,7 +21,7 @@ func TestValidAlias(t *testing.T) {
 		"volatile":                         "reserved namespace word",
 		"release":                          "reserved namespace word",
 		"community":                        "reserved namespace word",
-		"the maintainer-Operator":                    "uppercase not allowed",
+		"Jane-Operator":                    "uppercase not allowed",
 		"acme/x":                           "slash not allowed",
 		"-acme":                            "leading dash not allowed",
 		"acme-":                            "trailing dash not allowed",
@@ -38,7 +38,7 @@ func TestValidAlias(t *testing.T) {
 func TestAllocateSlotAliasUniqueness(t *testing.T) {
 	ctx := context.Background()
 	r := open(t)
-	if _, err := r.InitializeSlotPool(ctx, "zagros-test", 8); err != nil {
+	if _, err := r.InitializeSlotPool(ctx, "galaxy-test", 8); err != nil {
 		t.Fatalf("init pool: %v", err)
 	}
 
@@ -74,7 +74,7 @@ func TestListAliases(t *testing.T) {
 	if as, err := r.ListAliases(ctx); err != nil || as == nil || len(as) != 0 {
 		t.Fatalf("ListAliases (no pool) = (%v,%v), want ([],nil)", as, err)
 	}
-	if _, err := r.InitializeSlotPool(ctx, "zagros-test", 8); err != nil {
+	if _, err := r.InitializeSlotPool(ctx, "galaxy-test", 8); err != nil {
 		t.Fatalf("init pool: %v", err)
 	}
 	for _, h := range []string{"bravo", "alpha"} {

@@ -15,9 +15,8 @@
      2. isitup_external_services  — the shared off-mesh catalog       source: offmesh
      3. external_service_* decls  — ADR 1178, one row per hostname    source: external
 
-   Until #1518 the first two were concatenated with no dedup, and zagros and
-   zagros-prod carried the seven catalog rows inline as well, so every one of
-   them rendered twice.
+   The three sources are deduplicated by hostname: a catalog row a goatnet
+   also carries inline renders once.
 
    Per-row display state (#1518), on isitup_services rows and on an external
    declaration's `status:` (and per hostname under `status.hostnames`):
@@ -39,7 +38,7 @@
 
    A hidden row (listed: false, or past retire_after) still CLAIMS its id and
    hostname, so a catalog row or declaration with the same id or name stays
-   off the page too. Otherwise hiding one of zagros's inline off-mesh rows would
+   off the page too. Otherwise hiding one of a goatnet's inline off-mesh rows would
    bring the catalog's copy back in its place.
 
    Rows are dicts; services.env.j2 owns the pipe-delimited shape. -#}
@@ -82,8 +81,8 @@
     earlier row already names is skipped — that row is the one on the page.
 
     Past the first hostname, the row id and name take the label as a suffix so
-    they stay unique. A NESTED label (`api.org16x`) drops the service name it
-    hangs under before the suffix is built, because "org16x-api-org16x" says the
+    they stay unique. A NESTED label (`api.acme`) drops the service name it
+    hangs under before the suffix is built, because "acme-api-acme" says the
     same thing twice; what is left has its dots hyphenated, because an id ends
     up in page anchors and CSS selectors and a dot there is a class separator.
 
@@ -95,11 +94,11 @@
       status:
         list: true                 # default for every hostname below
         hostnames:
-          api.org16x: { list: false }
-          heartbeat.org16x: { health_path: /health, desc: "…" }
+          api.acme: { list: false }
+          heartbeat.acme: { health_path: /health, desc: "…" }
 
-    The service owner decides this in their declaration, in
-    usareur-af/hello-galaxy-external-service. -#}
+    The service owner decides this in their declaration (worked example:
+    the hello-galaxy-external-service repository). -#}
 {#- external_service_wildcard_cert matches the prefix too; only mappings are services. -#}
 {%- for _ext_var in (lookup('varnames', '^external_service_', wantlist=True) | sort) if lookup('vars', _ext_var) is mapping -%}
 {%-   set _ext = lookup('vars', _ext_var) -%}

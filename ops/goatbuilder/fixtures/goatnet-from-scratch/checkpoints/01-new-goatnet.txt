@@ -110,7 +110,7 @@ assay plan: env=zagros  58 applicable rows, 21 N/A
   onboarding (5)
     prove  intake-form-browser-submit                   cmd-assert
     prove  review-gate-accepts-open-field-invite        cmd-assert
-    prove  onboard-runner-knows-this-goatnet            cmd-assert
+    prove  onboard-runner-knows-this-goatnet            onboard-runner-profile
     prove  onboard-runner-reaches-mgmt-api              cmd-assert
     prove  onboard-runner-audit-reaches-the-fabric      cmd-assert
 

@@ -30,7 +30,7 @@ except ImportError:
 TPL_DIR = Path(__file__).resolve().parent.parent / "templates"
 TPL = "spire-trust-sync.sh.j2"
 
-CORE_TRUST = "/etc/zagros-sandbox-zenoh/tls/ca-root-cert.pem"
+CORE_TRUST = "/etc/zagros-zenoh/tls/ca-root-cert.pem"
 EDGE_A = "/etc/goat-zenoh-edge-aaa/tls/partner-ca.pem"
 EDGE_B = "/etc/goat-zenoh-edge-bbb/tls/partner-ca.pem"
 DOMAIN_A = "aaa.partner.example"
@@ -48,12 +48,12 @@ def render(**overrides) -> str:
         spire_data_dir="/opt/spire/data",
         spire_compose_dir="/opt/mgmt-host",
         spire_bin_dir="/opt/spire/bin",
-        spire_trust_domain="zagros.zagros.example",
+        spire_trust_domain="zagros.goat.example",
         spire_agent_node_path="agent/thor",
         spire_agent_rescue_enabled=True,
         spire_trust_sync_interval="15min",
         spire_trust_sync_router_trust_file=CORE_TRUST,
-        spire_trust_sync_restart_containers=["zagros-sandbox-zenoh-router"],
+        spire_trust_sync_restart_containers=["zagros-zenoh-router"],
         spire_trust_sync_federated_edges=[],
         spire_trust_sync_federated_edges_retired=[],
         spire_trust_sync_prune_enabled=True,

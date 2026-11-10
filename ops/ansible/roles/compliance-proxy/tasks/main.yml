@@ -89,14 +89,19 @@
 # The route filename changed. Traefik's file provider reads the whole directory,
 # so an orphaned old file would declare a second router on the same Host() rule.
 #
-# The path below MUST name the OLD file. Pointing it at the new one renders
-# compliance.yml and then immediately deletes it — a deploy that reports
-# changed=2 and leaves the surface with no route at all.
+# compliance_proxy_traefik_dynamic_filename_legacy MUST name the OLD file.
+# Pointing it at the new one would render compliance.yml and then immediately
+# delete it — a deploy that reports changed=2 and leaves the surface with no
+# route at all — so the task is skipped when the two names are equal. Empty
+# (the role default) removes nothing.
 - name: Remove the pre-rename compliance route file
   ansible.builtin.file:
-    path: "{{ compliance_proxy_traefik_dynamic_dir | default('/etc/traefik/dynamic') }}/nova-compliance.yml"
+    path: "{{ compliance_proxy_traefik_dynamic_dir | default('/etc/traefik/dynamic') }}/{{ compliance_proxy_traefik_dynamic_filename_legacy }}"
     state: absent
   become: true
+  when:
+    - compliance_proxy_traefik_dynamic_filename_legacy | default('') | length > 0
+    - compliance_proxy_traefik_dynamic_filename_legacy != 'compliance.yml'
   tags: [route]
 
 - name: Set compliance-proxy compose-time env (images + OIDC host entry + Function URL)
@@ -175,7 +180,7 @@
         Upstream:      aws-sigv4-proxy -> {{ compliance_function_url_host }} (AWS_IAM Function URL)
       Next: apply the Traefik route (compliance.<zone> -> oauth2-proxy-compliance:4180,
       mesh-only) + CoreDNS entry, verify a COMPLIANCE-group user renders the
-      dashboard, then retire the ALB on the usareur-af-infra side.
+      dashboard, then retire the ALB in the infrastructure repository.
 # Deploy ledger now written by the shared `rollback-ledger`
 # meta-dependency (meta/main.yml) per ADR 1060 — no per-role task here.
   tags: [sidecars]

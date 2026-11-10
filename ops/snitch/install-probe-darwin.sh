@@ -20,7 +20,7 @@
 
 set -euo pipefail
 
-COLLECTOR="${SNITCH_COLLECTOR:-https://snitch.netbird.legacy.example}"
+COLLECTOR="${SNITCH_COLLECTOR:-}"
 PROBE_KEY="${SNITCH_PROBE_KEY:-}"
 OPERATOR_KEY="${OPERATOR_KEY:-${SNITCH_OPERATOR_KEY:-}}"
 INTERVAL=60
@@ -37,6 +37,11 @@ while [[ $# -gt 0 ]]; do
     *)            echo "Unknown arg: $1" >&2; exit 1 ;;
   esac
 done
+
+if [ -z "$COLLECTOR" ]; then
+  echo "snitch: no collector URL: pass --collector <url> or set SNITCH_COLLECTOR" >&2
+  exit 1
+fi
 
 log() { echo "[snitch-darwin] $(date +%H:%M:%S) $*"; }
 

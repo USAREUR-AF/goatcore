@@ -11,7 +11,7 @@
 
 services:
   test-postgres-a:
-    image: ghcr.io/usareur-af/postgres-spock@sha256:038f12f0e5339b2722754c06273a2277fcc4e4e17056c8afd2f52f28ed16e56c  # pinned to the fleet digest (group_vars zagros/vega); :latest broke the conf-load contract 2026-07-15
+    image: "${POSTGRES_SPOCK_IMAGE:?set it to a digest-pinned postgres-spock image; run-test.sh reads the fleet pin}"  # never :latest (it broke the conf-load contract 2026-07-15)
     container_name: test-postgres-a
     command: ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf"]  # mirror production (site-bootstrap Phase 2); the image CMD alone does not load the Spock conf
     environment:
@@ -27,7 +27,7 @@ services:
       retries: 30
 
   test-postgres-b:
-    image: ghcr.io/usareur-af/postgres-spock@sha256:038f12f0e5339b2722754c06273a2277fcc4e4e17056c8afd2f52f28ed16e56c  # pinned to the fleet digest (group_vars zagros/vega); :latest broke the conf-load contract 2026-07-15
+    image: "${POSTGRES_SPOCK_IMAGE:?set it to a digest-pinned postgres-spock image; run-test.sh reads the fleet pin}"  # never :latest (it broke the conf-load contract 2026-07-15)
     container_name: test-postgres-b
     command: ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf"]  # mirror production (site-bootstrap Phase 2); the image CMD alone does not load the Spock conf
     environment:

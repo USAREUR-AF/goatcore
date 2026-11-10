@@ -70,7 +70,7 @@
           names something narrower than the fleet, this playbook resolves to the
           umbrella group `mgmt_hosts` — every mgmt host on every goatnet,
           production included — and it apt-upgrade and reboot-wave what they resolve to. Re-run with
-          `-e target=<site>_hosts` (e.g. `-e target=zagros_prod_hosts`) or
+          `-e target=<site>_hosts` (e.g. `-e target=zagros_hosts`) or
           `--limit <host>`. If a fleet-wide run really is what you want, say it
           out loud: `-e fleet_wide=true`.
         success_msg: >-
@@ -103,6 +103,11 @@
         autoremove: true
 
   roles:
+    # The site cache on the obs host (goatbuilder-speed.md sink 6): apt goes
+    # through apt-cacher-ng when site_cache_host is set and the cache answers,
+    # upstream otherwise. Empty site_cache_host = nothing changes on the host.
+    - role: site-cache-client
+
     # Docker Compose is the canonical container orchestrator (ADR 0207). Cloud
     # envs come with Docker via AMI, on-prem mgmt-hosts
     # don't — installing here as part of the baseline so the per-site bootstrap
@@ -171,19 +176,19 @@
     # operator who built it can't log into. Seed the platform-admin roster into
     # the booted-OS login authorized_keys (the dropbear initramfs gets the same
     # roster via the dropbear-initramfs role). Fail CLOSED on an empty roster —
-    # that is exactly what produced the delta-obs-b lockout. Source: group_vars/all.yml.
+    # that is exactly what locks every operator out of a new host. Source: group_vars/all.yml.
     - name: "access invariant — the platform-admin roster must be non-empty"
       ansible.builtin.assert:
         that: (admin_authorized_keys | length) > 0
         fail_msg: >-
           admin_authorized_keys is empty — refusing to build a host with no
-          platform-admin access seeded (the delta-obs-b lockout). Set
+          platform-admin access seeded. Set
           PLATFORM_ADMIN_SSH_PUBKEYS (newline-delimited) in
           .envrc.local.d/45-platform-admin-keys.envrc and re-run.
 
     - name: "access invariant — seed platform-admin roster into booted-OS authorized_keys"
       ansible.posix.authorized_key:
-        user: "{{ ansible_user | default('goat') }}"
+        user: "{{ ansible_user | mandatory('set ansible_user for this host in the inventory: it is the login account the roster is seeded into') }}"
         key: "{{ item }}"
         state: present
         exclusive: false   # additive — never wipe the bootstrap key

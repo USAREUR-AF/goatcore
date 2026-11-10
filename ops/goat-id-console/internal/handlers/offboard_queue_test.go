@@ -22,7 +22,7 @@ import (
 func seedOffboardRow(t *testing.T, s *Server, status string) string {
 	t.Helper()
 	p := &onboardstore.Proposal{Sponsor: "sponsor@example.org", Env: "zagros", Handle: "jane",
-		Email: "person-55@example.org", ManifestJSON: "{}"}
+		Email: "person-47@example.org", ManifestJSON: "{}"}
 	if err := s.Onboard.CreateProposal(context.Background(), p); err != nil {
 		t.Fatalf("create proposal: %v", err)
 	}

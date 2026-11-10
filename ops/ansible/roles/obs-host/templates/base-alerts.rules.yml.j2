@@ -67,7 +67,7 @@ groups:
           severity: critical
         annotations:
           summary: "Data-root {{ alert_data_root_mountpoint | default('/opt/docker-data') }} has disappeared"
-          description: "The encrypted NVMe data volume is no longer mounted, and it was present within the last 6h. Docker's data-root and containerd's live here, so every container on this host is affected — not just observability. Check the LUKS mapping and `dmesg | grep -i nvme` before restarting anything: a re-format on an unformatted device is silent and destroys the volume."
+          description: "The encrypted NVMe data volume is no longer mounted, and it was present within the last 6h. Docker's data-root and containerd's live here{% if obs_host_data_root_alert_record | default('') %} ({{ obs_host_data_root_alert_record }}){% endif %}, so every container on this host is affected — not just observability. Check the LUKS mapping and `dmesg | grep -i nvme` before restarting anything: a re-format on an unformatted device is silent and destroys the volume."
 
       - alert: NodeMemoryHigh
         expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > {{ alert_mem_used_pct | default(92) }}

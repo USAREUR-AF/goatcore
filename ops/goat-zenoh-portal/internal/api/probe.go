@@ -147,7 +147,7 @@ func interpretProbe(res probeResult, expectedFingerprint string) []probeFinding 
 			Severity:  sevError,
 			Status:    "fail",
 			Message:   "DNS could not resolve the router hostname: " + res.DNS.Error,
-			FixHint:   "Finish your netbird enrollment so the mesh resolver answers for `zenoh.nova.netbird.nova.example`. Without DNS, none of the subsequent layers can run.",
+			FixHint:   "Finish your netbird enrollment so the mesh resolver answers for the router hostname. Without DNS, none of the subsequent layers can run.",
 			DocAnchor: "/peering/our-config.html",
 		})
 		out = appendSkips(out, []string{"2-tcp", "3-tls", "4-cert-chain", "5-uri-san"}, "DNS failed; can't proceed.")
@@ -349,7 +349,7 @@ func overallStatus(findings []probeFinding) string {
 func (s *Server) handleProbeScript(w http.ResponseWriter, r *http.Request) {
 	hostAndPort := strings.TrimPrefix(s.cfg.RouterEndpoint, "tls/")
 	if hostAndPort == "" {
-		hostAndPort = "zenoh.nova.netbird.nova.example:7447"
+		hostAndPort = "zenoh.goat.example:7447"
 	}
 	idx := strings.LastIndex(hostAndPort, ":")
 	host := hostAndPort

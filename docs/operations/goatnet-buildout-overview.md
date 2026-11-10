@@ -37,12 +37,12 @@ engines chained by one driver, and the driver is your working surface.
 
 **The run, in one line:** **1** gates → **2** baseline+LUKS → **3** secrets →
 **4** certs → **5** mgmt-stack + relay-connect → **6** identity + finish 5 →
-**7** public TLS + relays → **⏸ 8 mesh-enroll** → **9** router + SPIRE → **10**
+**7** public TLS + relays → **8** mesh-enroll → **9** router + SPIRE → **10**
 dashboard/OIDC → **⏸ 11 browser step** → **12** ACL, identities, services →
 **13** acceptance gate → **14** rescue nodes + cross-goatnet surfaces.
 
-Two **⏸ pauses** need a human (enroll the host; first browser login + API
-token). A LAN GOAT-Net skips phases 7, 8 and 11 and the relay-connect step. Run `--plan` first
+One **⏸ pause** needs a human: the first browser login + API token in phase 11.
+Phase 8 enrols the hosts and re-mints the router certificate with no one at the keyboard. A LAN GOAT-Net skips phases 7, 8 and 11 and the relay-connect step. Run `--plan` first
 — it prints every command for your profile and executes nothing.
 
 ## What to have ready first
@@ -58,12 +58,19 @@ complete a resilient site. At the small end — a dev or LAN GOAT-Net — the co
 plane runs on a single x86 mini-PC or a VM; six computers is the production
 shape, not the minimum.
 
-| Role | Qty | Purpose |
-|---|---|---|
-| **Core pair** | 2 | Management / control plane — active + warm standby. Runs the GOAT-Net stack (postgres-spock, netbird management + signal, Ory, Traefik, the Zenoh router). **This is what the standup provisions.** |
-| **Observability pair** | 2 | Logs, metrics, dashboards, object storage (OpenObserve, MinIO, Prometheus + Grafana). The second obs node holds the second copy of the audit record. |
-| **Breakglass backups** | 2 | One core, one obs — dormant recovery nodes, held cutover-safe until an operator promotes them. |
-| **Network gear** | 1 | A jumpbox for admin entry to the segment, plus the local switch and transport uplink. |
+| Role | Qty | Purpose | Decided in |
+|---|---|---|---|
+| **Core pair** | 2 | Management / control plane — active + warm standby; promotion is operator-fired. Runs the GOAT-Net stack (postgres-spock, netbird management + signal, Ory, Traefik, the Zenoh router). **This is what the standup provisions.** | [ADR 1141](../adr/1141-four-node-host-site-baseline.md) |
+| **Observability pair** | 2 | Logs, metrics, dashboards, object storage (OpenObserve, MinIO, Prometheus + Grafana). The second obs node is a warm standby and holds the second copy of the audit record. | [ADR 1141](../adr/1141-four-node-host-site-baseline.md), [ADR 1111](../adr/1111-cutover-gated-service-class-for-standby-nodes.md) |
+| **Break-glass node** (`BREAKGLASS`) | 1 | Operator reach-in of last resort: dual-homed, minimal, no mission or fabric workload, with a second reach-in path that shares no control plane with the goatnet. | [ADR 1114](../adr/1114-breakglass-node-class-and-two-path-reach.md) |
+| **Network-jump host** (`NETWORK-JUMP`) | 1 | Reaches the site's network gear over SSH (tcp 22) only. | [ADR 1131](../adr/1131-network-jump-class-and-herd-gear-scope.md) |
+| **Network gear** | — | The local switch and the transport uplink. | |
+
+A site declares its break-glass node and its network-jump host, or states why it
+has neither (`has_breakglass_node` / `breakglass_absent_reason`,
+`has_network_jump_node` / `network_jump_absent_reason`); the config preflight
+refuses a site that says nothing, and phase 14 converges what is declared
+([ADR 1183](../adr/1183-rescue-nodes-are-part-of-the-site-baseline.md)).
 
 **Spec rule of thumb, per compute node** (source: `compute-spec-minimums.md`):
 an x86 mini-PC — industrial fanless class in production, a NUC-class box
@@ -71,8 +78,8 @@ for dev or interim. **8-core, 16 GB RAM** (32 GB for a multi-site fleet), a smal
 system disk *plus* a **≥256 GB NVMe (512 GB recommended)** carrying the
 LUKS-encrypted data tier — Postgres, audit logs, `.env` files and TLS keys live
 there, and capacity on the wrong mount point is useless capacity. Node shape from
-ADR 1141 (core pair + obs pair),
-extended with the two breakglass backups.
+ADR 1141 (core pair + obs pair), amended by ADR 1183 (the break-glass node and
+the network-jump host).
 
 ### And in the repo and cloud
 
@@ -89,7 +96,7 @@ extended with the two breakglass backups.
 | Bucket | What it is | Time (repeat operator, hardware + accounts in hand) |
 |---|---|---|
 | **Before the run** (before phase 1) | Author the ~30-file config surface, the cert manifest, the inventory, the fleet-pins row. Desk work in the repo — no host touched. | **½–1 day** — the long pole |
-| **Driver run** (phases 1–14) | Mostly automated ansible, plus the schema-wait cycle (5 → 6) and the two human pauses. Image pulls and DNS propagation dominate the waiting. | **~2–4 h** internet, ~1–2 h LAN |
+| **Driver run** (phases 1–14) | Mostly automated ansible, plus the one human pause (phase 11). Image pulls and DNS propagation dominate the waiting. | **~2–4 h** internet, ~1–2 h LAN |
 | **Verify** | Read the acceptance gate; fix what it flags; re-run. | minutes–1 h |
 
 **The honest number:** for a repeat internet build-out with hardware and accounts
@@ -114,7 +121,7 @@ export SITE=demo
 export GROUP=demo_hosts
 export SITE_UPPER=DEMO
 export ZONE=netbird.demo.example.net
-export OWNER_EMAIL=person-139@example.org
+export OWNER_EMAIL=person-125@example.org
 export HOST_IP=192.168.1.40
 ```
 
@@ -136,7 +143,7 @@ luks_volumes_mgmt_host:
      passphrase: "{{ lookup('env', luks_passphrase_envvar) }}"}
 
 site_admins:                              # only these emails may log in
-  - {email: "person-139@example.org", name: "You"}
+  - {email: "person-125@example.org", name: "You"}
 ```
 
 **3 — The cert manifest** — copy the template, never another GOAT-Net's (its SANs
@@ -160,12 +167,13 @@ goat-standup: site=demo  group=demo_hosts  profile=internet  (PLAN — nothing e
 === Phase 2 [A] host baseline + LUKS (this site's nodes only) ===
 === Phase 3 [T] generate per-instance secrets ===
 === Phase 4 [T] mint leaf certs ===
-=== Phase 5 [A] mgmt-stack (site-bootstrap) — first run STOPS at the schema wait ===
-=== Phase 5 [A] [internet] relay-connect (rathole-client) ===
+=== Phase 5 [A] mgmt-stack (site-bootstrap up to the account seed; the seed needs Ory and runs in phase 6) ===
+=== Phase 5 [A] [internet] relay-connect (rathole-client, site-rathole-client.yml) ===
 === Phase 6 [A] ory (kratos/hydra/ui) ===
-=== Phase 6 [A] re-run site-bootstrap (completes phase 5; prints + saves the setup key) ===
+=== Phase 6 [A] the rest of site-bootstrap: wait for the netbird schema, seed the account, print + save the setup key ===
 === Phase 7 [A] [internet] public TLS certificate (traefik-acme) ===
-=== Phase 8 [MANUAL] [internet] mesh-enroll the host + re-mint the router cert ===
+=== Phase 8 [A] [internet] mesh-enroll the hosts (a single-use key each, the declared enrolment URL) ===
+=== Phase 8 [T] [internet] record the mesh IPs (group_vars, mesh inventory, cert manifest) and re-mint the router cert ===
 === Phase 9 [A] zenoh router ===
 === Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ===
 ```

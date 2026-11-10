@@ -14,25 +14,25 @@ func TestOwnedPeerName(t *testing.T) {
 		want    bool
 		because string
 	}{
-		{"machine-svn-gateway-one-1-gateway-one-pi-1", "svn-gateway-one-1", true,
+		{"machine-rtr-gw-1-gw-pi-1", "rtr-gw-1", true,
 			"the shape the mgmt image actually produces"},
 		{"machine-octo-pod-test-machine-octo-pod-test-machine", "octo-pod-test-machine", true,
 			"handle and hostname identical, so the handle appears twice"},
-		{"machine-alpha-baxter-1-alpha-baxter-1", "alpha-baxter-1", true,
+		{"machine-sam-baxter-1-sam-baxter-1", "sam-baxter-1", true,
 			"same shape, different machine"},
-		{"gateway-one-svk-001", "gateway-one-svk-001", true,
+		{"gw-lab-001", "gw-lab-001", true,
 			"renamed to the bare handle by hand — the documented workaround, still has to cut"},
-		{"machine-pod-svk-001", "pod-svk-001", true,
+		{"machine-pod-lab-001", "pod-lab-001", true,
 			"auto_peer_name with no hostname appended"},
 
 		// The reason the trailing hyphen is in the implementation.
-		{"machine-gateway-one-11-thor", "gateway-one-1", false,
-			"handle gateway-one-1 must NOT claim gateway-one-11 — cutting the wrong machine is worse than not cutting"},
-		{"machine-svn-gateway-one-10-x", "svn-gateway-one-1", false,
+		{"machine-gw-11-thor", "gw-1", false,
+			"handle gw-1 must NOT claim gw-11 — cutting the wrong machine is worse than not cutting"},
+		{"machine-rtr-gw-10-x", "rtr-gw-1", false,
 			"same trap one digit further out"},
 
-		{"guestshell", "gateway-one-svk-001", false, "an unrelated peer is not owned"},
-		{"", "gateway-one-svk-001", false, "empty name owns nothing"},
+		{"guestshell", "gw-lab-001", false, "an unrelated peer is not owned"},
+		{"", "gw-lab-001", false, "empty name owns nothing"},
 	}
 
 	for _, c := range cases {

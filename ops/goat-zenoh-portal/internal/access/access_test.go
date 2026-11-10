@@ -35,7 +35,7 @@ func fixture() Sources {
 			{Handle: "ghost-ops", Type: "person", Org: "ghost", Status: "revoked"},
 		},
 		ReadTiers: []ReadTier{{Group: "community-read", Prefix: "**"}},
-		Releases:  []ReleaseIn{{Set: "fvey", Partners: []string{"isl", "aus"}, Prefix: "example-vendor/observations"}},
+		Releases:  []ReleaseIn{{Set: "fvey", Partners: []string{"nld", "aus"}, Prefix: "example-vendor/observations"}},
 	}
 }
 
@@ -73,7 +73,7 @@ func TestVendorWithAnchorMayWriteItsTopics(t *testing.T) {
 // whole roster.
 func TestSlotPoolAnchorWritesItsNamespace(t *testing.T) {
 	g := Assemble(Sources{
-		Vendors: []VendorIn{{Prefix: "e7a9c75b", DisplayName: "maintainer-operator", WriteAnchor: "e7a9c75b"}},
+		Vendors: []VendorIn{{Prefix: "e7a9c75b", DisplayName: "jane-operator", WriteAnchor: "e7a9c75b"}},
 		// no Topics declared for this anchor
 		FlatCommunityRead: true,
 	})
@@ -175,7 +175,7 @@ func TestReverseTopicWritersAndReceivers(t *testing.T) {
 	}
 	// release-set fvey prefix example-vendor/observations covers this key
 	if len(r.Receivers) != 2 {
-		t.Fatalf("expected 2 release receivers (isl,aus), got %v", r.Receivers)
+		t.Fatalf("expected 2 release receivers (nld,aus), got %v", r.Receivers)
 	}
 }
 
@@ -258,9 +258,9 @@ func TestSlotAnchorAffiliationViaAliasHop(t *testing.T) {
 	// Prefix→Alias→declared member attaches the member's affiliation.
 	anchor := "e7a9c75b1f2a3c4d5e6f7a8b9c0d1e2f"
 	s := Sources{
-		Vendors: []VendorIn{{Prefix: anchor, DisplayName: "Kratcorp", Alias: "contributord-system"}},
+		Vendors: []VendorIn{{Prefix: anchor, DisplayName: "Kratcorp", Alias: "example-system"}},
 		Roster: []RosterEntry{{
-			Handle: "contributord-system", Type: "system", Org: "kratcorp", Status: "active",
+			Handle: "example-system", Type: "system", Org: "kratcorp", Status: "active",
 			Affiliation: "vendor", Nation: "USA",
 		}},
 	}
@@ -331,10 +331,10 @@ func TestAffClaimReconcilesTagFreeIdentity(t *testing.T) {
 	// vendor_tag. Before the aff claim this identity was an untracked stray.
 	s := Sources{
 		Roster: []RosterEntry{{
-			Handle: "org67x", Type: "person", Org: "org67x", OrgID: "org63x",
+			Handle: "example-org-sam", Type: "person", Org: "example-org-sam", OrgID: "example-org",
 			Status: "active", Affiliation: "vendor", Nation: "USA",
 		}},
-		Identities: []IdentityIn{{ID: "kid-aff", AffID: "org63x", AffKind: "vendor", AffNation: "USA"}},
+		Identities: []IdentityIn{{ID: "kid-aff", AffID: "example-org", AffKind: "vendor", AffNation: "USA"}},
 	}
 	n := Assemble(s).Nodes[nodeID(KindPerson, "kid-aff")]
 	if n.State != StateActive {
@@ -354,10 +354,10 @@ func TestPerPersonVendorTagBeatsOrgLevelAff(t *testing.T) {
 	// org sibling under the same aff org is still active.
 	s := Sources{
 		Roster: []RosterEntry{
-			{Handle: "org63x-old", Type: "person", Org: "org63x-old", OrgID: "org63x", Status: "revoked"},
-			{Handle: "org63x-new", Type: "person", Org: "org63x-new", OrgID: "org63x", Status: "active"},
+			{Handle: "example-org-old", Type: "person", Org: "example-org-old", OrgID: "example-org", Status: "revoked"},
+			{Handle: "example-org-new", Type: "person", Org: "example-org-new", OrgID: "example-org", Status: "active"},
 		},
-		Identities: []IdentityIn{{ID: "kid-old", Vendor: "org63x-old", AffID: "org63x"}},
+		Identities: []IdentityIn{{ID: "kid-old", Vendor: "example-org-old", AffID: "example-org"}},
 	}
 	if st := Assemble(s).Nodes[nodeID(KindPerson, "kid-old")].State; st != StateCutOff {
 		t.Errorf("state = %s, want cut_off (per-person vendor-tag key wins over org-level aff)", st)
@@ -408,16 +408,16 @@ func TestAffOrgEdgeWhenVendorNodeIsOrgID(t *testing.T) {
 	// aff-carrying, tag-free identity gets its belongs-to-org edge via the
 	// claim, with the deciding record naming traits.aff.id.
 	s := Sources{
-		Vendors:    []VendorIn{{Prefix: "org63x", DisplayName: "org63x"}},
-		Roster:     []RosterEntry{{Handle: "org67x", Type: "person", Org: "org67x", OrgID: "org63x", Status: "active"}},
-		Identities: []IdentityIn{{ID: "kid-aff", AffID: "org63x"}},
+		Vendors:    []VendorIn{{Prefix: "example-org", DisplayName: "Example-Org"}},
+		Roster:     []RosterEntry{{Handle: "example-org-sam", Type: "person", Org: "example-org-sam", OrgID: "example-org", Status: "active"}},
+		Identities: []IdentityIn{{ID: "kid-aff", AffID: "example-org"}},
 	}
 	g := Assemble(s)
 	found := false
 	for _, e := range g.Edges {
-		if e.From == nodeID(KindPerson, "kid-aff") && e.To == nodeID(KindVendor, "org63x") && e.Kind == EdgeBelongsToOrg {
+		if e.From == nodeID(KindPerson, "kid-aff") && e.To == nodeID(KindVendor, "example-org") && e.Kind == EdgeBelongsToOrg {
 			found = true
-			if !strings.Contains(e.Reason, "traits.aff.id=org63x") {
+			if !strings.Contains(e.Reason, "traits.aff.id=example-org") {
 				t.Errorf("edge reason = %q, want it to name traits.aff.id", e.Reason)
 			}
 		}
@@ -432,13 +432,13 @@ func TestVendorSpineAffiliationViaOrgIDIndex(t *testing.T) {
 	// its per-person vendor tag — the OrgID index attaches the org's
 	// affiliation to the spine node anyway.
 	s := Sources{
-		Vendors: []VendorIn{{Prefix: "org63x"}},
+		Vendors: []VendorIn{{Prefix: "example-org"}},
 		Roster: []RosterEntry{{
-			Handle: "org67x", Type: "person", Org: "org67x", OrgID: "org63x",
+			Handle: "example-org-sam", Type: "person", Org: "example-org-sam", OrgID: "example-org",
 			Status: "active", Affiliation: "vendor", Nation: "USA",
 		}},
 	}
-	n := Assemble(s).Nodes[nodeID(KindVendor, "org63x")]
+	n := Assemble(s).Nodes[nodeID(KindVendor, "example-org")]
 	if n.Affiliation != "vendor" || n.Nation != "USA" {
 		t.Errorf("affiliation = %q/%q, want vendor/USA (via the OrgID index)", n.Affiliation, n.Nation)
 	}
@@ -589,15 +589,15 @@ func indexOf(haystack, needle string) int {
 }
 
 func TestReonboardedPersonPrefersActiveDeclaredEntry(t *testing.T) {
-	// The user296x regression: a re-onboarded person carries BOTH
+	// The bsmith1 regression: a re-onboarded person carries BOTH
 	// their old revoked declared entry and a fresh active one (same email —
 	// the registry deprecates, never deletes). First-match let the revoked
 	// ghost win and reported a live, freshly minted admin as cut_off.
 	email := "person-901@example.org"
 	s := Sources{
 		Roster: []RosterEntry{
-			{Handle: "user367x-2", Type: "person", Org: "demo-org-data", Status: "revoked", EmailHash: emailHash(email)},
-			{Handle: "user296x", Type: "person", Org: "usareur-af", Status: "active", EmailHash: emailHash(email)},
+			{Handle: "ben-smith-2", Type: "person", Org: "demo-org-data", Status: "revoked", EmailHash: emailHash(email)},
+			{Handle: "bsmith1", Type: "person", Org: "usareur-af", Status: "active", EmailHash: emailHash(email)},
 		},
 		Identities: []IdentityIn{{ID: "kid-ben", Email: email}},
 	}
@@ -609,7 +609,7 @@ func TestReonboardedPersonPrefersActiveDeclaredEntry(t *testing.T) {
 	// And with ONLY the revoked entry, cut_off must still hold (the fix must
 	// not weaken the real offboarding signal).
 	s2 := Sources{
-		Roster:     []RosterEntry{{Handle: "user367x-2", Type: "person", Org: "demo-org-data", Status: "revoked", EmailHash: emailHash(email)}},
+		Roster:     []RosterEntry{{Handle: "ben-smith-2", Type: "person", Org: "demo-org-data", Status: "revoked", EmailHash: emailHash(email)}},
 		Identities: []IdentityIn{{ID: "kid-ben2", Email: email}},
 	}
 	g2 := Assemble(s2)
@@ -626,15 +626,15 @@ func TestWhoResolvesDeclaredRosterHandle(t *testing.T) {
 	email := "person-900@example.org"
 	s := Sources{
 		Roster: []RosterEntry{{
-			Handle: "maintainer", Type: "person",
+			Handle: "jane", Type: "person",
 			Org:    "(internal / no vendor)", // oss-allow: generic bucket label
 			Status: "active", EmailHash: emailHash(email),
 		}},
-		Identities: []IdentityIn{{ID: "kid-maintainer", Email: email, Vendor: ""}},
+		Identities: []IdentityIn{{ID: "kid-jane", Email: email, Vendor: ""}},
 	}
 	g := Assemble(s)
 
-	byHandle := g.Who("maintainer")
+	byHandle := g.Who("jane")
 	if byHandle.Resolved == "" {
 		t.Fatalf("Who(handle) missed: notes=%v", byHandle.Notes)
 	}
@@ -660,18 +660,18 @@ func TestWhoAttributesPersonOwnMeshPeer(t *testing.T) {
 	email := "person-900@example.org"
 	s := Sources{
 		Roster: []RosterEntry{{
-			Handle: "maintainer", Type: "person",
+			Handle: "jane", Type: "person",
 			Org:    "(internal / no vendor)", // oss-allow: generic bucket label
 			Status: "active", EmailHash: emailHash(email),
 		}},
-		Identities: []IdentityIn{{ID: "kid-maintainer", Email: email}},
+		Identities: []IdentityIn{{ID: "kid-jane", Email: email}},
 		Peers: []PeerIn{{
-			ID: "nb-1", Name: "peer-maintainer-zagros-20260601-mac",
+			ID: "nb-1", Name: "peer-jane-galaxy-20260601-mac",
 			Connected: true, LastSeenUnix: 1750000000,
 		}},
 	}
 	g := Assemble(s)
-	w := g.Who("maintainer")
+	w := g.Who("jane")
 	if !w.OnMesh || !w.Connected {
 		t.Errorf("on_mesh=%v connected=%v, want true/true from the person's own peer", w.OnMesh, w.Connected)
 	}
@@ -682,7 +682,7 @@ func TestWhoAttributesPersonOwnMeshPeer(t *testing.T) {
 		t.Errorf("mesh_attribution = %q, want %q", w.MeshAttribution, MeshAttrPeer)
 	}
 	// The why-trace's mesh gate must pass on the same custody edge.
-	why := g.Why("maintainer", "some/topic")
+	why := g.Why("jane", "some/topic")
 	for _, st := range why.Steps {
 		if st.Layer == "mesh" && st.Verdict != "allow" {
 			t.Errorf("why mesh verdict = %s (%s), want allow via the person's own peer", st.Verdict, st.Reason)
@@ -737,14 +737,14 @@ func TestWhoPersonOrgFallbackStillRollsUp(t *testing.T) {
 
 func TestMatchPeerHandleLongestPrefixWins(t *testing.T) {
 	roster := []RosterEntry{
-		{Handle: "maintainer", Type: "person"},
-		{Handle: "maintainer-2", Type: "person"},
+		{Handle: "jane", Type: "person"},
+		{Handle: "jane-2", Type: "person"},
 	}
-	if h := MatchPeerHandle("peer-maintainer-2-zagros-20260601", roster); h != "maintainer-2" {
-		t.Errorf("matched %q, want maintainer-2 (longest prefix)", h)
+	if h := MatchPeerHandle("peer-jane-2-galaxy-20260601", roster); h != "jane-2" {
+		t.Errorf("matched %q, want jane-2 (longest prefix)", h)
 	}
-	if h := MatchPeerHandle("peer-maintainer-zagros-20260601", roster); h != "maintainer" {
-		t.Errorf("matched %q, want maintainer", h)
+	if h := MatchPeerHandle("peer-jane-galaxy-20260601", roster); h != "jane" {
+		t.Errorf("matched %q, want jane", h)
 	}
 	if h := MatchPeerHandle("unconventional", roster); h != "" {
 		t.Errorf("matched %q, want no match", h)
@@ -758,20 +758,20 @@ func TestWhoPersonWritesResolveViaSlotAlias(t *testing.T) {
 	// every org row has its grant. The slot ALIAS is the hop that closes it — keyed
 	// on the org short-tag, which is what an alias actually spells (the onboard sets
 	// it from `zenoh.trial.vendor` and drift-checks it against `org.short_tag`).
-	email := "user903x@example.com"
+	email := "alex@example.com"
 	s := Sources{
 		Vendors: []VendorIn{{
 			Prefix: "3f2a0b1c-uuid-anchor", WriteAnchor: "3f2a0b1c-uuid-anchor",
-			Alias: "org65x",
+			Alias: "example-org-alex",
 		}},
 		Roster: []RosterEntry{{
-			Handle: "user903x", Type: "person", Org: "org65x",
+			Handle: "alex", Type: "person", Org: "example-org-alex",
 			Status: "active", EmailHash: emailHash(email),
 		}},
-		Identities: []IdentityIn{{ID: "kid-user903x", Email: email, Vendor: "org65x"}},
+		Identities: []IdentityIn{{ID: "kid-alex", Email: email, Vendor: "example-org-alex"}},
 	}
 	g := Assemble(s)
-	w := g.Who("user903x")
+	w := g.Who("alex")
 	if len(w.Writes) == 0 {
 		t.Fatalf("writes = 0, want the anchor grant via the alias hop; notes=%v", w.Notes)
 	}
@@ -785,7 +785,7 @@ func TestWhoPersonWritesResolveViaSlotAlias(t *testing.T) {
 	// The why-trace's zenoh step hops the same anchor for declared topics.
 	s.Topics = []TopicIn{{VendorPrefix: "3f2a0b1c-uuid-anchor", KeyPattern: "3f2a0b1c-uuid-anchor/obs/v1"}}
 	g2 := Assemble(s)
-	why := g2.Why("user903x", "3f2a0b1c-uuid-anchor/obs/v1")
+	why := g2.Why("alex", "3f2a0b1c-uuid-anchor/obs/v1")
 	for _, st := range why.Steps {
 		if st.Layer == "zenoh" && st.Verdict != "allow" {
 			t.Errorf("why zenoh verdict = %s (%s), want allow via the person's anchor", st.Verdict, st.Reason)
@@ -818,13 +818,13 @@ func TestWhoPersonZeroWritesGetsUnattributedNote(t *testing.T) {
 	email := "person-900@example.org"
 	s := Sources{
 		Roster: []RosterEntry{{
-			Handle: "maintainer", Type: "person",
+			Handle: "jane", Type: "person",
 			Org:    "(internal / no vendor)", // oss-allow: generic bucket label
 			Status: "active", EmailHash: emailHash(email),
 		}},
-		Identities: []IdentityIn{{ID: "kid-maintainer", Email: email}},
+		Identities: []IdentityIn{{ID: "kid-jane", Email: email}},
 	}
-	w := Assemble(s).Who("maintainer")
+	w := Assemble(s).Who("jane")
 	if len(w.Writes) != 0 {
 		t.Fatalf("writes = %v, want none (no anchor exists)", w.Writes)
 	}
@@ -842,17 +842,17 @@ func TestWhoPersonZeroWritesGetsUnattributedNote(t *testing.T) {
 func TestWhoPersonWritesResolveViaTagAlias(t *testing.T) {
 	// A goatnet can mint slot aliases as the member's VENDOR TAG, not their personal
 	// handle. A person whose tag names an alias anchors there.
-	email := "user903x@example.com"
+	email := "alex@example.com"
 	s := Sources{
 		Vendors: []VendorIn{{
 			Prefix: "3ea54776-uuid-anchor", WriteAnchor: "3ea54776-uuid-anchor",
-			Alias: "org65x",
+			Alias: "example-org-alex",
 		}},
 		Roster: []RosterEntry{{
-			Handle: "user104x", Type: "person", Org: "org65x",
+			Handle: "alex-smith", Type: "person", Org: "example-org-alex",
 			Status: "active", EmailHash: emailHash(email),
 		}},
-		Identities: []IdentityIn{{ID: "kid-user903x", Email: email, Vendor: "org65x"}},
+		Identities: []IdentityIn{{ID: "kid-alex", Email: email, Vendor: "example-org-alex"}},
 	}
 	w := Assemble(s).Who(email)
 	if len(w.Writes) == 0 || w.Writes[0].Topic != "3ea54776-uuid-anchor/**" {
@@ -904,26 +904,26 @@ func TestWhoTagAliasWinsAndHandleAliasIsRefused(t *testing.T) {
 }
 
 func TestWhoPersonWritesResolveViaSuffixedAlias(t *testing.T) {
-	// A re-issued slot's alias carries a -<n> suffix (user318x-2 — the
+	// A re-issued slot's alias carries a -<n> suffix (kim-park-2 — the
 	// ≤2-certs convention); exact matching left these people "unattributed"
 	// despite a live slot (2 of the 21 zero-write rows).
 	email := "sang@example.com"
 	s := Sources{
 		Vendors: []VendorIn{{
-			Prefix: "9ab1-uuid", WriteAnchor: "9ab1-uuid", Alias: "user318x-2",
+			Prefix: "9ab1-uuid", WriteAnchor: "9ab1-uuid", Alias: "kim-park-2",
 		}},
 		Roster: []RosterEntry{{
-			Handle: "user318x", Type: "person", Org: "user318x",
+			Handle: "kim-park", Type: "person", Org: "kim-park",
 			Status: "active", EmailHash: emailHash(email),
 		}},
-		Identities: []IdentityIn{{ID: "kid-sang", Email: email, Vendor: "user318x"}},
+		Identities: []IdentityIn{{ID: "kid-kim", Email: email, Vendor: "kim-park"}},
 	}
 	w := Assemble(s).Who(email)
 	if len(w.Writes) == 0 || w.Writes[0].Topic != "9ab1-uuid/**" {
 		t.Errorf("writes = %v, want the suffixed-alias slot attributed", w.Writes)
 	}
 	// An exact alias must always beat another slot's stripped suffix.
-	s.Vendors = append([]VendorIn{{Prefix: "exact-uuid", WriteAnchor: "exact-uuid", Alias: "user318x"}}, s.Vendors...)
+	s.Vendors = append([]VendorIn{{Prefix: "exact-uuid", WriteAnchor: "exact-uuid", Alias: "kim-park"}}, s.Vendors...)
 	w2 := Assemble(s).Who(email)
 	if len(w2.Writes) == 0 || w2.Writes[0].Topic != "exact-uuid/**" {
 		t.Errorf("writes = %v, want the exact-alias slot to win", w2.Writes)
@@ -932,8 +932,8 @@ func TestWhoPersonWritesResolveViaSuffixedAlias(t *testing.T) {
 
 func TestAliasBase(t *testing.T) {
 	for in, want := range map[string]string{
-		"user318x-2": "user318x", "demo-org-data-adam-2": "demo-org-data-adam",
-		"team-x1": "team-x1", "org65x": "org65x", "solo": "solo", "a-10": "a",
+		"kim-park-2": "kim-park", "demo-org-data-adam-2": "demo-org-data-adam",
+		"team-x1": "team-x1", "example-org-alex": "example-org-alex", "solo": "solo", "a-10": "a",
 	} {
 		if got := aliasBase(in); got != want {
 			t.Errorf("aliasBase(%q) = %q, want %q", in, got, want)

@@ -1,0 +1,125 @@
+---
+# Post-check of relay-ingress-add-site.yml, per founder relay: the joiner's
+# server is in the haproxy dispatcher and EVERY dispatcher backend (balanced,
+# pin_*) is UP, read from the haproxy stats CSV on 127.0.0.1:<stats port>.
+#
+# A backend can stay DOWN after the re-render although nothing is wrong with
+# its node: rathole-server restarted with the new server.toml and the node's
+# rathole client sits in reconnect backoff, so enrolment through this relay
+# fails. The node's rathole-client@<relay> is restarted once (delegated to the
+# node) and the relay re-checked; a backend still DOWN fails closed, naming the
+# relay and the backend.
+#
+# Needs join_site and founder_site; the node behind a backend is found in the
+# loaded inventory (see "Name the node behind each DOWN backend").
+- name: Dispatcher check — every backend UP on this relay
+  vars:
+    _stats_port: "{{ rathole_ingress_dispatch_stats_port | default(8404) }}"
+    # This relay's tunnel unit on a management node: rathole-client@<relay>,
+    # the relay's inventory name without its relay- prefix (site-rathole-client.yml).
+    _client_unit: "rathole-client@{{ inventory_hostname | regex_replace('^relay-', '') }}"
+    # Every server row of the dispatcher's backends (balanced, pin_*) whose
+    # status is not UP; a row is the stats CSV split on commas, column 18
+    # (index 17) the status. Lazy: reads the latest stats register (_stats,
+    # then _stats_after once the re-read has run).
+    _cur_stats: "{{ _stats_after if (_stats_after.stdout_lines is defined) else _stats }}"
+    _down_expr: >-
+      {{ _cur_stats.stdout_lines | default([])
+         | reject('match', '#') | map('split', ',')
+         | selectattr('17', 'defined')
+         | rejectattr('1', 'in', ['FRONTEND', 'BACKEND'])
+         | selectattr('0', 'match', '^(balanced|pin_)')
+         | rejectattr('17', 'match', '^UP')
+         | list }}
+  block:
+    - name: Read the relay's live haproxy stats (localhost socket) until every backend is UP
+      ansible.builtin.command:
+        argv: [curl, -sf, "http://127.0.0.1:{{ _stats_port }}/;csv"]
+      register: _stats
+      changed_when: false
+      failed_when: false
+      retries: 6
+      delay: "{{ rathole_ingress_check_delay | default(5) }}"
+      until: >-
+        _stats.rc == 0 and
+        ('balanced,' + (join_site | string) + ',') in _stats.stdout and
+        (_down_expr | length) == 0
+
+    - name: Assert the joiner backend is wired into this relay's dispatcher
+      ansible.builtin.assert:
+        that:
+          - _stats.rc == 0
+          - "('balanced,' + (join_site | string) + ',') in _stats.stdout"
+        fail_msg: >-
+          {{ inventory_hostname }}:
+          {{ ('haproxy stats on 127.0.0.1:' ~ _stats_port ~ ' did not answer (curl exit ' ~ _stats.rc ~ ')') if _stats.rc != 0
+             else ('no `' ~ join_site ~ '` server in the haproxy `balanced` backend after the re-render — the alias was not applied here. Check the merge landed in inventory/' ~ founder_site ~ '-goat-relay-alias.ini and re-run.') }}
+        quiet: true
+
+    # A backend can stay DOWN after the re-render although nothing is wrong
+    # with its node: rathole-server restarted with the new server.toml and the
+    # node's rathole client sits in reconnect backoff. Restart that node's
+    # client for THIS relay, once, and re-check.
+    - name: Name the DOWN backends
+      ansible.builtin.set_fact:
+        _down_rows: "{{ _down_expr }}"
+        _down_nodes: {}
+
+    # The node behind a backend: its `node:` field when declared, else the first
+    # host of the joiner's group (backend named join_site) or the founder's
+    # (service netbird-mgmt, or named founder_site), else of <backend>_hosts.
+    - name: Name the node behind each DOWN backend
+      ansible.builtin.set_fact:
+        _down_nodes: >-
+          {{ _down_nodes | combine({item[1]: (_b.node | default('', true))
+             or (groups[_g] | default([]) | first | default(''))}) }}
+      vars:
+        _b: "{{ rathole_ingress_backends | default([]) | selectattr('name', 'equalto', item[1]) | first | default({}) }}"
+        _g: >-
+          {{ ((join_site if item[1] == (join_site | string)
+               else (founder_site if (_b.service | default('')) == 'netbird-mgmt' or item[1] == (founder_site | string)
+               else item[1])) | replace('-', '_')) ~ '_hosts' }}
+      loop: "{{ _down_rows }}"
+      loop_control:
+        label: "{{ item[0] }}/{{ item[1] }} {{ item[17] }}"
+
+    - name: Restart the DOWN backend's rathole client for this relay, on its node
+      ansible.builtin.command:
+        argv: [systemctl, restart, "{{ _client_unit }}"]
+      changed_when: true
+      become: true
+      delegate_to: "{{ item.value }}"
+      loop: "{{ _down_nodes | dict2items | selectattr('value') | list }}"
+      loop_control:
+        label: "{{ item.key }} on {{ item.value }} ({{ _client_unit }})"
+      when: _down_rows | length > 0
+
+    # Unconditional, so the verdict below always reads a fresh register: with
+    # nothing DOWN it returns on the first read.
+    - name: Re-read the haproxy stats (after any client restart)
+      ansible.builtin.command:
+        argv: [curl, -sf, "http://127.0.0.1:{{ _stats_port }}/;csv"]
+      register: _stats_after
+      changed_when: false
+      failed_when: false
+      retries: "{{ 12 if _down_rows | length > 0 else 1 }}"
+      delay: "{{ rathole_ingress_check_delay | default(5) }}"
+      until: _stats_after.rc == 0 and (_down_expr | length) == 0
+
+    - name: Assert every dispatcher backend on this relay is UP
+      ansible.builtin.assert:
+        that:
+          - _stats_after.rc == 0
+          - (_down_expr | length) == 0
+        fail_msg: >-
+          {{ inventory_hostname }}: dispatcher backend(s) still not UP after
+          restarting each one's rathole client for this relay:
+          {% for r in _down_expr %}{{ r[0] }}/{{ r[1] }} {{ r[17] }}; {% endfor %}
+          {% for k, v in _down_nodes.items() if not v %}Backend {{ k }} names no node in this inventory (set node: on its
+          rathole_ingress_backends entry, or pass the node's inventory), so its
+          {{ _client_unit }} was not restarted. {% endfor %}
+          Read the node's `journalctl -u {{ _client_unit }}` and the relay's
+          rathole-server log; a node whose client never dials leaves its
+          backend DOWN and enrolment through this relay fails.
+        success_msg: >-
+          {{ inventory_hostname }}: every dispatcher backend UP, `{{ join_site }}` included.

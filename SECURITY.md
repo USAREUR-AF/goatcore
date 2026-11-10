@@ -4,7 +4,13 @@ goat handles identity, authentication and encrypted transit at the boundary betw
 
 ## Reporting a vulnerability
 
-**Do not open a public issue.** Use GitHub Private Vulnerability Reporting on this repository: *Security* → *Report a vulnerability*. This opens a private advisory visible only to the maintainers.
+**Do not open a public issue or pull request to report a vulnerability.**
+
+**[Report a vulnerability privately](https://github.com/USAREUR-AF/goatcore/security/advisories/new)**
+
+You can also open the reporting form from this repository's *Security* tab by selecting *Report a vulnerability*.
+
+Reports are private and accessible to repository administrators, organization owners, security managers, the reporter, and collaborators explicitly added to the advisory. Being listed in `CODEOWNERS` does not itself grant access. Reports remain private until an authorized maintainer publishes the advisory. See [GitHub's advisory permissions](https://docs.github.com/en/code-security/reference/permissions/repository-security-advisory) for details.
 
 Include: a description of the issue and its impact; reproduction steps or a proof of concept; the affected versions, commits or deployment surfaces; whether you have shared it elsewhere.
 
@@ -24,3 +30,17 @@ In scope: the code in this repository and the images and release artifacts built
 ## Supported versions
 
 Pre-1.0, the latest tagged release of each component is supported. Fixes land on `main` and are released by tag.
+
+## Advance notice for operators of goat deployments
+
+Registered members of the goat user community can receive advance notice of a vulnerability before its public advisory. A recipient receives, privately, the advisory text, the fix as a patch, and fixed images and binaries built from it, so the deployments they operate are patched by the time the advisory is published.
+
+**When it is used.** Only for a vulnerability in this repository's own code that is not already public or easily discoverable, and only once a fix exists. A vulnerability in a dependency that already has a public advisory is handled in the open, through the normal dependency update.
+
+**Timing.** The advance-notice window sits inside the coordinated disclosure date agreed with the reporter and never moves that date. It is 7 days from the notice by default, may be extended once to 14 days, and always ends at the agreed disclosure date or earlier. The advisory is published at once, ending the window, if the vulnerability is found being exploited, becomes public, or is disclosed by anyone who received notice.
+
+**What a recipient may do during the window.** Deploy the fix to the deployments they operate, and share the notice with the people who operate them. They may not discuss the vulnerability publicly, publish the patch or the fixed artifacts, or share them with anyone outside those deployments.
+
+**Who receives notice.** Registered members of the goat user community. A registered member is a person who has completed onboarding to one of the community environments the goat maintainers operate, whose registration is current, and who has linked a GitHub account to that registration. There may be several community environments, each serving a different user community; registration in any one of them qualifies. Registration is the admission: there is no separate application.
+
+To link your GitHub account, add your GitHub username to your registration in your community environment's identity service, when you register or at any time afterwards. Registered members are given read access to a private repository, from which notices, patches and fixed artifacts are distributed, and receive each notice by e-mail. Access ends when the registration ends.

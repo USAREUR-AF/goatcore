@@ -34,7 +34,7 @@ tests:
               component: identity
             exp_annotations:
               summary: "12 live identity(ies) on zagros have no declared record"
-              description: "12 unallowlisted person-stray(s) reconcile to out_of_band — live (login/mesh) but absent from the declared registry (roster.json). Each is a real participant needing a manifest backfill (see the user209x backfill) or an identity to revoke; if it's a legitimate test/service account, add it to identity-reconcile-allowlist.txt. Names: `journalctl -t identity-reconcile` on the mgmt host."
+              description: "12 unallowlisted person-stray(s) reconcile to out_of_band — live (login/mesh) but absent from the declared registry (roster.json). Each is a real participant needing a manifest backfill or an identity to revoke; if it's a legitimate test/service account, add it to identity-reconcile-allowlist.txt. Names: `journalctl -t identity-reconcile` on the mgmt host."
       - eval_time: 20m
         alertname: IdentityReconcileStale
         exp_alerts: []

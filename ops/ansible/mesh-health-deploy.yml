@@ -7,12 +7,12 @@
 # grades each WireGuard link and publishes ops/mesh/health/<site>. Passive;
 # persists nothing.
 #
-#   OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES aws-vault exec legacy --no-session -- \
+#   OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES aws-vault exec <profile> --no-session -- \
 #     ../scripts/ansible-preflight.sh \
 #       -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini \
 #       mesh-health-deploy.yml
 #
-#   # ZAGROS sibling goatnet:  add  -e target=zagros_hosts
+#   # another goatnet:  add  -e target=<site>_hosts
 #
 # Pre-flight (operator-side):
 #   1. zenoh-router Healthy on the target host with the infra-mesh-health
@@ -25,10 +25,10 @@
 #      (replace the PENDING :latest placeholder with the built digest).
 #
 # Live-fire: a live subscriber on ops/mesh/health/<site> sees the per-site
-# EnvHealthV1{domain:"mesh"} (`goat sub --context zagros 'ops/mesh/health/**' --take 2`).
+# EnvHealthV1{domain:"mesh"} (`goat sub --context <goatnet> 'ops/mesh/health/**' --take 2`).
 
-- name: deploy goat-mesh-health meter on nova trial fabric (ADR 1042/1036)
-  hosts: "{{ target | mandatory }}"   # -e target=zagros_hosts for the ZAGROS sibling goatnet
+- name: deploy goat-mesh-health meter on the trial fabric (ADR 1042/1036)
+  hosts: "{{ target | mandatory }}"   # -e target=<site>_hosts
   become: true
   gather_facts: true
 

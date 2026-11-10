@@ -15,7 +15,7 @@ import (
 const goldenZenohdJSON5 = `// header comment
 {
   mode: "router",
-  connect: { endpoints: ["tls/zenoh.nova.netbird.nova.example:7447"] },
+  connect: { endpoints: ["tls/zenoh.goat.example:7447"] },
   listen: { endpoints: ["tcp/127.0.0.1:7447"] },
   transport: {
     link: {
@@ -57,7 +57,7 @@ func TestPeeringLint_MissingMTLS(t *testing.T) {
 }
 
 func TestPeeringLint_MissingTLSBlockEntirely(t *testing.T) {
-	src := `{ mode: "router", connect: { endpoints: ["tls/zenoh.nova.netbird.nova.example:7447"] } }`
+	src := `{ mode: "router", connect: { endpoints: ["tls/zenoh.goat.example:7447"] } }`
 	ts := newTestServer(t)
 	body := mustLint(t, ts.URL, "zenohd_json5", src, "")
 	if !findingsContain(body.Findings, "error", "transport.link.tls") {
@@ -76,7 +76,7 @@ func TestPeeringLint_WrongMode(t *testing.T) {
 
 func TestPeeringLint_MissingConnectEndpoints(t *testing.T) {
 	src := strings.Replace(goldenZenohdJSON5,
-		`connect: { endpoints: ["tls/zenoh.nova.netbird.nova.example:7447"] },`,
+		`connect: { endpoints: ["tls/zenoh.goat.example:7447"] },`,
 		``, 1)
 	ts := newTestServer(t)
 	body := mustLint(t, ts.URL, "zenohd_json5", src, "")
@@ -88,7 +88,7 @@ func TestPeeringLint_MissingConnectEndpoints(t *testing.T) {
 func TestPeeringLint_ACLPrefixMismatch(t *testing.T) {
 	src := `{
   mode: "router",
-  connect: { endpoints: ["tls/zenoh.nova.netbird.nova.example:7447"] },
+  connect: { endpoints: ["tls/zenoh.goat.example:7447"] },
   transport: { link: { tls: {
     enable_mtls: true, verify_name_on_connect: true,
     root_ca_certificate: "/cert/root-cert.pem",
@@ -216,7 +216,7 @@ func TestPeeringLint_PythonFalseAndNone(t *testing.T) {
 func TestPeeringLint_PythonInsideStringNotFlagged(t *testing.T) {
 	src := `{
   mode: "router",
-  connect: { endpoints: ["tls/zenoh.nova.netbird.nova.example:7447"] },
+  connect: { endpoints: ["tls/zenoh.goat.example:7447"] },
   // Comment about True / False / None - should NOT trigger
   some_string_field: "this string contains True and False and None",
   transport: { link: { tls: {
@@ -272,7 +272,7 @@ func TestPeeringLint_LineNumberInSniffFinding(t *testing.T) {
 func TestJSON5Lite_HandlesSingleQuotes(t *testing.T) {
 	// Direct test through the lint surface — a single-quoted value should
 	// be tolerated and reach the semantic stage as a normal string.
-	src := `{ mode: 'router', connect: { endpoints: ['tls/zenoh.nova.netbird.nova.example:7447'] }, transport: { link: { tls: { enable_mtls: true, verify_name_on_connect: true, root_ca_certificate: '/cert/root-cert.pem', listen_private_key: '/cert/key.pem', listen_certificate: '/cert/cert.pem', connect_private_key: '/cert/key.pem', connect_certificate: '/cert/cert.pem' } } } }`
+	src := `{ mode: 'router', connect: { endpoints: ['tls/zenoh.goat.example:7447'] }, transport: { link: { tls: { enable_mtls: true, verify_name_on_connect: true, root_ca_certificate: '/cert/root-cert.pem', listen_private_key: '/cert/key.pem', listen_certificate: '/cert/cert.pem', connect_private_key: '/cert/key.pem', connect_certificate: '/cert/cert.pem' } } } }`
 	ts := newTestServer(t)
 	body := mustLint(t, ts.URL, "zenohd_json5", src, "")
 	if !body.ParseOK {
@@ -281,7 +281,7 @@ func TestJSON5Lite_HandlesSingleQuotes(t *testing.T) {
 }
 
 func TestJSON5Lite_HandlesTrailingCommas(t *testing.T) {
-	src := `{ mode: "router", connect: { endpoints: ["tls/zenoh.nova.netbird.nova.example:7447",], }, transport: { link: { tls: { enable_mtls: true, verify_name_on_connect: true, root_ca_certificate: "/cert/root-cert.pem", listen_private_key: "/cert/key.pem", listen_certificate: "/cert/cert.pem", connect_private_key: "/cert/key.pem", connect_certificate: "/cert/cert.pem", }, }, }, }`
+	src := `{ mode: "router", connect: { endpoints: ["tls/zenoh.goat.example:7447",], }, transport: { link: { tls: { enable_mtls: true, verify_name_on_connect: true, root_ca_certificate: "/cert/root-cert.pem", listen_private_key: "/cert/key.pem", listen_certificate: "/cert/cert.pem", connect_private_key: "/cert/key.pem", connect_certificate: "/cert/cert.pem", }, }, }, }`
 	ts := newTestServer(t)
 	body := mustLint(t, ts.URL, "zenohd_json5", src, "")
 	if !body.ParseOK {
@@ -291,7 +291,7 @@ func TestJSON5Lite_HandlesTrailingCommas(t *testing.T) {
 
 func TestJSON5Lite_HandlesBlockComments(t *testing.T) {
 	src := `/* leading block */
-{ mode: "router" /* inline */, connect: { endpoints: ["tls/zenoh.nova.netbird.nova.example:7447"] }, transport: { link: { tls: { enable_mtls: true, verify_name_on_connect: true, root_ca_certificate: "/cert/root-cert.pem", listen_private_key: "/cert/key.pem", listen_certificate: "/cert/cert.pem", connect_private_key: "/cert/key.pem", connect_certificate: "/cert/cert.pem" } } } }`
+{ mode: "router" /* inline */, connect: { endpoints: ["tls/zenoh.goat.example:7447"] }, transport: { link: { tls: { enable_mtls: true, verify_name_on_connect: true, root_ca_certificate: "/cert/root-cert.pem", listen_private_key: "/cert/key.pem", listen_certificate: "/cert/cert.pem", connect_private_key: "/cert/key.pem", connect_certificate: "/cert/cert.pem" } } } }`
 	ts := newTestServer(t)
 	body := mustLint(t, ts.URL, "zenohd_json5", src, "")
 	if !body.ParseOK {

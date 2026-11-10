@@ -1437,7 +1437,7 @@ mod tests {
         let artifact = serde_json::to_vec(&ClaimArtifact {
             format: "goat-name-claim-v1".into(),
             name: name.into(),
-            ip: "100.127.0.64".into(),
+            ip: "100.127.0.67".into(),
             anchor: anchor.into(),
             issued_at_unix: issued_at,
             ttl_seconds: ttl,
@@ -1471,7 +1471,7 @@ mod tests {
         let snap = snap_with_binding(PEER, ANCHOR);
         let vc = verify_claim(&env, &snap, &fix.root_vk, now).expect("valid claim verifies");
         assert_eq!(vc.name, PEER);
-        assert_eq!(vc.ip.to_string(), "100.127.0.64");
+        assert_eq!(vc.ip.to_string(), "100.127.0.67");
         assert_eq!(vc.age_secs, 60);
     }
 
@@ -1505,7 +1505,7 @@ mod tests {
         let artifact = serde_json::to_vec(&ClaimArtifact {
             format: "goat-name-claim-v1".into(),
             name: PEER.into(),
-            ip: "100.127.0.64".into(),
+            ip: "100.127.0.67".into(),
             anchor: ANCHOR.into(),
             issued_at_unix: now - 60,
             ttl_seconds: 3600,
@@ -1519,13 +1519,13 @@ mod tests {
         };
         let snap = snap_with_binding(PEER, ANCHOR);
         let vc = verify_claim(&env, &snap, &root_vk, now).expect("ed25519 claim verifies");
-        assert_eq!(vc.ip.to_string(), "100.127.0.64");
+        assert_eq!(vc.ip.to_string(), "100.127.0.67");
 
         // Tampered artifact refused under ed25519 too.
         let mut bad = env.clone();
         let flipped = String::from_utf8(artifact.clone())
             .unwrap()
-            .replace("100.127.0.64", "6.6.6.6");
+            .replace("100.127.0.67", "6.6.6.6");
         bad.artifact_b64 = b64.encode(flipped.as_bytes());
         assert!(verify_claim(&bad, &snap, &root_vk, now)
             .unwrap_err()
@@ -1584,7 +1584,7 @@ mod tests {
         let bytes = b64.decode(&tampered.artifact_b64).unwrap();
         let flipped = String::from_utf8(bytes)
             .unwrap()
-            .replace("100.127.0.64", "6.6.6.6");
+            .replace("100.127.0.67", "6.6.6.6");
         tampered.artifact_b64 = b64.encode(flipped.as_bytes());
         let err = verify_claim(&tampered, &snap, &fix.root_vk, now).unwrap_err();
         assert!(err.contains("signature invalid"), "{err}");

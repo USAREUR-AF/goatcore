@@ -18,7 +18,7 @@ services:
       - --configFile=/etc/traefik/traefik.yml
     volumes:
       - {{ obs_traefik_compose_dir }}/traefik.yml:/etc/traefik/traefik.yml:ro
-      - {{ obs_traefik_dynamic_dir }}:/etc/goat/traefik-dynamic:ro
+      - {{ obs_traefik_dynamic_dir }}:{{ obs_traefik_dynamic_dir }}:ro
       - {{ obs_traefik_tls_root }}:{{ obs_traefik_tls_root }}:ro
     ports:
       # :443 bound to all interfaces — the public-facing TLS

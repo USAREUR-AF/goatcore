@@ -25,7 +25,7 @@ func authTestServer(t *testing.T, cfg *config.Config) *Server {
 // A per-person operator key resolves to its handle in Principal.Actor.
 func TestResolvePrincipal_NamedOperatorKeySetsActor(t *testing.T) {
 	s := authTestServer(t, &config.Config{
-		OperatorAPIKeys: map[string]string{"maintainer-operator": "k1", "alice-op": "k2"},
+		OperatorAPIKeys: map[string]string{"jane-operator": "k1", "alice-op": "k2"},
 	})
 	p, err := s.resolvePrincipal(context.Background(), "k2")
 	if err != nil {
@@ -58,7 +58,7 @@ func TestResolvePrincipal_LegacyKeyDefaultsActor(t *testing.T) {
 func TestResolvePrincipal_UnknownTokenIsNil(t *testing.T) {
 	s := authTestServer(t, &config.Config{
 		OperatorAPIKey:  "legacy",
-		OperatorAPIKeys: map[string]string{"maintainer-operator": "k1"},
+		OperatorAPIKeys: map[string]string{"jane-operator": "k1"},
 	})
 	p, err := s.resolvePrincipal(context.Background(), "nope")
 	if err != nil {
@@ -74,14 +74,14 @@ func TestResolvePrincipal_UnknownTokenIsNil(t *testing.T) {
 func TestResolvePrincipal_NamedKeyWinsOnCollision(t *testing.T) {
 	s := authTestServer(t, &config.Config{
 		OperatorAPIKey:  "shared",
-		OperatorAPIKeys: map[string]string{"maintainer-operator": "shared"},
+		OperatorAPIKeys: map[string]string{"jane-operator": "shared"},
 	})
 	p, err := s.resolvePrincipal(context.Background(), "shared")
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
-	if p == nil || p.Actor != "maintainer-operator" {
-		t.Fatalf("expected maintainer-operator actor, got %#v", p)
+	if p == nil || p.Actor != "jane-operator" {
+		t.Fatalf("expected jane-operator actor, got %#v", p)
 	}
 }
 
@@ -93,9 +93,9 @@ func TestActorOf(t *testing.T) {
 		t.Errorf("actorOf with no principal = %q, want %q", got, defaultOperatorHandle)
 	}
 
-	ctx := context.WithValue(r.Context(), principalKey, &Principal{Operator: true, Actor: "maintainer-operator"})
+	ctx := context.WithValue(r.Context(), principalKey, &Principal{Operator: true, Actor: "jane-operator"})
 	r2 := r.WithContext(ctx)
-	if got := actorOf(r2); got != "maintainer-operator" {
-		t.Errorf("actorOf with operator principal = %q, want maintainer-operator", got)
+	if got := actorOf(r2); got != "jane-operator" {
+		t.Errorf("actorOf with operator principal = %q, want jane-operator", got)
 	}
 }

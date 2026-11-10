@@ -29,6 +29,12 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+# The image's install directories (the repo under $GOAT_HOST_OPT_DIR/repo, the
+# state and log dirs first-boot.sh writes): the environment, else the tree's
+# group_vars/all.yml, else /opt/goat and friends (lib-host-layout.sh).
+# shellcheck source=ops/bootstrap/lib-host-layout.sh
+. "$REPO_ROOT/ops/bootstrap/lib-host-layout.sh"
+host_layout_load "$REPO_ROOT"
 
 usage() {
   cat <<EOF
@@ -70,14 +76,17 @@ rm -rf "$STAGE"
 mkdir -p "$STAGE"
 git -C "$REPO_ROOT" archive --format=tar "$BUNDLE_TAG" \
   | tar -x -C "$STAGE" -f -
+# The unit and the script it starts name this build's layout.
+host_layout_render "$STAGE/ops/bootstrap/first-boot/first-boot.service" \
+  "$STAGE/ops/bootstrap/first-boot/first-boot.sh"
 
 # -- Step 2: write mkosi.conf -------------------------------------------
 step "Step 2: render mkosi.conf"
 MKOSI_DIR="$OUTPUT_DIR/mkosi"
-mkdir -p "$MKOSI_DIR/mkosi.extra/opt/goat"
+mkdir -p "$MKOSI_DIR/mkosi.extra$GOAT_HOST_OPT_DIR"
 mkdir -p "$MKOSI_DIR/mkosi.extra/etc/systemd/system/multi-user.target.wants"
 
-cp -a "$STAGE" "$MKOSI_DIR/mkosi.extra/opt/goat/repo"
+cp -a "$STAGE" "$MKOSI_DIR/mkosi.extra$GOAT_HOST_OPT_DIR/repo"
 cp "$STAGE/ops/bootstrap/first-boot/first-boot.service" \
    "$MKOSI_DIR/mkosi.extra/etc/systemd/system/first-boot.service"
 ln -sf /etc/systemd/system/first-boot.service \

@@ -26,7 +26,7 @@
 #
 # Implements docs/design/mgmt-plane-threat-mitigations.md §1.1 (N1-N5)
 # and docs/design/universal-ntp-hygiene.md — the five alerts specified
-# in the region A-ship MVP brief.
+# in the first-ship MVP brief.
 #
 # Known client-side NTS-auth-failure metric gap: chrony_exporter does
 # NOT currently emit a client-side NTS-KE handshake failure counter
@@ -46,7 +46,7 @@ groups:
       # Spock becomes semantically wrong when two sites disagree on the
       # clock by more than the inter-site commit latency. 500ms is the
       # tight bound we're willing to run the multi-master cluster at;
-      # re-evaluate if real-world Satlink latency pushes sample
+      # re-evaluate if real-world satellite-link latency pushes sample
       # variance higher than expected.
       - alert: ChronyClockOffsetHigh
         expr: abs(chrony_tracking_last_offset_seconds) > 0.5

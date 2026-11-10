@@ -14,6 +14,15 @@
 #
 # Persists nothing — no S3/MinIO/.env.
 
+- name: time-health | the image pin is set
+  ansible.builtin.assert:
+    that:
+      - time_health_image | length > 0
+    fail_msg: >-
+      time_health_image is empty. The role carries no pin: set it in the
+      goatnet's pin table (ops/pins/fleet-pins.yaml) or in its group_vars.
+    quiet: true
+
 - name: time-health | pre-flight leaf cert exists (when tls/ endpoint)
   ansible.builtin.stat:
     path: "{{ time_health_cert_dir }}/time-health-cert.pem"

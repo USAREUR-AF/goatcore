@@ -2,17 +2,19 @@
 # goat-image-import — verify + push a cosign-signed OCI image bundle into
 # the on-box registry on a closed-network mgmt-host.
 #
-# Run on nova-lan-A (or any closed-network mgmt-host with registry-mirror).
+# Run on the closed-network mgmt-host that runs the registry-mirror role.
 # Bundle is produced by goat-image-bundle-build.sh on a WAN-connected
 # operator machine and carried in via USB.
 #
 # Inputs (positional):
 #   $1   path to bundle tarball
 #
-# Environment overrides:
-#   GOAT_REGISTRY        — registry endpoint (default: registry.nova.lan:5000)
-#   GOAT_TRUST_ANCHOR    — cosign verify-blob trust anchor (default:
-#                          /etc/nova-lan-ca/operator-pubkey.pem)
+# Environment overrides (a site's bring-up runbook names its own):
+#   GOAT_REGISTRY        — registry endpoint (default: localhost:5000, the
+#                          registry-mirror on the host this runs on)
+#   GOAT_TRUST_ANCHOR    — cosign verify-blob trust anchor: the public key the
+#                          bundle was signed with (default:
+#                          /etc/goat/image-signing/operator-pubkey.pem)
 #
 # Verifies cosign signatures on the manifest + each image tarball
 # against the on-box trust anchor before pushing. Refuses on any
@@ -23,8 +25,8 @@
 set -euo pipefail
 
 BUNDLE="${1:-}"
-REGISTRY="${GOAT_REGISTRY:-registry.nova.lan:5000}"
-TRUST="${GOAT_TRUST_ANCHOR:-/etc/nova-lan-ca/operator-pubkey.pem}"
+REGISTRY="${GOAT_REGISTRY:-localhost:5000}"
+TRUST="${GOAT_TRUST_ANCHOR:-/etc/goat/image-signing/operator-pubkey.pem}"
 
 if [ -z "$BUNDLE" ]; then
   echo "usage: $0 <bundle.tar>" >&2
@@ -88,7 +90,7 @@ for i in $(seq 0 $((count - 1))); do
   fi
 
   # Strip the upstream registry prefix so images are addressed via the
-  # closed-LAN registry. ghcr.io/usareur-af/foo:bar -> registry.nova.lan/goat-maintainer/foo:bar
+  # closed-LAN registry. ghcr.io/<org>/foo:bar -> $REGISTRY/<org>/foo:bar
   TARGET_NAME=$(echo "$NAME" | sed -E 's|^[^/]+/||')
   TARGET="${REGISTRY}/${TARGET_NAME}:${TAG}"
 

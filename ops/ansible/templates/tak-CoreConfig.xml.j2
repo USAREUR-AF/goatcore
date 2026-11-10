@@ -34,7 +34,7 @@
 
   <certificateSigning CA="{{ tak_ca_name }}">
     <nameEntries>
-      <nameEntry name="O" value="goat"/>
+      <nameEntry name="O" value="{{ tak_cert_org | mandatory('set tak_cert_org, the O of certificates this TAK server signs, in the tak_servers group') }}"/>
       <nameEntry name="OU" value="TAK"/>
     </nameEntries>
   </certificateSigning>

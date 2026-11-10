@@ -629,6 +629,9 @@ func (s *Server) onboardSlotSystem(w http.ResponseWriter, r *http.Request, req c
 	// exists, which on this path is at collection. Nothing to roll back, because
 	// nothing was minted.
 	if req.DeferCredential {
+		// The grant is an authorization the sponsor approved at intake; it does
+		// not depend on the credential, so it is seeded here too.
+		s.seedOnboardMachineGrant(r.Context(), anchor, req, actorOf(r))
 		_ = s.reg.LogAuditEvent(r.Context(), actorOf(r), "slot-onboard-deferred", handle,
 			fmt.Sprintf(`{"slot_idx":%d,"anchor":%q,"identity_id":%q}`, slot.Idx, anchor, identityID))
 		writeJSON(w, http.StatusCreated, &createVendorResponse{
@@ -685,23 +688,7 @@ func (s *Server) onboardSlotSystem(w http.ResponseWriter, r *http.Request, req c
 		}
 	}
 
-	// Seed the machine-enrollment grant (ADR 1096) so a person onboarded with a
-	// machine_quota can enroll machines without a separate operator grant. The
-	// custodian is the slot anchor — the same id goat machine ls/enroll resolve.
-	// Best-effort: the slot + cert already minted, so a grant hiccup must not fail
-	// the onboard; the operator can still `goat machine grant` after the fact.
-	if req.MachineQuota > 0 {
-		aff := strings.TrimSpace(req.Affiliation)
-		if aff == "" {
-			slog.Warn("machine_quota set but no affiliation on onboard — grant not seeded (a machine inherits its custodian's unit); grant later with `goat machine grant`",
-				"anchor", anchor, "quota", req.MachineQuota)
-		} else if err := s.reg.SetMachineGrant(r.Context(), anchor, req.MachineQuota, aff, strings.TrimSpace(req.Site), actorOf(r)); err != nil {
-			slog.Warn("machine grant seed failed at onboard (non-fatal; grant later with `goat machine grant`)",
-				"anchor", anchor, "err", err)
-		} else {
-			slog.Info("seeded machine enrollment grant at onboard", "anchor", anchor, "quota", req.MachineQuota, "affiliation", aff)
-		}
-	}
+	s.seedOnboardMachineGrant(r.Context(), anchor, req, actorOf(r))
 
 	_ = s.reg.LogAuditEvent(r.Context(), actorOf(r), "slot-onboard", handle,
 		fmt.Sprintf(`{"slot_idx":%d,"anchor":%q,"identity_id":%q}`, slot.Idx, anchor, identityID))
@@ -1402,6 +1389,17 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "stream", err.Error())
 		return
 	}
+	release, ok := s.streams.acquire(PrincipalFromContext(r.Context()), s.cfg.MaxStreamsPerPrincipal)
+	if !ok {
+		// Not 429: the proxy's errors middleware replaces every 429 with its
+		// own page (TestPortal_NeverProducesA429). 409 says the request
+		// conflicts with what this caller already holds open.
+		writeError(w, http.StatusConflict, "stream_limit", fmt.Sprintf(
+			"this key already has %d live streams open; close one (an inspector tab) and retry",
+			s.cfg.MaxStreamsPerPrincipal))
+		return
+	}
+	defer release()
 	if err := s.zenoh.StreamSSE(r.Context(), w, key, time.Second); err != nil {
 		// Once SSE headers are written we can't switch to JSON error; log
 		// and let the client retry.
@@ -1510,4 +1508,39 @@ func (s *Server) handleCatalog(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, cat)
+}
+
+// seedOnboardMachineGrant seeds the machine-enrollment grant (ADR 1096) so a
+// person onboarded with a machine_quota can enroll machines without a separate
+// operator grant. The custodian is the slot anchor — the same id goat machine
+// ls/enroll resolve. It runs on BOTH onboard paths: the immediate mint and the
+// deferred (mint-on-collect) one, because the grant is an authorization approved
+// at intake, independent of when the credential is minted. Best-effort: the slot
+// already exists, so a grant hiccup must not fail the onboard; the operator can
+// still `goat machine grant` after the fact.
+func (s *Server) seedOnboardMachineGrant(ctx context.Context, anchor string, req createVendorRequest, actor string) {
+	if req.MachineQuota <= 0 {
+		return
+	}
+	aff := strings.TrimSpace(req.Affiliation)
+	// Request-derived strings are stripped of line breaks before they reach a
+	// log line, so a crafted value cannot forge a second entry.
+	logAnchor := logLineSafe(anchor)
+	if aff == "" {
+		slog.Warn("machine_quota set but no affiliation on onboard — grant not seeded (a machine inherits its custodian's unit); grant later with `goat machine grant`",
+			"anchor", logAnchor)
+		return
+	}
+	if err := s.reg.SetMachineGrant(ctx, anchor, req.MachineQuota, aff, strings.TrimSpace(req.Site), actor); err != nil {
+		slog.Warn("machine grant seed failed at onboard (non-fatal; grant later with `goat machine grant`)",
+			"anchor", logAnchor, "err", logLineSafe(err.Error()))
+		return
+	}
+	slog.Info("seeded machine enrollment grant at onboard", "anchor", logAnchor, "affiliation", logLineSafe(aff))
+}
+
+// logLineSafe removes carriage returns and line feeds from a value bound for a
+// log line.
+func logLineSafe(v string) string {
+	return strings.ReplaceAll(strings.ReplaceAll(v, "\n", ""), "\r", "")
 }

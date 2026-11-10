@@ -17,6 +17,13 @@
 # flat-read until the B2.1 partition is enabled on a goatnet. The COP is honest
 # about that (it flags reads as still-flat while showing the declared sets).
 #
+# WHERE A GOATNET DECLARES ITS OWN SETS: `portal_release_sets` in its
+# group_vars (e.g. group_vars/<site>_hosts/data-access.yml), a list of
+# {set, prefix, members} in exactly this file's shape. When that list is
+# defined and non-empty, roles/goat-zenoh-portal renders the portal's registry
+# from it (templates/release-sets.yaml.j2) and this file is not used. This
+# file is the generic registry a goatnet that declares nothing receives.
+#
 # `members` are ORG identifiers (the write-anchor UUID or seed org prefix),
 # never person handles. `prefix` defaults to `release/<set>/` when omitted.
 #
@@ -56,3 +63,6 @@ release_sets:
   # `members` are ORG ids. Empty until the cohort is minted —
   # declaring a member here does not grant a read (that is the ACL carve); this
   # list is the DECLARATION the COP reveals and the reason the lane exists.
+  - set: REL-PARTNER
+    prefix: release/REL-PARTNER/
+    members: []

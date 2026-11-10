@@ -77,7 +77,7 @@ func TestOffboardStates_HaveQueueTabs(t *testing.T) {
 func TestOffboardFailedDetail_ShowsReasonRequesterAndRequeue(t *testing.T) {
 	s := newOnboardTestServer(t)
 	h := s.Routes()
-	pid := offboardRowTo(t, s, h, "person-102@example.org", onboardstore.ProposalOffboardFailed)
+	pid := offboardRowTo(t, s, h, "person-89@example.org", onboardstore.ProposalOffboardFailed)
 
 	rec := getQueuePage(t, h, "/onboarding?status=offboard-failed&id="+pid)
 	if rec.Code != http.StatusOK {
@@ -102,8 +102,8 @@ func TestOffboardInFlightDetails_NameRequesterWithoutButton(t *testing.T) {
 	s := newOnboardTestServer(t)
 	h := s.Routes()
 	for _, tc := range []struct{ email, state string }{
-		{"person-103@example.org", onboardstore.ProposalOffboardRequested},
-		{"person-104@example.org", onboardstore.ProposalOffboarding},
+		{"person-90@example.org", onboardstore.ProposalOffboardRequested},
+		{"person-91@example.org", onboardstore.ProposalOffboarding},
 	} {
 		pid := offboardRowTo(t, s, h, tc.email, tc.state)
 		rec := getQueuePage(t, h, "/onboarding?status="+tc.state+"&id="+pid)
@@ -130,7 +130,7 @@ func TestOffboardInFlightDetails_NameRequesterWithoutButton(t *testing.T) {
 func TestOffboardedDetail_RunnerCutSaysSo(t *testing.T) {
 	s := newOnboardTestServer(t)
 	h := s.Routes()
-	pid := offboardRowTo(t, s, h, "person-101@example.org", onboardstore.ProposalOffboarded)
+	pid := offboardRowTo(t, s, h, "person-88@example.org", onboardstore.ProposalOffboarded)
 
 	rec := getQueuePage(t, h, "/onboarding?status=offboarded&id="+pid)
 	if rec.Code != http.StatusOK {
@@ -155,7 +155,7 @@ func TestFailedDetail_ShowsRunnerNote(t *testing.T) {
 	s := newOnboardTestServer(t)
 	h := s.Routes()
 	tok := mintTokenViaStore(t, s)
-	pid := submit(t, h, tok, map[string]any{"name": "Pat Mintfail", "email": "person-110@example.org", "organization": "Offboard Org"})
+	pid := submit(t, h, tok, map[string]any{"name": "Pat Mintfail", "email": "person-97@example.org", "organization": "Offboard Org"})
 	for _, st := range []string{onboardstore.ProposalSponsorApproved, onboardstore.ProposalApproved} {
 		if err := s.Onboard.DecideProposal(context.Background(), pid, st, "admin@x", ""); err != nil {
 			t.Fatalf("decide %s: %v", st, err)

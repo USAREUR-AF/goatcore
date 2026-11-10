@@ -39,11 +39,11 @@ func seedPeerset(t *testing.T, active []peerset.Peer, deprecated []peerset.Depre
 // against.
 func activePeer() peerset.Peer {
 	return peerset.Peer{
-		Name:          "vega-a",
+		Name:          "lab-a",
 		WGCP0Address:  "198.18.0.1",
 		CurrentPubkey: "kwtaja-old-pubkey-base64-22-chars-long==",
 		Role:          "mgmt-host",
-		Site:          "vega",
+		Site:          "lab",
 	}
 }
 
@@ -52,7 +52,7 @@ func activePeer() peerset.Peer {
 func TestRun_Onboard_DryRunShowsAddPlan(t *testing.T) {
 	path := seedPeerset(t, []peerset.Peer{activePeer()}, nil)
 	code, stdout, stderr := runArgs(t, "onboard", "new-orin",
-		"--site", "vega", "--role", "mgmt-host",
+		"--site", "lab", "--role", "mgmt-host",
 		"--wg-cp0-address", "198.18.0.99/24",
 		"--path", path)
 	if code != 0 {
@@ -73,8 +73,8 @@ func TestRun_Onboard_DryRunShowsAddPlan(t *testing.T) {
 
 func TestRun_Onboard_RejectsDuplicateName(t *testing.T) {
 	path := seedPeerset(t, []peerset.Peer{activePeer()}, nil)
-	code, _, stderr := runArgs(t, "onboard", "vega-a",
-		"--site", "vega", "--role", "mgmt-host",
+	code, _, stderr := runArgs(t, "onboard", "lab-a",
+		"--site", "lab", "--role", "mgmt-host",
 		"--wg-cp0-address", "198.18.0.50/24",
 		"--path", path)
 	if code != 1 {
@@ -88,7 +88,7 @@ func TestRun_Onboard_RejectsDuplicateName(t *testing.T) {
 func TestRun_Onboard_RejectsDuplicateAddress(t *testing.T) {
 	path := seedPeerset(t, []peerset.Peer{activePeer()}, nil)
 	code, _, stderr := runArgs(t, "onboard", "different-name",
-		"--site", "vega", "--role", "mgmt-host",
+		"--site", "lab", "--role", "mgmt-host",
 		"--wg-cp0-address", "198.18.0.1/24",
 		"--path", path)
 	if code != 1 {
@@ -107,8 +107,8 @@ func TestRun_Onboard_RejectsResurrectionViaOnboard(t *testing.T) {
 			RemovedReason: "previously decommissioned",
 		},
 	})
-	code, _, stderr := runArgs(t, "onboard", "vega-a",
-		"--site", "vega", "--role", "mgmt-host",
+	code, _, stderr := runArgs(t, "onboard", "lab-a",
+		"--site", "lab", "--role", "mgmt-host",
 		"--wg-cp0-address", "198.18.0.1/24",
 		"--path", path)
 	if code != 1 {
@@ -149,7 +149,7 @@ func TestRun_Onboard_RejectsMissingFlags(t *testing.T) {
 func TestRun_Onboard_ApplyRequiresBundleOut(t *testing.T) {
 	path := seedPeerset(t, nil, nil)
 	code, _, stderr := runArgs(t, "onboard", "new-orin",
-		"--site", "vega", "--role", "mgmt-host",
+		"--site", "lab", "--role", "mgmt-host",
 		"--wg-cp0-address", "198.18.0.99/24",
 		"--apply",
 		"--path", path)
@@ -165,7 +165,7 @@ func TestRun_Onboard_ApplyReturnsSessionAPending(t *testing.T) {
 	path := seedPeerset(t, nil, nil)
 	bundleOut := filepath.Join(t.TempDir(), "bundle.cbor")
 	code, _, stderr := runArgs(t, "onboard", "new-orin",
-		"--site", "vega", "--role", "mgmt-host",
+		"--site", "lab", "--role", "mgmt-host",
 		"--wg-cp0-address", "198.18.0.99/24",
 		"--bundle-out", bundleOut,
 		"--apply",
@@ -185,13 +185,13 @@ func TestRun_Onboard_ApplyReturnsSessionAPending(t *testing.T) {
 
 func TestRun_Rotate_DryRunShowsRotatePlan(t *testing.T) {
 	path := seedPeerset(t, []peerset.Peer{activePeer()}, nil)
-	code, stdout, stderr := runArgs(t, "rotate", "vega-a",
+	code, stdout, stderr := runArgs(t, "rotate", "lab-a",
 		"--reason", "scheduled 90d rotation",
 		"--path", path)
 	if code != 0 {
 		t.Fatalf("code = %d (stderr = %q)", code, stderr)
 	}
-	if !strings.Contains(stdout, "ROTATE peer vega-a") {
+	if !strings.Contains(stdout, "ROTATE peer lab-a") {
 		t.Errorf("dry-run output missing ROTATE line: %q", stdout)
 	}
 	if !strings.Contains(stdout, "scheduled 90d rotation") {
@@ -204,7 +204,7 @@ func TestRun_Rotate_DryRunShowsRotatePlan(t *testing.T) {
 
 func TestRun_Rotate_RejectsMissingReason(t *testing.T) {
 	path := seedPeerset(t, []peerset.Peer{activePeer()}, nil)
-	code, _, stderr := runArgs(t, "rotate", "vega-a", "--path", path)
+	code, _, stderr := runArgs(t, "rotate", "lab-a", "--path", path)
 	if code != 2 {
 		t.Errorf("code = %d, want 2", code)
 	}
@@ -230,7 +230,7 @@ func TestRun_Rotate_DeprecatedPeerSuggestsResurrect(t *testing.T) {
 	path := seedPeerset(t, nil, []peerset.DeprecatedPeer{
 		{Peer: activePeer(), RemovedAt: time.Now().UTC(), RemovedReason: "old"},
 	})
-	code, _, stderr := runArgs(t, "rotate", "vega-a",
+	code, _, stderr := runArgs(t, "rotate", "lab-a",
 		"--reason", "test",
 		"--path", path)
 	if code != 1 {
@@ -243,7 +243,7 @@ func TestRun_Rotate_DeprecatedPeerSuggestsResurrect(t *testing.T) {
 
 func TestRun_Rotate_ApplyReturnsSessionAPending(t *testing.T) {
 	path := seedPeerset(t, []peerset.Peer{activePeer()}, nil)
-	code, _, stderr := runArgs(t, "rotate", "vega-a",
+	code, _, stderr := runArgs(t, "rotate", "lab-a",
 		"--reason", "test",
 		"--bundle-out", filepath.Join(t.TempDir(), "b.cbor"),
 		"--apply",
@@ -260,13 +260,13 @@ func TestRun_Rotate_ApplyReturnsSessionAPending(t *testing.T) {
 
 func TestRun_Remove_DryRunShowsRemoveProminently(t *testing.T) {
 	path := seedPeerset(t, []peerset.Peer{activePeer()}, nil)
-	code, stdout, stderr := runArgs(t, "remove", "vega-a",
+	code, stdout, stderr := runArgs(t, "remove", "lab-a",
 		"--reason", "host decommissioned",
 		"--path", path)
 	if code != 0 {
 		t.Fatalf("code = %d (stderr = %q)", code, stderr)
 	}
-	if !strings.Contains(stdout, "REMOVE peers[]: vega-a") {
+	if !strings.Contains(stdout, "REMOVE peers[]: lab-a") {
 		t.Errorf("dry-run output missing REMOVE line: %q", stdout)
 	}
 	if !strings.Contains(stdout, "SOFT-DELETE") {
@@ -276,7 +276,7 @@ func TestRun_Remove_DryRunShowsRemoveProminently(t *testing.T) {
 
 func TestRun_Remove_RejectsMissingReason(t *testing.T) {
 	path := seedPeerset(t, []peerset.Peer{activePeer()}, nil)
-	code, _, stderr := runArgs(t, "remove", "vega-a", "--path", path)
+	code, _, stderr := runArgs(t, "remove", "lab-a", "--path", path)
 	if code != 2 {
 		t.Errorf("code = %d, want 2", code)
 	}
@@ -289,7 +289,7 @@ func TestRun_Remove_AlreadyDeprecated(t *testing.T) {
 	path := seedPeerset(t, nil, []peerset.DeprecatedPeer{
 		{Peer: activePeer(), RemovedAt: time.Now().UTC(), RemovedReason: "old"},
 	})
-	code, _, stderr := runArgs(t, "remove", "vega-a",
+	code, _, stderr := runArgs(t, "remove", "lab-a",
 		"--reason", "test",
 		"--path", path)
 	if code != 1 {
@@ -315,7 +315,7 @@ func TestRun_Remove_UnknownPeer(t *testing.T) {
 
 func TestRun_Remove_ApplyReturnsSessionAPending(t *testing.T) {
 	path := seedPeerset(t, []peerset.Peer{activePeer()}, nil)
-	code, _, stderr := runArgs(t, "remove", "vega-a",
+	code, _, stderr := runArgs(t, "remove", "lab-a",
 		"--reason", "test",
 		"--apply",
 		"--path", path)
@@ -337,11 +337,11 @@ func TestRun_Resurrect_DryRunShowsRestorePlan(t *testing.T) {
 			RemovedReason: "accidental removal",
 		},
 	})
-	code, stdout, stderr := runArgs(t, "resurrect", "vega-a", "--path", path)
+	code, stdout, stderr := runArgs(t, "resurrect", "lab-a", "--path", path)
 	if code != 0 {
 		t.Fatalf("code = %d (stderr = %q)", code, stderr)
 	}
-	if !strings.Contains(stdout, "RESURRECT peers[]: vega-a") {
+	if !strings.Contains(stdout, "RESURRECT peers[]: lab-a") {
 		t.Errorf("dry-run output missing RESURRECT line: %q", stdout)
 	}
 	if !strings.Contains(stdout, "accidental removal") {
@@ -351,7 +351,7 @@ func TestRun_Resurrect_DryRunShowsRestorePlan(t *testing.T) {
 
 func TestRun_Resurrect_RejectsAlreadyActive(t *testing.T) {
 	path := seedPeerset(t, []peerset.Peer{activePeer()}, nil)
-	code, _, stderr := runArgs(t, "resurrect", "vega-a", "--path", path)
+	code, _, stderr := runArgs(t, "resurrect", "lab-a", "--path", path)
 	if code != 1 {
 		t.Errorf("code = %d, want 1", code)
 	}
@@ -381,7 +381,7 @@ func TestRun_Resurrect_RejectsNameCollisionWithActive(t *testing.T) {
 	ps := &peerset.PeerSet{
 		SchemaVersion: peerset.SchemaVersion,
 		Peers: []peerset.Peer{
-			{Name: "vega-a", WGCP0Address: "198.18.0.50", CurrentPubkey: "new-key=="},
+			{Name: "lab-a", WGCP0Address: "198.18.0.50", CurrentPubkey: "new-key=="},
 		},
 		DeprecatedPeers: []peerset.DeprecatedPeer{
 			{Peer: activePeer(), RemovedAt: time.Now().UTC(), RemovedReason: "old"},
@@ -390,7 +390,7 @@ func TestRun_Resurrect_RejectsNameCollisionWithActive(t *testing.T) {
 	if err := ps.Save(path); err != nil {
 		t.Fatalf("save: %v", err)
 	}
-	code, _, stderr := runArgs(t, "resurrect", "vega-a", "--path", path)
+	code, _, stderr := runArgs(t, "resurrect", "lab-a", "--path", path)
 	if code != 1 {
 		t.Errorf("code = %d, want 1", code)
 	}
@@ -403,7 +403,7 @@ func TestRun_Resurrect_ApplyReturnsSessionAPending(t *testing.T) {
 	path := seedPeerset(t, nil, []peerset.DeprecatedPeer{
 		{Peer: activePeer(), RemovedAt: time.Now().UTC(), RemovedReason: "test"},
 	})
-	code, _, stderr := runArgs(t, "resurrect", "vega-a", "--apply", "--path", path)
+	code, _, stderr := runArgs(t, "resurrect", "lab-a", "--apply", "--path", path)
 	if code != 1 {
 		t.Errorf("code = %d, want 1", code)
 	}
@@ -437,15 +437,15 @@ func TestParseLifecycleFlags_FlagRequiresValue(t *testing.T) {
 func TestParseLifecycleFlags_ApplyIsBoolean(t *testing.T) {
 	// --apply takes no value; positional after it must still be
 	// consumed as a positional, not as --apply's value.
-	la, pos, err := parseLifecycleFlags([]string{"--apply", "vega-a"}, nil)
+	la, pos, err := parseLifecycleFlags([]string{"--apply", "lab-a"}, nil)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
 	if !la.Apply {
 		t.Error("Apply should be true")
 	}
-	if len(pos) != 1 || pos[0] != "vega-a" {
-		t.Errorf("positional = %v; want [vega-a]", pos)
+	if len(pos) != 1 || pos[0] != "lab-a" {
+		t.Errorf("positional = %v; want [lab-a]", pos)
 	}
 }
 
@@ -457,7 +457,7 @@ func TestEmitPreview_StructuredOutput(t *testing.T) {
 			Name:         "new-orin",
 			WGCP0Address: "198.18.0.99",
 			Role:         "mgmt-host",
-			Site:         "vega",
+			Site:         "lab",
 		},
 		RelayAdd:       []string{derivePubkeyPlaceholder()},
 		BundleMint:     true,
@@ -521,7 +521,7 @@ func TestRun_Onboard_AgainstFreshPath(t *testing.T) {
 	// peerset.Load returns empty v2 envelope; nothing collides.
 	path := filepath.Join(t.TempDir(), "fresh.json")
 	code, stdout, stderr := runArgs(t, "onboard", "first-peer",
-		"--site", "vega", "--role", "mgmt-host",
+		"--site", "lab", "--role", "mgmt-host",
 		"--wg-cp0-address", "198.18.0.1/24",
 		"--path", path)
 	if code != 0 {
@@ -537,9 +537,9 @@ func TestRun_Onboard_AgainstFreshPath(t *testing.T) {
 func TestEmitPreview_RotateShape(t *testing.T) {
 	plan := &lifecyclePlan{
 		Op:       "rotate",
-		PeerName: "vega-a",
+		PeerName: "lab-a",
 		StateRotate: &rotatePlanDetail{
-			PeerName:    "vega-a",
+			PeerName:    "lab-a",
 			PriorPubkey: "abc-prior=",
 			Reason:      "compromise response",
 		},
@@ -552,7 +552,7 @@ func TestEmitPreview_RotateShape(t *testing.T) {
 	if !strings.Contains(got, "APPLY") {
 		t.Errorf("expected APPLY verb; got %q", got)
 	}
-	if !strings.Contains(got, "ROTATE peer vega-a") {
+	if !strings.Contains(got, "ROTATE peer lab-a") {
 		t.Errorf("missing ROTATE line: %q", got)
 	}
 	if !strings.Contains(got, "compromise response") {
@@ -595,8 +595,8 @@ func TestRun_Onboard_NoMutationOnFailedDryRun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read peerset: %v", err)
 	}
-	_, _, _ = runArgs(t, "onboard", "vega-a",
-		"--site", "vega", "--role", "mgmt-host",
+	_, _, _ = runArgs(t, "onboard", "lab-a",
+		"--site", "lab", "--role", "mgmt-host",
 		"--wg-cp0-address", "198.18.0.99/24",
 		"--path", path)
 	after, err := os.ReadFile(path)

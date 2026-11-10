@@ -39,10 +39,10 @@ func repoSection(t *testing.T, out string) string {
 
 func TestRender_mixedRepoGrantOutcomesSplitTruthfully(t *testing.T) {
 	out := Render(zagrosCatalog(), devWithGrants(
-		RepoGrant{Owner: "usareur-af", Repo: "hello-galaxy-zenoh-patterns", Permission: "pull", Outcome: "invited", Source: "policy"},
-		RepoGrant{Owner: "usareur-af", Repo: "hello-galaxy-time-hygiene", Permission: "pull", Outcome: "failed", Source: "policy", HTTPStatus: 404, Failure: "repo_not_visible_to_token"},
-		RepoGrant{Owner: "usareur-af", Repo: "hello-galaxy-external-service", Permission: "pull", Outcome: "failed", Source: "policy", HTTPStatus: 403, Failure: "token_forbidden"},
-		RepoGrant{Owner: "usareur-af", Repo: "hello-galaxy-mesh-change-control", Permission: "pull", Outcome: "failed", Source: "policy"},
+		RepoGrant{Owner: "example-org", Repo: "hello-galaxy-zenoh-patterns", Permission: "pull", Outcome: "invited", Source: "policy"},
+		RepoGrant{Owner: "example-org", Repo: "hello-galaxy-time-hygiene", Permission: "pull", Outcome: "failed", Source: "policy", HTTPStatus: 404, Failure: "repo_not_visible_to_token"},
+		RepoGrant{Owner: "example-org", Repo: "hello-galaxy-external-service", Permission: "pull", Outcome: "failed", Source: "policy", HTTPStatus: 403, Failure: "token_forbidden"},
+		RepoGrant{Owner: "example-org", Repo: "hello-galaxy-mesh-change-control", Permission: "pull", Outcome: "failed", Source: "policy"},
 	), Artifacts{SetupKey: "K"})
 	sec := repoSection(t, out)
 
@@ -52,14 +52,14 @@ func TestRender_mixedRepoGrantOutcomesSplitTruthfully(t *testing.T) {
 		t.Fatalf("want the success list, then the not-granted list:\n%s", sec)
 	}
 	successPart, failedPart := sec[added:notGranted], sec[notGranted:]
-	if !strings.Contains(successPart, "usareur-af/hello-galaxy-zenoh-patterns") {
+	if !strings.Contains(successPart, "example-org/hello-galaxy-zenoh-patterns") {
 		t.Errorf("the invited repo is missing from the success list:\n%s", successPart)
 	}
 	for _, repo := range []string{"hello-galaxy-time-hygiene", "hello-galaxy-external-service", "hello-galaxy-mesh-change-control"} {
 		if strings.Contains(successPart, repo) {
 			t.Errorf("failed grant %s is presented as added:\n%s", repo, successPart)
 		}
-		if !strings.Contains(failedPart, "usareur-af/"+repo) {
+		if !strings.Contains(failedPart, "example-org/"+repo) {
 			t.Errorf("failed grant %s is not named as not granted:\n%s", repo, failedPart)
 		}
 	}
@@ -73,8 +73,8 @@ func TestRender_mixedRepoGrantOutcomesSplitTruthfully(t *testing.T) {
 
 func TestRender_allRepoGrantsFailedMakesNoSuccessClaim(t *testing.T) {
 	out := Render(zagrosCatalog(), devWithGrants(
-		RepoGrant{Owner: "usareur-af", Repo: "hello-galaxy-time-hygiene", Permission: "pull", Outcome: "failed"},
-		RepoGrant{Owner: "usareur-af", Repo: "hello-galaxy-external-service", Permission: "pull", Outcome: "failed"},
+		RepoGrant{Owner: "example-org", Repo: "hello-galaxy-time-hygiene", Permission: "pull", Outcome: "failed"},
+		RepoGrant{Owner: "example-org", Repo: "hello-galaxy-external-service", Permission: "pull", Outcome: "failed"},
 	), Artifacts{SetupKey: "K"})
 	sec := repoSection(t, out)
 	for _, claim := range []string{"You've been added", "accept the invite", "pending invitation"} {
@@ -83,8 +83,8 @@ func TestRender_allRepoGrantsFailedMakesNoSuccessClaim(t *testing.T) {
 		}
 	}
 	if !strings.Contains(sec, "has not been confirmed") ||
-		!strings.Contains(sec, "usareur-af/hello-galaxy-time-hygiene") ||
-		!strings.Contains(sec, "usareur-af/hello-galaxy-external-service") {
+		!strings.Contains(sec, "example-org/hello-galaxy-time-hygiene") ||
+		!strings.Contains(sec, "example-org/hello-galaxy-external-service") {
 		t.Errorf("the failed grants are not named as not granted:\n%s", sec)
 	}
 }
@@ -93,7 +93,7 @@ func TestRender_allRepoGrantsFailedMakesNoSuccessClaim(t *testing.T) {
 // evidence of access, so it must not land on the success list either.
 func TestRender_unknownRepoGrantOutcomeIsNotSuccess(t *testing.T) {
 	out := Render(zagrosCatalog(), devWithGrants(
-		RepoGrant{Owner: "usareur-af", Repo: "mystery", Permission: "pull", Outcome: ""},
+		RepoGrant{Owner: "example-org", Repo: "mystery", Permission: "pull", Outcome: ""},
 	), Artifacts{SetupKey: "K"})
 	if strings.Contains(repoSection(t, out), "You've been added") {
 		t.Errorf("a grant with no recorded outcome is presented as added:\n%s", out)

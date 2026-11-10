@@ -10,7 +10,7 @@ expression: outcomes
     "verdict": "fail",
     "elapsed_ms": 0,
     "summary": "TCP connect to router host timed out",
-    "hint": "router host 100.127.0.190:7447 did not answer in 1500ms — compare from another mesh peer; check tunnel, route and router service"
+    "hint": "router host 100.127.0.193:7447 did not answer in 1500ms — compare from another mesh peer; check tunnel, route and router service"
   },
   {
     "step": 2,

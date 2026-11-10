@@ -32,7 +32,7 @@ func TestGetMachineGrant_ReadsBackTheEntitlement(t *testing.T) {
 	// A grant WITHOUT the entitlement reads network_admin false — the fail-closed
 	// default that every legacy row carries.
 	r := doJSON(t, c, "POST", ts.URL+"/api/machines/grant", "dev-operator-key", map[string]any{
-		"custodian": "morgan", "quota": 5, "affiliation": "usareur-af", "site": "site-one",
+		"custodian": "morgan", "quota": 5, "affiliation": "usareur-af", "site": "harbor",
 	})
 	if r.StatusCode != http.StatusOK {
 		t.Fatalf("seed grant: %d %s", r.StatusCode, mustReadBody(t, r))

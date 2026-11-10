@@ -1,7 +1,7 @@
 # standup-dag.yaml — which phase-12 steps need which, for both avenues
 # (goat-standup.sh and `goatbuilder standup`, ADR 1201).
 #
-# Phase 12 runs fourteen steps one after another, though only some depend on
+# Phase 12 runs twelve steps one after another, though only some depend on
 # others. With `--parallel`, each avenue runs the steps whose needs are met
 # together, wave by wave; without it the order is the serial one it always was.
 # Both plans print each step's `needs:` line, so the standup parity gate checks
@@ -18,34 +18,26 @@
 # rather than guessing that concurrent writes are safe.
 phase: 12
 steps:
-  - id: acl-groups
-    label: "declared NetBird groups"
+  - id: acl
+    label: "declared NetBird ACL"
     needs: []
-    why: "the declared ACL first (ADR 1185): groups, then policies, then enforce"
-  - id: acl-policies
-    label: "declared NetBird policies"
-    needs: [acl-groups]
-    why: "policies reference the declared groups"
-  - id: acl-enforce
-    label: "enforce: no Default All->All"
-    needs: [acl-policies]
-    why: "enforce deletes any Default All->All once the declared policies exist"
+    why: "the declared ACL first (ADR 1185): groups, then policies, then enforce, one play run in that order"
   - id: acl-gate
     label: "the live NetBird account holds only the declared ACL"
-    needs: [acl-enforce]
-    why: "the gate reads the account the three steps above wrote"
+    needs: [acl]
+    why: "the gate reads the account the ACL step wrote"
   - id: si-mint
     label: "mint the NetBird service identities"
-    needs: [acl-groups]
-    why: "the mint writes service users into the same NetBird account the ACL steps write; serialised after the groups"
+    needs: [acl]
+    why: "the mint writes service users into the same NetBird account the ACL step writes; serialised after it"
   - id: si-gate
     label: "every required NetBird service identity"
     needs: [si-mint]
     why: "the gate verifies what the mint wrote"
   - id: account-baseline
     label: "netbird account baseline"
-    needs: [acl-groups]
-    why: "writes the mesh-DNS nameserver group into the same account; serialised after the declared groups"
+    needs: [acl]
+    why: "writes the mesh-DNS nameserver group into the same account; serialised after the declared ACL"
   - id: mesh-dns
     label: "mesh CoreDNS"
     needs: [account-baseline]

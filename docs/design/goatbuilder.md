@@ -152,7 +152,8 @@ A team points `goatbuilder` at their own config — their components, their envi
 | `goatbuilder pins {check,regenerate}` | declarative | declare | `generate-pins.py` |
 | `goatbuilder standup <env> --site <s>` | declarative | all — declares the site's whole topology (founder or joiner), converges the doctrine's phases in order, verifies every record; the one-hour target | `goat-standup.sh` |
 | `goatbuilder join-node <env> --site <s> --class <c>` | declarative | declares one more machine of a class at a live site → converge → verify | node-addition.md by hand |
-| `goatbuilder federate <with>` | declarative | declares a sovereign peering → converges ADR 1157's four steps → verifies each | the peering runbook by hand |
+| `goatbuilder federate <partner>` | declarative | declares a sovereign peering → converges ADR 1157's four steps → verifies each; also carries the six package verbs `init\|lint\|compose\|diff\|verify\|apply` ([ADR 1225](../adr/1225-federation-belongs-to-goatbuilder-one-command-one-decision.md)) | the peering runbook by hand; `goat federate` |
+| `goatbuilder federate init\|lint\|compose\|diff\|verify\|apply` | read-only (`init --out`, `compose --out` and `apply --confirm` write the files they name) | the six federation verbs, in process from the `goat-federation` library, with `goat federate <verb>`'s flags and exit codes | `goat federate <verb>`, which runs the same library |
 | `goatbuilder status <component>` | read-only | verify: converged / pending / unknown per machine | `graduate.py status` |
 | `goatbuilder verify <component> --env <e>` | read-only | verify | `deploy-component.sh --verify-only` |
 | `goatbuilder diff <component> --env <e>` | read-only | verify: declared vs actual (C8) | — |
@@ -161,7 +162,7 @@ A team points `goatbuilder` at their own config — their components, their envi
 | `goatbuilder apply <plan>` | declarative | runs exactly the reviewed plan; refuses if the declaration moved | — |
 | `goatbuilder history <component> --env <e>` | read-only | the records as a timeline (C8) | reading the ledger by hand |
 | `goatbuilder update [--site <s>] [--check] [--force]` | the tool itself | replaces this binary with the release `get.<site>.<zone>/goatbuilder/` serves: the `.sha256`, `SHA256SUMS` and (with cosign on PATH) its signature checked before anything is touched, the swap atomic; `--check` reads only. A behind-version line on a terminal at most once a day; `doctor` grades the same comparison ([goatbuilder-distribution.md](goatbuilder-distribution.md)) | the landing page's install sequence by hand |
-| `goatbuilder doctor` | read-only | preflight: deps, checkout freshness, transports, registries | `rc.sh`'s and `ansible-preflight.sh`'s preflights |
+| `goatbuilder doctor` | read-only | preflight: deps, checkout freshness (an assembled tree is recognized by its `.goat-assembled` marker and passes on its detached HEAD, naming what it was built from; built), transports, registries; the live rows' browser toolchain is a note unless `--browser-tests` (built) | `rc.sh`'s and `ansible-preflight.sh`'s preflights |
 | `goatbuilder validate` | read-only | the config against the versioned schema, offline | — |
 | `goatbuilder adopt --env <e>` | declarative | declares what an existing environment's records say it runs | — |
 | `goatbuilder tutor` | read-only, on `--mock` copies | **built** (2026-10-28): eleven lessons, each a short text and the exact commands to type against a throwaway fixture copy (or, read-only, this checkout); the tutor checks each run's exit and rows before the next unlocks; `--list`, `tutor <n>`, `--reset`; lessons needing a verb this build lacks are listed and skipped | — |
@@ -198,7 +199,159 @@ The golden paths landed in September 2026 — the founder-and-joiner standup wal
 
 Status of those paths, in the contract's words: **built, and worked once** — by the end of the September buildout each path had run, fixed in flight as it went; **a fresh, unattended full run has not been proven.** That proof is what `standup --mock` rehearses on the conformance fixture and what the first timed real run measures; until then the one-hour target is a target, not a claim.
 
+The edge host and the core router host of a peering can carry a baseline host firewall, opt-in and off by default: inbound default deny with accept rules derived from the peering's own values, and a per-deployment override that tightens freely and loosens only a named rule with a recorded reason ([peering-host-firewall.md](peering-host-firewall.md)). The plan reports its ruleset and hash before anything is applied.
+
 What this adds to the model is only the site level and the peering object; the verbs, the contract and the converger interface are unchanged. `federate` is a declarative verb like any other — which is the point: a sovereign peering becomes something that is declared, reviewed, converged and verified rather than a procedure carried in a runbook.
+
+#### Federation belongs to goatbuilder
+
+Status: WIP — gate: the federation end-to-end test drives both sides with goatbuilder federate alone
+
+All federation code lives in the `goat-federation` library crate and in `goatbuilder federate` ([ADR 1225](../adr/1225-federation-belongs-to-goatbuilder-one-command-one-decision.md), Proposed); `goat` keeps none of its own. The library crate holds the package format, lint, compose, diff, verify, render and keyring code (**built**: moved from `goat-cli` with no behavior change). goatbuilder carries the six package verbs with the flags and exit codes `goat federate` has, and `goatbuilder federate <partner>` is the whole procedure (**designed**). Until a goatbuilder release carrying the verbs is available to partner environments, `goat federate <verb>` runs the same library and prints one line naming the goatbuilder command; then it is removed from `goat`.
+
+The person makes one decision, the partner and the release sets it receives (the sets are owned by the deployment's `federation.toml`; a `peerings:` entry's `offer:` may only narrow them, validated as a subset), and two confirmations that stay human: reading the verifying key and CA fingerprint aloud and comparing the agreement digest, and approving what the core will admit before its router restarts, which covers reviewing and merging the allocated values and rendered configuration in the deployment's own repository. After acceptance passes on both sides, both operators publish `exchanging` through a reviewable change, a deliberate act after the federation works. Everything else is done, checked and recorded by the command, safe to re-run, and resumed by inspecting actual state. `apply` stays a renderer. The stages of the one command are `goatbuilder federate plan | deploy | test | status`, each also runnable alone; `goatbuilder federate <partner>` runs them in order with the two human stops. Configuration ownership, plan and state, and acceptance follow the federation automation proposal of 9 November 2026 (ADR 1225 decision 5); each phase's behavior is described with the code that builds it. Both avenues stay. The driver keeps spawning `goat federate` by default and `ops/scripts/peering-standup.sh` keeps calling it, until each one's own switch-of-default pull request moves it to the `goatbuilder federate` verbs (ADR 1225 amends [ADR 1201](../adr/1201-two-avenues-scripts-documented-cli-supported.md) rule 2 for this row only).
+
+
+#### Federation modules and their seams
+
+Status: WIP — gate: the federation end-to-end test drives both sides with goatbuilder federate alone
+
+Federation is built as modules ([ADR 1225](../adr/1225-federation-belongs-to-goatbuilder-one-command-one-decision.md) decision 7). One pull request is one module; a code move and a behavior change never share one; new behavior arrives beside the old, and each switch of default is its own pull request. A stage graduates when its scenarios pass in the federation test environment and nothing that passes on `main` regresses. Each paragraph below is enough to change or revert that module without reading the others. Status words are per module; none is built on `main` yet.
+
+**Stage 0, test-environment baseline.** Owns the scenario matrix the federation test environment runs against a pushed branch (`ops/federation-e2e/`). Interface: a scenario name and its outcome per branch and commit. Every later stage depends on it for graduation. Reverting it leaves `ops/federation-e2e/run.sh` as it is today.
+
+**Stage 1, acceptance cannot pass on skipped checks.** Owns the exit status of `ops/federation/standup/acceptance.sh`: a skipped required check fails the run. Interface: named by the module's pull request, which updates this paragraph. Phase 14 of both avenues depends on it. Reverting it restores the old rule, where skips pass unless `FED_ACCEPTANCE_STRICT=1`.
+
+**Stage 2, evidence schema and outcome words.** Owns the versioned check and result schema and the outcomes PASS, FAIL, BLOCKED, SKIP and NOT APPLICABLE; a required check never becomes PASS, and NOT APPLICABLE is valid only for scope the agreement excludes. Interface: named by the module's pull request, which updates this paragraph. Stage 2.x, `status` (stage 12) and the bilateral exchange read it. Reverting it returns acceptance to stage 1's output.
+
+**Stage 2.x, acceptance from the agreement.** Owns checks generated from the agreement's flows, the session manifest, result bundles exchanged by file, run-owned probes and their cleanup, and publishing `exchanging` through a reviewable change that both operators make after the required scope passes. Interface: the stage 2 schema; the rest named by the module's pull request, which updates this paragraph. `test` (stage 12) runs it. Each part reverts alone to the fixed checks.
+
+**Stage 3, library crate (pure move).** Owns `crates/goat-federation`: package format, lint, compose, diff, verify, render and keyring. Interface: the crate's public Rust functions. `goat-cli` and `goatbuilder` depend on it. **Built**, not yet on `main`. Reverting it moves the code back into `crates/goat-cli/src/fed/`, after any later stage that uses it is reverted.
+
+**Stage 4, verbs into the library (pure move).** Owns the six verb implementations, moved out of `crates/goat-cli/src/cmd/federate.rs` into `goat_federation::verbs` (`crates/goat-federation/src/verbs/`, one file per verb), with their arguments, checks, reports and exit codes. Interface: a front end supplies where its declaration, certificate and CA roots are and where the report goes; the verb returns its exit code. Stage 5 and `goat federate` depend on it. Reverting it moves them back into `goat-cli`.
+
+**Stage 5, goatbuilder verbs beside `goat`'s.** Owns `goatbuilder federate init|lint|compose|diff|verify|apply`, with the flags and exit codes `goat federate` has. Interface: the command line and exit codes; the rest named by the module's pull request, which updates this paragraph. Stages 5.1, 9 and the switches depend on it. Reverting it leaves the driver and the script on `goat federate`, which is still the default.
+
+**Stage 5.1, driver runs the verbs in process (opt-in).** Owns the driver's opt-in to call the stage 5 verbs in process instead of spawning `goat`. Interface: named by the module's pull request, which updates this paragraph. The driver switch in stage 13+ depends on it. Reverting it leaves the driver spawning `goat federate`.
+
+**Stage 5.2, notice in `goat federate`.** Owns the one line `goat federate` prints on stderr naming the goatbuilder command. Interface: that line. Nothing depends on it. Reverting it removes the line.
+
+**Stage 6, planner and preflight.** Owns `goatbuilder federate plan`: validates configuration, measures readiness (ports in use, slot list against the registry, receive scopes against the edge's grants, certificate names and expiry, conflicts with existing peerings) and writes a plan with versions, agreement digest, rendered-configuration hashes, resource ownership and restart requirements. Interface: named by the module's pull request, which updates this paragraph. Until stage 8 lands it takes the per-peering values as parameters; the call site is wired to the allocation when stage 8 merges. Stage 12's approval binds to the plan's hash. Reverting it leaves `ops/federation/standup/preflight.py` as phase 1.
+
+**Stage 6.1, phase 8 resolves the CA key.** Owns locating the operator-held CA key that phase 8's existing script mints the per-peering certificates with; minting itself does not change, and no automatic issuance is added. Interface: named by the module's pull request, which updates this paragraph. Stage 7 installs what phase 8 mints. Reverting it returns to a hand-supplied key file, which still wins when given.
+
+**Stage 7, edge role installs the minted certificates.** Owns installing the per-peering certificate files on the edge through the role `goat-zenoh-edge`, behind the opt-in `goat_zenoh_edge_install_certs` (off by default). Until stage 8 lands it takes the certificate directory as a parameter; the call site is wired when stage 8 merges. Stage 12's `deploy` uses it. Reverting it returns to placing the files by hand, which still works with the switch off.
+
+**Stage 8, allocated peering values.** Three pull requests: the declaration (`crates/goatbuilder/src/federate/declaration.rs`), the allocator (`federate/alloc.rs`) and the rendering (`federate/peering_files.rs`), each **built**, not yet on `main`. Owns the per-peering values no agreement carries: tunnel interface and listen port, proposed link subnet, edge listen port, SPIRE outbound port, republisher metrics port, certificate directory, inventory groups and names, and behind a forwarder the carrier interface, ports and subnet and the public port. They are stable across re-runs and additions, never collide between peerings on one host, are proposed as a reviewable change to the deployment's own configuration, and never expand what the agreement permits. Interface: the `peerings:` fields `offer` (narrows federation.toml's `[data] release`, never widens it), `values` (pins), `hosts` and `forwarder`, beside the existing `tunnel`; `environments[].peering_edge_reserved_udp`; `alloc::PeeringValues`, `allocate(cfg, with, ctx)`, `allocate_in(cfg, env, with, ctx)` and `allocate_all(cfg, ctx)`; `declaration::check_offer` and `declaration::peering`; the allocation record `ops/goatbuilder/peering-values.yaml`; and the files `goatbuilder federate allocate` renders, `ops/ansible/group_vars/<edge_group>/peering-values.yml`, `group_vars/<core_group>/peering-values.yml` and `ops/ansible/inventory/peering-edges.ini` (sections "The peering declaration", "Per-peering values" and "Per-peering files" below). Refusals GB-120..129, GB-230 and GB-231. Stages 6, 7 and 10 read it. Reverting it returns to hand-written per-peering files, which keep working beside it because a peering the record does not hold runs as before; revert the rendering, then the allocator, then the declaration.
+
+**Stage 9, phase 3 over SSH.** Owns building our package on the core host from the operator's machine. It runs `init` through the stage 5 verbs, so it stands on stage 5. Interface: named by the module's pull request, which updates this paragraph. Reverting it returns to running `init` on the host, with the binary and key copied there.
+
+**Stage 10, forwarder from the declaration.** Owns the peering forwarder's port mapping and carrier key exchange, applied by the driver from the peering entry (`crates/goatbuilder/src/federate/forwarder.rs`, `ops/ansible/peering-carrier-keys.yml`; [peering-forwarder.md](peering-forwarder.md) §7). **Built**, not yet on `main`. Interface: a `peerings:` entry's `forwarder: { endpoint, group, ansible_host }`; the stage 8 values `public_port`, `carrier_interface`, `carrier_listen_port`, `carrier_port` and `carrier_subnet`; the file `goatbuilder federate allocate` renders, `ops/ansible/group_vars/<forwarder group>/peering-forwarder.yml` (`goatbuilder_forwarder_peerings`, and `peering_forwarder_peerings`, the entries whose edge carrier key is present), the edge's carrier variables in its `peering-values.yml`, and the forwarder group in the rendered inventory; and phase 2 of a relayed peering: prepare, carrier keys from every relayed edge, the forwarder play, carrier keys again with a check that `<cert_dir>/forwarder-carrier.pub` arrived, prepare again. Refusals GB-160..163. A peering without `forwarder:` keeps a byte-identical phase 2. Reverting it returns to setting the mapping and exchanging carrier keys by hand; a re-run of `allocate` afterwards drops the edge's carrier variables and stops rendering the forwarder file.
+
+**Stage 11, directory with one package per counterparty.** Owns per-counterparty directory slots and their lookup in `ops/federation/standup/directory.py`, behind the opt-in `--per-counterparty` (or `FED_DIRECTORY_PER_COUNTERPARTY=1`) ([peering-directory-service.md](peering-directory-service.md), ADR 1225 decision 6). The directory service's route `/v1/parties/<us>/packages/<counterparty>` merges first. Reverting it leaves the single slot and pointer, which stay the default until their own switch.
+
+**Stage 12, the one-command surface.** Owns `deploy` (executes an approved plan through the existing roles), approval bound to the plan's hash, live prerequisites rechecked before any change, the run journal, per-peering locks with a host-level allocation check, resume by inspecting actual state, `test` and `status`. Interface: named by the module's pull request, which updates this paragraph. Each part reverts alone, and the phases then run as today.
+
+**Stage 13+, switches of default.** Each owns one default and nothing else: the driver runs the verbs in process; `peering-standup.sh` calls `goatbuilder federate`; the directory publishes per counterparty; `goat federate` is removed once a goatbuilder release with the verbs reaches partner environments. Each reverts with one commit, restoring the previous default.
+
+**Stage 14, teaching material.** Owns the runbook, the tutorials and the guides that teach the command, in this repository and its siblings. It follows the switches. Reverting it restores the earlier text.
+
+### The peering declaration
+
+Status: built (`crates/goatbuilder/src/federate/declaration.rs`, the schema's `peering` definition, unit tests). Status: WIP — gate: a peering with `offer:` equal to federation.toml's sets runs every phase in the federation test environment, and one that names an undeclared set is refused before phase 1.
+
+A `peerings:` entry keeps `with`, `environment`, `site`, `edge_class` and the optional `tunnel` (`wireguard` or `ipsec`, the one field for the transport), and takes these optional fields:
+
+```yaml
+peerings:
+  - with: xab
+    environment: dev
+    site: alpha
+    edge_class: edge
+    offer: [all, xab]           # narrows federation.toml's [data] release for this partner
+    values: {}                  # pins that override allocated values (Per-peering values, below)
+    hosts: { edge: 192.0.2.20, core: 192.0.2.10, user: goat }   # for a rendered inventory
+    forwarder: { endpoint: 203.0.113.7 }   # present when a peering forwarder relays (ADR 1218)
+```
+
+`init lint compose diff verify apply help status plan deploy test allocate` are words of `goatbuilder federate` and can never name a partner (GB-120).
+
+`tunnel` is this party's local choice of transport, spelled as the schema has always spelled it: `ipsec` is the agreement's `ipsec-fips`. Like `offer:`, it may only narrow: the agreement picks the transport from both packages' measured capabilities, and phase 11 runs the play for the transport the agreement chose, never the one `tunnel` names. A `tunnel` that disagrees with the agreement is a configuration to correct, not an override.
+
+A partner declared on two environments needs `--env` only when it matters: the offer check demands it only when one of the entries declares `offer:`.
+
+**One owner per field: the offered release sets.** The verified agreement determines what flows between the two parties. The goat context's `federation.toml` owns the release sets this party offers (`[data] release`), and `goat federate init` writes them into our half of the agreement. A peering's `offer:` may only narrow that list for one partner. A set name `X` means the key expression `release/X/**` (`ops/permissions/release-sets.yaml`), and a key expression under `release/` is compared as written. Every entry must be one `federation.toml` offers; an entry it does not offer is refused, never added (GB-129). So there is no second, hand-kept list that could widen what was declared and reviewed in one place.
+
+Where it is checked:
+
+| Check | Where | Reads |
+|---|---|---|
+| reserved names (GB-120); `offer:` empty, malformed or repeating a set (GB-129) | `goatbuilder validate`, and every command that loads the config | goatbuilder.yaml only |
+| every `offer:` entry is in `[data] release` (GB-129) | `goatbuilder federate <with>`, before phase 1, when the peering declares `offer:` | the `federation.toml` phase 3 reads: `$GOAT_PROFILE_DIR` (else `~/.goat`), context `$GOAT_CONTEXT` (else `current_context`, else `default`) |
+
+A peering without `offer:` is not checked, and nothing is read: the driver runs as before.
+
+Not built yet: phase 3 offering a narrowed list. `goat federate init` offers exactly what `federation.toml` declares, so until it takes a narrowed list, an `offer:` narrower than `[data] release` is refused too (GB-129) rather than run with the wider set.
+
+### Per-peering values: allocated and recorded
+
+Status: built (`crates/goatbuilder/src/federate/alloc.rs`, unit tests). Status: WIP — gate: two peerings on one edge host and one core host, both carrying data, in the federation test environment, with every per-peering value allocated and none chosen by hand.
+
+A peering needs values that no agreement carries and that two peerings on one edge host or one core host cannot share. Before this, a person chose them by hand for each peering. The first real run on 9 Nov 2026 hit the case this prevents: the tunnel listen port it chose was NetBird's 51820 on the edge. `federate/alloc.rs` computes them; `allocate(cfg, with, ctx)` returns one peering's `PeeringValues` and `allocate_all(cfg, ctx)` every peering's.
+
+**The values and their sequences.** The first peering of an environment gets index 0 of each sequence. The defaults are port numbers, link-local ranges and the driver's existing working-directory root, so they belong to no deployment.
+
+| Value | Sequence | Unique across |
+|---|---|---|
+| `wg_interface` | `wg-fed0`, `wg-fed1`, ... | interfaces on the edge host |
+| `wg_listen_port` | 51823, 51825, ... (never 51820, NetBird's) | UDP ports on the edge host |
+| `link_subnet` (the subnet we propose) | `169.254.10.0/31`, `169.254.10.2/31`, ... | subnets on the edge host |
+| `spire_outbound_port` | 18443, 18444, ... | TCP ports on the edge host |
+| `republisher_metrics_port` | 9310, 9311, ... | TCP ports on the core host |
+| `edge_listen_port` | 7448 for every peering | shared on purpose: `apply` binds each edge router to its own link address, and the partner dials this port number |
+| `cert_dir` | `/var/lib/goat-federation/<with>/pki`, the driver's own default `<work>/pki` (`/var/lib/goat-federation/<env>-<with>/pki` for the same partner on a second environment) | the repository: the machine running the driver may run every environment's peerings |
+| `edge_group`, `core_group` | `<with>_edge`, `<with>_core` (`<env>_<with>_edge` for the same partner on a second environment) | the repository |
+| `edge_host_name`, `core_host_name` | `<env>-edge-<with>`, `<env>-core-<with>` | the repository |
+| with `forwarder:` only: `public_port`, `carrier_port` | 51820, 51822, ... and 51821, 51823, ... | UDP ports on that forwarder (by its `endpoint`), across every environment it relays |
+| with `forwarder:` only: `carrier_interface`, `carrier_listen_port`, `carrier_subnet` | `wg-carry0`, ...; 51822, 51824, ...; `169.254.30.0/31`, ... | the edge host, with the values above; the interface and subnet also on that forwarder, across environments |
+
+Every host-scoped value is unique within one environment, which is stricter than per host and never wrong. One inventory name per peering per machine matters because Ansible merges the group_vars of every group a host name is in: one name in two peering groups makes each peering's run read the other's interface, ports and certificate paths.
+
+**Where a value comes from, one owner per field.** A pin under `values:` is owned by the person who wrote it. Every other value is owned by the allocation record, `ops/goatbuilder/peering-values.yaml`, which `goatbuilder federate allocate` writes (next section) and the deployment commits like any reviewed change. A value missing from both is allocated: the first candidate in its sequence that no other peering of the environment holds. All pinned and recorded values are registered before any fresh allocation, so a new peering takes only free values.
+
+**Why a record and not only a deterministic order.** Values derived from a peering's position in the list move when an earlier peering is removed or the list is reordered, and a name hashed into a slot can collide. With the record, a value once allocated is never moved by a later run, and adding a peering in any position leaves the others' values as they were. The record is also the reviewable proposal: the change the tool makes to the deployment's own configuration is a diff of this file and the rendered files, read before anything is deployed. Removing a peering's declaration keeps its record entry, and its values stay reserved, because the peering may still be running on the hosts. A person removes the entry once the peering is cut; `allocate` names each such entry. A pinned value is the pin's and is not recorded, so removing a pin lets allocation choose that value afresh; to keep a running peering's value, leave the pin or move the value into its record entry.
+
+**Refusals**, each naming the fix: a pin that another peering's pin or recorded value holds, or a partner declared twice on one environment (GB-121); a pin on a UDP port the edge already holds (GB-122); a malformed pin or a forwarder pin with no forwarder (GB-123); an unusable record, including a recorded value on a port the edge holds (GB-124); a sequence exhausted (GB-127). These are checks on the configuration itself: `goatbuilder validate` reports them, reading the record beside goatbuilder.yaml, and every goatbuilder command that loads the config refuses while one stands, not only `federate`. A colliding pin therefore stops `goatbuilder standup` too, until it is corrected.
+
+**The edge's reserved UDP ports are per environment.** `environments[].peering_edge_reserved_udp` lists the UDP ports that environment's edge hosts already hold; allocation never gives one to a tunnel or carrier, and a pin on one is refused (GB-122). Absent, it is `[51820]`, NetBird's WireGuard, because a mesh-enrolled edge holds it. An environment whose edges run no mesh client sets `[]`, which is how a peering already running on the role default 51820 is adopted by pinning it.
+
+### Per-peering files: rendered for review
+
+Status: built (`crates/goatbuilder/src/federate/peering_files.rs`, unit tests). Status: WIP — gate: two peerings on one edge host and one core host carrying data in the federation test environment, with every per-peering file rendered by `goatbuilder federate allocate` and none written by hand.
+
+`goatbuilder federate allocate` writes the allocation record and the per-peering files a person used to write by hand. The record and these files are the proposal: the deployment reviews and commits them like any other change to its own configuration, and nothing is deployed by this command.
+
+**Refusals**, each naming the fix: a target file goatbuilder did not generate, or a hand-written file that sets a variable this would render for the same hosts (the group, its parent `peering_edges`, `peering_cores` or `peering_forwarders` group, or the host_vars of its inventory names), so no variable has two owners decided by Ansible's precedence (GB-125); `hosts:` on some peerings and not others (GB-126). Once the record holds a peering, `goatbuilder federate <with>` refuses a run whose `--work` (its `pki`), `--edge-group` or core group differs from the allocated `cert_dir`, `edge_group` and `core_group` (GB-128): phase 8 would mint where the edge does not read, or the plays would reach another peering's hosts. A peering the record does not hold runs as before, so hand-written files keep working. The driver runs the republisher on `<with>_core` and does not read the allocated core group yet, so a partner declared on a second environment (allocated `<env>_<with>_core`) or a `core_group` pin is refused by GB-128 until it does. Without `hosts:` the inventory stays hand-written, and `allocate` refuses one inventory name in two peering groups of it (GB-231).
+
+**Adopting a peering that already runs.** A peering the record does not hold, whose edge group already has hand-written group_vars or a group in the hand inventory, runs today on values a person chose or on the role defaults (`wg-fed0`, 51820, SPIRE 18443, metrics 9310, read from the roles in this repository). `allocate` never renders different values for it silently: it refuses (GB-230) and names each value that would move. Pin the running values under `values:` to adopt it as it runs, or confirm the move with `FED_ALLOCATE_MOVE=<with>`, after which its next phase 2 moves the tunnel. Once recorded, the peering is no longer checked this way.
+
+**With the edge role installing the certificates.** When `goat_zenoh_edge_install_certs` is on for an edge group (its own hand-written group_vars, else `peering_edges`, else `all`), `goat-zenoh-edge` reads the leaves from `<fed_work>/pki`, which is the allocated `cert_dir` because the driver's `--work` must match it (GB-128), installs them in `goat_zenoh_edge_cert_dir`, and derives the four leaf paths from that directory, refusing any other value. `allocate` then renders the edge's per-peering directory `goat_zenoh_edge_cert_dir: /etc/goat-zenoh-edge-<with>/tls` and none of the leaf paths. It is not the allocated `cert_dir` itself: that directory is the source on the machine running the driver and holds the core's and republisher's leaves too, which the role refuses in a directory it installs into. A group whose only hand-written file is that switch is not treated as a running peering for GB-230.
+
+**Retired peerings in the inventory.** A peering removed from `peerings:` keeps its record entry, and its groups stay in the rendered inventory (carried from the last rendered one) until a person removes the entry, so backing it out still has its hosts to target. Every file is written to a temporary name and renamed, so a reader never sees half a record.
+
+**What `goatbuilder federate allocate` writes**, relative to the repository; `--dry-run` writes nothing and shows each file:
+
+| File | Holds |
+|---|---|
+| `ops/goatbuilder/peering-values.yaml` | the allocation record |
+| `ops/ansible/group_vars/<edge_group>/peering-values.yml` | the WireGuard interface and listen port, the SPIRE outbound port and server host, the edge listen port, and either the four leaf certificate paths under `cert_dir` (not the two CA paths: phase 8 does not write those files, and the partner CA is placed only after its fingerprint is checked in phase 10) or, when the group's hand-written group_vars turn on `goat_zenoh_edge_install_certs`, `goat_zenoh_edge_cert_dir: /etc/goat-zenoh-edge-<with>/tls` and no leaf path |
+| `ops/ansible/group_vars/<core_group>/peering-values.yml` | the republisher's metrics port and certificate sources |
+| `ops/ansible/inventory/peering-edges.ini` | `peering_edges` and `peering_cores` with one group per peering, when every peering declares `hosts:`; the forwarder's group when a forwarder relays |
+| `ops/ansible/group_vars/<forwarder group>/peering-forwarder.yml` | `peering_forwarder_peerings`, one entry per relayed peering ([peering-forwarder.md](peering-forwarder.md) §7) |
+
+It never writes the agreement's own values: `goat federate apply` renders those beside these files (`federation-<them>.yml`, `-republish.yml`, `-transport.yml`). It never overwrites a file it did not generate, and a re-run that changes nothing writes nothing.
+
+Not built yet: phase 3 reading `wg_interface` and `link_subnet` into the goat context's `federation.toml` `[transport]`, and the driver taking `--work`, `--edge-group` and the core group from the allocation instead of checking them (GB-128). The link the edge binds is the agreement's subnet, which may be the partner's proposal: two agreements that pick one subnet on one edge are not refused yet.
 
 ### A goatlite profile (future)
 
@@ -266,7 +419,7 @@ These are practitioner and standards sources, not a single authority; the contra
 
 Both avenues stay functional for the three golden paths — founder standup, federating node, deployments across environments — and neither is deleted ([ADR 1201](../adr/1201-two-avenues-scripts-documented-cli-supported.md), amending ADR 1198's "subsume and delete"). The operator's rule, verbatim: "keep both avenues functional … both the scripts method and the cli method and eventually we will document how scripts can work, but support only the cli."
 
-1. **Dual-run.** `goatbuilder <verb>` is built to pass the conformance suite and to produce the same result as the script beside it. The script never depends on the binary.
+1. **Dual-run.** `goatbuilder <verb>` is built to pass the conformance suite and to produce the same result as the script beside it. The script never depends on the binary, with one exception: from its own switch-of-default pull request, `peering-standup.sh` calls the `goatbuilder federate` package verbs, because federation's package protocol has one implementation ([ADR 1225](../adr/1225-federation-belongs-to-goatbuilder-one-command-one-decision.md)).
 2. **Parity gate.** A CI check runs the binary and the script against the same input and asserts identical declaration and record outcomes, the way `registry-parity` already gates image refs. A failure on either side fails the check; the fix lands on both sides in the same change.
 3. **Support moves, surface stays.** The runbooks, one-pagers, hosted book and error catalog teach the binary. Each script's page says what it does and that it is unsupported. The CLAUDE.md pointer names the binary as the driver and the script as the documented alternative.
 

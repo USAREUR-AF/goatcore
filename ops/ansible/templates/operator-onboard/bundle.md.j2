@@ -176,7 +176,7 @@ already be on the mesh.
 
 ### Site: {{ site }}
 
-**Login URL:** `{{ ory_site_kratos_admin_host_map[site].auth_url | default('https://auth.' + site + '.netbird.' + (ory_site_zone_map[site] | default('nova.example'))) }}/`
+**Login URL:** `{{ ory_site_kratos_admin_host_map[site].auth_url | default('https://auth.' + site + '.netbird.' + (ory_site_zone_map[site] | default(site ~ '.net'))) }}/`
 (or open any OIDC-gated service and you'll be redirected to it)
 
 **Username (Kratos identifier — must be email-shaped):**
@@ -190,7 +190,7 @@ already be on the mesh.
 {{ _cred.password }}
 ```
 
-Log in with your email + password. Change your password at: `{{ ory_site_kratos_admin_host_map[site].auth_url | default('https://auth.' + site + '.netbird.' + (ory_site_zone_map[site] | default('nova.example'))) }}/settings`
+Log in with your email + password. Change your password at: `{{ ory_site_kratos_admin_host_map[site].auth_url | default('https://auth.' + site + '.netbird.' + (ory_site_zone_map[site] | default(site ~ '.net'))) }}/settings`
 {% endif %}
 
 {% if _cred.recovery_link is defined %}
@@ -289,16 +289,16 @@ Operator-IdP identity not provisioned.
 You have **two credentials** for the trial fabric:
 
 1. **X.509 wire-layer cert + key** — what the Zenoh router validates at session establishment. Lives inside the bundle tarball below.
-2. **Portal API key** — what authenticates you to the portal at `{{ zenoh_vendor_provisioned.portal_url | default('https://portal.nova.netbird.nova.example') }}` for topic registration + schema upload + inspector calls. Distinct from the X.509 cert by design.
+2. **Portal API key** — what authenticates you to the portal at `{{ zenoh_vendor_provisioned.portal_url | default(zenoh_trial_portal_url) }}` for topic registration + schema upload + inspector calls. Distinct from the X.509 cert by design.
 
 | Field | Value |
 |---|---|
 | Vendor prefix | `{{ manifest.zenoh.trial.vendor }}` |
 | URI-SAN | `{{ zenoh_vendor_provisioned.uri_san | default('(minted at provisioning — per-goatnet scheme, see your cert)') }}` |
-| Portal | {{ zenoh_vendor_provisioned.portal_url | default('https://portal.nova.netbird.nova.example') }} |
-| Router endpoint (mTLS) | `{{ zenoh_vendor_provisioned.router_endpoint | default('tls/100.127.0.190:7447') }}` |
+| Portal | {{ zenoh_vendor_provisioned.portal_url | default(zenoh_trial_portal_url) }} |
+| Router endpoint (mTLS) | `{{ zenoh_vendor_provisioned.router_endpoint | default(zenoh_router_endpoint_map.get(zenoh_trial_site, 'tls/zenoh.' ~ zenoh_trial_site ~ '.netbird.' ~ zenoh_trial_site ~ '.net:7447')) }}` |
 | Portal API key | `{{ zenoh_vendor_provisioned.api_key | default('(not in this bundle — see note below)', true) }}` |
-| Bundle tarball URL (one-time, ~24h) | {{ zenoh_vendor_provisioned.portal_url | default('https://portal.nova.netbird.nova.example') }}{{ zenoh_vendor_provisioned.bundle_url | default('(not regenerable — see note below)', true) }} |
+| Bundle tarball URL (one-time, ~24h) | {{ zenoh_vendor_provisioned.portal_url | default(zenoh_trial_portal_url) }}{{ zenoh_vendor_provisioned.bundle_url | default('(not regenerable — see note below)', true) }} |
 
 {% if zenoh_vendor_provisioned.status | default(0) == 409 %}
 > **Note:** The portal returned `409 vendor exists`. This vendor prefix was registered in a prior run; the api_key + bundle_url above are NOT recoverable (the api_key is bcrypt-hashed in the portal registry). Either (a) deliver the prior bundle if you still have it, or (b) revoke the vendor row at the portal and re-run this orchestrator.
@@ -309,7 +309,7 @@ You have **two credentials** for the trial fabric:
 ```bash
 mkdir -p ~/{{ manifest.zenoh.trial.vendor }}-zenoh
 cd ~/{{ manifest.zenoh.trial.vendor }}-zenoh
-curl -fsSL '{{ zenoh_vendor_provisioned.portal_url | default('https://portal.nova.netbird.nova.example') }}{{ zenoh_vendor_provisioned.bundle_url | default('<bundle_url from above>') }}' -o bundle.tar.gz
+curl -fsSL '{{ zenoh_vendor_provisioned.portal_url | default(zenoh_trial_portal_url) }}{{ zenoh_vendor_provisioned.bundle_url | default('<bundle_url from above>') }}' -o bundle.tar.gz
 tar -xzf bundle.tar.gz
 ls -la
 # expected:
@@ -350,7 +350,7 @@ curl -fsS -X POST \
      -H 'Authorization: Bearer {{ zenoh_vendor_provisioned.api_key | default('<portal api_key>') }}' \
      -H 'Content-Type: application/json' \
      -d '{"key_pattern":"{{ manifest.zenoh.trial.vendor }}/foo/v1","format":"json","description":"first topic"}' \
-     {{ zenoh_vendor_provisioned.portal_url | default('https://portal.nova.netbird.nova.example') }}/api/vendors/{{ manifest.zenoh.trial.vendor }}/topics
+     {{ zenoh_vendor_provisioned.portal_url | default(zenoh_trial_portal_url) }}/api/vendors/{{ manifest.zenoh.trial.vendor }}/topics
 ```
 
 The portal UI at the URL above does the same thing through a form; bring the api_key as a Bearer token.
@@ -403,7 +403,7 @@ up, the download host is mesh-only):
 OS=$(uname -s | tr 'A-Z' 'a-z')                      # darwin | linux
 ARCH=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
 DL=$(mktemp -d)                                      # private download dir, not a shared /tmp name
-curl -fsSL {{ goat_get_base_url | default('https://get.nova.netbird.nova.example') }}/goat-${OS}-${ARCH} -o "$DL/goat"
+curl -fsSL {{ goat_get_base_url | default('https://get.' ~ zenoh_trial_site ~ '.netbird.' ~ zenoh_trial_site ~ '.net') }}/goat-${OS}-${ARCH} -o "$DL/goat"
 [ "$OS" = darwin ] && codesign --force --sign - "$DL/goat"   # macOS: clear the launch hang, before the move
 sudo mkdir -p /usr/local/bin
 sudo install -m 0755 "$DL/goat" /usr/local/bin/goat
@@ -450,7 +450,7 @@ see `goat --help` or the goat-cli design doc inside the repo.
 > needed to mint a fresh CBOR bundle were unrecoverable. If you
 > still have the prior CBOR bundle, that one is still valid
 > (cert + token + endpoints + ca-roots are all CA-signed against the
-> nova CA root the goat-cli verifier embeds). Otherwise revoke
+> goatnet CA root the goat-cli verifier embeds). Otherwise revoke
 > the vendor row at the portal and re-run this orchestrator.
 {% else %}
 > goat-cli profile bundle not minted (Zenoh not enabled, revoke

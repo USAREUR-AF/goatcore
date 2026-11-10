@@ -17,9 +17,10 @@ import hashlib
 import json
 import os
 
-from .paths import CAPS_FILE, INTENT_SCHEMA, LITE_TABLE, TABLE, intent_path, rel
-from .resolve import (SchemaError, all_scope_vars, artifact_type, deviation_scope,
-                      member_scopes, resolve, resolve_var_full, role_defaults)
+from .paths import INTENT_SCHEMA, LITE_TABLE, TABLE, intent_path, rel
+from .resolve import (SchemaError, all_scope_vars, artifact_type, caps_files,
+                      deviation_scope, member_scopes, resolve, resolve_var_full,
+                      role_defaults)
 
 INTENT_FORMAT = "goat-intent-v1"
 
@@ -150,13 +151,16 @@ def sources_of(goatnet, lite_goatnets=frozenset(), table=None, lite_table=None):
     sha256 of its exact bytes. A goatnet declared in fleet-pins.yaml: the fleet
     table and the capabilities file — unchanged since CF-1, so a lite render
     beside it moves no committed intent. A goatnet declared in the lite sidecar
-    (ADR 1213): the fleet table, the sidecar and the capabilities file."""
+    (ADR 1213): the fleet table, the sidecar and the capabilities file. Each
+    capabilities extension a deployment supplies (resolve.caps_files) is listed
+    after the capabilities file."""
     table = table or TABLE
     out = {rel(table): sha256_of_file(table)}
     if goatnet in lite_goatnets:
         lite_table = lite_table or LITE_TABLE
         out[rel(lite_table)] = sha256_of_file(lite_table)
-    out[rel(CAPS_FILE)] = sha256_of_file(CAPS_FILE)
+    for caps_file in caps_files():
+        out[rel(caps_file)] = sha256_of_file(caps_file)
     return out
 
 

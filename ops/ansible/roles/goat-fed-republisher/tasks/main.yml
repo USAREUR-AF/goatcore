@@ -1,0 +1,225 @@
+---
+# goat-fed-republisher — runs on our core host. See defaults/main.yml for where
+# and why; ops/federation/republisher/README.md for what it does to a sample.
+
+- name: republisher | nothing leaves under this agreement
+  ansible.builtin.debug:
+    msg: >-
+      The agreement grants no flow from us, so `goat federate apply` rendered no
+      republisher values and there is nothing to republish. Not deployed.
+  when: goat_fed_republisher_release | length == 0
+
+- name: republisher | stop here when nothing leaves
+  ansible.builtin.meta: end_host
+  when: goat_fed_republisher_release | length == 0
+
+# --- Fail loud on anything unset ---------------------------------------------
+- name: republisher | every value from the agreement and this deployment must be set
+  ansible.builtin.assert:
+    that:
+      - goat_fed_republisher_sovereign_id | length > 0
+      - goat_fed_republisher_partner_id | length > 0
+      - goat_fed_republisher_cn | length > 0
+      - goat_fed_republisher_publish_under == 'from/' ~ goat_fed_republisher_sovereign_id ~ '/**'
+      - goat_fed_republisher_image | length > 0
+      - goat_fed_republisher_core_endpoint | length > 0
+      - goat_fed_republisher_core_ca_src | length > 0
+    fail_msg: >-
+      goat-fed-republisher is missing a value. The agreement half comes from
+      `goat federate apply` (phase 9, federation-<them>-republish.yml); the
+      deployment half goes in group_vars/<peering>_core/: image, core endpoint,
+      and goat_fed_republisher_core_ca_src (our CA, on the controller). See
+      docs/operations/sovereign-federation-runbook.md, phase 12.
+
+- name: republisher | image must be content-addressed (ADR 0703)
+  ansible.builtin.assert:
+    that:
+      - goat_fed_republisher_image is search('@sha256:[0-9a-f]{64}$')
+        or goat_fed_republisher_image is match('^sha256:[0-9a-f]{64}$')
+    fail_msg: >-
+      goat_fed_republisher_image must be pinned by digest (or be a local image id
+      `sha256:<64 hex>`), never by tag.
+
+- name: republisher | the core endpoint carries no per-link fragment
+  ansible.builtin.assert:
+    that: ["'#' not in goat_fed_republisher_core_endpoint"]
+    fail_msg: >-
+      goat_fed_republisher_core_endpoint is a plain endpoint, e.g. tls/<core>:7447.
+      Its trust is goat_fed_republisher_core_ca_src; a `#root_ca_certificate_file=`
+      fragment belongs to the edge's endpoints, not here.
+
+- name: republisher | every release prefix is a staging name, never the wire name
+  ansible.builtin.assert:
+    that:
+      - goat_fed_republisher_release | reject('match', '^release/[^*/]+(/.*)?$') | list | length == 0
+    fail_msg: >-
+      Every entry of goat_fed_republisher_release must be a `release/<set>/...`
+      staging name: {{ goat_fed_republisher_release }}.
+
+# --- One host, several peerings -----------------------------------------------
+# Every republisher runs on the host network and serves /metrics on loopback. Two of
+# them on one core host with the same port: the second cannot bind it. Refused here,
+# before anything is written, naming the republisher that holds the port.
+- name: republisher | other republishers on this host holding our metrics port
+  ansible.builtin.shell:
+    cmd: >-
+      docker ps -a --filter name=^goat-fed-republisher- --format '{{ '{{' }}.Names{{ '}}' }}' |
+      while read -r n; do
+        [ "$n" = "{{ goat_fed_republisher_stack }}" ] && continue;
+        docker inspect -f '{{ '{{' }}range .Config.Env{{ '}}{{' }}println .{{ '}}{{' }}end{{ '}}' }}' "$n" |
+        grep -qx 'FED_REPUBLISHER_METRICS_BIND=127.0.0.1:{{ goat_fed_republisher_metrics_port }}' && echo "$n";
+      done; true
+    executable: /bin/bash
+  register: _rp_metrics_clash
+  changed_when: false
+  check_mode: false
+
+- name: republisher | no other republisher on this host holds our metrics port
+  ansible.builtin.assert:
+    that: _rp_metrics_clash.stdout_lines | length == 0
+    fail_msg: >-
+      goat-fed-republisher refuses: 127.0.0.1:{{ goat_fed_republisher_metrics_port }} is the
+      metrics port of {{ _rp_metrics_clash.stdout_lines | join(', ') }} on this host. Each
+      peering's republisher needs its own: set goat_fed_republisher_metrics_port in
+      group_vars/<peering>_core/ for this peering.
+
+# --- What it reads, placed on this host --------------------------------------
+- name: republisher | directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - "{{ goat_fed_republisher_dir }}"
+    - "/opt/{{ goat_fed_republisher_stack }}"
+
+- name: republisher | the agreement, our CA and its certificate
+  ansible.builtin.copy:
+    src: "{{ item.src }}"
+    dest: "{{ goat_fed_republisher_dir }}/{{ item.dest }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - { src: "{{ goat_fed_republisher_agreement_src }}", dest: agreement.json }
+    - { src: "{{ goat_fed_republisher_core_ca_src }}", dest: core-ca.pem }
+    - { src: "{{ goat_fed_republisher_cert_src }}", dest: republisher.pem }
+  notify: Restart goat fed republisher
+
+- name: republisher | its key, readable by the container's user alone
+  ansible.builtin.copy:
+    src: "{{ goat_fed_republisher_key_src }}"
+    dest: "{{ goat_fed_republisher_dir }}/republisher-key.pem"
+    owner: "{{ goat_fed_republisher_uid }}"
+    group: root
+    mode: "0400"
+  notify: Restart goat fed republisher
+
+- name: republisher | the certificate carries the name the core admits
+  ansible.builtin.command:
+    cmd: "openssl x509 -in {{ goat_fed_republisher_dir }}/republisher.pem -noout -subject -nameopt RFC2253"
+  register: _rp_subject
+  changed_when: false
+
+- name: republisher | refuse a certificate the core's subject would not match
+  ansible.builtin.assert:
+    that: ["_rp_subject.stdout is search('CN=' ~ goat_fed_republisher_cn ~ '(,|$)')"]
+    fail_msg: >-
+      {{ goat_fed_republisher_dir }}/republisher.pem is {{ _rp_subject.stdout }}, and
+      the core's fed-rp-{{ goat_fed_republisher_partner_id }} subject matches
+      CN={{ goat_fed_republisher_cn }}. A mismatch connects and matches nothing.
+      Re-run phase 8 (mint-peering-leaves.sh).
+
+# The process validates the agreement and prints its mapping, opening no session.
+- name: republisher | the agreement and the mapping, checked by the process itself
+  ansible.builtin.command:
+    argv:
+      - docker
+      - run
+      - --rm
+      - --network
+      - none
+      - -v
+      - "{{ goat_fed_republisher_dir }}:/etc/republisher:ro"
+      - "{{ goat_fed_republisher_image }}"
+      - --agreement
+      - /etc/republisher/agreement.json
+      - --sovereign-id
+      - "{{ goat_fed_republisher_sovereign_id }}"
+      - --local-endpoint
+      - "{{ goat_fed_republisher_core_endpoint }}"
+      - --edge-endpoint
+      - "{{ goat_fed_republisher_core_endpoint }}"
+      - --check
+  register: _rp_check
+  changed_when: false
+
+- name: republisher | the mapping it will apply
+  ansible.builtin.debug:
+    msg: "{{ (_rp_check.stdout_lines + _rp_check.stderr_lines) | select('search', 'release .* -> wire ') | list }}"
+
+# --- Run it -------------------------------------------------------------------
+- name: republisher | compose project
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "/opt/{{ goat_fed_republisher_stack }}/docker-compose.yml"
+    mode: "0640"
+  notify: Restart goat fed republisher
+
+- name: republisher | up
+  community.docker.docker_compose_v2:
+    project_src: "/opt/{{ goat_fed_republisher_stack }}"
+    state: present
+    pull: "{{ 'never' if goat_fed_republisher_image is match('^sha256:') else 'missing' }}"
+
+- name: republisher | flush handlers so the check below sees the running process
+  ansible.builtin.meta: flush_handlers
+
+# --- Worked when --------------------------------------------------------------
+# Running, subscribed to every offered set, and its publishing session linked to
+# our core. Read from its own /metrics, on this host's loopback.
+- name: republisher | running, subscribed, and linked to our core
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ goat_fed_republisher_metrics_port }}/metrics"
+    return_content: true
+  register: _rp_metrics
+  until:
+    - _rp_metrics.status | default(0) == 200
+    - _rp_metrics.content is search('(?m)^goat_fed_republisher_local_subscribed(\{[^}]*\})? 1$')
+    - _rp_metrics.content is search('(?m)^goat_fed_republisher_edge_linked(\{[^}]*\})? 1$')
+  retries: "{{ goat_fed_republisher_settle_retries }}"
+  delay: "{{ goat_fed_republisher_settle_delay }}"
+  changed_when: false
+
+- name: republisher | its log names one release -> wire line per offered set
+  ansible.builtin.command:
+    cmd: "docker logs {{ goat_fed_republisher_stack }}"
+  register: _rp_log
+  changed_when: false
+
+- name: republisher | refuse a republisher that maps fewer sets than the agreement offers
+  ansible.builtin.assert:
+    that:
+      - (_rp_log.stdout_lines + _rp_log.stderr_lines) | select('search', 'release ' ~ (item | regex_escape) ~ ' -> wire ') | list | length > 0
+    fail_msg: >-
+      The running republisher logged no `release {{ item }} -> wire ...` line, so
+      {{ item }} is not being lifted onto {{ goat_fed_republisher_publish_under }}.
+    quiet: true
+  loop: "{{ goat_fed_republisher_release }}"
+
+- name: republisher | worked
+  ansible.builtin.debug:
+    msg: >-
+      {{ goat_fed_republisher_stack }} is running on {{ inventory_hostname }}:
+      subscribed to {{ goat_fed_republisher_release | join(', ') }} on our core and
+      publishing under {{ goat_fed_republisher_publish_under }}.
+
+- name: goat-fed-republisher | record deploy convergence in the ledger after the check
+  ansible.builtin.include_role:
+    name: rollback-ledger
+    tasks_from: promote
+  vars:
+    rollback_component: "goat-fed-republisher"
+    rollback_ref: "{{ goat_fed_republisher_image }}"

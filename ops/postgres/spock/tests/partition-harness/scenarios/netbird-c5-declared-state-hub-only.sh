@@ -31,7 +31,7 @@ after_heal() {
         COMMIT;"
   nb a "BEGIN;
         INSERT INTO name_server_groups (id, account_id, name, description, name_servers, groups, domains, enabled)
-        VALUES ('$NS', '$ACCT', 'harness-mesh-dns', 'declared', '[{\"IP\":\"100.127.0.31\",\"NSType\":1,\"Port\":53}]',
+        VALUES ('$NS', '$ACCT', 'harness-mesh-dns', 'declared', '[{\"IP\":\"100.127.0.29\",\"NSType\":1,\"Port\":53}]',
                 '[\"$G\"]', '[]', true);
         UPDATE accounts SET network_serial = network_serial + 1 WHERE id = '$ACCT';
         COMMIT;"

@@ -120,7 +120,7 @@
           VPS control channel: {{ 'reachable' if connectivity_test is succeeded else 'UNREACHABLE — check VPS UFW and AWS security group' }}
 
           Test from any machine:
-            curl -sk --resolve netbird.legacy.example:443:{{ vps_relay_ip }} https://netbird.legacy.example/api/accounts
+            curl -sk --resolve <mgmt-fqdn>:443:{{ vps_relay_ip }} https://<mgmt-fqdn>/api/accounts
 
   handlers:
     - name: Restart rathole client

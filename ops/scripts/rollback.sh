@@ -92,6 +92,38 @@ command -v jq >/dev/null 2>&1 && HAVE_JQ=1
 # fails at once and reads as unreachable, the same in both avenues (ADR 1201).
 SSH_OPTS=(-o StrictHostKeyChecking=no -o ConnectTimeout=4 -o BatchMode=yes)
 
+# rssh <user> <host> <command...> — run a command on a ledger host. Direct SSH
+# first. A host this laptop cannot reach directly (a goatnet reached through its
+# env door, docs/design/env-doors.md) is reached through the --site goatnet's
+# door when that goatnet's map is one host: a door lands on one host, so a
+# multi-host map never guesses which. ops/scripts/door-open.sh opens or reuses
+# the door and proves ssh lands before the port is used.
+DIRECT_OK=" "; DIRECT_NO=" "; DOOR_PORT=""
+door_port() {
+  [ -n "$SITE" ] && [ "$HOST_COUNT" -eq 1 ] || return 1
+  [ -n "$DOOR_PORT" ] && return 0
+  local door; door="$(dirname "$0")/door-open.sh"
+  [ -x "$door" ] || [ -f "$door" ] || return 1
+  bash "$door" "$SITE" >/dev/null 2>&1 || return 1
+  DOOR_PORT="$(bash "$door" "$SITE" --status 2>/dev/null | sed -n 's/.*(127\.0\.0\.1:\([0-9]*\)).*/\1/p' | head -1)"
+  [ -n "$DOOR_PORT" ]
+}
+rssh() {
+  local user="$1" host="$2"; shift 2
+  case "$DIRECT_NO" in *" $host "*) ;; *)
+    case "$DIRECT_OK" in *" $host "*) ssh "${SSH_OPTS[@]}" "${user}@${host}" "$@"; return ;; esac
+    if ssh "${SSH_OPTS[@]}" "${user}@${host}" true >/dev/null 2>&1; then
+      DIRECT_OK="$DIRECT_OK$host "; ssh "${SSH_OPTS[@]}" "${user}@${host}" "$@"; return
+    fi
+    DIRECT_NO="$DIRECT_NO$host " ;;
+  esac
+  if door_port; then
+    note "$host is not reachable directly; using the $SITE door (127.0.0.1:$DOOR_PORT)"
+    ssh "${SSH_OPTS[@]}" -p "$DOOR_PORT" "${user}@127.0.0.1" "$@"; return
+  fi
+  ssh "${SSH_OPTS[@]}" "${user}@${host}" "$@"
+}
+
 # The in-repo ledger as JSON, whichever yq is installed: mikefarah's yq (brew)
 # and the jq-wrapping Python yq (pip) take different flags, and their @tsv
 # differ — mikefarah's leaves a newline inside a field raw (and quotes the
@@ -124,14 +156,14 @@ fi
 # Echo the latest jsonl row (one JSON object) from a host, or empty.
 host_latest_row() {
   local user="$1" host="$2" comp="$3"
-  ssh "${SSH_OPTS[@]}" "${user}@${host}" \
+  rssh "${user}" "${host}" \
     "sudo tail -n 1 $(runtime_ledger_path "$comp") 2>/dev/null" 2>/dev/null || true
 }
 
 # Echo distinct refs newest-first (one per line) from a host's jsonl.
 host_refs_newest_first() {
   local user="$1" host="$2" comp="$3"
-  ssh "${SSH_OPTS[@]}" "${user}@${host}" \
+  rssh "${user}" "${host}" \
     "sudo tac $(runtime_ledger_path "$comp") 2>/dev/null" 2>/dev/null \
     | jq -r '(.ref // .image) // empty' 2>/dev/null \
     | awk '!seen[$0]++'
@@ -168,10 +200,14 @@ if [ "$MODE" = "--list" ]; then
     for i in $(seq 0 $((HOST_COUNT - 1))); do
       USERi="$(yq -r ".hosts[$i].ssh_user" "$LEDGER")"
       HOSTi="$(yq -r ".hosts[$i].host" "$LEDGER")"
-      HROWS="$(ssh "${SSH_OPTS[@]}" "${USERi}@${HOSTi}" \
+      SITEi="$(yq -r ".hosts[$i].site // \"\"" "$LEDGER")"
+      HROWS="$(rssh "${USERi}" "${HOSTi}" \
         "sudo tac $(runtime_ledger_path "$SERVICE") 2>/dev/null" 2>/dev/null || true)"
       if [ -n "$HROWS" ]; then
-        echo "  (on-host ledger @ ${HOSTi} — source of truth)"
+        echo "  (on-host ledger @ ${HOSTi}${SITEi:+, goatnet ${SITEi}} — source of truth)"
+        if [ -z "$SITE" ] && [ "$HOST_COUNT" -gt 1 ]; then
+          note "this is the first reachable of $HOST_COUNT hosts; pass --site <goatnet> for one goatnet's history"
+        fi
         echo "$HROWS" | jq -r '"  " + (.ts // "?") + "  [" + (.artifact_type // "image") + "]  " + ((.ref // .image) // "—") + (if (.reversible // true)==false then "  (reversible:false)" else "" end) + (if .promoted_at then "  (finished " + .promoted_at + ")" else "" end)'
         exit 0
       fi
@@ -195,7 +231,7 @@ if [ "$MODE" = "--status" ]; then
     HOST="$(yq -r ".hosts[$i].host" "$LEDGER")"
     SSH_USER="$(yq -r ".hosts[$i].ssh_user" "$LEDGER")"
     CONTAINER="$(yq -r ".hosts[$i].container_name" "$LEDGER")"
-    CURRENT="$(ssh "${SSH_OPTS[@]}" "${SSH_USER}@${HOST}" \
+    CURRENT="$(rssh "${SSH_USER}" "${HOST}" \
       "sudo docker inspect ${CONTAINER} --format '{{.Config.Image}}'" 2>/dev/null \
       || echo "<unreachable>")"
     printf "  %s @ %s: %s\n" "$CONTAINER" "$HOST" "$CURRENT"
@@ -341,7 +377,7 @@ for i in $(seq 0 $((HOST_COUNT - 1))); do
   # A component can run on several goatnets; a host in the map may be down.
   # Skip an unreachable host (or one without the container) and continue —
   # don't abort the whole rollback.
-  PREV_IMAGE="$(ssh "${SSH_OPTS[@]}" "${SSH_USER}@${HOST}" \
+  PREV_IMAGE="$(rssh "${SSH_USER}" "${HOST}" \
     "sudo docker inspect ${CONTAINER} --format '{{.Config.Image}}'" 2>/dev/null || true)"
   if [ -z "$PREV_IMAGE" ]; then
     note "    unreachable or no '${CONTAINER}' container — skipping this host."
@@ -380,7 +416,7 @@ for i in $(seq 0 $((HOST_COUNT - 1))); do
     MF_DIR="$(dirname "${CF_LIST%% *}")"
     FF=""; for f in $CF_LIST; do FF="$FF -f $f"; done
     note "    flipping image across compose files [$CF_LIST] (recreate with$FF)"
-    ssh "${SSH_OPTS[@]}" "${SSH_USER}@${HOST}" "
+    rssh "${SSH_USER}" "${HOST}" "
         set -euo pipefail
         hit=''
         for f in ${CF_LIST}; do
@@ -395,7 +431,7 @@ for i in $(seq 0 $((HOST_COUNT - 1))); do
       "
   elif [ -n "$ENV_FILE" ] && [ -n "$ENV_VAR" ]; then
     note "    flipping ${ENV_VAR} in ${ENV_FILE} (compose-time substitution)"
-    ssh "${SSH_OPTS[@]}" "${SSH_USER}@${HOST}" "
+    rssh "${SSH_USER}" "${HOST}" "
         set -euo pipefail
         sudo sed -i.rollback-bak \"s|^${ENV_VAR}=.*|${ENV_VAR}=${TARGET_IMAGE}|\" '${ENV_FILE}' \
           && sudo grep -q '^${ENV_VAR}=' '${ENV_FILE}' \
@@ -405,7 +441,7 @@ for i in $(seq 0 $((HOST_COUNT - 1))); do
         echo '{\"ts\":\"${TS}\",\"component\":\"${SERVICE}\",\"artifact_type\":\"image\",\"action\":\"rollback\",\"ref\":\"${TARGET_IMAGE}\",\"prior_ref\":\"${PREV_IMAGE}\",\"image\":\"${TARGET_IMAGE}\",\"reversible\":true,\"operator\":\"${USER:-unknown}@$(hostname)\",\"via\":\"rollback.sh:env_file\",\"target_pr\":\"${TARGET_PR}\"}' | sudo tee -a '${RUNTIME_LEDGER}' >/dev/null
       "
   else
-    ssh "${SSH_OPTS[@]}" "${SSH_USER}@${HOST}" "
+    rssh "${SSH_USER}" "${HOST}" "
         set -euo pipefail
         sudo sed -i.rollback-bak \"s|^\(\s*image:\s*\\\"\?\)${PREV_IMAGE//\//\\/}\(\\\"\?\)|\1${TARGET_IMAGE//\//\\/}\2|\" '${COMPOSE}'
         if sudo grep -qF '${PREV_IMAGE}' '${COMPOSE}'; then

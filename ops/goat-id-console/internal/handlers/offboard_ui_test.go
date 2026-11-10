@@ -97,7 +97,7 @@ func TestBrowserOffboard_ConfirmCommandOmitsBlankEnv(t *testing.T) {
 				Sponsor:      "dev@bypass.local",
 				Env:          tc.env,
 				Handle:       "pat-envcase",
-				Email:        "person-107@example.org",
+				Email:        "person-94@example.org",
 				Status:       onboardstore.ProposalOnboarded,
 				ManifestJSON: "{}",
 			}
@@ -172,7 +172,7 @@ func TestBrowserOffboard_ArchivedConfirmNamesTheOneWayDoor(t *testing.T) {
 				Sponsor:      "dev@bypass.local",
 				Env:          "zagros",
 				Handle:       "pat-oneway",
-				Email:        "person-111@example.org",
+				Email:        "person-98@example.org",
 				Status:       tc.state,
 				ManifestJSON: "{}",
 			}

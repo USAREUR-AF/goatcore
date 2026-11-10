@@ -3050,39 +3050,15 @@ mod tests {
 
 #[cfg(test)]
 mod netvis_tests {
-    use std::collections::{BTreeMap, BTreeSet};
+    use std::collections::BTreeMap;
 
     use super::netvis::*;
     use super::Realization;
-    use crate::netbird::{NbGroup, NbPeer, NbPolicy, NbPolicyRule};
-
-
-    struct Fixture {
-        groups: Vec<NbGroup>,
-        policies: Vec<NbPolicy>,
-        peers: Vec<NbPeer>,
-    }
-
-
-
-    fn n_findings(d: &Doc, id: &str) -> usize {
-        d.findings.iter().filter(|f| f.id == id).count()
-    }
+    use crate::netbird::{NbGroup, NbPolicy, NbPolicyRule};
 
     // ── structure ──────────────────────────────────────────────────────────
 
-
-
-
-
-
-
     // ── counts, direction, constraint ──────────────────────────────────────
-
-
-
-
-
 
     /// The constraint comes from the RULE. A policy named "icmp only" whose
     /// rule permits everything must render as wide open — that mistake points
@@ -3097,14 +3073,6 @@ mod netvis_tests {
 
     // ── honesty ────────────────────────────────────────────────────────────
 
-
-
-
-
-
-
-
-
     /// A ledger that does not balance is a page that dropped a rule. Refuse.
     #[test]
     fn an_unbalanced_ledger_refuses_to_build() {
@@ -3116,21 +3084,7 @@ mod netvis_tests {
 
     // ── findings ───────────────────────────────────────────────────────────
 
-
-
-
-
-
-
-
     // ── fabric altitude ────────────────────────────────────────────────────
-
-
-
-
-
-
-
 
     // ── helpers ────────────────────────────────────────────────────────────
 
@@ -3174,6 +3128,5 @@ mod netvis_tests {
         // state that was actually measured.
         assert!(Realization::Unknown < Realization::Latent);
     }
-
 
 }

@@ -93,30 +93,28 @@
     bundle_path: "{{ out_dir }}/{{ operator_handle }}-bundle.md"
     audit_log_path: "{{ repo_root }}/ops/operators/audit.log"
 
+    # THE PER-SITE MAPS IN THIS BLOCK NAME NO GOATNET. Each reads the variable
+    # of the same name with a `goatnet_` prefix, which a deployment sets for
+    # localhost (ops/ansible/host_vars/localhost/), keyed by site name, and is
+    # empty when the deployment sets none. Where the use site derives a default
+    # from the site name, a goatnet that follows the convention needs no entry.
+    #
     # NetBird per-site PAT env-var alias map. Most sites follow
     # <SITE_UPPERCASE_UNDERSCORE>_NB_API_TOKEN. See .envrc.local.d/30-site-services.envrc.
     # The orchestrator falls back to the mechanical default if no alias.
-    netbird_site_env_var_map:
-      vega: VEGA_NB_API_TOKEN
-      legacy: LEGACY_NB_API_TOKEN
-      zagros: ZAGROS_NB_API_TOKEN
-      zagros-prod: ZAGROS_PROD_NB_API_TOKEN
-      # Add via dashboard mint (Q1 decision: PAT issuance stays dashboard-only).
+    # Add via dashboard mint (Q1 decision: PAT issuance stays dashboard-only).
+    netbird_site_env_var_map: "{{ goatnet_netbird_site_env_var_map | default({}) }}"
 
     # NetBird per-site mgmt-API URL map. The mgmt-API host names are
     # per-site config that operator manifests don't carry (manifests are
     # operator-facing; URLs are fleet-config). Add a new site here when
     # it stands up its mgmt-stack. The URL is the base — paths like
     # /api/setup-keys are appended at task-time.
-    netbird_site_url_map:
-      vega: https://mgmt.vega.netbird-prod.goat.example
-      legacy: https://netbird.legacy.example
-      zagros: https://netbird.zagros.example
-      # A goatnet's apex can be a round-robin across its relays, which
-      # rathole-forward to the active node's Traefik, not an mgmt.<site>. host.
-      # The token env var derives from the site name by the default rule below,
-      # minted after the account seed, so this entry is inert until then.
-      zagros-prod: https://netbird.zagros-prod.example
+    #
+    # A goatnet's apex can be a round-robin across its relays, which
+    # rathole-forward to the active node's Traefik, not an mgmt.<site>. host.
+    # A site without an entry is reached at https://netbird.<site>.net.
+    netbird_site_url_map: "{{ goatnet_netbird_site_url_map | default({}) }}"
 
     # Per-role TTL defaults per docs/operations/setup-key-rotation.md.
     netbird_role_ttl_days_default:
@@ -151,34 +149,14 @@
     # ory_site_kratos_admin_host_map names the inventory host. The host's
     # connection params are injected via add_host at Phase 2.0 so this
     # playbook stays runnable with `-i localhost,`.
-    ory_site_kratos_admin_host_map:
-      zagros-dev:
-        # Reached at its own mesh IP through the goatnet's door (doors.yaml).
-        delegate_host_name: kratos-admin-zagros-dev
-        ssh_host: 100.127.0.152
-        ssh_user: goat
-        kratos_admin_url: http://127.0.0.1:4434
-        auth_url: https://auth.zagros-dev.examplebird.zagros-dev.example
-      zagros:
-        # A single-host goatnet. Kratos admin API binds 127.0.0.1:4434
-        # in-container; reach it via SSH delegate to the host's mesh IP
-        # (see group_vars). The onboarding host must be on that mesh to SSH this address.
-        delegate_host_name: kratos-admin-zagros
-        ssh_host: 100.127.0.179
-        ssh_user: goat
-        kratos_admin_url: http://127.0.0.1:4434
-        auth_url: https://auth.zagros.netbird.zagros.example
-      zagros-prod:
-        # A two-node goatnet's active mgmt node. Kratos admin binds 127.0.0.1:4434
-        # in-container; reach it by SSH delegate to the node's mesh IP. The
-        # onboarding host must be on that mesh. Without this entry Phase 0.14
-        # fails with an unhelpful templating error rather than a clear
-        # "site not mapped" message.
-        delegate_host_name: kratos-admin-zagros-prod
-        ssh_host: 100.127.0.221
-        ssh_user: goat
-        kratos_admin_url: http://127.0.0.1:4434
-        auth_url: https://auth.zagros-prod.examplebird.zagros-prod.example
+    #
+    # One entry per site: delegate_host_name, ssh_host, ssh_user,
+    # kratos_admin_url (the admin API binds 127.0.0.1:4434 in-container, so it
+    # is reached by SSH delegate to the management host) and auth_url. The
+    # onboarding host must be able to SSH ssh_host, or use the door override
+    # below. A site without an entry is refused with a "site not mapped"
+    # message.
+    ory_site_kratos_admin_host_map: "{{ goatnet_ory_site_kratos_admin_host_map | default({}) }}"
 
     # ADR 1117 env doors — onboard into a goatnet WITHOUT flipping the laptop's
     # netbird profile. The map above hardcodes each host's mesh IP on port
@@ -203,23 +181,16 @@
     onboard_delegate_port_override: ""
 
     # Zone map for the bundle template's Ory section.
-    ory_site_zone_map:
-      vega: goat.example
-      legacy: legacy.example
-      zagros: zagros.example
-      zagros-prod: zagros-prod.example
+    ory_site_zone_map: "{{ goatnet_ory_site_zone_map | default({}) }}"
 
     # Per-site host suffix for mesh-internal service URLs. The site name
     # (e.g. `site-a`) can differ from the DNS subdomain (e.g. `sa`)
     # — this map names the actual `<subdomain>.netbird.<zone>` tail that
     # mesh-internal services live under, used by the bundle template's
     # "Services reachable on the mesh" section so the rendered URLs match
-    # the real Caddyfile / Traefik routing rules.
-    services_host_suffix_map:
-      # A site's services live under <service>.<site_id>.netbird.<zone>,
-      # resolved by mesh CoreDNS.
-      zagros: zagros.netbird.zagros.example
-      zagros-prod: zagros-prod.examplebird.zagros-prod.example
+    # the real Caddyfile / Traefik routing rules. A site's services live under
+    # <service>.<site_id>.netbird.<zone>, resolved by mesh CoreDNS.
+    services_host_suffix_map: "{{ goatnet_services_host_suffix_map | default({}) }}"
 
     # Defaults for ory_site.credentials when the manifest doesn't override.
     # password=true (immediate-use credential vendor can log in with day 1).
@@ -255,8 +226,7 @@
     # deployed runner mints with the same switch (onboard_runner_aff_trait_enabled);
     # identities minted before the flip get the trait from
     # ops/identity/backfill-aff-trait.py.
-    ory_site_affiliation_trait_enabled_map:
-      zagros: true
+    ory_site_affiliation_trait_enabled_map: "{{ goatnet_ory_site_affiliation_trait_enabled_map | default({}) }}"
 
     # Zenoh portal — Phase 4 dispatches vendor registration to the
     # goat-zenoh-portal's POST /api/vendors endpoint, which encapsulates
@@ -264,18 +234,16 @@
     # rule append + zenohd reload, and one-time bundle URL issuance.
     # See docs/design/operator-onboard-utilities.md §83E.
     #
-    # Per-site portal URLs.
-    zenoh_portal_url_map:
-      # A portal is mesh-internal, resolved by mesh CoreDNS. The onboarding host must
-      # be on the mesh to reach it. A per-uuid slot-pool portal (ADR 1025) records the
-      # requested `prefix` below but assigns a uuid slot anchor as the write namespace + cert CN.
-      zagros: https://portal.zagros.netbird.zagros.example
-      zagros-dev: https://portal.zagros-dev.examplebird.zagros-dev.example
-      # A goatnet missing from this map dies at the Phase 0.13.b assert on
-      # `goat admin onboard <handle> --env <env>`. The SSH half of the mesh constraint
-      # is lifted by onboard_delegate_*_override above; this HTTPS call is not,
-      # because it resolves through mesh CoreDNS.
-      zagros-prod: https://portal.zagros-prod.examplebird.zagros-prod.example
+    # Per-site portal URLs. A portal is mesh-internal, resolved by mesh CoreDNS.
+    # The onboarding host must be on the mesh to reach it. A per-uuid slot-pool
+    # portal (ADR 1025) records the requested `prefix` below but assigns a uuid
+    # slot anchor as the write namespace + cert CN.
+    #
+    # A goatnet missing from this map dies at the Phase 0.13.b assert on
+    # `goat admin onboard <handle> --env <env>`. The SSH half of the mesh constraint
+    # is lifted by onboard_delegate_*_override above; this HTTPS call is not,
+    # because it resolves through mesh CoreDNS.
+    zenoh_portal_url_map: "{{ goatnet_zenoh_portal_url_map | default({}) }}"
 
     # Per-site Zenoh router endpoint. The router is mesh-internal; vendors
     # connect their Zenoh client to this endpoint at session establishment.
@@ -287,28 +255,24 @@
     # F-143 fix — see zenoh-deploy.yml's goat_zenoh_listen_host
     # default which now resolves to the same address from the ansible_facts
     # 'wt0' fact at that host's deploy time).
-    zenoh_router_endpoint_map:
-      # A router cert that carries a DNS SAN lets vendors dial the mesh hostname
-      # (resolved by CoreDNS) and keep verify_name_on_connect — matches
-      # portal_router_endpoint in the goatnet's group_vars.
-      zagros: tls/zenoh.zagros.netbird.zagros.example:7447
-      zagros-prod: tls/zenoh.zagros-prod.examplebird.zagros-prod.example:7447
+    #
+    # A router cert that carries a DNS SAN lets vendors dial the mesh hostname
+    # (resolved by CoreDNS) and keep verify_name_on_connect — matches
+    # portal_router_endpoint in the goatnet's group_vars.
+    zenoh_router_endpoint_map: "{{ goatnet_zenoh_router_endpoint_map | default({}) }}"
 
     # Per-site portal operator API key env var. The portal expects this
     # as the Bearer token on POST /api/vendors (see
     # ops/goat-zenoh-portal/internal/api/auth.go). Same env var the
     # portal role itself reads (PORTAL_OPERATOR_API_KEY) — operator
     # sets it once in .envrc.local.d/30-site-services.envrc.
-    zenoh_portal_operator_api_key_env_var_map:
-      zagros: ZAGROS_PORTAL_OPERATOR_API_KEY
-      zagros-dev: ZAGROS_DEV_PORTAL_OPERATOR_API_KEY
-      zagros-prod: ZAGROS_PROD_PORTAL_OPERATOR_API_KEY
+    zenoh_portal_operator_api_key_env_var_map: "{{ goatnet_zenoh_portal_operator_api_key_env_var_map | default({}) }}"
 
     # Site → trial-portal mapping. Used by Phase 0.13 to resolve
     # zenoh.trial.vendor to the right portal. Derived from the env the
     # manifest belongs to (goat admin onboard --env <env>), with a legacy default
     # for the flat layout. A manifest mints against its own goatnet's portal.
-    zenoh_trial_site: "{{ onboard_env | mandatory('onboard_env (--env <goatnet>) is required: the nova default was retired 2026-09-09') }}"
+    zenoh_trial_site: "{{ onboard_env | mandatory('onboard_env (--env <goatnet>) is required: there is no default goatnet') }}"
 
     # --- Durable resolution: derive per-goatnet values from site_id by CONVENTION,
     # so a conventional <site>.net goatnet needs NO hand-edit here. The maps above
@@ -332,12 +296,8 @@
     # group_vars — the freeze-critical Class-A cert-identity fact (CI-gated by
     # ops/ci/check-portal-cert-identity-override.sh). Never derive one from the
     # goatnet name; read it from the goatnet.
-    zenoh_uri_san_scheme_map:
-      zagros: 'urn:goat:zagros:org='
-      zagros-prod: 'urn:goat:zagros-prod:org='
-    zenoh_observer_uri_san_scheme_map:
-      zagros: 'urn:goat:zagros:observer='
-      zagros-prod: 'urn:goat:zagros-prod:observer='
+    zenoh_uri_san_scheme_map: "{{ goatnet_zenoh_uri_san_scheme_map | default({}) }}"
+    zenoh_observer_uri_san_scheme_map: "{{ goatnet_zenoh_observer_uri_san_scheme_map | default({}) }}"
 
     # ADR 1019 — goat-cli operator-profile bundle. Phase 4.5 mints a
     # signed CBOR bundle the operator drops into ~/.goat/contexts/
@@ -346,17 +306,10 @@
     # The CA private key lives OUTSIDE the repo (operator state, not
     # session-worktree-shared) per ops/enrollment/ca/<goatnet>/README.md.
     # Distribute OOB to operators who need to mint bundles.
-    # A goatnet signs under its own root.
-    goat_cli_ca_id_map:
-      nova: dev-nova-ca-ecdsa-2026-05-14
-      zagros: dev-zagros-ca-ecdsa-2026-09-03
-      # Each goatnet has its OWN root CA. Copying a CA
-      # across fabrics is the fork-free violation the runbook names.
-      zagros-prod: dev-zagros-prod-ca-ecdsa-2026-08-03
-    goat_cli_ca_key_path_map:
-      nova: "{{ lookup('env', 'HOME') }}/.goat/state/nova-ca/ca.key.age"
-      zagros: "{{ lookup('env', 'HOME') }}/.goat/state/zagros-ca/ca.key.age"
-      zagros-prod: "{{ lookup('env', 'HOME') }}/.goat/state/zagros-prod-ca/ca.key.age"
+    # A goatnet signs under its own root: each has its OWN root CA. Copying a
+    # CA across fabrics is the fork-free violation the runbook names.
+    goat_cli_ca_id_map: "{{ goatnet_goat_cli_ca_id_map | default({}) }}"
+    goat_cli_ca_key_path_map: "{{ goatnet_goat_cli_ca_key_path_map | default({}) }}"
     # The public half of that signing key, the file a recipient passes to
     # `goat ca add` before `goat profile init`. goat ships trusting no CA, so
     # without it the first init fails with E_BUNDLE_INVALID. get.<site> serves
@@ -376,22 +329,19 @@
     # This map is the issuing root: Phase 4o.2 passes it to cert-sign as
     # --root-cert, so the observer leaf chains to it. What the bundle
     # ships as ca_roots is the next map, not this one.
-    goat_cli_root_cert_path_map:
-      nova: "{{ repo_root }}/ops/enrollment/ca/nova/root-cert.pem"
-      zagros: "{{ repo_root }}/ops/enrollment/ca/zagros/root-cert.pem"
+    goat_cli_root_cert_path_map: "{{ goatnet_goat_cli_root_cert_path_map | default({}) }}"
     # The roots the bundle ships as ca_roots, concatenated in order, which a
     # client verifies the router with. Kept apart from the signing root, as in
     # step 3 of the CA-separation runbook: a goatnet can ship both roots while the
     # router's own server certificate still chains to the shared one.
-    goat_cli_trust_roots_path_map:
-      nova:
-        - "{{ repo_root }}/ops/enrollment/ca/nova/root-cert.pem"
-      zagros:
-        - "{{ repo_root }}/ops/enrollment/ca/nova/root-cert.pem"
-        - "{{ repo_root }}/ops/enrollment/ca/zagros/root-cert.pem"
+    goat_cli_trust_roots_path_map: "{{ goatnet_goat_cli_trust_roots_path_map | default({}) }}"
     # Observer leaf lifetime + audit log (mirrors the cert-sign ceremony).
     goat_cli_observer_validity: "720h"
-    goat_cli_ca_audit_log: "{{ lookup('env', 'HOME') }}/.goat/state/{{ zenoh_trial_site }}-ca/ca-audit-{{ zenoh_trial_site }}.jsonl"
+    # The --site-id and the DNS SAN suffix cert-sign stamps into the observer
+    # leaf. A deployment that mints under other names sets the goatnet_ pair.
+    goat_cli_observer_cert_site_id: "{{ goatnet_goat_cli_observer_cert_site_id | default(zenoh_trial_site ~ '-trial') }}"
+    goat_cli_observer_cert_san_suffix: "{{ goatnet_goat_cli_observer_cert_san_suffix | default(zenoh_trial_site ~ '.peer') }}"
+    goat_cli_ca_audit_log: "{{ goat_controller_state_dir | default(lookup('env', 'HOME') ~ '/.goat/state') }}/{{ zenoh_trial_site }}-ca/ca-audit-{{ zenoh_trial_site }}.jsonl"
 
     # OBSERVER-PATH ONLY. Where the locally-minted observer CBOR bundle
     # lands (Phase 4o), next to bundle.md in ops/operators/out/ (gitignored).
@@ -727,7 +677,7 @@
           - zenoh_trial_site in zenoh_portal_url_map
         fail_msg: |
           Zenoh trial-portal URL not mapped for site '{{ zenoh_trial_site }}'.
-          Add an entry to zenoh_portal_url_map in ops/ansible/operator-onboard.yml.
+          Set goatnet_zenoh_portal_url_map for localhost in the deployment overlay.
       when:
         - manifest.zenoh.enabled
         - onboard_action == 'enroll'
@@ -1012,7 +962,7 @@
           usage_limit: "{{ _usage_limit | int }}"
           ephemeral: false
           # AutoPeerName (Block 83C.3) — operator-assigned label prefix.
-          # The patched goat-maintainer/netbird-mgmt image combines this with the
+          # The patched netbird-mgmt image combines this with the
           # joining peer's reported hostname at registration as
           # "<auto_peer_name>-<hostname>". Both halves preserved so a peer
           # named `dale` enrolled via this key shows up as
@@ -1105,8 +1055,8 @@
         fail_msg: |
           Site '{{ item }}' is missing from ory_site_kratos_admin_host_map
           in ops/ansible/operator-onboard.yml. Add the {delegate_host_name,
-          ssh_host, ssh_user, kratos_admin_url, auth_url} entry before
-          re-running.
+          ssh_host, ssh_user, kratos_admin_url, auth_url} entry in
+          goatnet_ory_site_kratos_admin_host_map for localhost before re-running.
       loop: "{{ manifest.ory_site.sites }}"
       when:
         - manifest.ory_site.enabled
@@ -1123,7 +1073,11 @@
         # instead of hanging the whole onboard (a revoke sat >2 min
         # with no output). ConnectTimeout caps the connect; ServerAlive detects
         # a dead session in ~30s; BatchMode refuses an interactive prompt.
-        ansible_ssh_common_args: "-o ConnectTimeout=15 -o ServerAliveInterval=10 -o ServerAliveCountMax=3 -o BatchMode=yes"
+        ansible_ssh_common_args: "-o ConnectTimeout=15 -o ServerAliveInterval=10 -o ServerAliveCountMax=3 -o BatchMode=yes{{ (' ' ~ ory_site_kratos_admin_host_map[item].ssh_extra_args) if ory_site_kratos_admin_host_map[item].ssh_extra_args is defined else '' }}"
+        # A site that pins its host keys (ssh_extra_args naming a known_hosts
+        # file) turns the check on here; ansible.cfg's host_key_checking=false
+        # would otherwise put StrictHostKeyChecking=no ahead of those args.
+        ansible_host_key_checking: "{{ ory_site_kratos_admin_host_map[item].host_key_checking | default(lookup('ansible.builtin.config', 'HOST_KEY_CHECKING')) }}"
         groups: kratos_admin_targets
       loop: "{{ manifest.ory_site.sites }}"
       loop_control:
@@ -1758,11 +1712,11 @@
           - "--ca-id"
           - "{{ goat_cli_ca_id_map[zenoh_trial_site] }}"
           - "--site-id"
-          - "nova-trial"
+          - "{{ goat_cli_observer_cert_site_id }}"
           - "--cn"
           - "observer-{{ manifest.identity.handle }}"
           - "--san"
-          - "observer-{{ manifest.identity.handle }}.nova.peer"
+          - "observer-{{ manifest.identity.handle }}.{{ goat_cli_observer_cert_san_suffix }}"
           - "--uri-san"
           - "{{ zenoh_observer_uri_san_scheme_map[zenoh_trial_site] }}{{ manifest.identity.handle }}"
           - "--eku"
@@ -1777,6 +1731,10 @@
           - "{{ observer_tmp.path }}/observer-key.pem"
           - "--audit-log"
           - "{{ goat_cli_ca_audit_log }}"
+          # The Subject O the goatnet's CA issues (goat_cert_organization in
+          # group_vars/all.yml); empty leaves cert-sign's own default.
+          - "--org"
+          - "{{ goat_cert_organization | default('') }}"
       changed_when: true
       when: *observer_when
 
@@ -1991,13 +1949,12 @@
     # the override still prints them.
     - name: "revoke/NetBird: refuse if this person owns a peer the cut cannot select"
       ansible.builtin.command:
-        argv:
-          - "{{ playbook_dir }}/../scripts/peer-attribution.py"
-          - "{{ item }}"
-          - "--handle"
-          - "{{ manifest.identity.handle }}"
-          - "--site"
-          - "{{ item }}"
+        # --api-url only for a mapped site: an unmapped one keeps the script's own
+        # configuration-based URL resolution.
+        argv: >-
+          {{ [playbook_dir ~ '/../scripts/peer-attribution.py', item,
+              '--handle', manifest.identity.handle, '--site', item]
+             + (['--api-url', netbird_site_url_map[item]] if item in netbird_site_url_map else []) }}
       environment: "{{ {_tokvar: lookup('env', _tokvar)} }}"
       vars:
         _tokvar: "{{ netbird_site_env_var_map[item] | default(item | upper | replace('-', '_') + '_NB_API_TOKEN') }}"
@@ -2201,7 +2158,11 @@
         ansible_connection: "{{ ory_site_kratos_admin_host_map[item].connection | default('ssh', true) }}"
         # P1.4 — bound the SSH transport (see enroll Phase 2.0); harmless when
         # the test overrides connection to 'local'.
-        ansible_ssh_common_args: "-o ConnectTimeout=15 -o ServerAliveInterval=10 -o ServerAliveCountMax=3 -o BatchMode=yes"
+        ansible_ssh_common_args: "-o ConnectTimeout=15 -o ServerAliveInterval=10 -o ServerAliveCountMax=3 -o BatchMode=yes{{ (' ' ~ ory_site_kratos_admin_host_map[item].ssh_extra_args) if ory_site_kratos_admin_host_map[item].ssh_extra_args is defined else '' }}"
+        # A site that pins its host keys (ssh_extra_args naming a known_hosts
+        # file) turns the check on here; ansible.cfg's host_key_checking=false
+        # would otherwise put StrictHostKeyChecking=no ahead of those args.
+        ansible_host_key_checking: "{{ ory_site_kratos_admin_host_map[item].host_key_checking | default(lookup('ansible.builtin.config', 'HOST_KEY_CHECKING')) }}"
         groups: kratos_admin_targets
       loop: "{{ manifest.ory_site.sites }}"
       loop_control:

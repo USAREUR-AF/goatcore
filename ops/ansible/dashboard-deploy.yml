@@ -26,8 +26,8 @@
 #          --san dashboard.<site>.<site_dns_zone> \
 #          --san <wg-cp0-ip-of-orin-A> \
 #          --san 127.0.0.1 \
-#          --out-cert ~/.goat/state/<site>/dashboard-a-cert.pem \
-#          --out-key ~/.goat/state/<site>/dashboard-a-key.pem
+#          --out-cert <the site's leaf directory>/dashboard-a-cert.pem \
+#          --out-key <the site's leaf directory>/dashboard-a-key.pem
 #      (the required root-CA flags are elided: --root-cert, --root-key,
 #      --age-identity, --ca-id, --site-id — see cert-sign --help)
 #   4. NETBIRD_DASHBOARD_<SITE>_DASHBOARD_OIDC_CLIENT_SECRET env var set
@@ -108,7 +108,7 @@
       block:
         - name: Ensure the dashboard TLS directory exists
           ansible.builtin.file:
-            path: "/etc/goat/tls/dashboard-{{ router_role | lower }}"
+            path: "{{ goat_host_etc_dir | default('/etc/goat') }}/tls/dashboard-{{ router_role | lower }}"
             state: directory
             owner: root
             group: root
@@ -117,7 +117,7 @@
         - name: Install the dashboard TLS cert and key
           ansible.builtin.copy:
             src: "{{ ('dashboard-' ~ (router_role | lower) ~ '-' ~ item.name ~ '.pem') | goat_leaf(site_id) }}"
-            dest: "/etc/goat/tls/dashboard-{{ router_role | lower }}/{{ item.name }}.pem"
+            dest: "{{ goat_host_etc_dir | default('/etc/goat') }}/tls/dashboard-{{ router_role | lower }}/{{ item.name }}.pem"
             owner: root
             group: root
             mode: "{{ item.mode }}"
@@ -133,14 +133,14 @@
     # DNS-01) opt out
     # by setting `dashboard_cert_delivery_mode: acme` in group_vars. In ACME
     # mode the cert is owned by Traefik (/letsencrypt/acme.json), not laid
-    # down at /etc/goat/tls/, so the file-existence pre-flight is
+    # down in the host TLS directory, so the file-existence pre-flight is
     # the wrong gate. Traefik mints the cert SANs via tls.domains in the
     # site's dynamic config (mgmt-dynamic.yml.j2); on a
     # rendered fresh dashboard hostname the cert reissue happens on next
     # Traefik reload.
     - name: Verify dashboard TLS leaf cert is delivered to host
       ansible.builtin.stat:
-        path: "/etc/goat/tls/dashboard-{{ router_role | lower }}/cert.pem"
+        path: "{{ goat_host_etc_dir | default('/etc/goat') }}/tls/dashboard-{{ router_role | lower }}/cert.pem"
       register: dashboard_cert_stat
       when: (dashboard_cert_delivery_mode | default('file')) == 'file'
 
@@ -148,7 +148,7 @@
       ansible.builtin.fail:
         msg: |
           Dashboard TLS leaf cert not found at
-          /etc/goat/tls/dashboard-{{ router_role | lower }}/cert.pem.
+          {{ goat_host_etc_dir | default('/etc/goat') }}/tls/dashboard-{{ router_role | lower }}/cert.pem.
 
           Mint via cert-sign on operator laptop, then deliver the pair.
 
@@ -167,7 +167,7 @@
           path above, or deliver by hand per
           docs/operations/mgmt-stack-cert-rotation.md "Step 2 — Push the
           new cert + key" (install the cert 0644 and the key 0400, root-owned,
-          into /etc/goat/tls/dashboard-{{ router_role | lower }}/).
+          into {{ goat_host_etc_dir | default('/etc/goat') }}/tls/dashboard-{{ router_role | lower }}/).
           {% endif %}
 
           Mint:
@@ -185,8 +185,8 @@
           {% endif %}
               --san {{ ansible_host }} \
               --san 127.0.0.1 \
-              --out-cert ~/.goat/state/{{ site_id }}/dashboard-{{ router_role | lower }}-cert.pem \
-              --out-key ~/.goat/state/{{ site_id }}/dashboard-{{ router_role | lower }}-key.pem
+              --out-cert {{ ('dashboard-' ~ (router_role | lower) ~ '-cert.pem') | goat_leaf(site_id) }} \
+              --out-key {{ ('dashboard-' ~ (router_role | lower) ~ '-key.pem') | goat_leaf(site_id) }}
             (plus the required root-CA flags: --root-cert, --root-key,
             --age-identity, --ca-id, --site-id — see cert-sign --help)
 

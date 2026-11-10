@@ -1,16 +1,16 @@
 ---
 # ops/ansible/roles/goat-zenoh/tasks/main.yml
 #
-# Nova-mode Zenoh router deployment. Forked from the canonical
+# Trial-fabric Zenoh router deployment. Forked from the canonical
 # zenoh role; the deviations (mTLS, access_control, per-vendor storages,
-# different file paths) were large enough that an `if nova_mode`
+# different file paths) were large enough that a mode switch
 # pile in the parent role would be net-negative on readability.
 #
 # Pre-flight gates the deploy on Track A's substrate being in place:
-#   - nova offline-CA root cert
+#   - the goatnet's offline-CA root cert
 #   - Zenoh router leaf cert + key
-# If any are missing, the role fails fast with a clear error pointing
-# at docs/operations/nova-zenoh-trial-deploy.md §"Pre-flight gate".
+# If any are missing, the role fails fast with a clear error naming what
+# to mint.
 
 - name: Pre-flight | edge-queryable lockdown carries its re-grants
   # Fail CLOSED. The lockdown narrows `trial-peer-r-all`, and every service
@@ -103,6 +103,68 @@
     - zenoh_peer_read_scoped | default(false) | bool
     - zenoh_partner_read_partition | default(false) | bool
 
+- name: Pre-flight | with several sovereign peerings, each reads its own sets only
+  # Every peering's republisher writes its sets under `from/<us>/<set>/**` on this one
+  # core. A peering whose release_key_exprs is the whole wire name `from/<us>/**` (or
+  # wider) can read every other peering's sets, including a set agreed with another
+  # partner only, and its edge carries them out. With one peering the whole prefix and
+  # the offered sets carry the same data; with two it is a leak. Refuse rather than
+  # render it: list the wire key of each set the agreement offers, as
+  # `goat federate apply` renders it (`from/<us>/<set>/**`).
+  ansible.builtin.assert:
+    that:
+      - _sov_whole_prefix | length == 0
+    fail_msg: >-
+      zenoh_sovereign_peerings declares {{ zenoh_sovereign_peerings | length }} peerings, and
+      {{ _sov_whole_prefix | join(', ') }} reads a whole wire name or wider
+      (release_key_exprs). Each peering's republisher writes onto this core, so that
+      peering's edge would carry the other peerings' sets out, including sets agreed with
+      another partner only. Narrow it to the wire key of each set its agreement offers,
+      e.g. from/<us>/<set>/**, and set its release_interest_key_exprs to from/<us>/**
+      (interest carries no data, and a narrower interest rule refuses the receiver's
+      subscription).
+    quiet: true
+  vars:
+    _sov_whole_prefix: >-
+      {%- set out = [] -%}
+      {%- for p in zenoh_sovereign_peerings | default([]) -%}
+      {%-   for k in p.release_key_exprs | default([]) -%}
+      {%-     set segs = k.split('/') -%}
+      {%-     if (segs | length) <= 3 and segs[-1] == '**' or (segs[:3] | select('search', '\\*') | list | length > 0) -%}
+      {%-       set _ = out.append(p.sovereign ~ ' (' ~ k ~ ')') -%}
+      {%-     endif -%}
+      {%-   endfor -%}
+      {%- endfor -%}
+      {{ out | unique }}
+  when: (zenoh_sovereign_peerings | default([]) | length) > 1
+
+- name: Pre-flight | a sovereign read narrowed to sets keeps its interest on the wire name
+  # Narrowing release_key_exprs to sets also narrows the interest rules unless
+  # release_interest_key_exprs says otherwise, and zenoh then refuses the receiver's
+  # subscriber declaration for the whole wire name: the link stays up, nothing is
+  # asked for, nothing crosses, and nothing is logged above TRACE. Refuse instead.
+  ansible.builtin.assert:
+    that:
+      - _sov_interest_narrowed | length == 0
+    fail_msg: >-
+      {{ _sov_interest_narrowed | join(', ') }}: release_key_exprs names sets, and with
+      release_interest_key_exprs unset the interest rules narrow with it, so that
+      partner's subscription to our whole wire name is refused and nothing crosses.
+      Set release_interest_key_exprs to the whole wire name, e.g. from/<us>/**.
+    quiet: true
+  vars:
+    _sov_interest_narrowed: >-
+      {%- set out = [] -%}
+      {%- for p in zenoh_sovereign_peerings | default([]) -%}
+      {%-   set keys = p.release_key_exprs | default([]) -%}
+      {%-   if keys | length > 0 and (p.release_interest_key_exprs | default([]) | length == 0)
+              and (keys | select('search', '^[^/]+/[^/]+/\\*\\*$') | list | length == 0) -%}
+      {%-     set _ = out.append(p.sovereign) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ out }}
+  when: (zenoh_sovereign_peerings | default([]) | length) > 0
+
 - name: Pre-flight | flatten the pre-cut partner slot ranges (ADR 1138)
   # The explicit lane map is only half the partner population: the pre-cut
   # blocks carve whole ranges of slot indexes. A `slot_idx:` grant landing in
@@ -133,42 +195,41 @@
 
 - name: Pre-flight | the goatnet's CA root cert exists on controller
   ansible.builtin.stat:
-    path: "{{ nova_ca_root_cert_path }}"
+    path: "{{ goat_ca_root_cert_path }}"
   delegate_to: localhost
   become: false
-  register: nova_ca_root_stat
+  register: zenoh_ca_root_stat
   changed_when: false
 
 - name: Pre-flight | the goatnet's router leaf cert exists on controller
   ansible.builtin.stat:
-    path: "{{ nova_router_leaf_cert_path }}"
+    path: "{{ zenoh_router_leaf_cert_path }}"
   delegate_to: localhost
   become: false
-  register: nova_router_cert_stat
+  register: zenoh_router_cert_stat
   changed_when: false
 
 - name: Pre-flight | the goatnet's router leaf key exists on controller
   ansible.builtin.stat:
-    path: "{{ nova_router_leaf_key_path }}"
+    path: "{{ zenoh_router_leaf_key_path }}"
   delegate_to: localhost
   become: false
-  register: nova_router_key_stat
+  register: zenoh_router_key_stat
   changed_when: false
 
 - name: Pre-flight | refuse to deploy without Track A substrate
   ansible.builtin.assert:
     that:
-      - nova_ca_root_stat.stat.exists
-      - nova_router_cert_stat.stat.exists
-      - nova_router_key_stat.stat.exists
+      - zenoh_ca_root_stat.stat.exists
+      - zenoh_router_cert_stat.stat.exists
+      - zenoh_router_key_stat.stat.exists
     fail_msg: >-
       GB-071 goat-zenoh refuses to deploy: the CA root or the router leaf is
       not on this controller. Looked for
-        - {{ nova_ca_root_cert_path }}
-        - {{ nova_router_leaf_cert_path }}
-        - {{ nova_router_leaf_key_path }}
-      The leaf is read from the site manifest's out_dir
-      (~/.goat/state/{{ goat_router_leaf_site }}-leaves), so any checkout
+        - {{ goat_ca_root_cert_path }}
+        - {{ zenoh_router_leaf_cert_path }}
+        - {{ zenoh_router_leaf_key_path }}
+      The leaf is read from the site manifest's out_dir, so any checkout
       finds it. If it is missing there, mint it:
       {{ 'router-cert.pem' | goat_leaf_mint(goat_router_leaf_site) }}
 
@@ -337,7 +398,7 @@
     checksum: "sha256:{{ goat_zenoh_rocksdb_backend_sha256 }}"
     mode: "0644"
   register: goat_zenoh_rocksdb_zip
-  notify: Restart nova zenoh router
+  notify: Restart zenoh router
   when: not goat_zenoh_fips_variant | bool
 
 - name: Install libzenoh_backend_rocksdb.so to host plugin dir
@@ -346,7 +407,7 @@
     dest: "{{ goat_zenoh_plugin_dir }}/"
     remote_src: true
     creates: "{{ goat_zenoh_plugin_dir }}/libzenoh_backend_rocksdb.so"
-  notify: Restart nova zenoh router
+  notify: Restart zenoh router
   when: not goat_zenoh_fips_variant | bool
 
 # Snapshot which issuers the router trusts RIGHT NOW, before the copy below
@@ -382,10 +443,10 @@
 
 - name: Deliver the goatnet's CA root cert to host
   ansible.builtin.copy:
-    src: "{{ nova_ca_root_cert_path }}"
+    src: "{{ goat_ca_root_cert_path }}"
     dest: "{{ goat_zenoh_tls_dir }}/ca-root-cert.pem"
     mode: "0644"
-  notify: Restart nova zenoh router
+  notify: Restart zenoh router
   tags: [trust-anchors]
 
 # Deliver repo-side extra trust roots (e.g. ZAGROS's own offline-CA root during
@@ -400,7 +461,7 @@
   loop_control:
     label: "{{ item.dest }}"
   when: goat_zenoh_extra_ca_deliver | length > 0
-  notify: Restart nova zenoh router
+  notify: Restart zenoh router
   tags: [trust-anchors]
 
 # Fold extra trust roots (e.g. the SPIRE CA on ZAGROS) into the same root_ca
@@ -425,10 +486,10 @@
         fi
       done
       echo "extra_ca_changed=${changed}"
-  register: nova_extra_ca
-  changed_when: "'extra_ca_changed=1' in nova_extra_ca.stdout"
+  register: zenoh_extra_ca
+  changed_when: "'extra_ca_changed=1' in zenoh_extra_ca.stdout"
   when: goat_zenoh_extra_ca_paths | length > 0
-  notify: Restart nova zenoh router
+  notify: Restart zenoh router
   tags: [trust-anchors]
 
 # Fail CLOSED if the rebuilt bundle lost an issuer it previously carried.
@@ -464,17 +525,17 @@
 
 - name: Deliver the goatnet's router leaf cert to host
   ansible.builtin.copy:
-    src: "{{ nova_router_leaf_cert_path }}"
+    src: "{{ zenoh_router_leaf_cert_path }}"
     dest: "{{ goat_zenoh_tls_dir }}/router-cert.pem"
     mode: "0644"
-  notify: Restart nova zenoh router
+  notify: Restart zenoh router
 
 - name: Deliver the goatnet's router leaf key to host
   ansible.builtin.copy:
-    src: "{{ nova_router_leaf_key_path }}"
+    src: "{{ zenoh_router_leaf_key_path }}"
     dest: "{{ goat_zenoh_tls_dir }}/router-key.pem"
     mode: "0600"
-  notify: Restart nova zenoh router
+  notify: Restart zenoh router
 
 # --- F-258 identity-model branch ------------------------------------------
 # per-vendor mode (nova-a / nova-lan / nova-twin): the portal appends per-vendor ACL
@@ -582,7 +643,7 @@
     src: "config.json5.j2"
     dest: "{{ goat_zenoh_config_path }}"
     mode: "0644"
-  notify: Restart nova zenoh router
+  notify: Restart zenoh router
   when: not jz_per_vendor
 
 # F-447 — a render that STOPS declaring a storage does not remove what that
@@ -756,7 +817,7 @@
     dest: "{{ goat_zenoh_config_path }}"
     remote_src: true
     mode: "0644"
-  notify: Restart nova zenoh router
+  notify: Restart zenoh router
   when: jz_per_vendor
 
 - name: F-258 | remove assemble scratch file
@@ -832,7 +893,7 @@
     src: "docker-compose.yml.j2"
     dest: "{{ goat_zenoh_compose_path }}"
     mode: "0644"
-  notify: Restart nova zenoh router
+  notify: Restart zenoh router
 
 # ---- Boot-race healer ---------------------------------------------
 # The router's host-port publish is pinned to the netbird mesh IP, which
@@ -874,7 +935,7 @@
   # `docker compose up -d` would pull on first run anyway; this is just
   # an explicit-pull step for operator visibility.
   ansible.builtin.command:
-    cmd: "docker pull {{ nova_zenoh_image }}"
+    cmd: "docker pull {{ zenoh_router_image }}"
   register: goat_zenoh_pull
   changed_when: "'Downloaded newer image' in goat_zenoh_pull.stdout or 'Pull complete' in goat_zenoh_pull.stdout"
 
@@ -923,7 +984,7 @@
     content: |
       {
         "fips_marker": true,
-        "image_digest": "{{ nova_zenoh_image | regex_replace('^.*@', '') }}",
+        "image_digest": "{{ zenoh_router_image | regex_replace('^.*@', '') }}",
         "attested_at_ms": {{ (ansible_date_time.epoch | int) * 1000 }},
         "module": "AWS-LC FIPS 3.1.0 (CMVP #5298/#5314)"
       }
@@ -952,4 +1013,4 @@
     name: rollback-ledger
     tasks_from: render-manifest
   vars:
-    render_component: nova-zenoh
+    render_component: "{{ goat_zenoh_ledger_component | default('goat-zenoh') }}"

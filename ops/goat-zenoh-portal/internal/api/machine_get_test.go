@@ -13,7 +13,7 @@ import (
 )
 
 func TestGetMachine_DerivedGroupsSiteAndExerciseScope(t *testing.T) {
-	mgmt := fakeMgmt(t, "ZAGROS-SENSOR-FEED")
+	mgmt := fakeMgmt(t, "GALAXY-SENSOR-FEED")
 	ts, reg := newMeshMintServer(t, mgmt.URL)
 	_ = reg.SetMachineGrant(t.Context(), "alice", 1, "usareur-af", "", "op")
 	c := &http.Client{}
@@ -39,8 +39,8 @@ func TestGetMachine_DerivedGroupsSiteAndExerciseScope(t *testing.T) {
 		t.Fatalf("mesh_derivable = %v, want true", b["mesh_derivable"])
 	}
 	mg, _ := b["mesh_groups"].([]any)
-	if len(mg) != 1 || mg[0] != "ZAGROS-SENSOR-FEED" {
-		t.Fatalf("mesh_groups = %v, want [ZAGROS-SENSOR-FEED]", b["mesh_groups"])
+	if len(mg) != 1 || mg[0] != "GALAXY-SENSOR-FEED" {
+		t.Fatalf("mesh_groups = %v, want [GALAXY-SENSOR-FEED]", b["mesh_groups"])
 	}
 
 	// Exercise scope: same suffix derivation under the EX prefix.
@@ -72,7 +72,7 @@ func TestGetMachine_DerivedGroupsSiteAndExerciseScope(t *testing.T) {
 }
 
 func TestGetMachine_LegacyClassReads200NotRefusal(t *testing.T) {
-	mgmt := fakeMgmt(t, "ZAGROS-SENSOR-FEED")
+	mgmt := fakeMgmt(t, "GALAXY-SENSOR-FEED")
 	ts, reg := newMeshMintServer(t, mgmt.URL)
 	ctx := t.Context()
 	_ = reg.SetMachineGrant(ctx, "alice", 1, "usareur-af", "", "op")
@@ -107,7 +107,7 @@ func TestGetMachine_LegacyClassReads200NotRefusal(t *testing.T) {
 }
 
 func TestGetMachine_VendorScopedOwnCustodyOnly(t *testing.T) {
-	mgmt := fakeMgmt(t, "ZAGROS-KID")
+	mgmt := fakeMgmt(t, "GALAXY-KID")
 	ts, reg := newMeshMintServer(t, mgmt.URL)
 	c := &http.Client{}
 	// Onboard the bearers FIRST: the grant + custody edge normalize a handle

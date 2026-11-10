@@ -1,0 +1,60 @@
+---
+# Refuse a management node's signal federation config when its containers could
+# not run it, or would run it unauthenticated. Included by mgmt-host.yml before
+# the .env render and by signal-federation-transport.yml before any change.
+#
+# These are the per-node states; the pair (both sides on or both off, crossed
+# names and addresses, relay SNI pins, DNS) is checked from the repository by
+# ops/scripts/signal-federation-check.py, which `goatbuilder join-node` runs as
+# a gate before a joiner's federation phase.
+#
+#   proxy on, no peer mesh address  -> haproxy renders `server mesh  check` and
+#                                      the federation-proxy container exits
+#   proxy on, no public SNI / relays -> no backup leg to verify or dial
+#   peers -> federation-proxy, proxy off -> signal dials a container not running
+#   ingress on, no fqdn              -> a Traefik router with no hostname
+#   ingress or peers set, no token   -> the public Forward surface accepts any caller
+#
+# A node with the proxy on and federation_peers_for_a empty is a node standing
+# by (its proxy runs, its signal forwards nothing) and passes.
+- name: Signal federation | read this node's declared state
+  ansible.builtin.set_fact:
+    _sigfed_proxy: "{{ signal_federation_proxy_enabled | default(false) | bool }}"
+    _sigfed_ingress: "{{ signal_federation_ingress_enabled | default(false) | bool }}"
+    _sigfed_peers: "{{ (federation_peers_for_a if (router_role | default('A') | upper) == 'A' else federation_peers_for_b) | default('', true) | string | trim }}"
+    _sigfed_token_set: "{{ (signal_federation_token | default('', true) | string | length) > 0 }}"
+
+- name: Signal federation | refuse a config the containers cannot run
+  ansible.builtin.assert:
+    that:
+      - not _sigfed_proxy or (federation_peer_mesh_addr | default('', true) | string | trim | length) > 0
+      - not _sigfed_proxy or (federation_peer_public_sni | default('', true) | string | trim | length) > 0
+      - not _sigfed_proxy or (federation_public_relays | default([], true) | length) > 0
+      - _sigfed_proxy or ('federation-proxy' not in _sigfed_peers)
+      - not _sigfed_ingress or (signal_federation_ingress_fqdn | default('', true) | string | trim | length) > 0
+    fail_msg: >-
+      {{ inventory_hostname }}: half-configured signal federation in
+      group_vars. proxy={{ _sigfed_proxy }}
+      peer_mesh_addr='{{ federation_peer_mesh_addr | default('') }}'
+      peer_public_sni='{{ federation_peer_public_sni | default('') }}'
+      relays={{ federation_public_relays | default([]) | length }}
+      peers='{{ _sigfed_peers }}' ingress={{ _sigfed_ingress }}
+      ingress_fqdn='{{ signal_federation_ingress_fqdn | default('') }}'.
+      A proxy needs the peer's mesh address (<mesh_ip_a>:10000), its federation
+      hostname and the relay list; signal pointed at federation-proxy needs the
+      proxy on; an ingress needs its hostname. Fix both sides together and run
+      ops/scripts/signal-federation-check.py <joiner-site>.
+    quiet: true
+
+- name: Signal federation | refuse a federation surface without its token
+  ansible.builtin.assert:
+    that:
+      - _sigfed_token_set or not (_sigfed_ingress or (_sigfed_peers | length) > 0)
+    fail_msg: >-
+      {{ inventory_hostname }}: signal federation is configured (ingress={{ _sigfed_ingress }},
+      peers='{{ _sigfed_peers }}') but signal_federation_token is empty, so
+      signal-server would accept unauthenticated Forwards on its public
+      federation hostname. Set the variable signal_federation_token reads (the
+      same one on both sides of the pair) in this run's environment, e.g. run
+      under ops/scripts/with-secrets.
+    quiet: true

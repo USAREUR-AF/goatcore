@@ -1,0 +1,38 @@
+# {{ ansible_managed }}
+# Outbound republisher for the peering with "{{ goat_fed_republisher_partner_id }}".
+#
+# Both sessions dial OUR core router at {{ goat_fed_republisher_core_endpoint }}:
+# the local one subscribes to the offered release sets, the publishing one writes
+# the wire name {{ goat_fed_republisher_publish_under }}. Same leaf for both; the
+# core's `fed-rp-{{ goat_fed_republisher_partner_id }}` subject matches its CN.
+# Host network so it dials the core's published port as the edge does; /metrics
+# binds loopback only. No published port.
+services:
+  {{ goat_fed_republisher_stack }}:
+    image: "{{ goat_fed_republisher_image }}"
+    container_name: "{{ goat_fed_republisher_stack }}"
+    restart: unless-stopped
+{% if goat_fed_republisher_image is match('^sha256:') %}
+    # A local content-addressed image: nothing to pull.
+    pull_policy: never
+{% endif %}
+    network_mode: host
+    environment:
+      FED_REPUBLISHER_AGREEMENT: /etc/republisher/agreement.json
+      FED_REPUBLISHER_SOVEREIGN_ID: "{{ goat_fed_republisher_sovereign_id }}"
+      FED_REPUBLISHER_LOCAL_ENDPOINT: "{{ goat_fed_republisher_core_endpoint }}"
+      FED_REPUBLISHER_LOCAL_CERT: /etc/republisher/republisher.pem
+      FED_REPUBLISHER_LOCAL_KEY: /etc/republisher/republisher-key.pem
+      FED_REPUBLISHER_LOCAL_ROOT_CA: /etc/republisher/core-ca.pem
+      FED_REPUBLISHER_EDGE_ENDPOINT: "{{ goat_fed_republisher_core_endpoint }}"
+      FED_REPUBLISHER_EDGE_CERT: /etc/republisher/republisher.pem
+      FED_REPUBLISHER_EDGE_KEY: /etc/republisher/republisher-key.pem
+      FED_REPUBLISHER_EDGE_ROOT_CA: /etc/republisher/core-ca.pem
+      FED_REPUBLISHER_QUEUE_DEPTH: "{{ goat_fed_republisher_queue_depth }}"
+      FED_REPUBLISHER_METRICS_BIND: "127.0.0.1:{{ goat_fed_republisher_metrics_port }}"
+    volumes:
+      - "{{ goat_fed_republisher_dir }}:/etc/republisher:ro"
+    deploy:
+      resources:
+        limits:
+          memory: {{ goat_fed_republisher_memory_limit }}

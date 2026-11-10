@@ -6,19 +6,19 @@
 #   - Build stage: rust:1.92-bookworm (Debian-slim with rustc + gcc +
 #     glibc — required by ktls-sys's build script which generates C
 #     bindings to the kernel TLS ULP at compile time).
-#   - Runtime stage: cgr.dev/chainguard/glibc-dynamic — minimal,
-#     vulnerability-scanned, frequently rebuilt. Chainguard-first per
-#     ADR 0700; matches the supply-chain posture for the runtime
-#     surface (the security-relevant layer). The non-Chainguard
+#   - Runtime stage: the runtime-cc base (ops/base-images/, ADR 1220)
+#     — minimal, no shell; an overlay may substitute a hardened
+#     catalogue image for the runtime surface (the security-relevant
+#     layer). The
 #     builder is a build-time-only dependency that does not ship in
 #     the runtime image.
 #
 # References:
 #   - ADR 0709 (Block 33 architecture; D7 tokio + D8 rustls/ktls + D9
 #     quinn + D10 tungstenite)
-#   - ADR 0700 (Chainguard-first; runtime surface only is the priority)
+#   - ADR 0700 + ADR 1220 (hardened runtime surface; bases by role)
 #   - ops/zenoh/image/Dockerfile (precedent for Rust-from-source builds
-#     using a non-Chainguard builder when the alternative requires
+#     using a stock Debian builder when the alternative requires
 #     extensive feature backports)
 #
 # Build context: repository root (this Dockerfile copies the entire
@@ -52,6 +52,10 @@
 
 ARG RUST_VERSION=1.92
 
+# Base images are build arguments named for their role; the defaults are
+# the public images in ops/base-images/ (docs/design/base-images.md).
+ARG BASE_RUNTIME_CC=cgr.dev/chainguard/glibc-dynamic:latest@sha256:671a621016fb33812136dea6182b1db957996d3c8c618187aaf86abd9b14af53
+
 # --- Stage 1: build the binary ---
 FROM rust:${RUST_VERSION}-bookworm AS builder
 
@@ -84,7 +88,7 @@ WORKDIR /build
 ENTRYPOINT ["cargo", "test", "--workspace", "--release", "--locked"]
 
 # --- Stage 3: minimal runtime ---
-FROM cgr.dev/chainguard/glibc-dynamic:latest AS runtime
+FROM ${BASE_RUNTIME_CC} AS runtime
 
 COPY --from=builder /build/target/release/goat-relay /usr/local/bin/goat-relay
 

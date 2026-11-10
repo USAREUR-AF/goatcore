@@ -69,7 +69,7 @@ use crate::listener::ws_ktls;
 use crate::routing::{ForwardError, RoutingTable};
 
 /// Default max concurrent connections per shard — admission control
-///. Overridable via `GOAT_RELAY_MAX_CONNS_PER_SHARD`. Bounds task /
+/// Overridable via `GOAT_RELAY_MAX_CONNS_PER_SHARD`. Bounds task /
 /// fd / memory growth and the pre-auth resource commitment a connection
 /// flood can force; at capacity new connections are REFUSED (not queued),
 /// which is the DoS-resistant behavior. The fd bound is load-bearing: a relay
@@ -879,7 +879,7 @@ where
 
         // Any successfully-parsed inbound frame is evidence the peer is
         // alive — credit liveness on data, not only on HealthCheck echoes
-        //. Tight borrow scope (no `.await` held).
+        // Tight borrow scope (no `.await` held).
         ka_sender.borrow_mut().mark_alive();
 
         match msg_type {

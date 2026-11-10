@@ -29,7 +29,7 @@ func TestEgressHostsFrom_mergesRolesPerHostname(t *testing.T) {
 // address. They appear when the console resolves through a local override, and
 // printing one would send a network team to allowlist a meaningless range.
 func TestPublicIPs_dropsAddressesARemoteRuleCannotUse(t *testing.T) {
-	got := PublicIPs([]string{"8.8.8.8", "10.0.0.5", "100.127.1.32", "127.0.0.1", "192.168.1.1", "8.8.8.8", "2600:1f18::1", "junk"})
+	got := PublicIPs([]string{"8.8.8.8", "10.0.0.5", "100.127.1.23", "127.0.0.1", "192.168.1.1", "8.8.8.8", "2600:1f18::1", "junk"})
 	want := []string{"2600:1f18::1", "8.8.8.8"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("got %v want %v", got, want)

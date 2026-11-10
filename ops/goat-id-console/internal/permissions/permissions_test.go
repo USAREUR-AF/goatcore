@@ -148,7 +148,7 @@ func TestCanonicalMatrixGrantsConsoleAdminToIAMAdmin(t *testing.T) {
 // TestEveryServiceDeclaresAValidDoor is the Go half of the ratchet that
 // ops/ci/check-group-permissions-parity.sh enforces in CI. A service with no
 // door renders a column whose blank cells cannot be read: only a group-gated
-// door makes a blank cell a denial. demogame, brief and dataflows sat with
+// door makes a blank cell a denial. airdefenders, brief and dataflows sat with
 // no door and a `fence:` naming an oauth2-proxy that does not exist until
 // and the console rendered them as denied to every group but
 // PLATFORM-ADMIN while nothing gated them at all.
@@ -203,7 +203,7 @@ func TestMeshOnlyDoorsAreNamed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	// Empty : demogame, brief and dataflows sit behind
+	// Empty : airdefenders, brief and dataflows sit behind
 	// authenticated doors (oauth2-proxy-surface). Turning a door off again on
 	// every goatnet means putting its name back here in the same change.
 	// help (ADR 1176): a dormant door. The row says mesh-only because
@@ -232,7 +232,7 @@ func TestMeshOnlyDoorsAreNamed(t *testing.T) {
 
 // TestMeshOnlyDoorsHoldNoGrants: a grant on a door that admits everyone is
 // enforced by nothing and renders as an access list. The `play` grant to
-// PLATFORM-ADMIN on demogame is how the grid read "nobody else may play".
+// PLATFORM-ADMIN on airdefenders is how the grid read "nobody else may play".
 func TestMeshOnlyDoorsHoldNoGrants(t *testing.T) {
 	wd, err := os.Getwd()
 	if err != nil {

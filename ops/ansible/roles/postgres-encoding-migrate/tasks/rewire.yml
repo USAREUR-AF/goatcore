@@ -1,0 +1,166 @@
+---
+# Phase 8 — wire Spock again on the new clusters, with the same roles and in
+# the order a join uses (goatbuilder join-node phase 13, spock-mesh-wire.yml):
+#   8.0 every member: the revocation guard and the hub ledger (ops/postgres/spock)
+#   8.1 founders  spock-mesh-peering   (netbird: nodes, repsets, both directions)
+#   8.2 joiners   spock-mesh-peering
+#   8.3 primaries start kratos + hydra (ory-narrow-repset waits for them healthy)
+#   8.4 joiners   ory-narrow-repset, ory_spock_wire_subscriptions=false
+#   8.5 founders  ory-narrow-repset, ory_spock_reconcile_history=false
+#   8.6 joiners   ory-narrow-repset (subscriptions + history reconcile)
+#   8.7 primaries the subscription set equals phase 1's, all replicating
+# Every subscription is created with synchronize_data false: phase 3 proved
+# the replicated tables identical and phase 5 restored them unchanged.
+#
+# Each node is wired to exactly the members it pulled from before (explicit
+# peers), so a goatnet host outside this run is never subscribed.
+# Input: pem_step (one of the step names below).
+
+# Peers are taken from the live subscriptions phase 1 recorded, separately for
+# the netbird databases and the Ory databases (ory_spock_databases), so each
+# role re-creates only what existed: a node with no Ory subscription before
+# the run gets none after it, whatever ory_spock_enabled says (phase 1 refuses
+# a run whose declared wiring differs from live).
+- name: "rewire | this node's peers before the migration"
+  ansible.builtin.set_fact:
+    _pem_peers: "{{ _pem_peers_for | selectattr('ory', 'equalto', false) | map(attribute='site') | unique | list }}"
+    _pem_peers_ory: "{{ _pem_peers_for | selectattr('ory', 'equalto', true) | map(attribute='site') | unique | list }}"
+    _pem_spock_on: >-
+      {{ not (_pem_standby | bool)
+         and (participates_in_spock | default(false) | bool)
+         and (inter_site_spock_topology | default('none')) != 'none' }}
+  vars:
+    _ory_dbs: "{{ ory_spock_databases | default(['kratos', 'hydra']) }}"
+    _pem_peers_for: >-
+      {%- set out = [] -%}
+      {%- for d in _pem_pre.spock | default([]) -%}
+        {%- for s in d.subs -%}
+          {%- for h in ansible_play_hosts if h != inventory_hostname -%}
+            {%- if s.provider in (hostvars[h]._pem_pre.spock | default([]) | map(attribute='node') | list) -%}
+              {%- set _ = out.append({'site': hostvars[h].site_id, 'ory': d.db in _ory_dbs}) -%}
+            {%- endif -%}
+          {%- endfor -%}
+        {%- endfor -%}
+      {%- endfor -%}
+      {{ out }}
+
+# 8.0, before any node's pass: the revocation guard and the hub directive
+# ledger on every member. A node's spock-mesh-peering pass installs them
+# locally and then reconciles revocation history by reading the PEER's
+# goat_revocations; a peer wired before the guard existed (its dump has none)
+# fails that read until its own pass runs later. A fresh build installs them
+# on every site before history is read; this does the same. The SQL is the
+# role's own (ops/postgres/spock/), idempotent.
+- name: "rewire | revocation guard and hub ledger on this member"
+  ansible.builtin.command:
+    argv: "{{ _pem_psql + ['-d', item.0.name] }}"
+    stdin: "{{ lookup('ansible.builtin.file', item.1) }}"
+  loop: >-
+    {%- set out = [] -%}
+    {%- for d in spock_mesh_databases | default([{'name': spock_mesh_database | default('netbird')}]) -%}
+      {%- set g = playbook_dir ~ '/../postgres/spock/revocation-guard/' ~ d.name ~ '.sql' -%}
+      {%- set h = playbook_dir ~ '/../postgres/spock/hub-authority/' ~ d.name ~ '.sql' -%}
+      {%- if (spock_mesh_revocation_guard | default(true) | bool) and g is file -%}{%- set _ = out.append([d, g]) -%}{%- endif -%}
+      {%- if (spock_mesh_hub_authority | default(true) | bool) and h is file -%}{%- set _ = out.append([d, h]) -%}{%- endif -%}
+    {%- endfor -%}
+    {{ out }}
+  loop_control:
+    label: "{{ item.0.name }}: {{ item.1 | basename }} ({{ item.1 | dirname | basename }})"
+  changed_when: true
+  when:
+    - pem_step == 'guards'
+    - _pem_spock_on | bool
+
+- name: "rewire | netbird (spock-mesh-peering)"
+  ansible.builtin.include_role:
+    name: spock-mesh-peering
+  vars:
+    inter_site_spock_topology: explicit
+    inter_site_spock_peers: "{{ _pem_peers }}"
+  when:
+    - pem_step in ['netbird-founders', 'netbird-joiners']
+    - _pem_spock_on | bool
+    - (_pem_founder | bool) == (pem_step == 'netbird-founders')
+
+- name: "rewire | start kratos and hydra for the Ory re-wire"
+  when:
+    - pem_step == 'ory-start'
+    - _pem_spock_on | bool
+    - ory_spock_enabled | default(false) | bool
+    - (_pem_peers_ory | length > 0) or (_pem_founder | bool)
+  block:
+    - name: "rewire | start {{ postgres_encoding_migrate_ory_containers | join(', ') }}"
+      ansible.builtin.command:
+        argv: "{{ ['docker', 'start'] + postgres_encoding_migrate_ory_containers }}"
+      changed_when: true
+
+    - name: "rewire | Ory containers healthy"
+      ansible.builtin.shell:
+        executable: /bin/bash
+        cmd: |
+          for c in {{ postgres_encoding_migrate_ory_containers | map('quote') | join(' ') }}; do
+            docker inspect --format '{{ "{{" }}.State.Health.Status{{ "}}" }}' "$c" | grep -qx healthy || exit 1
+          done
+      register: _pem_ory_health
+      until: _pem_ory_health.rc == 0
+      retries: 24
+      delay: 5
+      changed_when: false
+
+- name: "rewire | Ory (ory-narrow-repset)"
+  ansible.builtin.include_role:
+    name: ory-narrow-repset
+  vars:
+    inter_site_spock_topology: explicit
+    inter_site_spock_peers: "{{ _pem_peers_ory }}"
+    ory_spock_wire_subscriptions: "{{ pem_step != 'ory-joiners-1' }}"
+    ory_spock_reconcile_history: "{{ pem_step != 'ory-founders' }}"
+  when:
+    - pem_step in ['ory-joiners-1', 'ory-founders', 'ory-joiners-2']
+    - _pem_spock_on | bool
+    - ory_spock_enabled | default(false) | bool
+    # Live Ory wiring only: a joiner that pulled no Ory subscription before
+    # the run is not wired now; a founder keeps its node and repset.
+    - (_pem_peers_ory | length > 0) or (_pem_founder | bool)
+    - (_pem_founder | bool) == (pem_step == 'ory-founders')
+
+- name: "rewire | verify the subscription set"
+  when:
+    - pem_step == 'verify'
+    - not (_pem_standby | bool)
+  block:
+    - name: "rewire | subscriptions now"
+      ansible.builtin.shell:
+        executable: /bin/bash
+        cmd: |
+          set -euo pipefail
+          P=(docker exec -u postgres {{ _pem_c | quote }} psql -X -q -v ON_ERROR_STOP=1 -U postgres -tA)
+          for db in {{ _pem_pre.spock | default([]) | map(attribute='db') | map('quote') | join(' ') }}; do
+            "${P[@]}" -d "$db" -c "SELECT s.subscription_name || ' ' || s.status FROM spock.sub_show_status() s ORDER BY 1" | sed "s/^/$db /"
+          done
+      register: _pem_subs_now
+      until: _pem_subs_now.rc == 0 and (_pem_subs_now.stdout_lines | reject('match', '.* replicating$') | list | length == 0)
+      retries: 30
+      delay: 2
+      changed_when: false
+      failed_when: false
+
+    - name: "rewire | refuse a missing, extra or stalled subscription"
+      ansible.builtin.assert:
+        that:
+          - _now | sort == _want | sort
+        fail_msg: >-
+          {{ inventory_hostname }}: subscriptions after the re-wire
+          {{ _pem_subs_now.stdout_lines }}; before the migration
+          {{ _want }} (all replicating). The new clusters hold the data and
+          the writers are still stopped; fix the wiring and re-run (the run
+          resumes at phase 8), or action=rollback.
+        quiet: true
+      vars:
+        _now: "{{ _pem_subs_now.stdout_lines }}"
+        _want: >-
+          {%- set out = [] -%}
+          {%- for d in _pem_pre.spock | default([]) -%}
+            {%- for s in d.subs -%}{%- set _ = out.append(d.db ~ ' ' ~ s.name ~ ' replicating') -%}{%- endfor -%}
+          {%- endfor -%}
+          {{ out }}

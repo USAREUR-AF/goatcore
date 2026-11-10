@@ -29,7 +29,7 @@
 # A bare page address carries no state to spend AND leaves the form with one
 # `token` param, so it submits correctly. Both problems have the same fix.
 #
-#   ops/scripts/kanidm-reissue-code.sh user167x
+#   ops/scripts/kanidm-reissue-code.sh <handle>
 #   ops/scripts/kanidm-reissue-code.sh someone --plane collab
 #
 # NOTE --ttl-hours above 24 does nothing: Kanidm caps credential-setup codes at
@@ -40,8 +40,12 @@
 #   ops/scripts/kanidm-door-audit.sh --reinvite-plan
 #
 # Credentials come from the environment (direnv), never arguments:
-#   public plane (dashboard door) → <PUBLIC>_IDM_ADMIN_PW
+#   public plane (dashboard door) → GOAT_IDM_ADMIN_PW (or, when that is unset,
+#     the variable the checkout names as public_door_idm_admin_pw_env)
 #   collab plane (collab Kanidm) → COLLAB_KANIDM_IDM_ADMIN_PW
+# The door's address is PUBLIC_DOOR_KANIDM_URL / COLLAB_KANIDM_URL, else what
+# the checkout declares as public_door_kanidm_url / collab_door_kanidm_url in
+# ops/ansible/group_vars/all.yml (https://idm.<zone>).
 #
 # Find the handle: it is the Kanidm account name, e.g. from the roster or
 #   curl -H "Authorization: Bearer <tok>" https://<kanidm-host>/v1/person
@@ -66,11 +70,34 @@ if [ -z "$HANDLE" ]; then
   exit 2
 fi
 
+# One value this checkout declares in ops/ansible/group_vars/all.yml (through
+# project-setting.sh). Prints nothing where the script runs outside a checkout.
+declared_var() {
+  local helper
+  helper="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/project-setting.sh"
+  [ -x "$helper" ] || return 0
+  "$helper" var "$1" 2>/dev/null || true
+}
+
+# The variable the public door's idm_admin password is read from:
+# GOAT_IDM_ADMIN_PW. A checkout whose secret references carry another name
+# declares it as public_door_idm_admin_pw_env, and that variable is read when
+# GOAT_IDM_ADMIN_PW is unset.
+public_pw_var() {
+  local name=""
+  [ -n "${GOAT_IDM_ADMIN_PW:-}" ] || name="$(declared_var public_door_idm_admin_pw_env)"
+  case "$name" in ""|[0-9]*|*[!A-Za-z0-9_]*) name="" ;; esac
+  if [ -n "$name" ] && [ -n "${!name:-}" ]; then printf '%s' "$name"; else printf 'GOAT_IDM_ADMIN_PW'; fi
+}
+
 case "$PLANE" in
-  public) HOST=https://idm.goat.example;        PW="${GOAT_IDM_ADMIN_PW:-}";     PWVAR=GOAT_IDM_ADMIN_PW ;;
-  collab) HOST=https://idm.collab.goat.example; PW="${COLLAB_KANIDM_IDM_ADMIN_PW:-}";  PWVAR=COLLAB_KANIDM_IDM_ADMIN_PW ;;
+  public) HOSTVAR=PUBLIC_DOOR_KANIDM_URL; HOSTKEY=public_door_kanidm_url; PWVAR="$(public_pw_var)" ;;
+  collab) HOSTVAR=COLLAB_KANIDM_URL;      HOSTKEY=collab_door_kanidm_url; PWVAR=COLLAB_KANIDM_IDM_ADMIN_PW ;;
   *) echo "unknown --plane '$PLANE' (want: public | collab)" >&2; exit 2 ;;
 esac
+PW="${!PWVAR:-}"
+HOST="${!HOSTVAR:-}"; [ -n "$HOST" ] || HOST="$(declared_var "$HOSTKEY")"; HOST="${HOST%/}"
+[ -n "$HOST" ] || { echo "$HOSTVAR is not set and the checkout declares no $HOSTKEY — the base URL of the $PLANE door's Kanidm (https://idm.<zone>)." >&2; exit 2; }
 
 if [ -z "$PW" ]; then
   echo "$PWVAR is not set — run under direnv in the repo, or export it." >&2
@@ -194,6 +221,6 @@ Two rules for whoever sends this:
     and it also breaks the page's Submit button, silently.
   * Check afterwards that they actually got in, rather than assuming:
       ops/scripts/kanidm-door-audit.sh --plane $PLANE | grep -w $HANDLE
-    No output means done. Still listed means still stuck — user167x was
-    "unblocked by hand" on 2026-08-12 and was still credential-less on 08-17.
+    No output means done. Still listed means still stuck: an account
+    "unblocked by hand" can stay without a credential for days.
 EOF

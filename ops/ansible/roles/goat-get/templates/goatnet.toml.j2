@@ -1,0 +1,8 @@
+# goatnet.toml: this goatnet's own facts for the goat CLI.
+# Rendered by the goat-get role from this goatnet's group_vars; edit those, not this file.
+# `goat context refresh` writes these keys into the context's profile.toml.
+schema = "goat/goatnet/v1"
+{# `none` is a real answer for warrant_membership_converge (no declaration); elsewhere it means unset. #}
+{% for k, v in goat_get_goatnet_facts.items() if (v | string) not in ['', 'None'] and ((v | string) != 'none' or k == 'warrant_membership_converge') %}
+{{ k }} = "{{ v }}"
+{% endfor %}

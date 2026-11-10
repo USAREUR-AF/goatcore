@@ -256,6 +256,11 @@ def run(argv=None):
         # inject a token from env if the row names auth: <ENVVAR>
         if "auth" in params:
             tok = os.environ.get(str(params["auth"]))
+            # The secrets store names a goatnet's portal operator key
+            # <SITE>_PORTAL_OPERATOR_API_KEY (goatbuilder secrets init); the
+            # assay runs under with-secrets, so read that name too.
+            if not tok and params["auth"] == "portal_operator_key" and values.get("site_id"):
+                tok = os.environ.get(str(values["site_id"]).upper().replace("-", "_") + "_PORTAL_OPERATOR_API_KEY")
             if not tok:
                 # Without the token the call is unauthenticated and a 401 says
                 # nothing about the goatnet: the probe cannot answer.
@@ -488,13 +493,13 @@ def self_test():
         subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes",
                         "-keyout", str(key), "-out", str(pem), "-days", "1",
                         "-subj", "/O=goat/OU=zagros-prod/CN=goat-zenoh-router",
-                        "-addext", "subjectAltName=IP:100.127.0.221"],
+                        "-addext", "subjectAltName=IP:100.127.0.217"],
                        capture_output=True)
         if pem.exists():
             check("tls green", probes.tls_identity({"pem_file": str(pem),
-                  "expect_cn": "goat-zenoh-router", "expect_san_ip": "100.127.0.221"}).status, probes.PASS)
+                  "expect_cn": "goat-zenoh-router", "expect_san_ip": "100.127.0.217"}).status, probes.PASS)
             check("tls RED (stale IP)", probes.tls_identity({"pem_file": str(pem),
-                  "expect_san_ip": "100.127.0.114"}).status, probes.FAIL)
+                  "expect_san_ip": "100.127.0.110"}).status, probes.FAIL)
             check("tls RED (refuse default)", probes.tls_identity({"pem_file": str(pem),
                   "refuse_cn": "goat-zenoh-router"}).status, probes.FAIL)
         else:
@@ -540,7 +545,7 @@ def self_test():
               {"host": "localhost", "cmd": str(nomod), "expect": "OK"}).status, probes.UNKNOWN)
         # a health envelope arrives as base64 from the REST plugin and as
         # `hex:` from `goat sub`; both decode to the same site.
-        _env = bytes.fromhex("0a046d6573681208656664692d646576")  # EnvHealthV1{domain:"mesh", scope:"zagros-dev"}
+        _env = bytes.fromhex("0a046d657368120a7a6167726f732d646576")  # EnvHealthV1{domain:"mesh", scope:"zagros-dev"}
         import base64 as _b64
         check("payload from goat sub (hex:)", probes._payload_fields("hex:" + _env.hex()).get("site"), "zagros-dev")
         check("payload from REST (base64)", probes._payload_fields(_b64.b64encode(_env).decode()).get("site"), "zagros-dev")
@@ -808,7 +813,7 @@ if a[0] == "exec":
     c = json.load(open(path(a[1])))
     if a[2:5] == ["netbird", "status", "--json"]:
         print(json.dumps({"management": {"connected": c["ok"]},
-                          "netbirdIp": "100.127.0.64/16" if c["ok"] else ""})); sys.exit(0)
+                          "netbirdIp": "100.127.0.60/16" if c["ok"] else ""})); sys.exit(0)
     sys.exit(0 if os.environ.get("goat_stub_reach") == "1" else 1)
 if a[0] == "rm":
     try: os.remove(path(a[-1]))

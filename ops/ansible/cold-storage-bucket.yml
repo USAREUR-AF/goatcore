@@ -6,17 +6,17 @@
 #
 # Usage (operator-fired, single shot per dataset):
 #
-#   OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES aws-vault exec legacy --no-session -- \
+#   OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES aws-vault exec <profile> --no-session -- \
 #     ../scripts/ansible-preflight.sh \
 #       -i inventory/mgmt-hosts.ini \
 #       -i inventory/mgmt-hosts-mesh.ini \
 #       cold-storage-bucket.yml \
 #       -e cold_storage_dataset_id=zagros-1.0 \
-#       -e cold_storage_operator=maintainer-maintainer \
-#       -e cold_storage_description="nova-1.0 milestone close — audit data preserved before 7d→30d retention flip" \
+#       -e cold_storage_operator=<your-handle> \
+#       -e cold_storage_description="zagros-1.0 milestone close — audit data preserved before 7d→30d retention flip" \
 #       -e cold_storage_retention_days=365
 #
-# Pre-flight: MinIO container Healthy on nova-a; the `local` mc alias is
+# Pre-flight: MinIO container Healthy on the target host; the `local` mc alias is
 # pre-configured inside the container by the minio role.
 #
 # After this playbook succeeds, run ops/scripts/offload-to-cold.sh
@@ -37,7 +37,7 @@
           - "cold_storage_dataset_id | length > 0"
         fail_msg: >-
           Pass -e cold_storage_dataset_id=<kebab-case>
-          (e.g. cold_storage_dataset_id=nova-1.0)
+          (e.g. cold_storage_dataset_id=zagros-1.0)
 
   roles:
     - role: cold-storage-bucket

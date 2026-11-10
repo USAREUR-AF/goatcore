@@ -1,19 +1,16 @@
 ---
-# site.yml — relays and probes, in dependency order.
+# site.yml — the relay tier.
 #
 # A goatnet is stood up by `goatbuilder standup` (docs/operations/goatnet-standup.md),
-# not by this file. It remains for re-running these two tiers by hand. The site's
-# services are site-services.yml.
+# not by this file. It remains for re-running the relay tier by hand. The site's
+# services are site-services.yml. A deployment with tiers of its own (a network
+# host, bridges, probes) carries its own site.yml in its overlay.
 #
 # Usage:
 #   ansible-playbook site.yml
-#   ansible-playbook site-infra.yml                   # relays only
 #
 # Prerequisites:
 #   - terraform apply (creates the relay VPSes)
 #   - inventory/generate-relays.sh (populates the inventory + SSH keys)
 
 - import_playbook: relay-server.yml
-
-# Requires SNITCH_PROBE_KEY in the environment.
-- import_playbook: snitch-probes.yml

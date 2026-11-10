@@ -39,7 +39,8 @@
 #
 # The manifest carries NO secrets: subjects, SANs, EKUs and output paths only.
 # Keys never leave the operator machine; out-dir defaults to
-# ~/.goat/state/<site-id>-leaves .
+# <state dir>/<site-id>-leaves, where the state dir is what the project declares
+# (deploy.state_dir in ops/goatbuilder/goatbuilder.yaml), else ~/.goat/state.
 #
 # Class-A warning (instance-variability-model.md §1): URI SANs are
 # freeze-critical identity. A new site's manifest must use ITS OWN
@@ -105,7 +106,30 @@ case "$ROOT_CERT" in /*) ;; *) ROOT_CERT="$REPO_ROOT/$ROOT_CERT" ;; esac
 ROOT_KEY="$(expand_home "$(yq -r '.ca.root_key' "$MANIFEST")")"
 AGE_IDENTITY="$(expand_home "$(yq -r '.ca.age_identity // "~/.config/age/keys.txt"' "$MANIFEST")")"
 CA_ID="$(yq -r '.ca.ca_id' "$MANIFEST")"
-OUT_DIR="$(expand_home "$(yq -r ".out_dir // \"~/.goat/state/${SITE}-leaves\"" "$MANIFEST")")"
+# Where this machine keeps a project's local state when the manifest names no
+# out_dir: what the project declares (deploy.state_dir in
+# ops/goatbuilder/goatbuilder.yaml, the key goatbuilder reads), else ~/.goat/state.
+STATE_DIR="$(yq -r '.deploy.state_dir // ""' "$REPO_ROOT/ops/goatbuilder/goatbuilder.yaml" 2>/dev/null || true)"
+# shellcheck disable=SC2088  # quoted tilde is deliberate: expand_home expands it
+[ -n "$STATE_DIR" ] || STATE_DIR="~/.goat/state"
+OUT_DIR="$(expand_home "$(yq -r ".out_dir // \"${STATE_DIR}/${SITE}-leaves\"" "$MANIFEST")")"
+# The audit log cert-sign appends to: ca-audit.jsonl beside the state
+# directory, named on every call so the file is the project's and not a default
+# built into the tool (the path ops/scripts/project-setting.sh ca-audit-log prints).
+case "${STATE_DIR%/}" in */*) AUDIT_LOG="${STATE_DIR%/}"; AUDIT_LOG="$(expand_home "${AUDIT_LOG%/*}/ca-audit.jsonl")" ;; *) AUDIT_LOG=./ca-audit.jsonl ;; esac
+# The Subject O of every certificate minted here: what the checkout declares
+# as goat_cert_organization in ops/ansible/group_vars/all.yml. With none
+# declared the tools issue their own default.
+CERT_ORG="$(yq -r '.goat_cert_organization // ""' "$REPO_ROOT/ops/ansible/group_vars/all.yml" 2>/dev/null || true)"
+# takes_org <tool>: the tool has --org. A binary on PATH built before the flag
+# existed issues the organisation compiled into it, so the flag is left off
+# and the run says so once.
+takes_org() { local help; help="$("$1" --help 2>&1 || true)"; case "$help" in *"-org "*) return 0 ;; esac; return 1; }
+org_args() {  # org_args <tool> -> prints "--org" and the organisation, one per line, when both apply
+  [ -n "$CERT_ORG" ] || return 0
+  if takes_org "$1"; then printf '%s\n%s\n' --org "$CERT_ORG"; return 0; fi
+  echo "mint-site-certs: $1 has no --org (built before the flag): it issues the organisation compiled into it. Rebuild it from ops/enrollment to state '$CERT_ORG' on the call." >&2
+}
 
 # Resolve post-enrol mesh-IP SAN placeholders from the site's group_vars so the
 # router cert always carries the node's real wt0 IP without a hand-edit of the
@@ -120,7 +144,7 @@ MESH_IP_B="$(yq -r '.mesh_ip_b // ""' "$GROUP_VARS" 2>/dev/null || true)"
 resolve_san() {
   local v="$1"
   case "$v" in
-    TBD_*_CORE_A_MESH_IP|TBD_*_MESH_IP_A) v="$MESH_IP_A" ;;
+    TBD_*_CORE_A_MESH_IP|TBD_*_MESH_IP_A|TBD_ROUTER_MESH_IP) v="$MESH_IP_A" ;;
     TBD_*_CORE_B_MESH_IP|TBD_*_MESH_IP_B) v="$MESH_IP_B" ;;
   esac
   case "$v" in
@@ -179,9 +203,11 @@ if [ "$MINT_CA" = 1 ] && [ "$DRY_RUN" = 0 ]; then
     CA_INIT="$(build_tool ca-init)"
     mkdir -p "$(dirname "$ROOT_CERT")" "$(dirname "$ROOT_KEY")" "$REPO_ROOT/ops/enrollment/public-keys"
     echo "mint-site-certs: minting the $SITE CA ($CA_ID) — single age recipient $RECIPIENT (ADR 1213 D4)"
+    ca_org=(); while IFS= read -r a; do ca_org+=( "$a" ); done < <(org_args "$CA_INIT")
     "$CA_INIT" --mode dev --allow-single-recipient --recipients "$RECIPIENT" --id "$CA_ID" \
       --out "$ROOT_KEY" --gen-root-cert "$ROOT_CERT" --age-identity "$AGE_IDENTITY" \
-      --root-cn "$SITE goatlite CA" --public-key-dir "$REPO_ROOT/ops/enrollment/public-keys" >/dev/null
+      --root-cn "$SITE goatlite CA" --public-key-dir "$REPO_ROOT/ops/enrollment/public-keys" \
+      ${ca_org[@]+"${ca_org[@]}"} >/dev/null
     [ -f "$ROOT_CERT" ] && [ -f "$ROOT_KEY" ] || die "ca-init returned but $ROOT_CERT / $ROOT_KEY are not both present"
     echo "mint-site-certs: CA minted — key $ROOT_KEY (age), root cert $ROOT_CERT, public key ops/enrollment/public-keys/$CA_ID.pem (commit the cert + public key; never the key)"
   fi
@@ -196,6 +222,9 @@ for f in "$ROOT_CERT" "$ROOT_KEY" "$AGE_IDENTITY"; do
   [ "$DRY_RUN" = 1 ] || [ -f "$f" ] || die "missing input: $f"
 done
 [ "$DRY_RUN" = 1 ] || mkdir -p "$OUT_DIR"
+
+# Resolved once: the same flags go on every leaf.
+leaf_org=(); while IFS= read -r a; do leaf_org+=( "$a" ); done < <(org_args "$CERT_SIGN")
 
 count="$(yq -r '.leaves | length' "$MANIFEST")"
 [ "$count" -gt 0 ] || die "manifest has no leaves"
@@ -225,7 +254,8 @@ while [ "$i" -lt "$count" ]; do
 
   args=( --root-cert "$ROOT_CERT" --root-key "$ROOT_KEY" --age-identity "$AGE_IDENTITY"
          --ca-id "$CA_ID" --site-id "$SITE" --cn "$cn" --eku "$eku"
-         --out-cert "$out_cert" --out-key "$out_key" )
+         --out-cert "$out_cert" --out-key "$out_key" --audit-log "$AUDIT_LOG"
+         ${leaf_org[@]+"${leaf_org[@]}"} )
   n_san="$(yq -r ".leaves[$i].sans | length" "$MANIFEST")"
   j=0; while [ "$j" -lt "$n_san" ]; do args+=( --san "$(resolve_san "$(yq -r ".leaves[$i].sans[$j]" "$MANIFEST")")" ); j=$((j+1)); done
   n_uri="$(yq -r ".leaves[$i].uri_sans // [] | length" "$MANIFEST")"

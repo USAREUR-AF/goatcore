@@ -43,7 +43,7 @@ services:
     category: infrastructure
     checks:
       - type: tcp
-        host: 100.127.1.32
+        host: 100.127.1.23
         port: 443
 
   - name: caddy-proxy
@@ -83,21 +83,21 @@ services:
 
   # --- Applications ---
   # doodle was retired see docs/operations/archived-services.md
-  - name: demogame
-    description: Demo Game game + shared leaderboard
+  - name: airdefenders
+    description: Air Defenders game + shared leaderboard
     category: application
     checks:
       - type: http
-        url: http://demogame.netbird.legacy.example
+        url: http://airdefenders.netbird.legacy.example
         expect:
           status: 200
       - type: http
-        url: http://demogame.netbird.legacy.example/health
+        url: http://airdefenders.netbird.legacy.example/health
         expect:
           status: 200
           body_contains: "ok"
       - type: http
-        url: http://demogame.netbird.legacy.example/api/scores?period=all
+        url: http://airdefenders.netbird.legacy.example/api/scores?period=all
         expect:
           status: 200
           body_contains: "scores"

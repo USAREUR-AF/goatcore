@@ -33,7 +33,7 @@ wg_cp0_allowed_peers: []
 # Cloud relays: aws_secrets_manager (recoverable across image rebuilds).
 # Local-physical relays: local_file (no AWS dependency).
 wg_cp0_secret_storage: aws_secrets_manager   # or "local_file"
-wg_cp0_secret_name_prefix: "usareur-af-prod-goat-relay"   # Secrets Manager prefix; relay name is appended
+wg_cp0_secret_name_prefix: "goat-relay"   # Secrets Manager prefix (an example; set per deployment); relay name is appended
 wg_cp0_local_secret_path: "/etc/wireguard/wg-cp0-priv.key"
 
 # nftables rate-limiting on the listen port (defense-in-depth; WireGuard

@@ -3,6 +3,17 @@
 # See docs/adr/0406-offline-ca-yubikey-piv.md §"Interim mode" and the role
 # README. Idempotent; safe to re-run when the operator roster changes.
 
+- name: Require the CA ID and the allowlist repository to be named by the deployment
+  ansible.builtin.assert:
+    that:
+      - ca_signing_host_ca_id | default('') | length > 0
+      - ca_signing_host_repo_url | default('') | length > 0
+    fail_msg: >-
+      ca_signing_host_ca_id and ca_signing_host_repo_url have no default. Set
+      both in the group_vars of the host group this role is applied to: the CA
+      ID that matches ops/enrollment/public-keys/<id>.pem, and the git URL of
+      the repository whose allowlist this signing host trusts.
+
 - name: Ensure base packages present
   become: true
   ansible.builtin.apt:

@@ -1,0 +1,44 @@
+---
+# SPDX-License-Identifier: Apache-2.0
+#
+# apt asks /usr/local/bin/goat-apt-proxy-detect for a proxy on every run
+# (Acquire::http::Proxy-Auto-Detect). It answers the cache's URL when the cache
+# accepts a TCP connection within site_cache_probe_timeout_seconds, else DIRECT,
+# so a cache that is down or not built yet never stops an apt run. Only http
+# sources go through it; https sources (the Docker repository) go direct.
+- name: site-cache-client | the proxy probe apt runs
+  ansible.builtin.copy:
+    dest: /usr/local/bin/goat-apt-proxy-detect
+    owner: root
+    group: root
+    mode: "0755"
+    content: |
+      #!/bin/sh
+      # Rendered by ops/ansible/roles/site-cache-client. Prints the site cache's
+      # URL when it answers, else DIRECT (apt then uses the upstream mirrors).
+      if timeout {{ site_cache_probe_timeout_seconds }} bash -c ': </dev/tcp/{{ site_cache_host }}/{{ site_cache_apt_port }}' 2>/dev/null; then
+        echo "http://{{ site_cache_host }}:{{ site_cache_apt_port }}"
+      else
+        echo DIRECT
+      fi
+  when: site_cache_host | length > 0
+
+- name: site-cache-client | apt uses the probe
+  ansible.builtin.copy:
+    dest: /etc/apt/apt.conf.d/01goat-site-cache
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      // Rendered by ops/ansible/roles/site-cache-client (site_cache_host).
+      Acquire::http::Proxy-Auto-Detect "/usr/local/bin/goat-apt-proxy-detect";
+  when: site_cache_host | length > 0
+
+- name: site-cache-client | no cache declared — nothing of this role on the host
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/apt/apt.conf.d/01goat-site-cache
+    - /usr/local/bin/goat-apt-proxy-detect
+  when: site_cache_host | length == 0

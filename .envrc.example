@@ -8,7 +8,7 @@
 # ${VAR:?} / ${VAR:-} forms. A variable appears here because something
 # consumes it, which is the only claim this file is entitled to make.
 #
-# 1375 variables, 387 of them secret-bearing by name.
+# 1402 variables, 392 of them secret-bearing by name.
 #
 # THIS FILE HOLDS NO VALUES AND NEVER WILL. Credentials live in the store.
 # .envrc.local.d/*.refs hold references, mode 0600 (ADR 1186).
@@ -34,10 +34,10 @@
 # ==========================================================================
 
 # in use by: ZAGROS, ZAGROS_DEV, ZAGROS_PROD
-export <ENV>_DEMOGAME_OAUTH2_PROXY_CLIENT_SECRET=""  # SECRET
+export <ENV>_AIRDEFENDERS_OAUTH2_PROXY_CLIENT_SECRET=""  # SECRET
 
 # in use by: ZAGROS, ZAGROS_DEV, ZAGROS_PROD
-export <ENV>_DEMOGAME_OAUTH2_PROXY_COOKIE_SECRET=""  # SECRET
+export <ENV>_AIRDEFENDERS_OAUTH2_PROXY_COOKIE_SECRET=""  # SECRET
 
 # in use by: NOVA_LAN, UK
 export <ENV>_A_LUKS_PASS=""  # SECRET
@@ -290,7 +290,7 @@ export <ENV>_ZULIP_OIDC_CLIENT_SECRET=""  # SECRET
 #
 # Every line here is credential material. Blast radius and rotation cost p
 # er class: docs/design/credential-inventory.md.
-# 194 variables.
+# 200 variables.
 # ==========================================================================
 
 # ops/compose/mgmt-host/docker-compose.admit-audit.yml
@@ -302,7 +302,7 @@ export ALERT_SMTP_PASS=""  # SECRET
 # .github/workflows/docs-translation-gate.yml, ops/ansible/nethost-secwatch.yml …
 export ANTHROPIC_API_KEY=""  # SECRET
 
-# ops/zenoh-trial-peers/demogame-schemas/upload-all.sh
+# ops/zenoh-trial-peers/airdefenders-schemas/upload-all.sh
 export API_KEY=""  # SECRET
 
 # ops/relay/health/serve.sh, ops/wave3/steady-state.sh
@@ -334,6 +334,9 @@ export CLOUDFLARE_API_TOKEN_ZAGROS_PROD=""  # SECRET
 
 # docs/operations/rapid-bringup-drill-runbook.md, ops/ansible/group_vars/zagros_dev_hosts/vars.yml …
 export CLOUDFLARE_API_TOKEN_PROD=""  # SECRET
+
+# ops/scripts/test_standup_required_inputs.py
+export CLOUDFLARE_API_TOKEN_X=""  # SECRET
 
 # ops/ansible/templates/traefik-acme/docker-compose.acme.yml.j2, ops/compose/relay-health-standalone/docker-compose.public.yml
 export CLOUDFLARE_DNS_API_TOKEN=""  # SECRET
@@ -466,6 +469,9 @@ export GOAT_CREDENTIALS_REFS=""  # SECRET
 
 # ops/goatnets/render-cross-env.py
 export GOAT_CROSS_FLEET_TOKEN=""  # SECRET
+
+# ops/scripts/create-door-audit-identity.sh, ops/scripts/kanidm-door-audit.sh …
+export GOAT_IDM_ADMIN_PW=""  # SECRET
 
 # incubator/goat-moon-open-pod/examples/delivery_reconcile.py
 export GOAT_MTLS_KEY=""  # SECRET
@@ -605,13 +611,10 @@ export KRATOS_SECRETS_CIPHER=""  # SECRET
 # ops/compose/mgmt-host/docker-compose.ory.yml
 export KRATOS_SECRETS_COOKIE=""  # SECRET
 
-# ops/ansible/oci-substrate-deploy.yml
-export VEGA_ADMIT_AUDIT_PASS=""  # SECRET
-
-# ops/ansible/roles/openobserve/defaults/main.yml
+# ops/ansible/group_vars/all.yml
 export VEGA_C_MINIO_ROOT_PASSWORD=""  # SECRET
 
-# ops/ansible/roles/openobserve/defaults/main.yml, ops/ansible/roles/otel-collector/defaults/main.yml
+# ops/ansible/group_vars/all.yml
 export VEGA_C_OPENOBSERVE_ROOT_PASSWORD=""  # SECRET
 
 # docs/design/operator-credentials.md
@@ -695,6 +698,15 @@ export ONBOARD_RUNNER_PORTAL_KEY=""  # SECRET
 # ops/observability/wide-events/spike/run-spike.sh
 export OPENOBSERVE_PASS=""  # SECRET
 
+# ops/ansible/roles/openobserve/defaults/main.yml, ops/ansible/roles/otel-collector/defaults/main.yml
+export OPENOBSERVE_ROOT_PASSWORD=""  # SECRET
+
+# ops/ansible/roles/openobserve/defaults/main.yml
+export OPENOBSERVE_S3_ACCESS_KEY=""  # SECRET
+
+# ops/ansible/roles/openobserve/defaults/main.yml
+export OPENOBSERVE_S3_SECRET_KEY=""  # SECRET
+
 # docs/project/iac-coverage-audit-2026-05-09.md
 export OPERATOR_AUTHORIZED_KEYS=""  # SECRET
 
@@ -725,10 +737,10 @@ export PEERVIEW_PORTAL_KEY=""  # SECRET
 # ops/wave-34/34I-enrollment-rate/run.sh
 export PEER_SSH_KEY=""  # SECRET
 
-# ops/ansible/group_vars/all.yml
+# ops/ansible/group_vars/all.yml, ops/scripts/node-seed.py
 export PLATFORM_ADMIN_SSH_PUBKEYS=""  # SECRET
 
-# ops/zenoh-trial-peers/demogame-schemas/upload-all.sh, ops/zenoh-trial-peers/synth-vendor-schemas/delete-ghost-topics.sh …
+# ops/zenoh-trial-peers/airdefenders-schemas/upload-all.sh, ops/zenoh-trial-peers/synth-vendor-schemas/delete-ghost-topics.sh …
 export PORTAL_API_KEY=""  # SECRET
 
 # ops/scripts/create-decode-health-identity.sh, ops/scripts/create-provenance-guard-identity.sh
@@ -788,11 +800,11 @@ export ROSENPASS_ENABLED=""  # SECRET
 # ops/validation/probes.py
 export SAFE_BROWSING_API_KEY=""  # SECRET
 
-# ops/ansible/roles/saltlick/templates/docker-compose.yml.j2
-export SALTLICK_IMAGE=""  # SECRET
-
 # ops/compose/mgmt-host/docker-compose.yml, signal-server/cmd/signal-server/main.go
 export SIGNAL_FEDERATION_TOKEN=""  # SECRET
+
+# ops/ansible/site-oidc-clients.yml
+export SITE_COMPLIANCE_OIDC_CLIENT_SECRET=""  # SECRET
 
 # ops/ci/check-group-vars-parity.sh
 export SITE_SLOT_POOL_SALT=""  # SECRET
@@ -866,6 +878,9 @@ export WG_PEER_KEY=""  # SECRET
 # ops/ansible/roles/peerview/defaults/main.yml
 export X_NB_API_TOKEN=""  # SECRET
 
+# ops/scripts/test_standup_required_inputs.py
+export X_PASS=""  # SECRET
+
 # ops/relay/health/zenoh-health-probe.sh
 export ZENOH_CLIENT_KEY=""  # SECRET
 
@@ -880,7 +895,7 @@ export ZH_KEY=""  # SECRET
 #
 # Named here because something reads them, so a missing one breaks a run t
 # he same way a missing secret does.
-# 966 variables.
+# 988 variables.
 # ==========================================================================
 
 # ops/federation-partnerenv/drill/lib/common.sh
@@ -898,16 +913,16 @@ export ADMIT_AUDIT_IMAGE=""
 # ops/ci/check-adr-status-vs-code.sh
 export ADR_STATUS_BASELINE=""
 
-# ops/serve/demogame/spawn-bots.sh
+# ops/serve/airdefenders/spawn-bots.sh
 export AD_BOTS=""
 
-# ops/serve/demogame/demo_auth.go
+# ops/serve/airdefenders/demo_auth.go
 export AD_DEMO_UNGATED=""
 
-# ops/serve/demogame/ws.go
+# ops/serve/airdefenders/ws.go
 export AD_MAX_CONNS_PER_IP=""
 
-# ops/serve/demogame/spawn-bots.sh
+# ops/serve/airdefenders/spawn-bots.sh
 export AD_URL=""
 
 # ops/ci/check-federated-trust-retirement.sh
@@ -922,14 +937,14 @@ export AGENT_REF_RANGE_HEAD=""
 # ops/loadtest/rca-throughput-decomposition.sh
 export AGG_K=""
 
-# docs/project/active-work/recently_completed/demogame-mp-merge.yaml, docs/project/active-work/recently_completed/easy-rollback-tier0-demogame.yaml …
-export DEMOGAME_IMAGE=""
+# docs/project/active-work/recently_completed/airdefenders-mp-merge.yaml, docs/project/active-work/recently_completed/easy-rollback-tier0-airdefenders.yaml …
+export AIRDEFENDERS_IMAGE=""
 
-# ops/zenoh-trial-peers/bootstrap-demogame-portal.sh
-export DEMOGAME_VENDOR_CERT_OUT_DIR=""
+# ops/zenoh-trial-peers/bootstrap-airdefenders-portal.sh
+export AIRDEFENDERS_VENDOR_CERT_OUT_DIR=""
 
-# ops/ansible/roles/demogame/defaults/main.yml, ops/ansible/roles/demogame/tasks/deploy.yml …
-export DEMOGAME_ZENOH_SIDECAR_IMAGE=""
+# ops/ansible/roles/airdefenders/defaults/main.yml, ops/ansible/roles/airdefenders/tasks/deploy.yml …
+export AIRDEFENDERS_ZENOH_SIDECAR_IMAGE=""
 
 # ops/ansible/group_vars/zagros_cloud_hosts/vars.yml, ops/ansible/group_vars/zagros_dev_hosts/vars.yml …
 export ALERT_EMAIL_DIGEST_RECIPIENTS=""
@@ -1009,7 +1024,7 @@ export AUSTERITY_TIERS=""
 # ops/relay/metrics-publish.sh
 export AUTH_WINDOW_MIN=""
 
-# ops/federation-partnerenv/drill/lib/common.sh
+# ops/federation-partnerenv/drill/lib/common.sh, ops/scripts/door-open.sh
 export AWS_PROFILE_NAME=""
 
 # ops/scripts/goat-standup.sh
@@ -1018,7 +1033,7 @@ export AWS_PROFILE_STANDUP=""
 # ops/ansible/roles/compliance-proxy/defaults/main.yml, ops/compose/mgmt-host/docker-compose.compliance-proxy.yml
 export AWS_SIGV4_PROXY_IMAGE=""
 
-# ops/ansible/inventory/gen-goat-relay-tier4b.sh, ops/wave-33/tier-4b/inchworm.sh …
+# ops/ansible/inventory/gen-goat-relay-tier4b.sh, ops/ansible/scripts/create-setup-key.py …
 export AWS_VAULT_PROFILE=""
 
 # ops/scripts/offboard_driver.py, ops/secrets/openbao/bao-login-cert …
@@ -1051,7 +1066,7 @@ export BLACKBOX_EXTRA_PROBE_HOST=""
 # ops/scripts/gated-service-preflight.sh
 export BRANCHES=""
 
-# ops/serve/demogame/spawn-bots.sh
+# ops/serve/airdefenders/spawn-bots.sh
 export BROWSER=""
 
 # terraform-prod/bootstrap.sh
@@ -1104,6 +1119,9 @@ export CANONICAL_RATE=""
 
 # ops/zenoh/wedge-loadtest/scripts/rig-harness.sh
 export CARDINALITY=""
+
+# ops/oss/binary_match.py
+export CARGO_HOME=""
 
 # ops/identity/cac-live-test/catcher.py
 export CATCHER_MODE=""
@@ -1171,10 +1189,13 @@ export COALITION_FRAMEWORK=""
 # ops/scripts/kanidm-reissue-code.sh
 export CODE=""
 
-# ops/scripts/offboard_driver.py
+# ops/onboard-runner/collab.go, ops/scripts/offboard_driver.py
 export COLLAB_KANIDM_URL=""
 
-# ops/serve/demogame/spawn-bots.sh
+# ops/onboard-runner/collab.go
+export COLLAB_SIGNIN_URL=""
+
+# ops/serve/airdefenders/spawn-bots.sh
 export COLS=""
 
 # ops/ansible/compliance-proxy-deploy.yml
@@ -1293,9 +1314,6 @@ export GOAT_ROOT=""
 
 # ops/ansible/spire-ca-standby.yml, ops/ansible/surface-visit-deploy.yml
 export DEV_CA_AGE_BREAK_GLASS=""
-
-# ops/ansible/spire-ca-standby.yml, ops/ansible/surface-visit-deploy.yml
-export DEV_CA_AGE_OPERATOR_1=""
 
 # ops/scripts/rc.sh
 export DEV_EVID=""
@@ -1561,7 +1579,7 @@ export FROM_IMAGE=""
 # docs/design/usareur-af-repo-migration.md, docs/findings/F-362-a-repo-flip-changed-which-registry-namespace-every-deploy-pulls-from.md …
 export GHCR_ORG=""
 
-# ops/ci/check-image-build-parity.sh, ops/scripts/closeout-check.sh
+# ops/ci/check-image-build-parity.sh, ops/scripts/external-service-finish.py …
 export GH_REPO=""
 
 # ops/ci/check-mermaid-renders.sh, ops/ci/check-no-agent-references.sh …
@@ -1579,8 +1597,11 @@ export GIT_SSH_COMMAND=""
 # ops/goatbuilder/parity-endstate.sh, ops/oss/templates/hello-galaxy-goatenv/run
 export GOATBUILDER=""
 
-# ops/scripts/deploy-component.sh, ops/scripts/goatnet-endstate.sh
+# ops/scripts/deploy-component.sh, ops/scripts/env-door.sh …
 export GOATBUILDER_PYTHON=""
+
+# ops/goatprivate/assemble.sh, ops/goatprivate/extra-files/.github/scripts/assembled-build/assemble-trees.sh
+export GOATCORE_URL=""
 
 # ops/serve/goat-map/docker-compose.yml
 export GOATMAP_ATTEST_DIR=""
@@ -1711,19 +1732,22 @@ export GOATNET_SUMMARY_STALE_AFTER_S=""
 # ops/relay/health/goatnet-summary-publish.sh
 export GOATNET_SUMMARY_TARGETS=""
 
+# ops/goatprivate/assemble.sh, ops/goatprivate/extra-files/.github/scripts/assembled-build/assemble-trees.sh
+export GOATSTUFF_URL=""
+
 # Makefile, ops/scripts/daily-review.sh
 export GOAT_ACK=""
 
 # ops/enrollment/cmd/wg-cp0/bundle_create_invoke.go, ops/secrets/openbao/people.py
 export GOAT_AGE_IDENTITY=""
 
-# ops/scripts/ansible-preflight.sh, ops/scripts/fresh-source.sh
+# ops/goatprivate/check-export-source.py, ops/scripts/ansible-preflight.sh …
 export GOAT_ANSIBLE_TRUNK_REMOTE=""
 
 # ops/scripts/with-aws
 export GOAT_AWS_MODE=""
 
-# ops/goatnets/cross-env-apply.sh, ops/scripts/goat-standup.sh
+# ops/goatnets/cross-env-apply.sh, ops/scripts/deploy-component.sh …
 export GOAT_AWS_PROFILE=""
 
 # ops/secrets/openbao/bootstrap.sh
@@ -1792,8 +1816,11 @@ export GOAT_DEB_URL=""
 # ops/scripts/deploy-component.sh
 export GOAT_DEPLOY_LOG_DIR=""
 
-# ops/ansible/roles/rollback-ledger/tasks/main.yml, ops/oss/templates/goatstuff/ops/ansible/roles/rollback-ledger/tasks/main.yml …
+# ops/ansible/roles/rollback-ledger/tasks/main.yml, ops/goatprivate/check-export-source.py …
 export GOAT_DEPLOY_OFFLINE=""
+
+# ops/ansible/roles/rollback-ledger/tasks/main.yml
+export GOAT_DEPLOY_SOURCE_TREE=""
 
 # ops/goat-id-console/internal/handlers/zz_render_dump_test.go
 export GOAT_DUMP_HTML=""
@@ -1804,8 +1831,11 @@ export GOAT_ENV=""
 # ops/goat-client-assay/install-goat-client.sh
 export GOAT_FORCE_RELAY=""
 
-# ops/scripts/ansible-preflight.sh, ops/scripts/fresh-source.sh
+# ops/goatprivate/check-export-source.py, ops/scripts/ansible-preflight.sh …
 export GOAT_FRESH_SOURCE_TRUNK=""
+
+# ops/scripts/lib/source_of_record.py
+export GOAT_GOATSTUFF_DIR=""
 
 # ops/goat-id-console/internal/onboardlint/onboardlint.go, ops/operators/test_validate_grammar.py …
 export GOAT_GRAMMAR_CUTOVER=""
@@ -1824,6 +1854,9 @@ export GOAT_KEEP_AWAKE_ANY_OS=""
 
 # ops/ansible/filter_plugins/goat_leaf.py, ops/ansible/filter_plugins/test_goat_leaf.py
 export GOAT_LEAF_DIR=""
+
+# ops/oss/templates/_shared/.github/leak-gate/scan-diff.py
+export GOAT_LEAK_NEEDLES=""
 
 # ops/secrets/posture.py
 export GOAT_LITE_CONFIG=""
@@ -1852,6 +1885,15 @@ export GOAT_OPERATOR_HANDLE=""
 # ops/secrets/openbao/mirror.py
 export GOAT_OP_CMD=""
 
+# ops/scripts/ansible-preflight.sh, ops/scripts/lib/source_of_record.py
+export GOAT_OVERLAY_DIR=""
+
+# ops/scripts/lib/source_of_record.py
+export GOAT_OVERLAY_REMOTE=""
+
+# ops/scripts/lib/source_of_record.py
+export GOAT_OVERLAY_TRUNK_REMOTE=""
+
 # incubator/goat-moon-open-pod/examples/delivery_reconcile.py
 export GOAT_PREFIX=""
 
@@ -1860,6 +1902,9 @@ export GOAT_PROFILE_DIR=""
 
 # ops/standby/promote-zagros-b.sh
 export GOAT_PROMOTION_DRILL_ENV=""
+
+# ops/scripts/repo-slug.sh
+export GOAT_PR_REPOS=""
 
 # ops/oci-substrate/scripts/push-from-host.sh
 export GOAT_PUBLISHER_USER=""
@@ -1936,6 +1981,12 @@ export GOAT_SKIP_ARG_GUARDS=""
 # ops/scripts/ansible-preflight.sh
 export GOAT_SKIP_GHCR_PARITY=""
 
+# ops/goat-id-console/internal/mailer/sink_test.go
+export GOAT_SMTP_SINK_API=""
+
+# ops/goat-id-console/internal/mailer/sink_test.go
+export GOAT_SMTP_SINK_SMTP=""
+
 # ops/ansible/group_vars/all.yml
 export GOAT_SOURCE_REPO=""
 
@@ -1992,6 +2043,9 @@ export GUARD_RECONCILE_ALLOWLIST=""
 
 # ops/ci/check-node-class-membership.sh
 export GUARD_TAXONOMY=""
+
+# ops/ci/check-node-class-membership.sh
+export GUARD_WARRANT_DIR=""
 
 # ops/ci/check-env-coverage.sh, ops/ci/check-site-config-bleed.sh
 export GV_ROOT=""
@@ -2239,10 +2293,10 @@ export KRATOS_PUBLIC_URL=""
 # ops/compose/mgmt-host/docker-compose.ory.yml
 export KRATOS_SELFSERVICE_UI_IMAGE=""
 
-# ops/ansible/roles/openobserve/defaults/main.yml
+# ops/ansible/group_vars/all.yml
 export VEGA_C_MINIO_ROOT_USER=""
 
-# ops/ansible/roles/openobserve/defaults/main.yml, ops/ansible/roles/otel-collector/defaults/main.yml
+# ops/ansible/group_vars/all.yml
 export VEGA_C_OPENOBSERVE_ROOT_EMAIL=""
 
 # ops/zenoh-path-comparison/metrics-loop.sh
@@ -2328,6 +2382,9 @@ export LOADTEST_OUT_DIR=""
 
 # docs/reference/compendium/export-compendium.sh
 export LOCALAPPDATA=""
+
+# ops/recipes/local-registry/test.sh
+export LOCAL_REGISTRY_TEST_PORT=""
 
 # ops/ansible/roles/luks-unlock/files/tpm2-enroll-helper.sh
 export LUKS_DEV=""
@@ -2685,6 +2742,9 @@ export OPENBAO_SOVEREIGN_PKI_DIR=""
 
 # ops/secrets/openbao/bootstrap.sh
 export OPENBAO_USER_CA_FILE=""
+
+# ops/ansible/roles/openobserve/defaults/main.yml, ops/ansible/roles/otel-collector/defaults/main.yml
+export OPENOBSERVE_ROOT_EMAIL=""
 
 # ops/observability/wide-events/spike/run-spike.sh
 export OPENOBSERVE_URL=""
@@ -3127,6 +3187,9 @@ export REPO_ROOT=""
 # ops/scripts/fresh-peer-probe.sh
 export REPRESENTATIVE=""
 
+# ops/recipes/local-registry/test.sh
+export REQUIRE_DOCKER=""
+
 # ops/scripts/fresh-peer-probe.sh
 export RESOLVE_ERROR=""
 
@@ -3187,16 +3250,16 @@ export RUST_LOG=""
 # ops/zenoh/docker-compose.yml, ops/zenoh/loadgen/main.go
 export SCENARIO=""
 
-# ops/zenoh-trial-peers/bootstrap-demogame-portal.sh, ops/zenoh-trial-peers/bootstrap-portal-vendors.sh
+# ops/zenoh-trial-peers/bootstrap-airdefenders-portal.sh, ops/zenoh-trial-peers/bootstrap-portal-vendors.sh
 export SCP_TARGET=""
 
 # ops/loadtest/rca-throughput-decomposition.sh
 export SCRATCH_ROCKSDB=""
 
-# ops/serve/demogame/spawn-bots.sh
+# ops/serve/airdefenders/spawn-bots.sh
 export SCREEN_H=""
 
-# ops/serve/demogame/spawn-bots.sh
+# ops/serve/airdefenders/spawn-bots.sh
 export SCREEN_W=""
 
 # ops/zenoh/wedge-repro/run-slow-consumer.sh, ops/zenoh/wedge-repro/slow_consumer.py
@@ -3313,6 +3376,9 @@ export SLACK_ALERT_WEBHOOK_URL=""
 # ops/zenoh/wedge-loadtest/router/peergen/peergen.py
 export SLOTS=""
 
+# ops/smoketest/cmd/smoketest/main.go
+export SMOKETEST_CONFIG=""
+
 # ops/zenoh-trial-peers/budget-notify/budget-notify.py
 export SMTP_FROM=""
 
@@ -3333,6 +3399,9 @@ export SNITCH_DB_URL=""
 
 # ops/snitch/internal/server/probe_policy.go
 export SNITCH_DEFAULT_POLICY=""
+
+# ops/snitch/internal/collector/collector.go
+export SNITCH_PEER_DOMAIN_SUFFIXES=""
 
 # ops/snitch/cmd/snitch/main.go, ops/snitch/internal/measure/policy.go
 export SNITCH_PROBE_DISABLED=""
@@ -3544,13 +3613,16 @@ export TRAEFIK_METRICS_BIND=""
 # ops/authelia/docker-compose.yml, ops/gatewatch/docker-compose.yml …
 export TRAEFIK_NETWORK=""
 
+# ops/compose/mgmt-host/docker-compose.yml
+export TRAEFIK_TLS_ROOT=""
+
 # ops/scripts/peering-standup.sh
 export TRANSPORT=""
 
 # ops/scripts/pr-readiness.sh
 export TRUNK=""
 
-# ops/serve/demogame/demo_auth.go
+# ops/serve/airdefenders/demo_auth.go
 export TRUST_FORWARDED_IDENTITY=""
 
 # ops/serve/trust-sandbox/deploy/docker-compose.hosted.yml
@@ -3564,6 +3636,9 @@ export TTL_HOURS=""
 
 # ops/federation-partnerenv/drill/lib/tunnel.sh
 export TUNNEL_WAIVER=""
+
+# ops/vm-image/build.sh
+export UBUNTU_BASE=""
 
 # ops/bootstrap/first-boot/integration-test/drive-test.sh
 export USERDATA_OVERRIDE=""
@@ -3592,6 +3667,9 @@ export VENDOR=""
 # ops/grant-crypto/transport-proof/run.sh
 export VENV=""
 
+# ops/vm-image/build.sh
+export VM_IMAGE_SSH_PORT=""
+
 # ops/zenoh/wedge-repro/run-stage.sh
 export VOLUME=""
 
@@ -3603,6 +3681,9 @@ export VXLAN_RCA_NETBIRD_IFACE=""
 
 # ops/scripts/vxlan-rca.sh
 export VXLAN_RCA_NO_PCAP=""
+
+# ops/ci/check-node-class-membership.sh
+export WARRANT_MEMBERSHIP_DIR=""
 
 # ops/wave3/scripts/check-soak-progress.sh, ops/wave3/scripts/start-soak.sh …
 export WAVE3_ACCOUNT_ID=""
@@ -3742,13 +3823,13 @@ export ZENOH_PIN=""
 # ops/relay/health/zenoh-health-probe.sh
 export ZENOH_PROM_OUT=""
 
-# MULTIPLAYER_NOTES.md, ops/serve/demogame/main.go
+# MULTIPLAYER_NOTES.md, ops/serve/airdefenders/main.go
 export ZENOH_PUBLISH=""
 
 # ops/relay/health/zenoh-health-probe.sh
 export ZENOH_QUIC_PORT=""
 
-# ops/serve/demogame/main.go
+# ops/serve/airdefenders/main.go
 export ZENOH_REST_ENDPOINT=""
 
 # ops/relay/health/zenoh-fabric-sampler.sh, ops/relay/health/zenoh-health-probe.sh

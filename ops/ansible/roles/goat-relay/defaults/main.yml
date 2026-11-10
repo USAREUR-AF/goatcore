@@ -15,13 +15,13 @@
 # Override via `-e goat_relay_image=ghcr.io/{{ ghcr_org }}/goat-relay:<tag>`.
 goat_relay_image: ghcr.io/{{ ghcr_org }}/goat-relay:sha-d5f492e@sha256:08602535f642153b43466d0be07de476e468ea16d6c15f6e14c044dd7d984f42
 
-# Listener bind address. The relay runs in the host network namespace
-#, so this is the host-facing bind. Production: 0.0.0.0:33073.
+# Listener bind address. The relay runs in the host network namespace,
+# so this is the host-facing bind. Production: 0.0.0.0:33073.
 goat_relay_bind_addr: "0.0.0.0:33073"
 
 # Address peers reach the relay at — returned in `AuthResponse` (spec
 # §3.3). For cloud-fronted hosts behind EIP/NAT/LB this differs from
-# `goat_relay_bind_addr`. Per F-032: if the relay
+# `goat_relay_bind_addr`. If the relay
 # advertises `0.0.0.0` peers can't dial the other peer's relay-mediated
 # address. Production deploys MUST set this to the public IP / DNS
 # name peers connect to. Defaults to bind addr (matches the binary's
@@ -144,7 +144,7 @@ goat_relay_use_uring: false
 # target host after first login. Mirrors the brief/dataflows role pattern.
 goat_relay_pull_auth_enabled: false
 goat_relay_pull_registry: "ghcr.io"
-goat_relay_pull_username: "goat-maintainer"
+goat_relay_pull_username: ""
 goat_relay_pull_password: ""
 
 # --- relay-metrics self-publish (ADR 1058) — OPT-IN ---

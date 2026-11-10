@@ -26,7 +26,7 @@ func TestL1DerivedFromBundleMintedAt(t *testing.T) {
 		t.Fatalf("create vendor with bundle: %v", err)
 	}
 	if err := r.CreateVendor(ctx, &registry.Vendor{
-		Prefix:     "user52x",
+		Prefix:     "otter",
 		APIKeyHash: "h",
 		// no bundle minted — should NOT get an l1_at
 	}); err != nil {
@@ -46,8 +46,8 @@ func TestL1DerivedFromBundleMintedAt(t *testing.T) {
 	} else if got.L1At == nil || *got.L1At != mintedAt {
 		t.Fatalf("aardwolf L1At = %v, want %d", got.L1At, mintedAt)
 	}
-	if got := byPrefix["user52x"]; got.L1At != nil {
-		t.Fatalf("user52x L1At should be nil (no bundle minted); got %v", *got.L1At)
+	if got := byPrefix["otter"]; got.L1At != nil {
+		t.Fatalf("otter L1At should be nil (no bundle minted); got %v", *got.L1At)
 	}
 }
 
@@ -213,7 +213,7 @@ func TestAuditCursorRoundTrip(t *testing.T) {
 	r := open(t)
 	ctx := context.Background()
 
-	c, err := r.GetAuditCursor(ctx, "nova-a")
+	c, err := r.GetAuditCursor(ctx, "site-A")
 	if err != nil {
 		t.Fatalf("get empty: %v", err)
 	}
@@ -221,14 +221,14 @@ func TestAuditCursorRoundTrip(t *testing.T) {
 		t.Fatalf("empty cursor should have empty LastKey, got %q", c.LastKey)
 	}
 
-	if err := r.SetAuditCursor(ctx, "nova-a", "nova-a/2026/05/21/14/1716340000000-256.ndjson"); err != nil {
+	if err := r.SetAuditCursor(ctx, "site-A", "site-A/2026/05/21/14/1716340000000-256.ndjson"); err != nil {
 		t.Fatalf("set: %v", err)
 	}
-	c2, err := r.GetAuditCursor(ctx, "nova-a")
+	c2, err := r.GetAuditCursor(ctx, "site-A")
 	if err != nil {
 		t.Fatalf("get after set: %v", err)
 	}
-	if c2.LastKey != "nova-a/2026/05/21/14/1716340000000-256.ndjson" {
+	if c2.LastKey != "site-A/2026/05/21/14/1716340000000-256.ndjson" {
 		t.Fatalf("LastKey = %q", c2.LastKey)
 	}
 	if c2.LastSeenAt == 0 {
@@ -246,13 +246,13 @@ func TestAuditCursorRoundTrip(t *testing.T) {
 // applyObject is the common call shape, so a signature change surfaces once.
 func applyObject(t *testing.T, r *registry.Registry, key string, updates ...registry.AuditProgressUpdate) error {
 	t.Helper()
-	return r.ApplyAuditObject(context.Background(), "nova-a", key, updates)
+	return r.ApplyAuditObject(context.Background(), "site-A", key, updates)
 }
 
 func TestApplyAuditObjectKeepsOneRowPerOrg(t *testing.T) {
 	r := open(t)
 	ctx := context.Background()
-	for _, p := range []string{"aardwolf", "user52x"} {
+	for _, p := range []string{"aardwolf", "otter"} {
 		if err := r.CreateVendor(ctx, &registry.Vendor{Prefix: p, APIKeyHash: "h"}); err != nil {
 			t.Fatalf("create %s: %v", p, err)
 		}
@@ -272,14 +272,14 @@ func TestApplyAuditObjectKeepsOneRowPerOrg(t *testing.T) {
 	// One object carrying many publishes for one org across several distinct
 	// key expressions. The old shape wrote a row per key; this must write one
 	// row per org no matter how many keys were involved.
-	if err := applyObject(t, r, "nova-a/1.ndjson",
+	if err := applyObject(t, r, "site-A/1.ndjson",
 		registry.AuditProgressUpdate{
 			Prefix: "aardwolf", HelloFirstAt: t1, LastPublishAt: t1 + 9,
 			PublishDelta: 2500, LastTopic: "aardwolf/telemetry/2500",
 		},
 		registry.AuditProgressUpdate{
-			Prefix: "user52x", OtherFirstAt: t1, LastPublishAt: t1 + 3,
-			PublishDelta: 4, LastTopic: "user52x/edge",
+			Prefix: "otter", OtherFirstAt: t1, LastPublishAt: t1 + 3,
+			PublishDelta: 4, LastTopic: "otter/edge",
 		},
 	); err != nil {
 		t.Fatalf("apply: %v", err)
@@ -300,8 +300,8 @@ func TestApplyAuditObjectKeepsOneRowPerOrg(t *testing.T) {
 	if aw.L3At == nil || *aw.L3At != t1 {
 		t.Errorf("aardwolf L3At = %v, want %d", aw.L3At, t1)
 	}
-	if by["user52x"].PublishCount != 4 {
-		t.Errorf("user52x PublishCount = %d, want 4", by["user52x"].PublishCount)
+	if by["otter"].PublishCount != 4 {
+		t.Errorf("otter PublishCount = %d, want 4", by["otter"].PublishCount)
 	}
 
 	// The property the whole change exists for: 2,504 publishes across many
@@ -326,7 +326,7 @@ func TestApplyAuditObjectNeverWritesThePerTopicTable(t *testing.T) {
 	// Nothing may write to it in the meantime, and this is the assertion that
 	// keeps it that way.
 	for i := 0; i < 5; i++ {
-		if err := applyObject(t, r, fmt.Sprintf("nova-a/%d.ndjson", i),
+		if err := applyObject(t, r, fmt.Sprintf("site-A/%d.ndjson", i),
 			registry.AuditProgressUpdate{
 				Prefix: "aardwolf", LastPublishAt: int64(1716200000 + i),
 				PublishDelta: 100, LastTopic: fmt.Sprintf("aardwolf/k/%d", i),
@@ -350,14 +350,14 @@ func TestApplyAuditObjectLastTopicFollowsLatestPublish(t *testing.T) {
 		t.Fatalf("create: %v", err)
 	}
 	newer := int64(1716200500)
-	if err := applyObject(t, r, "nova-a/1.ndjson", registry.AuditProgressUpdate{
+	if err := applyObject(t, r, "site-A/1.ndjson", registry.AuditProgressUpdate{
 		Prefix: "aardwolf", LastPublishAt: newer, PublishDelta: 1, LastTopic: "aardwolf/newest",
 	}); err != nil {
 		t.Fatalf("apply first: %v", err)
 	}
 	// An object replayed out of order, carrying an OLDER publish. Neither the
 	// timestamp nor the name it goes with may rewind.
-	if err := applyObject(t, r, "nova-a/2.ndjson", registry.AuditProgressUpdate{
+	if err := applyObject(t, r, "site-A/2.ndjson", registry.AuditProgressUpdate{
 		Prefix: "aardwolf", LastPublishAt: newer - 400, PublishDelta: 1, LastTopic: "aardwolf/older",
 	}); err != nil {
 		t.Fatalf("apply older: %v", err)
@@ -372,7 +372,7 @@ func TestApplyAuditObjectLastTopicFollowsLatestPublish(t *testing.T) {
 
 	// An object with publishes but no topic name must not blank the name the
 	// surface is showing.
-	if err := applyObject(t, r, "nova-a/3.ndjson", registry.AuditProgressUpdate{
+	if err := applyObject(t, r, "site-A/3.ndjson", registry.AuditProgressUpdate{
 		Prefix: "aardwolf", LastPublishAt: newer + 10, PublishDelta: 1,
 	}); err != nil {
 		t.Fatalf("apply nameless: %v", err)
@@ -389,7 +389,7 @@ func TestApplyAuditObjectRetryAppliesExactlyOnce(t *testing.T) {
 	if err := r.CreateVendor(ctx, &registry.Vendor{Prefix: "aardwolf", APIKeyHash: "h"}); err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	key := "nova-a/1.ndjson"
+	key := "site-A/1.ndjson"
 	upd := registry.AuditProgressUpdate{
 		Prefix: "aardwolf", LastPublishAt: 1716200000, PublishDelta: 7, LastTopic: "aardwolf/t",
 	}
@@ -398,14 +398,14 @@ func TestApplyAuditObjectRetryAppliesExactlyOnce(t *testing.T) {
 	// back together, which is what lets the retry below be safe.
 	cancelled, cancel := context.WithCancel(ctx)
 	cancel()
-	if err := r.ApplyAuditObject(cancelled, "nova-a", key, []registry.AuditProgressUpdate{upd}); err == nil {
+	if err := r.ApplyAuditObject(cancelled, "site-A", key, []registry.AuditProgressUpdate{upd}); err == nil {
 		t.Fatal("cancelled apply returned nil; the failure path is not exercised")
 	}
 	rows, _ := r.ListProgress(ctx, true)
 	if rows[0].PublishCount != 0 {
 		t.Fatalf("cancelled apply left PublishCount = %d, want 0", rows[0].PublishCount)
 	}
-	if c, _ := r.GetAuditCursor(ctx, "nova-a"); c.LastKey == key {
+	if c, _ := r.GetAuditCursor(ctx, "site-A"); c.LastKey == key {
 		t.Fatal("cancelled apply advanced the cursor; a retry would skip the object")
 	}
 
@@ -420,7 +420,7 @@ func TestApplyAuditObjectRetryAppliesExactlyOnce(t *testing.T) {
 	// Re-applying the SAME object is what the cursor prevents in the tailer;
 	// at this layer, applying twice legitimately counts twice, and the tailer
 	// test (TestPullOnceRepullDoesNotDoubleCount) covers the guard.
-	if c, _ := r.GetAuditCursor(ctx, "nova-a"); c.LastKey != key {
+	if c, _ := r.GetAuditCursor(ctx, "site-A"); c.LastKey != key {
 		t.Fatalf("cursor = %q, want %q", c.LastKey, key)
 	}
 }

@@ -1,0 +1,25 @@
+{%- set _rows = [] -%}
+{%- for p in _pf_peerings -%}
+{%-   set _ = _rows.append({
+        "name": p.name,
+        "interface": p.interface,
+        "peering_port": p.peering_port | int,
+        "edge_peering_port": p.edge_peering_port | int,
+        "carrier_port": p.carrier_port | int,
+        "carrier_local_ip": p.carrier_local_ip,
+        "carrier_remote_ip": p.carrier_remote_ip,
+        "carrier_mtu": p.carrier_mtu | int,
+        "edge_carrier_public_key": p.edge_carrier_public_key,
+        "forwarder_carrier_public_key": (_pf_public.results | selectattr('item.interface', 'equalto', p.interface) | map(attribute='stdout') | first | default('')),
+        "partner_sources": p.partner_sources if (p.partner_sources | length > 0) else "any"
+      }) -%}
+{%- endfor -%}
+{{ {
+  "timestamp": ansible_date_time.iso8601,
+  "hostname": ansible_hostname,
+  "role": "goat-peering-forwarder",
+  "public_interface": peering_forwarder_public_interface,
+  "holds_peering_material": false,
+  "holds": ["one carrier key per peering", "one nftables table"],
+  "peerings": _rows
+} | to_nice_json }}

@@ -74,7 +74,7 @@ pub enum LanCmd {
         /// address. Omit to triage every registry host `scan` finds.
         target: Option<String>,
         /// SSH user for the L4 on-host probe (default: the registry
-        /// entry's ssh_user, else `goat`).
+        /// entry's ssh_user, else the context's `mgmt_ssh_user`).
         #[arg(long)]
         ssh_user: Option<String>,
         /// Skip the L4 on-host ssh probe even when the banner is healthy.
@@ -95,7 +95,14 @@ pub async fn run(ctx: &super::Ctx, op: LanCmd) -> anyhow::Result<()> {
             ssh_user,
             no_ssh,
             json,
-        } => doctor(&registry, target.as_deref(), ssh_user.as_deref(), no_ssh, json).await,
+        } => {
+            let fallback = ctx.profile.profile_field("mgmt_ssh_user");
+            let users = SshUsers {
+                flag: ssh_user.as_deref(),
+                fallback: fallback.as_deref(),
+            };
+            doctor(&registry, target.as_deref(), users, no_ssh, json).await
+        }
     }
 }
 
@@ -112,14 +119,19 @@ pub struct LanHost {
     pub last_lan_ip: Ipv4Addr,
     /// Mesh (netbird) IP — informational; this toolkit never needs it up.
     pub mesh_ip: Ipv4Addr,
-    #[serde(default = "default_ssh_user")]
+    /// Empty = not declared for this host; the context's `mgmt_ssh_user` applies.
+    #[serde(default)]
     pub ssh_user: String,
     #[serde(default)]
     pub goatnet: String,
 }
 
-fn default_ssh_user() -> String {
-    "goat".into()
+/// Where the L4 probe's SSH user comes from, in order: the `--ssh-user` flag,
+/// the registry entry, then the context's `mgmt_ssh_user` (goatnet.toml).
+#[derive(Clone, Copy, Default)]
+struct SshUsers<'a> {
+    flag: Option<&'a str>,
+    fallback: Option<&'a str>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -753,7 +765,7 @@ struct DoctorTarget {
 async fn doctor(
     registry: &[LanHost],
     target: Option<&str>,
-    ssh_user_override: Option<&str>,
+    users: SshUsers<'_>,
     no_ssh: bool,
     json: bool,
 ) -> anyhow::Result<()> {
@@ -774,7 +786,7 @@ async fn doctor(
     }
 
     let nets = discover_local_nets()?;
-    let targets = resolve_targets(registry, &nets, target, ssh_user_override).await?;
+    let targets = resolve_targets(registry, &nets, target, users).await?;
 
     let mut reports = Vec::new();
     for t in &targets {
@@ -822,13 +834,15 @@ async fn resolve_targets(
     registry: &[LanHost],
     nets: &[LocalNet],
     target: Option<&str>,
-    ssh_user_override: Option<&str>,
+    users: SshUsers<'_>,
 ) -> anyhow::Result<Vec<DoctorTarget>> {
     let user_for = |h: Option<&LanHost>| -> String {
-        ssh_user_override
+        users
+            .flag
             .map(str::to_owned)
-            .or_else(|| h.map(|h| h.ssh_user.clone()))
-            .unwrap_or_else(default_ssh_user)
+            .or_else(|| h.map(|h| h.ssh_user.clone()).filter(|u| !u.is_empty()))
+            .or_else(|| users.fallback.map(str::to_owned))
+            .unwrap_or_default()
     };
 
     match target {
@@ -933,6 +947,13 @@ async fn run_layers(
             "on-host",
             CheckStatus::Skip,
             "skipped (--no-ssh)".into(),
+        )
+    } else if matches!(banner, BannerState::Banner(_)) && t.ssh_user.is_empty() {
+        LayerOutcome::new(
+            "L4",
+            "on-host",
+            CheckStatus::Skip,
+            "skipped: no SSH user (pass --ssh-user, or run `goat context refresh`)".into(),
         )
     } else if matches!(banner, BannerState::Banner(_)) {
         layer_l4(t.ip, &t.ssh_user).await
@@ -1683,7 +1704,7 @@ Interface: 192.168.8.99 --- 0x10
         let a = hosts.iter().find(|h| h.name == "mgmt-a-01").unwrap();
         assert_eq!(a.last_lan_ip, Ipv4Addr::new(10, 0, 0, 5));
         assert_eq!(a.mac, SYN_MAC); // normalized at load
-        assert_eq!(a.ssh_user, "goat"); // serde default
+        assert_eq!(a.ssh_user, ""); // undeclared: the context's mgmt_ssh_user applies
         let b = hosts.iter().find(|h| h.name == "mgmt-b-01").unwrap();
         assert_eq!(b.mac, SYN_MAC_2);
         assert_eq!(b.ssh_user, "ops");

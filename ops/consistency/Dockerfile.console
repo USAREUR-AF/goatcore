@@ -15,10 +15,15 @@
 # is one Rust binary (the §7.11 no-build-time-asset-fetch rule, which is also
 # what makes the island-mode page self-contained).
 #
-# Chainguard glibc-dynamic runtime per ADR 0700; non-root uid 65532 (the
+# runtime-cc base (ops/base-images/, ADR 1220); non-root uid 65532 (the
 # ansible role chowns the cert dir to it).
 
-FROM cgr.dev/chainguard/rust:latest-dev AS rust-builder
+# Base images are build arguments named for their role; the defaults are
+# the public images in ops/base-images/ (docs/design/base-images.md).
+ARG BASE_RUST_BUILD=cgr.dev/chainguard/rust:latest-dev@sha256:bb029397076cc17b3a96b4d5183b4c362d8323a6d36394c71a21e8e5706664af
+ARG BASE_RUNTIME_CC=cgr.dev/chainguard/glibc-dynamic:latest@sha256:671a621016fb33812136dea6182b1db957996d3c8c618187aaf86abd9b14af53
+
+FROM ${BASE_RUST_BUILD} AS rust-builder
 USER root
 WORKDIR /build/rust
 
@@ -43,7 +48,7 @@ COPY rust/goat-consistency-health/ goat-consistency-health/
 COPY rust/goat-consistency-console/ goat-consistency-console/
 RUN cargo build --release --locked -p goat-consistency-console
 
-FROM cgr.dev/chainguard/glibc-dynamic:latest
+FROM ${BASE_RUNTIME_CC}
 WORKDIR /
 COPY --from=rust-builder /build/rust/target/release/goat-consistency-console /usr/local/bin/goat-consistency-console
 EXPOSE 9760

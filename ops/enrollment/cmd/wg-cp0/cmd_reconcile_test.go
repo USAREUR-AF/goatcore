@@ -148,7 +148,7 @@ func TestRun_Diff_Help(t *testing.T) {
 
 func TestRun_Reconcile_SiteFilter(t *testing.T) {
 	withOffline(t, func() {
-		code, stdout, _ := runArgs(t, "reconcile", "--path", fixturePath, "--site", "vega", "--no-color")
+		code, stdout, _ := runArgs(t, "reconcile", "--path", fixturePath, "--site", "lab", "--no-color")
 		if code != 0 {
 			t.Errorf("code = %d", code)
 		}
@@ -198,12 +198,12 @@ func TestParseReconcileFlags_BooleanFlags(t *testing.T) {
 }
 
 func TestParseReconcileFlags_ValueFlags(t *testing.T) {
-	args := []string{"--path", "/x", "--site", "vega"}
+	args := []string{"--path", "/x", "--site", "lab"}
 	f, _, err := parseReconcileFlags(args)
 	if err != nil {
 		t.Fatalf("parseReconcileFlags: %v", err)
 	}
-	if f.path != "/x" || f.site != "vega" {
+	if f.path != "/x" || f.site != "lab" {
 		t.Errorf("flags = %+v", f)
 	}
 }

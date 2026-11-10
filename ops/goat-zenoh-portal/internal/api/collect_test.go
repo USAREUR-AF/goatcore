@@ -134,7 +134,7 @@ func TestCollect_RefusesWhenOnboardAlreadyMinted(t *testing.T) {
 	c := &http.Client{}
 
 	onboard := doJSON(t, c, "POST", ts.URL+"/api/vendors", "dev-operator-key", map[string]any{
-		"prefix":      "vega-fires-bn",
+		"prefix":      "alpha-fires-bn",
 		"identity_id": collectorIdentity,
 	})
 	if onboard.StatusCode != http.StatusCreated {
@@ -263,7 +263,7 @@ func TestCollect_RequiresOperatorBearer(t *testing.T) {
 
 	// A legitimate org key, which is not an operator key.
 	onboard := doJSON(t, c, "POST", ts.URL+"/api/vendors", "dev-operator-key",
-		map[string]any{"prefix": "vega-fires-bn"})
+		map[string]any{"prefix": "alpha-fires-bn"})
 	if onboard.StatusCode != http.StatusCreated {
 		t.Fatalf("onboard: status %d", onboard.StatusCode)
 	}
@@ -420,7 +420,7 @@ func TestCollect_RecycledSlotDoesNotInheritThePriorTenantsCredential(t *testing.
 	resp := doJSON(t, c, "POST", ts.URL+"/api/orgs/collect", "dev-operator-key",
 		map[string]any{"identity_id": collectorIdentity})
 	if resp.StatusCode != http.StatusCreated {
-		t.Fatalf("collect on a recycled slot: status %d body=%s — this is the live ZAGROS failure",
+		t.Fatalf("collect on a recycled slot: status %d body=%s — this is the live GALAXY failure",
 			resp.StatusCode, mustReadBody(t, resp))
 	}
 	apiKey, _ := mustReadJSON(t, resp)["api_key"].(string)

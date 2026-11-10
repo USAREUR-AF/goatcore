@@ -3,8 +3,8 @@
 #
 # Zenoh router deployment — Step 1 of the implementation tracker.
 # See docs/project/zenoh-implementation.md for the 8-step sequence and
-# docs/design/zenoh-data-fabric.md §"Phase 2 deployment scope" for
-# what ships.
+# docs/design/zenoh-data-fabric.md §"Which role deploys a goatnet's router"
+# for where this lab role may run.
 #
 # This role ONLY deploys the router + minimal config. Plugins, load
 # generator, gatewatch integration, storage configuration come in

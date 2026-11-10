@@ -1,0 +1,1051 @@
+{
+  "schema": "code-scanning-triage/v1",
+  "repository": "USAREUR-AF/goatcore",
+  "baseline": "96ad9d47f30c67f14943b0c5dfdcf8065175bd60",
+  "date": "2026-11-04",
+  "scope": "open critical and high alerts on main",
+  "summary": {
+    "reviewed_false_positive": 96,
+    "code_fix": 8
+  },
+  "alerts": [
+    {
+      "alert": 129,
+      "severity": "critical",
+      "rule": "rust/hard-coded-cryptographic-value",
+      "path": "crates/goat-cli/src/cmd/doctor.rs",
+      "line": 532,
+      "disposition": "reviewed_false_positive",
+      "reason": "The zero-initialized nonce buffer is completely overwritten by OsRng.fill_bytes before it is formatted or used. The scratch suffix is a random collision-avoidance identifier, not a fixed encryption nonce.",
+      "dismissed_reason": "false positive"
+    },
+    {
+      "alert": 128,
+      "severity": "critical",
+      "rule": "rust/hard-coded-cryptographic-value",
+      "path": "ops/grant-crypto/sdk/core/tests/write_interop.rs",
+      "line": 18,
+      "disposition": "reviewed_false_positive",
+      "reason": "The hard-coded key is a public, synthetic interoperability vector in an ignored fixture-producing test. Production issuance uses new_dek and OsRng.",
+      "dismissed_reason": "used in tests"
+    },
+    {
+      "alert": 127,
+      "severity": "critical",
+      "rule": "rust/hard-coded-cryptographic-value",
+      "path": "ops/grant-crypto/sdk/core/src/lib.rs",
+      "line": 353,
+      "disposition": "reviewed_false_positive",
+      "reason": "HKDF expand overwrites the entire KEK and propagates an error before AES initialization. Zero initialization is not the encryption key.",
+      "dismissed_reason": "false positive"
+    },
+    {
+      "alert": 126,
+      "severity": "critical",
+      "rule": "rust/hard-coded-cryptographic-value",
+      "path": "ops/grant-crypto/sdk/core/src/lib.rs",
+      "line": 310,
+      "disposition": "reviewed_false_positive",
+      "reason": "OsRng.fill_bytes completely overwrites the DEK before new_dek returns it.",
+      "dismissed_reason": "false positive"
+    },
+    {
+      "alert": 125,
+      "severity": "critical",
+      "rule": "rust/hard-coded-cryptographic-value",
+      "path": "ops/grant-crypto/sdk/core/src/lib.rs",
+      "line": 244,
+      "disposition": "reviewed_false_positive",
+      "reason": "The authenticated plaintext length is checked before copy_from_slice overwrites the entire DEK buffer. Invalid lengths return an error.",
+      "dismissed_reason": "false positive"
+    },
+    {
+      "alert": 124,
+      "severity": "critical",
+      "rule": "rust/hard-coded-cryptographic-value",
+      "path": "ops/grant-crypto/sdk/core/src/lib.rs",
+      "line": 221,
+      "disposition": "reviewed_false_positive",
+      "reason": "HKDF expand overwrites the entire KEK and propagates an error before decryption. Zero initialization is not the encryption key.",
+      "dismissed_reason": "false positive"
+    },
+    {
+      "alert": 123,
+      "severity": "critical",
+      "rule": "rust/hard-coded-cryptographic-value",
+      "path": "ops/grant-crypto/sdk/core/src/pqc.rs",
+      "line": 124,
+      "disposition": "reviewed_false_positive",
+      "reason": "HKDF expand overwrites the entire hybrid KEM key and propagates failure before returning the key.",
+      "dismissed_reason": "false positive"
+    },
+    {
+      "alert": 122,
+      "severity": "critical",
+      "rule": "rust/hard-coded-cryptographic-value",
+      "path": "crates/goat-cli/src/cmd/doctor.rs",
+      "line": 1833,
+      "disposition": "reviewed_false_positive",
+      "reason": "Unit test for topic-path slash normalization. The literal is a synthetic path suffix, not a production cryptographic nonce.",
+      "dismissed_reason": "used in tests"
+    },
+    {
+      "alert": 121,
+      "severity": "critical",
+      "rule": "rust/hard-coded-cryptographic-value",
+      "path": "crates/goat-cli/src/cmd/doctor.rs",
+      "line": 1824,
+      "disposition": "reviewed_false_positive",
+      "reason": "Unit test for scratch topic construction. The literal is a synthetic path suffix, not a production cryptographic nonce.",
+      "dismissed_reason": "used in tests"
+    },
+    {
+      "alert": 120,
+      "severity": "high",
+      "rule": "rust/non-https-url",
+      "path": "crates/goat-cli/tests/socks_proxy.rs",
+      "line": 68,
+      "disposition": "reviewed_false_positive",
+      "reason": "The test targets the reserved .invalid domain through a loopback SOCKS fixture that refuses CONNECT. No production request or credential is sent over HTTP.",
+      "dismissed_reason": "used in tests"
+    },
+    {
+      "alert": 119,
+      "severity": "high",
+      "rule": "rust/uncontrolled-allocation-size",
+      "path": "ops/consistency/rust/goat-consistency-console/src/main.rs",
+      "line": 440,
+      "disposition": "reviewed_false_positive",
+      "reason": "The vector size comes from immutable operator configuration loaded at process startup. Axum State is application state, not an HTTP body/query allocation size.",
+      "dismissed_reason": "false positive"
+    },
+    {
+      "alert": 118,
+      "severity": "high",
+      "rule": "rust/cleartext-logging",
+      "path": "goat-relay/src/main.rs",
+      "line": 506,
+      "disposition": "reviewed_false_positive",
+      "reason": "The error contains file paths and PEM/rustls error descriptions; private-key bytes are never formatted. The dataflow treats the error from private-key parsing as the key itself.",
+      "dismissed_reason": "false positive"
+    },
+    {
+      "alert": 117,
+      "severity": "high",
+      "rule": "rust/cleartext-logging",
+      "path": "crates/goat-cli/src/cmd/sealed.rs",
+      "line": 160,
+      "disposition": "reviewed_false_positive",
+      "reason": "The displayed value is a Zenoh reply error and the release-set routing label. It is not a decrypted key bundle or private key.",
+      "dismissed_reason": "false positive"
+    },
+    {
+      "alert": 116,
+      "severity": "high",
+      "rule": "rust/cleartext-logging",
+      "path": "crates/goat-cli/src/cmd/replay.rs",
+      "line": 60,
+      "disposition": "reviewed_false_positive",
+      "reason": "The reported source is a public routing key expression, UUID display-mode flag, certificate anchor, alias-map entry or release-set identifier. This CLI operation displays that routing/identity metadata; it does not print a private encryption key or credential.",
+      "dismissed_reason": "false positive"
+    },
+    {
+      "alert": 115,
+      "severity": "high",
+      "rule": "rust/cleartext-logging",
+      "path": "crates/goat-cli/src/cmd/pubsub.rs",
+      "line": 1015,
+      "disposition": "reviewed_false_positive",
+      "reason": "The reported source is a public routing key expression, UUID display-mode flag, certificate anchor, alias-map entry or release-set identifier. This CLI operation displays that routing/identity metadata; it does not print a private encryption key or credential.",
+      "dismissed_reason": "false positive"
+    },
+    {
+      "alert": 114,
+      "severity": "high",
+      "rule": "rust/cleartext-logging",
+      "path": "crates/goat-cli/src/cmd/pubsub.rs",
+      "line": 1005,
+      "disposition": "reviewed_false_positive",
+      "reason": "The reported source is a public routing key expression, UUID display-mode flag, certificate anchor, alias-map entry or release-set identifier. This CLI operation displays that routing/identity metadata; it does not print a private encryption key or credential.",
+      "dismissed_reason": "false positive"
+    },
+    {
+      "alert": 113,
+      "severity": "high",
+      "rule": "rust/cleartext-logging",
+      "path": "crates/goat-cli/src/cmd/pubsub.rs",
+      "line": 758,
+      "disposition": "reviewed_false_positive",
+      "reason": "The reported source is a public routing key expression, UUID display-mode flag, certificate anchor, alias-map entry or release-set identifier. This CLI operation displays that routing/identity metadata; it does not print a private encryption key or credential.",
+      "dismissed_reason": "false positive"
+    },
+    {
+      "alert": 112,
+      "severity": "high",
+      "rule": "rust/cleartext-logging",
+      "path": "crates/goat-cli/src/cmd/pubsub.rs",
+      "line": 739,
+      "disposition": "reviewed_false_positive",
+      "reason": "The reported source is a public routing key expression, UUID display-mode flag, certificate anchor, alias-map entry or release-set identifier. This CLI operation displays that routing/identity metadata; it does not print a private encryption key or credential.",
+      "dismissed_reason": "false positive"
+    },
+    {
+      "alert": 111,
+      "severity": "high",
+      "rule": "rust/cleartext-logging",
+      "path": "crates/goat-cli/src/cmd/pubsub.rs",
+      "line": 490,
+      "disposition": "reviewed_false_positive",
+      "reason": "The reported source is a public routing key expression, UUID display-mode flag, certificate anchor, alias-map entry or release-set identifier. This CLI operation displays that routing/identity metadata; it does not print a private encryption key or credential.",
+      "dismissed_reason": "false positive"
+    },
+    {
+      "alert": 110,
+      "severity": "high",
+      "rule": "rust/cleartext-logging",
+      "path": "crates/goat-cli/src/cmd/pubsub.rs",
+      "line": 427,
+      "disposition": "reviewed_false_positive",
+      "reason": "The reported source is a public routing key expression, UUID display-mode flag, certificate anchor, alias-map entry or release-set identifier. This CLI operation displays that routing/identity metadata; it does not print a private encryption key or credential.",
+      "dismissed_reason": "false positive"
+    },
+    {
+      "alert": 109,
+      "severity": "high",
+      "rule": "rust/cleartext-logging",
+      "path": "crates/goat-cli/src/cmd/pubsub.rs",
+      "line": 277,
+      "disposition": "reviewed_false_positive",
+      "reason": "The reported source is a public routing key expression, UUID display-mode flag, certificate anchor, alias-map entry or release-set identifier. This CLI operation displays that routing/identity metadata; it does not print a private encryption key or credential.",
+      "dismissed_reason": "false positive"
+    },
+    {
+      "alert": 108,
+      "severity": "high",
+      "rule": "rust/cleartext-logging",
+      "path": "crates/goat-cli/src/cmd/pubsub.rs",
+      "line": 241,
+      "disposition": "reviewed_false_positive",
+      "reason": "The reported source is a public routing key expression, UUID display-mode flag, certificate anchor, alias-map entry or release-set identifier. This CLI operation displays that routing/identity metadata; it does not print a private encryption key or credential.",
+      "dismissed_reason": "false positive"
+    },
+    {
+      "alert": 107,
+      "severity": "high",
+      "rule": "rust/cleartext-logging",
+      "path": "crates/goat-cli/src/cmd/admin.rs",
+      "line": 3864,
+      "disposition": "reviewed_false_positive",
+      "reason": "The reported source is a public routing key expression, UUID display-mode flag, certificate anchor, alias-map entry or release-set identifier. This CLI operation displays that routing/identity metadata; it does not print a private encryption key or credential.",
+      "dismissed_reason": "false positive"
+    },
+    {
+      "alert": 106,
+      "severity": "high",
+      "rule": "rust/cleartext-logging",
+      "path": "crates/goat-cli/src/cmd/admin.rs",
+      "line": 3734,
+      "disposition": "reviewed_false_positive",
+      "reason": "The reported source is a public routing key expression, UUID display-mode flag, certificate anchor, alias-map entry or release-set identifier. This CLI operation displays that routing/identity metadata; it does not print a private encryption key or credential.",
+      "dismissed_reason": "false positive"
+    },
+    {
+      "alert": 105,
+      "severity": "high",
+      "rule": "rust/cleartext-logging",
+      "path": "crates/goat-cli/src/cmd/admin.rs",
+      "line": 3662,
+      "disposition": "reviewed_false_positive",
+      "reason": "The reported source is a public routing key expression, UUID display-mode flag, certificate anchor, alias-map entry or release-set identifier. This CLI operation displays that routing/identity metadata; it does not print a private encryption key or credential.",
+      "dismissed_reason": "false positive"
+    },
+    {
+      "alert": 104,
+      "severity": "high",
+      "rule": "rust/cleartext-logging",
+      "path": "crates/goat-cli/src/cmd/blob.rs",
+      "line": 184,
+      "disposition": "reviewed_false_positive",
+      "reason": "The reported source is a public routing key expression, UUID display-mode flag, certificate anchor, alias-map entry or release-set identifier. This CLI operation displays that routing/identity metadata; it does not print a private encryption key or credential.",
+      "dismissed_reason": "false positive"
+    },
+    {
+      "alert": 103,
+      "severity": "high",
+      "rule": "rust/cleartext-logging",
+      "path": "crates/goat-cli/src/cmd/blob.rs",
+      "line": 161,
+      "disposition": "reviewed_false_positive",
+      "reason": "The reported source is a public routing key expression, UUID display-mode flag, certificate anchor, alias-map entry or release-set identifier. This CLI operation displays that routing/identity metadata; it does not print a private encryption key or credential.",
+      "dismissed_reason": "false positive"
+    },
+    {
+      "alert": 102,
+      "severity": "high",
+      "rule": "rust/cleartext-logging",
+      "path": "crates/goat-cli/src/cmd/blob.rs",
+      "line": 134,
+      "disposition": "reviewed_false_positive",
+      "reason": "The reported source is a public routing key expression, UUID display-mode flag, certificate anchor, alias-map entry or release-set identifier. This CLI operation displays that routing/identity metadata; it does not print a private encryption key or credential.",
+      "dismissed_reason": "false positive"
+    },
+    {
+      "alert": 101,
+      "severity": "high",
+      "rule": "rust/cleartext-logging",
+      "path": "crates/goat-cli/src/cmd/blob.rs",
+      "line": 132,
+      "disposition": "reviewed_false_positive",
+      "reason": "The reported source is a public routing key expression, UUID display-mode flag, certificate anchor, alias-map entry or release-set identifier. This CLI operation displays that routing/identity metadata; it does not print a private encryption key or credential.",
+      "dismissed_reason": "false positive"
+    },
+    {
+      "alert": 100,
+      "severity": "high",
+      "rule": "rust/cleartext-logging",
+      "path": "crates/goat-cli/src/cmd/blob.rs",
+      "line": 130,
+      "disposition": "reviewed_false_positive",
+      "reason": "The reported source is a public routing key expression, UUID display-mode flag, certificate anchor, alias-map entry or release-set identifier. This CLI operation displays that routing/identity metadata; it does not print a private encryption key or credential.",
+      "dismissed_reason": "false positive"
+    },
+    {
+      "alert": 99,
+      "severity": "high",
+      "rule": "rust/cleartext-logging",
+      "path": "crates/goat-cli/src/cmd/blob.rs",
+      "line": 129,
+      "disposition": "reviewed_false_positive",
+      "reason": "The reported source is a public routing key expression, UUID display-mode flag, certificate anchor, alias-map entry or release-set identifier. This CLI operation displays that routing/identity metadata; it does not print a private encryption key or credential.",
+      "dismissed_reason": "false positive"
+    },
+    {
+      "alert": 98,
+      "severity": "high",
+      "rule": "rust/cleartext-logging",
+      "path": "crates/goat-cli/src/cmd/blob.rs",
+      "line": 103,
+      "disposition": "reviewed_false_positive",
+      "reason": "The reported source is a public routing key expression, UUID display-mode flag, certificate anchor, alias-map entry or release-set identifier. This CLI operation displays that routing/identity metadata; it does not print a private encryption key or credential.",
+      "dismissed_reason": "false positive"
+    },
+    {
+      "alert": 97,
+      "severity": "high",
+      "rule": "rust/cleartext-logging",
+      "path": "crates/goat-cli/src/cmd/status.rs",
+      "line": 588,
+      "disposition": "reviewed_false_positive",
+      "reason": "The reported source is a public routing key expression, UUID display-mode flag, certificate anchor, alias-map entry or release-set identifier. This CLI operation displays that routing/identity metadata; it does not print a private encryption key or credential.",
+      "dismissed_reason": "false positive"
+    },
+    {
+      "alert": 96,
+      "severity": "high",
+      "rule": "rust/cleartext-logging",
+      "path": "crates/goat-cli/src/cmd/replay.rs",
+      "line": 54,
+      "disposition": "reviewed_false_positive",
+      "reason": "The reported source is a public routing key expression, UUID display-mode flag, certificate anchor, alias-map entry or release-set identifier. This CLI operation displays that routing/identity metadata; it does not print a private encryption key or credential.",
+      "dismissed_reason": "false positive"
+    },
+    {
+      "alert": 95,
+      "severity": "high",
+      "rule": "rust/cleartext-logging",
+      "path": "crates/goat-cli/src/cmd/pubsub.rs",
+      "line": 1471,
+      "disposition": "reviewed_false_positive",
+      "reason": "The reported source is a public routing key expression, UUID display-mode flag, certificate anchor, alias-map entry or release-set identifier. This CLI operation displays that routing/identity metadata; it does not print a private encryption key or credential.",
+      "dismissed_reason": "false positive"
+    },
+    {
+      "alert": 94,
+      "severity": "high",
+      "rule": "rust/cleartext-logging",
+      "path": "crates/goat-cli/src/cmd/pubsub.rs",
+      "line": 1470,
+      "disposition": "reviewed_false_positive",
+      "reason": "The reported source is a public routing key expression, UUID display-mode flag, certificate anchor, alias-map entry or release-set identifier. This CLI operation displays that routing/identity metadata; it does not print a private encryption key or credential.",
+      "dismissed_reason": "false positive"
+    },
+    {
+      "alert": 93,
+      "severity": "high",
+      "rule": "rust/cleartext-logging",
+      "path": "crates/goat-cli/src/cmd/pubsub.rs",
+      "line": 1082,
+      "disposition": "reviewed_false_positive",
+      "reason": "The reported source is a public routing key expression, UUID display-mode flag, certificate anchor, alias-map entry or release-set identifier. This CLI operation displays that routing/identity metadata; it does not print a private encryption key or credential.",
+      "dismissed_reason": "false positive"
+    },
+    {
+      "alert": 92,
+      "severity": "high",
+      "rule": "rust/cleartext-logging",
+      "path": "crates/goat-cli/src/cmd/pubsub.rs",
+      "line": 1080,
+      "disposition": "reviewed_false_positive",
+      "reason": "The reported source is a public routing key expression, UUID display-mode flag, certificate anchor, alias-map entry or release-set identifier. This CLI operation displays that routing/identity metadata; it does not print a private encryption key or credential.",
+      "dismissed_reason": "false positive"
+    },
+    {
+      "alert": 91,
+      "severity": "high",
+      "rule": "rust/cleartext-logging",
+      "path": "crates/goat-cli/src/cmd/pubsub.rs",
+      "line": 1079,
+      "disposition": "reviewed_false_positive",
+      "reason": "The reported source is a public routing key expression, UUID display-mode flag, certificate anchor, alias-map entry or release-set identifier. This CLI operation displays that routing/identity metadata; it does not print a private encryption key or credential.",
+      "dismissed_reason": "false positive"
+    },
+    {
+      "alert": 90,
+      "severity": "high",
+      "rule": "rust/cleartext-logging",
+      "path": "crates/goat-cli/src/cmd/pubsub.rs",
+      "line": 611,
+      "disposition": "reviewed_false_positive",
+      "reason": "The reported source is a public routing key expression, UUID display-mode flag, certificate anchor, alias-map entry or release-set identifier. This CLI operation displays that routing/identity metadata; it does not print a private encryption key or credential.",
+      "dismissed_reason": "false positive"
+    },
+    {
+      "alert": 89,
+      "severity": "high",
+      "rule": "rust/cleartext-logging",
+      "path": "crates/goat-cli/src/cmd/pubsub.rs",
+      "line": 604,
+      "disposition": "reviewed_false_positive",
+      "reason": "The reported source is a public routing key expression, UUID display-mode flag, certificate anchor, alias-map entry or release-set identifier. This CLI operation displays that routing/identity metadata; it does not print a private encryption key or credential.",
+      "dismissed_reason": "false positive"
+    },
+    {
+      "alert": 88,
+      "severity": "high",
+      "rule": "rust/cleartext-logging",
+      "path": "crates/goat-cli/src/cmd/pubsub.rs",
+      "line": 418,
+      "disposition": "reviewed_false_positive",
+      "reason": "The reported source is a public routing key expression, UUID display-mode flag, certificate anchor, alias-map entry or release-set identifier. This CLI operation displays that routing/identity metadata; it does not print a private encryption key or credential.",
+      "dismissed_reason": "false positive"
+    },
+    {
+      "alert": 87,
+      "severity": "high",
+      "rule": "rust/cleartext-logging",
+      "path": "crates/goat-cli/src/cmd/pubsub.rs",
+      "line": 422,
+      "disposition": "reviewed_false_positive",
+      "reason": "The reported source is a public routing key expression, UUID display-mode flag, certificate anchor, alias-map entry or release-set identifier. This CLI operation displays that routing/identity metadata; it does not print a private encryption key or credential.",
+      "dismissed_reason": "false positive"
+    },
+    {
+      "alert": 86,
+      "severity": "high",
+      "rule": "rust/cleartext-logging",
+      "path": "crates/goat-cli/src/cmd/profile.rs",
+      "line": 206,
+      "disposition": "reviewed_false_positive",
+      "reason": "The reported source is a public routing key expression, UUID display-mode flag, certificate anchor, alias-map entry or release-set identifier. This CLI operation displays that routing/identity metadata; it does not print a private encryption key or credential.",
+      "dismissed_reason": "false positive"
+    },
+    {
+      "alert": 85,
+      "severity": "high",
+      "rule": "rust/cleartext-logging",
+      "path": "crates/goat-cli/src/cmd/profile.rs",
+      "line": 204,
+      "disposition": "reviewed_false_positive",
+      "reason": "The reported source is a public routing key expression, UUID display-mode flag, certificate anchor, alias-map entry or release-set identifier. This CLI operation displays that routing/identity metadata; it does not print a private encryption key or credential.",
+      "dismissed_reason": "false positive"
+    },
+    {
+      "alert": 84,
+      "severity": "high",
+      "rule": "rust/cleartext-logging",
+      "path": "crates/goat-cli/src/cmd/profile.rs",
+      "line": 188,
+      "disposition": "reviewed_false_positive",
+      "reason": "This command displays only the public certificate expiration timestamp, not its private key.",
+      "dismissed_reason": "false positive"
+    },
+    {
+      "alert": 83,
+      "severity": "high",
+      "rule": "rust/cleartext-logging",
+      "path": "crates/goat-cli/src/cmd/presence.rs",
+      "line": 146,
+      "disposition": "reviewed_false_positive",
+      "reason": "The reported source is a public routing key expression, UUID display-mode flag, certificate anchor, alias-map entry or release-set identifier. This CLI operation displays that routing/identity metadata; it does not print a private encryption key or credential.",
+      "dismissed_reason": "false positive"
+    },
+    {
+      "alert": 82,
+      "severity": "high",
+      "rule": "rust/cleartext-logging",
+      "path": "crates/goat-cli/src/cmd/presence.rs",
+      "line": 117,
+      "disposition": "reviewed_false_positive",
+      "reason": "The reported source is a public routing key expression, UUID display-mode flag, certificate anchor, alias-map entry or release-set identifier. This CLI operation displays that routing/identity metadata; it does not print a private encryption key or credential.",
+      "dismissed_reason": "false positive"
+    },
+    {
+      "alert": 81,
+      "severity": "high",
+      "rule": "rust/cleartext-logging",
+      "path": "crates/goat-cli/src/cmd/narrate.rs",
+      "line": 68,
+      "disposition": "reviewed_false_positive",
+      "reason": "The reported source is a public routing key expression, UUID display-mode flag, certificate anchor, alias-map entry or release-set identifier. This CLI operation displays that routing/identity metadata; it does not print a private encryption key or credential.",
+      "dismissed_reason": "false positive"
+    },
+    {
+      "alert": 78,
+      "severity": "high",
+      "rule": "rust/cleartext-logging",
+      "path": "crates/goat-cli/src/cmd/machine.rs",
+      "line": 448,
+      "disposition": "reviewed_false_positive",
+      "reason": "This is the explicit newly minted machine API-key return from a provisioning command to its authorized operator, not a service log.",
+      "dismissed_reason": "false positive",
+      "context": "intentional privileged command output; review this distinction if changing output policy"
+    },
+    {
+      "alert": 77,
+      "severity": "high",
+      "rule": "rust/cleartext-logging",
+      "path": "crates/goat-cli/src/cmd/doctor.rs",
+      "line": 587,
+      "disposition": "reviewed_false_positive",
+      "reason": "The reported source is a public routing key expression, UUID display-mode flag, certificate anchor, alias-map entry or release-set identifier. This CLI operation displays that routing/identity metadata; it does not print a private encryption key or credential.",
+      "dismissed_reason": "false positive"
+    },
+    {
+      "alert": 76,
+      "severity": "high",
+      "rule": "rust/cleartext-logging",
+      "path": "crates/goat-cli/src/cmd/admin.rs",
+      "line": 9507,
+      "disposition": "reviewed_false_positive",
+      "reason": "This is the explicit newly provisioned login return from a privileged onboarding command. It is delivered to the invoking operator, not a background/service log.",
+      "dismissed_reason": "false positive",
+      "context": "intentional privileged command output; review this distinction if changing output policy"
+    },
+    {
+      "alert": 75,
+      "severity": "high",
+      "rule": "rust/cleartext-logging",
+      "path": "crates/goat-cli/src/cmd/admin.rs",
+      "line": 9497,
+      "disposition": "reviewed_false_positive",
+      "reason": "This is the explicit credential return from a privileged onboarding command. It is shown once to the invoking operator as part of issuing the identity, not written to a service log.",
+      "dismissed_reason": "false positive",
+      "context": "intentional privileged command output; review this distinction if changing output policy"
+    },
+    {
+      "alert": 74,
+      "severity": "high",
+      "rule": "rust/cleartext-logging",
+      "path": "crates/goat-cli/src/cmd/context.rs",
+      "line": 104,
+      "disposition": "reviewed_false_positive",
+      "reason": "This command displays only the public certificate expiration timestamp, not its private key.",
+      "dismissed_reason": "false positive"
+    },
+    {
+      "alert": 73,
+      "severity": "high",
+      "rule": "rust/cleartext-logging",
+      "path": "crates/goat-cli/src/cmd/admin.rs",
+      "line": 3740,
+      "disposition": "reviewed_false_positive",
+      "reason": "The reported source is a public routing key expression, UUID display-mode flag, certificate anchor, alias-map entry or release-set identifier. This CLI operation displays that routing/identity metadata; it does not print a private encryption key or credential.",
+      "dismissed_reason": "false positive"
+    },
+    {
+      "alert": 72,
+      "severity": "high",
+      "rule": "rust/cleartext-logging",
+      "path": "crates/goat-cli/src/cmd/admin.rs",
+      "line": 3714,
+      "disposition": "reviewed_false_positive",
+      "reason": "This is the explicit rotated API-key return from an operator rotation command, not background logging.",
+      "dismissed_reason": "false positive",
+      "context": "intentional privileged command output; review this distinction if changing output policy"
+    },
+    {
+      "alert": 71,
+      "severity": "high",
+      "rule": "rust/cleartext-logging",
+      "path": "crates/goat-cli/src/cmd/admin.rs",
+      "line": 3708,
+      "disposition": "reviewed_false_positive",
+      "reason": "The reported source is a public routing key expression, UUID display-mode flag, certificate anchor, alias-map entry or release-set identifier. This CLI operation displays that routing/identity metadata; it does not print a private encryption key or credential.",
+      "dismissed_reason": "false positive"
+    },
+    {
+      "alert": 70,
+      "severity": "high",
+      "rule": "rust/cleartext-logging",
+      "path": "crates/goat-cli/src/cmd/access.rs",
+      "line": 763,
+      "disposition": "reviewed_false_positive",
+      "reason": "The reported source is a public routing key expression, UUID display-mode flag, certificate anchor, alias-map entry or release-set identifier. This CLI operation displays that routing/identity metadata; it does not print a private encryption key or credential.",
+      "dismissed_reason": "false positive"
+    },
+    {
+      "alert": 69,
+      "severity": "high",
+      "rule": "rust/cleartext-logging",
+      "path": "crates/goat-cli/src/cmd/access.rs",
+      "line": 622,
+      "disposition": "reviewed_false_positive",
+      "reason": "The reported source is a public routing key expression, UUID display-mode flag, certificate anchor, alias-map entry or release-set identifier. This CLI operation displays that routing/identity metadata; it does not print a private encryption key or credential.",
+      "dismissed_reason": "false positive"
+    },
+    {
+      "alert": 67,
+      "severity": "high",
+      "rule": "rust/cleartext-logging",
+      "path": "crates/goatbuilder/src/doctor.rs",
+      "line": 2230,
+      "disposition": "reviewed_false_positive",
+      "reason": "A unit-test assertion formats remediation text and names the configured secrets-store backend. No live credential value is involved.",
+      "dismissed_reason": "used in tests"
+    },
+    {
+      "alert": 66,
+      "severity": "high",
+      "rule": "rust/cleartext-logging",
+      "path": "crates/goatbuilder/src/doctor.rs",
+      "line": 2225,
+      "disposition": "reviewed_false_positive",
+      "reason": "A unit-test assertion formats remediation text and names the configured secrets-store backend. No live credential value is involved.",
+      "dismissed_reason": "used in tests"
+    },
+    {
+      "alert": 65,
+      "severity": "high",
+      "rule": "rust/cleartext-logging",
+      "path": "crates/goatbuilder/src/doctor.rs",
+      "line": 2223,
+      "disposition": "reviewed_false_positive",
+      "reason": "A unit-test assertion formats remediation text and names the configured secrets-store backend. No live credential value is involved.",
+      "dismissed_reason": "used in tests"
+    },
+    {
+      "alert": 64,
+      "severity": "high",
+      "rule": "rust/cleartext-logging",
+      "path": "crates/goatbuilder/src/doctor.rs",
+      "line": 2222,
+      "disposition": "reviewed_false_positive",
+      "reason": "A unit-test assertion formats remediation text and names the configured secrets-store backend. No live credential value is involved.",
+      "dismissed_reason": "used in tests"
+    },
+    {
+      "alert": 63,
+      "severity": "high",
+      "rule": "rust/cleartext-logging",
+      "path": "crates/goatbuilder/src/doctor.rs",
+      "line": 2173,
+      "disposition": "reviewed_false_positive",
+      "reason": "A unit-test assertion formats remediation text and names the configured secrets-store backend. No live credential value is involved.",
+      "dismissed_reason": "used in tests"
+    },
+    {
+      "alert": 62,
+      "severity": "high",
+      "rule": "rust/cleartext-logging",
+      "path": "crates/goat-cli/src/cmd/admin.rs",
+      "line": 13125,
+      "disposition": "reviewed_false_positive",
+      "reason": "The generated password belongs to a unit test and is formatted only by a failing test assertion. No live credential is involved.",
+      "dismissed_reason": "used in tests"
+    },
+    {
+      "alert": 60,
+      "severity": "high",
+      "rule": "go/path-injection",
+      "path": "ops/snitch/internal/server/server.go",
+      "line": 258,
+      "disposition": "reviewed_false_positive",
+      "reason": "Both query fields pass the closed GOOS/GOARCH allowlist before path construction. The filename is one of two literal names. Traversal strings cannot reach os.Open.",
+      "dismissed_reason": "false positive"
+    },
+    {
+      "alert": 59,
+      "severity": "high",
+      "rule": "go/path-injection",
+      "path": "ops/smoketest/internal/server/server.go",
+      "line": 116,
+      "disposition": "reviewed_false_positive",
+      "reason": "The path is cleaned against a rooted slash before joining the configured directory. The stat cannot walk above that root; actual serving is delegated to http.FileServer.",
+      "dismissed_reason": "false positive"
+    },
+    {
+      "alert": 58,
+      "severity": "high",
+      "rule": "go/weak-sensitive-data-hashing",
+      "path": "ops/goat-zenoh-portal/internal/api/auth.go",
+      "line": 278,
+      "disposition": "reviewed_false_positive",
+      "reason": "SHA-256 indexes a token containing 32 cryptographically random bytes. It is not a human password hash; slow hashing would reintroduce the documented unauthenticated CPU amplifier.",
+      "dismissed_reason": "false positive"
+    },
+    {
+      "alert": 57,
+      "severity": "high",
+      "rule": "go/weak-sensitive-data-hashing",
+      "path": "ops/goat-zenoh-portal/internal/api/auth.go",
+      "line": 41,
+      "disposition": "reviewed_false_positive",
+      "reason": "SHA-256 is only the prehash before bcrypt and produces a fixed-length input below bcrypt's input limit. bcrypt still performs the password-style work factor.",
+      "dismissed_reason": "false positive"
+    },
+    {
+      "alert": 56,
+      "severity": "high",
+      "rule": "go/reflected-xss",
+      "path": "ops/goat-zenoh-portal/internal/api/server.go",
+      "line": 662,
+      "disposition": "reviewed_false_positive",
+      "reason": "The reported flow crosses unrelated Go HTTP ResponseWriter implementations from the console into portal middleware. Its actual originating .eml handler sets message/rfc822 and attachment disposition. Generic byte forwarding is not an HTML rendering sink.",
+      "dismissed_reason": "false positive"
+    },
+    {
+      "alert": 55,
+      "severity": "high",
+      "rule": "go/reflected-xss",
+      "path": "ops/goat-zenoh-portal/internal/api/gzip.go",
+      "line": 121,
+      "disposition": "reviewed_false_positive",
+      "reason": "The reported flow crosses unrelated Go HTTP ResponseWriter implementations from the console into portal middleware. Its actual originating .eml handler sets message/rfc822 and attachment disposition. Generic byte forwarding is not an HTML rendering sink.",
+      "dismissed_reason": "false positive"
+    },
+    {
+      "alert": 54,
+      "severity": "high",
+      "rule": "go/reflected-xss",
+      "path": "ops/goat-zenoh-portal/internal/api/cache.go",
+      "line": 112,
+      "disposition": "reviewed_false_positive",
+      "reason": "The reported flow crosses unrelated Go HTTP ResponseWriter implementations from the console into portal middleware. Its actual originating .eml handler sets message/rfc822 and attachment disposition. Generic byte forwarding is not an HTML rendering sink.",
+      "dismissed_reason": "false positive"
+    },
+    {
+      "alert": 53,
+      "severity": "high",
+      "rule": "go/reflected-xss",
+      "path": "ops/goat-zenoh-portal/internal/api/cache.go",
+      "line": 108,
+      "disposition": "reviewed_false_positive",
+      "reason": "The reported flow crosses unrelated Go HTTP ResponseWriter implementations from the console into portal middleware. Its actual originating .eml handler sets message/rfc822 and attachment disposition. Generic byte forwarding is not an HTML rendering sink.",
+      "dismissed_reason": "false positive"
+    },
+    {
+      "alert": 52,
+      "severity": "high",
+      "rule": "go/disabled-certificate-check",
+      "path": "ops/snitch/internal/measure/satlink.go",
+      "line": 238,
+      "disposition": "reviewed_false_positive",
+      "reason": "This gateway timing probe sends no credentials and measures connectivity to a self-signed device. It does not authenticate a service or deliver trusted application data.",
+      "dismissed_reason": "false positive"
+    },
+    {
+      "alert": 51,
+      "severity": "high",
+      "rule": "go/disabled-certificate-check",
+      "path": "ops/snitch/internal/measure/relay.go",
+      "line": 341,
+      "disposition": "reviewed_false_positive",
+      "reason": "This certificate-inspection probe deliberately collects the presented chain, including invalid/self-signed certificates, for diagnostics. It does not authenticate a credential-bearing application connection.",
+      "dismissed_reason": "false positive"
+    },
+    {
+      "alert": 50,
+      "severity": "high",
+      "rule": "go/disabled-certificate-check",
+      "path": "ops/smoketest/internal/probe/service.go",
+      "line": 100,
+      "disposition": "code_fix",
+      "reason": "Verify the service certificate and hostname; allow an explicitly configured CA bundle."
+    },
+    {
+      "alert": 49,
+      "severity": "high",
+      "rule": "go/disabled-certificate-check",
+      "path": "ops/relay-probe/probe_net.go",
+      "line": 163,
+      "disposition": "reviewed_false_positive",
+      "reason": "This enrollment probe measures tunnel liveness without sending credentials. Its result is HTTP reachability/latency, not certificate trust.",
+      "dismissed_reason": "false positive"
+    },
+    {
+      "alert": 48,
+      "severity": "high",
+      "rule": "go/disabled-certificate-check",
+      "path": "ops/onboard-runner/mtls.go",
+      "line": 56,
+      "disposition": "reviewed_false_positive",
+      "reason": "A custom verifier builds and verifies the server chain against the SPIRE trust bundle, then checks the allowed SPIFFE URI. Only DNS-name verification is replaced; invalid chains and identities are rejected.",
+      "dismissed_reason": "false positive"
+    },
+    {
+      "alert": 47,
+      "severity": "high",
+      "rule": "go/disabled-certificate-check",
+      "path": "ops/goat-id-console/internal/spiffemtls/spiffemtls.go",
+      "line": 97,
+      "disposition": "reviewed_false_positive",
+      "reason": "A custom verifier builds and verifies the server chain against the SPIRE trust bundle, then checks the allowed SPIFFE URI. Only DNS-name verification is replaced; invalid chains and identities are rejected.",
+      "dismissed_reason": "false positive"
+    },
+    {
+      "alert": 46,
+      "severity": "critical",
+      "rule": "go/email-injection",
+      "path": "ops/goat-id-console/internal/mailer/mailer.go",
+      "line": 261,
+      "disposition": "reviewed_false_positive",
+      "reason": "Recipient line breaks are refused; all headers pass headerValue, which replaces CR and LF. Body content follows an explicit header/body separator. SMTP handles wire dot-stuffing.",
+      "dismissed_reason": "false positive"
+    },
+    {
+      "alert": 45,
+      "severity": "critical",
+      "rule": "go/email-injection",
+      "path": "ops/goat-id-console/internal/mailer/mailer.go",
+      "line": 194,
+      "disposition": "reviewed_false_positive",
+      "reason": "Recipient line breaks are refused; all headers pass headerValue, which replaces CR and LF. Multipart body content is quoted-printable encoded. It cannot create top-level mail headers.",
+      "dismissed_reason": "false positive"
+    },
+    {
+      "alert": 44,
+      "severity": "critical",
+      "rule": "go/email-injection",
+      "path": "ops/goat-id-console/internal/mailer/mailer.go",
+      "line": 169,
+      "disposition": "reviewed_false_positive",
+      "reason": "Recipient line breaks are refused; all headers pass headerValue, which replaces CR and LF. Body content follows an explicit header/body separator. SMTP handles wire dot-stuffing.",
+      "dismissed_reason": "false positive"
+    },
+    {
+      "alert": 43,
+      "severity": "high",
+      "rule": "go/clear-text-logging",
+      "path": "ops/goat-zenoh-portal/cmd/portal/main.go",
+      "line": 244,
+      "disposition": "reviewed_false_positive",
+      "reason": "The logged field is the operator-key directory path and handle count, not the directory's key contents.",
+      "dismissed_reason": "false positive"
+    },
+    {
+      "alert": 42,
+      "severity": "high",
+      "rule": "go/clear-text-logging",
+      "path": "ops/goat-id-console/tools/reissue-preview/main.go",
+      "line": 96,
+      "disposition": "reviewed_false_positive",
+      "reason": "This standalone operator tool deliberately renders a requested credential handoff document to stdout. That document is its explicit output, not a service log.",
+      "dismissed_reason": "false positive",
+      "context": "intentional privileged command output; review this distinction if changing output policy"
+    },
+    {
+      "alert": 41,
+      "severity": "high",
+      "rule": "go/clear-text-logging",
+      "path": "ops/goat-id-console/tools/reissue-preview/main.go",
+      "line": 89,
+      "disposition": "reviewed_false_positive",
+      "reason": "This standalone operator tool deliberately renders a requested credential handoff document to stdout. That document is its explicit output, not a service log.",
+      "dismissed_reason": "false positive",
+      "context": "intentional privileged command output; review this distinction if changing output policy"
+    },
+    {
+      "alert": 40,
+      "severity": "high",
+      "rule": "go/clear-text-logging",
+      "path": "ops/goat-zenoh-portal/cmd/portal/main.go",
+      "line": 63,
+      "disposition": "reviewed_false_positive",
+      "reason": "The error wraps operator-key directory file/JSON-loading failures, not key values. The tainted field is the configured directory path.",
+      "dismissed_reason": "false positive"
+    },
+    {
+      "alert": 39,
+      "severity": "high",
+      "rule": "go/clear-text-logging",
+      "path": "ops/goat-zenoh-portal/cmd/portal/main.go",
+      "line": 58,
+      "disposition": "reviewed_false_positive",
+      "reason": "The error wraps operator-key directory file/JSON-loading failures, not key values. The tainted field is the configured directory path.",
+      "dismissed_reason": "false positive"
+    },
+    {
+      "alert": 38,
+      "severity": "high",
+      "rule": "py/insecure-protocol",
+      "path": "ops/smoketest/apptests/test_zagros_dns_and_tls.py",
+      "line": 44,
+      "disposition": "code_fix",
+      "reason": "Set an explicit TLS 1.2 protocol floor."
+    },
+    {
+      "alert": 37,
+      "severity": "high",
+      "rule": "py/insecure-protocol",
+      "path": "ops/validation/probes.py",
+      "line": 258,
+      "disposition": "code_fix",
+      "reason": "Set an explicit TLS 1.2 protocol floor."
+    },
+    {
+      "alert": 36,
+      "severity": "high",
+      "rule": "py/insecure-protocol",
+      "path": "ops/validation/probes.py",
+      "line": 236,
+      "disposition": "code_fix",
+      "reason": "Set an explicit TLS 1.2 protocol floor."
+    },
+    {
+      "alert": 35,
+      "severity": "high",
+      "rule": "py/clear-text-logging-sensitive-data",
+      "path": "ops/scripts/standup-required-inputs.py",
+      "line": 986,
+      "disposition": "reviewed_false_positive",
+      "reason": "The report prints missing variable names, environment names and role references. It never retrieves or prints the missing secret value.",
+      "dismissed_reason": "false positive"
+    },
+    {
+      "alert": 34,
+      "severity": "high",
+      "rule": "py/clear-text-logging-sensitive-data",
+      "path": "ops/scripts/standup-required-inputs.py",
+      "line": 979,
+      "disposition": "reviewed_false_positive",
+      "reason": "The JSON serializes missing variable/environment names and role references. It never retrieves or serializes the missing secret value.",
+      "dismissed_reason": "false positive"
+    },
+    {
+      "alert": 33,
+      "severity": "high",
+      "rule": "py/clear-text-logging-sensitive-data",
+      "path": "ops/scripts/newsite-secret-store.py",
+      "line": 291,
+      "disposition": "reviewed_false_positive",
+      "reason": "The output contains the store backend name, destination path and numeric counts, not credential values.",
+      "dismissed_reason": "false positive"
+    },
+    {
+      "alert": 32,
+      "severity": "high",
+      "rule": "py/clear-text-logging-sensitive-data",
+      "path": "ops/scripts/newsite-secret-store.py",
+      "line": 268,
+      "disposition": "reviewed_false_positive",
+      "reason": "The dry-run output contains the store backend name and numeric counts, not credential values.",
+      "dismissed_reason": "false positive"
+    },
+    {
+      "alert": 31,
+      "severity": "high",
+      "rule": "py/clear-text-logging-sensitive-data",
+      "path": "ops/scripts/netbird-service-identities.py",
+      "line": 486,
+      "disposition": "reviewed_false_positive",
+      "reason": "The SARIF sources are store backend names, vault/item identifiers and status text, not token values. This patch additionally removes raw 1Password stderr from failure reports.",
+      "dismissed_reason": "false positive"
+    },
+    {
+      "alert": 30,
+      "severity": "high",
+      "rule": "py/clear-text-logging-sensitive-data",
+      "path": "ops/scripts/netbird-service-identities.py",
+      "line": 68,
+      "disposition": "reviewed_false_positive",
+      "reason": "The reported value is the selected secrets-store backend name, not a stored credential.",
+      "dismissed_reason": "false positive"
+    },
+    {
+      "alert": 29,
+      "severity": "high",
+      "rule": "py/clear-text-logging-sensitive-data",
+      "path": "ops/operators/gen-roster.py",
+      "line": 962,
+      "disposition": "reviewed_false_positive",
+      "reason": "The source is identity.nationality metadata in a registry validation warning, not a private cryptographic value or password.",
+      "dismissed_reason": "false positive"
+    },
+    {
+      "alert": 28,
+      "severity": "high",
+      "rule": "py/clear-text-logging-sensitive-data",
+      "path": "ops/ci/check-roster-registry.py",
+      "line": 75,
+      "disposition": "reviewed_false_positive",
+      "reason": "The source is invalid nationality/collaboration metadata in a registry validation error, not a private cryptographic value or password.",
+      "dismissed_reason": "false positive"
+    },
+    {
+      "alert": 27,
+      "severity": "high",
+      "rule": "py/clear-text-storage-sensitive-data",
+      "path": "ops/scripts/netbird-service-identities.py",
+      "line": 338,
+      "disposition": "code_fix",
+      "reason": "Pass the 1Password item JSON over stdin instead of a temporary plaintext file."
+    },
+    {
+      "alert": 26,
+      "severity": "high",
+      "rule": "js/bad-tag-filter",
+      "path": "ops/ory-consent/tests/double-submit-guard.test.js",
+      "line": 36,
+      "disposition": "reviewed_false_positive",
+      "reason": "This regex extracts a literal script from a checked-in test fixture for execution in a VM. It does not sanitize attacker HTML; uppercase SCRIPT matching is not a security boundary.",
+      "dismissed_reason": "used in tests"
+    },
+    {
+      "alert": 25,
+      "severity": "high",
+      "rule": "js/path-injection",
+      "path": "docs/goat-cli-book/tests/picker-e2e.mjs",
+      "line": 33,
+      "disposition": "reviewed_false_positive",
+      "reason": "The loopback test server resolves the requested path and enforces equality with ROOT or a ROOT-plus-separator prefix before reading. A traversal path outside ROOT is refused.",
+      "dismissed_reason": "false positive"
+    },
+    {
+      "alert": 24,
+      "severity": "high",
+      "rule": "js/clear-text-storage-of-sensitive-data",
+      "path": "ops/snitch/internal/server/satlink.html",
+      "line": 181,
+      "disposition": "code_fix",
+      "reason": "Replace browser Web Storage credentials with an opaque server session."
+    },
+    {
+      "alert": 23,
+      "severity": "high",
+      "rule": "js/clear-text-storage-of-sensitive-data",
+      "path": "ops/goat-zenoh-portal/web/static/app.js",
+      "line": 12,
+      "disposition": "code_fix",
+      "reason": "Replace browser Web Storage credentials with an opaque server session."
+    },
+    {
+      "alert": 22,
+      "severity": "high",
+      "rule": "js/clear-text-storage-of-sensitive-data",
+      "path": "ops/goat-zenoh-portal/web/static/admin/vendor-activity.html",
+      "line": 173,
+      "disposition": "code_fix",
+      "reason": "Replace browser Web Storage credentials with an opaque server session."
+    }
+  ]
+}

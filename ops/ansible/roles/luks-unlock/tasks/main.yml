@@ -302,6 +302,14 @@
 # (luks_volumes == []), this template would otherwise render to just its header
 # and CLOBBER the installer's own root crypttab entry — an unbootable box. The
 # installer-luks path edits the existing crypttab in place instead.
+# Keep the installer's own crypttab lines when an installer-encrypted root shares
+# the node with role-managed volumes (crypttab-keep-installer.yml).
+- name: Keep the installer's crypttab entries
+  ansible.builtin.include_tasks: crypttab-keep-installer.yml
+  when:
+    - (luks_volumes | length) > 0
+    - (luks_installer_partitions | default([])) | length > 0
+
 - name: Render /etc/crypttab
   ansible.builtin.template:
     src: crypttab.j2

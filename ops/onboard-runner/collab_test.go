@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // fakeState records what the mock Kanidm saw + lets a test tune its responses.
@@ -333,5 +334,26 @@ func TestProvisionCollab_BestEffortOnFailure(t *testing.T) {
 		proposal{Handle: "x", Email: "x@example.net", ManifestJSON: `{"collab":{"enabled":true}}`}, discardLog())
 	if _, err := os.Stat(filepath.Join(repo, "ops", "operators", "out", "x-collab.md")); !os.IsNotExist(err) {
 		t.Error("no out-file should be staged when provisioning fails")
+	}
+}
+
+func TestCollabSignInURLDerivesFromDoor(t *testing.T) {
+	t.Setenv("COLLAB_SIGNIN_URL", "")
+	k := &kanidmProvider{base: "https://idm.collab.example.org"}
+	if got := collabSignInURL(k); got != "https://collab.example.org" {
+		t.Fatalf("derived sign-in = %q", got)
+	}
+	t.Setenv("COLLAB_SIGNIN_URL", "https://front.example.org/")
+	if got := collabSignInURL(k); got != "https://front.example.org" {
+		t.Fatalf("explicit sign-in = %q", got)
+	}
+}
+
+func TestCollabProviderNeedsDoor(t *testing.T) {
+	t.Setenv("COLLAB_PROVISION_ENABLED", "1")
+	t.Setenv("COLLAB_KANIDM_API_TOKEN", "tok")
+	t.Setenv("COLLAB_KANIDM_URL", "")
+	if p := newCollabProviderFromEnv(time.Second, slog.New(slog.NewTextHandler(io.Discard, nil))); p != nil {
+		t.Fatal("a provider with no COLLAB_KANIDM_URL must stay disabled")
 	}
 }

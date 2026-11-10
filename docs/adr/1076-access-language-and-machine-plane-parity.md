@@ -19,6 +19,7 @@ Two decisions. First: managing access should feel like Snowflake's — one small
 - Why the transport must differ (and a fork stays rejected): human reads pass through goat-owned surfaces (per-request check possible); machine reads pass through the stock router whose ACL is static, restart-required, exact-CN. The ADR 1025 write trick — pre-cut one rule per identity — does not transfer to reads, because read grants are **relational** (consumer×producer pairs cannot be pre-cut). Therefore machine-read enforcement = **possession of keys distributed per the same grant rows**.
 - **M2 (grant-keyed payload encryption) is upgraded from requirement-gated to a committed roadmap item**, sequenced after the resolver + labels/grant-loop build-out (it consumes their rows). The old tripwire — before one goatnet hosts two mutually-non-releasable orgs — remains as a **hard floor** on sequencing, not the trigger.
 - Interim rungs stay as declared (SoT `wire_read_posture.plan`): M1 static carves for slow-changing sensitive streams; **M1.5 (new)**: the goat client libraries/SDK refuse to subscribe beyond the caller's grants — compliance-floor only, honest about its trust model (it binds well-behaved code, not adversaries; adversary-proof is M2's job).
+- **Current state (2026-11-08): machine parity is built.** M2 is built ([ADR 1094](1094-grant-keyed-payload-encryption.md)): `grant-keyd` seals each release set to the audience it reads from the same grant rows the human surfaces check. M1.5 was the stopgap while M2 landed and is not needed.
 
 ## Part 2 — The access language
 

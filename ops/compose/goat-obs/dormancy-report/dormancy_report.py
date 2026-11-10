@@ -29,10 +29,20 @@ stdout → journald only, same discipline as identity-reconcile):
     goat_identities_no_session_ever{env}                        gauge
     goat_dormancy_sessions_check_up{env}                        gauge
     goat_dormancy_report_last_run_timestamp_seconds             gauge
+    goat_device_peer_expiry_enabled{env,class,kind}             gauge
+
+The last one is not dormancy; it rides this report because it reads the same
+peer list. It counts peers in a NETWORK, CONTROL or EDGE-SERVER group (ADR
+1216) that NetBird is set to expire: kind="login" when the peer's login
+expiration is on, kind="inactivity" when its inactivity expiration is on. Such
+a device drops off the mesh when the timer runs out and comes back only when
+someone re-enrolls it at the device, so the right count is zero. Every
+class x kind series is written, zeros included, so the alert is a value
+comparison and never an absent() form. Peer names go to journald only.
 
 Usage: dormancy_report.py <output-dir>
   env: NETBIRD_MGMT_URL, NETBIRD_API_TOKEN, KRATOS_ADMIN_URL (default
-       http://127.0.0.1:4434), GOAT_ENV (default zagros),
+       http://127.0.0.1:4434), GOAT_ENV (default unknown; obs.yml sets it),
        DORMANCY_THRESHOLDS (default "7,14,30" days)
 Exit: 0 ok (report written), 1 config/fetch error (up=0 written).
 """
@@ -108,6 +118,48 @@ def fetch_latest_sessions(kratos: str) -> tuple[int, dict[str, float]]:
         return 0, {}
 
 
+# ADR 1216: the classes whose devices must never expire. Matched on the group
+# SUFFIX, as ops/scripts/lifecycle-sweep.py does, so <SCOPE>-NETWORK counts and
+# <SCOPE>-NETWORK-JUMP does not.
+NON_EXPIRING_CLASSES = ("NETWORK", "CONTROL", "EDGE-SERVER")
+EXPIRY_KINDS = (
+    ("login", "login_expiration_enabled"),
+    ("inactivity", "inactivity_expiration_enabled"),
+)
+
+
+def device_class(peer: dict) -> str | None:
+    """The ADR 1216 class this peer's groups put it in, or None."""
+    for g in peer.get("groups") or []:
+        name = str(g.get("name", "") if isinstance(g, dict) else g).upper()
+        for cls in NON_EXPIRING_CLASSES:
+            if name == cls or name.endswith("-" + cls):
+                return cls
+    return None
+
+
+def expirable_device_peers(peers: list[dict]) -> list[tuple[str, str, str]]:
+    """(peer name, class, kind) for every NETWORK / CONTROL / EDGE-SERVER peer
+    with a NetBird expiry turned on. One row per kind that is on."""
+    rows = []
+    for p in peers:
+        cls = device_class(p)
+        if cls is None:
+            continue
+        for kind, field in EXPIRY_KINDS:
+            if p.get(field) is True:
+                rows.append((str(p.get("name", "?")), cls, kind))
+    return rows
+
+
+def expiry_counts(rows: list[tuple[str, str, str]]) -> dict[tuple[str, str], int]:
+    """Every class x kind pair, zeros included."""
+    counts = {(c, k): 0 for c in NON_EXPIRING_CLASSES for k, _ in EXPIRY_KINDS}
+    for _, cls, kind in rows:
+        counts[(cls, kind)] += 1
+    return counts
+
+
 def atomic_write(out_path: pathlib.Path, body: str) -> None:
     tmp = out_path.with_suffix(out_path.suffix + f".tmp.{os.getpid()}")
     tmp.write_text(body)
@@ -122,6 +174,7 @@ def render_prom(
     idents_by_thr: dict[int, int],
     never: int,
     sessions_up: int,
+    expiry: dict[tuple[str, str], int] | None = None,
 ) -> str:
     lines = [
         "# HELP goat_dormancy_report_up 1 if the NetBird peer fetch succeeded, else 0.",
@@ -149,6 +202,17 @@ def render_prom(
         "# TYPE goat_dormancy_report_last_run_timestamp_seconds gauge",
         f"goat_dormancy_report_last_run_timestamp_seconds {int(time.time())}",
     ]
+    # Written only when the peer list was read: with no list the count is
+    # unknown, and goat_dormancy_report_up=0 already says so.
+    if expiry is not None:
+        lines += [
+            "# HELP goat_device_peer_expiry_enabled NETWORK, CONTROL and EDGE-SERVER peers with a NetBird login or inactivity expiration turned on (ADR 1216; should be 0).",
+            "# TYPE goat_device_peer_expiry_enabled gauge",
+        ]
+        for (cls, kind), n in sorted(expiry.items()):
+            lines.append(
+                f'goat_device_peer_expiry_enabled{{env="{env}",class="{cls}",kind="{kind}"}} {n}'
+            )
     return "\n".join(lines) + "\n"
 
 
@@ -160,7 +224,7 @@ def main() -> int:
     outdir.mkdir(parents=True, exist_ok=True)
     out_path = outdir / "goat_dormancy_report.prom"
 
-    env = os.environ.get("GOAT_ENV", "zagros")
+    env = os.environ.get("GOAT_ENV", "unknown")
     nb_url = os.environ.get("NETBIRD_MGMT_URL", "").strip()
     nb_token = os.environ.get("NETBIRD_API_TOKEN", "").strip()
     kratos = os.environ.get("KRATOS_ADMIN_URL", "http://127.0.0.1:4434").strip()
@@ -214,8 +278,13 @@ def main() -> int:
                 thr: sum(1 for _, d in ident_quiet if d > thr) for thr in thresholds
             }
 
+    expiry_rows = expirable_device_peers(peers)
     atomic_write(
-        out_path, render_prom(env, 1, peers_by_thr, idents_by_thr, never, sessions_up)
+        out_path,
+        render_prom(
+            env, 1, peers_by_thr, idents_by_thr, never, sessions_up,
+            expiry_counts(expiry_rows),
+        ),
     )
 
     # Human report → journald. Names live here, never in the .prom.
@@ -232,6 +301,8 @@ def main() -> int:
     for email, days in sorted(ident_quiet, key=lambda x: -x[1]):
         if days > main_thr:
             print(f"  DORMANT-LOGIN {email} last-login={int(days)}d ago")
+    for name, cls, kind in sorted(expiry_rows):
+        print(f"  EXPIRABLE-DEVICE {name} class={cls} expiry={kind}")
     print(
         "dormancy-report: REPORT-ONLY — nothing moved. The shed leg (goat admin members "
         "move --filter last_seen>Nd --to PROBATION-<role>) stays behind probation_enforce "

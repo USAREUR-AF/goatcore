@@ -1,0 +1,18 @@
+---
+# A goatnet that declares no portal_release_sets would otherwise be given
+# ops/permissions/release-sets.yaml, the EXAMPLE goatnet's release lanes, and
+# its Data-Access views would show them as its own. Only the example goatnet
+# (and a box that asks for it) takes that file. Tested by
+# tests/release-sets-guard.sh.
+- name: Refuse the example release-set registry on a goatnet other than the example
+  ansible.builtin.assert:
+    that:
+      - portal_release_sets_use_example | bool
+    fail_msg: >-
+      portal_release_sets is unset for {{ site_id | default(inventory_hostname) }}, and
+      that is not the example goatnet: the portal would show the example goatnet's
+      release lanes (ops/permissions/release-sets.yaml) as this goatnet's. Declare
+      portal_release_sets in group_vars/<site>_hosts/data-access.yml, or set
+      portal_release_sets_use_example: true to take the example registry on purpose,
+      or portal_release_sets_path: "" to turn the release reveal off.
+    quiet: true

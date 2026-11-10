@@ -115,7 +115,7 @@ jobs:
         # Block 50F.1 — backfills tests for Block 50E.2 (URL-query auth
         # removal) and 50E.3 (KeyCount race fix). Requires docker
         # daemon; testcontainers spins up postgres:16-alpine per test.
-        run: go test -tags=integration -v -timeout 8m -count=1 ./internal/auth/...
+        run: go test -tags=integration -v -timeout 8m -count=1 ./internal/auth/... ./internal/store/...
         env:
           GOFLAGS: -tags=integration
 

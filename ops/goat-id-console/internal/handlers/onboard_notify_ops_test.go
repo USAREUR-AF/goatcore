@@ -67,7 +67,7 @@ func TestSubmitNotifiesSponsor(t *testing.T) {
 	h := s.Routes()
 	tok := mintTokenSponsoredBy(t, s, "sponsor@example.org", "Dana Sponsor")
 
-	submit(t, h, tok, map[string]any{"name": "Pat Liaison", "email": "person-119@example.org", "organization": "Notify Org"})
+	submit(t, h, tok, map[string]any{"name": "Pat Liaison", "email": "person-106@example.org", "organization": "Notify Org"})
 
 	got := noticeTo(s, "onboard_email_sponsor_submit")
 	if len(got) != 1 || got[0] != "sponsor@example.org" {
@@ -92,7 +92,7 @@ func TestSubmitSkipsAnchorSponsor(t *testing.T) {
 	h := s.Routes()
 	tok := mintTokenSponsoredBy(t, s, "0ff404dd", "")
 
-	submit(t, h, tok, map[string]any{"name": "Pat Liaison", "email": "person-119@example.org", "organization": "Notify Org"})
+	submit(t, h, tok, map[string]any{"name": "Pat Liaison", "email": "person-106@example.org", "organization": "Notify Org"})
 
 	if got := noticeTo(s, "onboard_email_sponsor_submit"); len(got) != 0 {
 		t.Fatalf("anchor sponsor must not be mailed, got %v", got)
@@ -107,7 +107,7 @@ func TestVouchNotifiesAdmins(t *testing.T) {
 	s.Cfg.OnboardAdminNotifyEmails = []string{"ops1@example.org", "ops2@example.org"}
 	h := s.Routes()
 	tok := mintTokenSponsoredBy(t, s, "sponsor@example.org", "Dana Sponsor")
-	pid := submit(t, h, tok, map[string]any{"name": "Pat Liaison", "email": "person-119@example.org", "organization": "Notify Org"})
+	pid := submit(t, h, tok, map[string]any{"name": "Pat Liaison", "email": "person-106@example.org", "organization": "Notify Org"})
 
 	if got := decideMachine(t, h, pid, "sponsor-approve"); got != onboardstore.ProposalSponsorApproved {
 		t.Fatalf("vouch: got %q", got)
@@ -125,7 +125,7 @@ func TestVouchWithNoAdminListIsSilent(t *testing.T) {
 	s := newOnboardTestServer(t)
 	h := s.Routes()
 	tok := mintTokenSponsoredBy(t, s, "sponsor@example.org", "")
-	pid := submit(t, h, tok, map[string]any{"name": "Pat Liaison", "email": "person-119@example.org", "organization": "Notify Org"})
+	pid := submit(t, h, tok, map[string]any{"name": "Pat Liaison", "email": "person-106@example.org", "organization": "Notify Org"})
 	decideMachine(t, h, pid, "sponsor-approve")
 
 	if got := noticeTo(s, "onboard_email_admin_vouched"); len(got) != 0 {
@@ -141,15 +141,15 @@ func TestRejectNotifiesCandidate(t *testing.T) {
 			s := newOnboardTestServer(t)
 			h := s.Routes()
 			tok := mintTokenSponsoredBy(t, s, "sponsor@example.org", "")
-			pid := submit(t, h, tok, map[string]any{"name": "Pat Liaison", "email": "person-119@example.org", "organization": "Notify Org"})
+			pid := submit(t, h, tok, map[string]any{"name": "Pat Liaison", "email": "person-106@example.org", "organization": "Notify Org"})
 			if action == "reject" {
 				decideMachine(t, h, pid, "sponsor-approve")
 			}
 			if got := decideMachine(t, h, pid, action); got != onboardstore.ProposalRejected {
 				t.Fatalf("%s: got %q", action, got)
 			}
-			if got := noticeTo(s, "onboard_email_rejected"); len(got) != 1 || got[0] != "person-119@example.org" {
-				t.Fatalf("rejection notice recipients = %v, want [person-119@example.org]", got)
+			if got := noticeTo(s, "onboard_email_rejected"); len(got) != 1 || got[0] != "person-106@example.org" {
+				t.Fatalf("rejection notice recipients = %v, want [person-106@example.org]", got)
 			}
 		})
 	}
@@ -160,7 +160,7 @@ func TestRejectNotifiesCandidate(t *testing.T) {
 // to ask a question the email could have answered.
 func TestRejectionEmailCarriesReviewerNote(t *testing.T) {
 	s := newOnboardTestServer(t)
-	_, body, ok := s.candidateEmail(notifyRequest{Event: "rejected", Email: "person-119@example.org",
+	_, body, ok := s.candidateEmail(notifyRequest{Event: "rejected", Email: "person-106@example.org",
 		Name: "Pat Liaison", Env: "zagros", Reason: "no sponsor relationship on record"})
 	if !ok {
 		t.Fatal("rejected event must render")
@@ -174,25 +174,25 @@ func TestRejectionEmailCarriesReviewerNote(t *testing.T) {
 // means — the mail has to stand alone in an inbox.
 func TestSponsorSubmitEmailBody(t *testing.T) {
 	subject, body := sponsorSubmitEmail("zagros", "Dana Sponsor", "Pat Liaison", "pat-liaison",
-		"person-119@example.org", true, "https://admin.auth.zagros.example/onboarding?status=proposed")
+		"person-106@example.org", true, "https://admin.auth.zagros.example/onboarding?status=proposed")
 	if !strings.Contains(subject, "Pat Liaison") {
 		t.Fatalf("subject must name the candidate: %q", subject)
 	}
-	for _, want := range []string{"Hello Dana Sponsor,", "pat-liaison", "person-119@example.org",
+	for _, want := range []string{"Hello Dana Sponsor,", "pat-liaison", "person-106@example.org",
 		"ESCALATED", "https://admin.auth.zagros.example/onboarding?status=proposed"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("sponsor body missing %q:\n%s", want, body)
 		}
 	}
 	// No console base configured → words, never a link to nowhere.
-	_, noLink := sponsorSubmitEmail("zagros", "", "Pat Liaison", "pat-liaison", "person-119@example.org", false, "")
+	_, noLink := sponsorSubmitEmail("zagros", "", "Pat Liaison", "pat-liaison", "person-106@example.org", false, "")
 	if strings.Contains(noLink, "http") {
 		t.Fatalf("unconfigured console base must not fabricate a link:\n%s", noLink)
 	}
 }
 
 func TestAdminVouchedEmailBody(t *testing.T) {
-	subject, body := adminVouchedEmail("zagros", "Pat Liaison", "pat-liaison", "person-119@example.org",
+	subject, body := adminVouchedEmail("zagros", "Pat Liaison", "pat-liaison", "person-106@example.org",
 		"sponsor@example.org", true, "https://admin.auth.zagros.example/onboarding?status=sponsor_approved")
 	if !strings.Contains(subject, "ESCALATED") {
 		t.Fatalf("escalated proposal must be flagged in the subject: %q", subject)

@@ -13,7 +13,7 @@
 #   replication_sets:  list the subscriptions pull (required)
 #   repset:            optional — {name, tables}; creates the named
 #                      repset locally and curates membership per-table
-#, always
+#                      (never repset_add_all_tables), always
 #                      synchronize_data := false (see defaults/main.yml
 #                      for the truncate-direction hazard rationale).
 

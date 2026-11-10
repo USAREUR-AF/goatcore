@@ -26,6 +26,21 @@ sys.path.insert(0, os.path.join(REPO, "ops", "consistency", "python"))
 from goat_consistency import resolve  # noqa: E402
 
 
+def _checkout_org():
+    """The namespace standup-images.py resolves `{{ ghcr_org }}` to in this
+    checkout, read through its own default_ghcr_org: an overlay's
+    group_vars/all.yml may name another organisation than this repository's."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("standup_images", IMAGES)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod.default_ghcr_org(REPO)
+
+
+ORG = _checkout_org()
+GOAT = "ghcr.io/%s/" % ORG
+
+
 def run(*args, env=None):
     return subprocess.run(list(args), capture_output=True, text=True, env=env)
 
@@ -72,11 +87,82 @@ class ImageList(unittest.TestCase):
             r = run(sys.executable, IMAGES, "--member", "hobby_hosts", "--table", os.path.join(d, "fleet-pins.yaml"))
             self.assertEqual(r.returncode, 0, r.stderr)
             refs = r.stdout.split()
-            fleet_ref = lambda c: str(fleet.components[c]["fleet"]).replace("{{ ghcr_org }}", "usareur-af")
+            fleet_ref = lambda c: str(fleet.components[c]["fleet"]).replace("{{ ghcr_org }}", ORG)
             self.assertNotIn(fleet_ref(gone), refs)
             self.assertIn(fleet_ref(kept), refs)
         finally:
             shutil.rmtree(d)
+
+
+def renderer():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("goatlite_render", os.path.join(HERE, "goatlite-render.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+class LitePreset(unittest.TestCase):
+    """`--preset lite` (the prepared VM image's list, goatlite.md §11 measure 5) is what a
+    rendered goatlite's pins resolve to; lite.image_registry moves goat's images only."""
+
+    def table_with_rendered_goatlite(self, d, registry=""):
+        """A copy of the fleet table with a lite sidecar holding the deviations
+        goatlite-render.py writes, for a goatlite `hobby` (member hobby_hosts: a committed group_vars directory no pin table governs)."""
+        import yaml
+        shutil.copy(os.path.join(REPO, "ops/pins/fleet-pins.yaml"), os.path.join(d, "fleet-pins.yaml"))
+        comps = {}
+        for cname, dev in renderer().lite_deviations(registry).items():
+            entry = {"absent": True, "reason": "test"} if dev[0] == "absent" else {"value": dev[1], "reason": "test"}
+            comps[cname] = {"deviations": {"hobby": entry}}
+        with open(os.path.join(d, "lite-pins.yaml"), "w") as f:
+            yaml.safe_dump({"goatnets": {"hobby": {"description": "a test goatlite", "members": ["hobby_hosts"],
+                                                      "ca_id_var": "goat_ca_id"}},
+                            "components": comps}, f)
+        return os.path.join(d, "fleet-pins.yaml")
+
+    def test_preset_lite_lists_what_a_rendered_goatlite_runs(self):
+        d = tempfile.mkdtemp()
+        try:
+            table = self.table_with_rendered_goatlite(d)
+            member = run(sys.executable, IMAGES, "--member", "hobby_hosts", "--table", table)
+            preset = run(sys.executable, IMAGES, "--preset", "lite")
+            self.assertEqual(member.returncode, 0, member.stderr)
+            self.assertEqual(preset.returncode, 0, preset.stderr)
+            self.assertTrue(preset.stdout.split())
+            self.assertEqual(sorted(preset.stdout.split()), sorted(member.stdout.split()))
+        finally:
+            shutil.rmtree(d)
+
+    def test_image_registry_moves_goat_images_and_nothing_else(self):
+        reg = "registry.lan:5000/goat"
+        d = tempfile.mkdtemp()
+        try:
+            table = self.table_with_rendered_goatlite(d, reg)
+            plain = run(sys.executable, IMAGES, "--preset", "lite").stdout.split()
+            moved = run(sys.executable, IMAGES, "--preset", "lite", "--image-registry", reg).stdout.split()
+            member = run(sys.executable, IMAGES, "--member", "hobby_hosts", "--table", table).stdout.split()
+            self.assertEqual(sorted(moved), sorted(member), "the rendered pins are the listed ones")
+            self.assertEqual(len(plain), len(moved))
+            goat = [r for r in plain if r.startswith(GOAT)]
+            other = [r for r in plain if not r.startswith(GOAT)]
+            self.assertTrue(goat and other, "the lite set has goat images and others (control)")
+            self.assertEqual(sorted(r.replace(GOAT, reg + "/", 1) for r in goat),
+                             sorted(r for r in moved if r.startswith(reg + "/")), "same name and digest")
+            self.assertEqual(sorted(other), sorted(r for r in moved if not r.startswith(reg + "/")),
+                             "another project's image keeps its registry")
+        finally:
+            shutil.rmtree(d)
+
+    def test_registry_vars_only_for_a_registry_off_the_box(self):
+        r = renderer()
+        self.assertEqual(r.registry_vars({"image_registry": ""}), "")
+        self.assertEqual(r.registry_vars({"image_registry": "127.0.0.1:5000/usareur-af"}), "")
+        self.assertEqual(r.registry_vars({"image_registry": "localhost:5000/usareur-af"}), "")
+        self.assertIn('docker_engine_insecure_registries: ["registry.lan:5000"]',
+                      r.registry_vars({"image_registry": "registry.lan:5000/usareur-af"}))
+        self.assertIsNotNone(r.IMAGE_REGISTRY.match("127.0.0.1:5000/usareur-af"))
+        self.assertIsNone(r.IMAGE_REGISTRY.match("127.0.0.1:5000"), "a namespace is required")
 
 
 class Pull(unittest.TestCase):
@@ -120,6 +206,24 @@ echo "$img"
         self.assertIn("could not pull ghcr.io/x/gone:1: Error response from daemon: manifest unknown", r.stdout)
         self.assertIn("2 of 3 image(s) present", r.stdout)
         self.assertNotIn("could not pull a:1", r.stdout)
+
+    def test_a_digest_pinned_image_already_on_the_host_is_not_pulled(self):
+        # `docker image inspect` succeeds for refs containing "had"; the fake records
+        # every pull in "pulls". A digest ref the host holds is skipped; a tag ref and a
+        # digest ref the host lacks are pulled (negative control).
+        d = "@sha256:" + "a" * 64
+        with open(os.path.join(self.d, "bin", "docker"), "w") as f:
+            f.write("""#!/usr/bin/env bash
+if [ "$1 $2" = "image inspect" ]; then case "$3" in *had*) exit 0 ;; *) exit 1 ;; esac; fi
+echo "${@: -1}" >> "%s/pulls"
+""" % self.d)
+        r = run("bash", PULL, "ghcr.io/x/had" + d, "ghcr.io/x/had:1", "ghcr.io/x/new" + d, env=self.env)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("3 of 3 image(s) present", r.stdout)
+        self.assertIn("(1 already on the host by digest, not pulled)", r.stdout)
+        with open(os.path.join(self.d, "pulls")) as f:
+            pulled = f.read().split()
+        self.assertEqual(sorted(pulled), sorted(["ghcr.io/x/had:1", "ghcr.io/x/new" + d]))
 
     def test_usage_is_refused(self):
         self.assertEqual(run("bash", PULL, env=self.env).returncode, 2)

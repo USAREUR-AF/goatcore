@@ -54,7 +54,7 @@ func TestIsHelloWorld(t *testing.T) {
 		},
 		{
 			name:   "right key, wrong vendor in payload",
-			ev:     auditEvent{KeyExpr: "aardwolf/hello/v1", PayloadBytesB64: helloPayload("hello from user52x at 1716340000.123")},
+			ev:     auditEvent{KeyExpr: "aardwolf/hello/v1", PayloadBytesB64: helloPayload("hello from otter at 1716340000.123")},
 			prefix: "aardwolf",
 			want:   false,
 		},
@@ -193,14 +193,14 @@ func TestPullOnceReplayThenIncremental(t *testing.T) {
 	// Historical batch — landed before the portal first booted.
 	hist := mkEvent("aardwolf", "aardwolf/hello/v1", "2026-05-20T10:00:00Z",
 		"hello from aardwolf at 1716200000.000")
-	histKey := "nova-a/2026/05/20/10/1716199000000-1.ndjson"
+	histKey := "site-A/2026/05/20/10/1716199000000-1.ndjson"
 
-	// Newer batch with two events: user52x hello, then aardwolf real.
-	live := mkEvent("user52x", "user52x/hello/v1", "2026-05-21T11:00:00Z",
-		"hello from user52x at 1716300000.000") + "\n" +
+	// Newer batch with two events: otter hello, then aardwolf real.
+	live := mkEvent("otter", "otter/hello/v1", "2026-05-21T11:00:00Z",
+		"hello from otter at 1716300000.000") + "\n" +
 		mkEvent("aardwolf", "aardwolf/observations/wind/v1", "2026-05-21T11:00:30Z",
 			"observed: 12 knots")
-	liveKey := "nova-a/2026/05/21/11/1716291600000-2.ndjson"
+	liveKey := "site-A/2026/05/21/11/1716291600000-2.ndjson"
 
 	srv := httptest.NewServer((&fakeS3{
 		bucket: "audit-integrity",
@@ -213,7 +213,7 @@ func TestPullOnceReplayThenIncremental(t *testing.T) {
 
 	r := openReg(t)
 	ctx := context.Background()
-	for _, p := range []string{"aardwolf", "user52x"} {
+	for _, p := range []string{"aardwolf", "otter"} {
 		if err := r.CreateVendor(ctx, &registry.Vendor{Prefix: p, APIKeyHash: "h"}); err != nil {
 			t.Fatalf("create %s: %v", p, err)
 		}
@@ -225,7 +225,7 @@ func TestPullOnceReplayThenIncremental(t *testing.T) {
 		Region:       "us-east-1",
 		AccessKey:    "key",
 		SecretKey:    "secret",
-		SubscriberID: "nova-a",
+		SubscriberID: "site-A",
 	}, r)
 	if !tl.Enabled() {
 		t.Fatalf("tailer should be enabled")
@@ -254,11 +254,11 @@ func TestPullOnceReplayThenIncremental(t *testing.T) {
 	if got := by["aardwolf"]; got.L4At == nil {
 		t.Errorf("aardwolf L4At should be set (live real publish)")
 	}
-	if got := by["user52x"]; got.L3At == nil {
-		t.Errorf("user52x L3At should be set")
+	if got := by["otter"]; got.L3At == nil {
+		t.Errorf("otter L3At should be set")
 	}
-	if got := by["user52x"]; got.L4At != nil {
-		t.Errorf("user52x L4At should still be nil; got %v", got.L4At)
+	if got := by["otter"]; got.L4At != nil {
+		t.Errorf("otter L4At should still be nil; got %v", got.L4At)
 	}
 
 	// Second pull — cursor caught up; no new objects.
@@ -290,7 +290,7 @@ func TestPullSkipsSyntheticAndUnknownVendors(t *testing.T) {
 	srv := httptest.NewServer((&fakeS3{
 		bucket: "audit-integrity",
 		objects: map[string]string{
-			"nova-a/2026/05/21/11/1.ndjson": body,
+			"site-A/2026/05/21/11/1.ndjson": body,
 		},
 	}).handler())
 	defer srv.Close()
@@ -310,7 +310,7 @@ func TestPullSkipsSyntheticAndUnknownVendors(t *testing.T) {
 		Region:       "us-east-1",
 		AccessKey:    "k",
 		SecretKey:    "s",
-		SubscriberID: "nova-a",
+		SubscriberID: "site-A",
 	}, r)
 
 	_, _, err := tl.PullOnce(ctx)
@@ -351,7 +351,7 @@ func TestPullOnceRepullDoesNotDoubleCount(t *testing.T) {
 		mkEvent("aardwolf/observations/wind/v1", "2026-05-21T11:00:10Z", "observed: 12 knots"),
 		mkEvent("aardwolf/observations/wind/v1", "2026-05-21T11:00:20Z", "observed: 14 knots"),
 	}, "\n")
-	key := "nova-a/2026/05/21/11/1716291600000-1.ndjson"
+	key := "site-A/2026/05/21/11/1716291600000-1.ndjson"
 
 	srv := httptest.NewServer((&fakeS3{
 		bucket:  "audit-integrity",
@@ -370,7 +370,7 @@ func TestPullOnceRepullDoesNotDoubleCount(t *testing.T) {
 		Region:       "us-east-1",
 		AccessKey:    "k",
 		SecretKey:    "s",
-		SubscriberID: "nova-a",
+		SubscriberID: "site-A",
 	}, r)
 
 	if _, _, err := tl.PullOnce(ctx); err != nil {
@@ -405,8 +405,8 @@ func TestPullOnceMidPullFailureKeepsCompletedObjects(t *testing.T) {
 		return fmt.Sprintf(`{"vendor":"aardwolf","key_expr":"%s","ts":"%s","payload_bytes_b64":"%s"}`,
 			keyExpr, ts, b64(payload))
 	}
-	key1 := "nova-a/2026/05/21/11/1716291600000-1.ndjson"
-	key2 := "nova-a/2026/05/21/12/1716295200000-1.ndjson"
+	key1 := "site-A/2026/05/21/11/1716291600000-1.ndjson"
+	key2 := "site-A/2026/05/21/12/1716295200000-1.ndjson"
 	fake := &fakeS3{
 		bucket: "audit-integrity",
 		objects: map[string]string{
@@ -429,7 +429,7 @@ func TestPullOnceMidPullFailureKeepsCompletedObjects(t *testing.T) {
 		Region:       "us-east-1",
 		AccessKey:    "k",
 		SecretKey:    "s",
-		SubscriberID: "nova-a",
+		SubscriberID: "site-A",
 	}, r)
 
 	// key1 applies and commits (data + cursor in one tx); key2's GET
@@ -437,7 +437,7 @@ func TestPullOnceMidPullFailureKeepsCompletedObjects(t *testing.T) {
 	if _, _, err := tl.PullOnce(ctx); err == nil {
 		t.Fatalf("pull should fail on key2's injected 500")
 	}
-	c, err := r.GetAuditCursor(ctx, "nova-a")
+	c, err := r.GetAuditCursor(ctx, "site-A")
 	if err != nil {
 		t.Fatalf("get cursor: %v", err)
 	}

@@ -16,7 +16,7 @@ func TestVendorShortTag_PrefersOrgFallsBackToVendor(t *testing.T) {
 		traits map[string]interface{}
 		want   string
 	}{
-		{"org only", org("org67x"), "org67x"},
+		{"org only", org("example-org-sam"), "example-org-sam"},
 		{"vendor only (legacy)", vendor("demo-vendor-pat"), "demo-vendor-pat"},
 		{"both present prefers org", map[string]interface{}{
 			"org":    map[string]interface{}{"short_tag": "new-tag"},

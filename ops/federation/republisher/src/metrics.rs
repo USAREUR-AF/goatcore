@@ -103,7 +103,8 @@ impl Metrics {
             )?,
             edge_linked: g!(
                 "goat_fed_republisher_edge_linked",
-                "1 when the peering edge session has a transport peer. While 0, nothing crosses."
+                "1 when the publishing session has a transport peer: our core router, which the \
+                 peering edge carries the wire name out from. It does not see the partner link."
             ),
             local_subscribed: g!(
                 "goat_fed_republisher_local_subscribed",

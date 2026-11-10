@@ -1,0 +1,29 @@
+---
+# SPDX-License-Identifier: Apache-2.0
+#
+# mgmt-host-tls-root-env.yml — write TRAEFIK_TLS_ROOT to {{ compose_dir }}/.env.
+#
+# WHY THIS EXISTS. ops/compose/mgmt-host/docker-compose.yml mounts Traefik's
+# certificate directory from ${TRAEFIK_TLS_ROOT}, at the same path on the host
+# and inside the container, and falls back to /etc/goat/tls when the key is
+# absent. The traefik role writes certificates to traefik_tls_root and its
+# dynamic config names each one by that path, so the mount has to be that
+# directory. On a host whose certificates live elsewhere, a Traefik recreated
+# without the key mounts an empty directory and serves no certificate.
+#
+# WHEN TO INCLUDE IT. BEFORE the task that copies docker-compose.yml to the
+# host, in every play that copies it. The key is then in .env from the moment
+# the file that reads it is on disk, including when the play stops between
+# the copy and its own .env writes. mgmt-host.yml's full .env render writes
+# the same line from the same expression.
+#
+# Requires: compose_dir (the directory must exist).
+- name: Write the Traefik certificate directory to .env
+  ansible.builtin.lineinfile:
+    path: "{{ compose_dir }}/.env"
+    regexp: "^TRAEFIK_TLS_ROOT="
+    line: "TRAEFIK_TLS_ROOT={{ traefik_tls_root | default((goat_host_etc_dir | default('/etc/goat')) ~ '/tls') }}"
+    owner: root
+    group: root
+    mode: "0600"
+    create: true

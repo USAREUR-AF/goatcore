@@ -118,7 +118,7 @@ const (
 
 // Node is one identity or data region in the graph.
 type Node struct {
-	ID    string     `json:"id"`    // stable key, e.g. "vendor:org11x" or "topic:org11x/obs/v1"
+	ID    string     `json:"id"`    // stable key, e.g. "vendor:acme" or "topic:acme/obs/v1"
 	Kind  NodeKind   `json:"kind"`  //
 	Label string     `json:"label"` // human display name
 	State ReconState `json:"state"` // declared-vs-actual verdict (identities only; topics StateActive)
@@ -157,7 +157,7 @@ type Edge struct {
 	To     string   `json:"to"`     // Node.ID
 	Kind   EdgeKind `json:"kind"`   //
 	Layer  string   `json:"layer"`  // "mesh" | "identity" | "zenoh" | "release"
-	Reason string   `json:"reason"` // the deciding record, e.g. "topics.vendor_prefix=org11x"
+	Reason string   `json:"reason"` // the deciding record, e.g. "topics.vendor_prefix=acme"
 }
 
 // Graph is the assembled, queryable access picture. Nodes are keyed by ID.
@@ -299,7 +299,7 @@ type MachineIn struct {
 // IdentityIn is an Ory person/service. Vendor is the legacy per-identity
 // traits.vendor.short_tag; AffID/AffKind/AffNation are the identity-grammar
 // Phase D traits.aff claim (ADR 1043) — the true org id (shared unit, e.g.
-// `org63x`), its kind, and nation. Identities minted before Phase D carry no
+// `example-org`), its kind, and nation. Identities minted before Phase D carry no
 // aff (all three empty) and reconcile via the legacy vendor-tag key. Groups
 // are the group claims that map to read tiers; Disabled marks an
 // Ory-inactive identity.
@@ -336,7 +336,7 @@ type RosterEntry struct {
 	Handle string
 	Type   string
 	Org    string // legacy reconcile key: the member's vendor_tag, else its org id
-	// OrgID is the member's true affiliation.id (the shared unit, e.g. `org63x`) —
+	// OrgID is the member's true affiliation.id (the shared unit, e.g. `example-org`) —
 	// the key an aff-carrying (Phase D) identity reconciles on, independent of
 	// the per-identity vendor-tag substitution in Org.
 	OrgID       string
@@ -471,7 +471,7 @@ func Assemble(s Sources) *Graph {
 		}
 	}
 	// Second pass: a re-issued slot's alias carries a `-<n>` suffix
-	// (user318x-2, demo-org-data-adam-2 — the ≤2-certs-per-person
+	// (jane-doe-2, demo-org-data-adam-2 — the ≤2-certs-per-person
 	// convention), which an exact tag match misses. Register the stripped base
 	// too, but only when no exact alias claims it — an alias that IS someone's
 	// exact tag always wins over another slot's suffix.
@@ -650,7 +650,7 @@ func Assemble(s Sources) *Graph {
 			}
 		}
 		// Fallback, tag-keyed: a slot alias spells the member's ORG SHORT-TAG
-		// (e.g. `org65x`) because the onboard sets the alias from
+		// (e.g. `example-org-jane`) because the onboard sets the alias from
 		// `zenoh.trial.vendor` and drift-checks it against `org.short_tag`. A
 		// person whose tag names a slot alias anchors there.
 		//
@@ -855,7 +855,7 @@ func classifyStrayIdentity(id IdentityIn, declaredByOrg, declaredByAffOrg map[st
 }
 
 // aliasBase strips one trailing re-issue suffix (`-<digits>`) from a slot
-// alias: "user318x-2" → "user318x". Anything else returns unchanged — the
+// alias: "jane-doe-2" → "jane-doe". Anything else returns unchanged — the
 // suffix convention is a single numeric leg, so "team-x1" and bare tags
 // pass through.
 func aliasBase(alias string) string {
@@ -891,7 +891,7 @@ func MatchPeerHandle(peerName string, roster []RosterEntry) string {
 // machine it was minted for. The portal mints the mesh setup key as
 // "machine-"+handle (api/machine_enroll.go) and NetBird appends "-<hostname>",
 // so `machine-<handle>` and `machine-<handle>-<anything>` both match, and the
-// longest handle wins so `alpha-baxter-1` is never claimed by `alpha-baxter`.
+// longest handle wins so `sam-baxter-1` is never claimed by `sam-baxter`.
 // ops/ci/check-node-class-membership.sh grades alignment on the same forms. The
 // `machine-` form is not in ops/identity/peer-name-grammar.yaml, which covers
 // only operator-onboarded `peer-` names.

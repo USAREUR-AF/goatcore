@@ -1,0 +1,148 @@
+---
+# SPDX-License-Identifier: Apache-2.0
+# audit-fifo-evict — see defaults/main.yml for why this service exists.
+
+- name: Require a reviewed immutable mc client image before installation
+  ansible.builtin.assert:
+    that:
+      - audit_fifo_evict_mc_image is match('^[^@ ]+@sha256:[a-f0-9]{64}$')
+    fail_msg: >-
+      The historical client artifact is unverified or unavailable. Supply a
+      reviewed accessible multi-architecture digest in audit_fifo_evict_mc_image
+      and append its deploy-history entry. PENDING is not deployable.
+    quiet: true
+
+- name: Resolve the evictor's MinIO secret from the operator environment
+  ansible.builtin.set_fact:
+    audit_fifo_evict_secret: "{{ lookup('env', audit_fifo_evict_secret_envvar) }}"
+  no_log: true
+
+- name: Assert the evictor has a secret, a quota, and water marks that make sense
+  ansible.builtin.assert:
+    that:
+      - audit_fifo_evict_secret | length > 0
+      - (audit_fifo_evict_quota_gib | int) > 0
+      - (audit_fifo_evict_low_water_pct | int) > 0
+      - (audit_fifo_evict_batch_hours | int) > 0
+      - (audit_fifo_evict_max_pass_pct | int) < 100
+      - (audit_fifo_evict_low_water_pct | int) < (audit_fifo_evict_high_water_pct | int)
+      - (audit_fifo_evict_high_water_pct | int) <= 100
+      - (audit_fifo_evict_max_pass_pct | int) > 0
+    fail_msg: >-
+      audit-fifo-evict is misconfigured and will NOT be installed.
+      {{ audit_fifo_evict_secret_envvar }} must be set in the operator
+      environment (mint once with `openssl rand -hex 24` into
+      .envrc.local.d/30-site-services.envrc, and declare the matching user in
+      minio_extra_users so mc-init creates it);
+      audit_fifo_evict_quota_gib must be > 0 and must match
+      minio_audit_bucket_quota_gib for this host — a service evicting against
+      the wrong ceiling is worse than one not running; and the low-water mark
+      must sit below the high-water mark.
+    quiet: true
+
+- name: Assert the declared quota matches the bucket quota this host sets
+  ansible.builtin.assert:
+    that:
+      - (audit_fifo_evict_quota_gib | int) == (minio_audit_bucket_quota_gib | int)
+    fail_msg: >-
+      audit_fifo_evict_quota_gib ({{ audit_fifo_evict_quota_gib }}) disagrees
+      with minio_audit_bucket_quota_gib ({{ minio_audit_bucket_quota_gib }}).
+      The evictor would measure against a ceiling the server does not enforce.
+    quiet: true
+  when: minio_audit_bucket_quota_gib is defined
+
+- name: Create the evictor directory
+  ansible.builtin.file:
+    path: "{{ audit_fifo_evict_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Render the evictor credential file
+  ansible.builtin.template:
+    src: evictor.env.j2
+    dest: "{{ audit_fifo_evict_dir }}/evictor.env"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+
+- name: Install the version-aware eviction engine
+  ansible.builtin.copy:
+    src: evict.py
+    dest: "{{ audit_fifo_evict_dir }}/evict.py"
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Render the non-secret eviction configuration
+  ansible.builtin.template:
+    src: config.json.j2
+    dest: "{{ audit_fifo_evict_dir }}/config.json"
+    owner: root
+    group: root
+    mode: "0640"
+
+- name: Ensure the node exporter textfile directory exists
+  ansible.builtin.file:
+    path: "{{ audit_fifo_evict_textfile_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the evictor script
+  ansible.builtin.template:
+    src: goat-audit-fifo-evict.sh.j2
+    dest: "{{ audit_fifo_evict_dir }}/goat-audit-fifo-evict.sh"
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Install the evictor unit
+  ansible.builtin.template:
+    src: goat-audit-fifo-evict.service.j2
+    dest: /etc/systemd/system/goat-audit-fifo-evict.service
+    owner: root
+    group: root
+    mode: "0644"
+  register: _evict_unit
+
+- name: Install the evictor timer
+  ansible.builtin.template:
+    src: goat-audit-fifo-evict.timer.j2
+    dest: /etc/systemd/system/goat-audit-fifo-evict.timer
+    owner: root
+    group: root
+    mode: "0644"
+  register: _evict_timer
+
+- name: Reload systemd when a unit changed
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when: _evict_unit is changed or _evict_timer is changed
+
+
+# Prove the identity works HERE, rather than discovering at the quota wall
+# that the one service meant to prevent an outage cannot authenticate. A
+# measurement needs only ListBucket, so this exercises the credential without
+# deleting anything.
+- name: Prove the evictor identity can measure the bucket
+  ansible.builtin.command:
+    argv:
+      - "{{ audit_fifo_evict_dir }}/goat-audit-fifo-evict.sh"
+      - --measure-only
+  register: _evict_probe
+  changed_when: false
+  failed_when: _evict_probe.rc != 0
+
+- name: Show what the evictor measured
+  ansible.builtin.debug:
+    var: _evict_probe.stdout_lines
+
+- name: Enable and start the evictor timer
+  ansible.builtin.systemd_service:
+    name: goat-audit-fifo-evict.timer
+    enabled: true
+    state: started

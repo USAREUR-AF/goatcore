@@ -16,7 +16,7 @@
 # goat-get role — serves the goat-cli release binaries (linux/darwin ×
 # amd64/arm64) from a mesh-internal nginx behind Traefik, so on-mesh
 # vendors can `curl https://get.<site>.<zone>/goat-<os>-<arch>` without
-# reaching the private GitHub release page. Mirrors the brief
+# reaching the GitHub release page. Mirrors the brief
 # role: file-provider Traefik route, container on `mgmt`, `le` cert
 # resolver, mesh-only gating. The hostname is per-goatnet via the
 # site-templated goat_get_hostname.
@@ -27,9 +27,11 @@
 #   2. `get.<site>.<zone>` is in that goatnet's Let's Encrypt tls.domains
 #      SAN list (the site traefik-acme play re-rendered with
 #      goat_get_enabled: true in group_vars).
-#   3. GOAT_CLI_RELEASE_TOKEN (or GH_TOKEN) is set in the operator env
-#      with contents:read on the repo, so the host can pull the release
-#      assets.
+#   3. Only for a PRIVATE release repository (goat_get_release_private:
+#      true, or the family's own *_release_private flag): GOAT_CLI_RELEASE_TOKEN
+#      (or GH_TOKEN) is set in the operator env with contents:read on the repo.
+#      A public release is read anonymously; a set token is used when GitHub
+#      accepts it (tasks/github-release-access.yml under ops/ansible/).
 #
 # Idempotent — re-running re-fetches the pinned release assets (cheap)
 # and is otherwise a no-op on a healthy host.
@@ -146,55 +148,38 @@
 
 - name: goat-get | otherwise fall back to the GitHub release API
   ansible.builtin.set_fact:
-    goat_get_dl_headers:
-      Authorization: "Bearer {{ goat_get_github_token }}"
-      Accept: "application/octet-stream"
     goat_get_source: github
   when: goat_get_source is not defined
 
-- name: goat-get | preconditions — release token present (GitHub fallback only)
-  ansible.builtin.assert:
-    that:
-      - goat_get_github_token | default('') | length > 0
-    fail_msg: >-
-      goat_get_github_token is empty. Set GOAT_CLI_RELEASE_TOKEN (or
-      GH_TOKEN) in your env with contents:read on {{ goat_get_release_repo }}
-      so the host can download the {{ goat_get_release_tag }} release assets.
-      Preferred instead: publish the tag to {{ goat_get_mirror_base }}, which a
-      site with no GitHub identity can read.
-  run_once: true
+# Only the GitHub leg talks to GitHub. A public release repository is read
+# anonymously; the token is used when it is set and accepted, and is required
+# only when goat_get_release_private is true. A token GitHub refuses (401/403)
+# does not block a public download: the role warns and reads anonymously.
+- name: goat-get | decide how to read the GitHub release (token or anonymous)
+  ansible.builtin.include_tasks: "{{ role_path }}/../../tasks/github-release-access.yml"
+  vars:
+    ghr_label: "goat-get"
+    ghr_repo: "{{ goat_get_release_repo }}"
+    ghr_tag: "{{ goat_get_release_tag }}"
+    ghr_token: "{{ goat_get_github_token }}"
+    ghr_token_name: "goat_get_github_token (GOAT_CLI_RELEASE_TOKEN, else GH_TOKEN, else GHCR_READ_TOKEN)"
+    ghr_private: "{{ goat_get_release_private }}"
+    ghr_private_var: goat_get_release_private
+    ghr_hint: >-
+      Preferred instead: publish the tag to {{ goat_get_mirror_base }}, which a site with no GitHub identity can read.
   when: goat_get_source == 'github'
 
-# A non-empty token is not enough: a token that lacks contents:read on a
-# PRIVATE repo gets a 404 (not 403) from the release-by-tag API, which reads
-# as "release missing" and masks the real cause. Probe authorization up front
-# so the failure names the token, not a phantom missing release.
-- name: goat-get | preconditions — token authorizes against the release (probe)
-  ansible.builtin.uri:
-    url: "https://api.github.com/repos/{{ goat_get_release_repo }}/releases/tags/{{ goat_get_release_tag }}"
-    method: GET
-    headers:
-      Authorization: "Bearer {{ goat_get_github_token }}"
-      Accept: "application/vnd.github+json"
-      X-GitHub-Api-Version: "2022-11-28"
-    status_code: [200, 401, 403, 404]
-  register: goat_get_token_probe
-  delegate_to: localhost
-  become: false
-  run_once: true
+- name: goat-get | GitHub request headers (Authorization only when the token is used)
+  ansible.builtin.set_fact:
+    goat_get_gh_auth: "{{ ghr_auth_headers }}"
   no_log: true
+  when: goat_get_source == 'github'
 
-- name: goat-get | preconditions — token has access to the release
-  ansible.builtin.assert:
-    that:
-      - goat_get_token_probe.status == 200
-    fail_msg: >-
-      The release token is present but GitHub returned
-      {{ goat_get_token_probe.status }} for {{ goat_get_release_repo }}
-      {{ goat_get_release_tag }}. On a private repo a 404 here usually means the
-      token lacks contents:read (not a missing release). Use a token with
-      contents:read — e.g. -e goat_get_github_token=$(gh auth token). See F-232.
-  run_once: true
+- name: goat-get | GitHub leg download headers
+  ansible.builtin.set_fact:
+    goat_get_dl_headers: "{{ {'Accept': 'application/octet-stream'} | combine(goat_get_gh_auth) }}"
+  no_log: true
+  when: goat_get_source == 'github'
 
 - name: goat-get | create compose + www dirs
   ansible.builtin.file:
@@ -210,10 +195,7 @@
   ansible.builtin.uri:
     url: "https://api.github.com/repos/{{ goat_get_release_repo }}/releases/tags/{{ goat_get_release_tag }}"
     method: GET
-    headers:
-      Authorization: "Bearer {{ goat_get_github_token }}"
-      Accept: "application/vnd.github+json"
-      X-GitHub-Api-Version: "2022-11-28"
+    headers: "{{ {'Accept': 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28'} | combine(goat_get_gh_auth) }}"
     return_content: true
   register: goat_get_release
   become: true
@@ -239,9 +221,7 @@
 - name: goat-get | download each release asset to the www dir
   ansible.builtin.get_url:
     url: "{{ goat_get_asset_urls[item] }}"
-    headers:
-      Authorization: "Bearer {{ goat_get_github_token }}"
-      Accept: "application/octet-stream"
+    headers: "{{ goat_get_dl_headers }}"
     dest: "{{ goat_get_www_dir }}/{{ item }}"
     # binaries get +x; checksum files (per-asset *.sha256 + SHA256SUMS) are plain text
     mode: "{{ '0755' if (item.startswith('goat-') and not item.endswith('.sha256')) else '0644' }}"
@@ -276,6 +256,40 @@
     dest: "{{ goat_get_www_dir }}/version.json"
     mode: "0644"
   become: true
+
+# This goatnet's own facts for the goat CLI (defaults: goat_get_goatnet_facts).
+# goat-cli holds no goatnet; `goat context refresh` reads this file and writes
+# its keys into the context's profile.toml.
+- name: goat-get | render goatnet.toml (per-goatnet facts for the goat CLI)
+  ansible.builtin.template:
+    src: goatnet.toml.j2
+    dest: "{{ goat_get_www_dir }}/goatnet.toml"
+    mode: "0644"
+  become: true
+
+# This goatnet's ACL declaration, served at get.<site>/acl/ beside goatnet.toml.
+# goat-cli compiles in no declaration; `goat context refresh` copies these two
+# files into the context, where `goat acl test` and `goat warrant` read them.
+# Off unless goat_get_acl_declaration is true: the declaration describes the
+# goatnet's access rules to every peer that can reach get.<site>.
+- name: goat-get | acl | create subdir
+  ansible.builtin.file:
+    path: "{{ goat_get_www_dir }}/acl"
+    state: directory
+    mode: "0755"
+  become: true
+  when: goat_get_acl_declaration | bool
+
+- name: goat-get | acl | publish the declaration
+  ansible.builtin.copy:
+    src: "{{ goat_get_acl_declaration_src_dir }}/{{ item }}"
+    dest: "{{ goat_get_www_dir }}/acl/{{ item }}"
+    mode: "0644"
+  loop:
+    - netbird_acl_taxonomy.yml
+    - netbird_acl_matrix.yml
+  become: true
+  when: goat_get_acl_declaration | bool
 
 # ---------------------------------------------------------------------------
 # CA roots — served at get.<site>/ca-roots/ alongside the binaries.
@@ -370,37 +384,27 @@
 # (grant-crypto-sdk-v*) pinned by goat_get_sdk_release_tag, fetched into a www/sdk/
 # subdir nginx already serves. Whole block guarded by goat_get_sdk_enabled — a
 # site that hasn't opted in never touches this. Fail-closed like the goat-cli
-# flow: token-authz probe on the SDK tag, then a set-equality assert on the
+# flow: release-access probe on the SDK tag, then a set-equality assert on the
 # requested assets. See docs/design/goat-cli-mesh-download.md §"SDK assets".
 # ---------------------------------------------------------------------------
-- name: goat-get | sdk | preconditions — token authorizes against the SDK release (probe)
-  ansible.builtin.uri:
-    url: "https://api.github.com/repos/{{ goat_get_sdk_release_repo }}/releases/tags/{{ goat_get_sdk_release_tag }}"
-    method: GET
-    headers:
-      Authorization: "Bearer {{ goat_get_github_token }}"
-      Accept: "application/vnd.github+json"
-      X-GitHub-Api-Version: "2022-11-28"
-    status_code: [200, 401, 403, 404]
-  register: goat_get_sdk_token_probe
-  delegate_to: localhost
-  become: false
-  run_once: true
-  no_log: true
+- name: goat-get | sdk | decide how to read the GitHub release (token or anonymous)
+  ansible.builtin.include_tasks: "{{ role_path }}/../../tasks/github-release-access.yml"
+  vars:
+    ghr_label: "goat-get | sdk"
+    ghr_repo: "{{ goat_get_sdk_release_repo }}"
+    ghr_tag: "{{ goat_get_sdk_release_tag }}"
+    ghr_token: "{{ goat_get_github_token }}"
+    ghr_token_name: "goat_get_github_token (GOAT_CLI_RELEASE_TOKEN, else GH_TOKEN, else GHCR_READ_TOKEN)"
+    ghr_private: "{{ goat_get_sdk_release_private }}"
+    ghr_private_var: goat_get_sdk_release_private
+    ghr_hint: >-
+      goat_get_sdk_enabled is true. If the SDK release tag has not been cut yet, cut grant-crypto-sdk-v* (workflow grant-crypto-sdk-release.yml).
   when: goat_get_sdk_enabled | bool
 
-- name: goat-get | sdk | preconditions — token has access to the SDK release
-  ansible.builtin.assert:
-    that:
-      - goat_get_sdk_token_probe.status == 200
-    fail_msg: >-
-      goat_get_sdk_enabled is true but GitHub returned
-      {{ goat_get_sdk_token_probe.status }} for {{ goat_get_sdk_release_repo }}
-      {{ goat_get_sdk_release_tag }}. On a private repo a 404 here usually means
-      the token lacks contents:read (not a missing release), or the SDK release
-      tag has not been cut yet. Cut grant-crypto-sdk-v* (workflow
-      grant-crypto-sdk-release.yml) or fix the token. See F-232.
-  run_once: true
+- name: goat-get | sdk | GitHub request headers (Authorization only when the token is used)
+  ansible.builtin.set_fact:
+    goat_get_sdk_gh_auth: "{{ ghr_auth_headers }}"
+  no_log: true
   when: goat_get_sdk_enabled | bool
 
 - name: goat-get | sdk | create www/sdk dir
@@ -415,10 +419,7 @@
   ansible.builtin.uri:
     url: "https://api.github.com/repos/{{ goat_get_sdk_release_repo }}/releases/tags/{{ goat_get_sdk_release_tag }}"
     method: GET
-    headers:
-      Authorization: "Bearer {{ goat_get_github_token }}"
-      Accept: "application/vnd.github+json"
-      X-GitHub-Api-Version: "2022-11-28"
+    headers: "{{ {'Accept': 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28'} | combine(goat_get_sdk_gh_auth) }}"
     return_content: true
   register: goat_get_sdk_release
   become: true
@@ -447,9 +448,7 @@
 - name: goat-get | sdk | download each SDK asset to the www/sdk dir
   ansible.builtin.get_url:
     url: "{{ goat_get_sdk_asset_urls[item] }}"
-    headers:
-      Authorization: "Bearer {{ goat_get_github_token }}"
-      Accept: "application/octet-stream"
+    headers: "{{ {'Accept': 'application/octet-stream'} | combine(goat_get_sdk_gh_auth) }}"
     dest: "{{ goat_get_www_dir }}/{{ goat_get_sdk_www_subdir }}/{{ item }}"
     # All SDK assets are tarballs / checksum text — plain files, no +x.
     mode: "0644"
@@ -570,38 +569,29 @@
 # meta-dependency (meta/main.yml) per ADR 1060 — no per-role task here.
 # ---------------------------------------------------------------------------
 # jetson-wireguard-kmod assets (ADR 1118) — OPT-IN parallel payload at
-# get.<site>/kmod/. Mirror of the SDK family above: token-authz probe on the
+# get.<site>/kmod/. Mirror of the SDK family above: release-access probe on the
 # release tag, set-equality assert on assets, host-side fetch (no large scp),
 # fail-closed throughout. See docs/design/goat-cli-mesh-download.md §"Jetson
 # kernel-module assets".
 # ---------------------------------------------------------------------------
-- name: goat-get | kmod | preconditions — token authorizes against the kmod release (probe)
-  ansible.builtin.uri:
-    url: "https://api.github.com/repos/{{ goat_get_kmod_release_repo }}/releases/tags/{{ goat_get_kmod_release_tag }}"
-    method: GET
-    headers:
-      Authorization: "Bearer {{ goat_get_github_token }}"
-      Accept: "application/vnd.github+json"
-      X-GitHub-Api-Version: "2022-11-28"
-    status_code: [200, 401, 403, 404]
-  register: goat_get_kmod_token_probe
-  delegate_to: localhost
-  become: false
-  run_once: true
-  no_log: true
+- name: goat-get | kmod | decide how to read the GitHub release (token or anonymous)
+  ansible.builtin.include_tasks: "{{ role_path }}/../../tasks/github-release-access.yml"
+  vars:
+    ghr_label: "goat-get | kmod"
+    ghr_repo: "{{ goat_get_kmod_release_repo }}"
+    ghr_tag: "{{ goat_get_kmod_release_tag }}"
+    ghr_token: "{{ goat_get_github_token }}"
+    ghr_token_name: "goat_get_github_token (GOAT_CLI_RELEASE_TOKEN, else GH_TOKEN, else GHCR_READ_TOKEN)"
+    ghr_private: "{{ goat_get_kmod_release_private }}"
+    ghr_private_var: goat_get_kmod_release_private
+    ghr_hint: >-
+      goat_get_kmod_enabled is true. While that repo is private, the token needs contents:read on it (or flip the repo public and set goat_get_kmod_release_private false).
   when: goat_get_kmod_enabled | bool
 
-- name: goat-get | kmod | preconditions — token has access to the kmod release
-  ansible.builtin.assert:
-    that:
-      - goat_get_kmod_token_probe.status == 200
-    fail_msg: >-
-      goat_get_kmod_enabled is true but GitHub returned
-      {{ goat_get_kmod_token_probe.status }} for {{ goat_get_kmod_release_repo }}
-      {{ goat_get_kmod_release_tag }}. While that repo is private, the token
-      needs contents:read on it (or flip the repo public); a 404 can also mean
-      the release tag is not cut.
-  run_once: true
+- name: goat-get | kmod | GitHub request headers (Authorization only when the token is used)
+  ansible.builtin.set_fact:
+    goat_get_kmod_gh_auth: "{{ ghr_auth_headers }}"
+  no_log: true
   when: goat_get_kmod_enabled | bool
 
 - name: goat-get | kmod | create www/kmod dir
@@ -616,10 +606,7 @@
   ansible.builtin.uri:
     url: "https://api.github.com/repos/{{ goat_get_kmod_release_repo }}/releases/tags/{{ goat_get_kmod_release_tag }}"
     method: GET
-    headers:
-      Authorization: "Bearer {{ goat_get_github_token }}"
-      Accept: "application/vnd.github+json"
-      X-GitHub-Api-Version: "2022-11-28"
+    headers: "{{ {'Accept': 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28'} | combine(goat_get_kmod_gh_auth) }}"
     return_content: true
   register: goat_get_kmod_release
   become: true
@@ -647,9 +634,7 @@
 - name: goat-get | kmod | download each kmod asset to the www/kmod dir
   ansible.builtin.get_url:
     url: "{{ goat_get_kmod_asset_urls[item] }}"
-    headers:
-      Authorization: "Bearer {{ goat_get_github_token }}"
-      Accept: "application/octet-stream"
+    headers: "{{ {'Accept': 'application/octet-stream'} | combine(goat_get_kmod_gh_auth) }}"
     dest: "{{ goat_get_www_dir }}/{{ goat_get_kmod_www_subdir }}/{{ item }}"
     mode: "0644"
     force: true
@@ -682,7 +667,7 @@
 
 # ---------------------------------------------------------------------------
 # octo-pod appliance assets — OPT-IN parallel payload at get.<site>/octo-pod/.
-# Same shape as the kmod family above: token-authz probe on the release tag,
+# Same shape as the kmod family above: release-access probe on the release tag,
 # set-equality assert on assets, host-side fetch, fail-closed throughout.
 #
 # This is what lets an edge pod take new software without reaching GitHub —
@@ -692,34 +677,24 @@
 # and the pod verifies the signature after downloading regardless of where it
 # came from. So a compromised surface serves software no pod will install.
 # ---------------------------------------------------------------------------
-- name: goat-get | octo-pod | preconditions — token authorizes against the octo-pod release (probe)
-  ansible.builtin.uri:
-    url: "https://api.github.com/repos/{{ goat_get_octopod_release_repo }}/releases/tags/{{ goat_get_octopod_release_tag }}"
-    method: GET
-    headers:
-      Authorization: "Bearer {{ goat_get_github_token }}"
-      Accept: "application/vnd.github+json"
-      X-GitHub-Api-Version: "2022-11-28"
-    status_code: [200, 401, 403, 404]
-  register: goat_get_octopod_token_probe
-  delegate_to: localhost
-  become: false
-  run_once: true
-  no_log: true
+- name: goat-get | octo-pod | decide how to read the GitHub release (token or anonymous)
+  ansible.builtin.include_tasks: "{{ role_path }}/../../tasks/github-release-access.yml"
+  vars:
+    ghr_label: "goat-get | octo-pod"
+    ghr_repo: "{{ goat_get_octopod_release_repo }}"
+    ghr_tag: "{{ goat_get_octopod_release_tag }}"
+    ghr_token: "{{ goat_get_github_token }}"
+    ghr_token_name: "goat_get_github_token (GOAT_CLI_RELEASE_TOKEN, else GH_TOKEN, else GHCR_READ_TOKEN)"
+    ghr_private: "{{ goat_get_octopod_release_private }}"
+    ghr_private_var: goat_get_octopod_release_private
+    ghr_hint: >-
+      goat_get_octopod_enabled is true. octo-pod releases are tagged octo-pod-vX.Y.Z.
   when: goat_get_octopod_enabled | bool
 
-- name: goat-get | octo-pod | preconditions — token has access to the octo-pod release
-  ansible.builtin.assert:
-    that:
-      - goat_get_octopod_token_probe.status == 200
-    fail_msg: >-
-      goat_get_octopod_enabled is true but GitHub returned
-      {{ goat_get_octopod_token_probe.status }} for
-      {{ goat_get_octopod_release_repo }} {{ goat_get_octopod_release_tag }}.
-      That repo is private, so the token needs contents:read on it; a 404 here
-      usually means that, not a missing release. It can also mean the tag is
-      not cut yet — octo-pod releases are tagged octo-pod-vX.Y.Z.
-  run_once: true
+- name: goat-get | octo-pod | GitHub request headers (Authorization only when the token is used)
+  ansible.builtin.set_fact:
+    goat_get_octopod_gh_auth: "{{ ghr_auth_headers }}"
+  no_log: true
   when: goat_get_octopod_enabled | bool
 
 - name: goat-get | octo-pod | create www/octo-pod dir
@@ -734,10 +709,7 @@
   ansible.builtin.uri:
     url: "https://api.github.com/repos/{{ goat_get_octopod_release_repo }}/releases/tags/{{ goat_get_octopod_release_tag }}"
     method: GET
-    headers:
-      Authorization: "Bearer {{ goat_get_github_token }}"
-      Accept: "application/vnd.github+json"
-      X-GitHub-Api-Version: "2022-11-28"
+    headers: "{{ {'Accept': 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28'} | combine(goat_get_octopod_gh_auth) }}"
     return_content: true
   register: goat_get_octopod_release
   become: true
@@ -769,9 +741,7 @@
 - name: goat-get | octo-pod | download each octo-pod asset to the www/octo-pod dir
   ansible.builtin.get_url:
     url: "{{ goat_get_octopod_asset_urls[item] }}"
-    headers:
-      Authorization: "Bearer {{ goat_get_github_token }}"
-      Accept: "application/octet-stream"
+    headers: "{{ {'Accept': 'application/octet-stream'} | combine(goat_get_octopod_gh_auth) }}"
     dest: "{{ goat_get_www_dir }}/{{ goat_get_octopod_www_subdir }}/{{ item }}"
     mode: "0644"
     force: true
@@ -805,7 +775,7 @@
 # ---------------------------------------------------------------------------
 # goatbuilder assets — OPT-IN parallel payload at get.<site>/goatbuilder/
 # (docs/design/goatbuilder-distribution.md). Same shape as the kmod family:
-# token-authz probe on the release tag, set-equality assert on assets,
+# release-access probe on the release tag, set-equality assert on assets,
 # host-side fetch, fail-closed throughout. This surface mirrors a signed
 # release; it never signs one. An operator verifies the cosign bundle over
 # SHA256SUMS after downloading, from here or from GitHub, identically.
@@ -821,34 +791,25 @@
   run_once: true
   when: goat_get_goatbuilder_enabled | bool
 
-- name: goat-get | goatbuilder | preconditions — token authorizes against the goatbuilder release (probe)
-  ansible.builtin.uri:
-    url: "https://api.github.com/repos/{{ goat_get_goatbuilder_release_repo }}/releases/tags/{{ goat_get_goatbuilder_release_tag }}"
-    method: GET
-    headers:
-      Authorization: "Bearer {{ goat_get_github_token }}"
-      Accept: "application/vnd.github+json"
-      X-GitHub-Api-Version: "2022-11-28"
-    status_code: [200, 401, 403, 404]
-  register: goat_get_goatbuilder_token_probe
-  delegate_to: localhost
-  become: false
-  run_once: true
-  no_log: true
+- name: goat-get | goatbuilder | decide how to read the GitHub release (token or anonymous)
+  ansible.builtin.include_tasks: "{{ role_path }}/../../tasks/github-release-access.yml"
+  vars:
+    ghr_label: "goat-get | goatbuilder"
+    ghr_repo: "{{ goat_get_goatbuilder_release_repo }}"
+    ghr_tag: "{{ goat_get_goatbuilder_release_tag }}"
+    ghr_token: "{{ goat_get_github_token }}"
+    ghr_token_name: "goat_get_github_token (GOAT_CLI_RELEASE_TOKEN, else GH_TOKEN, else GHCR_READ_TOKEN)"
+    ghr_private: "{{ goat_get_goatbuilder_release_private }}"
+    ghr_private_var: goat_get_goatbuilder_release_private
+    ghr_hint: >-
+      goat_get_goatbuilder_enabled is true. If the tag is not cut, a repository admin tags main:
+      git tag {{ goat_get_goatbuilder_release_tag }} <sha> && git push origin {{ goat_get_goatbuilder_release_tag }}.
   when: goat_get_goatbuilder_enabled | bool
 
-- name: goat-get | goatbuilder | preconditions — token has access to the goatbuilder release
-  ansible.builtin.assert:
-    that:
-      - goat_get_goatbuilder_token_probe.status == 200
-    fail_msg: >-
-      goat_get_goatbuilder_enabled is true but GitHub returned
-      {{ goat_get_goatbuilder_token_probe.status }} for {{ goat_get_goatbuilder_release_repo }}
-      {{ goat_get_goatbuilder_release_tag }}. While that repo is private, the token
-      needs contents:read on it; a 404 can also mean the release tag is not cut
-      (a repository admin tags main: git tag {{ goat_get_goatbuilder_release_tag }} <sha>
-      && git push origin {{ goat_get_goatbuilder_release_tag }}).
-  run_once: true
+- name: goat-get | goatbuilder | GitHub request headers (Authorization only when the token is used)
+  ansible.builtin.set_fact:
+    goat_get_goatbuilder_gh_auth: "{{ ghr_auth_headers }}"
+  no_log: true
   when: goat_get_goatbuilder_enabled | bool
 
 - name: goat-get | goatbuilder | create www/goatbuilder dir
@@ -863,10 +824,7 @@
   ansible.builtin.uri:
     url: "https://api.github.com/repos/{{ goat_get_goatbuilder_release_repo }}/releases/tags/{{ goat_get_goatbuilder_release_tag }}"
     method: GET
-    headers:
-      Authorization: "Bearer {{ goat_get_github_token }}"
-      Accept: "application/vnd.github+json"
-      X-GitHub-Api-Version: "2022-11-28"
+    headers: "{{ {'Accept': 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28'} | combine(goat_get_goatbuilder_gh_auth) }}"
     return_content: true
   register: goat_get_goatbuilder_release
   become: true
@@ -895,9 +853,7 @@
 - name: goat-get | goatbuilder | download each goatbuilder asset to the www/goatbuilder dir
   ansible.builtin.get_url:
     url: "{{ goat_get_goatbuilder_asset_urls[item] }}"
-    headers:
-      Authorization: "Bearer {{ goat_get_github_token }}"
-      Accept: "application/octet-stream"
+    headers: "{{ {'Accept': 'application/octet-stream'} | combine(goat_get_goatbuilder_gh_auth) }}"
     dest: "{{ goat_get_www_dir }}/{{ goat_get_goatbuilder_www_subdir }}/{{ item }}"
     mode: "0644"
     force: true

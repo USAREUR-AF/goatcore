@@ -135,7 +135,7 @@ tests:
               summary: "CRITICAL: zenoh router zagros blocked on slow consumers for 15m+"
               description: |
                 180 slow-consumer transport closes in 15 minutes —
-                the 2026-09-17 zagros outage shape. Identify the subscriber from
+                the 2026-09-17 outage shape. Identify the subscriber from
                 goat_zenoh_slow_consumer_last_close_timestamp_seconds and stop it
                 (stop the container or revoke the peer) rather than restarting the
                 router, which it will simply reconnect to. F-287 amendment.
@@ -196,8 +196,8 @@ tests:
                 The named list (zenoh_fabric_wide_read) is a grandfather list: it
                 names the peers that already held a whole-fabric subscription, so
                 enforcement broke nobody, and its purpose is to stop the NEXT one.
-                This counts SESSIONS, not identities: one named peer held three at
-                once on zagros, so the ceiling is a measured number plus headroom
+                This counts SESSIONS, not identities: one named peer has held three at
+                once, so the ceiling is a measured number plus headroom
                 (zenoh_health_fabric_wide_max_sessions), never the length of the
                 grant list. Over it means a new whole-fabric subscriber appeared, or
                 an existing one multiplied its sessions. Reconcile against the list

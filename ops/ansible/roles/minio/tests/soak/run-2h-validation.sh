@@ -9,8 +9,8 @@
 #
 # Run from a host that can reach MinIO (laptop or Orin-C operator):
 #   MINIO_HOST=192.168.1.253 \
-#   MINIO_USER=$VEGA_C_MINIO_ROOT_USER \
-#   MINIO_PASS=$VEGA_C_MINIO_ROOT_PASSWORD \
+#   MINIO_USER=<the MinIO root user> \
+#   MINIO_PASS=<the MinIO root password> \
 #   ops/ansible/roles/minio/tests/soak/run-2h-validation.sh
 #
 # What this validates:
@@ -41,12 +41,21 @@ SOAK_DURATION="${SOAK_DURATION:-2h}"
 TICK_INTERVAL=30  # seconds
 TODAY="$(date -u +%Y-%m-%d)"
 # EVIDENCE override env var lets the soak run from any directory (e.g.
-# /tmp on a remote host like NETHOST) where the repo isn't checked out.
+# /tmp on a remote host) where the repo isn't checked out.
 EVIDENCE="${EVIDENCE:-$REPO_ROOT/docs/reports/${TODAY}-minio-soak-evidence.jsonl}"
 
 MINIO_HOST="${MINIO_HOST:-192.168.1.253}"
 MINIO_USER="${MINIO_USER:-}"
 MINIO_PASS="${MINIO_PASS:-}"
+# The account ssh logs in to MINIO_HOST as: MINIO_SSH_USER, else the account
+# the project declares for its machines (deploy.ssh_user in
+# ops/goatbuilder/goatbuilder.yaml); with neither, ssh picks the account itself
+# (~/.ssh/config, else the local user name).
+MINIO_SSH_USER="${MINIO_SSH_USER:-}"
+if [ -z "$MINIO_SSH_USER" ] && [ -f "$REPO_ROOT/ops/goatbuilder/goatbuilder.yaml" ]; then
+  MINIO_SSH_USER="$(python3 -c 'import sys, yaml; print(str(((yaml.safe_load(open(sys.argv[1])) or {}).get("deploy") or {}).get("ssh_user") or "").strip())' "$REPO_ROOT/ops/goatbuilder/goatbuilder.yaml" 2>/dev/null || true)"
+fi
+MINIO_SSH_TARGET="${MINIO_SSH_USER:+${MINIO_SSH_USER}@}${MINIO_HOST}"
 
 if [ -z "$MINIO_USER" ] || [ -z "$MINIO_PASS" ]; then
   echo "ERROR: set MINIO_USER and MINIO_PASS" >&2
@@ -84,7 +93,7 @@ emit start "{\"duration_sec\":$SOAK_SEC,\"host\":\"$MINIO_HOST\"}"
 # Same bug bit the spike harness; fix is identical.
 mc_remote() {
   ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 \
-    "goat@$MINIO_HOST" \
+    "$MINIO_SSH_TARGET" \
     "sudo docker compose -f /opt/minio/docker-compose.yml run --rm --no-deps --entrypoint /bin/sh mc-init -c 'mc $*'"
 }
 

@@ -1,7 +1,7 @@
 // Command snitch monitors network performance across the goat mesh.
 //
 // Three modes:
-//   - serve: Start the HTTP dashboard and collector (runs on NETHOST)
+//   - serve: Start the HTTP dashboard and collector
 //   - probe: Run one measurement cycle and POST results to the collector
 //   - run:   Run one measurement cycle and print results locally
 package main
@@ -20,6 +20,7 @@ import (
 
 	"github.com/usareur-af/goatcore/ops/snitch/internal/auth"
 	"github.com/usareur-af/goatcore/ops/snitch/internal/collector"
+	"github.com/usareur-af/goatcore/ops/snitch/internal/compat"
 	"github.com/usareur-af/goatcore/ops/snitch/internal/identity"
 	"github.com/usareur-af/goatcore/ops/snitch/internal/measure"
 	"github.com/usareur-af/goatcore/ops/snitch/internal/server"
@@ -35,7 +36,14 @@ func main() {
 		os.Exit(1)
 	}
 
-	switch os.Args[1] {
+	// The earlier subcommand name runs the same command. Mapped before the
+	// switch: a build in which both names are the same string still compiles.
+	cmd := os.Args[1]
+	if cmd == compat.SatlinkProbeCommand {
+		cmd = "satlink-probe"
+	}
+
+	switch cmd {
 	case "serve":
 		cmdServe(os.Args[2:])
 	case "probe":
@@ -66,7 +74,7 @@ Commands:
   serve              Start the HTTP dashboard and collector
   probe              Run one measurement cycle and POST to collector
   run                Run one measurement cycle and print results
-  satlink-probe   Run one Satlink PoP benchmark and store results
+  satlink-probe      Run one satellite-link PoP benchmark and store results
   throughput-probe   Run one daily-throughput sample (single + multi flow iperf3)
   policy             Get/set the fleet-wide probe policy (off|minimal|default|focused-research)
   self-test          Exercise every probe step once and emit per-step JSON (multi-platform install verification)
@@ -75,10 +83,10 @@ Serve flags:
   --addr                  Listen address (default: :8080)
   --db-url                PostgreSQL connection string
   --key-file              Identity encryption key file (default: identity.key)
-  --satlink-interval   Satlink probe interval (default: 24h, 0 = disabled)
+  --satlink-interval      Satellite-link PoP probe interval (default: 24h, 0 = disabled)
 
 Probe flags:
-  --collector      Collector URL (default: http://100.127.1.32:8080)
+  --collector      Collector URL (required; or SNITCH_COLLECTOR)
   --interval       Repeat interval in seconds (0 = run once, default: 60)
   --probe-key      API key for authentication
 
@@ -94,8 +102,9 @@ func cmdServe(args []string) {
 	addr := fs.String("addr", ":8080", "listen address")
 	dbURL := fs.String("db-url", "", "PostgreSQL connection string")
 	keyFile := fs.String("key-file", "identity.key", "identity encryption key file")
-	satlinkInterval := fs.Duration("satlink-interval", 24*time.Hour, "Satlink probe interval (0 = disabled)")
+	satlinkInterval, compatInterval := satlinkIntervalFlags(fs)
 	_ = fs.Parse(args) //nolint:errcheck // ExitOnError terminates instead of returning an error
+	*satlinkInterval = resolveSatlinkInterval(fs, *satlinkInterval, *compatInterval)
 
 	// Database URL: flag > env > default.
 	if *dbURL == "" {
@@ -181,7 +190,8 @@ func cmdProbe(args []string) {
 		*collectorURL = os.Getenv("SNITCH_COLLECTOR")
 	}
 	if *collectorURL == "" {
-		*collectorURL = "http://100.127.1.32:8080"
+		fmt.Fprintln(os.Stderr, "snitch probe: no collector URL: pass --collector <url> or set SNITCH_COLLECTOR")
+		os.Exit(2)
 	}
 	if *probeKey == "" {
 		*probeKey = os.Getenv("SNITCH_PROBE_KEY")
@@ -458,7 +468,7 @@ func postReport(collectorURL, probeKey string, report *types.ProbeReport) error 
 //
 //	# 10-minute focused-research window:
 //	snitch policy set --mode focused-research --duration 10m \
-//	  --reason "weekly net-health snapshot" --set-by operator:maintainer
+//	  --reason "weekly net-health snapshot" --set-by operator:alice
 //
 //	# Abort an in-progress focused-research window early:
 //	snitch policy set --mode default --reason abort
@@ -472,7 +482,8 @@ func cmdPolicy(args []string) {
 	}
 	collectorURL := os.Getenv("SNITCH_COLLECTOR")
 	if collectorURL == "" {
-		collectorURL = "http://100.127.1.32:8080"
+		fmt.Fprintln(os.Stderr, "snitch policy: no collector URL: set SNITCH_COLLECTOR")
+		os.Exit(2)
 	}
 	switch args[0] {
 	case "get":
@@ -620,6 +631,33 @@ func cmdThroughputProbe(args []string) {
 	}
 }
 
+// satlinkIntervalFlags defines --satlink-interval and its earlier name on fs.
+// Where both names are the same string, one flag is defined and both results
+// point at it (defining a flag twice panics).
+func satlinkIntervalFlags(fs *flag.FlagSet) (current, earlier *time.Duration) {
+	current = fs.Duration("satlink-interval", 24*time.Hour, "satellite-link PoP probe interval (0 = disabled)")
+	if fs.Lookup(compat.SatlinkIntervalFlag) != nil {
+		return current, current
+	}
+	earlier = fs.Duration(compat.SatlinkIntervalFlag, 24*time.Hour, "earlier name of --satlink-interval (wins when both are set)")
+	return current, earlier
+}
+
+// resolveSatlinkInterval applies the earlier flag name when it was given on
+// the command line; it wins over --satlink-interval when both are set.
+func resolveSatlinkInterval(fs *flag.FlagSet, current, earlier time.Duration) time.Duration {
+	set := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == compat.SatlinkIntervalFlag {
+			set = true
+		}
+	})
+	if set {
+		return earlier
+	}
+	return current
+}
+
 func cmdSatlinkProbe(args []string) {
 	fs := flag.NewFlagSet("satlink-probe", flag.ExitOnError)
 	dbURL := fs.String("db-url", "", "PostgreSQL connection string")
@@ -639,7 +677,7 @@ func cmdSatlinkProbe(args []string) {
 	}
 	defer st.Close()
 
-	log.Println("running Satlink PoP benchmark...")
+	log.Println("running satellite-link PoP benchmark...")
 	result, err := measure.RunSatlinkProbe(ctx)
 	if err != nil {
 		log.Fatalf("probe failed: %v", err)

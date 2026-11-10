@@ -1,6 +1,7 @@
 # ADR 1169 — A federated partner may hold a release-set audience slot, validated by the existing SPIRE federation
 
 - **Status:** **Accepted, and decisions 2 and 3 are built** (2026-09-07). Still nothing changes in a live goatnet on merge: the key scope is rendered only when an operator names an audience, and unsealed exchange remains the default. Proven end to end on a two-region peering — `grant-keyd` rotated with a federated member (`spiffe://xaa.fed.lab/member/partner`) and that partner fetched `keys/weather/1` across the edge; with no audience named the same fetch is refused. Three defects in the shipped rule had to be fixed first (F-499).
+- **Not yet usable between two real environments.** `grant-keyd` reads a federated member's certificate from a file staged by hand on the sealing side, and the SVID key it wraps to changes hourly. [ADR 1223](1223-federated-recipient-key-crosses-the-boundary-signed-and-long-lived.md) (Proposed) replaces decision 2's key source with a signed, long-lived recipient key the partner publishes.
 - **Date:** 2026-09-06
 - **Deciders:** operator
 - **Evidence:** F-481 — the partner edge grants no read on the key topic, so a federated partner cannot obtain a data key and can neither read sealed data nor seal its own.

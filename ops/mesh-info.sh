@@ -11,9 +11,18 @@ set -euo pipefail
 #   bash ops/mesh-info.sh peers        Connected peers
 #   bash ops/mesh-info.sh dns          DNS resolution test
 #   bash ops/mesh-info.sh scan [port]  Scan peers for open ports
+#
+# Values a deployment sets in its ops/env-aliases.d/*.sh
+# (ops/scripts/lib/env-aliases.sh), each with an example default:
+#   NETBIRD_DOMAIN         the mesh's NetBird domain
+#   NETHOST_MESH_ADDRESS   the network host's mesh address, where its CoreDNS answers
+#   MESH_KNOWN_NAMES       names under NETBIRD_DOMAIN to test when no mesh-hosts file is found
+
+# shellcheck source=scripts/lib/env-aliases.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/scripts/lib/env-aliases.sh"
 
 CMD="${1:-all}"
-DOMAIN="netbird.legacy.example"
+DOMAIN="${NETBIRD_DOMAIN:-netbird.legacy.example}"
 
 # Colors
 B='\033[1m'
@@ -70,7 +79,7 @@ show_peers() {
 }
 
 show_dns() {
-  local nethost_dns="100.127.1.32"
+  local nethost_dns="${NETHOST_MESH_ADDRESS:-100.127.1.23}"
 
   printf "${B}DNS resolver test:${N}\n"
 
@@ -121,7 +130,7 @@ show_dns() {
     done < "$hosts_file"
   else
     echo "  (mesh-hosts file not found — checking known names)"
-    for name in goat demogame; do
+    for name in ${MESH_KNOWN_NAMES:-goat airdefenders}; do
       local fqdn="$name.$DOMAIN"
       local resolved
       resolved=$(dig +short @"$nethost_dns" -p 5353 "$fqdn" 2>/dev/null || echo "")

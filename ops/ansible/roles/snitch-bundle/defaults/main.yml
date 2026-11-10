@@ -10,7 +10,7 @@
 # Path on the peer where the bootstrap bundle was unpacked. The
 # snitch binary lives at <unpacked>/binaries/snitch on Block 61's
 # bundle layout.
-snitch_bundle_unpack_dir: /opt/goat/bootstrap
+snitch_bundle_unpack_dir: "{{ goat_host_opt_dir | default('/opt/goat') }}/bootstrap"
 
 # Path on the peer where the per-device offline-enrollment bundle was
 # placed at provisioning. The role reads `snitch_probe_key` (32 bytes,
@@ -19,11 +19,17 @@ snitch_bundle_unpack_dir: /opt/goat/bootstrap
 # alternative: pass via inventory `snitch_probe_key` directly for
 # inventory-managed hosts where the Ansible operator already has the key
 # in 1Password / Vault).
-snitch_enrollment_bundle_path: /etc/goat/enrollment/enrollment.cbor
+snitch_enrollment_bundle_path: "{{ goat_host_etc_dir | default('/etc/goat') }}/enrollment/enrollment.cbor"
 
-# Snitch collector reachable via wg-cp0; default expects mgmt VIP. For
-# legacy mesh-IP peers, override to the legacy mesh IP (100.127.1.32).
-snitch_collector_url: "http://snitch.netbird.legacy.example:8080"
+# launchd label of the probe on macOS; the plist is
+# /Library/LaunchDaemons/<label>.plist. A fleet whose Macs already run the
+# probe under another label sets that label.
+snitch_probe_launchd_label: "net.goat.snitch-probe"
+
+# Snitch collector the probe reports to. The value here is an example:
+# every goatnet that enables snitch sets its own collector in group_vars
+# (standup-config-preflight.py refuses snitch_enabled with none).
+snitch_collector_url: "http://snitch.goat.example:8080"
 
 # Probe interval base (seconds). Actual sleep jitters [base-5, base+5].
 snitch_probe_interval: 60
@@ -52,7 +58,7 @@ snitch_probe_disabled: ""
 
 # F-074 fallback: operator-laptop-staged binary for the snitch probe when
 # the on-host bundle layout isn't laid down. Block 68 rapid-bringup was
-# supposed to lay down /opt/goat/bootstrap/binaries/snitch but
+# supposed to lay down <snitch_bundle_unpack_dir>/binaries/snitch but
 # doesn't yet; the Linux task list copies from a controller-side
 # pre-staged path when the on-host path is empty. The repo is PRIVATE
 # (Block 30 sanitization gate), so direct unauthenticated GitHub release
@@ -62,9 +68,9 @@ snitch_probe_disabled: ""
 #
 # When the repo is public-facing (post-Block 30), switch back to the
 # get_url+URL pattern for unauthenticated CDN downloads.
-snitch_release_local_path: "{{ lookup('env', 'HOME') }}/.goat/state/snitch-binaries"
-# Self-referential — the repo the operator is told to `gh release download`
-# from should be the one they are deploying from, not a hardcoded side.
+snitch_release_local_path: "{{ goat_controller_state_dir | default(lookup('env', 'HOME') ~ '/.goat/state') }}/snitch-binaries"
+# Resolves through `source_repo` to the repo the operator is told to
+# `gh release download` from.
 # Declaring it here (rather than inline in the task message) is also what
 # makes it visible to ops/ci/check-release-asset-parity.sh, which pairs
 # `<prefix>_release_repo` with `<prefix>_release_tag`.
@@ -77,7 +83,7 @@ snitch_bundle_marker_dir: "/var/lib/goat/snitch-bundle"
 # Re-stage the probe binary even when one is already present.
 #
 # WHY THIS EXISTS. The release-download fallback below is gated on the staged
-# binary being ABSENT, so once /opt/goat/bootstrap/binaries/snitch exists
+# binary being ABSENT, so once <snitch_bundle_unpack_dir>/binaries/snitch exists
 # it is reused forever — however old. A rebuilt binary therefore never reaches
 # the hosts: the copy compares against the stale source, reports changed=0, and
 # the deploy looks successful while the probes keep running the previous build.

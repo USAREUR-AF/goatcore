@@ -54,7 +54,7 @@ impl SealTrust {
         })?;
         let trust_domain = trust_domain.ok_or_else(|| {
             anyhow::anyhow!(
-                "--sealed/--open needs --trust-domain <td> (e.g. zagros.zagros.example)"
+                "--sealed/--open needs --trust-domain <td> (e.g. zagros.goat.example)"
             )
         })?;
         let key_service_id =

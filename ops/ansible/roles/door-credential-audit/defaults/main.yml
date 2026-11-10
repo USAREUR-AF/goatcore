@@ -28,6 +28,13 @@ door_credential_audit_enabled: false
 # with different values if a host should watch both.
 door_credential_audit_plane: public
 
+# The base URL of that door's Kanidm (https://idm.<zone>), written into the
+# unit's environment as PUBLIC_DOOR_KANIDM_URL or COLLAB_KANIDM_URL: the audit
+# script has no built-in door. Defaults to what the fleet-wide variables
+# declare for the plane (public_door_kanidm_url / collab_door_kanidm_url); the
+# role refuses to install with none.
+door_credential_audit_door_url: "{{ (public_door_kanidm_url if door_credential_audit_plane == 'public' else collab_door_kanidm_url) | default('', true) }}"
+
 # Credential for the read. Prefer a READ-SCOPED service-account bearer, minted
 # with ops/scripts/create-door-audit-identity.sh — this host then holds a
 # credential that can list persons and nothing else.

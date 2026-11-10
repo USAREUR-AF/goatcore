@@ -6,7 +6,7 @@ change to one IS the access-control decision, so the checks here are about
 making a bad declaration impossible to merge quietly rather than about schema
 tidiness.
 
-Run: python3 ops/federation/validate-partners.py
+Run: python3 ops/federation/validate-partners.py [--partners DIR]
 """
 import os
 import re
@@ -20,6 +20,8 @@ except ImportError:
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PARTNERS = os.path.join(HERE, "partners")
+if "--partners" in sys.argv:
+    PARTNERS = sys.argv[sys.argv.index("--partners") + 1]
 LEVELS = ("recognised", "connected", "exchanging")
 REQUIRED = ("sovereign_id", "level", "partner_cn", "ingress", "egress", "rationale")
 
@@ -34,6 +36,12 @@ OURS = {
     "goat-node-net-health-trial-peer", "goat-consistency-health-trial-peer",
     "goat-fabric-crawler-trial-peer", "goat-consistency-console-trial-peer",
 }
+
+# A peering forwarder, when one side listens through one (ADR 1218,
+# docs/design/peering-forwarder.md §6). Optional; when present, every key is required.
+FORWARDER_KEYS = ("operator", "placement", "endpoint")
+PLACEMENTS = ("cloud-vm", "owned-site")
+ENDPOINT = re.compile(r"([A-Za-z0-9.-]+|\[[0-9A-Fa-f:]+\]):([0-9]{1,5})")
 
 errs, seen_cn, seen_id, n = [], {}, {}, 0
 
@@ -89,6 +97,29 @@ for fn in sorted(os.listdir(PARTNERS)) if os.path.isdir(PARTNERS) else []:
                 bad(path, f"ingress {k!r} must sit under from/{sid}/ so data is "
                           "attributable by prefix, which is the only authenticated "
                           "attribution available across a boundary")
+
+    if "forwarder" in d:
+        fw = d["forwarder"]
+        if not isinstance(fw, dict):
+            bad(path, "forwarder must be a mapping with operator, placement and endpoint")
+        else:
+            for k in FORWARDER_KEYS:
+                if fw.get(k) in (None, ""):
+                    bad(path, f"forwarder.{k} is required when a forwarder is declared")
+            for k in sorted(set(fw) - set(FORWARDER_KEYS)):
+                bad(path, f"forwarder.{k} is not a forwarder field ({', '.join(FORWARDER_KEYS)})")
+            op = fw.get("operator")
+            if op and not re.fullmatch(r"[a-z0-9][a-z0-9-]{1,15}", str(op)):
+                bad(path, f"forwarder.operator {op!r} must be the sovereign_id of the party that runs it")
+            pl = fw.get("placement")
+            if pl and pl not in PLACEMENTS:
+                bad(path, f"forwarder.placement must be one of {PLACEMENTS}, got {pl!r}")
+            ep = fw.get("endpoint")
+            if ep:
+                m = ENDPOINT.fullmatch(str(ep))
+                if not m or not 1 <= int(m.group(2)) <= 65535:
+                    bad(path, f"forwarder.endpoint {ep!r} must be host:port, the address the "
+                              "partner dials, as transport_offer.endpoint carries it")
 
     if len(str(d["rationale"]).strip()) < 20:
         bad(path, "rationale is too short to be a review artifact")

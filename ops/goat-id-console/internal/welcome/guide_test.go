@@ -255,8 +255,8 @@ func TestGuide_deadlinesRenderAsTheirOwnElement(t *testing.T) {
 // Repo links are composed from a configurable base because repositories get
 // renamed and move orgs. With no base, names still render, with an ask note.
 func TestGuide_repoCatalogueSurvivesRenamesAndOrgMoves(t *testing.T) {
-	withBase := renderGuide(t, "developer", "repos", "https://github.com/usareur-af")
-	if !strings.Contains(withBase, "https://github.com/usareur-af/hello-galaxy-zenoh-patterns") {
+	withBase := renderGuide(t, "developer", "repos", "https://github.com/example-org")
+	if !strings.Contains(withBase, "https://github.com/example-org/hello-galaxy-zenoh-patterns") {
 		t.Error("a configured base should compose real links")
 	}
 	noBase := renderGuide(t, "developer", "repos", "")
@@ -827,7 +827,7 @@ func TestGuide_identityAdminCarriesTheRetiredConsolePageContent(t *testing.T) {
 		"ADMIN APPROVES",
 		"onboarding queue",
 		// the two group vocabularies, and that they do not mix
-		"ZAGROS-DEVELOPER",
+		"GALAXY-DEVELOPER",
 		"PLATFORM-ADMIN",
 		"grants nothing",
 		// changing a role later — the save IS the notification

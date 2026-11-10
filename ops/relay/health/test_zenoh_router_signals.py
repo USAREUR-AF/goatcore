@@ -87,9 +87,9 @@ class TailTests(unittest.TestCase):
 
 class CensusTests(unittest.TestCase):
     ADMIN = {"sessions": [
-        {"peer": "aaa", "whatami": "client", "links": [{"dst": "tls/100.127.0.45:5000"}]},
-        {"peer": "bbb", "whatami": "router", "links": [{"dst": "tls/100.127.0.111:58674"}]},
-        {"peer": "ccc", "whatami": "router", "links": [{"dst": "tls/100.127.0.110:44936"}]},
+        {"peer": "aaa", "whatami": "client", "links": [{"dst": "tls/100.127.0.41:5000"}]},
+        {"peer": "bbb", "whatami": "router", "links": [{"dst": "tls/100.127.0.107:58674"}]},
+        {"peer": "ccc", "whatami": "router", "links": [{"dst": "tls/100.127.0.106:44936"}]},
         {"peer": "ddd", "whatami": "peer", "links": [{"dst": "tls/172.19.0.14:57122"}]},
     ]}
     NETS = [ipaddress.ip_network("172.19.0.0/16")]
@@ -104,16 +104,16 @@ class CensusTests(unittest.TestCase):
         self.assertEqual(remote, ["ccc"])
 
     def test_allow_list_accepts_addresses_because_zids_are_not_stable(self):
-        # bbb is 100.127.0.111, ccc is 100.127.0.110. Declaring bbb BY ADDRESS
+        # bbb is 100.127.0.107, ccc is 100.127.0.106. Declaring bbb BY ADDRESS
         # must exclude it even though its ZID is not listed — the whole point,
         # since a third-party router's ZID changes when it restarts.
-        zids, nets = signals.parse_allow("100.127.0.111")
-        self.assertEqual((zids, [str(n) for n in nets]), (set(), ["100.127.0.111/32"]))
+        zids, nets = signals.parse_allow("100.127.0.107")
+        self.assertEqual((zids, [str(n) for n in nets]), (set(), ["100.127.0.107/32"]))
         _, remote = signals.session_census(self.ADMIN, zids, self.NETS, nets)
         self.assertEqual(remote, ["ccc"])
 
         # A CIDR covers a range; mixing a ZID and an address works.
-        zids2, nets2 = signals.parse_allow("bbb, 100.127.0.109/24")
+        zids2, nets2 = signals.parse_allow("bbb, 100.127.0.105/24")
         self.assertEqual(zids2, {"bbb"})
         _, remote2 = signals.session_census(self.ADMIN, zids2, self.NETS, nets2)
         self.assertEqual(remote2, [])
@@ -133,10 +133,10 @@ class CensusTests(unittest.TestCase):
 class LinklessTests(unittest.TestCase):
     # #1922: entries whose teardown never finished keep a table slot and no link.
     ADMIN = {"sessions": [
-        {"peer": "aaa", "whatami": "client", "links": [{"dst": "tls/100.127.0.45:5000"}]},
+        {"peer": "aaa", "whatami": "client", "links": [{"dst": "tls/100.127.0.41:5000"}]},
         {"peer": "bbb", "whatami": "client", "links": []},
         {"peer": "ccc", "whatami": "client"},
-        {"peer": "ddd", "whatami": "router", "links": [{"dst": "tls/100.127.0.111:58674"}]},
+        {"peer": "ddd", "whatami": "router", "links": [{"dst": "tls/100.127.0.107:58674"}]},
     ]}
 
     def test_counts_sessions_with_no_link(self):

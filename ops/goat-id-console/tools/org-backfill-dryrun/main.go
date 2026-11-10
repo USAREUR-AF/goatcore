@@ -18,9 +18,9 @@
 //     (similar spelling is not the same org — the allen pair is exactly why),
 //     resolved later as `goat admin org merge` (with the governance-union
 //     acknowledgment) or dismissed as `--despite` negative pairs;
-//  3. CHAIN — parent attachments already decided by canon (today: the two
-//     region C orgs under a to-be-created org125x root, per the
-//     design doc's worked example — flat is the explicit interim, attaching
+//  3. CHAIN — parent attachments already decided by canon (the design
+//     doc's worked example: existing flat orgs attached under a
+//     to-be-created root — flat is the explicit interim, attaching
 //     parents re-keys nothing).
 //
 // This tool MUTATES NOTHING: no network, no DB. Apply is a separate operator
@@ -29,7 +29,7 @@
 //
 //	Run: cd ops/goat-id-console && go run ./tools/org-backfill-dryrun \
 //	       --roster ../../docs/operators/roster.json \
-//	       --catalog ../../ops/identity/orgs/zagros.yaml > report.md
+//	       --catalog ../../ops/identity/orgs/<goatnet>.yaml > report.md
 package main
 
 import (
@@ -65,8 +65,12 @@ func str(p *string) string {
 
 func main() {
 	rosterPath := flag.String("roster", "docs/operators/roster.json", "committed roster projection")
-	catalogPath := flag.String("catalog", "ops/identity/orgs/zagros.yaml", "committed org catalog (yaml)")
+	catalogPath := flag.String("catalog", "", "committed org catalog (yaml), e.g. ops/identity/orgs/<goatnet>.yaml (required)")
 	flag.Parse()
+	if *catalogPath == "" {
+		fmt.Fprintln(os.Stderr, "--catalog is required (e.g. ops/identity/orgs/<goatnet>.yaml)")
+		os.Exit(2)
+	}
 
 	raw, err := os.ReadFile(*rosterPath)
 	if err != nil {
@@ -269,12 +273,11 @@ func main() {
 
 	fmt.Println("## 3. CHAIN — canon-decided parent attachments")
 	fmt.Println()
-	fmt.Println("Per the design doc's worked example (§9): create `org125x`")
-	fmt.Println("(root, partner, SVN, operator-verified) and attach the two existing flat")
-	fmt.Println("orgs — zero credential/grant churn by construction:")
+	fmt.Println("Per the design doc's worked example (§9): register the root org")
+	fmt.Println("(partner, its nation, operator-verified) and attach the existing flat")
+	fmt.Println("orgs under it — zero credential/grant churn by construction:")
 	fmt.Println()
-	fmt.Println("    goat admin org register org125x --kind partner --nation SVN \\")
-	fmt.Println("      --display-name \"org125x\"")
-	fmt.Println("    goat admin org set-parent org123x --parent org125x")
-	fmt.Println("    goat admin org set-parent org130x --parent org125x")
+	fmt.Println("    goat admin org register <root-org> --kind partner --nation <ISO3> \\")
+	fmt.Println("      --display-name \"<Root Org Name>\"")
+	fmt.Println("    goat admin org set-parent <flat-org> --parent <root-org>")
 }

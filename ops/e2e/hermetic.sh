@@ -123,6 +123,9 @@ if [ "$HOSTS" = 1 ]; then
   grep -q ' ghcr.io$' /etc/hosts || echo "127.0.0.1 ghcr.io" | sudo tee -a /etc/hosts >/dev/null
   for _i in $(seq 1 30); do curl -s --cacert "$CERTS/cert.pem" https://ghcr.io/v2/ >/dev/null 2>&1 && break; sleep 1; done
   curl -s --cacert "$CERTS/cert.pem" https://ghcr.io/v2/ >/dev/null || die "the hermetic registry did not come up as ghcr.io"
+  # dockerd is a Go program: its resolver caches /etc/hosts for up to 5 s, so a
+  # push right after the re-point can still reach the real ghcr.io. Wait it out.
+  sleep 6
   say "images: the canary at three stamps"
   build_push() { # $1 tag, $2 stamp -> the digest the registry holds
     docker build -q --build-arg "CANARY_STAMP=$2" -t "ghcr.io/usareur-af/e2e-canary:$1" "$HERE/canary" >/dev/null
@@ -397,6 +400,36 @@ say "cases: the first-run page's commands, run as written"
 rec doc-as-test-first-run-live --expect-in "first-run page:" \
   -- python3 "$HERE/doc-as-test.py" "$CLONE/docs/operations/goatbuilder-first-run.md" --section "A deploy, with its proof" \
      --map "<goatnet>=e2e_dev" --map "<component>=e2e-canary" --map "zagros_dev=e2e_dev" --map "netvis=e2e-canary" --map "goatbuilder=${GB:-$HERE/stubs/goatbuilder-absent}" --cwd "$CLONE"
+
+# The teardown plays (ops/goatbuilder/teardown.yaml, goatbuilder-speed.md
+# "Teardown"): a service stopped by name inside its compose project, then the
+# project brought down, each proved from the host, a teardown.jsonl row written
+# and the deploy ledger left as it was. Last, because the canary stops.
+say "cases: the teardown plays against the dev canary"
+dev_ip="$(awk '$0=="[e2e_dev_hosts]"{f=1;next} /^\[/{f=0} f && /ansible_host=/{sub(/.*ansible_host=/,""); sub(/[[:space:]].*/,""); print; exit}' "$CLONE/ops/ansible/inventory/mgmt-hosts.ini")"
+canary_svc="$(ssh "goat@$dev_ip" "sudo sed -n 's/^ *container_name: *//p' /opt/e2e-canary/docker-compose.yml" | head -1)"
+ledger_before="$(ledger_rows e2e_dev e2e-canary | tr -d ' ')"
+rec teardown-service-stop-stops-the-named-service --expect-in "failed=0" \
+  -- bash -c "cd '$CLONE/ops/ansible' && ansible-playbook -i inventory/mgmt-hosts.ini teardown-service-stop.yml -e target=e2e_dev_hosts -e teardown_component=e2e-canary -e teardown_project=/opt/e2e-canary -e 'teardown_services=[\"$canary_svc\"]'"
+rec teardown-compose-down-proves-nothing-runs --expect-in "failed=0" \
+  -- bash -c "cd '$CLONE/ops/ansible' && ansible-playbook -i inventory/mgmt-hosts.ini teardown-compose.yml -e target=e2e_dev_hosts -e teardown_component=e2e-canary -e 'teardown_dirs=[{\"var\":\"e2e_canary_dir\",\"default\":\"/opt/e2e-canary\"}]'"
+rec teardown-records-two-rows --expect-in "teardown rows: 2" \
+  -- bash -c "echo \"teardown rows: \$(ssh 'goat@$dev_ip' 'sudo wc -l < /var/lib/goat/e2e-canary/teardown.jsonl' | tr -d ' ')\""
+rec teardown-leaves-the-deploy-ledger --expect-in "ledger rows: $ledger_before" \
+  -- bash -c "echo \"ledger rows: \$(ssh 'goat@$dev_ip' 'sudo wc -l < /var/lib/goat/e2e-canary/deploy-history.jsonl' | tr -d ' ')\""
+
+# The site-cache client (goatbuilder-speed.md sink 6): apt's proxy probe names
+# the cache when it answers and DIRECT when it does not, so a cache that is down
+# never stops an apt run. The host's own sshd stands in for an answering cache.
+say "cases: the site-cache client falls back when the cache does not answer"
+rec site-cache-client-applies \
+  -- bash -c "cd '$CLONE/ops/ansible' && ansible e2e_dev_hosts -i inventory/mgmt-hosts.ini -b -m include_role -a name=site-cache-client -e site_cache_host=127.0.0.1 -e site_cache_apt_port=22"
+rec site-cache-probe-names-an-answering-cache --expect-in "http://127.0.0.1:22" \
+  -- ssh "goat@$dev_ip" /usr/local/bin/goat-apt-proxy-detect
+rec site-cache-client-falls-back-direct --expect-in "DIRECT" \
+  -- bash -c "cd '$CLONE/ops/ansible' && ansible e2e_dev_hosts -i inventory/mgmt-hosts.ini -b -m include_role -a name=site-cache-client -e site_cache_host=127.0.0.1 -e site_cache_apt_port=1 >/dev/null && ssh 'goat@$dev_ip' /usr/local/bin/goat-apt-proxy-detect"
+rec site-cache-client-apt-reads-the-probe --expect-in "goat-apt-proxy-detect" \
+  -- ssh "goat@$dev_ip" "apt-config dump | grep -i proxy-auto-detect"
 
 record_ledgers
 python3 "$HERE/report.py" "$RECORD" --check --title "deployment e2e (hermetic)" || true

@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | **Measured and partly built** (2026-10-29). Built: SSH multiplexing for direct hosts, per-phase timing, a static required-input scan as a phase-1 gate, phase 12 in dependency waves (`--parallel`), the bot-token pause removed, and a services teardown in both avenues. Designed with dates: phase-8 enrolment as a scripted step, host install per node class, a site-local image mirror, and the rest of the teardown |
+| Status | **Built; the hour not yet measured on hardware.** Built: SSH multiplexing for direct hosts, per-phase timing, a static required-input scan as a phase-1 gate, phase 12 in dependency waves (`--parallel`), the bot-token pause removed, phase 8 enrolment as a scripted step, a parallel pre-pull of every pinned image, the site cache on the obs host, and a teardown with a built way down for every step that is not refused, in both avenues. The autoinstall seed per node class is built and **Status: WIP, not for production use — gate: a timed host baseline on a seeded Karbon 801 against a stock one, recorded as a measurement** |
 | Design | [goatbuilder.md](goatbuilder.md) §"Standing up a goatnet in an hour" · [phoenix-architecture.md](phoenix-architecture.md) · [ADR 1201](../adr/1201-two-avenues-scripts-documented-cli-supported.md) (both avenues) |
 | Targets | founder site declared → verified ≤ 60 min · one new node ≤ 15 min · burn-down to nothing, records kept ≤ 15 min |
 
@@ -19,10 +19,10 @@ Ranked by the minutes each costs a founder standup:
 |---|---|---|---|---|
 | 1 | Defects found during the run, one stop each | hours to days; the inchworm skill's case: 16 runs of a 5-min play to find 12 missing inputs, 80 min | **built**: `goatbuilder doctor --site <s>` and the phase-1 gate in both avenues scan every play the plan reaches for inputs it requires and secrets it reads, in one pass | **measured**: one scan takes 6–13 s per site. **Modelled**: each input it names is one stopped run avoided |
 | 2 | A fresh SSH connection per Ansible task | 62–133 min | **built**: multiplexing for direct hosts | **modelled** from M-120's measured per-call cost: 14–30 min remain |
-| 3 | Human pauses | each one waits on a person; any absence adds hours | **built**: the bot step reads its token and continues. **Designed**: phase 8 as a scripted step (2026-11-13). Phase 11 stays a person: the first NetBird token needs a browser login | one stop removed; phase 8 saves one more |
+| 3 | Human pauses | each one waits on a person; any absence adds hours | **built**: the bot step reads its token and continues; phase 8 enrols the hosts and re-mints the router certificate with no one at the keyboard. Phase 11 stays a person: the first NetBird token needs a browser login | two stops removed; phase 11 is the one left |
 | 4 | Serial phase-12 steps | 14 steps one after another | **built**: every step declares `needs:`; `--parallel` runs them in 6 waves | **modelled**: 14 step-durations become 6, about 8 min at a minute a step |
-| 5 | Host baseline + LUKS per host (215 tasks) | 10–20 min per host (**modelled**) | **designed**: an installer seed per node class (2026-11-27) | **modelled**: 3–5 min per host |
-| 6 | Image pulls per role | unmeasured | **designed**: a site-local mirror on the obs host, plus a pre-pull of every pinned digest (2026-11-20) | warm mirror only: rebuilds and joiners, not the first standup |
+| 5 | Host baseline + LUKS per host (215 tasks) | 10–20 min per host (**modelled**) | **built, WIP**: an autoinstall seed per node class (`node-seed.py`); unproven until a seeded host is timed | **modelled**: 3–5 min per host |
+| 6 | Image pulls per role | unmeasured | **built**: every pinned image pulled on the box in parallel between phases 2 and 5; the obs host runs apt-cacher-ng and a registry mirror, and a core host that declares `site_cache_host` uses both, with fallback to upstream | pre-pull: phases 3–4 overlap the pulls. Cache: apt and Docker Hub pulls on rebuilds and joiners, not the first standup; ghcr.io images do not go through it (below) |
 | 7 | Fact gathering per play | small | `gathering = smart` with a one-hour cache | none needed |
 
 Hosts in one play already run together: `ansible.cfg` sets `forks = 10`, and the
@@ -37,7 +37,7 @@ obs leg runs beside the core host. Sink 5's saving is per host, not per site.
 | 3–4 secrets, leaf certs, name snapshot | 2 | **modelled** |
 | 5–6 mgmt stack, relay connect, identity | 15 | **modelled** |
 | 7 public TLS and relay | 5 | **modelled** |
-| 8 enrolment (scripted, 2026-11-13) | 3 | **modelled** |
+| 8 enrolment (scripted) | 3 | **modelled** |
 | 9 router and workload identity | 5 | **modelled** |
 | 10–11 dashboard, OIDC clients, first admin and token | 4 | a person, phase 11 |
 | 12 services in 6 waves | 8 | **modelled**, sink 4 |
@@ -47,8 +47,10 @@ obs leg runs beside the core host. Sink 5's saving is per host, not per site.
 
 The first timed run on hardware replaces the modelled rows. A new node is the
 phase-1 and class-converge subset: ≤ 15 min. A burn-down of the services is
-phase 12 in reverse: ≤ 5 min (**modelled**). The rest of a burn-down waits on the
-designed teardown steps below.
+phase 12 in reverse: ≤ 5 min (**modelled**). `--services` from phase 1 also stops
+the router, SPIRE, the dashboard, the relay tunnel and the obs stacks; no timed
+run backs a number for that yet. The NetBird account, the identity store and the
+database come down only by a person's hand.
 
 ## What is built
 
@@ -112,7 +114,66 @@ The bot step in phase 12 used to stop the run so a person could export
 `FORGEJO_PUBSUB_TOKEN` and resume. It now reads the token from the operator's
 envrc with `ops/scripts/envrc-var.sh` and continues. `goatbuilder` does the same.
 
-### Teardown of the services
+### Phase 8 enrolment as a scripted step (sink 3)
+
+Phase 8 was a person: run the `netbird up` line `ops/preflight-enrollment.sh`
+printed, check the peer, fill the mesh IP into inventory and re-mint the router
+certificate. It is two steps now, in both avenues, on an internet site:
+
+| Step | What it does |
+|---|---|
+| 8 A `mesh-enroll-host.yml -e target=<site>_hosts` | per host, one at a time: nothing if `netbird status --json` already shows the management connection and a mesh IP. Otherwise it checks the site's declared `mesh_enrollment_url` against where the host resolves the name and refuses a pair that disagrees; mints a single-use key (one use, one hour, role bootstrap) with `mgmt-host-bootstrap create-setup-key` on the site's first host; hands it to `netbird up --setup-key-file` through a 0600 file under `/run`, removed afterwards; adds the rosenpass flags when `rosenpass_enabled`; waits up to `mesh_enroll_wait_seconds` (180 s) for the connection and a mesh IP. It writes each host's IP to `~/.goat/state/standup-<site>-mesh-ips.json` |
+| 8 T `standup-mesh-record.py <site> --ips <file>` | `mesh_ip_a` / `mesh_ip_b` in the site's group_vars (the manifest's mesh-IP placeholders resolve from them), each host's `ansible_host` in its `mgmt-hosts-mesh.ini` line (a host with no line keeps its transport), a literal old IP in the manifest's router leaf, then the router pair re-minted. A second run with the same IPs mints nothing |
+
+`mesh_enrollment_url` is declared per site in group_vars. The key
+is minted on the first host because that is where the NetBird database is; for
+the second host of a pair it crosses the Ansible connection under `no_log`.
+Phase 11 stays a person: the first NetBird token needs a browser login by the
+first admin.
+
+### Image pre-pull and the site cache (sink 6)
+
+| Part | What it does |
+|---|---|
+| pre-pull | `standup-image-pull.yml` starts after phase 2 and is joined before phase 5: every image the site's pins name, pulled on the site's hosts four at a time, every failure named in one run |
+| site cache | the obs leg's host play (from phase 2) applies the `apt-cacher-ng` (:3142) and `docker-registry-mirror` (docker.io :5000, ghcr.io :5001, quay.io :5002) roles on the obs host's NVMe |
+| cache client | a core host whose group_vars set `site_cache_host` (the obs host's LAN address) gets it as Docker's registry mirror in `daemon.json` (docker-engine role) and as apt's proxy through a probe (`site-cache-client` role, first in `mgmt-host-baseline.yml`) that answers the cache's URL when it accepts a connection and `DIRECT` when it does not. Unset, neither file changes, so no daemon restarts |
+
+Docker has a mirror setting for Docker Hub only. The goat images on ghcr.io
+therefore pull from ghcr.io on every host; the pre-pull makes those pulls
+parallel, and the cache serves apt packages and Docker Hub images. A rebuild
+after a burn-down, and every node that joins, finds the cache warm; the first
+standup of a site fills it.
+
+### The autoinstall seed per node class (sink 5)
+
+**Status: WIP, not for production use — gate: a timed host baseline on a seeded
+Karbon 801 against a stock one, recorded as a measurement.**
+
+A cloned disk image is ruled out: a cloned LUKS header gives every host the same
+volume key, and host-site-node-disk-encryption.md
+starts from LUKS created by each host's own installer. Ubuntu Pro attachment and
+FIPS enablement are per machine with a token and a reboot.
+
+`ops/goatbuilder/node-classes.yaml` declares the class `x86-tpm2` (the Karbon 801
+core and obs nodes). `ops/scripts/node-seed.py <site> --host <h> --class x86-tpm2`
+writes a NoCloud seed (`user-data` + `meta-data`, 0600) to
+`~/.goat/state/seeds/<h>/`:
+
+| Part | Where it runs |
+|---|---|
+| LUKS-encrypted LVM on the class's disk (the largest NVMe, or `--disk-serial`): the `crypto_LUKS` → `ubuntu-vg` layout the LUKS role asserts, with the host's `<HOST>_LUKS_PASS` from the secrets posture | the installer |
+| the class's packages plus the `luks-unlock` and `tang-server` default lists, read at generation time; through the site cache when `site_cache_host` is declared | the installer |
+| `goat`, key-only SSH from `PLATFORM_ADMIN_SSH_PUBKEYS`, passwordless sudo, a locked password | the installer |
+| `/etc/goat/node-seed.json`: the class and the seed's hash | a late command |
+| Pro attach, FIPS enable, the TPM2 or Tang unlock slot | the existing plays, unchanged |
+
+The seed holds the LUKS passphrase, so it belongs on the install media only. The
+baseline play then converges a host that is already most of the way there. The
+Raspberry Pi 5 (`tang_initramfs`) has no class: it installs from the Raspberry Pi
+image, which has no autoinstall.
+
+### Teardown
 
 `ops/goatbuilder/teardown.yaml` declares how each standup step comes down. Both
 `goatbuilder teardown` and `ops/scripts/goat-teardown.sh` read it, and the
@@ -120,101 +181,56 @@ teardown parity gate compares their plans.
 
 | Action | Meaning | Steps |
 |---|---|---|
-| compose-down | stop the compose projects, volumes kept, proved by `docker compose ps -q` | synthetic publishers, grant-keyd, runner, intake, portal |
-| keep | nothing to reverse | gates, the pub/sub mirror, the TLS certificate, the host baseline, the rescue nodes |
-| refused | reversing it destroys data | the NetBird account rows, service identities, ACL, OIDC clients, Ory, the mgmt stack, the relay tier |
-| designed | defined, not built | see the dated plan below |
+| compose-down | stop the compose projects, volumes kept, proved by `docker compose ps -q` | synthetic publishers, grant-keyd, runner, intake, portal, mesh CoreDNS, the zenoh router (`/opt/<site>-zenoh`), the obs stack and Forgejo (obs host) |
+| service-stop | stop named services inside a shared compose project, containers and volumes kept, proved by no running container of those services | the dashboard and SPIRE in `/opt/mgmt-host` |
+| systemd-stop | stop and disable units, unit files kept, proved by no active unit | the relay tunnel (`rathole-client@*.service`) |
+| command | run a line on the operator machine; `--services` leaves it in place | the cross-goatnet surfaces: `cross-env-apply.sh --absent <site>` refuses while `cross-env.yaml` lists the site, then redeploys every relay-health box without it |
+| keep | nothing to reverse | gates, phase-8 enrolment, the pub/sub mirror, the TLS certificate, the host baseline, the rescue nodes |
+| refused | reversing it destroys data | the NetBird account rows (the mesh-DNS nameserver group among them), service identities, ACL, OIDC clients, Ory, the mgmt stack, the relay tier |
 
-A full teardown that reaches a refused or designed step refuses with exit 3
-before touching anything. `--services` stops the compose-down steps in reverse
-order and lists the rest as left in place. Each stop appends a row to
+A full teardown that reaches a refused step refuses with exit 3 before touching
+anything; one whose range reaches none (`--from 13` takes phase 14 only) runs.
+`--services` runs every compose-down, service-stop and systemd-stop step in
+reverse order and lists the rest as left in place. Each stop appends a row to
 `/var/lib/goat/<component>/teardown.jsonl`. `deploy-history.jsonl` is never
 touched, so rollback's history is unchanged.
 
-Planned on zagros-dev on 2026-10-29, dry run only:
+Planned on zagros-dev, dry run only:
 
 | Command | Result |
 |---|---|
-| `goatbuilder teardown zagros_dev --site zagros-dev --dry-run` | refused: 15 steps hold data or are not built |
-| `… --services --from 12 --dry-run` | 5 services come down, 6 steps left in place |
+| `goatbuilder teardown zagros_dev --site zagros-dev --dry-run` | refused: 7 steps hold data |
+| `… --services --dry-run` | 10 steps come down, 8 left in place |
+| `… --services --from 12 --dry-run` | 6 steps come down, 3 left in place |
 
-The fixture rehearsal (`goatbuilder --mock`) verifies 5 components on 4 machines,
-appends 8 teardown records, and finds all 8 already torn down on a second run.
-
-## Designed, with dates
-
-### Phase 8 enrolment as a scripted step — 2026-11-13
-
-Phase 8 is a person today: run the `netbird up` line that
-`ops/preflight-enrollment.sh` prints, check the peer connected, fill the mesh IP
-into inventory and re-mint the router certificate. The scripted step:
-
-1. Mints a single-use setup key on the host with
-   `mgmt-host-bootstrap create-setup-key`, as `site-bootstrap.yml` already does.
-   The key never leaves the host.
-2. Enrols the host against a declared enrolment URL in group_vars, so the port
-   rule from F-188 is a fact of the site and not a choice made at the keyboard.
-   The rosenpass flags come from `rosenpass_enabled`.
-3. Waits for `netbird status` to show the management connection and a mesh IP,
-   writes the IP into the site's inventory and cert manifest, and re-mints the
-   router pair.
-
-Phase 11 stays a person. The first NetBird token needs a browser login by the
-first admin. The zero-SaaS quickstart removes the other console steps.
-
-### Host install per node class (sink 5) — 2026-11-27
-
-A cloned disk image is ruled out. A cloned LUKS header gives every host the same
-volume key, and host-site-node-disk-encryption.md
-starts from LUKS created by each host's own installer. Ubuntu Pro attachment and
-FIPS enablement are per machine with a token and a reboot.
-
-The pre-bake is therefore an Ubuntu autoinstall seed per node class, not an image:
-
-| Part | Where it runs |
-|---|---|
-| LUKS on the root disk, a passphrase per host from the secrets store | the installer |
-| the baseline's package set, from the site's apt cache | the installer's late commands |
-| Pro attach, FIPS enable, the TPM2 or Tang unlock slot | the existing plays, unchanged |
-
-The baseline play then converges a host that is already most of the way there, so
-most of its 132 tasks report no change. Acceptance is a timed baseline on a
-seeded host against a stock one, recorded as a measurement.
-
-### Site-local image mirror (sink 6) — 2026-11-20
-
-The `docker-registry-mirror` and `apt-cacher-ng` roles exist. Only retired
-plays deploy them, and `utility-host-bootstrap.yml` names them as steps still to
-add. oci-goat-substrate.md §4 places the mirror on a site
-cache host. The plan:
-
-1. `utility-host-bootstrap.yml`, which the obs leg already runs, gains both roles
-   on the obs host beside Forgejo, before the core host's phase 5.
-2. The core host's Docker daemon lists the obs host as a registry mirror.
-3. A phase-1 step pre-pulls every pinned digest the plan's roles will use, in
-   parallel with the laptop-side phases 3 and 4.
-
-The first standup of a site still pulls from upstream. A rebuild after a
-burn-down, and every node that joins, pulls from the warm mirror.
-
-### The rest of the teardown — 2026-11-20
-
-| Step | What lands |
-|---|---|
-| mesh CoreDNS | the systemd service stop and the nameserver-group removal, with the account teardown |
-| dashboard, SPIRE | a per-service stop, after the mgmt-host compose project is split |
-| zenoh router | the teardown play reads the rendered per-site compose path |
-| relay connect | the rathole client stop, with the relay teardown |
-| obs leg | the obs host's stacks come down with the obs leg |
-| cross-goatnet surfaces | the site leaves `cross-env.yaml` and every relay-health box is redeployed |
+The hermetic e2e (`ops/e2e/hermetic.sh`) runs `teardown-service-stop.yml` and
+`teardown-compose.yml` against the dev canary on a container host: nothing of it
+runs afterwards, two `teardown.jsonl` rows are written, and the deploy ledger's
+row count is unchanged. The fixture rehearsal (`goatbuilder --mock`) verifies 5
+components on 4 machines, appends 8 teardown records, and finds all 8 already
+torn down on a second run.
 
 The refused steps stay refused. Destroying a NetBird account, an identity store
 or the database is a decision a person makes by hand, not a teardown flag.
 
+## What remains
+
+| Item | What proves it |
+|---|---|
+| phase 8 on hardware | a standup of an internet site whose hosts are not yet enrolled: both hosts connected, the router certificate carrying their IPs, no stop at phase 8. The play has run in no live run; CI checks its syntax, the plan lines in both avenues and the recorder's unit tests |
+| the seed | a Karbon 801 installed from `node-seed.py`'s seed, its baseline timed against a stock one, recorded as a measurement |
+| the site cache on hardware | the obs leg's host play on an obs host, then a core host with `site_cache_host` set pulling a Docker Hub image and an apt package through it. The client's fallback is proved in the hermetic e2e; the obs-host roles have not run in this shape |
+| `teardown-systemd.yml` | a run against a host with the relay tunnel up; the hermetic container hosts have no systemd |
+| ghcr.io through the cache | Docker reads no mirror for ghcr.io; serving goat images from the obs host needs the containerd image store's per-registry hosts, not built |
+| a goatbuilder avenue for the seed | `node-seed.py` is a script only; the seed is not a standup phase |
+| the hour | the first timed standup on hardware (below) |
+
 ## Both avenues
 
 Every lever lives in both drivers: the scan gate, the `needs:` lines and waves,
-the bot-token read, the rathole target and the teardown. The shared facts live in
+the bot-token read, the rathole target, the image pre-pull, the two phase-8
+steps and the teardown. The site cache is in the plays both drivers run, and the
+seed generator is a script both can call. The shared facts live in
 data files both read: `standup-dag.yaml` and `teardown.yaml`. The parity gates in
 `goatbuilder-pr.yml` compare the standup plans, the
 teardown plans, and the federate and deploy plans.

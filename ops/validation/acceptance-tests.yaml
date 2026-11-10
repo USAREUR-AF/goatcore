@@ -25,6 +25,7 @@ tests:
   # leg is local against the public page. Mints, submits in Chromium,
   # requires 201, sponsor-rejects its own proposal.
   - id: intake-form-browser-submit
+    applies_when: goatnet_founder   # founder-owned surface; a joiner uses the founder's
     aspect: onboarding/candidate-intake
     probe: cmd-assert
     params: {host: localhost, cmd: "ops/scripts/onboard-intake-smoke.sh --context {{ goat_sponsor_context }} --env {{ env }} --goat-via {{ goat_via }}", expect: "smoke: PASS", unknown_rc: 2, timeout: 240}
@@ -36,6 +37,7 @@ tests:
   # console", no such path), while pre-bound CLI invites passed, so a
   # CLI-only check read green. Needs an operator context for the admin-stage reject.
   - id: review-gate-accepts-open-field-invite
+    applies_when: goatnet_founder   # founder-owned surface; a joiner uses the founder's
     aspect: onboarding/review-gate
     probe: cmd-assert
     params: {host: localhost, cmd: "ops/scripts/onboard-intake-smoke.sh --context {{ goat_sponsor_context }} --env {{ env }} --goat-via {{ goat_via }} --stage sponsor", expect: "smoke: PASS", unknown_rc: 2, timeout: 300}
@@ -48,6 +50,7 @@ tests:
   # user the registry names. Without them a portal refuses every machine
   # enrollment. Runs from the operator laptop, where the tokens live.
   - id: netbird-service-identities
+    applies_when: goatnet_founder   # founder-owned surface; a joiner uses the founder's
     aspect: mgmt-stack/netbird-service-identities
     probe: cmd-assert
     params: {host: localhost, cmd: "ops/scripts/netbird-service-identities.py {{ env }} --live",
@@ -72,6 +75,7 @@ tests:
     requires: [signal-server, traefik]
     caught_would_have: "row 22 — signal_proto http; peers registered but Signal-disconnected"
   - id: enrollment-entrypoint-cert-identity
+    applies_when: {goatlite: false}   # a goatlite has no relay ingress on 8443; its edge is the box's 443
     aspect: mgmt-stack/enrollment
     probe: tls-identity
     # expect_issuer is per site (generate-values.py, from
@@ -130,10 +134,14 @@ tests:
   - id: pg-standby-encoding-utf8
     aspect: data/postgres-pair
     probe: cmd-assert
-    params: {host: "{{ orin_b }}", cmd: "docker exec postgres-a psql -tAc \"show server_encoding\"", expect: "UTF8"}
+    # The goatnet's encoding, not a literal: the founder's declared
+    # postgres_initdb_encoding (a joiner initialises with the founder's), UTF8
+    # when none is declared (generate-values.py, postgres_encoding). The id keeps
+    # its name so recorded evidence still joins.
+    params: {host: "{{ orin_b }}", cmd: "docker exec postgres-a psql -tAc \"show server_encoding\"", expect: "{{ postgres_encoding }}"}
     requires: [postgres-streaming-replication]
     applies_when: intra_site_pair
-    caught_would_have: "row 45 — initdb defaulting SQL_ASCII on the rebuilt standby"
+    caught_would_have: "row 45 — initdb on the rebuilt standby defaulting to an encoding other than the goatnet's"
   - id: pgbackrest-stanza-and-first-backup
     aspect: data/backups
     probe: cmd-assert
@@ -486,23 +494,27 @@ tests:
       each answers that name with Traefik's default certificate, so a peer
       whose tunnel flaps has no working path to re-signal.
   - id: every-declared-service-resolves
+    applies_when: {goatlite: false}   # a goatlite runs no isitup and declares no isitup_services
     aspect: dns/mesh-zone
     probe: dns-resolve
     params: {names_from: isitup_services, resolver: "{{ mesh_ip_a }}:5353", expect: "{{ mesh_ip_a }}"}
     requires: [mesh-coredns]
     caught_would_have: "F-197 — declared-but-unresolvable deploys dark"
   - id: declared-service-actually-deployed
+    applies_when: {goatlite: false}   # a goatlite runs no isitup and declares no isitup_services
     aspect: services/deploy-join
     probe: cmd-assert
     params: {host: "{{ orin_a }}", cmd_template: "docker ps --format '{{ '{{' }}.Names{{ '}}' }}' | grep -qx {item}", for_each: isitup_containers}
     requires: [mesh-coredns]
     caught_would_have: "row 30 — whole tiers declared in isitup_services, silently never deployed. EXACT: each declared service's own container name (isitup_containers) must be running, or this row hard-FAILs — a goatnet cannot pass the gate with a declared service missing."
   - id: public-auth-fqdns-not-flagged
+    applies_when: {goatlite: false}   # a goatlite's names live under its LAN zone; none is public
     aspect: enrollment/safe-browsing
     probe: safe-browsing
     params: {names_from: public_auth_fqdns}
     caught_would_have: "the Google Safe Browsing 'dangerous site' interstitial on a fresh public login/consent domain (F-class none yet) — every enroller hits a full-page red block before reaching the portal, and it reads as a phishing verdict, not a TLS error. Graded here needs SAFE_BROWSING_API_KEY (else UNKNOWN, not a false pass); FAIL means file a review in Google Search Console for the zone."
   - id: panoscope-serves-authenticated
+    applies_when: goatnet_founder   # founder-owned surface; a joiner uses the founder's
     aspect: surfaces/panoscope
     probe: http-ok
     params: {url: "https://panoscope.{{ site_id }}.{{ site_dns_zone }}", expect: [200, 302], from: mesh}
@@ -560,14 +572,14 @@ tests:
   # is a legitimate shape) declares that by leaving relay_public_ips empty.
   # Absence has to be declared, not inferred from a missing listener.
   - id: relay-fleet-answers-if-declared
-    applies_when: {goatnet_founder: true, relay_public_ips: true}   # founder-owned relay fleet; a joiner uses the founder's
+    applies_when: {goatnet_founder: true, relay_public_ips: true, goatlite: false}   # founder-owned relay fleet; a joiner uses the founder's
     aspect: relays/presence
     probe: tls-identity
     params: {hosts_from: relay_public_ips, port: 33073, verify_name: false, expect_system_trust: true}
     caught_would_have: "relay VPSes with no inventory, no rels:// listener, acceptance gate green"
 
   - id: relay-protocol-cert-system-trust
-    applies_when: goatnet_founder   # founder-owned surface; a joiner uses the founder's
+    applies_when: {goatnet_founder: true, goatlite: false}   # founder-owned relay tier; a joiner uses the founder's, a goatlite has none
     aspect: relays/tls
     probe: tls-identity
     params: {hosts_from: relay_public_ips, port: 33073, verify_name: false, expect_system_trust: true}
@@ -583,6 +595,7 @@ tests:
   # row below names a defect that survived a full standup plus three days of
   # green dashboards.
   - id: portal-resolves-a-person
+    applies_when: goatnet_founder   # founder-owned surface; a joiner uses the founder's
     aspect: portal/identity-layer
     probe: http-ok
     params: {url: "https://portal.{{ site_id }}.{{ site_dns_zone }}/api/access/who?id={{ acceptance_known_person_email }}",
@@ -595,6 +608,7 @@ tests:
       the portal stays healthy. Asserting a 200 does NOT catch it; asserting
       that `resolved` is non-empty does, on standup day.
   - id: portal-anchor-linkage-is-recorded
+    applies_when: goatnet_founder   # founder-owned surface; a joiner uses the founder's
     aspect: portal/identity-layer
     probe: http-ok
     params: {url: "https://portal.{{ site_id }}.{{ site_dns_zone }}/api/access/who?id={{ acceptance_known_person_email }}",
@@ -608,6 +622,7 @@ tests:
       degraded, not broken, and the row exists to keep the degradation VISIBLE
       instead of letting the fallback quietly remain the mechanism.
   - id: microscope-every-source-live
+    applies_when: goatnet_founder   # founder-owned surface; a joiner uses the founder's
     aspect: microscope/adapters
     probe: http-ok
     params: {url: "https://microscope.{{ site_id }}.{{ site_dns_zone }}/api/entity?id={{ acceptance_known_person_email }}",
@@ -647,6 +662,7 @@ tests:
       while the container, its DNS record, its Traefik router and its TLS are all
       green.
   - id: audit-offload-pipeline-runs
+    applies_when: goatnet_founder   # founder-owned surface; a joiner uses the founder's
     aspect: audit/three-tier
     probe: container-health
     params: {host: "{{ orin_a }}", container: audit-subscriber}
@@ -732,18 +748,17 @@ tests:
   # suite is for.
   - id: onboard-runner-knows-this-goatnet
     aspect: onboarding/goat-cli-config
-    probe: cmd-assert
+    probe: onboard-runner-profile
     applies_when: onboard_runner_enabled
-    params: {host: "{{ orin_a }}", cmd: "docker exec onboard-runner sh -c 'strings /usr/local/bin/goat | grep -c \"{{ site_id }}\"' || echo 0", expect_min: 1}
+    params: {host: "{{ orin_a }}", goatnet: "{{ site_id }}"}
     requires: [onboard-runner]
     severity: gate
     caught_would_have: >-
-      F-485 wall 1 + wall 2 — goat-cli hardcodes per-goatnet endpoints in three
-      match arms, so a goatnet stood up after those arms were last edited is
-      invisible to the onboarder and every mint refuses. Asserting against the
-      binary the CONTAINER sees also catches wall 2: the runner bind-mounts the
-      host binary, so replacing that file leaves the container on the old inode
-      until something restarts it.
+      A stock goat binary can onboard a new goatnet from its profile alone.
+      Check the default profile written inside the running container, including
+      the router, NetBird and Ory settings, without printing values or tokens.
+      Missing configuration fails; an unreachable container is UNKNOWN.
+      Binary freshness remains the onboard-runner role's version/restart check.
   - id: onboard-runner-reaches-mgmt-api
     aspect: onboarding/runner-reachability
     probe: cmd-assert
@@ -902,6 +917,7 @@ tests:
       the first `goat status` a new operator runs: router port, an mTLS session,
       the portal and the operator's own cert, each graded on its own line.
   - id: portal-health-answers
+    applies_when: goatnet_founder   # founder-owned surface; a joiner uses the founder's
     aspect: fabric/operator-chain
     probe: cmd-assert
     # From the management machine, so it answers wherever the assay runs; the
@@ -937,6 +953,7 @@ tests:
       subscriber; the goat CLI round trip above cannot grade it on a goatnet
       with no operator context yet.
   - id: goat-presence-has-peers
+    applies_when: {goatlite: false}   # a goatlite runs no presence publisher (presence-health is above its tier)
     aspect: fabric/presence
     probe: goat-cli
     params: {via: "{{ probe_via }}", context: "{{ probe_context }}", verb: "presence --json",
@@ -995,13 +1012,16 @@ tests:
   - id: goat-acl-declaration-holds
     aspect: mesh/acl-declaration
     probe: goat-cli
-    params: {via: "localhost", context: "{{ goat_context }}", verb: "acl test {{ site_id }} --json",
-             expect_jq: "all(.[]; .verdict == \"satisfied\")", timeout: 60}
+    params: {via: "localhost", context: "{{ goat_context }}", verb: "acl test {{ acl_scope }} --json",
+             expect_jq: "length > 0 and all(.[]; .verdict == \"satisfied\")", timeout: 60}
     requires: [netbird-mgmt]
     caught_would_have: >-
       a declared ACL assertion (allow or deny) that the goatnet's declaration
-      no longer satisfies. The declaration, not the live mesh: the must_refuse
-      rows are the live boundary checks.
+      no longer satisfies, or a goatnet that declares no assertions at all
+      (the verb exits non-zero and the report is empty). The declaration, not
+      the live mesh: the must_refuse rows are the live boundary checks.
+      The scope is the goatnet's (acl_scope: a joiner site's is its founder's),
+      because ACL declarations are per goatnet, not per site.
   - id: deploy-ledgers-match-main
     aspect: deploy/ledgers
     probe: goat-cli

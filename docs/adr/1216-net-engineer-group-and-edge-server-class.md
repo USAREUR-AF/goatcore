@@ -55,15 +55,13 @@ Three gaps sit behind that:
 
 This replaces unrecorded any-port grants with least-privilege, role-based, one-way access (AC-6, AC-17 remote access over named services, CM-7 least functionality). Every grant is declared in version control, generated, and asserted on each change and against live state (CM-3, CA-7). The new guard detects the over-broad policy shape on demand (AC-6(9)-style review). Residual risk: any hand-made policies stay enabled until disabled; the compensating control is the guard's report naming them.
 
-## Not in this change
+## Follow-ups
 
-Each is a follow-up with a date, tracked in in-flight.md §"network engineer access".
-
-| Follow-up | By |
+| Follow-up | Status |
 |---|---|
-| Membership: declare the site engineers into `<SCOPE>-NET-ENGINEER` through warrant membership | 2026-11-16 |
-| An alert when a `NETWORK`, `CONTROL` or `EDGE-SERVER` peer becomes able to expire (login expiration or key expiry turned on) | 2026-11-23 |
-| A `goat machine ssh enable` command that turns on NetBird SSH on an enrolled device | 2026-11-30 |
+| An alert when a `NETWORK`, `CONTROL` or `EDGE-SERVER` peer becomes able to expire (login or inactivity expiration turned on) | **Built.** `ops/compose/goat-obs/dormancy-report/dormancy_report.py` writes `goat_device_peer_expiry_enabled{env,class,kind}` (peer names to journald as `EXPIRABLE-DEVICE`); alert `DevicePeerCanExpire` in `prometheus/rules/dormancy.yml`; fixture tests `test_dormancy_report.py` + `tests/dormancy.test.yml`. Live where the dormancy-report cron runs |
+| A `goat machine ssh enable` command that turns on NetBird SSH on an enrolled device | **Built.** `crates/goat-cli/src/cmd/machine_ssh.rs`; one `PUT /api/peers/{id}` with every other setting echoed (`NetbirdClient::set_peer_ssh`); audited as `machine.ssh.enable`; errors `E_MACHINE_UNRESOLVED`, `E_MESH_PEER_UNRESOLVED`, `E_NETBIRD_FAILED`, `E_NOT_ADMIN` |
+| Membership: declare the site engineers into `<SCOPE>-NET-ENGINEER` through warrant membership | **Not built**: each deployment declares its own engineers per scope, then re-applies the scope so the group exists |
 
 ## Trigger conditions for revisit
 

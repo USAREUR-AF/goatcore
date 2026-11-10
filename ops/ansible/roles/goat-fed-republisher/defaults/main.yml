@@ -1,0 +1,67 @@
+---
+# goat-fed-republisher — the outbound half of a sovereign peering.
+#
+# Canon: ops/federation/republisher/README.md
+#        docs/design/federation-package-spec.md §3.2
+#        docs/operations/sovereign-federation-runbook.md (phase 12)
+#
+# WHERE IT RUNS. On our CORE host, the host the peering edge dials, in the
+# inventory group <peering>_core under [peering_cores:children]. BOTH of its
+# sessions dial our core router: it subscribes to the offered `release/<set>/**`
+# staging names and publishes each sample under `from/<us>/<set>/**`, the wire
+# name. The edge already carries `from/<us>/**` out (its core-return and
+# partner-receive rules), so the partner-facing edge needs no extra listener.
+# The core admits it by one subject, `fed-rp-<them>` in the fragment
+# `goat federate apply` renders, which reads the offered release sets and writes
+# our wire name and nothing else. It is the only writer of `from/<us>/**`.
+#
+# TWO HALVES OF CONFIGURATION, as for the edge:
+#   - the AGREEMENT half, rendered by `goat federate apply` into
+#     <fed_work>/applied/ops/ansible/group_vars/<edge group>/federation-<them>-republish.yml
+#     and read by the play: goat_fed_republisher_sovereign_id, _partner_id, _cn,
+#     _publish_under, _release. Never typed here.
+#   - the DEPLOYMENT half, below, in group_vars/<peering>_core/: the image, the
+#     core endpoint, and where the trust material comes from. Empty by default;
+#     the role refuses rather than guesses.
+
+# --- from `goat federate apply` (federation-<them>-republish.yml) ------------
+goat_fed_republisher_sovereign_id: ""
+goat_fed_republisher_partner_id: ""
+goat_fed_republisher_cn: ""
+goat_fed_republisher_publish_under: ""
+goat_fed_republisher_release: []
+
+# --- this deployment ----------------------------------------------------------
+# Digest-pinned like every other image (ADR 0703). The component is
+# `goat-fed-republisher` in ops/pins/fleet-pins.yaml, built by
+# .github/workflows/goat-fed-republisher-image.yml. A content-addressed local
+# image id (`sha256:<64 hex>`, as `docker load` leaves it) is accepted too: it is
+# as immutable as a registry digest, and it is what a hermetic run has.
+goat_fed_republisher_image: ""
+
+# Our core router, as this host dials it: the same address the edge dials, which
+# the core's certificate carries as a SAN. e.g. tls/<core address>:7447
+goat_fed_republisher_core_endpoint: ""
+
+# Files on the CONTROLLER (where the driver runs and fed_work lives), copied to
+# this host. The agreement and the leaf are phase 6 and phase 8's output.
+goat_fed_republisher_agreement_src: "{{ fed_work | default('') }}/agreement.json"
+goat_fed_republisher_cert_src: "{{ fed_work | default('') }}/pki/republisher.pem"
+goat_fed_republisher_key_src: "{{ fed_work | default('') }}/pki/republisher-key.pem"
+# OUR CA — the roots the core router's certificate chains to. Never the
+# partner's: this process talks to our core and nothing else.
+goat_fed_republisher_core_ca_src: ""
+
+goat_fed_republisher_stack: "goat-fed-republisher-{{ goat_fed_republisher_partner_id }}"
+goat_fed_republisher_dir: "/etc/{{ goat_fed_republisher_stack }}"
+# The image runs as Chainguard's nonroot user; the key is made readable to it alone.
+goat_fed_republisher_uid: 65532
+
+# /metrics and /healthz, on loopback only. One port per peering on a shared host.
+goat_fed_republisher_metrics_port: 9310
+goat_fed_republisher_queue_depth: 4096
+goat_fed_republisher_memory_limit: 256m
+
+# How long the phase-12 check waits for `local_subscribed 1` and `edge_linked 1`.
+goat_fed_republisher_settle_retries: 30
+goat_fed_republisher_settle_delay: 2

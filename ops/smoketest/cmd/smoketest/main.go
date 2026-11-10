@@ -1,4 +1,4 @@
-// Command smoketest runs probes against the goat infrastructure
+// Command smoketest runs probes against a goatnet's infrastructure
 // or starts an HTTP server that exposes probe results via a dashboard.
 package main
 
@@ -51,15 +51,18 @@ Run flags:
   --mode       quick|full (default: quick)
   --category   Comma-separated categories to run (default: all)
   --json       Output results as JSON
+  --config     Goatnet config YAML: domain, relays, host_mesh_ip, relay_dns, expected_ips
 
 Serve flags:
   --addr           Listen address (default: :8080)
   --results-file   Path to JSONL results file (default: results.jsonl)
   --catalogue      Path to service catalogue JSON file
+  --config         Goatnet config YAML (as for run)
 
 Environment:
   NETBIRD_API_TOKEN   Netbird management API token
-  NETBIRD_DOMAIN      Netbird management domain (default: netbird.legacy.example)`)
+  NETBIRD_DOMAIN      Netbird management domain (overrides the config file's domain)
+  SMOKETEST_CONFIG    Goatnet config YAML when --config is not given`)
 }
 
 func cmdRun(args []string) {
@@ -68,9 +71,13 @@ func cmdRun(args []string) {
 	category := fs.String("category", "", "comma-separated categories to run (empty = all)")
 	jsonOut := fs.Bool("json", false, "output results as JSON")
 	cataloguePath := fs.String("catalogue", "", "path to service catalogue YAML file")
+	configPath := fs.String("config", os.Getenv("SMOKETEST_CONFIG"), "goatnet config YAML (default $SMOKETEST_CONFIG)")
 	fs.Parse(args)
 
-	cfg := probe.DefaultConfig()
+	cfg, err := probe.LoadConfig(*configPath)
+	if err != nil {
+		log.Fatalf("load config: %v", err)
+	}
 	cfg.Mode = *mode
 	cfg.NetbirdToken = os.Getenv("NETBIRD_API_TOKEN")
 
@@ -119,9 +126,13 @@ func cmdServe(args []string) {
 	resultsFile := fs.String("results-file", "results.jsonl", "path to JSONL results file")
 	cataloguePath := fs.String("catalogue", "", "path to service catalogue YAML file")
 	dashboardDir := fs.String("dashboard-dir", "", "path to dashboard dist/ directory (uses embedded HTML if empty)")
+	configPath := fs.String("config", os.Getenv("SMOKETEST_CONFIG"), "goatnet config YAML (default $SMOKETEST_CONFIG)")
 	fs.Parse(args)
 
-	cfg := probe.DefaultConfig()
+	cfg, err := probe.LoadConfig(*configPath)
+	if err != nil {
+		log.Fatalf("load config: %v", err)
+	}
 	cfg.NetbirdToken = os.Getenv("NETBIRD_API_TOKEN")
 
 	if domain := os.Getenv("NETBIRD_DOMAIN"); domain != "" {

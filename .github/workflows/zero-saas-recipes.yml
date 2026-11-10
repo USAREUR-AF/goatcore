@@ -1,0 +1,91 @@
+# zero-saas-recipes — the fallbacks of docs/design/pluggable-dependencies.md rows
+# 13, 14 and 16, each run end to end on the runner with Docker:
+#   local-registry  ops/recipes/local-registry/test.sh: a registry:3 container, goat
+#                   images mirrored at their digests, the goatlite pins rendered
+#                   against it, docker pull of a rendered pin
+#   smtp-sink       ops/recipes/smtp-sink/test.sh: the smtp-sink play brings Mailpit
+#                   up; the identity console's mailer delivers an invite to it
+#   alert-channels  tests/test_alert_channels_off_when_empty.py: empty channels render
+#                   no outside receiver, amtool accepts the render, no role requires one
+#
+# Rollback: rm this file.
+
+name: zero-saas-recipes
+
+on:
+  pull_request:
+    paths:
+      - 'ops/recipes/**'
+      - 'ops/scripts/standup-images.py'
+      - 'ops/scripts/goatlite-render.py'
+      - 'ops/scripts/deploy-secrets-needed.py'
+      - 'ops/secrets/off-when-empty.txt'
+      - 'ops/pins/fleet-pins.yaml'
+      - 'ops/ansible/smtp-sink.yml'
+      - 'ops/ansible/roles/smtp-sink/**'
+      - 'ops/ansible/roles/obs-host/**'
+      - 'ops/ansible/roles/observability/**'
+      - 'ops/ansible/group_vars/**'
+      - 'ops/goat-id-console/internal/mailer/**'
+      - 'tests/test_alert_channels_off_when_empty.py'
+      - '.github/workflows/zero-saas-recipes.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zero-saas-recipes-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  local-registry:
+    name: local registry (row 13)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install --quiet pyyaml jsonschema
+      - name: skopeo (copies an image with its digest unchanged)
+        timeout-minutes: 5
+        run: command -v skopeo || { sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 update -qq && sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 install -y -qq skopeo; }
+      - name: The recipe, end to end
+        env:
+          REQUIRE_DOCKER: '1'
+        run: ops/recipes/local-registry/test.sh
+
+  smtp-sink:
+    name: SMTP sink (row 14)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: ops/goat-id-console/go.mod
+          cache-dependency-path: ops/goat-id-console/go.sum
+      - name: ansible-core
+        run: python3 -m pip install --quiet 'ansible-core==2.20.11'
+      - name: The recipe, end to end
+        run: ops/recipes/smtp-sink/test.sh
+
+  alert-channels:
+    name: alert channels off when empty (row 16)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: ansible-core
+        run: python3 -m pip install --quiet pyyaml jsonschema 'ansible-core==2.20.11'
+      - name: Empty is off, and no role requires a channel
+        env:
+          REQUIRE_DOCKER: '1'
+        run: python3 tests/test_alert_channels_off_when_empty.py

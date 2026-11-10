@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""scoped-read-check.py — prove what the scoped peer read ALLOWS and REFUSES
-
+"""scoped-read-check.py — prove what the scoped peer read ALLOWS and REFUSES.
 
 Every other test in this role asserts the SHAPE of the rendered config. This one
 asserts the DECISIONS: it renders the template, loads it through the ACL
@@ -56,7 +55,7 @@ def render(**overrides) -> str:
         goat_zenoh_rest_port=8000, goat_zenoh_retention_days=7,
         goat_zenoh_audit_retention_days=365,
         goat_zenoh_storage_path="/var/lib/x/rocksdb", goat_zenoh_tls_dir="/etc/x/tls",
-        nova_seed_vendors=["community"],
+        zenoh_seed_vendors=["community"],
         zenoh_identity_model="per-uuid-slot-pool",
         zenoh_slot_pool_size=POOL, zenoh_slot_pool_salt=SALT,
         zenoh_partner_read_partition=True, zenoh_partner_slot_blocks=BLOCKS,
@@ -211,7 +210,13 @@ except ImportError:
     print("  SKIP: pyyaml not installed")
 else:
     seen = 0
-    for gv in sorted(_glob.glob(str(ROLE.parent.parent / "group_vars" / "*" / "*.yml"))):
+    # A substrate-only tree (goatcore on its own) carries no goatnet's
+    # group_vars, only `_examples/`; the real values arrive with an environment
+    # overlay in an assembled tree. With no goatnet present there is nothing to
+    # require, so the "at least one" check below applies only where one is.
+    goatnet_vars = [gv for gv in sorted(_glob.glob(str(ROLE.parent.parent / "group_vars" / "*" / "*.yml")))
+                    if not Path(gv).parent.name.startswith("_")]
+    for gv in goatnet_vars:
         with open(gv, encoding="utf-8") as fh:
             try:
                 doc = _yaml.safe_load(fh) or {}
@@ -228,7 +233,10 @@ else:
             check(shape != "**", f"{scope}: `{shape}` is not the fabric-wide grant in disguise")
             check(any(c not in ("*", "**") for c in shape.split("/")),
                   f"{scope}: `{shape}` names at least one real chunk (a `*`-only shape matches everything)")
-    check(seen > 0, f"at least one goatnet declares cross-tenant shapes ({seen} found)")
+    if goatnet_vars:
+        check(seen > 0, f"at least one goatnet declares cross-tenant shapes ({seen} found)")
+    else:
+        print("  SKIP: no goatnet group_vars in this tree (substrate only); runs in an assembled tree")
 
 print()
 print("ALL SCOPED-READ CHECKS PASSED" if fails == 0 else f"{fails} CHECK(S) FAILED")

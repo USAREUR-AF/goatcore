@@ -6,13 +6,13 @@
 # /opt/mgmt-host/docker-compose.lan-tls.yml. Applied as:
 #   docker compose -f docker-compose.yml -f docker-compose.lan-tls.yml up -d traefik
 #
-# Unlike the nova ACME override this does NOT touch `command:` — compose
+# Unlike the ACME override this does NOT touch `command:` — compose
 # merges `volumes:` lists additively, so the base traefik service is
 # otherwise unchanged (no ACME flags, no /letsencrypt).
 services:
   traefik:
     volumes:
-      - {{ traefik_tls_root | default('/etc/goat/tls') }}:{{ traefik_tls_root | default('/etc/goat/tls') }}:ro
+      - {{ tls_root }}:{{ tls_root }}:ro
 
   # Internal-CA trust for management-a's JWKS fetch: hydra's discovery doc
   # advertises the PUBLIC issuer (https://oauth2.<site>.<zone>/...jwks.json),
@@ -26,4 +26,4 @@ services:
     environment:
       SSL_CERT_FILE: /etc/netbird/lan-trust-bundle.pem
     volumes:
-      - {{ traefik_tls_root | default('/etc/goat/tls') }}/lan-trust-bundle.pem:/etc/netbird/lan-trust-bundle.pem:ro
+      - {{ tls_root }}/lan-trust-bundle.pem:/etc/netbird/lan-trust-bundle.pem:ro
