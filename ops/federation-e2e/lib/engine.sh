@@ -180,6 +180,10 @@ wait_ready() { # $1 host: systemd up, dockerd answering
       # FE2E_WG_APPARMOR=host keeps the machine's profile in force (scenario
       # ubuntu-2604-apparmor).
       [ "${FE2E_WG_APPARMOR:-bypass}" = host ] || docker exec "$h" sh -c 'cp /usr/bin/wg /usr/local/sbin/wg'
+      # apt inside a host gives up on an unreachable mirror address in seconds and tries the
+      # next, over IPv4: a machine whose IPv6 or one mirror address does not answer otherwise
+      # stalls phase 2's apt-get update for many minutes.
+      docker exec "$h" sh -c 'printf "%s\n" "Acquire::http::Timeout \"20\";" "Acquire::https::Timeout \"20\";" "Acquire::Retries \"5\";" "Acquire::ForceIPv4 \"true\";" > /etc/apt/apt.conf.d/99fe2e-net'
       return 0
     fi
     sleep 2
