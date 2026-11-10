@@ -6,7 +6,7 @@ that sits behind NAT. It carries ciphertext only. Design:
 
 ```
 partner edge ──wg-fed0──▶ forwarder <public>:51820
-                           │ DNAT to 169.254.30.1:51820, masquerade to 169.254.30.0
+                           │ DNAT to 169.254.30.1:51823, masquerade to 169.254.30.0
                            ▼
                wg-carry0 ◀── dialled by our edge to <public>:51821, keepalive 25 s
                            ▼
@@ -28,7 +28,8 @@ peering_forwarder_peerings:
 ```
 
 Each entry takes the rest from `peering_forwarder_peering_defaults`: `interface`
-`wg-carry0`, `peering_port` 51820, `edge_peering_port` 51820, `carrier_port` 51821,
+`wg-carry0`, `peering_port` 51820, `edge_peering_port` 51823 (the edge's `peering_wg_listen_port`;
+NetBird holds 51820 on the edge), `carrier_port` 51821,
 `carrier_local_ip` 169.254.30.0, `carrier_remote_ip` 169.254.30.1, `carrier_prefix_len`
 31, `carrier_mtu` 1420. A second peering is a second entry with its own interface,
 peering port, carrier port and carrier subnet; the role refuses two entries that share

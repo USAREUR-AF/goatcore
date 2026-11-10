@@ -111,7 +111,7 @@ cat > "$WORK/forwarder.json" <<EOF
 {"role_dir": "$FR", "out": "$WORK/forwarder",
  "files": [["forwarder.nft.j2", "forwarder.nft"], ["carrier.env.j2", "wg-carry0.env"], ["goat-peering-forwarder-link.sh.j2", "link"]],
  "peering_forwarder_enabled": true, "peering_forwarder_public_interface": "eth0",
- "_pf_peerings": [{"name": "xaa", "interface": "wg-carry0", "peering_port": 51820, "edge_peering_port": 51820,
+ "_pf_peerings": [{"name": "xaa", "interface": "wg-carry0", "peering_port": 51820, "edge_peering_port": 51823,
    "carrier_port": 51821, "carrier_local_ip": "169.254.30.0", "carrier_remote_ip": "169.254.30.1",
    "carrier_prefix_len": 31, "carrier_mtu": 1420, "partner_sources": ["$WAN.20"],
    "edge_carrier_public_key": "$EDGE_CARRIER"}],
@@ -140,7 +140,7 @@ for h in forwarder edge partner; do
     || { cat "$WORK/render-$h.log"; fail "rendering the templates for $h"; }
 done
 
-grep -q 'iifname "wg-carry0" ip saddr 169.254.30.0 ip daddr 169.254.30.1 udp dport 51820 accept' "$WORK/edge/wg-fed0.nft" \
+grep -q 'iifname "wg-carry0" ip saddr 169.254.30.0 ip daddr 169.254.30.1 udp dport 51823 accept' "$WORK/edge/wg-fed0.nft" \
   || fail "the edge firewall does not bind the peering port to the carrier"
 
 push() { # host dir dest

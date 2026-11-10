@@ -8,6 +8,9 @@
 - name: peering-wg | another peering's interface, port, address or carrier is not taken
   ansible.builtin.import_tasks: ownership.yml
 
+- name: peering-wg | the recorded listen port follows the configuration, or the run refuses
+  ansible.builtin.import_tasks: listen_port.yml
+
 - name: peering-wg | the interface name fits IFNAMSIZ
   ansible.builtin.assert:
     that:
