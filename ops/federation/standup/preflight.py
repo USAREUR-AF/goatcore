@@ -507,11 +507,12 @@ def main(argv=None):
                 tail = (live.text(out) + live.text(err)).strip().splitlines()[-3:]
                 print("     probe: " + " / ".join(tail))
             if "edge-ports" in port_checks:
+                bind, _ = live.edge_bind_address(a.repo, a.work, group, env)
                 record(live.check_edge_ports(
                     facts, edge_hosts, int(ports["FED_WG_LISTEN_PORT"][0]), ports["FED_WG_INTERFACE"][0],
                     int(ports["FED_EDGE_LISTEN_PORT"][0]),
                     str(live.group_var(a.repo, group, "goat_zenoh_edge_stack") or f"goat-zenoh-edge-{counterparty}"),
-                    group))
+                    group, bind))
             if "core-ports" in port_checks:
                 record(live.check_core_ports(
                     facts, core_hosts, int(ports["FED_REPUBLISHER_METRICS_PORT"][0]),
@@ -547,7 +548,8 @@ def main(argv=None):
         else:
             required, source = live.required_ingress_scopes(a.repo, group, counterparty, a.work)
             record(live.check_ingress_stores(a.repo, receives, required, source, router, call,
-                                             env.get("FED_CORE_CONFIG_PATH", "") or "/etc/zenoh/config.json5"))
+                                             env.get("FED_CORE_CONFIG_PATH", "") or "/etc/zenoh/config.json5",
+                                             counterparty))
 
     if want("signing-ca"):
         record(live.check_signing_ca(ca_cert, ca_key, ca_key_age, age_id))

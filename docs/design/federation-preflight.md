@@ -25,11 +25,11 @@ first driven runs hit late is checked here first, and each check names its fix:
 | id | Checks | Code when it does not pass |
 |---|---|---|
 | `inputs` | every input the later phases need is present; each missing one is listed with where to declare it | GB-130 |
-| `edge-ports` | the tunnel listen port (UDP) and the edge router listen port (TCP) are free on the edge; NetBird holds UDP 51820 on a mesh host | GB-131, GB-133 |
+| `edge-ports` | the tunnel listen port (UDP) and the edge router listen port (TCP, by address) are free on the edge; NetBird holds UDP 51820 on a mesh host | GB-131, GB-133 |
 | `core-ports` | the republisher metrics port is free on the core (only when we offer a release set) | GB-132, GB-133 |
 | `slot-anchors` | the committed slot list equals the registry (`sync-slot-anchors.py --check`) | GB-134, GB-135 |
 | `core-router` | the core router container is found, by the selection phase 3 uses | GB-138, GB-139 |
-| `ingress-stores` | the core has a receive store equal to each scope the edge admits (only when we accept data) | GB-136, GB-137 |
+| `ingress-stores` | once the core admits the peering, it has a receive store equal to each scope the edge admits (only when we accept data; before admission, NOT APPLICABLE) | GB-136, GB-137 |
 | `signing-ca` | our CA certificate is a CA, and its signing key resolves and matches it | GB-140, GB-141 |
 
 The checks that were already there keep running and now carry codes: the
@@ -101,6 +101,18 @@ Nothing on a host is changed.
   userland proxy off a published port has no socket for `ss` to show) is a
   collision. No answer for a host is GB-133, never a
   pass.
+
+  The edge router's TCP port is judged by address and port, because several
+  peerings share one edge and each router binds its own link address (apply
+  renders `goat_zenoh_edge_bind_address` from the agreement). This router's
+  address is `FED_EDGE_BIND_ADDRESS`; else apply's rendered value; else what the
+  deployment declares for the edge group; else pending, until phase 9 renders the
+  link address. A holder collides when it listens on the same address, or when
+  either side is a wildcard (`0.0.0.0`, `::`, or a container publishing on every
+  address). While the address is pending, only a wildcard holder collides, and
+  another peering's router on its own link address is reported, not refused.
+  Overlapping link subnets are the federation plan's host-level check. The tunnel's UDP port is still
+  judged by port alone: a WireGuard interface listens on every address.
 - **Core router.** The same selection as `goat federate init`
   ([federation-router-discovery.md](federation-router-discovery.md)), against the
   same daemon: `FED_ROUTER_DOCKER_HOST`, else an ambient `DOCKER_HOST`, else the
@@ -115,6 +127,24 @@ Nothing on a host is changed.
   apply has run, else the spec's wire name for the partner, `from/<partner>/**`.
   An unreadable configuration is SKIP with GB-137; the configuration is never
   printed.
+
+  The store is required only once the core admits the peering. The goat-zenoh
+  role renders the per-partner store `sovereign_from_<them>` (key `from/<them>/**`)
+  only for a peering listed in `zenoh_sovereign_peerings`
+  (`roles/goat-zenoh/templates/config.json5.j2`, the `{% for _p in
+  zenoh_sovereign_peerings %}` storage block). The list is empty by default
+  (`roles/goat-zenoh/defaults/main.yml`), and the runbook adds the peering when phase 10
+  admits the edge (`docs/operations/sovereign-federation-runbook.md`, the
+  phase table: "review what apply rendered; admit the edge on our core"). A new
+  peering's store therefore cannot exist at phase 1. The check reads admission
+  from the same configuration: the ACL subject `sovereign-<them>` (the role) or
+  `fed-<them>` (apply's spliced fragment). Without it, NOT APPLICABLE ("not yet
+  expected; created at phase 10"). With it (a re-run, or a deploy after phase
+  10), a missing or too-wide store is a FAIL with GB-136. The plan's recheck,
+  which the deploy runs before phases 11 to 13, reruns this check, so the store
+  is enforced after admission. A core whose configuration lives elsewhere (a
+  hand-run core) needs `FED_CORE_CONFIG_PATH`; without it the check is SKIP
+  (GB-137), not a pass.
 - **Slot list.** `ops/scripts/sync-slot-anchors.py --env <environment> --check`.
   Exit 1 is drift (GB-134); exit 2 is an unreadable registry (GB-135), which is
   not a drift verdict. NOT APPLICABLE when the environment has no

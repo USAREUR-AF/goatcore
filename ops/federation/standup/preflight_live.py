@@ -271,8 +271,25 @@ def parse_containers(out):
     return cont
 
 
+WILDCARDS = {"", "*", "0.0.0.0", "::", "::0"}
+
+
+def norm_addr(a):
+    """`[::]`, `192.0.2.1%eth0` and the like, as a bare address."""
+    a = str(a or "").strip()
+    if a.startswith("[") and "]" in a:
+        a = a[1:a.index("]")]
+    return a.split("%", 1)[0]
+
+
+def is_wildcard(a):
+    return norm_addr(a) in WILDCARDS
+
+
 def holders(facts, proto, port, own_container="", own_wg_interface=""):
-    """Who holds `proto/port` on one host: [(description, ours)]."""
+    """Who holds `proto/port` on one host: [(description, ours, address)]. The
+    address is the one the holder listens on ("" when it is not known, which
+    counts as every address)."""
     found = []
     pids = parse_pids(facts.get("pids", ""))
     containers = parse_containers(facts.get("containers", ""))
@@ -290,34 +307,51 @@ def holders(facts, proto, port, own_container="", own_wg_interface=""):
                     continue  # attributed to the publishing container below
                 ours = bool(own_container) and cname == own_container
                 where = f"container {cname}" if cname else f"process {name} (pid {pid})"
-                found.append((f"{proto}/{port} on {row['addr']} by {where}", ours))
+                found.append((f"{proto}/{port} on {row['addr']} by {where}", ours, norm_addr(row["addr"])))
         else:
             # A socket with no process is the kernel's: on a UDP port, a
             # WireGuard interface. `wg show` says which one.
             owners = [i for i, p in wg.items() if p == port]
             if owners:
                 for i in owners:
-                    found.append((f"{proto}/{port} by WireGuard interface {i}", i == own_wg_interface))
+                    found.append((f"{proto}/{port} by WireGuard interface {i}", i == own_wg_interface, ""))
             else:
-                found.append((f"{proto}/{port} on {row['addr']} by a kernel socket", False))
+                found.append((f"{proto}/{port} on {row['addr']} by a kernel socket", False, norm_addr(row["addr"])))
     for cname in publishers:
-        found.append((f"{proto}/{port} published by container {cname}", bool(own_container) and cname == own_container))
+        m = re.search(rf"(?:^|[ ,])([^ ,]*?):{port}->\d+/{proto}\b", containers[cname])
+        found.append((f"{proto}/{port} published by container {cname}",
+                      bool(own_container) and cname == own_container, norm_addr(m.group(1)) if m else ""))
     # wg can hold a port ss did not list (another namespace); still a holder.
     for i, p in wg.items():
-        if p == port and not any(f"interface {i}" in d for d, _ in found):
-            found.append((f"udp/{port} by WireGuard interface {i}", i == own_wg_interface))
-    # De-duplicate (v4 and v6 sockets of one holder).
-    seen, uniq = set(), []
-    for d, o in found:
+        if p == port and not any(f"interface {i}" in d for d, _, _ in found):
+            found.append((f"udp/{port} by WireGuard interface {i}", i == own_wg_interface, ""))
+    # De-duplicate (v4 and v6 sockets of one holder): a wildcard copy wins.
+    seen, uniq = {}, []
+    for d, o, a in found:
         key = (re.sub(r" on \S+", "", d), o)
         if key not in seen:
-            seen.add(key)
-            uniq.append((d, o))
+            seen[key] = len(uniq)
+            uniq.append((d, o, a))
+        elif is_wildcard(a):
+            uniq[seen[key]] = (d, o, a)
     return uniq
 
 
+def collides(holder_addr, bind):
+    """Whether a holder on `holder_addr` collides with this run's listener.
+    bind None: the port alone decides (any holder collides). bind "pending": the
+    listener binds the link address phase 9 renders, so only a wildcard holder
+    collides. Otherwise the same address, or a wildcard on either side."""
+    if bind is None or is_wildcard(holder_addr):
+        return True
+    if bind == "pending":
+        return False
+    return is_wildcard(bind) or norm_addr(bind) == norm_addr(holder_addr)
+
+
 def _port_check(check, label, code, hosts, facts, wanted, fix):
-    """wanted: [(proto, port, own_container, own_wg_interface, what)]."""
+    """wanted: [(proto, port, own_container, own_wg_interface, what, bind)];
+    bind as in `collides`."""
     missing = [h for h in hosts if h not in facts]
     if not hosts:
         return Result(check, label, BLOCKED, "the inventory group lists no host", "GB-130",
@@ -326,26 +360,62 @@ def _port_check(check, label, code, hosts, facts, wanted, fix):
         return Result(check, label, FAIL, "no probe answer from " + ", ".join(missing), "GB-133",
                       "Check the host is reachable with the inventory the plays use; the probe output above\n"
                       "says why ansible could not read it.")
-    collisions, own = [], []
+    collisions, own, apart = [], [], []
     for h in hosts:
         if not facts[h].get("ss_ok", True):
             return Result(check, label, FAIL, f"{h}: `ss` could not list listening sockets", "GB-133",
                           "Install iproute2 on the host, or read its listening sockets by hand.")
-        for proto, port, cont, iface, what in wanted:
-            for desc, ours in holders(facts[h], proto, port, cont, iface):
-                (own if ours else collisions).append(f"{h}: {what} {desc}")
+        for proto, port, cont, iface, what, bind in wanted:
+            for desc, ours, addr in holders(facts[h], proto, port, cont, iface):
+                if ours:
+                    own.append(f"{h}: {what} {desc}")
+                elif collides(addr, bind):
+                    collisions.append(f"{h}: {what} {desc}")
+                else:
+                    apart.append(f"{h}: {what} {desc}")
     facts_out = {"own": own} if own else {}
     if collisions:
         return Result(check, label, FAIL, "; ".join(collisions), code, fix, facts_out)
-    detail = ", ".join(f"{what} {proto}/{port} free" for proto, port, _, _, what in wanted)
+    detail = ", ".join(f"{what} {proto}/{port} free" for proto, port, _, _, what, _ in wanted)
     if own:
         detail += "; held by this peering's own service (a re-run): " + "; ".join(own)
+    if apart:
+        detail += ("; on another address, which does not collide (this peering's edge router binds its own"
+                   " link address): " + "; ".join(apart))
     return Result(check, label, PASS, detail, facts=facts_out)
 
 
-def check_edge_ports(facts, edge_hosts, wg_port, wg_interface, edge_port, edge_container, edge_group):
-    wanted = [("udp", wg_port, "", wg_interface, "tunnel listen port"),
-              ("tcp", edge_port, edge_container, "", "edge router listen port")]
+def edge_bind_address(repo, work, edge_group, environ=None):
+    """The address this peering's edge router will listen on, and where that
+    came from: FED_EDGE_BIND_ADDRESS; else apply's rendered
+    goat_zenoh_edge_bind_address (the link address from the agreement); else a
+    value the deployment declares for the edge group; else "pending" -- apply
+    renders the link address at phase 9 (an agreement without a transport stops
+    at phase 11), so before then the address is not known, and it is not the
+    role's 0.0.0.0 default."""
+    environ = os.environ if environ is None else environ
+    if environ.get("FED_EDGE_BIND_ADDRESS", ""):
+        return environ["FED_EDGE_BIND_ADDRESS"], "$FED_EDGE_BIND_ADDRESS"
+    applied = Path(work) / "applied/ops/ansible/group_vars" / edge_group
+    for f in sorted(applied.glob("*.yml")) if applied.is_dir() else []:
+        v = _plain_yaml_value(f, "goat_zenoh_edge_bind_address")
+        if v:
+            return str(v), str(f)
+    for g in (edge_group, "peering_edges", "all"):
+        v = _group_var_raw(repo, g, "goat_zenoh_edge_bind_address")
+        if v is TEMPLATED:
+            return "pending", f"group_vars/{g}: goat_zenoh_edge_bind_address is templated (rendered in the play)"
+        if v not in (None, ""):
+            return str(v), f"group_vars/{g}: goat_zenoh_edge_bind_address"
+    return "pending", "the link address apply renders at phase 9"
+
+
+def check_edge_ports(facts, edge_hosts, wg_port, wg_interface, edge_port, edge_container, edge_group,
+                     edge_bind=None):
+    """edge_bind: where this peering's edge router will listen (`collides`);
+    None compares the port alone."""
+    wanted = [("udp", wg_port, "", wg_interface, "tunnel listen port", None),
+              ("tcp", edge_port, edge_container, "", "edge router listen port", edge_bind)]
     fix = (f"Choose ports nothing else on the edge holds (NetBird holds UDP 51820 on a mesh host):\n"
            f"pin them in the peering declaration (goatbuilder.yaml peerings: values: wg_listen_port /\n"
            f"edge_listen_port), or set peering_wg_listen_port / goat_zenoh_edge_listen_port in\n"
@@ -354,7 +424,7 @@ def check_edge_ports(facts, edge_hosts, wg_port, wg_interface, edge_port, edge_c
 
 
 def check_core_ports(facts, core_hosts, metrics_port, republisher_container, core_group):
-    wanted = [("tcp", metrics_port, republisher_container, "", "republisher metrics port")]
+    wanted = [("tcp", metrics_port, republisher_container, "", "republisher metrics port", None)]
     fix = (f"Choose a metrics port nothing else on the core holds: pin republisher_metrics_port in the\n"
            f"peering declaration (goatbuilder.yaml peerings: values:), or set\n"
            f"goat_fed_republisher_metrics_port in group_vars/{core_group}/. One port per peering on a\n"
@@ -486,8 +556,19 @@ def required_ingress_scopes(repo, edge_group, counterparty, work):
     return [f"from/{counterparty}/**"], "the spec's wire name for the counterparty (from/<them>/**)"
 
 
-def check_ingress_stores(repo, receives, required, source, router, call, config_path):
-    """router: (tool, id) or None."""
+def admitted(config_text, counterparty):
+    """Whether the core's configuration already admits the counterparty: the ACL
+    subject the goat-zenoh role renders for a declared peering
+    (`sovereign-<them>`, templates/config.json5.j2) or the one apply's fragment
+    splices in (`fed-<them>`)."""
+    who = re.escape(counterparty)
+    return re.search(rf"""["']?id["']?\s*:\s*["'](?:sovereign|fed)-{who}["']""", config_text) is not None
+
+
+def check_ingress_stores(repo, receives, required, source, router, call, config_path, counterparty=None):
+    """router: (tool, id) or None. With `counterparty`, a peering the core does
+    not admit yet is NOT APPLICABLE: its receive store appears when it is
+    admitted at phase 10."""
     label = "core receive stores"
     if not receives:
         return Result("ingress-stores", label, NA, "the declaration accepts nothing ([data] accept_* absent)")
@@ -502,6 +583,10 @@ def check_ingress_stores(repo, receives, required, source, router, call, config_
                       "GB-137",
                       "Set FED_CORE_CONFIG_PATH to where the core router reads its configuration, or\n"
                       "inspect the core's storages through its own approved workflow.")
+    if counterparty and not admitted(out, counterparty):
+        return Result("ingress-stores", label, NA,
+                      f"not yet expected: the core does not admit {counterparty} yet, and its receive store is "
+                      f"created when the peering is admitted at phase 10 (checked again before phases 11-13)")
     report = _ingress_filter(repo)(out, required)
     if report["error"]:
         return Result("ingress-stores", label, FAIL, report["error"], "GB-136",
