@@ -54,7 +54,7 @@ fn q(s: &str) -> String {
 }
 
 /// The edge group's per-peering values.
-fn edge_vars(p: &config::Peering, v: &PeeringValues, inventory: bool) -> String {
+fn edge_vars(p: &config::Peering, v: &PeeringValues, inventory: bool, installs: bool) -> String {
     let c = &v.cert_dir;
     let mut s = header(&format!(
         "the edge values of peering {} on environment {}.",
@@ -84,19 +84,35 @@ fn edge_vars(p: &config::Peering, v: &PeeringValues, inventory: bool) -> String 
          goat_zenoh_edge_listen_port: {}\n",
         v.edge_listen_port
     ));
-    s.push_str(
-        "\n# This peering's leaf certificates: phase 8 writes them here, and the edge reads them\n\
-         # here. The two CA paths (goat_zenoh_edge_our_ca_path, goat_zenoh_edge_partner_ca_path)\n\
-         # are not rendered: phase 8 does not write those files, and the partner CA is placed\n\
-         # only after its fingerprint is checked against the agreement (phase 10).\n",
-    );
-    for (var, file) in [
-        ("goat_zenoh_edge_outward_cert", "peering-outward.pem"),
-        ("goat_zenoh_edge_outward_key", "peering-outward-key.pem"),
-        ("goat_zenoh_edge_inward_cert", "peering-inward.pem"),
-        ("goat_zenoh_edge_inward_key", "peering-inward-key.pem"),
-    ] {
-        s.push_str(&format!("{var}: {}\n", q(&format!("{c}/{file}"))));
+    if installs {
+        // goat-zenoh-edge installs the leaves itself (goat_zenoh_edge_install_certs):
+        // it reads them from <fed_work>/pki (this peering's cert_dir, which the
+        // driver's --work matches, GB-128), checks them, and installs them in
+        // goat_zenoh_edge_cert_dir, deriving the four leaf paths from it and refusing
+        // any other value. So the leaf paths are not rendered, and the edge's own
+        // per-peering directory is.
+        s.push_str(&format!(
+            "\n# goat_zenoh_edge_install_certs is on for this group: the role installs this\n\
+             # peering's leaves from {c} (phase 8) into the directory below and derives\n\
+             # the four leaf paths from it; they are not set here.\n\
+             goat_zenoh_edge_cert_dir: {}\n",
+            q(&format!("/etc/goat-zenoh-edge-{}/tls", v.peering))
+        ));
+    } else {
+        s.push_str(
+            "\n# This peering's leaf certificates: phase 8 writes them here, and the edge reads them\n\
+             # here. The two CA paths (goat_zenoh_edge_our_ca_path, goat_zenoh_edge_partner_ca_path)\n\
+             # are not rendered: phase 8 does not write those files, and the partner CA is placed\n\
+             # only after its fingerprint is checked against the agreement (phase 10).\n",
+        );
+        for (var, file) in [
+            ("goat_zenoh_edge_outward_cert", "peering-outward.pem"),
+            ("goat_zenoh_edge_outward_key", "peering-outward-key.pem"),
+            ("goat_zenoh_edge_inward_cert", "peering-inward.pem"),
+            ("goat_zenoh_edge_inward_key", "peering-inward-key.pem"),
+        ] {
+            s.push_str(&format!("{var}: {}\n", q(&format!("{c}/{file}"))));
+        }
     }
     s
 }
@@ -250,7 +266,7 @@ pub fn render_with(
     values: &[PeeringValues],
     previous: &alloc::Record,
 ) -> Result<Vec<Rendered>> {
-    render_full(cfg, values, previous, None)
+    render_full(cfg, values, previous, None, &Default::default())
 }
 
 /// `render_with`, carrying over from `prev_inventory` (the inventory this
@@ -261,6 +277,7 @@ pub fn render_full(
     values: &[PeeringValues],
     previous: &alloc::Record,
     prev_inventory: Option<&str>,
+    installs: &std::collections::BTreeSet<String>,
 ) -> Result<Vec<Rendered>> {
     let mut out = vec![Rendered {
         path: format!("ops/goatbuilder/{}", alloc::RECORD_FILE),
@@ -288,7 +305,7 @@ pub fn render_full(
     for (p, v) in cfg.peerings.iter().zip(values.iter()) {
         out.push(Rendered {
             path: format!("ops/ansible/group_vars/{}/peering-values.yml", v.edge_group),
-            body: edge_vars(p, v, inv),
+            body: edge_vars(p, v, inv, installs.contains(&v.edge_group)),
         });
         out.push(Rendered {
             path: format!("ops/ansible/group_vars/{}/peering-values.yml", v.core_group),
@@ -426,6 +443,34 @@ fn hand_group_files(repo: &Path, group: &str) -> Vec<PathBuf> {
     out
 }
 
+/// Whether hand-written group_vars turn on `goat_zenoh_edge_install_certs` for
+/// an edge group: the group's own files, else its parent `peering_edges`, else
+/// `all`, the way Ansible's group precedence reads them.
+fn installs_certs(repo: &Path, edge_group: &str) -> bool {
+    let read = |f: &Path| -> Option<bool> {
+        let text = std::fs::read_to_string(f).ok()?;
+        let v: serde_yaml::Value = serde_yaml::from_str(&text).ok()?;
+        match v.get("goat_zenoh_edge_install_certs")? {
+            serde_yaml::Value::Bool(b) => Some(*b),
+            serde_yaml::Value::String(s) => Some(matches!(
+                s.to_ascii_lowercase().as_str(),
+                "true" | "yes" | "on" | "1"
+            )),
+            _ => None,
+        }
+    };
+    for group in [edge_group, "peering_edges", "all"] {
+        if let Some(b) = hand_group_files(repo, group)
+            .iter()
+            .rev()
+            .find_map(|f| read(f))
+        {
+            return b;
+        }
+    }
+    false
+}
+
 /// One variable's value as the hand files of `group` set it, else as the role
 /// default in this repository sets it.
 fn live_value(repo: &Path, group: &str, var: &str, role: &str) -> Option<String> {
@@ -448,7 +493,15 @@ fn live_value(repo: &Path, group: &str, var: &str, role: &str) -> Option<String>
 /// Whether a peering already runs from hand-written configuration: its edge
 /// group has hand group_vars, or the hand-written inventory names its group.
 fn runs_by_hand(repo: &Path, edge_group: &str) -> bool {
-    if !hand_group_files(repo, edge_group).is_empty() {
+    // A file that only turns on goat-zenoh-edge's certificate install is a
+    // setting for the peering to come, not evidence that it runs.
+    let evidence = hand_group_files(repo, edge_group).iter().any(|f| {
+        let keys = std::fs::read_to_string(f)
+            .map(|t| yaml_keys(&t))
+            .unwrap_or_default();
+        keys.is_empty() || keys.iter().any(|k| k != "goat_zenoh_edge_install_certs")
+    });
+    if evidence {
         return true;
     }
     hand_inventory(repo)
@@ -696,7 +749,20 @@ pub fn run(repo: &Path, o: &Options) -> Result<Report> {
         std::fs::read_to_string(repo.join("ops/ansible/inventory/peering-edges.ini"))
             .ok()
             .filter(|t| t.starts_with(MARKER));
-    let rendered = render_full(&cfg, &values, &ctx.record, prev_inventory.as_deref())?;
+    // Edge groups whose hand-written group_vars turn on goat-zenoh-edge's own
+    // certificate install.
+    let installs: std::collections::BTreeSet<String> = values
+        .iter()
+        .filter(|v| installs_certs(repo, &v.edge_group))
+        .map(|v| v.edge_group.clone())
+        .collect();
+    let rendered = render_full(
+        &cfg,
+        &values,
+        &ctx.record,
+        prev_inventory.as_deref(),
+        &installs,
+    )?;
     let writes = !o.dry_run && o.mock.is_none();
     let mode = if o.dry_run {
         " (DRY RUN: nothing is written)"
@@ -1221,6 +1287,62 @@ mod tests {
             "xab_edge"
         )
         .is_ok());
+    }
+
+    /// With goat_zenoh_edge_install_certs on in the edge group's hand group_vars,
+    /// the role installs and derives the leaf paths: allocate renders the edge's
+    /// per-peering certificate directory and none of the four paths. Off, as before.
+    #[test]
+    fn the_leaf_paths_give_way_to_the_edge_roles_own_install() {
+        let d = repo_with(json!([p("xab", false), p("xac", false)]));
+        let g = d.path().join("ops/ansible/group_vars/xab_edge");
+        std::fs::create_dir_all(&g).unwrap();
+        std::fs::write(g.join("certs.yml"), "goat_zenoh_edge_install_certs: true\n").unwrap();
+        let c = config::load(&d.path().join("ops/goatbuilder/goatbuilder.yaml")).unwrap();
+        let vs = alloc::allocate_all(&c, &AllocContext::default()).unwrap();
+        let installs: std::collections::BTreeSet<String> = vs
+            .iter()
+            .filter(|v| installs_certs(d.path(), &v.edge_group))
+            .map(|v| v.edge_group.clone())
+            .collect();
+        assert_eq!(installs.iter().collect::<Vec<_>>(), vec!["xab_edge"]);
+        // A group whose only hand file is that switch is not a running peering.
+        assert!(adoption_check(d.path(), &c, &vs, &AllocContext::default(), &[]).is_ok());
+        let fs = render_full(&c, &vs, &alloc::Record::default(), None, &installs).unwrap();
+        let on = body(&fs, "ops/ansible/group_vars/xab_edge/peering-values.yml");
+        assert!(
+            on.contains("goat_zenoh_edge_cert_dir: \"/etc/goat-zenoh-edge-xab/tls\""),
+            "{on}"
+        );
+        for k in [
+            "goat_zenoh_edge_outward_cert",
+            "goat_zenoh_edge_outward_key",
+            "goat_zenoh_edge_inward_cert",
+            "goat_zenoh_edge_inward_key",
+        ] {
+            assert!(
+                !on.contains(&format!("{k}:")),
+                "{k} rendered with the role's install on: {on}"
+            );
+        }
+        let off = body(&fs, "ops/ansible/group_vars/xac_edge/peering-values.yml");
+        assert!(off.contains("goat_zenoh_edge_outward_cert: \"/var/lib/goat-federation/xac/pki/peering-outward.pem\""), "{off}");
+        assert!(!off.contains("goat_zenoh_edge_cert_dir"), "{off}");
+        // The parent group's switch counts too; `false` in the group overrides it.
+        let pe = d.path().join("ops/ansible/group_vars/peering_edges");
+        std::fs::create_dir_all(&pe).unwrap();
+        std::fs::write(
+            pe.join("certs.yml"),
+            "goat_zenoh_edge_install_certs: true\n",
+        )
+        .unwrap();
+        assert!(installs_certs(d.path(), "xac_edge"));
+        std::fs::write(
+            g.join("certs.yml"),
+            "goat_zenoh_edge_install_certs: false\n",
+        )
+        .unwrap();
+        assert!(!installs_certs(d.path(), "xab_edge"));
     }
 
     #[test]
