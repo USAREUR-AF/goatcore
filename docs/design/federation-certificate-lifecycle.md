@@ -150,10 +150,18 @@ rotated leaf restarts the edge once. The checks also run under `--check`. Key
 files are copied with `diff: false`, so `--diff` does not print them.
 
 Several peerings on one edge each have their own `cert_dir`. The default is
-`/etc/goat-zenoh-edge-<partner>/tls`. Not built: the driver passing the
-allocated `PeeringValues.cert_dir` (stage 8, allocation); until then the default
-or a group_vars value applies. The `.peering` marker makes a directory that
-another peering already holds a refusal rather than an overwrite.
+`/etc/goat-zenoh-edge-<partner>/tls`. When the edge group turns this switch on,
+`goatbuilder federate allocate` renders the same per-peering directory,
+`goat_zenoh_edge_cert_dir: /etc/goat-zenoh-edge-<with>/tls`, into the group's
+`peering-values.yml`, and none of the leaf paths ([goatbuilder.md](goatbuilder.md),
+"Per-peering files"). It does not pass the allocated `PeeringValues.cert_dir`:
+that is `<work>/pki` on the machine running the driver, the source this role
+reads the leaves from (`goat_zenoh_edge_cert_src_dir`), and it also holds the
+core's and the republisher's leaves, so the unmarked-directory check below would
+refuse installing into it whenever the driver runs on the edge host. Without
+`allocate`, the default or a group_vars value applies. The `.peering` marker
+makes a directory that another peering already holds a refusal rather than an
+overwrite.
 
 Not built: the driver's phase 10 text still tells the person to place the partner
 CA, which stays correct while the switch defaults to off. Turning the default on,

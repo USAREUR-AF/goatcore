@@ -26,7 +26,7 @@ the files on the edge and sets the five path variables to them.
 | Variable | Default | What |
 |---|---|---|
 | `goat_zenoh_edge_install_certs` | `false` | install the five files from the run's working directory |
-| `goat_zenoh_edge_cert_dir` | `/etc/goat-zenoh-edge-<partner>/tls` | the per-peering directory on the edge (not built yet: the driver passing the allocated `PeeringValues.cert_dir`, stage 8) |
+| `goat_zenoh_edge_cert_dir` | `/etc/goat-zenoh-edge-<partner>/tls` | the per-peering directory on the edge. `goatbuilder federate allocate` renders this same value for a group with the switch on; it is never the allocated `cert_dir`, which is `<work>/pki`, the source on the controller (`goat_zenoh_edge_cert_src_dir`) |
 | `goat_zenoh_edge_cert_src_dir` | `<fed_work>/pki` | the leaves, on the controller |
 | `goat_zenoh_edge_partner_ca_src` | `<fed_work>/theirs-ca.pem` | the partner's CA, on the controller |
 | `goat_zenoh_edge_agreement_src` | `<fed_work>/agreement.json` | the agreement that names both CA fingerprints |
