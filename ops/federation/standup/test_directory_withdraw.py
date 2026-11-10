@@ -25,7 +25,7 @@ SEED = bytes(range(32))
 
 class StandIn(http.server.BaseHTTPRequestHandler):
     """Hosts xaa's entry and its slots for xab and xac, and xab's own entry. A DELETE
-    is honoured only when it is signed by xaa's key over the saltlick statement."""
+    is honored only when it is signed by xaa's key over the saltlick statement."""
     slots = {}
     seen = []
     key = None
