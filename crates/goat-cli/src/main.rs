@@ -72,6 +72,18 @@ pub struct Cli {
     #[arg(long, global = true, env = "GOAT_CONTEXT")]
     pub context: Option<String>,
 
+    /// Connect to this router endpoint (`tls/<ip>:<port>`) instead of the
+    /// context's `router_endpoint`, for this command only. The context's
+    /// certificate, key and CA roots are still used. For a local port
+    /// forward: `env-door.sh <goatnet> --forward <router-ip>:7447`.
+    #[arg(
+        long,
+        global = true,
+        env = "GOAT_ROUTER_ENDPOINT",
+        value_name = "ENDPOINT"
+    )]
+    pub router: Option<String>,
+
     /// Show the substrate cascade a mutating command sets off.
     #[arg(long, global = true)]
     pub narrate: bool,
@@ -413,6 +425,14 @@ async fn main() {
         // and exited on error. Render via clap for parity if it ever is.
         Err(e) => e.exit(),
     };
+    if let Some(router) = cli.router.as_deref() {
+        profile::set_router_override(router);
+        if profile::router_override().is_some() {
+            eprintln!(
+                "router: {router} (--router; replaces the context's router_endpoint for this command)"
+            );
+        }
+    }
 
     let filter = if cli.verbose {
         // The trailing bare `warn` is what makes `-v` a SUPERSET of the

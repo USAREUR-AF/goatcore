@@ -1129,7 +1129,7 @@ async fn open_zenoh_session_opts(
     // machine's own cargo registry path and nothing about the actual cause.
     profile.require_mesh_ready()?;
     let toml = profile.read_classified(&profile.profile_toml_path())?;
-    let router = extract_toml_string(&toml, "router_endpoint").ok_or_else(|| {
+    let router = crate::profile::resolve_router_endpoint(&toml).ok_or_else(|| {
         anyhow::anyhow!(
             "{} missing router_endpoint — re-run `goat profile init`",
             profile.profile_toml_path().display()
@@ -1393,12 +1393,6 @@ async fn read_payload(
     }
 }
 
-/// Mirror cmd::doctor::parse_endpoints' tiny TOML extractor so
-/// pubsub doesn't pull a full TOML parser dep for one field read.
-// See crate::profile::extract_toml_field's doc comment: this used to be a
-// locally hand-rolled parser with a prefix-collision bug. Now an alias onto
-// the one shared, correct implementation.
-use crate::profile::extract_toml_field as extract_toml_string;
 
 /// Verdict of a `--confirm` round-trip read-back. Shared with
 /// `goat doctor --topic`, which reuses the same write-then-read-back
@@ -1488,6 +1482,9 @@ fn hex(b: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    // The router endpoint is read through crate::profile::resolve_router_endpoint
+    // in the session open; the tests below still exercise the shared reader.
+    use crate::profile::extract_toml_field as extract_toml_string;
 
     #[test]
     fn extract_toml_finds_router_endpoint() {
