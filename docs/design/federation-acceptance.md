@@ -49,7 +49,7 @@ The run's verdict and exit status come from `acceptance_evidence.py` alone:
 | 0 | PASS | every required check passed |
 | 1 | FAIL | a check failed |
 | 3 | INCOMPLETE | none failed, but a required check was BLOCKED or SKIPPED, or no required check ran (catalog code X-ACCEPT-001; both avenues' failure text names it) |
-| 2 | | the agreement could not be read, or the evidence could not be written |
+| 2 | | the agreement could not be read, or the evidence could not be written (including one check whose record failed: the bundle would lack it) |
 
 A required check becomes PASS only by passing. No flag turns FAIL, BLOCKED or SKIP into PASS.
 Every check is required today.
@@ -108,7 +108,7 @@ Check names are stable (`delivery/<direction>/<set>`, `republisher-boundary/<dir
 two runs and two parties' bundles can be compared row by row.
 
 The bundle records local observations only (`observed_by`). Keeping a partner's reported
-results beside it, distinctly labelled, is not built.
+results beside it, distinctly labeled, is not built.
 
 ## 5. Testing without hosts
 

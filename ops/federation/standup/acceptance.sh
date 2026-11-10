@@ -95,7 +95,7 @@ CHECKS="$EVID/.checks-$RUN_ID.jsonl"; OBSF="$EVID/.obs-$RUN_ID"
 : > "$CHECKS"; : > "$OBSF"
 trap 'rm -f "$CHECKS" "$OBSF"' EXIT
 T0="$RUN_STARTED"
-pass=0; fail=0; skip=0; blocked=0
+pass=0; fail=0; skip=0; blocked=0; RECORD_FAILED=""
 
 # begin: the start time of the checks that follow. obs KEY VALUE: one raw observation
 # for the next check recorded.
@@ -106,7 +106,7 @@ record() {
   if ! python3 "$EVIDENCE" record "$CHECKS" --name "$1" --direction "$2" --tier "$3" --verdict "$4" \
        --reason "$5" --title "$5" --started "$T0" --obs-file "$OBSF"; then
     printf '  \033[31mFAIL\033[0m  the evidence for %s could not be recorded\n' "$1"
-    fail=$((fail+1))
+    fail=$((fail+1)); RECORD_FAILED="$RECORD_FAILED $1"
   fi
   : > "$OBSF"
 }
@@ -405,4 +405,10 @@ python3 "$EVIDENCE" finalize "$CHECKS" --out "$EVID" --agreement "$AGREEMENT" --
   "spire=$(set_or_not "${FED_SPIRE_OURS:-}${FED_SPIRE_THEIRS:-}")"
 rc=$?
 [ "$rc" -eq 2 ] && echo "  ACCEPTANCE FAILED — the evidence bundle could not be written to $EVID."
+# A check whose evidence could not be recorded is missing from the bundle, so the
+# bundle's verdict cannot stand: the run fails as an evidence failure.
+if [ -n "$RECORD_FAILED" ]; then
+  echo "  ACCEPTANCE FAILED — the evidence for$RECORD_FAILED could not be recorded; the bundle is incomplete."
+  exit 2
+fi
 exit "$rc"

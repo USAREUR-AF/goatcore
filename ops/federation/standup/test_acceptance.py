@@ -99,6 +99,30 @@ class AcceptanceRun(unittest.TestCase):
         self.assertIn("the ACL trace was not read", out)
         self.assertEqual(self.verdicts()["refusal/acl-trace"], "BLOCKED")
 
+    def test_a_check_whose_evidence_cannot_be_recorded_fails_the_run(self):
+        # A copy of the runner whose record step refuses one check: the bundle would
+        # lack it, so the run must not exit with the bundle's own verdict.
+        d = os.path.join(self.tmp, "runner")
+        os.makedirs(d)
+        shutil.copy(SCRIPT, os.path.join(d, "acceptance.sh"))
+        src = open(HERE / "acceptance_evidence.py").read()
+        src = src.replace("    try:\n        if a.cmd == \"record\":",
+                          "    if a.cmd == \"record\" and a.name.startswith(\"spire\"):\n        return 2\n"
+                          "    try:\n        if a.cmd == \"record\":", 1)
+        self.assertIn('a.name.startswith("spire")', src)
+        open(os.path.join(d, "acceptance_evidence.py"), "w").write(src)
+        path = os.path.join(self.tmp, "agreement.json")
+        with open(path, "w") as f:
+            json.dump(self.ag, f)
+        env = {k: v for k, v in os.environ.items() if k not in SCRUB}
+        env.update(self.fabric.start())
+        env.update({"FED_ACCEPTANCE_WAIT": "0.3", "FED_ACCEPTANCE_GAP": "0", "FED_ACCEPTANCE_RT_TIMEOUT": "3"})
+        p = subprocess.run(["bash", os.path.join(d, "acceptance.sh"), path, "--as", "xaa"], env=env,
+                           capture_output=True, text=True, timeout=240)
+        out = p.stdout + p.stderr
+        self.assertEqual(p.returncode, 2, out)
+        self.assertIn("could not be recorded", out)
+
     def test_an_unwritable_evidence_directory_stops_the_run(self):
         blocker = os.path.join(self.tmp, "not-a-directory")
         open(blocker, "w").close()
