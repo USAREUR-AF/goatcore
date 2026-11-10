@@ -10,9 +10,14 @@ marks.jsonl: rows {"check": "<scenario>.<check>", "outcome": "BLOCKED|SKIP|NOT A
 "reason": "..."} that a unit writes when it decides a check cannot run or is excluded by
 the agreement. A unit that stopped writes stopped.json {"reason": "..."}.
 
+A mark may only say BLOCKED, SKIP or NOT APPLICABLE: PASS and FAIL come from recorded
+steps alone, never from a unit's say-so.
+
 A check reads one recorded step (its `step`, with {A}, {B} and {n} replaced):
-  pass -> PASS; fail or xfail -> FAIL;
-  no step, a mark -> the mark's outcome and reason;
+  a failed step -> FAIL, whatever else is recorded: a violation observed is never hidden;
+  a mark -> the mark's outcome and reason, even beside a passing step: no PASS where the
+    unit itself declared the check blocked, skipped or excluded;
+  a passing step -> PASS;
   no step, the unit stopped -> BLOCKED (the unit stopped before it);
   no step, the unit never ran -> SKIP.
 A scenario is FAIL if a required check FAILed, else BLOCKED if one is BLOCKED, else SKIP
@@ -32,6 +37,7 @@ import yaml
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 WORDS = ("PASS", "FAIL", "BLOCKED", "SKIP", "NOT APPLICABLE")
+MARK_WORDS = ("BLOCKED", "SKIP", "NOT APPLICABLE")
 
 
 def load_jsonl(path):
@@ -69,8 +75,10 @@ def judge(catalog, records, avenue, only):
             row["_unit"], row["_dir"] = unit, rdir
             steps[(unit, row["name"])] = row
         for m in load_jsonl(os.path.join(rdir, "marks.jsonl")):
-            if m.get("outcome") not in WORDS:
-                raise SystemExit(f"verdict: {rdir}/marks.jsonl: outcome {m.get('outcome')!r} is not an outcome word")
+            if m.get("outcome") not in MARK_WORDS:
+                raise SystemExit(f"verdict: {rdir}/marks.jsonl: a mark may say only BLOCKED, SKIP or NOT APPLICABLE, not {m.get('outcome')!r}")
+            if not (m.get("reason") or "").strip():
+                raise SystemExit(f"verdict: {rdir}/marks.jsonl: the mark on {m.get('check')} has no reason")
             marks[(unit, m["check"])] = m
     out = []
     params = catalog.get("params", {})
@@ -99,13 +107,19 @@ def judge(catalog, records, avenue, only):
                 else:
                     row = steps.get((unit, step))
             mark = marks.get((unit, cid)) or marks.get((unit, ck["id"]))
-            if row is not None:
-                c["outcome"] = "PASS" if row["status"] == "pass" else "FAIL"
-                c["reason"] = "" if row["status"] == "pass" else (row.get("why") or "failed")
+            if row is not None and row["status"] != "pass":
+                c["outcome"], c["reason"] = "FAIL", (row.get("why") or "failed")
                 c["evidence"] = os.path.join(row["_unit"], row["log"])
                 c["duration_s"] = row.get("duration_s", 0)
             elif mark is not None:
-                c["outcome"], c["reason"] = mark["outcome"], mark.get("reason") or "marked by the unit"
+                c["outcome"], c["reason"] = mark["outcome"], mark["reason"]
+                if row is not None:
+                    c["reason"] += f" (step {step} also recorded and passed; the mark decides)"
+                    c["evidence"] = os.path.join(row["_unit"], row["log"])
+            elif row is not None:
+                c["outcome"], c["reason"] = "PASS", ""
+                c["evidence"] = os.path.join(row["_unit"], row["log"])
+                c["duration_s"] = row.get("duration_s", 0)
             elif sc.get("not_built"):
                 c["outcome"], c["reason"] = "SKIP", f"not built: {sc['not_built']}"
             elif not unit:
@@ -120,7 +134,7 @@ def judge(catalog, records, avenue, only):
         o, why = scenario_outcome(checks)
         s = {
             "id": sc["id"], "title": sc["title"], "pass_condition": sc["pass_condition"].strip(),
-            "runs_where": sc.get("runs_where", "workhorse"), "required": bool(sc.get("required", True)),
+            "runs_where": sc.get("runs_where", "local"), "required": bool(sc.get("required", True)),
             "outcome": o, "reason": why, "checks": checks,
         }
         if sc.get("known_failure"):
@@ -192,12 +206,13 @@ def main():
     }
     if a.versions:
         res["versions"] = json.loads(a.versions)
+    # An unvalidated result is not written: jsonschema is required.
     try:
         import jsonschema
-        with open(os.path.join(HERE, "..", "result.schema.json"), encoding="utf-8") as fh:
-            jsonschema.validate(res, json.load(fh))
     except ImportError:
-        print("verdict: jsonschema not installed; the result was not validated", file=sys.stderr)
+        raise SystemExit("verdict: python3 jsonschema is required to validate the result; install it (pip install jsonschema)")
+    with open(os.path.join(HERE, "..", "result.schema.json"), encoding="utf-8") as fh:
+        jsonschema.validate(res, json.load(fh))
     text = json.dumps(res, indent=2) + "\n"
     if a.out:
         with open(a.out, "w", encoding="utf-8") as fh:
