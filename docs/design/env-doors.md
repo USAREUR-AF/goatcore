@@ -184,9 +184,14 @@ door whose inventories disagree — a mismatch otherwise surfaces as
 - AWS API is in the connect path. Island-mode or AWS-down means Tier 1 is
   down — same failure domain as enrollment, not worse.
 
-### Reading a goatnet's fabric through a door (built)
+### Reading a goatnet's fabric through a door (proposed, ADR 1227)
 
-A laptop that is not a peer of a goatnet can still run `goat health`, `goat sub`
+**Status: proposed, not accepted.** A platform-admin workaround only, never a
+person-facing path; the supported ways to read a goatnet's fabric are a `goat`
+profile on its mesh, or its panoscope. The complexity, fragility and security
+costs are in [ADR 1227](../adr/1227-platform-admin-may-read-a-goatnets-fabric-through-its-door.md).
+
+With it, a platform admin's laptop that is not a peer of a goatnet can run `goat health`, `goat sub`
 or any other fabric command against it, with the operator's own certificate,
 through that goatnet's door. Nothing is placed on the host and the laptop's mesh
 profile is not touched.
