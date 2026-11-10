@@ -78,6 +78,7 @@ resource "aws_security_group" "this" {
   vpc_id      = data.aws_vpc.default.id
 
   egress {
+    description = "Allow outbound IPv4 traffic"
     from_port   = 0
     to_port     = 0
     protocol    = "-1"
