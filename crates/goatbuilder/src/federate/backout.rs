@@ -559,6 +559,16 @@ fn directory(repo: &Path, o: &Options, t: &Target, dry: bool) -> Option<(String,
 }
 
 pub fn backout(repo: &Path, o: &Options) -> Result<Report> {
+    backout_with(repo, o, &mut |r: &Path, c: &str| run_bash(r, c))
+}
+
+/// [`backout`], with the play runner passed in, so a test can stand in for the
+/// hosts and see which commands would have run.
+pub fn backout_with(
+    repo: &Path,
+    o: &Options,
+    exec: &mut dyn FnMut(&Path, &str) -> Result<bool>,
+) -> Result<Report> {
     let t = target(o)?;
     if let Err(e) = work_belongs_to(&t.work, &t.partner) {
         return Err(goat_errors::coded("GB-220", e).into());
@@ -667,7 +677,7 @@ pub fn backout(repo: &Path, o: &Options) -> Result<Report> {
     let _ = std::fs::create_dir_all(&survey_dir);
     clear(&survey_dir);
     checks.push(row("cmd", true, survey_cmd.clone(), None));
-    if !run_bash(repo, &survey_cmd)? {
+    if !exec(repo, &survey_cmd)? {
         let recs = read_records(&survey_dir).unwrap_or_default();
         let s = summarize(&recs, &t.partner);
         let detail = if s.refused.is_empty() {
@@ -718,9 +728,13 @@ pub fn backout(repo: &Path, o: &Options) -> Result<Report> {
             ));
         }
     }
-    // A preview for the plan; the recheck that gates the restart runs again
-    // immediately before it, after the removal play (step 4).
-    let (slot_word, _, slot_said) = slot_recheck(repo, env.as_deref(), s.core_candidate.is_some());
+    // The slot check runs here, before anything is removed: when the core will
+    // restart and the check is BLOCKED or FAIL, the run stops now, so the edge is
+    // never taken down while the core still admits the partner. It runs again
+    // immediately before the restart (step 4).
+    let (slot_word, slot_ok_now, slot_said) =
+        slot_recheck(repo, env.as_deref(), s.core_candidate.is_some());
+    let slot_blocks = s.core_candidate.is_some() && !slot_ok_now;
     let (rec_path, rec_ours) = partner_record(repo, &t.partner);
     let dir_plan = directory(repo, o, &t, true);
     let mut extra: Vec<(String, String)> = Vec::new();
@@ -755,6 +769,21 @@ pub fn backout(repo: &Path, o: &Options) -> Result<Report> {
         ));
     }
     let view = plan_view(&t, &recs, &extra);
+
+    if slot_blocks {
+        if o.table {
+            print!("{view}");
+        }
+        checks.push(row(
+            "slot-recheck",
+            false,
+            format!("{slot_word}: {slot_said} (GB-223)"),
+            Some("nothing was changed: the core restart this back-out needs could not be cleared, so no resource is removed. Name the slot registry (FED_SLOT_DB, or FED_SLOT_REGISTRY_STORE=postgres with FED_SLOT_PG_SSH) or regenerate and commit the slot list, then run it again".into()),
+        ));
+        let mut r = Report::new("federate-backout", checks, EXIT_REFUSED);
+        r.printed = o.table;
+        return Ok(r);
+    }
 
     if !s.refused.is_empty() {
         if o.table {
@@ -843,7 +872,7 @@ pub fn backout(repo: &Path, o: &Options) -> Result<Report> {
     let apply_dir = base.join("apply");
     let _ = std::fs::create_dir_all(&apply_dir);
     clear(&apply_dir);
-    if !run_bash(repo, &apply_cmd)? {
+    if !exec(repo, &apply_cmd)? {
         checks.push(row("remove", false, "the removal play failed partway (GB-225); run the back-out again: every step is idempotent".into(), Some(format!("goatbuilder federate backout {}", t.partner))));
         let mut r = Report::new("federate-backout", checks, EXIT_REFUSED);
         r.exit = EXIT_NOT_CONVERGED;
@@ -879,7 +908,7 @@ pub fn backout(repo: &Path, o: &Options) -> Result<Report> {
             let core_dir = base.join("core-apply");
             let _ = std::fs::create_dir_all(&core_dir);
             clear(&core_dir);
-            if !run_bash(repo, &core_cmd)? {
+            if !exec(repo, &core_cmd)? {
                 core_done = false;
                 checks.push(row("core", false, "the core router was not restarted on the reviewed candidate (GB-224): its configuration changed since the survey, or the restart failed".into(), Some(format!("goatbuilder federate backout {} --dry-run, review the new candidate, then run it again", t.partner))));
                 exit = EXIT_NOT_CONVERGED;
@@ -965,7 +994,7 @@ pub fn backout(repo: &Path, o: &Options) -> Result<Report> {
         ));
     }
     clear(&survey_dir);
-    let after_ok = run_bash(repo, &survey_cmd)?;
+    let after_ok = exec(repo, &survey_cmd)?;
     let after = read_records(&survey_dir).unwrap_or_default();
     let left = summarize(&after, &t.partner);
     if !after_ok || left.to_remove > 0 {
@@ -1385,6 +1414,94 @@ mod tests {
         .unwrap();
         assert!(work_belongs_to(&w, "xac").is_err());
         assert!(work_belongs_to(&w, "xab").is_ok());
+    }
+
+    /// A repository whose deployment declares lazy slot storage, a work
+    /// directory, and a stand-in for the hosts: the survey finds the partner's
+    /// edge router and a core admission that needs a restart.
+    fn stand_in(dir: &Path) -> (PathBuf, String) {
+        let repo = dir.join("repo");
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join(
+            "../../ops/goatbuilder/fixtures/goatnet-from-scratch/03-boundary-node/goatbuilder.yaml",
+        );
+        std::fs::create_dir_all(repo.join("ops/goatbuilder")).unwrap();
+        std::fs::copy(fixture, repo.join("ops/goatbuilder/goatbuilder.yaml")).unwrap();
+        let gv = repo.join("ops/ansible/group_vars/zagros_hosts");
+        std::fs::create_dir_all(&gv).unwrap();
+        std::fs::write(
+            gv.join("zenoh-lazy-storage.yml"),
+            "zenoh_active_slot_anchors: []\n",
+        )
+        .unwrap();
+        (repo, dir.join("work").display().to_string())
+    }
+
+    fn fake_hosts(
+        work: String,
+        ran: std::rc::Rc<std::cell::RefCell<Vec<String>>>,
+    ) -> impl FnMut(&Path, &str) -> Result<bool> {
+        move |_: &Path, cmd: &str| {
+            ran.borrow_mut().push(cmd.to_string());
+            let survey = Path::new(&work).join("backout/survey");
+            std::fs::create_dir_all(&survey).unwrap();
+            std::fs::write(
+                survey.join("core-x.json"),
+                r#"{"host":"core-x","peering":"hello-ally","rows":[
+                  {"component":"edge router","resource":"container goat-zenoh-edge-hello-ally","state":"present","action":"remove","note":""},
+                  {"component":"core admission","resource":"router restart on /etc/x/config.json5","state":"present","action":"restart","note":"8 lines leave; candidate sha256:0000000000000000000000000000000000000000000000000000000000000000; stays admitted: no other peering"}]}"#,
+            )
+            .unwrap();
+            Ok(true)
+        }
+    }
+
+    #[test]
+    fn a_blocked_slot_check_stops_the_run_before_anything_is_removed() {
+        if std::env::var("FED_SLOT_DB").is_ok() || std::env::var("FED_SLOT_REGISTRY_STORE").is_ok()
+        {
+            return; // the check would not be BLOCKED in this environment
+        }
+        let d = tempfile::tempdir().unwrap();
+        let (repo, work) = stand_in(d.path());
+        let ran = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let mut exec = fake_hosts(work.clone(), ran.clone());
+        let o = Options {
+            partner: "hello-ally",
+            env: None,
+            r#as: None,
+            edge_group: None,
+            work: Some(&work),
+            mock: None,
+            dry_run: false,
+            yes: true,
+            table: false,
+        };
+        let r = backout_with(&repo, &o, &mut exec).unwrap();
+        assert!(!r.ok);
+        assert_eq!(r.exit, EXIT_REFUSED);
+        let gate = r
+            .checks
+            .iter()
+            .find(|c| c.name == "slot-recheck")
+            .expect("a slot-recheck row");
+        assert!(
+            gate.detail.starts_with("BLOCKED") && gate.detail.contains("GB-223"),
+            "{}",
+            gate.detail
+        );
+        let ran = ran.borrow();
+        assert_eq!(ran.len(), 1, "only the survey ran: {ran:?}");
+        assert!(
+            !ran[0].contains("peering_backout_apply")
+                && !ran[0].contains("peering_backout_core_apply")
+        );
+        // The dry run says the same, and also removes nothing.
+        let ran2 = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let mut exec2 = fake_hosts(work.clone(), ran2.clone());
+        let o2 = Options { dry_run: true, ..o };
+        let r2 = backout_with(&repo, &o2, &mut exec2).unwrap();
+        assert_eq!(r2.exit, EXIT_REFUSED);
+        assert_eq!(ran2.borrow().len(), 1);
     }
 
     #[test]
