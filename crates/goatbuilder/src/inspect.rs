@@ -814,10 +814,9 @@ mod tests {
         }
     }
 
-    fn fixture(tag: &str) -> PathBuf {
+    fn fixture(tag: &str) -> crate::testdir::Held<PathBuf> {
         let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../ops/goatbuilder/fixtures/basic");
-        let dst = std::env::temp_dir().join(format!("goatbuilder-inspect-{tag}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dst);
+        let dst = crate::testdir::path(&format!("goatbuilder-inspect-{tag}-"));
         copy_dir(&src, &dst);
         dst
     }

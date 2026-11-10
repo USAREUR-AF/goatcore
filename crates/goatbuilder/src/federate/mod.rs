@@ -774,7 +774,8 @@ mod tests {
     /// when no agreement names a transport, and nothing executed.
     #[test]
     fn dry_run_plans_the_scripts_phases_and_refuses_an_unknown_transport() {
-        let work = std::env::temp_dir().join(format!("goatbuilder-federate-{}", std::process::id()));
+        let held = crate::testdir::path("goatbuilder-federate-");
+        let work = held.join("work");
         let work_s = work.display().to_string();
         let fx = fixture();
         let o = Options { with: "hello-ally", env: None, r#as: None, edge_group: None, work: Some(&work_s), mock: Some(&fx), from: 1, to: 99, dry_run: true, table: false };
@@ -797,7 +798,7 @@ mod tests {
     }
 
     fn phase_11(kind: &str) -> (Vec<String>, String) {
-        let work = std::env::temp_dir().join(format!("goatbuilder-federate-{kind}-{}", std::process::id()));
+        let work = crate::testdir::path(&format!("goatbuilder-federate-{kind}-"));
         std::fs::create_dir_all(&work).unwrap();
         std::fs::write(work.join("agreement.json"), format!(r#"{{"transport":{{"kind":"{kind}"}}}}"#)).unwrap();
         let work_s = work.display().to_string();
@@ -858,7 +859,8 @@ mod tests {
     #[test]
     fn a_mock_fixture_supplies_the_declared_peering() {
         let fx = fixture();
-        let work = std::env::temp_dir().join(format!("goatbuilder-federate-mock-{}", std::process::id()));
+        let held = crate::testdir::path("goatbuilder-federate-mock-");
+        let work = held.join("work");
         let work_s = work.display().to_string();
         let declared = Options { with: "hello-ally", env: None, r#as: Some("zagros"), edge_group: None, work: Some(&work_s), mock: Some(&fx), from: 1, to: 99, dry_run: true, table: false };
         let r = federate(&repo(), &declared).unwrap();
@@ -874,7 +876,7 @@ mod tests {
     /// and must not create its working directory.
     #[test]
     fn a_mock_without_dry_run_executes_nothing_and_records_every_phase() {
-        let root = std::env::temp_dir().join(format!("goatbuilder-federate-mock-exec-{}", std::process::id()));
+        let root = crate::testdir::path("goatbuilder-federate-mock-exec-");
         std::fs::create_dir_all(&root).unwrap();
         let sentinel = root.join("ran");
         let stub = root.join("goat-stub");

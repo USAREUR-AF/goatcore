@@ -37,6 +37,8 @@ mod secrets;
 mod settings;
 mod standup;
 mod survey;
+#[cfg(test)]
+mod testdir;
 mod trace;
 mod tutor;
 mod update;
