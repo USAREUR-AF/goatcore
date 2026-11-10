@@ -3,8 +3,8 @@
 """Every build or package manifest in the tree is on the allowlist.
 
 A new language, framework or package manager needs a written reason and a
-named owner before it lands (docs/design/engineering-baseline.md). The
-manifest is where it lands, so this guard refuses any tracked manifest that
+named owner before it lands (goatdocs docs/design/engineering-baseline.md).
+The manifest is where it lands, so this guard refuses any tracked manifest that
 ops/ci/manifest-allowlist.txt does not list with an owner and a reason.
 
 Rules:
