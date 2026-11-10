@@ -12,7 +12,3 @@
 ops/ansible/roles/netbird-dashboard/tests/fixture-e2e/playwright/package.json | playwright
 ops/goat-id-console/web/e2e/package.json | @playwright/test
 ops/goat-zenoh-portal/web/e2e/package.json | @playwright/test
-ops/smoketest/dashboard/package.json | @preact/preset-vite
-ops/smoketest/dashboard/package.json | preact
-ops/smoketest/dashboard/package.json | typescript
-ops/smoketest/dashboard/package.json | vite
