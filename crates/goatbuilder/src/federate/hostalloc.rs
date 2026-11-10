@@ -431,13 +431,15 @@ pub fn readiness(cmp: &Comparison, ours: &[Conflict]) -> Readiness {
 mod tests {
     use super::*;
 
+    /// From its declared fields, as the config loader reads it.
     fn p(with: &str, env: &str) -> config::Peering {
-        config::Peering {
-            with: with.into(),
-            environment: env.into(),
-            site: "alpha".into(),
-            edge_class: "edge".into(),
-        }
+        serde_json::from_value(serde_json::json!({
+            "with": with,
+            "environment": env,
+            "site": "alpha",
+            "edge_class": "edge",
+        }))
+        .expect("a peering declaration")
     }
 
     fn res(kind: &str, v: &str) -> Resource {
