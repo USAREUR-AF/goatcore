@@ -7,6 +7,7 @@ test exercises the same splice the core runs.
 import importlib.util
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -190,7 +191,7 @@ class OnePeeringOfTwo(unittest.TestCase):
         self.assertEqual(result["removed"]["subjects"], ["fed-xac"])
         self.assertNotIn("xac", fx.text(os.path.join(out, "org.candidate")))
 
-    def test_a_recognition_only_neighbour_keeps_its_trailing_comment(self):
+    def test_a_recognition_only_neighbor_keeps_its_trailing_comment(self):
         # xab grants nothing, so its policies region ends in a comment, right before
         # xac's GENERATED header: removing xac must not take xab's comment with it.
         quiet = fragment("xaa", "xab").split("##ACL-ORG-REGION write-rules", 1)[0] + (
@@ -211,6 +212,23 @@ class OnePeeringOfTwo(unittest.TestCase):
             self.assertIn(f'"{i}"', cand)
         for i in bc.rule_ids("xa") | bc.subject_ids("xa"):
             self.assertNotIn(f'"{i}"', cand)
+
+
+class Header(unittest.TestCase):
+    def test_the_markers_are_render_rs_constants(self):
+        src = (REPO / "crates/goat-federation/src/render.rs").read_text()
+        by = re.search(r'pub const GENERATED_BY: &str = "([^"]+)";', src).group(1)
+        rest = re.search(r'pub const GENERATED_MARKERS: &\[&str\] = &\[GENERATED_BY, ([^\]]*)\];', src).group(1)
+        markers = (by,) + tuple(re.findall(r'"([^"]+)"', rest))
+        self.assertEqual(markers, bc.GENERATED_MARKERS)
+
+    def test_a_goatbuilder_worded_fragment_is_still_recognized(self):
+        frag = fragment("xaa", "xac").replace("`goat federate apply`", "`goatbuilder federate apply`")
+        fx = Fixture(fragment("xaa", "xab"), frag)
+        result, rc, out = fx.plan("xac")
+        self.assertEqual(rc, 0, result)
+        self.assertEqual(result["removed"]["comments"], 1)
+        self.assertNotIn("xac", fx.text(os.path.join(out, "org.candidate")))
 
 
 class Refusals(unittest.TestCase):
