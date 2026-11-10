@@ -345,6 +345,16 @@ class Publish(Fixture):
                     self.propose(approvals) if approvals else self.propose()
                 self.assertFalse(os.path.exists(os.path.join(self.out, "xab.yaml")))
 
+    def test_approver_names_are_written_exactly_and_control_characters_refused(self):
+        self.ready()
+        proposed, _ = self.propose(("xaa=Operator \"A\" \\ the first", "xab=Operator B"))
+        import yaml
+        self.assertEqual(yaml.safe_load(open(proposed))["acceptance"]["approved_by"]["xaa"],
+                         'Operator "A" \\ the first')
+        for bad in ("xaa=Operator\nlevel: exchanging", "xaa=Op\x1berator"):
+            with self.subTest(bad=bad), self.assertRaises(ses.Refused):
+                self.propose((bad, "xab=Operator B"))
+
     def test_an_open_bilateral_scope_is_refused(self):
         self.ready()
         with open(os.path.join(self.evidence, "result.json")) as f:

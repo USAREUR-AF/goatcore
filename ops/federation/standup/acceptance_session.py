@@ -411,8 +411,7 @@ def propose(manifest_path, us, evidence, partner_file, approvals, out_dir, now=N
     target = os.path.join(out_dir, os.path.basename(partner_file))
     if os.path.realpath(os.path.dirname(target)) == os.path.realpath(os.path.dirname(os.path.abspath(partner_file))):
         raise Refused("--out is the partner file's own directory; the proposal is written beside it, never over it")
-    m = _shape(load(manifest_path, "the session manifest"))
-    them = [p.get("sovereign_id") for p in m.get("participants", []) if p.get("sovereign_id") != us][0]
+    m, them = _shape(load(manifest_path, "the session manifest"), us)
     now = now or utcnow()
     if now >= parse_ts(m["expires_at"]):
         raise Refused("the session expired at %s; run a new one before publishing" % m["expires_at"])
@@ -433,6 +432,9 @@ def propose(manifest_path, us, evidence, partner_file, approvals, out_dir, now=N
         if not names.get(side, "").strip():
             raise Refused("both operators approve the result: no approver named for %s (--approved-by %s=<name>)"
                           % (side, side))
+        if any(ord(ch) < 32 or ord(ch) == 127 for ch in names[side]) or len(names[side]) > 120:
+            raise Refused("the approver named for %s holds a control character or is longer than 120 characters"
+                          % side)
     try:
         with open(partner_file) as f:
             text = f.read()
@@ -467,8 +469,10 @@ def propose(manifest_path, us, evidence, partner_file, approvals, out_dir, now=N
         '  verified_at: "%s"' % ts(now),
         '  expires: "%s"' % (ag_expires or m["expires_at"][:10]),
         "  approved_by:",
-        '    %s: "%s"' % (us, names[us].replace('"', "'")),
-        '    %s: "%s"' % (them, names[them].replace('"', "'")),
+        # JSON strings are valid YAML double-quoted scalars, so a name is written
+        # exactly, whatever quotes or backslashes it holds.
+        "    %s: %s" % (us, json.dumps(names[us])),
+        "    %s: %s" % (them, json.dumps(names[them])),
     ]) + "\n"
     if not text.endswith("\n"):
         text += "\n"

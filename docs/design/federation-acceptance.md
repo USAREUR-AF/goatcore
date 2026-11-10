@@ -397,7 +397,9 @@ refreshes the combined result under `<evidence>/bilateral/`, as `combine` does. 
 bundles show `cleanup/probes` PASS (§2.4), both operators are named, the session has not
 expired, the file declares this session's partner, and its `level` already grants `exchanging`.
 The block holds the session, the digests of the manifest, agreement, both bundles and the
-combined result, the time, the expiry (the agreement's), and the two approvers. A later session
+combined result, the time, the expiry (the agreement's), and the two approvers, written as JSON
+strings so a name lands exactly; a name with a control character, or longer than 120 characters, is
+refused. A later session
 replaces the block.
 
 `ops/federation/validate-partners.py` checks the block: known fields only; status `exchanging`,
