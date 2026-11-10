@@ -109,6 +109,17 @@ the job summary. An operator running the live canary gets the same directory.
 
 ## Live canary
 
+**Built:** the role pulls `e2e_canary_image` as declared. A different deployment
+`ghcr_org` does not rewrite its registry. The hermetic tier can explicitly set
+`e2e_canary_registry` to a mirror; that override preserves the pinned digest.
+Reference-only tests cover both paths and the refusal of empty or tag-only
+pins without host writes or registry access. They do not execute the role's
+rollback-ledger dependency or a deployment.
+
+Pull-request runs of `e2e-canary-image.yml` validate the build without publishing
+an image. Use a published digest, such as one from the main-branch publisher,
+when declaring the live canary pin.
+
 `ops/e2e/live-canary.sh`, from a checkout on main or an assembled tree, on a
 laptop that reaches the goatnet (mesh or door). The goatnet is the release
 ladder's `dev` rung (`ops/release/ladder.yaml`) unless `--env` names another, and

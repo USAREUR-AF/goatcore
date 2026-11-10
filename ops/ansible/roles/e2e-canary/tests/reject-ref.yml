@@ -1,0 +1,24 @@
+---
+- name: Reset the refusal observation
+  ansible.builtin.set_fact:
+    _fixture_refused: false
+
+- name: Refuse an empty or tag-only pin
+  block:
+    - name: Execute production validation
+      ansible.builtin.include_tasks: "{{ canary_pull_ref_tasks | default(playbook_dir ~ '/../tasks/pull-ref.yml') }}"
+      vars:
+        e2e_canary_image: "{{ fixture_bad_ref }}"
+  rescue:
+    - name: Require the expected pin-validation failure
+      ansible.builtin.assert:
+        that:
+          - "'must be a digest-pinned reference' in ansible_failed_result.msg"
+    - name: Record the refusal
+      ansible.builtin.set_fact:
+        _fixture_refused: true
+
+- name: Invalid pins never resolve successfully
+  ansible.builtin.assert:
+    that:
+      - _fixture_refused

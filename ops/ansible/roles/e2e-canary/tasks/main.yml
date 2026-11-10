@@ -4,18 +4,8 @@
 # (refuse an unpinned image; compose up -d; the ledger as the proof) with
 # nothing a canary does not need.
 
-- name: e2e-canary | refuse an unpinned image
-  ansible.builtin.assert:
-    that:
-      - e2e_canary_image | length > 0
-      - "'@sha256:' in e2e_canary_image"
-    fail_msg: >-
-      e2e_canary_image must be a digest-pinned reference
-      (ghcr.io/<org>/e2e-canary:<tag>@sha256:...). Empty or tag-only is refused.
-
-- name: e2e-canary | the pull reference (registry prefix rewritten, digest kept)
-  ansible.builtin.set_fact:
-    _e2e_pull_ref: "{{ e2e_canary_registry }}/{{ e2e_canary_image | regex_replace('^ghcr\\.io/[^/]+/', '') }}"
+- name: e2e-canary | validate and resolve the pinned reference
+  ansible.builtin.import_tasks: pull-ref.yml
 
 - name: e2e-canary | ensure the compose directory
   ansible.builtin.file:

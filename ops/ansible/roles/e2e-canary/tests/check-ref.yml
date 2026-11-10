@@ -1,0 +1,11 @@
+---
+- name: Resolve the declared pin through the production task file
+  ansible.builtin.include_tasks: "{{ canary_pull_ref_tasks | default(playbook_dir ~ '/../tasks/pull-ref.yml') }}"
+  vars:
+    e2e_canary_image: "{{ fixture_case.image }}"
+    e2e_canary_registry: "{{ fixture_case.registry | default(_fixture_registry_default) }}"
+
+- name: The resulting reference preserves the image and digest
+  ansible.builtin.assert:
+    that:
+      - _e2e_pull_ref == fixture_case.expected
