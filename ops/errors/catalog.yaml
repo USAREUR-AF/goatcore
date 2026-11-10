@@ -2218,6 +2218,21 @@ entries:
       - "^status: peering '[^']*' is not declared in "
     exit: 1
 
+  - code: GB-232
+    tool: goatbuilder
+    title: a rendered deployment half needs a site value no group_vars sets
+    what: "The peering declares deployment: rendered, so goatbuilder federate allocate renders the edge's and the core's deployment halves (peering-deployment.yml) from the declaration, the allocated values, and the site values set in the group_vars of the environment's groups (environments[].groups) or all. A required one (the edge image, the core router's CN, the SPIRE server address, the republisher image, the core router endpoint) is set in none of them. Nothing is invented and nothing was written."
+    causes:
+      - "the site values live in a group the environment does not name in environments[].groups"
+      - "a value still lives only in the peering's hand-written deployment.yml"
+    fixes:
+      - "set the named variable once in the group_vars of one of the environment's groups"
+      - "or declare deployment: hand on the peering and keep writing its deployment halves by hand"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "\\(GB-232\\)"
+    exit: 2
+
   # ------------------------------------------------ federate: the peering forwarder
 
   - code: GB-160

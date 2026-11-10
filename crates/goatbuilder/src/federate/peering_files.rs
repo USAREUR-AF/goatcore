@@ -344,7 +344,11 @@ fn stale(repo: &Path, rendered: &[Rendered]) -> Vec<String> {
         return out;
     };
     for d in dirs.flatten() {
-        for name in ["peering-values.yml", "peering-forwarder.yml"] {
+        for name in [
+            "peering-values.yml",
+            "peering-forwarder.yml",
+            "peering-deployment.yml",
+        ] {
             let f = d.path().join(name);
             let rel = format!(
                 "ops/ansible/group_vars/{}/{name}",
@@ -654,6 +658,159 @@ fn hand_inventory_names_apart(repo: &Path, values: &[PeeringValues]) -> Result<(
     Ok(())
 }
 
+/// The site values a rendered deployment half copies, from the environment's
+/// own groups' hand-written group_vars (each of `environments[].groups`, then
+/// `all`, the first that sets it): (variable, required).
+const EDGE_SITE: &[(&str, bool)] = &[
+    ("goat_zenoh_edge_image", true),
+    ("goat_zenoh_edge_core_cn", true),
+    ("peering_spire_server_addr", true),
+    ("goat_zenoh_edge_trust_mode", false),
+    ("goat_zenoh_edge_acl_trace", false),
+    ("peering_wg_fips_waived_reason", false),
+    ("peering_wg_extra_ports", false),
+    ("peering_spire_outbound_listen", false),
+];
+const CORE_SITE: &[(&str, bool)] = &[
+    ("goat_fed_republisher_image", true),
+    ("goat_fed_republisher_core_endpoint", true),
+];
+
+/// A YAML value as one line of a group_vars file (a list as indented items).
+fn yaml_line(var: &str, v: &serde_yaml::Value) -> String {
+    match v {
+        serde_yaml::Value::String(s) => format!("{var}: {}\n", q(s)),
+        serde_yaml::Value::Sequence(items) => {
+            let mut out = format!("{var}:\n");
+            for i in items {
+                let one = match i {
+                    serde_yaml::Value::String(s) => q(s),
+                    other => serde_yaml::to_string(other)
+                        .unwrap_or_default()
+                        .trim()
+                        .to_string(),
+                };
+                out.push_str(&format!("  - {one}\n"));
+            }
+            out
+        }
+        other => format!(
+            "{var}: {}\n",
+            serde_yaml::to_string(other).unwrap_or_default().trim()
+        ),
+    }
+}
+
+/// One variable from the environment's groups' hand-written group_vars.
+fn site_value(repo: &Path, groups: &[String], var: &str) -> Option<serde_yaml::Value> {
+    let read = |f: &Path| -> Option<serde_yaml::Value> {
+        let text = std::fs::read_to_string(f).ok()?;
+        let v: serde_yaml::Value = serde_yaml::from_str(&text).ok()?;
+        v.get(var).cloned()
+    };
+    groups
+        .iter()
+        .map(String::as_str)
+        .chain(["all"])
+        .find_map(|g| hand_group_files(repo, g).iter().rev().find_map(|f| read(f)))
+}
+
+/// The deployment halves of every peering declared `deployment: rendered`:
+/// `group_vars/<edge_group>/peering-deployment.yml` and the core's, from the
+/// declaration, the allocated values and the environment's site values.
+/// Refuses (GB-232) a required site value no group_vars sets; nothing is
+/// invented.
+pub fn deployment_halves(
+    repo: &Path,
+    cfg: &Config,
+    values: &[PeeringValues],
+) -> Result<Vec<Rendered>> {
+    let mut out = Vec::new();
+    for (p, v) in cfg.peerings.iter().zip(values.iter()) {
+        if p.deployment.as_deref() != Some("rendered") {
+            continue;
+        }
+        let groups: Vec<String> = cfg
+            .environments
+            .iter()
+            .find(|e| e.name == p.environment)
+            .map(|e| e.groups.clone())
+            .unwrap_or_default();
+        let mut missing: Vec<&'static str> = Vec::new();
+        let mut take = |list: &[(&'static str, bool)], body: &mut String| {
+            for (var, required) in list {
+                match site_value(repo, &groups, var) {
+                    Some(val) => body.push_str(&yaml_line(var, &val)),
+                    None if *required => missing.push(*var),
+                    None => {}
+                }
+            }
+        };
+        let our_ca = format!("{}/our-ca.pem", v.cert_dir);
+        let mut edge = header(&format!(
+            "the edge's deployment half of peering {} on environment {}.",
+            v.peering, v.environment
+        ));
+        edge.push_str(&format!(
+            "# From the declaration (deployment: rendered), the allocated values, and the site values\n\
+             # set in the group_vars of environment {}'s groups ({}) or all.\n\n",
+            v.environment,
+            if groups.is_empty() { "none declared".to_string() } else { groups.join(", ") }
+        ));
+        edge.push_str("goat_zenoh_edge_enabled: true\n");
+        edge.push_str(&format!("goat_zenoh_edge_partner_id: {}\n", q(&v.peering)));
+        edge.push_str("peering_spire_enabled: true\n");
+        take(EDGE_SITE, &mut edge);
+        let core_endpoint = site_value(repo, &groups, "goat_fed_republisher_core_endpoint");
+        if let Some(serde_yaml::Value::String(ep)) = &core_endpoint {
+            edge.push_str(&format!(
+                "goat_zenoh_edge_core_endpoints:\n  - {}\n",
+                q(&format!("{ep}#root_ca_certificate_file={our_ca}"))
+            ));
+        }
+        let mut core = header(&format!(
+            "the core's deployment half (the republisher) of peering {} on environment {}.",
+            v.peering, v.environment
+        ));
+        core.push('\n');
+        take(CORE_SITE, &mut core);
+        core.push_str(&format!(
+            "goat_fed_republisher_core_ca_src: {}\n",
+            q(&our_ca)
+        ));
+        if !missing.is_empty() {
+            missing.sort();
+            missing.dedup();
+            return Err(goat_errors::coded(
+                "GB-232",
+                format!(
+                    "peering '{}' declares deployment: rendered, and no group_vars of environment '{}''s groups ({}) or all sets {} (GB-232). Set each once in one of those groups' group_vars, or declare deployment: hand and write the halves by hand",
+                    v.peering,
+                    v.environment,
+                    if groups.is_empty() { "none declared: add environments[].groups".to_string() } else { groups.join(", ") },
+                    missing.join(", ")
+                ),
+            )
+            .into());
+        }
+        out.push(Rendered {
+            path: format!(
+                "ops/ansible/group_vars/{}/peering-deployment.yml",
+                v.edge_group
+            ),
+            body: edge,
+        });
+        out.push(Rendered {
+            path: format!(
+                "ops/ansible/group_vars/{}/peering-deployment.yml",
+                v.core_group
+            ),
+            body: core,
+        });
+    }
+    Ok(out)
+}
+
 fn row(name: &str, ok: bool, detail: String, fix: Option<String>) -> Check {
     Check {
         name: name.into(),
@@ -855,6 +1012,7 @@ pub fn run_scoped(repo: &Path, o: &Options, only: Option<&str>) -> Result<Report
         prev_inventory.as_deref(),
         &installs,
     )?;
+    rendered.extend(deployment_halves(repo, &cfg, &values)?);
     if only.is_some() {
         // One peering: its own files and the record. The inventory is the
         // whole repository's, and other peerings' files are not this run's.
@@ -1535,6 +1693,96 @@ mod tests {
             "{e}"
         );
         assert!(run_scoped(d.path(), &opts(false), Some("xzz")).is_err());
+    }
+
+    /// A repository whose environment names its inventory groups, with the site
+    /// values for peering edges set in one of them.
+    fn repo_with_site(peerings: serde_json::Value, site: &str) -> tempfile::TempDir {
+        let d = repo_with(peerings);
+        let cfgp = d.path().join("ops/goatbuilder/goatbuilder.yaml");
+        let mut doc: serde_json::Value =
+            serde_yaml::from_str(&std::fs::read_to_string(&cfgp).unwrap()).unwrap();
+        doc["environments"][0]["groups"] = json!(["dev_hosts"]);
+        std::fs::write(&cfgp, serde_yaml::to_string(&doc).unwrap()).unwrap();
+        let g = d.path().join("ops/ansible/group_vars/dev_hosts");
+        std::fs::create_dir_all(&g).unwrap();
+        std::fs::write(g.join("site.yml"), site).unwrap();
+        d
+    }
+
+    const SITE: &str = "goat_zenoh_edge_image: ghcr.io/example-org/zenoh-edge@sha256:00\n\
+                        goat_zenoh_edge_core_cn: core-dev\n\
+                        goat_fed_republisher_image: ghcr.io/example-org/republisher@sha256:00\n\
+                        goat_fed_republisher_core_endpoint: tls/192.0.2.10:7447\n\
+                        peering_spire_server_addr: 192.0.2.10\n\
+                        peering_wg_fips_waived_reason: example waiver\n";
+
+    /// `deployment: rendered`: the edge's and the core's deployment halves are
+    /// rendered from the declaration and the environment's site values; a
+    /// peering left `hand` gets no such file.
+    #[test]
+    fn the_deployment_halves_are_rendered_from_the_site_values() {
+        let mut a = p("xab", false);
+        a["deployment"] = json!("rendered");
+        let d = repo_with_site(json!([a, p("xac", false)]), SITE);
+        run(d.path(), &opts(false)).unwrap();
+        let gv = d.path().join("ops/ansible/group_vars");
+        let edge = std::fs::read_to_string(gv.join("xab_edge/peering-deployment.yml")).unwrap();
+        assert!(edge.starts_with(MARKER), "{edge}");
+        for frag in [
+            "goat_zenoh_edge_enabled: true",
+            "goat_zenoh_edge_partner_id: \"xab\"",
+            "goat_zenoh_edge_image: \"ghcr.io/example-org/zenoh-edge@sha256:00\"",
+            "goat_zenoh_edge_core_cn: \"core-dev\"",
+            "goat_zenoh_edge_core_endpoints:\n  - \"tls/192.0.2.10:7447#root_ca_certificate_file=/var/lib/goat-federation/xab/pki/our-ca.pem\"",
+            "peering_spire_enabled: true",
+            "peering_spire_server_addr: \"192.0.2.10\"",
+            "peering_wg_fips_waived_reason: \"example waiver\"",
+        ] {
+            assert!(edge.contains(frag), "{frag}\n---\n{edge}");
+        }
+        assert!(
+            !edge.contains("peering_wg_extra_ports"),
+            "unset site values are not invented: {edge}"
+        );
+        let core = std::fs::read_to_string(gv.join("xab_core/peering-deployment.yml")).unwrap();
+        for frag in [
+            "goat_fed_republisher_image: \"ghcr.io/example-org/republisher@sha256:00\"",
+            "goat_fed_republisher_core_endpoint: \"tls/192.0.2.10:7447\"",
+            "goat_fed_republisher_core_ca_src: \"/var/lib/goat-federation/xab/pki/our-ca.pem\"",
+        ] {
+            assert!(core.contains(frag), "{frag}\n---\n{core}");
+        }
+        assert!(!gv.join("xac_edge/peering-deployment.yml").exists());
+        // The rendered halves parse as YAML.
+        let _: serde_yaml::Value = serde_yaml::from_str(&edge).unwrap();
+        let _: serde_yaml::Value = serde_yaml::from_str(&core).unwrap();
+    }
+
+    /// A site value the halves need and the environment's group_vars do not
+    /// set is refused, naming it (GB-232); nothing is invented.
+    #[test]
+    fn a_missing_site_value_is_named() {
+        let mut a = p("xab", false);
+        a["deployment"] = json!("rendered");
+        let d = repo_with_site(json!([a]), "goat_zenoh_edge_image: x\n");
+        let e = run(d.path(), &opts(false)).unwrap_err();
+        assert_eq!(
+            e.downcast_ref::<goat_errors::Coded>().unwrap().code,
+            "GB-232"
+        );
+        assert!(
+            e.to_string().contains("goat_zenoh_edge_core_cn")
+                && e.to_string().contains("dev_hosts"),
+            "{e}"
+        );
+        assert!(
+            !d.path()
+                .join("ops/goatbuilder")
+                .join(alloc::RECORD_FILE)
+                .exists(),
+            "nothing written"
+        );
     }
 
     #[test]
