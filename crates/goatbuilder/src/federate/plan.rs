@@ -1682,13 +1682,15 @@ mod tests {
             .join(name)
     }
 
+    /// From its declared fields, as the config loader reads it.
     fn peering() -> config::Peering {
-        config::Peering {
-            with: "velmara".into(),
-            environment: "zagros".into(),
-            site: "alpha".into(),
-            edge_class: "edge".into(),
-        }
+        serde_json::from_value(serde_json::json!({
+            "with": "velmara",
+            "environment": "zagros",
+            "site": "alpha",
+            "edge_class": "edge",
+        }))
+        .expect("a peering declaration")
     }
 
     /// Built as a mock: it asks no binary for its version, so a test here
