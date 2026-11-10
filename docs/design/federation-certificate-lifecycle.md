@@ -178,7 +178,7 @@ holds, an unmarked directory holding other files or an older leaf, a path set by
 hand and a relative directory; two peerings with two directories and two markers,
 each refused the other's directory; five refusals against an installed directory,
 which keeps its files, modes and restart count; a failed restart and a half-done
-install, each leaving `.restart-pending` that the next run honours with one
+install, each leaving `.restart-pending` that the next run honors with one
 restart. Through the whole role: with the switch on, the check runs and a later
 refusal in `tasks/main.yml` leaves no certificate installed; bad material is
 refused before the role's first write; with the switch off no certificate task
