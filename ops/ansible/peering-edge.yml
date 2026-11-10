@@ -35,3 +35,36 @@
   become: true
   roles:
     - role: goat-peering-edge
+  post_tasks:
+    # Opt-in (goat_host_firewall_baseline, default false); docs/design/peering-host-firewall.md.
+    - name: Host firewall baseline for this edge, with this peering's tunnel
+      ansible.builtin.include_role:
+        name: goat-host-firewall
+      vars:
+        goat_host_firewall_profile: edge
+        goat_host_firewall_peering:
+          name: "{{ peering_edge_link_ifname }}"
+          transport: ipsec-fips
+          ike_ports: "{{ [peering_edge_ike_port | int, 4500] | unique | list }}"
+          # A literal far address (with or without :port) names who may reach IKE and
+          # ESP; %any or a name admits any source, as the strongSwan side does.
+          peer_addr: >-
+            {{ (peering_edge_remote_addr | regex_replace(':[0-9]+$', ''))
+               if (peering_edge_remote_addr is match('^[0-9.]+(:[0-9]+)?$')) else '' }}
+          tunnel_interface: "{{ peering_edge_link_ifname }}"
+          remote_link_ip: "{{ peering_edge_remote_link_ip }}"
+          edge_port: "{{ goat_zenoh_edge_listen_port | default(7448) | int }}"
+          extra_tcp_ports: "{{ peering_wg_extra_ports | default([]) | map('int') | list }}"
+          # Phase 13 opens this forward after this phase; admitted now so it is not cut.
+          spire_outbound_port: >-
+            {{ (peering_spire_outbound_port | default(18443) | int)
+               if (peering_spire_enabled | default(false) | bool) else '' }}
+          spire_server_addr: >-
+            {{ peering_spire_server_addr | default('')
+               if (peering_spire_server_addr | default('') is match('^[0-9.]+$')) else '' }}
+      when: goat_host_firewall_baseline | default(false) | bool
+    - name: Host firewall baseline is off; refuse if a host still carries one
+      ansible.builtin.include_role:
+        name: goat-host-firewall
+        tasks_from: off.yml
+      when: not (goat_host_firewall_baseline | default(false) | bool)

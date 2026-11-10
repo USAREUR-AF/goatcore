@@ -1,0 +1,99 @@
+---
+# Defaults for `goat-host-firewall` — the baseline host firewall of a peering edge
+# host and of the core router host it dials.
+#
+# Design: docs/design/peering-host-firewall.md
+# ADR:    docs/adr/1219-peering-edge-on-the-mesh-reaches-only-the-core-router.md
+# Plays:  peering-wg.yml and peering-edge.yml (profile edge, phase 11),
+#         peering-republisher.yml (profile core, phase 12)
+#
+# Inbound default deny, in one nftables table of its own (inet goat_host_firewall).
+# It adds drops and never removes another table's: the tunnel table of
+# goat-peering-wg, docker's and the mesh client's stay as they are. Outbound is
+# unchanged.
+
+# Off by default: a host that has not switched it on sees no change at all. The
+# plays include this role only when it is true.
+goat_host_firewall_baseline: false
+
+# edge | core. Set by the play that includes the role, never in group_vars.
+goat_host_firewall_profile: ""
+
+# --- management --------------------------------------------------------------
+# Sources (IPv4 or IPv6 addresses or CIDRs) admitted to SSH. Required: empty is
+# refused before anything is applied, because it would admit no one.
+goat_host_firewall_management_sources: []
+# A management source broader than this prefix (per address family) loosens
+# ssh-management and needs `ssh-management: {reason: "..."}` in the override. A /0 is
+# refused outright.
+goat_host_firewall_management_prefix_floor: {ipv4: 24, ipv6: 64}
+goat_host_firewall_ssh_port: "{{ ansible_port | default(22) }}"
+
+# --- the mesh ----------------------------------------------------------------
+# The mesh client's interface, and its own WireGuard UDP port(s). Empty by default:
+# the mesh client then reaches its peers by the connections it opens itself (replies
+# are admitted as established). List the port when mesh peers must be able to dial
+# this host directly; what crosses the mesh stays the mesh ACL's decision (ADR 1219).
+# A port listed here may not be a peering's tunnel, IKE or carrier port (GB-210), and
+# listing any is a loosening that needs `mesh-wireguard: {reason: "..."}` in the override.
+# Without it, a mesh peer behind NAT that cannot be reached directly carries its traffic
+# through the mesh's relay instead: it still works, slower.
+goat_host_firewall_mesh_interface: "{{ goat_zenoh_mesh_iface | default('wt0') }}"
+goat_host_firewall_mesh_udp_ports: []
+
+# Ports this host listens on (on a non-loopback address) that the ruleset closes on
+# purpose, as "tcp/<port>" or "udp/<port>". The role reads the host's listening
+# sockets before loading and refuses (GB-215) to close one that is neither admitted
+# by a rule nor named here, so a service sharing the host is never cut by surprise.
+goat_host_firewall_closed_listeners: []
+
+# --- core profile ------------------------------------------------------------
+goat_host_firewall_fabric_tcp_port: "{{ goat_zenoh_listen_port | default(7447) }}"
+goat_host_firewall_fabric_udp_port: >-
+  {{ (goat_zenoh_quic_port | default(7448)) if (goat_zenoh_quic_enabled | default(false) | bool) else '' }}
+# Empty admits any source to the fabric port; the router's mutual TLS decides who
+# may speak. Narrow it with the override (rule fabric-tls), which is free.
+goat_host_firewall_fabric_sources: []
+# The mesh nameserver the edge resolves the core's name through (ADR 1219
+# decision 4). Drop it with the override on a core that does not serve it.
+goat_host_firewall_mesh_dns_port: 5353
+
+# The SPIRE bundle endpoint the edge's inbound forward reaches on this core host
+# (goat-peering-spire), admitted from the edge's mesh address. Set by
+# peering-republisher.yml when peering_spire_enabled; empty leaves the rule out.
+goat_host_firewall_spire_bundle_port: ""
+goat_host_firewall_spire_bundle_sources: []
+
+# --- edge profile ------------------------------------------------------------
+# This run's peering, set by the play from the transport role's values (see
+# peering-wg.yml and peering-edge.yml). Each peering's entry is kept on the host
+# in goat_host_firewall_dir/peerings/<name>.json, and the edge's ruleset admits
+# every peering stored there, so a second peering's run never cuts the first.
+goat_host_firewall_peering: {}
+
+# --- the per-deployment override --------------------------------------------
+# A mapping of baseline rule name to change. List the names with
+#   python3 roles/goat-host-firewall/files/goat-host-firewall-render.py --input <in.json> --list-rules
+# Tightening is free: drop a rule, or narrow its sources, ports or interface.
+# Loosening (wider sources, other ports, another interface) is allowed only for a
+# named rule, and only with `reason:`; without one, or for an unknown name, the
+# whole run is refused before anything is applied. Example:
+#   goat_host_firewall_override:
+#     icmp-echo: {drop: true}
+#     fabric-tls: {sources: [100.127.0.0/16]}
+#     other-tcp:
+#       ports: [9100]
+#       reason: "node exporter, scraped by the site's monitoring host"
+goat_host_firewall_override: {}
+
+# --- applying ----------------------------------------------------------------
+# The new ruleset is loaded with a rollback armed: unless a fresh connection to the
+# host succeeds and cancels it, the previous ruleset comes back after this many
+# seconds. The confirming connection waits at most confirm_timeout, and twice that plus
+# 15 s must fit before the rollback (GB-210 otherwise).
+goat_host_firewall_rollback_seconds: 90
+goat_host_firewall_confirm_timeout: 30
+
+goat_host_firewall_dir: /etc/goat-host-firewall
+goat_host_firewall_service: goat-host-firewall.service
+goat_host_firewall_rollback_unit: goat-host-firewall-rollback

@@ -20,3 +20,39 @@
       ansible.builtin.include_tasks: tasks/peering-applied-vars.yml
   roles:
     - role: goat-peering-wg
+  post_tasks:
+    # Opt-in (goat_host_firewall_baseline, default false); docs/design/peering-host-firewall.md.
+    - name: Host firewall baseline for this edge, with this peering's tunnel
+      ansible.builtin.include_role:
+        name: goat-host-firewall
+      vars:
+        goat_host_firewall_profile: edge
+        goat_host_firewall_peering:
+          name: "{{ peering_wg_interface }}"
+          transport: wireguard
+          listen_port: "{{ peering_wg_listen_port | int }}"
+          peer_addr: "{{ _pw_peer_addr | default('') | trim }}"
+          tunnel_interface: "{{ peering_wg_interface }}"
+          remote_link_ip: "{{ peering_wg_remote_link_ip }}"
+          edge_port: "{{ peering_wg_fabric_port | int }}"
+          extra_tcp_ports: "{{ peering_wg_extra_ports | map('int') | list }}"
+          # Phase 13 opens this forward after this phase; admitted now so it is not cut.
+          spire_outbound_port: >-
+            {{ (peering_spire_outbound_port | default(18443) | int)
+               if (peering_spire_enabled | default(false) | bool) else '' }}
+          spire_server_addr: >-
+            {{ peering_spire_server_addr | default('')
+               if (peering_spire_server_addr | default('') is match('^[0-9.]+$')) else '' }}
+          via_forwarder: "{{ peering_wg_via_forwarder | bool }}"
+          carrier_interface: "{{ peering_wg_carrier_interface }}"
+          carrier_remote_ip: "{{ peering_wg_carrier_remote_ip }}"
+          carrier_listen_port: "{{ peering_wg_carrier_listen_port | int }}"
+          forwarder_addr: >-
+            {{ (peering_wg_forwarder_endpoint.rsplit(':', 1) | first)
+               if (peering_wg_forwarder_endpoint is match('^[0-9.]+:[0-9]+$')) else '' }}
+      when: goat_host_firewall_baseline | default(false) | bool
+    - name: Host firewall baseline is off; refuse if a host still carries one
+      ansible.builtin.include_role:
+        name: goat-host-firewall
+        tasks_from: off.yml
+      when: not (goat_host_firewall_baseline | default(false) | bool)

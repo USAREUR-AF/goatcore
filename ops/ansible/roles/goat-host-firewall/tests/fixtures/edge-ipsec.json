@@ -1,0 +1,27 @@
+{
+  "schema": "goat-host-firewall-input/v1",
+  "profile": "edge",
+  "host": {
+    "ssh_port": 22,
+    "management_sources": [
+      "198.51.100.10/32"
+    ],
+    "mesh_interface": "wt0",
+    "mesh_udp_ports": []
+  },
+  "peerings": [
+    {
+      "name": "ipsec-xab",
+      "transport": "ipsec-fips",
+      "ike_ports": [
+        500,
+        4500
+      ],
+      "peer_addr": "192.0.2.20",
+      "tunnel_interface": "ipsec-xab",
+      "remote_link_ip": "169.254.11.0",
+      "edge_port": 7448,
+      "extra_tcp_ports": []
+    }
+  ]
+}
