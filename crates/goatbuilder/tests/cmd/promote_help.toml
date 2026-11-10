@@ -21,7 +21,7 @@ Commands:
                 DO. Read-only
   readiness     The `release-readiness-v1` document. Read-only, derived, no verdict of its own
   abandon       Mark a record abandoned WITH a machine-readable reason (C8)
-  check         CI invariants C1–C9 (fail-closed, current-tree). Exit 0/1
+  check         CI invariants C1–C10 (fail-closed, current-tree). Exit 0/1
   help          Print this message or the help of the given subcommand(s)
 
 Options:

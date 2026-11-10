@@ -56,6 +56,17 @@ hide behind an unrelated PR):
       grandfathered rather than back-filled with invented reasons.
   C9  an open hotfix record older than HOTFIX_BACKFILL_MAX_DAYS carries
       validation evidence — a fastlane's backfill is owed, not optional.
+  C10 an open ladder candidate already running on the upper rung of a live
+      hop that carries the runtime-health gate passes that gate for the lower
+      rung (or carries a recorded override) — the dev->preprod move is a pin
+      edit, not a `graduate`, so CI is where that hop is held.
+
+GATE runtime-health (any hop): the record's `runtime_health.<lower rung>`
+block, written by ops/release/rung-health.py at the end of the soak, shows the
+candidate digest running with zero restarts, zero OOM kills and peak memory at
+or under the gate's `max_memory_fraction` of the container limit. Refused
+unless `runtime_health_override.<lower rung>` names who and why
+(`graduate --override-runtime-health REASON --ack NAME` writes it).
 """
 
 import argparse
@@ -76,7 +87,10 @@ SETS = REPO / "ops/release/sets"
 
 DIGEST_RE = re.compile(r"@sha256:[0-9a-f]{64}")
 KNOWN_GATES = {"candidate-record", "soak", "convergence-evidence",
-               "validation-evidence", "operator-ack"}
+               "validation-evidence", "operator-ack", "runtime-health"}
+# runtime-health: the ceiling on peak memory as a fraction of the container's
+# limit when the gate entry in ladder.yaml does not set max_memory_fraction.
+RUNTIME_HEALTH_MAX_MEMORY_FRACTION = 0.8
 RECORD_STATES = {"candidate", "graduated", "abandoned"}
 # C9: a fastlane's hotfix record may sit with empty validation evidence for
 # this many days before `check` refuses the tree. One soak window plus room
@@ -409,6 +423,99 @@ def cmd_open(args):
     return 0
 
 
+def gate_id(g):
+    return g["id"] if isinstance(g, dict) else g
+
+
+def runtime_health_settings(hop, gate):
+    """(max_memory_fraction, min_days, require_memory_limit) for one
+    runtime-health gate entry. min_days defaults to the hop's own soak gate, so
+    the capture is taken no earlier than the soak's end; a hop with no soak
+    gate (dev->preprod) waits one day unless the entry says otherwise."""
+    g = gate if isinstance(gate, dict) else {}
+    soak = next((x for x in hop.get("gates", []) if gate_id(x) == "soak"), None)
+    soak_days = (soak.get("min_days", 1) if isinstance(soak, dict) else 1) if soak is not None else 1
+    return (g.get("max_memory_fraction", RUNTIME_HEALTH_MAX_MEMORY_FRACTION),
+            g.get("min_days", soak_days),
+            g.get("require_memory_limit", True) is not False)
+
+
+def runtime_health_override(rec, rung):
+    """The record's override for this rung when it names who AND why; else None."""
+    o = rec.get("runtime_health_override")
+    o = o.get(rung) if isinstance(o, dict) else None
+    if isinstance(o, dict) and str(o.get("reason") or "").strip() and str(o.get("by") or "").strip():
+        return o
+    return None
+
+
+def _utc(value):
+    """An ISO-8601 time from a record (string, or a datetime YAML already
+    parsed), as an aware datetime; None when unreadable."""
+    if isinstance(value, dt.datetime):
+        return value if value.tzinfo else value.replace(tzinfo=dt.timezone.utc)
+    try:
+        t = dt.datetime.fromisoformat(str(value).strip().replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    return t if t.tzinfo else t.replace(tzinfo=dt.timezone.utc)
+
+
+def grade_runtime_health(block, rung, candidate_ref, max_fraction, min_days, require_limit):
+    """Every reason one captured runtime_health block fails the gate. The
+    verdict is recomputed from the numbers; a `verdict:` field in the block is
+    never trusted. A failure starting `runtime-health awaiting` is a capture
+    not taken yet (or taken before the soak ended); the rest are measurements."""
+    if block is None:
+        return [f"runtime-health awaiting: no runtime_health.{rung} block "
+                f"(ops/release/rung-health.py --write-record, at the soak's end)"]
+    if not isinstance(block, dict):
+        return [f"runtime-health: runtime_health.{rung} is not a mapping"]
+    fails = []
+    captured, deployed = _utc(block.get("captured")), _utc(block.get("deployed"))
+    if captured is None or deployed is None:
+        fails.append(f"runtime-health: runtime_health.{rung} has no readable captured/deployed time")
+    else:
+        hours = int((captured - deployed).total_seconds() // 3600)
+        if hours < min_days * 24:
+            fails.append(f"runtime-health awaiting: runtime_health.{rung} was captured {hours} h "
+                         f"after deploy, needs >= {min_days * 24} h (the soak)")
+    m = DIGEST_RE.search(str(candidate_ref or ""))
+    if m:
+        digest = m.group(0)[1:]
+        if digest not in [str(d) for d in (block.get("digests") or [])]:
+            fails.append(f"runtime-health: runtime_health.{rung} was not captured on the "
+                         f"candidate digest {digest[7:19]}")
+    for key, what in (("restarts", "restarted"), ("oom_kills", "OOM-killed")):
+        n = block.get(key)
+        if not isinstance(n, int) or isinstance(n, bool):
+            fails.append(f"runtime-health: {rung} {key} unknown — the capture could not read it")
+        elif n > 0:
+            fails.append(f"runtime-health: {rung} {what} {n} time(s) since deploy")
+    frac = block.get("peak_memory_fraction")
+    if frac is None or isinstance(frac, bool) or not isinstance(frac, (int, float)):
+        if require_limit:
+            fails.append(f"runtime-health: {rung} peak memory has no limit to grade against "
+                         f"(set a memory limit, or require_memory_limit: false on the gate)")
+    elif frac > max_fraction:
+        fails.append(f"runtime-health: {rung} peak memory reached {frac} of its limit, "
+                     f"ceiling {max_fraction}")
+    return fails
+
+
+def runtime_health_failures(rec, hop, gate):
+    """The runtime-health gate for this hop: graded on the LOWER rung (the
+    hop's `from`), satisfied by a recorded override for that rung."""
+    rung = hop.get("from")
+    if runtime_health_override(rec, rung):
+        return []
+    max_fraction, min_days, require_limit = runtime_health_settings(hop, gate)
+    blocks = rec.get("runtime_health")
+    block = blocks.get(rung) if isinstance(blocks, dict) else None
+    return grade_runtime_health(block, rung, rec.get("candidate_ref"),
+                                max_fraction, min_days, require_limit)
+
+
 def gate_failures(rec, hop, today):
     fails = []
     for g in hop.get("gates", []):
@@ -430,6 +537,8 @@ def gate_failures(rec, hop, today):
                 fails.append("evidence.validation is empty")
         elif gid == "operator-ack":
             pass  # supplied at graduate time via --ack
+        elif gid == "runtime-health":
+            fails.extend(runtime_health_failures(rec, hop, g))
     return fails
 
 
@@ -475,6 +584,23 @@ def cmd_graduate(args):
         print("  or take this component out of the set (edit the file, in a reviewed PR) "
               "if it genuinely moves alone.", file=sys.stderr)
         return 1
+    override = getattr(args, "override_runtime_health", None)
+    if override is not None:
+        if not str(override).strip():
+            die("--override-runtime-health needs a reason")
+        if not args.ack:
+            die("--override-runtime-health needs --ack '<name>' — an override names who decided")
+        rt = [f for g in hop.get("gates", []) if gate_id(g) == "runtime-health"
+              for f in runtime_health_failures(rec, hop, g)]
+        if rt:
+            rec.setdefault("runtime_health_override", {})
+            if not isinstance(rec["runtime_health_override"], dict):
+                rec["runtime_health_override"] = {}
+            rec["runtime_health_override"][hop.get("from")] = {
+                "by": args.ack, "reason": str(override).strip(),
+                "recorded": dt.date.today().isoformat(), "failures": rt}
+            print(f"graduate: runtime-health overridden for {hop.get('from')} by {args.ack}: "
+                  f"{str(override).strip()}")
     fails = gate_failures(rec, hop, dt.date.today())
     needs_ack = any((g["id"] if isinstance(g, dict) else g) == "operator-ack"
                     for g in hop.get("gates", []))
@@ -908,7 +1034,7 @@ def candidate_readiness(rec, hop, today):
     waiver = soak_waiver(rec)
     if not blockers:
         state = "ready"
-    elif all(b.startswith("soak") for b in blockers):
+    elif all(b.startswith("soak") or b.startswith("runtime-health awaiting") for b in blockers):
         state = "soak-waived" if waiver else "soaking"
     else:
         state = "blocked"
@@ -1193,6 +1319,8 @@ def _next_step(it):
         needs.append("evidence")
     if any("operator-ack" in b for b in blockers):
         needs.append("ack")
+    if any(b.startswith("runtime-health") for b in blockers):
+        needs.append("runtime health")
     what = " + ".join(needs) or "gate"
     if cls == "hotfix":
         return f"rows → {what} → graduate → no deploy"
@@ -1360,6 +1488,15 @@ def cmd_check(args):
             gid = g["id"] if isinstance(g, dict) else g
             if gid not in KNOWN_GATES:
                 failures.append(f"C1: unknown gate id {gid!r}")
+            if gid == "runtime-health" and isinstance(g, dict):
+                frac = g.get("max_memory_fraction", RUNTIME_HEALTH_MAX_MEMORY_FRACTION)
+                if isinstance(frac, bool) or not isinstance(frac, (int, float)) or not 0 < frac <= 1:
+                    failures.append(f"C1: hop {h.get('from')}->{h.get('to')} runtime-health "
+                                    f"max_memory_fraction must be a number in (0, 1]")
+                md = g.get("min_days", 1)
+                if isinstance(md, bool) or not isinstance(md, int) or md < 1:
+                    failures.append(f"C1: hop {h.get('from')}->{h.get('to')} runtime-health "
+                                    f"min_days must be a whole number of days >= 1")
     for name, ov in (ladder.get("class_overrides") or {}).items():
         if ov.get("class") not in CLASSES:
             failures.append(f"C1: class_overrides.{name} has unknown class")
@@ -1394,6 +1531,17 @@ def cmd_check(args):
                 failures.append(f"C2: {rp} soak_waiver names no `by:` — name the "
                                 f"operator, or write `by: null` to state that the "
                                 f"record cannot attribute it")
+        ov = rec.get("runtime_health_override")
+        if ov is not None:
+            if not isinstance(ov, dict):
+                failures.append(f"C2: {rp} runtime_health_override must map a rung to "
+                                f"{{by, reason}}")
+            else:
+                for rung in ov:
+                    if not runtime_health_override(rec, rung):
+                        failures.append(f"C2: {rp} runtime_health_override.{rung} must name "
+                                        f"a non-empty by and reason — an override nobody can "
+                                        f"attribute is worse than none")
     # C3/C4 — skew must be declared
     _, live2, _, rows = build_status()
     for row in rows:
@@ -1462,6 +1610,37 @@ def cmd_check(args):
             failures.append(f"C9: {rec['_path'].relative_to(REPO)} has owed its backfill for {age} days "
                             f"with evidence.validation empty — run the affected live rows, fill the "
                             f"evidence and `graduate`, or abandon it with a reason")
+    # C10 — runtime health on a hop `graduate` does not run. The dev->preprod
+    # move is a pin edit, so the PR that puts a candidate on the upper rung is
+    # where its lower rung's runtime health is held. `records_opened_from` on
+    # the gate entry leaves candidates opened before the gate was switched on
+    # to `graduate`, which still asks every candidate.
+    for h in ladder.get("hops", []):
+        if h.get("status") != "live":
+            continue
+        upper = next((r for r in live if r["name"] == h.get("to")), None)
+        if upper is None:
+            continue
+        for g in h.get("gates", []):
+            if gate_id(g) != "runtime-health":
+                continue
+            since = str((g.get("records_opened_from") if isinstance(g, dict) else None) or "")
+            for rec in records:
+                if "_error" in rec or rec.get("state") != "candidate" \
+                        or (rec.get("class") or "ladder") != "ladder":
+                    continue
+                if since and str(rec.get("opened") or "") < since:
+                    continue
+                comp_def = (pins.get("components") or {}).get(rec.get("component"))
+                if comp_def is None:
+                    continue
+                st, val = effective(comp_def, upper["goatnet"])
+                if st != "value" or val != rec.get("candidate_ref"):
+                    continue
+                for f in runtime_health_failures(rec, h, g):
+                    failures.append(f"C10: {rec['_path'].relative_to(REPO)} runs on "
+                                    f"{upper['goatnet']} but its {h.get('from')}->{h.get('to')} "
+                                    f"gate fails: {f}")
     # C7 — graduation sets (ADR 1125). The set is the unit of movement, so a
     # malformed one is a promotion hazard, not a docs nit.
     sets = load_sets()
@@ -1560,6 +1739,10 @@ def main():
     s.add_argument("--reason", required=True)
     s = sub.add_parser("graduate")
     s.add_argument("component"); s.add_argument("--ack", default=None, type=ack_name)
+    s.add_argument("--override-runtime-health", dest="override_runtime_health", default=None,
+                   metavar="REASON",
+                   help="graduate although the runtime-health gate fails; REASON and the "
+                        "--ack name are written into the record")
     s = sub.add_parser("graduate-set")
     s.add_argument("name"); s.add_argument("--ack", default=None, type=ack_name)
     s = sub.add_parser("hotfix")

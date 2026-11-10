@@ -3,7 +3,7 @@ bin.name = "goatbuilder"
 args = ["promote", "check", "--help"]
 status.code = 0
 stdout = """
-CI invariants C1–C9 (fail-closed, current-tree). Exit 0/1
+CI invariants C1–C10 (fail-closed, current-tree). Exit 0/1
 
 Usage: goatbuilder promote check [OPTIONS]
 

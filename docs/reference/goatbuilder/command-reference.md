@@ -297,7 +297,7 @@ Guide and observe release graduation across the goatnet ladder (ADR 1120, 1125):
 - [`goatbuilder promote review`](#goatbuilder-promote-review) — The start-of-day / end-of-day review: every open record sorted by what a person must DO. Read-only
 - [`goatbuilder promote readiness`](#goatbuilder-promote-readiness) — The `release-readiness-v1` document. Read-only, derived, no verdict of its own
 - [`goatbuilder promote abandon`](#goatbuilder-promote-abandon) — Mark a record abandoned WITH a machine-readable reason (C8)
-- [`goatbuilder promote check`](#goatbuilder-promote-check) — CI invariants C1–C9 (fail-closed, current-tree). Exit 0/1
+- [`goatbuilder promote check`](#goatbuilder-promote-check) — CI invariants C1–C10 (fail-closed, current-tree). Exit 0/1
 
 ## `goatbuilder promote status`
 
@@ -341,6 +341,7 @@ Verify the hop gates, mark the record graduated, print the fold-to-fleet edit
 | Flag | Description | Default |
 |---|---|---|
 | `--ack <ACK>` |  |  |
+| `--override-runtime-health <OVERRIDE_RUNTIME_HEALTH>` | Graduate although the runtime-health gate fails; REASON and the --ack name are written into the record |  |
 
 ## `goatbuilder promote graduate-set`
 
@@ -425,7 +426,7 @@ Mark a record abandoned WITH a machine-readable reason (C8)
 
 ## `goatbuilder promote check`
 
-CI invariants C1–C9 (fail-closed, current-tree). Exit 0/1
+CI invariants C1–C10 (fail-closed, current-tree). Exit 0/1
 
 ## `goatbuilder explain`
 

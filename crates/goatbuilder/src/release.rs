@@ -1003,7 +1003,7 @@ fn release_inner(repo: &Path, o: &Options, checks: Rc<RefCell<Vec<Check>>>) -> R
         let (dev, pre, prod) = (run.dev.clone(), run.pre.clone(), run.prod.clone());
         run.step(&format!("prod rung: graduate {} and fold it into fleet:", run.tag));
         run.mkwt()?;
-        let out = run.promote(&format!("graduate {} --ack '{}'  (refuses until the soak gate is met)", o.component, o.ack), &promote::Sub::Graduate { component: o.component.into(), ack: Some(o.ack.into()) })?;
+        let out = run.promote(&format!("graduate {} --ack '{}'  (refuses until the soak gate is met)", o.component, o.ack), &promote::Sub::Graduate { component: o.component.into(), ack: Some(o.ack.into()), override_runtime_health: None })?;
         if o.dry_run {
             run.rec = format!("ops/release/records/{}/<the open candidate record>.yaml", o.component);
         } else {
