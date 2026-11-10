@@ -36,12 +36,12 @@ A prior contribution is a weaker signal than it looks: a contributor can build t
 - **Fail closed.** If the check cannot read the API it fails, and is re-run. If the roster cannot be read (no token configured), the author counts as not registered, never as registered.
 - **The roster is configured, not written into the public tree.** The repository variable `CONTRIBUTOR_ROSTER_REPO` names the roster repository, and the secret `CONTRIBUTOR_ROSTER_TOKEN` is a read-only token that can list its collaborators. No list of people appears in any public repository.
 - **The check is made required** in each repository's `main` ruleset once it has run on open pull requests.
-- **No bypass on `main`.** The `main-protection` ruleset in every public repository has no bypass actors. A required check that is failing, or that never started, blocks the merge for everyone, owners included. The emergency path is an owner editing the ruleset, which is a logged settings change, not a button on the pull request. Until 2026-11-10 the `goat-owners` team held an always-on bypass; on 2026-11-09 #237 merged through it while every run of this check in the repository was failing to start (issues #338, #339).
+- **Required checks cannot be skipped.** The `main-protection` ruleset in every public repository has no bypass actors and requires no approving review: anyone with write permission (owners and maintainers only) merges when the required checks are green, and a required check that is failing or never started blocks everyone. The emergency path is an owner editing the ruleset, a logged settings change. Until 2026-11-10 the `goat-owners` team held an always-on bypass that owners used for their own merges and that also skipped the checks; on 2026-11-09 #237 merged through it while every run of this check was failing to start (issues #338, #339). octo-pod keeps its own two-approval rule.
 
 ## Consequences
 
-- An outside contribution from an unknown author cannot merge on one approval. It needs a recorded security review and a second owner's approval.
-- An owner cannot merge their own pull request alone: the ruleset's one approval from a code owner, with the last push approved, applies to owners too.
+- An outside contribution from an unknown author cannot merge until an owner records a security review with the label; only an account with write permission can perform the merge, and no account can merge past a failing or missing required check.
+- Owners and maintainers merge their own pull requests as soon as the required checks are green; no approving review is required by the ruleset, and no bypass exists to skip a check.
 - A registered person or a returning contributor gets a fast path for ordinary changes, and still gets the review on sensitive code.
 - Approving an outside contributor's first CI run stays separate and stays safe: no repository uses a self-hosted runner, fork runs get no secrets, and the only workflows that run with more privilege (`leak-gate`, `agent-references`, this check) run the base branch's code.
 - The sensitive-path list is a judgement, kept in one file the owners edit by pull request.
