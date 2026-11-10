@@ -61,9 +61,11 @@ goat_zenoh_edge_inward_key: "{{ (goat_zenoh_edge_cert_dir ~ '/peering-inward-key
 # the directory, and the next run restarts the edge.
 goat_zenoh_edge_install_certs: false
 # The per-peering directory on the edge. Each peering has its own: several
-# peerings on one edge never share or overwrite files. Not built yet: the driver
-# passing the allocated PeeringValues.cert_dir (stage 8, allocation); until then
-# this default or a group_vars value applies.
+# peerings on one edge never share or overwrite files. goatbuilder federate
+# allocate renders this same value for an edge group with the switch on. It is
+# never the allocated PeeringValues.cert_dir: that is <work>/pki on the
+# controller, the source below (goat_zenoh_edge_cert_src_dir), and it holds the
+# core's and republisher's leaves too.
 goat_zenoh_edge_cert_dir: "/etc/goat-zenoh-edge-{{ goat_zenoh_edge_partner_id }}/tls"
 # Sources ON THE CONTROLLER. fed_work is the run's working directory, passed by
 # the driver (`-e fed_work=...`), as for goat-fed-republisher.
