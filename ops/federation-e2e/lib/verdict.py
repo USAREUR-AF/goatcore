@@ -181,6 +181,8 @@ def main():
     ap.add_argument("--merged", action="append", default=[])
     ap.add_argument("--avenue", required=True, choices=("script", "goatbuilder"))
     ap.add_argument("--harness-sha", default="")
+    ap.add_argument("--harness-fp", default="", help="the harness fingerprint (env fingerprint)")
+    ap.add_argument("--blocked-all", default="", help="every check BLOCKED with this reason (the ref did not build)")
     ap.add_argument("--run-id", default="")
     ap.add_argument("--started", default="")
     ap.add_argument("--only", default="")
@@ -192,7 +194,13 @@ def main():
         catalog = yaml.safe_load(fh)
     only = set(x for x in a.only.split(",") if x)
     now = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    scen = judge(catalog, a.record, a.avenue, only)
+    scen = judge(catalog, [] if a.blocked_all else a.record, a.avenue, only)
+    if a.blocked_all:
+        for sc in scen:
+            for c in sc["checks"]:
+                c["outcome"], c["reason"] = "BLOCKED", a.blocked_all
+                c.pop("evidence", None)
+            sc["outcome"], sc["reason"] = "BLOCKED", a.blocked_all
     ref = {"name": a.ref_name, "sha": a.ref_sha}
     if a.merged:
         ref["merged"] = a.merged
@@ -200,7 +208,7 @@ def main():
         "schema": "fed-e2e-result/1",
         "run_id": a.run_id or f"{a.ref_sha[:12]}-{a.avenue}-{now}",
         "ref": ref, "avenue": a.avenue,
-        "harness": {"sha": a.harness_sha or "unknown"},
+        "harness": dict({"sha": a.harness_sha or "unknown"}, **({"fingerprint": a.harness_fp} if a.harness_fp else {})),
         "started": a.started or now, "finished": now,
         "scenarios": scen, "verdict": verdict_of(scen),
     }

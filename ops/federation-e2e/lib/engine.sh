@@ -39,6 +39,12 @@ DIRECTORY_IP="$NB.3.40"; export DIRECTORY_IP
 # registry digest, until the published image is pinned in ops/pins/fleet-pins.yaml.
 RP_TAG="${FE2E_RP_TAG:-fed-e2e-republisher}"
 RP_IMAGE=""
+# The id a host's own dockerd gives an image loaded with `docker save | docker load`: the
+# image's config digest. The runner's .Id is that digest only on the classic image store;
+# with the containerd image store (Docker 29 defaults) it is the manifest digest instead.
+image_config_id() { # $1 image reference -> sha256:<config digest>
+  docker save "$1" | tar -xO manifest.json | python3 -c 'import json,sys; c=json.load(sys.stdin)[0]["Config"]; print("sha256:" + c.split("/")[-1].split(".")[0])'
+}
 ACL_ASSEMBLE="$SRC/ops/ansible/roles/goat-zenoh/files/acl-assemble.py"
 REC="$REPO/ops/e2e/rec.py"
 FAILS=0
@@ -167,7 +173,15 @@ start_host() { # $1 name, $2 sovereign, $3 internal ip
 wait_ready() { # $1 host: systemd up, dockerd answering
   local h="$1"
   for _ in $(seq 1 90); do
-    if docker exec "$h" sh -c 'systemctl is-active --quiet ssh && docker version --format "{{.Server.Version}}"' >/dev/null 2>&1; then return 0; fi
+    if docker exec "$h" sh -c 'systemctl is-active --quiet ssh && docker version --format "{{.Server.Version}}"' >/dev/null 2>&1; then
+      # The machine's own AppArmor profile `wg` (Ubuntu 26.04 LTS) attaches by path to
+      # /usr/bin/wg in every container and lets it read keys only under /etc/wireguard. A
+      # copy on PATH ahead of it runs unconfined, as on a host without that profile.
+      # FE2E_WG_APPARMOR=host keeps the machine's profile in force (scenario
+      # ubuntu-2604-apparmor).
+      [ "${FE2E_WG_APPARMOR:-bypass}" = host ] || docker exec "$h" sh -c 'cp /usr/bin/wg /usr/local/sbin/wg'
+      return 0
+    fi
     sleep 2
   done
   docker exec "$h" systemctl --no-pager status docker ssh 2>&1 | tail -20 || true
@@ -640,25 +654,27 @@ guard_refusals() { # $1 scenario: the refusals that keep two peerings on one hos
     "rm -rf '$WORK/merged' && cp -R '$WORK/${A}/clone' '$WORK/merged' && sed -i 's/^${A}-edge-${C} /${A}-edge-${B} /' '$WORK/merged/ops/ansible/inventory/peering-edges.ini' && python3 '$WORK/merged/ops/federation/standup/preflight.py' ${C} --work '$WORK/merged-work' --edge-group ${C}_edge --repo '$WORK/merged'"
 }
 
-scenario3() {
-  local n=3
+scenario3() { # [$1 avenue of the first peering, default goatbuilder] [$2 of the second, default script]
+  local n=3 av1="${1:-goatbuilder}" av2="${2:-script}"
   set_partners "$A" "$B $C"; set_partners "$B" "$A"; set_partners "$C" "$A"; NODIR="$A:$C $C:$A"
   export_helpers
   say "scenario 3: ${A} federates with ${B} and with ${C} on one edge host and one core host"
   setup_hosts "$n"
 
-  # The first peering, through the driver's goatbuilder avenue and the directory.
-  peer_up "$n" ${A} ${B} goatbuilder
+  # The first peering, through the driver's $av1 avenue and the directory.
+  peer_up "$n" ${A} ${B} $av1
   snap ${A} ${B} ${C} > "$RECORD/s3-${B}-before-${C}.txt"
+  docker exec $HP-${A}-edge sha256sum /var/lib/goat-federation/${B}/agreement.json | cut -d' ' -f1 > "$WORK/${A}-${B}-agreement.sha"
   docker exec $HP-${A}-edge sha256sum /var/lib/goat-federation/${B}/ours.canonical.json | cut -d' ' -f1 > "$WORK/${A}-${B}-package.sha"
 
   # The second peering, added beside it: peering-standup.sh, packages by hand.
-  peer_up "$n" ${A} ${C} script
+  peer_up "$n" ${A} ${C} $av2
   snap ${A} ${B} ${C} > "$RECORD/s3-${B}-after-${C}.txt"
   # Phase 10 for ${C} restarts ${A}'s core on the joined ACL, so the ${B}
   # peering reconnects; nothing of its own may have changed.
   rec "s3-adding-${C}-left-${B}-untouched" -- diff "$RECORD/s3-${B}-before-${C}.txt" "$RECORD/s3-${B}-after-${C}.txt"
-  accept_pair "$n" ${A} ${B} goatbuilder "-after-${C}"
+  rec "s3-adding-${C}-left-${B}-agreement-digest" --expect-in "$(cat "$WORK/${A}-${B}-agreement.sha")" -- docker exec $HP-${A}-edge sha256sum /var/lib/goat-federation/${B}/agreement.json
+  accept_pair "$n" ${A} ${B} $av1 "-after-${C}"
 
   say "scenario 3: each partner receives the sets its own agreement offers, and no other"
   set_isolation "$n" ${A} both-up
@@ -670,22 +686,22 @@ scenario3() {
 
   say "scenario 3: re-running one peering's phases leaves the other untouched"
   snap ${A} ${C} ${B} > "$RECORD/s3-${C}-before-${B}-rerun.txt"
-  rec "s3-rerun-${B}-phase-2" -- bash -c "drive ${A} ${B} goatbuilder 2 2"
-  rec "s3-rerun-${B}-phases-7-to-9" -- bash -c "drive ${A} ${B} goatbuilder 7 9"
-  rec "s3-rerun-${B}-phases-11-to-13" -- bash -c "drive ${A} ${B} goatbuilder 11 13"
+  rec "s3-rerun-${B}-phase-2" -- bash -c "drive ${A} ${B} $av1 2 2"
+  rec "s3-rerun-${B}-phases-7-to-9" -- bash -c "drive ${A} ${B} $av1 7 9"
+  rec "s3-rerun-${B}-phases-11-to-13" -- bash -c "drive ${A} ${B} $av1 11 13"
   snap ${A} ${C} ${B} > "$RECORD/s3-${C}-after-${B}-rerun.txt"
   rec "s3-${B}-rerun-left-${C}-untouched" -- diff "$RECORD/s3-${C}-before-${B}-rerun.txt" "$RECORD/s3-${C}-after-${B}-rerun.txt"
   rec "s3-${C}-round-trip-after-${B}-rerun" --expect-in "PASS" -- bash -c "round_trip_eventually ${A} ${C}"
 
   snap ${A} ${B} ${C} > "$RECORD/s3-${B}-before-${C}-rerun.txt"
-  rec "s3-rerun-${C}-phase-2" -- bash -c "drive ${A} ${C} script 2 2"
-  rec "s3-rerun-${C}-phases-7-to-9" -- bash -c "drive ${A} ${C} script 7 9"
-  rec "s3-rerun-${C}-phases-11-to-13" -- bash -c "drive ${A} ${C} script 11 13"
+  rec "s3-rerun-${C}-phase-2" -- bash -c "drive ${A} ${C} $av2 2 2"
+  rec "s3-rerun-${C}-phases-7-to-9" -- bash -c "drive ${A} ${C} $av2 7 9"
+  rec "s3-rerun-${C}-phases-11-to-13" -- bash -c "drive ${A} ${C} $av2 11 13"
   snap ${A} ${B} ${C} > "$RECORD/s3-${B}-after-${C}-rerun.txt"
   rec "s3-${C}-rerun-left-${B}-untouched" -- diff "$RECORD/s3-${B}-before-${C}-rerun.txt" "$RECORD/s3-${B}-after-${C}-rerun.txt"
   rec "s3-${B}-round-trip-after-${C}-rerun" --expect-in "PASS" -- bash -c "round_trip_eventually ${A} ${B}"
-  accept_pair "$n" ${A} ${B} goatbuilder "-after-reruns"
-  accept_pair "$n" ${A} ${C} script "-after-reruns"
+  accept_pair "$n" ${A} ${B} $av1 "-after-reruns"
+  accept_pair "$n" ${A} ${C} $av2 "-after-reruns"
   set_isolation "$n" ${A} after-reruns
 
   say "scenario 3: the refusals that keep two peerings on one host apart"
@@ -698,6 +714,9 @@ scenario3() {
   # the entry and its transport offer change; ${B}'s running peering does not.
   rec "s3-what-${B}-sees-if-${A}-republishes" --expect-in "$(boundary_ip ${A}):$(wgport ${A} ${C})" -- docker exec $HP-${A}-edge bash -c \
     "SSL_CERT_FILE=/etc/fed-e2e/directory-ca.pem python3 /opt/goat/ops/federation/standup/directory.py --url https://$DIRECTORY_IP:8443 --ours /var/lib/goat-federation/${C}/ours.canonical.json --key /etc/fed-e2e/signing.key --ca /etc/fed-e2e/ca.pem --their-id ${B} --work /tmp/republish-demo >/dev/null; $dir_ptr; echo; curl -fsS --cacert /etc/fed-e2e/directory-ca.pem https://$DIRECTORY_IP:8443/v1/parties/${A}/package | python3 -c 'import json,sys; print(json.load(sys.stdin)[\"transport_offer\"])'"
+  # What the first partner composes when it reruns phases 5 to 7 against that entry.
+  rec "s3-${B}-rerun-5-to-7-composes-the-same-agreement" --expect-in "$(cat "$WORK/${A}-${B}-agreement.sha")" -- bash -c \
+    "drive ${B} ${A} $av1 5 7 >/dev/null 2>&1; docker exec $HP-${B}-edge sha256sum /var/lib/goat-federation/${A}/agreement.json"
   rec "s3-${B}-still-carries-after-the-republish" --expect-in "PASS" -- bash -c "round_trip_eventually ${A} ${B}"
   collect "$n"
 }

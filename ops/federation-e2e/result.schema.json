@@ -60,7 +60,7 @@
     "harness": {
       "type": "object",
       "required": ["sha"],
-      "properties": {"sha": {"type": "string"}, "dirty": {"type": "boolean"}}
+      "properties": {"sha": {"type": "string"}, "dirty": {"type": "boolean"}, "fingerprint": {"type": "string", "description": "env fingerprint: the catalog, units, engine and verdict and the scenario subset; rows compare only when equal"}}
     },
     "versions": {"type": "object", "description": "The tool versions each sovereign ran, by sovereign id.", "additionalProperties": {"type": "string"}},
     "started": {"type": "string", "format": "date-time"},
