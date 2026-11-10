@@ -182,6 +182,11 @@ when any remains. A manifest an earlier run left behind with resources not confi
 was killed) is cleaned first, only the resources it names, recorded as `cleanup/earlier-runs`;
 a manifest whose run is still going on this machine (its process id answers) is left alone, and a
 manifest that cannot be read FAILs that row, since it cannot show its resources are gone.
+A manifest names its run by process id and that process's start time: a live process id with
+another start time is a reused id (the run is gone, its probes are cleaned); one whose start time
+cannot be compared is left alone and recorded as `cleanup/earlier-runs-unknown`, BLOCKED. Only
+exit 1 from `alive` counts as gone; any other answer leaves the probe listed. The probes are
+also stopped when the run leaves any other way (an EXIT trap beside the INT and TERM ones).
 An interrupt or termination stops this run's probes before the run exits. A probe given directly
 (`FED_PROBE_THEIRS_REST` and the rest) is not started or stopped by the run. Probe keys stay
 under the reserved `acceptance-probe/`, `acceptance-forged/` and `acceptance-impersonate/`
