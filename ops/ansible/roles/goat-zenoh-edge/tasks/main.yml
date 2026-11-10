@@ -161,6 +161,11 @@
   ansible.builtin.include_tasks: ingress-storage-check.yml
   when: goat_zenoh_edge_ingress_key_exprs | default([]) | length > 0
 
+# Before the first write: a refusal here leaves the edge as it was.
+- name: edge | check the peering certificates in the run's working directory
+  ansible.builtin.include_tasks: certificates-check.yml
+  when: goat_zenoh_edge_install_certs | bool
+
 - name: edge | directories
   ansible.builtin.file:
     path: "{{ item }}"
@@ -261,6 +266,12 @@
       concatenates it with the partner's, and `fragment` names it in the
       per-endpoint override AND MOUNTS IT -- an override pointing at a path the
       container cannot read is discarded, and the edge never dials.
+
+# After every other check, so a refusal cannot follow a certificate change whose
+# restart would then be lost; before the bundle reads the installed partner CA.
+- name: edge | install the checked peering certificates
+  ansible.builtin.include_tasks: certificates-install.yml
+  when: goat_zenoh_edge_install_certs | bool
 
 - name: edge | read our CA
   ansible.builtin.slurp:

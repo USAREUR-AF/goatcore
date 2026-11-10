@@ -137,6 +137,10 @@ pub struct Environment {
     pub groups: Vec<String>,
     #[serde(default)]
     pub sites: Vec<Site>,
+    /// UDP ports this environment's edge hosts already hold, which a peering's
+    /// tunnel or carrier never takes. Absent: NetBird's 51820.
+    #[serde(default)]
+    pub peering_edge_reserved_udp: Option<Vec<u16>>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -179,7 +183,58 @@ pub struct Peering {
     pub environment: String,
     pub site: String,
     pub edge_class: String,
+    /// Step 1's tunnel: `wireguard` or `ipsec` (the FIPS-validated IPsec
+    /// transport). Absent: wireguard. The one field for the transport.
+    #[serde(default)]
+    pub tunnel: Option<String>,
+    /// Release sets this peering offers, narrowing the `[data] release` of the
+    /// goat context's federation.toml, which owns them. Absent: all of them.
+    /// Checked by federate/declaration.rs: it may narrow, never widen.
+    #[serde(default)]
+    pub offer: Option<Vec<String>>,
+    /// Pins that override allocation, same keys as the allocated values.
+    #[serde(default)]
+    pub values: crate::federate::declaration::PeeringPins,
+    /// The machines' addresses, for the rendered peering inventory.
+    #[serde(default)]
+    pub hosts: Option<PeeringHosts>,
+    /// Present when a peering forwarder relays the partner to our edge (ADR 1218).
+    #[serde(default)]
+    #[allow(dead_code)] // read where the forwarder is rendered and applied
+    pub forwarder: Option<PeeringForwarder>,
 }
+
+/// Where the edge and the core are, as the inventory reaches them.
+#[derive(Debug, Clone, Deserialize)]
+pub struct PeeringHosts {
+    pub edge: String,
+    pub core: String,
+    #[serde(default)]
+    pub user: Option<String>,
+}
+
+/// The peering forwarder in front of the edge (docs/design/peering-forwarder.md).
+#[derive(Debug, Clone, Deserialize)]
+pub struct PeeringForwarder {
+    /// The forwarder's public host the partner and our edge dial.
+    pub endpoint: String,
+    /// The inventory group the forwarder is in (default `peering_forwarders`).
+    #[serde(default)]
+    pub group: Option<String>,
+    /// The forwarder's address as the inventory reaches it (for the rendered inventory).
+    #[serde(default)]
+    pub ansible_host: Option<String>,
+}
+
+/// Words `goatbuilder federate <word>` takes, or is reserved to take, as a
+/// subcommand, so a peering declared with one could never be run: the six
+/// federation verbs, clap's `help`, the stages of the one command (`status`,
+/// `plan`, `deploy`, `test`), and `allocate`. The one list; ops/goatbuilder/
+/// validate.py's RESERVED_PEERING_NAMES mirrors it.
+pub const RESERVED_PEERING_NAMES: &[&str] = &[
+    "init", "lint", "compose", "diff", "verify", "apply", "help", "status", "plan", "deploy",
+    "test", "allocate",
+];
 
 /// Read a YAML config file into a JSON value (the form the schema validates).
 pub fn load_value(path: &Path) -> Result<Value> {
@@ -217,7 +272,18 @@ pub fn problems(value: &Value) -> Result<Vec<String>> {
 
 /// `problems`, with the checkout's own config a lite file may take `repo` and
 /// `components` from.
+#[allow(dead_code)] // the record-free form, for callers without a config path
 pub fn problems_in(value: &Value, checkout: Option<&Value>) -> Result<Vec<String>> {
+    problems_at(value, checkout, None)
+}
+
+/// `problems_in`, reading the peering allocation record in `record_dir` (the
+/// config file's directory), so a pin on a recorded value is reported too.
+pub fn problems_at(
+    value: &Value,
+    checkout: Option<&Value>,
+    record_dir: Option<&Path>,
+) -> Result<Vec<String>> {
     let schema: Value = serde_json::from_str(SCHEMA_JSON).context("embedded schema is not JSON")?;
     let compiled = JSONSchema::options()
         .with_draft(Draft::Draft7)
@@ -248,7 +314,7 @@ pub fn problems_in(value: &Value, checkout: Option<&Value>) -> Result<Vec<String
     }
     let cfg: Config = serde_json::from_value(derive_lite(value, checkout))
         .context("config does not match the typed model")?;
-    out.extend(cross_field(&cfg));
+    out.extend(cross_field_at(&cfg, record_dir));
     Ok(out)
 }
 
@@ -352,7 +418,13 @@ pub fn derive_lite(value: &Value, checkout: Option<&Value>) -> Value {
 }
 
 /// The rules JSON Schema cannot express — identical in intent to validate.py's.
+#[allow(dead_code)] // the record-free form, kept for callers without a config path
 pub fn cross_field(cfg: &Config) -> Vec<String> {
+    cross_field_at(cfg, None)
+}
+
+/// `cross_field`, with the peering allocation record read from `record_dir`.
+pub fn cross_field_at(cfg: &Config, record_dir: Option<&Path>) -> Vec<String> {
     let mut out = Vec::new();
     let names: Vec<&str> = cfg.environments.iter().map(|e| e.name.as_str()).collect();
     let mut dupes: Vec<&str> = names
@@ -433,6 +505,15 @@ pub fn cross_field(cfg: &Config) -> Vec<String> {
             ));
         }
     }
+    // Reserved names and the offer's shape (docs/design/goatbuilder.md, "The
+    // peering declaration").
+    out.extend(crate::federate::declaration::problems(cfg));
+    // Pins that are malformed or collide, and partners declared twice
+    // (docs/design/goatbuilder.md, "Per-peering values").
+    out.extend(match record_dir {
+        Some(d) => crate::federate::alloc::declaration_problems_in(cfg, d),
+        None => crate::federate::alloc::declaration_problems(cfg),
+    });
     out
 }
 
@@ -454,7 +535,7 @@ pub fn op_account(repo: &Path) -> Option<String> {
 pub fn load(path: &Path) -> Result<Config> {
     let value = load_value(path)?;
     let checkout = checkout_for(path);
-    let problems = problems_in(&value, checkout.as_ref())?;
+    let problems = problems_at(&value, checkout.as_ref(), path.parent())?;
     if !problems.is_empty() {
         return Err(anyhow!(
             "{} does not validate:\n  {}",
@@ -468,7 +549,7 @@ pub fn load(path: &Path) -> Result<Config> {
 /// The `validate` verb's report: one check per problem, or one passing check.
 pub fn validate_report(path: &Path) -> Result<Report> {
     let value = load_value(path)?;
-    let problems = problems_in(&value, checkout_for(path).as_ref())?;
+    let problems = problems_at(&value, checkout_for(path).as_ref(), path.parent())?;
     let checks = if problems.is_empty() {
         vec![Check {
             name: "config".into(),
@@ -628,6 +709,20 @@ mod tests {
         let mut v = with_sites();
         v["peerings"] = json!([{"with": "velmara", "environment": "dev", "site": "alpha", "edge_class": "router"}]);
         rejected(&v, "edge_class 'router'");
+    }
+
+    /// Every federation verb `goatbuilder federate` runs is in the one reserved
+    /// list, so a partner named like one is refused where it is declared (GB-120).
+    #[test]
+    fn a_peering_named_like_a_federate_subcommand_is_refused() {
+        for name in ["lint", "apply", "help"] {
+            let mut v = with_sites();
+            v["peerings"] = json!([{"with": name, "environment": "dev", "site": "alpha", "edge_class": "edge"}]);
+            rejected(&v, "(GB-120)");
+        }
+        for verb in goat_federation::verbs::VERB_NAMES {
+            assert!(RESERVED_PEERING_NAMES.contains(verb), "{verb} is a verb and must be reserved");
+        }
     }
 
     #[test]

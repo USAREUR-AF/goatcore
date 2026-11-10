@@ -1,0 +1,22 @@
+---
+# Parse-only fixture for the goat-host-firewall role. Addresses are from the RFC 5737
+# documentation ranges and the RFC 3927 link-local range.
+- name: goat-host-firewall | parse-only fixture
+  hosts: localhost
+  gather_facts: false
+  vars:
+    goat_host_firewall_baseline: true
+    goat_host_firewall_profile: edge
+    goat_host_firewall_management_sources: [198.51.100.10/32]
+    goat_host_firewall_peering:
+      name: wg-fed0
+      transport: wireguard
+      listen_port: 51821
+      peer_addr: 192.0.2.10
+      tunnel_interface: wg-fed0
+      remote_link_ip: 169.254.10.0
+      edge_port: 7448
+      extra_tcp_ports: []
+      via_forwarder: false
+  roles:
+    - role: ../..

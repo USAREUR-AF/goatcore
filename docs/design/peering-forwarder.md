@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | **Built, not yet run between two goatnets.** Forwarder: `roles/goat-peering-forwarder`, play `ops/ansible/peering-forwarder.yml`. Edge: `peering_wg_via_forwarder` in `roles/goat-peering-wg`. Guard: `ops/ci/check-peering-forwarder-holds-nothing.py`. Container test: `ops/ci/test-peering-forwarder-e2e.sh`. `forwarder:` is validated by `ops/federation/validate-partners.py`. The package member `transport_offer.via` (§6) is designed, not built |
+| Status | **Built, not yet run between two goatnets.** Forwarder: `roles/goat-peering-forwarder`, play `ops/ansible/peering-forwarder.yml`, applied by `goatbuilder federate` from the peering declaration (§7, built, WIP). Edge: `peering_wg_via_forwarder` in `roles/goat-peering-wg`. Guard: `ops/ci/check-peering-forwarder-holds-nothing.py`. Container test: `ops/ci/test-peering-forwarder-e2e.sh`. `forwarder:` is validated by `ops/federation/validate-partners.py`. The package member `transport_offer.via` (§6) is designed, not built |
 | Decision | [ADR 1218](../adr/1218-peering-forwarder-when-neither-edge-accepts-inbound.md), amends [ADR 1157](../adr/1157-cross-sovereign-federation-edge-terminated.md) step 1 |
 | Companions | [`sovereign-federation-runbook.md`](../operations/sovereign-federation-runbook.md) (step 1 and step 5), [`federation-package-spec.md`](federation-package-spec.md) (`transport_offer`), `roles/goat-peering-wg` |
 | Audience | Operators of two goatnets that want to federate; whoever accredits the interconnection |
@@ -182,6 +182,46 @@ two parties can establish the same fact on a call.
 - **Replacing the forwarder** changes our `transport_offer.endpoint`, so it is a new package and a
   re-composed agreement. Keep the address stable; a cloud placement uses a reserved static IP and
   not an ephemeral one.
+
+### Applied by the driver from the peering declaration
+
+Status: built (`crates/goatbuilder/src/federate/forwarder.rs`, `ops/ansible/peering-carrier-keys.yml`, unit tests, and case 8 of `ops/ci/test-peering-forwarder-role.sh`). Status: WIP — gate: two peerings relayed by one forwarder to one edge, both carrying data, in the federation test environment, with the forwarder applied by `goatbuilder federate` and nothing set by hand.
+
+A peering says a forwarder relays it with `forwarder:` in its goatbuilder.yaml `peerings:` entry. A peering without it is unchanged.
+
+```yaml
+peerings:
+  - with: xab
+    environment: dev
+    site: alpha
+    edge_class: edge
+    forwarder:
+      endpoint: 203.0.113.7       # the forwarder's public host, no port: the ports are allocated
+      group: peering_forwarders   # optional; one group per forwarder
+      ansible_host: 203.0.113.7   # optional; how the inventory reaches it
+```
+
+Allocation ([goatbuilder.md](goatbuilder.md), "Per-peering values") gives each relayed peering a public port, a carrier interface, a carrier port on the forwarder, a carrier listen port on the edge and a carrier /31. The first relayed peering gets the role defaults above (51820, `wg-carry0`, 51821, 51822, `169.254.30.0/31`); a second gets 51822, `wg-carry1`, 51823, 51824 and `169.254.30.2/31`, and so on. Its edge inner listen port is its own `wg_listen_port` (51823, 51825, ...), so the forwarder maps each public port to its own edge listen port.
+
+`goatbuilder federate allocate` renders, from every relayed peering's values:
+
+| File | Holds |
+|---|---|
+| `ops/ansible/group_vars/<forwarder group>/peering-forwarder.yml` | `peering_forwarder_enabled: true`, `goatbuilder_forwarder_peerings` with one entry per relayed peering and every key explicit (each `edge_carrier_public_key` a `lookup('file')` of `<cert_dir>/edge-carrier.pub`), and `peering_forwarder_peerings`: those entries whose key is present |
+| the edge's `peering-values.yml` | `peering_wg_via_forwarder: true`, the carrier interface, listen port and addresses, `peering_wg_forwarder_endpoint: <endpoint>:<carrier port>`, and `peering_wg_forwarder_carrier_public_key` as a `lookup('file')` of `<cert_dir>/forwarder-carrier.pub` |
+| `ops/ansible/inventory/peering-edges.ini` | the forwarder in its own group under `peering_forwarders`, when the inventory is rendered |
+
+Phase 2 of `goatbuilder federate <with>` for a relayed peering is the three runs of the table above, with the key exchange done by the driver:
+
+1. `peering-prepare.yml` on the edge: the edge makes its carrier key;
+2. `peering-carrier-keys.yml` on every relayed edge and the forwarder: copies each edge's carrier public key to its `<cert_dir>/edge-carrier.pub` on the machine running the driver;
+3. `peering-forwarder.yml` on the forwarder group: reads the edge's key through the group_vars lookup and makes the forwarder's carrier key;
+4. `peering-carrier-keys.yml` again: copies the forwarder's carrier public key to `<cert_dir>/forwarder-carrier.pub`, and phase 2 stops there if that file is missing or empty, rather than bringing the carrier up with no peer;
+5. `peering-prepare.yml` on the edge again: the carrier comes up.
+
+Only public keys move, and no private key leaves the host that made it. The keys land in the peering's certificate directory, which phase 8 creates 0700 for its private leaf keys; the keys play creates or keeps that directory 0700 and never widens it (`ops/ci/test-peering-carrier-keys.sh`). The forwarder role is unchanged and `check-peering-forwarder-holds-nothing.py` still passes: the lookups are in the deployment's group_vars, not in the role. The forwarder play applies every peering the forwarder relays, so the keys play copies the carrier key of every relayed edge (`--limit peering_edges:<forwarder group>`), not only this peering's. `peering_forwarder_peerings` is rendered as `goatbuilder_forwarder_peerings` with every entry whose edge has no carrier key yet left out, so a peering whose phase 2 has not run never blocks another's run, and joins the list on its own run. Refusals: two peerings on one forwarder sharing a value (GB-160; allocation keeps one forwarder's values apart across environments, so this is the backstop for a hand-edited record); a partner id the forwarder role cannot name (GB-161); one forwarder group with two endpoints (GB-162); a relayed peering the allocation record does not hold yet, so its rendered files do not exist (GB-163). A hand-written forwarder group file that already sets `peering_forwarder_peerings` is refused by `allocate` (GB-125): the variable has one owner.
+
+Not built yet: phase 3 writing the forwarder's `<endpoint>:<public port>`, `listener = true` and `measured_mtu = 1300` into the goat context's `federation.toml` `[transport]`. Until then those values are set by hand, read from `goatbuilder federate allocate`'s output.
 
 ## 8. Alternatives not taken
 

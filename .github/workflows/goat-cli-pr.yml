@@ -8,6 +8,8 @@ on:
   pull_request:
     paths:
       - 'crates/goat-cli/**'
+      - 'crates/goat-federation/**'
+      - 'ops/federation/vectors/**'
       - 'crates/panoscope-core/**'
       - 'crates/Cargo.toml'
       - 'crates/Cargo.lock'
@@ -74,10 +76,10 @@ jobs:
         run: cargo check -p goat-cli --all-targets
 
       - name: cargo clippy (deny warnings)
-        run: cargo clippy -p goat-cli -p goat-fun -p goat-selfupdate -p panoscope-core --all-targets -- -D warnings
+        run: cargo clippy -p goat-cli -p goat-federation -p goat-fun -p goat-selfupdate -p panoscope-core --all-targets -- -D warnings
 
       - name: cargo test
-        run: cargo test -p goat-cli -p goat-fun -p goat-selfupdate
+        run: cargo test -p goat-cli -p goat-federation -p goat-fun -p goat-selfupdate
 
       - name: Every message has a translation in every shipped language
         working-directory: .

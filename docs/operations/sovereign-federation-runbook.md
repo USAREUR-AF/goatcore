@@ -207,6 +207,12 @@ Set these, and nothing else:
 | `goat_zenoh_edge_outward_cert` / `_key` | what you present to them |
 | `goat_zenoh_edge_inward_cert` / `_key` | what you present to your own core |
 
+**Or let the role install the certificates.** With `goat_zenoh_edge_install_certs: true`, leave
+the three certificate rows above unset: phase 12 checks the phase 8 leaves and their CA from
+`$FED_WORK` (keys match, leaves chain to your CA, their CA's fingerprint equals the agreement's)
+and installs them in the peering's own directory on the edge, `goat_zenoh_edge_cert_dir`. Nothing
+is copied by hand. See [roles/goat-zenoh-edge/README.md](../../ops/ansible/roles/goat-zenoh-edge/README.md).
+
 **Do not point the trust refresh at your core router.** It must write to the edge router's trust
 file. Pointing it at the core puts a foreign certificate authority on the machine that holds
 everything — the single most damaging mistake available in this procedure.

@@ -57,7 +57,7 @@ closes.**
 ### 1.1 What one peering actually costs
 
 Every row is a real artifact with a real name. `goat federate apply` — the only writing verb
-of the six in `crates/goat-cli/src/cmd/federate.rs:53,67,82,98,111,120` — renders rows 4–7.
+of the six in `crates/goat-federation/src/verbs/mod.rs:83,97,112,128,141,150` — renders rows 4–7.
 
 | # | Artifact | Where | Currency | Forced to be per-pair? |
 |---|---|---|---|---|
@@ -67,7 +67,7 @@ of the six in `crates/goat-cli/src/cmd/federate.rs:53,67,82,98,111,120` — rend
 | 4 | Partner trust-level declaration | `ops/federation/partners/<id>.yaml` | machine | yes |
 | 5 | Edge group_vars | `ops/ansible/group_vars/EDGE_HOST/federation-<id>.yml` | machine | yes |
 | 6 | ACL fragment | `ops/federation/acl/<id>-fragment.json5` | machine | yes |
-| 7 | Trust anchor placement | manual step named by `crates/goat-cli/src/fed/render.rs:617` | machine | yes |
+| 7 | Trust anchor placement | manual step named by `crates/goat-federation/src/render.rs:617` | machine | yes |
 | 8 | One `zenohd` container | `goat_zenoh_edge_stack` (`roles/goat-zenoh-edge/defaults/main.yml:46`) | machine | **yes — F-424** |
 | 9 | One trust store holding exactly that partner's CA | `goat_zenoh_edge_partner_ca_path` (`:26`) | machine | **yes — F-424** |
 | 10 | One SPIRE federation relationship and one edge trust-sync entry | `spire_federates_with`, `spire_trust_sync_federated_edges` (`roles/spire/defaults/main.yml:156,90`) | machine | yes |
@@ -205,7 +205,7 @@ channel. The roster is where the confirmed value is *kept and reused*; it is not
 value is *learned*. This is the specification's own rule — a directory is a cache of the
 binding, never its source — turned into a refusal in the tool rather than a sentence in a
 document. Concretely: a per-party record under `ops/federation/parties/<sovereign_id>.yaml`
-holds the two values and the act that established them, and `goat federate apply` refuses when
+holds the two values and the act that established them, and `goatbuilder federate apply` refuses when
 the counterparty's package disagrees with that record or no record exists.
 
 **The roster is valid on a threshold of member signatures, not on one operator's.** Tor's
@@ -446,7 +446,7 @@ a foreign CA admitted to an edge, which under F-424 **is** an authorization gran
 
 The counter is one design property, and the recommendation is only sound if that property is
 built rather than written: **the roster may not be the source of a first-contact binding.**
-`goat federate apply` refuses a counterparty with no local corroboration record, so a party
+`goatbuilder federate apply` refuses a counterparty with no local corroboration record, so a party
 that has never been confirmed over an independently authenticated channel cannot be peered with
 no matter what the roster says. The roster then does what PeeringDB does and what eduGAIN's
 aggregate does not — it distributes, and it decides nothing.
@@ -496,7 +496,7 @@ small.
 | Piece | State |
 |---|---|
 | The package format, canonical form, signature and digest rules | **Written** — [`federation-package-spec.md`](federation-package-spec.md); the conformance vectors in `ops/federation/vectors/` are normative |
-| The six `goat federate` verbs, `apply` the only writer | **Built** — `crates/goat-cli/src/cmd/federate.rs:53,67,82,98,111,120` |
+| The six `goat federate` verbs, `apply` the only writer | **Built** — `crates/goat-federation/src/verbs/mod.rs:83,97,112,128,141,150`; `goat federate <verb>` prints one line on stderr naming `goatbuilder federate <verb>` while federation moves to goatbuilder, with stdout and exit codes unchanged (`crates/goat-cli/src/cmd/federate.rs`) |
 | Per-partner edge role and its four CI isolation guards | **Built, deployed once, inward link failed** — F-474 |
 | Peering fired both directions between two purpose-built environments | **Measured** — M-113, 2026-09-05; both environments destroyed after the run |
 | Any goatnet peering with anything | **Not built** |

@@ -1,0 +1,9 @@
+# The six verbs read no fixture: under --mock, `apply --confirm` would still
+# write real files, so --mock (and -C, -o) is refused with a verb.
+bin.name = "goatbuilder"
+args = ["--mock", "../../ops/goatbuilder/fixtures/goatnet-from-scratch/03-boundary-node", "federate", "apply", "../../ops/federation/vectors/compose-full/agreement.canonical.json", "--as", "xaa", "--out", "never-written", "--confirm"]
+status.code = 2
+stdout = ""
+stderr = """
+goatbuilder: --mock, -C/--repo and -o/--output do not apply to goatbuilder federate init|lint|compose|diff|verify|apply: the verbs read only the files they are named and the party's context, and run for real; drop the flag (the verbs take --json for a JSON report)
+"""

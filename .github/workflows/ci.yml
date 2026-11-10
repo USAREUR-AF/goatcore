@@ -158,7 +158,7 @@ jobs:
         run: |
           set -o pipefail
           export PYTHONPATH="$PWD/ops/consistency/python"
-          python3 -m pytest -q --ignore=ops/ci/test_membership_reconcile.py --ignore=ops/consistency/python/tests/test_corpus.py --ignore=ops/consistency/python/tests/test_lite_sidecar.py ops/ci ops/consistency/python ops/goatbuilder tests 2>&1 | tail -40
+          python3 -m pytest -q --ignore=ops/ci/test_membership_reconcile.py --ignore=ops/consistency/python/tests/test_corpus.py --ignore=ops/consistency/python/tests/test_lite_sidecar.py ops/ci ops/consistency/python ops/goatbuilder ops/federation/standup tests 2>&1 | tail -40
       - name: Go vulnerability scan coverage
         run: |
           python3 ops/ci/test_go_vuln_coverage.py
@@ -227,9 +227,36 @@ jobs:
         run: |
           sudo modprobe wireguard
           bash ops/ci/test-peering-forwarder-e2e.sh
+      - name: the carrier-keys play copies public keys and keeps the certificate directory 0700
+        timeout-minutes: 5
+        run: bash ops/ci/test-peering-carrier-keys.sh
       - name: the forwarder play, run on a systemd host, converges and refuses
         timeout-minutes: 10
         run: bash ops/ci/test-peering-forwarder-role.sh
+
+  peering-host-firewall:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: deps
+        timeout-minutes: 5
+        run: |
+          python3 -m pip install -q pyyaml pytest
+          sudo apt-get install -y -q nftables
+      - name: the baseline renders, and the override contract refuses what it must
+        run: python3 -m pytest -q ops/ansible/roles/goat-host-firewall/tests/test_render.py ops/ansible/roles/goat-host-firewall/tests/test_play_vars.py
+      - name: each rendered baseline, loaded in a network namespace, answers on exactly its ports
+        timeout-minutes: 5
+        run: bash ops/ansible/roles/goat-host-firewall/tests/netns-behavior.sh
+      - name: the role over SSH converges, refuses, keeps a second peering and rolls back
+        timeout-minutes: 12
+        run: bash ops/ci/test-host-firewall-role.sh
 
   bats-bash32:
     # Keep the Bats harness on host Bash 5 so failed [[ assertions are reliable.
