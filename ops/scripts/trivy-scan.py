@@ -74,22 +74,31 @@ FINDING_SECTIONS = (
     ("Secrets", None),
 )
 # A curated image that cannot be pulled is a lifecycle state, not a scanner
-# fault: the registry answers DENIED or not-found for a package that was never
-# published, is not public, or was deleted. Report it as a warning so a red
-# run always means the scanner itself or a report failed. A network or
-# registry outage does not match these markers and stays a failure.
-UNPULLABLE_MARKERS = (
-    "unable to find the specified image",
-    "manifest unknown",
-    "name unknown",
-    "denied",
-    "unauthorized",
+# fault. But Trivy probes docker, containerd, podman and the registry in turn
+# and prints one error line per source: every miss begins "unable to find the
+# specified image", and on GitHub's runners the containerd probe always says
+# "permission denied", so matching anywhere in the output would also call a
+# registry outage or a timeout "not pullable". Only the registry's own verdict
+# decides: the "* remote error:" line, and on it only the OCI error codes that
+# mean "this reference is not served". The codes are matched with their
+# trailing colon ("denied:") so the containerd line's "permission denied",
+# which has none, cannot match. A 5xx, TLS failure, DNS error or timeout
+# carries no such code and stays a failure.
+UNPULLABLE_REMOTE_CODES = (
+    "denied:",
+    "manifest_unknown:",
+    "name_unknown:",
+    "unauthorized:",
 )
 
 
 def image_is_unpullable(output: str) -> bool:
-    text = output.lower()
-    return any(marker in text for marker in UNPULLABLE_MARKERS)
+    for line in output.lower().splitlines():
+        if "remote error:" not in line:
+            continue
+        if any(code in line for code in UNPULLABLE_REMOTE_CODES):
+            return True
+    return False
 
 
 def warn_unpullable(label: str, lane: str) -> None:
