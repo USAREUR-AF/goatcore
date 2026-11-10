@@ -586,7 +586,7 @@ class AcceptanceRun(unittest.TestCase):
         self.assertIn("another agreement", out)
 
     # --- run-owned, time-limited probes ---------------------------------------
-    def launcher(self, fab_env, stuck=False):
+    def launcher(self, fab_env, stuck=False, alive_cmd=None):
         """A launcher in the contract acceptance.sh documents. Its 'sessions' are files;
         the fabric already serves the three probe surfaces."""
         state = os.path.join(self.tmp, "launched")
@@ -603,7 +603,7 @@ class AcceptanceRun(unittest.TestCase):
                 f.write('      %s) echo "REST=%s"; echo "ZID=%s" ;;\n' % (k, rest[k], zid[k]))
             f.write('    esac\n    echo "HANDLE=$2-$3"; echo "$4" > "$S/$2-$3" ;;\n')
             f.write('  stop) %s ;;\n' % ("true" if stuck else 'rm -f "$S/$2"'))
-            f.write('  alive) test -f "$S/$2" ;;\nesac\n')
+            f.write('  alive) %s ;;\nesac\n' % (alive_cmd or 'test -f "$S/$2"'))
         os.chmod(path, 0o700)
         return path, state
 
@@ -665,6 +665,48 @@ class AcceptanceRun(unittest.TestCase):
             extra={"FED_PROBE_LAUNCHER": launcher})
         self.assertEqual(rc, 1, out)
         self.assertEqual(self.verdicts()["cleanup/earlier-runs"], "FAIL", out)
+
+    def test_only_exit_1_from_alive_means_gone(self):
+        # A launcher whose `alive` errors (exit 2) cannot show a probe is gone.
+        fab = self.fabric.start()
+        launcher, state = self.launcher(fab, alive_cmd="exit 2")
+        rc, out = self.run_acceptance(
+            drop=["FED_PROBE_THEIRS_REST", "FED_PROBE_FORGED_REST", "FED_PROBE_IMPERSONATE_REST"],
+            extra={"FED_PROBE_LAUNCHER": launcher})
+        self.assertEqual(rc, 1, out)
+        self.assertEqual(self.verdicts()["cleanup/probes"], "FAIL", out)
+
+    def earlier_manifest(self, **fields):
+        probes = os.path.join(self.tmp, "evidence", "acceptance", "probes")
+        os.makedirs(probes, exist_ok=True)
+        m = {"run": "acc-old", "resources": {"agreed-acc-old": {"kind": "agreed", "status": "started", "deadline": 1}}}
+        m.update(fields)
+        with open(os.path.join(probes, "acc-old.json"), "w") as f:
+            json.dump(m, f)
+
+    def test_a_reused_pid_does_not_hide_a_dead_runs_probes(self):
+        fab = self.fabric.start()
+        launcher, state = self.launcher(fab)
+        open(os.path.join(state, "agreed-acc-old"), "w").close()
+        # This test process is alive, but it is not the run that wrote the manifest.
+        self.earlier_manifest(pid=os.getpid(), pid_start="Thu Jan  1 00:00:00 1970")
+        rc, out = self.run_acceptance(
+            drop=["FED_PROBE_THEIRS_REST", "FED_PROBE_FORGED_REST", "FED_PROBE_IMPERSONATE_REST"],
+            extra={"FED_PROBE_LAUNCHER": launcher})
+        self.assertEqual(self.verdicts()["cleanup/earlier-runs"], "PASS", out)
+        self.assertEqual(os.listdir(state), [])
+
+    def test_a_live_pid_without_a_start_time_is_blocked_not_skipped(self):
+        fab = self.fabric.start()
+        launcher, state = self.launcher(fab)
+        open(os.path.join(state, "agreed-acc-old"), "w").close()
+        self.earlier_manifest(pid=os.getpid())
+        rc, out = self.run_acceptance(
+            drop=["FED_PROBE_THEIRS_REST", "FED_PROBE_FORGED_REST", "FED_PROBE_IMPERSONATE_REST"],
+            extra={"FED_PROBE_LAUNCHER": launcher})
+        self.assertEqual(self.verdicts()["cleanup/earlier-runs-unknown"], "BLOCKED", out)
+        self.assertEqual(rc, 3, out)
+        self.assertIn("agreed-acc-old", os.listdir(state))
 
     def test_without_a_launcher_nothing_is_started_or_cleaned(self):
         rc, out = self.run_acceptance()
