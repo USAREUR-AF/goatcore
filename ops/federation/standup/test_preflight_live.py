@@ -34,9 +34,9 @@ EDGE_TCP = 'tcp   LISTEN 0      4096   192.0.2.10:7448   0.0.0.0:*    users:(("z
 
 
 class EdgePorts(unittest.TestCase):
-    def check(self, facts, wg_port=51820, edge_port=7448):
+    def check(self, facts, wg_port=51820, edge_port=7448, bind=None):
         return live.check_edge_ports({"edge-1": facts}, ["edge-1"], wg_port, "wg-fed0", edge_port,
-                                     "goat-zenoh-edge-xab", "xab_edge")
+                                     "goat-zenoh-edge-xab", "xab_edge", bind)
 
     def test_free_ports_pass(self):
         r = self.check(host(ss='tcp LISTEN 0 128 0.0.0.0:22 0.0.0.0:* users:(("sshd",pid=1,fd=3))\n'))
@@ -63,10 +63,51 @@ class EdgePorts(unittest.TestCase):
         r = self.check(host(ss=EDGE_TCP, pids="4242 /goat-zenoh-edge-xab\n"))
         self.assertEqual(r.outcome, live.PASS, r)
 
-    def test_another_peerings_edge_container_is_a_collision(self):
-        r = self.check(host(ss=EDGE_TCP, pids="4242 /goat-zenoh-edge-xac\n"))
-        self.assertEqual(r.outcome, live.FAIL, r)
+    def test_another_peerings_edge_router_on_our_address_is_a_collision(self):
+        # Same address, same port: the two routers cannot both listen.
+        r = self.check(host(ss=EDGE_TCP, pids="4242 /goat-zenoh-edge-xac\n"), bind="192.0.2.10")
+        self.assertEqual((r.outcome, r.code), (live.FAIL, "GB-131"), r)
         self.assertIn("container goat-zenoh-edge-xac", r.detail)
+
+    def test_another_peerings_edge_router_on_its_own_link_address_does_not_collide(self):
+        # The shared edge: the first peering's router holds 7448 on its link
+        # address; ours binds a different link address.
+        first = 'tcp LISTEN 0 4096 169.254.77.0:7448 0.0.0.0:* users:(("zenohd",pid=4242,fd=9))\n'
+        r = self.check(host(ss=first, pids="4242 /goat-zenoh-edge-xab2\n"), bind="169.254.77.2")
+        self.assertEqual(r.outcome, live.PASS, r)
+        self.assertIn("on another address", r.detail)
+        # Before phase 9 the link address is not known yet: a holder on a
+        # specific address still does not collide.
+        self.assertEqual(self.check(host(ss=first, pids="4242 /goat-zenoh-edge-xab2\n"), bind="pending").outcome,
+                         live.PASS)
+
+    def test_a_wildcard_on_either_side_is_a_collision(self):
+        wild = 'tcp LISTEN 0 4096 0.0.0.0:7448 0.0.0.0:* users:(("zenohd",pid=4242,fd=9))\n'
+        wild6 = 'tcp LISTEN 0 4096 [::]:7448 [::]:* users:(("zenohd",pid=4242,fd=9))\n'
+        pids = "4242 /goat-zenoh-edge-xac\n"
+        for ss in (wild, wild6):
+            for bind in ("169.254.77.2", "pending"):
+                self.assertEqual(self.check(host(ss=ss, pids=pids), bind=bind).outcome, live.FAIL, (ss, bind))
+        specific = 'tcp LISTEN 0 4096 169.254.77.0:7448 0.0.0.0:* users:(("zenohd",pid=4242,fd=9))\n'
+        self.assertEqual(self.check(host(ss=specific, pids=pids), bind="0.0.0.0").outcome, live.FAIL)
+        # A container publishing the port on every address collides too.
+        self.assertEqual(self.check(host(containers="goat-zenoh-edge-xac\t0.0.0.0:7448->7448/tcp\n"),
+                                    bind="169.254.77.2").outcome, live.FAIL)
+        self.assertEqual(self.check(host(containers="goat-zenoh-edge-xac\t169.254.77.0:7448->7448/tcp\n"),
+                                    bind="169.254.77.2").outcome, live.PASS)
+
+    def test_the_bind_address_comes_from_apply_then_the_deployment_else_it_is_pending(self):
+        with tempfile.TemporaryDirectory() as t:
+            self.assertEqual(live.edge_bind_address(t, t, "xab_edge", {})[0], "pending")
+            gv = Path(t) / "ops/ansible/group_vars/xab_edge"
+            gv.mkdir(parents=True)
+            (gv / "edge.yml").write_text('goat_zenoh_edge_bind_address: "0.0.0.0"\n')
+            self.assertEqual(live.edge_bind_address(t, t, "xab_edge", {})[0], "0.0.0.0")
+            ap = Path(t) / "applied/ops/ansible/group_vars/xab_edge"
+            ap.mkdir(parents=True)
+            (ap / "federation-xab-transport.yml").write_text('goat_zenoh_edge_bind_address: "169.254.77.2"\n')
+            self.assertEqual(live.edge_bind_address(t, t, "xab_edge", {})[0], "169.254.77.2")
+            self.assertEqual(live.edge_bind_address(t, t, "xab_edge", {"FED_EDGE_BIND_ADDRESS": "x"})[0], "x")
 
     def test_docker_proxy_for_our_published_port_is_ours(self):
         ss = 'tcp LISTEN 0 4096 192.0.2.10:7448 0.0.0.0:* users:(("docker-proxy",pid=900,fd=4))\n'
@@ -271,16 +312,19 @@ class CoreRouter(unittest.TestCase):
         self.assertTrue(live.container_name("zagros-zenoh-router"))
 
 
-CORE_WIDE = '{ plugins: { storage_manager: { storages: { landing: { key_expr: "from/**", volume: "memory" } } } } }'
-CORE_SCOPED = ('{ plugins: { storage_manager: { storages: { landing: { key_expr: "from/**" },'
+ADMITS_XAB = ' access_control: { subjects: [ { id: "sovereign-xab", cert_common_names: ["fed.xab.zagros.01"] } ] },'
+CORE_WIDE = ('{' + ADMITS_XAB +
+             ' plugins: { storage_manager: { storages: { landing: { key_expr: "from/**", volume: "memory" } } } } }')
+CORE_SCOPED = ('{' + ADMITS_XAB + ' plugins: { storage_manager: { storages: { landing: { key_expr: "from/**" },'
                ' xab: { key_expr: "from/xab/**" } } } } }')
+CORE_NOT_ADMITTED = '{ plugins: { storage_manager: { storages: { landing: { key_expr: "from/**" } } } } }'
 
 
 class IngressStores(unittest.TestCase):
     def check(self, config, ok=True, receives=True, router=("docker", "full-a")):
         call = fake_runtime({("docker", "exec"): (ok, config)})
         return live.check_ingress_stores(REPO, receives, ["from/xab/**"], "test", router, call,
-                                         "/etc/zenoh/config.json5")
+                                         "/etc/zenoh/config.json5", "xab")
 
     def test_a_store_wider_than_the_grant_is_refused(self):
         # The 9 Nov run: a core store on from/** while the edge grants from/xab/**.
@@ -288,6 +332,19 @@ class IngressStores(unittest.TestCase):
         self.assertEqual((r.outcome, r.code), (live.FAIL, "GB-136"))
         self.assertIn("from/xab/**", r.detail)
         self.assertIn("the wider from/**", r.detail)
+
+    def test_a_peering_not_yet_admitted_is_not_expected_to_have_its_store(self):
+        # A new peering on a role-deployed core: the role renders the store
+        # only once the peering is declared and admitted, at phase 10.
+        r = self.check(CORE_NOT_ADMITTED)
+        self.assertEqual(r.outcome, live.NA, r)
+        self.assertIn("not yet expected", r.detail)
+        self.assertIn("phase 10", r.detail)
+
+    def test_an_admitted_peering_through_apply_fragment_is_checked(self):
+        frag = CORE_WIDE.replace('"sovereign-xab"', '"fed-xab"')
+        self.assertEqual(self.check(frag).code, "GB-136")
+        self.assertFalse(live.admitted(CORE_WIDE.replace('"sovereign-xab"', '"sovereign-xabc"'), "xab"))
 
     def test_a_matching_scoped_store_passes_beside_history(self):
         self.assertEqual(self.check(CORE_SCOPED).outcome, live.PASS)
