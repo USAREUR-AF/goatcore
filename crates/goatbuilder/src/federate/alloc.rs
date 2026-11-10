@@ -1343,6 +1343,27 @@ mod tests {
     /// environment whose edges run no mesh client may pin 51820 (adopting a
     /// peering that runs on the role default), and one whose edges hold another
     /// port steps around it.
+    /// The setting validates where the allocator reads it: on an environment.
+    #[test]
+    fn the_schema_takes_reserved_udp_on_an_environment_not_a_site() {
+        let mut v = serde_json::to_value(json!({
+            "schema": "goatbuilder/v1",
+            "preset": "full",
+            "repo": {"source": "example-org/example-repo", "image_namespace": "ghcr.io/example-org"},
+            "components": {"example-service": {"declared_in": "ops/pins/fleet-pins.yaml"}},
+            "environments": [{"name": "dev", "converger": "push-ansible", "peering_edge_reserved_udp": [],
+                "sites": [{"name": "alpha", "role": "founder", "classes": {"core": {}, "edge": {}}}]}],
+            "promotion": {"path": [{"name": "dev", "kind": "rung", "environment": "dev"}]},
+        }))
+        .unwrap();
+        assert_eq!(crate::config::problems(&v).unwrap(), Vec::<String>::new());
+        v["environments"][0]["sites"][0]["peering_edge_reserved_udp"] = json!([]);
+        assert!(crate::config::problems(&v)
+            .unwrap()
+            .iter()
+            .any(|p| p.contains("peering_edge_reserved_udp")));
+    }
+
     #[test]
     fn the_reserved_udp_ports_are_per_environment() {
         let mut a = p("xab");
