@@ -496,7 +496,7 @@ small.
 | Piece | State |
 |---|---|
 | The package format, canonical form, signature and digest rules | **Written** — [`federation-package-spec.md`](federation-package-spec.md); the conformance vectors in `ops/federation/vectors/` are normative |
-| The six `goat federate` verbs, `apply` the only writer | **Built** — `crates/goat-federation/src/verbs/mod.rs:83,97,112,128,141,150` |
+| The six `goat federate` verbs, `apply` the only writer | **Built** — `crates/goat-federation/src/verbs/mod.rs:83,97,112,128,141,150`; `goat federate <verb>` prints one line on stderr naming `goatbuilder federate <verb>` while federation moves to goatbuilder, with stdout and exit codes unchanged (`crates/goat-cli/src/cmd/federate.rs`) |
 | Per-partner edge role and its four CI isolation guards | **Built, deployed once, inward link failed** — F-474 |
 | Peering fired both directions between two purpose-built environments | **Measured** — M-113, 2026-09-05; both environments destroyed after the run |
 | Any goatnet peering with anything | **Not built** |
