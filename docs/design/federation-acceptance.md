@@ -91,7 +91,8 @@ So after the delivery rows, for each offered set and direction, the runner:
 2. FAILs when no store of the router subscribes to the key, and is BLOCKED while another session
    does. A drill that keeps test subscribers on a core names a command that stops them and one
    that starts them again (`FED_TEST_SUBSCRIBERS_PAUSE_OURS` / `_RESUME_OURS`, and `_THEIRS`);
-   the runner stops them, reads the subscribers again, and restarts them after the read. A
+   the runner stops them, reads the subscribers again, and restarts them after the read. A stop
+   command without a start command is refused before the run begins (exit 2). A
    subscriber that does not match the key is no reason to stop (the round-trip responder polls
    `**/fedcheck/*` over REST and subscribes to nothing);
 3. publishes a new sample under `release/<set>/acceptance/<run id>/persist` on the sending core
@@ -176,6 +177,9 @@ that the peering works. The bilateral exchange that closes it is not built.
 ```
 
 `direction` is `outbound` (ours to theirs), `inbound` (theirs to ours), `both` or `local`.
+`tier` is one of `positive`, `persistence`, `negative`, `round-trip`, `spire`, `precondition`;
+`persistence` was added to that list without a new schema version, since a reader that ignores
+unknown tiers reads the bundle the same.
 `inputs` names which surfaces the run had, as booleans only: an address is not evidence and
 does not belong in a file that may be handed to the partner. `observations` holds what the
 check saw: the key, the bytes sent and read back, the ACL trace lines, the round-trip output.

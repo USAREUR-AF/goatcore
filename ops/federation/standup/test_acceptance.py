@@ -270,6 +270,13 @@ class AcceptanceRun(unittest.TestCase):
         self.assertEqual(v["persistence/inbound/release/all"], "FAIL", out)
         self.assertFalse(os.path.exists(flag), "the test subscriber was not started again")
 
+    def test_a_pause_command_without_a_resume_command_is_refused(self):
+        flag = os.path.join(self.tmp, "paused-xaa")
+        rc, out = self.run_acceptance(extra={"FED_TEST_SUBSCRIBERS_PAUSE_OURS": "touch '%s'" % flag})
+        self.assertEqual(rc, 2, out)
+        self.assertIn("FED_TEST_SUBSCRIBERS_RESUME_OURS", out)
+        self.assertFalse(os.path.exists(flag))
+
     def test_a_subscriber_on_other_keys_does_not_block(self):
         # The round-trip responder subscribes to fedcheck keys only; it carries no
         # persistence sample, so it is no reason to stop.

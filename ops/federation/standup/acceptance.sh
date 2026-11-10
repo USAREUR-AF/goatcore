@@ -99,6 +99,15 @@ done
 : "${FED_THEIRS_REST:=}"                        # theirs, when the drill owns both sides
 : "${FED_SSH_OURS:=}"                           # or reach them over ssh
 : "${FED_SSH_THEIRS:=}"
+# A drill that names a command to stop its test subscribers names the one that starts
+# them again too; otherwise they would stay stopped after the run with no row saying so.
+for side in OURS THEIRS; do
+  eval "pause=\${FED_TEST_SUBSCRIBERS_PAUSE_$side:-}; resume=\${FED_TEST_SUBSCRIBERS_RESUME_$side:-}"
+  if [ -n "$pause" ] && [ -z "$resume" ]; then
+    echo "acceptance: FED_TEST_SUBSCRIBERS_PAUSE_$side is set without FED_TEST_SUBSCRIBERS_RESUME_$side; set both or neither" >&2
+    exit 2
+  fi
+done
 
 settle() { sleep "${FED_ACCEPTANCE_WAIT:-$1}"; }
 now()    { date -u +%Y-%m-%dT%H:%M:%SZ; }
