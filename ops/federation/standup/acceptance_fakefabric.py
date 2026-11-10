@@ -12,7 +12,7 @@ It stands in for what phase 14 talks to, over the same HTTP shapes:
     in the line shapes zenoh 1.9 prints;
   * a `spire-server` stand-in for each side, backed by CAs made with openssl.
 
-Every behaviour can be broken on purpose (see `Faults`), so a test proves the script
+Every behavior can be broken on purpose (see `Faults`), so a test proves the script
 fails when the fabric does, not only that it passes when the fabric works.
 
 This is test code. It models the boundary the script checks, not zenoh.
@@ -246,7 +246,7 @@ case "$1 $2" in
   *) echo "fake spire-server: $*" >&2; exit 1 ;;
 esac
 """ % {"d": d, "other": other, "side": side})
-            os.chmod(script, 0o755)
+            os.chmod(script, 0o700)
             env[var] = script
         return env
 
