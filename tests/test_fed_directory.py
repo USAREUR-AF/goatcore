@@ -235,8 +235,7 @@ def test_a_key_that_did_not_sign_the_package_publishes_nothing(server):
 
 
 @needs_ed25519
-def test_looks_up_fetches_checks_and_places_the_counterpartys_package(server, tmp_path, monkeypatch):
-    monkeypatch.setenv("FED_DIRECTORY_PER_COUNTERPARTY", "0")  # the single-package flow
+def test_looks_up_fetches_checks_and_places_the_counterpartys_package(server, tmp_path):
     serve("xab", XAB)
     run("--url", server, "--ours", XAB, "--package-url", f"{server}/packages/xab.json", "--key", KEY["xab"])
     keyring = tmp_path / "keys.txt"
@@ -360,8 +359,7 @@ def test_driver_phase_5_with_no_directory_names_the_files_to_hand_over(tmp_path)
 @needs_ed25519
 def test_driver_phase_5_with_a_directory_publishes_and_reports(server, tmp_path):
     serve("xab", XAB)
-    run("--url", server, "--ours", XAB, "--package-url", f"{server}/packages/xab.json", "--key", KEY["xab"],
-        "--their-id", "xaa")
+    run("--url", server, "--ours", XAB, "--package-url", f"{server}/packages/xab.json", "--key", KEY["xab"])
     (tmp_path / "ours.canonical.json").write_bytes(XAA.read_bytes())
     serve("xaa", XAA)
     r = driver(tmp_path, FED_DIRECTORY_URL=server, FED_PACKAGE_URL=f"{server}/packages/xaa.json",
@@ -460,8 +458,7 @@ def test_a_ca_that_is_not_the_packages_anchor_is_not_uploaded(server, tmp_path, 
 
 @needs_ed25519
 @needs_openssl
-def test_their_ca_is_fetched_checked_placed_and_read_back(server, tmp_path, monkeypatch):
-    monkeypatch.setenv("FED_DIRECTORY_PER_COUNTERPARTY", "0")  # the single-package flow
+def test_their_ca_is_fetched_checked_placed_and_read_back(server, tmp_path):
     ca, fp = mint_ca(tmp_path, "xab")
     (tmp_path / "xab-ca.pem").write_bytes(ca)
     theirs_pkg = package_with_ca(tmp_path, "xab", fp)
@@ -481,8 +478,7 @@ def test_their_ca_is_fetched_checked_placed_and_read_back(server, tmp_path, monk
 
 @needs_ed25519
 @needs_openssl
-def test_a_ca_that_does_not_match_their_package_is_not_placed(server, tmp_path, monkeypatch):
-    monkeypatch.setenv("FED_DIRECTORY_PER_COUNTERPARTY", "0")  # the single-package flow
+def test_a_ca_that_does_not_match_their_package_is_not_placed(server, tmp_path):
     _, fp = mint_ca(tmp_path, "xab")
     wrong, _ = mint_ca(tmp_path, "wrong")
     run("--url", server, "--ours", package_with_ca(tmp_path, "xab", fp), "--key", KEY["xab"])
@@ -496,8 +492,7 @@ def test_a_ca_that_does_not_match_their_package_is_not_placed(server, tmp_path, 
 
 
 @needs_ed25519
-def test_a_party_hosting_no_ca_is_a_warning(server, tmp_path, monkeypatch):
-    monkeypatch.setenv("FED_DIRECTORY_PER_COUNTERPARTY", "0")  # the single-package flow
+def test_a_party_hosting_no_ca_is_a_warning(server, tmp_path):
     serve("xab", XAB)
     run("--url", server, "--ours", XAB, "--package-url", f"{server}/packages/xab.json", "--key", KEY["xab"])
     rc, out = run("--url", server, "--ours", XAA, "--their-id", "xab", "--work", tmp_path)
@@ -509,8 +504,7 @@ def test_a_party_hosting_no_ca_is_a_warning(server, tmp_path, monkeypatch):
 def test_driver_phase_5_without_a_package_url_uploads_and_fetches(server, tmp_path):
     ca, fp = mint_ca(tmp_path, "xab")
     (tmp_path / "xab-ca.pem").write_bytes(ca)
-    run("--url", server, "--ours", package_with_ca(tmp_path, "xab", fp), "--key", KEY["xab"], "--ca", tmp_path / "xab-ca.pem",
-        "--their-id", "xaa")
+    run("--url", server, "--ours", package_with_ca(tmp_path, "xab", fp), "--key", KEY["xab"], "--ca", tmp_path / "xab-ca.pem")
     work = tmp_path / "work"
     work.mkdir()
     ours_ca, ours_fp = mint_ca(tmp_path, "xaa")
@@ -521,16 +515,8 @@ def test_driver_phase_5_without_a_package_url_uploads_and_fetches(server, tmp_pa
     assert r.returncode == 0, r.stderr
     assert Server.hosted["xaa/package"] == (work / "ours.canonical.json").read_bytes()
     assert "xaa/ca" in Server.hosted
-    # Per counterparty by default: before the keys are recorded, their CA waits beside its place.
-    assert (work / "theirs-ca.pem.unconfirmed").exists() and not (work / "theirs-ca.pem").exists()
-    assert (work / "theirs.canonical.json").exists()
+    assert (work / "theirs-ca.pem").exists() and (work / "theirs.canonical.json").exists()
     assert r.stdout.rstrip().splitlines()[-1].strip().startswith("^ OPERATOR STEP")
-    # The operator records both keys from the call and runs phase 5 again: it places the CA.
-    (work / "keys.txt").write_text(f"xaa={PUB['xaa']}\nxab={PUB['xab']}\n")
-    r = driver(work, FED_DIRECTORY_URL=server, FED_COUNTERPARTY_ID="xab", FED_SIGNING_KEY=KEY["xaa"],
-               FED_CA_CERT=tmp_path / "xaa-ca.pem")
-    assert r.returncode == 0, r.stderr
-    assert (work / "theirs-ca.pem").exists() and not (work / "theirs-ca.pem.unconfirmed").exists(), r.stdout
 
 
 BUNDLE = b'{"keys":[{"use":"jwt-svid","kty":"OKP","crv":"Ed25519","kid":"k1","x":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}],"spiffe_sequence":1}\n'
@@ -538,8 +524,7 @@ BUNDLE = b'{"keys":[{"use":"jwt-svid","kty":"OKP","crv":"Ed25519","kid":"k1","x"
 
 @needs_ed25519
 @needs_openssl
-def test_their_spiffe_bundle_is_uploaded_checked_against_their_key_and_placed(server, tmp_path, monkeypatch):
-    monkeypatch.setenv("FED_DIRECTORY_PER_COUNTERPARTY", "0")  # the single-package flow
+def test_their_spiffe_bundle_is_uploaded_checked_against_their_key_and_placed(server, tmp_path):
     ca, fp = mint_ca(tmp_path, "xab")
     (tmp_path / "xab-ca.pem").write_bytes(ca)
     theirs_pkg = package_with_ca(tmp_path, "xab", fp)
@@ -560,8 +545,7 @@ def test_their_spiffe_bundle_is_uploaded_checked_against_their_key_and_placed(se
 
 @needs_ed25519
 @needs_openssl
-def test_a_spiffe_bundle_not_signed_by_their_key_is_not_placed(server, tmp_path, monkeypatch):
-    monkeypatch.setenv("FED_DIRECTORY_PER_COUNTERPARTY", "0")  # the single-package flow
+def test_a_spiffe_bundle_not_signed_by_their_key_is_not_placed(server, tmp_path):
     ca, fp = mint_ca(tmp_path, "xab")
     (tmp_path / "xab-ca.pem").write_bytes(ca)
     theirs_pkg = package_with_ca(tmp_path, "xab", fp)
@@ -703,7 +687,7 @@ def test_env_flag_reads_on_and_off_and_refuses_anything_else(monkeypatch):
 
 @needs_ed25519
 def test_without_the_flag_the_pointers_package_is_still_placed(server, tmp_path, monkeypatch):
-    monkeypatch.setenv("FED_DIRECTORY_PER_COUNTERPARTY", "0")
+    monkeypatch.delenv("FED_DIRECTORY_PER_COUNTERPARTY", raising=False)
     serve("xab", XAB)
     run("--url", server, "--ours", XAB, "--package-url", f"{server}/packages/xab.json", "--key", KEY["xab"])
     theirs = tmp_path / "theirs.json"
@@ -723,7 +707,7 @@ def test_an_older_directory_without_slots_keeps_the_single_package_flow(server, 
 
 @needs_ed25519
 def test_without_the_flag_the_single_package_flow_is_unchanged(server, tmp_path, monkeypatch):
-    monkeypatch.setenv("FED_DIRECTORY_PER_COUNTERPARTY", "0")
+    monkeypatch.delenv("FED_DIRECTORY_PER_COUNTERPARTY", raising=False)
     for_xab = peering_package(tmp_path, "xaa", "xab", "192.0.2.10:51821", "169.254.10.0/31")
     for_xac = peering_package(tmp_path, "xaa", "xac", "192.0.2.10:51822", "169.254.10.2/31")
     run("--url", server, "--ours", for_xab, "--key", KEY["xaa"], "--their-id", "xab")
@@ -888,13 +872,12 @@ def test_without_a_keyring_a_slot_whose_resource_names_us_is_placed_and_its_key_
 def test_a_party_with_one_peering_from_the_prior_release_keeps_refreshing_its_single_slot(server, tmp_path, monkeypatch):
     """The prior release wrote ours.pointer.json but no mark file. A reissue with a changed offer
     under the flag must still count the single slot as this peering's."""
-    monkeypatch.setenv("FED_DIRECTORY_PER_COUNTERPARTY", "0")
+    monkeypatch.delenv("FED_DIRECTORY_PER_COUNTERPARTY", raising=False)
     first = peering_package(tmp_path, "xaa", "xab", "192.0.2.10:51821", "169.254.10.0/31")
     rc, out = run("--url", server, "--ours", first, "--key", KEY["xaa"], "--their-id", "xab", "--work", tmp_path)
     assert rc == 0 and Server.hosted["xaa/package"] == first.read_bytes(), out
     # Without the flag the step writes no mark, as the prior release did not.
     assert not (tmp_path / d.SINGLE_SLOT_MARK).exists()
-    monkeypatch.delenv("FED_DIRECTORY_PER_COUNTERPARTY")
     moved = peering_package(tmp_path, "xaa", "xab", "192.0.2.10:51831", "169.254.10.0/31")
     rc, out = run("--url", server, "--ours", moved, "--key", KEY["xaa"], "--their-id", "xab", "--work", tmp_path,
                   "--per-counterparty")
@@ -993,12 +976,11 @@ def test_a_package_placed_before_the_key_was_read_back_is_moved_aside_when_it_th
 def test_a_transient_failure_does_not_strand_a_prior_release_party(server, tmp_path, monkeypatch):
     """ours.pointer.json is the record of the package this peering last published; a run that
     stops before publishing must not overwrite it, or the next run no longer recognizes the slot."""
-    monkeypatch.setenv("FED_DIRECTORY_PER_COUNTERPARTY", "0")
+    monkeypatch.delenv("FED_DIRECTORY_PER_COUNTERPARTY", raising=False)
     first = peering_package(tmp_path, "xaa", "xab", "192.0.2.10:51821", "169.254.10.0/31")
     run("--url", server, "--ours", first, "--key", KEY["xaa"], "--their-id", "xab", "--work", tmp_path)
     assert not (tmp_path / d.SINGLE_SLOT_MARK).exists()  # without the flag, as the prior release: no mark
     first = first.read_bytes()  # peering_package reuses the file name for the same peering
-    monkeypatch.delenv("FED_DIRECTORY_PER_COUNTERPARTY")
     moved = peering_package(tmp_path, "xaa", "xab", "192.0.2.10:51831", "169.254.10.0/31")
     args = ("--url", server, "--ours", moved, "--key", KEY["xaa"], "--their-id", "xab", "--work", tmp_path,
             "--per-counterparty")
@@ -1008,6 +990,25 @@ def test_a_transient_failure_does_not_strand_a_prior_release_party(server, tmp_p
     assert json.loads((tmp_path / "ours.pointer.json").read_bytes())["package_sha256"] == d.sha256_of(first)
     rc, out = run(*args)
     assert rc == 0 and Server.hosted["xaa/package"] == moved.read_bytes(), out
+
+
+@needs_ed25519
+def test_the_per_counterparty_variable_reads_true_and_yes_and_refuses_other_words(server, tmp_path, monkeypatch):
+    for v in ("true", "yes", "1"):
+        Server.hosted.clear()
+        monkeypatch.setenv("FED_DIRECTORY_PER_COUNTERPARTY", v)
+        rc, out = run("--url", server, "--ours", XAA, "--key", KEY["xaa"], "--their-id", "xab")
+        assert rc == 0 and "xaa/packages/xab" in Server.hosted, (v, out)
+    for v in ("false", "no", "0", ""):
+        Server.hosted.clear()
+        monkeypatch.setenv("FED_DIRECTORY_PER_COUNTERPARTY", v)
+        rc, out = run("--url", server, "--ours", XAA, "--key", KEY["xaa"], "--their-id", "xab")
+        assert rc == 0 and sorted(Server.hosted) == ["xaa/package"], (v, out)
+    Server.entries.clear()
+    Server.hosted.clear()
+    monkeypatch.setenv("FED_DIRECTORY_PER_COUNTERPARTY", "on")
+    rc, out = run("--url", server, "--ours", XAA, "--key", KEY["xaa"], "--their-id", "xab")
+    assert rc == 0 and "FAIL    FED_DIRECTORY_PER_COUNTERPARTY='on'" in out and Server.hosted == {}, out
 
 
 @needs_ed25519
@@ -1177,13 +1178,12 @@ def test_a_lying_directory_cannot_move_a_correct_package_aside(server, tmp_path)
 def test_a_failed_package_upload_does_not_strand_a_prior_release_party(server, tmp_path, monkeypatch):
     """Hosted: the pointer PUT can succeed and the package PUT fail. ours.pointer.json waits for the
     package to read back, so the next run still recognizes the single slot."""
-    monkeypatch.setenv("FED_DIRECTORY_PER_COUNTERPARTY", "0")
+    monkeypatch.delenv("FED_DIRECTORY_PER_COUNTERPARTY", raising=False)
     first = peering_package(tmp_path, "xaa", "xab", "192.0.2.10:51821", "169.254.10.0/31").read_bytes()
     first_p = tmp_path / "first.json"
     first_p.write_bytes(first)
     run("--url", server, "--ours", first_p, "--key", KEY["xaa"], "--their-id", "xab", "--work", tmp_path)
     assert not (tmp_path / d.SINGLE_SLOT_MARK).exists()  # without the flag, as the prior release: no mark
-    monkeypatch.delenv("FED_DIRECTORY_PER_COUNTERPARTY")
     moved = peering_package(tmp_path, "xaa", "xab", "192.0.2.10:51831", "169.254.10.0/31")
     args = ("--url", server, "--ours", moved, "--key", KEY["xaa"], "--their-id", "xab", "--work", tmp_path,
             "--per-counterparty")
@@ -1218,7 +1218,6 @@ def test_on_the_pointer_path_a_package_not_signed_by_the_recorded_key_is_not_pla
     assert rc == 0 and "FAIL    package signature" in out, out
     assert not theirs.exists() and "COMPATIBILITY REPORT" not in out
     # Without the flag, as before: a WARN, and the package is placed (compose then refuses it).
-    monkeypatch.setenv("FED_DIRECTORY_PER_COUNTERPARTY", "0")
     rc, out = run("--url", server, "--ours", XAA, "--their-id", "xab", "--theirs", theirs, "--keyring", wrong)
     assert rc == 0 and "WARN    package signature" in out and theirs.exists(), out
 
@@ -1262,8 +1261,8 @@ def _snapshot(module, server, root, steps):
 
 
 def _same_with_and_without_this_change(server, tmp_path, steps, monkeypatch):
-    monkeypatch.delenv("FED_DIRECTORY_PLACE_POINTER_PACKAGE", raising=False)
-    monkeypatch.setenv("FED_DIRECTORY_PER_COUNTERPARTY", "0")  # the flag is on by default here
+    for var in ("FED_DIRECTORY_PER_COUNTERPARTY", "FED_DIRECTORY_PLACE_POINTER_PACKAGE"):
+        monkeypatch.delenv(var, raising=False)
     before = _snapshot(old, server, tmp_path / "before", steps)
     after = _snapshot(d, server, tmp_path / "after", steps)
     assert before[0] == after[0], "work directories differ"
@@ -1340,60 +1339,3 @@ def test_without_the_flag_every_file_written_and_line_printed_is_as_before(serve
     assert not any(f.endswith(d.SINGLE_SLOT_MARK) for f in files)
     assert "WARN    package signature" in printed[4][1]
     assert not any("/packages/" in r for r in state["hosted"])
-
-
-
-
-@needs_ed25519
-def test_per_counterparty_is_the_default_and_single_package_turns_it_off(server, tmp_path, monkeypatch):
-    monkeypatch.delenv("FED_DIRECTORY_PER_COUNTERPARTY", raising=False)
-    rc, out = run("--url", server, "--ours", XAA, "--key", KEY["xaa"], "--their-id", "xab")
-    assert rc == 0 and Server.hosted["xaa/packages/xab"] == XAA.read_bytes(), out
-    rc, out = run("--url", server, "--ours", XAB, "--key", KEY["xab"], "--their-id", "xaa", "--single-package")
-    assert rc == 0 and "xab/packages/xaa" not in Server.hosted and Server.hosted["xab/package"] == XAB.read_bytes()
-
-
-@needs_ed25519
-def test_driver_phase_5_by_default_holds_a_package_reached_only_through_the_pointer(server, tmp_path):
-    """The default is per counterparty: a counterparty that hosts no package for us (one peering,
-    or an older release) has the package its pointer names saved, not placed, until confirmed."""
-    serve("xab", XAB)
-    run("--url", server, "--ours", XAB, "--package-url", f"{server}/packages/xab.json", "--key", KEY["xab"],
-        "--single-package")
-    (tmp_path / "ours.canonical.json").write_bytes(XAA.read_bytes())
-    serve("xaa", XAA)
-    env = dict(FED_DIRECTORY_URL=server, FED_PACKAGE_URL=f"{server}/packages/xaa.json",
-               FED_COUNTERPARTY_ID="xab", FED_SIGNING_KEY=KEY["xaa"])
-    r = driver(tmp_path, **env)
-    assert r.returncode == 0, r.stderr
-    assert "xaa/packages/xab" in Server.hosted
-    assert not (tmp_path / "theirs.canonical.json").exists(), r.stdout
-    assert (tmp_path / "theirs.pointer.json").read_bytes() == XAB.read_bytes()
-    assert "it may belong to another of `xab`'s peerings" in r.stdout
-    r = driver(tmp_path, FED_DIRECTORY_PLACE_POINTER_PACKAGE="1", **env)
-    assert r.returncode == 0, r.stderr
-    assert (tmp_path / "theirs.canonical.json").read_bytes() == XAB.read_bytes(), r.stdout
-
-
-@needs_ed25519
-def test_the_per_counterparty_variable_reads_on_and_off_words_and_refuses_others(server, tmp_path, monkeypatch):
-    monkeypatch.delenv("FED_DIRECTORY_PER_COUNTERPARTY", raising=False)
-    rc, out = run("--url", server, "--ours", XAA, "--key", KEY["xaa"], "--their-id", "xab")
-    assert rc == 0 and "xaa/packages/xab" in Server.hosted, out  # unset: the default, on
-    for v in ("1", "true", "yes", "TRUE"):
-        Server.hosted.clear()
-        monkeypatch.setenv("FED_DIRECTORY_PER_COUNTERPARTY", v)
-        rc, out = run("--url", server, "--ours", XAA, "--key", KEY["xaa"], "--their-id", "xab")
-        assert rc == 0 and "xaa/packages/xab" in Server.hosted, (v, out)
-    for v in ("0", "false", "no", ""):
-        Server.hosted.clear()
-        monkeypatch.setenv("FED_DIRECTORY_PER_COUNTERPARTY", v)
-        rc, out = run("--url", server, "--ours", XAA, "--key", KEY["xaa"], "--their-id", "xab")
-        assert rc == 0 and sorted(Server.hosted) == ["xaa/package"], (v, out)
-    for v in ("2", "on", "off", "y"):
-        Server.entries.clear()
-        Server.hosted.clear()
-        monkeypatch.setenv("FED_DIRECTORY_PER_COUNTERPARTY", v)
-        rc, out = run("--url", server, "--ours", XAA, "--key", KEY["xaa"], "--their-id", "xab")
-        assert rc == 0 and "FAIL    FED_DIRECTORY_PER_COUNTERPARTY=" in out, (v, out)
-        assert Server.entries == {} and Server.hosted == {}
