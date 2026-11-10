@@ -210,12 +210,14 @@ stops for the key check, it:
 
 Every directory failure is a warning. Unset, phase 5 is unchanged.
 
-The single-package flow (without `FED_DIRECTORY_PER_COUNTERPARTY`) is slightly stricter than
-before the per-counterparty change, in two places that apply whenever their key is in the
-keyring: a package fetched through their pointer whose signature does not verify under that key
-is a FAIL and is not placed (it was a WARN, and placed), and a package already on disk whose
-signature does not verify under that key is moved aside with the CA certificate and SPIFFE
-bundle beside it (§6.3, step 3). Without a keyring entry for them, it behaves as before.
+Without `FED_DIRECTORY_PER_COUNTERPARTY` the step is the single-package flow as it was before
+§6.3: the same files written, the same requests, the same output (a test runs it beside an
+unmodified copy of the earlier script and compares all three). The stricter checks of §6.3
+(a pointer-path package signature that fails under the key in the keyring is a FAIL and places
+nothing; a package on disk that fails under that key is moved aside with the CA certificate and
+SPIFFE bundle beside it; the mark file and the later `ours.pointer.json`) apply only with the
+flag. The one difference is how the variable itself is read: `true` and `yes` now turn it on,
+and a value that is none of `1`, `true`, `yes`, `0`, `false`, `no` or empty is refused.
 
 ### 6.3 A party with several peerings: one package per counterparty
 
@@ -261,10 +263,10 @@ separate change. With it set, the step:
    applies, so the run cannot replace another peering's single slot;
 2. writes the pointer and the single `/package` slot only when they are this peering's: the
    single slot is empty, holds the bytes this peering last wrote (recorded in
-   `$FED_WORK/directory-single-slot.sha256`, which every run that uploads the single slot now
-   writes, with or without the flag; the work directory is per peering), holds the package
+   `$FED_WORK/directory-single-slot.sha256`, which a run with the flag writes when it uploads
+   the single slot; the work directory is per peering), holds the package
    named by this peering's last published pointer (`$FED_WORK/ours.pointer.json`, which
-   releases before the mark file also wrote, and which the step now writes only once the
+   releases before the mark file also wrote, and which the step, with the flag, writes only once the
    directory holds the pointer and, with no `FED_PACKAGE_URL`, serves our package back byte for
    byte, so a run that fails partway leaves it as it was), or holds a
    package with our `transport_offer`. With
@@ -327,7 +329,7 @@ The CA certificate and the SPIFFE bundle stay one per party: they name the party
 
 **What the directory learns.** The slot name is the counterparty's `sovereign_id`, so anyone who
 asks for it learns that the two parties hold a peering. saltlick does not list slots in its
-catalogue or on its home page, does not interpret the name, and still computes nothing about who
+catalog or on its home page, does not interpret the name, and still computes nothing about who
 should peer with whom. A party that does not want a peering visible exchanges that package
 directly, as §6 already allows.
 

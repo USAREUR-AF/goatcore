@@ -876,9 +876,8 @@ def test_a_party_with_one_peering_from_the_prior_release_keeps_refreshing_its_si
     first = peering_package(tmp_path, "xaa", "xab", "192.0.2.10:51821", "169.254.10.0/31")
     rc, out = run("--url", server, "--ours", first, "--key", KEY["xaa"], "--their-id", "xab", "--work", tmp_path)
     assert rc == 0 and Server.hosted["xaa/package"] == first.read_bytes(), out
-    # Flag-off runs write the mark too now; remove it to stand in for the prior release.
-    assert (tmp_path / d.SINGLE_SLOT_MARK).read_text().strip() == d.sha256_of(first.read_bytes())
-    (tmp_path / d.SINGLE_SLOT_MARK).unlink()
+    # Without the flag the step writes no mark, as the prior release did not.
+    assert not (tmp_path / d.SINGLE_SLOT_MARK).exists()
     moved = peering_package(tmp_path, "xaa", "xab", "192.0.2.10:51831", "169.254.10.0/31")
     rc, out = run("--url", server, "--ours", moved, "--key", KEY["xaa"], "--their-id", "xab", "--work", tmp_path,
                   "--per-counterparty")
@@ -976,11 +975,11 @@ def test_a_package_placed_before_the_key_was_read_back_is_moved_aside_when_it_th
 @needs_ed25519
 def test_a_transient_failure_does_not_strand_a_prior_release_party(server, tmp_path, monkeypatch):
     """ours.pointer.json is the record of the package this peering last published; a run that
-    stops before publishing must not overwrite it, or the next run no longer recognises the slot."""
+    stops before publishing must not overwrite it, or the next run no longer recognizes the slot."""
     monkeypatch.delenv("FED_DIRECTORY_PER_COUNTERPARTY", raising=False)
     first = peering_package(tmp_path, "xaa", "xab", "192.0.2.10:51821", "169.254.10.0/31")
     run("--url", server, "--ours", first, "--key", KEY["xaa"], "--their-id", "xab", "--work", tmp_path)
-    (tmp_path / d.SINGLE_SLOT_MARK).unlink()  # the prior release wrote no mark
+    assert not (tmp_path / d.SINGLE_SLOT_MARK).exists()  # without the flag, as the prior release: no mark
     first = first.read_bytes()  # peering_package reuses the file name for the same peering
     moved = peering_package(tmp_path, "xaa", "xab", "192.0.2.10:51831", "169.254.10.0/31")
     args = ("--url", server, "--ours", moved, "--key", KEY["xaa"], "--their-id", "xab", "--work", tmp_path,
@@ -1178,13 +1177,13 @@ def test_a_lying_directory_cannot_move_a_correct_package_aside(server, tmp_path)
 @needs_ed25519
 def test_a_failed_package_upload_does_not_strand_a_prior_release_party(server, tmp_path, monkeypatch):
     """Hosted: the pointer PUT can succeed and the package PUT fail. ours.pointer.json waits for the
-    package to read back, so the next run still recognises the single slot."""
+    package to read back, so the next run still recognizes the single slot."""
     monkeypatch.delenv("FED_DIRECTORY_PER_COUNTERPARTY", raising=False)
     first = peering_package(tmp_path, "xaa", "xab", "192.0.2.10:51821", "169.254.10.0/31").read_bytes()
     first_p = tmp_path / "first.json"
     first_p.write_bytes(first)
     run("--url", server, "--ours", first_p, "--key", KEY["xaa"], "--their-id", "xab", "--work", tmp_path)
-    (tmp_path / d.SINGLE_SLOT_MARK).unlink()  # the prior release wrote no mark
+    assert not (tmp_path / d.SINGLE_SLOT_MARK).exists()  # without the flag, as the prior release: no mark
     moved = peering_package(tmp_path, "xaa", "xab", "192.0.2.10:51831", "169.254.10.0/31")
     args = ("--url", server, "--ours", moved, "--key", KEY["xaa"], "--their-id", "xab", "--work", tmp_path,
             "--per-counterparty")
@@ -1214,6 +1213,129 @@ def test_on_the_pointer_path_a_package_not_signed_by_the_recorded_key_is_not_pla
     wrong = tmp_path / "wrong-keys.txt"
     wrong.write_text(f"xab={PUB['xaa']}\n")  # a key that did not sign their package
     theirs = tmp_path / "theirs.json"
-    rc, out = run("--url", server, "--ours", XAA, "--their-id", "xab", "--theirs", theirs, "--keyring", wrong)
+    rc, out = run("--url", server, "--ours", XAA, "--their-id", "xab", "--theirs", theirs, "--keyring", wrong,
+                  "--per-counterparty", "--place-pointer-package")
     assert rc == 0 and "FAIL    package signature" in out, out
     assert not theirs.exists() and "COMPATIBILITY REPORT" not in out
+    # Without the flag, as before: a WARN, and the package is placed (compose then refuses it).
+    rc, out = run("--url", server, "--ours", XAA, "--their-id", "xab", "--theirs", theirs, "--keyring", wrong)
+    assert rc == 0 and "WARN    package signature" in out and theirs.exists(), out
+
+
+# ---------------------------------------------------------------------------
+# Without the flag, the step is the single-package flow it was before slots.
+# tests/fed_directory_before_slots.py is an unmodified copy of directory.py as it was on
+# the integration branch before this change; each scenario below runs once through it and
+# once through the current directory.py against the same stand-in, and everything either
+# wrote (work directory, directory state) and printed must be identical.
+# ---------------------------------------------------------------------------
+
+_old_spec = importlib.util.spec_from_file_location("fed_directory_before_slots", REPO / "tests/fed_directory_before_slots.py")
+old = importlib.util.module_from_spec(_old_spec)
+_old_spec.loader.exec_module(old)
+
+
+def _tree(root):
+    return {str(p.relative_to(root)): p.read_bytes() for p in sorted(Path(root).rglob("*")) if p.is_file()}
+
+
+def _snapshot(module, server, root, steps):
+    """Run steps (a function given a runner and a fresh root) through module, from an empty
+    stand-in; return what was written and printed."""
+    Server.entries, Server.files, Server.hosted, Server.signed, Server.refuse_with = {}, {}, {}, {}, None
+    Server.no_slots, Server.fail_slot_reads, Server.fail_reads, Server.bound_override = False, None, {}, {}
+    Server.fail_puts, Server.refuse_slot_with = {}, None
+    root.mkdir()
+    printed = []
+
+    def runner(*args):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            rc = module.main([str(a) for a in args])
+        printed.append((rc, out.getvalue().replace(str(root), "<root>")))
+
+    steps(runner, root)
+    state = {"hosted": dict(Server.hosted), "entries": {k: v[0] for k, v in Server.entries.items()},
+             "signed": dict(Server.signed)}
+    return _tree(root), state, printed
+
+
+def _same_with_and_without_this_change(server, tmp_path, steps, monkeypatch):
+    for var in ("FED_DIRECTORY_PER_COUNTERPARTY", "FED_DIRECTORY_PLACE_POINTER_PACKAGE"):
+        monkeypatch.delenv(var, raising=False)
+    before = _snapshot(old, server, tmp_path / "before", steps)
+    after = _snapshot(d, server, tmp_path / "after", steps)
+    assert before[0] == after[0], "work directories differ"
+    assert before[1] == after[1], "directory state differs"
+    assert before[2] == after[2], "printed output differs"
+    return after
+
+
+@needs_ed25519
+@needs_openssl
+def test_without_the_flag_every_file_written_and_line_printed_is_as_before(server, tmp_path, monkeypatch):
+    ca_xab, fp_xab = mint_ca(tmp_path, "xab")
+    ca_xaa, fp_xaa = mint_ca(tmp_path, "xaa")
+    (tmp_path / "xab-ca.pem").write_bytes(ca_xab)
+    (tmp_path / "xaa-ca.pem").write_bytes(ca_xaa)
+    pkg_xab = package_with_ca(tmp_path, "xab", fp_xab).read_bytes()
+    pkg_xaa = package_with_ca(tmp_path, "xaa", fp_xaa).read_bytes()
+    (tmp_path / "pkg-xab.json").write_bytes(pkg_xab)
+    (tmp_path / "pkg-xaa.json").write_bytes(pkg_xaa)
+    first = peering_package(tmp_path, "xaa", "xab", "192.0.2.10:51821", "169.254.10.0/31").read_bytes()
+    second = peering_package(tmp_path, "xaa", "xac", "192.0.2.10:51822", "169.254.10.2/31").read_bytes()
+    (tmp_path / "first.json").write_bytes(first)
+    (tmp_path / "second.json").write_bytes(second)
+    pkg = {k: v for k, v in json.loads(pkg_xab).items() if k != "signature"}
+    forged = d.canonical(dict(pkg, signature=d.b64(d.sign(ROGUE_SEED, d.canonical(pkg)))))
+    good_keys = tmp_path / "good-keys.txt"
+    good_keys.write_text(f"xab={PUB['xab']}\nxaa={PUB['xaa']}\n")
+    wrong_keys = tmp_path / "wrong-keys.txt"
+    wrong_keys.write_text(f"xab={PUB['xaa']}\n")
+
+    def steps(run_, root):
+        theirs_work = root / "xab-work"
+        theirs_work.mkdir()
+        (theirs_work / "ours.spiffe-bundle").write_bytes(BUNDLE)
+        work = root / "work"
+        work.mkdir()
+        # The counterparty publishes, hosted, with CA and bundle; we publish and look it up.
+        run_("--url", server, "--ours", tmp_path / "pkg-xab.json", "--key", KEY["xab"], "--ca", tmp_path / "xab-ca.pem",
+             "--work", theirs_work)
+        run_("--url", server, "--ours", tmp_path / "pkg-xaa.json", "--key", KEY["xaa"], "--ca", tmp_path / "xaa-ca.pem",
+             "--their-id", "xab", "--theirs", work / "theirs.canonical.json", "--work", work)
+        # Again with the keys recorded.
+        run_("--url", server, "--ours", tmp_path / "pkg-xaa.json", "--key", KEY["xaa"], "--their-id", "xab",
+             "--theirs", work / "theirs.canonical.json", "--keyring", good_keys, "--work", work)
+        # A package on disk that the recorded key did not sign, and a CA and bundle beside it.
+        (work / "theirs.canonical.json").write_bytes(forged)
+        (work / "theirs-ca.pem").write_bytes(b"other CA")
+        (work / "theirs.spiffe-bundle").write_bytes(b"other bundle")
+        run_("--url", server, "--ours", tmp_path / "pkg-xaa.json", "--their-id", "xab",
+             "--theirs", work / "theirs.canonical.json", "--keyring", good_keys, "--work", work)
+        # A recorded key that did not sign their package, with nothing on disk.
+        w2 = root / "work2"
+        w2.mkdir()
+        run_("--url", server, "--ours", tmp_path / "pkg-xaa.json", "--their-id", "xab",
+             "--theirs", w2 / "theirs.canonical.json", "--keyring", wrong_keys, "--work", w2)
+        # Two peerings of one party, hosted: the second replaces the first, as before.
+        w3, w4 = root / "ab", root / "ac"
+        w3.mkdir()
+        w4.mkdir()
+        run_("--url", server, "--ours", tmp_path / "first.json", "--key", KEY["xaa"], "--their-id", "xab", "--work", w3)
+        run_("--url", server, "--ours", tmp_path / "second.json", "--key", KEY["xaa"], "--their-id", "xac", "--work", w4)
+        # A failed package upload after the pointer was accepted.
+        Server.fail_puts["xaa/package"] = 1
+        run_("--url", server, "--ours", tmp_path / "first.json", "--key", KEY["xaa"], "--their-id", "xab", "--work", w3)
+        # Our own host.
+        Server.files["/packages/xaa.json"] = first
+        run_("--url", server, "--ours", tmp_path / "first.json", "--key", KEY["xaa"], "--package-url",
+             f"{server}/packages/xaa.json", "--their-id", "xab", "--work", w3)
+
+    files, state, printed = _same_with_and_without_this_change(server, tmp_path, steps, monkeypatch)
+    # The scenarios reached the paths the review named: a package placed under a wrong key,
+    # nothing moved aside, no mark file, the second peering replacing the first.
+    assert "work2/theirs.canonical.json" in files and not any(".refused" in f for f in files)
+    assert not any(f.endswith(d.SINGLE_SLOT_MARK) for f in files)
+    assert "WARN    package signature" in printed[4][1]
+    assert not any("/packages/" in r for r in state["hosted"])
