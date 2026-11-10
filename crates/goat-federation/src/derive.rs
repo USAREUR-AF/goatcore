@@ -357,12 +357,17 @@ pub fn transports_on(probe: &dyn Probe) -> Derived<Vec<String>> {
     // cannot see it — collapsing that into `false` is the exact
     // claim-for-a-fact substitution `pqc_capable()` (below) was written to
     // avoid, and this check didn't copy that discipline.
+    //
+    // Only an absent file is a "no". Through a remote probe, a read can also
+    // fail because the connection dropped or sudo would not run `cat`; those
+    // say nothing about the host's FIPS mode either, so they are unknowns too.
     let fips = match probe.read_file("/proc/sys/crypto/fips_enabled") {
         Ok(s) => Ok(s.trim() == "1"),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
         Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
             Err("permission denied".to_string())
         }
-        Err(_) => Ok(false),
+        Err(e) => Err(e.to_string()),
     };
     match (ipsec, fips) {
         (true, Ok(true)) => {
@@ -586,6 +591,13 @@ pub fn transport_public_key(interface: &str) -> Derived<String> {
 /// [`transport_public_key`], read through `probe`.
 pub fn transport_public_key_on(probe: &dyn Probe, interface: &str) -> Derived<String> {
     const FIELD: &str = "transport_offer.public_key";
+    if !interface_name(interface) {
+        return Derived::fail(
+            FIELD,
+            format!("`{interface}` is not an interface name"),
+            "the declaration's [transport] interface",
+        );
+    }
     match probe.run("wg", &["show", interface, "public-key"]) {
         Ok(out) if !out.trim().is_empty() => Derived::ok(
             FIELD,
@@ -612,6 +624,9 @@ pub fn interface_mtu(interface: &str) -> Option<i64> {
 
 /// [`interface_mtu`], read through `probe`.
 pub fn interface_mtu_on(probe: &dyn Probe, interface: &str) -> Option<i64> {
+    if !interface_name(interface) {
+        return None;
+    }
     probe
         .read_file(&format!("/sys/class/net/{interface}/mtu"))
         .ok()
@@ -1260,6 +1275,27 @@ mod tests {
     }
 
     #[test]
+    fn a_remote_read_that_failed_for_another_reason_is_unknown_not_false() {
+        let edge = Recorded::new("on edge-a")
+            .answer("swanctl --version", Ok("swanctl 6.0"))
+            .file(
+                "/proc/sys/crypto/fips_enabled",
+                Err(std::io::Error::other(
+                    "ssh to edge-a failed: connection reset",
+                )),
+            );
+        let why = transports_on(&edge).outcome.unwrap_err();
+        assert!(
+            why.contains("UNKNOWN, not false") && why.contains("connection reset"),
+            "{why}"
+        );
+        // An absent file is still a readable "no".
+        let absent = Recorded::new("on edge-a").answer("swanctl --version", Ok("swanctl 6.0"));
+        let why = transports_on(&absent).outcome.unwrap_err();
+        assert!(why.contains("that is `ipsec`, not `ipsec-fips`"), "{why}");
+    }
+
+    #[test]
     fn an_operator_selector_reads_as_before_and_a_deployment_name_says_where_it_came_from() {
         let core = core_host();
         let named = |from| {
@@ -1275,6 +1311,14 @@ mod tests {
         };
         assert!(!named("FED_ROUTER_CONTAINER").contains("names the core router"));
         assert!(named("site_id").starts_with("site_id names the core router `gone`"));
+    }
+
+    #[test]
+    fn an_interface_name_that_leaves_sys_class_net_is_not_read() {
+        let edge = edge_host();
+        assert_eq!(interface_mtu_on(&edge, "../../../etc/shadow"), None);
+        assert!(transport_public_key_on(&edge, "-x").outcome.is_err());
+        assert!(edge.asked.borrow().is_empty(), "{:?}", edge.asked.borrow());
     }
 
     #[test]
