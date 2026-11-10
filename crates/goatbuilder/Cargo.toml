@@ -57,4 +57,7 @@ trycmd = "0.15"
 # Whole-flow integration tests run the built binary on throwaway copies of
 # the fixtures (tests/flows.rs).
 tempfile = "3"
+# The federate test world mints the mTLS certificate and CA that in-process
+# `federate init` reads (tests/federate_world).
+rcgen = "0.13"
 

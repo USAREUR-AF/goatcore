@@ -1,9 +1,35 @@
 //! The run journal, the per-peering lock and `--resume`, through the real
-//! binary against a stand-in repository (federate_world).
+//! binary against a stand-in repository (federate_world). Every test runs on
+//! both verb paths: `goat federate` in a shell (`FED_VERBS=goat`) and
+//! goatbuilder's in-process verbs (the default).
 
 mod federate_world;
 
-use federate_world::{phases_run, rows, says, world};
+use federate_world::{phases_run, rows, says, world_on, Verbs};
+
+/// `name` as two tests, `name::goat` and `name::in_process`.
+macro_rules! on_both_verb_paths {
+    ($($name:ident),* $(,)?) => {$(
+        mod $name {
+            #[test]
+            fn goat() {
+                super::$name(super::Verbs::Goat)
+            }
+            #[test]
+            fn in_process() {
+                super::$name(super::Verbs::InProcess)
+            }
+        }
+    )*};
+}
+
+on_both_verb_paths!(
+    a_run_is_recorded_and_behaves_as_before,
+    a_plan_or_a_mock_writes_no_journal,
+    resume_after_a_failure_skips_only_what_it_can_see,
+    a_killed_run_resumes,
+    a_second_run_of_the_same_peering_is_refused,
+);
 
 /// Kill the whole process group the child leads (it was spawned with
 /// `process_group(0)`): goatbuilder, its bash and the sleeping stub. Asserts
@@ -24,9 +50,8 @@ fn kill_group(child: &mut std::process::Child) {
 /// Without `--resume` a real run behaves as it always has, and is recorded:
 /// the stop at phase 5, `--from 6` declaring it done, the stop at phase 10,
 /// `--from 11` to the end.
-#[test]
-fn a_run_is_recorded_and_behaves_as_before() {
-    let w = world();
+fn a_run_is_recorded_and_behaves_as_before(verbs: Verbs) {
+    let w = world_on(verbs);
     let (out, v) = w.run(&["hello-ally"]);
     assert!(out.status.success(), "{}", says(&out));
     assert_eq!(phases_run(&v), [1, 2, 3, 4, 5], "{}", says(&out));
@@ -38,7 +63,7 @@ fn a_run_is_recorded_and_behaves_as_before() {
     assert_eq!(st["phases"]["5"]["outcome"], "stopped");
     assert_eq!(st["phases"]["3"]["outcome"], "passed");
 
-    std::fs::write(w.work.join("keys.txt"), "xaa=QUJD\nxab=QUJE\n").unwrap();
+    w.write_keys();
     let (out, v) = w.run(&["hello-ally", "--from", "6"]);
     assert!(out.status.success(), "{}", says(&out));
     assert_eq!(phases_run(&v), [6, 7, 8, 9, 10]);
@@ -64,9 +89,8 @@ fn a_run_is_recorded_and_behaves_as_before() {
 
 /// A dry run and a mock execute nothing, so they write no journal and take
 /// no lock.
-#[test]
-fn a_plan_or_a_mock_writes_no_journal() {
-    let w = world();
+fn a_plan_or_a_mock_writes_no_journal(verbs: Verbs) {
+    let w = world_on(verbs);
     for args in [
         vec!["hello-ally", "--dry-run"],
         vec!["hello-ally", "--dry-run", "--resume"],
@@ -85,10 +109,9 @@ fn a_plan_or_a_mock_writes_no_journal() {
 /// A phase that fails is recorded as failed with GB-183; `--resume` then
 /// starts again where the files it can see stop matching, skips what is
 /// unchanged, and runs every check and every play again.
-#[test]
-fn resume_after_a_failure_skips_only_what_it_can_see() {
-    let w = world();
-    std::fs::write(w.work.join("keys.txt"), "xaa=QUJD\nxab=QUJE\n").unwrap();
+fn resume_after_a_failure_skips_only_what_it_can_see(verbs: Verbs) {
+    let w = world_on(verbs);
+    w.write_keys();
     w.run(&["hello-ally"]);
     w.run(&["hello-ally", "--from", "6"]);
     std::fs::write(&w.fail_12, "").unwrap();
@@ -118,16 +141,14 @@ fn resume_after_a_failure_skips_only_what_it_can_see() {
     assert_eq!(phases_run(&v), [1, 2, 4, 7, 8, 11, 12, 13, 14]);
     let log = w.log();
     assert!(
-        !log.contains("goat federate init")
-            && !log.contains("goat federate compose")
-            && !log.contains("goat federate apply"),
-        "{log}"
+        !w.verb_ran(&out, "init") && !w.verb_ran(&out, "compose") && !w.verb_ran(&out, "apply"),
+        "{log}\n{}",
+        says(&out)
     );
     assert!(
-        log.contains("goat federate lint")
-            && log.contains("goat federate verify")
-            && log.contains("mint"),
-        "checks and minting run again: {log}"
+        w.verb_ran(&out, "lint") && w.verb_ran(&out, "verify") && log.contains("mint"),
+        "checks and minting run again: {log}\n{}",
+        says(&out)
     );
     for play in [
         "peering-prepare.yml",
@@ -146,35 +167,67 @@ fn resume_after_a_failure_skips_only_what_it_can_see() {
     assert!(rows(&v, "skipped").is_empty());
 }
 
-/// A run killed in the middle of phase 6 (compose, a phase resume could
-/// skip) leaves a journal that parses, shows the phase it was in, and a lock
-/// that died with it. `--resume` runs phase 6 again, because nothing records
-/// it passed.
-#[test]
-fn a_killed_run_resumes() {
+/// A run killed in the middle of a phase resume could skip leaves a journal
+/// that parses, shows the phase it was in, and a lock that died with it.
+/// `--resume` runs that phase again, because nothing records it passed.
+///
+/// On the goat path the phase is 6 (compose, whose stub sleeps), after phase 5
+/// was declared done. An in-process verb cannot be made to sleep without
+/// changing it, so on that path the phase is 3 (init), whose router probe is a
+/// stand-in that sleeps.
+fn a_killed_run_resumes(verbs: Verbs) {
     use std::os::unix::process::CommandExt;
-    let w = world();
-    std::fs::write(w.work.join("keys.txt"), "xaa=QUJD\nxab=QUJE\n").unwrap();
-    w.run(&["hello-ally"]);
-    std::fs::write(&w.hang_6, "").unwrap();
+    let w = world_on(verbs);
+    w.write_keys();
+    // (the phase killed, the killed run's flags, its hang switch, the log line
+    // that shows the phase is under way, the resumed run's flags and phases)
+    let (phase, killed_args, hang, started, resumed_args, resumed): (
+        u64,
+        &[&str],
+        _,
+        &str,
+        &[&str],
+        &[u32],
+    ) = match verbs {
+        Verbs::Goat => {
+            w.run(&["hello-ally"]);
+            (
+                6,
+                &["hello-ally", "--from", "6"],
+                w.hang_6.clone(),
+                "goat federate compose",
+                &["hello-ally", "--resume", "--to", "9"],
+                &[1, 2, 4, 6, 7, 8, 9],
+            )
+        }
+        Verbs::InProcess => (
+            3,
+            &["hello-ally"],
+            w.hang_3.clone(),
+            "probe docker ps",
+            &["hello-ally", "--resume", "--to", "4"],
+            &[1, 2, 3, 4],
+        ),
+    };
+    std::fs::write(&hang, "").unwrap();
     let mut child = w
-        .command(&["hello-ally", "--from", "6"])
+        .command(killed_args)
         .process_group(0)
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn()
         .unwrap();
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
-    while !w.log().contains("goat federate compose") {
+    while !w.log().contains(started) {
         assert!(
             std::time::Instant::now() < deadline,
-            "phase 6 never started: {}",
+            "phase {phase} never started: {}",
             w.log()
         );
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
     kill_group(&mut child);
-    std::fs::remove_file(&w.hang_6).unwrap();
+    std::fs::remove_file(&hang).unwrap();
 
     let st = w.state();
     let last = st["runs"].as_array().unwrap().last().unwrap().clone();
@@ -186,20 +239,22 @@ fn a_killed_run_resumes() {
     let a = st["attempts"].as_array().unwrap().last().unwrap().clone();
     assert_eq!(
         (a["phase"].as_u64(), a["event"].as_str()),
-        (Some(6), Some("start")),
+        (Some(phase), Some("start")),
         "the journal shows the phase it was in: {a}"
     );
     assert!(
-        st["phases"].get("6").is_none(),
-        "phase 6 never recorded an outcome"
+        st["phases"].get(phase.to_string()).is_none(),
+        "phase {phase} never recorded an outcome"
     );
-    assert_eq!(
-        st["phases"]["5"]["outcome"], "passed",
-        "declared done before the kill"
-    );
+    if verbs == Verbs::Goat {
+        assert_eq!(
+            st["phases"]["5"]["outcome"], "passed",
+            "declared done before the kill"
+        );
+    }
 
     w.clear_log();
-    let (out, v) = w.run(&["hello-ally", "--resume", "--to", "9"]);
+    let (out, v) = w.run(resumed_args);
     assert!(
         out.status.success(),
         "the lock died with the killed run: {}",
@@ -207,21 +262,20 @@ fn a_killed_run_resumes() {
     );
     assert_eq!(
         phases_run(&v),
-        [1, 2, 4, 6, 7, 8, 9],
-        "3 and 5 skipped, 6 runs again: {}",
+        resumed,
+        "what passed is skipped, phase {phase} runs again: {}",
         says(&out)
     );
-    assert!(w.log().contains("goat federate compose"));
-    assert_eq!(w.state()["phases"]["6"]["outcome"], "passed");
+    assert!(w.log().contains(started), "{}", w.log());
+    assert_eq!(w.state()["phases"][phase.to_string()]["outcome"], "passed");
 }
 
 /// Two runs of one peering at once: the second is refused with GB-180 and
 /// changes nothing.
-#[test]
-fn a_second_run_of_the_same_peering_is_refused() {
+fn a_second_run_of_the_same_peering_is_refused(verbs: Verbs) {
     use std::os::unix::process::CommandExt;
-    let w = world();
-    std::fs::write(w.work.join("keys.txt"), "xaa=QUJD\nxab=QUJE\n").unwrap();
+    let w = world_on(verbs);
+    w.write_keys();
     w.run(&["hello-ally"]);
     w.run(&["hello-ally", "--from", "6"]);
     std::fs::write(&w.hang_12, "").unwrap();
