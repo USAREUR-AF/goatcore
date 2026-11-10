@@ -49,11 +49,13 @@
         fail_msg: "wg pubkey printed '{{ _pck_edge_pub.stdout }}', not a WireGuard public key"
       when: _pck_edge_key.stat.exists
 
+    # The peering's certificate directory: phase 8 makes it 0700 and keeps
+    # private leaf keys in it, so it is never widened here.
     - name: The directory it goes to, on the machine running the driver
       ansible.builtin.file:
         path: "{{ peering_carrier_edge_key_out | dirname }}"
         state: directory
-        mode: "0755"
+        mode: "0700"
       delegate_to: localhost
       become: false
       when: _pck_edge_key.stat.exists
@@ -102,11 +104,11 @@
       loop_control:
         label: "{{ item.item.item.key }}"
 
-    - name: The directories they go to, on the machine running the driver
+    - name: The directories they go to, on the machine running the driver (0700, as above)
       ansible.builtin.file:
         path: "{{ item.item.item.value | dirname }}"
         state: directory
-        mode: "0755"
+        mode: "0700"
       loop: "{{ _pck_fwd_pubs.results }}"
       loop_control:
         label: "{{ item.item.item.key }}"
