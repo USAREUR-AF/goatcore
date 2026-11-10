@@ -198,6 +198,11 @@ pub struct Peering {
     /// The machines' addresses, for the rendered peering inventory.
     #[serde(default)]
     pub hosts: Option<PeeringHosts>,
+    /// `rendered`: `goatbuilder federate allocate` renders the edge's and the
+    /// core's deployment halves from the declaration and the environment's site
+    /// values. Absent or `hand`: they are written by hand, as before.
+    #[serde(default)]
+    pub deployment: Option<String>,
     /// `rendered`: `goatbuilder federate allocate` generates this peering's
     /// federation.toml from the environment's own federation.toml and the
     /// allocated values. Absent or `hand`: written by hand, as before.

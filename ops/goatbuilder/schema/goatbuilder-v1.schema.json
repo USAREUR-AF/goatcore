@@ -403,6 +403,10 @@
             "user": { "type": "string", "pattern": "^[a-z_][a-z0-9_-]*$" }
           }
         },
+        "deployment": {
+          "description": "Who writes this peering's deployment halves (the edge's goat-zenoh-edge values and the core's republisher values that are not the agreement's and not allocated). hand (the default): written by hand. rendered: goatbuilder federate allocate renders them into peering-deployment.yml from the declaration and the site values set in the environment's groups' group_vars, and refuses one it cannot find (GB-232).",
+          "enum": ["hand", "rendered"]
+        },
         "federation_toml": {
           "description": "Who writes this peering's federation.toml. hand (the default): written by hand. rendered: goatbuilder federate allocate writes ops/federation/<environment>/peerings/<with>/federation.toml from the environment's own ops/federation/<environment>/federation.toml (sovereign_id, term_days, cut_contact, [data], measured_mtu; [data] release narrowed by offer:) and the allocated values ([transport]). The environment's file stays the one owner of those values; a missing one is refused (GB-233).",
           "enum": ["hand", "rendered"]

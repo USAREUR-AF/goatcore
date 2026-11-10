@@ -179,6 +179,15 @@ class EdgeReservedUdp(unittest.TestCase):
         self.assertTrue(any("peering_edge_reserved_udp" in e for e in validate.errors_for(c)))
 
 
+class PeeringDeployment(unittest.TestCase):
+    def test_deployment_is_hand_or_rendered(self):
+        c = with_sites()
+        c["peerings"] = [{"with": "xab", "environment": "dev", "site": "alpha", "edge_class": "edge", "deployment": "rendered"}]
+        self.assertEqual(validate.errors_for(c), [])
+        c["peerings"][0]["deployment"] = "generated"
+        self.assertTrue(any("generated" in e for e in validate.errors_for(c)))
+
+
 class PeeringFederationToml(unittest.TestCase):
     def test_federation_toml_is_hand_or_rendered(self):
         c = with_sites()
