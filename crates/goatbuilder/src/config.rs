@@ -198,6 +198,11 @@ pub struct Peering {
     /// The machines' addresses, for the rendered peering inventory.
     #[serde(default)]
     pub hosts: Option<PeeringHosts>,
+    /// `rendered`: `goatbuilder federate allocate` generates this peering's
+    /// federation.toml from the environment's own federation.toml and the
+    /// allocated values. Absent or `hand`: written by hand, as before.
+    #[serde(default)]
+    pub federation_toml: Option<String>,
     /// Present when a peering forwarder relays the partner to our edge (ADR 1218).
     #[serde(default)]
     #[allow(dead_code)] // read where the forwarder is rendered and applied

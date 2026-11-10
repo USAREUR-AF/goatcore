@@ -788,6 +788,8 @@ pub fn run_scoped(repo: &Path, o: &Options, only: Option<&str>) -> Result<Report
     let mut cfg = full.clone();
     // The groups of peerings this run does not render: their files are left alone.
     let mut others: Vec<String> = Vec::new();
+    // Their generated federation.toml files, left alone the same way.
+    let mut other_tomls: Vec<String> = Vec::new();
     if let Some(name) = only {
         let Some(named) = super::declaration::peering(&full, name, o.env)? else {
             return Err(anyhow::anyhow!(
@@ -810,6 +812,7 @@ pub fn run_scoped(repo: &Path, o: &Options, only: Option<&str>) -> Result<Report
                 // Kept for the record and for collisions; its files are not rewritten.
                 others.push(format!("{}_edge", p.with));
                 others.push(format!("{}_core", p.with));
+                other_tomls.push(super::federation_toml::target_path(&p.environment, &p.with));
                 if let Some(e) = ctx.record.peerings.get(&k) {
                     others.extend(e.edge_group.clone());
                     others.extend(e.core_group.clone());
@@ -855,6 +858,7 @@ pub fn run_scoped(repo: &Path, o: &Options, only: Option<&str>) -> Result<Report
         prev_inventory.as_deref(),
         &installs,
     )?;
+    rendered.extend(super::federation_toml::render(repo, &cfg, &values)?);
     if only.is_some() {
         // One peering: its own files and the record. The inventory is the
         // whole repository's, and other peerings' files are not this run's.
@@ -863,6 +867,7 @@ pub fn run_scoped(repo: &Path, o: &Options, only: Option<&str>) -> Result<Report
                 && !others
                     .iter()
                     .any(|g| r.path.starts_with(&format!("ops/ansible/group_vars/{g}/")))
+                && !other_tomls.contains(&r.path)
         });
     }
     let writes = !o.dry_run && o.mock.is_none();
@@ -1516,6 +1521,41 @@ mod tests {
             "{:?}",
             again.checks
         );
+    }
+
+    /// `allocate <peering>` leaves another recorded peering's generated
+    /// federation.toml alone, as it leaves that peering's group_vars.
+    #[test]
+    fn allocate_one_peering_leaves_another_peerings_federation_toml_alone() {
+        let mut b = p("xab", false);
+        b["federation_toml"] = json!("rendered");
+        let mut c = p("xac", false);
+        c["federation_toml"] = json!("rendered");
+        let d = repo_with(json!([b, c]));
+        let src = d
+            .path()
+            .join(super::super::federation_toml::source_path("dev"));
+        std::fs::create_dir_all(src.parent().unwrap()).unwrap();
+        std::fs::write(
+            &src,
+            "sovereign_id = \"xaa\"\nterm_days = 91\ncut_contact = \"fed-ops@example.org\"\n\n\
+             [transport]\nendpoint = \"edge.example.org:51820\"\nlistener = true\nmeasured_mtu = 1380\n\n\
+             [data]\nrelease = [\"release/all/**\"]\naccept_hz = 100\n",
+        )
+        .unwrap();
+        run(d.path(), &opts(false)).unwrap();
+        let xab = d
+            .path()
+            .join(super::super::federation_toml::target_path("dev", "xab"));
+        let xac = d
+            .path()
+            .join(super::super::federation_toml::target_path("dev", "xac"));
+        assert!(xab.is_file() && xac.is_file());
+        std::fs::remove_file(&xab).unwrap();
+        std::fs::remove_file(&xac).unwrap();
+        run_scoped(d.path(), &opts(false), Some("xab")).unwrap();
+        assert!(xab.is_file(), "the named peering's file is written");
+        assert!(!xac.exists(), "another peering's file is not this run's");
     }
 
     /// The named peering itself is still protected: if it runs from hand files,
