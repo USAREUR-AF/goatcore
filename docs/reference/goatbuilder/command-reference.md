@@ -262,7 +262,8 @@ A sovereign peering declared, converged and verified (ADR 1157): our half measur
 
 | Argument | Description |
 |---|---|
-| `<WITH>` | The peering name (the counterparty, as declared) |
+| `<WITH>` | The peering name (the counterparty, as declared), or a stage run alone: `status [<partner>]` |
+| `<PARTNER>` | The partner, after a stage word (`status <partner>`) |
 
 **Options**
 

@@ -438,9 +438,12 @@ pub enum Cmd {
         verb: Option<goat_federation::verbs::FederateCmd>,
         #[command(flatten)]
         site: Box<federate::verbs::SiteArgs>,
-        /// The peering name (the counterparty, as declared).
+        /// The peering name (the counterparty, as declared), or a stage run
+        /// alone: `status [<partner>]`.
         #[arg(required = true)]
         with: Option<String>,
+        /// The partner, after a stage word (`status <partner>`).
+        partner: Option<String>,
         /// The environment the peering is declared on (checked against goatbuilder.yaml peerings:).
         #[arg(long)]
         env: Option<String>,
@@ -1342,10 +1345,20 @@ fn main() {
                 joinnode::join_node(&repo, &joinnode::Options { env, site, node, class, address: address.as_deref(), pass_var: pass_var.as_deref(), via, from: *from, to: *to, dry_run: *dry_run })
             }
         }
-        Cmd::Federate { verb: _, site, with, env, as_party, edge_group, work, from, to, dry_run, resume } => {
+        Cmd::Federate { verb: _, site, with, partner, env, as_party, edge_group, work, from, to, dry_run, resume } => {
             let with = with.as_deref().unwrap_or_default();
+            let cfg_path = cli.mock.as_ref().map(|m| m.join("goatbuilder.yaml")).unwrap_or_else(|| repo.join("ops/goatbuilder/goatbuilder.yaml"));
+            if with == "status" {
+                let format = match cli.output {
+                    OutputFormat::Table => federate::status::Format::Table,
+                    OutputFormat::Json => federate::status::Format::Json,
+                    OutputFormat::Yaml => federate::status::Format::Yaml,
+                };
+                federate::status::status(&cfg_path, partner.as_deref(), env.as_deref(), work.as_deref(), format)
+            } else if let Some(extra) = partner {
+                Err(anyhow::anyhow!("unexpected argument '{extra}': only a stage word (status) takes a partner after it"))
             // A mock executes nothing, with or without --dry-run, so it mutates nothing.
-            if !site.is_empty() && goat_federation::verbs::VERB_NAMES.contains(&with) {
+            } else if !site.is_empty() && goat_federation::verbs::VERB_NAMES.contains(&with) {
                 // `federate --context-dir D init`: clap read the verb as a partner.
                 Err(anyhow::anyhow!("put --context-dir, --cert, --ca-roots, --context and --profile-dir after the verb: goatbuilder federate {with} --context-dir <dir> ..."))
             } else if !site.is_empty() {
