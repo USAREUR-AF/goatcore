@@ -427,6 +427,7 @@ mod tests {
             kind: "A",
             label: "prepare".into(),
             cmd: "x peering-prepare.yml".into(),
+            verb: None,
         }];
         splice(&mut phases, &c, dir.path(), &o, "xab_edge").unwrap();
         assert_eq!(phases[0].cmd, "x peering-prepare.yml");
@@ -598,6 +599,7 @@ mod tests {
                 kind: "A",
                 label: "prepare".into(),
                 cmd: base.into(),
+                verb: None,
             }]
         };
         let dir = tempfile::tempdir().unwrap();
