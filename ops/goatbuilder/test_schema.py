@@ -162,6 +162,23 @@ class MinimalShape(unittest.TestCase):
         self.assertEqual(validate.errors_for(c), [])
 
 
+class EdgeReservedUdp(unittest.TestCase):
+    """environments[].peering_edge_reserved_udp is per environment, where the
+    allocator reads it (crates/goatbuilder/src/federate/alloc.rs)."""
+
+    def test_an_environment_declares_its_edge_reserved_udp(self):
+        c = with_sites()
+        c["environments"][0]["peering_edge_reserved_udp"] = []
+        self.assertEqual(validate.errors_for(c), [])
+        c["environments"][0]["peering_edge_reserved_udp"] = [51820, 51900]
+        self.assertEqual(validate.errors_for(c), [])
+
+    def test_a_site_does_not(self):
+        c = with_sites()
+        c["environments"][0]["sites"][0]["peering_edge_reserved_udp"] = []
+        self.assertTrue(any("peering_edge_reserved_udp" in e for e in validate.errors_for(c)))
+
+
 class FailClosed(unittest.TestCase):
     def assertRejected(self, config: dict, fragment: str):
         problems = validate.errors_for(config)
