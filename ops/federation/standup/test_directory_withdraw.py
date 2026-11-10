@@ -7,6 +7,7 @@ from pathlib import Path
 import tempfile
 import threading
 import unittest
+import urllib.request
 
 HERE = Path(__file__).resolve().parent
 
@@ -68,6 +69,13 @@ class Withdraw(unittest.TestCase):
 
     def tearDown(self):
         self.srv.shutdown()
+
+    @classmethod
+    def tearDownClass(cls):
+        # urllib builds its process-wide opener, and with it the TLS trust store, on the
+        # first urlopen. Drop it so a later test that trusts its own CA through
+        # SSL_CERT_FILE gets an opener built after that variable is set.
+        urllib.request.install_opener(None)
 
     def test_only_our_slot_for_that_counterparty_goes(self):
         r = dw.withdraw(self.url, "xaa", "xac", self.key.name, False)
