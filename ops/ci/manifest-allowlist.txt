@@ -79,5 +79,3 @@ ops/goat-zenoh-portal/web/e2e/package-lock.json | @USAREUR-AF/goat-owners | npm 
 # --- npm: other
 ops/grant-crypto/sdk/bindings/ts/package.json | @USAREUR-AF/goat-owners | npm: TypeScript binding of the grant-crypto SDK for partner use (ADR 1106)
 ops/grant-crypto/sdk/bindings/ts/package-lock.json | @USAREUR-AF/goat-owners | npm lockfile for the grant-crypto TypeScript binding
-ops/smoketest/dashboard/package.json | @USAREUR-AF/goat-owners | npm: Preact and Vite build of the smoketest dashboard; being converted to plain JavaScript
-ops/smoketest/dashboard/package-lock.json | @USAREUR-AF/goat-owners | npm lockfile for the smoketest dashboard build
