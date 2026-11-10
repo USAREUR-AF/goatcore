@@ -83,9 +83,12 @@ class CaKeyFromAge(unittest.TestCase):
         self.log = self.root / 'age.log'
         self.log.write_text('')
 
-    def run_mint(self, *extra, env=None, path=None, cwd=None):
+    def run_mint(self, *extra, env=None, path=None, cwd=None, opt_in=True):
         e = {k: v for k, v in os.environ.items() if not k.startswith('FED_')}
-        e.update({'TMPDIR': str(self.tmp), 'PATH': path or self.fake_path, 'FAKE_AGE_LOG': str(self.log)})
+        e.update({'TMPDIR': str(self.tmp), 'FED_CA_KEY_TMP': str(self.tmp), 'PATH': path or self.fake_path,
+                  'FAKE_AGE_LOG': str(self.log)})
+        if opt_in:
+            e['FED_CA_KEY_FROM_AGE'] = '1'
         e.update(env or {})
         args = ['bash', str(SCRIPT), str(self.agreement), str(self.out), '--as', 'xaa',
                 '--ca-cert', str(self.ca), '--core-cn', 'router', '--core-san', 'core.example.test', *extra]
@@ -112,6 +115,32 @@ class CaKeyFromAge(unittest.TestCase):
         self.assertEqual(len(list(self.out.glob('*.pem'))), 8)
         self.assert_no_key_left()
         self.assert_written_privately()
+
+    def test_off_by_default_nothing_is_decrypted(self):
+        r = self.run_mint(env={'FED_CA_KEY_AGE': str(self.age_file), 'FED_AGE_IDENTITY': str(self.good)},
+                          opt_in=False)
+        self.assertNotEqual(r.returncode, 0, 'issuance needs a key, and none was opened')
+        self.assertEqual(self.log.read_text(), '', 'age ran without the opt-in')
+        self.assertIn('is not opened (opt-in: FED_CA_KEY_FROM_AGE=1', r.stderr)
+        self.assertIn('FED_CA_KEY_FROM_AGE=1', r.stdout + r.stderr)
+        self.assert_no_key_left()
+
+    def test_the_flag_opts_in_too(self):
+        r = self.run_mint('--ca-key-from-age', env={'FED_CA_KEY_AGE': str(self.age_file),
+                                                    'FED_AGE_IDENTITY': str(self.good)}, opt_in=False)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assert_written_privately()
+
+    @unittest.skipUnless(os.path.isdir('/dev/shm') and os.access('/dev/shm', os.W_OK), 'no writable /dev/shm')
+    def test_without_a_named_directory_the_key_goes_to_dev_shm(self):
+        e = {'FED_CA_KEY_AGE': str(self.age_file), 'FED_AGE_IDENTITY': str(self.good), 'FED_CA_KEY_TMP': ''}
+        r = self.run_mint(env=e)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        path = self.log.read_text().split()[0]
+        self.assertTrue(path.startswith('/dev/shm/fed-ca-key.'), path)
+        self.assertFalse(Path(path).exists())
+        self.assertFalse(Path(path).parent.exists())
+        self.assert_no_key_left()
 
     def test_flags_name_the_age_key_too(self):
         r = self.run_mint('--ca-key-age', str(self.age_file), '--age-identity', str(self.good))
@@ -158,7 +187,8 @@ class CaKeyFromAge(unittest.TestCase):
 
     def test_termination_removes_the_copy(self):
         e = {k: v for k, v in os.environ.items() if not k.startswith('FED_')}
-        e.update({'TMPDIR': str(self.tmp), 'PATH': self.fake_path, 'FAKE_AGE_LOG': str(self.log), 'FAKE_AGE_SLEEP': '30',
+        e.update({'TMPDIR': str(self.tmp), 'FED_CA_KEY_TMP': str(self.tmp), 'FED_CA_KEY_FROM_AGE': '1',
+                  'PATH': self.fake_path, 'FAKE_AGE_LOG': str(self.log), 'FAKE_AGE_SLEEP': '30',
                   'FED_CA_KEY_AGE': str(self.age_file), 'FED_AGE_IDENTITY': str(self.good)})
         args = ['bash', str(SCRIPT), str(self.agreement), str(self.out), '--as', 'xaa', '--ca-cert', str(self.ca)]
         proc = subprocess.Popen(args, env=e, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)

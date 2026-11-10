@@ -34,20 +34,24 @@
 #                          [--core-cn <name>] [--core-san <san>[,<san>...]]
 #                          [--link-ip <ip>] [--rotate] [--min-valid-seconds <n>]
 #
-# Environment: FED_CA_CERT, FED_CA_KEY, FED_CA_KEY_AGE, FED_AGE_IDENTITY,
-#              FED_CORE_CN, FED_CORE_SAN, FED_LINK_IP
+# Environment: FED_CA_CERT, FED_CA_KEY, FED_CA_KEY_FROM_AGE, FED_CA_KEY_AGE,
+#              FED_AGE_IDENTITY, FED_CA_KEY_TMP, FED_CORE_CN, FED_CORE_SAN, FED_LINK_IP
 #
-# THE CA KEY. An explicit key file (--ca-key, FED_CA_KEY) always wins. Without
-# one, the deployment's age-encrypted key (--ca-key-age, FED_CA_KEY_AGE; the
-# driver derives it from <deploy.state_dir>/<site>-ca/ca.key.age) is opened with
-# its age identity into a file this run owns: mode 0600 in a fresh private
-# directory, removed when the script exits, whatever the exit. The key is
-# needed only to issue a missing leaf or to rotate.
+# THE CA KEY. An explicit key file (--ca-key, FED_CA_KEY) always wins. Opening
+# the deployment's age-encrypted key is opt-in, off by default: only with
+# FED_CA_KEY_FROM_AGE=1 (or --ca-key-from-age; goatbuilder sets it from
+# goat_federation_ca_key_from_age: true) is the key (--ca-key-age,
+# FED_CA_KEY_AGE; the driver derives it from <deploy.state_dir>/<site>-ca/ca.key.age)
+# opened with its age identity into a file this run owns: mode 0600 in a fresh
+# private directory under FED_CA_KEY_TMP, else memory-backed /dev/shm, else
+# $TMPDIR, else /tmp, removed when the script exits, whatever the exit. The key
+# is needed only to issue a missing leaf or to rotate.
 set -uo pipefail
 
 AGREEMENT=""; OUT=""; AS=""
 CA_CERT="${FED_CA_CERT:-}"; CA_KEY="${FED_CA_KEY:-}"
 CA_KEY_AGE="${FED_CA_KEY_AGE:-}"; AGE_IDENTITY="${FED_AGE_IDENTITY:-}"
+FROM_AGE="${FED_CA_KEY_FROM_AGE:-0}"
 CORE_CN="${FED_CORE_CN:-goat-zenoh}"; CORE_SAN="${FED_CORE_SAN:-}"; LINK_IP="${FED_LINK_IP:-}"
 DAYS="${FED_LEAF_DAYS:-90}"
 ROTATE=0; MIN_VALID_SECONDS="${FED_LEAF_MIN_VALID_SECONDS:-86400}"
@@ -62,6 +66,7 @@ while [ $# -gt 0 ]; do
     --ca-key)   CA_KEY="$2"; shift 2 ;;
     --ca-key-age)   CA_KEY_AGE="$2"; shift 2 ;;
     --age-identity) AGE_IDENTITY="$2"; shift 2 ;;
+    --ca-key-from-age) FROM_AGE=1; shift ;;
     --core-cn)  CORE_CN="$2"; shift 2 ;;
     --core-san) CORE_SAN="$2"; shift 2 ;;
     --link-ip)  LINK_IP="$2"; shift 2 ;;
@@ -172,7 +177,10 @@ trap cleanup_key EXIT
 trap 'cleanup_key; exit 130' INT
 trap 'cleanup_key; exit 143' TERM
 trap 'cleanup_key; exit 129' HUP
-if [ -z "$CA_KEY" ] && [ -n "$CA_KEY_AGE" ]; then
+if [ -z "$CA_KEY" ] && [ -n "$CA_KEY_AGE" ] && [ "$FROM_AGE" != 1 ]; then
+  echo "  CA key: $CA_KEY_AGE is not opened (opt-in: FED_CA_KEY_FROM_AGE=1, or goat_federation_ca_key_from_age: true)" >&2
+fi
+if [ -z "$CA_KEY" ] && [ -n "$CA_KEY_AGE" ] && [ "$FROM_AGE" = 1 ]; then
   why=""
   if [ ! -f "$CA_KEY_AGE" ]; then
     why="$CA_KEY_AGE does not exist"
@@ -181,11 +189,11 @@ if [ -z "$CA_KEY" ] && [ -n "$CA_KEY_AGE" ]; then
   elif ! command -v age >/dev/null 2>&1; then
     why="the age command is not installed"
   else
-    # $TMPDIR when set; else memory-backed /dev/shm where there is one, so the
-    # plaintext never reaches a disk; else /tmp.
-    key_parent="${TMPDIR:-}"
+    # FED_CA_KEY_TMP when set; else memory-backed /dev/shm where there is one,
+    # so the plaintext never reaches a disk; else $TMPDIR; else /tmp.
+    key_parent="${FED_CA_KEY_TMP:-}"
     if [ -z "$key_parent" ]; then
-      if [ -d /dev/shm ] && [ -w /dev/shm ]; then key_parent=/dev/shm; else key_parent=/tmp; fi
+      if [ -d /dev/shm ] && [ -w /dev/shm ]; then key_parent=/dev/shm; else key_parent="${TMPDIR:-/tmp}"; fi
     fi
     RUN_KEY_DIR="$(umask 077 && mktemp -d "$key_parent/fed-ca-key.XXXXXX")" || why="no private temporary directory"
     if [ -z "$why" ]; then
