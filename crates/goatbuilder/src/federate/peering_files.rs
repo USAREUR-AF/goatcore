@@ -761,13 +761,14 @@ pub fn run(repo: &Path, o: &Options) -> Result<Report> {
         .filter(|v| installs_certs(repo, &v.edge_group))
         .map(|v| v.edge_group.clone())
         .collect();
-    let rendered = render_full(
+    let mut rendered = render_full(
         &cfg,
         &values,
         &ctx.record,
         prev_inventory.as_deref(),
         &installs,
     )?;
+    rendered.extend(super::federation_toml::render(repo, &cfg, &values)?);
     let writes = !o.dry_run && o.mock.is_none();
     let mode = if o.dry_run {
         " (DRY RUN: nothing is written)"

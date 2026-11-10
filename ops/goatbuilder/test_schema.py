@@ -179,6 +179,15 @@ class EdgeReservedUdp(unittest.TestCase):
         self.assertTrue(any("peering_edge_reserved_udp" in e for e in validate.errors_for(c)))
 
 
+class PeeringFederationToml(unittest.TestCase):
+    def test_federation_toml_is_hand_or_rendered(self):
+        c = with_sites()
+        c["peerings"] = [{"with": "xab", "environment": "dev", "site": "alpha", "edge_class": "edge", "federation_toml": "rendered"}]
+        self.assertEqual(validate.errors_for(c), [])
+        c["peerings"][0]["federation_toml"] = "template"
+        self.assertTrue(any("template" in e for e in validate.errors_for(c)))
+
+
 class FailClosed(unittest.TestCase):
     def assertRejected(self, config: dict, fragment: str):
         problems = validate.errors_for(config)
