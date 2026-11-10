@@ -439,10 +439,12 @@ pub enum Cmd {
         #[command(flatten)]
         site: Box<federate::verbs::SiteArgs>,
         /// The peering name (the counterparty, as declared), or a stage run
-        /// alone: `status [<partner>]`.
+        /// alone: `status [<partner>]`, `allocate [<peering>]`.
         #[arg(required = true)]
         with: Option<String>,
-        /// The partner, after a stage word (`status <partner>`).
+        /// The partner, after a stage word (`status <partner>`), or after
+        /// `allocate` the one peering to allocate and render, beside peerings
+        /// that are still hand-written.
         partner: Option<String>,
         /// The environment the peering is declared on (checked against goatbuilder.yaml peerings:).
         #[arg(long)]
@@ -1355,8 +1357,8 @@ fn main() {
                     OutputFormat::Yaml => federate::status::Format::Yaml,
                 };
                 federate::status::status(&cfg_path, partner.as_deref(), env.as_deref(), work.as_deref(), format)
-            } else if let Some(extra) = partner {
-                Err(anyhow::anyhow!("unexpected argument '{extra}': only a stage word (status) takes a partner after it"))
+            } else if let Some(extra) = partner.as_deref().filter(|_| with != "allocate") {
+                Err(anyhow::anyhow!("unexpected argument '{extra}': only a stage word (status) takes a partner after it, and only `goatbuilder federate allocate <peering>` takes a peering after it"))
             // A mock executes nothing, with or without --dry-run, so it mutates nothing.
             } else if !site.is_empty() && goat_federation::verbs::VERB_NAMES.contains(&with) {
                 // `federate --context-dir D init`: clap read the verb as a partner.
@@ -1366,7 +1368,12 @@ fn main() {
             } else if !cli.yes && !*dry_run && cli.mock.is_none() && !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
                 Err(anyhow::anyhow!("federate is a mutation: pass --yes without a terminal (C10)"))
             } else {
-                federate::federate_with(&repo, &federate::Options { with, env: env.as_deref(), r#as: as_party.as_deref(), edge_group: edge_group.as_deref(), work: work.as_deref(), mock: cli.mock.as_deref(), from: *from, to: *to, dry_run: *dry_run, table: matches!(cli.output, OutputFormat::Table) }, &federate::Surface { resume: *resume })
+                let options = federate::Options { with, env: env.as_deref(), r#as: as_party.as_deref(), edge_group: edge_group.as_deref(), work: work.as_deref(), mock: cli.mock.as_deref(), from: *from, to: *to, dry_run: *dry_run, table: matches!(cli.output, OutputFormat::Table) };
+                match partner.as_deref() {
+                    // `allocate <peering>`: that peering alone, beside hand-written ones.
+                    Some(one) => federate::peering_files::run_scoped(&repo, &options, Some(one)),
+                    None => federate::federate_with(&repo, &options, &federate::Surface { resume: *resume }),
+                }
             }
         }
     };

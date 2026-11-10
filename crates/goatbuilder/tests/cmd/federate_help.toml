@@ -26,10 +26,11 @@ Commands:
 Arguments:
   <WITH>
           The peering name (the counterparty, as declared), or a stage run alone: `status
-          [<partner>]`
+          [<partner>]`, `allocate [<peering>]`
 
   [PARTNER]
-          The partner, after a stage word (`status <partner>`)
+          The partner, after a stage word (`status <partner>`), or after `allocate` the one peering
+          to allocate and render, beside peerings that are still hand-written
 
 Options:
   -o, --output <OUTPUT>

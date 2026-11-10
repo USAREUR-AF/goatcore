@@ -729,16 +729,103 @@ pub fn driver_agrees(
 /// The verb. Allocates every declared peering, then writes (or with
 /// `--dry-run`/`--mock` shows) the record and the files.
 pub fn run(repo: &Path, o: &Options) -> Result<Report> {
+    run_scoped(repo, o, None)
+}
+
+/// The values a peering that is not under allocation runs on today, from its
+/// edge and core groups' hand-written group_vars, else the role defaults in
+/// this repository: what an allocation beside it must not take.
+fn running_values(repo: &Path, p: &config::Peering) -> alloc::PeeringPins {
+    let edge = format!("{}_edge", p.with);
+    let core = format!("{}_core", p.with);
+    let port = |v: Option<String>| v.and_then(|s| s.parse::<u16>().ok());
+    let mut held = alloc::PeeringPins {
+        spire_outbound_port: port(live_value(
+            repo,
+            &edge,
+            "peering_spire_outbound_port",
+            "goat-peering-spire",
+        )),
+        republisher_metrics_port: port(live_value(
+            repo,
+            &core,
+            "goat_fed_republisher_metrics_port",
+            "goat-fed-republisher",
+        )),
+        ..Default::default()
+    };
+    if p.tunnel.as_deref() != Some("ipsec") {
+        held.wg_interface = live_value(repo, &edge, "peering_wg_interface", "goat-peering-wg");
+        held.wg_listen_port = port(live_value(
+            repo,
+            &edge,
+            "peering_wg_listen_port",
+            "goat-peering-wg",
+        ));
+    }
+    held
+}
+
+/// `goatbuilder federate allocate [<peering>]`. With a peering named, only
+/// that peering is allocated and rendered, beside peerings that are still
+/// hand-written: those are not checked, rendered or recorded, and the values
+/// they run on are reserved so the named one takes none of them. Peerings the
+/// record already holds keep their recorded values and their files are not
+/// rewritten. Every guard still applies to the named peering, including the
+/// refusal to move one that already runs (GB-230). Without a name, every
+/// declared peering, as before.
+pub fn run_scoped(repo: &Path, o: &Options, only: Option<&str>) -> Result<Report> {
     let cfg_path = match o.mock {
         Some(m) => m.join("goatbuilder.yaml"),
         None => repo.join("ops/goatbuilder/goatbuilder.yaml"),
     };
-    let cfg = config::load(&cfg_path)?;
+    let full = config::load(&cfg_path)?;
     let cfg_dir = cfg_path
         .parent()
         .map(Path::to_path_buf)
         .unwrap_or_else(|| repo.to_path_buf());
-    let ctx = AllocContext::load(&cfg_dir)?;
+    let mut ctx = AllocContext::load(&cfg_dir)?;
+    let mut cfg = full.clone();
+    // The groups of peerings this run does not render: their files are left alone.
+    let mut others: Vec<String> = Vec::new();
+    if let Some(name) = only {
+        let Some(named) = super::declaration::peering(&full, name, o.env)? else {
+            return Err(anyhow::anyhow!(
+                "peering '{name}' is not declared in {} peerings: (C1); `goatbuilder federate allocate <peering>` allocates one declared peering",
+                cfg_path.display()
+            ));
+        };
+        let named_key = format!("{}/{}", named.environment, named.with);
+        let recorded = |p: &config::Peering| {
+            ctx.record
+                .peerings
+                .contains_key(&format!("{}/{}", p.environment, p.with))
+        };
+        for p in &full.peerings {
+            let k = format!("{}/{}", p.environment, p.with);
+            if k == named_key {
+                continue;
+            }
+            if recorded(p) {
+                // Kept for the record and for collisions; its files are not rewritten.
+                others.push(format!("{}_edge", p.with));
+                others.push(format!("{}_core", p.with));
+                if let Some(e) = ctx.record.peerings.get(&k) {
+                    others.extend(e.edge_group.clone());
+                    others.extend(e.core_group.clone());
+                }
+            } else if runs_by_hand(repo, &format!("{}_edge", p.with)) {
+                ctx.held.insert(k, running_values(repo, p));
+            }
+        }
+        cfg.peerings = full
+            .peerings
+            .iter()
+            .filter(|p| format!("{}/{}", p.environment, p.with) == named_key || recorded(p))
+            .cloned()
+            .collect();
+    }
+    let ctx = ctx;
     let values = alloc::allocate_all(&cfg, &ctx)?;
     let moves: Vec<String> = std::env::var("FED_ALLOCATE_MOVE")
         .unwrap_or_default()
@@ -761,13 +848,23 @@ pub fn run(repo: &Path, o: &Options) -> Result<Report> {
         .filter(|v| installs_certs(repo, &v.edge_group))
         .map(|v| v.edge_group.clone())
         .collect();
-    let rendered = render_full(
+    let mut rendered = render_full(
         &cfg,
         &values,
         &ctx.record,
         prev_inventory.as_deref(),
         &installs,
     )?;
+    if only.is_some() {
+        // One peering: its own files and the record. The inventory is the
+        // whole repository's, and other peerings' files are not this run's.
+        rendered.retain(|r| {
+            r.path != "ops/ansible/inventory/peering-edges.ini"
+                && !others
+                    .iter()
+                    .any(|g| r.path.starts_with(&format!("ops/ansible/group_vars/{g}/")))
+        });
+    }
     let writes = !o.dry_run && o.mock.is_none();
     let mode = if o.dry_run {
         " (DRY RUN: nothing is written)"
@@ -779,15 +876,28 @@ pub fn run(repo: &Path, o: &Options) -> Result<Report> {
     let mut checks = vec![row(
         "allocate",
         true,
-        format!(
-            "{} peering(s) declared in {}{mode}",
-            values.len(),
-            cfg_path.display()
-        ),
+        match only {
+            Some(name) => format!(
+                "peering '{name}' only, of {} declared in {}{mode}",
+                full.peerings.len(),
+                cfg_path.display()
+            ),
+            None => format!(
+                "{} peering(s) declared in {}{mode}",
+                values.len(),
+                cfg_path.display()
+            ),
+        },
         None,
     )];
-    for v in &values {
+    for v in values
+        .iter()
+        .filter(|v| only.map(|n| v.peering == n).unwrap_or(true))
+    {
         checks.push(row("values", true, alloc::summary(v), None));
+    }
+    for k in ctx.held.keys() {
+        checks.push(row("beside", true, format!("left alone: {k} runs from hand-written files; the values it runs on are reserved, and nothing of it is checked, rendered or recorded"), None));
     }
     // Refuse before writing anything: one foreign file stops the whole run.
     for r in &rendered {
@@ -856,10 +966,13 @@ pub fn run(repo: &Path, o: &Options) -> Result<Report> {
     for (k, _) in alloc::retired_entries(&cfg, &ctx) {
         checks.push(row("retired", true, format!("kept: {k} is in {} but no longer declared; its values stay reserved until you remove its entry, once that peering is cut", alloc::RECORD_FILE), None));
     }
-    for s in stale(repo, &rendered) {
+    for s in stale(repo, &rendered)
+        .into_iter()
+        .filter(|_| only.is_none())
+    {
         checks.push(row("stale", true, format!("left in place: {s} was generated for a peering no longer declared; delete it once that peering is cut"), None));
     }
-    if !values.is_empty() && cfg.peerings.iter().all(|p| p.hosts.is_none()) {
+    if only.is_none() && !values.is_empty() && cfg.peerings.iter().all(|p| p.hosts.is_none()) {
         checks.push(row("inventory", true, "not rendered: no peering declares hosts:, so ops/ansible/inventory/peering-edges.ini stays hand-written. Give each peering its own inventory name for each machine (the edge_host_name and core_host_name above): a name in two peering groups reads both peerings' peering-values.yml".into(), None));
     }
     if writes {
@@ -1348,6 +1461,80 @@ mod tests {
         )
         .unwrap();
         assert!(!installs_certs(d.path(), "xab_edge"));
+    }
+
+    /// A repository with one peering still hand-written (xac) and one to adopt
+    /// (xab). `allocate` over every peering refuses (xac would move);
+    /// `allocate xab` allocates and renders xab alone, around the values xac
+    /// runs on, and leaves xac's files and the record's view of xac alone.
+    #[test]
+    fn allocate_one_peering_beside_a_hand_written_one() {
+        let d = repo_with(json!([p("xab", false), p("xac", false)]));
+        role_defaults(d.path());
+        let g = d.path().join("ops/ansible/group_vars/xac_edge");
+        std::fs::create_dir_all(&g).unwrap();
+        let hand = "peering_wg_interface: wg-fed0\npeering_wg_listen_port: 51823\ngoat_zenoh_edge_outward_cert: /etc/x/out.pem\n";
+        std::fs::write(g.join("deployment.yml"), hand).unwrap();
+        // Every peering at once: refused, as before.
+        let e = run(d.path(), &opts(false)).unwrap_err();
+        assert_eq!(
+            e.downcast_ref::<goat_errors::Coded>().unwrap().code,
+            "GB-230",
+            "{e}"
+        );
+        // Only xab: allocated around xac's running values, nothing of xac touched.
+        run_scoped(d.path(), &opts(false), Some("xab")).unwrap();
+        let rec =
+            alloc::read_record(&d.path().join("ops/goatbuilder").join(alloc::RECORD_FILE)).unwrap();
+        assert_eq!(rec.peerings.keys().collect::<Vec<_>>(), vec!["dev/xab"]);
+        let xab = &rec.peerings["dev/xab"];
+        assert_eq!(
+            (xab.wg_interface.as_deref(), xab.wg_listen_port),
+            (Some("wg-fed1"), Some(51825)),
+            "xac runs on wg-fed0 / 51823"
+        );
+        assert!(d
+            .path()
+            .join("ops/ansible/group_vars/xab_edge/peering-values.yml")
+            .is_file());
+        assert!(!d
+            .path()
+            .join("ops/ansible/group_vars/xac_edge/peering-values.yml")
+            .exists());
+        assert_eq!(
+            std::fs::read_to_string(g.join("deployment.yml")).unwrap(),
+            hand
+        );
+        // A re-run changes nothing.
+        let again = run_scoped(d.path(), &opts(false), Some("xab")).unwrap();
+        assert!(
+            again
+                .checks
+                .iter()
+                .filter(|c| c.name == "file")
+                .all(|c| c.detail.starts_with("unchanged")),
+            "{:?}",
+            again.checks
+        );
+    }
+
+    /// The named peering itself is still protected: if it runs from hand files,
+    /// a scoped allocate that would move it is refused (GB-230), and a peering
+    /// that is not declared is refused.
+    #[test]
+    fn allocate_one_peering_still_refuses_to_move_it_or_an_undeclared_name() {
+        let d = repo_with(json!([p("xab", false), p("xac", false)]));
+        role_defaults(d.path());
+        let g = d.path().join("ops/ansible/group_vars/xab_edge");
+        std::fs::create_dir_all(&g).unwrap();
+        std::fs::write(g.join("deployment.yml"), "goat_zenoh_edge_image: x\n").unwrap();
+        let e = run_scoped(d.path(), &opts(false), Some("xab")).unwrap_err();
+        assert_eq!(
+            e.downcast_ref::<goat_errors::Coded>().unwrap().code,
+            "GB-230",
+            "{e}"
+        );
+        assert!(run_scoped(d.path(), &opts(false), Some("xzz")).is_err());
     }
 
     #[test]
