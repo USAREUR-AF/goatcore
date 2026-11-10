@@ -1475,23 +1475,47 @@ mod tests {
         assert_eq!(classify_mesh_path(b"{}"), None);
     }
 
+    /// Write an executable test script from a child process, so this
+    /// multi-threaded test process never holds the script open for writing.
+    /// If another test thread forks while it is open, the child keeps the
+    /// descriptor until it execs, and running the script then fails with
+    /// ETXTBSY ("Text file busy"): the refinement sees no status and the test
+    /// fails at random.
+    #[cfg(unix)]
+    fn write_exec_script(path: &std::path::Path, body: &str) {
+        use std::io::Write;
+        let mut child = std::process::Command::new("/bin/sh")
+            .args(["-c", "cat > \"$1\" && chmod 700 \"$1\"", "sh"])
+            .arg(path)
+            .stdin(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(body.as_bytes())
+            .unwrap();
+        assert!(
+            child.wait().unwrap().success(),
+            "could not write {}",
+            path.display()
+        );
+    }
+
     #[cfg(unix)]
     #[tokio::test]
     async fn router_failure_refinement_kills_timed_out_status_process() {
-        use std::os::unix::fs::PermissionsExt;
-
         let dir = tempfile::tempdir().unwrap();
         let script = dir.path().join("netbird");
         let pid_file = dir.path().join("pid");
-        std::fs::write(
+        write_exec_script(
             &script,
-            format!(
+            &format!(
                 "#!/bin/sh\necho $$ > '{}'\nexec sleep 30\n",
                 pid_file.display()
             ),
-        )
-        .unwrap();
-        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).unwrap();
+        );
         let original = fail(
             1,
             Instant::now(),
@@ -1530,16 +1554,12 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn router_failure_refinement_uses_the_selected_status_binary() {
-        use std::os::unix::fs::PermissionsExt;
-
         let dir = tempfile::tempdir().unwrap();
         let script = dir.path().join("custom-netbird");
-        std::fs::write(
+        write_exec_script(
             &script,
-            format!("#!/bin/sh\n[ \"$*\" = 'status --json' ] || exit 1\n/bin/cat <<'STATUS'\n{CONTROL_ONLY}\nSTATUS\n"),
-        )
-        .unwrap();
-        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).unwrap();
+            &format!("#!/bin/sh\n[ \"$*\" = 'status --json' ] || exit 1\n/bin/cat <<'STATUS'\n{CONTROL_ONLY}\nSTATUS\n"),
+        );
         let original = fail(
             1,
             Instant::now(),
