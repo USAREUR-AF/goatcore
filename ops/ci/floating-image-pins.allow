@@ -70,7 +70,6 @@ ops/smoketest/Dockerfile golang:1.26-bookworm   # 2026-09-22 seed
 ops/smoketest/Dockerfile node:20-slim   # 2026-09-22 seed
 ops/smoketest/docker-compose.yml smoketest:latest   # 2026-09-22 seed
 ops/snitch/Dockerfile debian:bookworm-slim   # 2026-09-22 seed
-ops/snitch/Dockerfile golang:1.26-bookworm   # 2026-09-22 seed
 ops/snitch/docker-compose.prod-orin.yml snitch:latest   # 2026-09-22 seed
 ops/snitch/docker-compose.yml snitch:latest   # 2026-09-22 seed
 ops/wg-cp0-mesh-reach/Dockerfile alpine:3.20   # 2026-09-22 seed
