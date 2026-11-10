@@ -38,6 +38,15 @@ same commit; `ops/ci/check-error-catalog.py` refuses a drift between them.
 | `E_NETBIRD_FAILED` | A NetBird management API call failed for a reason other than authorization (403 is `E_NOT_ADMIN`): token rejected (401), server unreachable, an unexpected status, or a peer record missing a setting the update must send back. Nothing was changed. | 4 | Export a current admin token as `<CONTEXT>_NB_API_TOKEN` (or `GOAT_NB_API_TOKEN`); `goat admin peer ls` proves URL and token; retry once the server answers. |
 | `E_ACL_DECLARATION_MISSING` | `goat acl test` or `goat warrant` found no ACL declaration: no `--declaration`, no `GOAT_ACL_DECLARATION_DIR`, none in the active context, and no checkout carrying one. goat compiles in no deployment's declaration. | 1 | Pass `--declaration <dir>`, export `GOAT_ACL_DECLARATION_DIR`, set `acl_declaration_dir` in the context's profile.toml, run `goat context refresh` against a goatnet that serves `get.<site>/acl/`, or run inside a checkout carrying `ops/ansible/netbird_acl_*.yml`. |
 
+The catalog also interprets these uncoded failures by their error text. Their
+underlying commands retain the generic exit code; the interpretation adds a
+specific explanation without changing the refusal.
+
+| Code | Meaning | Exit | Remedy |
+|---|---|---|---|
+| `E_MEMBERSHIP_VERSION_UNSUPPORTED` | Catalog interpretation of an unsupported membership fragment, scope or baseline version. | 1 | Update goat, check the named declaration and regenerate a generated baseline from the reviewed operator manifests. Do not lower only the version number to bypass validation. |
+| `E_RECIPIENT_KEY_UNPUBLISHED` | Catalog interpretation of an anchor without a published public recipient certificate. | 1 | Check the context; an authorized operator checks `goat access key --anchor <anchor>`. For an enrolled recipient with an old leaf, the operator reissues it in place under ADR 1044 and installs the replacement bundle. |
+
 ## Exit codes (summary)
 
 | Code | Meaning |

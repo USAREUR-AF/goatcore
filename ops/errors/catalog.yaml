@@ -341,6 +341,40 @@ entries:
     read: docs/design/goat-cli-error-codes.md
     exit: 1
 
+  - code: E_MEMBERSHIP_VERSION_UNSUPPORTED
+    tool: goat
+    title: the membership file uses an unsupported version
+    what: goat refused a membership fragment, scope file or generated baseline whose version is not supported by this build. No membership change was applied.
+    causes:
+      - the file was written by a newer tool than the goat reading it
+      - the version field was edited by hand
+      - the command was pointed at the wrong declaration file
+    fixes:
+      - "goat update   (use a goat version that supports the declaration)"
+      - "check version: in the file named by the error and confirm the declaration directory"
+      - "for a generated baseline, regenerate with python3 ops/warrant/membership.py --generate-baseline using the deployment's operator manifests; do not change only the version number to bypass the refusal"
+    read: docs/operations/warrant-runbook.md
+    exit: 1
+    matches:
+      - "this goat reads version 1"
+
+  - code: E_RECIPIENT_KEY_UNPUBLISHED
+    tool: goat
+    title: the recipient's public certificate is not published
+    what: the portal has no persisted public recipient certificate for the named anchor. The key service cannot wrap a data key to that recipient until the public certificate is available.
+    causes:
+      - the recipient's leaf was issued before the recipient-certificate store existed
+      - the recipient has not been enrolled on this goatnet
+      - the recipient's certificate is on a different goatnet from the active context
+    fixes:
+      - "goat context show   (confirm the intended goatnet)"
+      - "authorized operator: goat access key --anchor <anchor>   (check the recipient's publication status)"
+      - "for an enrolled recipient whose leaf predates the store, ask the goatnet operator to run goat admin rotate <anchor> and follow the replacement-bundle procedure; reissuing the leaf publishes its public certificate; install the replacement credentials using that procedure, which does not cryptographically revoke the old leaf"
+    read: docs/adr/1044-credential-rotation-in-place-reissue.md
+    exit: 1
+    matches:
+      - 'recipient key for [^\s]+ is NOT published'
+
   # --------------------------------------------------------------- goatbuilder
 
   - code: GB-001
