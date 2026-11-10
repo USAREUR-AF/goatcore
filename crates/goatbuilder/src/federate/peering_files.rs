@@ -152,6 +152,44 @@ fn host_line(name: &str, addr: &str, user: Option<&str>) -> String {
     l
 }
 
+/// The inventory file of one peering when not every peering declares `hosts:`:
+/// beside the hand-written `peering-edges.ini`, read by the driver with a
+/// second `-i` (federate/mod.rs). Named by the edge group, which is unique in
+/// the repository.
+pub fn one_inventory_path(edge_group: &str) -> String {
+    format!("ops/ansible/inventory/peering-{edge_group}.ini")
+}
+
+/// That file: this peering's edge and core groups under `peering_edges` and
+/// `peering_cores`, and the forwarder group when a forwarder relays it.
+fn one_inventory(cfg: &Config, p: &config::Peering, v: &PeeringValues) -> Result<String> {
+    let h = p.hosts.as_ref().expect("checked by the caller");
+    let mut s = header(&format!(
+        "the inventory of peering {} on environment {}, from goatbuilder.yaml peerings: hosts:.",
+        v.peering, v.environment
+    ));
+    s.push_str(
+        "# Not every peering declares hosts:, so ops/ansible/inventory/peering-edges.ini stays\n\
+         # hand-written and this peering's groups are here; the driver adds this file with -i.\n\n",
+    );
+    s.push_str(&format!(
+        "[peering_edges:children]\n{}\n\n[{}]\n{}\n\n[peering_cores:children]\n{}\n\n[{}]\n{}\n",
+        v.edge_group,
+        v.edge_group,
+        host_line(&v.edge_host_name, &h.edge, h.user.as_deref()),
+        v.core_group,
+        v.core_group,
+        host_line(&v.core_host_name, &h.core, h.user.as_deref())
+    ));
+    let mut single = cfg.clone();
+    single.peerings = vec![p.clone()];
+    s.push_str(&super::forwarder::inventory(
+        &single,
+        std::slice::from_ref(v),
+    )?);
+    Ok(s)
+}
+
 /// The peering inventory: every peering's edge and core, one inventory name per
 /// peering per machine, so two peerings on one machine never read each other's
 /// group_vars (Ansible merges every group a host name is in).
@@ -286,35 +324,30 @@ pub fn render_full(
         body: alloc::record_text(&alloc::record_of(values, previous)),
     }];
     let with_hosts = cfg.peerings.iter().filter(|p| p.hosts.is_some()).count();
-    if with_hosts != 0 && with_hosts != cfg.peerings.len() {
-        let missing: Vec<String> = cfg
-            .peerings
-            .iter()
-            .enumerate()
-            .filter(|(_, p)| p.hosts.is_none())
-            .map(|(i, p)| format!("peerings/{i} (with '{}')", p.with))
-            .collect();
-        return Err(goat_errors::coded(
-            "GB-126",
-            format!(
-                "the peering inventory is rendered whole, and {} declare no hosts: (GB-126). Add `hosts: {{edge: <address>, core: <address>}}` to each, or remove hosts: from every peering and keep writing ops/ansible/inventory/peering-edges.ini by hand",
-                missing.join(", ")
-            ),
-        )
-        .into());
-    }
-    let inv = with_hosts != 0;
+    // Every peering declares hosts: the whole peering inventory. Only some do:
+    // each of those gets its own inventory file beside the hand-written one.
+    let whole = with_hosts != 0 && with_hosts == cfg.peerings.len();
     for (p, v) in cfg.peerings.iter().zip(values.iter()) {
         out.push(Rendered {
             path: format!("ops/ansible/group_vars/{}/peering-values.yml", v.edge_group),
-            body: edge_vars(p, v, inv, installs.contains(&v.edge_group)),
+            body: edge_vars(p, v, p.hosts.is_some(), installs.contains(&v.edge_group)),
         });
         out.push(Rendered {
             path: format!("ops/ansible/group_vars/{}/peering-values.yml", v.core_group),
             body: core_vars(v),
         });
     }
-    if inv {
+    if !whole {
+        for (p, v) in cfg.peerings.iter().zip(values.iter()) {
+            if p.hosts.is_some() {
+                out.push(Rendered {
+                    path: one_inventory_path(&v.edge_group),
+                    body: one_inventory(cfg, p, v)?,
+                });
+            }
+        }
+    }
+    if whole {
         out.push(Rendered {
             path: "ops/ansible/inventory/peering-edges.ini".into(),
             body: inventory(
@@ -991,8 +1024,30 @@ pub fn run_scoped(repo: &Path, o: &Options, only: Option<&str>) -> Result<Report
         .filter(|m| !m.is_empty())
         .collect();
     adoption_check(repo, &cfg, &values, &ctx, &moves)?;
-    if cfg.peerings.iter().all(|p| p.hosts.is_none()) {
+    if !cfg.peerings.iter().all(|p| p.hosts.is_some()) {
         hand_inventory_names_apart(repo, &values)?;
+        // A peering whose groups this run renders into its own inventory file
+        // must not also be defined in the hand-written one.
+        if let Some(groups) = hand_inventory(repo) {
+            for (p, v) in cfg.peerings.iter().zip(values.iter()) {
+                if p.hosts.is_none() {
+                    continue;
+                }
+                for g in [&v.edge_group, &v.core_group] {
+                    if groups.contains_key(g.as_str()) {
+                        return Err(goat_errors::coded(
+                            "GB-126",
+                            format!(
+                                "peering '{}' declares hosts:, so its inventory is rendered into {}, and ops/ansible/inventory/peering-edges.ini (hand-written) also defines [{g}] (GB-126). Remove that group from the hand-written inventory, or remove hosts: from the peering and keep its group there",
+                                p.with,
+                                one_inventory_path(&v.edge_group)
+                            ),
+                        )
+                        .into());
+                    }
+                }
+            }
+        }
     }
     let prev_inventory =
         std::fs::read_to_string(repo.join("ops/ansible/inventory/peering-edges.ini"))
@@ -1234,17 +1289,65 @@ mod tests {
             !body(&fs, "ops/ansible/group_vars/xab_edge/peering-values.yml")
                 .contains("peering_spire_server_host")
         );
+    }
+
+    /// Only some peerings declare hosts: each of those gets its own inventory
+    /// file, and the whole peering inventory is not rendered.
+    #[test]
+    fn a_peering_with_hosts_gets_its_own_inventory_beside_hand_written_ones() {
         let c = cfg(json!([p("xab", true), p("xac", false)]));
-        let e = render(
+        let fs = render(
             &c,
             &alloc::allocate_all(&c, &AllocContext::default()).unwrap(),
         )
-        .unwrap_err();
+        .unwrap();
+        assert!(fs
+            .iter()
+            .all(|r| r.path != "ops/ansible/inventory/peering-edges.ini"));
+        let one = body(&fs, "ops/ansible/inventory/peering-xab_edge.ini");
+        assert!(one.starts_with(MARKER), "{one}");
+        for frag in [
+            "[peering_edges:children]\nxab_edge\n",
+            "[xab_edge]\ndev-edge-xab ansible_host=192.0.2.20 ansible_user=goat\n",
+            "[peering_cores:children]\nxab_core\n",
+            "[xab_core]\ndev-core-xab ansible_host=192.0.2.10 ansible_user=goat\n",
+        ] {
+            assert!(one.contains(frag), "{frag}\n---\n{one}");
+        }
+        assert!(!one.contains("xac"), "{one}");
+        assert!(fs.iter().all(|r| !r.path.contains("peering-xac")));
+        assert!(
+            body(&fs, "ops/ansible/group_vars/xab_edge/peering-values.yml")
+                .contains("peering_spire_server_host: \"dev-core-xab\""),
+        );
+    }
+
+    /// The hand-written inventory keeps working; a group defined both there and
+    /// in a rendered per-peering file is refused (GB-126).
+    #[test]
+    fn a_group_in_both_the_hand_inventory_and_its_own_file_is_refused() {
+        let d = repo_with(json!([p("xab", true), p("xac", false)]));
+        let inv = d.path().join("ops/ansible/inventory");
+        std::fs::create_dir_all(&inv).unwrap();
+        let hand = "[xac_edge]\nedge-1-xac ansible_host=192.0.2.21\n";
+        std::fs::write(inv.join("peering-edges.ini"), hand).unwrap();
+        run(d.path(), &opts(false)).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(inv.join("peering-edges.ini")).unwrap(),
+            hand
+        );
+        assert!(inv.join("peering-xab_edge.ini").is_file());
+        std::fs::write(
+            inv.join("peering-edges.ini"),
+            format!("{hand}\n[xab_edge]\nedge-1 ansible_host=192.0.2.20\n"),
+        )
+        .unwrap();
+        let e = run(d.path(), &opts(false)).unwrap_err();
         assert_eq!(
             e.downcast_ref::<goat_errors::Coded>().unwrap().code,
             "GB-126"
         );
-        assert!(e.to_string().contains("peerings/1 (with 'xac')"), "{e}");
+        assert!(e.to_string().contains("[xab_edge]"), "{e}");
     }
 
     fn repo_with(peerings: serde_json::Value) -> tempfile::TempDir {

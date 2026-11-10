@@ -230,6 +230,11 @@ def main(argv=None):
     core = a.core_group or f"{a.peering}_core"
     counterparty = env.get("FED_COUNTERPARTY_ID", "") or a.peering
     inv = Path(a.repo) / "ops/ansible/inventory/peering-edges.ini"
+    # This peering's own inventory file (goatbuilder federate allocate, when not
+    # every peering declares hosts:) holds its group instead.
+    own = Path(a.repo) / f"ops/ansible/inventory/peering-{group}.ini"
+    if own.is_file():
+        inv = own
     inv_text = inv.read_text() if inv.is_file() else ""
     decl = ctx / "federation.toml"
     decl_text = decl.read_text() if decl.is_file() else ""
@@ -384,7 +389,11 @@ def main(argv=None):
         #      names for it (same ansible_host): one name in two peering groups merges both
         #      groups' variables, and a run for one peering reads the other's values.
         if inv.is_file():
-            shared = shared_inventory_names(inv_text, [group, core])
+            # With its own inventory file, a name it shares with the hand-written
+            # inventory counts too: the driver reads both.
+            hand = Path(a.repo) / "ops/ansible/inventory/peering-edges.ini"
+            text = inv_text + ("\n" + hand.read_text() if own.is_file() and hand.is_file() else "")
+            shared = shared_inventory_names(text, [group, core])
             for h, gs in shared:
                 bad("one inventory name per peering", f"{h} is in {', '.join(gs)}",
                     "Ansible merges the group_vars of every group a host is in and the group that\n"
@@ -497,7 +506,7 @@ def main(argv=None):
             for old in out_dir.glob("*.json"):
                 old.unlink()  # a previous run's answer is not this run's evidence
             groups = [group] + ([core] if "core-ports" in port_checks else [])
-            argv = live.probe_command(a.repo, "inventory/peering-edges.ini", ":".join(groups), out_dir,
+            argv = live.probe_command(a.repo, f"inventory/{inv.name}", ":".join(groups), out_dir,
                                       env.get("GOAT_AWS_PROFILE", "") or "default")
             print(f"     probing {', '.join(groups)} read-only: ansible-playbook ... peering-preflight.yml")
             rc, out, err = PROBE(argv, cwd=str(Path(a.repo) / "ops/ansible"),
