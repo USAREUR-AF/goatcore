@@ -334,6 +334,8 @@ Status: built (`crates/goatbuilder/src/federate/peering_files.rs`, unit tests). 
 
 **Adopting a peering that already runs.** A peering the record does not hold, whose edge group already has hand-written group_vars or a group in the hand inventory, runs today on values a person chose or on the role defaults (`wg-fed0`, 51820, SPIRE 18443, metrics 9310, read from the roles in this repository). `allocate` never renders different values for it silently: it refuses (GB-230) and names each value that would move. Pin the running values under `values:` to adopt it as it runs, or confirm the move with `FED_ALLOCATE_MOVE=<with>`, after which its next phase 2 moves the tunnel. Once recorded, the peering is no longer checked this way.
 
+**With the edge role installing the certificates.** When `goat_zenoh_edge_install_certs` is on for an edge group (its own hand-written group_vars, else `peering_edges`, else `all`), `goat-zenoh-edge` reads the leaves from `<fed_work>/pki`, which is the allocated `cert_dir` because the driver's `--work` must match it (GB-128), installs them in `goat_zenoh_edge_cert_dir`, and derives the four leaf paths from that directory, refusing any other value. `allocate` then renders the edge's per-peering directory `goat_zenoh_edge_cert_dir: /etc/goat-zenoh-edge-<with>/tls` and none of the leaf paths. It is not the allocated `cert_dir` itself: that directory is the source on the machine running the driver and holds the core's and republisher's leaves too, which the role refuses in a directory it installs into. A group whose only hand-written file is that switch is not treated as a running peering for GB-230.
+
 **Retired peerings in the inventory.** A peering removed from `peerings:` keeps its record entry, and its groups stay in the rendered inventory (carried from the last rendered one) until a person removes the entry, so backing it out still has its hosts to target. Every file is written to a temporary name and renamed, so a reader never sees half a record.
 
 **What `goatbuilder federate allocate` writes**, relative to the repository; `--dry-run` writes nothing and shows each file:
@@ -341,7 +343,7 @@ Status: built (`crates/goatbuilder/src/federate/peering_files.rs`, unit tests). 
 | File | Holds |
 |---|---|
 | `ops/goatbuilder/peering-values.yaml` | the allocation record |
-| `ops/ansible/group_vars/<edge_group>/peering-values.yml` | the WireGuard interface and listen port, the SPIRE outbound port and server host, the edge listen port, the four leaf certificate paths under `cert_dir` (not the two CA paths: phase 8 does not write those files, and the partner CA is placed only after its fingerprint is checked in phase 10) |
+| `ops/ansible/group_vars/<edge_group>/peering-values.yml` | the WireGuard interface and listen port, the SPIRE outbound port and server host, the edge listen port, and either the four leaf certificate paths under `cert_dir` (not the two CA paths: phase 8 does not write those files, and the partner CA is placed only after its fingerprint is checked in phase 10) or, when the group's hand-written group_vars turn on `goat_zenoh_edge_install_certs`, `goat_zenoh_edge_cert_dir: /etc/goat-zenoh-edge-<with>/tls` and no leaf path |
 | `ops/ansible/group_vars/<core_group>/peering-values.yml` | the republisher's metrics port and certificate sources |
 | `ops/ansible/inventory/peering-edges.ini` | `peering_edges` and `peering_cores` with one group per peering, when every peering declares `hosts:` |
 
