@@ -20,7 +20,19 @@ units:
   pair: {parties: "xaa xab xac"}
   three: {parties: "xaa xab xac"}
   apparmor: {parties: "xaa xab xac"}
+  ipsec: {parties: "xaa xab xac"}
+  # goat_versions: the released goat env resolves for a sovereign when `env run` is given no
+  # --goat-version for it. previous_release: env resolves the newest published goat and
+  # goatbuilder older than the ref's versions (FE2E_PREV_GOAT, FE2E_PREV_GB).
+  mixed: {parties: "xaa xab", goat_versions: "xaa=0.5.18"}
+  rollback: {parties: "xaa xab", previous_release: true}
+  forwarder: {parties: "xaa xab xac"}
+  preflight: {parties: "xaa xab"}
+  killresume: {parties: "xaa xab"}
   pair-role: {parties: "xaa xab xac"}
+  nodesec: {parties: "xaa xab xac"}
+  shapes-oneway: {parties: "xaa xab"}
+  shapes-asym: {parties: "xac xad"}
 
 scenarios:
   - id: two-party-full
@@ -237,7 +249,8 @@ scenarios:
 
   - id: node-ports-declared
     title: Each edge and core answers on exactly its declared ports, from the partner side and the internal side
-    not_built: unit nodesec comes with module 6
+    unit: nodesec
+    runs_where: local
     pass_condition: >
       After a full two-party federation, every TCP port (1-65535) and a list of relevant UDP
       ports is scanned on each edge and each core: from the partner's edge toward our edge's
@@ -271,7 +284,8 @@ scenarios:
 
   - id: node-firewall-profile
     title: The baseline host firewall profile, and one tightening override, both pass the port scan
-    not_built: unit nodesec comes with module 6
+    unit: nodesec
+    runs_where: local
     pass_condition: >
       With the ref's baseline host firewall profile applied by the roles the driver runs, the
       scans of node-ports-declared pass against the profile's own declared set; then with one
@@ -298,7 +312,8 @@ scenarios:
 
   - id: node-firewall-three-party
     title: Three parties on one shared edge and core still pass with the baseline profile on
-    not_built: unit nodesec comes with module 6
+    unit: nodesec
+    runs_where: local
     pass_condition: >
       With the baseline host firewall profile on, {A} peers with {B} and with {C} on one edge
       host and one core host (scenario 3): both peerings pass strict acceptance from {A}'s
@@ -320,7 +335,8 @@ scenarios:
 
   - id: kill-resume
     title: A run killed at each phase resumes correctly
-    not_built: unit killresume comes with module 6
+    unit: killresume
+    runs_where: local
     pass_condition: >
       On the first side ({F}), each phase 1-13 is started, its driver's process tree is
       killed -9 inside the edge host partway through, and the phase is run again with
@@ -372,7 +388,8 @@ scenarios:
 
   - id: preflight-port-in-use
     title: Preflight refuses when the tunnel port is already held on the edge
-    not_built: unit preflight comes with module 6
+    unit: preflight
+    runs_where: local
     pass_condition: >
       With another process holding UDP 51820 on the listening edge ({A}) before phase 1,
       phase 1 exits non-zero, its message names port 51820 and a fix (a free inner port
@@ -449,7 +466,8 @@ scenarios:
 
   - id: preflight-store-wider
     title: Preflight refuses a core receive store wider than the edge grants
-    not_built: unit preflight comes with module 6
+    unit: preflight
+    runs_where: local
     pass_condition: >
       With {A}'s core receive store for {B} at from/** where {A}'s edge grants
       from/{B}/<set>/**, some phase from 1 to 13 on either side exits non-zero with a message
@@ -465,7 +483,8 @@ scenarios:
 
   - id: preflight-router-discovery
     title: Core router found or refused with a named fix
-    not_built: unit preflight comes with module 6
+    unit: preflight
+    runs_where: local
     pass_condition: >
       Phase 3 (`goat federate init` through FED_ROUTER_DOCKER_HOST) on {B} writes a package
       carrying the router's fabric_version when the core router is the role's (standard name
@@ -485,7 +504,8 @@ scenarios:
 
   - id: agreement-send-only
     title: Send-only agreement, from the side that releases
-    not_built: unit shapes-oneway comes with module 6
+    unit: shapes-oneway
+    runs_where: local
     known_failure: >
       Phase 12 on the side that accepts nothing: the goat-zenoh-edge role asserts
       goat_zenoh_edge_ingress_key_exprs | length > 0 and refuses ("missing required peering
@@ -522,7 +542,8 @@ scenarios:
 
   - id: agreement-receive-only
     title: Receive-only agreement, from the side that releases nothing
-    not_built: unit shapes-oneway comes with module 6
+    unit: shapes-oneway
+    runs_where: local
     known_failure: >
       Phase 12 on the side that releases nothing: the goat-zenoh-edge template renders the
       partner-receive rule with key_exprs [], the edge router refuses its config ("Given
@@ -559,7 +580,8 @@ scenarios:
 
   - id: agreement-asymmetric
     title: Asymmetric agreement, each side offering a different set
-    not_built: unit shapes-asym comes with module 6
+    unit: shapes-asym
+    runs_where: local
     pass_condition: >
       Both sides accept; {C} releases only release/all and {D} only release/{C}. Both compose
       one agreement with exactly those two flows; phases 11-13 complete; each republisher maps
@@ -592,7 +614,8 @@ scenarios:
 
   - id: forwarder-path
     title: Forwarder path, an edge behind NAT that cannot accept inbound
-    not_built: unit forwarder comes with module 6
+    unit: forwarder
+    runs_where: local
     pass_condition: >
       {A}'s edge sits behind a NAT router that forwards nothing inbound: {B}'s probe of the
       edge fails, and the same probe reaches it with the NAT opened. The tree's own
@@ -625,7 +648,8 @@ scenarios:
 
   - id: port-51820-held
     title: Another service already holds UDP 51820 on an edge
-    not_built: unit preflight comes with module 6
+    unit: preflight
+    runs_where: local
     pass_condition: >
       With UDP 51820 held on the listening edge ({A}) by another process, the peering
       configured on the free inner port 51823 (peering_wg_listen_port, and the endpoint {A}'s
@@ -651,7 +675,8 @@ scenarios:
 
   - id: ipsec-profile
     title: IPsec transport profile
-    not_built: unit ipsec comes with module 6
+    unit: ipsec
+    runs_where: local
     pass_condition: >
       Both sides' packages offer ipsec-fips and the agreement selects it; phases 11-12 open
       it through goat-peering-edge with a recorded waiver; the IKE SA and CHILD SA establish,
@@ -682,7 +707,8 @@ scenarios:
 
   - id: mixed-versions
     title: Released goat 0.5.18 with `goat federate` on one side, goatbuilder on the other
-    not_built: unit mixed comes with module 6
+    unit: {goatbuilder: mixed}
+    runs_where: local
     pass_condition: >
       {A} drives with the released goat 0.5.18 (units.mixed.goat_versions, or
       `env run --goat-version {A}=<version>`) through peering-standup.sh from its own clone of
@@ -714,7 +740,8 @@ scenarios:
 
   - id: rollback-tools
     title: A deployment rolled back to the previous release of the tools still works
-    not_built: unit rollback comes with module 6
+    unit: {goatbuilder: rollback}
+    runs_where: local
     pass_condition: >
       A peering deployed with the ref's tools (goatbuilder, phases 1-14, strict acceptance from
       both sides); then goat and goatbuilder on both sides replaced with the previous release

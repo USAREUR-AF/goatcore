@@ -177,7 +177,7 @@ start_host() { # $1 name, $2 sovereign, $3 internal ip
     --network "$NP-$s" --ip "$ip" \
     --tmpfs /run --tmpfs /run/lock -v /var/lib/docker -v /lib/modules:/lib/modules:ro \
     -v "$WORK/$s/keys:/etc/fed-e2e:ro" -v "$WORK/$s/origin.git:/srv/goat.git:ro" \
-    -v "$GOAT:/usr/local/bin/goat:ro" -v "$GB:/usr/local/bin/goatbuilder:ro" \
+    -v "$(goat_of "$s"):/usr/local/bin/goat:ro" -v "$GB:/usr/local/bin/goatbuilder:ro" \
     -e container=docker "$HOST_IMAGE" >/dev/null
 }
 
@@ -207,6 +207,33 @@ host_package() {
     sleep 10
   done
   return 1
+}
+
+# The goat binary one sovereign's hosts carry: GOAT_<id> when the environment pinned a
+# release for that sovereign (mixed versions), else the ref's own GOAT. A pin that did not
+# resolve ("unavailable:<version>") stops the run rather than quietly using the ref's goat.
+goat_of() { # $1 sovereign
+  local v="GOAT_$1" p
+  p="${!v:-}"
+  case "$p" in
+    "") echo "$GOAT" ;;
+    unavailable:*) die "goat ${p#unavailable:} for $1 is not published as a release asset" ;;
+    *) echo "$p" ;;
+  esac
+}
+
+# Replace goat and goatbuilder on a running host with other binaries (a rollback of the
+# tools): each is copied into the host and bind-mounted over the path the drivers call,
+# /usr/local/bin/goat and /usr/local/bin/goatbuilder. The binaries in the build cache are
+# not touched. $1 host, $2 goat, $3 goatbuilder.
+replace_tools() {
+  local h="$1" t
+  docker exec "$h" install -d -m 0755 /usr/local/lib/fe2e-tools
+  docker cp -q "$2" "$h:/usr/local/lib/fe2e-tools/goat"
+  docker cp -q "$3" "$h:/usr/local/lib/fe2e-tools/goatbuilder"
+  for t in goat goatbuilder; do
+    docker exec "$h" sh -c "chmod 0755 /usr/local/lib/fe2e-tools/$t && mount --bind /usr/local/lib/fe2e-tools/$t /usr/local/bin/$t"
+  done
 }
 
 wait_ready() { # $1 host: systemd up, dockerd answering
@@ -296,6 +323,13 @@ start_spire() { # $1 sovereign: the SPIRE server on its core host
   host_exec "$h" docker logs spire-server 2>&1 | tail -20 || true
   die "spire-server on $h did not become healthy"
 }
+
+# Network profile seams. A unit may redefine these after sourcing the engine. The
+# defaults are the direct path every other unit runs: the edge holds its own boundary
+# address and offers it, with the role's default MTU.
+offer_endpoint() { echo "$(boundary_ip "$1"):$(wgport "$1" "$2")"; } # $1 us, $2 them
+offer_mtu() { echo 1380; }                                           # $1 us, $2 them
+attach_boundary() { docker network connect --ip "$(boundary_ip "$1")" "$NP-boundary" "$HP-$1-edge"; } # $1 sovereign
 
 # --- the core router by the ref's goat-zenoh role (FE2E_CORE=role) ----------------------
 # What a real goatnet's core is: container <site_id>-zenoh-router, label
@@ -407,6 +441,19 @@ prepare_edge() { # $1 sovereign, $2 them, $3 "true" when this side listens
   host_exec "$h" install -d -m 0700 /root/.goat /root/.goat/contexts "$p"
   host_exec "$h" install -m 0644 /etc/fed-e2e/profile.pem "$p/mtls.cert.pem"
   host_exec "$h" install -m 0644 /etc/fed-e2e/ca.pem "$p/ca-roots.pem"
+  # The [data] halves, per side (the agreement-shapes units set them; run.sh does not):
+  #   FE2E_RELEASE_<sovereign>  a TOML array for `release`, or `none` to declare no send
+  #                             half (default: release/all/** and release/<them>/**)
+  #   FE2E_ACCEPT_<sovereign>   `no` to declare no receive half (default: the three accept_*)
+  local rel acc release_line accept_lines
+  eval "rel=\${FE2E_RELEASE_$s-}"; eval "acc=\${FE2E_ACCEPT_$s-yes}"
+  [ -n "$rel" ] || rel="[\"release/all/**\", \"release/$them/**\"]"
+  release_line="release                  = $rel"
+  [ "$rel" = none ] && release_line="# no send half: this side releases nothing"
+  accept_lines="accept_hz                = 100
+accept_bytes_per_message = 1048576
+accept_distinct_keys     = 5000"
+  [ "$acc" = no ] && accept_lines="# no receive half: this side accepts nothing"
   cat > "$WORK/$s/federation.toml" <<TOML
 sovereign_id = "$s"
 term_days    = 30
@@ -414,16 +461,14 @@ cut_contact  = "fed-ops@$s.test"
 
 [transport]
 interface            = "$(iface "$s" "$them")"
-endpoint             = "$(boundary_ip "$s"):$(wgport "$s" "$them")"
+endpoint             = "$(offer_endpoint "$s" "$them")"
 listener             = $listener
 proposed_link_subnet = "$(pair_subnet "$s" "$them")"
-measured_mtu         = 1380
+measured_mtu         = $(offer_mtu "$s" "$them")
 
 [data]
-release                  = ["release/all/**", "release/$them/**"]
-accept_hz                = 100
-accept_bytes_per_message = 1048576
-accept_distinct_keys     = 5000
+$release_line
+$accept_lines
 TOML
   docker cp -q "$WORK/$s/federation.toml" "$h:$p/federation.toml"
   host_exec "$h" install -d -m 0755 /var/lib/goat-federation "/var/lib/goat-federation/$them" "/var/lib/goat-federation/$them/pki"
@@ -606,7 +651,7 @@ setup_hosts() { # $1 scenario number
   for s in $(partner_list); do
     start_host "$HP-$s-core" "$s" "$(core_ip "$s")"
     start_host "$HP-$s-edge" "$s" "$(edge_ip "$s")"
-    docker network connect --ip "$(boundary_ip "$s")" "$NP-boundary" "$HP-$s-edge"
+    attach_boundary "$s"
   done
   for s in $(partner_list); do wait_ready "$HP-$s-core"; wait_ready "$HP-$s-edge"; done
   for s in $(partner_list); do start_core "$s"; done
@@ -626,26 +671,30 @@ setup_hosts() { # $1 scenario number
   done
 }
 
+# The avenue one side drives: the first side (and both, by default) drives $3; the other
+# side drives $4 when given. $1 the side, $2 the first side.
+side_avenue() { if [ "$1" != "$2" ] && [ -n "${4:-}" ]; then echo "$4"; else echo "$3"; fi; }
+
 # One peering, phases 1-14 from both sides. $1 scenario, $2 the side that listens and goes
-# first, $3 the other side, $4 avenue.
+# first, $3 the other side, $4 avenue, [$5 the other side's avenue, default $4].
 peer_up() {
-  local n="$1" first="$2" second="$3" avenue="$4" s them i
+  local n="$1" first="$2" second="$3" avenue="$4" avenue2="${5:-}" s them i
   i="$(iface "$first" "$second")"
   prepare_edge "$first" "$second" true
   prepare_edge "$second" "$first" false
   local want5="exchange through the directory"; nodir "$first" "$second" && want5="exchange packages by hand"
 
-  say "scenario $n: $first <-> $second phases 1-4, each side, up to the exchange ($avenue)"
+  say "scenario $n: $first <-> $second phases 1-4, each side, up to the exchange ($avenue${avenue2:+ and $avenue2})"
   for s in "$first" "$second"; do
     them="$([ "$s" = "$first" ] && echo "$second" || echo "$first")"
-    rec "s$n-$s-$them-phases-1-to-5" --expect-in "$want5" -- bash -c "drive '$s' '$them' '$avenue' 1 5"
+    rec "s$n-$s-$them-phases-1-to-5" --expect-in "$want5" -- bash -c "drive '$s' '$them' '$(side_avenue "$s" "$first" "$avenue" "$avenue2")' 1 5"
   done
   exchange "$first" "$second" "$avenue" "$n"
 
   say "scenario $n: $first <-> $second phases 6-9, each side, up to the review"
   for s in "$first" "$second"; do
     them="$([ "$s" = "$first" ] && echo "$second" || echo "$first")"
-    rec "s$n-$s-$them-phases-6-to-10" --expect-in "review what apply rendered" -- bash -c "drive '$s' '$them' '$avenue' 6 10"
+    rec "s$n-$s-$them-phases-6-to-10" --expect-in "review what apply rendered" -- bash -c "drive '$s' '$them' '$(side_avenue "$s" "$first" "$avenue" "$avenue2")' 6 10"
   done
   rec "s$n-$first-$second-both-sides-hold-one-agreement" -- bash -c \
     "a=\$(docker exec $HP-$first-edge sha256sum /var/lib/goat-federation/$second/agreement.json | cut -d' ' -f1); b=\$(docker exec $HP-$second-edge sha256sum /var/lib/goat-federation/$first/agreement.json | cut -d' ' -f1); echo \"\$a \$b\"; [ -n \"\$a\" ] && [ \"\$a\" = \"\$b\" ]"
@@ -656,7 +705,7 @@ peer_up() {
   say "scenario $n: $first <-> $second phases 11-12, each side: the transport, the edge, the republisher"
   for s in "$first" "$second"; do
     them="$([ "$s" = "$first" ] && echo "$second" || echo "$first")"
-    rec "s$n-$s-$them-phases-11-to-12" --expect-in "open the wireguard transport" --expect-in "goat-fed-republisher-$them is running" -- bash -c "drive '$s' '$them' '$avenue' 11 12"
+    rec "s$n-$s-$them-phases-11-to-12" --expect-in "open the wireguard transport" --expect-in "goat-fed-republisher-$them is running" -- bash -c "drive '$s' '$them' '$(side_avenue "$s" "$first" "$avenue" "$avenue2")' 11 12"
     rec "s$n-$s-$them-republisher-maps-both-sets" --expect-in "release release/all/** -> wire from/$s/all/**" --expect-in "release release/$them/** -> wire from/$s/$them/**" \
       -- docker exec "$HP-$s-core" docker logs "goat-fed-republisher-$them"
   done
@@ -667,7 +716,7 @@ peer_up() {
   say "scenario $n: $first <-> $second phase 13, each side: the SPIRE trust domains"
   for s in "$first" "$second"; do
     them="$([ "$s" = "$first" ] && echo "$second" || echo "$first")"
-    rec "s$n-$s-$them-phase-13" --expect-in "federate the SPIRE trust domains" -- bash -c "drive '$s' '$them' '$avenue' 13 13"
+    rec "s$n-$s-$them-phase-13" --expect-in "federate the SPIRE trust domains" -- bash -c "drive '$s' '$them' '$(side_avenue "$s" "$first" "$avenue" "$avenue2")' 13 13"
   done
 
   say "scenario $n: $first <-> $second phase 14 from both sides, positives and refusals together"
@@ -679,15 +728,15 @@ peer_up() {
     start_probe "$s" "$them" forged /etc/fed-e2e/forged.pem /etc/fed-e2e/forged-key.pem "$(probe_port "$s" "$them" 8102)"
     start_probe "$s" "$them" impersonate "/etc/fed-e2e/impersonate-$them.pem" "/etc/fed-e2e/impersonate-$them-key.pem" "$(probe_port "$s" "$them" 8103)"
   done
-  accept_pair "$n" "$first" "$second" "$avenue" ""
+  accept_pair "$n" "$first" "$second" "$avenue" "" "$avenue2"
 }
 
-accept_pair() { # $1 scenario, $2 a, $3 b, $4 avenue, $5 label suffix
-  local n="$1" a="$2" b="$3" avenue="$4" sfx="$5" s them
+accept_pair() { # $1 scenario, $2 a, $3 b, $4 avenue, $5 label suffix, [$6 b's avenue, default $4]
+  local n="$1" a="$2" b="$3" avenue="$4" sfx="$5" avenue2="${6:-}" s them
   for s in "$a" "$b"; do
     them="$([ "$s" = "$a" ] && echo "$b" || echo "$a")"
     rec "s$n-acceptance-as-$s-with-$them$sfx" --expect-in "acceptance-counts:" --expect-in "skip=0" --expect-in "fail=0" --expect-not-in "ACCEPTANCE FAILED" \
-      -- bash -c "accept_as '$s' '$them' '$avenue'"
+      -- bash -c "accept_as '$s' '$them' '$(side_avenue "$s" "$a" "$avenue" "$avenue2")'"
   done
 }
 

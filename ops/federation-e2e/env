@@ -7,7 +7,7 @@
 #                                                 bring a pair up and federate it; leave it running
 #   env down   [--lab N | --all]                  remove what this environment created, and nothing else
 #   env run    --ref REF [--avenue script|goatbuilder|both] [--scenario ID[,ID]|all]
-#              [--jobs N] [--out DIR] [--name NAME] [--merged NAME@SHA]...
+#              [--jobs N] [--out DIR] [--name NAME] [--merged NAME@SHA]... [--goat-version ID=VER]...
 #                                                 run scenarios; write results.json and a page per avenue
 #   env list                                      the scenarios, where each runs, and its pass condition
 #   env status                                    the labs in use and what holds them
@@ -101,6 +101,78 @@ fingerprint() { # $1 harness ops/federation-e2e dir, $2 scenario subset
 }
 host_tag() { echo "fe2e-host:$(cd "$HERE/host" && cat Dockerfile daemon.json fed-e2e-keys.service | sha256sum | cut -c1-12)"; }
 
+# Released tools, from goatcore's GitHub releases. The tags are goat-cli-v<ver> and
+# goatbuilder/v<ver>; each release carries <tool>-linux-amd64 and <tool>-linux-amd64.sha256.
+RELEASES_API="https://api.github.com/repos/usareur-af/goatcore/releases?per_page=100"
+release_tag() { case "$1" in goat) echo "goat-cli-v$2" ;; goatbuilder) echo "goatbuilder/v$2" ;; esac; }
+release_tool() { # $1 goat|goatbuilder, $2 version -> path, or fails with the reason on stderr
+  local t="$1" v="$2" d tag url sum
+  d="$FE2E_HOME/release/$t-$v"; tag="$(release_tag "$t" "$v")"
+  [ -x "$d/$t" ] && { echo "$d/$t"; return 0; }
+  mkdir -p "$d" "$FE2E_HOME/locks"
+  lock "$FE2E_HOME/locks/release-$t-$v"
+  url="https://github.com/usareur-af/goatcore/releases/download/$(echo "$tag" | sed 's|/|%2F|g')/$t-linux-amd64"
+  if [ ! -x "$d/$t" ] && curl -fsSL -o "$d/$t.tmp" "$url" && sum="$(curl -fsSL "$url.sha256" | cut -d' ' -f1)" \
+     && [ "$(sha256sum "$d/$t.tmp" | cut -d' ' -f1)" = "$sum" ]; then
+    chmod +x "$d/$t.tmp"; mv "$d/$t.tmp" "$d/$t"
+  fi
+  rm -f "$d/$t.tmp"; unlock "$FE2E_HOME/locks/release-$t-$v"
+  [ -x "$d/$t" ] && { echo "$d/$t"; return 0; }
+  echo "$t $v is not published as a release asset ($tag, $t-linux-amd64 with a matching .sha256)" >&2; return 1
+}
+release_goat() { release_tool goat "$1"; }
+# A tool built from a release tag's commit, for a release whose binary is not published.
+release_built() { # $1 goat|goatbuilder, $2 version -> path, or fails
+  local tag sha; tag="$(release_tag "$1" "$2")"
+  sha="$(git -C "$REPO" rev-parse -q --verify "$tag^{commit}" 2>/dev/null)" \
+    || { echo "no tag $tag in this repository (git fetch --tags first?)" >&2; return 1; }
+  ( build "$sha" ) >&2 || return 1
+  echo "$FE2E_HOME/bin/$sha/$1"
+}
+previous_release() { # $1 goat|goatbuilder, $2 version -> the newest published version older than it
+  local list; list="$(curl -fsSL "$RELEASES_API")" || { echo "the release list did not answer" >&2; return 1; }
+  printf '%s' "$list" | python3 -c '
+import json, re, sys
+pre = {"goat": "goat-cli-v", "goatbuilder": "goatbuilder/v"}[sys.argv[1]]
+key = lambda v: tuple(int(x) for x in v.split("."))
+ref = key(sys.argv[2]); best = None
+for r in json.load(sys.stdin):
+    t = r.get("tag_name", "")
+    if r.get("draft") or r.get("prerelease") or not t.startswith(pre): continue
+    v = t[len(pre):]
+    if not re.fullmatch(r"[0-9]+(\.[0-9]+)*", v) or key(v) >= ref: continue
+    if best is None or key(v) > key(best): best = v
+if best is None: sys.exit("no published %s release older than %s" % (sys.argv[1], sys.argv[2]))
+print(best)' "$1" "$2"
+}
+crate_version() { # $1 tree, $2 crate directory under crates/ -> its version
+  sed -n 's/^version = "\(.*\)"/\1/p' "$1/crates/$2/Cargo.toml" | head -1
+}
+# What a unit needs beyond the ref's own tools, resolved before it starts: the --goat-version
+# pins, else the unit's catalog goat_versions; and with previous_release, the newest published
+# goat and goatbuilder older than the ref's. Prints NAME=VALUE words (no spaces) for env(1).
+unit_tools() { # $1 unit, $2 sha
+  local unit="$1" sha="$2" kv ids="" p t T crate ref v
+  for kv in ${GOAT_VERSIONS:-}; do ids="$ids ${kv%%=*}"; echo "GOAT_${kv%%=*}=${kv#*=}"; done
+  for kv in ${GOAT_VERSIONS_ASKED:-}; do echo "GOAT_VERSION_${kv%%=*}=${kv#*=}"; done
+  for kv in $(catalog_unit_field "$unit" goat_versions); do
+    case " $ids " in *" ${kv%%=*} "*) continue ;; esac
+    if p="$(release_goat "${kv#*=}" 2>/dev/null)"; then echo "GOAT_${kv%%=*}=$p"; else echo "GOAT_${kv%%=*}=unavailable:${kv#*=}"; fi
+    echo "GOAT_VERSION_${kv%%=*}=${kv#*=}"
+  done
+  case "$(catalog_unit_field "$unit" previous_release)" in True|true) ;; *) return 0 ;; esac
+  for t in goat goatbuilder; do
+    if [ "$t" = goat ]; then T=GOAT; crate=goat-cli; else T=GB; crate=goatbuilder; fi
+    ref="$(crate_version "$FE2E_HOME/src/$sha" "$crate")"
+    echo "FE2E_REF_${T}_VERSION=$ref"
+    if ! v="$(previous_release "$t" "$ref" 2>&1)"; then echo "FE2E_PREV_${T}=unavailable:$(echo "$v" | tail -1 | tr ' ' _)"; continue; fi
+    echo "FE2E_PREV_${T}_VERSION=$v"
+    if p="$(release_tool "$t" "$v" 2>/dev/null)"; then echo "FE2E_PREV_${T}=$p"; echo "FE2E_PREV_${T}_FROM=release-asset"
+    elif p="$(release_built "$t" "$v" 2>/dev/null)"; then echo "FE2E_PREV_${T}=$p"; echo "FE2E_PREV_${T}_FROM=built-from-tag"
+    else echo "FE2E_PREV_${T}=unavailable:${t}_${v}_is_neither_published_nor_buildable_from_its_tag"; fi
+  done
+}
+
 # --- labs -----------------------------------------------------------------------------------
 # A lab's lock holds the pid of the process running in it. Only a numeric pid that no longer
 # runs marks a lab as stale; anything else (a lab held by `up`) is left for `down`.
@@ -152,17 +224,29 @@ print((cat.get("units") or {}).get(sys.argv[2], {}).get("parties", cat.get("para
 PY
 }
 
+catalog_unit_field() { # $1 unit, $2 field -> its value under units:, or nothing
+  python3 - "$CATALOG" "$1" "$2" <<'PY'
+import sys, yaml
+cat = yaml.safe_load(open(sys.argv[1]))
+v = (cat.get("units") or {}).get(sys.argv[2], {}).get(sys.argv[3])
+print("" if v is None else v)
+PY
+}
+
 run_unit() { # $1 unit, $2 avenue, $3 sha, $4 run dir, $5 lab (taken), [$6 keep]
   local unit="$1" av="$2" sha="$3" run="$4" lab="$5" keep="${6:-0}" rec work parties
   rec="$run/$av/$unit"; work="$run/work/$av-$unit"
   rm -rf "$rec" "$work"; mkdir -p "$rec" "$work"
   parties="$(catalog_parties "$unit")"
   say "unit $unit, avenue $av, lab $lab, parties $parties"
+  local extra=() kv
+  for kv in $(unit_tools "$unit" "$sha"); do extra+=("$kv"); done
+  printf '%s\n' ${extra[@]+"${extra[@]}"} > "$rec/tools.txt"
   # shellcheck disable=SC2046
   env $(lab_env "$lab") FE2E_PARTIES="$parties" FE2E_HOST_IMAGE="$(host_tag)" \
     FE2E_RP_TAG="fe2e-republisher:${sha:0:12}" RP_IMAGE="$(rp_id "$sha")" \
     SRC="$FE2E_HOME/src/$sha" GOAT="$FE2E_HOME/bin/$sha/goat" GB="$FE2E_HOME/bin/$sha/goatbuilder" \
-    AVENUE="$av" WORK="$work" RECORD="$rec" KEEP="$keep" \
+    AVENUE="$av" WORK="$work" RECORD="$rec" KEEP="$keep" ${extra[@]+"${extra[@]}"} \
     bash "$run/harness/ops/federation-e2e/lib/unit.sh" "$unit" > "$rec/unit.log" 2>&1 || true
   [ "$keep" = 1 ] || lab_clean "$lab"
   echo "$(grep -c '"status": "pass"' "$rec/report.jsonl" 2>/dev/null || echo 0) passed, $(grep -c '"status": "fail"' "$rec/report.jsonl" 2>/dev/null || echo 0) failed: $unit/$av" >&2
@@ -273,7 +357,7 @@ for s in cat["scenarios"]:
 PY
 }
 
-REF=""; AVENUE="both"; SCENARIOS="all"; OUT=""; NAME=""; LAB_N=""; ALL=0; MERGED=""
+REF=""; AVENUE="both"; SCENARIOS="all"; OUT=""; NAME=""; LAB_N=""; ALL=0; MERGED=""; GOAT_VERSIONS=""
 CMD="${1:-}"; [ -n "$CMD" ] || usage 2; shift
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -286,12 +370,23 @@ while [ $# -gt 0 ]; do
     --lab) LAB_N="$2"; shift 2 ;;
     --all) ALL=1; shift ;;
     --merged) MERGED="$MERGED $2"; shift 2 ;;
+    --goat-version) GOAT_VERSIONS="$GOAT_VERSIONS $2"; shift 2 ;;
     --parties) export FE2E_UP_PARTIES="$2"; shift 2 ;;
     -h|--help) usage 0 ;;
     *) die "unknown argument $1" ;;
   esac
 done
 [ -n "$NAME" ] || NAME="${REF#origin/}"
+# Pinned released goat per sovereign: resolve to binaries before any unit starts.
+GOAT_VERSIONS_ASKED="$GOAT_VERSIONS"
+if [ -n "$GOAT_VERSIONS" ]; then
+  resolved=""
+  for kv in $GOAT_VERSIONS; do
+    if p="$(release_goat "${kv#*=}")"; then resolved="$resolved ${kv%%=*}=$p"; else resolved="$resolved ${kv%%=*}=unavailable:${kv#*=}"; fi
+  done
+  GOAT_VERSIONS="$resolved"
+fi
+export GOAT_VERSIONS GOAT_VERSIONS_ASKED
 case "$CMD" in
   build) [ -n "$REF" ] || die "build needs --ref"; cmd_build ;;
   run) [ -n "$REF" ] || die "run needs --ref"; cmd_run ;;

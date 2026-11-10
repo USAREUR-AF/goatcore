@@ -11,6 +11,7 @@
 #   SRC       the goatcore tree under test        GOAT, GB  its built binaries
 #   AVENUE    script | goatbuilder                WORK, RECORD  this unit's directories
 #   KEEP      1 leaves the lab up                 FE2E_HOST_IMAGE, FE2E_RP_TAG, RP_IMAGE
+#   GOAT_<id> a goat binary for one sovereign only (mixed versions)
 #
 # The unit writes into RECORD: report.jsonl (rec.py), marks.jsonl (mark), and stopped.json
 # when it ends before its last step, so that verdict.py tells BLOCKED from SKIP.

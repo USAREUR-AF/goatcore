@@ -12,7 +12,6 @@ The federation e2e environment runs synthetic sovereign environments on one Linu
 | `env` entry point, units, scenario catalog, matrix page, watcher | Built |
 | Scenarios in the catalog marked `not_built:` | Not built; each entry names why |
 | Core router deployed by the `goat-zenoh` role | Built: `FE2E_CORE=role` (unit `pair-role`, scenarios `core-by-role`, `preflight-slot-list`); the default stays the hand-run router until the other units pass under it |
-| Units `ipsec`, `mixed`, `rollback`, `forwarder`, `preflight`, `killresume`, `nodesec`, `shapes-oneway`, `shapes-asym` | Not built in this change; module 6 adds them. Their scenarios are in the catalog as `not_built:` |
 | Running the same scenarios on real hosts through `live-host.sh` | Designed, not built (§Real hosts) |
 
 ## Run one scenario on your own machine
@@ -67,17 +66,17 @@ The engine reads these names from `FE2E_*` variables (header of `lib/engine.sh`)
 | Profile | Built how | Status |
 |---|---|---|
 | Listening edge, direct path | the listener's boundary address is reachable on the tunnel port | Built (unit `pair`) |
-| Edge behind NAT, no inbound; forwarder path | a NAT router holds the edge's boundary address (outbound masquerade, nothing inbound); the party's forwarder host on the boundary, applied by `goat-peering-forwarder` and `peering_wg_via_forwarder` | Not built in this change; module 6 adds unit `forwarder` |
-| UDP 51820 already held on an edge | a process holding the port before phase 1 | Not built in this change; module 6 adds unit `preflight` |
+| Edge behind NAT, no inbound; forwarder path | a NAT router holds the edge's boundary address (outbound masquerade, nothing inbound); the party's forwarder host on the boundary, applied by `goat-peering-forwarder` and `peering_wg_via_forwarder` | Built (unit `forwarder`); the drivers do not apply the forwarder, so the unit runs the operator's three plays |
+| UDP 51820 already held on an edge | a process holding the port before phase 1 | Being built |
 | WireGuard transport | `goat-peering-wg` | Built |
-| IPsec transport | `goat-peering-edge` (strongSwan, XFRM) under a waiver | Not built in this change; module 6 adds unit `ipsec` |
+| IPsec transport | `goat-peering-edge` (strongSwan, XFRM) under a waiver | Built (unit `ipsec`): IKE and the child SA between two edge hosts are measured here; the federation path is BLOCKED on a ref whose init offers `ipsec-fips` only on a FIPS kernel and whose phase 11 cannot apply `goat-peering-edge` |
 | Stock Ubuntu 26.04 AppArmor | `FE2E_WG_APPARMOR=host` keeps the machine's `wg` profile in force | Built (unit `apparmor`) |
 
 The machine's AppArmor profile `wg` (shipped by Ubuntu 26.04 LTS in `/etc/apparmor.d/wg`) attaches by path to `/usr/bin/wg` in every container and permits key files only under `/etc/wireguard`. `goat-peering-wg` keeps its key at `/etc/goat-peering-wg/<interface>.key`, so on such a machine the tunnel unit fails with `fopen: Permission denied`. By default the engine copies `wg` to `/usr/local/sbin` inside each host, which runs unconfined, as on a host without that profile. Scenario `ubuntu-2604-apparmor` runs without that copy.
 
 ## Units and scenarios
 
-A unit brings sovereigns up once in one lab and records steps; several scenarios read one unit's steps. This keeps the number of bring-ups small: the two-party unit alone feeds six scenarios.
+A unit brings sovereigns up once in one lab and records steps; several scenarios read one unit's steps. This keeps the number of bring-ups small: the two-party unit alone feeds eight scenarios.
 
 | File | Holds |
 |---|---|
@@ -107,7 +106,7 @@ A scenario takes the worst required outcome in the order FAIL, BLOCKED, SKIP; NO
 GitHub runners can run privileged containers with the `wireguard` module, but have four cores and a job time limit. The split:
 
 - **CI** (`.github/workflows/federation-e2e.yml`): `ops/ci/check-federation-e2e-harness.sh` (the catalog and the verdict's outcome rules on fixtures, no Docker), run.sh's prepare-only, and run.sh's scenarios 1 to 3, which record the steps of `two-party-full` (`runs_where: ci`) on both avenues.
-- **Local** (`runs_where: local`), on one Linux machine: every other built scenario, including the pair unit's own checks (out-of-lane, identity, acceptance exit status, reruns), persistent reception and the republisher boundary on the role-deployed core, three sovereigns, the stock AppArmor profile, and the integration preview. `lib/watch.sh` runs these on every new head. Running the pair unit itself in CI through `env` is designed, not built. The scenarios for four sovereigns, NAT and the forwarder, held ports, killing the driver at each phase, released binaries, IPsec and node ports are in the catalog as `not_built:` until module 6 adds their units.
+- **Local** (`runs_where: local`), on one Linux machine: every other scenario, including the pair unit's own checks (persistent reception, the republisher boundary, out-of-lane, identity, acceptance exit status, reruns), three or four sovereigns, NAT and the forwarder, held ports, killing the driver at each phase, released binaries, IPsec, node ports, and the integration preview. `lib/watch.sh` runs these on every new head. Running the pair unit itself in CI through `env` is designed, not built.
 
 `env list` prints each scenario's place.
 
