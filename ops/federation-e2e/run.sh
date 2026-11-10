@@ -226,10 +226,11 @@ wait_ready() { # $1 host: systemd up, dockerd answering
 }
 
 start_core() { # $1 sovereign: seed config, bootstrap cert, the router and the SPIRE server
-  local s="$1" h="fed-$1-core" them; them="$(partners "$s" | awk '{print $1}')"
+  local s="$1" h="fed-$1-core" them extra; them="$(partners "$s" | awk '{print $1}')"
   sed "s/__THEM__/$them/g; s/__US__/$s/g; s/__CORE_LISTEN__/0.0.0.0/; s/__CORE_REST__/0.0.0.0/" "$HERE/core-seed.json5" > "$WORK/$s/core-seed.json5"
   # A later partner's landing and not-granted prefixes are held the same way.
-  python3 - "$WORK/$s/core-seed.json5" $(partners "$s" | cut -s -d' ' -f2-) <<'PY'
+  read -r -a extra <<< "$(partners "$s" | cut -s -d' ' -f2-)"
+  python3 - "$WORK/$s/core-seed.json5" ${extra[@]+"${extra[@]}"} <<'PY'
 import sys
 path, extra = sys.argv[1], sys.argv[2:]
 out = []
@@ -497,7 +498,7 @@ setup_hosts() { # $1 scenario number
 # One peering, phases 1-14 from both sides. $1 scenario, $2 the side that listens and goes
 # first, $3 the other side, $4 avenue.
 peer_up() {
-  local n="$1" first="$2" second="$3" avenue="$4" s them i probes
+  local n="$1" first="$2" second="$3" avenue="$4" s them i
   i="$(iface "$first" "$second")"
   prepare_edge "$first" "$second" true
   prepare_edge "$second" "$first" false
