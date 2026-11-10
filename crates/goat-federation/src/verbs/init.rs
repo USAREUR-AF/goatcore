@@ -148,6 +148,12 @@ pub fn measure_here(interface: Option<&str>) -> anyhow::Result<derive::Measured>
         pqc_capable: derive::pqc_capable(),
         public_key: interface.map(derive::transport_public_key),
         interface_mtu: interface.and_then(derive::interface_mtu),
+        // Run on the core, this reads the SPIRE server's own config; anywhere
+        // else it is absent and the profile alone must name the trust domain.
+        spire_trust_domain: Some(derive::spire_trust_domain_on(
+            &derive::Local,
+            derive::SPIRE_SERVER_CONF,
+        )),
     })
 }
 
@@ -264,15 +270,15 @@ pub fn run_init_measured(
         ),
     ));
 
-    // --- identity, from our own credentials ---
-    let td = derive::trust_domain(&site.cert_path);
-    let cafp = derive::ca_fingerprint(&site.ca_roots_path, &site.cert_path);
     // --- capabilities, measured ---
     let interface = match (&decl.transport, a.with_transport) {
         (Some(t), true) => Some(t.interface.as_str()),
         _ => None,
     };
     let measured = measure(interface)?;
+    // --- identity, from our own credentials, and the core's SPIRE server ---
+    let td = derive::resolve_trust_domain(&site.cert_path, measured.spire_trust_domain.as_ref());
+    let cafp = derive::ca_fingerprint(&site.ca_roots_path, &site.cert_path);
     let transports = measured.transports;
     let (fips, version) = (measured.fabric_fips_image, measured.fabric_version);
     let pqc = measured.pqc_capable;
@@ -711,6 +717,7 @@ mod tests {
                 source: "on edge-a".into(),
             }),
             interface_mtu: interface.map(|_| 1420),
+            spire_trust_domain: None,
         }
     }
 

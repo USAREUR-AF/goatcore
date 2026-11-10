@@ -108,8 +108,9 @@ pub fn is_read_only_probe(bin: &str, args: &[&str]) -> bool {
             container_name(id)
         }
         ("cat", ["--", path]) => {
-            (path.starts_with("/proc/sys/crypto/") || path.starts_with("/sys/class/net/"))
-                && !path.contains("..")
+            ((path.starts_with("/proc/sys/crypto/") || path.starts_with("/sys/class/net/"))
+                && !path.contains(".."))
+                || spire_conf_path(path)
         }
         _ => false,
     }
@@ -185,8 +186,78 @@ impl<T> Derived<T> {
 /// `identity.trust_domain` — the SPIFFE trust domain out of the profile leaf
 /// certificate's URI subject-alternative name. Derived rather than declared
 /// because the certificate is what a counterparty's edge will actually see.
+///
+/// A profile with no `spiffe://` URI-SAN fails here. [`resolve_trust_domain`]
+/// also takes the core's SPIRE server, which a portal-minted profile needs.
 pub fn trust_domain(cert_pem: &Path) -> Derived<String> {
+    resolve_trust_domain(cert_pem, None)
+}
+
+/// `identity.trust_domain`, from the profile leaf and, when given, from the
+/// trust domain the core's SPIRE server runs ([`spire_trust_domain_on`]).
+///
+/// A portal-minted profile (`cert-sign`, the goatnet's offline CA) carries
+/// `urn:goat:<site>:org=<anchor>` and never a SPIFFE ID (#247,
+/// `ops/grant-crypto/keyd/src/portal.rs`). The trust domain the agreement pins
+/// is the one SPIRE federates in phase 13, so SPIRE is a source of the same
+/// fact, not a fallback guess:
+///
+/// - the profile's `spiffe://` URI-SAN, when it has one, as before; it must
+///   agree with SPIRE when SPIRE was read;
+/// - otherwise SPIRE's `server.trust_domain`;
+/// - a profile that cannot be read fails as before, whatever SPIRE says: the
+///   same certificate selects `identity.ca_fingerprint`.
+pub fn resolve_trust_domain(cert_pem: &Path, spire: Option<&Derived<String>>) -> Derived<String> {
     const FIELD: &str = "identity.trust_domain";
+    let src = cert_pem.display().to_string();
+    let (profile, uris) = match profile_spiffe_domain(cert_pem) {
+        Ok(found) => found,
+        Err(why) => return Derived::fail(FIELD, why, src),
+    };
+    let spire_ok = spire.and_then(|s| s.outcome.as_ref().ok().map(|v| (v, &s.source)));
+    match (profile, spire_ok) {
+        (Some(p), Some((s, s_src))) if &p != s => Derived::fail(
+            FIELD,
+            format!(
+                "the profile certificate names `{p}` but the SPIRE server ({s_src}) runs `{s}`. \
+                 The agreement pins one trust domain and SPIRE federates exactly what it runs, \
+                 so one of the two is wrong; fix it rather than choose"
+            ),
+            format!("{src} URI-SAN"),
+        ),
+        (Some(p), Some((_, s_src))) => {
+            Derived::ok(FIELD, p, format!("{src} URI-SAN, matching {s_src}"))
+        }
+        (Some(p), None) => Derived::ok(FIELD, p, format!("{src} URI-SAN")),
+        (None, Some((s, s_src))) => Derived::ok(
+            FIELD,
+            s.clone(),
+            format!("{s_src} (the profile certificate {src} carries no SPIFFE ID: {uris:?})"),
+        ),
+        (None, None) => {
+            let spire_why = match spire {
+                Some(Derived { outcome: Err(e), source, .. }) => {
+                    format!(" The core's SPIRE server could not answer either ({source}): {e}")
+                }
+                _ => String::new(),
+            };
+            Derived::fail(
+                FIELD,
+                format!(
+                    "the profile certificate carries no `spiffe://` URI-SAN (it has {uris:?}), \
+                     and no SPIRE server trust domain was read.{spire_why} A portal-minted \
+                     profile never carries a SPIFFE ID; measure the core (goatbuilder federate \
+                     init --over-ssh), or run init where the SPIRE server config is readable"
+                ),
+                src,
+            )
+        }
+    }
+}
+
+/// The profile leaf's `spiffe://<domain>` (domain only), or `None` with the
+/// URI-SANs it has instead. `Err` when the certificate cannot be read at all.
+fn profile_spiffe_domain(cert_pem: &Path) -> Result<(Option<String>, Vec<String>), String> {
     let src = cert_pem.display().to_string();
     // NotFound/IsADirectory/PermissionDenied were all collapsed into one
     // "run profile init" remedy — correct for the first, wrong for the
@@ -195,31 +266,23 @@ pub fn trust_domain(cert_pem: &Path) -> Derived<String> {
     let bytes = match std::fs::read(cert_pem) {
         Ok(b) => b,
         Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
-            return Derived::fail(
-                FIELD,
-                format!(
-                    "profile certificate at {src} exists but is not readable by this user \
-                     (permission denied) — fix ownership/permissions, not `profile init`"
-                ),
-                src,
-            );
+            return Err(format!(
+                "profile certificate at {src} exists but is not readable by this user \
+                 (permission denied) — fix ownership/permissions, not `profile init`"
+            ));
         }
         Err(_) => {
-            return Derived::fail(
-                FIELD,
-                format!(
-                    "no profile certificate at {src}. Run `goat profile init <bundle.cbor>` first"
-                ),
-                src,
-            );
+            return Err(format!(
+                "no profile certificate at {src}. Run `goat profile init <bundle.cbor>` first"
+            ));
         }
     };
     let Ok(pem) = pem::parse(&bytes) else {
-        return Derived::fail(FIELD, "the profile certificate is not readable PEM", src);
+        return Err("the profile certificate is not readable PEM".into());
     };
     let der = pem.contents();
     let Ok((_, cert)) = x509_parser::parse_x509_certificate(der) else {
-        return Derived::fail(FIELD, "the profile certificate is not readable X.509", src);
+        return Err("the profile certificate is not readable X.509".into());
     };
     let mut uris: Vec<String> = Vec::new();
     if let Ok(Some(san)) = cert.tbs_certificate.subject_alternative_name() {
@@ -229,37 +292,161 @@ pub fn trust_domain(cert_pem: &Path) -> Derived<String> {
             }
         }
     }
-    let spiffe = uris.iter().find(|u| u.starts_with("spiffe://"));
-    match spiffe {
-        Some(u) => {
-            // spiffe://<trust-domain>/<path…> — the trust domain is the
-            // authority component and nothing below it.
-            let rest = &u["spiffe://".len()..];
-            let domain = rest.split('/').next().unwrap_or_default();
-            if domain.is_empty() {
-                return Derived::fail(
-                    FIELD,
-                    format!("the URI-SAN `{u}` names no trust domain"),
-                    src,
-                );
-            }
-            Derived::ok(
-                FIELD,
-                format!("spiffe://{domain}"),
-                format!("{src} URI-SAN"),
-            )
-        }
-        None => Derived::fail(
+    let Some(u) = uris.iter().find(|u| u.starts_with("spiffe://")) else {
+        return Ok((None, uris));
+    };
+    // spiffe://<trust-domain>/<path…> — the trust domain is the authority
+    // component and nothing below it.
+    let rest = &u["spiffe://".len()..];
+    let domain = rest.split('/').next().unwrap_or_default();
+    if domain.is_empty() {
+        return Err(format!("the URI-SAN `{u}` names no trust domain"));
+    }
+    Ok((Some(format!("spiffe://{domain}")), uris))
+}
+
+// ---------------------------------------------------------------------------
+// Identity — the core's SPIRE server
+// ---------------------------------------------------------------------------
+
+/// Where the spire role renders the server's config:
+/// `{{ spire_config_dir }}/server.conf`, `spire_config_dir` defaulting to
+/// `/opt/spire/config` (ops/ansible/roles/spire/defaults/main.yml).
+pub const SPIRE_SERVER_CONF: &str = "/opt/spire/config/server.conf";
+
+/// A SPIRE server config path [`is_read_only_probe`] lets a remote probe read:
+/// a `server.conf` under `/opt/spire/` or `/etc/spire/`, and nothing that walks
+/// out of either. The rendered file holds no secret (the database password is
+/// an `${SPIRE_DB_PASSWORD}` placeholder expanded from the container's
+/// environment), and only `server.trust_domain` is taken from it; the file is
+/// never printed.
+pub fn spire_conf_path(path: &str) -> bool {
+    (path.starts_with("/opt/spire/") || path.starts_with("/etc/spire/"))
+        && path.ends_with("/server.conf")
+        && !path.contains("..")
+        && !path.contains("//")
+        && path
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "/_.-".contains(c))
+}
+
+/// The trust domain the core's SPIRE server runs, `spiffe://<domain>`, from
+/// `server { trust_domain = "…" }` in `conf_path`, read through `probe`.
+pub fn spire_trust_domain_on(probe: &dyn Probe, conf_path: &str) -> Derived<String> {
+    const FIELD: &str = "identity.trust_domain";
+    let src = format!("{conf_path} server.trust_domain{}", at(probe));
+    if !spire_conf_path(conf_path) {
+        return Derived::fail(
             FIELD,
-            format!(
-                "the profile certificate carries no `spiffe://` URI-SAN (it has {uris:?}). The \
-                 trust domain is read from the certificate a counterparty's edge will actually \
-                 see, so there is nowhere else to take it from"
-            ),
+            format!("`{conf_path}` is not a SPIRE server config path this reads"),
             src,
-        ),
+        );
+    }
+    let text = match probe.read_file(conf_path) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Derived::fail(FIELD, format!("no SPIRE server config at {conf_path}"), src);
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+            return Derived::fail(
+                FIELD,
+                format!("the SPIRE server config at {conf_path} is not readable (permission denied)"),
+                src,
+            );
+        }
+        Err(e) => {
+            return Derived::fail(FIELD, format!("{conf_path} could not be read: {e}"), src);
+        }
+    };
+    match server_trust_domain(&text) {
+        Ok(d) => Derived::ok(FIELD, format!("spiffe://{d}"), src),
+        Err(why) => Derived::fail(FIELD, format!("{conf_path}: {why}"), src),
     }
 }
+
+/// `line` up to a `#` or `//` comment outside a quoted string. Braces inside
+/// quotes are left for the caller, which counts only what is outside them.
+fn strip_hcl_comment(line: &str) -> &str {
+    let bytes = line.as_bytes();
+    let mut in_quote = false;
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\\' if in_quote => i += 1,
+            b'"' => in_quote = !in_quote,
+            b'#' if !in_quote => return &line[..i],
+            b'/' if !in_quote && bytes.get(i + 1) == Some(&b'/') => return &line[..i],
+            _ => {}
+        }
+        i += 1;
+    }
+    line
+}
+
+/// `trust_domain` in the top-level `server` block of a SPIRE server config
+/// (HCL), validated as a SPIFFE trust domain name. Only that one attribute is
+/// read; the error never quotes the file.
+fn server_trust_domain(text: &str) -> Result<String, String> {
+    let mut depth: usize = 0;
+    let mut in_server = false;
+    let mut found: Option<String> = None;
+    for raw in text.lines() {
+        let line = strip_hcl_comment(raw).trim();
+        if depth == 0 {
+            let head = line.trim_end_matches('{').trim();
+            if line.ends_with('{') && head == "server" {
+                in_server = true;
+            }
+        } else if depth == 1 && in_server {
+            if let Some(rest) = line.strip_prefix("trust_domain") {
+                let rest = rest.trim_start();
+                if let Some(v) = rest.strip_prefix('=') {
+                    let v = v.trim();
+                    let Some(v) = v.strip_prefix('"').and_then(|v| v.strip_suffix('"')) else {
+                        return Err("server.trust_domain is not a quoted string".into());
+                    };
+                    if found.is_some() {
+                        return Err("server.trust_domain is set more than once".into());
+                    }
+                    found = Some(v.to_string());
+                }
+            }
+        }
+        let mut in_quote = false;
+        for c in line.chars() {
+            match c {
+                '"' => in_quote = !in_quote,
+                _ if in_quote => {}
+                '{' => depth += 1,
+                '}' => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        in_server = false;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    let Some(domain) = found else {
+        return Err("no trust_domain in a top-level `server` block".into());
+    };
+    // SPIFFE trust domain names: lowercase letters, digits, `.`, `-`, `_`.
+    if domain.is_empty()
+        || !domain
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || ".-_".contains(c))
+    {
+        return Err(format!(
+            "server.trust_domain `{domain}` is not a SPIFFE trust domain name"
+        ));
+    }
+    Ok(domain)
+}
+
+// ---------------------------------------------------------------------------
+// Identity — the profile's trust anchor
+// ---------------------------------------------------------------------------
 
 /// `identity.ca_fingerprint` — `sha256:` over the DER of the trust anchor in
 /// the profile's root bundle (§5.1): the root whose key signed the profile
@@ -638,8 +825,10 @@ pub fn interface_mtu_on(probe: &dyn Probe, interface: &str) -> Option<i64> {
 // ---------------------------------------------------------------------------
 
 /// The measured half of a package: what the edge host and the core host say
-/// about themselves. Identity (`trust_domain`, `ca_fingerprint`) is not here:
-/// it is read from the operator's own profile, wherever `init` runs.
+/// about themselves. Identity (`trust_domain`, `ca_fingerprint`) is read from
+/// the operator's own profile, wherever `init` runs; the core's SPIRE trust
+/// domain is here because a portal-minted profile carries none (#247), and
+/// [`resolve_trust_domain`] combines the two.
 #[derive(Debug, Clone)]
 pub struct Measured {
     pub transports: Derived<Vec<String>>,
@@ -650,6 +839,9 @@ pub struct Measured {
     pub public_key: Option<Derived<String>>,
     /// The interface MTU, for the `measured_mtu` cross-check only.
     pub interface_mtu: Option<i64>,
+    /// The trust domain the core's SPIRE server runs, when its config was
+    /// named ([`spire_trust_domain_on`]).
+    pub spire_trust_domain: Option<Derived<String>>,
 }
 
 /// Measure the edge and the core. The edge carries the transport and the PQC
@@ -663,9 +855,11 @@ pub fn measure(
     tools: &[&'static str],
     knob: &str,
     interface: Option<&str>,
+    spire_conf: Option<&str>,
 ) -> Measured {
     let (fabric_fips_image, fabric_version) = fabric_capabilities_on(core, router, tools, knob);
     Measured {
+        spire_trust_domain: spire_conf.map(|p| spire_trust_domain_on(core, p)),
         transports: transports_on(edge),
         fabric_fips_image,
         fabric_version,
@@ -1195,6 +1389,7 @@ mod tests {
             &["docker"],
             "--router-container",
             Some("wg-fed0"),
+            None,
         );
         assert_eq!(m.transports.outcome, Ok(vec!["wireguard".to_string()]));
         assert!(
@@ -1452,5 +1647,221 @@ mod tests {
                 assert_eq!(&r.id, id, "{name}");
             }
         }
+    }
+
+    // --- #247: the trust domain from the core's SPIRE server -----------------
+
+    /// What the spire role renders (roles/spire/templates/server.conf.j2),
+    /// with federation on, so a nested `trust_domain` is present too.
+    const SPIRE_CONF: &str = r#"# Ansible managed — edit the role, not this file (ops/ansible)
+server {
+    bind_address       = "0.0.0.0"
+    bind_port          = "8081"
+    trust_domain       = "zagros.example.org"
+    data_dir           = "/opt/spire/data/server"
+    federation {
+        bundle_endpoint {
+            address = "0.0.0.0"
+            port    = 8443
+            profile "https_spiffe" {}
+        }
+        federates_with "partner-a.example" {
+            bundle_endpoint_url = "https://partner-a.example:8443"
+            bundle_endpoint_profile "https_spiffe" {
+                endpoint_spiffe_id = "spiffe://partner-a.example/spire/server"
+            }
+        }
+    }
+}
+
+plugins {
+    DataStore "sql" {
+        plugin_data {
+            database_type = "postgres"
+            connection_string = "dbname=spire password=${SPIRE_DB_PASSWORD}"
+        }
+    }
+}
+"#;
+
+    #[test]
+    fn the_spire_server_trust_domain_is_read_from_the_server_block_only() {
+        assert_eq!(
+            server_trust_domain(SPIRE_CONF).as_deref(),
+            Ok("zagros.example.org")
+        );
+        // A trust_domain anywhere but directly in `server` is not the server's.
+        let nested = "server {\n  federation {\n    trust_domain = \"x.example\"\n  }\n}\n";
+        assert!(server_trust_domain(nested).is_err());
+        let elsewhere = "agent {\n  trust_domain = \"x.example\"\n}\n";
+        assert!(server_trust_domain(elsewhere).is_err());
+        // Comments are not values.
+        let commented = "server {\n  # trust_domain = \"old.example\"\n  trust_domain = \"new.example\" # set by the role\n}\n";
+        assert_eq!(server_trust_domain(commented).as_deref(), Ok("new.example"));
+    }
+
+    #[test]
+    fn a_spire_trust_domain_that_is_missing_twice_or_malformed_is_refused() {
+        for (conf, why) in [
+            ("server {\n  bind_port = \"8081\"\n}\n", "no trust_domain"),
+            ("server {\n  trust_domain = \"a.example\"\n  trust_domain = \"b.example\"\n}\n", "more than once"),
+            ("server {\n  trust_domain = a.example\n}\n", "not a quoted string"),
+            ("server {\n  trust_domain = \"\"\n}\n", "not a SPIFFE trust domain"),
+            ("server {\n  trust_domain = \"Upper.Example\"\n}\n", "not a SPIFFE trust domain"),
+            ("server {\n  trust_domain = \"spiffe://a.example\"\n}\n", "not a SPIFFE trust domain"),
+        ] {
+            let got = server_trust_domain(conf).unwrap_err();
+            assert!(got.contains(why), "{conf:?}: {got}");
+        }
+    }
+
+    #[test]
+    fn the_spire_trust_domain_is_measured_on_the_core_and_says_where() {
+        let core = Recorded::new("on core-a").file(SPIRE_SERVER_CONF, Ok(SPIRE_CONF));
+        let d = spire_trust_domain_on(&core, SPIRE_SERVER_CONF);
+        assert_eq!(d.outcome.as_deref(), Ok("spiffe://zagros.example.org"));
+        assert_eq!(
+            d.source,
+            "/opt/spire/config/server.conf server.trust_domain on core-a"
+        );
+        // The file is never quoted back, even on failure.
+        let bad = Recorded::new("on core-a").file(SPIRE_SERVER_CONF, Ok("plugins {\n password = \"${SPIRE_DB_PASSWORD}\"\n}\n"));
+        let d = spire_trust_domain_on(&bad, SPIRE_SERVER_CONF);
+        assert!(!d.outcome.unwrap_err().contains("SPIRE_DB_PASSWORD"));
+    }
+
+    #[test]
+    fn an_absent_or_unreadable_spire_config_is_said_as_such() {
+        let absent = Recorded::new("on core-a");
+        let why = spire_trust_domain_on(&absent, SPIRE_SERVER_CONF).outcome.unwrap_err();
+        assert!(why.contains("no SPIRE server config"), "{why}");
+        let denied = Recorded::new("on core-a").file(
+            SPIRE_SERVER_CONF,
+            Err(std::io::ErrorKind::PermissionDenied.into()),
+        );
+        let why = spire_trust_domain_on(&denied, SPIRE_SERVER_CONF).outcome.unwrap_err();
+        assert!(why.contains("permission denied"), "{why}");
+    }
+
+    #[test]
+    fn only_a_spire_server_config_is_added_to_the_read_only_list() {
+        for ok in [
+            "/opt/spire/config/server.conf",
+            "/etc/spire/server/server.conf",
+        ] {
+            assert!(is_read_only_probe("cat", &["--", ok]), "{ok}");
+        }
+        for refused in [
+            "/opt/spire/../etc/shadow",
+            "/opt/spire/config/../../../etc/server.conf",
+            "/etc/shadow",
+            "/opt/spire/config/agent.conf",
+            "/opt/spire/data/server/keys.json",
+            "/opt/spire/config/.env.spire",
+            "/home/x/opt/spire/server.conf",
+            "/opt/spire//server.conf",
+            "/opt/spire/config/server.conf ; id",
+        ] {
+            assert!(!is_read_only_probe("cat", &["--", refused]), "{refused}");
+        }
+        // A path off the list is refused before anything is read.
+        let core = Recorded::new("on core-a");
+        let why = spire_trust_domain_on(&core, "/etc/shadow").outcome.unwrap_err();
+        assert!(why.contains("not a SPIRE server config path"), "{why}");
+        assert!(core.asked.borrow().is_empty());
+    }
+
+    #[test]
+    fn measure_reads_the_spire_trust_domain_on_the_core_when_named() {
+        let edge = edge_host();
+        let core = core_host().file(SPIRE_SERVER_CONF, Ok(SPIRE_CONF));
+        let m = measure(
+            &edge,
+            &core,
+            RouterTarget::Discover,
+            &["docker"],
+            "--router-container",
+            None,
+            Some(SPIRE_SERVER_CONF),
+        );
+        let td = m.spire_trust_domain.unwrap();
+        assert_eq!(td.outcome.as_deref(), Ok("spiffe://zagros.example.org"));
+        assert!(td.source.ends_with(" on core-a"), "{}", td.source);
+        assert!(edge.asked.borrow().iter().all(|c| !c.contains("spire")));
+    }
+
+    /// A self-signed leaf carrying exactly these URI-SANs, written to a file.
+    fn profile_with(uris: &[&str]) -> (tempfile::TempDir, std::path::PathBuf) {
+        let mut params = rcgen::CertificateParams::new(vec![]).unwrap();
+        params.subject_alt_names = uris
+            .iter()
+            .map(|u| rcgen::SanType::URI(rcgen::Ia5String::try_from(*u).unwrap()))
+            .collect();
+        let key = rcgen::KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256).unwrap();
+        let cert = params.self_signed(&key).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mtls.cert.pem");
+        std::fs::write(&path, cert.pem()).unwrap();
+        (dir, path)
+    }
+
+    fn spire(outcome: Result<&str, &str>) -> Derived<String> {
+        Derived {
+            field: "identity.trust_domain",
+            outcome: outcome.map(String::from).map_err(String::from),
+            source: "/opt/spire/config/server.conf server.trust_domain on core-a".into(),
+        }
+    }
+
+    #[test]
+    fn a_portal_minted_profile_takes_the_trust_domain_from_spire() {
+        let (_d, cert) = profile_with(&["urn:goat:zagros:org=0123456789abcdef0123456789abcdef"]);
+        let ok = spire(Ok("spiffe://zagros.example.org"));
+        let td = resolve_trust_domain(&cert, Some(&ok));
+        assert_eq!(td.outcome.as_deref(), Ok("spiffe://zagros.example.org"));
+        assert!(td.source.starts_with("/opt/spire/config/server.conf"), "{}", td.source);
+        assert!(td.source.contains("carries no SPIFFE ID"), "{}", td.source);
+    }
+
+    #[test]
+    fn a_spiffe_profile_still_wins_and_must_agree_with_spire() {
+        let (_d, cert) = profile_with(&["spiffe://zagros.example.org/operator"]);
+        // Alone, exactly as before.
+        let td = resolve_trust_domain(&cert, None);
+        assert_eq!(td.outcome.as_deref(), Ok("spiffe://zagros.example.org"));
+        assert!(td.source.ends_with("URI-SAN"), "{}", td.source);
+        // SPIRE unreadable: the profile alone, as before.
+        let td = resolve_trust_domain(&cert, Some(&spire(Err("no SPIRE server config"))));
+        assert_eq!(td.outcome.as_deref(), Ok("spiffe://zagros.example.org"));
+        // Agreeing.
+        let td = resolve_trust_domain(&cert, Some(&spire(Ok("spiffe://zagros.example.org"))));
+        assert_eq!(td.outcome.as_deref(), Ok("spiffe://zagros.example.org"));
+        assert!(td.source.contains("matching"), "{}", td.source);
+        // Disagreeing: refused, not chosen between.
+        let why = resolve_trust_domain(&cert, Some(&spire(Ok("spiffe://other.example"))))
+            .outcome
+            .unwrap_err();
+        assert!(why.contains("one of the two is wrong"), "{why}");
+    }
+
+    #[test]
+    fn no_spiffe_profile_and_no_spire_fails_naming_both() {
+        let (_d, cert) = profile_with(&["urn:goat:zagros:org=x"]);
+        let why = resolve_trust_domain(&cert, None).outcome.unwrap_err();
+        assert!(why.contains("no `spiffe://` URI-SAN") && why.contains("SPIRE"), "{why}");
+        let why = resolve_trust_domain(&cert, Some(&spire(Err("no SPIRE server config at /opt/spire/config/server.conf"))))
+            .outcome
+            .unwrap_err();
+        assert!(why.contains("could not answer either") && why.contains("no SPIRE server config"), "{why}");
+    }
+
+    #[test]
+    fn an_unreadable_profile_fails_whatever_spire_says() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("mtls.cert.pem");
+        let why = resolve_trust_domain(&missing, Some(&spire(Ok("spiffe://zagros.example.org"))))
+            .outcome
+            .unwrap_err();
+        assert!(why.contains("no profile certificate"), "{why}");
     }
 }
