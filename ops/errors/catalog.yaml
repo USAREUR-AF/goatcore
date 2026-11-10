@@ -2462,6 +2462,21 @@ entries:
       - "\\(GB-232\\)"
     exit: 2
 
+  - code: GB-233
+    tool: goatbuilder
+    title: a peering's federation.toml cannot be generated from the environment's
+    what: "The peering declares federation_toml: rendered, so goatbuilder federate allocate generates its federation.toml from the environment's own ops/federation/<environment>/federation.toml, the one owner of sovereign_id, term_days, cut_contact, the release sets, the accept limits and the measured path MTU, and fills [transport] from the allocated values. That file is missing, is not TOML, or lacks a required top-level value. Nothing was written."
+    causes:
+      - "the environment has no ops/federation/<environment>/federation.toml yet"
+      - "sovereign_id, term_days or cut_contact is missing from it"
+    fixes:
+      - "write ops/federation/<environment>/federation.toml once for the environment (the template goat federate init prints is the shape)"
+      - "or declare federation_toml: hand on the peering and keep writing its federation.toml by hand"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "\\(GB-233\\)"
+    exit: 2
+
   # ------------------------------------------------ federate: the peering forwarder
 
   - code: GB-160
