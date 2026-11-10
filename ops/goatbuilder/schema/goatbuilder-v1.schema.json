@@ -403,6 +403,10 @@
             "user": { "type": "string", "pattern": "^[a-z_][a-z0-9_-]*$" }
           }
         },
+        "deployment": {
+          "description": "Who writes this peering's deployment halves (the edge's goat-zenoh-edge values and the core's republisher values that are not the agreement's and not allocated). hand (the default): written by hand. rendered: goatbuilder federate allocate renders them into peering-deployment.yml from the declaration and the site values set in the environment's groups' group_vars, and refuses one it cannot find (GB-232).",
+          "enum": ["hand", "rendered"]
+        },
         "forwarder": {
           "description": "Present when a peering forwarder relays the partner to our edge (ADR 1218, docs/design/peering-forwarder.md). Allocation then gives the peering a public port on the forwarder and a carrier; the driver applies the forwarder from these values.",
           "type": "object",
