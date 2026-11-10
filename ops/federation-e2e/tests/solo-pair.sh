@@ -46,8 +46,9 @@ trap 'exit 130' INT TERM
 printf 'sovereign_id=%s\nedge_address=%s\nedge_port=%s\nlistens=true\nrelease=release/all/** release/%s/**\n' "$Y" "$YIP" "$PORT" "$X" > "$DIR/facts-$X.txt"
 printf 'sovereign_id=%s\nedge_address=%s\nedge_port=%s\nlistens=false\nrelease=release/all/** release/%s/**\n' "$X" "$XIP" "$PORT" "$Y" > "$DIR/facts-$Y.txt"
 
-side() { # $1 us, $2 them, $3 our address on the stand-in internet
-  FE2E_PARTNER=external FE2E_PARTNER_FACTS="$DIR/facts-$1.txt" \
+side() { # $1 us, $2 them, $3 our address on the stand-in internet; run in the background,
+  # it becomes env itself (exec), so that $! is env's pid and stopping it stops its units.
+  exec env FE2E_PARTNER=external FE2E_PARTNER_FACTS="$DIR/facts-$1.txt" \
   FE2E_EXCHANGE_OUT="$DIR/$1-out" FE2E_EXCHANGE_IN="$DIR/$2-out" \
   FE2E_SOLO_WAN="$WAN" FE2E_SOLO_WAN_IP="$3" FE2E_SOLO_STEP_TIMEOUT="$STEP_TIMEOUT" \
     "$HERE/env" run --ref "$REF" --name "solo-$1" --avenue goatbuilder --scenario solo-external-partner \
