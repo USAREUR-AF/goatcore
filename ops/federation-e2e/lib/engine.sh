@@ -184,6 +184,16 @@ wait_ready() { # $1 host: systemd up, dockerd answering
       # next, over IPv4: a machine whose IPv6 or one mirror address does not answer otherwise
       # stalls phase 2's apt-get update for many minutes.
       docker exec "$h" sh -c 'printf "%s\n" "Acquire::http::Timeout \"20\";" "Acquire::https::Timeout \"20\";" "Acquire::Retries \"5\";" "Acquire::ForceIPv4 \"true\";" > /etc/apt/apt.conf.d/99fe2e-net'
+      # The package cache and python3-apt (Ansible's apt module needs it) are made ready here,
+      # with retries, so that phase 2's apt task finds a fresh cache and needs no mirror. A mirror
+      # that stays unreachable stops the unit as an environment fault (BLOCKED), never as a FAIL
+      # of the tree under test.
+      local try ready=0
+      for try in 1 2 3 4 5; do
+        if docker exec "$h" sh -c 'apt-get update -qq >/dev/null 2>&1 && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3-apt >/dev/null 2>&1'; then ready=1; break; fi
+        sleep 10
+      done
+      [ "$ready" = 1 ] || die "host $h could not use the Ubuntu package mirror (apt-get update and python3-apt failed 5 times); an environment fault, not the tree under test"
       return 0
     fi
     sleep 2
