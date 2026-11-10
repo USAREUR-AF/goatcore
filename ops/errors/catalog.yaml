@@ -1784,9 +1784,9 @@ entries:
   - code: GB-160
     tool: goatbuilder
     title: two peerings on one forwarder would share a value
-    what: "The peerings one forwarder relays must share no carrier interface, public port, carrier port or carrier address on it: the forwarder sends each packet by its port alone. Allocation keeps the peerings of one environment apart; two environments behind one forwarder each start from the first values and collide."
+    what: "The peerings one forwarder relays must share no carrier interface, public port, carrier port or carrier address on it: the forwarder sends each packet by its port alone. Allocation keeps them apart across every environment the forwarder relays (by its endpoint); this refusal is the backstop for values that collide anyway."
     causes:
-      - peerings on two environments declare the same forwarder
+      - "a hand edit of peering-values.yaml gives two relayed peerings one forwarder value"
       - "a pin under values: (public_port, carrier_port, carrier_interface, carrier_subnet) repeats another peering's value"
     fixes:
       - "pin different public_port, carrier_port, carrier_interface and carrier_subnet values under one peering's values:"
