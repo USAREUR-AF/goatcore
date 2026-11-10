@@ -96,11 +96,17 @@ scenarios:
       On a core router deployed by the ref's goat-zenoh role (FE2E_CORE=role), so the
       receiving store is the one the ref renders.
       With no responder, probe or other subscriber running on either side, a fresh value
-      released on each side is stored by the receiving core's own configured store.
+      released on each side is stored by the receiving core's own configured store; and after
+      the receiving core's router restarts, with the edge router left running, a fresh value
+      is stored again (the core's interest reaches the edge without an edge restart).
     checks:
       - {id: no-subscriber, step: "s{n}-no-diagnostic-subscriber-runs"}
       - {id: first-to-second, step: "s{n}-{F}-to-{S}-stored-without-a-subscriber"}
       - {id: second-to-first, step: "s{n}-{S}-to-{F}-stored-without-a-subscriber"}
+      - {id: first-to-second-after-core-restart, step: "s{n}-{F}-to-{S}-stored-after-the-receiving-core-restarts"}
+      - {id: second-to-first-after-core-restart, step: "s{n}-{S}-to-{F}-stored-after-the-receiving-core-restarts"}
+      - {id: second-edge-not-restarted, step: "s{n}-{S}-edge-was-not-restarted"}
+      - {id: first-edge-not-restarted, step: "s{n}-{F}-edge-was-not-restarted"}
 
   - id: republisher-boundary
     title: A set that was not offered does not cross the republisher
