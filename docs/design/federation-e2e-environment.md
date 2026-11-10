@@ -67,7 +67,7 @@ The engine reads these names from `FE2E_*` variables (header of `lib/engine.sh`)
 |---|---|---|
 | Listening edge, direct path | the listener's boundary address is reachable on the tunnel port | Built (unit `pair`) |
 | Edge behind NAT, no inbound; forwarder path | a NAT router holds the edge's boundary address (outbound masquerade, nothing inbound); the party's forwarder host on the boundary, applied by `goat-peering-forwarder` and `peering_wg_via_forwarder` | Built (unit `forwarder`); the drivers do not apply the forwarder, so the unit runs the operator's three plays |
-| UDP 51820 already held on an edge | a process holding the port before phase 1 | Being built |
+| UDP 51820 already held on an edge | a process holding the port before phase 1; the peering on a free inner port | Built (unit `preflight`, scenarios `preflight-port-in-use`, `port-51820-held`) |
 | WireGuard transport | `goat-peering-wg` | Built |
 | IPsec transport | `goat-peering-edge` (strongSwan, XFRM) under a waiver | Built (unit `ipsec`): IKE and the child SA between two edge hosts are measured here; the federation path is BLOCKED on a ref whose init offers `ipsec-fips` only on a FIPS kernel and whose phase 11 cannot apply `goat-peering-edge` |
 | Stock Ubuntu 26.04 AppArmor | `FE2E_WG_APPARMOR=host` keeps the machine's `wg` profile in force | Built (unit `apparmor`) |
@@ -76,7 +76,7 @@ The machine's AppArmor profile `wg` (shipped by Ubuntu 26.04 LTS in `/etc/apparm
 
 ## Units and scenarios
 
-A unit brings sovereigns up once in one lab and records steps; several scenarios read one unit's steps. This keeps the number of bring-ups small: the two-party unit alone feeds eight scenarios.
+A unit brings sovereigns up once in one lab and records steps; several scenarios read one unit's steps. This keeps the number of bring-ups small: the two-party unit alone feeds six scenarios.
 
 | File | Holds |
 |---|---|
