@@ -22,11 +22,13 @@ KEEP="${KEEP:-0}"; ONLY=""; PREPARE=0
 mkdir -p "$WORK" "$RECORD"
 export E2E_RECORD_DIR="$RECORD" GIT_LFS_SKIP_SMUDGE=1
 ZENOH_IMAGE="ghcr.io/usareur-af/zenoh-pqc@sha256:372de39d2e8b64fe7157194173f1b7ac6eac2700ff04c49cce2ce3c284a6fdb2"
-UNIT_DONE=0
+UNIT_DONE=0; UNIT_RC=""
 unit_exit() {
   local rc=$?
   if [ "$UNIT_DONE" != 1 ]; then
-    local why="exit $rc"
+    local why="exit ${UNIT_RC:-$rc}" last
+    last="$(tail -1 "$RECORD/report.jsonl" 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin)["name"])' 2>/dev/null)"
+    [ -z "$last" ] || why="a command after step $last exited ${UNIT_RC:-$rc}"
     [ -s "$RECORD/stopped.reason" ] && why="$(tail -1 "$RECORD/stopped.reason")"
     python3 -c 'import json,sys; print(json.dumps({"reason": sys.argv[1]}))' "$why" > "$RECORD/stopped.json"
   fi
@@ -73,5 +75,5 @@ export -f mark has_text
 # bash runs a trap only between foreground commands, and `wait` is one it can interrupt.
 unit_main &
 UNIT_PID=$!
-if wait "$UNIT_PID"; then UNIT_DONE=1; fi
+if wait "$UNIT_PID"; then UNIT_DONE=1; else UNIT_RC=$?; fi
 kill "$UNIT_WATCHDOG" 2>/dev/null || true

@@ -170,6 +170,34 @@ start_host() { # $1 name, $2 sovereign, $3 internal ip
     -e container=docker "$HOST_IMAGE" >/dev/null
 }
 
+# host_package <host> <package>: make sure the host has <package> installed in dpkg's records.
+host_package() {
+  local h="$1" pkg="$2" d try
+  docker exec "$h" dpkg -s "$pkg" >/dev/null 2>&1 && return 0
+  # Built once per run under the run's own WORK, and reused for every host.
+  d="$WORK/debs/$pkg"
+  if [ ! -s "$d.deb" ] && dpkg -s "$pkg" >/dev/null 2>&1; then
+    mkdir -p "$d/DEBIAN"
+    dpkg -L "$pkg" | while read -r f; do [ -f "$f" ] && printf '%s\n' "${f#/}"; done \
+      | tar -C / -cf - -T - 2>/dev/null | tar -C "$d" -xf -
+    {
+      dpkg-query -W -f='Package: ${Package}\nVersion: ${Version}\nArchitecture: ${Architecture}\nMaintainer: ${Maintainer}\n' "$pkg"
+      [ -z "$(dpkg-query -W -f='${Depends}' "$pkg")" ] || printf 'Depends: %s\n' "$(dpkg-query -W -f='${Depends}' "$pkg")"
+      dpkg-query -W -f='Description: ${Description}\n' "$pkg"
+    } > "$d/DEBIAN/control"
+    dpkg-deb --root-owner-group --build "$d" "$d.deb" >/dev/null 2>&1 || true
+  fi
+  if [ -s "$d.deb" ] && docker cp -q "$d.deb" "$h:/root/fe2e-$pkg.deb" \
+    && docker exec "$h" dpkg -i --force-depends "/root/fe2e-$pkg.deb" >/dev/null 2>&1; then
+    return 0
+  fi
+  for try in 1 2 3; do
+    docker exec "$h" sh -c "apt-get update -qq >/dev/null 2>&1 && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq $pkg >/dev/null 2>&1" && return 0
+    sleep 10
+  done
+  return 1
+}
+
 wait_ready() { # $1 host: systemd up, dockerd answering
   local h="$1"
   for _ in $(seq 1 90); do
@@ -184,25 +212,19 @@ wait_ready() { # $1 host: systemd up, dockerd answering
       # next, over IPv4: a machine whose IPv6 or one mirror address does not answer otherwise
       # stalls phase 2's apt-get update for many minutes.
       docker exec "$h" sh -c 'printf "%s\n" "Acquire::http::Timeout \"20\";" "Acquire::https::Timeout \"20\";" "Acquire::Retries \"5\";" "Acquire::ForceIPv4 \"true\";" > /etc/apt/apt.conf.d/99fe2e-net'
-      # Phase 2's apt task (update_cache, cache_valid_time 3600) and Ansible's apt module, which
-      # needs python3-apt, would reach the Ubuntu mirror on every run. The packages the roles
-      # install are in the host image already, so the run needs no mirror: python3-apt comes
-      # from the image, else from this machine's own installed package (same release), else
-      # from apt with retries; and the host's apt cache is marked fresh. A host left without
-      # python3-apt stops the unit as an environment fault (BLOCKED), never a FAIL.
-      if ! docker exec "$h" python3 -c 'import apt_pkg' >/dev/null 2>&1 && dpkg -s python3-apt >/dev/null 2>&1; then
-        dpkg -L python3-apt | while read -r f; do [ -f "$f" ] && printf '%s\n' "${f#/}"; done | tar -C / -cf - -T - 2>/dev/null \
-          | docker exec -i "$h" tar -C / -xf - 2>/dev/null || true
-      fi
-      if ! docker exec "$h" python3 -c 'import apt_pkg' >/dev/null 2>&1; then
-        local try
-        for try in 1 2 3; do
-          docker exec "$h" sh -c 'apt-get update -qq >/dev/null 2>&1 && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3-apt >/dev/null 2>&1' && break
-          sleep 10
-        done
-      fi
-      docker exec "$h" python3 -c 'import apt, apt_pkg' >/dev/null 2>&1 \
-        || die "host $h has no python3-apt and the Ubuntu package mirror did not provide it; an environment fault, not the tree under test"
+      # The roles' apt tasks (update_cache with cache_valid_time 3600; goat-peering-wg installs
+      # wireguard-tools and nftables, goat-zenoh installs unzip) and Ansible's apt module, which
+      # needs python3-apt, would reach the Ubuntu mirror on every run. So a run needs no mirror:
+      # each package in FE2E_HOST_PACKAGES that the host image lacks is installed into the host
+      # as a real dpkg package (so the apt module sees it installed), built from this machine's
+      # own installed copy (same release), else fetched with apt; then the host's apt cache is
+      # marked fresh. A host left without one of them stops the unit as an environment fault
+      # (BLOCKED), naming the package, never as a FAIL of the tree under test.
+      local pkg
+      for pkg in ${FE2E_HOST_PACKAGES:-python3-apt unzip}; do
+        host_package "$h" "$pkg" \
+          || die "host $h lacks package $pkg and neither this machine nor the Ubuntu mirror provided it; an environment fault, not the tree under test"
+      done
       docker exec "$h" sh -c 'mkdir -p /var/lib/apt/periodic && touch /var/lib/apt/periodic/update-success-stamp'
       return 0
     fi
