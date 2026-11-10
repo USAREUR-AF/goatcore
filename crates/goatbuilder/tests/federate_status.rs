@@ -1,12 +1,38 @@
 //! `goatbuilder federate status`, through the real binary against the
 //! stand-in repository (federate_world): read-only, a table or
-//! `goatbuilder.federate.status/v1`.
+//! `goatbuilder.federate.status/v1`. Every test runs on both verb paths:
+//! `goat federate` in a shell (`FED_VERBS=goat`) and goatbuilder's in-process
+//! verbs (the default).
 
 mod federate_world;
 
 use std::path::Path;
 
-use federate_world::{says, world};
+use federate_world::{says, world_on, Verbs};
+
+/// `name` as two tests, `name::goat` and `name::in_process`.
+macro_rules! on_both_verb_paths {
+    ($($name:ident),* $(,)?) => {$(
+        mod $name {
+            #[test]
+            fn goat() {
+                super::$name(super::Verbs::Goat)
+            }
+            #[test]
+            fn in_process() {
+                super::$name(super::Verbs::InProcess)
+            }
+        }
+    )*};
+}
+
+on_both_verb_paths!(
+    status_reads_the_journal_and_writes_nothing,
+    status_reads_acceptance_evidence_current_stale_and_damaged,
+    status_of_an_undeclared_peering_is_refused_and_a_run_keeps_its_own_refusal,
+    work_without_a_partner_is_refused,
+    a_partner_after_a_peering_name_is_refused,
+);
 
 /// Every file under `d` with its size and modification time.
 fn listing(d: &Path) -> Vec<String> {
@@ -49,9 +75,8 @@ fn evidence(work: &Path, agreement_sha: &str, verdict: &str) {
     .unwrap();
 }
 
-#[test]
-fn status_reads_the_journal_and_writes_nothing() {
-    let w = world();
+fn status_reads_the_journal_and_writes_nothing(verbs: Verbs) {
+    let w = world_on(verbs);
     // Nothing run yet.
     let before = listing(&w.work);
     let (out, v) = w.run(&["status", "hello-ally"]);
@@ -100,10 +125,9 @@ fn status_reads_the_journal_and_writes_nothing() {
     assert!(y.contains("schema: goatbuilder.federate.status/v1"), "{y}");
 }
 
-#[test]
-fn status_reads_acceptance_evidence_current_stale_and_damaged() {
-    let w = world();
-    std::fs::write(w.work.join("keys.txt"), "xaa=QUJD\nxab=QUJE\n").unwrap();
+fn status_reads_acceptance_evidence_current_stale_and_damaged(verbs: Verbs) {
+    let w = world_on(verbs);
+    w.write_keys();
     w.run(&["hello-ally"]);
     w.run(&["hello-ally", "--from", "6"]);
     w.run(&["hello-ally", "--from", "11"]);
@@ -140,9 +164,8 @@ fn status_reads_acceptance_evidence_current_stale_and_damaged() {
     );
 }
 
-#[test]
-fn status_of_an_undeclared_peering_is_refused_and_a_run_keeps_its_own_refusal() {
-    let w = world();
+fn status_of_an_undeclared_peering_is_refused_and_a_run_keeps_its_own_refusal(verbs: Verbs) {
+    let w = world_on(verbs);
     let (out, _) = w.run(&["status", "xzz"]);
     let text = says(&out);
     assert_eq!(out.status.code(), Some(1), "{text}");
@@ -153,9 +176,8 @@ fn status_of_an_undeclared_peering_is_refused_and_a_run_keeps_its_own_refusal() 
     assert!(!says(&out).contains("GB-185"), "{}", says(&out));
 }
 
-#[test]
-fn work_without_a_partner_is_refused() {
-    let w = world();
+fn work_without_a_partner_is_refused(verbs: Verbs) {
+    let w = world_on(verbs);
     let (out, _) = w.run(&["status", "--work", "/tmp/x"]);
     assert!(!out.status.success(), "{}", says(&out));
     assert!(
@@ -165,9 +187,8 @@ fn work_without_a_partner_is_refused() {
     );
 }
 
-#[test]
-fn a_partner_after_a_peering_name_is_refused() {
-    let w = world();
+fn a_partner_after_a_peering_name_is_refused(verbs: Verbs) {
+    let w = world_on(verbs);
     let (out, _) = w.run(&["hello-ally", "extra", "--dry-run"]);
     assert!(!out.status.success(), "{}", says(&out));
     assert!(
