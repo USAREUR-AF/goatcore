@@ -581,6 +581,10 @@ pub fn federate(repo: &Path, o: &Options) -> Result<Report> {
 /// catalog code (GB-100: 2), 101 for a panic, or 1 for any other fault, which
 /// is printed.
 fn run_verb_in_process(dir: &Path, env: &[(String, String)], words: &[String]) -> i32 {
+    // set_var and set_current_dir change process-global state. This is safe
+    // only while the driver is single-threaded, as it is here: it runs one
+    // phase at a time and spawns no thread. A driver that runs phases or verbs
+    // concurrently must pass the environment and directory to the verb instead.
     let saved: Vec<(String, Option<std::ffi::OsString>)> = env.iter().map(|(k, _)| (k.clone(), std::env::var_os(k))).collect();
     for (k, v) in env {
         std::env::set_var(k, v);
