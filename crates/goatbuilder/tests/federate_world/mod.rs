@@ -149,6 +149,9 @@ impl World {
             .env("PATH", std::env::var("PATH").unwrap())
             .env("HOME", r)
             .env("GOAT_BIN", r.join("bin/goat"))
+            // The world stands in for `goat` with a stub; since the verbs run in
+            // goatbuilder by default, name the stub path so the run uses it.
+            .env("FED_VERBS", "goat")
             .env("GOAT_PROFILE_DIR", &self.profile)
             .env("GOAT_NO_FUN", "1")
             .env("FED_WORK", &self.work)
