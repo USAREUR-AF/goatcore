@@ -14,13 +14,23 @@
 #   FE2E_NET_BASE    the first two octets of the run's /24s (default 10.77)
 #   FE2E_LAB         the value of label org.goat.fe2e.lab on all of it (default fed-e2e)
 #   FE2E_HOST_IMAGE, FE2E_RP_TAG   the host image and the republisher's local tag
+#   FE2E_CORE        how each sovereign's core router is deployed (default hand):
+#                    hand  `docker run` from core-seed.json5; phase 10 splices the fragment
+#                          with acl-assemble.py and restarts the container
+#                    role  the ref's own goat-zenoh role (zenoh-deploy.yml), run from the
+#                          sovereign's clone on its edge host against the core host over
+#                          ssh, as an operator runs it; phase 10 declares the peering in
+#                          group_vars, places the fragment where the role splices it, and
+#                          redeploys (core_deploy, admit_by_role)
 SRC="${SRC:-$REPO}"
 read -r A B C D <<<"${FE2E_PARTIES:-pasture meadow paddock}"
 PARTIES="$A $B ${C:-} ${D:-}"
 HP="${FE2E_HOST_PREFIX:-fed}"; NP="${FE2E_NET_PREFIX:-fed-e2e}"; NB="${FE2E_NET_BASE:-10.77}"
 LAB="${FE2E_LAB:-fed-e2e}"
 LABEL=(--label "org.goat.fe2e.lab=$LAB")
-export SRC A B C D PARTIES HP NP NB LAB
+FE2E_CORE="${FE2E_CORE:-hand}"
+case "$FE2E_CORE" in hand|role) ;; *) echo "engine: FE2E_CORE must be hand or role, not '$FE2E_CORE'" >&2; exit 2 ;; esac
+export SRC A B C D PARTIES HP NP NB LAB FE2E_CORE
 # The fleet image, by digest, and the SPIRE release the fleet pins: the `spire`
 # component's value of record in ops/pins/fleet-pins.yaml, which every checkout carries
 # (a public one declares no goatnet there, but keeps every component). Both pull
@@ -152,6 +162,7 @@ gen_sovereign() { # $1 sovereign: its CA, its signing key, its operator's identi
   done
   python3 "$HERE/overlay.py" "$d/clone" "$s" "$first" "$(octet "$s")" "$ZENOH_IMAGE" --republisher-image "$RP_IMAGE" \
     --core-addr "$(core_ip "$s")" --spire-listen "$(edge_ip "$s")" ${also[@]+"${also[@]}"}
+  if [ "$FE2E_CORE" = role ]; then core_role_overlay "$s" "$d/clone"; fi
   git -C "$d/clone" add -A
   git -C "$d/clone" commit -q -m "$s: this sovereign's declarations for the peering"
   git clone -q --bare "$d/clone" "$d/origin.git"
@@ -235,7 +246,13 @@ wait_ready() { # $1 host: systemd up, dockerd answering
 }
 
 start_core() { # $1 sovereign: seed config, bootstrap cert, the router and the SPIRE server
-  local s="$1" h="$HP-$1-core" them extra; them="$(partners "$s" | awk '{print $1}')"
+  local s="$1" them; them="$(partners "$s" | awk '{print $1}')"
+  if [ "$FE2E_CORE" = role ]; then start_core_role "$s"; else start_core_hand "$s" "$them"; fi
+  start_spire "$s"
+}
+
+start_core_hand() { # $1 sovereign, $2 its first partner: the router by `docker run`
+  local s="$1" h="$HP-$1-core" them="$2" extra
   sed "s/__THEM__/$them/g; s/__US__/$s/g; s/__CORE_LISTEN__/0.0.0.0/; s/__CORE_REST__/0.0.0.0/" "$HERE/core-seed.json5" > "$WORK/$s/core-seed.json5"
   # A later partner's landing and not-granted prefixes are held the same way.
   read -r -a extra <<< "$(partners "$s" | cut -s -d' ' -f2-)"
@@ -262,6 +279,10 @@ PY
     -e RUST_LOG=zenoh=info,zenoh::net::routing::interceptor::access_control=trace \
     -p 7447:7447 -p 8000:8000 -v /etc/goat-core:/etc/goat-core:ro \
     "$ZENOH_IMAGE" -c /etc/goat-core/config.json5 >/dev/null
+}
+
+start_spire() { # $1 sovereign: the SPIRE server on its core host
+  local s="$1" h="$HP-$1-core"
   python3 "$HERE/render-spire.py" "$SRC/ops/ansible/roles/spire/templates/server.conf.j2" "$(td "$s")" "$WORK/$s/server.conf"
   host_exec "$h" sh -c 'install -d -m 0755 /opt/spire/config; install -d -o 1000 -g 1000 -m 0750 /opt/spire/data /opt/spire/data/server'
   docker cp -q "$WORK/$s/server.conf" "$h:/opt/spire/config/server.conf"
@@ -274,6 +295,106 @@ PY
   done
   host_exec "$h" docker logs spire-server 2>&1 | tail -20 || true
   die "spire-server on $h did not become healthy"
+}
+
+# --- the core router by the ref's goat-zenoh role (FE2E_CORE=role) ----------------------
+# What a real goatnet's core is: container <site_id>-zenoh-router, label
+# org.goat.component=zenoh-core, compose project <site_id>-zenoh from
+# /opt/<site_id>-zenoh/docker-compose.yml, config /etc/<site_id>-zenoh/config.json5. The
+# role's own templates render it; the harness supplies only a deployment's values.
+core_ca() { # $1 sovereign: the trust roots its core router loads
+  if [ "$FE2E_CORE" = role ]; then echo "/etc/$1-zenoh/tls/ca-root-cert.pem"; else echo /etc/goat-core/ca.pem; fi
+}
+
+# The deployment's declarations for its core router, in its own repository: one inventory
+# group naming the core host, and the role's values. The image is the digest-pinned one
+# the hand-run core uses. No peering is declared yet: phase 10 does that.
+core_role_overlay() { # $1 sovereign, $2 its clone
+  local s="$1" c="$2"
+  mkdir -p "$c/ops/ansible/inventory" "$c/ops/ansible/group_vars/core_router"
+  cat > "$c/ops/ansible/inventory/core-router.ini" <<INI
+# This sovereign's core router host, deployed by zenoh-deploy.yml (roles/goat-zenoh).
+[core_router]
+$s-core ansible_host=$(core_ip "$s") ansible_user=goat
+INI
+  cat > "$c/ops/ansible/group_vars/core_router/zenoh.yml" <<YAML
+# The core router of $s (roles/goat-zenoh, zenoh-deploy.yml -e target=core_router -e site_id=$s).
+zenoh_router_image: "$ZENOH_IMAGE"
+# No mesh interface on this host: publish the fabric port on every address of the host.
+zenoh_listen_host_override: "0.0.0.0"
+# No vendor of this goatnet is seeded; the federation fragment is the only org content.
+zenoh_seed_vendors: []
+YAML
+}
+
+# zenoh-deploy.yml from the sovereign's clone on its edge host, through the same wrapper
+# phases 11-12 use, against the core host over ssh. REST is published on the core host's
+# address because this is a drill whose checks read it from outside (the play pins it to
+# loopback; an extra var is the documented override).
+core_deploy() { # $1 sovereign, [ansible-playbook arguments]
+  local s="$1"; shift
+  docker exec -e GOAT_AWS_MODE=none -e GOAT_ANSIBLE_TRUNK_REMOTE=origin -e HOME=/root -w /opt/goat/ops/ansible "$HP-$s-edge" \
+    ../scripts/with-aws none -- ../scripts/ansible-preflight.sh -i inventory/core-router.ini \
+    -e target=core_router -e "site_id=$s" -e goat_zenoh_rest_host=0.0.0.0 "$@" zenoh-deploy.yml
+}
+
+start_core_role() { # $1 sovereign: the CA root and the bootstrap leaf where the role reads them, then the role
+  local s="$1" e="$HP-$1-edge" log="$RECORD/core-role-deploy-$1.log"
+  host_exec "$e" sh -c "[ -d /opt/goat/.git ] || git clone -q /srv/goat.git /opt/goat"
+  host_exec "$e" sh -c "git -C /opt/goat config user.name '$s operator'; git -C /opt/goat config user.email 'ops@$s.test'"
+  # The role's defaults: the CA root under the checkout's ops/enrollment/ca/<site_id>/,
+  # the router leaf in the controller's state directory (goat_leaf, ~/.goat/state/<site>-leaves).
+  host_exec "$e" sh -c "install -d -m 0755 /opt/goat/ops/enrollment/ca/$s && install -m 0644 /etc/fed-e2e/ca.pem /opt/goat/ops/enrollment/ca/$s/root-cert.pem \
+    && install -d -m 0700 /root/.goat/state/$s-leaves && install -m 0644 /etc/fed-e2e/core.pem /root/.goat/state/$s-leaves/router-cert.pem \
+    && install -m 0600 /etc/fed-e2e/core-key.pem /root/.goat/state/$s-leaves/router-key.pem"
+  if ! core_deploy "$s" > "$log" 2>&1; then
+    tail -40 "$log" >&2
+    die "the goat-zenoh role did not deploy $s's core router (zenoh-deploy.yml; log $log)"
+  fi
+  host_exec "$HP-$s-core" docker inspect -f '{{.State.Running}}' "$s-zenoh-router" 2>/dev/null | grep -qx true \
+    || die "the goat-zenoh role ran, but no running container $s-zenoh-router is on $HP-$s-core"
+}
+
+# A reviewed change to the core's declarations, merged into this sovereign's trunk (its
+# origin) and fast-forwarded on the edge's checkout: ansible-preflight.sh refuses to deploy
+# from a main that holds commits its trunk does not.
+core_declare() { # $1 sovereign, $2 path in the repository, $3 local file, $4 commit message
+  local s="$1" rel="$2" src="$3" msg="$4" c="$WORK/$1/clone"
+  mkdir -p "$(dirname "$c/$rel")"; cp "$src" "$c/$rel"
+  git -C "$c" add "$rel"
+  git -C "$c" diff --cached --quiet || git -C "$c" commit -q -m "$msg"
+  git -C "$c" push -q origin HEAD:main
+  host_exec "$HP-$s-edge" git -C /opt/goat pull -q --ff-only origin main
+}
+
+# Phase 10 on a role-deployed core, as its operator does it: the peering declared in the
+# core's group_vars (zenoh_sovereign_peerings, which renders the from/** landing stores;
+# its CN is the fragment's subject), the reviewed fragment placed as the role's org
+# fragment (the file the role splices into the seed's marker regions with acl-assemble),
+# the core certificate phase 8 minted placed where the role reads the router leaf, then a
+# dry run and the deploy, which re-renders, re-splices and restarts the router.
+admit_by_role() { # $1 sovereign, $2 the peering being admitted, $3 its applied dir, $4 scenario number
+  local s="$1" them="$2" d="$3" n="$4" e="$HP-$1-edge" w="/var/lib/goat-federation/$2"
+  python3 - "$d" $(partners "$s") > "$d/peerings.yml" <<'PY' || die "$s: no peering subject in a rendered fragment under $d"
+import os, re, sys
+import yaml
+d, out = sys.argv[1], []
+for t in sys.argv[2:]:
+    p = os.path.join(d, f"fragment-{t}.json5")
+    if not os.path.exists(p):
+        continue
+    m = re.search(r'id:\s*"fed-%s",\s*cert_common_names:\s*\["([^"]+)"\]' % re.escape(t), open(p).read())
+    if not m:
+        sys.exit(f"no subject fed-{t} in {p}")
+    out.append({"sovereign": t, "cn": m.group(1)})
+print("# Each admitted peering, from the subject of its reviewed fragment (phase 10).")
+print(yaml.safe_dump({"zenoh_sovereign_peerings": out}, sort_keys=False), end="")
+PY
+  core_declare "$s" ops/ansible/group_vars/core_router/peerings.yml "$d/peerings.yml" "$s: admit the peering with $them on the core router"
+  docker cp -q "$d/fragment.json5" "$HP-$s-core:/etc/$s-zenoh/acl-org-fragment.json5"
+  host_exec "$e" sh -c "install -m 0644 $w/pki/core.pem /root/.goat/state/$s-leaves/router-cert.pem && install -m 0600 $w/pki/core-key.pem /root/.goat/state/$s-leaves/router-key.pem"
+  rec "s$n-$s-$them-core-role-dry-run" -- bash -c "core_deploy $s --check --diff"
+  rec "s$n-$s-$them-core-role-admits" --expect-in "Restart zenoh router" -- bash -c "core_deploy $s"
 }
 
 prepare_edge() { # $1 sovereign, $2 them, $3 "true" when this side listens
@@ -390,8 +511,8 @@ exchange() { # $1 the side that ran phase 5 first, $2 the other side, $3 avenue,
 # Phase 10, as an operator does it: check their CA against the fingerprint in the signed
 # agreement, place it, splice the rendered fragment with the real assembler, and restart
 # the core on the certificate phase 8 minted.
-review_and_admit() { # $1 sovereign, $2 the peering being admitted
-  local s="$1" them="$2" w d t; w="/var/lib/goat-federation/$them"; d="$WORK/$s/applied-$them"
+review_and_admit() { # $1 sovereign, $2 the peering being admitted, [$3 scenario number]
+  local s="$1" them="$2" n="${3:-0}" w d t; w="/var/lib/goat-federation/$them"; d="$WORK/$s/applied-$them"
   rm -rf "$d"; mkdir -p "$d"
   docker cp -q "$HP-$s-edge:$w/agreement.json" "$WORK/$s/agreement-$them.json"
   docker cp -q "$HP-$s-edge:$w/theirs-ca.pem" "$d/theirs-ca.pem"
@@ -410,6 +531,7 @@ review_and_admit() { # $1 sovereign, $2 the peering being admitted
       cat "$d/fragment-$t.json5" >> "$d/fragment.json5"
     fi
   done
+  if [ "$FE2E_CORE" = role ]; then admit_by_role "$s" "$them" "$d" "$n"; return 0; fi
   python3 "$ACL_ASSEMBLE" assemble --seed "$WORK/$s/core-seed.json5" --org "$d/fragment.json5" --out "$d/core.json5"
   docker cp -q "$d/core.json5" "$HP-$s-core:/etc/goat-core/config.json5"
   docker cp -q "$HP-$s-edge:$w/pki/core.pem" "$d/core.pem"
@@ -468,7 +590,8 @@ accept_as() { # $1 sovereign, $2 them, $3 avenue
 # The helpers every `rec ... bash -c` runs in a child shell.
 export_helpers() {
   export -f drive host_exec other octet core_ip edge_ip boundary_ip die partners pidx iface wgport \
-    spire_out rp_metrics probe_port ctx_of pair_subnet nodir partner_list accept_as probe_zid td round_trip round_trip_eventually
+    spire_out rp_metrics probe_port ctx_of pair_subnet nodir partner_list accept_as probe_zid td round_trip round_trip_eventually \
+    core_deploy core_ca
   for _p in $PARTIES; do export "P_$_p"; done
   export NODIR WORK GB REPO HERE SRC RECORD DIRECTORY_IP
 }
@@ -527,8 +650,8 @@ peer_up() {
   rec "s$n-$first-$second-both-sides-hold-one-agreement" -- bash -c \
     "a=\$(docker exec $HP-$first-edge sha256sum /var/lib/goat-federation/$second/agreement.json | cut -d' ' -f1); b=\$(docker exec $HP-$second-edge sha256sum /var/lib/goat-federation/$first/agreement.json | cut -d' ' -f1); echo \"\$a \$b\"; [ -n \"\$a\" ] && [ \"\$a\" = \"\$b\" ]"
   rec "s$n-$first-$second-the-agreement-selected-wireguard" --expect-in '"kind":"wireguard"' -- docker exec "$HP-$first-edge" cat "/var/lib/goat-federation/$second/agreement.json"
-  review_and_admit "$first" "$second"
-  review_and_admit "$second" "$first"
+  review_and_admit "$first" "$second" "$n"
+  review_and_admit "$second" "$first" "$n"
 
   say "scenario $n: $first <-> $second phases 11-12, each side: the transport, the edge, the republisher"
   for s in "$first" "$second"; do
@@ -587,7 +710,7 @@ failures() { # $1 scenario, $2 first, $3 second
   for s in "$first" "$second"; do
     them="$([ "$s" = "$first" ] && echo "$second" || echo "$first")"
     rec "s$n-$s-core-trusts-only-its-own-ca" -- bash -c \
-      "docker exec $HP-$s-core sh -c 'grep -c BEGIN /etc/goat-core/ca.pem' | grep -qx 1 && [ \"\$(docker exec $HP-$s-core cat /etc/goat-core/ca.pem | openssl x509 -noout -subject)\" = \"\$(openssl x509 -in '$WORK/$s/keys/ca.pem' -noout -subject)\" ]"
+      "docker exec $HP-$s-core sh -c 'grep -c BEGIN $(core_ca "$s")' | grep -qx 1 && [ \"\$(docker exec $HP-$s-core cat $(core_ca "$s") | openssl x509 -noout -subject)\" = \"\$(openssl x509 -in '$WORK/$s/keys/ca.pem' -noout -subject)\" ]"
     rec "s$n-$s-tunnel-carried-it" -- bash -c \
       "docker exec $HP-$s-edge wg show $(iface "$s" "$them") transfer | awk '{print; if (\$2 < 1 || \$3 < 1) exit 1}'"
   done

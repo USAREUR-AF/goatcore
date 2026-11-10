@@ -11,7 +11,7 @@ The federation e2e environment runs synthetic sovereign environments on one Linu
 | Result schema `fed-e2e-result/1` and verdict | Built |
 | `env` entry point, units, scenario catalog, matrix page, watcher | Built |
 | Scenarios in the catalog marked `not_built:` | Not built; each entry names why |
-| Core router deployed by the `goat-zenoh` role | Not built in this change; module 5 adds it behind `FE2E_CORE=role` (unit `pair-role`). Its scenarios, and persistent reception and the republisher boundary, which read the store the role renders, are in the catalog as `not_built:` |
+| Core router deployed by the `goat-zenoh` role | Built: `FE2E_CORE=role` (unit `pair-role`, scenarios `core-by-role`, `preflight-slot-list`); the default stays the hand-run router until the other units pass under it |
 | Units `ipsec`, `mixed`, `rollback`, `forwarder`, `preflight`, `killresume`, `nodesec`, `shapes-oneway`, `shapes-asym` | Not built in this change; module 6 adds them. Their scenarios are in the catalog as `not_built:` |
 | Running the same scenarios on real hosts through `live-host.sh` | Designed, not built (§Real hosts) |
 
@@ -107,7 +107,7 @@ A scenario takes the worst required outcome in the order FAIL, BLOCKED, SKIP; NO
 GitHub runners can run privileged containers with the `wireguard` module, but have four cores and a job time limit. The split:
 
 - **CI** (`.github/workflows/federation-e2e.yml`): `ops/ci/check-federation-e2e-harness.sh` (the catalog and the verdict's outcome rules on fixtures, no Docker), run.sh's prepare-only, and run.sh's scenarios 1 to 3, which record the steps of `two-party-full` (`runs_where: ci`) on both avenues.
-- **Local** (`runs_where: local`), on one Linux machine: every other built scenario, including the pair unit's own checks (out-of-lane, identity, acceptance exit status, reruns), three sovereigns, the stock AppArmor profile, and the integration preview. `lib/watch.sh` runs these on every new head. Running the pair unit itself in CI through `env` is designed, not built. The scenarios for the role-deployed core (module 5) and for four sovereigns, NAT and the forwarder, held ports, killing the driver at each phase, released binaries, IPsec and node ports (module 6) are in the catalog as `not_built:` until those modules add their units.
+- **Local** (`runs_where: local`), on one Linux machine: every other built scenario, including the pair unit's own checks (out-of-lane, identity, acceptance exit status, reruns), persistent reception and the republisher boundary on the role-deployed core, three sovereigns, the stock AppArmor profile, and the integration preview. `lib/watch.sh` runs these on every new head. Running the pair unit itself in CI through `env` is designed, not built. The scenarios for four sovereigns, NAT and the forwarder, held ports, killing the driver at each phase, released binaries, IPsec and node ports are in the catalog as `not_built:` until module 6 adds their units.
 
 `env list` prints each scenario's place.
 
