@@ -102,7 +102,12 @@ fw_profile_find() {
 # interface the scan arrives on is the one the target routes the source through.
 fw_profile_ports() {
   local tgt="$1" saddr="$2" pfx="$3" iif live want
-  docker exec "$tgt" nft -s list table inet goat_host_firewall > "$pfx.loaded.nft" 2>/dev/null || return 1
+  if ! docker exec "$tgt" nft -s list table inet goat_host_firewall > "$pfx.loaded.nft" 2>&1; then
+    # No such table, or no command runs in the host at all (the daemon, or a full /tmp
+    # for runc): only the first is the host's answer.
+    docker exec "$tgt" nft list tables > "$pfx.tables.txt" 2>&1 || return 2
+    return 1
+  fi
   docker exec "$tgt" cat /etc/goat-host-firewall/ruleset.nft > "$pfx.ruleset.nft" 2>/dev/null || return 1
   live="$(sha256sum < "$pfx.loaded.nft" | cut -d' ' -f1)"
   want="$(docker exec "$tgt" cat /etc/goat-host-firewall/applied-live.sha256 2>/dev/null | tr -cd 'a-f0-9')"
@@ -150,8 +155,10 @@ ns_drill() {
 # NS_PROFILE_REQUIRED=1 (the baseline was switched on): the target's loaded rule set is
 # the only declaration, and a target without one prints nothing and returns 1.
 ns_expect() {
-  local decl src notes='[]' prof
-  if prof="$(fw_profile_ports "$5" "$6" "$7")" && [ -n "$prof" ]; then
+  local decl src notes='[]' prof rc=0
+  prof="$(fw_profile_ports "$5" "$6" "$7")" || rc=$?
+  [ "$rc" = 2 ] && return 2
+  if [ "$rc" = 0 ] && [ -n "$prof" ]; then
     python3 - "$prof" "$1:$2" "$5" "$3" "$4" <<'PY'
 import json, sys
 p, side, tgt, us, them = json.loads(sys.argv[1]), sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5]
@@ -240,8 +247,12 @@ link_ip() { # $1 party, $2 partner: the party's own address on that peering's tu
 # $5 target address, $6 role, $7 side, $8 us, $9 partner.
 ns_scan() {
   local step="$1" from="$2" saddr="$3" tgt="$4" taddr="$5" role="$6" side="$7" us="$8" them="$9"
-  local scan="$RECORD/$step.scan" rc reason
-  if ! ns_expect "$role" "$side" "$us" "$them" "$tgt" "$saddr" "$RECORD/$step" > "$WORK/$step.expect.json"; then
+  local scan="$RECORD/$step.scan" rc=0 reason
+  ns_expect "$role" "$side" "$us" "$them" "$tgt" "$saddr" "$RECORD/$step" > "$WORK/$step.expect.json" || rc=$?
+  if [ "$rc" = 2 ]; then
+    die "no command runs in $tgt to read its firewall ($(head -1 "$RECORD/$step.tables.txt" 2>/dev/null)); an environment fault, not the tree under test"
+  fi
+  if [ "$rc" != 0 ]; then
     # The switch is on in this sovereign's group_vars and the driver's phases ran, yet the
     # host carries no baseline table: the declaration the check compares against is absent.
     rec "$step" -- bash -c "echo '$tgt carries no table inet goat_host_firewall although goat_host_firewall_baseline is true in its group_vars and phases 11-12 ran (see the nsp/ns3 phase steps)'; exit 1"
