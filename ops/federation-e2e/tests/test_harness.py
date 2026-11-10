@@ -124,8 +124,53 @@ def verdict_checks():
             FAIL.append("jsonschema is not installed")
 
 
+def fwdeclared_checks():
+    """lib/fwdeclared.py: the ports a goat-host-firewall rule set admits from one source."""
+    ruleset = """table inet goat_host_firewall
+delete table inet goat_host_firewall
+table inet goat_host_firewall {
+  chain input {
+    type filter hook input priority filter; policy drop;
+    iifname "lo" accept comment "loopback"
+    udp sport 67 udp dport 68 accept comment "dhcp-client"
+    iifname "br-*" accept comment "container-bridges"
+    ip saddr { 198.51.100.10/32 } tcp dport { 22 } accept comment "ssh-management"
+    ip saddr { 192.0.2.10 } udp dport { 51820 } accept comment "wg-fed0/tunnel"
+    iifname "wg-fed0" ip saddr { 169.254.10.0 } tcp dport { 7448 } accept comment "wg-fed0/edge-router"
+    tcp dport { 7447 } accept comment "fabric-tls"
+    counter drop comment "default-deny"
+  }
+  chain published_new {
+    ip saddr { 203.0.113.5/32 } meta l4proto tcp ct original proto-dst { 9999 } accept comment "other"
+  }
+}
+"""
+    with tempfile.TemporaryDirectory() as d:
+        f = os.path.join(d, "ruleset.nft")
+        open(f, "w").write(ruleset)
+
+        def run(saddr, iif):
+            p = subprocess.run([sys.executable, os.path.join(ROOT, "lib", "fwdeclared.py"), "--ruleset", f, "--saddr", saddr, "--iif", iif],
+                               capture_output=True, text=True)
+            return json.loads(p.stdout) if p.returncode == 0 else None
+
+        r = run("198.51.100.10", "eth0")
+        check(r and r["tcp"] == [22, 7447] and r["udp"] == [], f"fwdeclared: management source got {r and (r['tcp'], r['udp'])}")
+        r = run("169.254.10.0", "wg-fed0")
+        check(r and r["tcp"] == [7447, 7448], f"fwdeclared: the far link address on the tunnel got {r and r['tcp']}")
+        r = run("169.254.10.0", "eth0")
+        check(r and r["tcp"] == [7447], "fwdeclared: a rule bound to the tunnel interface admitted another interface")
+        r = run("192.0.2.10", "eth1")
+        check(r and r["udp"] == [51820] and r["by_port"].get("udp/51820") == ["wg-fed0/tunnel"], "fwdeclared: the tunnel port from the partner endpoint")
+        r = run("203.0.113.5", "eth0")
+        check(r and r["tcp"] == [7447], "fwdeclared: a rule outside chain input or a fixed expression was counted")
+        open(f, "w").write("table inet other {}\n")
+        check(run("198.51.100.10", "eth0") is None, "fwdeclared: a file without the goat_host_firewall table was read as a rule set")
+
+
 catalog_checks()
 verdict_checks()
+fwdeclared_checks()
 for f in FAIL:
     print(f"FAIL {f}")
 print("ok: federation e2e harness checks" if not FAIL else f"{len(FAIL)} harness check(s) failed")

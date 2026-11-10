@@ -294,11 +294,16 @@ scenarios:
     unit: nodesec
     runs_where: local
     pass_condition: >
-      With the ref's baseline host firewall profile applied by the roles the driver runs, the
-      scans of node-ports-declared pass against the profile's own declared set; then with one
-      tightening override (SSH on each edge from one management address only), the edge
-      scans from the core host and from the management source pass against the tightened set.
-      On a ref with no host firewall profile every check is BLOCKED.
+      Each sovereign switches the ref's goat-host-firewall baseline on in its own group_vars
+      (goat_host_firewall_baseline, the management sources, and named loosenings with a
+      reason for the drill's own surfaces), committed to its trunk, and reruns phases 11-12,
+      whose plays (peering-wg.yml, peering-republisher.yml) apply the role. The scans of
+      node-ports-declared then pass against the rule set the role loaded on each host (the
+      ports its accept rules admit from the scanning source; no separate SPIRE or drill list);
+      then with one tightening override (ssh-management on each edge from the management host
+      only), the edge scans from the core host and from the management source pass against
+      the tightened rule set. A host the switch is on for that carries no loaded rule set
+      FAILs its checks. On a ref with no goat-host-firewall role every check is BLOCKED.
     checks:
       - {id: a-edge-boundary, step: "nsp-{A}-edge-from-{B}-edge-boundary"}
       - {id: a-edge-tunnel, step: "nsp-{A}-edge-from-{B}-edge-tunnel"}
@@ -322,11 +327,12 @@ scenarios:
     unit: nodesec
     runs_where: local
     pass_condition: >
-      With the baseline host firewall profile on, {A} peers with {B} and with {C} on one edge
-      host and one core host (scenario 3): both peerings pass strict acceptance from {A}'s
-      side, each partner receives its own set, and {A}'s edge and core answer on exactly the
-      declared ports of both peerings, from each partner and from the internal side. On a
-      ref with no host firewall profile every check is BLOCKED.
+      With the goat-host-firewall baseline on in every party's group_vars before the first
+      phase, {A} peers with {B} and with {C} on one edge host and one core host (scenario 3):
+      both peerings pass strict acceptance from {A}'s side, each partner receives its own set,
+      and {A}'s edge and core answer on exactly the ports the loaded rule set admits for both
+      peerings, from each partner and from the internal side. On a ref with no
+      goat-host-firewall role every check is BLOCKED.
     checks:
       - {id: ab-acceptance, step: "s3-acceptance-as-{A}-with-{B}"}
       - {id: ac-acceptance, step: "s3-acceptance-as-{A}-with-{C}"}
