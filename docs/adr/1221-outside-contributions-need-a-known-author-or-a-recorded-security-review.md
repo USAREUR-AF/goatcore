@@ -5,7 +5,7 @@
 | Status | Accepted |
 | Date | 2026-11-08 |
 | Deciders | operator |
-| Repo scope | Multi (goatcore, goatstuff, goatdocs, goatenv, hello-galaxy-goatenv, goatrodeo) |
+| Repo scope | Multi: every public repository of the organization. The check is a required status check on `main` in each one; the first six were goatcore, goatstuff, goatdocs, goatenv, hello-galaxy-goatenv and goatrodeo (2026-11-08), the remaining twenty followed on 2026-11-10 |
 | Amends | [ADR 1015](1015-code-review-discipline.md) (adds a review tier for contributions from outside the maintainers) |
 | Supersedes | — |
 | Superseded by | — |
