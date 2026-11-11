@@ -16,12 +16,9 @@ federation in goatbuilder: ADR 1225 (`federation-belongs-to-goatbuilder-one-comm
 
 Status: measured — the federation end-to-end test drives both sides with goatbuilder federate alone (run up-4b1adc18cc3b-20261111T102642).
 
-Step 1 describes the procedure as the program that moves federation from `goat` into `goatbuilder`
-builds it: the stages `plan`, `deploy`, `test` and `status`. Each part arrives beside the procedure
-you run today, and today's procedure stays the default until that part's default switch lands. A
-goatbuilder that does not list `plan`, `deploy`, `test` and `status` under
-`goatbuilder federate --help` runs today's procedure: follow
-[Until the switch](#until-the-switch-the-procedure-today).
+Step 1 describes the procedure: `goatbuilder federate <partner>`, and its stages `plan`, `deploy`,
+`test` and `status`. This page teaches only `goatbuilder federate`. The earlier method is described
+in one place, [The earlier method](#the-earlier-method).
 
 **Status of the procedure itself: it has not yet been executed between two real environments
 through these stages.** The certificate behaviour it relies on is proven
@@ -306,45 +303,24 @@ from `ops/errors/catalog.yaml` and the fix. Fix the cause and run the same comma
 
 The six package verbs, `goatbuilder federate init|lint|compose|diff|verify|apply`, keep the exit
 codes of `goat federate`: `20` refused · `21` malformed · `22` digest mismatch · `23` underived ·
-`24` not conformant. `goat federate <verb>` keeps working through the same library and prints one
-line naming the goatbuilder command; packages and agreements are identical whichever tool made
-them.
+`24` not conformant. Packages and agreements are identical whichever tool made them; see
+[The earlier method](#the-earlier-method) for `goat federate <verb>`.
 
-## Until the switch: the procedure today
+## The earlier method
 
-Until each part's default switch lands, `goatbuilder federate <partner>` runs the fourteen phases as
-one run that stops at phases 5 and 10, and you resume it by number. The phase table in
-[`plan`](#plan--validate-and-explain-the-change), [`deploy`](#deploy--carry-out-the-approved-plan) and
-[`test`](#test--a-bounded-acceptance-session-with-the-partner) holds for it, with three
-differences: you record the keys you read back yourself, you carry out the core review in phase 10
-yourself, and acceptance prints counts (`acceptance-counts: pass=… fail=… skip=…`, where a skip
-fails only under `FED_ACCEPTANCE_STRICT=1`). Where this page names
-`goatbuilder federate <verb>` for a package verb, a goatbuilder that does not list the verbs uses
-`goat federate <verb>`, with the same flags and exit codes.
+Before 0.5.0, federation ran through `goat federate <verb>` and by hand around it. The operator decided on
+11 November 2026:
 
-```bash
-goatbuilder federate <peering> --dry-run       # every phase and command; nothing runs
-goatbuilder federate <peering> --yes           # exchanges through the directory, stops at phase 5
-goatbuilder federate <peering> --from 6 --yes  # after the call; stops at phase 10
-goatbuilder federate <peering> --from 11 --yes # after the review
-```
-
-Phase 1 refuses without `FED_DIRECTORY_URL`, `FED_COUNTERPARTY_ID` and `FED_SIGNING_KEY`; the
-[script avenue](#the-script-avenue) lists every variable. At the phase 5 stop, read the keys aloud as
-in confirmation 1, write both to `$FED_WORK/keys.txt`, one `sovereign_id=key` per line, and resume
-with `--from 6`. At the phase 10 stop, review what apply rendered as in confirmation 2, splice
-`<work>/applied/ops/federation/acl/<them>-fragment.json5` into your core's access control with
-`roles/goat-zenoh/files/acl-assemble.py`, give the core `<work>/pki/core.pem` and its key, restart
-it, and resume with `--from 11`.
-
-Phase 3 reads the core image and version from the running core container. If it reports several
-candidates, `export FED_ROUTER_CONTAINER=zagros-zenoh-router` (your actual core name) and rerun
-phase 3. An absent or stopped explicit selection refuses instead of probing another core, and an
-explicit remote Docker endpoint never falls back to local Podman. See
-[core discovery](../design/federation-router-discovery.md).
-
-**Phases 2 and 11–13 run ansible** against `ops/ansible/inventory/peering-edges.ini`: the edge
-group `<peering>_edge`, and for the republisher the core group `<peering>_core`.
+1. **`goat federate <verb>` is sunset.** In 0.5.0 it still runs and prints one line naming the
+   `goatbuilder federate` command. It is removed from `goat` 30 days after the 0.5.0 release, and not
+   before one peering between two standing environments has been completed with
+   `goatbuilder federate`. After that, `goat federate` answers only with an error that names
+   `goatbuilder federate`.
+2. **The script driver stays**, as the script avenue below describes: documented, not supported
+   ([ADR 1201](../adr/1201-two-avenues-scripts-documented-cli-supported.md)), running the same
+   fourteen phases and held identical by the parity gate.
+3. **One method is taught.** This runbook, the tutorials and the reference teach only
+   `goatbuilder federate`.
 
 ### The script avenue
 
@@ -373,7 +349,11 @@ It reads its inputs from the environment; phase 1 refuses without the first thre
 | `FED_PACKAGE_URL` | **leave unset**: the directory hosts your package. Set it only to serve the package from a public host of your own, behind TLS, never on a mesh |
 | `FED_NO_DIRECTORY` | `1` only for a counterparty that can reach no directory; phase 5 then names the files to hand over |
 
-Its two stops are the ones [Until the switch](#until-the-switch-the-procedure-today) describes.
+At the phase 5 stop, read the keys aloud as in confirmation 1, write both to `$FED_WORK/keys.txt`,
+one `sovereign_id=key` per line, and resume with `--from 6`. At the phase 10 stop, review what apply
+rendered as in confirmation 2, splice `<work>/applied/ops/federation/acl/<them>-fragment.json5` into
+your core's access control with `roles/goat-zenoh/files/acl-assemble.py`, give the core
+`<work>/pki/core.pem` and its key, restart it, and resume with `--from 11`.
 
 ## Step 2 — The names and prefixes come from the agreement
 
@@ -598,7 +578,7 @@ read sealed data, and ADR 1169 keeps that decision entirely ours.
 goatbuilder federate apply <agreement> --as <us> --edge-group <group> --partner-audience weather
 ```
 
-The verb takes the same flags as `goat federate apply`, which keeps working during the transition.
+The verb takes the same flags `goat federate apply` had.
 
 This renders `goat_zenoh_edge_key_bundle_key_exprs: ["keys/weather/**"]` — scoped per release set,
 never `keys/**`, which would hand them every audience's bundle. Withdrawing the scope is re-running
