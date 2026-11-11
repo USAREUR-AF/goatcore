@@ -72,6 +72,23 @@ Missing complete pairs require a matching own CA signing key. Private keys are
 created under a private staging directory; fresh serials avoid mutating a shared
 CA serial file.
 
+## Our CA beside the leaves
+
+Once every requested pair is issued or reused, the helper places our CA, the
+certificate whose fingerprint the agreement names for us, at
+`<out>/our-ca.pem` (mode 0644), and rewrites it only when its content differs.
+The rendered deployment halves (`goatbuilder federate allocate`, `deployment:
+rendered`) name that file as the CA of the edge's inward endpoint
+(`#root_ca_certificate_file=`) and as `goat_fed_republisher_core_ca_src`. Before
+this, no phase wrote it: the edge's bind mount of a missing path left a directory
+there, zenoh could not read the CA, discarded the endpoint and never dialled the
+core, and phase 12 refused with "NO connection to any core endpoint". Something
+other than a regular file at that path (such as that directory) is refused by
+name before anything is issued. `--rotate` does not replace it.
+
+Status: WIP — gate: nothing-hand-written on the federation test environment
+passes phase 12 with the rendered edge half and no hand-placed `our-ca.pem`.
+
 ## Explicit replacement
 
 `--rotate` deliberately replaces every requested certificate/key pair. This is the

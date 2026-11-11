@@ -93,6 +93,46 @@ def mint(folder, name, cn, san, ca, ca_key, days):
     cert.chmod(0o644)
 
 
+OUR_CA = 'our-ca.pem'
+
+
+def our_ca_target(out):
+    """Where our CA goes beside the leaves: refused, before anything is issued,
+    when something other than a regular file holds that path."""
+    target = out / OUR_CA
+    if target.is_symlink() or (target.exists() and not target.is_file()):
+        raise ValueError(OUR_CA + ': expected a regular file at ' + str(target)
+                         + '; a container started before phase 8 creates a directory at a '
+                         'mounted path that does not exist. Remove it and run phase 8 again')
+    return target
+
+
+def place_our_ca(out, ca):
+    """Our CA, the one the agreement names for us, beside the leaves it signs.
+
+    The rendered deployment halves name <out>/our-ca.pem as the CA of the
+    edge's inward endpoint (root_ca_certificate_file) and as the republisher's
+    core CA, and the edge mounts that path into its container. Nothing else
+    writes it, and a bind mount of a path that does not exist makes the
+    container runtime create a directory there: zenoh then cannot read the CA,
+    discards the endpoint and never dials the core, with nothing logged.
+    Written once the leaves are in place, and only when the content differs,
+    so a re-run changes nothing.
+    """
+    target = our_ca_target(out)
+    data = ca.read_bytes()
+    if target.is_file() and target.read_bytes() == data:
+        return
+    stage = out / ('.' + OUR_CA + '.tmp')
+    stage.unlink(missing_ok=True)
+    fd = os.open(stage, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW, 0o644)
+    with os.fdopen(fd, 'wb') as handle:
+        handle.write(data)
+    os.chmod(stage, 0o644)
+    os.replace(stage, target)
+    print('  [placed] ' + OUR_CA + ': our CA, as the agreement names it')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--out', required=True, type=Path)
@@ -140,6 +180,7 @@ def main():
         if b'-no-CAstore' in help_result.stderr + help_result.stdout:
             trust_options.append('-no-CAstore')
         openssl('verify', *trust_options, '-trusted', ca, ca)
+        our_ca_target(out)
         pending = []
         existing = []
         for name, cn, san in args.leaf:
@@ -161,6 +202,7 @@ def main():
         if not pending:
             for name in names:
                 print('  [reused] ' + name + ': existing certificate and key validated')
+            place_our_ca(out, ca)
             return
         if args.ca_key is None or not args.ca_key.is_file():
             raise ValueError('issuance requires our CA key; set FED_CA_KEY or --ca-key, '
@@ -210,6 +252,7 @@ def main():
                 journal.unlink()
             for name, _, _ in pending:
                 print('  [issued] ' + name)
+            place_our_ca(out, ca)
             if backup:
                 print('  Previous material retained at ' + str(backup))
 
