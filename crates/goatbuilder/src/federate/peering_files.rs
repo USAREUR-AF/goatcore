@@ -502,20 +502,33 @@ fn live_value(repo: &Path, group: &str, var: &str, role: &str) -> Option<String>
 /// Whether a peering already runs from hand-written configuration: its edge
 /// group has hand group_vars, or the hand-written inventory names its group.
 fn runs_by_hand(repo: &Path, edge_group: &str) -> bool {
+    hand_run_reason(repo, edge_group).is_some()
+}
+
+/// Why a peering counts as running from hand-written configuration (its edge
+/// group's hand group_vars, else the hand inventory naming the group), or
+/// `None` when it does not.
+pub(super) fn hand_run_reason(repo: &Path, edge_group: &str) -> Option<String> {
     // A file that only turns on goat-zenoh-edge's certificate install is a
     // setting for the peering to come, not evidence that it runs.
-    let evidence = hand_group_files(repo, edge_group).iter().any(|f| {
-        let keys = std::fs::read_to_string(f)
-            .map(|t| yaml_keys(&t))
-            .unwrap_or_default();
-        keys.is_empty() || keys.iter().any(|k| k != "goat_zenoh_edge_install_certs")
-    });
-    if evidence {
-        return true;
+    let evidence: Vec<String> = hand_group_files(repo, edge_group)
+        .iter()
+        .filter(|f| {
+            let keys = std::fs::read_to_string(f)
+                .map(|t| yaml_keys(&t))
+                .unwrap_or_default();
+            keys.is_empty() || keys.iter().any(|k| k != "goat_zenoh_edge_install_certs")
+        })
+        .map(|f| f.strip_prefix(repo).unwrap_or(f).display().to_string())
+        .collect();
+    if !evidence.is_empty() {
+        return Some(format!("hand-written {}", evidence.join(", ")));
     }
     hand_inventory(repo)
-        .map(|groups| groups.contains_key(edge_group))
-        .unwrap_or(false)
+        .is_some_and(|groups| groups.contains_key(edge_group))
+        .then(|| {
+            format!("the hand-written ops/ansible/inventory/peering-edges.ini names [{edge_group}]")
+        })
 }
 
 /// The groups of the hand-written peering inventory and their host names.
@@ -733,7 +746,7 @@ pub fn deployment_halves(
 ) -> Result<Vec<Rendered>> {
     let mut out = Vec::new();
     for (p, v) in cfg.peerings.iter().zip(values.iter()) {
-        if p.deployment.as_deref() != Some("rendered") {
+        if !super::switches::deployment(repo, p, v).rendered {
             continue;
         }
         let groups: Vec<String> = cfg
@@ -971,6 +984,16 @@ pub fn run(repo: &Path, o: &Options) -> Result<Report> {
     for v in &values {
         checks.push(row("values", true, alloc::summary(v), None));
     }
+    for (p, v) in cfg.peerings.iter().zip(values.iter()) {
+        if let Some(why) = super::switches::deployment(repo, p, v).left_by_hand {
+            checks.push(row(
+                "hand",
+                true,
+                format!("left on hand-written files: the deployment halves of peering '{}', because it already runs by hand ({why}). To have allocate render them, declare deployment: rendered on it and remove the hand-written values the halves set (GB-125 names them)", v.peering),
+                None,
+            ));
+        }
+    }
     // Refuse before writing anything: one foreign file stops the whole run.
     for r in &rendered {
         let t = target(repo, &cfg_dir, &r.path);
@@ -1068,9 +1091,10 @@ mod tests {
         .unwrap()
     }
 
+    /// A peering declared with `deployment: hand`, so the tests that are not
+    /// about the deployment halves render none; `absent()` drops the switch.
     fn p(with: &str, hosts: bool) -> serde_json::Value {
-        let mut v =
-            json!({"with": with, "environment": "dev", "site": "alpha", "edge_class": "edge"});
+        let mut v = json!({"with": with, "environment": "dev", "site": "alpha", "edge_class": "edge", "deployment": "hand"});
         if hosts {
             v["hosts"] = json!({"edge": "192.0.2.20", "core": "192.0.2.10", "user": "goat"});
         }
@@ -1648,6 +1672,84 @@ mod tests {
         assert!(
             helper.contains("OUR_CA = 'our-ca.pem'"),
             "phase 8 places our CA under the name the halves read"
+        );
+    }
+
+    /// The pieces `the_site_values_are_derived_from_the_declarations` needs:
+    /// the core router's role default and the republisher's fleet pin.
+    fn with_owners(d: &Path) {
+        let r = d.join("ops/ansible/roles/goat-zenoh/defaults");
+        std::fs::create_dir_all(&r).unwrap();
+        std::fs::write(
+            r.join("main.yml"),
+            "goat_zenoh_listen_port: 7447\nzenoh_router_image: \"ghcr.io/{{ ghcr_org }}/zenoh@sha256:11\"\n",
+        )
+        .unwrap();
+        let pins = d.join("ops/pins");
+        std::fs::create_dir_all(&pins).unwrap();
+        std::fs::write(
+            pins.join("fleet-pins.yaml"),
+            "goatnets: {}\ncomponents:\n  goat-fed-republisher:\n    var: goat_fed_republisher_image\n    fleet: ghcr.io/{{ ghcr_org }}/goat-fed-republisher@sha256:22\n",
+        )
+        .unwrap();
+    }
+
+    fn absent(mut v: serde_json::Value) -> serde_json::Value {
+        v.as_object_mut().unwrap().remove("deployment");
+        v
+    }
+
+    /// `deployment` absent on a new peering: its halves are rendered, and a
+    /// re-run keeps rendering them.
+    #[test]
+    fn a_new_peering_has_its_deployment_halves_rendered_by_default() {
+        let d = repo_with_site(json!([absent(p("xab", true))]), "# none\n");
+        with_owners(d.path());
+        let r = run(d.path(), &opts(false)).unwrap();
+        let half = d
+            .path()
+            .join("ops/ansible/group_vars/xab_edge/peering-deployment.yml");
+        assert!(half.exists());
+        assert!(!r.checks.iter().any(|c| c.name == "hand"), "{:?}", r.checks);
+        run(d.path(), &opts(false)).unwrap();
+        assert!(half.exists(), "still rendered on a re-run");
+    }
+
+    /// `deployment` absent on a peering that already runs from hand-written
+    /// files: nothing is rendered for it, and allocate names it and why.
+    /// Declaring `deployment: rendered` opts it in.
+    #[test]
+    fn a_hand_run_peering_is_left_on_its_hand_files_and_named() {
+        let d = repo_with_site(
+            json!([absent(p("xab", true)), absent(p("xac", true))]),
+            "# none\n",
+        );
+        with_owners(d.path());
+        let g = d.path().join("ops/ansible/group_vars/xac_edge");
+        std::fs::create_dir_all(&g).unwrap();
+        std::fs::write(
+            g.join("deployment.yml"),
+            "goat_zenoh_edge_acl_trace: true\n",
+        )
+        .unwrap();
+        let r = run(d.path(), &opts(false)).unwrap();
+        let gv = d.path().join("ops/ansible/group_vars");
+        assert!(gv.join("xab_edge/peering-deployment.yml").exists());
+        assert!(!gv.join("xac_edge/peering-deployment.yml").exists());
+        assert!(!gv.join("xac_core/peering-deployment.yml").exists());
+        let hand: Vec<&String> = r
+            .checks
+            .iter()
+            .filter(|c| c.name == "hand")
+            .map(|c| &c.detail)
+            .collect();
+        assert_eq!(hand.len(), 1, "{hand:?}");
+        assert!(
+            hand[0].contains("peering 'xac'")
+                && hand[0].contains("ops/ansible/group_vars/xac_edge/deployment.yml")
+                && hand[0].contains("declare deployment: rendered"),
+            "{}",
+            hand[0]
         );
     }
 

@@ -200,7 +200,8 @@ pub struct Peering {
     pub hosts: Option<PeeringHosts>,
     /// `rendered`: `goatbuilder federate allocate` renders the edge's and the
     /// core's deployment halves from the declaration and the environment's site
-    /// values. Absent or `hand`: they are written by hand, as before.
+    /// values. `hand`: they are written by hand. Absent: rendered, unless the
+    /// peering already runs from hand-written files (`federate::switches`).
     #[serde(default)]
     pub deployment: Option<String>,
     /// `rendered`: `goatbuilder federate allocate` generates this peering's

@@ -58,6 +58,7 @@ pub mod federation_toml;
 pub mod forwarder;
 pub mod peering_files;
 pub mod site_values;
+pub mod switches;
 pub mod lock;
 mod run;
 pub mod state;
