@@ -614,6 +614,10 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
     let inputs = preflight::derive_inputs(repo, peering, &work, &edge_group, None);
     if executes {
         preflight::export(&inputs);
+        // Phase 14 reads our core and edge declarations by group
+        // (acceptance_surfaces.py): the edge group this run uses, whatever the
+        // environment held, so --edge-group is never typed a second time.
+        std::env::set_var("FED_EDGE_GROUP", &edge_group);
     }
     let mut phases = plan(repo, o, &work, &edge_group, &resume);
     // A peering a forwarder relays: the forwarder runs inside phase 2 (federate/forwarder.rs).
