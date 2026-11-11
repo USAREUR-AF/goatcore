@@ -34,7 +34,8 @@
 #   FED_EDGE_LOG_OURS        `docker logs <goat_zenoh_edge_stack>` on the <them>_edge host
 #   FED_SPIRE_OURS           `docker exec <peering_spire_container> <peering_spire_bin>`
 #                            on peering_spire_server_host, when peering_spire_enabled
-# from ops/ansible/inventory/peering-edges.ini and ops/ansible/group_vars (groups from
+# from ops/ansible/inventory/peering-<edge group>.ini (when allocate rendered it) and
+# peering-edges.ini, and ops/ansible/group_vars (groups from
 # FED_EDGE_GROUP / FED_CORE_GROUP, which both avenues export for phase 14). stderr says where each came from, or
 # what was looked for when it could not be derived.
 #

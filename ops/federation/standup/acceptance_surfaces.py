@@ -19,6 +19,10 @@ group_vars the plays read:
                      over ssh (SPIRE_VIA), only when the edge group sets
                      peering_spire_enabled: true.
 
+The hosts are read from the inventories the plays run with: the peering's own
+ops/ansible/inventory/peering-<edge group>.ini (rendered by `goatbuilder federate
+allocate` when not every peering declares hosts:), then peering-edges.ini.
+
 A value set in the environment is never replaced; it is an override. A value
 that cannot be derived is left unset, and stderr names what was looked for and
 where, so acceptance's own BLOCKED or SKIP row stands with that reason. A value
@@ -114,8 +118,13 @@ def derive(repo, peering, environ, edge_group="", core_group=""):
     core_group = core_group or f"{peering}_core"
     edge_groups = [edge_group, "peering_edges", "all"]
     core_groups = [core_group, "peering_cores", "all"]
-    inv = Path(repo) / "ops/ansible/inventory/peering-edges.ini"
-    inv_text = inv.read_text() if inv.is_file() else ""
+    # The inventories the plays run with: the peering's own rendered file
+    # (`goatbuilder federate allocate`, when not every peering declares hosts:)
+    # beside the peering inventory, as the driver passes them with -i.
+    files = [f for f in (f"ops/ansible/inventory/peering-{edge_group}.ini",
+                         "ops/ansible/inventory/peering-edges.ini") if (Path(repo) / f).is_file()]
+    inv_text = "\n".join((Path(repo) / f).read_text() for f in files)
+    where = " and ".join(files) or "ops/ansible/inventory/peering-edges.ini"
     out, notes = [], []
 
     def one_host(group):
@@ -123,8 +132,8 @@ def derive(repo, peering, environ, edge_group="", core_group=""):
         if len(hosts) == 1:
             return next(iter(hosts.items())), None
         if not hosts:
-            return None, f"no host under [{group}] in ops/ansible/inventory/peering-edges.ini"
-        return None, f"{len(hosts)} hosts under [{group}] in ops/ansible/inventory/peering-edges.ini; one is read"
+            return None, f"no host under [{group}] in {where}"
+        return None, f"{len(hosts)} hosts under [{group}] in {where}; one is read"
 
     def sudo(groups, hostvars):
         return "sudo -n " if become(repo, groups, hostvars) else ""
@@ -184,7 +193,7 @@ def derive(repo, peering, environ, edge_group="", core_group=""):
             container, cwhere = declared(repo, edge_groups, "goat-peering-spire", "peering_spire_container")
             binary, bwhere = declared(repo, edge_groups, "goat-peering-spire", "peering_spire_bin")
             if hv is None:
-                notes.append(f"FED_SPIRE_OURS not derived: peering_spire_server_host {server} ({vwhere}) is not a host in ops/ansible/inventory/peering-edges.ini")
+                notes.append(f"FED_SPIRE_OURS not derived: peering_spire_server_host {server} ({vwhere}) is not a host in {where}")
             elif container is None or binary is None:
                 notes.append(f"FED_SPIRE_OURS not derived: {cwhere if container is None else bwhere}")
             else:

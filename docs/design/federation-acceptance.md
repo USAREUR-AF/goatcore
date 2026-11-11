@@ -210,7 +210,7 @@ the environment does not set it. The variables stay as overrides.
 
 | Value | Read from | Runs |
 |---|---|---|
-| `FED_OURS_REST` | `goat_zenoh_rest_host` and `goat_zenoh_rest_port` of `<them>_core` (then `peering_cores`, `all`, the goat-zenoh role default), on the group's one host in `ops/ansible/inventory/peering-edges.ini` | from here; when the surface is bound to loopback (the role's default), on the core, and `FED_SSH_OURS` is derived from that host's `ansible_host`, `ansible_user` and `ansible_port` |
+| `FED_OURS_REST` | `goat_zenoh_rest_host` and `goat_zenoh_rest_port` of `<them>_core` (then `peering_cores`, `all`, the goat-zenoh role default), on the group's one host in the inventories the plays use (the peering's own `peering-<edge group>.ini` when `allocate` rendered one, then `peering-edges.ini`) | from here; when the surface is bound to loopback (the role's default), on the core, and `FED_SSH_OURS` is derived from that host's `ansible_host`, `ansible_user` and `ansible_port` |
 | `FED_EDGE_LOG_OURS` | `docker logs <goat_zenoh_edge_stack>` of `<them>_edge` (the role's name, `goat-zenoh-edge-<them>`, when unset); `sudo -n` when `ansible_become` is true | on the edge host, over ssh |
 | `FED_SPIRE_OURS` | `docker exec <peering_spire_container> <peering_spire_bin>` (goat-peering-spire), only when the edge group sets `peering_spire_enabled: true` | on `peering_spire_server_host`, over ssh |
 

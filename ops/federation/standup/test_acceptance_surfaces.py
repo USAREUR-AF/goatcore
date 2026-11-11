@@ -118,6 +118,21 @@ class Surfaces(unittest.TestCase):
         self.assertEqual(out["FED_OURS_REST"], "http://192.0.2.21:8000")
         self.assertEqual(out["EDGE_LOG_VIA"], "ssh://192.0.2.11")
 
+    def test_the_peerings_own_rendered_inventory_is_read(self):
+        # allocate renders peering-<edge group>.ini when not every peering declares
+        # hosts:, and the hand-written peering-edges.ini holds other peerings.
+        self.inventory("[xac_edge]\nedge-c ansible_host=192.0.2.40\n")
+        own = self.repo / "ops/ansible/inventory/peering-xab_edge.ini"
+        own.write_text("[peering_edges:children]\nxab_edge\n\n[xab_edge]\nzagros-edge-xab ansible_host=192.0.2.11 ansible_user=goat\n"
+                       "\n[peering_cores:children]\nxab_core\n\n[xab_core]\nzagros-core-xab ansible_host=192.0.2.21 ansible_user=goat\n")
+        self.group_vars("xab_edge", "peering_spire_enabled: true\npeering_spire_server_host: zagros-core-xab\n")
+        out, notes = self.derive()
+        self.assertEqual(out["FED_OURS_REST"], "http://127.0.0.1:8000")
+        self.assertEqual(out["FED_SSH_OURS"], "ssh://goat@192.0.2.21")
+        self.assertEqual(out["EDGE_LOG_VIA"], "ssh://goat@192.0.2.11")
+        self.assertEqual(out["SPIRE_VIA"], "ssh://goat@192.0.2.21")
+        self.assertTrue(any("peering-xab_edge.ini" in n or "derived" in n for n in notes), notes)
+
     def test_output_is_shell_assignments(self):
         self.group_vars("peering_edges", "goat_zenoh_edge_stack: \"edge xab; touch /nonexistent\"\n")
         env = {k: v for k, v in os.environ.items() if not k.startswith("FED_")}
