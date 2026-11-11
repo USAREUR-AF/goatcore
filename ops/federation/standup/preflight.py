@@ -320,8 +320,8 @@ def main(argv=None):
             values = [url, env.get("FED_COUNTERPARTY_ID", ""), env.get("FED_PACKAGE_URL", ""), env.get("FED_CA_CERT", "")]
             if not url:
                 missing.append(("FED_DIRECTORY_URL", f"goat_federation_directory_url in group_vars/{group}/ (https://"
-                                "<directory>), or goat_federation_no_directory: true for a counterparty that can "
-                                "reach none"))
+                                "<directory>) or environments[].peering_directory.url in goatbuilder.yaml, or "
+                                "goat_federation_no_directory: true for a counterparty that can reach none"))
             elif not url.startswith("https://"):
                 bad("peering directory", f"FED_DIRECTORY_URL is {url}, not an https:// address", code="GB-147")
             elif not env.get("FED_COUNTERPARTY_ID", ""):

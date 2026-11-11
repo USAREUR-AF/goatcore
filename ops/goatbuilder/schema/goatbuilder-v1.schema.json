@@ -285,6 +285,16 @@
           "uniqueItems": true,
           "items": { "type": "integer", "minimum": 1, "maximum": 65535 }
         },
+        "peering_directory": {
+          "description": "The peering directory this environment's peerings exchange packages through. goatbuilder federate reads url as FED_DIRECTORY_URL and ca_cert as SSL_CERT_FILE when those are unset and the edge group's group_vars do not set goat_federation_directory_url. Absent: nothing is derived, as before.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["url"],
+          "properties": {
+            "url": { "type": "string", "pattern": "^https://[A-Za-z0-9._:/?=&%~+@-]+$", "description": "The directory's https:// address." },
+            "ca_cert": { "type": "string", "minLength": 1, "pattern": "^[^'\"`$\\\\\\u0000-\\u001f]+$", "description": "The CA certificate (PEM) the directory's TLS certificate chains to, when it is not a public one. The run exports it as SSL_CERT_FILE, which replaces the system roots for every TLS client the run starts, so a run that also reaches public services names a bundle holding both. A relative path is inside the active goat context directory." }
+          }
+        },
         "groups": {
           "description": "The inventory groups a push converger targets for this environment (the goatnet's members in the pins today). doctor reads their group_vars to derive which environment variables each component's deploy templates, so a missing secret is named before any host is touched.",
           "type": "array",
