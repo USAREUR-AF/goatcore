@@ -787,6 +787,17 @@ pub fn admit(
     if let Some(ca) = &edge_ca {
         plan.push(("partner-ca.pem".into(), their_ca.clone(), PathBuf::from(ca)));
     }
+    // On a goat-zenoh role core, the core admits the partner in the role's own
+    // declarations too: its zenoh_sovereign_peerings entry, from the fragment.
+    if let Some(r) = &core.role {
+        let entry = super::admit_role::fragment_cn(&fragment)
+            .map_err(|e| format!("{e} (GB-237)"))
+            .and_then(|cn| super::admit_role::merge_peerings(repo, &r.group, &them, &cn));
+        match entry {
+            Ok(text) => plan.push(("peerings.yml".into(), text.into_bytes(), super::admit_role::peerings_file(repo, &r.group))),
+            Err(e) => return fail("GB-237", e, "fix what it names, make a new plan, and deploy again"),
+        }
+    }
     // The key is placed from memory and never written to the staging folder.
     for (name, bytes, _) in plan.iter().filter(|(n, _, _)| n != "core-key.pem") {
         if let Err(e) = write_staged(name, bytes) {

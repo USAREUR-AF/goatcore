@@ -302,6 +302,104 @@ impl RoleCore {
     }
 }
 
+/// The CN the partner's edge presents, from the subject of the agreement's
+/// access-control fragment (`cert_common_names` of its subjects region).
+/// Exactly one, or the reason there is not.
+pub fn fragment_cn(fragment: &str) -> Result<String, String> {
+    let re = regex::Regex::new(r#"cert_common_names\s*:\s*\[([^\]]*)\]"#).expect("regex");
+    let q = regex::Regex::new(r#""([^"]+)""#).expect("regex");
+    let mut cns: Vec<String> = Vec::new();
+    for c in re.captures_iter(fragment) {
+        for n in q.captures_iter(&c[1]) {
+            if !cns.contains(&n[1].to_string()) {
+                cns.push(n[1].to_string());
+            }
+        }
+    }
+    match cns.as_slice() {
+        [one] => Ok(one.clone()),
+        [] => Err("the fragment names no subject CN (cert_common_names)".into()),
+        many => Err(format!(
+            "the fragment names several subject CNs: {}",
+            many.join(", ")
+        )),
+    }
+}
+
+/// The file admission writes the core's admission of the partner into, in
+/// the goat-zenoh role's own declarations: `group_vars/<group>/peerings.yml`.
+pub fn peerings_file(repo: &Path, group: &str) -> PathBuf {
+    repo.join("ops/ansible/group_vars")
+        .join(group)
+        .join("peerings.yml")
+}
+
+/// `zenoh_sovereign_peerings` with this partner's entry (`sovereign`, `cn`)
+/// merged into what `group_vars/<group>/peerings.yml` holds: another
+/// partner's entry is kept as it is, and this partner's other keys are kept.
+/// Refused (GB-237) when another of the group's files sets the variable,
+/// because it would then have two owners.
+pub fn merge_peerings(repo: &Path, group: &str, them: &str, cn: &str) -> Result<String, String> {
+    let file = peerings_file(repo, group);
+    let gv = repo.join("ops/ansible/group_vars");
+    let mut others: Vec<PathBuf> = vec![
+        gv.join(format!("{group}.yml")),
+        gv.join(format!("{group}.yaml")),
+    ];
+    if let Ok(rd) = std::fs::read_dir(gv.join(group)) {
+        others.extend(rd.filter_map(|e| e.ok().map(|e| e.path())));
+    }
+    for f in others.iter().filter(|f| **f != file) {
+        let set = std::fs::read_to_string(f)
+            .ok()
+            .and_then(|t| serde_yaml::from_str::<serde_yaml::Value>(&t).ok())
+            .is_some_and(|d| d.get("zenoh_sovereign_peerings").is_some());
+        if set {
+            return Err(format!(
+                "zenoh_sovereign_peerings is set in {}, and admission writes it in {} (GB-237): move the entries into {} and remove the variable from the other file",
+                f.strip_prefix(repo).unwrap_or(f).display(),
+                file.strip_prefix(repo).unwrap_or(&file).display(),
+                file.strip_prefix(repo).unwrap_or(&file).display()
+            ));
+        }
+    }
+    let doc: serde_yaml::Value = match std::fs::read_to_string(&file) {
+        Ok(t) => serde_yaml::from_str(&t)
+            .map_err(|e| format!("{} is not YAML ({e}) (GB-237)", file.display()))?,
+        Err(_) => serde_yaml::Value::Null,
+    };
+    let mut list: Vec<serde_yaml::Value> = doc
+        .get("zenoh_sovereign_peerings")
+        .and_then(|l| l.as_sequence())
+        .cloned()
+        .unwrap_or_default();
+    let key = |k: &str| serde_yaml::Value::String(k.into());
+    match list
+        .iter_mut()
+        .find(|e| e.get("sovereign").and_then(|v| v.as_str()) == Some(them))
+    {
+        Some(e) => {
+            if let Some(m) = e.as_mapping_mut() {
+                m.insert(key("cn"), key(cn));
+            }
+        }
+        None => {
+            let mut m = serde_yaml::Mapping::new();
+            m.insert(key("sovereign"), key(them));
+            m.insert(key("cn"), key(cn));
+            list.push(serde_yaml::Value::Mapping(m));
+        }
+    }
+    let mut top = serde_yaml::Mapping::new();
+    top.insert(
+        key("zenoh_sovereign_peerings"),
+        serde_yaml::Value::Sequence(list),
+    );
+    let body =
+        serde_yaml::to_string(&serde_yaml::Value::Mapping(top)).map_err(|e| e.to_string())?;
+    Ok(format!("# Each partner this core admits (the goat-zenoh role's zenoh_sovereign_peerings),\n# written by phase 10's admission from the agreement's access-control fragment.\n{body}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -399,6 +497,53 @@ mod tests {
             .role_value(r.path(), "goat_zenoh_acl_org_path")
             .unwrap_err()
             .contains("(GB-236)"));
+    }
+
+    const FRAG: &str = "##ACL-ORG-REGION subjects\n      {\n        id: \"fed-xab\",\n        cert_common_names: [\"fed.xab.zagros.01\"],\n      },\n##ACL-ORG-REGION policies\n";
+
+    #[test]
+    fn the_partner_entry_is_merged_from_the_fragments_subject() {
+        assert_eq!(fragment_cn(FRAG).unwrap(), "fed.xab.zagros.01");
+        assert!(fragment_cn("no subjects").is_err());
+        assert!(fragment_cn("cert_common_names: [\"a\", \"b\"]")
+            .unwrap_err()
+            .contains("several"));
+        // A new file: this partner's entry alone.
+        let r = checkout(&[INV, GV]);
+        let text = merge_peerings(r.path(), "core_router", "xab", "fed.xab.zagros.01").unwrap();
+        let v: serde_yaml::Value = serde_yaml::from_str(&text).unwrap();
+        assert_eq!(v["zenoh_sovereign_peerings"][0]["sovereign"], "xab");
+        assert_eq!(v["zenoh_sovereign_peerings"][0]["cn"], "fed.xab.zagros.01");
+        // Another partner kept, this partner's other keys kept, its CN replaced.
+        let r = checkout(&[INV, GV, ("ops/ansible/group_vars/core_router/peerings.yml",
+            "zenoh_sovereign_peerings:\n- sovereign: xac\n  cn: fed.xac.zagros.01\n- sovereign: xab\n  cn: old\n  release_key_exprs: [from/zagros/REL-ALL/**]\n")]);
+        let text = merge_peerings(r.path(), "core_router", "xab", "fed.xab.zagros.01").unwrap();
+        let v: serde_yaml::Value = serde_yaml::from_str(&text).unwrap();
+        let l = v["zenoh_sovereign_peerings"].as_sequence().unwrap();
+        assert_eq!(l.len(), 2);
+        assert_eq!(l[0]["sovereign"], "xac");
+        assert_eq!(
+            (l[1]["cn"].as_str(), l[1]["release_key_exprs"][0].as_str()),
+            (Some("fed.xab.zagros.01"), Some("from/zagros/REL-ALL/**"))
+        );
+        assert_eq!(
+            merge_peerings(r.path(), "core_router", "xab", "fed.xab.zagros.01")
+                .unwrap()
+                .matches("sovereign: xab")
+                .count(),
+            1
+        );
+        // Set in another of the group's files: two owners, refused.
+        let r = checkout(&[
+            INV,
+            (
+                "ops/ansible/group_vars/core_router/zenoh.yml",
+                "zenoh_router_image: x\nsite_id: zagros\nzenoh_sovereign_peerings: []\n",
+            ),
+        ]);
+        assert!(merge_peerings(r.path(), "core_router", "xab", "c")
+            .unwrap_err()
+            .contains("(GB-237)"));
     }
 
     #[test]
