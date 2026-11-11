@@ -135,6 +135,9 @@ export GOAT_PROFILE_DIR
 # The core host the edge dials: the outbound republisher runs there, beside our
 # core router, and both of its sessions dial that router (phase 12).
 CORE_GROUP="${PEERING}_core"
+# Phase 14 reads our core and edge declarations by group (acceptance_surfaces.py).
+export FED_EDGE_GROUP="$EDGE_GROUP"
+: "${FED_CORE_GROUP:=$CORE_GROUP}"; export FED_CORE_GROUP
 
 # THE BOUND KEYS. `compose` refuses (exit 20) unless a verifying key is bound to
 # each party, and it will never take one from the package it verifies — a package
