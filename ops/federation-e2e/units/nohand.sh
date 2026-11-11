@@ -32,7 +32,8 @@ nh_lab_only() { # $1 line
   case "$1" in
     "value goat_fed_republisher_image in ops/ansible/group_vars/all.yml (block lab-site): lab-only: "*) return 0 ;;
     "value peering_wg_fips_waived_reason in ops/ansible/group_vars/all.yml (block lab-site): lab-only: "*) return 0 ;;
-    "values FED_THEIRS_REST, "*"FED_SPIRE_THEIRS, FED_PROBE_LAUNCHER and the drill's reach into the partner's network"*"lab-only: only a drill owns both sides"*) return 0 ;;
+    "values FED_THEIRS_REST, FED_SPIRE_THEIRS, FED_PROBE_LAUNCHER and the drill's reach into the partner's network (phase 14's counterparty surfaces): given only to the separate acceptance step; lab-only: only a drill owns both sides; "*) return 0 ;;
+    "values FED_THEIRS_REST, FED_SSH_THEIRS, FED_SPIRE_THEIRS, FED_PROBE_LAUNCHER and the drill's reach into the partner's network, given to phase 14 (\`goatbuilder federate "*" --from 14\`) on "*": lab-only: only a drill owns both sides; a production operator holds only their own (docs/design/federation-acceptance.md)") return 0 ;;
   esac
   return 1
 }
@@ -89,21 +90,9 @@ NH_DECLARED="FED_SIGNING_KEY FED_CA_CERT FED_CA_KEY FED_DIRECTORY_URL SSL_CERT_F
 # Admission's values on a goat-zenoh role core, withheld where the tree derives them.
 NH_ADMIT="FED_CORE_ACL_ORG FED_CORE_CERT FED_CORE_KEY FED_CORE_RESTART FED_CORE_DRY_RUN FED_SLOT_CHECK"
 NH_ADMIT_TREE=0
+# Both sides are treated alike: the same values withheld, given back only in survey mode.
 oc_env_more() { # $1 us, $2 them
   local out=() i=0 n=${#OC_ENV[@]} name
-  if [ "$1" = "$B" ]; then
-    # {B} admits {A} through plan -> deploy on its own role core: admission's values are
-    # withheld there too, and never given back.
-    [ "$NH_ADMIT_TREE" = 1 ] || return 0
-    while [ "$i" -lt "$n" ]; do
-      if [ "${OC_ENV[$i]}" = -e ]; then
-        case " $NH_ADMIT " in *" ${OC_ENV[$((i + 1))]%%=*} "*) i=$((i + 2)); continue ;; esac
-      fi
-      out+=("${OC_ENV[$i]}"); i=$((i + 1))
-    done
-    OC_ENV=("${out[@]}")
-    return 0
-  fi
   while [ "$i" -lt "$n" ]; do
     if [ "${OC_ENV[$i]}" = -e ]; then
       name="${OC_ENV[$((i + 1))]%%=*}"
@@ -313,88 +302,33 @@ for group, name, cmd in ((f"{them}_edge", "deployment.yml", "the edge half"), (f
 PY
 }
 
-nh_main() {
-  local s them gen inv
-  : > "$HAND"; : > "$OUTSIDE"
-  eval "FE2E_OVERLAY_ARGS_$A=--no-peering"; export "FE2E_OVERLAY_ARGS_$A"
-  # The core of each sovereign: deployed by the ref's goat-zenoh role (default), or the
-  # hand-run core for comparison (FE2E_NH_CORE=hand).
-  FE2E_CORE="${FE2E_NH_CORE:-role}"; export FE2E_CORE
-  set_partners "$A" "$B"; set_partners "$B" "$A"; export NODIR=""
-  export_helpers
-  export -f oc_passed
-  export OC_PREFIX HP ZENOH_IMAGE GB
-  say "nothing-hand-written: $A declares its peering with $B from nothing; every other file from the command"
-  setup_hosts nh
-  local c="$WORK/$A/clone" h; h="$(drv_host "$A")"
+# One side's peering declared from nothing: the operator's profile in the goat context, the
+# peering entry and the offer, and every other file from `goatbuilder federate allocate`. A
+# and B are this side's own within the function (bash's dynamic scope), so each helper
+# called here works on this side.
+nh_side_from_nothing() { # $1 us, $2 them, $3 "true" when this side listens
+  local A="$1" B="$2" listener="$3"
+  local c="$WORK/$A/clone" h s them gen inv f declares="${NH_DECLARES:-0}"
+  h="$(drv_host "$A")"
   rec "nh-$A-starts-with-no-peering" -- bash -c \
     "cd '$c' && ls ops/ansible/group_vars/ ops/ansible/inventory/ 2>&1; grep -n 'peerings' ops/goatbuilder/goatbuilder.yaml; ! ls -d ops/ansible/group_vars/${B}_edge ops/ansible/group_vars/${B}_core ops/ansible/inventory/peering-edges.ini 2>/dev/null && ! grep -q '^peerings:' ops/goatbuilder/goatbuilder.yaml"
-
-  # {B}, the ordinary partner, as every unit prepares it; it listens ({A}'s offer dials).
-  prepare_edge "$B" "$A" true
-  # {A}'s operator profile, the sovereign's own before any peering: the goat context holds
+  # The operator's profile, the sovereign's own before any peering: the goat context holds
   # the enrolled certificate and the CA roots, and nothing of the peering.
   local p="/root/.goat/contexts/default"
+  host_exec "$h" sh -c "[ -d /opt/goat/.git ] || git clone -q /srv/goat.git /opt/goat"
+  host_exec "$h" sh -c "git -C /opt/goat config user.name '$A operator'; git -C /opt/goat config user.email 'ops@$A.test'"
   host_exec "$h" install -d -m 0700 /root/.goat /root/.goat/contexts "$p"
   host_exec "$h" install -m 0644 /etc/fed-e2e/profile.pem "$p/mtls.cert.pem"
   host_exec "$h" install -m 0644 /etc/fed-e2e/ca.pem "$p/ca-roots.pem"
-  for s in "$A" "$B"; do oc_core_staging "$s"; done
-  # A tree whose admission works a goat-zenoh role core itself (GB-237: it writes
-  # zenoh_sovereign_peerings; it runs the role's play with site_id from the core group, places
-  # the org fragment and the router leaf where the role reads them, and judges the slot check):
-  # {A} declares only what a deployment declares for its core (site_id in the core group), and
-  # admission's values are withheld; one is given back, and listed, only when a run names it
-  # as missing.
-  local admit_tree=0
-  [ "$FE2E_CORE" = role ] && has_text ops/errors/catalog.yaml "code: GB-237" && admit_tree=1
-  if [ "$admit_tree" = 1 ]; then
-    NH_ADMIT_TREE=1
-    for s in "$A" "$B"; do
-      printf '%s\n' "# $s's core router site (the goat-zenoh role's mandatory site_id)." "site_id: $s" > "$WORK/$s/core-site.yml"
-      core_declare "$s" ops/ansible/group_vars/core_router/site.yml "$WORK/$s/core-site.yml" "$s: the core router's site"
-    done
-    # One group configures the core router, as in a deployment: the site overlay's [core]
-    # (the site inventory's hosts, which allocate reads) keeps no goat-zenoh variable of its
-    # own, else admission finds two role groups for one machine (GB-236).
-    if [ -f "$c/ops/ansible/group_vars/core/zenoh.yml" ]; then
-      git -C "$c" rm -q ops/ansible/group_vars/core/zenoh.yml
-      git -C "$c" commit -q -m "$A: the core router is configured by its core_router group only"
-      git -C "$c" push -q origin HEAD:main
-      host_exec "$h" git -C /opt/goat pull -q --ff-only origin main
-    fi
-    NH_WITHHELD="$NH_WITHHELD $NH_ADMIT"
-  elif [ "$FE2E_CORE" = role ]; then
-    oc_core_declare_role "$B" "$A"
-    oc_core_declare_role "$A" "$B"
-    hand "file ops/ansible/group_vars/core_router/peerings.yml (zenoh_sovereign_peerings: [{sovereign: $B, cn: fed.$B.$A.01}]): the core's admission of the partner in the goat-zenoh role's own declarations, written by hand and merged; phase 10's admission should write it into the reviewed change from the agreement (admission, W10)"
-    hand "file /usr/local/sbin/fe2e-core-role and values FED_CORE_RESTART, FED_CORE_DRY_RUN (place the org fragment on the core host, then zenoh-deploy.yml -i inventory/core-router.ini -e target=core_router -e site_id=$A, with --check --diff for the dry run): admission's play route FED_CORE_PLAY runs only \`-i inventory/peering-edges.ini --limit <with>_core\`, which cannot give zenoh-deploy.yml its mandatory target and site_id, and it writes the org fragment on the driver host, never where the role reads it; admission should run the goat-zenoh role from the core_router inventory group with site_id from it and place the fragment at the role's goat_zenoh_acl_org_path on that host (admission, W10)"
-    hand "value FED_CORE_ACL_ORG (/var/lib/goat-core-admission/acl-org-fragment.json5, a driver-host copy fetched from the core host): the role keeps the org fragment at goat_zenoh_acl_org_path (/etc/$A-zenoh/acl-org-fragment.json5) on the core host; admission should read and write it there (admission, W10)"
-    hand "values FED_CORE_CERT, FED_CORE_KEY (/root/.goat/state/$A-leaves/router-cert.pem and router-key.pem): where the goat-zenoh role reads the router leaf (goat_leaf, the controller's state directory); admission should take the location from the role, not from the operator (admission, W10)"
-    hand "value FED_SLOT_CHECK=skip: this core declares no lazy slot storage (preflight reports the slot check NOT APPLICABLE: no zenoh-lazy-storage.yml), yet admission refuses without FED_SLOT_REGISTRY_DB, FED_SLOT_PG_SSH or skip; it should judge the slot check NOT APPLICABLE the same way (admission, W10)"
-  else
-    hand "files /srv/goat-core/{seed.json5,acl-org-fragment.json5,config.json5,core.pem,core-key.pem,restart,dry-run} and values FED_CORE_CONFIG_PATH, FED_CORE_ACL_ORG, FED_CORE_ACL_SEED, FED_CORE_ACL_OUT, FED_CORE_CERT, FED_CORE_KEY, FED_CORE_RESTART, FED_CORE_DRY_RUN, FED_SLOT_CHECK: lab-only: the hand-run core (FE2E_NH_CORE=hand, kept for comparison) is started with docker run, so no deployment declaration exists for any command to read; with the role core (the default) these lines are replaced by the role-core gaps"
+  # One group configures the core router, as in a deployment: the site overlay's [core]
+  # (the site inventory's hosts, which allocate reads) keeps no goat-zenoh variable of its
+  # own, else admission finds two role groups for one machine (GB-236).
+  if [ "${NH_ADMIT_TREE:-0}" = 1 ] && [ -f "$c/ops/ansible/group_vars/core/zenoh.yml" ]; then
+    git -C "$c" rm -q ops/ansible/group_vars/core/zenoh.yml
+    git -C "$c" commit -q -m "$A: the core router is configured by its core_router group only"
+    git -C "$c" push -q origin HEAD:main
+    host_exec "$h" git -C /opt/goat pull -q --ff-only origin main
   fi
-  # The operator's keys and the peering directory: declared in goatbuilder.yaml where the
-  # tree reads the declarations (secrets.federation, environments[].peering_directory),
-  # which is the operator's input like the peering entry; the environment values are then
-  # left out, and given (and listed) only when a run names one as missing.
-  local declares=0
-  has_text ops/goatbuilder/schema/goatbuilder-v1.schema.json '"peering_directory"' && declares=1
-  if [ "$declares" = 1 ]; then
-    NH_WITHHELD="$NH_WITHHELD $NH_DECLARED"
-  else
-    hand "values FED_SIGNING_KEY, FED_CA_CERT, FED_CA_KEY (paths of the operator's signing key and CA): should be resolved from the goat context or goatbuilder.yaml secrets (W6 ca-key-resolve)"
-    hand "values FED_DIRECTORY_URL, SSL_CERT_FILE (the peering directory and its CA): should come from the environment's declaration in goatbuilder.yaml"
-  fi
-  if [ "${FE2E_ACC_VALUES:-omit}" = set ] || [ ! -f "$c/ops/federation/standup/acceptance_surfaces.py" ]; then
-    hand "values FED_OURS_REST, FED_EDGE_LOG_OURS, FED_SPIRE_OURS (phase 14 on this side's own surfaces): should be derived from the core and edge declarations (acceptance, W7)"
-  fi
-
-  # Phase 14's counterparty surfaces: only the separate acceptance step (oc_accept) is given
-  # them; phase 14 inside the command runs without them and is BLOCKED ("no counterparty
-  # surface (FED_THEIRS_REST)").
-  hand "values FED_THEIRS_REST, FED_SPIRE_THEIRS, FED_PROBE_LAUNCHER and the drill's reach into the partner's network (phase 14's counterparty surfaces): given only to the separate acceptance step; lab-only: only a drill owns both sides; a production operator holds only their own, so phase 14 inside \`goatbuilder federate $B\` is BLOCKED, exit 3, without them (no counterparty surface (FED_THEIRS_REST)), the designed reading (docs/design/federation-acceptance.md); production proves the partner's half through the bilateral session exchanged by file"
-
   # THE OPERATOR'S INPUT, and nothing else: the peering entry, and the environment's offer.
   python3 - "$c/ops/goatbuilder/goatbuilder.yaml" "$B" "$A" "$declares" "https://$DIRECTORY_IP:8443" <<'PY'
 import sys, yaml
@@ -419,7 +353,7 @@ cut_contact  = "fed-ops@$A.test"
 
 [transport]
 endpoint     = "$(boundary_ip "$A")"
-listener     = false
+listener     = $listener
 measured_mtu = 1380
 
 [data]
@@ -568,6 +502,75 @@ YAML
   rec "nh-$A-federation-toml-from-the-command" -- bash -c "cat '$c/$ft' 2>&1; head -1 '$c/$ft' 2>/dev/null | grep -qF '$gen'"
   git -C "$c" add -A
   git -C "$c" diff --cached --quiet || { git -C "$c" commit -q -m "$A: what no command wrote for $B, by hand"; git -C "$c" push -q origin HEAD:main; host_exec "$h" git -C /opt/goat pull -q --ff-only origin main; }
+
+}
+
+nh_main() {
+  local s them gen inv
+  : > "$HAND"; : > "$OUTSIDE"
+  for s in "$A" "$B"; do eval "FE2E_OVERLAY_ARGS_$s=--no-peering"; export "FE2E_OVERLAY_ARGS_$s"; done
+  # The core of each sovereign: deployed by the ref's goat-zenoh role (default), or the
+  # hand-run core for comparison (FE2E_NH_CORE=hand).
+  FE2E_CORE="${FE2E_NH_CORE:-role}"; export FE2E_CORE
+  set_partners "$A" "$B"; set_partners "$B" "$A"; export NODIR=""
+  export_helpers
+  export -f oc_passed
+  export OC_PREFIX HP ZENOH_IMAGE GB
+  say "nothing-hand-written: $A and $B each declare their peering from nothing; every other file from the command"
+  setup_hosts nh
+
+  for s in "$A" "$B"; do oc_core_staging "$s"; done
+  # A tree whose admission works a goat-zenoh role core itself (GB-237: it writes
+  # zenoh_sovereign_peerings; it runs the role's play with site_id from the core group, places
+  # the org fragment and the router leaf where the role reads them, and judges the slot check):
+  # {A} declares only what a deployment declares for its core (site_id in the core group), and
+  # admission's values are withheld; one is given back, and listed, only when a run names it
+  # as missing.
+  local admit_tree=0
+  [ "$FE2E_CORE" = role ] && has_text ops/errors/catalog.yaml "code: GB-237" && admit_tree=1
+  if [ "$admit_tree" = 1 ]; then
+    NH_ADMIT_TREE=1
+    for s in "$A" "$B"; do
+      printf '%s\n' "# $s's core router site (the goat-zenoh role's mandatory site_id)." "site_id: $s" > "$WORK/$s/core-site.yml"
+      core_declare "$s" ops/ansible/group_vars/core_router/site.yml "$WORK/$s/core-site.yml" "$s: the core router's site"
+    done
+    NH_WITHHELD="$NH_WITHHELD $NH_ADMIT"
+  elif [ "$FE2E_CORE" = role ]; then
+    oc_core_declare_role "$B" "$A"
+    oc_core_declare_role "$A" "$B"
+    hand "file ops/ansible/group_vars/core_router/peerings.yml (zenoh_sovereign_peerings: [{sovereign: $B, cn: fed.$B.$A.01}]): the core's admission of the partner in the goat-zenoh role's own declarations, written by hand and merged; phase 10's admission should write it into the reviewed change from the agreement (admission, W10)"
+    hand "file /usr/local/sbin/fe2e-core-role and values FED_CORE_RESTART, FED_CORE_DRY_RUN (place the org fragment on the core host, then zenoh-deploy.yml -i inventory/core-router.ini -e target=core_router -e site_id=$A, with --check --diff for the dry run): admission's play route FED_CORE_PLAY runs only \`-i inventory/peering-edges.ini --limit <with>_core\`, which cannot give zenoh-deploy.yml its mandatory target and site_id, and it writes the org fragment on the driver host, never where the role reads it; admission should run the goat-zenoh role from the core_router inventory group with site_id from it and place the fragment at the role's goat_zenoh_acl_org_path on that host (admission, W10)"
+    hand "value FED_CORE_ACL_ORG (/var/lib/goat-core-admission/acl-org-fragment.json5, a driver-host copy fetched from the core host): the role keeps the org fragment at goat_zenoh_acl_org_path (/etc/$A-zenoh/acl-org-fragment.json5) on the core host; admission should read and write it there (admission, W10)"
+    hand "values FED_CORE_CERT, FED_CORE_KEY (/root/.goat/state/$A-leaves/router-cert.pem and router-key.pem): where the goat-zenoh role reads the router leaf (goat_leaf, the controller's state directory); admission should take the location from the role, not from the operator (admission, W10)"
+    hand "value FED_SLOT_CHECK=skip: this core declares no lazy slot storage (preflight reports the slot check NOT APPLICABLE: no zenoh-lazy-storage.yml), yet admission refuses without FED_SLOT_REGISTRY_DB, FED_SLOT_PG_SSH or skip; it should judge the slot check NOT APPLICABLE the same way (admission, W10)"
+  else
+    hand "files /srv/goat-core/{seed.json5,acl-org-fragment.json5,config.json5,core.pem,core-key.pem,restart,dry-run} and values FED_CORE_CONFIG_PATH, FED_CORE_ACL_ORG, FED_CORE_ACL_SEED, FED_CORE_ACL_OUT, FED_CORE_CERT, FED_CORE_KEY, FED_CORE_RESTART, FED_CORE_DRY_RUN, FED_SLOT_CHECK: lab-only: the hand-run core (FE2E_NH_CORE=hand, kept for comparison) is started with docker run, so no deployment declaration exists for any command to read; with the role core (the default) these lines are replaced by the role-core gaps"
+  fi
+  # The operator's keys and the peering directory: declared in goatbuilder.yaml where the
+  # tree reads the declarations (secrets.federation, environments[].peering_directory),
+  # which is the operator's input like the peering entry; the environment values are then
+  # left out, and given (and listed) only when a run names one as missing.
+  NH_DECLARES=0
+  has_text ops/goatbuilder/schema/goatbuilder-v1.schema.json '"peering_directory"' && NH_DECLARES=1
+  local declares="$NH_DECLARES"
+  if [ "$declares" = 1 ]; then
+    NH_WITHHELD="$NH_WITHHELD $NH_DECLARED"
+  else
+    hand "values FED_SIGNING_KEY, FED_CA_CERT, FED_CA_KEY (paths of the operator's signing key and CA): should be resolved from the goat context or goatbuilder.yaml secrets (W6 ca-key-resolve)"
+    hand "values FED_DIRECTORY_URL, SSL_CERT_FILE (the peering directory and its CA): should come from the environment's declaration in goatbuilder.yaml"
+  fi
+  if [ "${FE2E_ACC_VALUES:-omit}" = set ] || ! has_text ops/federation/standup/acceptance_surfaces.py "def "; then
+    hand "values FED_OURS_REST, FED_EDGE_LOG_OURS, FED_SPIRE_OURS (phase 14 on this side's own surfaces): should be derived from the core and edge declarations (acceptance, W7)"
+  fi
+
+  # Phase 14's counterparty surfaces: only the separate acceptance step (oc_accept) is given
+  # them; phase 14 inside the command runs without them and is BLOCKED ("no counterparty
+  # surface (FED_THEIRS_REST)").
+  hand "values FED_THEIRS_REST, FED_SPIRE_THEIRS, FED_PROBE_LAUNCHER and the drill's reach into the partner's network (phase 14's counterparty surfaces): given only to the separate acceptance step; lab-only: only a drill owns both sides; a production operator holds only their own, so phase 14 inside \`goatbuilder federate $B\` is BLOCKED, exit 3, without them (no counterparty surface (FED_THEIRS_REST)), the designed reading (docs/design/federation-acceptance.md); production proves the partner's half through the bilateral session exchanged by file"
+
+  # Each side declares its peering from nothing, the same way (nh_side_from_nothing).
+  nh_side_from_nothing "$A" "$B" false
+  nh_side_from_nothing "$B" "$A" true
 
   # The responders a drill keeps on each core (acceptance §2), then both operators run the
   # one command, as in units/onecmd.sh.

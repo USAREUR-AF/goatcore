@@ -930,8 +930,9 @@ scenarios:
     unit: {goatbuilder: nohand}
     runs_where: local
     pass_condition: >
-      {A} starts with no peering to {B}: overlay.py --no-peering writes no peering group_vars,
-      no peering inventory and no goatbuilder.yaml `peerings:` entry. The operator's input is
+      {A} and {B} each start with no peering to the other: overlay.py --no-peering writes no
+      peering group_vars, no peering inventory and no goatbuilder.yaml `peerings:` entry, and
+      no goat context holds a peering's federation.toml. Both sides are declared alike. The operator's input is
       exactly the peering entry in goatbuilder.yaml (with, environment, site, edge_class),
       the offer in ops/federation/{A}/federation.toml, and the two confirmations answered at
       the command's prompts. Every other file and value comes from `goatbuilder federate
@@ -968,11 +969,15 @@ scenarios:
       - {id: phase-10-admission, step: "nh-{A}-{B}-phases-10"}
       - {id: phases-11-to-12, step: "nh-{A}-{B}-phases-11-to-12"}
       - {id: phase-13, step: "nh-{A}-{B}-phases-13"}
-      - {id: phase-14-in-the-command, step: "nh-{A}-{B}-phases-14", required: false}
+      - {id: phase-14-in-the-command, step: "nh-{A}-{B}-phases-14"}
       - {id: confirmed-at-the-terminal, step: "nh-{A}-{B}-confirmed-at-the-terminal"}
-      - {id: partner-phases-1-to-5, step: "nh-{B}-{A}-phases-1-to-5", required: false}
-      - {id: partner-phase-13, step: "nh-{B}-{A}-phases-13", required: false}
+      - {id: partner-phases-1-to-5, step: "nh-{B}-{A}-phases-1-to-5"}
+      - {id: partner-phases-6-to-9, step: "nh-{B}-{A}-phases-6-to-9"}
+      - {id: partner-phase-10-admission, step: "nh-{B}-{A}-phases-10"}
+      - {id: partner-phases-11-to-12, step: "nh-{B}-{A}-phases-11-to-12"}
+      - {id: partner-phase-13, step: "nh-{B}-{A}-phases-13"}
+      - {id: partner-phase-14-in-the-command, step: "nh-{B}-{A}-phases-14"}
       - {id: one-agreement, step: "nh-{A}-{B}-one-agreement-digest"}
       - {id: handshake, step: "nh-{A}-{B}-a-wireguard-handshake"}
-      - {id: acceptance, step: "nh-acceptance-as-{A}-with-{B}", required: false}
+      - {id: acceptance, step: "nh-acceptance-as-{A}-with-{B}"}
       - {id: nothing-hand-written, step: "nh-nothing-hand-written"}
