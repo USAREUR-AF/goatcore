@@ -128,6 +128,9 @@ EMPTY = {"pagerduty_integration_key": "", "slack_webhook_url": "", "smtp_smartho
 SET = dict(EMPTY, pagerduty_integration_key="pd-fixture-key", slack_webhook_url="https://hooks.example.test/x",
            smtp_smarthost="smtp.example.test:587", smtp_auth_username="u", smtp_auth_password="p",
            email_digest_recipients="ops@example.test")
+NTFY = dict(SET, ntfy_alertmanager_webhook_url="https://ntfy.example.test/goat-critical?template=alertmanager",
+            ntfy_alertmanager_webhook_url_warning="https://ntfy.example.test/goat-warning?template=alertmanager",
+            ntfy_alertmanager_user="alertmanager", ntfy_alertmanager_password="fixture")
 
 
 def render(template, values, out_dir):
@@ -159,6 +162,18 @@ class Rendered(unittest.TestCase):
 
     def tearDown(self):
         shutil.rmtree(self.d, ignore_errors=True)
+
+    def test_noop_receiver_sends_nothing(self):
+        # The null route must be a receiver with no integrations. A POST to a
+        # closed local port fails every group_interval, spams retry errors,
+        # and makes the deliberate drop look identical in the logs to a real
+        # delivery failure on a configured channel.
+        for t in TEMPLATES:
+            for values in (EMPTY, NTFY):
+                doc = yaml.safe_load(render(t, values, self.d))
+                noop = next(r for r in doc["receivers"] if r["name"] == "webhook-noop")
+                self.assertEqual(sorted(noop), ["name"],
+                                 "%s: webhook-noop must carry no integrations" % t)
 
     def test_empty_channels_render_no_outside_receiver(self):
         for t in TEMPLATES:

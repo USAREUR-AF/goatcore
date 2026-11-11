@@ -161,10 +161,12 @@ receivers:
   # Always-defined null receiver. Every other receiver falls back to
   # this when its credentials aren't set. Dropping alerts here is
   # intentional during shakedown — the Prom UI still shows them.
+  # A receiver with no integrations is Alertmanager's null route: the
+  # dispatcher succeeds without sending anything. The previous shape
+  # POSTed to a closed local port, so every group_interval logged retry
+  # errors and the deliberate drop was indistinguishable in the logs
+  # from a real delivery failure on a configured channel.
   - name: webhook-noop
-    webhook_configs:
-      - url: "http://localhost:9999/noop"
-        send_resolved: false
 {% if deadman_active %}
   - name: deadman
     webhook_configs:
