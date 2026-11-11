@@ -1,6 +1,6 @@
 module github.com/usareur-af/goatcore/ops/goat-zenoh-portal
 
-go 1.26.10
+go 1.26.11
 
 require (
 	github.com/bufbuild/protocompile v0.14.1
