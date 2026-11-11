@@ -8,10 +8,12 @@ description: >-
 
 inputs:
   cache-image:
-    # THE ONE PLACE the cache image is named. Swap in the pushed digest
-    # (ghcr.io/usareur-af/ci-apt-cache:2026-11-11@sha256:...) here. A job that runs in a
-    # `container:` names the same image in its `services:` entry (goatlite-workstation.yml
-    # fresh-ubuntu); change both together.
+    # The cache image is named in TWO places; swap the pushed digest
+    # (ghcr.io/usareur-af/ci-apt-cache:2026-11-11@sha256:...) into both:
+    #   1. here;
+    #   2. .github/workflows/goatlite-workstation.yml, fresh-ubuntu `services: apt-cache: image`
+    #      (a job container cannot run it from this action).
+    # A tag is accepted, with a warning when the failover pulls it.
     description: The cache image (apt-cacher-ng on port 3142, serving offline).
     default: ghcr.io/usareur-af/ci-apt-cache:2026-11-11
   token:
@@ -112,9 +114,17 @@ runs:
         if [ -n "$CACHE_TOKEN" ] && printf '%s' "$CACHE_TOKEN" | docker login ghcr.io -u "${GITHUB_ACTOR:-github-actions}" --password-stdin >/dev/null 2>&1; then
           login="ghcr.io login"
         fi
+        [[ "$CACHE_IMAGE" =~ @sha256:[0-9a-f]{64}$ ]] || echo "::warning::apt-failover: cache-image is not pinned by digest: $CACHE_IMAGE"
         if ! docker pull -q "$CACHE_IMAGE" >/dev/null; then
-          echo "::error::apt-failover: mirror $host did not answer, and the cache image $CACHE_IMAGE could not be pulled ($login); this job's packages have no source"
-          exit 1
+          # A token that logs in but cannot read the package is denied a pull that an
+          # anonymous one of a public package would get.
+          if [ "$login" = "ghcr.io login" ] && docker logout ghcr.io >/dev/null 2>&1 \
+             && login="anonymous pull after a denied login" && docker pull -q "$CACHE_IMAGE" >/dev/null; then
+            :
+          else
+            echo "::error::apt-failover: mirror $host did not answer, and the cache image $CACHE_IMAGE could not be pulled ($login); this job's packages have no source"
+            exit 1
+          fi
         fi
         docker rm -f ci-apt-cache >/dev/null 2>&1 || true
         docker run -d --name ci-apt-cache --network host --restart no "$CACHE_IMAGE" >/dev/null

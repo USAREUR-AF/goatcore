@@ -15,7 +15,7 @@ A GitHub runner installs packages from Ubuntu's archive, through its Azure mirro
 3. If the mirror answers, nothing changes, and one line says so. That is the normal path.
 4. If it does not answer:
    - it logs in to ghcr.io with the job token, or falls back to an anonymous pull;
-   - it pulls the `cache-image` input (`ghcr.io/usareur-af/ci-apt-cache:<date>`, an apt-cacher-ng that serves its baked cache offline);
+   - it pulls the `cache-image` input (`ghcr.io/usareur-af/ci-apt-cache:<date>`, an apt-cacher-ng that serves its baked cache offline). A tag is pulled with a warning that it is not pinned by digest. A pull denied after a successful token login is retried anonymously, for a public package;
    - it runs that image on the host network on port 3142, and waits for it to listen;
    - it writes `/etc/apt/apt.conf.d/00ci-failover` (`Acquire::http::Proxy "http://127.0.0.1:3142"`);
    - it sets `proxies.default` in `~/.docker/config.json`, with `httpProxy` at the default bridge's gateway (inside a container, 127.0.0.1 is the container), and `noProxy` covering loopback, the private ranges, `.local` and `.internal`. It sets no `httpsProxy`, so the https fetches of image builds (PyPI, galaxy, registries) stay direct;
@@ -26,7 +26,20 @@ A GitHub runner installs packages from Ubuntu's archive, through its Azure mirro
 
 `ops/ci/apt-install-fallback.sh` sees `Acquire::http::Proxy` once this file is written, and then uses the proxy and never rewrites sources. So the two never fight.
 
-Nothing restarts. The docker CLI reads its config on each command, and apt reads its config on each run.
+Nothing restarts.
+
+## Where the image is named
+
+The image is named in two places. Swap the pushed digest into both:
+
+1. the `cache-image` input default in `.github/actions/apt-failover/action.yml`;
+2. `services: apt-cache: image` of `fresh-ubuntu` in `.github/workflows/goatlite-workstation.yml`.
+
+## Limits of the design
+
+- The probe checks only the first mirror apt names, the runner's Azure mirror. If archive.ubuntu.com or security.ubuntu.com is down while Azure answers, the action does not fail over. That matters to windows-portability, which reads those two hosts directly.
+- The cache image must listen on all addresses, not only 127.0.0.1. Docker builds and containers reach it at the bridge gateway, and a service at its own hostname.
+- fresh-ubuntu's service image is pulled on every run, not only on failover. The docker CLI reads its config on each command, and apt reads its config on each run.
 
 ## Job containers
 
@@ -52,6 +65,7 @@ The runner image's own extra sources (for example packages.microsoft.com) are no
 - One job each:
   - `federation-bundle.yml` bundle;
   - `federation-republisher.yml` test;
+  - `deploy-e2e.yml` hermetic;
   - `goatbuilder-pr.yml` host;
   - `goat-cli-pr.yml` windows-portability;
   - `signal-server.yml` test;
@@ -66,10 +80,12 @@ The runner image's own extra sources (for example packages.microsoft.com) are no
   - `zero-saas-recipes.yml` local-registry;
   - `goatlite-vm-image.yml` build;
   - `netbird-mgmt.yml` build;
-  - `goatlite-workstation.yml` fresh-ubuntu.
-- `federation-e2e.yml` (two-sovereigns) and `deploy-e2e.yml` (hermetic) are maintained by the test environment, which adds the step there.
+  - `goatlite-workstation.yml` fresh-ubuntu;
+  - `id-console-web-e2e.yml` e2e (Playwright's `install --with-deps`);
+  - `portal-web-e2e.yml` e2e (the same).
+- `federation-e2e.yml` (two-sovereigns) is maintained by the test environment, which added the step there.
 
-Each job that pulls the image has `packages: read`. Where its workflow set only `contents: read` at the top, the job now sets `contents: read` and `packages: read`, and nothing else is widened. A workflow with no permissions block keeps its defaults.
+Each job that pulls the image has `packages: read`. Where its workflow set only `contents: read` at the top, the job now sets `contents: read` and `packages: read`, and nothing else is widened. Where a workflow has no permissions block, the wired job keeps its defaults, except the two Playwright e2e jobs, which now set `contents: read` and `packages: read`.
 
 ## Not built
 
