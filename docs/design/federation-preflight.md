@@ -78,6 +78,7 @@ character is not exported either, because the phase commands run through
 | `FED_CA_KEY_FROM_AGE` | phase 8 | `goat_federation_ca_key_from_age: true` gives `1`; unset otherwise (phase 8 then opens no age-encrypted key) |
 | `FED_CA_KEY_AGE`, `FED_AGE_IDENTITY` | preflight, phase 8 | `goat_federation_ca_key_age`, else `<deploy.state_dir>/<site>-ca/ca.key.age` (`portal_ca_key_src`); `goat_federation_age_identity`, else `~/.config/age/keys.txt` |
 | `FED_CORE_SAN` | preflight, phase 8 | the addresses `group_vars/<edge>/deployment.yml` dials |
+| `FED_CORE_CN` | phase 8 | the CN the edge pins for its core: `goat_zenoh_edge_core_cn` in `group_vars/<edge>/` (the rendered `peering-deployment.yml` included), else the core's site-inventory name (`site_values::phase8_core_cn`) |
 | `FED_ROUTER_DOCKER_HOST` | preflight, phase 3 | `ssh://<ansible_user>@<ansible_host>` of the one host in `[<core group>]` (`deploy.ssh_user` when the host names no user); nothing when the group has several hosts |
 | `FED_SLOT_DB` or `FED_SLOT_REGISTRY_STORE` with `FED_SLOT_PG_SSH` | preflight | not derived; `portal_store` and `portal_db_*` in `group_vars/<env>_hosts/` are read for the rest |
 
