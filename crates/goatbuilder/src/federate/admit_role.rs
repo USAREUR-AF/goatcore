@@ -321,7 +321,10 @@ pub fn fragment_cn(fragment: &str, agreed: Option<&str>) -> Result<String, Strin
             }
         }
     }
-    let partner: Vec<&String> = cns.iter().filter(|c| !c.contains(".republisher.")).collect();
+    let partner: Vec<&String> = cns
+        .iter()
+        .filter(|c| !c.contains(".republisher."))
+        .collect();
     match (partner.as_slice(), agreed) {
         (_, Some(a)) if partner.len() == 1 && partner[0] == a => Ok(a.to_string()),
         (_, Some(a)) if partner.iter().any(|c| c.as_str() == a) => Err(format!(
@@ -531,11 +534,17 @@ mod tests {
         }
         // Two partner candidates are still refused.
         let two = both(edge, "fed.xab.xaa.02");
-        assert!(fragment_cn(&two, Some(edge)).unwrap_err().contains("several partner"));
-        assert!(fragment_cn(&two, None).unwrap_err().contains("several partner"));
+        assert!(fragment_cn(&two, Some(edge))
+            .unwrap_err()
+            .contains("several partner"));
+        assert!(fragment_cn(&two, None)
+            .unwrap_err()
+            .contains("several partner"));
         // A fragment without the agreed CN is refused, naming what it has.
         let other = both("fed.xac.xaa.01", ours);
-        assert!(fragment_cn(&other, Some(edge)).unwrap_err().contains("fed.xac.xaa.01"));
+        assert!(fragment_cn(&other, Some(edge))
+            .unwrap_err()
+            .contains("fed.xac.xaa.01"));
     }
 
     #[test]
