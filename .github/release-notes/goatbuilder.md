@@ -1,6 +1,6 @@
 `goatbuilder`, the build, release, deploy and standup tool for a goatnet.
 
-**New in 0.5.0: federation is in goatbuilder.** You federate with a partner using goatbuilder alone. You make one decision (the partner, and the release sets it receives) and two confirmations at the terminal. The full list is in `crates/goatbuilder/CHANGELOG.md`.
+**New in 0.5.0 and 0.5.1: federation is in goatbuilder.** (0.5.0 was tagged and not published; 0.5.1 is the same goatbuilder and the first published release that carries it.) You federate with a partner using goatbuilder alone. You make one decision (the partner, and the release sets it receives) and two confirmations at the terminal. The full list is in `crates/goatbuilder/CHANGELOG.md`.
 
 - `goatbuilder federate <partner>`: the whole procedure in one run. At a terminal it asks for the partner's key and CA fingerprint and for the agreement digest. It makes the plan and asks you to approve it, shows what our core will admit and asks again, then carries on through acceptance. A run that stops resumes where it stopped.
 - `goatbuilder federate plan <partner>`, `deploy <partner>`, `test <partner>`, `status [<partner>]` and `backout <partner>`: each stage on its own. `backout --dry-run` surveys what backing one peering out would remove.

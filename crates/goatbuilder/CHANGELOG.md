@@ -6,6 +6,20 @@ Each release is the tag `goatbuilder/v<semver>` on `main`, built and signed by
 
 ## Unreleased
 
+## 0.5.1 — 2026-11-11
+
+The same goatbuilder as 0.5.0. Version 0.5.0 was tagged and its binaries were
+built, but its release was not published: the release's documentation job
+installs gettext from the runner's Ubuntu mirror, and that mirror did not
+answer. 0.5.1 is the first published release that carries everything listed
+under 0.5.0 below.
+
+### Fixed: a release no longer waits on a distribution mirror
+
+The release's documentation job uses gettext when the runner already has it,
+tries the Ubuntu mirror for three minutes, and otherwise installs it with
+Homebrew from the runner image.
+
 ## 0.5.0 — 2026-11-11
 
 Federation moves from `goat` into goatbuilder. An operator now federates
