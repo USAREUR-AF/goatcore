@@ -162,6 +162,84 @@ class MinimalShape(unittest.TestCase):
         self.assertEqual(validate.errors_for(c), [])
 
 
+class EdgeReservedUdp(unittest.TestCase):
+    """environments[].peering_edge_reserved_udp is per environment, where the
+    allocator reads it (crates/goatbuilder/src/federate/alloc.rs)."""
+
+    def test_an_environment_declares_its_edge_reserved_udp(self):
+        c = with_sites()
+        c["environments"][0]["peering_edge_reserved_udp"] = []
+        self.assertEqual(validate.errors_for(c), [])
+        c["environments"][0]["peering_edge_reserved_udp"] = [51820, 51900]
+        self.assertEqual(validate.errors_for(c), [])
+
+    def test_a_site_does_not(self):
+        c = with_sites()
+        c["environments"][0]["sites"][0]["peering_edge_reserved_udp"] = []
+        self.assertTrue(any("peering_edge_reserved_udp" in e for e in validate.errors_for(c)))
+
+
+class PeeringDeployment(unittest.TestCase):
+    def test_deployment_is_hand_or_rendered(self):
+        c = with_sites()
+        c["peerings"] = [{"with": "xab", "environment": "dev", "site": "alpha", "edge_class": "edge", "deployment": "rendered"}]
+        self.assertEqual(validate.errors_for(c), [])
+        c["peerings"][0]["deployment"] = "generated"
+        self.assertTrue(any("generated" in e for e in validate.errors_for(c)))
+
+
+class PeeringFederationToml(unittest.TestCase):
+    def test_federation_toml_is_hand_or_rendered(self):
+        c = with_sites()
+        c["peerings"] = [{"with": "xab", "environment": "dev", "site": "alpha", "edge_class": "edge", "federation_toml": "rendered"}]
+        self.assertEqual(validate.errors_for(c), [])
+        c["peerings"][0]["federation_toml"] = "template"
+        self.assertTrue(any("template" in e for e in validate.errors_for(c)))
+
+
+class PeeringDirectory(unittest.TestCase):
+    """environments[].peering_directory names the directory and its CA for
+    goatbuilder federate (crates/goatbuilder/src/federate/declared.rs)."""
+
+    def test_url_and_ca_validate(self):
+        c = with_sites()
+        c["environments"][0]["peering_directory"] = {"url": "https://directory.example.org:8443", "ca_cert": "directory-ca.pem"}
+        self.assertEqual(validate.errors_for(c), [])
+        c["environments"][0]["peering_directory"] = {"url": "https://directory.example.org"}
+        self.assertEqual(validate.errors_for(c), [])
+
+    def test_plain_http_no_url_unknown_field_or_a_site_is_rejected(self):
+        for bad, fragment in (({"url": "http://directory.example.org"}, "url"), ({"ca_cert": "x.pem"}, "url"),
+                              ({"url": "https://d.example.org", "token": "x"}, "token"),
+                              ({"url": "https://d.example.org/'$(x)'"}, "url")):
+            c = with_sites()
+            c["environments"][0]["peering_directory"] = bad
+            problems = validate.errors_for(c)
+            self.assertTrue(any(fragment in p for p in problems), (bad, problems))
+        c = with_sites()
+        c["environments"][0]["sites"][0]["peering_directory"] = {"url": "https://d.example.org"}
+        self.assertTrue(any("peering_directory" in e for e in validate.errors_for(c)))
+
+
+class SecretsFederation(unittest.TestCase):
+    """secrets.federation names this side's federation key paths for
+    goatbuilder federate (crates/goatbuilder/src/federate/declared.rs)."""
+
+    def test_paths_validate(self):
+        c = minimal()
+        c["secrets"] = {"store": "env-file", "federation": {
+            "signing_key": "federation/signing.key", "ca_cert": "/srv/fed/ca.pem", "ca_key": "~/fed/ca-key.pem"}}
+        self.assertEqual(validate.errors_for(c), [])
+
+    def test_unknown_empty_or_shell_unsafe_is_rejected(self):
+        for bad, fragment in (({"signing_key": "a", "seed": "b"}, "seed"), ({}, "federation"),
+                              ({"ca_key": ""}, "ca_key"), ({"ca_cert": "/srv/$(x)/ca.pem"}, "ca_cert")):
+            c = minimal()
+            c["secrets"] = {"store": "env-file", "federation": bad}
+            problems = validate.errors_for(c)
+            self.assertTrue(any(fragment in p for p in problems), (bad, problems))
+
+
 class FailClosed(unittest.TestCase):
     def assertRejected(self, config: dict, fragment: str):
         problems = validate.errors_for(config)

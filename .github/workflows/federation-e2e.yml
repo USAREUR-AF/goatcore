@@ -15,6 +15,7 @@ on:
   pull_request:
     paths:
       - 'ops/federation-e2e/**'
+      - 'ops/ci/check-federation-e2e-harness.sh'
       - 'ops/e2e/report.py'
       - 'ops/federation/standup/**'
       - 'ops/federation/roundtrip/**'
@@ -50,31 +51,60 @@ jobs:
   federation:
     name: two sovereigns through the real driver, proved from the receiving side
     runs-on: ubuntu-24.04
-    timeout-minutes: 100
+    timeout-minutes: 120
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: '3.12'
-      - name: Install Rust toolchain (stable)
-        uses: dtolnay/rust-toolchain@stable
+      # The compiler ci.yml's rust job pins (ADR 0707), so the binaries proved here are built
+      # by the same one.
+      - name: Install Rust toolchain (1.95.0, pinned)
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: '1.95.0'
       - name: Cache cargo registry + build target
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             crates/target
-          key: federation-e2e-cargo-${{ runner.os }}-${{ hashFiles('crates/Cargo.lock') }}
-      - name: Install the tools the harness needs
-        timeout-minutes: 8
+          key: federation-e2e-cargo-${{ runner.os }}-1.95.0-${{ hashFiles('crates/Cargo.lock') }}
+      # The hosts carry every package a scenario needs in their image. The runner needs the
+      # harness's Python packages, pinned with hashes, the kernel's wireguard module, and jq
+      # and pkg-config, which its image already has. A declared input that cannot be reached
+      # exits 69 with "environment:", never as a failure of the change.
+      - name: The harness's Python packages (pinned, hashed)
+        timeout-minutes: 5
         run: |
-          set -euo pipefail
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq --no-install-recommends jq libpcsclite-dev pkg-config wireguard-tools "linux-modules-extra-$(uname -r)" || sudo apt-get install -y -qq --no-install-recommends jq libpcsclite-dev pkg-config wireguard-tools
-          python3 -m pip install --quiet pyyaml jinja2 jsonschema
-          sudo modprobe wireguard
-          grep -q '^wireguard ' /proc/modules
+          set -o pipefail
+          if python3 -m pip install --quiet --require-hashes --no-deps -r ops/federation-e2e/requirements.lock 2>&1 | tee "$RUNNER_TEMP/pip.log"; then exit 0; fi
+          # Only an unreachable PyPI is environment; a hash mismatch, a missing pin or a bad
+          # Python is a defect of the change.
+          if grep -qE 'NewConnectionError|Temporary failure in name resolution|Read timed out|Max retries exceeded|Failed to establish a new connection' "$RUNNER_TEMP/pip.log"; then
+            echo "::error::environment: PyPI did not answer for ops/federation-e2e/requirements.lock (a declared input)"; exit 69
+          fi
+          echo "::error::the harness's Python packages did not install from ops/federation-e2e/requirements.lock"; exit 1
+      # jq and pkg-config are on the runner image; only a missing one is installed. A declared
+      # input: the runner's mirror, with retries and a fallback to archive.ubuntu.com and
+      # security.ubuntu.com (ops/ci/apt-install-fallback.sh); still failing exits 69.
+      - name: "The runner's tools (declared input: the Ubuntu mirror, only for what is missing)"
+        timeout-minutes: 15
+        run: ops/ci/apt-install-fallback.sh jq pkg-config
+      # The runner kernel's own module first. Only when it lacks one is the kernel's modules
+      # package fetched, through the same fallback.
+      - name: "The wireguard kernel module (declared input: linux-modules-extra when the kernel lacks it)"
+        timeout-minutes: 15
+        run: |
+          if sudo modprobe wireguard 2>/dev/null && grep -q '^wireguard ' /proc/modules; then exit 0; fi
+          echo "the runner kernel $(uname -r) has no loadable wireguard module; fetching linux-modules-extra-$(uname -r)"
+          ops/ci/apt-install-fallback.sh "linux-modules-extra-$(uname -r)" || exit $?
+          sudo modprobe wireguard && grep -q '^wireguard ' /proc/modules \
+            || { echo "::error::the wireguard module did not load from linux-modules-extra-$(uname -r)"; exit 1; }
+      # The environment's catalog and verdict rules, no Docker (ops/federation-e2e/tests).
+      - name: The e2e environment's harness checks
+        run: ops/ci/check-federation-e2e-harness.sh
       # Release, because a debug build reads its embedded message catalogs from the
       # source tree at run time, and these binaries run on hosts that have no such path.
       - name: Build goat and goatbuilder
@@ -86,7 +116,8 @@ jobs:
       - name: The runner prepares from a public-shaped checkout
         timeout-minutes: 10
         run: ops/ci/check-federation-e2e-prepare.sh crates/target/release/goatbuilder
-      - name: Two sovereigns, both scenarios
+      - name: Two sovereigns, four scenarios (the fourth, nothing-hand-written, strict)
+        timeout-minutes: 105
         run: ops/federation-e2e/run.sh --goat crates/target/release/goat --goatbuilder crates/target/release/goatbuilder --record "$RUNNER_TEMP/federation-report"
       - name: The acceptance counts
         if: always()
@@ -95,7 +126,7 @@ jobs:
       # live run then ships the commit CI measured, not a build of its own.
       - name: Upload the binaries this run proved
         if: success()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: federation-live-binaries
           path: |
@@ -104,7 +135,7 @@ jobs:
           retention-days: 14
       - name: Upload the run record
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: federation-e2e-report
           path: ${{ runner.temp }}/federation-report

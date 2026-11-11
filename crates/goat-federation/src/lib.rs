@@ -22,7 +22,11 @@
 //                                     package provably cannot touch anything.
 //   anchor                            pure. Picks the trust anchor out of PEM
 //                                     bytes that `derive` read.
-//   derive                            reads local state. Never writes.
+//   derive                            reads host state through a `Probe`:
+//                                     this machine, or a host the caller
+//                                     reaches (goatbuilder's SSH probe).
+//                                     Only the commands `is_read_only_probe`
+//                                     lists. Never writes.
 //   render                            builds configuration text in memory. The
 //                                     caller decides whether it reaches disk.
 //   verbs                             the six federation verbs over the modules

@@ -30,6 +30,9 @@ updates:
       - /ops/onboard-runner
       - /ops/postgres/spock
       - /ops/secwatch
+      - /ops/smoketest
+      - /ops/snitch
+      - /ops/zenoh/loadgen
       - /signal-server
     schedule:
       interval: weekly

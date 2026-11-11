@@ -1,6 +1,6 @@
 module github.com/usareur-af/goatcore/ops/smoketest
 
-go 1.26.10
+go 1.26.11
 
 require (
 	github.com/pion/stun/v3 v3.1.5

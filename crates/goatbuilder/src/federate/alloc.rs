@@ -133,6 +133,10 @@ pub struct AllocContext {
     pub work_root: String,
     /// UDP ports the edge host already holds.
     pub reserved_edge_udp: Vec<u16>,
+    /// Values peerings not under allocation run on today (hand-written files
+    /// or role defaults), keyed `<environment>/<with>`: reserved, never
+    /// recorded, so an allocation beside them takes none of them.
+    pub held: BTreeMap<String, PeeringPins>,
 }
 
 impl Default for AllocContext {
@@ -144,6 +148,7 @@ impl Default for AllocContext {
             },
             work_root: DEFAULT_WORK_ROOT.into(),
             reserved_edge_udp: DEFAULT_RESERVED_EDGE_UDP.to_vec(),
+            held: BTreeMap::new(),
         }
     }
 }
@@ -750,7 +755,14 @@ fn run(cfg: &Config, ctx: &AllocContext) -> (Vec<PeeringValues>, Vec<Problem>) {
                 .map(|x| format!("forwarder {}", x.endpoint))
         })
         .collect();
-    for (k, entry) in retired_entries(cfg, ctx) {
+    let retired = retired_entries(cfg, ctx)
+        .into_iter()
+        .map(|(k, e)| (k, e, "the record's entry {k}, no longer declared"));
+    let held = ctx
+        .held
+        .iter()
+        .map(|(k, e)| (k, e, "the peering {k}, which runs from hand-written files"));
+    for (k, entry, whose) in retired.chain(held) {
         let env = k.split('/').next().unwrap_or_default().to_string();
         for f in FIELDS.iter().copied() {
             let (Some(v), Some(pool)) = (pins_get(entry, f), f.pool()) else {
@@ -773,10 +785,7 @@ fn run(cfg: &Config, ctx: &AllocContext) -> (Vec<PeeringValues>, Vec<Problem>) {
                         &place,
                         v.clone(),
                         Holder {
-                            who: format!(
-                                "the record's entry {k}, no longer declared ({})",
-                                f.name()
-                            ),
+                            who: format!("{} ({})", whose.replace("{k}", k), f.name()),
                             pin_of: None,
                         },
                     );
@@ -1343,6 +1352,27 @@ mod tests {
     /// environment whose edges run no mesh client may pin 51820 (adopting a
     /// peering that runs on the role default), and one whose edges hold another
     /// port steps around it.
+    /// The setting validates where the allocator reads it: on an environment.
+    #[test]
+    fn the_schema_takes_reserved_udp_on_an_environment_not_a_site() {
+        let mut v = serde_json::to_value(json!({
+            "schema": "goatbuilder/v1",
+            "preset": "full",
+            "repo": {"source": "example-org/example-repo", "image_namespace": "ghcr.io/example-org"},
+            "components": {"example-service": {"declared_in": "ops/pins/fleet-pins.yaml"}},
+            "environments": [{"name": "dev", "converger": "push-ansible", "peering_edge_reserved_udp": [],
+                "sites": [{"name": "alpha", "role": "founder", "classes": {"core": {}, "edge": {}}}]}],
+            "promotion": {"path": [{"name": "dev", "kind": "rung", "environment": "dev"}]},
+        }))
+        .unwrap();
+        assert_eq!(crate::config::problems(&v).unwrap(), Vec::<String>::new());
+        v["environments"][0]["sites"][0]["peering_edge_reserved_udp"] = json!([]);
+        assert!(crate::config::problems(&v)
+            .unwrap()
+            .iter()
+            .any(|p| p.contains("peering_edge_reserved_udp")));
+    }
+
     #[test]
     fn the_reserved_udp_ports_are_per_environment() {
         let mut a = p("xab");

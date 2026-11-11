@@ -1,0 +1,7 @@
+goat_zenoh_quic_enabled: true
+goat_host_firewall_mesh_dns_port: ""
+peering_spire_enabled: true
+peering_spire_server_host: core-z
+goat_host_firewall_override:
+  icmp-echo:
+    drop: true

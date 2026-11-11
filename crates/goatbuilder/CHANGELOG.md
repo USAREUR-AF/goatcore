@@ -6,6 +6,131 @@ Each release is the tag `goatbuilder/v<semver>` on `main`, built and signed by
 
 ## Unreleased
 
+## 0.5.1 — 2026-11-11
+
+The same goatbuilder as 0.5.0. Version 0.5.0 was tagged and its binaries were
+built, but its release was not published: the release's documentation job
+installs gettext from the runner's Ubuntu mirror, and that mirror did not
+answer. 0.5.1 is the first published release that carries everything listed
+under 0.5.0 below.
+
+### Fixed: a release no longer waits on a distribution mirror
+
+The release's documentation job uses gettext when the runner already has it,
+tries the Ubuntu mirror for three minutes, and otherwise installs it with
+Homebrew from the runner image.
+
+## 0.5.0 — 2026-11-11
+
+Federation moves from `goat` into goatbuilder. An operator now federates
+with a partner from goatbuilder alone: one decision (the partner, and what
+it receives) and two confirmations, typed at the terminal.
+
+### Added: `goatbuilder federate <partner>` runs the whole procedure
+
+```bash
+goatbuilder federate xab
+```
+
+At a terminal, one run does every phase. It asks for the partner's
+verifying key and CA fingerprint (read aloud and typed back) and for the
+agreement digest. It then makes the plan, shows it, and asks you to approve
+the plan's hash. Next it shows what our core will admit and asks you to
+approve that. Our core router restarts only after that approval. The run
+then opens the transport, deploys the edge, federates SPIRE, and runs
+acceptance last. A run that stops resumes where it stopped (`--no-resume`
+starts over), and every phase is safe to run again. Without a terminal, or
+in a dry run, it stops at phase 10 and names `goatbuilder federate plan`,
+`deploy` and `test` instead. `--no-confirm` keeps the two confirmations by
+hand as before. The verified agreement decides what may flow:
+`federation.toml` owns the offered release sets, and a `peerings:` entry
+(`offer:`, or `--offer`) may only narrow them.
+
+### Added: `plan`, `deploy`, `test`, `status` and `backout`, each on its own
+
+```bash
+goatbuilder federate plan xab          # the bounded plan, written to <work>/plan.json with a stable hash; changes no host
+goatbuilder federate deploy xab        # carry out the approved plan (--approve-plan <hash>), phases 10 to 13
+goatbuilder federate test xab          # acceptance alone; evidence in <work>/evidence/acceptance/
+goatbuilder federate status [xab]      # what each peering's journal and evidence say
+goatbuilder federate backout xab --dry-run   # survey what backing one peering out removes, per host
+goatbuilder federate backout xab       # remove that one peering and leave every other one as it was
+```
+
+`deploy` takes the admission by flag too: `--approve-admission <digest>`,
+or `--review-in-pr` to write the summary for a pull request and stop.
+`goatbuilder federate init|lint|compose|diff|verify|apply` are the package
+verbs `goat federate` had, with the same flags and exit codes. They now run
+in goatbuilder, and `goat federate <verb>` prints one line naming the
+goatbuilder command.
+
+### Added: `goatbuilder federate allocate [<peering>]` writes the per-peering files
+
+```bash
+goatbuilder federate allocate xab --dry-run   # show every file it would write
+goatbuilder federate allocate xab             # one peering, beside peerings still written by hand
+goatbuilder federate allocate                 # every declared peering
+```
+
+`allocate` gives each peering its own values: the tunnel interface, the
+listen ports, the link subnet, the edge router port and the republisher
+metrics port. No two peerings on one machine collide, and a re-run never
+moves a value. A peering that already runs by hand keeps its values unless
+you pin them or move it on purpose (`FED_ALLOCATE_MOVE`). For a new
+peering, `allocate` renders the files a person used to write, for review
+and commit:
+
+- its inventory, `ops/ansible/inventory/peering-<edge group>.ini`, beside a
+  hand-written `peering-edges.ini`;
+- both deployment halves, the edge's and the core's;
+- its `federation.toml`.
+
+A peering that already runs by hand keeps its hand-written files.
+
+### Added: values come from the declarations the deployment already has
+
+The run derives what used to be exported by hand. A variable set in the
+environment still wins, as an override.
+
+- **Signing key and CA:** `secrets.federation` in `goatbuilder.yaml` names
+  the signing key, our CA certificate and our CA key (`signing_key`,
+  `ca_cert`, `ca_key`). A relative path is read inside the goat context.
+- **Peering directory:** `environments[].peering_directory` names its `url`
+  and, when it is not a public one, its `ca_cert`.
+- **Machines:** a peering without `hosts:` takes its edge and core from the
+  site inventory.
+- **Site values and core certificate:** the site values the rendered halves
+  need, and the core certificate's names, come from their owners.
+- **Phase 14's surfaces:** our core's REST endpoint, the edge log and the
+  SPIRE server come from the core and edge declarations.
+
+A declaration that is ambiguous stops with a catalog error that names
+what was looked for and where.
+
+### Added: admission on a core deployed by the goat-zenoh role
+
+On a core deployed by the goat-zenoh role, phase 10 needs no restart
+command. Admission finds the core router's inventory group, its `site_id`
+and the role's play from the role's own declarations. It reads and places
+the org fragment at the role's `goat_zenoh_acl_org_path` on the core host,
+and places our router leaf where the role reads it. It writes the partner
+into the role's `zenoh_sovereign_peerings`
+(`group_vars/<core router group>/peerings.yml`) as part of the reviewed
+change. It runs the role's play with `--check --diff` as the dry run, then
+for the restart. The slot check is not applicable when the core keeps no
+committed slot list. `FED_CORE_PLAY`, `FED_CORE_RESTART` and the other
+`FED_CORE_*` settings stay overrides.
+
+### Deprecated: `goat federate <verb>`
+
+`goat federate <verb>` still runs in 0.5.0 and prints one line naming the
+`goatbuilder federate` command. It is removed from `goat` 30 days after the
+0.5.0 release, and not before one peering between two standing environments
+has been completed with `goatbuilder federate`. After that, `goat federate`
+answers only with an error that names `goatbuilder federate`. The script
+driver `ops/scripts/peering-standup.sh` stays as it is: documented, not
+supported (ADR 1201), running the same fourteen phases.
+
 ## 0.4.3 — 2026-11-08
 
 ### Changed: `update` takes its release signer from the checkout

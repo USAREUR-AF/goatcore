@@ -8,6 +8,17 @@ from the receiving side. The same scenario runs in two places.
 | `run.sh` | CI job `federation-e2e`, four privileged containers on one runner | Every phase of both avenues, both orders | M-124 |
 | `live.sh` | Two real Ubuntu hosts, one per sovereign, driven from a laptop over SSH | The same phases and proofs across a real network | M-125 |
 
+`env` is the environment around them: several sovereigns at once, any goatcore ref as the
+tree under test, a scenario catalog with outcome words, and a watcher for branch heads
+([docs/design/federation-e2e-environment.md](../../docs/design/federation-e2e-environment.md)).
+
+```text
+ops/federation-e2e/env list
+ops/federation-e2e/env run --ref origin/main --avenue goatbuilder --scenario two-party-full
+ops/federation-e2e/env run --ref <ref> --avenue both --scenario all --jobs 3 --out <dir>
+ops/federation-e2e/env down --lab <n>
+```
+
 Both need only the checkout: the SPIRE image is the `spire` component of
 `ops/pins/fleet-pins.yaml`, and `overlay.py` writes each sovereign's whole
 `ops/goatbuilder/goatbuilder.yaml`, inventory and edge `group_vars` into its clone.

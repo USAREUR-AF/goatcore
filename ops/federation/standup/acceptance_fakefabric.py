@@ -66,6 +66,12 @@ class Faults:
         #                                    sample arrives there only beside a diagnostic subscriber
         self.diagnostic = {}               # side -> key expression a client session subscribes to there
         self.admin_closed = set()          # sides whose admin space answers nothing
+        self.deny_from_other_session = False  # our edge logs the agreed probe's denials under
+        #                                    another session's id (its own decisions are missing)
+        self.trace_without_session = False # decision lines carry no session id
+        self.silent_probes = set()         # probe kinds our edge records nothing for in this run
+        self.existing_down = set()         # existing partners that no longer receive anything from us
+        self.leak_to_existing = set()      # existing partners that receive every set we lift
 
 
 class Core:
@@ -90,9 +96,15 @@ class Fabric:
         self.tmp = tmp
         self.trace_path = os.path.join(tmp, "edge-trace.log")
         open(self.trace_path, "w").close()
+        # Each side's edge keeps its own ACL trace; a run as either side reads its own.
+        self.trace_paths = {us: self.trace_path, self.them: os.path.join(tmp, "edge-trace-%s.log" % self.them)}
+        open(self.trace_paths[self.them], "w").close()
+        self.surfaces = {}
         self.servers = []
         self.zids = {"forged": "f" + "1" * 31, "impersonate": "f" + "2" * 31}
         self.diag_zid = "d" + "3" * 31
+        self.agreed_zid = "a" * 32
+        self.existing = {}                 # partner id -> (agreement, Core): peerings we already have
 
     # --- the agreement -------------------------------------------------------
     def offered(self, side):
@@ -103,6 +115,45 @@ class Fabric:
                     out.append(r[:-3] if r.endswith("/**") else r)
         return out
 
+    def add_existing(self, agreement):
+        """A peering this side already has, with its own partner core and responder."""
+        pid = [p["sovereign_id"] for p in agreement["parties"] if p["sovereign_id"] != self.us][0]
+        self.existing[pid] = (agreement, Core(pid))
+        return pid
+
+    @staticmethod
+    def offered_in(agreement, side):
+        out = []
+        for f in agreement.get("flows", []):
+            if f.get("from") == side:
+                for r in f.get("release", []):
+                    out.append(r[:-3] if r.endswith("/**") else r)
+        return out
+
+    def put_existing(self, key, value):
+        """Our republisher for each existing peering lifts the sets that peering's
+        agreement offers; that partner's responder acknowledges a round-trip probe
+        under its first offered set, which its republisher lifts back to us."""
+        for pid, (ag, core) in self.existing.items():
+            stem = None
+            for st in self.offered_in(ag, self.us):
+                if key.startswith(st + "/"):
+                    stem = st
+            if stem is None and pid in self.faults.leak_to_existing:
+                stem = "/".join(key.split("/")[:2])
+            if stem is None or pid in self.faults.existing_down:
+                continue
+            wire = "from/%s/%s" % (self.us, key[len("release/"):])
+            with core.lock:
+                core.store[wire] = value
+            m = re.fullmatch(r"from/%s/(?:.+/)?fedcheck/([^/]+)" % re.escape(self.us), wire)
+            theirs = self.offered_in(ag, pid)
+            if m and theirs:
+                ack = json.dumps({"sha256": hashlib.sha256(value).hexdigest(), "observed_key": wire}).encode()
+                back = "from/%s/%s/fedcheck-ack/%s" % (pid, theirs[0][len("release/"):], m.group(1))
+                with self.cores[self.us].lock:
+                    self.cores[self.us].store[back] = ack
+
     def other(self, side):
         return self.them if side == self.us else self.us
 
@@ -111,6 +162,8 @@ class Fabric:
         core = self.cores[side]
         with core.lock:
             core.store[key] = value
+        if key.startswith("release/") and side == self.us and self.existing:
+            self.put_existing(key, value)
         if key.startswith("release/") and side not in self.faults.republisher_down:
             stem = None
             for s in self.offered(side):
@@ -181,23 +234,35 @@ class Fabric:
         self.put(side, "%s/fedcheck-ack/%s" % (self.offered(side)[0], m.group(1)), ack)
 
     # --- the probe sessions on their side, judged by our edge -----------------
-    def probe_put(self, which, key, value):
+    def probe_put(self, which, key, value, edge=None):
+        """A probe session holding the other side's identity writes `key`, judged by
+        `edge`'s edge (ours unless named), which records the decision in its trace."""
+        edge = edge or self.us
+        sender = self.other(edge)
         lines = []
         if which == "agreed":
-            zid, subject = "aaaa", "peering-%s" % self.them
-            ok = key.startswith("from/%s/" % self.them) and bool(self.offered(self.them))
-            lines.append("%s on %s is %s to Put (ingress) on %s" % (zid, subject, "authorized" if ok else "unauthorized", key))
+            zid, subject = self.agreed_zid, "peering-%s" % sender
+            ok = key.startswith("from/%s/" % sender) and bool(self.offered(sender))
+            if not ok and self.faults.deny_from_other_session:
+                zid = "e" * 32
+            # zenoh 1.9: `<zid> on Interface(..)+CertCommonName(..)+Transport(Tls)+<zid> is ...`
+            who = "%s on Interface(eth0)+CertCommonName(%s)+Transport(Tls)+%s" % (zid, subject, zid)
+            if self.faults.trace_without_session:
+                who = "Interface(eth0)+CertCommonName(%s)" % subject
+            lines.append("%s is %s to Put (ingress) on %s" % (who, "authorized" if ok else "unauthorized", key))
             if ok:
-                self.deliver(self.us, key, value)
+                self.deliver(edge, key, value)
         else:
             zid = self.zids[which]
             if which == "forged" and self.faults.authorize_forged:
                 lines.append("%s on forged is authorized to Put (ingress) on %s" % (zid, key))
-                self.deliver(self.us, key, value)
+                self.deliver(edge, key, value)
             else:
                 lines.append("ACL: peer %s did not match any configured ACL subject" % zid)
+        if which in self.faults.silent_probes:
+            lines = []
         if not self.faults.trace_silent:
-            with open(self.trace_path, "a") as f:
+            with open(self.trace_paths[edge], "a") as f:
                 for line in lines:
                     f.write("2026-11-09T00:00:00Z INFO zenoh::net::routing::interceptor::access_control: %s\n" % line)
 
@@ -266,7 +331,38 @@ class Fabric:
                            ("impersonate", "FED_PROBE_IMPERSONATE_REST")):
             env[var] = self._serve(self._handler(lambda e: [], lambda k, v, w=which: self.probe_put(w, k, v)))
         env.update(self._spire())
+        self.surfaces = {self.us: env["FED_OURS_REST"], self.them: env["FED_THEIRS_REST"]}
+        self.probe_urls = {self.us: {w: env[v] for w, v in (("agreed", "FED_PROBE_THEIRS_REST"),
+                                                               ("forged", "FED_PROBE_FORGED_REST"),
+                                                               ("impersonate", "FED_PROBE_IMPERSONATE_REST"))}}
+        self.probe_urls[self.them] = {
+            w: self._serve(self._handler(lambda e: [], lambda k, v, w=w: self.probe_put(w, k, v, edge=self.them)))
+            for w in ("agreed", "forged", "impersonate")}
+        if self.existing:
+            surfaces = []
+            for pid, (ag, core) in self.existing.items():
+                def rows(expr, core=core):
+                    return [{"key": k, "value": base64.b64encode(v).decode(), "encoding": "zenoh/bytes"}
+                            for k, v in core.get(urllib.parse.unquote(expr))]
+                surfaces.append("%s=%s" % (pid, self._serve(self._handler(rows, lambda k, v: None))))
+            env["FED_EXISTING_REST"] = ",".join(surfaces)
         return env
+
+    def env_for(self, side):
+        """What `side`'s own operator holds after start(): their core, their edge's
+        trace, probes judged by their edge, and SPIRE commands. No counterparty surface."""
+        d = os.path.join(self.tmp, "spire")
+        return {
+            "FED_OURS_REST": self.surfaces[side],
+            "FED_EDGE_LOG_OURS": "cat '%s'" % self.trace_paths[side],
+            "FED_PROBE_THEIRS_REST": self.probe_urls[side]["agreed"],
+            "FED_PROBE_FORGED_REST": self.probe_urls[side]["forged"],
+            "FED_PROBE_FORGED_ZID": self.zids["forged"],
+            "FED_PROBE_IMPERSONATE_REST": self.probe_urls[side]["impersonate"],
+            "FED_PROBE_IMPERSONATE_ZID": self.zids["impersonate"],
+            "FED_SPIRE_OURS": os.path.join(d, "spire-" + side),
+            "FED_SPIRE_THEIRS": os.path.join(d, "spire-" + self.other(side)),
+        }
 
     def stop(self):
         for s in self.servers:
@@ -287,14 +383,17 @@ class Fabric:
                  "-days", "2", "-subj", "/CN=%s spire ca" % side,
                  "-addext", "basicConstraints=critical,CA:TRUE", "-addext", "keyUsage=critical,keyCertSign,cRLSign")
         td = {p["sovereign_id"]: p["trust_domain"] for p in self.ag["parties"]}
-        ext = os.path.join(d, "leaf.ext")
-        with open(ext, "w") as f:
-            f.write("subjectAltName=URI:%s/federation-acceptance\n" % td[self.them])
-        ossl("req", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1", "-nodes",
-             "-keyout", os.path.join(d, "leaf.key"), "-out", os.path.join(d, "leaf.csr"), "-subj", "/CN=leaf")
-        ossl("x509", "-req", "-in", os.path.join(d, "leaf.csr"), "-CA", os.path.join(d, self.them + "-ca.pem"),
-             "-CAkey", os.path.join(d, self.them + "-ca.key"), "-CAcreateserial", "-days", "1",
-             "-extfile", ext, "-out", os.path.join(d, "leaf.pem"))
+        # One workload SVID per side, issued by that side's CA in its trust domain.
+        for side in (self.us, self.them):
+            ext = os.path.join(d, "leaf-%s.ext" % side)
+            with open(ext, "w") as f:
+                f.write("subjectAltName=URI:%s/federation-acceptance\n" % td[side])
+            ossl("req", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1", "-nodes",
+                 "-keyout", os.path.join(d, "leaf-%s.key" % side), "-out", os.path.join(d, "leaf-%s.csr" % side),
+                 "-subj", "/CN=leaf")
+            ossl("x509", "-req", "-in", os.path.join(d, "leaf-%s.csr" % side), "-CA", os.path.join(d, side + "-ca.pem"),
+                 "-CAkey", os.path.join(d, side + "-ca.key"), "-CAcreateserial", "-days", "1",
+                 "-extfile", ext, "-out", os.path.join(d, "leaf-%s.pem" % side))
         env = {}
         for side, var in ((self.us, "FED_SPIRE_OURS"), (self.them, "FED_SPIRE_THEIRS")):
             script = os.path.join(d, "spire-" + side)
@@ -305,7 +404,7 @@ case "$1 $2" in
   "federation refresh") exit 0 ;;
   "bundle list") cat '%(d)s/%(other)s-ca.pem' ;;
   "bundle show") cat '%(d)s/%(side)s-ca.pem' ;;
-  "x509 mint") cat '%(d)s/leaf.pem' '%(d)s/leaf.key' ;;
+  "x509 mint") cat '%(d)s/leaf-%(side)s.pem' '%(d)s/leaf-%(side)s.key' ;;
   *) echo "fake spire-server: $*" >&2; exit 1 ;;
 esac
 """ % {"d": d, "other": other, "side": side})

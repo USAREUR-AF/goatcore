@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "fed-e2e-result/1",
+  "title": "Federation e2e environment: the result of one matrix run",
+  "description": "One run of the scenario catalog (ops/federation-e2e/scenarios/catalog.yaml) against one goatcore ref and one avenue. Outcome words and their meanings follow the federation acceptance contract: PASS expected evidence observed; FAIL violation observed; BLOCKED prerequisite or evidence unavailable; SKIP not exercised; NOT APPLICABLE excluded by the agreement. A required check that is BLOCKED or SKIP never counts as passing.",
+  "type": "object",
+  "required": ["schema", "run_id", "ref", "avenue", "harness", "started", "finished", "scenarios", "verdict"],
+  "additionalProperties": false,
+  "$defs": {
+    "outcome": {"enum": ["PASS", "FAIL", "BLOCKED", "SKIP", "NOT APPLICABLE"]},
+    "check": {
+      "type": "object",
+      "required": ["id", "required", "outcome", "reason"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9.-]*$"},
+        "required": {"type": "boolean"},
+        "outcome": {"$ref": "#/$defs/outcome"},
+        "reason": {"type": "string", "description": "Why this outcome: the failed expectation, the missing prerequisite, or the agreement clause that excludes it. Empty only for PASS."},
+        "observer": {"enum": ["local", "peer-reported"], "default": "local"},
+        "step": {"type": "string", "description": "The recorded step this check reads (report.jsonl name)."},
+        "evidence": {"type": "string", "description": "Path of the step's log, relative to the record directory."},
+        "duration_s": {"type": "number"}
+      },
+      "allOf": [
+        {"if": {"properties": {"outcome": {"enum": ["FAIL", "BLOCKED", "SKIP", "NOT APPLICABLE"]}}}, "then": {"properties": {"reason": {"minLength": 1}}}}
+      ]
+    },
+    "scenario": {
+      "type": "object",
+      "required": ["id", "title", "pass_condition", "runs_where", "required", "outcome", "reason", "checks"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$"},
+        "title": {"type": "string"},
+        "pass_condition": {"type": "string", "minLength": 1},
+        "runs_where": {"enum": ["ci", "local"]},
+        "required": {"type": "boolean"},
+        "outcome": {"$ref": "#/$defs/outcome"},
+        "reason": {"type": "string"},
+        "known_failure": {"type": "string", "description": "When the baseline (main) records this scenario as failing: the cause."},
+        "checks": {"type": "array", "items": {"$ref": "#/$defs/check"}}
+      }
+    }
+  },
+  "properties": {
+    "schema": {"const": "fed-e2e-result/1"},
+    "run_id": {"type": "string"},
+    "ref": {
+      "type": "object",
+      "required": ["name", "sha"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {"type": "string"},
+        "sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "merged": {"type": "array", "items": {"type": "string"}, "description": "For an integration ref: the branch heads it merges, as name@sha."}
+      }
+    },
+    "avenue": {"enum": ["script", "goatbuilder"]},
+    "harness": {
+      "type": "object",
+      "required": ["sha"],
+      "properties": {"sha": {"type": "string"}, "dirty": {"type": "boolean"}, "fingerprint": {"type": "string", "description": "env fingerprint: the catalog, units, engine and verdict and the scenario subset; rows compare only when equal"}}
+    },
+    "versions": {"type": "object", "description": "The tool versions each sovereign ran, by sovereign id.", "additionalProperties": {"type": "string"}},
+    "directory": {
+      "type": "object",
+      "description": "Present only when the peering directory was built from a saltlick commit (env --directory-ref) instead of the pinned image.",
+      "required": ["ref", "sha"],
+      "additionalProperties": false,
+      "properties": {"ref": {"type": "string", "minLength": 1}, "sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"}}
+    },
+    "started": {"type": "string", "format": "date-time"},
+    "finished": {"type": "string", "format": "date-time"},
+    "scenarios": {"type": "array", "items": {"$ref": "#/$defs/scenario"}},
+    "verdict": {
+      "type": "object",
+      "required": ["outcome", "counts", "exit"],
+      "additionalProperties": false,
+      "properties": {
+        "outcome": {"enum": ["PASS", "FAIL", "BLOCKED", "SKIP"]},
+        "counts": {"type": "object", "additionalProperties": {"type": "integer"}},
+        "exit": {"type": "integer", "description": "0 only when every required scenario is PASS or NOT APPLICABLE."}
+      }
+    }
+  }
+}

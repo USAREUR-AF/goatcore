@@ -29,6 +29,8 @@ use anyhow::Result;
 use clap::{Args, Parser};
 use goat_federation::verbs::{self, FederateCmd, Site};
 
+use super::measure::MeasureArgs;
+
 /// Where this party's own state is, for the verbs that read it.
 #[derive(Args, Debug, Clone, Default)]
 pub struct SiteArgs {
@@ -162,18 +164,42 @@ pub fn run_to(cmd: FederateCmd, site: &SiteArgs, out: &mut dyn Write) -> Result<
     verbs::run(cmd, &resolve, out)
 }
 
+/// [`run_to`], with init measuring over SSH when `measure` says
+/// `--over-ssh` (federate/measure.rs). `repo` is the checkout whose
+/// ops/ansible inventory names the hosts; only `--over-ssh` reads it.
+pub fn run_measured_to(
+    cmd: FederateCmd,
+    site: &SiteArgs,
+    measure: &MeasureArgs,
+    repo: Option<&Path>,
+    out: &mut dyn Write,
+) -> Result<i32> {
+    match (measure.peering()?, cmd) {
+        (None, cmd) => run_to(cmd, site, out),
+        (Some(_), FederateCmd::Init(a)) => {
+            let repo = repo.ok_or_else(|| {
+                anyhow::anyhow!("init --over-ssh reads the plays' inventory: pass -C <repository>")
+            })?;
+            super::measure::run_init(repo, &resolve_site(site)?, &a, measure, out)
+        }
+        (Some(_), _) => Err(anyhow::anyhow!(
+            "--over-ssh and its host flags apply to `goatbuilder federate init` only"
+        )),
+    }
+}
+
 /// Run one verb, its report on stdout.
-pub fn run(cmd: FederateCmd, site: &SiteArgs) -> Result<i32> {
+pub fn run(cmd: FederateCmd, site: &SiteArgs, measure: &MeasureArgs, repo: Option<&Path>) -> Result<i32> {
     let mut out = std::io::stdout().lock();
-    run_to(cmd, site, &mut out)
+    run_measured_to(cmd, site, measure, repo, &mut out)
 }
 
 /// `goatbuilder federate <verb>` from the command line: run it, and turn a
 /// fault into goatbuilder's refusal line. The exit code is the verb's own
 /// (0, or 20 to 24 as `goat federate` exits); a fault exits 1, as it does in
 /// goat, and a coded refusal (GB-100) exits with its catalog code.
-pub fn exit_of(cmd: FederateCmd, site: &SiteArgs) -> i32 {
-    match run(cmd, site) {
+pub fn exit_of(cmd: FederateCmd, site: &SiteArgs, measure: &MeasureArgs, repo: Option<&Path>) -> i32 {
+    match run(cmd, site, measure, repo) {
         Ok(code) => code,
         Err(e) => fault_exit(&e),
     }
@@ -203,6 +229,11 @@ pub fn fault_exit(e: &anyhow::Error) -> i32 {
 struct VerbLine {
     #[command(flatten)]
     site: SiteArgs,
+    #[command(flatten)]
+    measure: MeasureArgs,
+    /// The repository root, as `goatbuilder -C` names it.
+    #[arg(short = 'C', long, value_name = "DIR", global = true)]
+    repo: Option<PathBuf>,
     #[command(subcommand)]
     cmd: FederateCmd,
 }
@@ -216,7 +247,7 @@ pub fn run_argv(argv: &[String]) -> Result<i32> {
     let line = VerbLine::try_parse_from(argv).map_err(|e| {
         anyhow::Error::new(e).context(format!("goatbuilder federate {}", argv.join(" ")))
     })?;
-    run(line.cmd, &line.site)
+    run(line.cmd, &line.site, &line.measure, line.repo.as_deref())
 }
 
 #[cfg(test)]
@@ -510,5 +541,15 @@ mod tests {
             2,
             "a command line clap refuses exits 2, as in goat"
         );
+    }
+
+    /// `--over-ssh` belongs to init; on another verb it is refused, and a
+    /// host flag without it is refused rather than measuring this machine.
+    #[test]
+    fn over_ssh_is_init_only_and_its_host_flags_need_it() {
+        let e = run_argv(&["lint".into(), "x".into(), "--over-ssh".into(), "xab".into()]).unwrap_err();
+        assert!(e.to_string().contains("init` only"), "{e}");
+        let e = run_argv(&["init".into(), "--edge-host".into(), "xaa-edge".into()]).unwrap_err();
+        assert!(e.to_string().contains("without --over-ssh"), "{e}");
     }
 }

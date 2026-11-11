@@ -13,7 +13,7 @@ use goat_federation::verbs::{self, Site, EXIT_OK};
 /// The one line `goat federate <verb>` prints on stderr while federation moves
 /// to goatbuilder. stderr, so a `--json` report on stdout stays one document.
 pub fn moving_notice(verb: &str) -> String {
-    format!("goat federate is moving to goatbuilder: run `goatbuilder federate {verb} ...`")
+    format!("goat federate is moving to goatbuilder and will be removed from goat: run `goatbuilder federate {verb} ...`")
 }
 
 pub async fn run(ctx: &super::Ctx, cmd: FederateCmd) -> anyhow::Result<()> {
@@ -75,7 +75,7 @@ mod tests {
     fn the_moving_notice_names_the_goatbuilder_command() {
         assert_eq!(
             moving_notice("lint"),
-            "goat federate is moving to goatbuilder: run `goatbuilder federate lint ...`"
+            "goat federate is moving to goatbuilder and will be removed from goat: run `goatbuilder federate lint ...`"
         );
     }
 }

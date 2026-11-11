@@ -5,8 +5,19 @@
 **Built:** `goat federate init` selects a running core router once and reads its
 image and version from that container. The core role publishes a stable discovery
 label, and both federation e2e harnesses use the role's naming pattern and label.
-**Not built:** remote host provisioning or automatic selection among several cores.
-Live deployment and bilateral federation acceptance are separate release gates.
+**Built:** the measurements read through a `Probe` (`crates/goat-federation/src/derive.rs`),
+so the same derivations measure this machine or a host reached over SSH; goatbuilder's SSH
+probe and the router precedence below (`crates/goatbuilder/src/federate/measure.rs`), with
+offline tests; the library's `run_init_measured` (`crates/goat-federation/src/verbs/init.rs`),
+which takes init's measured half from its caller, and goatbuilder's `measure::over_ssh`,
+which supplies it. **Measured** once against two throwaway hosts built from the harness host
+image (sshd, NOPASSWD sudo, a WireGuard interface, a labeled router container): every value
+read over SSH, the declared, discovered, wrong-name and unreachable cases. **Built:**
+`goatbuilder federate init --over-ssh <peering>` (with `--ssh-edge-group`, `--ssh-core-group`,
+`--edge-host`, `--core-host`, `--router-container`), and the driver's phase 3 using it when
+`FED_MEASURE` unset or `ssh`, on both avenues (`peering-standup.sh` takes the same switch);
+`FED_MEASURE=here` measures the machine the run is on, as before. **Not built:** automatic selection among several cores. Live deployment and
+bilateral federation acceptance are separate release gates.
 
 > The verb moves to `goatbuilder federate init` ([ADR 1225](../adr/1225-federation-belongs-to-goatbuilder-one-command-one-decision.md), Proposed), which runs
 > where the deployment's declaration is. This document describes the selection as built in
@@ -50,6 +61,78 @@ Several different eligible containers cause refusal with guidance to set
 `FED_ROUTER_CONTAINER`. Runtime aliases reporting the same full container ID are
 deduplicated.
 
+## Phase 3 from the operator's machine
+
+Status: WIP — gate: the federation end-to-end test runs phase 3 for both sides from outside
+the edge and core hosts, with no `goat` binary, no signing key and no `FED_ROUTER_DOCKER_HOST`
+on either host, and the packages pass lint and compose as before.
+
+Run as `goat federate init`, phase 3 measures the machine it runs on. The operator copies
+`goat` and a signing key to the edge, gives the edge Docker access to the core, and copies the
+package back. goatbuilder instead measures both hosts from the operator's machine:
+
+- **How it is asked for.** `goatbuilder federate init --over-ssh <peering>` with init's own
+  flags (`--with-transport`, `--with-data`, `--signing-key`, `--out`). The groups default to
+  `<peering>_edge` and `<peering>_core`; `--ssh-edge-group` and `--ssh-core-group` name others.
+  The checkout whose inventory names the hosts is `-C <repository>`, else the git toplevel of
+  the current directory. A host, group or router flag without `--over-ssh` is refused, as is
+  `--over-ssh` on any verb but init. Without `--over-ssh`, init measures this machine exactly
+  as `goat federate init` does. In a peering run, `FED_MEASURE=ssh` (the default; `here`
+  measures the machine the run is on) makes phase 3 `goatbuilder federate init ... --over-ssh <peering> --ssh-edge-group <edge group>
+  [--router-container $FED_ROUTER_CONTAINER] --repo <repository>`, run in process whoever runs
+  the other verbs (`FED_VERBS`), with no `DOCKER_HOST`; `FED_ROUTER_DOCKER_HOST` is not used.
+  A GB-113 refusal over SSH (no router found, or several) names both ways to select one:
+  `--router-container`, and `FED_ROUTER_CONTAINER`, which the one command passes as that flag.
+  `peering-standup.sh` prints and runs the same words through `$GOATBUILDER_BIN`, and the
+  parity gate compares both avenues with `FED_MEASURE` unset and set. Phase 1's local
+  `docker compose` check still reads the machine the run is on (set
+  `FED_SKIP_LOCAL_DOCKER_CHECK=1` when that is not the edge).
+
+- **Which hosts.** The single host of the edge group and of the core group (`<partner>_core`)
+  in `ops/ansible/inventory/peering-edges.ini`, the inventory the peering plays use, read with
+  `ansible-inventory --playbook-dir .` so group_vars and host_vars apply as in a play. A group
+  with several hosts needs `--edge-host` or `--core-host`; an empty group, an unreadable
+  inventory or a connection other than `ssh` or `local` refuses with GB-110.
+- **How they are reached.** `ansible_host`, `ansible_user`, `ansible_port`,
+  `ansible_ssh_private_key_file`, and `ansible_ssh_common_args` and `ansible_ssh_extra_args`
+  (a jump host is `-o ProxyJump=…` there), with `BatchMode=yes`, `ConnectTimeout=10` and
+  `StrictHostKeyChecking=accept-new`. The plays become root (`ops/ansible/ansible.cfg`), so
+  each read runs under `sudo -n` unless the host sets `ansible_become: false`;
+  `ansible_become_user` is honored. `ansible_connection=local` runs the reads on this machine.
+  Before measuring, each host runs `true` the same way: a host that does not answer refuses
+  with GB-111 and the ssh command, and a sudo that wants a password refuses with GB-112.
+  Two differences from a play: the plays' `ansible.cfg` turns host key checking off and adds
+  its own `ssh_args`, and phase 3 uses neither, so a host whose key is not yet known is
+  learned once and a changed key refuses (X-SSH-003). The inventory's SSH options are passed
+  to `ssh` as given, as Ansible passes them, so a `ProxyCommand` there runs on the operator's
+  machine; `BatchMode=yes` comes first and cannot be turned off by them.
+- **What runs there.** Only the commands derive issues, listed by `is_read_only_probe`: `wg
+  show`, `swanctl --version`, `ipsec --version`, `systemctl is-active` and `list-unit-files`,
+  `docker`/`podman` `ps` and `inspect`, `exec <id> zenohd --version` in exactly that shape, and
+  `cat` under `/proc/sys/crypto/` and `/sys/class/net/`, each in exactly the shape derive sends
+  (so neither `wg show all private-key` nor a bare `docker inspect` passes). The probe refuses
+  anything else before ssh starts. The host's command line is one quoted string after `--`
+  and the destination. A read that fails for a reason other than an absent file (the
+  connection dropped, sudo would not run `cat`) is an unknown, never a "no": the FIPS flag
+  read that way withholds `ipsec-fips` rather than reporting the host as not in FIPS mode.
+  An interface name that is not a Linux interface name is refused before any read, for
+  `goat federate init` too.
+- **Where each value comes from.** Transports, the PQC unit, the interface public key and the
+  interface MTU are read on the edge; the router's image and version on the core. Identity
+  (trust domain, CA fingerprint) and the declaration come from the operator's own profile, and
+  the package is signed on the operator's machine with a key resolved there. Each value's
+  `source` names the inventory host and destination it was read on.
+- **Which router.** First `--router-container <name>`, the operator's selector. Then the
+  deployment's variables for the core host: the goat-zenoh role names its container
+  `{{ zenoh_stack }}-router` with `zenoh_stack` defaulting to `{{ site_id }}-zenoh`, so
+  `zenoh_stack` (with `{{ site_id }}` resolved), else `site_id` with the role default, gives the
+  name. Role defaults are not inventory variables, which is why `site_id` alone is read this
+  way; a test fails if the role's default or container name changes. Last, the discovery above,
+  run on the core host over SSH. A named router, by flag or by variable, is never replaced by a
+  discovered one. A router that cannot be found refuses with GB-113 and these three fixes; a
+  router that is found but whose version cannot be read stays an underived value with init's
+  exit 23.
+
 ## Measurements and limits
 
 The CLI inspects the selected container's running state, full ID and configured
@@ -69,6 +152,19 @@ and [Podman listing format](https://docs.podman.io/en/stable/markdown/podman-ps.
 The inspection adapter accounts for Docker's `Id` and Podman's `ID` template fields.
 
 ## Verification
+
+Phase 3 over SSH: derive is tested against recorded host outputs (each command it issues is
+checked against the read-only list, and edge reads never reach the core or the reverse);
+goatbuilder's tests cover the ssh argument vector from an inventory (address, user, port, key,
+jump options, `sudo -n`, quoting), refusal of non-read-only commands before ssh starts, the
+router precedence, the GB-110, GB-111 and GB-113 refusals, and a remote read error that is
+ssh's own not being taken for the file's permission; `run_init_measured` is tested to ask
+its measurer once, for the declared interface only when a transport is offered, and to
+return a measurer's error as is. `goatbuilder federate init --over-ssh` is tested end to end
+short of a real host (an inventory naming this machine with `ansible_connection=local`: the
+groups, the router from `zenoh_stack`, the GB-113 and GB-110 refusals), the flag refusals, and
+the driver's phase 3 words with every other phase unchanged. Not yet run inside the
+end-to-end harness (scenario `phase3-from-outside`, requested).
 
 Rust regression cases cover standard and legacy names, custom labels, explicit
 selection, invalid selectors, missing and stopped containers, multiple cores,

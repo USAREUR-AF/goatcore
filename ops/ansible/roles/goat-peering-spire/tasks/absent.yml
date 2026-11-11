@@ -1,0 +1,153 @@
+---
+# Back out ONE peering's SPIRE federation (ops/ansible/peering-backout.yml), in the order
+# Step 9 of the runbook gives: the partner's trust domain leaves our server FIRST, or the
+# refresh re-adds their bundle within minutes. Then the bundle forwards on this edge host,
+# then the bundle itself.
+#
+# The relationship and the bundle are keyed by the partner's trust domain, read from the
+# agreement this peering composed (or the rendered agreement values). Without one, the
+# server is not touched and the row says so.
+#
+# Forwards: goat-peering-bundle-{in,out}-<partner>.{socket,service} are this peering's
+# by name. A forward with the older fixed name (goat-peering-bundle-in.socket, one pair
+# per host) is this peering's only when it listens on this peering's link address, or
+# listens on this peering's outbound address and forwards to this partner's link
+# address; otherwise it is another peering's and stays.
+- name: peering-spire | absent | no SPIRE server on this side
+  ansible.builtin.set_fact:
+    _pb_rows: "{{ _pb_rows + [{'component': 'spire', 'resource': 'federation', 'state': 'absent', 'action': 'none', 'note': 'peering_spire_enabled is false'}] }}"
+  when: not _pb_names.spire.enabled
+
+- name: peering-spire | absent | read the server and the forwards
+  when: _pb_names.spire.enabled
+  block:
+    - name: peering-spire | absent | the trust domain is known
+      ansible.builtin.set_fact:
+        _pbs_td: "{{ _pb_names.trust_domain if (_pb_names.trust_domain is match('^spiffe://[^/]+$')) else '' }}"
+
+    - name: peering-spire | absent | is the relationship declared?
+      ansible.builtin.command:
+        argv: [docker, exec, "{{ _pb_names.spire.container }}", "{{ _pb_names.spire.bin }}", federation, show,
+               -trustDomain, "{{ _pbs_td | regex_replace('^spiffe://', '') }}"]
+      delegate_to: "{{ _pb_names.spire.server_host }}"
+      register: _pbs_fed
+      changed_when: false
+      failed_when: false
+      when: _pbs_td | length > 0 and _pb_names.spire.server_host | length > 0
+
+    - name: peering-spire | absent | does the server hold their bundle?
+      ansible.builtin.command:
+        argv: [docker, exec, "{{ _pb_names.spire.container }}", "{{ _pb_names.spire.bin }}", bundle, list,
+               -id, "{{ _pbs_td }}", -format, pem]
+      delegate_to: "{{ _pb_names.spire.server_host }}"
+      register: _pbs_bundle
+      changed_when: false
+      failed_when: false
+      when: _pbs_td | length > 0 and _pb_names.spire.server_host | length > 0
+
+    - name: peering-spire | absent | the forward units on this host
+      ansible.builtin.find:
+        paths: /etc/systemd/system
+        patterns: "goat-peering-bundle-*.socket,goat-peering-bundle-*.service"
+      register: _pbs_units
+
+    - name: peering-spire | absent | read the fixed-name forwards
+      ansible.builtin.slurp:
+        src: "/etc/systemd/system/{{ item }}"
+      loop: "{{ _pbs_units.files | map(attribute='path') | map('basename')
+                | select('in', ['goat-peering-bundle-in.socket', 'goat-peering-bundle-out.socket', 'goat-peering-bundle-out.service']) | list }}"
+      register: _pbs_legacy_raw
+
+    - name: peering-spire | absent | which forwards are this peering's
+      ansible.builtin.set_fact:
+        _pbs_have: "{{ _pbs_units.files | map(attribute='path') | map('basename') | list }}"
+        _pbs_legacy: >-
+          {%- set out = {} -%}
+          {%- for r in _pbs_legacy_raw.results | default([]) -%}
+          {%-   for line in (r.content | b64decode).splitlines() -%}
+          {%-     if line.startswith('ListenStream=') -%}{%- set _ = out.update({r.item: line.split('=', 1)[1] | trim}) -%}{%- endif -%}
+          {%-     if line.startswith('ExecStart=') -%}{%- set _ = out.update({r.item: (line.split() | last)}) -%}{%- endif -%}
+          {%-   endfor -%}
+          {%- endfor -%}
+          {{ out }}
+
+    - name: peering-spire | absent | the fixed-name forwards this peering owns
+      ansible.builtin.set_fact:
+        _pbs_legacy_ours: >-
+          {%- set out = [] -%}
+          {%- set n = _pb_names.spire -%}
+          {%- if n.legacy_in_listen and _pbs_legacy.get('goat-peering-bundle-in.socket') == n.legacy_in_listen -%}
+          {%-   set _ = out.extend(['goat-peering-bundle-in.socket', 'goat-peering-bundle-in.service']) -%}
+          {%- endif -%}
+          {%- if n.legacy_out_listen and n.legacy_out_target
+                and _pbs_legacy.get('goat-peering-bundle-out.socket') == n.legacy_out_listen
+                and _pbs_legacy.get('goat-peering-bundle-out.service') == n.legacy_out_target -%}
+          {%-   set _ = out.extend(['goat-peering-bundle-out.socket', 'goat-peering-bundle-out.service']) -%}
+          {%- endif -%}
+          {{ out }}
+
+    - name: peering-spire | absent | record what is there
+      ansible.builtin.set_fact:
+        _pb_rows: >-
+          {%- set out = _pb_rows -%}
+          {%- set act = 'removed' if _pb_apply else 'remove' -%}
+          {%- if _pbs_td | length == 0 or _pb_names.spire.server_host | length == 0 -%}
+          {%-   set _ = out.append({'component': 'spire', 'resource': 'federation (trust domain unknown)', 'state': 'unknown', 'action': 'none', 'note': 'no agreement or rendered trust domain, or no peering_spire_server_host: the server was not read'}) -%}
+          {%- else -%}
+          {%-   set _ = out.append({'component': 'spire', 'resource': 'federation ' ~ _pbs_td, 'state': ('present' if _pbs_fed.rc == 0 else 'absent'), 'action': (act if _pbs_fed.rc == 0 else 'none'), 'note': 'on ' ~ _pb_names.spire.server_host}) -%}
+          {%-   set held = _pbs_bundle.rc == 0 and 'BEGIN CERTIFICATE' in (_pbs_bundle.stdout | default('')) -%}
+          {%-   set _ = out.append({'component': 'spire', 'resource': 'bundle ' ~ _pbs_td, 'state': ('present' if held else 'absent'), 'action': (act if held else 'none'), 'note': 'on ' ~ _pb_names.spire.server_host}) -%}
+          {%- endif -%}
+          {%- for u in _pb_names.spire.units -%}
+          {%-   set p = u in _pbs_have -%}
+          {%-   set _ = out.append({'component': 'spire', 'resource': 'unit ' ~ u, 'state': ('present' if p else 'absent'), 'action': (act if p else 'none'), 'note': ''}) -%}
+          {%- endfor -%}
+          {%- for u in ['goat-peering-bundle-in.socket', 'goat-peering-bundle-in.service', 'goat-peering-bundle-out.socket', 'goat-peering-bundle-out.service'] if u in _pbs_have -%}
+          {%-   set mine = u in _pbs_legacy_ours -%}
+          {%-   set _ = out.append({'component': 'spire', 'resource': 'unit ' ~ u, 'state': 'present', 'action': (act if mine else 'kept'), 'note': ('fixed name, this peering\'s addresses' if mine else 'fixed name, another peering\'s addresses or unproven')}) -%}
+          {%- endfor -%}
+          {{ out }}
+        _pbs_remove_units: "{{ (_pb_names.spire.units | select('in', _pbs_have) | list) + _pbs_legacy_ours }}"
+
+    - name: peering-spire | absent | the relationship leaves the server first
+      ansible.builtin.command:
+        argv: [docker, exec, "{{ _pb_names.spire.container }}", "{{ _pb_names.spire.bin }}", federation, delete,
+               -id, "{{ _pbs_td | regex_replace('^spiffe://', '') }}"]
+      delegate_to: "{{ _pb_names.spire.server_host }}"
+      register: _pbs_fed_del
+      changed_when: _pbs_fed_del.rc == 0
+      failed_when: false
+      when: _pb_apply and _pbs_td | length > 0 and _pb_names.spire.server_host | length > 0 and _pbs_fed.rc | default(1) == 0
+
+    - name: peering-spire | absent | stop this peering's forwards
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: stopped
+        enabled: false
+      loop: "{{ _pbs_remove_units }}"
+      failed_when: false
+      when: _pb_apply
+
+    - name: peering-spire | absent | delete this peering's forward units
+      ansible.builtin.file:
+        path: "/etc/systemd/system/{{ item }}"
+        state: absent
+      loop: "{{ _pbs_remove_units }}"
+      when: _pb_apply
+
+    - name: peering-spire | absent | systemd forgets them
+      ansible.builtin.systemd:
+        daemon_reload: true
+      when: _pb_apply and _pbs_remove_units | length > 0
+
+    # dissociate: entries that federate with this trust domain lose that association
+    # and are otherwise kept. Our own entries are never deleted from here.
+    - name: peering-spire | absent | their bundle leaves the server
+      ansible.builtin.command:
+        argv: [docker, exec, "{{ _pb_names.spire.container }}", "{{ _pb_names.spire.bin }}", bundle, delete,
+               -id, "{{ _pbs_td }}", -mode, dissociate]
+      delegate_to: "{{ _pb_names.spire.server_host }}"
+      register: _pbs_bundle_del
+      changed_when: _pbs_bundle_del.rc == 0
+      failed_when: false
+      when: _pb_apply and _pbs_td | length > 0 and _pb_names.spire.server_host | length > 0 and _pbs_bundle.rc | default(1) == 0
