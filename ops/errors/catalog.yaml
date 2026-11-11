@@ -2233,6 +2233,22 @@ entries:
     matches:
       - "\\(GB-235\\)"
     exit: 2
+  - code: GB-236
+    tool: goatbuilder
+    title: our core router's goat-zenoh role declarations do not resolve for admission
+    what: "Phase 10's admission names no route of its own (FED_CORE_PLAY and FED_CORE_RESTART are unset), and an inventory group of the site inventory (ops/ansible/inventory/*.ini, not peering-*.ini) has group_vars that configure the goat-zenoh role, so admission restarts the core through the role's own play on that group. It could not resolve that play: several groups configure the role and the peering core's address does not pick one, nothing gives the group's site_id, or no single fleet pin whose image variable the group sets names a deploy play that exists. The message names what was looked for and where. Nothing on the core changed."
+    causes:
+      - "two inventory groups both configure the goat-zenoh role"
+      - "the core router group's group_vars declare no site_id and the group is not named <site>_hosts"
+      - "no component in ops/pins/fleet-pins.yaml has the group's image variable as its var with a deploy play"
+    fixes:
+      - "declare site_id in group_vars/<core router group>/"
+      - "keep one inventory group per core router, or put the peering's core in the peering inventory with the same address"
+      - "set FED_CORE_PLAY or FED_CORE_RESTART to name the route by hand"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "\\(GB-236\\)"
+    exit: 2
   - code: GB-185
     tool: goatbuilder
     title: the partner named to `federate status` is not a declared peering

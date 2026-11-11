@@ -39,7 +39,9 @@
 //! required: it is what every other vendor and partner is kept from), and
 //! FED_CORE_ACL_SEED with FED_CORE_ACL_OUT when the core configuration is
 //! assembled; FED_CORE_CERT and FED_CORE_KEY; FED_CORE_PLAY (with
-//! FED_CORE_GROUP) or FED_CORE_RESTART and FED_CORE_DRY_RUN; and
+//! FED_CORE_GROUP) or FED_CORE_RESTART and FED_CORE_DRY_RUN, unless the core
+//! is the goat-zenoh role's (federate/admit_role.rs: its own play, found from
+//! its declarations); and
 //! FED_SLOT_REGISTRY_DB or FED_SLOT_PG_SSH (or FED_SLOT_CHECK=skip).
 
 use std::collections::BTreeMap;
@@ -209,11 +211,14 @@ struct Core {
     restart: Option<String>,
     dry_run: Option<String>,
     slot: Slot,
+    /// The goat-zenoh role core, when the deployment names no route of its own
+    /// (federate/admit_role.rs).
+    role: Option<super::admit_role::RoleCore>,
 }
 
 impl Core {
     /// The deployment's settings, or the names of the ones missing (GB-194).
-    fn from_env(with: &str) -> Result<Core, Vec<&'static str>> {
+    fn from_env(with: &str, role: Option<super::admit_role::RoleCore>) -> Result<Core, Vec<&'static str>> {
         let mut missing = Vec::new();
         let (org, seed, out) = (
             env("FED_CORE_ACL_ORG").map(PathBuf::from),
@@ -231,7 +236,7 @@ impl Core {
             env("FED_CORE_RESTART"),
             env("FED_CORE_DRY_RUN"),
         );
-        if play.is_none() && restart.is_none() {
+        if play.is_none() && restart.is_none() && role.is_none() {
             missing
                 .push("FED_CORE_PLAY (the play that deploys our core router) or FED_CORE_RESTART");
         }
@@ -265,11 +270,14 @@ impl Core {
             restart,
             dry_run,
             slot,
+            role,
         })
     }
 
     fn play_cmd(&self, repo: &Path, work: &Path, check: bool) -> Option<String> {
-        let play = self.play.as_ref()?;
+        let Some(play) = self.play.as_ref() else {
+            return self.role.as_ref().map(|r| r.play_cmd(repo, check));
+        };
         let aws = crate::settings::aws_profile(repo);
         // The per-peering inventory files too, as the driver's plays read
         // them: the core group may be in one of them (plan::per_peering_inventories).
@@ -292,7 +300,7 @@ impl Core {
         match (&self.play, &self.restart) {
             (Some(p), _) => format!("the play {p} on {}", self.group),
             (None, Some(c)) => format!("FED_CORE_RESTART ({c})"),
-            _ => "nothing".into(),
+            (None, None) => self.role.as_ref().map(|r| r.route()).unwrap_or_else(|| "nothing".into()),
         }
     }
 }
@@ -564,7 +572,18 @@ pub fn admit(
             "do not admit the edge; ask the partner which CA is current",
         );
     }
-    let core = match Core::from_env(with) {
+    // A core the goat-zenoh role deploys is restarted by the role's own play,
+    // found from its declarations, unless the deployment names a route.
+    let role = if env("FED_CORE_PLAY").is_none() && env("FED_CORE_RESTART").is_none() {
+        let core_group = env("FED_CORE_GROUP").unwrap_or_else(|| format!("{with}_core"));
+        match super::admit_role::find(repo, &core_group) {
+            Ok(r) => r,
+            Err(e) => return fail("GB-236", e, "declare what it names, or set FED_CORE_PLAY or FED_CORE_RESTART, make a new plan, and deploy again"),
+        }
+    } else {
+        None
+    };
+    let core = match Core::from_env(with, role) {
         Ok(c) => c,
         Err(missing) => {
             return fail(
