@@ -26,6 +26,8 @@ peering_spire_bundle_port: 8443
 #   outbound  <listen address>:<local port> -> <their link ip>:<bundle port>
 # TLS passes through both untouched: https_spiffe authenticates the far server by its
 # own SVID, so the forwards see ciphertext and vouch for nothing.
+# Empty: the source address of this edge's route to peering_spire_server_addr
+# (tasks/outbound-listen.yml), the address that server's dial arrives on.
 peering_spire_outbound_listen: ""
 # Every peering on one edge host forwards outbound on peering_spire_outbound_listen, so
 # each needs its own port here; the role refuses one another peering already listens on.

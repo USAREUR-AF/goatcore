@@ -1,0 +1,48 @@
+---
+# This host's findings, one row per resource, on the controller where the driver reads
+# them: <fed_work>/backout/<stage>/<inventory_hostname>.json.
+- name: backout | what this host holds of the peering
+  ansible.builtin.debug:
+    msg: >-
+      {%- set out = [] -%}
+      {%- for r in _pb_rows -%}
+      {%-   set _ = out.append(r.component ~ '  ' ~ r.resource ~ '  ' ~ r.state ~ '  ' ~ r.action) -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: backout | the controller's record directory
+  ansible.builtin.file:
+    path: "{{ fed_work }}/backout/{{ _pb_stage }}"
+    state: directory
+    mode: "0755"
+  vars:
+    _pb_stage: >-
+      {{ 'core-apply' if (peering_backout_core_apply | default(false) | bool)
+         else ('apply' if _pb_apply else 'survey') }}
+  delegate_to: localhost
+  become: false
+  run_once: true
+  when: fed_work is defined
+
+- name: backout | write this host's record on the controller
+  ansible.builtin.copy:
+    dest: "{{ fed_work }}/backout/{{ _pb_stage }}/{{ inventory_hostname }}.json"
+    content: "{{ {'schema': 'goat-federation-backout-host/v1', 'host': inventory_hostname, 'peering': peering_backout_id, 'stage': _pb_stage, 'rows': _pb_rows} | to_nice_json }}\n"
+    mode: "0644"
+  vars:
+    _pb_stage: >-
+      {{ 'core-apply' if (peering_backout_core_apply | default(false) | bool)
+         else ('apply' if _pb_apply else 'survey') }}
+  delegate_to: localhost
+  become: false
+  when: fed_work is defined
+
+- name: backout | refuse when a resource belongs to another peering
+  ansible.builtin.fail:
+    msg: >-
+      {{ inventory_hostname }} holds resources under this peering's names that another
+      peering can be shown to hold, or that cannot be shown to be this peering's alone: {{ _pb_rows | selectattr('state', 'in', ['not-ours', 'refused'])
+      | map(attribute='resource') | join(', ') }}. They were left untouched. Fix the
+      peering's group values (each peering needs its own interface, stack and ports),
+      then run the back-out again.
+  when: _pb_rows | selectattr('state', 'in', ['not-ours', 'refused']) | list | length > 0

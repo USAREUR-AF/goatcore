@@ -37,6 +37,8 @@ mod secrets;
 mod settings;
 mod standup;
 mod survey;
+#[cfg(test)]
+mod testdir;
 mod trace;
 mod tutor;
 mod update;
@@ -136,6 +138,9 @@ pub enum OutputFormat {
 }
 
 #[derive(Subcommand, Debug)]
+// `federate` carries the flags of its stages and confirmations; parsed once
+// per run, its size does not matter.
+#[allow(clippy::large_enum_variant)]
 pub enum Cmd {
     /// Check a config against the versioned schema and the cross-field rules, offline.
     Validate {
@@ -426,19 +431,76 @@ pub enum Cmd {
     /// opened, acceptance in all four tiers. Replaces
     /// ops/scripts/peering-standup.sh step for step.
     ///
+    /// At a terminal, `goatbuilder federate <partner>` is the whole procedure:
+    /// it asks for the partner's key and CA fingerprint and the agreement
+    /// digest, makes the plan and asks to approve it, shows what our core will
+    /// admit and asks again, then carries on through acceptance. A run that
+    /// stops resumes where it stopped. Values come from the deployment's
+    /// declarations; a FED_* variable set in the environment overrides one.
+    ///
+    /// Each stage also runs alone: `plan <partner>`, `deploy <partner>`,
+    /// `test <partner>`, `status [<partner>]`. `allocate [<peering>]` writes a
+    /// peering's values and files for review; `backout <partner>` backs one
+    /// peering out and leaves the others as they were.
     /// `goatbuilder federate init|lint|compose|diff|verify|apply` runs one of
     /// the six federation verbs in process, with the flags and exit codes of
     /// `goat federate <verb>`.
     #[command(args_conflicts_with_subcommands = true, subcommand_negates_reqs = true)]
     Federate {
-        /// One federation verb instead of the whole peering.
+        /// One federation verb, one stage of the one command (`plan`), or
+        /// `backout <partner>`, instead of the whole peering.
         #[command(subcommand)]
-        verb: Option<goat_federation::verbs::FederateCmd>,
+        verb: Option<federate::plan::Stage>,
         #[command(flatten)]
         site: Box<federate::verbs::SiteArgs>,
-        /// The peering name (the counterparty, as declared).
+        #[command(flatten)]
+        measure: Box<federate::measure::MeasureArgs>,
+        /// The peering name (the counterparty, as declared), or a stage run
+        /// alone: `status [<partner>]`, `deploy <partner>`, `test <partner>`,
+        /// `allocate [<peering>]`.
         #[arg(required = true)]
         with: Option<String>,
+        /// The partner, after a stage word; after `allocate`, the one peering to
+        /// allocate and render, beside peerings that are still hand-written.
+        partner: Option<String>,
+        /// deploy: the plan to execute (default <work>/plan.json).
+        #[arg(long, value_name = "FILE")]
+        plan: Option<std::path::PathBuf>,
+        /// deploy: approve exactly this plan hash, after reading the plan.
+        /// --yes never approves a plan.
+        #[arg(long, value_name = "SHA256")]
+        approve_plan: Option<String>,
+        /// Phases 5, 6 and 10: confirm the keys, the agreement digest and the
+        /// admission here, at this terminal, instead of stopping for them by
+        /// hand. The default when both stdin and stderr are a terminal.
+        #[arg(long, conflicts_with = "no_confirm")]
+        confirm: bool,
+        /// Stop at phases 5 and 10 for the steps by hand even at a terminal,
+        /// as before confirming at the terminal was the default.
+        #[arg(long)]
+        no_confirm: bool,
+        /// Phase 5: the partner's verifying key, as read aloud on the call.
+        #[arg(long, value_name = "BASE64")]
+        partner_key: Option<String>,
+        /// Phase 5: the partner's CA fingerprint, as read aloud on the call.
+        #[arg(long, value_name = "SHA256")]
+        partner_ca_fingerprint: Option<String>,
+        /// Phase 6: the agreement digest, as compared with the partner.
+        #[arg(long, value_name = "SHA256")]
+        agreement_digest: Option<String>,
+        /// Phase 5: place the package the partner's single pointer named and
+        /// the directory held back, after confirming on the call that it is
+        /// the package for this peering (its digest, as the stop shows it).
+        #[arg(long, value_name = "SHA256")]
+        place_pointer_package: Option<String>,
+        /// Phase 10: approve exactly this admission digest, after reading
+        /// what our core will admit. --yes never approves it.
+        #[arg(long, value_name = "SHA256")]
+        approve_admission: Option<String>,
+        /// Phase 10: write what our core would admit for review in a pull
+        /// request, and stop.
+        #[arg(long)]
+        review_in_pr: bool,
         /// The environment the peering is declared on (checked against goatbuilder.yaml peerings:).
         #[arg(long)]
         env: Option<String>,
@@ -460,6 +522,16 @@ pub enum Cmd {
         /// Print every phase and command; run nothing.
         #[arg(long)]
         dry_run: bool,
+        /// Skip the phases the run journal (<work>/state.json) shows passed,
+        /// whose inputs and local outputs are unchanged now; checks and plays
+        /// always run again. This is the default; the flag is kept so
+        /// scripts that pass it keep working.
+        #[arg(long, conflicts_with = "no_resume")]
+        resume: bool,
+        /// Run every phase in range, even ones the run journal shows passed
+        /// with unchanged inputs (the behavior before resuming was the default).
+        #[arg(long)]
+        no_resume: bool,
     },
     /// ONE resolution pass with TWO renderings: every listed member's
     /// group_vars pins.yml and every listed goatnet's IntentV1 artifact, from
@@ -1035,20 +1107,25 @@ fn main() {
     // candidate lists read the checkout leniently and never fail loudly.
     // The six federation verbs read only the files they are named, and the
     // site (federate/verbs.rs): no repository, no config.
-    if let Cmd::Federate { verb: Some(_), .. } = &cli.cmd {
+    if let Cmd::Federate { verb: Some(federate::plan::Stage::Verb(_)), .. } = &cli.cmd {
         // The verbs read no repository, fixture or table output, so a flag that
         // would choose one is refused rather than silently ignored: under
         // --mock, `apply --confirm` would still write the files it names.
-        if cli.mock.is_some() || cli.repo.is_some() || !matches!(cli.output, OutputFormat::Table) {
+        // -C/--repo is the one exception: `init --over-ssh` reads the plays'
+        // inventory in the checkout it names (federate/measure.rs).
+        let over_ssh = matches!(&cli.cmd, Cmd::Federate { measure, .. } if !measure.is_empty());
+        if cli.mock.is_some() || (cli.repo.is_some() && !over_ssh) || !matches!(cli.output, OutputFormat::Table) {
             eprintln!(
                 "goatbuilder: --mock, -C/--repo and -o/--output do not apply to goatbuilder federate init|lint|compose|diff|verify|apply: \
                  the verbs read only the files they are named and the party's context, and run for real; \
-                 drop the flag (the verbs take --json for a JSON report)"
+                 drop the flag (the verbs take --json for a JSON report; -C/--repo is taken only by init --over-ssh)"
             );
             std::process::exit(2);
         }
-        if let Cmd::Federate { verb: Some(verb), site, .. } = cli.cmd {
-            std::process::exit(federate::verbs::exit_of(verb, &site));
+        if let Cmd::Federate { verb: Some(federate::plan::Stage::Verb(verb)), site, measure, .. } = cli.cmd {
+            // Only init --over-ssh reads the checkout (its ansible inventory).
+            let repo = (!measure.is_empty()).then(|| cli.repo.clone().or_else(|| repo_root().ok())).flatten();
+            std::process::exit(federate::verbs::exit_of(verb, &site, &measure, repo.as_deref()));
         }
     }
     match &cli.cmd {
@@ -1335,18 +1412,79 @@ fn main() {
                 joinnode::join_node(&repo, &joinnode::Options { env, site, node, class, address: address.as_deref(), pass_var: pass_var.as_deref(), via, from: *from, to: *to, dry_run: *dry_run })
             }
         }
-        Cmd::Federate { verb: _, site, with, env, as_party, edge_group, work, from, to, dry_run } => {
+        Cmd::Federate { verb: Some(federate::plan::Stage::Backout(b)), .. } => {
+            if !cli.yes && !b.dry_run && cli.mock.is_none() && !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+                Err(goat_errors::coded("GB-008", "federate backout is a mutation: pass --yes without a terminal (C10)").into())
+            } else {
+                federate::backout::backout(&repo, &b.options(cli.mock.as_deref(), cli.yes, matches!(cli.output, OutputFormat::Table)))
+            }
+        }
+        Cmd::Federate { verb: Some(stage), site, measure, .. } => {
+            if !site.is_empty() {
+                Err(anyhow::anyhow!("--context-dir, --cert, --ca-roots, --context and --profile-dir apply to the six verbs (goatbuilder federate init|lint|compose|diff|verify|apply), not to goatbuilder federate plan"))
+            } else if !measure.is_empty() {
+                Err(anyhow::anyhow!("--over-ssh and its host flags apply to `goatbuilder federate init`, not to goatbuilder federate plan"))
+            } else {
+                federate::plan::run(&repo, stage, cli.mock.as_deref())
+            }
+        }
+        Cmd::Federate { verb: None, site, measure, with, partner, plan, approve_plan, confirm, no_confirm, partner_key, partner_ca_fingerprint, agreement_digest, place_pointer_package, approve_admission, review_in_pr, env, as_party, edge_group, work, from, to, dry_run, resume, no_resume } => {
             let with = with.as_deref().unwrap_or_default();
+            let cfg_path = cli.mock.as_ref().map(|m| m.join("goatbuilder.yaml")).unwrap_or_else(|| repo.join("ops/goatbuilder/goatbuilder.yaml"));
+            if with == "status" {
+                let format = match cli.output {
+                    OutputFormat::Table => federate::status::Format::Table,
+                    OutputFormat::Json => federate::status::Format::Json,
+                    OutputFormat::Yaml => federate::status::Format::Yaml,
+                };
+                federate::status::status(&cfg_path, partner.as_deref(), env.as_deref(), work.as_deref(), format)
+            } else if matches!(with, "deploy" | "test") && partner.is_none() {
+                Err(goat_errors::coded("GB-189", format!("`goatbuilder federate {with}` needs the partner: goatbuilder federate {with} <partner>")).into())
+            } else if partner.is_some() && !matches!(with, "deploy" | "test" | "allocate") {
+                Err(goat_errors::coded("GB-189", format!("unexpected argument '{}': only a stage word (status, deploy, test) takes a partner after it, and `allocate` the one peering to allocate", partner.as_deref().unwrap_or_default())).into())
+            } else if (partner_key.is_some() || partner_ca_fingerprint.is_some() || agreement_digest.is_some() || place_pointer_package.is_some()) && matches!(with, "deploy" | "test") {
+                Err(goat_errors::coded("GB-189", format!("--partner-key, --partner-ca-fingerprint, --agreement-digest and --place-pointer-package belong to phases 5 and 6 of `goatbuilder federate <partner>`, not to {with}")).into())
+            } else if (*confirm || approve_admission.is_some() || *review_in_pr) && with == "test" {
+                Err(goat_errors::coded("GB-189", "--confirm, --approve-admission and --review-in-pr do not apply to `goatbuilder federate test`").into())
+            } else if (approve_admission.is_some() || *review_in_pr || *confirm) && with == "deploy" && *from > 10 {
+                Err(goat_errors::coded("GB-189", "--approve-admission, --review-in-pr and --confirm are for phase 10, and deploy --from 11 starts after it").into())
+            } else if (approve_admission.is_some() || *review_in_pr) && with != "deploy" {
+                Err(goat_errors::coded("GB-189", "--approve-admission and --review-in-pr belong to `goatbuilder federate deploy <partner>`: phase 10 is admitted by the command only from an approved plan").into())
+            } else if ((partner_key.is_some() || partner_ca_fingerprint.is_some() || place_pointer_package.is_some()) && !(*from <= 5 && 5 <= *to)) || (agreement_digest.is_some() && !(*from <= 6 && 6 <= *to)) {
+                Err(goat_errors::coded("GB-189", "--partner-key and --partner-ca-fingerprint are for phase 5 and --agreement-digest for phase 6; this run's --from/--to leave that phase out").into())
+            } else if (plan.is_some() || approve_plan.is_some()) && with != "deploy" {
+                Err(goat_errors::coded("GB-189", "--plan and --approve-plan belong to `goatbuilder federate deploy <partner>`").into())
+            } else if matches!(with, "deploy" | "test") && (*to != 99 || *resume || *no_resume) {
+                Err(goat_errors::coded("GB-189", format!("`goatbuilder federate {with}` runs its own phases: --to, --resume and --no-resume do not apply to it")).into())
             // A mock executes nothing, with or without --dry-run, so it mutates nothing.
-            if !site.is_empty() && goat_federation::verbs::VERB_NAMES.contains(&with) {
+            } else if !site.is_empty() && goat_federation::verbs::VERB_NAMES.contains(&with) {
                 // `federate --context-dir D init`: clap read the verb as a partner.
                 Err(anyhow::anyhow!("put --context-dir, --cert, --ca-roots, --context and --profile-dir after the verb: goatbuilder federate {with} --context-dir <dir> ..."))
             } else if !site.is_empty() {
                 Err(anyhow::anyhow!("--context-dir, --cert, --ca-roots, --context and --profile-dir apply to the six verbs (goatbuilder federate init|lint|compose|diff|verify|apply), not to a peering run"))
+            } else if !measure.is_empty() {
+                Err(anyhow::anyhow!("--over-ssh and its host flags apply to `goatbuilder federate init`; a peering run measures phase 3 over SSH with FED_MEASURE=ssh (for init, put the flags after the word init)"))
             } else if !cli.yes && !*dry_run && cli.mock.is_none() && !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
                 Err(anyhow::anyhow!("federate is a mutation: pass --yes without a terminal (C10)"))
             } else {
-                federate::federate(&repo, &federate::Options { with, env: env.as_deref(), r#as: as_party.as_deref(), edge_group: edge_group.as_deref(), work: work.as_deref(), mock: cli.mock.as_deref(), from: *from, to: *to, dry_run: *dry_run, table: matches!(cli.output, OutputFormat::Table) })
+                let name = partner.as_deref().unwrap_or(with);
+                let o = federate::Options { with: name, env: env.as_deref(), r#as: as_party.as_deref(), edge_group: edge_group.as_deref(), work: work.as_deref(), mock: cli.mock.as_deref(), from: *from, to: *to, dry_run: *dry_run, table: matches!(cli.output, OutputFormat::Table) };
+                match with {
+                    "deploy" => federate::deploy::deploy(&repo, &o, plan.as_deref(), approve_plan.as_deref(), &mut federate::prompt::Terminal, federate::Admission { approve: approve_admission.clone(), review_in_pr: *review_in_pr }, federate::prompt::ask_by_default(*confirm, *no_confirm)),
+                    "test" => federate::deploy::test(&repo, &o),
+                    // `allocate <peering>`: that peering alone, beside hand-written ones.
+                    "allocate" if partner.is_some() => federate::peering_files::run_scoped(&repo, &federate::Options { with, ..o }, partner.as_deref()),
+                    _ => {
+                        let values = federate::Values { ask: federate::prompt::ask_by_default(*confirm, *no_confirm), partner_key: partner_key.clone(), partner_ca_fingerprint: partner_ca_fingerprint.clone(), agreement_digest: agreement_digest.clone(), pointer_package: place_pointer_package.clone() };
+                        let admission = federate::Admission { approve: approve_admission.clone(), review_in_pr: *review_in_pr };
+                        let ask = values.ask;
+                        // With a person at the terminal, phase 10 hands over to
+                        // plan, deploy and test: one command, the two prompts.
+                        let hand_off_at_10 = ask && federate::prompt::Terminal::present() && !*dry_run && cli.mock.is_none();
+                        let mut s = federate::Surface { resume: !*no_resume, values, admission: admission.clone(), ask: Some(Box::new(federate::prompt::Terminal)), hand_off_at_10, ..Default::default() };
+                        federate::deploy::whole(&repo, &o, &mut s, &mut federate::prompt::Terminal, admission, ask)
+                    }
+                }
             }
         }
     };

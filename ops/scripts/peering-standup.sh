@@ -30,15 +30,24 @@
 #   Environment:
 #     GOAT_BIN            the goat binary (default: whatever is on PATH)
 #     FED_VERBS           who runs the federation verbs of phases 3, 4, 6, 7 and 9:
-#                         `goat` (the default: `$GOAT_BIN federate <verb>`) or
-#                         `goatbuilder` (`$GOATBUILDER_BIN federate <verb>`, the same
-#                         library, flags and exit codes)
-#     GOATBUILDER_BIN     the goatbuilder binary for FED_VERBS=goatbuilder
-#                         (default: whatever is on PATH)
+#                         `goatbuilder` (the default: `$GOATBUILDER_BIN federate <verb>`)
+#                         or `goat` (`$GOAT_BIN federate <verb>`, the same library,
+#                         flags and exit codes)
+#     GOATBUILDER_BIN     the goatbuilder binary (default: whatever is on PATH)
+#     FED_MEASURE         where phase 3 measures: `ssh` (the default:
+#                         `$GOATBUILDER_BIN federate init --over-ssh`, the hosts of
+#                         <peering>_edge and <peering>_core over SSH, as the plays
+#                         reach them; nothing is copied to either host) or `here`
+#                         (the host this runs on, and the core router through
+#                         FED_ROUTER_DOCKER_HOST, with whoever FED_VERBS names)
+#     FED_DECLARATION     the peering's own federation.toml for phase 3 (default: the
+#                         goat context's federation.toml). goatbuilder sets it to
+#                         ops/federation/<env>/peerings/<peering>/federation.toml when
+#                         `goatbuilder federate allocate` generated that file
 #     FED_WORK            working directory (default: /var/lib/goat-federation/<peering>)
 #     FED_COUNTERPARTY    path to the counterparty's package (phase 6 needs it)
 #     FED_SIGNING_KEY     our Ed25519 signing key (64 hex or 44 base64)
-#     FED_ROUTER_DOCKER_HOST  DOCKER_HOST for phase 3 when the core router is not on
+#     FED_ROUTER_DOCKER_HOST  with FED_MEASURE=here: DOCKER_HOST for phase 3 when the core router is not on
 #                         this host, e.g. ssh://<user>@<core>. `init` reads the
 #                         federation interface here and the running router there; the
 #                         edge must not share a machine with the core.
@@ -86,7 +95,7 @@ while [ $# -gt 0 ]; do
     --to)         TO="$2"; shift 2 ;;
     --as)         AS="$2"; shift 2 ;;
     --edge-group) EDGE_GROUP="$2"; shift 2 ;;
-    -h|--help)    sed -n '2,67p' "$0"; exit 0 ;;
+    -h|--help)    sed -n '2,66p' "$0"; exit 0 ;;
     -*)           echo "unknown flag $1" >&2; exit 2 ;;
     *)            [ -z "$PEERING" ] && PEERING="$1"; shift ;;
   esac
@@ -95,10 +104,14 @@ done
 
 : "${GOAT_BIN:=$(command -v goat || echo goat)}"
 : "${GOATBUILDER_BIN:=$(command -v goatbuilder || echo goatbuilder)}"
-case "${FED_VERBS:-goat}" in
+case "${FED_VERBS:-goatbuilder}" in
   goat)        FED_VERB="$GOAT_BIN federate" ;;
   goatbuilder) FED_VERB="$GOATBUILDER_BIN federate" ;;
   *) echo "peering-standup.sh: FED_VERBS is goat or goatbuilder, not '$FED_VERBS'" >&2; exit 2 ;;
+esac
+case "${FED_MEASURE:=ssh}" in
+  here|ssh) ;;
+  *) echo "peering-standup.sh: FED_MEASURE is here or ssh, not '$FED_MEASURE'" >&2; exit 2 ;;
 esac
 : "${FED_WORK:=/var/lib/goat-federation/$PEERING}"
 : "${FED_COUNTERPARTY:=$FED_WORK/theirs.canonical.json}"
@@ -126,6 +139,9 @@ export GOAT_PROFILE_DIR
 # The core host the edge dials: the outbound republisher runs there, beside our
 # core router, and both of its sessions dial that router (phase 12).
 CORE_GROUP="${PEERING}_core"
+# Phase 14 reads our core and edge declarations by group (acceptance_surfaces.py).
+export FED_EDGE_GROUP="$EDGE_GROUP"
+: "${FED_CORE_GROUP:=$CORE_GROUP}"; export FED_CORE_GROUP
 
 # THE BOUND KEYS. `compose` refuses (exit 20) unless a verifying key is bound to
 # each party, and it will never take one from the package it verifies — a package
@@ -133,6 +149,35 @@ CORE_GROUP="${PEERING}_core"
 # operator writes during phase 5, after reading them aloud, and phase 6 passes them.
 : "${FED_KEYRING:=$FED_WORK/keys.txt}"
 OURS="$FED_WORK/ours.canonical.json"
+
+# OUR PARTY. Phases 7, 8, 9 and 14 always name it: without --as, the
+# declaration's sovereign_id, as the usage says, else our half's. Mint and
+# acceptance otherwise take the agreement's first party, which is us only when
+# we sort first. The same rule as the driver (crates/goatbuilder/src/federate/mod.rs
+# our_id): the goat context the verbs read is $GOAT_CONTEXT_DIR, else
+# $GOAT_PROFILE_DIR/contexts/<$GOAT_CONTEXT, else config.toml current_context,
+# else default>.
+our_id() {
+  local dir name id
+  dir="${GOAT_CONTEXT_DIR:-}"
+  if [ -z "$dir" ]; then
+    name="${GOAT_CONTEXT:-}"
+    if [ -z "$name" ] && [ -f "$GOAT_PROFILE_DIR/config.toml" ]; then
+      name="$(sed -n 's/^[[:space:]]*current_context[[:space:]]*=[[:space:]]*//p' "$GOAT_PROFILE_DIR/config.toml" | head -1 | sed 's/[[:space:]]*$//; s/^"//; s/"$//')"
+    fi
+    dir="$GOAT_PROFILE_DIR/contexts/${name:-default}"
+  fi
+  id=""
+  if [ -f "$dir/federation.toml" ]; then
+    id="$(python3 -c 'import sys, tomllib; print(str(tomllib.load(open(sys.argv[1], "rb")).get("sovereign_id", "")))' "$dir/federation.toml" 2>/dev/null || true)"
+  fi
+  if ! printf '%s' "$id" | grep -Eq '^[a-z0-9][a-z0-9-]{1,31}$'; then
+    id="$(python3 -c 'import sys, json; print(str(json.load(open(sys.argv[1])).get("sovereign_id", "")))' "$OURS" 2>/dev/null || true)"
+  fi
+  printf '%s' "$id" | grep -Eq '^[a-z0-9][a-z0-9-]{1,31}$' && printf '%s' "$id"
+  return 0
+}
+[ -n "$AS" ] || AS="$(our_id)"
 AGREEMENT="$FED_WORK/agreement.json"
 APPLIED="$FED_WORK/applied"
 PKI="$FED_WORK/pki"
@@ -196,8 +241,12 @@ echo "peering-standup: peering=$PEERING  work=$FED_WORK  edge-group=$EDGE_GROUP 
 
 # Every ansible phase, one shape. The generated vars and the two exchanged files
 # reach the plays through these, so a phase cannot read an older run's copy.
+# This peering's own inventory file (goatbuilder federate allocate, when not every
+# peering declares hosts:), read beside the hand-written one.
+MORE_INV=""
+[ -f "$REPO/ops/ansible/inventory/peering-$EDGE_GROUP.ini" ] && MORE_INV=" -i inventory/peering-$EDGE_GROUP.ini"
 play() {
-  printf "%s" "cd '$REPO/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws $GOAT_AWS_PROFILE -- ../scripts/ansible-preflight.sh -i inventory/peering-edges.ini --limit '${2:-$EDGE_GROUP}' -e fed_edge_group='$EDGE_GROUP' -e fed_work='$FED_WORK' -e fed_counterparty='$FED_COUNTERPARTY' $1"
+  printf "%s" "cd '$REPO/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws $GOAT_AWS_PROFILE -- ../scripts/ansible-preflight.sh -i inventory/peering-edges.ini$MORE_INV --limit '${2:-$EDGE_GROUP}' -e fed_edge_group='$EDGE_GROUP' -e fed_work='$FED_WORK' -e fed_counterparty='$FED_COUNTERPARTY' $1"
 }
 
 # ---------------------------------------------------------------------------
@@ -222,8 +271,29 @@ step 2 A "prepare what the package measures: the federation interface and the SP
 # Phase 3 — OUR HALF, MEASURED. Exit 23 means a value could not be derived and init
 #     refused to invent it; the list of what is missing IS the output.
 # ---------------------------------------------------------------------------
-step 3 T "init — our half, read from the running system" \
-  "${FED_ROUTER_DOCKER_HOST:+DOCKER_HOST='$FED_ROUTER_DOCKER_HOST' }$FED_VERB init --with-transport --with-data ${FED_SIGNING_KEY:+--signing-key '$FED_SIGNING_KEY' }--out '$OURS'"
+#     By default (FED_MEASURE=ssh) the edge and the core are measured over SSH from
+#     this machine (goatbuilder federate init --over-ssh); only goatbuilder can, so
+#     phase 3 runs goatbuilder whoever runs the other verbs, and
+#     FED_ROUTER_DOCKER_HOST is not used. FED_MEASURE=here measures this host.
+#     FED_DECLARATION names the peering's own federation.toml for init to read
+#     (goatbuilder derives it when allocate generated one); unset, init reads the
+#     goat context's.
+case "${FED_DECLARATION:-}" in *"'"*)
+  echo "peering-standup.sh: FED_DECLARATION holds a quote: '$FED_DECLARATION'" >&2; exit 2 ;;
+esac
+if [ "$FED_MEASURE" = ssh ]; then
+  # Each value below is pasted into a command that step evaluates.
+  for v in "$PEERING" "$EDGE_GROUP" "${FED_ROUTER_CONTAINER:-x}"; do
+    case "$v" in ''|-*|*[!A-Za-z0-9_.-]*)
+      echo "peering-standup.sh: FED_MEASURE=ssh: '$v' is not an inventory or container name" >&2; exit 2 ;;
+    esac
+  done
+  step 3 T "init — our half, read from the running system" \
+    "$GOATBUILDER_BIN federate init --with-transport --with-data ${FED_SIGNING_KEY:+--signing-key '$FED_SIGNING_KEY' }${FED_DECLARATION:+--declaration '$FED_DECLARATION' }--out '$OURS' --over-ssh '$PEERING' --ssh-edge-group '$EDGE_GROUP' ${FED_ROUTER_CONTAINER:+--router-container '$FED_ROUTER_CONTAINER' }--repo '$REPO'"
+else
+  step 3 T "init — our half, read from the running system" \
+    "${FED_ROUTER_DOCKER_HOST:+DOCKER_HOST='$FED_ROUTER_DOCKER_HOST' }$FED_VERB init --with-transport --with-data ${FED_SIGNING_KEY:+--signing-key '$FED_SIGNING_KEY' }${FED_DECLARATION:+--declaration '$FED_DECLARATION' }--out '$OURS'"
+fi
 
 step 4 T "lint our package against the spec" \
   "$FED_VERB lint '$OURS'"

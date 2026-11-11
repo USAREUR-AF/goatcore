@@ -38,6 +38,15 @@ What a real run would leave to you, at phase 5:
 
      /tmp/goat-peering-rehearsal/keys.txt
 
+Phase 1 checks these before anything changes:
+  inputs          every required input is present
+  edge-ports      the tunnel and edge router ports are free on the edge
+  core-ports      the republisher metrics port is free on the core
+  slot-anchors    the committed slot list equals the registry
+  core-router     the core router container is found
+  ingress-stores  the core's receive stores match what the edge grants
+  signing-ca      our CA certificate and its signing key resolve
+
 To see more: add -o json to see every phase's command, or read
 docs/operations/sovereign-federation-runbook.md.
 

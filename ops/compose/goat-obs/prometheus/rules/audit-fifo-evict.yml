@@ -61,6 +61,26 @@ groups:
             else does. Check goat-audit-fifo-evict.service for why it is not
             keeping up before raising the quota.
 
+      # The exact shape that precedes a quota outage: the bucket breached
+      # high-water while the evictor is deployed measure-only. This gives days
+      # of lead time where AuditBucketAtQuota gives hours, because with
+      # eviction disabled nothing will relieve the bucket.
+      - alert: AuditEvictionDisabledOverHighWater
+        expr: >
+          goat_audit_evict_over_high_water == 1
+          and goat_audit_evict_last_result == 4
+        for: 30m
+        labels:
+          severity: warning
+          component: audit-middle-tier
+        annotations:
+          summary: "audit bucket {{ $labels.bucket }} is over high-water and eviction is disabled"
+          description: |
+            The evictor measured the bucket at or past its high-water mark but
+            is running measure-only (audit_fifo_evict_enabled is false), so
+            nothing will relieve the bucket before the quota wall. Enable
+            eviction or raise the quota now, while headroom remains.
+
       # A preventive service that is not running is the real failure mode:
       # nothing else notices until the wall.
       - alert: AuditEvictorStale

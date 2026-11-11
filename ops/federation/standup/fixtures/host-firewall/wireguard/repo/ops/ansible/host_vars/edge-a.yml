@@ -1,0 +1,2 @@
+# host_vars outrank the inventory line's wt9.
+goat_host_firewall_mesh_interface: wt0

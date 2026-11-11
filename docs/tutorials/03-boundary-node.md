@@ -26,7 +26,27 @@ only what each deliberately releases.
 
 The supported path is `goatbuilder federate`. The script it stands beside,
 `ops/scripts/peering-standup.sh`, runs the same fourteen phases and stays
-documented; each step below names it. Partners are onboarded with this same
+documented; each step below names it.
+
+**One command runs the procedure.** At a terminal, `goatbuilder federate <partner>`
+runs every phase. It runs `plan`, `deploy` and `test` in order, and each is
+also a command of its own, with `status` to read where a peering stands. You
+make one decision: the partner, and the release sets it receives.
+`federation.toml` owns those sets, and the peering's declaration may only
+narrow them. You also make two confirmations at the terminal:
+
+- the keys and CA fingerprints read aloud and typed back, with the agreement
+  digest compared;
+- approval of the plan, then of what your core admits, including the reviewed
+  configuration change, before your core router restarts.
+
+Acceptance ends in result bundles both operators exchange by file and review.
+Publishing `exchanging` afterwards is a third deliberate act by both operators,
+through a reviewable change. The
+[runbook's step 1](../operations/sovereign-federation-runbook.md#step-1--run-goatbuilder-federate-partner)
+covers each stage.
+
+Partners are onboarded with this same
 tooling and the onboarding guide, never with a one-off script
 ([partner-onboarding.md](../design/partner-onboarding.md)).
 
@@ -116,9 +136,12 @@ line. Read it before moving on:
   the manual review that admits the edge on your core (10), the agreed transport
   opened (11), the edge router deployed (12), the SPIRE trust domains federated
   (13), and acceptance (14).
-- Phases 5 and 10 are `MANUAL`. The plan names them and, on a real run, the verb
-  stops at each: phase 5 exchanges packages through the directory, you and the
-  counterparty read your keys to each other and resume with `--from 6`, then review what was rendered and resume with `--from 11`.
+- Phases 5 and 10 are `MANUAL` in the plan: they hold the two confirmations. On
+  a real run at a terminal the command asks for them in the run. At phase 5 the
+  packages are exchanged through the directory, you and the counterparty read
+  your keys to each other, and you type theirs back. At phase 10 you approve
+  the plan and then what your core admits. Without a terminal the run stops at
+  each, and the stop names the command that carries on.
 - Phase 11 opens the transport the **agreement** chose, read from the agreement
   itself. Here that is `ipsec-fips`, so it runs `peering-edge.yml`; `wireguard`
   runs `peering-wg.yml`. If the two
@@ -142,31 +165,48 @@ is the sovereign-federation runbook
    there is no peering to complete; this is why the tutorial stops at the plan on
    a laptop.
 2. **An edge host**, a peer of your own goatnet's mesh in node class `PEERING-EDGE` (it reaches
-   only your core router's fabric port and mesh DNS; ADR 1219), in an ansible group
-   named by `--edge-group` (default `<peering>_edge`). The boundary router runs
-   here, not on a core host. Declare the group in
-   `ops/ansible/inventory/peering-edges.ini` in your goatnet's own repository;
-   goatcore ships none, because the hosts are yours. One group per peering,
-   listed under `[peering_edges:children]`:
+   only your core router's fabric port and mesh DNS; ADR 1219). The boundary
+   router runs here, not on a core host. Your site inventory already names it
+   with the core, and `goatbuilder federate allocate` takes both from there when
+   the peering declares no `hosts:`. It then renders the peering's own inventory,
+   `ops/ansible/inventory/peering-<peering>_edge.ini`, with one group per
+   peering (`--edge-group`, default `<peering>_edge`). A peering may instead name
+   its machines with `hosts: {edge: <address>, core: <address>, user: <user>}`,
+   or keep a hand-written `ops/ansible/inventory/peering-edges.ini`.
+   goatcore ships none of these files, because the hosts are yours.
+3. **The peering declared**: a row under `peerings:` in `goatbuilder.yaml` for
+   this counterparty on this environment. The one you name must be declared, so
+   a typo is refused before anything runs. Then
+   `goatbuilder federate allocate <peering>` writes the files a person used to
+   write: the peering's values, its inventory, both deployment halves and its
+   `federation.toml`. Review and commit them. A peering that already runs by hand
+   keeps its own files.
+4. **A peering directory both sides reach** (saltlick), and your signing key and
+   CA, declared once in `goatbuilder.yaml`. The run reads these declarations, so
+   nothing is exported by hand. `FED_DIRECTORY_URL`, `SSL_CERT_FILE`,
+   `FED_SIGNING_KEY`, `FED_CA_CERT` and `FED_CA_KEY` stay as overrides. A
+   relative key path is read inside your goat context.
 
-   ```ini
-   [peering_edges:children]
-   <peering>_edge
-
-   [<peering>_edge]
-   <edge-host> ansible_host=<address on the peering transport or the mesh> ansible_user=ubuntu
+   ```yaml
+   environments:
+     - name: zagros
+       # ...
+       peering_directory:
+         url: https://directory.example.org:8443
+         ca_cert: directory-ca.pem      # only when its certificate is not a public one
+   secrets:
+     store: env-file
+     federation:
+       signing_key: federation/signing.key
+       ca_cert: federation/ca.pem
+       ca_key: federation/ca-key.pem
    ```
-3. **The peering declared**, when you keep peerings in `goatbuilder.yaml`: a row
-   under `peerings:` for this counterparty on this environment. With any peering
-   declared, the one you name must be among them, so a typo is refused before
-   anything runs.
-4. **A peering directory both sides reach** (saltlick), named by
-   `FED_DIRECTORY_URL`, with `FED_COUNTERPARTY_ID` and `FED_SIGNING_KEY`; phase 1
-   refuses without them. Phase 5 uploads your package and CA, fetches theirs, and
-   prints both verifying keys and CA fingerprints. You read yours to each other on
-   one call and record both keys, one per line: a key taken from the package it
-   verifies proves nothing, and phase 6 refuses to compose for any party whose key
-   is not bound.
+
+   Phase 5 uploads your package and CA, fetches theirs, and prints both
+   verifying keys and CA fingerprints. You read yours to each other on one call,
+   and type theirs back when the run asks. A key taken from the package it
+   verifies proves nothing, and phase 6 refuses to compose for any party whose
+   key is not bound.
 5. **A FIPS-mode fabric image on both edge routers**, which belongs in the
    agreement: the data's cryptography is carried by the fabric TLS session, not
    by the tunnel (cross-sovereign-federation.md §5.1).
@@ -175,7 +215,7 @@ is the sovereign-federation runbook
 
 ## Run it on your hardware
 
-The same verb, against your peering. `<peering>` is the counterparty's name;
+The same command, against your peering. `<peering>` is the counterparty's name;
 `<ours>` is your sovereign code.
 
 ```text
@@ -183,27 +223,40 @@ goatbuilder federate <peering> --env <env> --as <ours> --dry-run
 ```
 
 The plan is the command reference; there is no second list to drift. When it
-reads right, run it for real up to the manual phase:
+reads right, run it for real at a terminal:
 
 ```text
 ops/scripts/with-secrets \
   goatbuilder federate <peering> --env <env> --as <ours>
 ```
 
-The run stops at **phase 5**, after the directory step has uploaded your package
-and CA and fetched theirs. If their entry is not there yet, run phase 5 again
-once they have run theirs. Read your verifying key and CA fingerprint to each
-other on one call, record both keys where the plan names, then resume:
+The run asks you at **phase 5**, after the directory step has uploaded your
+package and CA and fetched theirs. If their entry is not there yet, run the
+command again once they have run theirs; it resumes where it stopped. Read your
+verifying key and CA fingerprint to each other on one call, then type their key
+and fingerprint, and the agreement digest, when the run asks.
+
+At **phase 10** the run makes the plan, shows it and asks you to approve its
+hash. Then it shows what your core will admit: the access fragment, the
+certificates, every file it places and where, and how the core restarts. Only
+you may change your own core, so it asks again before anything there changes.
+On a core deployed by the goat-zenoh role, admission takes the role's own
+inventory group, `site_id`, play and org fragment from the role's declarations,
+and needs no restart command. Then the run carries on through acceptance.
+
+Without a terminal, run the stages yourself:
 
 ```text
-ops/scripts/with-secrets \
-  goatbuilder federate <peering> --env <env> --as <ours> --from 6
+goatbuilder federate plan <peering> --env <env>
+goatbuilder federate deploy <peering> --env <env> --approve-plan <hash> --review-in-pr
+goatbuilder federate deploy <peering> --env <env> --approve-plan <hash> --approve-admission <digest>
+goatbuilder federate test <peering> --env <env>
 ```
 
-The run stops again at **phase 10**, because only you may change your own core.
-Review what `apply` rendered, check their CA against the fingerprint it printed,
-splice the access fragment into your core and give the core the certificate phase
-8 minted, then resume with `--from 11`.
+`--review-in-pr` writes what your core will admit to a file for a pull request
+and stops; after the review, `--approve-admission` takes the digest it names.
+`--no-confirm` keeps both confirmations by hand, as before: the run stops at 5
+and 10 and resumes with `--from 6` and `--from 11`.
 
 A phase that fails says which phase, what state the peering is in, and the resume
 command. Every phase is idempotent: fix the cause, resume from that number. The
@@ -239,6 +292,18 @@ explained in `ops/federation/README.md`. Adding the file grants nothing; access
 follows only when the edge runs with it.
 
 ## Undo
+
+To back out one peering and leave every other peering and your core as they
+were, survey it first, then remove it:
+
+```text
+goatbuilder federate backout <peering> --env <env> --dry-run
+goatbuilder federate backout <peering> --env <env>
+```
+
+The dry run prints every resource the back-out would remove, per host. The
+real run asks you to confirm, then removes the peering's tunnel, SPIRE
+federation, edge router, republisher, forwarder mapping and core admission.
 
 Cutting a peering is local, immediate and unilateral — you do it on your own edge
 host, and it severs established sessions. On the IPsec edge `goatbuilder federate`

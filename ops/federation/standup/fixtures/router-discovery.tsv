@@ -1,0 +1,38 @@
+# Core router selection cases (docs/design/federation-router-discovery.md).
+# Read by BOTH implementations of the selection contract, so they cannot drift:
+#   crates/goat-federation/src/derive.rs  (select_router; goat federate init, phase 3)
+#   ops/federation/standup/preflight_live.py  (select_router; preflight, phase 1)
+# Tab-separated. `case` name, selected (- for none), tools (comma), expect (ok|none|many|invalid), expected id.
+# `reply` tool, request (ps | inspect:<name>), ok|err, payload with \t and \n escaped.
+# A request with no reply line fails as `err`.
+case	standard-name	-	docker	ok	full-a
+reply	docker	ps	ok	a1\tzagros-alpha-zenoh-router\t\n
+reply	docker	inspect:a1	ok	full-a\ttrue\tghcr.io/example-org/zenoh:1.9.0
+case	custom-name-with-role-label	-	docker	ok	full-b
+reply	docker	ps	ok	b1\tcustom-core\tzenoh-core\n
+reply	docker	inspect:b1	ok	full-b\ttrue\tghcr.io/example-org/zenoh:1.9.0
+case	legacy-name	-	docker	ok	full-c
+reply	docker	ps	ok	c1\tgoat-zenoh\t\n
+reply	docker	inspect:c1	ok	full-c\ttrue\tghcr.io/example-org/zenoh:1.9.0
+case	edge-router-alone-is-not-a-core	-	docker	none	
+reply	docker	ps	ok	d1\tgoat-zenoh-edge-xab\t\n
+case	two-cores-refuse	-	docker	many	
+reply	docker	ps	ok	e1\tone-zenoh-router\t\ne2\ttwo-zenoh-router\t\n
+reply	docker	inspect:e1	ok	full-e1\ttrue\tghcr.io/example-org/zenoh:1.9.0
+reply	docker	inspect:e2	ok	full-e2\ttrue\tghcr.io/example-org/zenoh:1.9.0
+case	stopped-core-is-not-found	-	docker	none	
+reply	docker	ps	ok	f1\tzagros-zenoh-router\t\n
+reply	docker	inspect:f1	ok	full-f\tfalse\tghcr.io/example-org/zenoh:1.9.0
+case	selector-must-be-a-name	--format	docker	invalid	
+case	selected-container	custom-router	docker	ok	full-g
+reply	docker	inspect:custom-router	ok	full-g\ttrue\tghcr.io/example-org/zenoh:1.9.0
+case	docker-aliasing-podman-is-one-router	-	docker,podman	ok	full-h
+reply	docker	ps	ok	h1\tzagros-zenoh-router\t\n
+reply	docker	inspect:h1	ok	full-h\ttrue\tghcr.io/example-org/zenoh:1.9.0
+reply	podman	ps	ok	h1\tzagros-zenoh-router\t\n
+reply	podman	inspect:h1	ok	full-h\ttrue\tghcr.io/example-org/zenoh:1.9.0
+case	unparsable-listing-refuses	-	docker	invalid	
+reply	docker	ps	ok	only-one-field\n
+case	no-runtime-reachable	-	docker,podman	none	
+reply	docker	ps	err	Cannot connect to the Docker daemon
+reply	podman	ps	err	podman: not found

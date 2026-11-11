@@ -183,7 +183,18 @@
         "sops_file": { "type": "string", "description": "sops store: the encrypted dotenv file (default secrets.sops.env)" },
         "git_crypt_file": { "type": "string", "description": "git-crypt store: the dotenv file under a git-crypt filter (default secrets/goat.env)" },
         "ref_prefix": { "type": "string", "description": "reference stores: what a reference starts with (default op:// or bao://)" },
-        "op_account": { "type": "string", "description": "1password store: the account op:// references resolve against (e.g. example.1password.com), pinned before any op call so it cannot prompt across every configured account. OP_ACCOUNT overrides it per command." }
+        "op_account": { "type": "string", "description": "1password store: the account op:// references resolve against (e.g. example.1password.com), pinned before any op call so it cannot prompt across every configured account. OP_ACCOUNT overrides it per command." },
+        "federation": {
+          "description": "Where this side's federation keys are, for goatbuilder federate: paths, never the keys. Each is read only when its environment variable is unset and the edge group's group_vars do not set it. A relative path is inside the active goat context directory ($GOAT_PROFILE_DIR, else ~/.goat, then contexts/<context>/); ~/ is the home directory.",
+          "type": "object",
+          "additionalProperties": false,
+          "minProperties": 1,
+          "properties": {
+            "signing_key": { "type": "string", "minLength": 1, "pattern": "^[^'\"`$\\\\\\u0000-\\u001f]+$", "description": "Our package signing key (64 hex characters or 44 base64), as FED_SIGNING_KEY." },
+            "ca_cert": { "type": "string", "minLength": 1, "pattern": "^[^'\"`$\\\\\\u0000-\\u001f]+$", "description": "Our CA certificate (PEM), as FED_CA_CERT. Declared, it replaces the convention ops/ansible/enrollment/ca/<site>/root-cert.pem." },
+            "ca_key": { "type": "string", "minLength": 1, "pattern": "^[^'\"`$\\\\\\u0000-\\u001f]+$", "description": "Our CA private key (PEM), as FED_CA_KEY. The age-encrypted key stays opt-in (goat_federation_ca_key_from_age); an explicit key always wins over it." }
+          }
+        }
       }
     }
   },
@@ -250,12 +261,6 @@
         "converger": { "$ref": "#/definitions/converger" },
         "transport": { "$ref": "#/definitions/transport" },
         "inventory": { "type": "string", "minLength": 1 },
-        "peering_edge_reserved_udp": {
-          "description": "UDP ports this environment's peering edge hosts already hold, which goatbuilder federate allocate never gives a peering's tunnel or carrier and a pin may not take. Absent: [51820], NetBird's WireGuard. An environment whose edges run no mesh client may set [] (for example to keep a running peering on the role default 51820).",
-          "type": "array",
-          "uniqueItems": true,
-          "items": { "type": "integer", "minimum": 1, "maximum": 65535 }
-        },
         "classes": {
           "type": "object",
           "propertyNames": { "pattern": "^[a-z][a-z0-9_-]*$" },
@@ -274,6 +279,22 @@
         "name": { "$ref": "#/definitions/name" },
         "converger": { "$ref": "#/definitions/converger" },
         "transport": { "$ref": "#/definitions/transport" },
+        "peering_edge_reserved_udp": {
+          "description": "UDP ports this environment's peering edge hosts already hold, which goatbuilder federate allocate never gives a peering's tunnel or carrier and a pin may not take. Absent: [51820], NetBird's WireGuard. An environment whose edges run no mesh client may set [] (for example to keep a running peering on the role default 51820).",
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "integer", "minimum": 1, "maximum": 65535 }
+        },
+        "peering_directory": {
+          "description": "The peering directory this environment's peerings exchange packages through. goatbuilder federate reads url as FED_DIRECTORY_URL and ca_cert as SSL_CERT_FILE when those are unset and the edge group's group_vars do not set goat_federation_directory_url. Absent: nothing is derived, as before.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["url"],
+          "properties": {
+            "url": { "type": "string", "pattern": "^https://[A-Za-z0-9._:/?=&%~+@-]+$", "description": "The directory's https:// address." },
+            "ca_cert": { "type": "string", "minLength": 1, "pattern": "^[^'\"`$\\\\\\u0000-\\u001f]+$", "description": "The CA certificate (PEM) the directory's TLS certificate chains to, when it is not a public one. The run exports it as SSL_CERT_FILE, which replaces the system roots for every TLS client the run starts, so a run that also reaches public services names a bundle holding both. A relative path is inside the active goat context directory." }
+          }
+        },
         "groups": {
           "description": "The inventory groups a push converger targets for this environment (the goatnet's members in the pins today). doctor reads their group_vars to derive which environment variables each component's deploy templates, so a missing secret is named before any host is touched.",
           "type": "array",
@@ -402,6 +423,14 @@
             "core": { "type": "string", "minLength": 1, "pattern": "^[A-Za-z0-9.:_-]+$" },
             "user": { "type": "string", "pattern": "^[a-z_][a-z0-9_-]*$" }
           }
+        },
+        "deployment": {
+          "description": "Who writes this peering's deployment halves (the edge's goat-zenoh-edge values and the core's republisher values that are not the agreement's and not allocated). rendered: goatbuilder federate allocate renders them into peering-deployment.yml from the declaration and the site values, each from the declaration that owns it, and refuses one it cannot derive (GB-232). hand: written by hand. Absent: rendered, unless the peering already runs from hand-written files (hand group_vars of its edge group, or the hand inventory naming it); allocate then leaves it on them and says so, and declaring rendered opts it in.",
+          "enum": ["hand", "rendered"]
+        },
+        "federation_toml": {
+          "description": "Who writes this peering's federation.toml. Absent: rendered, unless the peering already runs from hand-written files (hand group_vars of its edge group, or the hand inventory naming it) or a hand-written file sits at the generated path; allocate then leaves it on them and says so, and declaring rendered opts it in. hand: written by hand. rendered: goatbuilder federate allocate writes ops/federation/<environment>/peerings/<with>/federation.toml from the environment's own ops/federation/<environment>/federation.toml (sovereign_id, term_days, cut_contact, [data], measured_mtu; [data] release narrowed by offer:) and the allocated values ([transport]). The environment's file stays the one owner of those values; a missing one is refused (GB-233).",
+          "enum": ["hand", "rendered"]
         },
         "forwarder": {
           "description": "Present when a peering forwarder relays the partner to our edge (ADR 1218, docs/design/peering-forwarder.md). Allocation then gives the peering a public port on the forwarder and a carrier; the driver applies the forwarder from these values.",

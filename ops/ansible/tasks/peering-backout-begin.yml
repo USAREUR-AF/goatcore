@@ -1,0 +1,54 @@
+---
+# The names of ONE peering's resources on this host, derived from the peering id
+# and this peering's own group values, before any role looks at the host. Every
+# name below is an exact path, unit, interface, table, container or ACL id; none is
+# a pattern, so none can match another peering's resource. The roles' tasks/absent.yml
+# read these names and decide, host by host, which of them this peering holds.
+#
+# The literals in default() are the roles' own defaults (roles/<role>/defaults/main.yml):
+# the absent tasks are included by path, so a role's defaults are not loaded and its
+# meta dependencies (the rollback ledger) do not run. ops/ansible/tests/test_peering_backout.py
+# fails when a literal here drifts from its role default.
+- name: backout | the peering id is a sovereign id
+  ansible.builtin.assert:
+    that:
+      - peering_backout_id is defined
+      - peering_backout_id is string
+      - peering_backout_id is match('^[a-z0-9][a-z0-9-]{1,15}$')
+    fail_msg: >-
+      peering-backout.yml needs peering_backout_id, the partner's sovereign id
+      (2-16 characters of a-z0-9-); got '{{ peering_backout_id | default('') }}'.
+    quiet: true
+
+# The same directory tasks/peering-applied-vars.yml reads for every peering play, read
+# only when it exists: a peering backed out before phase 9 rendered anything has none,
+# and its resources are then named from its group values alone.
+- name: backout | read what `goat federate apply` rendered for this peering, if it did
+  ansible.builtin.include_vars:
+    dir: "{{ fed_work }}/applied/ops/ansible/group_vars/{{ fed_edge_group }}"
+  when:
+    - fed_work is defined
+    - fed_edge_group is defined
+    - (fed_work ~ '/applied/ops/ansible/group_vars/' ~ fed_edge_group) is directory
+
+- name: backout | the agreement this peering composed, when there is one
+  ansible.builtin.set_fact:
+    _pb_agreement: >-
+      {{ (lookup('ansible.builtin.file', fed_work ~ '/agreement.json', errors='ignore') | default('', true) | from_json)
+         if (fed_work is defined and (fed_work ~ '/agreement.json') is file) else {} }}
+
+- name: backout | the names of this peering's resources
+  ansible.builtin.set_fact:
+    _pb_rows: []
+    _pb_apply: "{{ peering_backout_apply | default(false) | bool }}"
+    _pb_names: "{{ lookup('ansible.builtin.template', (peering_backout_tasks_dir | default(playbook_dir ~ '/tasks')) ~ '/peering-backout-names.j2') | from_yaml }}"
+
+- name: backout | a rendered partner id that names another partner is refused
+  ansible.builtin.assert:
+    that:
+      - _pb_names.rendered_partner in ['', peering_backout_id]
+    fail_msg: >-
+      The rendered agreement values this play read name partner
+      '{{ _pb_names.rendered_partner }}', not '{{ peering_backout_id }}'. fed_work or
+      fed_edge_group points at another peering's working directory; nothing was changed.
+    quiet: true

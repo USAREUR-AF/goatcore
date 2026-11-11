@@ -130,11 +130,25 @@ goatbuilder diff --env <goatnet>             # what differs from main, if the de
 
 ## J. Peer with another sovereign goatnet
 
+The one decision is the partner (a peering entry in `goatbuilder.yaml`) and the
+release sets it receives (owned by `federation.toml`, which the peering entry
+may only narrow).
+
 ```bash
+goatbuilder federate allocate <partner>                 # the peering's values and files; review and commit them
 goatbuilder federate <partner> --env <goatnet> --dry-run
-goatbuilder federate <partner> --env <goatnet> --yes     # stops at phase 5: exchange packages
-goatbuilder federate <partner> --env <goatnet> --from 5 --yes
+goatbuilder federate <partner> --env <goatnet>          # at a terminal: asks for the keys, the plan and the admission
 ```
 
-Done when phase 11's acceptance shows the edge carries the agreed data,
-refuses everything else, and round-trips.
+Done when phase 14's acceptance shows the edge carries the agreed data,
+refuses everything else, and round-trips. Without a terminal, run the four
+stages, each also runnable alone:
+
+```bash
+goatbuilder federate plan <partner>      # validate and explain; nothing that carries traffic changes
+goatbuilder federate deploy <partner> --approve-plan <hash> --approve-admission <digest>
+goatbuilder federate test <partner>      # acceptance; evidence in <work>/evidence/acceptance/
+goatbuilder federate status <partner>    # health and the last evidence, with its age
+```
+
+See [the runbook, step 1](../../operations/sovereign-federation-runbook.md#step-1--run-goatbuilder-federate-partner).

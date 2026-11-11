@@ -1,0 +1,29 @@
+{
+  "schema": "goat-host-firewall-input/v1",
+  "profile": "core",
+  "host": {
+    "ssh_port": 22,
+    "management_sources": [
+      "198.51.100.0/24"
+    ],
+    "mesh_interface": "wt0",
+    "mesh_udp_ports": [],
+    "fabric_tcp_port": 7447,
+    "fabric_udp_port": 7448,
+    "fabric_sources": [],
+    "mesh_dns_port": null,
+    "closed_listeners": [],
+    "management_prefix_floor": {
+      "ipv4": 24,
+      "ipv6": 64
+    },
+    "spire_bundle_port": "",
+    "spire_bundle_sources": []
+  },
+  "peerings": [],
+  "override": {
+    "icmp-echo": {
+      "drop": true
+    }
+  }
+}

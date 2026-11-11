@@ -1526,7 +1526,7 @@ mod tests {
         // The phase runner reads the checkout's secrets posture; a learner's
         // goatlite.yaml at the root would turn it into a value store (ADR 1213 D4).
         std::env::set_var("GOAT_LITE_CONFIG", "/nonexistent/goatlite.yaml");
-        let t = std::env::temp_dir().join(format!("gb-waves-{}", std::process::id()));
+        let t = crate::testdir::path("gb-waves-");
         std::fs::create_dir_all(&t).unwrap();
         let site = Site {
             repo: String::new(), site: "zagros".into(), group: "zagros_hosts".into(), upper: "ZAGROS".into(), obs_group: String::new(),
@@ -1617,7 +1617,7 @@ mod tests {
         assert!(!seed[0].2.contains("missing "), "no refusal for an absent per-site play: {}", seed[0].2);
         let f = phase_lines(&test_site(false), &o);
         assert!(!f.iter().any(|l| l.2.contains("seed-from-peer")), "a founder never seeds");
-        let t = std::env::temp_dir().join(format!("gb-seed-play-{}", std::process::id()));
+        let t = crate::testdir::path("gb-seed-play-");
         std::fs::create_dir_all(t.join("ops/ansible")).unwrap();
         assert_eq!(site_play(&t, "zagros", "seed-from-peer.yml"), "site-seed-from-peer.yml");
         std::fs::write(t.join("ops/ansible/zagros-seed-from-peer.yml"), "---\n").unwrap();
@@ -1757,12 +1757,12 @@ mod tests {
         }
     }
 
-    fn fixture(tag: &str) -> Fixture {
+    fn fixture(tag: &str) -> crate::testdir::Held<Fixture> {
         let src = repo().join("ops/goatbuilder/fixtures/standup");
-        let dst = std::env::temp_dir().join(format!("goatbuilder-standup-{tag}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dst);
+        let dst = crate::testdir::path(&format!("goatbuilder-standup-{tag}-"));
         copy_dir(&src, &dst);
-        Fixture::open(&dst).unwrap()
+        let f = Fixture::open(&dst).unwrap();
+        crate::testdir::Held::with(dst, f)
     }
 
     /// The rehearsal: every class in phase order, every record verified, exit 0,
@@ -1846,8 +1846,7 @@ mod tests {
     /// An obs leg whose play is absent is named before anything runs.
     #[test]
     fn a_missing_obs_play_is_named() {
-        let dir = std::env::temp_dir().join(format!("goatbuilder-obs-play-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        let dir = crate::testdir::path("goatbuilder-obs-play-");
         std::fs::create_dir_all(dir.join("ops/ansible")).unwrap();
         let why = obs_play_missing(&dir).expect("an absent play is reported");
         assert!(why.contains("utility-host-bootstrap.yml"), "{why}");
@@ -1887,12 +1886,12 @@ mod tests {
         assert!(standup(&repo(), &o).is_err());
     }
 
-    fn goatnet_from_scratch(step: &str, tag: &str) -> Fixture {
+    fn goatnet_from_scratch(step: &str, tag: &str) -> crate::testdir::Held<Fixture> {
         let src = repo().join("ops/goatbuilder/fixtures/goatnet-from-scratch").join(step);
-        let dst = std::env::temp_dir().join(format!("goatbuilder-hello-galaxy-{tag}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dst);
+        let dst = crate::testdir::path(&format!("goatbuilder-hello-galaxy-{tag}-"));
         copy_dir(&src, &dst);
-        Fixture::open(&dst).unwrap()
+        let f = Fixture::open(&dst).unwrap();
+        crate::testdir::Held::with(dst, f)
     }
 
     /// A site as read_site would build it for a LAN run, lite or not, with no

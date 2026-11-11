@@ -225,6 +225,13 @@
     dest: "{{ compose_dir }}/monitoring/rules/"
     mode: "0644"
 
+- name: Copy shared Alertmanager delivery health rules
+  ansible.builtin.copy:
+    src: "{{ role_path }}/../../../compose/goat-obs/prometheus/rules/alertmanager-health.yml"
+    dest: "{{ compose_dir }}/monitoring/rules/alertmanager-health.yml"
+    mode: "0644"
+  notify: Restart prometheus container
+
 # ---------------------------------------------------------------------------
 # 3. Append observability-specific keys to /opt/mgmt-host/.env.
 # ---------------------------------------------------------------------------
