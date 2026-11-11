@@ -83,8 +83,7 @@ fn ini_value(v: &str) -> Y {
 }
 
 fn parse_inventory(repo: &Path) -> Inventory {
-    let text = std::fs::read_to_string(repo.join("ops/ansible/inventory/peering-edges.ini"))
-        .unwrap_or_default();
+    let text = super::plan::peering_inventory_text(repo);
     let mut inv = Inventory::default();
     let mut section: Option<(String, String)> = None;
     for raw in text.lines() {

@@ -586,3 +586,48 @@ fn without_a_terminal_the_stop_at_10_names_plan_and_deploy() {
         says(&out)
     );
 }
+
+/// Not every peering declares `hosts:`: `goatbuilder federate allocate`
+/// renders this peering's groups into its own `peering-<edge group>.ini`
+/// beside the hand-written `peering-edges.ini`, which holds another peering.
+/// The planner reads both, as the plays do, so the host-allocation row is not
+/// SKIP and the plan and deploy reach the admission.
+#[test]
+fn a_peering_in_its_own_inventory_file_is_planned_and_deployed() {
+    let w = world();
+    let inv = w.repo.join("ops/ansible/inventory");
+    std::fs::write(
+        inv.join("peering-edges.ini"),
+        "[velmara_edge]\nedge-9 ansible_host=192.0.2.90\n\n[velmara_core]\ncore-9 ansible_host=192.0.2.91\n",
+    )
+    .unwrap();
+    std::fs::write(
+        inv.join("peering-hello-ally_edge.ini"),
+        "[peering_edges:children]\nhello-ally_edge\n\n[hello-ally_edge]\nedge-1 ansible_host=192.0.2.10\n\n\
+         [peering_cores:children]\nhello-ally_core\n\n[hello-ally_core]\ncore-1 ansible_host=192.0.2.11\n",
+    )
+    .unwrap();
+    let plan = ready(&w, true);
+    let saved: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(w.work.join("plan.json")).unwrap()).unwrap();
+    let row = saved["readiness"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["check"] == "host-allocation")
+        .cloned()
+        .unwrap();
+    assert_eq!(row["outcome"], "PASS", "{row}");
+    let digest = reviewed_digest(&w, &plan);
+    let (out, v) = w.run(&[
+        "deploy",
+        "hello-ally",
+        "--approve-plan",
+        &plan,
+        "--approve-admission",
+        &digest,
+    ]);
+    assert!(out.status.success(), "{}", says(&out));
+    assert_eq!(phases_run(&v), [10, 11, 12, 13], "{}", says(&out));
+    assert_eq!(w.state()["phases"]["10"]["outcome"], "passed");
+}

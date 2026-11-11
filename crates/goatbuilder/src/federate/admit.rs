@@ -271,8 +271,14 @@ impl Core {
     fn play_cmd(&self, repo: &Path, work: &Path, check: bool) -> Option<String> {
         let play = self.play.as_ref()?;
         let aws = crate::settings::aws_profile(repo);
+        // The per-peering inventory files too, as the driver's plays read
+        // them: the core group may be in one of them (plan::per_peering_inventories).
+        let more: String = super::plan::per_peering_inventories(repo)
+            .iter()
+            .filter_map(|p| p.file_name().and_then(|n| n.to_str()).map(|n| format!(" -i {}", sh_quote(&format!("inventory/{n}")))))
+            .collect();
         Some(format!(
-            "cd {} && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws {} -- ../scripts/ansible-preflight.sh -i inventory/peering-edges.ini --limit {} -e fed_work={} {}{}",
+            "cd {} && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws {} -- ../scripts/ansible-preflight.sh -i inventory/peering-edges.ini{more} --limit {} -e fed_work={} {}{}",
             sh_quote(&repo.join("ops/ansible").display().to_string()),
             sh_quote(&aws),
             sh_quote(&self.group),

@@ -332,7 +332,45 @@ pub(super) fn resolve(
     }
 }
 
-/// The hosts of one inventory group in ops/ansible/inventory/peering-edges.ini,
+/// The peering inventory as the plays read it: the hand-written (or whole
+/// rendered) `ops/ansible/inventory/peering-edges.ini`, then each per-peering
+/// file `goatbuilder federate allocate` renders beside it when not every
+/// peering declares `hosts:` (`peering-<edge group>.ini`,
+/// `peering_files::one_inventory_path`), in name order. The driver passes the
+/// same files with `-i`, so a group is read from whichever holds it.
+pub fn peering_inventory_text(repo: &Path) -> String {
+    let dir = repo.join("ops/ansible/inventory");
+    let mut text = std::fs::read_to_string(dir.join("peering-edges.ini")).unwrap_or_default();
+    for p in per_peering_inventories(repo) {
+        if let Ok(t) = std::fs::read_to_string(&p) {
+            text.push('\n');
+            text.push_str(&t);
+        }
+    }
+    text
+}
+
+/// The per-peering inventory files beside peering-edges.ini, in name order.
+pub fn per_peering_inventories(repo: &Path) -> Vec<PathBuf> {
+    let dir = repo.join("ops/ansible/inventory");
+    let mut own: Vec<PathBuf> = std::fs::read_dir(&dir)
+        .map(|rd| {
+            rd.flatten()
+                .map(|e| e.path())
+                .filter(|p| {
+                    p.file_name().and_then(|n| n.to_str()).is_some_and(|n| {
+                        n.starts_with("peering-") && n.ends_with(".ini") && n != "peering-edges.ini"
+                    }) && p.is_file()
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    own.sort();
+    own
+}
+
+/// The hosts of one inventory group in the peering inventory
+/// ([`peering_inventory_text`]: peering-edges.ini and the per-peering files),
 /// as (inventory name, address), read the way Ansible reads an INI inventory
 /// for what the plan needs: `[group:children]` expanded, `[group:vars]`
 /// sections skipped, a header's trailing comment ignored. The address is
@@ -340,8 +378,7 @@ pub(super) fn resolve(
 /// from `host_vars/<host>.yml` or `host_vars/<host>/*.yml`, else the name. Host
 /// ranges such as `edge[01:02]` are not expanded.
 pub fn inventory_hosts(repo: &Path, group: &str) -> Vec<(String, String)> {
-    let text = std::fs::read_to_string(repo.join("ops/ansible/inventory/peering-edges.ini"))
-        .unwrap_or_default();
+    let text = peering_inventory_text(repo);
     let unquote = |v: &str| v.trim_matches(|c| c == '"' || c == '\'').to_string();
     let mut members: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut children: BTreeMap<String, Vec<String>> = BTreeMap::new();
