@@ -82,11 +82,28 @@ segment: `release/REL-ALL/<rest>` crosses as `from/<you>/REL-ALL/<rest>`.
 `goatbuilder federate <partner>` runs four stages in order, and each is also a command of its own:
 
 ```bash
-goatbuilder federate plan <partner>      # validate and explain the change; nothing that carries traffic changes
-goatbuilder federate deploy <partner>    # carry out the approved plan through the existing roles
-goatbuilder federate test <partner>      # a bounded acceptance session with the partner
-goatbuilder federate status [<partner>]  # deployment health and the last acceptance evidence
+goatbuilder federate <partner>           # at a terminal: phases 1 to 14, asking at its prompts
+goatbuilder federate plan <partner>      # phase 1's checks and the plan of what is in <work>; changes no host
+goatbuilder federate deploy <partner>    # phases 10 to 13 of the approved plan, through the existing roles
+goatbuilder federate test <partner>      # phase 14, acceptance, alone
+goatbuilder federate status [<partner>]  # what the run journal and the last acceptance evidence say
 ```
+
+Phases 1 to 9 (the exchange, the agreement, the certificates, the rendered configuration) run
+under `goatbuilder federate <partner>`. `plan` does not run them: it runs phase 1's checks and
+writes the plan from what those phases left in the working directory. Without a terminal, the
+same procedure is:
+
+```bash
+goatbuilder federate <partner> --yes --partner-key <base64> --partner-ca-fingerprint <sha256> \
+  --agreement-digest <sha256>            # phases 1 to 9; stops at 10
+goatbuilder federate plan <partner>
+goatbuilder federate deploy <partner> --approve-plan <plan hash> --approve-admission <digest>
+goatbuilder federate test <partner>
+```
+
+A run that stops for a value it does not have yet (their key at phase 5, the agreement digest at
+phase 6, the admission digest at 10) says which, and the same command with it carries on.
 
 You make one decision and two confirmations; the commands do, check and record the rest. A third
 human act ends the procedure: publishing `exchanging` is a reviewable change that both operators
@@ -153,7 +170,8 @@ The per-peering values are **proposed** as a change to your deployment's own con
 you to review and commit like any other change. Once committed they never move on a re-run; `plan`
 validates them.
 
-To produce the agreement, `plan` runs phases 1 to 9: it prepares the federation interface with no
+To produce the agreement, `goatbuilder federate <partner>` runs phases 1 to 9 (`plan` then
+reads what they leave in the working directory): it prepares the federation interface with no
 peer on it so that it can be measured, measures your half over SSH, exchanges packages and CA
 certificates through the directory, composes and verifies the agreement, validates or mints the
 peering certificates, and renders the configuration. `apply` stays a renderer: it writes files and

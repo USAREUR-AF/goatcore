@@ -58,9 +58,10 @@ peering also needs a counterparty, and the validated FIPS backend where your acc
 | 13 | task | Federate the two SPIRE trust domains |
 | 14 | gate | Acceptance: carries, refuses, round-trips, read from the receiving side |
 
-The fourteen phases are the stages of one command. Phases 1 to 9 are
-`goatbuilder federate plan`, 10 to 13 are `deploy`, 14 is `test`, and `status`
-reports where a peering stands. At a terminal, `goatbuilder federate <partner>`
+The fourteen phases are one command, `goatbuilder federate <partner>`, which
+runs phases 1 to 9 itself. `goatbuilder federate plan` then runs phase 1's
+checks and writes the plan from what those phases left; 10 to 13 are `deploy`,
+14 is `test`, and `status` reports what the run journal and the evidence say. At a terminal, `goatbuilder federate <partner>`
 runs them in order and asks for the two confirmations in rows 5 and 10. The
 [runbook's step 1](../operations/sovereign-federation-runbook.md#step-1--run-goatbuilder-federate-partner)
 covers each stage. The runs below drive both sovereigns through that same

@@ -69,10 +69,10 @@ both confirmations by hand: the run stops at 5 and 10 and resumes with
 `--from 6` and `--from 11`. **Script:** `ops/scripts/peering-standup.sh`.
 Status: measured (run up-4b1adc18cc3b-20261111T102642).
 
-**The stages.** The same phases are four stages of one command, each also
-runnable alone: `goatbuilder federate plan <partner>` (phases 1 to 9:
-validate, measure, propose the per-peering values, exchange, compose, render),
-`deploy` (phases 10 to 13, after approval bound to the plan's hash), `test`
+**The stages.** `goatbuilder federate <partner>` runs phases 1 to 9 (measure,
+exchange, compose, mint, render); then come the stages, each also runnable
+alone: `goatbuilder federate plan <partner>` (phase 1's checks, and the plan of
+what is in the working directory), `deploy` (phases 10 to 13, after approval bound to the plan's hash), `test`
 (phase 14: acceptance, whose checks read PASS, FAIL, BLOCKED, SKIP or NOT
 APPLICABLE) and `status`. The offered release sets are owned by
 `federation.toml` (`[data] release`); the peering's declaration may only narrow
