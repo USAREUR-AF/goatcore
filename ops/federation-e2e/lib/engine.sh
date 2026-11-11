@@ -83,6 +83,15 @@ ACL_ASSEMBLE="$SRC/ops/ansible/roles/goat-zenoh/files/acl-assemble.py"
 REC="$REPO/ops/e2e/rec.py"
 FAILS=0
 rec() { python3 "$REC" "$@" || FAILS=$((FAILS + 1)); }
+# A declared input of the run that could not be reached, or an environment the run cannot
+# start in: exit 69 (EX_UNAVAILABLE) with "environment:", never read as a failure of the tree
+# under test (docs/design/ci-results-follow-inputs.md, rule 1).
+FE2E_EXIT_ENVIRONMENT=69
+env_fault() {
+  echo "environment: $*" >&2
+  [ -z "${RECORD:-}" ] || printf 'environment: %s\n' "$*" >> "$RECORD/stopped.reason"
+  exit "$FE2E_EXIT_ENVIRONMENT"
+}
 say() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
 die() { echo "run.sh: $*" >&2; exit 1; }
 other() { [ "$1" = "$A" ] && echo "$B" || echo "$A"; }
@@ -254,6 +263,9 @@ host_package() {
     && docker exec "$h" dpkg -i --force-depends "/root/fe2e-$pkg.deb" >/dev/null 2>&1; then
     return 0
   fi
+  # The Ubuntu mirror, from inside a host, only where a lab asks for it (FE2E_HOST_APT=1): in
+  # CI every package a scenario needs is in the host image, and the job reaches no mirror.
+  [ "${FE2E_HOST_APT:-0}" = 1 ] || return 1
   for _ in 1 2 3; do
     docker exec "$h" sh -c "apt-get update -qq >/dev/null 2>&1 && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq $pkg >/dev/null 2>&1" && return 0
     sleep 10
@@ -302,6 +314,12 @@ wait_ready() { # $1 host: systemd up, dockerd answering
       # next, over IPv4: a machine whose IPv6 or one mirror address does not answer otherwise
       # stalls phase 2's apt-get update for many minutes.
       docker exec "$h" sh -c 'printf "%s\n" "Acquire::http::Timeout \"20\";" "Acquire::https::Timeout \"20\";" "Acquire::Retries \"5\";" "Acquire::ForceIPv4 \"true\";" > /etc/apt/apt.conf.d/99fe2e-net'
+      # FE2E_DENY_MIRROR=1 (the proof of rule 1, ops/ci/check-federation-e2e-follows-inputs.sh):
+      # the host cannot reach a distribution mirror at all, so a scenario that still needs one
+      # fails where it reaches for it.
+      if [ "${FE2E_DENY_MIRROR:-0}" = 1 ]; then
+        docker exec "$h" sh -c 'for n in archive.ubuntu.com security.ubuntu.com ports.ubuntu.com ppa.launchpadcontent.net deb.debian.org pypi.org files.pythonhosted.org; do printf "0.0.0.0 %s\n" "$n"; done >> /etc/hosts'
+      fi
       # The roles' apt tasks (update_cache with cache_valid_time 3600; goat-peering-wg installs
       # wireguard-tools and nftables, goat-zenoh installs unzip) and Ansible's apt module, which
       # needs python3-apt, would reach the Ubuntu mirror on every run. So a run needs no mirror:
@@ -315,7 +333,7 @@ wait_ready() { # $1 host: systemd up, dockerd answering
       local pkg
       for pkg in ${FE2E_HOST_PACKAGES:-python3-apt unzip}; do
         host_package "$h" "$pkg" \
-          || die "host $h lacks package $pkg and neither this machine nor the Ubuntu mirror provided it; an environment fault, not the tree under test"
+          || env_fault "host $h lacks package $pkg: the host image (host/Dockerfile) should carry it, and no run-time source provided it (FE2E_HOST_APT=1 lets a lab host fetch it from the Ubuntu mirror)"
       done
       docker exec "$h" sh -c 'mkdir -p /var/lib/apt/periodic && touch /var/lib/apt/periodic/update-success-stamp'
       return 0
