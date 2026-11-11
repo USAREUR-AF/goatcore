@@ -12,6 +12,9 @@
 //! - `secrets.federation`: the paths of our package signing key, our CA
 //!   certificate and our CA key (FED_SIGNING_KEY, FED_CA_CERT, FED_CA_KEY). A
 //!   relative path is read inside the active goat context directory.
+//! - `environments[].peering_directory`: the peering directory this
+//!   environment's peerings exchange through, and the CA its TLS certificate
+//!   chains to when that is not a public one (FED_DIRECTORY_URL, SSL_CERT_FILE).
 
 use std::path::{Path, PathBuf};
 
@@ -57,7 +60,7 @@ fn in_context(declared: &str, context: &Path) -> String {
 
 /// The inputs this deployment declares in goatbuilder.yaml for the peering, in
 /// the order preflight reports them. Empty when it declares none.
-pub fn declared_inputs(cfg: &config::Config, _peering: &config::Peering) -> Vec<Input> {
+pub fn declared_inputs(cfg: &config::Config, peering: &config::Peering) -> Vec<Input> {
     let mut v = Vec::new();
     if let Some(fed) = cfg.secrets.as_ref().and_then(|s| s.federation.as_ref()) {
         let context = context_dir();
@@ -76,6 +79,26 @@ pub fn declared_inputs(cfg: &config::Config, _peering: &config::Peering) -> Vec<
         path("FED_SIGNING_KEY", "signing_key", &fed.signing_key);
         path("FED_CA_CERT", "ca_cert", &fed.ca_cert);
         path("FED_CA_KEY", "ca_key", &fed.ca_key);
+    }
+    let env = cfg
+        .environments
+        .iter()
+        .find(|e| e.name == peering.environment);
+    if let Some(dir) = env.and_then(|e| e.peering_directory.as_ref()) {
+        let at = |k: &str| {
+            format!(
+                "goatbuilder.yaml environments[{}].peering_directory.{k}",
+                peering.environment
+            )
+        };
+        v.push(input("FED_DIRECTORY_URL", Some(dir.url.clone()), at("url")));
+        if let Some(ca) = dir.ca_cert.as_deref().filter(|c| !c.is_empty()) {
+            v.push(input(
+                "SSL_CERT_FILE",
+                Some(in_context(ca, &context_dir())),
+                at("ca_cert"),
+            ));
+        }
     }
     v
 }
@@ -167,6 +190,39 @@ mod tests {
         let d = declared_inputs(&c, &c.peerings[0]);
         assert_eq!(d.len(), 1);
         assert!(d[0].value.as_deref().unwrap().ends_with("/s.key"));
+    }
+
+    #[test]
+    fn the_directory_and_its_ca_come_from_the_peerings_environment() {
+        let c = cfg(serde_json::json!({"environments": [
+            {"name": "dev", "converger": "push-ansible",
+             "peering_directory": {"url": "https://directory.example.org:8443", "ca_cert": "/srv/fed/directory-ca.pem"}},
+            {"name": "prod", "converger": "push-ansible",
+             "peering_directory": {"url": "https://other.example.org"}}]}));
+        let d = declared_inputs(&c, &c.peerings[0]);
+        assert_eq!(
+            d.iter().map(|i| i.name).collect::<Vec<_>>(),
+            ["FED_DIRECTORY_URL", "SSL_CERT_FILE"]
+        );
+        assert_eq!(
+            d[0].value.as_deref(),
+            Some("https://directory.example.org:8443")
+        );
+        assert_eq!(d[1].value.as_deref(), Some("/srv/fed/directory-ca.pem"));
+        assert!(d[0]
+            .source
+            .contains("environments[dev].peering_directory.url"));
+        // A directory with a public certificate declares no CA, and SSL_CERT_FILE is left alone.
+        let mut c = c;
+        c.peerings[0].environment = "prod".into();
+        let d = declared_inputs(&c, &c.peerings[0]);
+        assert_eq!(
+            d.iter().map(|i| i.name).collect::<Vec<_>>(),
+            ["FED_DIRECTORY_URL"]
+        );
+        // An environment that declares no directory gives nothing.
+        let c = cfg(serde_json::json!({}));
+        assert!(declared_inputs(&c, &c.peerings[0]).is_empty());
     }
 
     #[test]
