@@ -86,7 +86,10 @@ rec() { python3 "$REC" "$@" || FAILS=$((FAILS + 1)); }
 say() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
 die() { echo "run.sh: $*" >&2; exit 1; }
 other() { [ "$1" = "$A" ] && echo "$B" || echo "$A"; }
-octet() { case "$1" in "$A") echo 1 ;; "$B") echo 2 ;; "$C") echo 4 ;; "$D") echo 5 ;; esac; }
+# A party's place in the run's party list (PARTIES, set once when the engine loads), so the
+# names and addresses below hold even where a unit shadows A and B for one side.
+party_pos() { local i=0 p; for p in $PARTIES; do i=$((i + 1)); [ "$p" = "$1" ] && { echo "$i"; return 0; }; done; return 1; }
+octet() { case "$(party_pos "$1")" in 1) echo 1 ;; 2) echo 2 ;; 3) echo 4 ;; 4) echo 5 ;; esac; }
 core_ip() { echo "$NB.$(octet "$1").10"; }
 edge_ip() { echo "$NB.$(octet "$1").20"; }
 ops_ip() { echo "$NB.$(octet "$1").30"; }
@@ -99,7 +102,7 @@ drv_host() {
     *) echo "engine: FE2E_DRIVER must be edge or workspace, not '$FE2E_DRIVER'" >&2; return 2 ;;
   esac
 }
-boundary_ip() { case "$1" in "$A") echo "$NB.3.11" ;; "$B") echo "$NB.3.12" ;; "$C") echo "$NB.3.13" ;; "$D") echo "$NB.3.14" ;; esac; }
+boundary_ip() { case "$(party_pos "$1")" in 1) echo "$NB.3.11" ;; 2) echo "$NB.3.12" ;; 3) echo "$NB.3.13" ;; 4) echo "$NB.3.14" ;; esac; }
 td() { echo "$1.fed.test"; }
 
 # EVERY PER-PEERING VALUE IS A FUNCTION OF THE PAIR. A party's partners, in order, are
@@ -714,7 +717,7 @@ accept_as() { # $1 sovereign, $2 them, $3 avenue
 
 # The helpers every `rec ... bash -c` runs in a child shell.
 export_helpers() {
-  export -f drive host_exec other octet core_ip edge_ip boundary_ip die partners pidx iface wgport \
+  export -f drive host_exec other party_pos octet core_ip edge_ip boundary_ip die partners pidx iface wgport \
     spire_out rp_metrics probe_port ctx_of pair_subnet nodir partner_list accept_as probe_zid td round_trip round_trip_eventually \
     core_deploy core_ca drv_host ops_ip
   for _p in $PARTIES; do export "P_$_p"; done
