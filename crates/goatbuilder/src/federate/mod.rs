@@ -64,6 +64,7 @@ mod admit;
 mod confirm;
 pub mod deploy;
 pub mod site_values;
+pub mod switches;
 pub mod lock;
 pub mod prompt;
 mod run;
