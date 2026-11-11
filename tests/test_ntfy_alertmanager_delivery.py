@@ -31,7 +31,6 @@ import re
 import secrets
 import shutil
 import subprocess
-import sys
 import tempfile
 import time
 import unittest
@@ -176,12 +175,14 @@ class Harness:
         mutate_alertmanager(doc)
         with open(path, "w") as fh:
             yaml.safe_dump(doc, fh)
-        os.chmod(path, 0o644)
         am = self.tag + "-am"
         self.containers.append(am)
+        # Run as the caller so the config can stay private to it (no chmod);
+        # /tmp is writable by any uid, the image's data dir is not.
         self.sh("docker", "run", "-d", "--name", am, "--network", self.net, "-p", "127.0.0.1::9093",
+                "--user", "%d:%d" % (os.getuid(), os.getgid()),
                 "-v", path + ":/etc/alertmanager/alertmanager.yml:ro", alertmanager_image(),
-                "--config.file=/etc/alertmanager/alertmanager.yml")
+                "--config.file=/etc/alertmanager/alertmanager.yml", "--storage.path=/tmp/alertmanager")
         self.am_url = "http://127.0.0.1:%s" % self.port(am, 9093)
         self.wait(self.am_url + "/-/ready")
 
@@ -237,7 +238,6 @@ def previous(doc):
 class Delivery(unittest.TestCase):
     def setUp(self):
         self.d = tempfile.mkdtemp()
-        os.chmod(self.d, 0o755)
 
     def tearDown(self):
         shutil.rmtree(self.d, ignore_errors=True)
