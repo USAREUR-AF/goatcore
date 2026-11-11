@@ -153,13 +153,13 @@ pub fn render_one(
     Ok(out)
 }
 
-/// Every generated federation.toml, for the peerings declared
-/// `federation_toml: rendered`. Refuses (GB-233) when the environment's own
+/// Every generated federation.toml, for the peerings whose `federation_toml`
+/// renders (`switches::federation_toml`). Refuses (GB-233) when the environment's own
 /// federation.toml is missing or unreadable, naming it.
 pub fn render(repo: &Path, cfg: &Config, values: &[PeeringValues]) -> Result<Vec<Rendered>> {
     let mut out = Vec::new();
     for (p, v) in cfg.peerings.iter().zip(values.iter()) {
-        if p.federation_toml.as_deref() != Some("rendered") {
+        if !super::switches::federation_toml(repo, p, v).rendered {
             continue;
         }
         let rel = source_path(&p.environment);
