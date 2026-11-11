@@ -261,6 +261,17 @@ Federation is built as modules ([ADR 1225](../adr/1225-federation-belongs-to-goa
 **Stage 13+, switches of default.** Each owns one default and nothing else: the driver runs the verbs in process; `peering-standup.sh` calls `goatbuilder federate`; the directory publishes per counterparty; `goat federate` is removed once a goatbuilder release with the verbs reaches partner environments. Each reverts with one commit, restoring the previous default.
 
 **Stage 14, teaching material.** Owns the runbook, the tutorials and the guides that teach the command, in this repository and its siblings. It follows the switches. Reverting it restores the earlier text.
+### `federate`: which party we are in phases 7, 8, 9 and 14
+
+Phases 7 (verify), 8 (mint the peering leaves), 9 (apply) and 14 (acceptance) always name our party with `--as`. Given on the command line, `--as` is used as given. Without it, both avenues read our sovereign id by one rule (`our_id` in `crates/goatbuilder/src/federate/mod.rs`, `our_id` in `ops/scripts/peering-standup.sh`):
+
+1. the `sovereign_id` of the declaration in the goat context the verbs read. That is `federation.toml` in `$GOAT_CONTEXT_DIR`, else in `$GOAT_PROFILE_DIR/contexts/<$GOAT_CONTEXT, else config.toml current_context, else default>`;
+2. else the `sovereign_id` of our half, `<work>/ours.canonical.json`.
+
+A value that is not a well-formed id is not used. When neither source names one, the commands carry no `--as`, as before. Without this, mint and acceptance took the agreement's first party, so a run made by the party that sorts second minted as its partner and was refused at phase 8. Built; tested in `crates/goatbuilder/tests/federate_our_id.rs`. The parity gate passes with and without a declaration present.
+
+Status: WIP — gate: goatbuilder-only-both-sides `…-mints-as-us-without-as` passes on both parties.
+
 ### `federate`: the run journal, the locks and resume
 
 Status: WIP — gate: the federation test environment's `kill-resume` scenario passes on this branch (a run killed during a phase and run again with `--resume` finishes with every required acceptance check PASS), and its `rerun-every-phase` scenario shows no regression against main.

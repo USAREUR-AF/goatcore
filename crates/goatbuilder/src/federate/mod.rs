@@ -347,6 +347,30 @@ fn plan_with(repo: &Path, o: &Options, work: &str, edge_group: &str, resume: &st
     ev
 }
 
+/// Our sovereign id when `--as` is absent, by the same rule on both avenues
+/// (ops/scripts/peering-standup.sh): `sovereign_id` of the declaration in the
+/// goat context the verbs read (`federation.toml`, found as `verbs::resolve_site`
+/// finds it), else `sovereign_id` of our half, `<work>/ours.canonical.json`.
+/// None when neither names a well-formed id.
+fn our_id(work: &str) -> Option<String> {
+    let well_formed = |s: &String| {
+        (2..=32).contains(&s.len()) && s.starts_with(|c: char| c.is_ascii_lowercase() || c.is_ascii_digit()) && s.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+    };
+    let declared = verbs::resolve_site(&verbs::SiteArgs::default())
+        .ok()
+        .and_then(|site| std::fs::read_to_string(site.declaration_path()).ok())
+        .and_then(|t| toml::from_str::<toml::Value>(&t).ok())
+        .and_then(|v| v.get("sovereign_id").and_then(|x| x.as_str()).map(String::from))
+        .filter(well_formed);
+    declared.or_else(|| {
+        std::fs::read_to_string(format!("{work}/ours.canonical.json"))
+            .ok()
+            .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+            .and_then(|v| v.get("sovereign_id").and_then(|x| x.as_str()).map(String::from))
+            .filter(well_formed)
+    })
+}
+
 /// How a dry run reads to a person, the way kubeadm prints its phases: a
 /// header, one aligned table of phases, then each phase's command wrapped to
 /// the page, with this checkout's path and the home folder shortened.
@@ -550,6 +574,19 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
         declaration::driver_check(&cfg, o.with, o.env)?;
     }
     let work = work_dir(o);
+    // Phases 7, 8, 9 and 14 always name our party: without --as, our
+    // sovereign id from the declaration, as the help says, else from our
+    // half. Mint and acceptance otherwise take the agreement's first party,
+    // which is us only when we sort first. A mock plans the same commands
+    // the script avenue prints, so it reads them too.
+    let our = if o.r#as.is_none() { our_id(&work) } else { None };
+    let with_us;
+    let o = if our.is_some() {
+        with_us = Options { r#as: our.as_deref(), ..*o };
+        &with_us
+    } else {
+        o
+    };
     let edge_group = o.edge_group.map(String::from).unwrap_or_else(|| format!("{}_edge", o.with));
     let resume = format!("goatbuilder federate {}{}", o.with, o.env.map(|e| format!(" --env {e}")).unwrap_or_default());
     // Once `goatbuilder federate allocate` has recorded this peering, the run must use its values.

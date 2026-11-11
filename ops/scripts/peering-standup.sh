@@ -142,6 +142,35 @@ CORE_GROUP="${PEERING}_core"
 # operator writes during phase 5, after reading them aloud, and phase 6 passes them.
 : "${FED_KEYRING:=$FED_WORK/keys.txt}"
 OURS="$FED_WORK/ours.canonical.json"
+
+# OUR PARTY. Phases 7, 8, 9 and 14 always name it: without --as, the
+# declaration's sovereign_id, as the usage says, else our half's. Mint and
+# acceptance otherwise take the agreement's first party, which is us only when
+# we sort first. The same rule as the driver (crates/goatbuilder/src/federate/mod.rs
+# our_id): the goat context the verbs read is $GOAT_CONTEXT_DIR, else
+# $GOAT_PROFILE_DIR/contexts/<$GOAT_CONTEXT, else config.toml current_context,
+# else default>.
+our_id() {
+  local dir name id
+  dir="${GOAT_CONTEXT_DIR:-}"
+  if [ -z "$dir" ]; then
+    name="${GOAT_CONTEXT:-}"
+    if [ -z "$name" ] && [ -f "$GOAT_PROFILE_DIR/config.toml" ]; then
+      name="$(sed -n 's/^[[:space:]]*current_context[[:space:]]*=[[:space:]]*//p' "$GOAT_PROFILE_DIR/config.toml" | head -1 | sed 's/[[:space:]]*$//; s/^"//; s/"$//')"
+    fi
+    dir="$GOAT_PROFILE_DIR/contexts/${name:-default}"
+  fi
+  id=""
+  if [ -f "$dir/federation.toml" ]; then
+    id="$(python3 -c 'import sys, tomllib; print(str(tomllib.load(open(sys.argv[1], "rb")).get("sovereign_id", "")))' "$dir/federation.toml" 2>/dev/null || true)"
+  fi
+  if ! printf '%s' "$id" | grep -Eq '^[a-z0-9][a-z0-9-]{1,31}$'; then
+    id="$(python3 -c 'import sys, json; print(str(json.load(open(sys.argv[1])).get("sovereign_id", "")))' "$OURS" 2>/dev/null || true)"
+  fi
+  printf '%s' "$id" | grep -Eq '^[a-z0-9][a-z0-9-]{1,31}$' && printf '%s' "$id"
+  return 0
+}
+[ -n "$AS" ] || AS="$(our_id)"
 AGREEMENT="$FED_WORK/agreement.json"
 APPLIED="$FED_WORK/applied"
 PKI="$FED_WORK/pki"
