@@ -846,11 +846,22 @@ step 6 A "[joiner] the joiner's Spock wiring again, now that the founder's half 
   "cd '$REPO/ops/ansible' && $ANSIBLE_PRE ${INV[*]} spock-mesh-wire.yml --limit $GROUP"
 fi
 
-# Phase 7. [internet] Public TLS via ACME (traefik-acme.yml). DNS-01 through Cloudflare;
-#    needs the site's CF API token from the env.
+# Phase 7. [internet] Public TLS via ACME (traefik-acme.yml). DNS-01 through Cloudflare
+#    by default; needs the site's CF API token from the env. A site whose
+#    group_vars set `traefik_acme_dns_provider: azure` uses Azure DNS instead:
+#    the play reads the service principal from the group's own env lookups, so
+#    the command passes no credential. The `test -n "$(printenv ...)"` is there
+#    so standup-phase-run refuses an empty client secret by name before the
+#    play starts; `test` is a builtin, so the value never reaches an argv.
+ACME_DNS_PROVIDER="$(grep -E '^[[:space:]]*traefik_acme_dns_provider:' "$GV_FILE" 2>/dev/null | head -1 | awk '{print $2}' | tr -d '"'\''' || true)"
 if [ "$PROFILE" = internet ]; then
+if [ "$ACME_DNS_PROVIDER" = azure ]; then
+step 7 A "[internet] public TLS certificate (traefik-acme)" \
+  "cd '$REPO/ops/ansible' && test -n \"\$(printenv AZURE_DNS_CLIENT_SECRET_${SITE_UPPER})\" && $ANSIBLE_PRE ${INV[*]} traefik-acme.yml -e target=$GROUP"
+else
 step 7 A "[internet] public TLS certificate (traefik-acme)" \
   "cd '$REPO/ops/ansible' && $ANSIBLE_PRE ${INV[*]} traefik-acme.yml -e target=$GROUP -e cf_api_token=\"\$(printenv CLOUDFLARE_API_TOKEN_${SITE_UPPER})\""
+fi
 fi
 
 # Phase 7. [internet] RELAY TIER — inventory, then deploy. The phase this script did

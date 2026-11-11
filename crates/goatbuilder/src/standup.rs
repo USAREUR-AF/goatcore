@@ -90,6 +90,9 @@ struct Site {
     join_founder_group: String,
     acl_site: String,
     mgmt_fqdn: String,
+    /// `traefik_acme_dns_provider` (the script's ACME_DNS_PROVIDER): `azure`
+    /// changes the phase-7 ACME command; anything else is the Cloudflare path.
+    acme_dns_provider: String,
     intra_pair: bool,
     obs: bool,
     obs_why: String,
@@ -304,6 +307,7 @@ fn read_site(repo: &Path, o: &Options) -> Result<Site> {
         join_founder_group,
         acl_site,
         mgmt_fqdn: gv_first(&gv, "public_mgmt_fqdn"),
+        acme_dns_provider: gv_first(&gv, "traefik_acme_dns_provider"),
         intra_pair: gv_matches(&gv, "intra_site_pair", "true"),
         obs,
         obs_why,
@@ -470,7 +474,13 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
         ev.push(p(6, "A", "[joiner] the joiner's Spock wiring again, now that the founder's half exists (Ory subscription + history reconcile)".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} spock-mesh-wire.yml --limit {g}")));
     }
     if internet {
-        ev.push(p(7, "A", "[internet] public TLS certificate (traefik-acme)".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} traefik-acme.yml -e target={g} -e cf_api_token=\"$(printenv CLOUDFLARE_API_TOKEN_{u})\"")));
+        // Azure DNS-01: the play reads the service principal from the group's
+        // env lookups; the `test -n` lets standup-phase-run name an empty secret.
+        if s.acme_dns_provider == "azure" {
+            ev.push(p(7, "A", "[internet] public TLS certificate (traefik-acme)".into(), format!("cd '{r}/ops/ansible' && test -n \"$(printenv AZURE_DNS_CLIENT_SECRET_{u})\" && {pre} {inv} traefik-acme.yml -e target={g}")));
+        } else {
+            ev.push(p(7, "A", "[internet] public TLS certificate (traefik-acme)".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} traefik-acme.yml -e target={g} -e cf_api_token=\"$(printenv CLOUDFLARE_API_TOKEN_{u})\"")));
+        }
         ev.push(p(7, "T", "[internet] generate relay inventory from terraform".into(), format!("'{r}/ops/ansible/inventory/generate-relays.sh' {site} terraform-{site}")));
         ev.push(p(7, "A", "[internet] relay tier (coturn + rathole + TLS renewal)".into(), format!("cd '{r}/ops/ansible' && umask 077 && VF=$(mktemp -t goat-relay-vars.XXXXXX) && printf 'nb_relay_auth_secret: \"%s\"\\nrelay_secret: \"%s\"\\ncloudflare_api_token: \"%s\"\\n' \"$(printenv {u}_RELAY_SECRET)\" \"$(printenv {u}_RELAY_SECRET)\" \"$(printenv CLOUDFLARE_API_TOKEN_{u})\" > \"$VF\" && {pre} -i inventory/hosts-{site}.ini relay-server.yml -e @\"$VF\"; rc=$?; rm -f \"$VF\"; exit $rc")));
         if s.joiner {
@@ -1533,7 +1543,7 @@ mod tests {
             state_dir: t.display().to_string(), ansible_pre: String::new(), inv: "", profile: "lan".into(), joiner: false,
             join_founder_site: String::new(), join_founder_group: String::new(), acl_site: "zagros".into(), mgmt_fqdn: String::new(),
             intra_pair: false, obs: false, obs_why: String::new(), group_vars_exists: true, lite: false, nb_token_available: false,
-            owner_email: "$OWNER_EMAIL".to_string(),
+            acme_dns_provider: String::new(), owner_email: "$OWNER_EMAIL".to_string(),
         };
         let mk = |id: &str, needs: &[&str], cmd: &str| Queued { id: id.into(), needs: needs.iter().map(|x| x.to_string()).collect(), label: id.into(), cmd: cmd.into() };
         // The repository root: a step runs through its ops/scripts/standup-phase-run.
@@ -1558,7 +1568,7 @@ mod tests {
             state_dir: "/s".into(), ansible_pre: "PRE".into(), inv: "INV", profile: "lan".into(), joiner,
             join_founder_site: if joiner { "alpha".into() } else { String::new() }, join_founder_group: if joiner { "alpha_hosts".into() } else { String::new() },
             acl_site: "zagros".into(), mgmt_fqdn: String::new(), intra_pair: false, obs: false, obs_why: String::new(),
-            group_vars_exists: true, lite: false, nb_token_available: false, owner_email: "$OWNER_EMAIL".to_string(),
+            group_vars_exists: true, lite: false, nb_token_available: false, acme_dns_provider: String::new(), owner_email: "$OWNER_EMAIL".to_string(),
         }
     }
 
@@ -1902,7 +1912,7 @@ mod tests {
             state_dir: "/h/.goat/state".into(), ansible_pre: "PRE".into(), inv: INV, profile: "lan".into(), joiner: false,
             join_founder_site: String::new(), join_founder_group: String::new(), acl_site: "pasture".into(), mgmt_fqdn: "mgmt.pasture.lan".into(),
             intra_pair: false, obs: false, obs_why: String::new(), group_vars_exists: false, lite, nb_token_available,
-            owner_email: if lite { "a.learner@example.org".to_string() } else { "$OWNER_EMAIL".to_string() },
+            acme_dns_provider: String::new(), owner_email: if lite { "a.learner@example.org".to_string() } else { "$OWNER_EMAIL".to_string() },
         }
     }
 
