@@ -105,9 +105,12 @@ goatbuilder federate test <partner>
 A run that stops for a value it does not have yet (their key at phase 5, the agreement digest at
 phase 6, the admission digest at 10) says which, and the same command with it carries on.
 
-You make one decision and two confirmations; the commands do, check and record the rest. A third
-human act ends the procedure: publishing `exchanging` is a reviewable change that both operators
-approve.
+You make one decision and answer the run's prompts at phases 5, 6 and 10; the commands do, check
+and record the rest. At phase 5 you type the verifying key the partner reads aloud and confirm
+that they read their CA fingerprint; at phase 6 you confirm that both agreement digests are the
+same (together, confirmation 1 below); at phase 10 you approve the plan's hash and then what your
+core admits (confirmation 2). A third human act ends the procedure: publishing `exchanging` is a
+reviewable change that both operators approve.
 
 **Do not follow the phases by hand.** A peering stood up by hand on 2026-09-07 needed about a dozen
 improvised interventions, and four defects were invisible until the GENERATED artifacts were the

@@ -33,12 +33,13 @@ runs every phase. It runs `plan`, `deploy` and `test` in order, and each is
 also a command of its own, with `status` to read where a peering stands. You
 make one decision: the partner, and the release sets it receives.
 `federation.toml` owns those sets, and the peering's declaration may only
-narrow them. You also make two confirmations at the terminal:
+narrow them. The run then asks you at the terminal, at three phases:
 
-- the keys and CA fingerprints read aloud and typed back, with the agreement
-  digest compared;
-- approval of the plan, then of what your core admits, including the reviewed
-  configuration change, before your core router restarts.
+- phase 5: you type the verifying key the partner reads aloud, and confirm that
+  they read their CA fingerprint;
+- phase 6: you confirm that the agreement digest you both read is the same;
+- phase 10: you approve the plan's hash, then what your core admits, including
+  the reviewed configuration change, before your core router restarts.
 
 Acceptance ends in result bundles both operators exchange by file and review.
 Publishing `exchanging` afterwards is a third deliberate act by both operators,
@@ -136,11 +137,12 @@ line. Read it before moving on:
   the manual review that admits the edge on your core (10), the agreed transport
   opened (11), the edge router deployed (12), the SPIRE trust domains federated
   (13), and acceptance (14).
-- Phases 5 and 10 are `MANUAL` in the plan: they hold the two confirmations. On
-  a real run at a terminal the command asks for them in the run. At phase 5 the
-  packages are exchanged through the directory, you and the counterparty read
-  your keys to each other, and you type theirs back. At phase 10 you approve
-  the plan and then what your core admits. Without a terminal the run stops at
+- Phases 5 and 10 are `MANUAL` in the plan. On a real run at a terminal the
+  command asks in the run, at phases 5, 6 and 10. At phase 5 the packages are
+  exchanged through the directory, you and the counterparty read your keys and
+  CA fingerprints to each other, you type their key and confirm their
+  fingerprint. At phase 6 you confirm the agreement digest. At phase 10 you
+  approve the plan and then what your core admits. Without a terminal the run stops at
   each, and the stop names the command that carries on.
 - Phase 11 opens the transport the **agreement** chose, read from the agreement
   itself. Here that is `ipsec-fips`, so it runs `peering-edge.yml`; `wireguard`

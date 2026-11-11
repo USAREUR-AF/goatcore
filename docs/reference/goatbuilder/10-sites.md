@@ -59,14 +59,15 @@ goatbuilder federate allocate <partner>                       # the peering's va
 goatbuilder federate <partner> --env <goatnet>                # at a terminal: the whole procedure
 ```
 
-At a terminal the run asks for the two confirmations itself: the partner's key
-and CA fingerprint at phase 5 and the agreement digest at phase 6, then at
-phase 10 the plan and what our core admits. A run that stops resumes where it stopped.
+At a terminal the run asks at phases 5, 6 and 10: the partner's verifying key,
+typed as it is read aloud, and their CA fingerprint confirmed at phase 5; the
+agreement digest confirmed at phase 6; the plan's hash and then what our core
+admits at phase 10. A run that stops resumes where it stopped.
 `--as` says which party we are, `--edge-group` names the Ansible group of the
 edge (default `<partner>_edge`), and `--work` the working directory (default
 `$FED_WORK`, else `/var/lib/goat-federation/<partner>`). `--no-confirm` keeps
-both confirmations by hand: the run stops at 5 and 10 and resumes with
-`--from 6` and `--from 11`. **Script:** `ops/scripts/peering-standup.sh`.
+them by hand: the run stops at 5 and 10 and resumes with `--from 6` and
+`--from 11`. **Script:** `ops/scripts/peering-standup.sh`.
 Status: measured (run up-4b1adc18cc3b-20261111T102642).
 
 **The stages.** `goatbuilder federate <partner>` runs phases 1 to 9 (measure,
