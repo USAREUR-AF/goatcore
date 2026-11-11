@@ -790,7 +790,9 @@ pub fn admit(
     // On a goat-zenoh role core, the core admits the partner in the role's own
     // declarations too: its zenoh_sovereign_peerings entry, from the fragment.
     if let Some(r) = &core.role {
-        let entry = super::admit_role::fragment_cn(&fragment)
+        // The partner's edge leaf, as the agreement names it.
+        let agreed = party.get("peering_cn").and_then(|x| x.as_str());
+        let entry = super::admit_role::fragment_cn(&fragment, agreed)
             .map_err(|e| format!("{e} (GB-237)"))
             .and_then(|cn| super::admit_role::merge_peerings(repo, &r.group, &them, &cn));
         match entry {

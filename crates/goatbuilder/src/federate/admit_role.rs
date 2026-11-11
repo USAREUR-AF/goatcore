@@ -302,10 +302,15 @@ impl RoleCore {
     }
 }
 
-/// The CN the partner's edge presents, from the subject of the agreement's
-/// access-control fragment (`cert_common_names` of its subjects region).
-/// Exactly one, or the reason there is not.
-pub fn fragment_cn(fragment: &str) -> Result<String, String> {
+/// The CN the partner's edge presents, from the subjects of the agreement's
+/// access-control fragment (`cert_common_names`). The fragment also names our
+/// own outbound republisher (`fed.<us>.<them>.republisher.01`,
+/// `compose::republisher_cn`), which is not the partner; it is left out. When
+/// the agreement names the partner's edge leaf (`parties[].peering_cn` of the
+/// partner, `agreed`), that is the CN, and the fragment must name it as its
+/// one partner subject. Without it, the fragment's one partner subject is.
+/// Refused when the fragment names no partner subject, or several.
+pub fn fragment_cn(fragment: &str, agreed: Option<&str>) -> Result<String, String> {
     let re = regex::Regex::new(r#"cert_common_names\s*:\s*\[([^\]]*)\]"#).expect("regex");
     let q = regex::Regex::new(r#""([^"]+)""#).expect("regex");
     let mut cns: Vec<String> = Vec::new();
@@ -316,12 +321,22 @@ pub fn fragment_cn(fragment: &str) -> Result<String, String> {
             }
         }
     }
-    match cns.as_slice() {
-        [one] => Ok(one.clone()),
-        [] => Err("the fragment names no subject CN (cert_common_names)".into()),
-        many => Err(format!(
-            "the fragment names several subject CNs: {}",
-            many.join(", ")
+    let partner: Vec<&String> = cns.iter().filter(|c| !c.contains(".republisher.")).collect();
+    match (partner.as_slice(), agreed) {
+        (_, Some(a)) if partner.len() == 1 && partner[0] == a => Ok(a.to_string()),
+        (_, Some(a)) if partner.iter().any(|c| c.as_str() == a) => Err(format!(
+            "the fragment names several partner subject CNs: {}",
+            partner.iter().map(|c| c.as_str()).collect::<Vec<_>>().join(", ")
+        )),
+        (_, Some(a)) if !cns.is_empty() => Err(format!(
+            "the fragment names no subject with the CN the agreement gives the partner's edge ({a}); it names {}",
+            cns.join(", ")
+        )),
+        ([one], None) => Ok((*one).clone()),
+        ([], _) => Err("the fragment names no partner subject CN (cert_common_names)".into()),
+        (many, _) => Err(format!(
+            "the fragment names several partner subject CNs: {}",
+            many.iter().map(|c| c.as_str()).collect::<Vec<_>>().join(", ")
         )),
     }
 }
@@ -501,11 +516,37 @@ mod tests {
 
     const FRAG: &str = "##ACL-ORG-REGION subjects\n      {\n        id: \"fed-xab\",\n        cert_common_names: [\"fed.xab.zagros.01\"],\n      },\n##ACL-ORG-REGION policies\n";
 
+    /// The fragment apply renders names the partner's edge and our own
+    /// outbound republisher. The CN admitted is the one the agreement gives
+    /// the partner's edge, whatever the order of the subjects.
+    #[test]
+    fn the_partner_cn_is_the_agreed_one_beside_our_republisher() {
+        let both = |first: &str, second: &str| {
+            format!("##ACL-ORG-REGION subjects\n  {{ id: \"a\", cert_common_names: [\"{first}\"] }},\n  {{ id: \"b\", cert_common_names: [\"{second}\"] }},\n")
+        };
+        let (edge, ours) = ("fed.xab.xaa.01", "fed.xaa.xab.republisher.01");
+        for f in [both(edge, ours), both(ours, edge)] {
+            assert_eq!(fragment_cn(&f, Some(edge)).unwrap(), edge, "{f}");
+            assert_eq!(fragment_cn(&f, None).unwrap(), edge, "{f}");
+        }
+        // Two partner candidates are still refused.
+        let two = both(edge, "fed.xab.xaa.02");
+        assert!(fragment_cn(&two, Some(edge)).unwrap_err().contains("several partner"));
+        assert!(fragment_cn(&two, None).unwrap_err().contains("several partner"));
+        // A fragment without the agreed CN is refused, naming what it has.
+        let other = both("fed.xac.xaa.01", ours);
+        assert!(fragment_cn(&other, Some(edge)).unwrap_err().contains("fed.xac.xaa.01"));
+    }
+
     #[test]
     fn the_partner_entry_is_merged_from_the_fragments_subject() {
-        assert_eq!(fragment_cn(FRAG).unwrap(), "fed.xab.zagros.01");
-        assert!(fragment_cn("no subjects").is_err());
-        assert!(fragment_cn("cert_common_names: [\"a\", \"b\"]")
+        assert_eq!(fragment_cn(FRAG, None).unwrap(), "fed.xab.zagros.01");
+        assert_eq!(
+            fragment_cn(FRAG, Some("fed.xab.zagros.01")).unwrap(),
+            "fed.xab.zagros.01"
+        );
+        assert!(fragment_cn("no subjects", None).is_err());
+        assert!(fragment_cn("cert_common_names: [\"a\", \"b\"]", None)
             .unwrap_err()
             .contains("several"));
         // A new file: this partner's entry alone.
