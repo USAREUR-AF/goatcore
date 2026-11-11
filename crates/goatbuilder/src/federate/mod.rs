@@ -63,6 +63,7 @@ pub mod peering_files;
 mod admit;
 mod confirm;
 pub mod deploy;
+pub mod site_values;
 pub mod lock;
 pub mod prompt;
 mod run;
