@@ -762,3 +762,64 @@ fn a_role_core_is_admitted_through_the_roles_play_and_its_fragment_on_the_host()
     );
     assert!(fetch < copy && copy < dry && dry < play, "fetch, place, dry run, restart: {log}");
 }
+
+/// On a goat-zenoh role core, admission places phase 8's router leaf where the
+/// role reads it (`goat_leaf`: the controller's state directory), with no
+/// FED_CORE_CERT or FED_CORE_KEY, and restarts the core through the role's play.
+#[test]
+fn on_a_role_core_the_router_leaf_goes_where_the_role_reads_it() {
+    let w = world();
+    let real = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    for (rel, text) in [
+        ("ops/ansible/roles/goat-zenoh/defaults/main.yml", "zenoh_router_image: \"x\"\n".to_string()),
+        ("ops/ansible/zenoh-deploy.yml", "- hosts: \"{{ target | mandatory }}\"\n".into()),
+        ("ops/pins/fleet-pins.yaml", "components:\n  zenoh-router:\n    var: zenoh_router_image\n    deploy_playbook: zenoh-deploy.yml\n".into()),
+        ("ops/ansible/inventory/core-router.ini", "[core_router]\nzagros-core ansible_host=192.0.2.10 ansible_user=goat\n".into()),
+        ("ops/ansible/group_vars/core_router/zenoh.yml", "zenoh_router_image: \"ghcr.io/example-org/zenoh@sha256:00\"\nsite_id: zagros\n".into()),
+        ("ops/ansible/filter_plugins/goat_leaf.py", std::fs::read_to_string(real.join("ops/ansible/filter_plugins/goat_leaf.py")).unwrap()),
+    ] {
+        let f = w.repo.join(rel);
+        std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+        std::fs::write(f, text).unwrap();
+    }
+    let plan = ready(&w, true);
+    let run = |extra: &[&str]| {
+        let mut args = vec!["deploy", "hello-ally", "--approve-plan", &plan];
+        args.extend_from_slice(extra);
+        let out = w
+            .command(&args)
+            .env_remove("FED_CORE_RESTART")
+            .env_remove("FED_CORE_DRY_RUN")
+            .output()
+            .unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap_or_default();
+        (out, v)
+    };
+    let (out, _) = run(&["--review-in-pr"]);
+    assert!(out.status.success(), "{}", says(&out));
+    let review = std::fs::read_to_string(w.work.join("admission/review.md")).unwrap();
+    let leaves = w.root.path().join(".goat/state/zagros-leaves");
+    assert!(
+        review.contains(&leaves.join("router-cert.pem").display().to_string()),
+        "the summary names where the leaf goes: {review}"
+    );
+    let digest = review
+        .split("--approve-admission ")
+        .nth(1)
+        .unwrap()
+        .split_whitespace()
+        .next()
+        .unwrap()
+        .to_string();
+    let (out, _) = run(&["--approve-admission", &digest]);
+    assert!(out.status.success(), "{}", says(&out));
+    assert_eq!(
+        std::fs::read(leaves.join("router-cert.pem")).unwrap(),
+        std::fs::read(w.work.join("pki/core.pem")).unwrap()
+    );
+    assert_eq!(
+        std::fs::read(leaves.join("router-key.pem")).unwrap(),
+        std::fs::read(w.work.join("pki/core-key.pem")).unwrap()
+    );
+    assert!(w.log().contains("play zenoh-deploy.yml"), "{}", w.log());
+}

@@ -38,7 +38,8 @@
 //! for every deployment): FED_CORE_ACL_ORG (the core's org fragment,
 //! required: it is what every other vendor and partner is kept from), and
 //! FED_CORE_ACL_SEED with FED_CORE_ACL_OUT when the core configuration is
-//! assembled; FED_CORE_CERT and FED_CORE_KEY; FED_CORE_PLAY (with
+//! assembled; FED_CORE_CERT and FED_CORE_KEY (on a goat-zenoh role core, where
+//! the role reads the router leaf: federate/admit_leaf.rs); FED_CORE_PLAY (with
 //! FED_CORE_GROUP) or FED_CORE_RESTART and FED_CORE_DRY_RUN, unless the core
 //! is the goat-zenoh role's (federate/admit_role.rs: its own play, found from
 //! its declarations); and
@@ -289,12 +290,21 @@ impl Core {
         if !missing.is_empty() {
             return Err(missing);
         }
+        let leaf = match &role {
+            Some(r) => {
+                let (c, k) = super::admit_leaf::router_leaf(repo, r);
+                (c.map(|x| x.0), k.map(|x| x.0))
+            }
+            None => (None, None),
+        };
         Ok(Core {
             org,
             seed,
             out,
-            cert: env("FED_CORE_CERT").map(PathBuf::from),
-            key: env("FED_CORE_KEY").map(PathBuf::from),
+            // On a goat-zenoh role core the router leaf goes where the role
+            // reads it (federate/admit_leaf.rs); FED_CORE_CERT/KEY override.
+            cert: env("FED_CORE_CERT").map(PathBuf::from).or_else(|| leaf.0.clone()),
+            key: env("FED_CORE_KEY").map(PathBuf::from).or_else(|| leaf.1.clone()),
             play,
             group: env("FED_CORE_GROUP").unwrap_or_else(|| format!("{with}_core")),
             restart,

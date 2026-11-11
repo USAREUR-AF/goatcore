@@ -62,6 +62,7 @@ pub mod hostalloc;
 pub mod hostfw;
 pub mod peering_files;
 mod admit;
+mod admit_leaf;
 mod admit_role;
 mod confirm;
 pub mod deploy;
