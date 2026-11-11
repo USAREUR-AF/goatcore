@@ -344,11 +344,11 @@ entries:
   - code: E_MEMBERSHIP_VERSION_UNSUPPORTED
     tool: goat
     title: the membership file uses an unsupported version
-    what: goat refused a membership fragment, scope file or generated baseline whose version is not supported by this build. No membership change was applied.
+    what: goat parsed a membership fragment or scope file under its strict schema, or a generated baseline under its compatibility schema, then refused its numeric version because this build does not support it. Fragment and scope files reject unknown fields as parse errors; generated baselines deliberately permit unknown top-level fields. No membership change was applied.
     causes:
-      - the file was written by a newer tool than the goat reading it
-      - the version field was edited by hand
-      - the command was pointed at the wrong membership declaration file
+      - the file's recognized fields were written by a newer tool whose numeric membership version this goat does not support
+      - the numeric version field was edited by hand while the file's required fields still parse
+      - the command was pointed at a different membership declaration file whose recognized fields parse but whose numeric version is unsupported
     fixes:
       - "goat update   (use a goat version that supports the declaration)"
       - "check version: in the file named by the error and confirm the membership declaration directory"
@@ -356,7 +356,7 @@ entries:
     read: docs/operations/warrant-runbook.md
     exit: 1
     matches:
-      - "this goat reads version 1"
+      - "(?m)^(?:error: )?(?:[^\\n]*: )?(?:fragment|_scope[.]yaml|_baseline[.]generated[.]yaml) version [0-9]+ — this goat reads version [0-9]+$"
 
   # --------------------------------------------------------------- goatbuilder
 
