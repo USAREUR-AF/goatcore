@@ -1863,6 +1863,61 @@ mod tests {
         let _: serde_yaml::Value = serde_yaml::from_str(&core).unwrap();
     }
 
+    /// The edge's inward endpoint dials the core the republisher dials, and
+    /// both read our CA at `<cert_dir>/our-ca.pem`, the file phase 8 places
+    /// beside the leaves (peering_leaf_material.py). A CA path nothing writes
+    /// is mounted as an empty directory, and the edge never dials the core.
+    #[test]
+    fn the_inward_endpoint_reads_our_ca_where_phase_8_places_it() {
+        let mut a = p("xab", false);
+        a["deployment"] = json!("rendered");
+        let d = repo_with_site(json!([a]), SITE);
+        run(d.path(), &opts(false)).unwrap();
+        let gv = d.path().join("ops/ansible/group_vars");
+        let read = |f: &str| -> serde_yaml::Value {
+            serde_yaml::from_str(&std::fs::read_to_string(gv.join(f)).unwrap()).unwrap()
+        };
+        let (edge, core) = (
+            read("xab_edge/peering-deployment.yml"),
+            read("xab_core/peering-deployment.yml"),
+        );
+        let cert_dir = read("xab_edge/peering-values.yml")["goat_zenoh_edge_inward_cert"]
+            .as_str()
+            .unwrap()
+            .rsplit_once('/')
+            .unwrap()
+            .0
+            .to_string();
+        let our_ca = format!("{cert_dir}/our-ca.pem");
+        let endpoints = edge["goat_zenoh_edge_core_endpoints"]
+            .as_sequence()
+            .unwrap();
+        assert_eq!(endpoints.len(), 1, "{endpoints:?}");
+        let (dial, ca) = endpoints[0]
+            .as_str()
+            .unwrap()
+            .split_once("#root_ca_certificate_file=")
+            .unwrap();
+        assert_eq!(
+            dial,
+            core["goat_fed_republisher_core_endpoint"].as_str().unwrap()
+        );
+        assert_eq!(ca, our_ca);
+        assert_eq!(
+            core["goat_fed_republisher_core_ca_src"].as_str().unwrap(),
+            our_ca
+        );
+        let helper = std::fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../ops/federation/standup/peering_leaf_material.py"),
+        )
+        .unwrap();
+        assert!(
+            helper.contains("OUR_CA = 'our-ca.pem'"),
+            "phase 8 places our CA under the name the halves read"
+        );
+    }
+
     /// A site value the halves need and the environment's group_vars do not
     /// set is refused, naming it (GB-232); nothing is invented.
     #[test]
