@@ -1,0 +1,28 @@
+# Alertmanager delivery health: the notifier watching itself.
+#
+# A firing alert that Alertmanager cannot deliver is indistinguishable from
+# silence everywhere except Alertmanager's own counters. A 4xx response is
+# not retried: those notifications are dropped on the spot, so a persistently
+# rejected integration loses pages while Prometheus and every dashboard show
+# the alert firing and routed.
+#
+# Metrics: alertmanager_* via the `alertmanager` scrape job.
+groups:
+  - name: alertmanager-health
+    interval: 60s
+    rules:
+
+      - alert: AlertmanagerNotificationsFailing
+        expr: increase(alertmanager_notifications_failed_total[15m]) > 0
+        for: 10m
+        labels:
+          severity: critical
+          domain: observability
+        annotations:
+          summary: "alertmanager {{ $labels.integration }} notifications are failing"
+          description: |
+            Alertmanager attempted deliveries on the {{ $labels.integration }}
+            integration and they failed. A 4xx response is not retried, so
+            those pages are already lost. Check the alertmanager container
+            logs for the receiver and status code: a too-large payload, a
+            rejected credential and an unreachable endpoint all land here.

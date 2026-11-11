@@ -194,6 +194,13 @@ obs_rule_files:
   # nothing said so, because a broken collection makes its dependent alerts go
   # QUIET, and quiet is indistinguishable from healthy.
   - scrape-health.yml
+  # The notifier watching itself. Alertmanager drops a 4xx-rejected
+  # notification without retry, so a persistently rejected integration loses
+  # pages while every dashboard shows the alert firing and routed; without
+  # this file the only evidence is container log lines nothing watches.
+  # Safe on a goatnet without the alertmanager scrape job: the expr keys on
+  # alertmanager_* series that do not exist there, no absent(), so silence.
+  - alertmanager-health.yml
   # Link utilisation + bandwidth attribution (ADR 1128). Safe on a goatnet that
   # has not deployed the attribution collector: every alert keys on a series
   # that simply does not exist there, so nothing fires. That is asserted, not
