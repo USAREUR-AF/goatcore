@@ -324,7 +324,7 @@ Where it is checked:
 
 A peering without `offer:` is not checked, and nothing is read: the driver runs as before.
 
-Not built yet: phase 3 offering a narrowed list. `goat federate init` offers exactly what `federation.toml` declares, so until it takes a narrowed list, an `offer:` narrower than `[data] release` is refused too (GB-129) rather than run with the wider set.
+A narrower offer is carried out for a peering whose `federation.toml` is generated (built: `crates/goatbuilder/src/federate/federation_toml.rs`, test `the_offer_check_reads_the_generated_peering_declaration` in `federate/declaration.rs`). `goatbuilder federate allocate` writes the peering's `federation.toml` with `[data] release` narrowed to its `offer:`, refusing a set that the environment's `[data] release` does not declare (GB-129). Phase 3 reads that generated file, so `init` offers exactly the narrowed list. For a peering with `federation_toml: hand`, phase 3 reads the hand-written file, which `init` offers whole, so an `offer:` narrower than its `[data] release` is refused (GB-129) rather than run with the wider set.
 ### `federate status`: what each peering's journal and evidence say
 
 Status: WIP — gate: on two environments, `goatbuilder federate status` reads back a peering stood up by `goatbuilder federate`, with the acceptance verdict, its age and its scope, and marks evidence stale after the agreement changes.
