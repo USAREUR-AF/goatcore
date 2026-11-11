@@ -47,6 +47,11 @@ PARTIES="$A $B ${C:-} ${D:-}"
 HP="${FE2E_HOST_PREFIX:-fed}"; NP="${FE2E_NET_PREFIX:-fed-e2e}"; NB="${FE2E_NET_BASE:-10.77}"
 LAB="${FE2E_LAB:-fed-e2e}"
 LABEL=(--label "org.goat.fe2e.lab=$LAB")
+# A runner's docker may set proxies (~/.docker/config.json `proxies`, the CI failover cache
+# from .github/actions/apt-failover) that docker puts into every container it starts. The lab's
+# hosts and the directory reach nothing upstream during a scenario, and their own traffic (REST
+# probes, the directory, the peers) must never go through a cache: they start with none.
+NOPROXY=(-e HTTP_PROXY= -e HTTPS_PROXY= -e FTP_PROXY= -e NO_PROXY= -e http_proxy= -e https_proxy= -e ftp_proxy= -e no_proxy=)
 FE2E_CORE="${FE2E_CORE:-hand}"
 FE2E_DRIVER="${FE2E_DRIVER:-edge}"
 FE2E_PARTNER="${FE2E_PARTNER:-lab}"
@@ -226,7 +231,7 @@ gen_sovereign() { # $1 sovereign: its CA, its signing key, its operator's identi
 
 start_host() { # $1 name, $2 sovereign, $3 internal ip, [more docker run arguments]
   local n="$1" s="$2" ip="$3"; shift 3
-  docker run -d --name "$n" --hostname "$n" "${LABEL[@]}" --privileged --cgroupns=private \
+  docker run -d --name "$n" --hostname "$n" "${LABEL[@]}" "${NOPROXY[@]}" --privileged --cgroupns=private \
     --network "$NP-$s" --ip "$ip" "$@" \
     --tmpfs /run --tmpfs /run/lock -v /var/lib/docker -v /lib/modules:/lib/modules:ro \
     -v "$WORK/$s/keys:/etc/fed-e2e:ro" -v "$WORK/$s/origin.git:/srv/goat.git:ro" \
@@ -618,9 +623,9 @@ drive() { # $1 sovereign, $2 them, $3 avenue, $4 from, $5 to
 # front in its network namespace issuing a certificate for its address from a local CA.
 # Each edge trusts that CA through SSL_CERT_FILE.
 start_directory() {
-  docker run -d --name "$NP-directory" "${LABEL[@]}" --network "$NP-boundary" --ip "$DIRECTORY_IP" \
+  docker run -d --name "$NP-directory" "${LABEL[@]}" "${NOPROXY[@]}" --network "$NP-boundary" --ip "$DIRECTORY_IP" \
     -e SALTLICK_WRITE_LIMIT=0 -e SALTLICK_READ_LIMIT=0 "$SALTLICK_IMAGE" >/dev/null
-  docker run -d --name "$NP-directory-tls" "${LABEL[@]}" --network "container:$NP-directory" "$DIRECTORY_TLS_IMAGE" \
+  docker run -d --name "$NP-directory-tls" "${LABEL[@]}" "${NOPROXY[@]}" --network "container:$NP-directory" "$DIRECTORY_TLS_IMAGE" \
     caddy reverse-proxy --from "https://$DIRECTORY_IP:8443" --to 127.0.0.1:8080 >/dev/null
   local s
   for _ in $(seq 1 30); do
