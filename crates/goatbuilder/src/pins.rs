@@ -1826,9 +1826,8 @@ mod lite_tests {
         format!("goatnets:\n  zagros:\n    members: [zagros_a]\ncomponents:\n  alpha:\n    var: alpha_image\n    fleet: \"a{D}\"\n    deviations:\n      zagros:\n        value: \"a:tag\"\n        reason: rc\n  beta:\n    var: beta_image\n    fleet: \"b{D}\"\n")
     }
 
-    fn tree(name: &str, lite: Option<&str>) -> PathBuf {
-        let d = std::env::temp_dir().join(format!("goatbuilder-lite-{}-{name}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&d);
+    fn tree(name: &str, lite: Option<&str>) -> crate::testdir::Held<PathBuf> {
+        let d = crate::testdir::path(&format!("goatbuilder-lite-{name}-"));
         std::fs::create_dir_all(d.join("ops/pins")).unwrap();
         std::fs::write(d.join("ops/pins/fleet-pins.yaml"), fleet()).unwrap();
         if let Some(l) = lite {
@@ -1915,9 +1914,8 @@ mod edit_tests {
         p
     }
 
-    fn scratch(name: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!("goatbuilder-pins-edit-{}-{name}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&d);
+    fn scratch(name: &str) -> crate::testdir::Held<PathBuf> {
+        let d = crate::testdir::path(&format!("goatbuilder-pins-edit-{name}-"));
         std::fs::create_dir_all(d.join("ops/ansible/group_vars/m")).unwrap();
         d
     }

@@ -30,6 +30,11 @@ Scripts, parity gates and CI checks read `-o json`, never the table. When a
 verb prints its own human view (a plan, a lesson page), its rows still go to
 `-o json` and to the tutor's log unchanged.
 
+`goatbuilder federate status -o json` is its own versioned document,
+`goatbuilder.federate.status/v1`, and a real federate run keeps its journal in
+`<work>/state.json` (`goatbuilder.federate.state/v1`); both are contracts in
+the same sense ([goatbuilder.md](goatbuilder.md), federate).
+
 Enforced by: every parity gate reading `-o json`
 (`ops/goatbuilder/parity-federate.sh`, `parity-standup.sh`,
 `parity-teardown.sh`, `parity-deploy.sh`, `parity-verify.sh`) and

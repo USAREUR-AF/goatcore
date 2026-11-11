@@ -15,6 +15,7 @@ on:
   pull_request:
     paths:
       - 'ops/federation-e2e/**'
+      - 'ops/ci/check-federation-e2e-harness.sh'
       - 'ops/e2e/report.py'
       - 'ops/federation/standup/**'
       - 'ops/federation/roundtrip/**'
@@ -50,7 +51,7 @@ jobs:
   federation:
     name: two sovereigns through the real driver, proved from the receiving side
     runs-on: ubuntu-24.04
-    timeout-minutes: 100
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -75,6 +76,9 @@ jobs:
           python3 -m pip install --quiet pyyaml jinja2 jsonschema
           sudo modprobe wireguard
           grep -q '^wireguard ' /proc/modules
+      # The environment's catalog and verdict rules, no Docker (ops/federation-e2e/tests).
+      - name: The e2e environment's harness checks
+        run: ops/ci/check-federation-e2e-harness.sh
       # Release, because a debug build reads its embedded message catalogs from the
       # source tree at run time, and these binaries run on hosts that have no such path.
       - name: Build goat and goatbuilder
@@ -86,7 +90,8 @@ jobs:
       - name: The runner prepares from a public-shaped checkout
         timeout-minutes: 10
         run: ops/ci/check-federation-e2e-prepare.sh crates/target/release/goatbuilder
-      - name: Two sovereigns, both scenarios
+      - name: Two sovereigns, four scenarios (the fourth, nothing-hand-written, strict)
+        timeout-minutes: 105
         run: ops/federation-e2e/run.sh --goat crates/target/release/goat --goatbuilder crates/target/release/goatbuilder --record "$RUNNER_TEMP/federation-report"
       - name: The acceptance counts
         if: always()

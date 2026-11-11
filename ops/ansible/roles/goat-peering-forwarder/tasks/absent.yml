@@ -1,0 +1,160 @@
+---
+# Back out ONE peering's mapping on a peering forwarder (ops/ansible/peering-backout.yml).
+#
+# The forwarder holds one entry per peering in peering_forwarder_peerings, named for the
+# partner (README, "one entry per peering"). This peering's entry is the one whose name
+# is the partner id, exactly; its carrier interface, key, environment and unit go, and
+# the one nftables table is rendered again from the role's own template with the other
+# entries only, so every other peering's rules come out as they were. With no other
+# entry left, the table is deleted.
+#
+# The declaration itself is the deployment's configuration and is not edited here: until
+# the entry is removed from peering_forwarder_peerings, the next run of
+# peering-forwarder.yml restores the mapping. The row says so.
+- name: peering-forwarder | absent | this host forwards nothing
+  ansible.builtin.set_fact:
+    _pb_rows: "{{ _pb_rows + [{'component': 'forwarder', 'resource': 'mapping', 'state': 'absent', 'action': 'none', 'note': 'peering_forwarder_enabled is false'}] }}"
+  when: not (peering_forwarder_enabled | default(false) | bool)
+
+- name: peering-forwarder | absent | this peering's entry and the others
+  when: peering_forwarder_enabled | default(false) | bool
+  block:
+    - name: peering-forwarder | absent | fill each entry from the defaults
+      ansible.builtin.set_fact:
+        _pbf_all: >-
+          {%- set out = [] -%}
+          {#- The role's peering_forwarder_peering_defaults, repeated: this file is included
+              by path, so the role's defaults are not loaded (the drift test in
+              ops/ansible/tests/peering-backout/ compares them). -#}
+          {%- set role_defaults = {'interface': 'wg-carry0', 'peering_port': 51820, 'edge_peering_port': 51820,
+                                   'carrier_port': 51821, 'carrier_local_ip': '169.254.30.0',
+                                   'carrier_remote_ip': '169.254.30.1', 'carrier_prefix_len': 31,
+                                   'carrier_mtu': 1420, 'partner_sources': []} -%}
+          {%- for p in peering_forwarder_peerings | default([]) -%}
+          {%-   set _ = out.append((peering_forwarder_peering_defaults | default(role_defaults)) | combine(p)) -%}
+          {%- endfor -%}
+          {{ out }}
+
+    - name: peering-forwarder | absent | split this peering from the rest
+      ansible.builtin.set_fact:
+        _pbf_mine: "{{ _pbf_all | selectattr('name', 'equalto', peering_backout_id) | list }}"
+        _pf_peerings: "{{ _pbf_all | rejectattr('name', 'equalto', peering_backout_id) | list }}"
+        _pbf_dir: "{{ peering_forwarder_config_dir | default('/etc/goat-peering-forwarder') }}"
+
+    - name: peering-forwarder | absent | no declared entry for this partner
+      ansible.builtin.set_fact:
+        _pb_rows: "{{ _pb_rows + [{'component': 'forwarder', 'resource': 'mapping ' ~ peering_backout_id, 'state': 'absent', 'action': 'none', 'note': 'peering_forwarder_peerings has no entry named ' ~ peering_backout_id}] }}"
+      when: _pbf_mine | length == 0
+
+    - name: peering-forwarder | absent | one entry, and its interface is no other entry's
+      ansible.builtin.assert:
+        that:
+          - _pbf_mine | length == 1
+          - _pbf_mine[0].interface is match('^[a-zA-Z0-9_-]{1,15}$')
+          - _pbf_mine[0].interface not in (_pf_peerings | map(attribute='interface') | list)
+        fail_msg: >-
+          peering_forwarder_peerings has {{ _pbf_mine | length }} entries named
+          {{ peering_backout_id }}, or its interface is shared with another entry. Nothing was changed.
+        quiet: true
+      when: _pbf_mine | length > 0
+
+    - name: peering-forwarder | absent | read this peering's carrier
+      when: _pbf_mine | length == 1
+      block:
+        - name: peering-forwarder | absent | the carrier interface
+          ansible.builtin.command: "wg show {{ _pbf_mine[0].interface }} dump"
+          register: _pbf_link
+          changed_when: false
+          failed_when: false
+
+        - name: peering-forwarder | absent | the carrier files
+          ansible.builtin.stat:
+            path: "{{ _pbf_dir }}/{{ _pbf_mine[0].interface }}.{{ item }}"
+            get_checksum: false
+          loop: [key, env]
+          register: _pbf_files
+
+        # Lines that name this entry's carrier interface or its edge's carrier address,
+        # both unique per entry (the role refuses a list that shares either). Ports are
+        # not matched: another entry's edge port can be the same number.
+        - name: peering-forwarder | absent | its rules in the forwarding table
+          ansible.builtin.shell: >-
+            nft list table inet goat_peering_forwarder 2>/dev/null
+            | grep -c -E '"{{ _pbf_mine[0].interface }}"|[^0-9.]{{ _pbf_mine[0].carrier_remote_ip | regex_escape }}([^0-9]|$)'
+          register: _pbf_rules
+          changed_when: false
+          failed_when: false
+
+        - name: peering-forwarder | absent | record what is there
+          ansible.builtin.set_fact:
+            _pb_rows: >-
+              {%- set out = _pb_rows -%}
+              {%- set act = 'removed' if _pb_apply else 'remove' -%}
+              {%- set m = _pbf_mine[0] -%}
+              {%- set _ = out.append({'component': 'forwarder', 'resource': 'carrier ' ~ m.interface, 'state': ('present' if _pbf_link.rc == 0 else 'absent'), 'action': (act if _pbf_link.rc == 0 else 'none'), 'note': 'public ' ~ m.peering_port ~ ', carrier ' ~ m.carrier_port}) -%}
+              {%- for f in _pbf_files.results -%}
+              {%-   set _ = out.append({'component': 'forwarder', 'resource': 'file ' ~ f.stat.path | default(_pbf_dir ~ '/' ~ m.interface ~ '.' ~ f.item), 'state': ('present' if f.stat.exists else 'absent'), 'action': (act if f.stat.exists else 'none'), 'note': ''}) -%}
+              {%- endfor -%}
+              {%- set n = (_pbf_rules.stdout | default('0') | trim | int) -%}
+              {%- set _ = out.append({'component': 'forwarder', 'resource': 'nft rules for ' ~ m.interface ~ ' in the forwarder table', 'state': ('present' if n > 0 else 'absent'), 'action': (act if n > 0 else 'none'), 'note': ((n ~ ' lines; the table is rendered again with ' ~ (_pf_peerings | length) ~ ' other entries') if _pf_peerings | length > 0 else (n ~ ' lines; no other entry, the table goes'))}) -%}
+              {%- set _ = out.append({'component': 'forwarder', 'resource': 'declaration peering_forwarder_peerings[name=' ~ peering_backout_id ~ ']', 'state': 'present', 'action': 'kept', 'note': 'configuration: remove the entry by review, or the next peering-forwarder.yml run restores the mapping'}) -%}
+              {{ out }}
+
+        - name: peering-forwarder | absent | stop the carrier
+          ansible.builtin.systemd:
+            name: "goat-peering-forwarder@{{ _pbf_mine[0].interface }}.service"
+            state: stopped
+            enabled: false
+          failed_when: false
+          when: _pb_apply
+
+        - name: peering-forwarder | absent | the carrier interface is gone
+          ansible.builtin.command: "ip link del {{ _pbf_mine[0].interface }}"
+          register: _pbf_del
+          changed_when: _pbf_del.rc == 0
+          failed_when: false
+          when: _pb_apply
+
+        - name: peering-forwarder | absent | its key and environment are gone
+          ansible.builtin.file:
+            path: "{{ _pbf_dir }}/{{ _pbf_mine[0].interface }}.{{ item }}"
+            state: absent
+          loop: [key, env]
+          when: _pb_apply
+
+        - name: peering-forwarder | absent | the template's host values, when the deployment leaves them to the role
+          ansible.builtin.set_fact:
+            peering_forwarder_public_interface: "{{ ansible_default_ipv4.interface | default('') }}"
+          when: _pb_apply and peering_forwarder_public_interface is not defined
+
+        - name: peering-forwarder | absent | no SSH sources unless the deployment declares them
+          ansible.builtin.set_fact:
+            peering_forwarder_ssh_sources: []
+          when: _pb_apply and peering_forwarder_ssh_sources is not defined
+
+        - name: peering-forwarder | absent | the table, rendered with the other entries only
+          ansible.builtin.template:
+            src: "{{ role_path | default(playbook_dir ~ '/roles/goat-peering-forwarder') }}/templates/forwarder.nft.j2"
+            dest: "{{ peering_forwarder_nft_path | default(_pbf_dir ~ '/forwarder.nft') }}"
+            owner: root
+            group: root
+            mode: "0600"
+          when: _pb_apply and _pf_peerings | length > 0
+
+        - name: peering-forwarder | absent | load it (replaces only this table)
+          ansible.builtin.command: "nft -f {{ peering_forwarder_nft_path | default(_pbf_dir ~ '/forwarder.nft') }}"
+          changed_when: true
+          when: _pb_apply and _pf_peerings | length > 0
+
+        - name: peering-forwarder | absent | no peering left, so no table
+          ansible.builtin.command: "nft delete table inet goat_peering_forwarder"
+          register: _pbf_deltable
+          changed_when: _pbf_deltable.rc == 0
+          failed_when: false
+          when: _pb_apply and _pf_peerings | length == 0
+
+        - name: peering-forwarder | absent | no peering left, so no table file
+          ansible.builtin.file:
+            path: "{{ peering_forwarder_nft_path | default(_pbf_dir ~ '/forwarder.nft') }}"
+            state: absent
+          when: _pb_apply and _pf_peerings | length == 0

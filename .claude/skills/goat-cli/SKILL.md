@@ -158,7 +158,13 @@ assertions that hold.
 the gap is real it prints the smallest port-set that closes it. Design:
 `docs/design/warrant.md`; data access: `docs/design/data-access-cop.md`.
 
-## Federation (`goat federate`)
+## Federation (`goat federate`, moving to `goatbuilder federate`)
+
+Federating with another sovereign goatnet is a goatbuilder job: `goatbuilder federate <partner>`,
+whose stages `plan | deploy | test | status` arrive beside today's fourteen-phase run (WIP until
+each default switch lands; procedure: `docs/operations/sovereign-federation-runbook.md` step 1).
+The package verbs below move to `goatbuilder federate <verb>` with the same flags and exit codes;
+`goat federate <verb>` keeps working and prints one line naming the goatbuilder command.
 
 Format: `docs/design/federation-package-spec.md`.
 

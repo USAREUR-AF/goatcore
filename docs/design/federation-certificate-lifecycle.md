@@ -3,8 +3,9 @@
 ## Status
 
 **Built:** phase-8 validation and reuse in `mint-peering-leaves.sh` and its Python
-material helper, explicit replacement, output-directory locking, staged issuance
-and regression tests using disposable CAs. **Not built:** a renewal scheduler,
+material helper, explicit replacement, output-directory locking, staged issuance,
+the CA key opened from the deployment's age-encrypted copy for one run, and
+regression tests using disposable CAs. **Not built:** a renewal scheduler,
 service deployment, automatic acceptance refresh, or key distribution beyond the
 edge's peering leaves and the republisher's leaf.
 This change does not establish deployment or bilateral acceptance.
@@ -13,6 +14,41 @@ This change does not establish deployment or bilateral acceptance.
 the `goat-zenoh-edge` role, from the run's working directory, behind
 `goat_zenoh_edge_install_certs` (default off), with its refusal checks and a
 localhost test (see "Installing on the edge").
+
+## The CA key
+
+Issuing a missing leaf, or rotating, needs our CA's private key. An explicit key
+file always wins: `--ca-key` or `FED_CA_KEY`.
+
+Opening the deployment's age-encrypted key is opt-in and off by default. With
+`FED_CA_KEY_FROM_AGE=1` (or `--ca-key-from-age`; `goatbuilder federate` sets it
+from `goat_federation_ca_key_from_age: true` in the edge group's vars), phase 8
+opens `--ca-key-age` or `FED_CA_KEY_AGE` with `--age-identity` or
+`FED_AGE_IDENTITY`. `goatbuilder federate` derives both, from
+`goat_federation_ca_key_age` (else `<deploy.state_dir>/<site>-ca/ca.key.age`, the
+portal role's `portal_ca_key_src`) and `goat_federation_age_identity` (else
+`~/.config/age/keys.txt`). Without the opt-in, an age key that is present is not
+opened, phase 8 says so on stderr, and a run that must issue refuses with the
+helper's message, which names the opt-in.
+
+The decrypted key goes to `ca-key.pem` in a fresh directory (mode 0700, the
+file 0600) under `FED_CA_KEY_TMP` when it is set, else under memory-backed
+`/dev/shm` where there is one, else under `$TMPDIR`, else `/tmp`. That directory
+belongs to this run and is removed when the script exits, by any exit, including
+an interrupt or termination. A kill the shell cannot trap (SIGKILL) leaves it
+behind. An age key that does not open is reported on stderr, and the run goes on
+without it. The report never repeats quoted text from age or anything shaped like
+an age secret key, because age quotes the first line of a file it cannot read,
+and that line is a secret when an identity file is named by mistake. A re-run
+that reuses every leaf needs no key; one that must issue refuses with the
+helper's message.
+
+A later, separate change may make the opt-in the default.
+
+Status: WIP — gate: on the federation test environment, phase 8 issues a fresh
+peering's leaves with only the deployment's `ca.key.age`, its age identity and
+the opt-in declared, and leaves no key file behind; without the opt-in nothing is
+decrypted.
 
 ## Ordinary rerun
 
@@ -35,6 +71,23 @@ threshold, not an automatic renewal trigger. `FED_LEAF_DAYS` controls new issuan
 Missing complete pairs require a matching own CA signing key. Private keys are
 created under a private staging directory; fresh serials avoid mutating a shared
 CA serial file.
+
+## Our CA beside the leaves
+
+Once every requested pair is issued or reused, the helper places our CA, the
+certificate whose fingerprint the agreement names for us, at
+`<out>/our-ca.pem` (mode 0600, as the leaf keys: the edge container runs as root, the edge role reads it with become, and the republisher role copies it as the driver's user, who owns it), and rewrites it only when its content differs (a wider mode left by an earlier run is narrowed).
+The rendered deployment halves (`goatbuilder federate allocate`, `deployment:
+rendered`) name that file as the CA of the edge's inward endpoint
+(`#root_ca_certificate_file=`) and as `goat_fed_republisher_core_ca_src`. Before
+this, no phase wrote it: the edge's bind mount of a missing path left a directory
+there, zenoh could not read the CA, discarded the endpoint and never dialled the
+core, and phase 12 refused with "NO connection to any core endpoint". Something
+other than a regular file at that path (such as that directory) is refused by
+name before anything is issued. `--rotate` does not replace it.
+
+Status: WIP — gate: nothing-hand-written on the federation test environment
+passes phase 12 with the rendered edge half and no hand-placed `our-ca.pem`.
 
 ## Explicit replacement
 

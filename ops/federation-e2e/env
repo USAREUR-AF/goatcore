@@ -1,0 +1,483 @@
+#!/usr/bin/env bash
+# env — the federation e2e environment: synthetic sovereigns on one Linux machine, and a
+# scenario matrix run against any goatcore ref (docs/design/federation-e2e-environment.md).
+#
+#   env build  --ref REF                          build goat, goatbuilder and the republisher image from REF
+#   env up     --ref REF [--lab N] [--parties "xaa xab"] [--avenue A] [--directory-ref DREF]
+#                                                 bring a pair up and federate it; leave it running
+#   env down   [--lab N | --all]                  remove what this environment created, and nothing else
+#   env run    --ref REF [--avenue script|goatbuilder|both] [--scenario ID[,ID]|all]
+#              [--jobs N] [--out DIR] [--name NAME] [--merged NAME@SHA]... [--goat-version ID=VER]...
+#              [--directory-ref DREF] [--parties "xae xaf"]
+#                                                 run scenarios; write results.json and a page per avenue
+#   env list                                      the scenarios, where each runs, and its pass condition
+#   env status                                    the labs in use and what holds them
+#   env report --out DIR                          rewrite DIR/latest.md from every result under DIR
+#   env fingerprint [--scenario ID,ID]            the harness fingerprint a result is measured with
+#
+# --parties replaces the sovereign ids the catalog gives each unit (units:), in order A B C D:
+# the solo unit's lab sovereign is A and its outside partner B (units/solo.sh).
+#
+# REF is any git ref or sha the repository knows (origin/<branch> is tried too). The tree
+# under test is that ref; the harness is the checkout this script is in, copied into the
+# run first so that editing it does not disturb a running matrix.
+#
+# DREF is a ref of the saltlick repository (FE2E_SALTLICK_REPO, default the saltlick clone
+# beside this goatcore clone; it is fetched from origin first). The peering directory is then
+# that commit's image, built with its own Dockerfile as fe2e-saltlick:<sha12>, instead of the
+# pinned release; the result's `directory` field and each unit's tools.txt name it, and it
+# enters the harness fingerprint, so such a row never compares with one on the pinned image.
+#
+# Everything created is named fe2e-l<N>-*, carries the label org.goat.fe2e.lab=fe2e-l<N>,
+# and sits on 10.<230+N>.0.0/16 (N = 1..14). `down` removes by that label alone. Images are
+# tagged fe2e-host:<hash>, fe2e-republisher:<sha12> and fe2e-saltlick:<sha12>. State lives in FE2E_HOME
+# (default ~/.cache/fe2e): src/<sha>, bin/<sha>, saltlick/<sha>, runs/<run-id>, labs/.
+#
+# Needs: Linux, Docker, the wireguard kernel module, a Rust toolchain, python3 with pyyaml
+# (jsonschema to validate results). Touches no goatnet and no public directory.
+set -euo pipefail
+HERE="$(cd "$(dirname "$0")" && pwd)"; REPO="$(cd "$HERE/../.." && pwd)"
+FE2E_HOME="${FE2E_HOME:-$HOME/.cache/fe2e}"
+# Builds, clones and the linker write temporary files; keep them on FE2E_HOME's disk, not a
+# shared /tmp that other work can fill.
+mkdir -p "$FE2E_HOME/tmp"; export TMPDIR="$FE2E_HOME/tmp"
+CATALOG="$HERE/scenarios/catalog.yaml"
+MAX_LAB=14
+
+die() { echo "env: $*" >&2; exit 1; }
+say() { printf '\033[1m==> %s\033[0m\n' "$*" >&2; }
+usage() { sed -n '2,37p' "$0"; exit "${1:-0}"; }
+
+# --- refs and builds --------------------------------------------------------------------
+resolve() { # $1 ref -> sha
+  local r="$1" sha
+  for cand in "$r" "origin/$r"; do
+    sha="$(git -C "$REPO" rev-parse -q --verify "$cand^{commit}" 2>/dev/null)" && { echo "$sha"; return 0; }
+  done
+  die "no commit for ref '$r' (git fetch first?)"
+}
+
+lock() { # $1 lock dir: wait for it, hold it for this process
+  local l="$1"
+  until mkdir "$l" 2>/dev/null; do
+    if [ -f "$l/pid" ] && ! kill -0 "$(cat "$l/pid")" 2>/dev/null; then rm -rf "$l"; continue; fi
+    sleep 3
+  done
+  # Written whole: a reader that found the file empty would take a held lock for stale.
+  echo $$ > "$l/pid.tmp" && mv "$l/pid.tmp" "$l/pid"
+}
+unlock() { rm -rf "$1"; }
+
+build() { # $1 sha: the tree, the binaries, the republisher image; prints nothing on success
+  local sha="$1" src bin common tag
+  src="$FE2E_HOME/src/$sha"; bin="$FE2E_HOME/bin/$sha"; tag="fe2e-republisher:${sha:0:12}"
+  mkdir -p "$FE2E_HOME/src" "$FE2E_HOME/bin" "$FE2E_HOME/target" "$FE2E_HOME/locks"
+  lock "$FE2E_HOME/locks/build"
+  if [ ! -d "$src/.git" ]; then
+    common="$(git -C "$REPO" rev-parse --path-format=absolute --git-common-dir)"
+    rm -rf "$src"
+    git clone -q --shared --no-checkout "$common" "$src"
+    GIT_LFS_SKIP_SMUDGE=1 git -C "$src" checkout -q --detach "$sha"
+  fi
+  if [ ! -x "$bin/goat" ] || [ ! -x "$bin/goatbuilder" ]; then
+    say "build goat and goatbuilder at ${sha:0:12}"
+    ( cd "$src/crates" && CARGO_TARGET_DIR="$FE2E_HOME/target" nice cargo build --release --locked -p goat-cli -p goatbuilder >&2 ) \
+      || { unlock "$FE2E_HOME/locks/build"; die "the build failed at ${sha:0:12}"; }
+    mkdir -p "$bin.tmp"
+    cp "$FE2E_HOME/target/release/goat" "$FE2E_HOME/target/release/goatbuilder" "$bin.tmp/"
+    rm -rf "$bin"; mv "$bin.tmp" "$bin"
+  fi
+  if ! docker image inspect "$tag" >/dev/null 2>&1; then
+    say "build the republisher image at ${sha:0:12}"
+    docker build -q -t "$tag" "$src/ops/federation/republisher" >/dev/null \
+      || { unlock "$FE2E_HOME/locks/build"; die "the republisher image did not build at ${sha:0:12}"; }
+  fi
+  local htag; htag="fe2e-host:$(cd "$HERE/host" && cat Dockerfile daemon.json fed-e2e-keys.service | sha256sum | cut -c1-12)"
+  if ! docker image inspect "$htag" >/dev/null 2>&1; then
+    say "build the host image $htag"
+    docker build -q -t "$htag" "$HERE/host" >/dev/null || { unlock "$FE2E_HOME/locks/build"; die "the host image did not build"; }
+  fi
+  unlock "$FE2E_HOME/locks/build"
+}
+# The peering directory from a saltlick commit: its tree under FE2E_HOME/saltlick/<sha>, and
+# its image fe2e-saltlick:<sha12> built with the commit's own Dockerfile.
+saltlick_repo() {
+  if [ -n "${FE2E_SALTLICK_REPO:-}" ]; then echo "$FE2E_SALTLICK_REPO"; return 0; fi
+  local common; common="$(git -C "$REPO" rev-parse --path-format=absolute --git-common-dir)"
+  echo "$(dirname "$(dirname "$common")")/saltlick"
+}
+directory_resolve() { # $1 saltlick ref -> sha
+  local r="$1" repo sha cand
+  repo="$(saltlick_repo)"
+  git -C "$repo" rev-parse --git-dir >/dev/null 2>&1 || die "no saltlick clone at $repo (set FE2E_SALTLICK_REPO)"
+  git -C "$repo" fetch -q origin || die "git fetch origin failed in $repo"
+  for cand in "$r" "origin/$r"; do
+    sha="$(git -C "$repo" rev-parse -q --verify "$cand^{commit}" 2>/dev/null)" && { echo "$sha"; return 0; }
+  done
+  die "no saltlick commit for ref '$r' in $repo"
+}
+directory_build() { # $1 saltlick sha: its tree and its image; prints nothing on success
+  local sha="$1" repo src tag common
+  repo="$(saltlick_repo)"; src="$FE2E_HOME/saltlick/$sha"; tag="fe2e-saltlick:${sha:0:12}"
+  mkdir -p "$FE2E_HOME/saltlick" "$FE2E_HOME/locks"
+  lock "$FE2E_HOME/locks/build-saltlick"
+  if [ ! -d "$src/.git" ]; then
+    common="$(git -C "$repo" rev-parse --path-format=absolute --git-common-dir)"
+    rm -rf "$src"
+    git clone -q --shared --no-checkout "$common" "$src"
+    git -C "$src" checkout -q --detach "$sha"
+  fi
+  if ! docker image inspect "$tag" >/dev/null 2>&1; then
+    say "build the saltlick image at ${sha:0:12}"
+    docker build -q -t "$tag" "$src" >/dev/null \
+      || { unlock "$FE2E_HOME/locks/build-saltlick"; die "the saltlick image did not build at ${sha:0:12}"; }
+  fi
+  unlock "$FE2E_HOME/locks/build-saltlick"
+}
+rp_id() { # $1 sha: the republisher image's config digest, computed once
+  local f="$FE2E_HOME/bin/$1/republisher.id"
+  [ -s "$f" ] || docker save "fe2e-republisher:${1:0:12}" | tar -xO manifest.json \
+    | python3 -c 'import json,sys; c=json.load(sys.stdin)[0]["Config"]; print("sha256:" + c.split("/")[-1].split(".")[0])' > "$f"
+  cat "$f"
+}
+# What a result depends on besides the ref: the catalog, the units, the engine and the
+# verdict, and the scenario subset. Rows compare only when this is equal (lib/matrix.py).
+# With --directory-ref, the directory's ref and commit are part of it too; without, the
+# fingerprint is computed exactly as before that option existed.
+fingerprint() { # $1 harness ops/federation-e2e dir, $2 scenario subset
+  { cat "$1"/scenarios/*.yaml "$1"/units/*.sh "$1"/lib/engine.sh "$1"/lib/unit.sh "$1"/lib/verdict.py; echo "$2"
+    [ -z "${DIRECTORY_REF:-}" ] || echo "directory=$DIRECTORY_REF@$DIRECTORY_SHA"; } | sha256sum | cut -c1-12
+}
+host_tag() { echo "fe2e-host:$(cd "$HERE/host" && cat Dockerfile daemon.json fed-e2e-keys.service | sha256sum | cut -c1-12)"; }
+
+# Released tools, from goatcore's GitHub releases. The tags are goat-cli-v<ver> and
+# goatbuilder/v<ver>; each release carries <tool>-linux-amd64 and <tool>-linux-amd64.sha256.
+RELEASES_API="https://api.github.com/repos/usareur-af/goatcore/releases?per_page=100"
+release_tag() { case "$1" in goat) echo "goat-cli-v$2" ;; goatbuilder) echo "goatbuilder/v$2" ;; esac; }
+release_tool() { # $1 goat|goatbuilder, $2 version -> path, or fails with the reason on stderr
+  local t="$1" v="$2" d tag url sum
+  d="$FE2E_HOME/release/$t-$v"; tag="$(release_tag "$t" "$v")"
+  [ -x "$d/$t" ] && { echo "$d/$t"; return 0; }
+  mkdir -p "$d" "$FE2E_HOME/locks"
+  lock "$FE2E_HOME/locks/release-$t-$v"
+  url="https://github.com/usareur-af/goatcore/releases/download/$(echo "$tag" | sed 's|/|%2F|g')/$t-linux-amd64"
+  if [ ! -x "$d/$t" ] && curl -fsSL -o "$d/$t.tmp" "$url" && sum="$(curl -fsSL "$url.sha256" | cut -d' ' -f1)" \
+     && [ "$(sha256sum "$d/$t.tmp" | cut -d' ' -f1)" = "$sum" ]; then
+    chmod +x "$d/$t.tmp"; mv "$d/$t.tmp" "$d/$t"
+  fi
+  rm -f "$d/$t.tmp"; unlock "$FE2E_HOME/locks/release-$t-$v"
+  [ -x "$d/$t" ] && { echo "$d/$t"; return 0; }
+  echo "$t $v is not published as a release asset ($tag, $t-linux-amd64 with a matching .sha256)" >&2; return 1
+}
+release_goat() { release_tool goat "$1"; }
+# A tool built from a release tag's commit, for a release whose binary is not published.
+release_built() { # $1 goat|goatbuilder, $2 version -> path, or fails
+  local tag sha; tag="$(release_tag "$1" "$2")"
+  sha="$(git -C "$REPO" rev-parse -q --verify "$tag^{commit}" 2>/dev/null)" \
+    || { echo "no tag $tag in this repository (git fetch --tags first?)" >&2; return 1; }
+  ( build "$sha" ) >&2 || return 1
+  echo "$FE2E_HOME/bin/$sha/$1"
+}
+previous_release() { # $1 goat|goatbuilder, $2 version -> the newest published version older than it
+  local list; list="$(curl -fsSL "$RELEASES_API")" || { echo "the release list did not answer" >&2; return 1; }
+  printf '%s' "$list" | python3 -c '
+import json, re, sys
+pre = {"goat": "goat-cli-v", "goatbuilder": "goatbuilder/v"}[sys.argv[1]]
+key = lambda v: tuple(int(x) for x in v.split("."))
+ref = key(sys.argv[2]); best = None
+for r in json.load(sys.stdin):
+    t = r.get("tag_name", "")
+    if r.get("draft") or r.get("prerelease") or not t.startswith(pre): continue
+    v = t[len(pre):]
+    if not re.fullmatch(r"[0-9]+(\.[0-9]+)*", v) or key(v) >= ref: continue
+    if best is None or key(v) > key(best): best = v
+if best is None: sys.exit("no published %s release older than %s" % (sys.argv[1], sys.argv[2]))
+print(best)' "$1" "$2"
+}
+crate_version() { # $1 tree, $2 crate directory under crates/ -> its version
+  sed -n 's/^version = "\(.*\)"/\1/p' "$1/crates/$2/Cargo.toml" | head -1
+}
+# What a unit needs beyond the ref's own tools, resolved before it starts: the --goat-version
+# pins, else the unit's catalog goat_versions; and with previous_release, the newest published
+# goat and goatbuilder older than the ref's. Prints NAME=VALUE words (no spaces) for env(1).
+unit_tools() { # $1 unit, $2 sha
+  local unit="$1" sha="$2" kv ids="" p t T crate ref v
+  for kv in ${GOAT_VERSIONS:-}; do ids="$ids ${kv%%=*}"; echo "GOAT_${kv%%=*}=${kv#*=}"; done
+  for kv in ${GOAT_VERSIONS_ASKED:-}; do echo "GOAT_VERSION_${kv%%=*}=${kv#*=}"; done
+  for kv in $(catalog_unit_field "$unit" goat_versions); do
+    case " $ids " in *" ${kv%%=*} "*) continue ;; esac
+    if p="$(release_goat "${kv#*=}" 2>/dev/null)"; then echo "GOAT_${kv%%=*}=$p"; else echo "GOAT_${kv%%=*}=unavailable:${kv#*=}"; fi
+    echo "GOAT_VERSION_${kv%%=*}=${kv#*=}"
+  done
+  case "$(catalog_unit_field "$unit" previous_release)" in True|true) ;; *) return 0 ;; esac
+  for t in goat goatbuilder; do
+    if [ "$t" = goat ]; then T=GOAT; crate=goat-cli; else T=GB; crate=goatbuilder; fi
+    ref="$(crate_version "$FE2E_HOME/src/$sha" "$crate")"
+    echo "FE2E_REF_${T}_VERSION=$ref"
+    if ! v="$(previous_release "$t" "$ref" 2>&1)"; then echo "FE2E_PREV_${T}=unavailable:$(echo "$v" | tail -1 | tr ' ' _)"; continue; fi
+    echo "FE2E_PREV_${T}_VERSION=$v"
+    if p="$(release_tool "$t" "$v" 2>/dev/null)"; then echo "FE2E_PREV_${T}=$p"; echo "FE2E_PREV_${T}_FROM=release-asset"
+    elif p="$(release_built "$t" "$v" 2>/dev/null)"; then echo "FE2E_PREV_${T}=$p"; echo "FE2E_PREV_${T}_FROM=built-from-tag"
+    else echo "FE2E_PREV_${T}=unavailable:${t}_${v}_is_neither_published_nor_buildable_from_its_tag"; fi
+  done
+}
+
+# --- labs -----------------------------------------------------------------------------------
+# A lab's lock holds the pid of the process running in it. Only a numeric pid that no longer
+# runs marks a lab as stale; anything else (a lab held by `up`) is left for `down`.
+stale() { local p; p="$(cat "$1/pid" 2>/dev/null)"; case "$p" in ''|*[!0-9]*) return 1 ;; esac; ! kill -0 "$p" 2>/dev/null; }
+lab_take() { # -> N, held by this process until lab_give
+  local i
+  mkdir -p "$FE2E_HOME/labs"
+  while :; do
+    for i in $(seq 1 "$MAX_LAB"); do
+      local l="$FE2E_HOME/labs/l$i"
+      if [ -f "$l/pid" ] && stale "$l"; then lab_clean "$i"; rm -rf "$l"; fi
+      if mkdir "$l" 2>/dev/null; then echo "${1:-$$}" > "$l/pid"; echo "$i"; return 0; fi
+    done
+    sleep 10
+  done
+}
+lab_give() { rm -rf "$FE2E_HOME/labs/l$1"; }
+lab_clean() { # $1 N: every container and network carrying this lab's label, and nothing else
+  local lab="fe2e-l$1" ids
+  ids="$(docker ps -aq --filter "label=org.goat.fe2e.lab=$lab")"
+  [ -z "$ids" ] || docker rm -f -v $ids >/dev/null
+  ids="$(docker network ls -q --filter "label=org.goat.fe2e.lab=$lab")"
+  [ -z "$ids" ] || docker network rm $ids >/dev/null
+}
+lab_env() { # $1 N: the engine's naming for this lab
+  echo "FE2E_LAB=fe2e-l$1 FE2E_HOST_PREFIX=fe2e-l$1 FE2E_NET_PREFIX=fe2e-l$1 FE2E_NET_BASE=10.$((230 + $1))"
+}
+
+# --- units --------------------------------------------------------------------------------
+catalog_units() { # $1 avenue, $2 scenario list (comma, or all) -> unit names, one per line
+  python3 - "$CATALOG" "$1" "$2" <<'PY'
+import sys, yaml
+cat = yaml.safe_load(open(sys.argv[1])); av = sys.argv[2]; only = set(x for x in sys.argv[3].split(",") if x and x != "all")
+seen = []
+for s in cat["scenarios"]:
+    if only and s["id"] not in only: continue
+    if s.get("not_built"): continue
+    u = s.get("unit")
+    if isinstance(u, dict): u = u.get(av)
+    if u and u not in seen: seen.append(u)
+print("\n".join(seen))
+PY
+}
+catalog_parties() { # $1 unit -> its party ids
+  python3 - "$CATALOG" "$1" <<'PY'
+import sys, yaml
+cat = yaml.safe_load(open(sys.argv[1]))
+print((cat.get("units") or {}).get(sys.argv[2], {}).get("parties", cat.get("params", {}).get("parties", "xaa xab xac")))
+PY
+}
+
+catalog_unit_field() { # $1 unit, $2 field -> its value under units:, or nothing
+  python3 - "$CATALOG" "$1" "$2" <<'PY'
+import sys, yaml
+cat = yaml.safe_load(open(sys.argv[1]))
+v = (cat.get("units") or {}).get(sys.argv[2], {}).get(sys.argv[3])
+print("" if v is None else v)
+PY
+}
+
+run_unit() { # $1 unit, $2 avenue, $3 sha, $4 run dir, $5 lab (taken), [$6 keep]
+  local unit="$1" av="$2" sha="$3" run="$4" lab="$5" keep="${6:-0}" rec work parties
+  rec="$run/$av/$unit"; work="$run/work/$av-$unit"
+  rm -rf "$rec" "$work"; mkdir -p "$rec" "$work"
+  parties="${FE2E_UP_PARTIES:-$(catalog_parties "$unit")}"
+  say "unit $unit, avenue $av, lab $lab, parties $parties"
+  local extra=() kv ut
+  for kv in $(unit_tools "$unit" "$sha"); do extra+=("$kv"); done
+  # A unit that waits on people (solo) declares a longer limit under units: (timeout, s).
+  ut="$(catalog_unit_field "$unit" timeout)"
+  [ -z "$ut" ] || [ -n "${FE2E_UNIT_TIMEOUT:-}" ] || extra+=("FE2E_UNIT_TIMEOUT=$ut")
+  if [ -n "${DIRECTORY_REF:-}" ]; then
+    extra+=("FE2E_SALTLICK_IMAGE=fe2e-saltlick:${DIRECTORY_SHA:0:12}" "FE2E_DIRECTORY_REF=$DIRECTORY_REF" "FE2E_DIRECTORY_SHA=$DIRECTORY_SHA")
+  fi
+  printf '%s\n' ${extra[@]+"${extra[@]}"} > "$rec/tools.txt"
+  # shellcheck disable=SC2046
+  env $(lab_env "$lab") FE2E_PARTIES="$parties" FE2E_HOST_IMAGE="$(host_tag)" \
+    FE2E_RP_TAG="fe2e-republisher:${sha:0:12}" RP_IMAGE="$(rp_id "$sha")" \
+    SRC="$FE2E_HOME/src/$sha" GOAT="$FE2E_HOME/bin/$sha/goat" GB="$FE2E_HOME/bin/$sha/goatbuilder" \
+    AVENUE="$av" WORK="$work" RECORD="$rec" KEEP="$keep" ${extra[@]+"${extra[@]}"} \
+    bash "$run/harness/ops/federation-e2e/lib/unit.sh" "$unit" > "$rec/unit.log" 2>&1 || true
+  [ "$keep" = 1 ] || lab_clean "$lab"
+  echo "$(grep -c '"status": "pass"' "$rec/report.jsonl" 2>/dev/null || echo 0) passed, $(grep -c '"status": "fail"' "$rec/report.jsonl" 2>/dev/null || echo 0) failed: $unit/$av" >&2
+}
+
+snapshot_harness() { # $1 run dir
+  mkdir -p "$1/harness/ops"
+  cp -R "$HERE" "$1/harness/ops/federation-e2e"
+  cp -R "$REPO/ops/e2e" "$1/harness/ops/e2e"
+  ( cd "$REPO" && git rev-parse HEAD 2>/dev/null; git status --porcelain -- ops/federation-e2e ops/e2e 2>/dev/null | head -1 ) > "$1/harness.txt"
+}
+
+# --- commands -------------------------------------------------------------------------------
+cmd_build() { local sha; sha="$(resolve "$REF")"; build "$sha"; echo "$sha"; }
+
+cmd_run() {
+  local sha run avenues av unit units jobs="${JOBS:-3}" started blocked=""
+  sha="$(resolve "$REF")"
+  started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  run="$FE2E_HOME/runs/${sha:0:12}-$(date -u +%Y%m%dT%H%M%S)-$$"
+  mkdir -p "$run"; snapshot_harness "$run"
+  case "$AVENUE" in both) avenues="goatbuilder script" ;; script|goatbuilder) avenues="$AVENUE" ;; *) die "--avenue script|goatbuilder|both" ;; esac
+  # A ref that does not build still gets its row: every scenario BLOCKED, naming the failure.
+  if ! ( build "$sha" ) 2> "$run/build.log"; then
+    cat "$run/build.log" >&2
+    blocked="the tools did not build at ${sha:0:12}: $(grep -m1 -E '^error|^env:' "$run/build.log" | cut -c1-200)"
+  fi
+  if [ -z "$blocked" ] && [ -n "$DIRECTORY_REF" ] && ! ( directory_build "$DIRECTORY_SHA" ) 2> "$run/build-saltlick.log"; then
+    cat "$run/build-saltlick.log" >&2
+    blocked="the peering directory did not build at saltlick ${DIRECTORY_SHA:0:12} ($DIRECTORY_REF): $(grep -m1 -E '^ERROR|^env:' "$run/build-saltlick.log" | cut -c1-200)"
+  fi
+  # Units run in parallel, one lab each.
+  local pids=() INTERRUPTED=0
+  # An interrupted run publishes nothing: its stopped units would read BLOCKED everywhere.
+  trap 'INTERRUPTED=1; for p in ${pids[@]+"${pids[@]}"}; do kill "$p" 2>/dev/null; done' TERM INT HUP
+  for av in $avenues; do
+    [ -z "$blocked" ] || break
+    units="$(catalog_units "$av" "$SCENARIOS")"
+    for unit in $units; do
+      while [ "$(jobs -rp | wc -l)" -ge "$jobs" ]; do sleep 5; done
+      # The lab is taken here and then handed the background job's own pid: a pid read inside
+      # the job by command substitution names a process that has already exited.
+      lab="$(lab_take "$$")"
+      ( trap 'lab_clean "$lab"; lab_give "$lab"' EXIT; run_unit "$unit" "$av" "$sha" "$run" "$lab" ) &
+      echo "$!" > "$FE2E_HOME/labs/l$lab/pid"
+      pids+=("$!")
+    done
+  done
+  local p; for p in ${pids[@]+"${pids[@]}"}; do wait "$p" || true; done
+  trap - TERM INT HUP
+  if [ "$INTERRUPTED" = 1 ] || grep -qs 'terminated by a signal' "$run"/*/*/stopped.json; then
+    echo "env: the run was interrupted; nothing is published (run directory $run)" >&2
+    return 3
+  fi
+  local hsha; hsha="$(head -1 "$run/harness.txt")"
+  local rc=0 outd="" short="${sha:0:12}"
+  # A row on another directory is filed beside the default row, never over it.
+  [ -z "$DIRECTORY_REF" ] || short="$short-saltlick-${DIRECTORY_SHA:0:12}"
+  if [ -n "$OUT" ]; then outd="$OUT/$NAME"; mkdir -p "$outd"; fi
+  local subset=all; [ "$SCENARIOS" = all ] || subset="$(printf '%s' "$SCENARIOS" | sha256sum | cut -c1-8)"
+  for av in $avenues; do
+    local recs=(); for unit in $(catalog_units "$av" "$SCENARIOS"); do recs+=(--record "$run/$av/$unit"); done
+    local merged=(); local m; for m in ${MERGED:-}; do merged+=(--merged "$m"); done
+    # shellcheck disable=SC2046 # the optional --only flag splits into two words
+    python3 "$run/harness/ops/federation-e2e/lib/verdict.py" --catalog "$run/harness/ops/federation-e2e/scenarios/catalog.yaml" \
+      ${recs[@]+"${recs[@]}"} --ref-name "$NAME" --ref-sha "$sha" --avenue "$av" --harness-sha "$hsha" --started "$started" \
+      ${merged[@]+"${merged[@]}"} $( [ "$SCENARIOS" = all ] || echo "--only $SCENARIOS" ) \
+      --harness-fp "$(fingerprint "$run/harness/ops/federation-e2e" "$SCENARIOS")" \
+      ${blocked:+--blocked-all "$blocked"} \
+      ${DIRECTORY_REF:+--directory-ref "$DIRECTORY_REF" --directory-sha "$DIRECTORY_SHA"} \
+      --out "$run/results-$av.json" --markdown "$run/results-$av.md" || rc=1
+    # Published as <sha12>-<avenue>-<subset>.json: runs of different scenario subsets never overwrite
+    # each other. harness.revision is the fingerprint without the subset; lib/matrix.py merges a ref's
+    # subsets and compares cells only on one revision.
+    if [ -n "$outd" ]; then
+      python3 - "$run/results-$av.json" "$outd/$short-$av-$subset.json" "$(fingerprint "$run/harness/ops/federation-e2e" "")" <<'PY'
+import json, sys
+r = json.load(open(sys.argv[1])); r["harness"]["revision"] = sys.argv[3]
+open(sys.argv[2], "w").write(json.dumps(r, indent=2) + "\n")
+PY
+    fi
+  done
+  if [ -n "$outd" ]; then
+    { echo "# Federation e2e: $NAME @ $short"; echo; echo "Run $run, harness $hsha, started $started."
+      [ -z "$DIRECTORY_REF" ] || echo "Peering directory: saltlick $DIRECTORY_REF @ $DIRECTORY_SHA (image fe2e-saltlick:${DIRECTORY_SHA:0:12})."
+      echo
+      for av in $avenues; do cat "$run/results-$av.md"; echo; done; } > "$outd/$short-$subset.md"
+    python3 "$HERE/lib/matrix.py" --out "$OUT" >/dev/null || true
+  fi
+  for av in $avenues; do sed -n '1,4p' "$run/results-$av.md"; done
+  echo "run: $run"
+  return "$rc"
+}
+
+cmd_up() {
+  local sha lab; sha="$(resolve "$REF")"; build "$sha"
+  [ -z "$DIRECTORY_REF" ] || directory_build "$DIRECTORY_SHA"
+  local run; run="$FE2E_HOME/runs/up-${sha:0:12}-$(date -u +%Y%m%dT%H%M%S)"; mkdir -p "$run"; snapshot_harness "$run"
+  if [ -n "$LAB_N" ]; then lab="$LAB_N"; mkdir -p "$FE2E_HOME/labs/l$lab"; echo "held-by-up" > "$FE2E_HOME/labs/l$lab/pid.up"; else lab="$(lab_take "up")"; fi
+  rm -f "$FE2E_HOME/labs/l$lab/pid"; echo "up" > "$FE2E_HOME/labs/l$lab/held"
+  run_unit "${FE2E_UP_UNIT:-pair}" "${AVENUE/both/goatbuilder}" "$sha" "$run" "$lab" 1
+  echo "lab $lab is up ($(lab_env "$lab")); env down --lab $lab removes it"
+}
+
+cmd_down() {
+  local i
+  if [ "$ALL" = 1 ]; then for i in $(seq 1 "$MAX_LAB"); do lab_clean "$i"; rm -rf "$FE2E_HOME/labs/l$i"; done; return 0; fi
+  [ -n "$LAB_N" ] || die "down needs --lab N or --all"
+  lab_clean "$LAB_N"; rm -rf "$FE2E_HOME/labs/l$LAB_N"
+}
+
+cmd_status() {
+  local i n
+  for i in $(seq 1 "$MAX_LAB"); do
+    n="$(docker ps -q --filter "label=org.goat.fe2e.lab=fe2e-l$i" | wc -l | tr -d ' ')"
+    if [ -d "$FE2E_HOME/labs/l$i" ] || [ "$n" != 0 ]; then
+      echo "lab $i: $n containers, held by $(cat "$FE2E_HOME/labs/l$i/pid" "$FE2E_HOME/labs/l$i/held" 2>/dev/null | head -1)"
+    fi
+  done
+}
+
+cmd_list() {
+  python3 - "$CATALOG" <<'PY'
+import sys, yaml
+cat = yaml.safe_load(open(sys.argv[1]))
+for s in cat["scenarios"]:
+    nb = f"  [not built: {s['not_built']}]" if s.get("not_built") else ""
+    print(f"{s['id']:<34} {s.get('runs_where','local'):<9} {s['title']}{nb}")
+PY
+}
+
+REF=""; AVENUE="both"; SCENARIOS="all"; OUT=""; NAME=""; LAB_N=""; ALL=0; MERGED=""; GOAT_VERSIONS=""
+DIRECTORY_REF=""; DIRECTORY_SHA=""
+CMD="${1:-}"; [ -n "$CMD" ] || usage 2; shift
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --ref) REF="$2"; shift 2 ;;
+    --avenue) AVENUE="$2"; shift 2 ;;
+    --scenario) SCENARIOS="$2"; shift 2 ;;
+    --jobs) JOBS="$2"; shift 2 ;;
+    --out) OUT="$2"; shift 2 ;;
+    --name) NAME="$2"; shift 2 ;;
+    --lab) LAB_N="$2"; shift 2 ;;
+    --all) ALL=1; shift ;;
+    --merged) MERGED="$MERGED $2"; shift 2 ;;
+    --goat-version) GOAT_VERSIONS="$GOAT_VERSIONS $2"; shift 2 ;;
+    --parties) export FE2E_UP_PARTIES="$2"; shift 2 ;;
+    --directory-ref) DIRECTORY_REF="$2"; shift 2 ;;
+    -h|--help) usage 0 ;;
+    *) die "unknown argument $1" ;;
+  esac
+done
+[ -n "$NAME" ] || NAME="${REF#origin/}"
+# Pinned released goat per sovereign: resolve to binaries before any unit starts.
+GOAT_VERSIONS_ASKED="$GOAT_VERSIONS"
+if [ -n "$GOAT_VERSIONS" ]; then
+  resolved=""
+  for kv in $GOAT_VERSIONS; do
+    if p="$(release_goat "${kv#*=}")"; then resolved="$resolved ${kv%%=*}=$p"; else resolved="$resolved ${kv%%=*}=unavailable:${kv#*=}"; fi
+  done
+  GOAT_VERSIONS="$resolved"
+fi
+export GOAT_VERSIONS GOAT_VERSIONS_ASKED
+# The directory's commit is resolved once, before any unit starts.
+if [ -n "$DIRECTORY_REF" ]; then
+  case "$CMD" in run|up|fingerprint) DIRECTORY_SHA="$(directory_resolve "$DIRECTORY_REF")" ;; *) die "--directory-ref applies to run, up and fingerprint" ;; esac
+fi
+export DIRECTORY_REF DIRECTORY_SHA
+case "$CMD" in
+  build) [ -n "$REF" ] || die "build needs --ref"; cmd_build ;;
+  run) [ -n "$REF" ] || die "run needs --ref"; cmd_run ;;
+  up) [ -n "$REF" ] || die "up needs --ref"; cmd_up ;;
+  down) cmd_down ;;
+  status) cmd_status ;;
+  list) cmd_list ;;
+  report) [ -n "$OUT" ] || die "report needs --out"; python3 "$HERE/lib/matrix.py" --out "$OUT" ;;
+  fingerprint) fingerprint "$HERE" "$SCENARIOS" ;;
+  *) usage 2 ;;
+esac

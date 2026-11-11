@@ -9,6 +9,17 @@ running: `goat --version`. To get the latest, see [Install & verify](install.md)
 > translated guide catches up on the next sizeable release. So if you're reading
 > a translated page and this one is in English, that's expected, not a gap.
 
+## Unreleased
+
+- **Federation is moving to goatbuilder.** The package verbs become
+  `goatbuilder federate init|lint|compose|diff|verify|apply`, with the same
+  flags and exit codes, and the procedure becomes `goatbuilder federate
+  <partner>` with the stages `plan`, `deploy`, `test` and `status`.
+  `goat federate <verb>` keeps working through the same code, so packages and
+  agreements are identical whichever tool made them, and prints one line on
+  stderr naming the goatbuilder command. Status: WIP until each default switch
+  lands; see `docs/operations/sovereign-federation-runbook.md` in goatcore.
+
 ## v0.5.10
 
 - **A goatnet's membership declaration is now a directory, not one file.**

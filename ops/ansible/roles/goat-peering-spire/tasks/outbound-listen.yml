@@ -1,0 +1,38 @@
+---
+# The address our SPIRE server reaches this edge's outbound forward on, when
+# peering_spire_outbound_listen is not set: the source address of this edge's
+# route to the server (peering_spire_server_addr). That is the address the
+# server's dial arrives on, read from the edge itself rather than typed; the
+# inventory's ansible_host is how the controller reaches the edge, which can be
+# another address (or loopback, when the controller is the edge).
+- name: peering-spire | the address our SPIRE server reaches this edge on
+  ansible.builtin.shell: |
+    set -o pipefail
+    ip -o route get {{ peering_spire_server_addr | quote }} | grep -oE 'src [0-9a-fA-F.:]+' | awk '{print $2; exit}'
+  args:
+    executable: /bin/bash
+  register: _ps_listen_route
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when:
+    - peering_spire_outbound_listen | length == 0
+    - peering_spire_server_addr | length > 0
+
+- name: peering-spire | listen where the server's dial arrives
+  ansible.builtin.set_fact:
+    peering_spire_outbound_listen: "{{ _ps_listen_route.stdout | default('') | trim }}"
+  when:
+    - peering_spire_outbound_listen | length == 0
+    - _ps_listen_route is not skipped
+
+- name: peering-spire | the outbound listen address is known
+  ansible.builtin.assert:
+    that:
+      - peering_spire_outbound_listen | length > 0
+    fail_msg: >-
+      goat-peering-spire cannot tell where to listen for our SPIRE server:
+      peering_spire_outbound_listen is not set, and this edge has no route to
+      peering_spire_server_addr ('{{ peering_spire_server_addr }}') to read the source
+      address from (ip route get). Set peering_spire_server_addr, or set
+      peering_spire_outbound_listen to the edge address the server reaches.

@@ -649,8 +649,16 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
         let p6 = plan(t.path(), &opts("zagros-b", "core", "zagros")).unwrap().into_iter().find(|p| p.n == 6).unwrap();
+        // A failing run keeps its log (mktemp); TMPDIR puts it in the fixture,
+        // so the test leaves nothing in the system temp directory.
         let run = |log: &str, rc: &str| {
-            Command::new("bash").args(["-euo", "pipefail", "-c", &p6.cmd]).env("FAKE_LOG", log).env("FAKE_RC", rc).output().unwrap()
+            Command::new("bash")
+                .args(["-euo", "pipefail", "-c", &p6.cmd])
+                .env("FAKE_LOG", log)
+                .env("FAKE_RC", rc)
+                .env("TMPDIR", t.path())
+                .output()
+                .unwrap()
         };
         let wt0 = "TASK [wireguard-kmod : check current wt0 driver] ***\nok: [node-x]\nTASK [wireguard-kmod : verify wt0 is kernelspace wireguard] ***\nFAILED - RETRYING: [node-x]: verify wt0 is kernelspace wireguard (12 retries left).\nfatal: [node-x]: FAILED! => {\"attempts\": 12, \"cmd\": \"ip -d link show wt0\", \"stderr\": \"Device \\\"wt0\\\" does not exist.\"}";
         let other = "TASK [wireguard-kmod : install the module] ***\nfatal: [node-x]: FAILED! => {\"msg\": \"modprobe: FATAL: Module wireguard not found\"}";

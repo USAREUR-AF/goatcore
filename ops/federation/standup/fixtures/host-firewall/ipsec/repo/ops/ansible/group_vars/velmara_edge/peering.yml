@@ -1,0 +1,5 @@
+peering_edge_name: xab
+peering_edge_remote_addr: "203.0.113.9:500"
+peering_edge_remote_link_ip: "169.254.10.5"
+peering_spire_enabled: true
+peering_spire_server_addr: "192.0.2.30"

@@ -1803,13 +1803,14 @@ dependencies = [
 
 [[package]]
 name = "goatbuilder"
-version = "0.4.3"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
  "chrono",
  "clap",
  "clap_complete",
+ "ed25519-dalek",
  "goat-errors",
  "goat-federation",
  "goat-fun",
@@ -1824,6 +1825,7 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "sha2 0.10.9",
+ "shlex",
  "similar",
  "tempfile",
  "toml 0.8.23",
