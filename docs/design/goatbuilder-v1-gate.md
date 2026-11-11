@@ -74,6 +74,7 @@ remains after it.
 | B7 | Backing a peering out removes everything the command created and nothing else | in review; lands with 0.5.0 | The back-out scenario, followed by a comparison of both hosts with their state before the peering |
 | B8 | ADR 1225 is accepted, and the design document's federation sections carry no "WIP" status line | Proposed | The record's status and the document |
 | B9 | Federation has run between two environments that are not the test laboratory | not measured | One peering between two standing goatnets, set up with the released binary, with both sides' acceptance reports kept as a measurement |
+| B10 | A peering can be driven from two machines when no single machine reaches both the edge host and the core host: an edge-side driver that holds no CA key and cannot reach the core, and a controller that can. The plan approval, the run journal and resume hold across the two | not measured. The phases run by number (`--from`, `--to`) on separate machines today; the single command has been measured only from one machine | A scenario with two drivers per sovereign, in which the edge-side driver has no CA key and no route to the core |
 
 ### C. It is proven on real machines, by people who did not build it
 
@@ -113,7 +114,7 @@ are proposed; an item moves only by a change to this table.
 The requirements depend on one another in this order. No dates are set here.
 
 1. **0.5.0.** B1 and B7.
-2. **Federation completed.** B2 to B6, each its own release in the 0.x line, each behind a switch until its scenario passes.
+2. **Federation completed.** B2 to B6 and B10, each its own release in the 0.x line, each behind a switch until its scenario passes.
 3. **Federation on standing goatnets.** B9, then B8.
 4. **Real machines.** C3, then C1 and C2 on hardware.
 5. **The promise.** A1 to A5 and the decision in D on the pull converger. From this point the surfaces are frozen.
