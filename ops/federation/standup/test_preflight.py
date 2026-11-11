@@ -4,6 +4,7 @@ import importlib.util
 import io
 from pathlib import Path
 import subprocess
+import tempfile
 import unittest
 import unittest.mock as mock
 
@@ -98,6 +99,34 @@ c_core
         inv += "\n[monitoring]\nedge-c\n"
         self.assertEqual(self.p.shared_inventory_names(inv, ["c_edge", "c_core"]), [])
 
+
+
+class EdgeCoreEndpoints(unittest.TestCase):
+    def setUp(self):
+        spec = importlib.util.spec_from_file_location("preflight_ep", Path(__file__).with_name("preflight.py"))
+        self.p = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.p)
+        self.tmp = tempfile.TemporaryDirectory()
+        self.gv = Path(self.tmp.name) / "ops/ansible/group_vars/xab_edge"
+        self.gv.mkdir(parents=True)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_the_rendered_deployment_half_is_read_beside_the_hand_written_one(self):
+        (self.gv / "deployment.yml").write_text(
+            'goat_zenoh_edge_core_endpoints:\n  - "tls/192.0.2.20:7447"\n')
+        (self.gv / "peering-deployment.yml").write_text(
+            "goat_zenoh_edge_core_endpoints:\n"
+            '  - "tls/core.example.org:7447#root_ca_certificate_file=/x/our-ca.pem"\n'
+            '  - "tls/192.0.2.20:7447"\n'
+            'goat_fed_other_endpoint: "tls/198.51.100.9:7447"\n')
+        self.assertEqual(self.p.edge_core_endpoints(self.tmp.name, "xab_edge"),
+                         ["192.0.2.20", "core.example.org"])
+
+    def test_nothing_declared_is_an_empty_list(self):
+        self.assertEqual(self.p.edge_core_endpoints(self.tmp.name, "xab_edge"), [])
+        self.assertEqual(self.p.edge_core_endpoints(self.tmp.name, "no_such_edge"), [])
 
 if __name__ == "__main__":
     unittest.main()
