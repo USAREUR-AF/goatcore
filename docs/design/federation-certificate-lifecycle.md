@@ -76,7 +76,7 @@ CA serial file.
 
 Once every requested pair is issued or reused, the helper places our CA, the
 certificate whose fingerprint the agreement names for us, at
-`<out>/our-ca.pem` (mode 0644), and rewrites it only when its content differs.
+`<out>/our-ca.pem` (mode 0640: the edge reads it as root through its bind mount, and the directory is 0700), and rewrites it only when its content differs (a wider mode left by an earlier run is narrowed).
 The rendered deployment halves (`goatbuilder federate allocate`, `deployment:
 rendered`) name that file as the CA of the edge's inward endpoint
 (`#root_ca_certificate_file=`) and as `goat_fed_republisher_core_ca_src`. Before
