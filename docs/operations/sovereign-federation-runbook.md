@@ -122,12 +122,16 @@ The decision has two parts, each with one owner:
       site: alpha
       edge_class: edge
       # offer: [REL-ALL]            # optional: only narrows what federation.toml offers
-      # transport: wireguard        # or ipsec-fips; default: what both packages accept
+      # tunnel: wireguard           # or ipsec; the agreement picks the transport from both packages
       # values: {}                  # pins for the per-peering values
   ```
 
-The verified agreement determines what may flow. Your configuration may narrow it or demand
-stronger checks; it never widens it, and there is no second hand-kept access list or lane list.
+The verified agreement determines what may flow, and which transport carries it: it picks the
+transport from both packages' measured capabilities, and phase 11 runs the play for that transport.
+There is no `transport` key on a peering. The optional `tunnel` key (`wireguard` or `ipsec`) is this
+side's local choice; a `tunnel` that disagrees with the agreement is a configuration to correct,
+never an override. Your configuration may narrow what flows or demand stronger checks; it never
+widens it, and there is no second hand-kept access list or lane list.
 `init`, `lint`, `compose`, `diff`, `verify`, `apply`, `plan`, `deploy`, `test` and `status` are
 verbs and can never be a partner name.
 
