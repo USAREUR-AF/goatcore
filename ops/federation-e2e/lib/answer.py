@@ -113,38 +113,37 @@ try:
     import termios
     fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 50, 200, 0, 0))
 except Exception:
+    # The window size only widens the transcript; the prompts are answered at any width.
     pass
 
-out = open(a.transcript, "ab")
-typed = open(a.typed, "a")
-text, answered_at = "", 0
-end = time.time() + a.deadline
-while True:
-    if time.time() > end:
-        os.kill(pid, signal.SIGTERM)
-        typed.write(json.dumps({"run": a.label, "question": None, "typed": None, "why": f"no end after {a.deadline} s: terminated"}) + "\n")
-        break
-    r, _, _ = select.select([fd], [], [], 1.0)
-    if fd in r:
-        try:
-            b = os.read(fd, 65536)
-        except OSError:
+with open(a.transcript, "ab") as out, open(a.typed, "a") as typed:
+    text, answered_at = "", 0
+    end = time.time() + a.deadline
+    while True:
+        if time.time() > end:
+            os.kill(pid, signal.SIGTERM)
+            typed.write(json.dumps({"run": a.label, "question": None, "typed": None, "why": f"no end after {a.deadline} s: terminated"}) + "\n")
             break
-        if not b:
-            break
-        out.write(b); out.flush()
-        sys.stdout.buffer.write(b); sys.stdout.buffer.flush()
-        text += ANSI.sub("", b.decode("utf-8", "replace")).replace("\r", "")
-        continue
-    # Quiet for a second: a question waits at the end of the output, with no newline after it.
-    tail = text[answered_at:].rstrip(" ")
-    last = tail.rsplit("\n", 1)[-1] if tail else ""
-    if last and QUESTION.search(last + ":") and (last.endswith(":") or last.endswith("?")):
-        ans, why = decide(last, text)
-        typed.write(json.dumps({"run": a.label, "question": last.strip(), "typed": ans, "why": why}) + "\n"); typed.flush()
-        os.write(fd, (ans + "\n").encode())
-        answered_at = len(text)
-_, status = os.waitpid(pid, 0)
-rc = os.waitstatus_to_exitcode(status)
-out.close(); typed.close()
+        r, _, _ = select.select([fd], [], [], 1.0)
+        if fd in r:
+            try:
+                b = os.read(fd, 65536)
+            except OSError:
+                break
+            if not b:
+                break
+            out.write(b); out.flush()
+            sys.stdout.buffer.write(b); sys.stdout.buffer.flush()
+            text += ANSI.sub("", b.decode("utf-8", "replace")).replace("\r", "")
+            continue
+        # Quiet for a second: a question waits at the end of the output, with no newline after it.
+        tail = text[answered_at:].rstrip(" ")
+        last = tail.rsplit("\n", 1)[-1] if tail else ""
+        if last and QUESTION.search(last + ":") and (last.endswith(":") or last.endswith("?")):
+            ans, why = decide(last, text)
+            typed.write(json.dumps({"run": a.label, "question": last.strip(), "typed": ans, "why": why}) + "\n"); typed.flush()
+            os.write(fd, (ans + "\n").encode())
+            answered_at = len(text)
+    _, status = os.waitpid(pid, 0)
+    rc = os.waitstatus_to_exitcode(status)
 sys.exit(rc if rc >= 0 else 128 - rc)

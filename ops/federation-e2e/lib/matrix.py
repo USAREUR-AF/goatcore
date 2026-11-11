@@ -105,7 +105,7 @@ def main():
     # integration head before that module (lib/watch.sh --reverts).
     lines += ["", "## Module reverts on the integration branch", "",
               "Each module reverted on the integration head, against the integration head before it. "
-              "PASS: every scenario has the same outcome on both; FAIL: the differences are listed.", ""]
+              + "PASS: every scenario has the same outcome on both; FAIL: the differences are listed.", ""]
     rows = 0
     for (name, av), r in sorted(best.items()):
         if not name.startswith("integration-revert-"):

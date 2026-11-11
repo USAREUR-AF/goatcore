@@ -42,11 +42,13 @@ def main():
     with open(a.expect, encoding="utf-8") as fh:
         exp = json.load(fh)
     delivered = {}
+    ok = False
     try:
         with open(a.counters, encoding="utf-8") as fh:
             for m in re.finditer(r"(?:dport|proto-dst) (\d+) counter packets (\d+)", fh.read()):
                 delivered[m.group(1)] = delivered.get(m.group(1), 0) + int(m.group(2))
     except OSError:
+        # No counters file: every UDP port is judged by its probe alone.
         pass
     udp_open, udp_state = [], {}
     for port, how in scan.get("udp", {}).items():

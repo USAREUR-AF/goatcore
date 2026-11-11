@@ -25,13 +25,28 @@ ROOT = os.path.dirname(HERE)
 FAIL = []
 
 
+def read_json(path):
+    with open(path, encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+def read_yaml(path):
+    with open(path, encoding="utf-8") as fh:
+        return yaml.safe_load(fh)
+
+
+def write_text(path, text):
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(text)
+
+
 def check(cond, what):
     if not cond:
         FAIL.append(what)
 
 
 def catalog_checks():
-    cat = yaml.safe_load(open(os.path.join(ROOT, "scenarios", "catalog.yaml")))
+    cat = read_yaml(os.path.join(ROOT, "scenarios", "catalog.yaml"))
     ids = [s["id"] for s in cat["scenarios"]]
     check(len(ids) == len(set(ids)), "catalog: duplicate scenario ids")
     for s in cat["scenarios"]:
@@ -71,14 +86,14 @@ def verdict_checks():
     ]}
     with tempfile.TemporaryDirectory() as t:
         cp = os.path.join(t, "catalog.yaml")
-        yaml.safe_dump(cat, open(cp, "w"))
+        write_text(cp, yaml.safe_dump(cat))
         u1, u2 = os.path.join(t, "u1"), os.path.join(t, "u2")
         os.makedirs(u1); os.makedirs(u2)
         write(u1, "report.jsonl", [step(1, "s-xaa-a", "pass"), step(2, "s-b", "fail")])
         write(u1, "marks.jsonl", [{"check": "excluded.e", "outcome": "NOT APPLICABLE", "reason": "agreement offers no such flow"},
                                   {"check": "mark-beats-pass.g", "outcome": "NOT APPLICABLE", "reason": "nothing to exercise on this host"},
                                   {"check": "fail-beats-mark.h", "outcome": "BLOCKED", "reason": "an excuse"}])
-        json.dump({"reason": "probe did not come up"}, open(os.path.join(u2, "stopped.json"), "w"))
+        write_text(os.path.join(u2, "stopped.json"), json.dumps({"reason": "probe did not come up"}))
         out = os.path.join(t, "r.json")
         p = subprocess.run([sys.executable, os.path.join(ROOT, "lib", "verdict.py"), "--catalog", cp, "--record", u1, "--record", u2,
                             "--ref-name", "fixture", "--ref-sha", "0" * 40, "--avenue", "goatbuilder", "--out", out],
@@ -86,7 +101,7 @@ def verdict_checks():
         check(os.path.exists(out), f"verdict wrote no result: {p.stderr[-300:]}")
         if not os.path.exists(out):
             return
-        r = json.load(open(out))
+        r = read_json(out)
         by = {s["id"]: s for s in r["scenarios"]}
         want = {"all-pass": "PASS", "one-fails": "FAIL", "stopped": "BLOCKED", "not-run": "SKIP", "excluded": "NOT APPLICABLE", "optional-fail": "PASS",
                 "mark-beats-pass": "NOT APPLICABLE", "fail-beats-mark": "FAIL"}
@@ -102,7 +117,7 @@ def verdict_checks():
         p4 = subprocess.run([sys.executable, os.path.join(ROOT, "lib", "verdict.py"), "--catalog", cp, "--record", u1,
                              "--blocked-all", "the tools did not build", "--harness-fp", "abc123",
                              "--ref-name", "fixture", "--ref-sha", "0" * 40, "--avenue", "goatbuilder", "--out", out + ".4"], capture_output=True, text=True)
-        r4 = json.load(open(out + ".4")) if os.path.exists(out + ".4") else {"scenarios": []}
+        r4 = read_json(out + ".4") if os.path.exists(out + ".4") else {"scenarios": []}
         check(p4.returncode == 1 and r4["scenarios"] and all(x["outcome"] == "BLOCKED" for x in r4["scenarios"]), "verdict: --blocked-all did not make every scenario BLOCKED")
         check(r4.get("harness", {}).get("fingerprint") == "abc123", "verdict: the harness fingerprint is not in the result")
         check("directory" not in r4, "verdict: a result on the pinned directory carries a directory field")
@@ -110,7 +125,7 @@ def verdict_checks():
         p5 = subprocess.run([sys.executable, os.path.join(ROOT, "lib", "verdict.py"), "--catalog", cp, "--record", u1,
                              "--directory-ref", "origin/example", "--directory-sha", "1" * 40,
                              "--ref-name", "fixture", "--ref-sha", "0" * 40, "--avenue", "goatbuilder", "--out", out + ".5"], capture_output=True, text=True)
-        r5 = json.load(open(out + ".5")) if os.path.exists(out + ".5") else {}
+        r5 = read_json(out + ".5") if os.path.exists(out + ".5") else {}
         check(r5.get("directory") == {"ref": "origin/example", "sha": "1" * 40}, "verdict: --directory-ref is not in the result: " + p5.stderr[-300:])
         # A mark may not say PASS or FAIL.
         write(u2, "marks.jsonl", [{"check": "stopped.c", "outcome": "PASS", "reason": "trust me"}])
@@ -119,7 +134,7 @@ def verdict_checks():
         check(p3.returncode != 0 and "may say only" in p3.stderr + p3.stdout, "verdict: a PASS mark was accepted")
         try:
             import jsonschema
-            jsonschema.validate(json.load(open(out)), json.load(open(os.path.join(ROOT, "result.schema.json"))))
+            jsonschema.validate(read_json(out), read_json(os.path.join(ROOT, "result.schema.json")))
         except ImportError:
             FAIL.append("jsonschema is not installed")
 
@@ -147,7 +162,7 @@ table inet goat_host_firewall {
 """
     with tempfile.TemporaryDirectory() as d:
         f = os.path.join(d, "ruleset.nft")
-        open(f, "w").write(ruleset)
+        write_text(f, ruleset)
 
         def run(saddr, iif):
             p = subprocess.run([sys.executable, os.path.join(ROOT, "lib", "fwdeclared.py"), "--ruleset", f, "--saddr", saddr, "--iif", iif],
@@ -164,7 +179,7 @@ table inet goat_host_firewall {
         check(r and r["udp"] == [51820] and r["by_port"].get("udp/51820") == ["wg-fed0/tunnel"], "fwdeclared: the tunnel port from the partner endpoint")
         r = run("203.0.113.5", "eth0")
         check(r and r["tcp"] == [7447], "fwdeclared: a rule outside chain input or a fixed expression was counted")
-        open(f, "w").write("table inet other {}\n")
+        write_text(f, "table inet other {}\n")
         check(run("198.51.100.10", "eth0") is None, "fwdeclared: a file without the goat_host_firewall table was read as a rule set")
 
 
