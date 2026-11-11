@@ -94,6 +94,9 @@ jobs:
   windows-portability:
     name: windows/amd64 portability check
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: read
     timeout-minutes: 20
     env:
       # `cargo check` runs build scripts (ring compiles C/asm) but never
@@ -103,6 +106,7 @@ jobs:
       AR_x86_64_pc_windows_gnu: x86_64-w64-mingw32-ar
     steps:
       - uses: actions/checkout@v4
+      - uses: ./.github/actions/apt-failover
 
       - name: Install Rust toolchain (stable, target x86_64-pc-windows-gnu)
         uses: dtolnay/rust-toolchain@stable
@@ -118,11 +122,15 @@ jobs:
           set -euo pipefail
           ubuntu_sources="$(mktemp)"
           trap 'rm -f "$ubuntu_sources"' EXIT
-          cat > "$ubuntu_sources" <<'SOURCES'
-          deb [signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] https://archive.ubuntu.com/ubuntu noble main restricted universe multiverse
-          deb [signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] https://archive.ubuntu.com/ubuntu noble-updates main restricted universe multiverse
-          deb [signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] https://archive.ubuntu.com/ubuntu noble-backports main restricted universe multiverse
-          deb [signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] https://security.ubuntu.com/ubuntu noble-security main restricted universe multiverse
+          # When apt-failover found the mirror down, the same sources over plain http,
+          # which its cache serves (an https source bypasses the proxy). The archive
+          # keyring verifies every index either way.
+          scheme=https; [ "${APT_FAILOVER:-}" = 1 ] && scheme=http
+          cat > "$ubuntu_sources" <<SOURCES
+          deb [signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] $scheme://archive.ubuntu.com/ubuntu noble main restricted universe multiverse
+          deb [signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] $scheme://archive.ubuntu.com/ubuntu noble-updates main restricted universe multiverse
+          deb [signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] $scheme://archive.ubuntu.com/ubuntu noble-backports main restricted universe multiverse
+          deb [signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] $scheme://security.ubuntu.com/ubuntu noble-security main restricted universe multiverse
           SOURCES
           apt_args=(-o "Dir::Etc::sourcelist=$ubuntu_sources" -o Dir::Etc::sourceparts=-
                     -o Acquire::Retries=3 -o Acquire::http::Timeout=20
