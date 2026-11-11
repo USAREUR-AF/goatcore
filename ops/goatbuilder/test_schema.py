@@ -318,6 +318,7 @@ class ProjectValues(unittest.TestCase):
                                 "goatnets:\n  dev:\n    members: [dev_hosts]\n")
         self.ladder = self._write("ladder.yaml", "rungs:\n  - {name: dev, goatnet: dev, status: live}\n")
         self.none = os.path.join(d, "absent.yml")
+        self.federation = self._write("federation.yml", "sites: {}\npeerings: []\n")
 
     def _write(self, name, text):
         path = os.path.join(self.tmp.name, name)
@@ -326,7 +327,9 @@ class ProjectValues(unittest.TestCase):
         return path
 
     def gen(self, project, posture=None):
-        return gen_config.generate(self.pins, self.ladder, project, posture or self.none)
+        return gen_config.generate(
+            self.pins, self.ladder, project, posture or self.none, self.federation
+        )
 
     def test_no_project_file_names_no_one(self):
         cfg = self.gen(self.none)
@@ -376,6 +379,347 @@ class ProjectValues(unittest.TestCase):
             with self.subTest(word=word), self.assertRaises(SystemExit) as e:
                 self.gen(self._write("project.yml", text))
             self.assertIn(word, str(e.exception))
+
+
+class FederationValues(unittest.TestCase):
+    """federation.yml is the one source for generated sites and peerings."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.pins = self._write(
+            "pins.yaml",
+            "components:\n  example-service: {}\n"
+            "goatnets:\n  dev:\n    members: [dev_hosts]\n",
+        )
+        self.ladder = self._write(
+            "ladder.yaml", "rungs:\n  - {name: dev, goatnet: dev, status: live}\n"
+        )
+        self.project = self._write(
+            "project.yml",
+            "repo:\n  source: example-org/example-repo\n"
+            "  image_namespace: ghcr.io/example-org\n",
+        )
+        self.posture = self._write("posture.yml", "store: env-file\n")
+        self.out = os.path.join(self.tmp.name, "goatbuilder.yaml")
+
+    def _write(self, name, text):
+        path = os.path.join(self.tmp.name, name)
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        return path
+
+    def _source(self, peerings="[]", classes="{core: {}, edge: {}}"):
+        return self._write(
+            "federation.yml",
+            "sites:\n"
+            "  dev:\n"
+            "    - name: alpha\n"
+            "      role: founder\n"
+            f"      classes: {classes}\n"
+            f"peerings: {peerings}\n",
+        )
+
+    def _generate(self, federation):
+        return gen_config.generate(
+            self.pins, self.ladder, self.project, self.posture, federation
+        )
+
+    def _read_output(self):
+        with open(self.out, "rb") as fh:
+            return fh.read()
+
+    def _legacy_text(self, config):
+        return "".join(
+            line for line in gen_config.render(config).splitlines(keepends=True)
+            if not line.startswith(gen_config.FEDERATION_DIGEST_PREFIX)
+        )
+
+    def _marked_text(self, config, marker_config):
+        marker = gen_config._federation_digest(marker_config)
+        return (
+            gen_config.HEADER
+            + f"{gen_config.FEDERATION_DIGEST_PREFIX}{marker}\n"
+            + gen_config.yaml.safe_dump(
+                config, sort_keys=False, default_flow_style=False, width=100
+            )
+        )
+
+    def _assert_refused_unchanged(self, config, source, fragment):
+        before = (self._read_output(), os.stat(self.out).st_mtime_ns)
+        with self.assertRaises(SystemExit) as e:
+            gen_config.write_or_check(config, False, self.out, self.tmp.name, source)
+        self.assertIn(fragment, str(e.exception))
+        after = (self._read_output(), os.stat(self.out).st_mtime_ns)
+        self.assertEqual(before, after)
+        return e.exception
+
+    def test_no_peering_omits_the_optional_block(self):
+        cfg = self._generate(self._source())
+        self.assertNotIn("peerings", cfg)
+        self.assertEqual(validate.errors_for(cfg), [])
+
+    def test_one_peering_and_its_site_survive_and_validate(self):
+        source = self._source(
+            "[{with: velmara, environment: dev, site: alpha, edge_class: edge}]"
+        )
+        cfg = self._generate(source)
+        self.assertEqual(cfg["environments"][0]["sites"][0]["name"], "alpha")
+        self.assertEqual([row["with"] for row in cfg["peerings"]], ["velmara"])
+        self.assertEqual(validate.errors_for(cfg), [])
+
+    def test_multiple_peerings_survive_in_declared_order(self):
+        source = self._source(
+            "[{with: velmara, environment: dev, site: alpha, edge_class: edge}, "
+            "{with: xab, environment: dev, site: alpha, edge_class: edge}]"
+        )
+        cfg = self._generate(source)
+        self.assertEqual([row["with"] for row in cfg["peerings"]], ["velmara", "xab"])
+        self.assertEqual(validate.errors_for(cfg), [])
+
+    def test_render_is_deterministic_with_federation(self):
+        source = self._source(
+            "[{with: velmara, environment: dev, site: alpha, edge_class: edge}]"
+        )
+        first = gen_config.render(self._generate(source))
+        second = gen_config.render(self._generate(source))
+        self.assertEqual(first, second)
+
+    def test_regeneration_preserves_declarations_and_check_is_read_only(self):
+        source = self._source(
+            "[{with: velmara, environment: dev, site: alpha, edge_class: edge}]"
+        )
+        cfg = self._generate(source)
+        gen_config.write_or_check(cfg, False, self.out, self.tmp.name, source)
+        before = (self._read_output(), os.stat(self.out).st_mtime_ns)
+        gen_config.write_or_check(cfg, True, self.out, self.tmp.name, source)
+        after = (self._read_output(), os.stat(self.out).st_mtime_ns)
+        self.assertEqual(before, after)
+        loaded = gen_config.yaml.safe_load(before[0])
+        self.assertEqual(loaded["environments"][0]["sites"][0]["name"], "alpha")
+        self.assertEqual(loaded["peerings"][0]["with"], "velmara")
+
+        drifted = copy.deepcopy(cfg)
+        drifted["repo"]["signing"] = "cosign"
+        with self.assertRaises(SystemExit) as e:
+            gen_config.write_or_check(drifted, True, self.out, self.tmp.name, source)
+        self.assertIn("DRIFT", str(e.exception))
+        self.assertEqual((self._read_output(), os.stat(self.out).st_mtime_ns), before)
+
+    def test_refuses_malformed_or_undeclared_source(self):
+        cases = [
+            ("sites: []\npeerings: []\n", "sites:"),
+            ("sites: {}\npeerings: {}\n", "peerings:"),
+            ("sites: {}\npeerings: []\nsurprise: true\n", "surprise"),
+            ("sites:\n  other: [{name: alpha}]\npeerings: []\n", "undeclared environments"),
+            (
+                "sites:\n  dev: [{name: alpha, classes: {core: {}}}]\n"
+                "peerings: [{with: velmara, environment: dev, site: alpha, edge_class: edge}]\n",
+                "edge_class",
+            ),
+        ]
+        for i, (text, fragment) in enumerate(cases):
+            with self.subTest(fragment=fragment), self.assertRaises(SystemExit) as e:
+                self._generate(self._write(f"bad-{i}.yml", text))
+            self.assertIn(fragment, str(e.exception))
+
+    def test_unhashable_site_and_peering_identifiers_are_actionable_refusals(self):
+        cases = [
+            (
+                "sites:\n  dev: [{name: [alpha], classes: {edge: {}}}]\npeerings: []\n",
+                "sites.dev[0].name",
+            ),
+            (
+                "sites:\n  dev: [{name: alpha, classes: {edge: {}}}]\n"
+                "peerings: [{with: velmara, environment: [dev], site: alpha, edge_class: edge}]\n",
+                "peerings[0].environment",
+            ),
+            (
+                "sites:\n  dev: [{name: alpha, classes: {edge: {}}}]\n"
+                "peerings: [{with: velmara, environment: dev, site: [alpha], edge_class: edge}]\n",
+                "peerings[0].site",
+            ),
+            (
+                "sites:\n  dev: [{name: alpha, classes: {edge: {}}}]\n"
+                "peerings: [{with: [velmara], environment: dev, site: alpha, edge_class: edge}]\n",
+                "peerings[0].with",
+            ),
+        ]
+        for i, (text, field) in enumerate(cases):
+            with self.subTest(field=field), self.assertRaises(SystemExit) as e:
+                self._generate(self._write(f"identifier-{i}.yml", text))
+            self.assertIn(field, str(e.exception))
+            self.assertIn("non-empty string", str(e.exception))
+
+    def test_legacy_migration_refuses_same_id_site_class_loss(self):
+        source = self._source(classes="{core: {}}")
+        wanted = self._generate(source)
+        existing = copy.deepcopy(wanted)
+        existing["environments"][0]["sites"][0]["classes"]["edge"] = {}
+        with open(self.out, "w", encoding="utf-8") as fh:
+            fh.write(self._legacy_text(existing))
+        self._assert_refused_unchanged(wanted, source, "classes.edge")
+
+    def test_legacy_migration_refuses_changed_peering_trust_and_offer(self):
+        old_source = self._source(
+            "[{with: velmara, environment: dev, site: alpha, edge_class: edge, "
+            "trust: spire-federation, offer: [REL-ALL]}]"
+        )
+        existing = self._generate(old_source)
+        with open(self.out, "w", encoding="utf-8") as fh:
+            fh.write(self._legacy_text(existing))
+        new_source = self._source(
+            "[{with: velmara, environment: dev, site: alpha, edge_class: edge, "
+            "trust: handshake, offer: [REL-SUB]}]"
+        )
+        wanted = self._generate(new_source)
+        error = self._assert_refused_unchanged(wanted, new_source, "trust")
+        self.assertIn("offer", str(error))
+
+    def test_legacy_migration_refuses_omitted_peering_fields(self):
+        full_source = self._source(
+            "[{with: velmara, environment: dev, site: alpha, edge_class: edge, "
+            "trust: spire-federation, offer: [REL-ALL]}]"
+        )
+        existing = self._generate(full_source)
+        with open(self.out, "w", encoding="utf-8") as fh:
+            fh.write(self._legacy_text(existing))
+        sparse_source = self._source(
+            "[{with: velmara, environment: dev, site: alpha, edge_class: edge}]"
+        )
+        wanted = self._generate(sparse_source)
+        error = str(self._assert_refused_unchanged(wanted, sparse_source, "trust"))
+        self.assertIn("peerings[dev/velmara].trust", error)
+        self.assertIn("peerings[dev/velmara].offer", error)
+
+    def test_legacy_migration_refuses_missing_site_and_peering_ids(self):
+        source = self._source()
+        wanted = self._generate(source)
+        existing = copy.deepcopy(wanted)
+        existing["environments"][0]["sites"].append(
+            {"name": "bravo", "role": "joiner", "joins": "alpha", "classes": {"edge": {}}}
+        )
+        existing["peerings"] = [
+            {"with": "xab", "environment": "dev", "site": "alpha", "edge_class": "edge"}
+        ]
+        with open(self.out, "w", encoding="utf-8") as fh:
+            fh.write(self._legacy_text(existing))
+        error = self._assert_refused_unchanged(wanted, source, "sites[dev/bravo]")
+        self.assertIn("peerings[dev/xab]", str(error))
+
+    def test_tampered_marked_output_is_not_trusted(self):
+        source = self._source(
+            "[{with: velmara, environment: dev, site: alpha, edge_class: edge}]"
+        )
+        wanted = self._generate(source)
+        tampered = copy.deepcopy(wanted)
+        tampered["peerings"][0]["offer"] = ["REL-ALL"]
+        with open(self.out, "w", encoding="utf-8") as fh:
+            fh.write(self._marked_text(tampered, wanted))
+        self._assert_refused_unchanged(wanted, source, "offer")
+
+    def test_adopted_output_allows_later_intentional_source_changes(self):
+        original_source = self._source(
+            "[{with: velmara, environment: dev, site: alpha, edge_class: edge, "
+            "trust: spire-federation, offer: [REL-ALL]}]"
+        )
+        original = self._generate(original_source)
+        with open(self.out, "w", encoding="utf-8") as fh:
+            fh.write(self._legacy_text(original))
+
+        gen_config.write_or_check(
+            original, False, self.out, self.tmp.name, original_source
+        )
+        adopted = self._read_output()
+        self.assertIn(gen_config.FEDERATION_DIGEST_PREFIX.encode(), adopted)
+
+        changed_source = self._source(classes="{core: {}}")
+        changed = self._generate(changed_source)
+        gen_config.write_or_check(
+            changed, False, self.out, self.tmp.name, changed_source
+        )
+        self.assertEqual(self._read_output(), gen_config.render(changed).encode())
+
+    def test_missing_source_cannot_remove_adopted_declarations(self):
+        source = self._source(
+            "[{with: velmara, environment: dev, site: alpha, edge_class: edge}]"
+        )
+        adopted = self._generate(source)
+        gen_config.write_or_check(adopted, False, self.out, self.tmp.name, source)
+        os.unlink(source)
+        without_source = self._generate(source)
+        error = self._assert_refused_unchanged(
+            without_source, source, "is missing"
+        )
+        self.assertIn("sites: {}", str(error))
+        self.assertIn("peerings: []", str(error))
+
+    def test_explicit_empty_source_removes_adopted_declarations(self):
+        source = self._source(
+            "[{with: velmara, environment: dev, site: alpha, edge_class: edge}]"
+        )
+        adopted = self._generate(source)
+        gen_config.write_or_check(adopted, False, self.out, self.tmp.name, source)
+        self._write("federation.yml", "sites: {}\npeerings: []\n")
+        removed = self._generate(source)
+        gen_config.write_or_check(removed, False, self.out, self.tmp.name, source)
+        loaded = gen_config.yaml.safe_load(self._read_output())
+        self.assertNotIn("peerings", loaded)
+        self.assertTrue(all("sites" not in env for env in loaded["environments"]))
+        self.assertEqual(validate.errors_for(loaded), [])
+
+    def test_incomplete_or_null_source_cannot_remove_adopted_declarations(self):
+        source = self._source(
+            "[{with: velmara, environment: dev, site: alpha, edge_class: edge}]"
+        )
+        adopted = self._generate(source)
+        gen_config.write_or_check(adopted, False, self.out, self.tmp.name, source)
+        cases = [
+            ("", "missing required top-level keys"),
+            ("{}\n", "missing required top-level keys"),
+            ("sites: {}\n", "'peerings'"),
+            ("peerings: []\n", "'sites'"),
+            ("sites: null\npeerings: []\n", "`sites:` must be a mapping"),
+            ("sites: {}\npeerings: null\n", "`peerings:` must be a list"),
+        ]
+        for text, fragment in cases:
+            before = (self._read_output(), os.stat(self.out).st_mtime_ns)
+            with self.subTest(source=text), self.assertRaises(SystemExit) as e:
+                self._generate(self._write("federation.yml", text))
+            self.assertIn(fragment, str(e.exception))
+            self.assertIn("federation.yml", str(e.exception))
+            after = (self._read_output(), os.stat(self.out).st_mtime_ns)
+            self.assertEqual(before, after)
+
+    def test_duplicate_federation_source_keys_are_refused_without_output_change(self):
+        source = self._source(
+            "[{with: velmara, environment: dev, site: alpha, edge_class: edge}]"
+        )
+        adopted = self._generate(source)
+        gen_config.write_or_check(adopted, False, self.out, self.tmp.name, source)
+        cases = [
+            (
+                "sites:\n"
+                "  dev: [{name: alpha, classes: {edge: {}}}]\n"
+                "  dev: [{name: bravo, classes: {edge: {}}}]\n"
+                "peerings: []\n",
+                "duplicate key 'dev'",
+            ),
+            (
+                "sites:\n  dev: [{name: alpha, classes: {edge: {}}}]\n"
+                "peerings: []\n"
+                "peerings: [{with: velmara, environment: dev, site: alpha, edge_class: edge}]\n",
+                "duplicate key 'peerings'",
+            ),
+        ]
+        for text, fragment in cases:
+            before = (self._read_output(), os.stat(self.out).st_mtime_ns)
+            with self.subTest(fragment=fragment), self.assertRaises(SystemExit) as e:
+                self._generate(self._write("federation.yml", text))
+            self.assertIn(fragment, str(e.exception))
+            self.assertIn("federation.yml", str(e.exception))
+            after = (self._read_output(), os.stat(self.out).st_mtime_ns)
+            self.assertEqual(before, after)
 
 
 @unittest.skipUnless(HAS_LIVE_LADDER, "ops/release/ladder.yaml has no rungs in this tree")

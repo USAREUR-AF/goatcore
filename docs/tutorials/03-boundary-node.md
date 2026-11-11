@@ -156,8 +156,10 @@ is the sovereign-federation runbook
    [<peering>_edge]
    <edge-host> ansible_host=<address on the peering transport or the mesh> ansible_user=ubuntu
    ```
-3. **The peering declared**, when you keep peerings in `goatbuilder.yaml`: a row
-   under `peerings:` for this counterparty on this environment. With any peering
+3. **The peering declared** in `ops/goatbuilder/federation.yml`: a row under
+   `peerings:` for this counterparty on this environment, referring to a site in
+   that file's `sites:` map. Run `python3 ops/goatbuilder/gen-config.py` to
+   produce `goatbuilder.yaml`; never edit the generated copy. With any peering
    declared, the one you name must be among them, so a typo is refused before
    anything runs.
 4. **A peering directory both sides reach** (saltlick), named by

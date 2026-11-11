@@ -9,7 +9,7 @@ goatbuilder works for any team that points it at its own config, so nothing it p
 
 ## Where a value comes from
 
-A project declares its values in `ops/goatbuilder/goatbuilder.yaml`. Where that file is generated, `gen-config.py` takes `repo:` and `deploy:` from `ops/goatbuilder/project.yml` and `secrets:` from `ops/goatbuilder/posture.yml`; a deployment that keeps its values in a private overlay carries its own copies of both files there. An environment variable overrides a value for one command. A value nobody declared falls back to a name that belongs to no project, or the command refuses when no such name can be right.
+A project declares its values in `ops/goatbuilder/goatbuilder.yaml`. Where that file is generated, `gen-config.py` takes `repo:` and `deploy:` from `ops/goatbuilder/project.yml`, `secrets:` from `ops/goatbuilder/posture.yml`, and sites and peerings from `ops/goatbuilder/federation.yml`; a deployment that keeps its values in a private overlay carries its own copies of all three files there. An environment variable overrides a value for one command. A value nobody declared falls back to a name that belongs to no project, or the command refuses when no such name can be right.
 
 | Value | Override for one command | Declared in `goatbuilder.yaml` | Undeclared |
 |---|---|---|---|

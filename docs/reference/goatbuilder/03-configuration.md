@@ -9,7 +9,7 @@ live.
 |---|---|
 | File | `ops/goatbuilder/goatbuilder.yaml` |
 | Schema | `ops/goatbuilder/schema/goatbuilder-v1.schema.json` (`schema: goatbuilder/v1`) |
-| In goat's repository | **Generated** by `ops/goatbuilder/gen-config.py` from `ops/pins/fleet-pins.yaml`, `ops/release/ladder.yaml`, `ops/goatbuilder/project.yml` (`repo:`, `deploy:`) and `ops/goatbuilder/posture.yml` (`secrets:`). Do not edit it; change a source and regenerate. A deployment that keeps its values in a private overlay carries its own `project.yml` and `posture.yml` there |
+| In goat's repository | **Generated** by `ops/goatbuilder/gen-config.py` from `ops/pins/fleet-pins.yaml`, `ops/release/ladder.yaml`, `ops/goatbuilder/project.yml` (`repo:`, `deploy:`), `ops/goatbuilder/posture.yml` (`secrets:`) and `ops/goatbuilder/federation.yml` (sites and peerings). Do not edit it; change a source and regenerate. A deployment that keeps its values in a private overlay carries its own `project.yml`, `posture.yml` and `federation.yml` there |
 | Gate | `.github/workflows/goatbuilder-schema.yml` validates the file and the schema's refusal tests on every pull request |
 
 ## The shape
@@ -71,6 +71,20 @@ class within a site: `core`, `obs`, `breakglass` or `network-jump`. A
 Each environment lists its Ansible member groups. A deploy runs the play once
 per group and reads the ledger from every host of every group.
 
+The generator takes site declarations from `ops/goatbuilder/federation.yml`,
+keyed by the environment already declared in the fleet pins and live release
+ladder. This keeps the environment name in its existing home while giving the
+site topology one source:
+
+```yaml
+sites:
+  <goatnet>:
+    - name: <site>
+      role: founder
+      classes: {core: {}, edge: {}}
+peerings: []
+```
+
 ## Components
 
 A component is one key in `ops/pins/fleet-pins.yaml`. For each component the
@@ -105,7 +119,8 @@ the gates shown above.
 
 ## Peerings
 
-`peerings:` declares each sovereign peering: the partner's identifier (`with`),
+`ops/goatbuilder/federation.yml` declares each sovereign peering under
+`peerings:`: the partner's identifier (`with`),
 the environment and site that host the edge, the class that runs the dedicated
 edge router (`edge_class`), the tunnel (`wireguard` or `ipsec`), the trust
 mechanism (`spire-federation`) and the key prefix the partner's data arrives
@@ -113,6 +128,7 @@ under (`ingress_prefix`, of the form `from/<partner>`). `goatbuilder federate
 <with>` refuses a peering that is not declared here.
 
 ```yaml
+# ops/goatbuilder/federation.yml
 peerings:
   - with: <partner>
     environment: <goatnet>
@@ -122,6 +138,16 @@ peerings:
     trust: spire-federation
     ingress_prefix: from/<partner>
 ```
+
+`goatbuilder.yaml` contains the generated copy consumed by goatbuilder; do not
+edit that copy. On migration the generator refuses any site or peering content
+found only there rather than silently deleting it, and names `federation.yml`
+as the source to update. Once adopted, a declaration digest distinguishes later
+intentional source changes from output-only edits. Keep the source file even
+when removing the last declarations, using explicit `sites: {}` and
+`peerings: []`; a missing source is refused. Duplicate YAML keys are also
+refused rather than taking their last value. Empty, partial and null-valued
+files are refused: both keys and their mapping/list types are required.
 
 ## Presets
 

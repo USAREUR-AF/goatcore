@@ -19,12 +19,27 @@ The config schema gate is built and gates every pull request that touches it:
 | Piece | Path | What it holds |
 |---|---|---|
 | the schema | `ops/goatbuilder/schema/goatbuilder-v1.schema.json` | Draft-07, fail-closed (`additionalProperties: false` throughout); the gate vocabulary is the release ladder's own |
-| this repository's config | `ops/goatbuilder/goatbuilder.yaml` | **generated** from `ops/pins/fleet-pins.yaml` + `ops/release/ladder.yaml` + `ops/goatbuilder/project.yml` + `ops/goatbuilder/posture.yml` by `gen-config.py` — never hand-edited; one fact, one home |
+| this repository's config | `ops/goatbuilder/goatbuilder.yaml` | **generated** from `ops/pins/fleet-pins.yaml` + `ops/release/ladder.yaml` + `ops/goatbuilder/project.yml` + `ops/goatbuilder/posture.yml` + `ops/goatbuilder/federation.yml` by `gen-config.py` — never hand-edited; `federation.yml` owns site and peering declarations, so one fact has one home |
 | the validator | `ops/goatbuilder/validate.py` | the schema plus the cross-field rules JSON Schema cannot express; exit 0 / 1 / 2 like `ops/operators/validate.py` |
-| the refusals, locked | `ops/goatbuilder/test_schema.py` | 17 tests: every shape the schema must refuse, and that the real 30-component config fits |
+| the refusals, locked | `ops/goatbuilder/test_schema.py` | every shape the schema and generator sources must refuse, including undeclared federation references, and that the real config fits |
 | the CI gate | `.github/workflows/goatbuilder-schema.yml` | drift (`gen-config.py --check`), validity, and the refusal tests, on every PR touching the sources |
 
 That gate is contract clause **C3** at the config layer — the tool never acts on a declaration it cannot read exactly. The clause tests below carry C3 to the declaration itself.
+
+The federation source is **built**: sites are keyed by an environment whose
+identity remains in the fleet pins and live ladder, and peerings refer to those
+sites and their classes. Normal generation and `--check` use the same rendered
+value. `--check` does not write, and normal generation refuses before writing if
+the old generated file contains any site or peering field absent or changed in
+`federation.yml`. The first successful regeneration records a digest of the
+generated federation declarations. While the file still matches that digest,
+later edits to the source are intentional and may add, change or remove fields
+normally; an output-only edit makes the digest stale and restores the refusal.
+Deleting `federation.yml` never removes adopted declarations: removal of the
+last ones is the explicit source `sites: {}` and `peerings: []`. Duplicate YAML
+keys are refused at any depth before generation, rather than accepting only the
+last value. A present source must contain both keys with those mapping/list
+types; an empty, partial or null-valued file is not an empty declaration.
 
 ## The fixture: a mock topology and a scripted converger
 

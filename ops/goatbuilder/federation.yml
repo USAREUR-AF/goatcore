@@ -1,0 +1,7 @@
+# Source of record for the sites and sovereign peerings emitted into
+# goatbuilder.yaml. Key sites by an environment declared in the live release
+# ladder. Keep this file when removing the last declarations: explicit empty
+# blocks distinguish intentional removal from a missing source. The public core
+# declares no deployment topology or peering.
+sites: {}
+peerings: []
