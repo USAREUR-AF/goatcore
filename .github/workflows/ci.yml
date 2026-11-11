@@ -318,7 +318,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.26.10'
+          go-version: '1.26.11'
 
       - name: Verify interpreter and empty-array behavior
         run: |
@@ -375,7 +375,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           # A patched Go release for the standard-library scan.
-          go-version: '1.26.10'
+          go-version: '1.26.11'
           # go.* not go.sum: a dependency-free module carries no go.sum, and
           # setup-go trips on a pattern that resolves to nothing.
           cache-dependency-path: ${{ matrix.module }}/go.*

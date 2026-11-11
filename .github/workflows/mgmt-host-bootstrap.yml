@@ -76,7 +76,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.26.10'
+          go-version: '1.26.11'
           cache-dependency-path: ops/mgmt-host-bootstrap/go.sum
       - run: go vet ./...
       - name: golangci-lint (Block 50A.3 — strict config)
@@ -99,7 +99,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.26.10'
+          go-version: '1.26.11'
           cache-dependency-path: ops/mgmt-host-bootstrap/go.sum
 
       - name: Override netbird-mgmt image (workflow_dispatch override)
