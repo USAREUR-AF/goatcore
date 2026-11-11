@@ -51,6 +51,22 @@ def sans(value):
     return result
 
 
+def only_trust_options(ca, out):
+    """`openssl verify` options that trust nothing but `ca`: no default CA file,
+    path or store. OpenSSL 1.1 and later name them (-no-CAfile, -no-CApath,
+    -no-CAstore). LibreSSL (macOS's openssl) has none of them and loads its
+    default locations only for a -CAfile or -CApath that is not given, so both
+    are given: the CA itself, and a directory that does not exist."""
+    help_result = subprocess.run(['openssl', 'verify', '-help'], capture_output=True)
+    usage = help_result.stderr + help_result.stdout
+    if b'-no-CAfile' in usage:
+        options = ['-no-CAfile', '-no-CApath']
+        if b'-no-CAstore' in usage:
+            options.append('-no-CAstore')
+        return options
+    return ['-CAfile', ca, '-CApath', out / '.no-default-ca-path']
+
+
 def validate(cert, key, ca, cn, expected_sans, min_seconds, trust_options):
     if stat.S_IMODE(key.stat().st_mode) != 0o600:
         raise ValueError('private key must have mode 0600')
@@ -175,10 +191,7 @@ def main():
         journal = out / '.rotation-pending'
         if journal.exists() or journal.is_symlink():
             raise ValueError('interrupted rotation: inspect .rotation-pending and its backup before recovery')
-        help_result = subprocess.run(['openssl', 'verify', '-help'], capture_output=True)
-        trust_options = ['-no-CAfile', '-no-CApath']
-        if b'-no-CAstore' in help_result.stderr + help_result.stdout:
-            trust_options.append('-no-CAstore')
+        trust_options = only_trust_options(ca, out)
         openssl('verify', *trust_options, '-trusted', ca, ca)
         our_ca_target(out)
         pending = []

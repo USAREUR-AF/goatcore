@@ -2269,26 +2269,50 @@ mod tests {
         let (ca, key) = (t.path().join("ca.pem"), t.path().join("ca-key.pem"));
         let ok = |c: &mut std::process::Command| {
             let o = c.output().unwrap();
-            assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+            assert!(
+                o.status.success(),
+                "{:?}\n{}{}",
+                c,
+                String::from_utf8_lossy(&o.stdout),
+                String::from_utf8_lossy(&o.stderr)
+            );
             o.stdout
         };
+        // The CA's extensions from a config of its own: LibreSSL (macOS's
+        // openssl) adds the default config's v3_ca to -addext ones, which
+        // repeats basicConstraints and makes the CA unverifiable there.
+        let cnf = t.path().join("ca.cnf");
+        std::fs::write(
+            &cnf,
+            "[req]\ndistinguished_name = dn\n[dn]\n[v3_ca]\n\
+             basicConstraints = critical,CA:TRUE\n\
+             keyUsage = critical,keyCertSign,cRLSign\n\
+             subjectKeyIdentifier = hash\n",
+        )
+        .unwrap();
+        ok(std::process::Command::new("openssl")
+            .args([
+                "ecparam",
+                "-name",
+                "prime256v1",
+                "-genkey",
+                "-noout",
+                "-out",
+            ])
+            .arg(&key));
         ok(std::process::Command::new("openssl")
             .args([
                 "req",
                 "-x509",
-                "-newkey",
-                "ec",
-                "-pkeyopt",
-                "ec_paramgen_curve:prime256v1",
-                "-nodes",
-                "-days",
-                "30",
+                "-new",
                 "-subj",
                 "/CN=Test-CA",
-                "-addext",
-                "basicConstraints=critical,CA:TRUE",
+                "-days",
+                "30",
             ])
-            .arg("-keyout")
+            .args(["-extensions", "v3_ca", "-config"])
+            .arg(&cnf)
+            .arg("-key")
             .arg(&key)
             .arg("-out")
             .arg(&ca));
@@ -2328,11 +2352,10 @@ mod tests {
         let subject = ok(std::process::Command::new("openssl")
             .args(["x509", "-noout", "-subject", "-nameopt", "RFC2253", "-in"])
             .arg(out.join("core.pem")));
+        // OpenSSL prints `subject=CN=x`, LibreSSL `subject= CN=x`.
         let subject = String::from_utf8_lossy(&subject);
-        assert!(
-            subject.trim() == format!("subject=CN={pinned}"),
-            "{subject}"
-        );
+        let name = subject.trim().trim_start_matches("subject=").trim();
+        assert_eq!(name, format!("CN={pinned}"), "{subject}");
     }
 
     fn absent(mut v: serde_json::Value) -> serde_json::Value {
