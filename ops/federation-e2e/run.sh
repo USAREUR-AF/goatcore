@@ -126,10 +126,13 @@ ctx="$WORK/host-context"; rm -rf "$ctx"; cp -R "$HERE/host" "$ctx"
 # build that failed because the mirror did not answer exits as environment.
 docker build --progress=plain -t "$HOST_IMAGE" "$ctx" 2>&1 | tee "$WORK/host-image-build.log"
 if [ "${PIPESTATUS[0]}" != 0 ]; then
-  if grep -qE 'Temporary failure resolving|Could not connect to|Failed to fetch|Connection (timed out|refused)|Unable to connect' "$WORK/host-image-build.log"; then
-    env_fault "the host image did not build: the Ubuntu mirror did not answer ($(grep -m1 -oE '(Temporary failure resolving|Could not connect to|Failed to fetch|Connection (timed out|refused)|Unable to connect)[^ ]* ?[^ ]*' "$WORK/host-image-build.log"))"
-  fi
-  die "the host image did not build (host/Dockerfile); see the build log above"
+  # Only the failing build step's own lines count: a fetch that apt retried and got, followed
+  # by a real error (an unknown package, a failing RUN), is a defect of the Dockerfile.
+  why="$(python3 "$HERE/lib/build-failure.py" "$WORK/host-image-build.log")"
+  case "$why" in
+    network:*) env_fault "the host image did not build: the Ubuntu mirror did not answer (${why#network: })" ;;
+    *) die "the host image did not build (host/Dockerfile): ${why#other: }" ;;
+  esac
 fi
 
 say "the republisher image, from this checkout"
