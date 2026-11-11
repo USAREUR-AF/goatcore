@@ -261,13 +261,37 @@ fn group_host(repo: &Path, group: &str) -> Option<(String, Option<String>)> {
 /// `None` when the group has no host or several: then nothing is guessed.
 fn docker_host_of(repo: &Path, group: &str) -> Option<String> {
     let (host, user) = group_host(repo, group)?;
+    ssh_url(repo, &host, user)
+}
+
+fn ssh_url(repo: &Path, host: &str, user: Option<String>) -> Option<String> {
     let user = user.or_else(|| crate::settings::ssh_user(repo))?;
     let plain = |s: &str| {
         !s.is_empty()
             && s.chars()
                 .all(|c| c.is_ascii_alphanumeric() || "._-:".contains(c))
     };
-    (plain(&host) && plain(&user)).then(|| format!("ssh://{user}@{host}"))
+    (plain(host) && plain(&user)).then(|| format!("ssh://{user}@{host}"))
+}
+
+/// Where FED_ROUTER_DOCKER_HOST is derived from, in order, for its source and
+/// for the core-router refusal (GB-138) when nothing gives it.
+pub fn router_docker_host_sources(core_group: &str, edge_group: &str) -> String {
+    format!(
+        "peerings[].hosts.core (with hosts.user, else deploy.ssh_user) in goatbuilder.yaml; \
+         else the one host of inventory group [{core_group}] (ansible_host, ansible_user, else deploy.ssh_user) \
+         in ops/ansible/inventory/peering-edges.ini or peering-{edge_group}.ini"
+    )
+}
+
+/// The daemon the core router runs on: the core host the peering declares
+/// (`hosts.core`, which allocate also renders into the inventory), else the
+/// one host of the core's inventory group. Nothing is guessed.
+fn router_docker_host(repo: &Path, peering: &config::Peering, core_group: &str) -> Option<String> {
+    if let Some(h) = &peering.hosts {
+        return ssh_url(repo, &h.core, h.user.clone());
+    }
+    docker_host_of(repo, core_group)
 }
 
 /// The peering's own federation.toml, when `goatbuilder federate allocate`
@@ -464,8 +488,8 @@ fn from_deployment(
     ));
     v.push(input(
         "FED_ROUTER_DOCKER_HOST",
-        docker_host_of(repo, &core_group),
-        format!("the one host of inventory group [{core_group}] (ansible_host, ansible_user)"),
+        router_docker_host(repo, peering, &core_group),
+        router_docker_host_sources(&core_group, edge_group),
     ));
     v
 }
@@ -489,6 +513,14 @@ pub fn unset_derived(
 pub fn export(inputs: &[Input]) {
     for (k, v) in unset_derived(inputs, |k| std::env::var(k).ok()) {
         std::env::set_var(k, v);
+    }
+    // When the core router's daemon could not be derived, phase 1's
+    // core-router refusal (GB-138) names where it was looked for.
+    let unset = |k: &str| std::env::var(k).map(|v| v.is_empty()).unwrap_or(true);
+    if unset("FED_ROUTER_DOCKER_HOST") {
+        if let Some(i) = inputs.iter().find(|i| i.name == "FED_ROUTER_DOCKER_HOST" && i.value.is_none()) {
+            std::env::set_var("FED_ROUTER_DOCKER_HOST_SOURCES", &i.source);
+        }
     }
 }
 
@@ -836,6 +868,39 @@ mod tests {
         )
         .unwrap();
         assert_eq!(docker_host_of(repo.path(), "xab_core"), None);
+    }
+
+    /// The core host the peering declares gives the router's daemon; else the
+    /// one host of its core group, also from a per-peering inventory file.
+    #[test]
+    fn the_router_daemon_comes_from_the_declared_core_host_or_its_inventory() {
+        let repo = tempfile::tempdir().unwrap();
+        let r = repo.path();
+        let mut p = peering();
+        p.hosts = Some(config::PeeringHosts {
+            edge: "192.0.2.10".into(),
+            core: "192.0.2.20".into(),
+            user: Some("goat".into()),
+        });
+        assert_eq!(
+            router_docker_host(r, &p, "xab_core").as_deref(),
+            Some("ssh://goat@192.0.2.20")
+        );
+        p.hosts = None;
+        assert_eq!(router_docker_host(r, &p, "xab_core"), None);
+        std::fs::create_dir_all(r.join("ops/ansible/inventory")).unwrap();
+        std::fs::write(
+            r.join("ops/ansible/inventory/peering-xab_edge.ini"),
+            "[xab_core]\ncore-1 ansible_host=192.0.2.21 ansible_user=goat\n",
+        )
+        .unwrap();
+        assert_eq!(
+            router_docker_host(r, &p, "xab_core").as_deref(),
+            Some("ssh://goat@192.0.2.21"),
+            "a per-peering inventory file is read"
+        );
+        let src = router_docker_host_sources("xab_core", "xab_edge");
+        assert!(src.contains("hosts.core") && src.contains("peering-xab_edge.ini"), "{src}");
     }
 
     /// An explicitly set variable wins over a derived one (the script avenue).

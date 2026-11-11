@@ -525,10 +525,13 @@ def check_core_router(docker_host, selected, call):
     if verdict == "many":
         return Result("core-router", "core router found", FAIL, what, "GB-139",
                       "Set FED_ROUTER_CONTAINER to the core router's name or ID.")
+    sources = os.environ.get("FED_ROUTER_DOCKER_HOST_SOURCES", "")
+    looked = ("\nFED_ROUTER_DOCKER_HOST was not derived: goatbuilder looked in " + sources + ".\n"
+              "Declare the core host there.") if sources and not docker_host else ""
     return Result("core-router", "core router found", FAIL, f"{what} (looked on {where})", "GB-138",
                   "Phase 3 reads the core router the same way. Point FED_ROUTER_DOCKER_HOST at the core host\n"
-                  "(ssh://<user>@<core>; goatbuilder derives it from the inventory group <peering>_core),\n"
-                  "or set FED_ROUTER_CONTAINER to its name or ID.")
+                  "(ssh://<user>@<core>; goatbuilder derives it from the peering's hosts.core or the inventory\n"
+                  "group <peering>_core), or set FED_ROUTER_CONTAINER to its name or ID." + looked)
 
 
 # ---------------------------------------------------------------------------
