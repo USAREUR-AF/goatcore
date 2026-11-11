@@ -58,10 +58,12 @@ x() { local c="$1"; shift; docker exec "$P-$c" sh -c "$*"; }
 
 log "image"
 IMG="pf-e2e:$P"
-docker build -q -t "$IMG" - >/dev/null <<EOF || fail "building the test image"
+docker build --progress=plain -t "$IMG" - <<EOF || fail "building the test image"
 FROM $IMAGE
-RUN apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
-      wireguard-tools nftables iproute2 iputils-ping >/dev/null && rm -rf /var/lib/apt/lists/*
+# Retry transient mirror failures, but never build from a partial index refresh.
+RUN printf '%s\n' 'Acquire::Retries "3";' 'Acquire::http::Timeout "20";' 'Acquire::https::Timeout "20";' > /etc/apt/apt.conf.d/80-ci-network
+RUN apt-get update -o APT::Update::Error-Mode=any && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      wireguard-tools nftables iproute2 iputils-ping && rm -rf /var/lib/apt/lists/*
 EOF
 
 log "networks and containers"

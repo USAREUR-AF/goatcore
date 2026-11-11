@@ -64,11 +64,13 @@ cleanup() {
 trap cleanup EXIT
 
 log "image"
-docker build -q -t "$IMG" - >/dev/null <<'DOCKERFILE' || fail "building the test image"
+docker build --progress=plain -t "$IMG" - <<'DOCKERFILE' || fail "building the test image"
 FROM ubuntu:24.04
-RUN apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
+# Retry transient mirror failures, but never build from a partial index refresh.
+RUN printf '%s\n' 'Acquire::Retries "3";' 'Acquire::http::Timeout "20";' 'Acquire::https::Timeout "20";' > /etc/apt/apt.conf.d/80-ci-network
+RUN apt-get update -o APT::Update::Error-Mode=any && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
       systemd systemd-sysv sudo openssh-server openssh-client python3 python3-pip python3-yaml \
-      nftables iproute2 iputils-ping sshpass >/dev/null \
+      nftables iproute2 iputils-ping sshpass \
  && pip3 install --break-system-packages -q 'ansible-core>=2.16,<2.21' \
  && useradd -m -s /bin/bash ops && echo 'ops ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/ops \
  && echo 'ops:fixture-password-only' | chpasswd \

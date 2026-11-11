@@ -36,6 +36,9 @@ tests:
       - eval_time: 30m
         alertname: AuditEvictorCannotMeasure
         exp_alerts: []
+      - eval_time: 30m
+        alertname: AuditEvictionDisabledOverHighWater
+        exp_alerts: []
 
   # 2. A healthy evictor below the high-water mark: silent.
   - interval: 1m
@@ -80,6 +83,47 @@ tests:
                 its audit record silently — the producer logs the failure, nothing
                 else does. Check goat-audit-fifo-evict.service for why it is not
                 keeping up before raising the quota.
+
+  # A measure-only evictor watching a bucket already past high-water: the
+  # early warning fires, and the measure outcome (last_result 4) does NOT
+  # masquerade as an operation failure.
+  - interval: 1m
+    input_series:
+      - series: 'goat_audit_evict_over_high_water{bucket="audit-integrity"}'
+        values: '1+0x60'
+      - series: 'goat_audit_evict_last_result{bucket="audit-integrity"}'
+        values: '4+0x60'
+    alert_rule_test:
+      - eval_time: 45m
+        alertname: AuditEvictionDisabledOverHighWater
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: audit-middle-tier
+              bucket: audit-integrity
+            exp_annotations:
+              summary: "audit bucket audit-integrity is over high-water and eviction is disabled"
+              description: |
+                The evictor measured the bucket at or past its high-water mark but
+                is running measure-only (audit_fifo_evict_enabled is false), so
+                nothing will relieve the bucket before the quota wall. Enable
+                eviction or raise the quota now, while headroom remains.
+      - eval_time: 45m
+        alertname: AuditEvictorOperationFailed
+        exp_alerts: []
+
+  # An ARMED evictor still above high-water mid-relief (last_result 2) is the
+  # substrate working, not the disabled condition: stay silent.
+  - interval: 1m
+    input_series:
+      - series: 'goat_audit_evict_over_high_water{bucket="audit-integrity"}'
+        values: '1+0x60'
+      - series: 'goat_audit_evict_last_result{bucket="audit-integrity"}'
+        values: '2+0x60'
+    alert_rule_test:
+      - eval_time: 45m
+        alertname: AuditEvictionDisabledOverHighWater
+        exp_alerts: []
 
   # 4. The evictor stopped running: the preventive service going quiet is
   #    itself the condition to catch.
