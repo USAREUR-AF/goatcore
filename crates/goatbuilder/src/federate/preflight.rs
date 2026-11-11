@@ -293,9 +293,28 @@ fn existing(p: std::path::PathBuf) -> Option<String> {
 }
 
 /// Every input phases 1-14 read from the environment that the deployment can
-/// supply, in the order preflight.py reports them. `peering` is the declared
+/// supply, in the order preflight.py reports them: what the group_vars and the
+/// inventory give ([`from_deployment`]), with what goatbuilder.yaml itself
+/// declares for the run merged in (federate/declared.rs). Every path that
+/// derives the inputs (the plain run, `federate plan`, `deploy`'s recheck)
+/// calls this, so none can miss a declared value. `peering` is the declared
 /// entry (C1 has already found it); `alloc` the allocated values, when known.
 pub fn derive_inputs(
+    repo: &Path,
+    cfg: &config::Config,
+    peering: &config::Peering,
+    work: &str,
+    edge_group: &str,
+    alloc: Option<&Allocated>,
+) -> Vec<Input> {
+    let mut v = from_deployment(repo, peering, work, edge_group, alloc);
+    super::declared::overlay(&mut v, super::declared::declared_inputs(cfg, peering));
+    v
+}
+
+/// The inputs the group_vars, the inventory and the project settings give,
+/// before goatbuilder.yaml's own declarations are merged in.
+fn from_deployment(
     repo: &Path,
     peering: &config::Peering,
     work: &str,
@@ -606,7 +625,7 @@ mod tests {
     #[test]
     fn nothing_deployment_specific_is_defaulted() {
         let repo = tempfile::tempdir().unwrap();
-        let v = derive_inputs(repo.path(), &peering(), "/w", "xab_edge", None);
+        let v = from_deployment(repo.path(), &peering(), "/w", "xab_edge", None);
         assert_eq!(get(&v, "FED_COUNTERPARTY_ID").value.as_deref(), Some("xab"));
         assert_eq!(get(&v, "FED_SLOT_ENV").value.as_deref(), Some("zagros"));
         assert_eq!(get(&v, "FED_CORE_GROUP").value.as_deref(), Some("xab_core"));
@@ -651,7 +670,7 @@ mod tests {
             wg_interface: Some("wg-fed1".into()),
             ..Default::default()
         };
-        let v = derive_inputs(r, &peering(), "/w", "xab_edge", Some(&alloc));
+        let v = from_deployment(r, &peering(), "/w", "xab_edge", Some(&alloc));
         assert_eq!(
             get(&v, "FED_SIGNING_KEY").value.as_deref(),
             Some("/etc/goat-federation/signing.key")
@@ -732,7 +751,7 @@ mod tests {
             ["core.example.org", "192.0.2.20"],
             "hosts: core is the core's address; the inventory is read only without it"
         );
-        let v = derive_inputs(r, &p, "/w", "xab_edge", None);
+        let v = from_deployment(r, &p, "/w", "xab_edge", None);
         assert_eq!(
             get(&v, "FED_CORE_SAN").value.as_deref(),
             Some("core.example.org,192.0.2.20")
@@ -742,7 +761,7 @@ mod tests {
         assert_eq!(core_names(r, &peering(), "xab_edge", "xab_core"), ["192.0.2.21"]);
         // Nothing declares one: unset, and the source names every place looked.
         std::fs::remove_dir_all(r.join("ops/ansible/inventory")).unwrap();
-        let v = derive_inputs(r, &peering(), "/w", "xab_edge", None);
+        let v = from_deployment(r, &peering(), "/w", "xab_edge", None);
         let san = get(&v, "FED_CORE_SAN");
         assert_eq!(san.value, None);
         for place in [
@@ -761,7 +780,7 @@ mod tests {
     fn the_peering_declaration_is_the_generated_file_only() {
         let repo = tempfile::tempdir().unwrap();
         let r = repo.path();
-        let v = derive_inputs(r, &peering(), "/w", "xab_edge", None);
+        let v = from_deployment(r, &peering(), "/w", "xab_edge", None);
         assert_eq!(get(&v, "FED_DECLARATION").value, None);
         assert!(get(&v, "FED_DECLARATION")
             .source
@@ -776,7 +795,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(peering_declaration(r, &peering()), Some(f.clone()));
-        let v = derive_inputs(r, &peering(), "/w", "xab_edge", None);
+        let v = from_deployment(r, &peering(), "/w", "xab_edge", None);
         assert_eq!(
             get(&v, "FED_DECLARATION").value.as_deref(),
             Some(f.display().to_string().as_str())
@@ -901,12 +920,12 @@ mod tests {
     #[test]
     fn opening_the_ca_key_from_age_is_opt_in() {
         let repo = tempfile::tempdir().unwrap();
-        let v = derive_inputs(repo.path(), &peering(), "/w", "xab_edge", None);
+        let v = from_deployment(repo.path(), &peering(), "/w", "xab_edge", None);
         assert_eq!(get(&v, "FED_CA_KEY_FROM_AGE").value, None);
         let gv = repo.path().join("ops/ansible/group_vars/xab_edge");
         std::fs::create_dir_all(&gv).unwrap();
         std::fs::write(gv.join("fed.yml"), "goat_federation_ca_key_from_age: true\n").unwrap();
-        let v = derive_inputs(repo.path(), &peering(), "/w", "xab_edge", None);
+        let v = from_deployment(repo.path(), &peering(), "/w", "xab_edge", None);
         assert_eq!(get(&v, "FED_CA_KEY_FROM_AGE").value.as_deref(), Some("1"));
     }
 }

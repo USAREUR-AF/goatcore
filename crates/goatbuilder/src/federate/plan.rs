@@ -693,11 +693,12 @@ fn acceptance(agreement: Option<&AgreementFacts>) -> AcceptancePolicy {
 /// the operator has not set. Nothing is exported into this process.
 fn phase1_env(
     repo: &Path,
+    cfg: &config::Config,
     peering: &config::Peering,
     work: &str,
     edge_group: &str,
 ) -> Vec<(String, String)> {
-    let inputs = preflight::derive_inputs(repo, peering, work, edge_group, None);
+    let inputs = preflight::derive_inputs(repo, cfg, peering, work, edge_group, None);
     let mut env: Vec<(String, String)> =
         preflight::unset_derived(&inputs, |k| std::env::var(k).ok())
             .into_iter()
@@ -742,24 +743,26 @@ const LIVE_TARGETS: &[&str] = &[
 /// derived one; then the live-check targets that only the environment sets.
 fn effective_inputs(
     repo: &Path,
+    cfg: &config::Config,
     peering: &config::Peering,
     work: &str,
     edge_group: &str,
 ) -> Vec<Resolved> {
-    effective_inputs_with(repo, peering, work, edge_group, |k| std::env::var(k).ok())
+    effective_inputs_with(repo, cfg, peering, work, edge_group, |k| std::env::var(k).ok())
 }
 
 /// [`effective_inputs`] with the environment given, so a test sets nothing in
 /// the process.
 fn effective_inputs_with(
     repo: &Path,
+    cfg: &config::Config,
     peering: &config::Peering,
     work: &str,
     edge_group: &str,
     env: impl Fn(&str) -> Option<String>,
 ) -> Vec<Resolved> {
     let set = |k: &str| env(k).filter(|v| !v.is_empty());
-    let mut out: Vec<Resolved> = preflight::derive_inputs(repo, peering, work, edge_group, None)
+    let mut out: Vec<Resolved> = preflight::derive_inputs(repo, cfg, peering, work, edge_group, None)
         .into_iter()
         .map(|i| match set(i.name) {
             // A value set to exactly what the deployment derives is the
@@ -795,8 +798,10 @@ fn effective_inputs_with(
 /// Run phase 1 (all checks, or `only`) into its own result file, removed
 /// first so a stale answer never stands in, and read the outcomes. Refuses
 /// when the exit status and the result disagree.
+#[allow(clippy::too_many_arguments)]
 fn run_phase1(
     repo: &Path,
+    cfg: &config::Config,
     peering: &config::Peering,
     work: &str,
     edge_group: &str,
@@ -829,7 +834,7 @@ fn run_phase1(
         ])
         .arg("--result")
         .arg(result)
-        .envs(phase1_env(repo, peering, work, edge_group))
+        .envs(phase1_env(repo, cfg, peering, work, edge_group))
         .current_dir(repo);
     if let Some(ids) = only {
         cmd.args(["--only", &ids.join(",")]);
@@ -894,7 +899,7 @@ pub fn read_readiness(path: &Path) -> Result<(bool, Vec<Readiness>)> {
 
 /// The declared peering (C1), and every declared peering (for the host check),
 /// from the config `--mock` or the checkout names.
-fn declared(repo: &Path, o: &PlanOptions) -> Result<(config::Peering, Vec<config::Peering>)> {
+fn declared(repo: &Path, o: &PlanOptions) -> Result<(config::Peering, config::Config)> {
     let cfg_path = match o.mock {
         Some(m) => m.join("goatbuilder.yaml"),
         None => repo.join("ops/goatbuilder/goatbuilder.yaml"),
@@ -912,7 +917,7 @@ fn declared(repo: &Path, o: &PlanOptions) -> Result<(config::Peering, Vec<config
                 cfg_path.display()
             )
         })?;
-    Ok((found, cfg.peerings))
+    Ok((found, cfg))
 }
 
 fn work_of(o: &PlanOptions) -> String {
@@ -964,8 +969,9 @@ fn inputs_part(
     repo: &Path,
     o: &PlanOptions,
     peering: &config::Peering,
-    all: &[config::Peering],
+    cfg: &config::Config,
 ) -> Result<(Plan, Vec<Readiness>)> {
+    let all = cfg.peerings.as_slice();
     let with = peering.with.as_str();
     let work = work_of(o);
     let edge_group = o
@@ -1165,7 +1171,7 @@ fn inputs_part(
             goat,
             images,
         },
-        inputs: effective_inputs(repo, peering, &work, &edge_group),
+        inputs: effective_inputs(repo, cfg, peering, &work, &edge_group),
         restarts: restarts(o.r#as, agreement.as_ref()),
         acceptance: acceptance(agreement.as_ref()),
         rendered: rendered_hashes(&Path::new(&work).join("applied")),
@@ -1195,7 +1201,7 @@ fn inputs_part(
 /// Build the plan: the inputs, then phase 1 (unless a mock), the verdict and
 /// the hash.
 pub fn build(repo: &Path, o: &PlanOptions) -> Result<Plan> {
-    let (peering, all) = declared(repo, o)?;
+    let (peering, cfg) = declared(repo, o)?;
     // Phase 1 first: its live probe reads what the inputs then use (the
     // peerings the host firewall baseline stored on each edge).
     let work = work_of(o);
@@ -1212,9 +1218,9 @@ pub fn build(repo: &Path, o: &PlanOptions) -> Result<Plan> {
         }]
     } else {
         let result = Path::new(&work).join("plan/preflight.json");
-        run_phase1(repo, &peering, &work, &edge_group, None, &result, o.live)?
+        run_phase1(repo, &cfg, &peering, &work, &edge_group, None, &result, o.live)?
     };
-    let (mut p, input_rows) = inputs_part(repo, o, &peering, &all)?;
+    let (mut p, input_rows) = inputs_part(repo, o, &peering, &cfg)?;
     p.readiness = phase1;
     p.readiness.extend(input_rows);
     let skipped = p.readiness.iter().filter(|r| r.outcome == "SKIP").count();
@@ -1447,8 +1453,8 @@ pub fn inputs_now(
     let saved = read(plan_path)?;
     check_binding(&saved, plan_path, with)?;
     let o = saved_options(&saved, mock);
-    let (peering, all) = declared(repo, &o)?;
-    let (now, input_rows) = inputs_part(repo, &o, &peering, &all)?;
+    let (peering, cfg) = declared(repo, &o)?;
+    let (now, input_rows) = inputs_part(repo, &o, &peering, &cfg)?;
     Ok((saved, now, input_rows))
 }
 
@@ -1465,10 +1471,11 @@ pub fn recheck_live_prerequisites(repo: &Path, plan_path: &Path, with: &str) -> 
     // because the inputs read what the probe answers.
     let saved = read(plan_path)?;
     check_binding(&saved, plan_path, with)?;
-    let (peering, _) = declared(repo, &saved_options(&saved, None))?;
+    let (peering, cfg) = declared(repo, &saved_options(&saved, None))?;
     let result = Path::new(&saved.work).join("plan/recheck.json");
     let mut live = run_phase1(
         repo,
+        &cfg,
         &peering,
         &saved.work,
         &saved.edge_group,
@@ -1828,6 +1835,19 @@ mod tests {
     }
 
     /// From its declared fields, as the config loader reads it.
+    /// A config declaring only `p` (and its environment), for the paths that
+    /// take the config.
+    fn cfg_of(p: config::Peering) -> config::Config {
+        let mut c: config::Config = serde_json::from_value(serde_json::json!({
+            "schema": "goatbuilder/v1",
+            "environments": [{"name": p.environment.clone(), "converger": "push-ansible"}],
+            "promotion": {"path": [{"name": p.environment.clone(), "kind": "rung", "environment": p.environment.clone()}]},
+        }))
+        .expect("a config");
+        c.peerings = vec![p];
+        c
+    }
+
     fn peering() -> config::Peering {
         serde_json::from_value(serde_json::json!({
             "with": "velmara",
@@ -1869,7 +1889,7 @@ mod tests {
     }
 
     fn planned(repo: &Path, work: &str) -> Plan {
-        let (mut p, _) = inputs_part(repo, &opts(work), &peering(), &[peering()]).unwrap();
+        let (mut p, _) = inputs_part(repo, &opts(work), &peering(), &cfg_of(peering())).unwrap();
         p.readiness = vec![Readiness {
             check: "edge-ports".into(),
             outcome: "PASS".into(),
@@ -2268,7 +2288,7 @@ mod tests {
         let r = tempfile::tempdir().unwrap();
         let w = tempfile::tempdir().unwrap();
         let ws = w.path().display().to_string();
-        let inputs = effective_inputs(r.path(), &peering(), &ws, "velmara_edge");
+        let inputs = effective_inputs(r.path(), &cfg_of(peering()), &peering(), &ws, "velmara_edge");
         for k in [
             "FED_ROUTER_DOCKER_HOST",
             "FED_CA_CERT",
@@ -2332,7 +2352,7 @@ mod tests {
         .unwrap();
         let w = tempfile::tempdir().unwrap();
         let ws = w.path().display().to_string();
-        let (p, rows) = inputs_part(r.path(), &opts(&ws), &peering(), &[peering()]).unwrap();
+        let (p, rows) = inputs_part(r.path(), &opts(&ws), &peering(), &cfg_of(peering())).unwrap();
         assert_eq!(p.host_firewall[0].outcome, "NOT APPLICABLE");
         assert!(p.host_firewall[0]
             .detail
@@ -2341,13 +2361,49 @@ mod tests {
         let gv = r.path().join("ops/ansible/group_vars/peering_edges");
         std::fs::create_dir_all(&gv).unwrap();
         std::fs::write(gv.join("fw.yml"), "goat_host_firewall_baseline: true\n").unwrap();
-        let (p, rows) = inputs_part(r.path(), &opts(&ws), &peering(), &[peering()]).unwrap();
+        let (p, rows) = inputs_part(r.path(), &opts(&ws), &peering(), &cfg_of(peering())).unwrap();
         assert_eq!(p.host_firewall[0].outcome, "BLOCKED");
         assert!(
             rows.iter()
                 .any(|x| x.check == "host-firewall" && x.outcome == "BLOCKED"),
             "{rows:?}"
         );
+    }
+
+    /// `federate plan` (and `deploy`'s recheck, through the same function)
+    /// sees what goatbuilder.yaml declares for the run exactly as the plain
+    /// run exports it: the signing key, the CA and the directory, with
+    /// nothing in the environment and nothing in group_vars.
+    #[test]
+    fn the_plan_sees_the_declared_key_ca_and_directory_as_the_plain_run_does() {
+        let r = tempfile::tempdir().unwrap();
+        let w = tempfile::tempdir().unwrap();
+        let ws = w.path().display().to_string();
+        let mut c = cfg_of(peering());
+        c.secrets = Some(serde_json::from_value(serde_json::json!({"store": "env", "federation": {
+            "signing_key": "/srv/fed/signing.key", "ca_cert": "/srv/fed/ca.pem", "ca_key": "/srv/fed/ca-key.pem"}})).unwrap());
+        c.environments[0].peering_directory = Some(serde_json::from_value(serde_json::json!({
+            "url": "https://directory.example.org:8443", "ca_cert": "/srv/fed/directory-ca.pem"})).unwrap());
+        let plan = effective_inputs_with(r.path(), &c, &peering(), &ws, "velmara_edge", |_: &str| None);
+        let plain = preflight::derive_inputs(r.path(), &c, &peering(), &ws, "velmara_edge", None);
+        let want = [
+            ("FED_SIGNING_KEY", "/srv/fed/signing.key"),
+            ("FED_CA_CERT", "/srv/fed/ca.pem"),
+            ("FED_CA_KEY", "/srv/fed/ca-key.pem"),
+            ("FED_DIRECTORY_URL", "https://directory.example.org:8443"),
+            ("SSL_CERT_FILE", "/srv/fed/directory-ca.pem"),
+        ];
+        for (k, v) in want {
+            let p = plan.iter().find(|i| i.name == k).unwrap_or_else(|| panic!("{k} in the plan"));
+            let q = plain.iter().find(|i| i.name == k).unwrap_or_else(|| panic!("{k} in the plain run"));
+            assert_eq!(p.value.as_deref(), Some(v), "{k}");
+            assert_eq!((p.value.as_ref(), &p.source), (q.value.as_ref(), &q.source), "{k}");
+        }
+        // Without the declarations the plan derives none of them, as before.
+        let bare = effective_inputs_with(r.path(), &cfg_of(peering()), &peering(), &ws, "velmara_edge", |_: &str| None);
+        for (k, _) in want {
+            assert!(bare.iter().find(|i| i.name == k).and_then(|i| i.value.as_ref()).is_none(), "{k}");
+        }
     }
 
     /// `federate` exports each derived input before its phases. A recheck in
@@ -2358,7 +2414,7 @@ mod tests {
         let w = tempfile::tempdir().unwrap();
         let ws = w.path().display().to_string();
         let none = |_: &str| None;
-        let before = effective_inputs_with(r.path(), &peering(), &ws, "velmara_edge", none);
+        let before = effective_inputs_with(r.path(), &cfg_of(peering()), &peering(), &ws, "velmara_edge", none);
         let exported: Vec<(String, String)> = before
             .iter()
             .filter_map(|i| i.value.clone().map(|v| (i.name.clone(), v)))
@@ -2369,10 +2425,10 @@ mod tests {
                 .find(|(n, _)| n == k)
                 .map(|(_, v)| v.clone())
         };
-        let after = effective_inputs_with(r.path(), &peering(), &ws, "velmara_edge", env);
+        let after = effective_inputs_with(r.path(), &cfg_of(peering()), &peering(), &ws, "velmara_edge", env);
         assert_eq!(before, after);
         let other = |k: &str| (k == "FED_WORK").then(|| "/elsewhere".to_string());
-        let changed = effective_inputs_with(r.path(), &peering(), &ws, "velmara_edge", other);
+        let changed = effective_inputs_with(r.path(), &cfg_of(peering()), &peering(), &ws, "velmara_edge", other);
         let wk = changed.iter().find(|i| i.name == "FED_WORK").unwrap();
         assert_eq!(
             (wk.value.as_deref(), wk.source.as_str()),
