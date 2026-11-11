@@ -994,6 +994,16 @@ pub fn run(repo: &Path, o: &Options) -> Result<Report> {
             ));
         }
     }
+    for (p, v) in cfg.peerings.iter().zip(values.iter()) {
+        if let Some(why) = super::switches::federation_toml(repo, p, v).left_by_hand {
+            checks.push(row(
+                "hand",
+                true,
+                format!("left on hand-written files: the federation.toml of peering '{}' ({why}). To have allocate generate {}, declare federation_toml: rendered on it", v.peering, super::federation_toml::target_path(&v.environment, &v.peering)),
+                None,
+            ));
+        }
+    }
     // Refuse before writing anything: one foreign file stops the whole run.
     for r in &rendered {
         let t = target(repo, &cfg_dir, &r.path);
@@ -1091,10 +1101,11 @@ mod tests {
         .unwrap()
     }
 
-    /// A peering declared with `deployment: hand`, so the tests that are not
-    /// about the deployment halves render none; `absent()` drops the switch.
+    /// A peering declared with `deployment: hand` and `federation_toml: hand`,
+    /// so the tests that are not about them render neither; `absent()` and
+    /// `toml_absent()` drop a switch.
     fn p(with: &str, hosts: bool) -> serde_json::Value {
-        let mut v = json!({"with": with, "environment": "dev", "site": "alpha", "edge_class": "edge", "deployment": "hand"});
+        let mut v = json!({"with": with, "environment": "dev", "site": "alpha", "edge_class": "edge", "deployment": "hand", "federation_toml": "hand"});
         if hosts {
             v["hosts"] = json!({"edge": "192.0.2.20", "core": "192.0.2.10", "user": "goat"});
         }
@@ -1751,6 +1762,68 @@ mod tests {
             "{}",
             hand[0]
         );
+    }
+
+    fn toml_absent(mut v: serde_json::Value) -> serde_json::Value {
+        v.as_object_mut().unwrap().remove("federation_toml");
+        v
+    }
+
+    const ENV_TOML: &str = "sovereign_id = \"xaa\"\nterm_days = 91\ncut_contact = \"fed-ops@example.org\"\n\n\
+                            [transport]\nendpoint = \"edge.example.org:51820\"\nlistener = true\nmeasured_mtu = 1380\n\n\
+                            [data]\nrelease = [\"release/all/**\"]\naccept_hz = 100\n\
+                            accept_bytes_per_message = 1048576\naccept_distinct_keys = 5000\n";
+
+    /// `federation_toml` absent: a new peering's file is generated; one that
+    /// runs by hand is left alone and named; a hand-written file at the target
+    /// keeps its peering on it.
+    #[test]
+    fn federation_toml_is_generated_for_a_new_peering_and_left_for_a_hand_run_one() {
+        let d = repo_with(json!([
+            toml_absent(p("xab", true)),
+            toml_absent(p("xac", true)),
+            toml_absent(p("xad", true))
+        ]));
+        let src = d.path().join("ops/federation/dev/federation.toml");
+        std::fs::create_dir_all(src.parent().unwrap()).unwrap();
+        std::fs::write(&src, ENV_TOML).unwrap();
+        let g = d.path().join("ops/ansible/group_vars/xac_edge");
+        std::fs::create_dir_all(&g).unwrap();
+        std::fs::write(
+            g.join("deployment.yml"),
+            "goat_zenoh_edge_acl_trace: true\n",
+        )
+        .unwrap();
+        let hand = d
+            .path()
+            .join("ops/federation/dev/peerings/xad/federation.toml");
+        std::fs::create_dir_all(hand.parent().unwrap()).unwrap();
+        std::fs::write(&hand, "# written by hand\n").unwrap();
+        let r = run(d.path(), &opts(false)).unwrap();
+        let fed = d.path().join("ops/federation/dev/peerings");
+        let xab = std::fs::read_to_string(fed.join("xab/federation.toml")).unwrap();
+        assert!(xab.starts_with(MARKER), "{xab}");
+        assert!(!fed.join("xac/federation.toml").exists());
+        assert_eq!(
+            std::fs::read_to_string(&hand).unwrap(),
+            "# written by hand\n"
+        );
+        let rows: Vec<&String> = r
+            .checks
+            .iter()
+            .filter(|c| c.name == "hand" && c.detail.contains("federation.toml"))
+            .map(|c| &c.detail)
+            .collect();
+        assert_eq!(rows.len(), 2, "{rows:?}");
+        assert!(rows.iter().any(|d| d.contains("peering 'xac'")
+            && d.contains("ops/ansible/group_vars/xac_edge/deployment.yml")
+            && d.contains("declare federation_toml: rendered")));
+        assert!(rows
+            .iter()
+            .any(|d| d.contains("peering 'xad'") && d.contains("is written by hand")));
+        // A re-run keeps generating the new peering's file.
+        run(d.path(), &opts(false)).unwrap();
+        assert!(fed.join("xab/federation.toml").exists());
     }
 
     /// A site value the halves need that neither the environment's group_vars

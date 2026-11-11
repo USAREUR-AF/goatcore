@@ -206,7 +206,8 @@ pub struct Peering {
     pub deployment: Option<String>,
     /// `rendered`: `goatbuilder federate allocate` generates this peering's
     /// federation.toml from the environment's own federation.toml and the
-    /// allocated values. Absent or `hand`: written by hand, as before.
+    /// allocated values. `hand`: written by hand. Absent: rendered, unless the
+    /// peering already runs from hand-written files (`federate::switches`).
     #[serde(default)]
     pub federation_toml: Option<String>,
     /// Present when a peering forwarder relays the partner to our edge (ADR 1218).
