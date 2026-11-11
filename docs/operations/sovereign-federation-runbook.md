@@ -218,13 +218,18 @@ access fragment your **core** will take:
 3. The edge receives into `from/<them>/**` and nothing wider; no rule names `**`, `from/**` or
    another partner's prefix.
 4. The partner CA the edge will trust has the fingerprint you read back in confirmation 1.
-5. The router's dry run of the new access configuration passed.
-6. The configuration change `plan` proposed (the per-peering values and the rendered
+5. The configuration change `plan` proposed (the per-peering values and the rendered
    configuration) has been reviewed and merged through your deployment's normal change process.
    That review is part of this confirmation, and the approval covers it.
 
 If anything the plan covers changes after you approve, the approval no longer applies: run `plan`
 again and approve the new hash.
+
+The router's dry run is not something to check before you approve: it runs after the approval.
+In order, stopping at the first failure, admission places the staged files (keeping a backup), runs
+the core router's dry run (its play with `--check --diff`, or the deployment's own command), checks
+the committed slot list against the registry, and restarts the core router. A failed dry run or slot
+check puts every placed file back and says so; nothing on the core is live before the restart.
 
 ### `deploy` — carry out the approved plan
 
