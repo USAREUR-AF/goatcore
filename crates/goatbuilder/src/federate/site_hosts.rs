@@ -28,17 +28,21 @@ use crate::config::{Config, Peering, PeeringHosts};
 
 /// One machine as an inventory names it.
 #[derive(Debug, Clone, PartialEq)]
-struct Machine {
-    name: String,
-    addr: String,
-    user: Option<String>,
+pub struct Machine {
+    /// The inventory name.
+    pub name: String,
+    /// Its `ansible_host`, else the inventory name.
+    pub addr: String,
+    pub user: Option<String>,
 }
 
 /// Machines, each with the inventory group it is listed under.
 type Grouped = Vec<(String, Machine)>;
 
-/// The host lines of every plain `[group]` section of an INI inventory.
-fn groups(text: &str) -> Vec<(String, Vec<Machine>)> {
+/// The host lines of every plain `[group]` section of an INI inventory. The
+/// one INI reader for the site inventory: site_values.rs reads the core's
+/// address and name with it too.
+pub fn groups(text: &str) -> Vec<(String, Vec<Machine>)> {
     let mut out: Vec<(String, Vec<Machine>)> = Vec::new();
     let mut current: Option<usize> = None;
     for line in text.lines() {
@@ -74,29 +78,44 @@ fn groups(text: &str) -> Vec<(String, Vec<Machine>)> {
     out
 }
 
-/// The files to look in, as (path relative to the checkout, absolute path).
-fn candidates_files(repo: &Path, cfg: &Config, p: &Peering) -> (Vec<PathBuf>, String) {
+/// The hand-written site inventories: every `ops/ansible/inventory/*.ini`
+/// except the peering inventories (`peering-*.ini`) and a file
+/// `goatbuilder federate allocate` generated, in name order, as (path relative
+/// to the checkout, text). site_values.rs reads the core's name from these.
+pub fn site_inventories(repo: &Path) -> Vec<(String, String)> {
+    let mut files: Vec<PathBuf> = std::fs::read_dir(repo.join("ops/ansible/inventory"))
+        .map(|rd| rd.filter_map(|e| e.ok().map(|e| e.path())).collect())
+        .unwrap_or_default();
+    files.sort();
+    files
+        .into_iter()
+        .filter_map(|f| {
+            let name = f.file_name()?.to_str()?.to_string();
+            if !name.ends_with(".ini") || name.starts_with("peering-") {
+                return None;
+            }
+            let text = std::fs::read_to_string(&f).ok()?;
+            (!text.starts_with(super::peering_files::MARKER))
+                .then(|| (format!("ops/ansible/inventory/{name}"), text))
+        })
+        .collect()
+}
+
+/// The inventories to look in for a peering, as (path, text), and where that
+/// is, for a refusal: the environment's declared `inventory:` alone, else
+/// [`site_inventories`].
+fn candidates(repo: &Path, cfg: &Config, p: &Peering) -> (Vec<(String, String)>, String) {
     let env = cfg.environments.iter().find(|e| e.name == p.environment);
     if let Some(inv) = env.and_then(|e| e.inventory.as_deref()) {
         let rel = format!("ops/ansible/{inv}");
-        return (vec![repo.join(&rel)], rel);
+        let text = std::fs::read_to_string(repo.join(&rel)).ok();
+        return (
+            text.map(|t| vec![(rel.clone(), t)]).unwrap_or_default(),
+            rel,
+        );
     }
-    let dir = repo.join("ops/ansible/inventory");
-    let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
-        .map(|rd| {
-            rd.filter_map(|e| e.ok().map(|e| e.path()))
-                .filter(|f| f.extension().is_some_and(|x| x == "ini"))
-                .filter(|f| {
-                    !f.file_name()
-                        .and_then(|n| n.to_str())
-                        .is_some_and(|n| n.starts_with("peering-"))
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    files.sort();
     (
-        files,
+        site_inventories(repo),
         "ops/ansible/inventory/*.ini (not peering-*.ini)".to_string(),
     )
 }
@@ -182,18 +201,14 @@ pub fn derive(
     let Some(core) = core_class(cfg, p) else {
         return Ok(None);
     };
-    let (files, looked) = candidates_files(repo, cfg, p);
+    let (files, looked) = candidates(repo, cfg, p);
     let edge_names = group_names(p, &p.edge_class);
     let core_names = group_names(p, &core);
     let mut found: Vec<(String, Grouped, Grouped)> = Vec::new();
-    for f in &files {
-        let Ok(text) = std::fs::read_to_string(f) else {
-            continue;
-        };
-        let (e, c) = (matching(&text, &edge_names), matching(&text, &core_names));
+    for (rel, text) in &files {
+        let (e, c) = (matching(text, &edge_names), matching(text, &core_names));
         if !e.is_empty() || !c.is_empty() {
-            let rel = f.strip_prefix(repo).unwrap_or(f).display().to_string();
-            found.push((rel, e, c));
+            found.push((rel.clone(), e, c));
         }
     }
     let describe = |ms: &[(String, Machine)]| {
