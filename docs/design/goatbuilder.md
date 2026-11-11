@@ -6,6 +6,7 @@
 | Decision record | [ADR 1198](../adr/1198-goatbuilder-config-driven-deploy-release-cli.md) |
 | Reference | [the goatbuilder reference](../reference/goatbuilder/README.md) — every verb as a task, the contract, secrets, transports, errors, testing; the source of the goatbuilder book |
 | Distribution and hosting | [goatbuilder-distribution.md](goatbuilder-distribution.md) — one signed build, two homes (public releases; `get.<site>` inside each goatnet), and how the first copy escapes the catch-22 |
+| Version 1.0 | [goatbuilder-v1-gate.md](goatbuilder-v1-gate.md) — what 1.0 promises and the tests that decide it |
 | Audience | goat engineers, and the external goat dev teams who will run their own repos and environments |
 
 ## What this is
