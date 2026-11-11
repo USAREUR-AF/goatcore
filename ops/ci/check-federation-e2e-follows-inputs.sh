@@ -78,10 +78,18 @@ required = "two sovereigns through the real driver, proved from the receiving si
 gate = [j for j, v in jobs.items() if v.get("name") == required]
 builds = [j for j in jobs if not need(j) and j not in gate]
 scen = [j for j in jobs if j not in gate and need(j)]
-ok = len(gate) == 1 and builds and len(scen) >= 2 and all(set(need(s)) & set(builds) for s in scen) \
-     and set(scen) <= set(need(gate[0]))
+def legs(j):  # a matrix job is one job per leg
+    m = (jobs[j].get("strategy") or {}).get("matrix") or {}
+    n = 1
+    for k, v in m.items():
+        if isinstance(v, list) and k not in ("include", "exclude"): n *= len(v)
+    return n
+nscen = sum(legs(j) for j in scen)
+nofail = all(((jobs[j].get("strategy") or {}).get("fail-fast") is False) for j in scen if legs(j) > 1)
+ok = len(gate) == 1 and builds and nscen >= 2 and nofail and all(set(need(s)) & set(builds) for s in scen) \
+     and set(scen) <= set(need(gate[0])) and jobs[gate[0]].get("if", "").replace(" ", "") in ("always()", "${{always()}}")
 if ok:
-    print(f"PASS  case 2: build job(s) {builds}, {len(scen)} scenario jobs, the required check needs them all")
+    print(f"PASS  case 2: build job(s) {builds}, {nscen} scenario jobs (fail-fast off), the required check needs them all and always runs")
 else:
     print(f"FAIL  case 2: the job is not split into a build, one job per scenario and the required check over them "
           f"(jobs: {list(jobs)})"); sys.exit(1)
