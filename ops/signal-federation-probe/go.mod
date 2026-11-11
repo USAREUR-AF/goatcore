@@ -1,6 +1,6 @@
 module github.com/usareur-af/goatcore/ops/signal-federation-probe
 
-go 1.26.10
+go 1.26.11
 
 require (
 	github.com/netbirdio/netbird v0.70.0

@@ -49,6 +49,15 @@ fn code(o: &Output) -> i32 {
 }
 
 /// Copy a directory tree (the fixtures are small, plain files).
+/// A test's own directory under the system temp directory, removed when the
+/// returned guard drops (a panicking test included).
+fn scratch(prefix: &str) -> tempfile::TempDir {
+    tempfile::Builder::new()
+        .prefix(prefix)
+        .tempdir()
+        .expect("a temporary directory for the test")
+}
+
 fn copy_tree(from: &Path, to: &Path) {
     std::fs::create_dir_all(to).unwrap();
     for e in std::fs::read_dir(from).unwrap() {
@@ -783,18 +792,18 @@ fn deploy_prep_phase_gates_a_declared_restore_required_rollout_on_ack() {
     assert!(!text(&o).contains("re-run with --ack"), "ack given: not gated — {}", text(&o));
 }
 
-fn founder_copy(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("gb-mock-{name}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
+fn founder_copy(name: &str) -> (tempfile::TempDir, PathBuf) {
+    let held = scratch(&format!("gb-mock-{name}-"));
+    let dir = held.path().to_path_buf();
     copy_tree(&repo().join("ops/goatbuilder/fixtures/goatnet-from-scratch/01-founder"), &dir);
-    dir
+    (held, dir)
 }
 
 /// A dry run on a fixture acts on nothing and needs no actor, for standup and
 /// for teardown (the walkthrough found both ignoring --dry-run).
 #[test]
 fn a_mock_dry_run_changes_nothing() {
-    let dir = founder_copy("dry");
+    let (_held, dir) = founder_copy("dry");
     let d = dir.to_str().unwrap();
     let before = snapshot(&dir);
     let o = run(&["--mock", d, "standup", "zagros", "--site", "alpha", "--dry-run"]);
@@ -817,7 +826,7 @@ fn a_mock_dry_run_changes_nothing() {
 /// --from and --to bound a rehearsal as they bound a real run.
 #[test]
 fn a_mock_standup_honours_its_phase_range() {
-    let dir = founder_copy("range");
+    let (_held, dir) = founder_copy("range");
     let d = dir.to_str().unwrap();
     let o = run(&["--mock", d, "standup", "zagros", "--site", "alpha", "--from", "9", "--to", "9", "--dry-run"]);
     assert_eq!(code(&o), 0, "{}", text(&o));
@@ -859,11 +868,16 @@ fn assay_plan_writes_nothing_in_the_checkout() {
 }
 
 /// A throwaway repo and a `gh` that logs its arguments and knows one tag.
-struct FastlaneRepo { dir: PathBuf, gh_log: PathBuf, path: String }
+struct FastlaneRepo {
+    dir: PathBuf,
+    gh_log: PathBuf,
+    path: String,
+    _held: tempfile::TempDir,
+}
 
 fn fastlane_repo(name: &str, component: &str) -> FastlaneRepo {
-    let dir = std::env::temp_dir().join(format!("goatbuilder-fastlane-{name}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
+    let held = scratch(&format!("goatbuilder-fastlane-{name}-"));
+    let dir = held.path().to_path_buf();
     for d in ["ops/pins", "ops/ansible/roles/app", "ops/release/sets", "ops/goatbuilder", "bin"] {
         std::fs::create_dir_all(dir.join(d)).unwrap();
     }
@@ -876,7 +890,7 @@ fn fastlane_repo(name: &str, component: &str) -> FastlaneRepo {
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
     let path = format!("{}:{}", dir.join("bin").display(), std::env::var("PATH").unwrap_or_default());
-    FastlaneRepo { dir, gh_log, path }
+    FastlaneRepo { dir, gh_log, path, _held: held }
 }
 
 fn fastlane_dry(r: &FastlaneRepo, reference: &str) -> serde_json::Value {

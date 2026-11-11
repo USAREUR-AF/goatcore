@@ -98,6 +98,22 @@ pub struct LiteInternet {
 #[derive(Debug, Clone, Deserialize)]
 pub struct Secrets {
     pub store: String,
+    /// Where this side's federation keys are (`goatbuilder federate` reads them
+    /// as FED_SIGNING_KEY, FED_CA_CERT and FED_CA_KEY when those are unset).
+    #[serde(default)]
+    pub federation: Option<SecretsFederation>,
+}
+
+/// `secrets: federation:`: paths, never the keys themselves. A relative path is
+/// inside the active goat context directory (federate/declared.rs).
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct SecretsFederation {
+    #[serde(default)]
+    pub signing_key: Option<String>,
+    #[serde(default)]
+    pub ca_cert: Option<String>,
+    #[serde(default)]
+    pub ca_key: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -141,6 +157,19 @@ pub struct Environment {
     /// tunnel or carrier never takes. Absent: NetBird's 51820.
     #[serde(default)]
     pub peering_edge_reserved_udp: Option<Vec<u16>>,
+    /// The peering directory this environment's peerings exchange through
+    /// (federate/declared.rs reads it as FED_DIRECTORY_URL and SSL_CERT_FILE).
+    #[serde(default)]
+    pub peering_directory: Option<PeeringDirectory>,
+}
+
+/// `environments[].peering_directory`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct PeeringDirectory {
+    pub url: String,
+    /// The CA the directory's TLS certificate chains to, when it is not public.
+    #[serde(default)]
+    pub ca_cert: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -198,6 +227,18 @@ pub struct Peering {
     /// The machines' addresses, for the rendered peering inventory.
     #[serde(default)]
     pub hosts: Option<PeeringHosts>,
+    /// `rendered`: `goatbuilder federate allocate` renders the edge's and the
+    /// core's deployment halves from the declaration and the environment's site
+    /// values. `hand`: they are written by hand. Absent: rendered, unless the
+    /// peering already runs from hand-written files (`federate::switches`).
+    #[serde(default)]
+    pub deployment: Option<String>,
+    /// `rendered`: `goatbuilder federate allocate` generates this peering's
+    /// federation.toml from the environment's own federation.toml and the
+    /// allocated values. `hand`: written by hand. Absent: rendered, unless the
+    /// peering already runs from hand-written files (`federate::switches`).
+    #[serde(default)]
+    pub federation_toml: Option<String>,
     /// Present when a peering forwarder relays the partner to our edge (ADR 1218).
     #[serde(default)]
     #[allow(dead_code)] // read where the forwarder is rendered and applied
@@ -229,11 +270,12 @@ pub struct PeeringForwarder {
 /// Words `goatbuilder federate <word>` takes, or is reserved to take, as a
 /// subcommand, so a peering declared with one could never be run: the six
 /// federation verbs, clap's `help`, the stages of the one command (`status`,
-/// `plan`, `deploy`, `test`), and `allocate`. The one list; ops/goatbuilder/
-/// validate.py's RESERVED_PEERING_NAMES mirrors it.
+/// `plan`, `deploy`, `test`), `allocate`, and `backout` (one peering backed
+/// out). The one list; ops/goatbuilder/validate.py's RESERVED_PEERING_NAMES
+/// mirrors it.
 pub const RESERVED_PEERING_NAMES: &[&str] = &[
     "init", "lint", "compose", "diff", "verify", "apply", "help", "status", "plan", "deploy",
-    "test", "allocate",
+    "test", "allocate", "backout",
 ];
 
 /// Read a YAML config file into a JSON value (the form the schema validates).
@@ -715,7 +757,7 @@ mod tests {
     /// list, so a partner named like one is refused where it is declared (GB-120).
     #[test]
     fn a_peering_named_like_a_federate_subcommand_is_refused() {
-        for name in ["lint", "apply", "help"] {
+        for name in ["lint", "apply", "help", "backout"] {
             let mut v = with_sites();
             v["peerings"] = json!([{"with": name, "environment": "dev", "site": "alpha", "edge_class": "edge"}]);
             rejected(&v, "(GB-120)");
@@ -723,6 +765,7 @@ mod tests {
         for verb in goat_federation::verbs::VERB_NAMES {
             assert!(RESERVED_PEERING_NAMES.contains(verb), "{verb} is a verb and must be reserved");
         }
+        assert!(RESERVED_PEERING_NAMES.contains(&crate::federate::backout::VERB), "backout is a subcommand and must be reserved");
     }
 
     #[test]
@@ -848,8 +891,7 @@ mod tests {
         assert_eq!(cfg.repo.unwrap().source, "example-org/goatnet-from-scratch");
         assert_eq!(cfg.components.len(), 1);
         // The four-fact file at a checkout root loads through `load`, finding the checkout config beside it.
-        let root = std::env::temp_dir().join(format!("gb-lite-root-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
+        let root = crate::testdir::path("gb-lite-root-");
         std::fs::create_dir_all(root.join("ops/goatbuilder")).unwrap();
         std::fs::copy(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../ops/goatbuilder/goatbuilder.yaml"), root.join("ops/goatbuilder/goatbuilder.yaml")).unwrap();
         std::fs::write(root.join("goatlite.yaml"), "schema: goatbuilder/v1\npreset: lite\nlite:\n  name: pasture\n  host: 192.0.2.50\n  ssh_user: ubuntu\n  admin: me@example.org\n").unwrap();

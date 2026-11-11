@@ -256,18 +256,31 @@ One more machine of a class at a live site, declared → converged → verified:
 
 A sovereign peering declared, converged and verified (ADR 1157): our half measured, the packages exchanged through the peering directory, one agreement composed and verified, the leaves minted from it, the rules rendered by the one writer, the edge deployed, the transport the agreement chose opened, acceptance in all four tiers. Replaces ops/scripts/peering-standup.sh step for step.
 
-`goatbuilder federate init|lint|compose|diff|verify|apply` runs one of the six federation verbs in process, with the flags and exit codes of `goat federate <verb>`.
+At a terminal, `goatbuilder federate <partner>` is the whole procedure: it asks for the partner's key and CA fingerprint and the agreement digest, makes the plan and asks to approve it, shows what our core will admit and asks again, then carries on through acceptance. A run that stops resumes where it stopped. Values come from the deployment's declarations; a FED_* variable set in the environment overrides one.
+
+Each stage also runs alone: `plan <partner>`, `deploy <partner>`, `test <partner>`, `status [<partner>]`. `allocate [<peering>]` writes a peering's values and files for review; `backout <partner>` backs one peering out and leaves the others as they were. `goatbuilder federate init|lint|compose|diff|verify|apply` runs one of the six federation verbs in process, with the flags and exit codes of `goat federate <verb>`.
 
 **Arguments**
 
 | Argument | Description |
 |---|---|
-| `<WITH>` | The peering name (the counterparty, as declared) |
+| `<WITH>` | The peering name (the counterparty, as declared), or a stage run alone: `status [<partner>]`, `deploy <partner>`, `test <partner>`, `allocate [<peering>]` |
+| `<PARTNER>` | The partner, after a stage word; after `allocate`, the one peering to allocate and render, beside peerings that are still hand-written |
 
 **Options**
 
 | Flag | Description | Default |
 |---|---|---|
+| `--plan <PLAN>` | deploy: the plan to execute (default <work>/plan.json) |  |
+| `--approve-plan <APPROVE_PLAN>` | deploy: approve exactly this plan hash, after reading the plan. --yes never approves a plan |  |
+| `--confirm` | Phases 5, 6 and 10: confirm the keys, the agreement digest and the admission here, at this terminal, instead of stopping for them by hand. The default when both stdin and stderr are a terminal |  |
+| `--no-confirm` | Stop at phases 5 and 10 for the steps by hand even at a terminal, as before confirming at the terminal was the default |  |
+| `--partner-key <PARTNER_KEY>` | Phase 5: the partner's verifying key, as read aloud on the call |  |
+| `--partner-ca-fingerprint <PARTNER_CA_FINGERPRINT>` | Phase 5: the partner's CA fingerprint, as read aloud on the call |  |
+| `--agreement-digest <AGREEMENT_DIGEST>` | Phase 6: the agreement digest, as compared with the partner |  |
+| `--place-pointer-package <PLACE_POINTER_PACKAGE>` | Phase 5: place the package the partner's single pointer named and the directory held back, after confirming on the call that it is the package for this peering (its digest, as the stop shows it) |  |
+| `--approve-admission <APPROVE_ADMISSION>` | Phase 10: approve exactly this admission digest, after reading what our core will admit. --yes never approves it |  |
+| `--review-in-pr` | Phase 10: write what our core would admit for review in a pull request, and stop |  |
 | `--env <ENV>` | The environment the peering is declared on (checked against goatbuilder.yaml peerings:) |  |
 | `--as <AS_PARTY>` | Which party we are (default: read from the declaration) |  |
 | `--edge-group <EDGE_GROUP>` | The ansible group the edge runs in (default <peering>_edge) |  |
@@ -275,6 +288,8 @@ A sovereign peering declared, converged and verified (ADR 1157): our half measur
 | `--from <FROM>` | Resume from this phase | `1` |
 | `--to <TO>` | Stop after this phase | `99` |
 | `--dry-run` | Print every phase and command; run nothing |  |
+| `--resume` | Skip the phases the run journal (<work>/state.json) shows passed, whose inputs and local outputs are unchanged now; checks and plays always run again. This is the default; the flag is kept so scripts that pass it keep working |  |
+| `--no-resume` | Run every phase in range, even ones the run journal shows passed with unchanged inputs (the behavior before resuming was the default) |  |
 
 **Subcommands**
 
@@ -284,6 +299,8 @@ A sovereign peering declared, converged and verified (ADR 1157): our half measur
 - [`goatbuilder federate diff`](#goatbuilder-federate-diff) — Two digests disagree? Run this. It names the field
 - [`goatbuilder federate verify`](#goatbuilder-federate-verify) — Could we actually deliver this agreement? Dry-run it here
 - [`goatbuilder federate apply`](#goatbuilder-federate-apply) — Render the access rules and configuration this agreement implies
+- [`goatbuilder federate plan`](#goatbuilder-federate-plan) — The bounded plan of one peering before anything changes: versions, agreement digest, rendered-configuration hashes, owned resources, restarts, acceptance policy and phase 1's readiness, written to <work>/plan.json with a stable hash. Reads only; changes no host
+- [`goatbuilder federate backout`](#goatbuilder-federate-backout) — Back out ONE peering: survey its hosts, confirm, remove its tunnel, SPIRE federation, edge router, republisher, forwarder mapping and core admission, and leave every other peering and the core as they were
 
 ## `goatbuilder federate init`
 
@@ -304,6 +321,7 @@ Exit 23 means something could not be derived; the list is the output.
 | `--signing-key <SIGNING_KEY>` | Our Ed25519 signing key: 64 hex characters (the RFC 8032 seed) or 44 base64 characters. Without it this prints the exact bytes to sign and stops — it will not invent a key |  |
 | `--out <OUT>` | Write the package's canonical bytes here |  |
 | `--json` | One JSON object instead of the glyph lines |  |
+| `--declaration <DECLARATION>` | Read the declaration from this file instead of federation.toml in the context directory: a peering's own federation.toml, which goatbuilder generates from the environment's. Identity is still read from the context directory |  |
 
 ## `goatbuilder federate lint`
 
@@ -426,6 +444,47 @@ Prints what it would write and stops. Pass --confirm to write.
 | `--partner-audience <PARTNER_AUDIENCE>` | Release-sets this partner holds an audience slot in, so the edge grants it a READ of `keys/<set>/**` and it can obtain a data key (ADR 1169 decision 3). Repeatable |  |
 | `--confirm` | Write. Without this, the rendering is printed and nothing is touched |  |
 | `--json` | One JSON object instead of the glyph lines |  |
+
+## `goatbuilder federate plan`
+
+The bounded plan of one peering before anything changes: versions, agreement digest, rendered-configuration hashes, owned resources, restarts, acceptance policy and phase 1's readiness, written to <work>/plan.json with a stable hash. Reads only; changes no host
+
+**Arguments**
+
+| Argument | Description |
+|---|---|
+| `<WITH>` | The peering name (the counterparty, as declared) |
+
+**Options**
+
+| Flag | Description | Default |
+|---|---|---|
+| `--env <ENV>` | The environment the peering is declared on |  |
+| `--as <AS_PARTY>` | Which party we are |  |
+| `--edge-group <EDGE_GROUP>` | The ansible group the edge runs in (default <peering>_edge) |  |
+| `--work <WORK>` | The working directory (default $FED_WORK, else /var/lib/goat-federation/<peering>) |  |
+| `--no-live` | Skip phase 1's live reads of the hosts; each is reported SKIP |  |
+| `--recheck` | Recheck the saved plan instead of writing one: refused when the file was altered, an input changed, or a live prerequisite fails |  |
+
+## `goatbuilder federate backout`
+
+Back out ONE peering: survey its hosts, confirm, remove its tunnel, SPIRE federation, edge router, republisher, forwarder mapping and core admission, and leave every other peering and the core as they were
+
+**Arguments**
+
+| Argument | Description |
+|---|---|
+| `<PARTNER>` | The partner whose one peering is removed (its sovereign id, as declared) |
+
+**Options**
+
+| Flag | Description | Default |
+|---|---|---|
+| `--env <ENV>` | The environment the peering is declared on (checked against goatbuilder.yaml peerings:) |  |
+| `--as <AS_PARTY>` | Which party we are (default: read from the agreement in the working directory) |  |
+| `--edge-group <EDGE_GROUP>` | The ansible group the edge runs in (default <partner>_edge) |  |
+| `--work <WORK>` | The working directory (default $FED_WORK, else /var/lib/goat-federation/<partner>) |  |
+| `--dry-run` | Survey the peering's hosts read-only and print every resource the back-out would remove, per host; change nothing |  |
 
 ## `goatbuilder pins`
 

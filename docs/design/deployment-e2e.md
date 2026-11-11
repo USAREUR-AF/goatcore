@@ -213,6 +213,8 @@ come from what each command promises, and this table checks that no class is bli
 avenues, a real WireGuard link, and reads the proof from the receiving side's storage and ACL trace.
 Its hosts run systemd and their own dockerd, because the edge role bind-mounts host paths and reads
 the container's PID, which a socket shared with the runner would break.
+[federation-e2e-environment.md](federation-e2e-environment.md) runs the same engine with several
+sovereigns, network profiles and a scenario matrix against any ref.
 
 ## What is not here
 

@@ -5,5 +5,5 @@ args = ["-o", "json", "federate", "lint", "../../ops/federation/vectors/compose-
 status.code = 2
 stdout = ""
 stderr = """
-goatbuilder: --mock, -C/--repo and -o/--output do not apply to goatbuilder federate init|lint|compose|diff|verify|apply: the verbs read only the files they are named and the party's context, and run for real; drop the flag (the verbs take --json for a JSON report)
+goatbuilder: --mock, -C/--repo and -o/--output do not apply to goatbuilder federate init|lint|compose|diff|verify|apply: the verbs read only the files they are named and the party's context, and run for real; drop the flag (the verbs take --json for a JSON report; -C/--repo is taken only by init --over-ssh)
 """

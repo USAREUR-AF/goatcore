@@ -14,6 +14,9 @@
   ansible.builtin.meta: end_host
   when: not (peering_spire_enabled | bool)
 
+- name: peering-spire | the outbound listen address, from the route when not set
+  ansible.builtin.include_tasks: outbound-listen.yml
+
 - name: peering-spire | every value is here (fail-closed)
   ansible.builtin.assert:
     that:

@@ -101,6 +101,13 @@ proposal as the specification for configuration ownership, plan and state, accep
 - Every federate subcommand name (`init lint compose diff verify apply plan deploy test
   status`) is reserved and can never be a partner name; config validation refuses it.
 
+> Amendment, 10 November 2026, while this ADR is Proposed: the reserved list above also holds
+> `allocate`, the verb `goatbuilder federate allocate` (stage 8, allocated peering values), and
+> `backout`, the subcommand `goatbuilder federate backout <partner>` (stage 12.5, back out one
+> peering; [goatbuilder.md](../design/goatbuilder.md#federation-modules-and-their-seams)). The
+> decision text above is unchanged; config validation refuses both as partner names through the
+> same one list.
+
 ### 2. One command, one decision
 
 `goatbuilder federate <partner>` is the whole procedure. The person makes one decision:

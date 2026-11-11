@@ -39,6 +39,13 @@ pub struct InitArgs {
     /// One JSON object instead of the glyph lines.
     #[arg(long)]
     pub json: bool,
+
+    /// Read the declaration from this file instead of federation.toml in the
+    /// context directory: a peering's own federation.toml, which goatbuilder
+    /// generates from the environment's. Identity is still read from the
+    /// context directory.
+    #[arg(long, value_name = "FILE")]
+    pub declaration: Option<PathBuf>,
 }
 
 #[derive(Serialize)]
@@ -133,10 +140,46 @@ cut_contact  = "fed-ops@example"
 "#;
 
 pub fn run_init(site: &Site, a: &InitArgs, out: &mut dyn Write) -> anyhow::Result<i32> {
+    run_init_measured(site, a, out, &measure_here)
+}
+
+/// What `goat federate init` has always measured: this machine, and the core
+/// router through this machine's container runtime (`DOCKER_HOST`,
+/// `FED_ROUTER_CONTAINER`).
+pub fn measure_here(interface: Option<&str>) -> anyhow::Result<derive::Measured> {
+    let (fabric_fips_image, fabric_version) = derive::fabric_capabilities();
+    Ok(derive::Measured {
+        transports: derive::transports(),
+        fabric_fips_image,
+        fabric_version,
+        pqc_capable: derive::pqc_capable(),
+        public_key: interface.map(derive::transport_public_key),
+        interface_mtu: interface.and_then(derive::interface_mtu),
+        // Run on the core, this reads the SPIRE server's own config; anywhere
+        // else it is absent and the profile alone must name the trust domain.
+        spire_trust_domain: Some(derive::spire_trust_domain_on(
+            &derive::Local,
+            derive::SPIRE_SERVER_CONF,
+        )),
+    })
+}
+
+/// [`run_init`], with the measured half supplied by the caller. `measure` is
+/// called once, after the declaration is read, with the federation interface
+/// when the package offers a transport; goatbuilder passes one that reads the
+/// edge and the core over SSH. Identity and the declaration are still read
+/// from `site`, and signing still happens here. An `Err` from `measure` (a
+/// host that cannot be reached) is returned as is, for the caller to print.
+pub fn run_init_measured(
+    site: &Site,
+    a: &InitArgs,
+    out: &mut dyn Write,
+    measure: &dyn Fn(Option<&str>) -> anyhow::Result<derive::Measured>,
+) -> anyhow::Result<i32> {
     let mut outcomes = Vec::new();
     let mut underived: Vec<String> = Vec::new();
 
-    let decl_path = site.declaration_path();
+    let decl_path = a.declaration.clone().unwrap_or_else(|| site.declaration_path());
     // Captured here and reused below instead of re-reading the same file a
     // second time — the second read used `.unwrap_or_default()`, so on ANY
     // failure of that redundant read (a TOCTOU remove between the two reads,
@@ -234,13 +277,18 @@ pub fn run_init(site: &Site, a: &InitArgs, out: &mut dyn Write) -> anyhow::Resul
         ),
     ));
 
-    // --- identity, from our own credentials ---
-    let td = derive::trust_domain(&site.cert_path);
-    let cafp = derive::ca_fingerprint(&site.ca_roots_path, &site.cert_path);
     // --- capabilities, measured ---
-    let transports = derive::transports();
-    let (fips, version) = derive::fabric_capabilities();
-    let pqc = derive::pqc_capable();
+    let interface = match (&decl.transport, a.with_transport) {
+        (Some(t), true) => Some(t.interface.as_str()),
+        _ => None,
+    };
+    let measured = measure(interface)?;
+    // --- identity, from our own credentials, and the core's SPIRE server ---
+    let td = derive::resolve_trust_domain(&site.cert_path, measured.spire_trust_domain.as_ref());
+    let cafp = derive::ca_fingerprint(&site.ca_roots_path, &site.cert_path);
+    let transports = measured.transports;
+    let (fips, version) = (measured.fabric_fips_image, measured.fabric_version);
+    let pqc = measured.pqc_capable;
 
     let mut members: Vec<(String, JVal)> = Vec::new();
     members.push((
@@ -303,8 +351,17 @@ pub fn run_init(site: &Site, a: &InitArgs, out: &mut dyn Write) -> anyhow::Resul
                 underived.push("transport_offer".into());
             }
             Some(t) => {
-                let pk = derive::transport_public_key(&t.interface);
-                match derive::interface_mtu(&t.interface) {
+                // `measure` was given this interface above, so it answered
+                // for it; a measurer that did not is refused, not guessed.
+                let pk = measured.public_key.unwrap_or_else(|| derive::Derived {
+                    field: "transport_offer.public_key",
+                    outcome: Err(format!(
+                        "the measurement returned no public key for interface `{}`",
+                        t.interface
+                    )),
+                    source: "the caller's measurement".into(),
+                });
+                match measured.interface_mtu {
                     Some(mtu) => {
                         if t.measured_mtu > mtu {
                             outcomes.push(FedOutcome::fail(
@@ -614,6 +671,140 @@ mod tests {
             accept_bytes_per_message: bpm,
             accept_distinct_keys: keys,
         }
+    }
+
+    fn site_with(decl: &str) -> (tempfile::TempDir, Site) {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join(derive::DECLARATION_FILE), decl).unwrap();
+        let site = Site {
+            context_dir: dir.path().to_path_buf(),
+            cert_path: dir.path().join("cert.pem"),
+            ca_roots_path: dir.path().join("ca-roots.pem"),
+        };
+        (dir, site)
+    }
+
+    fn args(with_transport: bool) -> InitArgs {
+        InitArgs {
+            with_transport,
+            with_data: false,
+            signing_key: None,
+            out: None,
+            json: true,
+            declaration: None,
+        }
+    }
+
+    const DECL: &str = "sovereign_id = \"xaa\"\nterm_days = 30\ncut_contact = \"fed-ops@example.org\"\n\n[transport]\ninterface = \"wg-fed0\"\nendpoint = \"192.0.2.10:51820\"\nlistener = true\nproposed_link_subnet = \"169.254.77.0/31\"\nmeasured_mtu = 1380\n";
+
+    fn fixed(interface: Option<&str>) -> derive::Measured {
+        derive::Measured {
+            transports: derive::Derived {
+                field: "capabilities.transports",
+                outcome: Ok(vec!["wireguard".into()]),
+                source: "on edge-a".into(),
+            },
+            fabric_fips_image: derive::Derived {
+                field: "capabilities.fabric_fips_image",
+                outcome: Ok(false),
+                source: "on core-a".into(),
+            },
+            fabric_version: derive::Derived {
+                field: "capabilities.fabric_version",
+                outcome: Ok("1.9.0".into()),
+                source: "on core-a".into(),
+            },
+            pqc_capable: derive::Derived {
+                field: "capabilities.pqc_capable",
+                outcome: Ok(false),
+                source: "on edge-a".into(),
+            },
+            public_key: interface.map(|_| derive::Derived {
+                field: "transport_offer.public_key",
+                outcome: Ok("PUBKEYfixture=".into()),
+                source: "on edge-a".into(),
+            }),
+            interface_mtu: interface.map(|_| 1420),
+            spire_trust_domain: None,
+        }
+    }
+
+    /// The caller's measurement is asked once, for the declared interface
+    /// only when a transport is offered, and its values reach the report.
+    #[test]
+    fn init_takes_its_measured_half_from_the_caller() {
+        let (_d, site) = site_with(DECL);
+        for (with_transport, want) in [(true, Some("wg-fed0")), (false, None)] {
+            let asked = std::cell::RefCell::new(Vec::new());
+            let measure = |i: Option<&str>| {
+                asked.borrow_mut().push(i.map(str::to_string));
+                Ok(fixed(i))
+            };
+            let mut out = Vec::new();
+            // No profile certificate in the fixture: identity is underived, so
+            // the run ends at exit 23 after measuring, with the sources shown.
+            let code = run_init_measured(&site, &args(with_transport), &mut out, &measure).unwrap();
+            assert_eq!(code, super::super::EXIT_FED_UNDERIVED);
+            assert_eq!(*asked.borrow(), vec![want.map(str::to_string)]);
+            let text = String::from_utf8(out).unwrap();
+            assert!(
+                text.contains("on core-a") && text.contains("on edge-a"),
+                "{text}"
+            );
+        }
+    }
+
+    /// `--declaration` names the file the declared half is read from; the
+    /// context directory's federation.toml is then not read at all.
+    #[test]
+    fn init_reads_the_declaration_it_is_named() {
+        // The context's own file would fail to parse, so reading it fails the run.
+        let (_d, site) = site_with("not toml [");
+        let peering = tempfile::tempdir().unwrap();
+        let named = peering.path().join("federation.toml");
+        std::fs::write(&named, DECL.replace("wg-fed0", "wg-fed3")).unwrap();
+        let asked = std::cell::RefCell::new(Vec::new());
+        let measure = |i: Option<&str>| {
+            asked.borrow_mut().push(i.map(str::to_string));
+            Ok(fixed(i))
+        };
+        let a = InitArgs {
+            declaration: Some(named.clone()),
+            ..args(true)
+        };
+        let mut out = Vec::new();
+        let code = run_init_measured(&site, &a, &mut out, &measure).unwrap();
+        // Identity is underived (no certificate in the fixture), the declaration is not.
+        assert_eq!(code, super::super::EXIT_FED_UNDERIVED);
+        assert_eq!(*asked.borrow(), vec![Some("wg-fed3".to_string())]);
+        let text = String::from_utf8(out).unwrap();
+        assert!(!text.contains("not toml"), "{text}");
+
+        // Without it, the context's file is the declaration, as before.
+        let mut out = Vec::new();
+        run_init_measured(&site, &args(true), &mut out, &measure).unwrap();
+        let text = String::from_utf8(out).unwrap();
+        assert!(text.contains(&site.declaration_path().display().to_string()), "{text}");
+
+        // A named file that is missing says which file.
+        let gone = peering.path().join("missing.toml");
+        let a = InitArgs {
+            declaration: Some(gone.clone()),
+            ..args(true)
+        };
+        let mut out = Vec::new();
+        run_init_measured(&site, &a, &mut out, &measure).unwrap();
+        let text = String::from_utf8(out).unwrap();
+        assert!(text.contains(&gone.display().to_string()), "{text}");
+    }
+
+    /// A host that cannot be reached is the caller's error, returned as is.
+    #[test]
+    fn a_measurement_that_fails_is_returned_not_reported_as_underived() {
+        let (_d, site) = site_with(DECL);
+        let measure = |_: Option<&str>| Err(anyhow::anyhow!("GB-111 could not reach xaa-edge"));
+        let e = run_init_measured(&site, &args(true), &mut Vec::new(), &measure).unwrap_err();
+        assert!(e.to_string().contains("could not reach xaa-edge"), "{e}");
     }
 
     /// A limit that is not stated is a limit that does not exist, so a

@@ -34,6 +34,97 @@
 use std::path::Path;
 use std::process::Command;
 
+// ---------------------------------------------------------------------------
+// Where the reads happen
+// ---------------------------------------------------------------------------
+
+/// The one way `derive` touches a host: run a read-only command, or read a
+/// file. [`Local`] is this machine; a caller supplies another implementation to
+/// measure a host it reaches some other way (goatbuilder measures the edge and
+/// the core over SSH, `crates/goatbuilder/src/federate/measure.rs`). The
+/// derivations below are written once, against this trait, so a package
+/// measured from the operator's machine and one measured on the edge itself
+/// come from the same code.
+///
+/// The privilege boundary stays where it was: every command `derive` issues is
+/// listed by [`is_read_only_probe`], and an implementation that reaches another
+/// host is expected to refuse anything else.
+pub trait Probe {
+    /// Run `bin args…`. A non-zero exit is an error carrying stderr, never an
+    /// empty answer.
+    fn run(&self, bin: &str, args: &[&str]) -> Result<String, String>;
+    /// Run `bin args…` whose answer is on stdout even when it exits non-zero
+    /// (`systemctl is-active`). Still an error when nothing is on stdout.
+    fn run_reading_output(&self, bin: &str, args: &[&str]) -> Result<String, String>;
+    /// Read a file. `NotFound` and `PermissionDenied` are kept apart: they are
+    /// different facts (see [`transports_on`]).
+    fn read_file(&self, path: &str) -> std::io::Result<String>;
+    /// Where the reads happen, appended to each `source` so a reviewer can
+    /// re-run the same read in the same place. Empty for this machine.
+    fn place(&self) -> String {
+        String::new()
+    }
+}
+
+/// This machine: the reads `goat federate init` has always made.
+pub struct Local;
+
+impl Probe for Local {
+    fn run(&self, bin: &str, args: &[&str]) -> Result<String, String> {
+        run(bin, args)
+    }
+    fn run_reading_output(&self, bin: &str, args: &[&str]) -> Result<String, String> {
+        run_reading_output(bin, args)
+    }
+    fn read_file(&self, path: &str) -> std::io::Result<String> {
+        std::fs::read_to_string(path)
+    }
+}
+
+/// Every command `derive` issues, and nothing else. A [`Probe`] that reaches
+/// another host checks each command against this before sending it, so the
+/// derivations cannot be turned into a way to change a host: they read.
+///
+/// `docker exec <id> zenohd --version` is the one `exec`, and it is allowed
+/// only in exactly that shape. `cat` is how a remote [`Probe::read_file`] reads,
+/// and only under the two trees `derive` reads.
+pub fn is_read_only_probe(bin: &str, args: &[&str]) -> bool {
+    match (bin, args) {
+        // Exactly the two `wg show` reads: `wg show all private-key` is a read
+        // too, and it is the one read that must never leave the host.
+        ("wg", ["show", "interfaces"]) => true,
+        ("wg", ["show", interface, "public-key"]) => interface_name(interface),
+        ("swanctl" | "ipsec", ["--version"]) => true,
+        ("systemctl", ["is-active", "rosenpass"]) => true,
+        ("systemctl", ["list-unit-files", "rosenpass.service"]) => true,
+        // The listing and the inspection in the formats derive asks for, so a
+        // container's environment (its secrets) is never printed.
+        ("docker" | "podman", ["ps", "--no-trunc", "--format", ROUTER_LIST_FORMAT]) => true,
+        ("docker" | "podman", ["inspect", "--type", "container", "--format", format, name]) => {
+            (*format == ROUTER_INSPECT_FORMAT || *format == PODMAN_INSPECT_FORMAT)
+                && container_name(name)
+        }
+        ("docker" | "podman", ["exec", id, "zenohd" | "/zenohd", "--version"]) => {
+            container_name(id)
+        }
+        ("cat", ["--", path]) => {
+            ((path.starts_with("/proc/sys/crypto/") || path.starts_with("/sys/class/net/"))
+                && !path.contains(".."))
+                || spire_conf_path(path)
+        }
+        _ => false,
+    }
+}
+
+fn at(probe: &dyn Probe) -> String {
+    let place = probe.place();
+    if place.is_empty() {
+        place
+    } else {
+        format!(" {place}")
+    }
+}
+
 /// The declaration file, beside the profile it belongs to.
 pub const DECLARATION_FILE: &str = "federation.toml";
 
@@ -51,6 +142,8 @@ pub const MEASURED_ONLY: [&str; 5] = [
 const CORE_ROLE: &str = "zenoh-core";
 const ROUTER_LIST_FORMAT: &str = "{{.ID}}\t{{.Names}}\t{{.Label \"org.goat.component\"}}";
 const ROUTER_INSPECT_FORMAT: &str = "{{.Id}}\t{{.State.Running}}\t{{.Config.Image}}";
+/// Podman's template struct spells the field ID; Docker spells it Id.
+const PODMAN_INSPECT_FORMAT: &str = "{{.ID}}\t{{.State.Running}}\t{{.Config.Image}}";
 
 #[derive(Debug)]
 struct Router {
@@ -93,8 +186,78 @@ impl<T> Derived<T> {
 /// `identity.trust_domain` — the SPIFFE trust domain out of the profile leaf
 /// certificate's URI subject-alternative name. Derived rather than declared
 /// because the certificate is what a counterparty's edge will actually see.
+///
+/// A profile with no `spiffe://` URI-SAN fails here. [`resolve_trust_domain`]
+/// also takes the core's SPIRE server, which a portal-minted profile needs.
 pub fn trust_domain(cert_pem: &Path) -> Derived<String> {
+    resolve_trust_domain(cert_pem, None)
+}
+
+/// `identity.trust_domain`, from the profile leaf and, when given, from the
+/// trust domain the core's SPIRE server runs ([`spire_trust_domain_on`]).
+///
+/// A portal-minted profile (`cert-sign`, the goatnet's offline CA) carries
+/// `urn:goat:<site>:org=<anchor>` and never a SPIFFE ID (#247,
+/// `ops/grant-crypto/keyd/src/portal.rs`). The trust domain the agreement pins
+/// is the one SPIRE federates in phase 13, so SPIRE is a source of the same
+/// fact, not a fallback guess:
+///
+/// - the profile's `spiffe://` URI-SAN, when it has one, as before; it must
+///   agree with SPIRE when SPIRE was read;
+/// - otherwise SPIRE's `server.trust_domain`;
+/// - a profile that cannot be read fails as before, whatever SPIRE says: the
+///   same certificate selects `identity.ca_fingerprint`.
+pub fn resolve_trust_domain(cert_pem: &Path, spire: Option<&Derived<String>>) -> Derived<String> {
     const FIELD: &str = "identity.trust_domain";
+    let src = cert_pem.display().to_string();
+    let (profile, uris) = match profile_spiffe_domain(cert_pem) {
+        Ok(found) => found,
+        Err(why) => return Derived::fail(FIELD, why, src),
+    };
+    let spire_ok = spire.and_then(|s| s.outcome.as_ref().ok().map(|v| (v, &s.source)));
+    match (profile, spire_ok) {
+        (Some(p), Some((s, s_src))) if &p != s => Derived::fail(
+            FIELD,
+            format!(
+                "the profile certificate names `{p}` but the SPIRE server ({s_src}) runs `{s}`. \
+                 The agreement pins one trust domain and SPIRE federates exactly what it runs, \
+                 so one of the two is wrong; fix it rather than choose"
+            ),
+            format!("{src} URI-SAN"),
+        ),
+        (Some(p), Some((_, s_src))) => {
+            Derived::ok(FIELD, p, format!("{src} URI-SAN, matching {s_src}"))
+        }
+        (Some(p), None) => Derived::ok(FIELD, p, format!("{src} URI-SAN")),
+        (None, Some((s, s_src))) => Derived::ok(
+            FIELD,
+            s.clone(),
+            format!("{s_src} (the profile certificate {src} carries no SPIFFE ID: {uris:?})"),
+        ),
+        (None, None) => {
+            let spire_why = match spire {
+                Some(Derived { outcome: Err(e), source, .. }) => {
+                    format!(" The core's SPIRE server could not answer either ({source}): {e}")
+                }
+                _ => String::new(),
+            };
+            Derived::fail(
+                FIELD,
+                format!(
+                    "the profile certificate carries no `spiffe://` URI-SAN (it has {uris:?}), \
+                     and no SPIRE server trust domain was read.{spire_why} A portal-minted \
+                     profile never carries a SPIFFE ID; measure the core (goatbuilder federate \
+                     init --over-ssh), or run init where the SPIRE server config is readable"
+                ),
+                src,
+            )
+        }
+    }
+}
+
+/// The profile leaf's `spiffe://<domain>` (domain only), or `None` with the
+/// URI-SANs it has instead. `Err` when the certificate cannot be read at all.
+fn profile_spiffe_domain(cert_pem: &Path) -> Result<(Option<String>, Vec<String>), String> {
     let src = cert_pem.display().to_string();
     // NotFound/IsADirectory/PermissionDenied were all collapsed into one
     // "run profile init" remedy — correct for the first, wrong for the
@@ -103,31 +266,23 @@ pub fn trust_domain(cert_pem: &Path) -> Derived<String> {
     let bytes = match std::fs::read(cert_pem) {
         Ok(b) => b,
         Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
-            return Derived::fail(
-                FIELD,
-                format!(
-                    "profile certificate at {src} exists but is not readable by this user \
-                     (permission denied) — fix ownership/permissions, not `profile init`"
-                ),
-                src,
-            );
+            return Err(format!(
+                "profile certificate at {src} exists but is not readable by this user \
+                 (permission denied) — fix ownership/permissions, not `profile init`"
+            ));
         }
         Err(_) => {
-            return Derived::fail(
-                FIELD,
-                format!(
-                    "no profile certificate at {src}. Run `goat profile init <bundle.cbor>` first"
-                ),
-                src,
-            );
+            return Err(format!(
+                "no profile certificate at {src}. Run `goat profile init <bundle.cbor>` first"
+            ));
         }
     };
     let Ok(pem) = pem::parse(&bytes) else {
-        return Derived::fail(FIELD, "the profile certificate is not readable PEM", src);
+        return Err("the profile certificate is not readable PEM".into());
     };
     let der = pem.contents();
     let Ok((_, cert)) = x509_parser::parse_x509_certificate(der) else {
-        return Derived::fail(FIELD, "the profile certificate is not readable X.509", src);
+        return Err("the profile certificate is not readable X.509".into());
     };
     let mut uris: Vec<String> = Vec::new();
     if let Ok(Some(san)) = cert.tbs_certificate.subject_alternative_name() {
@@ -137,37 +292,161 @@ pub fn trust_domain(cert_pem: &Path) -> Derived<String> {
             }
         }
     }
-    let spiffe = uris.iter().find(|u| u.starts_with("spiffe://"));
-    match spiffe {
-        Some(u) => {
-            // spiffe://<trust-domain>/<path…> — the trust domain is the
-            // authority component and nothing below it.
-            let rest = &u["spiffe://".len()..];
-            let domain = rest.split('/').next().unwrap_or_default();
-            if domain.is_empty() {
-                return Derived::fail(
-                    FIELD,
-                    format!("the URI-SAN `{u}` names no trust domain"),
-                    src,
-                );
-            }
-            Derived::ok(
-                FIELD,
-                format!("spiffe://{domain}"),
-                format!("{src} URI-SAN"),
-            )
-        }
-        None => Derived::fail(
+    let Some(u) = uris.iter().find(|u| u.starts_with("spiffe://")) else {
+        return Ok((None, uris));
+    };
+    // spiffe://<trust-domain>/<path…> — the trust domain is the authority
+    // component and nothing below it.
+    let rest = &u["spiffe://".len()..];
+    let domain = rest.split('/').next().unwrap_or_default();
+    if domain.is_empty() {
+        return Err(format!("the URI-SAN `{u}` names no trust domain"));
+    }
+    Ok((Some(format!("spiffe://{domain}")), uris))
+}
+
+// ---------------------------------------------------------------------------
+// Identity — the core's SPIRE server
+// ---------------------------------------------------------------------------
+
+/// Where the spire role renders the server's config:
+/// `{{ spire_config_dir }}/server.conf`, `spire_config_dir` defaulting to
+/// `/opt/spire/config` (ops/ansible/roles/spire/defaults/main.yml).
+pub const SPIRE_SERVER_CONF: &str = "/opt/spire/config/server.conf";
+
+/// A SPIRE server config path [`is_read_only_probe`] lets a remote probe read:
+/// a `server.conf` under `/opt/spire/` or `/etc/spire/`, and nothing that walks
+/// out of either. The rendered file holds no secret (the database password is
+/// an `${SPIRE_DB_PASSWORD}` placeholder expanded from the container's
+/// environment), and only `server.trust_domain` is taken from it; the file is
+/// never printed.
+pub fn spire_conf_path(path: &str) -> bool {
+    (path.starts_with("/opt/spire/") || path.starts_with("/etc/spire/"))
+        && path.ends_with("/server.conf")
+        && !path.contains("..")
+        && !path.contains("//")
+        && path
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "/_.-".contains(c))
+}
+
+/// The trust domain the core's SPIRE server runs, `spiffe://<domain>`, from
+/// `server { trust_domain = "…" }` in `conf_path`, read through `probe`.
+pub fn spire_trust_domain_on(probe: &dyn Probe, conf_path: &str) -> Derived<String> {
+    const FIELD: &str = "identity.trust_domain";
+    let src = format!("{conf_path} server.trust_domain{}", at(probe));
+    if !spire_conf_path(conf_path) {
+        return Derived::fail(
             FIELD,
-            format!(
-                "the profile certificate carries no `spiffe://` URI-SAN (it has {uris:?}). The \
-                 trust domain is read from the certificate a counterparty's edge will actually \
-                 see, so there is nowhere else to take it from"
-            ),
+            format!("`{conf_path}` is not a SPIRE server config path this reads"),
             src,
-        ),
+        );
+    }
+    let text = match probe.read_file(conf_path) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Derived::fail(FIELD, format!("no SPIRE server config at {conf_path}"), src);
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+            return Derived::fail(
+                FIELD,
+                format!("the SPIRE server config at {conf_path} is not readable (permission denied)"),
+                src,
+            );
+        }
+        Err(e) => {
+            return Derived::fail(FIELD, format!("{conf_path} could not be read: {e}"), src);
+        }
+    };
+    match server_trust_domain(&text) {
+        Ok(d) => Derived::ok(FIELD, format!("spiffe://{d}"), src),
+        Err(why) => Derived::fail(FIELD, format!("{conf_path}: {why}"), src),
     }
 }
+
+/// `line` up to a `#` or `//` comment outside a quoted string. Braces inside
+/// quotes are left for the caller, which counts only what is outside them.
+fn strip_hcl_comment(line: &str) -> &str {
+    let bytes = line.as_bytes();
+    let mut in_quote = false;
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\\' if in_quote => i += 1,
+            b'"' => in_quote = !in_quote,
+            b'#' if !in_quote => return &line[..i],
+            b'/' if !in_quote && bytes.get(i + 1) == Some(&b'/') => return &line[..i],
+            _ => {}
+        }
+        i += 1;
+    }
+    line
+}
+
+/// `trust_domain` in the top-level `server` block of a SPIRE server config
+/// (HCL), validated as a SPIFFE trust domain name. Only that one attribute is
+/// read; the error never quotes the file.
+fn server_trust_domain(text: &str) -> Result<String, String> {
+    let mut depth: usize = 0;
+    let mut in_server = false;
+    let mut found: Option<String> = None;
+    for raw in text.lines() {
+        let line = strip_hcl_comment(raw).trim();
+        if depth == 0 {
+            let head = line.trim_end_matches('{').trim();
+            if line.ends_with('{') && head == "server" {
+                in_server = true;
+            }
+        } else if depth == 1 && in_server {
+            if let Some(rest) = line.strip_prefix("trust_domain") {
+                let rest = rest.trim_start();
+                if let Some(v) = rest.strip_prefix('=') {
+                    let v = v.trim();
+                    let Some(v) = v.strip_prefix('"').and_then(|v| v.strip_suffix('"')) else {
+                        return Err("server.trust_domain is not a quoted string".into());
+                    };
+                    if found.is_some() {
+                        return Err("server.trust_domain is set more than once".into());
+                    }
+                    found = Some(v.to_string());
+                }
+            }
+        }
+        let mut in_quote = false;
+        for c in line.chars() {
+            match c {
+                '"' => in_quote = !in_quote,
+                _ if in_quote => {}
+                '{' => depth += 1,
+                '}' => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        in_server = false;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    let Some(domain) = found else {
+        return Err("no trust_domain in a top-level `server` block".into());
+    };
+    // SPIFFE trust domain names: lowercase letters, digits, `.`, `-`, `_`.
+    if domain.is_empty()
+        || !domain
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || ".-_".contains(c))
+    {
+        return Err(format!(
+            "server.trust_domain `{domain}` is not a SPIFFE trust domain name"
+        ));
+    }
+    Ok(domain)
+}
+
+// ---------------------------------------------------------------------------
+// Identity — the profile's trust anchor
+// ---------------------------------------------------------------------------
 
 /// `identity.ca_fingerprint` — `sha256:` over the DER of the trust anchor in
 /// the profile's root bundle (§5.1): the root whose key signed the profile
@@ -231,13 +510,18 @@ pub fn ca_fingerprint(ca_roots_pem: &Path, leaf_pem: &Path) -> Derived<String> {
 /// declaration (§3), and a package that offered one would refuse at
 /// composition anyway with nothing to point at.
 pub fn transports() -> Derived<Vec<String>> {
+    transports_on(&Local)
+}
+
+/// [`transports`], read through `probe`.
+pub fn transports_on(probe: &dyn Probe) -> Derived<Vec<String>> {
     const FIELD: &str = "capabilities.transports";
     let mut found = Vec::new();
     let mut notes = Vec::new();
 
     // WireGuard: an interface has to exist. The tool being installed says
     // nothing about whether this host can carry a link.
-    match run("wg", &["show", "interfaces"]) {
+    match probe.run("wg", &["show", "interfaces"]) {
         Ok(out) if !out.trim().is_empty() => {
             found.push("wireguard".to_string());
             notes.push(format!("`wg show interfaces` → {}", out.trim()));
@@ -252,33 +536,40 @@ pub fn transports() -> Derived<Vec<String>> {
     // AND the host actually running in FIPS mode. Reporting `ipsec-fips`
     // because strongSwan is installed would be the exact claim-for-a-fact
     // substitution this module exists to prevent.
-    let ipsec = run("swanctl", &["--version"]).is_ok() || run("ipsec", &["--version"]).is_ok();
+    let ipsec =
+        probe.run("swanctl", &["--version"]).is_ok() || probe.run("ipsec", &["--version"]).is_ok();
     // Absent (ENOENT — no such sysctl, e.g. not Linux or a non-FIPS kernel)
     // IS a readable "not FIPS". PermissionDenied is a DIFFERENT fact: the
     // file exists and this host may well be in FIPS mode, but this caller
     // cannot see it — collapsing that into `false` is the exact
     // claim-for-a-fact substitution `pqc_capable()` (below) was written to
     // avoid, and this check didn't copy that discipline.
-    let fips = match std::fs::read_to_string("/proc/sys/crypto/fips_enabled") {
-        Ok(s) => Some(s.trim() == "1"),
-        Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => None,
-        Err(_) => Some(false),
+    //
+    // Only an absent file is a "no". Through a remote probe, a read can also
+    // fail because the connection dropped or sudo would not run `cat`; those
+    // say nothing about the host's FIPS mode either, so they are unknowns too.
+    let fips = match probe.read_file("/proc/sys/crypto/fips_enabled") {
+        Ok(s) => Ok(s.trim() == "1"),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+            Err("permission denied".to_string())
+        }
+        Err(e) => Err(e.to_string()),
     };
     match (ipsec, fips) {
-        (true, Some(true)) => {
+        (true, Ok(true)) => {
             found.push("ipsec-fips".to_string());
             notes.push("strongSwan present and /proc/sys/crypto/fips_enabled is 1".into());
         }
-        (true, Some(false)) => {
+        (true, Ok(false)) => {
             notes.push("strongSwan present but /proc/sys/crypto/fips_enabled is not 1 — that is `ipsec`, not `ipsec-fips`".into());
         }
-        (true, None) => {
-            notes.push(
+        (true, Err(why)) => {
+            notes.push(format!(
                 "strongSwan present but /proc/sys/crypto/fips_enabled could not be read \
-                 (permission denied) — FIPS status on this host is UNKNOWN, not false; \
+                 ({why}) — FIPS status on this host is UNKNOWN, not false; \
                  `ipsec-fips` is withheld rather than guessed."
-                    .into(),
-            );
+            ));
         }
         (false, _) => {
             notes.push("no strongSwan (`swanctl`/`ipsec`) on PATH".into());
@@ -289,14 +580,19 @@ pub fn transports() -> Derived<Vec<String>> {
         Derived::fail(
             FIELD,
             format!(
-                "no transport is installed and configured on this host. An empty set-array is not \
-                 a declaration, so there is nothing to emit. What was read: {}",
+                "no transport is installed and configured on this host{}. An empty set-array is \
+                 not a declaration, so there is nothing to emit. What was read: {}",
+                at(probe),
                 notes.join("; ")
             ),
-            "local system probe",
+            format!("local system probe{}", at(probe)),
         )
     } else {
-        Derived::ok(FIELD, super::json::normalise_set(&found), notes.join("; "))
+        Derived::ok(
+            FIELD,
+            super::json::normalise_set(&found),
+            format!("{}{}", notes.join("; "), at(probe)),
+        )
     }
 }
 
@@ -306,11 +602,57 @@ pub fn fabric_capabilities() -> (Derived<bool>, Derived<String>) {
     let selected = std::env::var("FED_ROUTER_CONTAINER")
         .ok()
         .filter(|v| !v.is_empty());
+    let target = match selected.as_deref() {
+        Some(name) => RouterTarget::Named {
+            name,
+            from: "FED_ROUTER_CONTAINER",
+        },
+        None => RouterTarget::Discover,
+    };
     // DOCKER_HOST explicitly selects a daemon, often remote. Never replace a
     // failed remote Docker read with an unrelated local Podman observation.
     let tools = router_tools(std::env::var_os("DOCKER_HOST").is_some());
-    let router = select_router(selected.as_deref(), tools, &mut run);
-    fabric_from_router(router, &mut run)
+    fabric_capabilities_on(&Local, target, tools, "FED_ROUTER_CONTAINER")
+}
+
+/// Which core router container to measure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RouterTarget<'a> {
+    /// Find the one running core: the role label, the standard
+    /// `*-zenoh-router` names, or the legacy `goat-zenoh`.
+    Discover,
+    /// A container name or ID, and where that name came from (an operator's
+    /// selector, or the deployment's own variables). Never falls back to
+    /// discovery: a named router that is absent or stopped is a refusal, not a
+    /// reason to measure some other container.
+    Named { name: &'a str, from: &'a str },
+}
+
+/// [`fabric_capabilities`], read through `probe`. `tools` are the container
+/// runtimes to ask, in order; `knob` is how the operator names a router by
+/// hand, quoted in the refusals (`FED_ROUTER_CONTAINER` for `goat`).
+pub fn fabric_capabilities_on(
+    probe: &dyn Probe,
+    target: RouterTarget,
+    tools: &[&'static str],
+    knob: &str,
+) -> (Derived<bool>, Derived<String>) {
+    let mut run = |bin: &str, args: &[&str]| probe.run(bin, args);
+    let router = match target {
+        RouterTarget::Discover => select_router(None, tools, &mut run, knob),
+        // An operator's own selector reads as it always has; a name the
+        // deployment supplied says where it came from.
+        RouterTarget::Named { name, from } if from == knob => {
+            select_router(Some(name), tools, &mut run, knob)
+        }
+        RouterTarget::Named { name, from } => select_router(Some(name), tools, &mut run, knob)
+            .map_err(|why| format!("{from} names the core router `{name}`: {why}")),
+    };
+    let (mut fips, mut version) = fabric_from_router(router, &mut run);
+    let place = at(probe);
+    fips.source.push_str(&place);
+    version.source.push_str(&place);
+    (fips, version)
 }
 
 fn router_tools(docker_host_set: bool) -> &'static [&'static str] {
@@ -383,6 +725,11 @@ fn fabric_from_router(
 /// in any sense a counterparty cares about, and `false` is not defaulted to
 /// either: an unreadable probe is an unknown, and an unknown is a failure.
 pub fn pqc_capable() -> Derived<bool> {
+    pqc_capable_on(&Local)
+}
+
+/// [`pqc_capable`], read through `probe`.
+pub fn pqc_capable_on(probe: &dyn Probe) -> Derived<bool> {
     const FIELD: &str = "capabilities.pqc_capable";
     // `systemctl is-active` EXITS NON-ZERO FOR EVERY STATE THAT IS NOT ACTIVE
     // and prints the state on stdout regardless — `inactive` with exit 3 is a
@@ -392,28 +739,31 @@ pub fn pqc_capable() -> Derived<bool> {
     // opt-in per goatnet (`rosenpass_enabled`). The result was that `init`
     // refused to produce a package on a host whose systemd had just answered
     // the question.
-    match run_reading_output("systemctl", &["is-active", "rosenpass"]) {
+    match probe.run_reading_output("systemctl", &["is-active", "rosenpass"]) {
         Ok(out) => {
             let s = out.trim().to_string();
             Derived::ok(
                 FIELD,
                 s == "active",
-                format!("`systemctl is-active rosenpass` → {s}"),
+                format!("`systemctl is-active rosenpass` → {s}{}", at(probe)),
             )
         }
-        Err(_) => match run("systemctl", &["list-unit-files", "rosenpass.service"]) {
+        Err(_) => match probe.run("systemctl", &["list-unit-files", "rosenpass.service"]) {
             // The unit exists and is not active — that is a readable `false`.
             Ok(out) if out.contains("rosenpass.service") => Derived::ok(
                 FIELD,
                 false,
-                "`systemctl list-unit-files rosenpass.service` — present, not active",
+                format!(
+                    "`systemctl list-unit-files rosenpass.service` — present, not active{}",
+                    at(probe)
+                ),
             ),
             _ => Derived::fail(
                 FIELD,
                 "no `rosenpass` unit and no systemd to ask. `false` is not defaulted here: an \
                  unreadable probe is an unknown, and emitting an unknown as a capability is the \
                  substitution this verb exists to prevent",
-                "systemd",
+                format!("systemd{}", at(probe)),
             ),
         },
     }
@@ -422,11 +772,25 @@ pub fn pqc_capable() -> Derived<bool> {
 /// `transport_offer.public_key` — the federation interface's own public key,
 /// read out of the running interface.
 pub fn transport_public_key(interface: &str) -> Derived<String> {
+    transport_public_key_on(&Local, interface)
+}
+
+/// [`transport_public_key`], read through `probe`.
+pub fn transport_public_key_on(probe: &dyn Probe, interface: &str) -> Derived<String> {
     const FIELD: &str = "transport_offer.public_key";
-    match run("wg", &["show", interface, "public-key"]) {
-        Ok(out) if !out.trim().is_empty() => {
-            Derived::ok(FIELD, out.trim().to_string(), format!("`wg show {interface} public-key`"))
-        }
+    if !interface_name(interface) {
+        return Derived::fail(
+            FIELD,
+            format!("`{interface}` is not an interface name"),
+            "the declaration's [transport] interface",
+        );
+    }
+    match probe.run("wg", &["show", interface, "public-key"]) {
+        Ok(out) if !out.trim().is_empty() => Derived::ok(
+            FIELD,
+            out.trim().to_string(),
+            format!("`wg show {interface} public-key`{}", at(probe)),
+        ),
         Ok(_) => Derived::fail(FIELD, format!("interface `{interface}` reported no public key"), "wg"),
         Err(e) => Derived::fail(
             FIELD,
@@ -442,14 +806,83 @@ pub fn transport_public_key(interface: &str) -> Derived<String> {
 /// one — but a declared path MTU larger than the interface that carries it
 /// cannot be right, and that is worth saying before the package is signed.
 pub fn interface_mtu(interface: &str) -> Option<i64> {
-    std::fs::read_to_string(format!("/sys/class/net/{interface}/mtu"))
+    interface_mtu_on(&Local, interface)
+}
+
+/// [`interface_mtu`], read through `probe`.
+pub fn interface_mtu_on(probe: &dyn Probe, interface: &str) -> Option<i64> {
+    if !interface_name(interface) {
+        return None;
+    }
+    probe
+        .read_file(&format!("/sys/class/net/{interface}/mtu"))
         .ok()
         .and_then(|s| s.trim().parse().ok())
 }
 
 // ---------------------------------------------------------------------------
+// Everything `init` measures, in one place
+// ---------------------------------------------------------------------------
+
+/// The measured half of a package: what the edge host and the core host say
+/// about themselves. Identity (`trust_domain`, `ca_fingerprint`) is read from
+/// the operator's own profile, wherever `init` runs; the core's SPIRE trust
+/// domain is here because a portal-minted profile carries none (#247), and
+/// [`resolve_trust_domain`] combines the two.
+#[derive(Debug, Clone)]
+pub struct Measured {
+    pub transports: Derived<Vec<String>>,
+    pub fabric_fips_image: Derived<bool>,
+    pub fabric_version: Derived<String>,
+    pub pqc_capable: Derived<bool>,
+    /// Present when a federation interface was named.
+    pub public_key: Option<Derived<String>>,
+    /// The interface MTU, for the `measured_mtu` cross-check only.
+    pub interface_mtu: Option<i64>,
+    /// The trust domain the core's SPIRE server runs, when its config was
+    /// named ([`spire_trust_domain_on`]).
+    pub spire_trust_domain: Option<Derived<String>>,
+}
+
+/// Measure the edge and the core. The edge carries the transport and the PQC
+/// layer; the core runs the router. On the edge host itself, with the core's
+/// runtime reachable from it, both are [`Local`] — the shape `goat federate
+/// init` has always had.
+pub fn measure(
+    edge: &dyn Probe,
+    core: &dyn Probe,
+    router: RouterTarget,
+    tools: &[&'static str],
+    knob: &str,
+    interface: Option<&str>,
+    spire_conf: Option<&str>,
+) -> Measured {
+    let (fabric_fips_image, fabric_version) = fabric_capabilities_on(core, router, tools, knob);
+    Measured {
+        spire_trust_domain: spire_conf.map(|p| spire_trust_domain_on(core, p)),
+        transports: transports_on(edge),
+        fabric_fips_image,
+        fabric_version,
+        pqc_capable: pqc_capable_on(edge),
+        public_key: interface.map(|i| transport_public_key_on(edge, i)),
+        interface_mtu: interface.and_then(|i| interface_mtu_on(edge, i)),
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/// A Linux interface name: what `wg` and `/sys/class/net/` accept, and
+/// nothing that walks out of `/sys/class/net/`.
+fn interface_name(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 15
+        && value.starts_with(|c: char| c.is_ascii_alphanumeric())
+        && value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "_.-".contains(c))
+}
 
 fn container_name(value: &str) -> bool {
     !value.is_empty()
@@ -464,9 +897,8 @@ fn inspect_router(
     name: &str,
     run: &mut impl FnMut(&str, &[&str]) -> Result<String, String>,
 ) -> Result<Router, String> {
-    // Podman's template struct spells the field ID; Docker spells it Id.
     let format = if tool == "podman" {
-        "{{.ID}}\t{{.State.Running}}\t{{.Config.Image}}"
+        PODMAN_INSPECT_FORMAT
     } else {
         ROUTER_INSPECT_FORMAT
     };
@@ -491,12 +923,12 @@ fn select_router(
     selected: Option<&str>,
     tools: &[&'static str],
     run: &mut impl FnMut(&str, &[&str]) -> Result<String, String>,
+    knob: &str,
 ) -> Result<Router, String> {
     if selected.is_some_and(|name| !container_name(name)) {
-        return Err(
-            "FED_ROUTER_CONTAINER must be a container name or ID, not an option or expression"
-                .into(),
-        );
+        return Err(format!(
+            "{knob} must be a container name or ID, not an option or expression"
+        ));
     }
     let mut found: Vec<Router> = Vec::new();
     let mut attempts = Vec::new();
@@ -546,10 +978,10 @@ fn select_router(
     }
     match found.len() {
         1 => Ok(found.remove(0)),
-        0 => Err(format!("no running core router found. Set FED_ROUTER_CONTAINER to its name or ID; \
+        0 => Err(format!("no running core router found. Set {knob} to its name or ID; \
             discovery accepts org.goat.component=zenoh-core, standard *-zenoh-router names and legacy goat-zenoh. \
             Attempts: {}", attempts.join(" | "))),
-        _ => Err(format!("multiple running core routers found ({}); set FED_ROUTER_CONTAINER to select one",
+        _ => Err(format!("multiple running core routers found ({}); set {knob} to select one",
             found.iter().map(|r| format!("{}:{}", r.tool, r.id)).collect::<Vec<_>>().join(", "))),
     }
 }
@@ -674,7 +1106,13 @@ mod tests {
     #[test]
     fn discovers_the_standard_role_name_and_reads_both_values_from_its_id() {
         let mut probe = runtime("coreid\tzagros-zenoh-router\t\nedgeid\tgoat-zenoh-edge-xab\t\n");
-        let router = select_router(None, &["docker", "podman"], &mut probe).unwrap();
+        let router = select_router(
+            None,
+            &["docker", "podman"],
+            &mut probe,
+            "FED_ROUTER_CONTAINER",
+        )
+        .unwrap();
         assert_eq!(router.id, "coreid");
         let (fips, version) = fabric_from_router(Ok(router), &mut probe);
         assert_eq!(fips.outcome, Ok(true));
@@ -690,7 +1128,9 @@ mod tests {
         let mut probe =
             runtime("customid\tcustom-router\tzenoh-core\nunrelated\tother-service\t\n");
         assert_eq!(
-            select_router(None, &["docker"], &mut probe).unwrap().id,
+            select_router(None, &["docker"], &mut probe, "FED_ROUTER_CONTAINER")
+                .unwrap()
+                .id,
             "customid"
         );
     }
@@ -699,7 +1139,9 @@ mod tests {
     fn existing_legacy_name_is_compatible() {
         let mut probe = runtime("legacyid\tgoat-zenoh\t\n");
         assert_eq!(
-            select_router(None, &["docker"], &mut probe).unwrap().id,
+            select_router(None, &["docker"], &mut probe, "FED_ROUTER_CONTAINER")
+                .unwrap()
+                .id,
             "legacyid"
         );
     }
@@ -708,7 +1150,7 @@ mod tests {
     fn multiple_cores_are_refused_instead_of_picking_the_first() {
         let mut probe =
             runtime("first\tzagros-zenoh-router\t\nsecond\tcustom-router\tzenoh-core\n");
-        let why = select_router(None, &["docker"], &mut probe).unwrap_err();
+        let why = select_router(None, &["docker"], &mut probe, "FED_ROUTER_CONTAINER").unwrap_err();
         assert!(why.contains("multiple") && why.contains("FED_ROUTER_CONTAINER"));
     }
 
@@ -719,7 +1161,13 @@ mod tests {
             calls.push(format!("{tool} {}", args.join(" ")));
             Err("no such container".into())
         };
-        assert!(select_router(Some("missing"), &["docker"], &mut probe).is_err());
+        assert!(select_router(
+            Some("missing"),
+            &["docker"],
+            &mut probe,
+            "FED_ROUTER_CONTAINER"
+        )
+        .is_err());
         assert_eq!(calls.len(), 1);
         assert!(calls[0].contains("inspect") && calls[0].ends_with(" missing"));
     }
@@ -728,9 +1176,14 @@ mod tests {
     fn explicit_selector_works_without_a_role_label() {
         let mut probe = runtime("");
         assert_eq!(
-            select_router(Some("custom-router"), &["docker"], &mut probe)
-                .unwrap()
-                .id,
+            select_router(
+                Some("custom-router"),
+                &["docker"],
+                &mut probe,
+                "FED_ROUTER_CONTAINER"
+            )
+            .unwrap()
+            .id,
             "custom-router"
         );
     }
@@ -739,17 +1192,25 @@ mod tests {
     fn selector_options_and_expressions_are_refused_before_any_command() {
         for name in ["--help", "x y", "x;echo", "$(id)", "", "/router"] {
             let mut probe = |_: &str, _: &[&str]| panic!("invalid selector executed");
-            assert!(select_router(Some(name), &["docker"], &mut probe).is_err());
+            assert!(
+                select_router(Some(name), &["docker"], &mut probe, "FED_ROUTER_CONTAINER").is_err()
+            );
         }
     }
 
     #[test]
     fn missing_and_stopped_routers_are_not_measured() {
         let mut empty = runtime("");
-        let why = select_router(None, &["docker"], &mut empty).unwrap_err();
+        let why = select_router(None, &["docker"], &mut empty, "FED_ROUTER_CONTAINER").unwrap_err();
         assert!(why.contains("no running core router") && why.contains("FED_ROUTER_CONTAINER"));
         let mut stopped = |_: &str, _: &[&str]| Ok("id\tfalse\timage".into());
-        assert!(select_router(Some("stopped"), &["docker"], &mut stopped).is_err());
+        assert!(select_router(
+            Some("stopped"),
+            &["docker"],
+            &mut stopped,
+            "FED_ROUTER_CONTAINER"
+        )
+        .is_err());
     }
 
     #[test]
@@ -784,10 +1245,18 @@ mod tests {
             "inspect" => Ok("sameid\ttrue\timage".into()),
             _ => unreachable!(),
         };
-        let router = select_router(None, &["docker", "podman"], &mut probe).unwrap();
+        let router = select_router(
+            None,
+            &["docker", "podman"],
+            &mut probe,
+            "FED_ROUTER_CONTAINER",
+        )
+        .unwrap();
         assert_eq!(router.id, "sameid");
         assert_eq!(
-            select_router(None, &["podman"], &mut probe).unwrap().tool,
+            select_router(None, &["podman"], &mut probe, "FED_ROUTER_CONTAINER")
+                .unwrap()
+                .tool,
             "podman"
         );
     }
@@ -798,20 +1267,292 @@ mod tests {
             assert_eq!(tool, "docker", "an unrelated local runtime was probed");
             Err("remote daemon unreachable".into())
         };
-        let why = select_router(None, router_tools(true), &mut probe).unwrap_err();
+        let why = select_router(None, router_tools(true), &mut probe, "FED_ROUTER_CONTAINER")
+            .unwrap_err();
         assert!(why.contains("remote daemon unreachable"));
     }
 
     #[test]
     fn malformed_runtime_output_and_permission_errors_are_not_capabilities() {
         let mut malformed = |_: &str, _: &[&str]| Ok("not a container listing".into());
-        assert!(select_router(None, &["docker"], &mut malformed)
-            .unwrap_err()
-            .contains("could not parse"));
+        assert!(
+            select_router(None, &["docker"], &mut malformed, "FED_ROUTER_CONTAINER")
+                .unwrap_err()
+                .contains("could not parse")
+        );
         let mut denied = |_: &str, _: &[&str]| Err("permission denied".into());
-        assert!(select_router(None, &["docker"], &mut denied)
+        assert!(
+            select_router(None, &["docker"], &mut denied, "FED_ROUTER_CONTAINER")
+                .unwrap_err()
+                .contains("permission denied")
+        );
+    }
+
+    /// A host made of recorded outputs: `(command line, answer)`. Every command
+    /// it is asked is recorded, and anything not recorded fails the way a
+    /// missing binary does.
+    struct Recorded {
+        place: &'static str,
+        answers: Vec<(&'static str, Result<&'static str, &'static str>)>,
+        files: Vec<(&'static str, std::io::Result<&'static str>)>,
+        asked: std::cell::RefCell<Vec<String>>,
+    }
+
+    impl Recorded {
+        fn new(place: &'static str) -> Self {
+            Recorded {
+                place,
+                answers: Vec::new(),
+                files: Vec::new(),
+                asked: Default::default(),
+            }
+        }
+        fn answer(mut self, cmd: &'static str, out: Result<&'static str, &'static str>) -> Self {
+            self.answers.push((cmd, out));
+            self
+        }
+        fn file(mut self, path: &'static str, out: std::io::Result<&'static str>) -> Self {
+            self.files.push((path, out));
+            self
+        }
+        fn lookup(&self, bin: &str, args: &[&str]) -> Result<String, String> {
+            assert!(
+                is_read_only_probe(bin, args),
+                "derive issued a command outside the read-only list: {bin} {args:?}"
+            );
+            let line = std::iter::once(bin)
+                .chain(args.iter().copied())
+                .collect::<Vec<_>>()
+                .join(" ");
+            self.asked.borrow_mut().push(line.clone());
+            match self.answers.iter().find(|(c, _)| *c == line) {
+                Some((_, Ok(out))) => Ok(out.to_string()),
+                Some((_, Err(e))) => Err(e.to_string()),
+                None => Err(format!("{bin}: No such file or directory")),
+            }
+        }
+    }
+
+    impl Probe for Recorded {
+        fn run(&self, bin: &str, args: &[&str]) -> Result<String, String> {
+            self.lookup(bin, args)
+        }
+        fn run_reading_output(&self, bin: &str, args: &[&str]) -> Result<String, String> {
+            self.lookup(bin, args)
+        }
+        fn read_file(&self, path: &str) -> std::io::Result<String> {
+            assert!(
+                is_read_only_probe("cat", &["--", path]),
+                "read outside the list: {path}"
+            );
+            self.asked.borrow_mut().push(format!("read {path}"));
+            match self.files.iter().find(|(p, _)| *p == path) {
+                Some((_, Ok(s))) => Ok(s.to_string()),
+                Some((_, Err(e))) => Err(std::io::Error::new(e.kind(), e.to_string())),
+                None => Err(std::io::ErrorKind::NotFound.into()),
+            }
+        }
+        fn place(&self) -> String {
+            self.place.to_string()
+        }
+    }
+
+    fn edge_host() -> Recorded {
+        Recorded::new("on edge-a")
+            .answer("wg show interfaces", Ok("wg-fed0 wt0\n"))
+            .answer("wg show wg-fed0 public-key", Ok("PUBKEYfixture=\n"))
+            .answer("systemctl is-active rosenpass", Ok("inactive\n"))
+            .file("/proc/sys/crypto/fips_enabled", Ok("0\n"))
+            .file("/sys/class/net/wg-fed0/mtu", Ok("1420\n"))
+    }
+
+    fn core_host() -> Recorded {
+        Recorded::new("on core-a")
+            .answer(
+                "docker ps --no-trunc --format {{.ID}}\t{{.Names}}\t{{.Label \"org.goat.component\"}}",
+                Ok("coreid\tzagros-zenoh-router\tzenoh-core\n"),
+            )
+            .answer(
+                "docker inspect --type container --format {{.Id}}\t{{.State.Running}}\t{{.Config.Image}} coreid",
+                Ok("coreid\ttrue\tregistry.example.org/zenoh-pqc-fips@sha256:fixture\n"),
+            )
+            .answer("docker exec coreid /zenohd --version", Ok("zenohd v1.9.0\n"))
+    }
+
+    #[test]
+    fn measure_reads_the_edge_and_the_core_each_where_it_runs() {
+        let (edge, core) = (edge_host(), core_host());
+        let m = measure(
+            &edge,
+            &core,
+            RouterTarget::Discover,
+            &["docker"],
+            "--router-container",
+            Some("wg-fed0"),
+            None,
+        );
+        assert_eq!(m.transports.outcome, Ok(vec!["wireguard".to_string()]));
+        assert!(
+            m.transports.source.ends_with(" on edge-a"),
+            "{}",
+            m.transports.source
+        );
+        assert_eq!(m.fabric_fips_image.outcome, Ok(true));
+        assert_eq!(m.fabric_version.outcome.as_deref(), Ok("1.9.0"));
+        assert!(
+            m.fabric_version.source.ends_with(" on core-a"),
+            "{}",
+            m.fabric_version.source
+        );
+        assert_eq!(m.pqc_capable.outcome, Ok(false));
+        assert_eq!(
+            m.public_key.unwrap().outcome.as_deref(),
+            Ok("PUBKEYfixture=")
+        );
+        assert_eq!(m.interface_mtu, Some(1420));
+        // No transport or PQC read goes to the core, no router read to the edge.
+        assert!(
+            core.asked.borrow().iter().all(|c| c.starts_with("docker ")),
+            "{:?}",
+            core.asked.borrow()
+        );
+        assert!(
+            edge.asked
+                .borrow()
+                .iter()
+                .all(|c| !c.starts_with("docker ")),
+            "{:?}",
+            edge.asked.borrow()
+        );
+    }
+
+    #[test]
+    fn an_unreadable_fips_flag_withholds_ipsec_fips_on_a_remote_host_too() {
+        let edge = Recorded::new("on edge-a")
+            .answer("swanctl --version", Ok("swanctl 6.0"))
+            .file(
+                "/proc/sys/crypto/fips_enabled",
+                Err(std::io::ErrorKind::PermissionDenied.into()),
+            );
+        let d = transports_on(&edge);
+        let why = d.outcome.unwrap_err();
+        assert!(
+            why.contains("UNKNOWN, not false") && why.contains("on edge-a"),
+            "{why}"
+        );
+    }
+
+    #[test]
+    fn a_declared_router_is_measured_by_name_and_never_rediscovered() {
+        let core = core_host();
+        let (fips, version) = fabric_capabilities_on(
+            &core,
+            RouterTarget::Named {
+                name: "xaa-zenoh-router",
+                from: "zenoh_stack (inventory host core-a)",
+            },
+            &["docker"],
+            "--router-container",
+        );
+        let why = version.outcome.unwrap_err();
+        assert!(
+            why.starts_with(
+                "zenoh_stack (inventory host core-a) names the core router `xaa-zenoh-router`"
+            ),
+            "{why}"
+        );
+        assert!(fips.outcome.is_err());
+        assert!(
+            core.asked.borrow().iter().all(|c| !c.contains(" ps ")),
+            "discovery ran: {:?}",
+            core.asked.borrow()
+        );
+    }
+
+    #[test]
+    fn a_remote_read_that_failed_for_another_reason_is_unknown_not_false() {
+        let edge = Recorded::new("on edge-a")
+            .answer("swanctl --version", Ok("swanctl 6.0"))
+            .file(
+                "/proc/sys/crypto/fips_enabled",
+                Err(std::io::Error::other(
+                    "ssh to edge-a failed: connection reset",
+                )),
+            );
+        let why = transports_on(&edge).outcome.unwrap_err();
+        assert!(
+            why.contains("UNKNOWN, not false") && why.contains("connection reset"),
+            "{why}"
+        );
+        // An absent file is still a readable "no".
+        let absent = Recorded::new("on edge-a").answer("swanctl --version", Ok("swanctl 6.0"));
+        let why = transports_on(&absent).outcome.unwrap_err();
+        assert!(why.contains("that is `ipsec`, not `ipsec-fips`"), "{why}");
+    }
+
+    #[test]
+    fn an_operator_selector_reads_as_before_and_a_deployment_name_says_where_it_came_from() {
+        let core = core_host();
+        let named = |from| {
+            fabric_capabilities_on(
+                &core,
+                RouterTarget::Named { name: "gone", from },
+                &["docker"],
+                "FED_ROUTER_CONTAINER",
+            )
+            .1
+            .outcome
             .unwrap_err()
-            .contains("permission denied"));
+        };
+        assert!(!named("FED_ROUTER_CONTAINER").contains("names the core router"));
+        assert!(named("site_id").starts_with("site_id names the core router `gone`"));
+    }
+
+    #[test]
+    fn an_interface_name_that_leaves_sys_class_net_is_not_read() {
+        let edge = edge_host();
+        assert_eq!(interface_mtu_on(&edge, "../../../etc/shadow"), None);
+        assert!(transport_public_key_on(&edge, "-x").outcome.is_err());
+        assert!(edge.asked.borrow().is_empty(), "{:?}", edge.asked.borrow());
+    }
+
+    #[test]
+    fn the_read_only_list_refuses_writes_and_shells() {
+        for (bin, args) in [
+            ("wg", vec!["set", "wg-fed0", "private-key", "/k"]),
+            ("docker", vec!["exec", "coreid", "sh", "-c", "id"]),
+            ("docker", vec!["rm", "-f", "coreid"]),
+            (
+                "docker",
+                vec!["exec", "--privileged", "zenohd", "--version"],
+            ),
+            ("systemctl", vec!["restart", "rosenpass"]),
+            ("cat", vec!["--", "/etc/shadow"]),
+            ("cat", vec!["--", "/sys/class/net/../../../etc/shadow"]),
+            ("wg", vec!["show", "all", "private-key"]),
+            ("wg", vec!["show", "wg-fed0", "private-key"]),
+            ("wg", vec!["showconf", "wg-fed0"]),
+            ("docker", vec!["inspect", "coreid"]),
+            (
+                "docker",
+                vec![
+                    "inspect",
+                    "--type",
+                    "container",
+                    "--format",
+                    "{{json .Config.Env}}",
+                    "coreid",
+                ],
+            ),
+            ("docker", vec!["ps", "--format", "{{.Command}}"]),
+            ("sh", vec!["-c", "true"]),
+        ] {
+            assert!(!is_read_only_probe(bin, &args), "{bin} {args:?}");
+        }
+        assert!(is_read_only_probe(
+            "docker",
+            &["exec", "coreid", "/zenohd", "--version"]
+        ));
     }
 
     #[test]
@@ -822,5 +1563,305 @@ mod tests {
         );
         assert_eq!(parse_version("zenohd 1.9.0"), Some("1.9.0".into()));
         assert_eq!(parse_version("no version here"), None);
+    }
+
+    /// The selection contract has two implementations: this one (phase 3) and
+    /// ops/federation/standup/preflight_live.py (phase 1). Both read the same
+    /// cases, so a change to one that the other does not make fails here or there.
+    #[test]
+    fn the_shared_router_discovery_cases_hold() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../ops/federation/standup/fixtures/router-discovery.tsv");
+        let text = std::fs::read_to_string(&path).unwrap();
+        let unescape = |s: &str| {
+            s.replace("\\t", "\t")
+                .replace("\\n", "\n")
+                .replace("\\\\", "\\")
+        };
+        type Case = (
+            String,
+            String,
+            Vec<&'static str>,
+            String,
+            String,
+            Vec<(String, String, bool, String)>,
+        );
+        let mut cases: Vec<Case> = Vec::new();
+        for line in text
+            .lines()
+            .filter(|l| !l.starts_with('#') && !l.is_empty())
+        {
+            let f: Vec<&str> = line.split('\t').collect();
+            match f[0] {
+                "case" => {
+                    let tools = f[3]
+                        .split(',')
+                        .map(|t| if t == "docker" { "docker" } else { "podman" })
+                        .collect();
+                    cases.push((
+                        f[1].into(),
+                        f[2].into(),
+                        tools,
+                        f[4].into(),
+                        f.get(5).copied().unwrap_or("").into(),
+                        Vec::new(),
+                    ));
+                }
+                "reply" => cases.last_mut().unwrap().5.push((
+                    f[1].into(),
+                    f[2].into(),
+                    f[3] == "ok",
+                    unescape(f.get(4).copied().unwrap_or("")),
+                )),
+                other => panic!("unknown row {other}"),
+            }
+        }
+        assert!(cases.len() >= 10, "{} cases", cases.len());
+        for (name, selected, tools, expect, id, replies) in &cases {
+            let mut probe = |tool: &str, args: &[&str]| -> Result<String, String> {
+                let req = if args[0] == "ps" {
+                    "ps".to_string()
+                } else {
+                    format!("inspect:{}", args.last().unwrap())
+                };
+                match replies.iter().find(|(t, r, _, _)| t == tool && *r == req) {
+                    Some((_, _, true, out)) => Ok(out.clone()),
+                    Some((_, _, false, err)) => Err(err.clone()),
+                    None => Err(format!("{tool}: no reply for {req}")),
+                }
+            };
+            let sel = if selected == "-" {
+                None
+            } else {
+                Some(selected.as_str())
+            };
+            let got = select_router(sel, tools, &mut probe, "FED_ROUTER_CONTAINER");
+            let verdict = match &got {
+                Ok(_) => "ok",
+                Err(e) if e.starts_with("multiple") => "many",
+                Err(e) if e.starts_with("no running core router") => "none",
+                Err(_) => "invalid",
+            };
+            assert_eq!(verdict, expect, "{name}: {got:?}");
+            if let Ok(r) = got {
+                assert_eq!(&r.id, id, "{name}");
+            }
+        }
+    }
+
+    // --- #247: the trust domain from the core's SPIRE server -----------------
+
+    /// What the spire role renders (roles/spire/templates/server.conf.j2),
+    /// with federation on, so a nested `trust_domain` is present too.
+    const SPIRE_CONF: &str = r#"# Ansible managed — edit the role, not this file (ops/ansible)
+server {
+    bind_address       = "0.0.0.0"
+    bind_port          = "8081"
+    trust_domain       = "zagros.example.org"
+    data_dir           = "/opt/spire/data/server"
+    federation {
+        bundle_endpoint {
+            address = "0.0.0.0"
+            port    = 8443
+            profile "https_spiffe" {}
+        }
+        federates_with "partner-a.example" {
+            bundle_endpoint_url = "https://partner-a.example:8443"
+            bundle_endpoint_profile "https_spiffe" {
+                endpoint_spiffe_id = "spiffe://partner-a.example/spire/server"
+            }
+        }
+    }
+}
+
+plugins {
+    DataStore "sql" {
+        plugin_data {
+            database_type = "postgres"
+            connection_string = "dbname=spire password=${SPIRE_DB_PASSWORD}"
+        }
+    }
+}
+"#;
+
+    #[test]
+    fn the_spire_server_trust_domain_is_read_from_the_server_block_only() {
+        assert_eq!(
+            server_trust_domain(SPIRE_CONF).as_deref(),
+            Ok("zagros.example.org")
+        );
+        // A trust_domain anywhere but directly in `server` is not the server's.
+        let nested = "server {\n  federation {\n    trust_domain = \"x.example\"\n  }\n}\n";
+        assert!(server_trust_domain(nested).is_err());
+        let elsewhere = "agent {\n  trust_domain = \"x.example\"\n}\n";
+        assert!(server_trust_domain(elsewhere).is_err());
+        // Comments are not values.
+        let commented = "server {\n  # trust_domain = \"old.example\"\n  trust_domain = \"new.example\" # set by the role\n}\n";
+        assert_eq!(server_trust_domain(commented).as_deref(), Ok("new.example"));
+    }
+
+    #[test]
+    fn a_spire_trust_domain_that_is_missing_twice_or_malformed_is_refused() {
+        for (conf, why) in [
+            ("server {\n  bind_port = \"8081\"\n}\n", "no trust_domain"),
+            ("server {\n  trust_domain = \"a.example\"\n  trust_domain = \"b.example\"\n}\n", "more than once"),
+            ("server {\n  trust_domain = a.example\n}\n", "not a quoted string"),
+            ("server {\n  trust_domain = \"\"\n}\n", "not a SPIFFE trust domain"),
+            ("server {\n  trust_domain = \"Upper.Example\"\n}\n", "not a SPIFFE trust domain"),
+            ("server {\n  trust_domain = \"spiffe://a.example\"\n}\n", "not a SPIFFE trust domain"),
+        ] {
+            let got = server_trust_domain(conf).unwrap_err();
+            assert!(got.contains(why), "{conf:?}: {got}");
+        }
+    }
+
+    #[test]
+    fn the_spire_trust_domain_is_measured_on_the_core_and_says_where() {
+        let core = Recorded::new("on core-a").file(SPIRE_SERVER_CONF, Ok(SPIRE_CONF));
+        let d = spire_trust_domain_on(&core, SPIRE_SERVER_CONF);
+        assert_eq!(d.outcome.as_deref(), Ok("spiffe://zagros.example.org"));
+        assert_eq!(
+            d.source,
+            "/opt/spire/config/server.conf server.trust_domain on core-a"
+        );
+        // The file is never quoted back, even on failure.
+        let bad = Recorded::new("on core-a").file(SPIRE_SERVER_CONF, Ok("plugins {\n password = \"${SPIRE_DB_PASSWORD}\"\n}\n"));
+        let d = spire_trust_domain_on(&bad, SPIRE_SERVER_CONF);
+        assert!(!d.outcome.unwrap_err().contains("SPIRE_DB_PASSWORD"));
+    }
+
+    #[test]
+    fn an_absent_or_unreadable_spire_config_is_said_as_such() {
+        let absent = Recorded::new("on core-a");
+        let why = spire_trust_domain_on(&absent, SPIRE_SERVER_CONF).outcome.unwrap_err();
+        assert!(why.contains("no SPIRE server config"), "{why}");
+        let denied = Recorded::new("on core-a").file(
+            SPIRE_SERVER_CONF,
+            Err(std::io::ErrorKind::PermissionDenied.into()),
+        );
+        let why = spire_trust_domain_on(&denied, SPIRE_SERVER_CONF).outcome.unwrap_err();
+        assert!(why.contains("permission denied"), "{why}");
+    }
+
+    #[test]
+    fn only_a_spire_server_config_is_added_to_the_read_only_list() {
+        for ok in [
+            "/opt/spire/config/server.conf",
+            "/etc/spire/server/server.conf",
+        ] {
+            assert!(is_read_only_probe("cat", &["--", ok]), "{ok}");
+        }
+        for refused in [
+            "/opt/spire/../etc/shadow",
+            "/opt/spire/config/../../../etc/server.conf",
+            "/etc/shadow",
+            "/opt/spire/config/agent.conf",
+            "/opt/spire/data/server/keys.json",
+            "/opt/spire/config/.env.spire",
+            "/home/x/opt/spire/server.conf",
+            "/opt/spire//server.conf",
+            "/opt/spire/config/server.conf ; id",
+        ] {
+            assert!(!is_read_only_probe("cat", &["--", refused]), "{refused}");
+        }
+        // A path off the list is refused before anything is read.
+        let core = Recorded::new("on core-a");
+        let why = spire_trust_domain_on(&core, "/etc/shadow").outcome.unwrap_err();
+        assert!(why.contains("not a SPIRE server config path"), "{why}");
+        assert!(core.asked.borrow().is_empty());
+    }
+
+    #[test]
+    fn measure_reads_the_spire_trust_domain_on_the_core_when_named() {
+        let edge = edge_host();
+        let core = core_host().file(SPIRE_SERVER_CONF, Ok(SPIRE_CONF));
+        let m = measure(
+            &edge,
+            &core,
+            RouterTarget::Discover,
+            &["docker"],
+            "--router-container",
+            None,
+            Some(SPIRE_SERVER_CONF),
+        );
+        let td = m.spire_trust_domain.unwrap();
+        assert_eq!(td.outcome.as_deref(), Ok("spiffe://zagros.example.org"));
+        assert!(td.source.ends_with(" on core-a"), "{}", td.source);
+        assert!(edge.asked.borrow().iter().all(|c| !c.contains("spire")));
+    }
+
+    /// A self-signed leaf carrying exactly these URI-SANs, written to a file.
+    fn profile_with(uris: &[&str]) -> (tempfile::TempDir, std::path::PathBuf) {
+        let mut params = rcgen::CertificateParams::new(vec![]).unwrap();
+        params.subject_alt_names = uris
+            .iter()
+            .map(|u| rcgen::SanType::URI(rcgen::Ia5String::try_from(*u).unwrap()))
+            .collect();
+        let key = rcgen::KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256).unwrap();
+        let cert = params.self_signed(&key).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mtls.cert.pem");
+        std::fs::write(&path, cert.pem()).unwrap();
+        (dir, path)
+    }
+
+    fn spire(outcome: Result<&str, &str>) -> Derived<String> {
+        Derived {
+            field: "identity.trust_domain",
+            outcome: outcome.map(String::from).map_err(String::from),
+            source: "/opt/spire/config/server.conf server.trust_domain on core-a".into(),
+        }
+    }
+
+    #[test]
+    fn a_portal_minted_profile_takes_the_trust_domain_from_spire() {
+        let (_d, cert) = profile_with(&["urn:goat:zagros:org=0123456789abcdef0123456789abcdef"]);
+        let ok = spire(Ok("spiffe://zagros.example.org"));
+        let td = resolve_trust_domain(&cert, Some(&ok));
+        assert_eq!(td.outcome.as_deref(), Ok("spiffe://zagros.example.org"));
+        assert!(td.source.starts_with("/opt/spire/config/server.conf"), "{}", td.source);
+        assert!(td.source.contains("carries no SPIFFE ID"), "{}", td.source);
+    }
+
+    #[test]
+    fn a_spiffe_profile_still_wins_and_must_agree_with_spire() {
+        let (_d, cert) = profile_with(&["spiffe://zagros.example.org/operator"]);
+        // Alone, exactly as before.
+        let td = resolve_trust_domain(&cert, None);
+        assert_eq!(td.outcome.as_deref(), Ok("spiffe://zagros.example.org"));
+        assert!(td.source.ends_with("URI-SAN"), "{}", td.source);
+        // SPIRE unreadable: the profile alone, as before.
+        let td = resolve_trust_domain(&cert, Some(&spire(Err("no SPIRE server config"))));
+        assert_eq!(td.outcome.as_deref(), Ok("spiffe://zagros.example.org"));
+        // Agreeing.
+        let td = resolve_trust_domain(&cert, Some(&spire(Ok("spiffe://zagros.example.org"))));
+        assert_eq!(td.outcome.as_deref(), Ok("spiffe://zagros.example.org"));
+        assert!(td.source.contains("matching"), "{}", td.source);
+        // Disagreeing: refused, not chosen between.
+        let why = resolve_trust_domain(&cert, Some(&spire(Ok("spiffe://other.example"))))
+            .outcome
+            .unwrap_err();
+        assert!(why.contains("one of the two is wrong"), "{why}");
+    }
+
+    #[test]
+    fn no_spiffe_profile_and_no_spire_fails_naming_both() {
+        let (_d, cert) = profile_with(&["urn:goat:zagros:org=x"]);
+        let why = resolve_trust_domain(&cert, None).outcome.unwrap_err();
+        assert!(why.contains("no `spiffe://` URI-SAN") && why.contains("SPIRE"), "{why}");
+        let why = resolve_trust_domain(&cert, Some(&spire(Err("no SPIRE server config at /opt/spire/config/server.conf"))))
+            .outcome
+            .unwrap_err();
+        assert!(why.contains("could not answer either") && why.contains("no SPIRE server config"), "{why}");
+    }
+
+    #[test]
+    fn an_unreadable_profile_fails_whatever_spire_says() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("mtls.cert.pem");
+        let why = resolve_trust_domain(&missing, Some(&spire(Ok("spiffe://zagros.example.org"))))
+            .outcome
+            .unwrap_err();
+        assert!(why.contains("no profile certificate"), "{why}");
     }
 }

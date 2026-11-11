@@ -1352,8 +1352,7 @@ mod tests {
     fn a_run_that_ticks_a_step_says_so() {
         // Its own folder: other tests compare paths under ws() and must never
         // find it existing (on macOS that changes how /tmp resolves).
-        let w = std::env::temp_dir().join(format!("goatbuilder-tutor-stepdone-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&w);
+        let w = crate::testdir::path("goatbuilder-tutor-stepdone-");
         std::fs::create_dir_all(&w).unwrap();
         std::fs::write(w.join(MARKER), "").unwrap();
         std::fs::create_dir_all(w.join("fixture")).unwrap(); // the copy lesson 3 runs on

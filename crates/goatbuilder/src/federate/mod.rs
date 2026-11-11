@@ -29,11 +29,12 @@
 //! The peering must be declared in goatbuilder.yaml `peerings:` (C1: declared
 //! first). An empty list declares nothing, so it refuses every name.
 //!
-//! Phases 3, 4, 6, 7 and 9 are the federation verbs. By default they run as
-//! `goat federate <verb>` in a shell, as the script does. With
-//! `FED_VERBS=goatbuilder` they run in process instead, through the same
-//! library (`verbs.rs`), and the plan prints them as
-//! `goatbuilder federate <verb> ...`, the words that are parsed and run.
+//! Phases 3, 4, 6, 7 and 9 are the federation verbs. By default they run in
+//! process, through the library `goat federate` also runs (`verbs.rs`), and the
+//! plan prints them as `goatbuilder federate <verb> ...`, the words that are
+//! parsed and run; the script calls `goatbuilder federate <verb>` too.
+//! `FED_VERBS=goat` runs them as `goat federate <verb>` in a shell instead,
+//! as before, on both avenues.
 
 /// `goatbuilder federate init|lint|compose|diff|verify|apply` (the six verbs).
 pub mod verbs;
@@ -41,16 +42,45 @@ pub mod verbs;
 use std::path::Path;
 use std::process::Command;
 
+pub mod backout;
+
 use anyhow::{anyhow, Context, Result};
 
 use crate::config;
+
+// Phase 3 measured over SSH: `goatbuilder federate init --over-ssh`, and the
+// driver's phase 3 unless FED_MEASURE=here.
+pub mod measure;
 use crate::{Check, Report, EXIT_OK, EXIT_REFUSED};
 
 pub mod alloc;
 pub mod declaration;
+pub mod federation_toml;
+pub mod declared;
 pub mod forwarder;
+pub mod hostalloc;
+pub mod hostfw;
 pub mod peering_files;
+mod admit;
+mod admit_leaf;
+mod admit_role;
+mod confirm;
+pub mod deploy;
+pub mod site_values;
+pub mod switches;
+pub mod site_hosts;
+pub mod lock;
+pub mod prompt;
+mod run;
+pub mod state;
+pub mod status;
+pub use admit::Admission;
+pub use confirm::Values;
+pub use run::Surface;
+pub mod plan;
+pub mod preflight;
 
+#[derive(Clone, Copy)]
 pub struct Options<'a> {
     pub with: &'a str,
     pub env: Option<&'a str>,
@@ -86,10 +116,15 @@ struct Phase {
 /// words after `goatbuilder federate`.
 type VerbCall = (Vec<(String, String)>, Vec<String>);
 
-/// Whether phases 3, 4, 6, 7 and 9 run in process (`FED_VERBS=goatbuilder`) or
-/// spawn `goat federate` (unset or `goat`, the default).
+/// Whether phases 3, 4, 6, 7 and 9 run in process (unset or `goatbuilder`, the
+/// default) or spawn `goat federate` (`FED_VERBS=goat`).
 fn verbs_in_process() -> bool {
-    env_or("FED_VERBS", String::new()) == "goatbuilder"
+    in_process_by(&env_or("FED_VERBS", String::new()))
+}
+
+/// The choice `verbs_in_process` makes, from the value of `FED_VERBS`.
+fn in_process_by(fed_verbs: &str) -> bool {
+    fed_verbs != "goat"
 }
 
 /// A verb's words as a shell line: the verb and each flag bare, every value
@@ -205,11 +240,19 @@ fn directory_args(repo: &Path, work: &str) -> Option<Vec<String>> {
 }
 
 fn plan(repo: &Path, o: &Options, work: &str, edge_group: &str, resume: &str) -> Vec<Phase> {
-    plan_verbs(repo, o, work, edge_group, resume, verbs_in_process())
+    plan_with(repo, o, work, edge_group, resume, verbs_in_process(), measure::driver_measures_over_ssh())
 }
 
 /// `plan`, with the choice of who runs the federation verbs made by the caller.
+#[cfg(test)]
 fn plan_verbs(repo: &Path, o: &Options, work: &str, edge_group: &str, resume: &str, in_process: bool) -> Vec<Phase> {
+    plan_with(repo, o, work, edge_group, resume, in_process, false)
+}
+
+/// `plan_verbs`, and whether phase 3 measures over SSH (FED_MEASURE=ssh): then
+/// phase 3 runs `goatbuilder federate init --over-ssh` in process, whoever runs
+/// the other verbs, and no DOCKER_HOST is handed to it.
+fn plan_with(repo: &Path, o: &Options, work: &str, edge_group: &str, resume: &str, in_process: bool, measure_ssh: bool) -> Vec<Phase> {
     let r = repo.display().to_string();
     let goat = goat_bin();
     let aws = crate::settings::aws_profile(repo);
@@ -241,8 +284,17 @@ fn plan_verbs(repo: &Path, o: &Options, work: &str, edge_group: &str, resume: &s
     if !signing.is_empty() {
         init_words.extend(w(&["--signing-key", &signing]));
     }
+    // The peering's generated federation.toml (FED_DECLARATION, federate/preflight.rs).
+    let declaration = env_or("FED_DECLARATION", String::new());
+    if !declaration.is_empty() {
+        init_words.extend(w(&["--declaration", &declaration]));
+    }
     init_words.extend(w(&["--out", &ours]));
-    let play_on = |limit: &str, name: &str| format!("cd '{r}/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws {aws} -- ../scripts/ansible-preflight.sh -i inventory/peering-edges.ini --limit '{limit}' -e fed_edge_group='{edge_group}' -e fed_work='{work}' -e fed_counterparty='{counterparty}' {name}");
+    // This peering's own inventory file (`goatbuilder federate allocate`, when
+    // not every peering declares hosts:), read beside the hand-written one.
+    let own_inv = format!("inventory/peering-{edge_group}.ini");
+    let more_inv = if repo.join("ops/ansible").join(&own_inv).is_file() { format!(" -i {own_inv}") } else { String::new() };
+    let play_on = |limit: &str, name: &str| format!("cd '{r}/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws {aws} -- ../scripts/ansible-preflight.sh -i inventory/peering-edges.ini{more_inv} --limit '{limit}' -e fed_edge_group='{edge_group}' -e fed_work='{work}' -e fed_counterparty='{counterparty}' {name}");
     let play = |name: &str| play_on(edge_group, name);
     // The core host the edge dials: the outbound republisher runs there, beside
     // our core router, and both of its sessions dial that router (phase 12).
@@ -251,7 +303,12 @@ fn plan_verbs(repo: &Path, o: &Options, work: &str, edge_group: &str, resume: &s
     let mut ev = vec![
         p(1, "GATE", "peering preflight (fail-closed)", format!("python3 '{r}/ops/federation/standup/preflight.py' '{}' --work '{work}' --edge-group '{edge_group}'", o.with)),
         p(2, "A", "prepare what the package measures: the federation interface and the SPIRE bundle", play("peering-prepare.yml")),
-        t(3, "init — our half, read from the running system", init_env, init_words),
+        if measure_ssh {
+            let words = measure::phase3_words(init_words, o.with, edge_group, std::env::var("FED_ROUTER_CONTAINER").ok().as_deref(), repo);
+            Phase { n: 3, kind: "T", label: "init — our half, read from the running system".into(), cmd: format!("goatbuilder federate {}", shell_words(&words)), verb: Some((Vec::new(), words)) }
+        } else {
+            t(3, "init — our half, read from the running system", init_env, init_words)
+        },
         t(4, "lint our package against the spec", Vec::new(), w(&["lint", &ours])),
         { let (label, body) = exchange(&r, &ours, work, &counterparty, &keyring); p(5, "MANUAL", label, body) },
     ];
@@ -304,6 +361,30 @@ fn plan_verbs(repo: &Path, o: &Options, work: &str, edge_group: &str, resume: &s
     ev.push(p(14, "GATE", "acceptance — carries, refuses, and round-trips", format!("'{r}/ops/federation/standup/acceptance.sh' '{agreement}'{as_arg}")));
     let _ = resume;
     ev
+}
+
+/// Our sovereign id when `--as` is absent, by the same rule on both avenues
+/// (ops/scripts/peering-standup.sh): `sovereign_id` of the declaration in the
+/// goat context the verbs read (`federation.toml`, found as `verbs::resolve_site`
+/// finds it), else `sovereign_id` of our half, `<work>/ours.canonical.json`.
+/// None when neither names a well-formed id.
+fn our_id(work: &str) -> Option<String> {
+    let well_formed = |s: &String| {
+        (2..=32).contains(&s.len()) && s.starts_with(|c: char| c.is_ascii_lowercase() || c.is_ascii_digit()) && s.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+    };
+    let declared = verbs::resolve_site(&verbs::SiteArgs::default())
+        .ok()
+        .and_then(|site| std::fs::read_to_string(site.declaration_path()).ok())
+        .and_then(|t| toml::from_str::<toml::Value>(&t).ok())
+        .and_then(|v| v.get("sovereign_id").and_then(|x| x.as_str()).map(String::from))
+        .filter(well_formed);
+    declared.or_else(|| {
+        std::fs::read_to_string(format!("{work}/ours.canonical.json"))
+            .ok()
+            .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+            .and_then(|v| v.get("sovereign_id").and_then(|x| x.as_str()).map(String::from))
+            .filter(well_formed)
+    })
 }
 
 /// How a dry run reads to a person, the way kubeadm prints its phases: a
@@ -415,6 +496,12 @@ fn plan_view(repo: &Path, o: &Options, work: &str, edge_group: &str, phases: &[P
             }
         }
     }
+    if shown.iter().any(|p| p.n == 1) {
+        s.push_str(&format!("\n{}\n", bold("Phase 1 checks these before anything changes:")));
+        for (id, what, _) in preflight::CHECKS {
+            s.push_str(&format!("  {id:<15} {what}\n"));
+        }
+    }
     s.push_str(&format!("\n{} add -o json to see every phase's command, or read\ndocs/operations/sovereign-federation-runbook.md.\n", bold("To see more:")));
     match shown.iter().find(|p| p.n == 11) {
         Some(_) if !agreement_known => {
@@ -452,7 +539,15 @@ fn plan_view(repo: &Path, o: &Options, work: &str, edge_group: &str, phases: &[P
     s
 }
 
+/// A run as it has always been: recorded in the journal, nothing skipped.
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn federate(repo: &Path, o: &Options) -> Result<Report> {
+    federate_with(repo, o, &mut Surface::default())
+}
+
+/// A run with what the caller asked for beyond the phases (run.rs). A real
+/// run holds the peering's lock and is recorded in `<work>/state.json`.
+pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report> {
     // `goatbuilder federate allocate`: the per-peering values and files (a reserved word, never a partner).
     if o.with == "allocate" {
         return peering_files::run(repo, o);
@@ -470,6 +565,7 @@ pub fn federate(repo: &Path, o: &Options) -> Result<Report> {
         None => repo.join("ops/goatbuilder/goatbuilder.yaml"),
     };
     let cfg = config::load(&cfg_path)?;
+    measure::check_driver_measure()?;
     if let Some(env) = o.env {
         if !cfg.environments.iter().any(|e| e.name == env) {
             return Err(anyhow!("unknown environment \"{env}\"; declared: {:?}", cfg.environments.iter().map(|e| e.name.as_str()).collect::<Vec<_>>()));
@@ -491,17 +587,51 @@ pub fn federate(repo: &Path, o: &Options) -> Result<Report> {
     }
     // A peering's offer: may narrow federation.toml's release sets, never widen them.
     if o.mock.is_none() {
-        declaration::driver_check(&cfg, o.with, o.env)?;
+        declaration::driver_check(&cfg, o.with, o.env, repo)?;
     }
-    let work = o.work.map(String::from).unwrap_or_else(|| env_or("FED_WORK", format!("/var/lib/goat-federation/{}", o.with)));
+    let work = work_dir(o);
+    // Phases 7, 8, 9 and 14 always name our party: without --as, our
+    // sovereign id from the declaration, as the help says, else from our
+    // half. Mint and acceptance otherwise take the agreement's first party,
+    // which is us only when we sort first. A mock plans the same commands
+    // the script avenue prints, so it reads them too.
+    let our = if o.r#as.is_none() { our_id(&work) } else { None };
+    let with_us;
+    let o = if our.is_some() {
+        with_us = Options { r#as: our.as_deref(), ..*o };
+        &with_us
+    } else {
+        o
+    };
     let edge_group = o.edge_group.map(String::from).unwrap_or_else(|| format!("{}_edge", o.with));
     let resume = format!("goatbuilder federate {}{}", o.with, o.env.map(|e| format!(" --env {e}")).unwrap_or_default());
     // Once `goatbuilder federate allocate` has recorded this peering, the run must use its values.
     peering_files::driver_agrees(&cfg, cfg_path.parent().unwrap_or(repo), o, &work, &edge_group)?;
+    let executes = !o.dry_run && o.mock.is_none();
+    // A deploy takes the peering's lock and runs the planner's live recheck
+    // first, before the phase-1 inputs are exported below.
+    let mut prelude = None;
+    if executes {
+        if let Some(plan) = &s.plan {
+            prelude = Some(run::Prelude::deploy(o.with, &work, plan, o.from, o.to)?);
+        }
+    }
+    // Phase 1's inputs, derived from the deployment (federate/preflight.rs). A
+    // real run exports each one the operator has not set, before the plan reads
+    // them; a dry run lists them and changes no command (the parity gate).
+    let peering = cfg.peerings.iter().find(|p| p.with == o.with && o.env.map(|e| p.environment == e).unwrap_or(true)).expect("C1 found it");
+    // With what goatbuilder.yaml itself declares for the run merged in (federate/declared.rs).
+    let inputs = preflight::derive_inputs(repo, &cfg, peering, &work, &edge_group, None);
+    if executes {
+        preflight::export(&inputs);
+        // Phase 14 reads our core and edge declarations by group
+        // (acceptance_surfaces.py): the edge group this run uses, whatever the
+        // environment held, so --edge-group is never typed a second time.
+        std::env::set_var("FED_EDGE_GROUP", &edge_group);
+    }
     let mut phases = plan(repo, o, &work, &edge_group, &resume);
     // A peering a forwarder relays: the forwarder runs inside phase 2 (federate/forwarder.rs).
     forwarder::splice(&mut phases, &cfg, cfg_path.parent().unwrap_or(repo), o, &edge_group)?;
-    let executes = !o.dry_run && o.mock.is_none();
     let banner_mode = if o.dry_run {
         "(DRY RUN — nothing executes)"
     } else if o.mock.is_some() {
@@ -515,9 +645,24 @@ pub fn federate(repo: &Path, o: &Options) -> Result<Report> {
     if executes {
         let _ = std::fs::create_dir_all(format!("{work}/pki"));
     }
+    let mut run = None;
+    if executes {
+        let (r, rows) = run::Run::begin(o.with, &work, &phases, o.from, o.to, s, prelude.take())?;
+        checks.extend(rows);
+        run = Some(r);
+    }
     let mut exit = EXIT_OK;
-    for ph in &phases {
-        if ph.n < o.from || ph.n > o.to {
+    let mut stopped = false;
+    // Phase 5 confirmed in this run writes the keyring phase 6 reads: the
+    // phases after it are planned again from what is there now.
+    let mut replanned: Option<Vec<Phase>> = None;
+    for planned in &phases {
+        let ph = replanned.as_ref().and_then(|v| v.iter().find(|p| p.n == planned.n)).unwrap_or(planned);
+        if !s.runs(ph.n, o.from, o.to) {
+            continue;
+        }
+        if let Some(r) = run.as_mut().filter(|r| r.skips(ph)) {
+            checks.push(r.skipped(ph));
             continue;
         }
         checks.push(row("phase", format!("=== Phase {} [{}] {} ===", ph.n, ph.kind, ph.label)));
@@ -530,16 +675,120 @@ pub fn federate(repo: &Path, o: &Options) -> Result<Report> {
             checks.push(row("mock", format!("phase {} recorded against the fixture; not executed", ph.n)));
             continue;
         }
+        if let Some(r) = run.as_mut() {
+            r.start(ph);
+            if let Some(c) = r.guard(ph) {
+                let d = c.detail.clone();
+                checks.push(c);
+                r.end(ph, state::Outcome::Failed, &d);
+                exit = EXIT_REFUSED;
+                break;
+            }
+        }
         if ph.kind == "MANUAL" {
             // The directory step, inside phase 5 before the stop. It is
             // advisory: its exit status is never read.
+            let phase_started = std::time::SystemTime::now();
             if ph.n == 5 {
                 if let Some(args) = directory_args(repo, &work) {
                     let _ = Command::new("python3").args(&args).current_dir(repo).status();
                     checks.push(row("directory", "the directory step ran; it is advisory and its result changes no phase".into()));
                 }
             }
+            // Confirmation 1, when asked for: a package the directory held
+            // back is placed only once a person confirms it is ours.
+            if let (5, Some(r), true) = (ph.n, run.as_mut(), s.values.active()) {
+                // The directory step again, its report on stderr (stdout
+                // carries -o json); success is judged by what it placed.
+                let rerun = || directory_args(repo, &work).map(|a| Command::new("python3").args(&a).env("FED_DIRECTORY_PLACE_POINTER_PACKAGE", "1").current_dir(repo).stdout(std::process::Stdio::from(std::io::stderr())).status().is_ok()).unwrap_or(false);
+                if let Some(step) = confirm::pointer(&r.paths, s, &mut r.state, &r.id.clone(), Some(phase_started), &rerun) {
+                    checks.extend(step.rows);
+                    match step.verdict {
+                        confirm::Verdict::Continue => {}
+                        confirm::Verdict::Stop(d) => {
+                            r.end(ph, state::Outcome::Stopped, &d);
+                            stopped = true;
+                            break;
+                        }
+                        confirm::Verdict::Fail(d) => {
+                            r.end(ph, state::Outcome::Failed, &d);
+                            exit = EXIT_REFUSED;
+                            break;
+                        }
+                    }
+                }
+            }
+            // Confirmation 1, when asked for: the command binds the keys
+            // and carries on instead of stopping.
+            if let (5, Some(r), true) = (ph.n, run.as_mut(), s.values.active()) {
+                let rerun = || directory_args(repo, &work).map(|a| Command::new("python3").args(&a).current_dir(repo).stdout(std::process::Stdio::from(std::io::stderr())).status().is_ok()).unwrap_or(false);
+                let step = confirm::exchange(&r.paths, s, &mut r.state, &r.id.clone(), &rerun);
+                checks.extend(step.rows);
+                match step.verdict {
+                    confirm::Verdict::Continue => {
+                        r.end(ph, state::Outcome::Passed, "keys confirmed");
+                        replanned = Some(plan(repo, o, &work, &edge_group, &resume));
+                        continue;
+                    }
+                    confirm::Verdict::Stop(d) => {
+                        r.end(ph, state::Outcome::Stopped, &d);
+                        stopped = true;
+                        break;
+                    }
+                    confirm::Verdict::Fail(d) => {
+                        r.end(ph, state::Outcome::Failed, &d);
+                        exit = EXIT_REFUSED;
+                        break;
+                    }
+                }
+            }
+            // Confirmation 2, when asked for: the command admits the edge on
+            // our core after the person approves what it admits.
+            if let (10, Some(r), true) = (ph.n, run.as_mut(), admit::active(s)) {
+                let env_name = o.env.map(String::from).or_else(|| cfg.peerings.iter().find(|p| p.with == o.with).map(|p| p.environment.clone())).unwrap_or_default();
+                let step = admit::admit(repo, &r.paths, o.with, &env_name, &edge_group, s, &mut r.state, &r.id.clone());
+                checks.extend(step.rows);
+                match step.verdict {
+                    confirm::Verdict::Continue => {
+                        r.end(ph, state::Outcome::Passed, "admitted by the command");
+                        continue;
+                    }
+                    confirm::Verdict::Stop(d) => {
+                        r.end(ph, state::Outcome::Stopped, &d);
+                        stopped = true;
+                        break;
+                    }
+                    confirm::Verdict::Fail(d) => {
+                        r.end(ph, state::Outcome::Failed, &d);
+                        exit = EXIT_REFUSED;
+                        break;
+                    }
+                }
+            }
+            // Phase 10 of a plain run: admitted by the command through an
+            // approved plan. With a person at the terminal the run hands over
+            // to plan, deploy (which asks to approve the plan, then what our
+            // core admits) and test; without one, the stop names them.
+            if ph.n == 10 && s.plan.is_none() && s.only.is_none() {
+                if s.hand_off_at_10 {
+                    checks.push(row("note", format!("phase 10 by the command: making the plan for {}, then deploy asks to approve it and what our core admits, and runs 10 to 13; then acceptance", o.with)));
+                    if let Some(r) = run.as_mut() {
+                        r.end(ph, state::Outcome::Stopped, "handed to plan, deploy and test");
+                    }
+                    s.handed_off = true;
+                    stopped = true;
+                    break;
+                }
+                checks.push(row("note", format!("or by the command: goatbuilder federate plan {w}, then goatbuilder federate deploy {w} (it asks to approve the plan and what our core admits, at a terminal), then goatbuilder federate test {w}", w = o.with)));
+            }
             checks.push(row("note", format!("^ OPERATOR STEP — do the above, then re-run with --from {}", ph.n + 1)));
+            if let Some(again) = &s.again {
+                checks.push(row("note", format!("the command that carries on: {again} --from {}", ph.n + 1)));
+            }
+            if let Some(r) = run.as_mut() {
+                r.end(ph, state::Outcome::Stopped, "waiting for the operator step");
+            }
+            stopped = true;
             break;
         }
         let rc = match &ph.verb {
@@ -553,10 +802,40 @@ pub fn federate(repo: &Path, o: &Options) -> Result<Report> {
             }
         };
         if rc != 0 {
-            checks.push(Check { name: "failed".into(), ok: false, detail: format!("!! Phase {} (\"{}\") FAILED — exit {rc}. No later phase has run; the peering is left partway through phase {}. `goat federate` exit codes are specific: 20 composition refused, 21 lint refused, 22 diff refused, 23 a value could not be derived. Phase 14 (acceptance) exits 3 when a required check was BLOCKED or skipped: nothing was proven by it (X-ACCEPT-001); exit 2 when the agreement or the evidence bundle could not be read or written. docs/operations/sovereign-federation-runbook.md names this phase's \"worked when\"; Steps 7 and 8 are the acceptance criteria.", ph.n, ph.label, ph.n), fix: Some(format!("fix the cause, then resume — every phase is idempotent: {resume} --from {}", ph.n)) });
+            checks.push(Check { name: "failed".into(), ok: false, detail: format!("!! Phase {} (\"{}\") FAILED — exit {rc}. No later phase has run; the peering is left partway through phase {}. `goat federate` exit codes are specific: 20 composition refused, 21 lint refused, 22 diff refused, 23 a value could not be derived. Phase 14 (acceptance) exits 3 when a required check was BLOCKED or skipped: nothing was proven by it (X-ACCEPT-001); exit 2 when the agreement or the evidence bundle could not be read or written. docs/operations/sovereign-federation-runbook.md names this phase's \"worked when\"; Steps 7 and 8 are the acceptance criteria.", ph.n, ph.label, ph.n), fix: Some(match &s.again {
+                Some(again) => format!("fix the cause, then run the stage again (its checks and plays all run again): {again}"),
+                None => format!("fix the cause, then resume — every phase is idempotent: {resume} --from {}", ph.n),
+            }) });
+            if let Some(r) = run.as_mut() {
+                r.end(ph, state::Outcome::Failed, &format!("GB-183: phase {} failed with exit {rc}", ph.n));
+            }
             exit = EXIT_REFUSED;
             break;
         }
+        if let Some(r) = run.as_mut() {
+            // Confirmation 1, second half: the agreement digest after compose.
+            if ph.n == 6 && s.values.active() {
+                let step = confirm::agreement(&r.paths, s, &mut r.state, &r.id.clone());
+                checks.extend(step.rows);
+                match step.verdict {
+                    confirm::Verdict::Continue => {}
+                    confirm::Verdict::Stop(d) => {
+                        r.end(ph, state::Outcome::Stopped, &d);
+                        stopped = true;
+                        break;
+                    }
+                    confirm::Verdict::Fail(d) => {
+                        r.end(ph, state::Outcome::Failed, &d);
+                        exit = EXIT_REFUSED;
+                        break;
+                    }
+                }
+            }
+            r.end(ph, state::Outcome::Passed, "");
+        }
+    }
+    if let Some(r) = run.as_mut() {
+        checks.extend(r.finish(if exit != EXIT_OK { "failed" } else if stopped { "stopped" } else { "passed" }));
     }
     let printed = o.dry_run && o.table;
     if printed {
@@ -565,6 +844,7 @@ pub fn federate(repo: &Path, o: &Options) -> Result<Report> {
         print!("{}", plan_view(repo, o, &work, &edge_group, &phases));
     }
     if o.dry_run {
+        checks.extend(preflight::plan_rows(&inputs));
         checks.push(row("footer", "PLAN ONLY — nothing above executed. Phases 5 and 10 are MANUAL and stop the run; resume with --from 6 and --from 11. Acceptance criteria for every phase: docs/operations/sovereign-federation-runbook.md. The shape and why: docs/design/staged-delivery-pattern.md".into()));
     }
     let mut r = Report::new("federate", checks, EXIT_REFUSED);
@@ -619,6 +899,12 @@ fn guarded(f: impl FnOnce() -> Result<i32>) -> i32 {
     }
 }
 
+/// The working directory: `--work`, else `$FED_WORK`, else
+/// /var/lib/goat-federation/<peering>.
+pub fn work_dir(o: &Options) -> String {
+    o.work.map(String::from).unwrap_or_else(|| env_or("FED_WORK", format!("/var/lib/goat-federation/{}", o.with)))
+}
+
 fn is_root() -> bool {
     Command::new("id").arg("-u").output().map(|o| String::from_utf8_lossy(&o.stdout).trim() == "0").unwrap_or(false)
 }
@@ -629,6 +915,28 @@ mod tests {
 
     fn repo() -> std::path::PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
+    }
+
+    /// A peering whose inventory `allocate` rendered into its own file (not
+    /// every peering declares hosts:) has every play read that file beside the
+    /// hand-written one; without the file the commands are as before.
+    #[test]
+    fn the_plays_read_the_peerings_own_inventory_file_when_there_is_one() {
+        let r = tempfile::tempdir().unwrap();
+        let work = tempfile::tempdir().unwrap();
+        let work_s = work.path().display().to_string();
+        let o = Options { with: "xab", env: None, r#as: None, edge_group: None, work: Some(&work_s), mock: None, from: 1, to: 99, dry_run: true, table: false };
+        let before = plan(r.path(), &o, &work_s, "xab_edge", "resume");
+        assert!(before.iter().all(|p| !p.cmd.contains("peering-xab_edge.ini")));
+        let inv = r.path().join("ops/ansible/inventory");
+        std::fs::create_dir_all(&inv).unwrap();
+        std::fs::write(inv.join("peering-xab_edge.ini"), "[xab_edge]\n").unwrap();
+        let after = plan(r.path(), &o, &work_s, "xab_edge", "resume");
+        let plays: Vec<&Phase> = after.iter().filter(|p| p.cmd.contains("ansible-preflight.sh")).collect();
+        assert!(!plays.is_empty());
+        for p in plays {
+            assert!(p.cmd.contains("-i inventory/peering-edges.ini -i inventory/peering-xab_edge.ini "), "{}", p.cmd);
+        }
     }
 
     /// A value from the agreement or the keyring never runs as shell code: the
@@ -705,6 +1013,32 @@ mod tests {
         assert!(view.contains("Open the connection the agreement chooses") && !view.contains("Refused"), "{view}");
     }
 
+    /// FED_MEASURE=ssh: phase 3 runs `goatbuilder federate init --over-ssh` in
+    /// process with no DOCKER_HOST, whoever runs the other verbs; its words
+    /// parse as the verb line, so the plan runs what it prints. Every other
+    /// phase is the plan it was.
+    #[test]
+    fn phase_3_measures_over_ssh_when_chosen_and_nothing_else_moves() {
+        let work = tempfile::tempdir().unwrap();
+        let work_s = work.path().display().to_string();
+        let o = Options { with: "velmara", env: None, r#as: None, edge_group: None, work: Some(&work_s), mock: None, from: 1, to: 99, dry_run: true, table: false };
+        for in_process in [false, true] {
+            let here = plan_with(&repo(), &o, &work_s, "edge-x", "resume", in_process, false);
+            let ssh = plan_with(&repo(), &o, &work_s, "edge-x", "resume", in_process, true);
+            let p3 = ssh.iter().find(|p| p.n == 3).unwrap();
+            let (env, words) = p3.verb.as_ref().expect("phase 3 runs in process");
+            assert!(env.is_empty(), "no DOCKER_HOST over SSH: {env:?}");
+            assert_eq!(p3.cmd, format!("goatbuilder federate {}", shell_words(words)));
+            let joined = words.join(" ");
+            assert!(joined.starts_with("init --with-transport --with-data"), "{joined}");
+            assert!(joined.contains("--over-ssh velmara --ssh-edge-group edge-x"), "{joined}");
+            assert!(joined.ends_with(&format!("--repo {}", repo().display())), "{joined}");
+            for (a, b) in here.iter().zip(ssh.iter()).filter(|(a, _)| a.n != 3) {
+                assert_eq!((a.n, &a.cmd), (b.n, &b.cmd));
+            }
+        }
+    }
+
     /// FED_VERBS=goatbuilder: phases 3, 4, 6, 7 and 9 run in process, and the
     /// plan prints exactly the words that are parsed and run. The default
     /// spawns goat, as the script does.
@@ -733,6 +1067,14 @@ mod tests {
         assert!(spawned.iter().all(|p| p.verb.is_none()), "the default runs every phase in a shell");
         assert!(spawned.iter().find(|p| p.n == 4).unwrap().cmd.contains(" federate lint '"), "goat federate lint");
         assert!(!spawned.iter().any(|p| p.cmd.contains("goatbuilder federate")));
+    }
+
+    /// The default runs the verbs in process; only FED_VERBS=goat spawns goat.
+    #[test]
+    fn the_verbs_run_in_process_unless_goat_is_chosen() {
+        assert!(in_process_by(""), "unset is the default: in process");
+        assert!(in_process_by("goatbuilder"));
+        assert!(!in_process_by("goat"), "FED_VERBS=goat keeps the previous path");
     }
 
     /// A panic in an in-process verb exits 101 and a refused command line 2,
@@ -774,7 +1116,8 @@ mod tests {
     /// when no agreement names a transport, and nothing executed.
     #[test]
     fn dry_run_plans_the_scripts_phases_and_refuses_an_unknown_transport() {
-        let work = std::env::temp_dir().join(format!("goatbuilder-federate-{}", std::process::id()));
+        let held = crate::testdir::path("goatbuilder-federate-");
+        let work = held.join("work");
         let work_s = work.display().to_string();
         let fx = fixture();
         let o = Options { with: "hello-ally", env: None, r#as: None, edge_group: None, work: Some(&work_s), mock: Some(&fx), from: 1, to: 99, dry_run: true, table: false };
@@ -797,7 +1140,7 @@ mod tests {
     }
 
     fn phase_11(kind: &str) -> (Vec<String>, String) {
-        let work = std::env::temp_dir().join(format!("goatbuilder-federate-{kind}-{}", std::process::id()));
+        let work = crate::testdir::path(&format!("goatbuilder-federate-{kind}-"));
         std::fs::create_dir_all(&work).unwrap();
         std::fs::write(work.join("agreement.json"), format!(r#"{{"transport":{{"kind":"{kind}"}}}}"#)).unwrap();
         let work_s = work.display().to_string();
@@ -858,7 +1201,8 @@ mod tests {
     #[test]
     fn a_mock_fixture_supplies_the_declared_peering() {
         let fx = fixture();
-        let work = std::env::temp_dir().join(format!("goatbuilder-federate-mock-{}", std::process::id()));
+        let held = crate::testdir::path("goatbuilder-federate-mock-");
+        let work = held.join("work");
         let work_s = work.display().to_string();
         let declared = Options { with: "hello-ally", env: None, r#as: Some("zagros"), edge_group: None, work: Some(&work_s), mock: Some(&fx), from: 1, to: 99, dry_run: true, table: false };
         let r = federate(&repo(), &declared).unwrap();
@@ -874,7 +1218,7 @@ mod tests {
     /// and must not create its working directory.
     #[test]
     fn a_mock_without_dry_run_executes_nothing_and_records_every_phase() {
-        let root = std::env::temp_dir().join(format!("goatbuilder-federate-mock-exec-{}", std::process::id()));
+        let root = crate::testdir::path("goatbuilder-federate-mock-exec-");
         std::fs::create_dir_all(&root).unwrap();
         let sentinel = root.join("ran");
         let stub = root.join("goat-stub");

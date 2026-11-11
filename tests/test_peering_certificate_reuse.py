@@ -62,7 +62,7 @@ class CertificateReuse(unittest.TestCase):
     def test_rerun_reuses_all_leaves_without_signing_key(self):
         self.invoke()
         before = self.snapshot()
-        self.assertEqual(len(before), 8)
+        self.assertEqual(len(before), 9)  # four pairs and our CA
         result = self.invoke(with_key=False)
         self.assertEqual(before, self.snapshot())
         self.assertIn('reused', result.stdout.lower())
@@ -112,6 +112,8 @@ class CertificateReuse(unittest.TestCase):
         before = self.snapshot()
         self.invoke('--rotate')
         after = self.snapshot()
+        # Rotation replaces the leaves; our CA is the agreement's and stays.
+        self.assertEqual(before.pop('our-ca.pem'), after['our-ca.pem'])
         for name in before:
             self.assertNotEqual(before[name][0], after[name][0], name)
         backups = list(self.out.glob('.previous-*'))
@@ -259,6 +261,33 @@ class CertificateReuse(unittest.TestCase):
         before = target.read_bytes()
         self.invoke('--rotate', ok=False)
         self.assertEqual(target.read_bytes(), before)
+
+    def test_our_ca_is_placed_beside_the_leaves_it_signed(self):
+        # The rendered edge half's inward endpoint and the republisher read our
+        # CA at <out>/our-ca.pem; phase 8 is what puts it there.
+        self.invoke()
+        placed = self.out / 'our-ca.pem'
+        self.assertTrue(placed.is_file())
+        self.assertEqual(placed.read_bytes(), self.ca.read_bytes())
+        # The owner's alone: its readers are the driver that owns it and root.
+        self.assertEqual(placed.stat().st_mode & 0o777, 0o600)
+        before = self.snapshot()
+        self.invoke(with_key=False)
+        self.assertEqual(before, self.snapshot(), 'a re-run rewrites nothing')
+
+    def test_our_ca_left_wider_by_an_earlier_run_is_narrowed(self):
+        self.invoke()
+        placed = self.out / 'our-ca.pem'
+        placed.chmod(0o644)
+        self.invoke(with_key=False)
+        self.assertEqual(placed.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(placed.read_bytes(), self.ca.read_bytes())
+
+    def test_a_directory_where_our_ca_goes_is_refused_by_name(self):
+        # What a container runtime leaves when the edge was started first.
+        (self.out / 'our-ca.pem').mkdir(parents=True)
+        result = self.invoke(ok=False)
+        self.assertIn('our-ca.pem: expected a regular file', result.stdout + result.stderr)
 
 
 if __name__ == '__main__':

@@ -2541,9 +2541,8 @@ pub fn soak_min_days(repo: &Path) -> i64 {
 mod driver_tests {
     use super::*;
 
-    fn tree(name: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!("goatbuilder-promote-{}-{name}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&d);
+    fn tree(name: &str) -> crate::testdir::Held<PathBuf> {
+        let d = crate::testdir::path(&format!("goatbuilder-promote-{name}-"));
         let recs = d.join("ops/release/records/comp");
         std::fs::create_dir_all(&recs).unwrap();
         let w = |f: &str, body: &str| std::fs::write(recs.join(f), body).unwrap();
@@ -2574,8 +2573,7 @@ mod driver_tests {
     /// candidate could start at dev. The finder names it, and what overtook it.
     #[test]
     fn stale_candidates_c6_names_the_overtaken_record_and_the_hotfix_that_overtook_it() {
-        let d = std::env::temp_dir().join(format!("goatbuilder-promote-{}-c6", std::process::id()));
-        let _ = std::fs::remove_dir_all(&d);
+        let d = crate::testdir::path("goatbuilder-promote-c6-");
         std::fs::create_dir_all(d.join("ops/release/records/comp")).unwrap();
         std::fs::create_dir_all(d.join("ops/pins")).unwrap();
         std::fs::write(d.join("ops/release/ladder.yaml"), "rungs:\n  - {name: dev, goatnet: zagros_dev, status: live}\n  - {name: preprod, goatnet: zagros, status: live}\n  - {name: prod, goatnet: zagros_prod, status: live}\n").unwrap();

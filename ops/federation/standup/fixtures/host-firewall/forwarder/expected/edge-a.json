@@ -1,0 +1,53 @@
+{
+  "schema": "goat-host-firewall-input/v1",
+  "profile": "edge",
+  "host": {
+    "ssh_port": 22,
+    "management_sources": [
+      "198.51.100.0/24"
+    ],
+    "mesh_interface": "wt0",
+    "mesh_udp_ports": [],
+    "fabric_tcp_port": 7447,
+    "fabric_udp_port": null,
+    "fabric_sources": [],
+    "mesh_dns_port": 5353,
+    "closed_listeners": [],
+    "management_prefix_floor": {
+      "ipv4": 24,
+      "ipv6": 64
+    },
+    "spire_bundle_port": "",
+    "spire_bundle_sources": []
+  },
+  "peerings": [
+    {
+      "name": "wg-fed2",
+      "transport": "wireguard",
+      "listen_port": 51820,
+      "peer_addr": "",
+      "tunnel_interface": "wg-fed2",
+      "remote_link_ip": "169.254.10.9",
+      "edge_port": 7448,
+      "extra_tcp_ports": [],
+      "spire_outbound_port": "",
+      "spire_server_addr": "",
+      "via_forwarder": true,
+      "carrier_interface": "wg-carry0",
+      "carrier_remote_ip": "169.254.30.0",
+      "carrier_listen_port": 51824,
+      "forwarder_addr": "198.51.100.77"
+    }
+  ],
+  "override": {
+    "other-tcp": {
+      "ports": [
+        8080
+      ],
+      "sources": [
+        "198.51.100.0/24"
+      ],
+      "reason": "a site monitoring agent listens on the edge"
+    }
+  }
+}

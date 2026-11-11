@@ -231,9 +231,8 @@ mod tests {
     }
 
     /// A bare trunk `origin` with ops/ansible and the real script, and a clone of it.
-    fn pair(tag: &str) -> (PathBuf, PathBuf, PathBuf) {
-        let root = std::env::temp_dir().join(format!("gb-fresh-{tag}-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&root);
+    fn pair(tag: &str) -> (crate::testdir::Held<PathBuf>, PathBuf, PathBuf) {
+        let root = crate::testdir::path(&format!("gb-fresh-{tag}-"));
         fs::create_dir_all(&root).unwrap();
         let (bare, a, b) = (root.join("o.git"), root.join("a"), root.join("b"));
         git(&root, &["init", "-q", "--bare", "o.git"]);
@@ -320,9 +319,8 @@ mod tests {
     /// An overlay trunk (bare), two overlay checkouts of it, and an assembled
     /// tree: a goatcore commit carrying the real check scripts, with the
     /// overlay's goatcore.ref and the marker beside it.
-    fn assembled_fixture(tag: &str) -> (PathBuf, PathBuf, PathBuf, PathBuf) {
-        let root = std::env::temp_dir().join(format!("gb-assembled-{tag}-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&root);
+    fn assembled_fixture(tag: &str) -> (crate::testdir::Held<PathBuf>, PathBuf, PathBuf, PathBuf) {
+        let root = crate::testdir::path(&format!("gb-assembled-{tag}-"));
         fs::create_dir_all(&root).unwrap();
         let (bare, ov, other, tree) = (root.join("ov.git"), root.join("ov"), root.join("other"), root.join("tree"));
         git(&root, &["init", "-q", "--bare", "ov.git"]);
@@ -389,7 +387,7 @@ mod tests {
         assert!(parse_marker("overlay_commit=def\n").is_err());
         assert!(parse_marker("goatcore_ref=\noverlay_commit=def\n").is_err());
         // A plain checkout carries no marker: the script judges it against its trunk.
-        let d = std::env::temp_dir().join(format!("gb-nomarker-{}", std::process::id()));
+        let d = crate::testdir::path("gb-nomarker-");
         fs::create_dir_all(&d).unwrap();
         assert!(marker(&d).unwrap().is_none());
         let _ = fs::remove_dir_all(d);
