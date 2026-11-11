@@ -216,7 +216,10 @@ fn slot_anchor_file(repo: &Path, env_name: &str) -> PathBuf {
 }
 
 struct Core {
-    org: PathBuf,
+    /// The org fragment as a file on this machine (FED_CORE_ACL_ORG); `None`
+    /// on a goat-zenoh role core, whose fragment is read and placed on the core
+    /// host at the role's goat_zenoh_acl_org_path.
+    org: Option<PathBuf>,
     seed: Option<PathBuf>,
     out: Option<PathBuf>,
     cert: Option<PathBuf>,
@@ -245,7 +248,7 @@ impl Core {
             env("FED_CORE_ACL_SEED").map(PathBuf::from),
             env("FED_CORE_ACL_OUT").map(PathBuf::from),
         );
-        if org.is_none() {
+        if org.is_none() && role.is_none() {
             missing.push("FED_CORE_ACL_ORG (our core's org fragment: every other vendor and partner is kept from it)");
         }
         if seed.is_some() != out.is_some() {
@@ -283,9 +286,9 @@ impl Core {
                 Slot::Skip
             }
         };
-        let Some(org) = org.filter(|_| missing.is_empty()) else {
+        if !missing.is_empty() {
             return Err(missing);
-        };
+        }
         Ok(Core {
             org,
             seed,
@@ -627,16 +630,43 @@ pub fn admit(
     // Stage everything the core will load, from bytes read once.
     let dir = paths.work.join("admission").join(run);
     let staged = dir.join("staged");
-    let existing = match std::fs::read_to_string(&core.org) {
+    // On a goat-zenoh role core the fragment lives on the core host, at the
+    // role's goat_zenoh_acl_org_path: fetched here, merged, and placed back.
+    let remote = match (&core.org, &core.role) {
+        (Some(_), _) => None,
+        (None, Some(r)) => match r.role_value(repo, "goat_zenoh_acl_org_path") {
+            Ok(p) if r.machines == 1 => Some((r.clone(), p)),
+            Ok(_) => return fail("GB-236", format!("our core router's goat-zenoh role declarations do not resolve (GB-236): [{}] in {} holds {} machines, and admission places one org fragment", r.group, r.inventory, r.machines), "keep one machine in the core router's group, or set FED_CORE_ACL_ORG"),
+            Err(e) => return fail("GB-236", e, "declare it in the core router's group_vars, or set FED_CORE_ACL_ORG"),
+        },
+        (None, None) => unreachable!("from_env asks for FED_CORE_ACL_ORG without a role core"),
+    };
+    let fetched = dir.join("fetched").join("acl-org-fragment.json5");
+    let read = match (&core.org, &remote) {
+        (Some(org), _) => std::fs::read_to_string(org).map_err(|e| format!("cannot read our core's org fragment {} ({e})", org.display())),
+        (None, Some((r, path))) => {
+            let _ = std::fs::create_dir_all(fetched.parent().unwrap_or(&dir));
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+            }
+            let _ = std::fs::remove_file(&fetched);
+            let cmd = r.fetch_cmd(repo, path, &fetched);
+            match bash(repo, &cmd) {
+                Ok(()) => std::fs::read_to_string(&fetched).map_err(|e| format!("the org fragment fetched from {path} on [{}] is not readable ({e})", r.group)),
+                Err(rc) => Err(format!("cannot read our core's org fragment {path} on [{}] (exit {rc}): {cmd}", r.group)),
+            }
+        }
+        (None, None) => unreachable!(),
+    };
+    let existing = match read {
         Ok(t) => t,
         Err(e) => {
             return fail(
                 "GB-194",
-                format!(
-                    "cannot read our core's org fragment {} ({e})",
-                    core.org.display()
-                ),
-                "check FED_CORE_ACL_ORG names the org fragment our core is assembled from",
+                e,
+                "check FED_CORE_ACL_ORG, or the core router's goat_zenoh_acl_org_path, names the org fragment our core is assembled from",
             )
         }
     };
@@ -691,11 +721,11 @@ pub fn admit(
             "declare it, make a new plan, and deploy again",
         );
     }
-    let mut plan: Vec<(String, Vec<u8>, PathBuf)> = vec![(
-        "acl-org-fragment.json5".into(),
-        merged.clone().into_bytes(),
-        core.org.clone(),
-    )];
+    let mut plan: Vec<(String, Vec<u8>, PathBuf)> = core
+        .org
+        .iter()
+        .map(|org| ("acl-org-fragment.json5".to_string(), merged.clone().into_bytes(), org.clone()))
+        .collect();
     // The staging folder and its files are the owner's only: a key is staged.
     let write_staged = |name: &str, bytes: &[u8]| {
         std::fs::create_dir_all(&staged)?;
@@ -762,6 +792,7 @@ pub fn admit(
         .iter()
         .map(|(n, _, to)| format!("{n} -> {}\n", to.display()))
         .collect::<String>()
+        + &remote.as_ref().map(|(r, p)| format!("acl-org-fragment.json5 -> {p} on [{}]\n", r.group)).unwrap_or_default()
         + &core.route();
     let mut parts: Vec<(String, Vec<u8>)> = plan
         .iter()
@@ -788,6 +819,9 @@ pub fn admit(
     ));
     for (n, _, to) in &plan {
         sum.push_str(&format!("    {n}  ->  {}\n", to.display()));
+    }
+    if let Some((r, p)) = &remote {
+        sum.push_str(&format!("    acl-org-fragment.json5  ->  {p} on [{}] in {} (what is there now: {})\n", r.group, r.inventory, fetched.display()));
     }
     sum.push_str(&format!("  Then: dry run, slot-list check, restart through {}.\n\n  Agreement digest:  {agreement_digest}\n", core.route()));
     if !plan_hash.is_empty() {
@@ -889,9 +923,34 @@ pub fn admit(
             );
         }
     }
+    // The fragment on a role core's host, after the local files; what was
+    // there is the copy fetched before the summary, kept with the backups.
+    if let Some((r, p)) = &remote {
+        let kept = bdir.join("remote-acl-org-fragment.json5");
+        if let Err(e) = std::fs::create_dir_all(&bdir).and_then(|_| std::fs::copy(&fetched, &kept)) {
+            let back = put_back(&backups);
+            return fail("GB-194", format!("cannot keep the fetched org fragment in {} ({e}); {back}", bdir.display()), "check the working folder is writable");
+        }
+        let cmd = r.place_cmd(repo, &staged.join("acl-org-fragment.json5"), p);
+        if let Err(rc) = bash(repo, &cmd) {
+            let back = put_back(&backups);
+            return fail("GB-194", format!("cannot place the org fragment at {p} on [{}] (exit {rc}); {back}", r.group), format!("run it by hand to read why: {cmd}"));
+        }
+    }
+    // Put back the local backups and, on a role core, the fetched fragment.
+    let back_all = |backups: &[(PathBuf, Option<PathBuf>)]| -> String {
+        let local = put_back(backups);
+        match &remote {
+            None => local,
+            Some((r, p)) => match bash(repo, &r.place_cmd(repo, &bdir.join("remote-acl-org-fragment.json5"), p)) {
+                Ok(()) => format!("{local}; the org fragment at {p} on [{}] is put back", r.group),
+                Err(rc) => format!("{local}; the org fragment at {p} on [{}] could NOT be put back (exit {rc}): copy {} there by hand", r.group, bdir.join("remote-acl-org-fragment.json5").display()),
+            },
+        }
+    };
     rows.push(ok(
         "publish",
-        format!("{} files placed; backups in {}", plan.len(), bdir.display()),
+        format!("{} files placed; backups in {}", plan.len() + usize::from(remote.is_some()), bdir.display()),
     ));
     // 2. dry run
     let dry = match (
@@ -906,7 +965,7 @@ pub fn admit(
     match dry {
         Some(cmd) => {
             if let Err(rc) = bash(repo, &cmd) {
-                let back = put_back(&backups);
+                let back = back_all(&backups);
                 return fail(
                     "GB-195",
                     format!("the core router's dry run failed (exit {rc}); {back}"),
@@ -952,7 +1011,7 @@ pub fn admit(
                 .map(|s| s.code().unwrap_or(2))
                 .unwrap_or(2);
             if rc != 0 {
-                let back = put_back(&backups);
+                let back = back_all(&backups);
                 let fix = format!("python3 {} {}   (writes the list; commit it, deploy the core, then run this again)", script.display(), args.iter().filter(|a| *a != "--check").cloned().collect::<Vec<_>>().join(" "));
                 return if rc == 1 {
                     fail("GB-195", format!("the committed slot list differs from the registry; restarting now would drop or add stores; {back}"), fix)

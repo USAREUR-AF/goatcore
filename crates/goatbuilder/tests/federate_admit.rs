@@ -694,3 +694,71 @@ fn the_slot_check_is_not_applicable_without_lazy_slot_storage() {
     );
     assert!(w.log().contains("restart"), "{}", w.log());
 }
+
+/// A core the goat-zenoh role deploys: its declarations in the stand-in
+/// repository (the role's defaults, the fleet pin and its play, the core
+/// router's inventory group and group_vars), and an `ansible` that reads and
+/// writes a stand-in core host under `<root>/remote`. Returns that bin dir.
+fn role_core(w: &World) -> std::path::PathBuf {
+    let r = w.root.path();
+    let a = w.repo.join("ops/ansible");
+    federate_world::write(&a.join("roles/goat-zenoh/defaults/main.yml"), "zenoh_router_image: \"x\"\nzenoh_stack: \"{{ site_id }}-zenoh\"   # a shared role must not name a goatnet\ngoat_zenoh_acl_org_path: \"/etc/{{ zenoh_stack }}/acl-org-fragment.json5\"\nzenoh_sovereign_peerings: []\n");
+    federate_world::write(&a.join("zenoh-deploy.yml"), "- hosts: \"{{ target | mandatory }}\"\n  roles: [goat-zenoh]\n");
+    federate_world::write(&w.repo.join("ops/pins/fleet-pins.yaml"), "components:\n  zenoh-router:\n    var: zenoh_router_image\n    deploy_playbook: zenoh-deploy.yml\n");
+    federate_world::write(&a.join("inventory/core-router.ini"), "[core_router]\nxaa-core ansible_host=192.0.2.11 ansible_user=goat\n");
+    federate_world::write(&a.join("group_vars/core_router/zenoh.yml"), "zenoh_router_image: \"ghcr.io/example-org/zenoh@sha256:00\"\nsite_id: xaa\n");
+    let org = std::fs::read_to_string(r.join("core/org.json5")).unwrap();
+    federate_world::write(&r.join("remote/etc/xaa-zenoh/acl-org-fragment.json5"), &org);
+    let bin = r.join("role-bin");
+    federate_world::exe(
+        &bin.join("ansible"),
+        &format!(
+            "#!/bin/sh\necho \"ansible $*\" >> '{log}'\nwhile [ $# -gt 0 ]; do case $1 in -m) m=$2; shift;; -a) a=$2; shift;; esac; shift; done\nsrc=$(echo \"$a\" | sed 's/.*src=\\([^ ]*\\).*/\\1/'); dest=$(echo \"$a\" | sed 's/.*dest=\\([^ ]*\\).*/\\1/')\ncase $m in *fetch) cp '{rem}'\"$src\" \"$dest\";; *copy) mkdir -p \"$(dirname '{rem}'\"$dest\")\"; cp \"$src\" '{rem}'\"$dest\";; esac\n",
+            log = w.log.display(),
+            rem = r.join("remote").display()
+        ),
+    );
+    bin
+}
+
+#[test]
+fn a_role_core_is_admitted_through_the_roles_play_and_its_fragment_on_the_host() {
+    let w = world();
+    let bin = role_core(&w);
+    let plan = ready(&w, true);
+    let role_run = |extra: &[&str]| {
+        let mut c = w.command(extra);
+        for k in ["FED_CORE_ACL_ORG", "FED_CORE_ACL_SEED", "FED_CORE_ACL_OUT", "FED_CORE_DRY_RUN", "FED_CORE_RESTART"] {
+            c.env_remove(k);
+        }
+        c.env("PATH", format!("{}:{}", bin.display(), std::env::var("PATH").unwrap()));
+        let out = c.output().unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap_or_default();
+        (out, v)
+    };
+    let (out, _) = role_run(&["deploy", "hello-ally", "--approve-plan", &plan, "--review-in-pr"]);
+    assert!(out.status.success(), "{}", says(&out));
+    let review = std::fs::read_to_string(w.work.join("admission/review.md")).unwrap();
+    assert!(
+        review.contains("/etc/xaa-zenoh/acl-org-fragment.json5 on [core_router]")
+            && review.contains("zenoh-deploy.yml on [core_router] in inventory/core-router.ini (site_id xaa)"),
+        "{review}"
+    );
+    let remote = w.root.path().join("remote/etc/xaa-zenoh/acl-org-fragment.json5");
+    assert!(!std::fs::read_to_string(&remote).unwrap().contains("fed-w-xab"), "nothing on the core changed before approval");
+    let digest = review.split("--approve-admission ").nth(1).unwrap().split_whitespace().next().unwrap().to_string();
+    w.clear_log();
+    let (out, v) = role_run(&["deploy", "hello-ally", "--approve-plan", &plan, "--approve-admission", &digest]);
+    assert!(out.status.success(), "{}", says(&out));
+    assert_eq!(phases_run(&v), [10, 11, 12, 13], "{}", says(&out));
+    let placed = std::fs::read_to_string(&remote).unwrap();
+    assert!(placed.contains("fed-w-xab") && placed.contains("vendor-a") && placed.contains("fed-w-xac"), "merged on the host, every other block kept: {placed}");
+    let log = w.log();
+    let (fetch, copy, dry, play) = (
+        log.find("ansible.builtin.fetch").unwrap(),
+        log.find("ansible.builtin.copy").unwrap(),
+        log.find("play --diff").unwrap(),
+        log.find("play zenoh-deploy.yml").unwrap(),
+    );
+    assert!(fetch < copy && copy < dry && dry < play, "fetch, place, dry run, restart: {log}");
+}
