@@ -40,6 +40,7 @@ on:
       - 'ops/postgres/spock/init/**'
       - '.github/workflows/ory-soak-smoke.yml'
       - 'tests/test_ory_concurrent_identity.py'
+      - 'tests/test_ory_partition_login.py'
   schedule:
     # Saturday 04:17 UTC — after mgmt-host-bootstrap-cron at 03:17 UTC,
     # before any human-attended weekend work.
@@ -69,7 +70,9 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - run: python3 tests/test_ory_concurrent_identity.py
+      - run: |
+          python3 tests/test_ory_concurrent_identity.py
+          python3 tests/test_ory_partition_login.py
 
   build-postgres-spock-image:
     name: build postgres-spock-test:contribs

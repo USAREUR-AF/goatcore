@@ -1,7 +1,8 @@
 # Concurrent identity creation: measurement and follow-up
 
-**Status:** built probe and regression coverage; two-node behavior is not measured
-by this change yet. This work is separate from the OS package refresh in
+**Status:** built probe and regression coverage; concurrent acceptance measured
+in the Linux smoke run. Post-resolution password checks are built but not yet
+measured on the database fixture. This work is separate from the OS package refresh in
 [PR #433](https://github.com/USAREUR-AF/goatcore/pull/433).
 Investigation: [issue #435](https://github.com/USAREUR-AF/goatcore/issues/435).
 
@@ -84,3 +85,31 @@ Before claiming the underlying conflict behavior is fixed:
 
 The immediate CI assertion makes the old F3 expectation visible; it is not
 approval of an unimplemented distributed conflict policy.
+
+## Measured concurrent acceptance and resolution follow-up
+
+[PR #436 smoke run](https://github.com/USAREUR-AF/goatcore/actions/runs/43113796109/job/130837526955)
+measured nine concurrent-create pairs: five returned 201 from both nodes with
+distinct accepted IDs, and four returned one 201 and one 409. The strict
+observation gate failed; the single-node soak and probe unit tests passed.
+This establishes the race in the wide-repset fixture, not eventual identity
+loss or broken login.
+
+The existing narrow-repset scenario
+`ops/postgres/spock/tests/partition-harness/scenarios/kratos-c4-same-email-both-sides.sh`
+already tests the ADR 1205 hub-directed resolution. It passed in
+[#433's partition run](https://github.com/USAREUR-AF/goatcore/actions/runs/43079557060/job/130728188502),
+including matching survivor IDs, equal identifier mappings and zero drift
+across 33 replicated tables. Its previous shared fixture password could not
+distinguish retained from losing credentials.
+
+The follow-up uses different passwords, establishes that each works locally
+while isolated, and checks password login at both sites after resolution.
+The survivor password must return the chosen identity in an active session;
+the losing password must return Kratos's invalid-credentials message, not a
+network or server error. A separate pre-existing fixture identity must still
+log in. Only identity IDs are printed, never session tokens.
+
+These additional checks still require a signed follow-up and a Linux run.
+They do not authorize automatic deletion of real identities or declare the
+proposed island-mode policy deployed.
