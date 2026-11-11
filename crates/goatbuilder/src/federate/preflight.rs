@@ -96,7 +96,7 @@ fn shell_plain(v: &str) -> bool {
     !v.chars().any(|c| c.is_control() || "'\"`$\\".contains(c))
 }
 
-fn input(name: &'static str, value: Option<String>, source: impl Into<String>) -> Input {
+pub(crate) fn input(name: &'static str, value: Option<String>, source: impl Into<String>) -> Input {
     let source = source.into();
     match value.filter(|v| !v.is_empty()) {
         Some(v) if !shell_plain(&v) => Input {

@@ -183,7 +183,18 @@
         "sops_file": { "type": "string", "description": "sops store: the encrypted dotenv file (default secrets.sops.env)" },
         "git_crypt_file": { "type": "string", "description": "git-crypt store: the dotenv file under a git-crypt filter (default secrets/goat.env)" },
         "ref_prefix": { "type": "string", "description": "reference stores: what a reference starts with (default op:// or bao://)" },
-        "op_account": { "type": "string", "description": "1password store: the account op:// references resolve against (e.g. example.1password.com), pinned before any op call so it cannot prompt across every configured account. OP_ACCOUNT overrides it per command." }
+        "op_account": { "type": "string", "description": "1password store: the account op:// references resolve against (e.g. example.1password.com), pinned before any op call so it cannot prompt across every configured account. OP_ACCOUNT overrides it per command." },
+        "federation": {
+          "description": "Where this side's federation keys are, for goatbuilder federate: paths, never the keys. Each is read only when its environment variable is unset and the edge group's group_vars do not set it. A relative path is inside the active goat context directory ($GOAT_PROFILE_DIR, else ~/.goat, then contexts/<context>/); ~/ is the home directory.",
+          "type": "object",
+          "additionalProperties": false,
+          "minProperties": 1,
+          "properties": {
+            "signing_key": { "type": "string", "minLength": 1, "pattern": "^[^'\"`$\\\\\\u0000-\\u001f]+$", "description": "Our package signing key (64 hex characters or 44 base64), as FED_SIGNING_KEY." },
+            "ca_cert": { "type": "string", "minLength": 1, "pattern": "^[^'\"`$\\\\\\u0000-\\u001f]+$", "description": "Our CA certificate (PEM), as FED_CA_CERT. Declared, it replaces the convention ops/ansible/enrollment/ca/<site>/root-cert.pem." },
+            "ca_key": { "type": "string", "minLength": 1, "pattern": "^[^'\"`$\\\\\\u0000-\\u001f]+$", "description": "Our CA private key (PEM), as FED_CA_KEY. The age-encrypted key stays opt-in (goat_federation_ca_key_from_age); an explicit key always wins over it." }
+          }
+        }
       }
     }
   },

@@ -86,6 +86,22 @@ decrypting in memory and writing nothing. Phase 8 opens the same key itself when
 no plaintext key file is given and the deployment opts in
 ([federation-certificate-lifecycle.md](federation-certificate-lifecycle.md#the-ca-key)).
 
+### Inputs declared in goatbuilder.yaml
+
+Built: `crates/goatbuilder/src/federate/declared.rs` reads the optional
+declarations below and merges them into the inputs above. A deployment that
+declares none of them gets exactly the inputs it got before. A declared value
+fills an input nothing else derived, and replaces one derived only by convention
+(for example the enrollment CA path); a value in the edge group's group_vars
+still wins over it, and a variable set in the environment wins over both.
+
+Status: WIP — gate: the federation test environment's nothing-hand-written
+scenario no longer lists these variables when its deployment declares them.
+
+| Declaration | Gives |
+|---|---|
+| `secrets.federation.signing_key`, `.ca_cert`, `.ca_key` | `FED_SIGNING_KEY`, `FED_CA_CERT`, `FED_CA_KEY`. Paths only. A relative path is inside the active goat context directory (`$GOAT_PROFILE_DIR`, else `~/.goat`, then `contexts/<context>/`, the context from `$GOAT_CONTEXT`, else `current_context` in its `config.toml`, else `default`). The age-encrypted CA key stays opt-in (`goat_federation_ca_key_from_age`) |
+
 ## Live reads
 
 Nothing on a host is changed.

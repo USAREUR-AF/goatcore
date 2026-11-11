@@ -293,7 +293,8 @@ def main(argv=None):
         key = env.get("FED_SIGNING_KEY", "")
         if not key:
             missing.append(("FED_SIGNING_KEY", f"goat_federation_signing_key in group_vars/{group}/ (a path to our "
-                            "Ed25519 key: 64 hex or 44 base64), or export it"))
+                            "Ed25519 key: 64 hex or 44 base64), or secrets.federation.signing_key in "
+                            "goatbuilder.yaml, or export it"))
         elif Path(key).is_file():
             raw = Path(key).read_text().strip()
             if not (re.fullmatch(r"[0-9a-fA-F]{64}", raw) or len(raw) == 44):
@@ -410,11 +411,12 @@ def main(argv=None):
     ca_key_age, age_id = env.get("FED_CA_KEY_AGE", ""), env.get("FED_AGE_IDENTITY", "")
     if want("signing-ca"):
         if not ca_cert:
-            missing.append(("FED_CA_CERT", f"goat_federation_ca_cert in group_vars/{group}/; goatbuilder derives "
+            missing.append(("FED_CA_CERT", f"goat_federation_ca_cert in group_vars/{group}/ or "
+                            "secrets.federation.ca_cert in goatbuilder.yaml; goatbuilder derives "
                             "ops/ansible/enrollment/ca/<site>/root-cert.pem"))
         if not ca_key and not ca_key_age:
             missing.append(("FED_CA_KEY or FED_CA_KEY_AGE", "goat_federation_ca_key (PEM) or goat_federation_ca_key_age "
-                            "in group_vars; goatbuilder derives <deploy.state_dir>/<site>-ca/ca.key.age"))
+                            "in group_vars, or secrets.federation.ca_key in goatbuilder.yaml; goatbuilder derives <deploy.state_dir>/<site>-ca/ca.key.age"))
 
     ports = live.resolve_port_inputs(a.repo, group, core, env)
     need_ports = [n for n in ("FED_WG_INTERFACE", "FED_WG_LISTEN_PORT", "FED_EDGE_LISTEN_PORT")] if want("edge-ports") else []

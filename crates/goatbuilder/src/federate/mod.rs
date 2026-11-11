@@ -53,6 +53,7 @@ use crate::{Check, Report, EXIT_OK, EXIT_REFUSED};
 
 pub mod alloc;
 pub mod declaration;
+pub mod declared;
 pub mod forwarder;
 pub mod peering_files;
 pub mod lock;
@@ -547,7 +548,9 @@ pub fn federate_with(repo: &Path, o: &Options, s: &Surface) -> Result<Report> {
     // real run exports each one the operator has not set, before the plan reads
     // them; a dry run lists them and changes no command (the parity gate).
     let peering = cfg.peerings.iter().find(|p| p.with == o.with && o.env.map(|e| p.environment == e).unwrap_or(true)).expect("C1 found it");
-    let inputs = preflight::derive_inputs(repo, peering, &work, &edge_group, None);
+    let mut inputs = preflight::derive_inputs(repo, peering, &work, &edge_group, None);
+    // What goatbuilder.yaml itself declares for the run (federate/declared.rs); nothing when it declares none.
+    declared::overlay(&mut inputs, declared::declared_inputs(&cfg, peering));
     if executes {
         preflight::export(&inputs);
     }
