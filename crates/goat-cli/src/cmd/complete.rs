@@ -32,10 +32,24 @@ pub enum CompleteCmd {
         partial: String,
     },
     /// Emit vendor prefixes matching a partial prefix.
-    VendorPrefix { partial: String },
+    VendorPrefix {
+        /// Partial prefix the operator has already typed.
+        partial: String,
+    },
     /// Emit context names matching a partial prefix. Pure-local
     /// (no portal call); always works.
-    ContextName { partial: String },
+    ContextName {
+        /// Partial prefix the operator has already typed.
+        partial: String,
+    },
+}
+
+fn matching_contexts(names: impl Iterator<Item = String>, partial: &str) -> Vec<String> {
+    let mut matches: Vec<_> = names
+        .filter(|name| !name.ends_with(".bak") && name.starts_with(partial))
+        .collect();
+    matches.sort();
+    matches
 }
 
 pub async fn run(ctx: &super::Ctx, op: CompleteCmd) -> anyhow::Result<()> {
@@ -73,15 +87,58 @@ pub async fn run(ctx: &super::Ctx, op: CompleteCmd) -> anyhow::Result<()> {
             // Pure-local — read ~/.goat/contexts/.
             let dir = ctx.profile.contexts_dir();
             if let Ok(entries) = std::fs::read_dir(&dir) {
-                for entry in entries.flatten() {
-                    if let Some(name) = entry.file_name().to_str() {
-                        if !name.ends_with(".bak") && name.starts_with(&partial) {
-                            println!("{name}");
-                        }
-                    }
+                let names = entries
+                    .flatten()
+                    .filter_map(|entry| entry.file_name().into_string().ok());
+                for name in matching_contexts(names, &partial) {
+                    println!("{name}");
                 }
             }
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::matching_contexts;
+
+    fn names<'a>(values: &'a [&'a str]) -> impl Iterator<Item = String> + 'a {
+        values.iter().map(|value| (*value).to_owned())
+    }
+
+    #[test]
+    fn matching_contexts_filters_by_prefix() {
+        let matches = matching_contexts(names(&["alpine", "zagros", "alpha"]), "al");
+
+        assert_eq!(matches, ["alpha", "alpine"]);
+    }
+
+    #[test]
+    fn matching_contexts_empty_prefix_returns_all() {
+        let matches = matching_contexts(names(&["zagros", "alpha"]), "");
+
+        assert_eq!(matches, ["alpha", "zagros"]);
+    }
+
+    #[test]
+    fn matching_contexts_excludes_backups() {
+        let matches = matching_contexts(names(&["alpha.bak", "alpha", "beta.bak", "beta"]), "");
+
+        assert_eq!(matches, ["alpha", "beta"]);
+    }
+
+    #[test]
+    fn matching_contexts_returns_empty_when_nothing_matches() {
+        let matches = matching_contexts(names(&["alpha", "beta"]), "zag");
+
+        assert!(matches.is_empty());
+    }
+
+    #[test]
+    fn matching_contexts_sorts_output() {
+        let matches = matching_contexts(names(&["charlie", "alpha", "bravo"]), "");
+
+        assert_eq!(matches, ["alpha", "bravo", "charlie"]);
+    }
 }
