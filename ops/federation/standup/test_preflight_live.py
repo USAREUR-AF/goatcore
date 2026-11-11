@@ -290,6 +290,27 @@ class CoreRouter(unittest.TestCase):
         self.assertIn("FED_ROUTER_DOCKER_HOST", r.fix)
         self.assertIn("DOCKER_HOST=ssh://goat@192.0.2.20", r.detail)
 
+    def test_an_underived_router_host_names_where_it_was_looked_for(self):
+        call = fake_runtime({("docker", "ps"): (True, "e1\tgoat-zenoh-edge-xab\t\n")})
+        old = os.environ.get("FED_ROUTER_DOCKER_HOST_SOURCES")
+        os.environ["FED_ROUTER_DOCKER_HOST_SOURCES"] = "peerings[].hosts.core in goatbuilder.yaml; [xab_core]"
+        try:
+            r = live.check_core_router("", "", call)
+        finally:
+            if old is None:
+                os.environ.pop("FED_ROUTER_DOCKER_HOST_SOURCES", None)
+            else:
+                os.environ["FED_ROUTER_DOCKER_HOST_SOURCES"] = old
+        self.assertEqual((r.outcome, r.code), (live.FAIL, "GB-138"))
+        self.assertIn("was not derived: goatbuilder looked in peerings[].hosts.core", r.fix)
+        # With a daemon given, the hint is not added: the router is simply not there.
+        os.environ["FED_ROUTER_DOCKER_HOST_SOURCES"] = "x"
+        try:
+            r = live.check_core_router("ssh://goat@192.0.2.20", "", call)
+        finally:
+            os.environ.pop("FED_ROUTER_DOCKER_HOST_SOURCES", None)
+        self.assertNotIn("was not derived", r.fix)
+
     def test_several_routers_name_the_selector(self):
         call = fake_runtime({("docker", "ps"): (True, "a\tone-zenoh-router\t\nb\ttwo-zenoh-router\t\n"),
                              ("docker", "inspect:a"): (True, "A\ttrue\timg"),

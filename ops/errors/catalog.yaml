@@ -2017,7 +2017,7 @@ entries:
       - the core router runs on another host and FED_ROUTER_DOCKER_HOST does not point at it
       - the core router is stopped, or runs under a custom name without the role label
     fixes:
-      - "export FED_ROUTER_DOCKER_HOST=ssh://<user>@<core>   (goatbuilder derives it from the inventory group <partner>_core)"
+      - "export FED_ROUTER_DOCKER_HOST=ssh://<user>@<core>   (goatbuilder derives it from the peering's hosts.core, else the one host of inventory group <partner>_core)"
       - "export FED_ROUTER_CONTAINER=<name or ID>"
     read: docs/design/federation-router-discovery.md
     exit: 1
