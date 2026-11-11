@@ -269,8 +269,8 @@ class CertificateReuse(unittest.TestCase):
         placed = self.out / 'our-ca.pem'
         self.assertTrue(placed.is_file())
         self.assertEqual(placed.read_bytes(), self.ca.read_bytes())
-        # Owner and group only: nothing but the edge (as root) and the driver read it.
-        self.assertEqual(placed.stat().st_mode & 0o777, 0o640)
+        # The owner's alone: its readers are the driver that owns it and root.
+        self.assertEqual(placed.stat().st_mode & 0o777, 0o600)
         before = self.snapshot()
         self.invoke(with_key=False)
         self.assertEqual(before, self.snapshot(), 'a re-run rewrites nothing')
@@ -280,7 +280,7 @@ class CertificateReuse(unittest.TestCase):
         placed = self.out / 'our-ca.pem'
         placed.chmod(0o644)
         self.invoke(with_key=False)
-        self.assertEqual(placed.stat().st_mode & 0o777, 0o640)
+        self.assertEqual(placed.stat().st_mode & 0o777, 0o600)
         self.assertEqual(placed.read_bytes(), self.ca.read_bytes())
 
     def test_a_directory_where_our_ca_goes_is_refused_by_name(self):
