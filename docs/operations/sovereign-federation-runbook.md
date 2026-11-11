@@ -14,7 +14,7 @@ Decision: [ADR 1157](../adr/1157-cross-sovereign-federation-edge-terminated.md);
 avenues, command and script: [ADR 1201](../adr/1201-two-avenues-scripts-documented-cli-supported.md);
 federation in goatbuilder: ADR 1225 (`federation-belongs-to-goatbuilder-one-command-one-decision`).
 
-Status: WIP — gate: the federation end-to-end test drives both sides with goatbuilder federate alone.
+Status: measured — the federation end-to-end test drives both sides with goatbuilder federate alone (run up-4b1adc18cc3b-20261111T102642).
 
 Step 1 describes the procedure as the program that moves federation from `goat` into `goatbuilder`
 builds it: the stages `plan`, `deploy`, `test` and `status`. Each part arrives beside the procedure

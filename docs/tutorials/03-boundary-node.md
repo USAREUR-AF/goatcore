@@ -46,8 +46,6 @@ through a reviewable change. The
 [runbook's step 1](../operations/sovereign-federation-runbook.md#step-1--run-goatbuilder-federate-partner)
 covers each stage.
 
-Status: WIP — gate: the federation end-to-end test drives both sides with goatbuilder federate alone.
-
 Partners are onboarded with this same
 tooling and the onboarding guide, never with a one-off script
 ([partner-onboarding.md](../design/partner-onboarding.md)).

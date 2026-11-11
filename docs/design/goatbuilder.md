@@ -209,7 +209,7 @@ What this adds to the model is only the site level and the peering object; the v
 
 #### Federation belongs to goatbuilder
 
-Status: WIP — gate: the federation end-to-end test drives both sides with goatbuilder federate alone
+Status: measured — the federation end-to-end test drives both sides with goatbuilder federate alone (run up-4b1adc18cc3b-20261111T102642).
 
 All federation code lives in the `goat-federation` library crate and in `goatbuilder federate` ([ADR 1225](../adr/1225-federation-belongs-to-goatbuilder-one-command-one-decision.md), Proposed); `goat` keeps none of its own. The library crate holds the package format, lint, compose, diff, verify, render and keyring code (**built**: moved from `goat-cli` with no behavior change). goatbuilder carries the six package verbs with the flags and exit codes `goat federate` has, and `goatbuilder federate <partner>` is the whole procedure (**designed**). Until a goatbuilder release carrying the verbs is available to partner environments, `goat federate <verb>` runs the same library and prints one line naming the goatbuilder command; then it is removed from `goat`.
 
@@ -218,7 +218,7 @@ The person makes one decision, the partner and the release sets it receives (the
 
 #### Federation modules and their seams
 
-Status: WIP — gate: the federation end-to-end test drives both sides with goatbuilder federate alone
+Status: measured — the federation end-to-end test drives both sides with goatbuilder federate alone (run up-4b1adc18cc3b-20261111T102642).
 
 Federation is built as modules ([ADR 1225](../adr/1225-federation-belongs-to-goatbuilder-one-command-one-decision.md) decision 7). One pull request is one module; a code move and a behavior change never share one; new behavior arrives beside the old, and each switch of default is its own pull request. A stage graduates when its scenarios pass in the federation test environment and nothing that passes on `main` regresses. Each paragraph below is enough to change or revert that module without reading the others. Status words are per module; none is built on `main` yet.
 
