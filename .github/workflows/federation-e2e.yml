@@ -15,6 +15,7 @@ on:
   pull_request:
     paths:
       - 'ops/federation-e2e/**'
+      - 'ops/ci/check-federation-e2e-harness.sh'
       - 'ops/e2e/report.py'
       - 'ops/federation/standup/**'
       - 'ops/federation/roundtrip/**'
@@ -77,6 +78,9 @@ jobs:
           grep -q '^wireguard ' /proc/modules
       # Release, because a debug build reads its embedded message catalogs from the
       # source tree at run time, and these binaries run on hosts that have no such path.
+      # The environment's catalog and verdict rules, no Docker (ops/federation-e2e/tests).
+      - name: The e2e environment's harness checks
+        run: ops/ci/check-federation-e2e-harness.sh
       - name: Build goat and goatbuilder
         working-directory: crates
         run: cargo build --release --locked -p goat-cli -p goatbuilder

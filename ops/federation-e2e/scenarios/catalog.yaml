@@ -1,0 +1,882 @@
+# The federation e2e environment's scenario catalog (docs/design/federation-e2e-environment.md).
+#
+# A scenario states its pass condition and lists checks. Each check reads one step a unit
+# records (report.jsonl, rec.py); {A} {B} {C} {D} are the unit's sovereign ids, {n} {F} {S}
+# the pair unit's scenario number, first and second side for the avenue (avenue_params).
+# lib/verdict.py turns the steps into outcome words: PASS, FAIL, BLOCKED, SKIP,
+# NOT APPLICABLE. A required check that is BLOCKED or SKIP never passes.
+#
+# runs_where: ci = also run in .github/workflows/federation-e2e.yml (run.sh records its steps);
+# local = the full privileged matrix on one Linux machine only.
+#
+# To ask for a scenario: the shared notes of the federation work, or a pull request that
+# adds an entry here with `not_built: <reason>` and its pass condition.
+schema: fed-e2e-catalog/1
+params: {A: xaa, B: xab, C: xac, D: xad}
+avenue_params:
+  goatbuilder: {n: 1, F: xaa, S: xab}
+  script: {n: 2, F: xab, S: xaa}
+units:
+  pair: {parties: "xaa xab xac"}
+  three: {parties: "xaa xab xac"}
+  apparmor: {parties: "xaa xab xac"}
+  ipsec: {parties: "xaa xab xac"}
+  # goat_versions: the released goat env resolves for a sovereign when `env run` is given no
+  # --goat-version for it. previous_release: env resolves the newest published goat and
+  # goatbuilder older than the ref's versions (FE2E_PREV_GOAT, FE2E_PREV_GB).
+  mixed: {parties: "xaa xab", goat_versions: "xaa=0.5.18"}
+  rollback: {parties: "xaa xab", previous_release: true}
+  forwarder: {parties: "xaa xab xac"}
+  preflight: {parties: "xaa xab"}
+  killresume: {parties: "xaa xab"}
+  pair-role: {parties: "xaa xab xac"}
+  nodesec: {parties: "xaa xab xac"}
+  shapes-oneway: {parties: "xaa xab"}
+  shapes-asym: {parties: "xac xad"}
+  workspace: {parties: "xaa xab"}
+  # The solo unit waits on people at each human step (FE2E_SOLO_STEP_TIMEOUT each), so its
+  # limit (timeout, seconds) is two days; env --parties "<lab> <partner>" replaces these ids.
+  solo: {parties: "xae xaf", timeout: 172800}
+
+scenarios:
+  - id: two-party-full
+    title: Two parties, all fourteen phases, one avenue
+    unit: pair
+    runs_where: ci
+    pass_condition: >
+      Both sides complete phases 1 to 13 through the avenue, hold one agreement digest that
+      selects WireGuard, the tunnel handshakes, each republisher maps both offered sets, and
+      phase 14 acceptance passes from both sides with FED_ACCEPTANCE_STRICT=1 (fail=0, skip=0);
+      a round trip fails with the republisher stopped or the link cut, and passes again after.
+    checks:
+      - {id: isolation-core-boundary, step: "s{n}-{F}-core-cannot-reach-{S}-boundary"}
+      - {id: isolation-core-core, step: "s{n}-{F}-core-cannot-reach-{S}-core"}
+      - {id: isolation-edge-core, step: "s{n}-{F}-edge-cannot-reach-{S}-core"}
+      - {id: first-phases-1-to-5, step: "s{n}-{F}-{S}-phases-1-to-5"}
+      - {id: second-phases-1-to-5, step: "s{n}-{S}-{F}-phases-1-to-5"}
+      - {id: first-directory-files, step: "s{n}-{F}-{S}-their-files-are-in-place"}
+      - {id: first-phases-6-to-10, step: "s{n}-{F}-{S}-phases-6-to-10"}
+      - {id: second-phases-6-to-10, step: "s{n}-{S}-{F}-phases-6-to-10"}
+      - {id: one-agreement, step: "s{n}-{F}-{S}-both-sides-hold-one-agreement"}
+      - {id: wireguard-selected, step: "s{n}-{F}-{S}-the-agreement-selected-wireguard"}
+      - {id: first-phases-11-to-12, step: "s{n}-{F}-{S}-phases-11-to-12"}
+      - {id: second-phases-11-to-12, step: "s{n}-{S}-{F}-phases-11-to-12"}
+      - {id: first-republisher-sets, step: "s{n}-{F}-{S}-republisher-maps-both-sets"}
+      - {id: second-republisher-sets, step: "s{n}-{S}-{F}-republisher-maps-both-sets"}
+      - {id: handshake, step: "s{n}-{F}-{S}-a-wireguard-handshake"}
+      - {id: fabric-port-closed, step: "s{n}-{F}-{S}-fabric-port-closed-on-the-boundary"}
+      - {id: first-phase-13, step: "s{n}-{F}-{S}-phase-13"}
+      - {id: second-phase-13, step: "s{n}-{S}-{F}-phase-13"}
+      - {id: acceptance-first, step: "s{n}-acceptance-as-{F}-with-{S}"}
+      - {id: acceptance-second, step: "s{n}-acceptance-as-{S}-with-{F}"}
+      - {id: core-trusts-own-ca, step: "s{n}-{F}-core-trusts-only-its-own-ca"}
+      - {id: tunnel-carried, step: "s{n}-{F}-tunnel-carried-it"}
+      - {id: fails-without-republisher, step: "s{n}-round-trip-fails-without-the-republisher"}
+      - {id: passes-with-republisher, step: "s{n}-round-trip-passes-with-the-republisher"}
+      - {id: fails-when-cut, step: "s{n}-round-trip-fails-when-cut"}
+      - {id: passes-again, step: "s{n}-round-trip-passes-again"}
+      - {id: wg-refused-without-waiver, step: "s{n}-wireguard-refused-without-a-waiver"}
+      - {id: wg-refused-other-transport, step: "s{n}-wireguard-refused-under-another-transport"}
+
+  - id: direct-path
+    title: Direct path, the listening edge accepts inbound
+    unit: pair
+    runs_where: local
+    pass_condition: >
+      The dialing edge's WireGuard endpoint is the listening edge's own boundary address and
+      tunnel port, with no relay between; the listening edge sees the dialer at the dialer's
+      own boundary address and has no carrier interface (the contrast with forwarder-path);
+      and the pair's traffic crossed it.
+    checks:
+      - {id: endpoint-is-listener, step: "s{n}-direct-path-endpoint-is-the-listener"}
+      - {id: listener-sees-dialer, step: "s{n}-direct-path-listener-sees-the-dialer"}
+      - {id: tunnel-carried, step: "s{n}-{F}-tunnel-carried-it"}
+
+  - id: persistent-reception
+    title: Persistent reception with no diagnostic subscriber
+    unit: pair-role
+    runs_where: local
+    pass_condition: >
+      On a core router deployed by the ref's goat-zenoh role (FE2E_CORE=role), so the
+      receiving store is the one the ref renders.
+      With no responder, probe or other subscriber running on either side, a fresh value
+      released on each side is stored by the receiving core's own configured store; and after
+      the receiving core's router restarts, with the edge router left running, a fresh value
+      is stored again (the core's interest reaches the edge without an edge restart).
+    checks:
+      - {id: no-subscriber, step: "s{n}-no-diagnostic-subscriber-runs"}
+      - {id: first-to-second, step: "s{n}-{F}-to-{S}-stored-without-a-subscriber"}
+      - {id: second-to-first, step: "s{n}-{S}-to-{F}-stored-without-a-subscriber"}
+      - {id: first-to-second-after-core-restart, step: "s{n}-{F}-to-{S}-stored-after-the-receiving-core-restarts"}
+      - {id: second-to-first-after-core-restart, step: "s{n}-{S}-to-{F}-stored-after-the-receiving-core-restarts"}
+      - {id: second-edge-not-restarted, step: "s{n}-{S}-edge-was-not-restarted"}
+      - {id: first-edge-not-restarted, step: "s{n}-{F}-edge-was-not-restarted"}
+
+  - id: republisher-boundary
+    title: A set that was not offered does not cross the republisher
+    unit: pair-role
+    runs_where: local
+    pass_condition: >
+      On a core router deployed by the ref's goat-zenoh role (FE2E_CORE=role), so the
+      receiving store is the one the ref renders.
+      A value staged under release/not-offered beside a control under release/all: the
+      control is stored at the receiver, the unoffered value is not, and the republisher
+      never names the unoffered set. Both directions.
+    checks:
+      - {id: first-control, step: "s{n}-{F}-control-crosses-the-republisher"}
+      - {id: first-unoffered, step: "s{n}-{F}-unoffered-set-does-not-cross"}
+      - {id: second-control, step: "s{n}-{S}-control-crosses-the-republisher"}
+      - {id: second-unoffered, step: "s{n}-{S}-unoffered-set-does-not-cross"}
+
+  - id: out-of-lane-refused
+    title: Out-of-lane writes refused, shown by the receiving edge's records
+    unit: pair
+    runs_where: local
+    pass_condition: >
+      Through the agreed identity's own session, a control write in lane and two writes out
+      of lane (ops/fabric, and the receiver's own wire name): the receiving edge records an
+      allow for the control and a deny for each refused write, and the receiving core holds
+      the control and neither refused key. Both directions.
+    checks:
+      - {id: first-allow, step: "s{n}-{F}-to-{S}-edge-allowed-the-control"}
+      - {id: first-deny, step: "s{n}-{F}-to-{S}-edge-denied-out-of-lane"}
+      - {id: first-core, step: "s{n}-{F}-to-{S}-core-holds-control-not-refused"}
+      - {id: second-allow, step: "s{n}-{S}-to-{F}-edge-allowed-the-control"}
+      - {id: second-deny, step: "s{n}-{S}-to-{F}-edge-denied-out-of-lane"}
+      - {id: second-core, step: "s{n}-{S}-to-{F}-core-holds-control-not-refused"}
+
+  - id: identity-refused
+    title: Forged name, wrong CA and impersonation refused
+    unit: pair
+    runs_where: local
+    pass_condition: >
+      Phase 14 acceptance (strict) passes from both sides, which includes the forged-name and
+      impersonation probes being refused by the receiving edge beside an allowed agreed probe;
+      and a session holding a certificate from a CA neither party trusts stores nothing.
+    checks:
+      - {id: acceptance-first, step: "s{n}-acceptance-as-{F}-with-{S}"}
+      - {id: acceptance-second, step: "s{n}-acceptance-as-{S}-with-{F}"}
+      - {id: wrong-ca, step: "s{n}-wrong-ca-session-is-refused"}
+
+  - id: acceptance-exit-status
+    title: Skipped required checks do not exit 0
+    unit: pair
+    runs_where: local
+    pass_condition: >
+      acceptance.sh run without FED_ACCEPTANCE_STRICT and without the probes its refusal
+      checks need exits non-zero.
+    checks:
+      - {id: nonstrict-skip-not-zero, step: "s{n}-acceptance-with-a-skipped-check-does-not-exit-0"}
+
+  - id: rerun-every-phase
+    title: Every phase rerun on a running peering
+    unit: pair
+    runs_where: local
+    pass_condition: >
+      Phases 1-4, 6-9 and 11-13 rerun on both sides succeed; the WireGuard key and every
+      peering key are unchanged; no container, interface or republisher is duplicated; the
+      edge and republisher configuration snapshot is unchanged and a round trip passes.
+    checks:
+      - {id: first-rerun-1-4, step: "s{n}-{F}-rerun-phases-1-to-4"}
+      - {id: first-rerun-6-9, step: "s{n}-{F}-rerun-phases-6-to-9"}
+      - {id: first-rerun-11-13, step: "s{n}-{F}-rerun-phases-11-to-13"}
+      - {id: second-rerun-1-4, step: "s{n}-{S}-rerun-phases-1-to-4"}
+      - {id: second-rerun-6-9, step: "s{n}-{S}-rerun-phases-6-to-9"}
+      - {id: second-rerun-11-13, step: "s{n}-{S}-rerun-phases-11-to-13"}
+      - {id: first-keys-kept, step: "s{n}-{F}-rerun-kept-the-working-keys"}
+      - {id: second-keys-kept, step: "s{n}-{S}-rerun-kept-the-working-keys"}
+      - {id: first-nothing-duplicated, step: "s{n}-{F}-rerun-duplicated-nothing"}
+      - {id: second-nothing-duplicated, step: "s{n}-{S}-rerun-duplicated-nothing"}
+      - {id: round-trip, step: "s{n}-round-trip-after-rerun"}
+      - {id: rotation-explicit-only, step: "s{n}-rotation-only-on-request"}
+
+  - id: three-party-shared-edge
+    title: Three parties, two peerings on one shared edge and one shared core
+    unit: three
+    runs_where: local
+    pass_condition: >
+      {A} peers with {B} and with {C} on ONE edge host and ONE core host. Each peering passes
+      strict acceptance by its own agreement; {B} never receives {A}'s bilateral set for {C}
+      and {C} never receives the set for {B}, beside each receiving its own; the refusals that
+      keep two peerings on one host apart fire (interface, port, metrics port, inventory name).
+    checks:
+      - {id: ab-acceptance, step: "s3-acceptance-as-{A}-with-{B}"}
+      - {id: ba-acceptance, step: "s3-acceptance-as-{B}-with-{A}"}
+      - {id: ac-acceptance, step: "s3-acceptance-as-{A}-with-{C}"}
+      - {id: ca-acceptance, step: "s3-acceptance-as-{C}-with-{A}"}
+      - {id: b-receives-own, step: "s3-both-up-{B}-receives-its-own-set"}
+      - {id: c-receives-own, step: "s3-both-up-{C}-receives-its-own-set"}
+      - {id: b-never-c-set, step: "s3-both-up-{B}-never-receives-{C}-set"}
+      - {id: c-never-b-set, step: "s3-both-up-{C}-never-receives-{B}-set"}
+      - {id: refuse-interface, step: "s3-a-second-peering-may-not-take-the-first-ones-interface"}
+      - {id: refuse-port, step: "s3-a-second-peering-may-not-take-the-first-ones-port"}
+      - {id: refuse-metrics, step: "s3-a-second-republisher-may-not-take-the-first-ones-metrics-port"}
+      - {id: refuse-inventory-name, step: "s3-preflight-refuses-one-inventory-name-in-two-peerings"}
+
+  - id: second-peering-while-first-carries
+    title: A second peering added while the first carries traffic
+    unit: three
+    runs_where: local
+    pass_condition: >
+      Adding {A}-{C} leaves {A}-{B}'s tunnel, keys, edge and republisher configuration
+      unchanged, its agreement digest unchanged, and {A}-{B} passes strict acceptance after;
+      re-running either peering's phases leaves the other untouched.
+    checks:
+      - {id: first-untouched, step: "s3-adding-{C}-left-{B}-untouched"}
+      - {id: first-agreement-digest-unchanged, step: "s3-adding-{C}-left-{B}-agreement-digest"}
+      - {id: first-acceptance-after, step: "s3-acceptance-as-{A}-with-{B}-after-{C}"}
+      - {id: rerun-b-left-c, step: "s3-{B}-rerun-left-{C}-untouched"}
+      - {id: rerun-c-left-b, step: "s3-{C}-rerun-left-{B}-untouched"}
+      - {id: c-round-trip-after-b-rerun, step: "s3-{C}-round-trip-after-{B}-rerun"}
+      - {id: b-round-trip-after-c-rerun, step: "s3-{B}-round-trip-after-{C}-rerun"}
+
+  - id: directory-two-peerings
+    title: One party publishing packages for two peerings to the directory
+    unit: three
+    runs_where: local
+    pass_condition: >
+      With {A} holding peerings with {B} and {C}, the directory still names the package {B}
+      composed against, and a rerun of phases 5 to 7 by {B} after {A} publishes its second
+      package composes the same agreement digest; {B}'s peering keeps carrying.
+    checks:
+      - {id: names-first-package, step: "s3-directory-names-the-{B}-package"}
+      - {id: second-package-visible, step: "s3-what-{B}-sees-if-{A}-republishes"}
+      - {id: first-still-carries, step: "s3-{B}-still-carries-after-the-republish"}
+      - {id: rerun-5-to-7-same-digest, step: "s3-{B}-rerun-5-to-7-composes-the-same-agreement"}
+
+  - id: ubuntu-2604-apparmor
+    title: The edge tunnel under the stock Ubuntu 26.04 AppArmor profile for wg
+    unit: apparmor
+    runs_where: local
+    pass_condition: >
+      With the machine's AppArmor profile `wg` in force (Ubuntu 26.04 LTS ships it; it lets
+      /usr/bin/wg read keys only under /etc/wireguard), phases 11-12 bring the tunnel up on
+      both edges and it handshakes.
+    checks:
+      - {id: first-phases-1-to-5, step: "s1-{A}-{B}-phases-1-to-5"}
+      - {id: first-phases-11-to-12, step: "s1-{A}-{B}-phases-11-to-12"}
+      - {id: handshake, step: "s1-{A}-{B}-a-wireguard-handshake"}
+
+  - id: node-ports-declared
+    title: Each edge and core answers on exactly its declared ports, from the partner side and the internal side
+    unit: nodesec
+    runs_where: local
+    pass_condition: >
+      After a full two-party federation, every TCP port (1-65535) and a list of relevant UDP
+      ports is scanned on each edge and each core: from the partner's edge toward our edge's
+      boundary address, toward our edge's tunnel address (the partner's own egress filter
+      lifted for the scan), and toward our core; and from the internal network, from our core
+      host toward our edge and from a scanner (the management source) toward our edge and our
+      core. Each target answers on exactly the declared ports and nothing else, and on every
+      one of them. The declared set is the ref's host firewall profile when it has one, else
+      the operator's baseline: edge boundary, the peering's tunnel UDP port; edge tunnel
+      address, TCP 7448; edge internal, TCP 22 from the management source only (ADR 1219);
+      core internal, TCP 7447 and TCP 22 from the management source; core from the partner,
+      nothing. The SPIRE federation forwards the peering roles open (TCP 8443 on the tunnel
+      address, the outbound forward 18443 on the edge's internal address) and the drill's own
+      surfaces (core REST 8000 and SPIRE server 8443 on the internal network, probe REST
+      ports on the edge's internal side) are allowed at those exact ports and sides only, and
+      each scan lists them separately. Every scan's full record is in RECORD/<step>.json.
+    checks:
+      - {id: federation-up, step: "s1-{A}-{B}-a-wireguard-handshake"}
+      - {id: a-edge-boundary, step: "ns-{A}-edge-from-{B}-edge-boundary"}
+      - {id: a-edge-tunnel, step: "ns-{A}-edge-from-{B}-edge-tunnel"}
+      - {id: a-core-partner, step: "ns-{A}-core-from-{B}-edge"}
+      - {id: a-edge-core, step: "ns-{A}-edge-from-{A}-core"}
+      - {id: a-edge-mgmt, step: "ns-{A}-edge-from-{A}-scanner"}
+      - {id: a-core-mgmt, step: "ns-{A}-core-from-{A}-scanner"}
+      - {id: b-edge-boundary, step: "ns-{B}-edge-from-{A}-edge-boundary"}
+      - {id: b-edge-tunnel, step: "ns-{B}-edge-from-{A}-edge-tunnel"}
+      - {id: b-core-partner, step: "ns-{B}-core-from-{A}-edge"}
+      - {id: b-edge-core, step: "ns-{B}-edge-from-{B}-core"}
+      - {id: b-edge-mgmt, step: "ns-{B}-edge-from-{B}-scanner"}
+      - {id: b-core-mgmt, step: "ns-{B}-core-from-{B}-scanner"}
+
+  - id: node-firewall-profile
+    title: The baseline host firewall profile, and one tightening override, both pass the port scan
+    unit: nodesec
+    runs_where: local
+    pass_condition: >
+      Each sovereign switches the ref's goat-host-firewall baseline on in its own group_vars
+      (goat_host_firewall_baseline, the management sources, and named loosenings with a
+      reason for the drill's own surfaces), committed to its trunk, and reruns phases 11-12,
+      whose plays (peering-wg.yml, peering-republisher.yml) apply the role. The scans of
+      node-ports-declared then pass against the rule set the role loaded on each host (the
+      ports its accept rules admit from the scanning source; no separate SPIRE or drill list);
+      then with one tightening override (ssh-management on each edge from the management host
+      only), the edge scans from the core host and from the management source pass against
+      the tightened rule set. A host the switch is on for that carries no loaded rule set
+      FAILs its checks. On a ref with no goat-host-firewall role every check is BLOCKED.
+    checks:
+      - {id: a-edge-boundary, step: "nsp-{A}-edge-from-{B}-edge-boundary"}
+      - {id: a-edge-tunnel, step: "nsp-{A}-edge-from-{B}-edge-tunnel"}
+      - {id: a-core-partner, step: "nsp-{A}-core-from-{B}-edge"}
+      - {id: a-edge-core, step: "nsp-{A}-edge-from-{A}-core"}
+      - {id: a-edge-mgmt, step: "nsp-{A}-edge-from-{A}-scanner"}
+      - {id: a-core-mgmt, step: "nsp-{A}-core-from-{A}-scanner"}
+      - {id: b-edge-boundary, step: "nsp-{B}-edge-from-{A}-edge-boundary"}
+      - {id: b-edge-tunnel, step: "nsp-{B}-edge-from-{A}-edge-tunnel"}
+      - {id: b-core-partner, step: "nsp-{B}-core-from-{A}-edge"}
+      - {id: b-edge-core, step: "nsp-{B}-edge-from-{B}-core"}
+      - {id: b-edge-mgmt, step: "nsp-{B}-edge-from-{B}-scanner"}
+      - {id: b-core-mgmt, step: "nsp-{B}-core-from-{B}-scanner"}
+      - {id: override-a-edge-core, step: "nso-{A}-edge-from-{A}-core"}
+      - {id: override-a-edge-mgmt, step: "nso-{A}-edge-from-{A}-scanner"}
+      - {id: override-b-edge-core, step: "nso-{B}-edge-from-{B}-core"}
+      - {id: override-b-edge-mgmt, step: "nso-{B}-edge-from-{B}-scanner"}
+
+  - id: node-firewall-three-party
+    title: Three parties on one shared edge and core still pass with the baseline profile on
+    unit: nodesec
+    runs_where: local
+    pass_condition: >
+      With the goat-host-firewall baseline on in every party's group_vars before the first
+      phase, {A} peers with {B} and with {C} on one edge host and one core host (scenario 3):
+      both peerings pass strict acceptance from {A}'s side, each partner receives its own set,
+      and {A}'s edge and core answer on exactly the ports the loaded rule set admits for both
+      peerings, from each partner and from the internal side. On a ref with no
+      goat-host-firewall role every check is BLOCKED.
+    checks:
+      - {id: ab-acceptance, step: "s3-acceptance-as-{A}-with-{B}"}
+      - {id: ac-acceptance, step: "s3-acceptance-as-{A}-with-{C}"}
+      - {id: b-receives-own, step: "s3-both-up-{B}-receives-its-own-set"}
+      - {id: c-receives-own, step: "s3-both-up-{C}-receives-its-own-set"}
+      - {id: a-edge-from-b-boundary, step: "ns3-{A}-edge-from-{B}-edge-boundary"}
+      - {id: a-edge-from-c-boundary, step: "ns3-{A}-edge-from-{C}-edge-boundary"}
+      - {id: a-edge-from-b-tunnel, step: "ns3-{A}-edge-from-{B}-edge-tunnel"}
+      - {id: a-edge-from-c-tunnel, step: "ns3-{A}-edge-from-{C}-edge-tunnel"}
+      - {id: a-edge-core, step: "ns3-{A}-edge-from-{A}-core"}
+      - {id: a-edge-mgmt, step: "ns3-{A}-edge-from-{A}-scanner"}
+      - {id: a-core-mgmt, step: "ns3-{A}-core-from-{A}-scanner"}
+
+  - id: kill-resume
+    title: A run killed at each phase resumes correctly
+    unit: killresume
+    runs_where: local
+    pass_condition: >
+      On the first side ({F}), each phase 1-13 is started, its driver's process tree is
+      killed -9 inside the edge host partway through, and the phase is run again with
+      --from P --to P: every rerun exits 0. The peering then ends as an uninterrupted run
+      does: the same files, containers, interfaces, tables and units as the clean second
+      side, nothing duplicated, each WireGuard key the one its partner holds, every peering
+      key matching its certificate, one agreement digest on both sides, a handshake, and
+      strict acceptance (FED_ACCEPTANCE_STRICT=1, fail=0, skip=0) from both sides. Whether
+      each kill landed inside its phase is recorded (optional checks), with its timing in
+      kills.tsv.
+    checks:
+      - {id: phase-1-resumed, step: "kr-phase-1-resumed"}
+      - {id: phase-2-resumed, step: "kr-phase-2-resumed"}
+      - {id: phase-3-resumed, step: "kr-phase-3-resumed"}
+      - {id: phase-4-resumed, step: "kr-phase-4-resumed"}
+      - {id: phase-5-resumed, step: "kr-phase-5-resumed"}
+      - {id: phase-6-resumed, step: "kr-phase-6-resumed"}
+      - {id: phase-7-resumed, step: "kr-phase-7-resumed"}
+      - {id: phase-8-resumed, step: "kr-phase-8-resumed"}
+      - {id: phase-9-resumed, step: "kr-phase-9-resumed"}
+      - {id: phase-10-resumed, step: "kr-phase-10-resumed"}
+      - {id: phase-11-resumed, step: "kr-phase-11-resumed"}
+      - {id: phase-12-resumed, step: "kr-phase-12-resumed"}
+      - {id: phase-13-resumed, step: "kr-phase-13-resumed"}
+      - {id: phase-1-killed-mid-phase, step: "kr-phase-1-killed-mid-phase", required: false}
+      - {id: phase-2-killed-mid-phase, step: "kr-phase-2-killed-mid-phase", required: false}
+      - {id: phase-3-killed-mid-phase, step: "kr-phase-3-killed-mid-phase", required: false}
+      - {id: phase-4-killed-mid-phase, step: "kr-phase-4-killed-mid-phase", required: false}
+      - {id: phase-5-killed-mid-phase, step: "kr-phase-5-killed-mid-phase", required: false}
+      - {id: phase-6-killed-mid-phase, step: "kr-phase-6-killed-mid-phase", required: false}
+      - {id: phase-7-killed-mid-phase, step: "kr-phase-7-killed-mid-phase", required: false}
+      - {id: phase-8-killed-mid-phase, step: "kr-phase-8-killed-mid-phase", required: false}
+      - {id: phase-9-killed-mid-phase, step: "kr-phase-9-killed-mid-phase", required: false}
+      - {id: phase-10-killed-mid-phase, step: "kr-phase-10-killed-mid-phase", required: false}
+      - {id: phase-11-killed-mid-phase, step: "kr-phase-11-killed-mid-phase", required: false}
+      - {id: phase-12-killed-mid-phase, step: "kr-phase-12-killed-mid-phase", required: false}
+      - {id: phase-13-killed-mid-phase, step: "kr-phase-13-killed-mid-phase", required: false}
+      - {id: all-phases, step: "kr-all-phases-resumed"}
+      - {id: one-agreement, step: "kr-one-agreement-digest"}
+      - {id: same-shape-as-clean, step: "kr-same-shape-as-the-clean-side"}
+      - {id: first-wg-key, step: "kr-{F}-wireguard-key-is-the-one-the-partner-holds"}
+      - {id: second-wg-key, step: "kr-{S}-wireguard-key-is-the-one-the-partner-holds"}
+      - {id: first-peering-keys, step: "kr-{F}-peering-keys-match-their-certificates"}
+      - {id: second-peering-keys, step: "kr-{S}-peering-keys-match-their-certificates"}
+      - {id: nothing-duplicated, step: "kr-{F}-duplicated-nothing"}
+      - {id: handshake, step: "kr-a-wireguard-handshake"}
+      - {id: acceptance-first, step: "kr-acceptance-as-{F}-with-{S}"}
+      - {id: acceptance-second, step: "kr-acceptance-as-{S}-with-{F}"}
+
+  - id: preflight-port-in-use
+    title: Preflight refuses when the tunnel port is already held on the edge
+    unit: preflight
+    runs_where: local
+    pass_condition: >
+      With another process holding UDP 51820 on the listening edge ({A}) before phase 1,
+      phase 1 exits non-zero, its message names port 51820 and a fix (a free inner port
+      through peering_wg_listen_port, or the peering forwarder), and the edge holds no
+      tunnel interface or tunnel configuration afterwards. Optional evidence: when phase 1
+      lets the held port through, whether a later phase fails naming the port.
+    checks:
+      - {id: port-held, step: "pf-port-held-before-phase-1"}
+      - {id: refused-names-port, step: "pf-port-in-use-refused"}
+      - {id: no-change-before-refusal, step: "pf-port-in-use-no-change-before-refusal"}
+      - {id: later-phase-names-port, step: "pf-port-later-phase-names-port", required: false}
+
+  - id: preflight-slot-list
+    title: Preflight refuses a committed slot list that differs from the registry
+    unit: pair-role
+    runs_where: local
+    pass_condition: >
+      On a core router deployed by the goat-zenoh role in per-uuid-slot-pool mode with lazy
+      slot storage, and the portal's slot registry at the role's default path: with three
+      live slots and two committed, the core's dry run (zenoh-deploy.yml --check) refuses
+      naming the difference; with the list regenerated to the registry the role's guard
+      passes the dry run; with one more slot assigned after that dry run, the real run, the
+      one that restarts the router, reads the registry again and refuses, and the running
+      router is not restarted. The role re-reads the registry at the start of that run, not
+      between its render and its restart handler.
+    checks:
+      - {id: refused, step: "pf-slot-list-refused"}
+      - {id: matching-list-passes, step: "pf-slot-list-matching-list-passes-the-dry-run"}
+      - {id: recheck-before-restart, step: "pf-slot-list-refused-on-the-run-that-restarts"}
+
+  - id: core-by-role
+    title: Each core router deployed by the ref's goat-zenoh role
+    unit: pair-role
+    runs_where: local
+    pass_condition: >
+      Each sovereign's core router is deployed by the ref's goat-zenoh role (zenoh-deploy.yml
+      run from the sovereign's own clone on its edge host, against the core host over ssh,
+      with the engine's digest-pinned zenoh image): container {id}-zenoh-router, label
+      org.goat.component=zenoh-core, compose project {id}-zenoh from
+      /opt/{id}-zenoh/docker-compose.yml, config /etc/{id}-zenoh/config.json5. Phase 10 admits
+      each peering through the role: the peering declared in the core's group_vars, the
+      reviewed fragment as the role's org fragment, a dry run, then the deploy that
+      re-renders and restarts the router. Phases 1-14 pass through that core: one agreement
+      selecting WireGuard, the handshake, both republishers, strict acceptance from both
+      sides, the core trusting only its own CA, and the round trip failing with the
+      republisher stopped or the link cut and passing again.
+    checks:
+      - {id: first-core-is-the-roles, step: "s{n}-{F}-core-is-the-roles"}
+      - {id: second-core-is-the-roles, step: "s{n}-{S}-core-is-the-roles"}
+      - {id: first-phases-1-to-5, step: "s{n}-{F}-{S}-phases-1-to-5"}
+      - {id: second-phases-1-to-5, step: "s{n}-{S}-{F}-phases-1-to-5"}
+      - {id: first-phases-6-to-10, step: "s{n}-{F}-{S}-phases-6-to-10"}
+      - {id: second-phases-6-to-10, step: "s{n}-{S}-{F}-phases-6-to-10"}
+      - {id: one-agreement, step: "s{n}-{F}-{S}-both-sides-hold-one-agreement"}
+      - {id: first-core-dry-run, step: "s{n}-{F}-{S}-core-role-dry-run"}
+      - {id: first-core-admits, step: "s{n}-{F}-{S}-core-role-admits"}
+      - {id: second-core-dry-run, step: "s{n}-{S}-{F}-core-role-dry-run"}
+      - {id: second-core-admits, step: "s{n}-{S}-{F}-core-role-admits"}
+      - {id: first-phases-11-to-12, step: "s{n}-{F}-{S}-phases-11-to-12"}
+      - {id: second-phases-11-to-12, step: "s{n}-{S}-{F}-phases-11-to-12"}
+      - {id: first-republisher-sets, step: "s{n}-{F}-{S}-republisher-maps-both-sets"}
+      - {id: second-republisher-sets, step: "s{n}-{S}-{F}-republisher-maps-both-sets"}
+      - {id: handshake, step: "s{n}-{F}-{S}-a-wireguard-handshake"}
+      - {id: first-phase-13, step: "s{n}-{F}-{S}-phase-13"}
+      - {id: second-phase-13, step: "s{n}-{S}-{F}-phase-13"}
+      - {id: acceptance-first, step: "s{n}-acceptance-as-{F}-with-{S}"}
+      - {id: acceptance-second, step: "s{n}-acceptance-as-{S}-with-{F}"}
+      - {id: first-core-trusts-own-ca, step: "s{n}-{F}-core-trusts-only-its-own-ca"}
+      - {id: second-core-trusts-own-ca, step: "s{n}-{S}-core-trusts-only-its-own-ca"}
+      - {id: fails-without-republisher, step: "s{n}-round-trip-fails-without-the-republisher"}
+      - {id: passes-with-republisher, step: "s{n}-round-trip-passes-with-the-republisher"}
+      - {id: fails-when-cut, step: "s{n}-round-trip-fails-when-cut"}
+      - {id: passes-again, step: "s{n}-round-trip-passes-again"}
+
+  - id: preflight-store-wider
+    title: Preflight refuses a core receive store wider than the edge grants
+    unit: preflight
+    runs_where: local
+    pass_condition: >
+      With {A}'s core receive store for {B} at from/** where {A}'s edge grants
+      from/{B}/<set>/**, some phase from 1 to 13 on either side exits non-zero with a message
+      that names the from/** store and the from/{B}/ grant. Optional evidence: whether the
+      edge's own ingress-storage inspection verified the store during phase 12, and what
+      strict phase 14 acceptance did with the wide store in place.
+    checks:
+      - {id: store-is-wide, step: "pf-wider-store-is-from-all"}
+      - {id: store-wide-after-phase-10, step: "pf-wider-store-still-from-all-after-phase-10"}
+      - {id: refused, step: "pf-store-wider-refused"}
+      - {id: edge-inspection-verified, step: "pf-wider-edge-inspection-said", required: false}
+      - {id: acceptance-today, step: "s-pf-wider-acceptance-as-{A}-with-{B}", required: false}
+
+  - id: preflight-router-discovery
+    title: Core router found or refused with a named fix
+    unit: preflight
+    runs_where: local
+    pass_condition: >
+      Phase 3 (`goat federate init` through FED_ROUTER_DOCKER_HOST) on {B} writes a package
+      carrying the router's fabric_version when the core router is the role's (standard name
+      <s>-zenoh-router with label org.goat.component=zenoh-core), the legacy goat-zenoh
+      without the label, and a custom name with the label. A custom name without the label
+      is refused naming FED_ROUTER_CONTAINER, and passes with FED_ROUTER_CONTAINER set to
+      it. With two labelled routers running, phase 3 refuses naming both container ids and
+      FED_ROUTER_CONTAINER.
+    checks:
+      - {id: prerequisite-phases-1-to-2, step: "pf-router-phases-1-to-2"}
+      - {id: standard, step: "pf-router-standard-name"}
+      - {id: legacy, step: "pf-router-legacy-name"}
+      - {id: custom-with-label, step: "pf-router-custom-name-with-label"}
+      - {id: custom-refused, step: "pf-router-custom-name-refused"}
+      - {id: custom-with-variable, step: "pf-router-custom-name-with-variable"}
+      - {id: several-refused, step: "pf-router-several-refused"}
+
+  - id: agreement-send-only
+    title: Send-only agreement, from the side that releases
+    unit: shapes-oneway
+    runs_where: local
+    known_failure: >
+      Phase 12 on the side that accepts nothing: the goat-zenoh-edge role asserts
+      goat_zenoh_edge_ingress_key_exprs | length > 0 and refuses ("missing required peering
+      parameters"), so its edge and republisher are never deployed and nothing crosses. Phase
+      14: acceptance.sh FAILs any agreement with no release set in one direction ("the
+      agreement offers no release set from them").
+    pass_condition: >
+      {A} releases release/all and release/{B} and declares no receive half; {B} declares only
+      the receive half. Both sides compose one agreement whose flows are exactly {A}->{B} with
+      {A}'s two sets; phases 11-13 complete; {A}'s republisher maps exactly its two sets; each
+      of them crosses to {B}'s store, release/not-offered does not, and nothing {B} stages
+      crosses to {A}. Every {B}->{A} crossing check is NOT APPLICABLE with the agreement digest
+      as its reason, and strict acceptance as {A} passes without refusing the shape.
+    checks:
+      - {id: first-phases-1-to-5, step: "sh1-{A}-{B}-phases-1-to-5"}
+      - {id: second-phases-1-to-5, step: "sh1-{B}-{A}-phases-1-to-5"}
+      - {id: first-phases-6-to-10, step: "sh1-{A}-{B}-phases-6-to-10"}
+      - {id: second-phases-6-to-10, step: "sh1-{B}-{A}-phases-6-to-10"}
+      - {id: one-agreement, step: "sh1-{A}-{B}-both-sides-hold-one-agreement"}
+      - {id: flows-match-the-shape, step: "sh1-{A}-{B}-flows-match-the-shape"}
+      - {id: first-phases-11-to-12, step: "sh1-{A}-{B}-phases-11-to-12"}
+      - {id: second-phases-11-to-12, step: "sh1-{B}-{A}-phases-11-to-12"}
+      - {id: republisher-maps-sets, step: "sh1-{A}-{B}-republisher-maps-the-offered-sets"}
+      - {id: handshake, step: "sh1-{A}-{B}-a-wireguard-handshake"}
+      - {id: first-phase-13, step: "sh1-{A}-{B}-phase-13"}
+      - {id: second-phase-13, step: "sh1-{B}-{A}-phase-13"}
+      - {id: sends-cross-all, step: "sh1-{A}-to-{B}-all-crosses"}
+      - {id: sends-cross-own-set, step: "sh1-{A}-to-{B}-{B}-crosses"}
+      - {id: unoffered-stays, step: "sh1-{A}-to-{B}-not-offered-does-not-cross"}
+      - {id: receives-cross, step: "sh1-{B}-to-{A}-all-crosses"}
+      - {id: nothing-comes-back, step: "sh1-{B}-to-{A}-all-does-not-cross"}
+      - {id: acceptance-accepts-the-shape, step: "sh1-acceptance-as-{A}-with-{B}-accepts-the-shape"}
+      - {id: acceptance, step: "sh1-acceptance-as-{A}-with-{B}"}
+
+  - id: agreement-receive-only
+    title: Receive-only agreement, from the side that releases nothing
+    unit: shapes-oneway
+    runs_where: local
+    known_failure: >
+      Phase 12 on the side that releases nothing: the goat-zenoh-edge template renders the
+      partner-receive rule with key_exprs [], the edge router refuses its config ("Given
+      collection was empty") and restarts, and the role refuses an edge with "NO connection to
+      any core endpoint", so nothing reaches this side's core. Phase 14: acceptance.sh FAILs
+      any agreement with no release set in one direction ("the agreement offers no release
+      set from us", then "no round trip possible").
+    pass_condition: >
+      The mirror of send-only, from {B}'s side: {B} composes the same agreement with only the
+      {A}->{B} flow, completes phases 11-13, receives each of {A}'s sets in its own store, and
+      sends nothing: what {B} stages under release/all and release/{B} does not reach {A}.
+      Every {B}->{A} check is NOT APPLICABLE with the agreement digest as its reason, and
+      strict acceptance as {B} passes without refusing the shape. What the republisher role
+      does on {B} (deployed or not) is recorded as an optional check.
+    checks:
+      - {id: first-phases-1-to-5, step: "sh1-{A}-{B}-phases-1-to-5"}
+      - {id: second-phases-1-to-5, step: "sh1-{B}-{A}-phases-1-to-5"}
+      - {id: first-phases-6-to-10, step: "sh1-{A}-{B}-phases-6-to-10"}
+      - {id: second-phases-6-to-10, step: "sh1-{B}-{A}-phases-6-to-10"}
+      - {id: one-agreement, step: "sh1-{A}-{B}-both-sides-hold-one-agreement"}
+      - {id: flows-match-the-shape, step: "sh1-{B}-{A}-flows-match-the-shape"}
+      - {id: second-phases-11-to-12, step: "sh1-{B}-{A}-phases-11-to-12"}
+      - {id: republisher-maps-sets, step: "sh1-{B}-{A}-republisher-maps-the-offered-sets"}
+      - {id: republisher-not-deployed, step: "sh1-{B}-{A}-republisher-when-nothing-leaves", required: false}
+      - {id: handshake, step: "sh1-{A}-{B}-a-wireguard-handshake"}
+      - {id: second-phase-13, step: "sh1-{B}-{A}-phase-13"}
+      - {id: receives-cross-all, step: "sh1-{A}-to-{B}-all-crosses"}
+      - {id: receives-cross-own-set, step: "sh1-{A}-to-{B}-{B}-crosses"}
+      - {id: sends-cross, step: "sh1-{B}-to-{A}-all-crosses"}
+      - {id: all-stays-home, step: "sh1-{B}-to-{A}-all-does-not-cross"}
+      - {id: own-set-stays-home, step: "sh1-{B}-to-{A}-{B}-does-not-cross"}
+      - {id: acceptance-accepts-the-shape, step: "sh1-acceptance-as-{B}-with-{A}-accepts-the-shape"}
+      - {id: acceptance, step: "sh1-acceptance-as-{B}-with-{A}"}
+
+  - id: agreement-asymmetric
+    title: Asymmetric agreement, each side offering a different set
+    unit: shapes-asym
+    runs_where: local
+    pass_condition: >
+      Both sides accept; {C} releases only release/all and {D} only release/{C}. Both compose
+      one agreement with exactly those two flows; phases 11-13 complete; each republisher maps
+      only its own set; release/all crosses {C}->{D} and release/{C} crosses {D}->{C}, while
+      each set staged on the side that does not offer it, and release/not-offered, stays home;
+      strict acceptance passes from both sides.
+    checks:
+      - {id: first-phases-1-to-5, step: "sh2-{C}-{D}-phases-1-to-5"}
+      - {id: second-phases-1-to-5, step: "sh2-{D}-{C}-phases-1-to-5"}
+      - {id: first-phases-6-to-10, step: "sh2-{C}-{D}-phases-6-to-10"}
+      - {id: second-phases-6-to-10, step: "sh2-{D}-{C}-phases-6-to-10"}
+      - {id: one-agreement, step: "sh2-{C}-{D}-both-sides-hold-one-agreement"}
+      - {id: first-flows-match-the-shape, step: "sh2-{C}-{D}-flows-match-the-shape"}
+      - {id: second-flows-match-the-shape, step: "sh2-{D}-{C}-flows-match-the-shape"}
+      - {id: first-phases-11-to-12, step: "sh2-{C}-{D}-phases-11-to-12"}
+      - {id: second-phases-11-to-12, step: "sh2-{D}-{C}-phases-11-to-12"}
+      - {id: first-republisher-maps-its-set, step: "sh2-{C}-{D}-republisher-maps-the-offered-sets"}
+      - {id: second-republisher-maps-its-set, step: "sh2-{D}-{C}-republisher-maps-the-offered-sets"}
+      - {id: handshake, step: "sh2-{C}-{D}-a-wireguard-handshake"}
+      - {id: first-phase-13, step: "sh2-{C}-{D}-phase-13"}
+      - {id: second-phase-13, step: "sh2-{D}-{C}-phase-13"}
+      - {id: first-set-crosses, step: "sh2-{C}-to-{D}-all-crosses"}
+      - {id: second-set-crosses, step: "sh2-{D}-to-{C}-{C}-crosses"}
+      - {id: second-set-not-sent-by-first, step: "sh2-{C}-to-{D}-{C}-does-not-cross"}
+      - {id: first-set-not-sent-by-second, step: "sh2-{D}-to-{C}-all-does-not-cross"}
+      - {id: first-unoffered-stays, step: "sh2-{C}-to-{D}-not-offered-does-not-cross"}
+      - {id: second-unoffered-stays, step: "sh2-{D}-to-{C}-not-offered-does-not-cross"}
+      - {id: acceptance-first, step: "sh2-acceptance-as-{C}-with-{D}"}
+      - {id: acceptance-second, step: "sh2-acceptance-as-{D}-with-{C}"}
+
+  - id: forwarder-path
+    title: Forwarder path, an edge behind NAT that cannot accept inbound
+    unit: forwarder
+    runs_where: local
+    pass_condition: >
+      {A}'s edge sits behind a NAT router that forwards nothing inbound: {B}'s probe of the
+      edge fails, and the same probe reaches it with the NAT opened. The tree's own
+      peering-forwarder.yml, applied from {A}'s edge to {A}'s forwarder in the three runs of
+      peering-forwarder.md §7, brings the carrier up. Through the avenue, the peering
+      handshakes, {B}'s WireGuard endpoint is the forwarder's public address and {A} sees
+      {B} at the forwarder's carrier address, the tunnel carries both ways, the forwarder
+      holds no WireGuard or TLS key of either party, and strict acceptance passes from both
+      sides.
+    checks:
+      - {id: partner-cannot-reach-edge, step: "sfwd-{B}-cannot-reach-{A}-edge-through-its-nat"}
+      - {id: probe-reaches-without-nat, step: "sfwd-the-same-probe-reaches-{A}-edge-with-the-nat-open"}
+      - {id: edge-carrier-key, step: "sfwd-{A}-prepare-makes-the-carrier-key"}
+      - {id: forwarder-role-applied, step: "sfwd-forwarder-role-applied"}
+      - {id: forwarder-in-place, step: "sfwd-forwarder-carrier-and-table-in-place"}
+      - {id: carrier-up, step: "sfwd-{A}-prepare-brings-the-carrier-up"}
+      - {id: carrier-handshake, step: "sfwd-{A}-carrier-handshake"}
+      - {id: first-phases-1-to-5, step: "sfwd-{A}-{B}-phases-1-to-5"}
+      - {id: second-phases-1-to-5, step: "sfwd-{B}-{A}-phases-1-to-5"}
+      - {id: first-phases-11-to-12, step: "sfwd-{A}-{B}-phases-11-to-12"}
+      - {id: second-phases-11-to-12, step: "sfwd-{B}-{A}-phases-11-to-12"}
+      - {id: handshake, step: "sfwd-{A}-{B}-a-wireguard-handshake"}
+      - {id: dialer-endpoint-is-forwarder, step: "sfwd-{B}-endpoint-is-the-forwarder"}
+      - {id: listener-sees-carrier, step: "sfwd-{A}-sees-{B}-at-the-carrier"}
+      - {id: first-tunnel-carried, step: "sfwd-{A}-tunnel-carried-it"}
+      - {id: second-tunnel-carried, step: "sfwd-{B}-tunnel-carried-it"}
+      - {id: forwarder-holds-no-key, step: "sfwd-forwarder-holds-no-peering-key"}
+      - {id: acceptance-nated, step: "sfwd-acceptance-as-{A}-with-{B}"}
+      - {id: acceptance-partner, step: "sfwd-acceptance-as-{B}-with-{A}"}
+
+  - id: port-51820-held
+    title: Another service already holds UDP 51820 on an edge
+    unit: preflight
+    runs_where: local
+    pass_condition: >
+      With UDP 51820 held on the listening edge ({A}) by another process, the peering
+      configured on the free inner port 51823 (peering_wg_listen_port, and the endpoint {A}'s
+      package offers) completes phases 1-13 on both sides; {A}'s tunnel listens on 51823 and
+      {B} dials {A}'s boundary address on 51823; the tunnel handshakes; strict phase 14
+      acceptance passes from both sides; and the other process still holds 51820.
+    checks:
+      - {id: port-held, step: "pf-held-port-held-before-phase-1"}
+      - {id: first-phases-1-to-5, step: "s-pf-held-{A}-{B}-phases-1-to-5"}
+      - {id: second-phases-1-to-5, step: "s-pf-held-{B}-{A}-phases-1-to-5"}
+      - {id: first-phases-6-to-10, step: "s-pf-held-{A}-{B}-phases-6-to-10"}
+      - {id: second-phases-6-to-10, step: "s-pf-held-{B}-{A}-phases-6-to-10"}
+      - {id: first-phases-11-to-12, step: "s-pf-held-{A}-{B}-phases-11-to-12"}
+      - {id: second-phases-11-to-12, step: "s-pf-held-{B}-{A}-phases-11-to-12"}
+      - {id: first-phase-13, step: "s-pf-held-{A}-{B}-phase-13"}
+      - {id: second-phase-13, step: "s-pf-held-{B}-{A}-phase-13"}
+      - {id: listens-on-inner-port, step: "pf-held-listens-on-the-inner-port"}
+      - {id: dialer-endpoint-inner-port, step: "pf-held-dialer-endpoint-is-the-inner-port"}
+      - {id: handshake, step: "s-pf-held-{A}-{B}-a-wireguard-handshake"}
+      - {id: acceptance-first, step: "s-pf-held-acceptance-as-{A}-with-{B}"}
+      - {id: acceptance-second, step: "s-pf-held-acceptance-as-{B}-with-{A}"}
+      - {id: port-still-held, step: "pf-held-port-still-held"}
+
+  - id: ipsec-profile
+    title: IPsec transport profile
+    unit: ipsec
+    runs_where: local
+    pass_condition: >
+      Both sides' packages offer ipsec-fips and the agreement selects it; phases 11-12 open
+      it through goat-peering-edge with a recorded waiver; the IKE SA and CHILD SA establish,
+      ESP counters move both ways on each side, and strict acceptance passes from both
+      sides. Not a FIPS claim. The optional checks show the machine carries IKE between two
+      edges outside the driver, and what phase 11's ipsec-fips play does with a waiver.
+    checks:
+      - {id: substrate-ike-sa, step: "ipsec-substrate-ike-sa-established", required: false}
+      - {id: substrate-ping, step: "ipsec-substrate-ping-both-ways", required: false}
+      - {id: substrate-counters, step: "ipsec-substrate-child-sa-counters-both-ways", required: false}
+      - {id: first-phases-1-to-5, step: "ipsec-{A}-{B}-phases-1-to-5"}
+      - {id: second-phases-1-to-5, step: "ipsec-{B}-{A}-phases-1-to-5"}
+      - {id: first-phases-6-to-10, step: "ipsec-{A}-{B}-phases-6-to-10"}
+      - {id: second-phases-6-to-10, step: "ipsec-{B}-{A}-phases-6-to-10"}
+      - {id: first-offers-ipsec-fips, step: "ipsec-{A}-offers-ipsec-fips"}
+      - {id: second-offers-ipsec-fips, step: "ipsec-{B}-offers-ipsec-fips"}
+      - {id: agreement-selected-ipsec-fips, step: "ipsec-{A}-{B}-the-agreement-selected-ipsec-fips"}
+      - {id: first-play-with-waiver, step: "ipsec-{A}-peering-edge-play-with-a-waiver", required: false}
+      - {id: second-play-with-waiver, step: "ipsec-{B}-peering-edge-play-with-a-waiver", required: false}
+      - {id: first-phases-11-to-12, step: "ipsec-{A}-{B}-phases-11-to-12"}
+      - {id: second-phases-11-to-12, step: "ipsec-{B}-{A}-phases-11-to-12"}
+      - {id: ike-sa-established, step: "ipsec-{A}-{B}-ike-sa-established"}
+      - {id: child-sa-installed, step: "ipsec-{A}-{B}-child-sa-installed"}
+      - {id: first-counters, step: "ipsec-{A}-counters-move-both-ways"}
+      - {id: second-counters, step: "ipsec-{B}-counters-move-both-ways"}
+      - {id: acceptance-first, step: "ipsec-acceptance-as-{A}-with-{B}"}
+      - {id: acceptance-second, step: "ipsec-acceptance-as-{B}-with-{A}"}
+
+  - id: mixed-versions
+    title: Released goat 0.5.18 with `goat federate` on one side, goatbuilder on the other
+    unit: {goatbuilder: mixed}
+    runs_where: local
+    pass_condition: >
+      {A} drives with the released goat 0.5.18 (units.mixed.goat_versions, or
+      `env run --goat-version {A}=<version>`) through peering-standup.sh from its own clone of
+      the ref; {B} with the ref's goat and goatbuilder federate. Each side's goat reports the
+      version it was given, both complete phases 1 to 13, both hold one agreement digest, and
+      phase 14 acceptance passes from both sides with FED_ACCEPTANCE_STRICT=1.
+    checks:
+      - {id: first-goat-version, step: "mv-{A}-goat-version"}
+      - {id: second-goat-version, step: "mv-{B}-goat-version"}
+      - {id: first-phases-1-to-5, step: "s4-{A}-{B}-phases-1-to-5"}
+      - {id: second-phases-1-to-5, step: "s4-{B}-{A}-phases-1-to-5"}
+      - {id: first-phases-6-to-10, step: "s4-{A}-{B}-phases-6-to-10"}
+      - {id: second-phases-6-to-10, step: "s4-{B}-{A}-phases-6-to-10"}
+      - {id: one-agreement, step: "s4-{A}-{B}-both-sides-hold-one-agreement"}
+      - {id: first-phases-11-to-12, step: "s4-{A}-{B}-phases-11-to-12"}
+      - {id: second-phases-11-to-12, step: "s4-{B}-{A}-phases-11-to-12"}
+      - {id: first-phase-13, step: "s4-{A}-{B}-phase-13"}
+      - {id: second-phase-13, step: "s4-{B}-{A}-phase-13"}
+      - {id: acceptance-first, step: "s4-acceptance-as-{A}-with-{B}"}
+      - {id: acceptance-second, step: "s4-acceptance-as-{B}-with-{A}"}
+
+  - id: operator-workspace
+    title: Each side driven from its operator's workspace, which reaches only its own hosts
+    unit: {goatbuilder: workspace}
+    runs_where: local
+    pass_condition: >
+      Each sovereign's driver runs on a third host, its operator's workspace, on the
+      sovereign's internal network only: it reaches its own edge and core over ssh, and not
+      the other sovereign's hosts, the boundary network or the directory. From both
+      workspaces (goatbuilder, packages exchanged by hand) phases 1 to 13 complete; phase 3's
+      package, written on the workspace, carries the edge's federation interface key and the
+      core router's zenohd version; both sides hold one agreement digest that selects
+      WireGuard, the tunnel handshakes, and phase 14 acceptance passes from both sides with
+      FED_ACCEPTANCE_STRICT=1.
+    checks:
+      - {id: first-reaches-edge, step: "ws-{A}-workspace-reaches-its-edge"}
+      - {id: first-reaches-core, step: "ws-{A}-workspace-reaches-its-core"}
+      - {id: second-reaches-edge, step: "ws-{B}-workspace-reaches-its-edge"}
+      - {id: second-reaches-core, step: "ws-{B}-workspace-reaches-its-core"}
+      - {id: first-not-other-edge, step: "ws-{A}-workspace-cannot-reach-{B}-edge"}
+      - {id: first-not-other-core, step: "ws-{A}-workspace-cannot-reach-{B}-core"}
+      - {id: first-not-other-boundary, step: "ws-{A}-workspace-cannot-reach-{B}-boundary"}
+      - {id: first-not-own-boundary, step: "ws-{A}-workspace-cannot-reach-its-own-boundary"}
+      - {id: first-not-directory, step: "ws-{A}-workspace-cannot-reach-the-directory"}
+      - {id: first-no-boundary-address, step: "ws-{A}-workspace-holds-no-boundary-address"}
+      - {id: second-not-other-edge, step: "ws-{B}-workspace-cannot-reach-{A}-edge"}
+      - {id: second-not-other-core, step: "ws-{B}-workspace-cannot-reach-{A}-core"}
+      - {id: second-not-other-boundary, step: "ws-{B}-workspace-cannot-reach-{A}-boundary"}
+      - {id: second-not-own-boundary, step: "ws-{B}-workspace-cannot-reach-its-own-boundary"}
+      - {id: second-not-directory, step: "ws-{B}-workspace-cannot-reach-the-directory"}
+      - {id: second-no-boundary-address, step: "ws-{B}-workspace-holds-no-boundary-address"}
+      - {id: first-edge-no-context, step: "ws-{A}-edge-holds-no-goat-context"}
+      - {id: second-edge-no-context, step: "ws-{B}-edge-holds-no-goat-context"}
+      - {id: first-phases-1-to-5, step: "sws-{A}-{B}-phases-1-to-5"}
+      - {id: second-phases-1-to-5, step: "sws-{B}-{A}-phases-1-to-5"}
+      - {id: first-package-written, step: "sws-{A}-package-written-on-the-workspace"}
+      - {id: second-package-written, step: "sws-{B}-package-written-on-the-workspace"}
+      - {id: first-package-edge-key, step: "sws-{A}-package-carries-the-edge-interface-key"}
+      - {id: second-package-edge-key, step: "sws-{B}-package-carries-the-edge-interface-key"}
+      - {id: first-package-router-version, step: "sws-{A}-package-carries-the-core-router-version"}
+      - {id: second-package-router-version, step: "sws-{B}-package-carries-the-core-router-version"}
+      - {id: first-files-in-place, step: "sws-{A}-{B}-their-files-are-in-place"}
+      - {id: second-files-in-place, step: "sws-{B}-{A}-their-files-are-in-place"}
+      - {id: first-phases-6-to-10, step: "sws-{A}-{B}-phases-6-to-10"}
+      - {id: second-phases-6-to-10, step: "sws-{B}-{A}-phases-6-to-10"}
+      - {id: one-agreement, step: "sws-{A}-{B}-both-sides-hold-one-agreement"}
+      - {id: wireguard-selected, step: "sws-{A}-{B}-the-agreement-selected-wireguard"}
+      - {id: first-phases-11-to-12, step: "sws-{A}-{B}-phases-11-to-12"}
+      - {id: second-phases-11-to-12, step: "sws-{B}-{A}-phases-11-to-12"}
+      - {id: handshake, step: "sws-{A}-{B}-a-wireguard-handshake"}
+      - {id: first-phase-13, step: "sws-{A}-{B}-phase-13"}
+      - {id: second-phase-13, step: "sws-{B}-{A}-phase-13"}
+      - {id: acceptance-first, step: "sws-acceptance-as-{A}-with-{B}"}
+      - {id: acceptance-second, step: "sws-acceptance-as-{B}-with-{A}"}
+
+  - id: back-out-one-peering
+    title: One of two peerings backed out while the other carries traffic
+    not_built: waits for the back-out command (the ref offers none to drive yet)
+    pass_condition: >
+      Backing out {A}-{C} removes its edge router, tunnel, republisher, core admission and
+      forwarder mapping; {A}-{B} carries traffic throughout with an unchanged agreement digest.
+    checks: [{id: other-unchanged, step: "bo-other-peering-unchanged"}]
+
+  - id: rollback-tools
+    title: A deployment rolled back to the previous release of the tools still works
+    unit: {goatbuilder: rollback}
+    runs_where: local
+    pass_condition: >
+      A peering deployed with the ref's tools (goatbuilder, phases 1-14, strict acceptance from
+      both sides); then goat and goatbuilder on both sides replaced with the previous release
+      (the newest published release older than the ref's version of each) and phases 11-14
+      driven again from both sides: it still passes strict acceptance, and its tunnel keys,
+      peering keys and agreement digest are unchanged.
+    checks:
+      - {id: deployed, step: "rb-deployed"}
+      - {id: rolled-back-versions, step: "rb-rolled-back-versions"}
+      - {id: phases-11-to-13, step: "rb-phases-11-to-13-after-rollback"}
+      - {id: accepted, step: "rb-acceptance-after-rollback"}
+      - {id: keys-unchanged, step: "rb-keys-unchanged"}
+      # The same rerun with the ref's own tools, before the swap: when it fails too, the
+      # failure is the ref's rerun, not the rollback.
+      - {id: control-ref-tools-rerun, step: "rb-control-phases-11-to-13-with-the-ref-tools", required: false}
+
+  - id: module-revert
+    title: Reverting a module on the integration branch returns the matrix to its prior state
+    not_built: measured by the watcher on integration merges, not by a unit
+    pass_condition: >
+      For each module merged into integration/federation-turnkey, the integration head with
+      that merge reverted produces the same outcomes as the integration head before it.
+    checks: [{id: same-outcomes, step: "mr-same-outcomes"}]
+
+  - id: solo-external-partner
+    title: One lab sovereign federates with a partner outside the lab, exchanging by file
+    unit: {goatbuilder: solo}
+    runs_where: local
+    pass_condition: >
+      One lab sovereign (A), its core deployed by the ref's goat-zenoh role, federates with a
+      partner (B) that is not in the lab (FE2E_PARTNER=external): no peering directory, phase 5
+      by hand through two exchange folders, and a pause at each human step that waits for a
+      file. On the lab side: phases 1-5, 6-10, 11-12 and 13 pass; the partner's package
+      matches the facts file; the key and CA fingerprint read on the voice call match the
+      partner's files; the agreement selects WireGuard and its digest equals the partner's;
+      phase 10 admits through the role; the tunnel handshakes and carries traffic both ways;
+      a sample staged on each side with no subscriber but the stores reaches the other side's
+      store, again after each receiving core restarts (its edge not restarted); and strict
+      acceptance run locally with this side's own surfaces passes (fail=0, skip=0). What the
+      partner read of our samples, and its acceptance, are peer-reported, never local
+      observations.
+    checks:
+      - {id: core-is-the-roles, step: "solo-core-is-the-roles"}
+      - {id: partner-facts, step: "solo-partner-facts-are-consistent"}
+      - {id: phases-1-to-5, step: "solo-phases-1-to-5"}
+      - {id: our-files-out, step: "solo-our-files-are-in-out"}
+      - {id: partner-files-in-place, step: "solo-partner-files-are-in-place"}
+      - {id: partner-package-matches-facts, step: "solo-partner-package-matches-the-facts"}
+      - {id: voice-call, step: "solo-voice-call-matches-the-partner-files"}
+      - {id: phases-6-to-10, step: "solo-phases-6-to-10"}
+      - {id: wireguard-selected, step: "solo-the-agreement-selected-wireguard"}
+      - {id: agreement-digest-equal, step: "solo-agreement-digest-equals-the-partners"}
+      - {id: core-dry-run, step: "s0-[a-z0-9]+-[a-z0-9]+-core-role-dry-run", regex: true}
+      - {id: core-admits, step: "s0-[a-z0-9]+-[a-z0-9]+-core-role-admits", regex: true}
+      - {id: phases-11-to-12, step: "solo-phases-11-to-12"}
+      - {id: republisher-sets, step: "solo-republisher-maps-both-sets"}
+      - {id: handshake, step: "solo-wireguard-handshake"}
+      - {id: phase-13, step: "solo-phase-13"}
+      - {id: acceptance-ran, step: "solo-acceptance-local-ran"}
+      - {id: acceptance-strict-local, step: "solo-acceptance-strict-local"}
+      - {id: partner-acceptance, step: "solo-partner-acceptance", observer: peer-reported, required: false}
+      - {id: no-diagnostic-subscriber, step: "solo-no-diagnostic-subscriber-runs"}
+      - {id: received-from-partner, step: "solo-received-from-partner-without-a-subscriber"}
+      - {id: partner-received, step: "solo-partner-received-without-a-subscriber", observer: peer-reported}
+      - {id: received-after-our-core-restarts, step: "solo-received-from-partner-after-our-core-restarts"}
+      - {id: our-edge-not-restarted, step: "solo-our-edge-was-not-restarted"}
+      - {id: partner-received-after-its-core-restarts, step: "solo-partner-received-after-its-core-restarts", observer: peer-reported}
+      - {id: tunnel-both-ways, step: "solo-tunnel-carried-both-ways"}

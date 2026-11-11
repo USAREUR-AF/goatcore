@@ -2,7 +2,8 @@
 """One sovereign's own declarations, written into that sovereign's clone.
 
     overlay.py <clone> <us> <them> <subnet-octet> <image>
-               [--core-addr A] [--spire-listen A] [--local] [--republisher-image I]
+               [--core-addr A] [--spire-listen A] [--edge-addr A] [--local]
+               [--republisher-image I] [--no-peering]
                [--also THEM:INTERFACE:PORT:SPIRE_OUT_PORT:METRICS_PORT]...
 
 Each party has its own repository, as two organisations would. Only synthetic names
@@ -12,11 +13,19 @@ and addresses: this run reaches no goatnet.
                   (default 10.77.<octet>.10, the container core host)
   --spire-listen  where the outbound bundle-endpoint forward listens
                   (default 10.77.<octet>.20, the container edge host)
+  --edge-addr     the edge's address in the inventory (default 127.0.0.1: the driver
+                  runs on the edge host). An address here is a driver on another machine,
+                  an operator's workspace, reaching the edge over ssh like the core
   --local         ansible reaches the edge and the core on this machine with a local
                   connection: the live run, where one host carries both
   --republisher-image
                   the outbound republisher's image on the core host: a digest-pinned
                   reference, or the `sha256:<id>` of an image loaded there
+  --no-peering    declare no peering at all: no peering inventory, no peering group_vars
+                  and no `peerings:` entry. The sovereign's own site is still declared (its
+                  goatbuilder.yaml environment and site, and its site inventory naming the
+                  core and the edge), so that everything the peering needs is left for the
+                  operator's declaration and the command (units/nohand.sh)
   --also          one more peering on the SAME edge host and the SAME core host, with
                   the values two peerings cannot share there: its WireGuard interface
                   and listen port, its SPIRE outbound forward port and its republisher's
@@ -39,9 +48,11 @@ for name in ("clone", "us", "them", "octet", "image"):
     ap.add_argument(name)
 ap.add_argument("--core-addr")
 ap.add_argument("--spire-listen")
+ap.add_argument("--edge-addr")
 ap.add_argument("--local", action="store_true")
 ap.add_argument("--republisher-image", default="")
 ap.add_argument("--also", action="append", default=[])
+ap.add_argument("--no-peering", action="store_true")
 a = ap.parse_args()
 
 clone, us = Path(a.clone), a.us
@@ -49,6 +60,7 @@ core_ip = a.core_addr or f"10.77.{a.octet}.10"
 spire_listen = a.spire_listen or f"10.77.{a.octet}.20"
 conn = "ansible_connection=local" if a.local else "ansible_user=goat"
 core_host = "127.0.0.1" if a.local else core_ip
+edge_host = "127.0.0.1" if a.local or not a.edge_addr else a.edge_addr
 
 # (them, per-peering overrides). The first peering keeps every role default.
 peerings = [(a.them, {})]
@@ -59,15 +71,30 @@ for spec in a.also:
 names = [p for p, _ in peerings]
 assert len(set(names)) == len(names), f"a partner named twice: {names}"
 
+if a.no_peering:
+    peerings = []
+    names = []
+    # The site as it stands before any peering: its core and its edge machine.
+    (clone / "ops/ansible/inventory").mkdir(parents=True, exist_ok=True)
+    (clone / f"ops/ansible/inventory/{us}-site.ini").write_text("\n".join([
+        f"# {us}: this sovereign's site before any peering (ops/federation-e2e/overlay.py --no-peering).",
+        "[core]", f"{us}-core ansible_host={core_host} {conn}", "",
+        "[edge]", f"{us}-edge ansible_host={edge_host} {conn}", ""]))
+    (clone / "ops/ansible/group_vars/core").mkdir(parents=True, exist_ok=True)
+    (clone / "ops/ansible/group_vars/core/zenoh.yml").write_text(
+        f"# {us}: the site's core router (ops/federation-e2e/overlay.py --no-peering).\n"
+        + yaml.safe_dump({"zenoh_router_image": a.image}, sort_keys=True))
+
 inv = ["[peering_edges:children]", *[f"{t}_edge" for t in names], ""]
 for t in names:
-    inv += [f"[{t}_edge]", f"{us}-edge-{t} ansible_host=127.0.0.1 {conn}", ""]
+    inv += [f"[{t}_edge]", f"{us}-edge-{t} ansible_host={edge_host} {conn}", ""]
 inv += ["# The core host each peering's edge dials: that peering's outbound republisher runs",
         "# there (phase 12). One machine, one inventory name per peering.",
         "[peering_cores:children]", *[f"{t}_core" for t in names], ""]
 for t in names:
     inv += [f"[{t}_core]", f"{us}-core-{t} ansible_host={core_host} {conn}", ""]
-(clone / "ops/ansible/inventory/peering-edges.ini").write_text("\n".join(inv))
+if names:
+    (clone / "ops/ansible/inventory/peering-edges.ini").write_text("\n".join(inv))
 
 for them, o in peerings:
     work = f"/var/lib/goat-federation/{them}"
@@ -130,7 +157,11 @@ cfg = {
     "schema": "goatbuilder/v1",
     "preset": "full",
     "repo": {"source": f"example-{us}/goat", "image_namespace": f"ghcr.io/example-{us}"},
+    # The site before any peering declares its core router's image (the schema wants one
+    # component at least); with a peering, the edge router's image as before.
     "components": {
+        "goat-zenoh": {"declared_in": "ops/ansible/group_vars/core/zenoh.yml", "var": "zenoh_router_image"},
+    } if a.no_peering else {
         "goat-zenoh-edge": {"declared_in": f"ops/ansible/group_vars/{a.them}_edge/deployment.yml", "var": "goat_zenoh_edge_image"},
     },
     "environments": [{
@@ -139,10 +170,11 @@ cfg = {
         "sites": [{"name": "home", "role": "founder", "classes": {"core": {}, "edge": {}}}],
     }],
     "promotion": {"path": [{"name": us, "kind": "rung", "environment": us}]},
-    "peerings": [{"with": t, "environment": us, "site": "home", "edge_class": "edge"} for t in names],
     # The run templates no credential: nothing to resolve, nothing to read from a file.
     "secrets": {"store": "env"},
 }
+if names:
+    cfg["peerings"] = [{"with": t, "environment": us, "site": "home", "edge_class": "edge"} for t in names]
 cfg_path.write_text(
     f"# {us}: this sovereign's synthetic goatbuilder config for the federation e2e\n"
     "# (ops/federation-e2e/overlay.py). Written whole on every run.\n"
