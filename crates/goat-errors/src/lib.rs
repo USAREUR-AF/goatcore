@@ -682,4 +682,26 @@ mod tests {
         let j = serde_json::to_string(&interpret("GB-007: NOT SET: X")).unwrap();
         assert!(j.contains("\"schema\":\"goat-errors.interpretation/v1\""));
     }
+
+    #[test]
+    fn membership_version_failures_have_specific_guidance() {
+        for message in [
+            "fragment version 2 — this goat reads version 1",
+            "_scope.yaml version 2 — this goat reads version 1",
+            "_baseline.generated.yaml version 2 — this goat reads version 1",
+        ] {
+            let interpretation = interpret(message);
+            assert!(!interpretation.unrecognised, "{message}");
+            assert!(
+                interpretation.hits.iter().any(|hit| {
+                    hit.code == "E_MEMBERSHIP_VERSION_UNSUPPORTED" && hit.layer == Layer::Pattern
+                }),
+                "{message}"
+            );
+        }
+
+        assert!(!interpret("fragment version 1").hits.iter().any(|hit| {
+            hit.code == "E_MEMBERSHIP_VERSION_UNSUPPORTED" && hit.layer == Layer::Pattern
+        }));
+    }
 }
