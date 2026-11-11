@@ -270,7 +270,7 @@ host_package() {
     docker exec "$h" sh -c "apt-get update -qq >/dev/null 2>&1 && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq $pkg >/dev/null 2>&1" && return 0
     sleep 10
   done
-  return 1
+  return 2
 }
 
 # The goat binary one sovereign's hosts carry: GOAT_<id> when the environment pinned a
@@ -332,8 +332,15 @@ wait_ready() { # $1 host: systemd up, dockerd answering
       # (BLOCKED), naming the package, never as a FAIL of the tree under test.
       local pkg
       for pkg in ${FE2E_HOST_PACKAGES:-python3-apt unzip}; do
-        host_package "$h" "$pkg" \
-          || env_fault "host $h lacks package $pkg: the host image (host/Dockerfile) should carry it, and no run-time source provided it (FE2E_HOST_APT=1 lets a lab host fetch it from the Ubuntu mirror)"
+        # A package the image lacks is a defect of the change (host/Dockerfile), not of the
+        # environment; only a lab's own mirror fetch (FE2E_HOST_APT=1) that the mirror did
+        # not answer is environment.
+        local hp=0; host_package "$h" "$pkg" || hp=$?
+        case "$hp" in
+          0) ;;
+          2) env_fault "host $h lacks package $pkg and the Ubuntu mirror did not provide it (FE2E_HOST_APT=1)" ;;
+          *) die "host $h lacks package $pkg: host/Dockerfile does not install it" ;;
+        esac
       done
       docker exec "$h" sh -c 'mkdir -p /var/lib/apt/periodic && touch /var/lib/apt/periodic/update-success-stamp'
       return 0

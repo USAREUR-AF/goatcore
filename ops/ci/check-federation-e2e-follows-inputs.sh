@@ -4,10 +4,11 @@
 #
 #   ops/ci/check-federation-e2e-follows-inputs.sh            the static checks and the key cases
 #   ops/ci/check-federation-e2e-follows-inputs.sh --run BIN_DIR
-#                                                            also case 1 measured: run.sh's
-#                                                            scenario 2 with every host denied the
-#                                                            distribution mirrors (BIN_DIR holds a
-#                                                            built goat and goatbuilder)
+#                                                            also case 1 measured: run.sh, all
+#                                                            four scenarios, with every host
+#                                                            denied the distribution mirrors and
+#                                                            PyPI (BIN_DIR holds a built goat and
+#                                                            goatbuilder)
 #
 # Each case prints PASS or FAIL with what it read. Case 2 and the reuse of case 3 are shown
 # by named CI runs (the workflow's header comment); here they are checked for the shape that
@@ -24,18 +25,26 @@ fail() { echo "FAIL  $*"; FAILS=$((FAILS + 1)); }
 
 # --- case 1, rule 1: inputs are fixed --------------------------------------------------------
 # Static: nothing in the job or its hosts is fetched by a floating name while it runs.
-if grep -nE '(^|[^-])apt-get( |$)' "$WF" >/dev/null; then
-  fail "case 1: the workflow runs apt-get: $(grep -nE '(^|[^-])apt-get( |$)' "$WF" | head -1)"
-else pass "case 1: the workflow runs no apt-get"; fi
+apt_out="$(python3 - "$WF" <<'PY'
+import re, sys, yaml
+wf = yaml.safe_load(open(sys.argv[1]))
+for j, job in wf.get("jobs", {}).items():
+    for st in job.get("steps", []):
+        if re.search(r"(^|[^-])apt-get( |$)", st.get("run", "")) and "declared input" not in st.get("name", ""):
+            print(f"{j}: {st.get('name', '(unnamed step)')}")
+PY
+)"
+if [ -n "$apt_out" ]; then fail "case 1: apt-get in a step that is not a declared input: $(echo "$apt_out" | head -1)"
+else pass "case 1: apt-get only in a step named as a declared input"; fi
 if grep -nE 'pip[0-9]? install' "$WF" | grep -v -- '--require-hashes' >/dev/null; then
   fail "case 1: a pip install without --require-hashes: $(grep -nE 'pip[0-9]? install' "$WF" | grep -v -- '--require-hashes' | head -1)"
 else pass "case 1: every pip install in the workflow requires hashes"; fi
 floating="$(grep -nE '^\s*-?\s*uses:\s*[^ ]+@' "$WF" | grep -vE '@[0-9a-f]{40}(\s|$)' || true)"
 if [ -n "$floating" ]; then fail "case 1: an action not pinned to a commit: $(echo "$floating" | head -1 | sed 's/^ *//')"
 else pass "case 1: every action is pinned to a commit"; fi
-if grep -qE 'toolchain:\s*.?stable' "$WF" || grep -qE 'rust-toolchain@stable' "$WF"; then
-  fail "case 1: the Rust toolchain floats (stable)"
-else pass "case 1: the Rust toolchain is a named version"; fi
+if grep -qE "toolchain:\s*'?[0-9]+\.[0-9]+\.[0-9]+'?" "$WF" && ! grep -qE 'toolchain:\s*.?stable|rust-toolchain@stable' "$WF"; then
+  pass "case 1: the Rust toolchain is an exact version ($(grep -oE "toolchain:\s*'?[0-9]+\.[0-9]+\.[0-9]+'?" "$WF" | head -1))"
+else fail "case 1: no exact Rust toolchain version in the workflow"; fi
 if grep -qE '^FROM [^ ]+@sha256:[0-9a-f]{64}' "$REPO/ops/federation-e2e/host/Dockerfile"; then
   pass "case 1: the host image's base is named by digest"
 else fail "case 1: the host image's base is not named by digest"; fi
@@ -47,14 +56,15 @@ else pass "case 1: the host image carries every package a scenario needs ($pkgs)
 if grep -q 'FE2E_HOST_APT:-0' "$REPO/ops/federation-e2e/lib/engine.sh"; then
   pass "case 1: run-time apt in a host only when a lab asks for it (FE2E_HOST_APT=1)"
 else fail "case 1: a host may fetch from the mirror at run time"; fi
-# Measured: scenario 2 with the hosts denied every distribution mirror.
+# Measured: the whole job's run.sh, all four scenarios, with the hosts denied every
+# distribution mirror and PyPI.
 if [ -n "$RUN_BIN" ]; then
   W="$(mktemp -d "${TMPDIR:-/tmp}/fe2e-proof.XXXXXX")"
   FE2E_DENY_MIRROR=1 "$REPO/ops/federation-e2e/run.sh" --goat "$RUN_BIN/goat" --goatbuilder "$RUN_BIN/goatbuilder" \
-    --work "$W/work" --record "$W/report" --scenario 2 > "$W/run.log" 2>&1
+    --work "$W/work" --record "$W/report" > "$W/run.log" 2>&1
   rc=$?
-  if [ "$rc" = 0 ]; then pass "case 1 measured: scenario 2 passes with the hosts denied the mirrors (record $W/report)"
-  else fail "case 1 measured: scenario 2 exit $rc with the hosts denied the mirrors (log $W/run.log)"; fi
+  if [ "$rc" = 0 ]; then pass "case 1 measured: all four scenarios pass with the hosts denied the mirrors (record $W/report)"
+  else fail "case 1 measured: run.sh exit $rc with the hosts denied the mirrors (log $W/run.log)"; fi
 fi
 
 # --- case 2, rule 2: stages keep their results ---------------------------------------------------
@@ -87,13 +97,23 @@ else
   k1="$("$KEY" "$T/tree" scenario-2)"; k2="$("$KEY" "$T/tree" scenario-2)"
   if [ -n "$k1" ] && [ "$k1" = "$k2" ]; then pass "case 3: identical inputs give one key ($k1)"
   else fail "case 3: identical inputs gave two keys ($k1, $k2)"; fi
-  echo "# proof" >> "$T/tree/ops/federation-e2e/run.sh"
-  k3="$("$KEY" "$T/tree" scenario-2)"
-  git -C "$T/tree" checkout -q -- ops/federation-e2e/run.sh
+  # Each declared class, changed alone, must give a new key.
+  for f in .github/workflows/federation-e2e.yml ops/federation-e2e/run.sh ops/ci/check-federation-e2e-prepare.sh \
+           ops/federation/standup/acceptance.sh crates/Cargo.lock ops/federation-e2e/host/Dockerfile \
+           ops/federation-e2e/requirements.lock; do
+    echo "# proof" >> "$T/tree/$f"
+    k="$("$KEY" "$T/tree" scenario-2)"
+    git -C "$T/tree" checkout -q -- "$f"
+    if [ "$k" != "$k1" ]; then pass "case 4: a declared input changed ($f): a new key, a full run"
+    else fail "case 4: a declared input changed ($f) and the key did not"; fi
+  done
+  sed -i "s/toolchain: '\([0-9.]*\)'/toolchain: '0.0.1'/" "$T/tree/.github/workflows/federation-e2e.yml"
+  k="$("$KEY" "$T/tree" scenario-2)"
+  git -C "$T/tree" checkout -q -- .github/workflows/federation-e2e.yml
+  if [ "$k" != "$k1" ]; then pass "case 4: the toolchain changed: a new key, a full run"
+  else fail "case 4: the toolchain changed and the key did not"; fi
   echo "proof" >> "$T/tree/README.md"
   k4="$("$KEY" "$T/tree" scenario-2)"
-  if [ "$k3" != "$k1" ]; then pass "case 4: a declared input changed (ops/federation-e2e/run.sh): a new key, a full run"
-  else fail "case 4: a declared input changed and the key did not"; fi
   if [ "$k4" = "$k1" ]; then pass "case 4: a path outside the declaration changed (README.md): the same key, the pass is reused"
   else fail "case 4: a path outside the declaration changed the key"; fi
   git -C "$T/tree" checkout -q -- README.md
