@@ -197,6 +197,30 @@ class PeeringFederationToml(unittest.TestCase):
         self.assertTrue(any("template" in e for e in validate.errors_for(c)))
 
 
+class PeeringDirectory(unittest.TestCase):
+    """environments[].peering_directory names the directory and its CA for
+    goatbuilder federate (crates/goatbuilder/src/federate/declared.rs)."""
+
+    def test_url_and_ca_validate(self):
+        c = with_sites()
+        c["environments"][0]["peering_directory"] = {"url": "https://directory.example.org:8443", "ca_cert": "directory-ca.pem"}
+        self.assertEqual(validate.errors_for(c), [])
+        c["environments"][0]["peering_directory"] = {"url": "https://directory.example.org"}
+        self.assertEqual(validate.errors_for(c), [])
+
+    def test_plain_http_no_url_unknown_field_or_a_site_is_rejected(self):
+        for bad, fragment in (({"url": "http://directory.example.org"}, "url"), ({"ca_cert": "x.pem"}, "url"),
+                              ({"url": "https://d.example.org", "token": "x"}, "token"),
+                              ({"url": "https://d.example.org/'$(x)'"}, "url")):
+            c = with_sites()
+            c["environments"][0]["peering_directory"] = bad
+            problems = validate.errors_for(c)
+            self.assertTrue(any(fragment in p for p in problems), (bad, problems))
+        c = with_sites()
+        c["environments"][0]["sites"][0]["peering_directory"] = {"url": "https://d.example.org"}
+        self.assertTrue(any("peering_directory" in e for e in validate.errors_for(c)))
+
+
 class SecretsFederation(unittest.TestCase):
     """secrets.federation names this side's federation key paths for
     goatbuilder federate (crates/goatbuilder/src/federate/declared.rs)."""

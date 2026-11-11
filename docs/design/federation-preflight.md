@@ -103,6 +103,7 @@ scenario no longer lists these variables when its deployment declares them.
 | Declaration | Gives |
 |---|---|
 | `secrets.federation.signing_key`, `.ca_cert`, `.ca_key` | `FED_SIGNING_KEY`, `FED_CA_CERT`, `FED_CA_KEY`. Paths only. A relative path is inside the active goat context directory (`$GOAT_PROFILE_DIR`, else `~/.goat`, then `contexts/<context>/`, the context from `$GOAT_CONTEXT`, else `current_context` in its `config.toml`, else `default`). The age-encrypted CA key stays opt-in (`goat_federation_ca_key_from_age`) |
+| `environments[].peering_directory.url`, `.ca_cert` (the environment the peering names) | `FED_DIRECTORY_URL`, and `SSL_CERT_FILE` when a CA is declared. A directory whose certificate chains to a public root declares no CA. `SSL_CERT_FILE` replaces the system roots for every TLS client the run starts, so a run that also reaches public services names a bundle that holds both |
 
 ## Live reads
 
