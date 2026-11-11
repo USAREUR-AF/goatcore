@@ -1,6 +1,6 @@
 module github.com/usareur-af/goatcore/ops/time-hygiene
 
-go 1.26.10
+go 1.26.11
 
 require (
 	github.com/facebook/time v0.0.0-20260421104200-941b5bc0a786

@@ -221,7 +221,7 @@ services:
     # (.env, written by Ansible on goatnets that enable the dual path;
     # single-site goatnets never run it).
     # Multi-arch INDEX digest (amd64+arm64) — resolve per-host at pull.
-    image: ${FEDERATION_PROXY_IMAGE:-haproxy:3.0-alpine@sha256:dee54db8b27cd6c21519ea4f0ba0604f3742e8e7369bc16fb5b69133dec3f47f}
+    image: ${FEDERATION_PROXY_IMAGE:-haproxy:3.0.30-alpine@sha256:d2b3567d836f3b7d174edb6d6f611ed5308e7966e53a9cd9a597e0415a298efd}
     container_name: federation-proxy
     profiles: ["federation-proxy"]
     restart: unless-stopped

@@ -202,7 +202,7 @@ services:
   blackbox-exporter:
     # HTTP / TCP / ICMP / DNS reachability probes. Used for "is this
     # public hostname / mesh peer / DNS resolver answering?" panels.
-    image: prom/blackbox-exporter:v0.25.0@sha256:9761529b5ff576deb4e823e298ec5ca70e738086fd7d073a84698332c9ae3554
+    image: prom/blackbox-exporter:v0.29.1@sha256:ea1c7aa3ef3f307cd03e85f34abb604478ccb90b567fc690da0cd9776da76b13
     container_name: ${OBS_PREFIX:?set OBS_PREFIX in .env}-blackbox
     restart: unless-stopped
     deploy:
