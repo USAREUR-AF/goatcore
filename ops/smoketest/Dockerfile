@@ -1,5 +1,5 @@
 # Stage 1 — Go build
-FROM golang:1.26-bookworm AS go-build
+FROM golang:1.26.11-bookworm@sha256:dc40a13b61304647ed7e5d581d246b86413dfc29d63c6d018310feb93cd98fc0 AS go-build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
