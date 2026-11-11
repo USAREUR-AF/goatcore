@@ -2220,6 +2220,7 @@ mod tests {
         let cfg = config::load(&d.path().join("ops/goatbuilder/goatbuilder.yaml")).unwrap();
         let inputs = super::super::preflight::derive_inputs(
             d.path(),
+            &cfg,
             &cfg.peerings[0],
             "/var/lib/goat-federation/xab",
             "xab_edge",

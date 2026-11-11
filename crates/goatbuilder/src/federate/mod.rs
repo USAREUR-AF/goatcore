@@ -618,9 +618,8 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
     // real run exports each one the operator has not set, before the plan reads
     // them; a dry run lists them and changes no command (the parity gate).
     let peering = cfg.peerings.iter().find(|p| p.with == o.with && o.env.map(|e| p.environment == e).unwrap_or(true)).expect("C1 found it");
-    let mut inputs = preflight::derive_inputs(repo, peering, &work, &edge_group, None);
-    // What goatbuilder.yaml itself declares for the run (federate/declared.rs); nothing when it declares none.
-    declared::overlay(&mut inputs, declared::declared_inputs(&cfg, peering));
+    // With what goatbuilder.yaml itself declares for the run merged in (federate/declared.rs).
+    let inputs = preflight::derive_inputs(repo, &cfg, peering, &work, &edge_group, None);
     if executes {
         preflight::export(&inputs);
         // Phase 14 reads our core and edge declarations by group

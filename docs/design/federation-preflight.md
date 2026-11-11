@@ -91,7 +91,9 @@ no plaintext key file is given and the deployment opts in
 ### Inputs declared in goatbuilder.yaml
 
 Built: `crates/goatbuilder/src/federate/declared.rs` reads the optional
-declarations below and merges them into the inputs above. A deployment that
+declarations below, and `preflight::derive_inputs` merges them into the inputs
+above, so the plain run, `goatbuilder federate plan` and `deploy`'s recheck all
+see them. A deployment that
 declares none of them gets exactly the inputs it got before. A declared value
 fills an input nothing else derived, and replaces one derived only by convention
 (for example the enrollment CA path); a value in the edge group's group_vars
