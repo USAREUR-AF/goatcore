@@ -535,7 +535,7 @@ A peer that lies about its region gets its traffic **routed** differently. It ga
 
 - **Router:** `ops/ansible/zenoh-deploy.yml -e target=<site>_hosts`, role `ops/ansible/roles/goat-zenoh/` (standup phase 9). Runbook: [`../operations/zenoh-runbook.md`](../operations/zenoh-runbook.md).
 - **Audit subscriber:** `ops/ansible/audit-subscriber-deploy.yml`, role `ops/ansible/roles/audit-subscriber/`.
-- **Load generator:** `ops/zenoh/loadgen/`, for soak and load tests under [ADR 1012](../adr/1012-load-testing-discipline.md).
+- **Load generator:** `ops/zenoh/loadgen/`, for soak and load tests under [ADR 1012](../adr/1012-load-testing-discipline.md). Its container pins Go 1.26.10 and Alpine 3.24 and disables automatic toolchain downloads.
 - **PQ hybrid TLS images:** [`zenoh-pqc-tls.md`](zenoh-pqc-tls.md).
 
 ---
