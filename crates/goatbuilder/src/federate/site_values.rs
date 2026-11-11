@@ -15,8 +15,9 @@
 //!   component whose `var:` it is, through the environment's deviations);
 //! - `goat_zenoh_edge_image`: the same for its own variable, else the fabric
 //!   image the core router runs (`zenoh_router_image`), resolved the same way;
-//! - `goat_zenoh_edge_core_cn`: the common name of the core certificate phase 8
-//!   mints, [`core_cn`].
+//! - `goat_zenoh_edge_core_cn`: the core's own name in the site inventory
+//!   ([`core_cn`]), which phase 8 also mints as the core certificate's CN
+//!   ([`phase8_core_cn`]).
 //!
 //! A required value none of these yields is refused with GB-232, naming every
 //! place that was read. Optional values are never derived.
@@ -133,9 +134,17 @@ fn groups_text(groups: &[String]) -> String {
 
 /// The address of the peering's core host: `peerings[].hosts.core`, else the
 /// `ansible_host` of the one host of `[<core_group>]` in the hand-written
-/// peering inventory.
-pub fn core_address(s: &Scope, looked: &mut Vec<String>) -> Option<(String, String)> {
-    if let Some(h) = &s.peering.hosts {
+/// peering inventory. The one core-identity source: the rendered halves, the
+/// core certificate's name (`core_cn`) and its SANs read the core from here.
+// TODO(w15 hosts-from-site-inventory): when the peering's hosts come from the
+// site inventory, take the address from that same function here.
+pub fn core_address(
+    repo: &Path,
+    peering: &Peering,
+    core_group: &str,
+    looked: &mut Vec<String>,
+) -> Option<(String, String)> {
+    if let Some(h) = &peering.hosts {
         return Some((
             h.core.clone(),
             "goatbuilder.yaml peerings[].hosts.core".into(),
@@ -143,40 +152,133 @@ pub fn core_address(s: &Scope, looked: &mut Vec<String>) -> Option<(String, Stri
     }
     looked.push(format!(
         "peerings[].hosts.core of peering '{}' in goatbuilder.yaml",
-        s.values.peering
+        peering.with
     ));
     let inv = "ops/ansible/inventory/peering-edges.ini";
-    looked.push(format!(
-        "the one host of [{}] in {inv}",
-        s.values.core_group
-    ));
-    let text = std::fs::read_to_string(s.repo.join(inv)).ok()?;
-    let head = format!("[{}]", s.values.core_group);
-    let mut inside = false;
-    let mut hosts = Vec::new();
+    looked.push(format!("the one host of [{core_group}] in {inv}"));
+    let text = std::fs::read_to_string(repo.join(inv)).ok()?;
+    let hosts: Vec<(String, String)> = ini_hosts(&text)
+        .into_iter()
+        .filter(|(g, _, _)| g == core_group)
+        .map(|(_, n, a)| (n, a))
+        .collect();
+    let [(_, addr)] = hosts.as_slice() else {
+        return None;
+    };
+    Some((addr.clone(), format!("[{core_group}] in {inv}")))
+}
+
+/// Every host line of an INI inventory: (group, inventory name, address), the
+/// address being its `ansible_host`, else the name. `:children` and `:vars`
+/// sections hold no hosts.
+fn ini_hosts(text: &str) -> Vec<(String, String, String)> {
+    let mut out = Vec::new();
+    let mut group: Option<String> = None;
     for l in text.lines().map(str::trim) {
         if l.is_empty() || l.starts_with('#') || l.starts_with(';') {
             continue;
         }
-        if l.starts_with('[') {
-            inside = l == head;
+        if let Some(name) = l.strip_prefix('[').and_then(|r| r.strip_suffix(']')) {
+            group = (!name.contains(':')).then(|| name.to_string());
             continue;
         }
-        if inside {
-            hosts.push(l.to_string());
+        let Some(g) = &group else { continue };
+        let mut words = l.split_whitespace();
+        let Some(name) = words.next() else { continue };
+        let addr = words
+            .find_map(|w| w.strip_prefix("ansible_host="))
+            .unwrap_or(name);
+        out.push((g.clone(), name.to_string(), addr.to_string()));
+    }
+    out
+}
+
+/// The core's own name in the site inventory: the inventory name of the host
+/// whose address is the core address, in the hand-written inventories of
+/// `ops/ansible/inventory/` other than the peering inventories (which give a
+/// machine one name per peering). One name per core, so every peering on that
+/// core mints and pins the same certificate name.
+// TODO(w15 hosts-from-site-inventory): unify with the site-inventory reader
+// that resolves peerings[].hosts, so both read the same file and group.
+pub fn core_cn(
+    repo: &Path,
+    peering: &Peering,
+    core_group: &str,
+    looked: &mut Vec<String>,
+) -> Option<(String, String)> {
+    let (addr, _) = core_address(repo, peering, core_group, looked)?;
+    let dir = repo.join("ops/ansible/inventory");
+    looked.push(format!(
+        "the site inventory's name for the core host {addr} in ops/ansible/inventory/*.ini (not peering-*.ini)"
+    ));
+    let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(&dir)
+        .map(|rd| rd.flatten().map(|e| e.path()).collect())
+        .unwrap_or_default();
+    files.sort();
+    let mut names: Vec<(String, String)> = Vec::new();
+    for f in files {
+        let fname = f
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_default()
+            .to_string();
+        if !fname.ends_with(".ini") || fname.starts_with("peering-") {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(&f) else {
+            continue;
+        };
+        if text.starts_with(super::peering_files::MARKER) {
+            continue;
+        }
+        for (_, name, a) in ini_hosts(&text) {
+            if a == addr && !names.iter().any(|(n, _)| *n == name) {
+                names.push((name, format!("ops/ansible/inventory/{fname}")));
+            }
         }
     }
-    let [line] = hosts.as_slice() else {
-        return None;
-    };
-    let mut words = line.split_whitespace();
-    let mut addr = words.next()?.to_string();
-    for w in words {
-        if let Some(v) = w.strip_prefix("ansible_host=") {
-            addr = v.to_string();
+    match names.as_slice() {
+        [(name, file)] => Some((
+            name.clone(),
+            format!("the core host {addr}'s name in {file}"),
+        )),
+        [] => None,
+        many => {
+            looked.push(format!(
+                "(the core host {addr} has several names there: {}; give it one)",
+                many.iter()
+                    .map(|(n, f)| format!("{n} in {f}"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+            None
         }
     }
-    Some((addr, format!("[{}] in {inv}", s.values.core_group)))
+}
+
+/// The CN phase 8 mints for the core certificate (FED_CORE_CN, which stays an
+/// override): the value the edge pins as its core subject
+/// (`goat_zenoh_edge_core_cn` in its group_vars, the rendered half included),
+/// else `core_cn`. So the certificate and the edge's ACL subject cannot differ.
+pub fn phase8_core_cn(
+    repo: &Path,
+    peering: &Peering,
+    edge_group: &str,
+    core_group: &str,
+) -> (Option<String>, String) {
+    if let Some(cn) = super::preflight::group_var(repo, edge_group, "goat_zenoh_edge_core_cn") {
+        return (
+            Some(cn),
+            format!("group_vars/{edge_group}: goat_zenoh_edge_core_cn (the edge's core subject)"),
+        );
+    }
+    let mut looked = vec![format!(
+        "goat_zenoh_edge_core_cn in group_vars/{edge_group}"
+    )];
+    match core_cn(repo, peering, core_group, &mut looked) {
+        Some((cn, from)) => (Some(cn), from),
+        None => (None, looked.join("; ")),
+    }
 }
 
 /// The core router's listen port: `goat_zenoh_listen_port` in group_vars, else
@@ -202,22 +304,6 @@ fn core_port(s: &Scope, looked: &mut Vec<String>) -> Option<(u16, String)> {
     num(doc.get("goat_zenoh_listen_port")?).map(|p| (p, role.to_string()))
 }
 
-/// The common name of the core certificate phase 8 mints (FED_CORE_CN), which
-/// the edge pins as the core link's ACL subject: the same function feeds both.
-/// From the inventory name of the peering's core host.
-pub fn core_cn(s: &Scope, looked: &mut Vec<String>) -> Option<(String, String)> {
-    let _ = looked;
-    (!s.values.core_host_name.is_empty()).then(|| {
-        (
-            s.values.core_host_name.clone(),
-            format!(
-                "the inventory name of the core host of [{}]",
-                s.values.core_group
-            ),
-        )
-    })
-}
-
 /// The required site values, each from its owner; `Err` lists what could not be
 /// derived and every place that was read for it.
 pub fn required(s: &Scope) -> Result<Vec<Site>, Vec<(&'static str, Vec<String>)>> {
@@ -239,7 +325,7 @@ pub fn required(s: &Scope) -> Result<Vec<Site>, Vec<(&'static str, Vec<String>)>
                 "{var} in group_vars of {} or all",
                 groups_text(&s.groups)
             ));
-            let (addr, from) = core_address(s, &mut looked)?;
+            let (addr, from) = core_address(s.repo, s.peering, &s.values.core_group, &mut looked)?;
             if var == "peering_spire_server_addr" {
                 return Some((Value::String(addr), from));
             }
@@ -273,7 +359,8 @@ pub fn required(s: &Scope) -> Result<Vec<Site>, Vec<(&'static str, Vec<String>)>
             "goat_zenoh_edge_core_cn in group_vars of {} or all",
             groups_text(&s.groups)
         ));
-        core_cn(s, &mut looked).map(|(v, f)| (Value::String(v), f))
+        core_cn(s.repo, s.peering, &s.values.core_group, &mut looked)
+            .map(|(v, f)| (Value::String(v), f))
     });
     put("goat_zenoh_edge_core_cn", got, looked);
 

@@ -1941,6 +1941,175 @@ mod tests {
         );
     }
 
+    /// The site inventory naming the core host once, as a site's own
+    /// inventory does (one name per machine, whatever its peerings).
+    fn site_inventory(d: &Path) {
+        let inv = d.join("ops/ansible/inventory");
+        std::fs::create_dir_all(&inv).unwrap();
+        std::fs::write(
+            inv.join("dev-site.ini"),
+            "[core]\ndev-core ansible_host=192.0.2.10 ansible_user=goat\n\n[edge]\ndev-edge ansible_host=192.0.2.20\n",
+        )
+        .unwrap();
+    }
+
+    /// The owners of the derived values: the core router's role default and
+    /// the republisher's fleet pin, and the site inventory.
+    fn with_owners(d: &Path) {
+        let r = d.join("ops/ansible/roles/goat-zenoh/defaults");
+        std::fs::create_dir_all(&r).unwrap();
+        std::fs::write(
+            r.join("main.yml"),
+            "goat_zenoh_listen_port: 7447\nzenoh_router_image: \"ghcr.io/{{ ghcr_org }}/zenoh@sha256:11\"\n",
+        )
+        .unwrap();
+        let pins = d.join("ops/pins");
+        std::fs::create_dir_all(&pins).unwrap();
+        std::fs::write(
+            pins.join("fleet-pins.yaml"),
+            "goatnets: {}\ncomponents:\n  goat-fed-republisher:\n    var: goat_fed_republisher_image\n    fleet: ghcr.io/{{ ghcr_org }}/goat-fed-republisher@sha256:22\n",
+        )
+        .unwrap();
+        site_inventory(d);
+    }
+
+    /// Two peerings on one core pin the same core name, the core's own name in
+    /// the site inventory, not one name per peering.
+    #[test]
+    fn two_peerings_on_one_core_pin_one_core_name() {
+        let mut a = p("xab", true);
+        a["deployment"] = json!("rendered");
+        let mut b = p("xac", true);
+        b["deployment"] = json!("rendered");
+        let d = repo_with_site(json!([a, b]), "# none\n");
+        with_owners(d.path());
+        run(d.path(), &opts(false)).unwrap();
+        let gv = d.path().join("ops/ansible/group_vars");
+        for g in ["xab_edge", "xac_edge"] {
+            let edge = std::fs::read_to_string(gv.join(g).join("peering-deployment.yml")).unwrap();
+            assert!(
+                edge.contains("goat_zenoh_edge_core_cn: \"dev-core\""),
+                "{g}\n{edge}"
+            );
+        }
+    }
+
+    /// Phase 8 mints the core certificate with the CN the rendered edge half
+    /// pins: FED_CORE_CN is derived from the same value, and the real phase-8
+    /// script, given it, mints a certificate whose subject CN is exactly that.
+    #[test]
+    fn the_minted_core_cn_is_the_one_the_edge_pins() {
+        let mut a = p("xab", true);
+        a["deployment"] = json!("rendered");
+        let d = repo_with_site(json!([a]), "# none\n");
+        with_owners(d.path());
+        run(d.path(), &opts(false)).unwrap();
+        let edge: serde_yaml::Value = serde_yaml::from_str(
+            &std::fs::read_to_string(
+                d.path()
+                    .join("ops/ansible/group_vars/xab_edge/peering-deployment.yml"),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let pinned = edge["goat_zenoh_edge_core_cn"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let cfg = config::load(&d.path().join("ops/goatbuilder/goatbuilder.yaml")).unwrap();
+        let inputs = super::super::preflight::derive_inputs(
+            d.path(),
+            &cfg.peerings[0],
+            "/var/lib/goat-federation/xab",
+            "xab_edge",
+            None,
+        );
+        let cn = inputs
+            .iter()
+            .find(|i| i.name == "FED_CORE_CN")
+            .and_then(|i| i.value.clone())
+            .expect("FED_CORE_CN derived");
+        assert_eq!(cn, pinned);
+
+        // The real phase 8, with that value, on a disposable CA.
+        let have_openssl = std::process::Command::new("openssl")
+            .arg("version")
+            .output()
+            .is_ok_and(|o| o.status.success());
+        if !have_openssl {
+            eprintln!("openssl not found: the mint half of this test is skipped");
+            return;
+        }
+        let t = tempfile::tempdir().unwrap();
+        let (ca, key) = (t.path().join("ca.pem"), t.path().join("ca-key.pem"));
+        let ok = |c: &mut std::process::Command| {
+            let o = c.output().unwrap();
+            assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+            o.stdout
+        };
+        ok(std::process::Command::new("openssl")
+            .args([
+                "req",
+                "-x509",
+                "-newkey",
+                "ec",
+                "-pkeyopt",
+                "ec_paramgen_curve:prime256v1",
+                "-nodes",
+                "-days",
+                "30",
+                "-subj",
+                "/CN=Test-CA",
+                "-addext",
+                "basicConstraints=critical,CA:TRUE",
+            ])
+            .arg("-keyout")
+            .arg(&key)
+            .arg("-out")
+            .arg(&ca));
+        let der = ok(std::process::Command::new("openssl")
+            .args(["x509", "-outform", "DER", "-in"])
+            .arg(&ca));
+        use sha2::Digest;
+        let fp = format!("sha256:{:x}", sha2::Sha256::digest(&der));
+        let agreement = t.path().join("agreement.json");
+        std::fs::write(
+            &agreement,
+            json!({"parties": [{"sovereign_id": "dev", "ca_fingerprint": fp}, {"sovereign_id": "xab"}],
+                   "transport": {"link_subnet": "169.254.10.0/31"}})
+            .to_string(),
+        )
+        .unwrap();
+        let out = t.path().join("pki");
+        let script = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../ops/federation/standup/mint-peering-leaves.sh");
+        let mut mint = std::process::Command::new("bash");
+        mint.arg(&script)
+            .arg(&agreement)
+            .arg(&out)
+            .args(["--as", "dev", "--core-san", "192.0.2.10"])
+            .arg("--ca-cert")
+            .arg(&ca)
+            .arg("--ca-key")
+            .arg(&key)
+            .env("FED_CORE_CN", &cn)
+            .env("TMPDIR", t.path());
+        for (k, _) in std::env::vars() {
+            if k.starts_with("FED_") && k != "FED_CORE_CN" {
+                mint.env_remove(k);
+            }
+        }
+        ok(&mut mint);
+        let subject = ok(std::process::Command::new("openssl")
+            .args(["x509", "-noout", "-subject", "-nameopt", "RFC2253", "-in"])
+            .arg(out.join("core.pem")));
+        let subject = String::from_utf8_lossy(&subject);
+        assert!(
+            subject.trim() == format!("subject=CN={pinned}"),
+            "{subject}"
+        );
+    }
+
     /// A site value the halves need that neither the environment's group_vars
     /// set nor any declaration yields is refused (GB-232), naming it and every
     /// place that was read for it; nothing is invented.
@@ -1966,8 +2135,9 @@ mod tests {
         ] {
             assert!(msg.contains(frag), "{frag}\n---\n{msg}");
         }
-        // Derived or set: not named.
-        assert!(!msg.contains("goat_zenoh_edge_core_cn ("), "{msg}");
+        // The core's name needs its address first.
+        assert!(msg.contains("goat_zenoh_edge_core_cn (looked in:"), "{msg}");
+        // Set by hand: not named.
         assert!(!msg.contains("goat_zenoh_edge_image ("), "{msg}");
         assert!(
             !d.path()
@@ -2009,6 +2179,7 @@ mod tests {
              fleet: ghcr.io/{{ ghcr_org }}/goat-fed-republisher@sha256:22\n",
         )
         .unwrap();
+        site_inventory(d.path());
         run(d.path(), &opts(false)).unwrap();
         let gv = d.path().join("ops/ansible/group_vars");
         let edge = std::fs::read_to_string(gv.join("xab_edge/peering-deployment.yml")).unwrap();
@@ -2016,7 +2187,8 @@ mod tests {
         for frag in [
             "goat_zenoh_edge_image: \"ghcr.io/{{ ghcr_org }}/zenoh@sha256:11\"",
             "# goat_zenoh_edge_image: the fabric image the core runs (zenoh_router_image, ops/ansible/roles/goat-zenoh/defaults/main.yml)",
-            "goat_zenoh_edge_core_cn: \"dev-core-xab\"",
+            "goat_zenoh_edge_core_cn: \"dev-core\""
+            ,"# goat_zenoh_edge_core_cn: the core host 192.0.2.10's name in ops/ansible/inventory/dev-site.ini",
             "peering_spire_server_addr: \"192.0.2.10\"",
             "goat_zenoh_edge_core_endpoints:\n  - \"tls/192.0.2.10:7447#root_ca_certificate_file=/var/lib/goat-federation/xab/pki/our-ca.pem\"",
         ] {

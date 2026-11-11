@@ -353,6 +353,11 @@ pub fn derive_inputs(
         (!sans.is_empty()).then(|| sans.join(",")),
         format!("the addresses group_vars/{edge_group}/deployment.yml dials"),
     ));
+    // The core certificate's CN: the name the edge pins for its core, from the
+    // one core-identity function (FED_CORE_CN in the environment overrides it).
+    let (core_cn, cn_src) =
+        super::site_values::phase8_core_cn(repo, peering, edge_group, &core_group);
+    v.push(input("FED_CORE_CN", core_cn, cn_src));
     v.push(input(
         "FED_ROUTER_DOCKER_HOST",
         docker_host_of(repo, &core_group),
@@ -526,6 +531,7 @@ mod tests {
             "FED_CA_CERT",
             "FED_CA_KEY",
             "FED_CORE_SAN",
+            "FED_CORE_CN",
             "FED_ROUTER_DOCKER_HOST",
             "FED_WG_LISTEN_PORT",
         ] {
