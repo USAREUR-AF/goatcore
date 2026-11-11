@@ -226,12 +226,17 @@ start_host() { # $1 name, $2 sovereign, $3 internal ip, [more docker run argumen
 }
 
 # host_package <host> <package>: make sure the host has <package> installed in dpkg's records.
+# This machine's own copy is repacked only when this machine runs the host image's Ubuntu
+# release: a package built for another release (python3-apt for another Python, say) would
+# be recorded as installed and fail to import. Otherwise the host installs it with apt.
 host_package() {
-  local h="$1" pkg="$2" d
+  local h="$1" pkg="$2" d mine theirs
   docker exec "$h" dpkg -s "$pkg" >/dev/null 2>&1 && return 0
+  mine="$(. /etc/os-release 2>/dev/null && echo "${ID:-}-${VERSION_ID:-}")"
+  theirs="$(docker exec "$h" sh -c '. /etc/os-release && echo "$ID-$VERSION_ID"' 2>/dev/null || true)"
   # Built once per run under the run's own WORK, and reused for every host.
   d="$WORK/debs/$pkg"
-  if [ ! -s "$d.deb" ] && dpkg -s "$pkg" >/dev/null 2>&1; then
+  if [ -n "$mine" ] && [ "$mine" = "$theirs" ] && [ ! -s "$d.deb" ] && dpkg -s "$pkg" >/dev/null 2>&1; then
     mkdir -p "$d/DEBIAN"
     dpkg -L "$pkg" | while read -r f; do [ -f "$f" ] && printf '%s\n' "${f#/}"; done \
       | tar -C / -cf - -T - 2>/dev/null | tar -C "$d" -xf -
@@ -242,7 +247,10 @@ host_package() {
     } > "$d/DEBIAN/control"
     dpkg-deb --root-owner-group --build "$d" "$d.deb" >/dev/null 2>&1 || true
   fi
-  if [ -s "$d.deb" ] && docker cp -q "$d.deb" "$h:/root/fe2e-$pkg.deb" \
+  # --force-depends only for a copy of the host's own release: the image lacks the package's
+  # small dependencies (python-apt-common, distro-info-data), whose files the copy does not
+  # need, and the run needs no mirror. A copy of another release is never installed.
+  if [ -n "$mine" ] && [ "$mine" = "$theirs" ] && [ -s "$d.deb" ] && docker cp -q "$d.deb" "$h:/root/fe2e-$pkg.deb" \
     && docker exec "$h" dpkg -i --force-depends "/root/fe2e-$pkg.deb" >/dev/null 2>&1; then
     return 0
   fi
@@ -299,7 +307,8 @@ wait_ready() { # $1 host: systemd up, dockerd answering
       # needs python3-apt, would reach the Ubuntu mirror on every run. So a run needs no mirror:
       # each package in FE2E_HOST_PACKAGES that the host image lacks is installed into the host
       # as a real dpkg package (so the apt module sees it installed), built from this machine's
-      # own installed copy (same release), else fetched with apt; then the host's apt cache is
+      # own installed copy when this machine runs the host image's release, else fetched with apt
+      # inside the host; then the host's apt cache is
       # marked fresh. A host left without one of them stops the unit as an environment fault
       # (BLOCKED), naming the package, never as a FAIL of the tree under test.
       local pkg
@@ -634,8 +643,13 @@ exchange() { # $1 the side that ran phase 5 first, $2 the other side, $3 avenue,
 review_and_admit() { # $1 sovereign, $2 the peering being admitted, [$3 scenario number]
   local s="$1" them="$2" n="${3:-0}" w d t h; w="/var/lib/goat-federation/$them"; d="$WORK/$s/applied-$them"; h="$(drv_host "$s")"
   rm -rf "$d"; mkdir -p "$d"
-  docker cp -q "$h:$w/agreement.json" "$WORK/$s/agreement-$them.json"
-  docker cp -q "$h:$w/theirs-ca.pem" "$d/theirs-ca.pem"
+  # A phase that failed leaves no agreement or partner CA: recorded as a failed step, so the
+  # run reports the check, instead of ending the whole run on docker cp's error.
+  if ! docker cp -q "$h:$w/agreement.json" "$WORK/$s/agreement-$them.json" 2>/dev/null \
+     || ! docker cp -q "$h:$w/theirs-ca.pem" "$d/theirs-ca.pem" 2>/dev/null; then
+    rec "s$n-$s-review-and-admit-$them" -- bash -c "echo '$s: no agreement.json or theirs-ca.pem under $w on $h; an earlier phase did not produce them'; exit 1"
+    return 0
+  fi
   local want got
   want="$(python3 -c 'import json,sys; ag=json.load(open(sys.argv[1])); print([p["ca_fingerprint"] for p in ag["parties"] if p["sovereign_id"]==sys.argv[2]][0])' "$WORK/$s/agreement-$them.json" "$them")"
   got="sha256:$(openssl x509 -in "$d/theirs-ca.pem" -outform DER | sha256sum | cut -d' ' -f1)"
