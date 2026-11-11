@@ -922,6 +922,23 @@ pub fn deployment_halves(
                 edge.push_str(&yaml_line(var, &val));
             }
         }
+        // The two CAs the edge router trusts, both in the allocated cert_dir:
+        // ours, which phase 8 places beside the leaves, and theirs, which
+        // admission places there once its fingerprint matches the agreement.
+        // When the role installs the certificates itself, it derives the
+        // partner CA's path from goat_zenoh_edge_cert_dir and refuses any other.
+        edge.push_str(&format!(
+            "\n# Our CA: phase 8 places it here (peering_leaf_material.py).\n\
+             goat_zenoh_edge_our_ca_path: {}\n",
+            q(&our_ca)
+        ));
+        if !installs_certs(repo, &v.edge_group) {
+            edge.push_str(&format!(
+                "# Their CA: admission places it here, checked against the agreement's fingerprint.\n\
+                 goat_zenoh_edge_partner_ca_path: {}\n",
+                q(&format!("{}/partner-ca.pem", v.cert_dir))
+            ));
+        }
         if let Some(ep) = site
             .iter()
             .find(|s| s.var == "goat_fed_republisher_core_endpoint")
@@ -2006,6 +2023,8 @@ mod tests {
             "peering_spire_enabled: true",
             "peering_spire_server_addr: \"192.0.2.10\"",
             "peering_wg_fips_waived_reason: \"example waiver\"",
+            "goat_zenoh_edge_our_ca_path: \"/var/lib/goat-federation/xab/pki/our-ca.pem\"",
+            "goat_zenoh_edge_partner_ca_path: \"/var/lib/goat-federation/xab/pki/partner-ca.pem\"",
         ] {
             assert!(edge.contains(frag), "{frag}\n---\n{edge}");
         }
@@ -2025,6 +2044,42 @@ mod tests {
         // The rendered halves parse as YAML.
         let _: serde_yaml::Value = serde_yaml::from_str(&edge).unwrap();
         let _: serde_yaml::Value = serde_yaml::from_str(&core).unwrap();
+    }
+
+    /// The rendered edge half names both CAs the edge router trusts, in the
+    /// allocated cert_dir: admission reads goat_zenoh_edge_partner_ca_path from
+    /// the edge group's vars to place their CA (GB-194 without it), and the edge
+    /// role asserts both. When the role installs the certificates itself, it
+    /// derives the partner CA's path, so only ours is rendered.
+    #[test]
+    fn the_rendered_edge_half_names_both_ca_paths_in_the_cert_dir() {
+        let mut a = p("xab", false);
+        a["deployment"] = json!("rendered");
+        let d = repo_with_site(json!([a]), SITE);
+        run(d.path(), &opts(false)).unwrap();
+        let g = |k: &str| super::super::preflight::group_var(d.path(), "xab_edge", k);
+        assert_eq!(
+            g("goat_zenoh_edge_partner_ca_path").as_deref(),
+            Some("/var/lib/goat-federation/xab/pki/partner-ca.pem")
+        );
+        assert_eq!(
+            g("goat_zenoh_edge_our_ca_path").as_deref(),
+            Some("/var/lib/goat-federation/xab/pki/our-ca.pem")
+        );
+
+        let mut a = p("xab", false);
+        a["deployment"] = json!("rendered");
+        let d = repo_with_site(json!([a]), SITE);
+        let pe = d.path().join("ops/ansible/group_vars/peering_edges");
+        std::fs::create_dir_all(&pe).unwrap();
+        std::fs::write(pe.join("certs.yml"), "goat_zenoh_edge_install_certs: true\n").unwrap();
+        run(d.path(), &opts(false)).unwrap();
+        let edge = std::fs::read_to_string(
+            d.path().join("ops/ansible/group_vars/xab_edge/peering-deployment.yml"),
+        )
+        .unwrap();
+        assert!(edge.contains("goat_zenoh_edge_our_ca_path: \"/var/lib/goat-federation/xab/pki/our-ca.pem\""), "{edge}");
+        assert!(!edge.contains("goat_zenoh_edge_partner_ca_path"), "{edge}");
     }
 
     /// The edge's inward endpoint dials the core the republisher dials, and
