@@ -192,8 +192,9 @@ fn push_new(out: &mut Vec<String>, v: &str) {
 ///    rendered peering-deployment.yml);
 /// 2. the address the core's republisher dials, `goat_fed_republisher_core_endpoint`,
 ///    in group_vars/<core>/ or group_vars/all/;
-/// 3. the peering declaration's `hosts: core`;
-/// 4. the `ansible_host` of the one host of the core's inventory group.
+/// 3. the core's address, `site_values::core_address`: the peering
+///    declaration's `hosts: core`, else the `ansible_host` of the one host of
+///    the core's inventory group.
 ///
 /// preflight.py checks that every address of 1 is covered.
 pub fn core_names(repo: &Path, peering: &config::Peering, edge_group: &str, core_group: &str) -> Vec<String> {
@@ -202,11 +203,10 @@ pub fn core_names(repo: &Path, peering: &config::Peering, edge_group: &str, core
     for g in [core_group, "all"] {
         endpoint_hosts(repo, g, "goat_fed_republisher_core_endpoint", &mut out);
     }
-    if let Some(h) = &peering.hosts {
-        push_new(&mut out, &h.core);
-    }
-    if let Some((host, _)) = group_host(repo, core_group) {
-        push_new(&mut out, &host);
+    // The core's own address, from the one core-identity function the rendered
+    // halves use (federate/site_values.rs), so the two never disagree.
+    if let Some((addr, _)) = super::site_values::core_address(repo, peering, core_group, &mut Vec::new()) {
+        push_new(&mut out, &addr);
     }
     let plain = |s: &String| s.chars().all(|c| c.is_ascii_alphanumeric() || ".-:".contains(c));
     out.retain(plain);
@@ -729,12 +729,13 @@ mod tests {
         });
         assert_eq!(
             core_names(r, &p, "xab_edge", "xab_core"),
-            ["core.example.org", "192.0.2.20", "192.0.2.21"]
+            ["core.example.org", "192.0.2.20"],
+            "hosts: core is the core's address; the inventory is read only without it"
         );
         let v = derive_inputs(r, &p, "/w", "xab_edge", None);
         assert_eq!(
             get(&v, "FED_CORE_SAN").value.as_deref(),
-            Some("core.example.org,192.0.2.20,192.0.2.21")
+            Some("core.example.org,192.0.2.20")
         );
         // Only the inventory knows the core: that is the name.
         std::fs::remove_dir_all(&gv).unwrap();
