@@ -631,3 +631,66 @@ fn a_peering_in_its_own_inventory_file_is_planned_and_deployed() {
     assert_eq!(phases_run(&v), [10, 11, 12, 13], "{}", says(&out));
     assert_eq!(w.state()["phases"]["10"]["outcome"], "passed");
 }
+
+/// A core that keeps no committed slot list (no
+/// `group_vars/<env>_hosts/zenoh-lazy-storage.yml`) needs no slot registry and
+/// no FED_SLOT_CHECK=skip: the check is NOT APPLICABLE, as preflight judges
+/// it. A core that keeps one still needs its registry named (GB-194).
+#[test]
+fn the_slot_check_is_not_applicable_without_lazy_slot_storage() {
+    let w = world();
+    let plan = ready(&w, true);
+    let run = |extra: &[&str]| {
+        let out = w
+            .command(extra)
+            .env_remove("FED_SLOT_CHECK")
+            .output()
+            .unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap_or_default();
+        (out, v)
+    };
+    // The slot list exists: the registry must be named, and nothing is placed.
+    let anchors = w
+        .repo
+        .join("ops/ansible/group_vars/zagros_hosts/zenoh-lazy-storage.yml");
+    std::fs::create_dir_all(anchors.parent().unwrap()).unwrap();
+    std::fs::write(&anchors, "zenoh_lazy_storage_slots: []\n").unwrap();
+    let (out, v) = run(&["deploy", "hello-ally", "--approve-plan", &plan, "--review-in-pr"]);
+    assert!(
+        rows(&v, "failed")
+            .iter()
+            .any(|d| d.starts_with("GB-194") && d.contains("FED_SLOT_REGISTRY_DB")),
+        "{}",
+        says(&out)
+    );
+    // No slot list: the summary and its digest, then the approved admission
+    // with the slot check NOT APPLICABLE.
+    std::fs::remove_file(&anchors).unwrap();
+    let (out, _) = run(&["deploy", "hello-ally", "--approve-plan", &plan, "--review-in-pr"]);
+    assert!(out.status.success(), "{}", says(&out));
+    let review = std::fs::read_to_string(w.work.join("admission/review.md")).unwrap();
+    let digest = review
+        .split("--approve-admission ")
+        .nth(1)
+        .unwrap()
+        .split_whitespace()
+        .next()
+        .unwrap()
+        .to_string();
+    let (out, v) = run(&[
+        "deploy",
+        "hello-ally",
+        "--approve-plan",
+        &plan,
+        "--approve-admission",
+        &digest,
+    ]);
+    assert!(out.status.success(), "{}", says(&out));
+    assert!(
+        rows(&v, "slots").iter().any(|d| d.starts_with("NOT APPLICABLE")
+            && d.contains("zagros_hosts/zenoh-lazy-storage.yml")),
+        "{}",
+        says(&out)
+    );
+    assert!(w.log().contains("restart"), "{}", w.log());
+}

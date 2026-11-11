@@ -42,7 +42,11 @@
 //! FED_CORE_GROUP) or FED_CORE_RESTART and FED_CORE_DRY_RUN, unless the core
 //! is the goat-zenoh role's (federate/admit_role.rs: its own play, found from
 //! its declarations); and
-//! FED_SLOT_REGISTRY_DB or FED_SLOT_PG_SSH (or FED_SLOT_CHECK=skip).
+//! FED_SLOT_REGISTRY_DB or FED_SLOT_PG_SSH (or FED_SLOT_CHECK=skip). A
+//! deployment that keeps no committed slot list (no
+//! `group_vars/<env>_hosts/zenoh-lazy-storage.yml`, `FED_SLOT_ENV` naming
+//! another environment) needs none of those: the check is NOT APPLICABLE, as
+//! preflight judges it.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -198,6 +202,17 @@ enum Slot {
     Db(String),
     Pg(String),
     Skip,
+    /// The deployment declares no lazy slot storage, so there is no slot list
+    /// to check (the reason, as preflight words it).
+    NotApplicable(String),
+}
+
+/// The committed slot list a deployment with lazy slot storage keeps, as
+/// preflight finds it (preflight_live.py `slot_anchor_file`).
+fn slot_anchor_file(repo: &Path, env_name: &str) -> PathBuf {
+    repo.join("ops/ansible/group_vars")
+        .join(format!("{}_hosts", env_name.replace('-', "_")))
+        .join("zenoh-lazy-storage.yml")
 }
 
 struct Core {
@@ -218,7 +233,12 @@ struct Core {
 
 impl Core {
     /// The deployment's settings, or the names of the ones missing (GB-194).
-    fn from_env(with: &str, role: Option<super::admit_role::RoleCore>) -> Result<Core, Vec<&'static str>> {
+    fn from_env(
+        repo: &Path,
+        with: &str,
+        env_name: &str,
+        role: Option<super::admit_role::RoleCore>,
+    ) -> Result<Core, Vec<&'static str>> {
         let mut missing = Vec::new();
         let (org, seed, out) = (
             env("FED_CORE_ACL_ORG").map(PathBuf::from),
@@ -243,6 +263,7 @@ impl Core {
         if play.is_none() && restart.is_some() && dry_run.is_none() {
             missing.push("FED_CORE_DRY_RUN (a command, or skip) beside FED_CORE_RESTART");
         }
+        let slot_env = env("FED_SLOT_ENV").unwrap_or_else(|| env_name.to_string());
         let slot = match (
             env("FED_SLOT_CHECK").as_deref(),
             env("FED_SLOT_REGISTRY_DB"),
@@ -251,6 +272,12 @@ impl Core {
             (Some("skip"), _, _) => Slot::Skip,
             (_, Some(db), _) => Slot::Db(db),
             (_, None, Some(h)) => Slot::Pg(h),
+            // No registry named: when the deployment keeps no slot list there
+            // is nothing to check, exactly as preflight judges it.
+            _ if !slot_anchor_file(repo, &slot_env).is_file() => Slot::NotApplicable(format!(
+                "no {}: this deployment declares no lazy slot storage",
+                slot_anchor_file(Path::new(""), &slot_env).display()
+            )),
             _ => {
                 missing.push("FED_SLOT_REGISTRY_DB or FED_SLOT_PG_SSH (or FED_SLOT_CHECK=skip)");
                 Slot::Skip
@@ -583,7 +610,7 @@ pub fn admit(
     } else {
         None
     };
-    let core = match Core::from_env(with, role) {
+    let core = match Core::from_env(repo, with, env_name, role) {
         Ok(c) => c,
         Err(missing) => {
             return fail(
@@ -896,7 +923,7 @@ pub fn admit(
     // 3. slot list against the registry, just before the restart
     let script = repo.join("ops/scripts/sync-slot-anchors.py");
     let slot = match &core.slot {
-        Slot::Skip => None,
+        Slot::Skip | Slot::NotApplicable(_) => None,
         Slot::Db(db) => Some(vec![
             "--env".to_string(),
             env_name.to_string(),
@@ -937,7 +964,10 @@ pub fn admit(
         }
         None => rows.push(ok(
             "slots",
-            "SKIP: FED_SLOT_CHECK=skip, so the slot list was not checked",
+            match &core.slot {
+                Slot::NotApplicable(why) => format!("NOT APPLICABLE: {why}"),
+                _ => "SKIP: FED_SLOT_CHECK=skip, so the slot list was not checked".into(),
+            },
         )),
     }
     // 4. restart
