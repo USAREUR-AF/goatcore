@@ -297,13 +297,21 @@ confirmed, and both operators approve the result, is `exchanging` published, and
 reviewable change through your normal configuration process. The two bundles are reviewed by
 people; nothing gates on the partner's report automatically.
 
-### `status` — health and evidence, with its age
+### `status` — the run journal and the evidence, with its age
 
 `goatbuilder federate status` lists every declared peering; `goatbuilder federate status <partner>`
-shows one: where the peering stands, read from its actual state, and what it waits for (you, the
-partner, or a fix), the agreement digest, the offer, the per-peering values, deployment health, and the last
-acceptance evidence with its age and scope. Later drift, expiry or a failed health check marks the
-evidence stale or degraded; it never changes a grant by itself.
+shows one. It reads the peering's run journal and its evidence in the working directory, and
+nothing else: it writes nothing, takes no lock and reaches no host. For each peering it shows the
+last run and how it ended (`in progress` or `killed` for a run with no end, by whether the process
+in its lock file is alive), each phase's last outcome, the confirmations given, the resources it
+holds on shared hosts, the digest of the agreement in the working directory, the last acceptance
+evidence with its verdict, age and counts by outcome word, and the command that carries the
+peering on.
+
+The evidence is `stale` only when it was produced against another agreement than the one in the
+working directory now, and `unknown` when either digest is missing. `status` does not measure the
+deployed edge's live health, does not show the offer, and does not say whether a stop waits for
+you or for the partner; the stop's own message and its fix say that.
 
 ### When a phase fails
 
