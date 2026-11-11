@@ -81,6 +81,8 @@ package back. goatbuilder instead measures both hosts from the operator's machin
   measures the machine the run is on) makes phase 3 `goatbuilder federate init ... --over-ssh <peering> --ssh-edge-group <edge group>
   [--router-container $FED_ROUTER_CONTAINER] --repo <repository>`, run in process whoever runs
   the other verbs (`FED_VERBS`), with no `DOCKER_HOST`; `FED_ROUTER_DOCKER_HOST` is not used.
+  A GB-113 refusal over SSH (no router found, or several) names both ways to select one:
+  `--router-container`, and `FED_ROUTER_CONTAINER`, which the one command passes as that flag.
   `peering-standup.sh` prints and runs the same words through `$GOATBUILDER_BIN`, and the
   parity gate compares both avenues with `FED_MEASURE` unset and set. Phase 1's local
   `docker compose` check still reads the machine the run is on (set

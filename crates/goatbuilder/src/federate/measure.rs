@@ -41,6 +41,11 @@ pub const INVENTORY: &str = "inventory/peering-edges.ini";
 
 /// How the operator names the core router by hand.
 pub const ROUTER_FLAG: &str = "--router-container";
+/// How a refusal tells the operator to name the core router: the flag of
+/// `goatbuilder federate init --over-ssh`, and the variable the one command
+/// (`goatbuilder federate <partner>`) passes to it as that flag.
+pub const ROUTER_KNOB: &str =
+    "--router-container (FED_ROUTER_CONTAINER for goatbuilder federate <partner>)";
 
 /// The container runtimes asked on the core host, in order.
 const RUNTIMES: &[&str] = &["docker", "podman"];
@@ -623,7 +628,7 @@ pub fn measure(
         &core,
         choice.target(),
         RUNTIMES,
-        ROUTER_FLAG,
+        ROUTER_KNOB,
         interface,
         Some(&spire_conf(&hosts.core)),
     );
@@ -1303,6 +1308,42 @@ mod tests {
         );
         let w = phase3_words(vec!["init".into()], "xab", "xab_edge", Some(""), Path::new("/r"));
         assert!(!w.contains(&"--router-container".to_string()), "{w:?}");
+    }
+
+    /// `init --over-ssh` with nothing naming the core router: discovery runs on
+    /// the core host (here this machine), finds no router or several, and the
+    /// GB-113 refusal names both ways to pick one, the flag and the variable
+    /// the one command passes as it.
+    #[test]
+    fn a_router_discovery_refusal_names_the_flag_and_the_variable() {
+        let inv = json!({
+            "_meta": {"hostvars": {
+                "station": {"ansible_connection": "local", "ansible_become": false}
+            }},
+            "all": {"children": ["xab_edge", "xab_core"]},
+            "xab_edge": {"hosts": ["station"]},
+            "xab_core": {"hosts": ["station"]}
+        });
+        let repo = checkout_with_inventory(&inv);
+        let ctx = tempfile::tempdir().unwrap();
+        let site = site(ctx.path());
+        let m = MeasureArgs {
+            over_ssh: Some("xab".into()),
+            ..Default::default()
+        };
+        let mut out = Vec::new();
+        match run_init(repo.path(), &site, &init_args(), &m, &mut out) {
+            Err(e) if code(&e).as_deref() == Some("GB-113") => {
+                let text = format!("{e:#}");
+                assert!(
+                    text.contains("--router-container") && text.contains("FED_ROUTER_CONTAINER"),
+                    "{text}"
+                );
+            }
+            Err(e) => panic!("expected GB-113, got {e:#}"),
+            Ok(_) => eprintln!("one core router runs on this machine: nothing to refuse, skipped"),
+        }
+        assert!(ROUTER_KNOB.contains(ROUTER_FLAG) && ROUTER_KNOB.contains("FED_ROUTER_CONTAINER"));
     }
 
     /// The whole path of `init --over-ssh`, short of a real host: the flags
