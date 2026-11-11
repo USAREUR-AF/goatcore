@@ -280,6 +280,11 @@ fn plan_with(repo: &Path, o: &Options, work: &str, edge_group: &str, resume: &st
     if !signing.is_empty() {
         init_words.extend(w(&["--signing-key", &signing]));
     }
+    // The peering's generated federation.toml (FED_DECLARATION, federate/preflight.rs).
+    let declaration = env_or("FED_DECLARATION", String::new());
+    if !declaration.is_empty() {
+        init_words.extend(w(&["--declaration", &declaration]));
+    }
     init_words.extend(w(&["--out", &ours]));
     // This peering's own inventory file (`goatbuilder federate allocate`, when
     // not every peering declares hosts:), read beside the hand-written one.
@@ -578,7 +583,7 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
     }
     // A peering's offer: may narrow federation.toml's release sets, never widen them.
     if o.mock.is_none() {
-        declaration::driver_check(&cfg, o.with, o.env)?;
+        declaration::driver_check(&cfg, o.with, o.env, repo)?;
     }
     let work = work_dir(o);
     // Phases 7, 8, 9 and 14 always name our party: without --as, our
