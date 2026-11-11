@@ -305,11 +305,12 @@ wait_ready() { # $1 host: systemd up, dockerd answering
       # The roles' apt tasks (update_cache with cache_valid_time 3600; goat-peering-wg installs
       # wireguard-tools and nftables, goat-zenoh installs unzip) and Ansible's apt module, which
       # needs python3-apt, would reach the Ubuntu mirror on every run. So a run needs no mirror:
-      # each package in FE2E_HOST_PACKAGES that the host image lacks is installed into the host
-      # as a real dpkg package (so the apt module sees it installed), built from this machine's
-      # own installed copy when this machine runs the host image's release, else fetched with apt
-      # inside the host; then the host's apt cache is
-      # marked fresh. A host left without one of them stops the unit as an environment fault
+      # the host image installs FE2E_HOST_PACKAGES at build time (host/Dockerfile), and this
+      # step only confirms each is there. A package the image lacks (an older image, or a
+      # longer FE2E_HOST_PACKAGES) is installed into the host as a real dpkg package, built
+      # from this machine's own installed copy when this machine runs the host image's
+      # release, else fetched with apt inside the host. Then the host's apt cache is marked
+      # fresh. A host left without one of them stops the unit as an environment fault
       # (BLOCKED), naming the package, never as a FAIL of the tree under test.
       local pkg
       for pkg in ${FE2E_HOST_PACKAGES:-python3-apt unzip}; do
