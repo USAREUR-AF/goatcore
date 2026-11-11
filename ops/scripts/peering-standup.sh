@@ -40,6 +40,10 @@
 #                         reach them; nothing is copied to either host) or `here`
 #                         (the host this runs on, and the core router through
 #                         FED_ROUTER_DOCKER_HOST, with whoever FED_VERBS names)
+#     FED_DECLARATION     the peering's own federation.toml for phase 3 (default: the
+#                         goat context's federation.toml). goatbuilder sets it to
+#                         ops/federation/<env>/peerings/<peering>/federation.toml when
+#                         `goatbuilder federate allocate` generated that file
 #     FED_WORK            working directory (default: /var/lib/goat-federation/<peering>)
 #     FED_COUNTERPARTY    path to the counterparty's package (phase 6 needs it)
 #     FED_SIGNING_KEY     our Ed25519 signing key (64 hex or 44 base64)
@@ -271,6 +275,12 @@ step 2 A "prepare what the package measures: the federation interface and the SP
 #     this machine (goatbuilder federate init --over-ssh); only goatbuilder can, so
 #     phase 3 runs goatbuilder whoever runs the other verbs, and
 #     FED_ROUTER_DOCKER_HOST is not used. FED_MEASURE=here measures this host.
+#     FED_DECLARATION names the peering's own federation.toml for init to read
+#     (goatbuilder derives it when allocate generated one); unset, init reads the
+#     goat context's.
+case "${FED_DECLARATION:-}" in *"'"*)
+  echo "peering-standup.sh: FED_DECLARATION holds a quote: '$FED_DECLARATION'" >&2; exit 2 ;;
+esac
 if [ "$FED_MEASURE" = ssh ]; then
   # Each value below is pasted into a command that step evaluates.
   for v in "$PEERING" "$EDGE_GROUP" "${FED_ROUTER_CONTAINER:-x}"; do
@@ -279,10 +289,10 @@ if [ "$FED_MEASURE" = ssh ]; then
     esac
   done
   step 3 T "init — our half, read from the running system" \
-    "$GOATBUILDER_BIN federate init --with-transport --with-data ${FED_SIGNING_KEY:+--signing-key '$FED_SIGNING_KEY' }--out '$OURS' --over-ssh '$PEERING' --ssh-edge-group '$EDGE_GROUP' ${FED_ROUTER_CONTAINER:+--router-container '$FED_ROUTER_CONTAINER' }--repo '$REPO'"
+    "$GOATBUILDER_BIN federate init --with-transport --with-data ${FED_SIGNING_KEY:+--signing-key '$FED_SIGNING_KEY' }${FED_DECLARATION:+--declaration '$FED_DECLARATION' }--out '$OURS' --over-ssh '$PEERING' --ssh-edge-group '$EDGE_GROUP' ${FED_ROUTER_CONTAINER:+--router-container '$FED_ROUTER_CONTAINER' }--repo '$REPO'"
 else
   step 3 T "init — our half, read from the running system" \
-    "${FED_ROUTER_DOCKER_HOST:+DOCKER_HOST='$FED_ROUTER_DOCKER_HOST' }$FED_VERB init --with-transport --with-data ${FED_SIGNING_KEY:+--signing-key '$FED_SIGNING_KEY' }--out '$OURS'"
+    "${FED_ROUTER_DOCKER_HOST:+DOCKER_HOST='$FED_ROUTER_DOCKER_HOST' }$FED_VERB init --with-transport --with-data ${FED_SIGNING_KEY:+--signing-key '$FED_SIGNING_KEY' }${FED_DECLARATION:+--declaration '$FED_DECLARATION' }--out '$OURS'"
 fi
 
 step 4 T "lint our package against the spec" \

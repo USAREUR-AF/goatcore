@@ -319,6 +319,7 @@ Exit 23 means something could not be derived; the list is the output.
 | `--signing-key <SIGNING_KEY>` | Our Ed25519 signing key: 64 hex characters (the RFC 8032 seed) or 44 base64 characters. Without it this prints the exact bytes to sign and stops — it will not invent a key |  |
 | `--out <OUT>` | Write the package's canonical bytes here |  |
 | `--json` | One JSON object instead of the glyph lines |  |
+| `--declaration <DECLARATION>` | Read the declaration from this file instead of federation.toml in the context directory: a peering's own federation.toml, which goatbuilder generates from the environment's. Identity is still read from the context directory |  |
 
 ## `goatbuilder federate lint`
 
