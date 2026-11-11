@@ -219,13 +219,11 @@ def summarize_twonode(ticks: list[dict]) -> dict:
     add("Hydra-A /health/ready", "hydra_a_health", lambda v: int(v) == 200)
     add("Hydra-B /health/ready", "hydra_b_health", lambda v: int(v) == 200)
 
-    # F3 (per ADR 1010 D6): concurrent same-email identity-create at A
-    # AND B — verifies the production discipline (D4: writes through
-    # admin API only) holds at the API layer. Pass = exactly one of the
-    # two parallel admin API calls returned 200; the other 409. Fail =
-    # both returned 200 (uniqueness fell through to Spock LWW).
+    # F3: only an observed 201 + 409 counts as a duplicate rejection.
+    # Historical ticks counted HTTP 200, discarded statuses, and cannot
+    # distinguish concurrent acceptance from a request/measurement failure.
     add(
-        "F3 (ADR 1010 D6) — Kratos app-layer caught duplicate-email create at A+B",
+        "F3 — concurrent create returned one identity and one conflict at A+B",
         "f3_app_layer_caught",
         lambda v: int(v) == 1,
     )

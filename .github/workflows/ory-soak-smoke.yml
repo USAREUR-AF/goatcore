@@ -39,6 +39,7 @@ on:
       - 'ops/postgres/spock/Dockerfile'
       - 'ops/postgres/spock/init/**'
       - '.github/workflows/ory-soak-smoke.yml'
+      - 'tests/test_ory_concurrent_identity.py'
   schedule:
     # Saturday 04:17 UTC — after mgmt-host-bootstrap-cron at 03:17 UTC,
     # before any human-attended weekend work.
@@ -63,6 +64,13 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
+  concurrent-identity-probe-tests:
+    name: concurrent identity probe contract
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 tests/test_ory_concurrent_identity.py
+
   build-postgres-spock-image:
     name: build postgres-spock-test:contribs
     runs-on: ubuntu-24.04
@@ -157,6 +165,23 @@ jobs:
           TICKS=$(python3 ops/ansible/roles/ory/tests/soak/summarize.py --json "$EVIDENCE" | python3 -c "import sys,json; print(json.load(sys.stdin)['ticks'])")
           echo "ticks: $TICKS"
           [ "$TICKS" -ge 3 ] || { echo "::error::soak produced fewer than 3 ticks — likely a driver regression"; exit 1; }
+      - name: Require observed duplicate rejection
+        # A successful smoke harness is not proof of identity uniqueness.
+        # This gate stays red on dual acceptance or missing/failed requests.
+        run: |
+          set -euo pipefail
+          EVIDENCE=$(find docs/reports -name '*-ory-spock-replicated-soak-evidence.jsonl' -printf '%T@ %p\n' | sort -rn | head -1 | cut -d' ' -f2-)
+          python3 - "$EVIDENCE" <<'PYCODE'
+          import json
+          import sys
+          from pathlib import Path
+          ticks = [json.loads(line) for line in Path(sys.argv[1]).read_text().splitlines() if line.strip()]
+          failed = [tick for tick in ticks if tick.get("f3_outcome") != "unique_conflict"]
+          for tick in failed:
+              print(json.dumps({key: value for key, value in tick.items() if key.startswith("f3_")}, sort_keys=True))
+          if not ticks or failed:
+              raise SystemExit("Concurrent identity uniqueness is unproven; inspect the F3 artifact.")
+          PYCODE
       - uses: actions/upload-artifact@v4
         if: always()
         with:
