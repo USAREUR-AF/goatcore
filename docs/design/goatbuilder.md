@@ -384,11 +384,13 @@ The specification is section 2 of the 9 November federation automation proposal:
 - **A dry run** asks for no approval and changes nothing; it checks a hash that is given and whether the plan's sections still hold, and prints the phases a deploy would run.
 - **`goatbuilder federate test <partner>`** runs phase 14, acceptance, and nothing else, recorded as a `test` run.
 - `--plan` and `--approve-plan` belong to `deploy`; `--to` and `--resume` do not apply to a stage; `deploy` and `test` need the partner (GB-189).
-- `goatbuilder federate <partner>` is unchanged: it still runs phases 1 to 14 without a plan, as it always has, until the default switch.
+- **`goatbuilder federate <partner>` is the whole procedure at a terminal.** With a person at the terminal (stdin and stderr both terminals, and confirmations asked, the default), the plain run does not stop at phase 10. Instead it records phase 10 as handed over and releases the peering's lock, and `deploy::whole` takes over. It makes the plan (`goatbuilder federate plan`, live) and shows it. Deploy then asks to approve the plan's hash (the first prompt), asks to approve what our core admits (confirmation 2, the second prompt), and runs 10 to 13. Acceptance (14) runs last. One command, one decision and the two confirmations. Without a terminal, in a dry run or a mock, the plain run stops at phase 10 as before, and the stop names `goatbuilder federate plan`, `deploy` and `test`. Tested in `crates/goatbuilder/tests/federate_admit.rs` (`the_plain_run_admits_at_its_prompt_and_carries_on`, under a pseudo-terminal; `without_a_terminal_the_stop_at_10_names_plan_and_deploy`).
+
+  Status: WIP — gate: goatbuilder-only-both-sides `{first,second}-plain-run-admits` and nothing-hand-written `plain-run-admits` pass.
 
 **Not in the recheck:** group_vars and inventory values the plays read that the plan does not list. The recheck covers what the plan records (its `inputs`, `resources`, host addresses, rendered files, `pki/`, the agreement and the live checks); another value a play reads from outside `<work>` can change after approval without refusing the deploy. Listing every value the plays read is left to a later stage.
 
-**Not built:** `goatbuilder federate <partner>` running plan, deploy and test in order with the human stops: a default switch.
+**Not built:** the same hand-over without a terminal. Approvals given by flag (`--approve-plan`, `--approve-admission`) still belong to `deploy`.
 
 ### Per-peering files: rendered for review
 

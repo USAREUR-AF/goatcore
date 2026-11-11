@@ -1468,7 +1468,12 @@ fn main() {
                     _ => {
                         let values = federate::Values { ask: federate::prompt::ask_by_default(*confirm, *no_confirm), partner_key: partner_key.clone(), partner_ca_fingerprint: partner_ca_fingerprint.clone(), agreement_digest: agreement_digest.clone(), pointer_package: place_pointer_package.clone() };
                         let admission = federate::Admission { approve: approve_admission.clone(), review_in_pr: *review_in_pr };
-                        federate::federate_with(&repo, &o, &mut federate::Surface { resume: !*no_resume, values, admission, ask: Some(Box::new(federate::prompt::Terminal)), ..Default::default() })
+                        let ask = values.ask;
+                        // With a person at the terminal, phase 10 hands over to
+                        // plan, deploy and test: one command, the two prompts.
+                        let hand_off_at_10 = ask && federate::prompt::Terminal::present() && !*dry_run && cli.mock.is_none();
+                        let mut s = federate::Surface { resume: !*no_resume, values, admission: admission.clone(), ask: Some(Box::new(federate::prompt::Terminal)), hand_off_at_10, ..Default::default() };
+                        federate::deploy::whole(&repo, &o, &mut s, &mut federate::prompt::Terminal, admission, ask)
                     }
                 }
             }
