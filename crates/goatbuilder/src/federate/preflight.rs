@@ -216,16 +216,16 @@ pub fn core_names(repo: &Path, peering: &config::Peering, edge_group: &str, core
 /// Where [`core_names`] looks, for the message when it finds nothing.
 pub fn core_names_sources(edge_group: &str, core_group: &str) -> String {
     format!(
-        "goat_zenoh_edge_core_endpoints in group_vars/{edge_group}/, goat_fed_republisher_core_endpoint in group_vars/{core_group}/ or group_vars/all/, peerings[].hosts.core in goatbuilder.yaml, or the ansible_host of the one host of [{core_group}] in ops/ansible/inventory/peering-edges.ini"
+        "goat_zenoh_edge_core_endpoints in group_vars/{edge_group}/, goat_fed_republisher_core_endpoint in group_vars/{core_group}/ or group_vars/all/, peerings[].hosts.core in goatbuilder.yaml, or the ansible_host of the one host of [{core_group}] in ops/ansible/inventory/peering-edges.ini or peering-{edge_group}.ini"
     )
 }
 
-/// The one host of an inventory group in ops/ansible/inventory/peering-edges.ini:
-/// its `ansible_host` (else its name) and `ansible_user`. `None` when the group
-/// has no host or several: then nothing is guessed.
+/// The one host of an inventory group in the peering inventory
+/// (`plan::peering_inventory_text`: peering-edges.ini and the per-peering
+/// files): its `ansible_host` (else its name) and `ansible_user`. `None` when
+/// the group has no host or several: then nothing is guessed.
 fn group_host(repo: &Path, group: &str) -> Option<(String, Option<String>)> {
-    let text =
-        std::fs::read_to_string(repo.join("ops/ansible/inventory/peering-edges.ini")).ok()?;
+    let text = super::plan::peering_inventory_text(repo);
     let mut inside = false;
     let mut hosts = Vec::new();
     for line in text.lines().map(str::trim) {

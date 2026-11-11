@@ -154,9 +154,9 @@ pub fn core_address(
         "peerings[].hosts.core of peering '{}' in goatbuilder.yaml",
         peering.with
     ));
-    let inv = "ops/ansible/inventory/peering-edges.ini";
+    let inv = "ops/ansible/inventory/peering-edges.ini and the per-peering peering-*.ini";
     looked.push(format!("the one host of [{core_group}] in {inv}"));
-    let text = std::fs::read_to_string(repo.join(inv)).ok()?;
+    let text = super::plan::peering_inventory_text(repo);
     let hosts: Vec<(String, String)> = super::site_hosts::groups(&text)
         .into_iter()
         .filter(|(g, _)| g == core_group)
