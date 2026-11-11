@@ -26,7 +26,7 @@ A GitHub runner installs packages from Ubuntu's archive, through its Azure mirro
 
 `ops/ci/apt-install-fallback.sh` sees `Acquire::http::Proxy` once this file is written, and then uses the proxy and never rewrites sources. So the two never fight.
 
-Nothing restarts.
+Nothing restarts. The docker CLI reads its config on each command, and apt reads its config on each run.
 
 ## Where the image is named
 
@@ -39,7 +39,7 @@ The image is named in two places. Swap the pushed digest into both:
 
 - The probe checks only the first mirror apt names, the runner's Azure mirror. If archive.ubuntu.com or security.ubuntu.com is down while Azure answers, the action does not fail over. That matters to windows-portability, which reads those two hosts directly.
 - The cache image must listen on all addresses, not only 127.0.0.1. Docker builds and containers reach it at the bridge gateway, and a service at its own hostname.
-- fresh-ubuntu's service image is pulled on every run, not only on failover. The docker CLI reads its config on each command, and apt reads its config on each run.
+- fresh-ubuntu's service image is pulled on every run, not only on failover.
 
 ## Job containers
 
