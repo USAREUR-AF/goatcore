@@ -13,6 +13,7 @@ The federation e2e environment runs synthetic sovereign environments on one Linu
 | Scenarios in the catalog marked `not_built:` | Not built; each entry names why |
 | Core router deployed by the `goat-zenoh` role | Built: `FE2E_CORE=role` (unit `pair-role`, scenarios `core-by-role`, `preflight-slot-list`); the default stays the hand-run router until the other units pass under it |
 | Running the same scenarios on real hosts through `live-host.sh` | Designed, not built (§Real hosts) |
+| `goatbuilder-only-both-sides` and `nothing-hand-written`, the one command on a terminal (`units/onecmd.sh`, `units/nohand.sh`) | Built and measured (§The one command, and nothing hand-written) |
 
 ## Run one scenario on your own machine
 
@@ -126,6 +127,24 @@ The engine reaches a host through four operations, and only these: run a command
 - units unchanged: they name hosts by role (`<id>-core`, `<id>-edge`) and never by address;
 - network profiles become preconditions checked before a unit runs (inbound reachability, a held port), not things the harness creates; a profile the hosts cannot provide makes its scenarios BLOCKED with that reason;
 - each operator runs only the units for the hosts they hold, and the two sides' result files are exchanged by file, with the partner's checks labeled `observer: peer-reported`.
+
+## The one command, and nothing hand-written
+
+Two units drive `goatbuilder federate <partner>` on a pseudo-terminal and answer its prompts from the partner's side of the lab (`lib/answer.py`): the partner's signing key and CA fingerprint, the agreement and package digests. Every switch stays in its released position.
+
+`goatbuilder-only-both-sides` (`units/onecmd.sh`) federates both sovereigns by the one command alone and lists every step the harness had to take outside it.
+
+`nothing-hand-written` (`units/nohand.sh`) starts one sovereign with no peering at all. Its operator's input is the peering entry in `goatbuilder.yaml` and the offer in `ops/federation/<us>/federation.toml`; every other file and value must come from `goatbuilder federate allocate` and `goatbuilder federate <partner>`. Both cores are deployed by the `goat-zenoh` role and declare only `site_id`. Admission's values (`FED_CORE_*`, `FED_SLOT_CHECK`) are withheld on both sides: the sovereign admits through the plain run, the partner through `federate plan` and `federate deploy`. Once both have passed phase 13, phase 14 runs inside the command on each side.
+
+The unit is strict by default (`FE2E_NH_MODE=strict`): nothing is given back, nothing is admitted by hand, and the first refusal is the result. `FE2E_NH_MODE=loop` keeps the lab up and waits at each refusal for a fixer's build, then resumes that side from the failed phase (`units/nohand-loop.sh`). `survey` gives each missing value back and lists it, to show every gap in one pass.
+
+What a person still had to write is the list `RECORD/hand-written.txt`. It may hold only three reviewed lab-only lines (`nh_lab_only`), and any other line fails the scenario:
+
+| Lab-only line | Why it belongs to the lab |
+|---|---|
+| `goat_fed_republisher_image` | the lab builds the republisher image locally; a deployment pins its own |
+| `peering_wg_fips_waived_reason` | the lab hosts are stock Ubuntu without a FIPS module; a deployment records its own waiver |
+| phase 14's counterparty surfaces (`FED_THEIRS_REST`, `FED_SPIRE_THEIRS`, the probe launcher, a network reach into the partner) | only a drill owns both sides; a production operator holds only its own, so phase 14 exits 3 until the partner's half is proven (`federation-acceptance.md`) |
 
 ## Solo party (an outside partner)
 

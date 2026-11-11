@@ -37,6 +37,8 @@ units:
   # The solo unit waits on people at each human step (FE2E_SOLO_STEP_TIMEOUT each), so its
   # limit (timeout, seconds) is two days; env --parties "<lab> <partner>" replaces these ids.
   solo: {parties: "xae xaf", timeout: 172800}
+  onecmd: {parties: "xaa xab"}
+  nohand: {parties: "xaa xab"}
 
 scenarios:
   - id: two-party-full
@@ -880,3 +882,97 @@ scenarios:
       - {id: our-edge-not-restarted, step: "solo-our-edge-was-not-restarted"}
       - {id: partner-received-after-its-core-restarts, step: "solo-partner-received-after-its-core-restarts", observer: peer-reported}
       - {id: tunnel-both-ways, step: "solo-tunnel-carried-both-ways"}
+
+  - id: goatbuilder-only-both-sides
+    title: Both sides driven by `goatbuilder federate <partner>` alone, every switch released
+    unit: {goatbuilder: onecmd}
+    runs_where: local
+    pass_condition: >
+      Two lab sovereigns, each driven only by `goatbuilder federate <partner>` with every
+      default switch in its released position (no --from, --to, --as, --yes or --confirm),
+      run on a terminal and run again whenever it stops. The confirmations are answered at
+      the command's own prompts from what the partner reads aloud (its verifying key, CA
+      fingerprint and agreement digest, from the partner's own files); the packages cross
+      through the peering directory. Both sides pass every phase 1 to 14 through the command,
+      admission on each core included; both hold one agreement digest; the tunnel handshakes;
+      strict acceptance (goatbuilder federate test, run-owned probes through the drill's
+      launcher) passes from both sides; and the harness does nothing the command should
+      have done (each such step is listed in the reason of nothing-outside-the-command).
+    checks:
+      - {id: first-phases-1-to-5, step: "oc-{A}-{B}-phases-1-to-5"}
+      - {id: first-phases-6-to-9, step: "oc-{A}-{B}-phases-6-to-9"}
+      - {id: first-phase-10-admission, step: "oc-{A}-{B}-phases-10"}
+      - {id: first-phases-11-to-12, step: "oc-{A}-{B}-phases-11-to-12"}
+      - {id: first-phase-13, step: "oc-{A}-{B}-phases-13"}
+      - {id: first-phase-14-in-the-command, step: "oc-{A}-{B}-phases-14", required: false}
+      - {id: first-confirmed-at-the-terminal, step: "oc-{A}-{B}-confirmed-at-the-terminal"}
+      - {id: second-phases-1-to-5, step: "oc-{B}-{A}-phases-1-to-5"}
+      - {id: second-phases-6-to-9, step: "oc-{B}-{A}-phases-6-to-9"}
+      - {id: second-phase-10-admission, step: "oc-{B}-{A}-phases-10"}
+      - {id: second-phases-11-to-12, step: "oc-{B}-{A}-phases-11-to-12"}
+      - {id: second-phase-13, step: "oc-{B}-{A}-phases-13"}
+      - {id: second-phase-14-in-the-command, step: "oc-{B}-{A}-phases-14", required: false}
+      - {id: second-confirmed-at-the-terminal, step: "oc-{B}-{A}-confirmed-at-the-terminal"}
+      - {id: one-agreement, step: "oc-{A}-{B}-one-agreement-digest"}
+      - {id: handshake, step: "oc-{A}-{B}-a-wireguard-handshake"}
+      - {id: acceptance-first, step: "oc-acceptance-as-{A}-with-{B}"}
+      - {id: acceptance-second, step: "oc-acceptance-as-{B}-with-{A}"}
+      - {id: first-plain-run-admits, step: "oc-{A}-{B}-plain-run-admits"}
+      - {id: second-plain-run-admits, step: "oc-{B}-{A}-plain-run-admits"}
+      - {id: first-deploy-carries-past-its-admission, step: "oc-{A}-{B}-deploy-carries-past-its-admission"}
+      - {id: second-deploy-carries-past-its-admission, step: "oc-{B}-{A}-deploy-carries-past-its-admission"}
+      - {id: first-mints-as-us-without-as, step: "oc-{A}-{B}-mints-as-us-without-as"}
+      - {id: second-mints-as-us-without-as, step: "oc-{B}-{A}-mints-as-us-without-as"}
+      - {id: nothing-outside-the-command, step: "oc-nothing-outside-the-command"}
+
+  - id: nothing-hand-written
+    title: A peering declared from nothing, every file but the operator's input from the command
+    unit: {goatbuilder: nohand}
+    runs_where: local
+    pass_condition: >
+      {A} starts with no peering to {B}: overlay.py --no-peering writes no peering group_vars,
+      no peering inventory and no goatbuilder.yaml `peerings:` entry. The operator's input is
+      exactly the peering entry in goatbuilder.yaml (with, environment, site, edge_class),
+      the offer in ops/federation/{A}/federation.toml, and the two confirmations answered at
+      the command's prompts. Every other file and value comes from `goatbuilder federate
+      allocate` and `goatbuilder federate {B}` (per-peering values, inventory, deployment
+      halves, the peering's federation.toml, certificates, admission), and {A} passes phases
+      1 to 13 by the one command, holds one agreement digest with {B} and handshakes. Both
+      cores are deployed by the goat-zenoh role and declare only site_id; admission's values
+      are withheld on both sides. {A} admits {B} through the plain run, {B} admits {A}
+      through `federate plan` and `federate deploy` (plan-deploy-admits), and once both have
+      passed 13 phase 14 runs inside the command on each side, given the drill's lab-only
+      reach to the partner. The first refusal ends the run (FE2E_NH_MODE=strict). The
+      list of everything a person still had to write (RECORD/hand-written.txt, also the
+      reason of nothing-hand-written, each line naming the command that should have produced
+      it) holds only the reviewed lab-only lines (units/nohand.sh nh_lab_only).
+    checks:
+      - {id: starts-with-no-peering, step: "nh-{A}-starts-with-no-peering"}
+      - {id: allocate-ran, step: "nh-{A}-allocate"}
+      - {id: allocate-wrote, step: "nh-{A}-allocate-wrote"}
+      - {id: allocate-leaves-nothing-on-hand, step: "nh-{A}-allocate-leaves-nothing-on-hand"}
+      - {id: inventory-from-the-command, step: "nh-{A}-inventory-from-the-command"}
+      - {id: edge-values-from-the-command, step: "nh-{A}-edge-values-from-the-command"}
+      - {id: edge-half-from-the-command, step: "nh-{A}-edge-half-from-the-command"}
+      - {id: core-half-from-the-command, step: "nh-{A}-core-half-from-the-command"}
+      - {id: federation-toml-from-the-command, step: "nh-{A}-federation-toml-from-the-command"}
+      - {id: rendered-halves-need-no-hand-site-values, step: "nh-{A}-rendered-halves-need-no-hand-site-values"}
+      - {id: site-hosts-unambiguous, step: "nh-{A}-site-hosts-unambiguous"}
+      - {id: named-allocate-renders-the-inventory, step: "nh-{A}-named-allocate-renders-the-inventory"}
+      - {id: plain-run-admits, step: "nh-{A}-{B}-plain-run-admits"}
+      - {id: plan-deploy-admits, step: "nh-{B}-plan-deploy-admits"}
+      - {id: deploy-carries-past-its-admission, step: "nh-{A}-{B}-deploy-carries-past-its-admission"}
+      - {id: mints-as-us-without-as, step: "nh-{A}-{B}-mints-as-us-without-as"}
+      - {id: phases-1-to-5, step: "nh-{A}-{B}-phases-1-to-5"}
+      - {id: phases-6-to-9, step: "nh-{A}-{B}-phases-6-to-9"}
+      - {id: phase-10-admission, step: "nh-{A}-{B}-phases-10"}
+      - {id: phases-11-to-12, step: "nh-{A}-{B}-phases-11-to-12"}
+      - {id: phase-13, step: "nh-{A}-{B}-phases-13"}
+      - {id: phase-14-in-the-command, step: "nh-{A}-{B}-phases-14", required: false}
+      - {id: confirmed-at-the-terminal, step: "nh-{A}-{B}-confirmed-at-the-terminal"}
+      - {id: partner-phases-1-to-5, step: "nh-{B}-{A}-phases-1-to-5", required: false}
+      - {id: partner-phase-13, step: "nh-{B}-{A}-phases-13", required: false}
+      - {id: one-agreement, step: "nh-{A}-{B}-one-agreement-digest"}
+      - {id: handshake, step: "nh-{A}-{B}-a-wireguard-handshake"}
+      - {id: acceptance, step: "nh-acceptance-as-{A}-with-{B}", required: false}
+      - {id: nothing-hand-written, step: "nh-nothing-hand-written"}
