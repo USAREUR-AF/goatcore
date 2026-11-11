@@ -22,7 +22,7 @@
 # phase 14 proves each one crosses as `from/<us>/<set>/**`: staged on the sending core,
 # lifted by its republisher, read back from the receiving core's store.
 #
-# Three scenarios:
+# Four scenarios:
 #   1  pasture listens and goes first, both sides through `goatbuilder federate`
 #   2  meadow listens and goes first, both sides through peering-standup.sh
 #   3  THREE parties. pasture federates with meadow and with a third sovereign, paddock,
@@ -33,6 +33,12 @@
 #      Proved: each peering carries and refuses per its own agreement, neither partner
 #      receives the other's bilateral set, adding or re-running one peering leaves the
 #      other untouched, and the refusals that keep two peerings on one host apart fire.
+#   4  nothing-hand-written, strict (units/nohand.sh): one sovereign declares only its
+#      peering entry and offer, both cores are the goat-zenoh role's and declare only
+#      site_id, and admission's values are withheld. The command must go 1 to 14 on both
+#      sides with nothing given by hand; the job fails on its first refusal and on any
+#      hand-written line outside the reviewed lab-only set. It runs in its own lab (its own
+#      host names and subnets) through lib/unit.sh, as ops/federation-e2e/env runs it.
 #
 # Linux + a Docker daemon + the wireguard kernel module + a built goat and goatbuilder.
 # Touches no goatnet, no cloud account and no credential store. Synthetic names only.
@@ -45,7 +51,7 @@
 # federation planned. It needs no Docker and no --goat (CI: check-federation-e2e-prepare.sh).
 #
 # usage: ops/federation-e2e/run.sh --goat BIN --goatbuilder BIN [--work DIR] [--record DIR]
-#                                  [--scenario 1|2|3] [--keep] [--prepare-only] [--src DIR]
+#                                  [--scenario 1|2|3|4] [--keep] [--prepare-only] [--src DIR]
 #
 # --src names the goatcore tree under test (default: this checkout): its driver, plays,
 # roles and scripts are what run; the harness is this directory. The names, subnets and
@@ -130,10 +136,30 @@ echo "republisher image: $RP_IMAGE"
 if [ -z "$ONLY" ] || [ "$ONLY" = 1 ]; then scenario 1 "$A" goatbuilder; fi
 if [ -z "$ONLY" ] || [ "$ONLY" = 2 ]; then scenario 2 "$B" script; fi
 if [ -z "$ONLY" ] || [ "$ONLY" = 3 ]; then scenario3; fi
+if [ -z "$ONLY" ] || [ "$ONLY" = 4 ]; then
+  say "scenario 4: nothing-hand-written, strict, in its own lab"
+  NH_WORK="$WORK/nothing-hand-written"; NH_REC="$RECORD/nothing-hand-written"
+  # Its own names and subnets, apart from scenarios 1-3; lib/unit.sh removes what it made.
+  env FE2E_LAB=fed-e2e-nh FE2E_HOST_PREFIX=fed-nh FE2E_NET_PREFIX=fed-e2e-nh FE2E_NET_BASE=10.78 \
+    FE2E_PARTIES="xaa xab" FE2E_HOST_IMAGE="$HOST_IMAGE" FE2E_RP_TAG="$RP_TAG" RP_IMAGE="$RP_IMAGE" \
+    FE2E_NH_MODE=strict FE2E_UNIT_TIMEOUT="${FE2E_NH_TIMEOUT:-2700}" \
+    SRC="$SRC" GOAT="$GOAT" GB="$GB" AVENUE=goatbuilder WORK="$NH_WORK" RECORD="$NH_REC" KEEP="$KEEP" \
+    bash "$HERE/lib/unit.sh" nohand > "$RECORD/nothing-hand-written.log" 2>&1 || true
+  python3 "$HERE/lib/verdict.py" --catalog "$HERE/scenarios/catalog.yaml" --record "$NH_REC" \
+    --ref-name "$(git -C "$SRC" rev-parse --abbrev-ref HEAD 2>/dev/null || echo tree)" --ref-sha "$(git -C "$SRC" rev-parse HEAD)" \
+    --avenue goatbuilder --harness-sha "$(git -C "$REPO" rev-parse HEAD)" --started "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    --only nothing-hand-written --harness-fp run.sh \
+    --out "$RECORD/nothing-hand-written.json" --markdown "$RECORD/nothing-hand-written.md" || true
+  nh_outcome="$(python3 -c 'import json,sys; print([s["outcome"] for s in json.load(open(sys.argv[1]))["scenarios"] if s["id"]=="nothing-hand-written"][0])' "$RECORD/nothing-hand-written.json" 2>/dev/null || echo "no result")"
+  echo "nothing-hand-written: $nh_outcome"
+  echo "written by a person besides the operator input:"; cat "$NH_REC/hand-written.txt" 2>/dev/null || echo none
+  [ -s "$NH_REC/loop.md" ] && { echo "refusals:"; cat "$NH_REC/loop.md"; }
+  [ "$nh_outcome" = PASS ] || FAILS=$((FAILS + 1))
+fi
 
 say "the record"
 {
-  grep -h "acceptance-counts:" "$RECORD"/*acceptance-as-*.log || true
+  grep -h "acceptance-counts:" "$RECORD"/*acceptance-as-*.log "$RECORD"/nothing-hand-written/*acceptance-as-*.log 2>/dev/null || true
 } | tee "$RECORD/acceptance-counts.txt"
 # The record step is a step: a report that cannot be written fails the run.
 python3 "$REPO/ops/e2e/report.py" "$RECORD" --check --title "cross-sovereign federation e2e (hermetic)" || { echo "run.sh: the run record did not validate (above)" >&2; FAILS=$((FAILS + 1)); }

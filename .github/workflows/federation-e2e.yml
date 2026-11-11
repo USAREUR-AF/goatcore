@@ -90,7 +90,7 @@ jobs:
       - name: The runner prepares from a public-shaped checkout
         timeout-minutes: 10
         run: ops/ci/check-federation-e2e-prepare.sh crates/target/release/goatbuilder
-      - name: Two sovereigns, both scenarios
+      - name: Two sovereigns, four scenarios (the fourth, nothing-hand-written, strict)
         run: ops/federation-e2e/run.sh --goat crates/target/release/goat --goatbuilder crates/target/release/goatbuilder --record "$RUNNER_TEMP/federation-report"
       - name: The acceptance counts
         if: always()
