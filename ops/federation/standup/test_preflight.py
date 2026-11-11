@@ -128,5 +128,42 @@ class EdgeCoreEndpoints(unittest.TestCase):
         self.assertEqual(self.p.edge_core_endpoints(self.tmp.name, "xab_edge"), [])
         self.assertEqual(self.p.edge_core_endpoints(self.tmp.name, "no_such_edge"), [])
 
+
+class DeclarationPath(unittest.TestCase):
+    """Phase 1 checks the federation.toml phase 3 reads: the peering's generated
+    file when allocate wrote it, else the goat context's."""
+
+    def setUp(self):
+        spec = importlib.util.spec_from_file_location("preflight_decl", Path(__file__).with_name("preflight.py"))
+        self.p = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.p)
+        self.tmp = tempfile.TemporaryDirectory()
+        self.repo = Path(self.tmp.name)
+        (self.repo / "ops/goatbuilder").mkdir(parents=True)
+        (self.repo / "ops/goatbuilder/goatbuilder.yaml").write_text(
+            "peerings:\n  - with: xab\n    environment: zagros\n    site: alpha\n    edge_class: edge\n")
+        self.ctx = self.repo / "ctx"
+        self.gen = self.repo / "ops/federation/zagros/peerings/xab/federation.toml"
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_a_hand_run_peering_reads_the_context(self):
+        self.assertEqual(self.p.declaration_path(self.repo, "xab", self.ctx, {}), self.ctx / "federation.toml")
+
+    def test_the_generated_file_is_read_when_allocate_wrote_it(self):
+        self.gen.parent.mkdir(parents=True)
+        self.gen.write_text('sovereign_id = "xaa"\n')
+        self.assertEqual(self.p.declaration_path(self.repo, "xab", self.ctx, {}), self.ctx / "federation.toml",
+                         "a hand-written file at that path is not the generated one")
+        self.gen.write_text(self.p.GENERATED_MARKER + ': x\nsovereign_id = "xaa"\n')
+        self.assertEqual(self.p.declaration_path(self.repo, "xab", self.ctx, {}), self.gen)
+        named = self.repo / "named.toml"
+        self.assertEqual(self.p.declaration_path(self.repo, "xab", self.ctx, {"FED_DECLARATION": str(named)}), named)
+
+    def test_the_marker_is_the_one_allocate_writes(self):
+        rs = (Path(__file__).resolve().parents[3] / "crates/goatbuilder/src/federate/peering_files.rs").read_text()
+        self.assertIn(f'pub const MARKER: &str = "{self.p.GENERATED_MARKER}";', rs)
+
 if __name__ == "__main__":
     unittest.main()
