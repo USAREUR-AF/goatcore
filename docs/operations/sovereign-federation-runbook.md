@@ -281,6 +281,31 @@ directory. It never skips a phase because a file says the phase passed.
    exchange bundles **by file**. Your own observations and the results your partner reports are kept
    apart and labeled; a reported result is not something you observed.
 
+The session, step by step, with `ops/federation/standup/acceptance_session.py`
+([federation-acceptance.md §6](../design/federation-acceptance.md#6-a-bilateral-session-exchanged-by-file)):
+
+```bash
+S=ops/federation/standup/acceptance_session.py
+# one operator writes the manifest, sends it, and both read its digest aloud
+python3 $S new --agreement <work>/agreement.json --us <us> --out session.json
+python3 $S digest session.json
+# each side runs phase 14 in the session
+FED_ACCEPTANCE_SESSION=session.json goatbuilder federate test <partner>
+# each imports the partner's result.json, then combines both sides
+python3 $S import --manifest session.json --us <us> --evidence <work>/evidence/acceptance <their result.json>
+python3 $S combine --manifest session.json --us <us> --evidence <work>/evidence/acceptance
+# after both operators reviewed the combined result: the reviewed partner-file change
+python3 $S propose --manifest session.json --us <us> --evidence <work>/evidence/acceptance \
+  --partner-file <overlay>/ops/federation/partners/<them>.yaml \
+  --approved-by <us>=<name> --approved-by <them>=<name> --out <dir>
+```
+
+`combine` writes `<evidence>/bilateral/<session id>.json` and `.md`, with your rows and the
+partner's side by side, and exits 0 only when the required scope of both sides passed. `propose`
+writes the partner file with its `acceptance:` block and a diff into `<dir>`, never the
+deployment's own file, and refuses unless the combined result passed
+([§7](../design/federation-acceptance.md#7-publishing-exchanging)).
+
 | Check | Required evidence |
 |---|---|
 | Fresh delivery, every agreed direction and set | a unique run id, nonce and payload digest, published through release staging and read back exactly at the receiving core |
