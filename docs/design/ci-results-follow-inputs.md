@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | **Designed.** First instance: the two-sovereign end-to-end job (`.github/workflows/federation-e2e.yml`), in work. No workflow follows all three rules yet |
+| Status | **Designed.** First instance: the two-sovereign end-to-end job (`.github/workflows/federation-e2e.yml`), in work. `ci.yml` declares its jobs' inputs in report-only mode (built). No workflow follows all three rules yet |
 | Related | [ci-redundant-rebuild-guard.md](ci-redundant-rebuild-guard.md) (the same idea for image builds, by changed paths) · [deployment-e2e.md](deployment-e2e.md) · [goatbuilder.md](goatbuilder.md), contract clause C1 (a deploy applies a content-addressed ref) |
 | Audience | whoever writes or changes a CI workflow, and whoever decides whether a check may be skipped |
 
@@ -119,6 +119,32 @@ earlier on another branch.
 | 1 | The host image (`ops/federation-e2e/host/Dockerfile`) installs every package a scenario needs when it is built. The setup step's tools come from the same pinned image or a pinned action. No `apt-get` at run time |
 | 2 | One build job produces the two binaries and the host image as artifacts. Each scenario is a job that takes them |
 | 3 | The key is the content of the workflow's `paths:` list, the Cargo lock file, the toolchain version and the host image digest. A pass is recorded per scenario |
+
+## Second instance: declared inputs for `ci.yml`, report only
+
+Status: built, report only. No job is skipped.
+
+`ops/ci/ci_areas.py` declares, for each `ci.yml` job, the paths its build and
+tests read, and its self-test (`ops/ci/test_ci_areas.py`) pins the answer for
+known change shapes. The `changes` job prints the plan for every pull request
+to the job summary. The map follows what each job's tests read, traced from
+the code and from a file-access trace of the Python suite, so it is wider
+than what each job builds: the Rust job reads `ops/ansible/`, `ops/pins/` and
+`ops/errors/`, and the Python job reads every `.py` and every `go.mod`.
+
+- **Fail open.** A change under `.github/`, a change to the classifier, or a
+  file no area claims marks every job as needed.
+- **Never gated.** `no-identifiers`, and `bats-bash32` while
+  `tests/build.bats` holds the only whole-tree credential scan.
+- **Next step, not built.** After a week of plans, check that no job the plan
+  would have skipped failed on the same pull request. Then gate each job on its
+  area, add one aggregate required check, and move `go-vuln` to Go changes,
+  `main` and a daily schedule, as "What is never reused" requires.
+
+The Python suite runs with `pytest -n auto`. Measured on the step's exact
+command: 13 min 38 s serial and 6 min 50 s with four workers, with the same
+784 passed and 12 skipped. That step sets the time to green for most pull
+requests, so it gains more than gating does.
 
 ## Not decided here
 
