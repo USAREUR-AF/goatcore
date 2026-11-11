@@ -402,7 +402,7 @@ fn put_back(backups: &[(PathBuf, Option<PathBuf>)]) -> String {
 }
 
 /// What the person gives for confirmation 2: by flag, or at a terminal.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Admission {
     /// `--approve-admission <digest>`.
     pub approve: Option<String>,
