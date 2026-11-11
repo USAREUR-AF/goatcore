@@ -12,7 +12,8 @@
   - the site inventory for the peering's machines.
 
   `FED_*` variables stay as overrides.
-- `goatbuilder federate init|lint|compose|diff|verify|apply` are the package verbs `goat federate` had, with the same flags and exit codes. `goat federate` still works and names the goatbuilder command.
+- `goatbuilder federate init|lint|compose|diff|verify|apply` are the package verbs `goat federate` had, with the same flags and exit codes.
+- **Deprecated: `goat federate`.** It still works in 0.5.0 and tells you the goatbuilder command to run instead. It will be removed from `goat` 30 days after this release, and not before one peering between two standing environments has been completed with `goatbuilder federate`. After that, `goat federate` only answers with an error that names `goatbuilder federate`. The script `ops/scripts/peering-standup.sh` stays as it is: documented, not supported.
 
 **Assets.** `goatbuilder-linux-amd64`, `goatbuilder-linux-arm64` (both run on glibc 2.31 and later: Ubuntu 20.04, Debian 11 and later), `goatbuilder-darwin-amd64` (Intel), `goatbuilder-darwin-arm64` (Apple Silicon), each with a `.sha256`; `goatbuilder-docs.tar.gz`, the goatbuilder book built from this tag, with its `.sha256`; `SHA256SUMS` over all five; `SHA256SUMS.cosign-bundle`, a keyless cosign signature over `SHA256SUMS` made by this repository's release workflow.
 

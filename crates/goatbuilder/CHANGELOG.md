@@ -107,6 +107,16 @@ for the restart. The slot check is not applicable when the core keeps no
 committed slot list. `FED_CORE_PLAY`, `FED_CORE_RESTART` and the other
 `FED_CORE_*` settings stay overrides.
 
+### Deprecated: `goat federate <verb>`
+
+`goat federate <verb>` still runs in 0.5.0 and prints one line naming the
+`goatbuilder federate` command. It is removed from `goat` 30 days after the
+0.5.0 release, and not before one peering between two standing environments
+has been completed with `goatbuilder federate`. After that, `goat federate`
+answers only with an error that names `goatbuilder federate`. The script
+driver `ops/scripts/peering-standup.sh` stays as it is: documented, not
+supported (ADR 1201), running the same fourteen phases.
+
 ## 0.4.3 — 2026-11-08
 
 ### Changed: `update` takes its release signer from the checkout
