@@ -658,22 +658,26 @@ fn hand_inventory_names_apart(repo: &Path, values: &[PeeringValues]) -> Result<(
     Ok(())
 }
 
-/// The site values a rendered deployment half copies, from the environment's
-/// own groups' hand-written group_vars (each of `environments[].groups`, then
-/// `all`, the first that sets it): (variable, required).
-const EDGE_SITE: &[(&str, bool)] = &[
-    ("goat_zenoh_edge_image", true),
-    ("goat_zenoh_edge_core_cn", true),
-    ("peering_spire_server_addr", true),
-    ("goat_zenoh_edge_trust_mode", false),
-    ("goat_zenoh_edge_acl_trace", false),
-    ("peering_wg_fips_waived_reason", false),
-    ("peering_wg_extra_ports", false),
-    ("peering_spire_outbound_listen", false),
+/// The optional site values a rendered deployment half copies when the
+/// environment's own groups' hand-written group_vars set them (each of
+/// `environments[].groups`, then `all`, the first that sets it). Never derived:
+/// unset stays unset. The required ones come from `site_values`.
+const EDGE_OPTIONAL: &[&str] = &[
+    "goat_zenoh_edge_trust_mode",
+    "goat_zenoh_edge_acl_trace",
+    "peering_wg_fips_waived_reason",
+    "peering_wg_extra_ports",
+    "peering_spire_outbound_listen",
 ];
-const CORE_SITE: &[(&str, bool)] = &[
-    ("goat_fed_republisher_image", true),
-    ("goat_fed_republisher_core_endpoint", true),
+/// The required values each half carries (`site_values::required`).
+const EDGE_REQUIRED: &[&str] = &[
+    "goat_zenoh_edge_image",
+    "goat_zenoh_edge_core_cn",
+    "peering_spire_server_addr",
+];
+const CORE_REQUIRED: &[&str] = &[
+    "goat_fed_republisher_image",
+    "goat_fed_republisher_core_endpoint",
 ];
 
 /// A YAML value as one line of a group_vars file (a list as indented items).
@@ -701,12 +705,14 @@ fn yaml_line(var: &str, v: &serde_yaml::Value) -> String {
     }
 }
 
-/// One variable from the environment's groups' hand-written group_vars.
-fn site_value(repo: &Path, groups: &[String], var: &str) -> Option<serde_yaml::Value> {
-    let read = |f: &Path| -> Option<serde_yaml::Value> {
+/// One variable from the environment's groups' hand-written group_vars, and
+/// the file that set it.
+fn site_value(repo: &Path, groups: &[String], var: &str) -> Option<(serde_yaml::Value, String)> {
+    let read = |f: &Path| -> Option<(serde_yaml::Value, String)> {
         let text = std::fs::read_to_string(f).ok()?;
         let v: serde_yaml::Value = serde_yaml::from_str(&text).ok()?;
-        v.get(var).cloned()
+        let rel = f.strip_prefix(repo).unwrap_or(f).display().to_string();
+        v.get(var).cloned().map(|v| (v, rel))
     };
     groups
         .iter()
@@ -736,14 +742,37 @@ pub fn deployment_halves(
             .find(|e| e.name == p.environment)
             .map(|e| e.groups.clone())
             .unwrap_or_default();
-        let mut missing: Vec<&'static str> = Vec::new();
-        let mut take = |list: &[(&'static str, bool)], body: &mut String| {
-            for (var, required) in list {
-                match site_value(repo, &groups, var) {
-                    Some(val) => body.push_str(&yaml_line(var, &val)),
-                    None if *required => missing.push(*var),
-                    None => {}
-                }
+        let hand = |var: &str| site_value(repo, &groups, var);
+        let scope = super::site_values::Scope {
+            repo,
+            peering: p,
+            values: v,
+            groups: groups.clone(),
+            hand: &hand,
+        };
+        let site = match super::site_values::required(&scope) {
+            Ok(site) => site,
+            Err(missing) => {
+                let each: Vec<String> = missing
+                    .iter()
+                    .map(|(var, looked)| format!("{var} (looked in: {})", looked.join("; ")))
+                    .collect();
+                return Err(goat_errors::coded(
+                    "GB-232",
+                    format!(
+                        "peering '{}' declares deployment: rendered, and these site values could not be derived from the deployment's declarations: {} (GB-232). Declare what is named there, set the value once in the group_vars of one of environment '{}''s groups or all, or declare deployment: hand and write the halves by hand",
+                        v.peering,
+                        each.join("; "),
+                        v.environment
+                    ),
+                )
+                .into());
+            }
+        };
+        let put = |vars: &[&str], body: &mut String| {
+            for s in site.iter().filter(|s| vars.contains(&s.var)) {
+                body.push_str(&format!("# {}: {}\n", s.var, s.from));
+                body.push_str(&yaml_line(s.var, &s.value));
             }
         };
         let our_ca = format!("{}/our-ca.pem", v.cert_dir);
@@ -752,17 +781,26 @@ pub fn deployment_halves(
             v.peering, v.environment
         ));
         edge.push_str(&format!(
-            "# From the declaration (deployment: rendered), the allocated values, and the site values\n\
-             # set in the group_vars of environment {}'s groups ({}) or all.\n\n",
+            "# From the declaration (deployment: rendered), the allocated values, and the site values,\n\
+             # each from the declaration that owns it (named above it); optional ones only when the\n\
+             # group_vars of environment {}'s groups ({}) or all set them.\n\n",
             v.environment,
             if groups.is_empty() { "none declared".to_string() } else { groups.join(", ") }
         ));
         edge.push_str("goat_zenoh_edge_enabled: true\n");
         edge.push_str(&format!("goat_zenoh_edge_partner_id: {}\n", q(&v.peering)));
         edge.push_str("peering_spire_enabled: true\n");
-        take(EDGE_SITE, &mut edge);
-        let core_endpoint = site_value(repo, &groups, "goat_fed_republisher_core_endpoint");
-        if let Some(serde_yaml::Value::String(ep)) = &core_endpoint {
+        put(EDGE_REQUIRED, &mut edge);
+        for var in EDGE_OPTIONAL {
+            if let Some((val, _)) = site_value(repo, &groups, var) {
+                edge.push_str(&yaml_line(var, &val));
+            }
+        }
+        if let Some(ep) = site
+            .iter()
+            .find(|s| s.var == "goat_fed_republisher_core_endpoint")
+            .and_then(|s| s.value.as_str())
+        {
             edge.push_str(&format!(
                 "goat_zenoh_edge_core_endpoints:\n  - {}\n",
                 q(&format!("{ep}#root_ca_certificate_file={our_ca}"))
@@ -773,26 +811,11 @@ pub fn deployment_halves(
             v.peering, v.environment
         ));
         core.push('\n');
-        take(CORE_SITE, &mut core);
+        put(CORE_REQUIRED, &mut core);
         core.push_str(&format!(
             "goat_fed_republisher_core_ca_src: {}\n",
             q(&our_ca)
         ));
-        if !missing.is_empty() {
-            missing.sort();
-            missing.dedup();
-            return Err(goat_errors::coded(
-                "GB-232",
-                format!(
-                    "peering '{}' declares deployment: rendered, and no group_vars of environment '{}''s groups ({}) or all sets {} (GB-232). Set each once in one of those groups' group_vars, or declare deployment: hand and write the halves by hand",
-                    v.peering,
-                    v.environment,
-                    if groups.is_empty() { "none declared: add environments[].groups".to_string() } else { groups.join(", ") },
-                    missing.join(", ")
-                ),
-            )
-            .into());
-        }
         out.push(Rendered {
             path: format!(
                 "ops/ansible/group_vars/{}/peering-deployment.yml",
@@ -1628,10 +1651,11 @@ mod tests {
         );
     }
 
-    /// A site value the halves need and the environment's group_vars do not
-    /// set is refused, naming it (GB-232); nothing is invented.
+    /// A site value the halves need that neither the environment's group_vars
+    /// set nor any declaration yields is refused (GB-232), naming it and every
+    /// place that was read for it; nothing is invented.
     #[test]
-    fn a_missing_site_value_is_named() {
+    fn a_missing_site_value_is_named_with_where_it_looked() {
         let mut a = p("xab", false);
         a["deployment"] = json!("rendered");
         let d = repo_with_site(json!([a]), "goat_zenoh_edge_image: x\n");
@@ -1640,11 +1664,21 @@ mod tests {
             e.downcast_ref::<goat_errors::Coded>().unwrap().code,
             "GB-232"
         );
-        assert!(
-            e.to_string().contains("goat_zenoh_edge_core_cn")
-                && e.to_string().contains("dev_hosts"),
-            "{e}"
-        );
+        let msg = e.to_string();
+        for frag in [
+            "goat_fed_republisher_core_endpoint (looked in:",
+            "peering_spire_server_addr (looked in:",
+            "goat_fed_republisher_image (looked in:",
+            "peerings[].hosts.core of peering 'xab'",
+            "[xab_core] in ops/ansible/inventory/peering-edges.ini",
+            "the component of ops/pins/fleet-pins.yaml whose var is goat_fed_republisher_image",
+            "group_vars of dev_hosts or all",
+        ] {
+            assert!(msg.contains(frag), "{frag}\n---\n{msg}");
+        }
+        // Derived or set: not named.
+        assert!(!msg.contains("goat_zenoh_edge_core_cn ("), "{msg}");
+        assert!(!msg.contains("goat_zenoh_edge_image ("), "{msg}");
         assert!(
             !d.path()
                 .join("ops/goatbuilder")
@@ -1652,6 +1686,70 @@ mod tests {
                 .exists(),
             "nothing written"
         );
+    }
+
+    /// With no site value written by hand, the five required values come from
+    /// the declarations that own them: the core host's address (peerings[].hosts
+    /// here), the core router's listen port (its role default), the republisher's
+    /// fleet pin, the fabric image the core runs, and the core's inventory name.
+    /// Optional values stay unset.
+    #[test]
+    fn the_site_values_are_derived_from_the_declarations() {
+        let mut a = p("xab", true);
+        a["deployment"] = json!("rendered");
+        let d = repo_with_site(json!([a]), "# nothing for peerings here\n");
+        let r = d.path().join("ops/ansible/roles/goat-zenoh/defaults");
+        std::fs::create_dir_all(&r).unwrap();
+        std::fs::write(
+            r.join("main.yml"),
+            "goat_zenoh_listen_port: 7447\n\
+             zenoh_router_image: \"ghcr.io/{{ ghcr_org }}/zenoh@sha256:11\"\n",
+        )
+        .unwrap();
+        let r = d
+            .path()
+            .join("ops/ansible/roles/goat-fed-republisher/defaults");
+        std::fs::create_dir_all(&r).unwrap();
+        std::fs::write(r.join("main.yml"), "goat_fed_republisher_image: \"\"\n").unwrap();
+        let pins = d.path().join("ops/pins");
+        std::fs::create_dir_all(&pins).unwrap();
+        std::fs::write(
+            pins.join("fleet-pins.yaml"),
+            "goatnets: {}\ncomponents:\n  goat-fed-republisher:\n    var: goat_fed_republisher_image\n    \
+             fleet: ghcr.io/{{ ghcr_org }}/goat-fed-republisher@sha256:22\n",
+        )
+        .unwrap();
+        run(d.path(), &opts(false)).unwrap();
+        let gv = d.path().join("ops/ansible/group_vars");
+        let edge = std::fs::read_to_string(gv.join("xab_edge/peering-deployment.yml")).unwrap();
+        let core = std::fs::read_to_string(gv.join("xab_core/peering-deployment.yml")).unwrap();
+        for frag in [
+            "goat_zenoh_edge_image: \"ghcr.io/{{ ghcr_org }}/zenoh@sha256:11\"",
+            "# goat_zenoh_edge_image: the fabric image the core runs (zenoh_router_image, ops/ansible/roles/goat-zenoh/defaults/main.yml)",
+            "goat_zenoh_edge_core_cn: \"dev-core-xab\"",
+            "peering_spire_server_addr: \"192.0.2.10\"",
+            "goat_zenoh_edge_core_endpoints:\n  - \"tls/192.0.2.10:7447#root_ca_certificate_file=/var/lib/goat-federation/xab/pki/our-ca.pem\"",
+        ] {
+            assert!(edge.contains(frag), "{frag}\n---\n{edge}");
+        }
+        for frag in [
+            "goat_fed_republisher_image: \"ghcr.io/{{ ghcr_org }}/goat-fed-republisher@sha256:22\"",
+            "# goat_fed_republisher_image: ops/pins/fleet-pins.yaml components.goat-fed-republisher.fleet",
+            "goat_fed_republisher_core_endpoint: \"tls/192.0.2.10:7447\"",
+        ] {
+            assert!(core.contains(frag), "{frag}\n---\n{core}");
+        }
+        for unset in [
+            "goat_zenoh_edge_trust_mode",
+            "goat_zenoh_edge_acl_trace",
+            "peering_wg_fips_waived_reason",
+            "peering_wg_extra_ports",
+            "peering_spire_outbound_listen",
+        ] {
+            assert!(!edge.contains(unset), "{unset} is not derived\n{edge}");
+        }
+        let _: serde_yaml::Value = serde_yaml::from_str(&edge).unwrap();
+        let _: serde_yaml::Value = serde_yaml::from_str(&core).unwrap();
     }
 
     #[test]
