@@ -101,9 +101,10 @@ checking the observed quota, retention posture, first pass scope and client
 artifact. The installation probe always passes `--measure-only` and accepts
 exit 0 or 4: either one proves the credential, and 4 means the bucket is
 already over high-water. The timer is always started so metrics and alerting
-stay live, and the converge then refuses to finish only when the probe saw 4
-with eviction disabled, because a measure-only timer will never relieve that
-bucket. The warning alert `AuditEvictionDisabledOverHighWater` watches the
+stay live. When the probe saw 4 with eviction disabled the converge prints a
+warning and still finishes green: disabled is the shipped default and enabling
+is an irreversible decision, so the role must not force it by failing. The
+warning alert `AuditEvictionDisabledOverHighWater` watches the
 same condition between converges, days before `AuditBucketAtQuota` goes
 critical (built). This flag does not replace the functional eviction path;
 `--evict` performs the bounded pass described above.

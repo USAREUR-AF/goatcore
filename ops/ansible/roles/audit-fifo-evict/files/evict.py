@@ -204,9 +204,8 @@ def run(config, backend, evict=False):
         used = backend.used(target)
         result = 3
         if not evict:
-            # The finally block rewrites the textfile with `result`; left at 3
-            # here, every measure-only pass would publish last_result 3 and
-            # trip AuditEvictorOperationFailed. It must carry the outcome.
+            # The finally block publishes `result`, so it carries this pass's
+            # outcome: 4 over high-water, 0 below it.
             result = 4 if over() else 0
             if result == 4:
                 # Observation of a breached threshold is not a success: the

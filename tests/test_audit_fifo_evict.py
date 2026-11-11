@@ -218,11 +218,18 @@ class Eviction(unittest.TestCase):
         # The converge must not die before the timer task, or an over-water
         # bucket loses its metrics and alerts exactly when they matter.
         self.assertEqual(tasks[probe_index]["failed_when"], "_evict_probe.rc not in [0, 4]")
-        refuse_index = next(i for i, task in enumerate(tasks) if task["name"] ==
-                            "Refuse to finish over high-water while eviction is disabled")
-        self.assertLess(timer_index, refuse_index)
-        self.assertEqual(tasks[refuse_index]["when"],
+        # Over high-water with eviction disabled warns and never fails the
+        # converge: disabled is the default and enabling is irreversible, so
+        # a red converge would have no way back to green. The alert carries
+        # the condition between converges.
+        warn_index = next(i for i, task in enumerate(tasks) if task["name"] ==
+                          "Warn when over high-water while eviction is disabled")
+        self.assertLess(timer_index, warn_index)
+        self.assertIn("ansible.builtin.debug", tasks[warn_index])
+        self.assertEqual(tasks[warn_index]["when"],
                          ["_evict_probe.rc == 4", "not (audit_fifo_evict_enabled | bool)"])
+        self.assertFalse(any("ansible.builtin.fail" in task for task in tasks),
+                         "no task may fail the converge on a measurement")
         defaults = yaml.safe_load((ROOT / "ops/ansible/roles/audit-fifo-evict/defaults/main.yml").read_text())
         self.assertIs(defaults["audit_fifo_evict_enabled"], False)
 
