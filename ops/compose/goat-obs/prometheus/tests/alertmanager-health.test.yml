@@ -30,12 +30,33 @@ tests:
         alertname: AlertmanagerNotificationsFailing
         exp_alerts: []
 
+  # One transient failure must not page. A single failed flush holds the 15m
+  # increase above zero for about 15 minutes; with the previous `for: 10m`
+  # this case fired from minute 16. It must stay silent throughout.
+  - interval: 1m
+    input_series:
+      - series: 'alertmanager_notifications_failed_total{integration="webhook"}'
+        values: '0x5 1+0x55'
+    alert_rule_test:
+      - eval_time: 18m
+        alertname: AlertmanagerNotificationsFailing
+        exp_alerts: []
+      - eval_time: 25m
+        alertname: AlertmanagerNotificationsFailing
+        exp_alerts: []
+      - eval_time: 40m
+        alertname: AlertmanagerNotificationsFailing
+        exp_alerts: []
+
   # A rejected integration: the failure counter rises every cycle.
   - interval: 1m
     input_series:
       - series: 'alertmanager_notifications_failed_total{integration="webhook"}'
         values: '0+1x60'
     alert_rule_test:
+      - eval_time: 15m
+        alertname: AlertmanagerNotificationsFailing
+        exp_alerts: []
       - eval_time: 30m
         alertname: AlertmanagerNotificationsFailing
         exp_alerts:
@@ -46,8 +67,10 @@ tests:
             exp_annotations:
               summary: "alertmanager webhook notifications are failing"
               description: |
-                Alertmanager attempted deliveries on the webhook
-                integration and they failed. A 4xx response is not retried, so
-                those pages are already lost. Check the alertmanager container
-                logs for the receiver and status code: a too-large payload, a
-                rejected credential and an unreachable endpoint all land here.
+                Deliveries on the webhook integration have kept
+                failing for at least 20 minutes. A 4xx response is not retried, so
+                those pages are lost; connection errors and 5xx responses are
+                retried each group interval and have not recovered. Check the
+                alertmanager container logs for the receiver and status code: a
+                too-large payload, a rejected credential and an unreachable
+                endpoint all land here.

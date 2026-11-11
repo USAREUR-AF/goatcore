@@ -4,7 +4,18 @@
 # silence everywhere except Alertmanager's own counters. A 4xx response is
 # not retried: those notifications are dropped on the spot, so a persistently
 # rejected integration loses pages while Prometheus and every dashboard show
-# the alert firing and routed.
+# the alert firing and routed. Connection errors and 5xx responses count too;
+# they are retried on the next group interval.
+#
+# Persistence: one failed flush keeps a 15m increase above zero for about
+# 15 minutes, so `for` must be longer than the window or a single blip pages.
+# With `for: 20m` the counter has to rise again inside every window for 20
+# minutes, which is a broken integration, not a transient one.
+#
+# On Alertmanager 0.27 the counter carries `integration` and `reason` only.
+# ntfy and the deadman heartbeat both report as `webhook`, so the label names
+# the integration type; the container log names the receiver. The null
+# receiver (webhook-noop) has no integrations and never touches the counter.
 #
 # Metrics: alertmanager_* via the `alertmanager` scrape job.
 groups:
@@ -14,15 +25,17 @@ groups:
 
       - alert: AlertmanagerNotificationsFailing
         expr: increase(alertmanager_notifications_failed_total[15m]) > 0
-        for: 10m
+        for: 20m
         labels:
           severity: critical
           domain: observability
         annotations:
           summary: "alertmanager {{ $labels.integration }} notifications are failing"
           description: |
-            Alertmanager attempted deliveries on the {{ $labels.integration }}
-            integration and they failed. A 4xx response is not retried, so
-            those pages are already lost. Check the alertmanager container
-            logs for the receiver and status code: a too-large payload, a
-            rejected credential and an unreachable endpoint all land here.
+            Deliveries on the {{ $labels.integration }} integration have kept
+            failing for at least 20 minutes. A 4xx response is not retried, so
+            those pages are lost; connection errors and 5xx responses are
+            retried each group interval and have not recovered. Check the
+            alertmanager container logs for the receiver and status code: a
+            too-large payload, a rejected credential and an unreachable
+            endpoint all land here.
