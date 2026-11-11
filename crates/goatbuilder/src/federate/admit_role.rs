@@ -29,6 +29,8 @@ pub struct RoleCore {
     pub site_id: String,
     /// The play that runs the role, relative to `ops/ansible/`.
     pub play: String,
+    /// How many machines the group holds.
+    pub machines: usize,
 }
 
 /// Every top-level key the group's group_vars set: group_vars/<group>.yml,
@@ -176,7 +178,7 @@ pub fn find(repo: &Path, core_group: &str) -> Result<Option<RoleCore>, String> {
             )));
         }
     }
-    let Some((group, inventory, _, keys)) = cands.pop() else {
+    let Some((group, inventory, addrs, keys)) = cands.pop() else {
         return Ok(None);
     };
     let site_id = super::preflight::group_var(repo, &group, "site_id")
@@ -201,6 +203,7 @@ pub fn find(repo: &Path, core_group: &str) -> Result<Option<RoleCore>, String> {
         inventory,
         site_id,
         play,
+        machines: addrs.len(),
     }))
 }
 
@@ -218,6 +221,76 @@ impl RoleCore {
             q(&self.site_id),
             q(&self.play),
             if check { " --check --diff" } else { "" }
+        )
+    }
+
+    /// A variable as the role resolves it for this group: the group's own
+    /// plain value, else the role's default, with `{{ site_id }}` and
+    /// `{{ zenoh_stack }}` put in. Anything else templated is not guessed.
+    pub fn role_value(&self, repo: &Path, key: &str) -> Result<String, String> {
+        let default = |k: &str| -> Option<String> {
+            let t = std::fs::read_to_string(
+                repo.join("ops/ansible/roles/goat-zenoh/defaults/main.yml"),
+            )
+            .ok()?;
+            let d: serde_yaml::Value = serde_yaml::from_str(&t).ok()?;
+            d.get(k)?.as_str().map(String::from)
+        };
+        // A value the group sets is its own, plain or not: a templated one is
+        // not replaced by the role's default.
+        let keys = group_keys(repo, &self.group);
+        let own = |k: &str| match keys.contains(k) {
+            true => Some(
+                super::preflight::group_var(repo, &self.group, k)
+                    .unwrap_or_else(|| "{{ templated }}".into()),
+            ),
+            false => default(k),
+        };
+        let stack = own("zenoh_stack")
+            .unwrap_or_default()
+            .replace("{{ site_id }}", &self.site_id);
+        let v = own(key)
+            .unwrap_or_default()
+            .replace("{{ zenoh_stack }}", &stack)
+            .replace("{{ site_id }}", &self.site_id);
+        if v.is_empty() || v.contains("{{") || v.contains('\'') {
+            return Err(format!(
+                "our core router's goat-zenoh role declarations do not resolve (GB-236): {key} for [{}] is not a plain value (group_vars/{}/, else roles/goat-zenoh/defaults/main.yml, with site_id {} and zenoh_stack put in): '{v}'",
+                self.group, self.group, self.site_id
+            ));
+        }
+        Ok(v)
+    }
+
+    /// One Ansible module call on the group's machine, as the play reaches it.
+    fn module_cmd(&self, repo: &Path, module: &str, args: &str) -> String {
+        let q = |s: &str| format!("'{}'", s.replace('\'', r"'\''"));
+        format!(
+            "cd {} && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws {} -- ansible {} -i {} -b -m {} -a {}",
+            q(&repo.join("ops/ansible").display().to_string()),
+            q(&crate::settings::aws_profile(repo)),
+            q(&self.group),
+            q(&self.inventory),
+            module,
+            q(args)
+        )
+    }
+
+    /// Copy `remote` on the core router to `local` on this machine.
+    pub fn fetch_cmd(&self, repo: &Path, remote: &str, local: &Path) -> String {
+        self.module_cmd(
+            repo,
+            "ansible.builtin.fetch",
+            &format!("src={remote} dest={} flat=yes", local.display()),
+        )
+    }
+
+    /// Copy `local` from this machine to `remote` on the core router.
+    pub fn place_cmd(&self, repo: &Path, local: &Path, remote: &str) -> String {
+        self.module_cmd(
+            repo,
+            "ansible.builtin.copy",
+            &format!("src={} dest={remote}", local.display()),
         )
     }
 
@@ -274,12 +347,58 @@ mod tests {
                 group: "core_router".into(),
                 inventory: "inventory/core-router.ini".into(),
                 site_id: "zagros".into(),
-                play: "zenoh-deploy.yml".into()
+                play: "zenoh-deploy.yml".into(),
+                machines: 1,
             }
         );
         let cmd = c.play_cmd(r.path(), true);
         assert!(cmd.contains("-i 'inventory/core-router.ini' -e target='core_router' -e site_id='zagros' 'zenoh-deploy.yml' --check --diff"), "{cmd}");
         assert!(!c.play_cmd(r.path(), false).contains("--check"));
+    }
+
+    #[test]
+    fn the_org_fragment_path_is_the_roles_with_site_id_and_stack_put_in() {
+        let role = ("ops/ansible/roles/goat-zenoh/defaults/main.yml", "zenoh_router_image: x\nzenoh_stack: \"{{ site_id }}-zenoh\"   # a comment\ngoat_zenoh_acl_org_path: \"/etc/{{ zenoh_stack }}/acl-org-fragment.json5\"\n");
+        let r = checkout(&[INV, GV, role]);
+        let c = find(r.path(), "xab_core").unwrap().unwrap();
+        assert_eq!(c.machines, 1);
+        assert_eq!(
+            c.role_value(r.path(), "goat_zenoh_acl_org_path").unwrap(),
+            "/etc/zagros-zenoh/acl-org-fragment.json5"
+        );
+        let fetch = c.fetch_cmd(
+            r.path(),
+            "/etc/zagros-zenoh/acl-org-fragment.json5",
+            Path::new("/w/fetched/org.json5"),
+        );
+        assert!(fetch.contains("ansible 'core_router' -i 'inventory/core-router.ini' -b -m ansible.builtin.fetch -a 'src=/etc/zagros-zenoh/acl-org-fragment.json5 dest=/w/fetched/org.json5 flat=yes'"), "{fetch}");
+        let place = c.place_cmd(
+            r.path(),
+            Path::new("/w/staged/org.json5"),
+            "/etc/zagros-zenoh/acl-org-fragment.json5",
+        );
+        assert!(place.contains("-m ansible.builtin.copy -a 'src=/w/staged/org.json5 dest=/etc/zagros-zenoh/acl-org-fragment.json5'"), "{place}");
+        // The group's own value wins; a template the role does not resolve here is refused.
+        let gv = ("ops/ansible/group_vars/core_router/zenoh.yml", "zenoh_router_image: x\nsite_id: zagros\ngoat_zenoh_acl_org_path: /srv/zenoh/org.json5\nzenoh_stack: \"{{ other }}\"\n");
+        let r = checkout(&[INV, gv, role]);
+        let c = find(r.path(), "xab_core").unwrap().unwrap();
+        assert_eq!(
+            c.role_value(r.path(), "goat_zenoh_acl_org_path").unwrap(),
+            "/srv/zenoh/org.json5"
+        );
+        let r = checkout(&[
+            INV,
+            (
+                "ops/ansible/group_vars/core_router/zenoh.yml",
+                "zenoh_router_image: x\nsite_id: zagros\nzenoh_stack: \"{{ other }}\"\n",
+            ),
+            role,
+        ]);
+        let c = find(r.path(), "xab_core").unwrap().unwrap();
+        assert!(c
+            .role_value(r.path(), "goat_zenoh_acl_org_path")
+            .unwrap_err()
+            .contains("(GB-236)"));
     }
 
     #[test]
