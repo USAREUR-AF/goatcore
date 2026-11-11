@@ -306,7 +306,7 @@ pub fn check_offer(
 /// yet), so an offer narrower than the file is refused too: running would offer
 /// the partner more than the declaration says. A peering without `offer:` is not
 /// checked and nothing is read.
-pub fn driver_check(cfg: &Config, with: &str, env: Option<&str>) -> Result<Option<OfferCheck>> {
+pub fn driver_check(cfg: &Config, with: &str, env: Option<&str>, repo: &Path) -> Result<Option<OfferCheck>> {
     // Only an entry with `offer:` needs checking; ambiguity matters only then.
     let declares = cfg.peerings.iter().any(|p| {
         p.with == with && env.map(|e| p.environment == e).unwrap_or(true) && p.offer.is_some()
@@ -314,8 +314,12 @@ pub fn driver_check(cfg: &Config, with: &str, env: Option<&str>) -> Result<Optio
     if !declares {
         return Ok(None);
     }
-    peering(cfg, with, env)?;
-    let path = declaration_path()?;
+    let p = peering(cfg, with, env)?;
+    // The file phase 3 reads: the peering's generated federation.toml, else the context's.
+    let path = match p.and_then(|p| super::preflight::peering_declaration(repo, p)) {
+        Some(generated) => generated,
+        None => declaration_path()?,
+    };
     match check_offer(cfg, with, env, &path)? {
         Some(c) => phase3_can_offer(with, c).map(Some),
         None => Ok(None),
@@ -497,12 +501,37 @@ mod tests {
         let mut prod = p("xab");
         prod["environment"] = json!("prod");
         let c = cfg(json!([p("xab"), prod.clone()]));
-        assert_eq!(driver_check(&c, "xab", None).unwrap(), None);
+        assert_eq!(driver_check(&c, "xab", None, Path::new("/nonexistent")).unwrap(), None);
         prod["offer"] = json!(["xab"]);
         let c = cfg(json!([p("xab"), prod]));
-        let e = driver_check(&c, "xab", None).unwrap_err();
+        let e = driver_check(&c, "xab", None, Path::new("/nonexistent")).unwrap_err();
         assert!(e.to_string().contains("pass --env"), "{e}");
-        assert_eq!(driver_check(&c, "xab", Some("dev")).unwrap(), None);
+        assert_eq!(driver_check(&c, "xab", Some("dev"), Path::new("/nonexistent")).unwrap(), None);
+    }
+
+    /// The offer is checked against the file phase 3 reads: the peering's
+    /// generated federation.toml when allocate wrote one, not the context's.
+    #[test]
+    fn the_offer_check_reads_the_generated_peering_declaration() {
+        let repo = tempfile::tempdir().unwrap();
+        let mut b = p("xab");
+        b["offer"] = json!(["xab"]);
+        let c = cfg(json!([b]));
+        let env = c.peerings[0].environment.clone();
+        let f = repo
+            .path()
+            .join(format!("ops/federation/{env}/peerings/xab/federation.toml"));
+        std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+        std::fs::write(
+            &f,
+            format!(
+                "{}: x\n[data]\nrelease = [\"release/xab/**\"]\n",
+                crate::federate::peering_files::MARKER
+            ),
+        )
+        .unwrap();
+        let got = driver_check(&c, "xab", None, repo.path()).unwrap().unwrap();
+        assert_eq!(got.offered, vec!["release/xab/**"]);
     }
 
     /// One reserved list: validate.py's RESERVED_PEERING_NAMES is the Rust list.

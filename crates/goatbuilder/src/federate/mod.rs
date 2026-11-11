@@ -265,6 +265,11 @@ fn plan_with(repo: &Path, o: &Options, work: &str, edge_group: &str, resume: &st
     if !signing.is_empty() {
         init_words.extend(w(&["--signing-key", &signing]));
     }
+    // The peering's generated federation.toml (FED_DECLARATION, federate/preflight.rs).
+    let declaration = env_or("FED_DECLARATION", String::new());
+    if !declaration.is_empty() {
+        init_words.extend(w(&["--declaration", &declaration]));
+    }
     init_words.extend(w(&["--out", &ours]));
     let play_on = |limit: &str, name: &str| format!("cd '{r}/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws {aws} -- ../scripts/ansible-preflight.sh -i inventory/peering-edges.ini --limit '{limit}' -e fed_edge_group='{edge_group}' -e fed_work='{work}' -e fed_counterparty='{counterparty}' {name}");
     let play = |name: &str| play_on(edge_group, name);
@@ -535,7 +540,7 @@ pub fn federate_with(repo: &Path, o: &Options, s: &Surface) -> Result<Report> {
     }
     // A peering's offer: may narrow federation.toml's release sets, never widen them.
     if o.mock.is_none() {
-        declaration::driver_check(&cfg, o.with, o.env)?;
+        declaration::driver_check(&cfg, o.with, o.env, repo)?;
     }
     let work = o.work.map(String::from).unwrap_or_else(|| env_or("FED_WORK", format!("/var/lib/goat-federation/{}", o.with)));
     let edge_group = o.edge_group.map(String::from).unwrap_or_else(|| format!("{}_edge", o.with));

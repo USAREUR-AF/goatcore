@@ -305,7 +305,7 @@ Where it is checked:
 | Check | Where | Reads |
 |---|---|---|
 | reserved names (GB-120); `offer:` empty, malformed or repeating a set (GB-129) | `goatbuilder validate`, and every command that loads the config | goatbuilder.yaml only |
-| every `offer:` entry is in `[data] release` (GB-129) | `goatbuilder federate <with>`, before phase 1, when the peering declares `offer:` | the `federation.toml` phase 3 reads: `$GOAT_PROFILE_DIR` (else `~/.goat`), context `$GOAT_CONTEXT` (else `current_context`, else `default`) |
+| every `offer:` entry is in `[data] release` (GB-129) | `goatbuilder federate <with>`, before phase 1, when the peering declares `offer:` | the `federation.toml` phase 3 reads: the peering's generated `ops/federation/<environment>/peerings/<with>/federation.toml` when allocate wrote it, else `$GOAT_PROFILE_DIR` (else `~/.goat`), context `$GOAT_CONTEXT` (else `current_context`, else `default`) |
 
 A peering without `offer:` is not checked, and nothing is read: the driver runs as before.
 
@@ -378,7 +378,7 @@ Status: built (`crates/goatbuilder/src/federate/peering_files.rs`, unit tests). 
 
 It never writes the agreement's own values: `goat federate apply` renders those beside these files (`federation-<them>.yml`, `-republish.yml`, `-transport.yml`). It never overwrites a file it did not generate, and a re-run that changes nothing writes nothing.
 
-Not built yet: phase 3 reading `wg_interface` and `link_subnet` into the goat context's `federation.toml` `[transport]`, and the driver taking `--work`, `--edge-group` and the core group from the allocation instead of checking them (GB-128). The link the edge binds is the agreement's subnet, which may be the partner's proposal: two agreements that pick one subnet on one edge are not refused yet.
+Phase 3 reads a peering's generated `federation.toml` (`ops/federation/<environment>/peerings/<with>/federation.toml`, written by allocate for `federation_toml: rendered`) itself, through `init --declaration` (FED_DECLARATION, `federate/preflight.rs`), so its `[transport]` from the allocation reaches the package and nothing is copied into the goat context; **built**. Status: WIP — gate: scenario nothing-hand-written runs phase 3 with no hand-copied context federation.toml. Not built yet: a hand-kept goat context's `federation.toml` taking `wg_interface` and `link_subnet` from the allocation, and the driver taking `--work`, `--edge-group` and the core group from the allocation instead of checking them (GB-128). The link the edge binds is the agreement's subnet, which may be the partner's proposal: two agreements that pick one subnet on one edge are not refused yet.
 
 ### A goatlite profile (future)
 

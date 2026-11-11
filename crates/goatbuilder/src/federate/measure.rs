@@ -1230,6 +1230,7 @@ mod tests {
             signing_key: None,
             out: None,
             json: false,
+            declaration: None,
         }
     }
 
