@@ -68,11 +68,25 @@ class Eviction(unittest.TestCase):
                            mc_image="fixture/mc")
 
     def test_probe_never_lists_or_deletes_at_high_usage(self):
+        # Over high-water with eviction disabled: still no listing and no
+        # deletion, but the run must now FAIL LOUDLY (exit 4) and raise the
+        # over_high_water gauge instead of printing a clean result. The prior
+        # contract, returning 0 here, is the silence that let a full bucket
+        # refuse every upload while the timer reported success.
         backend = Backend([version("site", 1, 300 * MIB, "v1")])
         backend.versions = lambda target: self.fail("measurement probe must not list versions")
-        self.assertEqual(engine.run(self.config, backend), 0)
+        self.assertEqual(engine.run(self.config, backend), 4)
         self.assertEqual(backend.removed, [])
         self.assertEqual(backend.trails, [])
+        prom = (self.directory / "audit_fifo_evict.prom").read_text()
+        self.assertIn('goat_audit_evict_over_high_water{bucket="audit-integrity"} 1', prom)
+
+    def test_probe_below_high_water_stays_quiet(self):
+        backend = Backend([version("site", 1, 300 * MIB, "v1")], used=800 * MIB)
+        backend.versions = lambda target: self.fail("measurement probe must not list versions")
+        self.assertEqual(engine.run(self.config, backend), 0)
+        prom = (self.directory / "audit_fifo_evict.prom").read_text()
+        self.assertIn('goat_audit_evict_over_high_water{bucket="audit-integrity"} 0', prom)
 
     def test_all_snapshotted_versions_deleted_with_quota_relief(self):
         backend = Backend([version("site", 1, 40 * MIB, "v1"),
