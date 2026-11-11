@@ -69,9 +69,13 @@ jobs:
     # caught nothing before F-270: every other test uses synthetic P-256
     # certs, masking the Ed25519 leaves the portal actually mints.
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: read
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+      - uses: ./.github/actions/apt-failover
       - uses: actions/setup-go@v5
         with:
           go-version: '1.26.11'

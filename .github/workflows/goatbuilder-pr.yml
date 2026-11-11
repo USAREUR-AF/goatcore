@@ -115,9 +115,13 @@ jobs:
   host:
     name: check + clippy + test
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: read
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+      - uses: ./.github/actions/apt-failover
       - name: Install Rust toolchain (stable + clippy)
         uses: dtolnay/rust-toolchain@stable
         with:

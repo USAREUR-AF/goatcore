@@ -67,12 +67,16 @@ jobs:
   unit:
     name: harness unit tests
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: read
     timeout-minutes: 20
     defaults:
       run:
         working-directory: ops/wg-cp0-mesh-reach
     steps:
       - uses: actions/checkout@v4
+      - uses: ./.github/actions/apt-failover
       - uses: actions/setup-go@v5
         with:
           go-version: 'stable'
