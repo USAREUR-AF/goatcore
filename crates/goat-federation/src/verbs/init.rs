@@ -39,6 +39,13 @@ pub struct InitArgs {
     /// One JSON object instead of the glyph lines.
     #[arg(long)]
     pub json: bool,
+
+    /// Read the declaration from this file instead of federation.toml in the
+    /// context directory: a peering's own federation.toml, which goatbuilder
+    /// generates from the environment's. Identity is still read from the
+    /// context directory.
+    #[arg(long, value_name = "FILE")]
+    pub declaration: Option<PathBuf>,
 }
 
 #[derive(Serialize)]
@@ -172,7 +179,7 @@ pub fn run_init_measured(
     let mut outcomes = Vec::new();
     let mut underived: Vec<String> = Vec::new();
 
-    let decl_path = site.declaration_path();
+    let decl_path = a.declaration.clone().unwrap_or_else(|| site.declaration_path());
     // Captured here and reused below instead of re-reading the same file a
     // second time — the second read used `.unwrap_or_default()`, so on ANY
     // failure of that redundant read (a TOCTOU remove between the two reads,
@@ -684,6 +691,7 @@ mod tests {
             signing_key: None,
             out: None,
             json: true,
+            declaration: None,
         }
     }
 
@@ -744,6 +752,50 @@ mod tests {
                 "{text}"
             );
         }
+    }
+
+    /// `--declaration` names the file the declared half is read from; the
+    /// context directory's federation.toml is then not read at all.
+    #[test]
+    fn init_reads_the_declaration_it_is_named() {
+        // The context's own file would fail to parse, so reading it fails the run.
+        let (_d, site) = site_with("not toml [");
+        let peering = tempfile::tempdir().unwrap();
+        let named = peering.path().join("federation.toml");
+        std::fs::write(&named, DECL.replace("wg-fed0", "wg-fed3")).unwrap();
+        let asked = std::cell::RefCell::new(Vec::new());
+        let measure = |i: Option<&str>| {
+            asked.borrow_mut().push(i.map(str::to_string));
+            Ok(fixed(i))
+        };
+        let a = InitArgs {
+            declaration: Some(named.clone()),
+            ..args(true)
+        };
+        let mut out = Vec::new();
+        let code = run_init_measured(&site, &a, &mut out, &measure).unwrap();
+        // Identity is underived (no certificate in the fixture), the declaration is not.
+        assert_eq!(code, super::super::EXIT_FED_UNDERIVED);
+        assert_eq!(*asked.borrow(), vec![Some("wg-fed3".to_string())]);
+        let text = String::from_utf8(out).unwrap();
+        assert!(!text.contains("not toml"), "{text}");
+
+        // Without it, the context's file is the declaration, as before.
+        let mut out = Vec::new();
+        run_init_measured(&site, &args(true), &mut out, &measure).unwrap();
+        let text = String::from_utf8(out).unwrap();
+        assert!(text.contains(&site.declaration_path().display().to_string()), "{text}");
+
+        // A named file that is missing says which file.
+        let gone = peering.path().join("missing.toml");
+        let a = InitArgs {
+            declaration: Some(gone.clone()),
+            ..args(true)
+        };
+        let mut out = Vec::new();
+        run_init_measured(&site, &a, &mut out, &measure).unwrap();
+        let text = String::from_utf8(out).unwrap();
+        assert!(text.contains(&gone.display().to_string()), "{text}");
     }
 
     /// A host that cannot be reached is the caller's error, returned as is.
