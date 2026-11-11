@@ -431,11 +431,20 @@ pub enum Cmd {
     /// opened, acceptance in all four tiers. Replaces
     /// ops/scripts/peering-standup.sh step for step.
     ///
+    /// At a terminal, `goatbuilder federate <partner>` is the whole procedure:
+    /// it asks for the partner's key and CA fingerprint and the agreement
+    /// digest, makes the plan and asks to approve it, shows what our core will
+    /// admit and asks again, then carries on through acceptance. A run that
+    /// stops resumes where it stopped. Values come from the deployment's
+    /// declarations; a FED_* variable set in the environment overrides one.
+    ///
+    /// Each stage also runs alone: `plan <partner>`, `deploy <partner>`,
+    /// `test <partner>`, `status [<partner>]`. `allocate [<peering>]` writes a
+    /// peering's values and files for review; `backout <partner>` backs one
+    /// peering out and leaves the others as they were.
     /// `goatbuilder federate init|lint|compose|diff|verify|apply` runs one of
     /// the six federation verbs in process, with the flags and exit codes of
-    /// `goat federate <verb>`. `goatbuilder federate plan <partner>` writes
-    /// the bounded plan alone; `goatbuilder federate backout <partner>` backs
-    /// one peering out and leaves the others as they were.
+    /// `goat federate <verb>`.
     #[command(args_conflicts_with_subcommands = true, subcommand_negates_reqs = true)]
     Federate {
         /// One federation verb, one stage of the one command (`plan`), or
