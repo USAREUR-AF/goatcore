@@ -57,7 +57,7 @@ class Plan(unittest.TestCase):
 
     def test_host_firewall_role_needs_both_peering_suites(self):
         got = needed(["ops/ansible/roles/goat-host-firewall/tasks/main.yml"])
-        self.assertTrue({"peering-forwarder", "peering-host-firewall"} <= got)
+        self.assertLessEqual({"peering-forwarder", "peering-host-firewall"}, got)
 
     def test_docs_read_by_tests_are_not_docs(self):
         self.assertIn("go", needed(["docs/operators/roster.json"]))
