@@ -20,7 +20,11 @@ printf '%s\n' 'Acquire::Retries "5";' 'Acquire::http::Timeout "20";' 'Acquire::h
 LOG="$(mktemp "${TMPDIR:-/tmp}/apt-install-fallback.XXXXXX")"
 # The failover cache (.github/actions/apt-failover) sets an apt proxy; when one is set it is
 # the path, and its host counts as a source.
-PROXY="$(apt-config dump 2>/dev/null | sed -n 's/^Acquire::http::Proxy "\(.*\)";$/\1/p' | head -1)"
+# It names the proxy per Ubuntu host (Acquire::http::Proxy::archive.ubuntu.com), with the
+# global one DIRECT so other sources stay direct; an older or hand-set global one still counts.
+PROXY="$(apt-config dump 2>/dev/null | sed -n 's/^Acquire::http::Proxy::archive\.ubuntu\.com "\(.*\)";$/\1/p' | head -1)"
+[ -n "$PROXY" ] || PROXY="$(apt-config dump 2>/dev/null | sed -n 's/^Acquire::http::Proxy "\(.*\)";$/\1/p' | head -1)"
+[ "$PROXY" != DIRECT ] || PROXY=""
 PROXY_HOST="$(printf '%s' "$PROXY" | sed -E 's#^[a-z]+://##; s#/.*$##')"
 # Network causes only (not "Failed to fetch", which a stale third-party source prints for a
 # 404 or a hash mismatch), and only on a source that can carry the package.

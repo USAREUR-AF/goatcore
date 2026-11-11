@@ -55,7 +55,9 @@ runs:
         # Every networked command is bounded (-k: killed if it ignores the TERM, as a blocked
         # connect can), and each failover stage prints a timestamped line, so a slow stage
         # shows in the log and never runs into the job's timeout.
-        stage() { echo "apt-failover: $(date -u +%H:%M:%SZ) $*"; }
+        # A check-run annotation is readable without signing in, unlike the step's log, so each
+        # stage is a notice (one per stage: annotations are capped per step).
+        stage() { echo "::notice title=apt-failover::$(date -u +%H:%M:%SZ) $*"; }
         bounded_out() { # STAGE SECONDS: the step's failure when a bounded command ran out of time
           echo "::error::environment: apt-failover: mirror $host $why, and $1 did not finish within $2s"
           exit 69
@@ -112,6 +114,23 @@ runs:
         fi
         why="did not answer in ${PROBE_SECONDS}s"; [ "$FORCE" = true ] && why="was not asked (force: true, the archive black-holed)"
 
+        # apt's proxy for the Ubuntu archive hosts only (the mirror apt names among them):
+        # every other source, a runner image's Microsoft, PPA or vendor repositories, stays
+        # direct, because the offline cache can never serve it.
+        ubuntu_hosts="archive.ubuntu.com security.ubuntu.com azure.archive.ubuntu.com ports.ubuntu.com"
+        case "$host" in *.ubuntu.com) case " $ubuntu_hosts " in *" $host "*) ;; *) ubuntu_hosts="$ubuntu_hosts $host" ;; esac ;; esac
+        write_proxy() { # PROXY_URL
+          { echo 'Acquire::http::Proxy "DIRECT";'
+            for h in $ubuntu_hosts; do printf 'Acquire::http::Proxy::%s "%s";\n' "$h" "$1"; done
+          } | $SUDO tee /etc/apt/apt.conf.d/00ci-failover >/dev/null \
+            || { echo "::error::apt-failover: could not write /etc/apt/apt.conf.d/00ci-failover"; exit 1; }
+          direct=$( { grep -hE '^[[:space:]]*deb(-src)?[[:space:]]' /etc/apt/sources.list /etc/apt/sources.list.d/*.list 2>/dev/null \
+                       | grep -oE '(https?|mirror\+[a-z]+):[^ ]+'
+                     grep -hE '^[[:space:]]*URIs:' /etc/apt/sources.list.d/*.sources 2>/dev/null | sed -E 's/^[[:space:]]*URIs:[[:space:]]*//' | tr ' ' '\n'
+                   } | grep -vE '^mirror\+|://([a-z0-9-]+\.)*ubuntu\.com(/|$)' | sort -u | tr '\n' ' ')
+          stage "apt: the Ubuntu archive hosts through $1; left direct: ${direct:-none}"
+        }
+
         # Once the proxy is set: refresh the lists through it, so every later install, with or
         # without its own `apt-get update`, resolves against the cache's indexes (a runner's
         # lists are as old as its image). A failed refresh means the cache cannot serve.
@@ -139,8 +158,7 @@ runs:
             timeout 2 bash -c 'exec 3<>"/dev/tcp/$1/3142"' _ "$SERVICE_HOST" 2>/dev/null && break
             sleep 1
           done
-          printf 'Acquire::http::Proxy "%s";\n' "$proxy" | $SUDO tee /etc/apt/apt.conf.d/00ci-failover >/dev/null \
-            || { echo "::error::apt-failover: could not write /etc/apt/apt.conf.d/00ci-failover"; exit 1; }
+          write_proxy "$proxy"
           update_through "$proxy"
           echo "APT_FAILOVER=1" >> "$GITHUB_ENV"
           echo "apt-failover: mirror $host $why; apt uses the cache service at $proxy"
@@ -148,6 +166,7 @@ runs:
         fi
         login="anonymous pull"
         stage "mirror $host $why; failing over to $CACHE_IMAGE"
+        stage "login to ghcr.io"
         if [ -n "$CACHE_TOKEN" ] && printf '%s' "$CACHE_TOKEN" | timeout -k 5 60 docker login ghcr.io -u "${GITHUB_ACTOR:-github-actions}" --password-stdin >/dev/null 2>&1; then
           login="ghcr.io login"
         fi
@@ -174,7 +193,7 @@ runs:
             exit 1
           fi
         fi
-        stage "pulled; starting the cache"
+        echo "apt-failover: $(date -u +%H:%M:%SZ) pull done; starting the cache"
         timeout -k 5 60 docker rm -f ci-apt-cache >/dev/null 2>&1 || true
         timeout -k 5 60 docker run -d --name ci-apt-cache --network host --restart no "$CACHE_IMAGE" >/dev/null
         up=""
@@ -190,8 +209,7 @@ runs:
           exit 1
         fi
         # The runner's apt. Only plain http sources go through it; an https source does not.
-        printf '%s\n' 'Acquire::http::Proxy "http://127.0.0.1:3142";' | $SUDO tee /etc/apt/apt.conf.d/00ci-failover >/dev/null \
-          || { echo "::error::apt-failover: could not write /etc/apt/apt.conf.d/00ci-failover"; exit 1; }
+        write_proxy "http://127.0.0.1:3142"
         update_through "http://127.0.0.1:3142"
         # Docker builds and containers: inside them 127.0.0.1 is the container, so they reach
         # the cache at the default bridge's gateway (the host). Only the http proxy: their
@@ -208,7 +226,14 @@ runs:
         cfg = json.load(open(path))
         cfg.setdefault("proxies", {})["default"] = {
             "httpProxy": proxy,
-            "noProxy": "localhost,127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,.local,.internal",
+            # Package hosts that are not Ubuntu's archive stay direct too: the offline cache
+            # cannot serve them (Debian and Alpine bases, PPAs, vendor repositories).
+            "noProxy": ",".join([
+                "localhost", "127.0.0.1", "::1", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
+                ".local", ".internal", ".debian.org", ".alpinelinux.org", ".launchpad.net",
+                ".launchpadcontent.net", "packages.microsoft.com", "download.docker.com",
+                ".nodesource.com", "apt.postgresql.org", "apt.releases.hashicorp.com",
+            ]),
         }
         json.dump(cfg, open(path, "w"), indent=2)
         PY

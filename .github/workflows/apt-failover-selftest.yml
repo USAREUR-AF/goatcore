@@ -33,11 +33,24 @@ jobs:
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      # The runner image's own apt sources, as an annotation (readable without the log): the
+      # failover sends only the Ubuntu archive hosts to the cache, and leaves these direct.
+      - name: The runner's apt sources
+        run: |
+          {
+            echo "files: $(find /etc/apt/sources.list /etc/apt/sources.list.d -maxdepth 1 -type f 2>/dev/null | tr '\n' ' ')"
+            grep -rhE '^(deb |URIs:|Types:|Suites:)' /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null || true
+          } > "$RUNNER_TEMP/sources.txt"
+          cat "$RUNNER_TEMP/sources.txt"
+          echo "::notice title=runner apt sources::$(sed ':a;N;$!ba;s/%/%25/g;s/\n/%0A/g' "$RUNNER_TEMP/sources.txt")"
       - name: The failover, forced
         uses: ./.github/actions/apt-failover
+        # Above the action's own bounds added up (probe, login, pull, start, update).
+        timeout-minutes: 15
         with:
           force: 'true'
       - name: (a) the cache image was pulled with the job token, serves, and the archive is closed
+        id: a
         run: |
           fail() { echo "::error::$1"; exit 1; }
           [ "${APT_FAILOVER:-}" = 1 ] || fail "the action did not fail over (APT_FAILOVER is '${APT_FAILOVER:-}')"
@@ -45,8 +58,10 @@ jobs:
             || fail "no ci-apt-cache container is running"
           jq -e '.auths["ghcr.io"]' "$HOME/.docker/config.json" >/dev/null \
             || fail "the image was not pulled with the job token (no ghcr.io login in ~/.docker/config.json)"
-          grep -qx 'Acquire::http::Proxy "http://127.0.0.1:3142";' /etc/apt/apt.conf.d/00ci-failover \
-            || fail "/etc/apt/apt.conf.d/00ci-failover does not point apt at the cache"
+          if ! grep -qx 'Acquire::http::Proxy::archive.ubuntu.com "http://127.0.0.1:3142";' /etc/apt/apt.conf.d/00ci-failover \
+             || ! grep -qx 'Acquire::http::Proxy "DIRECT";' /etc/apt/apt.conf.d/00ci-failover; then
+            fail "/etc/apt/apt.conf.d/00ci-failover does not send the Ubuntu archive, and only it, to the cache"
+          fi
           for h in archive.ubuntu.com security.ubuntu.com azure.archive.ubuntu.com; do
             getent ahostsv4 "$h" | grep -q '^0\.0\.0\.0 ' || fail "$h is not black-holed for IPv4: $(getent ahostsv4 "$h" | head -1)"
             v6=$(getent ahostsv6 "$h" | awk '{print $1; exit}')
@@ -57,25 +72,40 @@ jobs:
           [ -n "${APT_FAILOVER_ADD_HOSTS:-}" ] || fail "APT_FAILOVER_ADD_HOSTS is not set"
           echo "ok: cache $(docker inspect -f '{{.Config.Image}}' ci-apt-cache) serving; the archive hosts closed"
       - name: (b) the runner's apt-get update and two installs, through the cache
+        id: b
+        timeout-minutes: 5
         run: |
           set -o pipefail   # a failed command before `| tee` fails the step
-          sudo apt-get update 2>&1 | tee "$RUNNER_TEMP/apt.log"
+          apt_opts=(-o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20)
+          sudo apt-get "${apt_opts[@]}" update 2>&1 | tee "$RUNNER_TEMP/apt.log"
           # --reinstall: a package the runner image already has is still fetched.
-          sudo apt-get install -y --reinstall --no-install-recommends jq ripgrep 2>&1 | tee -a "$RUNNER_TEMP/apt.log"
+          sudo apt-get "${apt_opts[@]}" install -y --reinstall --no-install-recommends jq ripgrep 2>&1 | tee -a "$RUNNER_TEMP/apt.log"
           jq --version; rg --version | head -1
       - name: (c) a noble image and the 26.04 e2e host image, built through the cache
+        id: c
+        timeout-minutes: 15
         run: |
           set -o pipefail   # a failed build before `| tee` fails the step
           # The black holes go into every build container, so apt there reaches only the cache;
           # --no-cache, so every apt step runs here and not from an earlier build.
           read -r -a holes <<< "$APT_FAILOVER_ADD_HOSTS"
+          # shellcheck disable=SC2016  # $o is the Dockerfile's shell variable
           printf '%s\n' 'FROM ubuntu:24.04@sha256:fe81560990fae86dc4743202b2cb4d3df98d0bcf949173cecef15ce1127ef852' \
-            'RUN apt-get update && apt-get install -y --no-install-recommends nftables iproute2' > "$RUNNER_TEMP/Dockerfile.noble"
+            'RUN o="-o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20" && apt-get $o update && apt-get $o install -y --no-install-recommends nftables iproute2' > "$RUNNER_TEMP/Dockerfile.noble"
           docker build --no-cache --progress=plain "${holes[@]}" -f "$RUNNER_TEMP/Dockerfile.noble" -t apt-failover-selftest-noble "$RUNNER_TEMP" 2>&1 | tee "$RUNNER_TEMP/build.log"
           docker build --no-cache --progress=plain "${holes[@]}" -t apt-failover-selftest-host ops/federation-e2e/host 2>&1 | tee -a "$RUNNER_TEMP/build.log"
       - name: (d) every request a cache hit, and no apt error or warning
         if: always()
+        env:
+          A: ${{ steps.a.outcome }}
+          B: ${{ steps.b.outcome }}
+          C: ${{ steps.c.outcome }}
         run: |
+          # A count of hits proves nothing when the steps that make the requests did not run.
+          if [ "$A" != success ] || [ "$B" != success ] || [ "$C" != success ]; then
+            echo "::error::the forced steps did not run to success: (a) $A, (b) $B, (c) $C"
+            exit 1
+          fi
           docker exec ci-apt-cache cat /var/log/apt-cacher-ng/apt-cacher.log > "$RUNNER_TEMP/acng.log" 2>/dev/null || true
           docker exec ci-apt-cache cat /var/log/apt-cacher-ng/apt-cacher.err > "$RUNNER_TEMP/acng.err" 2>/dev/null || true
           # One line per transfer: <time>|<kind>|<bytes>|<client>|<path>. "O" is a file served from
@@ -110,6 +140,7 @@ jobs:
           if curl -fsI --max-time 10 "${u%/}/dists/noble/Release" >/dev/null; then echo "up=1" >> "$GITHUB_OUTPUT"
           else echo "up=0" >> "$GITHUB_OUTPUT"; echo "::warning::the runner's mirror $u does not answer now; the unforced job's assertions are skipped"; fi
       - uses: ./.github/actions/apt-failover
+        timeout-minutes: 5
       - name: The action changed nothing
         if: steps.mirror.outputs.up == '1'
         run: |
