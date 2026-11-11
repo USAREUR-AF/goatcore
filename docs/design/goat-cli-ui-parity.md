@@ -186,7 +186,7 @@ The `goat admin` commands and the console call the same APIs (`/api/onboard/*`, 
 > verbs is available to partner environments, `goat federate <verb>` runs the same library and
 > prints one line naming the goatbuilder command; then it is removed from `goat`. The
 > classification below holds for the goatbuilder verbs: they stay CLI-only.
-> Status: WIP — gate: the federation end-to-end test drives both sides with goatbuilder federate alone
+> Status: measured — the federation end-to-end test drives both sides with goatbuilder federate alone (run up-4b1adc18cc3b-20261111T102642).
 
 `goat federate` builds and checks the federation package two parties exchange to peer. The
 `lint`/`compose`/`diff` package-processing subset is designed to run with **no network, no

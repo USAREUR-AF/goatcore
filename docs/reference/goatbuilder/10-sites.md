@@ -55,25 +55,30 @@ Phase 1 needs `FED_DIRECTORY_URL`, `FED_COUNTERPARTY_ID` and `FED_SIGNING_KEY`
 
 ```bash
 goatbuilder federate <partner> --env <goatnet> --dry-run
-goatbuilder federate <partner> --env <goatnet> --yes          # stops at phase 5
-goatbuilder federate <partner> --env <goatnet> --from 6 --yes # after the call; stops at phase 10
-goatbuilder federate <partner> --env <goatnet> --from 11 --yes
+goatbuilder federate allocate <partner>                       # the peering's values and files, for review
+goatbuilder federate <partner> --env <goatnet>                # at a terminal: the whole procedure
 ```
 
+At a terminal the run asks for the two confirmations itself: the partner's key
+and CA fingerprint at phase 5 and the agreement digest at phase 6, then at
+phase 10 the plan and what our core admits. A run that stops resumes where it stopped.
 `--as` says which party we are, `--edge-group` names the Ansible group of the
 edge (default `<partner>_edge`), and `--work` the working directory (default
-`$FED_WORK`, else `/var/lib/goat-federation/<partner>`). **Script:**
-`ops/scripts/peering-standup.sh`. Status: built; not yet run on a live peering.
+`$FED_WORK`, else `/var/lib/goat-federation/<partner>`). `--no-confirm` keeps
+both confirmations by hand: the run stops at 5 and 10 and resumes with
+`--from 6` and `--from 11`. **Script:** `ops/scripts/peering-standup.sh`.
+Status: measured (run up-4b1adc18cc3b-20261111T102642).
 
-**The stages.** The same phases are becoming four stages of one command, each
-also runnable alone: `goatbuilder federate plan <partner>` (phases 1 to 9:
-validate, measure, propose the per-peering values, exchange, compose, render;
-asks for the key read-back), `deploy` (phases 10 to 13, after approval bound to
-the plan's hash), `test` (phase 14: a bilateral acceptance session whose checks
-read PASS, FAIL, BLOCKED, SKIP or NOT APPLICABLE) and `status`. The offered
-release sets are owned by `federation.toml` (`[data] release`); the peering's
-declaration may only narrow them. The procedure:
+**The stages.** The same phases are four stages of one command, each also
+runnable alone: `goatbuilder federate plan <partner>` (phases 1 to 9:
+validate, measure, propose the per-peering values, exchange, compose, render),
+`deploy` (phases 10 to 13, after approval bound to the plan's hash), `test`
+(phase 14: acceptance, whose checks read PASS, FAIL, BLOCKED, SKIP or NOT
+APPLICABLE) and `status`. The offered release sets are owned by
+`federation.toml` (`[data] release`); the peering's declaration may only narrow
+them. The procedure:
 [sovereign-federation-runbook.md](../../operations/sovereign-federation-runbook.md),
-step 1. Until each stage's default switch lands, the run above is the default.
-
-Status: WIP — gate: the federation end-to-end test drives both sides with goatbuilder federate alone.
+step 1. One switch has not landed: one directory package per counterparty
+stays opt-in (`FED_DIRECTORY_PER_COUNTERPARTY=1`, or `--per-counterparty` on
+`ops/federation/standup/directory.py`), so the directory holds one package per
+party by default.
