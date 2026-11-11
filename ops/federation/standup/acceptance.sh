@@ -25,6 +25,19 @@
 # (a send-only or receive-only peering) is NOT APPLICABLE, with its reason; a
 # direction it has is always required.
 #
+# OUR OWN SURFACES ARE READ FROM THE DECLARATIONS (acceptance_surfaces.py), each only
+# when the environment does not set it, so these stay overrides:
+#   FED_OURS_REST            our core's REST surface: goat_zenoh_rest_host and
+#                            goat_zenoh_rest_port of <them>_core, on its inventory host
+#                            (read on the core over FED_SSH_OURS, derived from the same
+#                            host, when the surface is bound to loopback)
+#   FED_EDGE_LOG_OURS        `docker logs <goat_zenoh_edge_stack>` on the <them>_edge host
+#   FED_SPIRE_OURS           `docker exec <peering_spire_container> <peering_spire_bin>`
+#                            on peering_spire_server_host, when peering_spire_enabled
+# from ops/ansible/inventory/peering-edges.ini and ops/ansible/group_vars (groups from
+# FED_EDGE_GROUP / FED_CORE_GROUP, which both avenues export for phase 14). stderr says where each came from, or
+# what was looked for when it could not be derived.
+#
 # WHAT A DRILL ADDS, because it owns both sides. Each is optional; absent, its checks
 # print BLOCKED or skip, and a check that did not run is not a pass: the run exits 3.
 #
@@ -108,7 +121,6 @@ while [ $# -gt 0 ]; do
 done
 [ -f "$AGREEMENT" ] || { echo "no agreement at $AGREEMENT" >&2; exit 2; }
 
-: "${FED_OURS_REST:=http://127.0.0.1:8000}"     # our fabric's REST surface
 : "${FED_THEIRS_REST:=}"                        # theirs, when the drill owns both sides
 : "${FED_SSH_OURS:=}"                           # or reach them over ssh
 : "${FED_SSH_THEIRS:=}"
@@ -233,6 +245,16 @@ echo "  our offered sets:   $OUR_SETS"
 echo "  their offered sets: $THEIR_SETS"
 echo "  evidence: $EVID"
 echo
+
+# OUR SURFACES, FROM THE DECLARATIONS. Our core's REST surface, our edge router's
+# log and our SPIRE server are read from the inventory and group_vars the plays read
+# (acceptance_surfaces.py names each source). A value already in the environment is
+# an override and is kept. The derived edge log and SPIRE commands run on their own
+# hosts over ssh (EDGE_LOG_VIA, SPIRE_VIA); a value set by hand runs where it always
+# has. What cannot be derived stays unset, and its row says what to set.
+EDGE_LOG_VIA=""; SPIRE_VIA=""
+if surfaces=$(python3 "$HERE/acceptance_surfaces.py" --peering "$THEM"); then eval "$surfaces"; fi
+: "${FED_OURS_REST:=http://127.0.0.1:8000}"     # our fabric's REST surface
 
 # With FED_SSH_KNOWN_HOSTS (a known_hosts file holding the cores' host keys) every ssh
 # verifies the host's identity and refuses an unknown or changed key. Unset, ssh runs
@@ -807,7 +829,8 @@ edge_refusals() {
       # this run's id, so no earlier run's line can match them; and the edge names a
       # peer that matches no subject once, when its session connects, which may be
       # before this run began. That line is tied to the probe's own session id.
-      trace()   { ours "$FED_EDGE_LOG_OURS" > "$TRACE" 2>&1; }
+      trace()   { if [ -n "$EDGE_LOG_VIA" ]; then side_ssh "$EDGE_LOG_VIA" "$FED_EDGE_LOG_OURS" > "$TRACE" 2>&1
+                  else ours "$FED_EDGE_LOG_OURS" > "$TRACE" 2>&1; fi; }
       lines()   { grep -F "$1" "$TRACE" | grep -E 'is (un)?authorized to ' | tail -3; }
       # verdict [SESSION-FILTER] KEY-FILTER: the last decision, of one session when given.
       verdict() {
@@ -1118,18 +1141,24 @@ begin
 if [ -z "${FED_SPIRE_OURS:-}" ] || [ -z "${FED_SPIRE_THEIRS:-}" ]; then
   skp spire local spire "SPIRE federation not checked" "Set FED_SPIRE_OURS and FED_SPIRE_THEIRS."
 else
+  # A derived SPIRE command runs on the server's host over ssh; one set by hand, here.
+  spire_ours() { if [ -n "$SPIRE_VIA" ]; then local IFS='
+'
+      # shellcheck disable=SC2046
+      timeout 60 ssh $(ssh_opts) "$SPIRE_VIA" "$FED_SPIRE_OURS $1"
+    else eval "$FED_SPIRE_OURS $1"; fi; }
   refreshed=""; out=""
   for _ in $(seq 1 18); do
-    if out=$(eval "$FED_SPIRE_OURS federation refresh -id $(printf %q "$THEIR_TD")" 2>&1); then refreshed=1; break; fi
+    if out=$(spire_ours "federation refresh -id $(printf %q "$THEIR_TD")" 2>&1); then refreshed=1; break; fi
     sleep 5
   done
   obs refresh "$out"
   if [ -n "$refreshed" ]; then ok spire/refresh inbound spire "our SPIRE server refreshed $THEIR_TD from its bundle endpoint across the link"
   else no spire/refresh inbound spire "our SPIRE server could not refresh $THEIR_TD" "$out"; fi
   tmp="$(mktemp -d)"
-  eval "$FED_SPIRE_OURS bundle list -id $(printf %q "$THEIR_TD") -format pem" > "$tmp/held.pem" 2>/dev/null
+  spire_ours "bundle list -id $(printf %q "$THEIR_TD") -format pem" > "$tmp/held.pem" 2>/dev/null
   eval "$FED_SPIRE_THEIRS bundle show -format pem" > "$tmp/theirs.pem" 2>/dev/null
-  eval "$FED_SPIRE_OURS bundle show -format pem" > "$tmp/ours.pem" 2>/dev/null
+  spire_ours "bundle show -format pem" > "$tmp/ours.pem" 2>/dev/null
   fp() { openssl x509 -in "$1" -noout -fingerprint -sha256 2>/dev/null; }
   begin; obs held "$(fp "$tmp/held.pem")"; obs theirs "$(fp "$tmp/theirs.pem")"
   if [ -s "$tmp/held.pem" ] && [ "$(fp "$tmp/held.pem")" = "$(fp "$tmp/theirs.pem")" ]; then
