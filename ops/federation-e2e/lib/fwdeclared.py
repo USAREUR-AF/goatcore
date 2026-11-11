@@ -53,7 +53,8 @@ def main():
     ap.add_argument("--saddr", required=True)
     ap.add_argument("--iif", default="")
     a = ap.parse_args()
-    text = open(a.ruleset, encoding="utf-8").read()
+    with open(a.ruleset, encoding="utf-8") as fh:
+        text = fh.read()
     if "table inet goat_host_firewall {" not in text:
         print(f"{a.ruleset}: no table inet goat_host_firewall", file=sys.stderr)
         return 1

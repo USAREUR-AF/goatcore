@@ -196,6 +196,7 @@ def declaration_path(repo, peering, ctx, env):
             if gen.read_text().startswith(GENERATED_MARKER):
                 return gen
         except OSError:
+            # No readable generated file: the peering runs from the context's file.
             pass
     return ctx / "federation.toml"
 

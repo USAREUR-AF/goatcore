@@ -113,6 +113,7 @@ def main():
         resource.setrlimit(resource.RLIMIT_NOFILE, (hard, hard))
         soft = hard
     except (ValueError, OSError):
+        # The hard limit could not be taken: keep the soft one, and the jobs below fit it.
         pass
     a.jobs = max(16, min(a.jobs, soft - 64))
     tcp = asyncio.run(tcp_scan(a.target, ports(a.tcp), a.timeout, a.jobs))
