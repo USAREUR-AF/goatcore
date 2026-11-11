@@ -15,6 +15,9 @@
 //!   component whose `var:` it is, through the environment's deviations);
 //! - `goat_zenoh_edge_image`: the same for its own variable, else the fabric
 //!   image the core router runs (`zenoh_router_image`), resolved the same way;
+//! - `peering_wg_extra_ports`: `[peering_spire_bundle_port]` (group_vars, else
+//!   the `goat-peering-spire` role default), the one port the tunnel must pass
+//!   for SPIRE federation;
 //! - `goat_zenoh_edge_core_cn`: the core's own name in the site inventory
 //!   ([`core_cn`]), which phase 8 also mints as the core certificate's CN
 //!   ([`phase8_core_cn`]).
@@ -240,27 +243,33 @@ pub fn phase8_core_cn(
     }
 }
 
-/// The core router's listen port: `goat_zenoh_listen_port` in group_vars, else
-/// the `goat-zenoh` role default.
-fn core_port(s: &Scope, looked: &mut Vec<String>) -> Option<(u16, String)> {
+/// A port as a play reads it: `var` in the hand-written group_vars of the
+/// environment's groups or all, else the `role`'s default.
+fn role_port(s: &Scope, var: &str, role: &str, looked: &mut Vec<String>) -> Option<(u16, String)> {
     let num = |v: &Value| -> Option<u16> {
         v.as_u64()
             .and_then(|n| u16::try_from(n).ok())
             .or_else(|| v.as_str().and_then(|t| t.trim().parse().ok()))
     };
-    if let Some((v, f)) = (s.hand)("goat_zenoh_listen_port") {
+    if let Some((v, f)) = (s.hand)(var) {
         if let Some(p) = num(&v) {
             return Some((p, f));
         }
     }
-    let role = "ops/ansible/roles/goat-zenoh/defaults/main.yml";
+    let file = format!("ops/ansible/roles/{role}/defaults/main.yml");
     looked.push(format!(
-        "goat_zenoh_listen_port in group_vars of {} or all, or in {role}",
+        "{var} in group_vars of {} or all, or in {file}",
         groups_text(&s.groups)
     ));
     let doc: Value =
-        serde_yaml::from_str(&std::fs::read_to_string(s.repo.join(role)).ok()?).ok()?;
-    num(doc.get("goat_zenoh_listen_port")?).map(|p| (p, role.to_string()))
+        serde_yaml::from_str(&std::fs::read_to_string(s.repo.join(&file)).ok()?).ok()?;
+    num(doc.get(var)?).map(|p| (p, file))
+}
+
+/// The core router's listen port: `goat_zenoh_listen_port` in group_vars, else
+/// the `goat-zenoh` role default.
+fn core_port(s: &Scope, looked: &mut Vec<String>) -> Option<(u16, String)> {
+    role_port(s, "goat_zenoh_listen_port", "goat-zenoh", looked)
 }
 
 /// The required site values, each from its owner; `Err` lists what could not be
@@ -322,6 +331,28 @@ pub fn required(s: &Scope) -> Result<Vec<Site>, Vec<(&'static str, Vec<String>)>
             .map(|(v, f)| (Value::String(v), f))
     });
     put("goat_zenoh_edge_core_cn", got, looked);
+
+    // The tunnel firewall drops every port it is not told about, and the
+    // rendered half turns SPIRE federation on: the one extra port is this
+    // peering's SPIRE bundle endpoint (goat-peering-spire asserts it is listed).
+    let mut looked = Vec::new();
+    let got = (s.hand)("peering_wg_extra_ports").or_else(|| {
+        looked.push(format!(
+            "peering_wg_extra_ports in group_vars of {} or all",
+            groups_text(&s.groups)
+        ));
+        let (port, from) = role_port(
+            s,
+            "peering_spire_bundle_port",
+            "goat-peering-spire",
+            &mut looked,
+        )?;
+        Some((
+            Value::Sequence(vec![Value::Number(port.into())]),
+            format!("the SPIRE bundle endpoint port (peering_spire_bundle_port, {from})"),
+        ))
+    });
+    put("peering_wg_extra_ports", got, looked);
 
     if missing.is_empty() {
         Ok(out)

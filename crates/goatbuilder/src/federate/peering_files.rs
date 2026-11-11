@@ -792,7 +792,6 @@ const EDGE_OPTIONAL: &[&str] = &[
     "goat_zenoh_edge_trust_mode",
     "goat_zenoh_edge_acl_trace",
     "peering_wg_fips_waived_reason",
-    "peering_wg_extra_ports",
     "peering_spire_outbound_listen",
 ];
 /// The required values each half carries (`site_values::required`).
@@ -800,6 +799,7 @@ const EDGE_REQUIRED: &[&str] = &[
     "goat_zenoh_edge_image",
     "goat_zenoh_edge_core_cn",
     "peering_spire_server_addr",
+    "peering_wg_extra_ports",
 ];
 const CORE_REQUIRED: &[&str] = &[
     "goat_fed_republisher_image",
@@ -2005,7 +2005,8 @@ mod tests {
                         goat_fed_republisher_image: ghcr.io/example-org/republisher@sha256:00\n\
                         goat_fed_republisher_core_endpoint: tls/192.0.2.10:7447\n\
                         peering_spire_server_addr: 192.0.2.10\n\
-                        peering_wg_fips_waived_reason: example waiver\n";
+                        peering_wg_fips_waived_reason: example waiver\n\
+                        peering_spire_bundle_port: 8443\n";
 
     /// `deployment: rendered`: the edge's and the core's deployment halves are
     /// rendered from the declaration and the environment's site values; a
@@ -2034,7 +2035,11 @@ mod tests {
             assert!(edge.contains(frag), "{frag}\n---\n{edge}");
         }
         assert!(
-            !edge.contains("peering_wg_extra_ports"),
+            edge.contains("peering_wg_extra_ports:\n  - 8443\n"),
+            "the SPIRE bundle port is the tunnel's extra port: {edge}"
+        );
+        assert!(
+            !edge.contains("peering_spire_outbound_listen"),
             "unset site values are not invented: {edge}"
         );
         let core = std::fs::read_to_string(gv.join("xab_core/peering-deployment.yml")).unwrap();
@@ -2077,13 +2082,23 @@ mod tests {
         let d = repo_with_site(json!([a]), SITE);
         let pe = d.path().join("ops/ansible/group_vars/peering_edges");
         std::fs::create_dir_all(&pe).unwrap();
-        std::fs::write(pe.join("certs.yml"), "goat_zenoh_edge_install_certs: true\n").unwrap();
-        run(d.path(), &opts(false)).unwrap();
-        let edge = std::fs::read_to_string(
-            d.path().join("ops/ansible/group_vars/xab_edge/peering-deployment.yml"),
+        std::fs::write(
+            pe.join("certs.yml"),
+            "goat_zenoh_edge_install_certs: true\n",
         )
         .unwrap();
-        assert!(edge.contains("goat_zenoh_edge_our_ca_path: \"/var/lib/goat-federation/xab/pki/our-ca.pem\""), "{edge}");
+        run(d.path(), &opts(false)).unwrap();
+        let edge = std::fs::read_to_string(
+            d.path()
+                .join("ops/ansible/group_vars/xab_edge/peering-deployment.yml"),
+        )
+        .unwrap();
+        assert!(
+            edge.contains(
+                "goat_zenoh_edge_our_ca_path: \"/var/lib/goat-federation/xab/pki/our-ca.pem\""
+            ),
+            "{edge}"
+        );
         assert!(!edge.contains("goat_zenoh_edge_partner_ca_path"), "{edge}");
     }
 
@@ -2171,7 +2186,15 @@ mod tests {
             "goatnets: {}\ncomponents:\n  goat-fed-republisher:\n    var: goat_fed_republisher_image\n    fleet: ghcr.io/{{ ghcr_org }}/goat-fed-republisher@sha256:22\n",
         )
         .unwrap();
+        spire_role(d);
         site_inventory(d);
+    }
+
+    /// goat-peering-spire's own default for the bundle endpoint port.
+    fn spire_role(d: &Path) {
+        let r = d.join("ops/ansible/roles/goat-peering-spire/defaults");
+        std::fs::create_dir_all(&r).unwrap();
+        std::fs::write(r.join("main.yml"), "peering_spire_bundle_port: 8443\n").unwrap();
     }
 
     /// Two peerings on one core pin the same core name, the core's own name in
@@ -2451,6 +2474,8 @@ mod tests {
             "goat_fed_republisher_core_endpoint (looked in:",
             "peering_spire_server_addr (looked in:",
             "goat_fed_republisher_image (looked in:",
+            "peering_wg_extra_ports (looked in:",
+            "peering_spire_bundle_port in group_vars of dev_hosts or all, or in ops/ansible/roles/goat-peering-spire/defaults/main.yml",
             "peerings[].hosts.core of peering 'xab'",
             "[xab_core] in ops/ansible/inventory/peering-edges.ini",
             "the component of ops/pins/fleet-pins.yaml whose var is goat_fed_republisher_image",
@@ -2481,6 +2506,7 @@ mod tests {
         let mut a = p("xab", true);
         a["deployment"] = json!("rendered");
         let d = repo_with_site(json!([a]), "# nothing for peerings here\n");
+        spire_role(d.path());
         let r = d.path().join("ops/ansible/roles/goat-zenoh/defaults");
         std::fs::create_dir_all(&r).unwrap();
         std::fs::write(
@@ -2528,10 +2554,15 @@ mod tests {
             "goat_zenoh_edge_trust_mode",
             "goat_zenoh_edge_acl_trace",
             "peering_wg_fips_waived_reason",
-            "peering_wg_extra_ports",
             "peering_spire_outbound_listen",
         ] {
             assert!(!edge.contains(unset), "{unset} is not derived\n{edge}");
+        }
+        for frag in [
+            "# peering_wg_extra_ports: the SPIRE bundle endpoint port (peering_spire_bundle_port, ops/ansible/roles/goat-peering-spire/defaults/main.yml)",
+            "peering_wg_extra_ports:\n  - 8443\n",
+        ] {
+            assert!(edge.contains(frag), "{frag}\n---\n{edge}");
         }
         let _: serde_yaml::Value = serde_yaml::from_str(&edge).unwrap();
         let _: serde_yaml::Value = serde_yaml::from_str(&core).unwrap();
