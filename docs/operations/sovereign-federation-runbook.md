@@ -245,6 +245,23 @@ and it never removes or changes another peering's resources.
 | 12 | deploy the edge, then the outbound republisher (`peering-zenoh-edge.yml`, then `peering-republisher.yml` with `--limit <peering>_core`) | the roles install the peering certificates on the edge and core host | the edge dials our core and accepts the partner's CN; the container `goat-fed-republisher-<them>` runs on the core host, its `/metrics` on loopback reads `goat_fed_republisher_local_subscribed 1` and `goat_fed_republisher_edge_linked 1`, and its log has one `release release/<set>/** -> wire from/<us>/<set>/**` line per offered set |
 | 13 | federate the SPIRE trust domains (ADR 1157 step 2) | runs `peering-spire.yml` | our server refreshes their trust domain across the link, or the play says the step was not done for a side with no SPIRE server |
 
+**Where phase 10 admits.** On a core the goat-zenoh role deploys, admission takes the core
+router's inventory group, its `site_id`, the role's play, the org fragment's path and the router
+leaf's location from the role's own declarations; nothing needs to be set. For any other core,
+the deployment names them in the environment, and admission stops (GB-194), naming the missing
+ones, before anything changes:
+
+| Setting | What it names |
+|---|---|
+| `FED_CORE_ACL_ORG` | the core's org fragment (required): the partner's block is merged into it, and every other vendor and partner is kept |
+| `FED_CORE_ACL_SEED` with `FED_CORE_ACL_OUT` | when the core's configuration is assembled: the seed it is assembled from, and where the assembled configuration goes |
+| `FED_CORE_CERT`, `FED_CORE_KEY` | where phase 8's core certificate and key are placed; each only when it is set |
+| `FED_CORE_PLAY` (on `FED_CORE_GROUP`, default `<partner>_core`) | the play that deploys the core router; its `--check --diff` run is the dry run |
+| `FED_CORE_RESTART` with `FED_CORE_DRY_RUN` | instead of a play: the restart command, and the dry-run command (or `skip`) |
+| `FED_SLOT_REGISTRY_DB` or `FED_SLOT_PG_SSH` (or `FED_SLOT_CHECK=skip`) | the slot registry the committed slot list is checked against before the restart; not needed, and the check NOT APPLICABLE, when the core keeps no committed slot list |
+
+Each of these also overrides what a goat-zenoh role core would take from the role.
+
 `deploy` keeps three things apart: the intent (your reviewed configuration and the verified
 agreement), the progress (the run journal in the working directory: the phase attempts and the
 resources this run owns) and the evidence (`<work>/evidence/`). Interrupted, run it again: it
