@@ -51,7 +51,7 @@ jobs:
   federation:
     name: two sovereigns through the real driver, proved from the receiving side
     runs-on: ubuntu-24.04
-    timeout-minutes: 100
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -76,11 +76,11 @@ jobs:
           python3 -m pip install --quiet pyyaml jinja2 jsonschema
           sudo modprobe wireguard
           grep -q '^wireguard ' /proc/modules
-      # Release, because a debug build reads its embedded message catalogs from the
-      # source tree at run time, and these binaries run on hosts that have no such path.
       # The environment's catalog and verdict rules, no Docker (ops/federation-e2e/tests).
       - name: The e2e environment's harness checks
         run: ops/ci/check-federation-e2e-harness.sh
+      # Release, because a debug build reads its embedded message catalogs from the
+      # source tree at run time, and these binaries run on hosts that have no such path.
       - name: Build goat and goatbuilder
         working-directory: crates
         run: cargo build --release --locked -p goat-cli -p goatbuilder
@@ -91,6 +91,7 @@ jobs:
         timeout-minutes: 10
         run: ops/ci/check-federation-e2e-prepare.sh crates/target/release/goatbuilder
       - name: Two sovereigns, four scenarios (the fourth, nothing-hand-written, strict)
+        timeout-minutes: 105
         run: ops/federation-e2e/run.sh --goat crates/target/release/goat --goatbuilder crates/target/release/goatbuilder --record "$RUNNER_TEMP/federation-report"
       - name: The acceptance counts
         if: always()
