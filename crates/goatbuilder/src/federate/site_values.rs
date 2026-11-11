@@ -136,8 +136,8 @@ fn groups_text(groups: &[String]) -> String {
 /// `ansible_host` of the one host of `[<core_group>]` in the hand-written
 /// peering inventory. The one core-identity source: the rendered halves, the
 /// core certificate's name (`core_cn`) and its SANs read the core from here.
-// TODO(w15 hosts-from-site-inventory): when the peering's hosts come from the
-// site inventory, take the address from that same function here.
+// When the peering's hosts come from the site inventory, `goatbuilder federate
+// allocate` has already put them in `peering.hosts` (site_hosts::fill).
 pub fn core_address(
     repo: &Path,
     peering: &Peering,
@@ -157,10 +157,10 @@ pub fn core_address(
     let inv = "ops/ansible/inventory/peering-edges.ini";
     looked.push(format!("the one host of [{core_group}] in {inv}"));
     let text = std::fs::read_to_string(repo.join(inv)).ok()?;
-    let hosts: Vec<(String, String)> = ini_hosts(&text)
+    let hosts: Vec<(String, String)> = super::site_hosts::groups(&text)
         .into_iter()
-        .filter(|(g, _, _)| g == core_group)
-        .map(|(_, n, a)| (n, a))
+        .filter(|(g, _)| g == core_group)
+        .flat_map(|(_, ms)| ms.into_iter().map(|m| (m.name, m.addr)))
         .collect();
     let [(_, addr)] = hosts.as_slice() else {
         return None;
@@ -168,38 +168,14 @@ pub fn core_address(
     Some((addr.clone(), format!("[{core_group}] in {inv}")))
 }
 
-/// Every host line of an INI inventory: (group, inventory name, address), the
-/// address being its `ansible_host`, else the name. `:children` and `:vars`
-/// sections hold no hosts.
-fn ini_hosts(text: &str) -> Vec<(String, String, String)> {
-    let mut out = Vec::new();
-    let mut group: Option<String> = None;
-    for l in text.lines().map(str::trim) {
-        if l.is_empty() || l.starts_with('#') || l.starts_with(';') {
-            continue;
-        }
-        if let Some(name) = l.strip_prefix('[').and_then(|r| r.strip_suffix(']')) {
-            group = (!name.contains(':')).then(|| name.to_string());
-            continue;
-        }
-        let Some(g) = &group else { continue };
-        let mut words = l.split_whitespace();
-        let Some(name) = words.next() else { continue };
-        let addr = words
-            .find_map(|w| w.strip_prefix("ansible_host="))
-            .unwrap_or(name);
-        out.push((g.clone(), name.to_string(), addr.to_string()));
-    }
-    out
-}
-
 /// The core's own name in the site inventory: the inventory name of the host
 /// whose address is the core address, in the hand-written inventories of
 /// `ops/ansible/inventory/` other than the peering inventories (which give a
 /// machine one name per peering). One name per core, so every peering on that
 /// core mints and pins the same certificate name.
-// TODO(w15 hosts-from-site-inventory): unify with the site-inventory reader
-// that resolves peerings[].hosts, so both read the same file and group.
+// The same files and reader as site_hosts.rs, which resolves peerings[].hosts.
+// TODO: a declared environments[].inventory narrows site_hosts to that file;
+// this has no config in hand and still reads every site inventory.
 pub fn core_cn(
     repo: &Path,
     peering: &Peering,
@@ -207,33 +183,16 @@ pub fn core_cn(
     looked: &mut Vec<String>,
 ) -> Option<(String, String)> {
     let (addr, _) = core_address(repo, peering, core_group, looked)?;
-    let dir = repo.join("ops/ansible/inventory");
     looked.push(format!(
         "the site inventory's name for the core host {addr} in ops/ansible/inventory/*.ini (not peering-*.ini)"
     ));
-    let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(&dir)
-        .map(|rd| rd.flatten().map(|e| e.path()).collect())
-        .unwrap_or_default();
-    files.sort();
     let mut names: Vec<(String, String)> = Vec::new();
-    for f in files {
-        let fname = f
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or_default()
-            .to_string();
-        if !fname.ends_with(".ini") || fname.starts_with("peering-") {
-            continue;
-        }
-        let Ok(text) = std::fs::read_to_string(&f) else {
-            continue;
-        };
-        if text.starts_with(super::peering_files::MARKER) {
-            continue;
-        }
-        for (_, name, a) in ini_hosts(&text) {
-            if a == addr && !names.iter().any(|(n, _)| *n == name) {
-                names.push((name, format!("ops/ansible/inventory/{fname}")));
+    for (file, text) in super::site_hosts::site_inventories(repo) {
+        for (_, ms) in super::site_hosts::groups(&text) {
+            for m in ms {
+                if m.addr == addr && !names.iter().any(|(n, _)| *n == m.name) {
+                    names.push((m.name, file.clone()));
+                }
             }
         }
     }
