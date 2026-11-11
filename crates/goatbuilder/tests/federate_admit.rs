@@ -500,3 +500,89 @@ fn a_change_after_deploys_last_phase_is_refused() {
     assert!(out.status.success(), "{}", says(&out));
     assert!(phases_run(&v).ends_with(&[12, 13]), "{}", says(&out));
 }
+
+/// Run `cmd` with a terminal on stdin, stdout and stderr (a pseudo-terminal),
+/// answering `yes` to each "Type yes" question. Returns everything printed.
+fn at_a_terminal(cmd: &std::process::Command) -> String {
+    const PTY: &str = r#"import os, pty, sys
+pid, fd = pty.fork()
+if pid == 0:
+    os.execv(sys.argv[1], sys.argv[1:])
+seen, asked = b"", 0
+while True:
+    try:
+        d = os.read(fd, 65536)
+    except OSError:
+        break
+    if not d:
+        break
+    seen += d
+    while seen.count(b"Type yes") > asked:
+        asked += 1
+        os.write(fd, b"yes\n")
+os.waitpid(pid, 0)
+sys.stdout.buffer.write(seen)
+"#;
+    let mut py = std::process::Command::new("python3");
+    py.arg("-c")
+        .arg(PTY)
+        .arg(cmd.get_program())
+        .args(cmd.get_args());
+    py.env_clear();
+    for (k, v) in cmd.get_envs() {
+        if let Some(v) = v {
+            py.env(k, v);
+        }
+    }
+    if let Some(d) = cmd.get_current_dir() {
+        py.current_dir(d);
+    }
+    let out = py.output().unwrap();
+    String::from_utf8_lossy(&out.stdout).into_owned()
+}
+
+/// With a person at the terminal, the plain `goatbuilder federate <partner>`
+/// does not stop at phase 10: it makes the plan, asks to approve it, asks to
+/// approve what our core admits, and carries on through 10 to 14.
+#[test]
+fn the_plain_run_admits_at_its_prompt_and_carries_on() {
+    let w = world();
+    ready(&w, true);
+    w.clear_log();
+    let printed = at_a_terminal(&w.command_with(&["-o", "table"], &["hello-ally", "--from", "10"]));
+    assert_eq!(
+        printed.matches("Type yes").count(),
+        2,
+        "the plan, then the admission: {printed}"
+    );
+    let st = w.state();
+    for n in ["10", "11", "12", "13", "14"] {
+        assert_eq!(st["phases"][n]["outcome"], "passed", "phase {n}: {printed}");
+    }
+    assert!(w.work.join("plan.json").exists(), "the plan was made");
+    let cfg = std::fs::read_to_string(w.root.path().join("core/config.json5")).unwrap();
+    assert!(
+        cfg.contains("fed.xab.xaa.01"),
+        "admitted on our core: {cfg}"
+    );
+    assert!(w.log().contains("acceptance"), "{}", w.log());
+}
+
+/// Without a terminal the plain run still stops at phase 10, and the stop
+/// names the commands that admit by the command.
+#[test]
+fn without_a_terminal_the_stop_at_10_names_plan_and_deploy() {
+    let w = world();
+    ready(&w, true);
+    let (out, v) = w.run(&["hello-ally", "--from", "10"]);
+    assert!(out.status.success(), "{}", says(&out));
+    assert_eq!(phases_run(&v), [10]);
+    assert!(
+        rows(&v, "note")
+            .iter()
+            .any(|d| d.contains("goatbuilder federate plan hello-ally")
+                && d.contains("goatbuilder federate deploy hello-ally")),
+        "{}",
+        says(&out)
+    );
+}

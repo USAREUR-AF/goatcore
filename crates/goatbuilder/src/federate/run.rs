@@ -72,6 +72,12 @@ pub struct Surface {
     /// The command that runs this stage again, when it is not
     /// `goatbuilder federate <partner>` (deploy carries its approval).
     pub again: Option<String>,
+    /// A plain run with a person at the terminal: at phase 10 it hands over
+    /// to plan, deploy and test (`deploy::whole`) instead of stopping for the
+    /// by-hand admission.
+    pub hand_off_at_10: bool,
+    /// Set by the run when it stopped at phase 10 to hand over.
+    pub handed_off: bool,
 }
 
 impl Surface {

@@ -410,6 +410,7 @@ pub fn deploy(
             ..Default::default()
         },
         ask: Some(Box::new(super::prompt::Terminal)),
+        ..Default::default()
     };
     federate_with(
         repo,
@@ -420,6 +421,61 @@ pub fn deploy(
         },
         &mut s,
     )
+}
+
+/// `goatbuilder federate <partner>` as the whole procedure, with a person at
+/// the terminal: phases 1 to 9 (confirmation 1 at its prompts), then at phase
+/// 10 the plan is made and shown, deploy asks to approve its hash and then
+/// what our core admits (confirmation 2), runs 10 to 13, and acceptance runs
+/// last. A run that does not reach phase 10, or has no one to ask, is the
+/// plain run as before. The rows of each stage are kept, in order.
+pub fn whole(
+    repo: &Path,
+    o: &Options,
+    s: &mut Surface,
+    ask: &mut dyn Ask,
+    admission: super::Admission,
+    confirm: bool,
+) -> Result<Report> {
+    let first = federate_with(repo, o, s)?;
+    if !s.handed_off || !first.ok {
+        return Ok(first);
+    }
+    let mut checks = first.checks;
+    let made = fplan::plan(
+        repo,
+        &fplan::PlanOptions {
+            with: o.with,
+            env: o.env,
+            r#as: o.r#as,
+            edge_group: o.edge_group,
+            work: o.work,
+            mock: None,
+            live: true,
+        },
+    )?;
+    checks.extend(made.checks);
+    let deployed = deploy(
+        repo,
+        &Options { from: DEPLOY_FROM, to: 99, ..*o },
+        None,
+        None,
+        ask,
+        admission,
+        confirm,
+    )?;
+    let mut exit = deployed.exit;
+    let carry_on = deployed.ok && o.to >= TEST;
+    checks.extend(deployed.checks);
+    if carry_on {
+        let tested = test(repo, o)?;
+        exit = tested.exit;
+        checks.extend(tested.checks);
+    }
+    let mut r = Report::new("federate", checks, crate::EXIT_REFUSED);
+    r.exit = exit;
+    r.ok = exit == crate::EXIT_OK;
+    Ok(r)
 }
 
 /// `goatbuilder federate test <partner>`: acceptance alone.

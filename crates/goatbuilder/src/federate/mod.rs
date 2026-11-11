@@ -744,6 +744,22 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
                     }
                 }
             }
+            // Phase 10 of a plain run: admitted by the command through an
+            // approved plan. With a person at the terminal the run hands over
+            // to plan, deploy (which asks to approve the plan, then what our
+            // core admits) and test; without one, the stop names them.
+            if ph.n == 10 && s.plan.is_none() && s.only.is_none() {
+                if s.hand_off_at_10 {
+                    checks.push(row("note", format!("phase 10 by the command: making the plan for {}, then deploy asks to approve it and what our core admits, and runs 10 to 13; then acceptance", o.with)));
+                    if let Some(r) = run.as_mut() {
+                        r.end(ph, state::Outcome::Stopped, "handed to plan, deploy and test");
+                    }
+                    s.handed_off = true;
+                    stopped = true;
+                    break;
+                }
+                checks.push(row("note", format!("or by the command: goatbuilder federate plan {w}, then goatbuilder federate deploy {w} (it asks to approve the plan and what our core admits, at a terminal), then goatbuilder federate test {w}", w = o.with)));
+            }
             checks.push(row("note", format!("^ OPERATOR STEP — do the above, then re-run with --from {}", ph.n + 1)));
             if let Some(again) = &s.again {
                 checks.push(row("note", format!("the command that carries on: {again} --from {}", ph.n + 1)));
