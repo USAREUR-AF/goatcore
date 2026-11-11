@@ -17,6 +17,12 @@ A GitHub runner installs packages from Ubuntu's archive, through its Azure mirro
    - it logs in to ghcr.io with the job token, or falls back to an anonymous pull;
    - it pulls the `cache-image` input (`ghcr.io/usareur-af/ci-apt-cache:<date>`, an apt-cacher-ng that serves its baked cache offline). A tag is pulled with a warning that it is not pinned by digest. A pull denied after a successful token login is retried anonymously, for a public package;
    - it runs that image on the host network on port 3142, and waits for it to listen;
+   - it replaces the runner's Ubuntu sources with plain ones. A runner reads the archive through apt's mirror method (`mirror+file:/etc/apt/apt-mirrors.txt`), in both `/etc/apt/sources.list` and `ubuntu.sources`, and an update through the cache that way did not finish on a real runner. So it does three things:
+     - it copies `sources.list`, `ubuntu.sources` and `apt-mirrors.txt` to `/etc/apt/ci-failover-orig/`;
+     - it writes one deb822 `ubuntu.sources`: `http://archive.ubuntu.com/ubuntu/` for `<codename>`, `-updates` and `-backports`, and `http://security.ubuntu.com/ubuntu/` for `-security`, with all four components and the archive keyring. On a non-x86 machine both are `ports.ubuntu.com`;
+     - it comments out every line of `sources.list`, so nothing is configured twice.
+
+     A notice says so, and that copying the backup back restores the originals; nothing on an ephemeral runner needs that. The same happens inside a job container;
    - it writes `/etc/apt/apt.conf.d/00ci-failover`, which sends only the Ubuntu archive hosts to the cache:
      - `Acquire::http::Proxy "DIRECT"`;
      - `Acquire::http::Proxy::<host> "http://127.0.0.1:3142"` for archive, security, azure.archive and ports.ubuntu.com, plus the probed mirror when it is another `*.ubuntu.com` host.
@@ -39,7 +45,9 @@ Every networked command is bounded, so the step can never run into a job's timeo
 | the wait for the cache | 30 tries |
 | `apt-get update` through the cache | 300 s, with apt's own timeouts at 20 s and one retry |
 
-Each bound uses `timeout -k`, so a command that ignores the TERM, as a blocked connect can, is killed. A pull or update that runs out of time is exit 69, "environment", in one line naming the stage. On the failover path, each stage is a timestamped `::notice::` annotation: the probe result, failing over, the login, the pull, the cache listening, the sources left direct, and the update's start and end. Annotations are readable on the check run without signing in, unlike the step's log, so they show where the time went. That is at most eight notices, with a warning and an error, within the cap of ten annotations per step. The mirror-answered path prints its one line only.
+Each bound uses `timeout -k`, so a command that ignores the TERM, as a blocked connect can, is killed. A pull or update that runs out of time is exit 69, "environment", in one line naming the stage. Before that line, when the update through the cache times out or fails on an Ubuntu source, the step log gets a diagnosis:
+- apt-get update run again, bounded at 120 s, with `Debug::Acquire::http` and `Debug::pkgAcquire::Worker`, last 80 lines;
+- the cache's transfer and error logs, last 40 lines each (on the runner; a job container cannot reach its service's logs). On the failover path, each stage is a timestamped `::notice::` annotation: the probe result, failing over, the pull, the cache listening, the rewritten sources, the sources left direct, and the update's start and end. Annotations are readable on the check run without signing in, unlike the step's log, so they show where the time went. That is at most eight notices, with a warning and an error, within the cap of ten annotations per step. The mirror-answered path prints its one line only.
 
 ## When the job token cannot pull the image
 

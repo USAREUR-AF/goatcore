@@ -134,18 +134,68 @@ runs:
         # Once the proxy is set: refresh the lists through it, so every later install, with or
         # without its own `apt-get update`, resolves against the cache's indexes (a runner's
         # lists are as old as its image). A failed refresh means the cache cannot serve.
+        # The runner's Ubuntu sources go through apt's mirror method (mirror+file:, in both
+        # /etc/apt/sources.list and ubuntu.sources). On failover they become plain sources of
+        # the two hosts the cache serves; the originals are kept to restore by copying back.
+        plain_sources() {
+          local bk=/etc/apt/ci-failover-orig arch uri sec f
+          $SUDO mkdir -p "$bk" || { echo "::error::apt-failover: could not create $bk"; exit 1; }
+          for f in /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources /etc/apt/apt-mirrors.txt; do
+            [ -f "$f" ] || continue
+            $SUDO cp -a "$f" "$bk/" || { echo "::error::apt-failover: could not back up $f"; exit 1; }
+          done
+          arch=$(dpkg --print-architecture 2>/dev/null || echo amd64)
+          case "$arch" in
+            amd64|i386) uri=http://archive.ubuntu.com/ubuntu/; sec=http://security.ubuntu.com/ubuntu/ ;;
+            *) uri=http://ports.ubuntu.com/ubuntu-ports/; sec=$uri ;;
+          esac
+          printf '%s\n' "Types: deb" "URIs: $uri" "Suites: $codename $codename-updates $codename-backports" \
+            "Components: main restricted universe multiverse" \
+            "Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg" "" \
+            "Types: deb" "URIs: $sec" "Suites: $codename-security" \
+            "Components: main restricted universe multiverse" \
+            "Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg" \
+            | $SUDO tee /etc/apt/sources.list.d/ubuntu.sources >/dev/null \
+            || { echo "::error::apt-failover: could not write /etc/apt/sources.list.d/ubuntu.sources"; exit 1; }
+          if [ -f /etc/apt/sources.list ]; then
+            # Kept, every line commented out: nothing is configured twice.
+            $SUDO sed -i -E 's/^([^#])/# apt-failover: \1/' /etc/apt/sources.list \
+              || { echo "::error::apt-failover: could not comment out /etc/apt/sources.list"; exit 1; }
+          fi
+          stage "apt sources: plain $uri and $sec for $codename (mirror+file removed); originals in $bk, restore by copying them back"
+        }
+
+        # Why an update through the cache failed: apt's own trace and the cache's logs, in the
+        # step's log (not annotations), so the next failure names its cause.
+        diagnose() { # PROXY_URL
+          echo "=== apt-failover diagnosis: apt Acquire debug (apt-get update again, bounded 120 s, last 80 lines) ==="
+          $SUDO timeout -k 5 120 apt-get -o Acquire::Retries=0 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 \
+            -o Debug::Acquire::http=true -o Debug::pkgAcquire::Worker=true update 2>&1 | tail -80
+          if [ -z "$SERVICE_HOST" ]; then
+            echo "=== apt-failover diagnosis: the cache's transfer log (apt-cacher.log, last 40 lines) ==="
+            timeout -k 5 30 docker exec ci-apt-cache tail -40 /var/log/apt-cacher-ng/apt-cacher.log 2>&1 || true
+            echo "=== apt-failover diagnosis: the cache's error log (apt-cacher.err, last 40 lines) ==="
+            timeout -k 5 30 docker exec ci-apt-cache tail -40 /var/log/apt-cacher-ng/apt-cacher.err 2>&1 || true
+          else
+            echo "=== apt-failover diagnosis: the cache service's logs are not reachable from a job container ==="
+          fi
+          echo "=== apt-failover diagnosis: end ==="
+        }
+
         update_through() {
           local log
           log=$(mktemp)
           # Its exit status is not the verdict (the step runs under bash -e): the lines are.
           stage "apt-get update through $1"
           $SUDO timeout -k 10 300 apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 update -qq >"$log" 2>&1
-          case $? in 124|137) bounded_out "apt-get update through $1" 300 ;; esac
+          case $? in 124|137) diagnose "$1"; bounded_out "apt-get update through $1" 300 ;; esac
           stage "apt-get update done"
           # Only an Ubuntu source counts: the runner image's third-party https sources go
           # direct and may warn on their own, which is not the cache failing.
           bad=$(grep -E '^(E|W): ' "$log" | grep -E 'ubuntu\.com|mirror\+file|127\.0\.0\.1:3142|:3142/' | head -1 || true)
           if [ -n "$bad" ]; then
+            cat "$log"
+            diagnose "$1"
             echo "::error::environment: apt-failover: mirror $host $why, and apt-get update through $1 failed: $bad"
             exit 69
           fi
@@ -158,6 +208,7 @@ runs:
             timeout 2 bash -c 'exec 3<>"/dev/tcp/$1/3142"' _ "$SERVICE_HOST" 2>/dev/null && break
             sleep 1
           done
+          plain_sources
           write_proxy "$proxy"
           update_through "$proxy"
           echo "APT_FAILOVER=1" >> "$GITHUB_ENV"
@@ -166,7 +217,7 @@ runs:
         fi
         login="anonymous pull"
         stage "mirror $host $why; failing over to $CACHE_IMAGE"
-        stage "login to ghcr.io"
+        echo "apt-failover: $(date -u +%H:%M:%SZ) login to ghcr.io"
         if [ -n "$CACHE_TOKEN" ] && printf '%s' "$CACHE_TOKEN" | timeout -k 5 60 docker login ghcr.io -u "${GITHUB_ACTOR:-github-actions}" --password-stdin >/dev/null 2>&1; then
           login="ghcr.io login"
         fi
@@ -209,6 +260,7 @@ runs:
           exit 1
         fi
         # The runner's apt. Only plain http sources go through it; an https source does not.
+        plain_sources
         write_proxy "http://127.0.0.1:3142"
         update_through "http://127.0.0.1:3142"
         # Docker builds and containers: inside them 127.0.0.1 is the container, so they reach
