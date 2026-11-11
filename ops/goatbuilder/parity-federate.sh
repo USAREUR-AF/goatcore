@@ -30,8 +30,14 @@ BIN="${1:?}"; shift
 WORK="$(mktemp -d -t goatbuilder-parity-federate.XXXXXX)"
 trap 'rm -rf "$WORK"' EXIT
 export FED_WORK="$WORK/work"
+# Both sides print the goat and goatbuilder paths they resolve, and resolve
+# them differently: the script with `command -v` once at its start, the binary
+# by its own PATH search on every run. Pin both, once, so a binary that appears
+# on or leaves PATH during the gate cannot make the two sides name different
+# paths.
 GOAT="$(command -v goat || echo goat)"
 GBBIN="$(command -v goatbuilder || echo goatbuilder)"
+export GOAT_BIN="$GOAT" GOATBUILDER_BIN="$GBBIN"
 MOCK="$REPO/ops/goatbuilder/fixtures/goatnet-from-scratch/03-boundary-node"
 
 norm() {
@@ -44,13 +50,19 @@ script_side() { "$REPO/ops/scripts/peering-standup.sh" "$1" --plan 2>&1 | norm; 
 # The binary's rows come from -o json: the human view of a dry run is a plan
 # table (federate.rs plan_view), and the rows are the same phase headers and
 # commands the table used to print, one per row.
+# A binary that fails, or prints anything but its JSON report, is reported as
+# that, with its exit code and stderr, and never compared as an empty plan.
 binary_side() {
-  "$BIN" -C "$REPO" -o json --mock "$MOCK" federate "$1" --dry-run 2>/dev/null \
-  | python3 -c 'import json,sys
-for c in json.load(sys.stdin)["checks"]:
+  local rc=0
+  "$BIN" -C "$REPO" -o json --mock "$MOCK" federate "$1" --dry-run >"$WORK/bin.out" 2>"$WORK/bin.err" || rc=$?
+  if ! python3 -c 'import json,sys
+for c in json.load(open(sys.argv[1]))["checks"]:
     if c["name"] == "phase": print(c["detail"])
-    elif c["name"] == "cmd": print("    " + c["detail"])' \
-  | norm
+    elif c["name"] == "cmd": print("    " + c["detail"])' "$WORK/bin.out" >"$WORK/bin.rows" 2>"$WORK/bin.parse"; then
+    echo "BINARY FAILED: exit $rc; stderr: $(tr "\n" " " <"$WORK/bin.err" | head -c 300); report: $(tail -n 1 "$WORK/bin.parse" | head -c 300)" >&2
+    return 1
+  fi
+  norm <"$WORK/bin.rows"
 }
 
 fail=0
@@ -61,14 +73,20 @@ for mode in "goat here" "goatbuilder here" "goat ssh" "goatbuilder ssh" "unset u
   if [ "$verbs" = unset ]; then unset FED_VERBS; else export FED_VERBS="$verbs"; fi
   if [ "$measure" = unset ]; then unset FED_MEASURE; else export FED_MEASURE="$measure"; fi
   for peering in "$@"; do
-    a="$(script_side "$peering" || true)"; b="$(binary_side "$peering" || true)"
+    a="$(script_side "$peering" || true)"
+    if ! b="$(binary_side "$peering" 2>"$WORK/side.err")"; then
+      fail=1; echo "PARITY FAIL: federate $peering (FED_VERBS=$verbs FED_MEASURE=$measure) — $(cat "$WORK/side.err")"; continue
+    fi
     if [ -z "$a" ]; then
       fail=1; echo "PARITY FAIL: federate $peering (FED_VERBS=$verbs FED_MEASURE=$measure) — the script produced no phases"; continue
     fi
-    if [ "$verbs" != unset ] && ! printf '%s\n' "$b" | grep -q "^$( [ "$verbs" = goat ] && echo GOAT || echo goatbuilder) federate lint "; then
+    # grep -q reads a here-string, not a pipe: under pipefail, grep -q leaving at
+    # its first match can kill the writer with SIGPIPE (exit 141), and the
+    # pipeline then reads as "no match" although the line is there.
+    if [ "$verbs" != unset ] && ! grep -q "^$( [ "$verbs" = goat ] && echo GOAT || echo goatbuilder) federate lint " <<<"$b"; then
       fail=1; echo "PARITY FAIL: federate $peering (FED_VERBS=$verbs FED_MEASURE=$measure) — phase 4 does not run through $verbs"; continue
     fi
-    if [ "$measure" = ssh ] && ! printf '%s\n' "$b" | grep -q "^goatbuilder federate init .*--over-ssh '$peering' "; then
+    if [ "$measure" = ssh ] && ! grep -q "^goatbuilder federate init .*--over-ssh '$peering' " <<<"$b"; then
       fail=1; echo "PARITY FAIL: federate $peering (FED_MEASURE=ssh) — phase 3 does not measure over SSH"; continue
     fi
     if [ "$a" != "$b" ]; then
