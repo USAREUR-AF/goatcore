@@ -116,3 +116,5 @@ jobs:
 
       - name: Peering edge certificate installation (disposable CAs, localhost only)
         run: bash ops/ansible/roles/goat-zenoh-edge/tests/test-certificates.sh
+      - name: Peering SPIRE outbound listen address from the route (localhost only)
+        run: bash ops/ansible/roles/goat-peering-spire/tests/test-outbound-listen.sh
