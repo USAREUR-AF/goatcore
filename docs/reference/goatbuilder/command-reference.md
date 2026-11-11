@@ -256,7 +256,9 @@ One more machine of a class at a live site, declared → converged → verified:
 
 A sovereign peering declared, converged and verified (ADR 1157): our half measured, the packages exchanged through the peering directory, one agreement composed and verified, the leaves minted from it, the rules rendered by the one writer, the edge deployed, the transport the agreement chose opened, acceptance in all four tiers. Replaces ops/scripts/peering-standup.sh step for step.
 
-`goatbuilder federate init|lint|compose|diff|verify|apply` runs one of the six federation verbs in process, with the flags and exit codes of `goat federate <verb>`. `goatbuilder federate plan <partner>` writes the bounded plan alone; `goatbuilder federate backout <partner>` backs one peering out and leaves the others as they were.
+At a terminal, `goatbuilder federate <partner>` is the whole procedure: it asks for the partner's key and CA fingerprint and the agreement digest, makes the plan and asks to approve it, shows what our core will admit and asks again, then carries on through acceptance. A run that stops resumes where it stopped. Values come from the deployment's declarations; a FED_* variable set in the environment overrides one.
+
+Each stage also runs alone: `plan <partner>`, `deploy <partner>`, `test <partner>`, `status [<partner>]`. `allocate [<peering>]` writes a peering's values and files for review; `backout <partner>` backs one peering out and leaves the others as they were. `goatbuilder federate init|lint|compose|diff|verify|apply` runs one of the six federation verbs in process, with the flags and exit codes of `goat federate <verb>`.
 
 **Arguments**
 
