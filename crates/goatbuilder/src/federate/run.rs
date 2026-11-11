@@ -480,7 +480,7 @@ impl Run {
         if p.n < deploy::DEPLOY_FROM {
             return None;
         }
-        deploy::inputs_hold(plan).err().map(|e| Check {
+        deploy::inputs_hold_since(plan, deploy::baseline(plan).as_ref()).err().map(|e| Check {
             name: "failed".into(),
             ok: false,
             detail: format!("{e:#}"),
@@ -502,9 +502,17 @@ impl Run {
         let inputs = Self::inputs(&self.paths, p);
         let outputs = Self::outputs(&self.paths, p.n);
         let id = self.id.clone();
+        let passed = outcome == Outcome::Passed;
         self.state
             .record(&id, p.n, outcome, inputs, outputs, detail);
         self.save();
+        // What deploy's own phase changed is expected; the next phase is
+        // compared with what this one left.
+        if let (true, Some(plan)) = (passed && p.n >= deploy::DEPLOY_FROM, self.plan.as_ref()) {
+            if let Err(e) = deploy::record_baseline(plan) {
+                self.save_errors.push(format!("{e:#}"));
+            }
+        }
     }
 
     /// Close the run in the journal with its outcome word. Returns a failed

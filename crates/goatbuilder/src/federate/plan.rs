@@ -1316,22 +1316,30 @@ pub struct Recheck {
     pub changed: Vec<String>,
     /// The live checks, rerun now, and the rows read from the inputs now (certificates, host allocation).
     pub live: Vec<Readiness>,
+    /// The checks the approved plan itself recorded as SKIP. The person
+    /// approved the plan with them shown, so the same SKIP now is no change.
+    pub skipped_in_plan: Vec<String>,
 }
 
 impl Recheck {
     /// A change may go ahead only when the saved plan was ready, no input
     /// changed, every live check answered, and each answer and input row
-    /// is PASS or NOT APPLICABLE. SKIP is not a pass.
+    /// is PASS or NOT APPLICABLE, or a SKIP the approved plan already
+    /// recorded for that check. Any other SKIP is not a pass.
     pub fn allows_change(&self) -> bool {
         self.unready.is_empty()
             && self.changed.is_empty()
             && LIVE_CHECKS
                 .iter()
                 .all(|c| self.live.iter().any(|r| r.check == *c))
-            && self
-                .live
-                .iter()
-                .all(|r| r.outcome == "PASS" || r.outcome == "NOT APPLICABLE")
+            && self.live.iter().all(|r| self.holds(r))
+    }
+
+    /// Whether one rechecked row lets the change go ahead.
+    pub fn holds(&self, r: &Readiness) -> bool {
+        r.outcome == "PASS"
+            || r.outcome == "NOT APPLICABLE"
+            || (r.outcome == "SKIP" && self.skipped_in_plan.contains(&r.check))
     }
 }
 
@@ -1420,13 +1428,28 @@ pub fn recheck_inputs(
     with: &str,
     mock: Option<&Path>,
 ) -> Result<(Plan, Vec<String>, Vec<Readiness>)> {
+    let (saved, now, input_rows) = inputs_now(repo, plan_path, with, mock)?;
+    let changed = changed_sections(&saved, &now);
+    Ok((saved, changed, input_rows))
+}
+
+/// The saved plan (its hash checked, bound to `with` and its directory), the
+/// plan's sections as they read now, and the rows read from the inputs now.
+/// A deploy keeps the sections it read after each of its own phases, so the
+/// next phase is compared with what deploy itself left, not with the plan
+/// written before deploy changed anything.
+pub fn inputs_now(
+    repo: &Path,
+    plan_path: &Path,
+    with: &str,
+    mock: Option<&Path>,
+) -> Result<(Plan, Plan, Vec<Readiness>)> {
     let saved = read(plan_path)?;
     check_binding(&saved, plan_path, with)?;
     let o = saved_options(&saved, mock);
     let (peering, all) = declared(repo, &o)?;
     let (now, input_rows) = inputs_part(repo, &o, &peering, &all)?;
-    let changed = changed_sections(&saved, &now);
-    Ok((saved, changed, input_rows))
+    Ok((saved, now, input_rows))
 }
 
 /// The live prerequisite recheck, for the deploy step to call immediately
@@ -1455,12 +1478,19 @@ pub fn recheck_live_prerequisites(repo: &Path, plan_path: &Path, with: &str) -> 
     )?;
     let (_, changed, input_rows) = recheck_inputs(repo, plan_path, with, None)?;
     live.extend(input_rows);
+    let skipped_in_plan = saved
+        .readiness
+        .iter()
+        .filter(|r| r.outcome == "SKIP")
+        .map(|r| r.check.clone())
+        .collect();
     Ok(Recheck {
         peering: saved.peering.clone(),
         unready: unready(&saved),
         plan_hash: saved.hash,
         changed,
         live,
+        skipped_in_plan,
     })
 }
 
@@ -2019,12 +2049,21 @@ mod tests {
             unready,
             changed,
             live,
+            skipped_in_plan: Vec::new(),
         };
         assert!(r(vec![], vec![], all("PASS")).allows_change());
         assert!(r(vec![], vec![], all("NOT APPLICABLE")).allows_change());
         let mut skip = all("PASS");
         skip[2].outcome = "SKIP".into();
-        assert!(!r(vec![], vec![], skip).allows_change());
+        assert!(!r(vec![], vec![], skip.clone()).allows_change());
+        // A SKIP the approved plan itself recorded for that check is no
+        // change; a SKIP of another check still refuses.
+        let recorded = |checks: &[&str], live: Vec<Readiness>| Recheck {
+            skipped_in_plan: checks.iter().map(|c| c.to_string()).collect(),
+            ..r(vec![], vec![], live)
+        };
+        assert!(recorded(&[LIVE_CHECKS[2]], skip.clone()).allows_change());
+        assert!(!recorded(&[LIVE_CHECKS[0]], skip).allows_change());
         assert!(!r(vec![], vec![], all("BLOCKED")).allows_change());
         assert!(!r(vec![], vec![], vec![]).allows_change());
         assert!(

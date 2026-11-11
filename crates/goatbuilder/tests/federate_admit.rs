@@ -396,3 +396,107 @@ fn admission_flags_belong_to_deploy() {
     ]);
     assert!(says(&out).contains("GB-189"), "{}", says(&out));
 }
+
+/// The admission digest the review names (`--review-in-pr` writes it and stops).
+fn reviewed_digest(w: &World, plan: &str) -> String {
+    let (out, _) = w.run(&[
+        "deploy",
+        "hello-ally",
+        "--approve-plan",
+        plan,
+        "--review-in-pr",
+    ]);
+    assert!(out.status.success(), "{}", says(&out));
+    std::fs::read_to_string(w.work.join("admission/review.md"))
+        .unwrap()
+        .split("--approve-admission ")
+        .nth(1)
+        .unwrap()
+        .split_whitespace()
+        .next()
+        .unwrap()
+        .to_string()
+}
+
+/// Admission that places their CA under pki/, a section the plan records.
+fn ca_in_pki(w: &World) {
+    let gv = w
+        .repo
+        .join("ops/ansible/group_vars/hello-ally_edge/peering.yml");
+    let text = std::fs::read_to_string(&gv).unwrap();
+    let text: String = text
+        .lines()
+        .map(|l| {
+            if l.starts_with("goat_zenoh_edge_partner_ca_path:") {
+                format!(
+                    "goat_zenoh_edge_partner_ca_path: {}",
+                    w.work.join("pki/partner-ca.pem").display()
+                )
+            } else {
+                l.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    std::fs::write(&gv, text + "\n").unwrap();
+}
+
+/// Deploy's own phases change what the plan was made from: here the
+/// admission places their CA in pki/. One approved plan carries deploy from
+/// 10 through 13 in one run, with no second plan.
+#[test]
+fn deploy_carries_past_its_own_admission() {
+    let w = world();
+    ca_in_pki(&w);
+    let plan = ready(&w, true);
+    let digest = reviewed_digest(&w, &plan);
+    let (out, v) = w.run(&[
+        "deploy",
+        "hello-ally",
+        "--approve-plan",
+        &plan,
+        "--approve-admission",
+        &digest,
+    ]);
+    assert!(out.status.success(), "{}", says(&out));
+    assert_eq!(phases_run(&v), [10, 11, 12, 13], "{}", says(&out));
+    assert!(
+        w.work.join("pki/partner-ca.pem").exists(),
+        "the admission changed pki/"
+    );
+}
+
+/// What deploy's last phase left is the reference for the next run of the
+/// same plan: a hand change after it is refused, and the same run passes
+/// once the change is gone.
+#[test]
+fn a_change_after_deploys_last_phase_is_refused() {
+    let w = world();
+    ca_in_pki(&w);
+    let plan = ready(&w, true);
+    let digest = reviewed_digest(&w, &plan);
+    let deploy = [
+        "deploy",
+        "hello-ally",
+        "--approve-plan",
+        &plan,
+        "--approve-admission",
+        &digest,
+    ];
+    std::fs::write(&w.fail_12, "").unwrap();
+    let (out, _) = w.run(&deploy);
+    assert!(!out.status.success(), "phase 12 fails: {}", says(&out));
+    std::fs::remove_file(&w.fail_12).unwrap();
+
+    let by_hand = w.work.join("pki/by-hand.pem");
+    std::fs::write(&by_hand, "not deploy's\n").unwrap();
+    let (out, _) = w.run(&deploy);
+    let text = says(&out);
+    assert!(!out.status.success(), "{text}");
+    assert!(text.contains("GB-188") && text.contains("pki"), "{text}");
+
+    std::fs::remove_file(&by_hand).unwrap();
+    let (out, v) = w.run(&deploy);
+    assert!(out.status.success(), "{}", says(&out));
+    assert!(phases_run(&v).ends_with(&[12, 13]), "{}", says(&out));
+}

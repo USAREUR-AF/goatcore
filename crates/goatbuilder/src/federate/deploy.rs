@@ -35,7 +35,7 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 
 use super::lock::Want;
 use super::plan::{self as fplan, Plan};
@@ -186,7 +186,13 @@ fn same_plan(a: &Approved) -> Result<()> {
 /// planner's live recheck allows the change.
 pub fn recheck(a: &Approved) -> Result<String> {
     same_plan(a)?;
-    let r = fplan::recheck_live_prerequisites(&a.repo, &a.path, &a.peering)?;
+    let mut r = fplan::recheck_live_prerequisites(&a.repo, &a.path, &a.peering)?;
+    // A later run of a plan deploy has already run part of: the sections are
+    // compared with what deploy's last phase left, not with the plan.
+    if let Some(before) = baseline(a) {
+        let (_, now, _) = fplan::inputs_now(&a.repo, &a.path, &a.peering, None)?;
+        r.changed = fplan::changed_sections(&before, &now);
+    }
     if r.plan_hash != a.hash {
         return Err(coded(
             "GB-187",
@@ -206,7 +212,7 @@ pub fn recheck(a: &Approved) -> Result<String> {
         why.extend(
             r.live
                 .iter()
-                .filter(|l| l.outcome != "PASS" && l.outcome != "NOT APPLICABLE")
+                .filter(|l| !r.holds(l))
                 .map(|l| format!("{} {}", l.check, l.outcome)),
         );
         for c in fplan::LIVE_CHECKS {
@@ -233,14 +239,70 @@ pub fn recheck(a: &Approved) -> Result<String> {
 /// live reads; the run's own export of phase 1's inputs keeps each value's
 /// derived source, so it is not a change).
 pub fn inputs_hold(a: &Approved) -> Result<()> {
+    inputs_hold_since(a, None)
+}
+
+/// [`inputs_hold`], compared with `since` when deploy has already run a
+/// phase: the plan's sections as they read right after deploy's last phase.
+/// What deploy's own phases changed (the admission's certificates, the
+/// rendered files a play leaves) is then expected; anything changed since
+/// that phase ended is refused.
+pub fn inputs_hold_since(a: &Approved, since: Option<&Plan>) -> Result<()> {
     same_plan(a)?;
-    let (_, changed, _) = fplan::recheck_inputs(&a.repo, &a.path, &a.peering, None)?;
+    let changed = match since {
+        None => fplan::recheck_inputs(&a.repo, &a.path, &a.peering, None)?.1,
+        Some(before) => {
+            let (_, now, _) = fplan::inputs_now(&a.repo, &a.path, &a.peering, None)?;
+            fplan::changed_sections(before, &now)
+        }
+    };
     if !changed.is_empty() {
         return Err(coded(
             "GB-188",
-            format!("deploy: what the plan was made from has changed: {}; make a new plan and approve it", changed.join(", ")),
+            if since.is_some() {
+                format!("deploy: what the plan was made from has changed since deploy's last phase: {}; make a new plan and approve it", changed.join(", "))
+            } else {
+                format!("deploy: what the plan was made from has changed: {}; make a new plan and approve it", changed.join(", "))
+            },
         ));
     }
+    Ok(())
+}
+
+/// Where deploy keeps the plan's sections as they read right after its last
+/// phase passed, bound to the approved plan's hash: `<work>/plan/deployed.json`.
+fn baseline_path(a: &Approved) -> PathBuf {
+    a.path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("plan/deployed.json")
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct Baseline {
+    plan_hash: String,
+    sections: Plan,
+}
+
+/// The sections deploy's own last phase left, for this approved plan; None
+/// before deploy has passed a phase of it.
+pub fn baseline(a: &Approved) -> Option<Plan> {
+    let b: Baseline = serde_json::from_str(&std::fs::read_to_string(baseline_path(a)).ok()?).ok()?;
+    (b.plan_hash == a.hash).then_some(b.sections)
+}
+
+/// Record the plan's sections as they read now, after a phase deploy ran
+/// passed: what that phase changed is deploy's own, and the next phase (in
+/// this run or a later run of the same plan) is compared with it.
+pub fn record_baseline(a: &Approved) -> Result<()> {
+    let (_, now, _) = fplan::inputs_now(&a.repo, &a.path, &a.peering, None)?;
+    let p = baseline_path(a);
+    if let Some(d) = p.parent() {
+        std::fs::create_dir_all(d)?;
+    }
+    let tmp = p.with_extension("json.tmp");
+    std::fs::write(&tmp, serde_json::to_vec_pretty(&Baseline { plan_hash: a.hash.clone(), sections: now })?)?;
+    std::fs::rename(&tmp, &p).with_context(|| format!("{}", p.display()))?;
     Ok(())
 }
 
