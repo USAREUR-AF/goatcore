@@ -113,19 +113,7 @@ fn input(name: &'static str, value: Option<String>, source: impl Into<String>) -
 /// merges them). A templated value resolves only inside a play, so it is not a
 /// value here.
 pub fn group_var(repo: &Path, group: &str, key: &str) -> Option<String> {
-    let gv = repo.join("ops/ansible/group_vars");
-    let mut files = vec![
-        gv.join(format!("{group}.yml")),
-        gv.join(format!("{group}.yaml")),
-    ];
-    if let Ok(rd) = std::fs::read_dir(gv.join(group)) {
-        let mut more: Vec<_> = rd
-            .filter_map(|e| e.ok().map(|e| e.path()))
-            .filter(|p| p.extension().is_some_and(|x| x == "yml" || x == "yaml"))
-            .collect();
-        more.sort();
-        files.extend(more);
-    }
+    let files = group_files(repo, group);
     let mut found = None;
     for f in files {
         let Ok(text) = std::fs::read_to_string(&f) else {
@@ -147,32 +135,95 @@ pub fn group_var(repo: &Path, group: &str, key: &str) -> Option<String> {
     found
 }
 
-/// The addresses the edge dials, from group_vars/<edge>/deployment.yml: the
-/// names the core certificate must carry as SANs (preflight.py reads the same
-/// lines to check them).
-fn dialled(repo: &Path, edge_group: &str) -> Vec<String> {
-    let re = regex::Regex::new(r#""(?:tls|tcp)/([^:"/#]+):"#).expect("regex");
-    let text = std::fs::read_to_string(
-        repo.join("ops/ansible/group_vars")
-            .join(edge_group)
-            .join("deployment.yml"),
-    )
-    .unwrap_or_default();
-    let mut out: Vec<String> = Vec::new();
-    for line in text.lines() {
-        if let Some(c) = re.captures(line) {
-            if !out.contains(&c[1].to_string()) {
-                out.push(c[1].to_string());
+/// The files Ansible reads for a group's vars, in the order it merges them:
+/// group_vars/<group>.yml, then each file in group_vars/<group>/ by name.
+fn group_files(repo: &Path, group: &str) -> Vec<std::path::PathBuf> {
+    let gv = repo.join("ops/ansible/group_vars");
+    let mut files = vec![
+        gv.join(format!("{group}.yml")),
+        gv.join(format!("{group}.yaml")),
+    ];
+    if let Ok(rd) = std::fs::read_dir(gv.join(group)) {
+        let mut more: Vec<_> = rd
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.extension().is_some_and(|x| x == "yml" || x == "yaml"))
+            .collect();
+        more.sort();
+        files.extend(more);
+    }
+    files
+}
+
+/// The host of each `tls/<host>:<port>` or `tcp/<host>:<port>` endpoint that
+/// `key` holds (a string or a list of strings) in any of a group's vars files.
+fn endpoint_hosts(repo: &Path, group: &str, key: &str, out: &mut Vec<String>) {
+    let re = regex::Regex::new(r"^(?:tls|tcp)/([^:/#\s]+):").expect("regex");
+    for f in group_files(repo, group) {
+        let Ok(text) = std::fs::read_to_string(&f) else {
+            continue;
+        };
+        let Ok(doc) = serde_yaml::from_str::<serde_yaml::Value>(&text) else {
+            continue;
+        };
+        let items: Vec<&str> = match doc.get(key) {
+            Some(serde_yaml::Value::String(e)) => vec![e.as_str()],
+            Some(serde_yaml::Value::Sequence(es)) => es.iter().filter_map(|e| e.as_str()).collect(),
+            _ => Vec::new(),
+        };
+        for e in items {
+            if let Some(c) = re.captures(e) {
+                push_new(out, &c[1]);
             }
         }
     }
+}
+
+fn push_new(out: &mut Vec<String>, v: &str) {
+    if !v.is_empty() && !v.contains("{{") && !out.iter().any(|o| o == v) {
+        out.push(v.to_string());
+    }
+}
+
+/// The names the core certificate carries (FED_CORE_SAN; phase 8 mints the core
+/// certificate only when it has them), each read where the deployment already
+/// declares it, in this order, without duplicates:
+/// 1. the addresses the edge dials: `goat_zenoh_edge_core_endpoints` in any
+///    file of group_vars/<edge>/ (the hand-written deployment.yml or the
+///    rendered peering-deployment.yml);
+/// 2. the address the core's republisher dials, `goat_fed_republisher_core_endpoint`,
+///    in group_vars/<core>/ or group_vars/all/;
+/// 3. the peering declaration's `hosts: core`;
+/// 4. the `ansible_host` of the one host of the core's inventory group.
+///
+/// preflight.py checks that every address of 1 is covered.
+pub fn core_names(repo: &Path, peering: &config::Peering, edge_group: &str, core_group: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    endpoint_hosts(repo, edge_group, "goat_zenoh_edge_core_endpoints", &mut out);
+    for g in [core_group, "all"] {
+        endpoint_hosts(repo, g, "goat_fed_republisher_core_endpoint", &mut out);
+    }
+    if let Some(h) = &peering.hosts {
+        push_new(&mut out, &h.core);
+    }
+    if let Some((host, _)) = group_host(repo, core_group) {
+        push_new(&mut out, &host);
+    }
+    let plain = |s: &String| s.chars().all(|c| c.is_ascii_alphanumeric() || ".-:".contains(c));
+    out.retain(plain);
     out
 }
 
-/// `ssh://<user>@<host>` for the one host of an inventory group, from its
-/// `ansible_host` and `ansible_user` (else the project's `deploy.ssh_user`).
-/// `None` when the group has no host or several: then nothing is guessed.
-fn docker_host_of(repo: &Path, group: &str) -> Option<String> {
+/// Where [`core_names`] looks, for the message when it finds nothing.
+pub fn core_names_sources(edge_group: &str, core_group: &str) -> String {
+    format!(
+        "goat_zenoh_edge_core_endpoints in group_vars/{edge_group}/, goat_fed_republisher_core_endpoint in group_vars/{core_group}/ or group_vars/all/, peerings[].hosts.core in goatbuilder.yaml, or the ansible_host of the one host of [{core_group}] in ops/ansible/inventory/peering-edges.ini"
+    )
+}
+
+/// The one host of an inventory group in ops/ansible/inventory/peering-edges.ini:
+/// its `ansible_host` (else its name) and `ansible_user`. `None` when the group
+/// has no host or several: then nothing is guessed.
+fn group_host(repo: &Path, group: &str) -> Option<(String, Option<String>)> {
     let text =
         std::fs::read_to_string(repo.join("ops/ansible/inventory/peering-edges.ini")).ok()?;
     let mut inside = false;
@@ -193,8 +244,7 @@ fn docker_host_of(repo: &Path, group: &str) -> Option<String> {
         return None;
     };
     let mut words = line.split_whitespace();
-    let name = words.next()?.to_string();
-    let mut host = name;
+    let mut host = words.next()?.to_string();
     let mut user = None;
     for w in words {
         if let Some(v) = w.strip_prefix("ansible_host=") {
@@ -203,6 +253,14 @@ fn docker_host_of(repo: &Path, group: &str) -> Option<String> {
             user = Some(v.to_string());
         }
     }
+    Some((host, user))
+}
+
+/// `ssh://<user>@<host>` for the one host of an inventory group, from its
+/// `ansible_host` and `ansible_user` (else the project's `deploy.ssh_user`).
+/// `None` when the group has no host or several: then nothing is guessed.
+fn docker_host_of(repo: &Path, group: &str) -> Option<String> {
+    let (host, user) = group_host(repo, group)?;
     let user = user.or_else(|| crate::settings::ssh_user(repo))?;
     let plain = |s: &str| {
         !s.is_empty()
@@ -347,11 +405,11 @@ pub fn derive_inputs(
         from_age,
         at("goat_federation_ca_key_from_age (true opts phase 8 in to opening the age-encrypted CA key)"),
     ));
-    let sans = dialled(repo, edge_group);
+    let sans = core_names(repo, peering, edge_group, &core_group);
     v.push(input(
         "FED_CORE_SAN",
         (!sans.is_empty()).then(|| sans.join(",")),
-        format!("the addresses group_vars/{edge_group}/deployment.yml dials"),
+        core_names_sources(edge_group, &core_group),
     ));
     // The core certificate's CN: the name the edge pins for its core, from the
     // one core-identity function (FED_CORE_CN in the environment overrides it).
@@ -601,6 +659,72 @@ mod tests {
             get(&v, "FED_WG_INTERFACE").value.as_deref(),
             Some("wg-fed1")
         );
+    }
+
+    /// The core certificate's names come from where the deployment declares
+    /// them: the edge's endpoints in any group_vars file (the rendered
+    /// peering-deployment.yml too), the core's republisher endpoint, the
+    /// declaration's hosts, then the core inventory host; once each, in order.
+    #[test]
+    fn the_core_names_are_read_from_every_declaration_that_holds_one() {
+        let repo = tempfile::tempdir().unwrap();
+        let r = repo.path();
+        let gv = r.join("ops/ansible/group_vars");
+        std::fs::create_dir_all(gv.join("xab_edge")).unwrap();
+        std::fs::create_dir_all(gv.join("xab_core")).unwrap();
+        std::fs::create_dir_all(gv.join("all")).unwrap();
+        std::fs::write(
+            gv.join("xab_edge/peering-deployment.yml"),
+            "goat_zenoh_edge_core_endpoints:\n  - \"tls/core.example.org:7447#root_ca_certificate_file=/x/our-ca.pem\"\n  - \"tls/192.0.2.20:7447\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            gv.join("xab_core/peering-deployment.yml"),
+            "goat_fed_republisher_core_endpoint: \"tls/192.0.2.20:7447\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            gv.join("all/site.yml"),
+            "goat_fed_republisher_core_endpoint: \"tls/{{ core_host }}:7447\"\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(r.join("ops/ansible/inventory")).unwrap();
+        std::fs::write(
+            r.join("ops/ansible/inventory/peering-edges.ini"),
+            "[xab_core]\ncore-1 ansible_host=192.0.2.21\n",
+        )
+        .unwrap();
+        let mut p = peering();
+        p.hosts = Some(config::PeeringHosts {
+            edge: "192.0.2.30".into(),
+            core: "192.0.2.20".into(),
+            user: None,
+        });
+        assert_eq!(
+            core_names(r, &p, "xab_edge", "xab_core"),
+            ["core.example.org", "192.0.2.20", "192.0.2.21"]
+        );
+        let v = derive_inputs(r, &p, "/w", "xab_edge", None);
+        assert_eq!(
+            get(&v, "FED_CORE_SAN").value.as_deref(),
+            Some("core.example.org,192.0.2.20,192.0.2.21")
+        );
+        // Only the inventory knows the core: that is the name.
+        std::fs::remove_dir_all(&gv).unwrap();
+        assert_eq!(core_names(r, &peering(), "xab_edge", "xab_core"), ["192.0.2.21"]);
+        // Nothing declares one: unset, and the source names every place looked.
+        std::fs::remove_dir_all(r.join("ops/ansible/inventory")).unwrap();
+        let v = derive_inputs(r, &peering(), "/w", "xab_edge", None);
+        let san = get(&v, "FED_CORE_SAN");
+        assert_eq!(san.value, None);
+        for place in [
+            "group_vars/xab_edge/",
+            "group_vars/xab_core/",
+            "peerings[].hosts.core",
+            "[xab_core]",
+        ] {
+            assert!(san.source.contains(place), "{}", san.source);
+        }
     }
 
     /// A declared value that would break out of the phase commands' quoting is

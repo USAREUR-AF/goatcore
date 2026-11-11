@@ -188,6 +188,28 @@ def list_checks():
     return 0
 
 
+def edge_core_endpoints(repo, group):
+    """The hosts of the endpoints the edge dials, goat_zenoh_edge_core_endpoints, in
+    any file of group_vars/<group>/ (the hand-written deployment.yml or the
+    rendered peering-deployment.yml), in file-name order, once each."""
+    gv_dir = Path(repo) / "ops/ansible/group_vars"
+    files = [gv_dir / f"{group}.yml", gv_dir / f"{group}.yaml"]
+    if (gv_dir / group).is_dir():
+        files += sorted(f for f in (gv_dir / group).iterdir() if f.suffix in (".yml", ".yaml"))
+    out = []
+    for f in files:
+        if not f.is_file():
+            continue
+        inside = False
+        for line in f.read_text().splitlines():
+            if re.match(r"\S", line):
+                inside = line.startswith("goat_zenoh_edge_core_endpoints:")
+            m = re.search(r"""(?:tls|tcp)/([^:"'/#\s]+):""", line) if inside else None
+            if m and m.group(1) not in out:
+                out.append(m.group(1))
+    return out
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("peering")
@@ -462,17 +484,15 @@ def main(argv=None):
             missing.append(("FED_SLOT_PG_SSH", f"the management host that runs {slot_env}'s portal database"))
 
     # The core certificate must carry a SAN for every address the edge will dial.
-    endpoints = []
-    dep = Path(a.repo) / "ops/ansible/group_vars" / group / "deployment.yml"
-    if dep.is_file():
-        for line in dep.read_text().splitlines():
-            m = re.search(r'"(?:tls|tcp)/([^:"/#]+):', line)
-            if m:
-                endpoints.append(m.group(1))
+    endpoints = edge_core_endpoints(a.repo, group)
     san = env.get("FED_CORE_SAN", "")
-    if static and endpoints and not san:
-        missing.append(("FED_CORE_SAN", f"the addresses the edge dials ({', '.join(endpoints)}); goatbuilder derives "
-                        f"them from group_vars/{group}/deployment.yml"))
+    if static and not san:
+        dials = f"the addresses the edge dials ({', '.join(endpoints)}); " if endpoints else ""
+        missing.append(("FED_CORE_SAN", f"{dials}the names phase 8 puts on the core certificate, which it does not "
+                        f"mint without them. goatbuilder reads them from goat_zenoh_edge_core_endpoints in "
+                        f"group_vars/{group}/, goat_fed_republisher_core_endpoint in group_vars/{core}/ or "
+                        f"group_vars/all/, peerings[].hosts.core in goatbuilder.yaml, or the ansible_host of the "
+                        f"one host of [{core}] in the peering inventory; none of them declares one"))
 
     if want("inputs"):
         record(live.check_inputs(missing))
