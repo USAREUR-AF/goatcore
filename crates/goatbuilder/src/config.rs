@@ -98,6 +98,22 @@ pub struct LiteInternet {
 #[derive(Debug, Clone, Deserialize)]
 pub struct Secrets {
     pub store: String,
+    /// Where this side's federation keys are (`goatbuilder federate` reads them
+    /// as FED_SIGNING_KEY, FED_CA_CERT and FED_CA_KEY when those are unset).
+    #[serde(default)]
+    pub federation: Option<SecretsFederation>,
+}
+
+/// `secrets: federation:`: paths, never the keys themselves. A relative path is
+/// inside the active goat context directory (federate/declared.rs).
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct SecretsFederation {
+    #[serde(default)]
+    pub signing_key: Option<String>,
+    #[serde(default)]
+    pub ca_cert: Option<String>,
+    #[serde(default)]
+    pub ca_key: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
