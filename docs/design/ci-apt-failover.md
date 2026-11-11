@@ -1,6 +1,6 @@
 # CI apt failover: our own package cache, used only when Ubuntu's mirror does not answer
 
-Status: built (`.github/actions/apt-failover/action.yml`, wired into the jobs below). Status: WIP — gate: a run with archive.ubuntu.com, security.ubuntu.com and azure.archive.ubuntu.com black-holed in which every wired job's install or image build succeeds through the cache.
+Status: built (`.github/actions/apt-failover/action.yml`, wired into the jobs below). Status: WIP — gate: the apt-failover selftest workflow passes its forced job on a GitHub runner.
 
 ## The job
 
@@ -23,6 +23,45 @@ A GitHub runner installs packages from Ubuntu's archive, through its Azure mirro
    - it exports `APT_FAILOVER=1` to the later steps;
    - one line names the path taken.
 5. If the image cannot be pulled, or does not listen, the step fails and says why. The job had no source for its packages either way.
+
+Every networked command is bounded, so the step can never run into a job's timeout:
+
+| Stage | Bound |
+|---|---|
+| the probe | `probe-seconds` (10) |
+| the login | 60 s |
+| each pull | 300 s |
+| the start | 60 s |
+| the wait for the cache | 30 tries |
+| `apt-get update` through the cache | 300 s, with apt's own timeouts at 20 s and one retry |
+
+Each bound uses `timeout -k`, so a command that ignores the TERM, as a blocked connect can, is killed. A pull or update that runs out of time is exit 69, "environment", in one line naming the stage. On the failover path, each stage prints a timestamped line (failing over, pull, start, cache listening, update start and end), so the log shows where the time went. The mirror-answered path prints its one line only.
+
+## When the job token cannot pull the image
+
+The package `ghcr.io/usareur-af/ci-apt-cache` is internal and linked to goatcore. A job reads it with its own token (`packages: read`) only when the package grants the repository access. If it does not, the pull is denied, and the step names the package and says the token has no read access to it.
+
+The fix: in the package's settings, under "Manage Actions access", add the goatcore repository with Read. Or make the package public; the step then also retries anonymously.
+
+The step names which of two failures it met. "denied", "unauthorized", 401 or 403 from the registry means the token cannot read the package: the fix above. "manifest unknown" or "not found" means the registry has no image under that reference: the digest is wrong, or the image was pushed elsewhere. ghcr.io can also answer 404 to a token that has no access, so check the access setting if the digest is right.
+
+## The selftest
+
+`.github/workflows/apt-failover-selftest.yml` proves the failover path on a GitHub runner. Every other job takes the normal path while the mirror answers. The selftest runs on pull requests that change the action, `ops/ci/apt-install-fallback.sh` or the selftest itself, weekly, and by hand.
+
+- **forced** runs the action with `force: true`. That input is for the selftest only. It fails over without probing, maps archive.ubuntu.com, security.ubuntu.com, azure.archive.ubuntu.com and ports.ubuntu.com to `0.0.0.0` and `::` in `/etc/hosts`, and exports `APT_FAILOVER_ADD_HOSTS` (the same as `--add-host` arguments) for docker builds and containers. The job then checks, in order:
+  1. the image was pulled with the job token and serves, and the archive hosts do not answer directly;
+  2. `apt-get update`, and a reinstall of jq and ripgrep on the runner, through the cache;
+  3. a noble image and the 26.04 federation e2e host image (`ops/federation-e2e/host`) build with `--no-cache` and the black holes;
+  4. every line of apt-cacher-ng's transfer log is a file served from the cache (`O`). It fails on any other line, on any apt `Err:`, `W:` or `E:` line, and on any line in the cache's error log. It prints the request count.
+- **unforced** runs the action as every other job does. While the runner's mirror answers, it checks that nothing changed:
+  - no `00ci-failover`;
+  - no `proxies` in `~/.docker/config.json`;
+  - no `ci-apt-cache` container;
+  - no black holes in `/etc/hosts`;
+  - neither `APT_FAILOVER` nor `APT_FAILOVER_ADD_HOSTS` set.
+
+  If the mirror does not answer at that moment, it warns and skips the checks.
 
 `ops/ci/apt-install-fallback.sh` sees `Acquire::http::Proxy` once this file is written, and then uses the proxy and never rewrites sources. So the two never fight.
 

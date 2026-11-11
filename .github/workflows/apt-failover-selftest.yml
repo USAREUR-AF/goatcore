@@ -1,0 +1,125 @@
+name: apt-failover selftest
+
+# The failover path of .github/actions/apt-failover, proved on a GitHub runner
+# (docs/design/ci-apt-failover.md). Every other job takes the normal path while the Ubuntu
+# mirror answers, so this one forces the failover, with the archive hosts black-holed for
+# the runner and for docker builds, and fails unless every package came from our cache. A
+# second job runs the action as every other job does and proves it changed nothing.
+on:
+  pull_request:
+    paths:
+      - '.github/actions/apt-failover/**'
+      - 'ops/ci/apt-install-fallback.sh'
+      - '.github/workflows/apt-failover-selftest.yml'
+  schedule:
+    - cron: '23 5 * * 1'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+jobs:
+  forced:
+    name: failover forced, the archive black-holed
+    runs-on: ubuntu-24.04
+    # packages: read, so the job token pulls the cache image from ghcr.io.
+    permissions:
+      contents: read
+      packages: read
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: The failover, forced
+        uses: ./.github/actions/apt-failover
+        with:
+          force: 'true'
+      - name: (a) the cache image was pulled with the job token, serves, and the archive is closed
+        run: |
+          fail() { echo "::error::$1"; exit 1; }
+          [ "${APT_FAILOVER:-}" = 1 ] || fail "the action did not fail over (APT_FAILOVER is '${APT_FAILOVER:-}')"
+          docker ps --filter name='^ci-apt-cache$' --format '{{.Image}} {{.Status}}' | grep . \
+            || fail "no ci-apt-cache container is running"
+          jq -e '.auths["ghcr.io"]' "$HOME/.docker/config.json" >/dev/null \
+            || fail "the image was not pulled with the job token (no ghcr.io login in ~/.docker/config.json)"
+          grep -qx 'Acquire::http::Proxy "http://127.0.0.1:3142";' /etc/apt/apt.conf.d/00ci-failover \
+            || fail "/etc/apt/apt.conf.d/00ci-failover does not point apt at the cache"
+          for h in archive.ubuntu.com security.ubuntu.com azure.archive.ubuntu.com; do
+            getent ahostsv4 "$h" | grep -q '^0\.0\.0\.0 ' || fail "$h is not black-holed for IPv4: $(getent ahostsv4 "$h" | head -1)"
+            v6=$(getent ahostsv6 "$h" | awk '{print $1; exit}')
+            case "${v6:-::}" in ::|::ffff:0.0.0.0) ;; *) fail "$h is not black-holed for IPv6: $v6" ;; esac
+            # shellcheck disable=SC2016  # $1 is the inner shell's argument
+            if timeout 5 bash -c 'exec 3<>"/dev/tcp/$1/80"' _ "$h" 2>/dev/null; then fail "$h answers directly"; fi
+          done
+          [ -n "${APT_FAILOVER_ADD_HOSTS:-}" ] || fail "APT_FAILOVER_ADD_HOSTS is not set"
+          echo "ok: cache $(docker inspect -f '{{.Config.Image}}' ci-apt-cache) serving; the archive hosts closed"
+      - name: (b) the runner's apt-get update and two installs, through the cache
+        run: |
+          set -o pipefail   # a failed command before `| tee` fails the step
+          sudo apt-get update 2>&1 | tee "$RUNNER_TEMP/apt.log"
+          # --reinstall: a package the runner image already has is still fetched.
+          sudo apt-get install -y --reinstall --no-install-recommends jq ripgrep 2>&1 | tee -a "$RUNNER_TEMP/apt.log"
+          jq --version; rg --version | head -1
+      - name: (c) a noble image and the 26.04 e2e host image, built through the cache
+        run: |
+          set -o pipefail   # a failed build before `| tee` fails the step
+          # The black holes go into every build container, so apt there reaches only the cache;
+          # --no-cache, so every apt step runs here and not from an earlier build.
+          read -r -a holes <<< "$APT_FAILOVER_ADD_HOSTS"
+          printf '%s\n' 'FROM ubuntu:24.04@sha256:fe81560990fae86dc4743202b2cb4d3df98d0bcf949173cecef15ce1127ef852' \
+            'RUN apt-get update && apt-get install -y --no-install-recommends nftables iproute2' > "$RUNNER_TEMP/Dockerfile.noble"
+          docker build --no-cache --progress=plain "${holes[@]}" -f "$RUNNER_TEMP/Dockerfile.noble" -t apt-failover-selftest-noble "$RUNNER_TEMP" 2>&1 | tee "$RUNNER_TEMP/build.log"
+          docker build --no-cache --progress=plain "${holes[@]}" -t apt-failover-selftest-host ops/federation-e2e/host 2>&1 | tee -a "$RUNNER_TEMP/build.log"
+      - name: (d) every request a cache hit, and no apt error or warning
+        if: always()
+        run: |
+          docker exec ci-apt-cache cat /var/log/apt-cacher-ng/apt-cacher.log > "$RUNNER_TEMP/acng.log" 2>/dev/null || true
+          docker exec ci-apt-cache cat /var/log/apt-cacher-ng/apt-cacher.err > "$RUNNER_TEMP/acng.err" 2>/dev/null || true
+          # One line per transfer: <time>|<kind>|<bytes>|<client>|<path>. "O" is a file served from
+          # the cache to a client; any other kind is traffic with an upstream.
+          total=$(grep -c . "$RUNNER_TEMP/acng.log" || true)
+          upstream=$(awk -F'|' '$2 != "O"' "$RUNNER_TEMP/acng.log")
+          echo "cache requests: ${total:-0}, served from the cache: $(awk -F'|' '$2 == "O"' "$RUNNER_TEMP/acng.log" | wc -l)"
+          touch "$RUNNER_TEMP/apt.log" "$RUNNER_TEMP/build.log"
+          apt_bad=$(grep -hE '^(Err:|W:|E:)|^#[0-9]+ [0-9.]+ (Err:|W:|E:)' "$RUNNER_TEMP/apt.log" "$RUNNER_TEMP/build.log" || true)
+          fail=0
+          [ "${total:-0}" -gt 0 ] || { echo "::error::the cache served nothing: the installs did not go through it"; fail=1; }
+          [ -z "$upstream" ] || { echo "::error::requests that were not cache hits:"; printf '%s\n' "$upstream" | head -20; fail=1; }
+          [ -z "$apt_bad" ] || { echo "::error::apt reported errors or warnings:"; printf '%s\n' "$apt_bad" | head -20; fail=1; }
+          [ ! -s "$RUNNER_TEMP/acng.err" ] || { echo "::error::apt-cacher-ng logged errors:"; tail -20 "$RUNNER_TEMP/acng.err"; fail=1; }
+          exit "$fail"
+
+  unforced:
+    name: no failover while the mirror answers
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: read
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      # Whether the runner's mirror answers right now, judged apart from the action.
+      - name: The mirror, before the action
+        id: mirror
+        run: |
+          u=$(awk 'NF {print $1; exit}' /etc/apt/apt-mirrors.txt 2>/dev/null || true)
+          u=${u:-http://archive.ubuntu.com/ubuntu/}
+          if curl -fsI --max-time 10 "${u%/}/dists/noble/Release" >/dev/null; then echo "up=1" >> "$GITHUB_OUTPUT"
+          else echo "up=0" >> "$GITHUB_OUTPUT"; echo "::warning::the runner's mirror $u does not answer now; the unforced job's assertions are skipped"; fi
+      - uses: ./.github/actions/apt-failover
+      - name: The action changed nothing
+        if: steps.mirror.outputs.up == '1'
+        run: |
+          fail() { echo "::error::the unforced action changed something: $1"; exit 1; }
+          [ -z "${APT_FAILOVER:-}" ] || fail "APT_FAILOVER is set ($APT_FAILOVER)"
+          [ -z "${APT_FAILOVER_ADD_HOSTS:-}" ] || fail "APT_FAILOVER_ADD_HOSTS is set"
+          [ ! -e /etc/apt/apt.conf.d/00ci-failover ] || fail "/etc/apt/apt.conf.d/00ci-failover exists"
+          if [ -f "$HOME/.docker/config.json" ] && jq -e '.proxies' "$HOME/.docker/config.json" >/dev/null; then
+            fail "$HOME/.docker/config.json has proxies"
+          fi
+          [ -z "$(docker ps -aq --filter name='^ci-apt-cache$')" ] || fail "a ci-apt-cache container exists"
+          if grep -qE '^0\.0\.0\.0 .*ubuntu\.com' /etc/hosts; then fail "/etc/hosts black-holes an Ubuntu host"; fi
+          echo "ok: apt, docker, /etc/hosts and the environment are as the runner image left them"

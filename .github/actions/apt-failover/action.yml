@@ -28,6 +28,14 @@ inputs:
   probe-seconds:
     description: How long the mirror has to answer.
     default: '10'
+  force:
+    description: >-
+      FOR THE SELFTEST ONLY (.github/workflows/apt-failover-selftest.yml); never set it in a
+      job. 'true' fails over without probing, and black-holes the Ubuntu archive hosts for the
+      rest of the job (0.0.0.0 in /etc/hosts; APT_FAILOVER_ADD_HOSTS holds the same as
+      `--add-host` arguments for docker builds and containers), so a pass cannot come from
+      the live archive.
+    default: 'false'
 
 runs:
   using: composite
@@ -39,9 +47,19 @@ runs:
         CACHE_TOKEN: ${{ inputs.token }}
         SERVICE_HOST: ${{ inputs.service-host }}
         PROBE_SECONDS: ${{ inputs.probe-seconds }}
+        FORCE: ${{ inputs.force }}
       run: |
-        set -uo pipefail
+        # The checks below decide; GitHub runs this under bash -e, which must not cut them short.
+        set +e -uo pipefail
         SUDO=""; [ "$(id -u)" = 0 ] || SUDO="sudo"
+        # Every networked command is bounded (-k: killed if it ignores the TERM, as a blocked
+        # connect can), and each failover stage prints a timestamped line, so a slow stage
+        # shows in the log and never runs into the job's timeout.
+        stage() { echo "apt-failover: $(date -u +%H:%M:%SZ) $*"; }
+        bounded_out() { # STAGE SECONDS: the step's failure when a bounded command ran out of time
+          echo "::error::environment: apt-failover: mirror $host $why, and $1 did not finish within $2s"
+          exit 69
+        }
 
         # The mirror apt is configured with: the first URI of the deb822 sources (through
         # the runner's mirror+file list when it uses one), else the first deb line.
@@ -64,7 +82,7 @@ runs:
         # One HTTP request for the release file, with bash alone (a job container has no
         # curl). An https mirror is judged by a TCP connect.
         probe() {
-          timeout "$PROBE_SECONDS" bash -c '
+          timeout -k 2 "$PROBE_SECONDS" bash -c '
             exec 3<>"/dev/tcp/$1/$2" || exit 1
             [ "$2" = 443 ] && exit 0
             printf "HEAD %s/dists/%s/Release HTTP/1.0\r\nHost: %s\r\n\r\n" "$3" "$4" "$1" >&3
@@ -76,10 +94,23 @@ runs:
           echo "apt-failover: no Ubuntu mirror found in this machine's apt sources; nothing changed"
           exit 0
         fi
-        if probe; then
-          echo "apt-failover: mirror $host answered within ${PROBE_SECONDS}s; apt and docker unchanged"
-          exit 0
+        if [ "$FORCE" = true ]; then
+          # The selftest: the archive must not answer for the rest of the job, here or in a
+          # docker build or container started with APT_FAILOVER_ADD_HOSTS.
+          holes="archive.ubuntu.com security.ubuntu.com azure.archive.ubuntu.com ports.ubuntu.com"
+          { printf '0.0.0.0 %s\n' $holes; printf ':: %s\n' $holes; } | $SUDO tee -a /etc/hosts >/dev/null \
+            || { echo "::error::apt-failover: could not write the black holes to /etc/hosts"; exit 1; }
+          add_hosts=""; for h in $holes; do add_hosts="$add_hosts --add-host $h:0.0.0.0"; done
+          echo "APT_FAILOVER_ADD_HOSTS=${add_hosts# }" >> "$GITHUB_ENV"
+        else
+          t0=$(date +%s)
+          if probe; then
+            echo "apt-failover: mirror $host answered in $(( $(date +%s) - t0 ))s; apt and docker unchanged"
+            exit 0
+          fi
+          stage "probe: mirror $host gave no answer in $(( $(date +%s) - t0 ))s"
         fi
+        why="did not answer in ${PROBE_SECONDS}s"; [ "$FORCE" = true ] && why="was not asked (force: true, the archive black-holed)"
 
         # Once the proxy is set: refresh the lists through it, so every later install, with or
         # without its own `apt-get update`, resolves against the cache's indexes (a runner's
@@ -87,12 +118,16 @@ runs:
         update_through() {
           local log
           log=$(mktemp)
-          $SUDO apt-get -o Acquire::Retries=2 update -qq >"$log" 2>&1
+          # Its exit status is not the verdict (the step runs under bash -e): the lines are.
+          stage "apt-get update through $1"
+          $SUDO timeout -k 10 300 apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 update -qq >"$log" 2>&1
+          case $? in 124|137) bounded_out "apt-get update through $1" 300 ;; esac
+          stage "apt-get update done"
           # Only an Ubuntu source counts: the runner image's third-party https sources go
           # direct and may warn on their own, which is not the cache failing.
-          bad=$(grep -E '^(E|W): ' "$log" | grep -E 'ubuntu\.com|mirror\+file|127\.0\.0\.1:3142|:3142/' | head -1)
+          bad=$(grep -E '^(E|W): ' "$log" | grep -E 'ubuntu\.com|mirror\+file|127\.0\.0\.1:3142|:3142/' | head -1 || true)
           if [ -n "$bad" ]; then
-            echo "::error::environment: apt-failover: mirror $host did not answer, and apt-get update through $1 failed: $bad"
+            echo "::error::environment: apt-failover: mirror $host $why, and apt-get update through $1 failed: $bad"
             exit 69
           fi
         }
@@ -104,54 +139,70 @@ runs:
             timeout 2 bash -c 'exec 3<>"/dev/tcp/$1/3142"' _ "$SERVICE_HOST" 2>/dev/null && break
             sleep 1
           done
-          printf 'Acquire::http::Proxy "%s";\n' "$proxy" | $SUDO tee /etc/apt/apt.conf.d/00ci-failover >/dev/null
+          printf 'Acquire::http::Proxy "%s";\n' "$proxy" | $SUDO tee /etc/apt/apt.conf.d/00ci-failover >/dev/null \
+            || { echo "::error::apt-failover: could not write /etc/apt/apt.conf.d/00ci-failover"; exit 1; }
           update_through "$proxy"
           echo "APT_FAILOVER=1" >> "$GITHUB_ENV"
-          echo "apt-failover: mirror $host did not answer in ${PROBE_SECONDS}s; apt uses the cache service at $proxy"
+          echo "apt-failover: mirror $host $why; apt uses the cache service at $proxy"
           exit 0
         fi
         login="anonymous pull"
-        if [ -n "$CACHE_TOKEN" ] && printf '%s' "$CACHE_TOKEN" | docker login ghcr.io -u "${GITHUB_ACTOR:-github-actions}" --password-stdin >/dev/null 2>&1; then
+        stage "mirror $host $why; failing over to $CACHE_IMAGE"
+        if [ -n "$CACHE_TOKEN" ] && printf '%s' "$CACHE_TOKEN" | timeout -k 5 60 docker login ghcr.io -u "${GITHUB_ACTOR:-github-actions}" --password-stdin >/dev/null 2>&1; then
           login="ghcr.io login"
         fi
         [[ "$CACHE_IMAGE" =~ @sha256:[0-9a-f]{64}$ ]] || echo "::warning::apt-failover: cache-image is not pinned by digest: $CACHE_IMAGE"
-        if ! docker pull -q "$CACHE_IMAGE" >/dev/null; then
+        pull_err=$(mktemp)
+        stage "pull ($login)"
+        timeout -k 10 300 docker pull -q "$CACHE_IMAGE" >/dev/null 2>"$pull_err"; rc=$?
+        case $rc in 124|137) bounded_out "the pull of $CACHE_IMAGE" 300 ;; esac
+        if [ "$rc" != 0 ]; then
           # A token that logs in but cannot read the package is denied a pull that an
           # anonymous one of a public package would get.
           if [ "$login" = "ghcr.io login" ] && docker logout ghcr.io >/dev/null 2>&1 \
-             && login="anonymous pull after a denied login" && docker pull -q "$CACHE_IMAGE" >/dev/null; then
+             && login="anonymous pull after a denied login" && timeout -k 10 300 docker pull -q "$CACHE_IMAGE" >/dev/null 2>>"$pull_err"; then
             :
           else
-            echo "::error::apt-failover: mirror $host did not answer, and the cache image $CACHE_IMAGE could not be pulled ($login); this job's packages have no source"
+            repo=${CACHE_IMAGE%%[@:]*}; pkg=${repo##*/}
+            if grep -qiE 'denied|unauthorized|forbidden|\b403\b|\b401\b' "$pull_err"; then
+              echo "::error::apt-failover: mirror $host $why, and the cache image $CACHE_IMAGE could not be pulled ($login): the job token has no read access to the package $repo. Fix: in the package's settings, Manage Actions access, add ${GITHUB_REPOSITORY:-this repository} with Read, or make the package public (https://github.com/orgs/${GITHUB_REPOSITORY_OWNER:-usareur-af}/packages/container/package/$pkg/settings)"
+            elif grep -qiE 'manifest unknown|not found' "$pull_err"; then
+              echo "::error::apt-failover: mirror $host $why, and the cache image $CACHE_IMAGE could not be pulled ($login): the registry has no image under that reference (the digest is wrong, or was pushed elsewhere). Check the digest in the action's cache-image default against the pushed image"
+            else
+              echo "::error::apt-failover: mirror $host $why, and the cache image $CACHE_IMAGE could not be pulled ($login): $(tail -1 "$pull_err")"
+            fi
             exit 1
           fi
         fi
-        docker rm -f ci-apt-cache >/dev/null 2>&1 || true
-        docker run -d --name ci-apt-cache --network host --restart no "$CACHE_IMAGE" >/dev/null
+        stage "pulled; starting the cache"
+        timeout -k 5 60 docker rm -f ci-apt-cache >/dev/null 2>&1 || true
+        timeout -k 5 60 docker run -d --name ci-apt-cache --network host --restart no "$CACHE_IMAGE" >/dev/null
         up=""
         for _ in $(seq 1 30); do
           if curl -fs -o /dev/null --max-time 2 http://127.0.0.1:3142/acng-report.html \
              || timeout 2 bash -c 'exec 3<>/dev/tcp/127.0.0.1/3142' 2>/dev/null; then up=1; break; fi
           sleep 1
         done
+        [ -z "$up" ] || stage "the cache listens on 127.0.0.1:3142"
         if [ -z "$up" ]; then
           echo "::error::apt-failover: the cache $CACHE_IMAGE did not start listening on 127.0.0.1:3142"
-          docker logs --tail 20 ci-apt-cache 2>&1 || true
+          timeout -k 5 30 docker logs --tail 20 ci-apt-cache 2>&1 || true
           exit 1
         fi
         # The runner's apt. Only plain http sources go through it; an https source does not.
-        printf '%s\n' 'Acquire::http::Proxy "http://127.0.0.1:3142";' | $SUDO tee /etc/apt/apt.conf.d/00ci-failover >/dev/null
+        printf '%s\n' 'Acquire::http::Proxy "http://127.0.0.1:3142";' | $SUDO tee /etc/apt/apt.conf.d/00ci-failover >/dev/null \
+          || { echo "::error::apt-failover: could not write /etc/apt/apt.conf.d/00ci-failover"; exit 1; }
         update_through "http://127.0.0.1:3142"
         # Docker builds and containers: inside them 127.0.0.1 is the container, so they reach
         # the cache at the default bridge's gateway (the host). Only the http proxy: their
         # https fetches (PyPI, galaxy, registries) stay direct. noProxy keeps traffic between
         # containers and to the host off the cache.
-        gw=$(docker network inspect bridge -f '{{(index .IPAM.Config 0).Gateway}}' 2>/dev/null)
+        gw=$(timeout -k 5 30 docker network inspect bridge -f '{{(index .IPAM.Config 0).Gateway}}' 2>/dev/null || true)
         gw=${gw:-172.17.0.1}
-        mkdir -p "$HOME/.docker"
         cfg="$HOME/.docker/config.json"
-        [ -s "$cfg" ] || echo '{}' > "$cfg"
-        python3 - "$cfg" "http://$gw:3142" <<'PY'
+        mkdir -p "$HOME/.docker" && { [ -s "$cfg" ] || echo '{}' > "$cfg"; } \
+          || { echo "::error::apt-failover: could not create $cfg"; exit 1; }
+        python3 - "$cfg" "http://$gw:3142" <<'PY' || { echo "::error::apt-failover: could not write the docker proxies into $cfg"; exit 1; }
         import json, sys
         path, proxy = sys.argv[1], sys.argv[2]
         cfg = json.load(open(path))
@@ -162,4 +213,4 @@ runs:
         json.dump(cfg, open(path, "w"), indent=2)
         PY
         echo "APT_FAILOVER=1" >> "$GITHUB_ENV"
-        echo "apt-failover: mirror $host did not answer in ${PROBE_SECONDS}s; apt uses $CACHE_IMAGE at 127.0.0.1:3142, docker builds and containers at $gw:3142 ($login)"
+        echo "apt-failover: mirror $host $why; apt uses $CACHE_IMAGE at 127.0.0.1:3142, docker builds and containers at $gw:3142 ($login)"
