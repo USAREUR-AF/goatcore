@@ -128,7 +128,23 @@ runs:
                        | grep -oE '(https?|mirror\+[a-z]+):[^ ]+'
                      grep -hE '^[[:space:]]*URIs:' /etc/apt/sources.list.d/*.sources 2>/dev/null | sed -E 's/^[[:space:]]*URIs:[[:space:]]*//' | tr ' ' '\n'
                    } | grep -vE '^mirror\+|://([a-z0-9-]+\.)*ubuntu\.com(/|$)' | sort -u | tr '\n' ' ')
-          stage "apt: the Ubuntu archive hosts through $1; left direct: ${direct:-none}"
+          # Only InRelease and Packages for the job: every other index target the installed
+          # tools add (translations, Contents for apt-file, DEP-11 for appstream, CNF for
+          # command-not-found) is optional for an install, and one the cache does not hold in
+          # the form a runner asks for would fail the update. In a file read after every
+          # other apt.conf.d file, so a tool's own setting cannot turn one back on.
+          off=$(apt-config dump 2>/dev/null | sed -n 's/^Acquire::IndexTargets::deb::\([^:" ]*\) "";$/\1/p' | grep -vx Packages | sort -u | tr '\n' ' ')
+          # And for every apt run of the job, not only this one: a bounded wait, and no HTTP
+          # pipelining. With pipelining, apt's http method was seen waiting without end on a
+          # connection the cache had closed after an error answer (CLOSE_WAIT).
+          { echo 'Acquire::Languages "none";'
+            echo 'Acquire::http::Pipeline-Depth "0";'
+            echo 'Acquire::http::Timeout "20";'
+            echo 'Acquire::https::Timeout "20";'
+            for t in $off; do printf 'Acquire::IndexTargets::deb::%s::DefaultEnabled "false";\n' "$t"; done
+          } | $SUDO tee /etc/apt/apt.conf.d/zz-ci-failover-targets >/dev/null \
+            || { echo "::error::apt-failover: could not write /etc/apt/apt.conf.d/zz-ci-failover-targets"; exit 1; }
+          stage "apt: the Ubuntu archive hosts through $1; left direct: ${direct:-none}; index targets off for the job: ${off:-none} (InRelease and Packages only)"
         }
 
         # Once the proxy is set: refresh the lists through it, so every later install, with or

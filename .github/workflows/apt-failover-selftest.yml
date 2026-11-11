@@ -63,6 +63,8 @@ jobs:
              || ! grep -qx 'Acquire::http::Proxy "DIRECT";' /etc/apt/apt.conf.d/00ci-failover; then
             fail "/etc/apt/apt.conf.d/00ci-failover does not send the Ubuntu archive, and only it, to the cache"
           fi
+          grep -qx 'Acquire::Languages "none";' /etc/apt/apt.conf.d/zz-ci-failover-targets \
+            || fail "/etc/apt/apt.conf.d/zz-ci-failover-targets does not limit the update to InRelease and Packages"
           for h in archive.ubuntu.com security.ubuntu.com azure.archive.ubuntu.com; do
             getent ahostsv4 "$h" | grep -q '^0\.0\.0\.0 ' || fail "$h is not black-holed for IPv4: $(getent ahostsv4 "$h" | head -1)"
             v6=$(getent ahostsv6 "$h" | awk '{print $1; exit}')
@@ -150,6 +152,7 @@ jobs:
           [ -z "${APT_FAILOVER_ADD_HOSTS:-}" ] || fail "APT_FAILOVER_ADD_HOSTS is set"
           [ ! -e /etc/apt/apt.conf.d/00ci-failover ] || fail "/etc/apt/apt.conf.d/00ci-failover exists"
           [ ! -e /etc/apt/ci-failover-orig ] || fail "/etc/apt/ci-failover-orig exists (the sources were rewritten)"
+          [ ! -e /etc/apt/apt.conf.d/zz-ci-failover-targets ] || fail "/etc/apt/apt.conf.d/zz-ci-failover-targets exists"
           if [ -f "$HOME/.docker/config.json" ] && jq -e '.proxies' "$HOME/.docker/config.json" >/dev/null; then
             fail "$HOME/.docker/config.json has proxies"
           fi
