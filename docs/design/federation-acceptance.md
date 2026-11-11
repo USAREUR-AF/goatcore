@@ -197,6 +197,33 @@ downstream.
 The launcher is the deployment's or the drill's: it holds whatever certificates the probes need
 (approved negative test identities, never the CA). None ships with this change.
 
+### 2.5 Our own surfaces, from the declarations
+
+**Built.** Status: WIP — gate: phase 14 run by `goatbuilder federate <partner>` on two real
+environments with none of `FED_OURS_REST`, `FED_EDGE_LOG_OURS` and `FED_SPIRE_OURS` exported,
+and the refusal and SPIRE rows reaching PASS.
+
+Phase 14 reads three surfaces on this side: our core's REST surface, our edge router's log (the
+ACL trace) and our SPIRE server. They are declared already, in the inventory and group_vars the
+plays of phases 11 to 13 read, so `acceptance_surfaces.py` reads them from there, each only when
+the environment does not set it. The variables stay as overrides.
+
+| Value | Read from | Runs |
+|---|---|---|
+| `FED_OURS_REST` | `goat_zenoh_rest_host` and `goat_zenoh_rest_port` of `<them>_core` (then `peering_cores`, `all`, the goat-zenoh role default), on the group's one host in `ops/ansible/inventory/peering-edges.ini` | from here; when the surface is bound to loopback (the role's default), on the core, and `FED_SSH_OURS` is derived from that host's `ansible_host`, `ansible_user` and `ansible_port` |
+| `FED_EDGE_LOG_OURS` | `docker logs <goat_zenoh_edge_stack>` of `<them>_edge` (the role's name, `goat-zenoh-edge-<them>`, when unset); `sudo -n` when `ansible_become` is true | on the edge host, over ssh |
+| `FED_SPIRE_OURS` | `docker exec <peering_spire_container> <peering_spire_bin>` (goat-peering-spire), only when the edge group sets `peering_spire_enabled: true` | on `peering_spire_server_host`, over ssh |
+
+The groups are the run's own: `goatbuilder federate` exports `FED_EDGE_GROUP` (the run's
+`--edge-group`, replacing any value the shell held) and `FED_CORE_GROUP` (the allocated core group,
+else `<with>_core`) into phase 14's environment, and `ops/scripts/peering-standup.sh` does the same;
+the phase's command line is unchanged. A value that cannot be derived (no
+host, several hosts, a templated value, a SPIRE server that is not an inventory host) stays unset,
+stderr names what was looked for and where, and the row that needs it is BLOCKED or skipped as
+before. A value set by hand runs where it always has: the edge log through `FED_SSH_OURS` when
+that is set, the SPIRE command here. Our partner's surfaces (`FED_THEIRS_REST`,
+`FED_SPIRE_THEIRS`) are not ours to declare and are not derived.
+
 ## 3. Outcome and exit status
 
 Every check ends with one of five outcome words:
