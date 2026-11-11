@@ -5,7 +5,7 @@
 # Windows operator laptop) can download a working probe binary from the
 # collector at /bin/snitch?os=<goos>&arch=<goarch>. CGO_ENABLED=0 across
 # all targets — pure Go, no native deps.
-FROM golang:1.26-bookworm AS build
+FROM golang:1.26.11-bookworm@sha256:dc40a13b61304647ed7e5d581d246b86413dfc29d63c6d018310feb93cd98fc0 AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download

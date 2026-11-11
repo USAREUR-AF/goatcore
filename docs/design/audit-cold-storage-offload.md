@@ -115,7 +115,7 @@ promtool test rules ops/compose/goat-obs/prometheus/tests/audit-fifo-evict.test.
 ```
 
 The integration script needs Docker, Git, Python 3 and Go. It selects the Docker
-architecture, verifies the two upstream commit IDs, uses Go 1.26.10, and removes
+architecture, verifies the two upstream commit IDs, uses Go 1.26.11, and removes
 only its unique test images and container. It contacts no live audit endpoint.
 
 ## Why three tiers (not one)
