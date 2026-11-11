@@ -408,7 +408,7 @@
           "enum": ["hand", "rendered"]
         },
         "federation_toml": {
-          "description": "Who writes this peering's federation.toml. hand (the default): written by hand. rendered: goatbuilder federate allocate writes ops/federation/<environment>/peerings/<with>/federation.toml from the environment's own ops/federation/<environment>/federation.toml (sovereign_id, term_days, cut_contact, [data], measured_mtu; [data] release narrowed by offer:) and the allocated values ([transport]). The environment's file stays the one owner of those values; a missing one is refused (GB-233).",
+          "description": "Who writes this peering's federation.toml. Absent: rendered, unless the peering already runs from hand-written files (hand group_vars of its edge group, or the hand inventory naming it) or a hand-written file sits at the generated path; allocate then leaves it on them and says so, and declaring rendered opts it in. hand: written by hand. rendered: goatbuilder federate allocate writes ops/federation/<environment>/peerings/<with>/federation.toml from the environment's own ops/federation/<environment>/federation.toml (sovereign_id, term_days, cut_contact, [data], measured_mtu; [data] release narrowed by offer:) and the allocated values ([transport]). The environment's file stays the one owner of those values; a missing one is refused (GB-233).",
           "enum": ["hand", "rendered"]
         },
         "forwarder": {

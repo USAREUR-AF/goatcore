@@ -1,10 +1,11 @@
-//! Who writes a peering's deployment halves (`peerings[].deployment`).
+//! Who writes a peering's deployment halves (`peerings[].deployment`) and its
+//! federation.toml (`peerings[].federation_toml`).
 //!
 //! Declared `rendered` or `hand`: as declared. Absent: `rendered`, unless the
 //! peering already runs from hand-written files, which `allocate` never takes
 //! over silently (the rule that it never moves a running peering). Such a
 //! peering stays on its hand files and `allocate` says so, naming why; it is
-//! opted in by declaring the switch `rendered`. A peering whose half
+//! opted in by declaring the switch `rendered`. A peering whose file
 //! `allocate` already generated stays rendered.
 
 use std::path::Path;
@@ -60,6 +61,21 @@ pub fn deployment(repo: &Path, p: &Peering, v: &PeeringValues) -> Choice {
         );
         if generated(repo, &edge_half) {
             return None;
+        }
+        super::peering_files::hand_run_reason(repo, &v.edge_group)
+    })
+}
+
+/// `peerings[].federation_toml`: left on hand files when the peering runs by
+/// hand, or when a hand-written file already sits where it would be generated.
+pub fn federation_toml(repo: &Path, p: &Peering, v: &PeeringValues) -> Choice {
+    choose(p.federation_toml.as_deref(), || {
+        let rel = super::federation_toml::target_path(&v.environment, &v.peering);
+        if generated(repo, &rel) {
+            return None;
+        }
+        if repo.join(&rel).exists() {
+            return Some(format!("{rel} is written by hand"));
         }
         super::peering_files::hand_run_reason(repo, &v.edge_group)
     })
