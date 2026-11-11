@@ -190,6 +190,59 @@ fn one_inventory(cfg: &Config, p: &config::Peering, v: &PeeringValues) -> Result
     Ok(s)
 }
 
+/// The whole peering inventory, rendered when every peering declares `hosts:`.
+const WHOLE_INVENTORY: &str = "ops/ansible/inventory/peering-edges.ini";
+
+/// An INI inventory's sections: `[name]` to its non-comment lines, in order.
+fn sections(text: &str) -> Vec<(String, Vec<String>)> {
+    let mut out: Vec<(String, Vec<String>)> = Vec::new();
+    for line in text.lines() {
+        let l = line.trim();
+        if l.is_empty() || l.starts_with('#') || l.starts_with(';') {
+            continue;
+        }
+        if let Some(name) = l.strip_prefix('[').and_then(|r| r.strip_suffix(']')) {
+            out.push((name.to_string(), Vec::new()));
+        } else if let Some((_, lines)) = out.last_mut() {
+            lines.push(l.to_string());
+        }
+    }
+    out
+}
+
+/// `allocate <peering>` rewrites the whole inventory only when every other
+/// peering's lines stay as they were: each section of the previous file other
+/// than the named peering's own groups is in the new one with the same lines
+/// (a `:children` list may gain the named peering's groups). Otherwise
+/// nothing is written (GB-235).
+fn others_unchanged(prev: &str, new: &str, mine: &[String]) -> Result<()> {
+    let new_sections = sections(new);
+    for (name, lines) in sections(prev) {
+        if mine.contains(&name) {
+            continue;
+        }
+        let now = new_sections
+            .iter()
+            .find(|(n, _)| *n == name)
+            .map(|(_, l)| l);
+        let kept = match now {
+            Some(now) if name.ends_with(":children") => lines.iter().all(|l| now.contains(l)),
+            Some(now) => *now == lines,
+            None => false,
+        };
+        if !kept {
+            return Err(goat_errors::coded(
+                "GB-235",
+                format!(
+                    "{WHOLE_INVENTORY} holds [{name}], which `goatbuilder federate allocate <peering>` would change or drop (GB-235): a named allocate leaves every other peering's lines as they were. Nothing was written. Run `goatbuilder federate allocate` for every declared peering, and review what it changes"
+                ),
+            )
+            .into());
+        }
+    }
+    Ok(())
+}
+
 /// The peering inventory: every peering's edge and core, one inventory name per
 /// peering per machine, so two peerings on one machine never read each other's
 /// group_vars (Ansible merges every group a host name is in).
@@ -312,6 +365,7 @@ pub fn render_with(
 /// `render_with`, carrying over from `prev_inventory` (the inventory this
 /// module generated last time) the groups of record entries no longer
 /// declared: their peering may still run, and backing it out needs its hosts.
+#[cfg(test)]
 pub fn render_full(
     cfg: &Config,
     values: &[PeeringValues],
@@ -319,14 +373,40 @@ pub fn render_full(
     prev_inventory: Option<&str>,
     installs: &std::collections::BTreeSet<String>,
 ) -> Result<Vec<Rendered>> {
+    render_full_as(
+        cfg,
+        values,
+        previous,
+        prev_inventory,
+        installs,
+        every_peering_has_hosts(cfg),
+    )
+}
+
+/// Every declared peering declares `hosts:`, so the whole peering inventory
+/// (`peering-edges.ini`) is rendered; otherwise each peering that declares
+/// them gets its own inventory file beside the hand-written one.
+fn every_peering_has_hosts(cfg: &Config) -> bool {
+    !cfg.peerings.is_empty() && cfg.peerings.iter().all(|p| p.hosts.is_some())
+}
+
+/// `render_full`, with the choice between the whole inventory and per-peering
+/// files made by the caller: `allocate <peering>` renders a subset of the
+/// declared peerings, and the choice follows all of them.
+fn render_full_as(
+    cfg: &Config,
+    values: &[PeeringValues],
+    previous: &alloc::Record,
+    prev_inventory: Option<&str>,
+    installs: &std::collections::BTreeSet<String>,
+    whole: bool,
+) -> Result<Vec<Rendered>> {
     let mut out = vec![Rendered {
         path: format!("ops/goatbuilder/{}", alloc::RECORD_FILE),
         body: alloc::record_text(&alloc::record_of(values, previous)),
     }];
-    let with_hosts = cfg.peerings.iter().filter(|p| p.hosts.is_some()).count();
     // Every peering declares hosts: the whole peering inventory. Only some do:
     // each of those gets its own inventory file beside the hand-written one.
-    let whole = with_hosts != 0 && with_hosts == cfg.peerings.len();
     for (p, v) in cfg.peerings.iter().zip(values.iter()) {
         out.push(Rendered {
             path: format!("ops/ansible/group_vars/{}/peering-values.yml", v.edge_group),
@@ -867,7 +947,10 @@ pub fn run_scoped(repo: &Path, o: &Options, only: Option<&str>) -> Result<Report
         .filter(|m| !m.is_empty())
         .collect();
     adoption_check(repo, &cfg, &values, &ctx, &moves)?;
-    if !cfg.peerings.iter().all(|p| p.hosts.is_some()) {
+    // Whole inventory or one file per peering: decided by every declared
+    // peering, also when `allocate <peering>` renders only one of them.
+    let whole = every_peering_has_hosts(&full);
+    if !whole {
         hand_inventory_names_apart(repo, &values)?;
         // A peering whose groups this run renders into its own inventory file
         // must not also be defined in the hand-written one.
@@ -903,22 +986,45 @@ pub fn run_scoped(repo: &Path, o: &Options, only: Option<&str>) -> Result<Report
         .filter(|v| installs_certs(repo, &v.edge_group))
         .map(|v| v.edge_group.clone())
         .collect();
-    let mut rendered = render_full(
+    let mut rendered = render_full_as(
         &cfg,
         &values,
         &ctx.record,
         prev_inventory.as_deref(),
         &installs,
+        whole,
     )?;
-    if only.is_some() {
-        // One peering: its own files and the record. The inventory is the
-        // whole repository's, and other peerings' files are not this run's.
+    if let Some(name) = only {
+        // One peering: its own files, its inventory, and the record. Other
+        // peerings' files are not this run's.
+        let own = values
+            .iter()
+            .find(|v| v.peering == name)
+            .map(|v| one_inventory_path(&v.edge_group));
         rendered.retain(|r| {
-            r.path != "ops/ansible/inventory/peering-edges.ini"
-                && !others
-                    .iter()
-                    .any(|g| r.path.starts_with(&format!("ops/ansible/group_vars/{g}/")))
+            if r.path == WHOLE_INVENTORY {
+                return true;
+            }
+            if r.path.starts_with("ops/ansible/inventory/peering-") {
+                return Some(&r.path) == own.as_ref();
+            }
+            !others
+                .iter()
+                .any(|g| r.path.starts_with(&format!("ops/ansible/group_vars/{g}/")))
         });
+        // The whole inventory holds every peering's groups: this run adds or
+        // changes the named peering's, and leaves every other line as it was.
+        if let (Some(prev), Some(new)) = (
+            prev_inventory.as_deref(),
+            rendered.iter().find(|r| r.path == WHOLE_INVENTORY),
+        ) {
+            let mine: Vec<String> = values
+                .iter()
+                .filter(|v| v.peering == name)
+                .flat_map(|v| [v.edge_group.clone(), v.core_group.clone()])
+                .collect();
+            others_unchanged(prev, &new.body, &mine)?;
+        }
     }
     let writes = !o.dry_run && o.mock.is_none();
     let mode = if o.dry_run {
@@ -1638,6 +1744,107 @@ mod tests {
             "{e}"
         );
         assert!(run_scoped(d.path(), &opts(false), Some("xzz")).is_err());
+    }
+
+    /// D4: `allocate <peering>` renders that peering's inventory too. Every
+    /// peering declares hosts: the whole inventory gains the named peering's
+    /// groups and keeps every other line; only some do: the named peering's own
+    /// inventory file, and no other peering's.
+    #[test]
+    fn allocate_one_peering_renders_its_inventory() {
+        let inv = |d: &tempfile::TempDir| {
+            std::fs::read_to_string(d.path().join(WHOLE_INVENTORY)).unwrap_or_default()
+        };
+        // Every peering declares hosts: xac is allocated first, then xab alone.
+        let d = repo_with(json!([p("xab", true), p("xac", true)]));
+        role_defaults(d.path());
+        run_scoped(d.path(), &opts(false), Some("xac")).unwrap();
+        let first = inv(&d);
+        assert!(first.starts_with(MARKER), "{first}");
+        assert!(
+            first.contains("[xac_edge]") && !first.contains("[xab_edge]"),
+            "{first}"
+        );
+        let dry = run_scoped(d.path(), &opts(true), Some("xab")).unwrap();
+        assert!(
+            states(&dry)
+                .iter()
+                .any(|l| l == &format!("would write: {WHOLE_INVENTORY}")),
+            "{:?}",
+            states(&dry)
+        );
+        run_scoped(d.path(), &opts(false), Some("xab")).unwrap();
+        let both = inv(&d);
+        assert!(
+            both.contains("[xab_edge]") && both.contains("[xab_core]"),
+            "{both}"
+        );
+        for (name, lines) in sections(&first) {
+            let now = sections(&both)
+                .into_iter()
+                .find(|(n, _)| *n == name)
+                .unwrap()
+                .1;
+            if name.ends_with(":children") {
+                assert!(
+                    lines.iter().all(|l| now.contains(l)),
+                    "[{name}] {lines:?} -> {now:?}"
+                );
+            } else {
+                assert_eq!(now, lines, "[{name}] changed");
+            }
+        }
+        // A re-run is unchanged, and matches what allocating every peering writes.
+        let again = run_scoped(d.path(), &opts(true), Some("xab")).unwrap();
+        assert!(
+            states(&again).iter().all(|l| l.starts_with("unchanged")),
+            "{:?}",
+            states(&again)
+        );
+        let all = run(d.path(), &opts(true)).unwrap();
+        assert!(
+            states(&all).contains(&format!("unchanged: {WHOLE_INVENTORY}")),
+            "{:?}",
+            states(&all)
+        );
+
+        // Another peering's lines would change (its hosts moved since): refused.
+        let d2 = repo_with(json!([p("xab", true), p("xac", true)]));
+        role_defaults(d2.path());
+        run_scoped(d2.path(), &opts(false), Some("xac")).unwrap();
+        let before = inv(&d2);
+        let moved = before.replace("ansible_host=192.0.2.20", "ansible_host=192.0.2.99");
+        std::fs::write(d2.path().join(WHOLE_INVENTORY), &moved).unwrap();
+        let e = run_scoped(d2.path(), &opts(false), Some("xab")).unwrap_err();
+        assert_eq!(
+            e.downcast_ref::<goat_errors::Coded>().unwrap().code,
+            "GB-235",
+            "{e}"
+        );
+        assert_eq!(inv(&d2), moved, "nothing was written");
+
+        // Only some peerings declare hosts: xab's own file, beside a
+        // hand-written peering-edges.ini that is left as it was.
+        let d3 = repo_with(json!([p("xab", true), p("xac", false)]));
+        role_defaults(d3.path());
+        let hand =
+            "[peering_edges:children]\nxac_edge\n\n[xac_edge]\nedge-xac ansible_host=192.0.2.30\n";
+        std::fs::create_dir_all(d3.path().join("ops/ansible/inventory")).unwrap();
+        std::fs::write(d3.path().join(WHOLE_INVENTORY), hand).unwrap();
+        let r = run_scoped(d3.path(), &opts(false), Some("xab")).unwrap();
+        let own = one_inventory_path("xab_edge");
+        assert!(
+            states(&r).contains(&format!("written: {own}")),
+            "{:?}",
+            states(&r)
+        );
+        let body = std::fs::read_to_string(d3.path().join(&own)).unwrap();
+        assert!(
+            body.contains("[xab_edge]") && body.contains("[xab_core]"),
+            "{body}"
+        );
+        assert_eq!(inv(&d3), hand);
+        assert!(!d3.path().join(one_inventory_path("xac_edge")).exists());
     }
 
     #[test]

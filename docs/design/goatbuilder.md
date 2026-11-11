@@ -405,7 +405,8 @@ Status: built (`crates/goatbuilder/src/federate/peering_files.rs`, unit tests). 
 - a peering the record does not hold and that runs from hand-written files is left alone: not checked, rendered or recorded. The values it runs on (its hand group_vars, else the role defaults: tunnel interface and port, SPIRE outbound port, republisher metrics port) are reserved, so the named peering takes none of them;
 - a peering the record holds keeps its recorded values, and its files are not rewritten;
 - every guard still applies to the named peering, including GB-230 when it already runs and would move, and GB-125 for its own files;
-- the record gains or updates the named peering's entry only, and the inventory is not written (it is the whole repository's).
+- the record gains or updates the named peering's entry only;
+- the named peering's inventory is rendered too, and no other peering's lines change. Status: built (`run_scoped`, unit test `allocate_one_peering_renders_its_inventory`). Status: WIP — gate: check `nothing-hand-written.named-allocate-renders-the-inventory` in the federation test environment. Whether the inventory is whole or per peering is decided by every declared peering, not only the named one. When every peering declares `hosts:`, the whole `peering-edges.ini` gains the named peering's groups. Every other section of the previous generated file must come out with the same lines (a `:children` list may gain the named peering's groups); if one would change or disappear, nothing is written (GB-235) and the fix is `allocate` over every peering. When only some do, the named peering gets its own `peering-<edge_group>.ini`, and the hand-written `peering-edges.ini` and every other peering's file stay as they were.
 
 `allocate` with no name behaves exactly as before.
 

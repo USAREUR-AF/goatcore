@@ -2203,6 +2203,19 @@ entries:
     matches:
       - "\\(GB-231\\)"
     exit: 2
+  - code: GB-235
+    tool: goatbuilder
+    title: a named allocate would change another peering's inventory lines
+    what: "Every peering declares hosts:, so ops/ansible/inventory/peering-edges.ini is the whole generated peering inventory. `goatbuilder federate allocate <peering>` renders the named peering's groups into it and leaves every other line as it was; this run would change or drop a section of another peering (its hosts were changed in goatbuilder.yaml since the last allocate, or it is declared but not yet recorded). Nothing was written."
+    causes:
+      - "another peering's hosts: changed in goatbuilder.yaml since the inventory was last rendered"
+      - "a peering in the generated inventory is declared but has no entry in the allocation record"
+    fixes:
+      - "goatbuilder federate allocate   (every declared peering; review and commit what it changes)"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "\\(GB-235\\)"
+    exit: 2
   - code: GB-185
     tool: goatbuilder
     title: the partner named to `federate status` is not a declared peering
