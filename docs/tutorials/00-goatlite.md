@@ -77,7 +77,7 @@ yq --version
 Install Go from `go.dev`. Ubuntu's `golang-go` is older than the version `ops/enrollment/go.mod` asks for:
 
 ```bash
-curl -fsSL "https://go.dev/dl/go1.26.10.linux-$(dpkg --print-architecture).tar.gz" | sudo tar -C /usr/local -xz
+curl -fsSL "https://go.dev/dl/go1.26.11.linux-$(dpkg --print-architecture).tar.gz" | sudo tar -C /usr/local -xz
 export PATH="/usr/local/go/bin:$PATH"
 go version
 ```

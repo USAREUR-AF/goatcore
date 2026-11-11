@@ -16,7 +16,7 @@ case "$(docker info --format '{{.Architecture}}')" in
   x86_64|amd64) fixture_arch=amd64 ;;
   *) echo 'Unsupported Docker architecture for the integration fixture' >&2; exit 1 ;;
 esac
-export GOTOOLCHAIN=go1.26.10 GOMAXPROCS=2
+export GOTOOLCHAIN=go1.26.11 GOMAXPROCS=2
 git clone -q --depth 1 --branch RELEASE.2024-10-29T16-01-48Z https://github.com/minio/minio.git "$scratch/server"
 git clone -q --depth 1 --branch RELEASE.2024-10-29T15-34-59Z https://github.com/minio/mc.git "$scratch/client"
 test "$(git -C "$scratch/server" rev-parse HEAD)" = c4239ced225b9fead5f6b44e3665c5ccd7eacc89
