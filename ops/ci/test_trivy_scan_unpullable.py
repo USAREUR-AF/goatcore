@@ -100,6 +100,17 @@ def test_codes_outside_the_remote_error_line_do_not_classify():
     )
 
 
+
+def test_permission_denied_inside_the_remote_line_is_not_a_code():
+    # The trailing colon is what separates the OCI code DENIED from the words
+    # "permission denied". Here the registry's own line carries those words
+    # with a 500, which is an outage, not "not served", so it must stay a
+    # failure. Without the colon in the code list this would classify.
+    assert not trivy_scan.image_is_unpullable(
+        "\t* remote error: GET https://ghcr.io/v2/usareur-af/fixture/manifests/latest: "
+        "unexpected status code 500 Internal Server Error: permission denied reading blob\n"
+    )
+
 if __name__ == "__main__":
     # Standalone, so the Trivy workflow can run it without installing pytest.
     cases = [fn for name, fn in sorted(globals().items()) if name.startswith("test_") and callable(fn)]
