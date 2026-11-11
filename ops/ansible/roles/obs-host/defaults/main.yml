@@ -114,6 +114,12 @@ offline_ca_root_path: "{{ goat_host_opt_dir | default('/opt/goat') }}/bootstrap/
 
 # Record id cited in the data-root alert's description; empty cites none.
 obs_host_data_root_alert_record: ""
+
+# This goatnet's ntfy topic URL, e.g.
+#   https://ntfy.example.net/goat-<goatnet>-critical?template=goat-alertmanager
+# The query must name goat-alertmanager, the bounded template the relay-health
+# role installs; deploy relay-health first, or ntfy rejects every page with an
+# unknown-template 400. Empty disables the ntfy channel.
 ntfy_alertmanager_webhook_url: ""
 
 # -- mesh path-quality probe -------------------------------------

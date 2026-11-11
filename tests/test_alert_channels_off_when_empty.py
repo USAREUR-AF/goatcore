@@ -124,7 +124,8 @@ def walk_tasks(node):
 
 EMPTY = {"pagerduty_integration_key": "", "slack_webhook_url": "", "smtp_smarthost": "", "smtp_auth_username": "",
          "smtp_auth_password": "", "email_digest_recipients": "", "deadman_webhook_url": "",
-         "ntfy_alertmanager_webhook_url": "http://alertmanager-ntfy:8000/hook", "site_id": "pasture"}
+         "ntfy_alertmanager_webhook_url": "https://ntfy.example.test/goat-pasture-critical?template=goat-alertmanager",
+         "site_id": "pasture"}
 SET = dict(EMPTY, pagerduty_integration_key="pd-fixture-key", slack_webhook_url="https://hooks.example.test/x",
            smtp_smarthost="smtp.example.test:587", smtp_auth_username="u", smtp_auth_password="p",
            email_digest_recipients="ops@example.test")
@@ -169,7 +170,7 @@ class Rendered(unittest.TestCase):
                 for key in ("pagerduty_configs", "slack_configs", "email_configs"):
                     self.assertNotIn(key, r, "%s: receiver %s carries %s with every channel empty" % (t, name, key))
             self.assertIn("webhook-noop", receivers(doc), t)
-            self.assertIn("alertmanager-ntfy", text, "%s: the goatnet's own ntfy channel is not rendered" % t)
+            self.assertIn("goat-pasture-critical", text, "%s: the goatnet's own ntfy channel is not rendered" % t)
             if os.environ.get("REQUIRE_DOCKER") == "1" or docker_ok():
                 amtool_check(t, text, self.d)
 
