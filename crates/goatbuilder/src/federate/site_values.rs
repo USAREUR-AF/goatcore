@@ -18,12 +18,14 @@
 //! - `peering_wg_extra_ports`: `[peering_spire_bundle_port]` (group_vars, else
 //!   the `goat-peering-spire` role default), the one port the tunnel must pass
 //!   for SPIRE federation;
+//! - `goat_zenoh_edge_acl_trace`: true, because phase 14's strict acceptance
+//!   reads the edge's ACL trace;
 //! - `goat_zenoh_edge_core_cn`: the core's own name in the site inventory
 //!   ([`core_cn`]), which phase 8 also mints as the core certificate's CN
 //!   ([`phase8_core_cn`]).
 //!
 //! A required value none of these yields is refused with GB-232, naming every
-//! place that was read. Optional values are never derived.
+//! place that was read. The other optional values are never derived.
 
 use std::path::Path;
 
@@ -353,6 +355,18 @@ pub fn required(s: &Scope) -> Result<Vec<Site>, Vec<(&'static str, Vec<String>)>
         ))
     });
     put("peering_wg_extra_ports", got, looked);
+
+    // Phase 14's strict acceptance reads the edge's ACL trace (acceptance.sh:
+    // the refusal of an unoffered set is recorded there, beside the allow), so
+    // the rendered half turns it on unless group_vars says otherwise.
+    let got = (s.hand)("goat_zenoh_edge_acl_trace").or_else(|| {
+        Some((
+            Value::Bool(true),
+            "phase 14's strict acceptance reads the edge's ACL trace (ops/federation/standup/acceptance.sh)"
+                .to_string(),
+        ))
+    });
+    put("goat_zenoh_edge_acl_trace", got, Vec::new());
 
     if missing.is_empty() {
         Ok(out)
