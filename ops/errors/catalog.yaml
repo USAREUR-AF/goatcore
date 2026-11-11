@@ -1701,14 +1701,14 @@ entries:
   - code: GB-129
     tool: goatbuilder
     title: a peering's offer would widen what federation.toml declares
-    what: "The goat context's federation.toml owns the release sets this party offers ([data] release). A peering's offer: may only narrow that list for one partner. It names a set federation.toml does not offer, is empty or malformed, or names a narrower set than phase 3 can carry out yet (phase 3 offers exactly what federation.toml declares), or federation.toml cannot be read. Nothing ran."
+    what: "federation.toml owns the release sets this party offers ([data] release). A peering's offer: may only narrow that list for one partner. It names a set federation.toml does not offer, is empty or malformed, or federation.toml cannot be read. Or the peering's federation.toml is hand-written (federation_toml: hand), whose [data] release phase 3 offers whole, and offer: is narrower than it; a peering whose federation.toml goatbuilder federate allocate generates gets the narrowed list. Nothing ran."
     causes:
       - "offer: names a set that is not in federation.toml's [data] release"
-      - "offer: is narrower than [data] release, and goat federate init takes no narrowed list yet"
+      - "offer: is narrower than the [data] release of a hand-written federation.toml (federation_toml: hand), which phase 3 offers whole"
       - "GOAT_PROFILE_DIR or GOAT_CONTEXT points at another goat context than the one phase 3 runs in"
     fixes:
       - "add the set to [data] release in federation.toml, the one owner of the offered sets, or remove it from offer:"
-      - "narrow [data] release in federation.toml to what this partner receives, or remove offer:"
+      - "declare federation_toml: rendered on the peering so goatbuilder federate allocate generates its federation.toml, or narrow [data] release in the hand-written file to what this partner receives, or remove offer:"
       - "goatbuilder validate   (the offer's shape)"
     read: docs/design/goatbuilder.md
     matches:
