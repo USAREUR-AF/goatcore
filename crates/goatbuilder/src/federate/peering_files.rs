@@ -740,6 +740,8 @@ pub fn run(repo: &Path, o: &Options) -> Result<Report> {
         .unwrap_or_else(|| repo.to_path_buf());
     let ctx = AllocContext::load(&cfg_dir)?;
     let values = alloc::allocate_all(&cfg, &ctx)?;
+    // A peering with no hosts: takes its machines from the site inventory (federate/site_hosts.rs).
+    let (cfg, host_rows) = super::site_hosts::fill(repo, cfg, &values)?;
     let moves: Vec<String> = std::env::var("FED_ALLOCATE_MOVE")
         .unwrap_or_default()
         .split(',')
@@ -788,6 +790,9 @@ pub fn run(repo: &Path, o: &Options) -> Result<Report> {
     )];
     for v in &values {
         checks.push(row("values", true, alloc::summary(v), None));
+    }
+    for r in host_rows {
+        checks.push(row("hosts", true, r, None));
     }
     // Refuse before writing anything: one foreign file stops the whole run.
     for r in &rendered {

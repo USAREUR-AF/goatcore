@@ -2203,6 +2203,22 @@ entries:
     matches:
       - "\\(GB-231\\)"
     exit: 2
+  - code: GB-234
+    tool: goatbuilder
+    title: the site inventory does not name one edge and one core for a peering without hosts
+    what: "A peering declares no hosts:, so goatbuilder federate allocate takes its machines from the site inventory (the environment's inventory:, else ops/ansible/inventory/*.ini but the peering-*.ini files): the group of the peering's edge_class and of the site's other class, each named as the class, <site>_<class>, <environment>_<class> or <environment>_<site>_<class>. More than one file names them, a class has no machine or several, or the two machines are reached as different users. The message names the candidates and where it looked. Nothing was written."
+    causes:
+      - "two inventory files define the site's class groups"
+      - "a class group lists several machines, or the edge class group lists none"
+      - "the edge and the core have different ansible_user values"
+    fixes:
+      - "declare hosts: {edge: <address>, core: <address>, user: <user>} on the peering"
+      - "declare the environment's inventory: so only that file is read"
+      - "make the site inventory name one machine per class"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "\\(GB-234\\)"
+    exit: 2
   - code: GB-185
     tool: goatbuilder
     title: the partner named to `federate status` is not a declared peering
