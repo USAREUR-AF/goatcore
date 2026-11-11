@@ -129,6 +129,34 @@ RUN --mount=type=bind,source=build/pin-install-time.py,target=/tmp/pin-install-t
  && ls /usr/pgsql-16/share/extension/ | grep -E "^(pg_trgm|btree_gin)\.control$" \
    || (echo "FATAL: contrib extensions not present after install" && exit 1)
 
+# Same-release OS fixes. Keep the database, extensions, backup tool and
+# OpenSSL provider packages unchanged; a dependency requiring them fails here.
+RUN --mount=type=bind,source=build/pin-install-time.py,target=/tmp/pin-install-time.py \
+    set -eu \
+ && set -- \
+      ca-certificates-2026.2.92_v9.0.319-90.3.el9_8 \
+      expat-2.5.0-6.el9_8.7 \
+      gdb-gdbserver-16.3-3.1.el9_8 \
+      gzip-1.12-2.el9_8 \
+      libevent-2.1.13-1.el9_8 \
+      libxml2-2.9.13-14.el9_8.5 \
+      pcre2-10.40-7.el9_8 \
+      pcre2-syntax-10.40-7.el9_8 \
+      python-unversioned-command-3.9.25-7.el9_8.6 \
+      python3-3.9.25-7.el9_8.6 \
+      python3-libs-3.9.25-7.el9_8.6 \
+      sqlite-libs-3.34.1-11.el9_8 \
+      vim-minimal-2:8.2.2637-26.el9_8.23 \
+ && mark=$(python3 /tmp/pin-install-time.py mark) \
+ && dnf upgrade -y --setopt=logdir=/tmp/dnf-log --setopt='*.countme=0' \
+      --setopt=install_weak_deps=False --disablerepo='pgedge*' \
+      --exclude='pgedge*' --exclude='postgresql*' --exclude='spock*' \
+      --exclude='pgbackrest*' --exclude='openssl*' "$@" \
+ && rpm -q -- "$@" \
+ && dnf clean all --setopt=logdir=/tmp/dnf-log \
+ && rm -rf /var/cache/dnf /tmp/dnf-log /var/cache/ldconfig/aux-cache \
+ && python3 /tmp/pin-install-time.py pin "$mark"
+
 # --- F-044 — scrub baked PGDATA ------------------------------------------
 # The pgedge-postgres base image ships /var/lib/pgsql/16/data already
 # populated from build-time setup. Docker named-volume first-mount
