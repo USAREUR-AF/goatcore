@@ -196,6 +196,24 @@ class PeeringFederationToml(unittest.TestCase):
         c["peerings"][0]["federation_toml"] = "template"
         self.assertTrue(any("template" in e for e in validate.errors_for(c)))
 
+class SecretsFederation(unittest.TestCase):
+    """secrets.federation names this side's federation key paths for
+    goatbuilder federate (crates/goatbuilder/src/federate/declared.rs)."""
+
+    def test_paths_validate(self):
+        c = minimal()
+        c["secrets"] = {"store": "env-file", "federation": {
+            "signing_key": "federation/signing.key", "ca_cert": "/srv/fed/ca.pem", "ca_key": "~/fed/ca-key.pem"}}
+        self.assertEqual(validate.errors_for(c), [])
+
+    def test_unknown_empty_or_shell_unsafe_is_rejected(self):
+        for bad, fragment in (({"signing_key": "a", "seed": "b"}, "seed"), ({}, "federation"),
+                              ({"ca_key": ""}, "ca_key"), ({"ca_cert": "/srv/$(x)/ca.pem"}, "ca_cert")):
+            c = minimal()
+            c["secrets"] = {"store": "env-file", "federation": bad}
+            problems = validate.errors_for(c)
+            self.assertTrue(any(fragment in p for p in problems), (bad, problems))
+
 
 class FailClosed(unittest.TestCase):
     def assertRejected(self, config: dict, fragment: str):
