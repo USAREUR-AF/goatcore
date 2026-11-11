@@ -13,7 +13,7 @@ for p in "$@"; do dpkg -s "$p" >/dev/null 2>&1 || want+=("$p"); done
 echo "apt-install-fallback: installing ${want[*]}"
 # It changes /etc/apt (retries, and the mirror on a fallback) and never restores it: only on a
 # CI runner or inside a container, never on an operator's own machine.
-[ "${GITHUB_ACTIONS:-}" = true ] || [ -f /.dockerenv ] \
+[ "${GITHUB_ACTIONS:-}" = true ] || [ -f /.dockerenv ] || [ -f /run/.containerenv ] \
   || { echo "apt-install-fallback: missing ${want[*]}; not changing this machine's apt outside CI"; exit 69; }
 printf '%s\n' 'Acquire::Retries "5";' 'Acquire::http::Timeout "20";' 'Acquire::https::Timeout "20";' 'Acquire::ForceIPv4 "true";' \
   | $SUDO tee /etc/apt/apt.conf.d/99ci-retries >/dev/null
@@ -25,7 +25,19 @@ PROXY_HOST="$(printf '%s' "$PROXY" | sed -E 's#^[a-z]+://##; s#/.*$##')"
 # Network causes only (not "Failed to fetch", which a stale third-party source prints for a
 # 404 or a hash mismatch), and only on a source that can carry the package.
 NET='Temporary failure resolving|Could not resolve|Could not connect to|Cannot initiate the connection|Connection timed out|Unable to connect|Network is unreachable|No route to host'
-net_ubuntu() { grep -E "$NET" "$1" | grep -qE "ubuntu\.com${PROXY_HOST:+|$(printf '%s' "$PROXY_HOST" | sed 's/[.]/\\./g')}"; }
+# The proxy as apt names it: "<host>:<port>" in a URL, "IP: <host> <port>" in a status line.
+PH=""
+if [ -n "$PROXY_HOST" ]; then
+  ph_host="${PROXY_HOST%:*}"; ph_port="${PROXY_HOST##*:}"
+  PH="$(printf '%s' "$ph_host" | sed 's/[.]/\\./g')"; PH="$PH:$ph_port|IP: $PH $ph_port"
+fi
+# Through the cache, a gap answers 5xx (503 for a .deb or an index it does not hold): a gap in a
+# declared input, the same as an unreachable mirror.
+PROXY_NET='[[:space:]]50[0-9][[:space:]]'
+net_ubuntu() {
+  { grep -E "$NET" "$1" | grep -qE "ubuntu\.com${PH:+|$PH}"; } \
+    || { [ -n "$PROXY" ] && grep -E '^(Err|E:|W:)' "$1" | grep -qE "$PROXY_NET"; }
+}
 attempt() {
   local i one
   for i in 1 2 3; do
