@@ -97,7 +97,7 @@ jobs:
     steps:
       # BASE, deliberately — this is what makes `pull_request_target` safe here.
       # The scanning script that runs below is main's, never the pull request's.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0  # need the base commit to diff against
           ref: ${{ github.event_name == 'push' && github.sha || github.event.pull_request.base.sha }}

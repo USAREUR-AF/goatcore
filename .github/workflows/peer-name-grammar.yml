@@ -38,9 +38,9 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: '3.12'
       - name: PyYAML
@@ -49,7 +49,7 @@ jobs:
       - name: Every implementation reproduces the SoT
         run: ./ops/ci/check-peer-name-grammar-sync.sh
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: 'stable'
           cache-dependency-path: ops/goat-zenoh-portal/go.sum
@@ -58,10 +58,10 @@ jobs:
         run: go test ./internal/peername/...
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
 
       - name: Cache cargo registry + git deps
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cargo/registry/index
@@ -72,7 +72,7 @@ jobs:
             cargo-peer-name-grammar-
 
       - name: Cache cargo build target
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: crates/target
           key: target-peer-name-grammar-${{ hashFiles('crates/Cargo.lock') }}

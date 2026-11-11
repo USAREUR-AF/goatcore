@@ -41,7 +41,7 @@ jobs:
     # rollout. The job summary and artifacts retain the outcome for review.
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       # Installed from the GitHub release and checked against a pinned digest,
       # not through setup-trivy: its installer downloads via get.trivy.dev,
@@ -68,7 +68,7 @@ jobs:
       - name: Upload Trivy reports
         id: reports
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: trivy-reports-${{ github.run_id }}
           path: .envrc.local.d/trivy-reports/**

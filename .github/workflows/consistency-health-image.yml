@@ -71,6 +71,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
+permissions:
+  contents: read
+
 jobs:
   test:
     # The corpus conformance gate (ADR 1110 D2) plus the meter's own tests —
@@ -83,7 +86,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: cargo test — grading library, shared golden corpus, and the meter
         working-directory: ops/consistency/rust
         run: cargo test --locked --workspace

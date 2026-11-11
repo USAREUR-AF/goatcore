@@ -53,6 +53,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
+permissions:
+  contents: read
+
 jobs:
   # Fail-closed guard that the console's embedded onboardlint schema
   # (go:embed) is byte-identical to the canonical operator-manifest SoT — the
@@ -61,7 +64,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: onboarding schema-sync check
         run: bash ops/ci/check-onboard-schema-sync.sh
 
@@ -76,8 +79,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: ops/goat-id-console/go.mod
           cache-dependency-path: ops/goat-id-console/go.sum

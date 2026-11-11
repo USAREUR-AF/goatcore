@@ -29,14 +29,17 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           # Match the patched Go pin in ci.yml. Go 1.27 export data is not
           # supported by the current linter.
@@ -67,7 +70,7 @@ jobs:
         run: go vet ./...
 
       - name: golangci-lint (Block 50A.3 — strict config)
-        uses: golangci/golangci-lint-action@v7
+        uses: golangci/golangci-lint-action@9fae48acfc02a90574d7c304a1758ef9895495fa # v7
         with:
           version: v2.13.2
           working-directory: signal-server
@@ -102,18 +105,18 @@ jobs:
       - name: Resolve self-referential registry namespace (lowercased)
         run: echo "REGISTRY_IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/signal-server" >> "$GITHUB_ENV"
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       # No setup-qemu — the Dockerfile pins the builder stage to
       # --platform=$BUILDPLATFORM (native amd64) and cross-compiles Go for
       # each target via GOARCH. The final stage is a static distroless image
       # (no runtime code executed during build), so buildx only needs to
       # pick the right pre-built manifest per arch.
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       - name: Log in to GHCR
         if: github.event_name != 'pull_request'
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -121,7 +124,7 @@ jobs:
 
       - name: Docker metadata
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
         with:
           images: ${{ env.REGISTRY_IMAGE }}
           tags: |
@@ -133,7 +136,7 @@ jobs:
 
       - name: Build and push
         id: build
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: signal-server
           platforms: linux/amd64,linux/arm64
