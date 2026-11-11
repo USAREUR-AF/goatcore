@@ -157,6 +157,19 @@ pub struct Environment {
     /// tunnel or carrier never takes. Absent: NetBird's 51820.
     #[serde(default)]
     pub peering_edge_reserved_udp: Option<Vec<u16>>,
+    /// The peering directory this environment's peerings exchange through
+    /// (federate/declared.rs reads it as FED_DIRECTORY_URL and SSL_CERT_FILE).
+    #[serde(default)]
+    pub peering_directory: Option<PeeringDirectory>,
+}
+
+/// `environments[].peering_directory`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct PeeringDirectory {
+    pub url: String,
+    /// The CA the directory's TLS certificate chains to, when it is not public.
+    #[serde(default)]
+    pub ca_cert: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

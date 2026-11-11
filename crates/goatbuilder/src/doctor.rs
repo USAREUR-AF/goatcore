@@ -2748,6 +2748,7 @@ mod tests {
             groups: vec![],
             sites: vec![],
             peering_edge_reserved_udp: None,
+            peering_directory: None,
         }
     }
 
