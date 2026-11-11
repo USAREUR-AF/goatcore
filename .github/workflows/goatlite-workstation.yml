@@ -44,8 +44,9 @@ jobs:
     timeout-minutes: 25
     container: ubuntu:24.04
     # Our package cache, read only when the Ubuntu mirror does not answer
-    # (.github/actions/apt-failover, whose cache-image input names the same image).
-    # A job container has no docker, so the cache runs as this job's service.
+    # (.github/actions/apt-failover). A job container has no docker, so the cache runs as
+    # this job's service. The image is named twice: here and in that action's cache-image
+    # default; swap the digest into both. GitHub pulls it on every run of this job.
     services:
       apt-cache:
         image: ghcr.io/usareur-af/ci-apt-cache:2026-11-11

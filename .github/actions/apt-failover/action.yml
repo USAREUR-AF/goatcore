@@ -8,10 +8,12 @@ description: >-
 
 inputs:
   cache-image:
-    # THE ONE PLACE the cache image is named. Swap in the pushed digest
-    # (ghcr.io/usareur-af/ci-apt-cache:2026-11-11@sha256:...) here. A job that runs in a
-    # `container:` names the same image in its `services:` entry (goatlite-workstation.yml
-    # fresh-ubuntu); change both together.
+    # The cache image is named in TWO places; swap the pushed digest
+    # (ghcr.io/usareur-af/ci-apt-cache:2026-11-11@sha256:...) into both:
+    #   1. here;
+    #   2. .github/workflows/goatlite-workstation.yml, fresh-ubuntu `services: apt-cache: image`
+    #      (a job container cannot run it from this action).
+    # A tag is accepted, with a warning when the failover pulls it.
     description: The cache image (apt-cacher-ng on port 3142, serving offline).
     default: ghcr.io/usareur-af/ci-apt-cache:2026-11-11
   token:
@@ -79,6 +81,22 @@ runs:
           exit 0
         fi
 
+        # Once the proxy is set: refresh the lists through it, so every later install, with or
+        # without its own `apt-get update`, resolves against the cache's indexes (a runner's
+        # lists are as old as its image). A failed refresh means the cache cannot serve.
+        update_through() {
+          local log
+          log=$(mktemp)
+          $SUDO apt-get -o Acquire::Retries=2 update -qq >"$log" 2>&1
+          # Only an Ubuntu source counts: the runner image's third-party https sources go
+          # direct and may warn on their own, which is not the cache failing.
+          bad=$(grep -E '^(E|W): ' "$log" | grep -E 'ubuntu\.com|mirror\+file|127\.0\.0\.1:3142|:3142/' | head -1)
+          if [ -n "$bad" ]; then
+            echo "::error::environment: apt-failover: mirror $host did not answer, and apt-get update through $1 failed: $bad"
+            exit 69
+          fi
+        }
+
         # The mirror did not answer: our cache.
         if [ -n "$SERVICE_HOST" ]; then
           proxy="http://$SERVICE_HOST:3142"
@@ -87,6 +105,7 @@ runs:
             sleep 1
           done
           printf 'Acquire::http::Proxy "%s";\n' "$proxy" | $SUDO tee /etc/apt/apt.conf.d/00ci-failover >/dev/null
+          update_through "$proxy"
           echo "APT_FAILOVER=1" >> "$GITHUB_ENV"
           echo "apt-failover: mirror $host did not answer in ${PROBE_SECONDS}s; apt uses the cache service at $proxy"
           exit 0
@@ -95,9 +114,17 @@ runs:
         if [ -n "$CACHE_TOKEN" ] && printf '%s' "$CACHE_TOKEN" | docker login ghcr.io -u "${GITHUB_ACTOR:-github-actions}" --password-stdin >/dev/null 2>&1; then
           login="ghcr.io login"
         fi
+        [[ "$CACHE_IMAGE" =~ @sha256:[0-9a-f]{64}$ ]] || echo "::warning::apt-failover: cache-image is not pinned by digest: $CACHE_IMAGE"
         if ! docker pull -q "$CACHE_IMAGE" >/dev/null; then
-          echo "::error::apt-failover: mirror $host did not answer, and the cache image $CACHE_IMAGE could not be pulled ($login); this job's packages have no source"
-          exit 1
+          # A token that logs in but cannot read the package is denied a pull that an
+          # anonymous one of a public package would get.
+          if [ "$login" = "ghcr.io login" ] && docker logout ghcr.io >/dev/null 2>&1 \
+             && login="anonymous pull after a denied login" && docker pull -q "$CACHE_IMAGE" >/dev/null; then
+            :
+          else
+            echo "::error::apt-failover: mirror $host did not answer, and the cache image $CACHE_IMAGE could not be pulled ($login); this job's packages have no source"
+            exit 1
+          fi
         fi
         docker rm -f ci-apt-cache >/dev/null 2>&1 || true
         docker run -d --name ci-apt-cache --network host --restart no "$CACHE_IMAGE" >/dev/null
@@ -114,6 +141,7 @@ runs:
         fi
         # The runner's apt. Only plain http sources go through it; an https source does not.
         printf '%s\n' 'Acquire::http::Proxy "http://127.0.0.1:3142";' | $SUDO tee /etc/apt/apt.conf.d/00ci-failover >/dev/null
+        update_through "http://127.0.0.1:3142"
         # Docker builds and containers: inside them 127.0.0.1 is the container, so they reach
         # the cache at the default bridge's gateway (the host). Only the http proxy: their
         # https fetches (PyPI, galaxy, registries) stay direct. noProxy keeps traffic between
