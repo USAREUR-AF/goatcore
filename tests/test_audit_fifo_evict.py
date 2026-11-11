@@ -82,6 +82,23 @@ class Eviction(unittest.TestCase):
         self.assertIn('goat_audit_evict_over_high_water{bucket="audit-integrity"} 1', prom)
         self.assertIn('goat_audit_evict_last_result{bucket="audit-integrity"} 4', prom)
 
+    def test_transient_metrics_failure_publishes_operation_failure(self):
+        original = engine.metrics
+        calls = []
+
+        def publish(*args, **kwargs):
+            calls.append(args)
+            if len(calls) == 1:
+                raise OSError("synthetic metrics write failure")
+            return original(*args, **kwargs)
+
+        with patch.object(engine, "metrics", side_effect=publish):
+            with self.assertRaises(OSError):
+                engine.run(self.config, Backend([]))
+        prom = (self.directory / "audit_fifo_evict.prom").read_text()
+        self.assertIn('goat_audit_evict_last_result{bucket="audit-integrity"} 3', prom)
+        self.assertEqual(len(calls), 2)
+
     def test_probe_below_high_water_stays_quiet(self):
         backend = Backend([version("site", 1, 300 * MIB, "v1")], used=800 * MIB)
         backend.versions = lambda target: self.fail("measurement probe must not list versions")

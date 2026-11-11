@@ -208,7 +208,6 @@ def run(config, backend, evict=False):
             # here, every measure-only pass would publish last_result 3 and
             # trip AuditEvictorOperationFailed. It must carry the outcome.
             result = 4 if over() else 0
-            metrics(config, used, 0, 0, result, total, over_high=over())
             if result == 4:
                 # Observation of a breached threshold is not a success: the
                 # bucket is at or past high-water, eviction is disabled, and
@@ -228,7 +227,6 @@ def run(config, backend, evict=False):
             pending.unlink()
         if used < quota * config["high_pct"] // 100:
             result = 0
-            metrics(config, used, 0, 0, 0, total, over_high=0)
             return 0
         budget = used * config["max_pass_pct"] // 100
         limit = max(quota * config["low_pct"] // 100, used - budget)
@@ -282,7 +280,14 @@ def run(config, backend, evict=False):
             result = 3
             metrics(config, used, prefixes, freed, result, total, over_high=over())
             raise
-        metrics(config, used, prefixes, freed, result, total, over_high=over())
+        try:
+            metrics(config, used, prefixes, freed, result, total, over_high=over())
+        except (OSError, Failure):
+            # If publication recovers, expose the failed operation rather than
+            # the measurement outcome. A persistent failure leaves the prior
+            # timestamp intact so the stale-metrics alert can detect it.
+            metrics(config, used, prefixes, freed, 3, total, over_high=over())
+            raise
     return result
 
 
