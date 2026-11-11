@@ -112,7 +112,7 @@ class CaKeyFromAge(unittest.TestCase):
         r = self.run_mint(env={'FED_CA_KEY_AGE': str(self.age_file), 'FED_AGE_IDENTITY': str(self.good)})
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertIn('opened', r.stdout)
-        self.assertEqual(len(list(self.out.glob('*.pem'))), 8)
+        self.assertEqual(len(list(self.out.glob('*.pem'))), 9)  # four pairs and our CA
         self.assert_no_key_left()
         self.assert_written_privately()
 
@@ -235,7 +235,7 @@ class CaKeyFromAge(unittest.TestCase):
         r = self.run_mint(env={'FED_CA_KEY_AGE': str(real), 'FED_AGE_IDENTITY': str(identity)},
                           path=os.environ['PATH'])
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        self.assertEqual(len(list(self.out.glob('*.pem'))), 8)
+        self.assertEqual(len(list(self.out.glob('*.pem'))), 9)  # four pairs and our CA
         self.assert_no_key_left()
 
 

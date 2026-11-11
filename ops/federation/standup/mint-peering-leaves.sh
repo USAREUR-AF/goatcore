@@ -236,6 +236,9 @@ cat <<DONE
     goat_fed_republisher_key:     $OUT/republisher-key.pem
     goat_fed_republisher_cn:      $REPUBLISHER_CN     (set by \`goat federate apply\`)
 
+  Our CA is placed beside them as $OUT/our-ca.pem: the CA of the edge's
+  inward endpoint (root_ca_certificate_file=) and goat_fed_republisher_core_ca_src.
+
   The partner's CA — and ONLY the partner's CA — goes in
   goat_zenoh_edge_partner_ca_path. Never in a core router's trust store.
 
