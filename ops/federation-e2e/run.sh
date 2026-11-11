@@ -138,7 +138,9 @@ if [ -z "$ONLY" ] || [ "$ONLY" = 2 ]; then scenario 2 "$B" script; fi
 if [ -z "$ONLY" ] || [ "$ONLY" = 3 ]; then scenario3; fi
 if [ -z "$ONLY" ] || [ "$ONLY" = 4 ]; then
   say "scenario 4: nothing-hand-written, strict, in its own lab"
-  NH_WORK="$WORK/nothing-hand-written"; NH_REC="$RECORD/nothing-hand-written"
+  # The record directory is named for the unit, as env lays it out (<avenue>/<unit>):
+  # lib/verdict.py reads a unit's steps only from a directory of that name.
+  NH_WORK="$WORK/nohand"; NH_REC="$RECORD/nohand"
   # Its own names and subnets, apart from scenarios 1-3; lib/unit.sh removes what it made.
   env FE2E_LAB=fed-e2e-nh FE2E_HOST_PREFIX=fed-nh FE2E_NET_PREFIX=fed-e2e-nh FE2E_NET_BASE=10.78 \
     FE2E_PARTIES="xaa xab" FE2E_HOST_IMAGE="$HOST_IMAGE" FE2E_RP_TAG="$RP_TAG" RP_IMAGE="$RP_IMAGE" \
@@ -159,7 +161,7 @@ fi
 
 say "the record"
 {
-  grep -h "acceptance-counts:" "$RECORD"/*acceptance-as-*.log "$RECORD"/nothing-hand-written/*acceptance-as-*.log 2>/dev/null || true
+  grep -h "acceptance-counts:" "$RECORD"/*acceptance-as-*.log "$RECORD"/nohand/*acceptance-as-*.log 2>/dev/null || true
 } | tee "$RECORD/acceptance-counts.txt"
 # The record step is a step: a report that cannot be written fails the run.
 python3 "$REPO/ops/e2e/report.py" "$RECORD" --check --title "cross-sovereign federation e2e (hermetic)" || { echo "run.sh: the run record did not validate (above)" >&2; FAILS=$((FAILS + 1)); }
