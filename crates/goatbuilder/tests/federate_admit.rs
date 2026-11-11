@@ -761,6 +761,12 @@ fn a_role_core_is_admitted_through_the_roles_play_and_its_fragment_on_the_host()
         log.find("play zenoh-deploy.yml").unwrap(),
     );
     assert!(fetch < copy && copy < dry && dry < play, "fetch, place, dry run, restart: {log}");
+    // The core's admission in the role's own declarations, from the fragment's subject.
+    let peerings = std::fs::read_to_string(w.repo.join("ops/ansible/group_vars/core_router/peerings.yml")).unwrap();
+    let doc: serde_yaml::Value = serde_yaml::from_str(&peerings).unwrap();
+    assert_eq!(doc["zenoh_sovereign_peerings"][0]["sovereign"], "xab", "{peerings}");
+    assert_eq!(doc["zenoh_sovereign_peerings"][0]["cn"], "fed.xab.xaa.01", "{peerings}");
+    assert!(review.contains("peerings.yml  ->"), "the summary names it: {review}");
 }
 
 /// On a goat-zenoh role core, admission places phase 8's router leaf where the
