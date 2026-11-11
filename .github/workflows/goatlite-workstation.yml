@@ -49,7 +49,7 @@ jobs:
     # default; swap the digest into both. GitHub pulls it on every run of this job.
     services:
       apt-cache:
-        image: ghcr.io/usareur-af/ci-apt-cache:2026-11-11
+        image: ghcr.io/usareur-af/ci-apt-cache:2026-11-11@sha256:f2e089fcd18ead4e97f13fb0eff5c934e7b6a27c8f37bca730b34f4ef5521ac6
         credentials:
           username: ${{ github.actor }}
           password: ${{ github.token }}

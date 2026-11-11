@@ -15,7 +15,7 @@ inputs:
     #      (a job container cannot run it from this action).
     # A tag is accepted, with a warning when the failover pulls it.
     description: The cache image (apt-cacher-ng on port 3142, serving offline).
-    default: ghcr.io/usareur-af/ci-apt-cache:2026-11-11
+    default: ghcr.io/usareur-af/ci-apt-cache:2026-11-11@sha256:f2e089fcd18ead4e97f13fb0eff5c934e7b6a27c8f37bca730b34f4ef5521ac6
   token:
     description: Token for a ghcr.io pull of the cache image (the job needs packages read).
     default: ${{ github.token }}
