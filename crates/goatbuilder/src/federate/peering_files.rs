@@ -790,7 +790,6 @@ fn hand_inventory_names_apart(repo: &Path, values: &[PeeringValues]) -> Result<(
 /// unset stays unset. The required ones come from `site_values`.
 const EDGE_OPTIONAL: &[&str] = &[
     "goat_zenoh_edge_trust_mode",
-    "goat_zenoh_edge_acl_trace",
     "peering_wg_fips_waived_reason",
     "peering_spire_outbound_listen",
 ];
@@ -800,6 +799,7 @@ const EDGE_REQUIRED: &[&str] = &[
     "goat_zenoh_edge_core_cn",
     "peering_spire_server_addr",
     "peering_wg_extra_ports",
+    "goat_zenoh_edge_acl_trace",
 ];
 const CORE_REQUIRED: &[&str] = &[
     "goat_fed_republisher_image",
@@ -2456,6 +2456,25 @@ mod tests {
         assert!(fed.join("xab/federation.toml").exists());
     }
 
+    /// The ACL trace a hand-written group_vars sets is taken as set, even off.
+    #[test]
+    fn a_declared_acl_trace_is_taken_as_set() {
+        let mut a = p("xab", true);
+        a["deployment"] = json!("rendered");
+        let d = repo_with_site(json!([a]), "goat_zenoh_edge_acl_trace: false\n");
+        with_owners(d.path());
+        run(d.path(), &opts(false)).unwrap();
+        let edge = std::fs::read_to_string(
+            d.path()
+                .join("ops/ansible/group_vars/xab_edge/peering-deployment.yml"),
+        )
+        .unwrap();
+        assert!(
+            edge.contains("goat_zenoh_edge_acl_trace: false\n"),
+            "{edge}"
+        );
+    }
+
     /// A site value the halves need that neither the environment's group_vars
     /// set nor any declaration yields is refused (GB-232), naming it and every
     /// place that was read for it; nothing is invented.
@@ -2552,12 +2571,15 @@ mod tests {
         }
         for unset in [
             "goat_zenoh_edge_trust_mode",
-            "goat_zenoh_edge_acl_trace",
             "peering_wg_fips_waived_reason",
             "peering_spire_outbound_listen",
         ] {
             assert!(!edge.contains(unset), "{unset} is not derived\n{edge}");
         }
+        assert!(
+            edge.contains("goat_zenoh_edge_acl_trace: true\n"),
+            "acceptance reads the ACL trace, so the rendered half turns it on\n{edge}"
+        );
         for frag in [
             "# peering_wg_extra_ports: the SPIRE bundle endpoint port (peering_spire_bundle_port, ops/ansible/roles/goat-peering-spire/defaults/main.yml)",
             "peering_wg_extra_ports:\n  - 8443\n",
