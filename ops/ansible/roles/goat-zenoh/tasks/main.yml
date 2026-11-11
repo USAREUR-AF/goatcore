@@ -433,7 +433,14 @@
       [ -f "$f" ] || { : > /tmp/.goat-trust-before; echo "no-prior-bundle"; exit 0; }
       awk 'BEGIN{n=0} /BEGIN CERT/{n++} {print > ("/tmp/.gtb-" n ".pem")}' "$f"
       for c in /tmp/.gtb-*.pem; do
-        [ -s "$c" ] && openssl x509 -in "$c" -noout -fingerprint -sha256 2>/dev/null
+        [ -s "$c" ] || continue
+        # An issuer already expired NOW can validate nothing, so its absence
+        # from the rebuilt bundle is rotation hygiene, not a dropped anchor.
+        # Counting it made the loss assertion fail on every legitimate CA
+        # rotation and invited a bypass of a trust check. A VALID issuer that
+        # disappears still fails the assertion below.
+        openssl x509 -in "$c" -noout -checkend 0 >/dev/null 2>&1 || continue
+        openssl x509 -in "$c" -noout -fingerprint -sha256 2>/dev/null
       done | sed 's/.*=//' | sort -u > /tmp/.goat-trust-before
       rm -f /tmp/.gtb-*.pem
       wc -l < /tmp/.goat-trust-before
