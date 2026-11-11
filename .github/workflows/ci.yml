@@ -74,6 +74,18 @@ jobs:
           echo "code=$code" >> "$GITHUB_OUTPUT"
           echo "rpi=$rpi"
           echo "rpi=$rpi" >> "$GITHUB_OUTPUT"
+      # Report only: which jobs this pull request's files can affect, by the
+      # input map in ops/ci/ci_areas.py. Nothing is skipped by it yet; the
+      # plans are compared with real results before any job is gated on them
+      # (docs/design/ci-results-follow-inputs.md).
+      - name: per-area plan (report only)
+        if: github.event_name == 'pull_request'
+        # A report must never fail the job every build job depends on.
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          python3 ops/ci/test_ci_areas.py
+          git diff --name-only HEAD^1 HEAD | python3 ops/ci/ci_areas.py --summary | tee -a "$GITHUB_STEP_SUMMARY"
 
   rust:
     needs: changes
@@ -156,7 +168,7 @@ jobs:
       - name: deps
         timeout-minutes: 5
         run: |
-          python3 -m pip install -q pyyaml jsonschema pytest ansible-core yamllint
+          python3 -m pip install -q pyyaml jsonschema pytest pytest-xdist ansible-core yamllint
           sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 -o APT::Update::Error-Mode=any update
           sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 install -y shellcheck ripgrep dosfstools parted xz-utils
           ansible-galaxy collection install -r ops/ansible/requirements.yml
@@ -174,7 +186,9 @@ jobs:
         run: |
           set -o pipefail
           export PYTHONPATH="$PWD/ops/consistency/python"
-          python3 -m pytest -q --ignore=ops/ci/test_membership_reconcile.py --ignore=ops/consistency/python/tests/test_corpus.py --ignore=ops/consistency/python/tests/test_lite_sidecar.py ops/ci ops/consistency/python ops/goatbuilder ops/federation/standup tests 2>&1 | tail -40
+          # -n auto: one worker per runner core. Measured on this exact
+          # command: 13m38s serial, 6m50s with four workers, same results.
+          python3 -m pytest -q -n auto --ignore=ops/ci/test_membership_reconcile.py --ignore=ops/consistency/python/tests/test_corpus.py --ignore=ops/consistency/python/tests/test_lite_sidecar.py ops/ci ops/consistency/python ops/goatbuilder ops/federation/standup tests 2>&1 | tail -40
       - name: Go vulnerability scan coverage
         run: |
           python3 ops/ci/test_go_vuln_coverage.py
