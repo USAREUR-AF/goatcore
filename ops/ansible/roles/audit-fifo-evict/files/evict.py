@@ -204,8 +204,12 @@ def run(config, backend, evict=False):
         used = backend.used(target)
         result = 3
         if not evict:
-            metrics(config, used, 0, 0, 0, total, over_high=over())
-            if over():
+            # The finally block rewrites the textfile with `result`; left at 3
+            # here, every measure-only pass would publish last_result 3 and
+            # trip AuditEvictorOperationFailed. It must carry the outcome.
+            result = 4 if over() else 0
+            metrics(config, used, 0, 0, result, total, over_high=over())
+            if result == 4:
                 # Observation of a breached threshold is not a success: the
                 # bucket is at or past high-water, eviction is disabled, and
                 # uploads will be refused at the quota. Exit non-zero so the

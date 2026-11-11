@@ -80,6 +80,7 @@ class Eviction(unittest.TestCase):
         self.assertEqual(backend.trails, [])
         prom = (self.directory / "audit_fifo_evict.prom").read_text()
         self.assertIn('goat_audit_evict_over_high_water{bucket="audit-integrity"} 1', prom)
+        self.assertIn('goat_audit_evict_last_result{bucket="audit-integrity"} 4', prom)
 
     def test_probe_below_high_water_stays_quiet(self):
         backend = Backend([version("site", 1, 300 * MIB, "v1")], used=800 * MIB)
@@ -87,6 +88,7 @@ class Eviction(unittest.TestCase):
         self.assertEqual(engine.run(self.config, backend), 0)
         prom = (self.directory / "audit_fifo_evict.prom").read_text()
         self.assertIn('goat_audit_evict_over_high_water{bucket="audit-integrity"} 0', prom)
+        self.assertIn('goat_audit_evict_last_result{bucket="audit-integrity"} 0', prom)
 
     def test_all_snapshotted_versions_deleted_with_quota_relief(self):
         backend = Backend([version("site", 1, 40 * MIB, "v1"),
@@ -195,7 +197,15 @@ class Eviction(unittest.TestCase):
                            "Enable and start the evictor timer")
         self.assertLess(probe_index, timer_index)
         self.assertIn("--measure-only", tasks[probe_index]["ansible.builtin.command"]["argv"])
-        self.assertEqual(tasks[probe_index]["failed_when"], "_evict_probe.rc != 0")
+        # rc 4 proves the credential too: the bucket measured over high-water.
+        # The converge must not die before the timer task, or an over-water
+        # bucket loses its metrics and alerts exactly when they matter.
+        self.assertEqual(tasks[probe_index]["failed_when"], "_evict_probe.rc not in [0, 4]")
+        refuse_index = next(i for i, task in enumerate(tasks) if task["name"] ==
+                            "Refuse to finish over high-water while eviction is disabled")
+        self.assertLess(timer_index, refuse_index)
+        self.assertEqual(tasks[refuse_index]["when"],
+                         ["_evict_probe.rc == 4", "not (audit_fifo_evict_enabled | bool)"])
         defaults = yaml.safe_load((ROOT / "ops/ansible/roles/audit-fifo-evict/defaults/main.yml").read_text())
         self.assertIs(defaults["audit_fifo_evict_enabled"], False)
 
