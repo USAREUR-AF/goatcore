@@ -98,3 +98,11 @@ def test_codes_outside_the_remote_error_line_do_not_classify():
         "INFO\tdetected misconfiguration: access denied: policy MANIFEST_UNKNOWN: x\n"
         "\t* docker error: No such image\n"
     )
+
+
+if __name__ == "__main__":
+    # Standalone, so the Trivy workflow can run it without installing pytest.
+    cases = [fn for name, fn in sorted(globals().items()) if name.startswith("test_") and callable(fn)]
+    for case in cases:
+        case()
+    print(f"ok: trivy unpullable classifier, {len(cases)} cases")
