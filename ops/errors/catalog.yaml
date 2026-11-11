@@ -1559,6 +1559,7 @@ entries:
       - several core routers run on the host
     fixes:
       - "goatbuilder federate init --router-container <name>   (name it by hand)"
+      - "FED_ROUTER_CONTAINER=<name> goatbuilder federate <partner>   (the one command passes it to phase 3 as --router-container)"
       - "set zenoh_stack or site_id for the core host in the deployment's group_vars or host_vars"
       - "ssh <user>@<core> sudo docker ps --format '{{.Names}} {{.Label \"org.goat.component\"}}'   (what is running)"
     read: docs/design/federation-router-discovery.md
