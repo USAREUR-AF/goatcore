@@ -110,7 +110,7 @@ def mint(folder, name, cn, san, ca, ca_key, days):
 
 
 OUR_CA = 'our-ca.pem'
-OUR_CA_MODE = 0o640
+OUR_CA_MODE = 0o600
 
 
 def our_ca_target(out):
@@ -134,10 +134,12 @@ def place_our_ca(out, ca):
     container runtime create a directory there: zenoh then cannot read the CA,
     discards the endpoint and never dials the core, with nothing logged.
     Written once the leaves are in place, and only when the content differs,
-    so a re-run changes nothing. Mode OUR_CA_MODE: owner and group read it,
-    others do not. The edge container already reads the 0600 leaf keys mounted
-    beside it, so it reads as their owner, and the republisher's copy runs as
-    the driver's user; the output directory is 0700 in any case.
+    so a re-run changes nothing. Mode OUR_CA_MODE, the owner's alone, like the
+    leaf keys beside it: every reader is the owner or root. The edge container
+    sets no user (its image runs as root) and already reads the 0600 leaf keys
+    mounted beside it; the edge role reads it on the edge with become; the
+    republisher role copies it from the controller as the driver's user, who
+    ran phase 8 and owns it.
     """
     target = our_ca_target(out)
     data = ca.read_bytes()
