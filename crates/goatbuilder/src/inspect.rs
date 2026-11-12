@@ -253,6 +253,12 @@ pub fn collect(repo: &Path, env: &str, only: Option<&str>) -> Result<(Vec<Drift>
 
 /// [`collect`], plus each host's own facts from the same read (`survey`).
 pub fn collect_full(repo: &Path, env: &str, only: Option<&str>) -> Result<(Vec<Drift>, String, BTreeMap<String, HostFacts>)> {
+    read_rows(repo, env, only).map(|(rows, t, facts)| (rows, t.detail, facts))
+}
+
+/// The one pass over an environment's hosts that [`collect_full`], [`diff`] and
+/// [`status`] share: the rows, and the transport they were read over.
+fn read_rows(repo: &Path, env: &str, only: Option<&str>) -> Result<(Vec<Drift>, push::Transport, BTreeMap<String, HostFacts>)> {
     let comps = match only {
         Some(c) => {
             push::declared(repo, c, env, None)?;
@@ -345,7 +351,69 @@ pub fn collect_full(repo: &Path, env: &str, only: Option<&str>) -> Result<(Vec<D
         }
     }
     let facts = by_group.into_values().flat_map(|(_, _, f)| f).collect();
-    Ok((rows, t.detail, facts))
+    Ok((rows, t, facts))
+}
+
+/// A row read off a host is at the declared ref only when its newest ledger row
+/// names the declared digest AND records a finished deploy: `verify`'s rule (C7,
+/// F-530). A row the play left at `action: pending`, or a rollback row, names the
+/// ref without proving the deploy finished.
+fn finished(d: &Drift) -> bool {
+    d.state == "same" && d.action == "deploy"
+}
+
+/// [`read_rows`] completed by `verify`'s second rule: every host the inventory
+/// expects to carry a component must answer, and silence is not proof (#1545).
+/// A host the inventory names that gave no answer is a `no-answer` row. Returns
+/// the rows, the transport's description, and a row per group whose inventory
+/// could not be read (nothing about its hosts is then known).
+fn read_expected(repo: &Path, env: &str, only: Option<&str>) -> Result<(Vec<Drift>, String, Vec<Check>)> {
+    let (mut rows, t, _) = read_rows(repo, env, only)?;
+    let n = env.replace('_', "-");
+    let mut problems = Vec::new();
+    // (component, group) pairs whose hosts were read; a group never provisioned,
+    // or a component without ledger coverage, names no host to expect.
+    let mut pairs: Vec<(String, String, String)> = Vec::new();
+    for d in rows.iter().filter(|d| d.state != "no-coverage" && d.state != "not-provisioned") {
+        let key = (d.component.clone(), d.group.clone(), d.declared.clone());
+        if !pairs.contains(&key) {
+            pairs.push(key);
+        }
+    }
+    let mut expected: BTreeMap<(String, String), std::result::Result<Vec<String>, String>> = BTreeMap::new();
+    for (c, g, declared) in pairs {
+        let role = single_homed_role(repo, &c);
+        let want = expected.entry((g.clone(), role.clone())).or_insert_with(|| push::expected_hosts(repo, &t, &g, &role).map(|(e, _)| e));
+        let hosts = match want {
+            Ok(h) => h.clone(),
+            Err(e) => {
+                let name = format!("{n}/{g}/inventory");
+                if !problems.iter().any(|p: &Check| p.name == name) {
+                    problems.push(not_ok(&name, format!("inventory read FAILED — {e}; which hosts must answer is unknown")));
+                }
+                continue;
+            }
+        };
+        if hosts.is_empty() {
+            continue;
+        }
+        // Ansible answered for no host at all: name each expected host instead of the group.
+        let placeholder = format!("<{g}>");
+        rows.retain(|d| !(d.component == c && d.group == g && d.host == placeholder));
+        let answered: std::collections::BTreeSet<String> = rows.iter().filter(|d| d.component == c && d.group == g).map(|d| d.host.clone()).collect();
+        for h in hosts.iter().filter(|h| !answered.contains(*h)) {
+            rows.push(Drift { component: c.clone(), group: g.clone(), host: h.clone(), declared: declared.clone(), running: String::new(), state: "no-answer".into(), row_ts: String::new(), action: String::new() });
+        }
+    }
+    // Keep the read's order: component, then group, then host as read.
+    let order: Vec<(String, String)> = rows.iter().map(|d| (d.component.clone(), d.group.clone())).fold(Vec::new(), |mut v, k| {
+        if !v.contains(&k) {
+            v.push(k);
+        }
+        v
+    });
+    rows.sort_by_key(|d| order.iter().position(|k| k.0 == d.component && k.1 == d.group));
+    Ok((rows, t.detail, problems))
 }
 
 /// A member group whose every host line in the base inventories still carries a
@@ -387,7 +455,12 @@ fn diff_checks(env: &str, rows: &[Drift]) -> Vec<Check> {
         .map(|d| {
             let name = format!("{}/{}/{}", env.replace('_', "-"), d.host, d.component);
             match d.state.as_str() {
-                "same" => ok(&name, format!("same: {} (row {} {})", short(&d.declared), d.action, d.row_ts)),
+                "same" if finished(d) => ok(&name, format!("same: {} (row {} {})", short(&d.declared), d.action, d.row_ts)),
+                "same" => Check {
+                    fix: Some(unfinished_fix(d)),
+                    ..not_ok(&name, format!("pending: record names {}, declared {}", short(&d.running), short(&d.declared)))
+                },
+                "no-answer" => not_ok(&name, format!("unknown: no answer from this host (the inventory names it); main declares {}", short(&d.declared))),
                 "drift" => not_ok(&name, format!("DRIFT: running {} — main declares {} (row {} {})", short(&d.running), short(&d.declared), d.action, d.row_ts)),
                 "no-ledger" => not_ok(&name, format!("unknown: no ledger on the host; main declares {}", short(&d.declared))),
                 "unreachable" => not_ok(&name, format!("unknown: host unreachable; main declares {}", short(&d.declared))),
@@ -401,14 +474,20 @@ fn diff_checks(env: &str, rows: &[Drift]) -> Vec<Check> {
         .collect()
 }
 
+/// Why a row naming the declared ref is not convergence, in `verify`'s words.
+fn unfinished_fix(d: &Drift) -> String {
+    format!("the newest ledger row is action={} (row ts {}), not a finished deploy: deploy it to record convergence", if d.action.is_empty() { "<none>" } else { &d.action }, d.row_ts)
+}
+
 /// `diff`: what is different from main right now. Exit 3 on any drift or unknown host.
 pub fn diff(repo: &Path, env: &str, only: Option<&str>) -> Result<Report> {
-    let (rows, transport) = collect(repo, env, only)?;
+    let (rows, transport, problems) = read_expected(repo, env, only)?;
     let mut checks = vec![ok(&format!("{}/transport", env.replace('_', "-")), format!("read via {transport}"))];
+    checks.extend(problems);
     checks.extend(diff_checks(env, &rows));
-    let drift = rows.iter().filter(|d| matches!(d.state.as_str(), "drift" | "served-drift")).count();
-    let unknown = rows.iter().filter(|d| matches!(d.state.as_str(), "no-ledger" | "unreachable" | "other-image" | "served-unknown")).count();
-    let same = rows.iter().filter(|d| d.state == "same").count();
+    let drift = rows.iter().filter(|d| matches!(d.state.as_str(), "drift" | "served-drift") || (d.state == "same" && !finished(d))).count();
+    let unknown = rows.iter().filter(|d| matches!(d.state.as_str(), "no-ledger" | "unreachable" | "no-answer" | "other-image" | "served-unknown")).count();
+    let same = rows.iter().filter(|d| finished(d)).count();
     let summary = format!("{same} same, {drift} drift, {unknown} unknown across {} component(s)", rows.iter().map(|d| &d.component).collect::<std::collections::BTreeSet<_>>().len());
     if rows.is_empty() {
         // An empty comparison is not agreement.
@@ -418,6 +497,71 @@ pub fn diff(repo: &Path, env: &str, only: Option<&str>) -> Result<Report> {
     let n = env.replace('_', "-");
     checks.push(if drift + unknown == 0 { ok(&format!("{n}/diff"), summary) } else { not_ok(&format!("{n}/diff"), summary) });
     Ok(Report::new("diff", checks, EXIT_NOT_CONVERGED))
+}
+
+// ---------------------------------------------------------------------------
+// status on real hosts (gate row C3)
+// ---------------------------------------------------------------------------
+
+/// One machine's state for one component, in `status`'s three words (C7):
+/// converged (its record names the declared ref, deploy finished), pending (it
+/// was read and is not there: another ref, no record, an unfinished row) or
+/// unknown (it was not read: unreachable, or silent where the inventory names it).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
+pub enum Verdict {
+    Converged,
+    Pending,
+    Unknown,
+}
+
+/// `status`'s grade of one row of [`read_expected`]: the rules `verify` applies
+/// to the same ledger rows. `None` for a row that names no machine (a group never
+/// provisioned, a component without ledger coverage).
+pub fn grade(d: &Drift) -> Option<Verdict> {
+    match d.state.as_str() {
+        "same" if finished(d) => Some(Verdict::Converged),
+        "same" | "drift" | "served-drift" | "served-unknown" | "no-ledger" | "other-image" => Some(Verdict::Pending),
+        "unreachable" | "no-answer" => Some(Verdict::Unknown),
+        _ => None,
+    }
+}
+
+/// One `status` row, in the words `status` uses on a fixture, so the same page
+/// renders both (`verbs::status_page`).
+fn status_check(n: &str, d: &Drift) -> Check {
+    let name = format!("{n}/{}/{}", d.host, d.component);
+    let (decl, run) = (short(&d.declared), short(&d.running));
+    let pending = |fix: Option<String>| Check { fix, ..not_ok(&name, format!("pending: record names {run}, declared {decl}")) };
+    match (grade(d), d.state.as_str()) {
+        (Some(Verdict::Converged), _) => ok(&name, format!("converged on {decl} (row {} {})", d.action, d.row_ts)),
+        (Some(Verdict::Pending), "same") => pending(Some(unfinished_fix(d))),
+        (Some(Verdict::Pending), "drift") => pending(None),
+        (Some(Verdict::Pending), "no-ledger") => not_ok(&name, format!("pending: no record yet; declared {decl}")),
+        (Some(Verdict::Pending), "other-image") => pending(Some("the shared ledger's newest row records another image: this component's own ref is not on record".into())),
+        // A serving surface: the image is the declared one, what it serves is not (or is unread).
+        (Some(Verdict::Pending), _) => Check { fix: Some(d.running.clone()), ..not_ok(&name, format!("pending: record names {decl}, declared {decl}")) },
+        (Some(Verdict::Unknown), "no-answer") => not_ok(&name, format!("unknown: {}: no answer from this host (the inventory names it)", d.host)),
+        (Some(Verdict::Unknown), _) => not_ok(&name, format!("unknown: {}: host unreachable", d.host)),
+        (None, "not-provisioned") => ok(&name, format!("not provisioned ({}); main declares {decl}", d.running)),
+        (None, _) => ok(&name, format!("no ledger coverage (ledger_component: null); main declares {decl}")),
+    }
+}
+
+/// `status` on real hosts: declared against recorded, per machine, read the way
+/// `diff` reads (one pass per member group) and graded the way `verify` grades,
+/// so the three never disagree about a machine (gate row C3). Reads only: no
+/// play runs and no file is written. Exit 3 while any machine is pending or unknown.
+// main.rs's `status` arm calls this once it is wired (the arm still refuses with GB-026).
+#[allow(dead_code)]
+pub fn status(repo: &Path, env: &str, only: Option<&str>) -> Result<Report> {
+    let (rows, _transport, mut checks) = read_expected(repo, env, only)?;
+    let n = env.replace('_', "-");
+    if rows.is_empty() {
+        // An empty read is not convergence.
+        checks.push(not_ok(&format!("{n}/status"), "nothing was read".into()));
+    }
+    checks.extend(rows.iter().map(|d| status_check(&n, d)));
+    Ok(Report::new("status", checks, EXIT_NOT_CONVERGED))
 }
 
 pub fn diff_mock(f: &Fixture, env: &str, only: Option<&str>) -> Result<Report> {
@@ -964,5 +1108,289 @@ mgmt-b | UNREACHABLE! => {}\n";
         assert_eq!(placeholder_group(d.path(), "real_hosts"), None);
         assert_eq!(placeholder_group(d.path(), "mixed_hosts"), None, "one real host means the group is provisioned");
         assert_eq!(placeholder_group(d.path(), "absent_hosts"), None);
+    }
+}
+
+/// Gate row C3: `status` on real hosts agrees with `verify` and `diff` for every
+/// machine. The hosts are a checkout whose `ops/scripts/with-aws` answers
+/// `ansible` and `ansible-inventory` from one table of host states, in the
+/// formats each read asks for, so all three verbs read the same machines
+/// through their real code paths.
+#[cfg(test)]
+mod status_agreement_tests {
+    use super::*;
+    use std::collections::BTreeSet;
+
+    const PORTAL: &str = "ghcr.io/zagros/portal:v1.3.2@sha256:9f8e00000000000000000000000000000000000000000000000000000000aa01";
+    const PORTAL_OLD: &str = "ghcr.io/zagros/portal:v1.3.1@sha256:1d2c00000000000000000000000000000000000000000000000000000000bb02";
+    const HERD: &str = "ghcr.io/zagros/herd:v0.2.1@sha256:4b5a00000000000000000000000000000000000000000000000000000000cc03";
+
+    /// Answers the two reads the verbs make: a READ_HOST shell per group (diff,
+    /// status) and a one-line `tail -n 1` of one ledger per group (verify), plus
+    /// `ansible-inventory --list`. Every call is logged; nothing else runs.
+    const STUB: &str = r#"#!/usr/bin/env python3
+import json, os, sys
+root = os.path.abspath(os.path.join(os.getcwd(), "..", ".."))
+argv = sys.argv[1:]
+with open(os.path.join(root, "calls.log"), "a") as f:
+    f.write(json.dumps(argv) + "\n")
+tool, args = argv[2], argv[3:]
+world = json.load(open(os.path.join(root, "hosts.json")))
+if tool == "ansible-inventory":
+    print(json.dumps(world["inventory"]))
+    sys.exit(0)
+if tool != "ansible":
+    sys.exit(9)
+i, group, cmd = 0, None, ""
+while i < len(args):
+    a = args[i]
+    if a in ("-i", "-m", "-a", "-e", "-l"):
+        if a == "-a":
+            cmd = args[i + 1]
+        i += 2
+        continue
+    if a.startswith("-"):
+        i += 1
+        continue
+    if group is None:
+        group = a
+    i += 1
+rc = 0
+for h in world["inventory"].get(group, {}).get("hosts", []):
+    st = world["hosts"].get(h, {})
+    if st.get("state") == "silent":
+        continue
+    if st.get("state") == "unreachable":
+        print(h + ' | UNREACHABLE! => {"changed": false, "unreachable": true}')
+        rc = 4
+        continue
+    ledgers = st.get("ledgers", {})
+    if cmd.startswith("tail -n 1"):
+        ledger = cmd.split("/var/lib/goat/")[1].split("/")[0]
+        row = ledgers.get(ledger)
+        out = json.dumps(row, separators=(",", ":")) if row is not None else "NO_LEDGER"
+        print(h + " | CHANGED | rc=0 | (stdout) " + out)
+    else:
+        print(h + " | CHANGED | rc=0 >>")
+        for l, row in ledgers.items():
+            print("GBROW " + l + " " + json.dumps(row))
+        print("GBEND")
+sys.exit(rc)
+"#;
+
+    fn row(r: &str, action: &str) -> serde_json::Value {
+        json!({"ref": r, "action": action, "ts": "2026-11-01T00:00:00Z", "prior_ref": ""})
+    }
+
+    /// One goatnet, one member group, two components, six machines: one in each
+    /// state a reader has to tell apart.
+    fn world() -> tempfile::TempDir {
+        use std::os::unix::fs::PermissionsExt;
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path();
+        for dir in ["ops/pins", "ops/scripts", "ops/ansible/inventory", "ops/ansible/group_vars/zagros_hosts"] {
+            std::fs::create_dir_all(p.join(dir)).unwrap();
+        }
+        std::fs::write(
+            p.join("ops/pins/fleet-pins.yaml"),
+            "goatnets:\n  zagros:\n    members: [zagros_hosts]\ncomponents:\n  portal:\n    var: portal_image\n  herd:\n    var: herd_image\n",
+        )
+        .unwrap();
+        std::fs::write(p.join("ops/ansible/group_vars/zagros_hosts/pins.yml"), format!("portal_image: \"{PORTAL}\"\nherd_image: \"{HERD}\"\n")).unwrap();
+        for c in ["portal", "herd"] {
+            std::fs::write(p.join(format!("ops/ansible/{c}-deploy.yml")), "- name: deploy\n  hosts: \"{{ target }}\"\n").unwrap();
+        }
+        std::fs::write(p.join("ops/ansible/inventory/mgmt-hosts.ini"), "[zagros_hosts]\n").unwrap();
+        std::fs::copy(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../ops/scripts/served-payloads.py"), p.join("ops/scripts/served-payloads.py")).unwrap();
+        let stub = p.join("ops/scripts/with-aws");
+        std::fs::write(&stub, STUB).unwrap();
+        std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let hosts = json!({
+            // converged on both components
+            "core-a": {"ledgers": {"portal": row(PORTAL, "deploy"), "herd": row(HERD, "deploy")}},
+            // portal one release behind
+            "core-b": {"ledgers": {"portal": row(PORTAL_OLD, "deploy"), "herd": row(HERD, "deploy")}},
+            // cannot be reached
+            "core-c": {"state": "unreachable"},
+            // portal's play started the declared ref and never finished (action: pending)
+            "core-d": {"ledgers": {"portal": row(PORTAL, "pending"), "herd": row(HERD, "deploy")}},
+            // portal never deployed here
+            "core-e": {"ledgers": {"herd": row(HERD, "deploy")}},
+            // the inventory names it, ansible says nothing for it
+            "core-f": {"state": "silent"},
+        });
+        let all: Vec<&str> = vec!["core-a", "core-b", "core-c", "core-d", "core-e", "core-f"];
+        let w = json!({"inventory": {"zagros_hosts": {"hosts": all}, "_meta": {"hostvars": {}}}, "hosts": hosts});
+        std::fs::write(p.join("hosts.json"), w.to_string()).unwrap();
+        d
+    }
+
+    /// What a machine is for one component, in the three verdicts C3 compares:
+    /// at the declared ref, read and not at it, or not read at all.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+    enum V {
+        Healthy,
+        Drifted,
+        Unreachable,
+    }
+
+    type Verdicts = BTreeMap<(String, String), V>;
+
+    /// `verify`'s per-host rows (`zagros/<host>`), for one component.
+    fn from_verify(r: &Report, component: &str, hosts: &BTreeSet<String>, into: &mut Verdicts) {
+        for c in &r.checks {
+            let Some(host) = c.name.strip_prefix("zagros/").filter(|h| hosts.contains(*h)) else { continue };
+            let v = if c.detail.starts_with("converged on") {
+                V::Healthy
+            } else if c.detail.starts_with("unknown — host unreachable") || c.detail.contains("no ledger row came back") {
+                V::Unreachable
+            } else if c.detail.starts_with("NOT converged") {
+                V::Drifted
+            } else {
+                panic!("verify row with no verdict: {c:?}")
+            };
+            assert!(into.insert((host.to_string(), component.to_string()), v).is_none(), "two verify rows for {host}/{component}");
+        }
+    }
+
+    /// `diff`'s or `status`'s rows (`zagros/<host>/<component>`). A host diff or
+    /// status could not read is Unreachable; one read and not at the declared
+    /// ref, whatever the reason, is Drifted.
+    fn from_rows(r: &Report) -> Verdicts {
+        let mut out = Verdicts::new();
+        for c in &r.checks {
+            let parts: Vec<&str> = c.name.split('/').collect();
+            if parts.len() != 3 || parts[2] == "inventory" {
+                continue;
+            }
+            let d = c.detail.as_str();
+            let v = if d.starts_with("same: ") || d.starts_with("converged on ") {
+                V::Healthy
+            } else if d.starts_with("unknown: host unreachable") || d.starts_with("unknown: no answer") || d.ends_with(": host unreachable") || d.contains(": no answer from this host") {
+                V::Unreachable
+            } else if d.starts_with("DRIFT") || d.starts_with("pending: ") || d.starts_with("unknown: ") {
+                V::Drifted
+            } else {
+                panic!("{} row with no verdict: {c:?}", r.verb)
+            };
+            assert!(out.insert((parts[1].to_string(), parts[2].to_string()), v).is_none(), "two {} rows for {}", r.verb, c.name);
+        }
+        out
+    }
+
+    fn snapshot(p: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
+        let mut out = BTreeMap::new();
+        let mut todo = vec![p.to_path_buf()];
+        while let Some(d) = todo.pop() {
+            for e in std::fs::read_dir(&d).unwrap() {
+                let e = e.unwrap().path();
+                if e.is_dir() {
+                    todo.push(e);
+                } else if e.file_name().is_some_and(|n| n != "calls.log") {
+                    out.insert(e.clone(), std::fs::read(&e).unwrap());
+                }
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn status_agrees_with_verify_and_diff_for_every_machine() {
+        let w = world();
+        let repo = w.path();
+        let before = snapshot(repo);
+        let hosts: BTreeSet<String> = ["core-a", "core-b", "core-c", "core-d", "core-e", "core-f"].map(String::from).into();
+
+        // The operator's comparison (ops/goatbuilder/c3-agreement.py) reads the -o json reports.
+        let out = tempfile::tempdir().unwrap();
+        let save = |name: &str, r: &Report| {
+            let f = out.path().join(name);
+            std::fs::write(&f, serde_json::to_string(r).unwrap()).unwrap();
+            f.display().to_string()
+        };
+        let mut by_verify = Verdicts::new();
+        let mut verify_args = Vec::new();
+        for c in ["portal", "herd"] {
+            let r = verify(repo, c, "zagros", None, false).unwrap();
+            from_verify(&r, c, &hosts, &mut by_verify);
+            verify_args.extend(["--verify".to_string(), format!("{c}={}", save(&format!("verify-{c}.json"), &r))]);
+        }
+        let d = diff(repo, "zagros", None).unwrap();
+        let diff_json = save("diff.json", &d);
+        let by_diff = from_rows(&d);
+        // The expected table, written out: what each machine is.
+        let want: Verdicts = [
+            ("core-a", "portal", V::Healthy),
+            ("core-a", "herd", V::Healthy),
+            ("core-b", "portal", V::Drifted),
+            ("core-b", "herd", V::Healthy),
+            ("core-c", "portal", V::Unreachable),
+            ("core-c", "herd", V::Unreachable),
+            ("core-d", "portal", V::Drifted),
+            ("core-d", "herd", V::Healthy),
+            ("core-e", "portal", V::Drifted),
+            ("core-e", "herd", V::Healthy),
+            ("core-f", "portal", V::Unreachable),
+            ("core-f", "herd", V::Unreachable),
+        ]
+        .into_iter()
+        .map(|(h, c, v)| ((h.to_string(), c.to_string()), v))
+        .collect();
+        assert_eq!(by_verify, want, "verify, the deploy contract's own read (C7)");
+        assert_eq!(by_diff, want, "diff agrees with verify for every machine and component");
+        let s = status(repo, "zagros", None).unwrap();
+        assert_eq!(s.verb, "status");
+        let by_status = from_rows(&s);
+        let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../ops/goatbuilder/c3-agreement.py");
+        let c3 = Command::new(crate::endstate::python()).arg(&script).args(["--status", &save("status.json", &s), "--diff", &diff_json]).args(&verify_args).output().unwrap();
+        let said = String::from_utf8_lossy(&c3.stdout).to_string();
+        assert!(c3.status.success(), "c3-agreement.py: {said}{}", String::from_utf8_lossy(&c3.stderr));
+        assert!(said.contains("c3: transport: read via direct (mgmt-hosts.ini)"), "{said}");
+        assert!(said.contains("agree on 6 machine(s), 2 component(s): 5 healthy, 3 drifted, 4 unreachable; reached 4 of 6 machine(s)"), "{said}");
+        assert_eq!(by_status, want, "status agrees with verify and diff for every machine and component");
+
+        // Per machine: the same set, and the same worst verdict.
+        let worst = |v: &Verdicts| -> BTreeMap<String, V> {
+            let mut m = BTreeMap::new();
+            for ((h, _), x) in v {
+                let e = m.entry(h.clone()).or_insert(*x);
+                *e = (*e).max(*x);
+            }
+            m
+        };
+        assert_eq!(worst(&by_status), worst(&by_verify));
+        assert_eq!(worst(&by_status), worst(&by_diff));
+        assert_eq!(worst(&by_status).keys().cloned().collect::<BTreeSet<_>>(), hosts, "every machine the inventory names, none other");
+
+        // The page main.rs prints for a person: every row in one of the three words.
+        let page = verbs::status_page(&s, "zagros", false);
+        assert!(page.contains("converged") && page.contains("pending") && page.contains("unknown"), "{page}");
+        assert!(!page.contains("in neither"), "every row is converged, pending or unknown: {page}");
+        // Not every machine is at the declared ref: status says so in its exit code.
+        assert_eq!(s.exit, EXIT_NOT_CONVERGED);
+
+        // Read-only: no file changed, and no play ran (no ansible-preflight, no playbook).
+        assert_eq!(before, snapshot(repo), "status, verify and diff changed no file");
+        let calls = std::fs::read_to_string(repo.join("calls.log")).unwrap();
+        for l in calls.lines() {
+            let argv: Vec<String> = serde_json::from_str(l).unwrap();
+            assert!(argv[2] == "ansible" || argv[2] == "ansible-inventory", "only reads: {argv:?}");
+            assert!(!argv.iter().any(|a| a.ends_with(".yml")), "no playbook: {argv:?}");
+        }
+    }
+
+    #[test]
+    fn status_on_a_goatnet_where_every_machine_converged_exits_zero() {
+        let w = world();
+        let p = w.path().join("hosts.json");
+        let mut v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&p).unwrap()).unwrap();
+        let ok = json!({"ledgers": {"portal": row(PORTAL, "deploy"), "herd": row(HERD, "deploy")}});
+        for h in ["core-a", "core-b", "core-c", "core-d", "core-e", "core-f"] {
+            v["hosts"][h] = ok.clone();
+        }
+        std::fs::write(&p, v.to_string()).unwrap();
+        let s = status(w.path(), "zagros", None).unwrap();
+        assert_eq!(s.exit, crate::EXIT_OK, "{:?}", s.checks);
+        assert_eq!(s.checks.iter().filter(|c| c.detail.starts_with("converged on ")).count(), 12);
     }
 }

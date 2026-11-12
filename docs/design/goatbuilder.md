@@ -169,6 +169,37 @@ A team points `goatbuilder` at their own config — their components, their envi
 
 Read-only verbs never mutate and are safe to run anywhere, including against a pull-converged environment the operator does not drive. Declarative verbs enforce C1–C10 before acting; `plan` shows exactly what one would do without doing it.
 
+### `status` on real hosts (gate row C3)
+
+`status` answers, for each machine and component, one of three words (C7): **converged** (the machine's newest ledger row names the declared digest and records a finished deploy), **pending** (the machine was read and is not there: another ref, no record, a row the play left at `action: pending`, a rollback row, a shared ledger whose newest row is another image's, a served payload off the declaration) or **unknown** (the machine was not read: unreachable, or named by the inventory and silent). Exit 3 while any machine is pending or unknown.
+
+On real hosts `status` takes the `diff` read and the `verify` rules, so the three verbs cannot disagree about a machine:
+
+- **One read.** `inspect::read_expected` reads every ledger of the environment in one Ansible call per member group (the `diff` read), then asks `ansible-inventory` which hosts must answer, as `verify` does (#1545). An expected host that gave no answer is a row of its own, never left out. `diff` and `status` both call it; `survey` and `adopt` keep the read without the inventory check.
+- **One grade.** `inspect::grade` applies `verify`'s rule to each row: the declared digest and `action: deploy`. `diff` uses the same rule. A row that names the declared ref but is not a finished deploy reads `pending` in both, with the ledger row's action in the fix line.
+- **Read-only.** No play runs and no file is written. The fixture test checks this by hashing every file before and after, and by checking that every call it logs is `ansible` or `ansible-inventory` with no playbook.
+
+Two changes to `diff` came with this, because before them `diff` disagreed with `verify`. A row left at `action: pending` (or a rollback row) at the declared digest was `same: ` in `diff` but not converged in `verify`; it is now `pending: `. A host the inventory names that gave no answer was missing from `diff`; it is now `unknown: no answer from this host`.
+
+Status: the read and the grade are **built** and tested on a fixture of real-host answers (`status_agreement_tests` in `crates/goatbuilder/src/inspect.rs`). In that fixture a stub `ops/scripts/with-aws` answers `ansible` and `ansible-inventory` from one table of six machines: converged, one release behind, unreachable, left at `action: pending`, no ledger, and silent. The test runs `verify` per component, `diff` and `status` through their real code paths. For every machine and component the three return the same verdict, and `ops/goatbuilder/c3-agreement.py` (the operator's comparison below) agrees. The `status` arm in `main.rs` still refuses without `--mock` (GB-026) until it calls `inspect::status`: **not built**. On a standing goatnet: **not measured**.
+
+The operator's step, on a standing goatnet (it reads only). It needs a binary in which the `status` arm in `main.rs` calls `inspect::status`. At this commit `goatbuilder status` without `--mock` still refuses with GB-026, so the step cannot run until that arm lands; run it with the checkout at the commit that adds it:
+
+```bash
+E=zagros-dev                                  # the pins' goatnet key
+goatbuilder status --env "$E" -o json > status.json
+goatbuilder diff   --env "$E" -o json > diff.json
+args=()
+for c in $(jq -r '.checks[].name | split("/") | select(length == 3) | .[2]' status.json | sort -u); do
+  [ "$c" = inventory ] && continue
+  goatbuilder verify "$c" --env "$E" -o json > "verify-$c.json"
+  args+=(--verify "$c=verify-$c.json")
+done
+python3 ops/goatbuilder/c3-agreement.py --status status.json --diff diff.json "${args[@]}"
+```
+
+Compare: exit 0 and the line `c3: agree on N machine(s), M component(s): …`. Any `c3: DISAGREE <host>/<component>: status …, verify …, diff …` line is a failure of C3, whatever the goatnet's own health. A goatnet with drift or unreachable hosts is a valid measurement. C3 asks that the three verbs agree, not that the goatnet is converged. A transport that reaches only some of a goatnet's machines (a door to one site, say) leaves the rest `unknown` under all three verbs; that is still a valid C3 measurement, but it is only a measurement of the machines reached, so the record must say which transport the run used and how many machines it reached out of how many are declared. Keep as the measurement: the goatcore commit, the goatnet key, the transport as `goatbuilder doctor --env "$E"` prints it, both `c3:` lines (the script prints the transport `diff` read over and `reached R of N machine(s)`), the wall time of each of the three verbs, and the JSON files. They contain host names, so they go to the operator's private record, never into this repository.
+
 ### Enforcement in one place
 
 The contract lives in one module every declarative verb calls, not in each verb. C1 resolves the ref from the declaration in git, never from the working tree. C2 signs on publish and verifies on read, and refuses a declaration older than the last accepted. C3 reconciles or refuses the input against the source of record. C7 reads each machine's record through the converger interface and gates completion on it, reporting *unknown* and *pending* honestly. C9 means `rollback` is the same module with the prior digest as input. This is the structural fix for the F-586 class: one place knows "a deploy applies the declared ref," and it cannot be bypassed by running from a different directory or on a different branch.
