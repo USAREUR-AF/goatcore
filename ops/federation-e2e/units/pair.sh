@@ -25,7 +25,14 @@ for r in d if isinstance(d,list) else []:
     except Exception: pass
     print(v)'
 }
-export -f put_release stored_at
+# Every router's subscribers and queryables in the receiving core's admin space. $1 core.
+pr_admin() {
+  local q
+  for q in subscribers queryables; do
+    echo "## $q"; curl -s -m 5 "http://$(core_ip "$1"):8000/@/*/router/$q/**" | head -c 6000; echo
+  done
+}
+export -f put_release stored_at pr_admin
 
 unit_main() {
   local n first second; n="$(pair_n)"; first="$(pair_first)"; second="$(other "$first")"
@@ -71,6 +78,9 @@ pair_persistent_reception() {
   for s in "$first" "$second"; do
     them="$(other "$s")"; nonce="pr$(date +%s)$RANDOM"
     edge_before="$(docker exec "$HP-$them-edge" docker inspect -f '{{.State.StartedAt}}' "goat-zenoh-edge-$s" 2>/dev/null)"
+    # The routers' subscribers and queryables as the receiving core sees them, before the restart.
+    pr_admin "$them" > "$RECORD/s$n-$them-admin-before-restart.txt" 2>&1 || true
+    docker exec "$HP-$them-edge" sh -c "date -u +%Y-%m-%dT%H:%M:%S" > "$WORK/pr-restart-at-$them" 2>/dev/null || true
     rec "s$n-$them-core-router-restarted" -- docker exec "$HP-$them-core" docker restart "$them-zenoh-router"
     rec "s$n-$s-to-$them-stored-after-the-receiving-core-restarts" -- bash -c \
       "for _ in \$(seq 1 60); do curl -s -m 2 -o /dev/null 'http://$(core_ip "$them"):8000/@/**' && break; sleep 1; done
@@ -81,6 +91,12 @@ pair_persistent_reception() {
        echo '--- the receiving core, its sessions and storages (admin space):'
        curl -s -m 5 'http://$(core_ip "$them"):8000/@/*/router' | head -c 4000; echo
        curl -s -m 5 'http://$(core_ip "$them"):8000/@/*/router/status/plugins/storage_manager/storages/*' | head -c 2000; echo
+       echo '--- subscribers and queryables the receiving core sees, before the restart:'
+       cat '$RECORD/s$n-$them-admin-before-restart.txt'
+       echo '--- the same, now:'
+       pr_admin $them
+       echo '--- the receiving edge router: its ACL decisions on declarations and from/ keys since the restart, whole:'
+       docker exec $HP-$them-edge docker logs --since \$(cat '$WORK/pr-restart-at-$them') goat-zenoh-edge-$s 2>&1 | grep -E 'Declare (Subscriber|Queryable)|Declare/Undeclare|from/' | head -200
        echo '--- the receiving edge router, its last log lines:'
        docker exec $HP-$them-edge docker logs --tail 40 goat-zenoh-edge-$s 2>&1 | cut -c1-300
        echo '--- the receiving core router, its last log lines:'
