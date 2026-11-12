@@ -158,7 +158,7 @@ jobs:
       - name: Install the Python the pins and promote flows render with
         run: pip install --quiet pyyaml jsonschema
       - name: cargo test (unit, golden commands, tutor, the C11 conformance test; every test target but the flows)
-        run: cargo test -p goatbuilder --bins --test cli_golden --test tutor --test bound_not_a_tty --test update --test federate_verbs --test legibility
+        run: cargo test -p goatbuilder --bins --test cli_golden --test tutor --test bound_not_a_tty --test update --test federate_verbs --test legibility --test legibility_one_door
       - name: cargo test -p goat-fun (the shared hidden runner, goat and goatbuilder bound) and goat-federation (the verbs goatbuilder runs)
         run: cargo test -p goat-fun -p goat-selfupdate -p goat-federation
       - name: cargo test (whole-flow integration; a skipped flow fails the job)

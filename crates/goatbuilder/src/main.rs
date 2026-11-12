@@ -33,6 +33,7 @@ mod promote;
 mod push;
 mod release;
 mod rollback;
+mod runner;
 mod secrets;
 mod settings;
 mod standup;
@@ -1004,7 +1005,7 @@ fn explain(input: &[String], report: bool, list: bool, format: OutputFormat) -> 
 }
 
 fn repo_root() -> std::io::Result<PathBuf> {
-    let out = std::process::Command::new("git")
+    let out = runner::Cmd::new("git")
         .args(["rev-parse", "--show-toplevel"])
         .output();
     match out {
@@ -1063,6 +1064,23 @@ fn verb_name(cmd: &Cmd) -> &'static str {
         Cmd::JoinNode { .. } => "join-node",
         Cmd::Explain { .. } => "explain",
         _ => "this verb",
+    }
+}
+
+/// The verb a run record names.
+fn run_verb(cmd: &Cmd) -> &'static str {
+    match cmd {
+        Cmd::Deploy { .. } => "deploy",
+        Cmd::Rollback { .. } => "rollback",
+        Cmd::Release { .. } => "release",
+        Cmd::Fastlane { .. } => "fastlane",
+        Cmd::Standup { .. } => "standup",
+        Cmd::JoinNode { .. } => "join-node",
+        Cmd::Federate { .. } => "federate",
+        Cmd::Teardown { .. } => "teardown",
+        Cmd::Apply { .. } => "apply",
+        Cmd::Assay { .. } => "assay",
+        _ => "other",
     }
 }
 
@@ -1192,6 +1210,11 @@ fn main() {
     output::set_machine_output(!matches!(cli.output, OutputFormat::Table));
     settings::init(&repo);
     tutor::init(&repo);
+    // A verb that drives hosts runs inside a run: every process it starts is framed,
+    // logged and recorded under <state>/runs/<id>/ (runner.rs).
+    if cli.mock.is_none() && long_running(&cli.cmd) {
+        runner::begin(std::path::Path::new(&settings::state_dir_abs(&repo)), run_verb(&cli.cmd));
+    }
     if let Some(owner) = config::owner(&repo) {
         output::set_owner(owner);
     }
@@ -1488,6 +1511,8 @@ fn main() {
             }
         }
     };
+    // The run ends with the verb; step 4 writes its commands to run.json.
+    let _commands = runner::end();
 
     // A run inside the tutor's workspace (or with $GOATBUILDER_TUTOR set) is
     // logged there, so `goatbuilder tutor` can check what the learner did.

@@ -1,0 +1,30 @@
+# Files under crates/goatbuilder/src that still start processes themselves, with
+# how many `Command::new` calls each has outside its tests (tests/legibility_one_door.rs).
+# Step 2b moves each call site to crate::runner::Cmd and lowers or removes its line.
+# A count only goes down; a new process started outside the runner fails the test.
+assay.rs 5
+awake.rs 2
+doctor.rs 7
+endstate.rs 3
+fastlane.rs 4
+federate/admit.rs 4
+federate/admit_leaf.rs 1
+federate/backout.rs 3
+federate/hostfw.rs 1
+federate/measure.rs 4
+federate/mod.rs 5
+federate/plan.rs 5
+federate/preflight.rs 1
+federate/status.rs 1
+fresh.rs 1
+inspect.rs 2
+joinnode.rs 2
+pins.rs 2
+preflight.rs 1
+promote.rs 2
+push.rs 5
+release.rs 7
+rollback.rs 3
+secrets.rs 3
+standup.rs 4
+update.rs 1

@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | **Designed.** Step 1, the conformance test, is **built** (2026-11-12): `crates/goatbuilder/tests/legibility.rs`, with the checks that fail today listed in `crates/goatbuilder/tests/legibility-known-failing.txt`. Every feature of steps 2 to 9 is **designed**; each feature's pull request changes its row below. |
+| Status | **Designed.** Step 1, the conformance test, is **built** (2026-11-12). Step 2a, the runner, is **built** with unit tests only (2026-11-12): `crates/goatbuilder/tests/legibility.rs`, with the checks that fail today listed in `crates/goatbuilder/tests/legibility-known-failing.txt`. Every feature of steps 2 to 9 is **designed**; each feature's pull request changes its row below. |
 | Design | [`goatbuilder.md`](goatbuilder.md) (the contract, C1 to C10) · [`goatbuilder-conformance.md`](goatbuilder-conformance.md) (the contract as tests) · [`goatbuilder-output.md`](goatbuilder-output.md) (the output standard) |
 | Audience | whoever builds or reviews goatbuilder's runner, dry runs, run records, phase catalog and failure messages |
 
@@ -128,6 +128,33 @@ Every check fails for every verb family: 16 lines.
 - The value rule of (b) is a floor. It does not read positional arguments.
 - The macOS form of `script(1)` (`script -q /dev/null <command>`) is written but has not been run; the test was run on Linux.
 
+## The runner
+
+**Built** (step 2a), unit tests only: `crates/goatbuilder/src/runner.rs`. Step 2b moves the call sites to it; until then no verb's command goes through it except main.rs's own.
+
+- `runner::Cmd` is built as `std::process::Command` is (`arg`, `args`, `env`, `envs`, `env_remove`, `env_clear`, `current_dir`, `stdin`, `stdout`, `stderr`), plus `host`. It runs a command three ways: `status` streams the child's output and waits, `output` captures it, `spawn` starts it in the background. It has no way to hand out the `Command` inside it, so nothing can run one around the door.
+- `runner::begin` starts a run: main.rs calls it for every verb that drives hosts, except under `--mock`. Inside a run, every command is logged under `-v`, framed, copied to a log at `<state>/runs/<id>/logs/<nnn>-<phase>.log` (made by the first command, mode 0600), and kept as a command entry: phase, command, argv, host, log, start, end, exit, seconds. `runner::end` hands the entries back; step 4 writes them to `run.json`. Outside a run, `Cmd` does exactly what `Command` does.
+- `runner::phase(id, name, purpose)` says which phase the next commands belong to. Until the phase catalog exists, a phase's purpose is its existing label.
+- The frame goes to stderr, so `-o json` stays a clean document. A phase that succeeds takes three lines; its first two print before the child can print anything (the child's output reaches the terminal only through the runner):
+
+  ```text
+  Phase 5 · mgmt-stack: site-bootstrap up to the account seed
+    $ cd ops/ansible && ../scripts/with-aws default -- ../scripts/ansible-preflight.sh ...   (on alpha_hosts; log ~/.goat/state/runs/<id>/logs/007-5.log)
+    ok in 12s
+  ```
+
+  A failure reads `FAILED exit 2 in 12s; log <path>`. A command outside a phase (a probe) is one line, `· <command>   (log <path>)`, and a second only when it fails.
+- To log while streaming, `status` and `spawn` pipe the child's stdout and stderr and copy each to the terminal and the log as it arrives; stdin stays inherited, so a prompt still works. The trade-off: the child no longer sees a terminal on its output, so a tool that colours or animates only at a terminal (ansible's colour, for one) prints plainly. `GOATBUILDER_CHILD_TTY=1` gives a streamed command the terminal as before, and its entry then says no log was written. A caller that sets `stdout` or `stderr` itself keeps that stream; the runner neither copies nor logs it.
+- A command that cannot start is recorded with no exit code and the note "did not start".
+
+**Designed**, for timed runs (from the timed hardware run of contract clause C1): the frame and the record carry what a measurement needs, so a run can be timed from the tool's own output.
+
+- Each phase prints its number and name, its wall-clock start and end, its duration and its outcome. The three-line frame carries the start on its first line and the end on its last.
+- A run ends with one summary line: the total time and the three slowest phases.
+- The run record keeps the same per phase, and every stop records its cause as a code (an error catalog code, or `manual` for a step the operator does), so a measurement can count the stops by cause.
+- A step that waits on a person (standup phase 11's browser login, federate's confirmations) records the wait apart from the phase's own time.
+
+
 ## Run record
 
 The interface step 4 builds, and that checks (a) and (b) read. One record for each run of each verb, at `<state>/runs/<id>/run.json`, where `<state>` is the state directory the verb already uses (`deploy.state_dir`, else `~/.goat/state`; federate's working directory for federate).
@@ -186,7 +213,8 @@ One pull request for each step, or for each feature within a step, each small an
 | Step | What it builds | Removes from the known-failing file | Status |
 |---|---|---|---|
 | 1 | the conformance test and the known-failing file | nothing | **built** |
-| 2 | one runner that starts every child process. When a phase starts it prints the frame (number and name; one line on what it is for; the exact command; the host; the log file) before the child's first output. It captures the output to a per-phase log while still streaming it, prints the outcome and duration at the end, logs under `-v`, and writes the run record's command entry. A lint or test fails on `Command::new` outside the runner's module | with step 4: `a standup`, `a join-node`, `a deploy`, `a federate`; with step 3, the probe lines of `c standup` and `c deploy` | designed |
+| 2a | the runner, `crates/goatbuilder/src/runner.rs` (§"The runner"): `runner::Cmd`, the frame, the per-command log, the command entry; a run begun in main.rs for every verb that drives hosts; the test `crates/goatbuilder/tests/legibility_one_door.rs`, which fails on a `Command::new` outside the runner beyond the counts in `crates/goatbuilder/tests/legibility-one-door-allow.txt` | nothing | **built**, unit tests only: no call site of a verb moves in 2a, so no verb prints a frame yet |
+| 2b | every call site moved to `runner::Cmd`, and `runner::phase` called where each verb's phase loop starts a phase; the allow-list emptied | with step 4: `a standup`, `a join-node`, `a deploy`, `a federate`; with step 3, the probe lines of `c standup` and `c deploy` | designed |
 | 3 | commands in the terminal dry run, built by the same code that runs them; anything not knowable before the run is marked as such | `c standup`, `c join-node`, `c deploy`, `c federate` | designed |
 | 4 | the run record for every verb (§"Run record"); `goatbuilder runs`, `goatbuilder show <run>`, `goatbuilder runs diff <a> <b>` | with step 2: the four `a` lines | designed |
 | 5 | every value with its source, verb by verb: federate's remaining values first (site values, site hosts, allocations), then standup, join-node, deploy. `goatbuilder inputs <verb> ...` and `goatbuilder why <value>`; the same list in every dry run, as a table and as JSON | `b federate`, then `b standup`, `b join-node`, `b deploy` | designed |
