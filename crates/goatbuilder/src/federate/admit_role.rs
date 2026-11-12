@@ -553,8 +553,10 @@ fn replace_list_block(text: &str, block: &str) -> Result<String, String> {
             Ok(format!("{text}{sep}{block}"))
         }
         [i0] => {
+            // The block ends at the next key line or at a document marker (`---`, `...`).
+            let is_marker = |l: &str| l.starts_with("---") || l.starts_with("...");
             let next = (i0 + 1..lines.len())
-                .find(|&i| is_key(lines[i]))
+                .find(|&i| is_key(lines[i]) || is_marker(lines[i]))
                 .unwrap_or(lines.len());
             // The block ends at its last content line; trailing comments and blank
             // lines stay with what follows.
@@ -1027,6 +1029,40 @@ mod tests {
             t3.starts_with("zenoh_mode: 0644  # octal\n") && t3.contains("- sovereign: xab"),
             "{t3}"
         );
+    }
+
+    /// A YAML document marker after the list is a line outside it: `...` (the end
+    /// of the document) is kept as it was. A `---` after the list starts a second
+    /// document, which the YAML reader refuses, so the file is refused, not dropped.
+    #[test]
+    fn a_document_marker_after_the_list_is_kept_or_refused_never_dropped() {
+        let body = "zenoh_a: 1\nzenoh_sovereign_peerings: []\n...\n";
+        let r = checkout(&[
+            INV,
+            GV,
+            ("ops/ansible/group_vars/core_router/peerings.yml", body),
+        ]);
+        let text = merge_peerings(r.path(), "core_router", "xab", "fed.xab.zagros.01").unwrap();
+        assert!(
+            text.starts_with("zenoh_a: 1\n") && text.ends_with("\n...\n"),
+            "`...` kept: {text}"
+        );
+        assert!(text.contains("- sovereign: xab"), "{text}");
+        let body = "zenoh_a: 1\nzenoh_sovereign_peerings:\n- sovereign: xac\n  cn: fed.xac.zagros.01\n---\n";
+        let r = checkout(&[
+            INV,
+            GV,
+            ("ops/ansible/group_vars/core_router/peerings.yml", body),
+        ]);
+        let file = r
+            .path()
+            .join("ops/ansible/group_vars/core_router/peerings.yml");
+        let e = merge_peerings(r.path(), "core_router", "xab", "fed.xab.zagros.01").unwrap_err();
+        assert!(
+            e.contains("(GB-237)") && e.contains("Nothing was written"),
+            "{e}"
+        );
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), body, "unchanged");
     }
 
     /// What admission cannot keep is refused, and the file is left as it was: a
