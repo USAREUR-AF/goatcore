@@ -217,6 +217,23 @@ fn slot_anchor_file(repo: &Path, env_name: &str) -> PathBuf {
         .join("zenoh-lazy-storage.yml")
 }
 
+/// The goat-zenoh role core admission restarts through, when the deployment
+/// names no restart of its own (FED_CORE_PLAY and FED_CORE_RESTART unset): the
+/// role group whose address is FED_CORE_GROUP's, else `<with>_core`'s. The
+/// back-out decides the same way (backout.rs `driver_core`).
+pub(super) fn role_core(
+    repo: &Path,
+    with: &str,
+    var: impl Fn(&str) -> Option<String>,
+) -> Result<Option<super::admit_role::RoleCore>, String> {
+    let env = |k: &str| var(k).filter(|v| !v.trim().is_empty());
+    if env("FED_CORE_PLAY").is_some() || env("FED_CORE_RESTART").is_some() {
+        return Ok(None);
+    }
+    let core_group = env("FED_CORE_GROUP").unwrap_or_else(|| format!("{with}_core"));
+    super::admit_role::find(repo, &core_group)
+}
+
 pub(super) struct Core {
     /// The org fragment as a file on this machine (FED_CORE_ACL_ORG); `None`
     /// on a goat-zenoh role core, whose fragment is read and placed on the core
@@ -224,8 +241,8 @@ pub(super) struct Core {
     pub(super) org: Option<PathBuf>,
     pub(super) seed: Option<PathBuf>,
     pub(super) out: Option<PathBuf>,
-    cert: Option<PathBuf>,
-    key: Option<PathBuf>,
+    pub(super) cert: Option<PathBuf>,
+    pub(super) key: Option<PathBuf>,
     pub(super) play: Option<String>,
     pub(super) group: String,
     pub(super) restart: Option<String>,
@@ -623,16 +640,9 @@ pub fn admit(
             "do not admit the edge; ask the partner which CA is current",
         );
     }
-    // A core the goat-zenoh role deploys is restarted by the role's own play,
-    // found from its declarations, unless the deployment names a route.
-    let role = if env("FED_CORE_PLAY").is_none() && env("FED_CORE_RESTART").is_none() {
-        let core_group = env("FED_CORE_GROUP").unwrap_or_else(|| format!("{with}_core"));
-        match super::admit_role::find(repo, &core_group) {
-            Ok(r) => r,
-            Err(e) => return fail("GB-236", e, "declare what it names, or set FED_CORE_PLAY or FED_CORE_RESTART, make a new plan, and deploy again"),
-        }
-    } else {
-        None
+    let role = match role_core(repo, with, env) {
+        Ok(r) => r,
+        Err(e) => return fail("GB-236", e, "declare what it names, or set FED_CORE_PLAY or FED_CORE_RESTART, make a new plan, and deploy again"),
     };
     let core = match Core::from_env(repo, with, env_name, role) {
         Ok(c) => c,

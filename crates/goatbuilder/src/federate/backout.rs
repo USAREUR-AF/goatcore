@@ -242,6 +242,9 @@ const CORE_ROUTE: [&str; 4] = [
 pub struct DriverCore {
     core: super::admit::Core,
     tool: PathBuf,
+    /// The peering's working folder: phase 8's leaves and admission's backups
+    /// are here, and the play admission ran is passed it as fed_work.
+    work: PathBuf,
 }
 
 /// The deployment's own route to our core, read with `var` the way admission
@@ -252,13 +255,17 @@ pub fn driver_core(
     repo: &Path,
     partner: &str,
     env_name: &str,
+    work: &Path,
     var: impl Fn(&str) -> Option<String>,
 ) -> Result<Option<DriverCore>> {
     let set = |k: &str| var(k).is_some_and(|v| !v.trim().is_empty());
     if !CORE_ROUTE.iter().any(|k| set(k)) {
         return Ok(None);
     }
-    let core = super::admit::Core::from_vars(repo, partner, env_name, None, &var).map_err(|missing| {
+    // The role core exactly as admission decides it (admit.rs `role_core`).
+    let role = super::admit::role_core(repo, partner, &var)
+        .map_err(|e| anyhow::Error::from(goat_errors::coded("GB-221", format!("{e} (GB-221)"))))?;
+    let core = super::admit::Core::from_vars(repo, partner, env_name, role, &var).map_err(|missing| {
         anyhow::Error::from(goat_errors::coded(
             "GB-221",
             format!(
@@ -268,16 +275,15 @@ pub fn driver_core(
             ),
         ))
     })?;
+    // Without FED_CORE_ACL_ORG, admission placed the org fragment on the role
+    // core's host: the play surveys it there, as it does with no route named.
     if core.org.is_none() {
-        return Err(goat_errors::coded(
-            "GB-221",
-            "the deployment names its own route to our core, but not FED_CORE_ACL_ORG, the org fragment admission changed (GB-221)",
-        )
-        .into());
+        return Ok(None);
     }
     Ok(Some(DriverCore {
         core,
         tool: repo.join("ops/federation/standup/backout_core.py"),
+        work: work.to_path_buf(),
     }))
 }
 
@@ -342,12 +348,126 @@ fn driver_plan(dc: &DriverCore, partner: &str, dir: &Path) -> Result<serde_json:
     })
 }
 
+/// Our core router's leaf admission placed (FED_CORE_CERT and FED_CORE_KEY, or
+/// where a role core reads it), each with phase 8's file it was placed from.
+fn leaf_targets(dc: &DriverCore) -> Vec<(PathBuf, PathBuf)> {
+    let pki = dc.work.join("pki");
+    [(&dc.core.cert, "core.pem"), (&dc.core.key, "core-key.pem")]
+        .into_iter()
+        .filter_map(|(t, ours)| t.clone().map(|t| (t, pki.join(ours))))
+        .collect()
+}
+
+/// What a leaf path holds, and what the back-out does with it.
+enum Leaf {
+    /// Absent, or another's bytes: left alone.
+    NotOurs,
+    /// This peering's, and another peering's working folder holds the same
+    /// leaf: kept, because that peering uses it too.
+    Shared(String),
+    /// This peering's: put back to what was there before its first admission.
+    Restore(Vec<u8>),
+    /// This peering's, and nothing was there before: removed.
+    Remove,
+}
+
+fn leaf_plan(dc: &DriverCore, target: &Path, ours: &Path) -> Leaf {
+    let (Ok(now), Ok(mine)) = (std::fs::read(target), std::fs::read(ours)) else {
+        return Leaf::NotOurs;
+    };
+    if now != mine {
+        return Leaf::NotOurs;
+    }
+    let name = ours.file_name().unwrap_or_default();
+    if let Some(parent) = dc.work.parent() {
+        let shared = std::fs::read_dir(parent)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| *p != dc.work)
+            .find(|p| std::fs::read(p.join("pki").join(name)).is_ok_and(|b| b == mine));
+        if let Some(p) = shared {
+            return Leaf::Shared(p.display().to_string());
+        }
+    }
+    // The first admission's backup of this path: admit.rs `publish` keeps what
+    // was there as `<n>-<file name>` in <work>/admission/<run>/backup. A run
+    // that kept none placed the leaf where nothing was.
+    let base = target
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
+    let mut runs: Vec<PathBuf> = std::fs::read_dir(dc.work.join("admission"))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.join("backup").is_dir())
+        .collect();
+    runs.sort();
+    let Some(first) = runs.first() else {
+        return Leaf::Remove;
+    };
+    let kept = std::fs::read_dir(first.join("backup"))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.path())
+        .find(|p| {
+            p.file_name()
+                .and_then(|f| f.to_str())
+                .and_then(|f| f.split_once('-'))
+                .is_some_and(|(n, rest)| {
+                    !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()) && rest == base
+                })
+        });
+    match kept {
+        Some(b) => std::fs::read(b).map(Leaf::Restore).unwrap_or(Leaf::NotOurs),
+        None => Leaf::Remove,
+    }
+}
+
 /// The driver's part of the survey, as one more host record (`driver`): the
 /// partner's subjects, rules and policies in the org fragment, and the restart
 /// it needs, with the candidate's digest; or why the fragment cannot be shown
 /// to change by this peering alone (refused).
 pub fn driver_survey(dc: &DriverCore, partner: &str, dir: &Path) -> Result<HostRecord> {
     let plan = driver_plan(dc, partner, dir)?;
+    let mut leaf_rows = Vec::new();
+    for (target, ours) in leaf_targets(dc) {
+        let t = target.display().to_string();
+        let row = |state: &str, action: &str, note: String| Row {
+            component: "core leaf".into(),
+            resource: t.clone(),
+            state: state.into(),
+            action: action.into(),
+            note,
+        };
+        leaf_rows.push(match leaf_plan(dc, &target, &ours) {
+            Leaf::NotOurs => row(
+                "absent",
+                "none",
+                format!("does not hold {}", ours.display()),
+            ),
+            Leaf::Shared(p) => row(
+                "present",
+                "kept",
+                format!("the same leaf is in {p}, another peering's"),
+            ),
+            Leaf::Restore(_) => row(
+                "present",
+                "remove",
+                "put back to what was there before the peering".into(),
+            ),
+            Leaf::Remove => row(
+                "present",
+                "remove",
+                "nothing was there before the peering".into(),
+            ),
+        });
+    }
     let org = dc.core.org.as_ref().expect("checked").display().to_string();
     let r = |component: &str, resource: String, state: &str, action: &str, note: String| Row {
         component: component.into(),
@@ -420,6 +540,7 @@ pub fn driver_survey(dc: &DriverCore, partner: &str, dir: &Path) -> Result<HostR
             ),
         ));
     }
+    rows.extend(leaf_rows);
     Ok(HostRecord {
         host: "driver".into(),
         peering: partner.into(),
@@ -471,7 +592,29 @@ pub fn driver_apply(
             .into());
         }
     }
-    let work = Path::new(dir);
+    // The router leaf, under the same backups: put back, or removed.
+    for (target, ours) in leaf_targets(dc) {
+        let r = match leaf_plan(dc, &target, &ours) {
+            Leaf::Restore(bytes) => super::admit::publish(&bytes, &target, &mut backups, &bdir),
+            Leaf::Remove => super::admit::publish(b"", &target, &mut backups, &bdir)
+                .and_then(|_| std::fs::remove_file(&target)),
+            Leaf::NotOurs | Leaf::Shared(_) => Ok(()),
+        };
+        if let Err(e) = r {
+            let back = super::admit::put_back(&backups);
+            return Err(goat_errors::coded(
+                "GB-224",
+                format!(
+                    "cannot take back {} ({e}); {back} (GB-224)",
+                    target.display()
+                ),
+            )
+            .into());
+        }
+    }
+    // The play admission ran is passed the peering's working folder, as
+    // admission passes it; it converges the core to what the files now hold.
+    let work = dc.work.as_path();
     let dry = match (
         dc.core.play_cmd(repo, work, true),
         dc.core.dry_run.as_deref(),
@@ -520,7 +663,11 @@ pub fn core_files(repo: &Path, t: &mut Target) -> Result<()> {
         )
         .into()
     };
-    let Some(core) = super::admit_role::find(repo, &t.core_group).map_err(refuse)? else {
+    // The role core exactly as admission decides it (admit.rs `role_core`):
+    // FED_CORE_GROUP's group when it is set, else <partner>_core's.
+    let Some(core) =
+        super::admit::role_core(repo, &t.partner, |k| std::env::var(k).ok()).map_err(refuse)?
+    else {
         return Ok(());
     };
     for (var, key) in [
@@ -922,9 +1069,13 @@ pub fn backout_with(
     // Our core: the deployment's own route, on the driver, when it names one
     // (the way admission went); else a goat-zenoh role core, surveyed by the
     // play at the paths admission resolved.
-    let driver = driver_core(repo, &t.partner, env.as_deref().unwrap_or_default(), |k| {
-        std::env::var(k).ok()
-    })?;
+    let driver = driver_core(
+        repo,
+        &t.partner,
+        env.as_deref().unwrap_or_default(),
+        Path::new(&t.work),
+        |k| std::env::var(k).ok(),
+    )?;
     if driver.is_some() {
         t.core_files
             .push(("peering_backout_core_by_driver", "true".into()));
@@ -2130,6 +2281,41 @@ mod tests {
         vars: BTreeMap<String, String>,
         before_org: String,
         before_live: Option<String>,
+        repo: PathBuf,
+    }
+
+    impl RouteCase {
+        fn work(&self) -> PathBuf {
+            self.dir.path().join("peerings/xab")
+        }
+    }
+
+    /// Admission placing our core router's leaf (FED_CORE_CERT/KEY) from
+    /// phase 8's pki/core.pem and core-key.pem, with a backup of what was at
+    /// each path before, as admit.rs `publish` keeps it.
+    fn place_leaf(c: &mut RouteCase, prior: Option<&[u8]>) {
+        let pki = c.work().join("pki");
+        std::fs::create_dir_all(&pki).unwrap();
+        std::fs::write(pki.join("core.pem"), b"CERT-OF-XAB").unwrap();
+        std::fs::write(pki.join("core-key.pem"), b"KEY-OF-XAB").unwrap();
+        let leaves = c.dir.path().join("leaves");
+        std::fs::create_dir_all(&leaves).unwrap();
+        let (cert, key) = (
+            leaves.join("router-cert.pem"),
+            leaves.join("router-key.pem"),
+        );
+        if let Some(p) = prior {
+            std::fs::write(&cert, p).unwrap();
+            std::fs::write(&key, p).unwrap();
+        }
+        let mut backups = Vec::new();
+        let bdir = c.work().join("admission/run-20261112T000000Z-1/backup");
+        super::super::admit::publish(b"CERT-OF-XAB", &cert, &mut backups, &bdir).unwrap();
+        super::super::admit::publish(b"KEY-OF-XAB", &key, &mut backups, &bdir).unwrap();
+        c.vars
+            .insert("FED_CORE_CERT".into(), cert.display().to_string());
+        c.vars
+            .insert("FED_CORE_KEY".into(), key.display().to_string());
     }
 
     const SEED: &str = "{\n  // BEGIN: per-vendor storages\n  // END: per-vendor storages\n  // BEGIN: per-vendor write rules\n  // END: per-vendor write rules\n  // BEGIN: per-vendor subjects\n  // END: per-vendor subjects\n  // BEGIN: per-vendor policies\n  // END: per-vendor policies\n}\n";
@@ -2193,15 +2379,16 @@ mod tests {
             vars,
             before_org: BEFORE_ORG.into(),
             before_live,
+            repo: real(),
         }
     }
 
     fn back_out(c: &RouteCase) -> Vec<String> {
         let var = |k: &str| c.vars.get(k).cloned();
-        let core = driver_core(&real(), "xab", "zagros", var)
+        let core = driver_core(&c.repo, "xab", "zagros", &c.work(), var)
             .unwrap()
             .expect("the deployment's own route");
-        let work = c.dir.path().join("work");
+        let work = c.dir.path().join("backout");
         let rec = driver_survey(&core, "xab", &work.join("survey")).unwrap();
         let s = summarize(&[rec], "xab");
         assert!(s.refused.is_empty(), "{s:?}");
@@ -2219,7 +2406,7 @@ mod tests {
                 .success())
         };
         driver_apply(
-            &real(),
+            &c.repo,
             &core,
             "xab",
             &work.join("core-apply"),
@@ -2229,7 +2416,11 @@ mod tests {
         .unwrap();
         // Run again: nothing of xab is left, nothing restarts.
         let again = driver_survey(&core, "xab", &work.join("survey-after")).unwrap();
-        assert!(summarize(&[again], "xab").core_candidate.is_none());
+        let left = summarize(&[again], "xab");
+        assert!(
+            left.core_candidate.is_none() && left.to_remove == 0,
+            "{left:?}"
+        );
         ran.into_inner()
     }
 
@@ -2305,12 +2496,122 @@ mod tests {
     }
 
     #[test]
+    fn the_router_leaf_admission_placed_goes_back_to_what_was_there() {
+        // Nothing there before: the leaf and its key are removed.
+        let mut c = admitted(
+            true,
+            &[("FED_CORE_RESTART", "true"), ("FED_CORE_DRY_RUN", "skip")],
+        );
+        place_leaf(&mut c, None);
+        back_out(&c);
+        assert!(!Path::new(&c.vars["FED_CORE_CERT"]).exists());
+        assert!(
+            !Path::new(&c.vars["FED_CORE_KEY"]).exists(),
+            "no private key is left behind"
+        );
+        // Another leaf there before: its bytes come back.
+        let mut c = admitted(
+            true,
+            &[("FED_CORE_RESTART", "true"), ("FED_CORE_DRY_RUN", "skip")],
+        );
+        place_leaf(&mut c, Some(b"THE-LEAF-BEFORE"));
+        back_out(&c);
+        assert_eq!(
+            std::fs::read(&c.vars["FED_CORE_CERT"]).unwrap(),
+            b"THE-LEAF-BEFORE"
+        );
+        assert_eq!(
+            std::fs::read(&c.vars["FED_CORE_KEY"]).unwrap(),
+            b"THE-LEAF-BEFORE"
+        );
+    }
+
+    #[test]
+    fn a_leaf_another_peering_uses_is_left_in_place() {
+        let mut c = admitted(
+            true,
+            &[("FED_CORE_RESTART", "true"), ("FED_CORE_DRY_RUN", "skip")],
+        );
+        place_leaf(&mut c, None);
+        // Peering xac minted the same leaf: it is theirs too.
+        let other = c.dir.path().join("peerings/xac/pki");
+        std::fs::create_dir_all(&other).unwrap();
+        std::fs::write(other.join("core.pem"), b"CERT-OF-XAB").unwrap();
+        std::fs::write(other.join("core-key.pem"), b"KEY-OF-XAB").unwrap();
+        back_out(&c);
+        assert_eq!(
+            std::fs::read(&c.vars["FED_CORE_CERT"]).unwrap(),
+            b"CERT-OF-XAB"
+        );
+        // And a leaf that is no longer ours (another admission since) is left.
+        let mut c = admitted(
+            true,
+            &[("FED_CORE_RESTART", "true"), ("FED_CORE_DRY_RUN", "skip")],
+        );
+        place_leaf(&mut c, None);
+        std::fs::write(&c.vars["FED_CORE_CERT"], b"A-LATER-LEAF").unwrap();
+        back_out(&c);
+        assert_eq!(
+            std::fs::read(&c.vars["FED_CORE_CERT"]).unwrap(),
+            b"A-LATER-LEAF"
+        );
+    }
+
+    #[test]
+    fn fed_core_acl_org_alone_on_a_role_core_is_restarted_by_the_roles_play() {
+        // Admission takes the role's own play whenever FED_CORE_PLAY and
+        // FED_CORE_RESTART are unset; the back-out decides the same way.
+        let mut c = admitted(false, &[]);
+        let role = role_core_checkout();
+        let tool = role.path().join("ops/federation/standup/backout_core.py");
+        std::fs::create_dir_all(tool.parent().unwrap()).unwrap();
+        std::fs::copy(real().join("ops/federation/standup/backout_core.py"), &tool).unwrap();
+        c.repo = role.path().to_path_buf();
+        let ran = back_out(&c);
+        assert_eq!(
+            std::fs::read_to_string(&c.vars["FED_CORE_ACL_ORG"]).unwrap(),
+            c.before_org
+        );
+        let plays: Vec<&String> = ran
+            .iter()
+            .filter(|r| r.contains("zenoh-deploy.yml"))
+            .collect();
+        assert_eq!(plays.len(), 2, "the role's dry run and deploy: {ran:?}");
+        assert!(plays[0].contains("--check"), "{plays:?}");
+    }
+
+    #[test]
+    fn fed_core_play_is_run_with_the_peerings_working_folder() {
+        let c = admitted(
+            true,
+            &[
+                ("FED_CORE_PLAY", "core-deploy.yml"),
+                ("FED_CORE_GROUP", "core_x"),
+            ],
+        );
+        let ran = back_out(&c);
+        let want = format!("-e fed_work='{}'", c.work().display());
+        assert!(
+            ran.iter()
+                .filter(|r| r.contains("core-deploy.yml"))
+                .all(|r| r.contains(&want)),
+            "{ran:?}"
+        );
+    }
+
+    #[test]
     fn without_a_route_of_its_own_the_role_core_is_the_plays_to_survey() {
-        assert!(driver_core(&real(), "xab", "zagros", |_| None)
-            .unwrap()
-            .is_none());
+        assert!(driver_core(
+            &real(),
+            "xab",
+            "zagros",
+            Path::new("/nonexistent/w"),
+            |_| None
+        )
+        .unwrap()
+        .is_none());
         // A route named but incomplete is refused, naming what is missing.
-        let e = driver_core(&real(), "xab", "zagros", |k| {
+        let e = driver_core(&real(), "xab", "zagros", Path::new("/nonexistent/w"), |k| {
             (k == "FED_CORE_RESTART").then(|| "x".into())
         })
         .err()
