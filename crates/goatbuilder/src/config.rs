@@ -465,6 +465,13 @@ pub fn derive_lite(value: &Value, checkout: Option<&Value>) -> Value {
     out
 }
 
+/// Gate row G1 (docs/design/goatlite-growth.md §6, the hand-over): the full
+/// configuration a lite one grows into, with the same values.
+#[allow(dead_code)] // the verb's wiring in main.rs is a separate change; the tests call this
+pub fn grow(value: &Value, _checkout: Option<&Value>) -> Result<Value> {
+    Ok(value.clone())
+}
+
 /// The rules JSON Schema cannot express — identical in intent to validate.py's.
 #[allow(dead_code)] // the record-free form, kept for callers without a config path
 pub fn cross_field(cfg: &Config) -> Vec<String> {
@@ -1024,4 +1031,92 @@ mod tests {
         }
     }
 
+    // --- gate row G1: a lite configuration grows into a full one ---------------
+
+    fn lite_fixture_text() -> String {
+        std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../ops/goatbuilder/fixtures/goatnet-from-scratch/00-goatlite/goatbuilder.yaml")).unwrap()
+    }
+
+    fn lite_fixture() -> Value {
+        serde_json::to_value(serde_yaml::from_str::<serde_yaml::Value>(&lite_fixture_text()).unwrap()).unwrap()
+    }
+
+    /// The rewritten configuration is the full preset, carries the lite file's
+    /// values, and validates with no lite block to lean on.
+    #[test]
+    fn grow_turns_the_lite_fixture_into_a_full_config_that_validates() {
+        let lite = lite_fixture();
+        let full = grow(&lite, None).unwrap();
+        assert_eq!(full["preset"], json!("full"));
+        assert!(full.get("lite").is_none(), "the grown config has no lite block: {full:#}");
+        assert_eq!(problems(&full).unwrap(), Vec::<String>::new());
+        let derived = derive_lite(&lite, None);
+        for key in ["repo", "components", "environments", "promotion", "secrets"] {
+            assert_eq!(full[key], derived[key], "{key} carries over unchanged");
+        }
+        assert_eq!(full["deploy"]["ssh_user"], json!("ubuntu"), "lite.ssh_user is deploy.ssh_user in the full shape");
+    }
+
+    /// The four-fact file of the tutorial has no repo or components of its own; growth
+    /// asks for them then, never at first run.
+    #[test]
+    fn grow_refuses_without_repo_and_components_and_names_them() {
+        let err = grow(&goatlite(), None).unwrap_err().to_string();
+        assert!(err.contains("repo") && err.contains("components"), "{err}");
+        let mut full = goatlite();
+        full["preset"] = json!("full");
+        assert!(grow(&full, None).unwrap_err().to_string().contains("preset: lite"));
+    }
+
+    /// One step of a standup dry run: its label and its command, with the checkout
+    /// path taken out so two checkouts compare.
+    fn plan_steps(repo: &Path) -> Vec<(String, String)> {
+        let o = crate::standup::Options { env: "pasture", site: "pasture", profile: None, from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false, check: false };
+        let report = crate::standup::standup(repo, &o).unwrap();
+        let root = repo.display().to_string();
+        let mut out: Vec<(String, String)> = Vec::new();
+        for c in &report.checks {
+            match c.name.as_str() {
+                "phase" => out.push((c.detail.clone(), String::new())),
+                "cmd" => {
+                    if let Some(last) = out.last_mut() {
+                        last.1 = c.detail.replace(&root, "<repo>");
+                    }
+                }
+                _ => {}
+            }
+        }
+        out
+    }
+
+    /// G1's proof: a standup plan from the grown configuration runs nothing the lite
+    /// plan did not, with the same arguments. It may drop the two lite render
+    /// gates (their files exist by then) and the CA mint-if-missing flag (the CA
+    /// exists), and a GATE may differ (a gate measures and changes nothing).
+    #[test]
+    fn a_standup_plan_from_the_grown_config_changes_nothing_that_exists() {
+        let lite_dir = crate::testdir::path("gb-grow-lite-");
+        std::fs::write(lite_dir.join("goatlite.yaml"), lite_fixture_text()).unwrap();
+        let full_dir = crate::testdir::path("gb-grow-full-");
+        std::fs::create_dir_all(full_dir.join("ops/goatbuilder")).unwrap();
+        let grown = grow(&lite_fixture(), None).unwrap();
+        std::fs::write(full_dir.join("ops/goatbuilder/goatbuilder.yaml"), serde_yaml::to_string(&grown).unwrap()).unwrap();
+
+        let lite: Vec<_> = plan_steps(&lite_dir)
+            .into_iter()
+            .filter(|(label, _)| !label.contains("[GATE] goatlite: "))
+            .map(|(l, c)| (l, c.replace(" --mint-ca-if-missing", "")))
+            .collect();
+        let full = plan_steps(&full_dir);
+        let is_gate = |label: &str| label.contains(" [GATE] ");
+        let changing = |steps: &[(String, String)]| steps.iter().filter(|(l, _)| !is_gate(l)).cloned().collect::<Vec<_>>();
+        let (lite, full) = (changing(&lite), changing(&full));
+        let differ: Vec<String> = lite
+            .iter()
+            .zip(full.iter())
+            .filter(|(a, b)| a != b)
+            .map(|(a, b)| format!("lite:  {} :: {}\ngrown: {} :: {}", a.0, a.1, b.0, b.1))
+            .collect();
+        assert!(differ.is_empty() && lite.len() == full.len(), "{} step(s) differ ({} lite, {} grown):\n{}", differ.len(), lite.len(), full.len(), differ.join("\n\n"));
+    }
 }
