@@ -33,10 +33,15 @@ rot_die() {
 rot_material() {
   local s="$1" k="$2" them h; them="$(other "$s")"; h="$(drv_host "$s")"
   case "$k" in
-    leaves) docker exec "$h" sh -c "for f in /var/lib/goat-federation/$them/pki/peering-*.pem /var/lib/goat-federation/$them/pki/republisher.pem; do case \$f in *-key.pem) ;; *) [ -f \$f ] && printf '%s %s\n' \"\$(basename \$f)\" \"\$(openssl x509 -in \$f -noout -serial)\" ;; esac; done" ;;
+    leaves) docker exec "$h" sh -c "for f in /var/lib/goat-federation/$them/pki/peering-*.pem /var/lib/goat-federation/$them/pki/republisher.pem /var/lib/goat-federation/$them/pki/core.pem; do case \$f in *-key.pem) ;; *) [ -f \$f ] && printf '%s %s\n' \"\$(basename \$f)\" \"\$(openssl x509 -in \$f -noout -serial)\" ;; esac; done" ;;
     transport) docker exec "$HP-$s-edge" wg show "$(iface "$s" "$them")" public-key ;;
     carrier) if [ "$s" = "$NATED" ]; then docker exec "$HP-$s-edge" wg show wg-carry0 public-key; else echo "no carrier on $s"; fi ;;
-    signing) docker exec "$h" sh -c "cat /etc/fed-e2e/signing.pub 2>/dev/null; python3 -c 'import json,sys; p=json.load(open(sys.argv[1])); print(p.get(\"signing_key\") or p.get(\"verifying_key\") or \"\")' /var/lib/goat-federation/$them/ours.canonical.json 2>/dev/null" ;;
+    signing)
+      # What a signing rotation changes: the seed this side signs with (its checkout's
+      # goat_federation_signing_key, else FED_SIGNING_KEY, as the drive passes it), by digest,
+      # and this party's verifying key as the partner's keyring holds it (spec §5.1).
+      docker exec "$h" sh -c "k=\$(grep -rhoE '^goat_federation_signing_key:[[:space:]]*\\S+' /opt/goat/ops/ansible/group_vars 2>/dev/null | head -1 | sed 's/^[^:]*:[[:space:]]*//; s/[\"\x27]//g'); k=\${k:-/etc/fed-e2e/signing.key}; printf 'seed %s %s\n' \"\$k\" \"\$(sha256sum \"\$k\" | cut -d' ' -f1)\""
+      docker exec "$(drv_host "$them")" sh -c "grep -E '^$s=' /var/lib/goat-federation/$s/keys.txt | sed 's/^/in the partner keyring: /'" ;;
   esac
 }
 export -f rot_material
@@ -57,20 +62,27 @@ rot_one() { # $1 key, $2 side
   rot_all_material "$s" "$RECORD/rot-$k-$s-after.txt"
   rec "rot-rotated-$k-$s" -- bash -c \
     "diff <(sed -n '/^## $k\$/,/^## /p' '$RECORD/rot-$k-$s-before.txt') <(sed -n '/^## $k\$/,/^## /p' '$RECORD/rot-$k-$s-after.txt') && { echo 'the $k material did not change'; exit 1; } || exit 0"
-  rec "rot-kept-$k-$s" -- bash -c \
-    "diff <(grep -v -A9999 '^## $k\$' '$RECORD/rot-$k-$s-before.txt' | grep -v '^## $k') <(grep -v -A9999 '^## $k\$' '$RECORD/rot-$k-$s-after.txt' | grep -v '^## $k') ; python3 - '$RECORD/rot-$k-$s-before.txt' '$RECORD/rot-$k-$s-after.txt' '$k' <<'PY'
-import sys
+  rec "rot-kept-$k-$s" -- python3 - "$RECORD/rot-$k-$s-before.txt" "$RECORD/rot-$k-$s-after.txt" "$k" <<'PY'
+import re, sys
 def parts(p):
     out, cur = {}, None
     for l in open(p):
-        if l.startswith('## '): cur = l[3:].strip(); out[cur] = []
+        if l.startswith("## "): cur = l[3:].strip(); out[cur] = []
         elif cur: out[cur].append(l)
     return out
 a, b, k = parts(sys.argv[1]), parts(sys.argv[2]), sys.argv[3]
-changed = [x for x in a if x != k and a.get(x) != b.get(x)]
-print('unchanged besides', k, ':', sorted(x for x in a if x != k and x not in changed), '; changed:', changed)
-sys.exit(1 if changed else 0)
-PY"
+bad = re.compile(r"error|no such|not found|unable|cannot|permission denied|usage:", re.I)
+problems = []
+for x in a:
+    if x == k: continue
+    body = "".join(a[x]).strip()
+    if not body or bad.search(body): problems.append(f"{x}: no material read before ({body[:80]!r})")
+    elif a.get(x) != b.get(x): problems.append(f"{x}: changed")
+print("other keys:", sorted(x for x in a if x != k), "; problems:", problems or "none")
+sys.exit(1 if problems else 0)
+PY
+  rot_all_material "$them" "$RECORD/rot-$k-$them-after.txt"
+  rec "rot-partner-kept-$k-$s" -- diff "$RECORD/rot-$k-$them-before.txt" "$RECORD/rot-$k-$them-after.txt"
   case "$k" in
     transport|signing) rot_die "the partner's step after a $k rotation waits on the operator's decision in docs/design/federation-key-rotation.md §5" ;;
   esac
@@ -91,7 +103,31 @@ unit_main() {
     for s in "$NATED" "$PARTNER"; do rot_one "$k" "$s"; done
     printf '%s\tend\n' "$(date +%s.%N)" >> "$RECORD/rot-$k.window"
   done
+  sleep 20 # values after the last rotation, before the flows stop
   flow_stop a2b; flow_stop b2a
-  rec "rot-samples" -- bash -c "flow_report a2b; flow_report b2a"
-  rec "rot-no-pending" -- bash -c "for s in $NATED $PARTNER; do docker exec \$(drv_host \$s) sh -c 'find /var/lib/goat-federation -name .rotation-pending' | grep . && exit 1; done; echo none"
+  { flow_report a2b; flow_report b2a; } > "$RECORD/rot-samples.json"
+  # Decidable now: data resumes. Values are stored inside and after every rotation's window,
+  # and the last five of each flow are stored.
+  rec "rot-samples-resume" -- python3 - "$RECORD" $ROT_KEYS <<'PY'
+import json, os, sys
+d, keys = sys.argv[1], sys.argv[2:]
+def rows(l): return [r.rstrip("\n").split("\t") for r in open(os.path.join(d, f"flow-{l}.read")) if r.strip()]
+def window(k):
+    t = [float(r.split("\t")[0]) for r in open(os.path.join(d, f"rot-{k}.window")) if r.strip()]
+    return min(t), max(t)
+bad = []
+for l in ("a2b", "b2a"):
+    rs = rows(l); ok = [r[3] == "stored" for r in rs]; t = [float(r[0]) for r in rs]
+    if len(ok) < 5 or not all(ok[-5:]): bad.append(f"{l}: the last five values are not all stored")
+    for k in keys:
+        lo, hi = window(k)
+        inside = [o for o, x in zip(ok, t) if lo <= x <= hi]; after = [o for o, x in zip(ok, t) if x > hi]
+        if not any(inside): bad.append(f"{l}: nothing stored during the {k} rotation")
+        if not any(after): bad.append(f"{l}: nothing stored after the {k} rotation")
+print(open(os.path.join(d, "rot-samples.json")).read().strip()); print("problems:", bad or "none")
+sys.exit(1 if bad else 0)
+PY
+  # Not decidable yet: how much may be lost across a rotation (the same question as B4's).
+  mark "key-rotation.samples-loss" BLOCKED "loss tolerance across a rotation awaits the operator's decision (as B4); the flow's figures are in rot-samples.json"
+  rec "rot-no-pending" -- bash -c "for s in $NATED $PARTNER; do o=\$(docker exec \$(drv_host \$s) find /var/lib/goat-federation -name .rotation-pending) || { echo \"could not search \$s\"; exit 1; }; [ -z \"\$o\" ] || { echo \"\$o\"; exit 1; }; done; echo none"
 }
