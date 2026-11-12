@@ -7,7 +7,11 @@
 #   changes  what it changes, and where (or "Nothing")
 #   verify   how to tell it worked
 #   runs     the script, play or verb it runs
-#   by_hand  the command that does the same by hand
+#   by_hand  the command the tool runs for it, to run by hand: placeholders in <angle
+#            brackets> (<work>, <edge-group>, <profile>, <keys>: one --key per line of
+#            keys.txt, ...), [square brackets] around a part the tool adds only when it
+#            applies; for a stop for a person, what that person does. A test holds it
+#            to the plan's own command
 #   read     the document to read (a repository path, with an optional #anchor)
 # and, for the documents rendered from it:
 #   title, kind, stage    the phase tables' cells
@@ -44,7 +48,7 @@ phases:
   why: The package offers a tunnel interface and a trust bundle; both have to exist before they can be measured and offered, and the interface must carry no peer until the agreement says which one.
   changes: 'On the edge host: the federation interface (the allocated name, e.g. wg-fed0) and its private key, with no peer. In the working directory: ours.spiffe-bundle, when this side runs SPIRE.'
   runs: ops/ansible/peering-prepare.yml (roles goat-peering-wg and goat-peering-spire)
-  by_hand: cd ops/ansible && ../scripts/ansible-preflight.sh -i inventory/peering-edges.ini --limit <edge-group> -e fed_edge_group=<edge-group> -e fed_work=<work> -e fed_counterparty=<counterparty-file> peering-prepare.yml
+  by_hand: cd ops/ansible && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws <profile> -- ../scripts/ansible-preflight.sh -i inventory/peering-edges.ini [-i inventory/peering-<edge-group>.ini] --limit <edge-group> -e fed_edge_group=<edge-group> -e fed_work=<work> -e fed_counterparty=<counterparty-file> peering-prepare.yml
   read: docs/operations/sovereign-federation-runbook.md#plan--validate-and-explain-the-change
   failed_because: the edge play failed
   then: read the play's failed task
@@ -59,7 +63,7 @@ phases:
   why: The partner verifies what this side actually runs, so the package is read from the hosts, never typed; a value that cannot be measured stops the run instead of being guessed.
   changes: 'In the working directory: ours.canonical.json, signed with the federation signing key. No host is changed.'
   runs: goatbuilder federate init --over-ssh (FED_MEASURE=ssh, the default; FED_MEASURE=here measures this machine)
-  by_hand: goatbuilder federate init --out <work>/ours.canonical.json --over-ssh <peering> --ssh-edge-group <edge-group> --repo <repository>
+  by_hand: goatbuilder federate init --with-transport --with-data [--declaration <declaration>] --out <work>/ours.canonical.json --over-ssh <peering> --ssh-edge-group <edge-group> [--router-container <router>] --repo <repository>
   read: docs/design/federation-router-discovery.md
   failed_because: exit 23, a value could not be derived
   then: the output lists each value and why; fix the measurement, never type the value
@@ -104,7 +108,7 @@ phases:
   why: Both sides must hold the same agreement; one digest, read to each other aloud, shows they do.
   changes: 'In the working directory: agreement.json.'
   runs: goatbuilder federate compose
-  by_hand: goatbuilder federate compose <work>/ours.canonical.json <work>/theirs.canonical.json --key <ours>=<key> --key <theirs>=<key> --out <work>/agreement.json
+  by_hand: goatbuilder federate compose <work>/ours.canonical.json <work>/theirs.canonical.json <keys> --out <work>/agreement.json
   read: docs/operations/sovereign-federation-runbook.md#plan--validate-and-explain-the-change
   failed_because: exit 20, composition refused
   then: a key is not bound or the packages disagree; compare with `goatbuilder federate diff`
@@ -179,7 +183,7 @@ phases:
   why: The tunnel is the one the two parties agreed; standing up any other is the drift between what was agreed and what was deployed that the flow exists to prevent.
   changes: 'On the edge host: the tunnel (WireGuard peer and its firewall, or the IPsec connection); through a forwarder, its entry for this peering.'
   runs: ops/ansible/peering-wg.yml (wireguard) or ops/ansible/peering-edge.yml (ipsec-fips), as the agreement's transport selects
-  by_hand: cd ops/ansible && ../scripts/ansible-preflight.sh -i inventory/peering-edges.ini --limit <edge-group> -e fed_edge_group=<edge-group> -e fed_work=<work> -e fed_counterparty=<counterparty-file> peering-wg.yml
+  by_hand: cd ops/ansible && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws <profile> -- ../scripts/ansible-preflight.sh -i inventory/peering-edges.ini [-i inventory/peering-<edge-group>.ini] --limit <edge-group> -e fed_edge_group=<edge-group> -e fed_work=<work> -e fed_counterparty=<counterparty-file> peering-wg.yml
   read: docs/operations/sovereign-federation-runbook.md#step-5--open-the-tunnel
   failed_because: 'refused: no play for the selected transport'
   then: the fix is in the agreement, never the play
@@ -194,7 +198,7 @@ phases:
   why: The edge router is the only thing the partner reaches, and the republisher is the only thing that lifts our offered release sets onto the wire; both are needed for data to cross.
   changes: 'On the edge host: the goat-zenoh-edge container and its configuration and certificates. On the core host: the goat-fed-republisher-<them> container and its files.'
   runs: ops/ansible/peering-zenoh-edge.yml, then ops/ansible/peering-republisher.yml --limit <peering>_core
-  by_hand: cd ops/ansible && ../scripts/ansible-preflight.sh -i inventory/peering-edges.ini --limit <edge-group> -e fed_edge_group=<edge-group> -e fed_work=<work> -e fed_counterparty=<counterparty-file> peering-zenoh-edge.yml, then the same with --limit <peering>_core and peering-republisher.yml
+  by_hand: cd ops/ansible && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws <profile> -- ../scripts/ansible-preflight.sh -i inventory/peering-edges.ini [-i inventory/peering-<edge-group>.ini] --limit <edge-group> -e fed_edge_group=<edge-group> -e fed_work=<work> -e fed_counterparty=<counterparty-file> peering-zenoh-edge.yml && cd ops/ansible && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws <profile> -- ../scripts/ansible-preflight.sh -i inventory/peering-edges.ini [-i inventory/peering-<edge-group>.ini] --limit <core-group> -e fed_edge_group=<edge-group> -e fed_work=<work> -e fed_counterparty=<counterparty-file> peering-republisher.yml
   read: docs/operations/sovereign-federation-runbook.md#step-4--stand-up-your-edge-router
   failed_because: the edge does not link to your core, or the republisher is not subscribed
   then: read the edge log on your side; the [symptom table](#if-something-does-not-work)
@@ -209,7 +213,7 @@ phases:
   why: Each side recognises the other's SPIRE trust domain (ADR 1157 step 2), so workloads can be identified across the link; what the partner may do stays the edge's access control.
   changes: 'On the edge host: the bundle-endpoint forwards for this peering. On our SPIRE server: the partner''s trust domain and bundle.'
   runs: ops/ansible/peering-spire.yml (role goat-peering-spire)
-  by_hand: cd ops/ansible && ../scripts/ansible-preflight.sh -i inventory/peering-edges.ini --limit <edge-group> -e fed_edge_group=<edge-group> -e fed_work=<work> -e fed_counterparty=<counterparty-file> peering-spire.yml
+  by_hand: cd ops/ansible && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws <profile> -- ../scripts/ansible-preflight.sh -i inventory/peering-edges.ini [-i inventory/peering-<edge-group>.ini] --limit <edge-group> -e fed_edge_group=<edge-group> -e fed_work=<work> -e fed_counterparty=<counterparty-file> peering-spire.yml
   read: docs/operations/sovereign-federation-runbook.md#deploy--carry-out-the-approved-plan
   failed_because: the SPIRE play failed
   then: check the link from phase 11 is up
