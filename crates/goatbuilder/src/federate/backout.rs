@@ -1195,6 +1195,33 @@ pub fn backout_with(
             std::env::var(k).ok()
         })?,
     };
+    // A leaf that goes, placed where nothing was: the role's play cannot
+    // deliver what is not there (it refuses, GB-071), so every back-out play
+    // is told to delete the host's copy in the role's TLS folder, where it
+    // still holds this peering's leaf.
+    if let Some((leaf, role)) = role_leaf
+        .as_ref()
+        .and_then(|l| l.role.as_ref().map(|r| (l, r)))
+    {
+        if leaf.counts().1 > 0 {
+            let tls = role.role_value(repo, "goat_zenoh_tls_dir").map_err(|e| {
+                anyhow::Error::from(goat_errors::coded(
+                    "GB-221",
+                    format!("the back-out cannot find where the role keeps our core's leaf on its host: {e} (GB-221)"),
+                ))
+            })?;
+            if !plain(&tls) {
+                return Err(goat_errors::coded(
+                    "GB-221",
+                    format!("goat_zenoh_tls_dir '{tls}' holds characters a plan line cannot carry safely (GB-221)"),
+                )
+                .into());
+            }
+            t.core_files
+                .push(("peering_backout_core_leaf_remove", "true".into()));
+            t.core_files.push(("peering_backout_core_tls_dir", tls));
+        }
+    }
     let mut checks = vec![row(
         "banner",
         true,
@@ -1225,16 +1252,7 @@ pub fn backout_with(
     ));
 
     let survey_cmd = play_cmd(repo, &t, &[]);
-    // A leaf removed on this machine is deleted on the role core's host by
-    // the play, which compares it with the peering's own first.
-    let mut apply_extra = vec![("peering_backout_apply", "true".to_string())];
-    if role_leaf
-        .as_ref()
-        .is_some_and(|l| l.role.is_some() && l.counts().1 > 0)
-    {
-        apply_extra.push(("peering_backout_core_leaf_remove", "true".into()));
-    }
-    let apply_cmd = play_cmd(repo, &t, &apply_extra);
+    let apply_cmd = play_cmd(repo, &t, &[("peering_backout_apply", "true".into())]);
     if o.mock.is_some() {
         for (n, (label, cmd)) in [
             (
@@ -1614,7 +1632,7 @@ pub fn backout_with(
     // nothing). On the deployment's own route driver_apply did it already.
     if core_done {
         if let Some(leaf) = driver.as_ref().map(|d| &d.leaf).or(role_leaf.as_ref()) {
-            let (restored, _) = leaf.counts();
+            let (restored, removed) = leaf.counts();
             let todo: Vec<String> = leaf
                 .rows()
                 .into_iter()
@@ -1627,7 +1645,7 @@ pub fn backout_with(
             // The host's copy: the role's play delivers what was put back,
             // the route admission took (dry run, then deploy).
             let taken = match (&taken, &leaf.role) {
-                (Ok(()), Some(role)) if restored > 0 => {
+                (Ok(()), Some(role)) if restored > 0 && removed == 0 => {
                     let mut ok = true;
                     for check in [true, false] {
                         let cmd = role.play_cmd(repo, check);
@@ -2367,7 +2385,7 @@ mod tests {
     fn role_core_checkout() -> tempfile::TempDir {
         let d = tempfile::tempdir().unwrap();
         for (rel, text) in [
-            ("ops/ansible/roles/goat-zenoh/defaults/main.yml", "zenoh_router_image: \"x\"\nzenoh_stack: \"{{ site_id }}-zenoh\"\ngoat_zenoh_config_path: \"/etc/{{ zenoh_stack }}/config.json5\"\ngoat_zenoh_acl_seed_path: \"/etc/{{ zenoh_stack }}/config.seed.json5\"\ngoat_zenoh_acl_org_path: \"/etc/{{ zenoh_stack }}/acl-org-fragment.json5\"\nzenoh_sovereign_peerings: []\n"),
+            ("ops/ansible/roles/goat-zenoh/defaults/main.yml", "zenoh_router_image: \"x\"\nzenoh_stack: \"{{ site_id }}-zenoh\"\ngoat_zenoh_config_path: \"/etc/{{ zenoh_stack }}/config.json5\"\ngoat_zenoh_acl_seed_path: \"/etc/{{ zenoh_stack }}/config.seed.json5\"\ngoat_zenoh_acl_org_path: \"/etc/{{ zenoh_stack }}/acl-org-fragment.json5\"\ngoat_zenoh_tls_dir: \"/etc/{{ zenoh_stack }}/tls\"\nzenoh_sovereign_peerings: []\n"),
             ("ops/ansible/zenoh-deploy.yml", "- hosts: \"{{ target | mandatory }}\"\n"),
             ("ops/pins/fleet-pins.yaml", "components:\n  zenoh-router:\n    var: zenoh_router_image\n    ledger_component: xaa-zenoh\n    deploy_playbook: zenoh-deploy.yml\n"),
             ("ops/ansible/inventory/core-router.ini", "[core_router]\nxaa-core ansible_host=192.0.2.10\n"),
@@ -2380,13 +2398,14 @@ mod tests {
         d
     }
 
-    #[test]
-    fn the_router_leaf_on_a_role_core_without_fed_core_acl_org_is_taken_back() {
-        // A goat-zenoh role core admitted with no route of its own: admission
-        // placed our core's router leaf on this machine where the role reads
-        // it. The back-out takes it back there, by the same earliest-record
-        // rule: the certificate goes back to what was there, the key, placed
-        // where nothing was, is removed.
+    /// A goat-zenoh role core admitted with no route of its own, its leaf
+    /// paths declared by the role's group; admission placed our core's router
+    /// leaf there, on this machine, over `prior` (or where nothing was). The
+    /// back-out runs with every play answering that nothing of the peering is
+    /// left; returns the plays it ran, the two leaf paths and the report.
+    fn role_leaf_back_out(
+        prior: Option<&[u8]>,
+    ) -> (Vec<String>, PathBuf, PathBuf, Report, tempfile::TempDir) {
         let d = tempfile::tempdir().unwrap();
         let (repo, work) = stand_in(d.path());
         let role = role_core_checkout();
@@ -2420,12 +2439,14 @@ mod tests {
         std::fs::create_dir_all(&pki).unwrap();
         std::fs::write(pki.join("core.pem"), b"CERT-OF-HELLO-ALLY").unwrap();
         std::fs::write(pki.join("core-key.pem"), b"KEY-OF-HELLO-ALLY").unwrap();
-        std::fs::write(&cert, b"THE-CERT-BEFORE").unwrap();
+        if let Some(p) = prior {
+            std::fs::write(&cert, p).unwrap();
+            std::fs::write(&key, p).unwrap();
+        }
         let mut backups = Vec::new();
         let bdir = Path::new(&work).join("admission/run-20261112T000000Z-1/backup");
         super::super::admit::publish(b"CERT-OF-HELLO-ALLY", &cert, &mut backups, &bdir).unwrap();
         super::super::admit::publish(b"KEY-OF-HELLO-ALLY", &key, &mut backups, &bdir).unwrap();
-        // The hosts: every play answers, with nothing of the peering left.
         let w = work.clone();
         let ran = std::rc::Rc::new(std::cell::RefCell::new(Vec::<String>::new()));
         let r2 = ran.clone();
@@ -2452,24 +2473,33 @@ mod tests {
             table: false,
         };
         let r = backout_with(&repo, &o, &mut exec).unwrap();
+        let ran = ran.borrow().clone();
+        (ran, cert, key, r, d)
+    }
+
+    #[test]
+    fn the_router_leaf_on_a_role_core_without_fed_core_acl_org_is_taken_back() {
+        // Something was there: both paths get it back, and the role's play,
+        // dry run then deploy, delivers it to the core host as admission's
+        // role play delivered the peering's leaf.
+        let (ran, cert, key, r, _d) = role_leaf_back_out(Some(b"THE-LEAF-BEFORE"));
         assert_eq!(
             std::fs::read(&cert).unwrap(),
-            b"THE-CERT-BEFORE",
+            b"THE-LEAF-BEFORE",
+            "{:?}",
+            r.checks
+        );
+        assert_eq!(
+            std::fs::read(&key).unwrap(),
+            b"THE-LEAF-BEFORE",
             "{:?}",
             r.checks
         );
         assert!(
-            !key.exists(),
-            "no private key is left behind: {:?}",
+            r.checks.iter().find(|c| c.name == "converged").unwrap().ok,
+            "{:?}",
             r.checks
         );
-        let converged = r.checks.iter().find(|c| c.name == "converged").unwrap();
-        assert!(converged.ok, "{:?}", r.checks);
-        // The core host's copy follows, the way admission delivered it: the
-        // role's play, dry run then deploy, delivers the certificate put back;
-        // the key placed where nothing was is deleted on the host by the
-        // back-out play, told so.
-        let ran = ran.borrow();
         let plays: Vec<&String> = ran
             .iter()
             .filter(|c| c.contains("zenoh-deploy.yml"))
@@ -2481,10 +2511,40 @@ mod tests {
         );
         assert!(
             ran.iter()
-                .any(|c| c.contains("peering_backout_apply='true'")
-                    && c.contains("-e peering_backout_core_leaf_remove='true'")),
+                .all(|c| !c.contains("peering_backout_core_leaf_remove")),
             "{ran:?}"
         );
+        // Nothing was there: both are removed here, the role's play is not run
+        // (it refuses a controller with no leaf), and every back-out play is
+        // told to delete the host's copy in the role's TLS folder.
+        let (ran, cert, key, r, _d) = role_leaf_back_out(None);
+        assert!(!cert.exists(), "{:?}", r.checks);
+        assert!(
+            !key.exists(),
+            "no private key is left behind: {:?}",
+            r.checks
+        );
+        assert!(
+            r.checks.iter().find(|c| c.name == "converged").unwrap().ok,
+            "{:?}",
+            r.checks
+        );
+        assert!(
+            ran.iter().all(|c| !c.contains("zenoh-deploy.yml")),
+            "{ran:?}"
+        );
+        let backout: Vec<&String> = ran
+            .iter()
+            .filter(|c| c.contains("peering-backout.yml"))
+            .collect();
+        assert!(!backout.is_empty());
+        for c in backout {
+            assert!(
+                c.contains("-e peering_backout_core_leaf_remove='true'")
+                    && c.contains("-e peering_backout_core_tls_dir='/etc/xaa-zenoh/tls'"),
+                "{c}"
+            );
+        }
     }
 
     #[test]
