@@ -17,6 +17,12 @@ use std::path::Path;
 use anyhow::Result;
 
 use super::run::Surface;
+
+// Called from main.rs once its `rotate` stage word is wired (one line).
+#[cfg_attr(not(test), allow(dead_code))]
+/// The stage word: `goatbuilder federate rotate <partner> <key>`. A peering
+/// can never be named this (config.rs RESERVED_PEERING_NAMES).
+pub const VERB: &str = "rotate";
 use super::{Options, Phase};
 
 // Called from main.rs once its `rotate` stage word is wired (one line).
@@ -45,7 +51,7 @@ pub(super) fn leaves(phases: &mut [Phase]) {
 pub fn leaves_run<'a>(o: &Options<'a>) -> (Options<'a>, Surface) {
     let s = Surface {
         stage: "rotate",
-        again: Some(format!("goatbuilder federate rotate {} leaves", o.with)),
+        again: Some(format!("goatbuilder federate {VERB} {} leaves", o.with)),
         rotate_leaves: true,
         resume: false,
         ..Default::default()
