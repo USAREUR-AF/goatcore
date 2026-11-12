@@ -3,7 +3,7 @@ bin.name = "goatbuilder"
 args = ["release", "-C", "../..", "netvis", "--version", "0.0.1", "--ack", "Gate", "--from", "preprod-rows", "--dry-run"]
 status.code = 1
 stdout = """
-FAIL  refused  --from preprod-rows needs --tag <the candidate tag on preprod>
+FAIL  refused  --from preprod-rows needs --tag <the candidate tag on preprod> (GB-018)
 release: refused (1 check)
 """
 stderr = ""

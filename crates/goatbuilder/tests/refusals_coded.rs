@@ -201,22 +201,6 @@ const PENDING: &[(&str, &str)] = &[
         "federate/mod.rs: code the refusal (GB-149)",
     ),
     (
-        "release_from_preprod_rows_needs_tag",
-        "release.rs: keep the refusal's code in its row (GB-018)",
-    ),
-    (
-        "release_from_prod_needs_tag",
-        "release.rs: keep the refusal's code in its row (GB-018)",
-    ),
-    (
-        "release_needs_ack",
-        "release.rs: keep the refusal's code in its row (GB-018)",
-    ),
-    (
-        "release_needs_version_or_tag",
-        "release.rs: keep the refusal's code in its row (GB-018)",
-    ),
-    (
         "validate_missing_file",
         "config.rs: code the refusal (GB-244)",
     ),

@@ -156,7 +156,7 @@ fn sh(cmd: &str, args: &[&str]) -> Result<String> {
     c.args(args);
     let out = c.output().with_context(|| format!("{cmd} {}", args.join(" ")))?;
     if !out.status.success() {
-        return Err(anyhow!("{}", String::from_utf8_lossy(&out.stderr).trim()));
+        return Err(anyhow::Error::from(goat_errors::coded("GB-258", String::from_utf8_lossy(&out.stderr).trim().to_string())));
     }
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
@@ -261,7 +261,7 @@ impl<'a> Run<'a> {
         }
         let (lines, code) = promote::call(&self.wt, cmd);
         if code != 0 {
-            return Err(anyhow!("{}", lines.join("\n")));
+            return Err(anyhow::Error::from(goat_errors::coded("GB-033", lines.join("\n"))));
         }
         Ok(lines)
     }
@@ -421,7 +421,7 @@ impl<'a> Run<'a> {
         } else {
             let r = pins::run(&self.wt, true)?;
             if !r.ok {
-                return Err(anyhow!("{}", r.checks.iter().filter(|c| !c.ok).map(|c| c.detail.clone()).collect::<Vec<_>>().join("\n")));
+                return Err(anyhow::Error::from(goat_errors::coded("GB-034", r.checks.iter().filter(|c| !c.ok).map(|c| c.detail.clone()).collect::<Vec<_>>().join("\n").to_string())));
             }
         }
         Ok(())
@@ -633,7 +633,13 @@ pub fn release(repo: &Path, o: &Options) -> Result<Report> {
         Ok(r) => Ok(r),
         Err(e) => {
             let mut v = checks.take();
-            v.push(Check { name: "refused".into(), ok: false, detail: e.to_string(), fix: None });
+            // The refusal's catalog code stays with it in the row, as main prints
+            // one for an error that ends the program (gate row C5).
+            let detail = match e.downcast_ref::<goat_errors::Coded>() {
+                Some(c) => format!("{e} ({})", c.code),
+                None => e.to_string(),
+            };
+            v.push(Check { name: "refused".into(), ok: false, detail, fix: None });
             let mut r = Report::new("release", v, EXIT_REFUSED);
             r.ok = false;
             r.exit = EXIT_REFUSED;
