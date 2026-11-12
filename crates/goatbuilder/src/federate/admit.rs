@@ -444,6 +444,9 @@ pub(super) fn publish(
                 .unwrap_or_default()
         ));
         std::fs::copy(to, &b)?;
+        // Which file this backup is of, beside it, so a later back-out finds
+        // the backup of exactly this path (backout.rs `leaf_plan`).
+        std::fs::write(b.with_file_name(format!("{}.target", b.file_name().unwrap_or_default().to_string_lossy())), to.display().to_string())?;
         Some(b)
     } else {
         None

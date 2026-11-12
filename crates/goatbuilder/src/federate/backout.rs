@@ -391,9 +391,13 @@ fn leaf_plan(dc: &DriverCore, target: &Path, ours: &Path) -> Leaf {
             return Leaf::Shared(p.display().to_string());
         }
     }
-    // The first admission's backup of this path: admit.rs `publish` keeps what
-    // was there as `<n>-<file name>` in <work>/admission/<run>/backup. A run
-    // that kept none placed the leaf where nothing was.
+    // What was there before the peering: the first backup of exactly this
+    // path in any admission run, in order (admit.rs `publish` keeps it as
+    // `<n>-<file name>` in <work>/admission/<run>/backup, with the path it was
+    // of in `<n>-<file name>.target`; an older backup without one is matched
+    // by its file name). A backup of this peering's own leaf is a later run's,
+    // not what was there before, and is passed over. No such backup: the
+    // first admission placed the leaf where nothing was.
     let base = target
         .file_name()
         .unwrap_or_default()
@@ -403,30 +407,44 @@ fn leaf_plan(dc: &DriverCore, target: &Path, ours: &Path) -> Leaf {
         .into_iter()
         .flatten()
         .flatten()
-        .map(|e| e.path())
-        .filter(|p| p.join("backup").is_dir())
+        .map(|e| e.path().join("backup"))
+        .filter(|p| p.is_dir())
         .collect();
     runs.sort();
-    let Some(first) = runs.first() else {
-        return Leaf::Remove;
-    };
-    let kept = std::fs::read_dir(first.join("backup"))
-        .into_iter()
-        .flatten()
-        .flatten()
-        .map(|e| e.path())
-        .find(|p| {
-            p.file_name()
-                .and_then(|f| f.to_str())
-                .and_then(|f| f.split_once('-'))
-                .is_some_and(|(n, rest)| {
-                    !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()) && rest == base
-                })
-        });
-    match kept {
-        Some(b) => std::fs::read(b).map(Leaf::Restore).unwrap_or(Leaf::NotOurs),
-        None => Leaf::Remove,
+    for backup in runs {
+        let mut kept: Vec<PathBuf> = std::fs::read_dir(&backup)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| {
+                p.file_name()
+                    .and_then(|f| f.to_str())
+                    .and_then(|f| f.split_once('-'))
+                    .is_some_and(|(n, rest)| {
+                        !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()) && rest == base
+                    })
+            })
+            .filter(|p| {
+                let side = p.with_file_name(format!(
+                    "{}.target",
+                    p.file_name().unwrap_or_default().to_string_lossy()
+                ));
+                std::fs::read_to_string(side)
+                    .map(|t| Path::new(t.trim()) == target)
+                    .unwrap_or(true)
+            })
+            .collect();
+        kept.sort();
+        for b in kept {
+            match std::fs::read(&b) {
+                Ok(bytes) if bytes == mine => continue,
+                Ok(bytes) => return Leaf::Restore(bytes),
+                Err(_) => return Leaf::NotOurs,
+            }
+        }
     }
+    Leaf::Remove
 }
 
 /// The driver's part of the survey, as one more host record (`driver`): the
@@ -2524,6 +2542,48 @@ mod tests {
             std::fs::read(&c.vars["FED_CORE_KEY"]).unwrap(),
             b"THE-LEAF-BEFORE"
         );
+    }
+
+    #[test]
+    fn the_leafs_backup_is_found_in_whichever_admission_run_kept_it() {
+        // An earlier admission run stopped after the org fragment, before the
+        // leaf: its backup folder holds no leaf. The leaf's own backup, the
+        // core's previous leaf, is in the later run, and is what comes back.
+        let mut c = admitted(
+            true,
+            &[("FED_CORE_RESTART", "true"), ("FED_CORE_DRY_RUN", "skip")],
+        );
+        let early = c.work().join("admission/run-20261111T000000Z-1/backup");
+        std::fs::create_dir_all(&early).unwrap();
+        std::fs::write(early.join("0-org.json5"), BEFORE_ORG).unwrap();
+        place_leaf(&mut c, Some(b"THE-LEAF-BEFORE"));
+        back_out(&c);
+        assert_eq!(
+            std::fs::read(&c.vars["FED_CORE_CERT"]).unwrap(),
+            b"THE-LEAF-BEFORE"
+        );
+        assert_eq!(
+            std::fs::read(&c.vars["FED_CORE_KEY"]).unwrap(),
+            b"THE-LEAF-BEFORE"
+        );
+        // A later admission's backup of this peering's own leaf is not what was
+        // there before: the first run placed it where nothing was, so it goes.
+        let mut c = admitted(
+            true,
+            &[("FED_CORE_RESTART", "true"), ("FED_CORE_DRY_RUN", "skip")],
+        );
+        place_leaf(&mut c, None);
+        let mut backups = Vec::new();
+        let again = c.work().join("admission/run-20261113T000000Z-1/backup");
+        super::super::admit::publish(
+            b"CERT-OF-XAB",
+            Path::new(&c.vars["FED_CORE_CERT"]),
+            &mut backups,
+            &again,
+        )
+        .unwrap();
+        back_out(&c);
+        assert!(!Path::new(&c.vars["FED_CORE_CERT"]).exists());
     }
 
     #[test]
