@@ -9,8 +9,8 @@ live.
 |---|---|
 | File | `ops/goatbuilder/goatbuilder.yaml` |
 | Schema | `ops/goatbuilder/schema/goatbuilder-v1.schema.json` (`schema: goatbuilder/v1`) |
-| In goat's repository | **Generated** by `ops/goatbuilder/gen-config.py` from `ops/pins/fleet-pins.yaml`, `ops/release/ladder.yaml`, `ops/goatbuilder/project.yml` (`repo:`, `deploy:`) and `ops/goatbuilder/posture.yml` (`secrets:`). Do not edit it; change a source and regenerate. A deployment that keeps its values in a private overlay carries its own `project.yml` and `posture.yml` there |
-| Gate | `.github/workflows/goatbuilder-schema.yml` validates the file and the schema's refusal tests on every pull request |
+| In a deployment | **Generated** by `ops/goatbuilder/gen-config.py` from `ops/pins/fleet-pins.yaml`, `ops/release/ladder.yaml`, `ops/goatbuilder/project.yml` (`repo:`, `deploy:`), `ops/goatbuilder/posture.yml` (`secrets:`) and the overlay's `ops/goatbuilder/federation.yml` (environment overlays and peerings). Do not edit it; change a source and regenerate. The public core intentionally ships neither `federation.yml` nor generated deployment config |
+| Checks | Run the Python suite and `gen-config.py --check` in the assembled deployment. Public-core CI does not currently run the assembled-output drift check |
 
 ## The shape
 
@@ -71,6 +71,27 @@ class within a site: `core`, `obs`, `breakglass` or `network-jump`. A
 Each environment lists its Ansible member groups. A deploy runs the play once
 per group and reads the ledger from every host of every group.
 
+The generator takes operator-owned environment declarations from the overlay's
+`ops/goatbuilder/federation.yml`, keyed by the environment already declared in
+the fleet pins and live release ladder. The pins and ladder own `name`,
+`converger` and `groups`; declaring any of those in `federation.yml` is refused
+with GB-079. The overlay owns the other environment fields, including `sites`,
+`transport`, `inventory`, `peering_edge_reserved_udp` and
+`peering_directory`:
+
+```yaml
+environments:
+  <goatnet>:
+    peering_directory:
+      url: https://directory.example.org:8443
+      ca_cert: directory-ca.pem
+    sites:
+      - name: <site>
+        role: founder
+        classes: {core: {}, edge: {}}
+peerings: []
+```
+
 ## Components
 
 A component is one key in `ops/pins/fleet-pins.yaml`. For each component the
@@ -105,7 +126,8 @@ the gates shown above.
 
 ## Peerings
 
-`peerings:` declares each sovereign peering: the partner's identifier (`with`),
+The overlay's `ops/goatbuilder/federation.yml` declares each sovereign peering under
+`peerings:`: the partner's identifier (`with`),
 the environment and site that host the edge, the class that runs the dedicated
 edge router (`edge_class`), the tunnel (`wireguard` or `ipsec`), the trust
 mechanism (`spire-federation`) and the key prefix the partner's data arrives
@@ -113,6 +135,7 @@ under (`ingress_prefix`, of the form `from/<partner>`). `goatbuilder federate
 <with>` refuses a peering that is not declared here.
 
 ```yaml
+# ops/goatbuilder/federation.yml
 peerings:
   - with: <partner>
     environment: <goatnet>
@@ -122,6 +145,23 @@ peerings:
     trust: spire-federation
     ingress_prefix: from/<partner>
 ```
+
+`goatbuilder.yaml` contains the generated copy consumed by goatbuilder; do not
+edit that copy. On migration, copy every operator-owned environment and peering
+field into `federation.yml`, and copy existing federation `signing_key`,
+`ca_cert` and `ca_key` paths from `secrets.federation` into the `federation:`
+block of `posture.yml`. The generator refuses content found only in the old
+output rather than silently deleting it. Once adopted, a type-sensitive digest
+covering both sources distinguishes later intentional source changes from
+output-only edits. Keep `federation.yml` when removing the last topology
+declarations, using explicit `environments: {}` and `peerings: []`. Keep
+`posture.yml` with its `store:` and remove its `federation:` block to
+intentionally remove the key/CA paths. A missing adopted source is refused when
+its generated declarations exist. Duplicate YAML keys, non-text mapping keys,
+unquoted dates and unsupported YAML scalar types are refused by path with
+GB-079. Empty, partial and null-valued federation files are refused: both keys
+and their mapping/list types are required. Run `gen-config.py --check` locally
+or wire it in the overlay; public-core CI does not currently run it.
 
 ## Presets
 
