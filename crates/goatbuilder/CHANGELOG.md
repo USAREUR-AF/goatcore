@@ -6,6 +6,90 @@ Each release is the tag `goatbuilder/v<semver>` on `main`, built and signed by
 
 ## Unreleased
 
+## 0.5.2 — 2026-11-12
+
+The federation documents corrected against the code, declared values passed
+to standup's phases as one word each, `status` read from the hosts themselves,
+an edge ingress check that now runs when the core is on its own host, and
+several smaller fixes.
+
+### Added: `status` reads real hosts
+
+`goatbuilder status <env> <component>` now reads each member group's hosts the
+way `diff` reads them, and grades each host by `verify`'s rule: the declared
+digest and a converged action. A host that cannot be read is reported as
+unknown, never as converged or not provisioned.
+
+### Fixed: declared values reach standup's phases as one word
+
+A declared state directory, AWS profile or other path is passed to each phase's
+shell as one word, exactly as declared. A value containing a space, a quote or
+`$(…)` is no longer split or run by the shell. A plain value is written exactly
+as before, so existing plans are unchanged.
+
+### Fixed: an edge's ingress check reads the core on its own host
+
+When the edge and the core run on separate hosts, the edge role's ingress check
+used to find no core, print a skip, and let phase 12 pass with a core whose only
+store was `from/**`. It now reads the core on the core host, at the
+configuration path the router was started with, and a check that cannot run
+fails phase 12 instead of skipping. **Behaviour change:** a deployment whose core
+keeps only a broad `from/**` store, or whose core cannot be read, now stops at
+phase 12.
+
+### Fixed: `validate` names GB-025 on every failing row
+
+Each failing row now starts with `GB-025:`, so `goatbuilder explain GB-025`
+applies, in the text output and in `-o json`.
+
+### Fixed: `release` and `rc.sh` print commits at a fixed length
+
+Both print a commit as 12 characters, so the two avenues print the same line
+however large the repository grows, and the release parity check compares them
+equal.
+
+### Changed: a recorded key rotation makes phase 3 run again
+
+When a key rotation leaves its record, `<work>/rotation.json`, phase 3 measures
+and signs our package again instead of being skipped on resume. Without that
+file, every phase's recorded inputs are unchanged, so an upgrade reruns
+nothing. No command writes the record yet.
+
+### Fixed: the federation documents match what the code does
+
+The operator runbook, the two-sovereigns and boundary-node tutorials, the
+design document, the reference and the roadmap were read against the release
+code and corrected. A peering names its `tunnel`, never a `transport`.
+`goatbuilder federate plan` writes the plan, and phases 1 to 9 run under
+`goatbuilder federate <partner>`. The core router's dry run comes after the
+admission is approved. `status` reads the run journal and the evidence, not
+the live peering. The run asks at phases 5, 6 and 10. The runbook now lists
+the admission settings for a core that the goat-zenoh role does not deploy,
+and gives the acceptance session's commands.
+
+### Fixed: GB-129 says when a narrower offer is refused
+
+A peering's `offer:` may narrow what it offers whenever goatbuilder generates
+its federation.toml. GB-129 now says that the narrower list is refused only
+for a hand-written federation.toml (`federation_toml: hand`), which phase 3
+offers whole.
+
+### Fixed: an interrupted phase 8 no longer leaves private keys behind
+
+Phase 8 mints new leaves in a private staging directory, `<out>/.mint-*`, and
+renames them into place. A run killed while minting left that directory, and
+the private keys in it, behind for good. The next run now removes every
+`.mint-*` entry once it holds the output directory's lock and has found no
+interrupted rotation to recover. Installed leaves, the CA certificate, the lock
+file and a rotation's retained previous set are never touched.
+
+### Changed: CI no longer depends on the Ubuntu archive
+
+When a runner cannot reach Ubuntu's mirror, the jobs that install packages
+or build images fail over to the project's own package cache, and say so in
+one line. A forced-failover self-test proves that path on a real runner.
+This changes how goatbuilder is built and checked, not the binary.
+
 ## 0.5.1 — 2026-11-11
 
 The same goatbuilder as 0.5.0. Version 0.5.0 was tagged and its binaries were
