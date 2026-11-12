@@ -468,8 +468,10 @@ pub fn derive_lite(value: &Value, checkout: Option<&Value>) -> Value {
 /// Gate row G1 (docs/design/goatlite-growth.md §6, the hand-over): the full
 /// configuration a lite one grows into, with the same values. It is what
 /// `derive_lite` computes from the `lite:` block, written as `preset: full`
-/// without that block, plus `deploy.ssh_user` from `lite.ssh_user` (and
-/// `deploy.aws_profile` from `lite.internet.aws_profile` when declared). The
+/// without that block, plus what a lite run decides from the preset, declared
+/// in `deploy:` so a full run decides the same: `ssh_user` and `owner` from
+/// `lite.ssh_user` and `lite.admin`, `cloud: none` on a LAN goatlite (else
+/// `aws_profile` from `lite.internet`), and `cross_goatnet: false`. The
 /// lite facts the full shape has no field for (host, admin, zone, disk and key
 /// choices) are already in the file set the render wrote, which the learner
 /// keeps. Refused unless the result validates: a four-fact file with no checkout
@@ -489,9 +491,21 @@ pub fn grow(value: &Value, checkout: Option<&Value>) -> Result<Value> {
         if let Some(user) = lite.get("ssh_user").and_then(Value::as_str) {
             d.entry("ssh_user").or_insert_with(|| Value::from(user));
         }
-        if let Some(profile) = lite.get("internet").and_then(|i| i.get("aws_profile")).and_then(Value::as_str) {
-            d.entry("aws_profile").or_insert_with(|| Value::from(profile));
+        if let Some(admin) = lite.get("admin").and_then(Value::as_str) {
+            d.entry("owner").or_insert_with(|| Value::from(admin));
         }
+        match lite.get("internet").and_then(|i| i.get("aws_profile")).and_then(Value::as_str) {
+            Some(profile) => {
+                d.entry("aws_profile").or_insert_with(|| Value::from(profile));
+            }
+            // A LAN goatlite declares no cloud account; growing keeps it that way.
+            None if lite.get("internet").is_none() => {
+                d.entry("cloud").or_insert_with(|| Value::from("none"));
+            }
+            None => {}
+        }
+        // A goatlite keeps to its own boxes (standup phase 14, ADR 1213).
+        d.entry("cross_goatnet").or_insert(Value::Bool(false));
     }
     let problems = problems_in(&out, None)?;
     if !problems.is_empty() {
@@ -1089,6 +1103,8 @@ mod tests {
             assert_eq!(full[key], derived[key], "{key} carries over unchanged");
         }
         assert_eq!(full["deploy"]["ssh_user"], json!("ubuntu"), "lite.ssh_user is deploy.ssh_user in the full shape");
+        assert_eq!(full["deploy"]["owner"], json!("admin@example.org"), "lite.admin is deploy.owner");
+        assert_eq!((full["deploy"]["cloud"].clone(), full["deploy"]["cross_goatnet"].clone()), (json!("none"), json!(false)));
     }
 
     /// The four-fact file of the tutorial has no repo or components of its own; growth

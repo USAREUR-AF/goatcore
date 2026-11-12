@@ -45,6 +45,27 @@ pub fn state_dir(repo: &Path) -> String {
     declared(repo).and_then(|v| deploy_field(&v, "state_dir")).unwrap_or_else(|| "~/.goat/state".to_string())
 }
 
+/// `deploy.cloud: none`: the project declares no cloud account, so no play may
+/// ask for one. `goatbuilder grow` writes it for a goatlite on its LAN
+/// (docs/design/goatlite-growth.md §6); undeclared, nothing changes.
+pub fn declares_no_cloud(repo: &Path) -> bool {
+    declared(repo).and_then(|v| deploy_field(&v, "cloud")).as_deref() == Some("none")
+}
+
+/// `deploy.owner`: the goatnet's first administrator, as `goatbuilder grow`
+/// carries it from `lite.admin`. `None` when undeclared (the standup then reads
+/// `$OWNER_EMAIL`, as before).
+pub fn deploy_owner(repo: &Path) -> Option<String> {
+    declared(repo).and_then(|v| deploy_field(&v, "owner"))
+}
+
+/// `deploy.cross_goatnet: false`: the project takes no part in the cross-goatnet
+/// surfaces, so standup phase 14 does not reach other goatnets' boxes. Only an
+/// explicit `false` counts; undeclared, phase 14 runs as before.
+pub fn declares_no_cross_goatnet(repo: &Path) -> bool {
+    declared(repo).and_then(|v| v.get("deploy")?.get("cross_goatnet")?.as_bool()) == Some(false)
+}
+
 /// `state_dir` with `~` expanded, for a path this process opens.
 pub fn state_dir_abs(repo: &Path) -> String {
     expand(&state_dir(repo))
