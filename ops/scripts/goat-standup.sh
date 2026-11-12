@@ -296,10 +296,11 @@ fi
 # read after GOAT_AWS_PROFILE and before the project's.
 AWS_PROFILE_STANDUP="${GOAT_AWS_PROFILE:-$LITE_INTERNET_AWS}"
 if [ -z "$AWS_PROFILE_STANDUP" ] && [ -f "$REPO/ops/goatbuilder/goatbuilder.yaml" ]; then
-  AWS_PROFILE_STANDUP="$(python3 - "$REPO/ops/goatbuilder/goatbuilder.yaml" <<'PY' 2>/dev/null || true
-import sys
+  if python3 -c 'import yaml' >/dev/null 2>&1; then
+    # With PyYAML the file is read as YAML, every form of it, as goatbuilder reads it.
+    AWS_PROFILE_STANDUP="$(python3 - "$REPO/ops/goatbuilder/goatbuilder.yaml" <<'PY' 2>/dev/null || true
+import sys, yaml
 try:
-    import yaml
     d = yaml.safe_load(open(sys.argv[1])) or {}
 except Exception:
     sys.exit(0)
@@ -307,6 +308,13 @@ if isinstance(d, dict):
     print(str((d.get("deploy") or {}).get("aws_profile", "")).strip())
 PY
 )"
+  else
+    # Without it, read as deploy.state_dir is (project-setting.sh): a value it
+    # cannot read the way goatbuilder does refuses the run (exit 3; it names the key).
+    ps_rc=0; AWS_PROFILE_STANDUP="$("$REPO/ops/scripts/project-setting.sh" --repo "$REPO" deploy aws_profile)" || ps_rc=$?
+    [ "$ps_rc" != 3 ] || exit 2
+    [ "$ps_rc" = 0 ] || AWS_PROFILE_STANDUP=""
+  fi
 fi
 AWS_PROFILE_STANDUP="${AWS_PROFILE_STANDUP:-default}"
 # Fresh source (contract C3): once, before phase 1 touches a host. Every play
@@ -372,6 +380,13 @@ fi
 # replication, so it applies nothing and is checked against the founder's ACL.
 # The mgmt API is the site's public_mgmt_fqdn (a joiner's is the founder's).
 ACL_SITE="$SITE"; [ "$JOINER" = 1 ] && ACL_SITE="$JOIN_FOUNDER_SITE"
+# The ACL site names the token variable phase 12 reads (<SITE>_NB_API_TOKEN), so a
+# founder site that cannot make a variable name is refused (standup.rs read_site).
+ACL_UPPER="$(printf '%s' "${ACL_SITE//-/_}" | tr '[:lower:]' '[:upper:]')"
+if [ -n "$ACL_SITE" ] && ! [[ "$ACL_UPPER" =~ ^[A-Z0-9_]+$ ]]; then
+  echo "goat-standup: join_founder_site '$ACL_SITE' in group_vars/$GROUP/vars.yml is not a site id: phase 12 reads the token variable ${ACL_UPPER}_NB_API_TOKEN named after it, so it may hold only letters, digits, - and _" >&2
+  exit 2
+fi
 MGMT_FQDN="$(grep -E '^[[:space:]]*public_mgmt_fqdn:' "$GV_FILE" 2>/dev/null | head -1 | awk '{print $2}' | tr -d '"'\''' || true)"
 # The group_vars values above as one shell word each in a planned command
 # (sh_quote / sh_word, as standup.rs writes them).
@@ -1070,7 +1085,7 @@ step 12 A "declared NetBird ACL: groups, then policies, then enforce (one play r
   "cd '$REPO/ops/ansible' && ansible-playbook -i localhost, --connection local netbird-acl-bootstrap.yml netbird-acl-cutover.yml -e target_site=$SITE -e mode=enforce -e confirm_cutover=YES -e netbird_mgmt_url=$MGMT_URL_W"
 fi
 step 12 GATE "the live NetBird account holds only the declared ACL for $ACL_SITE, and no All-group rule" \
-  "python3 '$REPO/ops/scripts/netbird-policy-posture.py' $ACL_SITE_Q --url $MGMT_URL_W --token-env $(printf '%s' "${ACL_SITE//-/_}" | tr '[:lower:]' '[:upper:]')_NB_API_TOKEN"
+  "python3 '$REPO/ops/scripts/netbird-policy-posture.py' $ACL_SITE_Q --url $MGMT_URL_W --token-env $(sh_word "${ACL_UPPER}_NB_API_TOKEN")"
 
 # Phase 12. NetBird service identities (ops/netbird/service-identities.yaml). This
 #     goatnet's group_vars decide which identities it needs; mint every missing

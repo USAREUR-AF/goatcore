@@ -322,6 +322,12 @@ fn read_site_in(repo: &Path, o: &Options, env: &SiteEnv) -> Result<Site> {
     let join_founder_site = if joiner { gv_first(&gv, "join_founder_site") } else { String::new() };
     let join_founder_group = if join_founder_site.is_empty() { String::new() } else { format!("{}_hosts", join_founder_site.replace('-', "_")) };
     let acl_site = if joiner { join_founder_site.clone() } else { site.clone() };
+    // The ACL site names the token variable phase 12 reads (<SITE>_NB_API_TOKEN),
+    // so a founder site that cannot make a variable name is refused here.
+    let upper_acl = acl_site.replace('-', "_").to_uppercase();
+    if !acl_site.is_empty() && !upper_acl.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_') {
+        return Err(anyhow!("join_founder_site {acl_site:?} in group_vars/{group}/vars.yml is not a site id: phase 12 reads the token variable {upper_acl}_NB_API_TOKEN named after it, so it may hold only letters, digits, - and _"));
+    }
     Ok(Site {
         repo: repo.display().to_string(),
         group_vars_exists: repo.join("ops/ansible/group_vars").join(&group).is_dir(),
@@ -564,7 +570,7 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
         ev.push(p(12, "A", "declared NetBird ACL: groups, then policies, then enforce (one play run)".into(), format!("cd '{r}/ops/ansible' && ansible-playbook -i localhost, --connection local netbird-acl-bootstrap.yml netbird-acl-cutover.yml -e target_site={site} -e mode=enforce -e confirm_cutover=YES -e netbird_mgmt_url={}", sh_word(&format!("https://{fqdn}")))));
     }
     let acl_upper = s.acl_site.replace('-', "_").to_uppercase();
-    ev.push(p(12, "GATE", format!("the live NetBird account holds only the declared ACL for {}, and no All-group rule", s.acl_site), format!("python3 '{r}/ops/scripts/netbird-policy-posture.py' {} --url {} --token-env {acl_upper}_NB_API_TOKEN", sh_quote(&s.acl_site), sh_word(&format!("https://{fqdn}")))));
+    ev.push(p(12, "GATE", format!("the live NetBird account holds only the declared ACL for {}, and no All-group rule", s.acl_site), format!("python3 '{r}/ops/scripts/netbird-policy-posture.py' {} --url {} --token-env {}", sh_quote(&s.acl_site), sh_word(&format!("https://{fqdn}")), sh_word(&format!("{acl_upper}_NB_API_TOKEN")))));
     ev.push(p(12, "T", "mint the NetBird service identities this goatnet needs (creates only what is missing)".into(), format!("python3 '{r}/ops/scripts/netbird-service-identities.py' {site} --group {g} --mint")));
     ev.push(p(12, "GATE", "every required NetBird service identity is present and verified".into(), format!("python3 '{r}/ops/scripts/netbird-service-identities.py' {site} --group {g} --live")));
     if !s.joiner {
