@@ -50,6 +50,24 @@
       changed_when: false
       failed_when: false
 
+    # The shared chain is read in the survey, not grepped through 2>/dev/null at
+    # removal: this link's rules are a row of the survey, and a chain that cannot be
+    # read is unknown, which stops the back-out, instead of reading as "no rules".
+    - name: peering-edge | absent | the shared clamp chain
+      ansible.builtin.command: "nft -a list chain inet goat_peering clamp"
+      register: _pbi_clamp
+      changed_when: false
+      failed_when: false
+
+    - name: peering-edge | absent | this link's clamp rules, by handle
+      ansible.builtin.set_fact:
+        _pbi_clamp_probe: "{{ _pbi_clamp | backout_probe_state('nft', 'goat_peering') }}"
+        _pbi_clamp_handles: >-
+          {{ (_pbi_clamp.stdout_lines | default([]) if (_pbi_clamp.rc | default(1)) == 0 else [])
+             | select('search', '(o|i)ifname "' ~ (_pb_names.ipsec.ifname | regex_escape) ~ '" ')
+             | select('search', '# handle [0-9]+$')
+             | map('regex_replace', '^.*# handle ([0-9]+)$', '\1') | list }}
+
     - name: peering-edge | absent | ownership
       ansible.builtin.set_fact:
         _pbi_owner: >-
@@ -70,6 +88,8 @@
                 ['ike ' ~ _pb_names.ipsec.name, (_pbi_files.results[0].stat.exists)],
                 ['interface ' ~ _pb_names.ipsec.ifname, link],
                 ['unit ' ~ _pb_names.ipsec.service, ('active' in (_pbi_unit.stdout_lines | default([]))) or ('enabled' in (_pbi_unit.stdout_lines | default([])))],
+                ['nft clamp rules for ' ~ _pb_names.ipsec.ifname,
+                 (_pbi_clamp_probe if _pbi_clamp_probe.state == 'unknown' else (_pbi_clamp_handles | length > 0))],
               ] -%}
           {%- for f in _pbi_files.results -%}
           {%-   set _ = items.append(['file ' ~ f.item, f.stat.exists]) -%}
@@ -81,14 +101,16 @@
           {%-     set present = (i[1].state == 'present') if (i[1] is mapping) else (i[1] | bool) -%}
           {%-     set state = ('not-ours' if (bad and present) else ('present' if present else 'absent')) -%}
           {%-     set action = ('kept' if state == 'not-ours' else (('removed' if _pb_apply else 'remove') if present else 'none')) -%}
-          {%-     set _ = out.append({'component': 'tunnel', 'resource': i[0], 'state': state, 'action': action, 'note': _pbi_owner}) -%}
+          {%-     set note = (_pbi_owner ~ '; handles ' ~ (_pbi_clamp_handles | join(', '))) if (i[0].startswith('nft clamp rules') and present) else _pbi_owner -%}
+          {%-     set _ = out.append({'component': 'tunnel', 'resource': i[0], 'state': state, 'action': action, 'note': note}) -%}
           {%-   endif -%}
           {%- endfor -%}
           {{ out }}
-        # Nothing is removed while the link could not be read.
+        # Nothing is removed while the link or the clamp chain could not be read.
         _pbi_remove: >-
           {{ _pbi_owner == 'ours'
-             and (_pbi_link | backout_probe_state('ip-link', _pb_names.ipsec.ifname)).state != 'unknown' }}
+             and (_pbi_link | backout_probe_state('ip-link', _pb_names.ipsec.ifname)).state != 'unknown'
+             and _pbi_clamp_probe.state != 'unknown' }}
 
     - name: peering-edge | absent | close the IKE SA and its children
       ansible.builtin.command: "swanctl --terminate --ike {{ _pb_names.ipsec.name }}"
@@ -114,22 +136,9 @@
       failed_when: false
       when: _pb_apply and (_pbi_remove | bool)
 
-    # The shared chain is read, not grepped through 2>/dev/null: a chain that cannot
-    # be read stops the back-out instead of reading as "no rules of this link".
-    - name: peering-edge | absent | the shared clamp chain
-      ansible.builtin.command: "nft -a list chain inet goat_peering clamp"
-      register: _pbi_clamp
-      changed_when: false
-      failed_when: (_pbi_clamp | backout_probe_state('nft', 'goat_peering')).state == 'unknown'
-      when: _pb_apply and (_pbi_remove | bool)
-
     - name: peering-edge | absent | remove this link's clamp rules, and only them
       ansible.builtin.command: "nft delete rule inet goat_peering clamp handle {{ item }}"
-      loop: >-
-        {{ (_pbi_clamp.stdout_lines | default([]) if (_pbi_clamp.rc | default(1)) == 0 else [])
-           | select('search', '(o|i)ifname "' ~ (_pb_names.ipsec.ifname | regex_escape) ~ '" ')
-           | select('search', '# handle [0-9]+$')
-           | map('regex_replace', '^.*# handle ([0-9]+)$', '\1') | list }}
+      loop: "{{ _pbi_clamp_handles }}"
       failed_when: false
       when: _pb_apply and (_pbi_remove | bool)
 

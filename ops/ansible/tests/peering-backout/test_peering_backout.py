@@ -273,7 +273,25 @@ class TwoPeeringsOneHost(unittest.TestCase):
 
     TUNNEL_PROBES = ("edge-xac: interface wg-fed1", "edge-xac: nft table inet goat_peering_wg_fed1",
                      "edge-xac: carrier wg-carry1", "edge-xac: interface ipsec-xaa-xac",
+                     "edge-xac: nft clamp rules for ipsec-xaa-xac",
                      "fwd: nft rules for wg-carry1 in the forwarder table")
+
+    def test_the_survey_shows_this_links_clamp_rules_and_only_them(self):
+        clamp = ('table inet goat_peering {', 'chain clamp {',
+                 'oifname "ipsec-xaa-xac" tcp flags syn tcp option maxseg size set rt mtu # handle 7',
+                 'iifname "ipsec-xaa-xac" tcp flags syn tcp option maxseg size set rt mtu # handle 8',
+                 'oifname "ipsec-xaa-xab" tcp flags syn tcp option maxseg size set rt mtu # handle 9', '}', '}')
+        rows = self.survey_with_tools({
+            "docker": 'eval "name=\\${$#}"; echo "Error response from daemon: No such container: $name" >&2; exit 1',
+            "wg": 'echo "Unable to access interface: No such device" >&2; exit 1',
+            "nft": ('case "$*" in\n'
+                    '  *"chain inet goat_peering clamp"*) cat <<\'EOF\'\n' + "\n".join(clamp) + '\nEOF\n ;;\n'
+                    '  *) ' + NFT_NOT_FOUND.replace("\n", "; ") + ' ;;\n'
+                    'esac')})
+        row = rows["edge-xac: nft clamp rules for ipsec-xaa-xac"]
+        self.assertEqual(row["state"], "present", row)
+        self.assertEqual(row["action"], "remove", row)
+        self.assertIn("handles 7, 8", row["note"], row)
 
     def test_tunnel_and_table_probes_that_fail_otherwise_are_unknown(self):
         rows = self.survey_with_tools({
