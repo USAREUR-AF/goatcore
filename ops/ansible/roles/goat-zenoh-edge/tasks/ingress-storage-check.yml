@@ -8,7 +8,11 @@
 # goat_zenoh_edge_ingress_scope_check: false turns it off, and that is reported.
 - name: edge | report disabled ingress storage inspection
   ansible.builtin.debug:
-    msg: "SKIP: ingress storage inspection is explicitly disabled; receive scopes were not verified."
+    msg: >-
+      SKIP, by decision: goat_zenoh_edge_ingress_scope_check is false, so the
+      ingress storage inspection was not run. This is not a pass: the receive
+      stores behind {{ goat_zenoh_edge_ingress_key_exprs | default([]) | join(', ') }}
+      were not verified.
   when: not (goat_zenoh_edge_ingress_scope_check | default(true) | bool)
 
 # main.yml has already looked for the core; included on its own, look here.

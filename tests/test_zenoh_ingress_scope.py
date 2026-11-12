@@ -177,7 +177,8 @@ class RolePreflight(unittest.TestCase):
     def test_disabled_check_skips_without_reading_docker(self):
         result = self.run_play('', enabled=False)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn('SKIP: ingress storage inspection is explicitly disabled', result.stdout)
+        self.assertIn('SKIP, by decision: goat_zenoh_edge_ingress_scope_check is false', result.stdout)
+        self.assertIn('This is not a pass', result.stdout)
         self.assertFalse(self.trace.exists())
         self.assertNotIn('PASS: a matching receive store', result.stdout)
 
