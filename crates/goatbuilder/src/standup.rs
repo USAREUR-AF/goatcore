@@ -2128,6 +2128,72 @@ assert_eq!(eval(&w), profile, "{}", ph.label);
         assert!(String::from_utf8_lossy(&out.stderr).contains(OWNER_VAR), "the refusal names the variable");
     }
 
+    /// Values a site's group_vars and inventory declare (the founder a joiner
+    /// joins and its group, the ACL site, the public management name, the obs
+    /// host's SSH target) reach the phases' shell as one word each, as declared.
+    #[test]
+    fn group_vars_values_reach_the_phases_without_shell_interpolation() {
+        let bad = "a$(x)`y`;z";
+        let eval = |w: &str| {
+            let out = Command::new("bash").args(["-euo", "pipefail", "-c", &format!("printf '%s' {w}")]).output().unwrap();
+            assert!(out.status.success(), "the shell takes {w} as one word");
+            String::from_utf8(out.stdout).unwrap()
+        };
+        let between = |c: &str, a: &str, b: &str| -> Option<String> { Some(c.split_once(a)?.1.split_once(b)?.0.to_string()) };
+        // A checkout with an obs host whose inventory entry carries the value too.
+        let repo = crate::testdir::path("gb-gv-words-");
+        for d in ["ops/scripts", "ops/ansible/inventory", "ops/ansible/group_vars/pasture_hosts"] {
+            std::fs::create_dir_all(repo.join(d)).unwrap();
+        }
+        let real = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../ops/scripts/inventory-hosts.py");
+        std::fs::copy(real, repo.join("ops/scripts/inventory-hosts.py")).unwrap();
+        std::fs::write(repo.join("ops/ansible/inventory/mgmt-hosts.ini"), format!("[pasture_obs_hosts]\nobs-1 ansible_host=192.0.2.9 ansible_user={bad}\n")).unwrap();
+        std::fs::write(repo.join("ops/ansible/inventory/mgmt-hosts-mesh.ini"), "").unwrap();
+        std::fs::write(repo.join("ops/ansible/group_vars/pasture_hosts/pubsub-state.yml"), "pubsub_state_repo: x\n").unwrap();
+
+        let mut seen = std::collections::BTreeSet::new();
+        for (joiner, profile) in [(true, "internet"), (true, "lan"), (false, "lan")] {
+            let mut site = lan_site(false, false);
+            site.profile = profile.into();
+            site.joiner = joiner;
+            site.obs = true;
+            site.mgmt_fqdn = bad.into();
+            site.acl_site = bad.into();
+            if joiner {
+                site.join_founder_site = bad.into();
+                site.join_founder_group = format!("{bad}_hosts");
+            }
+            let o = Options { env: "pasture", site: "pasture", profile: Some(profile), from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false, check: false };
+            for ph in phases_of(&plan(&repo, &site, &o, "R")) {
+                let c = ph.cmd.as_str();
+                let mut check = |name: &str, w: Option<String>, want: String| {
+                    if let Some(w) = w {
+                        assert_eq!(eval(&w), want, "{name} in {}", ph.label);
+                        seen.insert(name.to_string());
+                    }
+                };
+                check("acl --declared", between(c, "netbird-policy-posture.py' ", " --declared"), bad.into());
+                check("acl --url", between(c, "netbird-policy-posture.py' ", " --url"), bad.into());
+                check("--url", between(c, " --url ", " --token-env"), format!("https://{bad}"));
+                check("netbird_mgmt_url", c.split_once("-e netbird_mgmt_url=").map(|x| x.1.to_string()), format!("https://{bad}"));
+                if joiner {
+                    check("[ -n founder ]", between(c, "{ [ -n ", " ] ||"), if ph.label.contains("spock-mesh-wire") { format!("{bad}_hosts") } else { bad.into() });
+                    check("--limit", between(c, "spock-mesh-wire.yml --limit ", " -e "), format!("{bad}_hosts"));
+                    check("ls hosts", between(c, "{ ls ", " >/dev/null"), format!("inventory/hosts-{bad}.ini"));
+                    // The two relay inventories are the two words before the site inventories.
+                    let relay_words = c.contains("relay-ingress-add-site").then(|| c.split_once(" -i inventory/mgmt-hosts.ini").unwrap().0.rsplitn(3, " -i ").map(String::from).collect::<Vec<_>>());
+                    check("-i hosts", relay_words.as_ref().map(|w| w[1].clone()), format!("inventory/hosts-{bad}.ini"));
+                    check("-i alias", relay_words.as_ref().map(|w| w[0].clone()), format!("inventory/{bad}-goat-relay-alias.ini"));
+                    check("founder_site", between(c, "-e target=goat_relay_hosts -e ", " -e join_site").filter(|_| c.contains("relay-ingress-add-site")), format!("founder_site={bad}"));
+                    check("relay echo", between(c, "2>&1 || { echo ", "; exit 1; }; } && ").filter(|w| w.contains("founder relay inventory")), format!("founder relay inventory inventory/hosts-{bad}.ini missing — generate it first: inventory/generate-relays.sh {bad} terraform-{bad}"));
+                }
+                check("obs ssh", between(c, "forgejo-mint-pubsub-bot.sh' ", "      &&"), format!("{bad}@192.0.2.9"));
+            }
+        }
+        let want = ["acl --declared", "acl --url", "--url", "netbird_mgmt_url", "[ -n founder ]", "--limit", "ls hosts", "-i hosts", "-i alias", "founder_site", "relay echo", "obs ssh"];
+        assert_eq!(seen, want.iter().map(|s| s.to_string()).collect(), "every value was found in a plan");
+    }
+
     /// Not lite: no render gate, phase 4 as before; a LAN site pauses at 11 only
     /// while the token is missing, and never when it is available.
     #[test]
