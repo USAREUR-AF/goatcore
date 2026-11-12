@@ -15,7 +15,7 @@ when `cosign` was on PATH; without it, the update installed with the
 signature "not checked". Now an install without cosign enforces it too. A
 release whose signature does not verify, or that serves none, is refused
 (GB-261), and nothing is installed. Every goatbuilder release published
-with a signature (0.4.1, 0.4.2, 0.4.3, 0.5.1) verifies.
+with a signature (0.4.1, 0.4.2, 0.4.3, 0.5.1 and 0.5.3) verifies.
 
 The signature must be the release workflow's (`goatbuilder-release.yml`) in
 the repository `goatbuilder.yaml` names, at the served version's tag. The

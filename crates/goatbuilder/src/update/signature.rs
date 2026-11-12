@@ -987,7 +987,8 @@ mod tests {
     }
 
     /// Every goatbuilder release published with a signature (0.4.1, 0.4.2,
-    /// 0.4.3 and 0.5.1; 0.5.0 was tagged and never published) verifies.
+    /// 0.4.3, 0.5.1 and 0.5.3; 0.5.0 and 0.5.2 were tagged and never
+    /// published) verifies, its SCT included.
     #[test]
     fn every_published_release_signature_is_accepted() {
         for (v, sums, bundle) in [
@@ -1007,6 +1008,11 @@ mod tests {
                 include_str!("../../tests/fixtures/signature/v0.4.3/SHA256SUMS.cosign-bundle"),
             ),
             ("0.5.1", SUMS, BUNDLE),
+            (
+                "0.5.3",
+                &include_bytes!("../../tests/fixtures/signature/v0.5.3/SHA256SUMS")[..],
+                include_str!("../../tests/fixtures/signature/v0.5.3/SHA256SUMS.cosign-bundle"),
+            ),
         ] {
             let e = Expect {
                 version: v,
