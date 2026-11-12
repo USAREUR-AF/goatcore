@@ -358,6 +358,9 @@ fn driver_plan(dc: &DriverCore, partner: &str, dir: &Path) -> Result<serde_json:
 pub struct CoreLeaf {
     work: PathBuf,
     targets: Vec<(PathBuf, PathBuf)>,
+    /// The goat-zenoh role core that delivers the leaf to its host, when the
+    /// leaf is the one the role reads (`role_leaf`).
+    role: Option<super::admit_role::RoleCore>,
 }
 
 /// What a leaf path holds, and what the back-out does with it.
@@ -382,7 +385,21 @@ impl CoreLeaf {
                 .into_iter()
                 .filter_map(|(t, ours)| t.map(|t| (t, pki.join(ours))))
                 .collect(),
+            role: None,
         }
+    }
+
+    /// How many leaf paths go back to what was there, and how many are
+    /// removed.
+    fn counts(&self) -> (usize, usize) {
+        let plans: Vec<Leaf> = self.targets.iter().map(|(t, o)| self.plan(t, o)).collect();
+        (
+            plans
+                .iter()
+                .filter(|l| matches!(l, Leaf::Restore(_)))
+                .count(),
+            plans.iter().filter(|l| matches!(l, Leaf::Remove)).count(),
+        )
     }
 
     /// The earliest record of `target` in this peering's admission runs, in
@@ -553,13 +570,14 @@ pub fn role_leaf(
         Some(r) => super::admit_leaf::router_leaf(repo, r),
         None => (None, None),
     };
-    let leaf = CoreLeaf::new(
+    let mut leaf = CoreLeaf::new(
         work,
         env("FED_CORE_CERT")
             .map(PathBuf::from)
             .or(cert.map(|c| c.0)),
         env("FED_CORE_KEY").map(PathBuf::from).or(key.map(|k| k.0)),
     );
+    leaf.role = role;
     Ok((!leaf.targets.is_empty()).then_some(leaf))
 }
 
@@ -1207,7 +1225,16 @@ pub fn backout_with(
     ));
 
     let survey_cmd = play_cmd(repo, &t, &[]);
-    let apply_cmd = play_cmd(repo, &t, &[("peering_backout_apply", "true".into())]);
+    // A leaf removed on this machine is deleted on the role core's host by
+    // the play, which compares it with the peering's own first.
+    let mut apply_extra = vec![("peering_backout_apply", "true".to_string())];
+    if role_leaf
+        .as_ref()
+        .is_some_and(|l| l.role.is_some() && l.counts().1 > 0)
+    {
+        apply_extra.push(("peering_backout_core_leaf_remove", "true".into()));
+    }
+    let apply_cmd = play_cmd(repo, &t, &apply_extra);
     if o.mock.is_some() {
         for (n, (label, cmd)) in [
             (
@@ -1587,6 +1614,7 @@ pub fn backout_with(
     // nothing). On the deployment's own route driver_apply did it already.
     if core_done {
         if let Some(leaf) = driver.as_ref().map(|d| &d.leaf).or(role_leaf.as_ref()) {
+            let (restored, _) = leaf.counts();
             let todo: Vec<String> = leaf
                 .rows()
                 .into_iter()
@@ -1595,7 +1623,32 @@ pub fn backout_with(
                 .collect();
             let bdir = base.join("core/driver/leaf/backup");
             let mut backups = Vec::new();
-            match leaf.take_back(&mut backups, &bdir) {
+            let taken = leaf.take_back(&mut backups, &bdir);
+            // The host's copy: the role's play delivers what was put back,
+            // the route admission took (dry run, then deploy).
+            let taken = match (&taken, &leaf.role) {
+                (Ok(()), Some(role)) if restored > 0 => {
+                    let mut ok = true;
+                    for check in [true, false] {
+                        let cmd = role.play_cmd(repo, check);
+                        checks.push(row("cmd", true, cmd.clone(), None));
+                        if !exec(repo, &cmd)? {
+                            ok = false;
+                            break;
+                        }
+                    }
+                    if ok {
+                        taken
+                    } else {
+                        Err(format!(
+                            "the role's play on [{}] did not deliver the leaf put back",
+                            role.group
+                        ))
+                    }
+                }
+                _ => taken,
+            };
+            match taken {
                 Ok(()) if todo.is_empty() => {}
                 Ok(()) => checks.push(row(
                     "core leaf",
@@ -2374,7 +2427,10 @@ mod tests {
         super::super::admit::publish(b"KEY-OF-HELLO-ALLY", &key, &mut backups, &bdir).unwrap();
         // The hosts: every play answers, with nothing of the peering left.
         let w = work.clone();
-        let mut exec = move |_: &Path, _: &str| -> Result<bool> {
+        let ran = std::rc::Rc::new(std::cell::RefCell::new(Vec::<String>::new()));
+        let r2 = ran.clone();
+        let mut exec = move |_: &Path, cmd: &str| -> Result<bool> {
+            r2.borrow_mut().push(cmd.to_string());
             let survey = Path::new(&w).join("backout/survey");
             std::fs::create_dir_all(&survey).unwrap();
             std::fs::write(
@@ -2409,6 +2465,26 @@ mod tests {
         );
         let converged = r.checks.iter().find(|c| c.name == "converged").unwrap();
         assert!(converged.ok, "{:?}", r.checks);
+        // The core host's copy follows, the way admission delivered it: the
+        // role's play, dry run then deploy, delivers the certificate put back;
+        // the key placed where nothing was is deleted on the host by the
+        // back-out play, told so.
+        let ran = ran.borrow();
+        let plays: Vec<&String> = ran
+            .iter()
+            .filter(|c| c.contains("zenoh-deploy.yml"))
+            .collect();
+        assert_eq!(plays.len(), 2, "the role's dry run and deploy: {ran:?}");
+        assert!(
+            plays[0].contains("--check") && !plays[1].contains("--check"),
+            "{plays:?}"
+        );
+        assert!(
+            ran.iter()
+                .any(|c| c.contains("peering_backout_apply='true'")
+                    && c.contains("-e peering_backout_core_leaf_remove='true'")),
+            "{ran:?}"
+        );
     }
 
     #[test]
