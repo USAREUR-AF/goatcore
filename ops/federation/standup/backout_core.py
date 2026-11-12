@@ -38,6 +38,14 @@ this tool reports them (`role_declared`) and removes nothing for them.
   backout_core.py plan --partner P --seed S --org O --live L --out-dir D [--us U]
 
 writes D/org.candidate, D/live.candidate and D/plan.json and prints plan.json.
+
+  backout_core.py plan --partner P --org O --out-dir D [--us U]
+
+is the shape where only the org fragment is at hand (admission through
+FED_CORE_ACL_ORG with no seed or assembled output): it writes D/org.candidate and
+D/plan.json, proves the candidate removes only P's lines, and says in plan.json
+(`live_proof`) that the live = assemble(seed, org) proof was not possible. --seed and
+--live are given together or not at all.
 Exit 0 with a plan (possibly "absent"), 1 refused (plan.json says why), 2 usage.
 It reads three files and writes only into D.
 """
@@ -383,19 +391,57 @@ def run_plan(partner, seed, org, live, out_dir, us=None):
     return result, 0
 
 
+ORG_ONLY_PROOF = "not possible: no seed or live configuration given"
+
+
+def run_plan_org(partner, org, out_dir, us=None):
+    """The org fragment alone: the candidate and its proof that only P's lines go."""
+    os.makedirs(out_dir, exist_ok=True)
+    result = {"schema": "goat-federation-backout-core/v1", "partner": partner, "refused": None,
+              "live_proof": ORG_ONLY_PROOF}
+    try:
+        with open(org, encoding="utf-8") as f:
+            org_text = f.read()
+    except OSError as e:
+        result["refused"] = f"cannot read the org fragment: {e}"
+        return result, 1
+    # sovereign-<partner> ids are the role's, in the seed and the live file, which are
+    # not at hand: whether the role also declares P cannot be said here.
+    result["role_declared"] = None
+    try:
+        candidate, rep = plan(org_text, partner, us)
+    except ValueError as e:
+        result["refused"] = str(e)
+        return result, 1
+    result.update(rep)
+    if not is_line_subsequence(candidate, org_text):
+        result["refused"] = "internal: the candidate is not the old fragment with lines removed"
+        return result, 1
+    with open(os.path.join(out_dir, "org.candidate"), "w", encoding="utf-8") as f:
+        f.write(candidate)
+    result["org_sha256"] = sha256(org_text)
+    result["org_candidate_sha256"] = sha256(candidate)
+    return result, 0
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("plan")
     p.add_argument("--partner", required=True)
-    p.add_argument("--seed", required=True)
+    p.add_argument("--seed")
     p.add_argument("--org", required=True)
-    p.add_argument("--live", required=True)
+    p.add_argument("--live")
     p.add_argument("--out-dir", required=True)
     p.add_argument("--us")
     a = ap.parse_args(argv)
+    if (a.seed is None) != (a.live is None):
+        p.error("--seed and --live are given together, or neither (--org alone)")
     try:
-        result, rc = run_plan(a.partner, a.seed, a.org, a.live, a.out_dir, a.us)
+        if a.seed is None:
+            result, rc = run_plan_org(a.partner, a.org, a.out_dir, a.us)
+        else:
+            result, rc = run_plan(a.partner, a.seed, a.org, a.live, a.out_dir, a.us)
     except OSError as e:
         result, rc = {"schema": "goat-federation-backout-core/v1", "partner": a.partner,
                       "refused": f"cannot read an input: {e}"}, 1

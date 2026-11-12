@@ -12,7 +12,7 @@
 # holds the rules for its resources and refuses to touch one that another peering
 # can be shown to hold.
 #
-# Three switches, all off by default, so a run with none of them changes nothing
+# Four switches, all off by default, so a run with none of them changes nothing
 # on any host and only reports what exists:
 #   peering_backout_id           the partner (required)
 #   peering_backout_apply        remove the edge, tunnel, SPIRE, republisher and
@@ -22,6 +22,9 @@
 #                                peering_backout_core_expect, the candidate digest
 #                                the survey printed, so the core gets exactly what
 #                                was reviewed
+#   peering_backout_core_by_driver  the core's admission was placed from the driver
+#                                (FED_CORE_*): the driver backs it out, and the core
+#                                tasks write one row and run nothing on the core host
 #
 # Run by hand with the same -e the driver passes:
 #   cd ops/ansible

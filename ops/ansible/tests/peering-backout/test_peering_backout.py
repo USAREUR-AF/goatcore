@@ -261,6 +261,32 @@ class TwoPeeringsOneHost(unittest.TestCase):
             with self.subTest(resource=resource):
                 self.assertEqual(rows[resource]["state"], "present", rows[resource])
                 self.assertEqual(rows[resource]["action"], "remove", rows[resource])
+    def test_a_core_backed_out_by_the_driver_is_one_row_and_nothing_runs_on_it(self):
+        # FED_CORE_*: admission placed the core's fragment from the driver, so the
+        # driver backs it out. The play reports that in one row and reads nothing on
+        # the core host, even with core paths that do not exist.
+        work = f"{self.tmp}/work/xac"
+        missing = f"{self.tmp}/no-such-core"
+        r = run(["ansible-playbook", "-i", self.inv, "--limit", "xac_core",
+                 str(ANSIBLE / "peering-backout.yml"),
+                 "-e", "peering_backout_id=xac", "-e", f"fed_work={work}", "-e", "fed_edge_group=xac_edge",
+                 "-e", "ansible_become=false", "-e", "peering_backout_core_by_driver=true",
+                 "-e", f"peering_backout_core_seed={missing}/seed", "-e", f"peering_backout_core_org={missing}/org",
+                 "-e", f"peering_backout_core_config={missing}/live"], self.tmp)
+        self.assertEqual(r.returncode, 0, r.stdout[-6000:] + r.stderr[-2000:])
+        rows = jload(f"{work}/backout/survey/core-xac.json")["rows"]
+        core = [row for row in rows if row["component"] == "core admission"]
+        self.assertEqual(core, [{"component": "core admission", "resource": "the driver (FED_CORE_*)",
+                                 "state": "present", "action": "kept",
+                                 "note": "surveyed and removed by the driver, the way admission placed it"}])
+        # Every core-admission task but the one that writes that row was skipped.
+        ran = []
+        for section in r.stdout.split("\nTASK [")[1:]:
+            name, _, body = section.partition("]")
+            if name.startswith("core | absent |") and re.search(r"^(ok|changed|fatal|failed): \[core-xac", body, re.M):
+                ran.append(name)
+        self.assertEqual(ran, ["core | absent | the core is backed out by the driver"], r.stdout[-4000:])
+        self.assertFalse(os.path.exists(f"{work}/backout/core/core-xac"))
 
     def test_a_survey_without_the_rendered_values_or_agreement_still_runs(self):
         # A peering backed out before phase 9: no agreement, no applied values.
