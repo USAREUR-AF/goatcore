@@ -686,8 +686,14 @@ exchange() { # $1 the side that ran phase 5 first, $2 the other side, $3 avenue,
   for s in "$first" "$second"; do
     them="$([ "$s" = "$first" ] && echo "$second" || echo "$first")"
     # A per-counterparty slot exists where this side publishes one: goatbuilder's phase 5 by
-    # default, or the script avenue when PERCP names the pair; one slot otherwise.
-    [ "$(side_avenue "$s" "$first" "$avenue" "")" = goatbuilder ] || percp "$s" "$them" || continue
+    # default, or the script avenue when PERCP names the pair. A side that publishes one slot
+    # records both checks as not applicable, with why, so the record shows them.
+    if [ "$(side_avenue "$s" "$first" "$avenue" "")" != goatbuilder ] && ! percp "$s" "$them"; then
+      local why="$s publishes one slot (script avenue without PERCP for $s:$them)"
+      rec "s$n-directory-slot-$s-for-$them-holds-$s-package-not-applicable" -- echo "not applicable: $why"
+      rec "s$n-$s-placed-$them-package-from-its-slot-not-applicable" -- echo "not applicable: $why"
+      continue
+    fi
     slot_holds_ours "$n" "$s" "$them"
     rec "s$n-$s-placed-$them-package-from-its-slot" -- docker exec "$(drv_host "$s")" sh -c \
       "test ! -e /var/lib/goat-federation/$them/theirs.pointer.json || { echo 'held behind a pointer:'; cat /var/lib/goat-federation/$them/theirs.pointer.json; exit 1; }; echo 'no theirs.pointer.json'"
