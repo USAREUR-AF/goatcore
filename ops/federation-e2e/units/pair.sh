@@ -94,6 +94,9 @@ pair_persistent_reception() {
   done
   # The receiving core restarts (a host reboot, an upgrade): its store's interest must reach
   # the edge again by itself. Nothing restarts the edge; a fresh value must be stored anyway.
+  # Until that interest is back (seconds), a release has no route and Zenoh drops it silently
+  # (docs/design/zenoh-brokerless-consequences.md, row 4), so a fresh value is released every
+  # 2 s for 60 s and the first one stored passes, with how long the route took to return.
   local edge_before edge_after
   for s in "$first" "$second"; do
     them="$(other "$s")"; nonce="pr$(date +%s)$RANDOM"
@@ -104,7 +107,9 @@ pair_persistent_reception() {
     rec "s$n-$them-core-router-restarted" -- docker exec "$HP-$them-core" docker restart "$them-zenoh-router"
     rec "s$n-$s-to-$them-stored-after-the-receiving-core-restarts" -- bash -c \
       "for _ in \$(seq 1 60); do curl -s -m 2 -o /dev/null 'http://$(core_ip "$them"):8000/@/**' && break; sleep 1; done
-       put_release $s all $them $nonce >/dev/null; for _ in \$(seq 1 60); do v=\$(stored_at $them from/$s/all/$nonce); [ \"\$v\" = $nonce ] && { echo stored after the core restart: \$v; exit 0; }; sleep 1; done
+       t0=\$(date +%s); i=0
+       for _ in \$(seq 1 30); do i=\$((i + 1)); k=$nonce-\$i; put_release $s all $them \$k >/dev/null; sleep 2
+         v=\$(stored_at $them from/$s/all/\$k); [ \"\$v\" = \"\$k\" ] && { echo \"stored after the core restart: \$v, release \$i, \$((\$(date +%s) - t0)) s after the core answered\"; exit 0; }; done
        echo 'not stored at $them after its core restarted (edge not restarted): from/$s/all/$nonce'
        b=\$(cat '$WORK/pr-before-restart-$s' 2>/dev/null)
        echo \"--- the value stored before the restart, from/$s/all/\$b, read now: '\$(stored_at $them from/$s/all/\$b)' (expected \$b)\"
