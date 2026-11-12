@@ -336,3 +336,49 @@ fn every_release_is_pinned_for_each_platform() {
     }
     assert!(include_str!("upgrade/fetch.sh").contains("releases.sha256"));
 }
+
+/// Every line of releases.sha256 reads the same to each of its readers
+/// (fetch.sh splits on whitespace, released.rs on two spaces, and the
+/// compatibility check reads the same file): 64 lowercase hex characters, two
+/// spaces, then `v<MAJOR>.<MINOR>.<PATCH>/goatbuilder-<linux|darwin>-<amd64|arm64>`,
+/// with no path twice.
+#[test]
+fn every_pin_line_has_the_one_format() {
+    let text = include_str!("upgrade/releases.sha256");
+    let mut seen = std::collections::BTreeSet::new();
+    for (n, line) in text.lines().enumerate() {
+        let at = || format!("releases.sha256 line {}: {line:?}", n + 1);
+        let (sum, path) = line.split_once("  ").unwrap_or_else(|| panic!("{}", at()));
+        assert!(
+            sum.len() == 64
+                && sum
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
+            "{}",
+            at()
+        );
+        let (version, asset) = path.split_once('/').unwrap_or_else(|| panic!("{}", at()));
+        let core = version
+            .strip_prefix('v')
+            .unwrap_or_else(|| panic!("{}", at()));
+        let parts: Vec<&str> = core.split('.').collect();
+        assert!(
+            parts.len() == 3
+                && parts
+                    .iter()
+                    .all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit())),
+            "{}",
+            at()
+        );
+        assert!(
+            ["linux-amd64", "linux-arm64", "darwin-amd64", "darwin-arm64"]
+                .iter()
+                .any(|p| asset == format!("goatbuilder-{p}")),
+            "{}",
+            at()
+        );
+        assert!(seen.insert(path.to_string()), "{} is pinned twice", path);
+        assert_eq!(pin(version, asset).as_deref(), Some(sum), "{}", at());
+    }
+    assert!(!seen.is_empty());
+}
