@@ -318,15 +318,12 @@ async fn ingest_loop(
                     // A new key over the distinct-keys ceiling is data that will
                     // never cross: an operator must see it, so it warns (rate-limited
                     // in the policy; the held-back refusals are counted into the next).
-                    policy::Refusal::CardinalityShed { limit } => match shed_warning {
-                        Some(held) => warn!(
-                            staging_key = staging_key.as_str(),
-                            limit,
-                            "{}",
-                            policy::cardinality_shed_message(limit, held)
-                        ),
-                        None => debug!(staging_key = staging_key.as_str(), "refused: {r}"),
-                    },
+                    policy::Refusal::CardinalityShed { limit } => policy::log_cardinality_shed(
+                        release_prefix.as_str(),
+                        staging_key.as_str(),
+                        limit,
+                        shed_warning,
+                    ),
                     // The rate and size sheds repeat by nature. The counter is the
                     // repeatable observable; the log would be a firehose.
                     _ => debug!(staging_key = staging_key.as_str(), "refused: {r}"),
