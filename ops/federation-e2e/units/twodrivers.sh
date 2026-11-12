@@ -74,5 +74,112 @@ unit_main() {
     rec "td-$s-edge-driver-offers-side-edge" --expect-in="--side" -- docker exec "$HP-$s-edrv" goatbuilder federate --help
   done
   [ "$FAILS" = "$f0" ] || die "the two-driver run is not built: the controller's phase 1 gives no hand-off to an edge driver (docs/design/federation-two-drivers.md, What has to be built)"
-  die "the hand-off sequence after phase 1 is written once the hand-off object is in the contract"
+  for s in "$A" "$B"; do td_follow "$s" "$(other "$s")"; done
+  td_end_state
 }
+
+TD_HANDOFF="$HERE/lib/handoff.py"
+
+# The controller's goatbuilder, as an operator runs it there; $1 us, $2 them, then arguments.
+td_ctl() {
+  local s="$1" them="$2"; shift 2
+  docker exec -e "FED_WORK=/var/lib/goat-federation/$them" -e HOME=/root -e GOAT_AWS_MODE=none -w /opt/goat \
+    "$HP-$s-ops" goatbuilder -C /opt/goat --yes "$@"
+}
+# The edge driver's, the same way.
+td_edge() {
+  local s="$1" them="$2"; shift 2
+  docker exec -e "FED_WORK=/var/lib/goat-federation/$them" -e HOME=/root -w /opt/goat "$HP-$s-edrv" goatbuilder -C /opt/goat --yes "$@"
+}
+
+# The edge driver's checkout at the controller's commit: a bundle of the controller's checkout,
+# fetched and checked out on the edge driver (the lab's origin is read-only to both).
+td_sync_checkout() { # $1 us, $2 commit
+  local s="$1" c="$2" b="$WORK/$1/td-checkout.bundle"
+  docker exec "$HP-$s-ops" git -C /opt/goat bundle create /tmp/td.bundle --all >/dev/null 2>&1
+  docker cp -q "$HP-$s-ops:/tmp/td.bundle" "$b"
+  docker exec "$HP-$s-edrv" sh -c "[ -d /opt/goat/.git ] || git clone -q /srv/goat.git /opt/goat"
+  docker cp -q "$b" "$HP-$s-edrv:/tmp/td.bundle"
+  docker exec "$HP-$s-edrv" sh -c "cd /opt/goat && git fetch -q /tmp/td.bundle '+refs/*:refs/remotes/td/*' && git checkout -q --detach '$c' && git status --porcelain | grep -q . && exit 1 || exit 0"
+}
+
+# One side, from phase 1 to the end, following every hand-off the command gives.
+td_follow() { # $1 us, $2 them
+  local s="$1" them="$2" i=0 out nx way run_on cmd commit res code imp thn rp f0
+  out="$RECORD/td-$s-ctl-0.json"
+  rec "td-$s-controller-run" -- bash -c "td_ctl '$s' '$them' -o json federate '$them' --as '$s' > '$out'; rc=\$?; tail -c 2000 '$out'; exit \$rc"
+  while [ "$i" -lt 20 ]; do
+    i=$((i + 1))
+    nx="$(python3 "$TD_HANDOFF" next "$out")" || { rec "td-$s-handoff-$i-reads" -- false; return 0; }
+    run_on="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["run_on"] or "")' "$nx")"
+    [ -n "$run_on" ] || { echo "$s: no hand-off after $((i - 1)) hand-off(s)" >> "$RECORD/td-$s-follow.txt"; return 0; }
+    printf '%s\n' "$nx" >> "$RECORD/td-$s-handoffs.jsonl"
+    [ "$run_on" = edge ] || { rec "td-$s-handoff-$i-run-on-$run_on" -- bash -c "echo 'a controller-side hand-off from the controller itself: $nx'; exit 1"; return 0; }
+    cmd="$(python3 -c 'import json,sys; print(json.dumps(json.loads(sys.argv[1])["command"]))' "$nx")"
+    commit="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["commit"])' "$nx")"
+    # The controller's tree is clean before a hand-off: the command emits none otherwise.
+    rec "td-$s-handoff-$i-controller-clean" -- docker exec "$HP-$s-ops" sh -c "cd /opt/goat && test -z \"\$(git status --porcelain)\" && git rev-parse HEAD | grep -qx '$commit'"
+    rec "td-$s-handoff-$i-edge-at-the-commit" -- bash -c "td_sync_checkout '$s' '$commit'"
+    : > "$RECORD/td-$s-carry-mismatch.txt"
+    # Each carried work file, copied to the same path under the edge driver's <work> and checked.
+    python3 -c 'import json,sys; [print(c["file"], c["sha256"]) for c in json.loads(sys.argv[1])["carry"] if c["in"] == "work"]' "$nx" | while read -r f h; do
+      docker cp -q "$HP-$s-ops:/var/lib/goat-federation/$them/$f" "$WORK/$s/td-carry"
+      docker exec "$HP-$s-edrv" mkdir -p "/var/lib/goat-federation/$them/$(dirname "$f")"
+      docker cp -q "$WORK/$s/td-carry" "$HP-$s-edrv:/var/lib/goat-federation/$them/$f"
+      [ "$(sha256sum "$WORK/$s/td-carry" | cut -d' ' -f1)" = "$h" ] || echo "carry $f: sha256 differs" >> "$RECORD/td-$s-carry-mismatch.txt"
+    done
+    rec "td-$s-handoff-$i-carry-matches" -- bash -c "[ ! -s '$RECORD/td-$s-carry-mismatch.txt' ] || { cat '$RECORD/td-$s-carry-mismatch.txt'; exit 1; }"
+    way="$RECORD/td-$s-edge-$i.json"
+    rec "td-$s-handoff-$i-edge-ran" -- bash -c \
+      "docker exec -e FED_WORK=/var/lib/goat-federation/$them -e HOME=/root -w /opt/goat $HP-$s-edrv \$(python3 -c 'import json,shlex,sys; print(shlex.join(json.loads(sys.argv[1])))' '$cmd') -o json > '$way'; rc=\$?; tail -c 2000 '$way'; exit \$rc"
+    # The confirm code from the edge run's own output, and nothing else.
+    f0="$FAILS"
+    rec "td-$s-handoff-$i-way-back" -- python3 "$TD_HANDOFF" wayback "$way"
+    [ "$FAILS" = "$f0" ] || return 0
+    res="$(python3 "$TD_HANDOFF" wayback "$way")"
+    rp="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["result_path"])' "$res")"
+    code="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["confirm_code"])' "$res")"
+    docker cp -q "$HP-$s-edrv:$rp" "$WORK/$s/td-result-$i"
+    docker cp -q "$WORK/$s/td-result-$i" "$HP-$s-ops:/tmp/td-result-$i"
+    imp="$(python3 "$TD_HANDOFF" fill "$(python3 -c 'import json,sys; print(json.dumps(json.loads(sys.argv[1])["import"]))' "$nx")" --result "/tmp/td-result-$i" --code "$code")"
+    thn="$(python3 -c 'import json,sys; print(json.dumps(json.loads(sys.argv[1])["then"]))' "$nx")"
+    rec "td-$s-handoff-$i-imported" -- bash -c \
+      "docker exec -e FED_WORK=/var/lib/goat-federation/$them -e HOME=/root -w /opt/goat $HP-$s-ops \$(python3 -c 'import json,shlex,sys; print(shlex.join(json.loads(sys.argv[1])))' '$imp')"
+    out="$RECORD/td-$s-ctl-$i.json"
+    rec "td-$s-handoff-$i-then" -- bash -c \
+      "docker exec -e FED_WORK=/var/lib/goat-federation/$them -e HOME=/root -e GOAT_AWS_MODE=none -w /opt/goat $HP-$s-ops \$(python3 -c 'import json,shlex,sys; print(shlex.join(json.loads(sys.argv[1])))' '$thn') -o json > '$out'; rc=\$?; tail -c 2000 '$out'; exit \$rc"
+  done
+  rec "td-$s-hand-offs-ended" -- bash -c "echo 'more than 20 hand-offs on $s'; exit 1"
+}
+
+# The contract's end state, once both sides have followed every hand-off.
+td_end_state() {
+  local s them
+  for s in "$A" "$B"; do
+    them="$(other "$s")"
+    td_ctl "$s" "$them" -o json federate status "$them" > "$RECORD/td-$s-status.json" 2>&1 || true
+    rec "td-$s-controller-status-at-phase-14" -- python3 - "$RECORD/td-$s-status.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1])); ps = (d.get("peerings") or [{}])[0].get("phases", [])
+p14 = [x for x in ps if x.get("phase") == 14]
+print(p14[-1] if p14 else "no phase 14 in the status")
+sys.exit(0 if p14 and p14[-1].get("outcome") == "passed" else 1)
+PY
+    rec "td-$s-controller-journal-holds-every-phase-and-edge-digest" -- python3 - "$RECORD/td-$s-status.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1])); ps = (d.get("peerings") or [{}])[0].get("phases", [])
+passed = {x.get("phase") for x in ps if x.get("outcome") == "passed"}
+missing = [n for n in range(1, 15) if n not in passed]
+edge = {x.get("phase") for x in ps if x.get("edge_result_sha256") or x.get("imported_sha256")}
+print("not passed:", missing, "; phases with an imported edge result:", sorted(edge))
+sys.exit(0 if not missing and {1, 2, 3, 11, 12, 13, 14} <= edge else 1)
+PY
+    rec "td-acceptance-as-$s-with-$them" --expect-in "acceptance-counts:" --expect-in "skip=0" --expect-in "fail=0" \
+      --expect-not-in "ACCEPTANCE FAILED" --expect-not-in "ACCEPTANCE INCOMPLETE" -- bash -c "cat '$RECORD'/td-$s-ctl-*.json '$RECORD'/td-$s-edge-*.json 2>/dev/null | tail -c 20000"
+  done
+  # The edge's leaf keys were made on the edge driver: none is on a controller.
+  rec "td-private-keys-stay-where-they-were-made" -- bash -c \
+    "bad=0; for s in $A $B; do o=\$(other \$s); l=\$(docker exec $HP-\$s-ops sh -c \"ls /var/lib/goat-federation/\$o/pki/*outward-key.pem /var/lib/goat-federation/\$o/pki/*inward-key.pem 2>/dev/null\"); [ -z \"\$l\" ] || { echo \"\$s controller holds edge leaf keys: \$l\"; bad=1; }; done; exit \$bad"
+  rec "td-edge-half-killed-and-resumed" -- bash -c "echo 'the kill of an edge half is measured once the hand-offs run end to end'; exit 1"
+}
+export -f td_ctl td_edge td_sync_checkout
