@@ -16,6 +16,10 @@ federation in goatbuilder: ADR 1225 (`federation-belongs-to-goatbuilder-one-comm
 
 Status: measured — the federation end-to-end test drives both sides with goatbuilder federate alone (run up-4b1adc18cc3b-20261111T102642).
 
+To measure one peering between two goatnets that already run, with the released binary (the
+goatbuilder 1.0 gate's row B9), follow [federation-between-two-standing-goatnets.md](federation-between-two-standing-goatnets.md),
+which orders the steps below and says what to keep.
+
 Step 1 describes the procedure: `goatbuilder federate <partner>`, and its stages `plan`, `deploy`,
 `test` and `status`. This page teaches only `goatbuilder federate`. The earlier method is described
 in one place, [The earlier method](#the-earlier-method).
