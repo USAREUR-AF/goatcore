@@ -163,6 +163,21 @@ jobs:
           set -o pipefail
           cargo test -p goatbuilder --test flows -- --nocapture 2>&1 | tee /tmp/flows.log
           if grep -q '^skipped:' /tmp/flows.log; then echo "::error::a flow skipped for missing Python deps"; exit 1; fi
+      # Gate row E1: a deployment made with each released 0.x binary continues on
+      # this build. The released binaries come from a cache keyed on their pinned
+      # checksums; only a cache miss downloads, and fetch.sh refuses a download
+      # whose SHA-256 is not the pin. REQUIRED=1: a missing binary fails the job.
+      - name: Cache the released goatbuilder binaries the upgrade test runs
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/goatbuilder-upgrade
+          key: goatbuilder-upgrade-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('crates/goatbuilder/tests/upgrade/releases.sha256') }}
+      - name: Fetch the released binaries, checked against their pins
+        run: goatbuilder/tests/upgrade/fetch.sh ~/.cache/goatbuilder-upgrade
+      - name: cargo test (upgrade, gate row E1)
+        env:
+          GOATBUILDER_UPGRADE_REQUIRED: '1'
+        run: GOATBUILDER_UPGRADE_DIR="$HOME/.cache/goatbuilder-upgrade" cargo test -p goatbuilder --test upgrade
       - name: Every message has a translation in every shipped language
         working-directory: .
         run: |
