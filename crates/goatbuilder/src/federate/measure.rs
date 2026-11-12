@@ -27,6 +27,12 @@
 //! does not name a host this can reach, GB-111 SSH to a host failed, GB-112
 //! the host wants a sudo password, GB-113 no core router to measure.
 //!
+//! With two drivers (a site where no one machine reaches both hosts), the
+//! measurement runs in two halves: `--side edge` measures only the edge and
+//! writes [`EdgeHalf`] to a file, and `--side core` measures only the core and
+//! [`join`]s that file's half before init signs. GB-114 refuses an edge half
+//! that cannot be joined. The one-machine run is the two halves joined.
+//!
 //! docs/design/federation-router-discovery.md is the design.
 
 use std::path::Path;
@@ -592,8 +598,12 @@ pub fn hosts(
 /// instead of becoming two underived values: the operator can act on it.
 /// A version probe that fails on a router that WAS found stays an underived
 /// value for `init` to report, as it always has.
-fn router_refusal(m: &Measured, choice: &RouterChoice, core: &Target) -> Result<()> {
-    let Err(why) = &m.fabric_fips_image.outcome else {
+fn router_refusal(
+    fips: &derive::Derived<bool>,
+    choice: &RouterChoice,
+    core: &Target,
+) -> Result<()> {
+    let Err(why) = &fips.outcome else {
         return Ok(());
     };
     let looked = match choice {
@@ -610,10 +620,66 @@ fn router_refusal(m: &Measured, choice: &RouterChoice, core: &Target) -> Result<
     ))
 }
 
-/// Measure the edge and the core for phase 3. Both hosts are reached first,
-/// so a host that cannot be reached is one refusal with its fix, not a list of
-/// underived values. `interface` is the declaration's federation interface,
-/// when the package offers a transport.
+/// What phase 3 measures on the edge: the transports, the PQC layer, and the
+/// federation interface's public key and MTU (`goat_federation::derive`'s edge
+/// reads, in its order).
+#[derive(Debug, Clone)]
+pub struct EdgeHalf {
+    pub transports: derive::Derived<Vec<String>>,
+    pub pqc_capable: derive::Derived<bool>,
+    pub public_key: Option<derive::Derived<String>>,
+    pub interface_mtu: Option<i64>,
+}
+
+/// What phase 3 measures on the core: the router's FIPS image and version,
+/// and the SPIRE server's trust domain.
+#[derive(Debug, Clone)]
+pub struct CoreHalf {
+    pub fabric_fips_image: derive::Derived<bool>,
+    pub fabric_version: derive::Derived<String>,
+    pub spire_trust_domain: Option<derive::Derived<String>>,
+}
+
+/// The edge half, read through `edge`.
+pub fn edge_half(edge: &dyn Probe, interface: Option<&str>) -> EdgeHalf {
+    EdgeHalf {
+        transports: derive::transports_on(edge),
+        pqc_capable: derive::pqc_capable_on(edge),
+        public_key: interface.map(|i| derive::transport_public_key_on(edge, i)),
+        interface_mtu: interface.and_then(|i| derive::interface_mtu_on(edge, i)),
+    }
+}
+
+/// The core half, read through `core`.
+pub fn core_half(core: &dyn Probe, router: RouterTarget, spire_conf: Option<&str>) -> CoreHalf {
+    let (fabric_fips_image, fabric_version) =
+        derive::fabric_capabilities_on(core, router, RUNTIMES, ROUTER_KNOB);
+    CoreHalf {
+        fabric_fips_image,
+        fabric_version,
+        spire_trust_domain: spire_conf.map(|p| derive::spire_trust_domain_on(core, p)),
+    }
+}
+
+/// The two halves, as the one measurement `init` signs.
+pub fn join(edge: EdgeHalf, core: CoreHalf) -> Measured {
+    Measured {
+        transports: edge.transports,
+        fabric_fips_image: core.fabric_fips_image,
+        fabric_version: core.fabric_version,
+        pqc_capable: edge.pqc_capable,
+        public_key: edge.public_key,
+        interface_mtu: edge.interface_mtu,
+        spire_trust_domain: core.spire_trust_domain,
+    }
+}
+
+/// Measure the edge and the core for phase 3, from one machine that reaches
+/// both. Both hosts are reached first, so a host that cannot be reached is one
+/// refusal with its fix, not a list of underived values. `interface` is the
+/// declaration's federation interface, when the package offers a transport.
+/// The reads are the same, in the same order, as `derive::measure` makes:
+/// the core half, then the edge half.
 pub fn measure(
     hosts: &Hosts,
     router_flag: Option<&str>,
@@ -626,17 +692,39 @@ pub fn measure(
     );
     edge.reach()?;
     core.reach()?;
-    let m = derive::measure(
-        &edge,
-        &core,
-        choice.target(),
-        RUNTIMES,
-        ROUTER_KNOB,
-        interface,
-        Some(&spire_conf(&hosts.core)),
-    );
-    router_refusal(&m, &choice, &hosts.core)?;
-    Ok((m, choice))
+    let c = core_half(&core, choice.target(), Some(&spire_conf(&hosts.core)));
+    router_refusal(&c.fabric_fips_image, &choice, &hosts.core)?;
+    Ok((join(edge_half(&edge, interface), c), choice))
+}
+
+/// Phase 3's edge half alone, on a machine that reaches the edge: only the
+/// edge is reached.
+pub fn measure_edge(edge: &Target, interface: Option<&str>) -> Result<EdgeHalf> {
+    let probe = HostProbe::new(edge.clone());
+    probe.reach()?;
+    Ok(edge_half(&probe, interface))
+}
+
+/// Phase 3's core half alone, on a machine that reaches the core: only the
+/// core is reached, and the router is chosen as [`measure`] chooses it.
+pub fn measure_core(core: &Target, router_flag: Option<&str>) -> Result<CoreHalf> {
+    let choice = choose_router(router_flag, core)?;
+    let probe = HostProbe::new(core.clone());
+    probe.reach()?;
+    let c = core_half(&probe, choice.target(), Some(&spire_conf(core)));
+    router_refusal(&c.fabric_fips_image, &choice, core)?;
+    Ok(c)
+}
+
+/// The plays' inventory for this peering: peering-edges.ini, and this
+/// peering's own file when `allocate` rendered one.
+fn peering_inventory(repo: &Path, edge_group: &str) -> Result<Value> {
+    let own = format!("inventory/peering-{edge_group}.ini");
+    if repo.join("ops/ansible").join(&own).is_file() {
+        read_inventory(repo, &[INVENTORY, &own])
+    } else {
+        read_inventory(repo, &[INVENTORY])
+    }
 }
 
 /// The edge and the core named by the plays' inventory in this checkout.
@@ -647,13 +735,7 @@ pub fn resolve(
     edge_pick: Option<&str>,
     core_pick: Option<&str>,
 ) -> Result<Hosts> {
-    // This peering's own inventory file, when `allocate` rendered one.
-    let own = format!("inventory/peering-{edge_group}.ini");
-    let inv = if repo.join("ops/ansible").join(&own).is_file() {
-        read_inventory(repo, &[INVENTORY, &own])?
-    } else {
-        read_inventory(repo, &[INVENTORY])?
-    };
+    let inv = peering_inventory(repo, edge_group)?;
     hosts(&inv, edge_group, core_group, edge_pick, core_pick)
 }
 
@@ -666,6 +748,181 @@ pub fn over_ssh(
     router_flag: Option<String>,
 ) -> impl Fn(Option<&str>) -> Result<Measured> {
     move |interface| measure(&hosts, router_flag.as_deref(), interface).map(|(m, _)| m)
+}
+
+// ---------------------------------------------------------------------------
+// The edge half, carried from the edge driver to the controller
+// ---------------------------------------------------------------------------
+
+/// A probe that answers nothing. Asking derive's edge reads through it gives
+/// each read's field name, the `&'static str` an imported half is rebuilt
+/// with, so the names here cannot drift from derive's.
+struct Nothing;
+
+impl Probe for Nothing {
+    fn run(&self, _: &str, _: &[&str]) -> Result<String, String> {
+        Err("not asked".into())
+    }
+    fn run_reading_output(&self, _: &str, _: &[&str]) -> Result<String, String> {
+        Err("not asked".into())
+    }
+    fn read_file(&self, _: &str) -> std::io::Result<String> {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "not asked",
+        ))
+    }
+}
+
+fn derived_json<T: serde::Serialize>(d: &derive::Derived<T>) -> Value {
+    match &d.outcome {
+        Ok(v) => serde_json::json!({"field": d.field, "ok": v, "source": d.source}),
+        Err(e) => serde_json::json!({"field": d.field, "err": e, "source": d.source}),
+    }
+}
+
+fn derived_from<T: serde::de::DeserializeOwned>(
+    v: &Value,
+    field: &'static str,
+) -> Option<derive::Derived<T>> {
+    if v.get("field")?.as_str()? != field {
+        return None;
+    }
+    let source = v.get("source")?.as_str()?.to_string();
+    let outcome = match (v.get("ok"), v.get("err")) {
+        (Some(ok), None) => Ok(serde_json::from_value(ok.clone()).ok()?),
+        (None, Some(Value::String(e))) => Err(e.clone()),
+        _ => return None,
+    };
+    Some(derive::Derived {
+        field,
+        outcome,
+        source,
+    })
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::Digest;
+    sha2::Sha256::digest(bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+/// Write the edge half for `peering`, measured on `edge` for `interface`, to
+/// `path`; returns the file's sha256, which the controller is shown when it
+/// reads the file back.
+pub fn write_edge_half(
+    path: &Path,
+    peering: &str,
+    edge: &Target,
+    interface: Option<&str>,
+    half: &EdgeHalf,
+) -> Result<String> {
+    let v = serde_json::json!({
+        "schema": EDGE_HALF_SCHEMA,
+        "peering": peering,
+        "edge_host": edge.name,
+        "interface": interface,
+        "transports": derived_json(&half.transports),
+        "pqc_capable": derived_json(&half.pqc_capable),
+        "public_key": half.public_key.as_ref().map(derived_json),
+        "interface_mtu": half.interface_mtu,
+    });
+    let text = serde_json::to_string_pretty(&v)? + "\n";
+    std::fs::write(path, &text)
+        .map_err(|e| anyhow::anyhow!("could not write the edge half to {}: {e}", path.display()))?;
+    Ok(sha256_hex(text.as_bytes()))
+}
+
+/// An edge half read back: what was measured, for which interface, on which
+/// host, and the file's sha256.
+#[derive(Debug, Clone)]
+pub struct ImportedEdgeHalf {
+    pub half: EdgeHalf,
+    pub interface: Option<String>,
+    pub edge_host: String,
+    pub sha256: String,
+}
+
+/// Read an edge half for `peering`. Anything else is refused (GB-114): a
+/// file that does not read, another schema, another peering, or a field that
+/// is not what the edge half carries.
+pub fn read_edge_half(path: &Path, peering: &str) -> Result<ImportedEdgeHalf> {
+    let bad = |why: String| {
+        coded(
+            "GB-114",
+            format!(
+                "the edge half {} cannot be used for peering {peering} (GB-114): {why}",
+                path.display()
+            ),
+        )
+    };
+    let bytes = std::fs::read(path).map_err(|e| bad(format!("it could not be read: {e}")))?;
+    let v: Value =
+        serde_json::from_slice(&bytes).map_err(|e| bad(format!("it is not JSON: {e}")))?;
+    if v["schema"] != EDGE_HALF_SCHEMA {
+        return Err(bad(format!(
+            "its schema is {}, not {EDGE_HALF_SCHEMA}",
+            v["schema"]
+        )));
+    }
+    if v["peering"] != peering {
+        return Err(bad(format!("it was measured for peering {}", v["peering"])));
+    }
+    let n = Nothing;
+    let field = |k: &str| bad(format!("its {k} is not an edge measurement"));
+    let transports = derived_from(&v["transports"], derive::transports_on(&n).field)
+        .ok_or_else(|| field("transports"))?;
+    let pqc_capable = derived_from(&v["pqc_capable"], derive::pqc_capable_on(&n).field)
+        .ok_or_else(|| field("pqc_capable"))?;
+    let public_key = match &v["public_key"] {
+        Value::Null => None,
+        pk => Some(
+            derived_from(pk, derive::transport_public_key_on(&n, "wg0").field)
+                .ok_or_else(|| field("public_key"))?,
+        ),
+    };
+    let interface_mtu = match &v["interface_mtu"] {
+        Value::Null => None,
+        m => Some(m.as_i64().ok_or_else(|| field("interface_mtu"))?),
+    };
+    Ok(ImportedEdgeHalf {
+        half: EdgeHalf {
+            transports,
+            pqc_capable,
+            public_key,
+            interface_mtu,
+        },
+        interface: v["interface"].as_str().map(String::from),
+        edge_host: v["edge_host"].as_str().unwrap_or_default().to_string(),
+        sha256: sha256_hex(&bytes),
+    })
+}
+
+/// The federation interface init will ask the measurement for: the
+/// declaration's `[transport] interface` when the package offers a transport,
+/// as `run_init_measured` reads it. The edge half is measured for it.
+fn declared_interface(
+    site: &goat_federation::verbs::Site,
+    a: &goat_federation::verbs::InitArgs,
+) -> Result<Option<String>> {
+    if !a.with_transport {
+        return Ok(None);
+    }
+    let path = a
+        .declaration
+        .clone()
+        .unwrap_or_else(|| site.declaration_path());
+    let text = std::fs::read_to_string(&path)
+        .map_err(|e| anyhow::anyhow!("could not read the declaration {}: {e}", path.display()))?;
+    let doc: toml::Value =
+        toml::from_str(&text).map_err(|e| anyhow::anyhow!("{}: {e}", path.display()))?;
+    Ok(doc
+        .get("transport")
+        .and_then(|t| t.get("interface"))
+        .and_then(|i| i.as_str())
+        .map(String::from))
 }
 
 // ---------------------------------------------------------------------------
@@ -701,7 +958,7 @@ pub struct MeasureArgs {
     pub router_container: Option<String>,
     /// init --over-ssh: measure one half of phase 3 on this machine, for a
     /// peering no one machine reaches both hosts of
-    /// (docs/design/federation-two-drivers.md): `edge` measures only the edge
+    /// (docs/design/federation-router-discovery.md): `edge` measures only the edge
     /// and writes the result to --half-out; `core` measures only the core,
     /// joins the edge half read from --edge-half, and builds the package.
     /// Without it, both hosts are measured here, as always.
@@ -737,8 +994,9 @@ impl MeasureArgs {
                 return Ok(None);
             }
             return Err(anyhow::anyhow!(
-                "--ssh-edge-group, --ssh-core-group, --edge-host, --core-host and \
-                 --router-container choose what `init --over-ssh <peering>` measures; \
+                "--ssh-edge-group, --ssh-core-group, --edge-host, --core-host, \
+                 --router-container, --side, --half-out and --edge-half choose what \
+                 `init --over-ssh <peering>` measures; \
                  without --over-ssh, init measures this machine"
             ));
         };
@@ -758,8 +1016,18 @@ impl MeasureArgs {
             if let Some(v) = v.filter(|v| !plain(v)) {
                 return Err(coded(
                     "GB-110",
-                    format!("{flag} `{v}` is not an inventory name (letters, digits, `_`, `.`, `-`)"),
+                    format!(
+                        "{flag} `{v}` is not an inventory name (letters, digits, `_`, `.`, `-`)"
+                    ),
                 ));
+            }
+        }
+        match (self.side.as_deref(), &self.half_out, &self.edge_half) {
+            (None, None, None) | (Some("edge"), Some(_), None) | (Some("core"), None, Some(_)) => {}
+            _ => {
+                return Err(anyhow::anyhow!(
+                    "--side edge takes --half-out <file> (where the edge half is written), and                      --side core takes --edge-half <file> (the edge half to join); neither file                      is read or written without its side"
+                ))
             }
         }
         Ok(Some(p))
@@ -781,6 +1049,11 @@ impl MeasureArgs {
 /// `goatbuilder federate init --over-ssh <peering>`: the hosts are resolved
 /// from the plays' inventory in `repo`, measured over SSH, and the package is
 /// built and signed here by the library's `init`.
+///
+/// With `--side edge`, only the edge is resolved and reached; its half is
+/// written to `--half-out` and nothing is built or signed. With `--side core`,
+/// only the core is resolved and reached; the edge half is read from
+/// `--edge-half`, joined, and the package is built and signed here.
 pub fn run_init(
     repo: &Path,
     site: &goat_federation::verbs::Site,
@@ -792,15 +1065,63 @@ pub fn run_init(
         .peering()?
         .ok_or_else(|| anyhow::anyhow!("run_init over SSH without --over-ssh"))?;
     let (edge_group, core_group) = m.groups(peering);
-    let hosts = resolve(
-        repo,
-        &edge_group,
-        &core_group,
-        m.edge_host.as_deref(),
-        m.core_host.as_deref(),
-    )?;
-    let measure = over_ssh(hosts, m.router_container.clone());
-    goat_federation::verbs::run_init_measured(site, a, out, &measure)
+    match m.side.as_deref() {
+        None => {
+            let hosts = resolve(
+                repo,
+                &edge_group,
+                &core_group,
+                m.edge_host.as_deref(),
+                m.core_host.as_deref(),
+            )?;
+            let measure = over_ssh(hosts, m.router_container.clone());
+            goat_federation::verbs::run_init_measured(site, a, out, &measure)
+        }
+        Some("edge") => {
+            let path = m.half_out.as_ref().expect("checked by peering()");
+            let inv = peering_inventory(repo, &edge_group)?;
+            let edge = target_in(&inv, &edge_group, m.edge_host.as_deref(), "--edge-host")?;
+            let interface = declared_interface(site, a)?;
+            let half = measure_edge(&edge, interface.as_deref())?;
+            let digest = write_edge_half(path, peering, &edge, interface.as_deref(), &half)?;
+            writeln!(
+                out,
+                "phase 3, edge half of peering {peering}: measured on {} and written to {} (sha256 {digest}). Nothing was built or signed.\n\
+                 Carry the file to the controller, then run there: goatbuilder federate init --over-ssh {peering} --side core --edge-half <file> (with the same init flags)",
+                edge.name,
+                path.display()
+            )?;
+            Ok(0)
+        }
+        Some(_) => {
+            let path = m.edge_half.as_ref().expect("checked by peering()");
+            let imported = read_edge_half(path, peering)?;
+            let inv = peering_inventory(repo, &edge_group)?;
+            let core = target_in(&inv, &core_group, m.core_host.as_deref(), "--core-host")?;
+            eprintln!(
+                "phase 3: the edge half of peering {peering} from {} (measured on {}, sha256 {}), joined with the core measured here",
+                path.display(),
+                imported.edge_host,
+                imported.sha256
+            );
+            let router = m.router_container.clone();
+            let measure = move |interface: Option<&str>| -> Result<Measured> {
+                if interface != imported.interface.as_deref() {
+                    return Err(coded(
+                        "GB-114",
+                        format!(
+                            "the edge half {} cannot be used for peering {peering} (GB-114): it was measured for interface {:?}, and this package asks for {interface:?}. Measure the edge half again with the same declaration and init flags",
+                            path.display(),
+                            imported.interface
+                        ),
+                    ));
+                }
+                let c = measure_core(&core, router.as_deref())?;
+                Ok(join(imported.half.clone(), c))
+            };
+            goat_federation::verbs::run_init_measured(site, a, out, &measure)
+        }
+    }
 }
 
 /// Whether the driver's phase 3 measures over SSH (`FED_MEASURE` unset, empty
@@ -1148,7 +1469,8 @@ mod tests {
         let e = router_refusal(
             &measured(Err(
                 "no running core router found. Set --router-container".into()
-            )),
+            ))
+            .fabric_fips_image,
             &choice,
             &core,
         )
@@ -1160,7 +1482,7 @@ mod tests {
             "{e}"
         );
         // Found, version unreadable: left for init to report as underived.
-        assert!(router_refusal(&measured(Ok(true)), &choice, &core).is_ok());
+        assert!(router_refusal(&measured(Ok(true)).fabric_fips_image, &choice, &core).is_ok());
     }
 
     /// A recorded ssh client: prints `stderr` and exits `code`, whatever it is
@@ -1416,7 +1738,11 @@ mod tests {
         let here = json!({"ansible_connection": "local", "ansible_become": false, "zenoh_stack": "gb-b10-test-no-such"});
         let gone = json!({"ansible_host": "192.0.2.99", "ansible_user": "goat", "ansible_become": false,
                           "ansible_ssh_common_args": "-o ProxyCommand=false"});
-        let (e, c) = if edge_reachable { (here, gone) } else { (gone, here) };
+        let (e, c) = if edge_reachable {
+            (here, gone)
+        } else {
+            (gone, here)
+        };
         json!({
             "_meta": {"hostvars": {"edge-x": e, "core-x": c}},
             "all": {"children": ["xab_edge", "xab_core"]},
@@ -1449,9 +1775,18 @@ mod tests {
         assert_eq!(v["schema"], EDGE_HALF_SCHEMA);
         assert_eq!(v["peering"], "xab");
         assert_eq!(v["edge_host"], "edge-x");
-        assert!(v["transports"]["source"].as_str().unwrap().contains("edge-x"), "{v}");
+        assert!(
+            v["transports"]["source"]
+                .as_str()
+                .unwrap()
+                .contains("edge-x"),
+            "{v}"
+        );
         let text = String::from_utf8_lossy(&out);
-        assert!(text.contains("sha256") && text.contains("--side core --edge-half"), "{text}");
+        assert!(
+            text.contains("sha256") && text.contains("--side core --edge-half"),
+            "{text}"
+        );
     }
 
     /// B10: the controller reaches the core and not the edge. Phase 3's core
@@ -1466,11 +1801,21 @@ mod tests {
         let half = ctx.path().join("edge-half.json");
         // The edge driver's half, made where the edge is reachable.
         let edge_repo = checkout_with_inventory(&split_inventory(true));
-        let m = MeasureArgs { over_ssh: Some("xab".into()), side: Some("edge".into()), half_out: Some(half.clone()), ..Default::default() };
+        let m = MeasureArgs {
+            over_ssh: Some("xab".into()),
+            side: Some("edge".into()),
+            half_out: Some(half.clone()),
+            ..Default::default()
+        };
         run_init(edge_repo.path(), &site, &init_args(), &m, &mut Vec::new()).unwrap();
         // The controller, where only the core is.
         let repo = checkout_with_inventory(&split_inventory(false));
-        let m = MeasureArgs { over_ssh: Some("xab".into()), side: Some("core".into()), edge_half: Some(half.clone()), ..Default::default() };
+        let m = MeasureArgs {
+            over_ssh: Some("xab".into()),
+            side: Some("core".into()),
+            edge_half: Some(half.clone()),
+            ..Default::default()
+        };
         let e = run_init(repo.path(), &site, &init_args(), &m, &mut Vec::new()).unwrap_err();
         assert_eq!(code(&e).as_deref(), Some("GB-113"), "{e:#}");
         assert!(format!("{e:#}").contains("core-x"), "{e:#}");
@@ -1481,5 +1826,162 @@ mod tests {
         let e = run_init(repo.path(), &site, &init_args(), &m, &mut Vec::new()).unwrap_err();
         assert_eq!(code(&e).as_deref(), Some("GB-114"), "{e:#}");
         assert!(format!("{e:#}").contains("xac"), "{e:#}");
+    }
+
+    /// A probe that answers each read from a table and records what it was
+    /// asked, in order, under its name.
+    struct Table {
+        name: &'static str,
+        log: std::rc::Rc<std::cell::RefCell<Vec<String>>>,
+    }
+
+    impl Probe for Table {
+        fn run(&self, bin: &str, args: &[&str]) -> Result<String, String> {
+            self.log
+                .borrow_mut()
+                .push(format!("{} run {bin} {}", self.name, args.join(" ")));
+            match bin {
+                "wg" => Ok("wg-fed0\n".into()),
+                "docker" if args.first() == Some(&"inspect") => {
+                    Ok("abc\ttrue\tghcr.io/example-org/zenoh@sha256:1111\n".into())
+                }
+                _ => Err(format!("{bin}: not on this host")),
+            }
+        }
+        fn run_reading_output(&self, bin: &str, args: &[&str]) -> Result<String, String> {
+            self.log
+                .borrow_mut()
+                .push(format!("{} out {bin} {}", self.name, args.join(" ")));
+            Ok("inactive\n".into())
+        }
+        fn read_file(&self, path: &str) -> std::io::Result<String> {
+            self.log
+                .borrow_mut()
+                .push(format!("{} read {path}", self.name));
+            match path {
+                "/proc/sys/crypto/fips_enabled" => Ok("1\n".into()),
+                p if p.ends_with("/mtu") => Ok("1420\n".into()),
+                _ => Err(std::io::Error::new(std::io::ErrorKind::NotFound, "absent")),
+            }
+        }
+        fn place(&self) -> String {
+            format!("on {}", self.name)
+        }
+    }
+
+    /// The one-machine run is unchanged: the two halves, joined, are what
+    /// `derive::measure` measures, from the same reads made in the same order.
+    #[test]
+    fn the_two_halves_joined_are_the_one_machine_measurement() {
+        let probes = || {
+            let log = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+            (
+                Table {
+                    name: "edge",
+                    log: log.clone(),
+                },
+                Table {
+                    name: "core",
+                    log: log.clone(),
+                },
+                log,
+            )
+        };
+        let router = RouterTarget::Named {
+            name: "xaa-zenoh-router",
+            from: "the test",
+        };
+        let (e, c, whole_log) = probes();
+        let whole = derive::measure(
+            &e,
+            &c,
+            router,
+            RUNTIMES,
+            ROUTER_KNOB,
+            Some("wg-fed0"),
+            Some("/etc/spire/server.conf"),
+        );
+        let (e, c, split_log) = probes();
+        let core = core_half(&c, router, Some("/etc/spire/server.conf"));
+        let split = join(edge_half(&e, Some("wg-fed0")), core);
+        assert_eq!(format!("{whole:?}"), format!("{split:?}"));
+        assert_eq!(*whole_log.borrow(), *split_log.borrow());
+        assert!(
+            whole_log.borrow().iter().any(|l| l.starts_with("edge "))
+                && whole_log.borrow().iter().any(|l| l.starts_with("core "))
+        );
+    }
+
+    /// The edge half survives the file it is carried in: what is read back is
+    /// what was measured, field names included, and the digest is the file's.
+    #[test]
+    fn an_edge_half_reads_back_as_it_was_measured() {
+        let log = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let half = edge_half(&Table { name: "edge", log }, Some("wg-fed0"));
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("half.json");
+        let edge = target_in(&inventory(), "xab_edge", None, "--edge-host").unwrap();
+        let digest = write_edge_half(&path, "xab", &edge, Some("wg-fed0"), &half).unwrap();
+        let back = read_edge_half(&path, "xab").unwrap();
+        assert_eq!(format!("{:?}", back.half), format!("{half:?}"));
+        assert_eq!(
+            (
+                back.interface.as_deref(),
+                back.edge_host.as_str(),
+                back.sha256.as_str()
+            ),
+            (Some("wg-fed0"), "xaa-edge", digest.as_str())
+        );
+        // Another schema, a field that is not the edge's, and a missing file are GB-114.
+        let mut v: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        v["transports"]["field"] = json!("capabilities.fabric_version");
+        std::fs::write(&path, v.to_string()).unwrap();
+        assert_eq!(
+            code(&read_edge_half(&path, "xab").unwrap_err()).as_deref(),
+            Some("GB-114")
+        );
+        v["schema"] = json!("something/v9");
+        std::fs::write(&path, v.to_string()).unwrap();
+        assert_eq!(
+            code(&read_edge_half(&path, "xab").unwrap_err()).as_deref(),
+            Some("GB-114")
+        );
+        assert_eq!(
+            code(&read_edge_half(&dir.path().join("none.json"), "xab").unwrap_err()).as_deref(),
+            Some("GB-114")
+        );
+    }
+
+    #[test]
+    fn a_side_takes_its_own_file_and_no_other() {
+        let m = |side: Option<&str>, out: bool, half: bool| MeasureArgs {
+            over_ssh: Some("xab".into()),
+            side: side.map(String::from),
+            half_out: out.then(|| "h.json".into()),
+            edge_half: half.then(|| "h.json".into()),
+            ..Default::default()
+        };
+        assert!(m(Some("edge"), true, false).peering().is_ok());
+        assert!(m(Some("core"), false, true).peering().is_ok());
+        for bad in [
+            m(Some("edge"), false, false),
+            m(Some("core"), false, false),
+            m(Some("edge"), false, true),
+            m(None, true, false),
+            m(None, false, true),
+        ] {
+            assert!(bad
+                .peering()
+                .unwrap_err()
+                .to_string()
+                .contains("--side edge takes --half-out"));
+        }
+        let e = MeasureArgs {
+            side: Some("edge".into()),
+            ..Default::default()
+        }
+        .peering()
+        .unwrap_err();
+        assert!(e.to_string().contains("without --over-ssh"), "{e}");
     }
 }

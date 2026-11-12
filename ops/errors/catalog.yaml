@@ -1586,6 +1586,22 @@ entries:
       - "no core router to measure on"
     exit: 1
 
+  - code: GB-114
+    tool: goatbuilder
+    title: an edge half of phase 3 cannot be joined
+    what: "With two drivers (docs/design/federation-two-drivers.md), the edge driver measures phase 3's edge half with `goatbuilder federate init --over-ssh <partner> --side edge --half-out <file>`, and the controller joins it with `--side core --edge-half <file>` before it builds and signs the package. The file given could not be read, is not an edge half, was measured for another peering, or was measured for another federation interface than the one the package asks for."
+    causes:
+      - the file was not copied whole from the edge driver, or another file was given
+      - the edge half was measured for another partner
+      - the declaration or the init flags differ between the two machines, so the edge was measured for another interface (or none)
+    fixes:
+      - "goatbuilder federate init --over-ssh <partner> --side edge --half-out <file>   (on the edge driver, with the same declaration and init flags)"
+      - "sha256sum <file>   (on both machines: the controller prints the digest it read)"
+    read: docs/design/federation-router-discovery.md
+    matches:
+      - "cannot be used for peering"
+    exit: 1
+
   - code: GB-120
     tool: goatbuilder
     title: a peering names a partner with a reserved word

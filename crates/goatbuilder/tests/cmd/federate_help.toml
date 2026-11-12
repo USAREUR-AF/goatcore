@@ -136,6 +136,21 @@ Options:
           init --over-ssh: the core router container, by hand (default: the name the core host's
           variables give, else the one discovery finds there)
 
+      --side <SIDE>
+          init --over-ssh: measure one half of phase 3 on this machine, for a peering no one machine
+          reaches both hosts of (docs/design/federation-router-discovery.md): `edge` measures only
+          the edge and writes the result to --half-out; `core` measures only the core, joins the
+          edge half read from --edge-half, and builds the package. Without it, both hosts are
+          measured here, as always
+          
+          [possible values: edge, core]
+
+      --half-out <FILE>
+          init --over-ssh --side edge: the file the edge half is written to
+
+      --edge-half <FILE>
+          init --over-ssh --side core: the edge half the edge driver wrote
+
       --plan <FILE>
           deploy: the plan to execute (default <work>/plan.json)
 

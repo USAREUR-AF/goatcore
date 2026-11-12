@@ -426,6 +426,11 @@ gb-113-what = Phase 3 measures the core router's image and version on the core h
 gb-113-cause-1 = the declared router is not running on the core host, or the variables give a different name than the one deployed
 gb-113-cause-2 = nothing declares the router and no running container carries org.goat.component=zenoh-core or a standard name
 gb-113-cause-3 = several core routers run on the host
+gb-114-title = an edge half of phase 3 cannot be joined
+gb-114-what = With two drivers (docs/design/federation-two-drivers.md), the edge driver measures phase 3's edge half with `goatbuilder federate init --over-ssh <partner> --side edge --half-out <file>`, and the controller joins it with `--side core --edge-half <file>` before it builds and signs the package. The file given could not be read, is not an edge half, was measured for another peering, or was measured for another federation interface than the one the package asks for.
+gb-114-cause-1 = the file was not copied whole from the edge driver, or another file was given
+gb-114-cause-2 = the edge half was measured for another partner
+gb-114-cause-3 = the declaration or the init flags differ between the two machines, so the edge was measured for another interface (or none)
 gb-120-title = a peering names a partner with a reserved word
 gb-120-what = A word of `goatbuilder federate` (init lint compose diff verify apply help status plan deploy test allocate backout rotate) can never name a partner: `goatbuilder federate <word>` runs that step, so the peering could never be run by name.
 gb-120-cause-1 = a peerings entry's `with:` is one of the reserved words

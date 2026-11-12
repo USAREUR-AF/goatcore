@@ -16,7 +16,10 @@ read over SSH, the declared, discovered, wrong-name and unreachable cases. **Bui
 `goatbuilder federate init --over-ssh <peering>` (with `--ssh-edge-group`, `--ssh-core-group`,
 `--edge-host`, `--core-host`, `--router-container`), and the driver's phase 3 using it when
 `FED_MEASURE` unset or `ssh`, on both avenues (`peering-standup.sh` takes the same switch);
-`FED_MEASURE=here` measures the machine the run is on, as before. **Not built:** automatic selection among several cores. Live deployment and
+`FED_MEASURE=here` measures the machine the run is on, as before. **Built:** phase 3 in two
+halves for a peering no one machine reaches both hosts of (§"Phase 3 in two halves"), with
+offline tests; unmeasured on real hosts, and not yet used by the one command's phases.
+**Not built:** automatic selection among several cores. Live deployment and
 bilateral federation acceptance are separate release gates.
 
 > The verb moves to `goatbuilder federate init` ([ADR 1225](../adr/1225-federation-belongs-to-goatbuilder-one-command-one-decision.md), Proposed), which runs
@@ -132,6 +135,38 @@ package back. goatbuilder instead measures both hosts from the operator's machin
   discovered one. A router that cannot be found refuses with GB-113 and these three fixes; a
   router that is found but whose version cannot be read stays an underived value with init's
   exit 23.
+
+## Phase 3 in two halves
+
+Status: WIP — gate: goatbuilder 1.0 gate row B10, a scenario with two drivers per sovereign
+in which the edge driver has no route to the core (the contract is
+docs/design/federation-two-drivers.md, in review).
+
+Some sites have no machine that reaches both the edge host and the core host. Phase 3's
+measurement then runs in two halves, one on each machine:
+
+- **The edge half**, on a machine that reaches the edge:
+  `goatbuilder federate init --over-ssh <peering> --side edge --half-out <file>` with init's own
+  flags. It resolves and reaches only the edge (the core group need not be in its
+  inventory), measures the transports, the PQC unit, and the declared federation interface's
+  public key and MTU, writes them to `<file>` (schema `goatbuilder.phase3-edge-half/v1`, with the
+  peering, the edge host and the interface it was measured for), prints the file's sha256, and
+  builds and signs nothing.
+- **The core half**, on a machine that reaches the core:
+  `goatbuilder federate init --over-ssh <peering> --side core --edge-half <file>` with the same
+  init flags. It reads the edge half, refusing (GB-114) a file that does not read, another
+  schema, another peering, a field that is not an edge measurement, or another interface than
+  the package asks for. It resolves and reaches only the core, measures the router and the
+  SPIRE trust domain exactly as the one-machine run does (the same router choice, GB-113 when
+  there is none), joins the two, and init builds and signs the package there. It prints the
+  edge half's sha256 to stderr.
+- **The one-machine run is unchanged.** `measure` is the two halves joined, from the same
+  reads in the same order as `derive::measure` (a test compares the two). `--side` without its
+  file, a file without its side, or either without `--over-ssh` is refused.
+
+The edge half is a plain file, carried by the operator. Not built yet: its digest bound in
+the controller's journal, the one command's phase 3 handing off between the drivers, and
+measurement on two real hosts.
 
 ## Measurements and limits
 
