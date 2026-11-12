@@ -139,6 +139,17 @@ fn render(r: &str) -> String {
     }
 }
 
+/// How both avenues abbreviate a commit they print (rc.sh does the same): a
+/// fixed length, so the line does not change when git's automatic length
+/// grows with the repository's object count, and the parity gate compares
+/// equal lines.
+const SHORT: &str = "--short=12";
+
+/// `rev` in `repo`, abbreviated as both avenues print it.
+fn short_rev(repo: &str, rev: &str) -> Result<String> {
+    sh("git", &["-C", repo, "rev-parse", SHORT, rev])
+}
+
 fn sh(cmd: &str, args: &[&str]) -> Result<String> {
     let mut c = Command::new(cmd);
     c.args(args);
@@ -293,7 +304,7 @@ impl<'a> Run<'a> {
         sh("git", &["-C", &wt_s, "add", "-A", "--force"])?;
         ov.snap = sh("git", &["-C", &wt_s, "write-tree"])?;
         sh("git", &["-C", &wt_s, "reset", "-q"])?;
-        let short = sh("git", &["-C", &ov.owt.display().to_string(), "rev-parse", "--short", "HEAD"]).unwrap_or_default();
+        let short = short_rev(&ov.owt.display().to_string(), "HEAD").unwrap_or_default();
         self.root = wt.clone();
         self.note(format!("scratch tree {wt_s} assembled from overlay {short}"));
         Ok(())
@@ -709,7 +720,7 @@ fn release_inner(repo: &Path, o: &Options, checks: Rc<RefCell<Vec<Check>>>) -> R
     let fleet_shown = if run.fleet.is_empty() { "<none>".to_string() } else { render(&run.fleet) };
     run.note(format!("image {}; rungs dev={} preprod={} prod={}; fleet ref {fleet_shown}", run.image, run.dev, run.pre, run.prod));
     let _ = sh("git", &["-C", &repo_s, "fetch", "-q", "origin", "main"]);
-    let main = sh("git", &["-C", &repo_s, "rev-parse", "--short", "origin/main"])?;
+    let main = short_rev(&repo_s, "origin/main")?;
 
     // --- 1 preflight
     run.step("preflight");
@@ -1079,6 +1090,80 @@ fn release_inner(repo: &Path, o: &Options, checks: Rc<RefCell<Vec<Check>>>) -> R
 mod tests {
     use super::*;
 
+    /// git's automatic abbreviation grows with the object count (7, then 8 ...),
+    /// so `--short` alone printed `d7e1f2a` on one side and `d7e1f2a1` on the
+    /// other. With core.abbrev forced short, the release still prints 12.
+    #[test]
+    fn a_commit_is_printed_at_twelve_characters_whatever_git_would_choose() {
+        let d = tempfile::tempdir().unwrap();
+        let r = d.path().to_str().unwrap();
+        let git = |a: &[&str]| {
+            let o = std::process::Command::new("git")
+                .args(["-C", r])
+                .args(a)
+                .output()
+                .unwrap();
+            assert!(
+                o.status.success(),
+                "git {a:?}: {}",
+                String::from_utf8_lossy(&o.stderr)
+            );
+        };
+        git(&["init", "-q"]);
+        git(&[
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@example.org",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "c",
+        ]);
+        git(&["config", "core.abbrev", "7"]);
+        let s = short_rev(r, "HEAD").unwrap();
+        assert_eq!(s.len(), 12, "{s}");
+        git(&["config", "core.abbrev", "9"]);
+        assert_eq!(
+            short_rev(r, "HEAD").unwrap(),
+            s,
+            "the same 12 characters whatever core.abbrev says"
+        );
+    }
+
+    /// Both avenues print every commit they name at the same fixed length: no
+    /// `rev-parse --short` without `=12` in rc.sh, pr-land.sh or this module.
+    #[test]
+    fn both_avenues_name_commits_at_a_fixed_length() {
+        let bare = format!("\"rev-parse\", \"{}\"", "--short");
+        let here = include_str!("release.rs");
+        assert!(
+            !here.contains(&bare),
+            "release.rs calls rev-parse --short without a length"
+        );
+        assert_eq!(SHORT, "--short=12");
+        for (name, text) in [
+            (
+                "ops/scripts/rc.sh",
+                include_str!("../../../ops/scripts/rc.sh"),
+            ),
+            (
+                "ops/scripts/pr-land.sh",
+                include_str!("../../../ops/scripts/pr-land.sh"),
+            ),
+        ] {
+            for (n, line) in text.lines().enumerate() {
+                if let Some(i) = line.find("rev-parse --short") {
+                    assert!(
+                        line[i..].starts_with("rev-parse --short=12"),
+                        "{name}:{}: {line}",
+                        n + 1
+                    );
+                }
+            }
+        }
+    }
     #[test]
     fn a_run_finds_the_open_record_only_when_preprod_already_pins_the_ref() {
         let d = crate::testdir::path("goatbuilder-release-reuse-");

@@ -192,7 +192,7 @@ PROD="$(printf '%s' "$J" | python3 -c 'import json,sys; print(json.load(sys.stdi
 FLEET="$(printf '%s' "$J" | python3 -c 'import json,sys; print(json.load(sys.stdin)["fleet"] or "")')"
 note "image $IMAGE; rungs dev=$DEV preprod=$PRE prod=$PROD; fleet ref $(render "${FLEET:-<none>}")"
 git -C "$REPO" fetch -q origin main
-MAIN="$(git -C "$REPO" rev-parse --short origin/main)"
+MAIN="$(git -C "$REPO" rev-parse --short=12 origin/main)"  # a fixed length, as goatbuilder release prints it
 
 # --- 1 preflight ------------------------------------------------------------------
 step "preflight"
@@ -376,7 +376,7 @@ assemble_wt() {
   git -C "$WT" reset -q
   REPO="$WT"; PINS="$WT/ops/pins/fleet-pins.yaml"; LADDER="$WT/ops/release/ladder.yaml"
   RUNNERS="$WT/ops/validation/goatnet-runners.yaml"; DEPLOY_HERE="$WT/ops/scripts"
-  note "scratch tree $WT assembled from overlay $(git -C "$OWT" rev-parse --short HEAD)"
+  note "scratch tree $WT assembled from overlay $(git -C "$OWT" rev-parse --short=12 HEAD)"
 }
 land_overlay() { # $1 title, $2 body: the step's edits in $WT, as a PR on the overlay
   local changes st p B
