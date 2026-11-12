@@ -170,6 +170,9 @@ measurement then runs in two halves, one on each machine:
   signs into our package, and the partner dials it. A half changed on its way from the edge
   driver would put another key into a package signed by us. The confirmed digest makes the
   operator, who saw the edge driver's output, the check.
+  The confirm code must be read from the edge driver's own screen, or the output of its run,
+  never copied from anything that travelled with the file: a code carried beside a changed
+  file would confirm the change. That step is what the binding rests on.
 - **Why 24 hours.** The two halves of one phase 3 are measured and joined in one working
   session. Past a day, the edge may have been rebuilt or re-keyed (a new WireGuard key, a
   changed MTU), and a package signed with the old values would carry them.

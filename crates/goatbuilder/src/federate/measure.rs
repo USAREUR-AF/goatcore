@@ -1189,7 +1189,7 @@ pub fn run_init(
                 out,
                 "phase 3, edge half of peering {peering}: measured on {} and written to {} (sha256 {digest}). Nothing was built or signed.\n\
                  Confirm code: {code}\n\
-                 Carry the file to the controller and read the confirm code from here, then run there: goatbuilder federate init --over-ssh {peering} --side core --edge-half <file> --edge-half-sha256 {code} (with the same init flags)",
+                 Carry the file to the controller, and take the confirm code from this screen, never from anything that travelled with the file. Then run there: goatbuilder federate init --over-ssh {peering} --side core --edge-half <file> --edge-half-sha256 {code} (with the same init flags)",
                 edge.name,
                 path.display(),
                 code = confirm_code(&digest)
@@ -1216,8 +1216,8 @@ pub fn run_init(
                     ));
                 }
                 Ok(_) => {}
-                Err(_) => eprintln!(
-                    "phase 3: this checkout's inventory names no single edge host in {edge_group}, so the edge half's host {} is not checked against it",
+                Err(e) => eprintln!(
+                    "phase 3: could not name one edge host in {edge_group} ({e:#}), so the edge half's host {} is not checked against it",
                     imported.edge_host
                 ),
             }
