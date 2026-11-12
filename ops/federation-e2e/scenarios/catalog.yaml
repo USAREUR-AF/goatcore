@@ -39,6 +39,7 @@ units:
   solo: {parties: "xae xaf", timeout: 172800}
   onecmd: {parties: "xaa xab"}
   nohand: {parties: "xaa xab"}
+  offer: {parties: "xaa xab"}
 
 scenarios:
   - id: two-party-full
@@ -979,5 +980,23 @@ scenarios:
       - {id: partner-phase-14-in-the-command, step: "nh-{B}-{A}-phases-14"}
       - {id: one-agreement, step: "nh-{A}-{B}-one-agreement-digest"}
       - {id: handshake, step: "nh-{A}-{B}-a-wireguard-handshake"}
+      - {id: acceptance, step: "nh-acceptance-as-{A}-with-{B}"}
+      - {id: nothing-hand-written, step: "nh-nothing-hand-written"}
+
+  - id: offer-narrower-than-release
+    title: An offer narrower than the deployment's release sets is carried out for one partner (gate B5)
+    unit: {goatbuilder: offer}
+    runs_where: local
+    pass_condition: >
+      nothing-hand-written, with {A}'s peering entry offering only release/all/** while {A}'s
+      environment releases release/all/** and release/{B}/**. The agreement names only
+      release/all/** for {A}'s flow; a value staged under release/all on {A}'s core arrives at
+      {B}'s core under from/{A}/all; a value staged under release/{B} on {A}'s core does not
+      arrive, while an offered control does. The run is otherwise nothing-hand-written's:
+      strict acceptance passes and nothing is written by hand outside the lab-only lines.
+    checks:
+      - {id: agreement-offers-only-the-narrowed-set, step: "b5-{A}-offers-only-the-narrowed-set"}
+      - {id: offered-set-arrives, step: "b5-{A}-{B}-offered-set-arrives"}
+      - {id: narrowed-out-set-does-not-arrive, step: "b5-{A}-{B}-narrowed-out-set-does-not-arrive"}
       - {id: acceptance, step: "nh-acceptance-as-{A}-with-{B}"}
       - {id: nothing-hand-written, step: "nh-nothing-hand-written"}

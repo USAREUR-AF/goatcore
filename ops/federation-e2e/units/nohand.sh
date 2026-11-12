@@ -330,12 +330,17 @@ nh_side_from_nothing() { # $1 us, $2 them, $3 "true" when this side listens
     host_exec "$h" git -C /opt/goat pull -q --ff-only origin main
   fi
   # THE OPERATOR'S INPUT, and nothing else: the peering entry, and the environment's offer.
-  python3 - "$c/ops/goatbuilder/goatbuilder.yaml" "$B" "$A" "$declares" "https://$DIRECTORY_IP:8443" <<'PY'
+  # NH_OFFER_<side> (comma-separated release sets): this side's peering offers only those,
+  # narrowing its environment's release (the peering entry's `offer:`; units/offer.sh, B5).
+  local offer=""; eval "offer=\${NH_OFFER_$A:-}"
+  python3 - "$c/ops/goatbuilder/goatbuilder.yaml" "$B" "$A" "$declares" "https://$DIRECTORY_IP:8443" "$offer" <<'PY'
 import sys, yaml
-p, them, env, declares, url = sys.argv[1:6]
+p, them, env, declares, url, offer = sys.argv[1:7]
 text = open(p).read()
 cfg = yaml.safe_load(text)
 cfg["peerings"] = [{"with": them, "environment": env, "site": "home", "edge_class": "edge"}]
+if offer:
+    cfg["peerings"][0]["offer"] = [o for o in offer.split(",") if o]
 if declares == "1":
     cfg.setdefault("secrets", {})["federation"] = {
         "signing_key": "/etc/fed-e2e/signing.key", "ca_cert": "/etc/fed-e2e/ca.pem", "ca_key": "/etc/fed-e2e/ca-key.pem"}
