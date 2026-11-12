@@ -148,13 +148,26 @@ def handoff_checks():
     run = lambda *a: subprocess.run([sys.executable, h, *a], capture_output=True, text=True)
     with tempfile.TemporaryDirectory() as d:
         stop = {"ok": True, "handoff": {"phase": 3, "code": "GB-NNN", "run_on": "edge",
-                "command": ["goatbuilder", "federate", "xab", "--side", "edge", "--from", "3", "--to", "3"],
-                "carry": [], "result": "handoff/3/edge-half.json",
+                "command": ["goatbuilder", "federate", "xab", "--side", "edge", "--from", "3", "--to", "3",
+                            "--expect-commit", "c" * 40],
+                "commit": "c" * 40, "carry": [], "result": "handoff/3/edge-half.json",
                 "import": ["goatbuilder", "federate", "import", "xab", "3", "{result}", "--sha256", "{code}"],
                 "then": ["goatbuilder", "federate", "xab", "--from", "3"]}}
         write_text(os.path.join(d, "stop.json"), json.dumps(stop))
         r = run("next", os.path.join(d, "stop.json"))
         check(r.returncode == 0 and json.loads(r.stdout)["run_on"] == "edge", f"handoff next reads the stop: {r.stderr.strip()}")
+        nocommit = json.loads(json.dumps(stop)); del nocommit["handoff"]["commit"]
+        write_text(os.path.join(d, "nocommit.json"), json.dumps(nocommit))
+        r = run("next", os.path.join(d, "nocommit.json"))
+        check(r.returncode == 2, "handoff next refuses an edge hand-off that names no commit")
+        badcarry = json.loads(json.dumps(stop)); badcarry["handoff"]["carry"] = [{"file": "agreement.json", "sha256": "a" * 64}]
+        write_text(os.path.join(d, "badcarry.json"), json.dumps(badcarry))
+        r = run("next", os.path.join(d, "badcarry.json"))
+        check(r.returncode == 2, "handoff next refuses a carry entry without in: checkout|work")
+        okcarry = json.loads(json.dumps(stop)); okcarry["handoff"]["carry"] = [{"file": "agreement.json", "in": "work", "sha256": "a" * 64}]
+        write_text(os.path.join(d, "okcarry.json"), json.dumps(okcarry))
+        r = run("next", os.path.join(d, "okcarry.json"))
+        check(r.returncode == 0, f"handoff next reads a work carry entry: {r.stderr.strip()}")
         write_text(os.path.join(d, "none.json"), json.dumps({"ok": True}))
         r = run("next", os.path.join(d, "none.json"))
         check(r.returncode == 0 and json.loads(r.stdout)["run_on"] is None, "handoff next: a report without a hand-off is none")
@@ -175,7 +188,7 @@ def handoff_checks():
         check(r.returncode == 0 and json.loads(r.stdout)[5:] == ["/tmp/r.json", "--sha256", code], f"handoff fill replaces whole-element tokens: {r.stderr.strip()}")
         r = run("fill", json.dumps(["x", "--file={result}"]), "--result", "/tmp/r.json")
         check(r.returncode == 2, "handoff fill refuses a token inside an element")
-        write_text(os.path.join(d, "text.txt"), "continue on the edge driver:\n  goatbuilder federate xab --side edge --from 3 --to 3\n")
+        write_text(os.path.join(d, "text.txt"), "continue on the edge driver:\n  goatbuilder federate xab --side edge --from 3 --to 3 --expect-commit " + "c" * 40 + "\n")
         r = run("text-holds", os.path.join(d, "text.txt"), json.dumps(stop["handoff"]["command"]))
         check(r.returncode == 0, f"handoff text-holds finds the quoted argv: {r.stderr.strip()}")
         r = run("text-holds", os.path.join(d, "text.txt"), json.dumps(stop["handoff"]["then"]))

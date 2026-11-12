@@ -2,8 +2,10 @@
 """The two-driver hand-off object (docs/design/federation-two-drivers.md, "The hand-off object").
 
     handoff.py next REPORT           the stop's hand-off from a goatbuilder -o json report:
-                                     prints {"run_on", "phase", "command", "carry", "result",
-                                     "import", "then"} or {"run_on": null} when there is none
+                                     prints {"run_on", "phase", "command", "commit", "carry",
+                                     "result", "import", "then"} or {"run_on": null} when there is
+                                     none; an edge hand-off names the checkout's commit and its
+                                     command carries --expect-commit <commit>
     handoff.py wayback REPORT        the edge run's way-back object: prints {"result_path",
                                      "result_sha256", "confirm_code", "import", "then"}; refuses a
                                      confirm code that is not the first 32 hex digits of the
@@ -84,12 +86,20 @@ def cmd_next(path):
     if run_on not in ("edge", "controller"):
         die(f"run_on is {run_on!r}, not edge or controller")
     out = {"run_on": run_on, "phase": h.get("phase"),
-           "command": argv(h.get("command"), "command", allow_null=True),
+           "command": argv(h.get("command"), "command", allow_null=True), "commit": h.get("commit"),
            "carry": h.get("carry") or [], "result": h.get("result"),
            "import": argv(h.get("import"), "import"), "then": argv(h.get("then"), "then")}
     for c in out["carry"]:
-        if not (isinstance(c, dict) and isinstance(c.get("file"), str) and re.fullmatch(r"[0-9a-f]{64}", str(c.get("sha256", "")))):
-            die(f"a carry entry is not {{file, sha256}}: {c!r}")
+        if not (isinstance(c, dict) and isinstance(c.get("file"), str) and c.get("in") in ("checkout", "work")
+                and re.fullmatch(r"[0-9a-f]{64}", str(c.get("sha256", "")))):
+            die(f"a carry entry is not {{file, in: checkout|work, sha256}}: {c!r}")
+    if run_on == "edge" and out["command"] is not None:
+        # The edge runs against the controller's checkout at one commit, and refuses another.
+        if not isinstance(out["commit"], str) or not out["commit"]:
+            die("an edge hand-off names no commit for the checkout it runs against")
+        cmd = out["command"]
+        if not any(cmd[i] == "--expect-commit" and cmd[i + 1] == out["commit"] for i in range(len(cmd) - 1)):
+            die(f"the edge command does not carry --expect-commit {out['commit']}")
     print(json.dumps(out))
 
 
