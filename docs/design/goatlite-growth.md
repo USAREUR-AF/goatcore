@@ -133,6 +133,10 @@ Everything on hardware. No step of `grow` has run on a machine: not the custody 
 |---|---|---|
 | Facts the learner supplies | 4: `name`, `host`, `ssh_user`, `admin` | the schema's `lite.required`; a file of only those validates |
 | Stops for the learner | 1: phase 11, the first dashboard login on a LAN site | `MANUAL` steps in `goatbuilder standup pasture --dry-run -o json` |
-| Phases | 12 of 14 (7 and 8 are internet-only) | distinct phase numbers in that plan |
-| Steps | 36 | phase lines in that plan |
-| Tutorial 00 before the goatnet works | 7 sections, 36 command blocks, 75 lines in them | `docs/tutorials/00-goatlite.md` before `## 8. Use it` |
+| Phases | 12 of 14 (7 and 8 run on the internet profile only) | distinct phase numbers in that plan |
+| Steps | 36 | numbered phase rows in that plan |
+| Titled rows | 38: the 36 steps and the two image-pull rows, pinned by name | every `=== … ===` row in that plan |
+| Commands | 33 rows holding 59 shell command separators | command rows in that plan, and the `&&`, `\|\|`, `;` and `\|` inside them, so work appended to an existing step counts |
+| Tutorial 00 before the goatnet works | 7 numbered sections, 18 headings, 36 command blocks with 75 lines, 159 inline code spans | `docs/tutorials/00-goatlite.md` before `## 8. Use it`: every heading at any level, numbered or not; fenced blocks, indented ones included |
+
+**What the budget cannot see.** A prompt a play or script asks during a real run is not in the dry run, which runs nothing; nor are the pages the tutorial links the learner to. Both are held by review until a run on a machine records them.
