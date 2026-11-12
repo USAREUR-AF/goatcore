@@ -19,7 +19,10 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-use sha2::{Digest, Sha256};
+#[path = "upgrade/released.rs"]
+mod released;
+
+use released::pin;
 
 fn new_bin() -> &'static str {
     env!("CARGO_BIN_EXE_goatbuilder")
@@ -30,65 +33,6 @@ fn repo() -> PathBuf {
         .join("../..")
         .canonicalize()
         .expect("repo root")
-}
-
-fn asset() -> String {
-    let os = match std::env::consts::OS {
-        "macos" => "darwin",
-        o => o,
-    };
-    let arch = match std::env::consts::ARCH {
-        "x86_64" => "amd64",
-        "aarch64" => "arm64",
-        a => a,
-    };
-    format!("goatbuilder-{os}-{arch}")
-}
-
-/// The pinned SHA-256 of `<version>/<asset>`, from releases.sha256.
-fn pin(version: &str, asset: &str) -> Option<String> {
-    let pins = include_str!("upgrade/releases.sha256");
-    let want = format!("{version}/{asset}");
-    pins.lines().find_map(|l| {
-        let (sum, path) = l.split_once("  ")?;
-        (path == want).then(|| sum.to_string())
-    })
-}
-
-/// The released binary for `version`, checked against its pin; `None` (with
-/// the reason printed) when the test cannot run here.
-fn released(version: &str) -> Option<PathBuf> {
-    let required = std::env::var("GOATBUILDER_UPGRADE_REQUIRED").as_deref() == Ok("1");
-    let skip = |why: String| -> Option<PathBuf> {
-        assert!(!required, "GOATBUILDER_UPGRADE_REQUIRED=1 and {why}");
-        eprintln!("upgrade test NOT RUN for {version}: {why}");
-        None
-    };
-    let asset = asset();
-    let Some(want) = pin(version, &asset) else {
-        return skip(format!("releases.sha256 pins no {version}/{asset}"));
-    };
-    let Some(dir) = std::env::var_os("GOATBUILDER_UPGRADE_DIR") else {
-        return skip(
-            "GOATBUILDER_UPGRADE_DIR is unset (tests/upgrade/fetch.sh <dir> fills one)".into(),
-        );
-    };
-    let path = PathBuf::from(dir).join(version).join(&asset);
-    let Ok(bytes) = std::fs::read(&path) else {
-        return skip(format!("no {}", path.display()));
-    };
-    let got = hex(&Sha256::digest(&bytes));
-    assert_eq!(
-        got,
-        want,
-        "{} is not the released {version} binary (its SHA-256 differs from the pin)",
-        path.display()
-    );
-    Some(path)
-}
-
-fn hex(b: &[u8]) -> String {
-    b.iter().map(|x| format!("{x:02x}")).collect()
 }
 
 fn run(bin: &Path, args: &[&str]) -> Output {
@@ -186,7 +130,9 @@ fn portal_rows(bin: &Path, r: &str, f: &str) -> Vec<(String, bool, String)> {
 }
 
 fn continues_on_the_build_under_test(version: &str) {
-    let Some(old) = released(version) else { return };
+    let Some(old) = released::binary(version) else {
+        return;
+    };
     let tmp = tempfile::tempdir().unwrap();
     let fx = tmp.path().join("zagros");
     copy_tree(
