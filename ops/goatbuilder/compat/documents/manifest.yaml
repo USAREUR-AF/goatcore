@@ -198,3 +198,170 @@ documents:
   - --dry-run
   exit: 2
   release_exit: 2
+- name: deploy-dev-portal
+  format: json
+  scratch:
+  - basic
+  args:
+  - deploy
+  - -C
+  - .
+  - --mock
+  - '{scratch}/basic'
+  - --env
+  - dev
+  - --component
+  - portal
+  - --ack
+  - Reader
+  - --yes
+  exit: 3
+  release_exit: 3
+- name: deploy-dev-all
+  format: json
+  scratch:
+  - basic
+  args:
+  - deploy
+  - -C
+  - .
+  - --mock
+  - '{scratch}/basic'
+  - --env
+  - dev
+  - --ack
+  - Reader
+  - --yes
+  exit: 1
+  release_exit: 1
+- name: rollback-dev-portal
+  format: json
+  scratch:
+  - basic
+  args:
+  - rollback
+  - -C
+  - .
+  - --mock
+  - '{scratch}/basic'
+  - portal
+  - '1'
+  - --env
+  - dev
+  - --ack
+  - Reader
+  - --yes
+  exit: 3
+  release_exit: 3
+- name: plan-deploy-portal
+  format: json
+  scratch:
+  - basic
+  args:
+  - plan
+  - -C
+  - .
+  - --mock
+  - '{scratch}/basic'
+  - deploy
+  - portal
+  - --env
+  - dev
+  - --out
+  - '{scratch}/plan.json'
+  exit: 0
+  release_exit: 0
+- name: standup-dev-alpha
+  format: json
+  scratch:
+  - standup
+  args:
+  - standup
+  - -C
+  - .
+  - --mock
+  - '{scratch}/standup'
+  - dev
+  - --site
+  - alpha
+  - --ack
+  - Reader
+  - --yes
+  exit: 0
+  release_exit: 0
+- name: teardown-dev-alpha
+  format: json
+  scratch:
+  - standup
+  args:
+  - teardown
+  - -C
+  - .
+  - --mock
+  - '{scratch}/standup'
+  - dev
+  - --site
+  - alpha
+  - --yes
+  exit: 0
+  release_exit: 0
+- name: tutor-list
+  format: json
+  args:
+  - tutor
+  - --list
+  exit: 0
+  release_exit: 0
+- name: error-apply-missing-plan
+  format: json
+  args:
+  - apply
+  - -C
+  - .
+  - /nonexistent/goatbuilder-plan.json
+  exit: 2
+  release_exit: 2
+- name: error-assay-unknown-site
+  format: json
+  args:
+  - assay
+  - -C
+  - .
+  - nowhere
+  exit: 1
+  release_exit: 1
+- name: error-endstate-unknown-site
+  format: json
+  args:
+  - endstate
+  - -C
+  - .
+  - nowhere
+  - --no-assay
+  exit: 1
+  release_exit: 1
+- name: error-join-node-unknown-env
+  format: json
+  args:
+  - join-node
+  - -C
+  - .
+  - nowhere
+  - --site
+  - zagros
+  - --node
+  - n
+  - --class
+  - core
+  - --dry-run
+  exit: 2
+  release_exit: 2
+not_kept:
+  completion: prints a shell script, not a document
+  docs: prints the command reference as Markdown, not a document
+  doctor: its rows are this machine's tools, credentials and network, so its document differs from machine to machine
+  pins: reads a deployment's fleet pins and goatnets; this repository declares none, and there is no fixture for it yet
+  promote: reads the checkout's release records and ladder; there is no fixture for it yet
+  release: reads git tags and the checkout's release records; a shallow CI clone differs from a full one, and there is no fixture for it yet
+  fastlane: reads git refs and the checkout's pins; a shallow CI clone differs from a full one, and there is no fixture for it yet
+  secrets: prints no -o json document

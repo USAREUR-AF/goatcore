@@ -403,6 +403,38 @@ class A4ExitCodes(unittest.TestCase):
             self.assertEqual(compat.exit_problems(d), [], d)
 
 
+class A4EveryVerbIsKept(unittest.TestCase):
+    """Every verb of the last release has a kept -o json document, or says why not.
+
+    The kept set is the promise made checkable: a verb with no kept document
+    could drop or retype a field unseen. `not_kept:` in documents/manifest.yaml
+    names each verb without one and the reason; it only shrinks.
+    """
+
+    def verbs(self):
+        return sorted(k.split()[1] for k in compat.Baseline(HERE).surface() if len(k.split()) == 2)
+
+    def test_every_verb_has_a_kept_document_or_a_reason(self):
+        b = compat.Baseline(HERE)
+        kept = {compat.invocation_verb(d["args"], self.verbs()) for d in b.documents()}
+        not_kept = b.not_kept()
+        missing = [v for v in self.verbs() if v not in kept and v not in not_kept]
+        self.assertEqual(missing, [], "verbs with no kept document and no reason in not_kept")
+        for v, why in not_kept.items():
+            self.assertTrue(str(why).strip(), v)
+            self.assertNotIn(v, kept, f"{v} is kept; remove it from not_kept")
+
+    def test_the_verbs_that_change_state_are_kept(self):
+        kept = {compat.invocation_verb(d["args"], self.verbs()) for d in compat.Baseline(HERE).documents()}
+        for v in ("deploy", "rollback", "plan", "standup", "teardown"):
+            self.assertIn(v, kept)
+
+    def test_an_invocation_on_a_scratch_copy_names_only_kept_fixtures(self):
+        for d in compat.Baseline(HERE).documents():
+            for f in d.get("scratch") or []:
+                self.assertTrue(os.path.isdir(os.path.join(HERE, "documents", "fixtures", f)), (d["name"], f))
+
+
 class A5ErrorCodes(unittest.TestCase):
     BASE = [{"code": "GB-001", "title": "unknown component"}, {"code": "GB-002", "title": "no plan"}]
 

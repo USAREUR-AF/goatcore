@@ -6,4 +6,4 @@ binary_sha256: cce77bed0e0237cb3d7e07f8ce3fc66297c2aa0d32cee0e8168bcbeb23ccdbd2
 recorded: '2026-11-12'
 binary: goatbuilder-linux-amd64
 sums_sha256: 525a6e9b962d07e5ae38a66f72a441d6b9d859865ca7f6adfbfedd1e06f2d7b0
-documents_sha256: a0a4a9ed816992db78959c570e3b0cdd3c083e9e3d7c3246b50fcec81ddc77fd
+documents_sha256: 96b0f0f30ec9ccf4e5ad54776884cd802a4f7048f6d48a4fb3ccd4a1b8907ef9

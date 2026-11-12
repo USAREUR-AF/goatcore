@@ -1,0 +1,28 @@
+{
+  "schema": "goatbuilder.output/v1",
+  "verb": "plan",
+  "ok": true,
+  "exit": 0,
+  "checks": [
+    {
+      "name": "plan/written",
+      "ok": true,
+      "detail": "{scratch}/plan.json — review it, then: goatbuilder apply {scratch}/plan.json"
+    },
+    {
+      "name": "plan/declared",
+      "ok": true,
+      "detail": "\"ghcr.io/example-org/portal:v1.4.0@sha256:0b2a6c1d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b\""
+    },
+    {
+      "name": "plan/serial",
+      "ok": true,
+      "detail": "0"
+    },
+    {
+      "name": "plan/fixture",
+      "ok": true,
+      "detail": "\"{scratch}/basic\""
+    }
+  ]
+}

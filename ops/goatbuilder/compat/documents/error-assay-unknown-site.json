@@ -1,0 +1,42 @@
+{
+  "schema": "goatbuilder.error/v1",
+  "error": "no goatnet named `nowhere` here: ops/ansible/group_vars/nowhere_hosts/vars.yml does not exist",
+  "code": "GB-049",
+  "interpretation": {
+    "schema": "goat-errors.interpretation/v1",
+    "summary": "no goatnet named `nowhere` here: ops/ansible/group_vars/nowhere_hosts/vars.yml does not exist",
+    "hits": [
+      {
+        "code": "GB-049",
+        "layer": "code",
+        "evidence": "no goatnet named `nowhere` here: ops/ansible/group_vars/nowhere_hosts/vars.yml does not exist",
+        "at": 0,
+        "entry": {
+          "code": "GB-049",
+          "tool": "goatbuilder",
+          "title": "the acceptance assay cannot run here",
+          "what": "assay derives the site's values from its group_vars and runs ops/validation/run-acceptance.py with python3; one of those could not start, so nothing was probed.",
+          "causes": [
+            "the site name has no ops/ansible/group_vars/<site>_hosts/vars.yml, or --values names no file",
+            "python3 or PyYAML is not installed",
+            "the runner stopped with an error rather than a verdict"
+          ],
+          "fixes": [
+            "ls ops/ansible/group_vars/   (the site names this repository declares)",
+            "pip3 install pyyaml",
+            "python3 ops/validation/run-acceptance.py --self-test"
+          ],
+          "read": "docs/design/goatnet-acceptance-suite.md",
+          "exit": 1,
+          "matches": [
+            "no goatnet named `[^`]+` here",
+            "the site's values could not be derived",
+            "the acceptance runner did not finish",
+            "no value set at "
+          ]
+        }
+      }
+    ],
+    "unrecognised": false
+  }
+}

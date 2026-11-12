@@ -1,0 +1,53 @@
+{
+  "schema": "goatbuilder.output/v1",
+  "verb": "rollback",
+  "ok": false,
+  "exit": 3,
+  "checks": [
+    {
+      "name": "dev/portal/artifact",
+      "ok": true,
+      "detail": "artifact_type=image reversible=true (declared/artifacts.yaml)"
+    },
+    {
+      "name": "dev/portal/history",
+      "ok": true,
+      "detail": "newest first: ghcr.io/example-org/portal:v1.4.0@sha256:0b2a6c1d3e4f… ← ghcr.io/example-org/portal:v1.3.2@sha256:9f8e7d6c5b4a…"
+    },
+    {
+      "name": "dev/portal/declare",
+      "ok": true,
+      "detail": "declared ghcr.io/example-org/portal:v1.3.2@sha256:9f8e7d6c5b4a… in declared/pins.yaml (was ghcr.io/example-org/portal:v1.4.0@sha256:0b2a6c1d3e4f…)"
+    },
+    {
+      "name": "dev/portal/publish",
+      "ok": true,
+      "detail": "serial 1: ghcr.io/example-org/portal:v1.3.2@sha256:9f8e7d6c5b4a… by Reader"
+    },
+    {
+      "name": "dev/dev-core-a/portal",
+      "ok": true,
+      "detail": "converged on ghcr.io/example-org/portal:v1.3.2@sha256:9f8e7d6c5b4a…"
+    },
+    {
+      "name": "dev/dev-core-b/portal",
+      "ok": true,
+      "detail": "converged on ghcr.io/example-org/portal:v1.3.2@sha256:9f8e7d6c5b4a…"
+    },
+    {
+      "name": "dev/dev-edge-a/portal",
+      "ok": false,
+      "detail": "unknown: dev-edge-a: record unreadable"
+    },
+    {
+      "name": "dev/dev-obs-a/portal",
+      "ok": false,
+      "detail": "pending (not yet converged)"
+    },
+    {
+      "name": "dev/dev-obs-b/portal",
+      "ok": false,
+      "detail": "pending (not yet converged)"
+    }
+  ]
+}

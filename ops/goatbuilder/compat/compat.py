@@ -462,6 +462,10 @@ class Baseline:
     def documents(self) -> list:
         return _read_yaml(os.path.join(self.root, "documents", "manifest.yaml"))["documents"]
 
+    def not_kept(self) -> dict:
+        """The verbs with no kept document, each with the reason."""
+        return _read_yaml(os.path.join(self.root, "documents", "manifest.yaml")).get("not_kept") or {}
+
     def document(self, d: dict):
         with open(os.path.join(self.root, "documents", d["name"] + "." + d["format"])) as f:
             return json.load(f) if d["format"] == "json" else yaml.safe_load(f)
@@ -483,10 +487,35 @@ def _env() -> dict:
     return env
 
 
+SCRATCH = "{scratch}"
+
+
+def invocation_verb(args: list, verbs: list):
+    """The top-level verb an invocation runs: its first argument that names one."""
+    return next((a for a in args if a in verbs), None)
+
+
 def run_document(binary: str, repo: str, d: dict):
-    r = subprocess.run([binary, "-o", d["format"], *d["args"]], capture_output=True, text=True, env=_env(), cwd=repo)
+    """Run one kept invocation. A verb that changes state runs on a scratch copy:
+    each fixture named in `scratch:` is copied from documents/fixtures/ into a
+    fresh directory, `{scratch}` in the arguments names it, and its path is
+    written back as `{scratch}` in the output, so the kept document names no
+    machine's directory."""
+    args = list(d["args"])
+    tmp = None
+    if d.get("scratch"):
+        tmp = tempfile.mkdtemp(prefix="compat-scratch-")
+        for f in d["scratch"]:
+            shutil.copytree(os.path.join(HERE, "documents", "fixtures", f), os.path.join(tmp, f))
+        args = [a.replace(SCRATCH, tmp) for a in args]
     try:
-        doc = json.loads(r.stdout) if d["format"] == "json" else yaml.safe_load(r.stdout)
+        r = subprocess.run([binary, "-o", d["format"], *args], capture_output=True, text=True, env=_env(), cwd=repo)
+    finally:
+        if tmp:
+            shutil.rmtree(tmp, ignore_errors=True)
+    out = r.stdout.replace(tmp, SCRATCH) if tmp else r.stdout
+    try:
+        doc = json.loads(out) if d["format"] == "json" else yaml.safe_load(out)
     except (ValueError, yaml.YAMLError) as e:
         return r.returncode, None, f"not a {d['format']} document ({e}); stderr: {r.stderr.strip()[:300]}"
     return r.returncode, doc, None
@@ -680,7 +709,7 @@ def _refresh_last_release(repo: str, root: str, tag: str, binary: str, b: "Basel
                 f.write("\n")
             else:
                 yaml.safe_dump(doc, f, sort_keys=False, allow_unicode=True)
-    _write_manifest(os.path.join(root, "documents", "manifest.yaml"), "documents", docs)
+    _write_manifest(os.path.join(root, "documents", "manifest.yaml"), None, {"documents": docs, "not_kept": b.not_kept()})
 
 
 def _write_manifest(path: str, key, value) -> None:

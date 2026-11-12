@@ -103,6 +103,15 @@ exactly the shape `SHA256SUMS` writes (64 lowercase hex, two spaces,
   a refusal that gains its own code turns its guesses into one code hit with no
   score.
 
+## Verbs that change state
+
+`deploy`, `rollback`, `plan`, `standup` and `teardown` write into the fixture
+they run on. Their invocations name the fixtures they need in `scratch:`; each
+run copies those from `documents/fixtures/` into a fresh directory, `{scratch}`
+in the arguments names it, and its path is written back as `{scratch}` in the
+output, so the kept document names no machine's directory and the kept
+fixtures are never changed.
+
 ## What is not checked here
 
 - The text of tables printed for a person, and the shell scripts beside the
@@ -114,9 +123,13 @@ exactly the shape `SHA256SUMS` writes (64 lowercase hex, two spaces,
   comments makes clap print its values as a bulleted list instead of
   `[possible values: …]`. The parser does not read that list, so such a change
   fails loudly ("lists none now"), and the parser is extended in that change.
-- Documents of verbs that need a host or write state (`deploy`, `standup`,
-  `federate` past its first refusal): no read-only invocation of them on a
-  fixture produces a document yet.
+- The verbs listed under `not_kept:` in `documents/manifest.yaml`, each with
+  its reason (a script or Markdown instead of a document, a machine-dependent
+  readout, or a verb that reads a deployment or git history no fixture holds
+  yet). Every other verb has at least one kept document, and a test refuses a
+  verb that has neither; the list only shrinks.
+- `federate` past its first refusal and its journal: a peering needs the
+  federation test world, which the compat check does not build.
 - `explain <code> -o json` prints the catalog entry without a `schema` field,
   so that document carries no version yet. A document kept with no version
   may gain one (it is an added field); a document kept with a version must
