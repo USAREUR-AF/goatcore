@@ -185,9 +185,12 @@ jobs:
       - name: Python tests
         # openssh-server (deps) lets tests reach a host over a real loopback sshd,
         # as the edge role's core-on-another-host tests do; with
-        # GOAT_TEST_REQUIRE_SSHD=1 a test that needs sshd fails instead of skipping.
+        # GOAT_TEST_REQUIRE_SSHD=1 a test that needs sshd, and with
+        # GOAT_TEST_REQUIRE_ANSIBLE=1 one that needs ansible-playbook (installed in
+        # deps), fails instead of skipping.
         env:
           GOAT_TEST_REQUIRE_SSHD: "1"
+          GOAT_TEST_REQUIRE_ANSIBLE: "1"
         run: |
           set -o pipefail
           export PYTHONPATH="$PWD/ops/consistency/python"
