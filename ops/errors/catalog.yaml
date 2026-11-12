@@ -2587,6 +2587,108 @@ entries:
     matches:
       - "answered for peering '"
     exit: 2
+  - code: GB-254
+    tool: goatbuilder
+    title: a file goatbuilder reads or writes cannot be read or written
+    what: "A verb reads or writes a file of the checkout or its state (a pin table, a schema, a record, an inventory, a play) and the operating system refused: the file is missing, unreadable, or its directory is not writable. The message names the file and the system's reason."
+    causes:
+      - "the file is not in this checkout, or -C names another one"
+      - "the file or its directory is not readable or writable by this user"
+    fixes:
+      - "ls -l <the file the message names>"
+      - "goatbuilder -C <the right checkout> <verb>"
+    read: docs/design/goatbuilder.md
+    exit: 2
+  - code: GB-255
+    tool: goatbuilder
+    title: nothing is declared for the environment
+    what: "The fixture's (or checkout's) declarations name no component for the environment asked for, or none by the name given, so there is nothing to read, plan or roll back."
+    causes:
+      - "a misspelt environment or component"
+      - "the environment declares no component yet"
+    fixes:
+      - "goatbuilder pins --check   (what fleet-pins.yaml declares)"
+      - "pass an environment and component the declarations hold"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "nothing declared for "
+    exit: 2
+  - code: GB-256
+    tool: goatbuilder
+    title: a deploy play's hosts cannot be resolved
+    what: "To target a deploy, goatbuilder reads the component's play for its hosts: line, following at most three import_playbook hops. The play has neither, or the chain is longer."
+    causes:
+      - "the play has no hosts: line and no import_playbook"
+      - "more than three import_playbook hops"
+    fixes:
+      - "give the play a hosts: line (\"{{ target }}\" for a play targeted per group)"
+      - "declare deploy_playbook in fleet-pins.yaml for the play that does"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "no hosts: line and no import_playbook in"
+      - "more than three import_playbook hops"
+    exit: 2
+  - code: GB-257
+    tool: goatbuilder
+    title: fleet-pins.yaml is not in the shape goatbuilder edits
+    what: "goatbuilder reads fleet-pins.yaml's components and edits a component's block in place. The file has no components:, or the component's block or its fleet: line is not where the writer looks."
+    causes:
+      - "fleet-pins.yaml has no components: mapping"
+      - "the component's block was edited by hand into another shape"
+    fixes:
+      - "goatbuilder pins --check   (the table as goatbuilder reads it)"
+      - "restore the component's block to `<component>:` with a `fleet:` line, as the others are"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "fleet-pins.yaml has no components"
+      - ": no component block"
+      - ": no fleet: line"
+    exit: 2
+  - code: GB-258
+    tool: goatbuilder
+    title: a command a verb runs failed
+    what: "A verb runs git, gh, ansible or one of the repository's own steps and stops when it fails. The message is that command's own error output; it names what went wrong."
+    causes:
+      - "the command's own error, quoted in the message (a network failure, a missing credential, a refused push)"
+    fixes:
+      - "read the quoted output: its tool's own catalog entry may name it (goatbuilder explain '<the line>')"
+      - "run the command by hand with the same arguments (goatbuilder -v shows it)"
+    read: docs/design/goatbuilder.md
+    exit: 1
+  - code: GB-259
+    tool: goatbuilder
+    title: the assembled tree's marker is incomplete
+    what: "An assembled checkout (a goatcore commit plus an overlay) carries .goat-assembled, naming the goatcore_ref and overlay_commit it was built from; fresh-source checks against them. A line is missing."
+    causes:
+      - "the tree was assembled by hand, or the marker was edited"
+    fixes:
+      - "assemble the tree again with the overlay's assembly step"
+      - "cat .goat-assembled   (goatcore_ref= and overlay_commit= lines)"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "no goatcore_ref= line"
+      - "no overlay_commit= line"
+    exit: 2
+  - code: GB-260
+    tool: goatbuilder
+    title: a rollback has no history to go back to, or its target is refused
+    what: "rollback goes back through the host's deploy ledger and the in-repo history (deploy-history.yml). There is no history for the component, not enough of it, or the ref it would roll to is flagged do_not_roll_to, or a host runs a ref neither history knows."
+    causes:
+      - "the component has not been adopted into deploy-history.yml"
+      - "the history holds fewer entries than the rollback asks for"
+      - "the target ref is flagged do_not_roll_to in the in-repo ledger"
+      - "a host runs a ref no history records (deployed by hand?)"
+    fixes:
+      - "goatbuilder rollback <component> --status"
+      - "investigate the host the message names before rolling back"
+    read: docs/design/universal-deploy-rollback.md
+    matches:
+      - "deploy-history.yml has no hosts entr"
+      - "no deploy-history.yml at "
+      - "cannot roll back "
+      - "flagged do_not_roll_to=true"
+      - "which is in NO known history"
+    exit: 2
   - code: GB-246
     tool: goatbuilder
     title: a rollback depth outside the ledger
