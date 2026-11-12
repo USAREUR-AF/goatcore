@@ -5,7 +5,6 @@
 //! the two built binaries; this holds goatbuilder to the library in
 //! `cargo test`.
 
-
 #[path = "common/test_home.rs"]
 mod test_home;
 use std::path::{Path, PathBuf};

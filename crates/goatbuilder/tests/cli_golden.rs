@@ -1,6 +1,3 @@
-
-#[path = "common/test_home.rs"]
-mod test_home;
 // End-to-end golden tests for the `goatbuilder` binary, on goat-cli's model
 // (crates/goat-cli/tests/cli_golden.rs): `trycmd` drives the built binary
 // against the `.toml` cases in `tests/cmd/`.
@@ -12,6 +9,9 @@ mod test_home;
 //
 // Add a case: drop `tests/cmd/<name>.toml`. Regenerate after an intended
 // output change: `TRYCMD=overwrite cargo test -p goatbuilder --test cli_golden`.
+
+#[path = "common/test_home.rs"]
+mod test_home;
 
 #[test]
 fn cli_golden() {

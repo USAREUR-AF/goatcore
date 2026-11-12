@@ -21,7 +21,6 @@
 //! Flows that need hosts, GitHub or a registry are not here: the deployment
 //! e2e harness (ops/e2e) runs those against container hosts.
 
-
 #[path = "common/test_home.rs"]
 mod test_home;
 use std::path::{Path, PathBuf};

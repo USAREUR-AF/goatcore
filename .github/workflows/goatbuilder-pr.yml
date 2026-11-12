@@ -335,6 +335,11 @@ jobs:
             target-goatbuilder-pr-macos-
       - name: Install the Python the pins and promote flows render with
         run: python3 -m pip install --quiet --break-system-packages pyyaml jsonschema || python3 -m pip install --quiet pyyaml jsonschema
+      - name: Mark the time before the tests, for the state-directory guard
+        run: touch "$RUNNER_TEMP/goatbuilder-tests-start"
       - name: cargo test
         run: cargo test -p goatbuilder
+      - name: The tests wrote nothing into the real state directory
+        working-directory: ${{ github.workspace }}
+        run: bash ops/ci/check-goatbuilder-tests-leave-home.sh --after "$RUNNER_TEMP/goatbuilder-tests-start"
 

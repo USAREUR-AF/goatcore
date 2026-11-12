@@ -8,7 +8,6 @@
 //! lesson's commands run for real, on the tutor's own fixture copies or
 //! read-only on this checkout.
 
-
 #[path = "common/test_home.rs"]
 mod test_home;
 use std::path::{Path, PathBuf};

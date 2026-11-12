@@ -2,7 +2,7 @@
 //! the real one (its state directory, `~/.goat/state`, holds run records and
 //! logs). ops/ci/check-goatbuilder-tests-leave-home.sh holds the suite to it.
 //!
-//! The directory is under cargo's per-target scratch space, so nothing is left
+//! The directory is one per test, under cargo's per-target scratch space, so nothing is left
 //! in the system temp directory. Python keeps finding the packages installed for
 //! the real user (PYTHONUSERBASE), and git keeps the real user's configuration
 //! (GIT_CONFIG_GLOBAL), so a test sees the same tools it saw before.
@@ -12,10 +12,32 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// The tests' home directory, made once.
+/// This test's home directory: one per test (libtest names each test's thread
+/// after the test), under the test binary's own name, emptied the first time
+/// this process uses it, so no test reads what another, or an earlier run, left.
 pub fn path() -> PathBuf {
-    let p = Path::new(env!("CARGO_TARGET_TMPDIR")).join("goatbuilder-test-home");
-    std::fs::create_dir_all(&p).expect("the tests' home directory");
+    use std::collections::BTreeSet;
+    use std::sync::Mutex;
+    static MADE: Mutex<BTreeSet<PathBuf>> = Mutex::new(BTreeSet::new());
+    let exe = std::env::current_exe().ok();
+    let binary = exe
+        .as_deref()
+        .and_then(|e| e.file_stem())
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "tests".into());
+    let test = std::thread::current().name().unwrap_or("main").replace(
+        |c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '-'),
+        "_",
+    );
+    let p = Path::new(env!("CARGO_TARGET_TMPDIR"))
+        .join("goatbuilder-test-home")
+        .join(binary)
+        .join(test);
+    let mut made = MADE.lock().unwrap_or_else(|e| e.into_inner());
+    if made.insert(p.clone()) {
+        let _ = std::fs::remove_dir_all(&p);
+    }
+    std::fs::create_dir_all(&p).expect("the test's home directory");
     p
 }
 

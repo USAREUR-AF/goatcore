@@ -2,7 +2,6 @@
 //! refuses in one line when it is not given a terminal, so a pipe or CI never
 //! hangs, and it is hidden from `--help`.
 
-
 #[path = "common/test_home.rs"]
 mod test_home;
 use std::process::{Command, Stdio};

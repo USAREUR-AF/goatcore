@@ -16,7 +16,6 @@
 //! variable unset the test says so and passes without running, unless
 //! `GOATBUILDER_UPGRADE_REQUIRED=1`, which makes a missing binary a failure.
 
-
 #[path = "common/test_home.rs"]
 mod test_home;
 use std::path::{Path, PathBuf};
