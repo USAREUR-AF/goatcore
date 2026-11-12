@@ -81,6 +81,8 @@ pub struct Surface {
     pub hand_off_at_10: bool,
     /// Set by the run when it stopped at phase 10 to hand over.
     pub handed_off: bool,
+    /// `rotate <partner> leaves`: phase 8 replaces every leaf (rotation.rs).
+    pub rotate_leaves: bool,
 }
 
 impl Surface {

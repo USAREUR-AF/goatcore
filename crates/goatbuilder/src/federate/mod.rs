@@ -43,6 +43,7 @@ use std::path::Path;
 use std::process::Command;
 
 pub mod backout;
+pub mod rotation;
 
 use anyhow::{anyhow, Context, Result};
 
@@ -632,6 +633,9 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
     let mut phases = plan(repo, o, &work, &edge_group, &resume);
     // A peering a forwarder relays: the forwarder runs inside phase 2 (federate/forwarder.rs).
     forwarder::splice(&mut phases, &cfg, cfg_path.parent().unwrap_or(repo), o, &edge_group)?;
+    if s.rotate_leaves {
+        rotation::leaves(&mut phases);
+    }
     let banner_mode = if o.dry_run {
         "(DRY RUN — nothing executes)"
     } else if o.mock.is_some() {
@@ -728,6 +732,11 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
                     confirm::Verdict::Continue => {
                         r.end(ph, state::Outcome::Passed, "keys confirmed");
                         replanned = Some(plan(repo, o, &work, &edge_group, &resume));
+                        if s.rotate_leaves {
+                            if let Some(p) = replanned.as_mut() {
+                                rotation::leaves(p);
+                            }
+                        }
                         continue;
                     }
                     confirm::Verdict::Stop(d) => {
@@ -963,6 +972,31 @@ mod tests {
     /// A dry run reads as a plan: one aligned phase table, then the commands;
     /// no `=== Phase ===` banners, no em dashes, no `a/b/../../c` paths, and
     /// phase 11 says it waits on the agreement rather than "REFUSED".
+    /// `rotate <partner> leaves` (docs/design/federation-key-rotation.md §5,
+    /// K3): phase 8 replaces every leaf with --rotate, and only phase 8's
+    /// command changes; the run is 8 to 14.
+    #[test]
+    fn rotating_the_leaves_asks_phase_8_to_replace_them_and_nothing_else() {
+        let work = tempfile::tempdir().unwrap();
+        let work_s = work.path().display().to_string();
+        let o = Options { with: "velmara", env: None, r#as: None, edge_group: None, work: Some(&work_s), mock: None, from: 1, to: 99, dry_run: true, table: false };
+        let before = plan(&repo(), &o, &work_s, "velmara_edge", "resume");
+        let mut after = plan(&repo(), &o, &work_s, "velmara_edge", "resume");
+        rotation::leaves(&mut after);
+        for (a, b) in before.iter().zip(after.iter()) {
+            if a.n == 8 {
+                assert_eq!(b.cmd, format!("{} --rotate", a.cmd));
+            } else {
+                assert_eq!(a.cmd, b.cmd, "phase {}", a.n);
+            }
+        }
+        let (o2, s) = rotation::leaves_run(&o);
+        assert_eq!((o2.from, o2.to), (8, 14));
+        assert!(s.rotate_leaves && !s.resume);
+        assert_eq!(s.stage, "rotate");
+        assert_eq!(s.again.as_deref(), Some("goatbuilder federate rotate velmara leaves"));
+    }
+
     #[test]
     fn a_dry_run_prints_a_plan_table() {
         let work = tempfile::tempdir().unwrap();
