@@ -26,12 +26,12 @@ data received from partners.
   kinds of store (`ops/ansible/roles/goat-zenoh/templates/config.json5.j2`,
   lines 324 to 363):
   - **`sovereign_from`**, one store on `from/**`, shared by every partner, in
-    `<storage path>/sovereign_from` (line 335). Its comment says partner data
+    `<storage path>/sovereign_from` (store at line 335, its directory at line 339). Its comment says partner data
     "MUST persist here" so that what a partner sent can be audited, and that
     partner data "may be obliged to delete on request or on peering
     termination" (lines 326 and 332).
   - **`sovereign_from_<partner>`**, one per partner, on `from/<partner>/**`, in
-    `<storage path>/sovereign_from_<partner>` (line 350). A storage interest on
+    `<storage path>/sovereign_from_<partner>` (store at line 350, its directory at line 354). A storage interest on
     `from/**` does not fit an edge grant on `from/<partner>/**`, so each
     partner needs its own ([federation-package-spec.md](federation-package-spec.md),
     "Receiving storage interests").
@@ -123,7 +123,8 @@ would render its stores from that state.
 ### (c) The back-out keeps what other peerings need and deletes only this partner's data
 
 The back-out deletes the partner's samples by key, `from/<partner>/**`,
-through the router before the role entry is removed. That removes them from
+before the role entry is removed: either through the router, or on the host
+inside each RocksDB store. That removes them from
 both `sovereign_from` and `sovereign_from_<partner>`, and leaves other
 partners' data, which lives under other keys, untouched. Then the per-partner
 store and its directory are removed. The shared `sovereign_from` stays
@@ -135,7 +136,7 @@ empty store, or is removed as in (a).
 | Data obligations | Meets an obligation to delete on termination for this partner on any back-out, including one that leaves other peerings. Removes the audit copy, as in (a) |
 | A later re-peering | Starts with no data from the earlier peering |
 | The lab's check | B7's comparison, with the shared store's block as a named exception while it stays; plus a query on `from/<partner>/**` on our core that returns nothing |
-| What it costs | A deletion through the router needs an operator identity allowed to delete under `from/<partner>/**` on our own core; whether the core's access rules grant one is not established here. A deletion leaves tombstones in each store until they are collected. The per-partner directory is still deleted by the role, so the F-447 change in (a) applies to it |
+| What it costs | A temporary delete grant, or an on-host deletion. No grant exists today: the core's access rules deny by default (`config.json5.j2`, line 586), and the only ingress put or delete on `from/<partner>/**` is `sovereign-<partner>-w` (lines 597 to 601), the partner's own edge, which the back-out removes. The operator subject (`operator-trial-peer`, line 1621) may write only `ops/**`, and `system/**` where the legacy namespace is on, through `operator-w-ops` (lines 1114 to 1119). A deletion through the router therefore needs a temporary operator rule allowing ingress delete on `from/<partner>/**`, which changes the access rules B7 compares. A deletion on the host inside each RocksDB store needs no grant. Whether the pinned router applies a wildcard delete to every stored key under it is not checked. A deletion leaves tombstones in each store until they are collected. The per-partner directory is still deleted by the role, so the F-447 change in (a) applies to it |
 
 ## Across the options
 
@@ -145,7 +146,7 @@ empty store, or is removed as in (a).
 | Audit copy | gone | kept for the retention window | gone |
 | Re-peering sees old data | no | yes, within the window | no |
 | B7 comparison | exact | with a named exception | with a named exception while the shared store stays |
-| Changes to today's rules | back-out edits configuration; role deletes a directory | new declaration state; template change | new delete grant; role deletes a directory |
+| Changes to today's rules | back-out edits configuration; role deletes a directory | new declaration state; template change | a temporary delete grant or an on-host deletion; role deletes a directory |
 
 ## The question
 
