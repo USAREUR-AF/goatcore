@@ -9,7 +9,7 @@ use crate::runner::Cmd;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result};
 
 use crate::config::{self, Component};
 use crate::{Check, Report, EXIT_REFUSED};
@@ -1246,12 +1246,12 @@ pub fn reach(inventory: &Path, doors: &Path, env: &str) -> Result<Reach> {
                     .any(|l| !l.starts_with('#') && l.contains("ansible_host="))
         }
         Err(e) if e.kind() == NotFound => false,
-        Err(e) => return Err(anyhow!("{}: {e}", inventory.display())),
+        Err(e) => return Err(anyhow::Error::from(goat_errors::coded("GB-254", format!("{}: {e}", inventory.display())))),
     };
     let door = match std::fs::read_to_string(doors) {
         Ok(text) => {
             let v: serde_yaml::Value = serde_yaml::from_str(&text)
-                .map_err(|e| anyhow!("{}: {e}", doors.display()))?;
+                .map_err(|e| anyhow::Error::from(goat_errors::coded("GB-254", format!("{}: {e}", doors.display()))))?;
             let key = env.replace('_', "-");
             v.get("doors")
                 .and_then(|d| d.get(key.as_str()).or_else(|| d.get(env)))
@@ -1260,7 +1260,7 @@ pub fn reach(inventory: &Path, doors: &Path, env: &str) -> Result<Reach> {
                 .map(str::to_string)
         }
         Err(e) if e.kind() == NotFound => None,
-        Err(e) => return Err(anyhow!("{}: {e}", doors.display())),
+        Err(e) => return Err(anyhow::Error::from(goat_errors::coded("GB-254", format!("{}: {e}", doors.display())))),
     };
     Ok(Reach { mesh_row, door })
 }
@@ -1337,7 +1337,7 @@ pub fn resolve_target_mode(ansible: &Path, start: &Path) -> Result<TargetMode> {
     let mut play = start.to_path_buf();
     for _ in 0..3 {
         let text =
-            std::fs::read_to_string(&play).map_err(|e| anyhow!("{}: {e}", play.display()))?;
+            std::fs::read_to_string(&play).map_err(|e| anyhow::Error::from(goat_errors::coded("GB-254", format!("{}: {e}", play.display()))))?;
         if let Some(hosts) = text
             .lines()
             .map(str::trim)
@@ -1361,17 +1361,17 @@ pub fn resolve_target_mode(ansible: &Path, start: &Path) -> Result<TargetMode> {
             .lines()
             .find_map(|l| l.find(KEY).map(|i| l[i + KEY.len()..].trim().to_string()))
         else {
-            anyhow::bail!(
+            return Err(anyhow::Error::from(goat_errors::coded("GB-256", format!(
                 "no hosts: line and no import_playbook in {}",
                 play.display()
-            );
+            ))));
         };
         play = play.parent().unwrap_or(ansible).join(imp);
     }
-    anyhow::bail!(
+    Err(anyhow::Error::from(goat_errors::coded("GB-256", format!(
         "more than three import_playbook hops from {}",
         start.display()
-    )
+    ))))
 }
 
 fn which(tool: &str) -> bool {
