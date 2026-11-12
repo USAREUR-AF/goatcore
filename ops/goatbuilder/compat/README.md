@@ -22,8 +22,10 @@ crate, the schema, the catalog or this directory.
 
 `baseline.yaml` names it: `goatbuilder/v0.5.1`, commit `89e7cc1a`, with the
 SHA-256 of the released `goatbuilder-linux-amd64` binary the baseline was
-recorded from and of the `SHA256SUMS` that listed it. `releases.sha256` pins
-every published binary a baseline was recorded from. Nothing here is read from the network at check time: the
+recorded from and of the `SHA256SUMS` that listed it. That binary's SHA-256 must
+also be its line in `crates/goatbuilder/tests/upgrade/releases.sha256`, the one
+list of published release checksums, which the upgrade tests (gates E1 to E3)
+own and compat only reads. Nothing here is read from the network at check time: the
 baseline is committed, so a check's result depends only on the tree and the
 build.
 
@@ -48,28 +50,30 @@ python3 ops/goatbuilder/compat/compat.py refresh --tag goatbuilder/v$v --bin ./g
 ```
 
 `refresh` refuses a binary whose SHA-256 is not the goatbuilder binary entry
-of that `SHA256SUMS`, one that disagrees with `releases.sha256` for a release
-already pinned there, and one whose `--version` is not the tag's: a local
-build of main reports the same version as the last release, so the version
-alone proves nothing. It pins the binary's SHA-256 in `releases.sha256`, and
-`check` refuses a `baseline.yaml` whose binary that file does not pin. It rewrites
+of that `SHA256SUMS`, one that disagrees with the shared pin list for a
+release already pinned there, and one whose `--version` is not the tag's: a
+local build of main reports the same version as the last release, so the
+version alone proves nothing. It never writes the pin list, and `check` refuses
+a `baseline.yaml` whose binary that list does not pin (it names the file). It rewrites
 `surface.json`, `errors.yaml`, the documents and their exit codes, and
 `baseline.yaml`. Review the diff: a document or code that changed between the two
 releases is a change the release made, and its notes should say so.
 
-**The reviewer checks the new pin against the release page.** For a release
-not yet pinned, `refresh` trusts the `SHA256SUMS` it is given: the pin is only
-as good as that file. The pull request that moves the baseline adds one line
-to `releases.sha256` and sets `sums_sha256` in `baseline.yaml`; its reviewer
-compares that line with the `goatbuilder-linux-amd64` entry of `SHA256SUMS` on
-the tag's release page (and may verify `SHA256SUMS.cosign-bundle`). A
-follow-up has `refresh` fetch `SHA256SUMS` from the tag's release URL itself.
+**The pin comes first, and its reviewer checks it against the release page.**
+Adding a release to `crates/goatbuilder/tests/upgrade/releases.sha256` is a
+deliberate step, made in the pull request that names the release in the
+upgrade tests: every line there makes their `fetch.sh` download that release.
+Until that line exists, `check` refuses the moved baseline. Its reviewer
+compares the new lines with `SHA256SUMS` on the tag's release page (and may
+verify `SHA256SUMS.cosign-bundle`); for a release not yet pinned, `refresh`
+trusts the `SHA256SUMS` it is given. A follow-up has `refresh` fetch
+`SHA256SUMS` from the tag's release URL itself.
 
-**There are two pin lists.** The upgrade test (gate E1) pins the same
-published binaries in `crates/goatbuilder/tests/upgrade/releases.sha256`, in
-its own format. Nothing ties that file to `releases.sha256` here yet; they
-agree today where they overlap (v0.4.3 and v0.5.1, linux-amd64). A follow-up
-keeps one of them, or adds a gate that compares the two.
+**The list is read three ways and they must agree:** by the upgrade tests'
+`fetch.sh` (`read -r want path`), by their `released.rs`
+(`split_once("  ")`) and by compat. `test_compat.py` checks that every line has
+exactly the shape `SHA256SUMS` writes (64 lowercase hex, two spaces,
+`vX.Y.Z/goatbuilder-<os>-<arch>`, no path twice) and that the readings agree.
 
 ## Changing a surface on purpose
 
