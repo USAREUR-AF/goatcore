@@ -79,7 +79,7 @@ APPLICABLE) and `status`. The offered release sets are owned by
 `federation.toml` (`[data] release`); the peering's declaration may only narrow
 them. The procedure:
 [sovereign-federation-runbook.md](../../operations/sovereign-federation-runbook.md),
-step 1. One switch has not landed: one directory package per counterparty
-stays opt-in (`FED_DIRECTORY_PER_COUNTERPARTY=1`, or `--per-counterparty` on
-`ops/federation/standup/directory.py`), so the directory holds one package per
-party by default.
+step 1. Phase 5 publishes one directory package per counterparty, so each of
+an environment's peerings keeps its own package; `FED_DIRECTORY_PER_COUNTERPARTY=0`
+returns to one package per party (the single slot and pointer), for a directory
+that has no per-counterparty slots.

@@ -182,7 +182,23 @@ fn directory_step() -> Option<(String, Option<String>, Option<String>)> {
     Some((url, Some(pkg).filter(|v| !v.is_empty()), Some(id).filter(|v| !v.is_empty())))
 }
 
-/// Phase 5's label and body, word for word the script's.
+/// Whether phase 5 asks the directory step for one package per counterparty
+/// (`--per-counterparty`; gate row B6, ADR 1225 decision 6). On unless the
+/// operator sets FED_DIRECTORY_PER_COUNTERPARTY: then the command adds no flag
+/// and directory.py reads the variable itself (1, true or yes on; 0, false,
+/// no or empty off; any other word refused, the step doing nothing). Off is
+/// the single slot and pointer, for a directory or partner that has no
+/// per-counterparty slots.
+fn per_counterparty(switch: Option<std::ffi::OsString>) -> bool {
+    switch.is_none()
+}
+
+fn per_counterparty_by_default() -> bool {
+    per_counterparty(std::env::var_os("FED_DIRECTORY_PER_COUNTERPARTY"))
+}
+
+/// Phase 5's label and body: the script's words, and the switch the script
+/// leaves off.
 fn exchange(r: &str, ours: &str, work: &str, counterparty: &str, keyring: &str) -> (&'static str, String) {
     let directory_label = "exchange through the directory; read the key and CA fingerprint aloud";
     let (label, head) = if env_or("FED_NO_DIRECTORY", String::new()) == "1" {
@@ -195,9 +211,15 @@ fn exchange(r: &str, ours: &str, work: &str, counterparty: &str, keyring: &str) 
             Some((url, pkg, id)) => (
                 directory_label,
                 format!(
-                    "Directory step, run before this stop (it grants nothing):\n       python3 '{r}/ops/federation/standup/directory.py' --url '{url}' --ours '{ours}'{} --their-id '{}'\n     It uploads our package (unless FED_PACKAGE_URL names our own host), CA and\n     SPIFFE bundle (when phase 2 wrote one), publishes our pointer, fetches\n     theirs to {counterparty}, {work}/theirs-ca.pem and\n     {work}/theirs.spiffe-bundle, checks digest, signatures and CA\n     fingerprint, and prints both verifying keys and CA fingerprints in groups\n     of four and a compatibility report. Their entry not there yet: run phase 5\n     again after they run theirs.",
+                    "Directory step, run before this stop (it grants nothing):\n       python3 '{r}/ops/federation/standup/directory.py' --url '{url}' --ours '{ours}'{} --their-id '{}'{}\n     It uploads our package (unless FED_PACKAGE_URL names our own host), CA and\n     SPIFFE bundle (when phase 2 wrote one), publishes our pointer, fetches\n     theirs to {counterparty}, {work}/theirs-ca.pem and\n     {work}/theirs.spiffe-bundle, checks digest, signatures and CA\n     fingerprint, and prints both verifying keys and CA fingerprints in groups\n     of four and a compatibility report. Their entry not there yet: run phase 5\n     again after they run theirs.{}",
                     pkg.map(|p| format!(" --package-url '{p}'")).unwrap_or_default(),
-                    id.unwrap_or_else(|| "<unset>".to_string())
+                    id.unwrap_or_else(|| "<unset>".to_string()),
+                    if per_counterparty_by_default() { " --per-counterparty" } else { "" },
+                    if per_counterparty_by_default() {
+                        "\n     One package per counterparty: ours also goes to our slot for them, and\n     theirs is looked up first in their slot for us, so each of our peerings\n     keeps its own package. Until their key is in the keyring, their CA and\n     SPIFFE bundle wait beside it as <file>.unconfirmed: once both keys are\n     recorded, run phase 5 again to place them. A package that reached us only\n     through their pointer is held until it is confirmed on the call.\n     FED_DIRECTORY_PER_COUNTERPARTY=0 is the single slot and pointer alone."
+                    } else {
+                        ""
+                    }
                 ),
             ),
             None if !env_or("FED_DIRECTORY_URL", String::new()).is_empty() => (
@@ -237,6 +259,9 @@ fn directory_args(repo: &Path, work: &str) -> Option<Vec<String>> {
         a.extend(["--their-id".into(), i]);
     }
     a.extend(["--keyring".into(), env_or("FED_KEYRING", format!("{work}/keys.txt")), "--work".into(), work.to_string()]);
+    if per_counterparty_by_default() {
+        a.push("--per-counterparty".into());
+    }
     Some(a)
 }
 
@@ -926,6 +951,14 @@ fn is_root() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn one_package_per_counterparty_is_the_default_and_a_set_variable_is_the_directory_steps() {
+        assert!(per_counterparty(None));
+        for v in ["0", "", "no", "1", "yes", "on"] {
+            assert!(!per_counterparty(Some(v.into())), "{v:?}");
+        }
+    }
 
     fn repo() -> std::path::PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")

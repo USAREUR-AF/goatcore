@@ -255,8 +255,9 @@ before using it, and the driver step does.
 
 The driver step does this when `FED_DIRECTORY_PER_COUNTERPARTY` is `1`, `true` or `yes` (or
 `directory.py --per-counterparty`); `0`, `false`, `no`, empty or unset is off, and any other value
-is refused with nothing done. **Built, off by default**; switching the default is a
-separate change. With it set, the step:
+is refused with nothing done. **Built.** `directory.py` alone is off by default, and so is
+`peering-standup.sh`; `goatbuilder federate` passes `--per-counterparty` unless the operator sets
+the variable (gate row B6; [goatbuilder.md](goatbuilder.md), stage 11.5). With it set, the step:
 
 1. uploads our package to `/v1/parties/<us>/packages/<FED_COUNTERPARTY_ID>`, and reads it back
    byte for byte. With no counterparty id it publishes no slot and says so, and step 2 still
@@ -362,7 +363,7 @@ than overlapping.
 | Service | **Built** — image `ghcr.io/usareur-af/saltlick:v0.4.0`, multi-arch, pulls anonymously; hosts package, CA and SPIFFE bundle with the upload's signature |
 | Internet-reachable deployment (§5.1) | **Built** — one instance outside every goatnet, declared in the deploying team's private overlay, never a mesh service on a goatnet host; per-source rate limits in the service designed |
 | Pointer entry (§6) | **Built** in saltlick (`saltlick-pointer/v1`) |
-| Package per counterparty (§6.3) | **Built** in saltlick and the driver step, off by default (`FED_DIRECTORY_PER_COUNTERPARTY=1`); tested against a stand-in and a local saltlick, not yet on the test environment |
+| Package per counterparty (§6.3) | **Built** in saltlick and the driver step; on by default in `goatbuilder federate`, off by default in `directory.py` alone and `peering-standup.sh` (`FED_DIRECTORY_PER_COUNTERPARTY`); tested against a stand-in and a local saltlick, not yet measured on the test environment |
 | Driver step (§6.2) | **Built**; phase 5 of the driver, required by preflight unless `FED_NO_DIRECTORY=1`; exercised end to end by `ops/federation-e2e/run.sh` against a saltlick it starts |
 | The trust mechanism it sits above — package spec, `goatbuilder federate` (today `goat federate`; ADR 1225), conformance vectors | **Built and merged** — see [`federation-package-spec.md`](federation-package-spec.md) |
 
