@@ -125,7 +125,7 @@ td() { echo "$1.fed.test"; }
 # values two peerings cannot share on one edge host and one core host.
 partners() { local v="P_$1"; echo "${!v:-}"; }
 set_partners() { printf -v "P_$1" '%s' "$2"; export "P_$1"; } # $1 party, $2 its partners in order
-for _p in $PARTIES; do set_partners "$_p" ""; done; NODIR=""
+for _p in $PARTIES; do set_partners "$_p" ""; done; NODIR=""; PERCP=""
 pidx() { # $1 us, $2 them: the position of the peering among ours
   local i=0 t
   for t in $(partners "$1"); do [ "$t" = "$2" ] && { echo "$i"; return 0; }; i=$((i + 1)); done
@@ -147,6 +147,10 @@ pair_subnet() {
   esac
 }
 nodir() { case " $NODIR " in *" $1:$2 "*) return 0 ;; *) return 1 ;; esac; }
+# Pairs whose script-avenue drive publishes one directory package per partner
+# (FED_DIRECTORY_PER_COUNTERPARTY=1 for peering-standup.sh). goatbuilder does so by default,
+# and nothing sets the variable for it.
+percp() { case " $PERCP " in *" $1:$2 "*) return 0 ;; *) return 1 ;; esac; }
 partner_list() { # the parties in this scenario
   local s; for s in $PARTIES; do [ -n "$(partners "$s")" ] && echo "$s"; done; return 0
 }
@@ -613,6 +617,7 @@ drive() { # $1 sovereign, $2 them, $3 avenue, $4 from, $5 to
   # it exchanges its packages by hand, so the entry the first partner composed against
   # stays the one it names.
   if nodir "$s" "$them"; then env+=(-e FED_NO_DIRECTORY=1); else env+=(-e "FED_DIRECTORY_URL=https://$DIRECTORY_IP:8443"); fi
+  if [ "$avenue" = script ] && percp "$s" "$them"; then env+=(-e FED_DIRECTORY_PER_COUNTERPARTY=1); fi
   case "$avenue" in
     goatbuilder) docker exec "${env[@]}" -w /opt/goat "$h" goatbuilder -C /opt/goat --yes federate "$them" --as "$s" --from "$from" --to "$to" ;;
     script)      docker exec "${env[@]}" -w /opt/goat "$h" ops/scripts/peering-standup.sh "$them" --as "$s" --from "$from" --to "$to" ;;
@@ -677,6 +682,22 @@ exchange() { # $1 the side that ran phase 5 first, $2 the other side, $3 avenue,
     rec "s$n-$s-$them-their-files-are-in-place" -- docker exec "$(drv_host "$s")" sh -c \
       "test -s $w/theirs.canonical.json && test -s $w/theirs-ca.pem && test -s $w/theirs.spiffe-bundle"
   done
+  nodir "$first" "$second" && return 0
+  for s in "$first" "$second"; do
+    them="$([ "$s" = "$first" ] && echo "$second" || echo "$first")"
+    slot_holds_ours "$n" "$s" "$them"
+    rec "s$n-$s-placed-$them-package-from-its-slot" -- docker exec "$(drv_host "$s")" sh -c \
+      "test ! -e /var/lib/goat-federation/$them/theirs.pointer.json || { echo 'held behind a pointer:'; cat /var/lib/goat-federation/$them/theirs.pointer.json; exit 1; }; echo 'no theirs.pointer.json'"
+  done
+}
+
+# The directory's slot for $3 under $2's entry holds exactly $2's package for that peering.
+slot_holds_ours() { # $1 scenario, $2 us, $3 them
+  local n="$1" s="$2" them="$3" h; h="$(drv_host "$2")"
+  rec "s$n-directory-slot-$s-for-$them-holds-$s-package" -- docker exec "$h" sh -c \
+    "a=\$(curl -fsS --cacert /etc/fed-e2e/directory-ca.pem https://$DIRECTORY_IP:8443/v1/parties/$s/packages/$them | sha256sum | cut -d' ' -f1)
+     b=\$(sha256sum /var/lib/goat-federation/$them/ours.canonical.json | cut -d' ' -f1)
+     echo \"slot \$a, ours.canonical.json \$b\"; [ -n \"\$a\" ] && [ \"\$a\" = \"\$b\" ]"
 }
 
 # Phase 10, as an operator does it: check their CA against the fingerprint in the signed
@@ -774,10 +795,10 @@ accept_as() { # $1 sovereign, $2 them, $3 avenue
 # The helpers every `rec ... bash -c` runs in a child shell.
 export_helpers() {
   export -f drive host_exec other party_pos octet core_ip edge_ip boundary_ip die partners pidx iface wgport \
-    spire_out rp_metrics probe_port ctx_of pair_subnet nodir partner_list accept_as probe_zid td round_trip round_trip_eventually \
+    spire_out rp_metrics probe_port ctx_of pair_subnet nodir percp partner_list accept_as probe_zid td round_trip round_trip_eventually \
     core_deploy core_ca drv_host ops_ip
   for _p in $PARTIES; do export "P_$_p"; done
-  export NODIR WORK GB REPO HERE SRC RECORD DIRECTORY_IP FE2E_DRIVER
+  export NODIR PERCP WORK GB REPO HERE SRC RECORD DIRECTORY_IP FE2E_DRIVER
 }
 
 # The hosts of every party in this scenario, the directory, and the isolation checks.
@@ -1021,7 +1042,9 @@ guard_refusals() { # $1 scenario: the refusals that keep two peerings on one hos
 
 scenario3() { # [$1 avenue of the first peering, default goatbuilder] [$2 of the second, default script]
   local n=3 av1="${1:-goatbuilder}" av2="${2:-script}"
-  set_partners "$A" "$B $C"; set_partners "$B" "$A"; set_partners "$C" "$A"; NODIR="$A:$C $C:$A"
+  # Both peerings through the directory, each on its own slot: A–B on goatbuilder's default,
+  # A–C (the script avenue) with FED_DIRECTORY_PER_COUNTERPARTY=1.
+  set_partners "$A" "$B $C"; set_partners "$B" "$A"; set_partners "$C" "$A"; NODIR=""; PERCP="$A:$C $C:$A"
   export_helpers
   say "scenario 3: ${A} federates with ${B} and with ${C} on one edge host and one core host"
   setup_hosts "$n"
@@ -1039,6 +1062,16 @@ scenario3() { # [$1 avenue of the first peering, default goatbuilder] [$2 of the
   # peering reconnects; nothing of its own may have changed.
   rec "s3-adding-${C}-left-${B}-untouched" -- diff "$RECORD/s3-${B}-before-${C}.txt" "$RECORD/s3-${B}-after-${C}.txt"
   rec "s3-adding-${C}-left-${B}-agreement-digest" --expect-in "$(cat "$WORK/${A}-${B}-agreement.sha")" -- docker exec $HP-${A}-edge sha256sum /var/lib/goat-federation/${B}/agreement.json
+  # One package per partner: A's slots for B and for C hold different packages, each A's own
+  # for that peering; each pair composed against its own package, to one digest on both sides.
+  slot_holds_ours 3 ${A} ${B}; slot_holds_ours 3 ${A} ${C}
+  rec "s3-${A}-slots-for-${B}-and-${C}-differ" -- docker exec $HP-${A}-edge sh -c \
+    "d='curl -fsS --cacert /etc/fed-e2e/directory-ca.pem https://$DIRECTORY_IP:8443/v1/parties/${A}/packages'; x=\$(\$d/${B} | sha256sum); y=\$(\$d/${C} | sha256sum); echo \"${B}: \$x\"; echo \"${C}: \$y\"; [ \"\$x\" != \"\$y\" ]"
+  local t
+  for t in ${B} ${C}; do
+    rec "s3-${A}-${t}-one-agreement-digest-on-both-sides" -- bash -c \
+      "a=\$(docker exec $(drv_host ${A}) sha256sum /var/lib/goat-federation/$t/agreement.json | cut -d' ' -f1); b=\$(docker exec $(drv_host $t) sha256sum /var/lib/goat-federation/${A}/agreement.json | cut -d' ' -f1); echo \"${A}: \$a, $t: \$b\"; [ -n \"\$a\" ] && [ \"\$a\" = \"\$b\" ]"
+  done
   accept_pair "$n" ${A} ${B} $av1 "-after-${C}"
 
   say "scenario 3: each partner receives the sets its own agreement offers, and no other"
