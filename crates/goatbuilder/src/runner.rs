@@ -275,6 +275,7 @@ pub fn no_phase() {
 }
 
 /// A command, built as `std::process::Command` builds one, run through this door.
+#[derive(Debug)]
 pub struct Cmd {
     inner: Command,
     host: Option<String>,
@@ -566,6 +567,9 @@ impl Cmd {
         match code {
             Some(Some(0)) if in_phase => say(&format!("  ok in {took}")),
             Some(Some(0)) => {}
+            // Exit 3 is the contract's "not converged" (C10): a phase that is
+            // waiting or incomplete, not one that broke.
+            Some(Some(3)) if in_phase => say(&format!("  not converged (exit 3) in {took}{log}")),
             Some(Some(n)) => say(&format!("{what}: exit {n} in {took}{log}")),
             Some(None) => say(&format!("{what}: killed by a signal after {took}{log}")),
             None => {
@@ -967,6 +971,23 @@ mod tests {
             Path::new(log).is_file(),
             "the named log {log} does not exist"
         );
+    }
+
+    #[test]
+    fn a_phase_that_exits_3_reads_not_converged() {
+        let (_g, _sink) = capture();
+        let t = tempfile::tempdir().unwrap();
+        begin(t.path(), "federate", vec![], None);
+        phase("14", "acceptance", "");
+        Cmd::new("sh").args(["-c", "exit 3"]).status().unwrap();
+        let f = frame();
+        assert!(
+            f.lines()
+                .nth(2)
+                .is_some_and(|l| l.starts_with("  not converged (exit 3) in ")),
+            "{f}"
+        );
+        assert_eq!(end().unwrap().phases[0].exit, Some(3));
     }
 
     #[test]

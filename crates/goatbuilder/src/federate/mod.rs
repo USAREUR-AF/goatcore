@@ -700,6 +700,9 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
         if o.dry_run {
             continue;
         }
+        // The commands that follow are this phase's: the runner frames and
+        // records them under it (crates/goatbuilder/src/runner.rs).
+        crate::runner::phase(&ph.n.to_string(), &ph.label, "");
         // A mock has no hosts. Recording the phase is the whole of what it does.
         if !executes {
             checks.push(row("mock", format!("phase {} recorded against the fixture; not executed", ph.n)));

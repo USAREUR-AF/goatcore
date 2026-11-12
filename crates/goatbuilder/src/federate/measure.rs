@@ -466,7 +466,6 @@ impl HostProbe {
             ));
         }
         let argv = self.argv(bin, args);
-        crate::trace::cmd(crate::federate::runenv::command(&argv[0]).args(&argv[1..]));
         let out = crate::federate::runenv::command(&argv[0])
             .args(&argv[1..])
             .output()
@@ -499,7 +498,6 @@ impl HostProbe {
     pub fn reach(&self) -> Result<()> {
         let argv = self.argv("true", &[]);
         let shown = argv.iter().map(|w| quote(w)).collect::<Vec<_>>().join(" ");
-        crate::trace::cmd(crate::federate::runenv::command(&argv[0]).args(&argv[1..]));
         let out = crate::federate::runenv::command(&argv[0])
             .args(&argv[1..])
             .output()

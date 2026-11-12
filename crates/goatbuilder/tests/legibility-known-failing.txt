@@ -12,14 +12,13 @@
 a standup    no run record: no call site goes through the runner yet (step 2b), so the run starts no recorded command
 a join-node  no run record: no call site goes through the runner yet (step 2b)
 a deploy     no run record: no call site goes through the runner yet (step 2b); a play log still goes to $TMPDIR
-a federate   no run record: no call site goes through the runner yet (step 2b)
 
 # (b) every value in a command line has an entry in `inputs`, with a source.
 #     Removed by step 5, verb by verb (federate first).
 b standup    no run record, so no `inputs`; the profile and site-derived values have no recorded source
 b join-node  no `inputs`; no value has a recorded source
 b deploy     no `inputs`; no value has a recorded source
-b federate   no `inputs`; FED_* sources appear only as -o json dry-run rows
+b federate   the run record is written, but its `inputs` is empty until federate hands its list to the runner (runner::set_inputs)
 
 # (c) the commands a terminal dry run prints are the commands the real run executes, in order.
 #     Removed by step 3 (with step 2 for the probes that print nothing today).

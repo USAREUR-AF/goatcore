@@ -12,10 +12,10 @@
 //! for it first), and [`command`] starts a child with every recorded value in
 //! its environment. Nothing here touches the process environment.
 
+use crate::runner::Cmd;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::ffi::OsStr;
-use std::process::Command;
 
 thread_local! {
     static RUN: RefCell<BTreeMap<String, String>> = const { RefCell::new(BTreeMap::new()) };
@@ -54,10 +54,11 @@ pub fn pairs() -> Vec<(String, String)> {
     RUN.with(|r| r.borrow().iter().map(|(k, v)| (k.clone(), v.clone())).collect())
 }
 
-/// A child of this run: `Command::new(program)` with every recorded value in
-/// its environment.
-pub fn command(program: impl AsRef<OsStr>) -> Command {
-    let mut c = Command::new(program);
+/// A child of this run, started through the runner (one door for every child
+/// process, crates/goatbuilder/src/runner.rs), with every recorded value in its
+/// environment.
+pub fn command(program: impl AsRef<OsStr>) -> Cmd {
+    let mut c = Cmd::new(program);
     c.envs(pairs());
     c
 }
