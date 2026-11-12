@@ -217,19 +217,19 @@ fn slot_anchor_file(repo: &Path, env_name: &str) -> PathBuf {
         .join("zenoh-lazy-storage.yml")
 }
 
-struct Core {
+pub(super) struct Core {
     /// The org fragment as a file on this machine (FED_CORE_ACL_ORG); `None`
     /// on a goat-zenoh role core, whose fragment is read and placed on the core
     /// host at the role's goat_zenoh_acl_org_path.
-    org: Option<PathBuf>,
-    seed: Option<PathBuf>,
-    out: Option<PathBuf>,
+    pub(super) org: Option<PathBuf>,
+    pub(super) seed: Option<PathBuf>,
+    pub(super) out: Option<PathBuf>,
     cert: Option<PathBuf>,
     key: Option<PathBuf>,
-    play: Option<String>,
-    group: String,
-    restart: Option<String>,
-    dry_run: Option<String>,
+    pub(super) play: Option<String>,
+    pub(super) group: String,
+    pub(super) restart: Option<String>,
+    pub(super) dry_run: Option<String>,
     slot: Slot,
     /// The goat-zenoh role core, when the deployment names no route of its own
     /// (federate/admit_role.rs).
@@ -244,6 +244,19 @@ impl Core {
         env_name: &str,
         role: Option<super::admit_role::RoleCore>,
     ) -> Result<Core, Vec<&'static str>> {
+        Core::from_vars(repo, with, env_name, role, env)
+    }
+
+    /// [`Core::from_env`], with each variable read through `var` (the
+    /// back-out reads the same route the same way: backout.rs `driver_core`).
+    pub(super) fn from_vars(
+        repo: &Path,
+        with: &str,
+        env_name: &str,
+        role: Option<super::admit_role::RoleCore>,
+        var: impl Fn(&str) -> Option<String>,
+    ) -> Result<Core, Vec<&'static str>> {
+        let env = |k: &str| var(k).filter(|v| !v.trim().is_empty());
         let mut missing = Vec::new();
         let (org, seed, out) = (
             env("FED_CORE_ACL_ORG").map(PathBuf::from),
@@ -315,7 +328,7 @@ impl Core {
         })
     }
 
-    fn play_cmd(&self, repo: &Path, work: &Path, check: bool) -> Option<String> {
+    pub(super) fn play_cmd(&self, repo: &Path, work: &Path, check: bool) -> Option<String> {
         let Some(play) = self.play.as_ref() else {
             return self.role.as_ref().map(|r| r.play_cmd(repo, check));
         };
@@ -334,7 +347,7 @@ impl Core {
         ))
     }
 
-    fn route(&self) -> String {
+    pub(super) fn route(&self) -> String {
         match (&self.play, &self.restart) {
             (Some(p), _) => format!("the play {p} on {}", self.group),
             (None, Some(c)) => format!("FED_CORE_RESTART ({c})"),
@@ -398,7 +411,7 @@ fn write_in_place(to: &Path, bytes: &[u8]) -> std::io::Result<()> {
 }
 
 /// Place `bytes` at `to`, keeping what was there in `backups` (in `dir`).
-fn publish(
+pub(super) fn publish(
     bytes: &[u8],
     to: &Path,
     backups: &mut Vec<(PathBuf, Option<PathBuf>)>,
@@ -443,7 +456,7 @@ fn restore(backups: &[(PathBuf, Option<PathBuf>)]) -> Vec<String> {
     failed
 }
 
-fn put_back(backups: &[(PathBuf, Option<PathBuf>)]) -> String {
+pub(super) fn put_back(backups: &[(PathBuf, Option<PathBuf>)]) -> String {
     match restore(backups).as_slice() {
         [] => "every file placed is put back".into(),
         f => format!(

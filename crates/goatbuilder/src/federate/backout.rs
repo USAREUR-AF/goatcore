@@ -225,34 +225,284 @@ pub fn target(o: &Options) -> Result<Target> {
     })
 }
 
-/// The variables admission honours that name another route to our core
-/// (admit.rs: FED_CORE_PLAY with FED_CORE_GROUP, FED_CORE_RESTART, and
-/// FED_CORE_ACL_ORG for the org fragment). The back-out does not follow them,
-/// so a back-out with one set would survey and replace another core's files:
-/// it is refused (GB-221), naming the variable. `var` reads one variable.
-pub fn hand_core_route(var: impl Fn(&str) -> Option<String>) -> Result<()> {
-    let set: Vec<&str> = [
-        "FED_CORE_PLAY",
-        "FED_CORE_RESTART",
-        "FED_CORE_GROUP",
-        "FED_CORE_ACL_ORG",
-    ]
-    .into_iter()
-    .filter(|k| var(k).is_some_and(|v| !v.is_empty()))
-    .collect();
-    if set.is_empty() {
-        return Ok(());
+/// The variables that name the deployment's own route to our core. When one
+/// is set, admission works on the driver (admit.rs: the org fragment at
+/// FED_CORE_ACL_ORG, the seed and assembled output at FED_CORE_ACL_SEED and
+/// FED_CORE_ACL_OUT, a dry run, then FED_CORE_RESTART or FED_CORE_PLAY on
+/// FED_CORE_GROUP), and the back-out follows the same route there.
+const CORE_ROUTE: [&str; 4] = [
+    "FED_CORE_PLAY",
+    "FED_CORE_RESTART",
+    "FED_CORE_GROUP",
+    "FED_CORE_ACL_ORG",
+];
+
+/// Our core, reached the way the deployment names: what admission placed, on
+/// the driver, and how it restarted the core router.
+pub struct DriverCore {
+    core: super::admit::Core,
+    tool: PathBuf,
+}
+
+/// The deployment's own route to our core, read with `var` the way admission
+/// reads it (admit.rs `Core::from_vars`). `None` when none of its variables is
+/// set: the core is the play's to survey (a goat-zenoh role core). A route
+/// named but incomplete is refused (GB-221), naming what is missing.
+pub fn driver_core(
+    repo: &Path,
+    partner: &str,
+    env_name: &str,
+    var: impl Fn(&str) -> Option<String>,
+) -> Result<Option<DriverCore>> {
+    let set = |k: &str| var(k).is_some_and(|v| !v.trim().is_empty());
+    if !CORE_ROUTE.iter().any(|k| set(k)) {
+        return Ok(None);
     }
-    Err(goat_errors::coded(
-        "GB-221",
+    let core = super::admit::Core::from_vars(repo, partner, env_name, None, &var).map_err(|missing| {
+        anyhow::Error::from(goat_errors::coded(
+            "GB-221",
+            format!(
+                "the deployment names its own route to our core ({}), but not all of it: set {} (GB-221)",
+                CORE_ROUTE.iter().filter(|k| set(k)).copied().collect::<Vec<_>>().join(", "),
+                missing.join("; ")
+            ),
+        ))
+    })?;
+    if core.org.is_none() {
+        return Err(goat_errors::coded(
+            "GB-221",
+            "the deployment names its own route to our core, but not FED_CORE_ACL_ORG, the org fragment admission changed (GB-221)",
+        )
+        .into());
+    }
+    Ok(Some(DriverCore {
+        core,
+        tool: repo.join("ops/federation/standup/backout_core.py"),
+    }))
+}
+
+/// backout_core.py's plan of the org fragment alone, for a deployment that
+/// names no seed or assembled output (the host assembles them): the same
+/// `plan()`, without the proof that the output is seed plus org.
+const ORG_ONLY_PLAN: &str = r#"import importlib.util, json, sys
+spec = importlib.util.spec_from_file_location("backout_core", sys.argv[1])
+bc = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(bc)
+org = open(sys.argv[2], encoding="utf-8").read()
+try:
+    cand, rep = bc.plan(org, sys.argv[3])
+    rep["refused"] = None
+except ValueError as e:
+    cand, rep = None, {"refused": str(e)}
+if cand is not None:
+    open(sys.argv[4] + "/org.candidate", "w", encoding="utf-8").write(cand)
+    rep["org_candidate_sha256"] = bc.sha256(cand)
+    rep["candidate_sha256"] = rep["org_candidate_sha256"]
+rep["proof"] = "org fragment only: the host assembles it"
+print(json.dumps(rep, sort_keys=True))
+"#;
+
+/// The candidate the driver's files give without `partner`: backout_core.py
+/// plans it, from the seed, org fragment and assembled output when the
+/// deployment names all three (proving the output is seed plus org), else
+/// from the org fragment alone (the host assembles it). Writes into `dir`;
+/// returns the plan.
+fn driver_plan(dc: &DriverCore, partner: &str, dir: &Path) -> Result<serde_json::Value> {
+    let _ = std::fs::create_dir_all(dir);
+    let org = dc.core.org.as_ref().expect("driver_core requires it");
+    let out = match (&dc.core.seed, &dc.core.out) {
+        (Some(seed), Some(live)) => Command::new("python3")
+            .arg(&dc.tool)
+            .args(["plan", "--partner", partner, "--seed"])
+            .arg(seed)
+            .arg("--org")
+            .arg(org)
+            .arg("--live")
+            .arg(live)
+            .arg("--out-dir")
+            .arg(dir)
+            .output(),
+        // The org fragment alone: the same plan, without the assembled proof.
+        _ => Command::new("python3")
+            .args(["-c", ORG_ONLY_PLAN])
+            .arg(&dc.tool)
+            .arg(org)
+            .arg(partner)
+            .arg(dir)
+            .output(),
+    }
+    .with_context(|| format!("run {}", dc.tool.display()))?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    serde_json::from_str(text.trim()).with_context(|| {
         format!(
-            "{} {} set: admission reaches our core that way, and the back-out does not, so it would survey and replace other files than admission wrote (GB-221). Unset {} and back out through the core the declarations name, or remove this peering from that core by hand",
-            set.join(", "),
-            if set.len() == 1 { "is" } else { "are" },
-            if set.len() == 1 { "it" } else { "them" }
-        ),
-    )
-    .into())
+            "{} gave no plan: {}",
+            dc.tool.display(),
+            String::from_utf8_lossy(&out.stderr).trim()
+        )
+    })
+}
+
+/// The driver's part of the survey, as one more host record (`driver`): the
+/// partner's subjects, rules and policies in the org fragment, and the restart
+/// it needs, with the candidate's digest; or why the fragment cannot be shown
+/// to change by this peering alone (refused).
+pub fn driver_survey(dc: &DriverCore, partner: &str, dir: &Path) -> Result<HostRecord> {
+    let plan = driver_plan(dc, partner, dir)?;
+    let org = dc.core.org.as_ref().expect("checked").display().to_string();
+    let r = |component: &str, resource: String, state: &str, action: &str, note: String| Row {
+        component: component.into(),
+        resource,
+        state: state.into(),
+        action: action.into(),
+        note,
+    };
+    let mut rows = Vec::new();
+    if let Some(why) = plan["refused"].as_str() {
+        rows.push(r(
+            "core admission",
+            format!("fragment {org}"),
+            "refused",
+            "kept",
+            why.to_string(),
+        ));
+    } else if plan["absent"].as_bool().unwrap_or(true) {
+        rows.push(r(
+            "core admission",
+            format!("fragment {org}"),
+            "absent",
+            "none",
+            format!("no block of {partner} is spliced; no restart"),
+        ));
+    } else {
+        let list = |k: &str| -> Vec<String> {
+            plan["removed"][k]
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        for (k, what) in [
+            ("subjects", "subject"),
+            ("rules", "rule"),
+            ("policies", "policy for"),
+        ] {
+            for id in list(k) {
+                rows.push(r(
+                    "core admission",
+                    format!("{what} {id}"),
+                    "present",
+                    "remove",
+                    String::new(),
+                ));
+            }
+        }
+        let digest = plan["candidate_sha256"].as_str().unwrap_or_default();
+        rows.push(r(
+            "core admission",
+            format!("router restart through {}", dc.core.route()),
+            "present",
+            "restart",
+            format!(
+                "{} lines leave; candidate {digest}; stays admitted: {}",
+                plan["removed_lines"].as_u64().unwrap_or(0),
+                plan["others"]
+                    .as_array()
+                    .map(|a| a
+                        .iter()
+                        .filter_map(|v| v.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", "))
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or_else(|| "no other peering".into())
+            ),
+        ));
+    }
+    Ok(HostRecord {
+        host: "driver".into(),
+        peering: partner.into(),
+        rows,
+    })
+}
+
+/// Take `partner` out of the driver's files and restart our core the way
+/// admission did: plan again and refuse unless the candidate is the reviewed
+/// one (`expect`), place the org fragment (and the assembled output) with
+/// backups, dry-run, then restart; a failed dry run puts every file back.
+/// Commands run through `exec`, as the plays do.
+pub fn driver_apply(
+    repo: &Path,
+    dc: &DriverCore,
+    partner: &str,
+    dir: &Path,
+    expect: &str,
+    exec: &mut dyn FnMut(&Path, &str) -> Result<bool>,
+) -> Result<()> {
+    let plan = driver_plan(dc, partner, &dir.join("plan"))?;
+    let got = plan["candidate_sha256"].as_str().unwrap_or_default();
+    if got != expect {
+        return Err(goat_errors::coded(
+            "GB-224",
+            format!("our core's files changed since the survey: the candidate is now {got}, and {expect} was reviewed; nothing was placed (GB-224)"),
+        )
+        .into());
+    }
+    let mut placed = vec![(
+        std::fs::read(dir.join("plan").join("org.candidate"))?,
+        dc.core.org.clone().expect("checked"),
+    )];
+    if let Some(out) = &dc.core.out {
+        placed.push((
+            std::fs::read(dir.join("plan").join("live.candidate"))?,
+            out.clone(),
+        ));
+    }
+    let mut backups = Vec::new();
+    let bdir = dir.join("backup");
+    for (bytes, to) in &placed {
+        if let Err(e) = super::admit::publish(bytes, to, &mut backups, &bdir) {
+            let back = super::admit::put_back(&backups);
+            return Err(goat_errors::coded(
+                "GB-224",
+                format!("cannot place {} ({e}); {back} (GB-224)", to.display()),
+            )
+            .into());
+        }
+    }
+    let work = Path::new(dir);
+    let dry = match (
+        dc.core.play_cmd(repo, work, true),
+        dc.core.dry_run.as_deref(),
+    ) {
+        (Some(cmd), _) => Some(cmd),
+        (None, Some("skip")) | (None, None) => None,
+        (None, Some(cmd)) => Some(cmd.to_string()),
+    };
+    if let Some(cmd) = dry {
+        if !exec(repo, &cmd)? {
+            let back = super::admit::put_back(&backups);
+            return Err(goat_errors::coded(
+                "GB-224",
+                format!("the core router's dry run failed; {back} (GB-224)"),
+            )
+            .into());
+        }
+    }
+    let restart = dc
+        .core
+        .play_cmd(repo, work, false)
+        .or_else(|| dc.core.restart.clone())
+        .unwrap_or_default();
+    if !exec(repo, &restart)? {
+        return Err(goat_errors::coded(
+            "GB-224",
+            format!("the core restart through {} failed; the candidate is in place, and what was there before is in {} (GB-224)", dc.core.route(), bdir.display()),
+        )
+        .into());
+    }
+    Ok(())
 }
 
 /// The files of a goat-zenoh role core, resolved by the code admission uses
@@ -643,8 +893,6 @@ pub fn backout_with(
     exec: &mut dyn FnMut(&Path, &str) -> Result<bool>,
 ) -> Result<Report> {
     let mut t = target(o)?;
-    hand_core_route(|k| crate::federate::runenv::var(k).ok())?;
-    core_files(repo, &mut t)?;
     if let Err(e) = work_belongs_to(&t.work, &t.partner) {
         return Err(goat_errors::coded("GB-220", e).into());
     }
@@ -671,6 +919,18 @@ pub fn backout_with(
     let env = declared
         .map(|p| p.environment.clone())
         .or_else(|| Some(env_or("FED_SLOT_ENV", String::new())).filter(|v| !v.is_empty()));
+    // Our core: the deployment's own route, on the driver, when it names one
+    // (the way admission went); else a goat-zenoh role core, surveyed by the
+    // play at the paths admission resolved.
+    let driver = driver_core(repo, &t.partner, env.as_deref().unwrap_or_default(), |k| {
+        std::env::var(k).ok()
+    })?;
+    if driver.is_some() {
+        t.core_files
+            .push(("peering_backout_core_by_driver", "true".into()));
+    } else {
+        core_files(repo, &mut t)?;
+    }
     let mut checks = vec![row(
         "banner",
         true,
@@ -770,11 +1030,20 @@ pub fn backout_with(
         r.exit = EXIT_REFUSED;
         return Ok(r);
     }
-    let recs = read_records(&survey_dir)?;
+    let mut recs = read_records(&survey_dir)?;
+    if let Some(dc) = &driver {
+        recs.push(driver_survey(
+            dc,
+            &t.partner,
+            &base.join("core/driver/survey"),
+        )?);
+    }
     // No host answered, yet this working folder holds the peering's agreement:
     // the play matched no host (an inventory that does not name them), which
     // is not the same as nothing being deployed.
-    if recs.is_empty() && Path::new(&t.work).join("agreement.json").is_file() {
+    if recs.iter().all(|r| r.host == "driver")
+        && Path::new(&t.work).join("agreement.json").is_file()
+    {
         checks.push(row(
             "survey",
             false,
@@ -989,35 +1258,64 @@ pub fn backout_with(
                 format!("{slot_word}: {slot_said}"),
                 None,
             ));
-            let core_cmd = play_cmd(
-                repo,
-                &t,
-                &[
-                    ("peering_backout_core_apply", "true".into()),
-                    ("peering_backout_core_expect", digest.clone()),
-                ],
-            );
-            checks.push(row("cmd", true, core_cmd.clone(), None));
-            let core_dir = base.join("core-apply");
-            let _ = std::fs::create_dir_all(&core_dir);
-            clear(&core_dir);
-            if !exec(repo, &core_cmd)? {
-                core_done = false;
-                checks.push(row("core", false, "the core router was not restarted on the reviewed candidate (GB-224): its configuration changed since the survey, or the restart failed".into(), Some(format!("goatbuilder federate backout {} --dry-run, review the new candidate, then run it again", t.partner))));
-                exit = EXIT_NOT_CONVERGED;
+            if let Some(dc) = &driver {
+                // The way admission went: the driver's files, then its restart.
+                match driver_apply(
+                    repo,
+                    dc,
+                    &t.partner,
+                    &base.join("core/driver/apply"),
+                    digest,
+                    exec,
+                ) {
+                    Ok(()) => checks.push(row(
+                        "core",
+                        true,
+                        format!(
+                            "core router restarted through {} on {digest}",
+                            dc.core.route()
+                        ),
+                        None,
+                    )),
+                    Err(e) => {
+                        core_done = false;
+                        checks.push(row("core", false, format!("{e:#}"), Some(format!("goatbuilder federate backout {} --dry-run, review the new candidate, then run it again", t.partner))));
+                        exit = EXIT_NOT_CONVERGED;
+                    }
+                }
             } else {
-                // Say what the core step did, from its own record, not from the plan.
-                let restarted = read_records(&core_dir)
-                    .unwrap_or_default()
-                    .iter()
-                    .flat_map(|r| r.rows.iter())
-                    .any(|r| r.resource.starts_with("router restart") && r.action == "restarted");
-                checks.push(row(
+                let core_cmd = play_cmd(
+                    repo,
+                    &t,
+                    &[
+                        ("peering_backout_core_apply", "true".into()),
+                        ("peering_backout_core_expect", digest.clone()),
+                    ],
+                );
+                checks.push(row("cmd", true, core_cmd.clone(), None));
+                let core_dir = base.join("core-apply");
+                let _ = std::fs::create_dir_all(&core_dir);
+                clear(&core_dir);
+                if !exec(repo, &core_cmd)? {
+                    core_done = false;
+                    checks.push(row("core", false, "the core router was not restarted on the reviewed candidate (GB-224): its configuration changed since the survey, or the restart failed".into(), Some(format!("goatbuilder federate backout {} --dry-run, review the new candidate, then run it again", t.partner))));
+                    exit = EXIT_NOT_CONVERGED;
+                } else {
+                    // Say what the core step did, from its own record, not from the plan.
+                    let restarted = read_records(&core_dir)
+                        .unwrap_or_default()
+                        .iter()
+                        .flat_map(|r| r.rows.iter())
+                        .any(|r| {
+                            r.resource.starts_with("router restart") && r.action == "restarted"
+                        });
+                    checks.push(row(
                     "core",
                     true,
                     if restarted { format!("core router restarted on {digest}") } else { "the core held no block of this peering any more at the restart step; nothing was restarted".to_string() },
                     None,
                 ));
+                }
             }
         }
     } else if s.core_candidate.is_some() {
@@ -1088,7 +1386,14 @@ pub fn backout_with(
     }
     clear(&survey_dir);
     let after_ok = exec(repo, &survey_cmd)?;
-    let after = read_records(&survey_dir).unwrap_or_default();
+    let mut after = read_records(&survey_dir).unwrap_or_default();
+    if let Some(dc) = &driver {
+        after.push(driver_survey(
+            dc,
+            &t.partner,
+            &base.join("core/driver/after"),
+        )?);
+    }
     let left = summarize(&after, &t.partner);
     if !after_ok || left.to_remove > 0 {
         checks.push(row(
@@ -1784,29 +2089,203 @@ mod tests {
         assert_eq!(s.absent, 1);
     }
 
-    /// The core variables admission honours name another route to our core.
-    /// The back-out does not follow them, so it refuses while one is set.
-    #[test]
-    fn a_core_route_set_by_hand_is_refused_by_name() {
-        for var in [
-            "FED_CORE_PLAY",
-            "FED_CORE_RESTART",
-            "FED_CORE_GROUP",
-            "FED_CORE_ACL_ORG",
-        ] {
-            let e = hand_core_route(|k| (k == var).then(|| "x".to_string())).unwrap_err();
-            assert!(e.to_string().contains(var), "{var}: {e}");
-            assert_eq!(
-                e.downcast_ref::<goat_errors::Coded>()
-                    .map(|c| c.code.as_str()),
-                Some("GB-221")
+    /// Admission through the deployment's own route (FED_CORE_ACL_ORG, with
+    /// FED_CORE_ACL_SEED/OUT, restarted by FED_CORE_RESTART or FED_CORE_PLAY on
+    /// FED_CORE_GROUP) keeps our core's files on the driver. The back-out
+    /// follows the same route: it surveys those files, places the candidate,
+    /// dry-runs and restarts the way admission did, and the files are what they
+    /// were before the peering, byte for byte.
+    struct RouteCase {
+        dir: tempfile::TempDir,
+        vars: BTreeMap<String, String>,
+        before_org: String,
+        before_live: Option<String>,
+    }
+
+    const SEED: &str = "{\n  // BEGIN: per-vendor storages\n  // END: per-vendor storages\n  // BEGIN: per-vendor write rules\n  // END: per-vendor write rules\n  // BEGIN: per-vendor subjects\n  // END: per-vendor subjects\n  // BEGIN: per-vendor policies\n  // END: per-vendor policies\n}\n";
+    const BEFORE_ORG: &str = "##ACL-ORG-REGION storages\n##ACL-ORG-REGION write-rules\n      { id: \"vendor-a\", messages: [\"put\"], flows: [\"ingress\"], permission: \"allow\", key_exprs: [\"vendor/a/**\"] },\n##ACL-ORG-REGION subjects\n##ACL-ORG-REGION policies\n";
+    const FRAGMENT: &str = "##ACL-ORG-REGION storages\n##ACL-ORG-REGION write-rules\n      {\n        id: \"fed-w-xab\",\n        messages: [\"put\", \"delete\"],\n        flows: [\"ingress\"],\n        permission: \"allow\",\n        key_exprs: [\n          \"from/xab/**\",\n        ],\n      },\n##ACL-ORG-REGION subjects\n      {\n        id: \"fed-xab\",\n        cert_common_names: [\"fed.xab.xaa.01\"],\n      },\n##ACL-ORG-REGION policies\n      { rules: [\"fed-w-xab\"], subjects: [\"fed-xab\"] },\n";
+
+    fn real() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
+    }
+
+    fn assemble(seed: &Path, org: &Path, out: &Path) {
+        let st = std::process::Command::new("python3")
+            .arg(real().join("ops/ansible/roles/goat-zenoh/files/acl-assemble.py"))
+            .args(["assemble", "--seed"])
+            .arg(seed)
+            .arg("--org")
+            .arg(org)
+            .arg("--out")
+            .arg(out)
+            .status()
+            .unwrap();
+        assert!(st.success());
+    }
+
+    /// A core admitted xab on the driver's files, as admission writes them.
+    fn admitted(with_seed: bool, route: &[(&str, &str)]) -> RouteCase {
+        let dir = tempfile::tempdir().unwrap();
+        let org = dir.path().join("org.json5");
+        std::fs::write(&org, BEFORE_ORG).unwrap();
+        let mut vars: BTreeMap<String, String> = BTreeMap::new();
+        vars.insert("FED_CORE_ACL_ORG".into(), org.display().to_string());
+        let mut before_live = None;
+        if with_seed {
+            let seed = dir.path().join("seed.json5");
+            let out = dir.path().join("config.json5");
+            std::fs::write(&seed, SEED).unwrap();
+            assemble(&seed, &org, &out);
+            before_live = Some(std::fs::read_to_string(&out).unwrap());
+            vars.insert("FED_CORE_ACL_SEED".into(), seed.display().to_string());
+            vars.insert("FED_CORE_ACL_OUT".into(), out.display().to_string());
+        }
+        // Admission: admit.rs merge_org, then the assembler.
+        let merged = super::super::admit::merge_org(BEFORE_ORG, FRAGMENT, "xab").unwrap();
+        std::fs::write(&org, &merged).unwrap();
+        if with_seed {
+            assemble(
+                Path::new(&vars["FED_CORE_ACL_SEED"]),
+                &org,
+                Path::new(&vars["FED_CORE_ACL_OUT"]),
             );
         }
-        assert!(hand_core_route(|_| None).is_ok());
-        assert!(
-            hand_core_route(|_| Some(String::new())).is_ok(),
-            "an empty value is unset"
+        for (k, v) in route {
+            vars.insert(
+                k.to_string(),
+                v.replace("{log}", &dir.path().join("log").display().to_string()),
+            );
+        }
+        vars.insert("FED_SLOT_CHECK".into(), "skip".into());
+        RouteCase {
+            dir,
+            vars,
+            before_org: BEFORE_ORG.into(),
+            before_live,
+        }
+    }
+
+    fn back_out(c: &RouteCase) -> Vec<String> {
+        let var = |k: &str| c.vars.get(k).cloned();
+        let core = driver_core(&real(), "xab", "zagros", var)
+            .unwrap()
+            .expect("the deployment's own route");
+        let work = c.dir.path().join("work");
+        let rec = driver_survey(&core, "xab", &work.join("survey")).unwrap();
+        let s = summarize(&[rec], "xab");
+        assert!(s.refused.is_empty(), "{s:?}");
+        let digest = s.core_candidate.clone().expect("a candidate to restart on");
+        let ran = std::cell::RefCell::new(Vec::new());
+        let mut exec = |_: &Path, cmd: &str| -> Result<bool> {
+            ran.borrow_mut().push(cmd.to_string());
+            // A play is recorded, not run: this checkout's plays reach no host here.
+            if cmd.contains("ansible-preflight.sh") {
+                return Ok(true);
+            }
+            Ok(std::process::Command::new("bash")
+                .args(["-c", cmd])
+                .status()?
+                .success())
+        };
+        driver_apply(
+            &real(),
+            &core,
+            "xab",
+            &work.join("core-apply"),
+            &digest,
+            &mut exec,
+        )
+        .unwrap();
+        // Run again: nothing of xab is left, nothing restarts.
+        let again = driver_survey(&core, "xab", &work.join("survey-after")).unwrap();
+        assert!(summarize(&[again], "xab").core_candidate.is_none());
+        ran.into_inner()
+    }
+
+    #[test]
+    fn the_back_out_follows_fed_core_acl_org_with_its_seed_and_restart() {
+        let c = admitted(
+            true,
+            &[
+                ("FED_CORE_RESTART", "echo restart >> {log}"),
+                ("FED_CORE_DRY_RUN", "echo dry >> {log}"),
+            ],
         );
+        back_out(&c);
+        assert_eq!(
+            std::fs::read_to_string(&c.vars["FED_CORE_ACL_ORG"]).unwrap(),
+            c.before_org
+        );
+        assert_eq!(
+            std::fs::read_to_string(&c.vars["FED_CORE_ACL_OUT"]).unwrap(),
+            c.before_live.clone().unwrap()
+        );
+        assert_eq!(
+            std::fs::read_to_string(c.dir.path().join("log")).unwrap(),
+            "dry\nrestart\n"
+        );
+    }
+
+    #[test]
+    fn the_back_out_follows_fed_core_acl_org_alone_when_the_host_assembles() {
+        // The role-core shape: a driver copy of the org fragment, carried to the
+        // core and assembled there by FED_CORE_RESTART.
+        let c = admitted(
+            false,
+            &[
+                ("FED_CORE_RESTART", "echo restart >> {log}"),
+                ("FED_CORE_DRY_RUN", "skip"),
+            ],
+        );
+        back_out(&c);
+        assert_eq!(
+            std::fs::read_to_string(&c.vars["FED_CORE_ACL_ORG"]).unwrap(),
+            c.before_org
+        );
+        assert_eq!(
+            std::fs::read_to_string(c.dir.path().join("log")).unwrap(),
+            "restart\n"
+        );
+    }
+
+    #[test]
+    fn the_back_out_follows_fed_core_play_on_fed_core_group() {
+        let c = admitted(
+            true,
+            &[
+                ("FED_CORE_PLAY", "core-deploy.yml"),
+                ("FED_CORE_GROUP", "core_x"),
+            ],
+        );
+        let ran = back_out(&c);
+        assert_eq!(
+            std::fs::read_to_string(&c.vars["FED_CORE_ACL_ORG"]).unwrap(),
+            c.before_org
+        );
+        let plays: Vec<&String> = ran
+            .iter()
+            .filter(|r| r.contains("core-deploy.yml"))
+            .collect();
+        assert_eq!(plays.len(), 2, "a dry run and the deploy: {ran:?}");
+        assert!(
+            plays[0].contains("--check") && plays.iter().all(|p| p.contains("--limit 'core_x'")),
+            "{plays:?}"
+        );
+    }
+
+    #[test]
+    fn without_a_route_of_its_own_the_role_core_is_the_plays_to_survey() {
+        assert!(driver_core(&real(), "xab", "zagros", |_| None)
+            .unwrap()
+            .is_none());
+        // A route named but incomplete is refused, naming what is missing.
+        let e = driver_core(&real(), "xab", "zagros", |k| {
+            (k == "FED_CORE_RESTART").then(|| "x".into())
+        })
+        .err()
+        .unwrap();
+        assert!(e.to_string().contains("FED_CORE_ACL_ORG"), "{e}");
     }
 
     /// The back-out reads the core route the run holds (runenv), not only the
