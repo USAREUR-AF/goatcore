@@ -40,6 +40,7 @@ units:
   onecmd: {parties: "xaa xab"}
   nohand: {parties: "xaa xab"}
   twodrivers: {parties: "xaa xab"}
+  rotation: {parties: "xaa xab xac"}
   flow: {parties: "xaa xab xac"}
   offer: {parties: "xaa xab"}
   backout: {parties: "xaa xab"}
@@ -1082,3 +1083,54 @@ scenarios:
       - {id: stored-before, step: "fl-flow-stored-before-the-restart"}
       - {id: bounded-gap, step: "fl-flow-saw-a-bounded-gap"}
       - {id: stored-after, step: "fl-flow-stored-again-after-it"}
+
+  - id: key-rotation
+    title: Each key rotated in turn on a running peering, data arriving throughout (gate B3)
+    unit: {goatbuilder: rotation}
+    runs_where: local
+    pass_condition: >
+      The proving scenario of docs/design/federation-key-rotation.md §6, on the forwarder unit's
+      peering ({A} behind NAT through its forwarder). A flow of one fresh value a second runs
+      each way for the whole scenario (lib/flow.sh). For each key in turn (leaves, carrier,
+      transport, signing), first {A} and then {B}: `goatbuilder federate rotate <partner> <key>`
+      exits 0; the key's material differs from the material set aside before it; every other
+      key's material is unchanged; and strict acceptance passes on both sides. The flow reports
+      what it lost across each rotation, and no .rotation-pending file remains. What the flow
+      may lose during a rotation is an operator decision not yet made (the same as gate row
+      B4's re-convergence); until it is, the samples check records it. The partner's step
+      after a transport or signing rotation waits on §5's decision.
+    checks:
+      - {id: rotate-leaves-first-ran, step: "rot-rotate-leaves-{A}-ran"}
+      - {id: rotated-leaves-first, step: "rot-rotated-leaves-{A}"}
+      - {id: kept-leaves-first, step: "rot-kept-leaves-{A}"}
+      - {id: acceptance-leaves-first, step: "rot-acceptance-leaves-{A}"}
+      - {id: rotate-leaves-second-ran, step: "rot-rotate-leaves-{B}-ran"}
+      - {id: rotated-leaves-second, step: "rot-rotated-leaves-{B}"}
+      - {id: kept-leaves-second, step: "rot-kept-leaves-{B}"}
+      - {id: acceptance-leaves-second, step: "rot-acceptance-leaves-{B}"}
+      - {id: rotate-carrier-first-ran, step: "rot-rotate-carrier-{A}-ran"}
+      - {id: rotated-carrier-first, step: "rot-rotated-carrier-{A}"}
+      - {id: kept-carrier-first, step: "rot-kept-carrier-{A}"}
+      - {id: acceptance-carrier-first, step: "rot-acceptance-carrier-{A}"}
+      - {id: rotate-carrier-second-ran, step: "rot-rotate-carrier-{B}-ran"}
+      - {id: rotated-carrier-second, step: "rot-rotated-carrier-{B}"}
+      - {id: kept-carrier-second, step: "rot-kept-carrier-{B}"}
+      - {id: acceptance-carrier-second, step: "rot-acceptance-carrier-{B}"}
+      - {id: rotate-transport-first-ran, step: "rot-rotate-transport-{A}-ran"}
+      - {id: rotated-transport-first, step: "rot-rotated-transport-{A}"}
+      - {id: kept-transport-first, step: "rot-kept-transport-{A}"}
+      - {id: acceptance-transport-first, step: "rot-acceptance-transport-{A}"}
+      - {id: rotate-transport-second-ran, step: "rot-rotate-transport-{B}-ran"}
+      - {id: rotated-transport-second, step: "rot-rotated-transport-{B}"}
+      - {id: kept-transport-second, step: "rot-kept-transport-{B}"}
+      - {id: acceptance-transport-second, step: "rot-acceptance-transport-{B}"}
+      - {id: rotate-signing-first-ran, step: "rot-rotate-signing-{A}-ran"}
+      - {id: rotated-signing-first, step: "rot-rotated-signing-{A}"}
+      - {id: kept-signing-first, step: "rot-kept-signing-{A}"}
+      - {id: acceptance-signing-first, step: "rot-acceptance-signing-{A}"}
+      - {id: rotate-signing-second-ran, step: "rot-rotate-signing-{B}-ran"}
+      - {id: rotated-signing-second, step: "rot-rotated-signing-{B}"}
+      - {id: kept-signing-second, step: "rot-kept-signing-{B}"}
+      - {id: acceptance-signing-second, step: "rot-acceptance-signing-{B}"}
+      - {id: samples, step: "rot-samples"}
+      - {id: no-pending, step: "rot-no-pending"}
