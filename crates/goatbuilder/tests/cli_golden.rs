@@ -1,3 +1,6 @@
+
+#[path = "common/test_home.rs"]
+mod test_home;
 // End-to-end golden tests for the `goatbuilder` binary, on goat-cli's model
 // (crates/goat-cli/tests/cli_golden.rs): `trycmd` drives the built binary
 // against the `.toml` cases in `tests/cmd/`.
@@ -13,6 +16,9 @@
 #[test]
 fn cli_golden() {
     let t = trycmd::TestCases::new();
+    for (k, v) in test_home::vars() {
+        t.env(k, v);
+    }
     t.case("tests/cmd/*.toml");
     // Four cases run the binary against this checkout's own deployment
     // (`-C ../..`) and expect refusals that quote its declaration. A public
