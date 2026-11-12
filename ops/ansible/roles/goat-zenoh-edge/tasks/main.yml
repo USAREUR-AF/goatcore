@@ -157,7 +157,7 @@
     - goat_zenoh_edge_key_scope_check | default(true)
     - _edge_core_key_storages | default('') is search('"keys/\\*\\*"')
 
-- name: edge | inspect scoped ingress storage when a local core is readable
+- name: edge | require a receive store on the core for each admitted ingress scope
   ansible.builtin.include_tasks: ingress-storage-check.yml
   when: goat_zenoh_edge_ingress_key_exprs | default([]) | length > 0
 

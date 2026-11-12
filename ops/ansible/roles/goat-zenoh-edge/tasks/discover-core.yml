@@ -7,8 +7,10 @@
 #      ({{ zenoh_stack }}-router, so *-zenoh-router), or has the legacy name
 #      goat-zenoh.
 # Zero or several matches leave _edge_core_container empty and put the reason in
-# _edge_core_problem. The checks that read the core are advisory: they report
-# "could not run" with that reason, never a pass, and never fail the play on it.
+# _edge_core_problem. Neither check that reads the core reports a pass on it:
+# the key-storage comparison in main.yml reports "could not run" with that
+# reason and goes on; the ingress storage check (ingress-storage-check.yml)
+# looks on the core host next and fails the play if it finds no core there.
 #
 # _edge_core_on, when an includer sets it, names the inventory host to look on
 # (the core host, when the core router is not on this one); unset, this host.
