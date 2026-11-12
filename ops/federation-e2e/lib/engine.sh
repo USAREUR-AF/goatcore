@@ -656,15 +656,25 @@ exchange() { # $1 the side that ran phase 5 first, $2 the other side, $3 avenue,
       docker cp -q "$(drv_host "$s"):/var/lib/goat-federation/$them/ours.spiffe-bundle" "$WORK/$s/handover-$them.bundle"
       docker cp -q "$WORK/$s/handover-$them.bundle" "$(drv_host "$them"):/var/lib/goat-federation/$s/theirs.spiffe-bundle"
     done
-  else
+  fi
+  # The keyring (each party's verifying key, exchanged over the independently authenticated
+  # channel) is in place before the directory is read again: a per-counterparty package's CA
+  # and bundle stay <file>.unconfirmed until the partner's key is in it.
+  for s in "$first" "$second"; do
+    them="$([ "$s" = "$first" ] && echo "$second" || echo "$first")"
+    printf '%s=%s\n%s=%s\n' "$s" "$(cat "$WORK/$s/keys/signing.pub")" "$them" "$(cat "$WORK/$them/keys/signing.pub")" > "$WORK/$s/keys.txt"
+    docker cp -q "$WORK/$s/keys.txt" "$(drv_host "$s"):/var/lib/goat-federation/$them/keys.txt"
+  done
+  if ! nodir "$first" "$second"; then
+    # Each side reads the directory again, now with the keyring: the first for the package
+    # the second published after it, the second to confirm what it fetched.
     rec "s$n-$first-$second-phase-5-again" --expect-in "Directory step" -- bash -c "drive '$first' '$second' '$avenue' 5 5"
+    rec "s$n-$second-$first-phase-5-again" --expect-in "Directory step" -- bash -c "drive '$second' '$first' '$avenue' 5 5"
   fi
   for s in "$first" "$second"; do
     them="$([ "$s" = "$first" ] && echo "$second" || echo "$first")"; w="/var/lib/goat-federation/$them"
     rec "s$n-$s-$them-their-files-are-in-place" -- docker exec "$(drv_host "$s")" sh -c \
       "test -s $w/theirs.canonical.json && test -s $w/theirs-ca.pem && test -s $w/theirs.spiffe-bundle"
-    printf '%s=%s\n%s=%s\n' "$s" "$(cat "$WORK/$s/keys/signing.pub")" "$them" "$(cat "$WORK/$them/keys/signing.pub")" > "$WORK/$s/keys.txt"
-    docker cp -q "$WORK/$s/keys.txt" "$(drv_host "$s"):/var/lib/goat-federation/$them/keys.txt"
   done
 }
 
