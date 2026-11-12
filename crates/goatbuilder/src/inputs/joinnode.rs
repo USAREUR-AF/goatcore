@@ -361,7 +361,7 @@ mod tests {
                             &["--obs", "--peer", "--values", "--pass-var"],
                         ) {
                             let ok = inputs.iter().any(|i| {
-                                i.source.is_some()
+                                i.sourced()
                                     && if from_env {
                                         i.name == val
                                     } else {
@@ -402,8 +402,7 @@ mod tests {
             inputs
                 .iter()
                 .find(|i| i.name == n)
-                .and_then(|i| i.source.as_ref())
-                .map(Source::render)
+                .map(|i| i.source.render())
                 .unwrap_or_else(|| panic!("{n}"))
         };
         assert_eq!(

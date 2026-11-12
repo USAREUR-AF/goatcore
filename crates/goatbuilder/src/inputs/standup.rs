@@ -572,7 +572,7 @@ mod tests {
             for c in standup::plan_commands(repo, &s, &o) {
                 for (from_env, val) in values(&c) {
                     let ok = inputs.iter().any(|i| {
-                        i.source.is_some()
+                        i.sourced()
                             && if from_env {
                                 i.name == val
                             } else {
@@ -613,7 +613,7 @@ mod tests {
             .find(|i| i.name == "ZAGROS_B_PG_PASS")
             .unwrap();
         assert!(pg.secret && pg.value().is_none());
-        assert_eq!(pg.source, Some(Source::env("ZAGROS_B_PG_PASS")));
+        assert_eq!(pg.source, Source::env("ZAGROS_B_PG_PASS"));
         let all = serde_json::to_string(&inputs).unwrap();
         assert!(!all.contains("correct-horse"));
         assert!(!super::super::rows(&inputs)
@@ -657,8 +657,7 @@ mod tests {
             inputs
                 .iter()
                 .find(|i| i.name == n)
-                .and_then(|i| i.source.as_ref())
-                .map(Source::render)
+                .map(|i| i.source.render())
                 .unwrap_or_else(|| panic!("{n}"))
         };
         assert_eq!(

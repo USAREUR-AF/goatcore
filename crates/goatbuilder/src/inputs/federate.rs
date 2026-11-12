@@ -645,7 +645,7 @@ mod tests {
         for c in &cmds {
             for (from_env, val) in values(c) {
                 let ok = inputs.iter().any(|i| {
-                    i.source.is_some()
+                    i.sourced()
                         && if from_env {
                             i.name == val
                         } else {
@@ -681,26 +681,26 @@ mod tests {
         };
         assert_eq!(
             get("FED_SIGNING_KEY").source,
-            Some(Source::file(
+            Source::file(
                 "ops/ansible/group_vars/hello-ally_edge/peering.yml",
                 Some(3),
                 "goat_federation_signing_key"
-            ))
+            )
         );
         assert_eq!(
-            get("FED_COUNTERPARTY_ID").source.as_ref().unwrap().render(),
+            get("FED_COUNTERPARTY_ID").source.render(),
             "ops/goatbuilder/goatbuilder.yaml:51 peerings[0].with"
         );
         assert_eq!(
-            get("key.xab").source.as_ref().unwrap().render(),
+            get("key.xab").source.render(),
             format!(
                 "{}/keys.txt:3 <sovereign_id>=<verifying key>, read aloud and recorded at phase 5",
                 w.work
             )
         );
-        assert_eq!(get("work").source, Some(Source::arg("--work")));
+        assert_eq!(get("work").source, Source::arg("--work"));
         for i in &inputs {
-            assert!(i.source.is_some() || i.unset.is_some(), "{i:?}");
+            assert!(i.sourced() || i.unset.is_some(), "{i:?}");
         }
     }
 
@@ -712,7 +712,7 @@ mod tests {
         let inputs = inputs(&w.repo, &opts(&w, true), &env).unwrap();
         let i = inputs.iter().find(|i| i.name == "FED_SIGNING_KEY").unwrap();
         assert_eq!(i.value(), Some("/elsewhere/signing.key"));
-        assert_eq!(i.source, Some(Source::env("FED_SIGNING_KEY")));
+        assert_eq!(i.source, Source::env("FED_SIGNING_KEY"));
     }
 
     /// An allocated peering (`peering-values.yaml` holds it), declared
@@ -800,13 +800,7 @@ promotion:
                 )
             })
         };
-        let render = |n: &str| {
-            get(n)
-                .source
-                .as_ref()
-                .map(Source::render)
-                .unwrap_or_default()
-        };
+        let render = |n: &str| get(n).source.render();
 
         // The pin: its line in goatbuilder.yaml.
         assert_eq!(get("values.wg_listen_port").value(), Some("51831"));
@@ -830,7 +824,7 @@ promotion:
         );
         assert!(matches!(
             get("values.cert_dir").source,
-            Some(Source::Allocated { recorded: true, .. })
+            Source::Allocated { recorded: true, .. }
         ));
         // The machines, from the site inventory's lines.
         assert_eq!(get("hosts.edge").value(), Some("192.0.2.20"));
@@ -857,13 +851,10 @@ promotion:
         assert_eq!(get("goat_zenoh_edge_acl_trace").value(), Some("true"));
         assert!(matches!(
             get("goat_zenoh_edge_acl_trace").source,
-            Some(Source::Default { .. })
+            Source::Default { .. }
         ));
         assert!(
-            matches!(
-                get("peering_wg_extra_ports").source,
-                Some(Source::Derived { .. })
-            ),
+            matches!(get("peering_wg_extra_ports").source, Source::Derived { .. }),
             "{}",
             render("peering_wg_extra_ports")
         );
@@ -890,7 +881,7 @@ promotion:
         // Nothing listed lacks a source except what nothing gave.
         for i in &inputs {
             assert!(
-                i.source.is_some() || (i.unset.is_some() && i.value().is_none()),
+                i.sourced() || (i.unset.is_some() && i.value().is_none()),
                 "{i:?}"
             );
         }

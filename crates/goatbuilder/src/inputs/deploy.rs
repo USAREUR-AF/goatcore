@@ -312,7 +312,7 @@ mod tests {
         for c in &cmds {
             for (from_env, val) in super::super::command_values(c, &["-a"]) {
                 let ok = inputs.iter().any(|i| {
-                    i.source.is_some()
+                    i.sourced()
                         && if from_env {
                             i.name == val
                         } else {
@@ -329,9 +329,7 @@ mod tests {
                 .filter_map(|w| w.strip_prefix("target="))
             {
                 assert!(
-                    inputs
-                        .iter()
-                        .any(|i| i.value() == Some(w) && i.source.is_some()),
+                    inputs.iter().any(|i| i.value() == Some(w) && i.sourced()),
                     "{w}"
                 );
             }
@@ -361,8 +359,7 @@ mod tests {
             inputs
                 .iter()
                 .find(|i| i.name == n)
-                .and_then(|i| i.source.as_ref())
-                .map(Source::render)
+                .map(|i| i.source.render())
                 .unwrap_or_else(|| panic!("{n}: {inputs:#?}"))
         };
         assert_eq!(

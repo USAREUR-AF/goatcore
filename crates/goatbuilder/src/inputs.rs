@@ -1,5 +1,5 @@
 //! Every value a run uses, with where it came from (contract clause C11, gate
-//! row F2; docs/design/goatbuilder-legibility.md, "Inputs").
+//! row F2; docs/design/goatbuilder-legibility.md, "Run record").
 //!
 //! One [`Input`] is one value a command line, a phase or a play reads: its name
 //! (an environment variable, a flag or an Ansible variable), its value, and its
@@ -11,15 +11,24 @@
 //! - a default, which belongs to no deployment;
 //! - allocated: `goatbuilder federate allocate` chose it, and the allocation
 //!   record holds it (or will, once allocate is run);
-//! - an argument typed on the command line.
+//! - an argument typed on the command line;
+//! - missing: nothing gave a value, and where to declare it.
 //!
 //! A secret's value is never held here: [`Input::secret`] takes no value, and
 //! an input whose name reads as a credential is made secret whatever its
 //! constructor was given. A secret shows only its source.
 //!
-//! An input nothing gave a value to is [`Input::unset`]: it names where to
-//! declare it and carries no source, so a check that asks every value for its
-//! source fails on it.
+//! An input nothing gave a value to is [`Input::unset`]: it is still listed,
+//! never left out, with the source `missing` naming where to declare it and no
+//! value, so a check that compares a command's literal values with the listed
+//! ones fails on it. [`Input::sourced`] is false for it.
+//!
+//! The JSON entry is the run record's (docs/design/goatbuilder-legibility.md,
+//! "Run record"): `name`, `value`, `secret`, `source` (one line, never empty),
+//! `origin` (`kind` and that kind's fields). Beyond the design's fields,
+//! `allocated` also carries `recorded` and `line`, and `missing` carries
+//! `declare`; an input read from the environment that is not set now carries
+//! `unset`, where to set it.
 
 // `goatbuilder inputs` and the run record read these; until main.rs wires the
 // verb (W-L1's step 4), only the tests do.
@@ -64,6 +73,8 @@ pub enum Source {
     },
     /// Typed on the command line.
     Argument { flag: String },
+    /// Nothing gave a value: where to declare it.
+    Missing { declare: String },
 }
 
 impl Source {
@@ -112,6 +123,7 @@ impl Source {
                 "allocated: {field}, the first free value (not yet in {record}; `goatbuilder federate allocate` records it)"
             ),
             Source::Argument { flag } => format!("argument {flag}"),
+            Source::Missing { declare } => format!("missing: {declare}"),
         }
     }
 }
@@ -122,7 +134,7 @@ pub struct Input {
     pub name: String,
     value: Option<String>,
     pub secret: bool,
-    pub source: Option<Source>,
+    pub source: Source,
     /// For an input nothing gave a value: where to declare it.
     pub unset: Option<String>,
 }
@@ -169,7 +181,7 @@ impl Input {
             name,
             value: Some(value.into()),
             secret: false,
-            source: Some(source),
+            source,
             unset: None,
         }
     }
@@ -180,7 +192,7 @@ impl Input {
             name: name.into(),
             value: None,
             secret: true,
-            source: Some(source),
+            source,
             unset: None,
         }
     }
@@ -208,20 +220,28 @@ impl Input {
             value: if secret { None } else { now },
             name,
             secret,
-            source: Some(source),
+            source,
             unset,
         }
     }
 
     /// An input nothing gave a value, and where to declare it.
     pub fn unset(name: impl Into<String>, declare: impl Into<String>) -> Input {
+        let declare = declare.into();
         Input {
             name: name.into(),
             value: None,
             secret: false,
-            source: None,
-            unset: Some(declare.into()),
+            source: Source::Missing {
+                declare: declare.clone(),
+            },
+            unset: Some(declare),
         }
+    }
+
+    /// Whether something gave this input: any source but `missing`.
+    pub fn sourced(&self) -> bool {
+        !matches!(self.source, Source::Missing { .. })
     }
 
     /// The value, never a secret's.
@@ -235,7 +255,8 @@ impl Input {
 
     /// One line: `NAME=value  <source>`.
     pub fn line(&self) -> String {
-        match (&self.source, self.value(), self.secret) {
+        let s = self.sourced().then_some(&self.source);
+        match (s, self.value(), self.secret) {
             (Some(s), _, true) => match &self.unset {
                 Some(u) => format!("{} (secret) not set now  {} ({u})", self.name, s.render()),
                 None => format!("{} (secret, not shown)  {}", self.name, s.render()),
@@ -265,7 +286,7 @@ impl Serialize for Input {
         m.serialize_entry("name", &self.name)?;
         m.serialize_entry("value", &self.value())?;
         m.serialize_entry("secret", &self.secret)?;
-        m.serialize_entry("source", &self.source.as_ref().map(Source::render))?;
+        m.serialize_entry("source", &self.source.render())?;
         m.serialize_entry("origin", &self.source)?;
         if let Some(u) = &self.unset {
             m.serialize_entry("unset", u)?;
@@ -282,7 +303,7 @@ pub fn rows(inputs: &[Input]) -> Vec<crate::Check> {
         .iter()
         .map(|i| crate::Check {
             name: "input".into(),
-            ok: i.source.is_some(),
+            ok: i.sourced(),
             detail: i.line(),
             fix: i.unset.clone(),
         })
@@ -572,7 +593,9 @@ mod tests {
             "group_vars/xab_edge: goat_federation_ca_key",
         ))
         .unwrap();
-        assert_eq!(u["source"], serde_json::Value::Null);
+        assert!(u["source"].as_str().unwrap().starts_with("missing: "));
+        assert_eq!(u["origin"]["kind"], "missing");
+        assert_eq!(u["value"], serde_json::Value::Null);
         assert!(u["unset"]
             .as_str()
             .unwrap()
