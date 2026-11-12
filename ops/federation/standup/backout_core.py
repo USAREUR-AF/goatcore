@@ -71,8 +71,16 @@ def admission_blocks(lines, partner):
     """[(begin, end)] line indexes of each region's admission block for `partner`.
     A block that begins twice, never ends, or ends without beginning is refused."""
     begin, end = (m.replace("{them}", partner).strip() for m in ADMISSION_MARKERS)
+    any_marker = re.compile("^(?:" + "|".join(
+        re.escape(m.strip()).replace(re.escape("{them}"), r"(\S+)") for m in ADMISSION_MARKERS) + ")$")
     blocks, start, region = [], None, None
     for i, ln in enumerate(lines):
+        other = any_marker.match(ln.strip())
+        if start is not None and other and ln.strip() not in (begin, end):
+            them = other.group(1) or other.group(2)
+            raise ValueError(f"region {region}: the admission block for {partner} holds a marker line of "
+                             f"partner {them} ({ln.strip()}); removing it would break {them}'s back-out. "
+                             "Separate the two blocks by review.")
         if ln.startswith(FRAG_HDR):
             if start is not None:
                 raise ValueError(f"region {region}: the admission block for {partner} begins and never ends")

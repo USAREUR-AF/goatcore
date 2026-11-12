@@ -388,6 +388,17 @@ class AdmissionMarkers(unittest.TestCase):
             bc.plan(broken, "xab")
         self.assertIn("never ends", str(caught.exception))
 
+    def test_another_partners_marker_inside_the_block_is_refused_naming_both(self):
+        fx, before = self.org_before()
+        admitted = admit(before, fragment("xaa", "xab"), "xab")
+        for stray in ("      // END peering xac\n", "      // BEGIN peering xac (goatbuilder federate)\n"):
+            with self.subTest(stray=stray.strip()):
+                nested = admitted.replace("      // END peering xab\n", stray + "      // END peering xab\n", 1)
+                with self.assertRaises(ValueError) as caught:
+                    bc.plan(nested, "xab")
+                self.assertIn("xab", str(caught.exception))
+                self.assertIn("xac", str(caught.exception))
+
     def test_a_block_holding_a_line_that_is_not_the_partners_is_refused(self):
         fx, before = self.org_before()
         admitted = admit(before, fragment("xaa", "xab"), "xab")

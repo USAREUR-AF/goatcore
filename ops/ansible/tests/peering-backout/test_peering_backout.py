@@ -108,10 +108,12 @@ def leaves(v):
         yield v
 
 
-def run(argv, tmp):
+def run(argv, tmp, path_prefix=None):
     env = dict(os.environ, ANSIBLE_CONFIG=str(ANSIBLE / "ansible.cfg"), ANSIBLE_NOCOLOR="1",
                ANSIBLE_FACT_CACHING="memory", ANSIBLE_LOCAL_TEMP=f"{tmp}/ansible-tmp",
                ANSIBLE_REMOTE_TEMP=f"{tmp}/ansible-tmp")
+    if path_prefix:
+        env["PATH"] = path_prefix + os.pathsep + env["PATH"]
     return subprocess.run(argv, cwd=ANSIBLE, env=env, capture_output=True, text=True, check=False)
 
 
@@ -183,6 +185,83 @@ class TwoPeeringsOneHost(unittest.TestCase):
         # The core files were read, never written.
         self.assertEqual(Path(fx.org).read_text(), fx.vendor + tbc.fragment("xaa", "xab") + tbc.fragment("xaa", "xac"))
 
+    def survey_with_tools(self, tools):
+        """A survey of xac with fake docker and wg on PATH: {name: shell body}."""
+        bindir = f"{self.tmp}/fake-bin"
+        os.makedirs(bindir, exist_ok=True)
+        for name, body in tools.items():
+            path = f"{bindir}/{name}"
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("#!/bin/sh\n" + body + "\n")
+            os.chmod(path, 0o755)
+        fx = tbc.Fixture(tbc.fragment("xaa", "xab"), tbc.fragment("xaa", "xac"))
+        work = f"{self.tmp}/work/xac"
+        r = run(["ansible-playbook", "-i", self.inv, "--limit", "xac_edge:xac_core:peering_forwarders",
+                 str(ANSIBLE / "peering-backout.yml"),
+                 "-e", "peering_backout_id=xac", "-e", f"fed_work={work}", "-e", "fed_edge_group=xac_edge",
+                 "-e", "ansible_become=false",
+                 "-e", f"peering_backout_core_seed={fx.seed}", "-e", f"peering_backout_core_org={fx.org}",
+                 "-e", f"peering_backout_core_config={fx.live}"], self.tmp, path_prefix=bindir)
+        self.assertEqual(r.returncode, 0, r.stdout[-6000:] + r.stderr[-2000:])
+        rows = {}
+        for host in ("edge-xac", "core-xac", "fwd"):
+            for row in jload(f"{work}/backout/survey/{host}.json")["rows"]:
+                rows[host + ": " + row["resource"]] = row
+        return rows
+
+    PROBES = ("edge-xac: container goat-zenoh-edge-xac", "core-xac: container goat-fed-republisher-xac",
+              "fwd: carrier wg-carry1", "edge-xac: federation spiffe://xac.example.org",
+              "edge-xac: bundle spiffe://xac.example.org")
+
+    def test_a_probe_that_fails_for_another_reason_is_unknown_not_absent(self):
+        denied = 'echo "permission denied while trying to connect to the docker daemon socket" >&2; exit 1'
+        rows = self.survey_with_tools({
+            "docker": denied,
+            "wg": 'echo "Unable to access interface: Operation not permitted" >&2; exit 1'})
+        for resource in self.PROBES:
+            with self.subTest(resource=resource):
+                row = rows[resource]
+                self.assertEqual(row["state"], "unknown", row)
+                self.assertEqual(row["action"], "none", row)
+                self.assertIn("rc 1", row["note"], row)
+        self.assertIn("permission denied", rows["edge-xac: container goat-zenoh-edge-xac"]["note"])
+        self.assertIn("Operation not permitted", rows["fwd: carrier wg-carry1"]["note"])
+
+    def test_a_missing_tool_is_unknown(self):
+        rows = self.survey_with_tools({"docker": "exit 127", "wg": "exit 127"})
+        for resource in self.PROBES:
+            with self.subTest(resource=resource):
+                self.assertEqual(rows[resource]["state"], "unknown", rows[resource])
+
+    def test_each_tools_own_not_found_is_absent(self):
+        rows = self.survey_with_tools({
+            "docker": ('case "$*" in\n'
+                       '  *"federation show"*) echo "Error: rpc error: code = NotFound desc = federation'
+                       ' relationship does not exist" >&2; exit 1 ;;\n'
+                       '  *"bundle list"*) exit 0 ;;\n'
+                       '  *) echo "Error: No such container: $7" >&2; exit 1 ;;\n'
+                       'esac'),
+            "wg": 'echo "Unable to access interface: No such device" >&2; exit 1'})
+        for resource in self.PROBES:
+            with self.subTest(resource=resource):
+                self.assertEqual(rows[resource]["state"], "absent", rows[resource])
+                self.assertEqual(rows[resource]["action"], "none", rows[resource])
+
+    def test_a_probe_that_answers_is_present(self):
+        rows = self.survey_with_tools({
+            "docker": ('case "$*" in\n'
+                       '  *"bundle list"*) echo "-----BEGIN CERTIFICATE-----" ;;\n'
+                       '  *) echo "/x running" ;;\n'
+                       'esac'),
+            "wg": 'echo "Unable to access interface: No such device" >&2; exit 1'})
+        # The carrier is left absent here: an interface that answers on this one host
+        # is also the edge's carrier, which the WireGuard back-out rightly refuses to
+        # claim. ProbeState covers a carrier that answers.
+        for resource in self.PROBES[:2] + self.PROBES[3:]:
+            with self.subTest(resource=resource):
+                self.assertEqual(rows[resource]["state"], "present", rows[resource])
+                self.assertEqual(rows[resource]["action"], "remove", rows[resource])
+
     def test_a_survey_without_the_rendered_values_or_agreement_still_runs(self):
         # A peering backed out before phase 9: no agreement, no applied values.
         shutil.rmtree(f"{self.tmp}/work/xac")
@@ -195,6 +274,54 @@ class TwoPeeringsOneHost(unittest.TestCase):
         rec = jload(f"{self.tmp}/work/xac/backout/survey/edge-xac.json")
         spire = [r for r in rec["rows"] if r["component"] == "spire" and r["resource"].startswith("federation")]
         self.assertEqual(spire[0]["state"], "unknown")
+
+
+FILTER = ANSIBLE / "filter_plugins/backout_probe.py"
+
+
+class ProbeState(unittest.TestCase):
+    """The rule every back-out probe follows: present on rc 0, absent only on the
+    tool's own not-found words, unknown with the rc and the error otherwise."""
+
+    def state(self, kind, rc, stderr="", stdout=""):
+        spec = importlib.util.spec_from_file_location("backout_probe", FILTER)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod.backout_probe_state({"rc": rc, "stdout": stdout, "stderr": stderr}, kind)
+
+    def test_definite_not_found_words(self):
+        for kind, err in (("docker", "Error: No such container: goat-zenoh-edge-xac"),
+                          ("docker", "Error response from daemon: No such object: x"),
+                          ("docker", "Error: no such container"),
+                          ("wg", "Unable to access interface: No such device"),
+                          ("spire", "Error: rpc error: code = NotFound desc = federation relationship does not exist")):
+            with self.subTest(kind=kind, err=err):
+                self.assertEqual(self.state(kind, 1, err)["state"], "absent")
+
+    def test_anything_else_is_unknown_with_the_rc_and_first_error_line(self):
+        for kind, rc, err in (("docker", 1, "permission denied while trying to connect\nmore"),
+                              ("docker", 127, ""), ("docker", 255, "ssh: connect to host"),
+                              ("docker", 2, "No such container: x"),
+                              ("wg", 1, "Unable to access interface: Operation not permitted"),
+                              ("spire", 1, "Error: No such container: spire-server"),
+                              ("spire", 126, "OCI runtime exec failed")):
+            with self.subTest(kind=kind, rc=rc, err=err):
+                got = self.state(kind, rc, err)
+                self.assertEqual(got["state"], "unknown")
+                self.assertIn("rc %d" % rc, got["note"])
+                self.assertNotIn("\n", got["note"])
+
+    def test_a_probe_that_did_not_run_is_unknown(self):
+        spec = importlib.util.spec_from_file_location("backout_probe", FILTER)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        self.assertEqual(mod.backout_probe_state({"skipped": True}, "docker")["state"], "unknown")
+        self.assertEqual(mod.backout_probe_state(None, "docker")["state"], "unknown")
+
+    def test_a_spire_bundle_list_reads_its_answer(self):
+        self.assertEqual(self.state("spire-bundle", 0, stdout="-----BEGIN CERTIFICATE-----")["state"], "present")
+        self.assertEqual(self.state("spire-bundle", 0, stdout="")["state"], "absent")
+        self.assertEqual(self.state("spire-bundle", 1, "permission denied")["state"], "unknown")
 
 
 class RoleDefaults(unittest.TestCase):
