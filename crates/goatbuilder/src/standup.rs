@@ -2225,6 +2225,24 @@ assert_eq!(eval(&w), profile, "{}", ph.label);
         }
     }
 
+    /// For a founder the ACL site is the site itself, so a site name that cannot
+    /// make a variable name is refused naming the site, not join_founder_site.
+    #[test]
+    fn a_founder_site_that_cannot_name_a_variable_is_refused_naming_the_site() {
+        for (site, ok) in [("pasture", true), ("pasture-b", true), ("a;b", false), ("a$(x)", false)] {
+            let repo = crate::testdir::path("gb-acl-founder-");
+            let o = Options { env: "pasture", site, profile: Some("lan"), from: 1, to: 14, skip_obs: true, obs_only: false, dry_run: true, parallel: false, check: false };
+            match (read_site(&repo, &o), ok) {
+                (Ok(s), true) => assert_eq!(s.acl_site, site),
+                (Err(e), false) => {
+                    let e = e.to_string();
+                    assert!(e.contains(&format!("the site {site:?}")) && !e.contains("join_founder_site"), "{e}");
+                }
+                (r, _) => panic!("{site}: {:?}", r.map(|s| s.acl_site)),
+            }
+        }
+    }
+
     /// Not lite: no render gate, phase 4 as before; a LAN site pauses at 11 only
     /// while the token is missing, and never when it is available.
     #[test]

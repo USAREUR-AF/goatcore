@@ -116,6 +116,16 @@ class JoinFounderSite(unittest.TestCase):
             self.assertEqual(r.returncode, 2, r.stdout[-300:])
             self.assertIn("join_founder_site", r.stderr)
 
+    def test_a_founder_site_that_cannot_name_one_is_refused_naming_the_site(self):
+        root = tree("~/.goat/state")
+        shutil.copy(REPO / "ops/scripts/goat-standup.sh", root / "ops/scripts/goat-standup.sh")
+        r = subprocess.run(["bash", str(root / "ops/scripts/goat-standup.sh"), "a;b", "--plan"],
+                           capture_output=True, text=True, timeout=120,
+                           env={"PATH": os.environ["PATH"], "HOME": tempfile.mkdtemp()})
+        self.assertEqual(r.returncode, 2, r.stdout[-300:])
+        self.assertIn("the site 'a;b'", r.stderr)
+        self.assertNotIn("join_founder_site", r.stderr)
+
     def test_an_ordinary_one_plans(self):
         r = self.plan("bravo-1")
         self.assertNotIn("join_founder_site", r.stderr)
