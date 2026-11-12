@@ -981,7 +981,9 @@ mod tests {
         }
         assert!(view.contains("1. Phase 5 exchanges your half") && view.contains("Read your key and CA fingerprint aloud on one call"), "{view}");
         assert!(!view.contains('\u{2717}'), "a plan owes nothing, so it marks nothing: {view}");
-        assert!(view.lines().all(|l| l.chars().count() <= 80 || !l.trim().contains(' ')), "{view}");
+        // Every line fits 80 columns, but a line that names the working folder:
+        // that is the test's temporary path, as long as the machine's TMPDIR.
+        assert!(view.lines().filter(|l| !l.trim_start().starts_with("Working folder:")).all(|l| l.chars().count() <= 80 || !l.trim().contains(' ')), "{view}");
         let is_row = |l: &&str| l.split_whitespace().next().is_some_and(|w| w.parse::<u32>().is_ok());
         assert_eq!(view.lines().filter(is_row).count(), 14, "one table row per phase:\n{view}");
     }
