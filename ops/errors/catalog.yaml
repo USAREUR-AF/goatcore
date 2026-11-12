@@ -543,7 +543,7 @@ entries:
       - "no release signer is known"
     exit: 1
 
-  - code: GB-254
+  - code: GB-261
     tool: goatbuilder
     title: the release's signature does not verify, so the update refuses
     what: "`goatbuilder update` verifies the keyless signature over the release's SHA256SUMS (SHA256SUMS.cosign-bundle) itself, offline, against the Sigstore trusted root: the certificate chains to a Fulcio CA, Rekor's signed entry timestamp verifies, the entry names this file, and the certificate is the release signer's goatbuilder-release.yml at the served version's goatbuilder/v<version> tag. One of these failed, or the surface serves no signature. The message names the check. Nothing was installed."

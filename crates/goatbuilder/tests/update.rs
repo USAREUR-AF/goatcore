@@ -287,7 +287,7 @@ fn a_sha256_that_sha256sums_contradicts_is_refused() {
 
 /// The signature over SHA256SUMS is verified in process: one by another
 /// repository, another workflow, or for another version; one over other
-/// bytes; or none served, is refused with GB-254, and nothing is installed.
+/// bytes; or none served, is refused with GB-261, and nothing is installed.
 /// The release's own installs. No cosign is on PATH.
 #[test]
 fn a_verified_signature_installs_and_a_refused_one_does_not() {
@@ -309,7 +309,7 @@ fn a_verified_signature_installs_and_a_refused_one_does_not() {
         let o = run(&c, &url, &["update"], &[]);
         assert_eq!(o.status.code(), Some(1), "{what}: {}", text(&o));
         let t = text(&o);
-        assert!(t.contains("GB-254") && t.contains(says), "{what}: {t}");
+        assert!(t.contains("GB-261") && t.contains(says), "{what}: {t}");
         assert_eq!(bytes(&c.exe), before, "{what}: a refused signature installs nothing");
     }
 
@@ -330,6 +330,6 @@ fn a_signature_from_an_untrusted_ca_names_the_trusted_root_option() {
     let o = run(&c, &url, &["update"], &[("GOATBUILDER_UPDATE_TRUSTED_ROOT", "")]);
     assert_eq!(o.status.code(), Some(1), "{}", text(&o));
     let t = text(&o);
-    assert!(t.contains("GB-254") && t.contains("GOATBUILDER_UPDATE_TRUSTED_ROOT"), "{t}");
+    assert!(t.contains("GB-261") && t.contains("GOATBUILDER_UPDATE_TRUSTED_ROOT"), "{t}");
     assert_eq!(bytes(&c.exe), before);
 }

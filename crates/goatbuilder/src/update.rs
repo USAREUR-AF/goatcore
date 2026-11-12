@@ -15,7 +15,7 @@
 //!     The keyless signature over `SHA256SUMS` (`SHA256SUMS.cosign-bundle`) is
 //!     verified in process against the release workflow's identity
 //!     (update/signature.rs), with no cosign and offline from the bundle; a
-//!     signature that does not verify, or is not served, is GB-254. Both are
+//!     signature that does not verify, or is not served, is GB-261. Both are
 //!     checked before the installed binary is touched. The replace is atomic.
 //!   - version.json and the checksum are capped whole; the binary is bounded by
 //!     a stall (no bytes for 30 s), not a total, because the mesh path to
@@ -326,7 +326,7 @@ fn sig_refused(why: String) -> anyhow::Error {
 }
 
 /// The catalog code for a signature that does not verify.
-const SIGNATURE_REFUSED: &str = "GB-254";
+const SIGNATURE_REFUSED: &str = "GB-261";
 
 /// The repository whose GitHub workflow built this binary (`GITHUB_REPOSITORY`
 /// at build time): the binary's own release provenance. None for a local build.
