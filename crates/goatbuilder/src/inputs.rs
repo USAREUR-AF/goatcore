@@ -30,8 +30,8 @@
 //! `declare`; an input read from the environment that is not set now carries
 //! `unset`, where to set it.
 
-// `goatbuilder inputs` and the run record read these; until main.rs wires the
-// verb (W-L1's step 4), only the tests do.
+// `goatbuilder inputs` and the run record read these; until the change that
+// wires the verb in main.rs, only the tests do.
 #![allow(dead_code)]
 
 use std::path::Path;
@@ -139,9 +139,17 @@ pub struct Input {
     pub unset: Option<String>,
 }
 
-/// Whether a name reads as a credential: its value is then never held. A name
-/// with a word like pass, secret or token reads as one, unless it ends by
-/// naming where a value is kept (`token_env`, `secret_file`), not the value.
+/// Whether a name reads as a credential: its value is then never held. This
+/// is a backstop: every credential a verb lists is flagged by its call site
+/// ([`Input::secret`], [`Input::reads_env`] with `secret`), and the rule
+/// catches a credential-shaped name that was not.
+///
+/// A name reads as one when a word of it is a credential word (pass, pwd, psk,
+/// secret, token, ...), when it contains a credential phrase (password,
+/// privatekey, masterkey, encryption_key, signing_key, ...), or when it ends in
+/// `key` after a word that makes it a key's material (`bkp_key`, `hmac_key`).
+/// It does not when it ends by naming where a value is kept (`token_env`,
+/// `secret_file`, `ca_key_path`), not the value.
 pub fn secret_name(name: &str) -> bool {
     let n = name.to_ascii_lowercase();
     let words: Vec<&str> = n
@@ -151,35 +159,106 @@ pub fn secret_name(name: &str) -> bool {
     let names_a_place = words
         .last()
         .is_some_and(|w| ["env", "var", "variable", "name", "path", "file", "dir"].contains(w));
-    let credential = words.iter().any(|w| {
-        [
-            "pass",
-            "password",
-            "passwd",
-            "passphrase",
-            "secret",
-            "token",
-            "credential",
-            "credentials",
-            "apikey",
-            "enckey",
-        ]
-        .contains(w)
-    }) || n.contains("private_key")
-        || n.contains("api_key");
+    const WORDS: &[&str] = &[
+        "pass",
+        "password",
+        "passwd",
+        "passphrase",
+        "pwd",
+        "psk",
+        "secret",
+        "secrets",
+        "token",
+        "credential",
+        "credentials",
+        "apikey",
+        "enckey",
+        "privatekey",
+        "masterkey",
+    ];
+    const PHRASES: &[&str] = &[
+        "password",
+        "passwd",
+        "private_key",
+        "privatekey",
+        "api_key",
+        "masterkey",
+        "master_key",
+        "encryption_key",
+        "signing_key",
+        "preshared_key",
+        "client_secret",
+    ];
+    const KEY_MATERIAL: &[&str] = &[
+        "bkp",
+        "backup",
+        "hmac",
+        "cipher",
+        "crypt",
+        "enc",
+        "encryption",
+        "master",
+        "private",
+        "signing",
+        "preshared",
+        "psk",
+        "jwt",
+        "api",
+        "session",
+        "secret",
+    ];
+    let key_material = words
+        .iter()
+        .enumerate()
+        .any(|(i, w)| *w == "key" && i > 0 && KEY_MATERIAL.contains(&words[i - 1]));
+    let credential = words.iter().any(|w| WORDS.contains(w))
+        || PHRASES.iter().any(|p| n.contains(p))
+        || key_material;
     credential && !names_a_place
+}
+
+/// Whether a value names where something is kept (a path) rather than being
+/// it. A name like `FED_SIGNING_KEY` holds the path to our signing key, which
+/// is not secret; a key's material is never a path.
+fn names_a_path(value: &str) -> bool {
+    (value.starts_with('/')
+        || value.starts_with("~/")
+        || value.starts_with("./")
+        || value.starts_with("../"))
+        && !value.chars().any(char::is_whitespace)
+}
+
+/// A URL's password removed, wherever a value carries one
+/// (`postgres://user:pw@host` becomes `postgres://user:<redacted>@host`).
+pub fn redact_userinfo(value: &str) -> String {
+    let Some(i) = value.find("://") else {
+        return value.to_string();
+    };
+    let rest = &value[i + 3..];
+    let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let Some(at) = rest[..end].rfind('@') else {
+        return value.to_string();
+    };
+    match rest[..at].split_once(':') {
+        Some((user, _)) => format!("{}{user}:<redacted>{}", &value[..i + 3], &rest[at..]),
+        None => value.to_string(),
+    }
 }
 
 impl Input {
     /// A value and its source. A credential-shaped name is held as a secret.
+    /// A URL's password is never held either ([`redact_userinfo`]). A
+    /// credential-shaped name whose value is a path (the path to a key) keeps
+    /// its value: the path is not the secret.
     pub fn new(name: impl Into<String>, value: impl Into<String>, source: Source) -> Input {
         let name = name.into();
-        if secret_name(&name) {
+        let value = value.into();
+        if secret_name(&name) && !names_a_path(&value) {
             return Input::secret(name, source);
         }
         Input {
             name,
-            value: Some(value.into()),
+            value: Some(redact_userinfo(&value)),
             secret: false,
             source,
             unset: None,
@@ -217,7 +296,11 @@ impl Input {
             (None, None) => (Source::env(name.clone()), Some(hint.into())),
         };
         Input {
-            value: if secret { None } else { now },
+            value: if secret {
+                None
+            } else {
+                now.map(|v| redact_userinfo(&v))
+            },
             name,
             secret,
             source,
@@ -276,9 +359,10 @@ impl Input {
 }
 
 /// The shape every run record's `inputs` and `goatbuilder inputs -o json` use:
-/// `name`, `value` (null for a secret or an unset input), `secret`, `source`
-/// (the rendered line; null when unset), `origin` (the structured source), and
-/// `unset` (where to declare it) when nothing gave a value.
+/// `name`, `value` (null for a secret or an input with no value), `secret`,
+/// `source` (the rendered line, never empty: `missing: <where>` when nothing
+/// gave a value), `origin` (the structured source), and `unset` (where to
+/// declare or set it) when the input has no value now.
 impl Serialize for Input {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeMap;
@@ -543,13 +627,73 @@ mod tests {
             assert!(secret_name(n), "{n}");
         }
         for n in [
-            "token_env",
+            "PGPASSWORD",
+            "MYSQL_PWD",
+            "ALPHA_BKP_KEY",
+            "wg_privatekey",
+            "netbird_encryption_key",
+            "vault_masterkey",
+            "hmac_key",
+            "jwt_signing_key",
+            "preshared_key",
+            "wg_psk",
             "FED_SIGNING_KEY",
+            "OIDC_CLIENT_SECRET",
+        ] {
+            assert!(secret_name(n), "{n}");
+        }
+        for n in [
+            "token_env",
             "secret_file",
             "site",
             "FED_CA_KEY",
+            "ca_key_path",
+            "key",
+            "keyring",
+            "FED_KEYRING",
+            "ssh_user",
         ] {
             assert!(!secret_name(n), "{n}");
+        }
+        // A credential-shaped name holding a path keeps it: the path is not the secret.
+        let p = Input::new(
+            "FED_SIGNING_KEY",
+            "/srv/fed/signing.key",
+            Source::env("FED_SIGNING_KEY"),
+        );
+        assert_eq!((p.secret, p.value()), (false, Some("/srv/fed/signing.key")));
+        let k = Input::new(
+            "jwt_signing_key",
+            "c2VjcmV0IGJ5dGVz",
+            Source::env("jwt_signing_key"),
+        );
+        assert!(k.secret && k.value().is_none());
+        // A URL's password is never held, whatever the name.
+        let u = Input::new(
+            "registry",
+            "postgres://portal:hunter2@192.0.2.20:5432/registry",
+            Source::env("X"),
+        );
+        assert_eq!(
+            u.value(),
+            Some("postgres://portal:<redacted>@192.0.2.20:5432/registry")
+        );
+        assert!(!serde_json::to_string(&u).unwrap().contains("hunter2"));
+        let e = Input::reads_env(
+            "DB_URL",
+            false,
+            Some("https://u:pw@example.org/x".into()),
+            None,
+            "",
+        );
+        assert_eq!(e.value(), Some("https://u:<redacted>@example.org/x"));
+        for plain in [
+            "https://example.org/a@b",
+            "ssh://goat@192.0.2.20",
+            "user@example.org",
+            "no-url",
+        ] {
+            assert_eq!(redact_userinfo(plain), plain);
         }
         assert!(!serde_json::to_string(&s).unwrap().contains("hunter2"));
         assert!(!s.line().contains("hunter2"), "{}", s.line());
@@ -614,7 +758,7 @@ environments:
     sites:
       - name: alpha
 deploy:
-  aws_profile: lab
+  aws_profile: zagros
 peerings:
 - with: xab
   environment: dev
