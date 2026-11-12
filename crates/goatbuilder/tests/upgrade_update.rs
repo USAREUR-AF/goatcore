@@ -362,7 +362,7 @@ fn e3_a_binary_that_does_not_match_its_checksum_is_refused_and_the_install_kept(
             says(&o)
         );
         assert!(
-            says(&o).contains("checksum mismatch"),
+            says(&o).contains("checksum mismatch") && says(&o).contains("GB-074"),
             "{args:?}: {}",
             says(&o)
         );
