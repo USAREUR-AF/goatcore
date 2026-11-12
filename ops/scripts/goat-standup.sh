@@ -165,20 +165,42 @@ phase_arg() {  # phase_arg <flag> <value>
 phase_arg --from "$FROM"; phase_arg --to "$TO"
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# A declared value as one shell word in a planned command, the way goatbuilder's
+# sh_quote / sh_word write it (standup.rs): sh_quote always single-quotes, each '
+# written as '\''; sh_word leaves a value of letters, digits and _ . / : = @ % + , -
+# as it is, keeps a leading ~/ meaning the home directory, and quotes the rest.
+sh_quote() { local q="'\\''"; printf "'%s'" "${1//\'/$q}"; }
+sh_word() {
+  local plain='^[A-Za-z0-9_./:=@%+,-]+$'
+  # shellcheck disable=SC2088  # a literal ~/ on purpose: the planned word keeps it for the phase shell to expand
+  case "$1" in
+    "~/"*) if [[ "${1#\~/}" =~ $plain ]]; then printf '%s' "$1"; else printf '~/%s' "$(sh_quote "${1#\~/}")"; fi ;;
+    *) if [[ "$1" =~ $plain ]]; then printf '%s' "$1"; else sh_quote "$1"; fi ;;
+  esac
+}
 GROUP="${SITE//-/_}_hosts"
 
 # goatlite (ADR 1213): is THIS site the one <repo>/goatlite.yaml declares? Read as
-# YAML with python3 + PyYAML, the way gv_value reads group_vars below; no file, no
-# python3, no PyYAML, or another name all mean "not lite" and change nothing.
+# YAML with python3 + PyYAML, the way gv_value reads group_vars below, and judged
+# the way `goatbuilder standup` judges it (standup.rs resolve_lite): no file, or a
+# file that names another goatnet, means "not lite" and changes nothing; a file that
+# cannot be read as YAML refuses the run, and so does one that names this site and
+# does not validate (ops/goatbuilder/validate.py).
 LITE=0; LITE_INTERNET_AWS=""
 if [ -f "$REPO/goatlite.yaml" ]; then
-  lite_name="$(python3 - "$REPO/goatlite.yaml" <<'PY' 2>/dev/null || true
+  lite_rc=0
+  lite_name="$(python3 - "$REPO/goatlite.yaml" <<'PY'
 import sys
 try:
     import yaml
+except ImportError:
+    print("goat-standup: reading goatlite.yaml needs PyYAML (pip install pyyaml)", file=sys.stderr)
+    sys.exit(3)
+try:
     d = yaml.safe_load(open(sys.argv[1])) or {}
-except Exception:
-    sys.exit(0)
+except Exception as e:
+    print(f"goat-standup: goatlite.yaml is not readable as YAML: {e}", file=sys.stderr)
+    sys.exit(3)
 if isinstance(d, dict) and d.get("preset") == "lite":
     lite = d.get("lite") or {}
     # name on the first line, the declared administrator on the second, and on the
@@ -189,11 +211,16 @@ if isinstance(d, dict) and d.get("preset") == "lite":
     inet = lite.get("internet")
     print(str((inet.get("aws_profile") or lite.get("name", "")) if isinstance(inet, dict) else "").strip())
 PY
-)"
+)" || lite_rc=$?
+  [ "$lite_rc" = 0 ] || { echo "goat-standup: refusing to plan: fix $REPO/goatlite.yaml (or move it aside), then re-run" >&2; exit 2; }
   lite_admin="$(printf '%s\n' "$lite_name" | sed -n 2p)"
   lite_aws="$(printf '%s\n' "$lite_name" | sed -n 3p)"
   lite_name="$(printf '%s\n' "$lite_name" | sed -n 1p)"
-  if [ -n "$lite_name" ] && [ "$lite_name" = "$SITE" ]; then LITE=1; LITE_INTERNET_AWS="$lite_aws"; fi
+  if [ -n "$lite_name" ] && [ "$lite_name" = "$SITE" ]; then
+    python3 "$REPO/ops/goatbuilder/validate.py" "$REPO/goatlite.yaml" >&2 \
+      || { echo "goat-standup: goatlite.yaml does not validate; fix it, then re-run" >&2; exit 2; }
+    LITE=1; LITE_INTERNET_AWS="$lite_aws"
+  fi
 fi
 
 # Phase 12's dependency graph, the same file `goatbuilder standup` reads
@@ -314,7 +341,7 @@ case "$PROFILE" in lan|internet) ;; *) echo "bad --profile '$PROFILE' (want lan|
 # (crates/goatbuilder/src/standup.rs).
 AWS_MODE_STANDUP=""
 [[ "${LITE}" == 1 && "$PROFILE" == lan ]] && AWS_MODE_STANDUP="GOAT_AWS_MODE=none "
-ANSIBLE_PRE="OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ${AWS_MODE_STANDUP}../scripts/with-aws $AWS_PROFILE_STANDUP -- ../scripts/ansible-preflight.sh"
+ANSIBLE_PRE="OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ${AWS_MODE_STANDUP}../scripts/with-aws $(sh_word "$AWS_PROFILE_STANDUP") -- ../scripts/ansible-preflight.sh"
 
 # Founder or joiner (ADR 1084). goatnet_founder:false in the site's group_vars
 # makes site-bootstrap auto-skip the account seed (the account arrives by Spock
@@ -706,12 +733,15 @@ step 4 T "mint leaf certs" \
 #     in via name_snapshot_enabled. Signs with this goatnet's offline CA (same
 #     key family as the leaf certs; ca_id is read from the snapshot). goat-get (phase 12)
 #     then serves it. Skips cleanly when not opted in or the CA key is absent.
+CA_KEY_WORD="$(sh_word "${STATE_DECL}/${SITE}-ca/ca.key.age")"
+AUDIT_WORD="$(sh_word "$AUDIT_DECL")"
+NO_KEY_MSG="$(sh_quote "name_snapshot: no ${STATE_DECL}/${SITE}-ca/ca.key.age — generate ran, SIGN manually with ops/enrollment/cmd/name-snapshot-sign")"
 step 4 T "name-fallback snapshot (generate + sign)" \
   "if grep -qE 'name_snapshot_enabled:[[:space:]]*true' '$REPO/ops/ansible/group_vars/${GROUP}/vars.yml' 2>/dev/null; then \
      python3 '$REPO/ops/dns/generate-mesh-hosts.py'; \
-     if [ -f ${STATE_DECL}/${SITE}-ca/ca.key.age ]; then \
-       ( cd '$REPO/ops/enrollment' && go run ./cmd/name-snapshot-sign --snapshot '$REPO/ops/dns/${SITE}/name-snapshot.json' --root-key ${STATE_DECL}/${SITE}-ca/ca.key.age --age-identity ~/.config/age/keys.txt --audit-log ${AUDIT_DECL} ); \
-     else echo 'name_snapshot: no ${STATE_DECL}/${SITE}-ca/ca.key.age — generate ran, SIGN manually with ops/enrollment/cmd/name-snapshot-sign'; fi; \
+     if [ -f ${CA_KEY_WORD} ]; then \
+       ( cd '$REPO/ops/enrollment' && go run ./cmd/name-snapshot-sign --snapshot '$REPO/ops/dns/${SITE}/name-snapshot.json' --root-key ${CA_KEY_WORD} --age-identity ~/.config/age/keys.txt --audit-log ${AUDIT_WORD} ); \
+     else echo ${NO_KEY_MSG}; fi; \
    else echo 'name_snapshot_enabled not true for ${GROUP} — skipping (ADR 1082)'; fi"
 
 # Phase 5. mgmt-stack (postgres/signal/management/traefik/admit-audit). Needs FIVE
@@ -931,9 +961,9 @@ fi
 if [ "$PROFILE" = internet ]; then
 MESH_IPS="$STATE_DIR/standup-$SITE-mesh-ips.json"
 step 8 A "[internet] mesh-enroll the hosts (a single-use key each, the declared enrolment URL)" \
-  "cd '$REPO/ops/ansible' && $ANSIBLE_PRE ${INV[*]} mesh-enroll-host.yml -e target=$GROUP -e mesh_ips_out='$MESH_IPS'"
+  "cd '$REPO/ops/ansible' && $ANSIBLE_PRE ${INV[*]} mesh-enroll-host.yml -e target=$GROUP -e mesh_ips_out=$(sh_quote "$MESH_IPS")"
 step 8 T "[internet] record the mesh IPs (group_vars, mesh inventory, cert manifest) and re-mint the router cert" \
-  "python3 '$REPO/ops/scripts/standup-mesh-record.py' $SITE --ips '$MESH_IPS'"
+  "python3 '$REPO/ops/scripts/standup-mesh-record.py' $SITE --ips $(sh_quote "$MESH_IPS")"
 fi
 
 # Phase 9. Per-uuid Zenoh router (binds the mesh IP on internet, LAN IP on lan; cert from phase 4/8).
@@ -1171,7 +1201,7 @@ if [ "$LITE" = 1 ] && [ "$CHECK" = 0 ]; then
   fi
 else
 step 13 GATE "$ACCEPTANCE_LABEL" \
-  "python3 '$REPO/ops/goatbuilder/endstate/endstate.py' model $SITE > '$STATE_DIR/endstate-$SITE.json' && python3 '$REPO/ops/validation/generate-values.py' $SITE && python3 '$REPO/ops/validation/run-acceptance.py' --env $SITE --values '$REPO/ops/validation/values-$SITE.yaml' --endstate '$STATE_DIR/endstate-$SITE.json' --all-eligible --by-layer"
+  "python3 '$REPO/ops/goatbuilder/endstate/endstate.py' model $SITE > $(sh_quote "$STATE_DIR/endstate-$SITE.json") && python3 '$REPO/ops/validation/generate-values.py' $SITE && python3 '$REPO/ops/validation/run-acceptance.py' --env $SITE --values '$REPO/ops/validation/values-$SITE.yaml' --endstate $(sh_quote "$STATE_DIR/endstate-$SITE.json") --all-eligible --by-layer"
 fi
 
 # Phase 14. JOIN THE CROSS-GOATNET SURFACES. The goatnet overview on every relay-health

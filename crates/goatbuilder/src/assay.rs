@@ -66,8 +66,9 @@ impl Acceptance {
     /// The phase-13 line both standup drivers print and run (the parity gate diffs it
     /// against goat-standup.sh): the model into its file, the values, then the runner.
     pub fn phase_line(&self) -> String {
-        let sh = |a: &[String]| a.iter().map(|x| if x.contains('/') { format!("'{x}'") } else { x.clone() }).collect::<Vec<_>>().join(" ");
-        format!("{} > '{}' && {} && {}", sh(&self.model), self.endstate, sh(&self.gen), sh(&self.run))
+        let q = crate::standup::sh_quote;
+        let sh = |a: &[String]| a.iter().map(|x| if x.contains('/') { q(x) } else { x.clone() }).collect::<Vec<_>>().join(" ");
+        format!("{} > {} && {} && {}", sh(&self.model), q(&self.endstate), sh(&self.gen), sh(&self.run))
     }
 }
 
