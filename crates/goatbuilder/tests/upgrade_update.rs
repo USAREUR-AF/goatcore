@@ -23,6 +23,8 @@
 #[path = "upgrade/released.rs"]
 mod released;
 
+mod federate_world;
+
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
@@ -237,4 +239,73 @@ fn e3_update_moves_a_0_5_1_install_to_this_build_and_back() {
         released::pin("v0.5.1", &released::asset()).unwrap()
     );
     assert_eq!(version_of(&i), "0.5.1");
+}
+
+/// After going back, a run journal that a later build wrote can name a phase
+/// outcome 0.5.1 does not know (0.6 adds "waiting" and "incomplete" for phase
+/// 14). Measured here: 0.5.1 refuses it with GB-182, for a run, a resume and
+/// `status`, and leaves the file byte for byte as it was. It does not
+/// overwrite the only account of what ran. The run is stranded on 0.5.1 until
+/// the later build is installed again or the file is moved aside; that is the
+/// case the rule "a reader accepts outcomes from a later version" is for.
+#[test]
+fn e3_back_on_0_5_1_a_journal_from_a_later_build_is_refused_and_kept() {
+    let Some(old) = released::binary("v0.5.1") else {
+        return;
+    };
+    let new = Path::new(federate_world::bin());
+    let run_as = |bin: &Path, w: &federate_world::World, extra: &[&str]| -> Output {
+        let c = w.command(extra);
+        let mut o = Command::new(bin);
+        o.args(c.get_args()).env_clear();
+        for (k, v) in c.get_envs() {
+            if let Some(v) = v {
+                o.env(k, v);
+            }
+        }
+        if let Some(d) = c.get_current_dir() {
+            o.current_dir(d);
+        }
+        o.stdin(std::process::Stdio::null()).output().unwrap()
+    };
+    for word in ["waiting", "incomplete"] {
+        let w = federate_world::world();
+        run_as(new, &w, &["hello-ally"]);
+        std::fs::write(w.work.join("keys.txt"), "xaa=QUJD\nxab=QUJE\n").unwrap();
+        run_as(new, &w, &["hello-ally", "--from", "6"]);
+        let o = run_as(new, &w, &["hello-ally", "--from", "11"]);
+        assert!(o.status.success(), "{}", says(&o));
+        // The journal as a later build leaves it: phase 14 `word`.
+        let path = w.work.join("state.json");
+        let mut v: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        v["phases"]["14"]["outcome"] = serde_json::json!(word);
+        std::fs::write(&path, serde_json::to_string_pretty(&v).unwrap()).unwrap();
+        let kept = std::fs::read(&path).unwrap();
+        for args in [vec!["hello-ally", "--from", "14"], vec!["hello-ally"]] {
+            let o = run_as(&old, &w, &args);
+            assert_ne!(
+                o.status.code(),
+                Some(0),
+                "0.5.1 {args:?} took a journal it cannot read: {}",
+                says(&o)
+            );
+            let text = says(&o);
+            assert!(
+                text.contains("GB-182") && text.contains(&format!("unknown variant `{word}`")),
+                "0.5.1 {args:?} on phase 14 {word}: {text}"
+            );
+        }
+        let o = run_as(&old, &w, &["status", "hello-ally"]);
+        assert!(
+            says(&o).contains("GB-182"),
+            "0.5.1 status on phase 14 {word}: {}",
+            says(&o)
+        );
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            kept,
+            "0.5.1 rewrote a journal it cannot read"
+        );
+    }
 }
