@@ -7,15 +7,7 @@ awake.rs 2
 doctor.rs 7
 endstate.rs 3
 fastlane.rs 4
-federate/admit.rs 4
-federate/admit_leaf.rs 1
-federate/backout.rs 3
-federate/hostfw.rs 1
-federate/measure.rs 4
-federate/mod.rs 5
-federate/plan.rs 5
-federate/preflight.rs 1
-federate/status.rs 1
+federate/runenv.rs 1
 fresh.rs 1
 inspect.rs 2
 joinnode.rs 2
