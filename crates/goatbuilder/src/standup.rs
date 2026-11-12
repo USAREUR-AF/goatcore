@@ -1942,6 +1942,65 @@ mod tests {
         assert!(!ph.iter().any(|p| p.label.starts_with("[internet]")), "a lite site is a LAN site");
     }
 
+    /// Declared values a phase's command line carries (the state directory, the
+    /// CA audit log beside it, the AWS profile) reach the phase's shell as one word
+    /// each, passed on as declared: `~/` still means the home directory, and
+    /// nothing else in the value is interpreted.
+    #[test]
+    fn declared_paths_and_profiles_reach_the_phases_without_shell_interpolation() {
+        let state = "~/a b$(x)'q`y`\"z/state";
+        let profile = "p$(x) 'q\"r";
+        let dir = crate::testdir::path("gb-declared-words-");
+        std::fs::create_dir_all(dir.join("ops/goatbuilder")).unwrap();
+        let cfg = format!(
+            "schema: goatbuilder/v1\nrepo: {{source: example-org/x, image_namespace: ghcr.io/example-org}}\ncomponents: {{svc: {{declared_in: ops/pins/fleet-pins.yaml}}}}\n\
+             environments: [{{name: dev, converger: push-ansible, sites: [{{name: alpha, role: founder, classes: {{core: {{}}}}}}]}}]\n\
+             promotion: {{path: [{{name: dev, kind: rung, environment: dev}}]}}\ndeploy: {{state_dir: {}, aws_profile: {}}}\n",
+            serde_json::to_string(state).unwrap(),
+            serde_json::to_string(profile).unwrap()
+        );
+        std::fs::write(dir.join("ops/goatbuilder/goatbuilder.yaml"), cfg).unwrap();
+        let home = std::env::var("HOME").unwrap();
+        let abs = |p: &str| p.strip_prefix("~/").map(|r| format!("{home}/{r}")).unwrap_or_else(|| p.to_string());
+        let eval = |w: &str| {
+            let out = Command::new("bash").args(["-euo", "pipefail", "-c", &format!("printf '%s' {w}")]).env("HOME", &home).output().unwrap();
+            assert!(out.status.success(), "the shell takes {w} as one word");
+            String::from_utf8(out.stdout).unwrap()
+        };
+        let between = |cmd: &str, a: &str, b: &str| -> Option<String> { Some(cmd.split_once(a)?.1.split_once(b)?.0.to_string()) };
+        let mut seen = 0;
+        for profile_name in ["lan", "internet"] {
+            let o = Options { env: "dev", site: "alpha", profile: Some(profile_name), from: 1, to: 14, skip_obs: true, obs_only: false, dry_run: true, parallel: false, check: false };
+            let site = read_site(&dir, &o).unwrap();
+            for ph in phases_of(&plan(&dir, &site, &o, "R")) {
+                let c = &ph.cmd;
+                if let Some(w) = between(c, "../scripts/with-aws ", " -- ") {
+                    // GOAT_AWS_PROFILE, when this machine sets one, wins over the declaration.
+                    let want = std::env::var("GOAT_AWS_PROFILE").ok().filter(|v| !v.is_empty()).unwrap_or_else(|| profile.to_string());
+                    assert_eq!(eval(&w), want, "{}", ph.label);
+                    seen |= 1;
+                }
+                if let Some(w) = between(c, "--root-key ", " --age-identity") {
+                    assert_eq!(eval(&w), abs(&format!("{state}/alpha-ca/ca.key.age")));
+                    seen |= 2;
+                }
+                if let Some(w) = between(c, "--audit-log ", " )") {
+                    assert_eq!(eval(&w), abs("~/a b$(x)'q`y`\"z/ca-audit.jsonl"));
+                    seen |= 4;
+                }
+                if let Some((_, w)) = c.split_once("mesh_ips_out=") {
+                    assert_eq!(eval(w), abs(&format!("{state}/standup-alpha-mesh-ips.json")));
+                    seen |= 8;
+                }
+                if let Some(w) = between(c, "model alpha > ", " && ") {
+                    assert_eq!(eval(&w), abs(&format!("{state}/endstate-alpha.json")));
+                    seen |= 16;
+                }
+            }
+        }
+        assert_eq!(seen, 31, "every declared word was found in the plan");
+    }
+
     /// Not lite: no render gate, phase 4 as before; a LAN site pauses at 11 only
     /// while the token is missing, and never when it is available.
     #[test]
