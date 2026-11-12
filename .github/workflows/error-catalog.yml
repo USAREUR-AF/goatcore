@@ -18,8 +18,9 @@ on:
       - 'crates/goatbuilder/src/**'
       - 'crates/goat-cli/src/errors.rs'
       - 'crates/goat-cli/src/cmd/explain.rs'
-      - 'docs/reference/errors.md'
-      - 'docs/design/goat-cli-error-codes.md'
+      # every catalog `read` path is a document here, so any change to docs/ can
+      # move one, and the full gate must see it
+      - 'docs/**'
       - 'ops/ci/check-error-catalog.py'
       - '.github/workflows/error-catalog.yml'
   push:
@@ -27,6 +28,7 @@ on:
     paths:
       - 'ops/errors/**'
       - 'crates/goat-errors/**'
+      - 'docs/**'
 
 permissions:
   contents: read
