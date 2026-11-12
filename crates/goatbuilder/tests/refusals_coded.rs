@@ -228,30 +228,6 @@ const PENDING: &[(&str, &str)] = &[
         "validate_refuses_not_yaml",
         "config.rs: code the refusal (GB-245)",
     ),
-    (
-        "validate_refuses_json",
-        "validate's rows: print the code of a failing row (GB-025)",
-    ),
-    (
-        "validate_refuses_rung_undeclared_environment",
-        "validate's rows: print the code of a failing row (GB-025)",
-    ),
-    (
-        "validate_refuses_soak_without_min_days",
-        "validate's rows: print the code of a failing row (GB-025)",
-    ),
-    (
-        "validate_refuses_unknown_converger",
-        "validate's rows: print the code of a failing row (GB-025)",
-    ),
-    (
-        "validate_refuses_unknown_field",
-        "validate's rows: print the code of a failing row (GB-025)",
-    ),
-    (
-        "validate_refuses_wrong_schema_version",
-        "validate's rows: print the code of a failing row (GB-025)",
-    ),
 ];
 
 /// Cases that quote this checkout's own deployment, skipped where it declares
