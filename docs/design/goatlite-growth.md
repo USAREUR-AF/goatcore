@@ -88,7 +88,7 @@ A second site can join a running single site. The procedure exists and treats th
 1. the joiner is bootstrapped with replication off, so the empty database gets its schema once;
 2. `site-seed-from-peer.yml` copies the founder's identity and mesh rows into it, data only (`ops/ansible/site-seed-from-peer.yml:13`); the seed must come before any subscription (`ops/ansible/site-seed-from-peer.yml:40`);
 3. the joiner is bootstrapped with replication on;
-4. `spock-mesh-wire.yml` runs on the founder alone, creating the founder's node and its subscription to the joiner without re-running the founder's bootstrap (`ops/ansible/spock-mesh-wire.yml:14`).
+4. `spock-mesh-wire.yml` runs on the founder alone, creating the founder's node and its subscription to the joiner without re-running the founder's bootstrap (`ops/ansible/spock-mesh-wire.yml:2`).
 
 The founder side is additive. Subscriptions are created with `synchronize_data := false` (`ops/ansible/roles/spock-mesh-peering/README.md:81`), so no table on the founder is truncated or reloaded; the role creates the founder's node when it is missing (`ops/ansible/roles/spock-mesh-peering/tasks/per-database.yml:269`); and the seed play refuses to empty a table on a node that already replicates (`ops/ansible/site-seed-from-peer.yml:32`).
 
