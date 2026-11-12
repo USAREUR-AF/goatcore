@@ -217,10 +217,6 @@ const PENDING: &[(&str, &str)] = &[
         "release.rs: keep the refusal's code in its row (GB-018)",
     ),
     (
-        "rollback_n_out_of_range",
-        "rollback.rs: code the refusal (GB-246)",
-    ),
-    (
         "validate_missing_file",
         "config.rs: code the refusal (GB-244)",
     ),

@@ -17,7 +17,7 @@
 use crate::runner::Cmd;
 use std::path::Path;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 
 use crate::{Check, Report, EXIT_OK, EXIT_REFUSED};
 
@@ -82,7 +82,7 @@ fn load_ledger_at(repo: &Path, component: &str, site: Option<&str>) -> Result<(V
     }
     let p = role.join("deploy-history.yml");
     if !p.is_file() {
-        return Err(anyhow!("no deploy-history.yml at {} — '{component}' not yet adopted (ADR 0859/1060)", p.display()));
+        return Err(anyhow::Error::from(goat_errors::coded("GB-260", format!("no deploy-history.yml at {} — '{component}' not yet adopted (ADR 0859/1060)", p.display()))));
     }
     let doc: serde_yaml::Value = serde_yaml::from_str(&std::fs::read_to_string(&p)?).with_context(|| p.display().to_string())?;
     let hosts: Vec<HostMap> = doc
@@ -106,13 +106,13 @@ fn load_ledger_at(repo: &Path, component: &str, site: Option<&str>) -> Result<(V
         })
         .unwrap_or_default();
     if hosts.is_empty() {
-        return Err(anyhow!("deploy-history.yml has no hosts entries"));
+        return Err(anyhow::Error::from(goat_errors::coded("GB-260", "deploy-history.yml has no hosts entries".to_string())));
     }
     let hosts: Vec<HostMap> = match site {
         Some(want) => {
             let kept: Vec<HostMap> = hosts.into_iter().filter(|h| h.site == want).collect();
             if kept.is_empty() {
-                return Err(anyhow!("deploy-history.yml has no hosts entry with site: {want}"));
+                return Err(anyhow::Error::from(goat_errors::coded("GB-260", format!("deploy-history.yml has no hosts entry with site: {want}"))));
             }
             kept
         }
@@ -320,10 +320,10 @@ fn pick_target(hosts: &[HostMap], history: &[History], component: &str, n: u32) 
         break;
     }
     if history.is_empty() {
-        return Err(anyhow!("no history available (host ledger absent + in-repo history empty)"));
+        return Err(anyhow::Error::from(goat_errors::coded("GB-260", "no history available (host ledger absent + in-repo history empty)".to_string())));
     }
     if (n as usize) >= history.len() {
-        return Err(anyhow!("history has only {} entries; cannot roll back {n}", history.len()));
+        return Err(anyhow::Error::from(goat_errors::coded("GB-260", format!("history has only {} entries; cannot roll back {n}", history.len()))));
     }
     Ok((history[n as usize].image.clone(), "in-repo deploy-history.yml".into(), history[0].image.clone()))
 }
@@ -388,7 +388,7 @@ fn require_site_when_multi_goatnet(component: &str, site: Option<&str>, hosts: &
 /// before anything is saved, so a plan can never be written that flips every goatnet.
 pub(crate) fn decide(repo: &Path, component: &str, n: u32, site: Option<&str>) -> Result<serde_json::Value> {
     if !(1..=7).contains(&n) {
-        return Err(anyhow!("N must be 1..7 (got: {n})"));
+        return Err(anyhow::Error::from(goat_errors::coded("GB-246", format!("N must be 1..7 (got: {n})"))));
     }
     let (hosts, history) = load_ledger_at(repo, component, site)?;
     require_site_when_multi_goatnet(component, site, &hosts)?;
@@ -403,7 +403,7 @@ pub(crate) fn decide(repo: &Path, component: &str, n: u32, site: Option<&str>) -
 
 pub fn roll(repo: &Path, component: &str, n: u32, dry_run: bool, site: Option<&str>) -> Result<Report> {
     if !(1..=7).contains(&n) {
-        return Err(anyhow!("N must be 1..7 (got: {n})"));
+        return Err(anyhow::Error::from(goat_errors::coded("GB-246", format!("N must be 1..7 (got: {n})"))));
     }
     // Fresh source (C3): the guards below read this checkout's deploy-history.yml
     // (the hosts map, do_not_roll_to), so a checkout behind the trunk is refused
@@ -472,7 +472,7 @@ pub fn roll(repo: &Path, component: &str, n: u32, dry_run: bool, site: Option<&s
     let known = history.iter().find(|e| e.image == target);
     let target_pr = known.map(|e| e.pr.clone()).filter(|p| !p.is_empty()).unwrap_or_else(|| "?".into());
     if known.map(|e| e.do_not_roll_to).unwrap_or(false) {
-        return Err(anyhow!("target ref {target} flagged do_not_roll_to=true in the in-repo ledger; refusing. See PR #{target_pr}."));
+        return Err(anyhow::Error::from(goat_errors::coded("GB-260", format!("target ref {target} flagged do_not_roll_to=true in the in-repo ledger; refusing. See PR #{target_pr}."))));
     }
     checks.push(line(format!("rolling {component} (artifact_type=image) to [{n}] {target} (target source: {target_src}; PR #{target_pr})")));
 
@@ -497,7 +497,7 @@ pub fn roll(repo: &Path, component: &str, n: u32, dry_run: bool, site: Option<&s
         if !dry_run {
             let known_on_host = host_refs_newest_first(h, component).iter().any(|r| r == &prev) || history.iter().any(|e| e.image == prev);
             if !known_on_host {
-                return Err(anyhow!("host {} is running {prev} which is in NO known history (host ledger + in-repo); refusing — operator must investigate. Use --status.", h.host));
+                return Err(anyhow::Error::from(goat_errors::coded("GB-260", format!("host {} is running {prev} which is in NO known history (host ledger + in-repo); refusing — operator must investigate. Use --status.", h.host))));
             }
         }
         let shape = shape_for(h);
@@ -516,7 +516,7 @@ pub fn roll(repo: &Path, component: &str, n: u32, dry_run: bool, site: Option<&s
                 .status()
                 .with_context(|| format!("ssh {}", h.host))?;
             if !st.success() {
-                return Err(anyhow!("rollback on {} failed (see above)", h.host));
+                return Err(anyhow::Error::from(goat_errors::coded("GB-258", format!("rollback on {} failed (see above)", h.host))));
             }
         }
         checks.push(line(format!("    rolled back: {prev} -> {target}")));
