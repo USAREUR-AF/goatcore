@@ -300,5 +300,103 @@ class Cli(unittest.TestCase):
         self.assertTrue(os.path.exists(os.path.join(out, "live.candidate")))
 
 
+ADMIT_RS = REPO / "crates/goatbuilder/src/federate/admit.rs"
+REGIONS = ("storages", "write-rules", "subjects", "policies")
+
+
+def admission_markers():
+    """The two marker lines `goatbuilder federate` admission writes, from admit.rs."""
+    src = ADMIT_RS.read_text()
+    begin = re.search(r'fn begin\(them: &str\) -> String \{\s*format!\("([^"]*)"\)', src).group(1)
+    end = re.search(r'fn end\(them: &str\) -> String \{\s*format!\("([^"]*)"\)', src).group(1)
+    return begin, end
+
+
+def admit(existing, partner_fragment, them):
+    """admit.rs merge_org, line for line: the existing fragment's lines before the
+    first region and its regions, minus any earlier block for `them`, each region
+    followed by `them`'s lines in that region between the two marker lines. The
+    partner fragment's lines before its first region (its GENERATED header) are not
+    carried. Marker text comes from admit.rs itself."""
+    begin, end = (m.replace("{them}", them) for m in admission_markers())
+
+    def regions(text):
+        pre, cur, out = [], None, {r: [] for r in REGIONS}
+        for line in text.split("\n")[:-1] if text.endswith("\n") else text.split("\n"):
+            if line.startswith(bc.FRAG_HDR):
+                cur = line[len(bc.FRAG_HDR):].strip()
+            elif cur:
+                out[cur].append(line)
+            else:
+                pre.append(line)
+        return pre, out
+
+    pre, cur = regions(existing)
+    _, add = regions(partner_fragment)
+    out = "".join(line + "\n" for line in pre)
+    for r in REGIONS:
+        kept, inside = [], False
+        for line in cur[r]:
+            if line.strip() == begin.strip():
+                inside = True
+            elif inside and line.strip() == end.strip():
+                inside = False
+            elif not inside:
+                kept.append(line)
+        out += bc.FRAG_HDR + r + "\n" + "".join(line + "\n" for line in kept)
+        if any(line.strip() for line in add[r]):
+            out += begin + "\n" + "".join(line + "\n" for line in add[r]) + end + "\n"
+    return out
+
+
+class AdmissionMarkers(unittest.TestCase):
+    """What `goatbuilder federate` admission writes, taken out again whole."""
+
+    def test_the_markers_are_admit_rs_text(self):
+        self.assertEqual(admission_markers(), bc.ADMISSION_MARKERS)
+
+    def org_before(self):
+        fx = Fixture(fragment("xaa", "xac"))
+        return fx, admit(fx.vendor, fragment("xaa", "xac"), "xac")
+
+    def test_admitted_then_backed_out_is_byte_identical_to_before(self):
+        fx, before = self.org_before()
+        admitted = admit(before, fragment("xaa", "xab"), "xab")
+        self.assertIn("// BEGIN peering xab (goatbuilder federate)", admitted)
+        candidate, report = bc.plan(admitted, "xab")
+        self.assertEqual(candidate, before)
+        self.assertNotIn("peering xab", candidate)
+        self.assertEqual(report["removed"]["markers"], 6)
+
+    def test_the_whole_back_out_run_gives_the_fragment_before_admission(self):
+        fx, before = self.org_before()
+        fx.write_org(admit(before, fragment("xaa", "xab"), "xab"))
+        result, rc, out = fx.plan("xab")
+        self.assertEqual(rc, 0, result)
+        self.assertEqual(fx.text(os.path.join(out, "org.candidate")), before)
+
+    def test_another_partners_markers_stay(self):
+        fx, before = self.org_before()
+        candidate, _ = bc.plan(admit(before, fragment("xaa", "xab"), "xab"), "xab")
+        self.assertEqual(candidate.count("// BEGIN peering xac (goatbuilder federate)"), 3)
+        self.assertEqual(candidate.count("// END peering xac"), 3)
+
+    def test_a_block_that_begins_and_never_ends_is_refused(self):
+        fx, before = self.org_before()
+        broken = admit(before, fragment("xaa", "xab"), "xab").replace("      // END peering xab\n", "", 1)
+        with self.assertRaises(ValueError) as caught:
+            bc.plan(broken, "xab")
+        self.assertIn("never ends", str(caught.exception))
+
+    def test_a_block_holding_a_line_that_is_not_the_partners_is_refused(self):
+        fx, before = self.org_before()
+        admitted = admit(before, fragment("xaa", "xab"), "xab")
+        foreign = admitted.replace("      // END peering xab\n",
+                                   '      { id: "vendor-z", messages: ["put"] },\n      // END peering xab\n', 1)
+        with self.assertRaises(ValueError) as caught:
+            bc.plan(foreign, "xab")
+        self.assertIn("not xab's", str(caught.exception))
+
+
 if __name__ == "__main__":
     unittest.main()
