@@ -23,6 +23,9 @@
 #[path = "upgrade/released.rs"]
 mod released;
 
+#[path = "support/sigstore.rs"]
+mod sigstore;
+
 mod federate_world;
 
 use std::io::{Read, Write};
@@ -39,8 +42,19 @@ fn sha256(b: &[u8]) -> String {
         .collect()
 }
 
-/// A surface on an ephemeral port serving `version` and `bin`; anything else
-/// is a 404. Returns the base URL.
+/// The release signer every install is configured with, and the stand-in
+/// Sigstore that signs the build under test as that signer's release. The
+/// published 0.5.1 is signed by the real Sigstore as the same repository.
+const SIGNER: &str = "USAREUR-AF/goatcore";
+
+fn sigstore() -> &'static sigstore::Sigstore {
+    static S: std::sync::OnceLock<sigstore::Sigstore> = std::sync::OnceLock::new();
+    S.get_or_init(sigstore::Sigstore::new)
+}
+
+/// A surface on an ephemeral port serving `version` and `bin`, its SHA256SUMS
+/// signed by the stand-in Sigstore as the signer's release of `version`;
+/// anything else is a 404. Returns the base URL.
 fn surface(version: &str, bin: Vec<u8>) -> String {
     let sum = sha256(&bin);
     surface_claiming(version, bin, &sum)
@@ -50,6 +64,28 @@ fn surface(version: &str, bin: Vec<u8>) -> String {
 /// `.sha256` and in SHA256SUMS: a binary that is not the one the surface
 /// vouches for.
 fn surface_claiming(version: &str, bin: Vec<u8>, sum: &str) -> String {
+    let asset = released::asset();
+    let sums = format!("{sum}  {asset}\n").into_bytes();
+    let bundle = sigstore().bundle(&sums, &sigstore::Workflow::release(SIGNER, version));
+    serve(version, bin, sum, sums, bundle.into_bytes())
+}
+
+/// The published 0.5.1 as its release serves it: the binary, its line of the
+/// published SHA256SUMS, and the published SHA256SUMS.cosign-bundle, which the
+/// real Sigstore signed.
+fn surface_published_0_5_1(bin: Vec<u8>) -> String {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/signature/v0.5.1");
+    let sums = std::fs::read(dir.join("SHA256SUMS")).unwrap();
+    let bundle = std::fs::read(dir.join("SHA256SUMS.cosign-bundle")).unwrap();
+    let sum = sha256(&bin);
+    assert!(
+        String::from_utf8_lossy(&sums).contains(&format!("{sum}  {}", released::asset())),
+        "the published SHA256SUMS does not list this binary"
+    );
+    serve("0.5.1", bin, &sum, sums, bundle)
+}
+
+fn serve(version: &str, bin: Vec<u8>, sum: &str, sums: Vec<u8>, bundle: Vec<u8>) -> String {
     let asset = released::asset();
     let routes: Vec<(String, Vec<u8>)> = vec![
         (
@@ -62,10 +98,8 @@ fn surface_claiming(version: &str, bin: Vec<u8>, sum: &str) -> String {
             format!("/goatbuilder/{asset}.sha256"),
             format!("{sum}  {asset}\n").into_bytes(),
         ),
-        (
-            "/goatbuilder/SHA256SUMS".into(),
-            format!("{sum}  {asset}\n").into_bytes(),
-        ),
+        ("/goatbuilder/SHA256SUMS".into(), sums),
+        ("/goatbuilder/SHA256SUMS.cosign-bundle".into(), bundle),
     ];
     let l = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = l.local_addr().unwrap();
@@ -118,6 +152,15 @@ fn install_of(bin: &Path) -> Install {
     }
     let home = dir.path().join("home");
     std::fs::create_dir_all(&home).unwrap();
+    // The stand-in Sigstore's trusted root, beside the embedded public one,
+    // and the release signer, from a goatbuilder.yaml where update runs.
+    std::fs::write(home.join("trusted_root.json"), sigstore().trusted_root()).unwrap();
+    std::fs::create_dir_all(home.join("ops/goatbuilder")).unwrap();
+    std::fs::write(
+        home.join("ops/goatbuilder/goatbuilder.yaml"),
+        format!("schema: goatbuilder/v1\npreset: lite\nrepo:\n  source: example-org/declarations\n  image_namespace: ghcr.io/example-org\n  release_source: {SIGNER}\ncomponents:\n  portal:\n    declared_in: declared/pins.yaml\nenvironments:\n  - name: dev\n    converger: push-ansible\npromotion:\n  path:\n    - name: dev\n      kind: rung\n      environment: dev\n"),
+    )
+    .unwrap();
     Install {
         _dir: dir,
         exe,
@@ -133,6 +176,10 @@ fn run(i: &Install, url: &str, args: &[&str]) -> Output {
         .env("PATH", "/usr/bin:/bin")
         .env("GOAT_LANG", "en")
         .env("GOAT_NO_FUN", "1")
+        .env(
+            "GOATBUILDER_UPDATE_TRUSTED_ROOT",
+            i.home.join("trusted_root.json"),
+        )
         .env_remove("GOAT_EXPLAIN")
         .current_dir(&i.home)
         .output()
@@ -229,7 +276,8 @@ fn e3_update_moves_a_0_5_1_install_to_this_build_and_back() {
     assert_eq!(version_of(&i), new_v);
 
     // 2. Back: an older served version needs --force.
-    let back = surface(&old_v, old.clone());
+    // Back: the published 0.5.1, signed by the real Sigstore.
+    let back = surface_published_0_5_1(old.clone());
     if old_v != new_v {
         let o = run(&i, &back, &["update"]);
         step(
@@ -257,6 +305,12 @@ fn e3_update_moves_a_0_5_1_install_to_this_build_and_back() {
         o.status.code(),
         Some(0),
         "update --force back to 0.5.1: {}",
+        says(&o)
+    );
+    // The way back checked the published release's own signature, offline.
+    assert!(
+        says(&o).contains("SHA256SUMS signed by https://github.com/USAREUR-AF/goatcore/.github/workflows/goatbuilder-release.yml@refs/tags/goatbuilder/v0.5.1"),
+        "the published 0.5.1 signature was not verified: {}",
         says(&o)
     );
     assert!(
