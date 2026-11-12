@@ -66,7 +66,7 @@ One entry per error. The fields:
 | `what` | what happened |
 | `causes` | likely reasons, most likely first |
 | `fixes` | what to do; commands where a command exists |
-| `read` | a repo path to read more; the gate checks it exists |
+| `read` | a path in this repository to read more; the gate checks it exists. It never names a document that only a deployment's overlay or a sibling repository holds, because the catalog ships in one build for every deployment |
 | `exit` | the exit code the binary returns (goat and goatbuilder codes only) |
 | `matches` | regular expressions over the whole text of an error, for errors that arrive as text; any one matching is a hit |
 

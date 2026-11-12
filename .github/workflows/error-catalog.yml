@@ -3,7 +3,8 @@
 # ops/errors/catalog.yaml is the one home for every error goat and goatbuilder
 # print and every tool error they carry. On any change to it, to the crate
 # that embeds it, to the code that cites it, or to the generated reference:
-# the Python gate tests itself (its full run reads docs that live in goatdocs);
+# the Python gate tests itself, then runs in full: every `read` path names a
+# document in this repository, so a plain checkout passes it;
 # the crate's tests compile every pattern with the
 # Rust engine and prove the three matching layers on real messages.
 
@@ -48,6 +49,8 @@ jobs:
         run: pip install pyyaml
       - name: Gate self-test
         run: python3 ops/ci/check-error-catalog.py --self-test
+      - name: Gate, in full
+        run: python3 ops/ci/check-error-catalog.py
 
   crate:
     name: goat-errors tests (patterns compile, three layers hold)

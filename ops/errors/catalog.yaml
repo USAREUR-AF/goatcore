@@ -123,7 +123,7 @@ entries:
     fixes:
       - "goat profile show"
       - "goat profile rotate <new-bundle.cbor>   (after the operator re-issues it)"
-    read: docs/design/credential-rotation.md
+    read: docs/design/internal-tls-ca.md
     exit: 6
 
   - code: E_DOCTOR_INCONCLUSIVE
@@ -291,7 +291,7 @@ entries:
     fixes:
       - "goat machine ls   (shows each machine's handle, custodian and slot anchor)"
       - "pass the 32-hex slot anchor instead of the handle when the handle is ambiguous"
-    read: docs/design/machine-enrollment.md
+    read: docs/design/goat-cli-error-codes.md
     exit: 1
 
   - code: E_MESH_PEER_UNRESOLVED
@@ -306,7 +306,7 @@ entries:
       - "goat admin peer ls   (find the machine's peer and its name)"
       - "goat machine mesh-key <machine>   (when it never joined)"
       - "rename the peer back to `<handle>`, or remove the stale peer with goat admin peer cut <peer-id>"
-    read: docs/design/machine-enrollment.md
+    read: docs/design/goat-cli-error-codes.md
     exit: 1
 
   - code: E_NETBIRD_FAILED
@@ -445,7 +445,7 @@ entries:
     fixes:
       - "put the lines for the named variables from <owner>/goat-credentials refs/goat.refs into .envrc.local.d/<file>.refs"
       - "OP_ACCOUNT=<account> op run --env-file=.envrc.local.d/<file>.refs -- <the same command>"
-    read: docs/design/credential-hygiene-strategy.md
+    read: docs/design/secret-store-requirements.md
     matches:
       - "NOT SET: "
       - "refusing before any host is touched"
@@ -835,7 +835,7 @@ entries:
       - "env | grep 'op://'   (find the variable)"
       - "env -u <THAT_VAR> op run --env-file=… -- <command>"
       - "or complete the reference to op://<vault>/<item>/<field>"
-    read: docs/design/credential-hygiene-strategy.md
+    read: docs/design/secret-store-requirements.md
     matches:
       - "incomplete op:// reference"
     exit: 1
@@ -2769,7 +2769,7 @@ entries:
       - a group_vars fact missing for this goatnet
     fixes:
       - "goatbuilder deploy --env <env> --component <c> --dry-run   (names every variable the play needs)"
-    read: docs/design/credential-hygiene-strategy.md
+    read: docs/operations/goatnet-standup.md
     matches:
       - "Assertion failed"
       - "\"assertion\": "
@@ -2783,7 +2783,7 @@ entries:
       - see the msg in the fatal line
     fixes:
       - "grep -n -A3 'fatal:' <log>"
-    read: docs/operations/troubleshooting.md
+    read: docs/operations/goatnet-standup.md
     matches:
       - "fatal: \\[[^\\]]+\\]: FAILED!"
 
@@ -2796,7 +2796,7 @@ entries:
       - a feature branch that touches group_vars or roles
     fixes:
       - "git pull --ff-only origin main   (the message prints the exact command)"
-    read: docs/design/engineering-baseline.md
+    read: docs/operations/goatnet-standup.md
     matches:
       - "ansible-preflight: REFUSE"
       - "ansible-preflight: refused"
@@ -2846,7 +2846,7 @@ entries:
       - an address was reused by another machine
     fixes:
       - "confirm the rebuild with the operator, then: ssh-keygen -R <address>"
-    read: docs/operations/troubleshooting.md
+    read: docs/operations/site-node-troubleshooting.md
     matches:
       - "REMOTE HOST IDENTIFICATION HAS CHANGED"
       - "Host key verification failed"
@@ -2861,7 +2861,7 @@ entries:
     fixes:
       - "eval $(op signin)   (OP_ACCOUNT=<account> for the team store)"
       - "goatbuilder doctor --credentials --all   (the tool:op-session row)"
-    read: docs/design/credential-hygiene-strategy.md
+    read: docs/design/secret-store-requirements.md
     matches:
       - "not currently signed in"
       - "account is not signed in"
@@ -2879,7 +2879,7 @@ entries:
       - "env | grep 'op://'   (find the variable)"
       - "env -u <THAT_VAR> op run --env-file=… -- <command>"
       - "or complete it to op://<vault>/<item>/<field>"
-    read: docs/design/credential-hygiene-strategy.md
+    read: docs/design/secret-store-requirements.md
     matches:
       - "invalid secret reference"
       - "too few '/'"
@@ -2894,7 +2894,7 @@ entries:
     fixes:
       - "op item get '<item>' --vault <vault>"
       - "check refs/goat.refs in <owner>/goat-credentials for the current line"
-    read: docs/design/credential-hygiene-strategy.md
+    read: docs/design/secret-store-requirements.md
     matches:
       - "isn't an item"
       - "could not resolve"
@@ -2911,7 +2911,7 @@ entries:
     fixes:
       - "aws-vault exec <profile> --no-session -- aws sts get-caller-identity"
       - "aws-vault add <profile>   (re-enter the current key)"
-    read: docs/design/cloud-environments.md
+    read: docs/design/cloud-infrastructure-discipline.md
     matches:
       - "InvalidClientTokenId"
       - "SignatureDoesNotMatch"
@@ -2927,7 +2927,7 @@ entries:
     fixes:
       - "aws-vault add <profile>"
       - "aws-vault list"
-    read: docs/design/cloud-environments.md
+    read: docs/design/cloud-infrastructure-discipline.md
     matches:
       - "aws-vault: error"
       - "profile .* not found"
@@ -2957,7 +2957,7 @@ entries:
       - "aws login   (when the error names it)"
       - "env -u AWS_VAULT_KEYCHAIN_NAME aws-vault exec <profile> --no-session -- aws sts get-caller-identity   (when the keychain name is set)"
       - "aws-vault add <profile>   (when the key really is bad; it replaces the stored key without deleting it first)"
-    read: docs/design/cloud-environments.md
+    read: docs/design/cloud-infrastructure-discipline.md
     matches:
       - "Your session has expired. Please reauthenticate using 'aws login'"
 
@@ -3055,7 +3055,7 @@ entries:
       - the wrong public key or identity
     fixes:
       - "cosign verify --key <org key> <image@digest>"
-    read: docs/design/oci-goat-substrate.md
+    read: docs/design/base-images.md
     matches:
       - "no matching signatures"
       - "signature mismatch"
@@ -3069,7 +3069,7 @@ entries:
       - running docker without sudo on a host where the operator user is not in the docker group
     fixes:
       - "sudo docker …   (hosts run docker as root by baseline)"
-    read: docs/operations/troubleshooting.md
+    read: docs/operations/site-node-troubleshooting.md
     matches:
       - "permission denied while trying to connect to the Docker daemon socket"
 
@@ -3083,7 +3083,7 @@ entries:
     fixes:
       - "crane digest <repo.image_namespace>/<image>:<tag>"
       - "on the host: sudo docker pull <ref>"
-    read: docs/design/oci-goat-substrate.md
+    read: docs/design/base-images.md
     matches:
       - "manifest unknown"
       - "pull access denied"
@@ -3098,7 +3098,7 @@ entries:
       - a local Docker Desktop that is not launched (never launch it for goat work)
     fixes:
       - "on the host: sudo systemctl status docker"
-    read: docs/operations/troubleshooting.md
+    read: docs/operations/site-node-troubleshooting.md
     matches:
       - "Cannot connect to the Docker daemon"
 
@@ -3124,7 +3124,7 @@ entries:
       - the service is stopped
     fixes:
       - "sudo netbird service start   (or restart the desktop client)"
-    read: docs/operations/operator-laptop-hygiene.md
+    read: docs/operations/admin-operator-guide.md
     matches:
       - "daemon is not running"
       - "failed to connect to daemon"
@@ -3151,7 +3151,7 @@ entries:
       - no grant for this surface
     fixes:
       - "for goat admin verbs: GOAT_PORTAL_TOKEN=op_… goat …"
-    read: docs/design/rbac-adherence.md
+    read: docs/design/data-access-roles.md
     matches:
       - "403 Forbidden"
 
@@ -3163,7 +3163,7 @@ entries:
       - the container is restarting or down
     fixes:
       - "on the host: sudo docker ps --format '{{.Names}} {{.Status}}' | grep -v healthy"
-    read: docs/operations/troubleshooting.md
+    read: docs/operations/site-node-troubleshooting.md
     matches:
       - "502 Bad Gateway"
       - "503 Service Unavailable"
@@ -3191,7 +3191,7 @@ entries:
       - "an environment assignment placed where direnv exec expects the command"
     fixes:
       - "direnv exec . env VAR=value cmd"
-    read: docs/operations/operator-laptop-hygiene.md
+    read: docs/operations/admin-operator-guide.md
     matches:
       - "direnv: error command '[A-Za-z_]+=[^']*' not found on PATH"
 
@@ -3205,7 +3205,7 @@ entries:
     fixes:
       - "netbird status | head -5"
       - "dig +short <name>   (then the same against the mesh resolver the profile names: goat names)"
-    read: docs/design/dns-service-discovery.md
+    read: docs/design/mesh-dns-redundancy.md
     matches:
       - "Temporary failure in name resolution"
       - "Could not resolve host"
@@ -3222,7 +3222,7 @@ entries:
     fixes:
       - "goat ca ls"
       - "date -u   (compare with a known-good clock)"
-    read: docs/design/fips-pqc-path.md
+    read: docs/design/internal-tls-ca.md
     matches:
       - "certificate verify failed"
       - "x509: certificate"
