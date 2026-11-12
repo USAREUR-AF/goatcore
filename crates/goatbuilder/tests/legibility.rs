@@ -754,17 +754,21 @@ fn check_b(procs: &[Proc], records: &[serde_json::Value]) -> Result<(), String> 
 
 /// (c) each command the real run executed is printed by the terminal dry run,
 /// in the order it ran.
-fn check_c(procs: &[Proc], dry_terminal: &str) -> Result<(), String> {
+fn check_c(procs: &[Proc], dry_terminal: &str, parallel: &BTreeSet<String>) -> Result<(), String> {
     let page = norm(dry_terminal);
-    let parallel = parallel_blocks(dry_terminal);
     let mut at = 0;
     let mut missing = Vec::new();
     for p in procs {
         let want = norm(&p.line());
-        // A step that runs beside the others (`∥`, standup's image pull) starts
-        // when it starts: it is held to its own block of the page (its heading
-        // and the lines under it), not to the order of the steps around it.
-        if parallel.iter().any(|b| b.contains(&want)) {
+        // A command of a step that runs beside the others (`∥`, standup's image
+        // pull) starts when that step starts, which races the steps around it:
+        // it must be printed, but not in order. Only a command that IS one of
+        // that step's commands is held this loosely; any other command keeps
+        // its order, even when its text also appears inside the parallel one.
+        if parallel.contains(&want) {
+            if !page.contains(&want) {
+                missing.push(format!("not printed: {}", p.line()));
+            }
             continue;
         }
         // A program started by its path is recorded by its file name, which
@@ -790,26 +794,20 @@ fn check_c(procs: &[Proc], dry_terminal: &str) -> Result<(), String> {
     }
 }
 
-/// The command blocks of the parallel steps on a page: each heading marked `∥`
-/// and the indented lines under it, up to the next heading, normalized.
-fn parallel_blocks(page: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut cur: Option<String> = None;
-    for line in page.lines() {
-        let heading = !line.is_empty() && !line.starts_with(' ');
-        if heading {
-            if let Some(b) = cur.take() {
-                out.push(norm(&b));
-            }
-            if line.contains('\u{2225}') {
-                cur = Some(String::new());
-            }
-        } else if let Some(b) = cur.as_mut() {
-            b.push_str(line);
-            b.push('\n');
+/// The commands of the parallel steps a dry run plans, from its `-o json`
+/// rows: each `cmd` row under a `phase` row marked `∥`, up to the next `phase`
+/// row, normalized.
+fn parallel_commands(json: &serde_json::Value) -> BTreeSet<String> {
+    let mut out = BTreeSet::new();
+    let mut inside = false;
+    for c in json["checks"].as_array().into_iter().flatten() {
+        let detail = c["detail"].as_str().unwrap_or("");
+        if c["name"] == "phase" {
+            inside = detail.contains('\u{2225}');
+        } else if inside && c["name"] == "cmd" {
+            out.insert(norm(detail));
         }
     }
-    out.extend(cur.map(|b| norm(&b)));
     out
 }
 
@@ -1011,7 +1009,10 @@ fn c11_standup() {
         vec![
             ('a', check_a(&procs, &records)),
             ('b', check_b(&procs, &records)),
-            ('c', check_c(&procs, &page)),
+            (
+                'c',
+                check_c(&procs, &page, &parallel_commands(&json(&plan))),
+            ),
             (
                 'd',
                 check_d("standup", &planned_phases(&json(&plan)), &printed),
@@ -1080,7 +1081,10 @@ fn c11_join_node() {
         vec![
             ('a', check_a(&procs, &records)),
             ('b', check_b(&procs, &records)),
-            ('c', check_c(&procs, &page)),
+            (
+                'c',
+                check_c(&procs, &page, &parallel_commands(&json(&plan))),
+            ),
             (
                 'd',
                 check_d("join-node", &planned_phases(&json(&plan)), &printed),
@@ -1136,7 +1140,10 @@ fn c11_deploy() {
         vec![
             ('a', check_a(&procs, &records)),
             ('b', check_b(&procs, &records)),
-            ('c', check_c(&procs, &page)),
+            (
+                'c',
+                check_c(&procs, &page, &parallel_commands(&json(&plan))),
+            ),
             ('d', check_d("deploy", &steps, &printed)),
         ],
     );
@@ -1195,7 +1202,7 @@ fn c11_federate() {
         vec![
             ('a', check_a(&procs, &records)),
             ('b', check_b(&procs, &records)),
-            ('c', check_c(&procs, &pages)),
+            ('c', check_c(&procs, &pages, &parallel_commands(&plan))),
             ('d', check_d("federate", &planned_phases(&plan), &printed)),
         ],
     );
@@ -1240,7 +1247,7 @@ fn c11_each_check_can_pass_when_the_tool_does_what_it_asks() {
         &line[..40],
         &line[40..]
     );
-    assert_eq!(check_c(&procs, &page), Ok(()));
+    assert_eq!(check_c(&procs, &page, &BTreeSet::new()), Ok(()));
     let phases: BTreeSet<String> = ["5".to_string()].into();
     let catalog = "schema: goat-phases/v1\nphases:\n  - verb: standup\n    phase: 5\n    what: w\n    why: y\n    changes: c\n    verify: v\n    runs: r\n    by_hand: h\n    read: docs/design/goatbuilder.md\n";
     assert_eq!(
@@ -1272,25 +1279,48 @@ fn c11_each_check_can_pass_when_the_tool_does_what_it_asks() {
         ]
     );
 
-    // A parallel step is held to its own segment, whenever it started.
+    // A parallel step's own command is held to being printed, whenever it
+    // started; every other command keeps its order.
     let pg = "Phase 2 · A\n  run-a\nImage pull · A \u{2225} · images\n  pull-x\nPhase 3 · T\n  run-b\njoin the image pull before phase 5\nPhase 5\n  run-c\n";
+    let par: BTreeSet<String> = ["pull-x".to_string()].into();
     let pr = |l: &str| Proc {
         ppid: 1,
         program: "bash".into(),
         args: vec!["-c".into(), l.into()],
     };
+    let seq = |l: &[&str]| -> Vec<Proc> { l.iter().map(|x| pr(x)).collect() };
     for order in [
         ["run-a", "pull-x", "run-b", "run-c"],
         ["run-a", "run-b", "pull-x", "run-c"],
         ["pull-x", "run-a", "run-b", "run-c"],
     ] {
-        let procs: Vec<Proc> = order.iter().map(|l| pr(l)).collect();
-        assert_eq!(check_c(&procs, pg), Ok(()), "{order:?}");
+        assert_eq!(check_c(&seq(&order), pg, &par), Ok(()), "{order:?}");
     }
-    let late: Vec<Proc> = ["run-a", "run-c", "run-b"].iter().map(|l| pr(l)).collect();
     assert!(
-        check_c(&late, pg).is_err(),
-        "steps outside a parallel segment keep their order"
+        check_c(&seq(&["run-a", "run-c", "run-b"]), pg, &par).is_err(),
+        "steps outside the parallel step keep their order"
+    );
+    // A step whose text is part of a parallel command is not exempt by that.
+    let pg2 = "Phase 2 · A\n  run-a\nImage pull · A \u{2225} · images\n  pull-x && run-b\nPhase 3 · T\n  run-b\nPhase 5\n  run-c\n";
+    let par2: BTreeSet<String> = ["pull-x && run-b".to_string()].into();
+    assert!(
+        check_c(
+            &seq(&["run-a", "pull-x && run-b", "run-c", "run-b"]),
+            pg2,
+            &par2
+        )
+        .is_err(),
+        "run-b, its own Phase 3 step, run out of order"
+    );
+    let pg3 = "Phase 1 · GATE\n  netbird status\nPull · A \u{2225} · pull\n  ansible pull && netbird status --check\nPhase 2 · A\n  run-a\n";
+    let par3: BTreeSet<String> = ["ansible pull && netbird status --check".to_string()].into();
+    assert!(
+        check_c(&seq(&["run-a", "netbird status"]), pg3, &par3).is_err(),
+        "netbird status inside a longer parallel command, run out of order"
+    );
+    assert!(
+        check_c(&seq(&["missing-x"]), pg, &["missing-x".to_string()].into()).is_err(),
+        "a parallel command must still be printed"
     );
 
     // A dry run that fails is a harness failure, never a known-failing check.
@@ -1359,7 +1389,12 @@ fn c11_each_check_can_pass_when_the_tool_does_what_it_asks() {
         "values with no source"
     );
     assert!(
-        check_c(&procs, "add -o json to see every phase's command").is_err(),
+        check_c(
+            &procs,
+            "add -o json to see every phase's command",
+            &BTreeSet::new()
+        )
+        .is_err(),
         "a plan that hides its commands"
     );
     assert!(
