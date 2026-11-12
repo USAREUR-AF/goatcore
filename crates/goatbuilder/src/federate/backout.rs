@@ -2089,6 +2089,36 @@ mod tests {
         assert_eq!(s.absent, 1);
     }
 
+    /// The probe contract the roles follow (ops/ansible/filter_plugins/
+    /// backout_probe.py): a probe that could not read gives `unknown`, and
+    /// every such row, for each of the five probes, stops the back-out.
+    #[test]
+    fn every_probe_that_could_not_read_stops_the_back_out() {
+        let unknown = [
+            ("edge router", "container goat-zenoh-edge-xab"),
+            ("republisher", "container goat-fed-republisher-xab"),
+            ("forwarder", "carrier wg-carry0"),
+            ("spire", "federation xab.fed.test"),
+            ("spire", "bundle xab.fed.test"),
+        ];
+        for (component, resource) in unknown {
+            let recs = vec![rec(
+                "h",
+                "xab",
+                &[(
+                    component,
+                    resource,
+                    "unknown",
+                    "none",
+                    "rc 1: permission denied",
+                )],
+            )];
+            let s = summarize(&recs, "xab");
+            assert_eq!(s.refused.len(), 1, "{component} {resource}: {s:?}");
+            assert_eq!((s.to_remove, s.absent), (0, 0), "{component} {resource}");
+        }
+    }
+
     /// Admission through the deployment's own route (FED_CORE_ACL_ORG, with
     /// FED_CORE_ACL_SEED/OUT, restarted by FED_CORE_RESTART or FED_CORE_PLAY on
     /// FED_CORE_GROUP) keeps our core's files on the driver. The back-out
