@@ -43,7 +43,13 @@ path, two different paths, or an override that differs from the path the argumen
 name each refuse the check and say why (an override that differs prints both
 paths). Measured: the first separate-host
 version of this check assumed `/etc/zenoh/config.json5` and refused every such
-hand-run core on the federation test environment as unreadable. It looks for the core router on the edge host
+hand-run core on the federation test environment as unreadable. The rule lives in
+`tasks/core-config-path.yml`, and the role's key-storage comparison
+(`tasks/key-storage-check.yml`, the key-bundle grant against the core's `keys/`
+stores, on the edge host's own core only) reads the configuration by the same rule.
+Before, that comparison read `/etc/zenoh/config.json5` alone and reported a hand-run
+core's `keys/**` store as "could not run" instead of refusing it. Status: built,
+measured by `tests/test_zenoh_edge_key_storage.py`. It looks for the core router on the edge host
 first (`tasks/discover-core.yml`: `goat_zenoh_edge_core_container`, else the core
 role label or name). When none is there, it looks on the core host: the one host
 of inventory group `goat_zenoh_edge_core_group`, by default

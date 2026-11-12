@@ -17,6 +17,12 @@
     - goat_zenoh_edge_key_bundle_key_exprs | default([]) | length > 0
     - _edge_core_container | default('') | length == 0
 
+- name: edge | where the core router reads its configuration
+  ansible.builtin.include_tasks: core-config-path.yml
+  when:
+    - goat_zenoh_edge_key_bundle_key_exprs | default([]) | length > 0
+    - _edge_core_container | default('') | length > 0
+
 - name: edge | read the core's key storages, to compare against what we grant
   # A queryable declared WIDER than the lane this edge grants is refused, and
   # SILENTLY. The bundle is served
@@ -33,7 +39,7 @@
       - exec
       - "{{ _edge_core_container }}"
       - cat
-      - /etc/zenoh/config.json5
+      - "{{ _edge_core_config_path }}"
   register: _edge_core_key_config
   changed_when: false
   failed_when: false
@@ -43,12 +49,20 @@
     - goat_zenoh_edge_key_bundle_key_exprs | default([]) | length > 0
     - _edge_core_container | default('') | length > 0
 
+# The configuration stays hidden (it can hold credentials); the read's exit
+# status and error text do not.
 - name: edge | report a core configuration that could not be read
+  vars:
+    _read: "{{ _edge_core_key_config }}"
+    _why: "{{ (_read.stderr | default('') | trim) or (_read.msg | default('no error text')) }}"
   ansible.builtin.debug:
     msg: >-
       could not run: the core key-storage comparison was not made (could not
-      read /etc/zenoh/config.json5 from {{ _edge_core_container }}). The
-      key-bundle scope was not verified against the core.
+      read {{ _edge_core_config_path }} from {{ _edge_core_container }}:
+      docker exec ... cat exited {{ _read.rc | default('without a status') }}
+      ({{ _why | truncate(400) }})). The key-bundle scope was not verified
+      against the core. Set goat_zenoh_edge_core_config_path to where this core
+      router reads its configuration if that is not it.
   when:
     - goat_zenoh_edge_key_bundle_key_exprs | default([]) | length > 0
     - _edge_core_container | default('') | length > 0
