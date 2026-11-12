@@ -64,7 +64,7 @@ are not the regime.
 | **Sidecar / interceptor / shim *on the data path* (even if logically thin)** | **Rust** | Lives inside the Zenoh process or relay process; ABI + memory profile matters; matches Zenoh's Rust-native interceptor pattern |
 | **Per-request control service**, qps measured in single-to-low-hundreds, broad library needs | **Go** | Iteration speed, ecosystem breadth, deployment simplicity dominate |
 | **One-shot CLI / Ansible-callable binary** | **Go** | Static binary, fast to write, no async ceremony |
-| Browser SPA / small UI | **TypeScript / Node** | unchanged from 2026-04-24 |
+| Browser UI | **Plain HTML + JavaScript, no build step**; TypeScript for a frontend too complex for that | [engineering-baseline §12.4](https://github.com/USAREUR-AF/goatdocs/blob/main/docs/design/engineering-baseline.md) sets the rule and its CI check |
 | Ansible / scripts / ad-hoc data work | **Python** | unchanged |
 | Infra / config | **Terraform + Ansible** | unchanged |
 
@@ -117,7 +117,7 @@ assignments under this rule:
 ### Neutral
 
 - **No retroactive rewrites.** Existing Go services stay Go. Existing Rust services stay Rust. Migration triggers are workload-shape changes (a service that was request-shaped becoming data-shaped, the way the relay's load profile changed in production), not language preference.
-- **TypeScript / Python / Terraform / Ansible unchanged.** This ADR refines only the Go / Rust boundary.
+- **Python / Terraform / Ansible unchanged.** This ADR refines only the Go / Rust boundary. The browser-UI row follows [engineering-baseline §12.4](https://github.com/USAREUR-AF/goatdocs/blob/main/docs/design/engineering-baseline.md).
 
 ## Alternatives considered
 
