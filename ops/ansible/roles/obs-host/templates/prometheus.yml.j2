@@ -27,6 +27,13 @@ scrape_configs:
     static_configs:
       - targets: ["localhost:9090"]
 
+  # Alertmanager's own counters. Without this scrape a failing delivery
+  # (alertmanager_notifications_failed_total) is invisible to alerting
+  # and a dead pager is only discoverable in container logs.
+  - job_name: alertmanager
+    static_configs:
+      - targets: ["alertmanager:9093"]
+
   # The obs host's own node_exporter. The default address is the host's LAN
   # address, which is right where the firewall lets the docker bridge reach it —
   # and wrong on a mesh-only node. A mesh-only host's ufw may be INPUT DROP

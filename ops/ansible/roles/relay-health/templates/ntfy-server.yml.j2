@@ -14,5 +14,11 @@ enable-reservations: false
 cache-file: "/var/cache/ntfy/cache.db"
 cache-duration: "{{ ntfy_cache_duration }}"
 attachment-cache-dir: "/var/cache/ntfy/attachments"
+# Message templates (files/ntfy-templates). Alertmanager publishes with
+# ?template=goat-alertmanager, a bounded template; ntfy's built-in
+# `alertmanager` template overflows the 4096-byte message limit on a large
+# group. A file named alertmanager.yml here would silently replace the
+# built-in, so goat templates carry a goat- prefix.
+template-dir: "/etc/ntfy/templates"
 log-level: info
 log-format: json

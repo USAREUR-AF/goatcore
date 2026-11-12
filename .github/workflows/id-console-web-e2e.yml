@@ -25,6 +25,9 @@ concurrency:
 jobs:
   e2e:
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: read
     timeout-minutes: 30
     services:
       # ADR 1165 step A: the onboarding and org stores live in Postgres. The
@@ -46,6 +49,7 @@ jobs:
         working-directory: ops/goat-id-console/web/e2e
     steps:
       - uses: actions/checkout@v4
+      - uses: ./.github/actions/apt-failover
       - uses: actions/setup-go@v5
         with:
           go-version-file: ops/goat-id-console/go.mod

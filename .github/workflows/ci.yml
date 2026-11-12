@@ -108,9 +108,13 @@ jobs:
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: read
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
+      - uses: ./.github/actions/apt-failover
       - uses: actions/setup-go@v5
         with:
           go-version: stable
@@ -119,7 +123,8 @@ jobs:
       - name: protoc and plugins
         timeout-minutes: 5
         run: |
-          sudo apt-get update -q && sudo apt-get install -y -q protobuf-compiler libpcsclite-dev
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 -o APT::Update::Error-Mode=any update
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 install -y protobuf-compiler libpcsclite-dev
           go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.34.2
           go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.5.1
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
@@ -146,9 +151,13 @@ jobs:
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: read
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+      - uses: ./.github/actions/apt-failover
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -156,7 +165,8 @@ jobs:
         timeout-minutes: 5
         run: |
           python3 -m pip install -q pyyaml jsonschema pytest ansible-core yamllint
-          sudo apt-get update -q && sudo apt-get install -y -q shellcheck ripgrep dosfstools parted xz-utils
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 -o APT::Update::Error-Mode=any update
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 install -y shellcheck ripgrep dosfstools parted xz-utils
           ansible-galaxy collection install -r ops/ansible/requirements.yml
       - name: every Python file compiles
         run: python3 -m compileall -q .
@@ -223,15 +233,21 @@ jobs:
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: read
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+      - uses: ./.github/actions/apt-failover
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
       - name: deps
         timeout-minutes: 5
         run: python3 -m pip install -q pyyaml ansible-core pytest
+      - name: fixture image build failures stay visible
+        run: python3 ops/ci/test_peering_build_failures.py
       - name: the partner file's forwarder block is validated
         run: python3 -m pytest -q ops/ci/test_validate_partners_forwarder.py
       - name: the partner file's acceptance block is validated
@@ -256,9 +272,13 @@ jobs:
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: read
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+      - uses: ./.github/actions/apt-failover
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -286,9 +306,13 @@ jobs:
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: read
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+      - uses: ./.github/actions/apt-failover
 
       - name: Cache GNU Bash 3.2.57
         id: bash32
@@ -351,6 +375,9 @@ jobs:
     # purpose is named with its reason in ops/ci/check_go_vuln_coverage.py.
     # Unconditional (no `if:`): the guard accepts only a blocking scan.
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: read
     timeout-minutes: 20
     strategy:
       fail-fast: false
@@ -374,6 +401,7 @@ jobs:
           - ops/zenoh/loadgen
     steps:
       - uses: actions/checkout@v4
+      - uses: ./.github/actions/apt-failover
       - uses: actions/setup-go@v5
         with:
           # A patched Go release for the standard-library scan.

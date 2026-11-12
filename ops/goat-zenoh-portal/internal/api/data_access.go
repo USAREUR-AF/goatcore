@@ -89,7 +89,7 @@ func (s *Server) mayGovernProducer(r *http.Request, producer string) bool {
 	if p == nil || p.Vendor == "" || s.cfg.RosterPath == "" {
 		return false
 	}
-	dr, err := access.LoadDataRoster(s.cfg.RosterPath)
+	dr, err := s.rosters.Load(s.cfg.RosterPath)
 	if err != nil {
 		return false // fail-closed: can't confirm org membership → no org authority
 	}
@@ -346,7 +346,7 @@ func (s *Server) handleCreateGrant(w http.ResponseWriter, r *http.Request) {
 	// audience read to say so. The usual slip is a member's anchor where its org
 	// id belongs, so the refusal names the org that declares that anchor.
 	if body.GranteeKind == registry.GranteeOrg && s.cfg.RosterPath != "" {
-		dr, err := access.LoadDataRoster(s.cfg.RosterPath)
+		dr, err := s.rosters.Load(s.cfg.RosterPath)
 		if err != nil {
 			log.Printf("data-access: load roster: %v", err)
 			writeError(w, http.StatusInternalServerError, "registry", "could not load the declared registry")
@@ -434,7 +434,7 @@ func (s *Server) handleCreateMultipubTopic(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusServiceUnavailable, "no_roster", "roster unavailable — cannot confirm governance authority")
 		return
 	}
-	dr, err := access.LoadDataRoster(s.cfg.RosterPath)
+	dr, err := s.rosters.Load(s.cfg.RosterPath)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "roster", err.Error())
 		return
@@ -558,7 +558,7 @@ func (s *Server) handleCreateCoPublishGrant(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusServiceUnavailable, "no_roster", "roster unavailable — cannot confirm governance authority")
 		return
 	}
-	dr, err := access.LoadDataRoster(s.cfg.RosterPath)
+	dr, err := s.rosters.Load(s.cfg.RosterPath)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "roster", err.Error())
 		return

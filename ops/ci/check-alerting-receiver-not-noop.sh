@@ -4,8 +4,8 @@
 #
 # THE COUPLED FACTS: an obs host runs Prometheus + Alertmanager ("alerting is
 # on"), but every route in the rendered alertmanager.yml can resolve to the
-# always-defined `webhook-noop` receiver, which POSTs to localhost:9999/noop
-# and drops it — alerts fire, reach Alertmanager, and reach NOBODY. The
+# always-defined `webhook-noop` receiver, which has no integrations and
+# drops every alert — alerts fire, reach Alertmanager, and reach NOBODY. The
 # fall-through lives in roles/obs-host/templates/alertmanager.yml.j2 (and its
 # twin roles/observability/templates/alertmanager.yml.j2):
 #

@@ -90,7 +90,8 @@ def main():
             assert len(old_ids) == 2, before_rows
             used_before = backend.used(target)
             assert used_before == 40 * mib, used_before
-            assert engine.run(config, backend) == 0
+            # Measure-only over high-water: loud exit, and the bucket unchanged.
+            assert engine.run(config, backend) == 4
             assert backend.used(target) == used_before
             assert engine.run(config, backend, evict=True) == 2
             after_rows = backend.versions(target)

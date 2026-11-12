@@ -92,7 +92,7 @@ func (s *Server) seedGovernAdmins(ctx context.Context, firstOnly bool, nominated
 	if s.cfg.RosterPath == "" {
 		return sum, errors.New("govern seed: declared registry (roster path) not configured")
 	}
-	dr, err := access.LoadDataRoster(s.cfg.RosterPath)
+	dr, err := s.rosters.Load(s.cfg.RosterPath)
 	if err != nil {
 		return sum, err
 	}

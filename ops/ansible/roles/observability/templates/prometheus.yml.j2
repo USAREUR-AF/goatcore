@@ -42,6 +42,15 @@ scrape_configs:
           instance: prometheus-local
 
   # ------------------------------------------------------------------
+  # Alertmanager's own counters. Without this scrape a failing delivery
+  # (alertmanager_notifications_failed_total) is invisible to alerting
+  # and a dead pager is only discoverable in container logs.
+  # ------------------------------------------------------------------
+  - job_name: alertmanager
+    static_configs:
+      - targets: ["alertmanager:9093"]
+
+  # ------------------------------------------------------------------
   # signal-server — local /metrics via the compose network.
   # The base docker-compose.yml exposes :9090 host-locally; inside
   # the mgmt network we hit the container hostname directly.

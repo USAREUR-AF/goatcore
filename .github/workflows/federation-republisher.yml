@@ -38,9 +38,13 @@ concurrency:
 jobs:
   test:
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: read
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+      - uses: ./.github/actions/apt-failover
 
       - name: Install protoc
         timeout-minutes: 5

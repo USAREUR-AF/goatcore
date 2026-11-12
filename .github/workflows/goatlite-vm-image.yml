@@ -59,9 +59,13 @@ jobs:
   build:
     name: build and first-boot the image
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: read
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
+      - uses: ./.github/actions/apt-failover
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'

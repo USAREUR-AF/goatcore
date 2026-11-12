@@ -31,6 +31,13 @@ scrape_configs:
     static_configs:
       - targets: ["localhost:9090"]
 
+  # Alertmanager's own counters. Without this scrape a failing delivery
+  # (alertmanager_notifications_failed_total) is invisible to alerting
+  # and a dead pager is only discoverable in container logs.
+  - job_name: alertmanager
+    static_configs:
+      - targets: ["alertmanager:9093"]
+
   # node-exporter runs with network_mode:host (host-NIC visibility — a
   # bridge-networked exporter only sees its own veth) bound to the docker
   # bridge gateway IP; host.docker.internal resolves there via the

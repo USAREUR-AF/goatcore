@@ -81,7 +81,12 @@ admin right):
   its versioned metadata check as well as delete and governance-bypass rights.
 - Bound each pass by both the configured byte percentage and hour count.
   Exit 2 means a bounded incomplete pass. Measurement errors exit 1;
-  deletion, state or trail errors exit 3 and fail the unit.
+  deletion, state or trail errors exit 3 and fail the unit. A measure-only
+  pass that finds the bucket at or over the high-water mark exits 4 and
+  fails the unit loudly: observing a breached threshold is not a success.
+  The textfile publishes the same value (`last_result` 4) and raises
+  `over_high_water`, so the exit code, the metrics and the alerts agree
+  (built).
 - Journal each attempted version on local durable storage before removal.
   Confirmed outcomes are uploaded beneath `ops/eviction/`; failed trail
   uploads remain pending and block the next destructive pass. The evictor's
@@ -93,9 +98,16 @@ admin right):
 Installation and the default timer are measurement-only. Set
 `audit_fifo_evict_enabled: true` only as an explicit rollout decision after
 checking the observed quota, retention posture, first pass scope and client
-artifact. The installation probe always passes `--measure-only` and must
-succeed before the timer is started. This flag does not replace the functional
-eviction path; `--evict` performs the bounded pass described above.
+artifact. The installation probe always passes `--measure-only` and accepts
+exit 0 or 4: either one proves the credential, and 4 means the bucket is
+already over high-water. The timer is always started so metrics and alerting
+stay live. When the probe saw 4 with eviction disabled the converge prints a
+warning and still finishes green: disabled is the shipped default and enabling
+is an irreversible decision, so the role must not force it by failing. The
+warning alert `AuditEvictionDisabledOverHighWater` watches the
+same condition between converges, days before `AuditBucketAtQuota` goes
+critical (built). This flag does not replace the functional eviction path;
+`--evict` performs the bounded pass described above.
 
 The role refuses to install until `audit_fifo_evict_mc_image` names an
 immutable client image (`<image>@sha256:<64 hex>`); its default is an explicit

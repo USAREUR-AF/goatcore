@@ -18,7 +18,7 @@
    concurrently. PagerDuty's feature richness (on-call rotation,
    escalation policies, SMS/voice fallback, MTTR metrics) and ntfy's
    sovereign IP-push are complementary — neither is fallback for the
-   other. Per-site self-hosted ntfy server + alertmanager-ntfy bridge.
+   other. Per-site self-hosted ntfy server (relay-health), POSTed directly.
    See failure-isolation.md §9 (peer-pager pattern) and
    multi-agent-team-management.md §6.5c (same ntfy substrate serves
    agent escalations).
@@ -161,10 +161,12 @@ receivers:
   # Always-defined null receiver. Every other receiver falls back to
   # this when its credentials aren't set. Dropping alerts here is
   # intentional during shakedown — the Prom UI still shows them.
+  # A receiver with no integrations is Alertmanager's null route: the
+  # dispatcher succeeds without sending anything. The previous shape
+  # POSTed to a closed local port, so every group_interval logged retry
+  # errors and the deliberate drop was indistinguishable in the logs
+  # from a real delivery failure on a configured channel.
   - name: webhook-noop
-    webhook_configs:
-      - url: "http://localhost:9999/noop"
-        send_resolved: false
 {% if deadman_active %}
   - name: deadman
     webhook_configs:
@@ -242,16 +244,22 @@ receivers:
           firing: "{{ '{{' }} .Alerts.Firing | len {{ '}}' }}"
 {% endif %}
 {% if ntfy_alertmanager_webhook_url | default('') | length > 0 %}
-    # ntfy via the alertmanager-ntfy bridge container running on the
-    # same per-site mgmt-host. The bridge translates alertmanager's
-    # webhook JSON into ntfy POSTs with proper Title / Priority / Tags.
-    # Topic per group_vars: ntfy_topic_critical (default
-    # "goat-sre-{{ '{{' }}site{{ '}}' }}-critical"). See
-    # failure-isolation.md §9 + group_vars/{env}_hosts/vars.yml.
+    # ntfy: Alertmanager POSTs its webhook JSON straight to this goatnet's
+    # ntfy server (relay-health role, ADR 1168); there is no bridge. ntfy
+    # renders the notification server-side from the template named in the
+    # URL, which must be ?template=goat-alertmanager: the bounded template
+    # relay-health installs. ntfy's built-in `alertmanager` template lists
+    # every alert and overflows the 4096-byte limit on a large group, and
+    # the 400 it returns is not retried.
+    #
+    # One grouped POST per group, never one per alert: max_alerts caps the
+    # alerts sent, and the template reports the rest from truncatedAlerts as
+    # "+N more". 15 keeps the request far under ntfy's 128 KiB JSON body
+    # limit and the burst far under its per-visitor rate limit.
     webhook_configs:
       - url: "{{ ntfy_alertmanager_webhook_url }}"
         send_resolved: true
-        max_alerts: 0
+        max_alerts: 15
 {% if ntfy_alertmanager_user | default('') | length > 0 %}
         # ntfy is deny-all by default (ADR 1168); this is the write-only publisher.
         http_config:
@@ -304,17 +312,14 @@ receivers:
           Subject: "[{{ alertmanager_email_subject_tag | default('goat') }}] {{ '{{' }} .CommonLabels.severity {{ '}}' }}: {{ '{{' }} .CommonLabels.alertname {{ '}}' }}"
 {% endif %}
 {% if ntfy_alertmanager_webhook_url | default('') | length > 0 %}
-    # ntfy bridge for warnings — uses a different topic than critical
-    # so subscribers can opt into critical-only push if desired.
-    # The alertmanager-ntfy bridge reads the alert severity label and
-    # routes to ntfy_topic_warning vs ntfy_topic_critical accordingly,
-    # so the alertmanager-side webhook URL is the same for both tiers.
+    # ntfy for warnings: same server, same bounded goat-alertmanager
+    # template and the same max_alerts bound as the critical webhook above.
     webhook_configs:
       # Warning tier goes to its own topic when one is declared, so a person can
       # subscribe to critical alone; falls back to the single URL otherwise.
       - url: "{{ ntfy_alertmanager_webhook_url_warning | default(ntfy_alertmanager_webhook_url) }}"
         send_resolved: false
-        max_alerts: 0
+        max_alerts: 15
 {% if ntfy_alertmanager_user | default('') | length > 0 %}
         http_config:
           basic_auth:

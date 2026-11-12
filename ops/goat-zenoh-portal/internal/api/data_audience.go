@@ -73,7 +73,7 @@ func (s *Server) handleAudienceAccess(w http.ResponseWriter, r *http.Request) {
 			"declared registry (roster path) not configured — the audience cannot be derived")
 		return
 	}
-	dr, err := access.LoadDataRoster(s.cfg.RosterPath)
+	dr, err := s.rosters.Load(s.cfg.RosterPath)
 	if err != nil {
 		// Do not echo err (it carries the roster filesystem path) — log
 		// server-side, return a generic message.

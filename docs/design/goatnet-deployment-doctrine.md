@@ -208,12 +208,13 @@ amends [ADR 1084](../adr/1084-block-64r-mgmt-repset-and-two-node-federation.md)
 A second or joining site that lacks a surface is a site that cannot run that
 surface while cut off.
 
-Three placements, and the only reasons for each:
+Four placements, and the only reasons for each:
 
 | Placement | Applies to | Declared as |
 |---|---|---|
 | Every site | Read-only and per-site surfaces: viewers, inspection pages, download and docs surfaces, node-scoped publishers | `read_only: true` on the component in `ops/pins/fleet-pins.yaml` for a read-only surface; no `absent` deviation on any live site |
 | One node per goatnet (single-homed) | An admin write class that ADR 1165 has not yet lifted: the surfaces ADR 1084 §D3 names (portal, id-console, dashboard, `goat admin`) and the engines that write the same stores | `single_homed_role: "<router_role>"` on the component; its play runs `tasks/assert-admin-write-host.yml` |
+| One node per site | A per-site roll-up publisher that writes one key for the whole site: the fabric, mesh, time and presence health roll-ups (`ops/<domain>/health/<site>`) and the single lazy crawler. Every site runs one; a site whose host group holds two nodes runs it on the node that runs the router, because a second copy is a second writer to the same key | `single_homed_role: "<router_role>"` on the component; its play runs `tasks/assert-admin-write-host.yml` |
 | Absent at a named site, for a stated reason that is not single-homing | A dormant standby that routes nothing until promotion (ADR 1111 `route` trigger); a one-per-trust-domain singleton such as a certificate authority (ADR 1111 `singleton` trigger); a site that does not run the component yet, naming what it lacks | `absent: true` deviation whose `reason:` says which |
 
 A read-only surface is never single-homed. When ADR 1165 lifts a write class,

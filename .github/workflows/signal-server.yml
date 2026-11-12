@@ -35,6 +35,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+      - uses: ./.github/actions/apt-failover
 
       - uses: actions/setup-go@v5
         with:

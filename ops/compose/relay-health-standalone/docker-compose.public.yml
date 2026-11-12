@@ -150,6 +150,7 @@ services:
       TZ: UTC
     volumes:
       - /opt/relay-health/ntfy/server.yml:/etc/ntfy/server.yml:ro
+      - /opt/relay-health/ntfy/templates:/etc/ntfy/templates:ro
       - /opt/relay-health/ntfy/cache:/var/cache/ntfy
       - /opt/relay-health/ntfy/data:/var/lib/ntfy
     expose:

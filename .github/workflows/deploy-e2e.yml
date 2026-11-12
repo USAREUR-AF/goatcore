@@ -72,11 +72,15 @@ jobs:
   hermetic:
     name: hermetic — the real drivers on container hosts, proved from the ledger
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: read
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - uses: ./.github/actions/apt-failover
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'

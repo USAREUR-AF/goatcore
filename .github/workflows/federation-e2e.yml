@@ -51,9 +51,16 @@ jobs:
   federation:
     name: two sovereigns through the real driver, proved from the receiving side
     runs-on: ubuntu-24.04
+    # packages: read, so the apt failover step can pull the cache image from ghcr.io.
+    permissions:
+      contents: read
+      packages: read
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      # Our own package cache, only when the runner's Ubuntu mirror does not answer
+      # (docs/design/ci-apt-failover.md): the runner's apt and the host image build use it.
+      - uses: ./.github/actions/apt-failover
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: '3.12'
