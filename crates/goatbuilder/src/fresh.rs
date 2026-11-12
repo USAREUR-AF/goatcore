@@ -251,7 +251,7 @@ mod tests {
         fs::create_dir_all(a.join("docs")).unwrap();
         fs::write(a.join("ops/ansible/x"), "1").unwrap();
         let script = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../ops/scripts/fresh-source.sh");
-        fs::copy(&script, a.join("ops/scripts/fresh-source.sh")).unwrap();
+        crate::test_support::copied_executable(&script, &a.join("ops/scripts/fresh-source.sh"));
         git(&a, &["add", "-A"]);
         git(&a, &["commit", "-qm", "base"]);
         git(&a, &["remote", "add", "origin", bare.to_str().unwrap()]);
@@ -336,8 +336,8 @@ mod tests {
         git(&root, &["init", "-q", "-b", "main", "tree"]);
         let scripts = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../ops/scripts");
         fs::create_dir_all(tree.join("ops/scripts/lib")).unwrap();
-        fs::copy(scripts.join("fresh-source.sh"), tree.join("ops/scripts/fresh-source.sh")).unwrap();
-        fs::copy(scripts.join("lib/source_of_record.py"), tree.join(SOURCE_OF_RECORD)).unwrap();
+        crate::test_support::copied_executable(&scripts.join("fresh-source.sh"), &tree.join("ops/scripts/fresh-source.sh"));
+        crate::test_support::copied_executable(&scripts.join("lib/source_of_record.py"), &tree.join(SOURCE_OF_RECORD));
         commit_file(&tree, "ops/ansible/x", "1", "goatcore base");
         let gref = head(&tree);
         git(&root, &["init", "-q", "-b", "main", "ov"]);

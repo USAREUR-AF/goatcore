@@ -1623,14 +1623,11 @@ mod tests {
     /// A recorded ssh client: prints `stderr` and exits `code`, whatever it is
     /// asked. The tests then need no network, no sshd and no ssh config.
     fn recorded_ssh(dir: &Path, code: i32, stderr: &str) -> HostProbe {
-        use std::os::unix::fs::PermissionsExt;
         let path = dir.join(format!("ssh-{code}-{}", stderr.len()));
-        std::fs::write(
+        crate::test_support::executable(
             &path,
-            format!("#!/bin/sh\nprintf '%s\\n' '{stderr}' >&2\nexit {code}\n"),
-        )
-        .unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+            &format!("#!/bin/sh\nprintf '%s\\n' '{stderr}' >&2\nexit {code}\n"),
+        );
         let mut p =
             HostProbe::new(target_in(&inventory(), "xab_core", None, "--core-host").unwrap());
         p.ssh = path.display().to_string();
@@ -1700,14 +1697,12 @@ mod tests {
     /// `ansible-inventory --list` would, so `run_init` reads hosts the way it
     /// does on a real checkout without ansible installed.
     fn checkout_with_inventory(inventory: &Value) -> tempfile::TempDir {
-        use std::os::unix::fs::PermissionsExt;
         let d = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(d.path().join("ops/ansible/inventory")).unwrap();
         std::fs::create_dir_all(d.path().join("ops/scripts")).unwrap();
         std::fs::write(d.path().join("inventory.json"), inventory.to_string()).unwrap();
         let script = d.path().join("ops/scripts/with-aws");
-        std::fs::write(&script, "#!/bin/sh\ncat ../../inventory.json\n").unwrap();
-        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        crate::test_support::executable(&script, "#!/bin/sh\ncat ../../inventory.json\n");
         d
     }
 

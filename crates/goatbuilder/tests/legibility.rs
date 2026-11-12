@@ -46,6 +46,7 @@
 //! test reads them, are in docs/design/goatbuilder-legibility.md §"Run record".
 
 mod federate_world;
+use federate_world::test_support;
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -245,10 +246,7 @@ exit 0
 "#;
 
 fn exe(p: &Path, text: &str) {
-    std::fs::create_dir_all(p.parent().unwrap()).unwrap();
-    std::fs::write(p, text).unwrap();
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o755)).unwrap();
+    test_support::executable(p, text);
 }
 
 /// This machine's PATH, as the recorder runs real programs from it.

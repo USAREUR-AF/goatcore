@@ -41,6 +41,8 @@ mod settings;
 mod standup;
 mod survey;
 #[cfg(test)]
+mod test_support;
+#[cfg(test)]
 mod testdir;
 mod trace;
 mod tutor;

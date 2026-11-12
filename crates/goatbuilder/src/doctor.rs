@@ -3097,9 +3097,7 @@ mod summary_tests {
         std::fs::create_dir_all(&bin).unwrap();
         let run = |gh: &str| {
             let stub = bin.join("gh");
-            std::fs::write(&stub, gh).unwrap();
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
+            crate::test_support::executable(&stub, gh);
             std::process::Command::new("sh").arg("-c").arg(&script).current_dir(&t)
                 .env("PATH", format!("{}:{}", bin.display(), std::env::var("PATH").unwrap())).status().unwrap().success()
         };

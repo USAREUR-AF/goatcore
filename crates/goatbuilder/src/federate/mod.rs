@@ -1496,12 +1496,7 @@ mod tests {
         std::fs::create_dir_all(&root).unwrap();
         let sentinel = root.join("ran");
         let stub = root.join("goat-stub");
-        std::fs::write(&stub, format!("#!/bin/sh\ntouch '{}'\n", sentinel.display())).unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
+        crate::test_support::executable(&stub, &format!("#!/bin/sh\ntouch '{}'\n", sentinel.display()));
         runenv::set("GOAT_BIN", stub.display().to_string());
         let work = root.join("work");
         let work_s = work.display().to_string();

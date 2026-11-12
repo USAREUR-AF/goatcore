@@ -1190,7 +1190,6 @@ sys.exit(rc)
     /// One goatnet, one member group, two components, six machines: one in each
     /// state a reader has to tell apart.
     fn world() -> tempfile::TempDir {
-        use std::os::unix::fs::PermissionsExt;
         let d = tempfile::tempdir().unwrap();
         let p = d.path();
         for dir in ["ops/pins", "ops/scripts", "ops/ansible/inventory", "ops/ansible/group_vars/zagros_hosts"] {
@@ -1206,10 +1205,9 @@ sys.exit(rc)
             std::fs::write(p.join(format!("ops/ansible/{c}-deploy.yml")), "- name: deploy\n  hosts: \"{{ target }}\"\n").unwrap();
         }
         std::fs::write(p.join("ops/ansible/inventory/mgmt-hosts.ini"), "[zagros_hosts]\n").unwrap();
-        std::fs::copy(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../ops/scripts/served-payloads.py"), p.join("ops/scripts/served-payloads.py")).unwrap();
+        crate::test_support::copied_executable(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../ops/scripts/served-payloads.py"), &p.join("ops/scripts/served-payloads.py"));
         let stub = p.join("ops/scripts/with-aws");
-        std::fs::write(&stub, STUB).unwrap();
-        std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
+        crate::test_support::executable(&stub, STUB);
         let hosts = json!({
             // converged on both components
             "core-a": {"ledgers": {"portal": row(PORTAL, "deploy"), "herd": row(HERD, "deploy")}},

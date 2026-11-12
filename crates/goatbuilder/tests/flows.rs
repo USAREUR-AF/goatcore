@@ -23,6 +23,9 @@
 
 #[path = "common/test_home.rs"]
 mod test_home;
+#[path = "../src/test_support.rs"]
+mod test_support;
+
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
@@ -947,9 +950,7 @@ fn fastlane_repo(name: &str, component: &str) -> FastlaneRepo {
     std::fs::write(dir.join("ops/ansible/odd-name.yml"), "- hosts: all\n").unwrap();
     let gh_log = dir.join("gh.log");
     let gh = dir.join("bin/gh");
-    std::fs::write(&gh, format!("#!/bin/sh\necho \"$*\" >> '{}'\necho sha256:{}\n", gh_log.display(), "a".repeat(64))).unwrap();
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+    test_support::executable(&gh, &format!("#!/bin/sh\necho \"$*\" >> '{}'\necho sha256:{}\n", gh_log.display(), "a".repeat(64)));
     let path = format!("{}:{}", dir.join("bin").display(), std::env::var("PATH").unwrap_or_default());
     FastlaneRepo { dir, gh_log, path, _held: held }
 }

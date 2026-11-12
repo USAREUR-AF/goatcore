@@ -442,7 +442,6 @@ mod tests {
     /// and the founder reaches the signal-federation gate as written.
     #[test]
     fn declared_values_reach_join_node_phases_without_shell_interpolation() {
-        use std::os::unix::fs::PermissionsExt;
         let t = tempfile::tempdir().unwrap();
         let root = t.path();
         let marker = root.join("pwned");
@@ -468,18 +467,13 @@ mod tests {
         let stub = format!("#!/bin/sh\nfor a; do printf '%s\\n' \"$a\"; done >> '{}'\nprintf -- '--\\n' >> '{}'\nexit 0\n", log.display(), log.display());
         let bin = root.join("bin");
         std::fs::create_dir_all(&bin).unwrap();
-        let exe = |p: &Path| {
-            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
-            std::fs::write(p, &stub).unwrap();
-            std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o755)).unwrap();
-        };
+        let exe = |p: &Path| crate::test_support::executable(p, &stub);
         for b in ["python3", "ansible-playbook", "ansible", "go", "netbird", "sudo"] {
             exe(&bin.join(b));
         }
         // ssh runs what it is piped (`... | ssh <node> 'bash -s'`) as the node would.
         let ssh = bin.join("ssh");
-        std::fs::write(&ssh, format!("#!/bin/sh\nfor a; do printf '%s\\n' \"$a\"; done >> '{}'\nfor a; do [ \"$a\" = 'bash -s' ] && exec bash -s; done\nexit 0\n", log.display())).unwrap();
-        std::fs::set_permissions(&ssh, std::fs::Permissions::from_mode(0o755)).unwrap();
+        crate::test_support::executable(&ssh, &format!("#!/bin/sh\nfor a; do printf '%s\\n' \"$a\"; done >> '{}'\nfor a; do [ \"$a\" = 'bash -s' ] && exec bash -s; done\nexit 0\n", log.display()));
         for s in ["ops/scripts/with-aws", "ops/scripts/ansible-preflight.sh", "ops/scripts/seed-ssh-key.sh", "ops/scripts/door-open.sh"] {
             exe(&repo.join(s));
         }
@@ -755,9 +749,7 @@ mod tests {
         std::fs::create_dir_all(t.path().join("ops/scripts")).unwrap();
         // Stands in for with-aws + ansible: prints FAKE_LOG, exits FAKE_RC.
         let stub = t.path().join("ops/scripts/with-aws");
-        std::fs::write(&stub, "#!/bin/bash\nprintf '%s\\n' \"$FAKE_LOG\"\nexit \"$FAKE_RC\"\n").unwrap();
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
+        crate::test_support::executable(&stub, "#!/bin/bash\nprintf '%s\\n' \"$FAKE_LOG\"\nexit \"$FAKE_RC\"\n");
         let p6 = plan(t.path(), &opts("zagros-b", "core", "zagros")).unwrap().into_iter().find(|p| p.n == 6).unwrap();
         // A failing run keeps its log (mktemp); TMPDIR puts it in the fixture,
         // so the test leaves nothing in the system temp directory.
