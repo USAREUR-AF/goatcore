@@ -143,7 +143,7 @@ Every check failed for every verb family when step 1 merged: 16 lines. Step 3's 
     ok in 12s
   ```
 
-  A failure reads `FAILED exit 2 in 12s; log <path>`. A command outside a phase (a probe) is one line, `· <command>   (log <path>)`, and a second only when it fails.
+  A failure reads `FAILED: exit 2 in 12s; log <path>`. A command outside a phase (a probe: the fresh-source check, the secrets posture, release's `git` reads) prints nothing when it succeeds, so a verb's probes do not bury its phases: it is in the record, and logged under `-v`. When a probe fails it prints one line naming it, `· FAILED: <command>: exit 2 in 0.1s; log <path>`.
 - To log while streaming, `status` and `spawn` pipe the child's stdout and stderr and copy each to the terminal and the log as it arrives; stdin stays inherited, so a prompt still works. The trade-off: the child no longer sees a terminal on its output, so a tool that colours or animates only at a terminal (ansible's colour, for one) prints plainly. `GOATBUILDER_CHILD_TTY=1` gives a streamed command the terminal as before, and its entry then says no log was written. A caller that sets `stdout` or `stderr` itself keeps that stream; the runner neither copies nor logs it.
 - A command that cannot start is recorded with no exit code and the note "did not start".
 - The door covers `crates/goatbuilder/src`. A library goatbuilder runs in its own process is outside it: goat-federation, for one, starts a process of its own during federate's phase 3 (`crates/goat-federation/src/derive.rs`). Such a process is not framed or recorded until that library takes a runner too.
@@ -156,6 +156,31 @@ Every check failed for every verb family when step 1 merged: 16 lines. Step 3's 
 - The run record keeps the same per phase, and every stop records its cause as a code (an error catalog code, or `manual` for a step the operator does), so a measurement can count the stops by cause.
 - A step that waits on a person (standup phase 11's browser login, federate's confirmations) records the wait apart from the phase's own time.
 
+### Children that need a terminal
+
+Piping a child's output (§"The runner") is safe for a child that prompts through `/dev/tty` or through its stdin, because the runner leaves the controlling terminal and stdin as they were. It is not safe for a child that decides whether to prompt from whether its stdout or stderr is a terminal: piped, it would stop prompting, and its phase would do something else. A lost colour is acceptable; a prompt that silently disappears is a changed phase.
+
+Such a program goes on a reviewed list, `crates/goatbuilder/tests/legibility-interactive.txt`, one line per program with why it needs the terminal. The runner reads the list (built in): a streamed command whose line names a listed program keeps the terminal, writes no log, and its entry's `log_note` reads `not captured (interactive): <why>`. Check (a) accepts a command with no log only when its line names a listed program and its entry says so. Any other command with no log fails the check, whatever its note says, including a run with `GOATBUILDER_CHILD_TTY=1`. Adding a line is a reviewed change, like the known-failing list.
+
+The survey (2026-11-12) looked at every child a verb that drives hosts starts, and at what those children start in turn. **No child needs the terminal, so the list is empty.** This is designed, not measured; the first live run of each verb after step 2b measures it.
+
+| Child | How it asks for anything | Piped |
+|---|---|---|
+| `ssh` (join-node phases 2 and 4, rollback's host reads) | a host-key confirmation or a password, through `/dev/tty` | unchanged |
+| `ops/scripts/seed-ssh-key.sh` | the password comes from the environment variable `--pass-var` names, handed to `sshpass`, which makes its own terminal | unchanged |
+| `sudo` on a host, through `ssh ... sudo` | no prompt: the plays rely on NOPASSWD sudo, and without `ssh -t` sudo has no terminal today either | unchanged |
+| `ansible-playbook` (every play, through `ops/scripts/with-aws` and `ansible-preflight.sh`) | no `-K`, `--ask-become-pass` or `--ask-vault-pass` is passed; ansible's own prompts use `getpass`, through `/dev/tty`. Its colour follows stdout, so it prints plainly | colour lost |
+| `aws-vault exec` (inside `ops/scripts/with-aws`, `GOAT_AWS_MODE=aws-vault`) | an MFA code or a keyring password, written to stderr and read from stdin; on macOS a keychain dialog. The prompt reaches the terminal through the runner's copy, which forwards each read as it arrives, without waiting for a newline | unchanged; unmeasured |
+| the signing tools (`go run ./cmd/name-snapshot-sign`, standup phase 4; `intent-sign`) | no prompt: the age identity is a file named by `--age-identity`, read with `age.ParseIdentities` (`ops/enrollment/cmd/name-snapshot-sign/main.go:83-87`) | unchanged |
+| `goat federate init`, `lint`, `compose`, `verify`, `apply` (`FED_VERBS=goat`) | no prompt; `--confirm` is passed. goat's colour and its update notice follow stdout and stderr | colour and notice lost |
+| `ops/scripts/pr-land.sh` (fastlane) | every `gh` call is given all its values, so `gh` never prompts; its stdout already goes nowhere | unchanged |
+| `git push` (release, fastlane) | credentials through a credential helper or `/dev/tty` | unchanged |
+| federate phase 10 (admitting the edge) | the prompt is goatbuilder's own, in the same process, not a child | not a child |
+| the manual phases (standup 11, join-node 1, 8 and 10, federate 5 and 10) | not run by the tool | not a child |
+| `goatbuilder secrets exec -- <command>` | the operator's own command, which can be anything | not in a run: `secrets` is not a verb that drives hosts, so its command inherits everything as before |
+| `ops/goatbuilder/endstate/endstate.py` (under `assay`) | no prompt; it prints a table only when its stdout is a terminal | output form changes; no prompt is lost |
+
+Programs examined and not started by any verb: `ops/scripts/external-service-finish.py` (prompts with `input()`), `ops/scripts/secrets-session` (prompts when stdin is a terminal), `ops/scripts/ssh-key-backfill.sh` (reads `/dev/tty`).
 
 ## Run record
 
@@ -221,7 +246,7 @@ One pull request for each step, or for each feature within a step, each small an
 |---|---|---|---|
 | 1 | the conformance test and the known-failing file | nothing | **built** |
 | 2a | the runner, `crates/goatbuilder/src/runner.rs` (§"The runner"): `runner::Cmd`, the frame, the per-command log, the command entry; a run begun in main.rs for every verb that drives hosts; the test `crates/goatbuilder/tests/legibility_one_door.rs`, which fails on a `Command::new` outside the runner beyond the counts in `crates/goatbuilder/tests/legibility-one-door-allow.txt` | nothing | **built**, unit tests only: no call site of a verb moves in 2a, so no verb prints a frame yet |
-| 2b | every call site moved to `runner::Cmd`, and `runner::phase` called where each verb's phase loop starts a phase; the allow-list emptied | with step 4: `a standup`, `a join-node`, `a deploy`, `a federate`; with step 3, the probe lines of `c standup` and `c deploy` | designed |
+| 2b | every call site moved to `runner::Cmd`, and `runner::phase` called where each verb's phase loop starts a phase; the allow-list emptied | with step 4: `a standup`, `a join-node`, `a deploy`, `a federate`; with step 3, the probe lines of `c standup` and `c deploy` | **built** for every file but federate/**, standup.rs, joinnode.rs and push.rs: `crates/goatbuilder/tests/legibility-one-door-allow.txt` lists those, and the interactive list exists, empty; the rest is designed |
 | 3 | commands in the terminal dry run, built by the same code that runs them; anything not knowable before the run is marked as such | `c join-node` (removed: built); then `c standup` and `c deploy` once their probes are in the plan, and `c federate` once its plan page lists its commands | **built** for the pages in `crates/goatbuilder/src/output.rs` (2026-11-12): the plan page (join-node, teardown) lists each phase's command under the table, verbatim and unwrapped; the deploy and release page lists each dry-run line in place of a count, labelled "as the plan describes it", because those lines are the plan's own words for each command (`crates/goatbuilder/src/push.rs:565`, `crates/goatbuilder/src/release.rs:238`, `crates/goatbuilder/src/release.rs:586`) and not the argv the run builds; standup's page prints each command as it runs, verbatim and on one line, with no word rewritten, no image reference shortened and no wrap that would change what a pasted line runs. **Designed**: deploy's and release's lines built from the argv that runs (through the record's quoting, `runner::line_of`), once step 2b moves their call sites; the probes standup and deploy start on a real run (the secrets posture, the fresh-source check, `netbird status`, the ledger read), which their plans in standup.rs and push.rs do not yet name, and federate's plan page in `federate/mod.rs` |
 | 4 | the run record for every verb (§"Run record"); `goatbuilder runs`, `goatbuilder show <run>`, `goatbuilder runs diff <a> <b>` | with step 2: the four `a` lines | **built**, unit tests only: no verb writes a record until 2b moves its call sites |
 | 5 | every value with its source, verb by verb: federate's remaining values first (site values, site hosts, allocations), then standup, join-node, deploy. `goatbuilder inputs <verb> ...` and `goatbuilder why <value>`; the same list in every dry run, as a table and as JSON | `b federate`, then `b standup`, `b join-node`, `b deploy` | designed |

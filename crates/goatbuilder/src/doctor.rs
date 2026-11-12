@@ -5,9 +5,9 @@
 //! meshed), and — F-587's class — that every component's deploy playbook
 //! resolves, through any alias, to a play with a definite target mode.
 
+use crate::runner::Cmd;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use anyhow::{anyhow, Result};
 
@@ -132,7 +132,7 @@ pub fn run(repo: &Path, only_env: Option<&str>, frozen: bool, credentials: bool,
             }
         }
         if tool == "ansible-playbook" && which(tool) {
-            checks.push(ansible_row(Command::new(tool).arg("--version").output()));
+            checks.push(ansible_row(Cmd::new(tool).arg("--version").output()));
             continue;
         }
         if which(tool) {
@@ -1375,7 +1375,7 @@ pub fn resolve_target_mode(ansible: &Path, start: &Path) -> Result<TargetMode> {
 }
 
 fn which(tool: &str) -> bool {
-    Command::new("sh")
+    Cmd::new("sh")
         .args(["-c", &format!("command -v {tool} >/dev/null 2>&1")])
         .status()
         .map(|s| s.success())
@@ -1385,12 +1385,12 @@ fn which(tool: &str) -> bool {
 fn python_has(modules: &[&str]) -> Result<bool> {
     let code = format!("import {}", modules.join(", "));
     // Quiet: the python:deps row reports a missing module, not a traceback.
-    let status = Command::new("python3").args(["-c", &code]).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status()?;
+    let status = Cmd::new("python3").args(["-c", &code]).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status()?;
     Ok(status.success())
 }
 
 fn git(repo: &Path, args: &[&str]) -> Result<String> {
-    let out = Command::new("git")
+    let out = Cmd::new("git")
         .arg("-C")
         .arg(repo)
         .args(args)
@@ -1526,7 +1526,7 @@ fn live_rows_toolchain(repo: &Path) -> Check {
             &fix,
         );
     }
-    let version = Command::new("npx")
+    let version = Cmd::new("npx")
         .args(["--no-install", "playwright", "--version"])
         .current_dir(&e2e)
         .output()
@@ -1553,7 +1553,7 @@ fn live_rows_toolchain(repo: &Path) -> Check {
 /// Run a command with a deadline, so a tool that waits on a keychain or a
 /// browser prompt (aws-vault, op) cannot hang doctor. Returns (success, stdout+stderr).
 fn run_with_deadline(cmd: &str, args: &[&str], secs: u64) -> (bool, String) {
-    let child = Command::new(cmd)
+    let child = Cmd::new(cmd)
         .args(args)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
@@ -1849,7 +1849,7 @@ fn chromium_installed() -> bool {
 /// phase-0 gate): one FAIL row per missing input or unset secret, all at once.
 pub fn site_inputs(repo: &Path, site: &str) -> Vec<Check> {
     let script = repo.join("ops/scripts/standup-required-inputs.py");
-    let out = Command::new("python3").arg(&script).arg(site).arg("--json").current_dir(repo).output();
+    let out = Cmd::new("python3").arg(&script).arg(site).arg("--json").current_dir(repo).output();
     let out = match out {
         Ok(o) => o,
         Err(e) => return vec![refused("inputs", format!("cannot run {}: {e}", rel(repo, &script)), "install python3 with PyYAML")],
@@ -2257,6 +2257,7 @@ fn refused(name: &str, detail: String, fix: &str) -> Check {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::process::Command;
 
     fn write(root: &Path, rel: &str, text: &str) {
         let p = root.join(rel);

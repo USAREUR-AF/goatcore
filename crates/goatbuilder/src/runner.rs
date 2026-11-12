@@ -22,8 +22,9 @@
 //!   ok in 12s
 //! ```
 //!
-//! A command outside a phase (a probe such as the fresh-source check) gets one line,
-//! `· <command> (log …)`, and a second only when it fails.
+//! A command outside a phase (a probe such as the fresh-source check or a `git`
+//! read) prints nothing when it succeeds: it is in the record, and logged under
+//! `-v`. When it fails it prints one line, `· FAILED: <command>: exit 2 in 0.1s; log …`.
 //!
 //! To write the log while streaming, the child's stdout and stderr are pipes the
 //! runner copies to the terminal and the log; stdin stays inherited, so a prompt still
@@ -115,6 +116,11 @@ struct Run {
     /// The index in `commands` where the open phase began.
     phase_from: usize,
     inputs: serde_json::Value,
+    /// Unit tests share one process: a run belongs to the test thread that
+    /// began it, so another test's command never joins it. A real run is the
+    /// whole process, its worker threads included.
+    #[cfg(test)]
+    owner: std::thread::ThreadId,
 }
 
 fn now() -> String {
@@ -197,6 +203,8 @@ pub fn begin(
         phases: Vec::new(),
         phase_from: 0,
         inputs: serde_json::Value::Array(Vec::new()),
+        #[cfg(test)]
+        owner: std::thread::current().id(),
     });
     dir
 }
@@ -383,7 +391,11 @@ impl Cmd {
         };
         let child_tty = std::env::var_os("GOATBUILDER_CHILD_TTY").is_some_and(|v| v == "1");
         let t0 = Instant::now();
-        let status = if child_tty {
+        let status = if let Some(why) = interactive(&entry.command) {
+            entry.log_note = Some(format!("not captured (interactive): {why}"));
+            entry.log = None;
+            self.inner.status()
+        } else if child_tty {
             entry.log_note = Some(
                 "GOATBUILDER_CHILD_TTY=1: the command had the terminal; nothing was captured"
                     .into(),
@@ -460,6 +472,10 @@ impl Cmd {
     fn open(&self) -> Option<CommandEntry> {
         let mut guard = lock_run();
         let run = guard.as_mut()?;
+        #[cfg(test)]
+        if run.owner != std::thread::current().id() {
+            return None;
+        }
         run.seq += 1;
         let phase_id = run.phase.as_ref().map(|p| p.id.clone());
         let log_name = format!(
@@ -476,20 +492,19 @@ impl Cmd {
             Some(h) => format!("on {h}; log {}", shown(&log)),
             None => format!("log {}", shown(&log)),
         };
-        match run.phase.as_mut() {
-            Some(p) => {
-                if !p.shown {
-                    p.shown = true;
-                    let purpose = if p.purpose.is_empty() {
-                        String::new()
-                    } else {
-                        format!(": {}", p.purpose)
-                    };
-                    say(&format!("Phase {} \u{b7} {}{purpose}", p.id, p.name));
-                }
-                say(&format!("  $ {line}   ({at})"));
+        // A probe (a command outside any phase) is in the record and under -v
+        // only; it prints a line of its own when it fails (`close`).
+        if let Some(p) = run.phase.as_mut() {
+            if !p.shown {
+                p.shown = true;
+                let purpose = if p.purpose.is_empty() {
+                    String::new()
+                } else {
+                    format!(": {}", p.purpose)
+                };
+                say(&format!("Phase {} \u{b7} {}{purpose}", p.id, p.name));
             }
-            None => say(&format!("\u{b7} {line}   ({at})")),
+            say(&format!("  $ {line}   ({at})"));
         }
         Some(CommandEntry {
             phase: phase_id,
@@ -517,14 +532,20 @@ impl Cmd {
             .as_deref()
             .map(|l| format!("; log {}", shown(Path::new(l))))
             .unwrap_or_default();
+        // A probe has no frame above it, so its failure line names it.
+        let what = if in_phase {
+            "  FAILED".to_string()
+        } else {
+            format!("\u{b7} FAILED: {}", entry.command)
+        };
         match code {
             Some(Some(0)) if in_phase => say(&format!("  ok in {took}")),
             Some(Some(0)) => {}
-            Some(Some(n)) => say(&format!("  FAILED exit {n} in {took}{log}")),
-            Some(None) => say(&format!("  FAILED killed by a signal after {took}{log}")),
+            Some(Some(n)) => say(&format!("{what}: exit {n} in {took}{log}")),
+            Some(None) => say(&format!("{what}: killed by a signal after {took}{log}")),
             None => {
                 entry.log_note = Some("did not start".into());
-                say(&format!("  FAILED: did not start{log}"));
+                say(&format!("{what}: did not start{log}"));
             }
         }
         self.record(entry.clone());
@@ -563,6 +584,31 @@ impl Cmd {
         }
         status
     }
+}
+
+/// The programs that keep the terminal (tests/legibility-interactive.txt): one
+/// `<program> <why>` per line.
+const INTERACTIVE: &str = include_str!("../tests/legibility-interactive.txt");
+
+/// Why the command whose line is `line` keeps the terminal, when it names a
+/// program on the interactive list.
+pub fn interactive(line: &str) -> Option<String> {
+    interactive_in(INTERACTIVE, line)
+}
+
+fn interactive_in(list: &str, line: &str) -> Option<String> {
+    let words: Vec<&str> = line
+        .split(|c: char| c.is_whitespace() || ";&|()'\"`".contains(c))
+        .filter(|w| !w.is_empty())
+        .map(|w| w.rsplit('/').next().unwrap_or(w))
+        .collect();
+    list.lines()
+        .map(|l| l.split('#').next().unwrap_or("").trim())
+        .filter(|l| !l.is_empty())
+        .find_map(|l| {
+            let (name, why) = l.split_once(char::is_whitespace).unwrap_or((l, ""));
+            words.contains(&name).then(|| why.trim().to_string())
+        })
 }
 
 /// Copy a child's stream to our stdout (or stderr) and to the log, as it arrives.
@@ -749,7 +795,7 @@ mod tests {
     }
 
     #[test]
-    fn a_failure_names_its_exit_and_log_and_a_probe_is_one_line() {
+    fn a_failure_names_its_exit_and_log_and_a_probe_prints_only_when_it_fails() {
         let (_g, _sink) = capture();
         let t = tempfile::tempdir().unwrap();
         begin(t.path(), "deploy", vec![], None);
@@ -757,14 +803,24 @@ mod tests {
         phase("3", "playbook", "the play");
         let st = Cmd::new("sh").args(["-c", "exit 4"]).status().unwrap();
         assert_eq!(st.code(), Some(4));
+        no_phase();
+        Cmd::new("sh").args(["-c", "exit 2"]).output().unwrap();
         let f = frame();
         let lines: Vec<&str> = f.lines().collect();
-        assert!(lines[0].starts_with("\u{b7} true   (log "), "{f}");
-        assert_eq!(lines[1], "Phase 3 \u{b7} playbook: the play");
+        // The probe that passed prints nothing; the phase prints its frame and
+        // its failure; the probe that failed prints one line naming itself.
+        assert_eq!(lines[0], "Phase 3 \u{b7} playbook: the play", "{f}");
+        assert!(lines[1].starts_with("  $ exit 4   (log "), "{f}");
         assert!(
-            lines[3].starts_with("  FAILED exit 4 in ") && lines[3].contains("; log "),
+            lines[2].starts_with("  FAILED: exit 4 in ") && lines[2].contains("; log "),
             "{f}"
         );
+        assert!(
+            lines[3].starts_with("\u{b7} FAILED: exit 2: exit 2 in ")
+                && lines[3].contains("; log "),
+            "{f}"
+        );
+        assert_eq!(lines.len(), 4, "{f}");
         let fin = end().unwrap();
         let cmds = fin.commands;
         assert_eq!(cmds[0].phase, None);
@@ -777,6 +833,11 @@ mod tests {
         );
         assert_eq!(fin.phases[0].commands, 1);
         assert_eq!(cmds[1].exit, Some(4));
+        assert_eq!(
+            cmds.len(),
+            3,
+            "a probe is in the record whether it printed or not"
+        );
     }
 
     #[test]
@@ -789,7 +850,23 @@ mod tests {
         assert_eq!(cmds.len(), 1);
         assert_eq!(cmds[0].exit, None);
         assert_eq!(cmds[0].log_note.as_deref(), Some("did not start"));
-        assert!(frame().contains("FAILED: did not start"));
+        assert!(frame().contains("\u{b7} FAILED: /nonexistent/program: did not start"));
+    }
+
+    #[test]
+    fn a_listed_program_keeps_the_terminal_wherever_its_line_names_it() {
+        let list = "# comment\naws-vault prompts for a token by isatty(stderr)\n";
+        assert_eq!(
+            interactive_in(list, "cd x && ../scripts/aws-vault exec p -- y").as_deref(),
+            Some("prompts for a token by isatty(stderr)")
+        );
+        assert_eq!(
+            interactive_in(list, "aws-vault-helper exec"),
+            None,
+            "a whole program name, not a prefix"
+        );
+        assert_eq!(interactive_in(list, "echo 'no vault here'"), None);
+        assert_eq!(interactive(""), None, "the shipped list is empty");
     }
 
     #[test]

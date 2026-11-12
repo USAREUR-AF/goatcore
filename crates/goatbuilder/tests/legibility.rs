@@ -607,7 +607,19 @@ fn check_a(procs: &[Proc], records: &[serde_json::Value]) -> Result<(), String> 
             Some(c) => match c["log"].as_str() {
                 Some(l) if Path::new(l).is_file() => {}
                 Some(l) => missing.push(format!("its log {l} does not exist: {}", p.line())),
-                None => missing.push(format!("no log path: {}", p.line())),
+                // No log is allowed only for a program on the reviewed interactive
+                // list, and only when the entry says so; anything else must log.
+                None => {
+                    let note = c["log_note"].as_str().unwrap_or("");
+                    let listed = interactive_program(&p.line());
+                    if !(note.starts_with("not captured (interactive)") && listed.is_some()) {
+                        missing.push(format!(
+                            "no log path (note: {note:?}; on the interactive list: {}): {}",
+                            listed.as_deref().unwrap_or("no"),
+                            p.line()
+                        ));
+                    }
+                }
             },
         }
     }
@@ -621,6 +633,32 @@ fn check_a(procs: &[Proc], records: &[serde_json::Value]) -> Result<(), String> 
             missing.join("\n  ")
         ))
     }
+}
+
+/// The reviewed list of programs that keep the terminal (src/runner.rs reads the
+/// same file).
+const INTERACTIVE: &str = "tests/legibility-interactive.txt";
+
+/// The listed program `line` names, if any: its words, by file name, against
+/// the list.
+fn interactive_program(line: &str) -> Option<String> {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(INTERACTIVE);
+    let list = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+    interactive_in(&list, line)
+}
+
+fn interactive_in(list: &str, line: &str) -> Option<String> {
+    let words: Vec<&str> = line
+        .split(|c: char| c.is_whitespace() || ";&|()'\"`".contains(c))
+        .filter(|w| !w.is_empty())
+        .map(|w| w.rsplit('/').next().unwrap_or(w))
+        .collect();
+    list.lines()
+        .map(|l| l.split('#').next().unwrap_or("").trim())
+        .filter(|l| !l.is_empty())
+        .filter_map(|l| l.split_whitespace().next())
+        .find(|name| words.contains(name))
+        .map(String::from)
 }
 
 /// Options whose next word is a value.
@@ -1376,6 +1414,39 @@ fn c11_each_check_can_pass_when_the_tool_does_what_it_asks() {
     assert_eq!(
         step_id("join the image pull before phase 5"),
         "join-the-image-pull-before-phase-5"
+    );
+
+    // A command with no log passes only when it is on the interactive list and
+    // its entry says so; the note alone, or the list alone, is not enough.
+    let ssh = Proc {
+        ppid: 1,
+        program: "ssh".into(),
+        args: vec!["operator@192.0.2.10".into(), "true".into()],
+    };
+    let entry = |note: &str| serde_json::json!({ "verb": "standup", "commands": [{ "command": "ssh operator@192.0.2.10 true", "log": null, "log_note": note }], "inputs": [] });
+    assert!(
+        check_a(
+            std::slice::from_ref(&ssh),
+            &[entry("not captured (interactive): x")]
+        )
+        .is_err(),
+        "ssh is not on the shipped list"
+    );
+    assert!(
+        check_a(
+            std::slice::from_ref(&ssh),
+            &[entry("GOATBUILDER_CHILD_TTY=1")]
+        )
+        .is_err(),
+        "an escape is not a way out of logging"
+    );
+    assert_eq!(
+        interactive_in(
+            "ssh needs the terminal for x\n",
+            "ssh operator@192.0.2.10 true"
+        )
+        .as_deref(),
+        Some("ssh")
     );
 
     // A dry run that fails is a harness failure, never a known-failing check.

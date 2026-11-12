@@ -35,9 +35,10 @@
 //! after a landing the scratch tree is assembled again and the deploy runs
 //! from it.
 
+use crate::runner::Cmd;
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::rc::Rc;
 
 use anyhow::{anyhow, Context, Result};
@@ -151,9 +152,8 @@ fn short_rev(repo: &str, rev: &str) -> Result<String> {
 }
 
 fn sh(cmd: &str, args: &[&str]) -> Result<String> {
-    let mut c = Command::new(cmd);
+    let mut c = Cmd::new(cmd);
     c.args(args);
-    crate::trace::cmd(&c);
     let out = c.output().with_context(|| format!("{cmd} {}", args.join(" ")))?;
     if !out.status.success() {
         return Err(anyhow!("{}", String::from_utf8_lossy(&out.stderr).trim()));
@@ -162,9 +162,8 @@ fn sh(cmd: &str, args: &[&str]) -> Result<String> {
 }
 
 fn sh_ok(cmd: &str, args: &[&str]) -> bool {
-    let mut c = Command::new(cmd);
+    let mut c = Cmd::new(cmd);
     c.args(args).stdout(Stdio::null()).stderr(Stdio::null());
-    crate::trace::cmd(&c);
     c.status().map(|s| s.success()).unwrap_or(false)
 }
 
@@ -238,9 +237,8 @@ impl<'a> Run<'a> {
             self.note(format!("DRY: {cmd} {}", args.join(" ")));
             return Ok(());
         }
-        let mut c = Command::new(cmd);
+        let mut c = Cmd::new(cmd);
         c.args(args);
-        crate::trace::cmd(&c);
         let st = c.status().with_context(|| cmd.to_string())?;
         if !st.success() {
             return Err(goat_errors::coded("GB-028", format!("{cmd} {} failed", args.join(" "))).into());
@@ -295,7 +293,7 @@ impl<'a> Run<'a> {
         let Some(ov) = self.overlay.as_mut() else { return Ok(()) };
         let wt = self.wt.clone();
         let _ = std::fs::remove_dir_all(&wt);
-        let out = Command::new(ov.owt.join("assemble.sh")).arg(&wt).output().with_context(|| format!("{}/assemble.sh", ov.owt.display()))?;
+        let out = Cmd::new(ov.owt.join("assemble.sh")).arg(&wt).output().with_context(|| format!("{}/assemble.sh", ov.owt.display()))?;
         if !out.status.success() {
             eprint!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
             return Err(goat_errors::coded("GB-028", format!("{}/assemble.sh could not build the scratch tree {}", ov.owt.display(), wt.display())).into());
@@ -466,7 +464,7 @@ impl<'a> Run<'a> {
             // from THIS checkout, which ansible-preflight requires to be current.
             let rbr = sh("git", &["-C", self.repo.to_str().unwrap_or("."), "symbolic-ref", "--quiet", "--short", "HEAD"]).unwrap_or_else(|_| "main".into());
             let _ = sh("git", &["-C", self.repo.to_str().unwrap_or("."), "fetch", "-q", "origin", &rbr]);
-            let ok = Command::new("git")
+            let ok = Cmd::new("git")
                 .env("GOAT_ALLOW_MASTER_GIT_MUTATE", "1")
                 .args(["-C", self.repo.to_str().unwrap_or("."), "merge", "--ff-only", &format!("origin/{rbr}")])
                 .stdout(Stdio::null())
@@ -498,7 +496,7 @@ impl<'a> Run<'a> {
         if name.is_empty() {
             return Err(goat_errors::coded("GB-016", format!("no runner settings for {goatnet} in ops/validation/goatnet-runners.yaml")).into());
         }
-        let rows = Command::new("python3")
+        let rows = Cmd::new("python3")
             .args([self.repo.join("ops/validation/affected-flows.py").to_str().unwrap_or(""), "--component", self.o.component, "--head", &self.tag, "--json"])
             .output()
             .ok()
@@ -586,7 +584,7 @@ impl<'a> Run<'a> {
             self.note(format!("DRY: env {}", args.join(" ")));
             return Ok(true);
         }
-        let st = Command::new("env").args(&args).status()?;
+        let st = Cmd::new("env").args(&args).status()?;
         // exit 2 from the runner is an environment problem (a tool missing, a
         // context not configured): the rows did not run. UNTESTED, never FAIL.
         if st.code() == Some(2) {

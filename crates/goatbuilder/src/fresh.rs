@@ -23,8 +23,8 @@
 //! assembled tree is `goatcore_ref`; the rollback-ledger role records the
 //! commits and the patch ids in every row a play from the tree writes.
 
+use crate::runner::Cmd;
 use std::path::Path;
-use std::process::Command;
 
 use anyhow::{Context, Result};
 
@@ -74,7 +74,7 @@ fn check_with(repo: &Path, set: &[(&str, &str)], unset: &[&str]) -> Result<Fresh
             });
         }
     }
-    let mut cmd = Command::new(repo.join("ops/scripts/fresh-source.sh"));
+    let mut cmd = Cmd::new(repo.join("ops/scripts/fresh-source.sh"));
     cmd.args(["--repo".as_ref(), repo.as_os_str()]);
     for (k, v) in set {
         cmd.env(k, v);
@@ -214,6 +214,7 @@ fn short(sha: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::process::Command;
     use std::fs;
     use std::path::PathBuf;
 

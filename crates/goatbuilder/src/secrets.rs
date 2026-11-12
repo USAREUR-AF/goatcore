@@ -7,9 +7,10 @@
 //! (ADR 1186). A team adopting goat may declare `secrets: {store: env-file}`
 //! (or sops, git-crypt, openbao, env) and owns that trade.
 
+use crate::runner::Cmd;
 use std::collections::HashSet;
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 use anyhow::{Context, Result};
 
@@ -49,7 +50,7 @@ pub(crate) fn test_lite_config() -> Option<String> {
 }
 
 fn ask_with(repo: &Path, args: &[&str], probe: bool) -> Option<(i32, String)> {
-    let mut cmd = Command::new("python3");
+    let mut cmd = Cmd::new("python3");
     cmd.arg(posture(repo)).args(args).current_dir(repo);
     if let Some(p) = test_lite_config() {
         cmd.env("GOAT_LITE_CONFIG", p);
@@ -139,11 +140,11 @@ pub fn run(repo: &Path, args: &[String]) -> Result<Report> {
     // the one run verb both avenues share (ADR 1204).
     let mut cmd = if args.first().map(String::as_str) == Some("exec") {
         let rest: Vec<&String> = args[1..].iter().skip_while(|a| a.as_str() == "--").collect();
-        let mut c = Command::new(repo.join("ops/scripts/with-secrets"));
+        let mut c = Cmd::new(repo.join("ops/scripts/with-secrets"));
         c.args(rest);
         c
     } else {
-        let mut c = Command::new("python3");
+        let mut c = Cmd::new("python3");
         c.arg(posture(repo)).args(args);
         c
     };
@@ -164,6 +165,7 @@ pub fn run(repo: &Path, args: &[String]) -> Result<Report> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::process::Command;
 
     fn repo() -> std::path::PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")

@@ -14,8 +14,8 @@
 //! on the first reachable host, falling back to the in-repo `history:` block.
 //! The flip itself is the script's own remote shell, run over the same `ssh`.
 
+use crate::runner::Cmd;
 use std::path::Path;
-use std::process::Command;
 
 use anyhow::{anyhow, Context, Result};
 
@@ -142,7 +142,7 @@ fn ledger_path(component: &str) -> String {
 }
 
 fn ssh(user: &str, host: &str, cmd: &str) -> Option<String> {
-    let out = Command::new("ssh")
+    let out = Cmd::new("ssh")
         .args(["-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=4", "-o", "BatchMode=yes", &format!("{user}@{host}"), cmd])
         .output()
         .ok()?;
@@ -291,7 +291,7 @@ fn flip_script(shape: &str, h: &HostMap, component: &str, prev: &str, target: &s
 }
 
 fn hostname() -> String {
-    Command::new("hostname").output().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_else(|_| "unknown".into())
+    Cmd::new("hostname").output().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_else(|_| "unknown".into())
 }
 
 /// Which of the three flip shapes a host map calls for — the script's order of tests.
@@ -511,7 +511,7 @@ pub fn roll(repo: &Path, component: &str, n: u32, dry_run: bool, site: Option<&s
         if dry_run {
             checks.push(line(format!("    DRY: ssh {}@{} <<'SH'\n{script}SH", h.user, h.host)));
         } else {
-            let st = Command::new("ssh")
+            let st = Cmd::new("ssh")
                 .args(["-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=4", "-o", "BatchMode=yes", &format!("{}@{}", h.user, h.host), &script])
                 .status()
                 .with_context(|| format!("ssh {}", h.host))?;
