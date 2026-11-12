@@ -61,7 +61,7 @@ pair_persistent_reception() {
   rec "s$n-no-diagnostic-subscriber-runs" -- bash -c \
     "for s in $first $second; do docker exec $HP-\$s-core pgrep -f fed-responder.py && exit 1; docker exec $HP-\$s-edge docker ps -q --filter name=fed-probe- | grep . && exit 1; done; echo none; exit 0"
   for s in "$first" "$second"; do
-    them="$(other "$s")"; nonce="pr$(date +%s)$RANDOM"
+    them="$(other "$s")"; nonce="pr$(date +%s)$RANDOM"; echo "$nonce" > "$WORK/pr-before-restart-$s"
     rec "s$n-$s-to-$them-stored-without-a-subscriber" -- bash -c \
       "put_release $s all $them $nonce >/dev/null; for _ in \$(seq 1 30); do v=\$(stored_at $them from/$s/all/$nonce); [ \"\$v\" = $nonce ] && { echo stored: \$v; exit 0; }; sleep 1; done; echo 'not stored at $them: from/$s/all/$nonce'; exit 1"
   done
@@ -76,6 +76,8 @@ pair_persistent_reception() {
       "for _ in \$(seq 1 60); do curl -s -m 2 -o /dev/null 'http://$(core_ip "$them"):8000/@/**' && break; sleep 1; done
        put_release $s all $them $nonce >/dev/null; for _ in \$(seq 1 60); do v=\$(stored_at $them from/$s/all/$nonce); [ \"\$v\" = $nonce ] && { echo stored after the core restart: \$v; exit 0; }; sleep 1; done
        echo 'not stored at $them after its core restarted (edge not restarted): from/$s/all/$nonce'
+       b=\$(cat '$WORK/pr-before-restart-$s' 2>/dev/null)
+       echo \"--- the value stored before the restart, from/$s/all/\$b, read now: '\$(stored_at $them from/$s/all/\$b)' (expected \$b)\"
        echo '--- the receiving core, its sessions and storages (admin space):'
        curl -s -m 5 'http://$(core_ip "$them"):8000/@/*/router' | head -c 4000; echo
        curl -s -m 5 'http://$(core_ip "$them"):8000/@/*/router/status/plugins/storage_manager/storages/*' | head -c 2000; echo
