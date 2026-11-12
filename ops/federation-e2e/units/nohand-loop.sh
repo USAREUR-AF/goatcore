@@ -98,11 +98,29 @@ print(failed[-1] if failed else "?")
 PY
 }
 
+nh_phase14_outcome() { # $1 us: phase 14's outcome in the status document, or nothing
+  python3 - "$RECORD/status-$1.json" <<'PY'
+import json, sys
+try:
+    p = json.load(open(sys.argv[1]))["peerings"][0]
+except Exception:
+    sys.exit(0)
+o = [x.get("outcome", "") for x in p.get("phases", []) if x.get("phase") == 14]
+print(o[-1] if o else "")
+PY
+}
+
 # Phase 14 in the command BLOCKED only on the counterparty's surfaces (the partner's REST,
 # SPIRE, probes) is the designed production reading, lab-only here (the separate strict
-# acceptance proves those): not a refusal.
+# acceptance proves those): not a refusal. The journal records it as phase 14 "failed", or,
+# from the release that tells the two apart, "waiting" (exit 3, GB-199); either is read the
+# same, and the transcript must still show nothing but counterparty surfaces BLOCKED.
 loop_only_counterparty() { # $1 us, $2 transcript
-  [ "$(nh_failed_phase "$1")" = 14 ] || return 1
+  case "$(nh_phase14_outcome "$1")" in
+    failed) [ "$(nh_failed_phase "$1")" = 14 ] || return 1 ;;
+    waiting) ;;
+    *) return 1 ;;
+  esac
   # Phase 14's own run only: after the last "=== loop: phase 14 ===" marker the wrapper wrote
   # (acceptance prints its rows before the command's banner and header), else the whole file.
   local t; t="$(sed 's/\x1b\[[0-9;]*m//g; s/\r//g' "$2" 2>/dev/null | awk '/^=== loop: phase 14 ===$/{buf=""; next} {buf=buf $0 "\n"} END{printf "%s", buf}')"
