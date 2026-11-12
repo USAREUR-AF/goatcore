@@ -15,8 +15,9 @@ Usage:
   check-one-door-allow-shrinks.py --self-test        prove red, then green
 
 Exit 0 = every count is at or below the base's. Exit 1 = one grew or appeared.
-Exit 2 = usage, or the list could not be read.
+Exit 2 = usage, a base that is not a commit, or a list that could not be read.
 """
+import os
 import subprocess
 import sys
 
@@ -53,11 +54,22 @@ def self_test():
     assert grown(base, parse("a.rs 2\n")) == [], "lowering and removing pass"
     assert len(grown(base, parse("a.rs 4\nb.rs 1\n"))) == 1, "a higher count fails"
     assert len(grown(base, parse("a.rs 3\nb.rs 1\nc.rs 1\n"))) == 1, "a new file fails"
-    print("ok: self-test (a higher count and a new file fail; the same, lower and removed pass)")
+    # The base is checked, not assumed: a ref that is not a commit fails closed.
+    assert against("no-such-ref", {}) == 2, "a ref that does not exist"
+    assert against("0" * 40, {}) == 2, "an all-zero sha"
+    empty_tree = subprocess.run(["git", "hash-object", "-t", "tree", os.devnull], capture_output=True, text=True).stdout.strip()
+    before_list = subprocess.run(["git", "commit-tree", empty_tree, "-m", "a base with no list"], capture_output=True, text=True).stdout.strip()
+    assert before_list and against(before_list, {}) == 0, "a base with no list: this change introduces it"
+    print("ok: self-test (a higher count and a new file fail; the same, lower and removed pass; a base that is not a commit fails closed; a base with no list passes)")
     return 0
 
 
 def main(argv):
+    top = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True)
+    if top.returncode != 0:
+        print("not inside a git checkout", file=sys.stderr)
+        return 2
+    os.chdir(top.stdout.strip())
     if argv[1:] == ["--self-test"]:
         return self_test()
     if len(argv) != 3 or argv[1] != "--base":
@@ -69,11 +81,26 @@ def main(argv):
     except (OSError, ValueError) as e:
         print(f"cannot read {PATH}: {e}", file=sys.stderr)
         return 2
-    got = subprocess.run(["git", "show", f"{base_ref}:{PATH}"], capture_output=True, text=True)
-    if got.returncode != 0:
-        # The base predates the list: the list it brings is the first one.
+    return against(base_ref, head)
+
+
+def against(base_ref, head):
+    # A base that is not a commit is a broken gate, never a pass.
+    if subprocess.run(["git", "cat-file", "-e", f"{base_ref}^{{commit}}"], capture_output=True).returncode != 0:
+        print(f"cannot compare: {base_ref!r} is not a commit here (fetch the base first)", file=sys.stderr)
+        return 2
+    listed = subprocess.run(["git", "ls-tree", "--name-only", base_ref, "--", PATH], capture_output=True, text=True)
+    if listed.returncode != 0:
+        print(f"cannot list {PATH} at {base_ref}: {listed.stderr.strip()}", file=sys.stderr)
+        return 2
+    if not listed.stdout.strip():
+        # The base predates the list: the list this change brings is the first one.
         print(f"ok: {base_ref} has no {PATH}; this change introduces it")
         return 0
+    got = subprocess.run(["git", "show", f"{base_ref}:{PATH}"], capture_output=True, text=True)
+    if got.returncode != 0:
+        print(f"cannot read {PATH} at {base_ref}: {got.stderr.strip()}", file=sys.stderr)
+        return 2
     try:
         base = parse(got.stdout)
     except ValueError as e:
