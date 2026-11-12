@@ -72,5 +72,42 @@ class Quoted(unittest.TestCase):
         self.assertIn("deploy.state_dir", r.stderr)
 
 
+    def test_goat_standup_refuses_an_aws_profile_it_cannot_read_as_goatbuilder_does(self):
+        root = tree("~/.goat/state")
+        (root / "ops/goatbuilder/goatbuilder.yaml").write_text('schema: goatbuilder/v1\ndeploy:\n  aws_profile: "p\\"q"\n')
+        shutil.copy(REPO / "ops/scripts/goat-standup.sh", root / "ops/scripts/goat-standup.sh")
+        r = subprocess.run(["bash", str(root / "ops/scripts/goat-standup.sh"), "alpha", "--plan"],
+                           capture_output=True, text=True, timeout=120,
+                           env={"PATH": no_pyyaml_path(), "HOME": tempfile.mkdtemp()})
+        self.assertEqual(r.returncode, 2, r.stdout[-400:])
+        self.assertIn("deploy.aws_profile", r.stderr)
+
+
+class JoinFounderSite(unittest.TestCase):
+    """The ACL site names an environment variable (<SITE>_NB_API_TOKEN), so
+    goat-standup.sh refuses a join_founder_site that cannot make one, as goatbuilder does."""
+
+    def plan(self, jfs: str):
+        root = tree("~/.goat/state")
+        shutil.copy(REPO / "ops/scripts/goat-standup.sh", root / "ops/scripts/goat-standup.sh")
+        gv = root / "ops/ansible/group_vars/alpha_hosts"
+        gv.mkdir(parents=True)
+        (gv / "vars.yml").write_text(f"goatnet_founder: false\njoin_founder_site: {jfs}\n")
+        return subprocess.run(["bash", str(root / "ops/scripts/goat-standup.sh"), "alpha", "--plan"],
+                              capture_output=True, text=True, timeout=120,
+                              env={"PATH": os.environ["PATH"], "HOME": tempfile.mkdtemp()})
+
+    def test_one_that_cannot_name_a_variable_is_refused(self):
+        for jfs in ["a$(x)", "a;b", "a`b`"]:
+            r = self.plan(jfs)
+            self.assertEqual(r.returncode, 2, r.stdout[-300:])
+            self.assertIn("join_founder_site", r.stderr)
+
+    def test_an_ordinary_one_plans(self):
+        r = self.plan("bravo-1")
+        self.assertNotIn("join_founder_site", r.stderr)
+        self.assertIn("BRAVO_1_NB_API_TOKEN", r.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -2182,6 +2182,7 @@ assert_eq!(eval(&w), profile, "{}", ph.label);
                 check("acl --url", between(c, "netbird-policy-posture.py' ", " --url"), bad.into());
                 check("--url", between(c, " --url ", " --token-env"), format!("https://{bad}"));
                 check("netbird_mgmt_url", c.split_once("-e netbird_mgmt_url=").map(|x| x.1.to_string()), format!("https://{bad}"));
+                check("--token-env", c.split_once(" --token-env ").map(|x| x.1.to_string()), format!("{}_NB_API_TOKEN", bad.replace('-', "_").to_uppercase()));
                 if joiner {
                     check("[ -n founder ]", between(c, "{ [ -n ", " ] ||"), if ph.label.contains("spock-mesh-wire") { format!("{bad}_hosts") } else { bad.into() });
                     check("--limit", between(c, "spock-mesh-wire.yml --limit ", " -e "), format!("{bad}_hosts"));
@@ -2196,8 +2197,26 @@ assert_eq!(eval(&w), profile, "{}", ph.label);
                 check("obs ssh", between(c, "forgejo-mint-pubsub-bot.sh' ", "      &&"), format!("{bad}@192.0.2.9"));
             }
         }
-        let want = ["acl --declared", "acl --url", "--url", "netbird_mgmt_url", "[ -n founder ]", "--limit", "ls hosts", "-i hosts", "-i alias", "founder_site", "relay echo", "obs ssh"];
+        let want = ["acl --declared", "acl --url", "--url", "--token-env", "netbird_mgmt_url", "[ -n founder ]", "--limit", "ls hosts", "-i hosts", "-i alias", "founder_site", "relay echo", "obs ssh"];
         assert_eq!(seen, want.iter().map(|s| s.to_string()).collect(), "every value was found in a plan");
+    }
+
+    /// The ACL site names an environment variable (`<SITE>_NB_API_TOKEN`), so a
+    /// joiner whose join_founder_site cannot make a variable name is refused by
+    /// name before anything is planned; an ordinary one is read as before.
+    #[test]
+    fn a_join_founder_site_that_cannot_name_a_variable_is_refused() {
+        for (jfs, ok) in [("alpha", true), ("alpha-b", true), ("a$(x)", false), ("a;b", false), ("a`b`", false)] {
+            let repo = crate::testdir::path("gb-acl-site-");
+            std::fs::create_dir_all(repo.join("ops/ansible/group_vars/pasture_hosts")).unwrap();
+            std::fs::write(repo.join("ops/ansible/group_vars/pasture_hosts/vars.yml"), format!("goatnet_founder: false\njoin_founder_site: {jfs}\n")).unwrap();
+            let o = Options { env: "pasture", site: "pasture", profile: Some("lan"), from: 1, to: 14, skip_obs: true, obs_only: false, dry_run: true, parallel: false, check: false };
+            match (read_site(&repo, &o), ok) {
+                (Ok(s), true) => assert_eq!(s.acl_site, jfs),
+                (Err(e), false) => assert!(e.to_string().contains("join_founder_site") && e.to_string().contains(jfs), "{e}"),
+                (r, _) => panic!("{jfs}: {:?}", r.map(|s| s.acl_site)),
+            }
+        }
     }
 
     /// Not lite: no render gate, phase 4 as before; a LAN site pauses at 11 only
