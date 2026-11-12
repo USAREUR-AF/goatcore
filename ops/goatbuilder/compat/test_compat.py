@@ -435,6 +435,61 @@ class A4EveryVerbIsKept(unittest.TestCase):
                 self.assertTrue(os.path.isdir(os.path.join(HERE, "documents", "fixtures", f)), (d["name"], f))
 
 
+class RunsAreIsolated(unittest.TestCase):
+    """A kept invocation runs with its own HOME and XDG directories, and its
+    scratch path is written back as {scratch} in every form it can take."""
+
+    def setUp(self):
+        import tempfile
+        self.tmp = tempfile.mkdtemp(prefix="compat-iso-")
+        # The test's own stand-in for the developer's HOME, so that a run that is
+        # not isolated writes here and never into a real one.
+        self.home = os.path.join(self.tmp, "home")
+        os.makedirs(self.home)
+        self.saved = {k: os.environ.get(k) for k in ("HOME", "XDG_STATE_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME")}
+        os.environ["HOME"] = self.home
+        for k in list(self.saved)[1:]:
+            os.environ.pop(k, None)
+        self.bin = os.path.join(self.tmp, "fake-goatbuilder")
+        # Writes into $HOME as `tutor` does, and prints a document naming its
+        # scratch argument raw, through realpath, and JSON-escaped.
+        with open(self.bin, "w") as f:
+            f.write("""#!/bin/sh
+mkdir -p "$HOME/.goatbuilder/tutor" && echo x > "$HOME/.goatbuilder/tutor/progress.json"
+last=""; for a in "$@"; do last="$a"; done
+real=$(cd "$last" && pwd -P)
+printf '{"schema":"t/v1","home":"%s","xdg":"%s","raw":"%s","real":"%s"}\\n' "$HOME" "$XDG_STATE_HOME" "$last" "$real"
+""")
+        os.chmod(self.bin, 0o755)
+
+    def tearDown(self):
+        import shutil
+        for k, v in self.saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_a_run_writes_nothing_into_the_callers_home(self):
+        rc, doc, err = compat.run_document(self.bin, REPO, {"name": "t", "format": "json", "args": ["{scratch}/basic"], "scratch": ["basic"]})
+        self.assertIsNone(err)
+        self.assertNotEqual(doc["home"], self.home)
+        self.assertTrue(doc["xdg"] and not doc["xdg"].startswith(self.home), doc)
+        self.assertEqual(os.listdir(self.home), [], "the run wrote into the caller's HOME")
+
+    def test_every_form_of_the_scratch_path_is_written_back(self):
+        rc, doc, err = compat.run_document(self.bin, REPO, {"name": "t", "format": "json", "args": ["{scratch}/basic"], "scratch": ["basic"]})
+        self.assertIsNone(err)
+        self.assertEqual(doc["raw"], "{scratch}/basic")
+        self.assertEqual(doc["real"], "{scratch}/basic")
+        self.assertNotIn(self.tmp, json.dumps(doc))
+
+    def test_a_json_escaped_scratch_path_is_written_back(self):
+        out = compat.unscratch('{"p": "C:\\\\x\\\\y/basic"}', "C:\\x\\y")
+        self.assertEqual(json.loads(out)["p"], "{scratch}/basic")
+
+
 class A5ErrorCodes(unittest.TestCase):
     BASE = [{"code": "GB-001", "title": "unknown component"}, {"code": "GB-002", "title": "no plan"}]
 
@@ -611,6 +666,19 @@ class TheBuildKeepsThePromise(unittest.TestCase):
         rows = compat.check_all(REPO, HERE, os.environ["GOATBUILDER_BIN"])
         failed = [r for r in rows if not r[0]]
         self.assertEqual(failed, [], json.dumps(failed, indent=1))
+
+    def test_a_whole_check_leaves_the_callers_home_as_it_was(self):
+        import shutil
+        import tempfile
+        home = tempfile.mkdtemp(prefix="compat-caller-home-")
+        saved = os.environ.get("HOME")
+        os.environ["HOME"] = home
+        try:
+            compat.check_all(REPO, HERE, os.environ["GOATBUILDER_BIN"])
+            self.assertEqual(os.listdir(home), [], "a check wrote into the caller's HOME")
+        finally:
+            os.environ["HOME"] = saved
+            shutil.rmtree(home, ignore_errors=True)
 
 
 if __name__ == "__main__":

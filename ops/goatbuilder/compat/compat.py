@@ -479,15 +479,41 @@ class Baseline:
         return (_read_yaml(path).get("conditional") or []) if os.path.isfile(path) else []
 
 
-def _env() -> dict:
+SCRATCH = "{scratch}"
+
+
+def _env(home: str) -> dict:
+    """The environment of one run: this process's, without the switches that
+    change what a run prints, and with its own HOME and XDG directories, so a
+    verb that keeps state there (`tutor`) neither edits the caller's nor
+    depends on it."""
     env = dict(os.environ)
     for k in ("GOAT_EXPLAIN", "GOATBUILDER_UPDATE_URL", "GOATBUILDER_TIMEOUT", "CLICOLOR_FORCE", "RUST_LOG"):
         env.pop(k, None)
-    env.update({"GOAT_LANG": "en", "NO_COLOR": "1", "LC_ALL": "C.UTF-8"})
+    env.update({"GOAT_LANG": "en", "NO_COLOR": "1", "LC_ALL": "C.UTF-8", "HOME": home})
+    for k, sub in (("XDG_CONFIG_HOME", ".config"), ("XDG_CACHE_HOME", ".cache"), ("XDG_DATA_HOME", ".local/share"), ("XDG_STATE_HOME", ".local/state")):
+        env[k] = os.path.join(home, sub)
     return env
 
 
-SCRATCH = "{scratch}"
+def _run(cmd: list, cwd=None) -> subprocess.CompletedProcess:
+    """Run a goatbuilder with a fresh HOME, removed afterwards."""
+    home = tempfile.mkdtemp(prefix="compat-home-")
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, env=_env(home), cwd=cwd)
+    finally:
+        shutil.rmtree(home, ignore_errors=True)
+
+
+def unscratch(text: str, tmp: str) -> str:
+    """`text` with the scratch directory written back as {scratch}, in every
+    form a run can print it: as given, resolved (macOS's /private/var/...),
+    and JSON-escaped."""
+    forms = {tmp, os.path.realpath(tmp)}
+    forms |= {json.dumps(f)[1:-1] for f in list(forms)}
+    for f in sorted(forms, key=len, reverse=True):
+        text = text.replace(f, SCRATCH)
+    return text
 
 
 def invocation_verb(args: list, verbs: list):
@@ -509,11 +535,11 @@ def run_document(binary: str, repo: str, d: dict):
             shutil.copytree(os.path.join(HERE, "documents", "fixtures", f), os.path.join(tmp, f))
         args = [a.replace(SCRATCH, tmp) for a in args]
     try:
-        r = subprocess.run([binary, "-o", d["format"], *args], capture_output=True, text=True, env=_env(), cwd=repo)
+        r = _run([binary, "-o", d["format"], *args], cwd=repo)
     finally:
         if tmp:
             shutil.rmtree(tmp, ignore_errors=True)
-    out = r.stdout.replace(tmp, SCRATCH) if tmp else r.stdout
+    out = unscratch(r.stdout, tmp) if tmp else r.stdout
     try:
         doc = json.loads(out) if d["format"] == "json" else yaml.safe_load(out)
     except (ValueError, yaml.YAMLError) as e:
@@ -545,7 +571,7 @@ def check_all(repo: str, root: str, binary: str, only=("surface", "documents", "
         rows.append((False, "documents", "conditional.yaml", p))
 
     if "surface" in only:
-        r = subprocess.run([binary, "docs", "--markdown"], capture_output=True, text=True, env=_env(), cwd=repo)
+        r = _run([binary, "docs", "--markdown"], cwd=repo)
         if r.returncode != 0:
             rows.append((False, "surface", "docs --markdown", f"exit {r.returncode}: {r.stderr.strip()[:300]}"))
         else:
@@ -643,7 +669,7 @@ def release_binary_problem(binary: str, sums: str, tag: str, pins=None):
     pinned = (pins or {}).get((tag, name))
     if pinned and pinned != digest:
         return f"{sums} gives {name} of {tag} the sha256 {digest[:16]}…, but {PINS} pins {pinned[:16]}…"
-    r = subprocess.run([binary, "--version"], capture_output=True, text=True)
+    r = _run([binary, "--version"])
     if r.stdout.split()[-1:] != [tag.split("/", 1)[1].lstrip("v")]:
         return f"{binary} reports {r.stdout.strip()!r}, not {tag}"
     return None
@@ -683,7 +709,10 @@ def refresh(repo: str, root: str, tag: str, binary: str, sums=None) -> int:
 def _refresh_last_release(repo: str, root: str, tag: str, binary: str, b: "Baseline") -> None:
     """Record the surface, the error codes and the documents of the release as the new baseline."""
     # A3: the released binary's command tree.
-    md = subprocess.run([binary, "docs", "--markdown"], capture_output=True, text=True, check=True, env=_env()).stdout
+    r = _run([binary, "docs", "--markdown"])
+    if r.returncode != 0:
+        raise SystemExit(f"compat: {binary} docs --markdown: exit {r.returncode}")
+    md = r.stdout
     with open(os.path.join(root, "surface.json"), "w") as f:
         json.dump(surface_values(binary, parse_reference(md)), f, indent=1, sort_keys=True)
         f.write("\n")
