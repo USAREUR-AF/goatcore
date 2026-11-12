@@ -134,7 +134,7 @@ pub struct HostGuard {
 /// The folder that holds every peering's working folder on this machine.
 #[cfg_attr(not(test), allow(dead_code))]
 pub fn work_root(work: &Path) -> PathBuf {
-    match std::env::var("FED_WORK_ROOT")
+    match crate::federate::runenv::var("FED_WORK_ROOT")
         .ok()
         .filter(|v| !v.is_empty())
     {
@@ -366,7 +366,7 @@ mod tests {
 
     #[test]
     fn the_work_root_is_the_folder_above_the_working_folder() {
-        if std::env::var_os("FED_WORK_ROOT").is_none() {
+        if crate::federate::runenv::var_os("FED_WORK_ROOT").is_none() {
             assert_eq!(
                 work_root(Path::new("/var/lib/goat-federation/xab")),
                 Path::new("/var/lib/goat-federation")

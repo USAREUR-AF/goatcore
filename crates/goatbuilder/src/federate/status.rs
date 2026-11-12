@@ -236,7 +236,7 @@ fn pid_alive(pid: u32) -> bool {
     if Path::new("/proc/self").exists() {
         return Path::new(&format!("/proc/{pid}")).exists();
     }
-    std::process::Command::new("kill")
+    crate::federate::runenv::command("kill")
         .args(["-0", &pid.to_string()])
         .stderr(std::process::Stdio::null())
         .status()
@@ -440,7 +440,11 @@ fn next_step(
 /// evidence in `$FED_EVIDENCE_DIR` when set. Without one: each peering at
 /// `$FED_WORK_ROOT/<partner>`, else /var/lib/goat-federation/<partner>.
 pub fn folders_for(with: &str, named: bool, work: Option<&str>) -> Folders {
-    let env = |k: &str| std::env::var(k).ok().filter(|v| !v.is_empty());
+    let env = |k: &str| {
+        crate::federate::runenv::var(k)
+            .ok()
+            .filter(|v| !v.is_empty())
+    };
     let work = if named {
         work.map(PathBuf::from)
             .or_else(|| env("FED_WORK").map(PathBuf::from))
@@ -976,13 +980,15 @@ mod tests {
             folders_for("xab", true, Some("/w")).work,
             PathBuf::from("/w")
         );
-        if std::env::var_os("FED_EVIDENCE_DIR").is_none() {
+        if crate::federate::runenv::var_os("FED_EVIDENCE_DIR").is_none() {
             assert_eq!(
                 folders_for("xab", true, Some("/w")).evidence,
                 PathBuf::from("/w/evidence/acceptance")
             );
         }
-        if std::env::var_os("FED_WORK").is_none() && std::env::var_os("FED_WORK_ROOT").is_none() {
+        if crate::federate::runenv::var_os("FED_WORK").is_none()
+            && crate::federate::runenv::var_os("FED_WORK_ROOT").is_none()
+        {
             assert_eq!(
                 folders_for("xab", true, None).work,
                 PathBuf::from("/var/lib/goat-federation/xab")

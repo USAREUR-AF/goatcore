@@ -19,7 +19,7 @@
 //! renderer refusal makes the host BLOCKED, naming why. Nothing is guessed.
 
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -924,7 +924,7 @@ pub fn render(repo: &Path, input: &Value) -> Render {
             message: format!("the renderer {RENDERER} is not in this checkout"),
         };
     }
-    let child = Command::new("python3")
+    let child = crate::federate::runenv::command("python3")
         .arg(&script)
         .args(["--input", "-", "--format", "json"])
         .current_dir(repo)
@@ -1151,7 +1151,7 @@ mod tests {
                     .join(FIXTURE)
                     .join(v)
                     .join(format!("expected/{host}.json"));
-                if std::env::var_os("GOAT_RECORD_HOST_FIREWALL").is_some() {
+                if crate::federate::runenv::var_os("GOAT_RECORD_HOST_FIREWALL").is_some() {
                     write(
                         path.clone(),
                         &(serde_json::to_string_pretty(&got).unwrap() + "\n"),

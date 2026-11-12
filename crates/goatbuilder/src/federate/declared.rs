@@ -26,12 +26,14 @@ use crate::config;
 /// then `$GOAT_CONTEXT`, else `current_context` in its config.toml, else
 /// `default`.
 pub fn context_dir() -> PathBuf {
-    let profile = std::env::var("GOAT_PROFILE_DIR")
+    let profile = crate::federate::runenv::var("GOAT_PROFILE_DIR")
         .ok()
         .filter(|v| !v.is_empty())
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".goat"));
-    let context = std::env::var("GOAT_CONTEXT")
+        .unwrap_or_else(|| {
+            PathBuf::from(crate::federate::runenv::var("HOME").unwrap_or_default()).join(".goat")
+        });
+    let context = crate::federate::runenv::var("GOAT_CONTEXT")
         .ok()
         .filter(|v| !v.is_empty())
         .or_else(|| {
@@ -50,7 +52,10 @@ pub fn context_dir() -> PathBuf {
 /// absolute path is itself, and anything else is inside the goat context.
 fn in_context(declared: &str, context: &Path) -> String {
     if let Some(rest) = declared.strip_prefix("~/") {
-        return format!("{}/{rest}", std::env::var("HOME").unwrap_or_default());
+        return format!(
+            "{}/{rest}",
+            crate::federate::runenv::var("HOME").unwrap_or_default()
+        );
     }
     if Path::new(declared).is_absolute() {
         return declared.to_string();
@@ -157,7 +162,7 @@ mod tests {
             in_context("federation/ca.pem", ctx),
             "/profile/contexts/zagros/federation/ca.pem"
         );
-        let home = std::env::var("HOME").unwrap_or_default();
+        let home = crate::federate::runenv::var("HOME").unwrap_or_default();
         assert_eq!(
             in_context("~/k/ca-key.pem", ctx),
             format!("{home}/k/ca-key.pem")

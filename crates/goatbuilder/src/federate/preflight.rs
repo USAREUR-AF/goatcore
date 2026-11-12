@@ -21,7 +21,6 @@
 //! for the phase-10 step to call immediately before the core router restarts.
 
 use std::path::Path;
-use std::process::Command;
 
 use anyhow::{Context, Result};
 
@@ -448,7 +447,7 @@ fn from_deployment(
         ),
     };
     v.push(input("FED_CA_KEY_AGE", age_key, age_src));
-    let home = std::env::var("HOME").unwrap_or_default();
+    let home = crate::federate::runenv::var("HOME").unwrap_or_default();
     let (ident, ident_src) = match gv("goat_federation_age_identity") {
         Some(i) => (Some(i), at("goat_federation_age_identity")),
         None => (
@@ -506,20 +505,25 @@ pub fn unset_derived(
         .collect()
 }
 
-/// Put every derived value the operator has not set into this process's
-/// environment, so the plan's commands, phase 1 and every helper read it.
+/// Put every derived value the operator has not set into this run's
+/// environment (runenv), so the plan's commands, phase 1 and every helper
+/// read it; the process environment is not changed.
 /// Called only for a real run: a dry run and a mock change nothing, and a dry
 /// run's commands stay word for word the script's (the parity gate).
 pub fn export(inputs: &[Input]) {
-    for (k, v) in unset_derived(inputs, |k| std::env::var(k).ok()) {
-        std::env::set_var(k, v);
+    for (k, v) in unset_derived(inputs, |k| crate::federate::runenv::var(k).ok()) {
+        crate::federate::runenv::set(k, v);
     }
     // When the core router's daemon could not be derived, phase 1's
     // core-router refusal (GB-138) names where it was looked for.
-    let unset = |k: &str| std::env::var(k).map(|v| v.is_empty()).unwrap_or(true);
+    let unset = |k: &str| {
+        crate::federate::runenv::var(k)
+            .map(|v| v.is_empty())
+            .unwrap_or(true)
+    };
     if unset("FED_ROUTER_DOCKER_HOST") {
         if let Some(i) = inputs.iter().find(|i| i.name == "FED_ROUTER_DOCKER_HOST" && i.value.is_none()) {
-            std::env::set_var("FED_ROUTER_DOCKER_HOST_SOURCES", &i.source);
+            crate::federate::runenv::set("FED_ROUTER_DOCKER_HOST_SOURCES", i.source.clone());
         }
     }
 }
@@ -537,7 +541,9 @@ pub fn plan_rows(inputs: &[Input]) -> Vec<Check> {
         })
         .collect();
     for i in inputs {
-        let set = std::env::var(i.name).ok().filter(|v| !v.is_empty());
+        let set = crate::federate::runenv::var(i.name)
+            .ok()
+            .filter(|v| !v.is_empty());
         let detail = match (&set, &i.value) {
             (Some(v), _) => format!("{}={v}  (set in the environment; it wins)", i.name),
             (None, Some(v)) => format!("{}={v}  (from {})", i.name, i.source),
@@ -588,7 +594,7 @@ pub fn recheck_slot_anchors(repo: &Path, peering: &str, work: &str) -> Result<Sl
     // result) must never stand in for this run's.
     let result = Path::new(work).join("preflight/slot-recheck.json");
     let _ = std::fs::remove_file(&result);
-    let status = Command::new("python3")
+    let status = crate::federate::runenv::command("python3")
         .arg(&script)
         .args([
             peering,

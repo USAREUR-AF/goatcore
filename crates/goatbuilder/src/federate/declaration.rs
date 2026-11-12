@@ -154,10 +154,10 @@ pub fn problems(cfg: &Config) -> Vec<String> {
 /// `current_context` in its config.toml, else `default`), the same order goat
 /// uses (crates/goat-cli/src/profile.rs).
 pub fn declaration_path() -> Result<PathBuf> {
-    let dir = match std::env::var_os("GOAT_PROFILE_DIR") {
+    let dir = match crate::federate::runenv::var_os("GOAT_PROFILE_DIR") {
         Some(d) => PathBuf::from(d),
         None => {
-            let home = std::env::var_os("HOME").ok_or_else(|| {
+            let home = crate::federate::runenv::var_os("HOME").ok_or_else(|| {
                 goat_errors::coded(
                     "GB-129",
                     "the peering declares offer:, and neither GOAT_PROFILE_DIR nor HOME is set, so the federation.toml it narrows cannot be found (GB-129). Set GOAT_PROFILE_DIR to the goat profile directory phase 3 uses",
@@ -166,7 +166,7 @@ pub fn declaration_path() -> Result<PathBuf> {
             PathBuf::from(home).join(".goat")
         }
     };
-    let context = std::env::var("GOAT_CONTEXT")
+    let context = crate::federate::runenv::var("GOAT_CONTEXT")
         .ok()
         .filter(|c| !c.is_empty())
         .or_else(|| current_context(&dir.join("config.toml")))

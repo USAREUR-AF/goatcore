@@ -38,9 +38,9 @@
 
 /// `goatbuilder federate init|lint|compose|diff|verify|apply` (the six verbs).
 pub mod verbs;
+pub mod runenv;
 
 use std::path::Path;
-use std::process::Command;
 
 pub mod backout;
 
@@ -143,13 +143,13 @@ fn row(name: &str, detail: String) -> Check {
 }
 
 fn env_or(name: &str, default: String) -> String {
-    std::env::var(name).ok().filter(|v| !v.is_empty()).unwrap_or(default)
+    runenv::var(name).ok().filter(|v| !v.is_empty()).unwrap_or(default)
 }
 
 /// `$(command -v goat || echo goat)`.
 fn goat_bin() -> String {
     env_or("GOAT_BIN", {
-        let path = std::env::var("PATH").unwrap_or_default();
+        let path = runenv::var("PATH").unwrap_or_default();
         path.split(':').map(|d| Path::new(d).join("goat")).find(|p| p.is_file()).map(|p| p.display().to_string()).unwrap_or_else(|| "goat".to_string())
     })
 }
@@ -304,7 +304,7 @@ fn plan_with(repo: &Path, o: &Options, work: &str, edge_group: &str, resume: &st
         p(1, "GATE", "peering preflight (fail-closed)", format!("python3 '{r}/ops/federation/standup/preflight.py' '{}' --work '{work}' --edge-group '{edge_group}'", o.with)),
         p(2, "A", "prepare what the package measures: the federation interface and the SPIRE bundle", play("peering-prepare.yml")),
         if measure_ssh {
-            let words = measure::phase3_words(init_words, o.with, edge_group, std::env::var("FED_ROUTER_CONTAINER").ok().as_deref(), repo);
+            let words = measure::phase3_words(init_words, o.with, edge_group, runenv::var("FED_ROUTER_CONTAINER").ok().as_deref(), repo);
             Phase { n: 3, kind: "T", label: "init — our half, read from the running system".into(), cmd: format!("goatbuilder federate {}", shell_words(&words)), verb: Some((Vec::new(), words)) }
         } else {
             t(3, "init — our half, read from the running system", init_env, init_words)
@@ -391,7 +391,7 @@ fn our_id(work: &str) -> Option<String> {
 /// header, one aligned table of phases, then each phase's command wrapped to
 /// the page, with this checkout's path and the home folder shortened.
 fn plan_view(repo: &Path, o: &Options, work: &str, edge_group: &str, phases: &[Phase]) -> String {
-    let home = std::env::var("HOME").unwrap_or_default();
+    let home = runenv::var("HOME").unwrap_or_default();
     // The resolved path: with `-C ../..` the literal "../../" must not be
     // stripped from paths that merely contain it.
     let repo_s = std::fs::canonicalize(repo).unwrap_or_else(|_| repo.to_path_buf()).display().to_string();
@@ -578,12 +578,13 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
         let declared = cfg.peerings.iter().map(|p| format!("{} on {}", p.with, p.environment)).collect::<Vec<_>>().join(", ");
         return Err(anyhow!("peering '{}' is not declared in {} peerings: (declared: {}) — declare it first (C1)", o.with, cfg_path.display(), if declared.is_empty() { "none" } else { &declared }));
     }
-    // THE PROFILE DIRECTORY, resolved once and exported, so preflight and every
+    // THE PROFILE DIRECTORY, resolved once for this run, so preflight and every
     // `goat` call below agree (a run under sudo reads the invoking user's HOME).
-    if std::env::var("GOAT_PROFILE_DIR").map(|v| v.is_empty()).unwrap_or(true) {
-        let home = std::env::var("HOME").unwrap_or_default();
+    // Kept in the run's environment (runenv), never the process's.
+    if runenv::var("GOAT_PROFILE_DIR").map(|v| v.is_empty()).unwrap_or(true) {
+        let home = runenv::var("HOME").unwrap_or_default();
         let dir = if is_root() { "/root/.goat".to_string() } else { format!("{home}/.goat") };
-        std::env::set_var("GOAT_PROFILE_DIR", dir);
+        runenv::set("GOAT_PROFILE_DIR", dir);
     }
     // A peering's offer: may narrow federation.toml's release sets, never widen them.
     if o.mock.is_none() {
@@ -627,7 +628,7 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
         // Phase 14 reads our core and edge declarations by group
         // (acceptance_surfaces.py): the edge group this run uses, whatever the
         // environment held, so --edge-group is never typed a second time.
-        std::env::set_var("FED_EDGE_GROUP", &edge_group);
+        runenv::set("FED_EDGE_GROUP", &edge_group);
     }
     let mut phases = plan(repo, o, &work, &edge_group, &resume);
     // A peering a forwarder relays: the forwarder runs inside phase 2 (federate/forwarder.rs).
@@ -691,7 +692,7 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
             let phase_started = std::time::SystemTime::now();
             if ph.n == 5 {
                 if let Some(args) = directory_args(repo, &work) {
-                    let _ = Command::new("python3").args(&args).current_dir(repo).status();
+                    let _ = runenv::command("python3").args(&args).current_dir(repo).status();
                     checks.push(row("directory", "the directory step ran; it is advisory and its result changes no phase".into()));
                 }
             }
@@ -700,7 +701,7 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
             if let (5, Some(r), true) = (ph.n, run.as_mut(), s.values.active()) {
                 // The directory step again, its report on stderr (stdout
                 // carries -o json); success is judged by what it placed.
-                let rerun = || directory_args(repo, &work).map(|a| Command::new("python3").args(&a).env("FED_DIRECTORY_PLACE_POINTER_PACKAGE", "1").current_dir(repo).stdout(std::process::Stdio::from(std::io::stderr())).status().is_ok()).unwrap_or(false);
+                let rerun = || directory_args(repo, &work).map(|a| runenv::command("python3").args(&a).env("FED_DIRECTORY_PLACE_POINTER_PACKAGE", "1").current_dir(repo).stdout(std::process::Stdio::from(std::io::stderr())).status().is_ok()).unwrap_or(false);
                 if let Some(step) = confirm::pointer(&r.paths, s, &mut r.state, &r.id.clone(), Some(phase_started), &rerun) {
                     checks.extend(step.rows);
                     match step.verdict {
@@ -721,7 +722,7 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
             // Confirmation 1, when asked for: the command binds the keys
             // and carries on instead of stopping.
             if let (5, Some(r), true) = (ph.n, run.as_mut(), s.values.active()) {
-                let rerun = || directory_args(repo, &work).map(|a| Command::new("python3").args(&a).current_dir(repo).stdout(std::process::Stdio::from(std::io::stderr())).status().is_ok()).unwrap_or(false);
+                let rerun = || directory_args(repo, &work).map(|a| runenv::command("python3").args(&a).current_dir(repo).stdout(std::process::Stdio::from(std::io::stderr())).status().is_ok()).unwrap_or(false);
                 let step = confirm::exchange(&r.paths, s, &mut r.state, &r.id.clone(), &rerun);
                 checks.extend(step.rows);
                 match step.verdict {
@@ -797,7 +798,7 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
             None => {
                 // -e, like standup and join-node: a phase that is several statements
                 // stops at the first failure instead of running on past it.
-                let status = Command::new("bash").args(["-euo", "pipefail", "-c", &ph.cmd]).current_dir(repo).status().context("bash")?;
+                let status = runenv::command("bash").args(["-euo", "pipefail", "-c", &ph.cmd]).current_dir(repo).status().context("bash")?;
                 if status.success() { 0 } else { status.code().unwrap_or(1) }
             }
         };
@@ -861,12 +862,15 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
 /// catalog code (GB-100: 2), 101 for a panic, or 1 for any other fault, which
 /// is printed.
 fn run_verb_in_process(dir: &Path, env: &[(String, String)], words: &[String]) -> i32 {
-    // set_var and set_current_dir change process-global state. This is safe
-    // only while the driver is single-threaded, as it is here: it runs one
-    // phase at a time and spawns no thread. A driver that runs phases or verbs
-    // concurrently must pass the environment and directory to the verb instead.
+    // The verb runs in this process and reads the process environment, so the
+    // run's own values (runenv) and the verb's are put there for its duration
+    // and restored after. set_var and set_current_dir change process-global
+    // state: this is the one place federate does, for a real run's in-process
+    // verb, one at a time. A driver that runs verbs concurrently must pass the
+    // environment and directory to the verb instead.
+    let env: Vec<(String, String)> = runenv::pairs().into_iter().chain(env.iter().cloned()).collect();
     let saved: Vec<(String, Option<std::ffi::OsString>)> = env.iter().map(|(k, _)| (k.clone(), std::env::var_os(k))).collect();
-    for (k, v) in env {
+    for (k, v) in &env {
         std::env::set_var(k, v);
     }
     let here = std::env::current_dir().ok();
@@ -906,7 +910,7 @@ pub fn work_dir(o: &Options) -> String {
 }
 
 fn is_root() -> bool {
-    Command::new("id").arg("-u").output().map(|o| String::from_utf8_lossy(&o.stdout).trim() == "0").unwrap_or(false)
+    runenv::command("id").arg("-u").output().map(|o| String::from_utf8_lossy(&o.stdout).trim() == "0").unwrap_or(false)
 }
 
 #[cfg(test)]
@@ -963,6 +967,33 @@ mod tests {
     /// A dry run reads as a plan: one aligned phase table, then the commands;
     /// no `=== Phase ===` banners, no em dashes, no `a/b/../../c` paths, and
     /// phase 11 says it waits on the agreement rather than "REFUSED".
+    /// A federate run on one thread changes nothing another thread reads:
+    /// the profile directory, the edge group and every derived input reach the
+    /// run's own reads and its children through runenv, never the process
+    /// environment. Tests run in parallel; the plan tests read FED_* and
+    /// GOAT_* while other tests run federate.
+    #[test]
+    fn a_run_on_another_thread_leaves_this_threads_environment_alone() {
+        let names = ["GOAT_PROFILE_DIR", "FED_EDGE_GROUP", "FED_GB_ENV_PROBE"];
+        let before: Vec<_> = names.iter().map(|n| runenv::var_os(n)).collect();
+        let seen = std::thread::spawn(|| {
+            let work = tempfile::tempdir().unwrap();
+            let work_s = work.path().display().to_string();
+            let fx = fixture();
+            let o = Options { with: "hello-ally", env: None, r#as: Some("zagros"), edge_group: None, work: Some(&work_s), mock: Some(&fx), from: 1, to: 1, dry_run: true, table: false };
+            let _ = federate(&repo(), &o);
+            preflight::export(&[preflight::Input { name: "FED_GB_ENV_PROBE", value: Some("x".into()), source: "test".into() }]);
+            // The run that exported it reads it.
+            runenv::var("FED_GB_ENV_PROBE").ok()
+        })
+        .join()
+        .unwrap();
+        assert_eq!(seen.as_deref(), Some("x"), "the exporting run reads its own value");
+        let after: Vec<_> = names.iter().map(|n| runenv::var_os(n)).collect();
+        assert_eq!(before, after, "the process environment is unchanged");
+        assert!(runenv::var("FED_GB_ENV_PROBE").is_err(), "and this thread does not see the other run's value");
+    }
+
     #[test]
     fn a_dry_run_prints_a_plan_table() {
         let work = tempfile::tempdir().unwrap();
@@ -1101,7 +1132,7 @@ mod tests {
         let key = "GOATBUILDER_TEST_VERB_ENV";
         std::env::remove_var(key);
         assert_eq!(run_verb_in_process(&here, &[(key.into(), "x".into())], &["lint".into(), bad]), 21);
-        assert!(std::env::var_os(key).is_none(), "the verb's environment leaked");
+        assert!(runenv::var_os(key).is_none(), "the verb's environment leaked");
         assert_eq!(run_verb_in_process(&here, &[], &["lint".into(), "/no/such/package".into()]), 1, "a fault exits 1, as in goat");
         // A relative path is relative to the directory the verb runs in (the
         // repository, in the driver), as it is for a shell phase.
@@ -1228,13 +1259,13 @@ mod tests {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
-        std::env::set_var("GOAT_BIN", &stub);
+        runenv::set("GOAT_BIN", stub.display().to_string());
         let work = root.join("work");
         let work_s = work.display().to_string();
         let fx = fixture();
         let o = Options { with: "hello-ally", env: None, r#as: Some("zagros"), edge_group: None, work: Some(&work_s), mock: Some(&fx), from: 1, to: 99, dry_run: false, table: false };
         let r = federate(&repo(), &o).unwrap();
-        std::env::remove_var("GOAT_BIN");
+        runenv::unset("GOAT_BIN");
         assert_eq!(r.exit, EXIT_OK);
         assert_eq!(r.checks.iter().filter(|c| c.name == "mock").count(), 14, "every phase is recorded, past the MANUAL ones");
         assert!(!sentinel.exists(), "a mock ran a real command");

@@ -56,7 +56,12 @@ The results are written to `<work>/preflight/result.json` (schema
 
 `goatbuilder federate` derives each input from the deployment and exports the
 ones the operator has not set before it builds the plan, so phase 1, the
-commands of phases 3 to 14 and their helpers read one value. A variable the
+commands of phases 3 to 14 and their helpers read one value. **Built:** the
+export is to the run's own environment (`crates/goatbuilder/src/federate/runenv.rs`),
+never the process's. The run reads it first, and every child it starts gets
+it in its environment; an in-process verb sees it for its duration only. So
+a run on one thread changes nothing another thread reads (tested by
+`a_run_on_another_thread_leaves_this_threads_environment_alone`). A variable the
 operator sets always wins, which keeps the script avenue working with values
 exported by hand. A value no source declares stays unset and GB-130 names it.
 A declared value holding a quote, `$`, a backtick, a backslash or a control

@@ -30,7 +30,6 @@
 //! docs/design/federation-router-discovery.md is the design.
 
 use std::path::Path;
-use std::process::Command;
 
 use anyhow::Result;
 use goat_federation::derive::{self, Measured, Probe, RouterTarget};
@@ -457,8 +456,8 @@ impl HostProbe {
             ));
         }
         let argv = self.argv(bin, args);
-        crate::trace::cmd(Command::new(&argv[0]).args(&argv[1..]));
-        let out = Command::new(&argv[0])
+        crate::trace::cmd(crate::federate::runenv::command(&argv[0]).args(&argv[1..]));
+        let out = crate::federate::runenv::command(&argv[0])
             .args(&argv[1..])
             .output()
             .map_err(|e| format!("{}: {e}", argv[0]))?;
@@ -490,8 +489,8 @@ impl HostProbe {
     pub fn reach(&self) -> Result<()> {
         let argv = self.argv("true", &[]);
         let shown = argv.iter().map(|w| quote(w)).collect::<Vec<_>>().join(" ");
-        crate::trace::cmd(Command::new(&argv[0]).args(&argv[1..]));
-        let out = Command::new(&argv[0])
+        crate::trace::cmd(crate::federate::runenv::command(&argv[0]).args(&argv[1..]));
+        let out = crate::federate::runenv::command(&argv[0])
             .args(&argv[1..])
             .output()
             .map_err(|e| {
@@ -786,13 +785,13 @@ pub fn run_init(
 /// Whether the driver's phase 3 measures over SSH (`FED_MEASURE` unset, empty
 /// or `ssh`, the default) or the machine the driver runs on (`here`).
 pub fn driver_measures_over_ssh() -> bool {
-    std::env::var("FED_MEASURE").ok().as_deref() != Some("here")
+    crate::federate::runenv::var("FED_MEASURE").ok().as_deref() != Some("here")
 }
 
 /// Any other value of `FED_MEASURE` is refused, as peering-standup.sh refuses
 /// it: a misspelt `ssh` would otherwise measure the wrong machine.
 pub fn check_driver_measure() -> Result<()> {
-    match std::env::var("FED_MEASURE").ok().as_deref() {
+    match crate::federate::runenv::var("FED_MEASURE").ok().as_deref() {
         None | Some("") | Some("here") | Some("ssh") => Ok(()),
         Some(other) => Err(anyhow::anyhow!(
             "FED_MEASURE is here or ssh, not '{other}'"

@@ -20,7 +20,6 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
@@ -304,7 +303,10 @@ pub(super) fn resolve(
         source,
     };
     if let Some(e) = env_name {
-        if let Some(v) = std::env::var(e).ok().filter(|v| !v.is_empty()) {
+        if let Some(v) = crate::federate::runenv::var(e)
+            .ok()
+            .filter(|v| !v.is_empty())
+        {
             return r(Some(v), format!("${e}"));
         }
     }
@@ -483,7 +485,7 @@ fn host_var(repo: &Path, host: &str, key: &str) -> Option<String> {
 
 fn source_version(repo: &Path) -> String {
     let git = |args: &[&str]| {
-        Command::new("git")
+        crate::federate::runenv::command("git")
             .arg("-C")
             .arg(repo)
             .args(args)
@@ -507,11 +509,11 @@ fn source_version(repo: &Path) -> String {
 }
 
 fn goat_version() -> String {
-    let bin = std::env::var("GOAT_BIN")
+    let bin = crate::federate::runenv::var("GOAT_BIN")
         .ok()
         .filter(|v| !v.is_empty())
         .unwrap_or_else(|| "goat".to_string());
-    Command::new(&bin)
+    crate::federate::runenv::command(&bin)
         .arg("--version")
         .output()
         .ok()
@@ -607,7 +609,12 @@ pub fn certificates(pki: &Path) -> (Vec<CertFact>, Vec<Readiness>) {
         .collect();
     files.sort();
     let (mut facts, mut rows) = (Vec::new(), Vec::new());
-    let openssl = |args: &[&str], f: &Path| Command::new("openssl").args(args).arg(f).output();
+    let openssl = |args: &[&str], f: &Path| {
+        crate::federate::runenv::command("openssl")
+            .args(args)
+            .arg(f)
+            .output()
+    };
     for f in files {
         let name = f
             .file_name()
@@ -721,7 +728,7 @@ fn acceptance(agreement: Option<&AgreementFacts>) -> AcceptancePolicy {
     }
     AcceptancePolicy {
         runner: "ops/federation/standup/acceptance.sh".into(),
-        strict: std::env::var("FED_ACCEPTANCE_STRICT").is_ok_and(|v| v == "1"),
+        strict: crate::federate::runenv::var("FED_ACCEPTANCE_STRICT").is_ok_and(|v| v == "1"),
         required,
     }
 }
@@ -737,17 +744,17 @@ fn phase1_env(
 ) -> Vec<(String, String)> {
     let inputs = preflight::derive_inputs(repo, cfg, peering, work, edge_group, None);
     let mut env: Vec<(String, String)> =
-        preflight::unset_derived(&inputs, |k| std::env::var(k).ok())
+        preflight::unset_derived(&inputs, |k| crate::federate::runenv::var(k).ok())
             .into_iter()
             .map(|(k, v)| (k.to_string(), v))
             .collect();
-    if std::env::var("GOAT_PROFILE_DIR")
+    if crate::federate::runenv::var("GOAT_PROFILE_DIR")
         .map(|v| v.is_empty())
         .unwrap_or(true)
     {
         // As the driver resolves it (federate/mod.rs): a run under sudo reads
         // root's profile, not the invoking user's HOME.
-        let home = std::env::var("HOME").unwrap_or_default();
+        let home = crate::federate::runenv::var("HOME").unwrap_or_default();
         let dir = if is_root() {
             "/root/.goat".to_string()
         } else {
@@ -759,7 +766,7 @@ fn phase1_env(
 }
 
 fn is_root() -> bool {
-    Command::new("id")
+    crate::federate::runenv::command("id")
         .arg("-u")
         .output()
         .is_ok_and(|o| String::from_utf8_lossy(&o.stdout).trim() == "0")
@@ -785,7 +792,9 @@ fn effective_inputs(
     work: &str,
     edge_group: &str,
 ) -> Vec<Resolved> {
-    effective_inputs_with(repo, cfg, peering, work, edge_group, |k| std::env::var(k).ok())
+    effective_inputs_with(repo, cfg, peering, work, edge_group, |k| {
+        crate::federate::runenv::var(k).ok()
+    })
 }
 
 /// [`effective_inputs`] with the environment given, so a test sets nothing in
@@ -860,7 +869,7 @@ fn run_phase1(
         std::fs::create_dir_all(dir).with_context(|| format!("mkdir {}", dir.display()))?;
     }
     let script = repo.join("ops/federation/standup/preflight.py");
-    let mut cmd = Command::new("python3");
+    let mut cmd = crate::federate::runenv::command("python3");
     cmd.arg(&script)
         .args([
             peering.with.as_str(),
@@ -960,7 +969,11 @@ fn declared(repo: &Path, o: &PlanOptions) -> Result<(config::Peering, config::Co
 fn work_of(o: &PlanOptions) -> String {
     o.work
         .map(String::from)
-        .or_else(|| std::env::var("FED_WORK").ok().filter(|v| !v.is_empty()))
+        .or_else(|| {
+            crate::federate::runenv::var("FED_WORK")
+                .ok()
+                .filter(|v| !v.is_empty())
+        })
         .unwrap_or_else(|| format!("/var/lib/goat-federation/{}", o.with))
 }
 
@@ -1045,7 +1058,7 @@ fn inputs_part(
         .collect();
     // The containers, named as the roles name them: the group's own
     // `*_stack`, else `<role>-<partner id>` (the roles' templated default).
-    let partner_id = std::env::var("FED_COUNTERPARTY_ID")
+    let partner_id = crate::federate::runenv::var("FED_COUNTERPARTY_ID")
         .ok()
         .filter(|v| !v.is_empty())
         .unwrap_or_else(|| with.to_string());
@@ -1141,7 +1154,7 @@ fn inputs_part(
     // The baseline host firewall is opt-in per host (`goat_host_firewall_baseline`,
     // default false). Off: NOT APPLICABLE, nothing rendered. On: the ruleset and
     // hash from the role's own renderer, or BLOCKED naming why it cannot be shown.
-    let our_package = std::env::var("FED_COUNTERPARTY")
+    let our_package = crate::federate::runenv::var("FED_COUNTERPARTY")
         .ok()
         .filter(|v| !v.is_empty())
         .map(PathBuf::from)
@@ -1390,7 +1403,7 @@ impl Recheck {
 /// else 24. A saved plan is not proof the environment stayed the same, and an
 /// old one with unchanged inputs is aged out by this.
 fn plan_max_age_hours() -> i64 {
-    std::env::var("FED_PLAN_MAX_AGE_HOURS")
+    crate::federate::runenv::var("FED_PLAN_MAX_AGE_HOURS")
         .ok()
         .and_then(|v| v.trim().parse::<i64>().ok())
         .filter(|h| *h > 0)

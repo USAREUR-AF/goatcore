@@ -1152,7 +1152,7 @@ pub fn run_scoped(repo: &Path, o: &Options, only: Option<&str>) -> Result<Report
     let values = alloc::allocate_all(&cfg, &ctx)?;
     // A peering with no hosts: takes its machines from the site inventory (federate/site_hosts.rs).
     let (cfg, host_rows) = super::site_hosts::fill(repo, cfg, &values)?;
-    let moves: Vec<String> = std::env::var("FED_ALLOCATE_MOVE")
+    let moves: Vec<String> = crate::federate::runenv::var("FED_ALLOCATE_MOVE")
         .unwrap_or_default()
         .split(',')
         .map(|m| m.trim().to_string())
@@ -2257,7 +2257,7 @@ mod tests {
         assert_eq!(cn, pinned);
 
         // The real phase 8, with that value, on a disposable CA.
-        let have_openssl = std::process::Command::new("openssl")
+        let have_openssl = crate::federate::runenv::command("openssl")
             .arg("version")
             .output()
             .is_ok_and(|o| o.status.success());
@@ -2290,7 +2290,7 @@ mod tests {
              subjectKeyIdentifier = hash\n",
         )
         .unwrap();
-        ok(std::process::Command::new("openssl")
+        ok(crate::federate::runenv::command("openssl")
             .args([
                 "ecparam",
                 "-name",
@@ -2300,7 +2300,7 @@ mod tests {
                 "-out",
             ])
             .arg(&key));
-        ok(std::process::Command::new("openssl")
+        ok(crate::federate::runenv::command("openssl")
             .args([
                 "req",
                 "-x509",
@@ -2316,7 +2316,7 @@ mod tests {
             .arg(&key)
             .arg("-out")
             .arg(&ca));
-        let der = ok(std::process::Command::new("openssl")
+        let der = ok(crate::federate::runenv::command("openssl")
             .args(["x509", "-outform", "DER", "-in"])
             .arg(&ca));
         use sha2::Digest;
@@ -2332,7 +2332,7 @@ mod tests {
         let out = t.path().join("pki");
         let script = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../ops/federation/standup/mint-peering-leaves.sh");
-        let mut mint = std::process::Command::new("bash");
+        let mut mint = crate::federate::runenv::command("bash");
         mint.arg(&script)
             .arg(&agreement)
             .arg(&out)
@@ -2349,7 +2349,7 @@ mod tests {
             }
         }
         ok(&mut mint);
-        let subject = ok(std::process::Command::new("openssl")
+        let subject = ok(crate::federate::runenv::command("openssl")
             .args(["x509", "-noout", "-subject", "-nameopt", "RFC2253", "-in"])
             .arg(out.join("core.pem")));
         // OpenSSL prints `subject=CN=x`, LibreSSL `subject= CN=x`.

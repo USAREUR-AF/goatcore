@@ -17,7 +17,6 @@
 //! stay overrides.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use super::admit_role::RoleCore;
 use super::preflight::group_var;
@@ -28,7 +27,7 @@ pub type Leaf = (PathBuf, String);
 /// `goat_leaf(<file>, <site>, <root>)` from this checkout's filter plugin.
 fn goat_leaf(repo: &Path, file: &str, site: &str, root: Option<&str>) -> Option<PathBuf> {
     let plugins = repo.join("ops/ansible/filter_plugins");
-    let out = Command::new("python3")
+    let out = crate::federate::runenv::command("python3")
         .arg("-I")
         .arg("-c")
         .arg(

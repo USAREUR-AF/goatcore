@@ -295,7 +295,7 @@ pub fn exchange(
     if !plain_id(&them) || !plain_id(&us) || them == us {
         return fail("GB-191", format!("the sovereign ids in the two halves ('{us}', '{them}') must be two different plain ids"), "check both halves are the right packages");
     }
-    if let Some(want) = std::env::var("FED_COUNTERPARTY_ID")
+    if let Some(want) = crate::federate::runenv::var("FED_COUNTERPARTY_ID")
         .ok()
         .filter(|v| !v.is_empty())
     {

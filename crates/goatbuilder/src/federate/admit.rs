@@ -51,7 +51,6 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use super::confirm::{pem_fingerprints, sha256, Step, Verdict};
 use super::prompt::{self, groups};
@@ -85,7 +84,9 @@ fn fail(code: &str, detail: impl Into<String>, fix: impl Into<String>) -> Step {
 }
 
 fn env(name: &str) -> Option<String> {
-    std::env::var(name).ok().filter(|v| !v.trim().is_empty())
+    crate::federate::runenv::var(name)
+        .ok()
+        .filter(|v| !v.trim().is_empty())
 }
 
 /// Lines before the first header, and each region's lines.
@@ -183,7 +184,7 @@ fn sh_quote(s: &str) -> String {
 }
 
 fn cert_line(p: &Path) -> String {
-    let out = Command::new("openssl")
+    let out = crate::federate::runenv::command("openssl")
         .args(["x509", "-noout", "-subject", "-enddate", "-in"])
         .arg(p)
         .output();
@@ -347,7 +348,7 @@ impl Core {
 
 fn bash(repo: &Path, cmd: &str) -> Result<(), i32> {
     // Their output goes to stderr: stdout carries the report (-o json).
-    match Command::new("bash")
+    match crate::federate::runenv::command("bash")
         .args(["-euo", "pipefail", "-c", cmd])
         .current_dir(repo)
         .stdout(std::process::Stdio::from(std::io::stderr()))
@@ -755,7 +756,7 @@ pub fn admit(
     }
     if let (Some(seed), Some(out)) = (&core.seed, &core.out) {
         let cfg = staged.join("core-config.json5");
-        let assembled = Command::new("python3")
+        let assembled = crate::federate::runenv::command("python3")
             .arg(repo.join("ops/ansible/roles/goat-zenoh/files/acl-assemble.py"))
             .args(["assemble", "--seed"])
             .arg(seed)
@@ -1025,7 +1026,7 @@ pub fn admit(
     };
     match slot {
         Some(args) => {
-            let rc = Command::new("python3")
+            let rc = crate::federate::runenv::command("python3")
                 .arg(&script)
                 .args(&args)
                 .current_dir(repo)

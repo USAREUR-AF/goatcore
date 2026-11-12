@@ -29,7 +29,6 @@
 use std::collections::BTreeMap;
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use anyhow::{anyhow, Context, Result};
 use serde::Deserialize;
@@ -164,7 +163,7 @@ fn plain(s: &str) -> bool {
 }
 
 fn env_or(name: &str, default: String) -> String {
-    std::env::var(name)
+    crate::federate::runenv::var(name)
         .ok()
         .filter(|v| !v.is_empty())
         .unwrap_or(default)
@@ -431,7 +430,7 @@ pub fn slot_recheck(repo: &Path, env: Option<&str>, run: bool) -> (String, bool,
             format!("python3 {}", argv.join(" ")),
         );
     }
-    match Command::new("python3")
+    match crate::federate::runenv::command("python3")
         .args(&argv)
         .current_dir(repo)
         .output()
@@ -466,7 +465,7 @@ pub fn slot_recheck(repo: &Path, env: Option<&str>, run: bool) -> (String, bool,
 }
 
 fn run_bash(repo: &Path, cmd: &str) -> Result<bool> {
-    Ok(Command::new("bash")
+    Ok(crate::federate::runenv::command("bash")
         .args(["-euo", "pipefail", "-c", cmd])
         .current_dir(repo)
         .status()
@@ -948,7 +947,7 @@ pub fn backout_with(
 
     // 6 directory
     if let Some((_, args)) = directory(repo, o, &t, false).filter(|_| core_done) {
-        let out = Command::new("python3")
+        let out = crate::federate::runenv::command("python3")
             .args(&args)
             .current_dir(repo)
             .output();
@@ -1375,8 +1374,8 @@ mod tests {
             "zenoh_active_slot_anchors: []\n",
         )
         .unwrap();
-        if std::env::var("FED_SLOT_DB").is_err()
-            && std::env::var("FED_SLOT_REGISTRY_STORE").is_err()
+        if crate::federate::runenv::var("FED_SLOT_DB").is_err()
+            && crate::federate::runenv::var("FED_SLOT_REGISTRY_STORE").is_err()
         {
             let (w, ok, said) = slot_recheck(d.path(), Some("dev"), true);
             assert_eq!((w.as_str(), ok), ("BLOCKED", false), "{said}");
@@ -1454,7 +1453,8 @@ mod tests {
 
     #[test]
     fn a_blocked_slot_check_stops_the_run_before_anything_is_removed() {
-        if std::env::var("FED_SLOT_DB").is_ok() || std::env::var("FED_SLOT_REGISTRY_STORE").is_ok()
+        if crate::federate::runenv::var("FED_SLOT_DB").is_ok()
+            || crate::federate::runenv::var("FED_SLOT_REGISTRY_STORE").is_ok()
         {
             return; // the check would not be BLOCKED in this environment
         }

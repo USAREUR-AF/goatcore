@@ -94,7 +94,9 @@ pub fn resolve_site(a: &SiteArgs) -> Result<Site> {
 }
 
 fn non_empty_env(name: &str) -> Option<String> {
-    std::env::var(name).ok().filter(|v| !v.is_empty())
+    crate::federate::runenv::var(name)
+        .ok()
+        .filter(|v| !v.is_empty())
 }
 
 /// The goat context directory, resolved the way `goat` resolves it
@@ -302,7 +304,7 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(goat_context_dir(&a).unwrap(), d.path().join("contexts/xab"));
-        if std::env::var_os("GOAT_CONTEXT").is_none() {
+        if crate::federate::runenv::var_os("GOAT_CONTEXT").is_none() {
             a.context = None;
             assert_eq!(goat_context_dir(&a).unwrap(), d.path().join("contexts/xaa"));
         }
