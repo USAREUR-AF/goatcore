@@ -136,6 +136,19 @@ The requirements depend on one another in this order. No dates are set here.
 8. **The cold-read drill.** C4 and C5, on a release candidate `goatbuilder/v1.0.0-rc.N`.
 9. **1.0.** Every row of the gate reads "passed", with a link to its test run or measurement.
 
+## Release plan
+
+Three releases after 0.5.2 reach 1.0, or four if the release candidate needs a second round. No dates are set; a release is cut when its rows pass.
+
+| Release | What it is | Rows it closes |
+|---|---|---|
+| 0.5.2 | Document corrections; CI no longer depends on a distribution archive. Released and deployed with no exception at any stage | none; it proves the pipeline |
+| 0.6.0 | The tool shows its work, and the federation rows that need no outside party | F1 to F6; B5, B6, B7, B10; C3 |
+| 0.7.0 | Federation complete and proven outside the laboratory; the promise written and under test; upgrade tested | B2, B3, B4, B8, B9; A1 to A5; E1 to E3 |
+| 1.0.0-rc.N, then 1.0.0 | Surfaces frozen; proof on hardware and by people who did not build it | C1, C2, C4, C5; D agreed |
+
+Rows that need a person or a machine outside the build: B9 (a real partner), C1 and C2 (hardware), C4 (a person outside the team), A1 and D (decisions). Each is prepared so that the act itself is short.
+
 ## How the gate is kept
 
 - Each row's status is changed in the pull request that makes its test pass, and the row then links to the test.
