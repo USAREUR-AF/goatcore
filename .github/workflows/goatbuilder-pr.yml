@@ -233,7 +233,7 @@ jobs:
         run: touch "$RUNNER_TEMP/goatbuilder-tests-start"
       - name: cargo test (unit, golden commands, tutor, the C11 conformance test, A2 configuration compatibility, the docs' config examples; every test target but the flows)
         if: env.FULL == 'true'
-        run: cargo test -p goatbuilder --bins --test cli_golden --test tutor --test bound_not_a_tty --test update --test verify_release --test federate_verbs --test legibility --test legibility_one_door --test config_compat --test deprecation --test deploy_success --test doc_configs --test status_real_hosts
+        run: cargo test -p goatbuilder --bins --test cli_golden --test tutor --test bound_not_a_tty --test update --test verify_release --test federate_verbs --test legibility --test legibility_one_door --test config_compat --test deprecation --test deploy_success --test doc_configs --test full_plans_unchanged --test status_real_hosts
       - name: cargo test -p goat-fun (the shared hidden runner, goat and goatbuilder bound) and goat-federation (the verbs goatbuilder runs)
         if: env.FULL == 'true'
         run: cargo test -p goat-fun -p goat-selfupdate -p goat-federation
