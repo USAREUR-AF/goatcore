@@ -13,7 +13,8 @@
 //!   or it is a by-hand phase (5, 10), or it is phase 3, whose output is our
 //!   half as already sent to the partner (re-measuring it makes a new half
 //!   that needs a new exchange, so that is asked for with `--from 3`; its
-//!   digest covers the command and the signing key's bytes);
+//!   digest covers the command, the signing key's bytes and, when a key
+//!   rotation is recorded, `<work>/rotation.json`);
 //! - its journal record says it passed;
 //! - the digest of its command and of the files it reads, measured now, is
 //!   the recorded one; and the digest of the files it left, measured now, is
@@ -22,9 +23,11 @@
 //!   is where the run starts, and every such phase after it runs too.
 //!
 //! Everything else always runs: the gates (1, 14) are live checks, the lint
-//! and verify phases (4, 7) read again what is there, minting (8) checks the
-//! leaves' expiry and the CA they chain to and renews them when needed (a
-//! renewed leaf changes phase 10's inputs, so the by-hand review stops again),
+//! and verify phases (4, 7) read again what is there, minting (8) reuses each
+//! leaf that validates (its name, the CA it chains to, at least a day of
+//! validity) and issues a missing one; a leaf that fails validation, one about
+//! to expire included, stops phase 8 until it is replaced with `--rotate` (a
+//! new leaf changes phase 10's inputs, so the by-hand review stops again),
 //! and the phases that change hosts (2, 11, 12, 13) run their idempotent plays
 //! again, which is how the actual state of a host is inspected and converged. So a resumed run
 //! never trusts a phase number, and never skips work whose result it cannot
@@ -109,6 +112,10 @@ pub struct Paths {
     pub pki: PathBuf,
     /// The seed that signs our package (FED_SIGNING_KEY), read by phase 3.
     pub signing: Option<PathBuf>,
+    /// `<work>/rotation.json`: a key rotation asked for on this peering
+    /// (docs/design/federation-key-rotation.md §5). Read by phase 3 when it
+    /// exists, so a new key is measured into a new package.
+    pub rotation: PathBuf,
 }
 
 fn env_or(name: &str, default: String) -> String {
@@ -131,6 +138,7 @@ impl Paths {
             their_ca: w.join("theirs-ca.pem"),
             agreement: w.join("agreement.json"),
             applied: w.join("applied"),
+            rotation: w.join("rotation.json"),
             pki: w.join("pki"),
             signing: std::env::var("FED_SIGNING_KEY")
                 .ok()
@@ -169,7 +177,16 @@ impl Paths {
             self.applied.clone(),
         );
         match n {
-            3 => (self.signing.iter().cloned().collect(), vec![o]),
+            // The rotation record only when there is one: a journal written
+            // before it existed keeps its digest, so an upgrade reruns nothing.
+            3 => (
+                self.signing
+                    .iter()
+                    .cloned()
+                    .chain(Some(self.rotation.clone()).filter(|r| r.exists()))
+                    .collect(),
+                vec![o],
+            ),
             4 => (vec![o], vec![]),
             5 => (vec![o, t, ca], vec![k]),
             6 => (vec![o, t, k], vec![a]),
@@ -723,6 +740,28 @@ mod tests {
         assert!(
             phases().iter().all(|p| !r.skips(p)),
             "phase 3's output is gone: everything runs"
+        );
+    }
+
+    #[test]
+    fn a_recorded_rotation_makes_phase_3_and_every_later_phase_run_again() {
+        let d = tempfile::tempdir().unwrap();
+        let w = d.path().display().to_string();
+        write_outputs(d.path());
+        for n in [3, 5, 6, 8, 9, 10] {
+            pass(&w, n);
+        }
+        // No rotation recorded: phase 3 is skipped as before, so a journal
+        // written before rotation.json existed keeps its digest.
+        let r = begin(&w, 1, true);
+        assert!(phases().iter().any(|p| p.n == 3 && r.skips(p)));
+        drop(r);
+        // A rotation names a new key: our package must be measured again.
+        std::fs::write(d.path().join("rotation.json"), r#"{"key":"transport","nonce":"1"}"#).unwrap();
+        let r = begin(&w, 1, true);
+        assert!(
+            phases().iter().all(|p| !r.skips(p)),
+            "phase 3 and every phase after it run again"
         );
     }
 
