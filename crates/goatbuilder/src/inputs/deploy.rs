@@ -388,5 +388,14 @@ mod tests {
             render("ledger"),
             "default: the component's own name, when it declares no ledger_component"
         );
+        // Every input a derived value names is listed, so `why` follows it.
+        assert_eq!(super::super::dangling(&inputs), Vec::<String>::new());
+        assert_eq!(
+            super::super::why(&inputs, "name"),
+            [
+                "name=dev  derived from goatnet (above) by the goatnet with _ as -",
+                "  goatnet=dev  argument --env"
+            ]
+        );
     }
 }
