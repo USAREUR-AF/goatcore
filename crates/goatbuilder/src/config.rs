@@ -1002,4 +1002,18 @@ mod tests {
         let names: Vec<&str> = cfg.promotion.path.iter().map(|s| s.name.as_str()).collect();
         assert_eq!(names, ["dev", "preprod", "prod"]);
     }
+
+    /// The administrator address keeps the shape it has always validated with.
+    #[test]
+    fn an_admin_address_that_validated_before_still_validates() {
+        for a in ["admin@example.org", "me@pasture", "o$wner@example.org", "o'brien@example.org", "a$(x)@example.org", "a`b`c@example.org", "a\"b@example.org", "a\\b@example.org"] {
+            let mut v = goatlite();
+            v["lite"]["admin"] = json!(a);
+            assert_eq!(problems(&v).unwrap(), Vec::<String>::new(), "lite.admin {a} validates");
+            let mut v = goatlite();
+            v["lite"]["internet"] = json!({"zone": "pasture.example.org", "acme_email": a});
+            assert!(!problems(&v).unwrap().iter().any(|p| p.contains("acme_email")), "lite.internet.acme_email {a} validates");
+        }
+    }
+
 }

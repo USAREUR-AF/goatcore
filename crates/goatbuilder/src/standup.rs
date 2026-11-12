@@ -811,6 +811,12 @@ fn phase_command(repo: &Path, cmd: &str) -> Command {
     c
 }
 
+/// The values a site's phases read from their environment rather than from
+/// their command line.
+fn phase_env(_s: &Site) -> Vec<(&'static str, String)> {
+    Vec::new()
+}
+
 /// `standup` on real hosts: the plan, printed; executed unless `--dry-run`.
 pub fn standup(repo: &Path, o: &Options) -> Result<Report> {
     // A goatlite run (ADR 1213) declares its one environment in <repo>/goatlite.yaml,
@@ -2022,6 +2028,42 @@ mod tests {
             }
         }
         assert_eq!(seen, 31, "every declared word was found in the plan");
+    }
+
+    /// The administrator's address reaches the bootstrap phases as data: each
+    /// planned bootstrap command, run through the shared phase runner with the
+    /// site's phase environment, hands Ansible the address exactly as declared,
+    /// whatever it contains. An undeclared owner is still `"$OWNER_EMAIL"`.
+    #[test]
+    fn the_admin_address_reaches_the_phases_without_shell_interpolation() {
+        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().unwrap();
+        let o = Options { env: "pasture", site: "pasture", profile: Some("lan"), from: 1, to: 14, skip_obs: true, obs_only: false, dry_run: true, parallel: false, check: false };
+        let owner_word = |cmd: &str| {
+            let rest = cmd.split_once("-e bootstrap_owner_email=").expect("the bootstrap phase passes the owner").1;
+            rest.split_once(" -e postgres_superuser_password=").expect("the next argument").0.to_string()
+        };
+        let out = crate::testdir::path("gb-owner-word-");
+        for raw in ["a.learner@example.org", "me@pasture", "o'brien@example.org", "a$b@example.org", "a$(x)@example.org", "a`b`c@example.org", "a\"b@example.org", "a\\b@example.org"] {
+            let mut site = lan_site(true, false);
+            site.owner_email = raw.to_string();
+            let cmds: Vec<String> = phases_of(&plan(Path::new("/r"), &site, &o, "R")).iter().filter(|p| p.cmd.contains("bootstrap_owner_email")).map(|p| p.cmd.clone()).collect();
+            assert!(!cmds.is_empty());
+            for c in &cmds {
+                let file = out.join("owner");
+                let probe = format!("printf '%s' {} > '{}'", owner_word(c), file.display());
+                let mut run = phase_command(&repo, &probe);
+                run.current_dir(&repo).env_remove("OWNER_EMAIL").env("GOAT_SECRET_STORE", "env");
+                for (k, v) in phase_env(&site) {
+                    run.env(k, v);
+                }
+                let st = run.status().unwrap();
+                assert!(st.success(), "the runner ran the probe for {raw:?}");
+                assert_eq!(std::fs::read_to_string(&file).unwrap(), raw, "the phase receives the address as declared");
+            }
+        }
+        let cmds: Vec<String> = phases_of(&plan(Path::new("/r"), &lan_site(false, false), &o, "R")).iter().filter(|p| p.cmd.contains("bootstrap_owner_email")).map(|p| p.cmd.clone()).collect();
+        assert!(!cmds.is_empty() && cmds.iter().all(|c| owner_word(c) == "\"$OWNER_EMAIL\""), "an undeclared owner is unchanged");
+        assert!(phase_env(&lan_site(false, false)).is_empty(), "and adds nothing to the environment");
     }
 
     /// Not lite: no render gate, phase 4 as before; a LAN site pauses at 11 only
