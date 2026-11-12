@@ -24,6 +24,7 @@ on:
       - 'crates/Cargo.toml'
       - 'crates/Cargo.lock'
       - 'ops/goatbuilder/schema/**'
+      - 'docs/tutorials/00-goatlite.md'   # tests/goatlite_budget.rs: the first-run budget (G2)
       - 'ops/goatbuilder/goatbuilder.yaml'
       - 'ops/goatbuilder/parity-*.sh'
       - 'ops/pins/**'
