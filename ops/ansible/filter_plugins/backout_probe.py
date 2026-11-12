@@ -12,8 +12,9 @@ tool wrote is the tool's own not-found line for the probed name:
                     <name>" (or "Error: No such container|object: <name>");
            podman:  exit 125 and 'Error: no such container "<name>"';
            wg:      exit 1 and "Unable to access interface: No such device";
-           nft:     exit 1 and "Error: No such file or directory" (a table or
-                    chain that does not exist);
+           nft:     exit 1, "Error: No such file or directory", and on the next
+                    line the command it could not run, naming the probed table
+                    ("list table inet <table>", "list chain inet <table> <chain>");
            ip:      exit 1 and 'Device "<name>" does not exist.';
            SPIRE:   a non-zero exit and "rpc error: code = NotFound desc = ..."
                     (with or without a leading "Error: ");
@@ -39,7 +40,12 @@ def _first_line(text):
     return ''
 
 
-def _not_found(kind, rc, line, name):
+def _second_line(text):
+    lines = [line.strip() for line in (text or '').splitlines() if line.strip()]
+    return lines[1] if len(lines) > 1 else ''
+
+
+def _not_found(kind, rc, line, name, err=''):
     if kind == 'docker':
         if rc == 1:
             return re.fullmatch(r'Error( response from daemon)?: No such (container|object): '
@@ -50,7 +56,8 @@ def _not_found(kind, rc, line, name):
     if kind == 'wg':
         return rc == 1 and line == 'Unable to access interface: No such device'
     if kind == 'nft':
-        return rc == 1 and line == 'Error: No such file or directory'
+        return (rc == 1 and line == 'Error: No such file or directory'
+                and re.fullmatch(r'list (table|chain) inet ' + re.escape(name) + r'( \S+)?', _second_line(err)) is not None)
     if kind == 'ip-link':
         return rc == 1 and line == 'Device "%s" does not exist.' % name
     if kind in ('spire', 'spire-bundle'):
@@ -71,7 +78,7 @@ def backout_probe_state(result, kind, name):
             return {'state': 'unknown', 'note': 'rc 0: bundle has no X.509 authority'}
         return {'state': 'present', 'note': _first_line(out)}
     line = _first_line(err) or _first_line(out)
-    if _not_found(kind, rc, line, str(name)):
+    if _not_found(kind, rc, line, str(name), err):
         return {'state': 'absent', 'note': ''}
     first = line or _first_line(result.get('msg')) or 'no error text'
     return {'state': 'unknown', 'note': 'rc %d: %s' % (rc, first[:300])}

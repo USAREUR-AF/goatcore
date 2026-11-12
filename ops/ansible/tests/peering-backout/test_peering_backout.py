@@ -117,6 +117,21 @@ def run(argv, tmp, path_prefix=None):
     return subprocess.run(argv, cwd=ANSIBLE, env=env, capture_output=True, text=True, check=False)
 
 
+# Measured, nftables 1.1.6: a missing table or chain is exit 1, then nft's own
+# not-found line, then the command it could not run.
+NFT_NOT_FOUND = ('[ "$1" = -a ] && shift\n'
+                 'echo "Error: No such file or directory" >&2; echo "$*" >&2; exit 1')
+# The tools every survey test puts on PATH unless it gives its own, so a survey does
+# not depend on what this machine's ip, nft and systemctl say without privilege.
+NETWORK_NOT_FOUND = {
+    "ip": ('case "$*" in\n'
+           '  "-o link show") exit 0 ;;\n'
+           '  *) eval "name=\\${$#}"; echo "Device \\"$name\\" does not exist." >&2; exit 1 ;;\n'
+           'esac'),
+    "nft": NFT_NOT_FOUND,
+}
+
+
 @unittest.skipUnless(shutil.which("ansible-playbook"), "ansible-playbook not on PATH")
 class TwoPeeringsOneHost(unittest.TestCase):
     def setUp(self):
@@ -152,13 +167,14 @@ class TwoPeeringsOneHost(unittest.TestCase):
     def test_a_survey_of_one_peering_names_nothing_of_the_other(self):
         fx = tbc.Fixture(tbc.fragment("xaa", "xab"), tbc.fragment("xaa", "xac"))
         work = f"{self.tmp}/work/xac"
-        # nft as this user cannot read any table; a fake that says the forwarder table
-        # does not exist lets the forwarder row carry its note about the other entries.
-        bindir = f"{self.tmp}/fake-nft"
+        # nft as this user cannot read any table; fakes that say each table, chain and
+        # link does not exist let the forwarder row carry its note about the other entries.
+        bindir = f"{self.tmp}/fake-net"
         os.makedirs(bindir, exist_ok=True)
-        with open(f"{bindir}/nft", "w", encoding="utf-8") as f:
-            f.write('#!/bin/sh\nprintf "Error: No such file or directory\\n" >&2\nexit 1\n')
-        os.chmod(f"{bindir}/nft", 0o700)
+        for name, body in NETWORK_NOT_FOUND.items():
+            with open(f"{bindir}/{name}", "w", encoding="utf-8") as f:
+                f.write("#!/bin/sh\n" + body + "\n")
+            os.chmod(f"{bindir}/{name}", 0o755)
         r = run(["ansible-playbook", "-i", self.inv, "--limit", "xac_edge:xac_core:peering_forwarders",
                  str(ANSIBLE / "peering-backout.yml"),
                  "-e", "peering_backout_id=xac", "-e", f"fed_work={work}", "-e", "fed_edge_group=xac_edge",
@@ -193,10 +209,11 @@ class TwoPeeringsOneHost(unittest.TestCase):
         self.assertEqual(Path(fx.org).read_text(), fx.vendor + tbc.fragment("xaa", "xab") + tbc.fragment("xaa", "xac"))
 
     def survey_with_tools(self, tools):
-        """A survey of xac with fake docker and wg on PATH: {name: shell body}."""
+        """A survey of xac with fake tools on PATH: {name: shell body}; ip and nft
+        answer with their own not-found lines unless the test gives its own."""
         bindir = f"{self.tmp}/fake-bin"
         os.makedirs(bindir, exist_ok=True)
-        for name, body in tools.items():
+        for name, body in {**NETWORK_NOT_FOUND, **tools}.items():
             path = f"{bindir}/{name}"
             with open(path, "w", encoding="utf-8") as f:
                 f.write("#!/bin/sh\n" + body + "\n")
@@ -272,11 +289,24 @@ class TwoPeeringsOneHost(unittest.TestCase):
                 self.assertEqual(rows[resource]["action"], "none", rows[resource])
                 self.assertRegex(rows[resource]["note"], r"rc \d+: ", rows[resource])
 
+    def test_a_table_whose_sharing_cannot_be_checked_is_unknown(self):
+        # The table answers, but the list of links that says whether another link
+        # shares its name could not be read: removing it could take another's.
+        rows = self.survey_with_tools({
+            "docker": 'eval "name=\\${$#}"; echo "Error response from daemon: No such container: $name" >&2; exit 1',
+            "wg": 'echo "Unable to access interface: No such device" >&2; exit 1',
+            "nft": 'printf "table inet x {\\n}\\n"',
+            "ip": 'echo "RTNETLINK answers: Operation not permitted" >&2; exit 2'})
+        row = rows["edge-xac: nft table inet goat_peering_wg_fed1"]
+        self.assertEqual(row["state"], "unknown", row)
+        self.assertEqual(row["action"], "none", row)
+        self.assertIn("rc 2", row["note"], row)
+
     def test_tunnel_and_table_probes_read_each_tools_not_found(self):
         rows = self.survey_with_tools({
             "docker": 'eval "name=\\${$#}"; echo "Error response from daemon: No such container: $name" >&2; exit 1',
             "wg": 'echo "Unable to access interface: No such device" >&2; exit 1',
-            "nft": 'printf "Error: No such file or directory\\nlist table inet x\\n" >&2; exit 1',
+            "nft": NFT_NOT_FOUND,
             "ip": ('case "$*" in *"link show "*) eval "name=\\${$#}"; '
                    'echo "Device \\"$name\\" does not exist." >&2; exit 1 ;; *) exit 0 ;; esac')})
         for resource in self.TUNNEL_PROBES:
@@ -443,12 +473,19 @@ class ProbeState(unittest.TestCase):
         # Measured in a user and network namespace: nft 1.1 and iproute2.
         nft_missing = "Error: No such file or directory\nlist table inet goat_x\n                ^^^^^^"
         self.assertEqual(self.state("nft", 1, nft_missing, name="goat_x")["state"], "absent")
+        chain_missing = "Error: No such file or directory\nlist chain inet goat_x clamp\n                   ^^^^^"
+        self.assertEqual(self.state("nft", 1, chain_missing, name="goat_x")["state"], "absent")
         self.assertEqual(self.state("ip-link", 1, 'Device "wg-fed1" does not exist.', name="wg-fed1")["state"],
                          "absent")
         for kind, rc, err, name in (
                 ("nft", 1, "Operation not permitted (you must be root)\nnetlink: Error: cache initialization failed",
                  "goat_x"),
                 ("nft", 1, "Error: Could not process rule: No such file or directory", "goat_x"),
+                # nft writes the command it could not run on the next line: absent
+                # only when that command names the probed table.
+                ("nft", 1, "Error: No such file or directory\nlist table inet goat_y", "goat_x"),
+                ("nft", 1, "Error: No such file or directory\nlist table inet goat_x_old", "goat_x"),
+                ("nft", 1, "Error: No such file or directory", "goat_x"),
                 ("nft", 127, "", "goat_x"),
                 ("ip-link", 1, 'Device "wg-fed2" does not exist.', "wg-fed1"),
                 ("ip-link", 255, "RTNETLINK answers: Operation not permitted", "wg-fed1")):
