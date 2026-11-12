@@ -109,6 +109,30 @@ def mint(folder, name, cn, san, ca, ca_key, days):
     cert.chmod(0o644)
 
 
+STAGING_PREFIX = '.mint-'
+
+
+def sweep_stale_staging(out):
+    """Remove what an interrupted run left in its private staging directories.
+
+    Every leaf is minted into <out>/.mint-*, and a run that is killed (kill -9,
+    a lost host) leaves that directory behind with the private keys it had
+    generated. Only this helper creates a .mint-* entry, and only while it
+    holds the exclusive lock on <out>/.mint.lock; the kernel drops that lock
+    when its holder dies. Called with the lock held, so every .mint-* entry
+    seen here belongs to a run that is no longer alive and none is live
+    material. Installed leaves, our CA, the lock file and a rotation's
+    retained .previous-* set do not match the prefix and are never touched.
+    A symlink or file of that name is unlinked, never followed.
+    """
+    for entry in sorted(out.glob(STAGING_PREFIX + '*')):
+        if entry.is_dir() and not entry.is_symlink():
+            shutil.rmtree(entry)
+        else:
+            entry.unlink()
+        print('  [removed] ' + entry.name + ': staging left by an interrupted run')
+
+
 OUR_CA = 'our-ca.pem'
 OUR_CA_MODE = 0o600
 
@@ -199,6 +223,7 @@ def main():
         journal = out / '.rotation-pending'
         if journal.exists() or journal.is_symlink():
             raise ValueError('interrupted rotation: inspect .rotation-pending and its backup before recovery')
+        sweep_stale_staging(out)
         trust_options = only_trust_options(ca, out)
         openssl('verify', *trust_options, '-trusted', ca, ca)
         our_ca_target(out)
@@ -233,8 +258,10 @@ def main():
         if public_key(ca, certificate=True) != public_key(ca_key):
             raise ValueError('signing CA certificate and private key do not match')
         # Validate the complete candidate set before replacing any leaf. Temporary
-        # private material stays under a private directory on the same filesystem.
-        with tempfile.TemporaryDirectory(prefix='.mint-', dir=out) as temp:
+        # private material stays under a private (0700) directory on the same
+        # filesystem, so installation is a rename; if this run dies before the
+        # directory is removed, the next run's sweep_stale_staging removes it.
+        with tempfile.TemporaryDirectory(prefix=STAGING_PREFIX, dir=out) as temp:
             stage = Path(temp)
             for name, cn, san in pending:
                 mint(stage, name, cn, san, ca, ca_key, args.days)

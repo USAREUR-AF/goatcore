@@ -111,6 +111,20 @@ replacement, including a mixed set of otherwise valid pairs. Restore the previou
 set or complete the approved replacement using the retained private backup, verify
 the complete set, then remove the marker under the operator recovery procedure. This PR does not promise unattended recovery.
 
+New pairs are minted into a private (0700) staging directory, `<out>/.mint-*`,
+on the same filesystem, so installation is a rename. A run killed while minting
+leaves that directory behind with the private keys it generated. The next run,
+once it holds the lock and has found no `.rotation-pending` journal, removes every
+`.mint-*` entry before it inspects anything: only the helper creates one, only
+while it holds the lock, so an entry seen under the lock belongs to a run that is
+no longer alive. A symlink of that name is unlinked, never followed. Installed
+leaves, `our-ca.pem` and a rotation's `.previous-*` set are never removed. A run
+resumed after a kill during minting leaves `<out>` in the same shape as a clean
+run. Status: built, and measured by
+`ops/federation/standup/test_peering_leaf_material_interrupted.py`, which kills a
+real run while it is minting; the kill-resume scenario on the federation test
+environment is not yet measured with this change.
+
 ## Installing on the edge
 
 Status: WIP — gate: the federation e2e matrix passing with
