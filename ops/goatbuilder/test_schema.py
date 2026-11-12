@@ -16,6 +16,8 @@ from __future__ import annotations
 import copy
 import importlib.util
 import os
+import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -396,6 +398,7 @@ class ProjectValues(unittest.TestCase):
                                 "goatnets:\n  dev:\n    members: [dev_hosts]\n")
         self.ladder = self._write("ladder.yaml", "rungs:\n  - {name: dev, goatnet: dev, status: live}\n")
         self.none = os.path.join(d, "absent.yml")
+        self.federation = self._write("federation.yml", "environments: {}\npeerings: []\n")
 
     def _write(self, name, text):
         path = os.path.join(self.tmp.name, name)
@@ -404,7 +407,9 @@ class ProjectValues(unittest.TestCase):
         return path
 
     def gen(self, project, posture=None):
-        return gen_config.generate(self.pins, self.ladder, project, posture or self.none)
+        return gen_config.generate(
+            self.pins, self.ladder, project, posture or self.none, self.federation
+        )
 
     def test_no_project_file_names_no_one(self):
         cfg = self.gen(self.none)
@@ -454,6 +459,716 @@ class ProjectValues(unittest.TestCase):
             with self.subTest(word=word), self.assertRaises(SystemExit) as e:
                 self.gen(self._write("project.yml", text))
             self.assertIn(word, str(e.exception))
+
+
+class FederationValues(unittest.TestCase):
+    """federation.yml owns environment overlays and peerings."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.pins = self._write(
+            "pins.yaml",
+            "components:\n  example-service: {}\n"
+            "goatnets:\n  dev:\n    members: [dev_hosts]\n",
+        )
+        self.ladder = self._write(
+            "ladder.yaml", "rungs:\n  - {name: dev, goatnet: dev, status: live}\n"
+        )
+        self.project = self._write(
+            "project.yml",
+            "repo:\n  source: example-org/example-repo\n"
+            "  image_namespace: ghcr.io/example-org\n",
+        )
+        self.posture = self._write("posture.yml", "store: env-file\n")
+        self.out = os.path.join(self.tmp.name, "goatbuilder.yaml")
+
+    def _write(self, name, text):
+        path = os.path.join(self.tmp.name, name)
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        return path
+
+    def _source(self, peerings="[]", classes="{core: {}, edge: {}}", extra=""):
+        return self._write(
+            "federation.yml",
+            "environments:\n"
+            "  dev:\n"
+            f"{extra}"
+            "    sites:\n"
+            "      - name: alpha\n"
+            "        role: founder\n"
+            f"        classes: {classes}\n"
+            f"peerings: {peerings}\n",
+        )
+
+    def _generate(self, federation):
+        return gen_config.generate(
+            self.pins, self.ladder, self.project, self.posture, federation
+        )
+
+    def _read_output(self):
+        with open(self.out, "rb") as fh:
+            return fh.read()
+
+    def _legacy_text(self, config):
+        return "".join(
+            line for line in gen_config.render(config).splitlines(keepends=True)
+            if not line.startswith(gen_config.FEDERATION_DIGEST_PREFIX)
+        )
+
+    def _marked_text(self, config, marker_config):
+        marker = gen_config._federation_digest(marker_config)
+        return (
+            gen_config.HEADER
+            + f"{gen_config.FEDERATION_DIGEST_PREFIX}{marker}\n"
+            + gen_config.yaml.safe_dump(
+                config, sort_keys=False, default_flow_style=False, width=100
+            )
+        )
+
+    def _assert_refused_unchanged(self, config, source, fragment):
+        before = (self._read_output(), os.stat(self.out).st_mtime_ns)
+        with self.assertRaises(SystemExit) as e:
+            gen_config.write_or_check(
+                config, False, self.out, self.tmp.name, source, self.posture
+            )
+        self.assertIn(fragment, str(e.exception))
+        after = (self._read_output(), os.stat(self.out).st_mtime_ns)
+        self.assertEqual(before, after)
+        return e.exception
+
+    def test_no_peering_omits_the_optional_block(self):
+        cfg = self._generate(self._source())
+        self.assertNotIn("peerings", cfg)
+        self.assertEqual(validate.errors_for(cfg), [])
+
+    def test_public_core_defaults_to_a_missing_federation_source(self):
+        missing = os.path.join(self.tmp.name, "missing-federation.yml")
+        self.assertFalse(os.path.exists(missing))
+        cfg = self._generate(missing)
+        self.assertNotIn("peerings", cfg)
+        self.assertTrue(all("sites" not in env for env in cfg["environments"]))
+
+    def test_one_peering_and_its_site_survive_and_validate(self):
+        source = self._source(
+            "[{with: velmara, environment: dev, site: alpha, edge_class: edge}]"
+        )
+        cfg = self._generate(source)
+        self.assertEqual(cfg["environments"][0]["sites"][0]["name"], "alpha")
+        self.assertEqual([row["with"] for row in cfg["peerings"]], ["velmara"])
+        self.assertEqual(validate.errors_for(cfg), [])
+
+    def test_environment_declarations_survive_actual_regeneration(self):
+        source = self._source(
+            extra=(
+                "    transport: direct\n"
+                "    peering_edge_reserved_udp: [51821, 51822]\n"
+                "    peering_directory:\n"
+                "      url: https://directory.example.org:8443\n"
+                "      ca_cert: directory-ca.pem\n"
+            )
+        )
+        cfg = self._generate(source)
+        gen_config.write_or_check(cfg, False, self.out, self.tmp.name, source)
+        loaded = gen_config.yaml.safe_load(self._read_output())
+        environment = loaded["environments"][0]
+        self.assertEqual(environment["transport"], "direct")
+        self.assertEqual(environment["peering_edge_reserved_udp"], [51821, 51822])
+        self.assertEqual(
+            environment["peering_directory"],
+            {"url": "https://directory.example.org:8443", "ca_cert": "directory-ca.pem"},
+        )
+        self.assertEqual(environment["sites"][0]["name"], "alpha")
+        self.assertEqual(validate.errors_for(loaded), [])
+
+    def test_migration_carries_existing_environment_declarations(self):
+        sparse_source = self._source()
+        sparse = self._generate(sparse_source)
+        existing = copy.deepcopy(sparse)
+        existing["environments"][0]["peering_directory"] = {
+            "url": "https://directory.example.org:8443",
+            "ca_cert": "directory-ca.pem",
+        }
+        with open(self.out, "w", encoding="utf-8") as fh:
+            fh.write(self._legacy_text(existing))
+        self._assert_refused_unchanged(sparse, sparse_source, "peering_directory")
+
+        complete_source = self._source(
+            extra=(
+                "    peering_directory:\n"
+                "      url: https://directory.example.org:8443\n"
+                "      ca_cert: directory-ca.pem\n"
+            )
+        )
+        complete = self._generate(complete_source)
+        gen_config.write_or_check(
+            complete, False, self.out, self.tmp.name, complete_source
+        )
+        loaded = gen_config.yaml.safe_load(self._read_output())
+        self.assertEqual(
+            loaded["environments"][0]["peering_directory"],
+            existing["environments"][0]["peering_directory"],
+        )
+
+    def test_generator_owned_environment_fields_are_refused(self):
+        for field, value in (
+            ("name", "other"),
+            ("converger", "push-ansible"),
+            ("groups", "[other_hosts]"),
+        ):
+            with self.subTest(field=field), self.assertRaises(SystemExit) as error:
+                self._generate(self._source(extra=f"    {field}: {value}\n"))
+            self.assertIn("GB-079", str(error.exception))
+            self.assertIn("generator-owned", str(error.exception))
+
+    def test_multiple_peerings_survive_in_declared_order(self):
+        source = self._source(
+            "[{with: velmara, environment: dev, site: alpha, edge_class: edge}, "
+            "{with: xab, environment: dev, site: alpha, edge_class: edge}]"
+        )
+        cfg = self._generate(source)
+        self.assertEqual([row["with"] for row in cfg["peerings"]], ["velmara", "xab"])
+        self.assertEqual(validate.errors_for(cfg), [])
+
+    def test_allocator_pins_and_hosts_survive_actual_regeneration(self):
+        source = self._source(
+            "[{with: velmara, environment: dev, site: alpha, edge_class: edge, "
+            "values: {wg_listen_port: 51821}, hosts: {edge: edge-1, core: core-1}}]"
+        )
+        cfg = self._generate(source)
+        gen_config.write_or_check(
+            cfg, False, self.out, self.tmp.name, source, self.posture
+        )
+        loaded = gen_config.yaml.safe_load(self._read_output())
+        self.assertEqual(loaded["peerings"][0]["values"]["wg_listen_port"], 51821)
+        self.assertEqual(
+            loaded["peerings"][0]["hosts"], {"edge": "edge-1", "core": "core-1"}
+        )
+        self.assertEqual(validate.errors_for(loaded), [])
+
+    def test_render_is_deterministic_with_federation(self):
+        source = self._source(
+            "[{with: velmara, environment: dev, site: alpha, edge_class: edge}]"
+        )
+        first = gen_config.render(self._generate(source))
+        second = gen_config.render(self._generate(source))
+        self.assertEqual(first, second)
+
+    def test_regeneration_preserves_declarations_and_check_is_read_only(self):
+        source = self._source(
+            "[{with: velmara, environment: dev, site: alpha, edge_class: edge}]"
+        )
+        cfg = self._generate(source)
+        gen_config.write_or_check(cfg, False, self.out, self.tmp.name, source)
+        before = (self._read_output(), os.stat(self.out).st_mtime_ns)
+        gen_config.write_or_check(cfg, True, self.out, self.tmp.name, source)
+        after = (self._read_output(), os.stat(self.out).st_mtime_ns)
+        self.assertEqual(before, after)
+        loaded = gen_config.yaml.safe_load(before[0])
+        self.assertEqual(loaded["environments"][0]["sites"][0]["name"], "alpha")
+        self.assertEqual(loaded["peerings"][0]["with"], "velmara")
+
+        drifted = copy.deepcopy(cfg)
+        drifted["repo"]["signing"] = "cosign"
+        with self.assertRaises(SystemExit) as e:
+            gen_config.write_or_check(drifted, True, self.out, self.tmp.name, source)
+        self.assertIn("DRIFT", str(e.exception))
+        self.assertEqual((self._read_output(), os.stat(self.out).st_mtime_ns), before)
+
+    def test_refuses_malformed_or_undeclared_source(self):
+        cases = [
+            ("environments: []\npeerings: []\n", "environments:"),
+            ("environments: {}\npeerings: {}\n", "peerings:"),
+            ("environments: {}\npeerings: []\nsurprise: true\n", "surprise"),
+            ("environments:\n  other: {sites: [{name: alpha}]}\npeerings: []\n", "undeclared environments"),
+            (
+                "environments:\n  dev: {sites: [{name: alpha, classes: {core: {}}}]}\n"
+                "peerings: [{with: velmara, environment: dev, site: alpha, edge_class: edge}]\n",
+                "edge_class",
+            ),
+        ]
+        for i, (text, fragment) in enumerate(cases):
+            with self.subTest(fragment=fragment), self.assertRaises(SystemExit) as e:
+                self._generate(self._write(f"bad-{i}.yml", text))
+            self.assertIn("GB-079", str(e.exception))
+            self.assertIn(fragment, str(e.exception))
+
+    def test_unhashable_site_and_peering_identifiers_are_actionable_refusals(self):
+        cases = [
+            (
+                "environments:\n  dev: {sites: [{name: [alpha], classes: {edge: {}}}]}\npeerings: []\n",
+                "environments.dev.sites[0].name",
+            ),
+            (
+                "environments:\n  dev: {sites: [{name: alpha, classes: {edge: {}}}]}\n"
+                "peerings: [{with: velmara, environment: [dev], site: alpha, edge_class: edge}]\n",
+                "peerings[0].environment",
+            ),
+            (
+                "environments:\n  dev: {sites: [{name: alpha, classes: {edge: {}}}]}\n"
+                "peerings: [{with: velmara, environment: dev, site: [alpha], edge_class: edge}]\n",
+                "peerings[0].site",
+            ),
+            (
+                "environments:\n  dev: {sites: [{name: alpha, classes: {edge: {}}}]}\n"
+                "peerings: [{with: [velmara], environment: dev, site: alpha, edge_class: edge}]\n",
+                "peerings[0].with",
+            ),
+        ]
+        for i, (text, field) in enumerate(cases):
+            with self.subTest(field=field), self.assertRaises(SystemExit) as e:
+                self._generate(self._write(f"identifier-{i}.yml", text))
+            self.assertIn("GB-079", str(e.exception))
+            self.assertIn(field, str(e.exception))
+            self.assertIn("non-empty string", str(e.exception))
+
+    def test_legacy_migration_refuses_same_id_site_class_loss(self):
+        source = self._source(classes="{core: {}}")
+        wanted = self._generate(source)
+        existing = copy.deepcopy(wanted)
+        existing["environments"][0]["sites"][0]["classes"]["edge"] = {}
+        with open(self.out, "w", encoding="utf-8") as fh:
+            fh.write(self._legacy_text(existing))
+        self._assert_refused_unchanged(wanted, source, "classes.edge")
+
+    def test_legacy_migration_refuses_changed_peering_trust_and_offer(self):
+        old_source = self._source(
+            "[{with: velmara, environment: dev, site: alpha, edge_class: edge, "
+            "trust: spire-federation, offer: [REL-ALL]}]"
+        )
+        existing = self._generate(old_source)
+        with open(self.out, "w", encoding="utf-8") as fh:
+            fh.write(self._legacy_text(existing))
+        new_source = self._source(
+            "[{with: velmara, environment: dev, site: alpha, edge_class: edge, "
+            "trust: handshake, offer: [REL-SUB]}]"
+        )
+        wanted = self._generate(new_source)
+        error = self._assert_refused_unchanged(wanted, new_source, "trust")
+        self.assertIn("offer", str(error))
+
+    def test_legacy_migration_refuses_omitted_peering_fields(self):
+        full_source = self._source(
+            "[{with: velmara, environment: dev, site: alpha, edge_class: edge, "
+            "trust: spire-federation, offer: [REL-ALL]}]"
+        )
+        existing = self._generate(full_source)
+        with open(self.out, "w", encoding="utf-8") as fh:
+            fh.write(self._legacy_text(existing))
+        sparse_source = self._source(
+            "[{with: velmara, environment: dev, site: alpha, edge_class: edge}]"
+        )
+        wanted = self._generate(sparse_source)
+        error = str(self._assert_refused_unchanged(wanted, sparse_source, "trust"))
+        self.assertIn("peerings[dev/velmara].trust", error)
+        self.assertIn("peerings[dev/velmara].offer", error)
+
+    def test_legacy_migration_refuses_missing_site_and_peering_ids(self):
+        source = self._source()
+        wanted = self._generate(source)
+        existing = copy.deepcopy(wanted)
+        existing["environments"][0]["sites"].append(
+            {"name": "bravo", "role": "joiner", "joins": "alpha", "classes": {"edge": {}}}
+        )
+        existing["peerings"] = [
+            {"with": "xab", "environment": "dev", "site": "alpha", "edge_class": "edge"}
+        ]
+        with open(self.out, "w", encoding="utf-8") as fh:
+            fh.write(self._legacy_text(existing))
+        error = self._assert_refused_unchanged(
+            wanted, source, "environments[dev].sites['bravo']"
+        )
+        self.assertIn("peerings[dev/xab]", str(error))
+
+    def test_legacy_migration_is_type_sensitive(self):
+        for old, new in (("true", "1"), ("1", "1.0")):
+            with self.subTest(old=old, new=new):
+                old_source = self._source(extra=f"    transport: {old}\n")
+                existing = self._generate(old_source)
+                with open(self.out, "w", encoding="utf-8") as fh:
+                    fh.write(self._legacy_text(existing))
+                new_source = self._source(extra=f"    transport: {new}\n")
+                wanted = self._generate(new_source)
+                error = self._assert_refused_unchanged(
+                    wanted, new_source, "environments[dev].transport"
+                )
+                self.assertIn(f"{existing['environments'][0]['transport']!r} ->", str(error))
+
+    def test_legacy_migration_detects_lost_list_duplicates(self):
+        old_source = self._source(extra="    peering_edge_reserved_udp: [51821, 51821]\n")
+        existing = self._generate(old_source)
+        with open(self.out, "w", encoding="utf-8") as fh:
+            fh.write(self._legacy_text(existing))
+        new_source = self._source(extra="    peering_edge_reserved_udp: [51821]\n")
+        wanted = self._generate(new_source)
+        self._assert_refused_unchanged(
+            wanted, new_source, "environments[dev].peering_edge_reserved_udp"
+        )
+
+    def test_legacy_migration_requires_federation_key_paths_in_posture(self):
+        source = self._source()
+        complete_posture = self._write(
+            "posture.yml",
+            "store: env-file\nfederation:\n"
+            "  signing_key: federation/signing.key\n"
+            "  ca_cert: federation/ca.pem\n"
+            "  ca_key: federation/ca-key.pem\n",
+        )
+        existing = self._generate(source)
+        with open(self.out, "w", encoding="utf-8") as fh:
+            fh.write(self._legacy_text(existing))
+
+        self._write("posture.yml", "store: env-file\n")
+        sparse = self._generate(source)
+        error = self._assert_refused_unchanged(
+            sparse, source, "secrets.federation"
+        )
+        self.assertIn("posture.yml", str(error))
+
+        self._write(
+            "posture.yml",
+            "store: env-file\nfederation:\n"
+            "  signing_key: federation/signing.key\n"
+            "  ca_cert: federation/ca.pem\n"
+            "  ca_key: federation/ca-key.pem\n",
+        )
+        adopted = self._generate(source)
+        gen_config.write_or_check(
+            adopted, False, self.out, self.tmp.name, source, complete_posture
+        )
+        self.assertIn(gen_config.FEDERATION_DIGEST_PREFIX.encode(), self._read_output())
+
+    def test_adopted_federation_key_paths_require_explicit_posture_edit(self):
+        source = self._source()
+        self._write(
+            "posture.yml",
+            "store: env-file\nfederation:\n"
+            "  signing_key: federation/signing.key\n"
+            "  ca_cert: federation/ca.pem\n"
+            "  ca_key: federation/ca-key.pem\n",
+        )
+        adopted = self._generate(source)
+        gen_config.write_or_check(
+            adopted, False, self.out, self.tmp.name, source, self.posture
+        )
+
+        os.unlink(self.posture)
+        without_posture = self._generate(source)
+        error = self._assert_refused_unchanged(
+            without_posture, source, "posture.yml"
+        )
+        self.assertIn("Restore", str(error))
+
+        self._write("posture.yml", "store: env-file\n")
+        intentionally_removed = self._generate(source)
+        gen_config.write_or_check(
+            intentionally_removed,
+            False,
+            self.out,
+            self.tmp.name,
+            source,
+            self.posture,
+        )
+        loaded = gen_config.yaml.safe_load(self._read_output())
+        self.assertNotIn("federation", loaded["secrets"])
+
+    def test_output_only_federation_secret_edit_invalidates_digest(self):
+        source = self._source()
+        self._write(
+            "posture.yml",
+            "store: env-file\nfederation:\n  signing_key: federation/signing.key\n",
+        )
+        adopted = self._generate(source)
+        gen_config.write_or_check(
+            adopted, False, self.out, self.tmp.name, source, self.posture
+        )
+        tampered = copy.deepcopy(adopted)
+        tampered["secrets"]["federation"]["signing_key"] = "federation/other.key"
+        with open(self.out, "w", encoding="utf-8") as fh:
+            fh.write(self._marked_text(tampered, adopted))
+        self._assert_refused_unchanged(adopted, source, "secrets.federation.signing_key")
+
+    def test_tampered_marked_output_is_not_trusted(self):
+        source = self._source(
+            "[{with: velmara, environment: dev, site: alpha, edge_class: edge}]"
+        )
+        wanted = self._generate(source)
+        tampered = copy.deepcopy(wanted)
+        tampered["peerings"][0]["offer"] = ["REL-ALL"]
+        with open(self.out, "w", encoding="utf-8") as fh:
+            fh.write(self._marked_text(tampered, wanted))
+        self._assert_refused_unchanged(wanted, source, "offer")
+
+    def test_adopted_output_allows_later_intentional_source_changes(self):
+        original_source = self._source(
+            "[{with: velmara, environment: dev, site: alpha, edge_class: edge, "
+            "trust: spire-federation, offer: [REL-ALL]}]"
+        )
+        original = self._generate(original_source)
+        with open(self.out, "w", encoding="utf-8") as fh:
+            fh.write(self._legacy_text(original))
+
+        gen_config.write_or_check(
+            original, False, self.out, self.tmp.name, original_source
+        )
+        adopted = self._read_output()
+        self.assertIn(gen_config.FEDERATION_DIGEST_PREFIX.encode(), adopted)
+
+        changed_source = self._source(classes="{core: {}}")
+        changed = self._generate(changed_source)
+        gen_config.write_or_check(
+            changed, False, self.out, self.tmp.name, changed_source
+        )
+        self.assertEqual(self._read_output(), gen_config.render(changed).encode())
+
+    def test_missing_source_cannot_remove_adopted_declarations(self):
+        source = self._source(
+            "[{with: velmara, environment: dev, site: alpha, edge_class: edge}]"
+        )
+        adopted = self._generate(source)
+        gen_config.write_or_check(adopted, False, self.out, self.tmp.name, source)
+        os.unlink(source)
+        without_source = self._generate(source)
+        error = self._assert_refused_unchanged(
+            without_source, source, "is missing"
+        )
+        self.assertIn("GB-079", str(error))
+        self.assertIn("environments: {}", str(error))
+        self.assertIn("peerings: []", str(error))
+
+    def test_explicit_empty_source_removes_adopted_declarations(self):
+        source = self._source(
+            "[{with: velmara, environment: dev, site: alpha, edge_class: edge}]"
+        )
+        adopted = self._generate(source)
+        gen_config.write_or_check(adopted, False, self.out, self.tmp.name, source)
+        self._write("federation.yml", "environments: {}\npeerings: []\n")
+        removed = self._generate(source)
+        gen_config.write_or_check(removed, False, self.out, self.tmp.name, source)
+        loaded = gen_config.yaml.safe_load(self._read_output())
+        self.assertNotIn("peerings", loaded)
+        self.assertTrue(all("sites" not in env for env in loaded["environments"]))
+        self.assertEqual(validate.errors_for(loaded), [])
+
+    def test_incomplete_or_null_source_cannot_remove_adopted_declarations(self):
+        source = self._source(
+            "[{with: velmara, environment: dev, site: alpha, edge_class: edge}]"
+        )
+        adopted = self._generate(source)
+        gen_config.write_or_check(adopted, False, self.out, self.tmp.name, source)
+        cases = [
+            ("", "missing required top-level keys"),
+            ("{}\n", "missing required top-level keys"),
+            ("environments: {}\n", "'peerings'"),
+            ("peerings: []\n", "'environments'"),
+            ("environments: null\npeerings: []\n", "`environments:` must map"),
+            ("environments: {}\npeerings: null\n", "`peerings:` must be a list"),
+        ]
+        for text, fragment in cases:
+            before = (self._read_output(), os.stat(self.out).st_mtime_ns)
+            with self.subTest(source=text), self.assertRaises(SystemExit) as e:
+                self._generate(self._write("federation.yml", text))
+            self.assertIn("GB-079", str(e.exception))
+            self.assertIn(fragment, str(e.exception))
+            self.assertIn("federation.yml", str(e.exception))
+            after = (self._read_output(), os.stat(self.out).st_mtime_ns)
+            self.assertEqual(before, after)
+
+    def test_duplicate_federation_source_keys_are_refused_without_output_change(self):
+        source = self._source(
+            "[{with: velmara, environment: dev, site: alpha, edge_class: edge}]"
+        )
+        adopted = self._generate(source)
+        gen_config.write_or_check(adopted, False, self.out, self.tmp.name, source)
+        cases = [
+            (
+                "environments:\n"
+                "  dev: {sites: [{name: alpha, classes: {edge: {}}}]}\n"
+                "  dev: {sites: [{name: bravo, classes: {edge: {}}}]}\n"
+                "peerings: []\n",
+                "duplicate key 'dev'",
+            ),
+            (
+                "environments:\n  dev: {sites: [{name: alpha, classes: {edge: {}}}]}\n"
+                "peerings: []\n"
+                "peerings: [{with: velmara, environment: dev, site: alpha, edge_class: edge}]\n",
+                "duplicate key 'peerings'",
+            ),
+        ]
+        for text, fragment in cases:
+            before = (self._read_output(), os.stat(self.out).st_mtime_ns)
+            with self.subTest(fragment=fragment), self.assertRaises(SystemExit) as e:
+                self._generate(self._write("federation.yml", text))
+            self.assertIn("GB-079", str(e.exception))
+            self.assertIn(fragment, str(e.exception))
+            self.assertIn("federation.yml", str(e.exception))
+            after = (self._read_output(), os.stat(self.out).st_mtime_ns)
+            self.assertEqual(before, after)
+
+    def test_unsupported_yaml_values_are_actionable_and_leave_output_unchanged(self):
+        source = self._source()
+        adopted = self._generate(source)
+        gen_config.write_or_check(adopted, False, self.out, self.tmp.name, source)
+        cases = [
+            (
+                "environments:\n  dev:\n    peering_directory:\n"
+                "      url: 2026-11-12\npeerings: []\n",
+                "federation.environments.dev.peering_directory.url",
+                "date",
+            ),
+            (
+                "environments:\n  dev:\n    peering_directory:\n"
+                "      1: one\n      url: https://directory.example.org\npeerings: []\n",
+                "federation.environments.dev.peering_directory[1]",
+                "mapping key",
+            ),
+        ]
+        for text, path, guidance in cases:
+            before = (self._read_output(), os.stat(self.out).st_mtime_ns)
+            with self.subTest(path=path), self.assertRaises(SystemExit) as error:
+                self._generate(self._write("federation.yml", text))
+            message = str(error.exception)
+            self.assertIn("GB-079", message)
+            self.assertIn(path, message)
+            self.assertIn(guidance, message)
+            self.assertNotIn("Traceback", message)
+            self.assertEqual(
+                (self._read_output(), os.stat(self.out).st_mtime_ns), before
+            )
+
+    def test_malformed_yaml_is_catalogued_and_leaves_output_unchanged(self):
+        source = self._source()
+        adopted = self._generate(source)
+        gen_config.write_or_check(adopted, False, self.out, self.tmp.name, source)
+        before = (self._read_output(), os.stat(self.out).st_mtime_ns)
+        with self.assertRaises(SystemExit) as error:
+            self._generate(self._write("federation.yml", "environments: [\n"))
+        message = str(error.exception)
+        self.assertIn("GB-079", message)
+        self.assertIn("cannot read federation declarations", message)
+        self.assertNotIn("Traceback", message)
+        self.assertEqual((self._read_output(), os.stat(self.out).st_mtime_ns), before)
+
+
+class GeneratorSubprocessRefusals(unittest.TestCase):
+    """The executable reports catalogued refusals before touching output."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = self.tmp.name
+        self.generator_dir = os.path.join(self.root, "ops", "goatbuilder")
+        os.makedirs(self.generator_dir)
+        os.makedirs(os.path.join(self.root, "ops", "pins"))
+        os.makedirs(os.path.join(self.root, "ops", "release"))
+        shutil.copy2(
+            os.path.join(HERE, "gen-config.py"),
+            os.path.join(self.generator_dir, "gen-config.py"),
+        )
+        self._write(
+            "ops/pins/fleet-pins.yaml",
+            "components: {}\ngoatnets:\n  dev:\n    members: [dev_hosts]\n",
+        )
+        self._write(
+            "ops/release/ladder.yaml",
+            "rungs:\n  - {name: dev, goatnet: dev, status: live}\n",
+        )
+        self._write(
+            "ops/goatbuilder/project.yml",
+            "repo:\n  source: example-org/example-repo\n"
+            "  image_namespace: ghcr.io/example-org\n",
+        )
+        self._write("ops/goatbuilder/posture.yml", "store: env-file\n")
+        self._write(
+            "ops/goatbuilder/federation.yml", "environments: {}\npeerings: []\n"
+        )
+        self.output = os.path.join(self.generator_dir, "goatbuilder.yaml")
+
+    def _path(self, relative):
+        return os.path.join(self.root, relative)
+
+    def _write(self, relative, text):
+        path = self._path(relative)
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        return path
+
+    def _run(self):
+        return subprocess.run(
+            [sys.executable, os.path.join(self.generator_dir, "gen-config.py")],
+            cwd=self.root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    def _generate_output(self):
+        result = self._run()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        with open(self.output, "rb") as fh:
+            return fh.read()
+
+    def _assert_catalogued_unchanged(self, before, result, *fragments):
+        self.assertEqual(result.returncode, 1, result)
+        self.assertIn("GB-079", result.stderr)
+        for fragment in fragments:
+            self.assertIn(fragment, result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertNotIn("UnicodeDecodeError", result.stderr)
+        with open(self.output, "rb") as fh:
+            self.assertEqual(fh.read(), before)
+
+    def test_legacy_federation_secrets_refusal_is_catalogued_and_atomic(self):
+        self._write(
+            "ops/goatbuilder/posture.yml",
+            "store: env-file\nfederation:\n"
+            "  signing_key: federation/signing.key\n"
+            "  ca_cert: federation/ca.pem\n"
+            "  ca_key: federation/ca-key.pem\n",
+        )
+        adopted = self._generate_output().decode("utf-8")
+        legacy = "".join(
+            line for line in adopted.splitlines(keepends=True)
+            if not line.startswith(gen_config.FEDERATION_DIGEST_PREFIX)
+        ).encode("utf-8")
+        with open(self.output, "wb") as fh:
+            fh.write(legacy)
+        self._write("ops/goatbuilder/posture.yml", "store: env-file\n")
+        self._assert_catalogued_unchanged(
+            legacy, self._run(), "secrets.federation", "posture.yml"
+        )
+
+    def test_non_utf8_source_and_output_refusals_are_catalogued_and_atomic(self):
+        before = self._generate_output()
+        federation = self._path("ops/goatbuilder/federation.yml")
+        with open(federation, "wb") as fh:
+            fh.write(b"\xff\xfe\x80")
+        self._assert_catalogued_unchanged(
+            before, self._run(), "federation.yml", "cannot read federation declarations"
+        )
+
+        self._write("ops/goatbuilder/federation.yml", "environments: {}\npeerings: []\n")
+        invalid_output = b"\xff\xfe\x80"
+        with open(self.output, "wb") as fh:
+            fh.write(invalid_output)
+        self._assert_catalogued_unchanged(
+            invalid_output, self._run(), "goatbuilder.yaml", "cannot read the generated output"
+        )
+
+    def test_duplicate_peering_identity_refusal_names_source_and_is_atomic(self):
+        before = self._generate_output()
+        self._write(
+            "ops/goatbuilder/federation.yml",
+            "environments:\n  dev:\n    sites:\n"
+            "      - {name: alpha, classes: {edge: {}}}\n"
+            "peerings:\n"
+            "  - {with: xab, environment: dev, site: alpha, edge_class: edge}\n"
+            "  - {with: xab, environment: dev, site: alpha, edge_class: edge}\n",
+        )
+        self._assert_catalogued_unchanged(
+            before, self._run(), "federation.yml", "duplicates peering identity", "dev/xab"
+        )
 
 
 @unittest.skipUnless(HAS_LIVE_LADDER, "ops/release/ladder.yaml has no rungs in this tree")
