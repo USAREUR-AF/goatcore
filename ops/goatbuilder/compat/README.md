@@ -80,6 +80,11 @@ where it is.
 - **An error code no longer printed, or whose fault is renamed.** Keep the
   entry in the catalog and add `retired: goatbuilder/vX.Y.Z`. A different fault
   gets a new code.
+- **A kept exit code that changes** (before 1.0 only; exit codes are a
+  promised surface). Edit that invocation's `exit` in
+  `documents/manifest.yaml` in the same pull request and give the reason in
+  `exit_changed:`. The next refresh records the release's own exit and drops
+  the reason. `validate-not-yaml` keeps 0.5.1's exit 2 for this purpose.
 - **A kept document whose shape must change.** It cannot within one version:
   add the new field beside the old one, or publish a new document version.
 - **A kept file an earlier release refused, now accepted** (a field was

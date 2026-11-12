@@ -2,8 +2,11 @@
 # `-o <format>` in front, against the fixtures kept beside this file, and its
 # output must stay a superset of the release's document of the same name. The
 # exit codes, and the documents, are written by `compat.py refresh` from the
-# released binary. To keep another document, add its invocation here and
-# rerun the refresh against the last release's binary.
+# released binary. A change that moves a kept exit code edits it here in the
+# same pull request, with its reason in `exit_changed`, so every change to a
+# promised exit code is a reviewed baseline change. To keep another document,
+# add its invocation here and rerun the refresh against the last release's
+# binary.
 documents:
 - name: validate-basic
   format: json
@@ -29,6 +32,14 @@ documents:
   - .
   - ops/goatbuilder/compat/documents/fixtures/refused/unknown-field.yaml
   exit: 1
+- name: validate-not-yaml
+  format: json
+  args:
+  - validate
+  - -C
+  - .
+  - ops/goatbuilder/compat/documents/fixtures/refused/not-yaml.yaml
+  exit: 2
 - name: status-dev
   format: json
   args:

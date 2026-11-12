@@ -590,6 +590,7 @@ def _refresh_last_release(repo: str, root: str, tag: str, binary: str, b: "Basel
         if err:
             raise SystemExit(f"compat: {d['name']}: {err}")
         d["exit"] = rc
+        d.pop("exit_changed", None)  # the release's own exit now; the reason was for the change before it
         with open(os.path.join(root, "documents", d["name"] + "." + d["format"]), "w") as f:
             if d["format"] == "json":
                 json.dump(doc, f, indent=2, ensure_ascii=False)
