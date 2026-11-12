@@ -435,7 +435,7 @@ fn gate_failures(rec: &Record, hop: &Value, today: NaiveDate) -> Result<Vec<Stri
             "soak" => {
                 let mind = get(&g, "min_days").and_then(|m| m.as_i64()).unwrap_or(1);
                 let opened_s = py_opt(rec.get("opened"));
-                let opened = date(&opened_s).ok_or_else(|| anyhow!("Invalid isoformat string: '{opened_s}'"))?;
+                let opened = date(&opened_s).ok_or_else(|| anyhow::Error::from(goat_errors::coded("GB-033", format!("Invalid isoformat string: '{opened_s}'"))))?;
                 if (today - opened).num_days() < mind {
                     fails.push(format!("soak: opened {opened}, needs >= {mind} day(s)"));
                 }
@@ -703,7 +703,7 @@ fn write_record(path: &Path, doc: &Map<String, Value>) -> Result<()> {
     if let Some(d) = path.parent() {
         std::fs::create_dir_all(d)?;
     }
-    std::fs::write(path, dump_record(doc)).map_err(|e| anyhow!("{}: {e}", path.display()))
+    std::fs::write(path, dump_record(doc)).map_err(|e| anyhow::Error::from(goat_errors::coded("GB-254", format!("{}: {e}", path.display()))))
 }
 
 fn ref_short(reference: &str) -> String {
@@ -2411,10 +2411,10 @@ pub fn call(repo: &Path, cmd: &Sub) -> (Vec<String>, i32) {
 
 /// rc.sh's evidence edit: the record's empty `<field>: ''` becomes a folded scalar.
 pub fn record_set_evidence(path: &Path, field: &str, text: &str) -> Result<()> {
-    let s = std::fs::read_to_string(path).map_err(|e| anyhow!("{}: {e}", path.display()))?;
+    let s = std::fs::read_to_string(path).map_err(|e| anyhow::Error::from(goat_errors::coded("GB-254", format!("{}: {e}", path.display()))))?;
     let from = format!("  {field}: ''\n");
     let to = format!("  {field}: >-\n    {text}\n");
-    std::fs::write(path, s.replacen(&from, &to, 1)).map_err(|e| anyhow!("{}: {e}", path.display()))
+    std::fs::write(path, s.replacen(&from, &to, 1)).map_err(|e| anyhow::Error::from(goat_errors::coded("GB-254", format!("{}: {e}", path.display()))))
 }
 
 /// Every other OPEN ladder candidate for the component (rc.sh's preprod step
