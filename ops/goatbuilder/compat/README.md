@@ -110,7 +110,10 @@ exactly the shape `SHA256SUMS` writes (64 lowercase hex, two spaces,
 - The meaning of a flag beyond whether it takes a value and which values it
   accepts, and exit codes beyond the kept invocations. A flag whose values are
   checked in code rather than declared to clap lists none in `--help`, so its
-  values are not compared.
+  values are not compared. A `ValueEnum` whose variants gain their own doc
+  comments makes clap print its values as a bulleted list instead of
+  `[possible values: …]`. The parser does not read that list, so such a change
+  fails loudly ("lists none now"), and the parser is extended in that change.
 - Documents of verbs that need a host or write state (`deploy`, `standup`,
   `federate` past its first refusal): no read-only invocation of them on a
   fixture produces a document yet.
