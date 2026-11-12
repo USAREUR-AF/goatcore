@@ -441,7 +441,8 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
     ev.push(p(4, "T", "name-fallback snapshot (generate + sign)".into(), format!(
         "if grep -qE 'name_snapshot_enabled:[[:space:]]*true' '{r}/ops/ansible/group_vars/{g}/vars.yml' 2>/dev/null; then      python3 '{r}/ops/dns/generate-mesh-hosts.py';      if [ -f {ca_key} ]; then        ( cd '{r}/ops/enrollment' && go run ./cmd/name-snapshot-sign --snapshot '{r}/ops/dns/{site}/name-snapshot.json' --root-key {ca_key} --age-identity ~/.config/age/keys.txt --audit-log {audit} );      else echo {no_key}; fi;    else echo 'name_snapshot_enabled not true for {g} — skipping (ADR 1082)'; fi")));
 
-    let ev_secrets = format!("-e bootstrap_owner_email=\"{oe}\" -e postgres_superuser_password=\"$(printenv {u}_PG_PASS)\" -e netbird_encryption_key=\"$(printenv {u}_NB_ENCKEY)\" -e pgbackrest_cipher_pass=\"$(printenv {u}_BKP_KEY)\"");
+    let owner_arg = owner_word(oe);
+    let ev_secrets = format!("-e bootstrap_owner_email={owner_arg} -e postgres_superuser_password=\"$(printenv {u}_PG_PASS)\" -e netbird_encryption_key=\"$(printenv {u}_NB_ENCKEY)\" -e pgbackrest_cipher_pass=\"$(printenv {u}_BKP_KEY)\"");
     // A joiner's bootstrap carries site_id as a play variable (bootstrap_play):
     // as an extra var it would reach every host and the Spock roles would find
     // no peer. A founder keeps the plain form.
@@ -730,7 +731,7 @@ fn flush_waves(repo: &Path, s: &Site, q: &mut Vec<Queued>, checks: &mut Vec<Chec
         for i in &idx {
             let log = format!("{}/standup-{}-12-{}.log", s.state_dir, s.site, q[*i].id);
             let f = std::fs::File::create(&log)?;
-            let child = phase_command(repo, &q[*i].cmd).current_dir(repo).stdout(Stdio::from(f.try_clone()?)).stderr(Stdio::from(f)).spawn().context("bash")?;
+            let child = site_phase_command(repo, s, &q[*i].cmd).current_dir(repo).stdout(Stdio::from(f.try_clone()?)).stderr(Stdio::from(f)).spawn().context("bash")?;
             kids.push((*i, child, std::time::Instant::now(), log));
         }
         let mut failed = Vec::new();
@@ -811,10 +812,37 @@ fn phase_command(repo: &Path, cmd: &str) -> Command {
     c
 }
 
+/// `phase_command` with the site's phase environment (`phase_env`).
+fn site_phase_command(repo: &Path, s: &Site, cmd: &str) -> Command {
+    let mut c = phase_command(repo, cmd);
+    c.envs(phase_env(s));
+    c
+}
+
+/// The variable a declared administrator address reaches the bootstrap phases
+/// in. The command line names the variable inside double quotes, so the phase's
+/// shell expands it once and never parses the address itself.
+const OWNER_VAR: &str = "GOAT_BOOTSTRAP_OWNER_EMAIL";
+
+/// The bootstrap owner's word on a phase's command line: `"$OWNER_EMAIL"` when no
+/// administrator is declared, for that shell to expand as it always has;
+/// otherwise the variable `phase_env` sets.
+fn owner_word(owner: &str) -> String {
+    if owner == "$OWNER_EMAIL" {
+        "\"$OWNER_EMAIL\"".to_string()
+    } else {
+        format!("\"${OWNER_VAR}\"")
+    }
+}
+
 /// The values a site's phases read from their environment rather than from
-/// their command line.
-fn phase_env(_s: &Site) -> Vec<(&'static str, String)> {
-    Vec::new()
+/// their command line: a declared administrator address, as data.
+fn phase_env(s: &Site) -> Vec<(&'static str, String)> {
+    if s.owner_email == "$OWNER_EMAIL" {
+        Vec::new()
+    } else {
+        vec![(OWNER_VAR, s.owner_email.clone())]
+    }
 }
 
 /// `standup` on real hosts: the plan, printed; executed unless `--dry-run`.
@@ -899,7 +927,7 @@ pub fn standup(repo: &Path, o: &Options) -> Result<Report> {
                     std::fs::create_dir_all(d)?;
                 }
                 let f = std::fs::File::create(log)?;
-                let child = phase_command(repo, cmd).current_dir(repo).stdout(Stdio::from(f.try_clone()?)).stderr(Stdio::from(f)).spawn().context("bash")?;
+                let child = site_phase_command(repo, &s, cmd).current_dir(repo).stdout(Stdio::from(f.try_clone()?)).stderr(Stdio::from(f)).spawn().context("bash")?;
                 legs.insert(leg, (child, log.clone()));
             }
             Event::PullStart { label, cmd, log } => {
@@ -913,7 +941,7 @@ pub fn standup(repo: &Path, o: &Options) -> Result<Report> {
                     std::fs::create_dir_all(d)?;
                 }
                 let f = std::fs::File::create(log)?;
-                let child = phase_command(repo, cmd).current_dir(repo).stdout(Stdio::from(f.try_clone()?)).stderr(Stdio::from(f)).spawn().context("bash")?;
+                let child = site_phase_command(repo, &s, cmd).current_dir(repo).stdout(Stdio::from(f.try_clone()?)).stderr(Stdio::from(f)).spawn().context("bash")?;
                 pulling = Some((child, log.clone()));
             }
             Event::PullJoin { at } => {
@@ -978,7 +1006,7 @@ pub fn standup(repo: &Path, o: &Options) -> Result<Report> {
                     break 'run;
                 }
                 let t0 = std::time::Instant::now();
-                let status = phase_command(repo, &ph.cmd).current_dir(repo).status().context("bash")?;
+                let status = site_phase_command(repo, &s, &ph.cmd).current_dir(repo).status().context("bash")?;
                 let secs = t0.elapsed().as_secs();
                 let rc_now = status.code().unwrap_or(1);
                 checks.push(row("time", format!("phase {} took {secs}s (exit {rc_now})", ph.n)));
@@ -2051,11 +2079,8 @@ mod tests {
             for c in &cmds {
                 let file = out.join("owner");
                 let probe = format!("printf '%s' {} > '{}'", owner_word(c), file.display());
-                let mut run = phase_command(&repo, &probe);
+                let mut run = site_phase_command(&repo, &site, &probe);
                 run.current_dir(&repo).env_remove("OWNER_EMAIL").env("GOAT_SECRET_STORE", "env");
-                for (k, v) in phase_env(&site) {
-                    run.env(k, v);
-                }
                 let st = run.status().unwrap();
                 assert!(st.success(), "the runner ran the probe for {raw:?}");
                 assert_eq!(std::fs::read_to_string(&file).unwrap(), raw, "the phase receives the address as declared");

@@ -753,8 +753,16 @@ step 4 T "name-fallback snapshot (generate + sign)" \
 #    Hydra, so it and every play after it run in phase 6, after ory-deploy
 #    (--skip-tags stack). Each play runs once; no phase stops on purpose.
 OWNER_EMAIL_STANDUP="\$OWNER_EMAIL"
-[[ "${LITE}" == 1 && -n "${lite_admin:-}" ]] && OWNER_EMAIL_STANDUP="$lite_admin"
-BOOTSTRAP_SECRETS_EV="-e bootstrap_owner_email=\"$OWNER_EMAIL_STANDUP\" -e postgres_superuser_password=\"\$(printenv ${SITE_UPPER}_PG_PASS)\" -e netbird_encryption_key=\"\$(printenv ${SITE_UPPER}_NB_ENCKEY)\" -e pgbackrest_cipher_pass=\"\$(printenv ${SITE_UPPER}_BKP_KEY)\""
+OWNER_EMAIL_ARG="\"\$OWNER_EMAIL\""
+if [[ "${LITE}" == 1 && -n "${lite_admin:-}" ]]; then
+  # The declared address reaches the bootstrap phases as data: exported, and
+  # named on the command line inside double quotes, so the phase's shell expands
+  # it once and never parses the address (goatbuilder's phase_env does the same).
+  OWNER_EMAIL_STANDUP="$lite_admin"
+  export GOAT_BOOTSTRAP_OWNER_EMAIL="$lite_admin"
+  OWNER_EMAIL_ARG="\"\$GOAT_BOOTSTRAP_OWNER_EMAIL\""
+fi
+BOOTSTRAP_SECRETS_EV="-e bootstrap_owner_email=$OWNER_EMAIL_ARG -e postgres_superuser_password=\"\$(printenv ${SITE_UPPER}_PG_PASS)\" -e netbird_encryption_key=\"\$(printenv ${SITE_UPPER}_NB_ENCKEY)\" -e pgbackrest_cipher_pass=\"\$(printenv ${SITE_UPPER}_BKP_KEY)\""
 # A joiner's bootstrap carries site_id as a PLAY variable: its own
 # $SITE-bootstrap.yml when it keeps one (that play sets site_id), else the
 # generic wrapper site-bootstrap-for.yml -e bootstrap_site=$SITE. Never
