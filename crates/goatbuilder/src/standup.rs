@@ -2086,7 +2086,7 @@ mod tests {
             for ph in phases_of(&plan(&dir, &site, &o, "R")) {
                 let c = &ph.cmd;
                 if let Some(w) = between(c, "../scripts/with-aws ", " -- ") {
-assert_eq!(eval(&w), profile, "{}", ph.label);
+                    assert_eq!(eval(&w), profile, "{}", ph.label);
                     seen |= 1;
                 }
                 if let Some(w) = between(c, "--root-key ", " --age-identity") {
