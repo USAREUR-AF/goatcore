@@ -2370,28 +2370,34 @@ entries:
     exit: 2
   - code: GB-238
     tool: goatbuilder
-    title: a federation verb's site flags come before the verb
-    what: "goatbuilder federate init|lint|compose|diff|verify|apply read this party's context from --context-dir, --cert, --ca-roots, --context and --profile-dir, which belong to the verb: given before it, they are read as the name of a partner."
+    title: a federation verb's site flags are given where they do not belong
+    what: "goatbuilder federate init|lint|compose|diff|verify|apply read this party's context from --context-dir, --cert, --ca-roots, --context and --profile-dir. Those flags belong to the six verbs and come after the verb: given before it they are read as the name of a partner, and given to a peering run or to `federate plan` they would be ignored."
     causes:
       - "the flags were typed after `federate` and before the verb"
+      - "the flags were given to `goatbuilder federate <partner>` or `federate plan`, which read the deployment's own declarations"
     fixes:
       - "goatbuilder federate lint --context-dir <dir> <package>   (the verb first, then its flags)"
+      - "drop the flags from a peering run or a plan"
     read: docs/design/goatbuilder.md
     matches:
       - "after the verb: goatbuilder federate"
+      - "apply to the six verbs \\(goatbuilder federate init"
     exit: 2
   - code: GB-239
     tool: goatbuilder
-    title: a flag that does not apply to a federation verb
-    what: "The six federation verbs (init, lint, compose, diff, verify, apply) read only the files they are named and the party's context, and run for real. --mock, -C/--repo (except for init --over-ssh) and -o/--output choose things they do not read, so a run with one is refused rather than the flag ignored."
+    title: a flag that does not apply to the federation verb it was given to
+    what: "The six federation verbs (init, lint, compose, diff, verify, apply) read only the files they are named and the party's context, and run for real. --mock, -C/--repo (except for init --over-ssh) and -o/--output choose things they do not read; --over-ssh and its host flags belong to init alone. A run with one where it does not apply is refused rather than the flag ignored."
     causes:
       - "--mock, -C/--repo or -o/--output given to a federation verb"
+      - "--over-ssh or its host flags given to a verb other than init, to a plan or to a peering run"
     fixes:
       - "drop the flag; the verbs take --json for a JSON report"
       - "goatbuilder -C <repo> federate init --over-ssh <peering>   (the one verb that reads a checkout)"
+      - "FED_MEASURE=ssh goatbuilder federate <partner>   (a peering run measures phase 3 over SSH)"
     read: docs/design/goatbuilder.md
     matches:
       - "do not apply to goatbuilder federate init\\|lint\\|compose\\|diff\\|verify\\|apply"
+      - "--over-ssh and its host flags apply to `goatbuilder federate init`"
     exit: 2
   - code: GB-240
     tool: goatbuilder
