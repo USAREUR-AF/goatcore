@@ -352,11 +352,18 @@ pub fn peerings_file(repo: &Path, group: &str) -> PathBuf {
         .join("peerings.yml")
 }
 
+/// Whether a value holds a Jinja marker (`{{`, `{%` or `{#`): Ansible would
+/// render it, so its literal text is not what the role reads.
+fn is_templated(v: &str) -> bool {
+    ["{{", "{%", "{#"].iter().any(|m| v.contains(m))
+}
+
 /// `zenoh_sovereign_peerings` with this partner's entry (`sovereign`, `cn`)
 /// merged into what `group_vars/<group>/peerings.yml` holds: another
 /// partner's entry is kept as it is, and this partner's other keys are kept.
 /// Refused (GB-237) when another of the group's files sets the variable,
-/// because it would then have two owners.
+/// because it would then have two owners, and when an entry's `sovereign` is
+/// a template, which no literal id matches.
 pub fn merge_peerings(repo: &Path, group: &str, them: &str, cn: &str) -> Result<String, String> {
     let file = peerings_file(repo, group);
     let gv = repo.join("ops/ansible/group_vars");
@@ -386,11 +393,48 @@ pub fn merge_peerings(repo: &Path, group: &str, them: &str, cn: &str) -> Result<
             .map_err(|e| format!("{} is not YAML ({e}) (GB-237)", file.display()))?,
         Err(_) => serde_yaml::Value::Null,
     };
-    let mut list: Vec<serde_yaml::Value> = doc
-        .get("zenoh_sovereign_peerings")
-        .and_then(|l| l.as_sequence())
-        .cloned()
-        .unwrap_or_default();
+    let shown = file
+        .strip_prefix(repo)
+        .unwrap_or(&file)
+        .display()
+        .to_string();
+    // What the file holds is kept, so it must be read whole: a value that is
+    // not a list (a template that renders one, a mapping, a scalar) would read
+    // as empty, and the file written back would hold this partner alone.
+    let mut list: Vec<serde_yaml::Value> = match doc.get("zenoh_sovereign_peerings") {
+        None | Some(serde_yaml::Value::Null) => Vec::new(),
+        Some(serde_yaml::Value::Sequence(l)) => l.clone(),
+        Some(other) => {
+            let what = match other {
+                serde_yaml::Value::String(t) if is_templated(t) => format!("the template {t:?}"),
+                serde_yaml::Value::Mapping(_) => "a mapping".to_string(),
+                _ => "not a list".to_string(),
+            };
+            return Err(format!(
+                "{shown} sets zenoh_sovereign_peerings to {what} (GB-237): admission keeps every other partner's entry and must read them, so write the variable as a literal list of entries (sovereign, cn). Nothing was written"
+            ));
+        }
+    };
+    // An entry is found by its literal `sovereign`. One that is not a mapping
+    // with a literal sovereign id would never match, so this partner would be
+    // appended a second time.
+    for (i, e) in list.iter().enumerate() {
+        let sovereign = e.get("sovereign").and_then(|v| v.as_str());
+        let why = match (e.as_mapping(), sovereign) {
+            (None, _) => Some("is not a mapping of sovereign and cn".to_string()),
+            (Some(_), None) => Some("has no literal sovereign".to_string()),
+            (Some(_), Some(t)) if is_templated(t) => {
+                Some(format!("has the sovereign template {t:?}"))
+            }
+            _ => None,
+        };
+        if let Some(why) = why {
+            return Err(format!(
+                "{shown}: entry {} of zenoh_sovereign_peerings {why} (GB-237): admission finds a partner's entry by its literal sovereign id, so write that entry's sovereign as the partner's id. Nothing was written",
+                i + 1
+            ));
+        }
+    }
     let key = |k: &str| serde_yaml::Value::String(k.into());
     match list
         .iter_mut()
@@ -594,6 +638,92 @@ mod tests {
         assert!(merge_peerings(r.path(), "core_router", "xab", "c")
             .unwrap_err()
             .contains("(GB-237)"));
+    }
+
+    #[test]
+    fn an_entry_whose_sovereign_is_templated_is_refused_not_appended_beside() {
+        // The entry is found by its literal `sovereign`; a templated one would
+        // never match, and a second entry for the same partner would be added.
+        for templated in [
+            "\"{{ partner_id }}\"",
+            "\"{% if x %}xab{% endif %}\"",
+            "\"xab{# the partner #}\"",
+        ] {
+            let r = checkout(&[
+                INV,
+                GV,
+                (
+                    "ops/ansible/group_vars/core_router/peerings.yml",
+                    &format!("zenoh_sovereign_peerings:\n- sovereign: {templated}\n  cn: fed.xab.zagros.01\n"),
+                ),
+            ]);
+            let e =
+                merge_peerings(r.path(), "core_router", "xab", "fed.xab.zagros.01").unwrap_err();
+            assert!(
+                e.contains("(GB-237)") && e.contains("literal sovereign id"),
+                "{templated}: {e}"
+            );
+        }
+        // The whole list as a template, a mapping or a scalar: refused, not
+        // read as empty (which would write this partner alone, dropping the rest).
+        for (value, said) in [
+            ("\"{{ partners | to_entries }}\"", "the template"),
+            ("{xac: {cn: fed.xac.zagros.01}}", "a mapping"),
+            ("7", "not a list"),
+        ] {
+            let r = checkout(&[
+                INV,
+                GV,
+                (
+                    "ops/ansible/group_vars/core_router/peerings.yml",
+                    &format!("zenoh_sovereign_peerings: {value}\n"),
+                ),
+            ]);
+            let before = std::fs::read_to_string(
+                r.path()
+                    .join("ops/ansible/group_vars/core_router/peerings.yml"),
+            )
+            .unwrap();
+            let e =
+                merge_peerings(r.path(), "core_router", "xab", "fed.xab.zagros.01").unwrap_err();
+            assert!(
+                e.contains("(GB-237)") && e.contains(said) && e.contains("Nothing was written"),
+                "{value}: {e}"
+            );
+            assert_eq!(
+                std::fs::read_to_string(
+                    r.path()
+                        .join("ops/ansible/group_vars/core_router/peerings.yml")
+                )
+                .unwrap(),
+                before
+            );
+        }
+        // Another partner's templated entry is named by its position, not as this partner.
+        let r = checkout(&[
+            INV,
+            GV,
+            (
+                "ops/ansible/group_vars/core_router/peerings.yml",
+                "zenoh_sovereign_peerings:\n- sovereign: xac\n  cn: c\n- sovereign: \"{{ other }}\"\n  cn: d\n",
+            ),
+        ]);
+        let e = merge_peerings(r.path(), "core_router", "xab", "fed.xab.zagros.01").unwrap_err();
+        assert!(
+            e.contains("entry 2") && !e.contains("sovereign: xab"),
+            "{e}"
+        );
+        // A literal entry is matched, as before.
+        let r = checkout(&[
+            INV,
+            GV,
+            (
+                "ops/ansible/group_vars/core_router/peerings.yml",
+                "zenoh_sovereign_peerings:\n- sovereign: xab\n  cn: old\n",
+            ),
+        ]);
+        let text = merge_peerings(r.path(), "core_router", "xab", "fed.xab.zagros.01").unwrap();
+        assert_eq!(text.matches("sovereign: xab").count(), 1, "{text}");
     }
 
     #[test]
