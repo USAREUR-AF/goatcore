@@ -6,6 +6,32 @@ Each release is the tag `goatbuilder/v<semver>` on `main`, built and signed by
 
 ## Unreleased
 
+## 0.5.3 — 2026-11-12
+
+0.5.2 was tagged but never published: its release run stopped at startup,
+because the shared release workflow's docs job asks for `packages: read` and
+neither release workflow granted it. 0.5.3 is the first published release of
+everything in 0.5.2 below, plus that fix and the fixes merged since.
+
+### Fixed: the release workflows grant what their shared workflow asks for
+
+`goatbuilder-release.yml` and `goat-release.yml` now grant `packages: read`,
+which the docs job of `_release-binary.yml` needs for the project's package
+cache.
+
+### Fixed: declared values reach the phases as one word each
+
+The goatlite's administrator address reaches the bootstrap phases through the
+environment as data, never through the shell, and a bootstrap command run
+without that variable is refused, naming it. `join-node`'s founder site, SSH
+user, AWS profile and enrolment name are passed the same way, including the
+line run on the new node.
+
+### Fixed: `verify` reads a failed ledger read as unknown
+
+A host whose ledger could not be read is reported as unknown, not as not
+converged.
+
 ## 0.5.2 — 2026-11-12
 
 The federation documents corrected against the code, declared values passed
