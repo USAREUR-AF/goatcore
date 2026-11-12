@@ -858,6 +858,7 @@ fn in_range(n: u32, o: &Options) -> bool {
 fn phase_command(repo: &Path, cmd: &str) -> Command {
     let mut c = Command::new(repo.join("ops/scripts/standup-phase-run"));
     c.arg(cmd);
+    crate::secrets::with_test_env(&mut c);
     c
 }
 
@@ -1633,7 +1634,7 @@ mod tests {
         }
         // The phase runner reads the checkout's secrets posture; a learner's
         // goatlite.yaml at the root would turn it into a value store (ADR 1213 D4).
-        std::env::set_var("GOAT_LITE_CONFIG", "/nonexistent/goatlite.yaml");
+        crate::secrets::set_test_lite_config("/nonexistent/goatlite.yaml");
         let t = crate::testdir::path("gb-waves-");
         std::fs::create_dir_all(&t).unwrap();
         let site = Site {

@@ -23,9 +23,36 @@ fn ask(repo: &Path, args: &[&str]) -> Option<(i32, String)> {
     ask_with(repo, args, true)
 }
 
+// A test reads goat's own declared store by pointing the posture at a goatlite.yaml
+// that does not exist (GOAT_LITE_CONFIG). It is set for the test's own thread and
+// passed to the posture it spawns, never written to the process environment, which
+// other tests read in parallel.
+#[cfg(test)]
+thread_local! {
+    static LITE_CONFIG: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+
+/// `GOAT_LITE_CONFIG` for every posture this test thread spawns.
+#[cfg(test)]
+pub(crate) fn set_test_lite_config(path: &str) {
+    LITE_CONFIG.with(|c| *c.borrow_mut() = Some(path.to_string()));
+}
+
+/// Apply this test thread's `GOAT_LITE_CONFIG`, if it set one, to a command.
+pub(crate) fn with_test_env(cmd: &mut Command) -> &mut Command {
+    #[cfg(test)]
+    LITE_CONFIG.with(|c| {
+        if let Some(p) = c.borrow().as_ref() {
+            cmd.env("GOAT_LITE_CONFIG", p);
+        }
+    });
+    cmd
+}
+
 fn ask_with(repo: &Path, args: &[&str], probe: bool) -> Option<(i32, String)> {
     let mut cmd = Command::new("python3");
     cmd.arg(posture(repo)).args(args).current_dir(repo);
+    with_test_env(&mut cmd);
     if !probe {
         cmd.env("GOAT_STORE_PROBE", "0");
     }
@@ -158,7 +185,7 @@ mod tests {
     /// outranks goatbuilder.yaml for the posture (ADR 1213 D4), so the tests that ask
     /// for goat's own answer point the posture at a file that does not exist.
     fn own_checkout() {
-        std::env::set_var("GOAT_LITE_CONFIG", "/nonexistent/goatlite.yaml");
+        set_test_lite_config("/nonexistent/goatlite.yaml");
     }
 
     #[test]

@@ -11,7 +11,6 @@ use std::path::{Path, PathBuf};
 /// (file, text on the line, why it is safe)
 const KNOWN: &[(&str, &str, &str)] = &[
     ("federate/mod.rs", "remove_var(key)", "key is GOATBUILDER_TEST_VERB_ENV, a name no other code or test reads"),
-    ("federate/mod.rs", "GOAT_BIN", "not yet passed in: federate's plan reads GOAT_BIN from the process; a separate change"),
 ];
 
 fn sources(dir: &Path, out: &mut Vec<PathBuf>) {
