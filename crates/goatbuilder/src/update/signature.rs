@@ -15,7 +15,8 @@
 //!     valid at the entry's integratedTime (cosign `ValidateAndUnpackCert`,
 //!     `CheckExpiry`);
 //!  2. the leaf carries the code-signing extended key usage (Fulcio issues
-//!     only that);
+//!     only that), is not a CA, and marks no extension critical that this
+//!     verifier does not handle (as Go's x509.Verify, which cosign uses);
 //!  3. the signature over SHA256SUMS verifies with the leaf's key
 //!     (`VerifyBlobSignature`);
 //!  4. Rekor's SignedEntryTimestamp verifies, under the log key whose id is
@@ -31,7 +32,15 @@
 //!     at that tag as the Build Config URI. The certificate's SAN names the
 //!     reusable workflow both goat and goatbuilder releases run, so it cannot
 //!     tell them apart; the Build Config URI is the workflow that was
-//!     triggered.
+//!     triggered;
+//!  7. the leaf carries an SCT from a Certificate Transparency log of the
+//!     trusted root, valid at the SCT's time, over its precertificate (RFC
+//!     6962 sections 3.2 and 3.3; cosign v2 verify-blob checks it by default,
+//!     pkg/cosign/verify.go VerifyEmbeddedSCT).
+//!
+//! ECDSA is P-256 with SHA-256 or P-384 with SHA-384; any other key or curve
+//! fails closed. Ed25519 log keys are read, but a legacy bundle's SET is
+//! always from an ECDSA Rekor log, so that path is not reached by a release.
 
 use std::path::Path;
 
@@ -120,6 +129,8 @@ struct Authority {
 #[derive(Debug, Clone, Default)]
 pub struct TrustRoot {
     logs: Vec<LogKey>,
+    /// Certificate Transparency logs, whose SCTs a Fulcio leaf embeds.
+    ctlogs: Vec<LogKey>,
     authorities: Vec<Authority>,
     /// Where each part came from, for a refusal's message.
     sources: Vec<String>,
@@ -147,27 +158,42 @@ impl TrustRoot {
                 .as_str()
                 .and_then(rfc3339)
                 .ok_or_else(|| format!("{source}: a validFor without a start"))?;
-            Ok((start, w["end"].as_str().and_then(rfc3339)))
+            // An `end` that is there must parse: a window read as endless
+            // would trust a retired key.
+            let end = match w.get("end") {
+                None | Some(serde_json::Value::Null) => None,
+                Some(e) => Some(e.as_str().and_then(rfc3339).ok_or_else(|| {
+                    format!("{source}: a validFor end that is not an RFC 3339 time: {e}")
+                })?),
+            };
+            Ok((start, end))
         };
         let mut root = TrustRoot {
             sources: vec![source.to_string()],
             ..Default::default()
         };
-        for t in v["tlogs"].as_array().into_iter().flatten() {
-            let details = t["publicKey"]["keyDetails"].as_str().unwrap_or("");
-            let ed25519 = match details {
-                "PKIX_ECDSA_P256_SHA_256" => false,
-                "PKIX_ED25519" => true,
-                _ => continue,
-            };
-            let (start, end) = window(&t["publicKey"]["validFor"])?;
-            root.logs.push(LogKey {
-                id: b64(&t["logId"]["keyId"])?,
-                spki: b64(&t["publicKey"]["rawBytes"])?,
-                ed25519,
-                start,
-                end,
-            });
+        for (list, ct) in [("tlogs", false), ("ctlogs", true)] {
+            for t in v[list].as_array().into_iter().flatten() {
+                let details = t["publicKey"]["keyDetails"].as_str().unwrap_or("");
+                let ed25519 = match details {
+                    "PKIX_ECDSA_P256_SHA_256" => false,
+                    "PKIX_ED25519" => true,
+                    _ => continue,
+                };
+                let (start, end) = window(&t["publicKey"]["validFor"])?;
+                let key = LogKey {
+                    id: b64(&t["logId"]["keyId"])?,
+                    spki: b64(&t["publicKey"]["rawBytes"])?,
+                    ed25519,
+                    start,
+                    end,
+                };
+                if ct {
+                    root.ctlogs.push(key);
+                } else {
+                    root.logs.push(key);
+                }
+            }
         }
         for c in v["certificateAuthorities"].as_array().into_iter().flatten() {
             let chain = c["certChain"]["certificates"]
@@ -208,6 +234,7 @@ impl TrustRoot {
 
     fn add(&mut self, other: TrustRoot) {
         self.logs.extend(other.logs);
+        self.ctlogs.extend(other.ctlogs);
         self.authorities.extend(other.authorities);
         self.sources.extend(other.sources);
     }
@@ -269,13 +296,18 @@ pub fn verify(
     check_entry(&body, &digest, &sig, &leaf)?;
 
     // 1. and 2. The certificate chain at the entry's time, and its usage.
-    chain_to(&leaf, time, root)?;
+    let issuer = chain_to(&leaf, time, root)?;
     let (_, cert) = X509Certificate::from_der(&leaf).map_err(|e| {
         refuse(
             "chain",
             format!("the signing certificate does not parse: {e}"),
         )
     })?;
+    check_leaf(&cert)?;
+    // 7. The leaf was logged: an embedded SCT from a trusted CT log verifies
+    //    over its precertificate (cosign v2 verify-blob checks this by
+    //    default: pkg/cosign/verify.go, VerifyEmbeddedSCT).
+    check_sct(&cert, &issuer, root)?;
     let code_signing = matches!(cert.extended_key_usage(), Ok(Some(eku)) if eku.value.code_signing);
     if !code_signing {
         return Err(refuse(
@@ -494,7 +526,7 @@ fn verify_raw(spki: &SubjectPublicKeyInfo, msg: &[u8], sig: &[u8]) -> bool {
 /// each certificate signed by the next, each a CA but the leaf, each valid at
 /// `t` (cosign ValidateAndUnpackCert and CheckExpiry: a Fulcio leaf lives ten
 /// minutes, so the entry's time, not today, is what it must cover).
-fn chain_to(leaf: &[u8], t: i64, root: &TrustRoot) -> Result<(), Refusal> {
+fn chain_to(leaf: &[u8], t: i64, root: &TrustRoot) -> Result<Vec<u8>, Refusal> {
     let (_, cert) = X509Certificate::from_der(leaf).map_err(|e| {
         refuse(
             "chain",
@@ -544,7 +576,8 @@ fn chain_to(leaf: &[u8], t: i64, root: &TrustRoot) -> Result<(), Refusal> {
             && child.issuer().as_raw() == child.subject().as_raw()
             && child.verify_signature(None).is_ok()
         {
-            return Ok(());
+            // The leaf's issuer, whose key hash the SCT is over.
+            return Ok(a.chain[0].clone());
         }
     }
     Err(refuse(
@@ -554,6 +587,224 @@ fn chain_to(leaf: &[u8], t: i64, root: &TrustRoot) -> Result<(), Refusal> {
             cert.issuer(),
             root.named(),
             when(t)
+        ),
+    ))
+}
+
+/// The extensions a leaf may mark critical: the ones this verifier reads or
+/// enforces. Any other critical extension refuses the leaf, as Go's
+/// x509.Verify does for an unhandled critical extension (cosign verifies
+/// certificates with it).
+const HANDLED_CRITICAL: &[&str] = &[
+    "2.5.29.15", // keyUsage
+    "2.5.29.17", // subjectAltName (critical when the subject is empty, as Fulcio's is)
+    "2.5.29.19", // basicConstraints
+    "2.5.29.37", // extKeyUsage
+];
+
+/// The leaf is an end-entity certificate: not a CA, and with no critical
+/// extension the verifier does not handle.
+fn check_leaf(c: &X509Certificate) -> Result<(), Refusal> {
+    if matches!(c.basic_constraints(), Ok(Some(bc)) if bc.value.ca) {
+        return Err(refuse(
+            "chain",
+            "the signing certificate is a CA (basicConstraints CA:TRUE), not a Fulcio signing leaf",
+        ));
+    }
+    if let Some(e) = c
+        .extensions()
+        .iter()
+        .find(|e| e.critical && !HANDLED_CRITICAL.contains(&e.oid.to_id_string().as_str()))
+    {
+        return Err(refuse(
+            "chain",
+            format!(
+                "the signing certificate marks the extension {} critical, which this verifier does not handle",
+                e.oid.to_id_string()
+            ),
+        ));
+    }
+    Ok(())
+}
+
+/// The SCT list extension (RFC 6962 section 3.3).
+const SCT_LIST_OID: &str = "1.3.6.1.4.1.11129.2.4.2";
+
+/// One DER element at the start of `b`: (tag, header length, content length).
+fn der_tlv(b: &[u8]) -> Option<(u8, usize, usize)> {
+    let tag = *b.first()?;
+    let first = *b.get(1)?;
+    if first < 0x80 {
+        return Some((tag, 2, first as usize));
+    }
+    let n = (first & 0x7f) as usize;
+    if n == 0 || n > 3 || b.len() < 2 + n {
+        return None;
+    }
+    let len = b[2..2 + n]
+        .iter()
+        .fold(0usize, |a, &x| (a << 8) | x as usize);
+    Some((tag, 2 + n, len))
+}
+
+fn der_len(n: usize) -> Vec<u8> {
+    match n {
+        0..=0x7f => vec![n as u8],
+        0x80..=0xff => vec![0x81, n as u8],
+        0x100..=0xffff => vec![0x82, (n >> 8) as u8, n as u8],
+        _ => vec![0x83, (n >> 16) as u8, (n >> 8) as u8, n as u8],
+    }
+}
+
+/// The DER elements of a constructed element's content.
+fn der_children(mut b: &[u8]) -> Option<Vec<&[u8]>> {
+    let mut out = Vec::new();
+    while !b.is_empty() {
+        let (_, h, l) = der_tlv(b)?;
+        if b.len() < h + l {
+            return None;
+        }
+        out.push(&b[..h + l]);
+        b = &b[h + l..];
+    }
+    Some(out)
+}
+
+fn der_wrap(tag: u8, content: &[u8]) -> Vec<u8> {
+    let mut out = vec![tag];
+    out.extend(der_len(content.len()));
+    out.extend_from_slice(content);
+    out
+}
+
+/// The precertificate's TBS: the leaf's TBSCertificate with the SCT list
+/// extension removed and every length above it re-encoded (RFC 6962 section
+/// 3.2; certificate-transparency-go x509util / ctutil.VerifySCT build the
+/// same bytes).
+fn precert_tbs(tbs: &[u8], sct_ext_oid: &[u8]) -> Option<Vec<u8>> {
+    let (tag, h, l) = der_tlv(tbs)?;
+    if tag != 0x30 || tbs.len() != h + l {
+        return None;
+    }
+    let mut fields = Vec::new();
+    let mut found = false;
+    for f in der_children(&tbs[h..])? {
+        if f[0] != 0xa3 {
+            fields.extend_from_slice(f);
+            continue;
+        }
+        let (_, eh, _) = der_tlv(f)?;
+        let seq = &f[eh..];
+        let (_, sh, _) = der_tlv(seq)?;
+        let mut kept = Vec::new();
+        for ext in der_children(&seq[sh..])? {
+            let (_, xh, _) = der_tlv(ext)?;
+            let oid = der_children(&ext[xh..])?.first().copied()?;
+            if oid == sct_ext_oid {
+                found = true;
+            } else {
+                kept.extend_from_slice(ext);
+            }
+        }
+        fields.extend(der_wrap(0xa3, &der_wrap(0x30, &kept)));
+    }
+    found.then(|| der_wrap(0x30, &fields))
+}
+
+/// The leaf carries an SCT, from a CT log of the trusted root valid at the
+/// SCT's time, over the precertificate entry (RFC 6962 sections 3.2 and 3.3):
+/// version 0, certificate_timestamp, the SCT's timestamp, precert_entry, the
+/// SHA-256 of the issuer's SubjectPublicKeyInfo, the precert TBS (24-bit
+/// length) and the SCT's extensions. One that verifies is enough, as cosign
+/// requires (VerifyEmbeddedSCT).
+fn check_sct(c: &X509Certificate, issuer_der: &[u8], root: &TrustRoot) -> Result<(), Refusal> {
+    let Some(ext) = c
+        .extensions()
+        .iter()
+        .find(|e| e.oid.to_id_string() == SCT_LIST_OID)
+    else {
+        return Err(refuse(
+            "sct",
+            "the signing certificate carries no SCT: it was not logged in a Certificate Transparency log",
+        ));
+    };
+    let bad = |why: &str| refuse("sct", format!("the signing certificate's SCT list {why}"));
+    // extnValue holds an OCTET STRING whose content is the TLS-encoded list.
+    let (tag, h, l) = der_tlv(ext.value).ok_or_else(|| bad("is not DER"))?;
+    if tag != 0x04 || ext.value.len() != h + l {
+        return Err(bad("is not an OCTET STRING"));
+    }
+    let list = &ext.value[h..];
+    let total = u16::from_be_bytes([
+        *list.first().ok_or_else(|| bad("is empty"))?,
+        *list.get(1).ok_or_else(|| bad("is empty"))?,
+    ]) as usize;
+    if list.len() != 2 + total {
+        return Err(bad("has the wrong length"));
+    }
+    let (_, issuer) = X509Certificate::from_der(issuer_der)
+        .map_err(|_| bad("names an issuer that does not parse"))?;
+    let issuer_key_hash = Sha256::digest(issuer.public_key().raw);
+    // The DER of the SCT list extension's OID, to take it out of the TBS.
+    let oid_der = der_wrap(0x06, ext.oid.as_bytes());
+    let pre = precert_tbs(c.tbs_certificate.as_ref(), &oid_der).ok_or_else(|| {
+        bad("cannot be removed from the certificate to rebuild its precertificate")
+    })?;
+    let mut rest = &list[2..];
+    let mut seen = Vec::new();
+    while rest.len() >= 2 {
+        let n = u16::from_be_bytes([rest[0], rest[1]]) as usize;
+        let sct = rest
+            .get(2..2 + n)
+            .ok_or_else(|| bad("has an SCT past its end"))?;
+        rest = &rest[2 + n..];
+        // version(1) log_id(32) timestamp(8) extensions(2+n) hash(1) sig(1) signature(2+n)
+        if sct.len() < 1 + 32 + 8 + 2 || sct[0] != 0 {
+            continue;
+        }
+        let log_id = &sct[1..33];
+        let ts = u64::from_be_bytes(sct[33..41].try_into().unwrap_or_default());
+        let el = u16::from_be_bytes([sct[41], sct[42]]) as usize;
+        let Some(exts) = sct.get(43..43 + el) else {
+            continue;
+        };
+        let tail = &sct[43 + el..];
+        if tail.len() < 4 {
+            continue;
+        }
+        let sl = u16::from_be_bytes([tail[2], tail[3]]) as usize;
+        let Some(sig) = tail.get(4..4 + sl) else {
+            continue;
+        };
+        seen.push(hex(log_id));
+        let t = (ts / 1000) as i64;
+        let Some(key) = root
+            .ctlogs
+            .iter()
+            .find(|k| k.id == log_id && k.start <= t && k.end.is_none_or(|e| t <= e))
+        else {
+            continue;
+        };
+        let mut signed = vec![0u8, 0u8];
+        signed.extend(ts.to_be_bytes());
+        signed.extend([0u8, 1u8]);
+        signed.extend(issuer_key_hash);
+        signed.extend(&(pre.len() as u32).to_be_bytes()[1..]);
+        signed.extend(&pre);
+        signed.extend((el as u16).to_be_bytes());
+        signed.extend(exts);
+        if let Ok((_, spki)) = SubjectPublicKeyInfo::from_der(&key.spki) {
+            if !key.ed25519 && verify_raw(&spki, &signed, sig) {
+                return Ok(());
+            }
+        }
+    }
+    Err(refuse(
+        "sct",
+        format!(
+            "no SCT of the signing certificate verifies under a CT log of {} (logs named: {}). If Sigstore rotated its CT log key, set {TRUSTED_ROOT_ENV} to a trusted_root.json that holds it",
+            root.named(),
+            if seen.is_empty() { "none".into() } else { seen.join(", ") }
         ),
     ))
 }
@@ -684,6 +935,11 @@ fn pem_to_der(pem: &[u8]) -> Option<Vec<u8>> {
     let (_, p) = x509_parser::pem::parse_x509_pem(pem).ok()?;
     (p.label == "CERTIFICATE").then_some(p.contents)
 }
+
+/// The update tests' stand-in Sigstore, for the verifier's own tests.
+#[cfg(test)]
+#[path = "../../tests/support/sigstore.rs"]
+mod stand_in;
 
 #[cfg(test)]
 mod tests {
@@ -972,6 +1228,126 @@ mod tests {
             let r = verify(SUMS, b, &release(), &root()).unwrap_err();
             assert_eq!(r.check, "bundle", "{b:?}: {r}");
         }
+    }
+
+    use super::stand_in;
+
+    /// A stand-in Sigstore's release, verified against its trusted root alone.
+    fn stand_in(leaf: stand_in::Leaf) -> Result<Verified, Refusal> {
+        let s = stand_in::Sigstore::new();
+        let w = stand_in::Workflow::release("example-org/releases", "9.9.9");
+        let bundle = s.bundle_with(SUMS, &w, leaf);
+        let root = TrustRoot::parse(&s.trusted_root(), "stand-in").unwrap();
+        let e = Expect {
+            signer: "example-org/releases",
+            version: "9.9.9",
+            workflow: RELEASE_WORKFLOW,
+        };
+        verify(SUMS, &bundle, &e, &root)
+    }
+
+    /// The published releases' SCTs are checked, not skipped: without the
+    /// trusted root's CT logs, 0.5.1 is refused at the SCT.
+    #[test]
+    fn the_published_signature_needs_its_ct_log() {
+        let mut r = root();
+        r.ctlogs.clear();
+        let e = verify(SUMS, BUNDLE, &release(), &r).unwrap_err();
+        assert_eq!(e.check, "sct", "{e}");
+        assert!(
+            e.detail
+                .contains("dd3d306ac6c7113263191e1c99673702a24a5eb8de3cadff878a72802f29ee8e"),
+            "{e}"
+        );
+    }
+
+    #[test]
+    fn a_stand_in_release_with_a_valid_sct_is_accepted() {
+        let v = stand_in(stand_in::Leaf::default());
+        assert!(v.is_ok(), "{v:?}");
+    }
+
+    /// cosign v2 verify-blob requires an embedded SCT from a trusted CT log
+    /// (pkg/cosign/verify.go, VerifyEmbeddedSCT; RFC 6962 section 3.2).
+    #[test]
+    fn a_leaf_without_an_sct_is_refused() {
+        let r = stand_in(stand_in::Leaf {
+            sct: stand_in::Sct::None,
+            ..Default::default()
+        })
+        .unwrap_err();
+        assert_eq!(r.check, "sct", "{r}");
+    }
+
+    #[test]
+    fn an_sct_from_a_log_the_trusted_root_does_not_hold_is_refused() {
+        let r = stand_in(stand_in::Leaf {
+            sct: stand_in::Sct::UnknownLog,
+            ..Default::default()
+        })
+        .unwrap_err();
+        assert_eq!(r.check, "sct", "{r}");
+        assert!(r.detail.contains(TRUSTED_ROOT_ENV), "{r}");
+    }
+
+    #[test]
+    fn an_sct_over_another_certificate_is_refused() {
+        let r = stand_in(stand_in::Leaf {
+            sct: stand_in::Sct::OverOther,
+            ..Default::default()
+        })
+        .unwrap_err();
+        assert_eq!(r.check, "sct", "{r}");
+    }
+
+    /// As Go's x509.Verify does, a leaf with a critical extension the
+    /// verifier does not handle is refused.
+    #[test]
+    fn a_leaf_with_an_unknown_critical_extension_is_refused() {
+        let r = stand_in(stand_in::Leaf {
+            unknown_critical: true,
+            ..Default::default()
+        })
+        .unwrap_err();
+        assert_eq!(r.check, "chain", "{r}");
+        assert!(r.detail.contains("critical"), "{r}");
+    }
+
+    #[test]
+    fn a_leaf_that_is_a_ca_is_refused() {
+        let r = stand_in(stand_in::Leaf {
+            ca: true,
+            ..Default::default()
+        })
+        .unwrap_err();
+        assert_eq!(r.check, "chain", "{r}");
+        assert!(r.detail.contains("CA"), "{r}");
+    }
+
+    /// Through verify(): a leaf whose ten minutes ended before Rekor
+    /// integrated the entry.
+    #[test]
+    fn a_leaf_expired_at_the_entry_s_time_is_refused() {
+        let r = stand_in(stand_in::Leaf {
+            expired: true,
+            ..Default::default()
+        })
+        .unwrap_err();
+        assert_eq!(r.check, "chain", "{r}");
+        assert!(r.detail.contains("Rekor recorded the entry at"), "{r}");
+    }
+
+    /// An operator's trusted root with an `end` that does not parse is
+    /// refused, rather than read as a window with no end.
+    #[test]
+    fn a_trusted_root_with_an_unreadable_end_is_refused() {
+        let mut v: serde_json::Value = serde_json::from_str(EMBEDDED_ROOT).unwrap();
+        v["tlogs"][0]["publicKey"]["validFor"]["end"] = "the end of time".into();
+        let e = TrustRoot::parse(&v.to_string(), "operator").unwrap_err();
+        assert!(e.contains("end"), "{e}");
+        let mut v: serde_json::Value = serde_json::from_str(EMBEDDED_ROOT).unwrap();
+        v["certificateAuthorities"][1]["validFor"]["end"] = 7.into();
+        assert!(TrustRoot::parse(&v.to_string(), "operator").is_err());
     }
 
     fn leaf_der() -> Vec<u8> {

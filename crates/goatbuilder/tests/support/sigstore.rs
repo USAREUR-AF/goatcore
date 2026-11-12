@@ -67,6 +67,33 @@ pub struct Sigstore {
     inter: rcgen::Certificate,
     inter_key: rcgen::KeyPair,
     log_key: rcgen::KeyPair,
+    ct_key: rcgen::KeyPair,
+}
+
+/// How a stand-in leaf differs from a good one.
+#[derive(Clone, Copy, Default)]
+pub struct Leaf {
+    /// The leaf's embedded SCT.
+    pub sct: Sct,
+    /// Carry an unknown extension marked critical.
+    pub unknown_critical: bool,
+    /// Be a CA (basicConstraints CA:TRUE).
+    pub ca: bool,
+    /// Expire before the entry is integrated.
+    pub expired: bool,
+}
+
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub enum Sct {
+    /// Signed by the trusted CT log over the precertificate.
+    #[default]
+    Valid,
+    /// No SCT list extension.
+    None,
+    /// Signed by a CT log key the trusted root does not hold.
+    UnknownLog,
+    /// Signed by the trusted log over other bytes.
+    OverOther,
 }
 
 fn ca(name: &str) -> rcgen::CertificateParams {
@@ -89,12 +116,14 @@ impl Sigstore {
             .signed_by(&inter_key, &root, &root_key)
             .unwrap();
         let log_key = rcgen::KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256).unwrap();
+        let ct_key = rcgen::KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256).unwrap();
         Sigstore {
             root,
             root_key,
             inter,
             inter_key,
             log_key,
+            ct_key,
         }
     }
 
@@ -113,6 +142,16 @@ impl Sigstore {
                 },
                 "logId": {"keyId": b64(&Sha256::digest(&spki))}
             }],
+            "ctlogs": [{
+                "baseUrl": "https://ctfe.example.org",
+                "hashAlgorithm": "SHA2_256",
+                "publicKey": {
+                    "rawBytes": b64(&self.ct_key.public_key_der()),
+                    "keyDetails": "PKIX_ECDSA_P256_SHA_256",
+                    "validFor": {"start": "2020-01-01T00:00:00Z"}
+                },
+                "logId": {"keyId": b64(&Sha256::digest(self.ct_key.public_key_der()))}
+            }],
             "certificateAuthorities": [{
                 "subject": {"organization": "sigstore.example.org", "commonName": "stand-in"},
                 "uri": "https://fulcio.example.org",
@@ -128,7 +167,11 @@ impl Sigstore {
 
     /// A cosign bundle over `sums`, signed as `w`.
     pub fn bundle(&self, sums: &[u8], w: &Workflow) -> String {
-        let key = rcgen::KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256).unwrap();
+        self.bundle_with(sums, w, Leaf::default())
+    }
+
+    /// The leaf's parameters, without its SCT list.
+    fn leaf_params(&self, w: &Workflow, leaf: Leaf) -> rcgen::CertificateParams {
         let mut p = rcgen::CertificateParams::new(vec![]).unwrap();
         let reusable = format!(
             "https://github.com/{}/.github/workflows/_release-binary.yml@refs/tags/{}",
@@ -138,8 +181,20 @@ impl Sigstore {
             rcgen::Ia5String::try_from(reusable).unwrap(),
         )];
         p.extended_key_usages = vec![rcgen::ExtendedKeyUsagePurpose::CodeSigning];
-        p.not_before = time::OffsetDateTime::now_utc() - time::Duration::minutes(5);
-        p.not_after = time::OffsetDateTime::now_utc() + time::Duration::minutes(5);
+        p.serial_number = Some(rcgen::SerialNumber::from(vec![0x42, 0x17]));
+        let now = time::OffsetDateTime::now_utc()
+            .replace_nanosecond(0)
+            .unwrap();
+        if leaf.expired {
+            p.not_before = now - time::Duration::minutes(30);
+            p.not_after = now - time::Duration::minutes(20);
+        } else {
+            p.not_before = now - time::Duration::minutes(5);
+            p.not_after = now + time::Duration::minutes(5);
+        }
+        if leaf.ca {
+            p.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+        }
         for (n, v) in [
             (8, "https://token.actions.githubusercontent.com".to_string()),
             (12, format!("https://github.com/{}", w.repo)),
@@ -154,6 +209,52 @@ impl Sigstore {
         ] {
             p.custom_extensions
                 .push(rcgen::CustomExtension::from_oid_content(&oid(n), utf8(&v)));
+        }
+        if leaf.unknown_critical {
+            let mut e = rcgen::CustomExtension::from_oid_content(
+                &[1, 3, 6, 1, 4, 1, 99999, 1],
+                vec![0x05, 0x00],
+            );
+            e.set_criticality(true);
+            p.custom_extensions.push(e);
+        }
+        p
+    }
+
+    /// A cosign bundle whose leaf is `leaf`.
+    pub fn bundle_with(&self, sums: &[u8], w: &Workflow, leaf: Leaf) -> String {
+        let key = rcgen::KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256).unwrap();
+        // RFC 6962 section 3.2: the log signs the precertificate's TBS, which
+        // is the final certificate's TBS without the SCT list. The precert is
+        // built from the same parameters, so the two TBS differ only by it.
+        let pre = self
+            .leaf_params(w, leaf)
+            .signed_by(&key, &self.inter, &self.inter_key)
+            .unwrap();
+        let mut p = self.leaf_params(w, leaf);
+        if leaf.sct != Sct::None {
+            let (_, parsed) = x509_parser::parse_x509_certificate(pre.der()).unwrap();
+            let tbs = parsed.tbs_certificate.as_ref().to_vec();
+            let other = rcgen::KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256).unwrap();
+            let log = if leaf.sct == Sct::UnknownLog {
+                &other
+            } else {
+                &self.ct_key
+            };
+            let signed_tbs = if leaf.sct == Sct::OverOther {
+                b"other".to_vec()
+            } else {
+                tbs
+            };
+            let list = sct_list(log, self.inter.der(), &signed_tbs);
+            let mut content = vec![0x04];
+            content.extend(der_len(list.len()));
+            content.extend(list);
+            p.custom_extensions
+                .push(rcgen::CustomExtension::from_oid_content(
+                    &[1, 3, 6, 1, 4, 1, 11129, 2, 4, 2],
+                    content,
+                ));
         }
         let leaf = p.signed_by(&key, &self.inter, &self.inter_key).unwrap();
         let pem = leaf.pem();
@@ -184,4 +285,41 @@ impl Sigstore {
         })
         .to_string()
     }
+}
+
+fn der_len(n: usize) -> Vec<u8> {
+    if n < 0x80 {
+        vec![n as u8]
+    } else if n < 0x100 {
+        vec![0x81, n as u8]
+    } else {
+        vec![0x82, (n >> 8) as u8, n as u8]
+    }
+}
+
+/// A TLS-encoded SignedCertificateTimestampList holding one v1 SCT by `log`
+/// over the precert entry for `tbs`, issued by `issuer` (RFC 6962 3.2).
+fn sct_list(log: &rcgen::KeyPair, issuer: &[u8], tbs: &[u8]) -> Vec<u8> {
+    let (_, iss) = x509_parser::parse_x509_certificate(issuer).unwrap();
+    let issuer_key_hash = Sha256::digest(iss.public_key().raw);
+    let ts: u64 = (time::OffsetDateTime::now_utc().unix_timestamp() as u64) * 1000;
+    let mut signed = vec![0u8, 0u8];
+    signed.extend(ts.to_be_bytes());
+    signed.extend([0u8, 1u8]);
+    signed.extend(issuer_key_hash);
+    signed.extend(&(tbs.len() as u32).to_be_bytes()[1..]);
+    signed.extend(tbs);
+    signed.extend([0u8, 0u8]);
+    let sig = sign(log, &signed);
+    let mut sct = vec![0u8];
+    sct.extend(Sha256::digest(log.public_key_der()));
+    sct.extend(ts.to_be_bytes());
+    sct.extend([0u8, 0u8]);
+    sct.extend([4u8, 3u8]);
+    sct.extend((sig.len() as u16).to_be_bytes());
+    sct.extend(sig);
+    let mut list = (sct.len() as u16 + 2).to_be_bytes().to_vec();
+    list.extend((sct.len() as u16).to_be_bytes());
+    list.extend(sct);
+    list
 }
