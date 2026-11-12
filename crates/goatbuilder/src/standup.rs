@@ -254,12 +254,11 @@ impl SiteEnv {
     }
 }
 
-#[cfg(test)]
-fn read_site_in(repo: &Path, o: &Options, _env: &SiteEnv) -> Result<Site> {
-    read_site(repo, o)
+fn read_site(repo: &Path, o: &Options) -> Result<Site> {
+    read_site_in(repo, o, &SiteEnv::process())
 }
 
-fn read_site(repo: &Path, o: &Options) -> Result<Site> {
+fn read_site_in(repo: &Path, o: &Options, env: &SiteEnv) -> Result<Site> {
     let site = o.site.to_string();
     let site_us = site.replace('-', "_");
     let group = format!("{site_us}_hosts");
@@ -274,9 +273,10 @@ fn read_site(repo: &Path, o: &Options) -> Result<Site> {
     let lite_internet_aws = lite_cfg.as_ref().and_then(|c| c.lite.as_ref()).and_then(|l| {
         l.internet.as_ref().map(|i| i.aws_profile.clone().filter(|p| !p.is_empty()).unwrap_or_else(|| l.name.clone()))
     });
-    let aws = std::env::var("GOAT_AWS_PROFILE").ok().filter(|s| !s.is_empty())
+    let aws = env.aws_profile.clone()
         .or_else(|| lite_internet_aws.clone())
-        .unwrap_or_else(|| crate::settings::aws_profile(repo));
+        .or_else(|| crate::settings::declared_aws_profile(repo))
+        .unwrap_or_else(|| "default".to_string());
     // A goatlite declares its administrator (lite.admin), so the run uses that
     // rather than an OWNER_EMAIL the person must remember to export: phase 5
     // expanded "$OWNER_EMAIL" in its arguments and died before Ansible, and
@@ -330,7 +330,7 @@ fn read_site(repo: &Path, o: &Options) -> Result<Site> {
         group,
         upper,
         obs_group,
-        state_dir: crate::settings::state_dir_abs(repo),
+        state_dir: crate::settings::expand_under(&crate::settings::state_dir(repo), &env.home),
         // A LAN goatlite reaches its one box directly at its inventory address and
         // declares no cloud, so no play needs AWS. with-aws defaults to
         // aws-vault whenever aws-vault is installed (ADR 1204), so without this

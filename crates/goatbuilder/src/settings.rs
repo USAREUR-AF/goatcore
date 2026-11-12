@@ -63,8 +63,14 @@ fn beside_state(state: &str) -> String {
 }
 
 fn expand(p: &str) -> String {
+    expand_under(p, &std::env::var("HOME").unwrap_or_default())
+}
+
+/// `p` with a leading `~/` as `home`, for a caller that resolves the home
+/// directory itself.
+pub fn expand_under(p: &str, home: &str) -> String {
     match p.strip_prefix("~/") {
-        Some(rest) => format!("{}/{rest}", std::env::var("HOME").unwrap_or_default()),
+        Some(rest) => format!("{home}/{rest}"),
         None => p.to_string(),
     }
 }
