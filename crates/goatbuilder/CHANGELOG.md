@@ -6,6 +6,23 @@ Each release is the tag `goatbuilder/v<semver>` on `main`, built and signed by
 
 ## Unreleased
 
+### Changed: `update` verifies the release signature itself, and always
+
+`goatbuilder update` now verifies the keyless signature over the release's
+`SHA256SUMS` in the binary, with no `cosign` needed and nothing fetched beyond
+the release's own signature bundle. Before, the signature was checked only
+when `cosign` was on PATH; without it, the update installed with the
+signature "not checked". Now an install without cosign enforces it too. A
+release whose signature does not verify, or that serves none, is refused
+(GB-254), and nothing is installed. Every goatbuilder release published
+with a signature (0.4.1, 0.4.2, 0.4.3, 0.5.1) verifies.
+
+The signature must be the release workflow's (`goatbuilder-release.yml`) in
+the repository `goatbuilder.yaml` names, at the served version's tag. The
+Sigstore trusted root is built in. After a Sigstore key rotation, set
+`GOATBUILDER_UPDATE_TRUSTED_ROOT` to a `trusted_root.json` that holds the new
+key.
+
 ## 0.5.3 — 2026-11-12
 
 0.5.2 was tagged but never published: its release run stopped at startup,

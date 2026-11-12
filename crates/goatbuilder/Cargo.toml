@@ -52,6 +52,11 @@ shlex = "1"
 # `federate` phase 5: our verifying key, derived from the seed that signs our
 # package, shown to be read aloud.
 ed25519-dalek = "2"
+# `update`: SHA256SUMS's keyless signature checked in process (src/update/signature.rs):
+# ECDSA and Ed25519 by ring, certificates by x509-parser. Both were already linked
+# (ring through rustls, x509-parser through goat-federation), so nothing new is built.
+ring = "0.17"
+x509-parser = { version = "0.16", features = ["verify"] }
 
 [dev-dependencies]
 # Golden command tests, the same framework and conventions as goat-cli
@@ -61,4 +66,8 @@ trycmd = "0.15"
 # Whole-flow integration tests run the built binary on throwaway copies of
 # the fixtures (tests/flows.rs).
 tempfile = "3"
+# update/signature.rs: a certificate no trusted CA issued.
+rcgen = "0.13"
+# tests/support/sigstore.rs: certificate validity windows for the stand-in Sigstore.
+time = "0.3"
 

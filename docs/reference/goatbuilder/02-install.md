@@ -58,7 +58,7 @@ goatbuilder update                           # later: the surface the last updat
 | surface | `GOATBUILDER_UPDATE_URL`, else `--site` (from `ops/ansible/group_vars/<site>_hosts/`: `site_id`, `site_dns_zone`, `goat_get_goatbuilder_enabled`), else `~/.goatbuilder/update-check.json` |
 | version | `version.json`; current or newer prints one row and exits 0, `--force` reinstalls |
 | checksum | the asset's `.sha256` equals its line in `SHA256SUMS`, and the download hashes to it |
-| signature | with `cosign` on PATH, `SHA256SUMS.cosign-bundle` verified against the release workflow's identity; without it the row says not checked |
+| signature | `SHA256SUMS.cosign-bundle` verified by goatbuilder itself, offline, with no cosign needed. It checks the Sigstore certificate chain, Rekor's timestamp, and the release workflow `goatbuilder-release.yml` of the repository `goatbuilder.yaml` names, at the served version's tag. Not verified, or not served: GB-254, nothing installed. After a Sigstore key rotation, set `GOATBUILDER_UPDATE_TRUSTED_ROOT` to a trusted_root.json that holds the new key |
 | install | a temp file beside the binary, renamed over it: the old binary or the new one, never a partial |
 
 The binary download stops after 30 seconds without a byte

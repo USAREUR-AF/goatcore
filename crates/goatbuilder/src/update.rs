@@ -11,10 +11,12 @@
 //!     from); the surface the last successful run used, remembered in
 //!     `~/.goatbuilder/update-check.json`. None of them → GB-072.
 //!   - The download is checked against the surface's `<asset>.sha256`, which
-//!     must agree with the release's `SHA256SUMS`; with cosign on PATH the
-//!     signature over `SHA256SUMS` is verified against the release workflow's
-//!     identity, as the install page does by hand. Any disagreement is GB-074,
-//!     before the installed binary is touched. The replace is atomic.
+//!     must agree with the release's `SHA256SUMS` (GB-074 when they disagree).
+//!     The keyless signature over `SHA256SUMS` (`SHA256SUMS.cosign-bundle`) is
+//!     verified in process against the release workflow's identity
+//!     (update/signature.rs), with no cosign and offline from the bundle; a
+//!     signature that does not verify, or is not served, is GB-254. Both are
+//!     checked before the installed binary is touched. The replace is atomic.
 //!   - version.json and the checksum are capped whole; the binary is bounded by
 //!     a stall (no bytes for 30 s), not a total, because the mesh path to
 //!     get.<site> can run at a few hundred KB/s (goat #2134).
@@ -25,6 +27,9 @@
 //! answer, refreshed by one bounded fetch at most once a day, printed to a
 //! terminal's stderr at most once a day, never in `-o json|yaml`, and off with
 //! `GOATBUILDER_NO_VERSION_CHECK` (or goat's `GOAT_NO_VERSION_CHECK`).
+
+
+mod signature;
 
 use std::io::{IsTerminal, Read};
 use std::path::{Path, PathBuf};
@@ -248,7 +253,7 @@ pub fn run(repo: &Path, o: &Options) -> Result<Report> {
     // binary is refused before the long download.
     let sha_txt = fetch_text(&probe, &sha_url, fetch_total).map_err(|e| unread(format!("cannot read the checksum: {e}")))?;
     let want = goat_selfupdate::parse_checksum(&sha_txt).ok_or_else(|| unread(format!("{sha_url} holds no sha256 digest")))?;
-    let signature = signed(repo, &probe, &s.base, &asset, &want, fetch_total)?;
+    let signature = signed(repo, &probe, &s.base, &asset, &want, &latest, fetch_total)?;
     if matches!(o.output, OutputFormat::Table) {
         eprintln!("downloading {bin_url} …");
     }
@@ -275,10 +280,10 @@ pub fn run(repo: &Path, o: &Options) -> Result<Report> {
 }
 
 /// SHA256SUMS, the release's one signed file, must list `asset` at the digest
-/// its `.sha256` gives; with cosign on PATH its signature is verified against
-/// the release workflow's identity, as the install page does by hand
-/// (docs/design/goatbuilder-distribution.md). Returns the signature row's text.
-fn signed(repo: &Path, agent: &ureq::Agent, base: &str, asset: &str, want: &str, total: Duration) -> Result<String> {
+/// its `.sha256` gives, and its signature must verify for the release workflow
+/// at the served version's tag (update/signature.rs,
+/// docs/design/goatbuilder-distribution.md). Returns the signature row's text.
+fn signed(repo: &Path, agent: &ureq::Agent, base: &str, asset: &str, want: &str, version: &str, total: Duration) -> Result<String> {
     let sums_url = format!("{base}/SHA256SUMS");
     let sums = fetch_text(agent, &sums_url, total).map_err(|e| unread(format!("cannot read the signed checksums: {e}")))?;
     let listed = sums.lines().find_map(|l| {
@@ -291,11 +296,9 @@ fn signed(repo: &Path, agent: &ureq::Agent, base: &str, asset: &str, want: &str,
         Some(d) => return Err(goat_errors::coded("GB-074", format!("checksum mismatch, refusing to install: {asset}.sha256 says {want}, SHA256SUMS says {d}; the installed binary is untouched")).into()),
         None => return Err(goat_errors::coded("GB-074", format!("checksum mismatch, refusing to install: SHA256SUMS at {base}/ does not list {asset}; the installed binary is untouched")).into()),
     }
-    let Some(cosign) = on_path("cosign") else {
-        return Ok("SHA256SUMS signature not checked: cosign is not on PATH (brew install cosign); the sha256 is checked".into());
-    };
     let bundle_url = format!("{base}/SHA256SUMS.cosign-bundle");
-    let bundle = fetch_text(agent, &bundle_url, total).map_err(|e| unread(format!("cannot read the signature: {e}")))?;
+    let bundle = fetch_text(agent, &bundle_url, total)
+        .map_err(|e| sig_refused(format!("the surface serves no signature for SHA256SUMS ({bundle_url}: {e})")))?;
     // The signer is the checkout's repo.release_source, else its repo.source;
     // run outside a checkout, the repository whose workflow built this binary.
     // No repository is named in the code. The signature is always checked: an
@@ -307,31 +310,23 @@ fn signed(repo: &Path, agent: &ureq::Agent, base: &str, asset: &str, want: &str,
             "signature not checked, refusing to install: no release signer is known. Run from a checkout whose ops/goatbuilder/goatbuilder.yaml names repo.release_source (or repo.source); this binary was not built by a release workflow, so it names none itself. The installed binary is untouched",
         )
     })?;
-    let dir = std::env::temp_dir().join(format!("goatbuilder-update-{}", std::process::id()));
-    let _ = std::fs::create_dir_all(&dir);
-    let (sums_path, bundle_path) = (dir.join("SHA256SUMS"), dir.join("SHA256SUMS.cosign-bundle"));
-    let wrote = std::fs::write(&sums_path, &sums).and_then(|_| std::fs::write(&bundle_path, &bundle));
-    let identity = format!("^https://github.com/{source}/");
-    let out = wrote.and_then(|_| {
-        std::process::Command::new(&cosign)
-            .arg("verify-blob")
-            .arg("--bundle")
-            .arg(&bundle_path)
-            .args(["--certificate-identity-regexp", &identity, "--certificate-oidc-issuer", "https://token.actions.githubusercontent.com"])
-            .arg(&sums_path)
-            .output()
-    });
-    let _ = std::fs::remove_dir_all(&dir);
-    match out {
-        Ok(o) if o.status.success() => Ok(format!("SHA256SUMS signed by the {source} release workflow (cosign verify-blob)")),
-        Ok(o) => Err(goat_errors::coded(
-            "GB-074",
-            format!("signature refused, refusing to install: cosign verify-blob of {base}/SHA256SUMS against {identity}: {}; the installed binary is untouched", String::from_utf8_lossy(&o.stderr).trim()),
-        )
-        .into()),
-        Err(e) => Err(goat_errors::coded("GB-074", format!("signature not checked, refusing to install: cannot run {}: {e}; the installed binary is untouched", cosign.display())).into()),
+    // Checked in process (update/signature.rs): no cosign, and nothing fetched
+    // beyond the bundle; the trusted root is embedded, plus the operator's.
+    let root = signature::TrustRoot::resolve().map_err(|e| sig_refused(format!("cannot read the trusted root: {e}")))?;
+    let expect = signature::Expect { signer: &source, version, workflow: signature::RELEASE_WORKFLOW };
+    match signature::verify(sums.as_bytes(), &bundle, &expect, &root) {
+        Ok(v) => Ok(format!("SHA256SUMS signed by {} (Rekor entry {}, {})", v.identity, v.log_index, chrono::DateTime::from_timestamp(v.integrated_time, 0).map(|d| d.to_rfc3339()).unwrap_or_default())),
+        Err(r) => Err(sig_refused(format!("the signature over {base}/SHA256SUMS does not verify for the {source} release workflow at {}{version}: {r}", signature::TAG_PREFIX))),
     }
 }
+
+/// The signature over SHA256SUMS did not verify, or could not be checked.
+fn sig_refused(why: String) -> anyhow::Error {
+    goat_errors::coded(SIGNATURE_REFUSED, format!("{why}; refusing to install, and the installed binary is untouched")).into()
+}
+
+/// The catalog code for a signature that does not verify.
+const SIGNATURE_REFUSED: &str = "GB-254";
 
 /// The repository whose GitHub workflow built this binary (`GITHUB_REPOSITORY`
 /// at build time): the binary's own release provenance. None for a local build.
@@ -343,10 +338,6 @@ fn release_signer(configured: Option<String>, built_by: Option<&str>) -> Option<
     configured
         .filter(|s| !s.trim().is_empty())
         .or_else(|| built_by.filter(|s| !s.trim().is_empty()).map(str::to_string))
-}
-
-fn on_path(tool: &str) -> Option<PathBuf> {
-    std::env::split_paths(&std::env::var_os("PATH")?).map(|d| d.join(tool)).find(|p| p.is_file())
 }
 
 /// The binary, bounded by a stall rather than a total. `connect` bounds only

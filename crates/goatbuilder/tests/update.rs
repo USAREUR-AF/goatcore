@@ -6,11 +6,18 @@
 //
 // Cases: an update applied (the copy then runs as the served release), already
 // current, a checksum mismatch (refused, copy byte-for-byte intact), a .sha256
-// that SHA256SUMS contradicts, the signature over SHA256SUMS verified or
-// refused (a stand-in `cosign` on PATH), a stalled download (refused inside
-// the stall bound, copy intact), an unreachable surface, and `--check`. PATH is
-// /usr/bin:/bin unless a case puts its own cosign first, so a cosign installed
-// on the machine running the tests is never what answers.
+// that SHA256SUMS contradicts, the signature over SHA256SUMS verified in
+// process or refused (another repository, another workflow, another version,
+// a changed SHA256SUMS, none served), a stalled download (refused inside the
+// stall bound, copy intact), an unreachable surface, and `--check`.
+//
+// The signature is a stand-in Sigstore's (tests/support/sigstore.rs): its
+// trusted root is given to the copy through GOATBUILDER_UPDATE_TRUSTED_ROOT,
+// and the release signer through a goatbuilder.yaml in the working directory.
+// PATH is /usr/bin:/bin, and no cosign is needed.
+
+#[path = "support/sigstore.rs"]
+mod sigstore;
 
 use std::io::{Read, Write};
 use std::net::TcpListener;
@@ -83,29 +90,52 @@ fn surface(version: &str, bin: Body, sha: &str) -> String {
     surface_with_sums(version, bin, sha, sha)
 }
 
+/// The stand-in Sigstore every case's surface is signed by, made once.
+fn sigstore() -> &'static sigstore::Sigstore {
+    static S: std::sync::OnceLock<sigstore::Sigstore> = std::sync::OnceLock::new();
+    S.get_or_init(sigstore::Sigstore::new)
+}
+
+/// The release signer the copies are configured with (signer_config).
+const SIGNER: &str = "example-org/releases";
+
+/// How a surface's SHA256SUMS is signed.
+#[derive(Clone)]
+enum Signed {
+    /// By the signer's release workflow at the served version's tag.
+    AsRelease,
+    /// By this workflow identity instead.
+    As(sigstore::Workflow),
+    /// A bundle over other bytes than the served SHA256SUMS.
+    OverOther,
+    /// No bundle is served.
+    None,
+}
+
 /// `sha` in `<asset>.sha256`, `sums` for the asset's line in SHA256SUMS.
 fn surface_with_sums(version: &str, bin: Body, sha: &str, sums: &str) -> String {
-    serve(vec![
+    surface_signed(version, bin, sha, sums, Signed::AsRelease)
+}
+
+fn surface_signed(version: &str, bin: Body, sha: &str, sums: &str, signed: Signed) -> String {
+    let sums_text = format!("{}  goatbuilder-docs.tar.gz\n{sums}  {}\n", "0".repeat(64), asset());
+    let release = sigstore::Workflow::release(SIGNER, version);
+    let bundle = match signed {
+        Signed::AsRelease => Some(sigstore().bundle(sums_text.as_bytes(), &release)),
+        Signed::As(w) => Some(sigstore().bundle(sums_text.as_bytes(), &w)),
+        Signed::OverOther => Some(sigstore().bundle(b"another SHA256SUMS", &release)),
+        Signed::None => None,
+    };
+    let mut routes = vec![
         ("/goatbuilder/version.json".into(), Body::Full(format!("{{\"version\":\"{version}\",\"tag\":\"goatbuilder/v{version}\"}}").into_bytes())),
         (format!("/goatbuilder/{}", asset()), bin),
         (format!("/goatbuilder/{}.sha256", asset()), Body::Full(format!("{sha}  {}\n", asset()).into_bytes())),
-        ("/goatbuilder/SHA256SUMS".into(), Body::Full(format!("{}  goatbuilder-docs.tar.gz\n{sums}  {}\n", "0".repeat(64), asset()).into_bytes())),
-        ("/goatbuilder/SHA256SUMS.cosign-bundle".into(), Body::Full(b"{\"bundle\":\"stand-in\"}".to_vec())),
-    ])
-}
-
-/// A directory holding a stand-in `cosign` that exits `code`, for PATH.
-fn fake_cosign(c: &Copy, code: i32) -> String {
-    let dir = c.home.join("fakebin");
-    std::fs::create_dir_all(&dir).unwrap();
-    let p = dir.join("cosign");
-    std::fs::write(&p, format!("#!/bin/sh\necho \"stand-in cosign: $*\" >&2\nexit {code}\n")).unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        ("/goatbuilder/SHA256SUMS".into(), Body::Full(sums_text.into_bytes())),
+    ];
+    if let Some(b) = bundle {
+        routes.push(("/goatbuilder/SHA256SUMS.cosign-bundle".into(), Body::Full(b.into_bytes())));
     }
-    format!("{}:/usr/bin:/bin", dir.display())
+    serve(routes)
 }
 
 struct Copy {
@@ -121,12 +151,16 @@ fn copy() -> Copy {
     std::fs::copy(env!("CARGO_BIN_EXE_goatbuilder"), &exe).unwrap();
     let home = dir.path().join("home");
     std::fs::create_dir_all(&home).unwrap();
-    Copy { _dir: dir, exe, home }
+    std::fs::write(home.join("trusted_root.json"), sigstore().trusted_root()).unwrap();
+    let c = Copy { _dir: dir, exe, home };
+    // The signer comes from the deployment's config, never from the code.
+    signer_config(&c, SIGNER);
+    c
 }
 
 fn run(c: &Copy, url: &str, args: &[&str], extra: &[(&str, &str)]) -> Output {
     let mut cmd = Command::new(&c.exe);
-    cmd.args(args).env("GOATBUILDER_UPDATE_URL", url).env("HOME", &c.home).env("PATH", "/usr/bin:/bin").env("GOAT_LANG", "en").env_remove("GOAT_EXPLAIN").current_dir(c.home.as_path());
+    cmd.args(args).env("GOATBUILDER_UPDATE_URL", url).env("HOME", &c.home).env("PATH", "/usr/bin:/bin").env("GOAT_LANG", "en").env("GOATBUILDER_UPDATE_TRUSTED_ROOT", c.home.join("trusted_root.json")).env_remove("GOAT_EXPLAIN").current_dir(c.home.as_path());
     for (k, v) in extra {
         cmd.env(k, v);
     }
@@ -162,7 +196,10 @@ fn an_update_replaces_the_binary_with_the_verified_release() {
     assert_eq!(o.status.code(), Some(0), "{}", text(&o));
     let t = text(&o);
     assert!(t.contains("ok    checksum") && t.contains("ok    install") && t.contains("→ 9.9.9"), "{t}");
-    assert!(t.contains("signature not checked: cosign is not on PATH"), "without cosign the row says so: {t}");
+    assert!(
+        t.contains("ok    signature  SHA256SUMS signed by https://github.com/example-org/releases/.github/workflows/goatbuilder-release.yml@refs/tags/goatbuilder/v9.9.9"),
+        "the signature is verified with no cosign on PATH: {t}"
+    );
     assert_eq!(bytes(&c.exe), release());
     let v = Command::new(&c.exe).arg("--version").output().unwrap();
     assert_eq!(String::from_utf8_lossy(&v.stdout).trim(), "goatbuilder 9.9.9");
@@ -248,27 +285,51 @@ fn a_sha256_that_sha256sums_contradicts_is_refused() {
     assert_eq!(bytes(&c.exe), before);
 }
 
+/// The signature over SHA256SUMS is verified in process: one by another
+/// repository, another workflow, or for another version; one over other
+/// bytes; or none served, is refused with GB-254, and nothing is installed.
+/// The release's own installs. No cosign is on PATH.
 #[test]
 fn a_verified_signature_installs_and_a_refused_one_does_not() {
     let c = copy();
-    // The signer comes from the deployment's config, never from the code.
-    signer_config(&c, "example-org/releases");
+    let before = bytes(&c.exe);
+    let w = |repo: &str, workflow: &str, version: &str| sigstore::Workflow {
+        repo: repo.into(),
+        workflow: workflow.into(),
+        tag: format!("goatbuilder/v{version}"),
+    };
+    for (what, signed, says) in [
+        ("another repository", Signed::As(w("example-org/forks", "goatbuilder-release.yml", "9.9.9")), "source repository"),
+        ("goat's release workflow", Signed::As(w(SIGNER, "goat-release.yml", "9.9.9")), "Build Config URI"),
+        ("another version", Signed::As(w(SIGNER, "goatbuilder-release.yml", "9.9.8")), "source ref"),
+        ("other bytes", Signed::OverOther, "the Rekor entry names the hash"),
+        ("no bundle", Signed::None, "the surface serves no signature for SHA256SUMS"),
+    ] {
+        let url = surface_signed("9.9.9", Body::Full(release()), &sha256(&release()), &sha256(&release()), signed);
+        let o = run(&c, &url, &["update"], &[]);
+        assert_eq!(o.status.code(), Some(1), "{what}: {}", text(&o));
+        let t = text(&o);
+        assert!(t.contains("GB-254") && t.contains(says), "{what}: {t}");
+        assert_eq!(bytes(&c.exe), before, "{what}: a refused signature installs nothing");
+    }
+
+    let url = surface("9.9.9", Body::Full(release()), &sha256(&release()));
+    let o = run(&c, &url, &["update"], &[]);
+    assert_eq!(o.status.code(), Some(0), "{}", text(&o));
+    assert!(text(&o).contains("ok    signature  SHA256SUMS signed by"), "{}", text(&o));
+    assert_eq!(bytes(&c.exe), release());
+}
+
+/// Without the trusted root that holds the signing CA, the refusal names the
+/// option to supply one.
+#[test]
+fn a_signature_from_an_untrusted_ca_names_the_trusted_root_option() {
+    let c = copy();
     let before = bytes(&c.exe);
     let url = surface("9.9.9", Body::Full(release()), &sha256(&release()));
-    let refused = fake_cosign(&c, 1);
-    let o = run(&c, &url, &["update"], &[("PATH", &refused)]);
+    let o = run(&c, &url, &["update"], &[("GOATBUILDER_UPDATE_TRUSTED_ROOT", "")]);
     assert_eq!(o.status.code(), Some(1), "{}", text(&o));
     let t = text(&o);
-    assert!(t.contains("signature refused") && t.contains("--certificate-identity-regexp") && t.contains("GB-074"), "{t}");
-    assert_eq!(bytes(&c.exe), before, "a refused signature installs nothing");
-
-    let verified = fake_cosign(&c, 0);
-    let o = run(&c, &url, &["update"], &[("PATH", &verified)]);
-    assert_eq!(o.status.code(), Some(0), "{}", text(&o));
-    assert!(
-        text(&o).contains("ok    signature  SHA256SUMS signed by the example-org/releases release workflow"),
-        "{}",
-        text(&o)
-    );
-    assert_eq!(bytes(&c.exe), release());
+    assert!(t.contains("GB-254") && t.contains("GOATBUILDER_UPDATE_TRUSTED_ROOT"), "{t}");
+    assert_eq!(bytes(&c.exe), before);
 }

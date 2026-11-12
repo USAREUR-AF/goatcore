@@ -1819,7 +1819,9 @@ dependencies = [
  "i18n-embed-fl",
  "jsonschema",
  "once_cell",
+ "rcgen 0.13.2",
  "regex",
+ "ring",
  "rust-embed",
  "serde",
  "serde_json",
@@ -1828,12 +1830,14 @@ dependencies = [
  "shlex",
  "similar",
  "tempfile",
+ "time",
  "toml 0.8.23",
  "tracing",
  "tracing-subscriber",
  "trycmd",
  "unic-langid",
  "ureq",
+ "x509-parser 0.16.0",
 ]
 
 [[package]]

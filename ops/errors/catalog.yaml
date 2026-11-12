@@ -543,6 +543,25 @@ entries:
       - "no release signer is known"
     exit: 1
 
+  - code: GB-254
+    tool: goatbuilder
+    title: the release's signature does not verify, so the update refuses
+    what: "`goatbuilder update` verifies the keyless signature over the release's SHA256SUMS (SHA256SUMS.cosign-bundle) itself, offline, against the Sigstore trusted root: the certificate chains to a Fulcio CA, Rekor's signed entry timestamp verifies, the entry names this file, and the certificate is the release signer's goatbuilder-release.yml at the served version's goatbuilder/v<version> tag. One of these failed, or the surface serves no signature. The message names the check. Nothing was installed."
+    causes:
+      - the surface serves a SHA256SUMS or a binary that the release workflow did not sign
+      - the signature is another repository's, another workflow's, or another version's
+      - Sigstore rotated its Fulcio CA or Rekor key after this goatbuilder was built
+      - the surface serves no SHA256SUMS.cosign-bundle
+    fixes:
+      - "check that the surface serves the release unchanged: the goat-get role's goat_get_goatbuilder_release_tag, and the release page's SHA256SUMS"
+      - "after a Sigstore key rotation: GOATBUILDER_UPDATE_TRUSTED_ROOT=<a trusted_root.json holding the new key> goatbuilder update"
+      - "goatbuilder -C <checkout> update, so that repo.release_source names the repository that publishes goatbuilder"
+    read: docs/design/goatbuilder-distribution.md
+    matches:
+      - "does not verify for the .* release workflow"
+      - "the surface serves no signature for SHA256SUMS"
+    exit: 1
+
   - code: GB-012
     tool: goatbuilder
     title: the candidate's image build did not succeed
