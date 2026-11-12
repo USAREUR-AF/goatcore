@@ -91,7 +91,7 @@
               {%- set out = _pb_rows -%}
               {%- set act = 'removed' if _pb_apply else 'remove' -%}
               {%- set m = _pbf_mine[0] -%}
-              {%- set probe = _pbf_link | backout_probe_state('wg') -%}
+              {%- set probe = _pbf_link | backout_probe_state('wg', m.interface) -%}
               {%- set _ = out.append({'component': 'forwarder', 'resource': 'carrier ' ~ m.interface, 'state': probe.state, 'action': (act if probe.state == 'present' else 'none'), 'note': ('public ' ~ m.peering_port ~ ', carrier ' ~ m.carrier_port) if probe.state != 'unknown' else probe.note}) -%}
               {%- for f in _pbf_files.results -%}
               {%-   set _ = out.append({'component': 'forwarder', 'resource': 'file ' ~ f.stat.path | default(_pbf_dir ~ '/' ~ m.interface ~ '.' ~ f.item), 'state': ('present' if f.stat.exists else 'absent'), 'action': (act if f.stat.exists else 'none'), 'note': ''}) -%}

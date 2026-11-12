@@ -94,9 +94,9 @@
           {%- if _pbs_td | length == 0 or _pb_names.spire.server_host | length == 0 -%}
           {%-   set _ = out.append({'component': 'spire', 'resource': 'federation (trust domain unknown)', 'state': 'unknown', 'action': 'none', 'note': 'no agreement or rendered trust domain, or no peering_spire_server_host: the server was not read'}) -%}
           {%- else -%}
-          {%-   set fed = _pbs_fed | backout_probe_state('spire') -%}
+          {%-   set fed = _pbs_fed | backout_probe_state('spire', _pbs_td) -%}
           {%-   set _ = out.append({'component': 'spire', 'resource': 'federation ' ~ _pbs_td, 'state': fed.state, 'action': (act if fed.state == 'present' else 'none'), 'note': 'on ' ~ _pb_names.spire.server_host ~ (('; ' ~ fed.note) if fed.state == 'unknown' else '')}) -%}
-          {%-   set bundle = _pbs_bundle | backout_probe_state('spire-bundle') -%}
+          {%-   set bundle = _pbs_bundle | backout_probe_state('spire-bundle', _pbs_td) -%}
           {%-   set _ = out.append({'component': 'spire', 'resource': 'bundle ' ~ _pbs_td, 'state': bundle.state, 'action': (act if bundle.state == 'present' else 'none'), 'note': 'on ' ~ _pb_names.spire.server_host ~ (('; ' ~ bundle.note) if bundle.state == 'unknown' else '')}) -%}
           {%- endif -%}
           {%- for u in _pb_names.spire.units -%}

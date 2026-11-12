@@ -33,7 +33,7 @@
     _pb_rows: >-
       {%- set out = _pb_rows -%}
       {%- set act = 'removed' if _pb_apply else 'remove' -%}
-      {%- set probe = _pbr_ctr | backout_probe_state('docker') -%}
+      {%- set probe = _pbr_ctr | backout_probe_state('docker', _pb_names.republisher.stack) -%}
       {%- set _ = out.append({'component': 'republisher', 'resource': 'container ' ~ _pb_names.republisher.stack, 'state': probe.state, 'action': (act if probe.state == 'present' else 'none'), 'note': probe.note}) -%}
       {%- for p in _pbr_paths.results[:2] -%}
       {%-   set _ = out.append({'component': 'republisher', 'resource': 'dir ' ~ p.item, 'state': ('present' if p.stat.exists else 'absent'), 'action': (act if p.stat.exists else 'none'), 'note': ''}) -%}

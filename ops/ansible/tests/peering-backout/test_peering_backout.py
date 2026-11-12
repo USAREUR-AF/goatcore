@@ -236,10 +236,10 @@ class TwoPeeringsOneHost(unittest.TestCase):
     def test_each_tools_own_not_found_is_absent(self):
         rows = self.survey_with_tools({
             "docker": ('case "$*" in\n'
-                       '  *"federation show"*) echo "Error: rpc error: code = NotFound desc = federation'
+                       '  *"federation show"*) echo "rpc error: code = NotFound desc = federation'
                        ' relationship does not exist" >&2; exit 1 ;;\n'
-                       '  *"bundle list"*) exit 0 ;;\n'
-                       '  *) echo "Error: No such container: $7" >&2; exit 1 ;;\n'
+                       '  *"bundle list"*) echo "rpc error: code = NotFound desc = bundle not found" >&2; exit 1 ;;\n'
+                       '  *) eval "name=\\${$#}"; echo "Error response from daemon: No such container: $name" >&2; exit 1 ;;\n'
                        'esac'),
             "wg": 'echo "Unable to access interface: No such device" >&2; exit 1'})
         for resource in self.PROBES:
@@ -281,27 +281,55 @@ FILTER = ANSIBLE / "filter_plugins/backout_probe.py"
 
 class ProbeState(unittest.TestCase):
     """The rule every back-out probe follows: present on rc 0, absent only on the
-    tool's own not-found words, unknown with the rc and the error otherwise."""
+    tool's own not-found line for the probed name, unknown with the rc and the
+    error otherwise."""
 
-    def state(self, kind, rc, stderr="", stdout=""):
+    @classmethod
+    def setUpClass(cls):
         spec = importlib.util.spec_from_file_location("backout_probe", FILTER)
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
-        return mod.backout_probe_state({"rc": rc, "stdout": stdout, "stderr": stderr}, kind)
+        cls.mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cls.mod)
 
-    def test_definite_not_found_words(self):
-        for kind, err in (("docker", "Error: No such container: goat-zenoh-edge-xac"),
-                          ("docker", "Error response from daemon: No such object: x"),
-                          ("docker", "Error: no such container"),
-                          ("wg", "Unable to access interface: No such device"),
-                          ("spire", "Error: rpc error: code = NotFound desc = federation relationship does not exist")):
+    def state(self, kind, rc, stderr="", stdout="", name="goat-zenoh-edge-xac"):
+        return self.mod.backout_probe_state({"rc": rc, "stdout": stdout, "stderr": stderr}, kind, name)
+
+    def test_each_tools_own_not_found_line_is_absent(self):
+        for kind, rc, err, name in (
+                # Measured: docker 29 and podman 5.7 against a container that does not exist.
+                ("docker", 1, "\nError response from daemon: No such container: goat-zenoh-edge-xac", "goat-zenoh-edge-xac"),
+                ("docker", 1, "Error: No such object: goat-zenoh-edge-xac", "goat-zenoh-edge-xac"),
+                ("docker", 125, 'Error: no such container "goat-zenoh-edge-xac"', "goat-zenoh-edge-xac"),
+                ("wg", 1, "Unable to access interface: No such device", "wg-carry1"),
+                ("spire", 1, "rpc error: code = NotFound desc = federation relationship does not exist", "xac.example.org"),
+                ("spire", 1, "Error: rpc error: code = NotFound desc = bundle not found", "xac.example.org"),
+                ("spire-bundle", 1, "rpc error: code = NotFound desc = bundle not found", "xac.example.org")):
             with self.subTest(kind=kind, err=err):
-                self.assertEqual(self.state(kind, 1, err)["state"], "absent")
+                self.assertEqual(self.state(kind, rc, err, name=name)["state"], "absent")
+
+    def test_a_not_found_that_is_not_the_tools_own_line_is_unknown(self):
+        for kind, rc, err, name in (
+                # Another error that mentions the words, or another name.
+                ("docker", 1, "Error response from daemon: error while inspecting: No such object: layer sha256:ab",
+                 "goat-zenoh-edge-xac"),
+                ("docker", 1, "Error response from daemon: No such container: goat-zenoh-edge-xab", "goat-zenoh-edge-xac"),
+                ("docker", 1, "Error response from daemon: No such container: goat-zenoh-edge-xac-old",
+                 "goat-zenoh-edge-xac"),
+                ("docker", 125, "Error response from daemon: No such container: goat-zenoh-edge-xac",
+                 "goat-zenoh-edge-xac"),
+                ("docker", 1, 'Error: no such container "goat-zenoh-edge-xac"', "goat-zenoh-edge-xac"),
+                ("docker", 2, "Error: No such container: goat-zenoh-edge-xac", "goat-zenoh-edge-xac"),
+                ("wg", 1, "Unable to access interface: No such device or address", "wg-carry1"),
+                ("wg", 1, "Impossible d'acceder a l'interface : Aucun peripherique de ce type", "wg-carry1"),
+                ("spire", 1, "rpc error: code = Unavailable desc = connection error: code = NotFound", "xac.example.org"),
+                ("spire", 1, "dial failed\nrpc error: code = NotFound desc = x", "xac.example.org")):
+            with self.subTest(kind=kind, err=err, name=name):
+                got = self.state(kind, rc, err, name=name)
+                self.assertEqual(got["state"], "unknown", got)
+                self.assertIn("rc %d" % rc, got["note"])
 
     def test_anything_else_is_unknown_with_the_rc_and_first_error_line(self):
         for kind, rc, err in (("docker", 1, "permission denied while trying to connect\nmore"),
                               ("docker", 127, ""), ("docker", 255, "ssh: connect to host"),
-                              ("docker", 2, "No such container: x"),
                               ("wg", 1, "Unable to access interface: Operation not permitted"),
                               ("spire", 1, "Error: No such container: spire-server"),
                               ("spire", 126, "OCI runtime exec failed")):
@@ -312,15 +340,16 @@ class ProbeState(unittest.TestCase):
                 self.assertNotIn("\n", got["note"])
 
     def test_a_probe_that_did_not_run_is_unknown(self):
-        spec = importlib.util.spec_from_file_location("backout_probe", FILTER)
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
-        self.assertEqual(mod.backout_probe_state({"skipped": True}, "docker")["state"], "unknown")
-        self.assertEqual(mod.backout_probe_state(None, "docker")["state"], "unknown")
+        self.assertEqual(self.mod.backout_probe_state({"skipped": True}, "docker", "x")["state"], "unknown")
+        self.assertEqual(self.mod.backout_probe_state(None, "docker", "x")["state"], "unknown")
 
     def test_a_spire_bundle_list_reads_its_answer(self):
         self.assertEqual(self.state("spire-bundle", 0, stdout="-----BEGIN CERTIFICATE-----")["state"], "present")
-        self.assertEqual(self.state("spire-bundle", 0, stdout="")["state"], "absent")
+        # A bundle holding only JWT authorities lists no certificate: it is there,
+        # so it is not absent; the probe cannot show it, so it is unknown.
+        jwt_only = self.state("spire-bundle", 0, stdout="")
+        self.assertEqual(jwt_only["state"], "unknown")
+        self.assertIn("bundle has no X.509 authority", jwt_only["note"])
         self.assertEqual(self.state("spire-bundle", 1, "permission denied")["state"], "unknown")
 
 
