@@ -29,6 +29,7 @@ use std::path::Path;
 
 use serde::Serialize;
 
+pub mod deploy;
 pub mod federate;
 pub mod joinnode;
 pub mod standup;

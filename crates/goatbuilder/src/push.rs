@@ -746,12 +746,18 @@ fn recap_count(line: &str, field: &str) -> u32 {
         .unwrap_or(0)
 }
 
-/// The newest ledger row per host of a group, one `host | … | (stdout) <row>` line each
-/// (ansible `-o`); `NO_LEDGER` where the file is absent.
-fn read_tails(repo: &Path, inv: &[String], group: &str, ledger: &str) -> Result<String> {
+/// The ad-hoc `ansible` words that read the newest ledger row of every host of a group.
+pub(crate) fn ledger_read_args(inv: &[String], group: &str, ledger: &str) -> Vec<String> {
     let mut args = inv.to_vec();
     args.push(group.to_string());
     args.extend(["-m".into(), "shell".into(), "-a".into(), format!("tail -n 1 /var/lib/goat/{ledger}/deploy-history.jsonl 2>/dev/null || echo NO_LEDGER"), "-o".into()]);
+    args
+}
+
+/// The newest ledger row per host of a group, one `host | … | (stdout) <row>` line each
+/// (ansible `-o`); `NO_LEDGER` where the file is absent.
+fn read_tails(repo: &Path, inv: &[String], group: &str, ledger: &str) -> Result<String> {
+    let args = ledger_read_args(inv, group, ledger);
     let out = ansible_cmd(repo, "ansible", &args).output().with_context(|| "ansible")?;
     Ok(String::from_utf8_lossy(&out.stdout).to_string())
 }
@@ -759,9 +765,7 @@ fn read_tails(repo: &Path, inv: &[String], group: &str, ledger: &str) -> Result<
 /// [`read_tails`], plus the ledger read's failure: `Some(exit code)` when ansible did
 /// not exit 0 (an unreachable or failed host), `None` when it did.
 fn read_tails_status(repo: &Path, inv: &[String], group: &str, ledger: &str) -> Result<(String, Option<String>)> {
-    let mut args = inv.to_vec();
-    args.push(group.to_string());
-    args.extend(["-m".into(), "shell".into(), "-a".into(), format!("tail -n 1 /var/lib/goat/{ledger}/deploy-history.jsonl 2>/dev/null || echo NO_LEDGER"), "-o".into()]);
+    let args = ledger_read_args(inv, group, ledger);
     let out = ansible_cmd(repo, "ansible", &args).output().with_context(|| "ansible")?;
     let failed = (!out.status.success()).then(|| out.status.code().map_or("by signal".into(), |c| c.to_string()));
     Ok((String::from_utf8_lossy(&out.stdout).to_string(), failed))
