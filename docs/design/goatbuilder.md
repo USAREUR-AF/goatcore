@@ -50,6 +50,8 @@ A converger is anything that makes actual match declared, and `goatbuilder` spea
 
 A push converger implements `publish` as a no-op beyond the merge, `observe` by running the play, and `read_record` from the ledger. A pull converger implements `publish` by signing and pushing the index, `observe` by watching each machine's status as the agents reconcile — with the deadline derived from the agents' poll interval and jitter — and `read_record` from the machine's status line. Neither implementation is visible to the verbs, which only ever declare and then verify against `read_record`. This is the property that makes the push→pull shift a configuration value rather than a change to the tool, and it is what a future converger — a different orchestrator, a different host platform — must satisfy to plug in.
 
+Only the scripted converger on a fixture is behind this interface today; on real hosts the verbs call the push converger directly. Whether 1.0 ships with the push converger only, or waits for a pull converger, is an open decision: [goatbuilder-pull-converger-options.md](goatbuilder-pull-converger-options.md).
+
 The interface is deliberately asynchronous. In the pull model, **disconnection is a normal operating state**: an islanded environment keeps running what it last pulled and catches up on its next timer tick after a path home reappears. A verb therefore never blocks on "the whole fleet is done"; it reports the set that has converged, the set still pending, and the set it cannot read, and the operator decides what that means for the rollout.
 
 ## The deploy contract
