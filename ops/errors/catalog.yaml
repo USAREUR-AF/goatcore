@@ -2253,13 +2253,15 @@ entries:
   - code: GB-237
     tool: goatbuilder
     title: admission cannot write the partner into the role core's zenoh_sovereign_peerings
-    what: "On a goat-zenoh role core, phase 10's admission writes the partner's zenoh_sovereign_peerings entry (sovereign, and the CN of the agreement's access-control fragment subject) into ops/ansible/group_vars/<core router group>/peerings.yml, the role's own declaration, beside the fragment. It could not: the fragment names no subject CN or several, another of the group's group_vars files already sets zenoh_sovereign_peerings (two owners), an entry's sovereign is a template (it contains {{, {% or {#, so no literal id matches it and the partner would be added a second time), or peerings.yml is not YAML. Nothing on the core changed."
+    what: "On a goat-zenoh role core, phase 10's admission writes the partner's zenoh_sovereign_peerings entry (sovereign, and the CN of the agreement's access-control fragment subject) into ops/ansible/group_vars/<core router group>/peerings.yml, the role's own declaration, beside the fragment. It could not: the fragment names no subject CN or several, another of the group's group_vars files already sets zenoh_sovereign_peerings (two owners), an entry's sovereign is a template (it contains {{, {% or {#, so no literal id matches it and the partner would be added a second time), peerings.yml holds a comment below its leading comment block (admission rewrites the file from its parsed values, keeps every other variable and the leading block, and cannot keep any other comment), or peerings.yml is not YAML or not a mapping of variables. Nothing on the core changed."
     causes:
+      - "a comment between the variables of peerings.yml, or after a value on its line"
       - "zenoh_sovereign_peerings is set by hand in another file of the core router group's group_vars"
       - "an entry of zenoh_sovereign_peerings writes its sovereign as a Jinja template, or is not a mapping with a literal sovereign"
       - "zenoh_sovereign_peerings itself is a template, a mapping or a scalar, not a literal list: read as empty, it would be written back holding this partner alone"
       - "the fragment phase 9 rendered names no subject, or several"
     fixes:
+      - "move a comment in peerings.yml to the comment block at the top of the file, or out of it"
       - "move the zenoh_sovereign_peerings entries into group_vars/<core router group>/peerings.yml and remove the variable from the other file"
       - "write zenoh_sovereign_peerings as a literal list, and each entry's sovereign literally, as the partner's sovereign id"
       - "run phase 9 again, then make a new plan and deploy"
