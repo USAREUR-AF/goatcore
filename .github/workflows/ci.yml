@@ -208,7 +208,7 @@ jobs:
       - name: Pi flash scripts lint clean
         if: needs.changes.outputs.rpi == 'true'
         run: |
-          shellcheck ops/rpi-base-image/00-prerequisites.sh ops/rpi-base-image/01-flash.sh ops/ci/test-rpi-flash-linux.sh
+          shellcheck -x ops/rpi-base-image/00-prerequisites.sh ops/rpi-base-image/01-flash.sh ops/ci/test-rpi-flash-linux.sh
           shellcheck -S warning ops/rpi-base-image/*.sh ops/rpi-base-image/helper-scripts/*.sh
       # A scsi_debug RAM disk stands in for the SD card; the runner's own disks
       # are only ever passed to --dry-run, which must refuse them.
