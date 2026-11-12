@@ -177,16 +177,7 @@ pub fn plan_inputs(repo: &Path, o: &Options, p: &Plan, env: Env) -> Vec<Input> {
     }
 
     // The AWS profile and the ledger-read and play words the run fixes.
-    let aws_src = if set(env, "GOAT_AWS_PROFILE").is_some() {
-        Source::env("GOAT_AWS_PROFILE")
-    } else {
-        let p = repo.join("ops/goatbuilder/goatbuilder.yaml");
-        let text = std::fs::read_to_string(&p).unwrap_or_default();
-        match yaml_line(&text, &[Key("deploy"), Key("aws_profile")]) {
-            Some(n) => Source::file(rel(repo, &p), Some(n), "deploy.aws_profile"),
-            None => Source::default("default, the profile the AWS tools themselves fall back to"),
-        }
-    };
+    let aws_src = super::aws_profile_source(repo, env);
     v.push(Input::new(
         "aws_profile",
         crate::settings::aws_profile(repo),

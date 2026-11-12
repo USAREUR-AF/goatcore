@@ -227,16 +227,7 @@ pub fn inputs(repo: &Path, o: &Options, env: Env) -> Result<Vec<Input>> {
         ));
     }
     let aws = crate::settings::aws_profile(repo);
-    let aws_src = if set(env, "GOAT_AWS_PROFILE").is_some() {
-        Source::env("GOAT_AWS_PROFILE")
-    } else {
-        let decl = repo.join("ops/goatbuilder/goatbuilder.yaml");
-        let text = std::fs::read_to_string(&decl).unwrap_or_default();
-        match yaml_line(&text, &[Seg::Key("deploy"), Seg::Key("aws_profile")]) {
-            Some(n) => Source::file(rel(repo, &decl), Some(n), "deploy.aws_profile"),
-            None => Source::default("default, the profile the AWS tools themselves fall back to"),
-        }
-    };
+    let aws_src = super::aws_profile_source(repo, env);
     v.push(Input::new("aws_profile", aws.clone(), aws_src.clone()));
     v.push(Input::new("GOAT_AWS_PROFILE", aws, aws_src));
     match set(env, "GOAT_BIN") {

@@ -13,7 +13,7 @@ use std::path::Path;
 
 use anyhow::Result;
 
-use super::{push, rel, yaml_key_line, yaml_line, Input, Seg, Source};
+use super::{push, yaml_key_line, yaml_line, Input, Seg, Source};
 use crate::standup::{self, Options, Site};
 
 /// Reads the operator's environment.
@@ -51,16 +51,6 @@ fn lite(repo: &Path, keys: &[&str]) -> Source {
         yaml_line(&text, &path),
         format!("lite.{}", keys.join(".")),
     )
-}
-
-/// `deploy.<key>` in goatbuilder.yaml at its line, else `default`.
-fn deploy_or(repo: &Path, key: &str, default: &str) -> Source {
-    let p = repo.join("ops/goatbuilder/goatbuilder.yaml");
-    let text = std::fs::read_to_string(&p).unwrap_or_default();
-    match yaml_line(&text, &[Seg::Key("deploy"), Seg::Key(key)]) {
-        Some(n) => Source::file(rel(repo, &p), Some(n), format!("deploy.{key}")),
-        None => Source::default(default.to_string()),
-    }
 }
 
 /// The inputs of a standup whose site is `s` (read by `standup::read_site`).
@@ -156,7 +146,7 @@ pub fn site_inputs(repo: &Path, s: &Site, o: &Options, env: Env) -> Vec<Input> {
         w.into_iter()
             .skip_while(|w| !w.ends_with("with-aws"))
             .nth(1)
-            .filter(|p| p != "--")
+            .filter(|p| p != "--" && !p.is_empty())
     });
     let aws = aws_word.clone().unwrap_or_default();
     let aws_src = if set(env, "GOAT_AWS_PROFILE").is_some() {
@@ -171,7 +161,7 @@ pub fn site_inputs(repo: &Path, s: &Site, o: &Options, env: Env) -> Vec<Input> {
             ),
         }
     } else {
-        deploy_or(
+        super::deploy_setting(
             repo,
             "aws_profile",
             "default, the profile the AWS tools themselves fall back to",
@@ -311,7 +301,7 @@ pub fn site_inputs(repo: &Path, s: &Site, o: &Options, env: Env) -> Vec<Input> {
     v.push(Input::new(
         "state_dir",
         s.state_dir.clone(),
-        deploy_or(
+        super::deploy_setting(
             repo,
             "state_dir",
             "~/.goat/state, the state directory when deploy.state_dir is not declared",
@@ -657,6 +647,7 @@ mod tests {
             "OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws 'p q -- ../scripts/ansible-preflight.sh",
             "OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws -- ../scripts/ansible-preflight.sh",
             "OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws",
+            "OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws '' -- ../scripts/ansible-preflight.sh",
         ] {
             let mut s = site(false, "lan", false, false, false);
             s.ansible_pre = pre.into();

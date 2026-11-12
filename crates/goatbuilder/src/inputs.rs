@@ -515,6 +515,41 @@ pub fn push(v: &mut Vec<Input>, i: Input) {
     }
 }
 
+/// Where the project's AWS profile comes from, by settings::aws_profile's own
+/// rule: `GOAT_AWS_PROFILE` when the operator set it, else [`deploy_setting`].
+pub fn aws_profile_source(repo: &Path, env: &dyn Fn(&str) -> Option<String>) -> Source {
+    if env("GOAT_AWS_PROFILE").is_some_and(|v| !v.is_empty()) {
+        return Source::env("GOAT_AWS_PROFILE");
+    }
+    deploy_setting(
+        repo,
+        "aws_profile",
+        "default, the profile the AWS tools themselves fall back to",
+    )
+}
+
+/// `deploy.<key>` in goatbuilder.yaml at its line, only when it holds what
+/// settings.rs reads there (a non-empty string); otherwise `default`, saying
+/// so when the key is set to something that is not one (`""`, a number, `~`).
+pub fn deploy_setting(repo: &Path, key: &str, default: &str) -> Source {
+    let p = repo.join("ops/goatbuilder/goatbuilder.yaml");
+    let text = std::fs::read_to_string(&p).unwrap_or_default();
+    let line = yaml_line(&text, &[Seg::Key("deploy"), Seg::Key(key)]);
+    let doc: serde_yaml::Value = serde_yaml::from_str(&text).unwrap_or(serde_yaml::Value::Null);
+    let usable = doc
+        .get("deploy")
+        .and_then(|d| d.get(key))
+        .and_then(|v| v.as_str())
+        .is_some_and(|v| !v.is_empty());
+    match (line, usable) {
+        (Some(n), true) => Source::file(rel(repo, &p), Some(n), format!("deploy.{key}")),
+        (Some(_), false) => Source::default(format!(
+            "{default} (deploy.{key} is set, but not to a usable value)"
+        )),
+        (None, _) => Source::default(default.to_string()),
+    }
+}
+
 // --- where in a file ------------------------------------------------------------
 
 /// One step of a YAML path: a mapping key or a sequence index.
@@ -795,6 +830,54 @@ mod tests {
         assert_eq!(
             redact_userinfo("https://a:x@one.example.org/ https://b:y@two.example.org/"),
             "https://<redacted>@one.example.org/ https://<redacted>@two.example.org/"
+        );
+    }
+
+    /// A deploy setting is sourced to its line only when the line holds a
+    /// usable value; one set to something that is not (`""`, a number, `~`) is
+    /// the default, and says why.
+    #[test]
+    fn a_deploy_setting_names_its_line_only_when_it_gives_the_value() {
+        let d = tempfile::tempdir().unwrap();
+        let cfg = d.path().join("ops/goatbuilder/goatbuilder.yaml");
+        std::fs::create_dir_all(cfg.parent().unwrap()).unwrap();
+        let none = |_: &str| None;
+        std::fs::write(
+            &cfg,
+            "schema: goatbuilder/v1\ndeploy:\n  aws_profile: zagros\n",
+        )
+        .unwrap();
+        assert_eq!(
+            aws_profile_source(d.path(), &none),
+            Source::file(
+                "ops/goatbuilder/goatbuilder.yaml",
+                Some(3),
+                "deploy.aws_profile"
+            )
+        );
+        for bad in ["\"\"", "123", "~"] {
+            std::fs::write(
+                &cfg,
+                format!("schema: goatbuilder/v1\ndeploy:\n  aws_profile: {bad}\n"),
+            )
+            .unwrap();
+            let src = aws_profile_source(d.path(), &none);
+            assert!(
+                matches!(&src, Source::Default { rule } if rule.contains("is set, but not to a usable value")),
+                "{bad}: {src:?}"
+            );
+            // And the value settings.rs uses for it is the default, as the source says.
+            assert_eq!(crate::settings::aws_profile(d.path()), "default", "{bad}");
+        }
+        std::fs::write(&cfg, "schema: goatbuilder/v1\n").unwrap();
+        assert!(matches!(
+            aws_profile_source(d.path(), &none),
+            Source::Default { .. }
+        ));
+        let set = |k: &str| (k == "GOAT_AWS_PROFILE").then(|| "p".to_string());
+        assert_eq!(
+            aws_profile_source(d.path(), &set),
+            Source::env("GOAT_AWS_PROFILE")
         );
     }
 

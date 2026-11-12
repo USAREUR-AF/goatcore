@@ -154,13 +154,7 @@ pub fn inputs(repo: &Path, o: &Options, env: Env) -> Vec<Input> {
             "set deploy.ssh_user in ops/goatbuilder/goatbuilder.yaml",
         )),
     }
-    let aws_src = if set(env, "GOAT_AWS_PROFILE").is_some() {
-        Source::env("GOAT_AWS_PROFILE")
-    } else {
-        deploy(repo, "aws_profile").unwrap_or_else(|| {
-            Source::default("default, the profile the AWS tools themselves fall back to")
-        })
-    };
+    let aws_src = super::aws_profile_source(repo, env);
     v.push(Input::new(
         "aws_profile",
         crate::settings::aws_profile(repo),
