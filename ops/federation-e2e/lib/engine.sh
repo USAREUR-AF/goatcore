@@ -685,6 +685,9 @@ exchange() { # $1 the side that ran phase 5 first, $2 the other side, $3 avenue,
   nodir "$first" "$second" && return 0
   for s in "$first" "$second"; do
     them="$([ "$s" = "$first" ] && echo "$second" || echo "$first")"
+    # A per-counterparty slot exists where this side publishes one: goatbuilder's phase 5 by
+    # default, or the script avenue when PERCP names the pair; one slot otherwise.
+    [ "$(side_avenue "$s" "$first" "$avenue" "")" = goatbuilder ] || percp "$s" "$them" || continue
     slot_holds_ours "$n" "$s" "$them"
     rec "s$n-$s-placed-$them-package-from-its-slot" -- docker exec "$(drv_host "$s")" sh -c \
       "test ! -e /var/lib/goat-federation/$them/theirs.pointer.json || { echo 'held behind a pointer:'; cat /var/lib/goat-federation/$them/theirs.pointer.json; exit 1; }; echo 'no theirs.pointer.json'"
@@ -692,9 +695,9 @@ exchange() { # $1 the side that ran phase 5 first, $2 the other side, $3 avenue,
 }
 
 # The directory's slot for $3 under $2's entry holds exactly $2's package for that peering.
-slot_holds_ours() { # $1 scenario, $2 us, $3 them
-  local n="$1" s="$2" them="$3" h; h="$(drv_host "$2")"
-  rec "s$n-directory-slot-$s-for-$them-holds-$s-package" -- docker exec "$h" sh -c \
+slot_holds_ours() { # $1 scenario, $2 us, $3 them, [$4 step name suffix]
+  local n="$1" s="$2" them="$3" sfx="${4:-}" h; h="$(drv_host "$2")"
+  rec "s$n-directory-slot-$s-for-$them-holds-$s-package$sfx" -- docker exec "$h" sh -c \
     "a=\$(curl -fsS --cacert /etc/fed-e2e/directory-ca.pem https://$DIRECTORY_IP:8443/v1/parties/$s/packages/$them | sha256sum | cut -d' ' -f1)
      b=\$(sha256sum /var/lib/goat-federation/$them/ours.canonical.json | cut -d' ' -f1)
      echo \"slot \$a, ours.canonical.json \$b\"; [ -n \"\$a\" ] && [ \"\$a\" = \"\$b\" ]"
@@ -1064,7 +1067,7 @@ scenario3() { # [$1 avenue of the first peering, default goatbuilder] [$2 of the
   rec "s3-adding-${C}-left-${B}-agreement-digest" --expect-in "$(cat "$WORK/${A}-${B}-agreement.sha")" -- docker exec $HP-${A}-edge sha256sum /var/lib/goat-federation/${B}/agreement.json
   # One package per partner: A's slots for B and for C hold different packages, each A's own
   # for that peering; each pair composed against its own package, to one digest on both sides.
-  slot_holds_ours 3 ${A} ${B}; slot_holds_ours 3 ${A} ${C}
+  slot_holds_ours 3 ${A} ${B} "-after-${C}"; slot_holds_ours 3 ${A} ${C} "-after-${C}"
   rec "s3-${A}-slots-for-${B}-and-${C}-differ" -- docker exec $HP-${A}-edge sh -c \
     "d='curl -fsS --cacert /etc/fed-e2e/directory-ca.pem https://$DIRECTORY_IP:8443/v1/parties/${A}/packages'; x=\$(\$d/${B} | sha256sum); y=\$(\$d/${C} | sha256sum); echo \"${B}: \$x\"; echo \"${C}: \$y\"; [ \"\$x\" != \"\$y\" ]"
   local t
