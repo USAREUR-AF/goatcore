@@ -3690,6 +3690,61 @@ mod tests {
         );
     }
 
+    /// The federation test environment's org fragment before the peering and
+    /// as admission left it on a role core (run 586a2a706d1b-20261112T190954):
+    /// admission's merge_org makes the second from the first, and the back-out's
+    /// candidate (backout_core.py, the code the core tasks run) must give the
+    /// first back, byte for byte.
+    #[test]
+    fn backing_out_a_role_admitted_core_gives_back_the_fragment_before_the_peering() {
+        let fixtures =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/backout-role-core");
+        let before = std::fs::read_to_string(fixtures.join("org-before.json5")).unwrap();
+        let admitted = std::fs::read_to_string(fixtures.join("org-admitted.json5")).unwrap();
+        // The partner's fragment, as apply rendered it: each region's lines
+        // between the markers.
+        let mut fragment = String::new();
+        let mut inside = false;
+        for line in admitted.lines() {
+            if let Some(r) = line.strip_prefix("##ACL-ORG-REGION ") {
+                fragment.push_str(&format!("##ACL-ORG-REGION {r}\n"));
+            } else if line.trim() == "// BEGIN peering xab (goatbuilder federate)" {
+                inside = true;
+            } else if line.trim() == "// END peering xab" {
+                inside = false;
+            } else if inside {
+                fragment.push_str(line);
+                fragment.push('\n');
+            }
+        }
+        assert_eq!(
+            super::super::admit::merge_org(&before, &fragment, "xab").unwrap(),
+            admitted,
+            "the fixture is what admission writes"
+        );
+        let tool = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../ops/federation/standup/backout_core.py");
+        let out = std::process::Command::new("python3")
+            .args([
+                "-c",
+                "import importlib.util,sys\nspec=importlib.util.spec_from_file_location('bc', sys.argv[1])\nbc=importlib.util.module_from_spec(spec); spec.loader.exec_module(bc)\ncand, rep = bc.plan(open(sys.argv[2]).read(), 'xab')\nsys.stdout.write(cand)",
+            ])
+            .arg(&tool)
+            .arg(fixtures.join("org-admitted.json5"))
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let candidate = String::from_utf8(out.stdout).unwrap();
+        assert_eq!(
+            candidate, before,
+            "the back-out gives back the fragment before the peering"
+        );
+    }
+
     #[test]
     fn records_are_read_from_the_stage_directory() {
         let d = tempfile::tempdir().unwrap();
