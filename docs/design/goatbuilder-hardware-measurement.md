@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | **Designed.** The per-step timing file and its summary line are built for `standup` (below); everything else on this page is designed and not built. No run on hardware has been measured against it |
+| Status | **Designed.** The per-step timing file and its summary line are built for `standup`, and a per-component time line for `teardown` (below); everything else on this page is designed and not built. No run on hardware has been measured against it |
 | Proves | Gate rows C1 (a founder site in 60 minutes or less, a node in 15, a burn-down in 15) and C2 (tutorials 2 and 3 on real machines) of the goatbuilder 1.0 gate |
 | Design | [goatbuilder-speed.md](goatbuilder-speed.md) (the targets and the modelled budget) · [goatnet-tutorials.md](goatnet-tutorials.md) (the tutorials and their checkpoints) · [goatnet-standup.md](../operations/goatnet-standup.md) (the prerequisites and the phases) |
 
@@ -81,22 +81,31 @@ when it started and ended, how long it took and how it ended. At the end they
 see the total and the three slowest phases. The run record on disk holds the
 same, so the measurement is copied from the record, not from a screen.
 
-**Built today**, in `standup` only (`record_timing` and `timing_summary` in
+**Built today**, in `standup` (`record_timing` and `timing_summary` in
 `crates/goatbuilder/src/standup.rs`; `ops/scripts/goat-standup.sh` writes the
 same file):
 
 | What | Form |
 |---|---|
-| A line per executed step | `phase <n> took <s>s (exit <rc>)` |
-| A row per executed step in `<state_dir>/standup-<site>-timings.tsv` | time written, phase, step label, seconds, exit code |
+| A line per foreground step, and per phase-12 step run in `--parallel` waves | `phase <n> took <s>s (exit <rc>)`; a wave step prints `phase 12 <step id> took <s>s (exit <rc>)` |
+| A row per such step in `<state_dir>/standup-<site>-timings.tsv` | time written, phase, step label, seconds, exit code |
 | A summary at the end of the process | `total <s>s (<m> min) over <k> phases; slowest: ...`, the five slowest steps |
 | A failure | `!! Phase <n> ("<label>") FAILED — exit <rc>` and the resume command |
 
 The rows are per step, not per phase: a phase of several steps writes several
 rows. A stop names no cause code; the file keeps the exit code only. The
 summary covers one process, so a run resumed after phase 11 or after a defect
-prints two summaries and neither is the run's total. `join-node` and
-`teardown` record no timing.
+prints two summaries and neither is the run's total.
+
+Two kinds of work are not timed on their own. The image pull and the
+observability host's legs run in the background (`Event::PullStart` and
+`Event::LegStart` in `standup.rs`), and their joins print no `took` line and
+write no row. Their time appears only in the total, and the time the run waits
+at each join is credited to no phase.
+
+`teardown` prints `teardown <component> took <s>s (exit <rc>)` for each
+component, and writes no timing file and no summary. `join-node` records no
+timing.
 
 **Designed**, for `standup`, `join-node` and `teardown`, built with gate group F
 (the tool shows its work):
@@ -110,7 +119,8 @@ prints two summaries and neither is the run's total. `join-node` and
    three slowest phases with their durations.
 3. **The run record** keeps the same rows per phase and the summary row, in
    the timing file both drivers write, so a run driven by either reads back
-   the same way. The step rows stay.
+   the same way. The step rows stay, and the image pull, each observability
+   leg and the wait at each join get rows of their own.
 4. **Every stop records its cause code**: the `GB-nnn` code from
    `ops/errors/catalog.yaml` for a refusal or a known failure, `operator` for
    phase 11, and `uncatalogued` for an exit no code covers. Gate row C5
@@ -195,7 +205,10 @@ phases are the next three levers.
 | Per-phase lines, the run summary and the run record as described above | designed |
 | Cause codes on every stop, and the stop count | designed |
 | Phase 11 recorded as a row | designed |
-| Timing for `join-node` and `teardown` | not built |
+| The image pull, the observability legs and their joins as rows | designed |
+| A timing file and summary for `teardown` | not built |
+| Timing for `join-node` | not built |
 | A generator for a full goatnet's cloud tree | not built |
-| A timed run on hardware for any of the three clocks | not measured |
-| Tutorials 2 and 3 followed on hardware | not measured |
+
+None of the three clocks has been measured on hardware, and neither tutorial
+has been followed on hardware.
