@@ -399,6 +399,77 @@ mod tests {
         assert!(cmds.iter().any(|c| c.contains("-e participates_in_spock=false")));
     }
 
+    /// A value a site's vars.yml or the project's goatbuilder.yaml declares
+    /// reaches the phases as written, never as shell: every planned command
+    /// runs through bash, with a hostile founder site, enrolment name, SSH user
+    /// and AWS profile and stand-ins for every program it starts, and nothing
+    /// the values hold is executed. The stand-ins record what they were given,
+    /// and the founder reaches the signal-federation gate as written.
+    #[test]
+    fn declared_values_reach_join_node_phases_without_shell_interpolation() {
+        use std::os::unix::fs::PermissionsExt;
+        let t = tempfile::tempdir().unwrap();
+        let root = t.path();
+        let marker = root.join("pwned");
+        let m = marker.display().to_string();
+        assert!(!m.contains(char::is_whitespace), "{m}");
+        let founder = format!("za$(touch${{IFS}}{m})b`touch${{IFS}}{m}`");
+        let repo = root.join("repo");
+        let gv = repo.join("ops/ansible/group_vars/zagros_b_hosts");
+        std::fs::create_dir_all(&gv).unwrap();
+        std::fs::write(
+            gv.join("vars.yml"),
+            format!("goatnet_founder: false\njoin_founder_site: {founder}\nsite_enrollment_dns: e$(touch${{IFS}}{m})x\n"),
+        )
+        .unwrap();
+        std::fs::create_dir_all(repo.join("ops/goatbuilder")).unwrap();
+        std::fs::write(
+            repo.join("ops/goatbuilder/goatbuilder.yaml"),
+            format!("deploy:\n  ssh_user: \"u$(touch${{IFS}}{m})\"\n  aws_profile: \"p$(touch${{IFS}}{m})\"\n"),
+        )
+        .unwrap();
+        // Stand-ins for every program the phases start, each recording its argv.
+        let log = root.join("argv.log");
+        let stub = format!("#!/bin/sh\nfor a; do printf '%s\\n' \"$a\"; done >> '{}'\nprintf -- '--\\n' >> '{}'\nexit 0\n", log.display(), log.display());
+        let bin = root.join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let exe = |p: &Path| {
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, &stub).unwrap();
+            std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        };
+        for b in ["ssh", "python3", "ansible-playbook", "ansible", "go", "netbird", "sudo"] {
+            exe(&bin.join(b));
+        }
+        for s in ["ops/scripts/with-aws", "ops/scripts/ansible-preflight.sh", "ops/scripts/seed-ssh-key.sh", "ops/scripts/door-open.sh"] {
+            exe(&repo.join(s));
+        }
+        std::fs::write(repo.join("ops/preflight-enrollment.sh"), "true\n").unwrap();
+        std::fs::create_dir_all(repo.join("ops/ansible/inventory")).unwrap();
+        let path = format!("{}:/usr/bin:/bin", bin.display());
+        let mut ran = 0;
+        for class in ["core", "obs"] {
+            for via in ["mesh", "door"] {
+                let o = Options { env: "zagros", site: "zagros-b", node: "node-x", class, address: Some("192.0.2.30"), pass_var: None, via, from: 1, to: 15, dry_run: true };
+                for ph in plan(&repo, &o).unwrap().into_iter().filter(|p| p.kind != "MANUAL") {
+                    let out = Command::new("bash")
+                        .args(["-c", &ph.cmd])
+                        .current_dir(&repo)
+                        .env("PATH", &path)
+                        .env("HOME", root)
+                        .output()
+                        .unwrap();
+                    let _ = out;
+                    ran += 1;
+                    assert!(!marker.exists(), "phase {} ({}) ran a declared value as shell: {}", ph.n, ph.label, ph.cmd);
+                }
+            }
+        }
+        assert!(ran > 20, "{ran} commands");
+        let argv = std::fs::read_to_string(&log).unwrap_or_default();
+        assert!(argv.lines().any(|l| l == founder), "the founder reaches the gate as written:\n{argv}");
+    }
+
     /// A checkout with one founder and one joiner site, for the plan tests
     /// that must also run in a public clone.
     fn joiner_checkout() -> tempfile::TempDir {
