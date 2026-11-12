@@ -372,24 +372,7 @@ pub fn site_inputs(repo: &Path, s: &Site, o: &Options, env: Env) -> Vec<Input> {
     }
 
     // Values a phase's own command fixes: the same for every site.
-    let fixed = |name: &str, value: &str, why: &str| {
-        Input::new(name, value, Source::default(why.to_string()))
-    };
-    for i in [
-        fixed("skip_tags after-ory", "after-ory", "phase 5 runs site-bootstrap's stack plays; the account seed waits for Ory (phase 6)"),
-        fixed("skip_tags stack", "stack", "phase 6 runs the rest of site-bootstrap, after Ory"),
-        fixed("participates_in_spock", "false", "a joiner's first bootstrap pass runs without Spock; pass 3 turns it on"),
-        fixed("has_durable_independent_state", "true", "a joiner that is not an intra-site pair keeps its own durable state"),
-        fixed("ory_spock_wire_subscriptions", "false", "pass 3 wires the Ory node and repset only; the subscriptions come after the founder's half"),
-        fixed("spire_enabled", "true", "phase 9 runs the SPIRE server on the founder"),
-        fixed("lan_tags", "lan-dns,traefik,stun", "phase 10's LAN service surface"),
-        fixed("mode", "enforce", "phase 12 applies the declared NetBird ACL in enforce mode"),
-        fixed("confirm_cutover", "YES", "phase 12's cutover is confirmed by running the phase"),
-        fixed("relay_target", "goat_relay_hosts", "the relay ingress group a joiner is wired into"),
-        fixed("target_site", site, "the site itself"),
-        Input::new("VF", "$(mktemp -t goat-relay-vars.XXXXXX)", Source::derived("mktemp, when phase 7 runs", "a private file for the relay secrets, removed after the play")),
-        fixed("acl_inventory", "localhost,", "the ACL plays run on this machine against the NetBird API"),
-    ] {
+    for i in fixed(site) {
         push(&mut v, i);
     }
     // The rescue hosts of phase 14 (ADR 1183).
@@ -458,6 +441,29 @@ pub fn site_inputs(repo: &Path, s: &Site, o: &Options, env: Env) -> Vec<Input> {
         ));
     }
     v
+}
+
+/// The values the phases' own commands fix, the same for every site, each
+/// with why (standup and join-node share them).
+pub(super) fn fixed(site: &str) -> Vec<Input> {
+    let fixed = |name: &str, value: &str, why: &str| {
+        Input::new(name, value, Source::default(why.to_string()))
+    };
+    vec![
+        fixed("skip_tags after-ory", "after-ory", "standup phase 5 runs site-bootstrap's stack plays; the account seed waits for Ory"),
+        fixed("skip_tags stack", "stack", "standup phase 6 runs the rest of site-bootstrap, after Ory"),
+        fixed("participates_in_spock", "false", "a joiner's first bootstrap pass runs without Spock; pass 3 turns it on"),
+        fixed("has_durable_independent_state", "true", "a joiner that is not an intra-site pair keeps its own durable state"),
+        fixed("ory_spock_wire_subscriptions", "false", "pass 3 wires the Ory node and repset only; the subscriptions come after the founder's half"),
+        fixed("spire_enabled", "true", "the SPIRE server runs on the founder"),
+        fixed("lan_tags", "lan-dns,traefik,stun", "the LAN service surface (standup phase 10)"),
+        fixed("mode", "enforce", "the declared NetBird ACL is applied in enforce mode (standup phase 12)"),
+        fixed("confirm_cutover", "YES", "the ACL cutover is confirmed by running the phase (standup phase 12)"),
+        fixed("relay_target", "goat_relay_hosts", "the relay ingress group a joiner is wired into"),
+        fixed("target_site", site, "the site itself"),
+        Input::new("VF", "$(mktemp -t goat-relay-vars.XXXXXX)", Source::derived("mktemp, when standup phase 7 runs", "a private file for the relay secrets, removed after the play")),
+        fixed("acl_inventory", "localhost,", "the ACL plays run on this machine against the NetBird API"),
+    ]
 }
 
 #[cfg(test)]

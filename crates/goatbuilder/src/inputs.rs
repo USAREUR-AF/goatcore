@@ -30,6 +30,7 @@ use std::path::Path;
 use serde::Serialize;
 
 pub mod federate;
+pub mod joinnode;
 pub mod standup;
 
 /// Where one value came from.
@@ -436,6 +437,13 @@ pub(crate) fn command_values(line: &str, extra: &[&str]) -> Vec<(bool, String)> 
     let of = |v: &str| -> (bool, String) {
         // A word the shell ends with `;` (`... ini; fi`) is the value before it.
         let v = v.trim().trim_end_matches(';');
+        // An Ansible lookup of the environment: `{{ lookup("env", "NAME") }}`.
+        if let Some(n) = v
+            .strip_prefix("{{ lookup(\"env\", \"")
+            .and_then(|r| r.strip_suffix("\") }}"))
+        {
+            return (true, n.to_string());
+        }
         let env = v
             .strip_prefix("$(printenv ")
             .and_then(|r| r.strip_suffix(')'))

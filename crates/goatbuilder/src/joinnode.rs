@@ -284,6 +284,29 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
     Ok(ev)
 }
 
+/// Every command the plan runs, in order: the door when `--via door`, then
+/// each phase that is not a manual step (whose text is for a person). What
+/// `goatbuilder inputs join-node` must give a source for.
+#[cfg(test)]
+pub(crate) fn plan_commands(repo: &Path, o: &Options) -> Result<Vec<String>> {
+    let mut v: Vec<String> = Vec::new();
+    if o.via == "door" {
+        v.push(door_open_cmd(repo, o.env));
+    }
+    v.extend(plan(repo, o)?.into_iter().filter(|p| p.kind != "MANUAL").map(|p| p.cmd));
+    Ok(v)
+}
+
+/// The class's inventory group (`class_group`) and the transport's
+/// inventories (`inventories`), for `goatbuilder inputs`.
+pub(crate) fn group_of(site: &str, class: &str) -> String {
+    class_group(&site.replace('-', "_"), class)
+}
+
+pub(crate) fn inventories_of(via: &str) -> &'static str {
+    inventories(via)
+}
+
 pub fn join_node(repo: &Path, o: &Options) -> Result<Report> {
     let cfg = config::load(&repo.join("ops/goatbuilder/goatbuilder.yaml"))?;
     let Some(env) = cfg.environments.iter().find(|e| e.name == o.env) else {
