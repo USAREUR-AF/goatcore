@@ -970,6 +970,11 @@ pub struct MeasureArgs {
     /// init --over-ssh --side core: the edge half the edge driver wrote.
     #[arg(long, value_name = "FILE", global = true)]
     pub edge_half: Option<std::path::PathBuf>,
+    /// init --over-ssh --side core: the edge half's sha256 as the edge driver
+    /// printed it, read from there and confirmed here (the full digest, or its
+    /// first 32 hex digits; spaces and dashes are ignored).
+    #[arg(long, value_name = "SHA256", global = true)]
+    pub edge_half_sha256: Option<String>,
 }
 
 impl MeasureArgs {
@@ -983,6 +988,7 @@ impl MeasureArgs {
             && self.side.is_none()
             && self.half_out.is_none()
             && self.edge_half.is_none()
+            && self.edge_half_sha256.is_none()
     }
 
     /// The peering to measure over SSH; `None` measures this machine. A
@@ -1983,5 +1989,30 @@ mod tests {
         .peering()
         .unwrap_err();
         assert!(e.to_string().contains("without --over-ssh"), "{e}");
+    }
+
+    /// The edge half carries the edge's WireGuard public key, which the core
+    /// side signs into our package. A half changed after the edge driver wrote
+    /// it, here its key, is refused (GB-114) against the digest the edge driver
+    /// printed and the operator confirms, before the core is asked.
+    #[test]
+    fn a_half_whose_key_was_changed_in_transit_is_refused() {
+        let ctx = tempfile::tempdir().unwrap();
+        let site = site(ctx.path());
+        let half = ctx.path().join("edge-half.json");
+        let log = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let mut measured = edge_half(&Table { name: "edge", log }, None);
+        measured.public_key = Some(derive::Derived { field: derive::transport_public_key_on(&Nothing, "wg0").field, outcome: Ok("Ym9yaW5nIGtleSBmb3IgYSB0ZXN0IG9ubHkgMDAwMDA=".into()), source: "wg show wg-fed0 public-key on edge-x".into() });
+        let edge = target_in(&split_inventory(true), "xab_edge", None, "--edge-host").unwrap();
+        let digest = write_edge_half(&half, "xab", &edge, None, &measured).unwrap();
+        // In transit, someone puts their own key in the half.
+        let mut v: Value = serde_json::from_str(&std::fs::read_to_string(&half).unwrap()).unwrap();
+        v["public_key"]["ok"] = json!("YXR0YWNrZXIncyBrZXkgaW5zdGVhZCBvZiBvdXJzMDA=");
+        std::fs::write(&half, serde_json::to_string_pretty(&v).unwrap()).unwrap();
+        let repo = checkout_with_inventory(&split_inventory(false));
+        let m = MeasureArgs { over_ssh: Some("xab".into()), side: Some("core".into()), edge_half: Some(half.clone()), edge_half_sha256: Some(digest.clone()), ..Default::default() };
+        let e = run_init(repo.path(), &site, &init_args(), &m, &mut Vec::new()).unwrap_err();
+        assert_eq!(code(&e).as_deref(), Some("GB-114"), "{e:#}");
+        assert!(format!("{e:#}").contains(&digest[..32]), "names what was confirmed: {e:#}");
     }
 }
