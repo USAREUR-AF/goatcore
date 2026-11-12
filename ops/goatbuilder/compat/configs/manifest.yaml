@@ -1,0 +1,111 @@
+# The kept configuration files (A2): every goatbuilder.yaml in each release's
+# tree, every refusal fixture, and every whole example in its documents, kept
+# once, under the first release that carried it. `expect` is what that
+# release's binary did with it: valid (exit 0), refused (exit 1, a checks
+# document) or error (with the code it printed). Every later build must do
+# the same, printing the same code or the one `named`. Written by
+# `compat.py refresh`; `named` is the catalog error the release's documents
+# name for the refusal, added by hand.
+configs:
+- file: v0.4.1/crates__goatbuilder__tests__fixtures__configs__not-yaml.yaml
+  release: goatbuilder/v0.4.1
+  source: crates/goatbuilder/tests/fixtures/configs/not-yaml.yaml
+  expect: error
+  code: null
+  named: GB-025
+  note: 'the refusal prints no catalog code (C5): the documents name GB-025'
+- file: v0.4.1/crates__goatbuilder__tests__fixtures__configs__rung-undeclared-environment.yaml
+  release: goatbuilder/v0.4.1
+  source: crates/goatbuilder/tests/fixtures/configs/rung-undeclared-environment.yaml
+  expect: refused
+  code: null
+  named: GB-025
+- file: v0.4.1/crates__goatbuilder__tests__fixtures__configs__soak-without-min-days.yaml
+  release: goatbuilder/v0.4.1
+  source: crates/goatbuilder/tests/fixtures/configs/soak-without-min-days.yaml
+  expect: refused
+  code: null
+  named: GB-025
+- file: v0.4.1/crates__goatbuilder__tests__fixtures__configs__unknown-converger.yaml
+  release: goatbuilder/v0.4.1
+  source: crates/goatbuilder/tests/fixtures/configs/unknown-converger.yaml
+  expect: refused
+  code: null
+  named: GB-025
+- file: v0.4.1/crates__goatbuilder__tests__fixtures__configs__unknown-field.yaml
+  release: goatbuilder/v0.4.1
+  source: crates/goatbuilder/tests/fixtures/configs/unknown-field.yaml
+  expect: refused
+  code: null
+  named: GB-025
+- file: v0.4.1/crates__goatbuilder__tests__fixtures__configs__wrong-schema-version.yaml
+  release: goatbuilder/v0.4.1
+  source: crates/goatbuilder/tests/fixtures/configs/wrong-schema-version.yaml
+  expect: refused
+  code: null
+  named: GB-025
+- file: v0.4.1/docs__design__goatbuilder.md-example-1.yaml
+  release: goatbuilder/v0.4.1
+  source: docs/design/goatbuilder.md#example-1
+  expect: valid
+- file: v0.4.1/docs__design__goatlite.md-example-1.yaml
+  release: goatbuilder/v0.4.1
+  source: docs/design/goatlite.md#example-1
+  expect: valid
+- file: v0.4.1/docs__reference__goatbuilder__03-configuration.md-example-1.yaml
+  release: goatbuilder/v0.4.1
+  source: docs/reference/goatbuilder/03-configuration.md#example-1
+  expect: refused
+  code: null
+  named: GB-025
+  note: 'a template: its <placeholders> are refused until a reader fills them'
+- file: v0.4.1/docs__tutorials__00-goatlite.md-example-1.yaml
+  release: goatbuilder/v0.4.1
+  source: docs/tutorials/00-goatlite.md#example-1
+  expect: refused
+  code: null
+  named: GB-025
+  note: 'a template: its <placeholders> are refused until a reader fills them'
+- file: v0.4.1/ops__goatbuilder__fixtures__basic__goatbuilder.yaml
+  release: goatbuilder/v0.4.1
+  source: ops/goatbuilder/fixtures/basic/goatbuilder.yaml
+  expect: valid
+- file: v0.4.1/ops__goatbuilder__fixtures__goatnet-from-scratch__00-goatlite__goatbuilder.yaml
+  release: goatbuilder/v0.4.1
+  source: ops/goatbuilder/fixtures/goatnet-from-scratch/00-goatlite/goatbuilder.yaml
+  expect: valid
+- file: v0.4.1/ops__goatbuilder__fixtures__goatnet-from-scratch__01-founder__goatbuilder.yaml
+  release: goatbuilder/v0.4.1
+  source: ops/goatbuilder/fixtures/goatnet-from-scratch/01-founder/goatbuilder.yaml
+  expect: valid
+- file: v0.4.1/ops__goatbuilder__fixtures__goatnet-from-scratch__02-first-federated-node__goatbuilder.yaml
+  release: goatbuilder/v0.4.1
+  source: ops/goatbuilder/fixtures/goatnet-from-scratch/02-first-federated-node/goatbuilder.yaml
+  expect: valid
+- file: v0.4.1/ops__goatbuilder__fixtures__goatnet-from-scratch__03-boundary-node__goatbuilder.yaml
+  release: goatbuilder/v0.4.1
+  source: ops/goatbuilder/fixtures/goatnet-from-scratch/03-boundary-node/goatbuilder.yaml
+  expect: valid
+- file: v0.4.1/ops__goatbuilder__fixtures__preflight__goatbuilder.yaml
+  release: goatbuilder/v0.4.1
+  source: ops/goatbuilder/fixtures/preflight/goatbuilder.yaml
+  expect: valid
+- file: v0.4.1/ops__goatbuilder__fixtures__standup__goatbuilder.yaml
+  release: goatbuilder/v0.4.1
+  source: ops/goatbuilder/fixtures/standup/goatbuilder.yaml
+  expect: valid
+- file: v0.4.1/ops__goatbuilder__fixtures__survey__goatbuilder.yaml
+  release: goatbuilder/v0.4.1
+  source: ops/goatbuilder/fixtures/survey/goatbuilder.yaml
+  expect: valid
+- file: v0.4.1/ops__goatbuilder__fixtures__tutor__goatbuilder.yaml
+  release: goatbuilder/v0.4.1
+  source: ops/goatbuilder/fixtures/tutor/goatbuilder.yaml
+  expect: valid
+- file: v0.4.3/docs__reference__goatbuilder__03-configuration.md-example-1.yaml
+  release: goatbuilder/v0.4.3
+  source: docs/reference/goatbuilder/03-configuration.md#example-1
+  expect: refused
+  code: null
+  named: GB-025
+  note: 'a template: its <placeholders> are refused until a reader fills them'

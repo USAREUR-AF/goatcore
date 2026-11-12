@@ -1,0 +1,5 @@
+# Open ladder records: portal v2.0.0 is a candidate on its way to prod, so prod
+# trailing dev for portal is declared. Nothing covers router's difference.
+open:
+  portal:
+    - ghcr.io/example-org/portal:v2.0.0@sha256:2222222222222222222222222222222222222222222222222222222222222222

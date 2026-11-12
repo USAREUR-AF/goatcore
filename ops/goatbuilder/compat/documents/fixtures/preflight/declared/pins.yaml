@@ -1,0 +1,18 @@
+# One digest-pinned ref per component on the fixture goatnet (C1). The records under
+# records/ sit one version behind, so the pin-revert validation has a target.
+components:
+  netvis:
+    zagros-dev:
+      ref: ghcr.io/example-org/netvis:v0.4.0@sha256:a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0
+  id-console:
+    zagros-dev:
+      ref: ghcr.io/example-org/id-console:v1.2.0@sha256:b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1
+  console:
+    zagros-dev:
+      ref: ghcr.io/example-org/console:v0.9.0@sha256:c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2
+  health:
+    zagros-dev:
+      ref: ghcr.io/example-org/health:v0.9.0@sha256:d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3
+  mystery:
+    zagros-dev:
+      ref: ghcr.io/example-org/mystery:v3@sha256:e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4

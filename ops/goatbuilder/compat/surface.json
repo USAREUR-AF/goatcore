@@ -1,0 +1,594 @@
+{
+ "goatbuilder": {
+  "args": [],
+  "flags": {
+   "--color": true,
+   "--frozen": false,
+   "--lang": true,
+   "--mock": true,
+   "--offline": false,
+   "--output": true,
+   "--repo": true,
+   "--timeout": true,
+   "--verbose": false,
+   "--yes": false,
+   "-C": true,
+   "-o": true,
+   "-v": false
+  }
+ },
+ "goatbuilder adopt": {
+  "args": [],
+  "flags": {
+   "--env": true
+  }
+ },
+ "goatbuilder apply": {
+  "args": [
+   {
+    "name": "PLAN",
+    "required": true
+   }
+  ],
+  "flags": {}
+ },
+ "goatbuilder assay": {
+  "args": [
+   {
+    "name": "SITE",
+    "required": true
+   }
+  ],
+  "flags": {
+   "--only": true,
+   "--plan": false,
+   "--rows-out": true,
+   "--values": true,
+   "--var": true
+  }
+ },
+ "goatbuilder completion": {
+  "args": [
+   {
+    "name": "SHELL",
+    "required": true
+   }
+  ],
+  "flags": {}
+ },
+ "goatbuilder deploy": {
+  "args": [],
+  "flags": {
+   "--ack": true,
+   "--component": true,
+   "--dry-run": false,
+   "--env": true,
+   "--group": true,
+   "--verify-only": false
+  }
+ },
+ "goatbuilder diff": {
+  "args": [
+   {
+    "name": "COMPONENT",
+    "required": true
+   }
+  ],
+  "flags": {
+   "--all": false,
+   "--env": true
+  }
+ },
+ "goatbuilder docs": {
+  "args": [],
+  "flags": {
+   "--markdown": false
+  }
+ },
+ "goatbuilder doctor": {
+  "args": [],
+  "flags": {
+   "--all": false,
+   "--browser-tests": false,
+   "--credentials": false,
+   "--env": true,
+   "--site": true
+  }
+ },
+ "goatbuilder endstate": {
+  "args": [
+   {
+    "name": "SITE",
+    "required": true
+   }
+  ],
+  "flags": {
+   "--assay-rows": true,
+   "--facts": true,
+   "--no-assay": false,
+   "--root": true,
+   "--strict": false
+  }
+ },
+ "goatbuilder explain": {
+  "args": [
+   {
+    "name": "INPUT",
+    "required": true
+   }
+  ],
+  "flags": {
+   "--list": false,
+   "--report": false
+  }
+ },
+ "goatbuilder fastlane": {
+  "args": [
+   {
+    "name": "COMPONENT",
+    "required": true
+   }
+  ],
+  "flags": {
+   "--ack": true,
+   "--dry-run": false,
+   "--no-deploy": false,
+   "--reason": true,
+   "--ref": true
+  }
+ },
+ "goatbuilder federate": {
+  "args": [
+   {
+    "name": "WITH",
+    "required": true
+   },
+   {
+    "name": "PARTNER",
+    "required": true
+   }
+  ],
+  "flags": {
+   "--agreement-digest": true,
+   "--approve-admission": true,
+   "--approve-plan": true,
+   "--as": true,
+   "--confirm": false,
+   "--dry-run": false,
+   "--edge-group": true,
+   "--env": true,
+   "--from": true,
+   "--no-confirm": false,
+   "--no-resume": false,
+   "--partner-ca-fingerprint": true,
+   "--partner-key": true,
+   "--place-pointer-package": true,
+   "--plan": true,
+   "--resume": false,
+   "--review-in-pr": false,
+   "--to": true,
+   "--work": true
+  }
+ },
+ "goatbuilder federate apply": {
+  "args": [
+   {
+    "name": "AGREEMENT",
+    "required": true
+   }
+  ],
+  "flags": {
+   "--as": true,
+   "--confirm": false,
+   "--edge-group": true,
+   "--json": false,
+   "--out": true,
+   "--partner-audience": true
+  }
+ },
+ "goatbuilder federate backout": {
+  "args": [
+   {
+    "name": "PARTNER",
+    "required": true
+   }
+  ],
+  "flags": {
+   "--as": true,
+   "--dry-run": false,
+   "--edge-group": true,
+   "--env": true,
+   "--work": true
+  }
+ },
+ "goatbuilder federate compose": {
+  "args": [
+   {
+    "name": "FIRST",
+    "required": true
+   },
+   {
+    "name": "SECOND",
+    "required": true
+   }
+  ],
+  "flags": {
+   "--json": false,
+   "--key": true,
+   "--keyring": true,
+   "--now": true,
+   "--out": true,
+   "--print": false
+  }
+ },
+ "goatbuilder federate diff": {
+  "args": [
+   {
+    "name": "OURS",
+    "required": true
+   },
+   {
+    "name": "THEIRS",
+    "required": true
+   }
+  ],
+  "flags": {
+   "--json": false
+  }
+ },
+ "goatbuilder federate init": {
+  "args": [],
+  "flags": {
+   "--declaration": true,
+   "--json": false,
+   "--out": true,
+   "--signing-key": true,
+   "--with-data": false,
+   "--with-transport": false
+  }
+ },
+ "goatbuilder federate lint": {
+  "args": [
+   {
+    "name": "PACKAGE",
+    "required": true
+   }
+  ],
+  "flags": {
+   "--json": false
+  }
+ },
+ "goatbuilder federate plan": {
+  "args": [
+   {
+    "name": "WITH",
+    "required": true
+   }
+  ],
+  "flags": {
+   "--as": true,
+   "--edge-group": true,
+   "--env": true,
+   "--no-live": false,
+   "--recheck": false,
+   "--work": true
+  }
+ },
+ "goatbuilder federate verify": {
+  "args": [
+   {
+    "name": "AGREEMENT",
+    "required": true
+   }
+  ],
+  "flags": {
+   "--as": true,
+   "--json": false,
+   "--signing-key": true
+  }
+ },
+ "goatbuilder history": {
+  "args": [
+   {
+    "name": "COMPONENT",
+    "required": true
+   }
+  ],
+  "flags": {
+   "--component": true,
+   "--env": true
+  }
+ },
+ "goatbuilder join-node": {
+  "args": [
+   {
+    "name": "ENV",
+    "required": true
+   }
+  ],
+  "flags": {
+   "--address": true,
+   "--class": true,
+   "--dry-run": false,
+   "--from": true,
+   "--node": true,
+   "--pass-var": true,
+   "--site": true,
+   "--to": true,
+   "--via": true
+  }
+ },
+ "goatbuilder pins": {
+  "args": [],
+  "flags": {
+   "--check": false
+  }
+ },
+ "goatbuilder plan": {
+  "args": [
+   {
+    "name": "VERB",
+    "required": true
+   },
+   {
+    "name": "COMPONENT",
+    "required": true
+   }
+  ],
+  "flags": {
+   "--env": true,
+   "--group": true,
+   "--n": true,
+   "--out": true,
+   "--site": true
+  }
+ },
+ "goatbuilder preflight": {
+  "args": [
+   {
+    "name": "COMPONENT",
+    "required": true
+   }
+  ],
+  "flags": {
+   "--env": true,
+   "--site": true
+  }
+ },
+ "goatbuilder promote": {
+  "args": [],
+  "flags": {}
+ },
+ "goatbuilder promote abandon": {
+  "args": [
+   {
+    "name": "RECORD",
+    "required": true
+   }
+  ],
+  "flags": {
+   "--reason": true,
+   "--superseded-by": true
+  }
+ },
+ "goatbuilder promote check": {
+  "args": [],
+  "flags": {}
+ },
+ "goatbuilder promote graduate": {
+  "args": [
+   {
+    "name": "COMPONENT",
+    "required": true
+   }
+  ],
+  "flags": {
+   "--ack": true,
+   "--override-runtime-health": true
+  }
+ },
+ "goatbuilder promote graduate-set": {
+  "args": [
+   {
+    "name": "NAME",
+    "required": true
+   }
+  ],
+  "flags": {
+   "--ack": true
+  }
+ },
+ "goatbuilder promote hotfix": {
+  "args": [
+   {
+    "name": "COMPONENT",
+    "required": true
+   }
+  ],
+  "flags": {
+   "--ack": true,
+   "--previous-ref": true,
+   "--reason": true,
+   "--ref": true
+  }
+ },
+ "goatbuilder promote open": {
+  "args": [
+   {
+    "name": "COMPONENT",
+    "required": true
+   }
+  ],
+  "flags": {
+   "--reason": true,
+   "--ref": true
+  }
+ },
+ "goatbuilder promote readiness": {
+  "args": [],
+  "flags": {
+   "--out": true
+  }
+ },
+ "goatbuilder promote review": {
+  "args": [
+   {
+    "name": "COMPONENT",
+    "required": true
+   }
+  ],
+  "flags": {
+   "--ack": true,
+   "--detail": false,
+   "--json": false,
+   "--no-header": false
+  }
+ },
+ "goatbuilder promote status": {
+  "args": [],
+  "flags": {
+   "--json": false
+  }
+ },
+ "goatbuilder release": {
+  "args": [
+   {
+    "name": "COMPONENT",
+    "required": true
+   }
+  ],
+  "flags": {
+   "--ack": true,
+   "--dry-run": false,
+   "--from": true,
+   "--rc": true,
+   "--tag": true
+  }
+ },
+ "goatbuilder rollback": {
+  "args": [
+   {
+    "name": "COMPONENT",
+    "required": true
+   },
+   {
+    "name": "N",
+    "required": true
+   }
+  ],
+  "flags": {
+   "--ack": true,
+   "--dry-run": false,
+   "--env": true,
+   "--list": false,
+   "--site": true,
+   "--status": false
+  }
+ },
+ "goatbuilder secrets": {
+  "args": [
+   {
+    "name": "ARGS",
+    "required": true
+   }
+  ],
+  "flags": {}
+ },
+ "goatbuilder standup": {
+  "args": [
+   {
+    "name": "ENV",
+    "required": true
+   }
+  ],
+  "flags": {
+   "--ack": true,
+   "--check": false,
+   "--dry-run": false,
+   "--from": true,
+   "--obs-only": false,
+   "--parallel": false,
+   "--profile": true,
+   "--site": true,
+   "--skip-obs": false,
+   "--to": true
+  }
+ },
+ "goatbuilder status": {
+  "args": [],
+  "flags": {
+   "--component": true,
+   "--env": true
+  }
+ },
+ "goatbuilder survey": {
+  "args": [],
+  "flags": {
+   "--all": false,
+   "--env": true,
+   "--html": true,
+   "--inter": false,
+   "--intra": false
+  }
+ },
+ "goatbuilder teardown": {
+  "args": [
+   {
+    "name": "ENV",
+    "required": true
+   }
+  ],
+  "flags": {
+   "--dry-run": false,
+   "--from": true,
+   "--profile": true,
+   "--services": false,
+   "--site": true,
+   "--to": true
+  }
+ },
+ "goatbuilder tutor": {
+  "args": [
+   {
+    "name": "LESSON",
+    "required": true
+   }
+  ],
+  "flags": {
+   "--lesson": true,
+   "--list": false,
+   "--reset": false,
+   "--workspace": true
+  }
+ },
+ "goatbuilder update": {
+  "args": [],
+  "flags": {
+   "--check": false,
+   "--force": false,
+   "--site": true
+  }
+ },
+ "goatbuilder validate": {
+  "args": [
+   {
+    "name": "CONFIG",
+    "required": true
+   }
+  ],
+  "flags": {}
+ },
+ "goatbuilder verify": {
+  "args": [
+   {
+    "name": "COMPONENT",
+    "required": true
+   }
+  ],
+  "flags": {
+   "--dry-run": false,
+   "--env": true,
+   "--group": true
+  }
+ }
+}

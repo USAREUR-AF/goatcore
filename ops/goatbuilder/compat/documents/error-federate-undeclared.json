@@ -1,0 +1,91 @@
+{
+  "schema": "goatbuilder.error/v1",
+  "error": "cannot read config ./ops/goatbuilder/goatbuilder.yaml: No such file or directory (os error 2)",
+  "interpretation": {
+    "schema": "goat-errors.interpretation/v1",
+    "summary": "cannot read config ./ops/goatbuilder/goatbuilder.yaml: No such file or directory (os error 2)",
+    "hits": [
+      {
+        "code": "GB-066",
+        "layer": "lexical",
+        "evidence": "4 shared words, score 0.56",
+        "at": 0,
+        "score": 0.5617721079769153,
+        "entry": {
+          "code": "GB-066",
+          "tool": "goatbuilder",
+          "title": "the site's declared end state cannot be derived or read",
+          "what": "endstate derives what a site should run from its own declarations (group_vars, the fleet pin table, the inventory) and the service catalog, then reads the site's hosts once over Ansible. One of those could not start, so nothing was graded.",
+          "causes": [
+            "the site name has no ops/ansible/group_vars/<site>_hosts/ directory",
+            "python3 or PyYAML is not installed on this machine",
+            "the catalog file ops/goatbuilder/endstate/catalog.yaml does not parse"
+          ],
+          "fixes": [
+            "ls ops/ansible/group_vars/   (the site names this repository declares)",
+            "python3 ops/goatbuilder/endstate/endstate.py model <site>   (the derived end state, without reading any host)",
+            "python3 ops/goatbuilder/endstate/endstate.py --self-test"
+          ],
+          "read": "docs/design/goatnet-end-state.md",
+          "exit": 1,
+          "matches": [
+            "no goatnet site named `[^`]+`: ops/ansible/group_vars/"
+          ]
+        }
+      },
+      {
+        "code": "GB-025",
+        "layer": "lexical",
+        "evidence": "3 shared words, score 0.50",
+        "at": 1,
+        "score": 0.5007401208356013,
+        "entry": {
+          "code": "GB-025",
+          "tool": "goatbuilder",
+          "title": "the config does not validate",
+          "what": "ops/goatbuilder/goatbuilder.yaml failed the versioned schema or a cross-field rule. The config is generated; fix the source and regenerate.",
+          "causes": [
+            "a hand edit to the generated file",
+            "a pins or ladder change the generator was not run for"
+          ],
+          "fixes": [
+            "python3 ops/goatbuilder/gen-config.py && goatbuilder validate"
+          ],
+          "read": "docs/design/goatbuilder-conformance.md",
+          "exit": 1,
+          "matches": [
+            "does not validate",
+            "embedded schema does not compile"
+          ]
+        }
+      },
+      {
+        "code": "GB-185",
+        "layer": "lexical",
+        "evidence": "3 shared words, score 0.49",
+        "at": 2,
+        "score": 0.4915359409794687,
+        "entry": {
+          "code": "GB-185",
+          "tool": "goatbuilder",
+          "title": "the partner named to `federate status` is not a declared peering",
+          "what": "`goatbuilder federate status <partner>` reads a peering declared in goatbuilder.yaml `peerings:` (on `--env`, when given). The name given is not one of them, so nothing was read.",
+          "causes": [
+            "the name is misspelled, or the peering is declared under another environment's config",
+            "the peering has not been declared yet"
+          ],
+          "fixes": [
+            "goatbuilder federate status   (every declared peering)",
+            "declare it under peerings: in goatbuilder.yaml first (C1)"
+          ],
+          "read": "docs/design/goatbuilder.md",
+          "exit": 1,
+          "matches": [
+            "^status: peering '[^']*' is not declared in "
+          ]
+        }
+      }
+    ],
+    "unrecognised": true
+  }
+}

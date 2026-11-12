@@ -1,0 +1,12 @@
+# What each goatnet declares. prod is behind dev for both components.
+components:
+  portal:
+    dev:
+      ref: ghcr.io/example-org/portal:v2.0.0@sha256:2222222222222222222222222222222222222222222222222222222222222222
+    prod:
+      ref: ghcr.io/example-org/portal:v1.9.0@sha256:1111111111111111111111111111111111111111111111111111111111111111
+  router:
+    dev:
+      ref: ghcr.io/example-org/router:v3.1.0@sha256:3333333333333333333333333333333333333333333333333333333333333333
+    prod:
+      ref: ghcr.io/example-org/router:v3.0.0@sha256:4444444444444444444444444444444444444444444444444444444444444444

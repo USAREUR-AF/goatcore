@@ -1,0 +1,33 @@
+{
+  "schema": "goatbuilder.output/v1",
+  "verb": "verify",
+  "ok": false,
+  "exit": 3,
+  "checks": [
+    {
+      "name": "dev/dev-core-a/portal",
+      "ok": false,
+      "detail": "pending: record names ghcr.io/example-org/portal:v1.3.2@sha256:9f8e7d6c5b4a…, declared ghcr.io/example-org/portal:v1.4.0@sha256:0b2a6c1d3e4f…"
+    },
+    {
+      "name": "dev/dev-core-b/portal",
+      "ok": false,
+      "detail": "pending: no record yet; declared ghcr.io/example-org/portal:v1.4.0@sha256:0b2a6c1d3e4f…"
+    },
+    {
+      "name": "dev/dev-edge-a/portal",
+      "ok": false,
+      "detail": "unknown: dev-edge-a: record unreadable"
+    },
+    {
+      "name": "dev/dev-obs-a/portal",
+      "ok": false,
+      "detail": "pending: no record yet; declared ghcr.io/example-org/portal:v1.4.0@sha256:0b2a6c1d3e4f…"
+    },
+    {
+      "name": "dev/dev-obs-b/portal",
+      "ok": false,
+      "detail": "pending: no record yet; declared ghcr.io/example-org/portal:v1.4.0@sha256:0b2a6c1d3e4f…"
+    }
+  ]
+}

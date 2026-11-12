@@ -49,6 +49,8 @@ on:
       - 'ops/scripts/translate-ftl.py'
       # What check-goatbuilder-portable.py scans beyond the crate.
       - 'ops/ci/check-goatbuilder-portable.py'
+      # The promise to the last release (ops/goatbuilder/compat/ is under ops/goatbuilder/**).
+      - 'ops/ci/check-goatbuilder-compat.sh'
       - 'ops/errors/catalog.yaml'
       - 'docs/reference/goatbuilder/**'
       # The phase catalog the C11 conformance test reads (tests/legibility.rs).
@@ -194,6 +196,10 @@ jobs:
       - name: The tests wrote nothing into the real state directory
         working-directory: ${{ github.workspace }}
         run: bash ops/ci/check-goatbuilder-tests-leave-home.sh --after "$RUNNER_TEMP/goatbuilder-tests-start"
+      - name: The promise — configuration, commands, documents and error codes of the last release still hold
+        working-directory: ${{ github.workspace }}
+        # The baseline is ops/goatbuilder/compat/ (its README says how a release moves it).
+        run: bash ops/ci/check-goatbuilder-compat.sh crates/target/debug/goatbuilder
       - name: Every message has a translation in every shipped language
         working-directory: .
         run: |

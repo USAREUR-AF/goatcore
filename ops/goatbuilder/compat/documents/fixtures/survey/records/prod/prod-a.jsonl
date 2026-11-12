@@ -1,0 +1,2 @@
+{"ts":"2026-10-28T10:00:00Z","component":"portal","ref":"ghcr.io/example-org/portal:v1.9.0@sha256:1111111111111111111111111111111111111111111111111111111111111111","action":"deploy","serial":1}
+{"ts":"2026-10-28T10:00:00Z","component":"router","ref":"ghcr.io/example-org/router:v3.0.0@sha256:4444444444444444444444444444444444444444444444444444444444444444","action":"deploy","serial":2}
