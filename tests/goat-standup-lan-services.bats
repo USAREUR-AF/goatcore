@@ -23,6 +23,10 @@ setup() {
   # $(printenv NAME); it is real here, not stubbed, so that refusal is tested too.
   cp "$REPO_ROOT/ops/scripts/standup-phase-run" "$FIXTURE/ops/scripts/standup-phase-run"
   chmod +x "$FIXTURE/ops/scripts/standup-phase-run"
+  # goat-standup.sh reads deploy.state_dir and deploy.aws_profile through
+  # project-setting.sh and stops the run when that read fails, so it is real here.
+  cp "$REPO_ROOT/ops/scripts/project-setting.sh" "$FIXTURE/ops/scripts/project-setting.sh"
+  chmod +x "$FIXTURE/ops/scripts/project-setting.sh"
 
   # fresh-source.sh (contract C3): stubbed. This test is about phase 12's own
   # command and exit-code handling, not trunk staleness.

@@ -18,7 +18,7 @@ REPO = Path(__file__).resolve().parents[1]
 def checkout(goatlite: str) -> Path:
     """A throwaway tree holding the script, the validator and the schema it reads."""
     root = Path(tempfile.mkdtemp())
-    for rel in ("ops/scripts/goat-standup.sh", "ops/goatbuilder/validate.py"):
+    for rel in ("ops/scripts/goat-standup.sh", "ops/scripts/project-setting.sh", "ops/goatbuilder/validate.py"):
         (root / rel).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy(REPO / rel, root / rel)
     shutil.copytree(REPO / "ops/goatbuilder/schema", root / "ops/goatbuilder/schema")
