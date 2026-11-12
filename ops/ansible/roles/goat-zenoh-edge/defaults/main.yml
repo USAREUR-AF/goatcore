@@ -146,8 +146,10 @@ goat_zenoh_edge_core_group: "{{ goat_zenoh_edge_partner_id }}_core"
 # publishing on keys/** means wrapping a DEK of your own choosing.
 # Refuse a deploy whose core key storage is wider than what this edge grants.
 # A wider queryable is refused silently, so the partner fetches nothing and it
-# reads as "no bundle published". Set false only to accept that
-# deliberately.
+# reads as "no bundle published". The core is read where it runs (this host,
+# else the one host of goat_zenoh_edge_core_group); a comparison that cannot
+# run fails the play. False skips the comparison and reports that decision;
+# set it only to accept an unverified key storage deliberately.
 goat_zenoh_edge_key_scope_check: true
 # The core router container on this host read to make that comparison and the
 # ingress storage check. Empty (the default) discovers it on this host the way

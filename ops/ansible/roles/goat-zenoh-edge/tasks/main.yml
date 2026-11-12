@@ -81,7 +81,7 @@
   when: goat_zenoh_edge_key_bundle_key_exprs | default([]) | length > 0
 
 - name: edge | find the core router the checks below read
-  ansible.builtin.include_tasks: discover-core.yml
+  ansible.builtin.include_tasks: find-core.yml
   when: >-
     goat_zenoh_edge_key_bundle_key_exprs | default([]) | length > 0
     or (goat_zenoh_edge_ingress_key_exprs | default([]) | length > 0

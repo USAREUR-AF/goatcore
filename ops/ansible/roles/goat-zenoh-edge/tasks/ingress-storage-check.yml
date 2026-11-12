@@ -16,48 +16,20 @@
   when: not (goat_zenoh_edge_ingress_scope_check | default(true) | bool)
 
 # main.yml has already looked for the core; included on its own, look here.
-- name: edge | find the local core router
-  ansible.builtin.include_tasks: discover-core.yml
+- name: edge | find our core router
+  ansible.builtin.include_tasks: find-core.yml
   when:
     - goat_zenoh_edge_ingress_scope_check | default(true) | bool
-    - _edge_core_container is not defined
-
-- name: edge | the core host the inventory names, when the core router is not on this host
-  vars:
-    _group: "{{ goat_zenoh_edge_core_group | default((goat_zenoh_edge_partner_id | default('')) ~ '_core') }}"
-    _hosts: "{{ groups[_group] | default([]) }}"
-  ansible.builtin.set_fact:
-    _edge_ingress_core_group: "{{ _group }}"
-    _edge_ingress_core_hosts: "{{ _hosts }}"
-    _edge_ingress_local_problem: "on {{ inventory_hostname }}: {{ _edge_core_problem }}"
-    _edge_ingress_core_on: >-
-      {{ (_hosts | first) if (_hosts | length == 1 and (_hosts | first) != inventory_hostname) else '' }}
-  when:
-    - goat_zenoh_edge_ingress_scope_check | default(true) | bool
-    - _edge_core_container | default('') | length == 0
-
-- name: edge | find the core router on the core host
-  ansible.builtin.include_tasks: discover-core.yml
-  vars:
-    _edge_core_on: "{{ _edge_ingress_core_on }}"
-  when:
-    - goat_zenoh_edge_ingress_scope_check | default(true) | bool
-    - _edge_core_container | default('') | length == 0
-    - _edge_ingress_core_on | default('') | length > 0
+    - _edge_core_found is not defined
 
 - name: edge | refuse an ingress storage inspection that found no core to read
   ansible.builtin.fail:
     msg: >-
       could not run: ingress storage inspection found no core to read
-      ({{ _edge_ingress_local_problem }};
-      {%- if _edge_ingress_core_on | length > 0 %} on {{ _edge_ingress_core_on }}: {{ _edge_core_problem }}
-      {%- elif _edge_ingress_core_hosts | length == 0 %} no host in inventory group {{ _edge_ingress_core_group }}
-      {%- elif _edge_ingress_core_hosts | length > 1 %} inventory group {{ _edge_ingress_core_group }} holds several hosts: {{ _edge_ingress_core_hosts | join(', ') }}
-      {%- else %} inventory group {{ _edge_ingress_core_group }} names only this host
-      {%- endif %}). Receive scopes were not verified, and this edge would admit
+      ({{ _edge_core_not_found }}). Receive scopes were not verified, and this edge would admit
       the partner's ingress scopes {{ goat_zenoh_edge_ingress_key_exprs | join(', ') }}
       without a matching receive store. Put our core host, alone, in inventory group
-      {{ _edge_ingress_core_group }}, or name the container in
+      {{ _edge_core_group_name }}, or name the container in
       goat_zenoh_edge_core_container when the core runs on this host; set
       goat_zenoh_edge_ingress_scope_check: false only to accept this deliberately.
   when:
@@ -67,7 +39,7 @@
 - name: edge | where the core router reads its configuration
   ansible.builtin.include_tasks: core-config-path.yml
   vars:
-    _edge_core_on: "{{ _edge_ingress_core_on | default('') }}"
+    _edge_core_on: "{{ _edge_core_host | default('') }}"
   when:
     - goat_zenoh_edge_ingress_scope_check | default(true) | bool
     - _edge_core_container | default('') | length > 0
@@ -76,7 +48,7 @@
   ansible.builtin.fail:
     msg: >-
       could not run: cannot tell where the core router {{ _edge_core_container }}
-      on {{ _edge_ingress_core_on | default('', true) or inventory_hostname }}
+      on {{ _edge_core_host | default('', true) or inventory_hostname }}
       reads its configuration: {{ _edge_core_config_problem }}. Receive scopes
       were not verified; set goat_zenoh_edge_ingress_scope_check: false only to
       accept this deliberately.
@@ -98,7 +70,7 @@
   failed_when: false
   check_mode: false
   no_log: true
-  delegate_to: "{{ _edge_ingress_core_on | default('', true) or inventory_hostname }}"
+  delegate_to: "{{ _edge_core_host | default('', true) or inventory_hostname }}"
   when:
     - goat_zenoh_edge_ingress_scope_check | default(true) | bool
     - _edge_core_container | default('') | length > 0
@@ -113,7 +85,7 @@
     msg: >-
       could not run: could not read {{ _edge_core_config_path }} from
       {{ _edge_core_container }} on
-      {{ _edge_ingress_core_on | default('', true) or inventory_hostname }}:
+      {{ _edge_core_host | default('', true) or inventory_hostname }}:
       docker exec ... cat exited {{ _read.rc | default('without a status') }}
       ({{ _why | truncate(400) }}).
       Receive scopes were not verified. For a core router whose start arguments

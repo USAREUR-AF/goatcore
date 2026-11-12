@@ -1,38 +1,64 @@
 ---
-# The key-bundle scope against the core's key storages. main.yml has already
-# looked for the core (discover-core.yml); included on its own, look here.
-# A comparison that cannot run reports "could not run", never a pass, and does
-# not fail the play; a key storage wider than the grant fails it.
-- name: edge | find the local core router
-  ansible.builtin.include_tasks: discover-core.yml
-  when: _edge_core_container is not defined
-
-- name: edge | report a key-storage comparison that could not run
+# The key-bundle grant against the core's key storages. A core storing keys/**
+# against a per-set grant declares a queryable wider than the lane this edge
+# grants; zenoh refuses it SILENTLY, so the partner's fetch returns an empty
+# result that reads as "nothing was published". The core is read where it runs
+# (find-core.yml: this host, else the one host of <partner>_core), at the path
+# its router reads (core-config-path.yml). A comparison that cannot run fails
+# the play; it is never reported as a pass. Only
+# goat_zenoh_edge_key_scope_check: false turns it off, and that is reported.
+- name: edge | report a disabled key-storage comparison
   ansible.builtin.debug:
     msg: >-
-      could not run: the core key-storage comparison was not made
-      ({{ _edge_core_problem }}). The key-bundle scope was not verified against
-      the core.
+      SKIP, by decision: goat_zenoh_edge_key_scope_check is false, so the core's
+      key storages were not compared with the key-bundle grant
+      {{ goat_zenoh_edge_key_bundle_key_exprs | default([]) | join(', ') }}.
+      This is not a pass.
+  when: not (goat_zenoh_edge_key_scope_check | default(true) | bool)
+
+# main.yml has already looked for the core; included on its own, look here.
+- name: edge | find our core router
+  ansible.builtin.include_tasks: find-core.yml
   when:
-    - goat_zenoh_edge_key_bundle_key_exprs | default([]) | length > 0
+    - goat_zenoh_edge_key_scope_check | default(true) | bool
+    - _edge_core_found is not defined
+
+- name: edge | refuse a key-storage comparison that found no core to read
+  ansible.builtin.fail:
+    msg: >-
+      could not run: the core key-storage comparison found no core to read
+      ({{ _edge_core_not_found }}). The key-bundle grant
+      {{ goat_zenoh_edge_key_bundle_key_exprs | join(', ') }} was not compared with
+      the core's key storages. Put our core host, alone, in inventory group
+      {{ _edge_core_group_name }}, or name the container in
+      goat_zenoh_edge_core_container when the core runs on this host; set
+      goat_zenoh_edge_key_scope_check: false only to accept this deliberately.
+  when:
+    - goat_zenoh_edge_key_scope_check | default(true) | bool
     - _edge_core_container | default('') | length == 0
 
 - name: edge | where the core router reads its configuration
   ansible.builtin.include_tasks: core-config-path.yml
+  vars:
+    _edge_core_on: "{{ _edge_core_host | default('') }}"
   when:
-    - goat_zenoh_edge_key_bundle_key_exprs | default([]) | length > 0
+    - goat_zenoh_edge_key_scope_check | default(true) | bool
     - _edge_core_container | default('') | length > 0
 
+- name: edge | refuse a core whose configuration path cannot be told
+  ansible.builtin.fail:
+    msg: >-
+      could not run: cannot tell where the core router {{ _edge_core_container }}
+      on {{ _edge_core_host | default('', true) or inventory_hostname }}
+      reads its configuration: {{ _edge_core_config_problem }}. The key-bundle
+      grant was not compared with the core's key storages; set
+      goat_zenoh_edge_key_scope_check: false only to accept this deliberately.
+  when:
+    - goat_zenoh_edge_key_scope_check | default(true) | bool
+    - _edge_core_container | default('') | length > 0
+    - _edge_core_config_problem | length > 0
+
 - name: edge | read the core's key storages, to compare against what we grant
-  # A queryable declared WIDER than the lane this edge grants is refused, and
-  # SILENTLY. The bundle is served
-  # by a storage on the core, so a core storing "keys/**" against a per-set grant
-  # means the declaration never reaches the partner and their fetch returns an
-  # empty result that reads as "nothing was published".
-  #
-  # Read-only, and never fatal on its own: the core may legitimately be a host
-  # this play cannot reach, and a check that cannot run must not be reported as
-  # a check that passed.
   ansible.builtin.command:
     argv:
       - docker
@@ -45,26 +71,29 @@
   failed_when: false
   check_mode: false
   no_log: true
+  delegate_to: "{{ _edge_core_host | default('', true) or inventory_hostname }}"
   when:
-    - goat_zenoh_edge_key_bundle_key_exprs | default([]) | length > 0
+    - goat_zenoh_edge_key_scope_check | default(true) | bool
     - _edge_core_container | default('') | length > 0
 
 # The configuration stays hidden (it can hold credentials); the read's exit
 # status and error text do not.
-- name: edge | report a core configuration that could not be read
+- name: edge | refuse a core configuration that could not be read
   vars:
     _read: "{{ _edge_core_key_config }}"
     _why: "{{ (_read.stderr | default('') | trim) or (_read.msg | default('no error text')) }}"
-  ansible.builtin.debug:
+  ansible.builtin.fail:
     msg: >-
-      could not run: the core key-storage comparison was not made (could not
-      read {{ _edge_core_config_path }} from {{ _edge_core_container }}:
+      could not run: could not read {{ _edge_core_config_path }} from
+      {{ _edge_core_container }} on
+      {{ _edge_core_host | default('', true) or inventory_hostname }}:
       docker exec ... cat exited {{ _read.rc | default('without a status') }}
-      ({{ _why | truncate(400) }})). The key-bundle scope was not verified
-      against the core. Set goat_zenoh_edge_core_config_path to where this core
-      router reads its configuration if that is not it.
+      ({{ _why | truncate(400) }}). The key-bundle grant was not compared with
+      the core's key storages. For a core router whose start arguments name no
+      configuration, set goat_zenoh_edge_core_config_path to where it reads one;
+      set goat_zenoh_edge_key_scope_check: false only to accept this deliberately.
   when:
-    - goat_zenoh_edge_key_bundle_key_exprs | default([]) | length > 0
+    - goat_zenoh_edge_key_scope_check | default(true) | bool
     - _edge_core_container | default('') | length > 0
     - (_edge_core_key_config.rc | default(-1) | int) != 0
 
@@ -73,10 +102,10 @@
     _edge_core_key_storages: >-
       {{ _edge_core_key_config.stdout | regex_findall('"keys/[^"]*"') | unique | join(' ') }}
   when:
-    - goat_zenoh_edge_key_bundle_key_exprs | default([]) | length > 0
+    - goat_zenoh_edge_key_scope_check | default(true) | bool
     - (_edge_core_key_config.rc | default(-1) | int) == 0
 
-- name: edge | warn when the core's key storage is wider than the grant
+- name: edge | refuse a core whose key storage is wider than the grant
   ansible.builtin.fail:
     msg: >-
       The core stores {{ _edge_core_key_storages }}, which is WIDER
@@ -87,6 +116,15 @@
       released set(s), or set goat_zenoh_edge_key_scope_check=false if you have
       deliberately accepted this.
   when:
-    - goat_zenoh_edge_key_bundle_key_exprs | default([]) | length > 0
-    - goat_zenoh_edge_key_scope_check | default(true)
+    - goat_zenoh_edge_key_scope_check | default(true) | bool
     - _edge_core_key_storages | default('') is search('"keys/\\*\\*"')
+
+- name: edge | report a key-storage comparison that passed
+  ansible.builtin.debug:
+    msg: >-
+      PASS: the core's key storages ({{ _edge_core_key_storages | default('') or 'none' }})
+      are no wider than the key-bundle grant
+      {{ goat_zenoh_edge_key_bundle_key_exprs | join(', ') }}.
+  when:
+    - goat_zenoh_edge_key_scope_check | default(true) | bool
+    - (_edge_core_key_config.rc | default(-1) | int) == 0
