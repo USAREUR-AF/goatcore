@@ -165,11 +165,11 @@ pub fn yaml_to_json(v: &serde_yaml::Value) -> Value {
 }
 
 pub fn read_yaml(path: &Path) -> Result<Value> {
-    let text = std::fs::read_to_string(path).map_err(|e| anyhow!("{}: {e}", path.display()))?;
+    let text = std::fs::read_to_string(path).map_err(|e| anyhow::Error::from(goat_errors::coded("GB-254", format!("{}: {e}", path.display()))))?;
     if text.trim().is_empty() {
         return Ok(Value::Object(Map::new()));
     }
-    let v: serde_yaml::Value = serde_yaml::from_str(&text).map_err(|e| anyhow!("{}: {e}", path.display()))?;
+    let v: serde_yaml::Value = serde_yaml::from_str(&text).map_err(|e| anyhow::Error::from(goat_errors::coded("GB-254", format!("{}: {e}", path.display()))))?;
     let j = yaml_to_json(&v);
     Ok(if j.is_object() { j } else { Value::Object(Map::new()) })
 }
@@ -930,7 +930,7 @@ pub fn sha256_of(data: &[u8]) -> String {
 }
 
 pub fn sha256_of_file(path: &Path) -> Result<String> {
-    Ok(sha256_of(&std::fs::read(path).map_err(|e| anyhow!("{}: {e}", path.display()))?))
+    Ok(sha256_of(&std::fs::read(path).map_err(|e| anyhow::Error::from(goat_errors::coded("GB-254", format!("{}: {e}", path.display()))))?))
 }
 
 pub fn content_hash(body: &Map<String, Value>) -> String {
@@ -1200,8 +1200,8 @@ pub fn self_consistent(doc: &Map<String, Value>) -> (String, String) {
 
 pub fn validate_schema(p: &Paths, doc: &Map<String, Value>, where_: &str) -> Result<()> {
     let schema_path = p.intent_schema();
-    let schema: Value = serde_json::from_str(&std::fs::read_to_string(&schema_path).map_err(|e| anyhow!("{}: {e}", schema_path.display()))?)?;
-    let compiled = jsonschema::JSONSchema::options().with_draft(jsonschema::Draft::Draft7).compile(&schema).map_err(|e| anyhow!("{}: {e}", p.rel(&schema_path)))?;
+    let schema: Value = serde_json::from_str(&std::fs::read_to_string(&schema_path).map_err(|e| anyhow::Error::from(goat_errors::coded("GB-254", format!("{}: {e}", schema_path.display()))))?)?;
+    let compiled = jsonschema::JSONSchema::options().with_draft(jsonschema::Draft::Draft7).compile(&schema).map_err(|e| anyhow::Error::from(goat_errors::coded("GB-254", format!("{}: {e}", p.rel(&schema_path)))))?;
     let value = Value::Object(doc.clone());
     if let Err(errors) = compiled.validate(&value) {
         if let Some(e) = errors.into_iter().next() {
@@ -1331,7 +1331,7 @@ pub fn run(repo: &Path, check: bool) -> Result<Report> {
                 }
             }
         } else {
-            std::fs::write(&path, &text).map_err(|e| anyhow!("{}: {e}", path.display()))?;
+            std::fs::write(&path, &text).map_err(|e| anyhow::Error::from(goat_errors::coded("GB-254", format!("{}: {e}", path.display()))))?;
             note(&mut rows, format!("wrote {relpath}"));
         }
     }
@@ -1375,7 +1375,7 @@ pub fn run(repo: &Path, check: bool) -> Result<Report> {
                 std::fs::create_dir_all(d)?;
             }
             let current = std::fs::read_to_string(&path).unwrap_or_default();
-            std::fs::write(&path, &text).map_err(|e| anyhow!("{}: {e}", path.display()))?;
+            std::fs::write(&path, &text).map_err(|e| anyhow::Error::from(goat_errors::coded("GB-254", format!("{}: {e}", path.display()))))?;
             note(&mut rows, format!("wrote {rp} (serial {}, {})", doc["serial"], doc["content_hash"].as_str().unwrap_or("")));
             if current != text {
                 note(&mut rows, format!("      body changed — the committed signature is now STALE; {SIGNER_HINT}"));
@@ -1611,7 +1611,7 @@ pub fn edit_set_deviation(path: &Path, comp: &str, g: &str, reference: &str, rea
     if dropped.len() != original.len() {
         let at = original.find(&format!("      {g}:\n        value:")).unwrap_or(0);
         let block = format!("{}{entry}{}", &original[..at], &dropped[at..]);
-        return std::fs::write(path, format!("{}{block}{}", &s[..start], &s[end..])).map_err(|e| anyhow!("{}: {e}", path.display()));
+        return std::fs::write(path, format!("{}{block}{}", &s[..start], &s[end..])).map_err(|e| anyhow::Error::from(goat_errors::coded("GB-254", format!("{}: {e}", path.display()))));
     }
     let mut block = dropped;
     if let Some(i) = regex::Regex::new(r"(?m)^    deviations:\n").unwrap().find(&block).map(|m| m.end()) {
@@ -1619,19 +1619,19 @@ pub fn edit_set_deviation(path: &Path, comp: &str, g: &str, reference: &str, rea
     } else if let Some(i) = regex::Regex::new(r"(?m)^    fleet: .*\n").unwrap().find(&block).map(|m| m.end()) {
         block.insert_str(i, &format!("    deviations:\n{entry}"));
     }
-    std::fs::write(path, format!("{}{block}{}", &s[..start], &s[end..])).map_err(|e| anyhow!("{}: {e}", path.display()))
+    std::fs::write(path, format!("{}{block}{}", &s[..start], &s[end..])).map_err(|e| anyhow::Error::from(goat_errors::coded("GB-254", format!("{}: {e}", path.display()))))
 }
 
 /// rc.sh's fold step: the candidate becomes `fleet:`; the deviations that carried it are gone.
 pub fn edit_fold_fleet(path: &Path, comp: &str, reference: &str, old: &str, tag: &str, rec: &str, goatnets: &[String]) -> Result<()> {
-    let s = std::fs::read_to_string(path).map_err(|e| anyhow!("{}: {e}", path.display()))?;
-    let (start, end) = component_block(&s, comp).ok_or_else(|| anyhow!("{comp}: no component block"))?;
+    let s = std::fs::read_to_string(path).map_err(|e| anyhow::Error::from(goat_errors::coded("GB-254", format!("{}: {e}", path.display()))))?;
+    let (start, end) = component_block(&s, comp).ok_or_else(|| anyhow::Error::from(goat_errors::coded("GB-257", format!("{comp}: no component block"))))?;
     let mut block = s[start..end].to_string();
     let today = chrono::Local::now().date_naive();
     let rollback = if old.is_empty() { "<none>".to_string() } else { old.rsplit('/').next().unwrap_or(old).to_string() };
     let cmt = format!("  # {today} graduate {tag} (ADR 1120/1173, record {rec}): the preprod candidate\n  # becomes the fleet value; the per-rung deviations that carried it are gone.\n  # ROLLBACK: {rollback}\n");
     let re = regex::Regex::new(r"(?m)^    fleet: .*\n").unwrap();
-    let m = re.find(&block).ok_or_else(|| anyhow!("AssertionError: {comp}: no fleet: line"))?;
+    let m = re.find(&block).ok_or_else(|| anyhow::Error::from(goat_errors::coded("GB-257", format!("AssertionError: {comp}: no fleet: line"))))?;
     block.replace_range(m.start()..m.end(), &format!("{cmt}    fleet: \"{reference}\"\n"));
     for g in goatnets {
         block = drop_value_deviation(&block, g);
@@ -1646,7 +1646,7 @@ pub fn edit_fold_fleet(path: &Path, comp: &str, reference: &str, old: &str, tag:
         }
         out.push_str(l);
     }
-    std::fs::write(path, format!("{}{out}{}", &s[..start], &s[end..])).map_err(|e| anyhow!("{}: {e}", path.display()))
+    std::fs::write(path, format!("{}{out}{}", &s[..start], &s[end..])).map_err(|e| anyhow::Error::from(goat_errors::coded("GB-254", format!("{}: {e}", path.display()))))
 }
 
 /// The rungs a graduation folds, and the (rung, value) pairs it keeps.
@@ -1730,7 +1730,7 @@ pub fn edit_move_fleet(path: &Path, comp: &str, new_ref: &str, old_ref: &str, re
             printed.push("    deviations for this component: cleared (fastlane converges the fleet)".to_string());
         }
     }
-    std::fs::write(path, format!("{}{new_block}{}", &src[..start], &src[nxt..])).map_err(|e| anyhow!("{}: {e}", path.display()))?;
+    std::fs::write(path, format!("{}{new_block}{}", &src[..start], &src[nxt..])).map_err(|e| anyhow::Error::from(goat_errors::coded("GB-254", format!("{}: {e}", path.display()))))?;
     printed.push(format!("    fleet: -> {new_ref}"));
     Ok(printed)
 }
@@ -1749,7 +1749,7 @@ pub fn regenerate(repo: &Path) -> Result<Regen> {
     let p = Paths::new(repo);
     let mut wrote = Vec::new();
     for (_, path, text) in &r.pins {
-        std::fs::write(path, text).map_err(|e| anyhow!("{}: {e}", path.display()))?;
+        std::fs::write(path, text).map_err(|e| anyhow::Error::from(goat_errors::coded("GB-254", format!("{}: {e}", path.display()))))?;
         wrote.push(p.rel(path));
     }
     let mut changed_intents = Vec::new();
@@ -1757,7 +1757,7 @@ pub fn regenerate(repo: &Path) -> Result<Regen> {
         if let Some(d) = path.parent() {
             std::fs::create_dir_all(d)?;
         }
-        std::fs::write(path, text).map_err(|e| anyhow!("{}: {e}", path.display()))?;
+        std::fs::write(path, text).map_err(|e| anyhow::Error::from(goat_errors::coded("GB-254", format!("{}: {e}", path.display()))))?;
         wrote.push(p.rel(path));
         if *changed {
             changed_intents.push(g.clone());
