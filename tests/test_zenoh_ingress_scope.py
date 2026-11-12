@@ -31,6 +31,16 @@ def config(*scopes):
     }}}})
 
 
+def require_ansible_playbook(case):
+    """Skip without ansible-playbook, unless GOAT_TEST_REQUIRE_ANSIBLE=1 (CI sets
+    it), where its absence fails the test instead of skipping it quietly."""
+    if shutil.which('ansible-playbook'):
+        return
+    if os.environ.get('GOAT_TEST_REQUIRE_ANSIBLE') == '1':
+        case.fail('GOAT_TEST_REQUIRE_ANSIBLE=1 but ansible-playbook is not on PATH')
+    case.skipTest('ansible-playbook is required')
+
+
 class CoreConfigPath(unittest.TestCase):
     """Where a core router reads its configuration, from its start arguments."""
 
@@ -157,9 +167,9 @@ class ScopeInspection(unittest.TestCase):
             self.assertIn('from/**', report['observed'])
 
 
-@unittest.skipUnless(shutil.which('ansible-playbook'), 'ansible-playbook is required')
 class RolePreflight(unittest.TestCase):
     def setUp(self):
+        require_ansible_playbook(self)
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
@@ -285,7 +295,6 @@ class RolePreflight(unittest.TestCase):
         self.assertIn('exec chosen-core cat', self.trace.read_text())
 
 
-@unittest.skipUnless(shutil.which('ansible-playbook'), 'ansible-playbook is required')
 class CoreOnAnotherHost(unittest.TestCase):
     """The deployed shape: the edge and the core router on separate hosts.
 
@@ -296,6 +305,7 @@ class CoreOnAnotherHost(unittest.TestCase):
     """
 
     def setUp(self):
+        require_ansible_playbook(self)
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
@@ -471,6 +481,7 @@ class CoreOverSsh(unittest.TestCase):
     """
 
     def setUp(self):
+        require_ansible_playbook(self)
         if not _ssh_tools():
             # CI installs openssh-server and sets GOAT_TEST_REQUIRE_SSHD=1, so
             # there a missing sshd fails instead of skipping quietly.
