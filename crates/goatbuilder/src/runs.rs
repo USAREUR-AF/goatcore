@@ -46,6 +46,8 @@ pub fn write(run: &Finished, exit: i32, error: Option<&str>) -> Result<PathBuf> 
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
+    // A secret's value never reaches the file, whatever the verb handed over.
+    let inputs = without_secret_values(&run.inputs);
     let rec = Record {
         schema: SCHEMA,
         id,
@@ -59,7 +61,7 @@ pub fn write(run: &Finished, exit: i32, error: Option<&str>) -> Result<PathBuf> 
         error,
         phases: &run.phases,
         commands: &run.commands,
-        inputs: &run.inputs,
+        inputs: &inputs,
     };
     std::fs::create_dir_all(&run.dir).with_context(|| format!("{}", run.dir.display()))?;
     let path = run.dir.join("run.json");
@@ -128,6 +130,21 @@ pub fn tree_commit(repo: &Path) -> Option<String> {
         }
     }
     None
+}
+
+/// `inputs` with the `value` of every entry marked secret set to null.
+fn without_secret_values(inputs: &serde_json::Value) -> serde_json::Value {
+    let mut v = inputs.clone();
+    if let Some(list) = v.as_array_mut() {
+        for i in list.iter_mut() {
+            if i["secret"] == true {
+                if let Some(o) = i.as_object_mut() {
+                    o.insert("value".into(), serde_json::Value::Null);
+                }
+            }
+        }
+    }
+    v
 }
 
 /// Every record under `<state>/runs/`, oldest first (ids start with their UTC time).
@@ -597,6 +614,29 @@ mod tests {
         assert!(
             !rows.iter().any(|r| r.contains("ZAGROS_PG_PASS")),
             "an unchanged secret input is not shown: {rows:?}"
+        );
+    }
+
+    #[test]
+    fn a_secret_handed_over_with_its_value_is_written_without_it() {
+        let t = tempfile::tempdir().unwrap();
+        let mut run = finished(
+            &t.path().join("runs/20261112T000000Z-standup-1"),
+            &[("one", 0)],
+            "zagros_hosts",
+        );
+        run.inputs = serde_json::json!([
+            { "name": "ZAGROS_PG_PASS", "value": "hunter2", "secret": true, "source": "environment" },
+            { "name": "target", "value": "zagros_hosts", "secret": false, "source": "derived" }
+        ]);
+        let p = write(&run, 0, None).unwrap();
+        let text = std::fs::read_to_string(&p).unwrap();
+        assert!(!text.contains("hunter2"), "{text}");
+        let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(v["inputs"][0]["value"], serde_json::Value::Null);
+        assert_eq!(
+            v["inputs"][1]["value"], "zagros_hosts",
+            "a value not marked secret is kept"
         );
     }
 
