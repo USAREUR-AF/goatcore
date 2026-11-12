@@ -25,7 +25,7 @@ use std::process::Stdio;
 
 use crate::runner::Cmd;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 use serde::Deserialize;
 
 use crate::config;
@@ -129,12 +129,16 @@ pub fn site_for(repo: &Path, fixture: Option<&config::Config>, env: &str, site: 
     let root = repo.join("goatlite.yaml");
     if fixture.is_none() && root.is_file() {
         // A file that does not load is the cause; a missing --site would be a wrong answer.
-        let c = config::load(&root).map_err(|e| anyhow!("{e:#}\n\n(the site is derived from goatlite.yaml when --site is left out, so fix that file or pass --site)"))?;
+        // The config's own code when it carries one, else GB-025 (it does not validate).
+        let c = config::load(&root).map_err(|e| {
+            let code = e.downcast_ref::<goat_errors::Coded>().map(|c| c.code.clone()).unwrap_or_else(|| "GB-025".into());
+            goat_errors::coded(&code, format!("{e:#}\n\n(the site is derived from goatlite.yaml when --site is left out, so fix that file or pass --site)"))
+        })?;
         if lite_name(&c) {
             return Ok(c.lite.expect("checked").name);
         }
     }
-    Err(anyhow!("the following required arguments were not provided:\n  --site <SITE>\n\n(--site may be omitted only on a goatlite run: {} with preset lite and lite.name {env})", if fixture.is_some() { "the fixture's goatbuilder.yaml" } else { "goatlite.yaml at the checkout root" }))
+    Err(goat_errors::coded("GB-243", format!("the following required arguments were not provided:\n  --site <SITE>\n\n(--site may be omitted only on a goatlite run: {} with preset lite and lite.name {env})", if fixture.is_some() { "the fixture's goatbuilder.yaml" } else { "goatlite.yaml at the checkout root" })).into())
 }
 
 /// The goatlite config for a run (ADR 1213): `<repo>/goatlite.yaml`, when it
@@ -300,12 +304,12 @@ fn read_site_in(repo: &Path, o: &Options, env: &SiteEnv) -> Result<Site> {
         (true, String::new())
     };
     if o.obs_only && !obs {
-        return Err(anyhow!("--obs-only: no obs leg to run — {obs_why}"));
+        return Err(goat_errors::coded("GB-248", format!("--obs-only: no obs leg to run — {obs_why}")).into());
     }
     // Refuse here rather than at phase 2, after the core leg has started beside it.
     if obs {
         if let Some(missing) = obs_play_missing(repo) {
-            return Err(anyhow!("{missing} Re-run with --skip-obs to stand up the site without its obs host."));
+            return Err(goat_errors::coded("GB-248", format!("{missing} Re-run with --skip-obs to stand up the site without its obs host.")).into());
         }
     }
 
@@ -315,7 +319,7 @@ fn read_site_in(repo: &Path, o: &Options, env: &SiteEnv) -> Result<Site> {
         None => if gv_matches(&gv, "dashboard_cert_delivery_mode", "acme") { "internet".to_string() } else { "lan".to_string() },
     };
     if profile != "lan" && profile != "internet" {
-        return Err(anyhow!("bad --profile '{profile}' (want lan|internet)"));
+        return Err(goat_errors::coded("GB-242", format!("bad --profile '{profile}' (want lan|internet)")).into());
     }
     // A LAN site pauses for the first login (phase 11) only while the bootstrap
     // NetBird token is not available under the declared posture (ADR 1204).
@@ -914,10 +918,10 @@ pub fn standup(repo: &Path, o: &Options) -> Result<Report> {
     let Some(env) = env else {
         let mut declared: Vec<&str> = cfg.iter().flat_map(|c| c.environments.iter()).map(|e| e.name.as_str()).collect();
         declared.extend(lite_cfg.iter().flat_map(|c| c.environments.iter().map(|e| e.name.as_str())));
-        return Err(anyhow!("unknown environment \"{}\"; declared: {declared:?}", o.env));
+        return Err(goat_errors::coded("GB-241", format!("unknown environment \"{}\"; declared: {declared:?}", o.env)).into());
     };
     if !env.sites.is_empty() && !env.sites.iter().any(|s| s.name == o.site) {
-        return Err(anyhow!("site '{}' is not declared for environment '{}' (declared: {})", o.site, o.env, env.sites.iter().map(|s| s.name.as_str()).collect::<Vec<_>>().join(", ")));
+        return Err(goat_errors::coded("GB-247", format!("site '{}' is not declared for environment '{}' (declared: {})", o.site, o.env, env.sites.iter().map(|s| s.name.as_str()).collect::<Vec<_>>().join(", "))).into());
     }
     let s = read_site(repo, o)?;
     let resume = format!("goatbuilder standup {} --site {}", o.env, s.site);
@@ -1221,33 +1225,33 @@ pub fn mock(fixture: &mut Fixture, env: &str, site: &str, actor: &str, run: Mock
     let script: MockScript = serde_yaml::from_str(&text).context("converger.yaml has no standup: section (goatbuilder-conformance.md §\"Rehearsing a standup on the fixture\")")?;
     let m = script.standup;
     if m.env != env {
-        return Err(anyhow!("the fixture rehearses environment '{}', not '{env}'", m.env));
+        return Err(goat_errors::coded("GB-249", format!("the fixture rehearses environment '{}', not '{env}'", m.env)).into());
     }
     if m.site != site {
-        return Err(anyhow!("the fixture rehearses site '{}', not '{site}'", m.site));
+        return Err(goat_errors::coded("GB-249", format!("the fixture rehearses site '{}', not '{site}'", m.site)).into());
     }
     let declared_site = fixture.config.environments.iter().find(|e| e.name == env).and_then(|e| e.sites.iter().find(|s| s.name == site));
     let Some(declared_site) = declared_site else {
-        return Err(anyhow!("site '{site}' is not declared for environment '{env}' in goatbuilder.yaml"));
+        return Err(goat_errors::coded("GB-247", format!("site '{site}' is not declared for environment '{env}' in goatbuilder.yaml")).into());
     };
     let env_sites = &fixture.config.environments.iter().find(|e| e.name == env).expect("found above").sites;
     for ph in &m.phases {
         if let Some((other, class)) = ph.class.split_once('/') {
             // Another site's class: only the founder this joiner attaches to.
             if declared_site.joins.as_deref() != Some(other) {
-                return Err(anyhow!("phase {}: class '{}' names site '{other}', but '{site}' joins {} — a standup may touch only the founder it attaches to", ph.phase, ph.class, declared_site.joins.as_deref().map(|j| format!("'{j}'")).unwrap_or_else(|| "no site".into())));
+                return Err(goat_errors::coded("GB-249", format!("phase {}: class '{}' names site '{other}', but '{site}' joins {} — a standup may touch only the founder it attaches to", ph.phase, ph.class, declared_site.joins.as_deref().map(|j| format!("'{j}'")).unwrap_or_else(|| "no site".into()))).into());
             }
             let Some(founder) = env_sites.iter().find(|s| s.name == other) else {
-                return Err(anyhow!("phase {}: site '{other}' is not declared for environment '{env}'", ph.phase));
+                return Err(goat_errors::coded("GB-247", format!("phase {}: site '{other}' is not declared for environment '{env}'", ph.phase)).into());
             };
             if !founder.classes.contains_key(class) {
-                return Err(anyhow!("phase {}: class '{class}' is not declared at site '{other}' in goatbuilder.yaml", ph.phase));
+                return Err(goat_errors::coded("GB-247", format!("phase {}: class '{class}' is not declared at site '{other}' in goatbuilder.yaml", ph.phase)).into());
             }
         } else if !declared_site.classes.contains_key(&ph.class) {
-            return Err(anyhow!("phase {}: class '{}' is not declared at site '{site}' in goatbuilder.yaml", ph.phase, ph.class));
+            return Err(goat_errors::coded("GB-247", format!("phase {}: class '{}' is not declared at site '{site}' in goatbuilder.yaml", ph.phase, ph.class)).into());
         }
         if !m.classes.contains_key(&ph.class) {
-            return Err(anyhow!("phase {}: class '{}' has no machines in converger.yaml standup.classes", ph.phase, ph.class));
+            return Err(goat_errors::coded("GB-249", format!("phase {}: class '{}' has no machines in converger.yaml standup.classes", ph.phase, ph.class)).into());
         }
     }
     // A dry run records nothing, so it needs no actor.
@@ -1329,7 +1333,7 @@ pub fn teardown_mock(fixture: &mut Fixture, env: &str, site: &str, run: MockRun)
     let script: MockScript = serde_yaml::from_str(&text).context("converger.yaml has no standup: section")?;
     let m = script.standup;
     if m.env != env || m.site != site {
-        return Err(anyhow!("the fixture rehearses {}/{}, not {env}/{site}", m.env, m.site));
+        return Err(goat_errors::coded("GB-249", format!("the fixture rehearses {}/{}, not {env}/{site}", m.env, m.site)).into());
     }
     let started = std::time::Instant::now();
     let mut checks = Vec::new();

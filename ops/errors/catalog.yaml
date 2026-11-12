@@ -460,7 +460,7 @@ entries:
   - code: GB-008
     tool: goatbuilder
     title: a mutation needs --yes when there is no terminal
-    what: deploy, release, rollback and fastlane change state; without a terminal to confirm on, they refuse unless --yes is passed (contract C10).
+    what: deploy, release, rollback, fastlane, standup, teardown, join-node, federate and apply change state; without a terminal to confirm on, they refuse unless --yes is passed (contract C10).
     causes:
       - run from a script, CI or a pipe
     fixes:
@@ -2367,6 +2367,202 @@ entries:
     read: docs/design/goatbuilder.md
     matches:
       - "\\(GB-237\\)"
+    exit: 2
+  - code: GB-238
+    tool: goatbuilder
+    title: a federation verb's site flags come before the verb
+    what: "goatbuilder federate init|lint|compose|diff|verify|apply read this party's context from --context-dir, --cert, --ca-roots, --context and --profile-dir, which belong to the verb: given before it, they are read as the name of a partner."
+    causes:
+      - "the flags were typed after `federate` and before the verb"
+    fixes:
+      - "goatbuilder federate lint --context-dir <dir> <package>   (the verb first, then its flags)"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "after the verb: goatbuilder federate"
+    exit: 2
+  - code: GB-239
+    tool: goatbuilder
+    title: a flag that does not apply to a federation verb
+    what: "The six federation verbs (init, lint, compose, diff, verify, apply) read only the files they are named and the party's context, and run for real. --mock, -C/--repo (except for init --over-ssh) and -o/--output choose things they do not read, so a run with one is refused rather than the flag ignored."
+    causes:
+      - "--mock, -C/--repo or -o/--output given to a federation verb"
+    fixes:
+      - "drop the flag; the verbs take --json for a JSON report"
+      - "goatbuilder -C <repo> federate init --over-ssh <peering>   (the one verb that reads a checkout)"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "do not apply to goatbuilder federate init\\|lint\\|compose\\|diff\\|verify\\|apply"
+    exit: 2
+  - code: GB-240
+    tool: goatbuilder
+    title: FED_VERBS names no way to run the federation verbs
+    what: "FED_VERBS chooses who runs the federation verbs of a peering run: goatbuilder (in process, the default) or goat. Any other value is refused, as peering-standup.sh refuses it, so a misspelling cannot choose a different path on each avenue."
+    causes:
+      - "FED_VERBS is set to something other than goat or goatbuilder"
+    fixes:
+      - "unset FED_VERBS   (the verbs run in goatbuilder)"
+      - "FED_VERBS=goat goatbuilder federate <partner>   (the verbs run in goat)"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "FED_VERBS is goat or goatbuilder"
+    exit: 2
+  - code: GB-241
+    tool: goatbuilder
+    title: the environment named is not declared
+    what: "A verb was given an environment that goatbuilder.yaml (or goatlite.yaml) does not declare in environments:. Nothing runs against an environment nobody declared."
+    causes:
+      - "a misspelt environment name"
+      - "the environment is declared in another checkout's goatbuilder.yaml"
+    fixes:
+      - "the names declared are listed in the message; pass one of them"
+      - "add the environment to ops/goatbuilder/goatbuilder.yaml environments:"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "unknown environment \""
+    exit: 2
+  - code: GB-242
+    tool: goatbuilder
+    title: the command line does not parse
+    what: "The arguments do not make a command goatbuilder knows: a required argument is missing, a value is not one the option takes, two options that exclude each other were both given, or the verb is unknown. Nothing ran."
+    causes:
+      - "a required argument or subcommand was left out"
+      - "an option was given a value it does not take"
+      - "two options that exclude each other were given together"
+      - "a misspelt verb"
+    fixes:
+      - "goatbuilder <verb> --help   (the arguments the verb takes)"
+      - "goatbuilder --help   (the verbs)"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "^error: the following required arguments were not provided"
+      - "^error: unrecognized subcommand"
+      - "^error: invalid value '"
+      - "^error: the argument '[^']*' cannot be used with"
+      - "^error: unexpected argument"
+      - "^error: a value is required for"
+      - "requires a subcommand but one was not provided"
+    exit: 2
+  - code: GB-243
+    tool: goatbuilder
+    title: a standup names no site
+    what: "standup stands up one site and needs --site. It may be left out only on a goatlite run, where goatlite.yaml (preset lite) names the one site the environment has."
+    causes:
+      - "--site was left out on an environment that is not a goatlite"
+    fixes:
+      - "goatbuilder standup <environment> --site <site>"
+    read: docs/operations/goatnet-standup.md
+    matches:
+      - "--site may be omitted only on a goatlite run"
+    exit: 2
+  - code: GB-244
+    tool: goatbuilder
+    title: the config file cannot be read
+    what: "goatbuilder reads the deployment's goatbuilder.yaml (or the file a verb was named) before anything else. It is not there, or it cannot be read."
+    causes:
+      - "the path is wrong, or -C names another checkout"
+      - "the checkout has no ops/goatbuilder/goatbuilder.yaml"
+    fixes:
+      - "goatbuilder -C <the deployment's checkout> <verb>"
+      - "goatbuilder validate <path>   (the file you meant)"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "cannot read config "
+    exit: 2
+  - code: GB-245
+    tool: goatbuilder
+    title: the config file is not YAML
+    what: "The config file could be read, but it does not parse as YAML, so nothing in it can be checked. The message names the line and column."
+    causes:
+      - "a bracket, quote or indentation error near the line named"
+    fixes:
+      - "fix the line the message names, then goatbuilder validate <path>"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "is not valid YAML: "
+    exit: 2
+  - code: GB-247
+    tool: goatbuilder
+    title: the site or class named is not declared
+    what: "standup and join-node act on a site goatbuilder.yaml declares under the environment, and join-node on a class that site declares and the verb converges (core, obs, breakglass, network-jump). The one named is not there."
+    causes:
+      - "a misspelt site or class"
+      - "the site or class is not declared yet"
+    fixes:
+      - "the names declared are listed in the message; pass one of them"
+      - "declare the site under environments[].sites, or the class under its classes:, in ops/goatbuilder/goatbuilder.yaml"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "is not declared for environment '"
+      - "is not declared at site '"
+      - "is not one this verb converges"
+    exit: 2
+  - code: GB-248
+    tool: goatbuilder
+    title: the observability leg cannot run
+    what: "A site that declares has_obs_host: true stands up its observability host in a leg beside the core. --obs-only asked for that leg alone and there is none to run, or the leg's play (ops/ansible/utility-host-bootstrap.yml) is not in this tree. The message says which."
+    causes:
+      - "has_obs_host is not true, its group_vars or inventory host is missing (--obs-only)"
+      - "the checkout has no ops/ansible/utility-host-bootstrap.yml"
+    fixes:
+      - "goatbuilder standup <environment> --site <site> --skip-obs   (stand up the site without its obs host)"
+      - "declare has_obs_host: true, the <site>_obs_hosts group_vars and its inventory host, then run --obs-only"
+    read: docs/operations/goatnet-standup.md
+    matches:
+      - "--obs-only: no obs leg to run"
+      - "so the obs leg cannot run"
+    exit: 2
+  - code: GB-249
+    tool: goatbuilder
+    title: the fixture's standup does not fit what was asked
+    what: "standup --mock rehearses the standup a fixture's converger.yaml declares for one environment and site, against that fixture's goatbuilder.yaml. The environment or site asked for is another, or a phase of the rehearsal names a site or class the declaration does not allow (a joiner may touch only the founder it attaches to; a class needs machines)."
+    causes:
+      - "--mock names a fixture for another environment or site"
+      - "the fixture's converger.yaml and goatbuilder.yaml disagree"
+    fixes:
+      - "goatbuilder standup <the fixture's environment> --site <its site> --mock <fixture>"
+      - "correct the fixture's converger.yaml standup: or its goatbuilder.yaml"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "the fixture rehearses "
+      - "a standup may touch only the founder it attaches to"
+      - "has no machines in converger.yaml standup.classes"
+    exit: 2
+  - code: GB-250
+    tool: goatbuilder
+    title: a joiner site names no founder
+    what: "A site whose vars.yml says goatnet_founder: false joins another site's goatnet, and seeds from it, so it must name that founder in join_founder_site."
+    causes:
+      - "join_founder_site is missing from the joiner's group_vars/<site>_hosts/vars.yml"
+    fixes:
+      - "set join_founder_site: <founder site> in group_vars/<site>_hosts/vars.yml"
+    read: docs/tutorials/02-first-federated-node.md
+    matches:
+      - "a joiner must name the founder it seeds from"
+    exit: 2
+  - code: GB-251
+    tool: goatbuilder
+    title: no SSH user is declared for a new machine
+    what: "join-node reaches a new machine as the project's declared SSH user before anything is installed on it. The checkout declares none, and no name is right for every project's machines, so a real run refuses (a dry run plans with a placeholder)."
+    causes:
+      - "deploy.ssh_user (or lite.ssh_user) is not set in goatbuilder.yaml"
+    fixes:
+      - "set deploy.ssh_user in ops/goatbuilder/goatbuilder.yaml"
+      - "goatbuilder join-node ... --dry-run   (plans without it)"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "declares no SSH user for a new machine"
+    exit: 2
+  - code: GB-246
+    tool: goatbuilder
+    title: a rollback depth outside the ledger
+    what: "rollback N goes back N deploys in a host's ledger, which keeps the last seven. N outside 1 to 7 names no deploy the ledger holds."
+    causes:
+      - "N is 0, or more than 7"
+    fixes:
+      - "goatbuilder rollback <component> --env <goatnet> <N from 1 to 7>"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "N must be 1..7"
     exit: 2
   - code: GB-185
     tool: goatbuilder
