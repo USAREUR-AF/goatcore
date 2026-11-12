@@ -998,6 +998,7 @@ mod tests {
         let (o3, s3) = rotation::leaves_run(&Options { from: 11, ..o });
         assert_eq!((o3.from, o3.to), (11, 14));
         assert!(!s3.rotate_leaves, "phase 8 is not in the run, so nothing is re-minted");
+        assert!(s3.again.is_none(), "its stop and failure hints offer the plain resume, never rotate again");
         // Once phase 8 has passed, the command that carries on is the plain
         // resume, so following a stop or a failure never mints another set.
         let mut s4 = rotation::leaves_run(&o).1;

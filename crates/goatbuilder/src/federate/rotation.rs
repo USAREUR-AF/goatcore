@@ -56,7 +56,7 @@ pub fn leaves_run<'a>(o: &Options<'a>) -> (Options<'a>, Surface) {
     let from = o.from.max(8);
     let s = Surface {
         stage: "rotate",
-        again: Some(format!("goatbuilder federate {VERB} {} leaves", o.with)),
+        again: (from <= 8).then(|| format!("goatbuilder federate {VERB} {} leaves", o.with)),
         rotate_leaves: from <= 8,
         resume: false,
         ..Default::default()
