@@ -532,22 +532,36 @@ pub fn aws_profile_source(repo: &Path, env: &dyn Fn(&str) -> Option<String>) -> 
 /// settings.rs reads there (a non-empty string); otherwise `default`, saying
 /// so when the key is set to something that is not one (`""`, a number, `~`).
 pub fn deploy_setting(repo: &Path, key: &str, default: &str) -> Source {
-    let p = repo.join("ops/goatbuilder/goatbuilder.yaml");
-    let text = std::fs::read_to_string(&p).unwrap_or_default();
-    let line = yaml_line(&text, &[Seg::Key("deploy"), Seg::Key(key)]);
-    let doc: serde_yaml::Value = serde_yaml::from_str(&text).unwrap_or(serde_yaml::Value::Null);
-    let usable = doc
-        .get("deploy")
-        .and_then(|d| d.get(key))
-        .and_then(|v| v.as_str())
-        .is_some_and(|v| !v.is_empty());
-    match (line, usable) {
-        (Some(n), true) => Source::file(rel(repo, &p), Some(n), format!("deploy.{key}")),
-        (Some(_), false) => Source::default(format!(
+    if let Some(src) = setting_line(repo, &["deploy", key]) {
+        return src;
+    }
+    let text = std::fs::read_to_string(repo.join(GOATBUILDER_YAML)).unwrap_or_default();
+    match yaml_line(&text, &[Seg::Key("deploy"), Seg::Key(key)]) {
+        Some(_) => Source::default(format!(
             "{default} (deploy.{key} is set, but not to a usable value)"
         )),
-        (None, _) => Source::default(default.to_string()),
+        None => Source::default(default.to_string()),
     }
+}
+
+/// The project's goatbuilder.yaml, from the checkout's root.
+const GOATBUILDER_YAML: &str = "ops/goatbuilder/goatbuilder.yaml";
+
+/// `<keys...>` in goatbuilder.yaml at its line, only when it holds what
+/// settings.rs reads there: a non-empty string. `None` otherwise, so a caller
+/// can fall back as settings.rs does.
+pub fn setting_line(repo: &Path, keys: &[&str]) -> Option<Source> {
+    let p = repo.join(GOATBUILDER_YAML);
+    let text = std::fs::read_to_string(&p).ok()?;
+    let path: Vec<Seg> = keys.iter().map(|k| Seg::Key(k)).collect();
+    let n = yaml_line(&text, &path)?;
+    let doc: serde_yaml::Value = serde_yaml::from_str(&text).ok()?;
+    let usable = keys
+        .iter()
+        .try_fold(&doc, |v, k| v.get(*k))
+        .and_then(|v| v.as_str())
+        .is_some_and(|v| !v.is_empty());
+    usable.then(|| Source::file(rel(repo, &p), Some(n), keys.join(".")))
 }
 
 // --- where in a file ------------------------------------------------------------

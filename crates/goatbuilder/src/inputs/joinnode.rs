@@ -13,7 +13,7 @@
 use std::path::Path;
 
 use super::standup::fixed;
-use super::{push, rel, yaml_key_line, yaml_line, Input, Seg, Source};
+use super::{push, yaml_key_line, Input, Source};
 use crate::joinnode::{self, Options};
 
 /// Reads the operator's environment.
@@ -21,18 +21,6 @@ pub type Env<'a> = &'a dyn Fn(&str) -> Option<String>;
 
 fn set(env: Env, name: &str) -> Option<String> {
     env(name).filter(|v| !v.is_empty())
-}
-
-/// `deploy.<key>` in goatbuilder.yaml at its line, if declared.
-fn deploy(repo: &Path, key: &str) -> Option<Source> {
-    let p = repo.join("ops/goatbuilder/goatbuilder.yaml");
-    let text = std::fs::read_to_string(&p).ok()?;
-    let n = yaml_line(&text, &[Seg::Key("deploy"), Seg::Key(key)])?;
-    Some(Source::file(
-        rel(repo, &p),
-        Some(n),
-        format!("deploy.{key}"),
-    ))
 }
 
 /// The inputs of a join-node run.
@@ -137,9 +125,11 @@ pub fn inputs(repo: &Path, o: &Options, env: Env) -> Vec<Input> {
     // The project's SSH user and AWS profile.
     match crate::settings::ssh_user(repo) {
         Some(u) => {
-            let src = deploy(repo, "ssh_user").unwrap_or_else(|| {
-                Source::file("ops/goatbuilder/goatbuilder.yaml", None, "lite.ssh_user")
-            });
+            // settings::ssh_user's order: deploy.ssh_user when it names a user,
+            // else lite.ssh_user.
+            let src = super::setting_line(repo, &["deploy", "ssh_user"])
+                .or_else(|| super::setting_line(repo, &["lite", "ssh_user"]))
+                .unwrap_or_else(|| Source::derived("settings::ssh_user", "the project's SSH user"));
             v.push(Input::new("ssh_user", u.clone(), src));
             if let Some(a) = o.address {
                 v.push(Input::new(
@@ -323,6 +313,52 @@ mod tests {
         // The obs plays the obs class needs in the tree.
         std::fs::write(root.join("ops/ansible/utility-host-bootstrap.yml"), "[]\n").unwrap();
         root
+    }
+
+    /// The SSH user is sourced to the line that gives it: an empty
+    /// `deploy.ssh_user` gives nothing, so `lite.ssh_user`'s line is named.
+    #[test]
+    fn the_ssh_user_names_the_line_that_gives_it() {
+        let d = tempfile::tempdir().unwrap();
+        let cfg = d.path().join("ops/goatbuilder/goatbuilder.yaml");
+        std::fs::create_dir_all(cfg.parent().unwrap()).unwrap();
+        let none = |_: &str| None;
+        let o = Options {
+            env: "zagros",
+            site: "zagros-b",
+            node: "mgmt-zagros-b-02",
+            class: "mesh",
+            address: None,
+            pass_var: None,
+            via: "mesh",
+            from: 1,
+            to: 15,
+            dry_run: true,
+        };
+        let src = |text: &str| {
+            std::fs::write(&cfg, text).unwrap();
+            inputs(d.path(), &o, &none)
+                .into_iter()
+                .find(|i| i.name == "ssh_user")
+                .map(|i| (i.value().map(String::from), i.source))
+                .unwrap()
+        };
+        let y = "ops/goatbuilder/goatbuilder.yaml";
+        assert_eq!(
+            src("schema: goatbuilder/v1\ndeploy:\n  ssh_user: \"\"\nlite:\n  ssh_user: op\n"),
+            (Some("op".into()), Source::file(y, Some(5), "lite.ssh_user"))
+        );
+        assert_eq!(
+            src("schema: goatbuilder/v1\ndeploy:\n  ssh_user: ops\nlite:\n  ssh_user: op\n"),
+            (
+                Some("ops".into()),
+                Source::file(y, Some(3), "deploy.ssh_user")
+            )
+        );
+        assert_eq!(
+            src("schema: goatbuilder/v1\nlite:\n  ssh_user: op\n"),
+            (Some("op".into()), Source::file(y, Some(3), "lite.ssh_user"))
+        );
     }
 
     /// Check (b), for join-node, on the library: for every class, founder and
