@@ -10,6 +10,9 @@
    mark carries its outcome and reason; a required BLOCKED or SKIP never exits 0; a scenario
    whose required checks are all NOT APPLICABLE is NOT APPLICABLE; the result validates
    against result.schema.json.
+3. lib/handoff.py on the two-driver contract's own hand-off object: it reads a stop's hand-off
+   and an edge run's way back, refuses a confirm code that is not the result's, fills only
+   whole-element tokens, and finds each command quoted in the person's text.
 Exit 0 when all hold; prints one line per failure otherwise.
 """
 import json
@@ -139,6 +142,46 @@ def verdict_checks():
             FAIL.append("jsonschema is not installed")
 
 
+def handoff_checks():
+    """lib/handoff.py on the contract's own hand-off object (federation-two-drivers.md)."""
+    h = os.path.join(ROOT, "lib", "handoff.py")
+    run = lambda *a: subprocess.run([sys.executable, h, *a], capture_output=True, text=True)
+    with tempfile.TemporaryDirectory() as d:
+        stop = {"ok": True, "handoff": {"phase": 3, "code": "GB-NNN", "run_on": "edge",
+                "command": ["goatbuilder", "federate", "xab", "--side", "edge", "--from", "3", "--to", "3"],
+                "carry": [], "result": "handoff/3/edge-half.json",
+                "import": ["goatbuilder", "federate", "import", "xab", "3", "{result}", "--sha256", "{code}"],
+                "then": ["goatbuilder", "federate", "xab", "--from", "3"]}}
+        write_text(os.path.join(d, "stop.json"), json.dumps(stop))
+        r = run("next", os.path.join(d, "stop.json"))
+        check(r.returncode == 0 and json.loads(r.stdout)["run_on"] == "edge", f"handoff next reads the stop: {r.stderr.strip()}")
+        write_text(os.path.join(d, "none.json"), json.dumps({"ok": True}))
+        r = run("next", os.path.join(d, "none.json"))
+        check(r.returncode == 0 and json.loads(r.stdout)["run_on"] is None, "handoff next: a report without a hand-off is none")
+        sha = "ab12" * 16
+        code = " ".join(sha[:32][i:i + 4] for i in range(0, 32, 4))
+        way = {"handoff": {"phase": 3, "code": "GB-NNN", "run_on": "controller", "command": None,
+               "result_path": "/var/lib/goat-federation/xab/handoff/3/edge-half.json", "result_sha256": sha,
+               "confirm_code": code, "import": ["goatbuilder", "federate", "import", "xab", "3", "{result}", "--sha256", code],
+               "then": ["goatbuilder", "federate", "xab", "--from", "3"]}}
+        write_text(os.path.join(d, "way.json"), json.dumps(way))
+        r = run("wayback", os.path.join(d, "way.json"))
+        check(r.returncode == 0 and json.loads(r.stdout)["confirm_code"] == code, f"handoff wayback reads the edge's code: {r.stderr.strip()}")
+        way["handoff"]["confirm_code"] = "0000 " * 8
+        write_text(os.path.join(d, "bad.json"), json.dumps(way))
+        r = run("wayback", os.path.join(d, "bad.json"))
+        check(r.returncode == 2, "handoff wayback refuses a confirm code that is not the result's")
+        r = run("fill", json.dumps(stop["handoff"]["import"]), "--result", "/tmp/r.json", "--code", code)
+        check(r.returncode == 0 and json.loads(r.stdout)[5:] == ["/tmp/r.json", "--sha256", code], f"handoff fill replaces whole-element tokens: {r.stderr.strip()}")
+        r = run("fill", json.dumps(["x", "--file={result}"]), "--result", "/tmp/r.json")
+        check(r.returncode == 2, "handoff fill refuses a token inside an element")
+        write_text(os.path.join(d, "text.txt"), "continue on the edge driver:\n  goatbuilder federate xab --side edge --from 3 --to 3\n")
+        r = run("text-holds", os.path.join(d, "text.txt"), json.dumps(stop["handoff"]["command"]))
+        check(r.returncode == 0, f"handoff text-holds finds the quoted argv: {r.stderr.strip()}")
+        r = run("text-holds", os.path.join(d, "text.txt"), json.dumps(stop["handoff"]["then"]))
+        check(r.returncode == 2, "handoff text-holds refuses a text that lacks the argv")
+
+
 def fwdeclared_checks():
     """lib/fwdeclared.py: the ports a goat-host-firewall rule set admits from one source."""
     ruleset = """table inet goat_host_firewall
@@ -186,6 +229,7 @@ table inet goat_host_firewall {
 catalog_checks()
 verdict_checks()
 fwdeclared_checks()
+handoff_checks()
 for f in FAIL:
     print(f"FAIL {f}")
 print("ok: federation e2e harness checks" if not FAIL else f"{len(FAIL)} harness check(s) failed")
