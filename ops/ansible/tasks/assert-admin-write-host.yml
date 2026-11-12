@@ -44,6 +44,12 @@
 # duplicated into a new variable: a second spelling of "which node is the
 # writer" is the same one-fact-two-homes defect in a new place.
 #
+# ALSO USED BY per-site roll-up publishers (the fabric, mesh, time and presence
+# health plays) and the single lazy crawler: each writes one key per site, so a
+# second copy on a paired site's other node is a second writer to that key.
+# They pass `single_home_reason` so the skip message says that, not "admin
+# surface" (goatnet-deployment-doctrine.md P13).
+#
 # USAGE — first pre_task of every admin-mutation play:
 #   pre_tasks:
 #     - name: Guard — admin surfaces are single-homed (ADR 1084 §D3)
@@ -73,12 +79,17 @@
       ansible.builtin.debug:
         msg: >-
           SKIPPING {{ inventory_hostname }} (router_role={{ router_role }}):
-          admin-mutation surfaces are single-homed on router_role={{ admin_write_role | default('A') }}
-          per ADR 1084 §D3. Installing this surface here would give it its own
-          state — a second registry/store beside the one the goatnet already
-          treats as authoritative. To MOVE the single home rather than duplicate
-          it, re-run with `-e admin_write_role={{ router_role }}` and re-point
-          the surface's DNS/ledger in the same change.
+          {{ single_home_reason | default(_admin_write_default_reason) }}.
+          It is single-homed on router_role={{ admin_write_role | default('A') }}.
+          To MOVE the single home rather than duplicate it, re-run with
+          `-e admin_write_role={{ router_role }}` and re-point the surface's
+          DNS/ledger in the same change.
+      vars:
+        _admin_write_default_reason: >-
+          admin-mutation surfaces are single-homed per ADR 1084 §D3, and
+          installing this surface here would give it its own state — a second
+          registry/store beside the one the goatnet already treats as
+          authoritative
 
     - name: "admin-write guard | end play for this host"
       ansible.builtin.meta: end_host

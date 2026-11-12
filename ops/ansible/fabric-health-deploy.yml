@@ -38,5 +38,25 @@
   become: true
   gather_facts: true
 
+  pre_tasks:
+    # ONE writer per site key. This roll-up publishes ops/fabric/health/<site>,
+    # one key for the whole site. A site whose host group holds two nodes
+    # would otherwise get a second copy on the second node: two writers to one
+    # key, the last one silently winning. On a passive node the copy cannot
+    # even start, because the router network it joins is not there, and the
+    # group-wide deploy fails on that node every time.
+    #
+    # Same guard as the single lazy crawler: the play ends for a node whose
+    # router_role is not the single home, and that is a skip, not a failure.
+    # `single_homed_role` on the component in ops/pins/fleet-pins.yaml tells
+    # deploy verification the same thing (goatnet-deployment-doctrine.md P13).
+    - name: "Guard — one roll-up per site, on the router host (doctrine P13)"
+      ansible.builtin.include_tasks: tasks/assert-admin-write-host.yml
+      vars:
+        admin_write_surface: "the fabric health roll-up"
+        single_home_reason: >-
+          this roll-up writes ONE key per site (ops/fabric/health/<site>), so a
+          second copy on this node would be a second writer to the same key
+
   roles:
     - role: fabric-health

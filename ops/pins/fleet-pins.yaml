@@ -172,6 +172,7 @@ components:
     image_workflow: .github/workflows/fabric-crawler-image.yml
     ledger_component: fabric-crawler
     fleet: ghcr.io/{{ ghcr_org }}/goat-fabric-crawler@sha256:06ba0657585cf2e07a0ca24b63ca135e7d9bdefb5d7b5405a9ca55195a46998c
+    single_homed_role: A
   fabric-health:
     owns_state: false
     rollback: pin-revert
@@ -179,6 +180,7 @@ components:
     image_workflow: .github/workflows/fabric-health-image.yml
     ledger_component: fabric-health
     fleet: ghcr.io/{{ ghcr_org }}/goat-fabric-health@sha256:253970777185295252f3e30d4ee8096a85552af3bc9aa03f5d8b17751aff57ef
+    single_homed_role: A
   goat-topology:
     owns_state: false
     rollback: pin-revert
@@ -226,6 +228,7 @@ components:
     image_workflow: .github/workflows/mesh-health-image.yml
     ledger_component: mesh-health
     fleet: ghcr.io/{{ ghcr_org }}/goat-mesh-health@sha256:c788a98aa3ce8b3aa00afe91e86d935115a41b4894a1f949d90844e31c68f9ea
+    single_homed_role: A
   node-net-health:
     owns_state: false
     rollback: pin-revert
@@ -263,6 +266,7 @@ components:
     image_workflow: .github/workflows/presence-health-image.yml
     ledger_component: presence-health
     fleet: ghcr.io/{{ ghcr_org }}/goat-presence-health@sha256:88a12cf48c1dd9868659d573f3895ebff5accdce6537ac08007fad5166ed5a8e
+    single_homed_role: A
   stethoscope:
     owns_state: false
     rollback: pin-revert
@@ -278,6 +282,7 @@ components:
     image_workflow: .github/workflows/time-health-image.yml
     ledger_component: time-health
     fleet: ghcr.io/{{ ghcr_org }}/goat-time-health@sha256:d875d0d11ca1fe236367cdae109975ddd6e03cc2ebc2cac09c730b5b0fb32bec
+    single_homed_role: A
   e2e-canary:
     owns_state: false
     rollback: pin-revert
