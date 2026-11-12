@@ -247,11 +247,11 @@ OBS_GROUP="${SITE//-/_}_obs_hosts"
 # (crate::settings), so a run resumed with the other avenue finds its files.
 # STATE_DECL keeps the `~` for the commands a phase prints and runs; STATE_DIR
 # is the same path expanded, for what this script opens itself.
-# A declared value project-setting.sh cannot read the way goatbuilder reads it
-# refuses the run (exit 3; it names the key); anything else means "undeclared".
+# Only an empty answer with exit 0 means undeclared; any other exit of
+# project-setting.sh (its refusal, exit 3, or a file or value it cannot read)
+# stops the run with its message kept.
 ps_rc=0; STATE_DECL="$("$REPO/ops/scripts/project-setting.sh" --repo "$REPO" deploy state_dir)" || ps_rc=$?
-[ "$ps_rc" != 3 ] || exit 2
-[ "$ps_rc" = 0 ] || STATE_DECL=""
+[ "$ps_rc" = 0 ] || exit 2
 # shellcheck disable=SC2088  # the literal `~` is kept on purpose, see above
 [ -n "$STATE_DECL" ] || STATE_DECL='~/.goat/state'
 case "$STATE_DECL" in \~/*) STATE_DIR="$HOME/${STATE_DECL#\~/}" ;; *) STATE_DIR="$STATE_DECL" ;; esac
@@ -309,11 +309,10 @@ if isinstance(d, dict):
 PY
 )"
   else
-    # Without it, read as deploy.state_dir is (project-setting.sh): a value it
-    # cannot read the way goatbuilder does refuses the run (exit 3; it names the key).
+    # Without it, read as deploy.state_dir is (project-setting.sh): any exit but 0
+    # stops the run with its message kept.
     ps_rc=0; AWS_PROFILE_STANDUP="$("$REPO/ops/scripts/project-setting.sh" --repo "$REPO" deploy aws_profile)" || ps_rc=$?
-    [ "$ps_rc" != 3 ] || exit 2
-    [ "$ps_rc" = 0 ] || AWS_PROFILE_STANDUP=""
+    [ "$ps_rc" = 0 ] || exit 2
   fi
 fi
 AWS_PROFILE_STANDUP="${AWS_PROFILE_STANDUP:-default}"
