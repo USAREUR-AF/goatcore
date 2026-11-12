@@ -63,7 +63,7 @@ pair_persistent_reception() {
   for s in "$first" "$second"; do
     them="$(other "$s")"; nonce="pr$(date +%s)$RANDOM"
     rec "s$n-$s-to-$them-stored-without-a-subscriber" -- bash -c \
-      "put_release $s all $nonce >/dev/null; for _ in \$(seq 1 30); do v=\$(stored_at $them from/$s/all/$nonce); [ \"\$v\" = $nonce ] && { echo stored: \$v; exit 0; }; sleep 1; done; echo 'not stored at $them: from/$s/all/$nonce'; exit 1"
+      "put_release $s all $them $nonce >/dev/null; for _ in \$(seq 1 30); do v=\$(stored_at $them from/$s/all/$nonce); [ \"\$v\" = $nonce ] && { echo stored: \$v; exit 0; }; sleep 1; done; echo 'not stored at $them: from/$s/all/$nonce'; exit 1"
   done
   # The receiving core restarts (a host reboot, an upgrade): its store's interest must reach
   # the edge again by itself. Nothing restarts the edge; a fresh value must be stored anyway.
@@ -74,7 +74,7 @@ pair_persistent_reception() {
     docker exec "$HP-$them-core" docker restart "$them-zenoh-router" >/dev/null 2>&1 || true
     rec "s$n-$s-to-$them-stored-after-the-receiving-core-restarts" -- bash -c \
       "for _ in \$(seq 1 60); do curl -s -m 2 -o /dev/null 'http://$(core_ip "$them"):8000/@/**' && break; sleep 1; done
-       put_release $s all $nonce >/dev/null; for _ in \$(seq 1 60); do v=\$(stored_at $them from/$s/all/$nonce); [ \"\$v\" = $nonce ] && { echo stored after the core restart: \$v; exit 0; }; sleep 1; done
+       put_release $s all $them $nonce >/dev/null; for _ in \$(seq 1 60); do v=\$(stored_at $them from/$s/all/$nonce); [ \"\$v\" = $nonce ] && { echo stored after the core restart: \$v; exit 0; }; sleep 1; done
        echo 'not stored at $them after its core restarted (edge not restarted): from/$s/all/$nonce'; exit 1"
     edge_after="$(docker exec "$HP-$them-edge" docker inspect -f '{{.State.StartedAt}}' "goat-zenoh-edge-$s" 2>/dev/null)"
     rec "s$n-$them-edge-was-not-restarted" --expect-in "$edge_before" -- echo "edge router goat-zenoh-edge-$s started at $edge_after (before the core restart: $edge_before)"
@@ -88,7 +88,7 @@ pair_republisher_boundary() {
   for s in "$first" "$second"; do
     them="$(other "$s")"; c="rbc$(date +%s)$RANDOM"; x="rbx$(date +%s)$RANDOM"
     rec "s$n-$s-control-crosses-the-republisher" -- bash -c \
-      "put_release $s all $c >/dev/null; put_release $s not-offered $x >/dev/null; for _ in \$(seq 1 30); do [ \"\$(stored_at $them from/$s/all/$c)\" = $c ] && { echo control stored; exit 0; }; sleep 1; done; exit 1"
+      "put_release $s all $them $c >/dev/null; put_release $s not-offered $them $x >/dev/null; for _ in \$(seq 1 30); do [ \"\$(stored_at $them from/$s/all/$c)\" = $c ] && { echo control stored; exit 0; }; sleep 1; done; exit 1"
     rec "s$n-$s-unoffered-set-does-not-cross" -- bash -c \
       "sleep 5; v=\$(stored_at $them 'from/$s/not-offered/**'); echo \"stored='\$v'\"; case \"\$v\" in *$x*) exit 1 ;; esac; docker exec $HP-$s-core docker logs goat-fed-republisher-$them 2>&1 | grep -c 'not-offered' | grep -qx 0"
   done
