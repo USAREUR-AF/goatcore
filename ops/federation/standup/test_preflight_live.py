@@ -624,7 +624,7 @@ class Sides(unittest.TestCase):
             rc = pf.main(["xab", "--work", str(self.work), "--profile-dir", str(self.profile),
                           "--repo", str(self.repo), "--side", side])
         result = json.loads((self.work / "preflight/result.json").read_text())
-        live_ids = [r["check"] for r in result["results"] if r["check"]]
+        live_ids = [r["check"] for r in result["results"] if r["check"] in live.SIDES]
         return rc, out.getvalue(), live_ids, {r["check"]: r for r in result["results"]}, seen, result
 
     def test_the_edge_side_checks_the_edge_and_asks_nothing_of_the_core(self):
@@ -637,6 +637,10 @@ class Sides(unittest.TestCase):
         self.assertEqual(seen["limits"], ["xab_edge"], "the probe reaches only the edge")
         self.assertEqual(seen["docker"], 0, "nothing asks the core's container runtime")
         self.assertEqual(result["side"], "edge")
+        static = {r["check"] for r in result["results"]} - set(live.SIDES)
+        self.assertEqual(static & {"profile certificate", "CA root bundle", "signing key", "peering directory",
+                                   "republisher inventory", "core certificate SANs (phase 8)"}, set(), out)
+        self.assertTrue({"declaration", "working directory", "edge inventory"} <= static, static)
         self.assertEqual(rc, 0, out)
 
     def test_the_core_side_checks_the_core_and_asks_nothing_of_the_edge(self):
@@ -649,6 +653,9 @@ class Sides(unittest.TestCase):
         self.assertEqual(by["core-router"]["outcome"], "PASS", out)
         self.assertEqual(seen["limits"], ["xab_core"], "the probe reaches only the core")
         self.assertEqual(result["side"], "core")
+        static = {r["check"] for r in result["results"]} - set(live.SIDES)
+        self.assertNotIn("edge inventory", static, out)
+        self.assertTrue({"declaration", "profile certificate", "signing key", "republisher inventory"} <= static, static)
 
     def test_a_check_of_the_other_side_is_refused(self):
         pf = load_preflight()

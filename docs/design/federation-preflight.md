@@ -196,6 +196,29 @@ immediately before the restart:
 - Shell: `python3 ops/federation/standup/preflight.py <peering> --work <dir> --only slot-anchors --result <file>`
   (exit 0 or 1).
 
+## By side
+
+Status: WIP — gate: goatbuilder 1.0 gate row B10, a scenario with two drivers per sovereign in
+which the edge driver holds no CA key and has no route to the core (the contract is
+docs/design/federation-two-drivers.md, in review).
+
+**Built** (offline tests; not yet used by the one command, and not run on two machines):
+`preflight.py <peering> --work <dir> --side edge|core` runs one side's checks, for a peering
+where no one machine reaches both hosts. Each live check has a side in `preflight_live.SIDES`:
+
+| Side | Live checks | Static checks |
+|---|---|---|
+| edge | `edge-ports` | the edge inventory (phases 2 and 11 to 13 run the edge's plays there) |
+| core | `core-ports`, `slot-anchors`, `core-router`, `ingress-stores`, `signing-ca` | the profile certificate and CA roots, the signing key, the peering directory, the republisher inventory, the core certificate's names (`FED_CORE_SAN`) |
+| both | `inputs` | the declaration, the working directory, one inventory name per peering, declared first, the local `docker compose` |
+
+Each side asks only for the inputs its own checks need: the edge side never asks for the CA,
+the signing key or the core certificate's names, and the core side never asks for the edge's
+interface and ports. The port probe is limited to that side's group, and the core's container
+runtime is reached only by a core check. `--only` with a check of the other side is refused
+(exit 2), naming the side that runs it. The result file records `side` (`edge`, `core`, or
+`both` when `--side` is not given). Without `--side`, every check runs as before.
+
 ## Dry run
 
 `goatbuilder federate <partner> --dry-run` lists the phase-1 checks under the
