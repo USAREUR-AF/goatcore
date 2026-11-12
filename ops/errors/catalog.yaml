@@ -1570,7 +1570,7 @@ entries:
   - code: GB-120
     tool: goatbuilder
     title: a peering names a partner with a reserved word
-    what: "A word of `goatbuilder federate` (init lint compose diff verify apply help status plan deploy test allocate) can never name a partner: `goatbuilder federate <word>` runs that step, so the peering could never be run by name."
+    what: "A word of `goatbuilder federate` (init lint compose diff verify apply help status plan deploy test allocate backout rotate) can never name a partner: `goatbuilder federate <word>` runs that step, so the peering could never be run by name."
     causes:
       - a peerings entry's `with:` is one of the reserved words
     fixes:

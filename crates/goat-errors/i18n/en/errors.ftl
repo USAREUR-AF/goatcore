@@ -421,7 +421,7 @@ gb-113-cause-1 = the declared router is not running on the core host, or the var
 gb-113-cause-2 = nothing declares the router and no running container carries org.goat.component=zenoh-core or a standard name
 gb-113-cause-3 = several core routers run on the host
 gb-120-title = a peering names a partner with a reserved word
-gb-120-what = A word of `goatbuilder federate` (init lint compose diff verify apply help status plan deploy test allocate) can never name a partner: `goatbuilder federate <word>` runs that step, so the peering could never be run by name.
+gb-120-what = A word of `goatbuilder federate` (init lint compose diff verify apply help status plan deploy test allocate backout rotate) can never name a partner: `goatbuilder federate <word>` runs that step, so the peering could never be run by name.
 gb-120-cause-1 = a peerings entry's `with:` is one of the reserved words
 gb-121-title = two peerings would share a value
 gb-121-what = A per-peering value (an interface, a UDP or TCP port, a link subnet, a forwarder port, a certificate directory, an inventory name) is pinned on one peering and already held by another, by a pin or by the allocation record, or a partner is declared twice on one environment. Two peerings on one edge or core host cannot share one.
