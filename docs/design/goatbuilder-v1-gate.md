@@ -32,7 +32,8 @@ only by the rule beside it.
 
 **Deprecation (proposed).** A command, flag or field that is to be removed
 keeps working, with a warning that names its replacement, for at least two
-minor releases, and is removed only in the next major version.
+minor releases, and is removed only in the next major version. The period is
+still open: ADR 1228 sets out the options and leaves the choice to the operator.
 
 **What 1.0 does not promise.** The text of tables printed for a person. The
 shell scripts beside the binary, which stay documented and unsupported
@@ -49,8 +50,8 @@ implemented), **not built**, **in review** (a pull request is open),
 
 | # | Requirement | Status | Proven by |
 |---|---|---|---|
-| A1 | The compatibility and deprecation rules above are a decision record | not built | The record is accepted and this section cites it |
-| A2 | Configuration compatibility is a test | The schema and its gate are built. The compatibility test is not built | A kept set of configuration files from each release since 0.1.0, run through `validate` on every pull request. Each file validates, or is refused with the catalog error the release notes named |
+| A1 | The compatibility and deprecation rules above are a decision record | designed: ADR 1228 (`docs/adr/1228-goatbuilder-keeps-its-four-surfaces-and-removes-only-in-a-major-release.md`) is the record, Proposed; the operator's choice of the deprecation period is pending | ADR 1228 is accepted, with the operator's choice of the period, and this section cites it |
+| A2 | Configuration compatibility is a test | The schema and its gate are built. The compatibility test is not built | A kept set of configuration files from each release since `goatbuilder/v0.4.1`, the first tagged release (ADR 1228: no released binary or tagged tree exists for 0.1.0 to 0.4.0), run through `validate` on every pull request. Each file validates, or is refused with the catalog error the release notes named |
 | A3 | The command surface is a test | The `--help` output of every command is already checked in `crates/goatbuilder/tests/cmd/`. The rule "no removal" is not built | A check that compares the commands and flags of the build with those of the last release and fails on a removal or a renamed flag without a deprecation entry |
 | A4 | The machine-readable documents are a test | built for the current version | A kept set of `-o json` outputs from 1.0 that every later build must still produce a superset of |
 | A5 | Error codes are never reused | not built | A check that fails when a code present in the last release is absent, or its title has changed, without a "retired" mark |
