@@ -320,7 +320,7 @@ fn driver_plan(dc: &DriverCore, partner: &str, dir: &Path) -> Result<serde_json:
     let _ = std::fs::create_dir_all(dir);
     let org = dc.core.org.as_ref().expect("driver_core requires it");
     let out = match (&dc.core.seed, &dc.core.out) {
-        (Some(seed), Some(live)) => Command::new("python3")
+        (Some(seed), Some(live)) => crate::federate::runenv::command("python3")
             .arg(&dc.tool)
             .args(["plan", "--partner", partner, "--seed"])
             .arg(seed)
@@ -332,7 +332,7 @@ fn driver_plan(dc: &DriverCore, partner: &str, dir: &Path) -> Result<serde_json:
             .arg(dir)
             .output(),
         // The org fragment alone: the same plan, without the assembled proof.
-        _ => Command::new("python3")
+        _ => crate::federate::runenv::command("python3")
             .args(["-c", ORG_ONLY_PLAN])
             .arg(&dc.tool)
             .arg(org)
@@ -771,7 +771,8 @@ pub fn core_files(repo: &Path, t: &mut Target) -> Result<()> {
     // The role core exactly as admission decides it (admit.rs `role_core`):
     // FED_CORE_GROUP's group when it is set, else <partner>_core's.
     let Some(core) =
-        super::admit::role_core(repo, &t.partner, |k| std::env::var(k).ok()).map_err(refuse)?
+        super::admit::role_core(repo, &t.partner, |k| crate::federate::runenv::var(k).ok())
+            .map_err(refuse)?
     else {
         return Ok(());
     };
@@ -1179,7 +1180,7 @@ pub fn backout_with(
         &t.partner,
         env.as_deref().unwrap_or_default(),
         Path::new(&t.work),
-        |k| std::env::var(k).ok(),
+        |k| crate::federate::runenv::var(k).ok(),
     )?;
     if driver.is_some() {
         t.core_files
@@ -1192,7 +1193,7 @@ pub fn backout_with(
     let role_leaf = match &driver {
         Some(_) => None,
         None => role_leaf(repo, &t.partner, Path::new(&t.work), |k| {
-            std::env::var(k).ok()
+            crate::federate::runenv::var(k).ok()
         })?,
     };
     // A leaf that goes, placed where nothing was: the role's play cannot
