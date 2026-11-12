@@ -125,6 +125,8 @@ on:
       # Image digest guard (ADR 0703): anything that names an image.
       # Rust toolchain guard: every workflow names an exact Rust release.
       - 'ops/ci/check-rust-toolchain-pinned.sh'
+      # Reusable-workflow permission guard: a called workflow asks no more than its caller grants.
+      - 'ops/ci/check-reusable-workflow-permissions.py'
       - 'ops/ci/check-no-floating-image-pins.sh'
       - 'ops/ci/check-image-refs-pinned.py'
       - 'ops/ci/floating-image-pins.allow'
@@ -297,6 +299,14 @@ jobs:
       # on purpose, never the channel that moves under an unrelated change.
       - name: check-rust-toolchain-pinned
         run: ops/ci/check-rust-toolchain-pinned.sh
+
+      - name: check-reusable-workflow-permissions --self-test
+        run: python3 ops/ci/check-reusable-workflow-permissions.py --self-test
+      # GitHub refuses at startup a run whose called workflow asks for a permission
+      # the calling job does not grant; pull-request CI never runs the release
+      # callers, so the gap shows only when a tag is pushed.
+      - name: check-reusable-workflow-permissions
+        run: python3 ops/ci/check-reusable-workflow-permissions.py
 
       - name: check-no-floating-image-pins --self-test
         run: ops/ci/check-no-floating-image-pins.sh --self-test
