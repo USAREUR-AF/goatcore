@@ -112,6 +112,24 @@ in the arguments names it, and its path is written back as `{scratch}` in the
 output, so the kept document names no machine's directory and the kept
 fixtures are never changed.
 
+## The run journal
+
+`documents/fixtures/journal/` keeps two run journals
+(`goatbuilder.federate.state/v1`) and the declaration they belong to:
+
+- `v1/state.json`, a peering run to the end by this build;
+- `later/state.json`, the same journal as a later goatbuilder might leave it:
+  phases 3 and 14 and the last run hold the outcome `deferred`, which no
+  build knows (`waiting` becomes known in 0.6.0), and `written_by` and
+  phase 14's `session` are fields no build writes.
+
+A4 keeps `federate status` of each. 0.5.1 reads the first and refuses the
+second as unreadable (GB-182), so the second's kept document is that refusal.
+A build that reads journals from later versions produces a superset of it.
+The rule itself (shown as written, not passed on resume, unknown fields kept
+on rewrite) is proven by `crates/goatbuilder/tests/journal_from_a_later_build.rs`,
+which lands with the reader that passes it.
+
 ## What is not checked here
 
 - The text of tables printed for a person, and the shell scripts beside the

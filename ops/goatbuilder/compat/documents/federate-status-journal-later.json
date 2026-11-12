@@ -1,0 +1,16 @@
+{
+  "schema": "goatbuilder.federate.status/v1",
+  "peerings": [
+    {
+      "peering": "hello-ally",
+      "environment": "zagros",
+      "site": "alpha",
+      "work": "ops/goatbuilder/compat/documents/fixtures/journal/later",
+      "journal": "unreadable: ops/goatbuilder/compat/documents/fixtures/journal/later/state.json: the run journal does not parse (unknown variant `deferred`, expected one of `passed`, `failed`, `stopped` at line 55 column 27) (GB-182)",
+      "phases": [],
+      "confirmations": [],
+      "owned": [],
+      "next": "move ops/goatbuilder/compat/documents/fixtures/journal/later/state.json aside (or use the goatbuilder that wrote it), or give each peering its own --work; then: goatbuilder federate hello-ally --work ops/goatbuilder/compat/documents/fixtures/journal/later"
+    }
+  ]
+}

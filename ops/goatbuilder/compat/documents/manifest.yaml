@@ -356,6 +356,30 @@ documents:
   - --dry-run
   exit: 2
   release_exit: 2
+- name: federate-status-journal-v1
+  format: json
+  args:
+  - -C
+  - ops/goatbuilder/compat/documents/fixtures/journal/repo
+  - federate
+  - status
+  - hello-ally
+  - --work
+  - ops/goatbuilder/compat/documents/fixtures/journal/v1
+  exit: 0
+  release_exit: 0
+- name: federate-status-journal-later
+  format: json
+  args:
+  - -C
+  - ops/goatbuilder/compat/documents/fixtures/journal/repo
+  - federate
+  - status
+  - hello-ally
+  - --work
+  - ops/goatbuilder/compat/documents/fixtures/journal/later
+  exit: 0
+  release_exit: 0
 not_kept:
   completion: prints a shell script, not a document
   docs: prints the command reference as Markdown, not a document
