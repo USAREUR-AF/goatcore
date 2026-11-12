@@ -152,12 +152,19 @@ class TwoPeeringsOneHost(unittest.TestCase):
     def test_a_survey_of_one_peering_names_nothing_of_the_other(self):
         fx = tbc.Fixture(tbc.fragment("xaa", "xab"), tbc.fragment("xaa", "xac"))
         work = f"{self.tmp}/work/xac"
+        # nft as this user cannot read any table; a fake that says the forwarder table
+        # does not exist lets the forwarder row carry its note about the other entries.
+        bindir = f"{self.tmp}/fake-nft"
+        os.makedirs(bindir, exist_ok=True)
+        with open(f"{bindir}/nft", "w", encoding="utf-8") as f:
+            f.write('#!/bin/sh\nprintf "Error: No such file or directory\\n" >&2\nexit 1\n')
+        os.chmod(f"{bindir}/nft", 0o755)
         r = run(["ansible-playbook", "-i", self.inv, "--limit", "xac_edge:xac_core:peering_forwarders",
                  str(ANSIBLE / "peering-backout.yml"),
                  "-e", "peering_backout_id=xac", "-e", f"fed_work={work}", "-e", "fed_edge_group=xac_edge",
                  "-e", "ansible_become=false",
                  "-e", f"peering_backout_core_seed={fx.seed}", "-e", f"peering_backout_core_org={fx.org}",
-                 "-e", f"peering_backout_core_config={fx.live}"], self.tmp)
+                 "-e", f"peering_backout_core_config={fx.live}"], self.tmp, path_prefix=bindir)
         self.assertEqual(r.returncode, 0, r.stdout[-6000:] + r.stderr[-2000:])
         records = {}
         for host in ("edge-xac", "core-xac", "fwd"):
@@ -244,6 +251,37 @@ class TwoPeeringsOneHost(unittest.TestCase):
             "wg": 'echo "Unable to access interface: No such device" >&2; exit 1'})
         for resource in self.PROBES:
             with self.subTest(resource=resource):
+                self.assertEqual(rows[resource]["state"], "absent", rows[resource])
+                self.assertEqual(rows[resource]["action"], "none", rows[resource])
+
+    TUNNEL_PROBES = ("edge-xac: interface wg-fed1", "edge-xac: nft table inet goat_peering_wg_fed1",
+                     "edge-xac: carrier wg-carry1", "edge-xac: interface ipsec-xaa-xac",
+                     "fwd: nft rules for wg-carry1 in the forwarder table")
+
+    def test_tunnel_and_table_probes_that_fail_otherwise_are_unknown(self):
+        rows = self.survey_with_tools({
+            "docker": 'echo "Error response from daemon: No such container: x" >&2; exit 1',
+            "wg": 'echo "Unable to access interface: Operation not permitted" >&2; exit 1',
+            "nft": 'echo "Operation not permitted (you must be root)" >&2; exit 1',
+            "ip": ('case "$*" in *"link show "*) echo "RTNETLINK answers: Operation not permitted" >&2; exit 2 ;; '
+                   '*) exit 0 ;; esac')})
+        for resource in self.TUNNEL_PROBES:
+            with self.subTest(resource=resource):
+                self.assertIn(resource, rows, sorted(rows))
+                self.assertEqual(rows[resource]["state"], "unknown", rows[resource])
+                self.assertEqual(rows[resource]["action"], "none", rows[resource])
+                self.assertRegex(rows[resource]["note"], r"rc \d+: ", rows[resource])
+
+    def test_tunnel_and_table_probes_read_each_tools_not_found(self):
+        rows = self.survey_with_tools({
+            "docker": 'eval "name=\\${$#}"; echo "Error response from daemon: No such container: $name" >&2; exit 1',
+            "wg": 'echo "Unable to access interface: No such device" >&2; exit 1',
+            "nft": 'printf "Error: No such file or directory\\nlist table inet x\\n" >&2; exit 1',
+            "ip": ('case "$*" in *"link show "*) eval "name=\\${$#}"; '
+                   'echo "Device \\"$name\\" does not exist." >&2; exit 1 ;; *) exit 0 ;; esac')})
+        for resource in self.TUNNEL_PROBES:
+            with self.subTest(resource=resource):
+                self.assertIn(resource, rows, sorted(rows))
                 self.assertEqual(rows[resource]["state"], "absent", rows[resource])
                 self.assertEqual(rows[resource]["action"], "none", rows[resource])
 
@@ -400,6 +438,22 @@ class ProbeState(unittest.TestCase):
     def test_a_probe_that_did_not_run_is_unknown(self):
         self.assertEqual(self.mod.backout_probe_state({"skipped": True}, "docker", "x")["state"], "unknown")
         self.assertEqual(self.mod.backout_probe_state(None, "docker", "x")["state"], "unknown")
+
+    def test_nft_and_ip_not_found_lines(self):
+        # Measured in a user and network namespace: nft 1.1 and iproute2.
+        nft_missing = "Error: No such file or directory\nlist table inet goat_x\n                ^^^^^^"
+        self.assertEqual(self.state("nft", 1, nft_missing, name="goat_x")["state"], "absent")
+        self.assertEqual(self.state("ip-link", 1, 'Device "wg-fed1" does not exist.', name="wg-fed1")["state"],
+                         "absent")
+        for kind, rc, err, name in (
+                ("nft", 1, "Operation not permitted (you must be root)\nnetlink: Error: cache initialization failed",
+                 "goat_x"),
+                ("nft", 1, "Error: Could not process rule: No such file or directory", "goat_x"),
+                ("nft", 127, "", "goat_x"),
+                ("ip-link", 1, 'Device "wg-fed2" does not exist.', "wg-fed1"),
+                ("ip-link", 255, "RTNETLINK answers: Operation not permitted", "wg-fed1")):
+            with self.subTest(kind=kind, err=err):
+                self.assertEqual(self.state(kind, rc, err, name=name)["state"], "unknown")
 
     def test_a_spire_bundle_list_reads_its_answer(self):
         self.assertEqual(self.state("spire-bundle", 0, stdout="-----BEGIN CERTIFICATE-----")["state"], "present")

@@ -12,6 +12,9 @@ tool wrote is the tool's own not-found line for the probed name:
                     <name>" (or "Error: No such container|object: <name>");
            podman:  exit 125 and 'Error: no such container "<name>"';
            wg:      exit 1 and "Unable to access interface: No such device";
+           nft:     exit 1 and "Error: No such file or directory" (a table or
+                    chain that does not exist);
+           ip:      exit 1 and 'Device "<name>" does not exist.';
            SPIRE:   a non-zero exit and "rpc error: code = NotFound desc = ..."
                     (with or without a leading "Error: ");
   unknown  anything else: an unreachable host, a permission error, a missing
@@ -22,7 +25,9 @@ tool wrote is the tool's own not-found line for the probed name:
            status and the first line of the error.
 
 The docker and podman lines were measured (docker 29, podman 5.7) against a
-container that does not exist; the SPIRE line is the server CLI's gRPC error.
+container that does not exist, and the nft and ip lines in a user and network
+namespace against a table, chain and link that do not exist; the SPIRE line is
+the server CLI's gRPC error.
 """
 import re
 
@@ -44,13 +49,17 @@ def _not_found(kind, rc, line, name):
         return False
     if kind == 'wg':
         return rc == 1 and line == 'Unable to access interface: No such device'
+    if kind == 'nft':
+        return rc == 1 and line == 'Error: No such file or directory'
+    if kind == 'ip-link':
+        return rc == 1 and line == 'Device "%s" does not exist.' % name
     if kind in ('spire', 'spire-bundle'):
         return re.match(r'(Error: )?rpc error: code = NotFound desc =', line) is not None
     raise ValueError('unknown probe kind: %r' % (kind,))
 
 
 def backout_probe_state(result, kind, name):
-    if kind not in ('docker', 'wg', 'spire', 'spire-bundle'):
+    if kind not in ('docker', 'wg', 'nft', 'ip-link', 'spire', 'spire-bundle'):
         raise ValueError('unknown probe kind: %r' % (kind,))
     if not isinstance(result, dict) or result.get('skipped') or not isinstance(result.get('rc'), int):
         return {'state': 'unknown', 'note': 'the probe did not run'}

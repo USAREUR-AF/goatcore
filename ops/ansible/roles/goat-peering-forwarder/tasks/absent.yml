@@ -78,9 +78,7 @@
         # both unique per entry (the role refuses a list that shares either). Ports are
         # not matched: another entry's edge port can be the same number.
         - name: peering-forwarder | absent | its rules in the forwarding table
-          ansible.builtin.shell: >-
-            nft list table inet goat_peering_forwarder 2>/dev/null
-            | grep -c -E '"{{ _pbf_mine[0].interface }}"|[^0-9.]{{ _pbf_mine[0].carrier_remote_ip | regex_escape }}([^0-9]|$)'
+          ansible.builtin.command: "nft list table inet goat_peering_forwarder"
           register: _pbf_rules
           changed_when: false
           failed_when: false
@@ -96,8 +94,15 @@
               {%- for f in _pbf_files.results -%}
               {%-   set _ = out.append({'component': 'forwarder', 'resource': 'file ' ~ f.stat.path | default(_pbf_dir ~ '/' ~ m.interface ~ '.' ~ f.item), 'state': ('present' if f.stat.exists else 'absent'), 'action': (act if f.stat.exists else 'none'), 'note': ''}) -%}
               {%- endfor -%}
-              {%- set n = (_pbf_rules.stdout | default('0') | trim | int) -%}
-              {%- set _ = out.append({'component': 'forwarder', 'resource': 'nft rules for ' ~ m.interface ~ ' in the forwarder table', 'state': ('present' if n > 0 else 'absent'), 'action': (act if n > 0 else 'none'), 'note': ((n ~ ' lines; the table is rendered again with ' ~ (_pf_peerings | length) ~ ' other entries') if _pf_peerings | length > 0 else (n ~ ' lines; no other entry, the table goes'))}) -%}
+              {%- set table = _pbf_rules | backout_probe_state('nft', 'goat_peering_forwarder') -%}
+              {%- set n = (_pbf_rules.stdout_lines | default([])
+                           | select('search', '"' ~ (m.interface | regex_escape) ~ '"|[^0-9.]' ~ (m.carrier_remote_ip | regex_escape) ~ '([^0-9]|$)')
+                           | list | length) if table.state == 'present' else 0 -%}
+              {%- if table.state == 'unknown' -%}
+              {%-   set _ = out.append({'component': 'forwarder', 'resource': 'nft rules for ' ~ m.interface ~ ' in the forwarder table', 'state': 'unknown', 'action': 'none', 'note': table.note}) -%}
+              {%- else -%}
+              {%-   set _ = out.append({'component': 'forwarder', 'resource': 'nft rules for ' ~ m.interface ~ ' in the forwarder table', 'state': ('present' if n > 0 else 'absent'), 'action': (act if n > 0 else 'none'), 'note': ((n ~ ' lines; the table is rendered again with ' ~ (_pf_peerings | length) ~ ' other entries') if _pf_peerings | length > 0 else (n ~ ' lines; no other entry, the table goes'))}) -%}
+              {%- endif -%}
               {%- set _ = out.append({'component': 'forwarder', 'resource': 'declaration peering_forwarder_peerings[name=' ~ peering_backout_id ~ ']', 'state': 'present', 'action': 'kept', 'note': 'configuration: remove the entry by review, or the next peering-forwarder.yml run restores the mapping'}) -%}
               {{ out }}
 
