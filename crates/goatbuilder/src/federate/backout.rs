@@ -225,6 +225,36 @@ pub fn target(o: &Options) -> Result<Target> {
     })
 }
 
+/// The variables admission honours that name another route to our core
+/// (admit.rs: FED_CORE_PLAY with FED_CORE_GROUP, FED_CORE_RESTART, and
+/// FED_CORE_ACL_ORG for the org fragment). The back-out does not follow them,
+/// so a back-out with one set would survey and replace another core's files:
+/// it is refused (GB-221), naming the variable. `var` reads one variable.
+pub fn hand_core_route(var: impl Fn(&str) -> Option<String>) -> Result<()> {
+    let set: Vec<&str> = [
+        "FED_CORE_PLAY",
+        "FED_CORE_RESTART",
+        "FED_CORE_GROUP",
+        "FED_CORE_ACL_ORG",
+    ]
+    .into_iter()
+    .filter(|k| var(k).is_some_and(|v| !v.is_empty()))
+    .collect();
+    if set.is_empty() {
+        return Ok(());
+    }
+    Err(goat_errors::coded(
+        "GB-221",
+        format!(
+            "{} {} set: admission reaches our core that way, and the back-out does not, so it would survey and replace other files than admission wrote (GB-221). Unset {} and back out through the core the declarations name, or remove this peering from that core by hand",
+            set.join(", "),
+            if set.len() == 1 { "is" } else { "are" },
+            if set.len() == 1 { "it" } else { "them" }
+        ),
+    )
+    .into())
+}
+
 /// The files of a goat-zenoh role core, resolved by the code admission uses
 /// (`admit_role::find` and `role_value`), so the back-out reads and replaces
 /// exactly what admission wrote. Nothing is set without a role core: the
@@ -232,7 +262,13 @@ pub fn target(o: &Options) -> Result<Target> {
 /// resolve is refused (GB-221), never surveyed at a guessed path.
 pub fn core_files(repo: &Path, t: &mut Target) -> Result<()> {
     let refuse = |e: String| -> anyhow::Error {
-        goat_errors::coded("GB-221", format!("the back-out cannot find our core's files the way admission did: {e} (GB-221)")).into()
+        goat_errors::coded(
+            "GB-221",
+            format!(
+                "the back-out cannot find our core's files the way admission did: {e} (GB-221)"
+            ),
+        )
+        .into()
     };
     let Some(core) = super::admit_role::find(repo, &t.core_group).map_err(refuse)? else {
         return Ok(());
@@ -244,7 +280,9 @@ pub fn core_files(repo: &Path, t: &mut Target) -> Result<()> {
     ] {
         let v = core.role_value(repo, key).map_err(refuse)?;
         if !plain(&v) {
-            return Err(refuse(format!("{key} '{v}' holds characters a plan line cannot carry safely")));
+            return Err(refuse(format!(
+                "{key} '{v}' holds characters a plan line cannot carry safely"
+            )));
         }
         t.core_files.push((var, v));
     }
@@ -264,7 +302,12 @@ pub fn play_cmd(repo: &Path, t: &Target, extra: &[(&str, String)]) -> String {
         "-e peering_backout_id='{}' -e fed_edge_group='{}' -e fed_work='{}' -e fed_counterparty='{}'",
         t.partner, t.edge_group, t.work, counterparty
     );
-    for (k, v) in t.core_files.iter().map(|(k, v)| (*k, v)).chain(extra.iter().map(|(k, v)| (*k, v))) {
+    for (k, v) in t
+        .core_files
+        .iter()
+        .map(|(k, v)| (*k, v))
+        .chain(extra.iter().map(|(k, v)| (*k, v)))
+    {
         e.push_str(&format!(" -e {k}='{v}'"));
     }
     // The inventories the forward path reads (plan::inventory_args): on a site
@@ -317,9 +360,10 @@ pub fn summarize(recs: &[HostRecord], partner: &str) -> Summary {
                 ("not-ours" | "refused", _) => s
                     .refused
                     .push(format!("{}: {} ({})", rec.host, row.resource, row.note)),
-                // A core admission that could not be read is not one that is
-                // absent: the core may still admit the partner.
-                ("unknown", _) if row.component == "core admission" => s
+                // A row a host could not read is not one that is absent: the
+                // resource may still be there (the core may still admit the
+                // partner), so the back-out stops.
+                ("unknown", _) => s
                     .refused
                     .push(format!("{}: {} ({})", rec.host, row.resource, row.note)),
                 (_, "remove" | "restart") => s.to_remove += 1,
@@ -599,6 +643,7 @@ pub fn backout_with(
     exec: &mut dyn FnMut(&Path, &str) -> Result<bool>,
 ) -> Result<Report> {
     let mut t = target(o)?;
+    hand_core_route(|k| std::env::var(k).ok())?;
     core_files(repo, &mut t)?;
     if let Err(e) = work_belongs_to(&t.work, &t.partner) {
         return Err(goat_errors::coded("GB-220", e).into());
@@ -1567,12 +1612,19 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let inv = d.path().join("ops/ansible/inventory");
         std::fs::create_dir_all(&inv).unwrap();
-        std::fs::write(inv.join("peering-xac_edge.ini"), "[xac_edge]\nedge-1\n[xac_core]\ncore-1\n").unwrap();
+        std::fs::write(
+            inv.join("peering-xac_edge.ini"),
+            "[xac_edge]\nedge-1\n[xac_core]\ncore-1\n",
+        )
+        .unwrap();
         std::fs::write(inv.join("peering-xab_edge.ini"), "[xab_edge]\nedge-2\n").unwrap();
         let t = target(&opts("xac")).unwrap();
         let cmd = play_cmd(d.path(), &t, &[]);
         assert!(
-            cmd.contains(&format!(" {} ", super::super::plan::inventory_args(d.path()))),
+            cmd.contains(&format!(
+                " {} ",
+                super::super::plan::inventory_args(d.path())
+            )),
             "{cmd}"
         );
         assert!(
@@ -1614,9 +1666,22 @@ mod tests {
             let r = backout_with(&repo, &o, &mut exec).unwrap();
             assert!(!r.ok, "dry_run={dry_run}");
             assert_eq!(r.exit, EXIT_REFUSED);
-            let row = r.checks.iter().find(|c| c.name == "survey").expect("a survey row");
-            assert!(row.detail.contains("GB-222") && row.detail.contains("no host"), "{}", row.detail);
-            assert_eq!(ran.borrow().len(), 1, "only the survey ran: {:?}", ran.borrow());
+            let row = r
+                .checks
+                .iter()
+                .find(|c| c.name == "survey")
+                .expect("a survey row");
+            assert!(
+                row.detail.contains("GB-222") && row.detail.contains("no host"),
+                "{}",
+                row.detail
+            );
+            assert_eq!(
+                ran.borrow().len(),
+                1,
+                "only the survey ran: {:?}",
+                ran.borrow()
+            );
         }
         // Without an agreement in the working folder, nothing of the peering
         // was ever deployed from here, and an empty survey is not a refusal.
@@ -1662,8 +1727,14 @@ mod tests {
         core_files(r.path(), &mut t).unwrap();
         let cmd = play_cmd(r.path(), &t, &[]);
         for (k, v) in [
-            ("peering_backout_core_seed", "/etc/xaa-zenoh/config.seed.json5"),
-            ("peering_backout_core_org", "/etc/xaa-zenoh/acl-org-fragment.json5"),
+            (
+                "peering_backout_core_seed",
+                "/etc/xaa-zenoh/config.seed.json5",
+            ),
+            (
+                "peering_backout_core_org",
+                "/etc/xaa-zenoh/acl-org-fragment.json5",
+            ),
             ("peering_backout_core_config", "/etc/xaa-zenoh/config.json5"),
         ] {
             assert!(cmd.contains(&format!("-e {k}='{v}'")), "{cmd}");
@@ -1680,12 +1751,61 @@ mod tests {
         let recs = vec![rec(
             "core-x",
             "xab",
-            &[("core admission", "/etc/-zenoh/config.json5", "unknown", "kept", "not readable: /etc/-zenoh/config.seed.json5")],
+            &[(
+                "core admission",
+                "/etc/-zenoh/config.json5",
+                "unknown",
+                "kept",
+                "not readable: /etc/-zenoh/config.seed.json5",
+            )],
         )];
         let s = summarize(&recs, "xab");
         assert!(
             s.refused.iter().any(|r| r.contains("not readable")),
             "an unreadable core admission is not 'absent': {s:?}"
+        );
+    }
+
+    /// Any row a host could not read is a refusal, whatever its component:
+    /// the SPIRE row that could not read the server included.
+    #[test]
+    fn every_row_a_host_could_not_read_stops_the_back_out() {
+        let recs = vec![rec(
+            "edge-x",
+            "xab",
+            &[
+                ("spire", "federation (trust domain unknown)", "unknown", "none", "no agreement or rendered trust domain, or no peering_spire_server_host: the server was not read"),
+                ("tunnel", "interface wg-fed1", "absent", "none", "ours"),
+            ],
+        )];
+        let s = summarize(&recs, "xab");
+        assert_eq!(s.refused.len(), 1, "{s:?}");
+        assert!(s.refused[0].contains("trust domain unknown"), "{s:?}");
+        assert_eq!(s.absent, 1);
+    }
+
+    /// The core variables admission honours name another route to our core.
+    /// The back-out does not follow them, so it refuses while one is set.
+    #[test]
+    fn a_core_route_set_by_hand_is_refused_by_name() {
+        for var in [
+            "FED_CORE_PLAY",
+            "FED_CORE_RESTART",
+            "FED_CORE_GROUP",
+            "FED_CORE_ACL_ORG",
+        ] {
+            let e = hand_core_route(|k| (k == var).then(|| "x".to_string())).unwrap_err();
+            assert!(e.to_string().contains(var), "{var}: {e}");
+            assert_eq!(
+                e.downcast_ref::<goat_errors::Coded>()
+                    .map(|c| c.code.as_str()),
+                Some("GB-221")
+            );
+        }
+        assert!(hand_core_route(|_| None).is_ok());
+        assert!(
+            hand_core_route(|_| Some(String::new())).is_ok(),
+            "an empty value is unset"
         );
     }
 
