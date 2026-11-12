@@ -215,16 +215,7 @@ const PENDING_FEDERATE: &[(&str, &str)] = &[
 
 /// config.rs (W-G): a config that cannot be read or is not YAML.
 /// Emptied by the change to config.rs.
-const PENDING_CONFIG: &[(&str, &str)] = &[
-    (
-        "validate_missing_file",
-        "config.rs: code the refusal (GB-244)",
-    ),
-    (
-        "validate_refuses_not_yaml",
-        "config.rs: code the refusal (GB-245)",
-    ),
-];
+const PENDING_CONFIG: &[(&str, &str)] = &[];
 
 /// Every pending case, whoever owns it.
 fn pending() -> impl Iterator<Item = &'static (&'static str, &'static str)> {

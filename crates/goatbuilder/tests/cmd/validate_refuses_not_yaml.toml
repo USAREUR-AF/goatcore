@@ -5,4 +5,5 @@ status.code = 2
 stdout = ""
 stderr = """
 goatbuilder: tests/fixtures/configs/not-yaml.yaml is not valid YAML: did not find expected ',' or ']' at line 3 column 1, while parsing a flow sequence at line 2 column 13
+  (GB-245 — goatbuilder explain GB-245)
 """
