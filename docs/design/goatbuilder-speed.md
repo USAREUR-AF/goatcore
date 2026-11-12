@@ -257,3 +257,7 @@ cat ~/.goat/state/standup-<site>-timings.tsv
 
 Record the total and the per-phase rows as a measurement. The slowest three
 phases are the next three levers.
+
+What is inside the clock and before it, how phase 11 is timed on its own, and
+what a measurement records are in
+[goatbuilder-hardware-measurement.md](goatbuilder-hardware-measurement.md).

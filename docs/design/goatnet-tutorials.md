@@ -164,3 +164,7 @@ more: `federate` honors `--mock <dir>` and reads that directory's flat
 `goatbuilder.yaml`, so a worked-example peering is planned against a declaration
 in the fixture rather than the repository's own config — the same `--mock` every
 other verb already took.
+
+What a hardware run of tutorials 2 and 3 has to show, and what tutorial 3
+needs from its counterparty, is in
+[goatbuilder-hardware-measurement.md](goatbuilder-hardware-measurement.md#the-tutorials-on-hardware).
