@@ -43,8 +43,10 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 
 try:
     import yaml
@@ -104,7 +106,53 @@ def parse_reference(text: str) -> dict:
     return tree
 
 
-def _deprecated(deps: list, command: str, flag: str | None = None) -> bool:
+OPTION_HEAD = re.compile(r"^ {2,6}(?:-[A-Za-z0-9], )?(--[A-Za-z0-9][A-Za-z0-9-]*)")
+ARG_HEAD = re.compile(r"^ {2}([<\[][A-Z0-9_]+[>\]])(?:\.\.\.)? ")
+VALUES = re.compile(r"\[possible values: ([^\]]+)\]")
+
+
+def parse_values(help_text: str) -> dict:
+    """{"--output": ["table", "json", "yaml"], "<SHELL>": [...]}: each option or
+    argument of one `--help` page that lists its possible values, read across
+    wrapped lines."""
+    entries = []
+    for line in help_text.splitlines():
+        m = OPTION_HEAD.match(line) or ARG_HEAD.match(line)
+        if m:
+            name = m.group(1)
+            if name.startswith("["):
+                name = "<" + name[1:-1] + ">"
+            entries.append([name, line[m.end():]])
+        elif not line.strip():
+            continue  # the long help form leaves blank lines inside an entry
+        elif entries and line.startswith("   "):
+            entries[-1][1] += " " + line.strip()
+        else:
+            entries.append([None, ""])  # a section heading or prose ends the entry
+    out = {}
+    for name, text in entries:
+        m = VALUES.search(" ".join(text.split())) if name else None
+        if m:
+            out[name] = [v.strip() for v in m.group(1).split(",")]
+    return out
+
+
+def surface_values(binary: str, tree: dict) -> dict:
+    """Each command's possible values, from its `--help` (English, its own HOME)."""
+    home = tempfile.mkdtemp(prefix="compat-home-")
+    env = dict(_env(), HOME=home)
+    try:
+        for cmd in tree:
+            r = subprocess.run([binary, *cmd.split()[1:], "--help"], capture_output=True, text=True, env=env)
+            tree[cmd]["values"] = parse_values(r.stdout) if r.returncode == 0 else {}
+    finally:
+        shutil.rmtree(home, ignore_errors=True)
+    return tree
+
+
+def _deprecated(deps: list, command: str, flag: str | None = None, value: str | None = None) -> bool:
+    if value is not None:
+        return any(d.get("command") == command and d.get("flag") == flag and d.get("value") == value for d in deps)
     for d in deps:
         if d.get("command") == command and d.get("flag") == flag:
             return True
@@ -134,6 +182,17 @@ def surface_problems(base: dict, new: dict, deps: list) -> list:
             elif bflags[flag] != nflags[flag]:
                 was = "took a value" if bflags[flag] else "took no value"
                 out.append(f"{cmd} {flag}: the flag {was} in the last release and changes meaning here")
+        bvals, nvals = base[cmd].get("values") or {}, new[cmd].get("values") or {}
+        for flag in sorted(bvals):
+            if flag not in nvals:
+                # A flag that is gone is reported above; one still here, or an
+                # argument, that no longer lists its values changed meaning.
+                if flag in nflags or flag.startswith("<"):
+                    out.append(f"{cmd} {flag}: listed its possible values {', '.join(bvals[flag])} in the last release and lists none now")
+                continue
+            for v in bvals[flag]:
+                if v not in nvals[flag] and not _deprecated(deps, cmd, flag, v):
+                    out.append(f"{cmd} {flag}: the value `{v}` is no longer accepted; restore it, or name it in deprecations.yaml (with `value: {v}`) and its replacement")
         bargs, nargs = base[cmd]["args"], new[cmd]["args"]
         if len(nargs) < len(bargs) and not _deprecated(deps, cmd):
             out.append(f"{cmd}: had {len(bargs)} positional argument(s), now {len(nargs)}")
@@ -152,6 +211,8 @@ def deprecation_problems(deps: list) -> list:
             out.append(f"{where}: `command:` must name a goatbuilder command")
         if not d.get("replacement"):
             out.append(f"{where}: `replacement:` must name what to use instead (the warning prints it)")
+        if "value" in d and not (d.get("flag") and str(d.get("value") or "").strip()):
+            out.append(f"{where}: `value:` deprecates one value of a flag or argument; it needs the `flag:` (or `<ARG>`) it belongs to")
         if not re.match(r"^goatbuilder/v\d+\.\d+\.\d+$", str(d.get("deprecated_in", ""))):
             out.append(f"{where}: `deprecated_in:` must name the release, goatbuilder/vX.Y.Z")
     return out
@@ -459,7 +520,7 @@ def check_all(repo: str, root: str, binary: str, only=("surface", "documents", "
         if r.returncode != 0:
             rows.append((False, "surface", "docs --markdown", f"exit {r.returncode}: {r.stderr.strip()[:300]}"))
         else:
-            new = parse_reference(r.stdout)
+            new = surface_values(binary, parse_reference(r.stdout))
             problems = surface_problems(b.surface(), new, deps)
             for p in problems:
                 rows.append((False, "surface", p.split(":", 1)[0], p.split(":", 1)[1].strip()))
@@ -595,7 +656,7 @@ def _refresh_last_release(repo: str, root: str, tag: str, binary: str, b: "Basel
     # A3: the released binary's command tree.
     md = subprocess.run([binary, "docs", "--markdown"], capture_output=True, text=True, check=True, env=_env()).stdout
     with open(os.path.join(root, "surface.json"), "w") as f:
-        json.dump(parse_reference(md), f, indent=1, sort_keys=True)
+        json.dump(surface_values(binary, parse_reference(md)), f, indent=1, sort_keys=True)
         f.write("\n")
 
     # A5: the catalog the tag carried.

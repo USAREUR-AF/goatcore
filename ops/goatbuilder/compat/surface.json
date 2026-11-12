@@ -15,12 +15,36 @@
    "-C": true,
    "-o": true,
    "-v": false
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
   }
  },
  "goatbuilder adopt": {
   "args": [],
   "flags": {
    "--env": true
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
   }
  },
  "goatbuilder apply": {
@@ -30,7 +54,19 @@
     "required": true
    }
   ],
-  "flags": {}
+  "flags": {},
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
+  }
  },
  "goatbuilder assay": {
   "args": [
@@ -45,6 +81,18 @@
    "--rows-out": true,
    "--values": true,
    "--var": true
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
   }
  },
  "goatbuilder completion": {
@@ -54,7 +102,26 @@
     "required": true
    }
   ],
-  "flags": {}
+  "flags": {},
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ],
+   "<SHELL>": [
+    "bash",
+    "elvish",
+    "fish",
+    "powershell",
+    "zsh"
+   ]
+  }
  },
  "goatbuilder deploy": {
   "args": [],
@@ -65,6 +132,18 @@
    "--env": true,
    "--group": true,
    "--verify-only": false
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
   }
  },
  "goatbuilder diff": {
@@ -77,12 +156,36 @@
   "flags": {
    "--all": false,
    "--env": true
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
   }
  },
  "goatbuilder docs": {
   "args": [],
   "flags": {
    "--markdown": false
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
   }
  },
  "goatbuilder doctor": {
@@ -93,6 +196,18 @@
    "--credentials": false,
    "--env": true,
    "--site": true
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
   }
  },
  "goatbuilder endstate": {
@@ -108,6 +223,18 @@
    "--no-assay": false,
    "--root": true,
    "--strict": false
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
   }
  },
  "goatbuilder explain": {
@@ -120,6 +247,18 @@
   "flags": {
    "--list": false,
    "--report": false
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
   }
  },
  "goatbuilder fastlane": {
@@ -135,6 +274,18 @@
    "--no-deploy": false,
    "--reason": true,
    "--ref": true
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
   }
  },
  "goatbuilder federate": {
@@ -168,6 +319,18 @@
    "--review-in-pr": false,
    "--to": true,
    "--work": true
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
   }
  },
  "goatbuilder federate apply": {
@@ -184,6 +347,18 @@
    "--json": false,
    "--out": true,
    "--partner-audience": true
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
   }
  },
  "goatbuilder federate backout": {
@@ -199,6 +374,18 @@
    "--edge-group": true,
    "--env": true,
    "--work": true
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
   }
  },
  "goatbuilder federate compose": {
@@ -219,6 +406,18 @@
    "--now": true,
    "--out": true,
    "--print": false
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
   }
  },
  "goatbuilder federate diff": {
@@ -234,6 +433,18 @@
   ],
   "flags": {
    "--json": false
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
   }
  },
  "goatbuilder federate init": {
@@ -245,6 +456,18 @@
    "--signing-key": true,
    "--with-data": false,
    "--with-transport": false
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
   }
  },
  "goatbuilder federate lint": {
@@ -256,6 +479,18 @@
   ],
   "flags": {
    "--json": false
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
   }
  },
  "goatbuilder federate plan": {
@@ -272,6 +507,18 @@
    "--no-live": false,
    "--recheck": false,
    "--work": true
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
   }
  },
  "goatbuilder federate verify": {
@@ -285,6 +532,18 @@
    "--as": true,
    "--json": false,
    "--signing-key": true
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
   }
  },
  "goatbuilder history": {
@@ -297,6 +556,18 @@
   "flags": {
    "--component": true,
    "--env": true
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
   }
  },
  "goatbuilder join-node": {
@@ -316,12 +587,40 @@
    "--site": true,
    "--to": true,
    "--via": true
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ],
+   "--via": [
+    "mesh",
+    "door"
+   ]
   }
  },
  "goatbuilder pins": {
   "args": [],
   "flags": {
    "--check": false
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
   }
  },
  "goatbuilder plan": {
@@ -341,6 +640,18 @@
    "--n": true,
    "--out": true,
    "--site": true
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
   }
  },
  "goatbuilder preflight": {
@@ -353,11 +664,35 @@
   "flags": {
    "--env": true,
    "--site": true
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
   }
  },
  "goatbuilder promote": {
   "args": [],
-  "flags": {}
+  "flags": {},
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
+  }
  },
  "goatbuilder promote abandon": {
   "args": [
@@ -369,11 +704,35 @@
   "flags": {
    "--reason": true,
    "--superseded-by": true
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
   }
  },
  "goatbuilder promote check": {
   "args": [],
-  "flags": {}
+  "flags": {},
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
+  }
  },
  "goatbuilder promote graduate": {
   "args": [
@@ -385,6 +744,18 @@
   "flags": {
    "--ack": true,
    "--override-runtime-health": true
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
   }
  },
  "goatbuilder promote graduate-set": {
@@ -396,6 +767,18 @@
   ],
   "flags": {
    "--ack": true
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
   }
  },
  "goatbuilder promote hotfix": {
@@ -410,6 +793,18 @@
    "--previous-ref": true,
    "--reason": true,
    "--ref": true
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
   }
  },
  "goatbuilder promote open": {
@@ -422,12 +817,36 @@
   "flags": {
    "--reason": true,
    "--ref": true
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
   }
  },
  "goatbuilder promote readiness": {
   "args": [],
   "flags": {
    "--out": true
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
   }
  },
  "goatbuilder promote review": {
@@ -442,12 +861,36 @@
    "--detail": false,
    "--json": false,
    "--no-header": false
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
   }
  },
  "goatbuilder promote status": {
   "args": [],
   "flags": {
    "--json": false
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
   }
  },
  "goatbuilder release": {
@@ -463,6 +906,18 @@
    "--from": true,
    "--rc": true,
    "--tag": true
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
   }
  },
  "goatbuilder rollback": {
@@ -483,6 +938,18 @@
    "--list": false,
    "--site": true,
    "--status": false
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
   }
  },
  "goatbuilder secrets": {
@@ -492,7 +959,19 @@
     "required": true
    }
   ],
-  "flags": {}
+  "flags": {},
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
+  }
  },
  "goatbuilder standup": {
   "args": [
@@ -512,6 +991,18 @@
    "--site": true,
    "--skip-obs": false,
    "--to": true
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
   }
  },
  "goatbuilder status": {
@@ -519,6 +1010,18 @@
   "flags": {
    "--component": true,
    "--env": true
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
   }
  },
  "goatbuilder survey": {
@@ -529,6 +1032,18 @@
    "--html": true,
    "--inter": false,
    "--intra": false
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
   }
  },
  "goatbuilder teardown": {
@@ -545,6 +1060,18 @@
    "--services": false,
    "--site": true,
    "--to": true
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
   }
  },
  "goatbuilder tutor": {
@@ -559,6 +1086,18 @@
    "--list": false,
    "--reset": false,
    "--workspace": true
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
   }
  },
  "goatbuilder update": {
@@ -567,6 +1106,18 @@
    "--check": false,
    "--force": false,
    "--site": true
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
   }
  },
  "goatbuilder validate": {
@@ -576,7 +1127,19 @@
     "required": true
    }
   ],
-  "flags": {}
+  "flags": {},
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
+  }
  },
  "goatbuilder verify": {
   "args": [
@@ -589,6 +1152,18 @@
    "--dry-run": false,
    "--env": true,
    "--group": true
+  },
+  "values": {
+   "--color": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "--output": [
+    "table",
+    "json",
+    "yaml"
+   ]
   }
  }
 }

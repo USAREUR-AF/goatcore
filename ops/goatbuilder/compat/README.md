@@ -31,7 +31,7 @@ build.
 
 | Row | Rule | Kept here | Recorded from |
 |---|---|---|---|
-| A3 | No command or flag of the last release is gone or renamed, unless `deprecations.yaml` names it. A flag that took a value still takes one; an optional positional argument does not become required; no positional argument is dropped | `surface.json` | `goatbuilder docs --markdown` of the released binary, which equals the release's `docs/reference/goatbuilder/command-reference.md` |
+| A3 | No command or flag of the last release is gone or renamed, unless `deprecations.yaml` names it. A flag that took a value still takes one; a value a flag or argument accepted (`[possible values: …]` in its `--help`) is still accepted, unless `deprecations.yaml` names it with `value:`; an optional positional argument does not become required; no positional argument is dropped | `surface.json` | `goatbuilder docs --markdown` of the released binary, which equals the release's `docs/reference/goatbuilder/command-reference.md`, and each command's `--help` for its possible values |
 | A4 | Each kept document is still produced by the same invocation, with the same version (`schema`; a document that had none may gain one), the same exit code, and no field removed or retyped. A list that had entries must still have entries. Added fields pass | `documents/manifest.yaml`, `documents/<name>.<format>`, `documents/fixtures/` | the released binary, run on the fixtures kept beside the documents |
 | A5 | Every `GB-nnn` code of the last release is in `ops/errors/catalog.yaml` with the same title. A retitled entry passes only when it carries `retired:`. A code that is gone always fails: a retired code stays in the catalog | `errors.yaml` | `ops/errors/catalog.yaml` at the release tag |
 
@@ -107,8 +107,10 @@ exactly the shape `SHA256SUMS` writes (64 lowercase hex, two spaces,
 
 - The text of tables printed for a person, and the shell scripts beside the
   binary: neither is promised.
-- The meaning of a flag beyond whether it takes a value, and exit codes beyond
-  the kept invocations.
+- The meaning of a flag beyond whether it takes a value and which values it
+  accepts, and exit codes beyond the kept invocations. A flag whose values are
+  checked in code rather than declared to clap lists none in `--help`, so its
+  values are not compared.
 - Documents of verbs that need a host or write state (`deploy`, `standup`,
   `federate` past its first refusal): no read-only invocation of them on a
   fixture produces a document yet.

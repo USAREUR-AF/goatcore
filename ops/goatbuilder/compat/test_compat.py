@@ -159,6 +159,90 @@ class A3CommandSurface(unittest.TestCase):
         self.assertTrue(compat.deprecation_problems(deps))
 
 
+HELP = """Print a shell completion script
+
+Usage: goatbuilder completion [OPTIONS] <SHELL>
+
+Arguments:
+  <SHELL>  The shell to generate for [possible values: bash, elvish, fish, powershell,
+           zsh]
+
+Options:
+  -o, --output <OUTPUT>  Output format: a table for a person; JSON or YAML for a program [default:
+                         table] [possible values: table, json, yaml]
+      --yes              Confirm a declarative verb without prompting (for automation)
+      --color <COLOR>    Color the table's ok/FAIL glyph and verdict [default: auto] [possible
+                         values: auto, always, never]
+  -h, --help             Print help
+"""
+
+
+class A3FlagValues(unittest.TestCase):
+    """A value a flag or argument accepted in the last release is still accepted."""
+
+    def test_the_help_s_possible_values_are_read_even_when_wrapped(self):
+        self.assertEqual(compat.parse_values(HELP), {
+            "<SHELL>": ["bash", "elvish", "fish", "powershell", "zsh"],
+            "--output": ["table", "json", "yaml"],
+            "--color": ["auto", "always", "never"],
+        })
+
+    def test_the_long_help_form_is_read_too(self):
+        long_form = """Options:
+  -o, --output <OUTPUT>
+          Output format: a table for a person; JSON or YAML for a program
+          
+          [default: table]
+          [possible values: table, json, yaml]
+
+  -C, --repo <DIR>
+          The repository root
+"""
+        self.assertEqual(compat.parse_values(long_form), {"--output": ["table", "json", "yaml"]})
+
+    def surfaces(self):
+        base = {"goatbuilder completion": {"flags": {"--output": True}, "args": [{"name": "SHELL", "required": True}],
+                                           "values": {"--output": ["table", "json", "yaml"], "<SHELL>": ["bash", "zsh"]}}}
+        return base, copy.deepcopy(base)
+
+    def test_the_same_values_pass_and_an_added_value_passes(self):
+        base, new = self.surfaces()
+        new["goatbuilder completion"]["values"]["--output"].append("csv")
+        self.assertEqual(compat.surface_problems(base, new, []), [])
+
+    def test_a_removed_value_is_refused(self):
+        base, new = self.surfaces()
+        new["goatbuilder completion"]["values"]["--output"].remove("yaml")
+        p = compat.surface_problems(base, new, [])
+        self.assertEqual(len(p), 1, p)
+        self.assertIn("--output", p[0])
+        self.assertIn("yaml", p[0])
+
+    def test_a_removed_argument_value_is_refused(self):
+        base, new = self.surfaces()
+        new["goatbuilder completion"]["values"]["<SHELL>"] = ["bash"]
+        self.assertIn("zsh", compat.surface_problems(base, new, [])[0])
+
+    def test_a_flag_that_stops_listing_values_is_refused(self):
+        base, new = self.surfaces()
+        del new["goatbuilder completion"]["values"]["--output"]
+        self.assertTrue(compat.surface_problems(base, new, []))
+
+    def test_a_deprecation_entry_names_the_value_and_it_passes(self):
+        base, new = self.surfaces()
+        new["goatbuilder completion"]["values"]["--output"].remove("yaml")
+        deps = [{"command": "goatbuilder completion", "flag": "--output", "value": "yaml", "replacement": "json", "deprecated_in": "goatbuilder/v0.6.0"}]
+        self.assertEqual(compat.surface_problems(base, new, deps), [])
+
+    def test_a_value_entry_without_its_flag_is_refused(self):
+        self.assertTrue(compat.deprecation_problems([{"command": "goatbuilder join-node", "value": "door", "replacement": "mesh", "deprecated_in": "goatbuilder/v0.6.0"}]))
+
+    def test_the_kept_surface_holds_the_release_s_values(self):
+        s = compat.Baseline(HERE).surface()
+        self.assertEqual(s["goatbuilder"]["values"]["--output"], ["table", "json", "yaml"])
+        self.assertIn("zsh", s["goatbuilder completion"]["values"]["<SHELL>"])
+
+
 class A4Documents(unittest.TestCase):
     BASE = {
         "schema": "goatbuilder.output/v1",
