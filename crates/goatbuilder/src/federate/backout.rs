@@ -237,8 +237,11 @@ pub fn play_cmd(repo: &Path, t: &Target, extra: &[(&str, String)]) -> String {
     for (k, v) in extra {
         e.push_str(&format!(" -e {k}='{v}'"));
     }
+    // The inventories the forward path reads (plan::inventory_args): on a site
+    // whose inventory allocate renders, the hosts are in peering-<group>.ini.
+    let inventories = super::plan::inventory_args(repo);
     format!(
-        "cd '{r}/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws {aws} -- ../scripts/ansible-preflight.sh -i inventory/peering-edges.ini --limit '{}:{}:peering_forwarders' {e} peering-backout.yml",
+        "cd '{r}/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws {aws} -- ../scripts/ansible-preflight.sh {inventories} --limit '{}:{}:peering_forwarders' {e} peering-backout.yml",
         t.edge_group, t.core_group
     )
 }
@@ -687,6 +690,24 @@ pub fn backout_with(
         return Ok(r);
     }
     let recs = read_records(&survey_dir)?;
+    // No host answered, yet this working folder holds the peering's agreement:
+    // the play matched no host (an inventory that does not name them), which
+    // is not the same as nothing being deployed.
+    if recs.is_empty() && Path::new(&t.work).join("agreement.json").is_file() {
+        checks.push(row(
+            "survey",
+            false,
+            format!(
+                "no host of {}, {} or peering_forwarders answered the survey, but {}/agreement.json shows this peering was set up from here: the inventory names none of its hosts (GB-222)",
+                t.edge_group, t.core_group, t.work
+            ),
+            Some(format!(
+                "nothing was changed; check that ops/ansible/inventory/peering-edges.ini or peering-{}.ini names the hosts of [{}] and [{}], then goatbuilder federate backout {} --dry-run",
+                t.edge_group, t.edge_group, t.core_group, t.partner
+            )),
+        ));
+        return Ok(Report::new("federate-backout", checks, EXIT_REFUSED));
+    }
     let s = summarize(&recs, &t.partner);
     // The plan as surveyed, kept: the survey after the back-out reuses survey/.
     let plan_dir = base.join("plan");
@@ -1499,6 +1520,83 @@ mod tests {
         let r2 = backout_with(&repo, &o2, &mut exec2).unwrap();
         assert_eq!(r2.exit, EXIT_REFUSED);
         assert_eq!(ran2.borrow().len(), 1);
+    }
+
+    #[test]
+    fn the_back_out_reads_the_same_inventories_as_the_forward_path() {
+        // A nothing-hand-written site: allocate rendered peering-<edge group>.ini
+        // and there is no peering-edges.ini. The forward path (admit.rs) passes
+        // every per-peering file; the back-out must reach the same hosts.
+        let d = tempfile::tempdir().unwrap();
+        let inv = d.path().join("ops/ansible/inventory");
+        std::fs::create_dir_all(&inv).unwrap();
+        std::fs::write(inv.join("peering-xac_edge.ini"), "[xac_edge]\nedge-1\n[xac_core]\ncore-1\n").unwrap();
+        std::fs::write(inv.join("peering-xab_edge.ini"), "[xab_edge]\nedge-2\n").unwrap();
+        let t = target(&opts("xac")).unwrap();
+        let cmd = play_cmd(d.path(), &t, &[]);
+        assert!(
+            cmd.contains(&format!(" {} ", super::super::plan::inventory_args(d.path()))),
+            "{cmd}"
+        );
+        assert!(
+            cmd.contains("-i 'inventory/peering-xab_edge.ini' -i 'inventory/peering-xac_edge.ini'"),
+            "{cmd}"
+        );
+    }
+
+    #[test]
+    fn a_survey_no_host_answered_is_refused_while_the_peering_has_an_agreement() {
+        let d = tempfile::tempdir().unwrap();
+        let (repo, work) = stand_in(d.path());
+        std::fs::create_dir_all(&work).unwrap();
+        std::fs::write(
+            Path::new(&work).join("agreement.json"),
+            r#"{"parties":[{"sovereign_id":"xaa"},{"sovereign_id":"hello-ally"}]}"#,
+        )
+        .unwrap();
+        let ran = std::rc::Rc::new(std::cell::RefCell::new(Vec::<String>::new()));
+        let r2 = ran.clone();
+        // Ansible matched no host: the play "passes" and writes no record.
+        let mut exec = move |_: &Path, cmd: &str| -> Result<bool> {
+            r2.borrow_mut().push(cmd.to_string());
+            Ok(true)
+        };
+        for dry_run in [true, false] {
+            ran.borrow_mut().clear();
+            let o = Options {
+                partner: "hello-ally",
+                env: None,
+                r#as: None,
+                edge_group: None,
+                work: Some(&work),
+                mock: None,
+                dry_run,
+                yes: true,
+                table: false,
+            };
+            let r = backout_with(&repo, &o, &mut exec).unwrap();
+            assert!(!r.ok, "dry_run={dry_run}");
+            assert_eq!(r.exit, EXIT_REFUSED);
+            let row = r.checks.iter().find(|c| c.name == "survey").expect("a survey row");
+            assert!(row.detail.contains("GB-222") && row.detail.contains("no host"), "{}", row.detail);
+            assert_eq!(ran.borrow().len(), 1, "only the survey ran: {:?}", ran.borrow());
+        }
+        // Without an agreement in the working folder, nothing of the peering
+        // was ever deployed from here, and an empty survey is not a refusal.
+        std::fs::remove_file(Path::new(&work).join("agreement.json")).unwrap();
+        let o = Options {
+            partner: "hello-ally",
+            env: None,
+            r#as: None,
+            edge_group: None,
+            work: Some(&work),
+            mock: None,
+            dry_run: true,
+            yes: true,
+            table: false,
+        };
+        let r = backout_with(&repo, &o, &mut exec).unwrap();
+        assert!(r.checks.iter().all(|c| !c.detail.contains("GB-222")));
     }
 
     #[test]

@@ -350,6 +350,21 @@ pub fn peering_inventory_text(repo: &Path) -> String {
     text
 }
 
+/// The `-i` arguments every play of a peering takes, relative to ops/ansible:
+/// `inventory/peering-edges.ini`, then each per-peering file
+/// ([`per_peering_inventories`]). The admission (admit.rs) and the back-out
+/// (backout.rs) both use it, so the back-out reaches every host the forward
+/// path reached.
+pub fn inventory_args(repo: &Path) -> String {
+    let mut a = String::from("-i inventory/peering-edges.ini");
+    for p in per_peering_inventories(repo) {
+        if let Some(n) = p.file_name().and_then(|n| n.to_str()) {
+            a.push_str(&format!(" -i '{}'", format!("inventory/{n}").replace('\'', "'\\''")));
+        }
+    }
+    a
+}
+
 /// The per-peering inventory files beside peering-edges.ini, in name order.
 pub fn per_peering_inventories(repo: &Path) -> Vec<PathBuf> {
     let dir = repo.join("ops/ansible/inventory");

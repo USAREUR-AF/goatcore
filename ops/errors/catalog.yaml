@@ -2646,16 +2646,17 @@ entries:
   - code: GB-222
     tool: goatbuilder
     title: the back-out survey did not complete
-    what: "ops/ansible/peering-backout.yml failed before every host of the peering answered, so there is no plan to show and nothing was changed."
+    what: "ops/ansible/peering-backout.yml failed before every host of the peering answered, or no host answered while the working folder holds the peering's agreement, so there is no plan to show and nothing was changed."
     causes:
       - a host of <partner>_edge, <partner>_core or peering_forwarders is unreachable
-      - the inventory ops/ansible/inventory/peering-edges.ini does not exist in this checkout
+      - neither ops/ansible/inventory/peering-edges.ini nor a per-peering peering-<edge group>.ini names the peering's hosts, so the play matched no host
     fixes:
-      - "read the play output above; fix reachability, then goatbuilder federate backout <partner> --dry-run"
+      - "read the play output above; fix reachability or the inventory, then goatbuilder federate backout <partner> --dry-run"
     read: docs/design/goatbuilder.md
     exit: 1
     matches:
       - "survey play failed before every host answered"
+      - "answered the survey, but"
 
   - code: GB-223
     tool: goatbuilder
