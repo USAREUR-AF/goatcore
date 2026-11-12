@@ -25,10 +25,37 @@ up_work() { echo "/var/lib/goat-federation/$1"; } # $1 them
 # A deployment's checkout moves to the build: the build's tree laid over it, the files the
 # deployment changed since its first commit (its declarations, what the command wrote) kept,
 # then committed. $1 driver host.
+# The files a deployment changed since its checkout's first commit: its declarations and what
+# the command wrote, committed or not. $1 driver host -> one path a line.
+up_kept_list() {
+  local root; root="$(docker exec "$1" git -C /opt/goat rev-list --max-parents=0 HEAD | tail -1)"
+  docker exec "$1" sh -c "cd /opt/goat && { git diff --name-only $root HEAD; git ls-files --others --exclude-standard; git diff --name-only; } | sort -u"
+}
+
+# Every path of the host's checkout against a source tree: a path whose blob differs, or that
+# only one side has, must be one the deployment changed. $1 host, $2 source repo, $3 kept list.
+up_only_kept_differ() {
+  python3 - <(docker exec "$1" git -C /opt/goat ls-tree -r HEAD) <(git -C "$2" ls-tree -r HEAD) "$3" <<'PY'
+import sys
+def tree(p):
+    out = {}
+    for l in open(p):
+        meta, path = l.rstrip("\n").split("\t", 1); out[path] = meta.split()[2]
+    return out
+host, src = tree(sys.argv[1]), tree(sys.argv[2])
+kept = {l.strip() for l in open(sys.argv[3]) if l.strip()}
+differ = sorted(p for p in set(host) | set(src) if host.get(p) != src.get(p))
+extra = [p for p in differ if p not in kept]
+print(f"{len(host)} paths on the host, {len(differ)} differ from the source, all of them the deployment's own" if not extra
+      else f"{len(extra)} path(s) differ that the deployment did not change: {extra[:12]}")
+sys.exit(1 if extra else 0)
+PY
+}
+export -f up_kept_list up_only_kept_differ
+
 up_checkout_to_build() {
-  local h="$1" root keep
-  root="$(docker exec "$h" git -C /opt/goat rev-list --max-parents=0 HEAD | tail -1)"
-  keep="$(docker exec "$h" sh -c "cd /opt/goat && { git diff --name-only $root HEAD; git ls-files --others --exclude-standard; git diff --name-only; } | sort -u")"
+  local h="$1" keep
+  keep="$(up_kept_list "$h")"
   printf '%s\n' "$keep" > "$RECORD/up-$h-kept-files.txt"
   docker exec "$h" sh -c "cd /opt/goat && mkdir -p /tmp/up-keep && { printf '%s\n' \"$keep\" | while IFS= read -r f; do [ -n \"\$f\" ] && [ -e \"\$f\" ] && mkdir -p \"/tmp/up-keep/\$(dirname \"\$f\")\" && cp -p \"\$f\" \"/tmp/up-keep/\$f\"; done; }"
   # Files the release tracked that the build no longer has go; then the build's tree.
@@ -84,6 +111,8 @@ unit_main() {
     # By digest: a version string does not tell the release from a build of the same version.
     rec "up-$s-stood-up-by-the-release" --expect-in "$FE2E_UPGRADE_FROM_SHA256" -- docker exec "$h" sha256sum /usr/local/bin/goatbuilder
     rec "up-$s-checkout-is-the-release-s" -- bash -c "diff <(up_product_trees '$h') <(src_product_trees '$WORK/src-release')"
+    up_kept_list "$h" > "$RECORD/up-$s-kept-before-the-swap.txt"
+    rec "up-$s-only-its-own-files-differ-from-the-release" -- bash -c "up_only_kept_differ '$h' '$WORK/src-release' '$RECORD/up-$s-kept-before-the-swap.txt'"
     rec "up-$s-release-passed-phases-1-to-13" -- bash -c "oc_passed '$RECORD/status-$s.json' 1 2 3 4 5 6 7 8 9 10 11 12 13"
   done
   # Phase 14 by the release, each side: its result is kept beside the build's.
@@ -110,6 +139,7 @@ unit_main() {
     rec "up-$s-driver-runs-the-build" --expect-in "$(sha256sum "$UP_BUILD" | cut -d' ' -f1)" --expect-not-in "$FE2E_UPGRADE_FROM_SHA256" -- \
       docker exec "$h" sha256sum /usr/local/bin/goatbuilder
     rec "up-$s-checkout-is-the-build-s" -- bash -c "diff <(up_product_trees '$h') <(src_product_trees '$UP_SRC_BUILD')"
+    rec "up-$s-only-its-own-files-differ-from-the-build" -- bash -c "up_only_kept_differ '$h' '$UP_SRC_BUILD' '$RECORD/up-$h-kept-files.txt'"
     rec "up-$s-state-is-the-release-s" --expect-in "goatbuilder.federate.state/v1" -- docker exec "$h" sh -c "head -c 400 $(up_work "$them")/state.json"
   done
 
