@@ -425,6 +425,69 @@ class TwoPeeringsOneHost(unittest.TestCase):
             if name.startswith("core | absent |") and re.search(r"^(ok|changed|fatal|failed): \[core-xac", body, re.M):
                 ran.append(name)
         self.assertEqual(ran, ["core | absent | the core is backed out by the driver"], r.stdout[-4000:])
+    def leaf_backout(self, host_cert, apply):
+        """The core play told that the router leaf admission placed on the controller
+        went (goatbuilder federate backout: peering_backout_core_leaf_remove with the
+        role's goat_zenoh_tls_dir). The host's copy holds `host_cert` and this peering's
+        key; returns the core rows and the TLS folder."""
+        work = f"{self.tmp}/work/xac"
+        tls = f"{self.tmp}/core-tls"
+        os.makedirs(f"{work}/pki", exist_ok=True)
+        os.makedirs(tls, exist_ok=True)
+        for name, text in (("core.pem", "CERT-OF-XAC"), ("core-key.pem", "KEY-OF-XAC")):
+            dump(f"{work}/pki/{name}", text)
+        dump(f"{tls}/router-cert.pem", host_cert)
+        dump(f"{tls}/router-key.pem", "KEY-OF-XAC")
+        missing = f"{self.tmp}/no-such-core"
+        argv = ["ansible-playbook", "-i", self.inv, "--limit", "xac_core",
+                str(ANSIBLE / "peering-backout.yml"),
+                "-e", "peering_backout_id=xac", "-e", f"fed_work={work}", "-e", "fed_edge_group=xac_edge",
+                "-e", "ansible_become=false", "-e", "peering_backout_core_by_driver=true",
+                "-e", f"peering_backout_core_seed={missing}/seed", "-e", f"peering_backout_core_org={missing}/org",
+                "-e", f"peering_backout_core_config={missing}/live",
+                "-e", "peering_backout_core_leaf_remove=true", "-e", f"peering_backout_core_tls_dir={tls}"]
+        if apply:
+            argv += ["-e", "peering_backout_apply=true"]
+        r = run(argv, self.tmp)
+        self.assertEqual(r.returncode, 0, r.stdout[-6000:] + r.stderr[-2000:])
+        stage = "apply" if apply else "survey"
+        rows = jload(f"{work}/backout/{stage}/core-xac.json")["rows"]
+        return {row["resource"]: row for row in rows if row["component"] == "core leaf"}, tls
+
+    def test_the_host_copy_of_a_leaf_placed_where_nothing_was_is_deleted(self):
+        rows, tls = self.leaf_backout("CERT-OF-XAC", apply=False)
+        for name in ("router-cert.pem", "router-key.pem"):
+            with self.subTest(survey=name):
+                self.assertEqual((rows[f"{tls}/{name}"]["state"], rows[f"{tls}/{name}"]["action"]),
+                                 ("present", "remove"), rows)
+                self.assertTrue(os.path.exists(f"{tls}/{name}"), "the survey changes nothing")
+        rows, tls = self.leaf_backout("CERT-OF-XAC", apply=True)
+        for name in ("router-cert.pem", "router-key.pem"):
+            with self.subTest(apply=name):
+                self.assertEqual(rows[f"{tls}/{name}"]["action"], "removed", rows)
+                self.assertFalse(os.path.exists(f"{tls}/{name}"), "no private key is left on the host")
+        # Run again: nothing is there, nothing is removed.
+        rows, tls = self.leaf_backout("CERT-OF-XAC", apply=True)
+
+    def test_a_host_copy_that_is_not_this_peerings_leaf_is_kept(self):
+        rows, tls = self.leaf_backout("ANOTHER-CERT", apply=True)
+        self.assertEqual(open(f"{tls}/router-cert.pem", encoding="utf-8").read(), "ANOTHER-CERT")
+        self.assertEqual((rows[f"{tls}/router-cert.pem"]["state"], rows[f"{tls}/router-cert.pem"]["action"]),
+                         ("present", "kept"), rows)
+        self.assertFalse(os.path.exists(f"{tls}/router-key.pem"))
+
+    def test_without_the_flag_the_host_leaf_is_not_read(self):
+        work = f"{self.tmp}/work/xac"
+        missing = f"{self.tmp}/no-such-core"
+        r = run(["ansible-playbook", "-i", self.inv, "--limit", "xac_core",
+                 str(ANSIBLE / "peering-backout.yml"),
+                 "-e", "peering_backout_id=xac", "-e", f"fed_work={work}", "-e", "fed_edge_group=xac_edge",
+                 "-e", "ansible_become=false", "-e", "peering_backout_core_by_driver=true",
+                 "-e", f"peering_backout_core_seed={missing}/seed", "-e", f"peering_backout_core_org={missing}/org",
+                 "-e", f"peering_backout_core_config={missing}/live"], self.tmp)
+        self.assertEqual(r.returncode, 0, r.stdout[-6000:] + r.stderr[-2000:])
+        rows = jload(f"{work}/backout/survey/core-xac.json")["rows"]
+        self.assertEqual([row for row in rows if row["component"] == "core leaf"], [])
 
     def test_a_survey_without_the_rendered_values_or_agreement_still_runs(self):
         # A peering backed out before phase 9: no agreement, no applied values.

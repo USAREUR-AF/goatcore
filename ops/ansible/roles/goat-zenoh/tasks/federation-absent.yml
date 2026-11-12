@@ -24,6 +24,74 @@
 # FED_CORE_RESTART, FED_CORE_PLAY and FED_CORE_GROUP): the driver surveys and removes
 # the admission the way admission placed it. This file then writes one row saying so
 # and runs nothing on the core host.
+# peering_backout_core_leaf_remove: true, with peering_backout_core_tls_dir (goatbuilder
+# federate backout sets them on a goat-zenoh role core when the router leaf admission
+# placed on the controller goes, because nothing was there before the peering): the role
+# delivered that leaf to router-cert.pem and router-key.pem in the TLS folder, and its own
+# play cannot take them back (it refuses a controller with no leaf). Each file is deleted
+# where it is byte for byte this peering's leaf (fed_work/pki/core.pem, core-key.pem on
+# the controller), and kept otherwise. A file that cannot be read is unknown, which stops
+# the back-out. Nothing is restarted here: the core router keeps running on what it
+# loaded until its own play runs.
+- name: core | absent | the router leaf the role delivered for this peering
+  when: peering_backout_core_leaf_remove | default(false) | bool
+  block:
+    - name: core | absent | the peering's own leaf, on the controller
+      ansible.builtin.stat:
+        path: "{{ fed_work }}/pki/{{ item }}"
+        checksum_algorithm: sha256
+      loop: [core.pem, core-key.pem]
+      register: _pbl_ours
+      delegate_to: localhost
+      become: false
+
+    - name: core | absent | the host's copy
+      ansible.builtin.stat:
+        path: "{{ peering_backout_core_tls_dir }}/{{ item }}"
+        checksum_algorithm: sha256
+      loop: [router-cert.pem, router-key.pem]
+      register: _pbl_host
+      failed_when: false
+
+    - name: core | absent | what each copy is
+      ansible.builtin.set_fact:
+        _pbl_state: >-
+          {%- set out = [] -%}
+          {%- for h, o in _pbl_host.results | zip(_pbl_ours.results) -%}
+          {%-   set path = peering_backout_core_tls_dir ~ '/' ~ h.item -%}
+          {%-   if h.failed | default(false) or h.stat is not defined -%}
+          {%-     set _ = out.append({'path': path, 'state': 'unknown', 'ours': false, 'note': 'not readable: ' ~ (h.msg | default('stat failed'))}) -%}
+          {%-   elif not h.stat.exists -%}
+          {%-     set _ = out.append({'path': path, 'state': 'absent', 'ours': false, 'note': ''}) -%}
+          {%-   elif o.stat.exists and h.stat.checksum == o.stat.checksum -%}
+          {%-     set _ = out.append({'path': path, 'state': 'present', 'ours': true, 'note': 'this peering\'s leaf, placed where nothing was'}) -%}
+          {%-   else -%}
+          {%-     set _ = out.append({'path': path, 'state': 'present', 'ours': false, 'note': 'not this peering\'s leaf'}) -%}
+          {%-   endif -%}
+          {%- endfor -%}
+          {{ out }}
+
+    - name: core | absent | delete a copy that is this peering's leaf
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ _pbl_state | selectattr('ours') | list }}"
+      loop_control:
+        label: "{{ item.path }}"
+      when: _pb_apply
+
+    - name: core | absent | record the router leaf
+      ansible.builtin.set_fact:
+        _pb_rows: >-
+          {%- set out = _pb_rows -%}
+          {%- set act = 'removed' if _pb_apply else 'remove' -%}
+          {%- for l in _pbl_state -%}
+          {%-   set _ = out.append({'component': 'core leaf', 'resource': l.path, 'state': l.state,
+                                    'action': (act if l.ours else ('kept' if l.state == 'present' else 'none')),
+                                    'note': l.note}) -%}
+          {%- endfor -%}
+          {{ out }}
+
 # The core host's own declarations are read from the inventory, not from the host: a
 # partner the goat-zenoh role also declares (zenoh_sovereign_peerings) stays admitted
 # after the driver backs the splice out, and the survey says so (GB-227).
