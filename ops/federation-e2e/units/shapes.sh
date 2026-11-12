@@ -205,7 +205,7 @@ PY
   done
   for s in "$first" "$second"; do
     them="$(other "$s")"
-    rec "s$n-acceptance-as-$s-with-$them" --expect-in "acceptance-counts:" --expect-in "skip=0" --expect-in "fail=0" --expect-not-in "ACCEPTANCE FAILED" \
+    rec "s$n-acceptance-as-$s-with-$them" --expect-in "acceptance-counts:" --expect-in "skip=0" --expect-in "fail=0" --expect-not-in "ACCEPTANCE FAILED" --expect-not-in "ACCEPTANCE INCOMPLETE" \
       -- bash -c "accept_as '$s' '$them' '$AVENUE' 2>&1 | tee '$RECORD/s$n-acceptance-as-$s-with-$them.out'"
     # Whether acceptance refused the agreement for having one direction only.
     rec "s$n-acceptance-as-$s-with-$them-accepts-the-shape" --expect-not-in "offers no release set from" --expect-not-in "no round trip possible" -- \

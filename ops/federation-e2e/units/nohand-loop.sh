@@ -32,7 +32,7 @@ loop_note() {
 # The refusal of a run: the first failed line of the transcript, cleaned.
 loop_refusal() { # $1 transcript
   sed 's/\x1b\[[0-9;]*m//g; s/\r//g' "$1" 2>/dev/null \
-    | grep -m3 -E '✗|FAIL |GB-[0-9]+|refused|ACCEPTANCE FAILED|BLOCKED' | sed 's/^ *//' | tr '\n' ' ' | cut -c1-400
+    | grep -m3 -E '✗|FAIL |GB-[0-9]+|refused|ACCEPTANCE FAILED|ACCEPTANCE INCOMPLETE|BLOCKED' | sed 's/^ *//' | tr '\n' ' ' | cut -c1-400
 }
 
 loop_install() { # the fixer's build and tree onto the lab

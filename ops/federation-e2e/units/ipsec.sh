@@ -201,7 +201,7 @@ unit_main() {
   done
   for s in "$A" "$B"; do
     them="$(other "$s")"
-    rec "ipsec-acceptance-as-$s-with-$them" --expect-in "acceptance-counts:" --expect-in "skip=0" --expect-in "fail=0" --expect-not-in "ACCEPTANCE FAILED" \
+    rec "ipsec-acceptance-as-$s-with-$them" --expect-in "acceptance-counts:" --expect-in "skip=0" --expect-in "fail=0" --expect-not-in "ACCEPTANCE FAILED" --expect-not-in "ACCEPTANCE INCOMPLETE" \
       -- bash -c "accept_as '$s' '$them' '$AVENUE'"
   done
   # After acceptance's own traffic: ESP bytes in and out on each side.

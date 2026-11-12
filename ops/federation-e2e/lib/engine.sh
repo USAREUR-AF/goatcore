@@ -871,7 +871,7 @@ accept_pair() { # $1 scenario, $2 a, $3 b, $4 avenue, $5 label suffix, [$6 b's a
   local n="$1" a="$2" b="$3" avenue="$4" sfx="$5" avenue2="${6:-}" s them
   for s in "$a" "$b"; do
     them="$([ "$s" = "$a" ] && echo "$b" || echo "$a")"
-    rec "s$n-acceptance-as-$s-with-$them$sfx" --expect-in "acceptance-counts:" --expect-in "skip=0" --expect-in "fail=0" --expect-not-in "ACCEPTANCE FAILED" \
+    rec "s$n-acceptance-as-$s-with-$them$sfx" --expect-in "acceptance-counts:" --expect-in "skip=0" --expect-in "fail=0" --expect-not-in "ACCEPTANCE FAILED" --expect-not-in "ACCEPTANCE INCOMPLETE" \
       -- bash -c "accept_as '$s' '$them' '$(side_avenue "$s" "$a" "$avenue" "$avenue2")'"
   done
 }

@@ -24,7 +24,7 @@ rb_accept() { # $1 us, $2 them, $3 the previous goatbuilder
   local out; out="$(GB="$3" accept_as "$1" "$2" goatbuilder 2>&1)"; local rc=$?
   printf '%s\n' "$out" | tail -15
   printf '%s\n' "$out" | grep -q 'acceptance-counts:' && printf '%s\n' "$out" | grep -q 'skip=0' \
-    && printf '%s\n' "$out" | grep -q 'fail=0' && ! printf '%s\n' "$out" | grep -q 'ACCEPTANCE FAILED' && [ "$rc" = 0 ]
+    && printf '%s\n' "$out" | grep -q 'fail=0' && ! printf '%s\n' "$out" | grep -qE 'ACCEPTANCE (FAILED|INCOMPLETE)' && [ "$rc" = 0 ]
 }
 export -f rb_accept
 

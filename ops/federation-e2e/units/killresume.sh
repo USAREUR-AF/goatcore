@@ -225,7 +225,7 @@ sys.exit(1 if bad else 0)' "$RECORD/report.jsonl"
   done
   for s in "$first" "$second"; do
     them="$(other "$s")"
-    rec "kr-acceptance-as-$s-with-$them" --expect-in "acceptance-counts:" --expect-in "skip=0" --expect-in "fail=0" --expect-not-in "ACCEPTANCE FAILED" \
+    rec "kr-acceptance-as-$s-with-$them" --expect-in "acceptance-counts:" --expect-in "skip=0" --expect-in "fail=0" --expect-not-in "ACCEPTANCE FAILED" --expect-not-in "ACCEPTANCE INCOMPLETE" \
       -- bash -c "accept_as '$s' '$them' '$AVENUE'"
   done
   collect kr

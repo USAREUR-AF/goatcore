@@ -418,7 +418,7 @@ oc_acceptance_checks() { # $1 first, $2 second
       oc_accept "$s" "$them" > "$out" 2>&1 || arc=$?
       { echo "--- acceptance before the retry (full output in $(basename "$out").first):"; grep -E 'acceptance-counts|ACCEPTANCE|trace verdict' "$out.first" | head -5; } > "$out.retry-note"
     fi
-    rec "$OC_PREFIX-acceptance-as-$s-with-$them" --expect-in "acceptance-counts:" --expect-in "skip=0" --expect-in "fail=0" --expect-not-in "ACCEPTANCE FAILED" \
+    rec "$OC_PREFIX-acceptance-as-$s-with-$them" --expect-in "acceptance-counts:" --expect-in "skip=0" --expect-in "fail=0" --expect-not-in "ACCEPTANCE FAILED" --expect-not-in "ACCEPTANCE INCOMPLETE" \
       -- bash -c "cat '$out'; exit $arc"
   done
 }
