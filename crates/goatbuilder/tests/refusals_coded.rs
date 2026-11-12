@@ -118,8 +118,14 @@ const EXPECTED: &[(&str, &str)] = &[
 ];
 
 /// Refusals whose code a change in another stream's file brings, each with
-/// that change. A pending case must still lack its expected code.
-const PENDING: &[(&str, &str)] = &[
+/// that change, one list per owner so each owner's change empties its own
+/// list without touching another's. A pending case must still lack its
+/// expected code.
+const PENDING: &[&[(&str, &str)]] = &[PENDING_MAIN, PENDING_FEDERATE, PENDING_CONFIG];
+
+/// main.rs (W-L1): clap's errors and main's own refusals.
+/// Emptied by the change to main.rs.
+const PENDING_MAIN: &[(&str, &str)] = &[
     (
         "apply_missing_plan",
         "main.rs: code the C10 refusal (GB-008)",
@@ -192,6 +198,11 @@ const PENDING: &[(&str, &str)] = &[
         "usage_update_check_and_force",
         "main.rs: print clap's errors with their catalog code (GB-242)",
     ),
+];
+
+/// federate/ (W-B2): the federate verbs' own refusals.
+/// Emptied by the change to federate/.
+const PENDING_FEDERATE: &[(&str, &str)] = &[
     (
         "federate_unknown_fed_verbs",
         "federate/mod.rs: code the refusal (GB-240)",
@@ -200,6 +211,11 @@ const PENDING: &[(&str, &str)] = &[
         "federate_undeclared_is_refused",
         "federate/mod.rs: code the refusal (GB-149)",
     ),
+];
+
+/// config.rs (W-G): a config that cannot be read or is not YAML.
+/// Emptied by the change to config.rs.
+const PENDING_CONFIG: &[(&str, &str)] = &[
     (
         "validate_missing_file",
         "config.rs: code the refusal (GB-244)",
@@ -209,6 +225,11 @@ const PENDING: &[(&str, &str)] = &[
         "config.rs: code the refusal (GB-245)",
     ),
 ];
+
+/// Every pending case, whoever owns it.
+fn pending() -> impl Iterator<Item = &'static (&'static str, &'static str)> {
+    PENDING.iter().flat_map(|l| l.iter())
+}
 
 /// Cases that quote this checkout's own deployment, skipped where it declares
 /// none (as tests/cli_golden.rs skips them).
@@ -326,7 +347,7 @@ fn every_refusal_case_names_its_catalog_code() {
         let (exit, text) = run(&doc, home.path());
         let codes = codes_in(&text);
         let has = codes.iter().any(|c| c == want);
-        let pending = PENDING.iter().find(|(c, _)| *c == name);
+        let pending = pending().find(|(c, _)| *c == name);
         match (has, pending) {
             (true, None) | (false, Some(_)) => {}
             (true, Some((_, by))) => now_coded.push(format!(
@@ -364,7 +385,7 @@ fn the_lists_name_cases_and_catalog_codes() {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../ops/errors/catalog.yaml"),
     )
     .unwrap();
-    for (v, _) in VERDICTS.iter().chain(PENDING) {
+    for (v, _) in VERDICTS.iter().chain(pending()) {
         assert!(
             names.iter().any(|n| n == v),
             "{v} is not a case in tests/cmd"
@@ -384,7 +405,7 @@ fn the_lists_name_cases_and_catalog_codes() {
             "{code} ({c}) has no fix in the catalog"
         );
     }
-    for (p, _) in PENDING {
+    for (p, _) in pending() {
         assert!(
             EXPECTED.iter().any(|(c, _)| c == p),
             "{p} is pending with no expected code"
