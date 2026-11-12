@@ -28,11 +28,25 @@ for r in d if isinstance(d,list) else []:
 # Every router's subscribers and queryables in the receiving core's admin space. $1 core.
 pr_admin() {
   local q
-  for q in subscribers queryables; do
-    echo "## $q"; curl -s -m 5 "http://$(core_ip "$1"):8000/@/*/router/$q/**" | head -c 6000; echo
+  for q in subscriber queryable linkstate; do
+    echo "## @/*/router/$q/**"; curl -s -m 5 "http://$(core_ip "$1"):8000/@/*/router/$q/**" | head -c 20000; echo
   done
 }
-export -f put_release stored_at pr_admin
+# After the receiving core restarts: all four routers' logs since the restart, whole, and the
+# republishers' dropped counts. $1 sender, $2 receiver, $3 since (UTC), $4 record file.
+pr_capture() {
+  local s="$1" them="$2" since="$3" out="$4" x
+  {
+    for x in "$s" "$them"; do
+      echo "### $x core router, since $since"; docker exec "$HP-$x-core" docker logs --since "$since" "$x-zenoh-router" 2>&1
+      echo "### $x edge router toward $(other "$x"), since $since"; docker exec "$HP-$x-edge" docker logs --since "$since" "goat-zenoh-edge-$(other "$x")" 2>&1
+      echo "### $x republisher toward $(other "$x"): dropped"
+      docker exec "$HP-$x-core" curl -s -m 5 "http://127.0.0.1:$(rp_metrics "$x" "$(other "$x")")/metrics" 2>&1 | grep -E 'dropped' || echo '(no dropped series)'
+    done
+    echo "### admin space, as $them's core sees it"; pr_admin "$them"
+  } > "$out" 2>&1
+}
+export -f put_release stored_at pr_admin pr_capture
 
 unit_main() {
   local n first second; n="$(pair_n)"; first="$(pair_first)"; second="$(other "$first")"
@@ -102,6 +116,7 @@ pair_persistent_reception() {
        echo '--- the receiving core router, its last log lines:'
        docker exec $HP-$them-core docker logs --tail 40 $them-zenoh-router 2>&1 | cut -c1-300
        exit 1"
+    pr_capture "$s" "$them" "$(cat "$WORK/pr-restart-at-$them" 2>/dev/null)" "$RECORD/s$n-$s-to-$them-after-restart-capture.txt" || true
     edge_after="$(docker exec "$HP-$them-edge" docker inspect -f '{{.State.StartedAt}}' "goat-zenoh-edge-$s" 2>/dev/null)"
     rec "s$n-$them-edge-was-not-restarted" --expect-in "$edge_before" -- echo "edge router goat-zenoh-edge-$s started at $edge_after (before the core restart: $edge_before)"
   done
