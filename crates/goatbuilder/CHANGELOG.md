@@ -22,10 +22,16 @@ cache.
 ### Fixed: declared values reach the phases as one word each
 
 The goatlite's administrator address reaches the bootstrap phases through the
-environment as data, never through the shell, and a bootstrap command run
+environment as data, never parsed by the shell, and a bootstrap command run
 without that variable is refused, naming it. `join-node`'s founder site, SSH
 user, AWS profile and enrolment name are passed the same way, including the
 line run on the new node.
+
+### Changed: `rotate` is a reserved peering name
+
+A `peerings:` entry named `rotate` is refused with GB-120, as the other
+reserved names are. The word is kept for `goatbuilder federate rotate`, which
+is not yet a command.
 
 ### Fixed: `verify` reads a failed ledger read as unknown
 
