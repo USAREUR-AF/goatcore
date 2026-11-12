@@ -360,7 +360,7 @@ not_kept:
   completion: prints a shell script, not a document
   docs: prints the command reference as Markdown, not a document
   doctor: its rows are this machine's tools, credentials and network, so its document differs from machine to machine
-  pins: reads a deployment's fleet pins and goatnets; this repository declares none, and there is no fixture for it yet
+  pins: reads the checkout's ops/pins/fleet-pins.yaml and the goatnets it lists, and refuses --mock, so a fixture's declared/pins.yaml (as in the kept standup fixture) cannot stand in for it; this repository declares no deployment
   promote: reads the checkout's release records and ladder; there is no fixture for it yet
   release: reads git tags and the checkout's release records; a shallow CI clone differs from a full one, and there is no fixture for it yet
   fastlane: reads git refs and the checkout's pins; a shallow CI clone differs from a full one, and there is no fixture for it yet
