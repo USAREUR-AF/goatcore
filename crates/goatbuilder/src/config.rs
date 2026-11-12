@@ -6,7 +6,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use jsonschema::{Draft, JSONSchema};
 use serde::Deserialize;
 use serde_json::Value;
@@ -466,10 +466,44 @@ pub fn derive_lite(value: &Value, checkout: Option<&Value>) -> Value {
 }
 
 /// Gate row G1 (docs/design/goatlite-growth.md §6, the hand-over): the full
-/// configuration a lite one grows into, with the same values.
+/// configuration a lite one grows into, with the same values. It is what
+/// `derive_lite` computes from the `lite:` block, written as `preset: full`
+/// without that block, plus `deploy.ssh_user` from `lite.ssh_user` (and
+/// `deploy.aws_profile` from `lite.internet.aws_profile` when declared). The
+/// lite facts the full shape has no field for (host, admin, zone, disk and key
+/// choices) are already in the file set the render wrote, which the learner
+/// keeps. Refused unless the result validates: a four-fact file with no checkout
+/// config has no `repo` or `components`, and growth asks for them then.
 #[allow(dead_code)] // the verb's wiring in main.rs is a separate change; the tests call this
-pub fn grow(value: &Value, _checkout: Option<&Value>) -> Result<Value> {
-    Ok(value.clone())
+pub fn grow(value: &Value, checkout: Option<&Value>) -> Result<Value> {
+    if value.get("preset").and_then(Value::as_str) != Some("lite") {
+        return Err(anyhow!("grow takes a goatlite config: this one does not declare preset: lite"));
+    }
+    let lite = value.get("lite").and_then(Value::as_object).ok_or_else(|| anyhow!("grow takes a goatlite config: this one has no lite: block"))?;
+    let mut out = derive_lite(value, checkout);
+    let obj = out.as_object_mut().expect("derive_lite keeps an object");
+    obj.remove("lite");
+    obj.insert("preset".into(), Value::from("full"));
+    let deploy = obj.entry("deploy").or_insert_with(|| Value::Object(Default::default()));
+    if let Some(d) = deploy.as_object_mut() {
+        if let Some(user) = lite.get("ssh_user").and_then(Value::as_str) {
+            d.entry("ssh_user").or_insert_with(|| Value::from(user));
+        }
+        if let Some(profile) = lite.get("internet").and_then(|i| i.get("aws_profile")).and_then(Value::as_str) {
+            d.entry("aws_profile").or_insert_with(|| Value::from(profile));
+        }
+    }
+    let problems = problems_in(&out, None)?;
+    if !problems.is_empty() {
+        let missing: Vec<&str> = ["repo", "components"].into_iter().filter(|k| out.get(*k).is_none()).collect();
+        let ask = if missing.is_empty() {
+            String::new()
+        } else {
+            format!("\n\nA full configuration declares {} of its own; the lite preset took them from the checkout's config, and this checkout has none. Add them to goatlite.yaml, then grow again.", missing.join(" and "))
+        };
+        return Err(anyhow!("the grown configuration does not validate:\n  {}{ask}", problems.join("\n  ")));
+    }
+    Ok(out)
 }
 
 /// The rules JSON Schema cannot express — identical in intent to validate.py's.
@@ -1061,7 +1095,9 @@ mod tests {
     /// asks for them then, never at first run.
     #[test]
     fn grow_refuses_without_repo_and_components_and_names_them() {
-        let err = grow(&goatlite(), None).unwrap_err().to_string();
+        let mut four = goatlite();
+        four.as_object_mut().unwrap().retain(|k, _| ["schema", "preset", "lite"].contains(&k.as_str()));
+        let err = grow(&four, None).unwrap_err().to_string();
         assert!(err.contains("repo") && err.contains("components"), "{err}");
         let mut full = goatlite();
         full["preset"] = json!("full");
