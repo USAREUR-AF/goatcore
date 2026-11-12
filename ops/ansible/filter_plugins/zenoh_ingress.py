@@ -51,6 +51,32 @@ def zenoh_ingress_storage_check(text, required):
     return report
 
 
+def zenoh_config_path_from_args(text, fallback):
+    """Where a zenohd container reads its configuration, from its arguments.
+
+    `text` is `docker inspect --format '{{json .Args}}'`: the arguments after
+    the entrypoint, such as ["-c", "/etc/goat-core/config.json5"]. The last
+    -c/--config value wins; anything unreadable gives `fallback`.
+    """
+    import json
+    try:
+        args = json.loads(text)
+    except (TypeError, ValueError):
+        return fallback
+    if not isinstance(args, list):
+        return fallback
+    found = ''
+    for index, arg in enumerate(args):
+        if not isinstance(arg, str):
+            continue
+        if arg in ('-c', '--config') and index + 1 < len(args) and isinstance(args[index + 1], str):
+            found = args[index + 1]
+        elif arg.startswith('--config='):
+            found = arg[len('--config='):]
+    return found or fallback
+
+
 class FilterModule:
     def filters(self):
-        return {'zenoh_ingress_storage_check': zenoh_ingress_storage_check}
+        return {'zenoh_ingress_storage_check': zenoh_ingress_storage_check,
+                'zenoh_config_path_from_args': zenoh_config_path_from_args}

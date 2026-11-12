@@ -1,14 +1,17 @@
 """Scoped receive-storage preflight, including the retained legacy-store upgrade."""
 import contextlib
+import getpass
 import importlib.util
 import io
 import json
 import os
 from pathlib import Path
+import shlex
 import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest.mock
 
 import yaml
@@ -26,6 +29,24 @@ def config(*scopes):
     return json.dumps({'plugins': {'storage_manager': {'storages': {
         'store_' + str(i): {'key_expr': scope} for i, scope in enumerate(scopes)
     }}}})
+
+
+class ConfigPathFromArgs(unittest.TestCase):
+    def path(self, text, fallback):
+        return MODULE.zenoh_config_path_from_args(text, fallback)
+
+    def test_the_container_arguments_name_the_path(self):
+        for args, want in ((['-c', '/etc/goat-core/config.json5'], '/etc/goat-core/config.json5'),
+                           (['--config', '/etc/zenoh/config.json5'], '/etc/zenoh/config.json5'),
+                           (['--config=/srv/z.json5'], '/srv/z.json5'),
+                           (['-c', '/a', '-c', '/b'], '/b')):
+            with self.subTest(args=args):
+                self.assertEqual(self.path(json.dumps(args), '/fallback'), want)
+
+    def test_anything_else_gives_the_fallback(self):
+        for text in ('', 'null', '[]', '["-c"]', '{"-c": "/x"}', 'not json', '[1, "-c", 2]'):
+            with self.subTest(text=text):
+                self.assertEqual(self.path(text, '/fallback'), '/fallback')
 
 
 class ScopeInspection(unittest.TestCase):
@@ -306,7 +327,8 @@ class CoreOnAnotherHost(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0, result.stdout)
         self.assertIn('Missing exact scopes: from/xaa/**', result.stdout)
         self.assertIn('A broad from/** store alone does not satisfy', result.stdout)
-        self.assertEqual(self.trace.read_text(), 'core exec goat-zenoh-router cat /etc/zenoh/config.json5\n')
+        self.assertIn('core exec goat-zenoh-router cat /etc/zenoh/config.json5\n', self.trace.read_text())
+        self.assertNotIn('edge exec', self.trace.read_text())
 
     def test_matching_store_on_a_separate_core_host_passes(self):
         result = self.run_play(config('from/**', *REQUIRED))
@@ -347,6 +369,173 @@ class CoreOnAnotherHost(unittest.TestCase):
         result = self.run_play(config(*REQUIRED), cores=('edge-1',))
         self.assertNotEqual(result.returncode, 0, result.stdout)
         self.assertIn('on edge-1: no core router found', result.stdout)
+
+
+def _free_port():
+    import socket
+    with socket.socket() as sock:
+        sock.bind(('127.0.0.1', 0))
+        return sock.getsockname()[1]
+
+
+@unittest.skipUnless(shutil.which('ansible-playbook') and Path('/usr/sbin/sshd').exists()
+                     and shutil.which('ssh') and shutil.which('ssh-keygen'),
+                     'ansible-playbook, sshd, ssh and ssh-keygen are required')
+class CoreOverSsh(unittest.TestCase):
+    """The core host is a real ssh target: an unprivileged sshd on loopback.
+
+    The edge connects locally; the core host is reached over ssh, so delegation
+    uses the core host's own connection, interpreter and login environment, as
+    in phase 12. The core host's docker models one running core router: its
+    command-line arguments, and the one path inside it that holds the config.
+    A hand-run core (`docker run ... -c /etc/goat-core/config.json5`) keeps
+    its configuration somewhere other than the goat-zenoh role's
+    /etc/zenoh/config.json5.
+    """
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        bindir = self.root / 'bin'
+        bindir.mkdir()
+        docker = bindir / 'docker'
+        docker.write_text(
+            '#!/bin/sh\n'
+            '. "$INGRESS_ROOT/core.env"\n'
+            'printf "%s %s\\n" "$INGRESS_HOST" "$*" >> "$INGRESS_ROOT/trace"\n'
+            'case "$1" in\n'
+            '  ps) [ "$INGRESS_HOST" = core ] && printf "cid\\t%s\\tzenoh-core\\n" "$CORE_NAME"; exit 0 ;;\n'
+            '  inspect) [ "$INGRESS_HOST" = core ] || exit 1; printf "%s\\n" "$CORE_ARGS"; exit 0 ;;\n'
+            '  exec) [ "$INGRESS_HOST" = core ] || { echo "Error: No such container: $2" >&2; exit 1; }\n'
+            '    if [ "$4" = "$CORE_CONFIG_PATH" ]; then cat "$INGRESS_ROOT/config.json5"; exit 0; fi\n'
+            '    echo "cat: can\'t open \'$4\': No such file or directory" >&2; exit 1 ;;\n'
+            'esac\n'
+            'exit 1\n')
+        docker.chmod(0o755)
+        edge_python = self.root / 'python-edge'
+        edge_python.write_text('#!/bin/sh\nINGRESS_HOST=edge INGRESS_ROOT="' + str(self.root)
+                               + '" PATH="' + str(bindir) + ':$PATH" exec "' + sys.executable + '" "$@"\n')
+        edge_python.chmod(0o755)
+        keys = self.root / 'ssh'
+        keys.mkdir(mode=0o700)
+        for name in ('host', 'client'):
+            subprocess.run(['ssh-keygen', '-q', '-t', 'ed25519', '-N', '', '-f', str(keys / name)],
+                           check=True, capture_output=True)
+        (keys / 'authorized_keys').write_text((keys / 'client.pub').read_text())
+        self.port = _free_port()
+        config = keys / 'sshd_config'
+        config.write_text('\n'.join([
+            'Port ' + str(self.port), 'ListenAddress 127.0.0.1',
+            'HostKey ' + str(keys / 'host'), 'PidFile ' + str(keys / 'sshd.pid'),
+            'AuthorizedKeysFile ' + str(keys / 'authorized_keys'),
+            'PasswordAuthentication no', 'KbdInteractiveAuthentication no',
+            'UsePAM no', 'StrictModes no', 'Subsystem sftp internal-sftp',
+            'SetEnv INGRESS_HOST=core INGRESS_ROOT=' + str(self.root)
+            + ' PATH=' + str(bindir) + ':/usr/local/bin:/usr/bin:/bin', '']))
+        self.sshd = subprocess.Popen(['/usr/sbin/sshd', '-D', '-e', '-f', str(config)],
+                                     stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        self.addCleanup(self.stop_sshd)
+        self.key = keys / 'client'
+        ssh = ['ssh', '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=no',
+               '-o', 'UserKnownHostsFile=/dev/null', '-i', str(self.key),
+               '-p', str(self.port), '127.0.0.1', 'echo $INGRESS_HOST']
+        deadline = time.monotonic() + 15
+        while True:
+            probe = subprocess.run(ssh, capture_output=True, text=True)
+            if probe.stdout.strip() == 'core':
+                break
+            if time.monotonic() > deadline:
+                self.fail('the test sshd did not come up: ' + probe.stderr)
+            time.sleep(0.2)
+        self.input = self.root / 'config.json5'
+
+    def stop_sshd(self):
+        self.sshd.terminate()
+        self.sshd.wait(timeout=10)
+        self.sshd.stderr.close()
+
+    def run_play(self, text, args, config_path, name='xaa-zenoh-router', extra=None):
+        self.input.write_text(text)
+        (self.root / 'core.env').write_text(
+            'CORE_NAME=' + shlex.quote(name) + '\nCORE_ARGS=' + shlex.quote(json.dumps(args))
+            + '\nCORE_CONFIG_PATH=' + shlex.quote(config_path) + '\n')
+        inventory = self.root / 'peering-edges.ini'
+        inventory.write_text('\n'.join([
+            '[xab_edge]',
+            'edge-1 ansible_connection=local ansible_python_interpreter=' + str(self.root / 'python-edge'),
+            '', '[xab_core]',
+            'xaa-core-xab ansible_host=127.0.0.1 ansible_port=' + str(self.port)
+            + ' ansible_user=' + getpass.getuser()
+            + ' ansible_ssh_private_key_file=' + str(self.key)
+            + ' ansible_python_interpreter=' + sys.executable
+            + " ansible_ssh_common_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'",
+            '', '[peering_edges:children]', 'xab_edge', '',
+            '[peering_cores:children]', 'xab_core', '']))
+        task = ROOT / 'ops/ansible/roles/goat-zenoh-edge/tasks/ingress-storage-check.yml'
+        play = [{'hosts': 'xab_edge', 'gather_facts': True, 'become': False, 'vars': {
+                     'goat_zenoh_edge_partner_id': 'xab',
+                     'goat_zenoh_edge_ingress_scope_check': True,
+                     'goat_zenoh_edge_ingress_key_exprs': REQUIRED, **(extra or {})},
+                 'tasks': [{'ansible.builtin.include_tasks': str(task)}]}]
+        path = self.root / 'play.yml'
+        path.write_text(yaml.safe_dump(play, sort_keys=False))
+        env = {**os.environ, 'ANSIBLE_FILTER_PLUGINS': str(PLUGIN.parent),
+               'ANSIBLE_LOCAL_TEMP': str(self.root / 'ansible-local'),
+               'ANSIBLE_REMOTE_TEMP': str(self.root / 'ansible-remote'),
+               'ANSIBLE_NOCOLOR': '1', 'ANSIBLE_STDOUT_CALLBACK': 'default',
+               'ANSIBLE_RETRY_FILES_ENABLED': '0', 'ANSIBLE_HOST_KEY_CHECKING': 'False',
+               # No shared master connection: each test's sshd is its own host.
+               'ANSIBLE_SSH_ARGS': '-o ControlMaster=no -o ControlPersist=no',
+               'OBJC_DISABLE_INITIALIZE_FORK_SAFETY': 'YES'}
+        return subprocess.run(['ansible-playbook', '-i', str(inventory), '--limit', 'xab_edge',
+                               str(path)], env=env, capture_output=True, text=True, timeout=120)
+
+    def trace(self):
+        path = self.root / 'trace'
+        return path.read_text() if path.exists() else ''
+
+    # The test environment's hand-run core: zenohd -c /etc/goat-core/config.json5.
+    HAND = (['-c', '/etc/goat-core/config.json5'], '/etc/goat-core/config.json5')
+    # The goat-zenoh role's core: --config /etc/zenoh/config.json5.
+    ROLE = (['--config', '/etc/zenoh/config.json5'], '/etc/zenoh/config.json5')
+
+    def test_matching_store_on_a_hand_run_core_over_ssh_passes(self):
+        result = self.run_play(config('from/**', *REQUIRED), *self.HAND)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('core router: xaa-zenoh-router on xaa-core-xab', result.stdout)
+        self.assertIn('PASS: a matching receive store', result.stdout)
+        self.assertIn('core exec xaa-zenoh-router cat /etc/goat-core/config.json5', self.trace())
+
+    def test_broad_store_on_a_hand_run_core_over_ssh_is_refused(self):
+        result = self.run_play(config('from/**'), *self.HAND)
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn('Missing exact scopes: from/xaa/**', result.stdout)
+        self.assertIn('core exec xaa-zenoh-router cat /etc/goat-core/config.json5', self.trace())
+
+    def test_matching_store_on_a_role_core_over_ssh_passes(self):
+        result = self.run_play(config(*REQUIRED), *self.ROLE)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('PASS: a matching receive store', result.stdout)
+
+    def test_an_unreadable_configuration_names_the_command_result(self):
+        # The arguments name a path the container does not hold: the refusal
+        # carries the read's exit status and error text, never the content.
+        result = self.run_play(config(*REQUIRED), ['-c', '/etc/missing/config.json5'],
+                               '/etc/goat-core/config.json5')
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn('could not read /etc/missing/config.json5 from xaa-zenoh-router on xaa-core-xab',
+                      result.stdout)
+        self.assertIn('cat exited 1', result.stdout)
+        self.assertIn("No such file or directory", result.stdout)
+        self.assertNotIn('storage_manager', result.stdout)
+
+    def test_an_explicit_config_path_wins_over_the_arguments(self):
+        result = self.run_play(config(*REQUIRED), ['-c', '/etc/elsewhere.json5'],
+                               '/etc/goat-core/config.json5',
+                               extra={'goat_zenoh_edge_core_config_path': '/etc/goat-core/config.json5'})
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('PASS: a matching receive store', result.stdout)
 
 
 if __name__ == '__main__':

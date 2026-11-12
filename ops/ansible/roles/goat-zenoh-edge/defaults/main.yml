@@ -160,6 +160,10 @@ goat_zenoh_edge_key_scope_check: true
 # passes. Set a name or ID here only for a layout discovery cannot find
 # (tasks/discover-core.yml, docs/design/federation-router-discovery.md).
 goat_zenoh_edge_core_container: ""
+# Where that core router reads its configuration, inside its container. Empty
+# (the default) reads it from the -c/--config argument the container was
+# started with, else /etc/zenoh/config.json5 (the goat-zenoh role's path).
+goat_zenoh_edge_core_config_path: ""
 
 goat_zenoh_edge_key_bundle_key_exprs: []
 

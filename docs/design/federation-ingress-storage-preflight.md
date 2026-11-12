@@ -30,8 +30,14 @@ explicit operator review.
 
 ## Observation and verdicts
 
-The edge role reads `/etc/zenoh/config.json5` from the core router container
-using an argument-vector command. It looks for the core router on the edge host
+The edge role reads the core router's configuration from inside its container
+using an argument-vector command (`docker exec <core> cat <path>`). The path is
+`goat_zenoh_edge_core_config_path` when set; otherwise the `-c`/`--config`
+argument the container was started with (`docker inspect`, `.Args`), so a core
+run by hand with `-c /etc/goat-core/config.json5` is read where it reads; otherwise
+the goat-zenoh role's `/etc/zenoh/config.json5`. Measured: the first separate-host
+version of this check assumed `/etc/zenoh/config.json5` and refused every such
+hand-run core on the federation test environment as unreadable. It looks for the core router on the edge host
 first (`tasks/discover-core.yml`: `goat_zenoh_edge_core_container`, else the core
 role label or name). When none is there, it looks on the core host: the one host
 of inventory group `goat_zenoh_edge_core_group`, by default
@@ -49,7 +55,8 @@ with the missing scope names. The check does not infer success from silence.
 A check that cannot run fails the play: no core router on the edge host and no
 single core host in the group (none, several, or only the edge host itself), no
 core router on the core host, or a configuration that cannot be read. Each names
-the reason and the host. Before this, every one of those reported SKIP and let the
+the reason and the host; an unreadable configuration also names the path, the
+read's exit status and its error text, never the configuration's content. Before this, every one of those reported SKIP and let the
 play exit 0, so an edge on a separate host from its core admitted ingress scopes
 with only a broad `from/**` store behind them. The existing
 `goat_zenoh_edge_ingress_scope_check` switch can deliberately disable this
@@ -78,7 +85,11 @@ real core renders in both identity models, refusals when the check cannot run,
 the explicit disable switch and suppressed config secrets. The `CoreOnAnotherHost`
 cases put the edge and the core router on separate inventory hosts and limit the
 play to the edge group, as phase 12 does: a `from/**`-only store there is refused,
-a matching store passes, and a missing, ambiguous or unreadable core fails. The integration cases execute the actual Ansible tasks with a fake
+a matching store passes, and a missing, ambiguous or unreadable core fails. The
+`CoreOverSsh` cases reach the core host through a real, unprivileged `sshd` on
+loopback, as a hand-run core and as a role-deployed core; they are skipped where
+`sshd` is not installed. Not covered by a test: `become` on the core host, since
+the tests cannot use sudo. The integration cases execute the actual Ansible tasks with a fake
 Docker command and temporary files; no real core or edge is contacted. The
 normal Python CI suite discovers these tests.
 
