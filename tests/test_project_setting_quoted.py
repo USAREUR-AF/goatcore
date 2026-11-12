@@ -83,6 +83,19 @@ class Quoted(unittest.TestCase):
         self.assertIn("deploy.aws_profile", r.stderr)
 
 
+    def test_goat_standup_stops_on_a_config_it_cannot_read(self):
+        if os.geteuid() == 0:
+            self.skipTest("root reads a mode-000 file")
+        root = tree("~/.goat/state")
+        shutil.copy(REPO / "ops/scripts/goat-standup.sh", root / "ops/scripts/goat-standup.sh")
+        (root / "ops/goatbuilder/goatbuilder.yaml").chmod(0)
+        r = subprocess.run(["bash", str(root / "ops/scripts/goat-standup.sh"), "alpha", "--plan"],
+                           capture_output=True, text=True, timeout=120,
+                           env={"PATH": no_pyyaml_path(), "HOME": tempfile.mkdtemp()})
+        self.assertEqual(r.returncode, 2, r.stdout[-300:])
+        self.assertIn("goatbuilder.yaml", r.stderr)
+
+
 class JoinFounderSite(unittest.TestCase):
     """The ACL site names an environment variable (<SITE>_NB_API_TOKEN), so
     goat-standup.sh refuses a join_founder_site that cannot make one, as goatbuilder does."""
