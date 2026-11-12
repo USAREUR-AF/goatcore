@@ -174,33 +174,64 @@ is the sovereign-federation runbook
    its machines with `hosts: {edge: <address>, core: <address>, user: <user>}`,
    or keep a hand-written `ops/ansible/inventory/peering-edges.ini`.
    goatcore ships none of these files, because the hosts are yours.
-3. **The peering declared**: a row under `peerings:` in `goatbuilder.yaml` for
-   this counterparty on this environment. The one you name must be declared, so
-   a typo is refused before anything runs. Then
+3. **The peering declared** in the deployment overlay's
+   `ops/goatbuilder/federation.yml`: a row under `peerings:` for this
+   counterparty on this environment, referring to a site under
+   `environments.<goatnet>.sites`. Run
+   `python3 ops/goatbuilder/gen-config.py` to produce `goatbuilder.yaml`; never
+   edit the generated copy. The one you name must be declared, so a typo is
+   refused before anything runs. Then
    `goatbuilder federate allocate <peering>` writes the files a person used to
    write: the peering's values, its inventory, both deployment halves and its
    `federation.toml`. Review and commit them. A peering that already runs by hand
    keeps its own files.
-4. **A peering directory both sides reach** (saltlick), and your signing key and
-   CA, declared once in `goatbuilder.yaml`. The run reads these declarations, so
-   nothing is exported by hand. `FED_DIRECTORY_URL`, `SSL_CERT_FILE`,
-   `FED_SIGNING_KEY`, `FED_CA_CERT` and `FED_CA_KEY` stay as overrides. A
-   relative key path is read inside your goat context.
+4. **A peering directory both sides reach** (saltlick), declared under the
+   environment in `federation.yml`, and your signing key and CA, declared in
+   `ops/goatbuilder/posture.yml`. The generator carries both into
+   `goatbuilder.yaml`; the run reads that generated copy, so nothing is exported
+   by hand. `FED_DIRECTORY_URL`, `SSL_CERT_FILE`, `FED_SIGNING_KEY`,
+   `FED_CA_CERT` and `FED_CA_KEY` stay as overrides. A relative key path is read
+   inside your goat context.
 
    ```yaml
+   # ops/goatbuilder/federation.yml in the deployment overlay
    environments:
-     - name: zagros
-       # ...
+     zagros:
        peering_directory:
          url: https://directory.example.org:8443
          ca_cert: directory-ca.pem      # only when its certificate is not a public one
-   secrets:
-     store: env-file
-     federation:
-       signing_key: federation/signing.key
-       ca_cert: federation/ca.pem
-       ca_key: federation/ca-key.pem
+       sites:
+         - name: <site>
+           role: founder
+           classes: {core: {}, edge: {}}
+   peerings:
+     - with: <peering>
+       environment: zagros
+       site: <site>
+       edge_class: edge
    ```
+
+   ```yaml
+   # ops/goatbuilder/posture.yml in the deployment overlay
+   store: env-file
+   federation:
+     signing_key: federation/signing.key
+     ca_cert: federation/ca.pem
+     ca_key: federation/ca-key.pem
+   ```
+
+   `posture.yml` is the contents of the generated `secrets:` block, so its
+   source has `store:` and `federation:` at the top level as shown. When
+   migrating an existing hand-edited `goatbuilder.yaml`, copy every site,
+   peering, directory and other operator-owned environment field into
+   `federation.yml`, and copy its `secrets.federation` signing key and CA paths
+   into the `federation:` block of `posture.yml`, before the first regeneration.
+   GB-079 refuses and leaves the output unchanged if any declaration is
+   missing. After that adoption, intentional removal is an explicit edit to
+   its owning source: removing the last topology declarations uses
+   `environments: {}` and `peerings: []`; removing the key/CA paths keeps
+   `posture.yml` with `store:` and removes its `federation:` block. Do not
+   delete either adopted overlay source to express removal.
 
    Phase 5 uploads your package and CA, fetches theirs, and prints both
    verifying keys and CA fingerprints. You read yours to each other on one call,

@@ -543,6 +543,28 @@ entries:
       - "no release signer is known"
     exit: 1
 
+  - code: GB-079
+    tool: goatbuilder
+    title: federation declarations cannot be regenerated safely
+    what: "gen-config.py stopped before replacing goatbuilder.yaml because a federation or posture source is missing, malformed, conflicts with fields owned by another source, uses a YAML value that cannot be compared deterministically, or omits declaration content present in the generated file. The output is unchanged."
+    causes:
+      - an overlay that owns ops/goatbuilder/federation.yml is absent from the assembled checkout
+      - existing environment or peering declarations have not yet been migrated from goatbuilder.yaml into federation.yml
+      - existing secrets.federation key or CA paths have not yet been migrated from goatbuilder.yaml into posture.yml
+      - federation.yml declares name, converger or groups, which remain owned by fleet-pins.yaml and ladder.yaml
+      - a source or generated output is not UTF-8, or the source contains duplicate keys or peering identities, non-text mapping keys, an unquoted date or another unsupported YAML scalar
+    fixes:
+      - "restore the overlay's ops/goatbuilder/federation.yml, then run: python3 ops/goatbuilder/gen-config.py"
+      - "move every operator-owned environment field and peering the error names into federation.yml, then regenerate once to record adoption"
+      - "move secrets.federation signing_key, ca_cert and ca_key paths into posture.yml, then regenerate once to record adoption"
+      - "for intentional removal after adoption, keep federation.yml with explicit environments: {} and peerings: []"
+      - "to remove adopted federation key and CA paths, keep posture.yml with store: and remove its federation: block"
+      - "quote dates and mapping keys as text, remove duplicate keys, and follow the exact path in the error"
+    read: docs/design/goatbuilder-conformance.md
+    matches:
+      - "GB-079:"
+    exit: 1
+
   - code: GB-012
     tool: goatbuilder
     title: the candidate's image build did not succeed

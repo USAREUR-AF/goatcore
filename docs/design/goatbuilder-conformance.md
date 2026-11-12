@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | **Built** (2026-10-29): the schema gate (`ops/goatbuilder/`, CI `goatbuilder-schema.yml`) and every clause C1–C10 as a test on a throwaway copy of a fixture (`crates/goatbuilder/src/verbs.rs`, run by `goatbuilder-pr.yml`); written 2026-10-27 |
+| Status | **Built** (2026-10-29): the schema and every clause C1–C10 as a test on a throwaway copy of a fixture (`crates/goatbuilder/src/verbs.rs`, run by `goatbuilder-pr.yml`); the Python schema/generator suite is a local check and is not wired into public-core CI; written 2026-10-27 |
 | Design | [`goatbuilder.md`](goatbuilder.md) · [ADR 1198](../adr/1198-goatbuilder-config-driven-deploy-release-cli.md) |
 | Audience | whoever builds `goatbuilder`, and any team admitting a converger, transport or environment kind to it |
 
@@ -12,19 +12,52 @@ The deploy contract in [`goatbuilder.md`](goatbuilder.md) is a set of guarantees
 
 One fixture serves three needs, by design: the conformance suite, golden tests in CI, and `goatbuilder tutor` — the same keystone that let `goat-cli` test its whole onboarding flow with zero infrastructure (`goat-cli-e2e-testing.md`). It is reached from the binary as `--mock <fixture>`.
 
-## The first conformance test is already running
+## The first conformance test
 
-The config schema gate is built and gates every pull request that touches it:
+The config schema and its local suite are built:
 
 | Piece | Path | What it holds |
 |---|---|---|
 | the schema | `ops/goatbuilder/schema/goatbuilder-v1.schema.json` | Draft-07, fail-closed (`additionalProperties: false` throughout); the gate vocabulary is the release ladder's own |
-| this repository's config | `ops/goatbuilder/goatbuilder.yaml` | **generated** from `ops/pins/fleet-pins.yaml` + `ops/release/ladder.yaml` + `ops/goatbuilder/project.yml` + `ops/goatbuilder/posture.yml` by `gen-config.py` — never hand-edited; one fact, one home |
+| a deployment's config | `ops/goatbuilder/goatbuilder.yaml` | **generated** from `ops/pins/fleet-pins.yaml` + `ops/release/ladder.yaml` + `ops/goatbuilder/project.yml` + `ops/goatbuilder/posture.yml` and, in its overlay, `ops/goatbuilder/federation.yml` by `gen-config.py` — never hand-edited; the public core intentionally has no federation source or generated deployment config |
 | the validator | `ops/goatbuilder/validate.py` | the schema plus the cross-field rules JSON Schema cannot express; exit 0 / 1 / 2 like `ops/operators/validate.py` |
-| the refusals, locked | `ops/goatbuilder/test_schema.py` | 17 tests: every shape the schema must refuse, and that the real 30-component config fits |
-| the CI gate | `.github/workflows/goatbuilder-schema.yml` | drift (`gen-config.py --check`), validity, and the refusal tests, on every PR touching the sources |
+| the refusals, locked | `ops/goatbuilder/test_schema.py` | every shape the schema and generator sources must refuse, including undeclared federation references, and that the real config fits |
+| the local checks | `python3 -m unittest discover -s ops/goatbuilder -p 'test_*.py' -v`; `python3 ops/goatbuilder/gen-config.py --check` in an assembled deployment | schema validity, generator refusals, and generated-output drift. No public-core workflow currently invokes either command; an overlay must wire its assembled deployment check separately |
 
-That gate is contract clause **C3** at the config layer — the tool never acts on a declaration it cannot read exactly. The clause tests below carry C3 to the declaration itself.
+These local checks implement contract clause **C3** at the config layer — the
+tool never acts on a declaration it cannot read exactly. The clause tests below
+carry C3 to the declaration itself.
+
+The federation source is **built**. Fleet pins and the live ladder own each
+environment's `name`, `converger` and `groups`; `federation.yml` owns the
+remaining environment overlay, including `sites`, `transport`, `inventory`,
+`peering_edge_reserved_udp` and `peering_directory`, plus top-level `peerings`.
+Declaring a generator-owned field there is a GB-079 conflict, not a precedence
+rule. `posture.yml` separately owns `secrets`, including `secrets.federation`.
+
+Normal generation and `--check` render the same value. `--check` does not
+write, and normal generation refuses before writing if old generated output
+contains any source-owned environment or peering content absent or changed in
+`federation.yml`, or `secrets.federation` key/CA paths absent or changed in
+`posture.yml`. The first successful regeneration records a type-sensitive
+digest covering all those declarations. While output still matches that
+digest, later edits to the corresponding source are intentional and may add,
+change or remove fields; an output-only declaration edit makes the digest
+stale and restores the refusal on the next local generation or check. No
+public-core CI workflow currently runs that check.
+
+The public core ships the missing federation source state. Deleting an
+overlay's adopted `federation.yml` never removes declarations: removal of the
+last ones is the explicit overlay source `environments: {}` and `peerings: []`.
+Likewise, a missing adopted `posture.yml` cannot remove federation key/CA
+paths; keep the file and remove its `federation:` block to make that edit
+intentional. Duplicate YAML keys in `federation.yml` are refused at any depth. Non-text mapping
+keys, unquoted dates and other unsupported YAML scalar types are refused by
+precise path with GB-079 rather than reaching JSON canonicalization.
+Preservation comparisons distinguish `true`, `1` and `1.0` and count list
+duplicates. A present federation source must contain both required keys with
+mapping/list types; an empty, partial or null-valued file is not an empty
+declaration.
 
 ## The fixture: a mock topology and a scripted converger
 
@@ -88,7 +121,7 @@ The fixture is also where a fresh environment's standup is rehearsed before any 
 
 | Piece | Status |
 |---|---|
-| schema, generator, validator, refusal tests, CI gate | **built** (this change) |
+| schema, generator, validator and refusal tests | **built**; the Python suite and assembled-output drift check are not wired into public-core CI |
 | the fixture format and the scripted converger | **built** (2026-10-27): `ops/goatbuilder/fixtures/basic/` (two components, dev with five scripted machines, preprod with one) and `crates/goatbuilder/src/converger.rs` — the `Converger` trait (`publish` / `observe` / `read_record`) with the scripted implementation; `after: N` counts persist in `state/ticks.json` so a second run resumes |
 | `status` and `deploy` on the fixture (`--mock <dir>`) | **built**: `status` reads declared against recorded per machine (exit 3 while any is pending or unknown); `deploy` publishes the declared ref, observes once, and reports done only from the record. Without `--mock` both refuse and name `deploy-component.sh`, which stays the deploy until the push converger passes the parity gate |
 | the clause tests | C1–C10 **built** as tests in `verbs.rs` on a throwaway copy of a fixture (C9 on `fixtures/tutor/`: a rollback is a new declaration at the earlier ref, converged and verified like any deploy; a data artifact is refused with exit 3 before anything changes). C2–C6 built 2026-10-29: **C2** every row of `declared/publications.jsonl` carries a seal (sha256 over its fields) and the log is read before anything is published — a row whose seal does not match, or a serial not greater than one already accepted, is refused with GB-045, exit 1, and a new serial at an earlier digest is accepted as the revert it is (`c2_signed_and_ordered`); on hosts the same guarantee is the IntentV1 serial and its detached signature, checked by `pins --check` (CF-5). **C3** a fixture may carry its source of record at `source/pins.yaml` with a `revision:`; a local `declared/pins.yaml` behind it is fast-forwarded and the deploy applies the source's ref, `--frozen` refuses with the copy command, and a local copy ahead of it or diverged from it is always refused (GB-046, exit 1); a rollback writes its new declaration into the source of record as the next revision (`c3_fresh_source`). **C4** the publication and every record a declaration converges carry the actor; `deploy`, `rollback` and `standup` on a fixture without `--ack` are refused with GB-047, exit 1, before anything is published (`c4_attributed`, `mock_standup_without_an_actor_is_refused`, golden `c4_*_needs_ack.toml`); `release` and `fastlane` refuse without `--ack` on real hosts (`release_needs_ack.toml`). **C6** the scripted converger logs each transport it opens to `state/transports.jsonl`; a deploy to dev opens only dev's, and under `pull-agent` it opens none while the machines still converge (`c6_least_privilege`) |

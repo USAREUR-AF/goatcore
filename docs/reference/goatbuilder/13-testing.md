@@ -76,7 +76,7 @@ checks that every tool the release path invokes is named by its preflight.
 
 | Gate | Workflow | Refuses |
 |---|---|---|
-| config schema | `goatbuilder-schema.yml` | a config that does not validate; a generated config that differs from its sources |
+| config schema and generation | local Python suite; `gen-config.py --check` in an assembled deployment | a config that does not validate; unsafe declaration migration; generated-output drift. No public-core workflow currently runs these assembled checks |
 | pins | `goatbuilder pins --check` | drift, an unsigned or tampered intent |
 | ladder | `goatbuilder promote check` | a malformed ladder, a record without its pin edit, a stale hotfix |
 | error catalog | `error-catalog.yml` | an incomplete entry, an uncited or missing code, a stale reference |
