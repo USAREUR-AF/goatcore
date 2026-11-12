@@ -128,8 +128,9 @@ fn code_only(text: &str) -> String {
 }
 
 /// Constructions of std's `Command` in `text`, outside `#[cfg(test)]` items,
-/// comments and strings: `Command::new(`, `std::process::Command::new(`, and
-/// `X::new(` for every name the file gives it (`use … Command as X`,
+/// comments and strings: `Command::new`, `std::process::Command::new`,
+/// `<std::process::Command>::new`, the constructor named without a call, and
+/// `X::new` for every name the file gives it (`use … Command as X`,
 /// `type X = Command;`).
 fn spawns(text: &str) -> usize {
     let code = code_only(text);
@@ -142,7 +143,10 @@ fn spawns(text: &str) -> usize {
     names.extend(alias.captures_iter(&code).map(|c| c[1].to_string()));
     names.extend(ty.captures_iter(&code).map(|c| c[1].to_string()));
     let call = regex::Regex::new(&format!(
-        r"(?:^|[^\w])(?:{})\s*::\s*new\s*\(",
+        // `>` for a qualified path (`<std::process::Command>::new`); no `(`
+        // required, so the constructor taken as a value (`let f = Command::new`)
+        // counts too.
+        r"(?:^|[^\w])(?:{})\s*>?\s*::\s*new\b",
         names.join("|")
     ))
     .unwrap();
@@ -281,6 +285,12 @@ fn the_count_sees_every_way_to_build_a_command() {
         spawns("fn d() { let t = \"Command::new(\"; let r = r#\"Command::new(\"#; }\n"),
         0
     );
+    // A qualified path, and the constructor named without a call.
+    assert_eq!(
+        spawns("fn h() { <std::process::Command>::new(\"x\"); }\n"),
+        1
+    );
+    assert_eq!(spawns("fn i() { let f = Command::new; f(\"x\"); }\n"), 1);
     // A brace in a string or a char does not end a test module early.
     assert_eq!(spawns("#[cfg(test)]\nmod tests {\n    fn e() { let b = \"}\"; let c = '}'; Command::new(\"t\"); }\n}\nfn f() { Command::new(\"g\"); }\n"), 1);
 }
