@@ -129,7 +129,7 @@ jobs:
         working-directory: ops/grant-crypto/sdk
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.100.0
         with:
           components: rustfmt, clippy
       - run: cargo fmt --check
@@ -157,7 +157,7 @@ jobs:
         working-directory: ops/grant-crypto/sdk
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.100.0
         with:
           toolchain: '1.88.0'
       - name: Locked conformance tests at the declared minimum
@@ -181,7 +181,7 @@ jobs:
         working-directory: ops/grant-crypto/keyd
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.100.0
         with:
           components: rustfmt, clippy
       - name: fmt + clippy (keyd service crate)
@@ -202,7 +202,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.100.0
       - uses: actions/setup-go@v5
         with:
           go-version: '1.26.11'
@@ -227,7 +227,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.100.0
       - name: build the C ABI cdylib
         working-directory: ops/grant-crypto/sdk
         run: cargo build --locked -p grant-crypto-capi
@@ -246,7 +246,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.100.0
       - uses: actions/setup-node@v4
         with:
           node-version: '20'

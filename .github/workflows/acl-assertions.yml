@@ -41,7 +41,7 @@ jobs:
 
       - name: Install Rust toolchain
         if: steps.changes.outputs.run_tests == 'true'
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.100.0
 
       - name: Cache Cargo inputs and build
         if: steps.changes.outputs.run_tests == 'true'

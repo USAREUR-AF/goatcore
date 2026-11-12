@@ -88,8 +88,8 @@ jobs:
         with:
           go-version-file: ops/enrollment/go.mod
           cache-dependency-path: ops/enrollment/go.sum
-      - name: Install Rust toolchain (stable)
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust toolchain (1.100.0)
+        uses: dtolnay/rust-toolchain@1.100.0
       - name: Cache cargo registry + build target
         uses: actions/cache@v4
         with:
@@ -143,8 +143,8 @@ jobs:
           cache-dependency-path: |
             ops/goat-zenoh-portal/go.sum
             ops/goat-id-console/go.sum
-      - name: Install Rust toolchain (stable)
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust toolchain (1.100.0)
+        uses: dtolnay/rust-toolchain@1.100.0
       - name: Cache cargo registry + build target
         uses: actions/cache@v4
         with:

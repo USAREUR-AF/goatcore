@@ -30,6 +30,12 @@ Everything a job reads is either in the checkout or named by a digest.
   lock file.
 - A base image is named by digest and pulled from a registry the project
   controls or mirrors.
+- A compiler toolchain is named by its exact release, never by a channel.
+  Every workflow's Rust toolchain is an exact version
+  (`dtolnay/rust-toolchain@1.100.0`, or `toolchain: '1.100.0'`), and moving
+  it is a change of its own. Built and checked: `ops/ci/check-rust-toolchain-pinned.sh`
+  refuses `@stable`, `@beta`, `@nightly` and a `toolchain:` set to a channel,
+  and runs in the coupled-fact-guards workflow on every workflow change.
 - When a job cannot avoid a network source, that source is named in the
   workflow as an input, and the job reports a failure to reach it as
   `environment`, with a distinct exit, so it is never read as a failure of the

@@ -58,7 +58,7 @@ jobs:
         run: go test ./internal/peername/...
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.100.0
 
       - name: Cache cargo registry + git deps
         uses: actions/cache@v4

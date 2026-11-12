@@ -123,6 +123,8 @@ on:
       - 'ops/ansible/zenoh-acl-migrate.yml'
       - '.github/workflows/coupled-fact-guards.yml'
       # Image digest guard (ADR 0703): anything that names an image.
+      # Rust toolchain guard: every workflow names an exact Rust release.
+      - 'ops/ci/check-rust-toolchain-pinned.sh'
       - 'ops/ci/check-no-floating-image-pins.sh'
       - 'ops/ci/check-image-refs-pinned.py'
       - 'ops/ci/floating-image-pins.allow'
@@ -288,6 +290,13 @@ jobs:
       # judge it against main through one module (served payloads).
       - name: served payloads resolve and are judged one way for both avenues
         run: python3 ops/ci/test-served-payloads.py
+
+      - name: check-rust-toolchain-pinned --self-test
+        run: ops/ci/check-rust-toolchain-pinned.sh --self-test
+      # A workflow's Rust toolchain is a declared input: an exact release, moved
+      # on purpose, never the channel that moves under an unrelated change.
+      - name: check-rust-toolchain-pinned
+        run: ops/ci/check-rust-toolchain-pinned.sh
 
       - name: check-no-floating-image-pins --self-test
         run: ops/ci/check-no-floating-image-pins.sh --self-test

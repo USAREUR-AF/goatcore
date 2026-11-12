@@ -125,8 +125,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/apt-failover
-      - name: Install Rust toolchain (stable + clippy)
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust toolchain (1.100.0 + clippy)
+        uses: dtolnay/rust-toolchain@1.100.0
         with:
           components: clippy
       - name: Cache cargo registry + git deps
@@ -301,8 +301,8 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
-      - name: Install Rust toolchain (stable)
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust toolchain (1.100.0)
+        uses: dtolnay/rust-toolchain@1.100.0
       - name: Cache cargo registry + git deps
         uses: actions/cache@v4
         with:
