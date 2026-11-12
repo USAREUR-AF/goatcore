@@ -37,10 +37,11 @@ rot_material() {
     transport) docker exec "$HP-$s-edge" wg show "$(iface "$s" "$them")" public-key ;;
     carrier) if [ "$s" = "$NATED" ]; then docker exec "$HP-$s-edge" wg show wg-carry0 public-key; else echo "no carrier on $s"; fi ;;
     signing)
-      # What a signing rotation changes: the seed this side signs with (its checkout's
-      # goat_federation_signing_key, else FED_SIGNING_KEY, as the drive passes it), by digest,
+      # What a signing rotation changes: the seed this side signs for this peering with (this
+      # peering's edge group's goat_federation_signing_key, else FED_SIGNING_KEY as the drive
+      # passes it), by digest,
       # and this party's verifying key as the partner's keyring holds it (spec §5.1).
-      docker exec "$h" sh -c "k=\$(grep -rhoE '^goat_federation_signing_key:[[:space:]]*\\S+' /opt/goat/ops/ansible/group_vars 2>/dev/null | head -1 | sed 's/^[^:]*:[[:space:]]*//; s/[\"\x27]//g'); k=\${k:-/etc/fed-e2e/signing.key}; printf 'seed %s %s\n' \"\$k\" \"\$(sha256sum \"\$k\" | cut -d' ' -f1)\""
+      docker exec "$h" sh -c "k=\$(grep -hoE '^goat_federation_signing_key:[[:space:]]*\\S+' /opt/goat/ops/ansible/group_vars/${them}_edge/*.yml 2>/dev/null | head -1 | sed 's/^[^:]*:[[:space:]]*//; s/[\"\x27]//g'); k=\${k:-/etc/fed-e2e/signing.key}; printf 'seed %s %s\n' \"\$k\" \"\$(sha256sum \"\$k\" | cut -d' ' -f1)\""
       docker exec "$(drv_host "$them")" sh -c "grep -E '^$s=' /var/lib/goat-federation/$s/keys.txt | sed 's/^/in the partner keyring: /'" ;;
   esac
 }
@@ -60,8 +61,14 @@ rot_one() { # $1 key, $2 side
     "docker exec $h goatbuilder -C /opt/goat --yes federate rotate $them $k --as $s > '$out' 2>&1; rc=\$?; tail -30 '$out'; exit \$rc"
   [ "$FAILS" = "$f0" ] || rot_die "\`goatbuilder federate rotate $them $k\` did not run on $s: rotation is not built (docs/design/federation-key-rotation.md §7)"
   rot_all_material "$s" "$RECORD/rot-$k-$s-after.txt"
+  if [ "$k" = signing ]; then
+    # Signing: the seed must change here; the partner's keyring is its own check below.
+    rec "rot-rotated-$k-$s" -- bash -c \
+      "a=\$(grep '^seed ' '$RECORD/rot-$k-$s-before.txt'); b=\$(grep '^seed ' '$RECORD/rot-$k-$s-after.txt'); echo \"before: \$a\"; echo \"after:  \$b\"; [ -n \"\$a\" ] && [ -n \"\$b\" ] && [ \"\$a\" != \"\$b\" ]"
+  else
   rec "rot-rotated-$k-$s" -- bash -c \
     "diff <(sed -n '/^## $k\$/,/^## /p' '$RECORD/rot-$k-$s-before.txt') <(sed -n '/^## $k\$/,/^## /p' '$RECORD/rot-$k-$s-after.txt') && { echo 'the $k material did not change'; exit 1; } || exit 0"
+  fi
   rec "rot-kept-$k-$s" -- python3 - "$RECORD/rot-$k-$s-before.txt" "$RECORD/rot-$k-$s-after.txt" "$k" <<'PY'
 import re, sys
 def parts(p):
@@ -83,6 +90,11 @@ sys.exit(1 if problems else 0)
 PY
   rot_all_material "$them" "$RECORD/rot-$k-$them-after.txt"
   rec "rot-partner-kept-$k-$s" -- diff "$RECORD/rot-$k-$them-before.txt" "$RECORD/rot-$k-$them-after.txt"
+  if [ "$k" = signing ]; then
+    # Our new verifying key in the partner's keyring is the partner's step (§5), not built yet.
+    local ord; ord="$([ "$s" = "$NATED" ] && echo first || echo second)"
+    mark "key-rotation.partner-keyring-$ord" BLOCKED "the partner's step that takes our new verifying key into its keyring waits on the operator's decision in docs/design/federation-key-rotation.md §5"
+  fi
   case "$k" in
     transport|signing) rot_die "the partner's step after a $k rotation waits on the operator's decision in docs/design/federation-key-rotation.md §5" ;;
   esac

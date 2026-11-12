@@ -1096,7 +1096,10 @@ scenarios:
       exits 0; the key's material differs from the material set aside before it; every other
       key's material is unchanged and was read (non-empty, no error); the partner's material is
       unchanged; and strict acceptance passes on both sides. For signing the material is the
-      seed the side signs with, by digest, and its verifying key in the partner's keyring.
+      seed the side signs this peering with (its edge group's goat_federation_signing_key, else
+      FED_SIGNING_KEY), whose digest must change, and, as its own check (partner-keyring), its
+      verifying key in the partner's keyring, which must change too; the partner's step for
+      that waits on §5, and the check reads BLOCKED until it exists.
       Values are stored during and after every rotation and the last five of each flow are
       stored (samples-resume), and no .rotation-pending file remains. How much a flow may lose
       during a rotation is an operator decision not yet made (the same as gate row B4's
@@ -1137,11 +1140,13 @@ scenarios:
       - {id: rotated-signing-first, step: "rot-rotated-signing-{A}"}
       - {id: kept-signing-first, step: "rot-kept-signing-{A}"}
       - {id: partner-kept-signing-first, step: "rot-partner-kept-signing-{A}"}
+      - {id: partner-keyring-first, step: "rot-partner-keyring-{A}"}
       - {id: acceptance-signing-first, step: "rot-acceptance-signing-{A}"}
       - {id: rotate-signing-second-ran, step: "rot-rotate-signing-{B}-ran"}
       - {id: rotated-signing-second, step: "rot-rotated-signing-{B}"}
       - {id: kept-signing-second, step: "rot-kept-signing-{B}"}
       - {id: partner-kept-signing-second, step: "rot-partner-kept-signing-{B}"}
+      - {id: partner-keyring-second, step: "rot-partner-keyring-{B}"}
       - {id: acceptance-signing-second, step: "rot-acceptance-signing-{B}"}
       - {id: samples-resume, step: "rot-samples-resume"}
       - {id: samples-loss, step: "rot-samples-loss"}
