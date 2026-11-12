@@ -297,9 +297,20 @@ pub fn inputs(repo: &Path, o: &Options, env: Env) -> Result<Vec<Input>> {
             ));
             continue;
         }
+        // Inputs that hold a path or a host address, which their names may make
+        // look like a credential (FED_SIGNING_KEY is the path to our key).
+        let make = |name: &'static str, value: String, src: Source| -> Input {
+            if PATH_INPUTS.contains(&name) {
+                Input::path(name, value, src)
+            } else if ADDRESS_INPUTS.contains(&name) {
+                Input::address(name, value, src)
+            } else {
+                Input::new(name, value, src)
+            }
+        };
         let input = match (set(env, i.name), &i.value) {
-            (Some(x), _) => Input::new(i.name, x, Source::env(i.name)),
-            (None, Some(x)) => Input::new(
+            (Some(x), _) => make(i.name, x, Source::env(i.name)),
+            (None, Some(x)) => make(
                 i.name,
                 x.clone(),
                 classify(repo, &d, &edge_group, &i.source),
@@ -314,7 +325,7 @@ pub fn inputs(repo: &Path, o: &Options, env: Env) -> Result<Vec<Input>> {
         .find(|i| i.name == "FED_ROUTER_DOCKER_HOST")
         .and_then(|i| i.value().map(String::from))
     {
-        v.push(Input::new(
+        v.push(Input::address(
             "DOCKER_HOST",
             h,
             Source::derived("FED_ROUTER_DOCKER_HOST (above)", "phase 3's DOCKER_HOST"),
@@ -325,6 +336,20 @@ pub fn inputs(repo: &Path, o: &Options, env: Env) -> Result<Vec<Input>> {
     allocated(repo, &d, &cfg_dir, peering, &mut v)?;
     Ok(v)
 }
+
+/// Phase 1's inputs that hold a path: kept as they are, whatever their names.
+const PATH_INPUTS: &[&str] = &[
+    "FED_SIGNING_KEY",
+    "FED_CA_CERT",
+    "FED_CA_KEY",
+    "FED_CA_KEY_AGE",
+    "FED_AGE_IDENTITY",
+    "FED_DECLARATION",
+    "SSL_CERT_FILE",
+];
+
+/// Phase 1's inputs that hold a host address built from the inventory.
+const ADDRESS_INPUTS: &[&str] = &["FED_ROUTER_DOCKER_HOST"];
 
 /// A phase-1 input's source, from the words preflight.rs and declared.rs give
 /// it, as a structured [`Source`] with the line where there is one.
