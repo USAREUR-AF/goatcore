@@ -21,6 +21,7 @@ from __future__ import annotations
 import copy
 import importlib.util
 import json
+import re
 import os
 import unittest
 
@@ -387,8 +388,54 @@ class RefreshRecordsOnlyThePublishedBinary(unittest.TestCase):
 
     def test_the_kept_baseline_is_the_pinned_published_binary(self):
         b = compat.Baseline(HERE)
-        pins = compat.load_pins(HERE)
+        pins = compat.load_pins(REPO)
         self.assertEqual(pins[(b.release, b.meta["binary"])], b.meta["binary_sha256"])
+
+    def test_refresh_never_writes_the_pin_list(self):
+        before = open(os.path.join(REPO, compat.PINS), "rb").read()
+        compat.refresh(REPO, self.root, "goatbuilder/v0.5.1", self.bin, sums=self.sums("f" * 64))
+        self.assertEqual(open(os.path.join(REPO, compat.PINS), "rb").read(), before)
+
+
+class OnePinList(unittest.TestCase):
+    """compat and the upgrade tests (gate E1 to E3) read one list of published checksums.
+
+    crates/goatbuilder/tests/upgrade/releases.sha256 is that list. fetch.sh reads
+    it with `read -r want path` (any whitespace), released.rs with
+    `split_once("  ")` (exactly two spaces), compat with load_pins: all three
+    must read the same thing, so every line has exactly the shape SHA256SUMS writes.
+    """
+
+    LINE = re.compile(r"^[0-9a-f]{64}  v\d+\.\d+\.\d+/goatbuilder-(linux|darwin)-(amd64|arm64)$")
+
+    def lines(self):
+        with open(os.path.join(REPO, compat.PINS)) as f:
+            return [l.rstrip("\n") for l in f if l.strip() and not l.startswith("#")]
+
+    def test_the_list_is_the_upgrade_tests_and_compat_keeps_none_of_its_own(self):
+        self.assertEqual(compat.PINS, "crates/goatbuilder/tests/upgrade/releases.sha256")
+        self.assertFalse(os.path.exists(os.path.join(HERE, "releases.sha256")))
+
+    def test_every_line_has_the_shape_both_readers_accept(self):
+        lines = self.lines()
+        self.assertTrue(lines)
+        for l in lines:
+            self.assertRegex(l, self.LINE)
+        paths = [l.split("  ", 1)[1] for l in lines]
+        self.assertEqual(len(paths), len(set(paths)), "a path is pinned twice")
+
+    def test_fetch_sh_released_rs_and_compat_read_the_same_pins(self):
+        lines = self.lines()
+        as_fetch = {}
+        as_released = {}
+        for l in lines:
+            want, path = l.split(None, 1)  # read -r want path
+            as_fetch[path.strip()] = want
+            sha, p = l.split("  ", 1)  # split_once("  ")
+            as_released[p] = sha
+        as_compat = {f"{tag.split('/', 1)[1]}/{asset}": sha for (tag, asset), sha in compat.load_pins(REPO).items()}
+        self.assertEqual(as_fetch, as_released)
+        self.assertEqual(as_compat, as_released)
 
 
 @unittest.skipUnless(os.environ.get("GOATBUILDER_BIN"), "set GOATBUILDER_BIN to a built goatbuilder")

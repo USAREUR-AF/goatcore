@@ -30,7 +30,7 @@ the documents from the released binary and the error codes from the catalog at
 the tag. It refuses a binary whose
 SHA-256 is not the goatbuilder binary entry of the SHA256SUMS published with
 the tag (`--sums`), or that disagrees with releases.sha256 for a release
-already pinned there; `--version` alone proves nothing.
+already pinned in the upgrade tests' list (PINS); `--version` alone proves nothing.
 
 Needs PyYAML.
 """
@@ -398,11 +398,13 @@ def check_all(repo: str, root: str, binary: str, only=("surface", "documents", "
     """Rows of (ok, surface, item, detail)."""
     b = Baseline(root)
     rows = []
-    pinned = load_pins(root).get((b.release, b.meta.get("binary")))
+    pinned = load_pins(repo).get((b.release, b.meta.get("binary")))
     if pinned and pinned == b.meta.get("binary_sha256"):
-        rows.append((True, "baseline", b.release, f"recorded from the published {b.meta['binary']} ({pinned[:16]}…)"))
+        rows.append((True, "baseline", b.release, f"recorded from the published {b.meta['binary']} ({pinned[:16]}…), pinned in {PINS}"))
+    elif not pinned:
+        rows.append((False, "baseline", b.release, f"{PINS} pins no {b.meta.get('binary')} of {b.release}; the upgrade tests own that file: add the release's lines there from its SHA256SUMS"))
     else:
-        rows.append((False, "baseline", b.release, f"baseline.yaml names a binary that {PINS} does not pin; rerun compat.py refresh with the release's binary and SHA256SUMS"))
+        rows.append((False, "baseline", b.release, f"baseline.yaml's binary_sha256 is not the {PINS} pin for {b.meta.get('binary')} of {b.release}; rerun compat.py refresh with the published binary and SHA256SUMS"))
     deps = b.deprecations()
     for p in deprecation_problems(deps):
         rows.append((False, "surface", "deprecations.yaml", p))
@@ -450,7 +452,12 @@ def _git(repo: str, *args: str) -> str:
     return subprocess.run(["git", "-C", repo, *args], capture_output=True, text=True, check=True).stdout
 
 
-PINS = "releases.sha256"
+# The one list of published release checksums, shared with the upgrade tests
+# (gate E1 to E3), which own it: `<sha256>  vX.Y.Z/goatbuilder-<os>-<arch>`, as
+# SHA256SUMS writes a line. compat reads it and never writes it; adding a
+# release to it is a deliberate step in the pull request that names the release
+# in the upgrade tests.
+PINS = "crates/goatbuilder/tests/upgrade/releases.sha256"
 RELEASE_BINARY = re.compile(r"^goatbuilder-(linux|darwin)-(amd64|arm64)$")
 
 
@@ -459,16 +466,19 @@ def _sha256(path: str) -> str:
         return hashlib.sha256(f.read()).hexdigest()
 
 
-def load_pins(root: str) -> dict:
-    """{(tag, file): sha256} from releases.sha256: one `<sha256>  <tag> <file>` per line."""
+def load_pins(repo: str) -> dict:
+    """{(tag, file): sha256} from the shared pin list, e.g. ("goatbuilder/v0.5.1", "goatbuilder-linux-amd64")."""
     pins = {}
-    path = os.path.join(root, PINS)
+    path = os.path.join(repo, PINS)
     if os.path.exists(path):
         with open(path) as f:
             for line in f:
-                parts = line.split()
-                if len(parts) == 3 and not line.startswith("#"):
-                    pins[(parts[1], parts[2])] = parts[0]
+                if line.startswith("#") or "  " not in line:
+                    continue
+                sha, rel = line.rstrip("\n").split("  ", 1)
+                version, _, asset = rel.partition("/")
+                if version and asset:
+                    pins[(f"goatbuilder/{version}", asset)] = sha
     return pins
 
 
@@ -511,13 +521,14 @@ def refresh(repo: str, root: str, tag: str, binary: str, sums=None) -> int:
     if not sums:
         print(f"compat: refresh needs --sums, the SHA256SUMS published with {tag}", file=sys.stderr)
         return 2
-    problem = release_binary_problem(binary, sums, tag, load_pins(root))
+    problem = release_binary_problem(binary, sums, tag, load_pins(repo))
     if problem:
         print(f"compat: {problem}", file=sys.stderr)
         return 2
     name = [n for n, h in _sums_entries(sums).items() if h == _sha256(binary) and RELEASE_BINARY.match(n)][0]
     commit = _git(repo, "rev-parse", f"{tag}^{{commit}}").strip()
-    _pin(root, tag, name, _sha256(binary))
+    if (tag, name) not in load_pins(repo):
+        print(f"compat: {PINS} pins no {name} of {tag} yet; `check` refuses the baseline until the upgrade tests' owners add the release's lines from its SHA256SUMS", file=sys.stderr)
 
     b = Baseline(root)
     _refresh_last_release(repo, root, tag, binary, b)
@@ -565,19 +576,6 @@ def _refresh_last_release(repo: str, root: str, tag: str, binary: str, b: "Basel
             else:
                 yaml.safe_dump(doc, f, sort_keys=False, allow_unicode=True)
     _write_manifest(os.path.join(root, "documents", "manifest.yaml"), "documents", docs)
-
-
-def _pin(root: str, tag: str, name: str, digest: str) -> None:
-    """Record a published binary's sha256 in releases.sha256 (once)."""
-    if (tag, name) in load_pins(root):
-        return
-    path = os.path.join(root, PINS)
-    new = not os.path.exists(path)
-    with open(path, "a") as f:
-        if new:
-            f.write("# The published binaries the baseline was recorded from: <sha256>  <tag> <file>,\n"
-                    "# as each release's SHA256SUMS lists them. Written by compat.py refresh.\n")
-        f.write(f"{digest}  {tag} {name}\n")
 
 
 def _write_manifest(path: str, key, value) -> None:
