@@ -53,6 +53,7 @@ on:
       - 'docs/reference/goatbuilder/**'
       # The phase catalog the C11 conformance test reads (tests/legibility.rs).
       - 'ops/phases/catalog.yaml'
+      - 'ops/ci/check-one-door-allow-shrinks.py'
       # The scripts avenue (ADR 1201): a change to a script, a parity gate or the
       # tools both avenues call must run the gates too, or "both avenues identical"
       # is only ever checked when the binary changes.
@@ -161,6 +162,12 @@ jobs:
         run: cargo test -p goatbuilder --bins --test cli_golden --test tutor --test bound_not_a_tty --test update --test federate_verbs --test legibility --test legibility_one_door
       - name: cargo test -p goat-fun (the shared hidden runner, goat and goatbuilder bound) and goat-federation (the verbs goatbuilder runs)
         run: cargo test -p goat-fun -p goat-selfupdate -p goat-federation
+      - name: The one-door allow-list only shrinks, against the pull request's base
+        working-directory: ${{ github.workspace }}
+        run: |
+          python3 ops/ci/check-one-door-allow-shrinks.py --self-test
+          git fetch --no-tags --depth=1 origin "${{ github.base_ref }}"
+          python3 ops/ci/check-one-door-allow-shrinks.py --base FETCH_HEAD
       - name: cargo test (whole-flow integration; a skipped flow fails the job)
         run: |
           set -o pipefail
