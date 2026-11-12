@@ -367,8 +367,9 @@ accept_hz                = 100
 accept_bytes_per_message = 1048576
 accept_distinct_keys     = 5000
 TOML
-  mkdir -p "$RECORD/operator-input"
-  cp "$c/ops/goatbuilder/goatbuilder.yaml" "$c/ops/federation/$A/federation.toml" "$RECORD/operator-input/"
+  # Each side's input under its own name: both sides are declared into this one record.
+  mkdir -p "$RECORD/operator-input/$A"
+  cp "$c/ops/goatbuilder/goatbuilder.yaml" "$c/ops/federation/$A/federation.toml" "$RECORD/operator-input/$A/"
   git -C "$c" add -A && git -C "$c" commit -q -m "$A: declare the peering with $B"
   git -C "$c" push -q origin HEAD:main
   host_exec "$h" git -C /opt/goat pull -q --ff-only origin main
