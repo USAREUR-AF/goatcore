@@ -24,6 +24,7 @@ mod federate;
 mod fresh;
 mod fun;
 mod i18n;
+mod inputs;
 mod inspect;
 mod joinnode;
 mod output;

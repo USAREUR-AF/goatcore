@@ -195,6 +195,68 @@ pub fn derive(
     edge_group: &str,
     core_group: &str,
 ) -> Result<Option<PeeringHosts>> {
+    Ok(derive_at(repo, cfg, p, edge_group, core_group)?.map(|f| f.hosts))
+}
+
+/// The machines [`derive`] took, and where: the inventory file, and each
+/// machine's group, inventory name and line there.
+#[derive(Debug, Clone)]
+pub struct Found {
+    pub hosts: PeeringHosts,
+    pub file: String,
+    pub edge: (String, Machine, Option<usize>),
+    pub core: (String, Machine, Option<usize>),
+}
+
+impl Found {
+    /// `hosts.edge`, `hosts.core` and `hosts.user`, each derived from its
+    /// inventory line.
+    pub fn inputs(&self) -> Vec<crate::inputs::Input> {
+        use crate::inputs::{Input, Source};
+        let from = |(g, m, line): &(String, Machine, Option<usize>)| {
+            format!(
+                "{}{} [{g}] {}",
+                self.file,
+                line.map(|n| format!(":{n}")).unwrap_or_default(),
+                m.name
+            )
+        };
+        let rule =
+            "the one machine of the site class's group: its ansible_host, else its inventory name";
+        let mut v = vec![
+            Input::new(
+                "hosts.edge",
+                self.hosts.edge.clone(),
+                Source::derived(from(&self.edge), rule),
+            ),
+            Input::new(
+                "hosts.core",
+                self.hosts.core.clone(),
+                Source::derived(from(&self.core), rule),
+            ),
+        ];
+        if let Some(u) = &self.hosts.user {
+            v.push(Input::new(
+                "hosts.user",
+                u.clone(),
+                Source::derived(
+                    format!("{} and {}", from(&self.edge), from(&self.core)),
+                    "their one ansible_user",
+                ),
+            ));
+        }
+        v
+    }
+}
+
+/// [`derive`], with where each machine was found.
+pub fn derive_at(
+    repo: &Path,
+    cfg: &Config,
+    p: &Peering,
+    edge_group: &str,
+    core_group: &str,
+) -> Result<Option<Found>> {
     if p.hosts.is_some() || hand_written_defines(repo, &[edge_group, core_group]) {
         return Ok(None);
     }
@@ -233,9 +295,9 @@ pub fn derive(
             ));
         }
     };
-    let one = |ms: &[(String, Machine)], class: &str| -> Result<Machine> {
+    let one = |ms: &[(String, Machine)], class: &str| -> Result<(String, Machine)> {
         match ms {
-            [(_, m)] => Ok(m.clone()),
+            [(g, m)] => Ok((g.clone(), m.clone())),
             [] => Err(refuse(
                 p,
                 &looked,
@@ -254,7 +316,7 @@ pub fn derive(
             )),
         }
     };
-    let (e, c) = (one(edges, &p.edge_class)?, one(cores, &core)?);
+    let ((eg, e), (cg, c)) = (one(edges, &p.edge_class)?, one(cores, &core)?);
     if e.user != c.user {
         let who = |u: &Option<String>| u.clone().unwrap_or_else(|| "no ansible_user".into());
         return Err(refuse(
@@ -268,10 +330,24 @@ pub fn derive(
         ));
     }
     let user = e.user.clone();
-    Ok(Some(PeeringHosts {
-        edge: e.addr,
-        core: c.addr,
-        user,
+    let text = &files
+        .iter()
+        .find(|(f, _)| f == file)
+        .expect("found in one of the files")
+        .1;
+    let (el, cl) = (
+        crate::inputs::ini_host_line(text, &eg, &e.name),
+        crate::inputs::ini_host_line(text, &cg, &c.name),
+    );
+    Ok(Some(Found {
+        hosts: PeeringHosts {
+            edge: e.addr.clone(),
+            core: c.addr.clone(),
+            user,
+        },
+        file: file.clone(),
+        edge: (eg, e, el),
+        core: (cg, c, cl),
     }))
 }
 

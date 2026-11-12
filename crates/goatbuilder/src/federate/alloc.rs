@@ -1053,6 +1053,75 @@ pub fn summary(v: &PeeringValues) -> String {
     s
 }
 
+fn values_get(v: &PeeringValues, f: Field) -> Option<Val> {
+    let s = |x: &str| (!x.is_empty()).then(|| Val::S(x.to_string()));
+    let n = |x: u16| (x != 0).then_some(Val::P(x));
+    match f {
+        Field::WgInterface => s(&v.wg_interface),
+        Field::WgListenPort => n(v.wg_listen_port),
+        Field::PublicPort => v.public_port.map(Val::P),
+        Field::LinkSubnet => s(&v.link_subnet),
+        Field::EdgeListenPort => n(v.edge_listen_port),
+        Field::RepublisherMetricsPort => n(v.republisher_metrics_port),
+        Field::SpireOutboundPort => n(v.spire_outbound_port),
+        Field::CertDir => s(&v.cert_dir),
+        Field::EdgeGroup => s(&v.edge_group),
+        Field::CoreGroup => s(&v.core_group),
+        Field::EdgeHostName => s(&v.edge_host_name),
+        Field::CoreHostName => s(&v.core_host_name),
+        Field::CarrierInterface => v.carrier_interface.clone().map(Val::S),
+        Field::CarrierListenPort => v.carrier_listen_port.map(Val::P),
+        Field::CarrierPort => v.carrier_port.map(Val::P),
+        Field::CarrierSubnet => v.carrier_subnet.clone().map(Val::S),
+    }
+}
+
+/// Every allocated value of one peering with where it came from, in field
+/// order, by the order allocation itself applies (one owner per field): a pin
+/// (`pinned(field)` names its line in goatbuilder.yaml), else the record's entry
+/// (`record` is its path as shown, `record_text` its text, for the line), else
+/// a fresh allocation not yet recorded.
+pub fn field_sources(
+    p: &Peering,
+    v: &PeeringValues,
+    ctx: &AllocContext,
+    pinned: &dyn Fn(&str) -> crate::inputs::Source,
+    record: &str,
+    record_text: &str,
+) -> Vec<(&'static str, String, crate::inputs::Source)> {
+    use crate::inputs::{yaml_line, Seg, Source};
+    let k = key(p);
+    let entry = ctx.record.peerings.get(&k);
+    FIELDS
+        .iter()
+        .copied()
+        .filter_map(|f| {
+            let val = values_get(v, f)?;
+            let src = if pins_get(&p.values, f).is_some() {
+                pinned(f.name())
+            } else if entry.and_then(|e| pins_get(e, f)).is_some() {
+                Source::Allocated {
+                    record: record.to_string(),
+                    field: format!("{k}.{}", f.name()),
+                    recorded: true,
+                    line: yaml_line(
+                        record_text,
+                        &[Seg::Key("peerings"), Seg::Key(&k), Seg::Key(f.name())],
+                    ),
+                }
+            } else {
+                Source::Allocated {
+                    record: record.to_string(),
+                    field: format!("{k}.{}", f.name()),
+                    recorded: false,
+                    line: None,
+                }
+            };
+            Some((f.name(), val.show(), src))
+        })
+        .collect()
+}
+
 /// The set of field names (the pins' keys and the schema's `values:` keys).
 #[cfg(test)]
 pub fn field_names() -> std::collections::BTreeSet<&'static str> {

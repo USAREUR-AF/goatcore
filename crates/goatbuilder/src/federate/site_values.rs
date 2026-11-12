@@ -33,13 +33,66 @@ use serde_yaml::Value;
 
 use super::alloc::PeeringValues;
 use crate::config::Peering;
+use crate::inputs::Source;
 
-/// One required value: the variable, and where it came from.
+/// One required value: the variable, and where it came from (`from`, the words
+/// the rendered half writes above it; `source`, the same as a structured
+/// source with its line).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Site {
     pub var: &'static str,
     pub value: Value,
     pub from: String,
+    pub source: Source,
+}
+
+/// `key` in the YAML file `rel` (relative to `repo`), at its line.
+fn file_source(repo: &Path, rel: &str, path: &[crate::inputs::Seg], key: &str) -> Source {
+    let text = std::fs::read_to_string(repo.join(rel)).unwrap_or_default();
+    Source::file(rel, crate::inputs::yaml_line(&text, path), key)
+}
+
+fn key_source(repo: &Path, rel: &str, key: &str) -> Source {
+    file_source(repo, rel, &[crate::inputs::Seg::Key(key)], key)
+}
+
+/// The hand-written group_vars reader the rendered halves use: `var` in the
+/// files of each of `groups`, then `all` (`group_vars/<g>.yml|.yaml` and every
+/// YAML file of `group_vars/<g>/`, the last in name order winning, a generated
+/// file skipped), as (value, the file relative to the checkout).
+pub fn hand_reader<'a>(
+    repo: &'a Path,
+    groups: &'a [String],
+) -> impl Fn(&str) -> Option<(Value, String)> + 'a {
+    move |var: &str| {
+        let files = |g: &str| -> Vec<std::path::PathBuf> {
+            let gv = repo.join("ops/ansible/group_vars");
+            let mut out: Vec<std::path::PathBuf> = std::fs::read_dir(gv.join(g))
+                .map(|it| it.flatten().map(|e| e.path()).collect())
+                .unwrap_or_default();
+            for ext in ["yml", "yaml"] {
+                out.push(gv.join(format!("{g}.{ext}")));
+            }
+            out.retain(|f| {
+                matches!(f.extension().and_then(|e| e.to_str()), Some("yml" | "yaml"))
+                    && std::fs::read_to_string(f)
+                        .map(|t| !t.starts_with(super::peering_files::MARKER))
+                        .unwrap_or(false)
+            });
+            out.sort();
+            out
+        };
+        let read = |f: &Path| -> Option<(Value, String)> {
+            let v: Value = serde_yaml::from_str(&std::fs::read_to_string(f).ok()?).ok()?;
+            let rel = f.strip_prefix(repo).unwrap_or(f).display().to_string();
+            v.get(var).cloned().map(|v| (v, rel))
+        };
+        groups
+            .iter()
+            .map(String::as_str)
+            .chain(["all"])
+            .find_map(|g| files(g).iter().rev().find_map(|f| read(f)))
+    }
 }
 
 /// Everything read for the peering's environment: the group names (then
@@ -65,9 +118,10 @@ fn pinned_image(v: &Value) -> Option<String> {
 /// A pin as a play would read it: the hand-written group_vars, else the one
 /// role default that sets it, else the fleet-pins component whose `var:` it is
 /// (the environment's deviation, else `fleet:`). `looked` collects each place.
-fn pin(s: &Scope, var: &str, looked: &mut Vec<String>) -> Option<(Value, String)> {
+fn pin(s: &Scope, var: &str, looked: &mut Vec<String>) -> Option<(Value, String, Source)> {
     if let Some((v, f)) = (s.hand)(var) {
-        return Some((v, f));
+        let src = key_source(s.repo, &f, var);
+        return Some((v, f, src));
     }
     looked.push(format!(
         "{var} in group_vars of {} or all",
@@ -87,10 +141,9 @@ fn pin(s: &Scope, var: &str, looked: &mut Vec<String>) -> Option<(Value, String)
             })
             .unwrap_or_default();
         if let [(role, image)] = hits.as_slice() {
-            return Some((
-                Value::String(image.clone()),
-                format!("ops/ansible/roles/{role}/defaults/main.yml"),
-            ));
+            let file = format!("ops/ansible/roles/{role}/defaults/main.yml");
+            let src = key_source(s.repo, &file, var);
+            return Some((Value::String(image.clone()), file, src));
         }
     }
     looked.push(format!(
@@ -122,11 +175,33 @@ fn pin(s: &Scope, var: &str, looked: &mut Vec<String>) -> Option<(Value, String)
         .unwrap_or("");
     let (v, dev) = crate::pins::resolve(spec, member, env);
     let image = v.and_then(|v| v.as_str().map(String::from))?;
-    let at = match dev {
-        Some(_) => format!("ops/pins/fleet-pins.yaml components.{name} deviation"),
-        None => format!("ops/pins/fleet-pins.yaml components.{name}.fleet"),
+    let table_rel = table
+        .strip_prefix(s.repo)
+        .unwrap_or(&table)
+        .display()
+        .to_string();
+    let (at, src) = match dev {
+        Some(_) => (
+            format!("ops/pins/fleet-pins.yaml components.{name} deviation"),
+            Source::derived(
+                format!("{table_rel} components.{name}"),
+                format!("its deviation for environment {env}"),
+            ),
+        ),
+        None => {
+            use crate::inputs::Seg::Key;
+            (
+                format!("ops/pins/fleet-pins.yaml components.{name}.fleet"),
+                file_source(
+                    s.repo,
+                    &table_rel,
+                    &[Key("components"), Key(name), Key("fleet")],
+                    &format!("components.{name}.fleet"),
+                ),
+            )
+        }
     };
-    Some((Value::String(image), at))
+    Some((Value::String(image), at, src))
 }
 
 fn groups_text(groups: &[String]) -> String {
@@ -247,7 +322,12 @@ pub fn phase8_core_cn(
 
 /// A port as a play reads it: `var` in the hand-written group_vars of the
 /// environment's groups or all, else the `role`'s default.
-fn role_port(s: &Scope, var: &str, role: &str, looked: &mut Vec<String>) -> Option<(u16, String)> {
+fn role_port(
+    s: &Scope,
+    var: &str,
+    role: &str,
+    looked: &mut Vec<String>,
+) -> Option<(u16, String, Source)> {
     let num = |v: &Value| -> Option<u16> {
         v.as_u64()
             .and_then(|n| u16::try_from(n).ok())
@@ -255,7 +335,8 @@ fn role_port(s: &Scope, var: &str, role: &str, looked: &mut Vec<String>) -> Opti
     };
     if let Some((v, f)) = (s.hand)(var) {
         if let Some(p) = num(&v) {
-            return Some((p, f));
+            let src = key_source(s.repo, &f, var);
+            return Some((p, f, src));
         }
     }
     let file = format!("ops/ansible/roles/{role}/defaults/main.yml");
@@ -265,23 +346,47 @@ fn role_port(s: &Scope, var: &str, role: &str, looked: &mut Vec<String>) -> Opti
     ));
     let doc: Value =
         serde_yaml::from_str(&std::fs::read_to_string(s.repo.join(&file)).ok()?).ok()?;
-    num(doc.get(var)?).map(|p| (p, file))
+    let src = key_source(s.repo, &file, var);
+    num(doc.get(var)?).map(|p| (p, file, src))
 }
 
 /// The core router's listen port: `goat_zenoh_listen_port` in group_vars, else
 /// the `goat-zenoh` role default.
-fn core_port(s: &Scope, looked: &mut Vec<String>) -> Option<(u16, String)> {
+fn core_port(s: &Scope, looked: &mut Vec<String>) -> Option<(u16, String, Source)> {
     role_port(s, "goat_zenoh_listen_port", "goat-zenoh", looked)
 }
 
 /// The required site values, each from its owner; `Err` lists what could not be
 /// derived and every place that was read for it.
 pub fn required(s: &Scope) -> Result<Vec<Site>, Vec<(&'static str, Vec<String>)>> {
+    let (out, missing) = required_all(s);
+    if missing.is_empty() {
+        Ok(out)
+    } else {
+        Err(missing)
+    }
+}
+
+/// [`required`], with both what was derived and what was not, for listing
+/// every value with its source (`goatbuilder inputs`).
+pub fn required_all(s: &Scope) -> (Vec<Site>, Vec<(&'static str, Vec<String>)>) {
     let mut out = Vec::new();
     let mut missing: Vec<(&'static str, Vec<String>)> = Vec::new();
-    let mut put = |var: &'static str, got: Option<(Value, String)>, looked: Vec<String>| match got {
-        Some((value, from)) => out.push(Site { var, value, from }),
-        None => missing.push((var, looked)),
+    let mut put =
+        |var: &'static str, got: Option<(Value, String, Source)>, looked: Vec<String>| match got {
+            Some((value, from, source)) => out.push(Site {
+                var,
+                value,
+                from,
+                source,
+            }),
+            None => missing.push((var, looked)),
+        };
+    // A value the hand-written group_vars set, at its line.
+    let hand = |var: &str| -> Option<(Value, String, Source)> {
+        let (v, f) = (s.hand)(var)?;
+        let src = key_source(s.repo, &f, var);
+        Some((v, f, src))
     };
 
     // The core's address and port: the republisher's endpoint and the SPIRE server.
@@ -290,20 +395,20 @@ pub fn required(s: &Scope) -> Result<Vec<Site>, Vec<(&'static str, Vec<String>)>
         "peering_spire_server_addr",
     ] {
         let mut looked = Vec::new();
-        let got = (s.hand)(var).or_else(|| {
+        let got = hand(var).or_else(|| {
             looked.push(format!(
                 "{var} in group_vars of {} or all",
                 groups_text(&s.groups)
             ));
             let (addr, from) = core_address(s.repo, s.peering, &s.values.core_group, &mut looked)?;
             if var == "peering_spire_server_addr" {
-                return Some((Value::String(addr), from));
+                let src = Source::derived(from.clone(), "the core host's address");
+                return Some((Value::String(addr), from, src));
             }
-            let (port, pfrom) = core_port(s, &mut looked)?;
-            Some((
-                Value::String(format!("tls/{addr}:{port}")),
-                format!("{from}; port {pfrom}"),
-            ))
+            let (port, pfrom, _) = core_port(s, &mut looked)?;
+            let from = format!("{from}; port {pfrom}");
+            let src = Source::derived(from.clone(), "tls/<core address>:<goat_zenoh_listen_port>");
+            Some((Value::String(format!("tls/{addr}:{port}")), from, src))
         });
         put(var, got, looked);
     }
@@ -314,23 +419,29 @@ pub fn required(s: &Scope) -> Result<Vec<Site>, Vec<(&'static str, Vec<String>)>
 
     let mut looked = Vec::new();
     let got = pin(s, "goat_zenoh_edge_image", &mut looked).or_else(|| {
-        pin(s, "zenoh_router_image", &mut looked).map(|(v, f)| {
+        pin(s, "zenoh_router_image", &mut looked).map(|(v, f, src)| {
             (
                 v,
                 format!("the fabric image the core runs (zenoh_router_image, {f})"),
+                Source::derived(
+                    src.render(),
+                    "the fabric image the core runs (zenoh_router_image)",
+                ),
             )
         })
     });
     put("goat_zenoh_edge_image", got, looked);
 
     let mut looked = Vec::new();
-    let got = (s.hand)("goat_zenoh_edge_core_cn").or_else(|| {
+    let got = hand("goat_zenoh_edge_core_cn").or_else(|| {
         looked.push(format!(
             "goat_zenoh_edge_core_cn in group_vars of {} or all",
             groups_text(&s.groups)
         ));
-        core_cn(s.repo, s.peering, &s.values.core_group, &mut looked)
-            .map(|(v, f)| (Value::String(v), f))
+        core_cn(s.repo, s.peering, &s.values.core_group, &mut looked).map(|(v, f)| {
+            let src = Source::derived(f.clone(), "the core host's one inventory name");
+            (Value::String(v), f, src)
+        })
     });
     put("goat_zenoh_edge_core_cn", got, looked);
 
@@ -338,12 +449,12 @@ pub fn required(s: &Scope) -> Result<Vec<Site>, Vec<(&'static str, Vec<String>)>
     // rendered half turns SPIRE federation on: the one extra port is this
     // peering's SPIRE bundle endpoint (goat-peering-spire asserts it is listed).
     let mut looked = Vec::new();
-    let got = (s.hand)("peering_wg_extra_ports").or_else(|| {
+    let got = hand("peering_wg_extra_ports").or_else(|| {
         looked.push(format!(
             "peering_wg_extra_ports in group_vars of {} or all",
             groups_text(&s.groups)
         ));
-        let (port, from) = role_port(
+        let (port, from, src) = role_port(
             s,
             "peering_spire_bundle_port",
             "goat-peering-spire",
@@ -352,6 +463,10 @@ pub fn required(s: &Scope) -> Result<Vec<Site>, Vec<(&'static str, Vec<String>)>
         Some((
             Value::Sequence(vec![Value::Number(port.into())]),
             format!("the SPIRE bundle endpoint port (peering_spire_bundle_port, {from})"),
+            Source::derived(
+                src.render(),
+                "[peering_spire_bundle_port], the one port the tunnel passes for SPIRE federation",
+            ),
         ))
     });
     put("peering_wg_extra_ports", got, looked);
@@ -359,18 +474,11 @@ pub fn required(s: &Scope) -> Result<Vec<Site>, Vec<(&'static str, Vec<String>)>
     // Phase 14's strict acceptance reads the edge's ACL trace (acceptance.sh:
     // the refusal of an unoffered set is recorded there, beside the allow), so
     // the rendered half turns it on unless group_vars says otherwise.
-    let got = (s.hand)("goat_zenoh_edge_acl_trace").or_else(|| {
-        Some((
-            Value::Bool(true),
-            "phase 14's strict acceptance reads the edge's ACL trace (ops/federation/standup/acceptance.sh)"
-                .to_string(),
-        ))
+    let got = hand("goat_zenoh_edge_acl_trace").or_else(|| {
+        let why = "phase 14's strict acceptance reads the edge's ACL trace (ops/federation/standup/acceptance.sh)";
+        Some((Value::Bool(true), why.to_string(), Source::default(format!("true: {why}"))))
     });
     put("goat_zenoh_edge_acl_trace", got, Vec::new());
 
-    if missing.is_empty() {
-        Ok(out)
-    } else {
-        Err(missing)
-    }
+    (out, missing)
 }

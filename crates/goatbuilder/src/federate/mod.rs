@@ -369,7 +369,7 @@ fn plan_with(repo: &Path, o: &Options, work: &str, edge_group: &str, resume: &st
 /// goat context the verbs read (`federation.toml`, found as `verbs::resolve_site`
 /// finds it), else `sovereign_id` of our half, `<work>/ours.canonical.json`.
 /// None when neither names a well-formed id.
-fn our_id(work: &str) -> Option<String> {
+pub(crate) fn our_id(work: &str) -> Option<String> {
     let well_formed = |s: &String| {
         (2..=32).contains(&s.len()) && s.starts_with(|c: char| c.is_ascii_lowercase() || c.is_ascii_digit()) && s.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
     };
