@@ -71,11 +71,19 @@ pair_persistent_reception() {
   for s in "$first" "$second"; do
     them="$(other "$s")"; nonce="pr$(date +%s)$RANDOM"
     edge_before="$(docker exec "$HP-$them-edge" docker inspect -f '{{.State.StartedAt}}' "goat-zenoh-edge-$s" 2>/dev/null)"
-    docker exec "$HP-$them-core" docker restart "$them-zenoh-router" >/dev/null 2>&1 || true
+    rec "s$n-$them-core-router-restarted" -- docker exec "$HP-$them-core" docker restart "$them-zenoh-router"
     rec "s$n-$s-to-$them-stored-after-the-receiving-core-restarts" -- bash -c \
       "for _ in \$(seq 1 60); do curl -s -m 2 -o /dev/null 'http://$(core_ip "$them"):8000/@/**' && break; sleep 1; done
        put_release $s all $them $nonce >/dev/null; for _ in \$(seq 1 60); do v=\$(stored_at $them from/$s/all/$nonce); [ \"\$v\" = $nonce ] && { echo stored after the core restart: \$v; exit 0; }; sleep 1; done
-       echo 'not stored at $them after its core restarted (edge not restarted): from/$s/all/$nonce'; exit 1"
+       echo 'not stored at $them after its core restarted (edge not restarted): from/$s/all/$nonce'
+       echo '--- the receiving core, its sessions and storages (admin space):'
+       curl -s -m 5 'http://$(core_ip "$them"):8000/@/*/router' | head -c 4000; echo
+       curl -s -m 5 'http://$(core_ip "$them"):8000/@/*/router/status/plugins/storage_manager/storages/*' | head -c 2000; echo
+       echo '--- the receiving edge router, its last log lines:'
+       docker exec $HP-$them-edge docker logs --tail 40 goat-zenoh-edge-$s 2>&1 | cut -c1-300
+       echo '--- the receiving core router, its last log lines:'
+       docker exec $HP-$them-core docker logs --tail 40 $them-zenoh-router 2>&1 | cut -c1-300
+       exit 1"
     edge_after="$(docker exec "$HP-$them-edge" docker inspect -f '{{.State.StartedAt}}' "goat-zenoh-edge-$s" 2>/dev/null)"
     rec "s$n-$them-edge-was-not-restarted" --expect-in "$edge_before" -- echo "edge router goat-zenoh-edge-$s started at $edge_after (before the core restart: $edge_before)"
   done
