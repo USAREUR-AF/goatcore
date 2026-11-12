@@ -46,6 +46,10 @@ pub const ROUTER_FLAG: &str = "--router-container";
 pub const ROUTER_KNOB: &str =
     "--router-container (FED_ROUTER_CONTAINER for goatbuilder federate <partner>)";
 
+/// The schema of the file phase 3's edge half is carried in, from the edge
+/// driver to the controller.
+pub const EDGE_HALF_SCHEMA: &str = "goatbuilder.phase3-edge-half/v1";
+
 /// The container runtimes asked on the core host, in order.
 const RUNTIMES: &[&str] = &["docker", "podman"];
 
@@ -695,6 +699,20 @@ pub struct MeasureArgs {
     /// the core host's variables give, else the one discovery finds there).
     #[arg(long = "router-container", value_name = "NAME", global = true)]
     pub router_container: Option<String>,
+    /// init --over-ssh: measure one half of phase 3 on this machine, for a
+    /// peering no one machine reaches both hosts of
+    /// (docs/design/federation-two-drivers.md): `edge` measures only the edge
+    /// and writes the result to --half-out; `core` measures only the core,
+    /// joins the edge half read from --edge-half, and builds the package.
+    /// Without it, both hosts are measured here, as always.
+    #[arg(long, value_name = "SIDE", value_parser = ["edge", "core"], global = true)]
+    pub side: Option<String>,
+    /// init --over-ssh --side edge: the file the edge half is written to.
+    #[arg(long, value_name = "FILE", global = true)]
+    pub half_out: Option<std::path::PathBuf>,
+    /// init --over-ssh --side core: the edge half the edge driver wrote.
+    #[arg(long, value_name = "FILE", global = true)]
+    pub edge_half: Option<std::path::PathBuf>,
 }
 
 impl MeasureArgs {
@@ -705,6 +723,9 @@ impl MeasureArgs {
             && self.edge_host.is_none()
             && self.core_host.is_none()
             && self.router_container.is_none()
+            && self.side.is_none()
+            && self.half_out.is_none()
+            && self.edge_half.is_none()
     }
 
     /// The peering to measure over SSH; `None` measures this machine. A
@@ -1384,5 +1405,81 @@ mod tests {
         let e = run_init(repo.path(), &site, &init_args(), &m, &mut out).unwrap_err();
         assert_eq!(code(&e).as_deref(), Some("GB-110"), "{e:#}");
         assert!(format!("{e:#}").contains("no_such_core"), "{e:#}");
+    }
+
+    // --- phase 3 in two halves (docs/design/federation-two-drivers.md) -------
+
+    /// An inventory whose `reachable` group is this machine and whose
+    /// `unreachable` group is a host ssh can never reach (its ProxyCommand
+    /// fails at once, so the test neither hangs nor needs a network).
+    fn split_inventory(edge_reachable: bool) -> Value {
+        let here = json!({"ansible_connection": "local", "ansible_become": false, "zenoh_stack": "gb-b10-test-no-such"});
+        let gone = json!({"ansible_host": "192.0.2.99", "ansible_user": "goat", "ansible_become": false,
+                          "ansible_ssh_common_args": "-o ProxyCommand=false"});
+        let (e, c) = if edge_reachable { (here, gone) } else { (gone, here) };
+        json!({
+            "_meta": {"hostvars": {"edge-x": e, "core-x": c}},
+            "all": {"children": ["xab_edge", "xab_core"]},
+            "xab_edge": {"hosts": ["edge-x"]},
+            "xab_core": {"hosts": ["core-x"]}
+        })
+    }
+
+    /// B10: the edge driver reaches the edge and not the core. Phase 3's edge
+    /// half runs there alone and writes its result for the controller; the
+    /// core is never asked. Today phase 3 reaches both hosts in one call, so
+    /// this run is refused (GB-111) at the core.
+    #[test]
+    fn phase_3_measures_the_edge_half_with_only_the_edge_reachable() {
+        let repo = checkout_with_inventory(&split_inventory(true));
+        let ctx = tempfile::tempdir().unwrap();
+        let site = site(ctx.path());
+        let half = ctx.path().join("edge-half.json");
+        let m = MeasureArgs {
+            over_ssh: Some("xab".into()),
+            side: Some("edge".into()),
+            half_out: Some(half.clone()),
+            ..Default::default()
+        };
+        let mut out = Vec::new();
+        let rc = run_init(repo.path(), &site, &init_args(), &m, &mut out)
+            .unwrap_or_else(|e| panic!("the edge half needs only the edge: {e:#}"));
+        assert_eq!(rc, 0);
+        let v: Value = serde_json::from_str(&std::fs::read_to_string(&half).unwrap()).unwrap();
+        assert_eq!(v["schema"], EDGE_HALF_SCHEMA);
+        assert_eq!(v["peering"], "xab");
+        assert_eq!(v["edge_host"], "edge-x");
+        assert!(v["transports"]["source"].as_str().unwrap().contains("edge-x"), "{v}");
+        let text = String::from_utf8_lossy(&out);
+        assert!(text.contains("sha256") && text.contains("--side core --edge-half"), "{text}");
+    }
+
+    /// B10: the controller reaches the core and not the edge. Phase 3's core
+    /// half measures the core alone and joins the edge half it is given; the
+    /// edge is never asked. No router runs here under the test's name, so the
+    /// core half's own refusal (GB-113, on core-x) is the proof that it got
+    /// past the edge without reaching it.
+    #[test]
+    fn phase_3_joins_an_edge_half_and_measures_the_core_with_only_the_core_reachable() {
+        let ctx = tempfile::tempdir().unwrap();
+        let site = site(ctx.path());
+        let half = ctx.path().join("edge-half.json");
+        // The edge driver's half, made where the edge is reachable.
+        let edge_repo = checkout_with_inventory(&split_inventory(true));
+        let m = MeasureArgs { over_ssh: Some("xab".into()), side: Some("edge".into()), half_out: Some(half.clone()), ..Default::default() };
+        run_init(edge_repo.path(), &site, &init_args(), &m, &mut Vec::new()).unwrap();
+        // The controller, where only the core is.
+        let repo = checkout_with_inventory(&split_inventory(false));
+        let m = MeasureArgs { over_ssh: Some("xab".into()), side: Some("core".into()), edge_half: Some(half.clone()), ..Default::default() };
+        let e = run_init(repo.path(), &site, &init_args(), &m, &mut Vec::new()).unwrap_err();
+        assert_eq!(code(&e).as_deref(), Some("GB-113"), "{e:#}");
+        assert!(format!("{e:#}").contains("core-x"), "{e:#}");
+        // An edge half for another peering, or altered, is refused before the core is asked.
+        let mut v: Value = serde_json::from_str(&std::fs::read_to_string(&half).unwrap()).unwrap();
+        v["peering"] = json!("xac");
+        std::fs::write(&half, v.to_string()).unwrap();
+        let e = run_init(repo.path(), &site, &init_args(), &m, &mut Vec::new()).unwrap_err();
+        assert_eq!(code(&e).as_deref(), Some("GB-114"), "{e:#}");
+        assert!(format!("{e:#}").contains("xac"), "{e:#}");
     }
 }
