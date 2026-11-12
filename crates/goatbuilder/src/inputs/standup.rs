@@ -146,13 +146,14 @@ pub fn site_inputs(repo: &Path, s: &Site, o: &Options, env: Env) -> Vec<Input> {
         }
     };
     v.push(Input::new("profile", s.profile.clone(), profile_src));
-    let aws = s
-        .ansible_pre
-        .split_whitespace()
+    // The word after with-aws, read as the shell reads it: a declared profile
+    // that needs quoting is passed quoted, and its value is the unquoted word.
+    let aws = shlex::split(&s.ansible_pre)
+        .unwrap_or_default()
+        .into_iter()
         .skip_while(|w| !w.ends_with("with-aws"))
         .nth(1)
-        .unwrap_or_default()
-        .to_string();
+        .unwrap_or_default();
     let aws_src = if set(env, "GOAT_AWS_PROFILE").is_some() {
         Source::env("GOAT_AWS_PROFILE")
     } else if s.lite && aws != crate::settings::aws_profile(repo) {
@@ -590,6 +591,38 @@ mod tests {
             missing.dedup();
             assert!(missing.is_empty(), "joiner={joiner} profile={profile} lite={lite} obs={obs}: values with no sourced input: {missing:?}");
         }
+    }
+
+    /// A declared AWS profile that has to be quoted on the command line is
+    /// listed as the shell reads it, not as the quoted text.
+    #[test]
+    fn a_quoted_aws_profile_is_listed_as_the_shell_reads_it() {
+        let mut s = site(false, "lan", false, false, false);
+        let profile = "p$(x) 'q\"r";
+        let quoted = format!("'{}'", profile.replace('\'', "'\\''"));
+        s.ansible_pre = format!("OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws {quoted} -- ../scripts/ansible-preflight.sh");
+        let o = Options {
+            env: "zagros",
+            site: "zagros-b",
+            profile: Some("lan"),
+            from: 1,
+            to: 14,
+            skip_obs: true,
+            obs_only: false,
+            dry_run: true,
+            parallel: false,
+            check: false,
+        };
+        let env = |_: &str| None;
+        let inputs = site_inputs(Path::new("/r"), &s, &o, &env);
+        let aws = inputs.iter().find(|i| i.name == "aws_profile").unwrap();
+        assert_eq!(aws.value(), Some(profile));
+        // And check (b)'s reading of the plan's commands finds it.
+        let words = super::super::command_values(
+            &format!("cd /r/ops/ansible && {} site.yml", s.ansible_pre),
+            &[],
+        );
+        assert!(words.contains(&(false, profile.to_string())), "{words:?}");
     }
 
     /// A credential is listed by its source and never by its value, set or not.
