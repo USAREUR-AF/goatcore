@@ -21,6 +21,7 @@ unit_main() {
   local s them h got
   got="$(sha256sum "$FE2E_UPGRADE_FROM" | cut -d' ' -f1)"
   [ "$got" = "$FE2E_UPGRADE_FROM_SHA256" ] || die "units/upgrade.sh: $FE2E_UPGRADE_FROM has sha256 $got, not the published $FE2E_UPGRADE_FROM_SHA256"
+  [ "$(sha256sum "$UP_BUILD" | cut -d' ' -f1)" != "$got" ] || die "units/upgrade.sh: the build under test is the released binary itself; nothing would be upgraded"
   # The hosts mount $GB: the released binary until the swap.
   cp "$FE2E_UPGRADE_FROM" "$WORK/goatbuilder-released"; chmod 0755 "$WORK/goatbuilder-released"
   GB="$WORK/goatbuilder-released"; export GB
@@ -44,7 +45,8 @@ unit_main() {
   oc_status "$A" "$B"; oc_status "$B" "$A"
   for s in "$A" "$B"; do
     them="$(other "$s")"; h="$(drv_host "$s")"
-    rec "up-$s-stood-up-by-the-release" --expect-in "$("$GB" --version)" -- docker exec "$h" goatbuilder --version
+    # By digest: a version string does not tell the release from a build of the same version.
+    rec "up-$s-stood-up-by-the-release" --expect-in "$FE2E_UPGRADE_FROM_SHA256" -- docker exec "$h" sha256sum /usr/local/bin/goatbuilder
     rec "up-$s-release-passed-phases-1-to-13" -- bash -c "oc_passed '$RECORD/status-$s.json' 1 2 3 4 5 6 7 8 9 10 11 12 13"
   done
   # Phase 14 by the release, each side: its result is kept beside the build's.
@@ -61,7 +63,8 @@ unit_main() {
   for s in "$A" "$B"; do replace_tools "$(drv_host "$s")" "$(goat_of "$s")" "$UP_BUILD"; done
   for s in "$A" "$B"; do
     them="$(other "$s")"; h="$(drv_host "$s")"
-    rec "up-$s-driver-runs-the-build" --expect-in "$("$UP_BUILD" --version)" -- docker exec "$h" goatbuilder --version
+    rec "up-$s-driver-runs-the-build" --expect-in "$(sha256sum "$UP_BUILD" | cut -d' ' -f1)" --expect-not-in "$FE2E_UPGRADE_FROM_SHA256" -- \
+      docker exec "$h" sha256sum /usr/local/bin/goatbuilder
     rec "up-$s-state-is-the-release-s" --expect-in "goatbuilder.federate.state/v1" -- docker exec "$h" sh -c "head -c 400 $(up_work "$them")/state.json"
   done
 
