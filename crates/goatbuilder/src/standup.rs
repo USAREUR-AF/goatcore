@@ -239,6 +239,26 @@ pub(crate) fn sh_word(v: &str) -> String {
     }
 }
 
+/// What reading a site takes from this process's environment, passed in so a
+/// test can fix it rather than read what another test is changing.
+struct SiteEnv {
+    /// `GOAT_AWS_PROFILE`, when set and not empty.
+    aws_profile: Option<String>,
+    /// The home directory a declared `~/` state directory is under.
+    home: String,
+}
+
+impl SiteEnv {
+    fn process() -> Self {
+        SiteEnv { aws_profile: std::env::var("GOAT_AWS_PROFILE").ok().filter(|s| !s.is_empty()), home: std::env::var("HOME").unwrap_or_default() }
+    }
+}
+
+#[cfg(test)]
+fn read_site_in(repo: &Path, o: &Options, _env: &SiteEnv) -> Result<Site> {
+    read_site(repo, o)
+}
+
 fn read_site(repo: &Path, o: &Options) -> Result<Site> {
     let site = o.site.to_string();
     let site_us = site.replace('-', "_");
@@ -1983,7 +2003,9 @@ mod tests {
             serde_json::to_string(profile).unwrap()
         );
         std::fs::write(dir.join("ops/goatbuilder/goatbuilder.yaml"), cfg).unwrap();
-        let home = std::env::var("HOME").unwrap();
+        // Fixed here, not read from the process: other tests change its environment.
+        let home = "/home/a-test-user".to_string();
+        let env = SiteEnv { aws_profile: None, home: home.clone() };
         let abs = |p: &str| p.strip_prefix("~/").map(|r| format!("{home}/{r}")).unwrap_or_else(|| p.to_string());
         let eval = |w: &str| {
             let out = Command::new("bash").args(["-euo", "pipefail", "-c", &format!("printf '%s' {w}")]).env("HOME", &home).output().unwrap();
@@ -1994,13 +2016,11 @@ mod tests {
         let mut seen = 0;
         for profile_name in ["lan", "internet"] {
             let o = Options { env: "dev", site: "alpha", profile: Some(profile_name), from: 1, to: 14, skip_obs: true, obs_only: false, dry_run: true, parallel: false, check: false };
-            let site = read_site(&dir, &o).unwrap();
+            let site = read_site_in(&dir, &o, &env).unwrap();
             for ph in phases_of(&plan(&dir, &site, &o, "R")) {
                 let c = &ph.cmd;
                 if let Some(w) = between(c, "../scripts/with-aws ", " -- ") {
-                    // GOAT_AWS_PROFILE, when this machine sets one, wins over the declaration.
-                    let want = std::env::var("GOAT_AWS_PROFILE").ok().filter(|v| !v.is_empty()).unwrap_or_else(|| profile.to_string());
-                    assert_eq!(eval(&w), want, "{}", ph.label);
+assert_eq!(eval(&w), profile, "{}", ph.label);
                     seen |= 1;
                 }
                 if let Some(w) = between(c, "--root-key ", " --age-identity") {
