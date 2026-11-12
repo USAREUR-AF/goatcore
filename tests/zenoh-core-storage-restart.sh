@@ -70,6 +70,31 @@ store=/var/lib/goat-zenoh/rocksdb
 # which reach the edge in a deployment through `link_protocols: ["tls"]`. The edge's
 # are roles/goat-zenoh-edge's partner-* and core-* rules with the key expressions
 # goat-federation renders for partner xaa offering `all` (render.rs:632-655).
+# ZENOH_TLS=on runs every link over mTLS with certificates minted for this run, and
+# matches each ACL subject by certificate common name, as the roles render them.
+# One test CA signs every certificate: the names are the deployment's (core-xab;
+# our edge's inward fed.xaa.xab.01 and outward fed.xab.xaa.01; core-xaa; the
+# republisher's fed.xaa.xab.republisher.01), the two-CA trust split is not.
+proto=tcp
+[ "${ZENOH_TLS:-off}" = on ] && proto=tls
+mint() { # <name>: a leaf for that common name under the run's CA
+  openssl req -newkey rsa:2048 -nodes -subj "/CN=$1" -keyout "$work/tls/$1-key.pem" -out "$work/tls/$1.csr" >/dev/null 2>&1 &&
+    printf 'subjectAltName=DNS:%s\nextendedKeyUsage=serverAuth,clientAuth\n' "$1" > "$work/tls/$1.ext" &&
+    openssl x509 -req -in "$work/tls/$1.csr" -CA "$work/tls/ca.pem" -CAkey "$work/tls/ca-key.pem" -CAcreateserial \
+      -days 2 -extfile "$work/tls/$1.ext" -out "$work/tls/$1.pem" >/dev/null 2>&1 || die "openssl could not mint $1"
+  chmod 0644 "$work/tls/$1-key.pem"
+}
+tls_conf() { # <listen name> <connect name>: the transport block, empty over tcp
+  [ "$proto" = tls ] || return 0
+  echo '  transport: { link: { tls: {'
+  echo '    root_ca_certificate: "/tls/ca.pem", enable_mtls: true, verify_name_on_connect: false,'
+  [ -n "$1" ] && echo "    listen_certificate: \"/tls/$1.pem\", listen_private_key: \"/tls/$1-key.pem\","
+  [ -n "$2" ] && echo "    connect_certificate: \"/tls/$2.pem\", connect_private_key: \"/tls/$2-key.pem\","
+  echo '  } } },'
+}
+subj() { # <id> <zid> <common name>: an ACL subject by router id, or by name over TLS
+  if [ "$proto" = tls ]; then echo "{ id: \"$1\", cert_common_names: [\"$3\"] }"; else echo "{ id: \"$1\", zids: [\"$2\"] }"; fi
+}
 CORE_ZID=a1b2c3d4e5f60718293a4b5c6d7e8f90
 EDGE_ZID=e1e2e3e4e5e6e7e8e9eaebecedeeef01
 FAR_ZID=f1f2f3f4f5f6f7f8f9fafbfcfdfeff02
@@ -90,7 +115,7 @@ core_acl() {
   acl_rule trial-peer-r-all '"egress", "ingress"' '"declare_subscriber", "query", "declare_queryable", "reply", "declare_liveliness_subscriber", "liveliness_query"' '"**", "**/@adv/**"'
   acl_rule trial-peer-deliver-all '"egress"' '"put", "delete", "liveliness_token"' '"**", "**/@adv/**"'
   echo '    ],'
-  echo "    subjects: [ { id: \"edge\", zids: [\"$EDGE_ZID\"] } ],"
+  echo "    subjects: [ $(subj edge "$EDGE_ZID" fed.xaa.xab.01) ],"
   echo '    policies: ['
   echo '      { subjects: ["edge"], rules: ["sovereign-xaa-w", "sovereign-xaa-w-interest", "fed-w-xaa", "fed-w-interest-xaa", "fed-r-xaa", "fed-r-interest-xaa", "trial-peer-r-all", "trial-peer-deliver-all"] },'
   echo '    ],'
@@ -108,14 +133,14 @@ farcore_acl() { # the partner's core (xaa): its edge, and the republisher as a c
   acl_rule trial-peer-r-all '"egress", "ingress"' '"declare_subscriber", "query", "declare_queryable", "reply", "declare_liveliness_subscriber", "liveliness_query"' '"**", "**/@adv/**"'
   acl_rule trial-peer-deliver-all '"egress"' '"put", "delete", "liveliness_token"' '"**", "**/@adv/**"'
   echo '    ],'
-  echo "    subjects: [ { id: \"edge\", zids: [\"$FAR_ZID\"] }, { id: \"republisher\", zids: [\"$CLIENT_ZID\"] } ],"
+  echo "    subjects: [ $(subj edge "$FAR_ZID" fed.xab.xaa.01), $(subj republisher "$CLIENT_ZID" fed.xaa.xab.republisher.01) ],"
   echo '    policies: ['
   echo '      { subjects: ["edge"], rules: ["fed-w-xab", "fed-w-interest-xab", "fed-r-xab", "fed-r-interest-xab", "trial-peer-r-all", "trial-peer-deliver-all"] },'
   echo '      { subjects: ["republisher"], rules: ["fed-rp-w-xab", "fed-rp-w-interest-xab", "trial-peer-r-all", "trial-peer-deliver-all"] },'
   echo '    ],'
   echo '  },'
 }
-edge_acl() { # <partner zid> <core zid or empty> <ingress> <egress> <egress interest>
+edge_acl() { # <partner zid> <core zid> <ingress> <egress> <egress interest> <partner name> <core name>
   [ "${ZENOH_ACL:-on}" = off ] && return
   echo '  access_control: { enabled: true, default_permission: "deny", rules: ['
   acl_rule partner-land '"ingress"' '"put", "delete", "liveliness_token"' "$3"
@@ -126,10 +151,10 @@ edge_acl() { # <partner zid> <core zid or empty> <ingress> <egress> <egress inte
   acl_rule core-return '"ingress", "egress"' '"put", "delete", "declare_subscriber", "query", "reply", "liveliness_token"' "$5"
   echo '    ],'
   if [ -n "$2" ]; then
-    echo "    subjects: [ { id: \"partner-peer\", zids: [\"$1\"] }, { id: \"our-core\", zids: [\"$2\"] } ],"
+    echo "    subjects: [ $(subj partner-peer "$1" "$6"), $(subj our-core "$2" "$7") ],"
     echo '    policies: [ { rules: ["partner-land", "partner-land-interest", "partner-receive", "partner-receive-interest"], subjects: ["partner-peer"] }, { rules: ["core-forward", "core-return"], subjects: ["our-core"] } ],'
   else
-    echo "    subjects: [ { id: \"partner-peer\", zids: [\"$1\"] } ],"
+    echo "    subjects: [ $(subj partner-peer "$1" "$6") ],"
     echo '    policies: [ { rules: ["partner-land", "partner-land-interest", "partner-receive", "partner-receive-interest"], subjects: ["partner-peer"] } ],'
   fi
   echo '  },'
@@ -144,7 +169,8 @@ storage() { # <name> <key_expr>: one storage entry exactly as the role renders i
   [ "${ZENOH_CORE_ZID:-pinned}" = random ] || echo "  id: \"$CORE_ZID\","
   core_acl
   echo '  timestamping: { enabled: true, drop_future_timestamp: false },'
-  echo '  listen: { endpoints: ["tcp/0.0.0.0:7447"] },'
+  echo "  listen: { endpoints: [\"$proto/0.0.0.0:7447\"] },"
+  tls_conf core-xab ""
   echo '  plugins_loading: { enabled: true, search_dirs: ["/", "/opt/zenoh/plugins"] },'
   echo '  plugins: {'
   echo '    rest: { http_port: "0.0.0.0:8000" },'
@@ -163,10 +189,12 @@ storage() { # <name> <key_expr>: one storage entry exactly as the role renders i
   echo '{'
   echo '  mode: "router",'
   echo "  id: \"$EDGE_ZID\","
-  echo '  listen: { endpoints: ["tcp/0.0.0.0:7448"] },'
-  echo "  connect: { endpoints: [\"tcp/$core:7447\"] },"
+  echo "  listen: { endpoints: [\"$proto/0.0.0.0:7448\"] },"
+  echo "  connect: { endpoints: [\"$proto/$core:7447\"] },"
+  # Presents its outward identity to the partner, its inward one to our core.
+  tls_conf fed.xab.xaa.01 fed.xaa.xab.01
   # Our edge (xab) for partner xaa: they land on from/xaa/**, receive the offered set.
-  edge_acl "$FAR_ZID" "$CORE_ZID" '"from/xaa/**"' '"from/xab/all/**", "from/xab/xaa/**"' '"from/xab/**"'
+  edge_acl "$FAR_ZID" "$CORE_ZID" '"from/xaa/**"' '"from/xab/all/**", "from/xab/xaa/**"' '"from/xab/**"' fed.xaa.xab.01 core-xab
   echo '  scouting: { gossip: { enabled: false }, multicast: { enabled: false } },'
   echo '  plugins_loading: { enabled: true, search_dirs: ["/", "/opt/zenoh/plugins"] },'
   echo '  plugins: { rest: { http_port: "0.0.0.0:8000" } },'
@@ -178,9 +206,16 @@ storage() { # <name> <key_expr>: one storage entry exactly as the role renders i
   echo '{'
   echo '  mode: "router",'
   echo "  id: \"$FAR_ZID\","
-  echo "  connect: { endpoints: [\"tcp/$edge:7448\", \"tcp/$farcore:7447\"] },"
+  # Over TLS it dials our edge with its outward identity (a per-endpoint certificate,
+  # as roles/goat-zenoh-edge renders the partner dial) and its own core with the inward one.
+  if [ "$proto" = tls ]; then
+    echo "  connect: { endpoints: [\"tls/$edge:7448#connect_certificate_file=/tls/fed.xaa.xab.01.pem;connect_private_key_file=/tls/fed.xaa.xab.01-key.pem\", \"tls/$farcore:7447\"] },"
+  else
+    echo "  connect: { endpoints: [\"tcp/$edge:7448\", \"tcp/$farcore:7447\"] },"
+  fi
+  tls_conf "" fed.xab.xaa.01
   # The partner's edge (xaa) for us (xab): the mirror image.
-  edge_acl "$EDGE_ZID" "$FARCORE_ZID" '"from/xab/**"' '"from/xaa/all/**", "from/xaa/xab/**"' '"from/xaa/**"'
+  edge_acl "$EDGE_ZID" "$FARCORE_ZID" '"from/xab/**"' '"from/xaa/all/**", "from/xaa/xab/**"' '"from/xaa/**"' fed.xab.xaa.01 core-xaa
   echo '  scouting: { gossip: { enabled: false }, multicast: { enabled: false } },'
   echo '  plugins_loading: { enabled: true, search_dirs: ["/", "/opt/zenoh/plugins"] },'
   echo '  plugins: { rest: { http_port: "0.0.0.0:8000" } },'
@@ -193,7 +228,8 @@ storage() { # <name> <key_expr>: one storage entry exactly as the role renders i
   echo '{'
   echo '  mode: "router",'
   echo "  id: \"$FARCORE_ZID\","
-  echo '  listen: { endpoints: ["tcp/0.0.0.0:7447"] },'
+  echo "  listen: { endpoints: [\"$proto/0.0.0.0:7447\"] },"
+  tls_conf core-xaa ""
   farcore_acl
   echo '  plugins_loading: { enabled: true, search_dirs: ["/", "/opt/zenoh/plugins"] },'
   echo '  plugins: { rest: { http_port: "0.0.0.0:8000" } },'
@@ -203,29 +239,39 @@ storage() { # <name> <key_expr>: one storage entry exactly as the role renders i
   echo '{'
   echo '  mode: "client",'
   echo "  id: \"$CLIENT_ZID\","
-  echo "  connect: { endpoints: [\"tcp/$farcore:7447\"] },"
+  echo "  connect: { endpoints: [\"$proto/$farcore:7447\"] },"
+  tls_conf "" fed.xaa.xab.republisher.01
   echo '  plugins_loading: { enabled: true, search_dirs: ["/", "/opt/zenoh/plugins"] },'
   echo '  plugins: { rest: { http_port: "0.0.0.0:8000" } },'
   echo '}'
 } > "$work/client.json5"
 
+if [ "$proto" = tls ]; then
+  command -v openssl >/dev/null 2>&1 || die "ZENOH_TLS=on needs openssl"
+  mkdir -p "$work/tls"
+  openssl req -x509 -newkey rsa:2048 -nodes -subj "/CN=zenoh-storage-restart test CA" -days 2 \
+    -keyout "$work/tls/ca-key.pem" -out "$work/tls/ca.pem" >/dev/null 2>&1 || die "openssl could not make the test CA"
+  for n in core-xab fed.xaa.xab.01 fed.xab.xaa.01 core-xaa fed.xaa.xab.republisher.01; do mint "$n"; done
+else
+  mkdir -p "$work/tls"
+fi
 docker network create "$net" >/dev/null || die "docker network create failed"
-docker run -d --name "$core" --network "$net" -p 127.0.0.1::8000 -e RUST_LOG=info \
+docker run -d --name "$core" --network "$net" -p 127.0.0.1::8000 -e RUST_LOG=info -v "$work/tls:/tls:ro" \
   -v "$work/core.json5:/etc/zenoh/config.json5:ro" \
   -v "$work/plugins:/opt/zenoh/plugins:ro" \
   -v "$work/rocksdb:$store" \
   "$ZENOH_IMAGE" --config /etc/zenoh/config.json5 >/dev/null || die "the core router did not start"
-docker run -d --name "$edge" --network "$net" -p 127.0.0.1::8000 -e RUST_LOG=info \
+docker run -d --name "$edge" --network "$net" -p 127.0.0.1::8000 -e RUST_LOG=info -v "$work/tls:/tls:ro" \
   -v "$work/edge.json5:/etc/zenoh/config.json5:ro" \
   "$ZENOH_IMAGE" --config /etc/zenoh/config.json5 >/dev/null || die "the edge router did not start"
-docker run -d --name "$farcore" --network "$net" -p 127.0.0.1::8000 -e RUST_LOG=info \
+docker run -d --name "$farcore" --network "$net" -p 127.0.0.1::8000 -e RUST_LOG=info -v "$work/tls:/tls:ro" \
   -v "$work/farcore.json5:/etc/zenoh/config.json5:ro" \
   "$ZENOH_IMAGE" --config /etc/zenoh/config.json5 >/dev/null || die "the partner core did not start"
 sleep 2
-docker run -d --name "$client" --network "$net" -p 127.0.0.1::8000 -e RUST_LOG=info \
+docker run -d --name "$client" --network "$net" -p 127.0.0.1::8000 -e RUST_LOG=info -v "$work/tls:/tls:ro" \
   -v "$work/client.json5:/etc/zenoh/config.json5:ro" \
   "$ZENOH_IMAGE" --config /etc/zenoh/config.json5 >/dev/null || die "the client did not start"
-docker run -d --name "$far" --network "$net" -p 127.0.0.1::8000 -e RUST_LOG=info \
+docker run -d --name "$far" --network "$net" -p 127.0.0.1::8000 -e RUST_LOG=info -v "$work/tls:/tls:ro" \
   -v "$work/far.json5:/etc/zenoh/config.json5:ro" \
   "$ZENOH_IMAGE" --config /etc/zenoh/config.json5 >/dev/null || die "the far router did not start"
 
@@ -271,6 +317,12 @@ arrives() { # <base url> <where> <key> <value> <label>: PUT there, stored at the
 via_edge() { arrives "$erest" edge "$@"; }
 via_far() { arrives "$frest" "far router" "$@"; }
 via_client() { arrives "$clrest" "partner core's client (the republisher's place)" "$@"; }
+refused() { # <key> <value> <label>: PUT at the client, never stored at the core (the ACL holds)
+  [ "${ZENOH_ACL:-on}" = off ] && return
+  put "$clrest" "$1" "$2"
+  sleep 5
+  if holds "$1" "$2"; then fail "$3: PUT $1 by the partner core's client reached our core"; else pass "$3: PUT $1 by the partner core's client is not stored at our core"; fi
+}
 
 ready
 echo "before the core restarts"
@@ -293,6 +345,7 @@ read_back from/xaa/core-after c-after "put at the core after the restart"
 via_edge from/xaa/edge-after e-after "put through the edge after the restart"
 via_far from/xaa/all/far-after f-after "put two hops out after the restart"
 via_client from/xaa/all/client-after r-after "put by a client of the partner core after the restart"
+refused from/xaa/not-offered/x n-after "a set the partner does not offer, after the restart"
 
 warns=$(docker logs "$core" 2>&1 | grep -c 'no data_info in database')
 echo "core log: $warns line(s) 'no data_info in database, however payload data exists'"
@@ -303,7 +356,7 @@ if [ "$fails" -gt 0 ]; then
   docker logs "$edge" 2>&1 | tail -n 15
   echo "far router log, last lines:"
   docker logs "$far" 2>&1 | tail -n 10
-  echo "zenoh-core-storage-restart: FAIL ($fails of 11)"
+  echo "zenoh-core-storage-restart: FAIL ($fails)"
   exit 1
 fi
 echo "zenoh-core-storage-restart: PASS"
