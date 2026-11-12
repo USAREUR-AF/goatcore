@@ -42,8 +42,15 @@ fn sha256(b: &[u8]) -> String {
 /// A surface on an ephemeral port serving `version` and `bin`; anything else
 /// is a 404. Returns the base URL.
 fn surface(version: &str, bin: Vec<u8>) -> String {
-    let asset = released::asset();
     let sum = sha256(&bin);
+    surface_claiming(version, bin, &sum)
+}
+
+/// A surface that serves `bin` but names `sum` as its SHA-256, in the
+/// `.sha256` and in SHA256SUMS: a binary that is not the one the surface
+/// vouches for.
+fn surface_claiming(version: &str, bin: Vec<u8>, sum: &str) -> String {
+    let asset = released::asset();
     let routes: Vec<(String, Vec<u8>)> = vec![
         (
             "/goatbuilder/version.json".into(),
@@ -156,6 +163,11 @@ fn version_of(i: &Install) -> String {
         .to_string()
 }
 
+/// Print a step and its whole output (shown with `--nocapture`, kept by CI's log).
+fn step(what: &str, o: &Output) {
+    println!("=== {what}\n{}", says(o));
+}
+
 fn installed(i: &Install) -> Vec<u8> {
     std::fs::read(&i.exe).unwrap()
 }
@@ -179,6 +191,10 @@ fn e3_update_moves_a_0_5_1_install_to_this_build_and_back() {
     let there = surface(&new_v, new.clone());
     if !goat_selfupdate::is_outdated(&old_v, &new_v) {
         let o = run(&i, &there, &["update"]);
+        step(
+            "there: 0.5.1 runs `update`, served a build that is not newer",
+            &o,
+        );
         assert_eq!(o.status.code(), Some(0), "{}", says(&o));
         assert_eq!(
             installed(&i),
@@ -186,6 +202,7 @@ fn e3_update_moves_a_0_5_1_install_to_this_build_and_back() {
             "a plain update to a version that is not newer installed it"
         );
         let o = run(&i, &there, &["update", "--force"]);
+        step("there: 0.5.1 runs `update --force`", &o);
         assert_eq!(
             o.status.code(),
             Some(0),
@@ -194,6 +211,10 @@ fn e3_update_moves_a_0_5_1_install_to_this_build_and_back() {
         );
     } else {
         let o = run(&i, &there, &["update"]);
+        step(
+            "there: 0.5.1 runs a plain `update`, served the newer build under test",
+            &o,
+        );
         assert_eq!(
             o.status.code(),
             Some(0),
@@ -211,6 +232,10 @@ fn e3_update_moves_a_0_5_1_install_to_this_build_and_back() {
     let back = surface(&old_v, old.clone());
     if old_v != new_v {
         let o = run(&i, &back, &["update"]);
+        step(
+            "back: the build under test runs a plain `update`, served the older 0.5.1",
+            &o,
+        );
         assert_eq!(o.status.code(), Some(0), "{}", says(&o));
         assert!(
             String::from_utf8_lossy(&o.stdout).contains("--force")
@@ -224,6 +249,10 @@ fn e3_update_moves_a_0_5_1_install_to_this_build_and_back() {
         );
     }
     let o = run(&i, &back, &["update", "--force"]);
+    step(
+        "back: the build under test runs `update --force`, served 0.5.1",
+        &o,
+    );
     assert_eq!(
         o.status.code(),
         Some(0),
@@ -308,4 +337,39 @@ fn e3_back_on_0_5_1_a_journal_from_a_later_build_is_refused_and_kept() {
             "0.5.1 rewrote a journal it cannot read"
         );
     }
+}
+
+/// A surface whose binary is not the one its checksums vouch for: `update`
+/// refuses it with a checksum mismatch, with and without `--force`, and the
+/// install stays byte for byte the released 0.5.1.
+#[test]
+fn e3_a_binary_that_does_not_match_its_checksum_is_refused_and_the_install_kept() {
+    let Some(old_bin) = released::binary("v0.5.1") else {
+        return;
+    };
+    let old = std::fs::read(&old_bin).unwrap();
+    let new = std::fs::read(env!("CARGO_BIN_EXE_goatbuilder")).unwrap();
+    let i = install_of(&old_bin);
+    // The served bytes are the build under test; the checksums name 0.5.1's.
+    let tampered = surface_claiming("99.0.0", new, &sha256(&old));
+    for args in [vec!["update"], vec!["update", "--force"]] {
+        let o = run(&i, &tampered, &args);
+        step(&format!("tampered: 0.5.1 runs `{}`", args.join(" ")), &o);
+        assert_ne!(
+            o.status.code(),
+            Some(0),
+            "{args:?} installed a binary that does not match its checksum: {}",
+            says(&o)
+        );
+        assert!(
+            says(&o).contains("checksum mismatch"),
+            "{args:?}: {}",
+            says(&o)
+        );
+        assert!(
+            installed(&i) == old,
+            "{args:?} changed the install although it refused"
+        );
+    }
+    assert_eq!(version_of(&i), "0.5.1");
 }
