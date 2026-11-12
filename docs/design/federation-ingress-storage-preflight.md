@@ -32,10 +32,16 @@ explicit operator review.
 
 The edge role reads the core router's configuration from inside its container
 using an argument-vector command (`docker exec <core> cat <path>`). The path is
-`goat_zenoh_edge_core_config_path` when set; otherwise the `-c`/`--config`
-argument the container was started with (`docker inspect`, `.Args`), so a core
-run by hand with `-c /etc/goat-core/config.json5` is read where it reads; otherwise
-the goat-zenoh role's `/etc/zenoh/config.json5`. Measured: the first separate-host
+the one the container was started with (`docker inspect`, `.Args`): `-c <path>`,
+`--config <path>`, `-c=<path>`, `-c<path>` or `--config=<path>`, so a core run by
+hand with `-c /etc/goat-core/config.json5` is read where it reads
+(`tasks/core-config-path.yml`, filter `zenoh_core_config_path`). Only a router whose
+arguments name no configuration is read at `goat_zenoh_edge_core_config_path`, or at
+the goat-zenoh role's `/etc/zenoh/config.json5` when that is unset. Nothing is
+guessed: arguments that cannot be read, a configuration argument with no usable
+path, two different paths, or an override that differs from the path the arguments
+name each refuse the check and say why (an override that differs prints both
+paths). Measured: the first separate-host
 version of this check assumed `/etc/zenoh/config.json5` and refused every such
 hand-run core on the federation test environment as unreadable. It looks for the core router on the edge host
 first (`tasks/discover-core.yml`: `goat_zenoh_edge_core_container`, else the core

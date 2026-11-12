@@ -64,39 +64,26 @@
     - goat_zenoh_edge_ingress_scope_check | default(true) | bool
     - _edge_core_container | default('') | length == 0
 
-# Where the core router reads its configuration: goat_zenoh_edge_core_config_path
-# when set, else the -c/--config argument the container was started with (a
-# hand-run core uses -c /etc/goat-core/config.json5), else the goat-zenoh role's
-# /etc/zenoh/config.json5.
-- name: edge | the arguments the core router was started with
-  ansible.builtin.command:
-    argv:
-      - docker
-      - inspect
-      - --type
-      - container
-      - --format
-      - "{% raw %}{{json .Args}}{% endraw %}"
-      - "{{ _edge_core_container }}"
-  register: _edge_ingress_core_args
-  changed_when: false
-  failed_when: false
-  check_mode: false
-  delegate_to: "{{ _edge_ingress_core_on | default('', true) or inventory_hostname }}"
+- name: edge | where the core router reads its configuration
+  ansible.builtin.include_tasks: core-config-path.yml
+  vars:
+    _edge_core_on: "{{ _edge_ingress_core_on | default('') }}"
   when:
     - goat_zenoh_edge_ingress_scope_check | default(true) | bool
     - _edge_core_container | default('') | length > 0
-    - goat_zenoh_edge_core_config_path | default('') | length == 0
 
-- name: edge | the path the core router reads its configuration from
-  ansible.builtin.set_fact:
-    _edge_ingress_core_config_path: >-
-      {{ goat_zenoh_edge_core_config_path | default('', true)
-         or ((_edge_ingress_core_args.stdout | default(''))
-             | zenoh_config_path_from_args('/etc/zenoh/config.json5')) }}
+- name: edge | refuse a core whose configuration path cannot be told
+  ansible.builtin.fail:
+    msg: >-
+      could not run: cannot tell where the core router {{ _edge_core_container }}
+      on {{ _edge_ingress_core_on | default('', true) or inventory_hostname }}
+      reads its configuration: {{ _edge_core_config_problem }}. Receive scopes
+      were not verified; set goat_zenoh_edge_ingress_scope_check: false only to
+      accept this deliberately.
   when:
     - goat_zenoh_edge_ingress_scope_check | default(true) | bool
     - _edge_core_container | default('') | length > 0
+    - _edge_core_config_problem | length > 0
 
 - name: edge | read the core storage configuration
   ansible.builtin.command:
@@ -105,7 +92,7 @@
       - exec
       - "{{ _edge_core_container }}"
       - cat
-      - "{{ _edge_ingress_core_config_path }}"
+      - "{{ _edge_core_config_path }}"
   register: _edge_ingress_core_config
   changed_when: false
   failed_when: false
@@ -124,13 +111,14 @@
     _why: "{{ (_read.stderr | default('') | trim) or (_read.msg | default('no error text')) }}"
   ansible.builtin.fail:
     msg: >-
-      could not run: could not read {{ _edge_ingress_core_config_path }} from
+      could not run: could not read {{ _edge_core_config_path }} from
       {{ _edge_core_container }} on
       {{ _edge_ingress_core_on | default('', true) or inventory_hostname }}:
       docker exec ... cat exited {{ _read.rc | default('without a status') }}
       ({{ _why | truncate(400) }}).
-      Receive scopes were not verified. Set goat_zenoh_edge_core_config_path to
-      where this core router reads its configuration if that is not it; set
+      Receive scopes were not verified. For a core router whose start arguments
+      name no configuration, set goat_zenoh_edge_core_config_path to where it
+      reads one; set
       goat_zenoh_edge_ingress_scope_check: false only to accept this deliberately.
   when:
     - goat_zenoh_edge_ingress_scope_check | default(true) | bool

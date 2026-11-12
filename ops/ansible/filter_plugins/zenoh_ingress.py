@@ -51,32 +51,63 @@ def zenoh_ingress_storage_check(text, required):
     return report
 
 
-def zenoh_config_path_from_args(text, fallback):
+ROLE_CONFIG_PATH = '/etc/zenoh/config.json5'
+
+
+def zenoh_core_config_path(text):
     """Where a zenohd container reads its configuration, from its arguments.
 
     `text` is `docker inspect --format '{{json .Args}}'`: the arguments after
-    the entrypoint, such as ["-c", "/etc/goat-core/config.json5"]. The last
-    -c/--config value wins; anything unreadable gives `fallback`.
+    the entrypoint, such as ["-c", "/etc/goat-core/config.json5"]. Accepted
+    forms: `-c <path>`, `--config <path>`, `-c=<path>`, `-c<path>` and
+    `--config=<path>`. Returns {'path', 'named', 'error'}:
+      - the arguments name one path (repeating it is fine): that path, named;
+      - they name no configuration at all: the goat-zenoh role's path, not named;
+      - anything else (unreadable arguments, a configuration argument without a
+        usable value, two different paths): no path, and the error says why.
+    A guess is never made: a router started with a configuration argument this
+    cannot read is refused, not read at the role's path.
     """
     import json
+
+    def refused(why):
+        return {'path': '', 'named': False, 'error': why}
+
     try:
         args = json.loads(text)
     except (TypeError, ValueError):
-        return fallback
-    if not isinstance(args, list):
-        return fallback
-    found = ''
-    for index, arg in enumerate(args):
-        if not isinstance(arg, str):
-            continue
-        if arg in ('-c', '--config') and index + 1 < len(args) and isinstance(args[index + 1], str):
-            found = args[index + 1]
+        return refused('its start arguments could not be read')
+    if not isinstance(args, list) or any(not isinstance(arg, str) for arg in args):
+        return refused('its start arguments are not a list of strings')
+    named = []
+    index = 0
+    while index < len(args):
+        arg = args[index]
+        value = None
+        if arg in ('-c', '--config'):
+            if index + 1 >= len(args):
+                return refused(arg + ' is its last argument, with no path after it')
+            value = args[index + 1]
+            index += 1
         elif arg.startswith('--config='):
-            found = arg[len('--config='):]
-    return found or fallback
+            value = arg[len('--config='):]
+        elif arg.startswith('-c') and not arg.startswith('--'):
+            value = arg[2:]
+            if value.startswith('='):
+                value = value[1:]
+        if value is not None:
+            if not value:
+                return refused('a configuration argument (' + arg + ') names no path')
+            named.append(value)
+        index += 1
+    if not named:
+        return {'path': ROLE_CONFIG_PATH, 'named': False, 'error': ''}
+    if len(set(named)) > 1:
+        return refused('its arguments name more than one configuration: ' + ', '.join(named))
+    return {'path': named[0], 'named': True, 'error': ''}
 
 
 class FilterModule:
     def filters(self):
         return {'zenoh_ingress_storage_check': zenoh_ingress_storage_check,
-                'zenoh_config_path_from_args': zenoh_config_path_from_args}
+                'zenoh_core_config_path': zenoh_core_config_path}

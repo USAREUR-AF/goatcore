@@ -31,22 +31,39 @@ def config(*scopes):
     }}}})
 
 
-class ConfigPathFromArgs(unittest.TestCase):
-    def path(self, text, fallback):
-        return MODULE.zenoh_config_path_from_args(text, fallback)
+class CoreConfigPath(unittest.TestCase):
+    """Where a core router reads its configuration, from its start arguments."""
 
-    def test_the_container_arguments_name_the_path(self):
-        for args, want in ((['-c', '/etc/goat-core/config.json5'], '/etc/goat-core/config.json5'),
-                           (['--config', '/etc/zenoh/config.json5'], '/etc/zenoh/config.json5'),
-                           (['--config=/srv/z.json5'], '/srv/z.json5'),
-                           (['-c', '/a', '-c', '/b'], '/b')):
+    def parse(self, args):
+        return MODULE.zenoh_core_config_path(args if isinstance(args, str) else json.dumps(args))
+
+    def test_every_form_of_the_argument_names_the_path(self):
+        for args in (['-c', '/x/c.json5'], ['--config', '/x/c.json5'], ['--config=/x/c.json5'],
+                     ['-c=/x/c.json5'], ['-c/x/c.json5'], ['--no-multicast-scouting', '-c', '/x/c.json5'],
+                     ['-c', '/x/c.json5', '--config', '/x/c.json5']):
             with self.subTest(args=args):
-                self.assertEqual(self.path(json.dumps(args), '/fallback'), want)
+                self.assertEqual(self.parse(args), {'path': '/x/c.json5', 'named': True, 'error': ''})
 
-    def test_anything_else_gives_the_fallback(self):
-        for text in ('', 'null', '[]', '["-c"]', '{"-c": "/x"}', 'not json', '[1, "-c", 2]'):
+    def test_arguments_naming_no_configuration_give_the_role_path(self):
+        for args in ([], ['--no-multicast-scouting'], ['--cfg', 'x'], ['-l', 'tcp/0.0.0.0:7447']):
+            with self.subTest(args=args):
+                self.assertEqual(self.parse(args),
+                                 {'path': '/etc/zenoh/config.json5', 'named': False, 'error': ''})
+
+    def test_a_configuration_argument_that_cannot_be_used_is_refused(self):
+        for args in (['-c'], ['--config'], ['-c', ''], ['-c='], ['--config='], ['-c', 5],
+                     ['-c', '/a', '-c', '/b'], ['--config=/a', '-c/b']):
+            with self.subTest(args=args):
+                report = self.parse(args)
+                self.assertEqual(report['path'], '')
+                self.assertTrue(report['error'])
+
+    def test_arguments_that_cannot_be_read_are_refused(self):
+        for text in ('', 'null', '{"-c": "/x"}', 'not json', '[1, 2]', '"-c /x"'):
             with self.subTest(text=text):
-                self.assertEqual(self.path(text, '/fallback'), '/fallback')
+                report = self.parse(text)
+                self.assertEqual(report['path'], '')
+                self.assertTrue(report['error'])
 
 
 class ScopeInspection(unittest.TestCase):
@@ -135,6 +152,7 @@ class RolePreflight(unittest.TestCase):
         # is the config read.
         docker.write_text('#!/bin/sh\n'
                           'if [ "$1" = ps ]; then printf "$INGRESS_PS"; exit 0; fi\n'
+                          'if [ "$1" = inspect ]; then printf "%s\\n" "${INGRESS_ARGS:-[]}"; exit 0; fi\n'
                           'printf "invoked %s\\n" "$*" >> "$INGRESS_TRACE"\n'
                           'if [ "$INGRESS_UNREADABLE" = 1 ]; then exit 1; fi\n'
                           'cat "$INGRESS_CONFIG"\n')
@@ -273,7 +291,10 @@ class CoreOnAnotherHost(unittest.TestCase):
             '  printf "eid\\tgoat-zenoh-edge-xab\\t\\n"; exit 0\n'
             'fi\n'
             'printf "%s %s\\n" "$INGRESS_HOST" "$*" >> "$INGRESS_TRACE"\n'
-            '[ "$INGRESS_HOST" = core ] && [ "$INGRESS_UNREADABLE" != 1 ] || exit 1\n'
+            '[ "$INGRESS_HOST" = core ] || exit 1\n'
+            'if [ "$1" = inspect ]; then printf "%s\\n" "$INGRESS_CORE_ARGS"; exit 0; fi\n'
+            '[ "$INGRESS_UNREADABLE" != 1 ] && [ "$4" = "$INGRESS_CORE_CONFIG_PATH" ] || {\n'
+            '  echo "cat: can\'t open \'$4\': No such file or directory" >&2; exit 1; }\n'
             'cat "$INGRESS_CONFIG"\n')
         docker.chmod(0o755)
         for host in ('edge', 'core'):
@@ -304,14 +325,17 @@ class CoreOnAnotherHost(unittest.TestCase):
         path.write_text('\n'.join(lines))
         return path
 
+    # The test environment's hand-run core: zenohd -c /etc/goat-core/config.json5.
+    HAND = (['-c', '/etc/goat-core/config.json5'], '/etc/goat-core/config.json5')
+
     def run_play(self, text, cores=('core-1',), unreadable=False,
-                 core_ps='cid\\tgoat-zenoh-router\\tzenoh-core\\n'):
+                 core_ps='cid\\tgoat-zenoh-router\\tzenoh-core\\n', core=HAND, extra=None):
         self.input.write_text(text)
         task = ROOT / 'ops/ansible/roles/goat-zenoh-edge/tasks/ingress-storage-check.yml'
         play = [{'hosts': 'xab_edge', 'gather_facts': False, 'become': False, 'vars': {
                      'goat_zenoh_edge_partner_id': 'xab',
                      'goat_zenoh_edge_ingress_scope_check': True,
-                     'goat_zenoh_edge_ingress_key_exprs': REQUIRED},
+                     'goat_zenoh_edge_ingress_key_exprs': REQUIRED, **(extra or {})},
                  'tasks': [{'ansible.builtin.include_tasks': str(task)}]}]
         path = self.root / 'play.yml'
         path.write_text(yaml.safe_dump(play, sort_keys=False))
@@ -319,6 +343,8 @@ class CoreOnAnotherHost(unittest.TestCase):
         return subprocess.run(['ansible-playbook', '-i', str(self.inventory(cores)),
                                '--limit', 'xab_edge', str(path)],
                               env={**self.env, 'INGRESS_CORE_PS': core_ps,
+                                   'INGRESS_CORE_ARGS': json.dumps(core[0]),
+                                   'INGRESS_CORE_CONFIG_PATH': core[1],
                                    'INGRESS_UNREADABLE': '1' if unreadable else '0'},
                               capture_output=True, text=True, timeout=60)
 
@@ -327,8 +353,39 @@ class CoreOnAnotherHost(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0, result.stdout)
         self.assertIn('Missing exact scopes: from/xaa/**', result.stdout)
         self.assertIn('A broad from/** store alone does not satisfy', result.stdout)
-        self.assertIn('core exec goat-zenoh-router cat /etc/zenoh/config.json5\n', self.trace.read_text())
+        self.assertIn('core exec goat-zenoh-router cat /etc/goat-core/config.json5\n', self.trace.read_text())
         self.assertNotIn('edge exec', self.trace.read_text())
+
+    def test_a_hand_run_core_on_the_core_host_is_read_at_its_own_path(self):
+        # Runs without sshd: the inspect and the read are both delegated to the
+        # core host, and the read uses the path the router was started with.
+        result = self.run_play(config(*REQUIRED))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        trace = self.trace.read_text()
+        self.assertIn('core inspect --type container --format {{json .Args}} goat-zenoh-router\n', trace)
+        self.assertIn('core exec goat-zenoh-router cat /etc/goat-core/config.json5\n', trace)
+        self.assertNotIn('edge exec', trace)
+
+    def test_an_override_that_differs_from_the_arguments_is_refused(self):
+        result = self.run_play(config(*REQUIRED),
+                               extra={'goat_zenoh_edge_core_config_path': '/etc/elsewhere.json5'})
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn('/etc/goat-core/config.json5', result.stdout)
+        self.assertIn('goat_zenoh_edge_core_config_path is /etc/elsewhere.json5', result.stdout)
+        self.assertNotIn('core exec', self.trace.read_text())
+
+    def test_an_override_names_the_path_for_a_router_whose_arguments_name_none(self):
+        result = self.run_play(config(*REQUIRED), core=([], '/srv/core.json5'),
+                               extra={'goat_zenoh_edge_core_config_path': '/srv/core.json5'})
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('core exec goat-zenoh-router cat /srv/core.json5\n', self.trace.read_text())
+
+    def test_unusable_configuration_arguments_are_refused(self):
+        result = self.run_play(config(*REQUIRED), core=(['-c'], '/etc/goat-core/config.json5'))
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn('cannot tell where the core router goat-zenoh-router on core-1 reads its'
+                      ' configuration: -c is its last argument, with no path after it', result.stdout)
+        self.assertNotIn('core exec', self.trace.read_text())
 
     def test_matching_store_on_a_separate_core_host_passes(self):
         result = self.run_play(config('from/**', *REQUIRED))
@@ -360,7 +417,7 @@ class CoreOnAnotherHost(unittest.TestCase):
     def test_unreadable_core_configuration_on_the_core_host_fails(self):
         result = self.run_play(config(*REQUIRED), unreadable=True)
         self.assertNotEqual(result.returncode, 0, result.stdout)
-        self.assertIn('could not read /etc/zenoh/config.json5 from goat-zenoh-router on core-1',
+        self.assertIn('could not read /etc/goat-core/config.json5 from goat-zenoh-router on core-1',
                       result.stdout)
         self.assertNotIn('PASS: a matching receive store', result.stdout)
 
@@ -378,9 +435,11 @@ def _free_port():
         return sock.getsockname()[1]
 
 
-@unittest.skipUnless(shutil.which('ansible-playbook') and Path('/usr/sbin/sshd').exists()
-                     and shutil.which('ssh') and shutil.which('ssh-keygen'),
-                     'ansible-playbook, sshd, ssh and ssh-keygen are required')
+def _ssh_tools():
+    return bool(shutil.which('ansible-playbook') and Path('/usr/sbin/sshd').exists()
+                and shutil.which('ssh') and shutil.which('ssh-keygen'))
+
+
 class CoreOverSsh(unittest.TestCase):
     """The core host is a real ssh target: an unprivileged sshd on loopback.
 
@@ -394,6 +453,13 @@ class CoreOverSsh(unittest.TestCase):
     """
 
     def setUp(self):
+        if not _ssh_tools():
+            # CI installs openssh-server and sets GOAT_TEST_REQUIRE_SSHD=1, so
+            # there a missing sshd fails instead of skipping quietly.
+            if os.environ.get('GOAT_TEST_REQUIRE_SSHD') == '1':
+                self.fail('GOAT_TEST_REQUIRE_SSHD=1 but ansible-playbook, /usr/sbin/sshd, ssh '
+                          'or ssh-keygen is missing')
+            self.skipTest('ansible-playbook, sshd, ssh and ssh-keygen are required')
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
@@ -530,9 +596,16 @@ class CoreOverSsh(unittest.TestCase):
         self.assertIn("No such file or directory", result.stdout)
         self.assertNotIn('storage_manager', result.stdout)
 
-    def test_an_explicit_config_path_wins_over_the_arguments(self):
+    def test_an_override_that_differs_from_the_arguments_is_refused(self):
         result = self.run_play(config(*REQUIRED), ['-c', '/etc/elsewhere.json5'],
                                '/etc/goat-core/config.json5',
+                               extra={'goat_zenoh_edge_core_config_path': '/etc/goat-core/config.json5'})
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn('/etc/elsewhere.json5', result.stdout)
+        self.assertIn('goat_zenoh_edge_core_config_path is /etc/goat-core/config.json5', result.stdout)
+
+    def test_an_override_names_the_path_for_a_router_whose_arguments_name_none(self):
+        result = self.run_play(config(*REQUIRED), [], '/etc/goat-core/config.json5',
                                extra={'goat_zenoh_edge_core_config_path': '/etc/goat-core/config.json5'})
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn('PASS: a matching receive store', result.stdout)
