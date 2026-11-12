@@ -123,6 +123,150 @@ it, and what it produces comes back to the controller before the run goes on.
    result it imported, the phase, the time and the digest. On the edge driver it shows what that
    driver ran and the hand-off it is waiting on.
 
+## The hand-off object
+
+**Plain:** every hand-off stop is also printed as one JSON object, so a script
+or a test reads the next command instead of parsing a sentence. The object
+names the phase, the machine that acts next, the exact command to run there,
+the file that command writes, and the two commands the controller runs after
+it. The sentence a person reads names the same commands.
+
+### Where it appears
+
+- **At the stop.** With `-o json`, a run that stops at a hand-off prints its
+  report with one added member, `handoff`. The stop exits 0, as a by-hand stop
+  does today (GB-192).
+- **While the run waits.** `goatbuilder federate status <partner> -o json`
+  shows the same object for that peering until the next run of the command on
+  that machine. The run writes it to the journal as the phase's last record,
+  and `status` reads it from there.
+- **At the end of an edge run.** The edge driver's `--side edge` run prints
+  the object for the way back (`run_on: "controller"`), with the result it
+  wrote and its confirm code.
+- **In the text.** The person's text prints each argv of the object, quoted
+  for a POSIX shell, on its own line. A test renders each argv the same way
+  and checks that the text holds it.
+
+Both reports are additions to existing documents (`goatbuilder.output/v1` and
+`goatbuilder.federate.status/v1`), so neither needs a new schema version.
+
+### The members
+
+```json
+{"handoff": {
+  "phase": 3,
+  "code": "GB-NNN",
+  "run_on": "edge",
+  "command": ["goatbuilder", "federate", "xab", "--side", "edge", "--from", "3", "--to", "3"],
+  "carry": [],
+  "result": "handoff/3/edge-half.json",
+  "import": ["goatbuilder", "federate", "import", "xab", "3", "{result}", "--sha256", "{code}"],
+  "then": ["goatbuilder", "federate", "xab", "--from", "3"]
+}}
+```
+
+| Member | Meaning |
+|---|---|
+| `phase` | the phase the hand-off belongs to |
+| `code` | one new catalog code, "the run is waiting on the other driver", the same for every hand-off; its number is assigned when it is built |
+| `run_on` | `edge` or `controller`: the machine that acts next |
+| `command` | what to run on `run_on` now, as an argv. `null` in the edge's way-back object, where nothing more runs on the edge |
+| `carry` | the files the controller produced that must be on the edge driver before `command` runs, each `{"file": "<path under <work>>", "sha256": "<digest>"}`; `[]` when there are none. `command` names each one with `--expect <file>=<sha256>`, so the edge driver refuses a file changed in transit |
+| `result` | the file `command` writes, as a path under the writer's `<work>`. Each driver has its own `<work>` (`--work`, else `$FED_WORK`, else `/var/lib/goat-federation/<partner>`), so the controller cannot name the edge's absolute path; the edge's way-back object adds `result_path`, the absolute path it wrote, and `result_sha256` |
+| `import` | what the controller runs to take the result in, as an argv |
+| `then` | what the controller runs after the import, as an argv: `--from N` for a *both* phase, which runs phase N's core half against the imported result (contract step 3) |
+
+Every argv element is literal except two tokens, each standing for a whole
+element:
+
+- `{result}`: where the operator put the result file on the controller;
+- `{code}`: the confirm code.
+
+The controller's own objects (the stop and `status`) carry both tokens, because
+the controller knows neither. The edge's way-back object fills `{code}` and
+keeps `{result}`.
+
+### The confirm code
+
+**Plain:** the confirm code reaches the controller only through a person, or a
+test, reading the edge driver's own output. It is never in the file and never
+in anything that travels with the file.
+
+- The edge run prints the confirm code: the first 32 hex digits of the
+  result's sha256, in groups of four. In its JSON the code is the member
+  `confirm_code` of the way-back object, and it is filled into `import`. That
+  JSON is the edge driver's screen, in another form.
+- The code never appears in `result`, in the result file, or in `carry`. A
+  code carried beside a changed file would confirm the change.
+- `import` refuses a file whose sha256 does not begin with the code given, and
+  records the full sha256 in the controller's journal as an `operator-step`
+  confirmation on phase N. `then` uses that recorded digest; the operator does
+  not type it again.
+
+A scenario that reads the code from the edge driver's JSON is reading the edge
+driver's own output, which is exactly what the binding rests on. It must not
+read the code from the controller, from the result file, or from anything
+copied with it.
+
+### Phase 3, the hand-off already built
+
+Phase 3's two halves are built at the `init` level, in review: `goatbuilder
+federate init --over-ssh <peering> --side edge --half-out <file>` writes the
+edge half (schema `goatbuilder.phase3-edge-half/v1`) and prints its sha256, its
+confirm code and the line `goatbuilder federate init --over-ssh <peering> --side
+core --edge-half <file> --edge-half-sha256 <code>`. The core half refuses a
+changed or stale half with GB-114 ([federation-router-discovery.md](federation-router-discovery.md),
+once that change is on main).
+
+The hand-off object for phase 3 is the one command wrapped around those two
+halves:
+
+- **`command`** (`--side edge --from 3 --to 3`) runs exactly the built edge
+  half, `init --over-ssh xab --side edge --half-out <work>/handoff/3/edge-half.json`,
+  with the init flags the plan gives. The file, its schema and its confirm code
+  are the built ones.
+- **`import`** checks the file with the built core half's rules (the confirm
+  code, the schema, the peering, the edge host, the 24-hour window, the
+  interface; GB-114), copies it to the controller's
+  `<work>/handoff/3/edge-half.json`, and journals its full sha256.
+- **`then`** (`--from 3`) runs exactly the built core half: `init --over-ssh xab
+  --side core --edge-half <work>/handoff/3/edge-half.json --edge-half-sha256
+  <the journaled sha256>`, with the plan's init flags. It joins, builds and
+  signs the package as the built core half does.
+
+What changes in the built code is one thing: when the edge half runs inside
+the one command, its last line names the one command's `import` and `then`
+instead of the `init --side core` line, and it prints the way-back object with
+`-o json`. `init` run on its own keeps printing what it prints today.
+
+### Each hand-off, filled in
+
+For a peering `xab` seen from `xaa`, with default working directories. Every
+`import` is `["goatbuilder", "federate", "import", "xab", "<N>", "{result}",
+"--sha256", "{code}"]` with `<N>` the phase. `carry` lists the files the
+controller made that the edge's step reads.
+
+| Phase | `run_on` | `command` | `carry` | `result` | `then` |
+|---|---|---|---|---|---|
+| 1 | edge | `["goatbuilder","federate","xab","--side","edge","--from","1","--to","1"]`: preflight's edge checks only | `[]` | `handoff/1/edge.json` (the edge checks' results) | `["goatbuilder","federate","xab","--from","1"]`: the core checks and `signing-ca`, then the join |
+| 2 | edge | `["goatbuilder","federate","xab","--side","edge","--from","2","--to","2"]`: the federation interface and its key; the edge's leaf keys and their signing requests | `[]` | `handoff/2/edge.json` (the interface's public key, and one signing request per edge leaf; no private key) | `["goatbuilder","federate","xab","--from","2"]`: the SPIRE bundle export on the SPIRE server host |
+| 3 | edge | `["goatbuilder","federate","xab","--side","edge","--from","3","--to","3"]`: the built edge half | `[]` | `handoff/3/edge-half.json` (`goatbuilder.phase3-edge-half/v1`) | `["goatbuilder","federate","xab","--from","3"]`: the built core half, then phases 4 to 10 on the controller |
+| 11 | edge | `["goatbuilder","federate","xab","--side","edge","--from","11","--to","11","--expect","agreement.json=<sha256>","--expect","applied/transport.json=<sha256>"]`: the transport | the agreement and the rendered transport files | `handoff/11/edge.json` (the interface's state and its peer) | `["goatbuilder","federate","xab","--from","12"]`: phase 11 has no core half, so the controller goes on to 12, which stops for 12's edge half |
+| 12 | edge | `["goatbuilder","federate","xab","--side","edge","--from","12","--to","12","--expect","pki/outward.pem=<sha256>", …]`: the edge router, with the leaves phase 8 signed from phase 2's requests | the edge's certificates from phase 8 and the rendered edge router files | `handoff/12/edge.json` (the edge router's running state and its configuration digest) | `["goatbuilder","federate","xab","--from","12"]`: the republisher on the core |
+| 13 | edge | `["goatbuilder","federate","xab","--side","edge","--from","13","--to","13"]`: the edge's SPIRE federation tasks | `[]` | `handoff/13/edge.json` | `["goatbuilder","federate","xab","--from","13"]`: the tasks delegated to the SPIRE server host |
+| 14 | edge | `["goatbuilder","federate","xab","--side","edge","--from","14","--to","14","--window","<start>/<end>"]`: the edge's log read for the refusal checks | `[]` | `handoff/14/edge.json` (the edge's log lines in the window) | `["goatbuilder","federate","test","xab"]`: joins the edge's lines with the core half's result and decides |
+
+Phase 14 is the one hand-off that comes after the controller has acted. The
+refusal checks need the edge's log for the time the core half fired its
+samples, so the controller runs its half first, records the window, and then
+stops with the object above, whose `command` names that window. Its `then` is
+`test`, the stage that runs phase 14 alone. Finding the imported edge lines for
+the window its own core half recorded, it joins the two and fires nothing
+again.
+
+One hand-off covers one phase. Batching consecutive edge halves (1 to 3) into
+one is not designed.
+
 ## A single hand-off at phase 8, against the code
 
 | Proposal | What the code says | In the contract |
@@ -153,7 +297,15 @@ it, and what it produces comes back to the controller before the run goes on.
   runs phase N's core half against it. Today `operator-step` is recorded only for a by-hand
   phase's stop (5, 10, phase 3's re-exchange); it has to be extended to the edge half of a *both*
   phase (1, 2, 3, 12, 13, 14).
-- The hand-off stops, each with a new catalog code and the next command.
+- The hand-off stops, with one new catalog code, and the hand-off object of "The hand-off
+  object": in the run's `-o json` report, in `status -o json` while the run waits, and on the
+  edge driver's way back, with the human text naming the same argvs and a test checking it.
+- The `import` stage word, which checks a result against its confirm code, copies it under
+  `<work>/handoff/<N>/`, and journals its sha256.
+- `--side edge` runs ending with the way-back object and its confirm code, and `--expect`
+  on the edge driver refusing a carried file whose digest differs.
+- Phase 14 split by a window: the controller's half first, then the edge's log read for that
+  window, then `test` joining the two.
 - `status` showing imported edge results.
 
 ## The scenario that proves it
@@ -168,3 +320,6 @@ phase 14. The scenario passes when:
 - the controller's journal holds every phase, with each edge result's digest;
 - a run killed during an edge half and started again with `--from` on the same machine finishes;
 - `status` on each controller shows the peering at phase 14 with its evidence.
+- each side is driven only from the hand-off objects: the scenario runs `command` on `run_on`,
+  carries `result`, reads the confirm code from the edge driver's own JSON, runs `import` and
+  `then`, and checks that the text of every stop names the same argvs.
