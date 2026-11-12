@@ -247,7 +247,11 @@ OBS_GROUP="${SITE//-/_}_obs_hosts"
 # (crate::settings), so a run resumed with the other avenue finds its files.
 # STATE_DECL keeps the `~` for the commands a phase prints and runs; STATE_DIR
 # is the same path expanded, for what this script opens itself.
-STATE_DECL="$("$REPO/ops/scripts/project-setting.sh" --repo "$REPO" deploy state_dir 2>/dev/null || true)"
+# A declared value project-setting.sh cannot read the way goatbuilder reads it
+# refuses the run (exit 3; it names the key); anything else means "undeclared".
+ps_rc=0; STATE_DECL="$("$REPO/ops/scripts/project-setting.sh" --repo "$REPO" deploy state_dir)" || ps_rc=$?
+[ "$ps_rc" != 3 ] || exit 2
+[ "$ps_rc" = 0 ] || STATE_DECL=""
 # shellcheck disable=SC2088  # the literal `~` is kept on purpose, see above
 [ -n "$STATE_DECL" ] || STATE_DECL='~/.goat/state'
 case "$STATE_DECL" in \~/*) STATE_DIR="$HOME/${STATE_DECL#\~/}" ;; *) STATE_DIR="$STATE_DECL" ;; esac
@@ -369,6 +373,15 @@ fi
 # The mgmt API is the site's public_mgmt_fqdn (a joiner's is the founder's).
 ACL_SITE="$SITE"; [ "$JOINER" = 1 ] && ACL_SITE="$JOIN_FOUNDER_SITE"
 MGMT_FQDN="$(grep -E '^[[:space:]]*public_mgmt_fqdn:' "$GV_FILE" 2>/dev/null | head -1 | awk '{print $2}' | tr -d '"'\''' || true)"
+# The group_vars values above as one shell word each in a planned command
+# (sh_quote / sh_word, as standup.rs writes them).
+ACL_SITE_Q="$(sh_quote "$ACL_SITE")"
+MGMT_URL_W="$(sh_word "https://$MGMT_FQDN")"
+JFS_Q="$(sh_quote "$JOIN_FOUNDER_SITE")"; JFG_Q="$(sh_quote "$JOIN_FOUNDER_GROUP")"; JFG_W="$(sh_word "$JOIN_FOUNDER_GROUP")"
+RELAY_HOSTS_W="$(sh_word "inventory/hosts-$JOIN_FOUNDER_SITE.ini")"
+RELAY_ALIAS_W="$(sh_word "inventory/$JOIN_FOUNDER_SITE-goat-relay-alias.ini")"
+FOUNDER_SITE_W="$(sh_word "founder_site=$JOIN_FOUNDER_SITE")"
+RELAY_MISSING_Q="$(sh_quote "founder relay inventory inventory/hosts-$JOIN_FOUNDER_SITE.ini missing — generate it first: inventory/generate-relays.sh $JOIN_FOUNDER_SITE terraform-$JOIN_FOUNDER_SITE")"
 
 # intra_site_pair: an A/B core pair runs A->B streaming replication (inside
 # site-bootstrap.yml),
@@ -663,7 +676,7 @@ step 1 GATE "every input the phases before the manual step will reach is set (on
 # goatnet has no doors.yaml entry the generator stops and says what to declare.
 # ADR 1117 / docs/design/env-doors.md. The finish gate re-asserts it (--check).
 step 1 GATE "the NetBird ACL for ${ACL_SITE:-?} is declared, with no Default All->All (ADR 1185)" \
-  "python3 '$REPO/ops/scripts/netbird-policy-posture.py' '$ACL_SITE' --declared"
+  "python3 '$REPO/ops/scripts/netbird-policy-posture.py' $ACL_SITE_Q --declared"
 step 1 GATE "establish the env-door (off-profile transport)" \
   "python3 '$REPO/ops/scripts/generate-door-inventory.py' $SITE"
 
@@ -839,7 +852,7 @@ if [ "$JOINER" = 1 ]; then
 SEED_PLAY=site-seed-from-peer.yml
 [ -f "$REPO/ops/ansible/${SITE}-seed-from-peer.yml" ] && SEED_PLAY="${SITE}-seed-from-peer.yml"
 step 6 A "[joiner] seed-from-peer (pass 2 — data-only copy from founder ${JOIN_FOUNDER_SITE:-?}; guarded)" \
-  "cd '$REPO/ops/ansible' && { [ -n '$JOIN_FOUNDER_SITE' ] || { echo 'joiner: group_vars/$GROUP/vars.yml must set join_founder_site (the founder site-id to seed from)'; exit 1; }; } && $ANSIBLE_PRE ${INV[*]} $SEED_PLAY -e site_id=$SITE"
+  "cd '$REPO/ops/ansible' && { [ -n $JFS_Q ] || { echo 'joiner: group_vars/$GROUP/vars.yml must set join_founder_site (the founder site-id to seed from)'; exit 1; }; } && $ANSIBLE_PRE ${INV[*]} $SEED_PLAY -e site_id=$SITE"
 fi
 
 # Phase 6. The rest of site-bootstrap, now that Ory is up: the account seed waits
@@ -880,7 +893,7 @@ fi
 #     the seed step above, so wiring carries incremental writes only and never truncates.
 if [ "$JOINER" = 1 ]; then
 step 6 A "[joiner] founder-side mirror (spock-mesh-wire on ${JOIN_FOUNDER_GROUP:-?}, peer=$SITE only — both-direction subscriptions)" \
-  "cd '$REPO/ops/ansible' && { [ -n '$JOIN_FOUNDER_GROUP' ] || { echo 'joiner: join_founder_site not set in group_vars/$GROUP/vars.yml'; exit 1; }; } && $ANSIBLE_PRE ${INV[*]} spock-mesh-wire.yml --limit $JOIN_FOUNDER_GROUP -e '{\"inter_site_spock_peers\":[\"$SITE\"],\"ory_spock_reconcile_history\":false}'"
+  "cd '$REPO/ops/ansible' && { [ -n $JFG_Q ] || { echo 'joiner: join_founder_site not set in group_vars/$GROUP/vars.yml'; exit 1; }; } && $ANSIBLE_PRE ${INV[*]} spock-mesh-wire.yml --limit $JFG_W -e '{\"inter_site_spock_peers\":[\"$SITE\"],\"ory_spock_reconcile_history\":false}'"
 step 6 A "[joiner] the joiner's Spock wiring again, now that the founder's half exists (Ory subscription + history reconcile)" \
   "cd '$REPO/ops/ansible' && $ANSIBLE_PRE ${INV[*]} spock-mesh-wire.yml --limit $GROUP"
 fi
@@ -955,7 +968,7 @@ fi
 #       <founder>-rathole-client.yml -e rathole_client_target=<site>_hosts
 if [ "$JOINER" = 1 ] && [ "$PROFILE" = internet ]; then
 step 7 A "[joiner] wire $SITE into the founder (${JOIN_FOUNDER_SITE:-?}) relay ingress + re-render" \
-  "cd '$REPO/ops/ansible' && { [ -n '$JOIN_FOUNDER_SITE' ] || { echo 'joiner: join_founder_site not set in group_vars/$GROUP/vars.yml'; exit 1; }; } && { ls inventory/hosts-$JOIN_FOUNDER_SITE.ini >/dev/null 2>&1 || { echo 'founder relay inventory inventory/hosts-$JOIN_FOUNDER_SITE.ini missing — generate it first: inventory/generate-relays.sh $JOIN_FOUNDER_SITE terraform-$JOIN_FOUNDER_SITE'; exit 1; }; } && $ANSIBLE_PRE -i inventory/hosts-$JOIN_FOUNDER_SITE.ini -i inventory/$JOIN_FOUNDER_SITE-goat-relay-alias.ini ${INV[*]} relay-ingress-add-site.yml -e target=goat_relay_hosts -e founder_site=$JOIN_FOUNDER_SITE -e join_site=$SITE"
+  "cd '$REPO/ops/ansible' && { [ -n $JFS_Q ] || { echo 'joiner: join_founder_site not set in group_vars/$GROUP/vars.yml'; exit 1; }; } && { ls $RELAY_HOSTS_W >/dev/null 2>&1 || { echo $RELAY_MISSING_Q; exit 1; }; } && $ANSIBLE_PRE -i $RELAY_HOSTS_W -i $RELAY_ALIAS_W ${INV[*]} relay-ingress-add-site.yml -e target=goat_relay_hosts -e $FOUNDER_SITE_W -e join_site=$SITE"
 fi
 
 # Phase 8. [internet] Mesh-enroll the hosts onto their own goatnet, scripted
@@ -1054,10 +1067,10 @@ fi
 #     token from phase 11. A joiner applies nothing: its account IS the founder's.
 if [ "$JOINER" = 0 ]; then
 step 12 A "declared NetBird ACL: groups, then policies, then enforce (one play run)" \
-  "cd '$REPO/ops/ansible' && ansible-playbook -i localhost, --connection local netbird-acl-bootstrap.yml netbird-acl-cutover.yml -e target_site=$SITE -e mode=enforce -e confirm_cutover=YES -e netbird_mgmt_url=https://$MGMT_FQDN"
+  "cd '$REPO/ops/ansible' && ansible-playbook -i localhost, --connection local netbird-acl-bootstrap.yml netbird-acl-cutover.yml -e target_site=$SITE -e mode=enforce -e confirm_cutover=YES -e netbird_mgmt_url=$MGMT_URL_W"
 fi
 step 12 GATE "the live NetBird account holds only the declared ACL for $ACL_SITE, and no All-group rule" \
-  "python3 '$REPO/ops/scripts/netbird-policy-posture.py' '$ACL_SITE' --url https://$MGMT_FQDN --token-env $(printf '%s' "${ACL_SITE//-/_}" | tr '[:lower:]' '[:upper:]')_NB_API_TOKEN"
+  "python3 '$REPO/ops/scripts/netbird-policy-posture.py' $ACL_SITE_Q --url $MGMT_URL_W --token-env $(printf '%s' "${ACL_SITE//-/_}" | tr '[:lower:]' '[:upper:]')_NB_API_TOKEN"
 
 # Phase 12. NetBird service identities (ops/netbird/service-identities.yaml). This
 #     goatnet's group_vars decide which identities it needs; mint every missing
@@ -1136,7 +1149,7 @@ elif [ "$OBS" = 1 ]; then
   OBS_SSH_TARGET="$(python3 "$REPO/ops/scripts/inventory-hosts.py" "$OBS_GROUP" --ssh-target --inventory "$REPO/ops/ansible/inventory/mgmt-hosts.ini" --inventory "$REPO/ops/ansible/inventory/mgmt-hosts-mesh.ini" 2>/dev/null | head -1)"
 step 12 T "mint the pubsub-state mirror bot on the obs host's Forgejo (once; skipped when FORGEJO_PUBSUB_TOKEN is set)" \
   "if [ -n \"\${FORGEJO_PUBSUB_TOKEN:-}\" ]; then echo '    FORGEJO_PUBSUB_TOKEN already set — bot minted; skipping'; \
-   else '$REPO/ops/scripts/forgejo-mint-pubsub-bot.sh' '$OBS_SSH_TARGET' \
+   else '$REPO/ops/scripts/forgejo-mint-pubsub-bot.sh' $(sh_quote "$OBS_SSH_TARGET") \
      && eval \"\$('$REPO/ops/scripts/envrc-var.sh' FORGEJO_PUBSUB_TOKEN)\" \
      && '$REPO/ops/scripts/standup-keep-secret' FORGEJO_PUBSUB_TOKEN \
      && echo '    token loaded from the operator envrc; the run continues'; fi"
