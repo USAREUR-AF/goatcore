@@ -41,6 +41,7 @@ units:
   nohand: {parties: "xaa xab"}
   twodrivers: {parties: "xaa xab"}
   offer: {parties: "xaa xab"}
+  backout: {parties: "xaa xab"}
 
 scenarios:
   - id: two-party-full
@@ -812,11 +813,28 @@ scenarios:
 
   - id: back-out-one-peering
     title: One of two peerings backed out while the other carries traffic
-    not_built: waits for the back-out command (the ref offers none to drive yet)
+    not_built: the two-peering form waits on back-out-to-before (B7) passing for one peering first
     pass_condition: >
       Backing out {A}-{C} removes its edge router, tunnel, republisher, core admission and
       forwarder mapping; {A}-{B} carries traffic throughout with an unchanged agreement digest.
     checks: [{id: other-unchanged, step: "bo-other-peering-unchanged"}]
+
+  - id: back-out-to-before
+    title: Backing a peering out leaves both hosts as they were before it (gate B7)
+    unit: {goatbuilder: backout}
+    runs_where: local
+    pass_condition: >
+      nothing-hand-written runs {A}'s peering with {B} to acceptance; then `goatbuilder
+      federate backout {B}` on {A} exits 0, and {A}'s edge host and core host are each equal to
+      a snapshot taken before the first phase: containers, WireGuard interfaces, nftables
+      tables, goat and peering units, the edge's and the republisher's files, the core's org
+      fragment and configuration digests, and SPIRE's federation list. A difference names what
+      the command left or what it took.
+    checks:
+      - {id: peering-accepted, step: "nh-acceptance-as-{A}-with-{B}"}
+      - {id: backout-ran, step: "bo-{A}-{B}-backout-ran"}
+      - {id: edge-as-before, step: "bo-{A}-edge-as-before"}
+      - {id: core-as-before, step: "bo-{A}-core-as-before"}
 
   - id: rollback-tools
     title: A deployment rolled back to the previous release of the tools still works
