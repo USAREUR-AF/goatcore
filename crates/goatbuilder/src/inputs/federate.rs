@@ -733,11 +733,19 @@ mod tests {
     #[test]
     fn an_operator_value_is_an_environment_override() {
         let w = world();
-        let env = |k: &str| (k == "FED_SIGNING_KEY").then(|| "/elsewhere/signing.key".to_string());
+        let key = w.repo.join("elsewhere-signing.key");
+        std::fs::write(&key, "x").unwrap();
+        let path = key.display().to_string();
+        let env = |k: &str| (k == "FED_SIGNING_KEY").then(|| path.clone());
         let inputs = inputs(&w.repo, &opts(&w, true), &env).unwrap();
         let i = inputs.iter().find(|i| i.name == "FED_SIGNING_KEY").unwrap();
-        assert_eq!(i.value(), Some("/elsewhere/signing.key"));
+        assert_eq!(i.value(), Some(path.as_str()));
         assert_eq!(i.source, Source::env("FED_SIGNING_KEY"));
+        // The key itself in the variable, not its path: held back.
+        let env = |k: &str| (k == "FED_SIGNING_KEY").then(|| "0".repeat(64));
+        let held = super::inputs(&w.repo, &opts(&w, true), &env).unwrap();
+        let i = held.iter().find(|i| i.name == "FED_SIGNING_KEY").unwrap();
+        assert!(i.secret && i.value().is_none() && i.note.is_some(), "{i:?}");
     }
 
     /// An allocated peering (`peering-values.yaml` holds it), declared

@@ -137,6 +137,9 @@ pub struct Input {
     pub source: Source,
     /// For an input nothing gave a value: where to declare it.
     pub unset: Option<String>,
+    /// Why a value is held back, when it is not a secret by name: an
+    /// environment value that was to be a path and names no file.
+    pub note: Option<String>,
 }
 
 /// Whether a name reads as a credential: its value is then never held. This
@@ -217,74 +220,91 @@ pub fn secret_name(name: &str) -> bool {
     credential && !names_a_place
 }
 
+/// Where each URL in `value` begins and ends: (index after its `://`, end),
+/// a URL running to the start of the next URL's scheme, or the value's end.
+fn url_spans(value: &str) -> Vec<(usize, usize)> {
+    let marks: Vec<usize> = value.match_indices("://").map(|(i, _)| i).collect();
+    let scheme_start = |i: usize| {
+        value[..i]
+            .rfind(|c: char| !(c.is_ascii_alphanumeric() || "+.-".contains(c)))
+            .map(|j| j + 1)
+            .unwrap_or(0)
+    };
+    marks
+        .iter()
+        .enumerate()
+        .map(|(n, &i)| {
+            (
+                i + 3,
+                marks
+                    .get(n + 1)
+                    .map(|&k| scheme_start(k))
+                    .unwrap_or(value.len()),
+            )
+        })
+        .collect()
+}
+
 /// Every URL's userinfo, and a scheme-less DSN's, removed wherever a value
 /// carries one. The whole userinfo goes, the user too, because a token is
-/// often the user (`https://ghp_x@github.com/o/r`); it runs to the last `@`
-/// of the URL, because a password may hold `/`, `#` or `?`
-/// (`postgres://u:pa/ss@h/db` becomes `postgres://<redacted>@h/db`). Every URL
-/// in the value is redacted, and a DSN word like `u:p@tcp(h:3306)/db` becomes
-/// `<redacted>@tcp(h:3306)/db`. A value with a `@` in its path loses more than
-/// it needs to; that is the safe direction.
+/// often the user (`https://ghp_x@github.com/o/r`). A URL's userinfo runs to
+/// the last `@` before the next URL's scheme (or the value's end), whatever
+/// characters the password holds (`postgres://u:p,ss@h/db` becomes
+/// `postgres://<redacted>@h/db`); a DSN word's (`u:p@ss@tcp(h:3306)/db`) to its
+/// last `@`. A value with a `@` after its host loses more than it needs to;
+/// that is the safe direction.
 pub fn redact_userinfo(value: &str) -> String {
-    // Where one URL's text ends: whitespace, a quote, a bracket or a separator,
-    // or the start of the next scheme.
-    fn url_end(after: &str) -> usize {
-        let mut end = after
-            .find(|c: char| c.is_whitespace() || "\"'<>,;".contains(c))
-            .unwrap_or(after.len());
-        if let Some(k) = after[..end].find("://") {
-            let scheme = after[..k]
-                .rfind(|c: char| !(c.is_ascii_alphanumeric() || "+.-".contains(c)))
-                .map(|j| j + 1)
-                .unwrap_or(0);
-            end = scheme;
-        }
-        end
-    }
     let mut out = String::new();
-    let mut rest = value;
-    while let Some(i) = rest.find("://") {
-        out.push_str(&rest[..i + 3]);
-        let after = &rest[i + 3..];
-        let end = url_end(after);
-        match after[..end].rfind('@') {
-            Some(at) => {
+    let mut at = 0;
+    for (start, end) in url_spans(value) {
+        out.push_str(&value[at..start]);
+        match value[start..end].rfind('@') {
+            Some(k) => {
                 out.push_str("<redacted>");
-                out.push_str(&after[at..end]);
+                out.push_str(&value[start + k..end]);
             }
-            None => out.push_str(&after[..end]),
+            None => out.push_str(&value[start..end]),
         }
-        rest = &after[end..];
+        at = end;
     }
-    out.push_str(rest);
-    // A scheme-less DSN: a word that begins `user:password@`.
-    let mut redacted = String::new();
-    let mut word = String::new();
-    let flush = |word: &mut String, into: &mut String| {
-        let dsn = !word.contains("://")
-            && word.find('@').is_some_and(|at| {
-                let who = &word[..at];
-                who.contains(':') && !who.is_empty() && !who.contains('/')
-            });
-        if dsn {
-            let at = word.find('@').expect("checked");
-            into.push_str("<redacted>");
-            into.push_str(&word[at..]);
-        } else {
-            into.push_str(word);
+    out.push_str(&value[at..]);
+    // A scheme-less DSN: a word whose part before its last `@` has a `:`.
+    out.split_inclusive(char::is_whitespace)
+        .map(|w| {
+            let body = w.trim_end();
+            match body.rfind('@') {
+                Some(k)
+                    if !body.contains("://")
+                        && body[..k].contains(':')
+                        && !body[..k].contains('/') =>
+                {
+                    format!("<redacted>{}", &w[k..])
+                }
+                _ => w.to_string(),
+            }
+        })
+        .collect()
+}
+
+/// A URL's password dropped, its user kept: `ssh://u:p@h` becomes `ssh://u@h`.
+fn drop_password(value: &str) -> String {
+    let mut out = String::new();
+    let mut at = 0;
+    for (start, end) in url_spans(value) {
+        out.push_str(&value[at..start]);
+        let span = &value[start..end];
+        match span.rfind('@') {
+            Some(k) => {
+                let user = span[..k].split(':').next().unwrap_or("");
+                out.push_str(user);
+                out.push_str(&span[k..]);
+            }
+            None => out.push_str(span),
         }
-        word.clear();
-    };
-    for c in out.chars() {
-        if c.is_whitespace() || "\"'<>,;".contains(c) {
-            flush(&mut word, &mut redacted);
-            redacted.push(c);
-        } else {
-            word.push(c);
-        }
+        at = end;
     }
-    flush(&mut word, &mut redacted);
-    redacted
+    out.push_str(&value[at..]);
+    out
 }
 
 impl Input {
@@ -302,27 +322,50 @@ impl Input {
             secret: false,
             source,
             unset: None,
+            note: None,
         }
     }
 
     /// A path, as the call site that made it knows it to be: where something
     /// is kept, not the thing (`FED_SIGNING_KEY` holds the path to our signing
-    /// key). Held as it is, whatever the name.
+    /// key). A path a declaration gave is held as it is. A value the operator
+    /// set in the environment is shown only when it names an existing file:
+    /// anything else may be the thing itself (a key exported instead of its
+    /// path), and is held back as a secret, with the note that it is not a file.
     pub fn path(name: impl Into<String>, value: impl Into<String>, source: Source) -> Input {
+        let name = name.into();
+        let value = value.into();
+        if matches!(source, Source::Environment { .. }) && !Path::new(&value).is_file() {
+            let mut held = Input::secret(name.clone(), source);
+            held.note = Some(format!(
+                "not a file: ${name} is to name a file, and its value is held back in case it is the secret itself"
+            ));
+            return held;
+        }
         Input {
-            name: name.into(),
-            value: Some(value.into()),
+            name,
+            value: Some(value),
             secret: false,
             source,
             unset: None,
+            note: None,
         }
     }
 
     /// A host address the tool built from the inventory (`ssh://<user>@<host>`),
     /// as the call site that made it knows it to be: its user is an account
-    /// name, not a credential. Held as it is.
+    /// name, and is kept; a password after it never is (`ssh://u:p@h` is held
+    /// as `ssh://u@h`).
     pub fn address(name: impl Into<String>, value: impl Into<String>, source: Source) -> Input {
-        Input::path(name, value, source)
+        let value = drop_password(&value.into());
+        Input {
+            name: name.into(),
+            value: Some(value),
+            secret: false,
+            source,
+            unset: None,
+            note: None,
+        }
     }
 
     /// A secret: its source only.
@@ -333,6 +376,7 @@ impl Input {
             secret: true,
             source,
             unset: None,
+            note: None,
         }
     }
 
@@ -365,6 +409,7 @@ impl Input {
             secret,
             source,
             unset,
+            note: None,
         }
     }
 
@@ -379,6 +424,7 @@ impl Input {
                 declare: declare.clone(),
             },
             unset: Some(declare),
+            note: None,
         }
     }
 
@@ -400,9 +446,12 @@ impl Input {
     pub fn line(&self) -> String {
         let s = self.sourced().then_some(&self.source);
         match (s, self.value(), self.secret) {
-            (Some(s), _, true) => match &self.unset {
-                Some(u) => format!("{} (secret) not set now  {} ({u})", self.name, s.render()),
-                None => format!("{} (secret, not shown)  {}", self.name, s.render()),
+            (Some(s), _, true) => match (&self.unset, &self.note) {
+                (Some(u), _) => format!("{} (secret) not set now  {} ({u})", self.name, s.render()),
+                (None, Some(n)) => {
+                    format!("{} (held back, not shown)  {} ({n})", self.name, s.render())
+                }
+                (None, None) => format!("{} (secret, not shown)  {}", self.name, s.render()),
             },
             (Some(s), Some(v), false) => format!("{}={v}  {}", self.name, s.render()),
             (Some(s), None, false) => match &self.unset {
@@ -434,6 +483,9 @@ impl Serialize for Input {
         m.serialize_entry("origin", &self.source)?;
         if let Some(u) = &self.unset {
             m.serialize_entry("unset", u)?;
+        }
+        if let Some(n) = &self.note {
+            m.serialize_entry("note", n)?;
         }
         m.end()
     }
@@ -666,6 +718,66 @@ pub(crate) fn command_values(line: &str, extra: &[&str]) -> Vec<(bool, String)> 
 mod tests {
     use super::*;
 
+    /// Three leaks review-2 found in the backstop, each its own probe.
+    #[test]
+    fn an_address_keeps_its_user_and_drops_a_password() {
+        let a = Input::address(
+            "DOCKER_HOST",
+            "ssh://u:p4ss@h.example.org",
+            Source::env("FED_ROUTER_DOCKER_HOST"),
+        );
+        assert_eq!(a.value(), Some("ssh://u@h.example.org"));
+        let a = Input::address("DOCKER_HOST", "ssh://goat@192.0.2.20", Source::env("X"));
+        assert_eq!(a.value(), Some("ssh://goat@192.0.2.20"));
+    }
+
+    #[test]
+    fn a_path_from_the_environment_is_shown_only_when_it_names_a_file() {
+        let d = tempfile::tempdir().unwrap();
+        let f = d.path().join("signing.key");
+        std::fs::write(&f, "x").unwrap();
+        let shown = Input::path(
+            "FED_SIGNING_KEY",
+            f.display().to_string(),
+            Source::env("FED_SIGNING_KEY"),
+        );
+        assert_eq!(shown.value(), Some(f.display().to_string().as_str()));
+        // The key itself, exported as the old script comment said.
+        let key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let held = Input::path("FED_SIGNING_KEY", key, Source::env("FED_SIGNING_KEY"));
+        assert!(held.secret && held.value().is_none(), "{held:?}");
+        assert!(!serde_json::to_string(&held).unwrap().contains(key));
+        assert!(held.line().contains("not a file"), "{}", held.line());
+        // A derived path (from a declaration) is shown as it is: the declaration names a path.
+        let derived = Input::path(
+            "FED_CA_CERT",
+            "/srv/fed/ca.pem",
+            Source::derived("group_vars", "rule"),
+        );
+        assert_eq!(derived.value(), Some("/srv/fed/ca.pem"));
+    }
+
+    #[test]
+    fn a_password_holding_any_character_does_not_end_the_url() {
+        for (value, gone) in [
+            ("postgres://u:p,ss@h/db", "p,ss"),
+            ("postgres://u:p;ss@h/db", "p;ss"),
+            ("postgres://u:p\"ss@h/db", "p\"ss"),
+            ("postgres://u:p'ss@h/db", "p'ss"),
+            ("postgres://u:p ss@h/db", " ss@"),
+            ("user:p@ss@h:22", "p@ss"),
+        ] {
+            let r = redact_userinfo(value);
+            assert!(!r.contains(gone), "{value} -> {r}");
+            assert!(r.contains("<redacted>"), "{value} -> {r}");
+        }
+        // Two URLs: each one's userinfo, up to the last '@' before the next scheme.
+        assert_eq!(
+            redact_userinfo("https://a:x@one.example.org/ https://b:y@two.example.org/"),
+            "https://<redacted>@one.example.org/ https://<redacted>@two.example.org/"
+        );
+    }
+
     #[test]
     fn a_secret_never_holds_its_value() {
         let s = Input::secret("ALPHA_PG_PASS", Source::env("ALPHA_PG_PASS"));
@@ -737,7 +849,11 @@ mod tests {
         let p = Input::path(
             "FED_SIGNING_KEY",
             "/srv/fed/signing.key",
-            Source::env("FED_SIGNING_KEY"),
+            Source::file(
+                "ops/ansible/group_vars/xab_edge.yml",
+                Some(1),
+                "goat_federation_signing_key",
+            ),
         );
         assert_eq!((p.secret, p.value()), (false, Some("/srv/fed/signing.key")));
         let k = Input::new(

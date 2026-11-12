@@ -46,7 +46,8 @@
 #                         `goatbuilder federate allocate` generated that file
 #     FED_WORK            working directory (default: /var/lib/goat-federation/<peering>)
 #     FED_COUNTERPARTY    path to the counterparty's package (phase 6 needs it)
-#     FED_SIGNING_KEY     our Ed25519 signing key (64 hex or 44 base64)
+#     FED_SIGNING_KEY     the path to our Ed25519 signing key file (the file holds
+#                         64 hex or 44 base64 characters); never the key itself
 #     FED_ROUTER_DOCKER_HOST  with FED_MEASURE=here: DOCKER_HOST for phase 3 when the core router is not on
 #                         this host, e.g. ssh://<user>@<core>. `init` reads the
 #                         federation interface here and the running router there; the
@@ -67,7 +68,7 @@
 #                         (https, a static file). Unset, phase 5 uploads our
 #                         package to the directory and the pointer names that, so
 #                         a party behind NAT needs no public host
-#     FED_CA_CERT         our own CA certificate (PEM), the one phase 8 signs the
+#     FED_CA_CERT         the path to our own CA certificate (PEM), the one phase 8 signs the
 #                         peering leaves with; phase 5 uploads it to the directory
 #                         (unset there, the profile's ca-roots.pem). Only the
 #                         certificate whose SHA-256 is our identity.ca_fingerprint
