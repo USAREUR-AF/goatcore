@@ -1107,6 +1107,33 @@ mod tests {
         assert_eq!((full["deploy"]["cloud"].clone(), full["deploy"]["cross_goatnet"].clone()), (json!("none"), json!(false)));
     }
 
+    /// A grown config's deploy.owner reaches the bootstrap phases the way lite.admin
+    /// does: as data in the phase environment, arriving as written.
+    #[test]
+    fn a_grown_owner_reaches_the_bootstrap_phases_as_written() {
+        let raw = "o$wner'x@example.org";
+        let mut grown = grow(&lite_fixture(), None).unwrap();
+        grown["deploy"]["owner"] = json!(raw);
+        assert_eq!(problems(&grown).unwrap(), Vec::<String>::new(), "it validates as lite.admin would");
+        let mut lan = lite_fixture();
+        lan["lite"]["admin"] = json!("me@pasture");
+        assert_eq!(grow(&lan, None).unwrap()["deploy"]["owner"], json!("me@pasture"), "a single-label address a lite file accepts still grows");
+        let dir = crate::testdir::path("gb-grow-owner-");
+        std::fs::create_dir_all(dir.join("ops/goatbuilder")).unwrap();
+        std::fs::write(dir.join("ops/goatbuilder/goatbuilder.yaml"), serde_yaml::to_string(&grown).unwrap()).unwrap();
+        let words: Vec<String> = plan_steps(&dir)
+            .into_iter()
+            .filter_map(|(_, c)| Some(c.split_once("-e bootstrap_owner_email=")?.1.split_once(" -e postgres_superuser_password=")?.0.to_string()))
+            .collect();
+        assert!(!words.is_empty());
+        let o = crate::standup::Options { env: "pasture", site: "pasture", profile: None, from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false, check: false };
+        let env = crate::standup::phase_env_of(&dir, &o);
+        for w in words {
+            let out = std::process::Command::new("bash").args(["-euo", "pipefail", "-c", &format!("printf '%s' {w}")]).envs(env.clone()).env_remove("OWNER_EMAIL").output().unwrap();
+            assert_eq!(String::from_utf8(out.stdout).unwrap(), raw, "{w}");
+        }
+    }
+
     /// The four-fact file of the tutorial has no repo or components of its own; growth
     /// asks for them then, never at first run.
     #[test]

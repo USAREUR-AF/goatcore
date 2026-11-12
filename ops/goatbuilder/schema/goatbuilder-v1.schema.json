@@ -169,7 +169,7 @@
         "state_dir": { "type": "string", "minLength": 1, "description": "Where this machine keeps the project's local state: goatnet CA keys under <state_dir>/<ca-name>/, standup logs and timings. `~` is the home directory. Undeclared: ~/.goat/state." },
         "cloud": { "type": "string", "enum": ["none"], "description": "`none`: this goatnet has no cloud account, so no play asks for one (every play runs with GOAT_AWS_MODE=none). Written by `goatbuilder grow` for a goatlite on its LAN (docs/design/goatlite-growth.md §6). Undeclared: plays reach the cloud account as before." },
         "owner": { "type": "string", "pattern": "^[^@\\s]+@[^@\\s]+$", "description": "The goatnet's first administrator: the bootstrap owner the standup passes to the account seed and names the first-login file after. Written by `goatbuilder grow` from lite.admin. Undeclared: the standup reads $OWNER_EMAIL." },
-        "cross_goatnet": { "type": "boolean", "description": "`false`: this goatnet takes no part in the cross-goatnet surfaces, so standup phase 14 does not reach the relay-health boxes in ops/goatnets/cross-env.yaml. Written by `goatbuilder grow` for a goatlite. Undeclared: phase 14 runs." }
+        "cross_goatnet": { "type": "boolean", "description": "`false`: this goatnet takes no part in the cross-goatnet surfaces, so standup phase 14 does not reach the relay-health boxes in ops/goatnets/cross-env.yaml. Written by `goatbuilder grow` for a goatlite. `true` means the same as undeclared: phase 14 runs." }
       }
     },
     "secrets": {

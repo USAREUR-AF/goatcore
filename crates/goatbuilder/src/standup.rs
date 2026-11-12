@@ -892,6 +892,13 @@ fn phase_command(repo: &Path, cmd: &str) -> Cmd {
     c
 }
 
+/// The phase environment a run of this site would set, for a test that runs a
+/// planned line the way the runner does.
+#[cfg(test)]
+pub(crate) fn phase_env_of(repo: &Path, o: &Options) -> Vec<(&'static str, String)> {
+    phase_env(&read_site(repo, o).expect("the site reads"))
+}
+
 /// The mirror bot's Forgejo token, and the phases that read it: the step that
 /// mints it (and skips when it is set), and the mirror play, which can run the
 /// checkout play. No other phase child is given it: least privilege for child
