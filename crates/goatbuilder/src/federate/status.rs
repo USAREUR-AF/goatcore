@@ -53,10 +53,18 @@ pub struct LastRun {
     pub plan: String,
 }
 
+/// What a phase's outcome word this goatbuilder does not know is shown with.
+pub const LATER_NOTE: &str = "written by a later goatbuilder";
+
 #[derive(Serialize, Debug)]
 pub struct PhaseLine {
     pub phase: u32,
+    /// The word as the journal holds it.
     pub outcome: String,
+    /// Set when this goatbuilder does not know the word: a later goatbuilder
+    /// wrote it, and it is shown as written.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<&'static str>,
     pub at: String,
     pub run: String,
     pub attempts: u32,
@@ -302,6 +310,7 @@ fn peering_at(
                 .map(|(n, r)| PhaseLine {
                     phase: *n,
                     outcome: r.outcome.word().into(),
+                    note: (!r.outcome.known()).then_some(LATER_NOTE),
                     at: r.at.clone(),
                     run: r.run.clone(),
                     attempts: r.attempts,
@@ -376,7 +385,7 @@ fn again(with: &str, work: &Path) -> String {
 /// run recorded an outcome for, else the phase it last started.
 fn ended_on(st: &State, run: &str) -> Option<(u32, Option<Outcome>)> {
     if let Some((n, r)) = st.phases.iter().rfind(|(_, r)| r.run == run) {
-        return Some((*n, Some(r.outcome)));
+        return Some((*n, Some(r.outcome.clone())));
     }
     st.attempts
         .iter()
@@ -400,7 +409,7 @@ fn next_step(
         return "wait: a run of this peering is in progress".into();
     }
     let on = ended_on(st, &last.id);
-    match (last.outcome.as_str(), on) {
+    match (last.outcome.as_str(), on.clone()) {
         ("stopped", Some((n, _))) => {
             return format!(
                 "do the operator step of phase {n}, then: {again} --from {}",
@@ -497,7 +506,11 @@ fn phase_summary(phases: &[PhaseLine]) -> String {
         } else {
             format!("{}-{}", phases[i].phase, phases[j].phase)
         };
-        out.push(format!("{range} {}", phases[i].outcome));
+        out.push(format!(
+            "{range} {}{}",
+            phases[i].outcome,
+            phases[i].note.map(|n| format!(" ({n})")).unwrap_or_default()
+        ));
         i = j + 1;
     }
     out.join(", ")
@@ -737,12 +750,13 @@ mod tests {
             resume: false,
             plan: String::new(),
             outcome: String::new(),
+            extra: Default::default(),
         });
         for (n, o) in phases {
             st.record(
                 &run,
                 *n,
-                *o,
+                o.clone(),
                 "i".into(),
                 "o".into(),
                 if *o == Outcome::Passed { "" } else { "why" },
@@ -767,6 +781,22 @@ mod tests {
 
     fn passed(range: std::ops::RangeInclusive<u32>) -> Vec<(u32, Outcome)> {
         range.map(|n| (n, Outcome::Passed)).collect()
+    }
+
+    #[test]
+    fn a_word_a_later_goatbuilder_wrote_is_shown_as_written_and_named_so() {
+        let d = tempfile::tempdir().unwrap();
+        let mut ph = passed(1..=13);
+        ph.push((14, Outcome::Later("deferred".into())));
+        journal(d.path(), &ph, "deferred");
+        let p = peering_at("xab", "dev", "alpha", &folders(d.path()), at("2026-11-09T14:00:00Z"));
+        assert_eq!(p.phases.last().unwrap().outcome, "deferred");
+        assert_eq!(p.phases.last().unwrap().note, Some(LATER_NOTE));
+        let page = table(&StatusDoc { schema: SCHEMA, peerings: vec![p] });
+        assert!(
+            page.contains("  Phases:    1-13 passed, 14 deferred (written by a later goatbuilder)\n"),
+            "{page}"
+        );
     }
 
     #[test]
