@@ -69,7 +69,7 @@ def from_verify(report, component):
             continue
         if d.startswith("converged on"):
             v = HEALTHY
-        elif d.startswith("unknown — host unreachable") or "no ledger row came back" in d:
+        elif d.startswith("unknown — ") or "no ledger row came back" in d:
             v = UNREACHABLE
         elif d.startswith("NOT converged"):
             v = DRIFTED

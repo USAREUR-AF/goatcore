@@ -620,9 +620,11 @@ pub fn deploy(repo: &Path, o: &Options) -> Result<Report> {
                 continue;
             }
             answered.insert(host.clone());
-            if line.contains("| UNREACHABLE!") {
-                // Never "not converged": a host that cannot be read is unknown (C7).
-                checks.push(not_done(&format!("{}/{host}", p.name), "unknown — host unreachable; its ledger was not read".into()));
+            if line.contains("| UNREACHABLE!") || line.contains("| FAILED!") {
+                // Never "not converged": a host that cannot be read is unknown (C7). A read
+                // that FAILED (become refused, no python) read no ledger either.
+                let why = if line.contains("| FAILED!") { "the ledger read FAILED on the host" } else { "host unreachable" };
+                checks.push(not_done(&format!("{}/{host}", p.name), format!("unknown — {why}; its ledger was not read")));
                 rc_not_converged = true;
                 continue;
             }

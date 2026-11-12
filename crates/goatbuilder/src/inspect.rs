@@ -1164,6 +1164,10 @@ for h in world["inventory"].get(group, {}).get("hosts", []):
         print(h + ' | UNREACHABLE! => {"changed": false, "unreachable": true}')
         rc = 4
         continue
+    if st.get("state") == "failed":
+        print(h + ' | FAILED! => {"changed": false, "msg": "Missing sudo password"}')
+        rc = 2
+        continue
     ledgers = st.get("ledgers", {})
     if cmd.startswith("tail -n 1"):
         ledger = cmd.split("/var/lib/goat/")[1].split("/")[0]
@@ -1218,8 +1222,10 @@ sys.exit(rc)
             "core-e": {"ledgers": {"herd": row(HERD, "deploy")}},
             // the inventory names it, ansible says nothing for it
             "core-f": {"state": "silent"},
+            // reached, but the read itself failed (become refused): nothing was read
+            "core-g": {"state": "failed"},
         });
-        let all: Vec<&str> = vec!["core-a", "core-b", "core-c", "core-d", "core-e", "core-f"];
+        let all: Vec<&str> = vec!["core-a", "core-b", "core-c", "core-d", "core-e", "core-f", "core-g"];
         let w = json!({"inventory": {"zagros_hosts": {"hosts": all}, "_meta": {"hostvars": {}}}, "hosts": hosts});
         std::fs::write(p.join("hosts.json"), w.to_string()).unwrap();
         d
@@ -1242,7 +1248,7 @@ sys.exit(rc)
             let Some(host) = c.name.strip_prefix("zagros/").filter(|h| hosts.contains(*h)) else { continue };
             let v = if c.detail.starts_with("converged on") {
                 V::Healthy
-            } else if c.detail.starts_with("unknown — host unreachable") || c.detail.contains("no ledger row came back") {
+            } else if c.detail.starts_with("unknown — ") || c.detail.contains("no ledger row came back") {
                 V::Unreachable
             } else if c.detail.starts_with("NOT converged") {
                 V::Drifted
@@ -1299,7 +1305,7 @@ sys.exit(rc)
         let w = world();
         let repo = w.path();
         let before = snapshot(repo);
-        let hosts: BTreeSet<String> = ["core-a", "core-b", "core-c", "core-d", "core-e", "core-f"].map(String::from).into();
+        let hosts: BTreeSet<String> = ["core-a", "core-b", "core-c", "core-d", "core-e", "core-f", "core-g"].map(String::from).into();
 
         // The operator's comparison (ops/goatbuilder/c3-agreement.py) reads the -o json reports.
         let out = tempfile::tempdir().unwrap();
@@ -1332,6 +1338,8 @@ sys.exit(rc)
             ("core-e", "herd", V::Healthy),
             ("core-f", "portal", V::Unreachable),
             ("core-f", "herd", V::Unreachable),
+            ("core-g", "portal", V::Unreachable),
+            ("core-g", "herd", V::Unreachable),
         ]
         .into_iter()
         .map(|(h, c, v)| ((h.to_string(), c.to_string()), v))
@@ -1346,7 +1354,7 @@ sys.exit(rc)
         let said = String::from_utf8_lossy(&c3.stdout).to_string();
         assert!(c3.status.success(), "c3-agreement.py: {said}{}", String::from_utf8_lossy(&c3.stderr));
         assert!(said.contains("c3: transport: read via direct (mgmt-hosts.ini)"), "{said}");
-        assert!(said.contains("agree on 6 machine(s), 2 component(s): 5 healthy, 3 drifted, 4 unreachable; reached 4 of 6 machine(s)"), "{said}");
+        assert!(said.contains("agree on 7 machine(s), 2 component(s): 5 healthy, 3 drifted, 6 unreachable; reached 4 of 7 machine(s)"), "{said}");
         assert_eq!(by_status, want, "status agrees with verify and diff for every machine and component");
 
         // Per machine: the same set, and the same worst verdict.
@@ -1385,12 +1393,12 @@ sys.exit(rc)
         let p = w.path().join("hosts.json");
         let mut v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&p).unwrap()).unwrap();
         let ok = json!({"ledgers": {"portal": row(PORTAL, "deploy"), "herd": row(HERD, "deploy")}});
-        for h in ["core-a", "core-b", "core-c", "core-d", "core-e", "core-f"] {
+        for h in ["core-a", "core-b", "core-c", "core-d", "core-e", "core-f", "core-g"] {
             v["hosts"][h] = ok.clone();
         }
         std::fs::write(&p, v.to_string()).unwrap();
         let s = status(w.path(), "zagros", None).unwrap();
         assert_eq!(s.exit, crate::EXIT_OK, "{:?}", s.checks);
-        assert_eq!(s.checks.iter().filter(|c| c.detail.starts_with("converged on ")).count(), 12);
+        assert_eq!(s.checks.iter().filter(|c| c.detail.starts_with("converged on ")).count(), 14);
     }
 }
