@@ -110,14 +110,14 @@ The self-test holds the terminal case to it: a dry run with an unknown flag fail
 
 ### What fails today
 
-Every check failed for every verb family when step 1 merged: 16 lines. Step 3's first part made `c join-node` pass; 15 remain.
+Every check failed for every verb family when step 1 merged: 16 lines. Step 3's first part made `c join-node` pass, and step 6's first part made `d federate` pass; 14 remain.
 
 | Check | standup | join-node | deploy | federate |
 |---|---|---|---|---|
 | (a) | no run record (20 processes) | no run record (6) | no run record (5) | no run record (8) |
 | (b) | no `inputs` | no `inputs` | no `inputs` | no `inputs` |
 | (c) | 2 of 20 not printed: the two probes (step 3 stopped the page rewriting two commands) | passes (step 3) | 4 of 5 not printed: the probes (step 3 lists the play) | 8 of 8 not printed: the plan page hides them |
-| (d) | no phase catalog | no phase catalog | no phase catalog | no phase catalog; prints `docs/design/staged-delivery-pattern.md`, which does not exist |
+| (d) | no phase catalog | no phase catalog | no phase catalog | passes: the phase catalog has its 14 phases, and the dry-run footer names the staged-delivery pattern by its address in goatdocs |
 
 ### What the test does not cover
 
@@ -225,7 +225,7 @@ One pull request for each step, or for each feature within a step, each small an
 | 3 | commands in the terminal dry run, built by the same code that runs them; anything not knowable before the run is marked as such | `c join-node` (removed: built); then `c standup` and `c deploy` once their probes are in the plan, and `c federate` once its plan page lists its commands | **built** for the pages in `crates/goatbuilder/src/output.rs` (2026-11-12): the plan page (join-node, teardown) lists each phase's command under the table, verbatim and unwrapped; the deploy and release page lists each dry-run line in place of a count, labelled "as the plan describes it", because those lines are the plan's own words for each command (`crates/goatbuilder/src/push.rs:565`, `crates/goatbuilder/src/release.rs:238`, `crates/goatbuilder/src/release.rs:586`) and not the argv the run builds; standup's page prints each command as it runs, verbatim and on one line, with no word rewritten, no image reference shortened and no wrap that would change what a pasted line runs. **Designed**: deploy's and release's lines built from the argv that runs (through the record's quoting, `runner::line_of`), once step 2b moves their call sites; the probes standup and deploy start on a real run (the secrets posture, the fresh-source check, `netbird status`, the ledger read), which their plans in standup.rs and push.rs do not yet name, and federate's plan page in `federate/mod.rs` |
 | 4 | the run record for every verb (§"Run record"); `goatbuilder runs`, `goatbuilder show <run>`, `goatbuilder runs diff <a> <b>` | with step 2: the four `a` lines | **built**, unit tests only: no verb writes a record until 2b moves its call sites |
 | 5 | every value with its source, verb by verb: federate's remaining values first (site values, site hosts, allocations), then standup, join-node, deploy. `goatbuilder inputs <verb> ...` and `goatbuilder why <value>`; the same list in every dry run, as a table and as JSON | `b federate`, then `b standup`, `b join-node`, `b deploy` | designed |
-| 6 | the phase catalog (§"Phase catalog"); `goatbuilder explain <verb> <phase>`; the frame's "what it is for" line reads it; the runbook's phase tables, the command reference's stage text and appendix B are rendered from it and checked in CI; every document path the tool prints exists | `d standup`, `d join-node`, `d deploy`, `d federate` | designed |
+| 6 | the phase catalog (§"Phase catalog"); `goatbuilder explain <verb> <phase>`; the frame's "what it is for" line reads it; the runbook's phase tables, the command reference's stage text and appendix B are rendered from it and checked in CI; every document path the tool prints exists | `d standup`, `d join-node`, `d deploy`, `d federate` | built for federate: its catalog entries, the runbook's three phase tables rendered from them and checked in CI, and the document paths it prints (`d federate` removed); designed: the other verbs, `explain <verb> <phase>` (the library answers in `goat_errors::phases`, the command is not wired), the frame's line, the command reference and appendix B |
 | 7 | failed phases interpreted: a failed phase's output is matched against the error catalog, and the failure row carries the code, cause, fix, log path and the command to retry that one phase by hand | none; its own check is added to the test by that pull request | designed |
 | 8 | C11 recorded in [`goatbuilder.md`](goatbuilder.md) and [`06-contract.md`](../reference/goatbuilder/06-contract.md) with its test named; then `-o ndjson`, the run record written as events | none | designed |
 | 9 | `--step`: pause before each phase, show its catalog entry, command and inputs, and continue on a key; built on the tutor mode | none | designed |
@@ -234,8 +234,8 @@ One pull request for each step, or for each feature within a step, each small an
 
 Recorded here; fixed by step 6, not before.
 
-- `docs/design/staged-delivery-pattern.md` does not exist. federate's dry-run footer prints it (`crates/goatbuilder/src/federate/mod.rs:848`), and `ops/validation/run-acceptance.py:196` cites it. Check (d) for federate fails on it today.
-- `docs/operations/node-addition.md` does not exist. goatbuilder does not print it: join-node's help and plan name `docs/tutorials/02-first-federated-node.md`, which exists. It is named by `crates/goatbuilder/CHANGELOG.md:480`, by `ops/mgmt-host-bootstrap/main.go:487` and `ops/mgmt-host-bootstrap/main.go:529`, and by `ops/validation/generate-values.py:52`, `ops/validation/generate-values.py:387` and `ops/validation/acceptance-tests.yaml:152`. Check (d) does not see it, because the tool does not print it. Step 6 either writes the document or points those references at the tutorial.
+- `docs/design/staged-delivery-pattern.md` is not in this repository; it is in goatdocs. federate's dry-run footer (`crates/goatbuilder/src/federate/mod.rs:848`) and `ops/scripts/peering-standup.sh` now give its goatdocs address, and check (d) for federate passes. Comments in `ops/validation/run-acceptance.py:196` and `ops/validation/acceptance-tests.yaml:807` still name it by the bare path; the tool does not print them.
+- `docs/operations/node-addition.md` does not exist. goatbuilder does not print it: join-node's help and plan name `docs/tutorials/02-first-federated-node.md`, which exists. It is named by `crates/goatbuilder/CHANGELOG.md:480`, by `ops/mgmt-host-bootstrap/main.go:487` and `ops/mgmt-host-bootstrap/main.go:529`, and by `ops/validation/generate-values.py:52`, `ops/validation/generate-values.py:387` and `ops/validation/acceptance-tests.yaml:152`. Check (d) does not see it, because the tool does not print it. Appendix B now points at the tutorial; the references above are not changed yet.
 
 ## Reverting this
 

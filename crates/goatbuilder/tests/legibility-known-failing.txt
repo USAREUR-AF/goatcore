@@ -32,4 +32,3 @@ c federate   the terminal plan page hides every command ("add -o json to see eve
 d standup    no phase catalog (ops/phases/catalog.yaml)
 d join-node  no phase catalog (ops/phases/catalog.yaml)
 d deploy     no phase catalog (ops/phases/catalog.yaml)
-d federate   no phase catalog; the dry-run footer prints docs/design/staged-delivery-pattern.md, which does not exist
