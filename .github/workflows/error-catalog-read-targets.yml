@@ -1,0 +1,46 @@
+# The error catalog's full gate (ADR 1199, docs/design/error-interpretation.md).
+#
+# Every `read` path in ops/errors/catalog.yaml names a document in this
+# repository, so a change under docs/ can move one. This workflow runs the full
+# Python gate, and nothing else, whenever the catalog or any document changes:
+# no cargo build, so it costs seconds on a docs-only change. The crate's tests
+# and the gate's self-test stay in error-catalog.yml.
+
+name: error-catalog-read-targets
+
+on:
+  pull_request:
+    paths:
+      - 'docs/**'
+      - 'ops/errors/**'
+      - 'ops/ci/check-error-catalog.py'
+      - '.github/workflows/error-catalog-read-targets.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'docs/**'
+      - 'ops/errors/**'
+      - 'ops/ci/check-error-catalog.py'
+      - '.github/workflows/error-catalog-read-targets.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: error-catalog-read-targets-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  full:
+    name: catalog gate in full (read targets resolve)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: PyYAML
+        run: pip install pyyaml
+      - name: Gate, in full
+        run: python3 ops/ci/check-error-catalog.py
