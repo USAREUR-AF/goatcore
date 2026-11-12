@@ -2395,16 +2395,19 @@ entries:
     exit: 2
   - code: GB-240
     tool: goatbuilder
-    title: FED_VERBS names no way to run the federation verbs
-    what: "FED_VERBS chooses who runs the federation verbs of a peering run: goatbuilder (in process, the default) or goat. Any other value is refused, as peering-standup.sh refuses it, so a misspelling cannot choose a different path on each avenue."
+    title: a federation switch names no choice it has
+    what: "Two variables choose how a peering run works: FED_VERBS who runs the federation verbs (goatbuilder, in process, the default; or goat), and FED_MEASURE where phase 3 measures (ssh, the default; or here). Any other value is refused, as peering-standup.sh refuses it, so a misspelling cannot choose a different path on each avenue."
     causes:
       - "FED_VERBS is set to something other than goat or goatbuilder"
+      - "FED_MEASURE is set to something other than ssh or here"
     fixes:
-      - "unset FED_VERBS   (the verbs run in goatbuilder)"
+      - "unset FED_VERBS and FED_MEASURE   (the defaults)"
       - "FED_VERBS=goat goatbuilder federate <partner>   (the verbs run in goat)"
+      - "FED_MEASURE=here goatbuilder federate <partner>   (phase 3 measures the machine the run is on)"
     read: docs/design/goatbuilder.md
     matches:
       - "FED_VERBS is goat or goatbuilder"
+      - "FED_MEASURE is here or ssh"
     exit: 2
   - code: GB-241
     tool: goatbuilder
@@ -2551,6 +2554,32 @@ entries:
     read: docs/design/goatbuilder.md
     matches:
       - "declares no SSH user for a new machine"
+    exit: 2
+  - code: GB-252
+    tool: goatbuilder
+    title: the partner is declared on several environments
+    what: "The same partner is declared as a peering on more than one environment in goatbuilder.yaml peerings:, so the command cannot tell which peering it is about."
+    causes:
+      - "one partner is peered from two environments, and --env was not given"
+    fixes:
+      - "pass --env <environment>   (the environments are named in the message)"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "is declared on several environments"
+    exit: 2
+  - code: GB-253
+    tool: goatbuilder
+    title: a host's back-out survey answered for another peering
+    what: "Back-out surveys each host of the peering read-only before it plans what to remove, and every answer names the peering it read. One host's answer names another peering, so nothing is planned from it: removing that peering's resources would be removing someone else's."
+    causes:
+      - "the inventory groups of two peerings share a host name"
+      - "the survey ran with another peering's working directory"
+    fixes:
+      - "goatbuilder federate backout <partner> --plan   (survey again with this peering's own work directory)"
+      - "give each peering its own inventory name for the machine (allocate does)"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "answered for peering '"
     exit: 2
   - code: GB-246
     tool: goatbuilder

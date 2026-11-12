@@ -314,8 +314,8 @@ pub fn allocate_in(
         .collect();
     match hits.len() {
         1 => Ok(hits.remove(0)),
-        0 => Err(anyhow::anyhow!("peering '{with}' is not declared in goatbuilder.yaml peerings: — declare it first (C1)")),
-        _ => Err(anyhow::anyhow!("peering '{with}' is declared on several environments; pass --env")),
+        0 => Err(goat_errors::coded("GB-149", format!("peering '{with}' is not declared in goatbuilder.yaml peerings: — declare it first (C1)")).into()),
+        _ => Err(goat_errors::coded("GB-252", format!("peering '{with}' is declared on several environments; pass --env")).into()),
     }
 }
 
