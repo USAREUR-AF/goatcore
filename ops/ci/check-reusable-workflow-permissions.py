@@ -65,6 +65,18 @@ def asked(wf):
     return want
 
 
+def only_called(wf):
+    """True when a workflow's only trigger is workflow_call (PyYAML reads `on:` as True)."""
+    on = wf.get("on", wf.get(True))
+    if isinstance(on, str):
+        return on == "workflow_call"
+    if isinstance(on, list):
+        return on == ["workflow_call"]
+    if isinstance(on, dict):
+        return list(on.keys()) == ["workflow_call"]
+    return False
+
+
 def check(root):
     wfdir = os.path.join(root, ".github", "workflows")
     problems = []
@@ -79,7 +91,16 @@ def check(root):
             if not (isinstance(uses, str) and uses.startswith("./.github/workflows/")):
                 continue
             jp = norm(job.get("permissions"))
-            have = jp if jp is not None else (top if top is not None else {})
+            if jp is not None:
+                have = jp
+            elif top is not None:
+                have = top
+            elif granted_by_caller is not None:
+                # A called workflow's job with no block, in a file with no top level,
+                # runs with what its caller passed.
+                have = dict(granted_by_caller)
+            else:
+                have = {}
             if granted_by_caller is not None:
                 # Inside a called workflow, a job can't hold more than the caller gave.
                 have = {k: min(v, granted_by_caller.get(k, 0)) for k, v in have.items()}
@@ -100,12 +121,48 @@ def check(root):
                 visit(called, have, chain + [called])
 
     for fn in sorted(os.listdir(wfdir)):
-        if fn.endswith((".yml", ".yaml")):
-            visit(os.path.join(wfdir, fn), None, [os.path.join(wfdir, fn)])
+        if not fn.endswith((".yml", ".yaml")):
+            continue
+        path = os.path.join(wfdir, fn)
+        if only_called(load(path)):
+            # Reached through its callers, with what they grant.
+            continue
+        visit(path, None, [path])
     return problems
 
 
+def run_fixture(files):
+    with tempfile.TemporaryDirectory() as d:
+        os.makedirs(os.path.join(d, ".github", "workflows"))
+        for name, text in files.items():
+            with open(os.path.join(d, ".github/workflows", name), "w") as f:
+                f.write(text)
+        return check(d)
+
+
 def self_test():
+    leaf = ("on: workflow_call\njobs:\n  x:\n    permissions:\n      packages: read\n"
+            "    runs-on: x\n    steps: []\n")
+    cases = [
+        # (name, files, refused?)
+        ("a caller job's block replaces its workflow's top level", {
+            "caller.yml": "on: push\npermissions:\n  packages: read\njobs:\n  a:\n"
+                          "    permissions:\n      contents: read\n    uses: ./.github/workflows/_leaf.yml\n",
+            "_leaf.yml": leaf}, True),
+        ("permissions: {} grants nothing", {
+            "caller.yml": "on: push\njobs:\n  a:\n    permissions: {}\n    uses: ./.github/workflows/_leaf.yml\n",
+            "_leaf.yml": leaf}, True),
+        ("a nested call with no block inherits what the outer caller passed", {
+            "caller.yml": "on: push\njobs:\n  a:\n    permissions:\n      packages: read\n"
+                          "    uses: ./.github/workflows/_mid.yml\n",
+            "_mid.yml": "on: workflow_call\njobs:\n  b:\n    uses: ./.github/workflows/_leaf.yml\n",
+            "_leaf.yml": leaf}, False),
+    ]
+    for name, files, refused in cases:
+        got = run_fixture(files)
+        if bool(got) != refused:
+            print(f"SELF-TEST FAILED: {name}: expected {'a refusal' if refused else 'a pass'}, got {got}")
+            return 1
     caller = (
         "on: push\npermissions:\n  contents: read\njobs:\n  release:\n"
         "    permissions:\n      contents: write\n      id-token: write\n"
@@ -140,6 +197,7 @@ def main():
         for p in problems:
             print("  " + p)
         print("Grant the scope on the calling job, or remove it from the called workflow.")
+        print("(A caller that declares no permissions is read here as granting none: declare them on the calling job.)")
         return 1
     print("check-reusable-workflow-permissions: ok, every called workflow is covered by its caller")
     return 0
