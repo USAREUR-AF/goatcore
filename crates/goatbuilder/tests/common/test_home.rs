@@ -15,6 +15,10 @@ use std::process::Command;
 /// This test's home directory: one per test (libtest names each test's thread
 /// after the test), under the test binary's own name, emptied the first time
 /// this process uses it, so no test reads what another, or an earlier run, left.
+///
+/// The test is named by its thread, so call this (or [`vars`], [`isolate`]) on the
+/// test's own thread and pass the path down to any thread the test starts: called
+/// from a thread of its own, it names that thread, not the test.
 pub fn path() -> PathBuf {
     use std::collections::BTreeSet;
     use std::sync::Mutex;
