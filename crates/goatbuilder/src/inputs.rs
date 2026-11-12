@@ -328,17 +328,18 @@ impl Input {
 
     /// A path, as the call site that made it knows it to be: where something
     /// is kept, not the thing (`FED_SIGNING_KEY` holds the path to our signing
-    /// key). A path a declaration gave is held as it is. A value the operator
-    /// set in the environment is shown only when it names an existing file:
-    /// anything else may be the thing itself (a key exported instead of its
-    /// path), and is held back as a secret, with the note that it is not a file.
+    /// key). It is shown only when it names an existing file, whatever gave
+    /// it: anything else may be the thing itself (a key exported, or declared,
+    /// in place of its path), and is held back as a secret, with the note that
+    /// it is not a file. A declared path that names no file is one the run
+    /// refuses anyway, so holding it back costs nothing.
     pub fn path(name: impl Into<String>, value: impl Into<String>, source: Source) -> Input {
         let name = name.into();
         let value = value.into();
-        if matches!(source, Source::Environment { .. }) && !Path::new(&value).is_file() {
+        if !Path::new(&value).is_file() {
             let mut held = Input::secret(name.clone(), source);
             held.note = Some(format!(
-                "not a file: ${name} is to name a file, and its value is held back in case it is the secret itself"
+                "not a file: {name} is to name a file, and its value is held back in case it is the secret itself"
             ));
             return held;
         }
@@ -748,13 +749,32 @@ mod tests {
         assert!(held.secret && held.value().is_none(), "{held:?}");
         assert!(!serde_json::to_string(&held).unwrap().contains(key));
         assert!(held.line().contains("not a file"), "{}", held.line());
-        // A derived path (from a declaration) is shown as it is: the declaration names a path.
-        let derived = Input::path(
-            "FED_CA_CERT",
-            "/srv/fed/ca.pem",
-            Source::derived("group_vars", "rule"),
+        // Whatever gave it: a declared path is shown when it names a file, and a
+        // key declared in its place is held back.
+        let declared = Input::path(
+            "FED_SIGNING_KEY",
+            f.display().to_string(),
+            Source::file(
+                "ops/ansible/group_vars/xab_edge.yml",
+                Some(3),
+                "goat_federation_signing_key",
+            ),
         );
-        assert_eq!(derived.value(), Some("/srv/fed/ca.pem"));
+        assert_eq!(declared.value(), Some(f.display().to_string().as_str()));
+        let declared_key = Input::path(
+            "FED_SIGNING_KEY",
+            key,
+            Source::file(
+                "ops/ansible/group_vars/xab_edge.yml",
+                Some(3),
+                "goat_federation_signing_key",
+            ),
+        );
+        assert!(
+            declared_key.secret && declared_key.value().is_none() && declared_key.note.is_some(),
+            "{declared_key:?}"
+        );
+        assert!(!serde_json::to_string(&declared_key).unwrap().contains(key));
     }
 
     #[test]
@@ -846,6 +866,7 @@ mod tests {
                 "{name}"
             );
         }
+        // A path that names no file is held back, whatever gave it.
         let p = Input::path(
             "FED_SIGNING_KEY",
             "/srv/fed/signing.key",
@@ -855,7 +876,7 @@ mod tests {
                 "goat_federation_signing_key",
             ),
         );
-        assert_eq!((p.secret, p.value()), (false, Some("/srv/fed/signing.key")));
+        assert!(p.secret && p.value().is_none() && p.note.is_some(), "{p:?}");
         let k = Input::new(
             "jwt_signing_key",
             "c2VjcmV0IGJ5dGVz",
