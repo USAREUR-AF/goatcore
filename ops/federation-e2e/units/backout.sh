@@ -43,8 +43,12 @@ bo_core_files() { # $1 host, $2 label
 unit_main() {
   nh_main
   # The back-out, by the command, without a prompt (--yes is its documented confirmation).
+  # The core as admission left it, before the back-out touches it.
+  bo_core_files "$HP-$A-core" admitted
   local rc=0
   oc_run "$A" "$B" "bo" backout "$B" --yes || rc=$?
+  # The command's own record of the back-out: its survey, the core's plan and candidate.
+  docker cp -q "$(drv_host "$A"):/var/lib/goat-federation/$B/backout" "$RECORD/bo-$A-backout-record" 2>/dev/null || true
   # The command's own exit status decides; its transcript's tail is the evidence.
   rec "bo-$A-$B-backout-ran" -- bash -c \
     "sed 's/\x1b\[[0-9;]*m//g' '$RECORD/$OC_PREFIX-$A-bo.log' | tr -d '\r' | tail -40; exit $rc"
