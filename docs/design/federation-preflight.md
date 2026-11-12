@@ -219,6 +219,11 @@ runtime is reached only by a core check. `--only` with a check of the other side
 (exit 2), naming the side that runs it. The result file records `side` (`edge`, `core`, or
 `both` when `--side` is not given). Without `--side`, every check runs as before.
 
+Phase 1 passes only when both sides' results are ready: one side's READY says nothing about the
+other side's checks. When the one command hands phase 1 off between drivers (not built), the
+controller refuses a one-sided result: a result whose `side` is not `both` counts only together
+with the other side's result file, both present and both ready.
+
 ## Dry run
 
 `goatbuilder federate <partner> --dry-run` lists the phase-1 checks under the
