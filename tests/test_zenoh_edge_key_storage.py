@@ -26,15 +26,25 @@ HAND = (['-c', '/etc/goat-core/config.json5'], '/etc/goat-core/config.json5')
 ROLE = (['--config', '/etc/zenoh/config.json5'], '/etc/zenoh/config.json5')
 
 
+def require_ansible_playbook(case):
+    """Skip without ansible-playbook, unless GOAT_TEST_REQUIRE_ANSIBLE=1 (CI sets
+    it), where its absence fails the test instead of skipping it quietly."""
+    if shutil.which('ansible-playbook'):
+        return
+    if os.environ.get('GOAT_TEST_REQUIRE_ANSIBLE') == '1':
+        case.fail('GOAT_TEST_REQUIRE_ANSIBLE=1 but ansible-playbook is not on PATH')
+    case.skipTest('ansible-playbook is required')
+
+
 def config(*scopes):
     return json.dumps({'plugins': {'storage_manager': {'storages': {
         'store_' + str(i): {'key_expr': scope, 'volume': 'memory'} for i, scope in enumerate(scopes)
     }}}})
 
 
-@unittest.skipUnless(shutil.which('ansible-playbook'), 'ansible-playbook is required')
 class KeyStorageCheck(unittest.TestCase):
     def setUp(self):
+        require_ansible_playbook(self)
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
@@ -137,7 +147,6 @@ class KeyStorageCheck(unittest.TestCase):
         self.assertFalse((self.root / 'trace').exists())
 
 
-@unittest.skipUnless(shutil.which('ansible-playbook'), 'ansible-playbook is required')
 class KeyStorageOnAnotherHost(unittest.TestCase):
     """The deployed shape: the core router on its own host, in <partner>_core.
 
@@ -146,6 +155,7 @@ class KeyStorageOnAnotherHost(unittest.TestCase):
     """
 
     def setUp(self):
+        require_ansible_playbook(self)
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
