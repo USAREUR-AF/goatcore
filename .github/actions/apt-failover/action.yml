@@ -203,7 +203,10 @@ runs:
           log=$(mktemp)
           # Its exit status is not the verdict (the step runs under bash -e): the lines are.
           stage "apt-get update through $1"
-          $SUDO timeout -k 10 300 apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 update -qq >"$log" 2>&1
+          # Retries=0: the offline cache's answer is final, and a retried item it refused never
+          # completes. With Retries=1 one refused item held the update to its 300 s bound on a
+          # GitHub runner, while the same update with Retries=0 finished in about a second.
+          $SUDO timeout -k 10 300 apt-get -o Acquire::Retries=0 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 update -qq >"$log" 2>&1
           case $? in 124|137) diagnose "$1"; bounded_out "apt-get update through $1" 300 ;; esac
           stage "apt-get update done"
           # Only an Ubuntu source counts: the runner image's third-party https sources go
