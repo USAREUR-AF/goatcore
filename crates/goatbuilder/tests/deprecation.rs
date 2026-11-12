@@ -200,3 +200,78 @@ fn a_command_or_flag_that_is_not_a_whole_name_is_refused() {
     }
     assert!(parse("deprecations:\n  - {command: goatbuilder, flag: -o, replacement: --output, deprecated_in: goatbuilder/v0.6.0}\n").is_ok());
 }
+
+/// A short alias with its value attached (`-Ex`), and a flag that takes several
+/// values (`--tag a b`), read the way clap reads them.
+fn shorts() -> Command {
+    Command::new("goatbuilder").subcommand(
+        Command::new("deploy")
+            .arg(
+                Arg::new("environment")
+                    .long("environment")
+                    .short('e')
+                    .short_alias('E'),
+            )
+            .arg(
+                Arg::new("tag")
+                    .long("tag")
+                    .num_args(1..)
+                    .allow_hyphen_values(true),
+            )
+            .arg(Arg::new("verbose").short('v').action(ArgAction::SetTrue))
+            .arg(Arg::new("old").long("old").action(ArgAction::SetTrue)),
+    )
+}
+
+fn run_shorts(list: &str, argv: &[&str]) -> Vec<Deprecation> {
+    let deps = parse(list).unwrap();
+    let m = shorts().try_get_matches_from(argv).unwrap();
+    let argv: Vec<String> = argv.iter().map(|s| s.to_string()).collect();
+    used(&deps, &shorts(), &m, &argv)
+        .into_iter()
+        .cloned()
+        .collect()
+}
+
+const SHORT_E: &str = "deprecations:\n  - {command: goatbuilder deploy, flag: -E, replacement: -e, deprecated_in: goatbuilder/v0.6.0}\n";
+const OLD: &str = "deprecations:\n  - {command: goatbuilder deploy, flag: --old, replacement: --new, deprecated_in: goatbuilder/v0.6.0}\n";
+
+#[test]
+fn a_short_alias_with_its_value_attached_is_reported() {
+    assert_eq!(
+        run_shorts(SHORT_E, &["goatbuilder", "deploy", "-Edev"]).len(),
+        1
+    );
+    assert_eq!(
+        run_shorts(SHORT_E, &["goatbuilder", "deploy", "-E", "dev"]).len(),
+        1
+    );
+    assert_eq!(
+        run_shorts(SHORT_E, &["goatbuilder", "deploy", "-vEdev"]).len(),
+        1
+    );
+    assert!(run_shorts(SHORT_E, &["goatbuilder", "deploy", "-edev"]).is_empty());
+}
+
+#[test]
+fn every_value_of_a_many_valued_flag_is_skipped() {
+    // `--tag` takes several values, and they may look like flags: `--old` here is
+    // a value of `--tag`, not the deprecated flag.
+    let m = shorts()
+        .try_get_matches_from(["goatbuilder", "deploy", "--tag", "a", "--old"])
+        .unwrap();
+    assert_eq!(
+        m.subcommand_matches("deploy")
+            .unwrap()
+            .get_many::<String>("tag")
+            .unwrap()
+            .count(),
+        2,
+        "clap reads --old as the second value of --tag"
+    );
+    assert!(run_shorts(OLD, &["goatbuilder", "deploy", "--tag", "a", "--old"]).is_empty());
+    assert_eq!(
+        run_shorts(OLD, &["goatbuilder", "deploy", "--old", "--tag", "a", "b"]).len(),
+        1
+    );
+}

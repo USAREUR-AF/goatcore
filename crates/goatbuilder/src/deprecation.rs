@@ -180,33 +180,44 @@ pub fn used<'a>(
 fn typed_flags(chain: &[&Command], argv: &[String]) -> Vec<(usize, String)> {
     let mut out = Vec::new();
     let mut level = 0;
-    let mut tokens = argv.iter().skip(1);
+    let mut tokens = argv.iter().skip(1).peekable();
     while let Some(t) = tokens.next() {
         if t == "--" {
             break;
         }
-        if let Some(rest) = t.strip_prefix('-').filter(|r| !r.is_empty()) {
-            let (spelling, inline_value) = match t.split_once('=') {
-                Some((name, _)) => (name.to_string(), true),
-                None => (t.clone(), false),
+        if let Some(long) = t.strip_prefix("--") {
+            let (name, inline) = match long.split_once('=') {
+                Some((n, _)) => (n, true),
+                None => (long, false),
             };
-            let long = rest.strip_prefix('-');
-            let takes_value = chain[..=level].iter().rev().any(|c| {
-                c.get_arguments().any(|a| {
-                    let named = match long {
-                        Some(l) => {
-                            let l = l.split('=').next().unwrap_or(l);
-                            a.get_long() == Some(l)
-                                || a.get_all_aliases().into_iter().flatten().any(|x| x == l)
-                        }
-                        None => rest.len() == 1 && a.get_short() == rest.chars().next(),
-                    };
-                    named && a.get_action().takes_values()
-                })
+            out.push((level, format!("--{name}")));
+            let arg = find_arg(chain, level, |a| {
+                a.get_long() == Some(name)
+                    || a.get_all_aliases().into_iter().flatten().any(|x| x == name)
             });
-            out.push((level, spelling));
-            if takes_value && !inline_value {
-                tokens.next();
+            if let (Some(a), false) = (arg, inline) {
+                skip_values(a, &mut tokens);
+            }
+            continue;
+        }
+        if let Some(cluster) = t.strip_prefix('-').filter(|r| !r.is_empty()) {
+            // `-v`, `-Ex` (a value attached), `-vE x` (flags together, the last
+            // taking the next word as its value).
+            for (i, c) in cluster.char_indices() {
+                out.push((level, format!("-{c}")));
+                let arg = find_arg(chain, level, |a| {
+                    a.get_short() == Some(c)
+                        || a.get_all_short_aliases()
+                            .into_iter()
+                            .flatten()
+                            .any(|x| x == c)
+                });
+                if let Some(a) = arg.filter(|a| a.get_action().takes_values()) {
+                    if cluster[i + c.len_utf8()..].is_empty() {
+                        skip_values(a, &mut tokens);
+                    }
+                    break;
+                }
             }
             continue;
         }
@@ -218,4 +229,42 @@ fn typed_flags(chain: &[&Command], argv: &[String]) -> Vec<(usize, String)> {
         }
     }
     out
+}
+
+/// The argument a flag names, looked up from the command it was typed under
+/// back to the root (a global flag is defined there).
+fn find_arg<'c>(
+    chain: &[&'c Command],
+    level: usize,
+    named: impl Fn(&clap::Arg) -> bool,
+) -> Option<&'c clap::Arg> {
+    chain[..=level]
+        .iter()
+        .rev()
+        .find_map(|c| c.get_arguments().find(|a| named(a)))
+}
+
+/// Pass over the values a flag takes, as clap reads them: one, or for a flag
+/// that takes several, every following word up to the next flag (every word,
+/// for one that accepts values that look like flags), at most its maximum.
+fn skip_values<'t>(
+    a: &clap::Arg,
+    tokens: &mut std::iter::Peekable<impl Iterator<Item = &'t String>>,
+) {
+    if !a.get_action().takes_values() {
+        return;
+    }
+    let max = a.get_num_args().map(|r| r.max_values()).unwrap_or(1).max(1);
+    let hyphens = a.is_allow_hyphen_values_set();
+    let mut taken = 0;
+    while taken < max {
+        match tokens.peek() {
+            Some(n) if n.as_str() == "--" => break,
+            Some(n) if taken == 0 || hyphens || !n.starts_with('-') => {
+                tokens.next();
+                taken += 1;
+            }
+            _ => break,
+        }
+    }
 }
