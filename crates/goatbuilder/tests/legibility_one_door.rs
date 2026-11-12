@@ -28,27 +28,152 @@ fn rust_files(d: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
-/// `Command::new(` in `text`, outside `#[cfg(test)]` items and outside comments.
+/// `text` with the inside of every string and char literal blanked and every
+/// comment removed, so neither a `//` in a string nor a brace or a call written
+/// in one is read as code. Line breaks are kept.
+fn code_only(text: &str) -> String {
+    let c: Vec<char> = text.chars().collect();
+    let mut out = String::with_capacity(text.len());
+    let mut i = 0;
+    while i < c.len() {
+        let ch = c[i];
+        let next = c.get(i + 1).copied();
+        // A line comment, to its line's end.
+        if ch == '/' && next == Some('/') {
+            while i < c.len() && c[i] != '\n' {
+                i += 1;
+            }
+            continue;
+        }
+        // A block comment (not nested here; the crate has none nested).
+        if ch == '/' && next == Some('*') {
+            i += 2;
+            while i < c.len() && !(c[i] == '*' && c.get(i + 1) == Some(&'/')) {
+                if c[i] == '\n' {
+                    out.push('\n');
+                }
+                i += 1;
+            }
+            i += 2;
+            continue;
+        }
+        // A raw string: r"..." or r#"..."#, any number of #.
+        if ch == 'r'
+            && (next == Some('"') || next == Some('#'))
+            && (i == 0 || !(c[i - 1].is_alphanumeric() || c[i - 1] == '_'))
+        {
+            let mut j = i + 1;
+            let mut hashes = 0;
+            while c.get(j) == Some(&'#') {
+                hashes += 1;
+                j += 1;
+            }
+            if c.get(j) == Some(&'"') {
+                j += 1;
+                loop {
+                    if j >= c.len() {
+                        break;
+                    }
+                    if c[j] == '"' && (0..hashes).all(|k| c.get(j + 1 + k) == Some(&'#')) {
+                        j += 1 + hashes;
+                        break;
+                    }
+                    if c[j] == '\n' {
+                        out.push('\n');
+                    }
+                    j += 1;
+                }
+                out.push_str("\"\"");
+                i = j;
+                continue;
+            }
+        }
+        // A string.
+        if ch == '"' {
+            let mut j = i + 1;
+            while j < c.len() && c[j] != '"' {
+                if c[j] == '\\' {
+                    j += 1;
+                }
+                if c.get(j) == Some(&'\n') {
+                    out.push('\n');
+                }
+                j += 1;
+            }
+            out.push_str("\"\"");
+            i = j + 1;
+            continue;
+        }
+        // A char literal ('x', '\n', '\''), not a lifetime ('a).
+        if ch == '\'' {
+            if next == Some('\\') {
+                let mut j = i + 2;
+                while j < c.len() && c[j] != '\'' {
+                    j += 1;
+                }
+                out.push_str("' '");
+                i = j + 1;
+                continue;
+            }
+            if c.get(i + 2) == Some(&'\'') {
+                out.push_str("' '");
+                i += 3;
+                continue;
+            }
+        }
+        out.push(ch);
+        i += 1;
+    }
+    out
+}
+
+/// Constructions of std's `Command` in `text`, outside `#[cfg(test)]` items,
+/// comments and strings: `Command::new(`, `std::process::Command::new(`, and
+/// `X::new(` for every name the file gives it (`use … Command as X`,
+/// `type X = Command;`).
 fn spawns(text: &str) -> usize {
+    let code = code_only(text);
+    let mut names = vec!["Command".to_string()];
+    let alias = regex::Regex::new(r"\bCommand\s+as\s+([A-Za-z_]\w*)").unwrap();
+    let ty = regex::Regex::new(
+        r"\btype\s+([A-Za-z_]\w*)\s*=\s*(?:std\s*::\s*process\s*::\s*)?Command\s*;",
+    )
+    .unwrap();
+    names.extend(alias.captures_iter(&code).map(|c| c[1].to_string()));
+    names.extend(ty.captures_iter(&code).map(|c| c[1].to_string()));
+    let call = regex::Regex::new(&format!(
+        r"(?:^|[^\w])(?:{})\s*::\s*new\s*\(",
+        names.join("|")
+    ))
+    .unwrap();
     let mut n = 0;
     let mut skip_depth: Option<i64> = None;
     let mut depth: i64 = 0;
     let mut pending_cfg_test = false;
-    for raw in text.lines() {
-        let line = raw.split("//").next().unwrap_or("");
-        let trimmed = raw.trim_start();
+    for line in code.lines() {
+        let trimmed = line.trim_start();
         if trimmed.starts_with("#[cfg(test)]") {
             pending_cfg_test = true;
             continue;
         }
         let opens = line.matches('{').count() as i64;
         let closes = line.matches('}').count() as i64;
-        if pending_cfg_test && opens > 0 {
-            pending_cfg_test = false;
-            skip_depth = Some(depth);
+        if pending_cfg_test {
+            let brace = line.find('{');
+            let semi = line.find(';');
+            match (brace, semi) {
+                // `#[cfg(test)] use …;`: the attributed item ends here, without a body.
+                (None, Some(_)) => pending_cfg_test = false,
+                (Some(b), Some(s)) if s < b => pending_cfg_test = false,
+                (Some(_), _) => {
+                    pending_cfg_test = false;
+                    skip_depth = Some(depth);
+                }
+                (None, None) => {}
+            }
         }
         if skip_depth.is_none() {
-            n += line.matches("Command::new(").count();
+            n += call.find_iter(line).count();
         }
         depth += opens - closes;
         if let Some(d) = skip_depth {
@@ -124,6 +249,40 @@ fn every_process_goes_through_the_runner() {
         }
     }
     assert!(problems.is_empty(), "\n{}\n", problems.join("\n"));
+}
+
+/// Each way the door has been got round counts (ci-watch's review of step 2a).
+#[test]
+fn the_count_sees_every_way_to_build_a_command() {
+    // An alias of std's Command.
+    assert_eq!(
+        spawns("use std::process::Command as Spawn;\nfn a() { Spawn::new(\"x\"); }\n"),
+        1
+    );
+    assert_eq!(
+        spawns("use std::process::{Command as Run, Stdio};\nfn a() { Run::new(\"x\"); }\n"),
+        1
+    );
+    assert_eq!(
+        spawns("type Proc = std::process::Command;\nfn a() { Proc::new(\"x\"); }\n"),
+        1
+    );
+    // `#[cfg(test)]` on an item with no body leaves the next item counted.
+    assert_eq!(
+        spawns("#[cfg(test)]\nuse std::fs;\nfn b() { Command::new(\"y\"); }\n"),
+        1
+    );
+    // `//` inside a string is not a comment; a call in a string is not a call.
+    assert_eq!(
+        spawns("fn c() { let u = \"http://x\"; Command::new(\"z\"); }\n"),
+        1
+    );
+    assert_eq!(
+        spawns("fn d() { let t = \"Command::new(\"; let r = r#\"Command::new(\"#; }\n"),
+        0
+    );
+    // A brace in a string or a char does not end a test module early.
+    assert_eq!(spawns("#[cfg(test)]\nmod tests {\n    fn e() { let b = \"}\"; let c = '}'; Command::new(\"t\"); }\n}\nfn f() { Command::new(\"g\"); }\n"), 1);
 }
 
 #[test]
