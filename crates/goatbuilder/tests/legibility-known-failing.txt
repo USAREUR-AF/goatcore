@@ -23,7 +23,7 @@ b federate   no `inputs`; FED_* sources appear only as -o json dry-run rows
 
 # (c) the commands a terminal dry run prints are the commands the real run executes, in order.
 #     Removed by step 3 (with step 2 for the probes that print nothing today).
-c standup    probes (secrets posture, fresh-source) are never printed; the page rewrites a dash inside two echo strings
+c standup    probes (secrets posture, fresh-source) are never printed; the page rewrites a dash inside two echo strings (the parallel image pull is held to its own block, not to order)
 c join-node  the terminal plan page hides every command ("add -o json to see every phase's command")
 c deploy     the terminal page hides the play and ledger commands ("-o json lists them"); probes are never printed
 c federate   the terminal plan page hides every command ("add -o json to see every phase's command")

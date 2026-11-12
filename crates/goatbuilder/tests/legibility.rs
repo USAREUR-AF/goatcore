@@ -149,7 +149,8 @@ fn judge(verb: &str, results: Vec<(char, Result<(), String>)>) {
 
 /// Programs the tool may start by name, recorded even where this machine has none.
 /// Every other name on this machine's PATH gets a recorder too.
-const PROGRAMS: [&str; 16] = [
+const PROGRAMS: [&str; 17] = [
+    "sh",
     "bash",
     "python3",
     "ssh",
@@ -268,8 +269,8 @@ fn install_shims(root: &Path) -> PathBuf {
         };
         for e in rd.flatten() {
             use std::os::unix::fs::PermissionsExt;
-            let ok = e
-                .metadata()
+            // Follow a symlink: most of a PATH is links (sh, env, awk, ...).
+            let ok = std::fs::metadata(e.path())
                 .is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0);
             if ok {
                 names.insert(e.file_name().to_string_lossy().into_owned());
@@ -755,10 +756,17 @@ fn check_b(procs: &[Proc], records: &[serde_json::Value]) -> Result<(), String> 
 /// in the order it ran.
 fn check_c(procs: &[Proc], dry_terminal: &str) -> Result<(), String> {
     let page = norm(dry_terminal);
+    let parallel = parallel_blocks(dry_terminal);
     let mut at = 0;
     let mut missing = Vec::new();
     for p in procs {
         let want = norm(&p.line());
+        // A step that runs beside the others (`∥`, standup's image pull) starts
+        // when it starts: it is held to its own block of the page (its heading
+        // and the lines under it), not to the order of the steps around it.
+        if parallel.iter().any(|b| b.contains(&want)) {
+            continue;
+        }
         // A program started by its path is recorded by its file name, which
         // the printed path ends with, so a plain substring match holds.
         match page[at..].find(&want) {
@@ -780,6 +788,29 @@ fn check_c(procs: &[Proc], dry_terminal: &str) -> Result<(), String> {
             missing.join("\n  ")
         ))
     }
+}
+
+/// The command blocks of the parallel steps on a page: each heading marked `∥`
+/// and the indented lines under it, up to the next heading, normalized.
+fn parallel_blocks(page: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur: Option<String> = None;
+    for line in page.lines() {
+        let heading = !line.is_empty() && !line.starts_with(' ');
+        if heading {
+            if let Some(b) = cur.take() {
+                out.push(norm(&b));
+            }
+            if line.contains('\u{2225}') {
+                cur = Some(String::new());
+            }
+        } else if let Some(b) = cur.as_mut() {
+            b.push_str(line);
+            b.push('\n');
+        }
+    }
+    out.extend(cur.map(|b| norm(&b)));
+    out
 }
 
 /// The phases a dry run plans, from its `-o json` rows: `=== Phase 5 [A] ...`
@@ -1239,6 +1270,27 @@ fn c11_each_check_can_pass_when_the_tool_does_what_it_asks() {
             "FromEnv(\"VF\")",
             "Literal(\"zagros_b_hosts\")"
         ]
+    );
+
+    // A parallel step is held to its own segment, whenever it started.
+    let pg = "Phase 2 · A\n  run-a\nImage pull · A \u{2225} · images\n  pull-x\nPhase 3 · T\n  run-b\njoin the image pull before phase 5\nPhase 5\n  run-c\n";
+    let pr = |l: &str| Proc {
+        ppid: 1,
+        program: "bash".into(),
+        args: vec!["-c".into(), l.into()],
+    };
+    for order in [
+        ["run-a", "pull-x", "run-b", "run-c"],
+        ["run-a", "run-b", "pull-x", "run-c"],
+        ["pull-x", "run-a", "run-b", "run-c"],
+    ] {
+        let procs: Vec<Proc> = order.iter().map(|l| pr(l)).collect();
+        assert_eq!(check_c(&procs, pg), Ok(()), "{order:?}");
+    }
+    let late: Vec<Proc> = ["run-a", "run-c", "run-b"].iter().map(|l| pr(l)).collect();
+    assert!(
+        check_c(&late, pg).is_err(),
+        "steps outside a parallel segment keep their order"
     );
 
     // A dry run that fails is a harness failure, never a known-failing check.
