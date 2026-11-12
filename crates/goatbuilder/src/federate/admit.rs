@@ -427,7 +427,17 @@ fn write_in_place(to: &Path, bytes: &[u8]) -> std::io::Result<()> {
     std::fs::rename(&tmp, to)
 }
 
+/// The second line of a `<n>-<file name>.target` record when admission
+/// placed the file where nothing was (see [`publish`]).
+pub(super) const ABSENT: &str = "absent";
+
 /// Place `bytes` at `to`, keeping what was there in `backups` (in `dir`).
+///
+/// Every file placed leaves a record beside the backups,
+/// `<n>-<file name>.target`: its first line is the path placed, and its
+/// second is [`ABSENT`] when nothing was there, else the backup is
+/// `<n>-<file name>`. The back-out puts a path back by the earliest record of
+/// it (backout.rs `CoreLeaf::first_record`).
 pub(super) fn publish(
     bytes: &[u8],
     to: &Path,
@@ -435,20 +445,21 @@ pub(super) fn publish(
     dir: &Path,
 ) -> std::io::Result<()> {
     std::fs::create_dir_all(dir)?;
+    let name = format!(
+        "{}-{}",
+        backups.len(),
+        to.file_name()
+            .map(|f| f.to_string_lossy().to_string())
+            .unwrap_or_default()
+    );
+    let record = dir.join(format!("{name}.target"));
     let kept = if to.exists() {
-        let b = dir.join(format!(
-            "{}-{}",
-            backups.len(),
-            to.file_name()
-                .map(|f| f.to_string_lossy().to_string())
-                .unwrap_or_default()
-        ));
+        let b = dir.join(&name);
         std::fs::copy(to, &b)?;
-        // Which file this backup is of, beside it, so a later back-out finds
-        // the backup of exactly this path (backout.rs `leaf_plan`).
-        std::fs::write(b.with_file_name(format!("{}.target", b.file_name().unwrap_or_default().to_string_lossy())), to.display().to_string())?;
+        std::fs::write(&record, format!("{}\n", to.display()))?;
         Some(b)
     } else {
+        std::fs::write(&record, format!("{}\n{ABSENT}\n", to.display()))?;
         None
     };
     backups.push((to.to_path_buf(), kept));
