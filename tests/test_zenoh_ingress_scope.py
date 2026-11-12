@@ -44,6 +44,24 @@ class CoreConfigPath(unittest.TestCase):
             with self.subTest(args=args):
                 self.assertEqual(self.parse(args), {'path': '/x/c.json5', 'named': True, 'error': ''})
 
+    def test_another_options_value_is_never_read_as_a_configuration(self):
+        # -l/--listen, -e/--connect, -i/--id and --cfg take a value; that value is
+        # never an argument of its own, even when it begins with -c.
+        for args in (['--listen', '-cafe'], ['-l', '-cafe'], ['--connect', '-c/x'], ['-e', '-c/x'],
+                     ['--id', '-cab'], ['-i', '-c'], ['--cfg', '-c/x'], ['--listen', '-c', '-c', '/x/c.json5']):
+            with self.subTest(args=args):
+                want = '/x/c.json5' if args[-1] == '/x/c.json5' else '/etc/zenoh/config.json5'
+                self.assertEqual(self.parse(args)['path'], want, self.parse(args))
+                self.assertEqual(self.parse(args)['error'], '')
+
+    def test_an_attached_value_is_a_path_only_when_it_looks_like_one(self):
+        self.assertEqual(self.parse(['-c./c.json5'])['path'], './c.json5')
+        for args in (['-cafe'], ['-cx.json5']):
+            with self.subTest(args=args):
+                report = self.parse(args)
+                self.assertEqual(report['path'], '')
+                self.assertIn(args[0], report['error'])
+
     def test_arguments_naming_no_configuration_give_the_role_path(self):
         for args in ([], ['--no-multicast-scouting'], ['--cfg', 'x'], ['-l', 'tcp/0.0.0.0:7447']):
             with self.subTest(args=args):

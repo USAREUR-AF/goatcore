@@ -52,6 +52,9 @@ def zenoh_ingress_storage_check(text, required):
 
 
 ROLE_CONFIG_PATH = '/etc/zenoh/config.json5'
+# zenohd's options that take a value as the next argument: that argument is the
+# option's value and never an option of its own, even when it begins with -c.
+VALUE_OPTIONS = ('-l', '--listen', '-e', '--connect', '-i', '--id', '--cfg')
 
 
 def zenoh_core_config_path(text):
@@ -59,8 +62,9 @@ def zenoh_core_config_path(text):
 
     `text` is `docker inspect --format '{{json .Args}}'`: the arguments after
     the entrypoint, such as ["-c", "/etc/goat-core/config.json5"]. Accepted
-    forms: `-c <path>`, `--config <path>`, `-c=<path>`, `-c<path>` and
-    `--config=<path>`. Returns {'path', 'named', 'error'}:
+    forms: `-c <path>`, `--config <path>`, `-c=<path>`, `-c<path>` (only when
+    the path begins with `/` or `.`) and `--config=<path>`. The value after one
+    of VALUE_OPTIONS is skipped. Returns {'path', 'named', 'error'}:
       - the arguments name one path (repeating it is fine): that path, named;
       - they name no configuration at all: the goat-zenoh role's path, not named;
       - anything else (unreadable arguments, a configuration argument without a
@@ -84,6 +88,9 @@ def zenoh_core_config_path(text):
     while index < len(args):
         arg = args[index]
         value = None
+        if arg in VALUE_OPTIONS:
+            index += 2
+            continue
         if arg in ('-c', '--config'):
             if index + 1 >= len(args):
                 return refused(arg + ' is its last argument, with no path after it')
@@ -91,10 +98,13 @@ def zenoh_core_config_path(text):
             index += 1
         elif arg.startswith('--config='):
             value = arg[len('--config='):]
+        elif arg.startswith('-c='):
+            value = arg[3:]
         elif arg.startswith('-c') and not arg.startswith('--'):
             value = arg[2:]
-            if value.startswith('='):
-                value = value[1:]
+            if not value.startswith(('/', '.')):
+                return refused('cannot tell whether ' + arg + ' names a configuration: an attached'
+                               ' path must begin with / or .')
         if value is not None:
             if not value:
                 return refused('a configuration argument (' + arg + ') names no path')

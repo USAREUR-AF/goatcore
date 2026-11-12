@@ -33,7 +33,7 @@ explicit operator review.
 The edge role reads the core router's configuration from inside its container
 using an argument-vector command (`docker exec <core> cat <path>`). The path is
 the one the container was started with (`docker inspect`, `.Args`): `-c <path>`,
-`--config <path>`, `-c=<path>`, `-c<path>` or `--config=<path>`, so a core run by
+`--config <path>`, `-c=<path>`, `-c<path>` (only when the path begins with `/` or `.`) or `--config=<path>`, never the value of another option (`-l`/`--listen`, `-e`/`--connect`, `-i`/`--id`, `--cfg`), so a core run by
 hand with `-c /etc/goat-core/config.json5` is read where it reads
 (`tasks/core-config-path.yml`, filter `zenoh_core_config_path`). Only a router whose
 arguments name no configuration is read at `goat_zenoh_edge_core_config_path`, or at
