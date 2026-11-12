@@ -126,11 +126,16 @@ goat_zenoh_edge_egress_key_exprs: []   # e.g. from/<sovereign>/**
 # partner-receive (egress) still sends only goat_zenoh_edge_egress_key_exprs, and the
 # core sends this edge only the offered sets (the fragment's fed-r rule).
 goat_zenoh_edge_egress_interest_key_exprs: []
-# Check inspectable local cores for a receive store matching each admitted
-# ingress scope. A retained broad history store is compatible when the required
-# scoped stores exist. Unreadable/separate cores are explicitly SKIP, not PASS.
-# False disables this supplementary inspection and reports that decision.
+# Check the core for a receive store matching each admitted ingress scope. A
+# retained broad history store is compatible when the required scoped stores
+# exist. The core is read on this host, or on the one host of
+# goat_zenoh_edge_core_group when the core router runs elsewhere. A core that
+# cannot be found or read fails the play; it is never a pass. False disables
+# this inspection and reports that decision.
 goat_zenoh_edge_ingress_scope_check: true
+# The inventory group holding our core host, read when the core router is not on
+# this host. The driver deploys the outbound republisher to the same group.
+goat_zenoh_edge_core_group: "{{ goat_zenoh_edge_partner_id }}_core"
 
 # Key-bundle read for grant-keyed encryption. Empty means this partner
 # exchanges UNSEALED only: it cannot obtain a DEK, so it can neither read sealed
@@ -144,13 +149,15 @@ goat_zenoh_edge_ingress_scope_check: true
 # reads as "no bundle published". Set false only to accept that
 # deliberately.
 goat_zenoh_edge_key_scope_check: true
-# The core router container read to make that comparison (and the ingress
-# storage check). Empty (the default) discovers it on this host the way
+# The core router container on this host read to make that comparison and the
+# ingress storage check. Empty (the default) discovers it on this host the way
 # `goat federate init` does: one running container labeled
 # org.goat.component=zenoh-core, else named *-zenoh-router (the standard core
 # role's {{ zenoh_stack }}-router), else the legacy goat-zenoh. None or several
-# found means those checks report "could not run" and the reason; they do not
-# pass. Set a name or ID here only for a layout discovery cannot find
+# found: the key-storage comparison reports "could not run" and the reason, and
+# the ingress storage check looks the same way on the core host
+# (goat_zenoh_edge_core_group) and fails if it cannot read a core there. Neither
+# passes. Set a name or ID here only for a layout discovery cannot find
 # (tasks/discover-core.yml, docs/design/federation-router-discovery.md).
 goat_zenoh_edge_core_container: ""
 

@@ -775,16 +775,18 @@ describes the steps and how each resource is matched to this one peering.
 ## Receive-storage preflight
 
 The edge role checks each configured `goat_zenoh_edge_ingress_key_exprs` value
-against the core's storage declarations when it can read that core locally.
+against the core's storage declarations. It reads the core router's configuration
+on the edge host, or on our core host, the one host in inventory group
+`<partner>_core` (`goat_zenoh_edge_core_group`).
 Every required scope must have an exact matching receive store. This accepts the
 legacy-plus-scoped configuration introduced by #235 and preserves its existing
 history. It does not remove stores, migrate data, alter ACLs or restart the core.
 
 A readable configuration with missing scopes or an unsupported format fails with
-an actionable message. An unreadable or separate core is explicitly **SKIP**, not
-verified. Inspect that core through its own approved workflow. Setting
-`goat_zenoh_edge_ingress_scope_check: false` also reports SKIP and does not inspect
-the core. Actual fresh delivery and persistence still require the acceptance
+an actionable message. A core that cannot be found or read fails the play as
+**could not run**; it is never a pass. Setting
+`goat_zenoh_edge_ingress_scope_check: false` reports SKIP and does not inspect the
+core: use it only to accept an unverified receive store deliberately. Actual fresh delivery and persistence still require the acceptance
 checks; a configured store is not evidence that traffic arrived.
 
 The implementation and its limits are described in

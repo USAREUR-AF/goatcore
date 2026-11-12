@@ -166,10 +166,12 @@ class RolePreflight(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn(lanes[1], result.stdout)
 
-    def test_unavailable_core_is_explicitly_skipped(self):
+    def test_unavailable_core_configuration_fails(self):
+        # Could not run is not a pass: the edge would admit the scopes unverified.
         result = self.run_play('', unreadable=True)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn('SKIP: the local core configuration', result.stdout)
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn('could not read /etc/zenoh/config.json5 from sample-zenoh-router on localhost',
+                      result.stdout)
         self.assertNotIn('PASS: a matching receive store', result.stdout)
 
     def test_disabled_check_skips_without_reading_docker(self):
@@ -202,18 +204,18 @@ class RolePreflight(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn('core router: ' + name, result.stdout)
 
-    def test_no_core_router_is_reported_as_not_run(self):
+    def test_no_core_router_fails_as_not_run(self):
         result = self.run_play(config(*REQUIRED), ps='eid\\tgoat-zenoh-edge-sample\\t\\n')
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotEqual(result.returncode, 0, result.stdout)
         self.assertIn('could not run', result.stdout)
         self.assertIn('no core router found', result.stdout)
         self.assertFalse(self.trace.exists())
         self.assertNotIn('PASS: a matching receive store', result.stdout)
 
-    def test_several_core_routers_are_reported_as_ambiguous(self):
+    def test_several_core_routers_fail_as_ambiguous(self):
         result = self.run_play(config(*REQUIRED),
                                ps='a\\tsample-zenoh-router\\t\\nb\\tgoat-zenoh\\t\\n')
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotEqual(result.returncode, 0, result.stdout)
         self.assertIn('ambiguous: sample-zenoh-router, goat-zenoh', result.stdout)
         self.assertFalse(self.trace.exists())
         self.assertNotIn('PASS: a matching receive store', result.stdout)
@@ -223,6 +225,127 @@ class RolePreflight(unittest.TestCase):
                                ps='a\\tsample-zenoh-router\\t\\nb\\tgoat-zenoh\\t\\n')
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn('exec chosen-core cat', self.trace.read_text())
+
+
+@unittest.skipUnless(shutil.which('ansible-playbook'), 'ansible-playbook is required')
+class CoreOnAnotherHost(unittest.TestCase):
+    """The deployed shape: the edge and the core router on separate hosts.
+
+    Both inventory hosts connect locally; each one's Python interpreter is a
+    wrapper that names the host to a fake docker, so the core host runs a core
+    router and the edge host runs only the edge. The check must read the core's
+    configuration on the core host, the one in <partner>_core.
+    """
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        bindir = self.root / 'bin'
+        bindir.mkdir()
+        docker = bindir / 'docker'
+        docker.write_text(
+            '#!/bin/sh\n'
+            'if [ "$1" = ps ]; then\n'
+            '  if [ "$INGRESS_HOST" = core ]; then printf "$INGRESS_CORE_PS"; fi\n'
+            '  printf "eid\\tgoat-zenoh-edge-xab\\t\\n"; exit 0\n'
+            'fi\n'
+            'printf "%s %s\\n" "$INGRESS_HOST" "$*" >> "$INGRESS_TRACE"\n'
+            '[ "$INGRESS_HOST" = core ] && [ "$INGRESS_UNREADABLE" != 1 ] || exit 1\n'
+            'cat "$INGRESS_CONFIG"\n')
+        docker.chmod(0o755)
+        for host in ('edge', 'core'):
+            wrapper = self.root / ('python-' + host)
+            wrapper.write_text('#!/bin/sh\nINGRESS_HOST=' + host + ' PATH="' + str(bindir)
+                               + ':$PATH" exec "' + sys.executable + '" "$@"\n')
+            wrapper.chmod(0o755)
+        self.trace = self.root / 'trace'
+        self.input = self.root / 'config.json5'
+        self.env = {**os.environ, 'PATH': str(bindir) + ':' + os.environ['PATH'],
+                    'INGRESS_TRACE': str(self.trace), 'INGRESS_CONFIG': str(self.input),
+                    'ANSIBLE_FILTER_PLUGINS': str(PLUGIN.parent),
+                    'ANSIBLE_LOCAL_TEMP': str(self.root / 'ansible-local'),
+                    'ANSIBLE_REMOTE_TEMP': str(self.root / 'ansible-remote'),
+                    'ANSIBLE_NOCOLOR': '1', 'ANSIBLE_STDOUT_CALLBACK': 'default',
+                    'ANSIBLE_RETRY_FILES_ENABLED': '0',
+                    'OBJC_DISABLE_INITIALIZE_FORK_SAFETY': 'YES'}
+
+    def inventory(self, cores=('core-1',)):
+        def host(name, kind):
+            return (name + ' ansible_connection=local ansible_python_interpreter='
+                    + str(self.root / ('python-' + kind)))
+        lines = ['[xab_edge]', host('edge-1', 'edge'), '', '[xab_core]']
+        lines += [host(name, 'edge' if name == 'edge-1' else 'core') for name in cores]
+        lines += ['', '[peering_edges:children]', 'xab_edge', '',
+                  '[peering_cores:children]', 'xab_core', '']
+        path = self.root / 'peering-edges.ini'
+        path.write_text('\n'.join(lines))
+        return path
+
+    def run_play(self, text, cores=('core-1',), unreadable=False,
+                 core_ps='cid\\tgoat-zenoh-router\\tzenoh-core\\n'):
+        self.input.write_text(text)
+        task = ROOT / 'ops/ansible/roles/goat-zenoh-edge/tasks/ingress-storage-check.yml'
+        play = [{'hosts': 'xab_edge', 'gather_facts': False, 'become': False, 'vars': {
+                     'goat_zenoh_edge_partner_id': 'xab',
+                     'goat_zenoh_edge_ingress_scope_check': True,
+                     'goat_zenoh_edge_ingress_key_exprs': REQUIRED},
+                 'tasks': [{'ansible.builtin.include_tasks': str(task)}]}]
+        path = self.root / 'play.yml'
+        path.write_text(yaml.safe_dump(play, sort_keys=False))
+        # --limit to the edge group, as the driver runs phase 12.
+        return subprocess.run(['ansible-playbook', '-i', str(self.inventory(cores)),
+                               '--limit', 'xab_edge', str(path)],
+                              env={**self.env, 'INGRESS_CORE_PS': core_ps,
+                                   'INGRESS_UNREADABLE': '1' if unreadable else '0'},
+                              capture_output=True, text=True, timeout=60)
+
+    def test_broad_store_on_a_separate_core_host_is_refused(self):
+        result = self.run_play(config('from/**'))
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn('Missing exact scopes: from/xaa/**', result.stdout)
+        self.assertIn('A broad from/** store alone does not satisfy', result.stdout)
+        self.assertEqual(self.trace.read_text(), 'core exec goat-zenoh-router cat /etc/zenoh/config.json5\n')
+
+    def test_matching_store_on_a_separate_core_host_passes(self):
+        result = self.run_play(config('from/**', *REQUIRED))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('core router: goat-zenoh-router on core-1', result.stdout)
+        self.assertIn('PASS: a matching receive store', result.stdout)
+
+    def test_no_core_host_in_the_inventory_fails(self):
+        result = self.run_play(config(*REQUIRED), cores=())
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn('could not run', result.stdout)
+        self.assertIn('no host in inventory group xab_core', result.stdout)
+        self.assertFalse(self.trace.exists())
+        self.assertNotIn('PASS: a matching receive store', result.stdout)
+
+    def test_several_core_hosts_fail_as_ambiguous(self):
+        result = self.run_play(config(*REQUIRED), cores=('core-1', 'core-2'))
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn('inventory group xab_core holds several hosts: core-1, core-2', result.stdout)
+        self.assertFalse(self.trace.exists())
+
+    def test_no_core_router_on_the_core_host_fails(self):
+        result = self.run_play(config(*REQUIRED), core_ps='')
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn('could not run', result.stdout)
+        self.assertIn('on core-1: no core router found', result.stdout)
+        self.assertNotIn('PASS: a matching receive store', result.stdout)
+
+    def test_unreadable_core_configuration_on_the_core_host_fails(self):
+        result = self.run_play(config(*REQUIRED), unreadable=True)
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn('could not read /etc/zenoh/config.json5 from goat-zenoh-router on core-1',
+                      result.stdout)
+        self.assertNotIn('PASS: a matching receive store', result.stdout)
+
+    def test_core_group_holding_only_this_host_reads_locally(self):
+        # Edge and core on one host, listed in both groups: the local path, once.
+        result = self.run_play(config(*REQUIRED), cores=('edge-1',))
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn('on edge-1: no core router found', result.stdout)
 
 
 if __name__ == '__main__':

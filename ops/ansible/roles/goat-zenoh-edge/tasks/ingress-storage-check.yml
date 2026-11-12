@@ -1,5 +1,11 @@
 ---
-# Inspect a local core only. Missing access is explicitly SKIP, never PASS.
+# Read the core router's configuration where the core router runs, and require
+# a receive store matching each admitted ingress scope. The core is looked for
+# on this host first, then on the one host of the inventory group
+# goat_zenoh_edge_core_group (<partner>_core, the group the driver deploys the
+# republisher to): the deployed shape has the edge and the core on separate
+# hosts. A check that cannot run fails; it is never reported as a pass. Only
+# goat_zenoh_edge_ingress_scope_check: false turns it off, and that is reported.
 - name: edge | report disabled ingress storage inspection
   ansible.builtin.debug:
     msg: "SKIP: ingress storage inspection is explicitly disabled; receive scopes were not verified."
@@ -12,16 +18,49 @@
     - goat_zenoh_edge_ingress_scope_check | default(true) | bool
     - _edge_core_container is not defined
 
-- name: edge | report ingress storage inspection that could not run
-  ansible.builtin.debug:
-    msg: >-
-      SKIP: could not run: ingress storage inspection found no core to read
-      ({{ _edge_core_problem }}). Receive scopes were not verified by this edge play.
+- name: edge | the core host the inventory names, when the core router is not on this host
+  vars:
+    _group: "{{ goat_zenoh_edge_core_group | default((goat_zenoh_edge_partner_id | default('')) ~ '_core') }}"
+    _hosts: "{{ groups[_group] | default([]) }}"
+  ansible.builtin.set_fact:
+    _edge_ingress_core_group: "{{ _group }}"
+    _edge_ingress_core_hosts: "{{ _hosts }}"
+    _edge_ingress_local_problem: "on {{ inventory_hostname }}: {{ _edge_core_problem }}"
+    _edge_ingress_core_on: >-
+      {{ (_hosts | first) if (_hosts | length == 1 and (_hosts | first) != inventory_hostname) else '' }}
   when:
     - goat_zenoh_edge_ingress_scope_check | default(true) | bool
     - _edge_core_container | default('') | length == 0
 
-- name: edge | read the local core storage configuration
+- name: edge | find the core router on the core host
+  ansible.builtin.include_tasks: discover-core.yml
+  vars:
+    _edge_core_on: "{{ _edge_ingress_core_on }}"
+  when:
+    - goat_zenoh_edge_ingress_scope_check | default(true) | bool
+    - _edge_core_container | default('') | length == 0
+    - _edge_ingress_core_on | default('') | length > 0
+
+- name: edge | refuse an ingress storage inspection that found no core to read
+  ansible.builtin.fail:
+    msg: >-
+      could not run: ingress storage inspection found no core to read
+      ({{ _edge_ingress_local_problem }};
+      {%- if _edge_ingress_core_on | length > 0 %} on {{ _edge_ingress_core_on }}: {{ _edge_core_problem }}
+      {%- elif _edge_ingress_core_hosts | length == 0 %} no host in inventory group {{ _edge_ingress_core_group }}
+      {%- elif _edge_ingress_core_hosts | length > 1 %} inventory group {{ _edge_ingress_core_group }} holds several hosts: {{ _edge_ingress_core_hosts | join(', ') }}
+      {%- else %} inventory group {{ _edge_ingress_core_group }} names only this host
+      {%- endif %}). Receive scopes were not verified, and this edge would admit
+      the partner's ingress scopes {{ goat_zenoh_edge_ingress_key_exprs | join(', ') }}
+      without a matching receive store. Put our core host, alone, in inventory group
+      {{ _edge_ingress_core_group }}, or name the container in
+      goat_zenoh_edge_core_container when the core runs on this host; set
+      goat_zenoh_edge_ingress_scope_check: false only to accept this deliberately.
+  when:
+    - goat_zenoh_edge_ingress_scope_check | default(true) | bool
+    - _edge_core_container | default('') | length == 0
+
+- name: edge | read the core storage configuration
   ansible.builtin.command:
     argv:
       - docker
@@ -34,16 +73,19 @@
   failed_when: false
   check_mode: false
   no_log: true
+  delegate_to: "{{ _edge_ingress_core_on | default('', true) or inventory_hostname }}"
   when:
     - goat_zenoh_edge_ingress_scope_check | default(true) | bool
     - _edge_core_container | default('') | length > 0
 
-- name: edge | report unavailable local core storage inspection
-  ansible.builtin.debug:
+- name: edge | refuse a core storage configuration that could not be read
+  ansible.builtin.fail:
     msg: >-
-      SKIP: the local core configuration could not be read. A separate core host
-      must be inspected through its own approved workflow; receive scopes were
-      not verified by this edge play.
+      could not run: could not read /etc/zenoh/config.json5 from
+      {{ _edge_core_container }} on
+      {{ _edge_ingress_core_on | default('', true) or inventory_hostname }}.
+      Receive scopes were not verified; set goat_zenoh_edge_ingress_scope_check:
+      false only to accept this deliberately.
   when:
     - goat_zenoh_edge_ingress_scope_check | default(true) | bool
     - _edge_core_container | default('') | length > 0
