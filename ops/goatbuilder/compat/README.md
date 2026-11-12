@@ -67,6 +67,20 @@ outcome the released binary gives it. Files already kept are never changed or
 removed. Review the diff: a document or code that changed between the two
 releases is a change the release made, and its notes should say so.
 
+**The reviewer checks the new pin against the release page.** For a release
+not yet pinned, `refresh` trusts the `SHA256SUMS` it is given: the pin is only
+as good as that file. The pull request that moves the baseline adds one line
+to `releases.sha256` and sets `sums_sha256` in `baseline.yaml`; its reviewer
+compares that line with the `goatbuilder-linux-amd64` entry of `SHA256SUMS` on
+the tag's release page (and may verify `SHA256SUMS.cosign-bundle`). A
+follow-up has `refresh` fetch `SHA256SUMS` from the tag's release URL itself.
+
+**There are two pin lists.** The upgrade test (gate E1) pins the same
+published binaries in `crates/goatbuilder/tests/upgrade/releases.sha256`, in
+its own format. Nothing ties that file to `releases.sha256` here yet; they
+agree today where they overlap (v0.4.3 and v0.5.1, linux-amd64). A follow-up
+keeps one of them, or adds a gate that compares the two.
+
 To keep a configuration file from a release already recorded, run the same
 command with that release's binary and `--only configs`; the baseline stays
 where it is.
