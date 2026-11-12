@@ -822,6 +822,7 @@ pub fn write_edge_half(
     let v = serde_json::json!({
         "schema": EDGE_HALF_SCHEMA,
         "peering": peering,
+        "measured_at": chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
         "edge_host": edge.name,
         "interface": interface,
         "transports": derived_json(&half.transports),
@@ -836,19 +837,57 @@ pub fn write_edge_half(
 }
 
 /// An edge half read back: what was measured, for which interface, on which
-/// host, and the file's sha256.
+/// host and when, and the file's sha256.
 #[derive(Debug, Clone)]
 pub struct ImportedEdgeHalf {
     pub half: EdgeHalf,
     pub interface: Option<String>,
     pub edge_host: String,
+    pub measured_at: chrono::DateTime<chrono::Utc>,
     pub sha256: String,
 }
 
-/// Read an edge half for `peering`. Anything else is refused (GB-114): a
-/// file that does not read, another schema, another peering, or a field that
-/// is not what the edge half carries.
-pub fn read_edge_half(path: &Path, peering: &str) -> Result<ImportedEdgeHalf> {
+/// The oldest edge half the core side joins. The two halves of one phase 3
+/// are measured and joined in one working session: past a day, the edge may
+/// have been rebuilt or re-keyed (a new WireGuard key, a changed MTU), and a
+/// package signed with the old values would carry them. Measure it again.
+pub const EDGE_HALF_MAX_AGE_HOURS: i64 = 24;
+
+/// How far in the future an edge half's time may be, for clocks that differ.
+const EDGE_HALF_CLOCK_SKEW_MINUTES: i64 = 5;
+
+/// The fewest hex digits of the digest the operator may confirm: 128 bits.
+pub const CONFIRM_HEX_DIGITS: usize = 32;
+
+/// The digest as the operator reads it aloud or copies it: its first
+/// [`CONFIRM_HEX_DIGITS`] hex digits, in groups of four.
+pub fn confirm_code(sha256: &str) -> String {
+    sha256
+        .chars()
+        .take(CONFIRM_HEX_DIGITS)
+        .collect::<Vec<_>>()
+        .chunks(4)
+        .map(|c| c.iter().collect::<String>())
+        .collect::<Vec<_>>()
+        .join("-")
+}
+
+/// Read an edge half for `peering`, bound to the digest the operator
+/// confirms. Refused (GB-114) before anything in it is used: a file that does
+/// not read, a digest other than the one confirmed, another schema, another
+/// peering, no time or one older than [`EDGE_HALF_MAX_AGE_HOURS`], or a field
+/// that is not what the edge half carries. Each edge value's source then names
+/// the file and its confirmed digest, so the package's provenance does.
+pub fn read_edge_half(path: &Path, peering: &str, confirmed: &str) -> Result<ImportedEdgeHalf> {
+    read_edge_half_at(path, peering, confirmed, chrono::Utc::now())
+}
+
+fn read_edge_half_at(
+    path: &Path,
+    peering: &str,
+    confirmed: &str,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Result<ImportedEdgeHalf> {
     let bad = |why: String| {
         coded(
             "GB-114",
@@ -859,6 +898,27 @@ pub fn read_edge_half(path: &Path, peering: &str) -> Result<ImportedEdgeHalf> {
         )
     };
     let bytes = std::fs::read(path).map_err(|e| bad(format!("it could not be read: {e}")))?;
+    let sha256 = sha256_hex(&bytes);
+    let want: String = confirmed
+        .chars()
+        .filter(|c| !matches!(c, ' ' | '-' | ':'))
+        .collect::<String>()
+        .to_ascii_lowercase();
+    if want.len() < CONFIRM_HEX_DIGITS
+        || want.len() > 64
+        || !want.chars().all(|c| c.is_ascii_hexdigit())
+    {
+        return Err(bad(format!(
+            "--edge-half-sha256 must be at least the first {CONFIRM_HEX_DIGITS} hex digits of the sha256 the edge driver printed, not `{confirmed}`"
+        )));
+    }
+    if !sha256.starts_with(&want) {
+        return Err(bad(format!(
+            "its sha256 is {}, and the digest confirmed is {}: the file is not the one the edge driver wrote. Copy it again from the edge driver, or measure the edge half again",
+            confirm_code(&sha256),
+            confirm_code(&want)
+        )));
+    }
     let v: Value =
         serde_json::from_slice(&bytes).map_err(|e| bad(format!("it is not JSON: {e}")))?;
     if v["schema"] != EDGE_HALF_SCHEMA {
@@ -870,16 +930,35 @@ pub fn read_edge_half(path: &Path, peering: &str) -> Result<ImportedEdgeHalf> {
     if v["peering"] != peering {
         return Err(bad(format!("it was measured for peering {}", v["peering"])));
     }
+    let measured_at = v["measured_at"]
+        .as_str()
+        .and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok())
+        .map(|t| t.with_timezone(&chrono::Utc))
+        .ok_or_else(|| bad("it carries no measured_at time".into()))?;
+    let age = now.signed_duration_since(measured_at);
+    if age > chrono::Duration::hours(EDGE_HALF_MAX_AGE_HOURS) {
+        return Err(bad(format!(
+            "it was measured at {measured_at}, {} hours ago, and an edge half is joined within {EDGE_HALF_MAX_AGE_HOURS} hours: measure the edge half again",
+            age.num_hours()
+        )));
+    }
+    if age < -chrono::Duration::minutes(EDGE_HALF_CLOCK_SKEW_MINUTES) {
+        return Err(bad(format!("it says it was measured at {measured_at}, later than now ({now}): check the two machines' clocks")));
+    }
     let n = Nothing;
     let field = |k: &str| bad(format!("its {k} is not an edge measurement"));
-    let transports = derived_from(&v["transports"], derive::transports_on(&n).field)
+    let carried = format!(
+        "; carried in the edge half {} (sha256 {sha256}, confirmed)",
+        path.display()
+    );
+    let mut transports = derived_from(&v["transports"], derive::transports_on(&n).field)
         .ok_or_else(|| field("transports"))?;
-    let pqc_capable = derived_from(&v["pqc_capable"], derive::pqc_capable_on(&n).field)
+    let mut pqc_capable = derived_from(&v["pqc_capable"], derive::pqc_capable_on(&n).field)
         .ok_or_else(|| field("pqc_capable"))?;
-    let public_key = match &v["public_key"] {
+    let mut public_key = match &v["public_key"] {
         Value::Null => None,
         pk => Some(
-            derived_from(pk, derive::transport_public_key_on(&n, "wg0").field)
+            derived_from::<String>(pk, derive::transport_public_key_on(&n, "wg0").field)
                 .ok_or_else(|| field("public_key"))?,
         ),
     };
@@ -887,6 +966,11 @@ pub fn read_edge_half(path: &Path, peering: &str) -> Result<ImportedEdgeHalf> {
         Value::Null => None,
         m => Some(m.as_i64().ok_or_else(|| field("interface_mtu"))?),
     };
+    transports.source.push_str(&carried);
+    pqc_capable.source.push_str(&carried);
+    if let Some(pk) = public_key.as_mut() {
+        pk.source.push_str(&carried);
+    }
     Ok(ImportedEdgeHalf {
         half: EdgeHalf {
             transports,
@@ -896,7 +980,8 @@ pub fn read_edge_half(path: &Path, peering: &str) -> Result<ImportedEdgeHalf> {
         },
         interface: v["interface"].as_str().map(String::from),
         edge_host: v["edge_host"].as_str().unwrap_or_default().to_string(),
-        sha256: sha256_hex(&bytes),
+        measured_at,
+        sha256,
     })
 }
 
@@ -1028,12 +1113,22 @@ impl MeasureArgs {
                 ));
             }
         }
-        match (self.side.as_deref(), &self.half_out, &self.edge_half) {
-            (None, None, None) | (Some("edge"), Some(_), None) | (Some("core"), None, Some(_)) => {}
+        match (
+            self.side.as_deref(),
+            &self.half_out,
+            &self.edge_half,
+            &self.edge_half_sha256,
+        ) {
+            (None, None, None, None)
+            | (Some("edge"), Some(_), None, None)
+            | (Some("core"), None, Some(_), Some(_)) => {}
             _ => {
-                return Err(anyhow::anyhow!(
-                    "--side edge takes --half-out <file> (where the edge half is written), and                      --side core takes --edge-half <file> (the edge half to join); neither file                      is read or written without its side"
-                ))
+                return Err(anyhow::anyhow!(concat!(
+                    "--side edge takes --half-out <file> (where the edge half is written), and ",
+                    "--side core takes --edge-half <file> (the edge half to join) with ",
+                    "--edge-half-sha256 <digest> (the digest the edge driver printed, confirmed); ",
+                    "none of them is read or written without its side"
+                )))
             }
         }
         Ok(Some(p))
@@ -1093,21 +1188,45 @@ pub fn run_init(
             writeln!(
                 out,
                 "phase 3, edge half of peering {peering}: measured on {} and written to {} (sha256 {digest}). Nothing was built or signed.\n\
-                 Carry the file to the controller, then run there: goatbuilder federate init --over-ssh {peering} --side core --edge-half <file> (with the same init flags)",
+                 Confirm code: {code}\n\
+                 Carry the file to the controller and read the confirm code from here, then run there: goatbuilder federate init --over-ssh {peering} --side core --edge-half <file> --edge-half-sha256 {code} (with the same init flags)",
                 edge.name,
-                path.display()
+                path.display(),
+                code = confirm_code(&digest)
             )?;
             Ok(0)
         }
         Some(_) => {
             let path = m.edge_half.as_ref().expect("checked by peering()");
-            let imported = read_edge_half(path, peering)?;
+            let confirmed = m.edge_half_sha256.as_deref().expect("checked by peering()");
+            let imported = read_edge_half(path, peering, confirmed)?;
             let inv = peering_inventory(repo, &edge_group)?;
+            // The edge this checkout's inventory names, read and never reached:
+            // a half measured on another host is not this peering's edge.
+            match target_in(&inv, &edge_group, m.edge_host.as_deref(), "--edge-host") {
+                Ok(t) if t.name != imported.edge_host => {
+                    return Err(coded(
+                        "GB-114",
+                        format!(
+                            "the edge half {} cannot be used for peering {peering} (GB-114): it was measured on {}, and this checkout's inventory names {} as the edge of {edge_group}",
+                            path.display(),
+                            imported.edge_host,
+                            t.name
+                        ),
+                    ));
+                }
+                Ok(_) => {}
+                Err(_) => eprintln!(
+                    "phase 3: this checkout's inventory names no single edge host in {edge_group}, so the edge half's host {} is not checked against it",
+                    imported.edge_host
+                ),
+            }
             let core = target_in(&inv, &core_group, m.core_host.as_deref(), "--core-host")?;
             eprintln!(
-                "phase 3: the edge half of peering {peering} from {} (measured on {}, sha256 {}), joined with the core measured here",
+                "phase 3: the edge half of peering {peering} from {} (measured on {} at {}, sha256 {}, confirmed), joined with the core measured here",
                 path.display(),
                 imported.edge_host,
+                imported.measured_at,
                 imported.sha256
             );
             let router = m.router_container.clone();
@@ -1790,7 +1909,9 @@ mod tests {
         );
         let text = String::from_utf8_lossy(&out);
         assert!(
-            text.contains("sha256") && text.contains("--side core --edge-half"),
+            text.contains("sha256")
+                && text.contains("--side core --edge-half")
+                && text.contains("--edge-half-sha256"),
             "{text}"
         );
     }
@@ -1813,13 +1934,22 @@ mod tests {
             half_out: Some(half.clone()),
             ..Default::default()
         };
-        run_init(edge_repo.path(), &site, &init_args(), &m, &mut Vec::new()).unwrap();
+        let mut out = Vec::new();
+        run_init(edge_repo.path(), &site, &init_args(), &m, &mut out).unwrap();
+        // The confirm code the edge driver printed, read by the operator.
+        let text = String::from_utf8(out).unwrap();
+        let code_read = text
+            .lines()
+            .find_map(|l| l.strip_prefix("Confirm code: "))
+            .unwrap()
+            .to_string();
         // The controller, where only the core is.
         let repo = checkout_with_inventory(&split_inventory(false));
-        let m = MeasureArgs {
+        let mut m = MeasureArgs {
             over_ssh: Some("xab".into()),
             side: Some("core".into()),
             edge_half: Some(half.clone()),
+            edge_half_sha256: Some(code_read),
             ..Default::default()
         };
         let e = run_init(repo.path(), &site, &init_args(), &m, &mut Vec::new()).unwrap_err();
@@ -1829,6 +1959,8 @@ mod tests {
         let mut v: Value = serde_json::from_str(&std::fs::read_to_string(&half).unwrap()).unwrap();
         v["peering"] = json!("xac");
         std::fs::write(&half, v.to_string()).unwrap();
+        // (confirmed with the new file's own digest, so the peering is what refuses)
+        m.edge_half_sha256 = Some(sha256_hex(&std::fs::read(&half).unwrap()));
         let e = run_init(repo.path(), &site, &init_args(), &m, &mut Vec::new()).unwrap_err();
         assert_eq!(code(&e).as_deref(), Some("GB-114"), "{e:#}");
         assert!(format!("{e:#}").contains("xac"), "{e:#}");
@@ -1928,8 +2060,35 @@ mod tests {
         let path = dir.path().join("half.json");
         let edge = target_in(&inventory(), "xab_edge", None, "--edge-host").unwrap();
         let digest = write_edge_half(&path, "xab", &edge, Some("wg-fed0"), &half).unwrap();
-        let back = read_edge_half(&path, "xab").unwrap();
-        assert_eq!(format!("{:?}", back.half), format!("{half:?}"));
+        let back = read_edge_half(&path, "xab", &digest).unwrap();
+        // What was measured comes back, each source naming the file and its confirmed digest.
+        let carried = format!(
+            "; carried in the edge half {} (sha256 {digest}, confirmed)",
+            path.display()
+        );
+        assert_eq!(
+            back.half.transports.source,
+            format!("{}{carried}", half.transports.source)
+        );
+        assert_eq!(
+            format!("{:?}", back.half.transports.outcome),
+            format!("{:?}", half.transports.outcome)
+        );
+        assert_eq!(back.half.transports.field, half.transports.field);
+        assert_eq!(
+            format!("{:?}", back.half.pqc_capable.outcome),
+            format!("{:?}", half.pqc_capable.outcome)
+        );
+        assert_eq!(
+            back.half
+                .public_key
+                .as_ref()
+                .map(|d| (d.field, format!("{:?}", d.outcome))),
+            half.public_key
+                .as_ref()
+                .map(|d| (d.field, format!("{:?}", d.outcome)))
+        );
+        assert_eq!(back.half.interface_mtu, half.interface_mtu);
         assert_eq!(
             (
                 back.interface.as_deref(),
@@ -1938,23 +2097,95 @@ mod tests {
             ),
             (Some("wg-fed0"), "xaa-edge", digest.as_str())
         );
-        // Another schema, a field that is not the edge's, and a missing file are GB-114.
+        // The confirm code alone is enough; a shorter one, or another digest, is not.
+        assert!(read_edge_half(&path, "xab", &confirm_code(&digest)).is_ok());
+        assert_eq!(
+            code(&read_edge_half(&path, "xab", &digest[..16]).unwrap_err()).as_deref(),
+            Some("GB-114")
+        );
+        let other = format!(
+            "{}{}",
+            if digest.starts_with('0') { "1" } else { "0" },
+            &digest[1..]
+        );
+        assert_eq!(
+            code(&read_edge_half(&path, "xab", &other).unwrap_err()).as_deref(),
+            Some("GB-114")
+        );
+        // Past the bound, or from the future, it is refused (GB-114).
+        let now = chrono::Utc::now();
+        let e = read_edge_half_at(
+            &path,
+            "xab",
+            &digest,
+            now + chrono::Duration::hours(EDGE_HALF_MAX_AGE_HOURS + 1),
+        )
+        .unwrap_err();
+        assert!(
+            code(&e).as_deref() == Some("GB-114")
+                && e.to_string().contains("measure the edge half again"),
+            "{e}"
+        );
+        let e =
+            read_edge_half_at(&path, "xab", &digest, now - chrono::Duration::hours(1)).unwrap_err();
+        assert!(
+            code(&e).as_deref() == Some("GB-114") && e.to_string().contains("clocks"),
+            "{e}"
+        );
+        // Changed and confirmed with its own new digest, the shape is still checked.
+        let own = |p: &Path| sha256_hex(&std::fs::read(p).unwrap());
         let mut v: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         v["transports"]["field"] = json!("capabilities.fabric_version");
         std::fs::write(&path, v.to_string()).unwrap();
         assert_eq!(
-            code(&read_edge_half(&path, "xab").unwrap_err()).as_deref(),
+            code(&read_edge_half(&path, "xab", &own(&path)).unwrap_err()).as_deref(),
+            Some("GB-114")
+        );
+        v["transports"]["field"] = json!(half.transports.field);
+        v["measured_at"] = Value::Null;
+        std::fs::write(&path, v.to_string()).unwrap();
+        assert_eq!(
+            code(&read_edge_half(&path, "xab", &own(&path)).unwrap_err()).as_deref(),
             Some("GB-114")
         );
         v["schema"] = json!("something/v9");
         std::fs::write(&path, v.to_string()).unwrap();
         assert_eq!(
-            code(&read_edge_half(&path, "xab").unwrap_err()).as_deref(),
+            code(&read_edge_half(&path, "xab", &own(&path)).unwrap_err()).as_deref(),
             Some("GB-114")
         );
         assert_eq!(
-            code(&read_edge_half(&dir.path().join("none.json"), "xab").unwrap_err()).as_deref(),
+            code(&read_edge_half(&dir.path().join("none.json"), "xab", &digest).unwrap_err())
+                .as_deref(),
             Some("GB-114")
+        );
+    }
+
+    /// A half measured on a host other than the edge this checkout's inventory
+    /// names is refused (GB-114), before the core is asked.
+    #[test]
+    fn a_half_from_another_edge_host_is_refused() {
+        let ctx = tempfile::tempdir().unwrap();
+        let site = site(ctx.path());
+        let half = ctx.path().join("edge-half.json");
+        let log = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let measured = edge_half(&Table { name: "edge", log }, None);
+        let other = target_in(&inventory(), "xab_edge", None, "--edge-host").unwrap();
+        let digest = write_edge_half(&half, "xab", &other, None, &measured).unwrap();
+        let repo = checkout_with_inventory(&split_inventory(false));
+        let m = MeasureArgs {
+            over_ssh: Some("xab".into()),
+            side: Some("core".into()),
+            edge_half: Some(half),
+            edge_half_sha256: Some(digest),
+            ..Default::default()
+        };
+        let e = run_init(repo.path(), &site, &init_args(), &m, &mut Vec::new()).unwrap_err();
+        assert_eq!(code(&e).as_deref(), Some("GB-114"), "{e:#}");
+        assert!(
+            format!("{e:#}").contains("measured on xaa-edge")
+                && format!("{e:#}").contains("names edge-x"),
+            "{e:#}"
         );
     }
 
@@ -1965,6 +2196,7 @@ mod tests {
             side: side.map(String::from),
             half_out: out.then(|| "h.json".into()),
             edge_half: half.then(|| "h.json".into()),
+            edge_half_sha256: (side == Some("core") && half).then(|| "0".repeat(64)),
             ..Default::default()
         };
         assert!(m(Some("edge"), true, false).peering().is_ok());
@@ -1981,6 +2213,18 @@ mod tests {
                 .unwrap_err()
                 .to_string()
                 .contains("--side edge takes --half-out"));
+        }
+        // The core side without the confirmed digest, or a digest without the core side.
+        let mut no_digest = m(Some("core"), false, true);
+        no_digest.edge_half_sha256 = None;
+        let mut stray = m(Some("edge"), true, false);
+        stray.edge_half_sha256 = Some("0".repeat(64));
+        for bad in [no_digest, stray] {
+            let e = bad.peering().unwrap_err().to_string();
+            assert!(
+                e.contains("--edge-half-sha256") && !e.contains("  "),
+                "one line, no run of spaces: {e}"
+            );
         }
         let e = MeasureArgs {
             side: Some("edge".into()),
@@ -2002,7 +2246,11 @@ mod tests {
         let half = ctx.path().join("edge-half.json");
         let log = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
         let mut measured = edge_half(&Table { name: "edge", log }, None);
-        measured.public_key = Some(derive::Derived { field: derive::transport_public_key_on(&Nothing, "wg0").field, outcome: Ok("Ym9yaW5nIGtleSBmb3IgYSB0ZXN0IG9ubHkgMDAwMDA=".into()), source: "wg show wg-fed0 public-key on edge-x".into() });
+        measured.public_key = Some(derive::Derived {
+            field: derive::transport_public_key_on(&Nothing, "wg0").field,
+            outcome: Ok("Ym9yaW5nIGtleSBmb3IgYSB0ZXN0IG9ubHkgMDAwMDA=".into()),
+            source: "wg show wg-fed0 public-key on edge-x".into(),
+        });
         let edge = target_in(&split_inventory(true), "xab_edge", None, "--edge-host").unwrap();
         let digest = write_edge_half(&half, "xab", &edge, None, &measured).unwrap();
         // In transit, someone puts their own key in the half.
@@ -2010,9 +2258,18 @@ mod tests {
         v["public_key"]["ok"] = json!("YXR0YWNrZXIncyBrZXkgaW5zdGVhZCBvZiBvdXJzMDA=");
         std::fs::write(&half, serde_json::to_string_pretty(&v).unwrap()).unwrap();
         let repo = checkout_with_inventory(&split_inventory(false));
-        let m = MeasureArgs { over_ssh: Some("xab".into()), side: Some("core".into()), edge_half: Some(half.clone()), edge_half_sha256: Some(digest.clone()), ..Default::default() };
+        let m = MeasureArgs {
+            over_ssh: Some("xab".into()),
+            side: Some("core".into()),
+            edge_half: Some(half.clone()),
+            edge_half_sha256: Some(digest.clone()),
+            ..Default::default()
+        };
         let e = run_init(repo.path(), &site, &init_args(), &m, &mut Vec::new()).unwrap_err();
         assert_eq!(code(&e).as_deref(), Some("GB-114"), "{e:#}");
-        assert!(format!("{e:#}").contains(&digest[..32]), "names what was confirmed: {e:#}");
+        assert!(
+            format!("{e:#}").contains(&confirm_code(&digest)),
+            "names what was confirmed: {e:#}"
+        );
     }
 }

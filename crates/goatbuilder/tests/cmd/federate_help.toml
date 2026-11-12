@@ -151,6 +151,11 @@ Options:
       --edge-half <FILE>
           init --over-ssh --side core: the edge half the edge driver wrote
 
+      --edge-half-sha256 <SHA256>
+          init --over-ssh --side core: the edge half's sha256 as the edge driver printed it, read
+          from there and confirmed here (the full digest, or its first 32 hex digits; spaces and
+          dashes are ignored)
+
       --plan <FILE>
           deploy: the plan to execute (default <work>/plan.json)
 

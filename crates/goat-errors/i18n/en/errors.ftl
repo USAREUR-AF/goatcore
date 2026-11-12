@@ -427,10 +427,12 @@ gb-113-cause-1 = the declared router is not running on the core host, or the var
 gb-113-cause-2 = nothing declares the router and no running container carries org.goat.component=zenoh-core or a standard name
 gb-113-cause-3 = several core routers run on the host
 gb-114-title = an edge half of phase 3 cannot be joined
-gb-114-what = With two drivers (docs/design/federation-two-drivers.md), the edge driver measures phase 3's edge half with `goatbuilder federate init --over-ssh <partner> --side edge --half-out <file>`, and the controller joins it with `--side core --edge-half <file>` before it builds and signs the package. The file given could not be read, is not an edge half, was measured for another peering, or was measured for another federation interface than the one the package asks for.
-gb-114-cause-1 = the file was not copied whole from the edge driver, or another file was given
-gb-114-cause-2 = the edge half was measured for another partner
-gb-114-cause-3 = the declaration or the init flags differ between the two machines, so the edge was measured for another interface (or none)
+gb-114-what = With two drivers, the edge driver measures phase 3's edge half with `goatbuilder federate init --over-ssh <partner> --side edge --half-out <file>` and prints its sha256 and a confirm code. The controller joins it with `--side core --edge-half <file> --edge-half-sha256 <code>` before it builds and signs the package. The half carries the edge's WireGuard public key, which the package is signed with, so it is joined only when it is the file the edge driver wrote. The file given could not be read; its sha256 is not the one confirmed; it is not an edge half; it was measured for another peering, on another host than this checkout's inventory names as the edge, or for another federation interface than the package asks for; or it was measured more than 24 hours ago, or later than now.
+gb-114-cause-1 = the file was changed or not copied whole on its way from the edge driver, or another file was given
+gb-114-cause-2 = the confirm code was mistyped, or read from another run of the edge half
+gb-114-cause-3 = the edge half was measured for another partner or on another edge host
+gb-114-cause-4 = the declaration or the init flags differ between the two machines, so the edge was measured for another interface (or none)
+gb-114-cause-5 = the edge half is older than a day, or one of the two machines' clocks is wrong
 gb-120-title = a peering names a partner with a reserved word
 gb-120-what = A word of `goatbuilder federate` (init lint compose diff verify apply help status plan deploy test allocate backout rotate) can never name a partner: `goatbuilder federate <word>` runs that step, so the peering could never be run by name.
 gb-120-cause-1 = a peerings entry's `with:` is one of the reserved words
