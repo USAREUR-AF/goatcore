@@ -536,6 +536,12 @@ The human act stays human: a person reads what our core will admit (the partner 
 
 **Not built:** reaching the files of a core that is not the goat-zenoh role's over SSH without a play; the planner's own slot-list recheck function in place of the `sync-slot-anchors.py --check` call (the call site is the same).
 
+### The phase catalog
+
+Status: built for `federate` (its 14 phases), loader and gate; `explain <verb> <phase>` designed (the library answers, the command is not wired yet); the other verbs not built. Status: WIP — gate: conformance check (d) of the legibility work (C11) passes for every verb.
+
+Every phase of every verb is described once, in `ops/phases/catalog.yaml`, beside the error catalog: what it does, why it exists, what it changes and where, how to tell it worked, the script or play it runs, the command that does the same by hand, and what to read. `crates/goat-errors` embeds it at build time as it embeds the error catalog, in the module `phases`, so `goat` and `goatbuilder` read one copy and the entry for a phase is found by number or by its id (`explain_phase("federate", "8")` and `explain_phase("federate", "mint")` are the same entry). The documents' phase tables are rendered from it, between `<!-- BEGIN generated: phase-catalog <verb> <table> -->` markers: the runbook's plan, deploy and "when a phase fails" tables for `federate` today. `ops/ci/check-phase-catalog.py` refuses an entry missing a field or naming a document that does not exist, and a table edited by hand (`--write` re-renders; CI runs `--self-test`, workflow `phase-catalog.yml`). A unit test in `federate/mod.rs` checks that every phase the plan can hold, for each transport an agreement may select, has its entry.
+
 ### A goatlite profile (future)
 
 > Designed 2026-10-31: [goatlite.md](goatlite.md) and [ADR 1213](../adr/1213-goatlite-preset-one-box-one-file.md). The paragraph below is the reservation this section made; the design doc is canonical.

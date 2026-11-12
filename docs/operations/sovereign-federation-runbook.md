@@ -184,6 +184,8 @@ certificates through the directory, composes and verifies the agreement, validat
 peering certificates, and renders the configuration. `apply` stays a renderer: it writes files and
 changes no host.
 
+<!-- BEGIN generated: phase-catalog federate plan -->
+
 | # | Kind | Phase | Worked when |
 |---|---|---|---|
 | 1 | GATE | preflight, fail-closed | prints `READY`; a failure names the input, where it was looked for, and its catalog code. When the declaration offers a release set, the inventory group `<peering>_core` names the core host and sits under `[peering_cores:children]` |
@@ -195,6 +197,8 @@ changes no host.
 | 7 | T | `verify` | the derived names re-derive; the ingress prefix and republish target are stated |
 | 8 | T | validate or mint the peering leaves | four certificates, names derived from the agreement, SANs covering every address that will be dialled: outward, inward, core, and `republisher.pem` with CN `fed.<us>.<them>.republisher.01` |
 | 9 | T | `apply --confirm` | the partner declaration, the edge group_vars, the republisher vars (`federation-<them>-republish.yml`) and the ACL fragment, which carries the edge's subject and the republisher's `fed-rp-<them>` subject |
+
+<!-- END generated: phase-catalog federate plan -->
 
 **Confirmation 1 — read the keys aloud, and compare the agreement digest.** After the exchange,
 `plan` prints both verifying keys and both CA fingerprints in groups of four and a compatibility
@@ -245,12 +249,16 @@ anything it checks the live prerequisites again; if an input changed since the p
 asks for a new plan. It takes a lock for this peering, so two runs never act on one peering at once,
 and it never removes or changes another peering's resources.
 
+<!-- BEGIN generated: phase-catalog federate deploy -->
+
 | # | Phase | What `deploy` does | Worked when |
 |---|---|---|---|
 | 10 | admit the edge on our core | splices the approved fragment into the core's access control, gives the core its peering certificate, restarts the core router and checks it came back | the core runs on the new access configuration |
 | 11 | open the transport the AGREEMENT selected | `wireguard` runs `peering-wg.yml`, `ipsec-fips` runs `peering-edge.yml`, with the peering's values; through a forwarder, its entry too | the link is up. It never substitutes one transport for the other, and any other transport refuses |
 | 12 | deploy the edge, then the outbound republisher (`peering-zenoh-edge.yml`, then `peering-republisher.yml` with `--limit <peering>_core`) | the roles install the peering certificates on the edge and core host | the edge dials our core and accepts the partner's CN; the container `goat-fed-republisher-<them>` runs on the core host, its `/metrics` on loopback reads `goat_fed_republisher_local_subscribed 1` and `goat_fed_republisher_edge_linked 1`, and its log has one `release release/<set>/** -> wire from/<us>/<set>/**` line per offered set |
 | 13 | federate the SPIRE trust domains (ADR 1157 step 2) | runs `peering-spire.yml` | our server refreshes their trust domain across the link, or the play says the step was not done for a side with no SPIRE server |
+
+<!-- END generated: phase-catalog federate deploy -->
 
 **Where phase 10 admits.** On a core the goat-zenoh role deploys, admission takes the core
 router's inventory group, its `site_id`, the role's play, the org fragment's path and the router
@@ -368,6 +376,8 @@ The stage stops at the failed phase, runs nothing after it, and prints the phase
 from `ops/errors/catalog.yaml` and the fix. Fix the cause and run the same command again.
 `goatbuilder explain <code>` prints the catalog entry.
 
+<!-- BEGIN generated: phase-catalog federate failures -->
+
 | Phase | It failed because | What to do |
 |---|---|---|
 | 1 | an input is missing or a host is not ready | supply the value it names, in the place it names. A port in use: pin another under `values:` or free it. A receive store wider than the edge grants: declare one per admitted scope, `from/<them>/**` ([receive-storage preflight](#receive-storage-preflight)) |
@@ -384,6 +394,8 @@ from `ops/errors/catalog.yaml` and the fix. Fix the cause and run the same comma
 | 12 | the edge does not link to your core, or the republisher is not subscribed | read the edge log on your side; the [symptom table](#if-something-does-not-work) |
 | 13 | the SPIRE play failed | check the link from phase 11 is up |
 | 14 | a required check is not PASS | the bundle names the check and its evidence; read the router log on the **receiving** side |
+
+<!-- END generated: phase-catalog federate failures -->
 
 The six package verbs, `goatbuilder federate init|lint|compose|diff|verify|apply`, keep the exit
 codes of `goat federate`: `20` refused · `21` malformed · `22` digest mismatch · `23` underived ·

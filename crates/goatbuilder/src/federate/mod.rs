@@ -1012,6 +1012,29 @@ mod tests {
         assert!(s4.again.is_none() && !s4.rotate_leaves);
     }
 
+    /// Conformance check (d), for federate: every phase the plan can hold, for
+    /// each transport an agreement may select (or none), has its entry in the
+    /// phase catalog (ops/phases/catalog.yaml), with every field `explain`
+    /// answers from.
+    #[test]
+    fn every_federate_phase_has_a_phase_catalog_entry() {
+        for transport in [None, Some("wireguard"), Some("ipsec-fips"), Some("quic")] {
+            let work = tempfile::tempdir().unwrap();
+            if let Some(t) = transport {
+                std::fs::write(work.path().join("agreement.json"), format!(r#"{{"transport":{{"kind":"{t}"}}}}"#)).unwrap();
+            }
+            let work_s = work.path().display().to_string();
+            let o = Options { with: "velmara", env: None, r#as: None, edge_group: None, work: Some(&work_s), mock: None, from: 1, to: 99, dry_run: true, table: false };
+            let phases = plan(&repo(), &o, &work_s, "velmara_edge", "resume");
+            assert_eq!(phases.len(), 14, "{transport:?}");
+            for ph in &phases {
+                let e = goat_errors::phases::explain_phase("federate", &ph.n.to_string())
+                    .unwrap_or_else(|| panic!("federate phase {} ({}) has no phase-catalog entry", ph.n, ph.label));
+                assert!(!e.what.is_empty() && !e.why.is_empty() && !e.by_hand.is_empty(), "federate phase {}", ph.n);
+            }
+        }
+    }
+
     /// A dry run reads as a plan: one aligned phase table, then the commands;
     /// no `=== Phase ===` banners, no em dashes, no `a/b/../../c` paths, and
     /// phase 11 says it waits on the agreement rather than "REFUSED".

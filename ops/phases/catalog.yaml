@@ -1,0 +1,230 @@
+# The phase catalog: every phase of every goatbuilder verb, in one file, beside the
+# error catalog (ops/errors/catalog.yaml). docs/design/goatbuilder-legibility.md, step 6.
+#
+# Each entry answers, for one phase:
+#   what     what it does
+#   why      why it exists
+#   changes  what it changes, and where (or "Nothing")
+#   verify   how to tell it worked
+#   runs     the script, play or verb it runs
+#   by_hand  the command that does the same by hand
+#   read     the document to read (a repository path, with an optional #anchor)
+# and, for the documents rendered from it:
+#   title, kind, stage    the phase tables' cells
+#   failed_because, then  the runbook's "When a phase fails" table
+#
+# The runbook's phase tables are rendered from this file
+# (python3 ops/ci/check-phase-catalog.py --write) and checked in CI
+# (python3 ops/ci/check-phase-catalog.py). Edit here, never in the table.
+schema: goat-phases/v1
+phases:
+- verb: federate
+  phase: 1
+  id: preflight
+  stage: plan
+  kind: GATE
+  title: preflight, fail-closed
+  verify: prints `READY`; a failure names the input, where it was looked for, and its catalog code. When the declaration offers a release set, the inventory group `<peering>_core` names the core host and sits under `[peering_cores:children]`
+  what: 'Checks every input the run needs before anything changes: the declared values, the hosts named in the inventory, the tools on this machine, free ports and subnets on the edge, receive stores on the core no wider than the edge grants, and the slot registry. It fails closed and names each missing or wrong input, where it looked, and its catalog code.'
+  why: A federation run touches two sovereigns' hosts; an input found wrong at phase 11 or 12 leaves half a peering. Checking them all first means a run either has everything it needs or changes nothing.
+  changes: Nothing; it only reads (this machine, the edge and the core over SSH, the declarations in the repository).
+  runs: ops/federation/standup/preflight.py
+  by_hand: python3 ops/federation/standup/preflight.py <peering> --work <work> --edge-group <edge-group>
+  read: docs/operations/sovereign-federation-runbook.md#plan--validate-and-explain-the-change
+  failed_because: an input is missing or a host is not ready
+  then: 'supply the value it names, in the place it names. A port in use: pin another under `values:` or free it. A receive store wider than the edge grants: declare one per admitted scope, `from/<them>/**` ([receive-storage preflight](#receive-storage-preflight))'
+- verb: federate
+  phase: 2
+  id: prepare
+  stage: plan
+  kind: A
+  title: 'prepare what the package measures: the federation interface and the SPIRE bundle'
+  verify: the interface and its key exist with no peer on them; the bundle is exported when this side runs SPIRE
+  what: 'Runs peering-prepare.yml on the edge: brings up the federation interface and its key with no peer on it, so phase 3 can measure it, and exports this side''s SPIRE bundle for the exchange when this side runs SPIRE.'
+  why: The package offers a tunnel interface and a trust bundle; both have to exist before they can be measured and offered, and the interface must carry no peer until the agreement says which one.
+  changes: 'On the edge host: the federation interface (the allocated name, e.g. wg-fed0) and its private key, with no peer. In the working directory: ours.spiffe-bundle, when this side runs SPIRE.'
+  runs: ops/ansible/peering-prepare.yml (roles goat-peering-wg and goat-peering-spire)
+  by_hand: cd ops/ansible && ../scripts/ansible-preflight.sh -i inventory/peering-edges.ini --limit <edge-group> -e fed_edge_group=<edge-group> -e fed_work=<work> -e fed_counterparty=<counterparty-file> peering-prepare.yml
+  read: docs/operations/sovereign-federation-runbook.md#plan--validate-and-explain-the-change
+  failed_because: the edge play failed
+  then: read the play's failed task
+- verb: federate
+  phase: 3
+  id: init
+  stage: plan
+  kind: T
+  title: '`init` — our half, measured'
+  verify: a signed package; exit 23 means a value could not be derived and the list is the output
+  what: 'Builds and signs this side''s package from the running system: it measures the edge (the transports it can run, the federation interface''s public key and MTU) and the core (the router''s version, whether its image is the FIPS build, post-quantum support, the SPIRE trust domain), over SSH by default, and takes the rest from the declaration. Exit 23 lists every value it could not derive.'
+  why: The partner verifies what this side actually runs, so the package is read from the hosts, never typed; a value that cannot be measured stops the run instead of being guessed.
+  changes: 'In the working directory: ours.canonical.json, signed with the federation signing key. No host is changed.'
+  runs: goatbuilder federate init --over-ssh (FED_MEASURE=ssh, the default; FED_MEASURE=here measures this machine)
+  by_hand: goatbuilder federate init --out <work>/ours.canonical.json --over-ssh <peering> --ssh-edge-group <edge-group> --repo <repository>
+  read: docs/design/federation-router-discovery.md
+  failed_because: exit 23, a value could not be derived
+  then: the output lists each value and why; fix the measurement, never type the value
+- verb: federate
+  phase: 4
+  id: lint
+  stage: plan
+  kind: T
+  title: '`lint`'
+  verify: every required member present, signature shape valid
+  what: 'Checks our package against the package spec: every required member present and the signature in the right shape.'
+  why: A package the partner cannot read wastes the exchange; this catches it on our side before it is sent.
+  changes: Nothing.
+  runs: goatbuilder federate lint
+  by_hand: goatbuilder federate lint <work>/ours.canonical.json
+  read: docs/operations/sovereign-federation-runbook.md#when-a-phase-fails
+  failed_because: exit 21, the package does not lint
+  then: the rule is named; it is a defect in the package
+- verb: federate
+  phase: 5
+  id: exchange
+  stage: plan
+  kind: CONFIRM
+  title: exchange through the directory; read the key and CA fingerprint **aloud**
+  verify: the directory step uploaded ours and placed theirs and their CA on disk with no FAIL row; on one call each side read its verifying key and CA fingerprint and the other read them back; both keys are recorded
+  what: 'Exchanges packages, CA certificates and SPIFFE bundles through the peering directory (or by hand with FED_NO_DIRECTORY=1), then stops at the terminal for confirmation 1: both sides read their verifying key and CA fingerprint aloud and the other reads them back, and both keys are recorded.'
+  why: A key taken from the package it verifies, or from the directory that carried it, proves nothing. Reading the keys aloud on one call is the control against a substituted package.
+  changes: 'In the peering directory: our package, CA and bundle, and our pointer. In the working directory: theirs.canonical.json, theirs-ca.pem, theirs.spiffe-bundle and keys.txt (both parties'' keys).'
+  runs: ops/federation/standup/directory.py, then the confirmation at the terminal
+  by_hand: python3 ops/federation/standup/directory.py --url <directory-url> --ours <work>/ours.canonical.json --their-id <counterparty-id>; then record both keys in <work>/keys.txt as <sovereign_id>=<key>
+  read: docs/operations/sovereign-federation-runbook.md#step-3--exchange-packages-and-ca-certificates-through-the-directory
+  failed_because: the partner's entry is missing, or a FAIL row
+  then: wait for them, or fix the row on the side that owns it
+- verb: federate
+  phase: 6
+  id: compose
+  stage: plan
+  kind: T
+  title: '`compose`'
+  verify: one digest, and argument order does not change it
+  what: Composes the two packages into one agreement with one digest, binding each party's verifying key from keys.txt; the argument order does not change the result.
+  why: Both sides must hold the same agreement; one digest, read to each other aloud, shows they do.
+  changes: 'In the working directory: agreement.json.'
+  runs: goatbuilder federate compose
+  by_hand: goatbuilder federate compose <work>/ours.canonical.json <work>/theirs.canonical.json --key <ours>=<key> --key <theirs>=<key> --out <work>/agreement.json
+  read: docs/operations/sovereign-federation-runbook.md#plan--validate-and-explain-the-change
+  failed_because: exit 20, composition refused
+  then: a key is not bound or the packages disagree; compare with `goatbuilder federate diff`
+- verb: federate
+  phase: 7
+  id: verify
+  stage: plan
+  kind: T
+  title: '`verify`'
+  verify: the derived names re-derive; the ingress prefix and republish target are stated
+  what: 'Verifies the agreement from our side: both signatures, and that every derived name (subjects, prefixes, the republish target) re-derives.'
+  why: The rest of the run trusts the agreement; a name this side cannot re-derive means the agreement does not say what we think it says.
+  changes: Nothing.
+  runs: goatbuilder federate verify
+  by_hand: goatbuilder federate verify <work>/agreement.json --as <us>
+  read: docs/operations/sovereign-federation-runbook.md#step-2--the-names-and-prefixes-come-from-the-agreement
+  failed_because: the agreement does not verify from your side
+  then: the names it cannot re-derive are listed; do not continue
+- verb: federate
+  phase: 8
+  id: mint
+  stage: plan
+  kind: T
+  title: validate or mint the peering leaves
+  verify: 'four certificates, names derived from the agreement, SANs covering every address that will be dialled: outward, inward, core, and `republisher.pem` with CN `fed.<us>.<them>.republisher.01`'
+  what: 'Validates the four peering leaf certificates in the working directory, or mints the missing ones from the agreement with our CA: outward, inward, core and republisher, with every address that will be dialled as a SAN. It places our CA beside them as our-ca.pem.'
+  why: The names the partner and our core match on come from the agreement; certificates typed by hand have failed silently before (a missing SAN, a CN no ACL names).
+  changes: 'In the working directory, pki/: the leaf certificates and keys, and our-ca.pem. A valid existing pair is reused, never rewritten.'
+  runs: ops/federation/standup/mint-peering-leaves.sh
+  by_hand: ops/federation/standup/mint-peering-leaves.sh <work>/agreement.json <work>/pki --as <us>
+  read: docs/operations/sovereign-federation-runbook.md#phase-8-reruns-and-deliberate-certificate-replacement
+  failed_because: a certificate pair is invalid or changed
+  then: inspect it ([phase 8 reruns](#phase-8-reruns-and-deliberate-certificate-replacement)); do not delete files to get past it
+- verb: federate
+  phase: 9
+  id: apply
+  stage: plan
+  kind: T
+  title: '`apply --confirm`'
+  verify: the partner declaration, the edge group_vars, the republisher vars (`federation-<them>-republish.yml`) and the ACL fragment, which carries the edge's subject and the republisher's `fed-rp-<them>` subject
+  what: 'Renders the configuration the agreement implies: the partner declaration, the edge group_vars, the republisher''s vars and the access-control fragment for our core. It writes files and changes no host.'
+  why: apply is a renderer, so what deploy will change can be read and reviewed (confirmation 2) before any host changes.
+  changes: 'In the working directory, applied/: the rendered files. No host is changed.'
+  runs: goatbuilder federate apply --confirm
+  by_hand: goatbuilder federate apply <work>/agreement.json --as <us> --edge-group <edge-group> --out <work>/applied --confirm
+  read: docs/operations/sovereign-federation-runbook.md#confirmation-2--approve-the-plan
+  failed_because: apply refused
+  then: its message names the field
+- verb: federate
+  phase: 10
+  id: admit
+  stage: deploy
+  kind: MANUAL
+  title: admit the edge on our core
+  verify: the core runs on the new access configuration
+  what: splices the approved fragment into the core's access control, gives the core its peering certificate, restarts the core router and checks it came back
+  why: The core has to admit the edge before phase 12's inward link can come up, and only this party can change this party's core; the change is the one the approved plan names.
+  changes: 'On our core host: its access-control configuration (the approved fragment spliced in), its peering certificate, and a router restart. On the edge host: the partner CA, after its fingerprint is checked against the agreement.'
+  runs: goatbuilder federate deploy (after the approval of the plan's hash)
+  by_hand: review <work>/applied, check <work>/theirs-ca.pem against the agreement's fingerprint, splice <work>/applied/ops/federation/acl/<them>-fragment.json5 into the core's access control with roles/goat-zenoh/files/acl-assemble.py, give the core <work>/pki/core.pem and its key, and restart the core router
+  read: docs/operations/sovereign-federation-runbook.md#deploy--carry-out-the-approved-plan
+  failed_because: the router's dry run refused, or the core did not come back
+  then: if the dry run refused, nothing restarted; otherwise the core's previous access configuration is the way back
+- verb: federate
+  phase: 11
+  id: transport
+  stage: deploy
+  kind: A
+  title: open the transport the AGREEMENT selected
+  verify: the link is up. It never substitutes one transport for the other, and any other transport refuses
+  what: '`wireguard` runs `peering-wg.yml`, `ipsec-fips` runs `peering-edge.yml`, with the peering''s values; through a forwarder, its entry too'
+  why: The tunnel is the one the two parties agreed; standing up any other is the drift between what was agreed and what was deployed that the flow exists to prevent.
+  changes: 'On the edge host: the tunnel (WireGuard peer and its firewall, or the IPsec connection); through a forwarder, its entry for this peering.'
+  runs: ops/ansible/peering-wg.yml (wireguard) or ops/ansible/peering-edge.yml (ipsec-fips), as the agreement's transport selects
+  by_hand: cd ops/ansible && ../scripts/ansible-preflight.sh -i inventory/peering-edges.ini --limit <edge-group> -e fed_edge_group=<edge-group> -e fed_work=<work> -e fed_counterparty=<counterparty-file> peering-wg.yml
+  read: docs/operations/sovereign-federation-runbook.md#step-5--open-the-tunnel
+  failed_because: 'refused: no play for the selected transport'
+  then: the fix is in the agreement, never the play
+- verb: federate
+  phase: 12
+  id: edge
+  stage: deploy
+  kind: A
+  title: deploy the edge, then the outbound republisher (`peering-zenoh-edge.yml`, then `peering-republisher.yml` with `--limit <peering>_core`)
+  verify: the edge dials our core and accepts the partner's CN; the container `goat-fed-republisher-<them>` runs on the core host, its `/metrics` on loopback reads `goat_fed_republisher_local_subscribed 1` and `goat_fed_republisher_edge_linked 1`, and its log has one `release release/<set>/** -> wire from/<us>/<set>/**` line per offered set
+  what: the roles install the peering certificates on the edge and core host
+  why: The edge router is the only thing the partner reaches, and the republisher is the only thing that lifts our offered release sets onto the wire; both are needed for data to cross.
+  changes: 'On the edge host: the goat-zenoh-edge container and its configuration and certificates. On the core host: the goat-fed-republisher-<them> container and its files.'
+  runs: ops/ansible/peering-zenoh-edge.yml, then ops/ansible/peering-republisher.yml --limit <peering>_core
+  by_hand: cd ops/ansible && ../scripts/ansible-preflight.sh -i inventory/peering-edges.ini --limit <edge-group> -e fed_edge_group=<edge-group> -e fed_work=<work> -e fed_counterparty=<counterparty-file> peering-zenoh-edge.yml, then the same with --limit <peering>_core and peering-republisher.yml
+  read: docs/operations/sovereign-federation-runbook.md#step-4--stand-up-your-edge-router
+  failed_because: the edge does not link to your core, or the republisher is not subscribed
+  then: read the edge log on your side; the [symptom table](#if-something-does-not-work)
+- verb: federate
+  phase: 13
+  id: spire
+  stage: deploy
+  kind: A
+  title: federate the SPIRE trust domains (ADR 1157 step 2)
+  verify: our server refreshes their trust domain across the link, or the play says the step was not done for a side with no SPIRE server
+  what: runs `peering-spire.yml`
+  why: Each side recognises the other's SPIRE trust domain (ADR 1157 step 2), so workloads can be identified across the link; what the partner may do stays the edge's access control.
+  changes: 'On the edge host: the bundle-endpoint forwards for this peering. On our SPIRE server: the partner''s trust domain and bundle.'
+  runs: ops/ansible/peering-spire.yml (role goat-peering-spire)
+  by_hand: cd ops/ansible && ../scripts/ansible-preflight.sh -i inventory/peering-edges.ini --limit <edge-group> -e fed_edge_group=<edge-group> -e fed_work=<work> -e fed_counterparty=<counterparty-file> peering-spire.yml
+  read: docs/operations/sovereign-federation-runbook.md#deploy--carry-out-the-approved-plan
+  failed_because: the SPIRE play failed
+  then: check the link from phase 11 is up
+- verb: federate
+  phase: 14
+  id: acceptance
+  stage: test
+  kind: GATE
+  title: 'acceptance: carries, refuses, and round-trips'
+  verify: every check the agreement's flows require is PASS in the result bundle in <work>/evidence/acceptance/, with its evidence
+  what: 'Runs the acceptance checks the agreement''s flows generate, against our own core and edge: fresh delivery in every agreed direction and set, persistent reception, out-of-lane refusal, the republisher boundary, the round trip when the agreement has one, identity and SPIRE, and the other partnerships. It writes a result bundle.'
+  why: 'A peering is trusted only on evidence: an observed delivery and an observed refusal, never a check that was skipped or a link that is merely up.'
+  changes: 'In the working directory, evidence/acceptance/: the result bundle. Test samples published through release staging; no configuration is changed.'
+  runs: ops/federation/standup/acceptance.sh
+  by_hand: ops/federation/standup/acceptance.sh <work>/agreement.json --as <us>
+  read: docs/operations/sovereign-federation-runbook.md#test--a-bounded-acceptance-session-with-the-partner
+  failed_because: a required check is not PASS
+  then: the bundle names the check and its evidence; read the router log on the **receiving** side
