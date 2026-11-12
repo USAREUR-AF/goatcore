@@ -24,12 +24,24 @@
 # FED_CORE_RESTART, FED_CORE_PLAY and FED_CORE_GROUP): the driver surveys and removes
 # the admission the way admission placed it. This file then writes one row saying so
 # and runs nothing on the core host.
+# The core host's own declarations are read from the inventory, not from the host: a
+# partner the goat-zenoh role also declares (zenoh_sovereign_peerings) stays admitted
+# after the driver backs the splice out, and the survey says so (GB-227).
 - name: core | absent | the core is backed out by the driver
+  vars:
+    _declared: >-
+      {{ (zenoh_sovereign_peerings | default([], true)) | selectattr('sovereign', 'defined')
+         | selectattr('sovereign', 'equalto', peering_backout_id) | list | length > 0 }}
   ansible.builtin.set_fact:
     _pb_rows: >-
       {{ _pb_rows + [{'component': 'core admission', 'resource': 'the driver (FED_CORE_*)',
                       'state': 'present', 'action': 'kept',
-                      'note': 'surveyed and removed by the driver, the way admission placed it'}] }}
+                      'note': 'surveyed and removed by the driver, the way admission placed it'}]
+         + ([{'component': 'core admission',
+              'resource': 'zenoh_sovereign_peerings[sovereign=' ~ peering_backout_id ~ ']',
+              'state': 'present', 'action': 'kept',
+              'note': 'configuration: remove the entry by review and run the core play (a router restart)'}]
+            if (_declared | bool) else []) }}
   when: peering_backout_core_by_driver | default(false) | bool
 
 - name: core | absent | survey and back out the core here

@@ -407,6 +407,8 @@ class AdmissionMarkers(unittest.TestCase):
         with self.assertRaises(ValueError) as caught:
             bc.plan(foreign, "xab")
         self.assertIn("not xab's", str(caught.exception))
+
+
 class OrgOnly(unittest.TestCase):
     """`plan --org` alone: the shape where the driver holds only the org fragment
     (FED_CORE_ACL_ORG with no seed or assembled output)."""

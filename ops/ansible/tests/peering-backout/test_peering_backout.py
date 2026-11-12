@@ -288,6 +288,38 @@ class TwoPeeringsOneHost(unittest.TestCase):
         self.assertEqual(ran, ["core | absent | the core is backed out by the driver"], r.stdout[-4000:])
         self.assertFalse(os.path.exists(f"{work}/backout/core/core-xac"))
 
+    def test_by_the_driver_a_role_declared_peering_is_still_reported(self):
+        # A core that also declares the partner in zenoh_sovereign_peerings keeps
+        # admitting it after the driver backs out the splice: the row that says so
+        # (GB-227) must survive by_driver, read from the core host's declarations
+        # without touching the host.
+        cv = f"{self.tmp}/inventory/group_vars/xac_core.yml"
+        with open(cv, encoding="utf-8") as f:
+            values = yaml.safe_load(f)
+        values["zenoh_sovereign_peerings"] = [{"sovereign": "xac", "cn": "xac-peer", "release_key_exprs": []},
+                                              {"sovereign": "xab", "cn": "xab-peer", "release_key_exprs": []}]
+        dump(cv, values)
+        work = f"{self.tmp}/work/xac"
+        r = run(["ansible-playbook", "-i", self.inv, "--limit", "xac_core",
+                 str(ANSIBLE / "peering-backout.yml"),
+                 "-e", "peering_backout_id=xac", "-e", f"fed_work={work}", "-e", "fed_edge_group=xac_edge",
+                 "-e", "ansible_become=false", "-e", "peering_backout_core_by_driver=true"], self.tmp)
+        self.assertEqual(r.returncode, 0, r.stdout[-6000:] + r.stderr[-2000:])
+        core = [row for row in jload(f"{work}/backout/survey/core-xac.json")["rows"]
+                if row["component"] == "core admission"]
+        self.assertEqual(core, [
+            {"component": "core admission", "resource": "the driver (FED_CORE_*)", "state": "present",
+             "action": "kept", "note": "surveyed and removed by the driver, the way admission placed it"},
+            {"component": "core admission", "resource": "zenoh_sovereign_peerings[sovereign=xac]",
+             "state": "present", "action": "kept",
+             "note": "configuration: remove the entry by review and run the core play (a router restart)"}])
+        ran = []
+        for section in r.stdout.split("\nTASK [")[1:]:
+            name, _, body = section.partition("]")
+            if name.startswith("core | absent |") and re.search(r"^(ok|changed|fatal|failed): \[core-xac", body, re.M):
+                ran.append(name)
+        self.assertEqual(ran, ["core | absent | the core is backed out by the driver"], r.stdout[-4000:])
+
     def test_a_survey_without_the_rendered_values_or_agreement_still_runs(self):
         # A peering backed out before phase 9: no agreement, no applied values.
         shutil.rmtree(f"{self.tmp}/work/xac")
