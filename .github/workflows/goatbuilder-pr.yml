@@ -177,10 +177,10 @@ jobs:
           key: goatbuilder-upgrade-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('crates/goatbuilder/tests/upgrade/releases.sha256') }}
       - name: Fetch the released binaries, checked against their pins
         run: goatbuilder/tests/upgrade/fetch.sh ~/.cache/goatbuilder-upgrade
-      - name: cargo test (upgrade, gate rows E1 and E2)
+      - name: cargo test (upgrade, gate rows E1, E2 and E3)
         env:
           GOATBUILDER_UPGRADE_REQUIRED: '1'
-        run: GOATBUILDER_UPGRADE_DIR="$HOME/.cache/goatbuilder-upgrade" cargo test -p goatbuilder --test upgrade --test upgrade_federation
+        run: GOATBUILDER_UPGRADE_DIR="$HOME/.cache/goatbuilder-upgrade" cargo test -p goatbuilder --test upgrade --test upgrade_federation --test upgrade_update
       - name: Every message has a translation in every shipped language
         working-directory: .
         run: |
