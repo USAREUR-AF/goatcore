@@ -383,7 +383,9 @@ ACL_SITE="$SITE"; [ "$JOINER" = 1 ] && ACL_SITE="$JOIN_FOUNDER_SITE"
 # founder site that cannot make a variable name is refused (standup.rs read_site).
 ACL_UPPER="$(printf '%s' "${ACL_SITE//-/_}" | tr '[:lower:]' '[:upper:]')"
 if [ -n "$ACL_SITE" ] && ! [[ "$ACL_UPPER" =~ ^[A-Z0-9_]+$ ]]; then
-  echo "goat-standup: join_founder_site '$ACL_SITE' in group_vars/$GROUP/vars.yml is not a site id: phase 12 reads the token variable ${ACL_UPPER}_NB_API_TOKEN named after it, so it may hold only letters, digits, - and _" >&2
+  # A joiner's ACL site is its founder's (join_founder_site); a founder's is itself.
+  if [ "$JOINER" = 1 ]; then ACL_SOURCE="join_founder_site '$ACL_SITE' in group_vars/$GROUP/vars.yml"; else ACL_SOURCE="the site '$ACL_SITE'"; fi
+  echo "goat-standup: $ACL_SOURCE is not a site id: phase 12 reads the token variable ${ACL_UPPER}_NB_API_TOKEN named after it, so it may hold only letters, digits, - and _" >&2
   exit 2
 fi
 MGMT_FQDN="$(grep -E '^[[:space:]]*public_mgmt_fqdn:' "$GV_FILE" 2>/dev/null | head -1 | awk '{print $2}' | tr -d '"'\''' || true)"
