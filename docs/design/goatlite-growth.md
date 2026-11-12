@@ -106,11 +106,11 @@ The design document this repository's Spock role points to for the multi-site de
 
 A standup plan from the grown configuration changes nothing that exists. Against the lite plan it loses the two render gates (`crates/goatbuilder/src/standup.rs:375`) and the `--mint-ca-if-missing` flag (`crates/goatbuilder/src/standup.rs:414`); its remaining steps are the same commands, and each skips what already exists (a leaf certificate that exists is skipped, `ops/scripts/mint-site-certs.sh:243`). After the hand-over `--site` must be passed, because only a lite run derives it (`crates/goatbuilder/src/standup.rs:135`).
 
-Three behaviours of a lite plan are decided today by the preset rather than by a declared value, so a plan from the grown configuration loses them; each needs a declared source before G1 passes:
+Three behaviors of a lite plan are decided today by the preset rather than by a declared value, so a plan from the grown configuration loses them; each needs a declared source before G1 passes:
 
-| Behaviour | Today, under `preset: lite` | Declared source after the hand-over |
+| Behavior | Today, under `preset: lite` | Declared source after the hand-over |
 |---|---|---|
-| No cloud account: every play runs with `GOAT_AWS_MODE=none` | `crates/goatbuilder/src/standup.rs:299` | an explicit declaration in the full configuration that this goatnet has no cloud account |
+| No cloud account: on the LAN profile every play runs with `GOAT_AWS_MODE=none` (a goatlite on the internet profile reaches AWS) | `crates/goatbuilder/src/standup.rs:299` | `deploy.cloud: none`, a new optional field G1 adds to the schema; no field declares it today |
 | The bootstrap owner is the declared administrator | `crates/goatbuilder/src/standup.rs:243` | `site_admins` in the site's group_vars, which the render wrote (`ops/scripts/goatlite-render.py:669`) |
 | Phase 14 does not reach other goatnets' relay-health boxes | `crates/goatbuilder/src/standup.rs:591` | the site's `relay_health` absent row in `ops/goatnets/cross-env.yaml`, which the render wrote |
 
