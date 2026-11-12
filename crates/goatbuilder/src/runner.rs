@@ -75,11 +75,73 @@ struct Phase {
     shown: bool,
 }
 
+/// One phase as the run record keeps it.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct PhaseEntry {
+    pub id: String,
+    pub name: String,
+    pub purpose: String,
+    pub started: String,
+    pub ended: Option<String>,
+    /// The first non-zero exit of its commands, else 0; `None` when it ran no
+    /// command, or one that did not start.
+    pub exit: Option<i32>,
+    pub commands: usize,
+}
+
+/// A run as it ends: what the run record writes.
+#[derive(Debug, Clone)]
+pub struct Finished {
+    pub dir: PathBuf,
+    pub verb: String,
+    pub args: Vec<String>,
+    pub tree_commit: Option<String>,
+    pub started: String,
+    pub phases: Vec<PhaseEntry>,
+    pub commands: Vec<CommandEntry>,
+    pub inputs: serde_json::Value,
+}
+
 struct Run {
     dir: PathBuf,
     seq: u32,
     phase: Option<Phase>,
     commands: Vec<CommandEntry>,
+    verb: String,
+    args: Vec<String>,
+    tree_commit: Option<String>,
+    started: String,
+    phases: Vec<PhaseEntry>,
+    /// The index in `commands` where the open phase began.
+    phase_from: usize,
+    inputs: serde_json::Value,
+}
+
+fn now() -> String {
+    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+}
+
+/// Close the open phase entry, if any: its end, its exit, its command count.
+fn close_phase(r: &mut Run) {
+    if let Some(p) = r.phases.last_mut().filter(|p| p.ended.is_none()) {
+        let cmds = &r.commands[r.phase_from..];
+        p.ended = Some(now());
+        p.commands = cmds.len();
+        p.exit = if cmds.is_empty()
+            || cmds
+                .iter()
+                .any(|c| c.exit.is_none() && c.log_note.as_deref() == Some("did not start"))
+        {
+            None
+        } else {
+            Some(
+                cmds.iter()
+                    .filter_map(|c| c.exit)
+                    .find(|e| *e != 0)
+                    .unwrap_or(0),
+            )
+        };
+    }
 }
 
 static RUN: Mutex<Option<Run>> = Mutex::new(None);
@@ -111,7 +173,12 @@ fn say(line: &str) {
 /// Start a run: commands from now on are framed, logged and recorded under
 /// `<state_dir>/runs/<id>/`. The directory is made when the first command runs, so
 /// a run that starts nothing leaves nothing behind. Returns the run's directory.
-pub fn begin(state_dir: &Path, verb: &str) -> PathBuf {
+pub fn begin(
+    state_dir: &Path,
+    verb: &str,
+    args: Vec<String>,
+    tree_commit: Option<String>,
+) -> PathBuf {
     let id = format!(
         "{}-{verb}-{}",
         chrono::Utc::now().format("%Y%m%dT%H%M%SZ"),
@@ -123,13 +190,40 @@ pub fn begin(state_dir: &Path, verb: &str) -> PathBuf {
         seq: 0,
         phase: None,
         commands: Vec::new(),
+        verb: verb.to_string(),
+        args,
+        tree_commit,
+        started: now(),
+        phases: Vec::new(),
+        phase_from: 0,
+        inputs: serde_json::Value::Array(Vec::new()),
     });
     dir
 }
 
 /// End the run; its commands, in the order they started.
-pub fn end() -> Vec<CommandEntry> {
-    lock_run().take().map(|r| r.commands).unwrap_or_default()
+/// End the run: everything the run record writes, or `None` outside a run.
+pub fn end() -> Option<Finished> {
+    let mut r = lock_run().take()?;
+    close_phase(&mut r);
+    Some(Finished {
+        dir: r.dir,
+        verb: r.verb,
+        args: r.args,
+        tree_commit: r.tree_commit,
+        started: r.started,
+        phases: r.phases,
+        commands: r.commands,
+        inputs: r.inputs,
+    })
+}
+
+/// The run's inputs, each with its source (docs/design/goatbuilder-legibility.md
+/// §"Run record"), as the verb that knows them gives them. Never a secret value.
+pub fn set_inputs(inputs: serde_json::Value) {
+    if let Some(r) = lock_run().as_mut() {
+        r.inputs = inputs;
+    }
 }
 
 /// The commands of the run so far.
@@ -144,6 +238,17 @@ pub fn commands() -> Vec<CommandEntry> {
 /// `name`, for `purpose`. Its header prints with its first command.
 pub fn phase(id: &str, name: &str, purpose: &str) {
     if let Some(r) = lock_run().as_mut() {
+        close_phase(r);
+        r.phase_from = r.commands.len();
+        r.phases.push(PhaseEntry {
+            id: id.to_string(),
+            name: name.to_string(),
+            purpose: purpose.to_string(),
+            started: now(),
+            ended: None,
+            exit: None,
+            commands: 0,
+        });
         r.phase = Some(Phase {
             id: id.to_string(),
             name: name.to_string(),
@@ -156,6 +261,7 @@ pub fn phase(id: &str, name: &str, purpose: &str) {
 /// The commands that follow belong to no phase.
 pub fn no_phase() {
     if let Some(r) = lock_run().as_mut() {
+        close_phase(r);
         r.phase = None;
     }
 }
@@ -587,7 +693,7 @@ mod tests {
     fn a_phase_prints_its_frame_logs_its_output_and_records_it() {
         let (_g, _sink) = capture();
         let t = tempfile::tempdir().unwrap();
-        let dir = begin(t.path(), "standup");
+        let dir = begin(t.path(), "standup", vec![], None);
         phase("5", "mgmt-stack", "site-bootstrap up to the account seed");
         let st = Cmd::new("sh")
             .args(["-c", "echo from-the-child; echo to-stderr >&2"])
@@ -608,7 +714,7 @@ mod tests {
         );
         assert!(lines[2].starts_with("  ok in "), "{f}");
         assert_eq!(lines.len(), 3, "three lines for a phase that succeeds: {f}");
-        let cmds = end();
+        let cmds = end().unwrap().commands;
         assert_eq!(cmds.len(), 1);
         let c = &cmds[0];
         assert_eq!(c.phase.as_deref(), Some("5"));
@@ -627,7 +733,7 @@ mod tests {
     fn the_frame_is_printed_before_the_child_starts() {
         let (_g, _sink) = capture();
         let t = tempfile::tempdir().unwrap();
-        begin(t.path(), "deploy");
+        begin(t.path(), "deploy", vec![], None);
         phase("1", "gate", "");
         // The child reads the frame the runner has written so far: it must already be there.
         let marker = t.path().join("seen");
@@ -646,7 +752,7 @@ mod tests {
     fn a_failure_names_its_exit_and_log_and_a_probe_is_one_line() {
         let (_g, _sink) = capture();
         let t = tempfile::tempdir().unwrap();
-        begin(t.path(), "deploy");
+        begin(t.path(), "deploy", vec![], None);
         Cmd::new("sh").args(["-c", "true"]).output().unwrap();
         phase("3", "playbook", "the play");
         let st = Cmd::new("sh").args(["-c", "exit 4"]).status().unwrap();
@@ -659,8 +765,17 @@ mod tests {
             lines[3].starts_with("  FAILED exit 4 in ") && lines[3].contains("; log "),
             "{f}"
         );
-        let cmds = end();
+        let fin = end().unwrap();
+        let cmds = fin.commands;
         assert_eq!(cmds[0].phase, None);
+        assert_eq!(fin.phases.len(), 1);
+        assert_eq!(fin.phases[0].id, "3");
+        assert_eq!(
+            fin.phases[0].exit,
+            Some(4),
+            "a phase carries its failing command's exit"
+        );
+        assert_eq!(fin.phases[0].commands, 1);
         assert_eq!(cmds[1].exit, Some(4));
     }
 
@@ -668,9 +783,9 @@ mod tests {
     fn a_command_that_does_not_start_is_recorded_as_such() {
         let (_g, _sink) = capture();
         let t = tempfile::tempdir().unwrap();
-        begin(t.path(), "deploy");
+        begin(t.path(), "deploy", vec![], None);
         assert!(Cmd::new("/nonexistent/program").status().is_err());
-        let cmds = end();
+        let cmds = end().unwrap().commands;
         assert_eq!(cmds.len(), 1);
         assert_eq!(cmds[0].exit, None);
         assert_eq!(cmds[0].log_note.as_deref(), Some("did not start"));

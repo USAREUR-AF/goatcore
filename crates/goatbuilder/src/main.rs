@@ -35,6 +35,7 @@ mod push;
 mod release;
 mod rollback;
 mod runner;
+mod runs;
 mod secrets;
 mod settings;
 mod standup;
@@ -646,6 +647,27 @@ pub enum Cmd {
         #[arg(long, conflicts_with = "component")]
         all: bool,
     },
+    /// The runs this machine recorded, newest first: one row per run, with its
+    /// id, verb, exit code, number of commands and arguments. Each run of a verb
+    /// that drives hosts leaves a record at <state>/runs/<id>/run.json, kept until
+    /// you remove it. Reads only.
+    Runs {
+        #[command(subcommand)]
+        sub: Option<RunsCmd>,
+        /// Only the runs of this verb (standup, join-node, deploy, federate, ...).
+        #[arg(long)]
+        verb: Option<String>,
+        /// How many runs to list.
+        #[arg(long, default_value_t = 20)]
+        last: usize,
+    },
+    /// One recorded run, phase by phase and command by command, each with its
+    /// exit code and log, then its inputs with their sources. `-o json` prints the
+    /// record itself. Reads only.
+    Show {
+        /// The run: its id, a unique prefix of it, or `last`.
+        run: String,
+    },
     /// The deploy ledger as a timeline, newest first, on every host of the
     /// environment (C8): one row per record, with the machine, the time, the
     /// action (deploy or rollback) and the version. Each record's prior version
@@ -1049,6 +1071,18 @@ fn takes_fixture(cmd: &Cmd) -> bool {
     )
 }
 
+#[derive(Subcommand, Debug)]
+pub enum RunsCmd {
+    /// Compare two recorded runs: their arguments, their inputs (value and
+    /// source), their commands in order, and each phase's exit code. Reads only.
+    Diff {
+        /// The first run: an id, a unique prefix of one, or `last`.
+        a: String,
+        /// The second run.
+        b: String,
+    },
+}
+
 /// The verb as it is typed, for a message about it.
 fn verb_name(cmd: &Cmd) -> &'static str {
     match cmd {
@@ -1066,6 +1100,21 @@ fn verb_name(cmd: &Cmd) -> &'static str {
         Cmd::Explain { .. } => "explain",
         _ => "this verb",
     }
+}
+
+/// Whether the verb runs as a dry run (it then begins no run and writes no record).
+fn dry_run(cmd: &Cmd) -> bool {
+    matches!(
+        cmd,
+        Cmd::Deploy { dry_run: true, .. }
+            | Cmd::Rollback { dry_run: true, .. }
+            | Cmd::Release { dry_run: true, .. }
+            | Cmd::Fastlane { dry_run: true, .. }
+            | Cmd::Standup { dry_run: true, .. }
+            | Cmd::JoinNode { dry_run: true, .. }
+            | Cmd::Federate { dry_run: true, .. }
+            | Cmd::Teardown { dry_run: true, .. }
+    )
 }
 
 /// The verb a run record names.
@@ -1213,8 +1262,9 @@ fn main() {
     tutor::init(&repo);
     // A verb that drives hosts runs inside a run: every process it starts is framed,
     // logged and recorded under <state>/runs/<id>/ (runner.rs).
-    if cli.mock.is_none() && long_running(&cli.cmd) {
-        runner::begin(std::path::Path::new(&settings::state_dir_abs(&repo)), run_verb(&cli.cmd));
+    // A dry run starts none of its phases and leaves no record.
+    if cli.mock.is_none() && long_running(&cli.cmd) && !dry_run(&cli.cmd) {
+        runner::begin(std::path::Path::new(&settings::state_dir_abs(&repo)), run_verb(&cli.cmd), std::env::args().skip(1).collect(), runs::tree_commit(&repo));
     }
     if let Some(owner) = config::owner(&repo) {
         output::set_owner(owner);
@@ -1364,6 +1414,14 @@ fn main() {
             Some(dir) => verbs::Fixture::open(dir).and_then(|f| inspect::diff_mock(&f, env, component.as_deref())),
             None => inspect::diff(&repo, env, component.as_deref()),
         },
+        Cmd::Runs { sub, verb, last } => {
+            let state = PathBuf::from(settings::state_dir_abs(&repo));
+            match sub {
+                None => Ok(runs::list(&state, verb.as_deref(), *last)),
+                Some(RunsCmd::Diff { a, b }) => runs::diff(&state, a, b),
+            }
+        }
+        Cmd::Show { run } => runs::show(&PathBuf::from(settings::state_dir_abs(&repo)), run, !matches!(cli.output, OutputFormat::Table)),
         Cmd::History { component, component_flag, env } => {
             let component = component.as_deref().or(component_flag.as_deref()).unwrap_or_default();
             match &cli.mock {
@@ -1512,8 +1570,24 @@ fn main() {
             }
         }
     };
-    // The run ends with the verb; step 4 writes its commands to run.json.
-    let _commands = runner::end();
+    // The run ends with the verb: its record goes to <state>/runs/<id>/run.json.
+    // Every run that reached its first phase, or started a process, is recorded,
+    // a refusal or failure inside a phase included: that is why it stopped. A
+    // refusal of the arguments before any phase leaves nothing; its reason is
+    // already printed.
+    if let Some(run) = runner::end().filter(|r| !r.phases.is_empty() || !r.commands.is_empty()) {
+        let (exit, error) = match &report {
+            Ok(r) => (r.exit, None),
+            Err(e) => {
+                let code = e.downcast_ref::<goat_errors::Coded>().map(|c| c.code.clone());
+                (code.as_deref().and_then(goat_errors::explain).and_then(|x| x.exit).unwrap_or(EXIT_USAGE), Some(format!("{e:#}")))
+            }
+        };
+        match runs::write(&run, exit, error.as_deref()) {
+            Ok(path) => eprintln!("run record: {}", path.display()),
+            Err(e) => eprintln!("goatbuilder: the run record was not written: {e:#}"),
+        }
+    }
 
     // A run inside the tutor's workspace (or with $GOATBUILDER_TUTOR set) is
     // logged there, so `goatbuilder tutor` can check what the learner did.

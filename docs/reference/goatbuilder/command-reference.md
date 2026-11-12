@@ -42,6 +42,8 @@ Build and ship a goat environment: declare, converge, verify — under one deplo
 - [`goatbuilder secrets`](#goatbuilder-secrets) — The declared secrets posture (ADR 1204): which store is in force (1password, openbao, sops, git-crypt, env-file, env), what is available, how to supply what is missing, and the store's own checks. `init --env <goatnet>` writes the zero-SaaS quickstart's env file: a strong random value for every variable the goatnet's plays template, 0600, gitignored, never rotating a value already there. Same module as ops/scripts/with-secrets
 - [`goatbuilder verify`](#goatbuilder-verify) — Read every host's newest deploy-ledger row for one component and say whether it names the ref main declares (C7). Reads only; exit 3 while any host is pending or unknown. The same check `deploy --verify-only` runs
 - [`goatbuilder diff`](#goatbuilder-diff) — What is different from main right now (C8): main's declared ref against each host's newest ledger row, for one component or, without one, every component of the environment, read in one pass per member group. Reads only; exit 3 on any drift or unreadable host
+- [`goatbuilder runs`](#goatbuilder-runs) — The runs this machine recorded, newest first: one row per run, with its id, verb, exit code, number of commands and arguments. Each run of a verb that drives hosts leaves a record at <state>/runs/<id>/run.json, kept until you remove it. Reads only
+- [`goatbuilder show`](#goatbuilder-show) — One recorded run, phase by phase and command by command, each with its exit code and log, then its inputs with their sources. `-o json` prints the record itself. Reads only
 - [`goatbuilder history`](#goatbuilder-history) — The deploy ledger as a timeline, newest first, on every host of the environment (C8): one row per record, with the machine, the time, the action (deploy or rollback) and the version. Each record's prior version and the operator who ran it are in `-o json`. Reads only
 - [`goatbuilder plan`](#goatbuilder-plan) — Write what a declarative verb would do to a plan file for review: the declared refs, the play and target, the ledger, main's commit, the transport (deploy); the artifact type and the target ref (rollback). Touches no host's state. Run it as reviewed with `apply`
 - [`goatbuilder apply`](#goatbuilder-apply) — Run exactly a reviewed plan. Refuses (exit 1, naming what moved) when main's declaration, the pins commit, the play or the rollback target moved since the plan was written; a changed transport is reported, not refused
@@ -721,6 +723,42 @@ What is different from main right now (C8): main's declared ref against each hos
 |---|---|---|
 | `--env <ENV>` | The environment (the pins' goatnet key) |  |
 | `--all` | Every component the environment runs (the default without a component) |  |
+
+## `goatbuilder runs`
+
+The runs this machine recorded, newest first: one row per run, with its id, verb, exit code, number of commands and arguments. Each run of a verb that drives hosts leaves a record at <state>/runs/<id>/run.json, kept until you remove it. Reads only
+
+**Options**
+
+| Flag | Description | Default |
+|---|---|---|
+| `--verb <VERB>` | Only the runs of this verb (standup, join-node, deploy, federate, ...) |  |
+| `--last <LAST>` | How many runs to list | `20` |
+
+**Subcommands**
+
+- [`goatbuilder runs diff`](#goatbuilder-runs-diff) — Compare two recorded runs: their arguments, their inputs (value and source), their commands in order, and each phase's exit code. Reads only
+
+## `goatbuilder runs diff`
+
+Compare two recorded runs: their arguments, their inputs (value and source), their commands in order, and each phase's exit code. Reads only
+
+**Arguments**
+
+| Argument | Description |
+|---|---|
+| `<A>` | The first run: an id, a unique prefix of one, or `last` |
+| `<B>` | The second run |
+
+## `goatbuilder show`
+
+One recorded run, phase by phase and command by command, each with its exit code and log, then its inputs with their sources. `-o json` prints the record itself. Reads only
+
+**Arguments**
+
+| Argument | Description |
+|---|---|
+| `<RUN>` | The run: its id, a unique prefix of it, or `last` |
 
 ## `goatbuilder history`
 
