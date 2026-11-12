@@ -95,14 +95,20 @@ it, and what it produces comes back to the controller before the run goes on.
 2. **At the first phase that needs the other side,** the driver stops before acting, with a
    named hand-off and a catalog code. The stop says which phase, what the other machine runs,
    and the exact command, for example: "phase 3 needs the edge: on the edge driver run
-   `goatbuilder federate <partner> --side edge --from 3 --to 3`, then bring back its result and run
-   `goatbuilder federate <partner> --from 3` here". An edge driver that reaches a *core* phase stops
-   the same way, naming the controller's command.
-3. **The controller carries on with `--from N`.** `--from N` is the existing way to say "the phase
-   before this one was done elsewhere": the controller's journal records the edge's part of phase
-   N−1 as an operator step, bound to the result the edge driver produced. Resume, which is on by
-   default for a run from phase 1, skips only what this machine's own journal holds; it stays a
-   one-machine convenience and does not see the other machine's work.
+   `goatbuilder federate <partner> --side edge --from 3 --to 3`, bring its result file here,
+   import it, then run `goatbuilder federate <partner> --from 3` here". An edge driver that reaches
+   a *core* phase stops the same way, naming the controller's command.
+3. **The controller imports the edge result, then carries on with `--from N`.** For a *both*
+   phase N, the controller first imports the file the edge driver wrote for phase N's edge half.
+   The import checks its digest and records it in the controller's journal as an operator step on
+   phase N, bound to that digest. `goatbuilder federate <partner> --from N` then runs phase N's core
+   half, which reads the imported edge result, and the phases after it. `--from N` alone does not
+   carry the hand-off: as built it records phase N−1 as done only when N−1 is a by-hand phase (5,
+   10, or phase 3's re-exchange) whose last journal record is its stop (`federate/run.rs`, the
+   module comment). In the example, `--from 3` without the import would record nothing about the
+   edge's phase 3 and would treat phase 2 as the phase before. Resume, which is on by default for a
+   run from phase 1, skips only what this machine's own journal holds; it stays a one-machine
+   convenience and does not see the other machine's work.
 4. **What moves between the machines.** From the edge driver to the controller: the edge half of
    each *both* phase's result (phase 1's edge checks, phase 2's interface and key, phase 3's edge
    measurement, phase 14's edge log), as files under `<work>` with their digests. From the
@@ -117,7 +123,7 @@ it, and what it produces comes back to the controller before the run goes on.
    result it imported, the phase, the time and the digest. On the edge driver it shows what that
    driver ran and the hand-off it is waiting on.
 
-## Window 6's proposal, against the code
+## A single hand-off at phase 8, against the code
 
 | Proposal | What the code says | In the contract |
 |---|---|---|
@@ -142,6 +148,11 @@ it, and what it produces comes back to the controller before the run goes on.
   phase 8.
 - The carrier for an edge result: a file the edge driver writes and the controller imports,
   with its digest, and the journal entry recording it.
+- The import step on the controller: it checks the edge result's digest and records an
+  `operator-step` confirmation on phase N, bound to that digest, so that the following `--from N`
+  runs phase N's core half against it. Today `operator-step` is recorded only for a by-hand
+  phase's stop (5, 10, phase 3's re-exchange); it has to be extended to the edge half of a *both*
+  phase (1, 2, 3, 12, 13, 14).
 - The hand-off stops, each with a new catalog code and the next command.
 - `status` showing imported edge results.
 
