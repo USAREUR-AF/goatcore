@@ -279,9 +279,11 @@ pub fn site_inputs(repo: &Path, s: &Site, o: &Options, env: Env) -> Vec<Input> {
     ));
 
     // The owner, the state directory and the files under it.
-    if s.lite {
+    if s.owner_email != "$OWNER_EMAIL" {
+        // A declared administrator reaches the bootstrap phases as data, in the
+        // variable standup sets for them (standup::phase_env), not on the line.
         v.push(Input::new(
-            "bootstrap_owner_email",
+            standup::OWNER_VAR,
             s.owner_email.clone(),
             lite(repo, &["admin"]),
         ));

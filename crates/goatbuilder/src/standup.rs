@@ -857,7 +857,7 @@ fn site_phase_command(repo: &Path, s: &Site, cmd: &str) -> Command {
 /// The variable a declared administrator address reaches the bootstrap phases
 /// in. The command line reads it inside double quotes, so the phase's shell
 /// expands it once and never parses the address itself.
-const OWNER_VAR: &str = "GOAT_BOOTSTRAP_OWNER_EMAIL";
+pub(crate) const OWNER_VAR: &str = "GOAT_BOOTSTRAP_OWNER_EMAIL";
 
 /// The bootstrap owner's word on a phase's command line: `"$OWNER_EMAIL"` when no
 /// administrator is declared, for that shell to expand as it always has;
