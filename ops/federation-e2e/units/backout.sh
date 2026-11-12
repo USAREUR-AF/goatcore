@@ -15,7 +15,7 @@ bo_snapshot() { # $1 host -> stdout
     echo "## containers"; docker ps -a --format "{{.Names}} {{.Image}}" 2>/dev/null | sort
     echo "## wireguard"; ip -o link show 2>/dev/null | awk -F": " "{print \$2}" | grep -E "^wg" | sort
     echo "## nftables"; nft list tables 2>/dev/null | sort
-    echo "## units"; systemctl list-units --all --plain --no-legend "goat*" "*peering*" "*spire*" 2>/dev/null | awk "{print \$1}" | sort
+    echo "## units"; systemctl list-units --all --plain --no-legend --type=service,socket,timer "goat*" "*peering*" "*spire*" 2>/dev/null | awk "{print \$1}" | sort
     echo "## files"; for d in /etc/goat-peering-wg /etc/goat-zenoh-edge-* /opt/goat-zenoh-edge-* /etc/goat-fed-republisher* /opt/goat-fed-republisher* /etc/goat-peering-spire*; do [ -e "$d" ] && find "$d" -type f; done 2>/dev/null | sort
     echo "## core"; for f in /etc/*-zenoh/acl-org-fragment.json5 /etc/*-zenoh/config.json5; do [ -f "$f" ] && sha256sum "$f"; done 2>/dev/null
     echo "## spire federation"; docker exec spire-server /opt/spire/bin/spire-server federation list 2>/dev/null | grep -i "trust domain" | sort
@@ -27,7 +27,17 @@ eval "$(declare -f oc_drive | sed '1s/^oc_drive /bo_drive_inner /')"
 oc_drive() {
   bo_snapshot "$HP-$A-edge" > "$RECORD/bo-$A-edge-before.txt"
   bo_snapshot "$HP-$A-core" > "$RECORD/bo-$A-core-before.txt"
+  bo_core_files "$HP-$A-core" before
   bo_drive_inner "$@"
+}
+
+# The core's org fragment and configuration, kept whole: a digest that differs says only that
+# something changed, the diff says what.
+bo_core_files() { # $1 host, $2 label
+  local f
+  for f in acl-org-fragment.json5 config.json5; do
+    host_exec "$1" sh -c "cat /etc/*-zenoh/$f" > "$RECORD/bo-$A-core-$2-$f" 2>/dev/null || true
+  done
 }
 
 unit_main() {
@@ -41,5 +51,7 @@ unit_main() {
   bo_snapshot "$HP-$A-edge" > "$RECORD/bo-$A-edge-after.txt"
   bo_snapshot "$HP-$A-core" > "$RECORD/bo-$A-core-after.txt"
   rec "bo-$A-edge-as-before" -- diff "$RECORD/bo-$A-edge-before.txt" "$RECORD/bo-$A-edge-after.txt"
-  rec "bo-$A-core-as-before" -- diff "$RECORD/bo-$A-core-before.txt" "$RECORD/bo-$A-core-after.txt"
+  bo_core_files "$HP-$A-core" after
+  rec "bo-$A-core-as-before" -- bash -c "diff '$RECORD/bo-$A-core-before.txt' '$RECORD/bo-$A-core-after.txt'; r=\$?
+    for f in acl-org-fragment.json5 config.json5; do echo \"--- \$f, before the peering and after the back-out:\"; diff '$RECORD/bo-$A-core-before-'\$f '$RECORD/bo-$A-core-after-'\$f | head -60; done; exit \$r"
 }
