@@ -6,8 +6,11 @@
 //! `--rotate`, which sets the old pairs aside under `.previous-<random>/` and
 //! keeps a `.rotation-pending` journal while it replaces them
 //! (`ops/federation/standup/peering_leaf_material.py`); the run is phases 8 to
-//! 14, phase 10 stops for a new approval because its inputs include the new
-//! leaves, and phase 12 installs them. Nothing the partner holds changes, so
+//! 14. Phase 10 stops, as in every run, for the review of what apply rendered,
+//! now with the new leaves, and phase 12 installs them. Once phase 8 has
+//! passed, the command that carries on is the plain resume
+//! (`goatbuilder federate <partner> --from 11`), so following a stop or a
+//! failure never mints another set. Nothing the partner holds changes, so
 //! no `rotation.json` is written: phase 3 and our package are untouched.
 //!
 //! Designed, not built: `carrier`, `transport`, `signing` and `ca`.
@@ -47,23 +50,18 @@ pub(super) fn leaves(phases: &mut [Phase]) {
 // Called from main.rs once its `rotate` stage word is wired (one line).
 #[cfg_attr(not(test), allow(dead_code))]
 /// The run that rotates the leaves: phases 8 to 14, nothing skipped, recorded
-/// as a `rotate` run, and carried on with the same command.
+/// as a `rotate` run. A start after phase 8 (`--from 9` or later) is kept and
+/// mints nothing: phase 8 is not in that run.
 pub fn leaves_run<'a>(o: &Options<'a>) -> (Options<'a>, Surface) {
+    let from = o.from.max(8);
     let s = Surface {
         stage: "rotate",
         again: Some(format!("goatbuilder federate {VERB} {} leaves", o.with)),
-        rotate_leaves: true,
+        rotate_leaves: from <= 8,
         resume: false,
         ..Default::default()
     };
-    (
-        Options {
-            from: 8,
-            to: 14,
-            ..*o
-        },
-        s,
-    )
+    (Options { from, to: 14, ..*o }, s)
 }
 
 // Called from main.rs once its `rotate` stage word is wired (one line).
@@ -91,6 +89,16 @@ pub fn rotate(repo: &Path, o: &Options, key: &str) -> Result<crate::Report> {
     }
 }
 
+/// After phase `n` of a run passed. Once a rotate run's phase 8 has minted the
+/// new leaves, the run carries on as the plain one: no `rotate` command is
+/// offered again (it would mint another set), and the default resume is.
+pub(super) fn after_phase(s: &mut Surface, n: u32) {
+    if s.rotate_leaves && n == 8 {
+        s.rotate_leaves = false;
+        s.again = None;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -115,8 +123,7 @@ mod tests {
             dry_run: true,
             table: false,
         };
-        for (k, built) in KEYS.iter().filter(|(_, b)| !b) {
-            assert!(!built);
+        for k in ["carrier", "transport", "signing", "ca"] {
             let e = rotate(Path::new("/nonexistent"), &o, k).unwrap_err();
             assert_eq!(code(&e), "GB-189");
             assert!(e.to_string().contains("designed, not built"), "{k}: {e}");
