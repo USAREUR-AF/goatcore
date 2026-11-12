@@ -285,18 +285,21 @@ async fn ingest_loop(
             .with_label_values(&[release_prefix.as_str()])
             .inc();
 
-        let decision = {
+        let (decision, shed_warning) = {
             let mut p = policy.lock().unwrap();
-            let d = p.decide(
-                &staging_key,
-                payload.len(),
-                now_ms(),
-                Utc::now().date_naive(),
-            );
+            let now = now_ms();
+            let d = p.decide(&staging_key, payload.len(), now, Utc::now().date_naive());
             metrics
                 .distinct_wire_keys
                 .set(p.distinct_keys_seen() as i64);
-            d
+            // A new key refused at the ceiling never crosses: warn, at most once a minute.
+            let w = match &d {
+                Decision::Refuse(policy::Refusal::CardinalityShed { .. }) => {
+                    p.cardinality_shed_warning(now)
+                }
+                _ => None,
+            };
+            (d, w)
         };
         let wire_key = match decision {
             Decision::Publish(k) => k,
@@ -312,7 +315,19 @@ async fn ingest_loop(
                     | policy::Refusal::AgreementExpired(_) => {
                         warn!(staging_key = staging_key.as_str(), "refused: {r}");
                     }
-                    // The envelope sheds repeat by nature. The counter is the
+                    // A new key over the distinct-keys ceiling is data that will
+                    // never cross: an operator must see it, so it warns (rate-limited
+                    // in the policy; the held-back refusals are counted into the next).
+                    policy::Refusal::CardinalityShed { limit } => match shed_warning {
+                        Some(held) => warn!(
+                            staging_key = staging_key.as_str(),
+                            limit,
+                            "{}",
+                            policy::cardinality_shed_message(limit, held)
+                        ),
+                        None => debug!(staging_key = staging_key.as_str(), "refused: {r}"),
+                    },
+                    // The rate and size sheds repeat by nature. The counter is the
                     // repeatable observable; the log would be a firehose.
                     _ => debug!(staging_key = staging_key.as_str(), "refused: {r}"),
                 }

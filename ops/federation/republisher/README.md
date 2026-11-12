@@ -177,7 +177,7 @@ Everything comes from it:
 | `flows[…].publish_under` | re-derived and compared; a mismatch means the file was hand-edited, and is a refusal |
 | `envelope.bytes_per_message` | oversize samples are dropped **whole**, never truncated |
 | `envelope.hz` | shed above the receiver's declared rate |
-| `envelope.distinct_keys` | a new wire key beyond the ceiling is refused; keys already admitted keep flowing |
+| `envelope.distinct_keys` | a new wire key beyond the ceiling is refused; keys already admitted keep flowing. The refusal is logged at WARN, naming the limit, at most once a minute; the new keys refused in between are counted into the next warning and in `refused_total{reason="cardinality_shed"}` |
 | `expires` | refused at startup, and the flow stops on the day after without an operator touching anything |
 
 The ceilings are the **receiver's**, and a sender cannot raise anyone else's ceiling. Shedding

@@ -89,6 +89,25 @@ pub struct Policy {
     window_start_ms: u64,
     window_count: u64,
     seen_keys: HashSet<String>,
+    // The cardinality-shed warning: when it last fired, and the refusals held
+    // back since (see `cardinality_shed_warning`).
+    shed_warned_ms: Option<u64>,
+    shed_held: u64,
+}
+
+/// At most one cardinality-shed warning per this many milliseconds.
+pub const SHED_WARN_INTERVAL_MS: u64 = 60_000;
+
+/// The operator's line for a new wire key refused at the agreement's ceiling.
+pub fn cardinality_shed_message(limit: usize, held_back: u64) -> String {
+    let more = if held_back > 0 {
+        format!("; {held_back} more new key(s) refused the same way since the last warning")
+    } else {
+        String::new()
+    };
+    format!(
+        "refused a new wire key: the agreement's distinct_keys limit of {limit} is reached, so no new key crosses (keys already seen still do){more}"
+    )
 }
 
 impl Policy {
@@ -100,6 +119,8 @@ impl Policy {
             window_start_ms: 0,
             window_count: 0,
             seen_keys: HashSet::new(),
+            shed_warned_ms: None,
+            shed_held: 0,
         }
     }
 
@@ -109,6 +130,22 @@ impl Policy {
 
     pub fn distinct_keys_seen(&self) -> usize {
         self.seen_keys.len()
+    }
+
+    /// Called once per cardinality-shed refusal. `Some(n)` when this one should
+    /// be logged as a warning, `n` being the refusals held back since the last
+    /// warning; `None` when it falls inside the interval and is only counted.
+    pub fn cardinality_shed_warning(&mut self, now_ms: u64) -> Option<u64> {
+        match self.shed_warned_ms {
+            Some(t) if now_ms.saturating_sub(t) < SHED_WARN_INTERVAL_MS => {
+                self.shed_held += 1;
+                None
+            }
+            _ => {
+                self.shed_warned_ms = Some(now_ms);
+                Some(std::mem::take(&mut self.shed_held))
+            }
+        }
     }
 
     /// `now_ms` is any monotonic millisecond counter; `today` is UTC.
@@ -313,6 +350,56 @@ mod tests {
             Decision::Publish(_)
         ));
         assert_eq!(p.distinct_keys_seen(), 2);
+    }
+
+    /// A new key refused at the distinct-keys ceiling is data that never crosses,
+    /// so an operator must see it: the first refusal warns, the next ones within a
+    /// minute are counted into the following warning instead of logged each.
+    #[test]
+    fn a_cardinality_shed_warns_at_most_once_a_minute_and_counts_the_rest() {
+        let mut p = policy(
+            &["release/weather/**"],
+            Envelope {
+                distinct_keys: 1,
+                ..roomy()
+            },
+        );
+        assert!(matches!(
+            p.decide("release/weather/a", 1, 0, today()),
+            Decision::Publish(_)
+        ));
+        assert_eq!(
+            p.decide("release/weather/b", 1, 0, today()),
+            Decision::Refuse(Refusal::CardinalityShed { limit: 1 })
+        );
+        assert_eq!(
+            p.cardinality_shed_warning(0),
+            Some(0),
+            "the first refusal warns"
+        );
+        assert_eq!(
+            p.cardinality_shed_warning(1_000),
+            None,
+            "held back within the minute"
+        );
+        assert_eq!(p.cardinality_shed_warning(59_999), None);
+        assert_eq!(
+            p.cardinality_shed_warning(60_000),
+            Some(2),
+            "the next warning counts the two held back"
+        );
+        assert_eq!(p.cardinality_shed_warning(60_001), None);
+    }
+
+    #[test]
+    fn the_cardinality_warning_names_the_agreements_limit() {
+        let w = cardinality_shed_message(5000, 3);
+        assert!(w.contains("distinct_keys") && w.contains("5000"), "{w}");
+        assert!(w.contains("3 more"), "{w}");
+        assert!(
+            !cardinality_shed_message(5000, 0).contains("more"),
+            "no count when none was held back"
+        );
     }
 
     #[test]
