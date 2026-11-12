@@ -105,7 +105,13 @@ scenarios:
       With no responder, probe or other subscriber running on either side, a fresh value
       released on each side is stored by the receiving core's own configured store; and after
       the receiving core's router restarts, with the edge router left running, a fresh value
-      is stored again (the core's interest reaches the edge without an edge restart).
+      is stored again (the core's interest reaches the edge without an edge restart). After
+      the restart a fresh value, each with a nonce never used before, is released every 2 s
+      for 60 s; the first one stored passes, and the run records how many were lost before it
+      and how many seconds after the core answered it was stored. Values released while the
+      core's interest is travelling back (about 11 s in this environment) have no route and
+      are lost by design (docs/design/zenoh-brokerless-consequences.md, row 4); none stored
+      within 60 s is a FAIL naming the count.
     checks:
       - {id: no-subscriber, step: "s{n}-no-diagnostic-subscriber-runs"}
       - {id: first-to-second, step: "s{n}-{F}-to-{S}-stored-without-a-subscriber"}

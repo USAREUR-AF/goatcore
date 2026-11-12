@@ -109,8 +109,8 @@ pair_persistent_reception() {
       "for _ in \$(seq 1 60); do curl -s -m 2 -o /dev/null 'http://$(core_ip "$them"):8000/@/**' && break; sleep 1; done
        t0=\$(date +%s); i=0
        for _ in \$(seq 1 30); do i=\$((i + 1)); k=$nonce-\$i; put_release $s all $them \$k >/dev/null; sleep 2
-         v=\$(stored_at $them from/$s/all/\$k); [ \"\$v\" = \"\$k\" ] && { echo \"stored after the core restart: \$v, release \$i, \$((\$(date +%s) - t0)) s after the core answered\"; exit 0; }; done
-       echo 'not stored at $them after its core restarted (edge not restarted): from/$s/all/$nonce'
+         v=\$(stored_at $them from/$s/all/\$k); [ \"\$v\" = \"\$k\" ] && { echo \"stored after the core restart: \$v; \$((i - 1)) release(s) before it lost while the route returned; \$((\$(date +%s) - t0)) s after the core answered\"; exit 0; }; done
+       echo \"not stored at $them after its core restarted (edge not restarted): \$i fresh release(s) of from/$s/all/$nonce-<n> over \$((\$(date +%s) - t0)) s, none stored\"
        b=\$(cat '$WORK/pr-before-restart-$s' 2>/dev/null)
        echo \"--- the value stored before the restart, from/$s/all/\$b, read now: '\$(stored_at $them from/$s/all/\$b)' (expected \$b)\"
        echo '--- the receiving core, its sessions and storages (admin space):'
