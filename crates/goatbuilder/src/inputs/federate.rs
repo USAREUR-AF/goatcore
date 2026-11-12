@@ -528,89 +528,27 @@ impl Decl<'_> {
 mod tests {
     use super::*;
 
-    /// The words of one command line by the conformance test's rule
-    /// (tests/legibility.rs, check b): the right side of every `-e name=value`
-    /// and `--flag=value`, and the word after each option that takes a value;
-    /// here also federate's own options. `$NAME` is named by its variable.
     fn values(line: &str) -> Vec<(bool, String)> {
-        const FLAGS: &[&str] = &[
-            "-l",
-            "--limit",
-            "-i",
-            "--inventory",
-            "--site",
-            "--profile",
-            "--tags",
-            "--skip-tags",
-            "--repo",
-            "--address",
-            "--node",
-            "--class",
-            "--env",
-            "--component",
-            "--out",
-            "--with",
-            // federate's own
-            "--work",
-            "--edge-group",
-            "--signing-key",
-            "--declaration",
-            "--key",
-            "--as",
-            "--ssh-edge-group",
-            "--router-container",
-            "--url",
-            "--ours",
-            "--package-url",
-            "--their-id",
-            "--theirs",
-            "--keyring",
-            "--ca",
-        ];
-        let t = shlex::split(line)
-            .unwrap_or_else(|| line.split_whitespace().map(String::from).collect());
-        let of = |v: &str| -> (bool, String) {
-            let v = v.trim();
-            match v
-                .strip_prefix("${")
-                .and_then(|r| r.strip_suffix('}'))
-                .or_else(|| v.strip_prefix('$'))
-            {
-                Some(n) => (true, n.to_string()),
-                None => (false, v.to_string()),
-            }
-        };
-        let mut out = Vec::new();
-        let mut i = 0;
-        while i < t.len() {
-            let w = &t[i];
-            if w == "-e" && i + 1 < t.len() {
-                if let Some((_, x)) = t[i + 1].split_once('=') {
-                    out.push(of(x));
-                }
-                i += 2;
-                continue;
-            }
-            if w.starts_with("--") && w.contains('=') {
-                out.push(of(w.split_once('=').unwrap().1));
-            } else if FLAGS.contains(&w.as_str()) && i + 1 < t.len() {
-                out.push(of(&t[i + 1]));
-                i += 1;
-            } else if w == "with-aws" || w.ends_with("/with-aws") {
-                // ../scripts/with-aws <profile> -- ...
-                if let Some(p) = t.get(i + 1) {
-                    out.push(of(p));
-                }
-            } else if let Some((k, x)) = w.split_once('=').filter(|(k, _)| {
-                k.chars().all(|c| c.is_ascii_uppercase() || c == '_') && !k.is_empty()
-            }) {
-                // NAME=value before a command (phase 3's DOCKER_HOST)
-                let _ = k;
-                out.push(of(x));
-            }
-            i += 1;
-        }
-        out
+        super::super::command_values(
+            line,
+            &[
+                "--work",
+                "--edge-group",
+                "--signing-key",
+                "--declaration",
+                "--key",
+                "--as",
+                "--ssh-edge-group",
+                "--router-container",
+                "--url",
+                "--ours",
+                "--package-url",
+                "--their-id",
+                "--theirs",
+                "--keyring",
+                "--ca",
+            ],
+        )
     }
 
     struct World {

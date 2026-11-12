@@ -75,38 +75,38 @@ enum Event {
 
 /// What the script reads from the site's group_vars before any phase, and the
 /// derived names every command string carries.
-struct Site {
-    repo: String,
-    site: String,
-    group: String,
-    upper: String,
-    obs_group: String,
-    state_dir: String,
-    ansible_pre: String,
-    inv: &'static str,
-    profile: String,
-    joiner: bool,
-    join_founder_site: String,
-    join_founder_group: String,
-    acl_site: String,
-    mgmt_fqdn: String,
-    intra_pair: bool,
-    obs: bool,
-    obs_why: String,
-    group_vars_exists: bool,
+pub(crate) struct Site {
+    pub(crate) repo: String,
+    pub(crate) site: String,
+    pub(crate) group: String,
+    pub(crate) upper: String,
+    pub(crate) obs_group: String,
+    pub(crate) state_dir: String,
+    pub(crate) ansible_pre: String,
+    pub(crate) inv: &'static str,
+    pub(crate) profile: String,
+    pub(crate) joiner: bool,
+    pub(crate) join_founder_site: String,
+    pub(crate) join_founder_group: String,
+    pub(crate) acl_site: String,
+    pub(crate) mgmt_fqdn: String,
+    pub(crate) intra_pair: bool,
+    pub(crate) obs: bool,
+    pub(crate) obs_why: String,
+    pub(crate) group_vars_exists: bool,
     /// Who the bootstrap belongs to: a goatlite's declared `lite.admin`, else
     /// `$OWNER_EMAIL` for the phase's own shell to expand as it always has.
-    owner_email: String,
+    pub(crate) owner_email: String,
     /// A goatlite run (ADR 1213): `<repo>/goatlite.yaml` is `preset: lite` and
     /// names this site. Phase 1 renders the config surface first, phase 4 mints
     /// the CA when the manifest's root is missing, the profile is LAN, no obs host.
-    lite: bool,
+    pub(crate) lite: bool,
     /// `<UPPER>_NB_API_TOKEN` is available under the declared secrets posture,
     /// so a LAN site needs no phase-11 first-login step.
-    nb_token_available: bool,
+    pub(crate) nb_token_available: bool,
 }
 
-const INV: &str = "-i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini";
+pub(crate) const INV: &str = "-i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini";
 
 /// The site a standup runs for: `--site` when given; otherwise, on a goatlite
 /// run, the lite goatnet's own name — from the `--mock` fixture's config when
@@ -157,7 +157,7 @@ pub fn resolve_lite(repo: &Path, site: &str) -> Result<Option<config::Config>> {
 }
 
 /// `grep -qE '^[[:space:]]*<key>:[[:space:]]*<value>'` over a file.
-fn gv_matches(file: &Path, key: &str, value: &str) -> bool {
+pub(crate) fn gv_matches(file: &Path, key: &str, value: &str) -> bool {
     std::fs::read_to_string(file)
         .map(|t| t.lines().any(|l| gv_line_value(l, key).map(|v| v.starts_with(value)).unwrap_or(false)))
         .unwrap_or(false)
@@ -181,7 +181,7 @@ fn gv_line_value<'a>(line: &'a str, key: &str) -> Option<&'a str> {
 
 /// `gv_value` in the script: one group_vars value read as YAML, folded
 /// scalars included, whitespace collapsed; None when the key is absent.
-fn gv_value(file: &Path, key: &str) -> Option<String> {
+pub(crate) fn gv_value(file: &Path, key: &str) -> Option<String> {
     let text = std::fs::read_to_string(file).ok()?;
     let doc: serde_yaml::Value = serde_yaml::from_str(&text).ok()?;
     let v = doc.get(key)?;
@@ -196,7 +196,7 @@ fn gv_value(file: &Path, key: &str) -> Option<String> {
 }
 
 /// `python3 ops/scripts/inventory-hosts.py <groups...> [--ssh-target]`, one line per host.
-fn inventory_hosts(repo: &Path, groups: &[&str], ssh_target: bool) -> Vec<String> {
+pub(crate) fn inventory_hosts(repo: &Path, groups: &[&str], ssh_target: bool) -> Vec<String> {
     let mut c = Command::new("python3");
     c.arg(repo.join("ops/scripts/inventory-hosts.py")).args(groups);
     if ssh_target {
@@ -254,7 +254,7 @@ impl SiteEnv {
     }
 }
 
-fn read_site(repo: &Path, o: &Options) -> Result<Site> {
+pub(crate) fn read_site(repo: &Path, o: &Options) -> Result<Site> {
     read_site_in(repo, o, &SiteEnv::process())
 }
 
@@ -644,6 +644,21 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
         ev.push(p(14, "A", "join the cross-goatnet surfaces (relay-health overview on every box)".into(), format!("'{r}/ops/goatnets/cross-env-apply.sh' --require {site}")));
     }
     ev
+}
+
+/// Every command the plan runs, in order: each phase that is not a manual
+/// step (whose text is instructions for a person), each leg and the image
+/// pull. What `goatbuilder inputs standup` must give a source for.
+#[cfg(test)]
+pub(crate) fn plan_commands(repo: &Path, s: &Site, o: &Options) -> Vec<String> {
+    plan(repo, s, o, "goatbuilder standup")
+        .into_iter()
+        .filter_map(|e| match e {
+            Event::Phase(p) if p.kind != "MANUAL" && in_range(p.n, o) => Some(p.cmd),
+            Event::LegStart { cmd, .. } | Event::PullStart { cmd, .. } => Some(cmd),
+            _ => None,
+        })
+        .collect()
 }
 
 /// One row per executed phase in `<state_dir>/standup-<site>-timings.tsv`, the

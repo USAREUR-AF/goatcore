@@ -30,6 +30,7 @@ use std::path::Path;
 use serde::Serialize;
 
 pub mod federate;
+pub mod standup;
 
 /// Where one value came from.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -97,7 +98,7 @@ impl Source {
             Source::File { path, line: Some(n), key } => format!("{path}:{n} {key}"),
             Source::File { path, line: None, key } => format!("{path} {key}"),
             Source::Derived { from, rule } => format!("derived from {from} by {rule}"),
-            Source::Environment { var } => format!("environment ${var} (set by the operator; it wins)"),
+            Source::Environment { var } => format!("environment ${var}"),
             Source::Default { rule } => format!("default: {rule}"),
             Source::Allocated { record, field, recorded: true, line: Some(n) } => {
                 format!("allocated: {record}:{n} {field}")
@@ -124,19 +125,35 @@ pub struct Input {
     pub unset: Option<String>,
 }
 
-/// Whether a name reads as a credential: its value is then never held.
+/// Whether a name reads as a credential: its value is then never held. A name
+/// with a word like pass, secret or token reads as one, unless it ends by
+/// naming where a value is kept (`token_env`, `secret_file`), not the value.
 pub fn secret_name(name: &str) -> bool {
     let n = name.to_ascii_lowercase();
-    [
-        "pass",
-        "secret",
-        "token",
-        "credential",
-        "private_key",
-        "api_key",
-    ]
-    .iter()
-    .any(|w| n.contains(w))
+    let words: Vec<&str> = n
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .collect();
+    let names_a_place = words
+        .last()
+        .is_some_and(|w| ["env", "var", "variable", "name", "path", "file", "dir"].contains(w));
+    let credential = words.iter().any(|w| {
+        [
+            "pass",
+            "password",
+            "passwd",
+            "passphrase",
+            "secret",
+            "token",
+            "credential",
+            "credentials",
+            "apikey",
+            "enckey",
+        ]
+        .contains(w)
+    }) || n.contains("private_key")
+        || n.contains("api_key");
+    credential && !names_a_place
 }
 
 impl Input {
@@ -166,6 +183,34 @@ impl Input {
         }
     }
 
+    /// A variable a command reads from its environment when it runs
+    /// (`$(printenv NAME)`, `$NAME`): its source is that variable, or `store`
+    /// when the declared secrets store supplies it; `None` for `store` and
+    /// nothing in the environment leaves it unset, with `hint` saying where to
+    /// set it. A credential is never held, set or not.
+    pub fn reads_env(
+        name: impl Into<String>,
+        secret: bool,
+        now: Option<String>,
+        store: Option<Source>,
+        hint: impl Into<String>,
+    ) -> Input {
+        let name = name.into();
+        let secret = secret || secret_name(&name);
+        let (source, unset) = match (&now, store) {
+            (Some(_), _) => (Source::env(name.clone()), None),
+            (None, Some(s)) => (s, None),
+            (None, None) => (Source::env(name.clone()), Some(hint.into())),
+        };
+        Input {
+            value: if secret { None } else { now },
+            name,
+            secret,
+            source: Some(source),
+            unset,
+        }
+    }
+
     /// An input nothing gave a value, and where to declare it.
     pub fn unset(name: impl Into<String>, declare: impl Into<String>) -> Input {
         Input {
@@ -189,9 +234,15 @@ impl Input {
     /// One line: `NAME=value  <source>`.
     pub fn line(&self) -> String {
         match (&self.source, self.value(), self.secret) {
-            (Some(s), _, true) => format!("{} (secret, not shown)  {}", self.name, s.render()),
+            (Some(s), _, true) => match &self.unset {
+                Some(u) => format!("{} (secret) not set now  {} ({u})", self.name, s.render()),
+                None => format!("{} (secret, not shown)  {}", self.name, s.render()),
+            },
             (Some(s), Some(v), false) => format!("{}={v}  {}", self.name, s.render()),
-            (Some(s), None, false) => format!("{}  {}", self.name, s.render()),
+            (Some(s), None, false) => match &self.unset {
+                Some(u) => format!("{} not set now  {} ({u})", self.name, s.render()),
+                None => format!("{}  {}", self.name, s.render()),
+            },
             (None, _, _) => format!(
                 "{} not set: {}",
                 self.name,
@@ -354,6 +405,89 @@ pub fn rel(repo: &Path, p: &Path) -> String {
     p.strip_prefix(repo).unwrap_or(p).display().to_string()
 }
 
+/// The values of one command line by the conformance test's rule
+/// (tests/legibility.rs, check b): the right side of every `-e name=value`
+/// and `--flag=value`, the word after each option that takes a value (the
+/// test's list and `extra`), the AWS profile `with-aws` is given, and the
+/// value of a `NAME=value` before a command. `(true, NAME)` is a value read
+/// from the environment (`$NAME`, `${NAME}`, `$(printenv NAME)`).
+#[cfg(test)]
+pub(crate) fn command_values(line: &str, extra: &[&str]) -> Vec<(bool, String)> {
+    const FLAGS: &[&str] = &[
+        "-l",
+        "--limit",
+        "-i",
+        "--inventory",
+        "--site",
+        "--profile",
+        "--tags",
+        "--skip-tags",
+        "--repo",
+        "--address",
+        "--node",
+        "--class",
+        "--env",
+        "--component",
+        "--out",
+        "--with",
+    ];
+    let t =
+        shlex::split(line).unwrap_or_else(|| line.split_whitespace().map(String::from).collect());
+    let of = |v: &str| -> (bool, String) {
+        // A word the shell ends with `;` (`... ini; fi`) is the value before it.
+        let v = v.trim().trim_end_matches(';');
+        let env = v
+            .strip_prefix("$(printenv ")
+            .and_then(|r| r.strip_suffix(')'))
+            .or_else(|| v.strip_prefix("${").and_then(|r| r.strip_suffix('}')))
+            .or_else(|| {
+                v.strip_prefix('$')
+                    .filter(|r| r.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'))
+            });
+        match env {
+            Some(n) => (true, n.trim().to_string()),
+            None => (false, v.to_string()),
+        }
+    };
+    let takes = |w: &str| FLAGS.contains(&w) || extra.contains(&w);
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < t.len() {
+        let w = &t[i];
+        if w == "-e" && i + 1 < t.len() {
+            if let Some((_, x)) = t[i + 1].split_once('=') {
+                out.push(of(x));
+            }
+            i += 2;
+            continue;
+        }
+        if w.starts_with("--") && w.contains('=') {
+            out.push(of(w.split_once('=').unwrap().1));
+        } else if takes(w) && i + 1 < t.len() {
+            out.push(of(&t[i + 1]));
+            i += 1;
+        } else if w.ends_with("with-aws") {
+            if let Some(p) = t.get(i + 1) {
+                out.push(of(p));
+            }
+        } else if let Some((k, x)) = w.split_once('=') {
+            if !k.is_empty()
+                && k.chars()
+                    .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+            {
+                // `NAME=$(command)` is made when the line runs: named by NAME.
+                if x.starts_with("$(") && !x.starts_with("$(printenv ") {
+                    out.push((true, k.to_string()));
+                } else {
+                    out.push(of(x));
+                }
+            }
+        }
+        i += 1;
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -369,6 +503,24 @@ mod tests {
         // A credential-shaped name given a value is held as a secret anyway.
         let s = Input::new("NB_API_TOKEN", "hunter2", Source::env("NB_API_TOKEN"));
         assert!(s.secret);
+        for n in [
+            "ALPHA_PG_PASS",
+            "CLOUDFLARE_API_TOKEN_ALPHA",
+            "ALPHA_NB_ENCKEY",
+            "relay_secret",
+            "netbird_api_key",
+        ] {
+            assert!(secret_name(n), "{n}");
+        }
+        for n in [
+            "token_env",
+            "FED_SIGNING_KEY",
+            "secret_file",
+            "site",
+            "FED_CA_KEY",
+        ] {
+            assert!(!secret_name(n), "{n}");
+        }
         assert!(!serde_json::to_string(&s).unwrap().contains("hunter2"));
         assert!(!s.line().contains("hunter2"), "{}", s.line());
         assert!(!rows(&[s]).iter().any(|r| r.detail.contains("hunter2")));
