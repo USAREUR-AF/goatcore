@@ -590,6 +590,82 @@ class WholeRun(unittest.TestCase):
         self.assertIn("SKIPPED and not verified", out)
 
 
+class Sides(unittest.TestCase):
+    """Phase 1 by side (docs/design/federation-two-drivers.md, gate row B10): the
+    edge driver reaches the edge and not the core, and holds no CA key; the
+    controller reaches the core and not the edge. Each runs the checks of its
+    side, and asks only for the inputs those checks need."""
+
+    setUp = WholeRun.setUp
+    tearDown = WholeRun.tearDown
+
+    def run_side(self, side, probe_hosts, extra_env=None):
+        seen = {"limits": [], "docker": 0}
+        pf = load_preflight()
+
+        def probe(argv, cwd, env):
+            seen["limits"].append(argv[argv.index("--limit") + 1] if "--limit" in argv else "")
+            out = Path(argv[argv.index("-e") + 1].split("=", 1)[1])
+            for name, facts in probe_hosts.items():
+                (out / f"{name}.json").write_text(json.dumps(dict(facts, host=name)))
+            return 0, b"", b""
+        pf.PROBE = probe
+        runtime = fake_runtime({("docker", "ps"): (True, "a1\tzagros-zenoh-router\t\n"),
+                                ("docker", "inspect:a1"): (True, "full-a\ttrue\timg"),
+                                ("docker", "exec"): (True, CORE_SCOPED)})
+
+        def caller(h):
+            seen["docker"] += 1
+            return runtime
+        out = io.StringIO()
+        with mock.patch.dict(os.environ, dict(self.env, **(extra_env or {})), clear=True), \
+                mock.patch.object(pf.live, "docker_caller", caller), \
+                contextlib.redirect_stdout(out):
+            rc = pf.main(["xab", "--work", str(self.work), "--profile-dir", str(self.profile),
+                          "--repo", str(self.repo), "--side", side])
+        result = json.loads((self.work / "preflight/result.json").read_text())
+        live_ids = [r["check"] for r in result["results"] if r["check"]]
+        return rc, out.getvalue(), live_ids, {r["check"]: r for r in result["results"]}, seen, result
+
+    def test_the_edge_side_checks_the_edge_and_asks_nothing_of_the_core(self):
+        # No CA, no core certificate names, no signing key: the edge driver holds none of them.
+        env = {"FED_CA_CERT": "", "FED_SIGNING_KEY": "", "FED_CORE_SAN": "", "FED_ROUTER_DOCKER_HOST": ""}
+        rc, out, ids, by, seen, result = self.run_side("edge", {"edge-1": host()}, env)
+        self.assertEqual(ids, ["inputs", "edge-ports"], out)
+        self.assertEqual(by["inputs"]["outcome"], "PASS", out)
+        self.assertEqual(by["edge-ports"]["outcome"], "PASS", out)
+        self.assertEqual(seen["limits"], ["xab_edge"], "the probe reaches only the edge")
+        self.assertEqual(seen["docker"], 0, "nothing asks the core's container runtime")
+        self.assertEqual(result["side"], "edge")
+        self.assertEqual(rc, 0, out)
+
+    def test_the_core_side_checks_the_core_and_asks_nothing_of_the_edge(self):
+        # An edge input that would block the edge's ports check is not the core's to need.
+        env = {"FED_WG_LISTEN_PORT": "70000", "FED_CORE_SAN": "core-1"}
+        rc, out, ids, by, seen, result = self.run_side("core", {"core-1": host(name="core-1")}, env)
+        self.assertEqual(ids, ["inputs", "core-ports", "slot-anchors", "core-router", "ingress-stores", "signing-ca"], out)
+        self.assertNotIn("FED_WG_LISTEN_PORT", by["inputs"]["detail"], out)
+        self.assertEqual(by["core-ports"]["outcome"], "PASS", out)
+        self.assertEqual(by["core-router"]["outcome"], "PASS", out)
+        self.assertEqual(seen["limits"], ["xab_core"], "the probe reaches only the core")
+        self.assertEqual(result["side"], "core")
+
+    def test_a_check_of_the_other_side_is_refused(self):
+        pf = load_preflight()
+        err = io.StringIO()
+        with mock.patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stderr(err), \
+                contextlib.redirect_stdout(io.StringIO()):
+            rc = pf.main(["xab", "--work", str(self.work), "--profile-dir", str(self.profile),
+                          "--repo", str(self.repo), "--side", "edge", "--only", "signing-ca"])
+        self.assertEqual(rc, 2)
+        self.assertIn("signing-ca", err.getvalue())
+        self.assertIn("core", err.getvalue())
+
+    def test_every_check_has_a_side(self):
+        self.assertEqual({c for c, _, _ in live.CHECKS}, set(live.SIDES))
+        self.assertTrue(set(live.SIDES.values()) <= {"edge", "core", "both"})
+
+
 class CheckList(unittest.TestCase):
     def test_goatbuilder_lists_the_same_checks(self):
         rs = (REPO / "crates/goatbuilder/src/federate/preflight.rs").read_text()
