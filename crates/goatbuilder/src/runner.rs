@@ -488,9 +488,14 @@ impl Cmd {
         );
         let log = run.dir.join("logs").join(log_name);
         let line = self.line();
+        let where_ = if self.stdout_set && self.stderr_set {
+            "no log: the caller's own streams".to_string()
+        } else {
+            format!("log {}", shown(&log))
+        };
         let at = match &self.host {
-            Some(h) => format!("on {h}; log {}", shown(&log)),
-            None => format!("log {}", shown(&log)),
+            Some(h) => format!("on {h}; {where_}"),
+            None => where_,
         };
         // A probe (a command outside any phase) is in the record and under -v
         // only; it prints a line of its own when it fails (`close`).
@@ -506,13 +511,30 @@ impl Cmd {
             }
             say(&format!("  $ {line}   ({at})"));
         }
+        // A stream the caller set is the caller's own: the runner neither copies
+        // nor logs it, and the record says so rather than naming an empty log.
+        let (log, log_note) = match (self.stdout_set, self.stderr_set) {
+            (true, true) => (
+                None,
+                Some("not captured: stdout and stderr are the caller's own".to_string()),
+            ),
+            (true, false) => (
+                Some(log),
+                Some("stdout is the caller's own; the log holds stderr".to_string()),
+            ),
+            (false, true) => (
+                Some(log),
+                Some("stderr is the caller's own; the log holds stdout".to_string()),
+            ),
+            (false, false) => (Some(log), None),
+        };
         Some(CommandEntry {
             phase: phase_id,
             command: line,
             argv: self.argv(),
             host: self.host.clone(),
-            log: Some(log.display().to_string()),
-            log_note: None,
+            log: log.map(|l| l.display().to_string()),
+            log_note,
             started: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
             ended: None,
             exit: None,
@@ -837,6 +859,42 @@ mod tests {
             cmds.len(),
             3,
             "a probe is in the record whether it printed or not"
+        );
+    }
+
+    #[test]
+    fn a_stream_the_caller_owns_is_not_named_as_a_log() {
+        let (_g, _sink) = capture();
+        let t = tempfile::tempdir().unwrap();
+        begin(t.path(), "release", vec![], None);
+        phase("1", "tag", "");
+        Cmd::new("sh")
+            .args(["-c", "true"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .unwrap();
+        Cmd::new("sh")
+            .args(["-c", "echo e >&2"])
+            .stdout(Stdio::null())
+            .status()
+            .unwrap();
+        let f = frame();
+        assert!(f.contains("(no log: the caller's own streams)"), "{f}");
+        let cmds = end().unwrap().commands;
+        assert_eq!(
+            cmds[0].log, None,
+            "both streams the caller's own: no log is named"
+        );
+        assert_eq!(
+            cmds[0].log_note.as_deref(),
+            Some("not captured: stdout and stderr are the caller's own")
+        );
+        let log = cmds[1].log.as_deref().expect("stderr is still logged");
+        assert_eq!(std::fs::read_to_string(log).unwrap(), "e\n");
+        assert_eq!(
+            cmds[1].log_note.as_deref(),
+            Some("stdout is the caller's own; the log holds stderr")
         );
     }
 
