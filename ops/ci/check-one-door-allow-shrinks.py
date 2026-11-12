@@ -57,8 +57,26 @@ def self_test():
     # The base is checked, not assumed: a ref that is not a commit fails closed.
     assert against("no-such-ref", {}) == 2, "a ref that does not exist"
     assert against("0" * 40, {}) == 2, "an all-zero sha"
-    empty_tree = subprocess.run(["git", "hash-object", "-t", "tree", os.devnull], capture_output=True, text=True).stdout.strip()
-    before_list = subprocess.run(["git", "commit-tree", empty_tree, "-m", "a base with no list"], capture_output=True, text=True).stdout.strip()
+    # A base commit with no list: the empty tree, committed in place. This writes
+    # one loose commit object into the checkout's object store, and nothing else.
+    # It needs an identity (a CI runner has none) and must not try to sign.
+    empty_tree = subprocess.run(["git", "hash-object", "-t", "tree", os.devnull], capture_output=True, text=True, check=True).stdout.strip()
+    ident = {
+        "GIT_AUTHOR_NAME": "self-test",
+        "GIT_AUTHOR_EMAIL": "self-test@example.org",
+        "GIT_COMMITTER_NAME": "self-test",
+        "GIT_COMMITTER_EMAIL": "self-test@example.org",
+    }
+    made = subprocess.run(
+        ["git", "-c", "commit.gpgsign=false", "commit-tree", empty_tree, "-m", "a base with no list"],
+        capture_output=True,
+        text=True,
+        env={**os.environ, **ident},
+    )
+    if made.returncode != 0:
+        # git's own words, not a bare assertion.
+        raise SystemExit(f"self-test: git commit-tree failed: {made.stderr.strip()}")
+    before_list = made.stdout.strip()
     assert before_list and against(before_list, {}) == 0, "a base with no list: this change introduces it"
     print("ok: self-test (a higher count and a new file fail; the same, lower and removed pass; a base that is not a commit fails closed; a base with no list passes)")
     return 0
