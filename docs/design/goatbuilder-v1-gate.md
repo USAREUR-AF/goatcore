@@ -66,24 +66,24 @@ remains after it.
 
 | # | Requirement | Status | Proven by |
 |---|---|---|---|
-| B1 | `goatbuilder federate <partner>` federates two sovereign environments, with the operator writing only the peering entry and the offer and answering two prompts | in review; lands with 0.5.0 | The two-sovereign end-to-end job (`ops/federation-e2e/run.sh`) supplies no value the command should derive, and fails if one is needed |
+| B1 | `goatbuilder federate <partner>` federates two sovereign environments, with the operator writing only the peering entry and the offer and answering two prompts | built (0.5.0); measured in run `up-6884e8354ba6-20261111T090853` | The two-sovereign end-to-end job (`ops/federation-e2e/run.sh`) supplies no value the command should derive, and fails if one is needed |
 | B2 | The command completes the partner's half of acceptance. Today each side proves its own half, and the two halves are joined by a bilateral session the command does not run | designed | A scenario in which each side's acceptance report includes the other side's signed result, with no step outside the command |
-| B3 | Keys can be rotated. Every phase can be run again after a rotation and the peering keeps carrying data | not built | A scenario that rotates each key in turn, re-runs the command, and checks data arrives throughout |
-| B4 | Data keeps arriving across a restart of either side, and a republisher passes only what its release set names | The acceptance checks for persistent reception and the republisher boundary ([federation-acceptance.md](federation-acceptance.md)) fail in the federation test environment on `main` | Both checks pass there on two consecutive runs |
-| B5 | An offer narrower than the deployment's release sets is carried out for one partner | built for a peering whose `federation.toml` the command generates: `offer:` narrows the generated file and phase 3 reads it. Refused (GB-129) for a peering run from hand-written files. Not measured end to end | A scenario in which one partner receives a subset and a read of anything outside it is denied |
-| B6 | One environment holds several peerings, each with its own directory package | in review, behind a switch that is off by default | The switch is on by default and the two-sovereign job passes with it |
-| B7 | Backing a peering out removes everything the command created and nothing else | in review; lands with 0.5.0 | The back-out scenario, followed by a comparison of both hosts with their state before the peering |
+| B3 | Keys can be rotated. Every phase can be run again after a rotation and the peering keeps carrying data | designed (`docs/design/federation-key-rotation.md`); phase 3 measuring our package again after a recorded rotation is built | A scenario that rotates each key in turn, re-runs the command, and checks data arrives throughout |
+| B4 | Data keeps arriving across a restart of either side, and a republisher passes only what its release set names | measured: both checks passed in the federation test environment on `main` on two consecutive runs | Both checks pass there on two consecutive runs |
+| B5 | An offer narrower than the deployment's release sets is carried out for one partner | built for a peering whose `federation.toml` the command generates; refused (GB-129) for a peering run from hand-written files. Measured: the scenario passed on `main` in runs `26f9fd2a7355-20261112T175442-893243` and `e70da8a7fff8-20261112T181143-2472121` (strict) | A scenario in which one partner receives a subset and a read of anything outside it is denied |
+| B6 | One environment holds several peerings, each with its own directory package | built, behind `FED_DIRECTORY_PER_COUNTERPARTY`, which is off by default | The switch is on by default and the two-sovereign job passes with it |
+| B7 | Backing a peering out removes everything the command created and nothing else | built (0.5.0, `goatbuilder federate backout`); the back-out scenario is not built. What a back-out does with the partner's stored data is an open decision (`docs/design/federation-backout-partner-data.md`) | The back-out scenario, followed by a comparison of both hosts with their state before the peering |
 | B8 | ADR 1225 is accepted, and the design document's federation sections carry no "WIP" status line | Proposed | The record's status and the document |
-| B9 | Federation has run between two environments that are not the test laboratory | not measured | One peering between two standing goatnets, set up with the released binary, with both sides' acceptance reports kept as a measurement |
-| B10 | A peering can be driven from two machines when no single machine reaches both the edge host and the core host: an edge-side driver that holds no CA key and cannot reach the core, and a controller that can. The plan approval, the run journal and resume hold across the two | not measured. The phases run by number (`--from`, `--to`) on separate machines today; the single command has been measured only from one machine | A scenario with two drivers per sovereign, in which the edge-side driver has no CA key and no route to the core |
+| B9 | Federation has run between two environments that are not the test laboratory | not measured. The procedure is written (`docs/operations/federation-between-two-standing-goatnets.md`) | One peering between two standing goatnets, set up with the released binary, with both sides' acceptance reports kept as a measurement |
+| B10 | A peering can be driven from two machines when no single machine reaches both the edge host and the core host: an edge-side driver that holds no CA key and cannot reach the core, and a controller that can. The plan approval, the run journal and resume hold across the two | designed (`docs/design/federation-two-drivers.md`); phase 3's two halves are in review. The single command has been measured only from one machine | A scenario with two drivers per sovereign, in which the edge-side driver has no CA key and no route to the core |
 
 ### C. It is proven on real machines, by people who did not build it
 
 | # | Requirement | Status | Proven by |
 |---|---|---|---|
-| C1 | A founder site goes from declared to verified in 60 minutes or less, a new node in 15, a burn-down in 15 ([goatbuilder-speed.md](goatbuilder-speed.md)) | built; not measured on hardware | A timed run on hardware, kept as a measurement, with the per-phase times the binary prints |
-| C2 | Tutorials 2 and 3 work on real machines ([goatnet-tutorials.md](goatnet-tutorials.md)) | rehearsed on the fixture; not run on hardware | Both tutorials followed on hardware from the published text, with every command's output matching the text |
-| C3 | `status` reads real hosts | designed | `status` against a standing goatnet agrees with `verify` and `diff` for every machine |
+| C1 | A founder site goes from declared to verified in 60 minutes or less, a new node in 15, a burn-down in 15 ([goatbuilder-speed.md](goatbuilder-speed.md)) | built; not measured on hardware. What a timed run records is designed (`docs/design/goatbuilder-hardware-measurement.md`) | A timed run on hardware, kept as a measurement, with the per-phase times the binary prints |
+| C2 | Tutorials 2 and 3 work on real machines ([goatnet-tutorials.md](goatnet-tutorials.md)) | rehearsed on the fixture; not run on hardware. What a run on hardware must show is designed (`docs/design/goatbuilder-hardware-measurement.md`) | Both tutorials followed on hardware from the published text, with every command's output matching the text |
+| C3 | `status` reads real hosts | built: `status` reads real hosts as `diff` reads and `verify` grades them; not measured against a standing goatnet | `status` against a standing goatnet agrees with `verify` and `diff` for every machine |
 | C4 | A person outside the team stands up a goatnet and federates it using only the published documents | not measured | A cold-read drill: the person has the public repositories and no help. Every place they stopped becomes a fix to the tool or the text, and the drill is repeated until a run has no stops |
 | C5 | Every refusal the drills met is in the error catalog with its fix | built for known errors | The drill logs contain no error without a `GB-nnn` code |
 
@@ -106,8 +106,8 @@ are proposed; an item moves only by a change to this table.
 
 | # | Requirement | Status | Proven by |
 |---|---|---|---|
-| E1 | A deployment made with the last 0.x release continues on 1.0 | not built | A fixture deployed with the last 0.x binary, then `validate`, `status`, `deploy` and `rollback` run with the 1.0 binary with no change to its files |
-| E2 | A federation started on 0.x continues on 1.0 | not built | A peering taken to a middle phase with the last 0.x binary and finished with 1.0; and a finished 0.x peering that passes 1.0's acceptance |
+| E1 | A deployment made with the last 0.x release continues on 1.0 | built: `crates/goatbuilder/tests/upgrade.rs` passes against `main` for 0.4.3 and 0.5.1. The row closes when it runs against the 1.0 build | A fixture deployed with the last 0.x binary, then `validate`, `status`, `deploy` and `rollback` run with the 1.0 binary with no change to its files |
+| E2 | A federation started on 0.x continues on 1.0 | built for the first half: `crates/goatbuilder/tests/upgrade_federation.rs` finishes with this build a peering 0.5.1 took to phase 10, on the federate tests' stand-in world. The second half, a finished 0.x peering passing this build's acceptance, is not built | A peering taken to a middle phase with the last 0.x binary and finished with 1.0; and a finished 0.x peering that passes 1.0's acceptance |
 | E3 | `goatbuilder update` moves a 0.x install to 1.0 and back | `update` is built; the move to 1.0 and back is not measured | The update and the return, on each supported platform |
 
 ### F. The tool shows its work
@@ -121,7 +121,7 @@ Nothing `goatbuilder` does or decides is hidden from the person running it: what
 | F3 | A dry run prints the commands the real run executes, on a terminal as well as in JSON, and marks what cannot be known before the run | not built on a terminal | Check (c): the dry run's commands equal the real run's, in order |
 | F4 | Every phase of every verb is described in one catalog (what it does, why, what it changes, how to tell it worked, the command by hand), `explain` answers for a phase as it does for an error, and the documents' phase tables are rendered from that catalog | not built; the tables are kept by hand | Check (d): every phase that can run has a catalog entry, and every document path the tool prints exists |
 | F5 | The output of a failed phase is matched against the error catalog | built only for an error that ends the program | A phase made to fail with a known error carries that error's code and fix |
-| F6 | Clause C11 is in the contract with its conformance test | not built | The clause in `goatbuilder.md` and the contract chapter, naming the test |
+| F6 | Clause C11 is in the contract with its conformance test | the conformance test is built (`crates/goatbuilder/tests/legibility.rs`), with 20 entries in `legibility-known-failing.txt`; the clause is not built | The clause in `goatbuilder.md` and the contract chapter, naming the test |
 
 ### G. A first goatnet can grow
 
@@ -129,8 +129,8 @@ A goatlite stays quick to start: one file of four facts, no outside account, and
 
 | # | Requirement | Status | Proven by |
 |---|---|---|---|
-| G1 | A lite configuration is valid input to the full preset: the tool rewrites it into a full configuration with the same values and shows the difference | not built | On the lite fixture, the rewritten configuration passes validation and a standup plan from it changes nothing that already exists |
-| G2 | The first run of a goatlite does not grow: the count of facts the learner supplies, of prompts and of phases is held by a test | not built | The budget test on the lite fixture, and tutorial 00 gains no step before the goatnet works |
+| G1 | A lite configuration is valid input to the full preset: the tool rewrites it into a full configuration with the same values and shows the difference | designed (`docs/design/goatlite-growth.md`); the rewrite is in review | On the lite fixture, the rewritten configuration passes validation and a standup plan from it changes nothing that already exists |
+| G2 | The first run of a goatlite does not grow: the count of facts the learner supplies, of prompts and of phases is held by a test | built: `crates/goatbuilder/tests/goatlite_budget.rs` | The budget test on the lite fixture, and tutorial 00 gains no step before the goatnet works |
 
 ## Order of work
 
