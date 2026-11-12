@@ -233,7 +233,21 @@ pf_store_wider() {
   host_exec "$HP-$first-core" docker restart "$first-zenoh-router" >/dev/null
   rec "pf-wider-store-is-from-all" --expect-in 'key_expr: "from/**"' --expect-not-in "key_expr: \"from/$second/**\"" -- \
     docker exec "$HP-$first-core" cat /etc/goat-core/config.json5
-  peer_up "$n" "$first" "$second" "$av"
+  # The refusal this case looks for stops the peering partway: nothing later in peer_up (the
+  # probes of phase 14) can then come up, and its stop would end the unit before the refusal
+  # is read. So peer_up runs in a subshell here; what it stopped on is recorded, and the
+  # checks below decide.
+  local why="" prc=0 before=0
+  [ -f "$RECORD/stopped.reason" ] && before="$(wc -l < "$RECORD/stopped.reason")"
+  ( peer_up "$n" "$first" "$second" "$av" ) || prc=$?
+  # A stop inside the subshell went to stopped.reason (die): it is this case's to read, not
+  # the unit's, so it is taken back out once read.
+  if [ -f "$RECORD/stopped.reason" ] && [ "$(wc -l < "$RECORD/stopped.reason")" -gt "$before" ]; then
+    why="$(tail -1 "$RECORD/stopped.reason")"
+    head -n "$before" "$RECORD/stopped.reason" > "$RECORD/stopped.reason.tmp" && mv "$RECORD/stopped.reason.tmp" "$RECORD/stopped.reason"
+    [ -s "$RECORD/stopped.reason" ] || rm -f "$RECORD/stopped.reason"
+  fi
+  rec "pf-wider-the-peering-stopped-at" --note "exit $prc${why:+: $why}" -- echo "peer_up exit $prc${why:+: $why}"
   rec "pf-wider-store-still-from-all-after-phase-10" --expect-in 'key_expr: "from/**"' -- docker exec "$HP-$first-core" cat /etc/goat-core/config.json5
   # The refusal: a phase before 14, either side, failed naming the store and the grant.
   rec "pf-store-wider-refused" -- bash -c \
