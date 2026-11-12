@@ -18,10 +18,12 @@ directory: `--work` if you give it, else `$FED_WORK`, else `/var/lib/goat-federa
 
 0. **Check with the partner, before anything else:**
    - **Both sides run goatcore at or after the stage 2 commit** (`feafbd3b`, which carries
-     `ops/federation/standup/acceptance_session.py`). In each side's checkout:
+     `ops/federation/standup/acceptance_session.py`). The commit that counts is the goatcore
+     commit the deployment pins (its overlay's `goatcore.ref`), never the overlay's own commit.
+     Run the check in the goatcore checkout at that pin, not in the overlay:
 
      ```bash
-     git merge-base --is-ancestor feafbd3b HEAD && echo ok
+     git -C <goatcore checkout> merge-base --is-ancestor feafbd3b HEAD && echo ok
      ```
 
      The bilateral acceptance session (step 6) needs it on both sides. If the partner's
@@ -154,7 +156,7 @@ identities, so they do not go into a public repository):
 
 | What | Where |
 |---|---|
-| the goatbuilder version and the goatcore commit | `goatbuilder --version`; `git rev-parse HEAD` in the checkout the run used |
+| the goatbuilder version and the goatcore commit | `goatbuilder --version`; `git -C <goatcore checkout> rev-parse HEAD`, in the goatcore checkout at the deployment's pin. Never the overlay's commit: it belongs to a private repository and does not go in a public row |
 | the plan and its hash | `<work>/plan.json`, and the hash the phase 10 prompt showed |
 | the agreement digest, and the session manifest's digest | from the phase 6 prompt; `acceptance_session.py digest <work>/session.json` |
 | your own acceptance result, observed locally | `<work>/evidence/acceptance/result.json` and `summary.md`, and its run id (`run.id`) |
