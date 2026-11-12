@@ -122,6 +122,15 @@ Nothing `goatbuilder` does or decides is hidden from the person running it: what
 | F5 | The output of a failed phase is matched against the error catalog | built only for an error that ends the program | A phase made to fail with a known error carries that error's code and fix |
 | F6 | Clause C11 is in the contract with its conformance test | not built | The clause in `goatbuilder.md` and the contract chapter, naming the test |
 
+### G. A first goatnet can grow
+
+A goatlite stays quick to start: one file of four facts, no outside account, and no step added to prepare for later. Growing it into a full environment is a separate, later act that carries its values forward. Growth proven on machines, including the identity root and the database, comes after 1.0.
+
+| # | Requirement | Status | Proven by |
+|---|---|---|---|
+| G1 | A lite configuration is valid input to the full preset: the tool rewrites it into a full configuration with the same values and shows the difference | not built | On the lite fixture, the rewritten configuration passes validation and a standup plan from it changes nothing that already exists |
+| G2 | The first run of a goatlite does not grow: the count of facts the learner supplies, of prompts and of phases is held by a test | not built | The budget test on the lite fixture, and tutorial 00 gains no step before the goatnet works |
+
 ## Order of work
 
 The requirements depend on one another in this order. No dates are set here.
@@ -143,8 +152,8 @@ Three releases after 0.5.2 reach 1.0, or four if the release candidate needs a s
 | Release | What it is | Rows it closes |
 |---|---|---|
 | 0.5.2 | Document corrections; CI no longer depends on a distribution archive. Released and deployed with no exception at any stage | none; it proves the pipeline |
-| 0.6.0 | The tool shows its work, and the federation rows that need no outside party | F1 to F6; B5, B6, B7, B10; C3 |
-| 0.7.0 | Federation complete and proven outside the laboratory; the promise written and under test; upgrade tested | B2, B3, B4, B8, B9; A1 to A5; E1 to E3 |
+| 0.6.0 | The tool shows its work, and the federation rows that need no outside party | F1 to F6; B5, B6, B7, B10; C3; G2 |
+| 0.7.0 | Federation complete and proven outside the laboratory; the promise written and under test; upgrade tested | B2, B3, B4, B8, B9; A1 to A5; E1 to E3; G1 |
 | 1.0.0-rc.N, then 1.0.0 | Surfaces frozen; proof on hardware and by people who did not build it | C1, C2, C4, C5; D agreed |
 
 Rows that need a person or a machine outside the build: B9 (a real partner), C1 and C2 (hardware), C4 (a person outside the team), A1 and D (decisions). Each is prepared so that the act itself is short.
