@@ -641,14 +641,22 @@ const VALUE_FLAGS: [&str; 16] = [
 /// [`VALUE_FLAGS`]. A value that reads the environment (`$(printenv NAME)`,
 /// `$NAME`) is named by the variable it reads.
 fn values(line: &str) -> Vec<Value> {
-    let t = tokens(line);
+    // A word the shell ends with `;` (`... mesh.ini; fi`) carries the value without it.
+    let t: Vec<String> = tokens(line)
+        .into_iter()
+        .map(|w| w.trim_end_matches(';').to_string())
+        .collect();
     let mut out = Vec::new();
     let mut i = 0;
     while i < t.len() {
         let w = &t[i];
         if w == "-e" && i + 1 < t.len() {
-            if let Some((_, v)) = t[i + 1].split_once('=') {
+            let x = &t[i + 1];
+            if let Some((_, v)) = x.split_once('=') {
                 out.push(Value::of(v));
+            } else if let Some(file) = x.strip_prefix('@') {
+                // `-e @<file>`: the vars file is a value too.
+                out.push(Value::of(file));
             }
             i += 2;
             continue;
@@ -659,7 +667,9 @@ fn values(line: &str) -> Vec<Value> {
             }
         } else if w.starts_with("--") && w.contains('=') {
             out.push(Value::of(w.split_once('=').unwrap().1));
-        } else if VALUE_FLAGS.contains(&w.as_str()) && i + 1 < t.len() {
+        } else if (VALUE_FLAGS.contains(&w.as_str()) || w.ends_with("with-aws")) && i + 1 < t.len()
+        {
+            // `with-aws <profile> -- ...`: the profile is positional, and a value.
             out.push(Value::of(&t[i + 1]));
             i += 1;
         }
@@ -685,9 +695,14 @@ impl Value {
                 v.strip_prefix('$')
                     .filter(|r| r.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'))
             });
-        match env {
-            Some(name) => Value::FromEnv(name.trim().to_string()),
-            None => Value::Literal(v.to_string()),
+        // A play reading the environment itself: `{{ lookup("env", "NAME") }}`.
+        let lookup =
+            regex::Regex::new(r#"lookup\(\s*['"]env['"]\s*,\s*['"]([A-Za-z_][A-Za-z0-9_]*)['"]"#)
+                .unwrap();
+        match (env, lookup.captures(v)) {
+            (Some(name), _) => Value::FromEnv(name.trim().to_string()),
+            (None, Some(c)) => Value::FromEnv(c[1].to_string()),
+            (None, None) => Value::Literal(v.to_string()),
         }
     }
 }
@@ -1180,6 +1195,7 @@ fn c11_each_check_can_pass_when_the_tool_does_what_it_asks() {
         "verb": "standup",
         "commands": [{ "phase": "5", "command": line, "log": log.display().to_string() }],
         "inputs": [
+            { "name": "aws_profile", "value": "default", "source": "default: the AWS profile when the project declares none" },
             { "name": "inventory", "value": "inventory/mgmt-hosts.ini", "source": "default" },
             { "name": "target", "value": "alpha_hosts", "source": "derived from --site alpha by <site>_hosts" },
             { "name": "ALPHA_PG_PASS", "value": null, "secret": true, "source": "environment" },
@@ -1204,6 +1220,25 @@ fn c11_each_check_can_pass_when_the_tool_does_what_it_asks() {
             Some(catalog.into())
         ),
         Ok(())
+    );
+
+    // The value rule, on the shapes the verbs print.
+    let got: Vec<String> = values(
+        "if x; then a --inventory inv/mesh.ini; fi; ../scripts/with-aws default -- play.yml \
+         -e 'pg={{ lookup(\"env\", \"ZAGROS_PG_PASS\") }}' -e @\"$VF\" -l zagros_b_hosts;",
+    )
+    .iter()
+    .map(|v| format!("{v:?}"))
+    .collect();
+    assert_eq!(
+        got,
+        [
+            "Literal(\"inv/mesh.ini\")",
+            "Literal(\"default\")",
+            "FromEnv(\"ZAGROS_PG_PASS\")",
+            "FromEnv(\"VF\")",
+            "Literal(\"zagros_b_hosts\")"
+        ]
     );
 
     // A dry run that fails is a harness failure, never a known-failing check.
