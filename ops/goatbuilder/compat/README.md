@@ -87,8 +87,9 @@ exactly the shape `SHA256SUMS` writes (64 lowercase hex, two spaces,
 - **A kept exit code that changes** (before 1.0 only; exit codes are a
   promised surface). Edit that invocation's `exit` in
   `documents/manifest.yaml` in the same pull request and give the reason in
-  `exit_changed:`. The next refresh records the release's own exit and drops
-  the reason. `validate-not-yaml` keeps 0.5.1's exit 2 for this purpose.
+  `exit_changed:`. `release_exit` keeps what the release did, and `check`
+  refuses an `exit` that differs from it without a reason. The next refresh
+  records the release's own exit in both and drops the reason. `validate-not-yaml` keeps 0.5.1's exit 2 for this purpose.
 - **A kept document whose shape must change.** It cannot within one version:
   add the new field beside the old one, or publish a new document version.
 - **A field a format carries only on some entries** (conditional fields). The
