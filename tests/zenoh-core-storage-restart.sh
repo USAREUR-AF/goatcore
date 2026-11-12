@@ -51,12 +51,25 @@
 #                  as from/xaa/all/<key>, stamped with the partner core's
 #                  timestamp (ops/federation/republisher/src/edge.rs:84-99).
 #
-#   ZENOH_IMAGE=<router image>  ZENOH_ROCKSDB_SO=<libzenoh_backend_rocksdb.so> \
+#   ZENOH_IMAGE=<router image>  ZENOH_ROCKSDB_ZIP=<the backend's release zip> \
 #     bash tests/zenoh-core-storage-restart.sh
 #
+#   ZENOH_PUT_EARLY=on  records a boundary, never a failure: right after our core
+#                  restarts, as soon as its REST answers, one new value is put
+#                  ONCE (through the republisher when it runs, else the client)
+#                  and looked for for 60 s. While the restarted core's interest is
+#                  still on its way back to the sender, zenoh has no subscriber to
+#                  route that put to and drops it, by design; the line says
+#                  whether it was lost or stored, and after how long.
+#
 # ZENOH_IMAGE defaults to the role's zenoh_router_image with ghcr_org set to
-# ZENOH_GHCR_ORG. Exit 0 when every check passes; 1 when one does not (each line
-# says which); 2 when it cannot run (no docker, no image, no backend).
+# ZENOH_GHCR_ORG; an explicit image must carry the role's digest, unless
+# ZENOH_IMAGE_ANY=1 (an override then runs unchecked). ZENOH_ROCKSDB_ZIP is the
+# release asset the role fetches (goat_zenoh_rocksdb_backend_url_template); it must
+# match goat_zenoh_rocksdb_backend_sha256_map for this machine's architecture, and
+# the backend is taken from it (python3 reads the zip). Exit 0
+# when every check passes; 1 when one does not (each line says which); 2 when it
+# cannot run (no docker, no image, no backend, a pin that does not match).
 
 set -u
 
@@ -71,9 +84,24 @@ if [ -z "${ZENOH_IMAGE:-}" ]; then
   ZENOH_IMAGE=$(sed -n 's/^zenoh_router_image: "\(.*\)"$/\1/p' "$defaults" | sed "s/{{ ghcr_org }}/$ZENOH_GHCR_ORG/")
 fi
 [ -n "$ZENOH_IMAGE" ] || die "could not read zenoh_router_image from $defaults"
-if [ -z "${ZENOH_ROCKSDB_SO:-}" ] || [ ! -f "$ZENOH_ROCKSDB_SO" ]; then
-  die "set ZENOH_ROCKSDB_SO to the role's libzenoh_backend_rocksdb.so (goat_zenoh_rocksdb_backend_version in $defaults)"
+role_digest=$(sed -n 's/^zenoh_router_image: ".*@\(sha256:[0-9a-f]*\)"$/\1/p' "$defaults")
+case "$ZENOH_IMAGE" in
+  *"@$role_digest") ;;
+  *) [ "${ZENOH_IMAGE_ANY:-0}" = 1 ] || die "ZENOH_IMAGE $ZENOH_IMAGE is not the role's zenoh_router_image digest ($role_digest); set ZENOH_IMAGE_ANY=1 to run another image unchecked" ;;
+esac
+if [ -z "${ZENOH_ROCKSDB_ZIP:-}" ] || [ ! -f "$ZENOH_ROCKSDB_ZIP" ]; then
+  die "set ZENOH_ROCKSDB_ZIP to the backend release zip the role fetches (goat_zenoh_rocksdb_backend_version and _url_template in $defaults)"
 fi
+# The backend the role pins, for this machine's architecture.
+case "$(uname -m)" in
+  x86_64 | amd64) arch=x86_64 ;;
+  aarch64 | arm64) arch=aarch64 ;;
+  *) die "no goat_zenoh_rocksdb_backend_sha256_map entry for $(uname -m)" ;;
+esac
+want_sha=$(sed -n "/^goat_zenoh_rocksdb_backend_sha256_map:/,/^[^ ]/s/^  $arch: *\"\([0-9a-f]*\)\"/\1/p" "$defaults")
+[ -n "$want_sha" ] || die "could not read goat_zenoh_rocksdb_backend_sha256_map.$arch from $defaults"
+if command -v sha256sum >/dev/null 2>&1; then got_sha=$(sha256sum "$ZENOH_ROCKSDB_ZIP" | cut -d' ' -f1); else got_sha=$(shasum -a 256 "$ZENOH_ROCKSDB_ZIP" | cut -d' ' -f1); fi
+[ "$got_sha" = "$want_sha" ] || die "ZENOH_ROCKSDB_ZIP's sha256 is $got_sha; the role pins $want_sha for $arch (goat_zenoh_rocksdb_backend_sha256_map)"
 docker image inspect "$ZENOH_IMAGE" >/dev/null 2>&1 || die "image $ZENOH_IMAGE is not present locally"
 
 proto=tcp
@@ -93,7 +121,7 @@ if [ -n "$rp_image" ]; then
   docker image inspect "$rp_image" >/dev/null 2>&1 || die "image $rp_image is not present locally"
 fi
 
-work=$(mktemp -d "${TMPDIR:-/tmp}/zenoh-storage-restart.XXXXXX")
+work=$(mktemp -d "${TMPDIR:-/tmp}/zenoh-storage-restart.XXXXXX") || die "mktemp failed"
 tag="zenoh-storage-restart-$$"
 core="$tag-core"; edge="$tag-edge"; far="$tag-far"; farcore="$tag-farcore"; client="$tag-client"; rp="$tag-republisher"
 net="$tag"
@@ -106,7 +134,16 @@ cleanup() {
 }
 trap cleanup EXIT
 mkdir -p "$work/plugins" "$work/rocksdb" "$work/tls"
-cp "$ZENOH_ROCKSDB_SO" "$work/plugins/libzenoh_backend_rocksdb.so"
+# The one member the role installs, taken from the pinned zip.
+command -v python3 >/dev/null 2>&1 || die "reading ZENOH_ROCKSDB_ZIP needs python3"
+python3 -I -c '
+import sys, zipfile
+z = zipfile.ZipFile(sys.argv[1])
+names = [n for n in z.namelist() if n.rsplit("/", 1)[-1] == "libzenoh_backend_rocksdb.so"]
+if len(names) != 1:
+    sys.exit("expected one libzenoh_backend_rocksdb.so in the zip, found %d" % len(names))
+open(sys.argv[2], "wb").write(z.read(names[0]))
+' "$ZENOH_ROCKSDB_ZIP" "$work/plugins/libzenoh_backend_rocksdb.so" || die "could not take libzenoh_backend_rocksdb.so from $ZENOH_ROCKSDB_ZIP"
 store=/var/lib/goat-zenoh/rocksdb
 
 CORE_ZID=a1b2c3d4e5f60718293a4b5c6d7e8f90
@@ -210,8 +247,12 @@ edge_acl() { # <partner zid> <partner name> <core zid> <core name> <ingress> <eg
   echo '    policies: [ { rules: ["partner-land", "partner-land-interest", "partner-receive", "partner-receive-interest"], subjects: ["partner-peer"] }, { rules: ["core-forward", "core-return"], subjects: ["our-core"] } ],'
   echo '  },'
 }
+# The role's time_to_live for sovereign ingress: zenoh_from_retention_days * 86400 * 1000.
+from_days=$(sed -n 's/^zenoh_from_retention_days: *\([0-9][0-9]*\).*/\1/p' "$defaults")
+[ -n "$from_days" ] || die "could not read zenoh_from_retention_days from $defaults"
+from_ttl=$((from_days * 86400 * 1000))
 storage() { # <name> <key_expr>: one storage entry exactly as the role renders it
-  printf '        "%s": {\n          key_expr: "%s",\n          volume: { id: "rocksdb", dir: "%s/%s", on_closure: "do_nothing", create_db: true, db_recovery_enabled: false },\n          garbage_collect_period: 86400,\n          time_to_live: 2592000000,\n        },\n' "$1" "$2" "$store" "$1"
+  printf '        "%s": {\n          key_expr: "%s",\n          volume: { id: "rocksdb", dir: "%s/%s", on_closure: "do_nothing", create_db: true, db_recovery_enabled: false },\n          garbage_collect_period: 86400,\n          time_to_live: %s,\n        },\n' "$1" "$2" "$store" "$1" "$from_ttl"
 }
 plugins_rest() {
   echo '  plugins_loading: { enabled: true, search_dirs: ["/", "/opt/zenoh/plugins"] },'
@@ -343,9 +384,9 @@ ready() { # both stores listed at our core, every router and the client answerin
   crest=$(url "$core"); erest=$(url "$edge"); frest=$(url "$far"); fcrest=$(url "$farcore"); clrest=$(url "$client")
   i=0
   while [ $i -lt 60 ]; do
-    n=$(curl -fs "$crest/@/local/router/status/plugins/storage_manager/storages/**" 2>/dev/null | grep -o 'storages/sovereign_from[a-z_]*' | sort -u | wc -l)
-    if [ "$n" -ge 2 ] && curl -fs -o /dev/null "$erest/@/local/router" 2>/dev/null && curl -fs -o /dev/null "$frest/@/local/router" 2>/dev/null &&
-       curl -fs -o /dev/null "$fcrest/@/local/router" 2>/dev/null && curl -fs -o /dev/null "$clrest/@/local/**" 2>/dev/null; then
+    n=$(curl -fs -m 10 "$crest/@/local/router/status/plugins/storage_manager/storages/**" 2>/dev/null | grep -o 'storages/sovereign_from[a-z_]*' | sort -u | wc -l)
+    if [ "$n" -ge 2 ] && curl -fs -m 10 -o /dev/null "$erest/@/local/router" 2>/dev/null && curl -fs -m 10 -o /dev/null "$frest/@/local/router" 2>/dev/null &&
+       curl -fs -m 10 -o /dev/null "$fcrest/@/local/router" 2>/dev/null && curl -fs -m 10 -o /dev/null "$clrest/@/local/**" 2>/dev/null; then
       return 0
     fi
     sleep 1; i=$((i + 1))
@@ -354,17 +395,17 @@ ready() { # both stores listed at our core, every router and the client answerin
   die "the routers did not come up within 60 s"
 }
 put() { # <base url> <key> <value>
-  curl -fs -X PUT -H 'content-type: text/plain' --data "$3" "$1/$2" >/dev/null || die "PUT $2 failed"
+  curl -fs -m 10 -X PUT -H 'content-type: text/plain' --data "$3" "$1/$2" >/dev/null || die "PUT $2 failed"
 }
 holds() { # <key> <value>: a GET on our core returns the value (plain or base64)
-  curl -fs "$crest/$1" 2>/dev/null | grep -q "\"$2\"\|$(printf '%s' "$2" | base64)"
+  curl -fs -m 10 "$crest/$1" 2>/dev/null | grep -q "\"$2\"\|$(printf '%s' "$2" | base64)"
 }
 
 fails=0
 pass() { echo "  PASS  $1"; }
 fail() { echo "  FAIL  $1"; fails=$((fails + 1)); }
 read_back() { # <key> <value> <label>
-  if holds "$1" "$2"; then pass "$3: GET $1 at our core returns $2"; else fail "$3: GET $1 at our core returned $(curl -fs "$crest/$1" 2>/dev/null || echo nothing), expected $2"; fi
+  if holds "$1" "$2"; then pass "$3: GET $1 at our core returns $2"; else fail "$3: GET $1 at our core returned $(curl -fs -m 10 "$crest/$1" 2>/dev/null || echo nothing), expected $2"; fi
 }
 arrives() { # <base url> <where> <put key> <stored key> <value> <label>: stored at our core within 20 s
   put "$1" "$3" "$5"
@@ -403,6 +444,21 @@ via_client from/xaa/all/client-before r-before "put by a client of the partner's
 via_republisher rp-before p-before "a release republished by the partner"
 
 docker restart "$core" >/dev/null || die "docker restart failed"
+if [ "${ZENOH_PUT_EARLY:-off}" = on ]; then
+  # The boundary, recorded and never failed: one put as soon as the restarted
+  # core's REST answers, with no second put (see the header).
+  crest=$(url "$core"); fcrest=$(url "$farcore"); clrest=$(url "$client")
+  i=0; until curl -fs -m 2 -o /dev/null "$crest/@/**" 2>/dev/null || [ $i -ge 60 ]; do sleep 1; i=$((i + 1)); done
+  if [ -n "$rp_image" ]; then src="$fcrest"; at="the partner's core, crossing by its republisher"; key=release/all/early
+  else src="$clrest"; at="a client of the partner's core"; key=from/xaa/all/early; fi
+  put "$src" "$key" e-early
+  i=0; until holds from/xaa/all/early e-early || [ $i -ge 60 ]; do sleep 1; i=$((i + 1)); done
+  if holds from/xaa/all/early e-early; then
+    echo "  BOUNDARY  one put at $at as soon as our restarted core's REST answered: stored after ${i} s"
+  else
+    echo "  BOUNDARY  one put at $at as soon as our restarted core's REST answered: lost (no route yet; expected, by design)"
+  fi
+fi
 ready
 echo "after our core restarts (everything else keeps running)"
 read_back from/xaa/core-before c-before "put at our core before the restart"
