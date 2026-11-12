@@ -417,6 +417,7 @@ mod tests {
             render("ssh_user"),
             "ops/goatbuilder/goatbuilder.yaml:3 deploy.ssh_user"
         );
+        assert_eq!(super::super::dangling(&inputs), Vec::<String>::new());
         assert_eq!(render("node"), "argument --node");
         let pass = inputs
             .iter()

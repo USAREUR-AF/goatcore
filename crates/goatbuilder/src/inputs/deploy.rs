@@ -51,7 +51,7 @@ pub fn plan_inputs(repo: &Path, o: &Options, p: &Plan, env: Env) -> Vec<Input> {
     v.push(Input::new(
         "name",
         p.name.clone(),
-        Source::derived("--env (above)", "the goatnet with _ as -"),
+        Source::derived("goatnet (above)", "the goatnet with _ as -"),
     ));
     if !o.ack.trim().is_empty() {
         v.push(Input::new("ack", o.ack, Source::arg("--ack")));

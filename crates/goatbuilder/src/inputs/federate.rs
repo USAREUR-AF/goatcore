@@ -724,6 +724,7 @@ mod tests {
             )
         );
         assert_eq!(get("work").source, Source::arg("--work"));
+        assert_eq!(super::super::dangling(&inputs), Vec::<String>::new());
         for i in &inputs {
             assert!(i.sourced() || i.unset.is_some(), "{i:?}");
         }

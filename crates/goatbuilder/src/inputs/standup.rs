@@ -676,6 +676,7 @@ mod tests {
             "{}",
             render("aws_profile")
         );
+        assert_eq!(super::super::dangling(&inputs), Vec::<String>::new());
         assert_eq!(render("acl_site"), "derived from join_founder_site (above) by a joiner is governed by its founder's NetBird ACL");
     }
 }

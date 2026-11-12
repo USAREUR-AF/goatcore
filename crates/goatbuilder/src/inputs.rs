@@ -507,6 +507,46 @@ pub fn rows(inputs: &[Input]) -> Vec<crate::Check> {
         .collect()
 }
 
+/// `goatbuilder why <value>`: the inputs a query names, each with the chain of
+/// sources that gave it. A query matches an input by its name, else by its
+/// value (a secret never matches by value). Each answer is the input's line,
+/// then, for a value derived from another listed input (`from: "<name>
+/// (above)"`), that input's answer, indented, down to a source that names a
+/// file, the environment, a default, an allocation, an argument or nothing.
+pub fn why(inputs: &[Input], query: &str) -> Vec<String> {
+    let by_name: Vec<&Input> = inputs.iter().filter(|i| i.name == query).collect();
+    let hits = if by_name.is_empty() {
+        inputs.iter().filter(|i| i.value() == Some(query)).collect()
+    } else {
+        by_name
+    };
+    let mut out = Vec::new();
+    for i in hits {
+        let mut seen = vec![i.name.as_str()];
+        let mut at = i;
+        let mut depth = 0;
+        loop {
+            out.push(format!("{}{}", "  ".repeat(depth), at.line()));
+            let Source::Derived { from, .. } = &at.source else {
+                break;
+            };
+            let Some(name) = from.strip_suffix(" (above)") else {
+                break;
+            };
+            let Some(next) = inputs.iter().find(|x| x.name == name) else {
+                break;
+            };
+            if seen.contains(&next.name.as_str()) {
+                break;
+            }
+            seen.push(next.name.as_str());
+            at = next;
+            depth += 1;
+        }
+    }
+    out
+}
+
 /// Add an input unless one of that name is already listed (the first source
 /// to give a value is the one the run uses).
 pub fn push(v: &mut Vec<Input>, i: Input) {
@@ -631,6 +671,20 @@ pub fn rel(repo: &Path, p: &Path) -> String {
 /// test's list and `extra`), the AWS profile `with-aws` is given, and the
 /// value of a `NAME=value` before a command. `(true, NAME)` is a value read
 /// from the environment (`$NAME`, `${NAME}`, `$(printenv NAME)`).
+/// Every `<name> (above)` a derived source names that is not a listed input:
+/// `why` stops there, so each verb's tests ask for none.
+#[cfg(test)]
+pub(crate) fn dangling(inputs: &[Input]) -> Vec<String> {
+    inputs
+        .iter()
+        .filter_map(|i| match &i.source {
+            Source::Derived { from, .. } => from.strip_suffix(" (above)").map(String::from),
+            _ => None,
+        })
+        .filter(|n| !n.contains(" and ") && !inputs.iter().any(|x| &x.name == n))
+        .collect()
+}
+
 #[cfg(test)]
 pub(crate) fn command_values(line: &str, extra: &[&str]) -> Vec<(bool, String)> {
     const FLAGS: &[&str] = &[
@@ -796,6 +850,65 @@ mod tests {
             redact_userinfo("https://a:x@one.example.org/ https://b:y@two.example.org/"),
             "https://<redacted>@one.example.org/ https://<redacted>@two.example.org/"
         );
+    }
+
+    #[test]
+    fn why_answers_by_name_or_value_and_follows_what_a_value_was_derived_from() {
+        let v = vec![
+            Input::new(
+                "join_founder_site",
+                "zagros-a",
+                Source::file(
+                    "ops/ansible/group_vars/zagros_b_hosts/vars.yml",
+                    Some(3),
+                    "join_founder_site",
+                ),
+            ),
+            Input::new(
+                "founder_group",
+                "zagros_a_hosts",
+                Source::derived("join_founder_site (above)", "<founder, - as _>_hosts"),
+            ),
+            Input::new(
+                "acl_site",
+                "zagros-a",
+                Source::derived(
+                    "join_founder_site (above)",
+                    "a joiner is governed by its founder's NetBird ACL",
+                ),
+            ),
+            Input::secret("ZAGROS_B_PG_PASS", Source::env("ZAGROS_B_PG_PASS")),
+            Input::unset("public_mgmt_fqdn", "declare public_mgmt_fqdn in vars.yml"),
+        ];
+        // By value: the derived group, then what it came from, indented.
+        assert_eq!(
+            why(&v, "zagros_a_hosts"),
+            [
+                "founder_group=zagros_a_hosts  derived from join_founder_site (above) by <founder, - as _>_hosts",
+                "  join_founder_site=zagros-a  ops/ansible/group_vars/zagros_b_hosts/vars.yml:3 join_founder_site",
+            ]
+        );
+        // A value two inputs share answers for both.
+        assert_eq!(why(&v, "zagros-a").len(), 3);
+        // By name, before value.
+        assert_eq!(why(&v, "join_founder_site").len(), 1);
+        // A secret answers by name with its source, never by value.
+        assert_eq!(
+            why(&v, "ZAGROS_B_PG_PASS"),
+            ["ZAGROS_B_PG_PASS (secret, not shown)  environment $ZAGROS_B_PG_PASS"]
+        );
+        // Missing says where to declare it; an unknown query answers nothing.
+        assert_eq!(
+            why(&v, "public_mgmt_fqdn"),
+            ["public_mgmt_fqdn not set: declare public_mgmt_fqdn in vars.yml"]
+        );
+        assert!(why(&v, "nowhere").is_empty());
+        // A cycle stops.
+        let c = vec![
+            Input::new("a", "1", Source::derived("b (above)", "r")),
+            Input::new("b", "2", Source::derived("a (above)", "r")),
+        ];
+        assert_eq!(why(&c, "a").len(), 2);
     }
 
     #[test]
