@@ -109,6 +109,19 @@ are proposed; an item moves only by a change to this table.
 | E2 | A federation started on 0.x continues on 1.0 | not built | A peering taken to a middle phase with the last 0.x binary and finished with 1.0; and a finished 0.x peering that passes 1.0's acceptance |
 | E3 | `goatbuilder update` moves a 0.x install to 1.0 and back | `update` is built; the move to 1.0 and back is not measured | The update and the return, on each supported platform |
 
+### F. The tool shows its work
+
+Nothing `goatbuilder` does or decides is hidden from the person running it: what it will do, what it is doing, what it did, and why can each be read from the tool, without opening its source. This becomes contract clause C11.
+
+| # | Requirement | Status | Proven by |
+|---|---|---|---|
+| F1 | Every process the tool starts is shown when it starts (phase, purpose, command, host, log) and is in a run record afterwards, for every verb | not built: phase headers and commands print after a run ends; `-v` shows the command for deploy and release only; `join-node` keeps no record | The legibility conformance test, check (a): on the fixture, every process started is in the run record with its command and its log |
+| F2 | Every value a run uses is listed with its source: a file and line, the declaration and rule it was derived from, an environment override, a default, or an allocation. A secret shows its source and never its value | built for federation's `FED_*` inputs, in JSON only | Check (b): every value in a command line has an entry in `inputs` with a source |
+| F3 | A dry run prints the commands the real run executes, on a terminal as well as in JSON, and marks what cannot be known before the run | not built on a terminal | Check (c): the dry run's commands equal the real run's, in order |
+| F4 | Every phase of every verb is described in one catalog (what it does, why, what it changes, how to tell it worked, the command by hand), `explain` answers for a phase as it does for an error, and the documents' phase tables are rendered from that catalog | not built; the tables are kept by hand | Check (d): every phase that can run has a catalog entry, and every document path the tool prints exists |
+| F5 | The output of a failed phase is matched against the error catalog | built only for an error that ends the program | A phase made to fail with a known error carries that error's code and fix |
+| F6 | Clause C11 is in the contract with its conformance test | not built | The clause in `goatbuilder.md` and the contract chapter, naming the test |
+
 ## Order of work
 
 The requirements depend on one another in this order. No dates are set here.
@@ -117,10 +130,11 @@ The requirements depend on one another in this order. No dates are set here.
 2. **Federation completed.** B2 to B6 and B10, each its own release in the 0.x line, each behind a switch until its scenario passes.
 3. **Federation on standing goatnets.** B9, then B8.
 4. **Real machines.** C3, then C1 and C2 on hardware.
-5. **The promise.** A1 to A5 and the decision in D on the pull converger. From this point the surfaces are frozen.
-6. **Upgrade tests.** E1 to E3, against the release that froze the surfaces.
-7. **The cold-read drill.** C4 and C5, on a release candidate `goatbuilder/v1.0.0-rc.N`.
-8. **1.0.** Every row of the gate reads "passed", with a link to its test run or measurement.
+5. **The tool shows its work.** F1 to F6, in 0.x releases, beside the steps above.
+6. **The promise.** A1 to A5 and the decision in D on the pull converger. From this point the surfaces are frozen.
+7. **Upgrade tests.** E1 to E3, against the release that froze the surfaces.
+8. **The cold-read drill.** C4 and C5, on a release candidate `goatbuilder/v1.0.0-rc.N`.
+9. **1.0.** Every row of the gate reads "passed", with a link to its test run or measurement.
 
 ## How the gate is kept
 
