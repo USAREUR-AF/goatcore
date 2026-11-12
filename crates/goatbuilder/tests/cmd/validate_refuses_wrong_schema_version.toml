@@ -3,7 +3,7 @@ bin.name = "goatbuilder"
 args = ["validate", "-C", "../..", "tests/fixtures/configs/wrong-schema-version.yaml"]
 status.code = 1
 stdout = """
-FAIL  config  schema: "goatbuilder/v1" was expected
+FAIL  config  GB-025: schema: "goatbuilder/v1" was expected
 validate: refused (1 check)
 """
 stderr = ""

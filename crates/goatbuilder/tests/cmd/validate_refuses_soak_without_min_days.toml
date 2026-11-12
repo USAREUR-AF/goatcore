@@ -3,7 +3,7 @@ bin.name = "goatbuilder"
 args = ["validate", "-C", "../..", "tests/fixtures/configs/soak-without-min-days.yaml"]
 status.code = 1
 stdout = """
-FAIL  config  promotion/path/1/gates/0: "min_days" is a required property
+FAIL  config  GB-025: promotion/path/1/gates/0: "min_days" is a required property
 validate: refused (1 check)
 """
 stderr = ""

@@ -588,6 +588,9 @@ pub fn load(path: &Path) -> Result<Config> {
     serde_json::from_value(derive_lite(&value, checkout.as_ref())).context("config does not match the typed model")
 }
 
+/// The catalog code of a config that does not validate (ops/errors/catalog.yaml).
+pub const REFUSED_CODE: &str = "GB-025";
+
 /// The `validate` verb's report: one check per problem, or one passing check.
 pub fn validate_report(path: &Path) -> Result<Report> {
     let value = load_value(path)?;
@@ -600,12 +603,14 @@ pub fn validate_report(path: &Path) -> Result<Report> {
             fix: None,
         }]
     } else {
+        // Each row names the catalog code, so `goatbuilder explain GB-025` and a
+        // program reading `-o json` both find the refusal (C5).
         problems
             .into_iter()
             .map(|p| Check {
                 name: "config".into(),
                 ok: false,
-                detail: p,
+                detail: format!("{REFUSED_CODE}: {p}"),
                 fix: None,
             })
             .collect()
@@ -641,6 +646,33 @@ pub(crate) fn checkout_declares_a_deployment() -> bool {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// A refusal names the catalog code its documents give it (GB-025), on every
+    /// failing row, so a person can `goatbuilder explain` it and a program can read it
+    /// (docs/reference/goatbuilder/03-configuration.md: "A config that does not validate is GB-025").
+    #[test]
+    fn a_refused_config_names_gb_025_on_every_failing_row() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("goatbuilder.yaml");
+        std::fs::write(&path, "schema: goatbuilder/v1\nflavour: vanilla\n").unwrap();
+        let r = validate_report(&path).unwrap();
+        assert!(!r.ok);
+        assert!(
+            r.checks
+                .iter()
+                .all(|c| !c.ok && c.detail.starts_with("GB-025: ")),
+            "{:?}",
+            r.checks
+        );
+        let ok = dir.path().join("ok.yaml");
+        std::fs::write(&ok, serde_yaml::to_string(&minimal()).unwrap()).unwrap();
+        let r = validate_report(&ok).unwrap();
+        assert!(
+            r.ok && !r.checks[0].detail.contains("GB-025"),
+            "{:?}",
+            r.checks
+        );
+    }
 
     fn minimal() -> Value {
         json!({
