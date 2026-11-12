@@ -118,3 +118,13 @@ Everything on hardware. No step of `grow` has run on a machine: not the custody 
 |---|---|---|
 | G1 | On the lite fixture `ops/goatbuilder/fixtures/goatnet-from-scratch/00-goatlite`, `grow --dry-run` produces a full configuration that passes validation, and the standup plan from it, compared with the lite plan, runs no step that creates or replaces something that exists | not built |
 | G2 | On the same fixture, the count of facts the learner must supply, of prompts and of phases is pinned at today's numbers and may not rise, and `docs/tutorials/00-goatlite.md` gains no step before the goatnet works | not built |
+
+**The first-run budget G2 holds**, measured 2026-11-12 on the lite fixture and held as ceilings by `crates/goatbuilder/tests/goatlite_budget.rs`. A count that drops lowers its ceiling in the same change; a count that rises changes this table and the test together, with the reason.
+
+| Measure | Today | How it is counted |
+|---|---|---|
+| Facts the learner supplies | 4: `name`, `host`, `ssh_user`, `admin` | the schema's `lite.required`; a file of only those validates |
+| Stops for the learner | 1: phase 11, the first dashboard login on a LAN site | `MANUAL` steps in `goatbuilder standup pasture --dry-run -o json` |
+| Phases | 12 of 14 (7 and 8 are internet-only) | distinct phase numbers in that plan |
+| Steps | 36 | phase lines in that plan |
+| Tutorial 00 before the goatnet works | 7 sections, 36 command blocks, 75 lines in them | `docs/tutorials/00-goatlite.md` before `## 8. Use it` |
