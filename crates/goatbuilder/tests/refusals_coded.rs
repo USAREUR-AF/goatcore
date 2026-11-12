@@ -102,7 +102,7 @@ const EXPECTED: &[(&str, &str)] = &[
     ("usage_bad_output_format", "GB-242"),
     ("usage_join_node_needs_class", "GB-242"),
     ("usage_mock_on_a_verb_that_reads_the_checkout", "GB-039"),
-    ("usage_no_verb", "GB-007"),
+    ("usage_no_verb", "GB-242"),
     ("usage_release_bad_from", "GB-018"),
     ("usage_standup_needs_site", "GB-243"),
     ("usage_unknown_verb", "GB-242"),
@@ -170,6 +170,10 @@ const PENDING: &[(&str, &str)] = &[
     ),
     (
         "standup_from_old_phase_zero_is_refused",
+        "main.rs: print clap's errors with their catalog code (GB-242)",
+    ),
+    (
+        "usage_no_verb",
         "main.rs: print clap's errors with their catalog code (GB-242)",
     ),
     (
