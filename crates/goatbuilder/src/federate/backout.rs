@@ -176,6 +176,10 @@ pub struct Target {
     pub edge_group: String,
     pub core_group: String,
     pub work: String,
+    /// The core's seed, org fragment and live configuration, when the core is
+    /// a goat-zenoh role core: the paths admission wrote (admit_role), passed
+    /// to the play as peering_backout_core_{seed,org,config}.
+    pub core_files: Vec<(&'static str, String)>,
 }
 
 pub fn target(o: &Options) -> Result<Target> {
@@ -217,7 +221,34 @@ pub fn target(o: &Options) -> Result<Target> {
         edge_group,
         core_group,
         work,
+        core_files: Vec::new(),
     })
+}
+
+/// The files of a goat-zenoh role core, resolved by the code admission uses
+/// (`admit_role::find` and `role_value`), so the back-out reads and replaces
+/// exactly what admission wrote. Nothing is set without a role core: the
+/// core's own group vars decide, as before. A role core whose paths do not
+/// resolve is refused (GB-221), never surveyed at a guessed path.
+pub fn core_files(repo: &Path, t: &mut Target) -> Result<()> {
+    let refuse = |e: String| -> anyhow::Error {
+        goat_errors::coded("GB-221", format!("the back-out cannot find our core's files the way admission did: {e} (GB-221)")).into()
+    };
+    let Some(core) = super::admit_role::find(repo, &t.core_group).map_err(refuse)? else {
+        return Ok(());
+    };
+    for (var, key) in [
+        ("peering_backout_core_seed", "goat_zenoh_acl_seed_path"),
+        ("peering_backout_core_org", "goat_zenoh_acl_org_path"),
+        ("peering_backout_core_config", "goat_zenoh_config_path"),
+    ] {
+        let v = core.role_value(repo, key).map_err(refuse)?;
+        if !plain(&v) {
+            return Err(refuse(format!("{key} '{v}' holds characters a plan line cannot carry safely")));
+        }
+        t.core_files.push((var, v));
+    }
+    Ok(())
 }
 
 /// The play line, the way the peering plays run (federate/mod.rs `play_on`):
@@ -233,7 +264,7 @@ pub fn play_cmd(repo: &Path, t: &Target, extra: &[(&str, String)]) -> String {
         "-e peering_backout_id='{}' -e fed_edge_group='{}' -e fed_work='{}' -e fed_counterparty='{}'",
         t.partner, t.edge_group, t.work, counterparty
     );
-    for (k, v) in extra {
+    for (k, v) in t.core_files.iter().map(|(k, v)| (*k, v)).chain(extra.iter().map(|(k, v)| (*k, v))) {
         e.push_str(&format!(" -e {k}='{v}'"));
     }
     // The inventories the forward path reads (plan::inventory_args): on a site
@@ -284,6 +315,11 @@ pub fn summarize(recs: &[HostRecord], partner: &str) -> Summary {
         for row in &rec.rows {
             match (row.state.as_str(), row.action.as_str()) {
                 ("not-ours" | "refused", _) => s
+                    .refused
+                    .push(format!("{}: {} ({})", rec.host, row.resource, row.note)),
+                // A core admission that could not be read is not one that is
+                // absent: the core may still admit the partner.
+                ("unknown", _) if row.component == "core admission" => s
                     .refused
                     .push(format!("{}: {} ({})", rec.host, row.resource, row.note)),
                 (_, "remove" | "restart") => s.to_remove += 1,
@@ -562,7 +598,8 @@ pub fn backout_with(
     o: &Options,
     exec: &mut dyn FnMut(&Path, &str) -> Result<bool>,
 ) -> Result<Report> {
-    let t = target(o)?;
+    let mut t = target(o)?;
+    core_files(repo, &mut t)?;
     if let Err(e) = work_belongs_to(&t.work, &t.partner) {
         return Err(goat_errors::coded("GB-220", e).into());
     }
@@ -1597,6 +1634,59 @@ mod tests {
         };
         let r = backout_with(&repo, &o, &mut exec).unwrap();
         assert!(r.checks.iter().all(|c| !c.detail.contains("GB-222")));
+    }
+
+    /// A core admitted through the goat-zenoh role keeps its files where the
+    /// role's group resolves them; the back-out must read those, the files
+    /// admission wrote, not paths from the peering core group's own vars.
+    fn role_core_checkout() -> tempfile::TempDir {
+        let d = tempfile::tempdir().unwrap();
+        for (rel, text) in [
+            ("ops/ansible/roles/goat-zenoh/defaults/main.yml", "zenoh_router_image: \"x\"\nzenoh_stack: \"{{ site_id }}-zenoh\"\ngoat_zenoh_config_path: \"/etc/{{ zenoh_stack }}/config.json5\"\ngoat_zenoh_acl_seed_path: \"/etc/{{ zenoh_stack }}/config.seed.json5\"\ngoat_zenoh_acl_org_path: \"/etc/{{ zenoh_stack }}/acl-org-fragment.json5\"\nzenoh_sovereign_peerings: []\n"),
+            ("ops/ansible/zenoh-deploy.yml", "- hosts: \"{{ target | mandatory }}\"\n"),
+            ("ops/pins/fleet-pins.yaml", "components:\n  zenoh-router:\n    var: zenoh_router_image\n    ledger_component: xaa-zenoh\n    deploy_playbook: zenoh-deploy.yml\n"),
+            ("ops/ansible/inventory/core-router.ini", "[core_router]\nxaa-core ansible_host=192.0.2.10\n"),
+            ("ops/ansible/group_vars/core_router/zenoh.yml", "zenoh_router_image: \"ghcr.io/example-org/zenoh@sha256:00\"\nsite_id: xaa\n"),
+        ] {
+            let f = d.path().join(rel);
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            std::fs::write(f, text).unwrap();
+        }
+        d
+    }
+
+    #[test]
+    fn a_role_cores_files_are_the_ones_admission_wrote() {
+        let r = role_core_checkout();
+        let mut t = target(&opts("xab")).unwrap();
+        core_files(r.path(), &mut t).unwrap();
+        let cmd = play_cmd(r.path(), &t, &[]);
+        for (k, v) in [
+            ("peering_backout_core_seed", "/etc/xaa-zenoh/config.seed.json5"),
+            ("peering_backout_core_org", "/etc/xaa-zenoh/acl-org-fragment.json5"),
+            ("peering_backout_core_config", "/etc/xaa-zenoh/config.json5"),
+        ] {
+            assert!(cmd.contains(&format!("-e {k}='{v}'")), "{cmd}");
+        }
+        // Without a role core, nothing is added: the core's own vars decide, as before.
+        let plain_repo = tempfile::tempdir().unwrap();
+        let mut t = target(&opts("xab")).unwrap();
+        core_files(plain_repo.path(), &mut t).unwrap();
+        assert!(!play_cmd(plain_repo.path(), &t, &[]).contains("peering_backout_core_org"));
+    }
+
+    #[test]
+    fn a_core_admission_that_could_not_be_read_stops_the_back_out() {
+        let recs = vec![rec(
+            "core-x",
+            "xab",
+            &[("core admission", "/etc/-zenoh/config.json5", "unknown", "kept", "not readable: /etc/-zenoh/config.seed.json5")],
+        )];
+        let s = summarize(&recs, "xab");
+        assert!(
+            s.refused.iter().any(|r| r.contains("not readable")),
+            "an unreadable core admission is not 'absent': {s:?}"
+        );
     }
 
     #[test]
