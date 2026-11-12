@@ -48,6 +48,26 @@ pub struct Entry {
     pub matches: Vec<String>,
 }
 
+/// The version of a catalog entry printed as a document (`explain <code> -o json`).
+pub const ENTRY_SCHEMA: &str = "goat-errors.entry/v1";
+
+/// One catalog entry as a document a program reads: `schema`, then the entry's
+/// own fields unchanged. `explain <code> -o json|yaml` prints this, so the
+/// document carries its version like every other the binaries print.
+#[derive(Debug, Serialize)]
+pub struct EntryDocument<'a> {
+    pub schema: &'static str,
+    #[serde(flatten)]
+    pub entry: &'a Entry,
+}
+
+pub fn entry_document(entry: &Entry) -> EntryDocument<'_> {
+    EntryDocument {
+        schema: ENTRY_SCHEMA,
+        entry,
+    }
+}
+
 impl Entry {
     /// Our own binary's error, as opposed to a tool's words carried through.
     pub fn is_internal(&self) -> bool {
@@ -681,5 +701,28 @@ mod tests {
         }
         let j = serde_json::to_string(&interpret("GB-007: NOT SET: X")).unwrap();
         assert!(j.contains("\"schema\":\"goat-errors.interpretation/v1\""));
+    }
+
+    /// `explain <code> -o json` is a document a program reads, so it carries its
+    /// version like every other (docs/design/goatbuilder-output.md): the entry's
+    /// fields, unchanged, after `schema`.
+    #[test]
+    fn an_entry_document_carries_its_version_and_every_field() {
+        let e = explain("GB-017").unwrap();
+        let doc: serde_json::Value = serde_json::to_value(entry_document(e)).unwrap();
+        assert_eq!(doc["schema"], "goat-errors.entry/v1");
+        let bare: serde_json::Value = serde_json::to_value(e).unwrap();
+        for (k, v) in bare.as_object().unwrap() {
+            assert_eq!(&doc[k], v, "{k}");
+        }
+        assert_eq!(
+            doc.as_object().unwrap().len(),
+            bare.as_object().unwrap().len() + 1
+        );
+        let text = serde_json::to_string_pretty(&entry_document(e)).unwrap();
+        assert!(
+            text.starts_with("{\n  \"schema\": \"goat-errors.entry/v1\",\n  \"code\": \"GB-017\""),
+            "{text}"
+        );
     }
 }
