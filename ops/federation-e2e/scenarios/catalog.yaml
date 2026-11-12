@@ -40,6 +40,7 @@ units:
   onecmd: {parties: "xaa xab"}
   nohand: {parties: "xaa xab"}
   twodrivers: {parties: "xaa xab"}
+  flow: {parties: "xaa xab xac"}
   offer: {parties: "xaa xab"}
 
 scenarios:
@@ -1046,3 +1047,20 @@ scenarios:
       - {id: edge-half-kill-resumes, step: "td-edge-half-killed-and-resumed"}
       - {id: first-status-at-14, step: "td-{A}-controller-status-at-phase-14"}
       - {id: second-status-at-14, step: "td-{B}-controller-status-at-phase-14"}
+
+  - id: flow-monitor-measures-a-core-restart
+    title: The harness's flow monitor measures a gap it is shown (lib/flow.sh, for gate rows B3 and B4)
+    unit: {goatbuilder: flow}
+    runs_where: local
+    pass_condition: >
+      On a peering up through phase 14 on role cores (FE2E_CORE=role), a flow of one fresh value
+      a second from the first side to the second is read back value by value. With the second's
+      core router restarted 15 s into the flow and the flow kept for 45 s more, the monitor
+      reports values stored from the start, a run lost while the core's interest returns (at
+      least one value, no longer than 40 s), and the last five values stored. A monitor that
+      saw no gap, or no recovery, would not be measuring the flow.
+    checks:
+      - {id: restart-ran, step: "fl-{B}-core-router-restarted"}
+      - {id: stored-before, step: "fl-flow-stored-before-the-restart"}
+      - {id: bounded-gap, step: "fl-flow-saw-a-bounded-gap"}
+      - {id: stored-after, step: "fl-flow-stored-again-after-it"}
