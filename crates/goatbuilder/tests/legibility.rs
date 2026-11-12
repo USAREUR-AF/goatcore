@@ -802,7 +802,8 @@ fn parallel_commands(json: &serde_json::Value) -> BTreeSet<String> {
     let mut inside = false;
     for c in json["checks"].as_array().into_iter().flatten() {
         let detail = c["detail"].as_str().unwrap_or("");
-        if c["name"] == "phase" {
+        // A standup observability leg is a `leg` row, a step like a phase.
+        if c["name"] == "phase" || c["name"] == "leg" {
             inside = detail.contains('\u{2225}');
         } else if inside && c["name"] == "cmd" {
             out.insert(norm(detail));
@@ -819,26 +820,34 @@ fn planned_phases(json: &serde_json::Value) -> BTreeSet<String> {
         .as_array()
         .into_iter()
         .flatten()
-        .filter(|c| c["name"] == "phase")
+        .filter(|c| c["name"] == "phase" || c["name"] == "leg")
         .filter_map(|c| c["detail"].as_str())
         .filter_map(|d| {
             d.trim()
                 .strip_prefix("===")
                 .and_then(|r| r.strip_suffix("==="))
         })
-        .map(|t| {
-            let t = t.trim();
-            if let Some(n) = t.strip_prefix("Phase ").and_then(|r| r.split(' ').next()) {
-                return n.to_string();
-            }
-            t.split(" [")
-                .next()
-                .unwrap_or(t)
-                .trim()
-                .to_lowercase()
-                .replace(' ', "-")
-        })
+        .map(|t| step_id(t.trim()))
         .collect()
+}
+
+/// A planned step's catalog id: `Phase 5 [A] ...` is `5`; any other title is
+/// the words before its `[kind]` or `(note)`, lowercased and hyphenated, quotes
+/// dropped (`Image pull [A ∥] ...` is `image-pull`, `Observability leg "host"
+/// [A ∥] ...` is `observability-leg-host`, `join observability leg "host" before
+/// phase 12 (waiting)` is `join-observability-leg-host-before-phase-12`).
+fn step_id(t: &str) -> String {
+    if let Some(n) = t.strip_prefix("Phase ").and_then(|r| r.split(' ').next()) {
+        return n.to_string();
+    }
+    let t = t.split(" [").next().unwrap_or(t);
+    let t = t.split(" (").next().unwrap_or(t);
+    t.trim()
+        .replace('"', "")
+        .to_lowercase()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join("-")
 }
 
 /// The document paths in what the tool printed, as paths in this repository.
@@ -1321,6 +1330,46 @@ fn c11_each_check_can_pass_when_the_tool_does_what_it_asks() {
     assert!(
         check_c(&seq(&["missing-x"]), pg, &["missing-x".to_string()].into()).is_err(),
         "a parallel command must still be printed"
+    );
+
+    // Standup's observability legs are steps too: `leg` rows, with the
+    // catalog's ids, and a parallel leg's command is held as a parallel one.
+    let legs = serde_json::json!({ "checks": [
+        { "name": "phase", "detail": "=== Phase 11 [MANUAL] first login ===" },
+        { "name": "leg", "detail": "=== Observability leg \"host\" [A \u{2225}] the obs host baseline ===" },
+        { "name": "cmd", "detail": "run-leg-host" },
+        { "name": "leg", "detail": "=== Observability leg \"stack\" [A \u{2225}] the obs stack ===" },
+        { "name": "cmd", "detail": "run-leg-stack" },
+        { "name": "leg", "detail": "=== join observability leg \"host\" before phase 12 ===" },
+        { "name": "leg", "detail": "=== join observability leg \"stack\" before phase 13 (waiting) ===" },
+        { "name": "phase", "detail": "=== Phase 12 [A] portal ===" },
+        { "name": "cmd", "detail": "run-portal" }
+    ]});
+    let want: BTreeSet<String> = [
+        "11",
+        "12",
+        "observability-leg-host",
+        "observability-leg-stack",
+        "join-observability-leg-host-before-phase-12",
+        "join-observability-leg-stack-before-phase-13",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect();
+    assert_eq!(planned_phases(&legs), want);
+    let par: BTreeSet<String> = ["run-leg-host".to_string(), "run-leg-stack".to_string()].into();
+    assert_eq!(
+        parallel_commands(&legs),
+        par,
+        "a parallel leg's commands, and no other"
+    );
+    assert_eq!(
+        step_id("Image pull [A \u{2225}] every pinned image"),
+        "image-pull"
+    );
+    assert_eq!(
+        step_id("join the image pull before phase 5"),
+        "join-the-image-pull-before-phase-5"
     );
 
     // A dry run that fails is a harness failure, never a known-failing check.
