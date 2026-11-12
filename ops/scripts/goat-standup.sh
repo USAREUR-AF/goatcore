@@ -755,12 +755,13 @@ step 4 T "name-fallback snapshot (generate + sign)" \
 OWNER_EMAIL_STANDUP="\$OWNER_EMAIL"
 OWNER_EMAIL_ARG="\"\$OWNER_EMAIL\""
 if [[ "${LITE}" == 1 && -n "${lite_admin:-}" ]]; then
-  # The declared address reaches the bootstrap phases as data: exported, and
-  # named on the command line inside double quotes, so the phase's shell expands
-  # it once and never parses the address (goatbuilder's phase_env does the same).
+  # The declared address reaches the bootstrap phases as data: exported, and read
+  # on the command line inside double quotes with printenv, so the phase's shell
+  # expands it once and never parses the address, and standup-phase-run refuses
+  # it by name when it is empty (goatbuilder's owner_word does the same).
   OWNER_EMAIL_STANDUP="$lite_admin"
   export GOAT_BOOTSTRAP_OWNER_EMAIL="$lite_admin"
-  OWNER_EMAIL_ARG="\"\$GOAT_BOOTSTRAP_OWNER_EMAIL\""
+  OWNER_EMAIL_ARG="\"\$(printenv GOAT_BOOTSTRAP_OWNER_EMAIL)\""
 fi
 BOOTSTRAP_SECRETS_EV="-e bootstrap_owner_email=$OWNER_EMAIL_ARG -e postgres_superuser_password=\"\$(printenv ${SITE_UPPER}_PG_PASS)\" -e netbird_encryption_key=\"\$(printenv ${SITE_UPPER}_NB_ENCKEY)\" -e pgbackrest_cipher_pass=\"\$(printenv ${SITE_UPPER}_BKP_KEY)\""
 # A joiner's bootstrap carries site_id as a PLAY variable: its own

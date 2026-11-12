@@ -820,18 +820,20 @@ fn site_phase_command(repo: &Path, s: &Site, cmd: &str) -> Command {
 }
 
 /// The variable a declared administrator address reaches the bootstrap phases
-/// in. The command line names the variable inside double quotes, so the phase's
-/// shell expands it once and never parses the address itself.
+/// in. The command line reads it inside double quotes, so the phase's shell
+/// expands it once and never parses the address itself.
 const OWNER_VAR: &str = "GOAT_BOOTSTRAP_OWNER_EMAIL";
 
 /// The bootstrap owner's word on a phase's command line: `"$OWNER_EMAIL"` when no
 /// administrator is declared, for that shell to expand as it always has;
-/// otherwise the variable `phase_env` sets.
+/// otherwise `"$(printenv GOAT_BOOTSTRAP_OWNER_EMAIL)"`, the variable `phase_env`
+/// sets. That is still data inside double quotes, and ops/scripts/standup-phase-run
+/// refuses it by name when it is empty (a command copied by hand without it).
 fn owner_word(owner: &str) -> String {
     if owner == "$OWNER_EMAIL" {
         "\"$OWNER_EMAIL\"".to_string()
     } else {
-        format!("\"${OWNER_VAR}\"")
+        format!("\"$(printenv {OWNER_VAR})\"")
     }
 }
 
@@ -2089,6 +2091,21 @@ mod tests {
         let cmds: Vec<String> = phases_of(&plan(Path::new("/r"), &lan_site(false, false), &o, "R")).iter().filter(|p| p.cmd.contains("bootstrap_owner_email")).map(|p| p.cmd.clone()).collect();
         assert!(!cmds.is_empty() && cmds.iter().all(|c| owner_word(c) == "\"$OWNER_EMAIL\""), "an undeclared owner is unchanged");
         assert!(phase_env(&lan_site(false, false)).is_empty(), "and adds nothing to the environment");
+    }
+
+    /// A bootstrap command run without the owner variable (copied by hand from a
+    /// dry run) is refused by the runner, naming the variable, before it runs.
+    #[test]
+    fn a_bootstrap_command_without_the_owner_variable_is_refused_by_name() {
+        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().unwrap();
+        let o = Options { env: "pasture", site: "pasture", profile: Some("lan"), from: 1, to: 14, skip_obs: true, obs_only: false, dry_run: true, parallel: false, check: false };
+        let site = lan_site(true, false);
+        let cmd = phases_of(&plan(Path::new("/r"), &site, &o, "R")).iter().find(|p| p.cmd.contains("bootstrap_owner_email")).map(|p| p.cmd.clone()).unwrap();
+        let word = cmd.split_once("-e bootstrap_owner_email=").unwrap().1.split_once(" -e postgres_superuser_password=").unwrap().0.to_string();
+        assert_eq!(word, "\"$(printenv GOAT_BOOTSTRAP_OWNER_EMAIL)\"");
+        let out = phase_command(&repo, &format!("printf '%s' {word}")).current_dir(&repo).env_remove(OWNER_VAR).env("GOAT_SECRET_STORE", "env").output().unwrap();
+        assert_eq!(out.status.code(), Some(3), "{}", String::from_utf8_lossy(&out.stderr));
+        assert!(String::from_utf8_lossy(&out.stderr).contains(OWNER_VAR), "the refusal names the variable");
     }
 
     /// Not lite: no render gate, phase 4 as before; a LAN site pauses at 11 only
