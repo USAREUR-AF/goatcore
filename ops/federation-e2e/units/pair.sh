@@ -44,6 +44,12 @@ pr_capture() {
       docker exec "$HP-$x-core" curl -s -m 5 "http://127.0.0.1:$(rp_metrics "$x" "$(other "$x")")/metrics" 2>&1 | grep -E 'dropped' || echo '(no dropped series)'
     done
     echo "### admin space, as $them's core sees it"; pr_admin "$them"
+    for x in "$s" "$them"; do
+      echo "### $x edge router toward $(other "$x"): its rendered configuration"
+      docker exec "$HP-$x-edge" sh -c "cat /etc/goat-zenoh-edge-$(other "$x")/config.json5" 2>&1
+      echo "### $x edge router toward $(other "$x"): its whole log from container start"
+      docker exec "$HP-$x-edge" docker logs "goat-zenoh-edge-$(other "$x")" 2>&1
+    done
   } > "$out" 2>&1
 }
 export -f put_release stored_at pr_admin pr_capture
