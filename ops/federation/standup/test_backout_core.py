@@ -91,7 +91,9 @@ def fragment(us, them, ingress=True, egress=True, republishes=True):
 
 class Fixture:
     def __init__(self, *frags):
-        self.dir = tempfile.mkdtemp(prefix="backout-core-")
+        # Removed with the fixture (each test's local `fx`), and at exit at the latest.
+        self._tmp = tempfile.TemporaryDirectory(prefix="backout-core-")
+        self.dir = self._tmp.name
         self.seed = os.path.join(self.dir, "seed.json5")
         vendor = os.path.join(self.dir, "vendor.org")
         import contextlib
@@ -272,6 +274,17 @@ class Refusals(unittest.TestCase):
     def test_a_bad_id_is_refused(self):
         with self.assertRaises(ValueError):
             bc.plan("", "X/../", None)
+
+
+class Cleanup(unittest.TestCase):
+    def test_a_fixture_leaves_no_directory_behind(self):
+        # Each test builds a Fixture; its working directory must go with it, or
+        # every run leaves one backout-core-* directory per test in the temp dir.
+        fx = Fixture(fragment("xaa", "xab"))
+        d = fx.dir
+        self.assertTrue(os.path.isdir(d))
+        del fx
+        self.assertFalse(os.path.exists(d), d)
 
 
 class Cli(unittest.TestCase):
