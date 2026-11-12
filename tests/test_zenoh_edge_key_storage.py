@@ -14,6 +14,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import importlib.util
 import unittest
 
 import yaml
@@ -34,6 +35,50 @@ def require_ansible_playbook(case):
     if os.environ.get('GOAT_TEST_REQUIRE_ANSIBLE') == '1':
         case.fail('GOAT_TEST_REQUIRE_ANSIBLE=1 but ansible-playbook is not on PATH')
     case.skipTest('ansible-playbook is required')
+
+
+_SPEC = importlib.util.spec_from_file_location('zenoh_ingress_keys_test', FILTERS / 'zenoh_ingress.py')
+FILTER = importlib.util.module_from_spec(_SPEC)
+_SPEC.loader.exec_module(FILTER)
+
+
+class KeyExpressionInclusion(unittest.TestCase):
+    """A store is accepted only when every key it can hold is in the grant."""
+
+    def check(self, text, grants):
+        return FILTER.zenoh_key_storage_check(text, grants)
+
+    def test_an_exact_or_narrower_store_is_included(self):
+        # '**' matches zero or more chunks, so keys/a/** also holds keys/a itself.
+        for store in ('keys/a/**', 'keys/a/x/**', 'keys/a/x', 'keys/a/*/y', 'keys/a'):
+            with self.subTest(store=store):
+                report = self.check(config(store), ['keys/a/**'])
+                self.assertEqual((report['error'], report['wider']), ('', []), report)
+                self.assertEqual(report['observed'], [store])
+
+    def test_a_wider_or_other_store_is_refused(self):
+        for store in ('keys/**', 'keys/*/**', 'keys/other/**', 'keys/*', 'keys', '**', '*/**',
+                      'keys/ab/**', 'keys/a$*/**', 'keys/$*/**'):
+            with self.subTest(store=store):
+                self.assertEqual(self.check(config(store), ['keys/a/**'])['wider'], [store])
+
+    def test_each_store_needs_one_grant_that_includes_it(self):
+        grants = ['keys/a/**', 'keys/b/**']
+        self.assertEqual(self.check(config('keys/a/**', 'keys/b/x/**'), grants)['wider'], [])
+        self.assertEqual(self.check(config('keys/a/**', 'keys/c/**'), grants)['wider'], ['keys/c/**'])
+
+    def test_stores_outside_the_key_space_are_not_compared(self):
+        report = self.check(config('from/**', 'from/xab/**', 'keys/a/**'), ['keys/a/**'])
+        self.assertEqual((report['observed'], report['wider']), (['keys/a/**'], []))
+
+    def test_an_acl_string_or_comment_is_not_a_store(self):
+        text = ('{ // key_expr: "keys/**"\n access_control: {rules: [{key_exprs: ["keys/**"]}]},'
+                ' plugins: {storage_manager: {storages: {k: {key_expr: "keys/a/**"}}}} }')
+        self.assertEqual(self.check(text, ['keys/a/**'])['wider'], [])
+
+    def test_unreadable_configuration_or_grant_is_an_error(self):
+        self.assertTrue(self.check('{', ['keys/a/**'])['error'])
+        self.assertTrue(self.check(config('keys/a/**'), [])['error'])
 
 
 def config(*scopes):
@@ -90,7 +135,7 @@ class KeyStorageCheck(unittest.TestCase):
     def test_a_wide_key_storage_on_a_hand_run_core_is_refused(self):
         result = self.run_play(config('keys/**'), *HAND)
         self.assertNotEqual(result.returncode, 0, result.stdout)
-        self.assertIn('which is WIDER', result.stdout)
+        self.assertIn('not included in the key-bundle grant', result.stdout)
         self.assertIn('exec xaa-zenoh-router cat /etc/goat-core/config.json5',
                       (self.root / 'trace').read_text())
 
@@ -103,7 +148,7 @@ class KeyStorageCheck(unittest.TestCase):
     def test_a_wide_key_storage_on_a_role_core_is_refused(self):
         result = self.run_play(config('keys/**'), *ROLE)
         self.assertNotEqual(result.returncode, 0, result.stdout)
-        self.assertIn('which is WIDER', result.stdout)
+        self.assertIn('not included in the key-bundle grant', result.stdout)
 
     def test_an_unreadable_configuration_fails_the_play_with_why(self):
         result = self.run_play(config('keys/**'), ['-c', '/etc/missing.json5'], '/etc/goat-core/config.json5')
@@ -126,12 +171,30 @@ class KeyStorageCheck(unittest.TestCase):
         result = self.run_play(config('keys/**'), [], '/srv/core.json5',
                                extra={'goat_zenoh_edge_core_config_path': '/srv/core.json5'})
         self.assertNotEqual(result.returncode, 0, result.stdout)
-        self.assertIn('which is WIDER', result.stdout)
+        self.assertIn('not included in the key-bundle grant', result.stdout)
+
+    def test_a_store_wider_than_the_grant_by_wildcard_is_refused(self):
+        result = self.run_play(config('keys/*/**'), *HAND)
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn('keys/*/**', result.stdout)
+        self.assertIn('not included in the key-bundle grant', result.stdout)
+        self.assertNotIn('PASS:', result.stdout)
+
+    def test_a_store_for_another_set_is_refused(self):
+        result = self.run_play(config('keys/other/**'), *HAND)
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn('keys/other/**', result.stdout)
+        self.assertNotIn('PASS:', result.stdout)
+
+    def test_a_narrower_store_passes(self):
+        result = self.run_play(config('keys/weather/daily/**'), *HAND)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('PASS: every key storage on the core', result.stdout)
 
     def test_a_scoped_store_reports_a_pass(self):
         result = self.run_play(config('keys/weather/**'), *HAND)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn('PASS: the core', result.stdout)
+        self.assertIn('PASS: every key storage on the core', result.stdout)
 
     def test_no_core_router_fails_the_play(self):
         result = self.run_play(config('keys/**'), *HAND, extra={}, ps='')
@@ -214,14 +277,14 @@ class KeyStorageOnAnotherHost(unittest.TestCase):
     def test_a_wide_key_storage_on_a_separate_core_host_is_refused(self):
         result = self.run_play(config('keys/**'))
         self.assertNotEqual(result.returncode, 0, result.stdout)
-        self.assertIn('which is WIDER', result.stdout)
+        self.assertIn('not included in the key-bundle grant', result.stdout)
         self.assertIn('core exec xab-zenoh-router cat /etc/goat-core/config.json5', self.trace())
         self.assertNotIn('edge exec', self.trace())
 
     def test_a_scoped_key_storage_on_a_separate_core_host_passes(self):
         result = self.run_play(config('keys/weather/**'))
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn('PASS: the core', result.stdout)
+        self.assertIn('PASS: every key storage on the core', result.stdout)
 
     def test_an_unreadable_configuration_on_the_core_host_fails_the_play(self):
         result = self.run_play(config('keys/**'), unreadable=True)
