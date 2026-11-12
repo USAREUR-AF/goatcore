@@ -856,7 +856,7 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
     }
     if o.dry_run {
         checks.extend(preflight::plan_rows(&inputs));
-        checks.push(row("footer", "PLAN ONLY — nothing above executed. Phases 5 and 10 are MANUAL and stop the run; resume with --from 6 and --from 11. Acceptance criteria for every phase: docs/operations/sovereign-federation-runbook.md. The shape and why: docs/design/staged-delivery-pattern.md".into()));
+        checks.push(row("footer", "PLAN ONLY — nothing above executed. Phases 5 and 10 are MANUAL and stop the run; resume with --from 6 and --from 11. Acceptance criteria for every phase: docs/operations/sovereign-federation-runbook.md. The shape and why: https://github.com/usareur-af/goatdocs/blob/main/docs/design/staged-delivery-pattern.md".into()));
     }
     let mut r = Report::new("federate", checks, EXIT_REFUSED);
     r.exit = exit;
