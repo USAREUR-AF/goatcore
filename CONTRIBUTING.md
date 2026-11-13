@@ -73,6 +73,8 @@ A new push removes the label. The approval that merges the pull request comes fr
 
 Development happens in this repository. A pull request merged to `main` is the change; there is no other upstream. A deployment picks it up by moving the commit it pins, in its own overlay repository.
 
+`main` changes many times a day. To build on goat, pin a whole-tree release, the tag `goatcore/vX.Y.Z`, or follow the branch `stable`, which always points at the newest one. `stable` takes no pull requests: every contribution goes to `main` ([the design](docs/design/community-and-stable-line.md)).
+
 ## Reporting a bug or proposing a feature
 
 Open an issue with the template. For a vulnerability, **do not open an issue** — follow [SECURITY.md](SECURITY.md).

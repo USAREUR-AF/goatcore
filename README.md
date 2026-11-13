@@ -21,6 +21,7 @@
 
 > [!NOTE]
 > goat is pre-1.0: interfaces can still change between releases.
+> To build on goat, use the [`stable`](https://github.com/usareur-af/goatcore/tree/stable) branch or the `goatcore/v` tag it points at. To contribute, open a pull request against `main`. [How the two fit together](docs/design/community-and-stable-line.md).
 
 ## What goat is
 

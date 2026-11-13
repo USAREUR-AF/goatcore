@@ -1,0 +1,59 @@
+# stable: fast-forwards the branch `stable` to a whole-tree release (ADR 1231).
+#
+# A maintainer cuts the signed tag goatcore/vX.Y.Z at the commit of the
+# goatbuilder release with the same version, after that commit has run in a
+# standing environment. This workflow then checks the tag
+# (ops/release/stable.py check), moves `stable` to the tagged commit, and
+# publishes the release page with the versions that go together.
+#
+# `stable` takes no pull requests and no other push: a ruleset on the branch
+# refuses every update except this workflow's. Cutting the tag is the
+# decision; nothing here decides when a release is ready.
+name: stable
+
+on:
+  push:
+    tags:
+      - 'goatcore/v*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: stable
+  cancel-in-progress: false
+
+jobs:
+  advance:
+    name: move stable to the release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write   # to push the branch `stable` and publish the release page
+    env:
+      TAG: ${{ github.ref_name }}
+    steps:
+      # The script as it is on main, and the whole history: the check compares
+      # the tagged commit with main, with stable and with the goatbuilder tag.
+      - name: check out main with every tag
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: fetch stable, if it exists yet
+        run: git fetch origin '+refs/heads/stable:refs/remotes/origin/stable' || echo "stable does not exist yet; this release creates it"
+
+      - name: check that stable may move to this tag
+        run: python3 ops/release/stable.py check "$TAG"
+
+      - name: fast-forward stable
+        run: git push origin "$(git rev-list -n 1 "refs/tags/$TAG"):refs/heads/stable"
+
+      - name: publish the release page with the versions that go together
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 ops/release/stable.py table "$TAG" > "$RUNNER_TEMP/notes.md"
+          gh release create "$TAG" --verify-tag --latest=false --title "goat ${TAG#goatcore/v}" --notes-file "$RUNNER_TEMP/notes.md"
