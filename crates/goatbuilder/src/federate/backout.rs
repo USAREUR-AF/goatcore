@@ -651,20 +651,10 @@ pub fn role_leaf(
     work: &Path,
     var: impl Fn(&str) -> Option<String>,
 ) -> Result<Option<CoreLeaf>> {
-    let env = |k: &str| var(k).filter(|v| !v.trim().is_empty());
     let role = super::admit::role_core(repo, partner, &var)
         .map_err(|e| anyhow::Error::from(goat_errors::coded("GB-221", format!("{e} (GB-221)"))))?;
-    let (cert, key) = match &role {
-        Some(r) => super::admit_leaf::router_leaf(repo, r),
-        None => (None, None),
-    };
-    let mut leaf = CoreLeaf::new(
-        work,
-        env("FED_CORE_CERT")
-            .map(PathBuf::from)
-            .or(cert.map(|c| c.0)),
-        env("FED_CORE_KEY").map(PathBuf::from).or(key.map(|k| k.0)),
-    );
+    let (cert, key) = super::admit::router_leaf_paths(repo, role.as_ref(), &var);
+    let mut leaf = CoreLeaf::new(work, cert, key);
     leaf.role = role;
     Ok((!leaf.targets.is_empty()).then_some(leaf))
 }
@@ -2634,6 +2624,56 @@ mod tests {
                     && c.contains("-e peering_backout_core_tls_dir='/etc/xaa-zenoh/tls'"),
                 "{c}"
             );
+        }
+    }
+
+    #[test]
+    fn admission_and_the_back_out_compose_the_leaf_paths_with_one_function() {
+        let repo = role_core_checkout();
+        std::fs::write(
+            repo.path().join("ops/ansible/group_vars/core_router/leaf.yml"),
+            "zenoh_router_leaf_cert_path: \"/srv/leaves/router-cert.pem\"\nzenoh_router_leaf_key_path: \"/srv/leaves/router-key.pem\"\n",
+        )
+        .unwrap();
+        let role = super::super::admit::role_core(repo.path(), "xab", |_| None)
+            .unwrap()
+            .expect("the role core");
+        let work = Path::new("/nonexistent/peerings/xab");
+        for vars in [
+            vec![],
+            vec![("FED_CORE_CERT", "/etc/x/cert.pem")],
+            vec![
+                ("FED_CORE_CERT", "/etc/x/cert.pem"),
+                ("FED_CORE_KEY", "/etc/x/key.pem"),
+            ],
+            vec![("FED_CORE_KEY", "  ")],
+        ] {
+            let var = |k: &str| {
+                vars.iter()
+                    .find(|(n, _)| *n == k)
+                    .map(|(_, v)| v.to_string())
+                    .or_else(|| (k == "FED_SLOT_CHECK").then(|| "skip".into()))
+            };
+            let paths = super::super::admit::router_leaf_paths(repo.path(), Some(&role), &var);
+            let core = super::super::admit::Core::from_vars(
+                repo.path(),
+                "xab",
+                "zagros",
+                Some(role.clone()),
+                &var,
+            )
+            .unwrap_or_else(|m| panic!("{m:?}"));
+            assert_eq!(
+                (core.cert.clone(), core.key.clone()),
+                paths,
+                "admission, {vars:?}"
+            );
+            let leaf = role_leaf(repo.path(), "xab", work, &var)
+                .unwrap()
+                .expect("a leaf");
+            let got: Vec<PathBuf> = leaf.targets.iter().map(|(t, _)| t.clone()).collect();
+            let want: Vec<PathBuf> = [paths.0, paths.1].into_iter().flatten().collect();
+            assert_eq!(got, want, "the back-out, {vars:?}");
         }
     }
 

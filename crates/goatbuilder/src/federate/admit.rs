@@ -234,6 +234,28 @@ pub(super) fn role_core(
     super::admit_role::find(repo, &core_group)
 }
 
+/// Where our core router's leaf goes: FED_CORE_CERT and FED_CORE_KEY, else,
+/// on a goat-zenoh role core, where the role reads it (admit_leaf.rs
+/// `router_leaf`). The one composition, for admission's `Core` and the
+/// back-out's `role_leaf`, so the two never disagree.
+pub(super) fn router_leaf_paths(
+    repo: &Path,
+    role: Option<&super::admit_role::RoleCore>,
+    var: impl Fn(&str) -> Option<String>,
+) -> (Option<PathBuf>, Option<PathBuf>) {
+    let env = |k: &str| var(k).filter(|v| !v.trim().is_empty());
+    let (cert, key) = match role {
+        Some(r) => super::admit_leaf::router_leaf(repo, r),
+        None => (None, None),
+    };
+    (
+        env("FED_CORE_CERT")
+            .map(PathBuf::from)
+            .or(cert.map(|c| c.0)),
+        env("FED_CORE_KEY").map(PathBuf::from).or(key.map(|k| k.0)),
+    )
+}
+
 pub(super) struct Core {
     /// The org fragment as a file on this machine (FED_CORE_ACL_ORG); `None`
     /// on a goat-zenoh role core, whose fragment is read and placed on the core
@@ -321,21 +343,15 @@ impl Core {
         if !missing.is_empty() {
             return Err(missing);
         }
-        let leaf = match &role {
-            Some(r) => {
-                let (c, k) = super::admit_leaf::router_leaf(repo, r);
-                (c.map(|x| x.0), k.map(|x| x.0))
-            }
-            None => (None, None),
-        };
+        // On a goat-zenoh role core the router leaf goes where the role
+        // reads it (federate/admit_leaf.rs); FED_CORE_CERT/KEY override.
+        let (cert, key) = router_leaf_paths(repo, role.as_ref(), &var);
         Ok(Core {
             org,
             seed,
             out,
-            // On a goat-zenoh role core the router leaf goes where the role
-            // reads it (federate/admit_leaf.rs); FED_CORE_CERT/KEY override.
-            cert: env("FED_CORE_CERT").map(PathBuf::from).or_else(|| leaf.0.clone()),
-            key: env("FED_CORE_KEY").map(PathBuf::from).or_else(|| leaf.1.clone()),
+            cert,
+            key,
             play,
             group: env("FED_CORE_GROUP").unwrap_or_else(|| format!("{with}_core")),
             restart,
