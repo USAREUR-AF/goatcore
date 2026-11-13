@@ -38,14 +38,14 @@ The end state therefore uses each source only for what it is authoritative for:
 | Fact | Read from |
 |---|---|
 | What a service is: containers, class, ledger, served names, OIDC clients, SPIRE paths, acceptance tokens | `ops/goatbuilder/endstate/catalog.yaml` (not per-goatnet) |
-| Whether the site runs it | the site's group_vars flag (else the role default, else the catalog's default) where the service has one; otherwise the pin table and the founder rule. A pin that merely renders a component is its version, not a presence vote; only `absent: true` speaks to presence |
+| Whether the site runs it | the site's group_vars flag (else the role default, else the catalog's default) where the service has one; otherwise the pin table, the founder rule (`present: {founder: true}`, absent at a joiner) and the replication-core rule (`present: {replication_core: true}`, present at every site that runs the replication core, [ADR 1233](../adr/1233-a-joiner-runs-the-replication-core.md)). A pin that merely renders a component is its version, not a presence vote; only `absent: true` speaks to presence |
 | Which machines | the inventory group; the observability class on `<site>_obs_hosts` when `has_obs_host: true`, else on the management host |
 | The served name and health path | the site's `isitup_services` row |
 | The declared version | the site's rendered `pins.yml` |
 
 Every presence declaration consulted must give the same answer: an `absent: true` against a flag that says on is a **contradiction**; none at all is **undeclared**. Neither is guessed.
 
-A service the model marks absent carries a `reason`: the declarations that say so, worded for a person ("`isitup_enabled` is false in group_vars"), and for an admin surface at a joining site, the single-homing they carry out ("single-homed at the founder (ADR 1084 §D3); every site once ADR 1165 lifts it for this class"). The grade's N/A row and the `join-node` plan both print it, so they cannot disagree. Built (`absent_reason` in `endstate.py`).
+A service the model marks absent carries a `reason`: the declarations that say so, worded for a person ("`isitup_enabled` is false in group_vars"), and for an admin surface (a catalog row marked `admin_surface: true`) at a joining site, the single-homing they carry out ("single-homed at the founder (ADR 1084 §D3); every site once ADR 1165 lifts it for this class"). The grade's N/A row and the `join-node` plan both print it, so they cannot disagree. Built (`absent_reason` in `endstate.py`).
 
 **The flag is what the deploy obeys.** Each role (or play) that deploys a catalog service reads the service's flag: the role's `tasks/main.yml` imports its tasks under `when: <name>_enabled | default(true) | bool`, its rollback-ledger dependency carries the same condition (so a skipped deploy writes no ledger row, F-530), and the observability plays bring up only the services the site's `prometheus_enabled`, `alertmanager_enabled`, `grafana_enabled` and `obs_exporters_enabled` select. Unset means on, so no site's deploy changed when the guards landed. `ops/ci/check-role-honours-presence-flag.py` refuses a catalog service whose flag no deploying code reads.
 
@@ -60,7 +60,7 @@ A service the model marks absent carries a `reason`: the declarations that say s
 | has no notional pub/sub | `synth_vendors_enabled: false` |
 | runs a service no flag names yet | `<catalog var>: true`, the `var:` its catalog row names (e.g. `minio_enabled`) |
 | runs on one machine | `has_obs_host: false`; the observability services are graded on the management host |
-| is a joiner | `goatnet_founder: false`; the founder-only control plane reads absent |
+| is a joiner | `goatnet_founder: false`; the founder-only services (the NetBird dashboard and mesh DNS) read absent, and the replication core (Traefik, NetBird management, signal, Ory and the Kratos self-service UI) reads present, as at the founder (ADR 1233) |
 | should not run a pinned component | `absent: true` for the member in `ops/pins/fleet-pins.yaml` (then regenerate and re-sign the pins) |
 
 `python3 ops/goatbuilder/endstate/endstate.py model <site>` prints the result: every service with present, absent, undeclared or contradicted, and the declaration behind each answer.
