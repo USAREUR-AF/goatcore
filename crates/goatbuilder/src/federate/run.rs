@@ -685,6 +685,37 @@ mod tests {
     }
 
     #[test]
+    fn a_newer_journal_write_a_killed_run_left_is_never_read_and_is_removed() {
+        // The journal records phase 3 as passed. A run killed mid-write left
+        // a newer, complete journal in `.state.json.<pid>.tmp` that records
+        // more phases as passed. A resumed run reads only `state.json`: it
+        // skips phase 3 alone, and the temporary file is gone.
+        let d = tempfile::tempdir().unwrap();
+        let w = d.path().display().to_string();
+        write_outputs(d.path());
+        pass(&w, 3);
+        let journal = std::fs::read(d.path().join("state.json")).unwrap();
+        for n in [5, 6, 8, 9, 10] {
+            pass(&w, n);
+        }
+        let newer = std::fs::read(d.path().join("state.json")).unwrap();
+        std::fs::write(d.path().join("state.json"), &journal).unwrap();
+        let mut child = std::process::Command::new("true").spawn().unwrap();
+        let stale = format!(".state.json.{}.tmp", child.id());
+        child.wait().unwrap();
+        std::fs::write(d.path().join(&stale), &newer).unwrap();
+
+        let r = begin(&w, 1, true);
+        let skipped: Vec<u32> = phases()
+            .iter()
+            .filter(|p| r.skips(p))
+            .map(|p| p.n)
+            .collect();
+        assert_eq!(skipped, vec![3], "only what state.json records is skipped");
+        assert!(!d.path().join(&stale).exists(), "{stale} is still there");
+    }
+
+    #[test]
     fn without_resume_nothing_is_skipped_and_every_run_is_recorded() {
         let d = tempfile::tempdir().unwrap();
         let w = d.path().display().to_string();

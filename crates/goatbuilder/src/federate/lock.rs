@@ -294,6 +294,55 @@ mod tests {
         PeeringLock::take(d.path(), "xab").expect("free again once the first run ends");
     }
 
+    /// A process id that is not running: a child that has exited and been reaped.
+    fn a_pid_not_running() -> u32 {
+        let mut child = std::process::Command::new("true").spawn().unwrap();
+        let pid = child.id();
+        child.wait().unwrap();
+        pid
+    }
+
+    #[test]
+    fn a_journal_write_an_interrupted_run_left_is_removed_when_the_lock_is_taken() {
+        // A run killed between writing `.state.json.<pid>.tmp` and renaming
+        // it leaves the temporary file; the next run that takes the lock
+        // removes it and leaves the journal as it is.
+        let d = tempfile::tempdir().unwrap();
+        let mut s = State::new("xab");
+        let run = s.open_run("federate", 1, 99, false, "");
+        s.close_run(&run, "passed");
+        s.save(d.path()).unwrap();
+        let journal = std::fs::read(d.path().join("state.json")).unwrap();
+        let stale = format!(".state.json.{}.tmp", a_pid_not_running());
+        std::fs::write(
+            d.path().join(&stale),
+            "{\"schema\":\"goatbuilder.federate.st",
+        )
+        .unwrap();
+        // Names that are not a journal write's temporary file are not touched.
+        for other in [
+            ".state.json.notes.tmp",
+            ".state.json..tmp",
+            "state.json.bak",
+        ] {
+            std::fs::write(d.path().join(other), "kept").unwrap();
+        }
+        let held = PeeringLock::take(d.path(), "xab").unwrap();
+        assert!(!d.path().join(&stale).exists(), "{stale} is still there");
+        assert_eq!(std::fs::read(d.path().join("state.json")).unwrap(), journal);
+        for other in [
+            ".state.json.notes.tmp",
+            ".state.json..tmp",
+            "state.json.bak",
+        ] {
+            assert_eq!(
+                std::fs::read_to_string(d.path().join(other)).unwrap(),
+                "kept"
+            );
+        }
+        drop(held);
+    }
+
     #[test]
     fn a_resource_another_peering_holds_is_refused_and_nothing_is_claimed() {
         let root = tempfile::tempdir().unwrap();
