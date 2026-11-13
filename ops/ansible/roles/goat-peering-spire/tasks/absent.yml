@@ -45,15 +45,17 @@
       failed_when: false
       when: _pbs_td | length > 0 and _pb_names.spire.server_host | length > 0
 
+    # find reports a directory it cannot read in skipped_paths and succeeds with no
+    # files; that is "could not tell", never "no forward units" (rows unknown below).
     - name: peering-spire | absent | the forward units on this host
       ansible.builtin.find:
-        paths: /etc/systemd/system
+        paths: "{{ peering_backout_systemd_dir | default('/etc/systemd/system') }}"
         patterns: "goat-peering-bundle-*.socket,goat-peering-bundle-*.service"
       register: _pbs_units
 
     - name: peering-spire | absent | read the fixed-name forwards
       ansible.builtin.slurp:
-        src: "/etc/systemd/system/{{ item }}"
+        src: "{{ peering_backout_systemd_dir | default('/etc/systemd/system') }}/{{ item }}"
       loop: "{{ _pbs_units.files | map(attribute='path') | map('basename')
                 | select('in', ['goat-peering-bundle-in.socket', 'goat-peering-bundle-out.socket', 'goat-peering-bundle-out.service']) | list }}"
       register: _pbs_legacy_raw
@@ -61,6 +63,8 @@
     - name: peering-spire | absent | which forwards are this peering's
       ansible.builtin.set_fact:
         _pbs_have: "{{ _pbs_units.files | map(attribute='path') | map('basename') | list }}"
+        _pbs_units_unread: >-
+          {{ (_pbs_units.skipped_paths | default({})).items() | map('join', ': ') | join('; ') }}
         _pbs_legacy: >-
           {%- set out = {} -%}
           {%- for r in _pbs_legacy_raw.results | default([]) -%}
@@ -101,14 +105,21 @@
           {%- endif -%}
           {%- for u in _pb_names.spire.units -%}
           {%-   set p = u in _pbs_have -%}
-          {%-   set _ = out.append({'component': 'spire', 'resource': 'unit ' ~ u, 'state': ('present' if p else 'absent'), 'action': (act if p else 'none'), 'note': ''}) -%}
+          {%-   if _pbs_units_unread | length > 0 -%}
+          {%-     set _ = out.append({'component': 'spire', 'resource': 'unit ' ~ u, 'state': 'unknown', 'action': 'none', 'note': 'the unit folder could not be listed: ' ~ _pbs_units_unread}) -%}
+          {%-   else -%}
+          {%-     set _ = out.append({'component': 'spire', 'resource': 'unit ' ~ u, 'state': ('present' if p else 'absent'), 'action': (act if p else 'none'), 'note': ''}) -%}
+          {%-   endif -%}
           {%- endfor -%}
           {%- for u in ['goat-peering-bundle-in.socket', 'goat-peering-bundle-in.service', 'goat-peering-bundle-out.socket', 'goat-peering-bundle-out.service'] if u in _pbs_have -%}
           {%-   set mine = u in _pbs_legacy_ours -%}
           {%-   set _ = out.append({'component': 'spire', 'resource': 'unit ' ~ u, 'state': 'present', 'action': (act if mine else 'kept'), 'note': ('fixed name, this peering\'s addresses' if mine else 'fixed name, another peering\'s addresses or unproven')}) -%}
           {%- endfor -%}
           {{ out }}
-        _pbs_remove_units: "{{ (_pb_names.spire.units | select('in', _pbs_have) | list) + _pbs_legacy_ours }}"
+        # Nothing is removed from a unit folder that could not be listed.
+        _pbs_remove_units: >-
+          {{ [] if (_pbs_units_unread | length > 0)
+             else ((_pb_names.spire.units | select('in', _pbs_have) | list) + _pbs_legacy_ours) }}
 
     - name: peering-spire | absent | the relationship leaves the server first
       ansible.builtin.command:
@@ -131,7 +142,7 @@
 
     - name: peering-spire | absent | delete this peering's forward units
       ansible.builtin.file:
-        path: "/etc/systemd/system/{{ item }}"
+        path: "{{ peering_backout_systemd_dir | default('/etc/systemd/system') }}/{{ item }}"
         state: absent
       loop: "{{ _pbs_remove_units }}"
       when: _pb_apply

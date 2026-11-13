@@ -509,6 +509,29 @@ class TwoPeeringsOneHost(unittest.TestCase):
         rows = jload(f"{work}/backout/survey/core-xac.json")["rows"]
         self.assertEqual([row for row in rows if row["component"] == "core leaf"], [])
 
+    @unittest.skipIf(os.geteuid() == 0, "root lists a directory whatever its mode")
+    def test_spire_units_in_a_directory_that_cannot_be_listed_are_unknown(self):
+        # find reports a directory it cannot read as skipped and succeeds with no
+        # files: that is not "no forward units", it is "could not tell".
+        units = f"{self.tmp}/systemd-unreadable"
+        os.makedirs(units)
+        dump(f"{units}/goat-peering-bundle-in-xac.socket", "[Socket]\n")
+        os.chmod(units, 0)
+        self.addCleanup(os.chmod, units, 0o700)
+        work = f"{self.tmp}/work/xac"
+        r = run(["ansible-playbook", "-i", self.inv, "--limit", "xac_edge",
+                 str(ANSIBLE / "peering-backout.yml"),
+                 "-e", "peering_backout_id=xac", "-e", f"fed_work={work}", "-e", "fed_edge_group=xac_edge",
+                 "-e", "ansible_become=false", "-e", f"peering_backout_systemd_dir={units}"], self.tmp)
+        self.assertEqual(r.returncode, 0, r.stdout[-6000:] + r.stderr[-2000:])
+        rows = [row for row in jload(f"{work}/backout/survey/edge-xac.json")["rows"]
+                if row["component"] == "spire" and row["resource"].startswith("unit ")]
+        self.assertTrue(rows, "the SPIRE forward units have rows")
+        for row in rows:
+            with self.subTest(resource=row["resource"]):
+                self.assertEqual((row["state"], row["action"]), ("unknown", "none"), row)
+                self.assertIn(units, row["note"])
+
     def test_a_survey_without_the_rendered_values_or_agreement_still_runs(self):
         # A peering backed out before phase 9: no agreement, no applied values.
         shutil.rmtree(f"{self.tmp}/work/xac")
