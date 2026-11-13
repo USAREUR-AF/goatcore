@@ -19,8 +19,41 @@
 # for its first site, and an unknown site must be refused in the same words.
 #
 # usage: parity-rollback.sh <goatbuilder binary> [component ...]
+#        parity-rollback.sh --self-test
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"; REPO="$(cd "$HERE/../.." && pwd)"
+# goatbuilder prints each refusal's catalog code on a line of its own after it,
+# `  (GB-NNN — goatbuilder explain GB-NNN)`; rollback.sh has no codes. That one
+# line is taken off goatbuilder's side, and everything else is compared as it is.
+binary_filter() { sed -E 's/^goatbuilder: //; s/^(ok  |FAIL)  rollback  //; /^rollback: (ok|refused|not converged)/d; /^[[:space:]]*\(GB-[0-9]+ — goatbuilder explain GB-[0-9]+\)$/d' | sed -E 's/[[:space:]]+$//'; }
+# The self-test: the code line is the only thing taken off goatbuilder's side, so
+# a real difference still fails. Each case is script output, goatbuilder output,
+# and whether the two must compare equal.
+code_line='  (GB-260 — goatbuilder explain GB-260)'
+self_test() {
+  local bad=0 a b want got
+  check() {
+    a="$(printf '%s\n' "$2" | sed -E 's/[[:space:]]+$//')"; b="$(printf '%s\n' "$3" | binary_filter)"
+    want="$4"; if [ "$a" = "$b" ]; then got=same; else got=differ; fi
+    if [ "$got" != "$want" ]; then bad=$((bad+1)); echo "SELF-TEST FAILED: $1: expected $want, got $got"; fi
+  }
+  check "the refusal with its code line" "deploy-history.yml has no hosts entries" \
+    "goatbuilder: deploy-history.yml has no hosts entries
+$code_line" same
+  check "a listing row that differs, code line or not" "  1  2026-01-02  v1.2.3  a deploy" \
+    "  1  2026-01-02  v1.2.4  a deploy
+$code_line" differ
+  check "a refusal in other words" "deploy-history.yml has no hosts entries" \
+    "goatbuilder: deploy-history.yml has no host entries
+$code_line" differ
+  check "a parenthesised line that is not the code line" "deploy-history.yml has no hosts entries" \
+    "goatbuilder: deploy-history.yml has no hosts entries
+  (GB-260 — see the ledger)" differ
+  check "the code line's words inside a row" "deploy-history.yml has no hosts entries" \
+    "goatbuilder: deploy-history.yml has no hosts entries (GB-260 — goatbuilder explain GB-260)" differ
+  if [ "$bad" = 0 ]; then echo "parity-rollback: self-test ok, 5 cases"; else echo "parity-rollback: self-test failed, $bad of 5 cases"; return 1; fi
+}
+if [ "${1:-}" = "--self-test" ]; then self_test; exit $?; fi
 BIN="${1:?usage: parity-rollback.sh <goatbuilder binary> [component ...]}"; shift || true
 COMPONENTS=("$@")
 if [ ${#COMPONENTS[@]} -eq 0 ]; then
@@ -29,7 +62,7 @@ fi
 command -v yq >/dev/null || { echo "parity-rollback: yq required by the script side (brew install yq / apt-get install yq)"; exit 2; }
 
 script_side() { "$REPO/ops/scripts/rollback.sh" "$@" 2>&1 | sed -E 's/^rollback\.sh: //' | sed -E 's/[[:space:]]+$//'; }
-binary_side() { "$BIN" -C "$REPO" rollback "$@" 2>&1 | sed -E 's/^goatbuilder: //; s/^(ok  |FAIL)  rollback  //; /^rollback: (ok|refused|not converged)/d' | sed -E 's/[[:space:]]+$//'; }
+binary_side() { "$BIN" -C "$REPO" rollback "$@" 2>&1 | binary_filter; }
 
 # The distinct sites of a component's hosts, whichever yq is installed.
 sites_of() {
