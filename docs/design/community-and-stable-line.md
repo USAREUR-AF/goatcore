@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | **Built: the `stable` workflow and its check, the release page with the versions that go together. In review: the `community` label. Designed: the parts marked so in "Status of each part".** |
+| Status | **Built: the `stable` workflow, its check and its guard, the release page with the versions that go together, and the `community` label. Designed: the parts marked so in "Status of each part".** |
 | Anchor ADR | [ADR 1231](../adr/1231-one-development-branch-and-a-stable-line-that-follows-releases.md) |
 | Composes with | [ADR 1228](../adr/1228-goatbuilder-keeps-its-four-surfaces-and-removes-only-in-a-major-release.md) (compatibility and deprecation), [ADR 1221](../adr/1221-outside-contributions-need-a-known-author-or-a-recorded-security-review.md) (`contributor-trust`), [release-candidate-validation.md](release-candidate-validation.md) |
 | Audience | anyone who builds on goat or contributes to it, and the maintainers |
@@ -12,7 +12,8 @@
 goat already ships by releases and tags. This design makes that pattern
 consistent, so that `main` keeps moving fast and everyone knows which
 version to build on and what will not change under them. It also commits
-the maintainers to answer outside contributors within one working day.
+the maintainers to answer validated outside contributors within one working
+day.
 
 ## Three names, three uses
 
@@ -69,7 +70,7 @@ say so. `docs/RELEASE-CONTENTS.md` lists each component and its status.
 
 | Commitment | How it is kept |
 |---|---|
-| A first reply within one working day, in words | A maintainer answers every pull request and issue from outside the team: who has it, and what happens next |
+| A first reply within one working day, in words, for a validated contributor | A contributor is validated when registered in a goat community environment with a linked GitHub account, or with an earlier merged pull request (the tier `known` of `contributor-trust`). A maintainer answers each of their pull requests and issues: who has it, and what happens next. For anyone else there is no stated time |
 | Outside pull requests are worked first | The `contributor-trust` check labels them `community`; maintainers work that list before their own |
 | Maintainers carry the rebase | A pull request does not have to be up to date with `main` to merge. When it conflicts, a maintainer rebases it |
 | Work is not replaced without a word | A maintainer's pull request that carries the same change says so in the contributor's pull request before that one is closed, and credits the commits |
@@ -100,8 +101,8 @@ cherry-picked to the branch.
 | The branch `stable` | created by the first `goatcore/v` tag cut at a goatbuilder release |
 | Guard: a pull request against `stable` is closed, and a push by a person is checked (`.github/workflows/stable-guard.yml`) | built |
 | Ruleset `stable-follows-releases`: `stable` cannot be deleted or moved backwards | built |
-| `community` label applied by `contributor-trust` | in review |
-| First reply within one working day | in force, kept by the maintainers |
+| `community` label applied by `contributor-trust` | built |
+| First reply within one working day for validated contributors | in force, kept by the maintainers |
 | Release notes with the headings "for someone deploying", "for someone contributing", "to be removed" | designed |
 | The example environments move to each new `goatcore/v` tag by a pull request the release opens | designed |
 | ADR index, error-code reference and changelog rendered from one file per entry, so that a new entry edits no shared file | designed |
