@@ -182,6 +182,8 @@ def self_test():
     signer = "on: workflow_call\njobs:\n  s:\n    runs-on: x\n    steps:\n      - run: cosign sign-blob --yes x\n"
     exact = r"'^https://github\.com/Org/Repo/\.github/workflows/_sign\.yml@refs/tags/tool/v'"
     vendor = "\"^https://github.com/chainguard-images/.*\""
+    # A second documented line, so a case that skips a vendor's identity still checks one of this repository's.
+    also_own = " \\\n  --certificate-identity-regexp '^https://github.com/Org/Repo/'"
     # (name, documented value, expected to pass, --release-repo, GITHUB_REPOSITORY)
     cases = [
         ("the exact workflow identity, anchored", exact, True, None, None),
@@ -193,8 +195,13 @@ def self_test():
         ("a placeholder is a template", "'^https://github.com/<owner>/<repo>/'", True, None, None),
         ("an exact identity at a real version", "'https://github.com/Org/Repo/.github/workflows/_sign.yml@refs/tags/tool/v1.2.3'", True, None, None),
         ("the owner alone, which also matches its other repositories", "'^https://github.com/Org/'", False, None, None),
-        ("a third party's signer is not this repository's claim", vendor, True, None, None),
-        ("a third party's exact identity", "'https://github.com/chainguard-images/images/.github/workflows/release.yaml@refs/heads/main'", True, None, None),
+        ("a third party's signer is not this repository's claim", vendor + also_own, True, None, None),
+        ("a third party's exact identity",
+         "'https://github.com/chainguard-images/images/.github/workflows/release.yaml@refs/heads/main'" + also_own,
+         True, None, None),
+        ("only another signer's identity: nothing is checked, so it fails closed", vendor, False, None, None),
+        ("a consumer's CI without --release-repo checks nothing, so it fails closed",
+         "'^https://github.com/USAREUR-AF/goatcore/'", False, None, "example-org/consumer"),
         ("--release-repo overrides GITHUB_REPOSITORY in a consumer's CI",
          "'^https://github.com/USAREUR-AF/goatcore/'", True, "USAREUR-AF/goatcore", "example-org/consumer"),
         ("a lowercase copy is refused under --release-repo",
