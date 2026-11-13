@@ -47,12 +47,6 @@ impl Fresh {
     }
 }
 
-/// Run the check for `repo`. `GOAT_DEPLOY_OFFLINE=1` (`--offline`) and an
-/// already-pinned `GOAT_FRESH_SOURCE_TRUNK` reach the script through the
-/// environment, as they do from the script avenue; so do the overlay and
-/// public-layer checkouts of an assembled tree (`GOAT_OVERLAY_DIR`,
-/// `GOAT_OVERLAY_TRUNK_REMOTE`, `GOAT_GOATSTUFF_DIR`, `GOAT_GOATRODEO_DIR`)
-/// when its marker does not name them.
 /// The fresh-source command a real run starts: what a dry run prints for it,
 /// and what [`check`] runs (one builder, so the two cannot differ).
 pub fn command(repo: &Path) -> Cmd {
@@ -61,6 +55,12 @@ pub fn command(repo: &Path) -> Cmd {
     cmd
 }
 
+/// Run the check for `repo`. `GOAT_DEPLOY_OFFLINE=1` (`--offline`) and an
+/// already-pinned `GOAT_FRESH_SOURCE_TRUNK` reach the script through the
+/// environment, as they do from the script avenue; so do the overlay and
+/// public-layer checkouts of an assembled tree (`GOAT_OVERLAY_DIR`,
+/// `GOAT_OVERLAY_TRUNK_REMOTE`, `GOAT_GOATSTUFF_DIR`, `GOAT_GOATRODEO_DIR`)
+/// when its marker does not name them.
 pub fn check(repo: &Path) -> Result<Fresh> {
     check_with(repo, &[], &[])
 }

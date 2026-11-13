@@ -359,7 +359,6 @@ impl Cmd {
         self
     }
 
-    /// Where the command acts, for the frame and the record (`alpha_hosts`, `operator@192.0.2.10`).
     /// The caller sends stdout and stderr to the file at `path` itself (a
     /// parallel step's own log): the record and the frame name that file as the
     /// command's log, and the runner copies nothing.
@@ -368,6 +367,7 @@ impl Cmd {
         self
     }
 
+    /// Where the command acts, for the frame and the record (`alpha_hosts`, `operator@192.0.2.10`).
     pub fn host<S: Into<String>>(&mut self, h: S) -> &mut Cmd {
         self.host = Some(h.into());
         self
@@ -1032,7 +1032,7 @@ mod tests {
             .spawn()
             .unwrap();
         child.wait().unwrap();
-        assert!(frame().contains(&format!("(log {})", own.display())));
+        assert!(frame().contains(&format!("(log {})", shown(&own))), "{}", frame());
         let cmds = end().unwrap().commands;
         assert_eq!(
             cmds[0].log.as_deref(),
