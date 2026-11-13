@@ -861,6 +861,18 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
                 Some(again) => format!("fix the cause, then run the stage again (its checks and plays all run again): {again}"),
                 None => format!("fix the cause, then resume — every phase is idempotent: {resume} --from {}", ph.n),
             }) });
+            // F5: the failed phase's output, matched against the error catalog
+            // (explain_phase::failed_phase); the runner kept it in a log.
+            let phase_id = ph.n.to_string();
+            let log = crate::runner::commands()
+                .into_iter()
+                .rev()
+                .find(|c| c.phase.as_deref() == Some(phase_id.as_str()) && c.log.is_some())
+                .and_then(|c| c.log);
+            let output = log.as_deref().and_then(|l| std::fs::read_to_string(l).ok()).unwrap_or_default();
+            if let Some(f) = crate::explain_phase::failed_phase("federate", ph.n, &output, log.as_deref()) {
+                checks.push(Check { name: "interpreted".into(), ok: false, detail: f.detail(), fix: Some(f.fix.clone()) });
+            }
             if let Some(r) = run.as_mut() {
                 r.end(ph, state::Outcome::Failed, &format!("GB-183: phase {} failed with exit {rc}", ph.n));
             }

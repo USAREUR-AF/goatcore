@@ -249,6 +249,134 @@ pub fn dispatch(input: &[String], report: bool, format: OutputFormat) -> Option<
     Some(exit)
 }
 
+/// What a failed phase's row carries (gate row F5; legibility step 7): the
+/// error catalog's code, cause and fix when the phase's output names a known
+/// error, else the phase catalog's own "if it failed" guidance; the log of
+/// its output; and the command that runs that phase by hand.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct FailedPhase {
+    pub verb: String,
+    pub phase: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
+    /// Other catalogued errors the output also names (a wrapper's words, an
+    /// earlier warning), for the person reading.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub also: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    pub cause: String,
+    pub fix: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub log: Option<String>,
+    pub by_hand: String,
+    pub read: String,
+}
+
+/// The output a failed phase's interpretation reads: at most this much of
+/// its end, where the error that stopped it is.
+pub const TAIL_BYTES: usize = 64 * 1024;
+
+/// Interpret the output of `verb`'s failed `phase`. `None` when the phase
+/// catalog has no such phase.
+pub fn failed_phase(
+    verb: &str,
+    phase: u32,
+    output: &str,
+    log: Option<&str>,
+) -> Option<FailedPhase> {
+    let p = goat_errors::phases::explain_phase(verb, &phase.to_string())?;
+    // The end of the output, cut at a character boundary.
+    let mut start = output.len().saturating_sub(TAIL_BYTES);
+    while !output.is_char_boundary(start) {
+        start += 1;
+    }
+    let tail = &output[start..];
+    // A code the output carries, or a pattern of the catalog it matches;
+    // never a lexical guess. The one nearest the end of the output is what
+    // stopped the phase: a later line, or, on one line, the innermost tool's
+    // words that a wrapper quotes (ansible's UNREACHABLE carrying ssh's
+    // "Permission denied").
+    let mut hits: Vec<goat_errors::Hit> = goat_errors::interpret(tail)
+        .hits
+        .into_iter()
+        .filter(|h| {
+            matches!(
+                h.layer,
+                goat_errors::Layer::Code | goat_errors::Layer::Pattern
+            )
+        })
+        .collect();
+    hits.sort_by_key(|h| h.at);
+    let hit = hits.pop();
+    let also: Vec<String> = hits.iter().rev().map(|h| h.entry.code.clone()).collect();
+    Some(match hit {
+        Some(h) => FailedPhase {
+            verb: verb.to_string(),
+            phase,
+            also,
+            code: Some(h.entry.code.clone()),
+            title: Some(h.entry.title.clone()),
+            cause: h
+                .entry
+                .causes
+                .first()
+                .cloned()
+                .unwrap_or_else(|| h.entry.what.clone()),
+            fix: h.entry.fixes.join("; "),
+            log: log.map(str::to_string),
+            by_hand: p.by_hand.clone(),
+            read: if h.entry.read.is_empty() {
+                p.read.clone()
+            } else {
+                h.entry.read.clone()
+            },
+        },
+        None => FailedPhase {
+            verb: verb.to_string(),
+            phase,
+            also,
+            code: None,
+            title: None,
+            cause: p.failed_because.clone(),
+            fix: p.then.clone(),
+            log: log.map(str::to_string),
+            by_hand: p.by_hand.clone(),
+            read: p.read.clone(),
+        },
+    })
+}
+
+impl FailedPhase {
+    /// The row's text, after the phase's own failure line: what the output
+    /// says went wrong, what to do, where the output is, and how to run this
+    /// phase again by hand.
+    pub fn detail(&self) -> String {
+        let mut s = match (&self.code, &self.title) {
+            (Some(c), Some(t)) => format!("{c}: {t}. Likely: {}. Fix: {}", self.cause, self.fix),
+            _ => format!(
+                "No known error in its output. This phase fails when {}; then {}",
+                self.cause, self.fix
+            ),
+        };
+        if let Some(l) = &self.log {
+            s.push_str(&format!(". Its output: {l}"));
+        }
+        s.push_str(&format!(". By hand: {}. Read: {}", self.by_hand, self.read));
+        if !self.also.is_empty() {
+            s.push_str(&format!(". The output also names {}", self.also.join(", ")));
+        }
+        match &self.code {
+            Some(c) => s.push_str(&format!(" (goatbuilder explain {c})")),
+            None => s.push_str(&format!(
+                " (goatbuilder explain {} {})",
+                self.verb, self.phase
+            )),
+        }
+        s
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -418,5 +546,83 @@ mod tests {
         }
         let e = goat_errors::explain(NO_SUCH_PHASE).expect("the refusal's code is in the catalog");
         assert_eq!(e.tool, "goatbuilder");
+    }
+
+    /// F5: a phase whose output names a known error carries that error's code,
+    /// cause and fix, the log of its output, and its command by hand.
+    #[test]
+    fn a_failed_phase_s_known_error_carries_its_code_and_fix() {
+        let out = "PLAY [edge] ****\nTASK [goat-zenoh-edge : deploy] ****\nfatal: [edge-1]: UNREACHABLE! => {\"msg\": \"Failed to connect to the host via ssh: goat@192.0.2.10: Permission denied (publickey).\"}\n";
+        let f = failed_phase(
+            "federate",
+            12,
+            out,
+            Some("/var/lib/goat/runs/r1/logs/012-1.log"),
+        )
+        .unwrap();
+        assert_eq!(f.code.as_deref(), Some("X-SSH-001"), "{f:?}");
+        let e = goat_errors::explain("X-SSH-001").unwrap();
+        assert_eq!(f.title.as_deref(), Some(e.title.as_str()));
+        assert_eq!(f.cause, e.causes[0]);
+        assert!(f.fix.contains(&e.fixes[0]), "{f:?}");
+        assert_eq!(
+            f.log.as_deref(),
+            Some("/var/lib/goat/runs/r1/logs/012-1.log")
+        );
+        let p = goat_errors::phases::explain_phase("federate", "12").unwrap();
+        assert_eq!(f.by_hand, p.by_hand);
+        assert_eq!(
+            f.also,
+            ["X-ANSIBLE-001"],
+            "the wrapper's words are named too"
+        );
+        let d = f.detail();
+        for part in [
+            "X-SSH-001",
+            e.title.as_str(),
+            "012-1.log",
+            "By hand:",
+            "goatbuilder explain X-SSH-001",
+        ] {
+            assert!(d.contains(part), "{part}\n{d}");
+        }
+    }
+
+    /// Output that names no known error gets the phase catalog's own guidance,
+    /// never a lexical guess.
+    #[test]
+    fn a_failed_phase_with_no_known_error_gets_the_phase_s_own_guidance() {
+        let f = failed_phase("federate", 12, "something odd happened\nexit 2\n", None).unwrap();
+        let p = goat_errors::phases::explain_phase("federate", "12").unwrap();
+        assert_eq!(f.code, None, "{f:?}");
+        assert_eq!(f.cause, p.failed_because);
+        assert_eq!(f.fix, p.then);
+        assert!(
+            f.detail().contains("goatbuilder explain federate 12"),
+            "{}",
+            f.detail()
+        );
+        assert!(failed_phase("federate", 99, "", None).is_none());
+    }
+
+    /// The code goatbuilder itself printed inside the phase is the answer, and
+    /// only the end of a long output is read.
+    #[test]
+    fn a_code_in_the_phase_s_output_is_taken_and_only_the_tail_is_read() {
+        let f = failed_phase(
+            "federate",
+            8,
+            "noise\ngoatbuilder: refused (GB-194)\n",
+            None,
+        )
+        .unwrap();
+        assert_eq!(f.code.as_deref(), Some("GB-194"), "{f:?}");
+        let mut long = "Permission denied (publickey).\n".to_string();
+        long.push_str(&"x".repeat(TAIL_BYTES + 10));
+        let f = failed_phase("federate", 12, &long, None).unwrap();
+        assert_eq!(
+            f.code, None,
+            "an error before the tail is not the one that stopped the phase: {f:?}"
+        );
     }
 }
