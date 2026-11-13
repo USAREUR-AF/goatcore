@@ -215,6 +215,13 @@ documents now give the release's own identity:
 
 #### Images and roles built from this repository
 
+- **The republisher and keyd images built from this release on use
+  quinn-proto 0.11.19 and quinn-udp 0.5.16**, for RUSTSEC-2026-0523 (a
+  MAX_STREAM_DATA frame can open streams beyond the stream limit),
+  RUSTSEC-2026-0524 (a long Retry token can panic or exhaust memory in a QUIC
+  client) and RUSTSEC-2026-0538 (a receive loop can spin after a truncated
+  datagram). A host runs them once its image pin moves to a digest built
+  after this change. goatbuilder does not use them (#590).
 - **The edge reads only the configuration path the core router names.** The
   edge role's ingress check reads the core's configuration at the path the
   router's own arguments name (`-c` or `--config` in any of their forms), and
@@ -301,6 +308,11 @@ None of these ships switched on, and no command in 0.6.0 reaches them.
   instead of setting it; the standup bats test has a home of its own; the sshd and
   Ansible tests fail instead of skipping when their tools are missing; and
   the back-out tests remove their working directories.
+- **Dependencies.** The quinn-udp dependency of the `goat` client and
+  panoscope-core (through zenoh) and of goat-relay moves to 0.5.16, for
+  RUSTSEC-2026-0538 (a receive loop can spin after a truncated datagram), and
+  goat-relay's quinn-proto moves to 0.11.19, for RUSTSEC-2026-0523 and
+  RUSTSEC-2026-0524. goatbuilder does not use them (#590).
 - **Libraries.** An error-catalog entry printed as a document carries its
   version (`goat-errors.entry/v1`); `explain` does not print it yet.
 - **Design documents.** The 1.0 gate gains group H (a node on a phone) and
