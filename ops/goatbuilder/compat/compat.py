@@ -140,7 +140,7 @@ def parse_values(help_text: str) -> dict:
 def surface_values(binary: str, tree: dict) -> dict:
     """Each command's possible values, from its `--help` (English, its own HOME)."""
     home = tempfile.mkdtemp(prefix="compat-home-")
-    env = dict(_env(), HOME=home)
+    env = _env(home)
     try:
         for cmd in tree:
             r = subprocess.run([binary, *cmd.split()[1:], "--help"], capture_output=True, text=True, env=env)
