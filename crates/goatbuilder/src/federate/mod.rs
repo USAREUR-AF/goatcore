@@ -589,6 +589,36 @@ pub fn federate(repo: &Path, o: &Options) -> Result<Report> {
     federate_with(repo, o, &mut Surface::default())
 }
 
+/// The configuration file a run reads: `--mock <dir>`'s flat
+/// `<dir>/goatbuilder.yaml`, else the repository's own.
+fn config_path(repo: &Path, o: &Options) -> std::path::PathBuf {
+    match o.mock {
+        Some(m) => m.join("goatbuilder.yaml"),
+        None => repo.join("ops/goatbuilder/goatbuilder.yaml"),
+    }
+}
+
+/// GB-267 for a two-driver peering whose run (`runs(n)`) would reach a phase
+/// after 2 that needs the edge (federate/handoff.rs). A peering that is not
+/// declared is left to C1.
+fn refuse_two_drivers(cfg: &config::Config, o: &Options, runs: impl Fn(u32) -> bool) -> Result<()> {
+    let two = cfg
+        .peerings
+        .iter()
+        .find(|p| p.with == o.with && o.env.map(|e| p.environment == e).unwrap_or(true))
+        .is_some_and(|p| handoff::two(p.drivers.as_deref()));
+    match two.then(|| handoff::refused_before_running(runs)).flatten() {
+        Some(e) => Err(e),
+        None => Ok(()),
+    }
+}
+
+/// The same refusal for a stage that acts before its run starts (deploy
+/// approves its plan first), over the phases it will run.
+pub(crate) fn refuse_two_drivers_before(repo: &Path, o: &Options, runs: impl Fn(u32) -> bool) -> Result<()> {
+    refuse_two_drivers(&config::load(&config_path(repo, o))?, o, runs)
+}
+
 /// A run with what the caller asked for beyond the phases (run.rs). A real
 /// run holds the peering's lock and is recorded in `<work>/state.json`.
 pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report> {
@@ -604,10 +634,7 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
     }
     // `--mock <dir>` reads the flat `<dir>/goatbuilder.yaml`, the same fixture
     // shape standup opens; without it, the repository's own config.
-    let cfg_path = match o.mock {
-        Some(m) => m.join("goatbuilder.yaml"),
-        None => repo.join("ops/goatbuilder/goatbuilder.yaml"),
-    };
+    let cfg_path = config_path(repo, o);
     let cfg = config::load(&cfg_path)?;
     measure::check_driver_measure()?;
     if let Some(env) = o.env {
@@ -622,6 +649,9 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
         let declared = cfg.peerings.iter().map(|p| format!("{} on {}", p.with, p.environment)).collect::<Vec<_>>().join(", ");
         return Err(anyhow!("peering '{}' is not declared in {} peerings: (declared: {}) — declare it first (C1)", o.with, cfg_path.display(), if declared.is_empty() { "none" } else { &declared }));
     }
+    // Two drivers: a run that would reach a phase after 2 needing the edge is
+    // refused here, before a deploy's lock, live recheck or admission acts.
+    refuse_two_drivers(&cfg, o, |n| s.runs(n, o.from, o.to))?;
     // THE PROFILE DIRECTORY, resolved once for this run, so preflight and every
     // `goat` call below agree (a run under sudo reads the invoking user's HOME).
     // Kept in the run's environment (runenv), never the process's.

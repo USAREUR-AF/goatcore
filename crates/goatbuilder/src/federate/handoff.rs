@@ -32,13 +32,40 @@ pub fn hands_off(n: u32) -> bool {
     matches!(n, 1 | 2)
 }
 
-/// The refusal of a two-driver run at a phase that needs the edge, after 2.
+const ONE_DRIVER: &str = "run the peering with one driver for now: remove drivers: two from its peerings: entry, from a machine that reaches both the edge host and the core host";
+
+/// The first phase of a run (`runs(n)` says whether the run holds phase n)
+/// that needs the edge.
+fn first_edge_phase(runs: impl Fn(u32) -> bool) -> Option<u32> {
+    (1..=14).find(|&n| runs(n) && matches!(side_of(n), Side::Edge | Side::Both))
+}
+
+/// A two-driver run whose first phase that needs the edge is after 2 is
+/// refused before it acts: before a deploy's live recheck, its approval or
+/// phase 10's admission on our core, which would otherwise run and leave the
+/// admission half done when the run reached 11. A run whose first such phase
+/// is 1 or 2 stops there with the hand-off object instead, so it never
+/// reaches a later one.
+pub fn refused_before_running(runs: impl Fn(u32) -> bool) -> Option<anyhow::Error> {
+    let n = first_edge_phase(runs).filter(|&n| !hands_off(n))?;
+    Some(
+        goat_errors::coded(
+            NOT_BUILT,
+            format!("phase {n} needs the edge, and its hand-off is not built yet: a two-driver peering (drivers: two) hands off only at phases 1 and 2 (docs/design/federation-two-drivers.md). Refused before this run acted: nothing of phase {n} ran, and no phase before it in this run. {ONE_DRIVER}"),
+        )
+        .into(),
+    )
+}
+
+/// The refusal of a later phase that needs the edge, met inside a run. Not
+/// reached while `refused_before_running` gates the run; if it is, the
+/// phases before it in this run did run, and its rows above say which.
 pub fn later_phase_not_built(n: u32) -> Check {
     Check {
         name: "handoff".into(),
         ok: false,
-        detail: format!("{NOT_BUILT}: phase {n} needs the edge, and its hand-off is not built yet: a two-driver peering (drivers: two) hands off only at phases 1 and 2 (docs/design/federation-two-drivers.md). Nothing ran"),
-        fix: Some("run the peering with one driver for now: remove drivers: two from its peerings: entry, from a machine that reaches both the edge host and the core host".into()),
+        detail: format!("{NOT_BUILT}: phase {n} needs the edge, and its hand-off is not built yet: a two-driver peering (drivers: two) hands off only at phases 1 and 2 (docs/design/federation-two-drivers.md). Nothing of phase {n} ran; the phases of this run before it did (the rows above)"),
+        fix: Some(ONE_DRIVER.into()),
     }
 }
 
@@ -252,5 +279,32 @@ mod tests {
     fn a_word_with_a_token_is_quoted() {
         let line = shell_line(&["import".into(), "{result}".into(), "it's".into()]);
         assert_eq!(line, "import '{result}' 'it'\\''s'");
+    }
+
+    #[test]
+    fn a_run_is_refused_up_front_when_its_first_edge_phase_is_after_2() {
+        let range = |from: u32, to: u32| move |n: u32| n >= from && n <= to;
+        // From 1 or 2: the stop hands it off before any later phase.
+        assert!(refused_before_running(range(1, 14)).is_none());
+        assert!(refused_before_running(range(2, 13)).is_none());
+        // 4 to 10 needs no edge (8 and 10 are core): nothing to refuse.
+        assert!(refused_before_running(range(4, 10)).is_none());
+        // Deploy (10 to 13) and its --from 11 reach 11 on the edge.
+        for (from, to, n) in [
+            (10, 13, 11),
+            (11, 13, 11),
+            (3, 3, 3),
+            (4, 11, 11),
+            (14, 14, 14),
+        ] {
+            let e = refused_before_running(range(from, to))
+                .expect("refused")
+                .to_string();
+            assert!(
+                e.contains(&format!("nothing of phase {n} ran")),
+                "{from}..{to}: {e}"
+            );
+            assert!(!e.contains("Nothing ran"), "{e}");
+        }
     }
 }

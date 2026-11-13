@@ -347,6 +347,9 @@ pub fn deploy(
             ))
         }
     };
+    // A two-driver peering reaches 11 on the edge: refused before the plan is
+    // read, approved or rechecked, and before phase 10 admits on our core.
+    super::refuse_two_drivers_before(repo, o, |n| (from..=DEPLOY_TO).contains(&n))?;
     let work = super::work_dir(o);
     let path = plan_flag
         .map(Path::to_path_buf)

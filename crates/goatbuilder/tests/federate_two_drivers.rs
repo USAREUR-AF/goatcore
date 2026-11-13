@@ -310,12 +310,29 @@ fn a_two_driver_run_after_phase_2_is_refused_with_no_object() {
         );
         assert!(!all.contains("Nothing ran"), "--from {from}: {all}");
         assert!(!w.log().contains(acted), "--from {from} acted: {}", w.log());
-        assert_eq!(
-            w.state()["phases"][from]["outcome"],
-            "failed",
-            "--from {from}"
+        // Refused before the run began: no journal was written.
+        assert!(
+            !w.work.join("state.json").exists(),
+            "--from {from}: a journal was written"
         );
     }
+}
+
+/// A run from 4 with no --to would run 4 to 10, which need no edge, then
+/// meet 11, which does. It is refused before phase 4 acts, and says so.
+#[test]
+fn a_two_driver_run_from_4_to_the_end_runs_nothing() {
+    let w = world();
+    two_drivers(&w);
+    let (out, v) = w.run(&["hello-ally", "--from", "4"]);
+    let all = says(&out);
+    assert!(!out.status.success(), "{all}");
+    assert!(v["handoff"].is_null(), "{all}");
+    assert!(all.contains("GB-267"), "{all}");
+    assert!(all.contains("nothing of phase 11 ran"), "{all}");
+    assert!(!all.contains("Nothing ran"), "{all}");
+    assert_eq!(w.log(), "", "the run acted");
+    assert!(!w.work.join("state.json").exists(), "a journal was written");
 }
 
 /// Phases 1 to 9 with one driver (confirmation 1 by flag), then the peering
