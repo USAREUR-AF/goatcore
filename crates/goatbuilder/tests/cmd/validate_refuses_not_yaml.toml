@@ -1,4 +1,4 @@
-# A config with not yaml is refused, exit 1, naming the field.
+# A config that is not YAML is refused as GB-245, exit 2, naming the line and column.
 bin.name = "goatbuilder"
 args = ["validate", "-C", "../..", "tests/fixtures/configs/not-yaml.yaml"]
 status.code = 2
