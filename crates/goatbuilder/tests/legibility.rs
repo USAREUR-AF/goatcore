@@ -486,6 +486,12 @@ impl Hollow {
         c.env("HOME", r.join("home"))
             .env("TMPDIR", r.join("tmp"))
             .env("GOAT_MESH_PROBE", "0")
+            // On macOS a long-running verb starts `caffeinate -i -w <pid>` to
+            // keep the operator's machine awake (src/awake.rs). The recorder
+            // shadows every name on this machine's PATH, so a macOS run would
+            // record that process too: it is no command of the plan, and it
+            // starts on macOS only, so every OS records the same processes.
+            .env("GOAT_NO_CAFFEINATE", "1")
             .env("GOAT_NO_FUN", "1")
             .env("GOAT_LANG", "en")
             .env("NO_COLOR", "1")
