@@ -351,11 +351,7 @@ pub(crate) fn render_ref(r: &str) -> String {
     }
 }
 
-/// Run `ansible-preflight.sh` (or `ansible`/`ansible-inventory`) from ops/ansible under ops/scripts/with-aws, as the script does.
-/// The deploy play's arguments for group `g`: the inventories, the play, the
-/// target (`target_flag` is the mode before `<group>`: `-e <var>=` or `-l `),
-/// and the accepted risk (ADR 1211) as an extra-var, so rollback-ledger
-/// records in its row what was knowingly accepted.
+/// The deploy play's arguments for group `g`: the inventories, the play, the target as two words, and the accepted risk (ADR 1211).
 fn deploy_args(inv: &[String], play: &Path, target_flag: &str, g: &str, accept: Option<&str>) -> Vec<String> {
     let mut args = inv.to_vec();
     args.push(play.file_name().unwrap_or_default().to_string_lossy().to_string());
@@ -374,6 +370,7 @@ fn deploy_args(inv: &[String], play: &Path, target_flag: &str, g: &str, accept: 
     args
 }
 
+/// Run `ansible-preflight.sh` (or `ansible`/`ansible-inventory`) from ops/ansible under ops/scripts/with-aws, as the script does.
 pub(crate) fn ansible_cmd(repo: &Path, tool: &str, args: &[String]) -> Command {
     // AWS credentials through ops/scripts/with-aws (ADR 1204): aws-vault where the
     // team uses it, a plain AWS profile or none where it does not.
