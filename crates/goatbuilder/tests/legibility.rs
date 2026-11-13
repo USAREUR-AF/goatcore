@@ -1223,6 +1223,43 @@ fn every_c11_world_opts_out_of_keep_awake() {
     assert!(opted_out(&w.command_with(&["-o", "table"], &["hello-ally"])), "the federate world, as a table");
 }
 
+/// Each group of a deploy is its own phase in the record, `deploy:<group>`
+/// and `verify:<group>`, so `runs diff` sees one group's outcome change while
+/// another's stays the same.
+#[test]
+fn a_two_group_deploy_records_a_phase_per_group() {
+    let h = hollow();
+    let r = h.repo();
+    exe(
+        &h.repo.join("ops/pins/fleet-pins.yaml"),
+        &format!("goatnets:\n  dev:\n    members: [dev_hosts, dev_edge]\ncomponents:\n  portal:\n    var: portal_image\n    fleet: \"{PORTAL_REF}\"\n"),
+    );
+    exe(
+        &h.repo.join("ops/ansible/inventory/mgmt-hosts.ini"),
+        "[dev_hosts]\ndev-core-a ansible_host=192.0.2.11\n\n[dev_edge]\ndev-edge-a ansible_host=192.0.2.12\n",
+    );
+    exe(
+        &h.repo.join("ops/ansible/group_vars/dev_edge/pins.yml"),
+        &format!("portal_image: \"{PORTAL_REF}\"\n"),
+    );
+    let args = ["deploy", "-C", r, "--env", "dev", "--component", "portal", "--ack", "A Person", "--yes"];
+    let (out, procs) = run_recorded(h.command(&args), &h.root.path().join("rec/two"));
+    ran("deploy, two groups", &out, &procs, &[0, 3]);
+    let records = run_records(h.root.path(), "deploy");
+    assert_eq!(records.len(), 1, "one run record: {records:?}");
+    let ids: Vec<String> = records[0]["phases"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|p| p["id"].as_str().map(String::from))
+        .collect();
+    for g in ["dev_hosts", "dev_edge"] {
+        assert!(ids.contains(&format!("deploy:{g}")), "no phase deploy:{g} in {ids:?}");
+    }
+    let unique: BTreeSet<&String> = ids.iter().collect();
+    assert_eq!(unique.len(), ids.len(), "a phase id repeats: {ids:?}");
+}
+
 #[test]
 fn c11_federate() {
     let w = federate_world::world();

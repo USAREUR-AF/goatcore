@@ -471,7 +471,8 @@ pub fn deploy(repo: &Path, o: &Options) -> Result<Report> {
     let mut checks = Vec::new();
     let name = o.goatnet.replace('_', "-");
     // The runner frames and records each step's commands under it
-    // (crates/goatbuilder/src/runner.rs); the names are the six steps.
+    // (crates/goatbuilder/src/runner.rs); the names are the five steps, the
+    // last two once per group.
     crate::runner::phase("prep", "the rollout facts and the ack gate", "");
 
     // Prep phase (ADR 1211): the reversibility readout, first, before anything
@@ -576,7 +577,7 @@ pub fn deploy(repo: &Path, o: &Options) -> Result<Report> {
         // The ledger rows as they stand before the play: the only reliable way to say
         // afterwards whether this run wrote a row or found one (a row's own ts is the
         // play's fact-gathering time, which a fact cache can make stale).
-        crate::runner::phase("deploy", &format!("the play on {g}"), "");
+        crate::runner::phase(&format!("deploy:{g}"), &format!("the play on {g}"), "");
         let before = if o.dry_run || o.verify_only { String::new() } else { read_tails(repo, &inv, g, &r.ledger)? };
         if !o.verify_only {
             let args = deploy_args(&inv, &r.play, &r.target_flag, g, accept_var.as_deref());
@@ -613,7 +614,7 @@ pub fn deploy(repo: &Path, o: &Options) -> Result<Report> {
                 }
             }
         }
-        crate::runner::phase("verify", &format!("every host of {g} names the declared ref"), "");
+        crate::runner::phase(&format!("verify:{g}"), &format!("every host of {g} names the declared ref"), "");
         // Served payloads (goat-get, goat-docs): what the surface serves is versioned by
         // role vars, not by its image; the same module as the script judges them.
         let served_note = match served_declared(repo, &r.ledger, g) {
