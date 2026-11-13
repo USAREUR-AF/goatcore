@@ -370,11 +370,12 @@ enum Leaf {
     /// This peering's, and another peering's working folder holds the same
     /// leaf: kept, because that peering uses it too.
     Shared(String),
-    /// This peering's: put back to what was there before its first admission.
-    Restore(Vec<u8>),
+    /// This peering's: put back to what was there before its first
+    /// admission, from this backup.
+    Restore(Vec<u8>, PathBuf),
     /// This peering's, and admission recorded that nothing was there
-    /// before: removed.
-    Remove,
+    /// before, in this record: removed.
+    Remove(PathBuf),
     /// This peering's, and what was there before cannot be read from the
     /// admission records (none, a corrupt one, an unreadable backup): left
     /// alone, and the back-out stops on it.
@@ -386,7 +387,7 @@ enum Record {
     /// What was there, kept as this backup.
     Backup(PathBuf),
     /// Nothing was there: this record says so.
-    Absent,
+    Absent(PathBuf),
 }
 
 impl CoreLeaf {
@@ -405,13 +406,16 @@ impl CoreLeaf {
     /// How many leaf paths go back to what was there, and how many are
     /// removed.
     fn counts(&self) -> (usize, usize) {
-        let plans: Vec<Leaf> = self.targets.iter().map(|(t, o)| self.plan(t, o)).collect();
+        let plans = self.plans();
         (
             plans
                 .iter()
-                .filter(|l| matches!(l, Leaf::Restore(_)))
+                .filter(|l| matches!(l, Leaf::Restore(..)))
                 .count(),
-            plans.iter().filter(|l| matches!(l, Leaf::Remove)).count(),
+            plans
+                .iter()
+                .filter(|l| matches!(l, Leaf::Remove(_)))
+                .count(),
         )
     }
 
@@ -499,7 +503,7 @@ impl CoreLeaf {
                     match read(&p) {
                         Ok((of, _)) if of != target => {}
                         Ok((_, Some(w))) if w == super::admit::ABSENT => {
-                            found.push((n, Ok(Record::Absent)))
+                            found.push((n, Ok(Record::Absent(p.clone()))))
                         }
                         // A record with a backup is decided beside the backup.
                         Ok((_, None)) if p.with_file_name(format!("{n}-{base}")).exists() => {}
@@ -561,13 +565,13 @@ impl CoreLeaf {
         // Only an explicit record removes the leaf; anything else is a guess.
         match self.first_record(target) {
             Ok(Some(Record::Backup(b))) => match std::fs::read(&b) {
-                Ok(bytes) => Leaf::Restore(bytes),
+                Ok(bytes) => Leaf::Restore(bytes, b),
                 Err(e) => Leaf::Unknown(format!(
                     "the admission backup {} cannot be read ({e})",
                     b.display()
                 )),
             },
-            Ok(Some(Record::Absent)) => Leaf::Remove,
+            Ok(Some(Record::Absent(r))) => Leaf::Remove(r),
             Ok(None) => Leaf::Unknown(format!(
                 "holds this peering's leaf, and no admission run in {} recorded what was there before",
                 self.work.join("admission").display()
@@ -576,10 +580,50 @@ impl CoreLeaf {
         }
     }
 
+    /// Each path's plan, with the certificate and key taken as one unit: if
+    /// one would be put back and the other removed, or one is unknown, the
+    /// leaf could not serve afterwards, so both read unknown and nothing
+    /// changes.
+    fn plans(&self) -> Vec<Leaf> {
+        let plans: Vec<Leaf> = self.targets.iter().map(|(t, o)| self.plan(t, o)).collect();
+        let restore = plans.iter().any(|l| matches!(l, Leaf::Restore(..)));
+        let remove = plans.iter().any(|l| matches!(l, Leaf::Remove(_)));
+        let unknown = plans.iter().any(|l| matches!(l, Leaf::Unknown(_)));
+        if !(restore && remove) && !(unknown && (restore || remove)) {
+            return plans;
+        }
+        let said: Vec<String> = self
+            .targets
+            .iter()
+            .zip(&plans)
+            .map(|((t, _), l)| match l {
+                Leaf::Restore(_, b) => {
+                    format!("{} would be put back from {}", t.display(), b.display())
+                }
+                Leaf::Remove(r) => format!("{} would be removed by {}", t.display(), r.display()),
+                Leaf::Unknown(why) => format!("{}: {why}", t.display()),
+                Leaf::NotOurs | Leaf::Shared(_) => format!("{} is left as it is", t.display()),
+            })
+            .collect();
+        let why = format!(
+            "the certificate and key are one leaf, and their admission records disagree: {}",
+            said.join("; ")
+        );
+        plans
+            .into_iter()
+            .map(|l| match l {
+                Leaf::Restore(..) | Leaf::Remove(_) | Leaf::Unknown(_) => {
+                    Leaf::Unknown(why.clone())
+                }
+                other => other,
+            })
+            .collect()
+    }
+
     /// One survey row per leaf path.
     fn rows(&self) -> Vec<Row> {
         let mut rows = Vec::new();
-        for (target, ours) in &self.targets {
+        for ((target, ours), plan) in self.targets.iter().zip(self.plans()) {
             let t = target.display().to_string();
             let row = |state: &str, action: &str, note: String| Row {
                 component: "core leaf".into(),
@@ -588,7 +632,7 @@ impl CoreLeaf {
                 action: action.into(),
                 note,
             };
-            rows.push(match self.plan(target, ours) {
+            rows.push(match plan {
                 Leaf::NotOurs => row(
                     "absent",
                     "none",
@@ -599,12 +643,12 @@ impl CoreLeaf {
                     "kept",
                     format!("the same leaf is in {p}, another peering's"),
                 ),
-                Leaf::Restore(_) => row(
+                Leaf::Restore(..) => row(
                     "present",
                     "remove",
                     "put back to what was there before the peering".into(),
                 ),
-                Leaf::Remove => row(
+                Leaf::Remove(_) => row(
                     "present",
                     "remove",
                     "nothing was there before the peering".into(),
@@ -627,10 +671,10 @@ impl CoreLeaf {
         backups: &mut Vec<super::admit::Placed>,
         bdir: &Path,
     ) -> Result<(), String> {
-        for (target, ours) in &self.targets {
-            let r = match self.plan(target, ours) {
-                Leaf::Restore(bytes) => super::admit::publish(&bytes, target, backups, bdir),
-                Leaf::Remove => super::admit::publish(b"", target, backups, bdir)
+        for ((target, _), plan) in self.targets.iter().zip(self.plans()) {
+            let r = match plan {
+                Leaf::Restore(bytes, _) => super::admit::publish(&bytes, target, backups, bdir),
+                Leaf::Remove(_) => super::admit::publish(b"", target, backups, bdir)
                     .and_then(|_| std::fs::remove_file(target)),
                 Leaf::NotOurs | Leaf::Shared(_) | Leaf::Unknown(_) => Ok(()),
             };
@@ -2654,13 +2698,13 @@ mod tests {
                     .map(|(_, v)| v.to_string())
                     .or_else(|| (k == "FED_SLOT_CHECK").then(|| "skip".into()))
             };
-            let paths = super::super::admit::router_leaf_paths(repo.path(), Some(&role), &var);
+            let paths = super::super::admit::router_leaf_paths(repo.path(), Some(&role), var);
             let core = super::super::admit::Core::from_vars(
                 repo.path(),
                 "xab",
                 "zagros",
                 Some(role.clone()),
-                &var,
+                var,
             )
             .unwrap_or_else(|m| panic!("{m:?}"));
             assert_eq!(
@@ -2668,7 +2712,7 @@ mod tests {
                 paths,
                 "admission, {vars:?}"
             );
-            let leaf = role_leaf(repo.path(), "xab", work, &var)
+            let leaf = role_leaf(repo.path(), "xab", work, var)
                 .unwrap()
                 .expect("a leaf");
             let got: Vec<PathBuf> = leaf.targets.iter().map(|(t, _)| t.clone()).collect();
@@ -2795,6 +2839,17 @@ mod tests {
     /// phase 8's pki/core.pem and core-key.pem, with a backup of what was at
     /// each path before, as admit.rs `publish` keeps it.
     fn place_leaf(c: &mut RouteCase, prior: Option<&[u8]>) {
+        let leaves = c.dir.path().join("leaves");
+        std::fs::create_dir_all(&leaves).unwrap();
+        if let Some(p) = prior {
+            std::fs::write(leaves.join("router-cert.pem"), p).unwrap();
+            std::fs::write(leaves.join("router-key.pem"), p).unwrap();
+        }
+        place_leaf_over(c);
+    }
+
+    /// [`place_leaf`] over whatever the leaf paths already hold.
+    fn place_leaf_over(c: &mut RouteCase) {
         let pki = c.work().join("pki");
         std::fs::create_dir_all(&pki).unwrap();
         std::fs::write(pki.join("core.pem"), b"CERT-OF-XAB").unwrap();
@@ -2805,10 +2860,6 @@ mod tests {
             leaves.join("router-cert.pem"),
             leaves.join("router-key.pem"),
         );
-        if let Some(p) = prior {
-            std::fs::write(&cert, p).unwrap();
-            std::fs::write(&key, p).unwrap();
-        }
         let mut backups = Vec::new();
         journal_run(&c.work(), "run-20261112T000000Z-1");
         let bdir = c.work().join("admission/run-20261112T000000Z-1/backup");
@@ -3347,6 +3398,38 @@ mod tests {
         back_out(&c);
         assert!(!cert.exists(), "the first run found nothing there");
         assert!(!key.exists(), "no private key is left behind");
+    }
+
+    #[test]
+    fn a_certificate_and_key_whose_records_disagree_are_left_as_they_are() {
+        // Admission found a certificate there but no key: one would be put
+        // back and the other removed, which leaves a leaf that cannot serve.
+        let mut c = admitted(
+            true,
+            &[("FED_CORE_RESTART", "true"), ("FED_CORE_DRY_RUN", "skip")],
+        );
+        let leaves = c.dir.path().join("leaves");
+        std::fs::create_dir_all(&leaves).unwrap();
+        std::fs::write(leaves.join("router-cert.pem"), b"THE-CERT-BEFORE").unwrap();
+        place_leaf_over(&mut c);
+        let rows = leaf_rows(&c);
+        for var in ["FED_CORE_CERT", "FED_CORE_KEY"] {
+            let r = &rows[&c.vars[var]];
+            assert_eq!(r.state, "unknown", "{rows:?}");
+            assert!(
+                r.note.contains("0-router-cert.pem") && r.note.contains("1-router-key.pem.target"),
+                "the note names both records: {}",
+                r.note
+            );
+        }
+        assert_eq!(
+            std::fs::read(&c.vars["FED_CORE_CERT"]).unwrap(),
+            b"CERT-OF-XAB"
+        );
+        assert_eq!(
+            std::fs::read(&c.vars["FED_CORE_KEY"]).unwrap(),
+            b"KEY-OF-XAB"
+        );
     }
 
     #[test]
