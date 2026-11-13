@@ -6,6 +6,8 @@ Each release is the tag `goatbuilder/v<semver>` on `main`, built and signed by
 
 ## Unreleased
 
+<!-- BEGIN generated: changelog unreleased, from crates/goatbuilder/changelog.d; edit the entries, not this section -->
+
 ### For someone deploying
 
 #### Fixed: join-node adds a node at a third site, phases 1 to 15
@@ -19,6 +21,8 @@ the Ory deployed by the next step: it now runs the stack plays only, as
 `standup` does. A third site that declares signal federation off, with its
 reason, was refused because its founder federates with another site: it now
 passes, unless the founder's federation names it.
+
+<!-- END generated: changelog unreleased -->
 
 ## 0.6.1 — 2026-11-13
 

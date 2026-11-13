@@ -24,6 +24,9 @@ on:
       - 'ops/onboard-runner/**'
       - 'README.md'
       - '.github/release-notes/**'
+      - 'crates/goatbuilder/CHANGELOG.md'
+      - 'crates/goatbuilder/changelog.d/**'
+      - 'ops/release/changelog.py'
       - '.github/workflows/_release-binary.yml'
       - '.github/workflows/*-release.yml'
 
@@ -82,6 +85,11 @@ jobs:
           pip install --quiet pyyaml
           python3 ops/ci/check-doc-signer-identity.py --self-test
           python3 ops/ci/check-doc-signer-identity.py
+
+      - name: goatbuilder's changelog Unreleased section equals its render from changelog.d
+        run: |
+          python3 ops/release/changelog.py --self-test
+          python3 ops/release/changelog.py check
 
       # Not here: the skill-audience guard (ADR 1174) runs where the
       # .claude/skills tree lives, and the roster-handle guard reads a roster
