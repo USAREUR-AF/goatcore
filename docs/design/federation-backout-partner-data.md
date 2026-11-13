@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | **Decided, 13 November 2026: option (a)**, under the rule in "The decision". To be reviewed later; no date is set. The back-out that carries it out is designed and not built. Today's behavior is stated under "What happens today"
+| Status | **Decided, 13 November 2026: option (a)** ([ADR 1234](../adr/1234-a-partners-data-lives-in-its-own-store-dropped-whole-when-the-peering-ends.md)), under the rule in "The decision". To be reviewed later; no date is set. The back-out that carries it out is designed and not built. Today's behavior is stated under "What happens today"
 | Decides | What `goatbuilder federate backout <partner>` does with the core's receive stores for that partner, above all when it is the last peering |
 | Gate row | B7 of the goatbuilder 1.0 gate: "Backing a peering out removes everything the command created and nothing else", proven by the back-out scenario and a comparison of both hosts with their state before the peering |
 | Related | [sovereign-federation-runbook.md](../operations/sovereign-federation-runbook.md), Step 9 · [federation-package-spec.md](federation-package-spec.md), "Receiving storage interests" · [ADR 1157](../adr/1157-cross-sovereign-federation-edge-terminated.md) |
