@@ -910,9 +910,7 @@ fn rollback_list_and_status_leave_no_run_record() {
     let bin_dir = dir.path().join("bin");
     std::fs::create_dir_all(&bin_dir).unwrap();
     let ssh = bin_dir.join("ssh");
-    std::fs::write(&ssh, "#!/bin/sh\nexit 255\n").unwrap();
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(&ssh, std::fs::Permissions::from_mode(0o755)).unwrap();
+    test_support::executable(&ssh, "#!/bin/sh\nexit 255\n");
     let path = format!("{}:{}", bin_dir.display(), std::env::var("PATH").unwrap_or_default());
     for mode in ["--list", "--status"] {
         let o = test_home::isolate(&mut Command::new(bin()))
