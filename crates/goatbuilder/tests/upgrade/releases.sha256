@@ -10,3 +10,7 @@ cb7caf042f2989684bd47168c4afd00857619b7bfe9605393da78500860d4937  v0.5.3/goatbui
 71ebd4040305cb6b9db64ef34cabf07d5ee47d49035b813f8b7fd7c74fd54a41  v0.5.3/goatbuilder-darwin-arm64
 65f2bbbabb23d5b30378ee3bb8820e5e16467b57aebb0f8ba81fb983ee9fb255  v0.5.3/goatbuilder-linux-amd64
 dfa196ca296f9124b72691b1f7e8df77bd7add94c10e9f39ec4d8d5578dc9fea  v0.5.3/goatbuilder-linux-arm64
+d6d11e018390fe74401ff1f3bf762513dda281be17443f6c2bc95acac77b5a55  v0.6.0/goatbuilder-darwin-amd64
+b0fbcc7d498d2d67ba8754eb10baa942f2bcb1826fdff2e2a02aa411ccbbaf4e  v0.6.0/goatbuilder-darwin-arm64
+8ea5c7049168264b20c19ec0438b23ef101b671ed5188a372f6dc8ebd6462f1e  v0.6.0/goatbuilder-linux-amd64
+83e75890cbd6206a4ac1558cf3e342d78b4f0e106adba88ffc2d6ca38079f91e  v0.6.0/goatbuilder-linux-arm64
