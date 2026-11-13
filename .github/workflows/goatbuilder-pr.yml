@@ -25,11 +25,10 @@ on:
       - 'crates/Cargo.lock'
       - 'ops/goatbuilder/schema/**'
       - 'docs/tutorials/00-goatlite.md'   # tests/goatlite_budget.rs: the first-run budget (G2)
-      # tests/doc_configs.rs: every whole goatbuilder.yaml example validates. The
-      # documents that hold one today; docs/reference/goatbuilder/** and
-      # docs/tutorials/** are listed below.
-      - 'docs/design/goatbuilder.md'
-      - 'docs/design/goatlite.md'
+      # tests/doc_configs.rs: every whole goatbuilder.yaml example in any document
+      # validates, so a change to any document runs it, and a new example is
+      # checked by its own pull request.
+      - 'docs/**/*.md'
       - 'ops/goatbuilder/goatbuilder.yaml'
       - 'ops/goatbuilder/parity-*.sh'
       - 'ops/pins/**'
