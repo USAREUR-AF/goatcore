@@ -40,7 +40,7 @@
 //! run of is the record it transcribes).
 
 use std::path::Path;
-use std::process::Command;
+use crate::runner::Cmd;
 
 use anyhow::{anyhow, Context, Result};
 
@@ -346,7 +346,8 @@ fn execute(repo: &Path, o: &Options) -> Result<Report> {
         checks.push(row("door", format!("=== Before phase 1: open the env door to {} — every play below goes through it (mgmt-hosts.ini + doors-groupvars.ini, never the mesh inventory too) ===", o.env)));
         checks.push(row("cmd", open.clone()));
         if !o.dry_run {
-            let status = Command::new("bash").args(["-euo", "pipefail", "-c", &open]).current_dir(repo).status().context("bash")?;
+            crate::runner::phase("door", &format!("open the env door to {}", o.env), "");
+            let status = Cmd::new("bash").args(["-euo", "pipefail", "-c", &open]).current_dir(repo).status().context("bash")?;
             if !status.success() {
                 checks.push(Check { name: "failed".into(), ok: false, detail: format!("!! the env door to {} did not open — no phase has run", o.env), fix: Some(format!("{open} --status says why; then re-run: {resume} --from {}", o.from.max(1))) });
                 let mut r = Report::new("join-node", checks, EXIT_REFUSED);
@@ -369,7 +370,8 @@ fn execute(repo: &Path, o: &Options) -> Result<Report> {
             checks.push(row("note", format!("^ OPERATOR STEP — do the above, then re-run with --from {}", ph.n + 1)));
             break;
         }
-        let status = Command::new("bash").args(["-euo", "pipefail", "-c", &ph.cmd]).current_dir(repo).status().context("bash")?;
+        crate::runner::phase(&ph.n.to_string(), &ph.label, "");
+        let status = Cmd::new("bash").args(["-euo", "pipefail", "-c", &ph.cmd]).current_dir(repo).status().context("bash")?;
         if !status.success() {
             let rc = status.code().unwrap_or(1);
             checks.push(Check { name: "failed".into(), ok: false, detail: format!("!! Phase {} (\"{}\") FAILED — exit {rc}. No later phase has run; the node is left partway through phase {}. `--dry-run` prints this phase's command and the gate that proves it.", ph.n, ph.label, ph.n), fix: Some(format!("fix the cause, then resume — every phase is idempotent: {resume} --from {}", ph.n)) });
@@ -389,6 +391,7 @@ fn execute(repo: &Path, o: &Options) -> Result<Report> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::process::Command;
 
     fn repo() -> std::path::PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")

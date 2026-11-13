@@ -2,6 +2,3 @@
 # how many `Command::new` calls each has outside its tests (tests/legibility_one_door.rs).
 # Step 2b moves each call site to crate::runner::Cmd and lowers or removes its line.
 # A count only goes down; a new process started outside the runner fails the test.
-joinnode.rs 2
-push.rs 5
-standup.rs 4

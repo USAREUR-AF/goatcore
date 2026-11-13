@@ -23,7 +23,7 @@
 use std::collections::BTreeMap;
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use crate::runner::Cmd;
 use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
@@ -213,7 +213,7 @@ pub fn declared(repo: &Path, component: &str, goatnet: &str, only_group: Option<
 }
 
 fn netbird_status() -> (String, String) {
-    let out = Command::new("netbird").arg("status").output();
+    let out = Cmd::new("netbird").arg("status").output();
     let text = out.map(|o| String::from_utf8_lossy(&o.stdout).to_string()).unwrap_or_default();
     let field = |key: &str| {
         text.lines()
@@ -294,7 +294,7 @@ pub fn transport(repo: &Path, name: &str, members: &[String], dry_run: bool) -> 
         // pin the path where nothing is reachable, and an SSM door there only times out.
         let open = std::env::var("GOAT_DOOR_OPEN").map(|v| v != "0").unwrap_or(true);
         if !dry_run && open {
-            let st = Command::new(&opener).arg(name).output().map(|o| o.status.success()).unwrap_or(false);
+            let st = Cmd::new(&opener).arg(name).output().map(|o| o.status.success()).unwrap_or(false);
             if !st {
                 return Err(goat_errors::coded("GB-006", format!("door to {name} did not open")).into());
             }
@@ -371,10 +371,10 @@ fn deploy_args(inv: &[String], play: &Path, target_flag: &str, g: &str, accept: 
 }
 
 /// Run `ansible-preflight.sh` (or `ansible`/`ansible-inventory`) from ops/ansible under ops/scripts/with-aws, as the script does.
-pub(crate) fn ansible_cmd(repo: &Path, tool: &str, args: &[String]) -> Command {
+pub(crate) fn ansible_cmd(repo: &Path, tool: &str, args: &[String]) -> Cmd {
     // AWS credentials through ops/scripts/with-aws (ADR 1204): aws-vault where the
     // team uses it, a plain AWS profile or none where it does not.
-    let mut c = Command::new("../scripts/with-aws");
+    let mut c = Cmd::new("../scripts/with-aws");
     c.current_dir(repo.join("ops/ansible"));
     c.env("OBJC_DISABLE_INITIALIZE_FORK_SAFETY", "YES");
     c.arg(crate::settings::aws_profile(repo)).arg("--");
@@ -384,8 +384,7 @@ pub(crate) fn ansible_cmd(repo: &Path, tool: &str, args: &[String]) -> Command {
         c.arg(tool);
     }
     c.args(args);
-    // `-v`: the ansible / ansible-inventory / preflight line a deploy runs.
-    crate::trace::cmd(&c);
+    // `-v` logs the line when it runs: the runner traces every command.
     c
 }
 
@@ -464,6 +463,9 @@ fn split_expected(inv: &serde_json::Value, group: &str, write_role: &str) -> (Ve
 pub fn deploy(repo: &Path, o: &Options) -> Result<Report> {
     let mut checks = Vec::new();
     let name = o.goatnet.replace('_', "-");
+    // The runner frames and records each step's commands under it
+    // (crates/goatbuilder/src/runner.rs); the names are the six steps.
+    crate::runner::phase("prep", "the rollout facts and the ack gate", "");
 
     // Prep phase (ADR 1211): the reversibility readout, first, before anything
     // is cut — the three facts, then the ack gate. A `none` or
@@ -510,6 +512,7 @@ pub fn deploy(repo: &Path, o: &Options) -> Result<Report> {
     let mut trunk = String::new();
     if !o.dry_run && !o.verify_only {
         resolve(repo, o.component, o.goatnet, o.only_group)?;
+        crate::runner::phase("fresh-source", "the checkout is current with the trunk", "");
         let f = crate::fresh::check(repo)?;
         let refused = f.refused();
         trunk = f.trunk.clone();
@@ -518,6 +521,7 @@ pub fn deploy(repo: &Path, o: &Options) -> Result<Report> {
             return Ok(Report::new("deploy", checks, EXIT_REFUSED));
         }
     }
+    crate::runner::phase("transport", "the secrets, and how the hosts are reached", "");
     let p = plan(repo, o)?;
     let r = &p.resolved;
     if !r.skipped.is_empty() {
@@ -558,6 +562,7 @@ pub fn deploy(repo: &Path, o: &Options) -> Result<Report> {
         // The ledger rows as they stand before the play: the only reliable way to say
         // afterwards whether this run wrote a row or found one (a row's own ts is the
         // play's fact-gathering time, which a fact cache can make stale).
+        crate::runner::phase("deploy", &format!("the play on {g}"), "");
         let before = if o.dry_run || o.verify_only { String::new() } else { read_tails(repo, &inv, g, &r.ledger)? };
         if !o.verify_only {
             let args = deploy_args(&inv, &r.play, &r.target_flag, g, accept_var.as_deref());
@@ -592,6 +597,7 @@ pub fn deploy(repo: &Path, o: &Options) -> Result<Report> {
                 }
             }
         }
+        crate::runner::phase("verify", &format!("every host of {g} names the declared ref"), "");
         // Served payloads (goat-get, goat-docs): what the surface serves is versioned by
         // role vars, not by its image; the same module as the script judges them.
         let served_note = match served_declared(repo, &r.ledger, g) {
@@ -705,7 +711,7 @@ pub fn deploy(repo: &Path, o: &Options) -> Result<Report> {
 /// as main declares them: `ops/scripts/served-payloads.py declared`, the module the script
 /// calls too. Empty when the component serves nothing but its image.
 pub(crate) fn served_declared(repo: &Path, ledger: &str, group: &str) -> std::result::Result<String, String> {
-    let out = Command::new(crate::endstate::python())
+    let out = Cmd::new(crate::endstate::python())
         .arg(repo.join("ops/scripts/served-payloads.py"))
         .args(["declared", "--repo"])
         .arg(repo)
@@ -724,7 +730,7 @@ pub(crate) fn served_declared(repo: &Path, ledger: &str, group: &str) -> std::re
 /// `served-payloads.py check` decides, so the verdict and its words are the script's.
 pub(crate) fn served_check(repo: &Path, ledger: &str, group: &str, line: &str) -> (bool, String) {
     use std::io::Write;
-    let child = Command::new(crate::endstate::python())
+    let child = Cmd::new(crate::endstate::python())
         .arg(repo.join("ops/scripts/served-payloads.py"))
         .args(["check", "--repo"])
         .arg(repo)

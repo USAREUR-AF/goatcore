@@ -281,6 +281,8 @@ pub struct Cmd {
     host: Option<String>,
     stdout_set: bool,
     stderr_set: bool,
+    /// The file the caller sends both streams to: then it is this command's log.
+    own_log: Option<PathBuf>,
 }
 
 impl Cmd {
@@ -288,6 +290,7 @@ impl Cmd {
         Cmd {
             inner: Command::new(program),
             host: None,
+            own_log: None,
             stdout_set: false,
             stderr_set: false,
         }
@@ -357,6 +360,14 @@ impl Cmd {
     }
 
     /// Where the command acts, for the frame and the record (`alpha_hosts`, `operator@192.0.2.10`).
+    /// The caller sends stdout and stderr to the file at `path` itself (a
+    /// parallel step's own log): the record and the frame name that file as the
+    /// command's log, and the runner copies nothing.
+    pub fn logged_at<P: AsRef<Path>>(&mut self, path: P) -> &mut Cmd {
+        self.own_log = Some(path.as_ref().to_path_buf());
+        self
+    }
+
     pub fn host<S: Into<String>>(&mut self, h: S) -> &mut Cmd {
         self.host = Some(h.into());
         self
@@ -491,6 +502,8 @@ impl Cmd {
         };
         let where_ = if terminal.is_some() {
             "no log: the command keeps the terminal".to_string()
+        } else if let Some(own) = &self.own_log {
+            format!("log {}", shown(own))
         } else if self.stdout_set && self.stderr_set {
             "no log: the caller's own streams".to_string()
         } else {
@@ -518,6 +531,10 @@ impl Cmd {
         // nor logs it, and the record says so rather than naming an empty log.
         let (log, log_note) = match (self.stdout_set, self.stderr_set) {
             _ if terminal.is_some() => (None, terminal),
+            _ if self.own_log.is_some() => (
+                self.own_log.clone(),
+                Some("the caller writes this log".to_string()),
+            ),
             (true, true) => (
                 None,
                 Some("not captured: stdout and stderr are the caller's own".to_string()),
@@ -997,6 +1014,31 @@ mod tests {
             "{f}"
         );
         assert_eq!(end().unwrap().phases[0].exit, Some(3));
+    }
+
+    #[test]
+    fn a_command_the_caller_logs_names_the_callers_file() {
+        let (_g, _sink) = capture();
+        let t = tempfile::tempdir().unwrap();
+        begin(t.path(), "standup", vec![], None);
+        phase("image-pull", "pull the images", "");
+        let own = t.path().join("pull.log");
+        let f = std::fs::File::create(&own).unwrap();
+        let mut child = Cmd::new("sh")
+            .args(["-c", "echo pulled"])
+            .stdout(Stdio::from(f.try_clone().unwrap()))
+            .stderr(Stdio::from(f))
+            .logged_at(&own)
+            .spawn()
+            .unwrap();
+        child.wait().unwrap();
+        assert!(frame().contains(&format!("(log {})", own.display())));
+        let cmds = end().unwrap().commands;
+        assert_eq!(
+            cmds[0].log.as_deref(),
+            Some(own.display().to_string().as_str())
+        );
+        assert_eq!(std::fs::read_to_string(&own).unwrap(), "pulled\n");
     }
 
     #[test]

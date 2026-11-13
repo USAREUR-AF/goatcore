@@ -21,7 +21,9 @@
 
 use std::collections::BTreeMap;
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
+
+use crate::runner::Cmd;
 
 use anyhow::{anyhow, Context, Result};
 use serde::Deserialize;
@@ -197,7 +199,7 @@ pub(crate) fn gv_value(file: &Path, key: &str) -> Option<String> {
 
 /// `python3 ops/scripts/inventory-hosts.py <groups...> [--ssh-target]`, one line per host.
 pub(crate) fn inventory_hosts(repo: &Path, groups: &[&str], ssh_target: bool) -> Vec<String> {
-    let mut c = Command::new("python3");
+    let mut c = Cmd::new("python3");
     c.arg(repo.join("ops/scripts/inventory-hosts.py")).args(groups);
     if ssh_target {
         c.arg("--ssh-target")
@@ -780,7 +782,8 @@ fn flush_waves(repo: &Path, s: &Site, q: &mut Vec<Queued>, checks: &mut Vec<Chec
         for i in &idx {
             let log = format!("{}/standup-{}-12-{}.log", s.state_dir, s.site, q[*i].id);
             let f = std::fs::File::create(&log)?;
-            let child = site_phase_command(repo, s, &q[*i].cmd).current_dir(repo).stdout(Stdio::from(f.try_clone()?)).stderr(Stdio::from(f)).spawn().context("bash")?;
+            crate::runner::phase("12", &q[*i].label, "");
+            let child = site_phase_command(repo, s, &q[*i].cmd).current_dir(repo).stdout(Stdio::from(f.try_clone()?)).stderr(Stdio::from(f)).logged_at(&log).spawn().context("bash")?;
             kids.push((*i, child, std::time::Instant::now(), log));
         }
         let mut failed = Vec::new();
@@ -810,7 +813,7 @@ fn flush_waves(repo: &Path, s: &Site, q: &mut Vec<Queued>, checks: &mut Vec<Chec
 /// The value of `export NAME="…"` as ops/scripts/envrc-var.sh prints it from the
 /// operator envrc, or None.
 fn envrc_export(repo: &Path, name: &str) -> Option<String> {
-    let out = Command::new(repo.join("ops/scripts/envrc-var.sh")).arg(name).output().ok()?;
+    let out = Cmd::new(repo.join("ops/scripts/envrc-var.sh")).arg(name).output().ok()?;
     if !out.status.success() {
         return None;
     }
@@ -855,8 +858,8 @@ fn in_range(n: u32, o: &Options) -> bool {
 /// One planned standup line, run the way goat-standup.sh runs it: through
 /// ops/scripts/standup-phase-run, which refuses an empty `$(printenv NAME)`,
 /// naming it, and under a value store reads the store afresh for each phase.
-fn phase_command(repo: &Path, cmd: &str) -> Command {
-    let mut c = Command::new(repo.join("ops/scripts/standup-phase-run"));
+fn phase_command(repo: &Path, cmd: &str) -> Cmd {
+    let mut c = Cmd::new(repo.join("ops/scripts/standup-phase-run"));
     c.arg(cmd);
     if let Some(p) = crate::secrets::test_lite_config() {
         c.env("GOAT_LITE_CONFIG", p);
@@ -865,7 +868,7 @@ fn phase_command(repo: &Path, cmd: &str) -> Command {
 }
 
 /// `phase_command` with the site's phase environment (`phase_env`).
-fn site_phase_command(repo: &Path, s: &Site, cmd: &str) -> Command {
+fn site_phase_command(repo: &Path, s: &Site, cmd: &str) -> Cmd {
     let mut c = phase_command(repo, cmd);
     c.envs(phase_env(s));
     c
@@ -981,7 +984,8 @@ pub fn standup(repo: &Path, o: &Options) -> Result<Report> {
                     std::fs::create_dir_all(d)?;
                 }
                 let f = std::fs::File::create(log)?;
-                let child = site_phase_command(repo, &s, cmd).current_dir(repo).stdout(Stdio::from(f.try_clone()?)).stderr(Stdio::from(f)).spawn().context("bash")?;
+                crate::runner::phase(&format!("observability-leg-{leg}"), label, "");
+                let child = site_phase_command(repo, &s, cmd).current_dir(repo).stdout(Stdio::from(f.try_clone()?)).stderr(Stdio::from(f)).logged_at(log).spawn().context("bash")?;
                 legs.insert(leg, (child, log.clone()));
             }
             Event::PullStart { label, cmd, log } => {
@@ -995,7 +999,8 @@ pub fn standup(repo: &Path, o: &Options) -> Result<Report> {
                     std::fs::create_dir_all(d)?;
                 }
                 let f = std::fs::File::create(log)?;
-                let child = site_phase_command(repo, &s, cmd).current_dir(repo).stdout(Stdio::from(f.try_clone()?)).stderr(Stdio::from(f)).spawn().context("bash")?;
+                crate::runner::phase("image-pull", label, "");
+                let child = site_phase_command(repo, &s, cmd).current_dir(repo).stdout(Stdio::from(f.try_clone()?)).stderr(Stdio::from(f)).logged_at(log).spawn().context("bash")?;
                 pulling = Some((child, log.clone()));
             }
             Event::PullJoin { at } => {
@@ -1060,6 +1065,7 @@ pub fn standup(repo: &Path, o: &Options) -> Result<Report> {
                     break 'run;
                 }
                 let t0 = std::time::Instant::now();
+                crate::runner::phase(&ph.n.to_string(), &ph.label, "");
                 let status = site_phase_command(repo, &s, &ph.cmd).current_dir(repo).status().context("bash")?;
                 let secs = t0.elapsed().as_secs();
                 let rc_now = status.code().unwrap_or(1);
@@ -1505,7 +1511,7 @@ pub fn teardown(repo: &Path, o: &Options, services: bool) -> Result<Report> {
     }
     for (component, cmd) in &cmds {
         let t0 = std::time::Instant::now();
-        let status = Command::new("bash").args(["-euo", "pipefail", "-c", cmd]).current_dir(repo).status().context("bash")?;
+        let status = Cmd::new("bash").args(["-euo", "pipefail", "-c", cmd]).current_dir(repo).status().context("bash")?;
         let rc = status.code().unwrap_or(1);
         checks.push(row("time", format!("teardown {component} took {}s (exit {rc})", t0.elapsed().as_secs())));
         if !status.success() {
@@ -1521,6 +1527,7 @@ pub fn teardown(repo: &Path, o: &Options, services: bool) -> Result<Report> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::process::Command;
 
     /// Both drivers run a planned line through the one runner that refuses an empty
     /// `$(printenv NAME)` (tests/test_standup_phase_run.py tests its refusal).
