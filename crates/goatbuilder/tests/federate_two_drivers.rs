@@ -401,3 +401,50 @@ fn a_two_driver_deploy_runs_nothing() {
         );
     }
 }
+
+/// `--side` is one flag, shared with `init --over-ssh`'s phase 3 halves, so
+/// GB-267 answers only `--side edge` on its own on a peering run. A
+/// misplaced flag for the built halves, or `--side edge` beside other
+/// measure flags or on `status`, gets the message it got before, never
+/// GB-267's advice to remove `drivers: two`.
+#[test]
+fn side_edge_is_gb_267_only_alone_on_a_peering_run() {
+    let w = world();
+    two_drivers(&w);
+    let (out, _) = w.run(&[
+        "--side",
+        "edge",
+        "init",
+        "--over-ssh",
+        "xab",
+        "--half-out",
+        "f",
+    ]);
+    let all = says(&out);
+    assert!(!out.status.success(), "{all}");
+    assert!(all.contains("after the word init"), "{all}");
+    assert!(!all.contains("GB-267"), "{all}");
+
+    let (out, _) = w.run(&[
+        "hello-ally",
+        "--over-ssh",
+        "xab",
+        "--side",
+        "edge",
+        "--half-out",
+        "f",
+    ]);
+    let all = says(&out);
+    assert!(!out.status.success(), "{all}");
+    assert!(all.contains("after the word init"), "{all}");
+    assert!(!all.contains("GB-267"), "{all}");
+
+    let (out, _) = w.run(&["status", "--side", "edge"]);
+    assert!(!says(&out).contains("GB-267"), "{}", says(&out));
+
+    let (out, _) = w.run(&["hello-ally", "--side", "edge"]);
+    let all = says(&out);
+    assert!(!out.status.success(), "{all}");
+    assert!(all.contains("GB-267"), "{all}");
+    assert!(!w.log().contains("preflight"), "{}", w.log());
+}
