@@ -264,6 +264,27 @@ documents now give the release's own identity:
 - **The pgbackrest role installs `cron`** before writing its backup schedule,
   so a minimal Debian 13 host no longer stops at the schedule task.
 
+#### Known issue: a federate run killed in phase 11 does not bring the link up on resume
+
+If a `goatbuilder federate` run is killed in phase 11 after it wrote the
+WireGuard link's files and before it restarted the link, the interface is
+left with no peer. Resuming with `--from 11` changes no file, so the link is
+not restarted: phase 11 refuses with "The interface does not hold what the
+agreement says", then phase 12 refuses. To recover, restart the peering
+WireGuard unit on the edge host (`systemctl restart` on the unit the role
+names in `peering_wg_service`), then resume with `--from 11`. A run that is
+not killed is not affected. 0.5.3 has the same gap. Fixed in the next
+release (#597).
+
+#### Fixed: the pre-deploy source check accepts a fix carried in two repositories
+
+The check that runs before every deploy (`ops/scripts/lib/source_of_record.py`,
+run by `fresh-source.sh` and by goatbuilder) refused a valid assembled tree
+when a pre-disclosure fix carried one patch in goatcore and one in goatstuff
+and both touched a file the two repositories share. Each patch is now judged
+against its own repository (#368). This shipped in 0.6.0 and was missing
+from its notes.
+
 #### Not in 0.6.0
 
 None of these ships switched on, and no command in 0.6.0 reaches them.
