@@ -220,3 +220,27 @@ PYTHON
   [[ "$output" == *"NO known history"* ]]
   [[ "$(cat "$COMPOSE_DIR/docker-compose.yml")" == *"$PREV_IMAGE"* ]]
 }
+
+@test "declared restore-only policy refuses before unavailable or legacy host ledgers" {
+  mkdir -p "$FIXTURE/ops/ansible/roles/microscope/meta"
+  cat > "$FIXTURE/ops/ansible/roles/microscope/meta/main.yml" <<'YAML'
+dependencies:
+  - role: rollback-ledger
+    vars:
+      rollback_reversible: false
+      rollback_restore_pointer: consistent-state snapshot required
+YAML
+  # Any host read would cross this tripwire. Source policy must decide first.
+  cat > "$BIN/ssh" <<'SH'
+#!/bin/sh
+echo unexpected-host-read >&2
+exit 99
+SH
+  chmod +x "$BIN/ssh"
+  run_rollback microscope 1
+  [ "$status" -eq 3 ] || { printf '%s\n' "$output" >&3; return 1; }
+  [[ "$output" == *"consistent-state snapshot required"* ]]
+  [[ "$output" != *"unexpected-host-read"* ]]
+  [[ "$(cat "$COMPOSE_DIR/docker-compose.yml")" == *"$PREV_IMAGE"* ]]
+  [[ "$(cat "$COMPOSE_DIR/.env")" == *"STALE_SENTINEL_VALUE"* ]]
+}

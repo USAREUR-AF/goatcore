@@ -1,0 +1,4 @@
+---
+# Server first, then all agents. See docs/design/spire-upgrades.md.
+spire_server_image: ghcr.io/spiffe/spire-server:1.12.6@sha256:65308aacf6ded62ed2037003b6d9598fcf63147944013ddc45b5a1fd07592fea
+spire_agent_image: ghcr.io/spiffe/spire-agent:1.12.6@sha256:9398a2f625e4f03aab1e5823514015b6baf53cbe49d6dfe9f0b1907f8bdd9cf4

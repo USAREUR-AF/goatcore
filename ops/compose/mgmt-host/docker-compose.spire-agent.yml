@@ -22,9 +22,9 @@
 
 services:
   spire-agent:
-    # Tag-only dev default; the deploy overrides SPIRE_AGENT_IMAGE with the
-    # digest from the generated pins, same as the co-located overlay.
-    image: ${SPIRE_AGENT_IMAGE:-ghcr.io/spiffe/spire-agent:1.11.2}
+    # Immutable default matches fleet-pins.yaml. Upgrade the CA holder first;
+    # see docs/design/spire-upgrades.md for intermediate stages.
+    image: ${SPIRE_AGENT_IMAGE:-ghcr.io/spiffe/spire-agent:1.16.0@sha256:ab3a8ce70435374cc5d84c81eabf0278dc046ddbc0a736d59694ba9e5975b1b6}
     container_name: spire-agent
     restart: unless-stopped
     command: ["-config", "/run/spire/config/agent.conf", "-expandEnv"]

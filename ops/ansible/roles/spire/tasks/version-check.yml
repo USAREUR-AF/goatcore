@@ -1,0 +1,170 @@
+---
+# SPIRE supports one minor at a time, servers before agents. Run before renders
+# or compose up. A stopped/unreadable existing runtime is an error, not a new install.
+- name: spire | require an immutable agent image
+  ansible.builtin.assert:
+    that:
+      - spire_agent_image is match('^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$')
+    fail_msg: "SPIRE needs a digest pin; see docs/design/spire-upgrades.md."
+
+- name: spire | require an immutable server image
+  ansible.builtin.assert:
+    that:
+      - spire_server_image is match('^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$')
+  when: not (spire_agent_only | default(false) | bool)
+
+# The digest selects executable bytes; a tag alone cannot establish a version.
+# No deployment state, credentials, host sockets or network enter these probes.
+- name: spire | read the candidate agent version from its immutable image
+  ansible.builtin.command:
+    argv: [docker, run, --rm, --network, none, --read-only, --cap-drop, ALL,
+           --security-opt, no-new-privileges, --user, '1000:1000',
+           --entrypoint, "{{ spire_bin_dir }}/spire-agent", "{{ spire_agent_image }}", -version]
+  register: spire_candidate_agent
+  changed_when: false
+
+- name: spire | read the candidate server version from its immutable image
+  ansible.builtin.command:
+    argv: [docker, run, --rm, --network, none, --read-only, --cap-drop, ALL,
+           --security-opt, no-new-privileges, --user, '1000:1000',
+           --entrypoint, "{{ spire_bin_dir }}/spire-server", "{{ spire_server_image }}", -version]
+  register: spire_candidate_server
+  changed_when: false
+  when: not (spire_agent_only | default(false) | bool)
+
+# SPIRE prints -version to stderr. Docker may emit pull diagnostics there too.
+# Accept exactly one complete version line across both streams, never a tag.
+- name: spire | collect candidate version lines
+  ansible.builtin.set_fact:
+    spire_candidate_agent_versions: "{{ (spire_candidate_agent.stdout_lines + spire_candidate_agent.stderr_lines) | select('match', '^1[.][0-9]+[.][0-9]+$') | list }}"
+    spire_candidate_server_versions: "{{ ((spire_candidate_server.stdout_lines | default([])) + (spire_candidate_server.stderr_lines | default([]))) | select('match', '^1[.][0-9]+[.][0-9]+$') | list }}"
+
+- name: spire | require a supported candidate agent version
+  ansible.builtin.assert:
+    that: spire_candidate_agent_versions | length == 1
+
+- name: spire | require a supported candidate server version
+  ansible.builtin.assert:
+    that: spire_candidate_server_versions | length == 1
+  when: not (spire_agent_only | default(false) | bool)
+
+- name: spire | bind any advertised agent version to the executed digest
+  ansible.builtin.assert:
+    that:
+      - (spire_agent_image.split('@')[0].split(':')[-1] | regex_replace('^v', '')) == (spire_candidate_agent_versions | first)
+  when: spire_agent_image.split('@')[0].split(':')[-1] is match('^v?[0-9]+[.][0-9]+[.][0-9]+$')
+
+- name: spire | bind any advertised server version to the executed digest
+  ansible.builtin.assert:
+    that:
+      - (spire_server_image.split('@')[0].split(':')[-1] | regex_replace('^v', '')) == (spire_candidate_server_versions | first)
+  when:
+    - not (spire_agent_only | default(false) | bool)
+    - spire_server_image.split('@')[0].split(':')[-1] is match('^v?[0-9]+[.][0-9]+[.][0-9]+$')
+
+- name: spire | find the existing server container
+  ansible.builtin.command:
+    argv: [docker, container, ls, --all, --filter, 'name=^/spire-server$', --quiet]
+  delegate_to: "{{ spire_ca_holder if (spire_agent_only | default(false) | bool) else inventory_hostname }}"
+  register: spire_existing_server
+  changed_when: false
+
+- name: spire | detect persisted server keys without a container
+  ansible.builtin.stat:
+    path: "{{ spire_data_dir }}/server/keys.json"
+  register: spire_persisted_server_keys
+  when: not (spire_agent_only | default(false) | bool)
+
+- name: spire | refuse to treat existing CA state as a fresh install
+  ansible.builtin.assert:
+    that:
+      - not spire_persisted_server_keys.stat.exists or (spire_existing_server.stdout | trim | length > 0)
+    fail_msg: "Existing CA state needs its prior runtime restored before an upgrade."
+  when: not (spire_agent_only | default(false) | bool)
+
+- name: spire | agent-only deployment needs a running server first
+  ansible.builtin.assert:
+    that: spire_existing_server.stdout | trim | length > 0
+  when: spire_agent_only | default(false) | bool
+
+- name: spire | read existing server version
+  ansible.builtin.command:
+    argv: [docker, exec, spire-server, "{{ spire_bin_dir }}/spire-server", -version]
+  delegate_to: "{{ spire_ca_holder if (spire_agent_only | default(false) | bool) else inventory_hostname }}"
+  register: spire_running_server
+  changed_when: false
+  when: spire_existing_server.stdout | trim | length > 0
+
+- name: spire | find the existing local agent container
+  ansible.builtin.command:
+    argv: [docker, container, ls, --all, --filter, 'name=^/spire-agent$', --quiet]
+  register: spire_existing_agent
+  changed_when: false
+
+- name: spire | detect persisted local agent state
+  ansible.builtin.stat:
+    path: "{{ spire_data_dir }}/agent/agent-data.json"
+  register: spire_persisted_agent_state
+
+- name: spire | refuse to treat an existing agent as a fresh install
+  ansible.builtin.assert:
+    that:
+      - not spire_persisted_agent_state.stat.exists or (spire_existing_agent.stdout | trim | length > 0)
+    fail_msg: "Existing agent state needs its prior runtime restored before an upgrade."
+
+- name: spire | read existing agent version
+  ansible.builtin.command:
+    argv: [docker, exec, spire-agent, "{{ spire_bin_dir }}/spire-agent", -version]
+  register: spire_running_agent
+  changed_when: false
+  when: spire_existing_agent.stdout | trim | length > 0
+
+- name: spire | collect existing runtime version lines
+  ansible.builtin.set_fact:
+    spire_running_server_versions: "{{ ((spire_running_server.stdout_lines | default([])) + (spire_running_server.stderr_lines | default([]))) | select('match', '^1[.][0-9]+[.][0-9]+$') | list }}"
+    spire_running_agent_versions: "{{ ((spire_running_agent.stdout_lines | default([])) + (spire_running_agent.stderr_lines | default([]))) | select('match', '^1[.][0-9]+[.][0-9]+$') | list }}"
+
+- name: spire | require parseable running versions
+  ansible.builtin.assert:
+    that:
+      - spire_running_server_versions | length == 1
+  when: spire_existing_server.stdout | trim | length > 0
+
+- name: spire | require parseable running agent version
+  ansible.builtin.assert:
+    that:
+      - spire_running_agent_versions | length == 1
+  when: spire_existing_agent.stdout | trim | length > 0
+
+- name: spire | resolve version targets
+  ansible.builtin.set_fact:
+    spire_target_agent_version: "{{ spire_candidate_agent_versions | first }}"
+    spire_target_server_version: >-
+      {{ (spire_running_server_versions | first) if (spire_agent_only | default(false) | bool)
+         else (spire_candidate_server_versions | first) }}
+
+- name: spire | refuse agent-before-server and unsupported skew
+  ansible.builtin.assert:
+    that:
+      - spire_target_agent_version is version(spire_target_server_version, '<=')
+      - (spire_target_server_version.split('.')[1] | int) - (spire_target_agent_version.split('.')[1] | int) <= 1
+    fail_msg: "Upgrade the CA holder first; agents must be at its version or one minor behind."
+
+- name: spire | refuse skipped server minors or an image-only downgrade
+  ansible.builtin.assert:
+    that:
+      - spire_target_server_version is version(spire_running_server_versions | first, '>=')
+      - (spire_target_server_version.split('.')[1] | int) - ((spire_running_server_versions | first).split('.')[1] | int) <= 1
+    fail_msg: "SPIRE requires one minor per stage. Downgrade requires consistent state restore; see docs/design/spire-upgrades.md."
+  when:
+    - not (spire_agent_only | default(false) | bool)
+    - spire_existing_server.stdout | trim | length > 0
+
+- name: spire | refuse skipped agent minors or an image-only downgrade
+  ansible.builtin.assert:
+    that:
+      - spire_target_agent_version is version(spire_running_agent_versions | first, '>=')
+      - (spire_target_agent_version.split('.')[1] | int) - ((spire_running_agent_versions | first).split('.')[1] | int) <= 1
+      - (spire_target_server_version.split('.')[1] | int) - ((spire_running_agent_versions | first).split('.')[1] | int) <= 1
+    fail_msg: "Converge the previous SPIRE agent stage before advancing the server; restore state for downgrades."
+  when: spire_existing_agent.stdout | trim | length > 0
