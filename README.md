@@ -54,7 +54,7 @@ The fastest way to see goat is a rehearsal: `goatbuilder` stands up a complete e
 git clone https://github.com/usareur-af/goatcore && cd goatcore
 
 OS="$(uname -s | tr '[:upper:]' '[:lower:]')"; ARCH="$(uname -m | sed 's/x86_64/amd64/; s/aarch64/arm64/')"
-curl -fsSL -o goatbuilder "https://github.com/usareur-af/goatcore/releases/download/goatbuilder/v0.5.3/goatbuilder-$OS-$ARCH"
+curl -fsSL -o goatbuilder "https://github.com/usareur-af/goatcore/releases/download/goatbuilder/v0.6.0/goatbuilder-$OS-$ARCH"
 chmod +x goatbuilder
 
 WORK="$(mktemp -d)/zagros"
