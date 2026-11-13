@@ -7,7 +7,8 @@
 #      lines to {{ peer_health_feed_dir }}/router.log
 #   2. append a heartbeat line, so the reader can tell "no rejections" from
 #      "the feed stopped"
-#   3. write the router's current session list to sessions.json
+#   3. write the router's current session list to sessions.json and the
+#      router's own Zenoh ID to router.zid
 # The reader container mounts the directory read-only.
 set -u
 DIR="{{ peer_health_feed_dir }}"
@@ -21,7 +22,15 @@ mkdir -p "$DIR"
 
 heartbeat() {
   while :; do
-    printf '%s  INFO peer-health-feed: alive\n' "$(date -u +%Y-%m-%dT%H:%M:%S.%6NZ)" >> "$LOG"
+    now=$(date -u +%Y-%m-%dT%H:%M:%S.%6NZ)
+    # The heartbeat also tells the reader which router it sits beside: the
+    # reader learns that from a "Using ZID:" line, and the router's own
+    # start-up line is not in this feed.
+    if [ -s "$DIR/router.zid" ]; then
+      printf '%s  INFO peer-health-feed: alive. Using ZID: %s\n' "$now" "$(cat "$DIR/router.zid")" >> "$LOG"
+    else
+      printf '%s  INFO peer-health-feed: alive\n' "$now" >> "$LOG"
+    fi
     size=$(stat -c %s "$LOG" 2>/dev/null || echo 0)
     [ "$size" -gt "$MAX" ] && : > "$LOG"
     sleep {{ peer_health_feed_heartbeat_secs }}
@@ -36,7 +45,11 @@ sessions() {
 import json, os, sys
 src, dst = sys.argv[1], sys.argv[2]
 zids = []
+router = ""
 for entry in json.load(open(src)):
+    parts = (entry.get("key") or "").split("/")
+    if len(parts) >= 3 and parts[0] == "@" and parts[2] == "router":
+        router = parts[1]
     for s in (entry.get("value") or {}).get("sessions") or []:
         z = s.get("peer")
         if z and z not in zids:
@@ -44,6 +57,10 @@ for entry in json.load(open(src)):
 tmp = dst + ".tmp"
 json.dump(sorted(zids), open(tmp, "w"))
 os.replace(tmp, dst)
+if router:
+    ztmp = os.path.join(os.path.dirname(dst), ".router.zid.tmp")
+    open(ztmp, "w").write(router + "\n")
+    os.replace(ztmp, os.path.join(os.path.dirname(dst), "router.zid"))
 PY
     fi
     sleep {{ peer_health_sessions_refresh_secs }}
