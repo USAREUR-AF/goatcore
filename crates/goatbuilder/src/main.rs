@@ -19,6 +19,7 @@ mod converger;
 mod docs;
 mod doctor;
 mod endstate;
+mod explain_phase;
 mod fastlane;
 mod federate;
 mod fresh;
@@ -954,6 +955,11 @@ fn explanation_for_stdout(text: &str) -> String {
 }
 
 fn explain(input: &[String], report: bool, list: bool, format: OutputFormat) -> i32 {
+    if !list {
+        if let Some(exit) = explain_phase::dispatch(input, report, format) {
+            return exit;
+        }
+    }
     let cat = goat_errors::catalog();
     if list {
         match format {
@@ -1300,9 +1306,14 @@ fn main() {
         let exit = explain(input, *report, *list, cli.output);
         // The tutor sees an explain run by the codes it named.
         let text = input.join(" ");
-        let codes: Vec<String> = match goat_errors::explain(text.trim()) {
-            Some(e) => vec![e.code.clone()],
-            None => goat_errors::interpret(&text).hits.iter().map(|h| h.code.clone()).collect(),
+        // A phase answer names no error: the tutor logs no codes for it.
+        let codes: Vec<String> = if explain_phase::is_phase_query(input) {
+            Vec::new()
+        } else {
+            match goat_errors::explain(text.trim()) {
+                Some(e) => vec![e.code.clone()],
+                None => goat_errors::interpret(&text).hits.iter().map(|h| h.code.clone()).collect(),
+            }
         };
         let rows = codes.into_iter().map(|c| Check { name: "explain".into(), ok: true, detail: c, fix: None }).collect();
         let mut r = Report::new("explain", rows, exit);

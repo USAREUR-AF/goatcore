@@ -1,0 +1,22 @@
+# explain with a verb and no phase lists the verb's phases.
+bin.name = "goatbuilder"
+args = ["explain", "federate"]
+stdout = """
+federate: 14 phases. goatbuilder explain federate <phase> answers for one, by number or id.
+
+  1  preflight   plan    GATE     preflight, fail-closed
+  2  prepare     plan    A        prepare what the package measures: the federation interface and the SPIRE bundle
+  3  init        plan    T        `init` — our half, measured
+  4  lint        plan    T        `lint`
+  5  exchange    plan    CONFIRM  exchange through the directory; read the key and CA fingerprint **aloud**
+  6  compose     plan    T        `compose`
+  7  verify      plan    T        `verify`
+  8  mint        plan    T        validate or mint the peering leaves
+  9  apply       plan    T        `apply --confirm`
+ 10  admit       deploy  MANUAL   admit the edge on our core
+ 11  transport   deploy  A        open the transport the AGREEMENT selected
+ 12  edge        deploy  A        deploy the edge, then the outbound republisher (`peering-zenoh-edge.yml`, then `peering-republisher.yml` with `--limit <peering>_core`)
+ 13  spire       deploy  A        federate the SPIRE trust domains (ADR 1157 step 2)
+ 14  acceptance  test    GATE     acceptance: carries, refuses, and round-trips
+"""
+stderr = ""

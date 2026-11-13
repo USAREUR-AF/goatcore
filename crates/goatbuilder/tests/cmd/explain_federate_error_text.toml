@@ -1,0 +1,17 @@
+# error text after a catalog verb is still interpreted, not taken for a phase.
+bin.name = "goatbuilder"
+args = ["explain", "federate", "refused"]
+stdout = """
+federate refused
+  not recognised exactly; the nearest catalog entries:
+  [nearest: 2 shared words, score 1.00]
+  GB-183 — a federate phase failed
+    what: The word the run journal records for a phase that exited non-zero, with its exit code. The run stopped there; no later phase ran.
+    why:  the phase's own error, printed above it (a `goat federate` exit 20 to 24, a play's failed task, a refused gate)
+    fix:  fix the cause, then run the same command again; with --resume, the phases found unchanged are not run again
+    read: docs/operations/sovereign-federation-runbook.md
+    exit: 1
+  if none of these is it: goatbuilder explain --report -   (writes ~/.goat/error-reports/<stamp>.txt to share)
+"""
+stderr = ""
+status.code = 1
