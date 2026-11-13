@@ -15,7 +15,7 @@ permissions:
   contents: read
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 jobs:
   # The eviction alerts, checked with the promtool of the Prometheus the
   # goat-obs stack runs (prom/prometheus:v2.54.1), so a rule that passes here

@@ -1,0 +1,22 @@
+# Fields a document format carries only on some of its entries (README.md,
+# "Conditional fields"). The A4 check compares a kept document with this build's
+# as a superset of fields, merged over every entry of a list. A field listed here
+# is held per entry instead: it may be absent from an entry its condition does not
+# name, and must still be present, with the release's type, on every entry it does.
+# An entry is reviewed like a deprecation: it says why the field is conditional.
+#
+#   - format: goat-errors.interpretation/v1   # the document's `schema:`, wherever it sits
+#     items: hits[]                           # the list of entries, inside that object
+#     field: score                            # the field the entries carry only sometimes
+#     present_when: {layer: lexical}          # the entries that carry it
+#     reason: why the others do not
+conditional:
+  - format: goat-errors.interpretation/v1
+    items: hits[]
+    field: score
+    present_when: {layer: lexical}
+    reason: >-
+      A lexical hit is a guess, and its score is how close the words came. A code
+      or pattern hit is a match, with no score (crates/goat-errors/src/lib.rs,
+      Hit.score). When a refusal gains its own code, its lexical guesses become one
+      code hit, and the score goes with them.

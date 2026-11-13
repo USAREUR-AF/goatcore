@@ -28,7 +28,7 @@ permissions:
 
 concurrency:
   group: goat-cli-pr-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 defaults:
   run:
