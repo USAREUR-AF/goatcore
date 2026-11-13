@@ -201,8 +201,8 @@ impl Proc {
 /// The recorder. It records the invocation, then, by `GB_REC_MODE`, exits 0
 /// (`stub`) or runs the real program of the same name from `GB_REC_PATH` (`pass`);
 /// a `pass` with no real program fails loudly. When the program and its first
-/// argument are `GB_REC_SAY_FOR`, it first prints `GB_REC_SAY` on stdout, as a
-/// child that talks would. Its own tools come from
+/// argument are `GB_REC_SAY_FOR`, or its arguments contain `GB_REC_SAY_WHEN`,
+/// it first prints `GB_REC_SAY` on stdout, as a child that talks would. Its own tools come from
 /// `GB_REC_PATH`, since the tool's PATH holds only recorders.
 const RECORDER: &str = r#"#!/bin/sh
 # goatbuilder C11 recorder (crates/goatbuilder/tests/legibility.rs)
@@ -225,6 +225,10 @@ printf '%s
 if [ -n "${GB_REC_SAY_FOR:-}" ] && [ "$name ${1:-}" = "$GB_REC_SAY_FOR" ]; then
   printf '%s
 ' "${GB_REC_SAY:?}"
+fi
+if [ -n "${GB_REC_SAY_WHEN:-}" ]; then
+  case " $* " in *"$GB_REC_SAY_WHEN"*) printf '%s
+' "${GB_REC_SAY:?}" ;; esac
 fi
 if [ "${GB_REC_MODE:-stub}" = pass ]; then
   ifs=$IFS; IFS=:
@@ -1243,7 +1247,12 @@ fn a_two_group_deploy_records_a_phase_per_group() {
         &format!("portal_image: \"{PORTAL_REF}\"\n"),
     );
     let args = ["deploy", "-C", r, "--env", "dev", "--component", "portal", "--ack", "A Person", "--yes"];
-    let (out, procs) = run_recorded(h.command(&args), &h.root.path().join("rec/two"));
+    // dev_edge's play prints a clean recap, so its deploy succeeds and its
+    // verify runs; dev_hosts's prints none, so its deploy fails.
+    let mut cmd = h.command(&args);
+    cmd.env("GB_REC_SAY_WHEN", "target=dev_edge")
+        .env("GB_REC_SAY", "PLAY RECAP ***\ndev-edge-a : ok=1 changed=0 unreachable=0 failed=0");
+    let (out, procs) = run_recorded(cmd, &h.root.path().join("rec/two"));
     ran("deploy, two groups", &out, &procs, &[0, 3]);
     let records = run_records(h.root.path(), "deploy");
     assert_eq!(records.len(), 1, "one run record: {records:?}");
@@ -1253,14 +1262,17 @@ fn a_two_group_deploy_records_a_phase_per_group() {
         .flatten()
         .filter_map(|p| p["id"].as_str().map(String::from))
         .collect();
+    let phase = |id: &str| records[0]["phases"].as_array().unwrap().iter().find(|p| p["id"] == id).cloned();
     for g in ["dev_hosts", "dev_edge"] {
         assert!(ids.contains(&format!("deploy:{g}")), "no phase deploy:{g} in {ids:?}");
-        // The recorder prints no play recap, so each group's deploy fails; its
-        // verify step is still a phase of the record, with its verdict.
         assert!(ids.contains(&format!("verify:{g}")), "no phase verify:{g} in {ids:?}");
-        let verify = records[0]["phases"].as_array().unwrap().iter().find(|p| p["id"] == format!("verify:{g}").as_str()).unwrap();
-        assert_eq!(verify["verdict"], "not checked: the deploy failed", "{verify}");
     }
+    // dev_edge's verify ran: it read the ledger, and gave no skip verdict.
+    let edge = phase("verify:dev_edge").unwrap();
+    assert!(edge["commands"].as_u64().unwrap_or(0) > 0 && edge["verdict"].is_null(), "verify:dev_edge did not run: {edge}");
+    // dev_hosts's deploy failed: its verify is a phase with its verdict.
+    let hosts = phase("verify:dev_hosts").unwrap();
+    assert_eq!(hosts["verdict"], "not checked: the deploy failed", "{hosts}");
     let unique: BTreeSet<&String> = ids.iter().collect();
     assert_eq!(unique.len(), ids.len(), "a phase id repeats: {ids:?}");
 }
