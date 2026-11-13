@@ -670,14 +670,16 @@ fn interactive_in(list: &str, line: &str) -> Option<String> {
         })
 }
 
-/// Copy a child's stream to our stdout (or stderr) and to the log, as it arrives.
-/// Where a child's stdout goes as it streams. Under `-o json` or `-o yaml`
-/// stdout is the report a script parses, so a child's output goes to stderr
-/// (and to its log, as always); at a terminal or `-o table` it stays on stdout.
+/// Where a child's stdout goes as it streams inside a run. Under `-o json` or
+/// `-o yaml` stdout is the report a script parses, so a child's output goes to
+/// stderr (and to its log, as always); at a terminal or `-o table` it stays on
+/// stdout. Outside a run, and for a command that keeps the terminal, the child
+/// inherits stdout as `Command` gives it.
 fn stdout_to_stderr() -> bool {
     crate::output::machine_output()
 }
 
+/// Copy a child's stream to our stdout (or stderr) and to the log, as it arrives.
 fn copy_in_background<R: Read + Send + 'static>(
     mut from: R,
     log: Option<Arc<Mutex<std::fs::File>>>,
