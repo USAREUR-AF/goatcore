@@ -1272,6 +1272,21 @@
         key_exprs: ["ops/time/health/**"],
       },
 
+      // goat-peer-health reader (ADR 1232, peer-fault-handling.md) writes ONLY
+      // the per-site peer-fault roll-up ops/peer/health/** (EnvHealthV1{domain:
+      // "peer"}) and the per-peer verdict documents ops/peer/verdict/**. It
+      // subscribes nothing: its input is the router's own log, fed to it on the
+      // host. Operator-minted leaf carries CN=goat-peer-health-trial-peer.
+      // INGRESS-only. Present in BOTH ACL modes (an infra peer); inert until a
+      // cert with that CN connects.
+      {
+        id: "infra-w-peer-health",
+        messages: ["put", "delete"],
+        flows: ["ingress"],
+        permission: "allow",
+        key_exprs: ["ops/peer/health/**", "ops/peer/verdict/**"],
+      },
+
       // goat-mesh-health meter (ADR 1042) writes ONLY the per-site mesh-health
       // viewing sub-namespace ops/mesh/health/** (the per-site
       // EnvHealthV1{domain:"mesh"} reading graded from the vantage host's own
@@ -1684,6 +1699,14 @@
         cert_common_names: ["goat-time-health-trial-peer"],
       },
 
+      // goat-peer-health reader — operator-minted leaf carries
+      // CN=goat-peer-health-trial-peer (ADR 1232 infra peer). Least-privilege
+      // ops/peer/health/** and ops/peer/verdict/** writer; both modes.
+      {
+        id: "infra-peer-health",
+        cert_common_names: ["goat-peer-health-trial-peer"],
+      },
+
       // goat-mesh-health meter — operator-minted leaf carries
       // CN=goat-mesh-health-trial-peer (ADR 1042 infra peer). Least-privilege
       // ops/mesh/health/** writer; both modes.
@@ -1902,6 +1925,7 @@
       { rules: ["trial-peer-r-all", "trial-peer-deliver-all", "infra-w-keys"], subjects: ["infra-keyd"] },
       { rules: ["trial-peer-r-all", "trial-peer-deliver-all", "infra-w-time-attest"], subjects: ["infra-ntp-health-pub"] },
       { rules: ["trial-peer-r-all", "trial-peer-deliver-all", "infra-w-time-health"], subjects: ["infra-time-health"] },
+      { rules: ["trial-peer-r-all", "trial-peer-deliver-all", "infra-w-peer-health"], subjects: ["infra-peer-health"] },
       { rules: ["trial-peer-r-all", "trial-peer-deliver-all", "infra-w-mesh-health"], subjects: ["infra-mesh-health"] },
       // The assay probe: its own round-trip writes and nothing else. No read
       // rule here on purpose — it reads through the universal subject, so the

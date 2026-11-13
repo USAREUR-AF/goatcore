@@ -45,6 +45,7 @@
       mesh-health: /opt/mesh-health/certs
       presence-health: /opt/presence-health/certs
       time-health: /opt/time-health/certs
+      peer-health: /opt/peer-health/certs
       consistency-health: /opt/consistency-health/certs
       fabric-crawler: /opt/fabric-health/certs
       goat-topology: /opt/goat-topology/certs

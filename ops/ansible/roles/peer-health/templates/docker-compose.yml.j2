@@ -1,0 +1,59 @@
+# {{ ansible_managed }}
+#
+# goat-peer-health reader for {{ peer_health_site }}. Rendered by
+# ops/ansible/roles/peer-health/ (ADR 1232). One container, mTLS Zenoh client of
+# the router: reads the feed file the host unit writes and publishes
+# ops/peer/health/{{ peer_health_site }} and ops/peer/verdict/<zid>. No docker
+# socket, no secrets, no .env.
+
+services:
+  peer-health:
+    image: {{ peer_health_image }}
+    container_name: peer-health
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    restart: unless-stopped
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    networks:
+      - zenoh
+    environment:
+      PEER_HEALTH_ENDPOINT: "{{ peer_health_zenoh_endpoint }}"
+      PEER_HEALTH_SITE: "{{ peer_health_site }}"
+      PEER_HEALTH_LOG_FILE: "/feed/router.log"
+      PEER_HEALTH_INTERVAL_MS: "{{ peer_health_interval_ms }}"
+      PEER_HEALTH_WINDOW_SECS: "{{ peer_health_window_secs }}"
+      PEER_HEALTH_CLEAN_AFTER_SECS: "{{ peer_health_clean_after_secs }}"
+      PEER_HEALTH_SILENCE_AFTER_SECS: "{{ peer_health_silence_after_secs }}"
+{% if peer_health_router_admin_url %}
+      PEER_HEALTH_SESSIONS_FILE: "/feed/sessions.json"
+{% endif %}
+{% if peer_health_peering %}
+      PEER_HEALTH_PEERING: "{{ peer_health_peering }}"
+{% endif %}
+{% if peer_health_peers %}
+      PEER_HEALTH_PEERS_FILE: "/config/peers.json"
+{% endif %}
+      RUST_LOG: "{{ peer_health_rust_log }}"
+{% if peer_health_zenoh_endpoint.startswith('tls/') %}
+      PEER_HEALTH_CERT: "/certs/peer-health-cert.pem"
+      PEER_HEALTH_KEY_FILE: "/certs/peer-health-key.pem"
+      PEER_HEALTH_ROOT_CA: "/ca/ca-root.pem"
+{% endif %}
+    volumes:
+      - "{{ peer_health_feed_dir }}:/feed:ro"
+{% if peer_health_peers %}
+      - "{{ peer_health_compose_dir }}/peers.json:/config/peers.json:ro"
+{% endif %}
+{% if peer_health_zenoh_endpoint.startswith('tls/') %}
+      - "{{ peer_health_cert_dir }}:/certs:ro"
+      - "{{ peer_health_ca_root_src }}:/ca/ca-root.pem:ro"
+{% endif %}
+
+networks:
+  zenoh:
+    name: {{ peer_health_zenoh_network }}
+    external: true

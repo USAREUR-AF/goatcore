@@ -112,6 +112,10 @@ leaves:
     cn: goat-time-health-trial-peer
     sans: [goat-time-health-trial-peer]
     uri_sans: ["urn:goat:<SITE>:infra:time-health"]
+  - name: peer-health
+    cn: goat-peer-health-trial-peer
+    sans: [goat-peer-health-trial-peer]
+    uri_sans: ["urn:goat:<SITE>:infra:peer-health"]
   - name: consistency-health
     cn: goat-consistency-health-trial-peer
     sans: [goat-consistency-health-trial-peer]

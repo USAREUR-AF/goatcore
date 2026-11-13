@@ -1,0 +1,160 @@
+---
+# SPDX-License-Identifier: Apache-2.0
+#
+# Deploy the goat-peer-health reader beside a Zenoh router (ADR 1232,
+# docs/design/peer-fault-handling.md).
+#
+# Pre-flight (operator-side, NOT this role):
+#   1. The router container is Healthy and its rendered config carries the ACL
+#      rule `infra-w-peer-health` (roles/goat-zenoh; a router rendered before
+#      that rule existed denies every publish silently).
+#   2. Infra leaf cert + key minted via the offline-CA cert-sign with Subject
+#      CN=goat-peer-health-trial-peer at
+#      {{ peer_health_cert_dir }}/peer-health-{cert,key}.pem.
+#   3. CA root present at {{ peer_health_ca_root_src }}.
+
+- name: peer-health | the image pin is set
+  ansible.builtin.assert:
+    that:
+      - peer_health_image | length > 0
+    fail_msg: >-
+      peer_health_image is empty. The role carries no pin: set it in the
+      goatnet's pin table (ops/pins/fleet-pins.yaml) or in its group_vars.
+    quiet: true
+
+- name: peer-health | pre-flight leaf cert exists (when tls/ endpoint)
+  ansible.builtin.stat:
+    path: "{{ peer_health_cert_dir }}/peer-health-cert.pem"
+  register: peer_health_cert_stat
+  when: peer_health_zenoh_endpoint is match('^tls/')
+
+- name: peer-health | fail on missing leaf cert
+  ansible.builtin.fail:
+    msg: >-
+      peer-health: leaf cert missing at
+      {{ peer_health_cert_dir }}/peer-health-cert.pem. Mint one via the offline-CA
+      cert-sign ceremony (Subject CN=goat-peer-health-trial-peer) before re-running
+      (see docs/operations/dev-ca-cert-sign.md).
+  when:
+    - peer_health_zenoh_endpoint is match('^tls/')
+    - peer_health_cert_stat is not skipped
+    - not (peer_health_cert_stat.stat.exists | default(false))
+
+- name: peer-health | pre-flight CA root exists (when tls/ endpoint)
+  ansible.builtin.stat:
+    path: "{{ peer_health_ca_root_src }}"
+  register: peer_health_ca_root_stat
+  when: peer_health_zenoh_endpoint is match('^tls/')
+
+- name: peer-health | fail on missing CA root
+  ansible.builtin.fail:
+    msg: >-
+      peer-health: CA root cert missing at {{ peer_health_ca_root_src }}. It is the
+      file the router uses, so its absence means the router is not deployed here.
+  when:
+    - peer_health_zenoh_endpoint is match('^tls/')
+    - peer_health_ca_root_stat is not skipped
+    - not (peer_health_ca_root_stat.stat.exists | default(false))
+
+- name: peer-health | the router's rendered config carries the reader's ACL rule
+  ansible.builtin.command:
+    cmd: "docker exec {{ peer_health_router_container }} grep -c infra-w-peer-health /etc/zenoh/config.json5"
+  register: peer_health_acl_probe
+  changed_when: false
+  failed_when: false
+
+- name: peer-health | warn when the router predates the ACL rule
+  ansible.builtin.debug:
+    msg: >-
+      peer-health: could not confirm the rule infra-w-peer-health in the running
+      router's config ({{ peer_health_router_container }}). A router rendered
+      before that rule existed denies every publish from this reader silently.
+      Re-render and restart the router (goat-zenoh deploy), then check a live
+      subscriber on ops/peer/health/{{ peer_health_site }}.
+  when: (peer_health_acl_probe.stdout | default('0') | trim) in ['', '0']
+
+- name: peer-health | normalize cert dir ownership for the container uid 65532
+  ansible.builtin.file:
+    path: "{{ peer_health_cert_dir }}"
+    owner: "65532"
+    group: "65532"
+    recurse: true
+  when: peer_health_zenoh_endpoint is match('^tls/')
+
+- name: peer-health | ensure compose and feed dirs
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - "{{ peer_health_compose_dir }}"
+    - "{{ peer_health_feed_dir }}"
+
+- name: peer-health | install the feed script
+  ansible.builtin.template:
+    src: peer-health-feed.sh.j2
+    dest: /usr/local/sbin/peer-health-feed
+    owner: root
+    group: root
+    mode: "0755"
+  notify: restart peer-health-feed
+
+- name: peer-health | install the feed unit
+  ansible.builtin.template:
+    src: peer-health-feed.service.j2
+    dest: /etc/systemd/system/peer-health-feed.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart peer-health-feed
+
+- name: peer-health | feed unit enabled and running
+  ansible.builtin.systemd:
+    name: peer-health-feed.service
+    enabled: true
+    state: started
+    daemon_reload: true
+
+- name: peer-health | render the attribution map
+  ansible.builtin.copy:
+    content: "{{ peer_health_peers | to_nice_json }}\n"
+    dest: "{{ peer_health_compose_dir }}/peers.json"
+    owner: root
+    group: root
+    mode: "0644"
+  when: peer_health_peers | length > 0
+
+- name: peer-health | render docker-compose.yml
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ peer_health_compose_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: peer-health | pull image
+  ansible.builtin.command:
+    cmd: "docker compose pull"
+    chdir: "{{ peer_health_compose_dir }}"
+  changed_when: true
+
+- name: peer-health | bring up (or refresh) the project
+  ansible.builtin.command:
+    cmd: "docker compose up -d --remove-orphans"
+    chdir: "{{ peer_health_compose_dir }}"
+  register: peer_health_up
+  changed_when:
+    - "'Started' in peer_health_up.stderr or 'Created' in peer_health_up.stderr or 'Recreated' in peer_health_up.stderr"
+
+- name: peer-health | running container summary
+  ansible.builtin.command:
+    cmd: "docker compose ps --format json"
+    chdir: "{{ peer_health_compose_dir }}"
+  register: peer_health_ps
+  changed_when: false
+
+- name: peer-health | show
+  ansible.builtin.debug:
+    msg: "{{ peer_health_ps.stdout_lines }}"

@@ -1,0 +1,14 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Feed the goat-peer-health reader from the Zenoh router log (ADR 1232)
+After=docker.service
+Requires=docker.service
+
+[Service]
+ExecStart=/usr/local/sbin/peer-health-feed
+Restart=always
+RestartSec=5
+KillMode=control-group
+
+[Install]
+WantedBy=multi-user.target

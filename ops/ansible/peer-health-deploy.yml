@@ -1,0 +1,40 @@
+---
+# SPDX-License-Identifier: Apache-2.0
+#
+# Deploy the goat-peer-health reader beside a goatnet's Zenoh router (ADR 1232,
+# docs/design/peer-fault-handling.md). It reads the router's timestamp-rejection
+# log lines through a host feed unit and publishes ops/peer/health/<site> and
+# ops/peer/verdict/<zid>. Enforces nothing, persists nothing.
+#
+#   OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES aws-vault exec <profile> --no-session -- \
+#     ../scripts/ansible-preflight.sh \
+#       -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini \
+#       peer-health-deploy.yml -e target=<site>_hosts
+#
+# Pre-flight (operator-side):
+#   1. The router is Healthy and was rendered with the ACL rule
+#      infra-w-peer-health (roles/goat-zenoh).
+#   2. Infra leaf cert + key minted (Subject CN=goat-peer-health-trial-peer) at
+#      /opt/peer-health/certs/peer-health-{cert,key}.pem.
+#   3. goat-peer-health image digest set in the goatnet's pins.
+#
+# Live check: a subscriber on ops/peer/health/<site> sees the per-site
+# EnvHealthV1{domain:"peer"}; with no peer at fault it reads clean, and with the
+# feed stopped it reads unmeasured.
+
+- name: deploy the goat-peer-health reader beside the router (ADR 1232)
+  hosts: "{{ target | mandatory }}"   # -e target=<site>_hosts
+  become: true
+  gather_facts: true
+
+  pre_tasks:
+    # ONE reader per router. On a site whose host group holds two nodes the
+    # reader runs only where the router runs; the play ends for the other node,
+    # and that is a skip, not a failure (doctrine P13).
+    - name: "Guard: one reader per site, on the router host (doctrine P13)"
+      ansible.builtin.include_tasks: tasks/assert-admin-write-host.yml
+      vars:
+        admin_write_surface: "the peer health reader"
+
+  roles:
+    - role: peer-health
