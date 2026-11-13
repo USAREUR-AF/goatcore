@@ -942,10 +942,9 @@ fn blocks(outcome: &str) -> bool {
 }
 
 /// Whether a phase-1 result file (`goat-federation-preflight/v1`) says ready,
-/// and its outcomes. Phase 1 passes only when both sides' results are ready
-/// (docs/design/federation-preflight.md): a result of one side's checks
-/// (`side` `edge` or `core`, from `preflight.py --side`) is never ready on its
-/// own, and a `sides` row says why. Combining it with the other side's result
+/// and its outcomes. Phase 1 passes only when both sides' results are ready:
+/// a result that carries `side` `edge` or `core` (written by the phase-1
+/// sides change, #558) is never ready on its own, and a `sides` row says why. Combining it with the other side's result
 /// is the two-driver import, which is not built.
 pub fn read_readiness(path: &Path) -> Result<(bool, Vec<Readiness>)> {
     let (ready, side, mut rows) = read_result(path)?;
@@ -2383,10 +2382,9 @@ mod tests {
         assert!(read_readiness(&d.path().join("none.json")).is_err());
     }
 
-    /// Phase 1 passes only when both sides' results are ready
-    /// (docs/design/federation-preflight.md): a result of one side's checks
-    /// (`preflight.py --side edge|core`) is never ready on its own, however
-    /// its own checks went. A result for both, or with no side, reads as before.
+    /// Phase 1 passes only when both sides' results are ready: a result that
+    /// carries `side` `edge` or `core` (written by the phase-1 sides change,
+    /// #558) is never ready on its own, however its own checks went. A result for both, or with no side, reads as before.
     #[test]
     fn a_one_sided_phase_1_result_is_never_ready_on_its_own() {
         let d = tempfile::tempdir().unwrap();
