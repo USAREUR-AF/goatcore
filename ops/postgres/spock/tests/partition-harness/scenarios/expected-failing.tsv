@@ -2,3 +2,4 @@
 # Each still runs and is reported FAILING; the job fails if one passes while listed here,
 # or if a scenario fails that is not listed.
 netbird-c5-policy-regenerate-no-duplicates	F-591: netbird-acl-cutover.yml has no cut-off mode
+console-c2-claim-both-runners	C7: the console claim has no owner_site filter yet (design §3.1 class 2; program step 4, schema step B), so a runner at each site claims and mints the same proposal

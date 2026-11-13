@@ -3,8 +3,10 @@
 
 Every input is read from the file that owns it, never copied:
   - repset table lists: ops/ansible/roles/spock-mesh-peering/defaults/main.yml
-    (spock_mesh_netbird_mgmt_tables) and ops/ansible/roles/ory-narrow-repset/
-    defaults/main.yml (ory_spock_inclusion_tables)
+    (spock_mesh_netbird_mgmt_tables), ops/ansible/roles/ory-narrow-repset/
+    defaults/main.yml (ory_spock_inclusion_tables), and for the id console's
+    two databases the Tables each store declares in Go (no role puts them in a
+    repset yet; console.sh)
   - image pins: ops/pins/fleet-pins.yaml (netbird-mgmt) and the Ory role
     default version, digest from the goatnet that digest-pins it
   - scenario names: docs/design/island-mode-write-inventory.md §10
@@ -35,8 +37,12 @@ SCENARIOS = HERE / "scenarios"
 
 # Mirrors the spock-drift-watch defaults: compare all replicated tables of
 # these three databases.
-DATABASES = ("netbird", "kratos", "hydra")
-REPSET = {"netbird": "netbird_mgmt", "kratos": "ory_narrow", "hydra": "ory_narrow"}
+DATABASES = ("netbird", "kratos", "hydra", "id_console_onboard", "id_console_orgs")
+REPSET = {"netbird": "netbird_mgmt", "kratos": "ory_narrow", "hydra": "ory_narrow",
+          "id_console_onboard": "id_console", "id_console_orgs": "id_console"}
+# The id console's stores: database -> the Go file whose `var Tables` lists them.
+CONSOLE_STORES = {"id_console_onboard": "ops/goat-id-console/internal/onboardstore/store.go",
+                  "id_console_orgs": "ops/goat-id-console/internal/orgstore/store.go"}
 
 
 def load(path):
@@ -44,6 +50,9 @@ def load(path):
 
 
 def tables(db):
+    if db in CONSOLE_STORES:
+        m = re.search(r'^var Tables = \[\]string\{([^}]*)\}', (REPO / CONSOLE_STORES[db]).read_text(), re.M)
+        return re.findall(r'"([a-z_]+)"', m.group(1))
     if db == "netbird":
         return list(load(ROLES / "spock-mesh-peering/defaults/main.yml")["spock_mesh_netbird_mgmt_tables"])
     inc = load(ROLES / "ory-narrow-repset/defaults/main.yml")["ory_spock_inclusion_tables"][db]
