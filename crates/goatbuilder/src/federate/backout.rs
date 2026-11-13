@@ -643,7 +643,7 @@ pub fn backout_with(
     exec: &mut dyn FnMut(&Path, &str) -> Result<bool>,
 ) -> Result<Report> {
     let mut t = target(o)?;
-    hand_core_route(|k| std::env::var(k).ok())?;
+    hand_core_route(|k| crate::federate::runenv::var(k).ok())?;
     core_files(repo, &mut t)?;
     if let Err(e) = work_belongs_to(&t.work, &t.partner) {
         return Err(goat_errors::coded("GB-220", e).into());
