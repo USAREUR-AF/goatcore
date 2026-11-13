@@ -292,11 +292,20 @@ impl Run {
             Some(p) => (p.lock, p.rechecked),
             None => (PeeringLock::take(&paths.work, with)?, String::new()),
         };
+        let mut rows: Vec<Check> = lock
+            .removed
+            .iter()
+            .map(|name| {
+                row(
+                    "journal",
+                    format!("[removed] {name}: a journal write left by an interrupted run"),
+                )
+            })
+            .collect();
         let mut state = State::load(&paths.work, with)?;
         let resume = s.resume && (from <= 1 || s.only.is_some());
         let plan_hash = s.plan.as_ref().map(|p| p.hash.clone()).unwrap_or_default();
         let id = state.open_run(stage, from, to, resume, &plan_hash);
-        let mut rows = Vec::new();
         if s.resume && from > 1 && s.only.is_none() {
             rows.push(row(
                 "resume",
@@ -705,7 +714,19 @@ mod tests {
         child.wait().unwrap();
         std::fs::write(d.path().join(&stale), &newer).unwrap();
 
-        let r = begin(&w, 1, true);
+        let (r, rows) = Run::begin(
+            "xab",
+            &w,
+            &phases(),
+            1,
+            99,
+            &Surface {
+                resume: true,
+                ..Default::default()
+            },
+            None,
+        )
+        .unwrap();
         let skipped: Vec<u32> = phases()
             .iter()
             .filter(|p| r.skips(p))
@@ -713,6 +734,15 @@ mod tests {
             .collect();
         assert_eq!(skipped, vec![3], "only what state.json records is skipped");
         assert!(!d.path().join(&stale).exists(), "{stale} is still there");
+        // The run says what it removed, the way phase 8 reports a stale
+        // `.mint-*` directory.
+        assert!(
+            rows.iter().any(|c| c.name == "journal"
+                && c.detail
+                    == format!("[removed] {stale}: a journal write left by an interrupted run")),
+            "{:?}",
+            rows.iter().map(|c| &c.detail).collect::<Vec<_>>()
+        );
     }
 
     #[test]

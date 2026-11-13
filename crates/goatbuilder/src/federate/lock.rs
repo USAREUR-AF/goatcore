@@ -3,6 +3,8 @@
 //! The per-peering lock, `<work>/.lock`, is held for the whole of a real run,
 //! so two runs of one peering never interleave phases or overwrite each
 //! other's journal. A second run is refused (GB-180) and changes nothing.
+//! Every journal write happens under it, so the run that takes it removes
+//! any `.state.json.<pid>.tmp` a killed run left (`state::sweep_stale_temp`).
 //!
 //! The host-level allocation check: before a run takes a resource on a shared
 //! host (a tunnel interface, a port, a link subnet, a certificate folder), it
@@ -30,7 +32,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 
-use super::state::State;
+use super::state::{self, State};
 
 /// A working folder or lock that cannot be made or taken (GB-184).
 pub fn io_error(what: impl std::fmt::Display, e: impl std::fmt::Display) -> anyhow::Error {
@@ -44,6 +46,9 @@ pub const HOST_LOCK: &str = ".allocation.lock";
 /// The per-peering lock, released when dropped.
 pub struct PeeringLock {
     _file: File,
+    /// The journal writes an interrupted run left, removed once the lock was
+    /// taken; the run reports each one.
+    pub removed: Vec<String>,
 }
 
 impl PeeringLock {
@@ -80,7 +85,13 @@ impl PeeringLock {
             Ok(()) => {
                 let _ = file.set_len(0);
                 let _ = (&file).write_all(format!("pid {}\n", std::process::id()).as_bytes());
-                Ok(PeeringLock { _file: file })
+                // Under the lock no other run can be writing the journal, so
+                // a temporary journal file here is what a killed run left.
+                let removed = state::sweep_stale_temp(work)?;
+                Ok(PeeringLock {
+                    _file: file,
+                    removed,
+                })
             }
             Err(std::fs::TryLockError::WouldBlock) => {
                 let holder = std::fs::read_to_string(&p).unwrap_or_default();
@@ -329,6 +340,7 @@ mod tests {
         }
         let held = PeeringLock::take(d.path(), "xab").unwrap();
         assert!(!d.path().join(&stale).exists(), "{stale} is still there");
+        assert_eq!(held.removed, vec![stale.clone()]);
         assert_eq!(std::fs::read(d.path().join("state.json")).unwrap(), journal);
         for other in [
             ".state.json.notes.tmp",

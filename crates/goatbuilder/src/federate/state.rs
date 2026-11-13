@@ -15,8 +15,11 @@
 //! skipped on a resumed run only when its record says it passed AND what it
 //! read and what it left, measured again now, are what it recorded (run.rs).
 //!
-//! The file is written whole, to a temporary file and then renamed, so a run
-//! killed mid-write leaves the previous journal, never half of one. A journal
+//! The file is written whole, to a temporary file (`.state.json.<pid>.tmp`)
+//! and then renamed, so a run killed mid-write leaves the previous journal,
+//! never half of one. The temporary file it leaves is never read as the
+//! journal, and the next run removes it once it holds the peering lock
+//! (`sweep_stale_temp`). A journal
 //! that does not parse, or one written by a newer schema, is refused (GB-182),
 //! never overwritten: it is the only account of what ran.
 
@@ -325,7 +328,8 @@ impl State {
         Ok(s)
     }
 
-    /// Write the journal whole: to a temporary file, then rename.
+    /// Write the journal whole: to a temporary file, then rename. Called only
+    /// by a run that holds the peering lock (lock.rs).
     pub fn save(&mut self, work: &Path) -> Result<()> {
         self.updated = now();
         self.written_by = latest_writer(&self.written_by, env!("CARGO_PKG_VERSION"));
@@ -343,7 +347,7 @@ impl State {
             )
         })?;
         let p = Self::path(work);
-        let tmp = work.join(format!(".{FILE}.{}.tmp", std::process::id()));
+        let tmp = work.join(temp_name(std::process::id()));
         let mut f = File::create(&tmp)
             .map_err(|e| io(format!("cannot write the run journal {}", tmp.display()), e))?;
         let mut text = serde_json::to_string_pretty(self)?;
@@ -500,6 +504,70 @@ impl State {
         }
         self.log(run, 0, status, format!("{kind} {value} on {scope}"));
     }
+}
+
+/// The temporary file `save` writes before its rename: `.state.json.<pid>.tmp`.
+fn temp_name(pid: u32) -> String {
+    format!(".{FILE}.{pid}.tmp")
+}
+
+/// Whether `name` is a temporary file `save` writes: `.state.json.<digits>.tmp`.
+fn is_temp(name: &str) -> bool {
+    name.strip_prefix(&format!(".{FILE}."))
+        .and_then(|rest| rest.strip_suffix(".tmp"))
+        .is_some_and(|pid| !pid.is_empty() && pid.bytes().all(|b| b.is_ascii_digit()))
+}
+
+/// Remove what interrupted journal writes left in `work`, and return the
+/// names removed.
+///
+/// `save` writes `.state.json.<pid>.tmp` and renames it over the journal; a
+/// run killed between the two (kill -9, a lost host) leaves the temporary
+/// file behind. Only `save` creates one, and only a run that holds the
+/// peering lock calls `save`; the kernel drops that lock when its holder
+/// dies. Called with the lock held, so every such file seen here belongs to
+/// a run that is no longer alive, whatever its process id, and none is a
+/// write in progress. The journal, the lock file and every other name are
+/// never touched. A symlink of that name is unlinked, never followed; a
+/// directory of that name is not something `save` writes and is left alone.
+/// A file that cannot be removed stops the run (GB-184).
+pub fn sweep_stale_temp(work: &Path) -> Result<Vec<String>> {
+    let io = |what: String, e: std::io::Error| -> anyhow::Error {
+        goat_errors::coded("GB-184", format!("{what}: {e}")).into()
+    };
+    let entries = std::fs::read_dir(work).map_err(|e| {
+        io(
+            format!("cannot read the working folder {}", work.display()),
+            e,
+        )
+    })?;
+    let mut names: Vec<String> = entries
+        .flatten()
+        .filter_map(|e| e.file_name().into_string().ok())
+        .filter(|n| is_temp(n))
+        .collect();
+    names.sort();
+    let mut removed = Vec::new();
+    for name in names {
+        let p = work.join(&name);
+        match std::fs::symlink_metadata(&p) {
+            Ok(m) if m.is_dir() => continue,
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(e) => return Err(io(format!("cannot inspect {}", p.display()), e)),
+        }
+        std::fs::remove_file(&p).map_err(|e| {
+            io(
+                format!(
+                    "cannot remove {}, a journal write left by an interrupted run",
+                    p.display()
+                ),
+                e,
+            )
+        })?;
+        removed.push(name);
+    }
+    Ok(removed)
 }
 
 /// `sha256:` over labeled parts, each length-prefixed so two different
