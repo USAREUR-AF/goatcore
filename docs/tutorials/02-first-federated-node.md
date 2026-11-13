@@ -95,8 +95,11 @@ checkpoint 2 on hardware proves.
    peers by walking that group, and the config preflight fails, naming the line
    to add, when a site running the management stack is missing from it.
 3. **The pins.** The joiner's member group added to the goatnet's row in
-   `ops/pins/fleet-pins.yaml`, with `absent: true` for components that stay
-   single-homed on the founder.
+   `ops/pins/fleet-pins.yaml`, with `absent: true` for components that are
+   single-homed on the founder. The admin write components (portal, id console,
+   onboarding runner) are single-homed only until
+   [ADR 1165](../adr/1165-island-mode-multi-writer-every-site-admits.md) lifts
+   their write class; their intended placement is every site.
 4. **Signal federation, declared on both sides.** Each site's group_vars name
    the other's mesh address and federation hostname, the shared token by
    reference, the proxy and the ingress
