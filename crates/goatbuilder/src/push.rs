@@ -359,7 +359,14 @@ pub(crate) fn render_ref(r: &str) -> String {
 fn deploy_args(inv: &[String], play: &Path, target_flag: &str, g: &str, accept: Option<&str>) -> Vec<String> {
     let mut args = inv.to_vec();
     args.push(play.file_name().unwrap_or_default().to_string_lossy().to_string());
-    args.push(format!("{target_flag}{g}"));
+    // The flag and its value, two words: `-e`, `<var>=<group>` or `-l`, `<group>`.
+    match target_flag.split_once(' ') {
+        Some((flag, value)) => {
+            args.push(flag.to_string());
+            args.push(format!("{value}{g}"));
+        }
+        None => args.push(format!("{target_flag}{g}")),
+    }
     if let Some(accept) = accept {
         args.push("-e".into());
         args.push(format!("{{\"rollback_preflight_accept\": {accept}}}"));
