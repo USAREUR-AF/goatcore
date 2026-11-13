@@ -221,6 +221,20 @@
 # Per-provider OIDC client secret via Kratos env-override — kept out of the 0644
 # kratos.yaml (secrets policy), resolved from the operator env at deploy time.
 # Index matches the provider order rendered in kratos.yaml (providers[<idx>]).
+# Before the write below, so a run without the secret leaves the env file on the
+# host as it was instead of replacing it with an empty value.
+- name: Refuse an enabled ICAM provider whose client secret is not in the deploy environment
+  ansible.builtin.assert:
+    that: (lookup('env', 'ICAM_OIDC_' ~ (item.id | upper | replace('-', '_')) ~ '_CLIENT_SECRET') | length) >= 16
+    fail_msg: >-
+      ICAM_OIDC_{{ item.id | upper | replace('-', '_') }}_CLIENT_SECRET is unset or shorter than 16
+      characters; Kratos would register provider {{ item.id }} with an empty secret.
+  loop: "{{ icam_federation.providers | default([]) }}"
+  loop_control:
+    label: "{{ item.id }}"
+  when: icam_federation.enabled | default(false) | bool
+  no_log: true
+
 - name: Write the external ICAM client secrets env file the kratos service loads (0600)
   # One SELFSERVICE_METHODS_OIDC_CONFIG_PROVIDERS_<n>_CLIENT_SECRET line per provider,
   # from the operator environment (ICAM_OIDC_<ID>_CLIENT_SECRET); a comment only when
@@ -240,18 +254,6 @@
     mode: "0600"
   no_log: true
   notify: restart kratos
-
-- name: Refuse an enabled ICAM provider whose client secret is not in the deploy environment
-  ansible.builtin.assert:
-    that: (lookup('env', 'ICAM_OIDC_' ~ (item.id | upper | replace('-', '_')) ~ '_CLIENT_SECRET') | length) >= 16
-    fail_msg: >-
-      ICAM_OIDC_{{ item.id | upper | replace('-', '_') }}_CLIENT_SECRET is unset or shorter than 16
-      characters; Kratos would register provider {{ item.id }} with an empty secret.
-  loop: "{{ icam_federation.providers | default([]) }}"
-  loop_control:
-    label: "{{ item.id }}"
-  when: icam_federation.enabled | default(false) | bool
-  no_log: true
 
 - name: At most one local card front-end per goatnet (one extra_hosts slot in the kratos service)
   vars:
