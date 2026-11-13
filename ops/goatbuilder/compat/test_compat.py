@@ -460,7 +460,7 @@ last=""; for a in "$@"; do last="$a"; done
 real=$(cd "$last" && pwd -P)
 printf '{"schema":"t/v1","home":"%s","xdg":"%s","raw":"%s","real":"%s"}\\n' "$HOME" "$XDG_STATE_HOME" "$last" "$real"
 """)
-        os.chmod(self.bin, 0o755)
+        os.chmod(self.bin, 0o700)
 
     def tearDown(self):
         import shutil
