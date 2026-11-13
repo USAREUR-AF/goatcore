@@ -510,9 +510,10 @@ pub fn rows(inputs: &[Input]) -> Vec<crate::Check> {
 /// `goatbuilder why <value>`: the inputs a query names, each with the chain of
 /// sources that gave it. A query matches an input by its name, else by its
 /// value (a secret never matches by value). Each answer is the input's line,
-/// then, for a value derived from another listed input (`from: "<name>
-/// (above)"`), that input's answer, indented, down to a source that names a
-/// file, the environment, a default, an allocation, an argument or nothing.
+/// then, for a value derived from other listed inputs (`from: "<name> (above)"`,
+/// or `"<a> and <b> (above)"` for one derived from two), each one's answer,
+/// indented, down to a source that names a file, the environment, a default, an
+/// allocation, an argument or nothing.
 pub fn why(inputs: &[Input], query: &str) -> Vec<String> {
     let by_name: Vec<&Input> = inputs.iter().filter(|i| i.name == query).collect();
     let hits = if by_name.is_empty() {
@@ -522,29 +523,44 @@ pub fn why(inputs: &[Input], query: &str) -> Vec<String> {
     };
     let mut out = Vec::new();
     for i in hits {
-        let mut seen = vec![i.name.as_str()];
-        let mut at = i;
-        let mut depth = 0;
-        loop {
-            out.push(format!("{}{}", "  ".repeat(depth), at.line()));
-            let Source::Derived { from, .. } = &at.source else {
-                break;
-            };
-            let Some(name) = from.strip_suffix(" (above)") else {
-                break;
-            };
-            let Some(next) = inputs.iter().find(|x| x.name == name) else {
-                break;
-            };
-            if seen.contains(&next.name.as_str()) {
-                break;
-            }
-            seen.push(next.name.as_str());
-            at = next;
-            depth += 1;
-        }
+        follow(inputs, i, 0, &mut vec![i.name.as_str()], &mut out);
     }
     out
+}
+
+/// One input's line at `depth`, then each listed input it was derived from, one
+/// level deeper. `path` holds the names above it, so a cycle stops.
+fn follow<'a>(
+    inputs: &'a [Input],
+    at: &'a Input,
+    depth: usize,
+    path: &mut Vec<&'a str>,
+    out: &mut Vec<String>,
+) {
+    out.push(format!("{}{}", "  ".repeat(depth), at.line()));
+    for name in parents(&at.source) {
+        let Some(next) = inputs.iter().find(|x| x.name == name) else {
+            continue;
+        };
+        if path.contains(&next.name.as_str()) {
+            continue;
+        }
+        path.push(next.name.as_str());
+        follow(inputs, next, depth + 1, path, out);
+        path.pop();
+    }
+}
+
+/// The listed inputs a derived source names: `<name> (above)`, or several
+/// joined by ` and `. Empty for any other source.
+fn parents(source: &Source) -> Vec<&str> {
+    match source {
+        Source::Derived { from, .. } => from
+            .strip_suffix(" (above)")
+            .map(|names| names.split(" and ").collect())
+            .unwrap_or_default(),
+        _ => Vec::new(),
+    }
 }
 
 /// Add an input unless one of that name is already listed (the first source
@@ -665,26 +681,24 @@ pub fn rel(repo: &Path, p: &Path) -> String {
     p.strip_prefix(repo).unwrap_or(p).display().to_string()
 }
 
+/// Every input a derived source names (`<name> (above)`, each part of `<a> and <b>`)
+/// that is not listed: `why` cannot follow it, so each verb's tests ask for none.
+#[cfg(test)]
+pub(crate) fn dangling(inputs: &[Input]) -> Vec<String> {
+    inputs
+        .iter()
+        .flat_map(|i| parents(&i.source))
+        .filter(|n| !inputs.iter().any(|x| x.name == *n))
+        .map(String::from)
+        .collect()
+}
+
 /// The values of one command line by the conformance test's rule
 /// (tests/legibility.rs, check b): the right side of every `-e name=value`
 /// and `--flag=value`, the word after each option that takes a value (the
 /// test's list and `extra`), the AWS profile `with-aws` is given, and the
 /// value of a `NAME=value` before a command. `(true, NAME)` is a value read
 /// from the environment (`$NAME`, `${NAME}`, `$(printenv NAME)`).
-/// Every `<name> (above)` a derived source names that is not a listed input:
-/// `why` stops there, so each verb's tests ask for none.
-#[cfg(test)]
-pub(crate) fn dangling(inputs: &[Input]) -> Vec<String> {
-    inputs
-        .iter()
-        .filter_map(|i| match &i.source {
-            Source::Derived { from, .. } => from.strip_suffix(" (above)").map(String::from),
-            _ => None,
-        })
-        .filter(|n| !n.contains(" and ") && !inputs.iter().any(|x| &x.name == n))
-        .collect()
-}
-
 #[cfg(test)]
 pub(crate) fn command_values(line: &str, extra: &[&str]) -> Vec<(bool, String)> {
     const FLAGS: &[&str] = &[
