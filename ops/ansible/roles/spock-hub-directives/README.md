@@ -33,6 +33,7 @@ Issue a directive at the hub only:
 INSERT INTO goat_hub_directives (kind, subject, actor) VALUES ('sever_site', 'zagros_b', '<your handle>');
 ```
 
-The role refuses to run without `goatnet_hub_site`. psql runs inside the local Postgres
+`site-bootstrap.yml` applies the role at every site that replicates with Spock and names
+its hub; run it alone with `--tags hub-directives`. The role refuses to run without `goatnet_hub_site`. psql runs inside the local Postgres
 container as `postgres`, so the env file holds no password. The partition harness
 (`ops/postgres/spock/tests/partition-harness`) runs this same script.
