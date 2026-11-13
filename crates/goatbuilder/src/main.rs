@@ -1102,10 +1102,16 @@ fn verb_name(cmd: &Cmd) -> &'static str {
     }
 }
 
-/// Whether the verb runs as a dry run (it then begins no run and writes no record).
-fn dry_run(cmd: &Cmd) -> bool {
+/// Whether this run of a long-running verb writes no run record: it changes
+/// nothing, so it begins no run (docs/design/goatbuilder-legibility.md §"Run
+/// record"). That is every dry run, and every mode that only lists, reports or
+/// reads, from hosts or from files. A mode that changes anything, on a host or in
+/// the checkout, writes one.
+fn writes_no_record(cmd: &Cmd) -> bool {
+    use federate::plan::Stage;
     matches!(
         cmd,
+        // Dry runs: each prints the plan and starts none of its phases.
         Cmd::Deploy { dry_run: true, .. }
             | Cmd::Rollback { dry_run: true, .. }
             | Cmd::Release { dry_run: true, .. }
@@ -1114,8 +1120,19 @@ fn dry_run(cmd: &Cmd) -> bool {
             | Cmd::JoinNode { dry_run: true, .. }
             | Cmd::Federate { dry_run: true, .. }
             | Cmd::Teardown { dry_run: true, .. }
-            // `assay --plan` lists the checks and probes nothing.
-            | Cmd::Assay { plan: true, .. }
+            // Reads only. `deploy --verify-only` reads the ledgers back and runs no play.
+            | Cmd::Deploy { verify_only: true, .. }
+            // `rollback --list` and `--status` read the ledgers and the running refs
+            // and flip nothing, as rollback.sh's do (parity-rollback.sh).
+            | Cmd::Rollback { list: true, .. }
+            | Cmd::Rollback { status: true, .. }
+            // `assay` probes and grades; with --plan it probes nothing. Its rows
+            // go to stdout or to --rows-out.
+            | Cmd::Assay { .. }
+            // `federate plan` and the six federation verbs read packages, hosts or
+            // the plan and write only their own output files; `federate backout`
+            // and the whole peering change hosts and keep their record.
+            | Cmd::Federate { verb: Some(Stage::Plan { .. } | Stage::Verb(_)), .. }
     )
 }
 
@@ -1264,8 +1281,8 @@ fn main() {
     tutor::init(&repo);
     // A verb that drives hosts runs inside a run: every process it starts is framed,
     // logged and recorded under <state>/runs/<id>/ (runner.rs).
-    // A dry run starts none of its phases and leaves no record.
-    if cli.mock.is_none() && long_running(&cli.cmd) && !dry_run(&cli.cmd) {
+    // A run that changes nothing (a dry run, a listing, a read) leaves no record.
+    if cli.mock.is_none() && long_running(&cli.cmd) && !writes_no_record(&cli.cmd) {
         runner::begin(std::path::Path::new(&settings::state_dir_abs(&repo)), run_verb(&cli.cmd), std::env::args().skip(1).collect(), runs::tree_commit(&repo));
     }
     if let Some(owner) = config::owner(&repo) {
