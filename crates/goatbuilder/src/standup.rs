@@ -334,7 +334,7 @@ fn read_site_in(repo: &Path, o: &Options, env: &SiteEnv) -> Result<Site> {
     if !acl_site.is_empty() && !upper_acl.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_') {
         // A joiner's ACL site is its founder's (join_founder_site); a founder's is itself.
         let source = if joiner { format!("join_founder_site {acl_site:?} in group_vars/{group}/vars.yml") } else { format!("the site {acl_site:?}") };
-        return Err(anyhow!("{source} is not a site id: phase 12 reads the token variable {upper_acl}_NB_API_TOKEN named after it, so it may hold only letters, digits, - and _"));
+        return Err(goat_errors::coded("GB-263", format!("{source} is not a site id: phase 12 reads the token variable {upper_acl}_NB_API_TOKEN named after it, so it may hold only letters, digits, - and _")).into());
     }
     Ok(Site {
         repo: repo.display().to_string(),

@@ -2689,6 +2689,20 @@ entries:
       - "flagged do_not_roll_to=true"
       - "which is in NO known history"
     exit: 2
+  - code: GB-263
+    tool: goatbuilder
+    title: a site id cannot name the variables its phases read
+    what: "Phase 12 reads the NetBird token from <SITE>_NB_API_TOKEN, named after the site that governs the ACL: the site itself, or a joiner's founder (join_founder_site). That site holds a character a variable name cannot, so the standup stops before any phase."
+    causes:
+      - "join_founder_site in the site's group_vars holds a space, a quote or another character outside letters, digits, - and _"
+      - "the site was named with such a character"
+    fixes:
+      - "set join_founder_site to the founder's site id (letters, digits, - and _)"
+      - "goatbuilder validate   (the site ids goatbuilder.yaml declares)"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "is not a site id: phase 12 reads the token variable"
+    exit: 2
   - code: GB-246
     tool: goatbuilder
     title: a rollback depth outside the ledger
