@@ -166,9 +166,7 @@ fn a_joiners_dry_run_lists_what_it_does_not_run_with_the_models_reasons() {
     let page = text(&dry_run(t.path(), false));
     assert!(page.contains("does not run"), "{page}");
     assert!(
-        page.contains(&format!(
-            "isitup \u{2014} `isitup_enabled` is false in group_vars"
-        )),
+        page.contains("isitup \u{2014} `isitup_enabled` is false in group_vars"),
         "{page}"
     );
 }
