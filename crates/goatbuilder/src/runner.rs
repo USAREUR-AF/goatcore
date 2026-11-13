@@ -397,12 +397,18 @@ impl Cmd {
 
     /// The line as it runs from `base`, the checkout a person pastes it in: a
     /// command with a working directory is `(cd <dir> && <line>)`, its
-    /// directory relative to `base` when it is under it.
+    /// directory relative to `base` when it is under it, and no `cd` when it is
+    /// `base` itself.
     pub fn line_from(&self, base: &Path) -> String {
         match self.inner.get_current_dir() {
             Some(d) => {
                 let dir = d.strip_prefix(base).unwrap_or(d).display().to_string();
-                format!("(cd {} && {})", quote(&dir), self.line())
+                if dir.is_empty() {
+                    // It runs in the checkout itself: no cd to print.
+                    self.line()
+                } else {
+                    format!("(cd {} && {})", quote(&dir), self.line())
+                }
             }
             None => self.line(),
         }
@@ -1062,6 +1068,8 @@ mod tests {
         assert_eq!(c.line_from(base), "../scripts/with-aws dev -- ansible all");
         c.current_dir(base.join("ops/ansible"));
         assert_eq!(c.line_from(base), "(cd ops/ansible && ../scripts/with-aws dev -- ansible all)");
+        c.current_dir(base);
+        assert_eq!(c.line_from(base), "../scripts/with-aws dev -- ansible all", "the checkout itself needs no cd");
         c.current_dir("/other place");
         assert_eq!(c.line_from(base), "(cd '/other place' && ../scripts/with-aws dev -- ansible all)");
     }
