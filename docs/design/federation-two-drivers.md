@@ -183,8 +183,18 @@ tests `a_two_driver_run_after_phase_2_is_refused_with_no_object`,
 (`federate/measure.rs`), and on a peering run `--side edge`, given with no other measure flag, is
 the edge driver's run, refused with GB-267 until it is built, for a peering with one driver or two.
 Beside another measure flag, after a verb's name (a misplaced `init` flag), or on `status`, it gets
-the message it got before (test `side_edge_is_gb_267_only_alone_on_a_peering_run`). Not built: the object in `status`, the edge's way-back object, and the
-`import` and `then` it names. Phase 3's two halves, which the phase 3 object wraps, are on main at
+the message it got before (test `side_edge_is_gb_267_only_alone_on_a_peering_run`).
+
+Every command the phase 1 and phase 2 objects name parses today with the binary that printed it,
+and none is a usage error. The edge `command`, with its `--expect-commit`, refuses with GB-267
+until the edge driver's run is built; `--expect-commit` without `--side edge` is refused as a
+misplaced flag (GB-189). `import` (`goatbuilder federate import <partner> <phase> <result>
+--sha256 <code>`, a reserved peering name) parses and refuses with GB-267, reading and recording
+nothing, until the import is built. `then` is an ordinary run, which stops at the same hand-off
+again while nothing is imported (test
+`every_command_a_hand_off_names_parses_and_refuses_as_not_built`). Not built: the object in
+`status`, the edge's way-back object, the edge run and `import` themselves, and `then` running a
+core half against an imported result. Phase 3's two halves, which the phase 3 object wraps, are on main at
 the `init` level ([federation-router-discovery.md](federation-router-discovery.md), "Phase 3 in
 two halves"); the one command does not run them yet.
 

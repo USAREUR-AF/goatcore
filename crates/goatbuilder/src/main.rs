@@ -461,6 +461,8 @@ pub enum Cmd {
         site: Box<federate::verbs::SiteArgs>,
         #[command(flatten)]
         measure: Box<federate::measure::MeasureArgs>,
+        #[command(flatten)]
+        edge_run: Box<federate::handoff::EdgeRunArgs>,
         /// The peering name (the counterparty, as declared), or a stage run
         /// alone: `status [<partner>]`, `deploy <partner>`, `test <partner>`,
         /// `allocate [<peering>]`.
@@ -1547,7 +1549,7 @@ fn main() {
                 federate::plan::run(&repo, stage, cli.mock.as_deref())
             }
         }
-        Cmd::Federate { verb: None, site, measure, with, partner, plan, approve_plan, confirm, no_confirm, partner_key, partner_ca_fingerprint, agreement_digest, place_pointer_package, approve_admission, review_in_pr, env, as_party, edge_group, work, from, to, dry_run, resume, no_resume } => {
+        Cmd::Federate { verb: None, site, measure, edge_run, with, partner, plan, approve_plan, confirm, no_confirm, partner_key, partner_ca_fingerprint, agreement_digest, place_pointer_package, approve_admission, review_in_pr, env, as_party, edge_group, work, from, to, dry_run, resume, no_resume } => {
             let with = with.as_deref().unwrap_or_default();
             let cfg_path = cli.mock.as_ref().map(|m| m.join("goatbuilder.yaml")).unwrap_or_else(|| repo.join("ops/goatbuilder/goatbuilder.yaml"));
             // `--side edge` alone on a peering run is the edge driver's run of
@@ -1561,6 +1563,8 @@ fn main() {
                 && !matches!(with, "status" | "allocate");
             if side_edge_alone {
                 Err(federate::handoff::edge_side_not_built())
+            } else if edge_run.expect_commit.is_some() {
+                Err(goat_errors::coded("GB-189", "--expect-commit belongs to the edge driver's run, `goatbuilder federate <partner> --side edge`").into())
             } else if with == "status" {
                 let format = match cli.output {
                     OutputFormat::Table => federate::status::Format::Table,

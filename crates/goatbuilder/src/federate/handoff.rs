@@ -98,6 +98,47 @@ pub fn two(drivers: Option<&str>) -> bool {
     drivers == Some("two")
 }
 
+/// The flag the hand-off object's edge `command` carries beside `--side
+/// edge`, accepted so that the command parses with the binary that printed
+/// it, and refused with the rest of the edge driver's run until it is built.
+#[derive(clap::Args, Debug, Default, Clone)]
+pub struct EdgeRunArgs {
+    /// With --side edge: the commit the edge driver's checkout must be at,
+    /// as a hand-off object names it. The edge driver's run is not built
+    /// yet: refused with GB-267 (docs/design/federation-two-drivers.md).
+    #[arg(long, value_name = "COMMIT")]
+    pub expect_commit: Option<String>,
+}
+
+/// `goatbuilder federate import <partner> <phase> <result> --sha256 <code>`:
+/// the hand-off object's `import`, accepted so that it parses, and refused
+/// until the import is built.
+#[derive(clap::Args, Debug, Clone)]
+pub struct ImportArgs {
+    /// The peering name (the counterparty, as declared).
+    pub with: String,
+    /// The phase whose edge result this is.
+    pub phase: u32,
+    /// The result file the edge driver wrote.
+    pub result: std::path::PathBuf,
+    /// The confirm code the edge driver printed (the result's sha256, or its
+    /// first digits).
+    #[arg(long, value_name = "CODE")]
+    pub sha256: String,
+}
+
+/// The refusal of `import` while it is not built.
+pub fn import_not_built(a: &ImportArgs) -> anyhow::Error {
+    goat_errors::coded(
+        NOT_BUILT,
+        format!(
+            "import: the controller's import of an edge result is not built yet (docs/design/federation-two-drivers.md); nothing was read or recorded for phase {} of peering {}; run the peering with one driver for now",
+            a.phase, a.with
+        ),
+    )
+    .into()
+}
+
 /// The refusal of `--side edge` while the edge driver's run is not built.
 pub fn edge_side_not_built() -> anyhow::Error {
     goat_errors::coded(

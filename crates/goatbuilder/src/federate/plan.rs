@@ -1915,6 +1915,10 @@ pub enum Stage {
     /// admission, and leave every other peering and the core as they were.
     #[command(name = super::backout::VERB)]
     Backout(super::backout::BackoutArgs),
+    /// A two-driver peering's import of an edge result, as a hand-off object
+    /// names it. Not built yet: refuses with GB-267
+    /// (docs/design/federation-two-drivers.md).
+    Import(super::handoff::ImportArgs),
 }
 
 /// Run one stage.
@@ -1924,6 +1928,7 @@ pub fn run(repo: &Path, stage: &Stage, mock: Option<&Path>) -> Result<Report> {
         Stage::Verb(_) | Stage::Backout(_) => {
             Err(anyhow!("the federation verbs and backout are run before this point"))
         }
+        Stage::Import(a) => Err(super::handoff::import_not_built(a)),
         Stage::Plan {
             with,
             env,

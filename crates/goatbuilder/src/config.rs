@@ -276,11 +276,12 @@ pub struct PeeringForwarder {
 /// subcommand, so a peering declared with one could never be run: the six
 /// federation verbs, clap's `help`, the stages of the one command (`status`,
 /// `plan`, `deploy`, `test`), `allocate`, `backout` (one peering backed
-/// out) and `rotate` (one key of a peering replaced). The one list; ops/goatbuilder/validate.py's RESERVED_PEERING_NAMES
+/// out), `rotate` (one key of a peering replaced) and `import` (a two-driver
+/// peering's edge result taken in). The one list; ops/goatbuilder/validate.py's RESERVED_PEERING_NAMES
 /// mirrors it.
 pub const RESERVED_PEERING_NAMES: &[&str] = &[
     "init", "lint", "compose", "diff", "verify", "apply", "help", "status", "plan", "deploy",
-    "test", "allocate", "backout", "rotate",
+    "test", "allocate", "backout", "rotate", "import",
 ];
 
 /// Read a YAML config file into a JSON value (the form the schema validates).
@@ -804,6 +805,7 @@ mod tests {
         }
         assert!(RESERVED_PEERING_NAMES.contains(&crate::federate::backout::VERB), "backout is a subcommand and must be reserved");
         assert!(RESERVED_PEERING_NAMES.contains(&crate::federate::rotation::VERB), "rotate is a subcommand and must be reserved");
+        assert!(RESERVED_PEERING_NAMES.contains(&"import"), "import is a subcommand and must be reserved");
     }
 
     #[test]

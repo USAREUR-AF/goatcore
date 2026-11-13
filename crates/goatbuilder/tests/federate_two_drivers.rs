@@ -461,7 +461,10 @@ fn every_command_a_hand_off_names_parses_and_refuses_as_not_built() {
         let (out, v) = w.run(&["hello-ally", "--from", phase, "--to", phase]);
         assert!(out.status.success(), "{}", says(&out));
         let h = v["handoff"].clone();
-        assert_eq!(h["phase"].as_u64().map(|n| n.to_string()).as_deref(), Some(phase));
+        assert_eq!(
+            h["phase"].as_u64().map(|n| n.to_string()).as_deref(),
+            Some(phase)
+        );
         let argv = |member: &str| -> Vec<String> {
             h[member]
                 .as_array()
@@ -481,14 +484,21 @@ fn every_command_a_hand_off_names_parses_and_refuses_as_not_built() {
             let rest: Vec<&str> = a[2..].iter().map(String::as_str).collect();
             let (out, v) = w.run(&rest);
             let all = says(&out);
-            assert_ne!(out.status.code(), Some(2), "phase {phase} {member} {a:?}: {all}");
+            assert_ne!(
+                out.status.code(),
+                Some(2),
+                "phase {phase} {member} {a:?}: {all}"
+            );
             assert!(
                 !all.contains("unexpected argument") && !all.contains("Usage:"),
                 "phase {phase} {member} {a:?}: a usage error: {all}"
             );
             if member == "then" {
                 assert!(out.status.success(), "phase {phase} then: {all}");
-                assert_eq!(v["handoff"]["phase"], h["phase"], "phase {phase} then: {all}");
+                assert_eq!(
+                    v["handoff"]["phase"], h["phase"],
+                    "phase {phase} then: {all}"
+                );
             } else {
                 assert!(!out.status.success(), "phase {phase} {member}: {all}");
                 assert!(
