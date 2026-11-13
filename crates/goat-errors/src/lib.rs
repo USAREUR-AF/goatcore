@@ -682,4 +682,37 @@ mod tests {
         let j = serde_json::to_string(&interpret("GB-007: NOT SET: X")).unwrap();
         assert!(j.contains("\"schema\":\"goat-errors.interpretation/v1\""));
     }
+
+    #[test]
+    fn membership_version_failures_have_specific_guidance() {
+        for message in [
+            "fragment version 2 — this goat reads version 1",
+            "/tmp/declaration/_scope.yaml: _scope.yaml version 0 — this goat reads version 2",
+            "outer context\nerror: C:\\decl\\_baseline.generated.yaml: _baseline.generated.yaml version 4294967295 — this goat reads version 17",
+        ] {
+            let interpretation = interpret(message);
+            assert!(!interpretation.unrecognised, "{message}");
+            let hits: Vec<_> = interpretation
+                .hits
+                .iter()
+                .filter(|hit| hit.code == "E_MEMBERSHIP_VERSION_UNSUPPORTED")
+                .collect();
+            assert_eq!(hits.len(), 1, "{message}: {hits:?}");
+            assert_eq!(hits[0].layer, Layer::Pattern, "{message}");
+        }
+
+        for message in [
+            "fragment version 1",
+            "/tmp/this goat reads version 1.yaml: does not parse as a fragment",
+            "/tmp/fragment version 2 — this goat reads version 1.yaml: permission denied",
+            "documentation mentions fragment version 2 — this goat reads version 1 in prose",
+        ] {
+            assert!(
+                !interpret(message).hits.iter().any(|hit| {
+                    hit.code == "E_MEMBERSHIP_VERSION_UNSUPPORTED" && hit.layer == Layer::Pattern
+                }),
+                "false positive: {message}"
+            );
+        }
+    }
 }

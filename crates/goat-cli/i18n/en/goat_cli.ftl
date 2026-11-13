@@ -34,6 +34,7 @@ error-machine-unresolved-summary = `{ $machine }` is not exactly one enrolled ma
 error-mesh-peer-unresolved-summary = enrolled machine `{ $machine }` has no single mesh peer
 error-netbird-failed-summary = the NetBird management API call failed; nothing was changed
 error-acl-declaration-missing-summary = no ACL declaration was supplied, so there is nothing to check
+error-membership-version-unsupported-summary = { $file }: { $kind } version { $found } — this goat reads version { $supported }
 
 # Machine-translation notice (ADR 1024 / docs/design/goat-cli-i18n.md).
 # Emitted to stderr when a non-English locale that is not native-reviewed

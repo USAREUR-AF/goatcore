@@ -35,6 +35,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
+use anyhow::Context as _;
 use clap::{Args, ValueEnum};
 use panoscope_core::aclcheck::Declaration;
 use panoscope_core::netbird::{NbEvent, NbGroup, NbPeer, NbUser, NetbirdClient, SetupKeyMeta};
@@ -142,6 +143,7 @@ pub struct ApplyArgs {
 pub const SCOPE_FILE: &str = "_scope.yaml";
 /// The generated per-person baseline inside a scope directory.
 pub const BASELINE_FILE: &str = "_baseline.generated.yaml";
+const MEMBERSHIP_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -588,27 +590,43 @@ fn check_entries(entries: &[MembershipEntry], scope: &str) -> anyhow::Result<()>
 /// full CI validation (taxonomy membership, expiry rules, EXTERNAL-INFRA and
 /// PLATFORM-ADMIN placement) is `ops/warrant/membership.py --check`; this is
 /// what the converger needs to not misbehave.
-pub fn parse_fragment(text: &str, scope: &str) -> anyhow::Result<Vec<MembershipEntry>> {
+pub fn parse_fragment(
+    text: &str,
+    scope: &str,
+    source: &Path,
+) -> anyhow::Result<Vec<MembershipEntry>> {
     let f: FragmentFile = serde_yaml::from_str(text).map_err(|e| {
         anyhow::anyhow!(
             "does not parse as a fragment (`version: 1` + `entries:`; only {SCOPE_FILE} may \
              carry `scope:`/`converge:`): {e}"
         )
     })?;
-    if f.version != 1 {
-        anyhow::bail!("fragment version {} — this goat reads version 1", f.version);
+    if f.version != MEMBERSHIP_VERSION {
+        return Err(crate::errors::membership_version_unsupported(
+            source,
+            "fragment",
+            f.version,
+            MEMBERSHIP_VERSION,
+        )
+        .into());
     }
     let entries = f.entries.unwrap_or_default();
     check_entries(&entries, scope)?;
     Ok(entries)
 }
 
-fn parse_scope_file(text: &str, scope: &str) -> anyhow::Result<ScopeFile> {
+fn parse_scope_file(text: &str, scope: &str, source: &Path) -> anyhow::Result<ScopeFile> {
     let s: ScopeFile = serde_yaml::from_str(text).map_err(|e| {
         anyhow::anyhow!("{SCOPE_FILE} does not parse (version, scope, converge only): {e}")
     })?;
-    if s.version != 1 {
-        anyhow::bail!("{SCOPE_FILE} version {} — this goat reads version 1", s.version);
+    if s.version != MEMBERSHIP_VERSION {
+        return Err(crate::errors::membership_version_unsupported(
+            source,
+            SCOPE_FILE,
+            s.version,
+            MEMBERSHIP_VERSION,
+        )
+        .into());
     }
     if s.scope != scope {
         anyhow::bail!(
@@ -622,11 +640,18 @@ fn parse_scope_file(text: &str, scope: &str) -> anyhow::Result<ScopeFile> {
 fn parse_baseline_file(
     text: &str,
     scope: &str,
+    source: &Path,
 ) -> anyhow::Result<BTreeMap<String, PersonBaseline>> {
     let b: BaselineFile = serde_yaml::from_str(text)
         .map_err(|e| anyhow::anyhow!("{BASELINE_FILE} does not parse: {e}"))?;
-    if b.version != 1 {
-        anyhow::bail!("{BASELINE_FILE} version {} — this goat reads version 1", b.version);
+    if b.version != MEMBERSHIP_VERSION {
+        return Err(crate::errors::membership_version_unsupported(
+            source,
+            BASELINE_FILE,
+            b.version,
+            MEMBERSHIP_VERSION,
+        )
+        .into());
     }
     if b.scope != scope {
         anyhow::bail!(
@@ -728,7 +753,7 @@ pub fn load_decl(dir: &Path, scope: &str) -> anyhow::Result<MembershipDecl> {
             scope_path.display()
         )
     })?;
-    let head = parse_scope_file(&text, scope)?;
+    let head = parse_scope_file(&text, scope, &scope_path)?;
 
     let mut files = Vec::new();
     walk(dir, Path::new(""), &mut files)?;
@@ -745,7 +770,7 @@ pub fn load_decl(dir: &Path, scope: &str) -> anyhow::Result<MembershipDecl> {
             let p = dir.join(&rel);
             let t = std::fs::read_to_string(&p)
                 .map_err(|e| anyhow::anyhow!("read {}: {e}", p.display()))?;
-            people = parse_baseline_file(&t, scope)?;
+            people = parse_baseline_file(&t, scope, &p)?;
             continue;
         }
         if name.starts_with('_') {
@@ -767,7 +792,8 @@ pub fn load_decl(dir: &Path, scope: &str) -> anyhow::Result<MembershipDecl> {
         let p = dir.join(&rel);
         let t =
             std::fs::read_to_string(&p).map_err(|e| anyhow::anyhow!("read {}: {e}", p.display()))?;
-        let got = parse_fragment(&t, scope).map_err(|e| anyhow::anyhow!("{}: {e}", p.display()))?;
+        let got = parse_fragment(&t, scope, &p)
+            .with_context(|| format!("parse membership fragment {}", p.display()))?;
         for e in got {
             if let Some(first) = sources.get(&e.peer) {
                 anyhow::bail!(
@@ -1270,7 +1296,7 @@ pub fn write_entry(
     };
     let merged = merge_entry(existing, entry)?;
     let next = splice_entry(&text, &merged);
-    let check = parse_fragment(&next, scope).map_err(|e| {
+    let check = parse_fragment(&next, scope, &path).map_err(|e| {
         anyhow::anyhow!(
             "refusing to write {}: the edit would not parse ({e})",
             path.display()
@@ -3096,7 +3122,7 @@ mod tests {
             } else {
                 Converge::Report
             },
-            entries: Some(parse_fragment(&text, "zagros-dev").unwrap()),
+            entries: Some(parse_fragment(&text, "zagros-dev", Path::new("fixture.yaml")).unwrap()),
             people: BTreeMap::new(),
             sources: BTreeMap::new(),
         }
@@ -4281,7 +4307,7 @@ mod tests {
     fn declaration_is_checked() {
         let bad = |entries: &str| {
             let text = format!("version: 1\nentries:{entries}\n");
-            parse_fragment(&text, "zagros-dev").is_err()
+            parse_fragment(&text, "zagros-dev", Path::new("fixture.yaml")).is_err()
         };
         // two forms
         assert!(bad("\n  - peer: a\n    exact: [ZAGROS-DEV-P2P]\n    grant: [ZAGROS-DEV-P2P]\n    owner: o\n    reason: r"));
@@ -4304,18 +4330,173 @@ mod tests {
         // a fragment may not carry scope/converge
         assert!(parse_fragment(
             "version: 1\nscope: zagros-dev\nconverge: report\nentries: []\n",
-            "zagros-dev"
+            "zagros-dev",
+            Path::new("fixture.yaml")
         )
         .is_err());
         // _scope.yaml: wrong scope, entries in it, bad version
-        assert!(parse_scope_file("version: 1\nscope: zagros\nconverge: report\n", "zagros-dev").is_err());
         assert!(parse_scope_file(
-            "version: 1\nscope: zagros-dev\nconverge: report\nentries: []\n",
-            "zagros-dev"
+            "version: 1\nscope: zagros\nconverge: report\n",
+            "zagros-dev",
+            Path::new(SCOPE_FILE)
         )
         .is_err());
-        assert!(parse_scope_file("version: 2\nscope: zagros-dev\nconverge: report\n", "zagros-dev").is_err());
-        assert!(parse_scope_file("version: 1\nscope: zagros-dev\nconverge: report\n", "zagros-dev").is_ok());
+        assert!(parse_scope_file(
+            "version: 1\nscope: zagros-dev\nconverge: report\nentries: []\n",
+            "zagros-dev",
+            Path::new(SCOPE_FILE)
+        )
+        .is_err());
+        assert!(parse_scope_file(
+            "version: 2\nscope: zagros-dev\nconverge: report\n",
+            "zagros-dev",
+            Path::new(SCOPE_FILE)
+        )
+        .is_err());
+        assert!(parse_scope_file(
+            "version: 1\nscope: zagros-dev\nconverge: report\n",
+            "zagros-dev",
+            Path::new(SCOPE_FILE)
+        )
+        .is_ok());
+    }
+
+    fn assert_version_error(
+        err: &anyhow::Error,
+        want_file: &Path,
+        want_kind: &str,
+        want_found: u32,
+    ) {
+        let goat = err
+            .downcast_ref::<crate::errors::GoatError>()
+            .expect("unsupported numeric version must remain a typed GoatError");
+        match goat {
+            crate::errors::GoatError::MembershipVersionUnsupported {
+                file,
+                kind,
+                found,
+                supported,
+                ..
+            } => {
+                assert_eq!(file, want_file);
+                assert_eq!(*kind, want_kind);
+                assert_eq!(*found, want_found);
+                assert_eq!(*supported, MEMBERSHIP_VERSION);
+                assert_eq!(goat.code(), "E_MEMBERSHIP_VERSION_UNSUPPORTED");
+                assert_eq!(goat.exit_code(), crate::exit_codes::EXIT_GENERIC);
+            }
+            other => panic!("wrong GoatError variant: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn every_reachable_membership_version_check_is_typed() {
+        let fragment = Path::new("nested/operators.yaml");
+        let err = parse_fragment("version: 2\nentries: []\n", "zagros-dev", fragment).unwrap_err();
+        assert_version_error(&err, fragment, "fragment", 2);
+
+        let scope = Path::new("declaration/_scope.yaml");
+        let err = parse_scope_file(
+            "version: 0\nscope: zagros-dev\nconverge: report\n",
+            "zagros-dev",
+            scope,
+        )
+        .unwrap_err();
+        assert_version_error(&err, scope, SCOPE_FILE, 0);
+
+        let baseline = Path::new("declaration/_baseline.generated.yaml");
+        let err = parse_baseline_file(
+            "version: 4294967295\nscope: zagros-dev\npeople: {}\n",
+            "zagros-dev",
+            baseline,
+        )
+        .unwrap_err();
+        assert_version_error(&err, baseline, BASELINE_FILE, u32::MAX);
+    }
+
+    #[test]
+    fn strict_schema_errors_keep_precedence_over_version_errors() {
+        for err in [
+            parse_fragment(
+                "version: 2\nentries: []\nfuture: true\n",
+                "zagros-dev",
+                Path::new("future-fragment.yaml"),
+            )
+            .unwrap_err(),
+            parse_scope_file(
+                "version: 2\nscope: zagros-dev\nconverge: report\nfuture: true\n",
+                "zagros-dev",
+                Path::new(SCOPE_FILE),
+            )
+            .unwrap_err(),
+            parse_fragment(
+                "version: 1\nentries: []\nfuture: true\n",
+                "zagros-dev",
+                Path::new("supported-with-unknown.yaml"),
+            )
+            .unwrap_err(),
+        ] {
+            assert!(
+                err.downcast_ref::<crate::errors::GoatError>().is_none(),
+                "strict decode failure must not be relabelled as a version error: {err:#}"
+            );
+            assert!(format!("{err:#}").contains("unknown field"));
+        }
+
+        // The baseline deliberately permits new top-level fields for rolling
+        // upgrades, so its numeric check remains reachable in this shape.
+        let err = parse_baseline_file(
+            "version: 2\nscope: zagros-dev\nfuture: true\n",
+            "zagros-dev",
+            Path::new(BASELINE_FILE),
+        )
+        .unwrap_err();
+        assert_version_error(&err, Path::new(BASELINE_FILE), BASELINE_FILE, 2);
+    }
+
+    #[test]
+    fn load_decl_preserves_type_and_exact_source_for_all_three_files() {
+        let temp = tempfile::tempdir().unwrap();
+
+        let scope_dir = temp.path().join("scope-version");
+        std::fs::create_dir_all(&scope_dir).unwrap();
+        let scope_path = scope_dir.join(SCOPE_FILE);
+        std::fs::write(
+            &scope_path,
+            "version: 2\nscope: zagros-dev\nconverge: report\n",
+        )
+        .unwrap();
+        let err = load_decl(&scope_dir, "zagros-dev").unwrap_err();
+        assert_version_error(&err, &scope_path, SCOPE_FILE, 2);
+
+        let baseline_dir = temp.path().join("baseline-version");
+        std::fs::create_dir_all(&baseline_dir).unwrap();
+        std::fs::write(
+            baseline_dir.join(SCOPE_FILE),
+            "version: 1\nscope: zagros-dev\nconverge: report\n",
+        )
+        .unwrap();
+        let baseline_path = baseline_dir.join(BASELINE_FILE);
+        std::fs::write(
+            &baseline_path,
+            "version: 2\nscope: zagros-dev\npeople: {}\n",
+        )
+        .unwrap();
+        let err = load_decl(&baseline_dir, "zagros-dev").unwrap_err();
+        assert_version_error(&err, &baseline_path, BASELINE_FILE, 2);
+
+        let fragment_dir = temp.path().join("fragment-version");
+        let nested_dir = fragment_dir.join("people");
+        std::fs::create_dir_all(&nested_dir).unwrap();
+        std::fs::write(
+            fragment_dir.join(SCOPE_FILE),
+            "version: 1\nscope: zagros-dev\nconverge: report\n",
+        )
+        .unwrap();
+        let fragment_path = nested_dir.join("operators.yaml");
+        std::fs::write(&fragment_path, "version: 2\nentries: []\n").unwrap();
+        let err = load_decl(&fragment_dir, "zagros-dev").unwrap_err();
+        assert_version_error(&err, &fragment_path, "fragment", 2);
     }
 
     /// Every scope directory shipped in the repo loads; their entries change

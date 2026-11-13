@@ -14,6 +14,7 @@
 
 use crate::exit_codes;
 use std::fmt;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, thiserror::Error)]
 #[allow(dead_code)] // Variants land as each subcommand wires them; Phase B-E sweep.
@@ -142,6 +143,19 @@ pub enum GoatError {
     /// of any deployment is compiled in, so there is nothing to fall back to.
     #[error("E_ACL_DECLARATION_MISSING")]
     AclDeclarationMissing { hint: String },
+
+    /// A warrant-membership file parsed as the current strict schema but its
+    /// numeric version is not supported by this build. The exact source path
+    /// travels with the typed error so loading context never has to flatten it
+    /// into an untyped string merely to name the file.
+    #[error("E_MEMBERSHIP_VERSION_UNSUPPORTED")]
+    MembershipVersionUnsupported {
+        file: PathBuf,
+        kind: &'static str,
+        found: u32,
+        supported: u32,
+        hint: String,
+    },
 }
 
 impl GoatError {
@@ -180,6 +194,7 @@ impl GoatError {
             Self::MeshPeerUnresolved { .. } => "E_MESH_PEER_UNRESOLVED",
             Self::NetbirdFailed { .. } => "E_NETBIRD_FAILED",
             Self::AclDeclarationMissing { .. } => "E_ACL_DECLARATION_MISSING",
+            Self::MembershipVersionUnsupported { .. } => "E_MEMBERSHIP_VERSION_UNSUPPORTED",
         }
     }
 
@@ -207,7 +222,9 @@ impl GoatError {
                 exit_codes::EXIT_GENERIC
             }
             Self::NetbirdFailed { .. } => exit_codes::EXIT_PORTAL,
-            Self::AclDeclarationMissing { .. } => exit_codes::EXIT_GENERIC,
+            Self::AclDeclarationMissing { .. } | Self::MembershipVersionUnsupported { .. } => {
+                exit_codes::EXIT_GENERIC
+            }
         }
     }
 
@@ -327,6 +344,20 @@ impl GoatError {
             Self::AclDeclarationMissing { .. } => {
                 fl!(LANGUAGE_LOADER, "error-acl-declaration-missing-summary")
             }
+            Self::MembershipVersionUnsupported {
+                file,
+                kind,
+                found,
+                supported,
+                ..
+            } => fl!(
+                LANGUAGE_LOADER,
+                "error-membership-version-unsupported-summary",
+                file = file.display().to_string(),
+                kind = kind.to_string(),
+                found = found.to_string(),
+                supported = supported.to_string()
+            ),
         }
     }
 
@@ -353,7 +384,8 @@ impl GoatError {
             | Self::MachineUnresolved { hint, .. }
             | Self::MeshPeerUnresolved { hint, .. }
             | Self::NetbirdFailed { hint }
-            | Self::AclDeclarationMissing { hint } => hint,
+            | Self::AclDeclarationMissing { hint }
+            | Self::MembershipVersionUnsupported { hint, .. } => hint,
         }
     }
 
@@ -386,12 +418,43 @@ impl GoatError {
             | Self::MachineUnresolved { hint, .. }
             | Self::MeshPeerUnresolved { hint, .. }
             | Self::NetbirdFailed { hint }
-            | Self::AclDeclarationMissing { hint } => {
+            | Self::AclDeclarationMissing { hint }
+            | Self::MembershipVersionUnsupported { hint, .. } => {
                 hint.push('\n');
                 hint.push_str("  hint: ");
                 hint.push_str(extra);
             }
         }
+    }
+}
+
+/// Build the typed refusal shared by the three warrant-membership parsers.
+/// `kind` is the stable legacy diagnostic label (`fragment`, `_scope.yaml`,
+/// or `_baseline.generated.yaml`); `file` is the exact source that was read.
+pub fn membership_version_unsupported(
+    file: &Path,
+    kind: &'static str,
+    found: u32,
+    supported: u32,
+) -> GoatError {
+    let mut hint = format!(
+        "{} declares membership version {found}, but this goat supports version {supported}. \
+         Update goat or check that --file names the intended membership declaration; do not \
+         change only `version:` to bypass validation. Nothing was changed.",
+        file.display()
+    );
+    if kind == "_baseline.generated.yaml" {
+        hint.push_str(
+            " Regenerate the baseline from the reviewed operator manifests with \
+             `python3 ops/warrant/membership.py --generate-baseline`.",
+        );
+    }
+    GoatError::MembershipVersionUnsupported {
+        file: file.to_path_buf(),
+        kind,
+        found,
+        supported,
+        hint,
     }
 }
 
