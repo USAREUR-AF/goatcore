@@ -869,6 +869,24 @@ fn assay_plan_writes_nothing_in_the_checkout() {
     }
 }
 
+/// `assay --plan` is a dry run: its derivations start through the runner, but it
+/// begins no run, so it prints no `run record:` line and writes no record. This is
+/// the goatlite tutorial's rehearsal, whose checkpoint has no such line
+/// (ops/tutorials/check.sh).
+#[test]
+fn assay_plan_leaves_no_run_record() {
+    if !python_deps() {
+        return;
+    }
+    let r = repo();
+    let values = r.join("ops/goatbuilder/fixtures/goatnet-from-scratch/00-goatlite/assay-values.yaml");
+    let o = run(&["-C", r.to_str().unwrap(), "assay", "pasture", "--values", values.to_str().unwrap(), "--plan"]);
+    assert_eq!(code(&o), 0, "{}", text(&o));
+    assert!(!text(&o).contains("run record:"), "assay --plan printed a run record:\n{}", text(&o));
+    let runs = test_home::path().join(".goat/state/runs");
+    assert!(!runs.exists(), "assay --plan wrote {}", runs.display());
+}
+
 /// A throwaway repo and a `gh` that logs its arguments and knows one tag.
 struct FastlaneRepo {
     dir: PathBuf,

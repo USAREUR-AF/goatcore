@@ -1114,6 +1114,8 @@ fn dry_run(cmd: &Cmd) -> bool {
             | Cmd::JoinNode { dry_run: true, .. }
             | Cmd::Federate { dry_run: true, .. }
             | Cmd::Teardown { dry_run: true, .. }
+            // `assay --plan` lists the checks and probes nothing.
+            | Cmd::Assay { plan: true, .. }
     )
 }
 
