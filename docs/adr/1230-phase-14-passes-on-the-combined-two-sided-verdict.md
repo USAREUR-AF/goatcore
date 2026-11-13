@@ -73,6 +73,10 @@ another session or replayed from an earlier one. Those are the signing and repla
 - **What a signature does not say.** It says the holder of the partner's sovereign key reported
   these rows, not that the partner's systems are honest. Peer-reported rows stay in their own
   column in the combined record.
+- **What it depends on.** The outcomes `waiting` and `incomplete`, and GB-199, are introduced by
+  the change that makes phase 14 report a missing partner half as waiting
+  (`federation-acceptance.md` §8.6). The session itself is designed in `federation-acceptance.md`
+  §8. Both land before this ADR is accepted.
 - **Publishing `exchanging` is unchanged.** It stays a reviewed change to the partner file
   (`federation-acceptance.md` §7). A combined `passed` makes `propose` possible; it never grants
   anything by itself.
