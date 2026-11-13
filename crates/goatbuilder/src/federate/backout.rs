@@ -365,8 +365,11 @@ pub struct CoreLeaf {
 
 /// What a leaf path holds, and what the back-out does with it.
 enum Leaf {
-    /// Absent, or another's bytes: left alone.
-    NotOurs,
+    /// Nothing at the path: left alone.
+    Missing,
+    /// Another's bytes at the path (or this peering's leaf cannot be read to
+    /// compare): left alone.
+    Foreign,
     /// This peering's, and another peering's working folder holds the same
     /// leaf: kept, because that peering uses it too.
     Shared(String),
@@ -540,11 +543,14 @@ impl CoreLeaf {
     }
 
     fn plan(&self, target: &Path, ours: &Path) -> Leaf {
-        let (Ok(now), Ok(mine)) = (std::fs::read(target), std::fs::read(ours)) else {
-            return Leaf::NotOurs;
+        let Ok(now) = std::fs::read(target) else {
+            return Leaf::Missing;
+        };
+        let Ok(mine) = std::fs::read(ours) else {
+            return Leaf::Foreign;
         };
         if now != mine {
-            return Leaf::NotOurs;
+            return Leaf::Foreign;
         }
         let name = ours.file_name().unwrap_or_default();
         if let Some(parent) = self.work.parent() {
@@ -581,14 +587,17 @@ impl CoreLeaf {
     }
 
     /// Each path's plan, with the certificate and key taken as one unit: if
-    /// one would be put back and the other removed, or one is unknown, the
-    /// leaf could not serve afterwards, so both read unknown and nothing
-    /// changes.
+    /// one would be put back and the other removed, or one is unknown or
+    /// holds another's bytes beside a half that would change, the leaf could
+    /// not serve afterwards, so both read unknown and nothing changes. A
+    /// missing half is neutral.
     fn plans(&self) -> Vec<Leaf> {
         let plans: Vec<Leaf> = self.targets.iter().map(|(t, o)| self.plan(t, o)).collect();
         let restore = plans.iter().any(|l| matches!(l, Leaf::Restore(..)));
         let remove = plans.iter().any(|l| matches!(l, Leaf::Remove(_)));
-        let unknown = plans.iter().any(|l| matches!(l, Leaf::Unknown(_)));
+        let unknown = plans
+            .iter()
+            .any(|l| matches!(l, Leaf::Unknown(_) | Leaf::Foreign));
         if !(restore && remove) && !(unknown && (restore || remove)) {
             return plans;
         }
@@ -602,17 +611,18 @@ impl CoreLeaf {
                 }
                 Leaf::Remove(r) => format!("{} would be removed by {}", t.display(), r.display()),
                 Leaf::Unknown(why) => format!("{}: {why}", t.display()),
-                Leaf::NotOurs | Leaf::Shared(_) => format!("{} is left as it is", t.display()),
+                Leaf::Foreign => format!("{} holds another leaf", t.display()),
+                Leaf::Missing | Leaf::Shared(_) => format!("{} is left as it is", t.display()),
             })
             .collect();
         let why = format!(
-            "the certificate and key are one leaf, and their admission records disagree: {}",
+            "the certificate and key are one leaf, and its two halves would not be left as one: {}",
             said.join("; ")
         );
         plans
             .into_iter()
             .map(|l| match l {
-                Leaf::Restore(..) | Leaf::Remove(_) | Leaf::Unknown(_) => {
+                Leaf::Restore(..) | Leaf::Remove(_) | Leaf::Unknown(_) | Leaf::Foreign => {
                     Leaf::Unknown(why.clone())
                 }
                 other => other,
@@ -633,9 +643,10 @@ impl CoreLeaf {
                 note,
             };
             rows.push(match plan {
-                Leaf::NotOurs => row(
-                    "absent",
-                    "none",
+                Leaf::Missing => row("absent", "none", String::new()),
+                Leaf::Foreign => row(
+                    "present",
+                    "kept",
                     format!("does not hold {}", ours.display()),
                 ),
                 Leaf::Shared(p) => row(
@@ -676,7 +687,7 @@ impl CoreLeaf {
                 Leaf::Restore(bytes, _) => super::admit::publish(&bytes, target, backups, bdir),
                 Leaf::Remove(_) => super::admit::publish(b"", target, backups, bdir)
                     .and_then(|_| std::fs::remove_file(target)),
-                Leaf::NotOurs | Leaf::Shared(_) | Leaf::Unknown(_) => Ok(()),
+                Leaf::Missing | Leaf::Foreign | Leaf::Shared(_) | Leaf::Unknown(_) => Ok(()),
             };
             r.map_err(|e| format!("cannot take back {} ({e})", target.display()))?;
         }
@@ -3456,10 +3467,54 @@ mod tests {
         );
         place_leaf(&mut c, None);
         std::fs::write(&c.vars["FED_CORE_CERT"], b"A-LATER-LEAF").unwrap();
+        std::fs::write(&c.vars["FED_CORE_KEY"], b"A-LATER-KEY").unwrap();
         back_out(&c);
         assert_eq!(
             std::fs::read(&c.vars["FED_CORE_CERT"]).unwrap(),
             b"A-LATER-LEAF"
+        );
+        assert_eq!(
+            std::fs::read(&c.vars["FED_CORE_KEY"]).unwrap(),
+            b"A-LATER-KEY"
+        );
+    }
+
+    #[test]
+    fn a_leaf_half_of_which_now_holds_another_s_bytes_is_left_as_it_is() {
+        // The certificate is still ours, with a backup to put back; the key
+        // now holds someone else's. Putting the certificate back beside a
+        // foreign key, or removing ours beside it, leaves a leaf that cannot
+        // serve: both read unknown and nothing changes. A half that is
+        // missing stays neutral.
+        let mut c = admitted(
+            true,
+            &[("FED_CORE_RESTART", "true"), ("FED_CORE_DRY_RUN", "skip")],
+        );
+        place_leaf(&mut c, Some(b"THE-LEAF-BEFORE"));
+        std::fs::write(&c.vars["FED_CORE_KEY"], b"SOMEONE-ELSES-KEY").unwrap();
+        let rows = leaf_rows(&c);
+        for var in ["FED_CORE_CERT", "FED_CORE_KEY"] {
+            assert_eq!(rows[&c.vars[var]].state, "unknown", "{rows:?}");
+        }
+        assert_eq!(
+            std::fs::read(&c.vars["FED_CORE_CERT"]).unwrap(),
+            b"CERT-OF-XAB"
+        );
+        assert_eq!(
+            std::fs::read(&c.vars["FED_CORE_KEY"]).unwrap(),
+            b"SOMEONE-ELSES-KEY"
+        );
+        // Missing is neutral: with the key gone, the certificate is put back.
+        let mut c = admitted(
+            true,
+            &[("FED_CORE_RESTART", "true"), ("FED_CORE_DRY_RUN", "skip")],
+        );
+        place_leaf(&mut c, Some(b"THE-LEAF-BEFORE"));
+        std::fs::remove_file(&c.vars["FED_CORE_KEY"]).unwrap();
+        back_out(&c);
+        assert_eq!(
+            std::fs::read(&c.vars["FED_CORE_CERT"]).unwrap(),
+            b"THE-LEAF-BEFORE"
         );
     }
 
