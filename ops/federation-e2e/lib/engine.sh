@@ -945,6 +945,10 @@ link_state() {
     echo "--- $s edge router toward $them: connection lines"
     docker exec "$HP-$s-edge" docker logs --tail 400 "goat-zenoh-edge-$them" 2>&1 | grep -iE 'unable to connect|tls|handshake|new session|close session|closed|lease|reconnect|connected' | tail -15 | cut -c1-300
     echo "--- $s republisher toward $them: last lines"; docker exec "$HP-$s-core" docker logs --tail 15 "goat-fed-republisher-$them" 2>&1 | cut -c1-300
+    echo "--- $s edge: TCP sessions on the fabric ports (7448 to the partner, 7447 to its core)"
+    docker exec "$HP-$s-edge" ss -tn '( sport = :7448 or dport = :7448 or sport = :7447 or dport = :7447 )' 2>&1 | head -20
+    echo "--- $s edge: the tunnel's nft table"
+    docker exec "$HP-$s-edge" nft list table inet "goat_peering_wg_$(iface "$s" "$them" | sed 's/^wg-//')" 2>&1 | head -40
     echo "--- $s partner CA: placed $(cat "$WORK/ca-sha-$s-$them" 2>/dev/null || echo unknown), now $(docker exec "$(drv_host "$s")" sha256sum "$w/theirs-ca.pem" 2>/dev/null | cut -d' ' -f1); unconfirmed: $(docker exec "$(drv_host "$s")" sh -c "ls $w/*.unconfirmed 2>/dev/null" | tr '\n' ' ')"
   done
 }
