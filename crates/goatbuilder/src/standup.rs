@@ -858,7 +858,9 @@ fn in_range(n: u32, o: &Options) -> bool {
 fn phase_command(repo: &Path, cmd: &str) -> Command {
     let mut c = Command::new(repo.join("ops/scripts/standup-phase-run"));
     c.arg(cmd);
-    crate::secrets::with_test_env(&mut c);
+    if let Some(p) = crate::secrets::test_lite_config() {
+        c.env("GOAT_LITE_CONFIG", p);
+    }
     c
 }
 

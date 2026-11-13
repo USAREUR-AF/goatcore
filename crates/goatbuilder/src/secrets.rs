@@ -38,21 +38,22 @@ pub(crate) fn set_test_lite_config(path: &str) {
     LITE_CONFIG.with(|c| *c.borrow_mut() = Some(path.to_string()));
 }
 
-/// Apply this test thread's `GOAT_LITE_CONFIG`, if it set one, to a command.
-pub(crate) fn with_test_env(cmd: &mut Command) -> &mut Command {
+/// The `GOAT_LITE_CONFIG` this test thread set, if any, for each caller to put in
+/// the environment of the command it starts (whatever its command type).
+pub(crate) fn test_lite_config() -> Option<String> {
     #[cfg(test)]
-    LITE_CONFIG.with(|c| {
-        if let Some(p) = c.borrow().as_ref() {
-            cmd.env("GOAT_LITE_CONFIG", p);
-        }
-    });
-    cmd
+    if let Some(p) = LITE_CONFIG.with(|c| c.borrow().clone()) {
+        return Some(p);
+    }
+    None
 }
 
 fn ask_with(repo: &Path, args: &[&str], probe: bool) -> Option<(i32, String)> {
     let mut cmd = Command::new("python3");
     cmd.arg(posture(repo)).args(args).current_dir(repo);
-    with_test_env(&mut cmd);
+    if let Some(p) = test_lite_config() {
+        cmd.env("GOAT_LITE_CONFIG", p);
+    }
     if !probe {
         cmd.env("GOAT_STORE_PROBE", "0");
     }
