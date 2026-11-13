@@ -1809,6 +1809,48 @@ mod tests {
         );
     }
 
+    /// The back-out reads the core route the run holds (runenv), not only the
+    /// process environment: a route recorded for this run on this thread, with
+    /// none in the process environment, is refused (GB-221) by the entry itself,
+    /// before any host is read.
+    #[test]
+    fn a_core_route_held_for_this_run_is_refused_by_the_back_out() {
+        if std::env::var_os("FED_CORE_PLAY").is_some() {
+            return; // the process environment already names one
+        }
+        let d = tempfile::tempdir().unwrap();
+        let (repo, work) = stand_in(d.path());
+        let ran = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let mut exec = fake_hosts(work.clone(), ran.clone());
+        let o = Options {
+            partner: "hello-ally",
+            env: None,
+            r#as: None,
+            edge_group: None,
+            work: Some(&work),
+            mock: None,
+            dry_run: true,
+            yes: true,
+            table: false,
+        };
+        crate::federate::runenv::set("FED_CORE_PLAY", "goat-zenoh-core-by-hand.yml");
+        let got = backout_with(&repo, &o, &mut exec);
+        crate::federate::runenv::unset("FED_CORE_PLAY");
+        let e = got.expect_err("a back-out with a hand-set core route is refused");
+        assert_eq!(
+            e.downcast_ref::<goat_errors::Coded>()
+                .map(|c| c.code.as_str()),
+            Some("GB-221"),
+            "{e}"
+        );
+        assert!(e.to_string().contains("FED_CORE_PLAY"), "{e}");
+        assert!(
+            ran.borrow().is_empty(),
+            "no host was read: {:?}",
+            ran.borrow()
+        );
+    }
+
     #[test]
     fn records_are_read_from_the_stage_directory() {
         let d = tempfile::tempdir().unwrap();
