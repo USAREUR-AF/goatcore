@@ -915,7 +915,7 @@ fn run_phase1(
     let out = cmd
         .output()
         .with_context(|| format!("python3 {}", script.display()))?;
-    let (ready, rows) = read_readiness(result).with_context(|| {
+    let (written, _, _) = read_result(result).with_context(|| {
         format!(
             "phase 1 exited {}: {}",
             out.status,
@@ -923,10 +923,12 @@ fn run_phase1(
         )
     })?;
     anyhow::ensure!(
-        out.status.success() == ready,
-        "phase 1 exited {} but its result says ready={ready}; not trusting either",
+        out.status.success() == written,
+        "phase 1 exited {} but its result says ready={written}; not trusting either",
         out.status
     );
+    // Read again for the verdict: a one-sided result is not ready on its own.
+    let (_, rows) = read_readiness(result)?;
     anyhow::ensure!(
         !rows.is_empty(),
         "phase 1 wrote no results to {}",
@@ -940,14 +942,35 @@ fn blocks(outcome: &str) -> bool {
 }
 
 /// Whether a phase-1 result file (`goat-federation-preflight/v1`) says ready,
-/// and its outcomes.
+/// and its outcomes. Phase 1 passes only when both sides' results are ready
+/// (docs/design/federation-preflight.md): a result of one side's checks
+/// (`side` `edge` or `core`, from `preflight.py --side`) is never ready on its
+/// own, and a `sides` row says why. Combining it with the other side's result
+/// is the two-driver import, which is not built.
 pub fn read_readiness(path: &Path) -> Result<(bool, Vec<Readiness>)> {
+    let (ready, side, mut rows) = read_result(path)?;
+    if let Some(side) = side.filter(|s| s != "both") {
+        rows.push(Readiness {
+            check: "sides".into(),
+            outcome: "BLOCKED".into(),
+            code: None,
+            detail: format!("this phase 1 result holds only the {side} side's checks; phase 1 passes only when both sides' results are ready, and a one-sided result is never ready on its own"),
+        });
+        return Ok((false, rows));
+    }
+    Ok((ready, rows))
+}
+
+/// A phase-1 result file as written: its own ready flag, its side (absent in
+/// a result written before sides), and its outcomes.
+fn read_result(path: &Path) -> Result<(bool, Option<String>, Vec<Readiness>)> {
     let text = std::fs::read_to_string(path)
         .with_context(|| format!("no phase 1 result at {}", path.display()))?;
     let doc: serde_json::Value =
         serde_json::from_str(&text).with_context(|| format!("{} is not JSON", path.display()))?;
     let s = |v: &serde_json::Value| v.as_str().unwrap_or_default().to_string();
     let ready = doc["ready"].as_bool() == Some(true);
+    let side = doc["side"].as_str().map(String::from);
     let rows = doc["results"]
         .as_array()
         .map(|rs| {
@@ -964,7 +987,7 @@ pub fn read_readiness(path: &Path) -> Result<(bool, Vec<Readiness>)> {
                 .collect()
         })
         .unwrap_or_default();
-    Ok((ready, rows))
+    Ok((ready, side, rows))
 }
 
 /// The declared peering (C1), and every declared peering (for the host check),

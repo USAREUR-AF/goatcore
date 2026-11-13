@@ -109,6 +109,13 @@ SSH failure, and an environment variable is easy to forget on one of the two mac
 
 Status: built (`federate_two_drivers.rs`).
 
+**Phase 1 passes only when both sides' results are ready.** A phase 1 result written by one
+side's checks (`preflight.py --side edge|core`, its `side` member) is never ready on its own,
+however its own checks went: `crates/goatbuilder/src/federate/plan.rs` (`read_readiness`) reads it
+as not ready and adds a BLOCKED `sides` row that says why. Combining it with the other side's
+result is the import, which is not built. Status: built (the test
+`a_one_sided_phase_1_result_is_never_ready_on_its_own`).
+
 ## The contract
 
 **The controller is the run of record.** It holds the CA key, the plan, every approval and the
