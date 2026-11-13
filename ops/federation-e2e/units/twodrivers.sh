@@ -96,7 +96,7 @@ peers[0]["drivers"] = "two"
 open(p, "w").write(yaml.safe_dump(cfg, sort_keys=False))
 print(f"declared drivers: two for the peering with {them}")
 PY
-  docker exec "$HP-$s-ops" sh -c "cd /opt/goat && git add ops/goatbuilder/goatbuilder.yaml && git commit -q -m '$s: the peering with $them is run from two drivers' && git log --oneline -1"
+  docker exec "$HP-$s-ops" sh -c "cd /opt/goat && git config user.name '$s operator' && git config user.email 'ops@$s.test' && git add ops/goatbuilder/goatbuilder.yaml && git commit -q -m '$s: the peering with $them is run from two drivers' && git log --oneline -1"
 }
 
 # The controller's goatbuilder, as an operator runs it there; $1 us, $2 them, then arguments.
