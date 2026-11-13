@@ -1058,7 +1058,7 @@ pub struct MeasureArgs {
     /// joins the edge half read from --edge-half, and builds the package.
     /// Without it, both hosts are measured here, as always. On a peering run,
     /// `--side edge` is the edge driver's run of a two-driver peering
-    /// (`drivers: two`): not built yet, and refused
+    /// (`drivers: two`): not built yet, and refused with GB-267
     /// (docs/design/federation-two-drivers.md).
     #[arg(long, value_name = "SIDE", value_parser = ["edge", "core"], global = true)]
     pub side: Option<String>,

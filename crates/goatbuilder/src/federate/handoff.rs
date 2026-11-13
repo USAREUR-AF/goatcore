@@ -4,13 +4,16 @@
 //! approvals and the journal. A peering opts in with `drivers: two` on its
 //! `peerings:` entry; absent, or `one`, one machine drives every phase.
 //!
-//! Built here: each phase's side, and the controller's stop at a phase that
-//! needs the edge, with the hand-off object of "The hand-off object" in the
-//! run's `-o json` report (member `handoff`) and the same argvs in its text.
-//! Not built yet: the edge driver's `--side edge` run, `import`, each
+//! Built here: each phase's side, and the controller's stop at phases 1 and 2,
+//! the two where the generic hand-off object is the contract's, with that
+//! object in the run's `-o json` report (member `handoff`) and the same argvs
+//! in its text. A two-driver run at any later phase that needs the edge (3,
+//! 11 to 14) is refused before acting (GB-267), because its object differs
+//! (phase 3's result is the edge half, 11 to 13 carry files, 14 binds by id)
+//! and is not built; so is `--side edge`. Not built either: `import`, each
 //! phase's core half against an imported result, and `status` showing the
-//! object. Until they are, a two-driver peering stops at its first phase that
-//! needs the edge and goes no further.
+//! object. A two-driver peering therefore stops at its first phase that needs
+//! the edge and goes no further.
 
 use crate::Check;
 use std::path::Path;
@@ -19,6 +22,25 @@ use std::path::Path;
 pub const WAITING: &str = "GB-265";
 /// The controller's checkout has changes, so no hand-off can pin it.
 pub const DIRTY: &str = "GB-266";
+/// This part of a two-driver peering is not built yet.
+pub const NOT_BUILT: &str = "GB-267";
+
+/// Whether the controller's stop at phase `n` gives the contract's object:
+/// phases 1 and 2 only, where nothing is carried and the result is the edge's
+/// `handoff/<n>/edge.json`.
+pub fn hands_off(n: u32) -> bool {
+    matches!(n, 1 | 2)
+}
+
+/// The refusal of a two-driver run at a phase that needs the edge, after 2.
+pub fn later_phase_not_built(n: u32) -> Check {
+    Check {
+        name: "handoff".into(),
+        ok: false,
+        detail: format!("{NOT_BUILT}: phase {n} needs the edge, and its hand-off is not built yet: a two-driver peering (drivers: two) hands off only at phases 1 and 2 (docs/design/federation-two-drivers.md). Nothing ran"),
+        fix: Some("run the peering with one driver for now: remove drivers: two from its peerings: entry, from a machine that reaches both the edge host and the core host".into()),
+    }
+}
 
 /// The side of the peering a phase needs (the contract's table, "Where each
 /// phase needs to run, today").
@@ -52,8 +74,8 @@ pub fn two(drivers: Option<&str>) -> bool {
 /// The refusal of `--side edge` while the edge driver's run is not built.
 pub fn edge_side_not_built() -> anyhow::Error {
     goat_errors::coded(
-        "GB-189",
-        "--side edge: the edge driver's run of a two-driver peering is not built yet; the controller's run stops at each phase that needs the edge (docs/design/federation-two-drivers.md, What has to be built)",
+        NOT_BUILT,
+        "--side edge: the edge driver's run of a two-driver peering is not built yet (docs/design/federation-two-drivers.md); run the peering with one driver for now",
     )
     .into()
 }

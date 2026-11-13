@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | **Designed; the hand-off stop is built.** A peering declares two drivers with `drivers: two` ("Which peerings have two drivers"), and the controller's run stops at the first phase that needs the edge with the hand-off object (GB-265; a checkout with changes is refused, GB-266). The halves, the edge driver's `--side edge` run, `import` and the rest are not built; the phase-3 halves are in review. It is the product contract goatbuilder 1.0 gate row B10 is proven against |
+| Status | **Designed; the hand-off stop at phases 1 and 2 is built.** A peering declares two drivers with `drivers: two` ("Which peerings have two drivers"). The controller's run stops at phase 1 or 2 with the hand-off object (GB-265), the two phases where the generic object is the contract's; a checkout with changes is refused (GB-266). A two-driver run at a later phase that needs the edge (3, 11 to 14), whose object differs, and the edge driver's `--side edge` run are refused before acting (GB-267, not built yet). The halves, `import` and the rest are not built; the phase-3 halves are in review. It is the product contract goatbuilder 1.0 gate row B10 is proven against |
 | Design | [goatbuilder.md](goatbuilder.md) (the federate sections) · [federation-plan.md](federation-plan.md) · [federation-preflight.md](federation-preflight.md) · [ADR 1225](../adr/1225-federation-belongs-to-goatbuilder-one-command-one-decision.md) |
 | Audience | whoever builds the two-driver run, writes its scenario, or runs a peering where no one machine reaches both the edge host and the core host |
 
@@ -166,9 +166,11 @@ everything that command reads from the other machine, the file it writes, and
 the two commands the controller runs after it. The sentence a person reads
 names the same commands.
 
-Status: built at the stop: the controller's run with `-o json` carries `handoff`, its text names
-every argv on its own line, quoted for a POSIX shell, and a checkout with changes gives no object
-(GB-266), naming each file (`crates/goatbuilder/src/federate/handoff.rs`, test
+Status: built at the stop, at phases 1 and 2 only: the controller's run with `-o json` carries
+`handoff`, its text names every argv on its own line, quoted for a POSIX shell, and a checkout with
+changes gives no object (GB-266), naming each file. At phases 3 and 11 to 14 the object differs
+(phase 3's result is the edge half, 11 to 13 carry files, 14 binds by id); a two-driver run there
+is refused before acting (GB-267) and prints no object (`crates/goatbuilder/src/federate/handoff.rs`, test
 `federate_two_drivers.rs`). Not built: the object in `status`, the edge's way-back object, and
 the `import` and `then` it names. Phase 3's two halves, which the phase 3 object wraps, are
 in review; this section says "built" for them once they are on main.

@@ -142,7 +142,7 @@ Options:
           the edge and writes the result to --half-out; `core` measures only the core, joins the
           edge half read from --edge-half, and builds the package. Without it, both hosts are
           measured here, as always. On a peering run, `--side edge` is the edge driver's run of a
-          two-driver peering (`drivers: two`): not built yet, and refused
+          two-driver peering (`drivers: two`): not built yet, and refused with GB-267
           (docs/design/federation-two-drivers.md)
           
           [possible values: edge, core]

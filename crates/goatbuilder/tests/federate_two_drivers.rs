@@ -237,12 +237,31 @@ fn phase_2_stops_with_the_contracts_hand_off_object() {
     assert_eq!(h["code"], "GB-265");
     assert_eq!(
         h["command"],
-        strings(&["goatbuilder", "federate", "hello-ally", "--side", "edge", "--from", "2", "--to", "2", "--expect-commit", &commit])
+        strings(&[
+            "goatbuilder",
+            "federate",
+            "hello-ally",
+            "--side",
+            "edge",
+            "--from",
+            "2",
+            "--to",
+            "2",
+            "--expect-commit",
+            &commit
+        ])
     );
     assert_eq!(h["carry"], serde_json::json!([]));
     assert_eq!(h["result"], "handoff/2/edge.json");
-    assert_eq!(h["then"], strings(&["goatbuilder", "federate", "hello-ally", "--from", "2"]));
-    assert!(!w.log().contains("play peering-prepare.yml"), "phase 2 acted: {}", w.log());
+    assert_eq!(
+        h["then"],
+        strings(&["goatbuilder", "federate", "hello-ally", "--from", "2"])
+    );
+    assert!(
+        !w.log().contains("play peering-prepare.yml"),
+        "phase 2 acted: {}",
+        w.log()
+    );
 }
 
 /// From phase 3 on, the generic object is not the contract's (phase 3's
@@ -251,15 +270,30 @@ fn phase_2_stops_with_the_contracts_hand_off_object() {
 /// printed.
 #[test]
 fn a_two_driver_run_after_phase_2_is_refused_with_no_object() {
-    for (from, acted) in [("3", "goat init"), ("11", "play peering-wg.yml"), ("12", "play peering-zenoh-edge.yml"), ("14", "acceptance")] {
+    for (from, acted) in [
+        ("3", "goat init"),
+        ("11", "play peering-wg.yml"),
+        ("12", "play peering-zenoh-edge.yml"),
+        ("14", "acceptance"),
+    ] {
         let w = world();
         two_drivers(&w);
         let (out, v) = w.run(&["hello-ally", "--from", from, "--to", from]);
         let all = says(&out);
         assert!(!out.status.success(), "--from {from}: {all}");
-        assert!(v["handoff"].is_null(), "--from {from} printed an object: {all}");
-        assert!(all.contains("GB-267") && all.contains("not built"), "--from {from}: {all}");
+        assert!(
+            v["handoff"].is_null(),
+            "--from {from} printed an object: {all}"
+        );
+        assert!(
+            all.contains("GB-267") && all.contains("not built"),
+            "--from {from}: {all}"
+        );
         assert!(!w.log().contains(acted), "--from {from} acted: {}", w.log());
-        assert_eq!(w.state()["phases"][from]["outcome"], "failed", "--from {from}");
+        assert_eq!(
+            w.state()["phases"][from]["outcome"],
+            "failed",
+            "--from {from}"
+        );
     }
 }

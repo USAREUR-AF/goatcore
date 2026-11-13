@@ -742,6 +742,16 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
         // Two drivers: a phase that needs the edge stops here, before acting,
         // and hands it to the edge driver (docs/design/federation-two-drivers.md).
         if two_drivers && matches!(handoff::side_of(ph.n), handoff::Side::Edge | handoff::Side::Both) {
+            if !handoff::hands_off(ph.n) {
+                let refusal = handoff::later_phase_not_built(ph.n);
+                let d = refusal.detail.clone();
+                checks.push(refusal);
+                if let Some(r) = run.as_mut() {
+                    r.end(ph, state::Outcome::Failed, &d);
+                }
+                exit = EXIT_REFUSED;
+                break;
+            }
             match handoff::clean_commit(repo) {
                 Ok(commit) => {
                     let stop = handoff::stop(o.with, ph.n, &commit);

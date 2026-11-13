@@ -577,6 +577,20 @@ entries:
       - "^GB-266: "
     exit: 1
 
+  - code: GB-267
+    tool: goatbuilder
+    title: this part of a two-driver peering is not built yet
+    what: "A peering declared with two drivers (`drivers: two`) is handed off between the edge driver and the controller only at phases 1 and 2, where the hand-off is built. Two cases are refused before anything runs: the edge driver's own run (`goatbuilder federate <partner> --side edge`), and a two-driver run that reaches a phase after 2 that needs the edge (3, 11, 12, 13 or 14), whose hand-off is designed and not built."
+    causes:
+      - "goatbuilder federate <partner> --side edge was run on the edge driver"
+      - "a two-driver peering was run from a phase after 2 (--from 3 or later) that needs the edge"
+    fixes:
+      - "run the peering with one driver for now: remove drivers: two from its peerings: entry, from a machine that reaches both the edge host and the core host"
+    read: docs/design/federation-two-drivers.md
+    matches:
+      - "^GB-267: "
+    exit: 1
+
   - code: GB-261
     tool: goatbuilder
     title: the release's signature does not verify, so the update refuses
