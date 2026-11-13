@@ -422,6 +422,16 @@ impl HostProbe {
     /// The full argument vector run on this machine. Over SSH the host's
     /// command line is one quoted string, after `--` and the destination, so no
     /// part of it can be read as an `ssh` option.
+    /// Where a probe acts, for the runner's frame and record: the host it
+    /// reaches over ssh, or this machine.
+    fn where_(&self) -> String {
+        if self.target.local {
+            "this machine".to_string()
+        } else {
+            format!("{} ({})", self.target.name, self.target.destination())
+        }
+    }
+
     pub fn argv(&self, bin: &str, args: &[&str]) -> Vec<String> {
         let host = self.on_host(bin, args);
         if self.target.local {
@@ -468,6 +478,7 @@ impl HostProbe {
         let argv = self.argv(bin, args);
         let out = crate::federate::runenv::command(&argv[0])
             .args(&argv[1..])
+            .host(self.where_())
             .output()
             .map_err(|e| format!("{}: {e}", argv[0]))?;
         let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
@@ -500,6 +511,7 @@ impl HostProbe {
         let shown = argv.iter().map(|w| quote(w)).collect::<Vec<_>>().join(" ");
         let out = crate::federate::runenv::command(&argv[0])
             .args(&argv[1..])
+            .host(self.where_())
             .output()
             .map_err(|e| {
                 coded(

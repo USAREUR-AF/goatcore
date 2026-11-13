@@ -416,6 +416,28 @@ pub(crate) fn our_id(work: &str) -> Option<String> {
 /// How a dry run reads to a person, the way kubeadm prints its phases: a
 /// header, one aligned table of phases, then each phase's command wrapped to
 /// the page, with this checkout's path and the home folder shortened.
+/// What federate's phase `n` is for, in a person's words: the plan page's step
+/// column and the runner's frame read it.
+fn purpose(n: u32) -> &'static str {
+    match n {
+        1 => "Check this site is ready to peer",
+        2 => "Make the link interface and export our trust bundle",
+        3 => "Build our half of the agreement from the running system",
+        4 => "Check our half is valid",
+        5 => "Swap halves through the directory, and read their key back",
+        6 => "Combine both halves into one agreement",
+        7 => "Check the agreement from our side",
+        8 => "Create the certificates for this peering",
+        9 => "Write the access rules and settings",
+        10 => "Review what was written, and let the router onto our core",
+        11 => "Open the connection the agreement chooses",
+        12 => "Deploy the edge router, and the republisher on our core",
+        13 => "Trust the other party's identity service",
+        14 => "Test that allowed traffic passes and the rest is refused",
+        _ => "",
+    }
+}
+
 fn plan_view(repo: &Path, o: &Options, work: &str, edge_group: &str, phases: &[Phase]) -> String {
     let home = runenv::var("HOME").unwrap_or_default();
     // The resolved path: with `-C ../..` the literal "../../" must not be
@@ -452,23 +474,7 @@ fn plan_view(repo: &Path, o: &Options, work: &str, edge_group: &str, phases: &[P
             let chose = ph.label.split("no play for '").nth(1).and_then(|r| r.split('\'').next()).unwrap_or("?");
             return format!("Open the connection: refused, the agreement chose '{chose}'");
         }
-        let plain = match ph.n {
-            1 => "Check this site is ready to peer",
-            2 => "Make the link interface and export our trust bundle",
-            3 => "Build our half of the agreement from the running system",
-            4 => "Check our half is valid",
-            5 => "Swap halves through the directory, and read their key back",
-            6 => "Combine both halves into one agreement",
-            7 => "Check the agreement from our side",
-            8 => "Create the certificates for this peering",
-            9 => "Write the access rules and settings",
-            10 => "Review what was written, and let the router onto our core",
-            11 => "Open the connection the agreement chooses",
-            12 => "Deploy the edge router, and the republisher on our core",
-            13 => "Trust the other party's identity service",
-            14 => "Test that allowed traffic passes and the rest is refused",
-            _ => "",
-        };
+        let plain = purpose(ph.n);
         if !plain.is_empty() {
             return plain.to_string();
         }
@@ -702,7 +708,7 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
         }
         // The commands that follow are this phase's: the runner frames and
         // records them under it (crates/goatbuilder/src/runner.rs).
-        crate::runner::phase(&ph.n.to_string(), &ph.label, "");
+        crate::runner::phase(&ph.n.to_string(), &ph.label, purpose(ph.n));
         // A mock has no hosts. Recording the phase is the whole of what it does.
         if !executes {
             checks.push(row("mock", format!("phase {} recorded against the fixture; not executed", ph.n)));
@@ -1310,6 +1316,15 @@ mod tests {
         assert_eq!(guarded(|| Ok(23)), 23);
         assert_eq!(guarded(|| verbs::run_argv(&["lint".into(), "--no-such-flag".into()])), 2);
         assert_eq!(guarded(|| Err(anyhow!("a fault"))), 1);
+    }
+
+    /// Each of federate's fourteen phases has a purpose, for the runner's frame.
+    #[test]
+    fn every_phase_has_a_purpose_for_the_frame() {
+        for n in 1..=14 {
+            assert!(!purpose(n).is_empty(), "phase {n}");
+        }
+        assert!(purpose(15).is_empty());
     }
 
     /// Of a verb's values, DOCKER_HOST and FED_ROUTER_CONTAINER reach the process
