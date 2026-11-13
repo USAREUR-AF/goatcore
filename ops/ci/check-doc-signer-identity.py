@@ -30,6 +30,8 @@ caught, or when, read case-insensitively, it matches one of the identities. Any
 other value names another signer, such as a vendor's image
 (`^https://github.com/chainguard-images/.*`), and is skipped and counted. A
 value holding a placeholder (`<`, `{{`, `$`) is a template and is skipped.
+When values are documented but none is held, the check fails closed (exit 1)
+and asks for --release-repo: a check that checked nothing does not pass.
 
 THE RULE. A held regexp must start with `^`, must match at least one of those
 identities (as cosign does: case-sensitive), and must match none of them moved
@@ -151,9 +153,12 @@ def problems(root, repo):
     elsewhere = [i.replace(f"/{repo}/", f"/{owner}/{name}-other/", 1) for i in ids]
     elsewhere += [i.replace(f"/{repo}/", f"/other-{owner}/{name}/", 1) for i in ids]
     out = []
-    for path, n, kind, value in documented(root):
-        if not names_repo(value, repo, ids):
-            continue
+    found = documented(root)
+    held = [d for d in found if names_repo(d[3], repo, ids)]
+    if found and not held:
+        return [f"no documented identity names {repo}; every one names another signer, so nothing was checked. "
+                f"If the releases are signed in another repository, pass --release-repo OWNER/REPO"]
+    for path, n, kind, value in held:
         if kind == "exact":
             any_version = [re.escape(i).replace(re.escape(SAMPLE_VERSION), r"[0-9][^@/]*") for i in ids]
             if not any(re.fullmatch(p, value) for p in any_version):
@@ -270,9 +275,6 @@ def main():
     tail = f", {other} names another signer and is not checked" if other == 1 else \
         f", {other} name another signer and are not checked" if other else ""
     print(f"check-doc-signer-identity: ok, {held} documented identities match {repo}'s release signers{tail}")
-    if other and not held:
-        print(f"check-doc-signer-identity: no documented identity names {repo}; if the releases are signed in "
-              "another repository, pass --release-repo OWNER/REPO", file=sys.stderr)
     return 0
 
 
