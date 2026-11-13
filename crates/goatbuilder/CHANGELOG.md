@@ -103,6 +103,17 @@ it. The other verbs' phases are not in a catalog yet.
 catalog, as `explain` answers for an error code, and `goatbuilder explain
 federate` lists the phases.
 
+#### Added: a failed federate phase is matched against the error catalog
+
+When a phase of `goatbuilder federate` fails, the end of its logged output
+(the last 64 KiB) is matched against the error catalog. The failure then
+carries an `interpreted` row: the matching code with its title, likely cause
+and fix, the log, the phase's command by hand from the phase catalog, and the
+`goatbuilder explain <code>` that tells more. When no known error matches,
+the row says so and gives the phase's own guidance. The failure line, the
+resume hint and the exit code are as before. Standup, join-node and deploy
+do not interpret a failed phase yet (#585).
+
 #### Changed: several peerings each keep their own directory package by default
 
 The peering directory (the `saltlick` directory service, proven against its
@@ -268,7 +279,6 @@ None of these ships switched on, and no command in 0.6.0 reaches them.
 - **`goatbuilder grow`, a goatlite becoming a full environment.**
 - **Phase catalogs for standup, join-node and deploy.**
 - **The back-out measured on running hosts.**
-- **A failed phase's output matched against the error catalog.**
 
 ### For someone contributing
 
