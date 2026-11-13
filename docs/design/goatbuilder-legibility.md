@@ -110,7 +110,7 @@ The self-test holds the terminal case to it: a dry run with an unknown flag fail
 
 ### What fails today
 
-Every check failed for every verb family when step 1 merged: 16 lines. Step 3's first part made `c join-node` pass, step 6's first part made `d federate` pass, and step 2b's federate group made `a federate` pass; 13 remain.
+Every check failed for every verb family when step 1 merged: 16 lines. Step 3's first part made `c join-node` pass, step 6's first part `d federate`, step 2b's federate group `a federate`, and federate's plan page, which lists its commands, `c federate`; 12 remain.
 
 | Check | standup | join-node | deploy | federate |
 |---|---|---|---|---|

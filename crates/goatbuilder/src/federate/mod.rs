@@ -492,6 +492,16 @@ fn plan_view(repo: &Path, o: &Options, work: &str, edge_group: &str, phases: &[P
     for ph in &shown {
         s.push_str(&format!("{:<6} {:<8} {}\n", ph.n, kind(ph.kind), step(ph)));
     }
+    // Each phase's command as the run executes it, verbatim and unwrapped, so a
+    // line can be pasted to run that phase by hand (docs/design/goatbuilder-legibility.md,
+    // step 3). A manual phase is spelled out below instead.
+    let runs: Vec<&&Phase> = shown.iter().filter(|p| p.kind != "MANUAL").collect();
+    if !runs.is_empty() {
+        s.push_str(&format!("\n{}\n", bold("What each phase runs:")));
+        for ph in runs {
+            s.push_str(&format!("\n{}  {}\n    {}\n", ph.n, step(ph), ph.cmd));
+        }
+    }
     if let Some(ph) = shown.iter().find(|p| p.kind == "MANUAL") {
         let found = |re: &str| regex::Regex::new(re).ok().and_then(|r| r.captures(&ph.cmd).map(|m| short(&m[1])));
         let (ours, theirs, keys) = (found(r"Send (\S+) (?:and|to)"), found(r"place (?:it|them) at:\s+(\S+)"), found(r"line, at:\s+(\S+)"));
@@ -534,7 +544,7 @@ fn plan_view(repo: &Path, o: &Options, work: &str, edge_group: &str, phases: &[P
             s.push_str(&format!("  {id:<15} {what}\n"));
         }
     }
-    s.push_str(&format!("\n{} add -o json to see every phase's command, or read\ndocs/operations/sovereign-federation-runbook.md.\n", bold("To see more:")));
+    s.push_str(&format!("\n{} -o json lists every row of the plan, and\ndocs/operations/sovereign-federation-runbook.md says what each phase proves.\n", bold("To see more:")));
     match shown.iter().find(|p| p.n == 11) {
         Some(_) if !agreement_known => {
             s.push_str("Phase 11 depends on what phase 6 agrees: wireguard and ipsec-fips each have\na play. Any other choice stops the run there.\n");
@@ -1198,7 +1208,15 @@ mod tests {
         let work_s = work.path().display().to_string();
         let o = Options { with: "velmara", env: None, r#as: None, edge_group: None, work: Some(&work_s), mock: None, from: 1, to: 99, dry_run: true, table: true };
         let phases = plan(&repo(), &o, &work_s, "velmara_edge", "goatbuilder federate velmara");
-        let view = plan_view(&repo(), &o, &work_s, "velmara_edge", &phases);
+        let full = plan_view(&repo(), &o, &work_s, "velmara_edge", &phases);
+        // The commands, verbatim: each phase that runs one, by its number.
+        let (head, rest) = full.split_once("What each phase runs:\n").expect("the commands section");
+        let (cmds, tail) = rest.split_once("\nWhat a real run would leave").map(|(c, t)| (c, format!("\nWhat a real run would leave{t}"))).unwrap_or((rest, String::new()));
+        for ph in phases.iter().filter(|p| p.kind != "MANUAL") {
+            assert!(cmds.contains(&format!("\n    {}\n", ph.cmd)), "phase {}'s command, verbatim:\n{cmds}", ph.n);
+        }
+        // The prose around them reads as before.
+        let view = format!("{head}{tail}");
         assert!(view.contains("PHASE  TYPE     STEP"), "{view}");
         assert!(!view.contains("==="), "{view}");
         assert!(!view.contains('\u{2014}'), "{view}");

@@ -19,8 +19,11 @@ const WIDTH: usize = 80;
 /// pipe, so what it measures is the row form a script reads, which has always
 /// been wide. The terminal pages have unit tests on their layout, and
 /// `a_failing_row_is_on_the_page_a_person_reads` runs them on a real terminal.
+/// `federate` joined it when its plan page started listing each phase's command
+/// verbatim and unwrapped, so a line pastes as the command it runs
+/// (docs/design/goatbuilder-legibility.md, step 3): a wrapped command would not.
 const WIDE_ALLOWED: &[&str] =
-    &["deploy", "diff", "history", "rollback", "standup", "teardown", "join-node", "verify", "survey", "pins", "promote", "validate", "explain", "doctor", "preflight", "assay"];
+    &["deploy", "diff", "history", "rollback", "standup", "teardown", "join-node", "verify", "survey", "pins", "promote", "validate", "explain", "doctor", "preflight", "assay", "federate"];
 
 /// Verbs still printing em or en dashes (the sweep on #2341). Same surface as
 /// the width list: on a terminal these are rewritten to plain punctuation.

@@ -24,7 +24,6 @@ b federate   the run record is written, but its `inputs` is empty until federate
 #     Removed by step 3 (with step 2 for the probes that print nothing today).
 c standup    probes (secrets posture, fresh-source) run on a real run and are not in the plan
 c deploy     probes (fresh-source, secrets posture, netbird status, the ledger read) run on a real run and are not in the plan
-c federate   the terminal plan page hides every command ("add -o json to see every phase's command")
 
 # (d) every phase that can run has a phase-catalog entry, and every document path the tool prints exists.
 #     Removed by step 6 (ops/phases/catalog.yaml; the missing document).
