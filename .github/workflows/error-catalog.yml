@@ -47,7 +47,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           # The release tags, for the codes-kept gate: it reads the catalog at the
-          # newest goatbuilder/v<x.y.z> tag reachable from HEAD.
+          # newest goatbuilder/v<x.y.z> and goat-cli-v<x.y.z> tags reachable from HEAD.
           fetch-depth: 0
       - uses: actions/setup-python@v5
         with:

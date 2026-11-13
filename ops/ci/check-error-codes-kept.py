@@ -6,9 +6,10 @@ logs, run records and pasted output that outlive the release. `goat explain` and
 `goatbuilder explain` must keep answering for it with the meaning it had, so a later build
 may never drop the code or give it another meaning.
 
-This gate compares ops/errors/catalog.yaml at the last release tag (the newest
-`goatbuilder/v<x.y.z>` tag reachable from HEAD, read with `git show`, never the network)
-with the catalog in the tree. It fails when a code of the release:
+This gate compares ops/errors/catalog.yaml at the last release of each binary that prints
+these codes (the newest `goatbuilder/v<x.y.z>` and `goat-cli-v<x.y.z>` tags reachable from
+HEAD, read with `git show`, never the network) with the catalog in the tree. It fails when a
+code of such a release:
 
   * is absent from the tree's catalog. A code that is no longer raised stays in the
     catalog with a `retired:` mark (docs/design/error-interpretation.md, "The catalog");
@@ -23,7 +24,7 @@ be read.
 
 usage: check-error-codes-kept.py [--repo DIR] [--base REF] [--self-test]
 """
-import argparse, os, subprocess, sys, tempfile
+import argparse, os, re, subprocess, sys, tempfile
 
 try:
     import yaml
@@ -32,8 +33,9 @@ except ImportError:
     sys.exit(2)
 
 CATALOG = "ops/errors/catalog.yaml"
-# A release tag: goatbuilder/v<major>.<minor>.<patch>, with no pre-release suffix.
-RELEASE_GLOB = "goatbuilder/v[0-9]*.[0-9]*.[0-9]*"
+# The release tags of the binaries that print these codes: <prefix><major>.<minor>.<patch>,
+# with no pre-release suffix (a `-rc.N` tag is not a release).
+RELEASE_PREFIXES = ("goatbuilder/v", "goat-cli-v")
 
 
 def entries(text, where):
@@ -67,13 +69,19 @@ def problems(released, now, base):
     return found
 
 
-def last_release(repo):
-    """The newest release tag reachable from HEAD, or None."""
-    r = subprocess.run(
-        ["git", "-C", repo, "describe", "--tags", "--abbrev=0", "--match", RELEASE_GLOB,
-         "--exclude", "*-*", "HEAD"],
-        capture_output=True, text=True)
-    return r.stdout.strip() or None
+def last_release(repo, prefix="goatbuilder/v"):
+    """The newest `<prefix>x.y.z` tag reachable from HEAD, or None."""
+    r = subprocess.run(["git", "-C", repo, "tag", "--merged", "HEAD", "--list", f"{prefix}*"],
+                       capture_output=True, text=True)
+    shape = re.compile(re.escape(prefix) + r"(\d+)\.(\d+)\.(\d+)")
+    found = [(tuple(int(x) for x in m.groups()), t) for t in r.stdout.split()
+             if (m := shape.fullmatch(t))]
+    return max(found)[1] if found else None
+
+
+def last_releases(repo):
+    """The last release of each binary, newest first within each; the ones that exist."""
+    return [t for t in (last_release(repo, p) for p in RELEASE_PREFIXES) if t]
 
 
 def at(repo, ref):
@@ -135,10 +143,15 @@ def self_test():
             raise SystemExit(f"self-test: git commit failed: {made.stderr.strip()}")
         git("tag", "goatbuilder/v0.0.1")
         git("tag", "goatbuilder/v0.0.2-rc.1")
+        git("tag", "goatbuilder/v0.0.10-rc.1")
+        git("tag", "goat-cli-v0.9.0")
+        git("tag", "goat-cli-v0.10.0")
         with open(os.path.join(d, CATALOG), "w") as f:
             f.write(dump({"GB-001": released["GB-001"]}))
         if last_release(d) != "goatbuilder/v0.0.1":
             failed.append(f"the last release is goatbuilder/v0.0.1, not {last_release(d)} (a pre-release is not one)")
+        if last_releases(d) != ["goatbuilder/v0.0.1", "goat-cli-v0.10.0"]:
+            failed.append(f"each binary's last release, by version not by text: {last_releases(d)}")
         got = check(d, "goatbuilder/v0.0.1")
         if not any("GB-002" in p for p in got):
             failed.append(f"a tree that drops GB-002 against its tag: {got}")
@@ -148,30 +161,36 @@ def self_test():
             print(f"  {f}")
         return 1
     print("check-error-codes-kept: self-test ok (an absent code and a changed title fail; "
-          "a retired code, a new code and a reworded `what` pass; a pre-release is not the last release)")
+          "a retired code, a new code and a reworded `what` pass; each binary's last release is "
+          "its highest x.y.z, and a pre-release is not one)")
     return 0
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--repo", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
-    ap.add_argument("--base", help="the release to compare with (default: the newest goatbuilder/v<x.y.z> tag reachable from HEAD)")
+    ap.add_argument("--base", action="append",
+                    help="a release to compare with, repeatable (default: the newest goatbuilder/v<x.y.z> "
+                         "and goat-cli-v<x.y.z> tags reachable from HEAD)")
     ap.add_argument("--self-test", action="store_true")
     a = ap.parse_args()
     if a.self_test:
         return self_test()
     repo = os.path.abspath(a.repo)
-    base = a.base or last_release(repo)
-    if not base:
-        print("check-error-codes-kept: no goatbuilder/v<x.y.z> tag is reachable from HEAD "
-              "(a shallow clone has none: check out with fetch-depth: 0), or pass --base <tag>",
+    bases = a.base or last_releases(repo)
+    if not bases:
+        print("check-error-codes-kept: no goatbuilder/v<x.y.z> or goat-cli-v<x.y.z> tag is reachable from "
+              "HEAD (a shallow clone has none: check out with fetch-depth: 0), or pass --base <tag>",
               file=sys.stderr)
         return 2
+    found = []
     try:
-        found = check(repo, base)
+        for base in bases:
+            found += check(repo, base)
     except (OSError, ValueError, yaml.YAMLError) as e:
         print(f"check-error-codes-kept: {e}", file=sys.stderr)
         return 2
+    base = " and ".join(bases)
     if found:
         print(f"check-error-codes-kept: {len(found)} code(s) of {base} not kept:")
         for p in found:
