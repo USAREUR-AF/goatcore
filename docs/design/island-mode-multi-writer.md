@@ -213,6 +213,8 @@ twice.
 
 ## 8. Gates
 
+Gates G2 to G4 are rows of the goatbuilder 1.0 gate, group I ([goatbuilder-v1-gate.md](goatbuilder-v1-gate.md)): 1.0 is not tagged until the partition drill has passed on two standing two-site goatnets.
+
 | Gate | Evidence |
 |---|---|
 | G0 preconditions | ADR 1193 / PR #1538 merged and rolled out; F-581 guards live on all goatnets; prod standby replicating (#1953); harness green on main |

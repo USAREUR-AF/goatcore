@@ -151,6 +151,18 @@ A site node can be built on an Android phone with the command that builds one on
 | H7 | One phone is built from a reset VM to a verified node by one command, with the released binary, in one uninterrupted run, and the record is kept | not measured: the first run was resumed several times | A timed run on a phone, kept as a measurement, as C1 is for a computer |
 | H8 | A phone node stays a node: it runs for seven days with the checks of H4 still passing, and comes back after a phone reboot without a person | not measured: about two hours on power; after a reboot the VM stays down until a person unlocks the phone | The seven-day record, and a reboot during it |
 
+### I. A joined site runs cut off
+
+A site added with `join-node` is a whole site: it runs every service it declares, and when it is cut off from the other sites it keeps admitting people and enrolling machines, then agrees with them again when the link returns, with no repair by hand. The design is [island-mode-multi-writer.md](island-mode-multi-writer.md) ([ADR 1165](../adr/1165-island-mode-multi-writer-every-site-admits.md)). I3 is `goatbuilder` work; I1, I2, I4 and I5 are work in the portal, the id console and the onboarding engine, and 1.0 waits for them.
+
+| # | Requirement | Status | Proven by |
+|---|---|---|---|
+| I1 | The portal and id console stores are at the multi-writer schema of the design's section 3 | not built: both stores run on Postgres with their earlier tables, in no replication set | The design's gate G2 |
+| I2 | The partition harness passes for all five write classes, with the portal and the id console among its stores | built for NetBird, Kratos and Hydra; the portal and console scenarios are not built | Every scenario of the harness passes, with none listed as expected to fail |
+| I3 | `join-node` alone builds every service a joining site declares: the data router, its certificates and health publishers, the front door, and, once I4 allows them, the portal, the id console and the onboarding engine. It states which founder-only services it leaves out and why | not built: the router, certificates and publishers are hand steps after `join-node`; the front door is set up only inside signal federation; no verb deploys the id console | A two-site join on the fixture with no step outside the command, and the declared service set equal to the deployed one |
+| I4 | Each write class is turned on at every site, and the rule that keeps admin surfaces at the founding site is lifted for it | not built | The design's gate G3, per class |
+| I5 | The partition drill passes on a standing two-site goatnet, and then on a second one: the sites are cut apart, a person is admitted and a machine enrolled on each side, and the sites agree after the link returns | not measured | The design's gate G4, with each drill kept as a measurement |
+
 ## Order of work
 
 The requirements depend on one another in this order. No dates are set here.
@@ -161,6 +173,7 @@ The requirements depend on one another in this order. No dates are set here.
 4. **Real machines.** C3, then C1 and C2 on hardware. H7 and H8 on a phone.
 5. **The tool shows its work.** F1 to F6, in 0.x releases, beside the steps above.
    **A node on a phone.** H1, H2 and H6 first, because they are faults on every new node; then H3 to H5.
+   **A joined site runs cut off.** I3 beside H1 and H2, in `join-node`. I1 and I2 before I4; I4 before I5.
 6. **The promise.** A1 to A5 and the decision in D on the pull converger. From this point the surfaces are frozen.
 7. **Upgrade tests.** E1 to E3, against the release that froze the surfaces.
 8. **The cold-read drill.** C4 and C5, on a release candidate `goatbuilder/v1.0.0-rc.N`.
@@ -168,16 +181,17 @@ The requirements depend on one another in this order. No dates are set here.
 
 ## Release plan
 
-Three releases after 0.5.2 reach 1.0, or four if the release candidate needs a second round. No dates are set; a release is cut when its rows pass.
+Three releases after 0.5.2 reach 1.0, with the 0.7.x releases that carry group I between the second and the third, or four if the release candidate needs a second round. No dates are set; a release is cut when its rows pass.
 
 | Release | What it is | Rows it closes |
 |---|---|---|
 | 0.5.2 | Document corrections; CI no longer depends on a distribution archive. Released and deployed with no exception at any stage | none; it proves the pipeline |
 | 0.6.0 | The tool shows its work, and the federation rows that need no outside party | F1 to F6; B5, B6, B7, B10; C3; G2 |
-| 0.7.0 | Federation complete and proven outside the laboratory; the promise written and under test; upgrade tested | B2, B3, B4, B8, B9; A1 to A5; E1 to E3; G1; H1 to H6 |
-| 1.0.0-rc.N, then 1.0.0 | Surfaces frozen; proof on hardware and by people who did not build it | C1, C2, C4, C5; D agreed; H7, H8 |
+| 0.7.0 | Federation complete and proven outside the laboratory; the promise written and under test; upgrade tested | B2, B3, B4, B8, B9; A1 to A5; E1 to E3; G1; H1 to H6; I3 |
+| 0.7.x | A joined site runs cut off, one write class at a time, each behind its own switch | I1, I2, I4 |
+| 1.0.0-rc.N, then 1.0.0 | Surfaces frozen; proof on hardware and by people who did not build it | C1, C2, C4, C5; D agreed; H7, H8; I5 |
 
-Rows that need a person or a machine outside the build: B9 (a real partner), C1 and C2 (hardware), H7 and H8 (a phone), C4 (a person outside the team), A1 and D (decisions). Each is prepared so that the act itself is short.
+Rows that need a person or a machine outside the build: B9 (a real partner), C1 and C2 (hardware), H7 and H8 (a phone), I5 (two standing two-site goatnets), C4 (a person outside the team), A1 and D (decisions). Each is prepared so that the act itself is short.
 
 ## How the gate is kept
 
