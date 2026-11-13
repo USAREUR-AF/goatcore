@@ -172,11 +172,18 @@
   register: pgbackrest_in_container
   changed_when: false
 
+# The root steps below run `docker exec --privileged -u 0`. The Postgres
+# container is started with `cap_drop: ALL` (compose), so its root has no
+# CAP_CHOWN, CAP_DAC_OVERRIDE or CAP_FOWNER: a plain `exec -u 0 chown` fails
+# with "Operation not permitted" as soon as an ownership really has to change
+# (measured when an image changed the postgres user's primary group).
+# `--privileged` applies to that one exec, not to the container.
 - name: Install PGDG repo inside {{ postgres_container_name }} (prereq for pgbackrest on RHEL 9)
   ansible.builtin.command:
     argv:
       - docker
       - exec
+      - --privileged
       - -u
       - "0"
       - "{{ postgres_container_name }}"
@@ -192,6 +199,7 @@
     argv:
       - docker
       - exec
+      - --privileged
       - -u
       - "0"
       - "{{ postgres_container_name }}"
@@ -225,6 +233,7 @@
     argv:
       - docker
       - exec
+      - --privileged
       - -u
       - "0"
       - "{{ postgres_container_name }}"
@@ -238,6 +247,7 @@
     argv:
       - docker
       - exec
+      - --privileged
       - -u
       - "0"
       - "{{ postgres_container_name }}"
@@ -251,6 +261,7 @@
     argv:
       - docker
       - exec
+      - --privileged
       - -u
       - "0"
       - "{{ postgres_container_name }}"
@@ -285,6 +296,7 @@
     argv:
       - docker
       - exec
+      - --privileged
       - -u
       - "0"
       - "{{ postgres_container_name }}"
@@ -316,6 +328,7 @@
     argv:
       - docker
       - exec
+      - --privileged
       - -u
       - "0"
       - "{{ postgres_container_name }}"
