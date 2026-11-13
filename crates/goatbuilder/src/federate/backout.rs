@@ -547,11 +547,20 @@ impl CoreLeaf {
             // Gone since admission (deleted by hand): what was there before
             // comes back when admission kept it; with no backup the half is
             // left missing.
+            // A record that cannot be read leaves what was there unknown.
             if target.symlink_metadata().is_err() {
-                if let Ok(Some(Record::Backup(b))) = self.first_record(target) {
-                    if let Ok(bytes) = std::fs::read(&b) {
-                        return Leaf::Restore(bytes, b);
+                match self.first_record(target) {
+                    Ok(Some(Record::Backup(b))) => {
+                        return match std::fs::read(&b) {
+                            Ok(bytes) => Leaf::Restore(bytes, b),
+                            Err(e) => Leaf::Unknown(format!(
+                                "the admission backup {} cannot be read ({e})",
+                                b.display()
+                            )),
+                        }
                     }
+                    Err(e) => return Leaf::Unknown(e),
+                    Ok(_) => {}
                 }
             }
             return Leaf::Missing;
@@ -3514,6 +3523,34 @@ mod tests {
             std::fs::read(&c.vars["FED_CORE_KEY"]).unwrap(),
             b"SOMEONE-ELSES-KEY"
         );
+    }
+
+    #[test]
+    fn a_missing_half_whose_record_cannot_be_read_blocks_its_partner() {
+        // The key was deleted by hand, and its admission record is corrupt:
+        // what was there before is not known, so the certificate is not put
+        // back alone. Both read unknown and nothing changes.
+        let mut c = admitted(
+            true,
+            &[("FED_CORE_RESTART", "true"), ("FED_CORE_DRY_RUN", "skip")],
+        );
+        place_leaf(&mut c, Some(b"THE-LEAF-BEFORE"));
+        std::fs::remove_file(&c.vars["FED_CORE_KEY"]).unwrap();
+        let bdir = c.work().join("admission/run-20261112T000000Z-1/backup");
+        std::fs::write(
+            bdir.join("1-router-key.pem.target"),
+            format!("{}\nabsen\n", c.vars["FED_CORE_KEY"]),
+        )
+        .unwrap();
+        let rows = leaf_rows(&c);
+        for var in ["FED_CORE_CERT", "FED_CORE_KEY"] {
+            assert_eq!(rows[&c.vars[var]].state, "unknown", "{rows:?}");
+        }
+        assert_eq!(
+            std::fs::read(&c.vars["FED_CORE_CERT"]).unwrap(),
+            b"CERT-OF-XAB"
+        );
+        assert!(!Path::new(&c.vars["FED_CORE_KEY"]).exists());
     }
 
     #[test]
