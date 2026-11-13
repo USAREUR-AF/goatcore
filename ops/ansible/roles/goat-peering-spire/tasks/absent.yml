@@ -111,6 +111,11 @@
           {%-     set _ = out.append({'component': 'spire', 'resource': 'unit ' ~ u, 'state': ('present' if p else 'absent'), 'action': (act if p else 'none'), 'note': ''}) -%}
           {%-   endif -%}
           {%- endfor -%}
+          {%- if _pbs_units_unread | length > 0 -%}
+          {%-   for u in ['goat-peering-bundle-in.socket', 'goat-peering-bundle-in.service', 'goat-peering-bundle-out.socket', 'goat-peering-bundle-out.service'] -%}
+          {%-     set _ = out.append({'component': 'spire', 'resource': 'unit ' ~ u, 'state': 'unknown', 'action': 'none', 'note': 'fixed name; the unit folder could not be listed: ' ~ _pbs_units_unread}) -%}
+          {%-   endfor -%}
+          {%- endif -%}
           {%- for u in ['goat-peering-bundle-in.socket', 'goat-peering-bundle-in.service', 'goat-peering-bundle-out.socket', 'goat-peering-bundle-out.service'] if u in _pbs_have -%}
           {%-   set mine = u in _pbs_legacy_ours -%}
           {%-   set _ = out.append({'component': 'spire', 'resource': 'unit ' ~ u, 'state': 'present', 'action': (act if mine else 'kept'), 'note': ('fixed name, this peering\'s addresses' if mine else 'fixed name, another peering\'s addresses or unproven')}) -%}

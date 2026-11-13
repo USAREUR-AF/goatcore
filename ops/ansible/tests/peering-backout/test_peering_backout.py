@@ -527,6 +527,11 @@ class TwoPeeringsOneHost(unittest.TestCase):
         rows = [row for row in jload(f"{work}/backout/survey/edge-xac.json")["rows"]
                 if row["component"] == "spire" and row["resource"].startswith("unit ")]
         self.assertTrue(rows, "the SPIRE forward units have rows")
+        # The four fixed-name forwards, which another peering's layout may use, are
+        # reported too: every unit that might be in that folder has a row.
+        fixed = {"unit goat-peering-bundle-in.socket", "unit goat-peering-bundle-in.service",
+                 "unit goat-peering-bundle-out.socket", "unit goat-peering-bundle-out.service"}
+        self.assertEqual(fixed - {row["resource"] for row in rows}, set(), rows)
         for row in rows:
             with self.subTest(resource=row["resource"]):
                 self.assertEqual((row["state"], row["action"]), ("unknown", "none"), row)
