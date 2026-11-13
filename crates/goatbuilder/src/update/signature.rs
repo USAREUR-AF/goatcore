@@ -706,7 +706,11 @@ fn precert_tbs(tbs: &[u8], sct_ext_oid: &[u8]) -> Option<Vec<u8>> {
                 kept.extend_from_slice(ext);
             }
         }
-        fields.extend(der_wrap(0xa3, &der_wrap(0x30, &kept)));
+        // RFC 5280: Extensions is SEQUENCE SIZE (1..MAX), so a TBS whose only
+        // extension was the SCT list has no [3] at all.
+        if !kept.is_empty() {
+            fields.extend(der_wrap(0xa3, &der_wrap(0x30, &kept)));
+        }
     }
     found.then(|| der_wrap(0x30, &fields))
 }
@@ -1265,6 +1269,47 @@ mod tests {
                 .contains("dd3d306ac6c7113263191e1c99673702a24a5eb8de3cadff878a72802f29ee8e"),
             "{e}"
         );
+    }
+
+    /// When the SCT list is the only extension, the precertificate's TBS has
+    /// no [3] at all (RFC 5280: Extensions is SIZE (1..MAX)); otherwise the
+    /// others are kept, in order.
+    #[test]
+    fn the_precert_tbs_omits_extensions_when_the_sct_list_was_the_only_one() {
+        let oid = der_wrap(
+            0x06,
+            &[0x2b, 0x06, 0x01, 0x04, 0x01, 0xd6, 0x79, 0x02, 0x04, 0x02],
+        );
+        let ext = |o: &[u8]| der_wrap(0x30, &[o, &der_wrap(0x04, &[0x04, 0x00])].concat());
+        let serial = der_wrap(0x02, &[0x01]);
+        let tbs = |exts: &[Vec<u8>]| {
+            der_wrap(
+                0x30,
+                &[
+                    serial.clone(),
+                    der_wrap(0xa3, &der_wrap(0x30, &exts.concat())),
+                ]
+                .concat(),
+            )
+        };
+        // Only the SCT list: no [3].
+        assert_eq!(
+            precert_tbs(&tbs(&[ext(&oid)]), &oid).unwrap(),
+            der_wrap(0x30, &serial)
+        );
+        // Another extension stays, before or after it.
+        let other = ext(&der_wrap(0x06, &[0x55, 0x1d, 0x0f]));
+        let want = tbs(std::slice::from_ref(&other));
+        assert_eq!(
+            precert_tbs(&tbs(&[ext(&oid), other.clone()]), &oid).unwrap(),
+            want
+        );
+        assert_eq!(
+            precert_tbs(&tbs(&[other.clone(), ext(&oid)]), &oid).unwrap(),
+            want
+        );
+        // No SCT list: nothing to rebuild.
+        assert_eq!(precert_tbs(&want, &oid), None);
     }
 
     #[test]
