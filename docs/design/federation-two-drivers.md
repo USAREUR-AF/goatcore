@@ -109,9 +109,9 @@ SSH failure, and an environment variable is easy to forget on one of the two mac
 
 Status: built (`federate_two_drivers.rs`).
 
-**Phase 1 passes only when both sides' results are ready.** A phase 1 result written by one
-side's checks (`preflight.py --side edge|core`, its `side` member) is never ready on its own,
-however its own checks went: `crates/goatbuilder/src/federate/plan.rs` (`read_readiness`) reads it
+**Phase 1 passes only when both sides' results are ready.** A phase 1 result that carries
+`side` `edge` or `core` (written by the phase-1 sides change, #558, not yet on main) is never
+ready on its own, however its own checks went: `crates/goatbuilder/src/federate/plan.rs` (`read_readiness`) reads it
 as not ready and adds a BLOCKED `sides` row that says why. Combining it with the other side's
 result is the import, which is not built. Status: built (the test
 `a_one_sided_phase_1_result_is_never_ready_on_its_own`).
@@ -180,8 +180,10 @@ edge and is not refused (`crates/goatbuilder/src/federate/handoff.rs`, `refused_
 tests `a_two_driver_run_after_phase_2_is_refused_with_no_object`,
 `a_two_driver_run_from_4_to_the_end_runs_nothing` and `a_two_driver_deploy_runs_nothing` in
 `federate_two_drivers.rs`). `--side` is one flag: on `init --over-ssh` it picks a phase 3 half
-(`federate/measure.rs`), and on a peering run `--side edge` is the edge driver's run, refused with
-GB-267 until it is built. Not built: the object in `status`, the edge's way-back object, and the
+(`federate/measure.rs`), and on a peering run `--side edge`, given with no other measure flag, is
+the edge driver's run, refused with GB-267 until it is built, for a peering with one driver or two.
+Beside another measure flag, after a verb's name (a misplaced `init` flag), or on `status`, it gets
+the message it got before (test `side_edge_is_gb_267_only_alone_on_a_peering_run`). Not built: the object in `status`, the edge's way-back object, and the
 `import` and `then` it names. Phase 3's two halves, which the phase 3 object wraps, are on main at
 the `init` level ([federation-router-discovery.md](federation-router-discovery.md), "Phase 3 in
 two halves"); the one command does not run them yet.

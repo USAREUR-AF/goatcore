@@ -1550,10 +1550,16 @@ fn main() {
         Cmd::Federate { verb: None, site, measure, with, partner, plan, approve_plan, confirm, no_confirm, partner_key, partner_ca_fingerprint, agreement_digest, place_pointer_package, approve_admission, review_in_pr, env, as_party, edge_group, work, from, to, dry_run, resume, no_resume } => {
             let with = with.as_deref().unwrap_or_default();
             let cfg_path = cli.mock.as_ref().map(|m| m.join("goatbuilder.yaml")).unwrap_or_else(|| repo.join("ops/goatbuilder/goatbuilder.yaml"));
-            // `--side edge` on a peering run is the edge driver's run of a
-            // two-driver peering (federate/handoff.rs); `--side` on init is a
-            // phase-3 half (federate/measure.rs).
-            if measure.side.as_deref() == Some("edge") {
+            // `--side edge` alone on a peering run is the edge driver's run of
+            // a two-driver peering (federate/handoff.rs). `--side` is also init's
+            // phase-3 half (federate/measure.rs): beside another measure flag,
+            // after a verb's name, or on status or allocate, it is a misplaced
+            // init flag or ignored, and gets the message it always got below.
+            let side_edge_alone = measure.side.as_deref() == Some("edge")
+                && federate::measure::MeasureArgs { side: None, ..(**measure).clone() }.is_empty()
+                && !goat_federation::verbs::VERB_NAMES.contains(&with)
+                && !matches!(with, "status" | "allocate");
+            if side_edge_alone {
                 Err(federate::handoff::edge_side_not_built())
             } else if with == "status" {
                 let format = match cli.output {
