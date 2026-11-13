@@ -92,23 +92,16 @@ real run will run is listed under "A real run also runs", so nothing the real
 run does is left out. `release`'s dry run still describes each step in the
 plan's words, and labels them so.
 
-#### Added: a catalog of federate's fourteen phases
+#### Added: a catalog of federate's fourteen phases, and `explain federate <phase>`
 
 Each phase of `goatbuilder federate` is described in one catalog,
 `ops/phases/catalog.yaml`: what it does, why, what it changes, how to tell it
 worked, and the command by hand. The runbook's phase table is rendered from
 it. The other verbs' phases are not in a catalog yet.
 
-`goatbuilder explain federate <phase>`, by number or name, answers from the <!-- PENDING #551 -->
-catalog, as `explain` answers for an error code, and `goatbuilder explain <!-- PENDING #551 -->
-federate` lists the phases. <!-- PENDING #551 -->
-
-#### Added: a failed federate phase is matched against the error catalog <!-- PENDING #585 -->
-
-When a phase of `goatbuilder federate` fails, the end of its logged output is <!-- PENDING #585 -->
-matched against the error catalog. The failure then carries an `interpreted` <!-- PENDING #585 -->
-row: the matching code with its cause and fix, the log, and the phase's <!-- PENDING #585 -->
-command by hand, or the phase's own guidance when no known error matches. <!-- PENDING #585 -->
+`goatbuilder explain federate <phase>`, by number or name, answers from the
+catalog, as `explain` answers for an error code, and `goatbuilder explain
+federate` lists the phases.
 
 #### Changed: several peerings each keep their own directory package by default
 
@@ -268,8 +261,7 @@ None of these ships switched on, and no command in 0.6.0 reaches them.
 - **`goatbuilder grow`, a goatlite becoming a full environment.**
 - **Phase catalogs for standup, join-node and deploy.**
 - **The back-out measured on running hosts.**
-<!-- PENDING #551: if it does not merge, add "- **`goatbuilder explain federate <phase>`.**" here -->
-<!-- PENDING #585: if it does not merge, add "- **A failed phase's output matched against the error catalog.**" here -->
+- **A failed phase's output matched against the error catalog.**
 
 ### For someone contributing
 
@@ -303,8 +295,10 @@ None of these ships switched on, and no command in 0.6.0 reaches them.
   state before it, each key rotated in turn on a running peering, a peering
   finished by a released goatbuilder, and a flow monitor that measures
   whether data keeps arriving while a step runs.
-- **Tests.** goatbuilder's unit tests pass the environment they need instead
-  of setting it; the standup bats test has a home of its own; the sshd and
+- **Tests.** A test that writes a stand-in script and then runs it writes it
+  from a child process, so another test thread can no longer make running it
+  fail with ETXTBSY. goatbuilder's unit tests pass the environment they need
+  instead of setting it; the standup bats test has a home of its own; the sshd and
   Ansible tests fail instead of skipping when their tools are missing; and
   the back-out tests remove their working directories.
 - **Libraries.** An error-catalog entry printed as a document carries its
