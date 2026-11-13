@@ -441,14 +441,25 @@ impl CoreLeaf {
                 lines.next().filter(|l| !l.is_empty()).map(String::from),
             ))
         };
-        let mut runs: Vec<PathBuf> = std::fs::read_dir(self.work.join("admission"))
+        // The runs in the order they started: the run journal's list, which
+        // a clock stepping back or two runs in one second cannot reorder.
+        let journal: Vec<String> = match super::state::State::read(&self.work) {
+            Ok(st) => st.map(|s| s.runs.into_iter().map(|r| r.id).collect()).unwrap_or_default(),
+            Err(e) => {
+                return Err(format!(
+                    "the run journal in {} cannot be read, so the admission runs cannot be ordered ({e:#})",
+                    self.work.display()
+                ))
+            }
+        };
+        let runs: Vec<PathBuf> = std::fs::read_dir(self.work.join("admission"))
             .into_iter()
             .flatten()
             .flatten()
             .map(|e| e.path().join("backup"))
             .filter(|p| p.is_dir())
             .collect();
-        runs.sort();
+        let mut earliest: Option<(usize, u64, Result<Record, String>)> = None;
         for backup in runs {
             let mut found: Vec<(u64, Result<Record, String>)> = Vec::new();
             for p in std::fs::read_dir(&backup).into_iter().flatten().flatten() {
@@ -506,11 +517,22 @@ impl CoreLeaf {
                 }
             }
             found.sort_by_key(|(n, _)| *n);
-            if let Some((_, r)) = found.into_iter().next() {
-                return r.map(Some);
+            let Some((n, r)) = found.into_iter().next() else {
+                continue;
+            };
+            let folder = backup.parent().unwrap_or(&backup);
+            let name = folder.file_name().unwrap_or_default().to_string_lossy();
+            let Some(at) = journal.iter().position(|id| *id == name) else {
+                return Err(format!(
+                    "the admission folder {} is not in the run journal, so which run touched this path first is not known",
+                    folder.display()
+                ));
+            };
+            if earliest.as_ref().is_none_or(|(a, ..)| at < *a) {
+                earliest = Some((at, n, r));
             }
         }
-        Ok(None)
+        earliest.map(|(_, _, r)| r.map(Some)).unwrap_or(Ok(None))
     }
 
     fn plan(&self, target: &Path, ours: &Path) -> Leaf {
@@ -2511,6 +2533,7 @@ mod tests {
             std::fs::write(&key, p).unwrap();
         }
         let mut backups = Vec::new();
+        journal_run(Path::new(&work), "run-20261112T000000Z-1");
         let bdir = Path::new(&work).join("admission/run-20261112T000000Z-1/backup");
         super::super::admit::publish(b"CERT-OF-HELLO-ALLY", &cert, &mut backups, &bdir).unwrap();
         super::super::admit::publish(b"KEY-OF-HELLO-ALLY", &key, &mut backups, &bdir).unwrap();
@@ -2747,6 +2770,7 @@ mod tests {
             std::fs::write(&key, p).unwrap();
         }
         let mut backups = Vec::new();
+        journal_run(&c.work(), "run-20261112T000000Z-1");
         let bdir = c.work().join("admission/run-20261112T000000Z-1/backup");
         super::super::admit::publish(b"CERT-OF-XAB", &cert, &mut backups, &bdir).unwrap();
         super::super::admit::publish(b"KEY-OF-XAB", &key, &mut backups, &bdir).unwrap();
@@ -2973,6 +2997,7 @@ mod tests {
             true,
             &[("FED_CORE_RESTART", "true"), ("FED_CORE_DRY_RUN", "skip")],
         );
+        journal_run(&c.work(), "run-20261111T000000Z-1");
         let early = c.work().join("admission/run-20261111T000000Z-1/backup");
         std::fs::create_dir_all(&early).unwrap();
         std::fs::write(early.join("0-org.json5"), BEFORE_ORG).unwrap();
@@ -2994,6 +3019,7 @@ mod tests {
         );
         place_leaf(&mut c, None);
         let mut backups = Vec::new();
+        journal_run(&c.work(), "run-20261113T000000Z-1");
         let again = c.work().join("admission/run-20261113T000000Z-1/backup");
         super::super::admit::publish(
             b"CERT-OF-XAB",
@@ -3022,6 +3048,7 @@ mod tests {
         std::fs::write(pki.join("core.pem"), b"CERT-OF-XAB-2").unwrap();
         std::fs::write(pki.join("core-key.pem"), b"KEY-OF-XAB-2").unwrap();
         let mut backups = Vec::new();
+        journal_run(&c.work(), "run-20261113T000000Z-1");
         let again = c.work().join("admission/run-20261113T000000Z-1/backup");
         for (bytes, var) in [
             (&b"CERT-OF-XAB-2"[..], "FED_CORE_CERT"),
@@ -3175,6 +3202,7 @@ mod tests {
             leaves.join("router-key.pem"),
         );
         let admit_run = |run: &str| {
+            journal_run(&c.work(), run);
             let mut backups = Vec::new();
             let bdir = c.work().join(format!("admission/{run}/backup"));
             super::super::admit::publish(b"CERT-OF-XAB", &cert, &mut backups, &bdir).unwrap();
@@ -3195,6 +3223,90 @@ mod tests {
         back_out(&c);
         assert_eq!(std::fs::read(&cert).unwrap(), b"ANOTHER-CERT");
         assert_eq!(std::fs::read(&key).unwrap(), b"ANOTHER-KEY");
+    }
+
+    /// Record admission run `id` in the peering's run journal, after the
+    /// runs already there, as `State::open_run` does.
+    fn journal_run(work: &Path, id: &str) {
+        let mut st = super::super::state::State::load(work, "xab").unwrap();
+        if st.runs.iter().all(|r| r.id != id) {
+            st.runs.push(super::super::state::RunEntry {
+                id: id.into(),
+                stage: "federate".into(),
+                started: super::super::state::now(),
+                ended: String::new(),
+                from: 1,
+                to: 14,
+                resume: false,
+                plan: String::new(),
+                outcome: String::new(),
+                extra: Default::default(),
+            });
+        }
+        st.save(work).unwrap();
+    }
+
+    #[test]
+    fn admission_runs_are_ordered_by_the_run_journal() {
+        // Two runs in one second: the one with the higher pid ran first and
+        // placed the leaf where nothing was; the second renewed it and kept
+        // the first leaf as its backup. By folder name the second sorts first.
+        let mut c = admitted(
+            true,
+            &[("FED_CORE_RESTART", "true"), ("FED_CORE_DRY_RUN", "skip")],
+        );
+        let pki = c.work().join("pki");
+        std::fs::create_dir_all(&pki).unwrap();
+        let leaves = c.dir.path().join("leaves");
+        std::fs::create_dir_all(&leaves).unwrap();
+        let (cert, key) = (
+            leaves.join("router-cert.pem"),
+            leaves.join("router-key.pem"),
+        );
+        for (run, n) in [
+            ("run-20261112T000000Z-9", ""),
+            ("run-20261112T000000Z-10", "-2"),
+        ] {
+            journal_run(&c.work(), run);
+            std::fs::write(pki.join("core.pem"), format!("CERT-OF-XAB{n}")).unwrap();
+            std::fs::write(pki.join("core-key.pem"), format!("KEY-OF-XAB{n}")).unwrap();
+            let mut backups = Vec::new();
+            let bdir = c.work().join(format!("admission/{run}/backup"));
+            super::super::admit::publish(
+                format!("CERT-OF-XAB{n}").as_bytes(),
+                &cert,
+                &mut backups,
+                &bdir,
+            )
+            .unwrap();
+            super::super::admit::publish(
+                format!("KEY-OF-XAB{n}").as_bytes(),
+                &key,
+                &mut backups,
+                &bdir,
+            )
+            .unwrap();
+        }
+        c.vars
+            .insert("FED_CORE_CERT".into(), cert.display().to_string());
+        c.vars
+            .insert("FED_CORE_KEY".into(), key.display().to_string());
+        // An admission folder the journal does not list cannot be ordered.
+        let stray = c.work().join("admission/run-20261111T000000Z-1/backup");
+        std::fs::create_dir_all(&stray).unwrap();
+        std::fs::write(stray.join("0-router-cert.pem"), b"A-STRAY-CERT").unwrap();
+        let rows = leaf_rows(&c);
+        assert_eq!(rows[&c.vars["FED_CORE_CERT"]].state, "unknown", "{rows:?}");
+        assert!(
+            rows[&c.vars["FED_CORE_CERT"]]
+                .note
+                .contains("run-20261111T000000Z-1"),
+            "{rows:?}"
+        );
+        std::fs::remove_dir_all(c.work().join("admission/run-20261111T000000Z-1")).unwrap();
+        back_out(&c);
+        assert!(!cert.exists(), "the first run found nothing there");
+        assert!(!key.exists(), "no private key is left behind");
     }
 
     #[test]
