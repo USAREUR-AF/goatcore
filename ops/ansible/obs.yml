@@ -468,6 +468,12 @@
     # never-built minio-quota-scraper sidecar) and goat_container_info (the
     # id→name join for raw-cgroup cadvisor series) into the textfile dir
     # node-exporter already mounts. Script lives in the synced compose tree.
+    - name: cron is installed (the entry below is a crontab entry; a minimal image has no cron)
+      ansible.builtin.apt:
+        name: cron
+        state: present
+        cache_valid_time: 3600
+
     - name: Install goat-obs textfile cron (*/5)
       ansible.builtin.cron:
         name: "goat-obs-textfile ({{ obs_prefix }})"
