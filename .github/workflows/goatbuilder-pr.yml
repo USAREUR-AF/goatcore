@@ -25,6 +25,11 @@ on:
       - 'crates/Cargo.lock'
       - 'ops/goatbuilder/schema/**'
       - 'docs/tutorials/00-goatlite.md'   # tests/goatlite_budget.rs: the first-run budget (G2)
+      # tests/doc_configs.rs: every whole goatbuilder.yaml example validates. The
+      # documents that hold one today; docs/reference/goatbuilder/** and
+      # docs/tutorials/** are listed below.
+      - 'docs/design/goatbuilder.md'
+      - 'docs/design/goatlite.md'
       - 'ops/goatbuilder/goatbuilder.yaml'
       - 'ops/goatbuilder/parity-*.sh'
       - 'ops/pins/**'
@@ -163,8 +168,8 @@ jobs:
         run: pip install --quiet pyyaml jsonschema
       - name: Mark the time before the tests, for the state-directory guard
         run: touch "$RUNNER_TEMP/goatbuilder-tests-start"
-      - name: cargo test (unit, golden commands, tutor, the C11 conformance test, A2 configuration compatibility; every test target but the flows)
-        run: cargo test -p goatbuilder --bins --test cli_golden --test tutor --test bound_not_a_tty --test update --test federate_verbs --test legibility --test legibility_one_door --test config_compat --test deprecation --test deploy_success
+      - name: cargo test (unit, golden commands, tutor, the C11 conformance test, A2 configuration compatibility, the docs' config examples; every test target but the flows)
+        run: cargo test -p goatbuilder --bins --test cli_golden --test tutor --test bound_not_a_tty --test update --test federate_verbs --test legibility --test legibility_one_door --test config_compat --test deprecation --test deploy_success --test doc_configs
       - name: cargo test -p goat-fun (the shared hidden runner, goat and goatbuilder bound) and goat-federation (the verbs goatbuilder runs)
         run: cargo test -p goat-fun -p goat-selfupdate -p goat-federation
       - name: The one-door allow-list only shrinks, against the pull request's base
