@@ -192,7 +192,7 @@ changes anything, and goes ahead only when `Recheck::allows_change()` is true:
    with the saved plan. Each section that differs is listed in `changed`
    (GB-200): a new plan is needed, and a new approval.
 4. The live phase-1 checks (`edge-ports`, `core-ports`, `slot-anchors`,
-   `core-router`, `ingress-stores`) run again into `<work>/plan/recheck.json`,
+   `core-router`, `ingress-stores`, `clock`) run again into `<work>/plan/recheck.json`,
    removed first so an older answer never stands in. Each must answer, and be
    PASS or NOT APPLICABLE; anything else is GB-202 beside the check's own code.
    A SKIP does not pass here. The certificates are read again too: one that

@@ -44,6 +44,11 @@ pub const CHECKS: &[(&str, &str, &str)] = &[
         "GB-132",
     ),
     (
+        "clock",
+        "edge and core clocks are synchronized, within the budget",
+        "GB-268",
+    ),
+    (
         "slot-anchors",
         "the committed slot list equals the registry",
         "GB-134",

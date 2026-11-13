@@ -25,8 +25,15 @@ def load_preflight():
     return mod
 
 
-def host(ss="", wg="", containers="", pids="", ss_ok=True, name="edge-1"):
-    return {"host": name, "ss": ss, "wg": wg, "containers": containers, "pids": pids, "ss_ok": ss_ok}
+# `chronyc -c tracking` of a host synchronized to an outside server, 1.2 ms off.
+CHRONY_GOOD = ("C0000201,192.0.2.123,3,1794571200.123456789,0.001234567,-0.000020000,0.000300000,"
+               "-3.141,0.002,0.050,0.012345678,0.000456789,64.5,Normal\n")
+
+
+def host(ss="", wg="", containers="", pids="", ss_ok=True, name="edge-1", chrony=CHRONY_GOOD, chrony_ok=True,
+         timedatectl="", timedatectl_ok=False):
+    return {"host": name, "ss": ss, "wg": wg, "containers": containers, "pids": pids, "ss_ok": ss_ok,
+            "chrony": chrony, "chrony_ok": chrony_ok, "timedatectl": timedatectl, "timedatectl_ok": timedatectl_ok}
 
 
 NETBIRD_WG = "udp   UNCONN 0      0            0.0.0.0:51820      0.0.0.0:*\n"
@@ -454,6 +461,122 @@ class SigningCA(unittest.TestCase):
             self.assertEqual((r.outcome, r.code), (live.FAIL, "GB-141"))
 
 
+def chrony(refid="C0000201", name="192.0.2.123", stratum=3, offset="0.001234567", leap="Normal"):
+    return (f"{refid},{name},{stratum},1794571200.123456789,{offset},-0.000020000,0.000300000,"
+            f"-3.141,0.002,0.050,0.012345678,0.000456789,64.5,{leap}\n")
+
+
+TIMEDATECTL_YES = "NTPSynchronized=yes\nTimeUSec=Fri 2026-11-13 12:00:00.123456 UTC\n"
+TIMEDATECTL_NO = "NTPSynchronized=no\nTimeUSec=Fri 2026-11-13 12:00:00.123456 UTC\n"
+
+
+class Clock(unittest.TestCase):
+    """Each host's clock against UTC, as its own time service reports it
+    (ADR 1232): chrony first, systemd's flag when chrony does not answer."""
+
+    def check(self, hosts, budget=250, groups=None):
+        if groups is None:
+            groups = [(side, f"xab_{side}", [h for h in hosts if h.startswith(side)]) for side in ("edge", "core")]
+            groups = [g for g in groups if g[2]]
+        facts = {h: dict(f, host=h) for h, f in hosts.items() if f is not None}
+        return live.check_clock(facts, groups, budget)
+
+    def test_chrony_csv_is_parsed(self):
+        c = live.parse_chrony_tracking(chrony(offset="-0.004500000"))
+        self.assertEqual((c["reference_id"], c["reference"], c["stratum"], c["leap"]),
+                         ("C0000201", "192.0.2.123", 3, "Normal"))
+        self.assertAlmostEqual(c["offset_s"], -0.0045)
+        self.assertIsNone(live.parse_chrony_tracking("506 Cannot talk to daemon\n"))
+        self.assertIsNone(live.parse_chrony_tracking(""))
+        self.assertIsNone(live.parse_chrony_tracking(chrony(stratum="x")))
+
+    def test_synchronized_within_the_budget_passes_and_prints_the_offset(self):
+        r = self.check({"edge-1": host(), "core-1": host(name="core-1", chrony=chrony(offset="-0.020000000"))})
+        self.assertEqual(r.outcome, live.PASS, r)
+        self.assertIn("edge-1 offset 1.2 ms", r.detail)
+        self.assertIn("core-1 offset 20.0 ms", r.detail)
+        self.assertIn("budget 250 ms", r.detail)
+        self.assertEqual(r.facts["hosts"]["core-1"]["side"], "core")
+        self.assertTrue(r.facts["hosts"]["edge-1"]["grounded"])
+
+    def test_synchronized_over_the_budget_fails_naming_host_offset_budget_and_limit(self):
+        r = self.check({"edge-1": host(chrony=chrony(offset="0.312300000")), "core-1": host(name="core-1")})
+        self.assertEqual((r.outcome, r.code), (live.FAIL, "GB-268"), r)
+        self.assertIn("edge-1: offset 312.3 ms", r.detail)
+        self.assertIn("250 ms budget", r.detail)
+        self.assertIn("router limit 500 ms", r.detail)
+        self.assertNotIn("core-1", r.detail)
+        self.assertIn("Repair time synchronization on edge-1", r.fix)
+
+    def test_a_slow_clock_counts_as_much_as_a_fast_one(self):
+        r = self.check({"edge-1": host(chrony=chrony(offset="-0.260000000"))})
+        self.assertEqual(r.outcome, live.FAIL, r)
+        self.assertIn("260.0 ms", r.detail)
+
+    def test_an_unsynchronized_chrony_fails(self):
+        r = self.check({"edge-1": host(chrony=chrony(refid="00000000", name="", stratum=0, offset="0.000000000",
+                                                     leap="Not synchronised"))})
+        self.assertEqual((r.outcome, r.code), (live.FAIL, "GB-268"), r)
+        self.assertIn("edge-1: not synchronized", r.detail)
+        self.assertIn("budget 250 ms, router limit 500 ms", r.detail)
+        self.assertFalse(r.facts["hosts"]["edge-1"]["grounded"])
+
+    def test_a_clock_following_only_its_own_local_reference_is_not_synchronized(self):
+        # `local stratum 10` with no server: chrony reports Normal against itself.
+        r = self.check({"edge-1": host(chrony=chrony(refid="7F7F0101", name="", stratum=10, offset="0.000000000"))})
+        self.assertEqual(r.outcome, live.FAIL, r)
+        self.assertIn("not synchronized", r.detail)
+        self.assertIn("local clock", r.detail)
+
+    def test_timedatectl_is_the_fallback_when_chrony_does_not_answer(self):
+        r = self.check({"edge-1": host(chrony="", chrony_ok=False, timedatectl=TIMEDATECTL_YES, timedatectl_ok=True)})
+        self.assertEqual(r.outcome, live.PASS, r)
+        self.assertIn("edge-1 synchronized (timedatectl; it reports no offset)", r.detail)
+        self.assertEqual(r.facts["hosts"]["edge-1"]["method"], "timedatectl")
+        self.assertIsNone(r.facts["hosts"]["edge-1"]["offset_ms"])
+        r = self.check({"edge-1": host(chrony="", chrony_ok=False, timedatectl=TIMEDATECTL_NO, timedatectl_ok=True)})
+        self.assertEqual((r.outcome, r.code), (live.FAIL, "GB-268"), r)
+        self.assertIn("not synchronized", r.detail)
+        # chronyc answered with something that is not its report: the fallback is read.
+        r = self.check({"edge-1": host(chrony="garbage\n", timedatectl=TIMEDATECTL_YES, timedatectl_ok=True)})
+        self.assertEqual(r.facts["hosts"]["edge-1"]["method"], "timedatectl")
+
+    def test_an_unreadable_clock_is_skipped_never_passed(self):
+        r = self.check({"edge-1": host(chrony="", chrony_ok=False), "core-1": host(name="core-1")})
+        self.assertEqual((r.outcome, r.code), (live.SKIP, "GB-268"), r)
+        self.assertIn("edge-1: no time service answered (tried chronyc -c tracking and timedatectl show", r.detail)
+        self.assertIn("core-1 offset 1.2 ms", r.detail)
+        r = self.check({"edge-1": None})
+        self.assertEqual(r.outcome, live.SKIP, r)
+        self.assertIn("edge-1: no probe answer", r.detail)
+
+    def test_a_failure_wins_over_an_unread_host(self):
+        r = self.check({"edge-1": host(chrony="", chrony_ok=False),
+                        "core-1": host(name="core-1", chrony=chrony(offset="0.900000000"))})
+        self.assertEqual(r.outcome, live.FAIL, r)
+        self.assertIn("not read: edge-1", r.detail)
+
+    def test_groups_with_no_host(self):
+        r = self.check({}, groups=[("edge", "xab_edge", []), ("core", "xab_core", [])])
+        self.assertEqual((r.outcome, r.code), (live.BLOCKED, "GB-130"), r)
+        r = self.check({"edge-1": host()}, groups=[("edge", "xab_edge", ["edge-1"]), ("core", "xab_core", [])])
+        self.assertEqual(r.outcome, live.SKIP, r)
+        self.assertIn("[xab_core] lists no host", r.detail)
+
+    def test_the_budget_input(self):
+        self.assertEqual(live.clock_budget({}), (250, None))
+        self.assertEqual(live.clock_budget({"FED_CLOCK_BUDGET_MS": "100"}), (100, None))
+        self.assertEqual(live.clock_budget({"FED_CLOCK_BUDGET_MS": "500"}), (500, None))
+        for bad in ("0", "501", "abc", "-5", "1.5"):
+            with self.subTest(bad):
+                v, why = live.clock_budget({"FED_CLOCK_BUDGET_MS": bad})
+                self.assertIsNone(v)
+                self.assertIn("500", why)
+        r = self.check({"edge-1": host(chrony=chrony(offset="0.120000000"))}, budget=100)
+        self.assertEqual(r.outcome, live.FAIL, r)
+        self.assertIn("over the 100 ms budget", r.detail)
+
+
 class WholeRun(unittest.TestCase):
     """preflight.py end to end against a fixture repository and fakes."""
 
@@ -541,8 +664,9 @@ class WholeRun(unittest.TestCase):
 
     def test_no_live_reports_skips_not_passes(self):
         rc, out, by = self.run_main({}, {"FED_PREFLIGHT_NO_LIVE": "1"})
-        for cid in ("edge-ports", "core-ports", "core-router", "ingress-stores"):
+        for cid in ("edge-ports", "core-ports", "clock", "core-router", "ingress-stores"):
             self.assertEqual(by[cid]["outcome"], "SKIP", cid)
+        self.assertIn("FED_PREFLIGHT_NO_LIVE=1", by["clock"]["detail"])
 
     def test_only_slot_anchors_runs_just_that_check(self):
         f = self.repo / "ops/ansible/group_vars/zagros_hosts/zenoh-lazy-storage.yml"
@@ -631,9 +755,11 @@ class Sides(unittest.TestCase):
         # No CA, no core certificate names, no signing key: the edge driver holds none of them.
         env = {"FED_CA_CERT": "", "FED_SIGNING_KEY": "", "FED_CORE_SAN": "", "FED_ROUTER_DOCKER_HOST": ""}
         rc, out, ids, by, seen, result = self.run_side("edge", {"edge-1": host()}, env)
-        self.assertEqual(ids, ["inputs", "edge-ports"], out)
+        self.assertEqual(ids, ["inputs", "edge-ports", "clock"], out)
         self.assertEqual(by["inputs"]["outcome"], "PASS", out)
         self.assertEqual(by["edge-ports"]["outcome"], "PASS", out)
+        self.assertEqual(by["clock"]["outcome"], "PASS", out)
+        self.assertEqual(set(by["clock"]["facts"]["hosts"]), {"edge-1"}, "the edge side reads only the edge's clock")
         self.assertEqual(seen["limits"], ["xab_edge"], "the probe reaches only the edge")
         self.assertEqual(seen["docker"], 0, "nothing asks the core's container runtime")
         self.assertEqual(result["side"], "edge")
@@ -647,9 +773,12 @@ class Sides(unittest.TestCase):
         # An edge input that would block the edge's ports check is not the core's to need.
         env = {"FED_WG_LISTEN_PORT": "70000", "FED_CORE_SAN": "core-1"}
         rc, out, ids, by, seen, result = self.run_side("core", {"core-1": host(name="core-1")}, env)
-        self.assertEqual(ids, ["inputs", "core-ports", "slot-anchors", "core-router", "ingress-stores", "signing-ca"], out)
+        self.assertEqual(ids, ["inputs", "core-ports", "clock", "slot-anchors", "core-router", "ingress-stores",
+                               "signing-ca"], out)
         self.assertNotIn("FED_WG_LISTEN_PORT", by["inputs"]["detail"], out)
         self.assertEqual(by["core-ports"]["outcome"], "PASS", out)
+        self.assertEqual(by["clock"]["outcome"], "PASS", out)
+        self.assertEqual(set(by["clock"]["facts"]["hosts"]), {"core-1"}, "the core side reads only the core's clock")
         self.assertEqual(by["core-router"]["outcome"], "PASS", out)
         self.assertEqual(seen["limits"], ["xab_core"], "the probe reaches only the core")
         self.assertEqual(result["side"], "core")
@@ -673,6 +802,106 @@ class Sides(unittest.TestCase):
         self.assertTrue(set(live.SIDES.values()) <= {"edge", "core", "both"})
 
 
+class ClockRun(unittest.TestCase):
+    """The clock check through preflight.py: --only clock, by side, its input."""
+
+    setUp = WholeRun.setUp
+    tearDown = WholeRun.tearDown
+
+    def run_clock(self, probe_hosts, extra_env=None, args=("--only", "clock")):
+        limits = []
+        pf = load_preflight()
+
+        def probe(argv, cwd, env):
+            limits.append(argv[argv.index("--limit") + 1])
+            out = Path(argv[argv.index("-e") + 1].split("=", 1)[1])
+            for name, facts in probe_hosts.items():
+                if name in ("edge-1",) and "xab_edge" not in limits[-1]:
+                    continue
+                if name in ("core-1",) and "xab_core" not in limits[-1]:
+                    continue
+                (out / f"{name}.json").write_text(json.dumps(dict(facts, host=name)))
+            return 0, b"", b""
+        pf.PROBE = probe
+        out = io.StringIO()
+        with mock.patch.dict(os.environ, dict(self.env, **(extra_env or {})), clear=True), \
+                mock.patch.object(pf.live, "docker_caller", lambda h: self.fail("the clock reads no container")), \
+                contextlib.redirect_stdout(out):
+            rc = pf.main(["xab", "--work", str(self.work), "--profile-dir", str(self.profile),
+                          "--repo", str(self.repo), *args])
+        result = json.loads((self.work / "preflight/result.json").read_text())
+        return rc, out.getvalue(), {r["check"]: r for r in result["results"]}, limits
+
+    BOTH = {"edge-1": host(), "core-1": host(name="core-1")}
+
+    def test_only_clock_runs_just_that_check_on_both_sides(self):
+        rc, out, by, limits = self.run_clock(self.BOTH)
+        self.assertEqual(list(by), ["clock"], out)
+        self.assertEqual(by["clock"]["outcome"], "PASS", out)
+        self.assertEqual(limits, ["xab_edge:xab_core"])
+        self.assertEqual(set(by["clock"]["facts"]["hosts"]), {"edge-1", "core-1"})
+        self.assertEqual(rc, 0, out)
+
+    def test_a_bad_clock_stops_phase_one(self):
+        hosts = dict(self.BOTH, **{"core-1": host(name="core-1", chrony=chrony(offset="17.000000000"))})
+        rc, out, by, _ = self.run_clock(hosts)
+        self.assertEqual((rc, by["clock"]["outcome"], by["clock"]["code"]), (1, "FAIL", "GB-268"), out)
+        self.assertIn("core-1: offset 17000.0 ms", out)
+        self.assertIn("NOT READY", out)
+
+    def test_an_unread_clock_is_skipped_and_strict_refuses(self):
+        hosts = dict(self.BOTH, **{"edge-1": host(chrony="", chrony_ok=False)})
+        rc, out, by, _ = self.run_clock(hosts)
+        self.assertEqual((rc, by["clock"]["outcome"]), (0, "SKIP"), out)
+        self.assertIn("SKIPPED and not verified: clock synchronized", out)
+        rc, out, by, _ = self.run_clock(hosts, {"FED_PREFLIGHT_STRICT": "1"})
+        self.assertEqual(rc, 1, out)
+
+    def test_no_live_skips_the_clock_and_probes_nothing(self):
+        rc, out, by, limits = self.run_clock(self.BOTH, {"FED_PREFLIGHT_NO_LIVE": "1"})
+        self.assertEqual(by["clock"]["outcome"], "SKIP")
+        self.assertEqual(limits, [])
+
+    def test_side_edge_reads_only_the_edge(self):
+        rc, out, by, limits = self.run_clock(self.BOTH, args=("--only", "clock", "--side", "edge"))
+        self.assertEqual(limits, ["xab_edge"])
+        self.assertEqual(set(by["clock"]["facts"]["hosts"]), {"edge-1"})
+        self.assertEqual((rc, by["clock"]["outcome"]), (0, "PASS"), out)
+
+    def test_side_core_reads_only_the_core(self):
+        hosts = dict(self.BOTH, **{"edge-1": host(chrony=chrony(offset="9.0"))})  # not the core side's to see
+        rc, out, by, limits = self.run_clock(hosts, args=("--only", "clock", "--side", "core"))
+        self.assertEqual(limits, ["xab_core"])
+        self.assertEqual(set(by["clock"]["facts"]["hosts"]), {"core-1"})
+        self.assertEqual((rc, by["clock"]["outcome"]), (0, "PASS"), out)
+
+    def test_an_unusable_budget_is_a_missing_input_and_blocks(self):
+        rc, out, by, limits = self.run_clock(self.BOTH, {"FED_CLOCK_BUDGET_MS": "900"},
+                                             args=("--only", "inputs,clock"))
+        self.assertEqual(by["inputs"]["outcome"], "FAIL", out)
+        self.assertIn("FED_CLOCK_BUDGET_MS", by["inputs"]["detail"])
+        self.assertEqual((by["clock"]["outcome"], by["clock"]["code"]), ("BLOCKED", "GB-130"))
+        self.assertEqual(limits, [], "a blocked check probes nothing")
+        self.assertEqual(rc, 1)
+
+    def test_the_budget_input_is_used(self):
+        hosts = dict(self.BOTH, **{"edge-1": host(chrony=chrony(offset="0.060000000"))})
+        rc, out, by, _ = self.run_clock(hosts, {"FED_CLOCK_BUDGET_MS": "50"})
+        self.assertEqual(by["clock"]["outcome"], "FAIL", out)
+        self.assertIn("over the 50 ms budget", by["clock"]["detail"])
+
+    def test_list_names_the_clock_check(self):
+        pf = load_preflight()
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            rc = pf.main(["xab", "--work", str(self.work), "--list"])
+        self.assertEqual(rc, 0)
+        line = [l for l in out.getvalue().splitlines() if " clock " in l]
+        self.assertEqual(len(line), 1, out.getvalue())
+        self.assertTrue(line[0].strip().startswith("--only  clock"), line)
+        self.assertIn("(GB-268)", line[0])
+
+
 class CheckList(unittest.TestCase):
     def test_goatbuilder_lists_the_same_checks(self):
         rs = (REPO / "crates/goatbuilder/src/federate/preflight.rs").read_text()
@@ -684,7 +913,7 @@ class CheckList(unittest.TestCase):
         cat = (REPO / "ops/errors/catalog.yaml").read_text()
         src = (HERE / "preflight_live.py").read_text() + (HERE / "preflight.py").read_text()
         import re
-        for code in sorted(set(re.findall(r'"(GB-1[34]\d)"', src))):
+        for code in sorted(set(re.findall(r'"(GB-\d{3})"', src))):
             self.assertIn(f"code: {code}", cat, code)
 
 

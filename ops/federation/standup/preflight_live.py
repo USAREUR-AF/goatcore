@@ -1,5 +1,5 @@
-"""Phase-1 checks that read live state: ports, the core router, its receive
-stores, the slot list, and the CA. Imported by preflight.py; every function
+"""Phase-1 checks that read live state: ports, host clocks, the core router, its
+receive stores, the slot list, and the CA. Imported by preflight.py; every function
 here takes its inputs as arguments and its command runner as a parameter, so
 each check is tested with fakes (test_preflight_live.py) and no test touches a
 host.
@@ -14,7 +14,8 @@ Every check returns one Result with one outcome word:
   NOT APPLICABLE  this deployment has nothing for the check to look at
 
 Nothing here changes a host. The port probe is a read-only play
-(ops/ansible/peering-preflight.yml); the router and store reads are
+(ops/ansible/peering-preflight.yml), which also reads each host's time
+service; the router and store reads are
 `docker ps`, `docker inspect` and `docker exec ... cat` against the daemon
 phase 3 reads (FED_ROUTER_DOCKER_HOST, else the local one).
 """
@@ -58,6 +59,7 @@ CHECKS = [
     ("inputs", "every required input is present", "GB-130"),
     ("edge-ports", "the tunnel and edge router ports are free on the edge", "GB-131"),
     ("core-ports", "the republisher metrics port is free on the core", "GB-132"),
+    ("clock", "edge and core clocks are synchronized, within the budget", "GB-268"),
     ("slot-anchors", "the committed slot list equals the registry", "GB-134"),
     ("core-router", "the core router container is found", "GB-138"),
     ("ingress-stores", "the core's receive stores match what the edge grants", "GB-136"),
@@ -73,6 +75,7 @@ SIDES = {
     "inputs": "both",
     "edge-ports": "edge",
     "core-ports": "core",
+    "clock": "both",
     "slot-anchors": "core",
     "core-router": "core",
     "ingress-stores": "core",
@@ -445,6 +448,155 @@ def check_core_ports(facts, core_hosts, metrics_port, republisher_container, cor
            f"goat_fed_republisher_metrics_port in group_vars/{core_group}/. One port per peering on a\n"
            f"shared core host.")
     return _port_check("core-ports", "core metrics port free", "GB-132", core_hosts, facts, wanted, fix)
+
+
+# ---------------------------------------------------------------------------
+# Host clocks, from the same probe (ADR 1232, docs/design/peer-fault-handling.md)
+#
+# A Zenoh router refuses a timestamp more than 500 ms ahead of its own clock.
+# Two federated fabrics are synchronized separately, and before the tunnel
+# exists neither side can read the other's clock, so each host is judged
+# against UTC as its own time service reports it. Half the router limit is the
+# budget: the other side may be off by as much in the other direction.
+# ---------------------------------------------------------------------------
+
+CLOCK_ROUTER_LIMIT_MS = 500
+CLOCK_BUDGET_MS = 250
+CLOCK_COMMANDS = ("chronyc -c tracking", "timedatectl show -p NTPSynchronized -p TimeUSec")
+# chrony's reference id for its own local clock (`local stratum N`), and for no
+# reference at all.
+_CHRONY_LOCAL_REFIDS = {"7F7F0101"}
+_CHRONY_NO_REFID = "00000000"
+_CHRONY_SYNCED_LEAP = {"Normal", "Insert second", "Delete second"}
+
+
+def clock_budget(environ=None):
+    """(budget in ms, None) from FED_CLOCK_BUDGET_MS, else the default; or
+    (None, why) when the value set is not a whole number from 1 to the router
+    limit."""
+    environ = os.environ if environ is None else environ
+    raw = str(environ.get("FED_CLOCK_BUDGET_MS", "")).strip()
+    if not raw:
+        return CLOCK_BUDGET_MS, None
+    if raw.isdigit() and 0 < int(raw) <= CLOCK_ROUTER_LIMIT_MS:
+        return int(raw), None
+    return None, (f"{raw} is not a whole number of milliseconds from 1 to {CLOCK_ROUTER_LIMIT_MS} "
+                  f"(the router limit); unset it for the default {CLOCK_BUDGET_MS}")
+
+
+def parse_chrony_tracking(out):
+    """`chronyc -c tracking` -> {reference_id, reference, stratum, offset_s,
+    root_dispersion_s, leap}, or None when it is not that report. The CSV
+    fields, in order: reference id, reference name, stratum, reference time,
+    system time offset, last offset, RMS offset, frequency, residual frequency,
+    skew, root delay, root dispersion, update interval, leap status."""
+    for line in text(out).splitlines():
+        if not line.strip():
+            continue
+        f = line.strip().split(",")
+        if len(f) < 14:
+            return None
+        try:
+            return {"reference_id": f[0].upper(), "reference": f[1], "stratum": int(f[2]),
+                    "offset_s": float(f[4]), "root_dispersion_s": float(f[11]), "leap": f[13].strip()}
+        except ValueError:
+            return None
+    return None
+
+
+def parse_timedatectl(out):
+    """`timedatectl show -p NTPSynchronized -p TimeUSec` -> {synchronized,
+    time_usec}, or None when it does not say whether the clock is synchronized."""
+    kv = {}
+    for line in text(out).splitlines():
+        k, sep, v = line.partition("=")
+        if sep:
+            kv[k.strip()] = v.strip()
+    if kv.get("NTPSynchronized") not in ("yes", "no"):
+        return None
+    return {"synchronized": kv["NTPSynchronized"] == "yes", "time_usec": kv.get("TimeUSec", "")}
+
+
+def read_clock(facts):
+    """One host's clock as its time service reports it: chrony's tracking
+    report when chronyd answered, else systemd's synchronization flag. None
+    when neither could be read. Each reading says whether it is grounded: the
+    host is synchronized to a reference outside itself."""
+    if facts.get("chrony_ok"):
+        c = parse_chrony_tracking(facts.get("chrony", ""))
+        if c:
+            local = c["reference_id"] in _CHRONY_LOCAL_REFIDS
+            none = c["reference_id"] == _CHRONY_NO_REFID or not c["reference_id"]
+            synced = c["leap"] in _CHRONY_SYNCED_LEAP and not local and not none
+            if local:
+                why = "chrony follows only this host's own local clock"
+            elif none or not synced:
+                why = f"chrony leap status {c['leap'] or 'empty'}, no reference"
+            else:
+                why = ""
+            return {"method": "chrony", "synchronized": synced, "grounded": synced, "why": why,
+                    "offset_ms": round(abs(c["offset_s"]) * 1000, 3), "chrony_system_time_s": c["offset_s"],
+                    "reference": c["reference"] or c["reference_id"], "stratum": c["stratum"],
+                    "root_dispersion_ms": round(c["root_dispersion_s"] * 1000, 3)}
+    if facts.get("timedatectl_ok"):
+        t = parse_timedatectl(facts.get("timedatectl", ""))
+        if t:
+            return {"method": "timedatectl", "synchronized": t["synchronized"], "grounded": t["synchronized"],
+                    "why": "" if t["synchronized"] else "timedatectl NTPSynchronized=no",
+                    "offset_ms": None, "time_usec": t["time_usec"]}
+    return None
+
+
+def check_clock(facts, groups, budget_ms):
+    """groups: [(side, group, hosts)] for the sides this run checks. PASS only
+    when every host's clock was read, is synchronized to an outside reference,
+    and, where the time service reports an offset, is within the budget. A host
+    whose clock was not read is never a pass: SKIP when nothing failed."""
+    label = "clock synchronized"
+    limit = CLOCK_ROUTER_LIMIT_MS
+    if not any(hosts for _, _, hosts in groups):
+        return Result("clock", label, BLOCKED, "the inventory groups list no host ("
+                      + ", ".join(f"[{g}]" for _, g, _ in groups) + ")", "GB-130",
+                      "name the hosts in the inventory groups (the inventory checks above say which)")
+    passed, failed, unread, out = [], [], [], {}
+    for side, group, hosts in groups:
+        if not hosts:
+            unread.append(f"[{group}] lists no host, so the {side}'s clock was not read")
+        for h in hosts:
+            if h not in facts:
+                unread.append(f"{h}: no probe answer")
+                continue
+            r = read_clock(facts[h])
+            if r is None:
+                unread.append(f"{h}: no time service answered (tried {' and '.join(CLOCK_COMMANDS)})")
+                out[h] = {"side": side, "read": False}
+                continue
+            out[h] = dict(r, side=side, read=True)
+            if not r["synchronized"]:
+                failed.append(f"{h}: not synchronized ({r['why']}); budget {budget_ms} ms, router limit {limit} ms")
+            elif r["offset_ms"] is not None and r["offset_ms"] > budget_ms:
+                failed.append(f"{h}: offset {r['offset_ms']:.1f} ms from UTC, over the {budget_ms} ms budget "
+                              f"(router limit {limit} ms)")
+            elif r["offset_ms"] is None:
+                passed.append(f"{h} synchronized ({r['method']}; it reports no offset)")
+            else:
+                passed.append(f"{h} offset {r['offset_ms']:.1f} ms ({r['method']}, stratum {r['stratum']})")
+    facts_out = {"budget_ms": budget_ms, "router_limit_ms": limit, "hosts": out}
+    if failed:
+        detail = "; ".join(failed) + ("; not read: " + "; ".join(unread) if unread else "")
+        hosts = ", ".join(sorted({f.split(":", 1)[0] for f in failed}))
+        return Result("clock", label, FAIL, detail, "GB-268",
+                      f"Repair time synchronization on {hosts}: its time service must follow an outside\n"
+                      f"reference and hold the clock within {budget_ms} ms of it. Check with `chronyc tracking`\n"
+                      f"or `timedatectl show`, then run phase 1 again.", facts_out)
+    if unread:
+        return Result("clock", label, SKIP, "clock NOT verified: " + "; ".join(unread)
+                      + ("; read and within budget: " + ", ".join(passed) if passed else ""), "GB-268",
+                      "Make the host's time service readable (chronyd answering `chronyc -c tracking`, or\n"
+                      "systemd answering `timedatectl show`) and the host reachable by the probe, then run\n"
+                      "phase 1 again.", facts_out)
+    return Result("clock", label, PASS, ", ".join(passed) + f"; budget {budget_ms} ms of the {limit} ms router limit",
+                  facts=facts_out)
 
 
 # ---------------------------------------------------------------------------

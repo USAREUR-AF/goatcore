@@ -92,6 +92,7 @@ Phase 1 checks these before anything changes:
   inputs          every required input is present
   edge-ports      the tunnel and edge router ports are free on the edge
   core-ports      the republisher metrics port is free on the core
+  clock           edge and core clocks are synchronized, within the budget
   slot-anchors    the committed slot list equals the registry
   core-router     the core router container is found
   ingress-stores  the core's receive stores match what the edge grants

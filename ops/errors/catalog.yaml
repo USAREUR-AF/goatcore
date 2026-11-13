@@ -2361,6 +2361,22 @@ entries:
     matches:
       - "declared .*\\(GB-149\\)"
 
+  - code: GB-268
+    tool: goatbuilder
+    title: a peering host's clock is not synchronized, is too far from UTC, or could not be read
+    what: "federate phase 1 (preflight) read each edge and core host's clock from its own time service (chronyc -c tracking, else timedatectl). A Zenoh router refuses a timestamp more than 500 ms ahead of its own clock, and the partner's fabric is synchronized separately, so each side must hold its clock within half that, 250 ms by default (FED_CLOCK_BUDGET_MS), of UTC. A host that is not synchronized to an outside reference, or is over the budget, is a FAIL; a host whose clock could not be read is SKIP, never PASS."
+    causes:
+      - the host's time service follows no reachable time source, or only the host's own local clock
+      - the clock is synchronized but still slewing a large step, or the time source itself is wrong
+      - neither chronyd nor systemd answered the probe, so the clock was not read
+    fixes:
+      - "on the named host: chronyc tracking   (or: timedatectl show); repair its time synchronization, then run phase 1 again"
+      - "goatbuilder federate <partner> --from 1 --to 1"
+    read: docs/design/federation-preflight.md
+    exit: 1
+    matches:
+      - "clock synchronized .*\\(GB-268\\)"
+
   - code: GB-230
     tool: goatbuilder
     title: allocate would move a peering that already runs

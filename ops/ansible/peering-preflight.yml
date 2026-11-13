@@ -1,6 +1,7 @@
 ---
-# peering-preflight.yml — READ the listening sockets of a peering's edge and core
-# hosts for federation phase 1, and change nothing.
+# peering-preflight.yml — READ the listening sockets and the time service's
+# report of a peering's edge and core hosts for federation phase 1, and change
+# nothing.
 #
 #   Caller:  ops/federation/standup/preflight.py (both avenues: goatbuilder
 #            federate and ops/scripts/peering-standup.sh), with
@@ -8,12 +9,17 @@
 #   Design:  docs/design/federation-preflight.md
 #
 # Every command here is a read (`ss`, `wg show`, `docker ps`, `docker inspect`,
-# and the host firewall baseline's stored peering entries on an edge)
-# with check_mode off and changed_when false. The only file written is one JSON
-# document per host on the CONTROLLER, under fed_preflight_out, which
-# preflight.py reads and then judges: the tunnel listen port, the edge router
-# listen port and the republisher metrics port must be free, or held by this
-# peering's own interface or container on a re-run. The judging is in Python,
+# `chronyc -c tracking`, `timedatectl show`, and the host firewall baseline's
+# stored peering entries on an edge) with check_mode off and changed_when false.
+# The time reads use what the host already runs: chronyc asks chronyd over its
+# local socket, timedatectl asks systemd; neither installs a package or opens
+# a port, and a host without them answers nothing, which preflight reports as
+# not read. The only file written is one JSON document per host on the
+# CONTROLLER, under fed_preflight_out, which preflight.py reads and then judges:
+# the tunnel listen port, the edge router listen port and the republisher
+# metrics port must be free, or held by this peering's own interface or
+# container on a re-run; each host's clock must be synchronized to an outside
+# reference and within the offset budget of UTC. The judging is in Python,
 # where it is tested with fakes; this play only reads.
 #
 # Same inventory and same groups as the peering plays, so it reaches the hosts
@@ -67,6 +73,25 @@
       failed_when: false
       check_mode: false
 
+    # The host's clock, as its own time service reports it: chrony's tracking
+    # report (CSV), and systemd's synchronization flag for a host without
+    # chronyd. preflight.py prefers chrony, which also gives the offset.
+    - name: Read the time service's tracking report (chrony)
+      ansible.builtin.command:
+        argv: [chronyc, -c, tracking]
+      register: _fed_pf_chrony
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: Read whether systemd counts the clock as synchronized
+      ansible.builtin.command:
+        argv: [timedatectl, show, -p, NTPSynchronized, -p, TimeUSec]
+      register: _fed_pf_timedatectl
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
     # The peerings the host firewall baseline stored on an edge (one JSON entry
     # per peering, written by goat-host-firewall): the deploy renders every one
     # of them with this run's, so the plan reads them to render the same input.
@@ -92,7 +117,7 @@
       ansible.builtin.copy:
         dest: "{{ fed_preflight_out }}/{{ inventory_hostname }}.json"
         mode: "0600"
-        content: "{{ {'host': inventory_hostname, 'groups': group_names, 'ss': _fed_pf_ss.stdout | default(''), 'ss_ok': (_fed_pf_ss.rc | default(1)) == 0, 'wg': _fed_pf_wg.stdout | default(''), 'containers': _fed_pf_containers.stdout | default(''), 'pids': _fed_pf_pids.stdout | default(''), 'host_firewall_peerings': (((_fed_pf_fw_stored.results | default([])) | map(attribute='content') | map('b64decode') | map('from_json') | list) if ('peering_edges' in group_names) else none)} | to_nice_json }}"
+        content: "{{ {'host': inventory_hostname, 'groups': group_names, 'ss': _fed_pf_ss.stdout | default(''), 'ss_ok': (_fed_pf_ss.rc | default(1)) == 0, 'wg': _fed_pf_wg.stdout | default(''), 'containers': _fed_pf_containers.stdout | default(''), 'pids': _fed_pf_pids.stdout | default(''), 'chrony': _fed_pf_chrony.stdout | default(''), 'chrony_ok': (_fed_pf_chrony.rc | default(1)) == 0, 'timedatectl': _fed_pf_timedatectl.stdout | default(''), 'timedatectl_ok': (_fed_pf_timedatectl.rc | default(1)) == 0, 'host_firewall_peerings': (((_fed_pf_fw_stored.results | default([])) | map(attribute='content') | map('b64decode') | map('from_json') | list) if ('peering_edges' in group_names) else none)} | to_nice_json }}"
       delegate_to: localhost
       become: false
       check_mode: false
