@@ -45,7 +45,7 @@
       failed_when: false
 
     - name: peering-edge | absent | the unit
-      ansible.builtin.shell: "systemctl is-active {{ _pb_names.ipsec.service }}; systemctl is-enabled {{ _pb_names.ipsec.service }}"
+      ansible.builtin.command: "systemctl show -p LoadState -p ActiveState -p UnitFileState {{ _pb_names.ipsec.service }}"
       register: _pbi_unit
       changed_when: false
       failed_when: false
@@ -87,7 +87,7 @@
           {%- set items = [
                 ['ike ' ~ _pb_names.ipsec.name, (_pbi_files.results[0].stat.exists)],
                 ['interface ' ~ _pb_names.ipsec.ifname, link],
-                ['unit ' ~ _pb_names.ipsec.service, ('active' in (_pbi_unit.stdout_lines | default([]))) or ('enabled' in (_pbi_unit.stdout_lines | default([])))],
+                ['unit ' ~ _pb_names.ipsec.service, (_pbi_unit | backout_probe_state('systemd', _pb_names.ipsec.service))],
                 ['nft clamp rules for ' ~ _pb_names.ipsec.ifname,
                  (_pbi_clamp_probe if _pbi_clamp_probe.state == 'unknown' else (_pbi_clamp_handles | length > 0))],
               ] -%}
@@ -106,11 +106,12 @@
           {%-   endif -%}
           {%- endfor -%}
           {{ out }}
-        # Nothing is removed while the link or the clamp chain could not be read.
+        # Nothing is removed while the link, its unit or the clamp chain could not be read.
         _pbi_remove: >-
           {{ _pbi_owner == 'ours'
              and (_pbi_link | backout_probe_state('ip-link', _pb_names.ipsec.ifname)).state != 'unknown'
-             and _pbi_clamp_probe.state != 'unknown' }}
+             and _pbi_clamp_probe.state != 'unknown'
+             and (_pbi_unit | backout_probe_state('systemd', _pb_names.ipsec.service)).state != 'unknown' }}
 
     - name: peering-edge | absent | close the IKE SA and its children
       ansible.builtin.command: "swanctl --terminate --ike {{ _pb_names.ipsec.name }}"

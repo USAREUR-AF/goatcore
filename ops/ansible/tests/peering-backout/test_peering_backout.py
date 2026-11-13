@@ -129,6 +129,7 @@ NETWORK_NOT_FOUND = {
            '  *) eval "name=\\${$#}"; echo "Device \\"$name\\" does not exist." >&2; exit 1 ;;\n'
            'esac'),
     "nft": NFT_NOT_FOUND,
+    "systemctl": 'printf "LoadState=not-found\\nActiveState=inactive\\nUnitFileState=\\n"',
 }
 
 
@@ -209,8 +210,8 @@ class TwoPeeringsOneHost(unittest.TestCase):
         self.assertEqual(Path(fx.org).read_text(), fx.vendor + tbc.fragment("xaa", "xab") + tbc.fragment("xaa", "xac"))
 
     def survey_with_tools(self, tools):
-        """A survey of xac with fake tools on PATH: {name: shell body}; ip and nft
-        answer with their own not-found lines unless the test gives its own."""
+        """A survey of xac with fake tools on PATH: {name: shell body}; ip, nft and
+        systemctl answer with their own not-found answers unless the test gives its own."""
         bindir = f"{self.tmp}/fake-bin"
         os.makedirs(bindir, exist_ok=True)
         for name, body in {**NETWORK_NOT_FOUND, **tools}.items():
@@ -275,6 +276,25 @@ class TwoPeeringsOneHost(unittest.TestCase):
                      "edge-xac: carrier wg-carry1", "edge-xac: interface ipsec-xaa-xac",
                      "edge-xac: nft clamp rules for ipsec-xaa-xac",
                      "fwd: nft rules for wg-carry1 in the forwarder table")
+
+    UNITS = ("edge-xac: unit goat-peering-wg@wg-fed1.service", "edge-xac: unit goat-peering-link@xaa-xac.service")
+
+    def test_a_unit_whose_bus_cannot_be_reached_is_unknown(self):
+        rows = self.survey_with_tools({
+            "systemctl": 'echo "Failed to connect to system scope bus via local transport: No such file or directory" >&2; exit 1'})
+        for resource in self.UNITS:
+            with self.subTest(resource=resource):
+                self.assertEqual(rows[resource]["state"], "unknown", rows[resource])
+                self.assertEqual(rows[resource]["action"], "none", rows[resource])
+                self.assertIn("rc 1", rows[resource]["note"], rows[resource])
+
+    def test_a_unit_that_is_not_loaded_is_absent_and_a_running_one_present(self):
+        rows = self.survey_with_tools({})
+        for resource in self.UNITS:
+            with self.subTest(resource=resource):
+                self.assertEqual(rows[resource]["state"], "absent", rows[resource])
+        rows = self.survey_with_tools({"systemctl": 'printf "LoadState=loaded\\nActiveState=active\\nUnitFileState=enabled\\n"'})
+        self.assertEqual(rows["edge-xac: unit goat-peering-link@xaa-xac.service"]["state"], "present")
 
     def test_the_survey_shows_this_links_clamp_rules_and_only_them(self):
         clamp = ('table inet goat_peering {', 'chain clamp {',
@@ -482,6 +502,30 @@ class ProbeState(unittest.TestCase):
                 self.assertEqual(got["state"], "unknown")
                 self.assertIn("rc %d" % rc, got["note"])
                 self.assertNotIn("\n", got["note"])
+
+    def test_a_unit_is_read_by_its_load_state(self):
+        # Measured: systemd 259, `systemctl show -p LoadState -p ActiveState -p
+        # UnitFileState <unit>`. A unit that does not exist is LoadState=not-found
+        # with exit 0; a bus that cannot be reached is exit 1 and an error line.
+        def unit(rc, out="", err=""):
+            return self.state("systemd", rc, err, stdout=out, name="goat-peering-wg@wg-fed1.service")
+        missing = unit(0, "LoadState=not-found\nActiveState=inactive\nUnitFileState=\n")
+        self.assertEqual(missing["state"], "absent", missing)
+        bus = unit(1, err="Failed to connect to system scope bus via local transport: No such file or directory")
+        self.assertEqual(bus["state"], "unknown", bus)
+        self.assertIn("rc 1", bus["note"])
+        self.assertEqual(unit(0, "LoadState=loaded\nActiveState=active\nUnitFileState=enabled\n")["state"], "present")
+        self.assertEqual(unit(0, "LoadState=loaded\nActiveState=inactive\nUnitFileState=enabled\n")["state"], "present")
+        self.assertEqual(unit(0, "LoadState=loaded\nActiveState=activating\nUnitFileState=disabled\n")["state"], "present")
+        # Running from a unit file that was since deleted: still there.
+        self.assertEqual(unit(0, "LoadState=not-found\nActiveState=active\nUnitFileState=\n")["state"], "present")
+        # A template instance that was never started loads from its template but is
+        # neither running nor enabled: not this peering's link (as before).
+        self.assertEqual(unit(0, "LoadState=loaded\nActiveState=inactive\nUnitFileState=disabled\n")["state"], "absent")
+        for out in ("LoadState=masked\nActiveState=inactive\nUnitFileState=masked\n",
+                    "LoadState=error\nActiveState=inactive\n", "ActiveState=inactive\n", ""):
+            with self.subTest(out=out):
+                self.assertEqual(unit(0, out)["state"], "unknown", out)
 
     def test_a_probe_that_did_not_run_is_unknown(self):
         self.assertEqual(self.mod.backout_probe_state({"skipped": True}, "docker", "x")["state"], "unknown")

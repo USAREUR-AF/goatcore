@@ -16,6 +16,10 @@ tool wrote is the tool's own not-found line for the probed name:
                     line the command it could not run, naming the probed table
                     ("list table inet <table>", "list chain inet <table> <chain>");
            ip:      exit 1 and 'Device "<name>" does not exist.';
+           systemd: `systemctl show -p LoadState -p ActiveState -p UnitFileState
+                    <unit>` exits 0 for a unit that does not exist and says
+                    LoadState=not-found; a unit is read from those properties,
+                    never from an error's words (_unit_state, below);
            SPIRE:   a non-zero exit and "rpc error: code = NotFound desc = ..."
                     (with or without a leading "Error: ");
   unknown  anything else: an unreachable host, a permission error, a missing
@@ -65,11 +69,52 @@ def _not_found(kind, rc, line, name, err=''):
     raise ValueError('unknown probe kind: %r' % (kind,))
 
 
+_RUNNING = ('active', 'activating', 'deactivating', 'reloading', 'refreshing')
+
+
+def _unit_state(result):
+    """A systemd unit, from `systemctl show -p LoadState -p ActiveState -p UnitFileState`.
+
+    present  running in any form (ActiveState active, activating, deactivating,
+             reloading), or enabled (UnitFileState enabled or enabled-runtime);
+    absent   neither, with LoadState not-found (no unit file) or loaded (a
+             template instance never started: the template exists, the
+             instance is not this peering's link);
+    unknown  a non-zero exit (the bus could not be reached, and so on), no
+             LoadState in the answer, or any other LoadState (masked, error,
+             bad-setting), which the probe cannot read as either.
+    Measured with systemd 259: a unit that does not exist exits 0 with
+    LoadState=not-found; a bus that cannot be reached exits 1.
+    """
+    rc = result['rc']
+    if rc != 0:
+        line = (_first_line(result.get('stderr')) or _first_line(result.get('stdout'))
+                or _first_line(result.get('msg')) or 'no error text')
+        return {'state': 'unknown', 'note': 'rc %d: %s' % (rc, line[:300])}
+    props = {}
+    for line in (result.get('stdout') or '').splitlines():
+        if '=' in line:
+            k, v = line.split('=', 1)
+            props[k.strip()] = v.strip()
+    load = props.get('LoadState')
+    active = props.get('ActiveState', '')
+    enabled = props.get('UnitFileState', '')
+    if load is None:
+        return {'state': 'unknown', 'note': 'rc 0: systemctl show gave no LoadState'}
+    if active in _RUNNING or enabled in ('enabled', 'enabled-runtime'):
+        return {'state': 'present', 'note': '%s, %s' % (active or '-', enabled or '-')}
+    if load in ('not-found', 'loaded'):
+        return {'state': 'absent', 'note': ''}
+    return {'state': 'unknown', 'note': 'rc 0: LoadState=%s' % load}
+
+
 def backout_probe_state(result, kind, name):
-    if kind not in ('docker', 'wg', 'nft', 'ip-link', 'spire', 'spire-bundle'):
+    if kind not in ('docker', 'wg', 'nft', 'ip-link', 'systemd', 'spire', 'spire-bundle'):
         raise ValueError('unknown probe kind: %r' % (kind,))
     if not isinstance(result, dict) or result.get('skipped') or not isinstance(result.get('rc'), int):
         return {'state': 'unknown', 'note': 'the probe did not run'}
+    if kind == 'systemd':
+        return _unit_state(result)
     rc = result['rc']
     out = result.get('stdout') or ''
     err = result.get('stderr') or ''

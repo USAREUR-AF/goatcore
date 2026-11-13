@@ -41,10 +41,11 @@
       changed_when: false
       failed_when: false
 
-    # Active or enabled. A template instance that was never started reads
-    # "disabled" from is-enabled, so that alone is not presence.
+    # Active or enabled, read from its properties (backout_probe_state 'systemd'):
+    # a template instance that was never started loads from the template but is
+    # neither, so that alone is not presence; a bus that cannot be reached is unknown.
     - name: peering-wg | absent | the unit
-      ansible.builtin.shell: "systemctl is-active {{ _pb_names.wg.service }}; systemctl is-enabled {{ _pb_names.wg.service }}"
+      ansible.builtin.command: "systemctl show -p LoadState -p ActiveState -p UnitFileState {{ _pb_names.wg.service }}"
       register: _pbw_unit
       changed_when: false
       failed_when: false
@@ -101,6 +102,7 @@
         # present, absent or unknown (filter_plugins/backout_probe.py): a probe that
         # could not tell is never read as a link or table that is not there.
         _pbw_link_probe: "{{ _pbw_peers | backout_probe_state('wg', _pb_names.wg.interface) }}"
+        _pbw_unit_probe: "{{ _pbw_unit | backout_probe_state('systemd', _pb_names.wg.service) }}"
         # A table that is there is shared or not by the list of links; when that list
         # could not be read the table cannot be shown to be this peering's alone.
         _pbw_table_probe: >-
@@ -147,7 +149,7 @@
           {%- set bad = own.startswith('other') or own.startswith('unproven') -%}
           {%- set items = [
                 ['interface ' ~ _pb_names.wg.interface, _pbw_link_exists, _pbw_link_probe],
-                ['unit ' ~ _pb_names.wg.service, ('active' in (_pbw_unit.stdout_lines | default([]))) or ('enabled' in (_pbw_unit.stdout_lines | default([]))), none],
+                ['unit ' ~ _pb_names.wg.service, _pbw_unit_probe.state == 'present', _pbw_unit_probe],
                 ['nft table inet ' ~ _pb_names.wg.nft_table, _pbw_table.rc == 0 and not (_pbw_table_shared | bool), _pbw_table_probe],
               ] -%}
           {%- for f in _pbw_files.results -%}
@@ -167,8 +169,8 @@
           {%-   set _ = out.append({'component': 'tunnel', 'resource': 'nft table inet ' ~ _pb_names.wg.nft_table, 'state': 'present', 'action': 'kept', 'note': 'another link maps to the same table name'}) -%}
           {%- endif -%}
           {{ out }}
-        # Nothing is removed while the link or its table could not be read.
-        _pbw_remove: "{{ _pbw_owner == 'ours' and _pbw_link_probe.state != 'unknown' and _pbw_table_probe.state != 'unknown' }}"
+        # Nothing is removed while the link, its table or its unit could not be read.
+        _pbw_remove: "{{ _pbw_owner == 'ours' and _pbw_link_probe.state != 'unknown' and _pbw_table_probe.state != 'unknown' and _pbw_unit_probe.state != 'unknown' }}"
 
     - name: peering-wg | absent | the carrier interface
       ansible.builtin.command: "wg show {{ _pb_names.wg.carrier }} peers"
