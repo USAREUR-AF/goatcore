@@ -55,6 +55,32 @@ least under our control, so the build targets it and treats the other two as the
 | Whose clock is right | Majority among the goatnet's own machines ([ADR 1037](../adr/1037-fabric-internal-time-synchronization-first.md)) | Same | Two separately synchronized fabrics meet. Neither majority applies to the other, so each side is compared against UTC and the verdict says which side was grounded |
 | Check before connecting | Join preflight | Machine enrollment | Federation preflight (`ops/federation/standup/preflight.py`), which has no clock row today |
 
+## What the router names when the fast clock is behind a partner
+
+Measured on 2026-11-13 with three Zenoh 1.9.0 routers in containers: ours, the partner's boundary router
+connected to ours, and a router one hop deeper in the partner's network, with a publisher behind it. A
+router's clock was set 17 seconds ahead where the table says fast. Every router stamps samples it
+receives from a client; our router ran with `drop_future_timestamp: false`.
+
+| Case | Partner boundary router | Deeper partner router (stamps the sample) | What our router logs | What our readers receive |
+|---|---|---|---|---|
+| A | fast; stamps the sample itself | none | Rejections naming the boundary router's ID | Every sample, re-stamped by our router |
+| B | correct, `drop_future_timestamp: false` | fast | Nothing. The partner's boundary router rejects and re-stamps | Every sample, stamped by the partner's boundary router |
+| B2 | correct, `drop_future_timestamp: true` | fast | Nothing | No samples. The partner's boundary router drops them |
+| D | fast | correct | Nothing. A router does not re-stamp a sample that already carries a timestamp | Every sample, with the deeper router's correct stamp |
+| F | fast | fast | Rejections naming the **deeper** router's ID, a router we hold no session with | Every sample, re-stamped by our router |
+
+Three consequences for the detector.
+
+- **The ID in a rejection line is the router that stamped the sample, not the connection it arrived on.**
+  When a whole partner network runs fast (case F), the ID belongs to a router we never see.
+- **The connection is named by which of our routers logged the line.** One reader runs beside each
+  per-partner edge router, so every rejection that reader counts belongs to that one peering, whatever
+  ID it carries. On a core router the reader joins the ID to the session list and reports a line whose
+  ID holds no session as arriving through another router.
+- **A fast clock one hop inside a correct partner network never reaches us** (cases B and B2). The
+  partner's own boundary router sees it. Our reader reports only what crosses the boundary.
+
 ## Stage 1: measure at the router we own
 
 The router is the only vantage point we control for a machine we do not own.
@@ -129,10 +155,7 @@ returns reopens the same entry with its history.
 
 Each step is one revertible change.
 
-1. **Measure the federated case.** On a federation test environment, give the partner side a fast clock
-   and record what our edge router logs and whose Zenoh ID the timestamps carry. A timestamp carries the
-   ID of the router that stamped it, which may be a router we hold no session with, so this settles how
-   the detector names the connection.
+1. **Measure the federated case.** Measured; see "What the router names when the fast clock is behind a partner".
 2. **The reader with the clock detector**, beside a per-partner edge router and beside the core router.
    Result: the clock fault shows on `goat health` and panoscope with the machine or the peering named.
 3. **The per-peer verdict key** and the `goat health` line on the peer's side.

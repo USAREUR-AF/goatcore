@@ -78,9 +78,9 @@ of it.
 - Each new fault kind costs a detector and a notice template.
 - The reader is a new component beside each router. If it stops, the fabric behaves as before and the
   `peer` domain reads unmeasured, never green.
-- One point is unmeasured and gates the federated detector: a Zenoh timestamp carries the ID of the router
-  that stamped it, which across a federation may be a router we hold no session with. The build order
-  measures this before the detector is designed in detail.
+- The ID in a timestamp rejection is the router that stamped the sample, which across a federation can be
+  a router we hold no session with (measured 2026-11-13, design doc). The connection is therefore named by
+  which of our routers logged the rejection: one reader per per-partner edge router.
 
 ## Assessor view (SCA-R)
 
@@ -90,6 +90,7 @@ admin space. The released verdict key carries one partner's own connection state
 
 ## Trigger conditions for revisit
 
-- The federated measurement shows the edge router cannot name the connection a bad timestamp arrived on.
+- Several partners come to share one edge router, so the router that logged a rejection no longer names
+  the peering.
 - A fault kind appears that the fabric cannot contain while the owner is being reached, so that a timed
   disconnect is the lesser harm.
