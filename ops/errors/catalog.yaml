@@ -568,6 +568,19 @@ entries:
       - "the surface serves no signature for SHA256SUMS"
     exit: 1
 
+  - code: GB-262
+    tool: goatbuilder
+    title: the verb has no such phase
+    what: "`goatbuilder explain <verb> <phase>` answers from the phase catalog (ops/phases/catalog.yaml), by the phase's number or its id. The verb has no phase by that number or id. The message names the phases it has."
+    causes:
+      - a phase number outside the verb's range, or a mistyped id
+    fixes:
+      - "goatbuilder explain <verb>   (lists the verb's phases, by number and id)"
+    read: docs/design/goatbuilder-legibility.md
+    matches:
+      - "has no phase `"
+    exit: 2
+
   - code: GB-012
     tool: goatbuilder
     title: the candidate's image build did not succeed
