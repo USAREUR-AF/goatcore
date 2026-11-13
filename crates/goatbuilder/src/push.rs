@@ -529,12 +529,10 @@ pub fn deploy(repo: &Path, o: &Options) -> Result<Report> {
             return Ok(Report::new("deploy", checks, EXIT_REFUSED));
         }
     }
-    // A dry run names the probes a real run starts before its plays, built by
-    // the code that starts them; their verdicts are known only when they run.
+    // A dry run names the fresh-source probe a real run starts before its
+    // plays, built by the code that starts it; its verdict is the run's.
     if o.dry_run {
         checks.push(ok("probe", crate::fresh::command(repo).line()));
-        checks.push(ok("probe", crate::secrets::posture_cmd(repo, &["available"]).line()));
-        checks.push(ok("probe", netbird_status_cmd().line()));
     }
     crate::runner::phase("transport", "the secrets, and how the hosts are reached", "");
     let p = plan(repo, o)?;
@@ -562,6 +560,13 @@ pub fn deploy(repo: &Path, o: &Options) -> Result<Report> {
         &format!("{}/playbook", p.name),
         format!("{} {}<group>; ledger component {}", r.play.file_name().unwrap_or_default().to_string_lossy(), r.target_flag, r.ledger),
     ));
+    // The probes this dry run started itself, in plan(): the secrets posture
+    // (secrets::available) and the mesh status (transport); their answers are
+    // in the rows above.
+    if o.dry_run {
+        checks.push(ok("probe-ran", crate::secrets::posture_cmd(repo, &["available"]).line()));
+        checks.push(ok("probe-ran", netbird_status_cmd().line()));
+    }
     let logdir = std::env::var("GOAT_DEPLOY_LOG_DIR").or_else(|_| std::env::var("TMPDIR")).unwrap_or_else(|_| "/tmp".into());
     let ts = stamp();
     let inv = inventory_args(&p.transport);
@@ -582,9 +587,10 @@ pub fn deploy(repo: &Path, o: &Options) -> Result<Report> {
         if !o.verify_only {
             let args = deploy_args(&inv, &r.play, &r.target_flag, g, accept_var.as_deref());
             if o.dry_run {
-                checks.push(ok("probe", ledger_read_cmd(repo, &inv, g, &r.ledger).line()));
-                // The play's line, built from the argv a real run starts.
-                checks.push(ok(&format!("{}/{g}/deploy", p.name), format!("DRY: deploying {}: (cd ops/ansible && {}) > {log}", render_ref(w), ansible_cmd(repo, "preflight", &args).line())));
+                checks.push(ok("probe", ledger_read_cmd(repo, &inv, g, &r.ledger).line_from(repo)));
+                // The play's line, built from the argv a real run starts, in the
+                // directory it starts in.
+                checks.push(ok(&format!("{}/{g}/deploy", p.name), format!("DRY: deploying {}: {} > {log}", render_ref(w), ansible_cmd(repo, "preflight", &args).line_from(repo))));
             } else {
                 checks.push(ok(&format!("{}/{g}/deploy", p.name), format!("deploying {}", render_ref(w))));
                 let mut cmd = ansible_cmd(repo, "preflight", &args);

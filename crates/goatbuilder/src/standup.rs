@@ -936,12 +936,12 @@ pub fn standup(repo: &Path, o: &Options) -> Result<Report> {
     // Fresh source (C3): once, before phase 1 touches a host. Every play then goes
     // through ansible-preflight.sh judged against the same trunk commit, so a merge
     // landing during a long standup does not stop it half way.
-    // A dry run names the probes a real run starts before phase 1: the secrets
-    // posture (read above, on a LAN site) and the fresh-source check. Their
-    // verdicts are not known until the run makes them.
+    // A dry run names its probes: the secrets posture, which on a LAN site it
+    // ran itself in read_site (its answer decides the phase-11 pause), and the
+    // fresh-source check, which only a real run starts.
     if o.dry_run {
         if s.profile == "lan" {
-            checks.push(row("probe", crate::secrets::posture_cmd(repo, &["available"]).line()));
+            checks.push(row("probe-ran", crate::secrets::posture_cmd(repo, &["available"]).line()));
         }
         checks.push(row("probe", crate::fresh::command(repo).line()));
     }

@@ -395,6 +395,19 @@ impl Cmd {
         line_of(&self.argv())
     }
 
+    /// The line as it runs from `base`, the checkout a person pastes it in: a
+    /// command with a working directory is `(cd <dir> && <line>)`, its
+    /// directory relative to `base` when it is under it.
+    pub fn line_from(&self, base: &Path) -> String {
+        match self.inner.get_current_dir() {
+            Some(d) => {
+                let dir = d.strip_prefix(base).unwrap_or(d).display().to_string();
+                format!("(cd {} && {})", quote(&dir), self.line())
+            }
+            None => self.line(),
+        }
+    }
+
     /// Run it, streaming its output, and wait.
     pub fn status(&mut self) -> std::io::Result<ExitStatus> {
         crate::trace::cmd(&self.inner);
@@ -1039,6 +1052,18 @@ mod tests {
             Some(own.display().to_string().as_str())
         );
         assert_eq!(std::fs::read_to_string(&own).unwrap(), "pulled\n");
+    }
+
+    #[test]
+    fn a_line_from_the_checkout_carries_its_working_directory() {
+        let base = Path::new("/srv/checkout");
+        let mut c = Cmd::new("../scripts/with-aws");
+        c.args(["dev", "--", "ansible", "all"]);
+        assert_eq!(c.line_from(base), "../scripts/with-aws dev -- ansible all");
+        c.current_dir(base.join("ops/ansible"));
+        assert_eq!(c.line_from(base), "(cd ops/ansible && ../scripts/with-aws dev -- ansible all)");
+        c.current_dir("/other place");
+        assert_eq!(c.line_from(base), "(cd '/other place' && ../scripts/with-aws dev -- ansible all)");
     }
 
     #[test]

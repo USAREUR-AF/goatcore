@@ -1260,6 +1260,56 @@ fn a_two_group_deploy_records_a_phase_per_group() {
     assert_eq!(unique.len(), ids.len(), "a phase id repeats: {ids:?}");
 }
 
+/// A deploy's dry run names its four probes under two headings: the two it
+/// ran itself (the secrets posture and the mesh status, whose answers shaped
+/// the plan) and the two only a real run starts (the fresh-source check and
+/// the ledger read). Each row is the line its builder makes, as `-o json`
+/// lists it.
+#[test]
+fn a_deploy_dry_run_names_its_probes_under_two_headings() {
+    let h = hollow();
+    let r = h.repo();
+    let dry = ["deploy", "-C", r, "--env", "dev", "--component", "portal", "--dry-run"];
+    let page = at_a_terminal(&h.command(&dry)).unwrap_or_else(|e| panic!("{e}"));
+    let mut plan = vec!["-o", "json"];
+    plan.extend(&dry);
+    let plan = json(&ok("deploy plan", h.command(&plan).output().unwrap()));
+    let rows = |name: &str| -> Vec<String> {
+        plan["checks"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|c| c["name"] == name)
+            .filter_map(|c| c["detail"].as_str().map(|d| d.trim().to_string()))
+            .collect()
+    };
+    let (ran, real) = (rows("probe-ran"), rows("probe"));
+    assert_eq!(ran.len(), 2, "the dry run's own probes: {ran:?}");
+    assert!(ran[0].contains("available") && ran[1].contains("netbird status"), "{ran:?}");
+    assert_eq!(real.len(), 2, "the real run's probes: {real:?}");
+    assert!(real[0].contains("fresh-source.sh"), "{real:?}");
+    assert!(real[1].starts_with("(cd ops/ansible && ") && real[1].contains("deploy-history.jsonl"), "the ledger read, runnable from the checkout: {real:?}");
+    // On the page, each row sits under its own heading: after it, and before
+    // the next heading of the other kind.
+    let page = norm(&page);
+    let ran_h = "This dry run ran (its answers shaped the plan above):";
+    let real_h = "A real run also runs (each verdict is known only then):";
+    let under = |heading: &str, other: &str, row: &str| {
+        let row = norm(row);
+        page.match_indices(heading).any(|(at, _)| {
+            let section = &page[at..];
+            let end = section[heading.len()..].find(other).map_or(section.len(), |e| e + heading.len());
+            section[..end].contains(&row)
+        })
+    };
+    for row in &ran {
+        assert!(under(ran_h, real_h, row), "{row:?} is not under {ran_h:?}:\n{page}");
+    }
+    for row in &real {
+        assert!(under(real_h, ran_h, row), "{row:?} is not under {real_h:?}:\n{page}");
+    }
+}
+
 #[test]
 fn c11_federate() {
     let w = federate_world::world();
