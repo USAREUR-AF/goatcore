@@ -53,6 +53,9 @@ another session or replayed from an earlier one. Those are the signing and repla
   - `waiting`, GB-199 (exit 3) while the partner's signed result has not arrived, or every open
     required row is one the partner observes;
   - `incomplete`, X-ACCEPT-001 (exit 3) when a required row of ours did not run.
+
+  When more than one applies, the first in this order decides: `failed`, then `incomplete`,
+  then `waiting`.
 - **A partner's result counts only when it is signed.** It must verify under the partner's key
   in `<work>/keys.txt`, for this session, as kind `result`. A result that does not verify is
   refused at import (exit 2) and never counts towards `passed`.
