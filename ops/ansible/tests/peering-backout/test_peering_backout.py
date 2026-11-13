@@ -367,6 +367,7 @@ class TwoPeeringsOneHost(unittest.TestCase):
             with self.subTest(resource=resource):
                 self.assertEqual(rows[resource]["state"], "present", rows[resource])
                 self.assertEqual(rows[resource]["action"], "remove", rows[resource])
+
     def test_a_core_backed_out_by_the_driver_is_one_row_and_nothing_runs_on_it(self):
         # FED_CORE_*: admission placed the core's fragment from the driver, so the
         # driver backs it out. The play reports that in one row and reads nothing on
@@ -425,7 +426,8 @@ class TwoPeeringsOneHost(unittest.TestCase):
             if name.startswith("core | absent |") and re.search(r"^(ok|changed|fatal|failed): \[core-xac", body, re.M):
                 ran.append(name)
         self.assertEqual(ran, ["core | absent | the core is backed out by the driver"], r.stdout[-4000:])
-    def leaf_backout(self, host_cert, apply):
+
+    def leaf_backout(self, host_cert, apply, unreadable=()):
         """The core play told that the router leaf admission placed on the controller
         went (goatbuilder federate backout: peering_backout_core_leaf_remove with the
         role's goat_zenoh_tls_dir). The host's copy holds `host_cert` and this peering's
@@ -436,8 +438,14 @@ class TwoPeeringsOneHost(unittest.TestCase):
         os.makedirs(tls, exist_ok=True)
         for name, text in (("core.pem", "CERT-OF-XAC"), ("core-key.pem", "KEY-OF-XAC")):
             dump(f"{work}/pki/{name}", text)
+        for name in ("router-cert.pem", "router-key.pem"):
+            if os.path.exists(f"{tls}/{name}"):
+                os.chmod(f"{tls}/{name}", 0o600)
         dump(f"{tls}/router-cert.pem", host_cert)
         dump(f"{tls}/router-key.pem", "KEY-OF-XAC")
+        for name in unreadable:
+            os.chmod(f"{tls}/{name}", 0)
+            self.addCleanup(os.chmod, f"{tls}/{name}", 0o600)
         missing = f"{self.tmp}/no-such-core"
         argv = ["ansible-playbook", "-i", self.inv, "--limit", "xac_core",
                 str(ANSIBLE / "peering-backout.yml"),
@@ -468,6 +476,18 @@ class TwoPeeringsOneHost(unittest.TestCase):
                 self.assertFalse(os.path.exists(f"{tls}/{name}"), "no private key is left on the host")
         # Run again: nothing is there, nothing is removed.
         rows, tls = self.leaf_backout("CERT-OF-XAC", apply=True)
+
+    @unittest.skipIf(os.geteuid() == 0, "root reads a file whatever its mode")
+    def test_a_host_copy_that_cannot_be_read_is_unknown_and_kept(self):
+        # stat finds the file but gives no checksum for one it cannot read: that is
+        # not this peering's leaf proven, and not absent either.
+        for apply in (False, True):
+            with self.subTest(apply=apply):
+                rows, tls = self.leaf_backout("CERT-OF-XAC", apply=apply, unreadable=("router-key.pem",))
+                key = rows[f"{tls}/router-key.pem"]
+                self.assertEqual((key["state"], key["action"]), ("unknown", "none"), rows)
+                self.assertIn("not readable", key["note"])
+                self.assertTrue(os.path.exists(f"{tls}/router-key.pem"), "an unreadable copy is never deleted")
 
     def test_a_host_copy_that_is_not_this_peerings_leaf_is_kept(self):
         rows, tls = self.leaf_backout("ANOTHER-CERT", apply=True)

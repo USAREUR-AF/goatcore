@@ -63,6 +63,10 @@
           {%-     set _ = out.append({'path': path, 'state': 'unknown', 'ours': false, 'note': 'not readable: ' ~ (h.msg | default('stat failed'))}) -%}
           {%-   elif not h.stat.exists -%}
           {%-     set _ = out.append({'path': path, 'state': 'absent', 'ours': false, 'note': ''}) -%}
+          {%-   elif h.stat.checksum is not defined -%}
+          {%-     set _ = out.append({'path': path, 'state': 'unknown', 'ours': false, 'note': 'not readable: it exists, and its content could not be compared with this peering\'s leaf'}) -%}
+          {%-   elif o.stat.exists and o.stat.checksum is not defined -%}
+          {%-     set _ = out.append({'path': path, 'state': 'unknown', 'ours': false, 'note': 'not readable: this peering\'s leaf on the controller, ' ~ o.stat.path}) -%}
           {%-   elif o.stat.exists and h.stat.checksum == o.stat.checksum -%}
           {%-     set _ = out.append({'path': path, 'state': 'present', 'ours': true, 'note': 'this peering\'s leaf, placed where nothing was'}) -%}
           {%-   else -%}
