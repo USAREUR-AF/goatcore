@@ -299,6 +299,51 @@ Federation is built as modules ([ADR 1225](../adr/1225-federation-belongs-to-goa
 **Stage 13+, switches of default.** Each owns one default and nothing else: the driver runs the verbs in process; `peering-standup.sh` calls `goatbuilder federate`; the directory publishes per counterparty (stage 11.5, for `goatbuilder federate`); `goat federate` is removed once a goatbuilder release with the verbs reaches partner environments. Each reverts with one commit, restoring the previous default.
 
 **Stage 14, teaching material.** Owns the runbook, the tutorials and the guides that teach the command, in this repository and its siblings. It follows the switches. Reverting it restores the earlier text.
+### `join-node`: the whole declared site
+
+A site added with `join-node` should run every service it declares, with no step after the command ([goatbuilder-v1-gate.md](goatbuilder-v1-gate.md), row I3). Today it does not. This section says what a joiner declares, what `join-node` deploys of it, and the plan that makes the declaration drive the verb. Status: **designed**; nothing below is built unless it says so.
+
+**(a) Where a joiner's service set is declared.** It is declared already, in the same place as a founder's. `ops/goatbuilder/endstate/catalog.yaml` says what each service is (its play, its containers, its class) and which declaration decides whether a site runs it: a flag in the site's group_vars (`<name>_enabled`, else the role default), the fleet pin table (`ops/pins/fleet-pins.yaml`), or the founder rule. `ops/goatbuilder/endstate/endstate.py model <site>` joins the catalog with the site's own group_vars and pins into the site's end state, one row per service with its presence and the declaration that decided it (ADR 1206). A joiner differs from a founder only in `goatnet_founder: false` and `join_founder_site`. No other list of a joiner's services exists, and none should be added.
+
+**(b) What `join-node` deploys now, and what is left to a person.** Measured in one `core` join at a goatnet that already had a joiner (the run behind group H of the gate):
+
+| Service | `join-node` today | After `join-node`, by hand |
+|---|---|---|
+| Host baseline, WireGuard modules, mesh enrolment | phases 5, 6, 11 (**built**); 8 and 10 are manual (row H2) | |
+| Postgres with Spock, NetBird management, signal, Ory (Kratos, Hydra), seed from the founder, the Spock subscriptions on both sides | phase 13, passes 1 to 3 and the founder-side mirror (**built**) | |
+| Signal federation, and the front door's certificate and routes (`traefik-acme.yml`) | phase 13, but only when the site declares signal federation on (**built**) | a site that declares federation off gets no front door |
+| Service certificates | **not built** | `ops/scripts/mint-site-certs.sh <site>`, then `stage-service-leaves.yml` |
+| Data router (`zenoh-deploy.yml`) | **not built** | the play, limited to the node |
+| Health publishers and the crawler (`fabric-health`, `mesh-health`, `presence-health`, `time-health`, `consistency-health`, `fabric-crawler`) | **not built** | each one's deploy play, limited to the node |
+| The standalone node exporter | **not built** | nothing deploys it on the join path |
+| The site's secrets (database, backup, replication and enrolment values) | **not built** | written by hand before phase 13. The replication and NetBird encryption values must name the founder's, so a generator that mints fresh ones is wrong for a joiner |
+| Portal, id console, onboarding engine | not run on a joiner, by design for now (see (d)) | none |
+
+`standup` runs the router (phase 9) and the portal (phase 12) on a founder. No verb runs `id-admin-console-deploy.yml` on any site; a founder that sets `id_admin_console_enabled` gets the console only from the play run by hand. A standup step for it, gated by that flag, is **designed**.
+
+**(c) The plan: the declared set drives `join-node`.** One new phase after phase 13's replication passes, "the declared services", is **designed**:
+
+1. It reads the site's end state from `endstate.py model <site>`, the same model `goatbuilder endstate` and the acceptance phase read. It keeps every service the model marks present at this site.
+2. It drops the services phase 13 has already converged (the replication core above). Those are verified, not run again.
+3. It orders the rest by what each needs: the service certificates first (`mint-site-certs.sh`, then `stage-service-leaves.yml`), then the data router, then the front door for the site's profile (`traefik-acme.yml` on an internet site, the LAN routes on a LAN site), with or without signal federation. After those come the other services.
+4. A service with a fleet pin deploys through `goatbuilder deploy --component <c> --env <goatnet> --group <site group>`, the path a release takes, so the joiner's ledger gets its row and the deploy is verified (C7). A service with only a flag runs its catalog `play` limited to the node.
+5. A service the model marks present with no play to run it refuses at plan time, naming the service and the declaration. It is never skipped in silence.
+
+Nothing in the phase names a service. When the island-mode program lifts ADR 1084 §D3 for a write class, which is gate G3 of [island-mode-multi-writer.md](island-mode-multi-writer.md) and is done by a change to group_vars, the model reports that class's surfaces as present at the joiner. The same phase then deploys the portal, the id console or the onboarding engine, with no change to `goatbuilder`. Until then, `ops/ansible/tasks/assert-admin-write-host.yml` is not the guard against a second, divergent portal: it passes any host whose `router_role` equals `admin_write_role`, and every site's first host is `router_role=A`. The unset flags are what keep the admin surfaces off a joiner, and the model reads exactly those flags.
+
+The phase needs (e) fixed first. Today the model marks absent at a joiner some services a joiner runs, and the phase would leave them out of its verification.
+
+**(d) What the plan and the summary say a joiner does not run.** The dry-run plan and the summary of a real run list, under their own heading, every catalog service the model marks absent at this site, each with the model's reason. An admin surface not yet lifted for its class reads "single-homed at the founder (ADR 1084 §D3); every site once ADR 1165 lifts it for this class". A service the site turns off reads its flag, for example "`isitup_enabled` is false in group_vars". This is **not built**. Without it, an operator who finds no portal on a new site cannot tell a declared absence from a failed deploy. The legibility rule ([goatbuilder-legibility.md](goatbuilder-legibility.md)) is that a dry run shows what the run will not do as well as what it will. The reason is the model's, so the plan and the end-state grade cannot disagree. The admin-surface placement is the island-mode program's present state, not a rule of a machine class: neither the catalog, nor the error texts, nor the `core` class may make an admin surface impossible on a joiner.
+
+**(e) The end-state catalog contradicts a live joiner.** The catalog marks seven services `present: {founder: true}`: traefik, netbird-mgmt, signal-server, netbird-dashboard, ory, kratos-selfservice-ui and mesh-coredns. `endstate.py` reads that as absent on a joiner (`presence()`, the founder branch). ADR 1206 item 2 gives the reason as "a joiner does not run it, ADR 1084 §D3". ADR 1084 §D3 says the opposite for most of them: the second node serves enrolment, peer sync, signal and the Ory login flows, and only the admin mutation surfaces (portal, id console, dashboard, `goat admin`) stay single-homed. Every live joiner runs Postgres, signal, NetBird management, Traefik, Kratos and Hydra. The measured effect: with the model passed to the acceptance phase, a joiner's PASS count fell from 18 to 16, because rows for services it runs read N/A.
+
+The fix, **designed**, replaces the one founder rule with two:
+
+- **Every site runs it:** traefik, netbird-mgmt, signal-server and ory. These lose the founder mark, and their presence comes from the pin table and the flags, as for any service.
+- **Admin surface:** netbird-dashboard, together with the portal and the id console, which today are pin- or flag-only. The mark means present at the site that holds the writer, and at every site once the class's D3 lift is declared in group_vars.
+
+kratos-selfservice-ui and mesh-coredns are placed by reading a live joiner's running containers before the change, not by argument. The change to `catalog.yaml` and `endstate.py` comes with a new ADR that amends ADR 1206 item 2; ADR 1206 itself is not edited. Its gate is that the model of a joiner fixture marks present every service a live joiner runs, and that acceptance with `--endstate` reads no row N/A for one of them.
+
 ### `federate`: which party we are in phases 7, 8, 9 and 14
 
 Phases 7 (verify), 8 (mint the peering leaves), 9 (apply) and 14 (acceptance) always name our party with `--as`. Given on the command line, `--as` is used as given. Without it, both avenues read our sovereign id by one rule (`our_id` in `crates/goatbuilder/src/federate/mod.rs`, `our_id` in `ops/scripts/peering-standup.sh`):
