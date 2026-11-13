@@ -239,6 +239,11 @@ pub struct Peering {
     /// peering already runs from hand-written files (`federate::switches`).
     #[serde(default)]
     pub federation_toml: Option<String>,
+    /// `one` (absent) or `two`: whether a single machine drives this peering,
+    /// or an edge driver and a controller (docs/design/federation-two-drivers.md;
+    /// federate/handoff.rs reads it).
+    #[serde(default)]
+    pub drivers: Option<String>,
     /// Present when a peering forwarder relays the partner to our edge (ADR 1218).
     #[serde(default)]
     #[allow(dead_code)] // read where the forwarder is rendered and applied

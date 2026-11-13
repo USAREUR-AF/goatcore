@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | **Designed.** Nothing in this document is built; the phase-3 halves are in review. It is the product contract goatbuilder 1.0 gate row B10 is proven against |
+| Status | **Designed; the hand-off stop is built.** A peering declares two drivers with `drivers: two` ("Which peerings have two drivers"), and the controller's run stops at the first phase that needs the edge with the hand-off object (GB-263; a checkout with changes is refused, GB-264). The halves, the edge driver's `--side edge` run, `import` and the rest are not built; the phase-3 halves are in review. It is the product contract goatbuilder 1.0 gate row B10 is proven against |
 | Design | [goatbuilder.md](goatbuilder.md) (the federate sections) · [federation-plan.md](federation-plan.md) · [federation-preflight.md](federation-preflight.md) · [ADR 1225](../adr/1225-federation-belongs-to-goatbuilder-one-command-one-decision.md) |
 | Audience | whoever builds the two-driver run, writes its scenario, or runs a peering where no one machine reaches both the edge host and the core host |
 
@@ -82,6 +82,33 @@ Two consequences shape the contract:
 - **`status`** reads the journal and the evidence in the working directory of each declared
   peering on the machine it runs on (`federate/status.rs`). It merges nothing from another machine.
 
+## Which peerings have two drivers
+
+A peering opts in on its own `peerings:` entry in the deployment's `goatbuilder.yaml`, read like
+every other peering value, so nothing about a deployment is in the binary:
+
+```yaml
+peerings:
+  - with: xab
+    environment: zagros
+    site: alpha
+    edge_class: edge
+    drivers: two
+```
+
+| Value | Meaning |
+|---|---|
+| `one`, or absent (the default) | one machine reaches both the edge host and the core host and runs every phase, as before |
+| `two` | an edge driver and a controller, as this document describes: the controller stops at each phase that needs the edge |
+
+The schema (`ops/goatbuilder/schema/goatbuilder-v1.schema.json`, `peering.drivers`) allows only
+those two values. `crates/goatbuilder/src/federate/handoff.rs` reads it (`two`) from the peering
+entry the run resolves, and it marks each phase's side (`side_of`) as the table above does. The
+choice is the deployment's, not the machine's: a reachability probe would hand off on a passing
+SSH failure, and an environment variable is easy to forget on one of the two machines.
+
+Status: built (`federate_two_drivers.rs`).
+
 ## The contract
 
 **The controller is the run of record.** It holds the CA key, the plan, every approval and the
@@ -132,7 +159,11 @@ everything that command reads from the other machine, the file it writes, and
 the two commands the controller runs after it. The sentence a person reads
 names the same commands.
 
-Status: designed. Phase 3's two halves, which the phase 3 object wraps, are
+Status: built at the stop: the controller's run with `-o json` carries `handoff`, its text names
+every argv on its own line, quoted for a POSIX shell, and a checkout with changes gives no object
+(GB-264), naming each file (`crates/goatbuilder/src/federate/handoff.rs`, test
+`federate_two_drivers.rs`). Not built: the object in `status`, the edge's way-back object, and
+the `import` and `then` it names. Phase 3's two halves, which the phase 3 object wraps, are
 in review; this section says "built" for them once they are on main.
 
 ### Where it appears
@@ -174,7 +205,7 @@ Both reports are additions to existing documents (`goatbuilder.output/v1` and
 | Member | Meaning |
 |---|---|
 | `phase` | the phase the hand-off belongs to |
-| `code` | one new catalog code, "the run is waiting on the other driver", the same for every hand-off; its number is assigned when it is built |
+| `code` | `GB-263`, "the run is waiting on the other driver", the same for every hand-off |
 | `run_on` | `edge` or `controller`: the machine that acts next |
 | `command` | what to run on `run_on` now, as an argv. `null` in the edge's way-back object, where nothing more runs on the edge |
 | `commit` | the commit of the deployment's checkout on the controller. The edge's plays read the checkout: the inventory, the group_vars that `allocate` renders and that phase 10 places, and the roles. `command` carries `--expect-commit <commit>`, and the edge driver refuses to run unless its checkout's `HEAD` is that commit and its tree is clean. The controller emits a hand-off object only when its own tree is clean, so that `commit` holds every `in: checkout` file: phase 10 places rendered group_vars in the checkout and admission writes `peerings.yml`, and until they are committed the controller stops instead, naming each file to commit. A file the checkout ignores is never read from the checkout by an edge step; a file the edge reads is either committed or carried as `in: work` |

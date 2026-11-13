@@ -67,6 +67,7 @@ mod admit_leaf;
 mod admit_role;
 mod confirm;
 pub mod deploy;
+pub mod handoff;
 pub mod site_values;
 pub mod switches;
 pub mod site_hosts;
@@ -666,6 +667,9 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
     let peering = cfg.peerings.iter().find(|p| p.with == o.with && o.env.map(|e| p.environment == e).unwrap_or(true)).expect("C1 found it");
     // With what goatbuilder.yaml itself declares for the run merged in (federate/declared.rs).
     let inputs = preflight::derive_inputs(repo, &cfg, peering, &work, &edge_group, None);
+    // `drivers: two`: an edge driver and a controller (federate/handoff.rs).
+    let two_drivers = handoff::two(peering.drivers.as_deref());
+    let mut handed: Option<serde_json::Value> = None;
     if executes {
         preflight::export(&inputs);
         // Phase 14 reads our core and edge declarations by group
@@ -734,6 +738,30 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
                 exit = EXIT_REFUSED;
                 break;
             }
+        }
+        // Two drivers: a phase that needs the edge stops here, before acting,
+        // and hands it to the edge driver (docs/design/federation-two-drivers.md).
+        if two_drivers && matches!(handoff::side_of(ph.n), handoff::Side::Edge | handoff::Side::Both) {
+            match handoff::clean_commit(repo) {
+                Ok(commit) => {
+                    let stop = handoff::stop(o.with, ph.n, &commit);
+                    checks.extend(stop.rows);
+                    handed = Some(stop.object);
+                    if let Some(r) = run.as_mut() {
+                        r.end(ph, state::Outcome::Stopped, &format!("{}: waiting on the edge driver", handoff::WAITING));
+                    }
+                    stopped = true;
+                }
+                Err(refusal) => {
+                    let d = refusal.detail.clone();
+                    checks.push(refusal);
+                    if let Some(r) = run.as_mut() {
+                        r.end(ph, state::Outcome::Failed, &d);
+                    }
+                    exit = EXIT_REFUSED;
+                }
+            }
+            break;
         }
         if ph.kind == "MANUAL" {
             // The directory step, inside phase 5 before the stop. It is
@@ -919,6 +947,7 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
     r.exit = exit;
     r.ok = exit == EXIT_OK;
     r.printed = printed;
+    r.handoff = handed;
     Ok(r)
 }
 
