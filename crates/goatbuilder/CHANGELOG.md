@@ -343,6 +343,23 @@ words of `goatbuilder federate` already were, because `goatbuilder federate
 rotate` is the stage that rotates a peering's keys (#493). This shipped in
 0.5.3 and was missing from its notes.
 
+### Fixed: a federate run keeps its derived values out of the process environment
+
+The values `goatbuilder federate` derives (phase 1's inputs,
+`GOAT_PROFILE_DIR` and `FED_EDGE_GROUP`) are kept in the run's own
+environment and passed to every process the run starts, instead of being
+written into goatbuilder's process environment (#498). Within one run, the
+same values reach the same commands as before. This shipped in 0.5.3 and was
+missing from its notes.
+
+### Fixed: the republisher warns when a release stops taking new keys
+
+When an agreement's `envelope.distinct_keys` ceiling is reached, the outbound
+republisher refuses each new wire key, as before, and now logs that refusal
+at WARN, at most once a minute, instead of at debug level only. The warning
+names the release, never the key. Keys already admitted keep flowing (#500).
+This shipped in 0.5.3 and was missing from its notes.
+
 ## 0.5.2 — 2026-11-12
 
 The federation documents corrected against the code, declared values passed
