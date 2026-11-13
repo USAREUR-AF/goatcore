@@ -16,11 +16,13 @@ patterns. The repository is GITHUB_REPOSITORY (GitHub's own spelling of the
 name), or else the `origin` remote's path.
 
 THE RULE. Every quoted --certificate-identity-regexp in docs/, README.md and
-.github/**/*.md must match at least one of those identities (as cosign does:
-case-sensitive, anywhere unless anchored), and must match none of them moved to
-another repository: it names this repository, anchored. An exact
+.github/**/*.md must start with `^`, must match at least one of those
+identities (as cosign does: case-sensitive), and must match none of them moved
+to another repository. An exact
 --certificate-identity must be one of them, with any version. A value holding a
-placeholder (`<`, `{{`, `$`) is a template and is skipped.
+placeholder (`<`, `{{`, `$`) is a template and is skipped. Not checked: that
+the dots are escaped (an unescaped `.` matches any character), and that the
+regexp names the signing workflow rather than the whole repository.
 
 Usage: check-doc-signer-identity.py [--self-test]
 Exit 0 ok; 1 naming each file:line, the regexp and the identities; 2 when the
@@ -120,6 +122,10 @@ def problems(root, repo):
             if not any(re.fullmatch(p, value) for p in any_version):
                 out.append(f"{path}:{n}: --certificate-identity {value!r} is no identity a release is signed with")
             continue
+        if not value.startswith("^"):
+            out.append(f"{path}:{n}: --certificate-identity-regexp {value!r} is not anchored: start it with "
+                       f"^https://github.com/{repo}/, or cosign accepts the identity anywhere in a longer one")
+            continue
         try:
             rx = re.compile(value)
         except re.error as e:
@@ -144,6 +150,7 @@ def self_test():
         ("a lowercase owner", "'^https://github.com/org/repo/'", False),
         ("the wrong workflow", r"'^https://github\.com/Org/Repo/\.github/workflows/other\.yml@'", False),
         ("not anchored to the repository", "'Repo/'", False),
+        ("the full prefix without a leading ^", r"'https://github\.com/Org/Repo/'", False),
         ("a placeholder is a template", "'^https://github.com/<owner>/<repo>/'", True),
         ("an exact identity at a real version", "'https://github.com/Org/Repo/.github/workflows/_sign.yml@refs/tags/tool/v1.2.3'", True),
     ]
