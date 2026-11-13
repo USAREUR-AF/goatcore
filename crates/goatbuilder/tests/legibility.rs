@@ -200,7 +200,9 @@ impl Proc {
 
 /// The recorder. It records the invocation, then, by `GB_REC_MODE`, exits 0
 /// (`stub`) or runs the real program of the same name from `GB_REC_PATH` (`pass`);
-/// a `pass` with no real program fails loudly. Its own tools come from
+/// a `pass` with no real program fails loudly. When the program and its first
+/// argument are `GB_REC_SAY_FOR`, it first prints `GB_REC_SAY` on stdout, as a
+/// child that talks would. Its own tools come from
 /// `GB_REC_PATH`, since the tool's PATH holds only recorders.
 const RECORDER: &str = r#"#!/bin/sh
 # goatbuilder C11 recorder (crates/goatbuilder/tests/legibility.rs)
@@ -220,6 +222,10 @@ f=$(mktemp "$d/p.XXXXXX") || exit 97
 } > "$f"
 printf '%s
 ' "${f##*/}" >> "$d/order"
+if [ -n "${GB_REC_SAY_FOR:-}" ] && [ "$name ${1:-}" = "$GB_REC_SAY_FOR" ]; then
+  printf '%s
+' "${GB_REC_SAY:?}"
+fi
 if [ "${GB_REC_MODE:-stub}" = pass ]; then
   ifs=$IFS; IFS=:
   for dir in $GB_REC_PATH; do
@@ -1533,4 +1539,28 @@ fn c11_each_check_can_pass_when_the_tool_does_what_it_asks() {
         .is_err(),
         "a printed path that does not exist"
     );
+}
+
+/// Under `-o json` stdout is the report alone: what a child prints goes to
+/// stderr and its log, never into the document a script parses.
+#[test]
+fn a_json_run_keeps_its_children_off_stdout() {
+    let w = federate_world::world();
+    std::fs::write(w.work.join("keys.txt"), "xaa=QUJD\nxab=QUJE\n").unwrap();
+    let root = w.root.path().to_path_buf();
+    let shims = install_shims(&root);
+    let mut c = w.command(&["hello-ally", "--to", "4"]);
+    behind_recorder(&mut c, &shims, "pass", &elsewhere(&root));
+    // Every phase's own command (`bash -euo pipefail -c ...`) talks on stdout.
+    const SAID: &str = "a phase's command printing on stdout";
+    c.env("GB_REC_SAY_FOR", "bash -euo").env("GB_REC_SAY", SAID);
+    let (out, procs) = run_recorded(c, &root.join("rec/json"));
+    ran("federate --to 4 -o json", &out, &procs, &[0]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let doc: Result<serde_json::Value, _> = serde_json::from_str(&stdout);
+    assert!(doc.is_ok(), "stdout is not one JSON document: {:?}\nstdout:\n{stdout}", doc.err());
+    assert!(text(&out).contains(SAID), "the child's line is on neither stream: it was not run");
+    assert!(String::from_utf8_lossy(&out.stderr).contains(SAID), "the child's line is not on stderr");
+    let logged = run_records(&root, "federate").iter().flat_map(|r| r["commands"].as_array().cloned().unwrap_or_default()).filter_map(|c| c["log"].as_str().and_then(|l| std::fs::read_to_string(l).ok())).any(|l| l.contains(SAID));
+    assert!(logged, "the child's line is not in its log");
 }

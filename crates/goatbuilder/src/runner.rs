@@ -446,7 +446,7 @@ impl Cmd {
         match child {
             Ok(mut c) => {
                 if let Some(o) = c.stdout.take() {
-                    copy_in_background(o, log.clone(), false);
+                    copy_in_background(o, log.clone(), stdout_to_stderr());
                 }
                 if let Some(e) = c.stderr.take() {
                     copy_in_background(e, log, true);
@@ -602,7 +602,7 @@ impl Cmd {
         let mut child = self.inner.spawn()?;
         let mut threads = Vec::new();
         if let Some(o) = child.stdout.take() {
-            threads.push(copy_in_background(o, log.clone(), false));
+            threads.push(copy_in_background(o, log.clone(), stdout_to_stderr()));
         }
         if let Some(e) = child.stderr.take() {
             threads.push(copy_in_background(e, log, true));
@@ -671,6 +671,13 @@ fn interactive_in(list: &str, line: &str) -> Option<String> {
 }
 
 /// Copy a child's stream to our stdout (or stderr) and to the log, as it arrives.
+/// Where a child's stdout goes as it streams. Under `-o json` or `-o yaml`
+/// stdout is the report a script parses, so a child's output goes to stderr
+/// (and to its log, as always); at a terminal or `-o table` it stays on stdout.
+fn stdout_to_stderr() -> bool {
+    crate::output::machine_output()
+}
+
 fn copy_in_background<R: Read + Send + 'static>(
     mut from: R,
     log: Option<Arc<Mutex<std::fs::File>>>,
