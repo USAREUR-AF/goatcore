@@ -122,7 +122,7 @@ Nothing `goatbuilder` does or decides is hidden from the person running it: what
 | F3 | A dry run prints the commands the real run executes, on a terminal as well as in JSON, and marks what cannot be known before the run | not built on a terminal | Check (c): the dry run's commands equal the real run's, in order |
 | F4 | Every phase of every verb is described in one catalog (what it does, why, what it changes, how to tell it worked, the command by hand), `explain` answers for a phase as it does for an error, and the documents' phase tables are rendered from that catalog | not built; the tables are kept by hand | Check (d): every phase that can run has a catalog entry, and every document path the tool prints exists |
 | F5 | The output of a failed phase is matched against the error catalog | built only for an error that ends the program | A phase made to fail with a known error carries that error's code and fix |
-| F6 | Clause C11 is in the contract with its conformance test | the conformance test is built (`crates/goatbuilder/tests/legibility.rs`), with 20 entries in `legibility-known-failing.txt`; the clause is not built | The clause in `goatbuilder.md` and the contract chapter, naming the test |
+| F6 | Clause C11 is in the contract with its conformance test | the conformance test is built (`crates/goatbuilder/tests/legibility.rs`), with 16 entries in `legibility-known-failing.txt`; the clause is not built | The clause in `goatbuilder.md` and the contract chapter, naming the test |
 
 ### G. A first goatnet can grow
 
