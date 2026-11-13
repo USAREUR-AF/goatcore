@@ -6,6 +6,12 @@ Each release is the tag `goatbuilder/v<semver>` on `main`, built and signed by
 
 ## Unreleased
 
+## 0.6.1 — 2026-11-13
+
+A patch release for one fix: a `goatbuilder federate` run killed in phase 11
+now resumes and brings the WireGuard link up, which 0.6.0 listed as a known
+issue. The roles below changed in the same tree.
+
 ### For someone deploying
 
 #### Fixed: a federate run killed in phase 11 resumes and brings the link up
@@ -15,6 +21,33 @@ restarted the link, left the interface with no peer. Resuming with `--from 11`
 changed no file, so the link was never restarted and phase 11 refused, then
 phase 12. The `goat-peering-wg` role now reads the interface and restarts the
 link whenever the interface does not hold the agreed peer and address (#597).
+
+#### Images and roles built from this repository
+
+- `ory-deploy.yml` reads the Postgres superuser password from the site's
+  `<SITE>_PG_PASS` in the deploy environment when no `-e` gives it, and checks
+  it is set before anything reaches the host. The sign-in provider's secret is
+  checked before its file is written, and the migrations and the start carry
+  `--no-deps`, so an Ory deploy never recreates `postgres-a` (#593).
+- The audit-subscriber role's lifecycle steps run `mc` with a writable `HOME`,
+  so they no longer stop at the first step on a host with a new MinIO
+  container (#595).
+
+### For someone contributing
+
+- The federation test environment's two-sovereign job runs as a build job, a
+  job per scenario and the required check over them, under its unchanged
+  name (#602). A script gives each stage a key from its whole input
+  directories (#603); reusing a stage's result by that key is not built.
+- CONTRIBUTING: a fix shows its failure on main before its pull request
+  opens (#588).
+- Designs: one path for faults on peers we do not own, ADR 1232 (#594);
+  `join-node` builds the whole declared site, designed (#604); island mode's
+  pre-minted certificate batch (#605).
+
+### To be removed
+
+Nothing new. `goat federate <verb>` remains announced for removal as in 0.6.0.
 
 ## 0.6.0 — 2026-11-13
 
