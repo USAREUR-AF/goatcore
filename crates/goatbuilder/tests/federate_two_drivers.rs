@@ -219,5 +219,47 @@ fn side_edge_is_offered_and_refused_until_built() {
     let (out, _) = w.run(&["hello-ally", "--side", "edge", "--from", "1", "--to", "1"]);
     assert!(!out.status.success(), "{}", says(&out));
     assert!(says(&out).contains("not built"), "{}", says(&out));
+    assert!(says(&out).contains("GB-267"), "{}", says(&out));
+    assert!(!says(&out).contains("GB-189"), "{}", says(&out));
     assert!(!w.log().contains("preflight"), "{}", w.log());
+}
+
+/// Phase 2's object is the contract's too: the interface and its key, no
+/// file carried, its result and its `then` at phase 2.
+#[test]
+fn phase_2_stops_with_the_contracts_hand_off_object() {
+    let w = world();
+    let commit = two_drivers(&w);
+    let (out, v) = w.run(&["hello-ally", "--from", "2", "--to", "2"]);
+    assert!(out.status.success(), "{}", says(&out));
+    let h = &v["handoff"];
+    assert_eq!(h["phase"], 2, "{}", says(&out));
+    assert_eq!(h["code"], "GB-265");
+    assert_eq!(
+        h["command"],
+        strings(&["goatbuilder", "federate", "hello-ally", "--side", "edge", "--from", "2", "--to", "2", "--expect-commit", &commit])
+    );
+    assert_eq!(h["carry"], serde_json::json!([]));
+    assert_eq!(h["result"], "handoff/2/edge.json");
+    assert_eq!(h["then"], strings(&["goatbuilder", "federate", "hello-ally", "--from", "2"]));
+    assert!(!w.log().contains("play peering-prepare.yml"), "phase 2 acted: {}", w.log());
+}
+
+/// From phase 3 on, the generic object is not the contract's (phase 3's
+/// result is the edge half, phases 11 to 13 carry files, phase 14 binds by
+/// id), so a two-driver run there is refused before acting, and no object is
+/// printed.
+#[test]
+fn a_two_driver_run_after_phase_2_is_refused_with_no_object() {
+    for (from, acted) in [("3", "goat init"), ("11", "play peering-wg.yml"), ("12", "play peering-zenoh-edge.yml"), ("14", "acceptance")] {
+        let w = world();
+        two_drivers(&w);
+        let (out, v) = w.run(&["hello-ally", "--from", from, "--to", from]);
+        let all = says(&out);
+        assert!(!out.status.success(), "--from {from}: {all}");
+        assert!(v["handoff"].is_null(), "--from {from} printed an object: {all}");
+        assert!(all.contains("GB-267") && all.contains("not built"), "--from {from}: {all}");
+        assert!(!w.log().contains(acted), "--from {from} acted: {}", w.log());
+        assert_eq!(w.state()["phases"][from]["outcome"], "failed", "--from {from}");
+    }
 }
