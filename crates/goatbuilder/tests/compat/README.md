@@ -28,9 +28,9 @@ Each entry's fields:
 - `code`: the catalog code that release printed;
 - `named`: the code the release's documents give the refusal (GB-025, "the
   config does not validate"), added by hand. A build may print the code its
-  release printed or a named one. A list names a more exact code a later
-  catalog gives the case: the not-YAML fixture also names GB-245, "the config
-  file is not YAML", which goatbuilder raises at its source with exit 2.
+  release printed or a named one (one code, or a list). The not-YAML fixture
+  names GB-245, "the config file is not YAML", which goatbuilder raises at its
+  source with exit 2; GB-025 is a different fault and is not accepted for it.
 
 `goatbuilder/v0.5.0` and `goatbuilder/v0.5.2` were tagged and never published,
 so they have no binary and no set; the manifest names them with that reason.

@@ -34,9 +34,7 @@ configs:
   file: files/98bd30371bf0ace0-not-yaml.yaml
   expect: error
   code: null
-  named:
-  - GB-025
-  - GB-245
+  named: GB-245
 - release: goatbuilder/v0.4.1
   source: crates/goatbuilder/tests/fixtures/configs/rung-undeclared-environment.yaml
   file: files/c942c1207804efa5-rung-undeclared-environment.yaml
@@ -128,9 +126,7 @@ configs:
   file: files/98bd30371bf0ace0-not-yaml.yaml
   expect: error
   code: null
-  named:
-  - GB-025
-  - GB-245
+  named: GB-245
 - release: goatbuilder/v0.4.2
   source: crates/goatbuilder/tests/fixtures/configs/rung-undeclared-environment.yaml
   file: files/c942c1207804efa5-rung-undeclared-environment.yaml
@@ -222,9 +218,7 @@ configs:
   file: files/98bd30371bf0ace0-not-yaml.yaml
   expect: error
   code: null
-  named:
-  - GB-025
-  - GB-245
+  named: GB-245
 - release: goatbuilder/v0.4.3
   source: crates/goatbuilder/tests/fixtures/configs/rung-undeclared-environment.yaml
   file: files/c942c1207804efa5-rung-undeclared-environment.yaml
@@ -316,9 +310,7 @@ configs:
   file: files/98bd30371bf0ace0-not-yaml.yaml
   expect: error
   code: null
-  named:
-  - GB-025
-  - GB-245
+  named: GB-245
 - release: goatbuilder/v0.5.1
   source: crates/goatbuilder/tests/fixtures/configs/rung-undeclared-environment.yaml
   file: files/c942c1207804efa5-rung-undeclared-environment.yaml
@@ -410,9 +402,7 @@ configs:
   file: files/98bd30371bf0ace0-not-yaml.yaml
   expect: error
   code: null
-  named:
-  - GB-025
-  - GB-245
+  named: GB-245
 - release: goatbuilder/v0.5.3
   source: crates/goatbuilder/tests/fixtures/configs/rung-undeclared-environment.yaml
   file: files/c942c1207804efa5-rung-undeclared-environment.yaml

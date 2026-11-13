@@ -251,8 +251,9 @@ fn the_kept_files_hold_only_synthetic_values() {
 
 /// The not-YAML fixture: every release so far ended it with an error document
 /// and no code. A build that names the case, GB-245 "the config file is not
-/// YAML" at its source, or GB-025 as a refused row, keeps the promise; one that
-/// accepts the file, or names another code, does not.
+/// YAML" at its source, keeps the promise. One that accepts the file, or names
+/// another code, GB-025 included (that is "the config does not validate", a
+/// different fault), does not.
 #[test]
 fn a_not_yaml_file_may_come_to_name_its_code_but_never_be_accepted() {
     let k = manifest()
@@ -263,7 +264,7 @@ fn a_not_yaml_file_may_come_to_name_its_code_but_never_be_accepted() {
     assert_eq!(k.expect, "error");
     assert!(same_outcome(&k, "error", None));
     assert!(same_outcome(&k, "error", Some("GB-245")));
-    assert!(same_outcome(&k, "refused", Some("GB-025")));
+    assert!(!same_outcome(&k, "refused", Some("GB-025")));
     assert!(!same_outcome(&k, "valid", None));
     assert!(!same_outcome(&k, "error", Some("GB-099")));
 }
