@@ -12,22 +12,37 @@ documented check fail for every reader, and nothing in CI runs it.
 THE IDENTITIES are read from this tree, never written here: for each workflow
 that runs on a pushed tag, the workflow that signs (`cosign sign-blob`), either
 itself or the local reusable workflow its job calls, at each of its tag
-patterns. The repository is GITHUB_REPOSITORY (GitHub's own spelling of the
-name), or else the `origin` remote's path.
+patterns. The repository is --release-repo OWNER/REPO when given, else
+GITHUB_REPOSITORY (GitHub's own spelling of the name), or else the `origin`
+remote's path.
 
-THE RULE. Every quoted --certificate-identity-regexp in docs/, README.md and
-.github/**/*.md must start with `^`, must match at least one of those
+FOR A CONSUMING REPOSITORY (an overlay assembled over goatcore that runs this
+check on its own CI): GITHUB_REPOSITORY there names the consumer, not the
+repository that signs the releases, so pass the release repository's name in
+GitHub's case:
+    python3 ops/ci/check-doc-signer-identity.py --release-repo USAREUR-AF/goatcore
+
+WHICH VALUES ARE HELD. A quoted --certificate-identity-regexp or
+--certificate-identity in docs/, README.md and .github/**/*.md is held to the
+rule when it names the release repository's GitHub path
+(github.com/OWNER/REPO), compared case-insensitively so a wrong-case copy is
+caught, or when, read case-insensitively, it matches one of the identities. Any
+other value names another signer, such as a vendor's image
+(`^https://github.com/chainguard-images/.*`), and is skipped and counted. A
+value holding a placeholder (`<`, `{{`, `$`) is a template and is skipped.
+
+THE RULE. A held regexp must start with `^`, must match at least one of those
 identities (as cosign does: case-sensitive), and must match none of them moved
-to another repository. An exact
---certificate-identity must be one of them, with any version. A value holding a
-placeholder (`<`, `{{`, `$`) is a template and is skipped. Not checked: that
-the dots are escaped (an unescaped `.` matches any character), and that the
-regexp names the signing workflow rather than the whole repository.
+to another repository. A held exact --certificate-identity must be one of them,
+with any version. Not checked: that the dots are escaped (an unescaped `.`
+matches any character), and that the regexp names the signing workflow rather
+than the whole repository.
 
-Usage: check-doc-signer-identity.py [--self-test]
+Usage: check-doc-signer-identity.py [--self-test] [--release-repo OWNER/REPO]
 Exit 0 ok; 1 naming each file:line, the regexp and the identities; 2 when the
 repository's name or the workflows cannot be read.
 """
+import argparse
 import glob
 import os
 import re
@@ -46,7 +61,9 @@ FLAG = re.compile(r"--certificate-identity(-regexp)?[= ]+(?:'([^']*)'|\"([^\"]*)
 PLACEHOLDER = re.compile(r"<|\{\{|\$")
 
 
-def repository(root):
+def repository(root, release_repo=None):
+    if release_repo:
+        return release_repo.strip()
     name = os.environ.get("GITHUB_REPOSITORY", "").strip()
     if name:
         return name
@@ -108,6 +125,24 @@ def documented(root):
     return out
 
 
+def names_repo(value, repo, ids):
+    """True when a documented value is this repository's signer claim (see WHICH VALUES ARE HELD)."""
+    plain = re.sub(r"\\([./-])", r"\1", value)
+    if re.search(r"github\.com/" + re.escape(repo) + r"(?![A-Za-z0-9_-])", plain, re.IGNORECASE):
+        return True
+    try:
+        rx = re.compile(value, re.IGNORECASE)
+    except re.error:
+        return False
+    return any(rx.search(i) for i in ids)
+
+
+def skipped(root, repo):
+    """The documented values that name another signer and are not checked."""
+    ids = identities(root, repo)
+    return [d for d in documented(root) if not names_repo(d[3], repo, ids)]
+
+
 def problems(root, repo):
     ids = identities(root, repo)
     if not ids:
@@ -117,6 +152,8 @@ def problems(root, repo):
     elsewhere += [i.replace(f"/{repo}/", f"/other-{owner}/{name}/", 1) for i in ids]
     out = []
     for path, n, kind, value in documented(root):
+        if not names_repo(value, repo, ids):
+            continue
         if kind == "exact":
             any_version = [re.escape(i).replace(re.escape(SAMPLE_VERSION), r"[0-9][^@/]*") for i in ids]
             if not any(re.fullmatch(p, value) for p in any_version):
@@ -198,12 +235,19 @@ def self_test():
 
 
 def main():
-    if sys.argv[1:] == ["--self-test"]:
+    parser = argparse.ArgumentParser(description="Every documented cosign identity is a release signer's.")
+    parser.add_argument("--self-test", action="store_true", help="run the built-in cases and exit")
+    parser.add_argument("--release-repo", metavar="OWNER/REPO",
+                        help="the repository that signs the releases, in GitHub's case "
+                             "(default: GITHUB_REPOSITORY, else the origin remote)")
+    args = parser.parse_args()
+    if args.self_test:
         return self_test()
     root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-    repo = repository(root)
+    repo = repository(root, args.release_repo)
     if not repo or "/" not in repo:
-        print("check-doc-signer-identity: cannot read the repository's name (set GITHUB_REPOSITORY=<owner>/<repo>)", file=sys.stderr)
+        print("check-doc-signer-identity: cannot read the repository's name "
+              "(pass --release-repo OWNER/REPO or set GITHUB_REPOSITORY=OWNER/REPO)", file=sys.stderr)
         return 2
     found = problems(root, repo)
     if found is None:
@@ -214,7 +258,14 @@ def main():
         for p in found:
             print("  " + p)
         return 1
-    print(f"check-doc-signer-identity: ok, {len(documented(root))} documented identities match {repo}'s release signers")
+    other = len(skipped(root, repo))
+    held = len(documented(root)) - other
+    tail = f", {other} names another signer and is not checked" if other == 1 else \
+        f", {other} name another signer and are not checked" if other else ""
+    print(f"check-doc-signer-identity: ok, {held} documented identities match {repo}'s release signers{tail}")
+    if other and not held:
+        print(f"check-doc-signer-identity: no documented identity names {repo}; if the releases are signed in "
+              "another repository, pass --release-repo OWNER/REPO", file=sys.stderr)
     return 0
 
 
