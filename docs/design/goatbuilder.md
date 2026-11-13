@@ -344,6 +344,8 @@ The fix, **designed**, replaces the one founder rule with two:
 
 kratos-selfservice-ui and mesh-coredns are placed by reading a live joiner's running containers before the change, not by argument. The change to `catalog.yaml` and `endstate.py` comes with a new ADR that amends ADR 1206 item 2; ADR 1206 itself is not edited. Its gate is that the model of a joiner fixture marks present every service a live joiner runs, and that acceptance with `--endstate` reads no row N/A for one of them.
 
+That ADR is [ADR 1233](../adr/1233-a-joiner-runs-the-replication-core.md) (Proposed); the live read it names for kratos-selfservice-ui and mesh-coredns is not done.
+
 ### `federate`: which party we are in phases 7, 8, 9 and 14
 
 Phases 7 (verify), 8 (mint the peering leaves), 9 (apply) and 14 (acceptance) always name our party with `--as`. Given on the command line, `--as` is used as given. Without it, both avenues read our sovereign id by one rule (`our_id` in `crates/goatbuilder/src/federate/mod.rs`, `our_id` in `ops/scripts/peering-standup.sh`):
