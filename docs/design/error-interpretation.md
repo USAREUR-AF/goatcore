@@ -69,6 +69,7 @@ One entry per error. The fields:
 | `read` | a path in this repository to read more; the gate checks it exists. It never names a document that only a deployment's overlay or a sibling repository holds, because the catalog ships in one build for every deployment |
 | `exit` | the exit code the binary returns (goat and goatbuilder codes only) |
 | `matches` | regular expressions over the whole text of an error, for errors that arrive as text; any one matching is a hit |
+| `retired` | `"<release>: <why>"` for a code no binary raises any more. A code a release printed is never deleted and never given another meaning, because logs, run records and pasted output keep it and `explain` must still answer for it with the meaning it had. A retired entry stays in the catalog, and only a retired entry may change its title |
 
 The catalog is the lexical data store the operator asked for: expandable by a YAML block, read by both binaries, no code to change for a new pattern. `ops/ci/check-error-catalog.py` holds it to the contract (§"The gate").
 
@@ -111,6 +112,9 @@ The goat `E_*` namespace, its exit codes and `docs/design/goat-cli-error-codes.m
 - every code a binary cites in Rust exists in the catalog; every `#[error("E_…")]` variant in `errors.rs` exists in the catalog
 - every row of `docs/design/goat-cli-error-codes.md` is in the catalog with the same exit code, and every `E_*` entry has a row there
 - `docs/reference/errors.md` equals what `--write` renders from the catalog
+- a `retired` mark, where there is one, is a non-empty string
+
+`ops/ci/check-error-codes-kept.py` (same workflow; gate row A5) holds the catalog to the last release: it reads `ops/errors/catalog.yaml` at the newest `goatbuilder/v<x.y.z>` tag reachable from HEAD with `git show`, never the network, and fails when a code of that release is absent from the tree's catalog, or its title has changed and its entry carries no `retired` mark. A new code passes, a retired one passes whatever its title, and rewording `what`, `causes` or `fixes` passes: the title is the code's meaning. A pre-release tag (`-rc.N`) is not a release.
 
 The crate's tests prove the three layers on real messages: a passthrough deploy failure (goatbuilder → ansible → ssh) reports all three codes with the ssh entry first; the `op run` malformed-reference stderr resolves to `X-OP-002`; a paraphrase with no pattern resolves lexically to `X-SSH-001`; nonsense is unrecognised with no hit.
 

@@ -21,6 +21,10 @@
 #   matches  regular expressions over the WHOLE text of an error, for errors that
 #            arrive as text (a tool's stderr carried inside a goat error). Any one
 #            matching is a hit. Case-sensitive; keep them literal and specific.
+#   retired  "<release>: <why>" for a code no binary raises any more. A code a release
+#            printed is never deleted or given another meaning: logs keep it, and
+#            explain must still answer for it. A retired entry stays, and only it may
+#            change its title (ops/ci/check-error-codes-kept.py, gate row A5).
 #
 # Adding an entry is a YAML block here and nothing else, unless a binary should
 # emit the code itself (then cite it in the Rust and the gate checks it exists).

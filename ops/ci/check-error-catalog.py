@@ -72,6 +72,8 @@ def check_entries(repo, data, problems):
             problems.append(f"{where}: read points at {e['read']}, which is not in the tree")
         if code.startswith(("E_", "GB-")) and not isinstance(e.get("exit"), int):
             problems.append(f"{where}: a goat/goatbuilder code needs its exit code")
+        if "retired" in e and not (isinstance(e["retired"], str) and e["retired"].strip()):
+            problems.append(f"{where}: retired must say \"<release>: <why>\"")
         for m in e.get("matches") or []:
             try:
                 re.compile(m)

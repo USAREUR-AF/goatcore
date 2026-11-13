@@ -46,6 +46,10 @@ pub struct Entry {
     pub exit: Option<i32>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub matches: Vec<String>,
+    /// `"<release>: <why>"` for a code no binary raises any more. The entry stays,
+    /// so an old log's code still explains (ops/ci/check-error-codes-kept.py).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retired: Option<String>,
 }
 
 impl Entry {
