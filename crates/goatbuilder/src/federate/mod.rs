@@ -899,22 +899,40 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
 /// 0, a verb's own 20 to 24, 2 for a refused command line, a coded refusal's
 /// catalog code (GB-100: 2), 101 for a panic, or 1 for any other fault, which
 /// is printed.
+/// The names the federation library reads from the process environment itself
+/// (goat-federation's derive.rs, during an in-process `init`); every other value
+/// an in-process verb reads, it reads through [`runenv`].
+const READ_FROM_THE_PROCESS_BY_THE_LIBRARY: [&str; 2] = ["DOCKER_HOST", "FED_ROUTER_CONTAINER"];
+
 fn run_verb_in_process(dir: &Path, env: &[(String, String)], words: &[String]) -> i32 {
-    // The verb runs in this process and reads the process environment, so the
-    // run's own values (runenv) and the verb's are put there for its duration
-    // and restored after. set_var and set_current_dir change process-global
-    // state: this is the one place federate does, for a real run's in-process
-    // verb, one at a time. A driver that runs verbs concurrently must pass the
-    // environment and directory to the verb instead.
-    let env: Vec<(String, String)> = runenv::pairs().into_iter().chain(env.iter().cloned()).collect();
-    let saved: Vec<(String, Option<std::ffi::OsString>)> = env.iter().map(|(k, _)| (k.clone(), std::env::var_os(k))).collect();
-    for (k, v) in &env {
+    // The verb runs in this process. goatbuilder's verbs read their values
+    // through runenv, which is this thread's, so the verb's own values go there
+    // for its duration and are put back after. Only the few names the library
+    // reads from the process environment itself are put there, and restored:
+    // set_var changes process-global state, so this stays the one place it
+    // happens, for a real run's in-process verb, one at a time. So does
+    // set_current_dir. A driver that runs verbs concurrently must pass both to
+    // the verb instead.
+    let all: Vec<(String, String)> = runenv::pairs().into_iter().chain(env.iter().cloned()).collect();
+    let to_process: Vec<&(String, String)> = all.iter().filter(|(k, _)| READ_FROM_THE_PROCESS_BY_THE_LIBRARY.contains(&k.as_str())).collect();
+    let saved: Vec<(String, Option<std::ffi::OsString>)> = to_process.iter().map(|(k, _)| (k.clone(), std::env::var_os(k))).collect();
+    for (k, v) in &to_process {
         std::env::set_var(k, v);
+    }
+    let saved_run: Vec<(String, Option<String>)> = env.iter().map(|(k, _)| (k.clone(), runenv::recorded(k))).collect();
+    for (k, v) in env {
+        runenv::set(k, v.clone());
     }
     let here = std::env::current_dir().ok();
     let rc = guarded(|| std::env::set_current_dir(dir).map_err(anyhow::Error::from).and_then(|_| verbs::run_argv(words)));
     if let Some(h) = here {
         let _ = std::env::set_current_dir(h);
+    }
+    for (k, v) in saved_run {
+        match v {
+            Some(v) => runenv::set(&k, v),
+            None => runenv::unset(&k),
+        }
     }
     for (k, v) in saved {
         match v {
@@ -1299,10 +1317,12 @@ mod tests {
         let good = v.join("compose-full/package-xaa.canonical.json").display().to_string();
         let bad = v.join("malformed/no-signature.json").display().to_string();
         assert_eq!(run_verb_in_process(&here, &[], &["lint".into(), good]), 0);
+        // The verb's own value is the run's, for the verb's duration: never the
+        // process environment's, and gone afterwards.
         let key = "GOATBUILDER_TEST_VERB_ENV";
-        std::env::remove_var(key);
         assert_eq!(run_verb_in_process(&here, &[(key.into(), "x".into())], &["lint".into(), bad]), 21);
         assert!(runenv::var_os(key).is_none(), "the verb's environment leaked");
+        assert!(std::env::var_os(key).is_none(), "the verb's environment reached the process");
         assert_eq!(run_verb_in_process(&here, &[], &["lint".into(), "/no/such/package".into()]), 1, "a fault exits 1, as in goat");
         // A relative path is relative to the directory the verb runs in (the
         // repository, in the driver), as it is for a shell phase.

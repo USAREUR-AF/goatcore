@@ -26,10 +26,15 @@ pub fn set(name: &str, value: impl Into<String>) {
     RUN.with(|r| r.borrow_mut().insert(name.to_string(), value.into()));
 }
 
-/// Forget `name` for this run (a test that recorded one).
-#[cfg(test)]
+/// Forget `name` for this run.
 pub fn unset(name: &str) {
     RUN.with(|r| r.borrow_mut().remove(name));
+}
+
+/// The value this run recorded for `name`, without falling back to the process
+/// environment (so a caller can put it back as it was).
+pub fn recorded(name: &str) -> Option<String> {
+    RUN.with(|r| r.borrow().get(name).cloned())
 }
 
 /// `name` as this run sees it: the value it recorded, else the process
