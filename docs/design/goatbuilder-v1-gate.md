@@ -44,7 +44,7 @@ The internals of a converger. The `goat` client, which has its own releases.
 
 Status words: **built** (the code is on `main`), **designed** (decided, not
 implemented), **not built**, **in review** (a pull request is open),
-**not measured** (exists and has not been exercised by the named test).
+**measured** (a named run with a record passed), **not measured** (exists and has not been exercised by the named test).
 
 ### A. The promise is written and tested
 
