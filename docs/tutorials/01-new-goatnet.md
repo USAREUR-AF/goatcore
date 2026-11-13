@@ -33,7 +33,7 @@ goatnet that serves it, and verify before you run it:
 
 ```text
 cosign verify-blob --bundle SHA256SUMS.cosign-bundle \
-  --certificate-identity-regexp '^https://github.com/usareur-af/goatcore/' \
+  --certificate-identity-regexp '^https://github\.com/USAREUR-AF/goatcore/\.github/workflows/_release-binary\.yml@refs/tags/goatbuilder/v' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com SHA256SUMS
 shasum -a 256 -c --ignore-missing SHA256SUMS
 install -m 0755 goatbuilder-<os>-<arch> ~/.local/bin/goatbuilder

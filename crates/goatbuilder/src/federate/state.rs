@@ -35,8 +35,7 @@ pub const FILE: &str = "state.json";
 /// Runs, confirmations, owned resources and each phase's last record are kept.
 const ATTEMPTS_MAX: usize = 1000;
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "kebab-case")]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Outcome {
     /// The phase finished and its outputs are in place.
     Passed,
@@ -45,17 +44,48 @@ pub enum Outcome {
     /// The phase is waiting for a person: an operator step, or a confirmation
     /// not given yet.
     Stopped,
+    /// A word a later goatbuilder wrote, kept as written. It is never a
+    /// pass, so a resumed run runs the phase again, and a rewrite keeps it.
+    Later(String),
 }
 
 impl Outcome {
-    pub fn word(self) -> &'static str {
+    pub fn word(&self) -> &str {
         match self {
             Outcome::Passed => "passed",
             Outcome::Failed => "failed",
             Outcome::Stopped => "stopped",
+            Outcome::Later(w) => w,
         }
     }
+
+    /// Whether this build knows the word.
+    pub fn known(&self) -> bool {
+        !matches!(self, Outcome::Later(_))
+    }
 }
+
+impl Serialize for Outcome {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(self.word())
+    }
+}
+
+impl<'de> Deserialize<'de> for Outcome {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let w = String::deserialize(d)?;
+        Ok(match w.as_str() {
+            "passed" => Outcome::Passed,
+            "failed" => Outcome::Failed,
+            "stopped" => Outcome::Stopped,
+            _ => Outcome::Later(w),
+        })
+    }
+}
+
+/// Fields a later goatbuilder wrote that this build does not know: kept, and
+/// written back unchanged.
+pub type Extra = BTreeMap<String, serde_json::Value>;
 
 /// One invocation that executed phases.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -79,6 +109,8 @@ pub struct RunEntry {
     /// run was killed: an empty `ended` on an older run means exactly that).
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub outcome: String,
+    #[serde(flatten)]
+    pub extra: Extra,
 }
 
 /// One phase attempt, or one event inside a run.
@@ -92,6 +124,8 @@ pub struct Attempt {
     pub event: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub detail: String,
+    #[serde(flatten)]
+    pub extra: Extra,
 }
 
 /// The last outcome of one phase.
@@ -111,6 +145,8 @@ pub struct PhaseRecord {
     /// One line on why it stopped or failed, with its catalog code.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub detail: String,
+    #[serde(flatten)]
+    pub extra: Extra,
 }
 
 /// A value a person confirmed, how, and what it is bound to.
@@ -130,6 +166,8 @@ pub struct Confirmation {
     /// The values confirmed (keys, fingerprints, digests).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub values: BTreeMap<String, String>,
+    #[serde(flatten)]
+    pub extra: Extra,
 }
 
 /// A resource on a shared host that this peering owns, so a second peering
@@ -146,6 +184,8 @@ pub struct Owned {
     pub status: String,
     pub run: String,
     pub at: String,
+    #[serde(flatten)]
+    pub extra: Extra,
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -176,6 +216,27 @@ pub struct State {
     pub owned: Vec<Owned>,
     #[serde(default)]
     pub attempts: Vec<Attempt>,
+    /// The goatbuilder that wrote this file last (`goatbuilder <version>`),
+    /// so a build that cannot read it can say which one did.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub written_by: String,
+    #[serde(flatten)]
+    pub extra: Extra,
+}
+
+/// `written_by` after a save: the latest goatbuilder that has written the
+/// journal. A later one that wrote it before stays named, so the journal still
+/// says which build's words it may hold; otherwise this build.
+fn latest_writer(recorded: &str, ours: &str) -> String {
+    let version = |w: &str| -> Option<Vec<u64>> {
+        let v = w.strip_prefix("goatbuilder ")?.split(['-', '+']).next()?;
+        v.split('.').map(|n| n.parse().ok()).collect()
+    };
+    let mine = format!("goatbuilder {ours}");
+    match (version(recorded), version(&mine)) {
+        (Some(r), Some(m)) if r > m => recorded.to_string(),
+        _ => mine,
+    }
 }
 
 pub fn now() -> String {
@@ -193,6 +254,8 @@ impl State {
             confirmations: Vec::new(),
             owned: Vec::new(),
             attempts: Vec::new(),
+            written_by: String::new(),
+            extra: Extra::new(),
         }
     }
 
@@ -214,23 +277,32 @@ impl State {
                 .into())
             }
         };
-        let s: State = serde_json::from_str(&text).map_err(|e| {
+        let parse = |e: serde_json::Error| {
             goat_errors::coded(
                 "GB-182",
                 format!("{}: the run journal does not parse ({e})", p.display()),
             )
-        })?;
-        if s.schema != SCHEMA {
+        };
+        // The schema first: a later schema is refused by name, whatever its
+        // shape. Within v1, a value or field this build does not know is kept.
+        let v: serde_json::Value = serde_json::from_str(&text).map_err(parse)?;
+        let schema = v["schema"].as_str().unwrap_or_default();
+        if schema != SCHEMA {
+            let by = v["written_by"]
+                .as_str()
+                .filter(|w| !w.is_empty())
+                .map(|w| format!(", written by {w}"))
+                .unwrap_or_default();
             return Err(goat_errors::coded(
                 "GB-182",
                 format!(
-                    "{}: the run journal is {}, and this goatbuilder reads {SCHEMA}",
-                    p.display(),
-                    s.schema
+                    "{}: the run journal is {schema}{by}, and this goatbuilder reads {SCHEMA}: run that goatbuilder, or a later one, on this peering",
+                    p.display()
                 ),
             )
             .into());
         }
+        let s: State = serde_json::from_value(v).map_err(parse)?;
         Ok(Some(s))
     }
 
@@ -256,6 +328,7 @@ impl State {
     /// Write the journal whole: to a temporary file, then rename.
     pub fn save(&mut self, work: &Path) -> Result<()> {
         self.updated = now();
+        self.written_by = latest_writer(&self.written_by, env!("CARGO_PKG_VERSION"));
         if self.attempts.len() > ATTEMPTS_MAX {
             let drop = self.attempts.len() - ATTEMPTS_MAX;
             self.attempts.drain(..drop);
@@ -317,6 +390,7 @@ impl State {
             resume,
             plan: plan.into(),
             outcome: String::new(),
+            extra: Extra::new(),
         });
         id
     }
@@ -335,6 +409,7 @@ impl State {
             phase,
             event: event.into(),
             detail: detail.into(),
+            extra: Extra::new(),
         });
     }
 
@@ -360,6 +435,7 @@ impl State {
                 run: run.into(),
                 attempts,
                 detail,
+                extra: Extra::new(),
             },
         );
     }
@@ -385,6 +461,7 @@ impl State {
             run: run.into(),
             bound_to: bound_to.into(),
             values,
+            extra: Extra::new(),
         });
         self.log(
             run,
@@ -418,6 +495,7 @@ impl State {
                 status: status.into(),
                 run: run.into(),
                 at: now(),
+                extra: Extra::new(),
             }),
         }
         self.log(run, 0, status, format!("{kind} {value} on {scope}"));
@@ -574,6 +652,79 @@ mod tests {
         std::fs::write(d.path().join(FILE), newer).unwrap();
         let e = State::load(d.path(), "xab").unwrap_err();
         assert!(e.to_string().contains("this goatbuilder reads"), "{e}");
+    }
+
+    /// A v1 journal written by a later goatbuilder: an outcome word and fields
+    /// this build does not know.
+    const LATER: &str = r#"{
+  "schema": "goatbuilder.federate.state/v1",
+  "peering": "xab",
+  "updated": "2026-11-12T00:00:00Z",
+  "written_by": "goatbuilder 0.7.0",
+  "runs": [{"id": "run-1", "stage": "federate", "started": "s", "ended": "e", "from": 1, "to": 14, "resume": false, "outcome": "deferred", "budget": 3}],
+  "phases": {
+    "13": {"outcome": "passed", "inputs": "sha256:i13", "outputs": "", "at": "a", "run": "run-1", "attempts": 1},
+    "14": {"outcome": "deferred", "inputs": "sha256:i14", "outputs": "", "at": "a", "run": "run-1", "attempts": 1, "detail": "GB-299: later", "session": "ses-1"}
+  },
+  "confirmations": [{"kind": "partner-package", "phase": 5, "how": "flag", "at": "a", "run": "run-1", "bound_to": "sha256:p", "witness": "x"}],
+  "owned": [{"kind": "udp-port", "scope": "xab_edge", "value": "51821", "status": "parked", "run": "run-1", "at": "a", "host_note": "n"}],
+  "attempts": [{"at": "a", "run": "run-1", "phase": 14, "event": "deferred", "why": "w"}]
+}"#;
+
+    #[test]
+    fn a_journal_from_a_later_goatbuilder_is_read_with_its_unknown_values_as_written() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::write(d.path().join(FILE), LATER).unwrap();
+        let s = State::load(d.path(), "xab").unwrap();
+        assert_eq!(s.phases[&13].outcome, Outcome::Passed);
+        let o = &s.phases[&14].outcome;
+        assert_eq!(o.word(), "deferred");
+        assert!(!o.known());
+        // An unknown outcome is never a pass.
+        assert_ne!(*o, Outcome::Passed);
+    }
+
+    #[test]
+    fn a_rewrite_keeps_unknown_values_and_fields_untouched() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::write(d.path().join(FILE), LATER).unwrap();
+        let mut s = State::load(d.path(), "xab").unwrap();
+        let run = s.open_run("federate", 13, 13, false, "");
+        s.record(&run, 13, Outcome::Passed, "sha256:i13".into(), "".into(), "");
+        s.close_run(&run, "passed");
+        s.save(d.path()).unwrap();
+        let before: serde_json::Value = serde_json::from_str(LATER).unwrap();
+        let after: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(d.path().join(FILE)).unwrap()).unwrap();
+        // Phase 14, which this run did not touch, is kept whole.
+        assert_eq!(after["phases"]["14"], before["phases"]["14"]);
+        // Unknown fields everywhere are kept.
+        assert_eq!(after["runs"][0], before["runs"][0]);
+        assert_eq!(after["confirmations"][0], before["confirmations"][0]);
+        assert_eq!(after["owned"][0], before["owned"][0]);
+        assert_eq!(after["attempts"][0], before["attempts"][0]);
+        // written_by keeps the latest goatbuilder that wrote the file.
+        assert_eq!(after["written_by"], "goatbuilder 0.7.0");
+        assert_eq!(latest_writer("", "0.6.0"), "goatbuilder 0.6.0");
+        assert_eq!(latest_writer("goatbuilder 0.5.1", "0.6.0"), "goatbuilder 0.6.0");
+        assert_eq!(latest_writer("goatbuilder 9.9.0", "0.6.0"), "goatbuilder 9.9.0");
+        assert_eq!(latest_writer("goatbuilder 0.10.0-rc.1", "0.6.0"), "goatbuilder 0.10.0-rc.1");
+    }
+
+    #[test]
+    fn only_a_later_schema_is_refused_and_it_names_the_writer() {
+        let d = tempfile::tempdir().unwrap();
+        let v2 = r#"{"schema":"goatbuilder.federate.state/v2","peering":"xab","updated":"","written_by":"goatbuilder 0.9.0"}"#;
+        std::fs::write(d.path().join(FILE), v2).unwrap();
+        let e = State::load(d.path(), "xab").unwrap_err();
+        let t = e.to_string();
+        assert!(t.contains("goatbuilder 0.9.0") && t.contains("v2"), "{t}");
+        assert!(
+            e.downcast_ref::<goat_errors::Coded>()
+                .is_some_and(|c| c.code == "GB-182"),
+            "{e}"
+        );
+        assert_eq!(std::fs::read_to_string(d.path().join(FILE)).unwrap(), v2);
     }
 
     #[test]

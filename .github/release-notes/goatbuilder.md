@@ -27,7 +27,7 @@
 base=https://github.com/USAREUR-AF/goatcore/releases/download/<tag>
 curl -fL --remote-name-all "$base/goatbuilder-<os>-<arch>" "$base/SHA256SUMS" "$base/SHA256SUMS.cosign-bundle"
 cosign verify-blob --bundle SHA256SUMS.cosign-bundle \
-  --certificate-identity-regexp '^https://github.com/USAREUR-AF/goatcore/' \
+  --certificate-identity-regexp '^https://github\.com/USAREUR-AF/goatcore/\.github/workflows/_release-binary\.yml@refs/tags/goatbuilder/v' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com SHA256SUMS
 sha256sum -c --ignore-missing SHA256SUMS        # on macOS: shasum -a 256 -c --ignore-missing SHA256SUMS
 install -m 0755 goatbuilder-<os>-<arch> ~/.local/bin/goatbuilder

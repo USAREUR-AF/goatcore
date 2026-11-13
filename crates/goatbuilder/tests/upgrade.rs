@@ -16,6 +16,8 @@
 //! variable unset the test says so and passes without running, unless
 //! `GOATBUILDER_UPGRADE_REQUIRED=1`, which makes a missing binary a failure.
 
+#[path = "common/test_home.rs"]
+mod test_home;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
@@ -36,7 +38,7 @@ fn repo() -> PathBuf {
 }
 
 fn run(bin: &Path, args: &[&str]) -> Output {
-    Command::new(bin)
+    test_home::isolate(&mut Command::new(bin))
         .args(args)
         .env("GOAT_MESH_PROBE", "0")
         .env("GOAT_NO_FUN", "1")

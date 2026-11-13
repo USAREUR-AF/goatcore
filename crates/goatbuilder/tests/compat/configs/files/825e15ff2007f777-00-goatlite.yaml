@@ -1,0 +1,11 @@
+schema: goatbuilder/v1
+preset: lite
+lite:
+  name: pasture            # the goatnet's name; its zone is pasture.lan
+  host: 192.0.2.50         # the box's LAN address or hostname
+  ssh_user: ubuntu         # the user your SSH key logs in as
+  admin: <your-email>      # the first and only administrator: you
+  zone: pasture.lan        # optional; defaults to <name>.lan
+  disk_encryption: false   # optional; defaults to true. false for a VM
+  data_disk: /dev/nvme0n1  # optional; the disk to encrypt, when disk_encryption is true
+  ssh_pubkey: ~/.ssh/id_ed25519.pub   # optional; defaults to the first ~/.ssh/id_*.pub found

@@ -22,6 +22,10 @@ on:
       - 'ops/goat-id-console/**'
       - 'ops/goat-zenoh-portal/**'
       - 'ops/onboard-runner/**'
+      - 'README.md'
+      - '.github/release-notes/**'
+      - '.github/workflows/_release-binary.yml'
+      - '.github/workflows/*-release.yml'
 
 permissions:
   contents: read
@@ -70,6 +74,14 @@ jobs:
         run: python3 ops/ci/check-doc-links.py
       - name: every `path:line` citation is within its file
         run: ./ops/ci/check-doc-code-citations.sh
+
+      # The by-hand signature check in the documents: its cosign identity is the
+      # one the release workflows sign with (read from .github/workflows).
+      - name: every documented cosign identity is a release signer's
+        run: |
+          pip install --quiet pyyaml
+          python3 ops/ci/check-doc-signer-identity.py --self-test
+          python3 ops/ci/check-doc-signer-identity.py
 
       # Not here: the skill-audience guard (ADR 1174) runs where the
       # .claude/skills tree lives, and the roster-handle guard reads a roster

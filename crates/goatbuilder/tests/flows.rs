@@ -21,6 +21,8 @@
 //! Flows that need hosts, GitHub or a registry are not here: the deployment
 //! e2e harness (ops/e2e) runs those against container hosts.
 
+#[path = "common/test_home.rs"]
+mod test_home;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
@@ -33,7 +35,7 @@ fn repo() -> PathBuf {
 }
 
 fn run(args: &[&str]) -> Output {
-    Command::new(bin())
+    test_home::isolate(&mut Command::new(bin()))
         .args(args)
         .env("GOAT_MESH_PROBE", "0")
         .output()
@@ -503,7 +505,7 @@ fn deploy_dry_run_names_secret_variables_never_their_values() {
     let rs = r.to_str().unwrap();
     let before = repo_porcelain();
     let secret = "s3cr3t-value-that-must-not-print";
-    let o = Command::new(bin())
+    let o = test_home::isolate(&mut Command::new(bin()))
         .args(["deploy", "-C", rs, "--env", "zagros_dev", "--component", "netvis", "--dry-run"])
         .env("GOAT_MESH_PROBE", "0")
         .env("ZAGROS_DEV_NETVIS_OAUTH2_PROXY_CLIENT_SECRET", secret)
@@ -712,7 +714,7 @@ fn preflight_mock_grades_the_four_rollout_cases() {
     let (_tmp, fx) = fixture_copy("preflight");
     let r = repo();
     let preflight = |component: &str| -> Output {
-        Command::new(bin())
+        test_home::isolate(&mut Command::new(bin()))
             .args(["-o", "json", "preflight", "-C", r.to_str().unwrap(), "--mock", fx.to_str().unwrap(), component, "--env", "zagros-dev"])
             .env("GOAT_MESH_PROBE", "0")
             .env("GOAT_PREFLIGHT_PULL", "0")
@@ -900,7 +902,7 @@ fn fastlane_dry(r: &FastlaneRepo, reference: &str) -> serde_json::Value {
 /// The same dry run with a PATH of the caller's choosing, so a test can take a
 /// tool away (a PATH of the fixture's bin alone has no `gh` once it is removed).
 fn fastlane_dry_on(r: &FastlaneRepo, reference: &str, path: &str) -> serde_json::Value {
-    let o = Command::new(env!("CARGO_BIN_EXE_goatbuilder"))
+    let o = test_home::isolate(&mut Command::new(env!("CARGO_BIN_EXE_goatbuilder")))
         .args(["-o", "json", "-C", r.dir.to_str().unwrap(), "fastlane", "app", "--ref", reference, "--reason", "test", "--ack", "Flow Test", "--dry-run"])
         .env("PATH", path)
         .env("GOAT_MESH_PROBE", "0")
@@ -995,7 +997,7 @@ fn fastlane_refuses_a_component_in_an_open_set() {
 #[test]
 fn completion_survives_a_closed_pipe() {
     use std::process::Stdio;
-    let mut child = Command::new(bin())
+    let mut child = test_home::isolate(&mut Command::new(bin()))
         .args(["completion", "zsh"])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

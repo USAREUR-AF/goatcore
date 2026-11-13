@@ -768,6 +768,26 @@ mod tests {
     }
 
     #[test]
+    fn an_outcome_a_later_goatbuilder_wrote_is_never_skipped() {
+        // Phase 6 holds a word this build does not know, with its inputs and
+        // outputs unchanged: it is not a pass, so the run starts there.
+        let d = tempfile::tempdir().unwrap();
+        let w = d.path().display().to_string();
+        write_outputs(d.path());
+        for n in [3, 5, 6, 8, 9, 10] {
+            pass(&w, n);
+        }
+        let paths = Paths::new(&w);
+        let mut st = State::load(&paths.work, "xab").unwrap();
+        let p6 = phases().into_iter().find(|p| p.n == 6).unwrap();
+        st.record("r0", 6, Outcome::Later("deferred".into()), Run::inputs(&paths, &p6), Run::outputs(&paths, 6), "");
+        st.save(&paths.work).unwrap();
+        let r = begin(&w, 1, true);
+        let skipped: Vec<u32> = phases().iter().filter(|p| r.skips(p)).map(|p| p.n).collect();
+        assert_eq!(skipped, [3, 5]);
+    }
+
+    #[test]
     fn a_failed_phase_is_where_a_resumed_run_starts() {
         let d = tempfile::tempdir().unwrap();
         let w = d.path().display().to_string();

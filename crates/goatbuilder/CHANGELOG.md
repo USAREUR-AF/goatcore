@@ -23,6 +23,15 @@ Sigstore trusted root is built in. After a Sigstore key rotation, set
 `GOATBUILDER_UPDATE_TRUSTED_ROOT` to a `trusted_root.json` that holds the new
 key.
 
+### Changed: a run journal a later goatbuilder wrote is read, not refused
+
+`<work>/state.json` written by a later goatbuilder, with an outcome word or a
+field this one does not know, is now read. The word is shown as written
+(`14 deferred (written by a later goatbuilder)`), never counts as passed, so a
+resumed run runs that phase again, and a rewrite keeps what it does not know.
+Only a later schema is refused (GB-182), naming the goatbuilder that wrote it.
+A plan a later goatbuilder made is refused by name (GB-201): make a new plan.
+
 ## 0.5.3 — 2026-11-12
 
 0.5.2 was tagged but never published: its release run stopped at startup,

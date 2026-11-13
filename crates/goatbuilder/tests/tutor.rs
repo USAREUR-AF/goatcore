@@ -8,6 +8,8 @@
 //! lesson's commands run for real, on the tutor's own fixture copies or
 //! read-only on this checkout.
 
+#[path = "common/test_home.rs"]
+mod test_home;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -29,7 +31,7 @@ fn repo() -> PathBuf {
 }
 
 fn tutor(ws: &Path) -> serde_json::Value {
-    let out = Command::new(bin())
+    let out = test_home::isolate(&mut Command::new(bin()))
         .args(["-C", repo().to_str().unwrap(), "-o", "json", "tutor", "--workspace", ws.to_str().unwrap()])
         .env("GOATBUILDER_TUTOR", ws)
         .output()
@@ -185,7 +187,7 @@ fn a_finished_lesson_opens_to_read_and_changes_nothing() {
     let page = |args: &[&str]| {
         let mut a = vec!["-C", repo().to_str().unwrap().to_owned().leak(), "tutor", "--workspace", ws.to_str().unwrap().to_owned().leak()];
         a.extend_from_slice(args);
-        let o = Command::new(bin()).args(&a).env("GOATBUILDER_TUTOR", &ws).env("GOAT_LANG", "en").output().unwrap();
+        let o = test_home::isolate(&mut Command::new(bin())).args(&a).env("GOATBUILDER_TUTOR", &ws).env("GOAT_LANG", "en").output().unwrap();
         String::from_utf8_lossy(&o.stdout).to_string()
     };
     for args in [&["--lesson", "1"][..], &["1"][..]] {

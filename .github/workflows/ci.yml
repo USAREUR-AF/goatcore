@@ -368,7 +368,10 @@ jobs:
         # The expected-failure fixture is kept outside tests/.
         run: |
           bash ops/ci/check-bats-bash32.sh
+          # The suite must leave the real state directory (~/.goat/state) alone.
+          touch "$RUNNER_TEMP/leave-home.marker"
           bats tests/
+          bash ops/ci/check-goatbuilder-tests-leave-home.sh --after "$RUNNER_TEMP/leave-home.marker"
 
   go-vuln:
     # govulncheck on every tracked Go module, one matrix row each; signal-server

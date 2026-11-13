@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | **Designed.** Step 1, the conformance test, is **built** (2026-11-12). Step 2a, the runner, is **built** with unit tests only (2026-11-12): `crates/goatbuilder/tests/legibility.rs`, with the checks that fail today listed in `crates/goatbuilder/tests/legibility-known-failing.txt`. Every feature of steps 2 to 9 is **designed**; each feature's pull request changes its row below. |
+| Status | **Designed.** Step 1, the conformance test, is **built** (2026-11-12). Step 2a, the runner, and step 4, the run record, are **built** with unit tests only (2026-11-12): `crates/goatbuilder/tests/legibility.rs`, with the checks that fail today listed in `crates/goatbuilder/tests/legibility-known-failing.txt`. Every feature of steps 2 to 9 is **designed**; each feature's pull request changes its row below. |
 | Design | [`goatbuilder.md`](goatbuilder.md) (the contract, C1 to C10) · [`goatbuilder-conformance.md`](goatbuilder-conformance.md) (the contract as tests) · [`goatbuilder-output.md`](goatbuilder-output.md) (the output standard) |
 | Audience | whoever builds or reviews goatbuilder's runner, dry runs, run records, phase catalog and failure messages |
 
@@ -159,15 +159,20 @@ Every check fails for every verb family: 16 lines.
 
 ## Run record
 
-The interface step 4 builds, and that checks (a) and (b) read. One record for each run of each verb, at `<state>/runs/<id>/run.json`, where `<state>` is the state directory the verb already uses (`deploy.state_dir`, else `~/.goat/state`; federate's working directory for federate).
+**Built** (step 4), unit tests only: `crates/goatbuilder/src/runs.rs` writes it from what the runner kept, and checks (a) and (b) read it. One record for each run of a verb that drives hosts (the verbs `long_running` names in main.rs), at `<state>/runs/<id>/run.json`, where `<state>` is the state directory the project declares (`deploy.state_dir`, else `~/.goat/state`), for every verb. The id is the UTC start time, the verb and the process id. The record is written when the verb returns, by an atomic rename, mode 0600, and kept until the operator removes it. Every run that reached its first phase, or started a process, writes one, a refusal or failure inside a phase included: that is why it stopped. A refusal of the arguments before any phase writes none, because its reason is already printed, and a dry run begins no run and writes none. Until step 2b moves the call sites to the runner and the phase loops call `runner::phase`, no verb's run reaches either, so no verb writes a record yet.
+
+The tests never write into the real state directory. Every test that runs a verb points `HOME` at a directory of its own: `crates/goatbuilder/tests/common/test_home.rs` (under cargo's per-target scratch directory, keeping the real user's Python packages and git configuration), or a temporary root (the federate stand-in, the C11 test). `ops/ci/check-goatbuilder-tests-leave-home.sh` fails if anything under `~/.goat/state` is newer than a marker made before the tests ran; `goatbuilder-pr.yml` runs it after its test steps.
+
+`goatbuilder runs [--verb V] [--last N]` lists the records, newest first. `goatbuilder show <run>` prints one, phase by phase and command by command, each with its exit code and log, then its inputs; `-o json` prints the record itself. `goatbuilder runs diff <a> <b>` compares two: arguments, inputs (value and source; a secret shows as `(secret)`), the commands in order, and each phase's exit code. A run is named by its id, a unique prefix of it, or `last`. The tree's commit is read from the checkout's git files, not by starting `git`, so the record names it without a process outside the record.
 
 | Field | Holds | Read by |
 |---|---|---|
-| `schema` | `goatbuilder.run/v1`; the version changes when a field changes meaning | |
+| `schema`, `id` | `goatbuilder.run/v1`; the version changes when a field changes meaning | |
 | `tool_version`, `tree_commit` | the binary's version and the checkout's commit | |
-| `verb`, `args` | the verb and its arguments, secrets withheld | the test finds a verb's records by `verb` |
-| `phases[]` | each phase: `id`, name, start, end, exit code | |
-| `commands[]` | each process: `phase`, `command` (the line as a shell reads it) and `argv`, `host`, `log` (its log file), start, end, exit code | check (a) |
+| `verb`, `args` | the verb and its arguments as typed (no verb that drives hosts takes a secret on its command line; secrets come from the environment) | the test finds a verb's records by `verb` |
+| `started`, `ended`, `exit`, `error` | the run's times, its exit code, and the error that ended it, as printed | |
+| `phases[]` | each phase: `id`, `name`, `purpose`, `started`, `ended`, `exit` (the first non-zero exit of its commands, else 0; null when it ran none, or one did not start), `commands` (how many) | |
+| `commands[]` | each process: `phase`, `command` (the line as a shell reads it), `argv`, `host`, `log` (its log file) or `log_note` (why there is none), `started`, `ended`, `exit`, `secs` | check (a) |
 | `inputs[]` | each value: `name`, `value`, `secret`, `source`, `origin` (below) | check (b) |
 
 One `inputs` entry is the same in `run.json` and in `goatbuilder inputs -o json` (step 5 writes the list; the run record carries it):
@@ -218,7 +223,7 @@ One pull request for each step, or for each feature within a step, each small an
 | 2a | the runner, `crates/goatbuilder/src/runner.rs` (§"The runner"): `runner::Cmd`, the frame, the per-command log, the command entry; a run begun in main.rs for every verb that drives hosts; the test `crates/goatbuilder/tests/legibility_one_door.rs`, which fails on a `Command::new` outside the runner beyond the counts in `crates/goatbuilder/tests/legibility-one-door-allow.txt` | nothing | **built**, unit tests only: no call site of a verb moves in 2a, so no verb prints a frame yet |
 | 2b | every call site moved to `runner::Cmd`, and `runner::phase` called where each verb's phase loop starts a phase; the allow-list emptied | with step 4: `a standup`, `a join-node`, `a deploy`, `a federate`; with step 3, the probe lines of `c standup` and `c deploy` | designed |
 | 3 | commands in the terminal dry run, built by the same code that runs them; anything not knowable before the run is marked as such | `c standup`, `c join-node`, `c deploy`, `c federate` | designed |
-| 4 | the run record for every verb (§"Run record"); `goatbuilder runs`, `goatbuilder show <run>`, `goatbuilder runs diff <a> <b>` | with step 2: the four `a` lines | designed |
+| 4 | the run record for every verb (§"Run record"); `goatbuilder runs`, `goatbuilder show <run>`, `goatbuilder runs diff <a> <b>` | with step 2: the four `a` lines | **built**, unit tests only: no verb writes a record until 2b moves its call sites |
 | 5 | every value with its source, verb by verb: federate's remaining values first (site values, site hosts, allocations), then standup, join-node, deploy. `goatbuilder inputs <verb> ...` and `goatbuilder why <value>`; the same list in every dry run, as a table and as JSON | `b federate`, then `b standup`, `b join-node`, `b deploy` | designed |
 | 6 | the phase catalog (§"Phase catalog"); `goatbuilder explain <verb> <phase>`; the frame's "what it is for" line reads it; the runbook's phase tables, the command reference's stage text and appendix B are rendered from it and checked in CI; every document path the tool prints exists | `d standup`, `d join-node`, `d deploy`, `d federate` | designed |
 | 7 | failed phases interpreted: a failed phase's output is matched against the error catalog, and the failure row carries the code, cause, fix, log path and the command to retry that one phase by hand | none; its own check is added to the test by that pull request | designed |

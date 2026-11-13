@@ -1592,6 +1592,24 @@ entries:
       - "no core router to measure on"
     exit: 1
 
+  - code: GB-114
+    tool: goatbuilder
+    title: an edge half of phase 3 cannot be joined
+    what: "With two drivers, the edge driver measures phase 3's edge half with `goatbuilder federate init --over-ssh <partner> --side edge --half-out <file>` and prints its sha256 and a confirm code. The controller joins it with `--side core --edge-half <file> --edge-half-sha256 <code>` before it builds and signs the package. The half carries the edge's WireGuard public key, which the package is signed with, so it is joined only when it is the file the edge driver wrote. The file given could not be read; its sha256 is not the one confirmed; it is not an edge half; it was measured for another peering, on another host than this checkout's inventory names as the edge, or for another federation interface than the package asks for; or it was measured more than 24 hours ago, or later than now."
+    causes:
+      - the file was changed or not copied whole on its way from the edge driver, or another file was given
+      - the confirm code was mistyped, or read from another run of the edge half
+      - the edge half was measured for another partner or on another edge host
+      - the declaration or the init flags differ between the two machines, so the edge was measured for another interface (or none)
+      - the edge half is older than a day, or one of the two machines' clocks is wrong
+    fixes:
+      - "goatbuilder federate init --over-ssh <partner> --side edge --half-out <file>   (on the edge driver, with the same declaration and init flags; it prints the confirm code)"
+      - "sha256sum <file>   (on both machines: the two must agree)"
+    read: docs/design/federation-router-discovery.md
+    matches:
+      - "cannot be used for peering"
+    exit: 1
+
   - code: GB-120
     tool: goatbuilder
     title: a peering names a partner with a reserved word
@@ -1873,10 +1891,10 @@ entries:
   - code: GB-182
     tool: goatbuilder
     title: the run journal cannot be read
-    what: "<work>/state.json is the only account of what ran for this peering, so a journal that does not parse, was written by a newer goatbuilder, or names another peering is refused rather than overwritten."
+    what: "<work>/state.json is the only account of what ran for this peering, so a journal that does not parse, has a later schema than this goatbuilder reads, or names another peering is refused rather than overwritten. A journal of the same schema that a later goatbuilder wrote is read: a word or field this one does not know is shown as written and kept."
     causes:
       - the file was edited by hand or cut short
-      - a newer goatbuilder wrote it (its schema is newer than this one reads)
+      - a later goatbuilder wrote it with a later schema (the message names the schema and the goatbuilder that wrote it)
       - two peerings share one working folder
     fixes:
       - "use the goatbuilder that wrote it, or move the file aside and run again (the run then starts with no journal, and --resume skips nothing)"

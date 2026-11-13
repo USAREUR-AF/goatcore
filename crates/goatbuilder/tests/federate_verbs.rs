@@ -5,6 +5,8 @@
 //! the two built binaries; this holds goatbuilder to the library in
 //! `cargo test`.
 
+#[path = "common/test_home.rs"]
+mod test_home;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -33,7 +35,7 @@ fn library(words: &[String]) -> (i32, Vec<u8>) {
 
 /// The binary's answer.
 fn binary(words: &[String]) -> (i32, Vec<u8>) {
-    let o = Command::new(env!("CARGO_BIN_EXE_goatbuilder"))
+    let o = test_home::isolate(&mut Command::new(env!("CARGO_BIN_EXE_goatbuilder")))
         .arg("federate")
         .args(words)
         .env("GOAT_LANG", "en")
