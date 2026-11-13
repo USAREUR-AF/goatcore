@@ -1,4 +1,4 @@
-# ADR 1231 — One development branch; a stable line that follows releases; validated outside contributors answered within one working day
+# ADR 1231 — One development branch; a stable line that follows releases; the maintainers aim to answer validated contributors within one working day
 
 | Field | Value |
 |---|---|
@@ -16,11 +16,10 @@ contribute to it. This record keeps one place where all work lands, the
 branch `main`, and gives everyone else a fixed thing to build on: a release
 of the whole repository, and a branch named `stable` that always points at
 the newest one. Nobody develops on `stable`. The project already released by
-tags; this makes the tags consistent. It also commits the maintainers to
-answer every pull request and issue from a validated outside contributor
-within one working day, because a contributor who hears nothing does not
-come back. The maintainers cannot keep that promise for anyone at all, so
-it is made to contributors the project already knows.
+tags; this makes the tags consistent. The maintainers also aim to answer a
+validated outside contributor within one working day, because a contributor
+who hears nothing does not come back. It is an aim and not a guarantee:
+validating a contributor takes work from both sides and has no fixed time.
 
 ## Context
 
@@ -64,13 +63,14 @@ versions go together.
 6. **A released version is fixed on `main` first.** A branch `release/X.Y`
    is created only when a supported release needs a fix that cannot wait for
    the next release; the fix merges to `main` and is cherry-picked.
-7. **A validated outside contributor gets a first reply within one working
-   day.** A contributor is validated when the `contributor-trust` check
-   places them in its tier `known`: registered in a goat community
-   environment with a linked GitHub account, or the author of an earlier
-   merged pull request (ADR 1221). The reply is in words: who has it and
-   what happens next. For any other author there is no stated time. Every
-   pull request from outside the maintainers carries the label `community`,
+7. **The maintainers aim to give a validated outside contributor a first
+   reply within one working day.** It is an aim, not a guarantee. A
+   contributor is validated when the `contributor-trust` check places them
+   in its tier `known`: registered in a goat community environment with a
+   linked GitHub account, or the author of an earlier merged pull request
+   (ADR 1221). Validation takes work from both sides and has no fixed time.
+   The reply is in words: who has it and what happens next. Every pull
+   request from outside the maintainers carries the label `community`,
    maintainers work that list first, and a maintainer rebases an outside
    pull request that conflicts with `main`.
 8. **A large program is built on an integration branch.** A program of many
@@ -102,7 +102,7 @@ when to expect an answer. `main` keeps its pace.
 
 **Negative.** `stable` is as old as the last minor release, so a fix on
 `main` reaches the stable line only at the next release. The reply
-commitment is kept by people; nothing enforces it. Cutting the whole-tree
+aim is kept by people; nothing enforces it. Cutting the whole-tree
 tag is one more signed act per minor release.
 
 ## Assessor view (SCA-R)
