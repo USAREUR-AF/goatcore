@@ -2360,6 +2360,31 @@ mod tests {
         assert!(read_readiness(&d.path().join("none.json")).is_err());
     }
 
+    /// Phase 1 passes only when both sides' results are ready
+    /// (docs/design/federation-preflight.md): a result of one side's checks
+    /// (`preflight.py --side edge|core`) is never ready on its own, however
+    /// its own checks went. A result for both, or with no side, reads as before.
+    #[test]
+    fn a_one_sided_phase_1_result_is_never_ready_on_its_own() {
+        let d = tempfile::tempdir().unwrap();
+        let f = d.path().join("r.json");
+        let doc = |side: &str| format!(r#"{{"schema":"goat-federation-preflight/v1","ready":true,{side}"results":[{{"check":"inputs","outcome":"PASS","code":"","detail":""}}]}}"#);
+        for side in ["edge", "core"] {
+            std::fs::write(&f, doc(&format!(r#""side":"{side}","#))).unwrap();
+            let (ready, rows) = read_readiness(&f).unwrap();
+            assert!(!ready, "a {side}-only result read as ready");
+            let row = rows.iter().find(|r| r.check == "sides").expect("a row saying why");
+            assert_eq!(row.outcome, "BLOCKED");
+            assert!(row.detail.contains(side) && row.detail.contains("both sides"), "{}", row.detail);
+        }
+        for side in [r#""side":"both","#, ""] {
+            std::fs::write(&f, doc(side)).unwrap();
+            let (ready, rows) = read_readiness(&f).unwrap();
+            assert!(ready, "{side}");
+            assert!(rows.iter().all(|r| r.check != "sides"));
+        }
+    }
+
     /// A plan that was not ready cannot be approved later: a FAIL, a BLOCKED,
     /// or a SKIP of a check the recheck does not rerun. A SKIP of a live check
     /// is fine here, because the recheck reruns it.
