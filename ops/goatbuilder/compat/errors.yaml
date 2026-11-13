@@ -1,4 +1,4 @@
-# The GB codes of goatbuilder/v0.5.1 and their titles, read from ops/errors/catalog.yaml at the tag by compat.py refresh.
+# The GB codes of goatbuilder/v0.5.3 and their titles, read from ops/errors/catalog.yaml at the tag by compat.py refresh.
 codes:
 - code: GB-001
   title: unknown component

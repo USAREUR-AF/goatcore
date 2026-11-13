@@ -7,7 +7,7 @@
     {
       "name": "config",
       "ok": false,
-      "detail": "(root): Additional properties are not allowed ('flavour' was unexpected)"
+      "detail": "GB-025: (root): Additional properties are not allowed ('flavour' was unexpected)"
     }
   ]
 }
