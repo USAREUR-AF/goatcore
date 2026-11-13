@@ -448,3 +448,54 @@ fn side_edge_is_gb_267_only_alone_on_a_peering_run() {
     assert!(all.contains("GB-267"), "{all}");
     assert!(!w.log().contains("preflight"), "{}", w.log());
 }
+
+/// Every command a hand-off object names parses with the binary that printed
+/// it: run as written (placeholders filled in), none is a usage error. The
+/// edge driver's run and `import` are not built, so each refuses with GB-267;
+/// `then` is an ordinary run, which stops at the same hand-off again.
+#[test]
+fn every_command_a_hand_off_names_parses_and_refuses_as_not_built() {
+    for phase in ["1", "2"] {
+        let w = world();
+        two_drivers(&w);
+        let (out, v) = w.run(&["hello-ally", "--from", phase, "--to", phase]);
+        assert!(out.status.success(), "{}", says(&out));
+        let h = v["handoff"].clone();
+        assert_eq!(h["phase"].as_u64().map(|n| n.to_string()).as_deref(), Some(phase));
+        let argv = |member: &str| -> Vec<String> {
+            h[member]
+                .as_array()
+                .unwrap_or_else(|| panic!("{member}: {h}"))
+                .iter()
+                .map(|s| {
+                    s.as_str()
+                        .unwrap()
+                        .replace("{result}", h["result"].as_str().unwrap())
+                        .replace("{code}", "0123456789abcdef0123456789abcdef")
+                })
+                .collect()
+        };
+        for member in ["command", "import", "then"] {
+            let a = argv(member);
+            assert_eq!(&a[..2], ["goatbuilder", "federate"], "{member}: {a:?}");
+            let rest: Vec<&str> = a[2..].iter().map(String::as_str).collect();
+            let (out, v) = w.run(&rest);
+            let all = says(&out);
+            assert_ne!(out.status.code(), Some(2), "phase {phase} {member} {a:?}: {all}");
+            assert!(
+                !all.contains("unexpected argument") && !all.contains("Usage:"),
+                "phase {phase} {member} {a:?}: a usage error: {all}"
+            );
+            if member == "then" {
+                assert!(out.status.success(), "phase {phase} then: {all}");
+                assert_eq!(v["handoff"]["phase"], h["phase"], "phase {phase} then: {all}");
+            } else {
+                assert!(!out.status.success(), "phase {phase} {member}: {all}");
+                assert!(
+                    all.contains("GB-267") && all.contains("not built"),
+                    "phase {phase} {member}: {all}"
+                );
+            }
+        }
+    }
+}
