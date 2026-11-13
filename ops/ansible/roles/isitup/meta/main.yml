@@ -10,9 +10,12 @@ galaxy_info:
         - jammy
         - noble
 
-# Universal deploy-rollback ledger (ADR 1060).
+# Universal deploy-rollback ledger (ADR 1060). The list-only play
+# (isitup-rows.yml) and the controller-only render (isitup-rows-render.yml) set
+# isitup_rows_only: they deploy no image, so they write no ledger row.
 dependencies:
   - role: rollback-ledger
+    when: not (isitup_rows_only | default(false) | bool)
     vars:
       rollback_component: isitup
       rollback_artifact_type: image

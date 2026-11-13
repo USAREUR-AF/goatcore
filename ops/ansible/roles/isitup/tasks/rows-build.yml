@@ -1,0 +1,92 @@
+---
+# rows-build.yml: build the status-page row list, check it and stamp it.
+#
+# Imported by tasks/main.yml (the full deploy) and by tasks/rows-only.yml (the
+# list-only play, ops/ansible/isitup-rows.yml), and run on the controller alone
+# by ops/ansible/isitup-rows-render.yml. Every task here runs on the controller
+# and writes nothing to a host. It reads no sign-in secret.
+#
+# Facts it sets:
+#   isitup_rows         the one row list (templates/isitup-rows.json.j2)
+#   isitup_rows_sha256  sha256 of the list in canonical JSON: keys sorted, no
+#                       spaces, ASCII escapes. Two renders of the same
+#                       declaration on the same UTC day give the same digest.
+#   isitup_rows_source  the source commits the list was rendered from, as
+#                       ops/scripts/lib/source_of_record.py describes them:
+#                       {"commit": …} for a plain clone, {"goatcore": …,
+#                       "overlay": …, …} for an assembled tree. {} when the
+#                       tree is neither.
+
+- name: Require the row-list inputs
+  ansible.builtin.assert:
+    that:
+      - isitup_enabled | default(false) | bool
+      - isitup_services | length > 0
+      - site_id is defined and (site_id | length) > 0
+      - site_dns_zone is defined and (site_dns_zone | length) > 0
+    fail_msg: |
+      The isitup row list requires:
+        - isitup_enabled: true
+        - isitup_services: non-empty list (see role defaults for shape)
+        - site_id, site_dns_zone
+
+# Fail-closed on a half-configured off-mesh section. Two catalog rows resolve
+# their fqdn from isitup_relay_health_public_fqdn (this goatnet's own off-mesh
+# relay-health box); a site that opts into the section without naming its box
+# would otherwise render rows linking to `https:///` — a dead link on the page
+# whose whole job is telling people where to go.
+- name: Require every off-mesh service row to name a host
+  ansible.builtin.assert:
+    that:
+      - isitup_external_services | rejectattr('fqdn', 'defined') | list | length == 0
+      - isitup_external_services | selectattr('fqdn', 'defined') | selectattr('fqdn', 'equalto', '') | list | length == 0
+    fail_msg: >-
+      isitup_external_services contains {{ isitup_external_services
+      | selectattr('fqdn', 'defined') | selectattr('fqdn', 'equalto', '')
+      | map(attribute='id') | list | join(', ') }} with an empty fqdn.
+      The relay-health rows resolve isitup_relay_health_public_fqdn — set it in
+      this site's group_vars (e.g. relay-health.<site>.goat.example), or drop those
+      rows from the site's isitup_external_services.
+  when: isitup_external_services | length > 0
+
+# ONE row list for everything below that describes the page (#1518). Built from
+# isitup_services + the off-mesh catalog + the ADR 1178 declarations,
+# deduplicated by id, with unlisted and past-retire_after rows dropped. See the
+# template header for the precedence and the per-row display fields.
+- name: Build the status-page row list
+  ansible.builtin.set_fact:
+    isitup_rows: "{{ lookup('ansible.builtin.template', 'isitup-rows.json.j2') | from_json }}"
+
+- name: Require every row's lifecycle to be one the page understands
+  ansible.builtin.assert:
+    that:
+      - isitup_rows | rejectattr('lifecycle', 'in', ['live', 'planned', 'retiring']) | list | length == 0
+    fail_msg: >-
+      isitup rows {{ isitup_rows | rejectattr('lifecycle', 'in', ['live', 'planned', 'retiring'])
+      | map(attribute='id') | list | join(', ') }} declare a lifecycle other than
+      live / planned / retiring. The page would count an unknown state as live
+      and the obs host would keep probing it — a typo here is how a retired
+      service goes on paging.
+
+# The stamp. The digest is what ops/scripts/isitup-list.py compares: it renders
+# the list from the current tree through this same file and holds its digest
+# against the one in the host's data/meta.json. The source is what the page
+# shows ("service list rendered from <commit>").
+#
+# The source is the one every deploy ledger row records: GOAT_DEPLOY_SOURCE_TREE
+# when ansible-preflight.sh exported it, else the same description read from the
+# tree on the controller (the .goat-assembled marker of an assembled tree, else
+# the checkout's git commit).
+- name: Stamp the row list with its digest and the source it was rendered from
+  ansible.builtin.set_fact:
+    isitup_rows_sha256: "{{ isitup_rows | to_json(sort_keys=True, separators=(',', ':'), ensure_ascii=True) | hash('sha256') }}"
+    isitup_rows_source: >-
+      {{ (_isitup_src_env | from_json) if (_isitup_src_env is match('[{].+[}]$'))
+         else (lookup('ansible.builtin.pipe', _isitup_src_cmd) | default('{}', true) | from_json) }}
+  vars:
+    _isitup_src_env: "{{ lookup('env', 'GOAT_DEPLOY_SOURCE_TREE') | trim }}"
+    _isitup_tree: "{{ role_path }}/../../../.."
+    _isitup_src_cmd: >-
+      {{ ansible_playbook_python | quote }}
+      {{ (_isitup_tree ~ '/ops/scripts/lib/source_of_record.py') | quote }}
+      describe --repo {{ _isitup_tree | quote }} 2>/dev/null || echo '{}'

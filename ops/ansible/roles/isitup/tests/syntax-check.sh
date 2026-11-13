@@ -32,10 +32,19 @@ if command -v python3 >/dev/null 2>&1; then
   # past-retire_after rows dropped, lifecycle/owner/source carried to
   # meta.json. Skips itself where jinja2 is absent.
   python3 ./row-list.py || fail=1
+  # The list-only play and the stale-list check: the row list renders with no
+  # sign-in secret, the digest the role stamps is the one the check compares,
+  # and ops/scripts/isitup-list.py reports a page that is behind. Skips itself
+  # where ansible-playbook is absent.
+  ./list-freshness.sh || fail=1
+  # isitup-list.py's own decisions (which goatnets a change reaches, the three
+  # verdicts). Wired here because this file is the hook CI runs for the role.
+  python3 ../../../../scripts/test_isitup_list.py || fail=1
 else
   echo "[isitup/front-door-probe] SKIP (python3 not on PATH)"
   echo "[isitup/free-text-columns] SKIP (python3 not on PATH)"
   echo "[isitup/row-list] SKIP (python3 not on PATH)"
+  echo "[isitup/list-freshness] SKIP (python3 not on PATH)"
 fi
 
 exit "$fail"

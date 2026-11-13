@@ -80,6 +80,10 @@
 #   4. Brings up the compose overlay (docker-compose.isitup.yml).
 #   5. Installs the cron job that ticks check.sh every 5 minutes inside the
 #      `isitup` container.
+#
+# The row list alone (services.env + data/meta.json) is refreshed by
+# ops/ansible/isitup-rows.yml (tasks/rows-only.yml). That play needs neither
+# secret above and touches no Hydra client.
 
 isitup_dir: /opt/mgmt-host/isitup
 isitup_compose_file: /opt/mgmt-host/docker-compose.isitup.yml

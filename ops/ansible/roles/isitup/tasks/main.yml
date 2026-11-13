@@ -26,24 +26,12 @@
         - isitup_cookie_secret (16, 24, or 32 random bytes; env-sourced)
         - site_id, site_dns_zone
 
-# Fail-closed on a half-configured off-mesh section. Two catalog rows resolve
-# their fqdn from isitup_relay_health_public_fqdn (this goatnet's own off-mesh
-# relay-health box); a site that opts into the section without naming its box
-# would otherwise render rows linking to `https:///` — a dead link on the page
-# whose whole job is telling people where to go.
-- name: Require every off-mesh service row to name a host
-  ansible.builtin.assert:
-    that:
-      - isitup_external_services | rejectattr('fqdn', 'defined') | list | length == 0
-      - isitup_external_services | selectattr('fqdn', 'defined') | selectattr('fqdn', 'equalto', '') | list | length == 0
-    fail_msg: >-
-      isitup_external_services contains {{ isitup_external_services
-      | selectattr('fqdn', 'defined') | selectattr('fqdn', 'equalto', '')
-      | map(attribute='id') | list | join(', ') }} with an empty fqdn.
-      The relay-health rows resolve isitup_relay_health_public_fqdn — set it in
-      this site's group_vars (e.g. relay-health.<site>.goat.example), or drop those
-      rows from the site's isitup_external_services.
-  when: isitup_external_services | length > 0
+# The row list is built, checked and stamped before anything is written to the
+# host: tasks/rows-build.yml holds the off-mesh and lifecycle checks, the
+# `isitup_rows` fact and the stamp (digest + source commits) that data/meta.json
+# carries. The list-only play (isitup-rows.yml) runs the same file.
+- name: Build, check and stamp the status-page row list
+  ansible.builtin.import_tasks: rows-build.yml
 
 - name: Ensure /opt/mgmt-host/isitup tree exists
   ansible.builtin.file:
@@ -98,50 +86,11 @@
   # path; services with an inline-SVG icon key don't need a file here.
   notify: restart isitup container
 
-# ONE row list for everything below that describes the page (#1518). Built from
-# isitup_services + the off-mesh catalog + the ADR 1178 declarations,
-# deduplicated by id, with unlisted and past-retire_after rows dropped. See the
-# template header for the precedence and the per-row display fields.
-- name: Build the status-page row list
-  ansible.builtin.set_fact:
-    isitup_rows: "{{ lookup('ansible.builtin.template', 'isitup-rows.json.j2') | from_json }}"
-
-- name: Require every row's lifecycle to be one the page understands
-  ansible.builtin.assert:
-    that:
-      - isitup_rows | rejectattr('lifecycle', 'in', ['live', 'planned', 'retiring']) | list | length == 0
-    fail_msg: >-
-      isitup rows {{ isitup_rows | rejectattr('lifecycle', 'in', ['live', 'planned', 'retiring'])
-      | map(attribute='id') | list | join(', ') }} declare a lifecycle other than
-      live / planned / retiring. The page would count an unknown state as live
-      and the obs host would keep probing it — a typo here is how a retired
-      service goes on paging.
-
-- name: Render services.env (per-site service list — drives page rows + health probe)
-  ansible.builtin.template:
-    src: services.env.j2
-    dest: "{{ isitup_dir }}/services.env"
-    owner: root
-    group: root
-    mode: "0644"
-  # services.env is single-file bind-mounted into the container; atomic-
-  # write template renders create a new inode the container can't see
-  # until recreate. Notify the same handler that the env_file template
-  # uses (compose --force-recreate).
-  notify: reload isitup compose
-
-# What the page knows about each row beyond its probe result: lifecycle,
-# where it came from (core / offmesh / external) and who owns it. Lives in the
-# data/ directory, which is a DIRECTORY bind mount — so unlike services.env and
-# check.sh it needs no container recreate to be seen, and it is served with the
-# same no-store header as current.json. The page reads both on every refresh.
-- name: Render data/meta.json (per-row lifecycle, source and owner for the page)
-  ansible.builtin.template:
-    src: meta.json.j2
-    dest: "{{ isitup_dir }}/data/meta.json"
-    owner: root
-    group: root
-    mode: "0644"
+# services.env (what check.sh probes) and data/meta.json (what the page knows
+# about each row, plus the stamp of the list itself), both from the `isitup_rows`
+# fact built above. The list-only play (isitup-rows.yml) runs the same file.
+- name: Render the row list (services.env + data/meta.json)
+  ansible.builtin.import_tasks: rows-render.yml
 
 - name: Render isitup.env (oauth2-proxy config; mode 0600)
   ansible.builtin.template:

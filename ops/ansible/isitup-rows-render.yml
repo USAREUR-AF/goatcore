@@ -1,0 +1,39 @@
+---
+# isitup-rows-render.yml: render a goatnet's status-page row list on the
+# controller and write it to a local file. It contacts no host.
+#
+# ops/scripts/isitup-list.py runs this to learn what the current tree declares
+# (the row list and its digest), then compares the digest with the one in a
+# status page's data/meta.json. The list is built by the same task file the
+# deploy uses (roles/isitup/tasks/rows-build.yml), so both give the same digest
+# for the same declaration.
+#
+#   -e target=<site>_hosts       the goatnet's mgmt group (required)
+#   -e isitup_rows_out=<dir>     an existing local directory (required); one
+#                                <inventory_hostname>.json is written per host
+#
+# The script passes -e ansible_connection=local as well, so an inventory that
+# names a remote connection for the group's hosts is not followed.
+
+- name: Render the isitup row list on the controller (contacts no host)
+  hosts: "{{ target | mandatory }}"
+  connection: local
+  become: false
+  gather_facts: false
+  vars:
+    isitup_rows_only: true
+  tasks:
+    - name: Build, check and stamp the row list
+      ansible.builtin.include_role:
+        name: isitup
+        tasks_from: rows-build.yml
+
+    - name: Write the list and its stamp to the local output directory
+      ansible.builtin.copy:
+        content: "{{ {'group': target, 'host': inventory_hostname, 'sha256': isitup_rows_sha256, 'source': isitup_rows_source, 'rows': isitup_rows} | to_json }}"
+        dest: "{{ isitup_rows_out | mandatory }}/{{ inventory_hostname }}.json"
+        mode: "0644"
+      delegate_to: localhost
+      vars:
+        ansible_connection: local
+        ansible_python_interpreter: "{{ ansible_playbook_python }}"

@@ -1,0 +1,44 @@
+---
+# isitup-rows.yml: refresh the row list of a goatnet's status page.
+#
+# The list-only path. It renders services.env (what check.sh probes) and
+# data/meta.json (what the page knows about each row, plus the stamp of the
+# list) from the goatnet's current row declaration, and recreates the isitup
+# container when the probe list changed.
+#
+# It needs no secret: it reads no OIDC client secret and no cookie secret,
+# touches no Hydra client, and leaves isitup.env, the Traefik routers, the
+# compose overlay and the oauth2-proxy container as they are. The status page
+# must already be deployed (isitup-deploy.yml, once); this play refuses a host
+# where it is not.
+#
+# Run it after any change to the row declaration: isitup_services, the off-mesh
+# catalog, or an external-service declaration's `status:` block.
+# ops/scripts/isitup-list.py names the goatnets a change touched and runs this
+# play for them.
+#
+#   cd ops/ansible
+#   ../scripts/ansible-preflight.sh \
+#     -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini \
+#     -e target=zagros_hosts isitup-rows.yml
+#
+#   -e target=<site>_hosts            the goatnet's mgmt group (required)
+#   -e isitup_rows_verify_only=true   write nothing; fail when the list on the
+#                                     host is not the list this tree declares
+#
+# Idempotent. A run against an unchanged declaration reports no change and
+# restarts nothing.
+#
+# Design: docs/design/isitup-status-page.md, "Keeping the list current".
+
+- name: Refresh the isitup row list (no sign-in client, no secret)
+  hosts: "{{ target | mandatory }}"
+  become: true
+  gather_facts: false
+  vars:
+    isitup_rows_only: true
+  tasks:
+    - name: Render the row list and apply it
+      ansible.builtin.include_role:
+        name: isitup
+        tasks_from: rows-only.yml
