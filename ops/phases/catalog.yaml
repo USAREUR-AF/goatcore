@@ -59,7 +59,7 @@ phases:
   kind: T
   title: '`init` — our half, measured'
   verify: a signed package; exit 23 means a value could not be derived and the list is the output
-  what: 'Builds and signs this side''s package from the running system: it measures the edge (the transports it can run, the federation interface''s public key and MTU) and the core (the router''s version, whether its image is the FIPS build, post-quantum support, the SPIRE trust domain), over SSH by default, and takes the rest from the declaration. Exit 23 lists every value it could not derive.'
+  what: 'Builds and signs this side''s package from the running system: it measures the edge (the transports it can run, the federation interface''s public key and MTU) and the core (the router''s version, whether its image is the FIPS build, post-quantum support, the SPIRE trust domain), over SSH by default, and takes the rest from the declaration. Exit 23 lists every value it could not derive. Where no machine reaches both hosts, it runs in two halves instead: `--side edge --half-out <file>` on a machine that reaches the edge, then `--side core --edge-half <file> --edge-half-sha256 <code>` on one that reaches the core, which joins them (GB-114 when the half cannot be joined) and signs the package.'
   why: The partner verifies what this side actually runs, so the package is read from the hosts, never typed; a value that cannot be measured stops the run instead of being guessed.
   changes: 'In the working directory: ours.canonical.json, signed with the federation signing key. No host is changed.'
   runs: goatbuilder federate init --over-ssh (FED_MEASURE=ssh, the default; FED_MEASURE=here measures this machine)
