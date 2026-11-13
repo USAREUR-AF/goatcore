@@ -82,8 +82,10 @@ unit_main() {
   [ "$(sha256sum "$UP_BUILD" | cut -d' ' -f1)" != "$got" ] || die "units/upgrade.sh: the build under test is the released binary itself; nothing would be upgraded"
   # The deployment's checkout at the release: SRC is what each sovereign's repository is
   # cloned from (lib/engine.sh, gen_sovereign).
-  git clone -q --shared --no-checkout "$REPO" "$WORK/src-release"
-  git -C "$WORK/src-release" checkout -q --detach "$FE2E_UPGRADE_FROM_REF" || die "units/upgrade.sh: no $FE2E_UPGRADE_FROM_REF in this repository"
+  # From the build's own source tree, a git repository that carries the release tags (REPO is
+  # the run's copy of the harness, which is not one).
+  git clone -q --shared --no-checkout "$UP_SRC_BUILD" "$WORK/src-release"
+  git -C "$WORK/src-release" checkout -q --detach "$FE2E_UPGRADE_FROM_REF" || die "units/upgrade.sh: no $FE2E_UPGRADE_FROM_REF in $UP_SRC_BUILD"
   SRC="$WORK/src-release"; export SRC
   # The hosts mount $GB: the released binary until the swap.
   cp "$FE2E_UPGRADE_FROM" "$WORK/goatbuilder-released"; chmod 0755 "$WORK/goatbuilder-released"
