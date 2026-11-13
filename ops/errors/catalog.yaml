@@ -3055,7 +3055,7 @@ entries:
       - the wrong public key or identity
     fixes:
       - "cosign verify --key <org key> <image@digest>"
-    read: docs/design/base-images.md
+    read: docs/reference/goatbuilder/02-install.md
     matches:
       - "no matching signatures"
       - "signature mismatch"
@@ -3124,7 +3124,7 @@ entries:
       - the service is stopped
     fixes:
       - "sudo netbird service start   (or restart the desktop client)"
-    read: docs/operations/admin-operator-guide.md
+    read: docs/operations/battle-drills/02-mesh-client.md
     matches:
       - "daemon is not running"
       - "failed to connect to daemon"
@@ -3151,7 +3151,7 @@ entries:
       - no grant for this surface
     fixes:
       - "for goat admin verbs: GOAT_PORTAL_TOKEN=op_… goat …"
-    read: docs/design/data-access-roles.md
+    read: docs/design/identity-access-and-onboarding-reference.md
     matches:
       - "403 Forbidden"
 
