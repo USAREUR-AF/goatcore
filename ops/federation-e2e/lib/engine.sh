@@ -160,9 +160,21 @@ NETS=("$NP-boundary"); HOSTS=()
 for _p in $PARTIES; do NETS+=("$NP-$_p"); HOSTS+=("$HP-$_p-core" "$HP-$_p-edge" "$HP-$_p-ops"); done
 DIRECTORY=("$NP-directory" "$NP-directory-tls")
 teardown() {
-  local net
+  local net i
   docker rm -f -v "${HOSTS[@]}" "${DIRECTORY[@]}" >/dev/null 2>&1 || true
-  for net in "${NETS[@]}"; do docker network rm "$net" >/dev/null 2>&1 || true; done
+  # A host whose own Docker is slow to stop can still hold a network when rm returns; wait for
+  # each network to go, and say which one did not, instead of failing later on "already exists".
+  for net in "${NETS[@]}"; do
+    for i in $(seq 1 30); do
+      docker network inspect "$net" >/dev/null 2>&1 || break
+      docker network rm "$net" >/dev/null 2>&1 && break
+      sleep 2
+    done
+    if docker network inspect "$net" >/dev/null 2>&1; then
+      echo "teardown: network $net is still there after 60 s; held by: $(docker network inspect -f '{{range .Containers}}{{.Name}} {{end}}' "$net" 2>/dev/null)" >&2
+      return 1
+    fi
+  done
 }
 final() { [ "$KEEP" = 1 ] || teardown; }
 
@@ -921,9 +933,17 @@ round_trip() { # $1 sender, $2 receiver, $3 seconds: one try
   BASE="http://$(core_ip "$1"):8000" "$SRC/ops/federation/roundtrip/fedcheck.sh" release/all "from/$2" "$3"
 }
 round_trip_eventually() { # $1 sender, $2 receiver
-  local out
+  local out s
   for _ in 1 2 3 4 5 6; do out="$(round_trip "$1" "$2" 20)" && { echo "$out"; return 0; }; sleep 10; done
-  echo "$out"; return 1
+  echo "$out"
+  # Why it did not come back: each edge's tunnel and its router, as they are now.
+  for s in "$1" "$2"; do
+    echo "--- $s edge: wg show (peers, latest handshakes, transfer)"
+    docker exec "$HP-$s-edge" wg show all 2>&1 | head -40
+    echo "--- $s edge: the edge router toward $(other "$s"), last lines"
+    docker exec "$HP-$s-edge" docker logs --tail 30 "goat-zenoh-edge-$(other "$s")" 2>&1 | cut -c1-300
+  done
+  return 1
 }
 
 # The failures that make the passes mean something, for a two-party scenario.
