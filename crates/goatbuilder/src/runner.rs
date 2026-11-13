@@ -386,21 +386,13 @@ impl Cmd {
     /// Run it, streaming its output, and wait.
     pub fn status(&mut self) -> std::io::Result<ExitStatus> {
         crate::trace::cmd(&self.inner);
-        let Some(mut entry) = self.open() else {
+        let Some(mut entry) = self.open(true) else {
             return self.inner.status();
         };
-        let child_tty = std::env::var_os("GOATBUILDER_CHILD_TTY").is_some_and(|v| v == "1");
         let t0 = Instant::now();
-        let status = if let Some(why) = interactive(&entry.command) {
-            entry.log_note = Some(format!("not captured (interactive): {why}"));
-            entry.log = None;
-            self.inner.status()
-        } else if child_tty {
-            entry.log_note = Some(
-                "GOATBUILDER_CHILD_TTY=1: the command had the terminal; nothing was captured"
-                    .into(),
-            );
-            entry.log = None;
+        // open() decided whether the command keeps the terminal; such an entry
+        // has no log, and says why.
+        let status = if keeps_terminal(&entry.command).is_some() {
             self.inner.status()
         } else {
             self.streamed(&entry)
@@ -412,10 +404,13 @@ impl Cmd {
     /// Run it, capturing its output, and wait.
     pub fn output(&mut self) -> std::io::Result<Output> {
         crate::trace::cmd(&self.inner);
-        let Some(mut entry) = self.open() else {
+        let Some(mut entry) = self.open(false) else {
             return self.inner.output();
         };
         let t0 = Instant::now();
+        // The log exists before the command starts, so a command that cannot
+        // start still names a file that is there.
+        let _ = entry.log.as_deref().and_then(log_file);
         let out = self.inner.output();
         if let (Ok(o), Some(log)) = (&out, &entry.log) {
             if let Some(mut f) = log_file(log) {
@@ -432,7 +427,7 @@ impl Cmd {
     /// not wait for it.
     pub fn spawn(&mut self) -> std::io::Result<Child> {
         crate::trace::cmd(&self.inner);
-        let Some(mut entry) = self.open() else {
+        let Some(mut entry) = self.open(false) else {
             return self.inner.spawn();
         };
         let log = entry
@@ -469,7 +464,7 @@ impl Cmd {
     }
 
     /// The entry for this command, and its frame printed; `None` outside a run.
-    fn open(&self) -> Option<CommandEntry> {
+    fn open(&self, streamed: bool) -> Option<CommandEntry> {
         let mut guard = lock_run();
         let run = guard.as_mut()?;
         #[cfg(test)]
@@ -488,7 +483,14 @@ impl Cmd {
         );
         let log = run.dir.join("logs").join(log_name);
         let line = self.line();
-        let where_ = if self.stdout_set && self.stderr_set {
+        let terminal = if streamed {
+            keeps_terminal(&line)
+        } else {
+            None
+        };
+        let where_ = if terminal.is_some() {
+            "no log: the command keeps the terminal".to_string()
+        } else if self.stdout_set && self.stderr_set {
             "no log: the caller's own streams".to_string()
         } else {
             format!("log {}", shown(&log))
@@ -514,6 +516,7 @@ impl Cmd {
         // A stream the caller set is the caller's own: the runner neither copies
         // nor logs it, and the record says so rather than naming an empty log.
         let (log, log_note) = match (self.stdout_set, self.stderr_set) {
+            _ if terminal.is_some() => (None, terminal),
             (true, true) => (
                 None,
                 Some("not captured: stdout and stderr are the caller's own".to_string()),
@@ -606,6 +609,20 @@ impl Cmd {
         }
         status
     }
+}
+
+/// Why a streamed command whose line is `line` keeps the terminal, when it does:
+/// a program on the interactive list, or `GOATBUILDER_CHILD_TTY=1`.
+fn keeps_terminal(line: &str) -> Option<String> {
+    if let Some(why) = interactive(line) {
+        return Some(format!("not captured (interactive): {why}"));
+    }
+    if std::env::var_os("GOATBUILDER_CHILD_TTY").is_some_and(|v| v == "1") {
+        return Some(
+            "GOATBUILDER_CHILD_TTY=1: the command had the terminal; nothing was captured".into(),
+        );
+    }
+    None
 }
 
 /// The programs that keep the terminal (tests/legibility-interactive.txt): one
@@ -895,6 +912,44 @@ mod tests {
         assert_eq!(
             cmds[1].log_note.as_deref(),
             Some("stdout is the caller's own; the log holds stderr")
+        );
+    }
+
+    #[test]
+    fn a_command_that_keeps_the_terminal_names_no_log_in_its_frame() {
+        let (_g, _sink) = capture();
+        let t = tempfile::tempdir().unwrap();
+        begin(t.path(), "standup", vec![], None);
+        phase("2", "baseline", "");
+        // GOATBUILDER_CHILD_TTY is read per command; set for this test only.
+        std::env::set_var("GOATBUILDER_CHILD_TTY", "1");
+        let st = Cmd::new("sh").args(["-c", "true"]).status();
+        std::env::remove_var("GOATBUILDER_CHILD_TTY");
+        assert!(st.unwrap().success());
+        let f = frame();
+        assert!(
+            !f.contains("log /"),
+            "a log is named that is never written: {f}"
+        );
+        assert!(
+            f.contains("(no log: the command keeps the terminal)"),
+            "{f}"
+        );
+        let cmds = end().unwrap().commands;
+        assert_eq!(cmds[0].log, None);
+    }
+
+    #[test]
+    fn a_captured_command_that_cannot_start_names_a_log_that_exists() {
+        let (_g, _sink) = capture();
+        let t = tempfile::tempdir().unwrap();
+        begin(t.path(), "deploy", vec![], None);
+        assert!(Cmd::new("/nonexistent/program").output().is_err());
+        let cmds = end().unwrap().commands;
+        let log = cmds[0].log.as_deref().expect("a log is named");
+        assert!(
+            Path::new(log).is_file(),
+            "the named log {log} does not exist"
         );
     }
 
