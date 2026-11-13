@@ -54,7 +54,8 @@ struct World {
 /// A checkout with the standup fixture's declaration, one component (portal) on
 /// one goatnet (dev, one group, one host), every ops/scripts entry a no-op stub
 /// except with-aws (above) and served-payloads.py (the real one, which deploy's
-/// verify consults).
+/// verify consults), and a secrets posture that answers: no variable is
+/// needed or available, so the transport phase's probe succeeds.
 fn world(row: &str) -> World {
     let root = tempfile::tempdir().unwrap();
     let r = root.path();
@@ -98,6 +99,10 @@ fn world(row: &str) -> World {
     );
     w("ops/scripts/with-aws", &with_aws(row));
     w(
+        "ops/secrets/posture.py",
+        "import sys\nsys.exit(0 if sys.argv[1:2] == [\"available\"] else 2)\n",
+    );
+    w(
         "ops/pins/fleet-pins.yaml",
         &format!("goatnets:\n  dev:\n    members: [{GROUP}]\ncomponents:\n  portal:\n    var: portal_image\n    fleet: \"{PORTAL_REF}\"\n"),
     );
@@ -124,11 +129,12 @@ fn exec(p: &Path) {
     std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o755)).unwrap();
 }
 
-/// The ledger row the stubbed play writes: rollback-ledger's shape, naming the
+/// The ledger row the stubbed play writes: rollback-ledger's row cut to its
+/// component and the fields deploy reads (`ts`, `action`, `ref`), naming the
 /// declared ref.
 fn good_row() -> String {
     format!(
-        r#"{{"ts": "2026-11-13T00:00:00Z", "component": "portal", "action": "deploy", "ref": "{PORTAL_REF}", "host": "{HOST}"}}"#
+        r#"{{"ts": "2026-11-13T00:00:00Z", "component": "portal", "action": "deploy", "ref": "{PORTAL_REF}"}}"#
     )
 }
 
@@ -220,14 +226,14 @@ fn a_deploy_that_converges_exits_0_and_names_what_it_deployed() {
         format!("deploying {PORTAL_REF}"),
         format!("{HOST} : ok=3 changed=1 unreachable=0 failed=0"),
         format!("converged on {DIGEST}"),
+        // The host had no ledger before the play, so this run wrote the row.
+        "ledger row written by this run".to_string(),
         "portal on dev: every host's ledger names the declared ref".to_string(),
     ] {
         assert!(t.contains(&want), "the page does not say {want:?}:\n{t}");
     }
-    assert!(
-        !t.contains("NOT converged") && !t.contains("deploy FAILED"),
-        "{t}"
-    );
+    // No command failed, the secrets posture probe included.
+    assert!(!t.contains("NOT converged") && !t.contains("FAILED"), "{t}");
 }
 
 /// The same run under `-o json`: one report, exit 0, ok, every row ok, and rows
@@ -266,8 +272,9 @@ fn a_deploy_that_converges_reports_it_in_json() {
 }
 
 /// The post-deploy verify is reached and decides the outcome: the same clean
-/// play, but a ledger row that names another digest, exits 3 and names the host
-/// NOT converged. A deploy that skipped verify would pass this play.
+/// play, but a ledger row that names another digest, exits 3 and names the
+/// host NOT converged on that row. A deploy that skipped verify would pass
+/// this play.
 #[test]
 fn the_verify_after_the_play_decides_the_outcome() {
     let other = good_row().replace(
@@ -282,7 +289,16 @@ fn the_verify_after_the_play_decides_the_outcome() {
         t.contains(&format!("{HOST} : ok=3")),
         "the play did not run: {t}"
     );
-    assert!(t.contains("NOT converged"), "{t}");
+    // "ledger tail" is the verdict for a finished deploy row that names
+    // another digest; a row naming the declared digest but not finished gets
+    // other words. The digest itself is not on the page: the tail shown is
+    // cut to 140 characters, which ends inside the ref.
+    assert!(
+        t.lines().any(|l| l.contains(&format!("dev/{HOST}"))
+            && l.contains("NOT converged — ledger tail")
+            && l.contains(r#""action": "deploy""#)),
+        "the host's row is not the other-digest verdict: {t}"
+    );
     assert!(
         !t.contains("every host's ledger names the declared ref"),
         "{t}"
@@ -332,6 +348,12 @@ fn a_deploy_that_converges_leaves_its_run_record() {
         "{line}"
     );
     let phases = r["phases"].as_array().unwrap();
+    // Every phase exited cleanly, the secrets probe's transport phase included.
+    let transport = phases
+        .iter()
+        .find(|p| p["id"] == "transport")
+        .unwrap_or_else(|| panic!("no transport phase: {r}"));
+    assert_eq!(transport["exit"], 0, "{transport}");
     let verify = phases
         .iter()
         .find(|p| p["id"] == format!("verify:{GROUP}"))
